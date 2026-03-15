@@ -1706,31 +1706,31 @@ struct TimeSamples {
   }
 
  private:
+  // Members ordered to minimize padding (8-byte aligned types first, then smaller)
+
   // Generic path storage (for generic Value types: string, token, dict, etc.)
   mutable std::vector<Sample> _samples;
 
-  // Unified binary-storage path (Phase 2 unification)
+  // Unified binary-storage path
   mutable std::vector<double> _times;
-  mutable Buffer<16> _blocked;
-  mutable std::vector<uint64_t> _small_values;                       // Direct storage for small scalar binary-serializable types (sizeof(T) <= 8 bytes), stored as uint64
-  mutable Buffer<16> _values;                                        // Raw byte storage for large scalar binary-serializable types and arrays
-  mutable std::vector<std::unique_ptr<Buffer<16>>> _array_values;    // Array data storage: each entry is a separate allocated buffer for one array sample
-  mutable std::vector<uint64_t> _offsets;                            // Offset table for large types and arrays with dedup/array/buffer flags
+  mutable std::vector<uint64_t> _small_values;    // Direct storage for small scalars (sizeof(T) <= 8)
+  mutable std::vector<uint64_t> _offsets;          // Offset table with dedup/array/buffer flags
+  mutable std::vector<std::unique_ptr<Buffer<16>>> _array_values;  // Per-sample array buffers
+  mutable Buffer<16> _blocked;                     // Blocked flags (one byte per sample)
+  mutable Buffer<16> _values;                      // Raw byte storage for large scalars
 
-  // value::Value array storage with dedup support (for generic Value array types)
-  // Stores unique value::Value objects; _value_array_refs contains indices or dedup references
-  mutable std::vector<value::Value> _value_array_storage;  // Stores unique array values
-  mutable std::vector<uint64_t> _value_array_refs;         // bit 63 = dedup flag, bits 0-62 = storage index or ref index
+  // value::Value array storage with dedup support
+  mutable std::vector<value::Value> _value_array_storage;
+  mutable std::vector<uint64_t> _value_array_refs; // bit 63 = dedup flag
+  mutable std::vector<size_t> _array_counts;       // Per-sample array element counts
 
-  // Type information
-  uint32_t _type_id{0};
+  // Metadata (grouped to minimize padding)
   StorageDescriptor _storage{};
   mutable size_t _blocked_count{0};
-  mutable std::vector<size_t> _array_counts; // Per-sample array element counts (for variable-sized arrays)
-
-  mutable bool _dirty{false};
   mutable size_t _dirty_start{0};
   mutable size_t _dirty_end{0};
+  uint32_t _type_id{0};
+  mutable bool _dirty{false};
 
   // _pod_samples removed - using unified storage directly
 
