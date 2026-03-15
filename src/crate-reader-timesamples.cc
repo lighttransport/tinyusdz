@@ -2969,89 +2969,43 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
       double, const crate::ValueRep &, value::TimeSamples &, size_t);
   UnpackTimeSampleFn unpack_fn = nullptr;
 
+#define UNPACK_CASE(ctype, suffix)                                    \
+  case crate::CrateDataTypeId::ctype:                                 \
+    unpack_fn = &CrateReader::UnpackTimeSampleValue_##suffix;         \
+    break;
+
   switch (crate_type_id) {
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_BOOL;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_INT32;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_UINT32;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_INT64;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_UINT64;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_HALF;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_FLOAT;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_DOUBLE;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_HALF2;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_HALF3;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4H:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_HALF4;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_FLOAT2;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_FLOAT3;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_FLOAT4;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_DOUBLE2;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_DOUBLE3;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_DOUBLE4;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_QUATF;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATH:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_QUATH;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_QUATD;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_MATRIX2D;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_MATRIX3D;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_MATRIX4D;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_ASSET_PATH;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_STRING;
-      break;
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN:
-      unpack_fn = &CrateReader::UnpackTimeSampleValue_TOKEN;
-      break;
+    UNPACK_CASE(CRATE_DATA_TYPE_BOOL, BOOL)
+    UNPACK_CASE(CRATE_DATA_TYPE_INT, INT32)
+    UNPACK_CASE(CRATE_DATA_TYPE_UINT, UINT32)
+    UNPACK_CASE(CRATE_DATA_TYPE_INT64, INT64)
+    UNPACK_CASE(CRATE_DATA_TYPE_UINT64, UINT64)
+    UNPACK_CASE(CRATE_DATA_TYPE_HALF, HALF)
+    UNPACK_CASE(CRATE_DATA_TYPE_FLOAT, FLOAT)
+    UNPACK_CASE(CRATE_DATA_TYPE_DOUBLE, DOUBLE)
+    UNPACK_CASE(CRATE_DATA_TYPE_VEC2H, HALF2)
+    UNPACK_CASE(CRATE_DATA_TYPE_VEC3H, HALF3)
+    UNPACK_CASE(CRATE_DATA_TYPE_VEC4H, HALF4)
+    UNPACK_CASE(CRATE_DATA_TYPE_VEC2F, FLOAT2)
+    UNPACK_CASE(CRATE_DATA_TYPE_VEC3F, FLOAT3)
+    UNPACK_CASE(CRATE_DATA_TYPE_VEC4F, FLOAT4)
+    UNPACK_CASE(CRATE_DATA_TYPE_VEC2D, DOUBLE2)
+    UNPACK_CASE(CRATE_DATA_TYPE_VEC3D, DOUBLE3)
+    UNPACK_CASE(CRATE_DATA_TYPE_VEC4D, DOUBLE4)
+    UNPACK_CASE(CRATE_DATA_TYPE_QUATF, QUATF)
+    UNPACK_CASE(CRATE_DATA_TYPE_QUATH, QUATH)
+    UNPACK_CASE(CRATE_DATA_TYPE_QUATD, QUATD)
+    UNPACK_CASE(CRATE_DATA_TYPE_MATRIX2D, MATRIX2D)
+    UNPACK_CASE(CRATE_DATA_TYPE_MATRIX3D, MATRIX3D)
+    UNPACK_CASE(CRATE_DATA_TYPE_MATRIX4D, MATRIX4D)
+    UNPACK_CASE(CRATE_DATA_TYPE_ASSET_PATH, ASSET_PATH)
+    UNPACK_CASE(CRATE_DATA_TYPE_STRING, STRING)
+    UNPACK_CASE(CRATE_DATA_TYPE_TOKEN, TOKEN)
     default:
       PUSH_ERROR_AND_RETURN(fmt::format("Unimplemented type in TimeSamples: {}",
                                         GetCrateDataTypeName(crate_type_id)));
   }
+#undef UNPACK_CASE
 
   for (size_t i = 0; i < vreps.size(); i++) {
     const crate::ValueRep &rep = vreps[i];
