@@ -263,40 +263,7 @@ class Stage {
 
  private:
 
-#if 0 // Deprecated. remove.
-  ///
-  /// Loads USD from and return it as Layer
-  ///
-  /// @param[in] filename USD filename
-  /// @param[in] resolver AssetResolutionResolver
-  /// @param[out] layer Layer representation of USD data.
-  /// @param[in] load_states Bitmask of LoadState(optional)
-  ///
-  bool LoadLayerFromFile(const std::string &filename, const AssetResolutionResolver &resolver, Layer *layer, const uint32_t load_states = static_cast<uint32_t>(LoadState::Toplevel));
 
-  ///
-  /// Loads USD asset from memory and return it as Layer
-  ///
-  /// @param[in] addr Memory address
-  /// @param[in] nbytes Num bytes
-  /// @param[in] asset_name Asset name(usually filename)
-  /// @param[out] layer Layer representation of USD data.
-  /// @param[in] load_states Bitmask of LoadState(optional)
-  ///
-  bool LoadLayerFromMemory(const uint8_t *addr, const size_t nbytes, const std::string &asset_name, Layer *layer, const uint32_t load_states = static_cast<uint32_t>(LoadState::Toplevel));
-#endif
-
-#if 0 // Deprecated. moved to composition.hh
-  ///
-  /// Loads `reference` USD asset and return it as Layer
-  ///
-  bool LoadReference(const Reference &reference, Layer *dest);
-
-  ///
-  /// Loads USD assets described in `subLayers` Stage/Layer meta and return it as Layers
-  ///
-  bool LoadSubLayers(std::vector<Layer> *dest_sublayers);
-#endif
 
   // Root nodes
   std::vector<Prim> _root_nodes;
