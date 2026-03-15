@@ -782,6 +782,16 @@ bool TimeSamples::add_dedup_sample(double t, size_t ref_index, std::string *err)
     return true;
 }
 
+std::vector<TimeSamples::Sample> &TimeSamples::samples() {
+    if (!_times.empty() && _samples.empty()) {
+      (void)get_samples();
+    }
+    if (_dirty) {
+      update();
+    }
+    return _samples;
+}
+
 const std::vector<TimeSamples::Sample> &TimeSamples::get_samples() const {
     // If unified storage has data, convert to generic samples on demand.
     if (!_times.empty() && _samples.empty()) {

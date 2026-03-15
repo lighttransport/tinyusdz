@@ -1076,27 +1076,7 @@ struct TimeSamples {
 
   const std::vector<Sample> &get_samples() const;  // Defined in timesamples.cc
 
-  std::vector<Sample> &samples() {
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wexit-time-destructors"
-#endif
-
-    static std::vector<Sample> empty;
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
-
-    if (!_times.empty() && _samples.empty()) {
-      (void)get_samples();
-    }
-
-    if (_dirty) {
-      update();
-    }
-    return _samples;
-  }
+  std::vector<Sample> &samples();  // Defined in timesamples.cc
 
   // Get value at specified time.
   // For non-interpolatable types (includes enums and unknown types)
