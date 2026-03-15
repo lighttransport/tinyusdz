@@ -1523,15 +1523,21 @@ struct TimeSamples {
     }
 
     if (value::TimeCode(t).is_default()) {
-      // TODO: Handle blocked
-        if (const auto pv = samples[0].value.as<T>()) {
-          (*dst) = *pv;
-          return true;
+        // Return the first non-blocked sample.
+        for (const auto &s : samples) {
+          if (!s.blocked) {
+            if (const auto pv = s.value.as<T>()) {
+              (*dst) = *pv;
+              return true;
+            }
+            return false;
+          }
         }
         return false;
       } else {
 
         if (samples.size() == 1) {
+          if (samples[0].blocked) return false;
           if (const auto pv = samples[0].value.as<T>()) {
             (*dst) = *pv;
             return true;
@@ -1543,9 +1549,13 @@ struct TimeSamples {
           samples.begin(), samples.end(), t,
           [](double tval, const Sample &a) { return tval < a.t; });
 
-        const auto it_minus_1 = (it == samples.begin()) ? samples.begin() : (it - 1);
+        const auto it_held = (it == samples.begin()) ? samples.begin() : (it - 1);
 
-        const value::Value &v = it_minus_1->value;
+        if (it_held->blocked) {
+          return false;
+        }
+
+        const value::Value &v = it_held->value;
 
         if (const T *pv = v.as<T>()) {
           (*dst) = *pv;
@@ -1576,18 +1586,21 @@ struct TimeSamples {
     }
 
     if (value::TimeCode(t).is_default()) {
-      // FIXME: Use the first item for now.
-      // TODO: Handle blocked
-      if (!samples.empty()) {
-        if (const auto pv = samples[0].value.as<T>()) {
-          (*dst) = *pv;
-          return true;
+      // Return the first non-blocked sample.
+      for (const auto &s : samples) {
+        if (!s.blocked) {
+          if (const auto pv = s.value.as<T>()) {
+            (*dst) = *pv;
+            return true;
+          }
+          return false;
         }
       }
       return false;
     } else {
 
       if (samples.size() == 1) {
+        if (samples[0].blocked) return false;
         if (const auto pv = samples[0].value.as<T>()) {
           (*dst) = *pv;
           return true;
@@ -1600,7 +1613,6 @@ struct TimeSamples {
             samples.begin(), samples.end(), t,
             [](const Sample &a, double tval) { return a.t < tval; });
 
-
         // MS STL does not allow seek vector iterator before begin
         // Issue #110
         const auto it_minus_1 = (it == samples.begin()) ? samples.begin() : (it - 1);
@@ -1612,6 +1624,25 @@ struct TimeSamples {
         size_t idx1 =
             size_t(std::max(int64_t(0), std::min(int64_t(samples.size() - 1),
                                                  int64_t(idx0) + 1)));
+
+        // If either endpoint is blocked, fall back to the non-blocked one.
+        if (samples[idx0].blocked && samples[idx1].blocked) {
+          return false;
+        }
+        if (samples[idx0].blocked) {
+          if (const auto pv = samples[idx1].value.as<T>()) {
+            (*dst) = *pv;
+            return true;
+          }
+          return false;
+        }
+        if (samples[idx1].blocked) {
+          if (const auto pv = samples[idx0].value.as<T>()) {
+            (*dst) = *pv;
+            return true;
+          }
+          return false;
+        }
 
         double tl = samples[idx0].t;
         double tu = samples[idx1].t;
@@ -1641,14 +1672,18 @@ struct TimeSamples {
         }
         return false;
       } else {
-        // Held
+        // Held interpolation
         auto it = std::upper_bound(
           samples.begin(), samples.end(), t,
           [](double tval, const Sample &a) { return tval < a.t; });
 
-        const auto it_minus_1 = (it == samples.begin()) ? samples.begin() : (it - 1);
+        const auto it_held = (it == samples.begin()) ? samples.begin() : (it - 1);
 
-        const value::Value &v = it_minus_1->value;
+        if (it_held->blocked) {
+          return false;
+        }
+
+        const value::Value &v = it_held->value;
 
         if (const T *pv = v.as<T>()) {
           (*dst) = *pv;
@@ -1658,8 +1693,6 @@ struct TimeSamples {
         return false;
       }
     }
-
-    return false;
   }
 
   size_t estimate_memory_usage() const {
