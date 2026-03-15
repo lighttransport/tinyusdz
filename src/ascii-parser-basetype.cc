@@ -1898,21 +1898,6 @@ bool AsciiParser::ReadBasicType(value::color3d *value) {
   return false;
 }
 
-#if 0
-template <>
-bool AsciiParser::ReadBasicType(value::point4h *value) {
-  // parse as float4
-  value::float4 v;
-  if (ParseBasicTypeTuple(&v)) {
-    value->x = value::float_to_half_full(v[0]);
-    value->y = value::float_to_half_full(v[1]);
-    value->z = value::float_to_half_full(v[2]);
-    value->w = value::float_to_half_full(v[3]);
-    return true;
-  }
-  return false;
-}
-#endif
 
 bool AsciiParser::ReadBasicType(value::color4h *value) {
   // parse as float4
@@ -4019,77 +4004,6 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result) {
 // Explicit template instanciations
 //
 
-#if 0
-//template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<bool>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<int32_t>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::int2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint32_t>> *result);
-// char types (optional)
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<char>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::char2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::char3>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::char4>> *result);
-// uchar types (optional)
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint8_t>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::uchar2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::uchar3>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::uchar4>> *result);
-// short types (optional)
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<int16_t>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::short2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::short3>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::short4>> *result);
-// ushort types (optional)
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint16_t>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::ushort2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::ushort3>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::ushort4>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<int64_t>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint64_t>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::half>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::half2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::half3>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::half4>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<float>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::float2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::float3>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::float4>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<double>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::double2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::double3>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::double4>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord2h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord2f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord2d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord3h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord3f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord3d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::point3h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::point3f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::point3d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::normal3h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::normal3f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::normal3d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::vector3h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::vector3f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::vector3d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color3h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color3f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color3d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color4h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color4f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color4d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix2d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix3d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix4d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::frame4d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::token>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::StringData>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<std::string>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<Reference>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<Path>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::AssetPath>> *result);
-#endif
 
 template bool AsciiParser::ParseBasicTypeArray(std::vector<bool> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result);
