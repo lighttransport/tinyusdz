@@ -641,7 +641,32 @@ half float_to_half_full_le(float _f) {
 
 }  // namespace
 
-// half_to_float is now inline in value-types.hh
+float half_to_float(value::half h) {
+  uint16_t hu = h.value;
+  uint32_t o;
+
+  o = (hu & 0x7fffU) << 13U;              // exponent/mantissa bits
+  uint32_t exp_ = (0x7c00U << 13U) & o;   // just the exponent
+  o += (127 - 15) << 23;                   // exponent adjust
+
+  if (exp_ == (0x7c00U << 13U))            // Inf/NaN?
+    o += (128 - 16) << 23;                 // extra exp adjust
+  else if (exp_ == 0) {                    // Zero/Denormal?
+    o += 1 << 23;                          // extra exp adjust
+    float of;
+    memcpy(&of, &o, sizeof(float));
+    uint32_t magic = 113 << 23;
+    float magicf;
+    memcpy(&magicf, &magic, sizeof(float));
+    of -= magicf;                          // renormalize
+    memcpy(&o, &of, sizeof(uint32_t));
+  }
+
+  o |= (hu & 0x8000U) << 16U;             // sign bit
+  float result;
+  memcpy(&result, &o, sizeof(float));
+  return result;
+}
 
 half float_to_half_full(float _f) {
   // TODO: Compile time detection of endianness
@@ -656,6 +681,226 @@ half float_to_half_full(float _f) {
   ///???
   half fp16{0};  // TODO: Raise exception or return NaN
   return fp16;
+}
+
+// half arithmetic operators
+
+half operator+(const half &a, const half &b) {
+  return float_to_half_full(half_to_float(a) + half_to_float(b));
+}
+
+half operator-(const half &a, const half &b) {
+  return float_to_half_full(half_to_float(a) - half_to_float(b));
+}
+
+half operator*(const half &a, const half &b) {
+  return float_to_half_full(half_to_float(a) * half_to_float(b));
+}
+
+half operator/(const half &a, const half &b) {
+  return float_to_half_full(half_to_float(a) / half_to_float(b));
+}
+
+half& operator+=(half &a, const half &b) {
+  a = float_to_half_full(half_to_float(a) + half_to_float(b));
+  return a;
+}
+
+half& operator-=(half &a, const half &b) {
+  a = float_to_half_full(half_to_float(a) - half_to_float(b));
+  return a;
+}
+
+half& operator*=(half &a, const half &b) {
+  a = float_to_half_full(half_to_float(a) * half_to_float(b));
+  return a;
+}
+
+half& operator/=(half &a, const half &b) {
+  a = float_to_half_full(half_to_float(a) / half_to_float(b));
+  return a;
+}
+
+half operator+(const half &a, float b) {
+  return float_to_half_full(half_to_float(a) + b);
+}
+
+half operator-(const half &a, float b) {
+  return float_to_half_full(half_to_float(a) - b);
+}
+
+half operator*(const half &a, float b) {
+  return float_to_half_full(half_to_float(a) * b);
+}
+
+half operator/(const half &a, float b) {
+  return float_to_half_full(half_to_float(a) / b);
+}
+
+half operator+(float a, const half &b) {
+  return float_to_half_full(a + half_to_float(b));
+}
+
+half operator-(float a, const half &b) {
+  return float_to_half_full(a - half_to_float(b));
+}
+
+half operator*(float a, const half &b) {
+  return float_to_half_full(a * half_to_float(b));
+}
+
+half operator/(float a, const half &b) {
+  return float_to_half_full(a / half_to_float(b));
+}
+
+// matrix set_row, set_scale, set_translation methods
+
+void matrix2f::set_row(uint32_t row, float x, float y) {
+  if (row < 2) {
+    m[row][0] = x;
+    m[row][1] = y;
+  }
+}
+
+void matrix2f::set_scale(float sx, float sy) {
+  m[0][0] = sx;
+  m[0][1] = 0.0f;
+
+  m[1][0] = 0.0f;
+  m[1][1] = sy;
+}
+
+void matrix3f::set_row(uint32_t row, float x, float y, float z) {
+  if (row < 3) {
+    m[row][0] = x;
+    m[row][1] = y;
+    m[row][2] = z;
+  }
+}
+
+void matrix3f::set_scale(float sx, float sy, float sz) {
+  m[0][0] = sx;
+  m[0][1] = 0.0f;
+  m[0][2] = 0.0f;
+
+  m[1][0] = 0.0f;
+  m[1][1] = sy;
+  m[1][2] = 0.0f;
+
+  m[2][0] = 0.0f;
+  m[2][1] = 0.0f;
+  m[2][2] = sz;
+}
+
+void matrix3f::set_translation(float tx, float ty, float tz) {
+  m[2][0] = tx;
+  m[2][1] = ty;
+  m[2][2] = tz;
+}
+
+void matrix4f::set_row(uint32_t row, float x, float y, float z, float w) {
+  if (row < 4) {
+    m[row][0] = x;
+    m[row][1] = y;
+    m[row][2] = z;
+    m[row][3] = w;
+  }
+}
+
+void matrix4f::set_scale(float sx, float sy, float sz) {
+  m[0][0] = sx;
+  m[0][1] = 0.0f;
+  m[0][2] = 0.0f;
+  m[0][3] = 0.0f;
+
+  m[1][0] = 0.0f;
+  m[1][1] = sy;
+  m[1][2] = 0.0f;
+  m[1][3] = 0.0f;
+
+  m[2][0] = 0.0f;
+  m[2][1] = 0.0f;
+  m[2][2] = sz;
+  m[2][3] = 0.0f;
+
+  m[3][0] = 0.0f;
+  m[3][1] = 0.0f;
+  m[3][2] = 0.0f;
+  m[3][3] = 1.0f;
+}
+
+void matrix4f::set_translation(float tx, float ty, float tz) {
+  m[3][0] = tx;
+  m[3][1] = ty;
+  m[3][2] = tz;
+}
+
+void matrix2d::set_row(uint32_t row, double x, double y) {
+  if (row < 2) {
+    m[row][0] = x;
+    m[row][1] = y;
+  }
+}
+
+void matrix2d::set_scale(double sx, double sy) {
+  m[0][0] = sx;
+  m[0][1] = 0.0;
+
+  m[1][0] = 0.0;
+  m[1][1] = sy;
+}
+
+void matrix3d::set_row(uint32_t row, double x, double y, double z) {
+  if (row < 3) {
+    m[row][0] = x;
+    m[row][1] = y;
+    m[row][2] = z;
+  }
+}
+
+void matrix3d::set_scale(double sx, double sy, double sz) {
+  m[0][0] = sx;
+  m[0][1] = 0.0;
+  m[0][2] = 0.0;
+
+  m[1][0] = 0.0;
+  m[1][1] = sy;
+  m[1][2] = 0.0;
+
+  m[2][0] = 0.0;
+  m[2][1] = 0.0;
+  m[2][2] = sz;
+}
+
+void matrix4d::set_row(uint32_t row, double x, double y, double z, double w) {
+  if (row < 4) {
+    m[row][0] = x;
+    m[row][1] = y;
+    m[row][2] = z;
+    m[row][3] = w;
+  }
+}
+
+void matrix4d::set_scale(double sx, double sy, double sz) {
+  m[0][0] = sx;
+  m[0][1] = 0.0;
+  m[0][2] = 0.0;
+  m[0][3] = 0.0;
+
+  m[1][0] = 0.0;
+  m[1][1] = sy;
+  m[1][2] = 0.0;
+  m[1][3] = 0.0;
+
+  m[2][0] = 0.0;
+  m[2][1] = 0.0;
+  m[2][2] = sz;
+  m[2][3] = 0.0;
+
+  m[3][0] = 0.0;
+  m[3][1] = 0.0;
+  m[3][2] = 0.0;
+  m[3][3] = 1.0;
 }
 
 matrix2f::matrix2f(const matrix2d &src) {

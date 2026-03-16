@@ -541,87 +541,8 @@ static void RegisterPropMetas(
       AsciiParser::VariableDef(value::kString, "displayGroup");
 }
 
-static void RegisterPrimAttrTypes(std::unordered_set<std::string> &d) {
-  d.clear();
-
-  d.insert(value::kBool);
-
-  d.insert(value::kInt64);
-
-  d.insert(value::kInt);
-  d.insert(value::kInt2);
-  d.insert(value::kInt3);
-  d.insert(value::kInt4);
-
-  d.insert(value::kUInt64);
-
-  d.insert(value::kUInt);
-  d.insert(value::kUInt2);
-  d.insert(value::kUInt3);
-  d.insert(value::kUInt4);
-
-  d.insert(value::kFloat);
-  d.insert(value::kFloat2);
-  d.insert(value::kFloat3);
-  d.insert(value::kFloat4);
-
-  d.insert(value::kDouble);
-  d.insert(value::kDouble2);
-  d.insert(value::kDouble3);
-  d.insert(value::kDouble4);
-
-  d.insert(value::kHalf);
-  d.insert(value::kHalf2);
-  d.insert(value::kHalf3);
-  d.insert(value::kHalf4);
-
-  d.insert(value::kQuath);
-  d.insert(value::kQuatf);
-  d.insert(value::kQuatd);
-
-  d.insert(value::kNormal3f);
-  d.insert(value::kPoint3f);
-  d.insert(value::kTexCoord2h);
-  d.insert(value::kTexCoord3h);
-  d.insert(value::kTexCoord4h);
-  d.insert(value::kTexCoord2f);
-  d.insert(value::kTexCoord3f);
-  d.insert(value::kTexCoord4f);
-  d.insert(value::kTexCoord2d);
-  d.insert(value::kTexCoord3d);
-  d.insert(value::kTexCoord4d);
-  d.insert(value::kVector3f);
-  d.insert(value::kVector4f);
-  d.insert(value::kVector3d);
-  d.insert(value::kVector4d);
-  d.insert(value::kColor3h);
-  d.insert(value::kColor3f);
-  d.insert(value::kColor3d);
-  d.insert(value::kColor4h);
-  d.insert(value::kColor4f);
-  d.insert(value::kColor4d);
-
-  d.insert(value::kMatrix2f);
-  d.insert(value::kMatrix3f);
-  d.insert(value::kMatrix4f);
-
-  d.insert(value::kMatrix2d);
-  d.insert(value::kMatrix3d);
-  d.insert(value::kMatrix4d);
-
-  d.insert(value::kToken);
-  d.insert(value::kString);
-
-  d.insert(value::kRelationship);
-  d.insert(value::kAssetPath);
-
-  d.insert(value::kDictionary);
-
-  // variantSet. Require special treatment.
-  d.insert("variantSet");
-
-  // TODO: Add more types...
-}
+// Shared implementation lives in value-types.hh:
+// value::RegisterPrimAttrTypes<SetType>(d, include_variant_set)
 
 static void RegisterPrimTypes(std::unordered_set<std::string> &d) {
   d.insert("Xform");
@@ -5240,7 +5161,7 @@ void AsciiParser::Setup() {
   RegisterStageMetas(_supported_stage_metas);
   RegisterPrimMetas(_supported_prim_metas);
   RegisterPropMetas(_supported_prop_metas);
-  RegisterPrimAttrTypes(_supported_prim_attr_types);
+  value::RegisterPrimAttrTypes(_supported_prim_attr_types, /* include_variant_set */ true);
   RegisterPrimTypes(_supported_prim_types);
   RegisterAPISchemas(_supported_api_schemas);
 }
