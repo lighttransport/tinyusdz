@@ -2423,6 +2423,9 @@ std::string to_string(tinyusdz::Extent e) {
   return ss.str();
 }
 
+// Forward declaration — print_prim is defined below in namespace prim
+namespace prim { std::string print_prim(const Prim &prim, const uint32_t indent); }
+
 std::string print_variantSetStmt(
     const std::map<std::string, VariantSet> &vslist, const uint32_t indent) {
   std::stringstream ss;
@@ -2468,14 +2471,14 @@ std::string print_variantSetStmt(
                             nameTok.str()));
           const auto it = primNameTable.find(nameTok.str());
           if (it != primNameTable.end()) {
-            ss << print_prim(*(it->second), indent + 2);
+            ss << prim::print_prim(*(it->second), indent + 2);
           } else {
             // TODO: Report warning?
           }
         }
       } else {
         for (const auto &child : variantPrimChildren) {
-          ss << print_prim(child, indent + 2);
+          ss << prim::print_prim(child, indent + 2);
         }
       }
 
