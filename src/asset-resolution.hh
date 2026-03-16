@@ -90,7 +90,6 @@ class Asset {
 struct ResolverAssetInfo {
   std::string version;
   std::string assetName;
-  // std::string repoPath;  deprecated in pxrUSD Ar 2.0
 
   value::Value resolverInfo;
 };

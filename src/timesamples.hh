@@ -116,8 +116,6 @@ struct TimeSamples {
     }
   }
 
-  /// @deprecated Use set_type_id() instead. Kept for backward compatibility.
-  bool init(uint32_t type_id);
 
   /// Cast the TimeSamples' type to a role type if the underlying types are compatible.
   /// This allows reinterpreting stored base types (e.g., float3) as role types (e.g., color3f).
@@ -350,11 +348,6 @@ struct TimeSamples {
   // We still need "dummy" value for type_name() and type_id()
   bool add_blocked_sample(double t, const value::Value &v, std::string *err = nullptr);  // Defined in timesamples.cc
 
-  /// @deprecated Dedup removed. Kept for backward compatibility — just copies the value.
-  /// @param t Time value for this sample
-  /// @param ref_index Index of the existing sample whose value to reuse
-  /// @param err Optional error string
-  bool add_dedup_sample(double t, size_t ref_index, std::string *err = nullptr);  // Defined in timesamples.cc
 
   template <typename T,
             typename std::enable_if<
@@ -787,48 +780,10 @@ struct TimeSamples {
     return true;
   }
 
-  /// Add deduplicated array sample — just copies the byte offset of the referenced sample
-  template<typename T>
-  bool add_dedup_array_sample(double t, size_t ref_index, std::string* err = nullptr) {
-    static_assert(value::uses_binary_timesample_array_storage_v<T>,
-                  "add_dedup_array_sample requires binary-serializable element types except bool");
-
-    if (ref_index >= _times.size()) {
-      if (err) *err = "Invalid ref_index: " + std::to_string(ref_index) + " >= " + std::to_string(_times.size());
-      return false;
-    }
-
-    if (ref_index >= _data_offsets.size()) {
-      if (err) *err = "Invalid ref_index for dedup";
-      return false;
-    }
-
-    if (_data_offsets[ref_index] == BLOCKED_OFFSET) {
-      if (err) *err = "Cannot deduplicate from blocked sample";
-      return false;
-    }
-
-    _times.push_back(t);
-    _blocked.push_back(0);
-    _data_offsets.push_back(_data_offsets[ref_index]);  // Share same byte offset
-    uint32_t ref_count = (ref_index < _array_counts.size()) ? _array_counts[ref_index] : 0;
-    _array_counts.push_back(ref_count);
-
-    invalidate_reconstructed_samples_cache();
-    _dirty = true;
-    return true;
-  }
-
   /// Add matrix array sample (delegates to add_array_sample)
   template<typename T>
   bool add_matrix_array_sample(double t, const T* matrices, size_t count, std::string* err = nullptr) {
     return add_array_sample<T>(t, matrices, count, err);
-  }
-
-  /// Add deduplicated matrix array sample (delegates to add_dedup_array_sample)
-  template<typename T>
-  bool add_dedup_matrix_array_sample(double t, size_t ref_index, std::string* err = nullptr) {
-    return add_dedup_array_sample<T>(t, ref_index, err);
   }
 
   bool add_bool_array_sample(double t, const std::vector<bool>& value,

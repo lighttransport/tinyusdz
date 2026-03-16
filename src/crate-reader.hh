@@ -422,9 +422,6 @@ class CrateReader {
   bool DescribeValueRep(const crate::ValueRep &rep,
                         MMapArrayRef *ref, crate::CrateValue *value);
 
-  // TODO: deprecated
-  //bool UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint64_t offset, crate::CrateValue *value);
-
   bool UnpackValueRepsToTimeSamples(const std::vector<double> &times,
     const std::vector<crate::ValueRep> &vreps,
     value::TimeSamples *d);
