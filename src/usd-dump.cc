@@ -59,10 +59,9 @@ std::string inspect_value(const value::Value &val, const InspectOptions &opts) {
 // Inspect TimeSamples
 void inspect_timesamples(std::stringstream &ss, const value::TimeSamples &ts,
                          uint32_t depth, const InspectOptions &opts) {
-  const auto &times = ts.get_times();
-  const auto &values = ts.get_values();
+  const auto &samples = ts.get_samples();
 
-  if (times.empty()) {
+  if (samples.empty()) {
     ss << Indent(depth, opts.indent_width) << "timeSamples: {}\n";
     return;
   }
@@ -70,19 +69,19 @@ void inspect_timesamples(std::stringstream &ss, const value::TimeSamples &ts,
   ss << Indent(depth, opts.indent_width) << "timeSamples:\n";
 
   size_t count = 0;
-  for (size_t i = 0; i < times.size(); i++) {
-    double t = times[i];
+  for (size_t i = 0; i < samples.size(); i++) {
+    double t = samples[i].t;
 
     // Time filtering
     if (opts.has_time_query) {
       // Check for single time vs range query using epsilon
       if (std::abs(opts.time_start - opts.time_end) < 1e-9) {
         // Single time query - find closest
-        if (i > 0 && std::abs(times[i - 1] - opts.time_start) <
+        if (i > 0 && std::abs(samples[i - 1].t - opts.time_start) <
                          std::abs(t - opts.time_start)) {
           continue;
         }
-        if (i + 1 < times.size() && std::abs(times[i + 1] - opts.time_start) <
+        if (i + 1 < samples.size() && std::abs(samples[i + 1].t - opts.time_start) <
                                         std::abs(t - opts.time_start)) {
           continue;
         }
@@ -96,17 +95,17 @@ void inspect_timesamples(std::stringstream &ss, const value::TimeSamples &ts,
 
     // Snip mode - limit number of time samples shown
     if (opts.value_mode == InspectValueMode::Snip && count >= opts.snip_count) {
-      ss << Indent(depth + 1, opts.indent_width) << "... (" << times.size()
+      ss << Indent(depth + 1, opts.indent_width) << "... (" << samples.size()
          << " total samples)\n";
       break;
     }
 
     ss << Indent(depth + 1, opts.indent_width) << t << ": ";
 
-    if (i < values.size()) {
-      ss << inspect_value(values[i], opts);
+    if (samples[i].blocked) {
+      ss << "None";
     } else {
-      ss << "<missing>";
+      ss << inspect_value(samples[i].value, opts);
     }
     ss << "\n";
 

@@ -1121,9 +1121,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
             PUSH_ERROR_AND_RETURN(fmt::format("Invalid typeName `{}` for TimeSamples", typeName.value().str()));
           }
 
-          if (!ts.init(type_id)) {
-            PUSH_ERROR_AND_RETURN(fmt::format("Failed to initialize TimeSamples with type_id {} for typeName `{}`", type_id, typeName.value().str()));
-          }
+          ts.set_type_id(type_id);
         }
 
         DCOUT("set_timesamples");
