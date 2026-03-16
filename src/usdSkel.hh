@@ -326,10 +326,6 @@ struct SkelAnimation {
   std::vector<value::token> _properties;
 };
 
-// PackedJointAnimation is deprecated(Convert to SkelAnimation)
-// struct PackedJointAnimation {
-// };
-
 //
 // Some usdSkel utility functions
 //

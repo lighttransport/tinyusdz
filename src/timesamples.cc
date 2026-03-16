@@ -392,47 +392,6 @@ size_t TimeSamples::estimate_memory_usage() const {
     return total;
 }
 
-bool TimeSamples::add_dedup_sample(double t, size_t ref_index, std::string *err) {
-    // For generic Value storage
-    if (!has_unified_samples()) {
-      if (ref_index >= _samples.size()) {
-        if (err) {
-          (*err) += "Invalid ref_index in add_dedup_sample: " +
-                    std::to_string(ref_index) + " >= " + std::to_string(_samples.size()) + ".\n";
-        }
-        return false;
-      }
-
-      Sample s;
-      s.t = t;
-      s.value = _samples[ref_index].value;
-      s.blocked = _samples[ref_index].blocked;
-      _samples.push_back(s);
-      _dirty = true;
-      return true;
-    }
-
-    // For binary storage — share same data offset
-    if (ref_index >= _data_offsets.size()) {
-      if (err) {
-        (*err) += "Invalid ref_index in add_dedup_sample: " +
-                  std::to_string(ref_index) + " >= " + std::to_string(_data_offsets.size()) + ".\n";
-      }
-      return false;
-    }
-
-    _times.push_back(t);
-    _blocked.push_back(0);
-    _data_offsets.push_back(_data_offsets[ref_index]);
-    if (_is_array) {
-      uint32_t ref_count = (ref_index < _array_counts.size()) ? _array_counts[ref_index] : 0;
-      _array_counts.push_back(ref_count);
-    }
-
-    invalidate_reconstructed_samples_cache();
-    _dirty = true;
-    return true;
-}
 
 std::vector<TimeSamples::Sample> &TimeSamples::samples() {
     if (!_times.empty() && _samples.empty()) {
@@ -1132,20 +1091,6 @@ void TimeSamples::clear() {
 }
 
 
-// init() method
-bool TimeSamples::init(uint32_t type_id) {
-  if (type_id == 0) {
-    return false;
-  }
-
-  if (_type_id != 0) {
-    return _type_id == type_id;
-  }
-
-  _type_id = type_id;
-
-  return true;
-}
 
 namespace {
 
