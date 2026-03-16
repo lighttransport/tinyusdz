@@ -329,8 +329,9 @@ void timesamples_test(void) {
       TEST_CHECK(ts.add_array_sample<float>(static_cast<double>(i), &v, 1));
     }
 
-    // Reference an index that will shift after sorting.
-    TEST_CHECK(ts.add_dedup_array_sample<float>(12.5, 20));
+    // Add a sample whose value matches sample at index 20 (value=20.0f).
+    float dup_val = 20.0f;
+    TEST_CHECK(ts.add_array_sample<float>(12.5, &dup_val, 1));
 
     std::vector<float> out;
     TEST_CHECK(ts.get_vector_at_time<float>(12.5, &out));
@@ -515,13 +516,13 @@ void timesamples_test(void) {
     }
   }
 
-  // Out-of-order deduplicated arrays must preserve remapped counts after sorting.
+  // Out-of-order arrays must preserve per-sample counts after sorting.
   {
     value::TimeSamples ts;
 
     TEST_CHECK(ts.add_array_sample<float>(5.0, std::vector<float>{5.0f, 6.0f, 7.0f}));
     TEST_CHECK(ts.add_array_sample<float>(1.0, std::vector<float>{1.0f}));
-    TEST_CHECK(ts.add_dedup_array_sample<float>(3.0, 0));
+    TEST_CHECK(ts.add_array_sample<float>(3.0, std::vector<float>{5.0f, 6.0f, 7.0f}));
 
     const auto &samples = ts.get_samples();
     TEST_CHECK(samples.size() == 3);
@@ -690,7 +691,7 @@ void timesamples_test(void) {
     std::vector<bool> authored = {true, false, true};
 
     TEST_CHECK(ts.add_array_sample<bool>(1.0, authored, &err));
-    TEST_CHECK(ts.add_dedup_sample(3.0, 0, &err));
+    TEST_CHECK(ts.add_sample(3.0, value::Value(authored), &err));
     TEST_CHECK(!ts.is_using_binary_storage());
     TEST_CHECK(ts.type_id() == value::TypeTraits<std::vector<bool>>::type_id());
 
@@ -721,7 +722,7 @@ void timesamples_test(void) {
 
     TEST_CHECK(ts.add_array_sample<float>(5.0, std::vector<float>{5.0f, 6.0f, 7.0f, 8.0f}));
     TEST_CHECK(ts.add_array_sample<float>(1.0, std::vector<float>{1.0f, 2.0f}));
-    TEST_CHECK(ts.add_dedup_sample(3.0, 1));
+    TEST_CHECK(ts.add_array_sample<float>(3.0, std::vector<float>{1.0f, 2.0f}));
 
     (void)ts.get_samples();
 
