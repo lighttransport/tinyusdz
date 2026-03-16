@@ -1,28 +1,44 @@
 # TypedArray TimeSamples Feature Test
 
-This test verifies the implementation of `TypedArray<T>` support for TimeSamples with value deduplication.
+This test verifies the implementation of `TypedArray<T>` support for TimeSamples.
 
 ## Feature Overview
 
 The TypedArray-based TimeSamples implementation provides:
 
-1. **Memory-efficient storage**: Uses `TypedArray<T>` instead of `std::vector<T>` for array data
-2. **Deduplication support**: Reuses cached array data when the same ValueRep appears multiple times
-3. **Backwards compatibility**: Existing `std::vector<T>` overloads continue to work
-4. **binary-storage path**: Integrates with TinyUSDZ's binary-storage TimeSamples path
+1. **Memory-efficient storage**: Uses flat byte buffer (`_data`) for all binary-serializable types
+2. **Backwards compatibility**: Both `std::vector<T>` and `TypedArray<T>` overloads work transparently
+3. **Flat binary-storage path**: All binary types (scalars and arrays) share a single `_data` buffer
+
+## Storage Architecture (as of 2026-03-17)
+
+TimeSamples uses two storage backends:
+
+### Backend 1: Flat Binary Storage
+For trivially-copyable POD types (int, float, half, matrix, etc.):
+- `_data: vector<uint8_t>` — flat byte buffer for ALL binary values
+- `_data_offsets: vector<uint32_t>` — per-sample byte offset into `_data`
+- `_array_counts: vector<uint32_t>` — per-sample element count (arrays only)
+
+### Backend 2: Generic Value Storage
+For non-binary types (string, token, path, bool, etc.):
+- `_samples: vector<Sample>` — `{double t, Value value, bool blocked}`
+
+### Auto-detection
+`add_sample<T>()` / `add_array_sample<T>()` auto-detect the backend on first call.
+No `init()` needed. Use `set_type_id()` for metadata-only cases (all-blocked TimeSamples).
 
 ## Supported Types
 
-### Binary-Serializable Array Types (with TypedArray)
-- `int32_t[]`, `uint32_t[]`, `int64_t[]`, `uint64_t[]`
-- `half[]`, `float[]`, `double[]`
+### Binary-Serializable Types (flat buffer storage)
+- Scalars: `int32_t`, `uint32_t`, `int64_t`, `uint64_t`, `half`, `float`, `double`
+- Vectors: `half2/3/4`, `float2/3/4`, `double2/3/4`, `int2/3/4`
+- Quaternions: `quath`, `quatf`, `quatd`
+- Matrices: `matrix2f/d`, `matrix3f/d`, `matrix4f/d`
+- Role types: `color3f/d`, `point3f/d`, `normal3f/d`, `vector3f/d`, `texcoord2f/d`, `texcoord3f/d`
 
-### Composite Array Types (still using std::vector)
-- `half2[]`, `half3[]`, `half4[]`
-- `float2[]`, `float3[]`, `float4[]`
-- `double2[]`, `double3[]`, `double4[]`
-- `quath[]`, `quatf[]`, `quatd[]`
-- `matrix2d[]`, `matrix3d[]`, `matrix4d[]`
+### Generic Value Types (Sample-based storage)
+- `token[]`, `string[]`, `path[]`, `bool[]`, `AssetPath[]`
 
 ## Building
 
@@ -39,12 +55,6 @@ make
 make test
 ```
 
-Or run directly:
-
-```bash
-./test-typed-array-timesamples
-```
-
 ### Cleaning
 
 ```bash
@@ -55,43 +65,31 @@ make clean
 
 The test program verifies:
 
-1. **TypedArray deduplication**: Adding the same `TypedArray<T>` at multiple time samples
+1. **TypedArray storage**: Adding `TypedArray<T>` at multiple time samples
 2. **std::vector compatibility**: Ensuring existing vector-based API still works
 3. **Scalar values**: Testing binary-serializable scalar value storage
 4. **Multiple types**: Testing int32, uint32, int64, uint64, float, and double
 
 ## Implementation Details
 
-### Key Files Modified
+### Key Files
 
-- `src/crate-reader.hh`: Updated dedup cache maps to use `TypedArray<T>`
-- `src/timesamples.hh`: Added `TypedArray<T>` overloads for `add_array_sample`
-- `src/crate-reader-timesamples.cc`: Updated UnpackTimeSampleValue_* functions
-  - INT32, UINT32, INT64, UINT64: Use `ReadIntArrayTyped`
-  - HALF: Convert from std::vector to TypedArray
-  - FLOAT: Use `ReadFloatArrayTyped`
-  - DOUBLE: Use `ReadDoubleArrayTyped`
+- `src/timesamples.hh`: TimeSamples class with flat binary storage
+- `src/timesamples.cc`: Implementation (sorting, reconstruction, copy/move)
+- `src/crate-reader-timesamples.cc`: Crate format TimeSamples reader
+- `src/ascii-parser-timesamples.cc`: ASCII format scalar TimeSamples parser
+- `src/ascii-parser-timesamples-array.cc`: ASCII format array TimeSamples parser
 
-### Deduplication Cache
+### Deduplication
 
-The deduplication cache in `CrateReader` stores decoded values keyed by `ValueRep`:
-
-```cpp
-std::unordered_map<crate::ValueRep, TypedArray<T>, crate::ValueRep::Hash> _dedup_<type>_array;
-```
-
-When the same `ValueRep` appears multiple times, the cached `TypedArray<T>` is reused,
-avoiding redundant file reads and memory allocations.
-
-## Benefits
-
-1. **Reduced memory usage**: Deduplicated arrays are stored once and referenced multiple times
-2. **Faster parsing**: Cached arrays avoid redundant file I/O and decompression
-3. **Cleaner code**: TypedArray provides a consistent interface for both owned and view data
-4. **Future-ready**: TypedArray supports mmap views for even more memory efficiency
+In-TimeSamples deduplication has been removed (2026-03-17). The crate reader
+already deduplicates at the `ValueRep` level. The ASCII parser's O(n^2) comparison
+was expensive and rarely triggered. Memory impact of storing full data is negligible
+for typical files.
 
 ## See Also
 
 - `src/typed-array.hh` - TypedArray implementation
-- `src/timesamples.hh` - TimeSamples binary-storage path
+- `src/timesamples.hh` - TimeSamples flat binary-storage path
 - `src/crate-reader-timesamples.cc` - Crate format TimeSamples reader
+- `doc/refactor-opportunities.md` - Full refactoring history
