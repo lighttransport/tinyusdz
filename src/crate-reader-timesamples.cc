@@ -402,338 +402,129 @@ bool CrateReader::UnpackTimeSampleValue_BOOL(double t,
   return true;
 }
 
-bool CrateReader::UnpackTimeSampleValue_INT32(double t,
-                                              const crate::ValueRep &rep,
-                                              value::TimeSamples &dst,
-                                              size_t expected_total_samples) {
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
-    // Blocked value
-    // VALUE_BLOCK can have any flags, just skip the flag check
-    // Just add a blocked sample
-    if (!add_blocked_sample_to_timesamples<int32_t>(&dst, t, &_err,
-                                                    expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Failed to add blocked sample to TimeSamples.");
-    }
-    return true;
-  }
-
-  // just in case
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) !=
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_INT) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid ValueRep type in TimeSamples.");
-  }
-
-  if (rep.IsInlined()) {
-    if (rep.IsCompressed() || rep.IsArray()) {
-      // Compressed or array types are not inlined
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Invalid inlined ValueRep in TimeSamples.");
-    }
-    // Scalar deduplication was removed - see FLOAT3 fix
-      // Decode and cache
-      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-      int32_t val;
-      memcpy(&val, &data, sizeof(int32_t));
-
-    if (!add_sample_to_timesamples<int32_t>(&dst, t, val, &_err,
-                                            expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-  } else if (rep.IsArray()) {
-    TypedArray<int32_t> v;
-    if (rep.GetPayload() == 0) {  // empty array
-      if (!add_array_sample_to_timesamples<int32_t>(&dst, t, v, &_err,
-                                                    expected_total_samples)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
-      return true;
-    }
-
-    if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Int array.");
-    }
-
-    if (v.empty()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty int array.");
-      return false;
-    }
-
-    DCOUT("timeSamples.INT32 " << value::print_array_snipped(v));
-
-    if (!add_array_sample_to_timesamples<int32_t>(
-            &dst, t, v, &_err, expected_total_samples, &rep)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-
-  } else {
-    // Non-array value is not supported
-
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for int32_t is invalid.");
-  }
-
-  return true;
+// Macro for simple scalar/array types with memcpy-style inline decode.
+// FUNC_SUFFIX: function name suffix (e.g. INT32)
+// CPP_TYPE: C++ type (e.g. int32_t)
+// CRATE_TYPE: crate data type enum suffix (e.g. CRATE_DATA_TYPE_INT)
+// INLINE_DECODE: code block that declares `CPP_TYPE val` from `uint32_t data`
+// READ_ARRAY_CALL: expression to read the array into `v`
+// ARRAY_TYPE: container type for array read (TypedArray<CPP_TYPE> or
+//             std::vector<CPP_TYPE>)
+// HAS_SCALAR: 1 if there is a scalar (non-inlined, non-array) path, 0 if error
+// CHECK_BLOCKED_FLAGS: 1 to check IsInlined/IsCompressed/IsArray on VALUE_BLOCK
+// HAS_EMPTY_CHECK: 1 to check v.empty() after array read
+#define DEFINE_UNPACK_SIMPLE_TIMESAMPLES(FUNC_SUFFIX, CPP_TYPE, CRATE_TYPE,    \
+    INLINE_DECODE, READ_ARRAY_CALL, ARRAY_TYPE,                                \
+    HAS_SCALAR, CHECK_BLOCKED_FLAGS, HAS_EMPTY_CHECK)                          \
+bool CrateReader::UnpackTimeSampleValue_##FUNC_SUFFIX(                         \
+    double t, const crate::ValueRep &rep, value::TimeSamples &dst,             \
+    size_t expected_total_samples) {                                           \
+  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==                    \
+      crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {                   \
+    if (CHECK_BLOCKED_FLAGS &&                                                 \
+        (rep.IsInlined() || rep.IsCompressed() || rep.IsArray())) {            \
+      PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
+                                "Invalid blocked ValueRep in TimeSamples.");    \
+    }                                                                          \
+    if (!add_blocked_sample_to_timesamples<CPP_TYPE>(&dst, t, &_err,           \
+                                                  expected_total_samples)) {    \
+      PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
+                                "Failed to add blocked sample to TimeSamples.");\
+    }                                                                          \
+    return true;                                                               \
+  }                                                                            \
+  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) !=                    \
+      crate::CrateDataTypeId::CRATE_TYPE) {                                    \
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid ValueRep type in TimeSamples.");  \
+  }                                                                            \
+  if (rep.IsInlined()) {                                                       \
+    if (rep.IsCompressed() || rep.IsArray()) {                                 \
+      PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
+                                "Invalid inlined ValueRep in TimeSamples.");    \
+    }                                                                          \
+    uint32_t data =                                                            \
+        (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));           \
+    INLINE_DECODE                                                              \
+    if (!add_sample_to_timesamples<CPP_TYPE>(&dst, t, val, &_err,              \
+                                              expected_total_samples)) {        \
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples."); \
+    }                                                                          \
+  } else if (rep.IsArray()) {                                                  \
+    ARRAY_TYPE v;                                                              \
+    if (rep.GetPayload() == 0) {                                               \
+      if (!add_array_sample_to_timesamples<CPP_TYPE>(&dst, t, v, &_err,        \
+                                                  expected_total_samples)) {    \
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");\
+      }                                                                        \
+      return true;                                                             \
+    }                                                                          \
+    if (!(READ_ARRAY_CALL)) {                                                  \
+      PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
+          "Failed to read " #FUNC_SUFFIX " array.");                           \
+    }                                                                          \
+    if (HAS_EMPTY_CHECK && v.empty()) {                                        \
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty " #FUNC_SUFFIX " array.");        \
+    }                                                                          \
+    if (!add_array_sample_to_timesamples<CPP_TYPE>(                            \
+            &dst, t, v, &_err, expected_total_samples, &rep)) {                \
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples."); \
+    }                                                                          \
+  } else if (HAS_SCALAR) {                                                     \
+    if (rep.IsCompressed()) {                                                  \
+      PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
+          "Compressed " #FUNC_SUFFIX " not supported for TimeSamples.");        \
+    }                                                                          \
+    CPP_TYPE v;                                                                \
+    if (!ReadTimeSampleScalarValue(&v, sizeof(CPP_TYPE),                       \
+                                   "Failed to read " #FUNC_SUFFIX)) {          \
+      return false;                                                            \
+    }                                                                          \
+    if (!add_sample_to_timesamples<CPP_TYPE>(&dst, t, v, &_err,                \
+                                              expected_total_samples)) {        \
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples."); \
+    }                                                                          \
+  } else {                                                                     \
+    PUSH_ERROR_AND_RETURN_TAG(kTag,                                            \
+        "Non-array value for " #FUNC_SUFFIX " is invalid.");                   \
+  }                                                                            \
+  return true;                                                                 \
 }
 
-bool CrateReader::UnpackTimeSampleValue_HALF(double t,
-                                             const crate::ValueRep &rep,
-                                             value::TimeSamples &dst,
-                                             size_t expected_total_samples) {
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
-    // Blocked value - just add a blocked sample
-    if (!add_blocked_sample_to_timesamples<value::half>(&dst, t, &_err,
-                                                  expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Failed to add blocked sample to TimeSamples.");
-    }
-    return true;
-  }
+// Inline decode helpers for DEFINE_UNPACK_SIMPLE_TIMESAMPLES
+#define INLINE_MEMCPY_DECODE(CPP_TYPE)                                         \
+    CPP_TYPE val; memcpy(&val, &data, sizeof(CPP_TYPE));
+#define INLINE_UINT32_DECODE                                                   \
+    uint32_t val = data;
+#define INLINE_DOUBLE_FROM_FLOAT_DECODE                                        \
+    float _f; memcpy(&_f, &data, sizeof(float));                               \
+    double val = static_cast<double>(_f);
 
-  // just in case
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) !=
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid ValueRep type in TimeSamples.");
-  }
+DEFINE_UNPACK_SIMPLE_TIMESAMPLES(INT32, int32_t, CRATE_DATA_TYPE_INT,
+    INLINE_MEMCPY_DECODE(int32_t),
+    ReadIntArrayTyped(rep.IsCompressed(), &v),
+    TypedArray<int32_t>, 0, 0, 1)
 
-  DCOUT("rep " << to_string(rep));
+DEFINE_UNPACK_SIMPLE_TIMESAMPLES(HALF, value::half, CRATE_DATA_TYPE_HALF,
+    INLINE_MEMCPY_DECODE(value::half),
+    ReadHalfArray(rep.IsCompressed(), &v),
+    std::vector<value::half>, 0, 0, 1)
 
-  if (rep.IsInlined()) {
-    if (rep.IsCompressed() || rep.IsArray()) {
-      // Compressed or array types are not inlined
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Invalid inlined ValueRep in TimeSamples.");
-    }
+DEFINE_UNPACK_SIMPLE_TIMESAMPLES(FLOAT, float, CRATE_DATA_TYPE_FLOAT,
+    INLINE_MEMCPY_DECODE(float),
+    ReadFloatArrayTyped(rep.IsCompressed(), &v),
+    TypedArray<float>, 1, 0, 0)
 
-    // Decode value directly without caching
-    // Scalar deduplication was removed - see FLOAT3 fix
-    value::half f;
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-    memcpy(&f, &data, sizeof(value::half));
+// FLOAT2 uses the same int8-component inline pattern as the vector macro but
+// needs ReadFloat2ArrayTyped for the array path, so we use the simple macro
+// with a custom inline decode.
+#define INLINE_FLOAT2_DECODE                                                   \
+    int8_t vdata[2]; memcpy(&vdata, &data, 2);                                \
+    value::float2 val; val[0] = float(vdata[0]); val[1] = float(vdata[1]);
 
-    if (!add_sample_to_timesamples<value::half>(&dst, t, f, &_err,
-                                                expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-
-  } else if (rep.IsArray()) {
-    TypedArray<value::half> v;
-    if (rep.GetPayload() == 0) {  // empty array
-      if (!add_array_sample_to_timesamples<value::half>(
-              &dst, t, v, &_err, expected_total_samples)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
-      return true;
-    }
-
-    std::vector<value::half> temp_v;
-    if (!ReadHalfArray(rep.IsCompressed(), &temp_v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read half array.");
-    }
-
-    DCOUT("timeSamples.HALF " << value::print_array_snipped(temp_v));
-
-    if (temp_v.empty()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty half array.");
-      return false;
-    }
-
-    if (!add_array_sample_to_timesamples<value::half>(
-            &dst, t, temp_v, &_err, expected_total_samples, &rep)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-
-  } else {
-    // Non-array value is not supported
-
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for half is invalid.");
-  }
-
-  return true;
-}
-
-bool CrateReader::UnpackTimeSampleValue_FLOAT(double t,
-                                              const crate::ValueRep &rep,
-                                              value::TimeSamples &dst,
-                                              size_t expected_total_samples) {
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
-    // Blocked value - just add a blocked sample
-    if (!add_blocked_sample_to_timesamples<float>(&dst, t, &_err,
-                                                  expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Failed to add blocked sample to TimeSamples.");
-    }
-    return true;
-  }
-
-  // just in case
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) !=
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid ValueRep type in TimeSamples.");
-  }
-
-  DCOUT("rep " << to_string(rep));
-
-  if (rep.IsInlined()) {
-    if (rep.IsCompressed() || rep.IsArray()) {
-      // Compressed or array types are not inlined
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Invalid inlined ValueRep in TimeSamples.");
-    }
-
-    // Decode value directly without caching
-    // Scalar deduplication was removed - see float3 fix
-    float val;
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-    memcpy(&val, &data, sizeof(float));
-
-    if (!add_sample_to_timesamples<float>(&dst, t, val, &_err,
-                                          expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-
-  } else if (rep.IsArray()) {
-    TypedArray<float> v;
-    if (rep.GetPayload() == 0) {  // empty array
-      if (!add_array_sample_to_timesamples<float>(&dst, t, v, &_err,
-                                                  expected_total_samples)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
-      return true;
-    }
-
-    if (!ReadFloatArrayTyped(rep.IsCompressed(), &v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Float array.");
-    }
-
-    DCOUT("timeSamples.FLOAT " << value::print_array_snipped(v));
-
-    if (!add_array_sample_to_timesamples<float>(
-            &dst, t, v, &_err, expected_total_samples, &rep)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-
-  } else {
-    if (rep.IsCompressed()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Compressed float not supported for TimeSamples.");
-    }
-
-    float v;
-    if (!ReadTimeSampleScalarValue(&v, sizeof(float), "Failed to read float")) {
-      return false;
-    }
-    DCOUT("float = " << v);
-
-    if (!add_sample_to_timesamples<float>(&dst, t, v, &_err,
-                                          expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-  }
-
-  return true;
-}
-
-bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
-                                               const crate::ValueRep &rep,
-                                               value::TimeSamples &dst,
-                                               size_t expected_total_samples) {
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
-    // Blocked value - just add a blocked sample
-    if (!add_blocked_sample_to_timesamples<value::float2>(&dst, t, &_err,
-                                                  expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Failed to add blocked sample to TimeSamples.");
-    }
-    return true;
-  }
-
-  // just in case
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) !=
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid ValueRep type in TimeSamples.");
-  }
-
-  DCOUT("rep " << to_string(rep));
-
-  if (rep.IsInlined()) {
-    if (rep.IsCompressed() || rep.IsArray()) {
-      // Compressed or array types are not inlined
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Invalid inlined ValueRep in TimeSamples.");
-    }
-
-    value::float2 v;
-    {
-      // Decode and cache
-      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-
-      // Value is represented in int8
-      int8_t vdata[2];
-      memcpy(&vdata, &data, 2);
-
-      v[0] = float(vdata[0]);
-      v[1] = float(vdata[1]);
-
-    }
-
-    DCOUT("value.float2 = " << v);
-
-    if (!add_sample_to_timesamples<value::float2>(&dst, t, v, &_err,
-                                                  expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-
-  } else if (rep.IsArray()) {
-    if (rep.IsCompressed()) {
-      PUSH_ERROR_AND_RETURN_TAG(
-          kTag, "Compressed float2 not supported for TimeSamples.");
-    }
-
-    TypedArray<value::float2> v;
-    if (rep.GetPayload() == 0) {  // empty array
-      if (!add_array_sample_to_timesamples<value::float2>(
-              &dst, t, v, &_err, expected_total_samples)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
-      return true;
-    }
-
-    if (!ReadFloat2ArrayTyped(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec2 array.");
-    }
-
-    DCOUT("timeSamples.FLOAT2 " << value::print_array_snipped(v));
-
-    if (!add_array_sample_to_timesamples<value::float2>(
-            &dst, t, v, &_err, expected_total_samples, &rep)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-
-  } else {
-    if (rep.IsCompressed()) {
-      PUSH_ERROR_AND_RETURN_TAG(
-          kTag, "Compressed float2 not supported for TimeSamples.");
-    }
-
-    value::float2 v;
-    if (!ReadTimeSampleScalarValue(&v, sizeof(value::float2),
-                                   "Failed to read float2")) {
-      return false;
-    }
-    DCOUT("float2 = " << v);
-
-    if (!add_sample_to_timesamples<value::float2>(&dst, t, v, &_err,
-                                                  expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-  }
-
-  return true;
-}
+DEFINE_UNPACK_SIMPLE_TIMESAMPLES(FLOAT2, value::float2, CRATE_DATA_TYPE_VEC2F,
+    INLINE_FLOAT2_DECODE,
+    ReadFloat2ArrayTyped(&v),
+    TypedArray<value::float2>, 1, 0, 0)
 
 bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
                                               const crate::ValueRep &rep,
@@ -1236,7 +1027,8 @@ bool CrateReader::UnpackTimeSampleValue_##FUNC_SUFFIX(                         \
 DEFINE_UNPACK_NOINLINE_TIMESAMPLES(QUATH, value::quath, CRATE_DATA_TYPE_QUATH, sizeof(uint16_t) * 4)
 DEFINE_UNPACK_NOINLINE_TIMESAMPLES(QUATD, value::quatd, CRATE_DATA_TYPE_QUATD, sizeof(double) * 4)
 
-// QUATF has inline support so it's kept as a separate function.
+// QUATF rejects inlined values but has a unique blocked-check (no flag validation),
+// so it's kept as a separate function.
 
 // Macro for matrix types: diagonal inline decode, ReadArray, no scalar path.
 #define DEFINE_UNPACK_MATRIX_TIMESAMPLES(FUNC_SUFFIX, CPP_TYPE, CRATE_TYPE,    \
@@ -1307,326 +1099,94 @@ DEFINE_UNPACK_MATRIX_TIMESAMPLES(MATRIX2D, value::matrix2d, CRATE_DATA_TYPE_MATR
 DEFINE_UNPACK_MATRIX_TIMESAMPLES(MATRIX3D, value::matrix3d, CRATE_DATA_TYPE_MATRIX3D, 3)
 DEFINE_UNPACK_MATRIX_TIMESAMPLES(MATRIX4D, value::matrix4d, CRATE_DATA_TYPE_MATRIX4D, 4)
 
-// Remaining explicit functions below (BOOL, HALF, INT32, FLOAT, FLOAT2, QUATF,
-// UINT32, INT64, UINT64, DOUBLE, ASSET_PATH, STRING, TOKEN) have unique structure.
-bool CrateReader::UnpackTimeSampleValue_UINT32(double t,
-                                               const crate::ValueRep &rep,
-                                               value::TimeSamples &dst,
-                                               size_t expected_total_samples) {
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
-    if (rep.IsInlined() || rep.IsCompressed() || rep.IsArray()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Invalid blocked ValueRep in TimeSamples.");
-    }
-    if (!add_blocked_sample_to_timesamples<uint32_t>(&dst, t, &_err,
-                                                     expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Failed to add blocked sample to TimeSamples.");
-    }
-    return true;
-  }
+// Remaining explicit functions (BOOL, QUATF, ASSET_PATH, STRING, TOKEN) have
+// specialized logic and are kept as-is.
 
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) !=
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid ValueRep type in TimeSamples.");
-  }
+DEFINE_UNPACK_SIMPLE_TIMESAMPLES(UINT32, uint32_t, CRATE_DATA_TYPE_UINT,
+    INLINE_UINT32_DECODE,
+    ReadIntArrayTyped(rep.IsCompressed(), &v),
+    TypedArray<uint32_t>, 0, 1, 0)
 
-  if (rep.IsInlined()) {
-    if (rep.IsCompressed() || rep.IsArray()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Invalid inlined ValueRep in TimeSamples.");
-    }
-
-    // Scalar deduplication was removed - see FLOAT3 fix
-      // Decode and cache
-      uint32_t val = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-
-    if (!add_sample_to_timesamples<uint32_t>(&dst, t, val, &_err,
-                                             expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-  } else if (rep.IsArray()) {
-    TypedArray<uint32_t> v;
-    if (rep.GetPayload() == 0) {
-      if (!add_array_sample_to_timesamples<uint32_t>(&dst, t, v, &_err,
-                                                     expected_total_samples)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
-      return true;
-    }
-
-    if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uint32 array.");
-    }
-
-    DCOUT("timeSamples.UINT32 " << value::print_array_snipped(v));
-
-    if (!add_array_sample_to_timesamples<uint32_t>(
-            &dst, t, v, &_err, expected_total_samples, &rep)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-  } else {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for uint32 is invalid.");
-  }
-
-  return true;
+// Macro for 64-bit integer types: inline decode widens 32-bit to 64-bit.
+// SMALL_TYPE is the 32-bit type used for memcpy from the payload.
+#define DEFINE_UNPACK_INT64_TIMESAMPLES(FUNC_SUFFIX, CPP_TYPE, CRATE_TYPE,     \
+                                          SMALL_TYPE)                           \
+bool CrateReader::UnpackTimeSampleValue_##FUNC_SUFFIX(                         \
+    double t, const crate::ValueRep &rep, value::TimeSamples &dst,             \
+    size_t expected_total_samples) {                                           \
+  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==                    \
+      crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {                   \
+    if (rep.IsInlined() || rep.IsCompressed() || rep.IsArray()) {              \
+      PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
+                                "Invalid blocked ValueRep in TimeSamples.");    \
+    }                                                                          \
+    if (!add_blocked_sample_to_timesamples<CPP_TYPE>(&dst, t, &_err,           \
+                                                  expected_total_samples)) {    \
+      PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
+                                "Failed to add blocked sample to TimeSamples.");\
+    }                                                                          \
+    return true;                                                               \
+  }                                                                            \
+  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) !=                    \
+      crate::CrateDataTypeId::CRATE_TYPE) {                                    \
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid ValueRep type in TimeSamples.");  \
+  }                                                                            \
+  if (rep.IsInlined()) {                                                       \
+    if (rep.IsCompressed() || rep.IsArray()) {                                 \
+      PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
+                                "Invalid inlined ValueRep in TimeSamples.");    \
+    }                                                                          \
+    uint32_t data =                                                            \
+        (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));           \
+    SMALL_TYPE _val;                                                           \
+    memcpy(&_val, &data, sizeof(SMALL_TYPE));                                  \
+    CPP_TYPE val = static_cast<CPP_TYPE>(_val);                                \
+    if (!add_sample_to_timesamples<CPP_TYPE>(&dst, t, val, &_err,              \
+                                              expected_total_samples)) {        \
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples."); \
+    }                                                                          \
+  } else if (rep.IsArray()) {                                                  \
+    TypedArray<CPP_TYPE> v;                                                    \
+    if (rep.GetPayload() == 0) {                                               \
+      if (!add_array_sample_to_timesamples<CPP_TYPE>(&dst, t, v, &_err,        \
+                                                  expected_total_samples)) {    \
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");\
+      }                                                                        \
+      return true;                                                             \
+    }                                                                          \
+    if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {                          \
+      PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
+          "Failed to read " #FUNC_SUFFIX " array.");                           \
+    }                                                                          \
+    if (!add_array_sample_to_timesamples<CPP_TYPE>(                            \
+            &dst, t, v, &_err, expected_total_samples, &rep)) {                \
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples."); \
+    }                                                                          \
+  } else {                                                                     \
+    if (rep.IsCompressed()) {                                                  \
+      PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
+          "Compressed " #FUNC_SUFFIX " not supported for TimeSamples.");        \
+    }                                                                          \
+    CPP_TYPE val;                                                              \
+    if (!ReadTimeSampleScalarValue(&val, sizeof(CPP_TYPE),                     \
+        "Failed to read " #FUNC_SUFFIX " value")) {                            \
+      return false;                                                            \
+    }                                                                          \
+    if (!add_sample_to_timesamples<CPP_TYPE>(&dst, t, val, &_err,              \
+                                              expected_total_samples)) {        \
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples."); \
+    }                                                                          \
+  }                                                                            \
+  return true;                                                                 \
 }
 
-bool CrateReader::UnpackTimeSampleValue_INT64(double t,
-                                              const crate::ValueRep &rep,
-                                              value::TimeSamples &dst,
-                                              size_t expected_total_samples) {
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
-    if (rep.IsInlined() || rep.IsCompressed() || rep.IsArray()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Invalid blocked ValueRep in TimeSamples.");
-    }
-    if (!add_blocked_sample_to_timesamples<int64_t>(&dst, t, &_err,
-                                                    expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Failed to add blocked sample to TimeSamples.");
-    }
-    return true;
-  }
+DEFINE_UNPACK_INT64_TIMESAMPLES(INT64, int64_t, CRATE_DATA_TYPE_INT64, int)
+DEFINE_UNPACK_INT64_TIMESAMPLES(UINT64, uint64_t, CRATE_DATA_TYPE_UINT64, uint32_t)
 
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) !=
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid ValueRep type in TimeSamples.");
-  }
-
-  if (rep.IsInlined()) {
-    if (rep.IsCompressed() || rep.IsArray()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Invalid inlined ValueRep in TimeSamples.");
-    }
-
-    // Scalar deduplication was removed - see FLOAT3 fix
-      // Decode and cache
-      // Value is represented as int
-      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-      int _val;
-      memcpy(&_val, &data, sizeof(int));
-      int64_t val = static_cast<int64_t>(_val);
-
-    if (!add_sample_to_timesamples<int64_t>(&dst, t, val, &_err,
-                                            expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-  } else if (rep.IsArray()) {
-    TypedArray<int64_t> v;
-    if (rep.GetPayload() == 0) {
-      if (!add_array_sample_to_timesamples<int64_t>(&dst, t, v, &_err,
-                                                    expected_total_samples)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
-      return true;
-    }
-
-    if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read int64 array.");
-    }
-
-    DCOUT("timeSamples.INT64 " << value::print_array_snipped(v));
-
-    if (!add_array_sample_to_timesamples<int64_t>(
-            &dst, t, v, &_err, expected_total_samples, &rep)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-  } else {
-    // Scalar (non-inlined, non-array) int64 value
-    if (rep.IsCompressed()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Compressed int64 not supported for TimeSamples.");
-    }
-
-    int64_t val;
-    if (!ReadTimeSampleScalarValue(&val, sizeof(int64_t),
-                                   "Failed to read int64 value")) {
-      return false;
-    }
-    DCOUT("int64 = " << val);
-    if (!add_sample_to_timesamples<int64_t>(&dst, t, val, &_err,
-                                            expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-  }
-
-  return true;
-}
-
-bool CrateReader::UnpackTimeSampleValue_UINT64(double t,
-                                               const crate::ValueRep &rep,
-                                               value::TimeSamples &dst,
-                                               size_t expected_total_samples) {
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
-    if (rep.IsInlined() || rep.IsCompressed() || rep.IsArray()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Invalid blocked ValueRep in TimeSamples.");
-    }
-    if (!add_blocked_sample_to_timesamples<uint64_t>(&dst, t, &_err,
-                                                     expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Failed to add blocked sample to TimeSamples.");
-    }
-    return true;
-  }
-
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) !=
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid ValueRep type in TimeSamples.");
-  }
-
-  if (rep.IsInlined()) {
-    if (rep.IsCompressed() || rep.IsArray()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Invalid inlined ValueRep in TimeSamples.");
-    }
-
-    // Scalar deduplication was removed - see FLOAT3 fix
-      // Decode and cache
-      // Value is represented as uint
-      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-      uint32_t _val;
-      memcpy(&_val, &data, sizeof(uint32_t));
-      uint64_t val = static_cast<uint64_t>(_val);
-
-    if (!add_sample_to_timesamples<uint64_t>(&dst, t, val, &_err,
-                                             expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-  } else if (rep.IsArray()) {
-    TypedArray<uint64_t> v;
-    if (rep.GetPayload() == 0) {
-      if (!add_array_sample_to_timesamples<uint64_t>(&dst, t, v, &_err,
-                                                     expected_total_samples)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
-      return true;
-    }
-
-    if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uint64 array.");
-    }
-
-    DCOUT("timeSamples.UINT64 " << value::print_array_snipped(v));
-
-    if (!add_array_sample_to_timesamples<uint64_t>(
-            &dst, t, v, &_err, expected_total_samples, &rep)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-  } else {
-    // Scalar (non-inlined, non-array) uint64 value
-    if (rep.IsCompressed()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Compressed uint64 not supported for TimeSamples.");
-    }
-
-    uint64_t val;
-    if (!ReadTimeSampleScalarValue(&val, sizeof(uint64_t),
-                                   "Failed to read uint64 value")) {
-      return false;
-    }
-    DCOUT("uint64 = " << val);
-    if (!add_sample_to_timesamples<uint64_t>(&dst, t, val, &_err,
-                                             expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-  }
-
-  return true;
-}
-
-bool CrateReader::UnpackTimeSampleValue_DOUBLE(double t,
-                                               const crate::ValueRep &rep,
-                                               value::TimeSamples &dst,
-                                               size_t expected_total_samples) {
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
-    if (rep.IsInlined() || rep.IsCompressed() || rep.IsArray()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Invalid blocked ValueRep in TimeSamples.");
-    }
-    if (!add_blocked_sample_to_timesamples<double>(&dst, t, &_err,
-                                                   expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Failed to add blocked sample to TimeSamples.");
-    }
-    return true;
-  }
-
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) !=
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid ValueRep type in TimeSamples.");
-  }
-
-  if (rep.IsInlined()) {
-    if (rep.IsCompressed() || rep.IsArray()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Invalid inlined ValueRep in TimeSamples.");
-    }
-
-    // Decode value directly without caching
-    // Scalar deduplication was removed - see FLOAT3 fix
-    // Value is stored as float
-    double val;
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-    float _f;
-    memcpy(&_f, &data, sizeof(float));
-    val = static_cast<double>(_f);
-
-    if (!add_sample_to_timesamples<double>(&dst, t, val, &_err,
-                                           expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-  } else if (rep.IsArray()) {
-    TypedArray<double> v;
-    if (rep.GetPayload() == 0) {
-      if (!add_array_sample_to_timesamples<double>(&dst, t, v, &_err,
-                                                   expected_total_samples)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
-      return true;
-    }
-
-    if (!ReadDoubleArrayTyped(rep.IsCompressed(), &v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double array.");
-    }
-
-    DCOUT("timeSamples.DOUBLE " << v.size() << " elements");
-
-    if (v.empty()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty double array.");
-      return false;
-    }
-
-    if (!add_array_sample_to_timesamples<double>(
-            &dst, t, v, &_err, expected_total_samples, &rep)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-  } else {
-    if (rep.IsCompressed()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Compressed double not supported for TimeSamples.");
-    }
-
-    double v;
-    if (!ReadTimeSampleScalarValue(&v, sizeof(double),
-                                   "Failed to read double")) {
-      return false;
-    }
-    DCOUT("double = " << v);
-
-    if (!add_sample_to_timesamples<double>(&dst, t, v, &_err,
-                                           expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-  }
-
-  return true;
-}
+DEFINE_UNPACK_SIMPLE_TIMESAMPLES(DOUBLE, double, CRATE_DATA_TYPE_DOUBLE,
+    INLINE_DOUBLE_FROM_FLOAT_DECODE,
+    ReadDoubleArrayTyped(rep.IsCompressed(), &v),
+    TypedArray<double>, 1, 1, 1)
 
 bool CrateReader::UnpackValueRepsToTimeSamples(
     const std::vector<double> &times,

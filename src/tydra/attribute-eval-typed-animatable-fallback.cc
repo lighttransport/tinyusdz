@@ -1,13 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022-Present Light Transport Entertainment, Inc.
 //
-#include "attribute-eval.hh"
-#include "scene-access.hh"
-
-#include "common-macros.inc"
-#include "pprinter.hh"
-#include "tiny-format.hh"
-#include "value-pprint.hh"
+#include "attribute-eval-internal.hh"
 
 namespace tinyusdz {
 namespace tydra {
@@ -30,8 +24,8 @@ bool EvaluateTypedAttributeImpl(
 
   if (attr.has_value()) {
     return attr.get_value(value);
-  } if (attr.has_connections()) {
-    // Follow connection target Path(singple targetPath only).
+  } else if (attr.has_connections()) {
+    // Follow connection target Path(single targetPath only).
     std::vector<Path> pv = attr.connections();
     Path target;
     if (!detail::ResolveSingleConnectionTargetPath(pv, attr_name, &target,
@@ -48,7 +42,7 @@ bool EvaluateTypedAttributeImpl(
     auto targetPrimRet =
         stage.GetPrimAtPath(Path(targetPrimPath, /* prop */ ""));
     if (targetPrimRet) {
-      // Follow the connetion
+      // Follow the connection
       const Prim *targetPrim = targetPrimRet.value();
 
       TerminalAttributeValue attr_value;
@@ -86,36 +80,6 @@ bool EvaluateTypedAttributeImpl(
 }
 
 
-namespace {
-
-// Convert TypedAttribute Connection to Attribute Connection.
-// If TypedAttribute has value, return Attribute with empty value.
-// TODO: make error when Attribute is not 'connection'.
-template<typename T>
-Attribute ToAttributeConnection(
-  const TypedAttributeWithFallback<Animatable<T>> &input)
-{
-  Attribute attr;
-  if (input.is_blocked()) {
-    attr.set_blocked(true);
-    attr.variability() = Variability::Varying;
-  } else if (input.is_connection()) {
-    attr.set_connections(input.connections());
-  } else if (input.is_value_empty()) {
-    // empty = set type info only
-    attr.set_type_name(value::TypeTraits<T>::type_name());
-    attr.variability() = Variability::Varying;
-
-  } else{
-    attr.set_type_name(value::TypeTraits<T>::type_name());
-    attr.variability() = Variability::Varying;
-  }
-
-  return attr;
-}
-
-} // namespace
-
 template<typename T>
 bool EvaluateTypedAnimatableAttribute(
     const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<T>> &tattr,
@@ -138,6 +102,7 @@ bool EvaluateTypedAnimatableAttribute(
     const Animatable<T> &value = tattr.get_value();
     T v;
     if (value.get(t, &v, tinterp)) {
+      *value_out = v;
       return true;
     } else {
       if (err) {
@@ -147,27 +112,13 @@ bool EvaluateTypedAnimatableAttribute(
     }
   } else if (tattr.has_connections()) {
 
-    // Follow targetPath
-    Attribute attr = ToAttributeConnection(tattr);
+    Attribute attr = detail::ToAttributeConnection<
+        TypedAttributeWithFallback<Animatable<T>>, Variability::Varying>(
+            tattr, value::TypeTraits<T>::type_name());
 
-    //std::set<std::string> visited_paths;
-
-    TerminalAttributeValue value;
-    bool ret = EvaluateAttribute(stage, attr, attr_name, &value, err,
-                                 value::TimeCode::Default(), value::TimeSampleInterpolationType::Held);
-
-    if (!ret) {
-      return false;
-    }
-
-    if (auto pv = value.as<T>()) {
-      (*value_out) = *pv;
-      return true;
-    }
-
-    if (err) {
-      (*err) += fmt::format("Type mismatch. Value producing attribute has type {}, but requested type is {}[]. Attribute: {}", value.type_name(), value::TypeTraits<T>::type_name(), attr_name);
-    }
+    return detail::FollowConnection(
+        stage, attr, attr_name, value_out, err,
+        value::TimeCode::Default(), value::TimeSampleInterpolationType::Held);
 
   } else if (tattr.is_value_empty()) {
     if (err) {
@@ -182,6 +133,7 @@ bool EvaluateTypedAnimatableAttribute(
   return false;
 }
 
+// std::string specialization — token coercion handled by detail::FollowConnection.
 template<>
 bool EvaluateTypedAnimatableAttribute(
     const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<std::string>> &tattr,
@@ -204,6 +156,7 @@ bool EvaluateTypedAnimatableAttribute(
     const Animatable<std::string> &value = tattr.get_value();
     std::string v;
     if (value.get(t, &v, tinterp)) {
+      *value_out = v;
       return true;
     } else {
       if (err) {
@@ -214,34 +167,13 @@ bool EvaluateTypedAnimatableAttribute(
 
   } else if (tattr.has_connections()) {
 
-    // Follow targetPath
-    Attribute attr = ToAttributeConnection(tattr);
+    Attribute attr = detail::ToAttributeConnection<
+        TypedAttributeWithFallback<Animatable<std::string>>,
+        Variability::Varying>(tattr, value::TypeTraits<std::string>::type_name());
 
-    //std::set<std::string> visited_paths;
-
-    TerminalAttributeValue value;
-    bool ret = EvaluateAttribute(stage, attr, attr_name, &value, err,
-                                 value::TimeCode::Default(), value::TimeSampleInterpolationType::Held);
-
-    if (!ret) {
-      return false;
-    }
-
-    if (auto pv = value.as<std::string>()) {
-      (*value_out) = *pv;
-      return true;
-    }
-
-    // Allow `token` typed value in the attribute of targetPath.
-    if (auto pv = value.as<value::token>()) {
-      // TODO: report an warninig.
-      (*value_out) = pv->str();
-      return true;
-    }
-
-    if (err) {
-      (*err) += fmt::format("Type mismatch. Value producing attribute has type {}, but requested type is {}[]. Attribute: {}", value.type_name(), value::TypeTraits<std::string>::type_name(), attr_name);
-    }
+    return detail::FollowConnection(
+        stage, attr, attr_name, value_out, err,
+        value::TimeCode::Default(), value::TimeSampleInterpolationType::Held);
 
   } else if (tattr.is_value_empty()) {
     if (err) {
@@ -256,7 +188,7 @@ bool EvaluateTypedAnimatableAttribute(
   return false;
 }
 
-// template instanciations
+// template instantiations
 #define EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE(__ty) \
 template bool EvaluateTypedAnimatableAttribute(const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinterp);
 
