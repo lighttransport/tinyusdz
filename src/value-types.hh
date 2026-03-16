@@ -568,107 +568,32 @@ using half3 = std::array<half, 3>;
 using half4 = std::array<half, 4>;
 
 ///
-/// Convert half-precision float to single-precision float (inline for performance).
+/// Convert half-precision float to single-precision float.
 /// Uses portable bit manipulation that works on both little-endian and big-endian.
 ///
-inline float half_to_float(value::half h) {
-  uint16_t hu = h.value;
-  uint32_t o;
-
-  o = (hu & 0x7fffU) << 13U;              // exponent/mantissa bits
-  uint32_t exp_ = (0x7c00U << 13U) & o;   // just the exponent
-  o += (127 - 15) << 23;                   // exponent adjust
-
-  if (exp_ == (0x7c00U << 13U))            // Inf/NaN?
-    o += (128 - 16) << 23;                 // extra exp adjust
-  else if (exp_ == 0) {                    // Zero/Denormal?
-    o += 1 << 23;                          // extra exp adjust
-    float of;
-    memcpy(&of, &o, sizeof(float));
-    uint32_t magic = 113 << 23;
-    float magicf;
-    memcpy(&magicf, &magic, sizeof(float));
-    of -= magicf;                          // renormalize
-    memcpy(&o, &of, sizeof(uint32_t));
-  }
-
-  o |= (hu & 0x8000U) << 16U;             // sign bit
-  float result;
-  memcpy(&result, &o, sizeof(float));
-  return result;
-}
+float half_to_float(value::half h);
 
 half float_to_half_full(float f);
 
-inline half operator+(const half &a, const half &b) {
-  return float_to_half_full(half_to_float(a) + half_to_float(b));
-}
+half operator+(const half &a, const half &b);
+half operator-(const half &a, const half &b);
+half operator*(const half &a, const half &b);
+half operator/(const half &a, const half &b);
 
-inline half operator-(const half &a, const half &b) {
-  return float_to_half_full(half_to_float(a) - half_to_float(b));
-}
+half& operator+=(half &a, const half &b);
+half& operator-=(half &a, const half &b);
+half& operator*=(half &a, const half &b);
+half& operator/=(half &a, const half &b);
 
-inline half operator*(const half &a, const half &b) {
-  return float_to_half_full(half_to_float(a) * half_to_float(b));
-}
+half operator+(const half &a, float b);
+half operator-(const half &a, float b);
+half operator*(const half &a, float b);
+half operator/(const half &a, float b);
 
-// TODO: save div
-inline half operator/(const half &a, const half &b) {
-  return float_to_half_full(half_to_float(a) / half_to_float(b));
-}
-
-inline half& operator+=(half &a, const half &b) {
-  a = float_to_half_full(half_to_float(a) + half_to_float(b));
-  return a;
-}
-
-inline half& operator-=(half &a, const half &b) {
-  a = float_to_half_full(half_to_float(a) - half_to_float(b));
-  return a;
-}
-
-inline half& operator*=(half &a, const half &b) {
-  a = float_to_half_full(half_to_float(a) * half_to_float(b));
-  return a;
-}
-
-// TODO: save div
-inline half& operator/=(half &a, const half &b) {
-  a = float_to_half_full(half_to_float(a) / half_to_float(b));
-  return a;
-}
-
-inline half operator+(const half &a, float b) {
-  return float_to_half_full(half_to_float(a) + b);
-}
-
-inline half operator-(const half &a, float b) {
-  return float_to_half_full(half_to_float(a) - b);
-}
-
-inline half operator*(const half &a, float b) {
-  return float_to_half_full(half_to_float(a) * b);
-}
-
-inline half operator/(const half &a, float b) {
-  return float_to_half_full(half_to_float(a) / b);
-}
-
-inline half operator+(float a, const half &b) {
-  return float_to_half_full(a + half_to_float(b));
-}
-
-inline half operator-(float a, const half &b) {
-  return float_to_half_full(a - half_to_float(b));
-}
-
-inline half operator*(float a, const half &b) {
-  return float_to_half_full(a * half_to_float(b));
-}
-
-inline half operator/(float a, const half &b) {
-  return float_to_half_full(a / half_to_float(b));
-}
+half operator+(float a, const half &b);
+half operator-(float a, const half &b);
+half operator*(float a, const half &b);
+half operator/(float a, const half &b);
 
 using char2 = std::array<char, 2>;
 using char3 = std::array<char, 3>;
@@ -723,20 +648,8 @@ struct matrix2f {
   matrix2f& operator=(const matrix2f&) = default;
   matrix2f& operator=(matrix2f&&) = default;
 
-  inline void set_row(uint32_t row, float x, float y) {
-    if (row < 2) {
-      m[row][0] = x;
-      m[row][1] = y;
-    }
-  }
-
-  inline void set_scale(float sx, float sy) {
-    m[0][0] = sx;
-    m[0][1] = 0.0f;
-
-    m[1][0] = 0.0f;
-    m[1][1] = sy;
-  }
+  void set_row(uint32_t row, float x, float y);
+  void set_scale(float sx, float sy);
 
   static matrix2f identity() {
     matrix2f mat{};
@@ -763,33 +676,9 @@ struct matrix3f {
   matrix3f& operator=(const matrix3f&) = default;
   matrix3f& operator=(matrix3f&&) = default;
 
-  inline void set_row(uint32_t row, float x, float y, float z) {
-    if (row < 3) {
-      m[row][0] = x;
-      m[row][1] = y;
-      m[row][2] = z;
-    }
-  }
-
-  inline void set_scale(float sx, float sy, float sz) {
-    m[0][0] = sx;
-    m[0][1] = 0.0f;
-    m[0][2] = 0.0f;
-
-    m[1][0] = 0.0f;
-    m[1][1] = sy;
-    m[1][2] = 0.0f;
-
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = sz;
-  }
-
-  inline void set_translation(float tx, float ty, float tz) {
-    m[2][0] = tx;
-    m[2][1] = ty;
-    m[2][2] = tz;
-  }
+  void set_row(uint32_t row, float x, float y, float z);
+  void set_scale(float sx, float sy, float sz);
+  void set_translation(float tx, float ty, float tz);
 
   static matrix3f identity() {
     matrix3f mat{};
@@ -818,42 +707,9 @@ struct matrix4f {
   matrix4f& operator=(const matrix4f&) = default;
   matrix4f& operator=(matrix4f&&) = default;
 
-  inline void set_row(uint32_t row, float x, float y, float z, float w) {
-    if (row < 4) {
-      m[row][0] = x;
-      m[row][1] = y;
-      m[row][2] = z;
-      m[row][3] = w;
-    }
-  }
-
-  inline void set_scale(float sx, float sy, float sz) {
-    m[0][0] = sx;
-    m[0][1] = 0.0f;
-    m[0][2] = 0.0f;
-    m[0][3] = 0.0f;
-
-    m[1][0] = 0.0f;
-    m[1][1] = sy;
-    m[1][2] = 0.0f;
-    m[1][3] = 0.0f;
-
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = sz;
-    m[2][3] = 0.0f;
-
-    m[3][0] = 0.0f;
-    m[3][1] = 0.0f;
-    m[3][2] = 0.0f;
-    m[3][3] = 1.0f;
-  }
-
-  inline void set_translation(float tx, float ty, float tz) {
-    m[3][0] = tx;
-    m[3][1] = ty;
-    m[3][2] = tz;
-  }
+  void set_row(uint32_t row, float x, float y, float z, float w);
+  void set_scale(float sx, float sy, float sz);
+  void set_translation(float tx, float ty, float tz);
 
   static matrix4f identity() {
     matrix4f mat{};
@@ -878,20 +734,8 @@ struct matrix2d {
   matrix2d& operator=(const matrix2d&) = default;
   matrix2d& operator=(matrix2d&&) = default;
 
-  inline void set_row(uint32_t row, double x, double y) {
-    if (row < 2) {
-      m[row][0] = x;
-      m[row][1] = y;
-    }
-  }
-
-  inline void set_scale(double sx, double sy) {
-    m[0][0] = sx;
-    m[0][1] = 0.0;
-
-    m[1][0] = 0.0;
-    m[1][1] = sy;
-  }
+  void set_row(uint32_t row, double x, double y);
+  void set_scale(double sx, double sy);
 
   static matrix2d identity() {
     matrix2d mat{};
@@ -912,27 +756,8 @@ struct matrix3d {
   matrix3d& operator=(const matrix3d&) = default;
   matrix3d& operator=(matrix3d&&) = default;
 
-  inline void set_row(uint32_t row, double x, double y, double z) {
-    if (row < 3) {
-      m[row][0] = x;
-      m[row][1] = y;
-      m[row][2] = z;
-    }
-  }
-
-  inline void set_scale(double sx, double sy, double sz) {
-    m[0][0] = sx;
-    m[0][1] = 0.0;
-    m[0][2] = 0.0;
-
-    m[1][0] = 0.0;
-    m[1][1] = sy;
-    m[1][2] = 0.0;
-
-    m[2][0] = 0.0;
-    m[2][1] = 0.0;
-    m[2][2] = sz;
-  }
+  void set_row(uint32_t row, double x, double y, double z);
+  void set_scale(double sx, double sy, double sz);
 
   static matrix3d identity() {
     matrix3d mat{};
@@ -954,36 +779,8 @@ struct matrix4d {
   matrix4d& operator=(const matrix4d&) = default;
   matrix4d& operator=(matrix4d&&) = default;
 
-  inline void set_row(uint32_t row, double x, double y, double z, double w) {
-    if (row < 4) {
-      m[row][0] = x;
-      m[row][1] = y;
-      m[row][2] = z;
-      m[row][3] = w;
-    }
-  }
-
-  inline void set_scale(double sx, double sy, double sz) {
-    m[0][0] = sx;
-    m[0][1] = 0.0;
-    m[0][2] = 0.0;
-    m[0][3] = 0.0;
-
-    m[1][0] = 0.0;
-    m[1][1] = sy;
-    m[1][2] = 0.0;
-    m[1][3] = 0.0;
-
-    m[2][0] = 0.0;
-    m[2][1] = 0.0;
-    m[2][2] = sz;
-    m[2][3] = 0.0;
-
-    m[3][0] = 0.0;
-    m[3][1] = 0.0;
-    m[3][2] = 0.0;
-    m[3][3] = 1.0;
-  }
+  void set_row(uint32_t row, double x, double y, double z, double w);
+  void set_scale(double sx, double sy, double sz);
 
   static matrix4d identity() {
     matrix4d mat{};
@@ -2940,8 +2737,96 @@ bool RoleTypeCast(const uint32_t roleTyId, value::Value &inout);
 ///
 bool UpcastType(const std::string &toType, value::Value &inout);
 
+///
+/// Register known primitive attribute type names into a set-like container.
+/// Works with std::set<std::string>, std::unordered_set<std::string>, etc.
+///
+/// @param d Container to populate (cleared first).
+/// @param include_variant_set If true, include "variantSet" entry.
+///
+template <typename SetType>
+inline void RegisterPrimAttrTypes(SetType &d, bool include_variant_set = false) {
+  d.clear();
 
+  d.insert(kBool);
 
+  d.insert(kInt64);
+
+  d.insert(kInt);
+  d.insert(kInt2);
+  d.insert(kInt3);
+  d.insert(kInt4);
+
+  d.insert(kUInt64);
+
+  d.insert(kUInt);
+  d.insert(kUInt2);
+  d.insert(kUInt3);
+  d.insert(kUInt4);
+
+  d.insert(kFloat);
+  d.insert(kFloat2);
+  d.insert(kFloat3);
+  d.insert(kFloat4);
+
+  d.insert(kDouble);
+  d.insert(kDouble2);
+  d.insert(kDouble3);
+  d.insert(kDouble4);
+
+  d.insert(kHalf);
+  d.insert(kHalf2);
+  d.insert(kHalf3);
+  d.insert(kHalf4);
+
+  d.insert(kQuath);
+  d.insert(kQuatf);
+  d.insert(kQuatd);
+
+  d.insert(kNormal3f);
+  d.insert(kPoint3f);
+  d.insert(kTexCoord2h);
+  d.insert(kTexCoord3h);
+  d.insert(kTexCoord4h);
+  d.insert(kTexCoord2f);
+  d.insert(kTexCoord3f);
+  d.insert(kTexCoord4f);
+  d.insert(kTexCoord2d);
+  d.insert(kTexCoord3d);
+  d.insert(kTexCoord4d);
+  d.insert(kVector3f);
+  d.insert(kVector4f);
+  d.insert(kVector3d);
+  d.insert(kVector4d);
+  d.insert(kColor3h);
+  d.insert(kColor3f);
+  d.insert(kColor3d);
+  d.insert(kColor4h);
+  d.insert(kColor4f);
+  d.insert(kColor4d);
+
+  d.insert(kMatrix2f);
+  d.insert(kMatrix3f);
+  d.insert(kMatrix4f);
+
+  d.insert(kMatrix2d);
+  d.insert(kMatrix3d);
+  d.insert(kMatrix4d);
+
+  d.insert(kToken);
+  d.insert(kString);
+
+  d.insert(kRelationship);
+  d.insert(kAssetPath);
+
+  d.insert(kDictionary);
+
+  if (include_variant_set) {
+    d.insert("variantSet");
+  }
+
+  // TODO: Add more types...
+}
 
 }  // namespace value
 
