@@ -1,13 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022-Present Light Transport Entertainment, Inc.
 //
-#include "attribute-eval.hh"
-#include "scene-access.hh"
-
-#include "common-macros.inc"
-#include "pprinter.hh"
-#include "tiny-format.hh"
-#include "value-pprint.hh"
+#include "attribute-eval-internal.hh"
 
 namespace tinyusdz {
 namespace tydra {
@@ -33,7 +27,7 @@ bool EvaluateTypedAttributeImpl(
     return attr.get_value(value);
 
   } else if (attr.has_connection()) {
-    // Follow connection target Path(singple targetPath only).
+    // Follow connection target Path(single targetPath only).
     std::vector<Path> pv = attr.connections();
     Path target;
     if (!detail::ResolveSingleConnectionTargetPath(pv, attr_name, &target,
@@ -50,7 +44,7 @@ bool EvaluateTypedAttributeImpl(
     auto targetPrimRet =
         stage.GetPrimAtPath(Path(targetPrimPath, /* prop */ ""));
     if (targetPrimRet) {
-      // Follow the connetion
+      // Follow the connection
       const Prim *targetPrim = targetPrimRet.value();
 
       TerminalAttributeValue attr_value;
@@ -88,41 +82,7 @@ bool EvaluateTypedAttributeImpl(
 }
 
 
-namespace {
-
-// Convert TypedAttribute Connection to Attribute Connection.
-// If TypedAttribute has value, return Attribute with empty value.
-// TODO: make error when Attribute is not 'connection'.
-template<typename T>
-Attribute ToAttributeConnection(
-  const TypedAttribute<Animatable<T>> &input)
-{
-  Attribute attr;
-  if (input.is_blocked()) {
-    attr.set_blocked(true);
-    attr.variability() = Variability::Varying;
-  } else if (input.is_value_empty()) {
-    // empty = set type info only
-    attr.set_type_name(value::TypeTraits<T>::type_name());
-    attr.variability() = Variability::Varying;
-
-  } else if (input.is_connection()) {
-
-    attr.set_connections(input.connections());
-
-  } else{
-    attr.set_type_name(value::TypeTraits<T>::type_name());
-    attr.variability() = Variability::Varying;
-  }
-
-  // Copy metadata
-  attr.metas() =  input.metas();
-
-  return attr;
-}
-
-} // namespace
-
+// std::string specialization — token coercion handled by detail::FollowConnection.
 template<> bool EvaluateTypedAnimatableAttribute<std::string>(
     const tinyusdz::Stage &stage, const TypedAttribute<Animatable<std::string>> &tattr,
     const std::string &attr_name,
@@ -147,31 +107,12 @@ template<> bool EvaluateTypedAnimatableAttribute<std::string>(
     return false;
   } else if (tattr.is_connection()) {
 
-    // Follow targetPath
-    Attribute attr = ToAttributeConnection(tattr);
+    Attribute attr = detail::ToAttributeConnection<
+        TypedAttribute<Animatable<std::string>>, Variability::Varying,
+        /* copyMeta */ true>(tattr, value::TypeTraits<std::string>::type_name());
 
-    TerminalAttributeValue value;
-    bool ret = EvaluateAttribute(stage, attr, attr_name, &value, err,
-                                 t, tinterp);
-
-    if (!ret) {
-      return false;
-    }
-
-    if (auto pv = value.as<std::string>()) {
-      (*value_out) = *pv;
-      return true;
-    }
-
-    // Allow `token` typed value in the attribute of targetPath.
-    if (auto pv = value.as<value::token>()) {
-      (*value_out) = pv->str();
-      return true;
-    }
-
-    if (err) {
-      (*err) += fmt::format("Type mismatch. Value producing attribute has type {}, but requested type is {}[]. Attribute: {}", value.type_name(), value::TypeTraits<std::string>::type_name(), attr_name);
-    }
+    return detail::FollowConnection(
+        stage, attr, attr_name, value_out, err, t, tinterp);
 
   } else {
     Animatable<std::string> value;
@@ -208,7 +149,7 @@ bool EvaluateTypedAnimatableAttribute(
 
   // Eval order:
   // - ValueBlocked?
-  // - has value?(default value or timesamped value)
+  // - has value?(default value or timesampled value)
   // - has connection?
 
   if (tattr.is_blocked()) {
@@ -230,25 +171,12 @@ bool EvaluateTypedAnimatableAttribute(
     }
   } else if (tattr.has_connections()) {
 
-    // Follow targetPath
-    Attribute attr = ToAttributeConnection(tattr);
+    Attribute attr = detail::ToAttributeConnection<
+        TypedAttribute<Animatable<T>>, Variability::Varying,
+        /* copyMeta */ true>(tattr, value::TypeTraits<T>::type_name());
 
-    TerminalAttributeValue value;
-    bool ret = EvaluateAttribute(stage, attr, attr_name, &value, err,
-                                 t, tinterp);
-
-    if (!ret) {
-      return false;
-    }
-
-    if (auto pv = value.as<T>()) {
-      (*value_out) = *pv;
-      return true;
-    }
-
-    if (err) {
-      (*err) += fmt::format("Type mismatch. Value producing attribute has type {}, but requested type is {}[]. Attribute: {}", value.type_name(), value::TypeTraits<T>::type_name(), attr_name);
-    }
+    return detail::FollowConnection(
+        stage, attr, attr_name, value_out, err, t, tinterp);
 
   } else if (tattr.is_value_empty()) {
     if (err) {
@@ -264,7 +192,7 @@ bool EvaluateTypedAnimatableAttribute(
 }
 
 
-// template instanciations
+// template instantiations
 #define EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE(__ty) \
 template bool EvaluateTypedAnimatableAttribute(const tinyusdz::Stage &stage, const TypedAttribute<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinterp);
 
