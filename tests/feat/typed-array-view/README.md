@@ -58,4 +58,8 @@ Key features:
 - Zero-copy access to array data
 - Returns const-qualified views for safety
 - Handles blocked values (ValueBlock) by returning empty views
-- Works with multiple storage types (`TypedArray`, `std::vector`, raw binary-storage arrays)
+- Works with flat binary storage (`_data` byte buffer) and generic `Value` storage (`_samples`)
+
+Note: As of 2026-03-17, TimeSamples uses a flat byte buffer (`_data`) for all binary
+types instead of the previous 5-backend system. `TypedArrayView` reads directly from
+this buffer via `_data_offsets`, providing zero-copy access without intermediate containers.

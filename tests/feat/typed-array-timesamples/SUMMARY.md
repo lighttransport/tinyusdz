@@ -2,190 +2,123 @@
 
 ## Overview
 
-Successfully implemented `TypedArray<T>` support for TimeSamples array values with ValueRep-based deduplication in the Crate binary format reader.
+`TypedArray<T>` support for TimeSamples array values. Both `std::vector<T>` and
+`TypedArray<T>` overloads write to the same flat binary byte buffer.
+
+## Current Architecture (as of 2026-03-17)
+
+### Storage
+
+All binary-serializable types share a single flat buffer:
+
+```
+_times:        vector<double>    — timestamps
+_blocked:      Buffer<16>        — per-sample blocked flag (1 byte each)
+_data:         vector<uint8_t>   — flat byte buffer for ALL binary values
+_data_offsets: vector<uint32_t>  — per-sample byte offset into _data
+_array_counts: vector<uint32_t>  — per-sample element count (arrays only)
+_element_size: uint32_t          — sizeof(T) for elements
+_type_id:      uint32_t
+_is_array:     bool
+_dirty:        bool
+```
+
+Non-binary types (token, string, path, etc.) use `_samples: vector<Sample>`.
+
+### Auto-initialization
+
+`add_sample<T>()` / `add_array_sample<T>()` auto-detect the backend on first call:
+- `uses_binary_timesample_scalar_storage_v<T>` → flat binary buffer
+- everything else → generic `Value` backend
+
+No `init()` needed. Use `set_type_id(uint32_t)` for metadata-only cases.
+
+### API
+
+```cpp
+// Adding samples
+template<T> bool add_sample(double t, const T& value, string* err)
+template<T> bool add_array_sample(double t, const vector<T>& arr, string* err)
+template<T> bool add_array_sample(double t, const TypedArray<T>& arr, string* err)
+template<T> bool add_blocked_sample(double t, string* err)
+bool add_sample(double t, const Value& v, string* err)   // generic fallback
+
+// Reading samples
+const vector<Sample>& get_samples() const               // lazy reconstruct
+template<T> bool get(T* dst, double t, InterpolationType) const
+template<T> TypedArrayView<const T> get_typed_array_view_at(size_t idx) const
+template<T> bool get_vector_at(size_t idx, vector<T>* out) const
+```
 
 ## Changes Made
 
-### 1. Updated Deduplication Cache (`src/crate-reader.hh`)
+### Phase 1: Eliminated init()/ensure flow (2026-03-17)
 
-Replaced `std::vector<T>` with `TypedArray<T>` for binary-storage array dedup maps:
+- `init()` replaced by `set_type_id()` for metadata-only use
+- `add_sample<T>()` auto-detects backend on first call
+- Removed early `init()` from ASCII parser that caused token[] data-loss bug
+- Collapsed 4 `ensure_*` functions into single `validate_type_or_init()`
 
-```cpp
-// Before:
-std::unordered_map<crate::ValueRep, std::vector<int32_t>, crate::ValueRep::Hash> _dedup_int32_array;
+### Phase 2: Unified binary storage to flat byte buffer (2026-03-17)
 
-// After:
-std::unordered_map<crate::ValueRep, TypedArray<int32_t>, crate::ValueRep::Hash> _dedup_int32_array;
-```
+Replaced 4 old binary storage mechanisms:
+- `_small_values` (uint64 array for sizeof(T) ≤ 8)
+- `_values` (Buffer for sizeof(T) > 8)
+- `_offsets` (uint64 with dedup/array/buffer flags)
+- `_array_values` (vector of unique_ptr<Buffer>)
 
-**Affected Types:**
-- Integer arrays: `int32_t[]`, `uint32_t[]`, `int64_t[]`, `uint64_t[]`
-- Floating point arrays: `half[]`, `float[]`, `double[]`
+With 2 new fields:
+- `_data` (flat uint8 byte buffer)
+- `_data_offsets` (uint32 per-sample byte offset)
 
-**Unchanged (still using std::vector):**
-- Composite types: `half2[]`, `float2[]`, `double2[]`, `quat*[]`, `matrix*[]`
-- These use `ReadArray<T>()` which returns `std::vector<T>`
+Deleted: `StorageDescriptor`, `ScalarStorageDescriptor`, `ArrayStorageDescriptor`,
+`UnifiedStorageBackend` enum, `ArrayLayoutKind` enum, offset flag constants.
 
-### 2. Added TypedArray Overloads (`src/timesamples.hh`)
+### Phase 3: Removed in-TimeSamples dedup (2026-03-17)
 
-Added new template overloads to accept `TypedArray<T>`:
+- Removed `arrays_equal()` and O(n^2) dedup lambda from ASCII parser
+- Removed `get_timesamples_dedup_map()` global tracker from crate reader
+- Crate reader already deduplicates at ValueRep level
 
-```cpp
-bool add_array_sample(double t, const TypedArray<T>& value,
-                                  std::string *err = nullptr,
-                                  size_t expected_total_samples = 0);
-```
+### Phase 4: Cleaned up public API (2026-03-17)
 
-### 3. Updated Helper Functions (`src/crate-reader-timesamples.cc`)
+Removed: `get_values()`, `get_offsets()`, `get_small_values()`, `get_array_size()`,
+`is_stl_array()`, `is_typed_array()`, `add_value_array_sample()`, `resolve_offset_static()`.
 
-Added TypedArray overloads for array sample helpers:
-
-```cpp
-template <typename T>
-typename std::enable_if<value::uses_binary_timesample_array_storage_v<T>, bool>::type
-add_array_sample_to_timesamples(value::TimeSamples *d, double time,
-                                const TypedArray<T> &arrval, std::string *err,
-                                size_t expected_total_samples = 0);
-```
-
-### 4. Updated UnpackTimeSampleValue Functions
-
-Modified array unpacking to use TypedArray:
-
-| Function | Type | Read Method | Dedup Storage |
-|----------|------|-------------|---------------|
-| `UnpackTimeSampleValue_INT32` | `int32_t[]` | `ReadIntArrayTyped` | `TypedArray<int32_t>` |
-| `UnpackTimeSampleValue_UINT32` | `uint32_t[]` | `ReadIntArrayTyped` | `TypedArray<uint32_t>` |
-| `UnpackTimeSampleValue_INT64` | `int64_t[]` | `ReadIntArrayTyped` | `TypedArray<int64_t>` |
-| `UnpackTimeSampleValue_UINT64` | `uint64_t[]` | `ReadIntArrayTyped` | `TypedArray<uint64_t>` |
-| `UnpackTimeSampleValue_HALF` | `half[]` | `ReadHalfArray` → convert | `TypedArray<half>` |
-| `UnpackTimeSampleValue_FLOAT` | `float[]` | `ReadFloatArrayTyped` | `TypedArray<float>` |
-| `UnpackTimeSampleValue_DOUBLE` | `double[]` | `ReadDoubleArrayTyped` | `TypedArray<double>` |
-
-## Benefits
-
-### 1. Memory Efficiency
-- **Deduplication**: When the same `ValueRep` appears multiple times in TimeSamples, the decoded array is cached and reused
-- **Reduced allocations**: Shared arrays avoid duplicate memory allocations
-- **Compact storage**: TypedArray uses packed pointer representation
-
-### 2. Performance
-- **Faster parsing**: Cached arrays avoid redundant file I/O operations
-- **No decompression overhead**: Repeated compressed arrays are decompressed once
-- **Cache-friendly**: TimeSamples binary storage is contiguous in memory
-
-### 3. Code Quality
-- **Backward compatible**: All existing `std::vector<T>` overloads continue to work
-- **Type safe**: Template specialization ensures binary-storage element types only
-- **Future ready**: TypedArray supports mmap views for zero-copy access
-
-## Test Coverage
-
-Created comprehensive feature test in `tests/feat/typed-array-timesamples/`:
-
-```bash
-cd tests/feat/typed-array-timesamples
-make test
-```
-
-**Test Cases:**
-1. TypedArray deduplication for binary-storage array types
-2. std::vector backward compatibility
-3. Scalar value storage
-4. Multiple type support (int, uint, int64, uint64, float, double)
-
-**Results:** ✅ All 12 tests passed
-
-## Example Usage
-
-```cpp
-// In Crate reader, when same ValueRep appears multiple times:
-TypedArray<int32_t> v;
-
-// First occurrence - read from file
-if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
-    return false;
-}
-_dedup_int32_array[rep] = v;  // Cache it
-
-// Second occurrence - reuse cached value
-auto it = _dedup_int32_array.find(rep);
-if (it != _dedup_int32_array.end()) {
-    v = it->second;  // No file I/O!
-}
-
-// Add to TimeSamples (uses binary storage)
-add_array_sample_to_timesamples<int32_t>(&dst, time, v, &err);
-```
-
-## Implementation Notes
-
-### Generic Value Fallback
-
-When binary storage is not selected, TypedArray is converted to std::vector:
-
-```cpp
-if (d->is_using_binary_storage()) {
-    return d->add_array_sample<T>(time, arrval, err, expected_total_samples);
-} else {
-    // Convert TypedArray to std::vector for generic Value path
-    std::vector<T> vec(arrval.data(), arrval.data() + arrval.size());
-    return d->add_sample(time, value::Value(vec), err);
-}
-```
-
-### TypedArray Construction
-
-TypedArray requires a TypedArrayImpl pointer:
-
-```cpp
-// Convert std::vector to TypedArray
-std::vector<T> temp_v;
-ReadSomeArray(&temp_v);
-
-TypedArray<T> arr(new TypedArrayImpl<T>(temp_v.data(), temp_v.size()));
-```
+Added: `get_data()`, `get_data_offsets()`, `element_size()`, `BLOCKED_OFFSET`.
 
 ## Files Modified
 
-1. `src/crate-reader.hh` - Dedup cache type changes (lines 544-594)
-2. `src/timesamples.hh` - TypedArray overloads (lines 1153-1215)
-3. `src/crate-reader-timesamples.cc` - Array unpacking updates
-   - Helper functions (lines 549-640)
-   - INT32 (line 793)
-   - UINT32 (line 2614)
-   - INT64 (line 2699)
-   - UINT64 (line 2784)
-   - HALF (line 886)
-   - FLOAT (line 1288)
-   - DOUBLE (line 2873)
+1. `src/timesamples.hh` - Storage redesign, API cleanup
+2. `src/timesamples.cc` - Sorting, reconstruction, copy/move, clear
+3. `src/ascii-parser-timesamples-array.cc` - Removed early init and dedup
+4. `src/ascii-parser-timesamples.cc` - init() → set_type_id()
+5. `src/crate-reader-timesamples.cc` - Removed dedup map, init() → set_type_id()
+6. `src/usdc-reader.cc` - init() → set_type_id()
+7. `src/timesamples-pprint.cc` - Updated for new storage API
+8. `src/usd-dump.cc` - Updated for new storage API
+9. `tests/unit/unit-timesamples.cc` - Updated for removed methods
 
 ## Build Verification
 
 ```bash
-# Main build
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target test_tinyusdz -j8
-
-# Feature test
-cd tests/feat/typed-array-timesamples
-make test
+cd build && make -j16        # zero warnings with -Werror
+ctest --output-on-failure    # all 5 tests pass
+bash tests/run-usdcat-compare.sh  # 0 USDA failures, 41 pre-existing USDC failures
+./build/tusdcat tests/usda/timesamples-array-token-001.usda  # token[] preserved
 ```
 
-Both builds successful ✅
+Net result: −1544 lines across 9 files.
 
-## Future Enhancements
+## Remaining Feature TODOs
 
-Potential improvements:
-
-1. **Composite type support**: Extend TypedArray to half2, float2, double2, etc.
-2. **Mmap integration**: Use TypedArray views for memory-mapped crate data
-3. **Hash-based dedup**: Use array content hash instead of ValueRep for better dedup
-4. **Streaming support**: Lazy loading of large arrays via TypedArray views
+1. **Deferred TimeSamples loading** — OpenUSD reads sample values lazily
+2. **SharedTimes** — OpenUSD shares times arrays across TimeSamples in crate files
+3. **Type validation for times array** — Validate that times ValueRep is `double[]`
 
 ## References
 
 - TypedArray implementation: `src/typed-array.hh`
-- TimeSamples binary storage: `src/timesamples.hh`
+- TimeSamples storage: `src/timesamples.hh`
 - Crate format reader: `src/crate-reader-timesamples.cc`
-- ValueRep deduplication: Recent commit `8afae37e`
+- Refactoring history: `doc/refactor-opportunities.md`
