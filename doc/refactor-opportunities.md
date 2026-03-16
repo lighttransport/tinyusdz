@@ -60,67 +60,81 @@ Severity: Medium → **Resolved** (commit c017d4b2)
 
 ## Refactoring Completed
 
-### TimeSamples — header slimming and compile time
+### TimeSamples — storage simplification (2026-03-17)
 
-- Moved 10 non-template methods from `timesamples.hh` to `timesamples.cc`
-  (`reconstruct_binary_sample`, `reconstruct_unified_sample`,
-  `reconstruct_value_array_sample`, `get_samples`, `samples`, `add_sample(Sample)`,
-  `add_sample(Value)`, `add_blocked_sample(Value)`, `add_value_array_sample`,
-  `add_dedup_sample`, `estimate_memory_usage`)
-- Header: 2853 → 2364 lines (−489, 17% reduction)
+Replaced 5 storage backends with 2:
+
+**Before (5 backends):**
+- `SmallScalar` — `_small_values: vector<uint64_t>` for sizeof(T) ≤ 8
+- `OffsetScalar` — `_values: Buffer<16>` + `_offsets: vector<uint64_t>` for sizeof(T) > 8
+- `ArrayOffset` — `_array_values: vector<unique_ptr<Buffer<16>>>` + `_offsets` with flag encoding
+- `ValueArray` — `_value_array_storage: vector<Value>` + `_value_array_refs`
+- Generic — `_samples: vector<Sample>`
+
+**After (2 backends):**
+- Binary — `_data: vector<uint8_t>` (flat byte buffer) + `_data_offsets: vector<uint32_t>`
+- Generic — `_samples: vector<Sample>`
+
+**Deleted types:** `StorageDescriptor`, `ScalarStorageDescriptor`, `ArrayStorageDescriptor`,
+`UnifiedStorageBackend` enum, `ArrayLayoutKind` enum, offset flag constants
+(`OFFSET_DEDUP_FLAG`, `OFFSET_ARRAY_FLAG`, `OFFSET_ARRAY_BUFFER_FLAG`, etc.),
+`resolve_offset_static()`.
+
+**API changes:**
+- `init()` → `set_type_id()` (metadata-only; `add_sample<T>()` auto-detects on first call)
+- Removed: `get_values()`, `get_offsets()`, `get_small_values()`, `add_value_array_sample()`,
+  `is_stl_array()`, `is_typed_array()`, `get_array_size()`
+- Added: `get_data()`, `get_data_offsets()`, `element_size()`, `BLOCKED_OFFSET`
+
+**Bug fixed:** `token[]` timeSamples data loss caused by early `init()` call in ASCII parser.
+Non-binary types (token, string, path) have dedicated VECTOR type_ids that don't use the
+`TYPE_ID_1D_ARRAY_BIT` pattern, so early init with the wrong type_id caused `add_sample()`
+to reject values silently.
+
+**Dedup removed:** In-TimeSamples deduplication was removed entirely:
+- ASCII parser: removed `arrays_equal()` (~100 lines) and O(n^2) dedup lambda (~120 lines)
+- Crate reader: removed `get_timesamples_dedup_map()` global tracker, `TimeSamplesDedupKeyHash`
+- Crate reader already deduplicates at ValueRep level; memory impact of storing full data is
+  negligible for typical files
+
+**Net result:** −1544 lines across 9 files. 0 USDA roundtrip failures, 41 pre-existing USDC
+failures (unchanged from baseline).
+
+### TimeSamples — header slimming and compile time (prior)
+
+- Moved non-template methods from `timesamples.hh` to `timesamples.cc`
 - Removed unused `logger.hh` include from header
 
-### TimeSamples — runtime efficiency
+### TimeSamples — runtime efficiency (prior)
 
 - Adaptive insertion sort for `TypedTimeSamples::update()` (O(n) for nearly-sorted)
 - `TimeSamples::reserve(n)` pre-allocates vectors; crate reader calls before unpack
-- Avoid unnecessary sort index allocation in `TimeSamples::update()`
+- Sorting simplified from 5 strategies to 1 (index-based permutation)
 
-### TimeSamples — memory
+### Crate reader — unpack function consolidation (prior)
 
-- Member reordering: `sizeof(TimeSamples)` 320 → 312 bytes
-- Removed dead `_samples` forwarding methods
-
-### Crate reader — unpack function consolidation
-
-- 15 of 26 `UnpackTimeSampleValue_*` functions consolidated via 3 macros:
-  - `DEFINE_UNPACK_VECTOR_TIMESAMPLES` (HALF2/3/4, FLOAT3/4, DOUBLE2/3/4)
-  - `DEFINE_UNPACK_NOINLINE_TIMESAMPLES` (QUATH, QUATD)
-  - `DEFINE_UNPACK_MATRIX_TIMESAMPLES` (MATRIX2D/3D/4D)
+- 15 of 26 `UnpackTimeSampleValue_*` functions consolidated via 3 macros
 - Function pointer dispatch consolidated via `UNPACK_CASE` macro
-- Init type dispatch consolidated via `HANDLE_INIT_TYPE_CASE` macro
-- Removed 6 dead `#if 0` blocks (344 lines)
-- Crate reader: 3226 → 1976 lines (−1250, 39% reduction)
+- Init type dispatch consolidated via `HANDLE_INIT_TYPE_CASE` macro (now using `set_type_id()`)
+- Removed dead `#if 0` blocks
 - Fixed blocked sample type mismatches (HALF, HALF2/3/4, FLOAT2, QUATF)
-- Removed stale TODO for generic vector binary-storage path
 
-### Crate reader — blocked sample type correctness
-
-- 6 unpack functions were using `<float>` for blocked samples instead of their actual
-  type (e.g. `<value::half2>`). Fixed to use correct types so that
-  `ensure_initialized_type` doesn't reject blocked samples after initialization.
-
-### ASCII parser — dedup and type dispatch
+### ASCII parser — type dispatch (prior)
 
 - Extracted shared 67-type PARSE_TYPE list to `ascii-parser-timesamples-type-list.inc`
-- Consolidated dedup switch with `DEDUP_CASE` macro
-- Enabled array dedup for all types (half, quat, color, point, normal, vector, texcoord)
+- Array dedup code removed (was O(n^2) comparison, rarely triggered)
 
-### Value types — operator==
+### Value types — operator== (prior)
 
 - Added `operator==`/`!=` to 30+ value types using `memcmp` (bitwise identity)
-  for dedup support: `half`, `quath/f/d`, `vector3h/f/d`, `normal3h/f/d`,
-  `point3h/f/d`, `color3h/f/d`, `color4h/f/d`, `texcoord2h/f/d`, `texcoord3h/f/d`
 
-### Pretty printing
+### Pretty printing (prior)
 
-- Removed 642 lines of dead `#if 0` legacy print functions
-- Removed dead `print_typed_array`/`try_print_typed_array` (130 lines)
+- Removed dead legacy print functions
 - Consolidated type size dispatch with `SIZE_CASE` macro
-- Deleted stale `timesamples-pprint.cc.bak`
-- pprint: 1639 → 786 lines (−853, 48% reduction)
+- Updated to use `get_data()` / `get_data_offsets()` for binary storage diagnostics
 
-### Test coverage
+### Test coverage (prior)
 
 - Added blocked sample tests for `TypedTimeSamples` (non-interp and interp types)
 - Tests cover: default time, held at blocked time, linear with blocked endpoint,
