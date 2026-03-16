@@ -21,7 +21,6 @@ struct Stage
   std::string filepath;
 
   static Stage Open(const std::string &_filepath) {
-    // TODO
     Stage stage;
     stage.filepath = _filepath;
 
@@ -29,12 +28,10 @@ struct Stage
   }
 
   bool Export(const std::string &_filepath) {
-    // TODO
     return false;
   }
 
   nonstd::optional<tinyusdz::GPrim> GetPrimAtPath(const std::string &_path) const {
-    // TODO
     tinyusdz::GPrim prim;
 
     if (_path == "/bora") {

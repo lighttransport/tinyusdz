@@ -122,7 +122,6 @@ bool ConvertTokenAttributeToStringAttribute(
           }
 #endif
         } else if (toks.is_blocked()) {
-          // TODO
           return false;
         }
       }

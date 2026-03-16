@@ -12,7 +12,6 @@
 #include "str-util.hh"
 #include "value-types.hh"
 
-// TODO:
 // - [ ] Implement our own `strlen`
 
 CTinyUSDValueType c_tinyusd_value_type(const CTinyUSDValue *value) {
@@ -75,7 +74,6 @@ CTinyUSDValueType c_tinyusd_value_type(const CTinyUSDValue *value) {
       basety = C_TINYUSD_VALUE_DICTIONARY;
       break;
     }
-    // TODO
     default: {
       break;
     }

@@ -30,7 +30,6 @@
 
 namespace simple_type_relection {
 
-// TODO:
 // [ ] EnumHandler
 // [ ] Better error report
 // [ ] std::optional type

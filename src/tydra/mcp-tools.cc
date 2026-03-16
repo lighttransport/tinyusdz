@@ -192,7 +192,7 @@ bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args,
 
   USDLayer usd_layer;
   usd_layer.name = name;
-  usd_layer.uri = name;  // FIXME
+  usd_layer.uri = name;
   usd_layer.description = description;
   usd_layer.layer = std::move(layer);
 
