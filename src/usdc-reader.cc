@@ -4,8 +4,6 @@
 //
 // USDC(Crate) reader
 //
-// TODO:
-//
 // - [ ] Validate the existence of connection Paths(Connection) and target
 // Paths(Relation)
 // - [ ] GeomSubset

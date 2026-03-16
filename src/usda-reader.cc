@@ -3,7 +3,6 @@
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
 // USDA reader
-// TODO:
 //   - [ ] Refactor and unify Prim and PrimSpec related code.
 
 #include <algorithm>

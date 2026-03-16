@@ -662,7 +662,6 @@ static void RegisterAPISchemas(std::unordered_set<std::string> &d) {
   d.insert("MaterialBindingAPI");
   d.insert("SkelBindingAPI");
 
-  // TODO:
   // d.insert("PhysicsCollisionAPI");
   // d.insert("PhysicsRigidBodyAPI");
 

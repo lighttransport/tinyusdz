@@ -232,7 +232,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
     Attribute normalsAttr;
     normalsAttr.metas().set_interpolation_enum(Interpolation::FaceVarying);
-    normalsAttr.variability() = Variability::Varying; // FIXME
+    normalsAttr.variability() = Variability::Varying;
     normalsAttr.set_var(std::move(var));
     Property prop(normalsAttr, false);
 

@@ -16,7 +16,6 @@ namespace tinyusdz {
 class MMapArrayTable;
 class MMapDataSource;
 
-// TODO: Use LayerMetas?
 using StageMetas = LayerMetas;
 
 class PrimRange;

@@ -5,8 +5,6 @@
 // To deal with too many sections in generated .obj error(happens in MinGW and MSVC)
 // Split ParseTimeSamples to two .cc files.
 //
-// TODO
-// - [x] Rewrite code with less C++ template code.
 
 #include <cstdio>
 #ifdef _MSC_VER

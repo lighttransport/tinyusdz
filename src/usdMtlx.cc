@@ -94,7 +94,6 @@ bool is_supported_type(const std::string &typeName) {
 
   // No matrixarray
 
-  // TODO
   // if (typeName.compare("color") == 0) return true;
   // if (typeName.compare("geomname") == 0) return true;
   // if (typeName.compare("geomnamearray") == 0) return true;
@@ -1991,13 +1990,6 @@ bool ReadMaterialXFromString(const std::string &str,
 
   // Attributes for a <materialx> element:
   //
-  // - [x] version(string, required)
-  //   - [x] validate version string
-  // - [x] cms(string, optional)
-  // - [x] cmsconfig(filename, optional)
-  // - [x] colorspace(string, optional)
-  // - [x] namespace(string, optional)
-
   tinyusdz::mtlx::pugi::xml_attribute ver_attr = root.attribute("version");
   if (!ver_attr) {
     PUSH_ERROR_AND_RETURN("version attribute not found in <materialx>:" +
@@ -2673,7 +2665,6 @@ bool ReadMaterialXFromString(const std::string &str,
   // look.
   for (auto look : root.children("look")) {
     PUSH_WARN("TODO: `look`");
-    // TODO
     (void)look;
   }
 

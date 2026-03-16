@@ -4,7 +4,6 @@
 // Image utilities.
 // Currently sRGB color space conversion feature is provided.
 //
-// TODO
 // - [ ] Image resize using stb_image_resize2
 // - [ ] OIIO 3D LUT support through tinycolorio
 //

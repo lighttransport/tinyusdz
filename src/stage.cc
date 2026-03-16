@@ -169,7 +169,6 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
 
   if (path.is_relative_path()) {
     DCOUT("Relative path is todo.");
-    // TODO:
     return nonstd::make_unexpected("Relative path is TODO.\n");
   }
 
@@ -393,7 +392,7 @@ namespace {
 }  // namespace
 
 std::string Stage::ExportToString(bool relative_path, bool parallel) const {
-  (void)relative_path; // TODO
+  (void)relative_path;
 #if !defined(TINYUSDZ_ENABLE_THREAD)
   (void)parallel; // Threading disabled
 #endif
