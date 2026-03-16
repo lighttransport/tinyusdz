@@ -380,3 +380,11 @@ web/js/assets/
 
 # fuzzer
 tests/fuzzer/corpus/
+
+# CTest artifacts (created when ctest runs from source dir)
+Testing/
+
+# Compiled test binaries under tests/feat/
+tests/feat/*/test_*
+!tests/feat/*/test_*.cc
+!tests/feat/*/test_*.cpp
