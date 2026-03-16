@@ -561,27 +561,23 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
         return;
     }
 
-    // Check if using unified storage (_times non-empty AND has actual data in buffers)
+    // Check if using binary storage (_times non-empty with _data/_data_offsets)
     // vs Sample-based storage (_samples vector)
-    // Note: Some operations like add_value_array_sample() populate _times but store data
-    // in _samples, so we need to check if unified storage buffers actually have data
-    bool has_unified_data = !samples.get_times().empty() &&
-                           (!samples.get_values().empty() ||
-                            !samples.get_small_values().empty() ||
-                            !samples.get_offsets().empty());
+    bool has_binary_data = samples.is_using_binary_storage() &&
+                           (!samples.get_data().empty() ||
+                            !samples.get_data_offsets().empty());
 
-    if (has_unified_data) {
+    if (has_binary_data) {
 
-        // Phase 3: Access unified storage directly from TimeSamples
-        // Note: TypedArray is no longer supported in Phase 3, so we skip that path
+        // Binary storage path: use _data buffer with _data_offsets
 
         // Get type information
         uint32_t type_id = samples.type_id();
-        size_t element_size = get_binary_serializable_type_size(type_id);
+        uint32_t elem_size = samples.element_size();
 
-        if (element_size == 0) {
+        if (elem_size == 0) {
             writer.write(pprint::Indent(indent + 1));
-            writer.write("/* Unknown type_id: ");
+            writer.write("/* Unknown element_size for type_id: ");
             writer.write(type_id);
             writer.write(" */\n");
             writer.write(pprint::Indent(indent));
@@ -589,146 +585,43 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
             return;
         }
 
-        // Get array size from TimeSamples directly (works for both binary storage and unified storage)
-        size_t array_size = samples.get_array_size();
-
-        // Get arrays from unified storage
+        // Get arrays from binary storage
         const auto& times = samples.get_times();
         const auto& blocked = samples.get_blocked();
-        const auto& values = samples.get_values();
-        const auto& offsets = samples.get_offsets();
-        const auto& small_values = samples.get_small_values();
-        const auto& array_counts = samples.get_array_counts();
+        const auto& data = samples.get_data();
+        const auto& data_offsets = samples.get_data_offsets();
+        bool is_array_type = samples.is_array();
 
-        // Write samples - handle offset table if present
-        if (!offsets.empty()) {
+        for (size_t i = 0; i < times.size(); ++i) {
+            writer.write(pprint::Indent(indent + 1));
+            writer.write(times[i]);
+            writer.write(": ");
 
-            // Phase 3: TypedArray path removed (not supported in unified storage)
-            // Use regular printing for all binary-serializable types
-            for (size_t i = 0; i < times.size(); ++i) {
-                writer.write(pprint::Indent(indent + 1));
-                writer.write(times[i]);
-                writer.write(": ");
+            // Check blocked: either via blocked buffer or BLOCKED_OFFSET sentinel
+            bool is_blocked = (i < blocked.size()) ? blocked[i] : false;
+            bool offset_is_blocked = (i < data_offsets.size()) &&
+                                     (data_offsets[i] == value::TimeSamples::BLOCKED_OFFSET);
+            if (is_blocked || offset_is_blocked) {
+                writer.write("None");
+            } else if (i < data_offsets.size()) {
+                uint32_t byte_offset = data_offsets[i];
+                const uint8_t* value_ptr = data.data() + byte_offset;
 
-                // Check blocked array bounds before accessing
-                bool is_blocked = (i < blocked.size()) ? blocked[i] : false;
-                // Check offsets bounds as well - treat out-of-bounds as None
-                bool offset_is_none = (i >= offsets.size()) || (offsets[i] == SIZE_MAX);
-                if (is_blocked || offset_is_none) {
-                    writer.write("None");
+                if (is_array_type) {
+                    size_t per_sample_count = samples.get_array_count(i);
+                    pprint_binary_serializable_array_by_type(writer, value_ptr, type_id, per_sample_count);
                 } else {
-                    // Resolve offset (may be encoded with dedup/array flags) and get resolved index
-                    size_t byte_offset;
-                    size_t resolved_idx = i;
-                    if (!value::TimeSamples::resolve_offset_static(offsets, i, &byte_offset, nullptr, nullptr, 100, &resolved_idx)) {
-                        writer.write("/* ERROR: failed to resolve offset */");
-                    } else {
-                        // Get pointer to value data using resolved byte offset
-                        const uint8_t* value_ptr = values.data() + byte_offset;
-
-                        // Check if this sample is an array (check array flag in offset)
-                        bool is_array = samples.is_stl_array() || (offsets[i] & value::TimeSamples::OFFSET_ARRAY_FLAG);
-
-                        if (is_array) {
-                            // Get per-sample array count (with fallback to global array_size)
-                            size_t per_sample_count = (resolved_idx < array_counts.size()) ? array_counts[resolved_idx] : array_size;
-                            // Print all elements in the array
-                            pprint_binary_serializable_array_by_type(writer, value_ptr, type_id, per_sample_count);
-                        } else {
-                            // Print single value
-                            pprint_binary_serializable_value_by_type(writer, value_ptr, type_id);
-                        }
-                    }
-                }
-
-                if (i < times.size() - 1) {
-                    writer.write(",");
-                }
-                writer.write("\n");
-            }
-        } else {
-            // No offset table - using direct storage (either _values or _small_values)
-            // Check if using small_values (for types sizeof <= 8) or values buffer (for types sizeof > 8)
-            bool using_small_values = !small_values.empty();
-
-            // Handle case where both storage types are empty but times is not (error case)
-            if (values.empty() && small_values.empty() && !times.empty()) {
-                for (size_t i = 0; i < times.size(); ++i) {
-                    writer.write(pprint::Indent(indent + 1));
-                    writer.write(times[i]);
-                    writer.write(": /* empty value data */");
-                    if (i < times.size() - 1) {
-                        writer.write(",");
-                    }
-                    writer.write("\n");
-                }
-            } else if (using_small_values) {
-                // Print small values (stored as uint64_t, one entry per sample)
-                for (size_t i = 0; i < times.size(); ++i) {
-                    writer.write(pprint::Indent(indent + 1));
-                    writer.write(times[i]);
-                    writer.write(": ");
-
-                    // Check blocked array bounds before accessing
-                    bool is_blocked = (i < blocked.size()) ? blocked[i] : false;
-                    if (is_blocked) {
-                        writer.write("None");
-                    } else {
-                        // Get value from small_values and print it
-                        if (i < small_values.size()) {
-                            uint64_t stored_value = small_values[i];
-                            // Cast to typed pointer and print
-                            const uint8_t* value_ptr = reinterpret_cast<const uint8_t*>(&stored_value);
-                            pprint_binary_serializable_value_by_type(writer, value_ptr, type_id);
-                        } else {
-                            writer.write("/* ERROR: small_values index out of bounds */");
-                        }
-                    }
-
-                    if (i < times.size() - 1) {
-                        writer.write(",");
-                    }
-                    writer.write("\n");
+                    pprint_binary_serializable_value_by_type(writer, value_ptr, type_id);
                 }
             } else {
-            // Use values buffer (large types)
-            size_t value_offset = 0;
-            for (size_t i = 0; i < times.size(); ++i) {
-                //TUSDZ_LOG_I("times[" << i << "] = " << times[i]);
-                writer.write(pprint::Indent(indent + 1));
-                writer.write(times[i]);
-                writer.write(": ");
-
-                // Check blocked array bounds before accessing
-                bool is_blocked = (i < blocked.size()) ? blocked[i] : false;
-                if (is_blocked) {
-                    writer.write("None");
-                } else {
-                    // Get pointer to value data
-                    const uint8_t* value_ptr = values.data() + value_offset;
-
-                    // Check if this is an array type
-                    bool is_array = samples.is_stl_array();
-
-                    if (is_array) {
-                        // Get per-sample array count (with fallback to global array_size)
-                        size_t per_sample_count = (i < array_counts.size()) ? array_counts[i] : array_size;
-                        // Print all elements in the array
-                        pprint_binary_serializable_array_by_type(writer, value_ptr, type_id, per_sample_count);
-                    } else {
-                        // Print single value
-                        pprint_binary_serializable_value_by_type(writer, value_ptr, type_id);
-                    }
-                    value_offset += element_size;
-                }
-
-                if (i < times.size() - 1) {
-                    writer.write(",");
-                }
-                writer.write("\n");
+                writer.write("/* ERROR: data_offsets index out of bounds */");
             }
-            } // end else for using_small_values check
-        } // end else for offsets.empty() check
+
+            if (i < times.size() - 1) {
+                writer.write(",");
+            }
+            writer.write("\n");
+        }
     } else {
         // Non-binary-storage path: use regular samples
         const auto& samples_vec = samples.get_samples();
