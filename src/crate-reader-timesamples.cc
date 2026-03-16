@@ -285,98 +285,21 @@ bool add_sample_to_timesamples(value::TimeSamples *d, double time, const T &val,
   return d->add_sample<T>(time, val, err, expected_total_samples);
 }
 
-// Per-TimeSamples deduplication map for array offsets
-// Maps (TimeSamples pointer, ValueRep payload) → first_sample_index
-// Use ValueRep payload (uint64_t) as key since it uniquely identifies the array data in USDC
-// When the same ValueRep payload appears multiple times in the same TimeSamples,
-// the first occurrence is stored as original and subsequent ones are deduplicated
-// Using function-static to avoid global constructor issues
-// Suppress exit-time-destructor warning as this is the correct way to handle it
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wexit-time-destructors"
-#endif
-struct TimeSamplesDedupKeyHash {
-  size_t operator()(const std::pair<void *, uint64_t> &key) const noexcept {
-    size_t h1 = std::hash<void *>{}(key.first);
-    size_t h2 = std::hash<uint64_t>{}(key.second);
-    return h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
-  }
-};
-
-static std::unordered_map<std::pair<void *, uint64_t>, size_t,
-                          TimeSamplesDedupKeyHash> &
-get_timesamples_dedup_map() {
-  static std::unordered_map<std::pair<void *, uint64_t>, size_t,
-                            TimeSamplesDedupKeyHash>
-      map;
-  return map;
-}
-
-/// Clear all dedup entries for a specific TimeSamples pointer
-/// Called when a TimeSamples finishes loading to prevent stale entries after object reallocation
-void clear_timesamples_dedup_entries(void* timesamples_ptr) {
-  auto& dedup_map = get_timesamples_dedup_map();
-
-  // Find and erase all entries with this TimeSamples pointer
-  auto it = dedup_map.begin();
-  while (it != dedup_map.end()) {
-    if (it->first.first == timesamples_ptr) {
-      it = dedup_map.erase(it);
-    } else {
-      ++it;
-    }
-  }
-}
-
-/// Clear all dedup entries (called at start of each file load)
-void clear_all_timesamples_dedup_entries() {
-  auto& dedup_map = get_timesamples_dedup_map();
-  dedup_map.clear();
-}
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
+// Dedup removed — crate reader stores full data; memory impact is negligible.
+// These stubs are kept for backward compatibility with any external callers.
+void clear_timesamples_dedup_entries(void* /*timesamples_ptr*/) {}
+void clear_all_timesamples_dedup_entries() {}
 
 template <typename T>
 bool
 add_array_sample_to_timesamples(value::TimeSamples *d, double time,
                                 const std::vector<T> &arrval, std::string *err,
                                 size_t expected_total_samples = 0,
-                                const crate::ValueRep *vrep = nullptr) {
+                                const crate::ValueRep * /*vrep*/ = nullptr) {
+  (void)expected_total_samples;
   if constexpr (std::is_same<T, bool>::value) {
-    if (vrep) {
-      auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
-      auto& dedup_map = get_timesamples_dedup_map();
-      auto it = dedup_map.find(key);
-      if (it != dedup_map.end()) {
-        return d->add_dedup_sample(time, it->second, err);
-      }
-
-      dedup_map[key] = d->size();
-    }
-
     return d->add_sample(time, value::Value(arrval), err);
   } else if constexpr (value::uses_binary_timesample_array_storage_v<T>) {
-    if (d->is_using_binary_storage()) {
-    // Check if this array valueRep has been seen before in this TimeSamples
-      if (vrep) {
-        auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
-        auto& dedup_map = get_timesamples_dedup_map();
-        auto it = dedup_map.find(key);
-        if (it != dedup_map.end()) {
-          size_t ref_index = it->second;
-          DCOUT("Array dedup: reusing sample index " << ref_index);
-          return d->add_dedup_array_sample<T>(time, ref_index, err);
-        }
-
-        size_t current_index = d->size();
-        dedup_map[key] = current_index;
-        DCOUT("Array dedup: storing new sample at index " << current_index);
-      }
-    }
-
     return d->add_array_sample<T>(time, arrval, err, expected_total_samples);
   } else {
     return d->add_sample(time, value::Value(arrval), err);
@@ -388,35 +311,11 @@ bool
 add_array_sample_to_timesamples(value::TimeSamples *d, double time,
                                 const TypedArray<T> &arrval, std::string *err,
                                 size_t expected_total_samples = 0,
-                                const crate::ValueRep *vrep = nullptr) {
-  // Store actual array data inline in TimeSamples, not packed pointers.
-  // The packed-pointer approach (add_typed_array_sample) has lifetime issues:
-  // The TypedArrayImpl object may be destroyed before TimeSamples is printed,
-  // leaving dangling pointers. Storing the data inline ensures it outlives TimeSamples.
+                                const crate::ValueRep * /*vrep*/ = nullptr) {
+  (void)expected_total_samples;
   if constexpr (value::uses_binary_timesample_array_storage_v<T>) {
-    if (d->is_using_binary_storage()) {
-      // Check if this array valueRep has been seen before in this TimeSamples.
-      if (vrep) {
-        auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
-        auto& dedup_map = get_timesamples_dedup_map();
-        auto it = dedup_map.find(key);
-        if (it != dedup_map.end()) {
-          size_t ref_index = it->second;
-          DCOUT("Array dedup: reusing sample index " << ref_index);
-          return d->add_dedup_array_sample<T>(time, ref_index, err);
-        } else {
-          size_t current_index = d->size();
-          dedup_map[key] = current_index;
-          DCOUT("Array dedup: storing new sample at index " << current_index);
-          return d->add_array_sample<T>(time, arrval, err,
-                                        expected_total_samples);
-        }
-      }
-    }
-
     return d->add_array_sample<T>(time, arrval, err, expected_total_samples);
   } else {
-    // Convert TypedArray to std::vector for generic Value storage.
     std::vector<T> vec(arrval.data(), arrval.data() + arrval.size());
     return d->add_sample(time, value::Value(vec), err);
   }
@@ -1781,37 +1680,40 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
 #define HANDLE_INIT_TYPE_CASE(ctype, is_array, VTYPE)                         \
   case crate::CrateDataTypeId::ctype: {                                       \
     if (is_array) {                                                           \
-      if (!d->init(value::TypeTraits<std::vector<VTYPE>>::type_id())) {       \
+      uint32_t tid = value::TypeTraits<std::vector<VTYPE>>::type_id();        \
+      if (d->type_id() != 0 && d->type_id() != tid) {                        \
         PUSH_ERROR_AND_RETURN(fmt::format(                                    \
             "TimeSamples already initialized with different type. type_id = " \
             "{}[]({}[]) timeSamples.type_id = {}, crate_type = {}[]",         \
-            value::TypeTraits<std::vector<VTYPE>>::type_id(),                 \
-            value::TypeTraits<std::vector<VTYPE>>::type_name(), d->type_id(), \
-            GetCrateDataTypeName(crate_type_id)));                            \
+            tid, value::TypeTraits<std::vector<VTYPE>>::type_name(),          \
+            d->type_id(), GetCrateDataTypeName(crate_type_id)));              \
       }                                                                       \
+      d->set_type_id(tid);                                                    \
     } else {                                                                  \
-      if (!d->init(value::TypeTraits<VTYPE>::type_id())) {                    \
+      uint32_t tid = value::TypeTraits<VTYPE>::type_id();                     \
+      if (d->type_id() != 0 && d->type_id() != tid) {                        \
         PUSH_ERROR_AND_RETURN(fmt::format(                                    \
             "TimeSamples already initialized with different type. type_id = " \
             "{}({}) timeSamples.type_id = {}, crate_type = {}",               \
-            value::TypeTraits<VTYPE>::type_id(),                              \
-            value::TypeTraits<VTYPE>::type_name(), d->type_id(),              \
+            tid, value::TypeTraits<VTYPE>::type_name(), d->type_id(),         \
             GetCrateDataTypeName(crate_type_id)));                            \
       }                                                                       \
+      d->set_type_id(tid);                                                    \
     }                                                                         \
     break;                                                                    \
   }
 
 #define HANDLE_INIT_VECTOR_TYPE_CASE(ctype, VTYPE)                          \
   case crate::CrateDataTypeId::ctype: {                                     \
-    if (!d->init(value::TypeTraits<std::vector<VTYPE>>::type_id())) {       \
+    uint32_t tid = value::TypeTraits<std::vector<VTYPE>>::type_id();        \
+    if (d->type_id() != 0 && d->type_id() != tid) {                        \
       PUSH_ERROR_AND_RETURN(fmt::format(                                    \
           "TimeSamples already initialized with different type. type_id = " \
           "{}({}) timeSamples.type_id = {}, crate_type = {}",               \
-          value::TypeTraits<VTYPE>::type_id(),                              \
-          value::TypeTraits<VTYPE>::type_name(), d->type_id(),              \
+          tid, value::TypeTraits<VTYPE>::type_name(), d->type_id(),         \
           GetCrateDataTypeName(crate_type_id)));                            \
     }                                                                       \
+    d->set_type_id(tid);                                                    \
     break;                                                                  \
   }
 

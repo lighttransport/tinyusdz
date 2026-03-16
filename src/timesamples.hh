@@ -63,86 +63,8 @@ struct TimeSamples {
     bool blocked{false};
   };
 
-  // Offset encoding constants (moved from unified binary storage)
-  static constexpr uint64_t OFFSET_DEDUP_FLAG = 0x8000000000000000ULL;        // Bit 63: dedup flag
-  static constexpr uint64_t OFFSET_ARRAY_FLAG = 0x4000000000000000ULL;        // Bit 62: array data flag
-  static constexpr uint64_t OFFSET_ARRAY_BUFFER_FLAG = 0x2000000000000000ULL; // Bit 61: array data in _array_values buffer
-  static constexpr uint64_t OFFSET_VALUE_MASK = 0x1FFFFFFFFFFFFFFFULL;        // Bits 60-0: index/offset value
-  static constexpr uint64_t OFFSET_FLAGS_MASK = 0xE000000000000000ULL;        // Bits 63-61: flags
-
-  // Offset manipulation helpers
-  static constexpr uint64_t make_offset(size_t byte_offset, bool is_array) {
-    return (is_array ? OFFSET_ARRAY_FLAG : 0ULL) | (byte_offset & OFFSET_VALUE_MASK);
-  }
-
-  static constexpr uint64_t make_array_buffer_offset(size_t array_index) {
-    return OFFSET_ARRAY_FLAG | OFFSET_ARRAY_BUFFER_FLAG | (array_index & OFFSET_VALUE_MASK);
-  }
-
-  static constexpr uint64_t make_dedup_offset(size_t sample_index, bool is_array) {
-    return OFFSET_DEDUP_FLAG | (is_array ? OFFSET_ARRAY_FLAG : 0ULL) | (sample_index & OFFSET_VALUE_MASK);
-  }
-
-  static constexpr bool is_dedup(uint64_t offset_value) {
-    return (offset_value & OFFSET_DEDUP_FLAG) != 0;
-  }
-
-  static constexpr bool is_array_offset(uint64_t offset_value) {
-    return (offset_value & OFFSET_ARRAY_FLAG) != 0;
-  }
-
-  static constexpr bool is_array_buffer_offset(uint64_t offset_value) {
-    return (offset_value & OFFSET_ARRAY_BUFFER_FLAG) != 0;
-  }
-
-  static constexpr size_t get_raw_value(uint64_t offset_value) {
-    return static_cast<size_t>(offset_value & OFFSET_VALUE_MASK);
-  }
-
-  /// Resolve offset value to actual byte offset, following dedup chain if necessary
-  static bool resolve_offset_static(const std::vector<uint64_t>& offsets, size_t sample_idx,
-                                     size_t* out_byte_offset, bool* out_is_array = nullptr,
-                                     bool* out_use_array_buffer = nullptr, size_t max_depth = 100,
-                                     size_t* out_resolved_idx = nullptr) {
-    if (sample_idx >= offsets.size()) {
-      return false;
-    }
-
-    uint64_t offset_value = offsets[sample_idx];
-    size_t current_idx = sample_idx;
-    size_t depth = 0;
-
-    // Follow dedup chain
-    while (is_dedup(offset_value)) {
-      if (++depth > max_depth) {
-        return false; // Dedup chain too deep, likely circular
-      }
-
-      size_t ref_idx = get_raw_value(offset_value);
-      if (ref_idx >= offsets.size() || ref_idx == sample_idx) {
-        return false; // Invalid or self-referencing index
-      }
-
-      current_idx = ref_idx;
-      offset_value = offsets[ref_idx];
-    }
-
-    // Now we have a non-dedup offset
-    if (out_byte_offset) {
-      *out_byte_offset = get_raw_value(offset_value);
-    }
-    if (out_is_array) {
-      *out_is_array = is_array_offset(offset_value);
-    }
-    if (out_use_array_buffer) {
-      *out_use_array_buffer = is_array_buffer_offset(offset_value);
-    }
-    if (out_resolved_idx) {
-      *out_resolved_idx = current_idx;
-    }
-
-    return true;
-  }
+  // Sentinel value for blocked samples in _data_offsets
+  static constexpr uint32_t BLOCKED_OFFSET = UINT32_MAX;
 
   bool empty() const {
     // Check unified storage first, then legacy storage
@@ -176,18 +98,25 @@ struct TimeSamples {
   /// Move assignment operator
   TimeSamples& operator=(TimeSamples&& other) noexcept;
 
-  /// Copy constructor - implements deep copy for _array_values
+  /// Copy constructor
   TimeSamples(const TimeSamples& other);
 
-  /// Copy assignment operator - implements deep copy for _array_values
+  /// Copy assignment operator
   TimeSamples& operator=(const TimeSamples& other);
 
   // Default constructor
   TimeSamples() = default;
 
-  /// type_id = TypeId
-  /// Initialize TimeSamples with a specific type_id.
-  /// This determines whether to use unified binary storage or generic Value storage.
+  /// Set the type_id for metadata-only use (e.g. all-blocked TimeSamples).
+  /// For normal usage, add_sample<T>() auto-detects the type on first call.
+  /// Replaces the old init() method.
+  void set_type_id(uint32_t tid) {
+    if (tid != 0 && _type_id == 0) {
+      _type_id = tid;
+    }
+  }
+
+  /// @deprecated Use set_type_id() instead. Kept for backward compatibility.
   bool init(uint32_t type_id);
 
   /// Cast the TimeSamples' type to a role type if the underlying types are compatible.
@@ -197,288 +126,15 @@ struct TimeSamples {
   bool cast_to_role_type(uint32_t role_type_id);
 
   /// Check if unified binary storage has samples (i.e., _times is not empty)
-  /// Returns true if any samples have been added to unified storage path.
   bool is_using_binary_storage() const { return !_times.empty(); }
 
-  /// Check if storing std::vector-based array data
-  /// @return true if using unified storage with STL arrays, false otherwise
-  bool is_stl_array() const {
-    return _storage.is_stl_array();
-  }
+  /// Check if storing array data
+  bool is_array() const { return _is_array; }
 
-  /// Check if storing TypedArray data
-  /// @return true if using unified storage with TypedArray, false otherwise
-  bool is_typed_array() const {
-    return _storage.is_typed_array();
-  }
+  /// Element size for binary storage (sizeof(T))
+  uint32_t element_size() const { return _element_size; }
 
  private:
-  enum class UnifiedStorageBackend : uint8_t {
-    None,
-    SmallScalar,
-    OffsetScalar,
-    ArrayOffset,
-    ValueArray,
-  };
-
-  enum class ArrayLayoutKind : uint8_t {
-    None,
-    StdVector,
-    TypedArray,
-  };
-
-  static const char* backend_name(UnifiedStorageBackend backend) {
-    switch (backend) {
-      case UnifiedStorageBackend::None:
-        return "none";
-      case UnifiedStorageBackend::SmallScalar:
-        return "small-scalar";
-      case UnifiedStorageBackend::OffsetScalar:
-        return "offset-scalar";
-      case UnifiedStorageBackend::ArrayOffset:
-        return "array-offset";
-      case UnifiedStorageBackend::ValueArray:
-        return "value-array";
-    }
-
-    return "unknown";
-  }
-
-  static const char* array_layout_name(ArrayLayoutKind layout) {
-    switch (layout) {
-      case ArrayLayoutKind::None:
-        return "none";
-      case ArrayLayoutKind::StdVector:
-        return "std::vector";
-      case ArrayLayoutKind::TypedArray:
-        return "TypedArray";
-    }
-
-    return "unknown";
-  }
-
-  struct ScalarStorageDescriptor {
-    UnifiedStorageBackend backend{UnifiedStorageBackend::None};
-    size_t element_size{0};
-
-    bool active() const { return backend != UnifiedStorageBackend::None; }
-
-    bool uses_offsets() const {
-      return backend == UnifiedStorageBackend::OffsetScalar;
-    }
-
-    bool uses_small_scalars() const {
-      return backend == UnifiedStorageBackend::SmallScalar;
-    }
-
-    bool validate_or_init(UnifiedStorageBackend requested_backend,
-                          size_t requested_element_size, std::string* err,
-                          const char* op_name) {
-      if ((requested_backend != UnifiedStorageBackend::SmallScalar) &&
-          (requested_backend != UnifiedStorageBackend::OffsetScalar)) {
-        if (err) {
-          (*err) += std::string(op_name) +
-                    " requested a non-scalar unified storage backend.\n";
-        }
-        return false;
-      }
-
-      if (backend == UnifiedStorageBackend::None) {
-        backend = requested_backend;
-        element_size = requested_element_size;
-        return true;
-      }
-
-      if (backend != requested_backend) {
-        if (err) {
-          (*err) += std::string(op_name) +
-                    " backend mismatch: existing backend is `" +
-                    backend_name(backend) + "`, requested backend is `" +
-                    backend_name(requested_backend) + "`.\n";
-        }
-        return false;
-      }
-
-      if ((requested_element_size != 0) && (element_size != 0) &&
-          (element_size != requested_element_size)) {
-        if (err) {
-          (*err) += std::string(op_name) +
-                    " element size mismatch: existing element size is " +
-                    std::to_string(element_size) +
-                    ", requested element size is " +
-                    std::to_string(requested_element_size) + ".\n";
-        }
-        return false;
-      }
-
-      if ((element_size == 0) && (requested_element_size != 0)) {
-        element_size = requested_element_size;
-      }
-
-      return true;
-    }
-
-    void clear() {
-      backend = UnifiedStorageBackend::None;
-      element_size = 0;
-    }
-  };
-
-  struct ArrayStorageDescriptor {
-    UnifiedStorageBackend backend{UnifiedStorageBackend::None};
-    ArrayLayoutKind layout{ArrayLayoutKind::None};
-    size_t uniform_array_count{0};
-    size_t element_size{0};
-
-    bool active() const { return backend != UnifiedStorageBackend::None; }
-
-    bool uses_value_array() const {
-      return backend == UnifiedStorageBackend::ValueArray;
-    }
-
-    bool uses_offsets() const {
-      return backend == UnifiedStorageBackend::ArrayOffset;
-    }
-
-    bool is_stl_array() const { return layout == ArrayLayoutKind::StdVector; }
-
-    bool is_typed_array() const {
-      return layout == ArrayLayoutKind::TypedArray;
-    }
-
-    bool validate_or_init(UnifiedStorageBackend requested_backend,
-                          ArrayLayoutKind requested_layout,
-                          size_t requested_element_size, std::string* err,
-                          const char* op_name) {
-      if ((requested_backend != UnifiedStorageBackend::ArrayOffset) &&
-          (requested_backend != UnifiedStorageBackend::ValueArray)) {
-        if (err) {
-          (*err) += std::string(op_name) +
-                    " requested a non-array unified storage backend.\n";
-        }
-        return false;
-      }
-
-      if (backend == UnifiedStorageBackend::None) {
-        backend = requested_backend;
-        layout = requested_layout;
-        element_size = requested_element_size;
-        return true;
-      }
-
-      if (backend != requested_backend) {
-        if (err) {
-          (*err) += std::string(op_name) +
-                    " backend mismatch: existing backend is `" +
-                    backend_name(backend) + "`, requested backend is `" +
-                    backend_name(requested_backend) + "`.\n";
-        }
-        return false;
-      }
-
-      if ((requested_layout != ArrayLayoutKind::None) &&
-          (layout != ArrayLayoutKind::None) &&
-          (layout != requested_layout)) {
-        if (err) {
-          (*err) += std::string(op_name) +
-                    " array layout mismatch: existing layout is `" +
-                    array_layout_name(layout) + "`, requested layout is `" +
-                    array_layout_name(requested_layout) + "`.\n";
-        }
-        return false;
-      }
-
-      if ((layout == ArrayLayoutKind::None) &&
-          (requested_layout != ArrayLayoutKind::None)) {
-        layout = requested_layout;
-      }
-
-      if ((requested_element_size != 0) && (element_size != 0) &&
-          (element_size != requested_element_size)) {
-        if (err) {
-          (*err) += std::string(op_name) +
-                    " element size mismatch: existing element size is " +
-                    std::to_string(element_size) +
-                    ", requested element size is " +
-                    std::to_string(requested_element_size) + ".\n";
-        }
-        return false;
-      }
-
-      if ((element_size == 0) && (requested_element_size != 0)) {
-        element_size = requested_element_size;
-      }
-
-      return true;
-    }
-
-    void update_metadata(size_t count, size_t requested_element_size,
-                         ArrayLayoutKind requested_layout) {
-      uniform_array_count = count;
-      if (requested_element_size != 0) {
-        element_size = requested_element_size;
-      }
-      if (requested_layout != ArrayLayoutKind::None) {
-        layout = requested_layout;
-      }
-    }
-
-    void clear() {
-      backend = UnifiedStorageBackend::None;
-      layout = ArrayLayoutKind::None;
-      uniform_array_count = 0;
-      element_size = 0;
-    }
-  };
-
-  struct StorageDescriptor {
-    ScalarStorageDescriptor scalar;
-    ArrayStorageDescriptor array;
-
-    bool is_array_backend() const { return array.active(); }
-
-    bool is_scalar_backend() const { return scalar.active(); }
-
-    bool uses_value_array() const { return array.uses_value_array(); }
-
-    bool uses_offsets() const {
-      return scalar.uses_offsets() || array.uses_offsets();
-    }
-
-    bool uses_small_scalars() const {
-      return scalar.uses_small_scalars();
-    }
-
-    bool is_stl_array() const { return array.is_stl_array(); }
-
-    bool is_typed_array() const { return array.is_typed_array(); }
-
-    const char* active_backend_name() const {
-      if (array.active()) {
-        return backend_name(array.backend);
-      }
-      if (scalar.active()) {
-        return backend_name(scalar.backend);
-      }
-      return backend_name(UnifiedStorageBackend::None);
-    }
-
-    size_t uniform_count() const {
-      if (array.active()) {
-        return array.uniform_array_count;
-      }
-      if (scalar.active()) {
-        return 1;
-      }
-      return 0;
-    }
-
-    void clear() {
-      scalar.clear();
-      array.clear();
-    }
-  };
-
   bool has_unified_samples() const {
     return !_times.empty();
   }
@@ -487,15 +143,10 @@ struct TimeSamples {
     return !_samples.empty() && !has_unified_samples();
   }
 
-  bool ensure_initialized_type(uint32_t expected_type_id, std::string* err,
-                               const char* op_name) {
+  bool validate_type_or_init(uint32_t expected_type_id, std::string* err,
+                             const char* op_name) {
     if (!is_initialized()) {
-      if (!init(expected_type_id)) {
-        if (err) {
-          (*err) += std::string(op_name) + " failed to initialize TimeSamples.\n";
-        }
-        return false;
-      }
+      set_type_id(expected_type_id);
       return true;
     }
 
@@ -509,66 +160,6 @@ struct TimeSamples {
     }
 
     return true;
-  }
-
-  bool ensure_array_storage_backend(UnifiedStorageBackend backend,
-                                    ArrayLayoutKind array_layout,
-                                    size_t element_size, std::string* err,
-                                    const char* op_name) {
-    if (has_generic_samples()) {
-      if (err) {
-        (*err) += std::string(op_name) +
-                  " cannot mix unified storage with existing generic Value samples.\n";
-      }
-      return false;
-    }
-
-    if (_storage.is_scalar_backend()) {
-      if (err) {
-        (*err) += std::string(op_name) +
-                  " cannot mix array unified storage with existing `" +
-                  _storage.active_backend_name() + "` scalar samples.\n";
-      }
-      return false;
-    }
-
-    return _storage.array.validate_or_init(backend, array_layout, element_size,
-                                           err, op_name);
-  }
-
-  bool ensure_scalar_storage_backend(UnifiedStorageBackend backend,
-                                     size_t element_size, std::string* err,
-                                     const char* op_name) {
-    if (has_generic_samples()) {
-      if (err) {
-        (*err) += std::string(op_name) +
-                  " cannot mix unified storage with existing generic Value samples.\n";
-      }
-      return false;
-    }
-
-    if (_storage.is_array_backend()) {
-      if (err) {
-        (*err) += std::string(op_name) +
-                  " cannot mix scalar unified storage with existing `" +
-                  _storage.active_backend_name() + "` array samples.\n";
-      }
-      return false;
-    }
-
-    return _storage.scalar.validate_or_init(backend, element_size, err,
-                                            op_name);
-  }
-
-  void update_array_metadata(size_t count, size_t element_size,
-                             ArrayLayoutKind layout) {
-    _storage.array.update_metadata(count, element_size, layout);
-  }
-
-  void update_scalar_metadata(size_t element_size) {
-    if (element_size != 0) {
-      _storage.scalar.element_size = element_size;
-    }
   }
 
   template<typename T>
@@ -592,7 +183,7 @@ struct TimeSamples {
       update();
     }
 
-    if (_times.empty() || !_storage.is_array_backend()) {
+    if (_times.empty() || !_is_array) {
       return false;
     }
 
@@ -610,35 +201,14 @@ struct TimeSamples {
       return true;
     }
 
-    if (_storage.uses_value_array()) {
-      if (idx >= _value_array_refs.size()) {
-        return false;
-      }
-
-      const size_t storage_idx = get_value_array_index(_value_array_refs[idx]);
-      if (storage_idx >= _value_array_storage.size()) {
-        return false;
-      }
-
-      if (const auto *typed = _value_array_storage[storage_idx].as<TypedArray<T>>()) {
-        ref->data = typed->data();
-        ref->count = typed->size();
-        return true;
-      }
-
-      if (const auto *vec = _value_array_storage[storage_idx].as<std::vector<T>>()) {
-        ref->data = vec->data();
-        ref->count = vec->size();
-        return true;
-      }
-
+    if (idx >= _data_offsets.size()) {
       return false;
     }
 
-    size_t byte_offset = 0;
-    bool use_array_buffer = false;
-    if (!resolve_offset_static(_offsets, idx, &byte_offset, nullptr, &use_array_buffer)) {
-      return false;
+    uint32_t byte_offset = _data_offsets[idx];
+    if (byte_offset == BLOCKED_OFFSET) {
+      ref->blocked = true;
+      return true;
     }
 
     ref->count = get_array_count(idx);
@@ -647,15 +217,11 @@ struct TimeSamples {
       return true;
     }
 
-    if (use_array_buffer) {
-      if (byte_offset >= _array_values.size() || !_array_values[byte_offset]) {
-        return false;
-      }
-      ref->data = reinterpret_cast<const T*>(_array_values[byte_offset]->data());
-      return true;
+    if (static_cast<size_t>(byte_offset) + sizeof(T) * ref->count > _data.size()) {
+      return false;
     }
 
-    ref->data = reinterpret_cast<const T*>(_values.data() + byte_offset);
+    ref->data = reinterpret_cast<const T*>(_data.data() + byte_offset);
     return true;
   }
 
@@ -693,14 +259,7 @@ struct TimeSamples {
     return false;
   }
 
-  bool reconstruct_value_array_sample(size_t idx, Sample* sample) const;  // Defined in timesamples.cc
-
   bool reconstruct_binary_sample(size_t idx, Sample* sample) const;  // Defined in timesamples.cc
-  bool reconstruct_unified_sample(size_t idx, Sample* sample) const; // Defined in timesamples.cc
-
-  // Original inline implementations moved to timesamples.cc to reduce header bloat.
-  // The methods expand 80+ macro-generated type dispatch cases that don't need to be
-  // in the header since TimeSamples is a concrete (non-template) class.
 
 
  public:
@@ -791,12 +350,9 @@ struct TimeSamples {
   // We still need "dummy" value for type_name() and type_id()
   bool add_blocked_sample(double t, const value::Value &v, std::string *err = nullptr);  // Defined in timesamples.cc
 
-  bool add_value_array_sample(double t, value::Value &&v, std::string *err = nullptr);   // Defined in timesamples.cc
-
-  /// Add a deduplicated array sample that references an existing sample's value
-  /// This uses the offset table to avoid copying value::Value
+  /// @deprecated Dedup removed. Kept for backward compatibility — just copies the value.
   /// @param t Time value for this sample
-  /// @param ref_index Index of the existing sample (in _times) whose value to reuse
+  /// @param ref_index Index of the existing sample whose value to reuse
   /// @param err Optional error string
   bool add_dedup_sample(double t, size_t ref_index, std::string *err = nullptr);  // Defined in timesamples.cc
 
@@ -810,9 +366,7 @@ struct TimeSamples {
     (void)expected_total_samples;
 
     if constexpr (value::uses_binary_timesample_scalar_storage_v<T>) {
-      if (!is_initialized()) {
-        init(value::TypeTraits<T>::type_id());
-      }
+      set_type_id(value::TypeTraits<T>::type_id());
       return add_binary_sample<T>(t, value, err);
     } else {
       return add_sample(t, value::Value(value), err);
@@ -826,18 +380,10 @@ struct TimeSamples {
     (void)expected_total_samples;
 
     if constexpr (value::uses_binary_timesample_array_storage_v<T>) {
-      if (!ensure_initialized_type(value::TypeTraits<std::vector<T>>::type_id(),
+      if (!validate_type_or_init(value::TypeTraits<std::vector<T>>::type_id(),
                                    err, "add_array_sample<std::vector>")) {
         return false;
       }
-
-      if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
-                                        ArrayLayoutKind::StdVector, sizeof(T),
-                                        err,
-                                        "add_array_sample<std::vector>")) {
-        return false;
-      }
-
       return add_array_sample<T>(t, value.data(), value.size(), err);
     } else {
       return add_sample(t, value::Value(value), err);
@@ -851,18 +397,10 @@ struct TimeSamples {
     (void)expected_total_samples;
 
     if constexpr (value::uses_binary_timesample_array_storage_v<T>) {
-      if (!ensure_initialized_type(value::TypeTraits<TypedArray<T>>::type_id(),
+      if (!validate_type_or_init(value::TypeTraits<TypedArray<T>>::type_id(),
                                    err, "add_array_sample<TypedArray>")) {
         return false;
       }
-
-      if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
-                                        ArrayLayoutKind::TypedArray,
-                                        sizeof(T), err,
-                                        "add_array_sample<TypedArray>")) {
-        return false;
-      }
-
       return add_array_sample<T>(t, value.data(), value.size(), err);
     } else {
       std::vector<T> vec(value.data(), value.data() + value.size());
@@ -876,9 +414,7 @@ struct TimeSamples {
     (void)expected_total_samples;
 
     if constexpr (value::uses_binary_timesample_scalar_storage_v<T>) {
-      if (!is_initialized()) {
-        init(value::TypeTraits<T>::type_id());
-      }
+      set_type_id(value::TypeTraits<T>::type_id());
       return add_binary_blocked_sample<T>(t, err);
     } else {
       return add_blocked_sample(t, value::Value(T{}), err);
@@ -1220,119 +756,76 @@ struct TimeSamples {
   // Unified array methods (work directly with TimeSamples storage)
   //
 
-  /// Add array sample using unified storage
-  /// Array data is stored in _array_values using unique_ptr for proper ownership semantics
+  /// Add array sample to flat byte buffer
   template<typename T>
   bool add_array_sample(double t, const T* values, size_t count, std::string* err = nullptr) {
     static_assert(value::uses_binary_timesample_array_storage_v<T>,
                   "add_array_sample requires binary-serializable element types except bool");
 
-    // Auto-initialize on first sample
-    if (!ensure_initialized_type(_type_id != 0 ? _type_id : value::TypeTraits<std::vector<T>>::type_id(),
+    if (!validate_type_or_init(_type_id != 0 ? _type_id : value::TypeTraits<std::vector<T>>::type_id(),
                                  err, "add_array_sample")) {
       return false;
     }
 
-    const ArrayLayoutKind layout =
-        (_storage.array.layout == ArrayLayoutKind::None)
-            ? ArrayLayoutKind::StdVector
-            : _storage.array.layout;
-    if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
-                                      layout, sizeof(T), err,
-                                      "add_array_sample")) {
-      return false;
-    }
+    _element_size = static_cast<uint32_t>(sizeof(T));
+    _is_array = true;
 
-    // Use unified storage
     _times.push_back(t);
-    _blocked.push_back(0);  // Not blocked
+    _blocked.push_back(0);
 
-    // Allocate new buffer for this array sample in _array_values
-    auto array_buffer = std::make_unique<Buffer<16>>();
+    // Append array data to flat buffer
+    uint32_t byte_offset = static_cast<uint32_t>(_data.size());
     size_t data_size = sizeof(T) * count;
-    array_buffer->resize(data_size);
-    std::memcpy(array_buffer->data(), values, data_size);
+    _data.resize(_data.size() + data_size);
+    std::memcpy(_data.data() + byte_offset, values, data_size);
 
-    // Store the index of the newly allocated buffer
-    size_t array_index = _array_values.size();
-    _array_values.push_back(std::move(array_buffer));
-
-    // Create encoded offset with array buffer flag and index
-    uint64_t encoded_offset = make_array_buffer_offset(array_index);
-    _offsets.push_back(encoded_offset);
-    _array_counts.push_back(count);
-
-    // Update array metadata
-    update_array_metadata(count, sizeof(T), layout);
+    _data_offsets.push_back(byte_offset);
+    _array_counts.push_back(static_cast<uint32_t>(count));
 
     invalidate_reconstructed_samples_cache();
     _dirty = true;
     return true;
   }
 
-  /// Add deduplicated array sample (Phase 2 path)
+  /// Add deduplicated array sample — just copies the byte offset of the referenced sample
   template<typename T>
   bool add_dedup_array_sample(double t, size_t ref_index, std::string* err = nullptr) {
     static_assert(value::uses_binary_timesample_array_storage_v<T>,
                   "add_dedup_array_sample requires binary-serializable element types except bool");
 
-    const ArrayLayoutKind layout =
-        (_storage.array.layout == ArrayLayoutKind::None)
-            ? ArrayLayoutKind::StdVector
-            : _storage.array.layout;
-    if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
-                                      layout, sizeof(T), err,
-                                      "add_dedup_array_sample")) {
-      return false;
-    }
-
-    // Validate reference
     if (ref_index >= _times.size()) {
       if (err) *err = "Invalid ref_index: " + std::to_string(ref_index) + " >= " + std::to_string(_times.size());
       return false;
     }
 
-    if (ref_index == _times.size()) {
-      if (err) *err = "Self-reference detected";
+    if (ref_index >= _data_offsets.size()) {
+      if (err) *err = "Invalid ref_index for dedup";
       return false;
     }
 
-    if (_offsets[ref_index] == SIZE_MAX) {
+    if (_data_offsets[ref_index] == BLOCKED_OFFSET) {
       if (err) *err = "Cannot deduplicate from blocked sample";
       return false;
     }
 
-    if (is_dedup(_offsets[ref_index])) {
-      if (err) *err = "Cannot deduplicate from deduplicated sample";
-      return false;
-    }
-
-    // Add dedup sample
     _times.push_back(t);
     _blocked.push_back(0);
-    const size_t ref_array_count =
-        (ref_index < _array_counts.size()) ? _array_counts[ref_index]
-                                           : _storage.uniform_count();
-    _array_counts.push_back(ref_array_count);
+    _data_offsets.push_back(_data_offsets[ref_index]);  // Share same byte offset
+    uint32_t ref_count = (ref_index < _array_counts.size()) ? _array_counts[ref_index] : 0;
+    _array_counts.push_back(ref_count);
 
-    uint64_t dedup_offset = make_dedup_offset(ref_index, true);
-    _offsets.push_back(dedup_offset);
-
-    update_array_metadata(ref_array_count, sizeof(T), layout);
     invalidate_reconstructed_samples_cache();
     _dirty = true;
     return true;
   }
 
-
-  /// Add matrix array sample (Phase 2 path)
+  /// Add matrix array sample (delegates to add_array_sample)
   template<typename T>
   bool add_matrix_array_sample(double t, const T* matrices, size_t count, std::string* err = nullptr) {
-    // Matrices are stored the same way as arrays
     return add_array_sample<T>(t, matrices, count, err);
   }
 
-  /// Add deduplicated matrix array sample (Phase 2 path)
+  /// Add deduplicated matrix array sample (delegates to add_dedup_array_sample)
   template<typename T>
   bool add_dedup_matrix_array_sample(double t, size_t ref_index, std::string* err = nullptr) {
     return add_dedup_array_sample<T>(t, ref_index, err);
@@ -1344,115 +837,51 @@ struct TimeSamples {
   }
 
   //
-  // Unified binary scalar sample methods
+  // Unified binary scalar sample methods — all types go into _data
   //
 
-  /// Add a binary-serializable scalar sample using unified storage.
-  /// Small types (sizeof(T) <= 8) are stored directly in _small_values.
+  /// Add a binary-serializable scalar sample to flat byte buffer
   template<typename T>
-  typename std::enable_if<(sizeof(T) <= 8), bool>::type
-  add_binary_sample(double t, const T& value, std::string* err = nullptr) {
+  bool add_binary_sample(double t, const T& value, std::string* err = nullptr) {
     static_assert(value::uses_binary_timesample_scalar_storage_v<T>,
                   "add_binary_sample requires binary-serializable types except bool");
 
-    // Auto-initialize on first sample
-    if (!ensure_initialized_type(value::TypeTraits<T>::type_id(), err,
+    if (!validate_type_or_init(value::TypeTraits<T>::type_id(), err,
                                  "add_binary_sample")) {
       return false;
     }
 
-    if (!ensure_scalar_storage_backend(UnifiedStorageBackend::SmallScalar,
-                                       sizeof(T), err, "add_binary_sample")) {
-      return false;
-    }
+    _element_size = static_cast<uint32_t>(sizeof(T));
 
     _times.push_back(t);
-    _blocked.push_back(0);  // Not blocked
+    _blocked.push_back(0);
 
-    // Direct storage for small scalars - no offset entry needed
-    uint64_t small_value = 0;
-    std::memcpy(&small_value, &value, sizeof(T));
-    _small_values.push_back(small_value);
-
-    // Update metadata (scalar, not array)
-    update_scalar_metadata(sizeof(T));
+    uint32_t byte_offset = static_cast<uint32_t>(_data.size());
+    _data.resize(_data.size() + sizeof(T));
+    std::memcpy(_data.data() + byte_offset, &value, sizeof(T));
+    _data_offsets.push_back(byte_offset);
 
     invalidate_reconstructed_samples_cache();
     _dirty = true;
     return true;
   }
 
-  /// Add a binary-serializable scalar sample using unified storage.
-  /// Large types (sizeof(T) > 8) are stored in _values with an offset table.
-  template<typename T>
-  typename std::enable_if<(sizeof(T) > 8), bool>::type
-  add_binary_sample(double t, const T& value, std::string* err = nullptr) {
-    static_assert(value::uses_binary_timesample_scalar_storage_v<T>,
-                  "add_binary_sample requires binary-serializable types except bool");
-
-    // Auto-initialize on first sample
-    if (!ensure_initialized_type(value::TypeTraits<T>::type_id(), err,
-                                 "add_binary_sample")) {
-      return false;
-    }
-
-    if (!ensure_scalar_storage_backend(UnifiedStorageBackend::OffsetScalar,
-                                       sizeof(T), err, "add_binary_sample")) {
-      return false;
-    }
-
-    _times.push_back(t);
-    _blocked.push_back(0);  // Not blocked
-
-    // Offset-based storage for large scalars
-    size_t byte_offset = _values.size();
-    _values.resize(byte_offset + sizeof(T));
-    std::memcpy(_values.data() + byte_offset, &value, sizeof(T));
-
-    // Create encoded offset (not array)
-    uint64_t encoded_offset = make_offset(byte_offset, false);
-    _offsets.push_back(encoded_offset);
-
-    // Update metadata (scalar, not array)
-    update_scalar_metadata(sizeof(T));
-
-    invalidate_reconstructed_samples_cache();
-    _dirty = true;
-    return true;
-  }
-
-  /// Add a blocked binary-serializable scalar sample using unified storage.
+  /// Add a blocked binary-serializable scalar sample
   template<typename T>
   bool add_binary_blocked_sample(double t, std::string* err = nullptr) {
     static_assert(value::uses_binary_timesample_scalar_storage_v<T>,
                   "add_binary_blocked_sample requires binary-serializable types except bool");
 
-    // Auto-initialize on first sample
-    if (!ensure_initialized_type(value::TypeTraits<T>::type_id(), err,
+    if (!validate_type_or_init(value::TypeTraits<T>::type_id(), err,
                                  "add_binary_blocked_sample")) {
       return false;
     }
 
-    if (!ensure_scalar_storage_backend(
-            (sizeof(T) > 8) ? UnifiedStorageBackend::OffsetScalar
-                            : UnifiedStorageBackend::SmallScalar,
-            sizeof(T), err, "add_binary_blocked_sample")) {
-      return false;
-    }
+    _element_size = static_cast<uint32_t>(sizeof(T));
 
-    // Add blocked sample to unified storage
     _times.push_back(t);
     _blocked.push_back(1);  // Blocked
-
-    // For small types (sizeof <= 8), don't use offsets - just rely on _blocked flag
-    // For large types (sizeof > 8), need offset table entry
-    if (sizeof(T) > 8) {
-      _offsets.push_back(SIZE_MAX);  // Special marker for blocked
-    } else {
-      _small_values.push_back(0);
-    }
-
-    update_scalar_metadata(sizeof(T));
+    _data_offsets.push_back(BLOCKED_OFFSET);
 
     invalidate_reconstructed_samples_cache();
     _dirty = true;
@@ -1570,106 +999,56 @@ struct TimeSamples {
   }
 
   //
-  // Accessor methods for unified storage
-  // These provide read-only access to internal binary storage for utilities like pprint
+  // Accessor methods for binary storage
   //
 
   const std::vector<double>& get_times() const {
-    if (_dirty) {
-      update();
-    }
+    if (_dirty) { update(); }
     return _times;
   }
 
   const Buffer<16>& get_blocked() const {
-    if (_dirty) {
-      update();
-    }
+    if (_dirty) { update(); }
     return _blocked;
   }
 
-  const Buffer<16>& get_values() const {
-    if (_dirty) {
-      update();
-    }
-    return _values;
+  const std::vector<uint8_t>& get_data() const {
+    if (_dirty) { update(); }
+    return _data;
   }
 
-  const std::vector<uint64_t>& get_offsets() const {
-    if (_dirty) {
-      update();
-    }
-    return _offsets;
-  }
-
-  const std::vector<uint64_t>& get_small_values() const {
-    if (_dirty) {
-      update();
-    }
-    return _small_values;
-  }
-
-  bool is_array() const {
-    return _storage.is_array_backend();
-  }
-
-  size_t get_array_size() const {
-    if (_array_counts.empty()) {
-      return _storage.uniform_count();
-    }
-
-    const size_t first = _array_counts.front();
-    for (size_t count : _array_counts) {
-      if (count != first) {
-        return 0;
-      }
-    }
-
-    return first;
+  const std::vector<uint32_t>& get_data_offsets() const {
+    if (_dirty) { update(); }
+    return _data_offsets;
   }
 
   size_t get_array_count(size_t idx) const {
-    if (_array_counts.empty()) {
-      return _storage.uniform_count();
-    }
-
     if (idx >= _array_counts.size()) {
       return 0;
     }
-
     return _array_counts[idx];
   }
 
-  const std::vector<size_t>& get_array_counts() const {
+  const std::vector<uint32_t>& get_array_counts() const {
     return _array_counts;
   }
 
  private:
-  // Members ordered to minimize padding (8-byte aligned types first, then smaller)
-
-  // Generic path storage (for generic Value types: string, token, dict, etc.)
+  // Generic path storage (for non-binary Value types: string, token, dict, etc.)
   mutable std::vector<Sample> _samples;
 
-  // Unified binary-storage path
+  // Flat binary storage (for trivially-copyable POD types)
   mutable std::vector<double> _times;
-  mutable std::vector<uint64_t> _small_values;    // Direct storage for small scalars (sizeof(T) <= 8)
-  mutable std::vector<uint64_t> _offsets;          // Offset table with dedup/array/buffer flags
-  mutable std::vector<std::unique_ptr<Buffer<16>>> _array_values;  // Per-sample array buffers
-  mutable Buffer<16> _blocked;                     // Blocked flags (one byte per sample)
-  mutable Buffer<16> _values;                      // Raw byte storage for large scalars
+  mutable Buffer<16> _blocked;                      // Blocked flags (one byte per sample)
+  mutable std::vector<uint8_t> _data;               // Flat byte buffer for ALL binary values
+  mutable std::vector<uint32_t> _data_offsets;      // Per-sample byte offset into _data
+  mutable std::vector<uint32_t> _array_counts;      // Per-sample element count (arrays only)
 
-  // value::Value array storage with dedup support
-  mutable std::vector<value::Value> _value_array_storage;
-  mutable std::vector<uint64_t> _value_array_refs; // bit 63 = dedup flag
-  mutable std::vector<size_t> _array_counts;       // Per-sample array element counts
-
-  // Metadata (grouped to minimize padding)
-  StorageDescriptor _storage{};
-  mutable size_t _blocked_count{0};
-  mutable size_t _dirty_start{0};
-  mutable size_t _dirty_end{0};
+  // Metadata
   uint32_t _type_id{0};
+  uint32_t _element_size{0};                        // sizeof(T) for binary elements
   mutable bool _dirty{false};
+  bool _is_array{false};                            // true if storing array data
 
   // _pod_samples removed - using unified storage directly
 
@@ -1717,21 +1096,6 @@ struct TimeSamples {
 
   static constexpr size_t kNotFound = static_cast<size_t>(-1);
 
- public:
-  // Helper constants for value array dedup
-  static constexpr uint64_t VALUE_ARRAY_DEDUP_BIT = uint64_t(1) << 63;
-
-  static bool is_value_array_dedup(uint64_t ref) {
-    return (ref & VALUE_ARRAY_DEDUP_BIT) != 0;
-  }
-
-  static uint64_t make_value_array_ref(size_t index, bool is_dedup) {
-    return is_dedup ? (VALUE_ARRAY_DEDUP_BIT | index) : index;
-  }
-
-  static size_t get_value_array_index(uint64_t ref) {
-    return static_cast<size_t>(ref & ~VALUE_ARRAY_DEDUP_BIT);
-  }
 };
 
 } // namespace value

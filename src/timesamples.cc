@@ -14,285 +14,19 @@
 
 namespace tinyusdz {
 
-// ============================================================================
-// TimeSamples Sorting Strategy Helper Methods
-// ============================================================================
-
 namespace {
 
-// ============================================================================
-// Adaptive Insertion Sort for Nearly-Sorted TimeSamples
-// ============================================================================
-//
-// TimeSamples data is typically already sorted or nearly sorted because:
-// 1. USD files store time samples in order
-// 2. Animation data is naturally sequential
-//
-// Insertion sort is optimal for nearly-sorted data:
-// - O(n) best case (already sorted)
-// - O(n + d) where d = number of inversions (nearly sorted)
-// - In-place sorting (no extra memory allocation)
-// - Stable sort (preserves order of equal elements)
-
-// Count inversions to decide if data is nearly sorted
-// Returns the number of out-of-order pairs (limited scan for efficiency)
-inline size_t count_inversions(const std::vector<double>& times, size_t max_scan = 100) {
-  if (times.size() < 2) return 0;
-
-  size_t inversions = 0;
-  size_t scan_limit = std::min(times.size() - 1, max_scan);
-
-  for (size_t i = 0; i < scan_limit; ++i) {
-    if (times[i] > times[i + 1]) {
-      ++inversions;
-    }
-  }
-  return inversions;
-}
-
-// In-place insertion sort for times with parallel arrays (offsets version)
-// O(n) for nearly sorted data, O(n²) worst case
-inline void insertion_sort_with_offsets(
-    std::vector<double>& times,
-    Buffer<16>& blocked,
-    std::vector<uint64_t>& offsets,
-    std::vector<size_t>* array_counts = nullptr) {
-
-  const size_t n = times.size();
-  if (n < 2) return;
-
-  // Verify sizes match
-  if (times.size() != offsets.size() || times.size() != blocked.size()) {
-    return;
-  }
-
-  for (size_t i = 1; i < n; ++i) {
-    // If current element is already in order, skip (fast path for sorted data)
-    if (times[i] >= times[i - 1]) {
-      continue;
-    }
-
-    // Save the element to insert
-    double key_time = times[i];
-    uint8_t key_blocked = blocked[i];
-    uint64_t key_offset = offsets[i];
-    size_t key_array_count = 0;
-    if (array_counts && i < array_counts->size()) {
-      key_array_count = (*array_counts)[i];
-    }
-
-    // Find insertion position and shift elements
-    size_t j = i;
-    while (j > 0 && times[j - 1] > key_time) {
-      times[j] = times[j - 1];
-      blocked[j] = blocked[j - 1];
-      offsets[j] = offsets[j - 1];
-      if (array_counts && j < array_counts->size()) {
-        (*array_counts)[j] = (*array_counts)[j - 1];
-      }
-      --j;
-    }
-
-    // Insert the element
-    times[j] = key_time;
-    blocked[j] = key_blocked;
-    offsets[j] = key_offset;
-    if (array_counts && j < array_counts->size()) {
-      (*array_counts)[j] = key_array_count;
-    }
-  }
-
-}
-
-
-// Helper: Create sorted index array based on time values
-// Used as fallback when in-place sort is not suitable
-inline std::vector<size_t> create_sort_indices(const std::vector<double>& times) {
-  std::vector<size_t> indices(times.size());
-  for (size_t i = 0; i < indices.size(); ++i) {
-    indices[i] = i;
-  }
-  std::sort(indices.begin(), indices.end(),
-            [&times](size_t a, size_t b) { return times[a] < times[b]; });
-  return indices;
-}
-
-// Strategy 1: Offset-backed sorting with dedup index remapping
-// Used when offset table exists - values don't need reordering
-// But dedup indices need to be remapped to new sorted positions
-inline void sort_with_offsets(
-    const std::vector<size_t>& indices,
-    std::vector<double>& times,
-    Buffer<16>& blocked,
-    std::vector<uint64_t>& offsets,
-    std::vector<size_t>* array_counts = nullptr) {
-
-  // Verify all arrays have consistent sizes
-  if (times.size() != offsets.size() || times.size() != blocked.size()) {
-    // Sizes don't match - this shouldn't happen, but handle gracefully
-    return;
-  }
-
-  // Verify all indices are within bounds
-  for (size_t i = 0; i < indices.size(); ++i) {
-    if (indices[i] >= times.size()) {
-      // Invalid index - abort sorting
-      return;
-    }
-  }
-
-  std::vector<double> sorted_times(times.size());
-  Buffer<16> sorted_blocked;
-  sorted_blocked.resize(blocked.size());
-  std::vector<uint64_t> sorted_offsets(offsets.size());
-  std::vector<size_t> sorted_array_counts;
-  if (array_counts && array_counts->size() == times.size()) {
-    sorted_array_counts.resize(array_counts->size());
-  }
-
-  // Create index mapping: old_idx -> new_idx
-  std::vector<size_t> index_map(times.size());
-  for (size_t new_idx = 0; new_idx < indices.size(); ++new_idx) {
-    index_map[indices[new_idx]] = new_idx;
-  }
-
-  // Copy and reorder data
-  for (size_t i = 0; i < indices.size(); ++i) {
-    sorted_times[i] = times[indices[i]];
-    sorted_blocked[i] = blocked[indices[i]];
-
-    uint64_t offset_val = offsets[indices[i]];
-
-    // If this is a dedup offset, remap the index to new position
-    if (offset_val & value::TimeSamples::OFFSET_DEDUP_FLAG) {
-      // Extract old reference index
-      size_t old_ref_idx = static_cast<size_t>(offset_val & value::TimeSamples::OFFSET_VALUE_MASK);
-
-      // Bounds check before accessing index_map
-      if (old_ref_idx < index_map.size()) {
-        // Map to new index
-        size_t new_ref_idx = index_map[old_ref_idx];
-
-        // Reconstruct offset with new index, preserving flags
-        offset_val = (offset_val & value::TimeSamples::OFFSET_FLAGS_MASK) | new_ref_idx;
-      }
-      // If out of bounds, keep the offset as-is (invalid but won't crash)
-    }
-
-    sorted_offsets[i] = offset_val;
-    if (!sorted_array_counts.empty()) {
-      sorted_array_counts[i] = (*array_counts)[indices[i]];
-    }
-  }
-
-  times = std::move(sorted_times);
-  blocked = std::move(sorted_blocked);
-  offsets = std::move(sorted_offsets);
-  if (!sorted_array_counts.empty()) {
-    (*array_counts) = std::move(sorted_array_counts);
-  }
-  // Note: values array doesn't need reordering as offsets handle the mapping
-}
-
-inline void sort_with_small_values(
-    const std::vector<size_t>& indices,
-    std::vector<double>& times,
-    Buffer<16>& blocked,
-    std::vector<uint64_t>& small_values) {
-  if (times.size() != blocked.size() || times.size() != small_values.size()) {
-    return;
-  }
-
-  std::vector<double> sorted_times(times.size());
-  Buffer<16> sorted_blocked;
-  sorted_blocked.resize(blocked.size());
-  std::vector<uint64_t> sorted_small_values(small_values.size());
-
-  for (size_t i = 0; i < indices.size(); ++i) {
-    sorted_times[i] = times[indices[i]];
-    sorted_blocked[i] = blocked[indices[i]];
-    sorted_small_values[i] = small_values[indices[i]];
-  }
-
-  times = std::move(sorted_times);
-  blocked = std::move(sorted_blocked);
-  small_values = std::move(sorted_small_values);
-}
-
-inline void sort_with_value_array_refs(
-    const std::vector<size_t>& indices,
-    std::vector<double>& times,
-    Buffer<16>& blocked,
-    std::vector<uint64_t>& refs,
-    std::vector<size_t>* array_counts = nullptr) {
-  if (times.size() != refs.size() || times.size() != blocked.size()) {
-    return;
-  }
-
-  std::vector<double> sorted_times(times.size());
-  Buffer<16> sorted_blocked;
-  sorted_blocked.resize(blocked.size());
-  std::vector<uint64_t> sorted_refs(refs.size());
-  std::vector<size_t> sorted_array_counts;
-  if (array_counts && array_counts->size() == times.size()) {
-    sorted_array_counts.resize(array_counts->size());
-  }
-
-  for (size_t i = 0; i < indices.size(); ++i) {
-    sorted_times[i] = times[indices[i]];
-    sorted_blocked[i] = blocked[indices[i]];
-    sorted_refs[i] = refs[indices[i]];
-    if (!sorted_array_counts.empty()) {
-      sorted_array_counts[i] = (*array_counts)[indices[i]];
-    }
-  }
-
-  times = std::move(sorted_times);
-  blocked = std::move(sorted_blocked);
-  refs = std::move(sorted_refs);
-  if (!sorted_array_counts.empty()) {
-    (*array_counts) = std::move(sorted_array_counts);
-  }
-}
-
-inline void sort_times_and_blocked(
-    const std::vector<size_t>& indices,
-    std::vector<double>& times,
-    Buffer<16>& blocked) {
-  if (times.size() != blocked.size()) {
-    return;
-  }
-
-  std::vector<double> sorted_times(times.size());
-  Buffer<16> sorted_blocked;
-  sorted_blocked.resize(blocked.size());
-
-  for (size_t i = 0; i < indices.size(); ++i) {
-    sorted_times[i] = times[indices[i]];
-    sorted_blocked[i] = blocked[indices[i]];
-  }
-
-  times = std::move(sorted_times);
-  blocked = std::move(sorted_blocked);
-}
-
-
-
-} // anonymous namespace
-
-namespace value {
-
 // Insertion sort for Sample array (nearly-sorted optimization)
-inline void insertion_sort_samples(std::vector<TimeSamples::Sample>& samples) {
+inline void insertion_sort_samples(std::vector<value::TimeSamples::Sample>& samples) {
   const size_t n = samples.size();
   if (n < 2) return;
 
   for (size_t i = 1; i < n; ++i) {
     if (samples[i].t >= samples[i - 1].t) {
-      continue;  // Already in order - fast path
+      continue;
     }
 
-    TimeSamples::Sample key = std::move(samples[i]);
+    value::TimeSamples::Sample key = std::move(samples[i]);
     size_t j = i;
 
     while (j > 0 && samples[j - 1].t > key.t) {
@@ -304,56 +38,77 @@ inline void insertion_sort_samples(std::vector<TimeSamples::Sample>& samples) {
   }
 }
 
+// Sort flat binary storage by permuting parallel arrays
+inline void sort_flat_storage(
+    std::vector<double>& times,
+    Buffer<16>& blocked,
+    std::vector<uint32_t>& data_offsets,
+    std::vector<uint32_t>* array_counts) {
+
+  const size_t n = times.size();
+  if (n < 2) return;
+
+  // Create index array
+  std::vector<size_t> indices(n);
+  for (size_t i = 0; i < n; ++i) indices[i] = i;
+  std::sort(indices.begin(), indices.end(),
+            [&times](size_t a, size_t b) { return times[a] < times[b]; });
+
+  std::vector<double> sorted_times(n);
+  Buffer<16> sorted_blocked;
+  sorted_blocked.resize(n);
+  std::vector<uint32_t> sorted_offsets(data_offsets.size());
+  std::vector<uint32_t> sorted_counts;
+  if (array_counts && array_counts->size() == n) {
+    sorted_counts.resize(n);
+  }
+
+  for (size_t i = 0; i < n; ++i) {
+    sorted_times[i] = times[indices[i]];
+    sorted_blocked[i] = blocked[indices[i]];
+    if (indices[i] < data_offsets.size()) {
+      sorted_offsets[i] = data_offsets[indices[i]];
+    }
+    if (!sorted_counts.empty()) {
+      sorted_counts[i] = (*array_counts)[indices[i]];
+    }
+  }
+
+  times = std::move(sorted_times);
+  blocked = std::move(sorted_blocked);
+  data_offsets = std::move(sorted_offsets);
+  if (!sorted_counts.empty()) {
+    (*array_counts) = std::move(sorted_counts);
+  }
+}
+
+} // anonymous namespace
+
+namespace value {
+
 // TimeSamples::update() implementation
 void TimeSamples::update() const {
-  // Check which storage is in use
   if (!_times.empty()) {
-    // Unified binary storage (new approach)
-    // Fast path: check if already sorted to avoid unnecessary work
+    // Flat binary storage
     if (_times.size() < 2 || std::is_sorted(_times.begin(), _times.end())) {
       _dirty = false;
       return;
     }
 
-    if (!_offsets.empty()) {
-      const bool has_dedup = std::any_of(
-          _offsets.begin(), _offsets.end(), [](uint64_t offset) {
-            return (offset & value::TimeSamples::OFFSET_DEDUP_FLAG) != 0;
-          });
-
-      if (!has_dedup && count_inversions(_times) * 20 < _times.size()) {
-        insertion_sort_with_offsets(_times, _blocked, _offsets, &_array_counts);
-      } else {
-        std::vector<size_t> indices = create_sort_indices(_times);
-        sort_with_offsets(indices, _times, _blocked, _offsets, &_array_counts);
-      }
-    } else {
-      std::vector<size_t> indices = create_sort_indices(_times);
-
-      if (_storage.uses_value_array()) {
-        sort_with_value_array_refs(indices, _times, _blocked, _value_array_refs,
-                                   &_array_counts);
-      } else if (!_small_values.empty()) {
-        sort_with_small_values(indices, _times, _blocked, _small_values);
-      } else {
-        sort_times_and_blocked(indices, _times, _blocked);
-      }
-    }
+    sort_flat_storage(_times, _blocked, _data_offsets,
+                      _is_array ? &_array_counts : nullptr);
   } else if (!_samples.empty()) {
-    // Legacy Sample-based storage
     if (_samples.size() < 2) {
       _dirty = false;
       return;
     }
 
-    // Fast path: check if already sorted
     if (std::is_sorted(_samples.begin(), _samples.end(),
               [](const Sample &a, const Sample &b) { return a.t < b.t; })) {
       _dirty = false;
       return;
     }
 
-    // Check if nearly sorted
     size_t inversions = 0;
     size_t scan_limit = std::min(_samples.size() - 1, size_t(100));
     for (size_t i = 0; i < scan_limit; ++i) {
@@ -362,7 +117,6 @@ void TimeSamples::update() const {
       }
     }
 
-    // Use insertion sort for nearly-sorted data
     if (inversions * 20 < _samples.size()) {
       insertion_sort_samples(_samples);
     } else {
@@ -374,37 +128,8 @@ void TimeSamples::update() const {
 }
 
 // ============================================================================
-// reconstruct_binary_sample / reconstruct_unified_sample
-// Moved from timesamples.hh to reduce header compilation cost.
-// These expand 80+ macro-generated type dispatch cases.
+// reconstruct_binary_sample — reconstructs value::Value from flat _data buffer
 // ============================================================================
-
-bool TimeSamples::reconstruct_value_array_sample(size_t idx, Sample* sample) const {
-    if (!sample || idx >= _times.size()) {
-      return false;
-    }
-
-    sample->t = _times[idx];
-    sample->value = value::Value();
-    sample->blocked = true;
-
-    if (idx < _blocked.size() && (_blocked[idx] != 0)) {
-      return true;
-    }
-
-    if (idx >= _value_array_refs.size()) {
-      return true;
-    }
-
-    const size_t storage_idx = get_value_array_index(_value_array_refs[idx]);
-    if (storage_idx >= _value_array_storage.size()) {
-      return true;
-    }
-
-    sample->value = _value_array_storage[storage_idx];
-    sample->blocked = false;
-    return true;
-}
 
 bool TimeSamples::reconstruct_binary_sample(size_t idx, Sample* sample) const {
     if (!sample || idx >= _times.size() || idx >= _blocked.size()) {
@@ -419,38 +144,21 @@ bool TimeSamples::reconstruct_binary_sample(size_t idx, Sample* sample) const {
       return true;
     }
 
-    // Array sample reconstruction
-    if (_storage.is_array_backend()) {
-      if (_storage.uses_value_array()) {
-        return false;  // Handled by reconstruct_value_array_sample
-      }
+    if (idx >= _data_offsets.size()) {
+      return true;
+    }
 
-      const size_t array_count = get_array_count(idx);
+    const uint32_t byte_offset = _data_offsets[idx];
+    if (byte_offset == BLOCKED_OFFSET) {
+      sample->blocked = true;
+      return true;
+    }
 
-      // Reconstruct from array-specific storage
-      if (idx < _offsets.size()) {
-        const uint64_t encoded_offset = _offsets[idx];
+    // Array reconstruction
+    if (_is_array) {
+      const size_t count = get_array_count(idx);
 
-        // Check dedup flag
-        if (encoded_offset & OFFSET_DEDUP_FLAG) {
-          const size_t ref_idx = static_cast<size_t>(encoded_offset & OFFSET_VALUE_MASK);
-          if (ref_idx < _offsets.size() && ref_idx != idx) {
-            Sample ref_sample;
-            if (reconstruct_binary_sample(ref_idx, &ref_sample)) {
-              sample->value = ref_sample.value;
-              return true;
-            }
-          }
-          return true;
-        }
-
-        // Check array buffer flag
-        if (encoded_offset & OFFSET_ARRAY_BUFFER_FLAG) {
-          const size_t buf_idx = static_cast<size_t>(encoded_offset & OFFSET_VALUE_MASK);
-          if (buf_idx < _array_values.size() && _array_values[buf_idx]) {
-            const auto& buf = *_array_values[buf_idx];
-
-#define RECONSTRUCT_ARRAY_SAMPLE(TYPE)                                            \
+#define RECONSTRUCT_ARRAY(TYPE)                                                   \
       if (reconstruct_unified_array_value<TYPE>(                                  \
               idx, value::TypeTraits<std::vector<TYPE>>::type_id(),               \
               &sample->value)) {                                                  \
@@ -462,171 +170,121 @@ bool TimeSamples::reconstruct_binary_sample(size_t idx, Sample* sample) const {
         return true;                                                              \
       }
 
-            (void)buf;  // Used indirectly via reconstruct_unified_array_value
-            RECONSTRUCT_ARRAY_SAMPLE(float)
-            RECONSTRUCT_ARRAY_SAMPLE(double)
-            RECONSTRUCT_ARRAY_SAMPLE(int32_t)
-            RECONSTRUCT_ARRAY_SAMPLE(uint32_t)
-            RECONSTRUCT_ARRAY_SAMPLE(int64_t)
-            RECONSTRUCT_ARRAY_SAMPLE(uint64_t)
-            RECONSTRUCT_ARRAY_SAMPLE(value::half)
-            RECONSTRUCT_ARRAY_SAMPLE(value::half2)
-            RECONSTRUCT_ARRAY_SAMPLE(value::half3)
-            RECONSTRUCT_ARRAY_SAMPLE(value::half4)
-            RECONSTRUCT_ARRAY_SAMPLE(value::float2)
-            RECONSTRUCT_ARRAY_SAMPLE(value::float3)
-            RECONSTRUCT_ARRAY_SAMPLE(value::float4)
-            RECONSTRUCT_ARRAY_SAMPLE(value::double2)
-            RECONSTRUCT_ARRAY_SAMPLE(value::double3)
-            RECONSTRUCT_ARRAY_SAMPLE(value::double4)
-            RECONSTRUCT_ARRAY_SAMPLE(value::int2)
-            RECONSTRUCT_ARRAY_SAMPLE(value::int3)
-            RECONSTRUCT_ARRAY_SAMPLE(value::int4)
-            RECONSTRUCT_ARRAY_SAMPLE(value::quath)
-            RECONSTRUCT_ARRAY_SAMPLE(value::quatf)
-            RECONSTRUCT_ARRAY_SAMPLE(value::quatd)
-            RECONSTRUCT_ARRAY_SAMPLE(value::point3f)
-            RECONSTRUCT_ARRAY_SAMPLE(value::point3d)
-            RECONSTRUCT_ARRAY_SAMPLE(value::normal3f)
-            RECONSTRUCT_ARRAY_SAMPLE(value::normal3d)
-            RECONSTRUCT_ARRAY_SAMPLE(value::vector3f)
-            RECONSTRUCT_ARRAY_SAMPLE(value::vector3d)
-            RECONSTRUCT_ARRAY_SAMPLE(value::color3f)
-            RECONSTRUCT_ARRAY_SAMPLE(value::color3d)
-            RECONSTRUCT_ARRAY_SAMPLE(value::color4f)
-            RECONSTRUCT_ARRAY_SAMPLE(value::color4d)
-            RECONSTRUCT_ARRAY_SAMPLE(value::texcoord2f)
-            RECONSTRUCT_ARRAY_SAMPLE(value::texcoord2d)
-            RECONSTRUCT_ARRAY_SAMPLE(value::texcoord3f)
-            RECONSTRUCT_ARRAY_SAMPLE(value::texcoord3d)
-            RECONSTRUCT_ARRAY_SAMPLE(value::matrix2f)
-            RECONSTRUCT_ARRAY_SAMPLE(value::matrix2d)
-            RECONSTRUCT_ARRAY_SAMPLE(value::matrix3f)
-            RECONSTRUCT_ARRAY_SAMPLE(value::matrix3d)
-            RECONSTRUCT_ARRAY_SAMPLE(value::matrix4f)
-            RECONSTRUCT_ARRAY_SAMPLE(value::matrix4d)
-
-#undef RECONSTRUCT_ARRAY_SAMPLE
-            return true;
-          }
-        }
-
-        // Inline array from _values buffer
-        const size_t byte_offset = static_cast<size_t>(encoded_offset & OFFSET_VALUE_MASK);
-        if (array_count > 0) {
-          // Reconstruct typed vector from inline buffer
-          std::vector<uint8_t> raw(array_count * _storage.array.element_size);
-          if (byte_offset + raw.size() <= _values.size()) {
-            std::memcpy(raw.data(), _values.data() + byte_offset, raw.size());
-          }
-          // Store as raw bytes — type reconstruction happens at query time
-          sample->value = value::Value(std::move(raw));
-        }
-      }
-
+      (void)count;
+      RECONSTRUCT_ARRAY(float)
+      RECONSTRUCT_ARRAY(double)
+      RECONSTRUCT_ARRAY(int32_t)
+      RECONSTRUCT_ARRAY(uint32_t)
+      RECONSTRUCT_ARRAY(int64_t)
+      RECONSTRUCT_ARRAY(uint64_t)
+      RECONSTRUCT_ARRAY(value::half)
+      RECONSTRUCT_ARRAY(value::half2)
+      RECONSTRUCT_ARRAY(value::half3)
+      RECONSTRUCT_ARRAY(value::half4)
+      RECONSTRUCT_ARRAY(value::float2)
+      RECONSTRUCT_ARRAY(value::float3)
+      RECONSTRUCT_ARRAY(value::float4)
+      RECONSTRUCT_ARRAY(value::double2)
+      RECONSTRUCT_ARRAY(value::double3)
+      RECONSTRUCT_ARRAY(value::double4)
+      RECONSTRUCT_ARRAY(value::int2)
+      RECONSTRUCT_ARRAY(value::int3)
+      RECONSTRUCT_ARRAY(value::int4)
+      RECONSTRUCT_ARRAY(value::quath)
+      RECONSTRUCT_ARRAY(value::quatf)
+      RECONSTRUCT_ARRAY(value::quatd)
+      RECONSTRUCT_ARRAY(value::point3f)
+      RECONSTRUCT_ARRAY(value::point3d)
+      RECONSTRUCT_ARRAY(value::normal3f)
+      RECONSTRUCT_ARRAY(value::normal3d)
+      RECONSTRUCT_ARRAY(value::vector3f)
+      RECONSTRUCT_ARRAY(value::vector3d)
+      RECONSTRUCT_ARRAY(value::color3f)
+      RECONSTRUCT_ARRAY(value::color3d)
+      RECONSTRUCT_ARRAY(value::color4f)
+      RECONSTRUCT_ARRAY(value::color4d)
+      RECONSTRUCT_ARRAY(value::texcoord2f)
+      RECONSTRUCT_ARRAY(value::texcoord2d)
+      RECONSTRUCT_ARRAY(value::texcoord3f)
+      RECONSTRUCT_ARRAY(value::texcoord3d)
+      RECONSTRUCT_ARRAY(value::matrix2f)
+      RECONSTRUCT_ARRAY(value::matrix2d)
+      RECONSTRUCT_ARRAY(value::matrix3f)
+      RECONSTRUCT_ARRAY(value::matrix3d)
+      RECONSTRUCT_ARRAY(value::matrix4f)
+      RECONSTRUCT_ARRAY(value::matrix4d)
+#undef RECONSTRUCT_ARRAY
       return true;
     }
 
-    // Scalar sample reconstruction
-    const uint32_t type_id = _type_id;
-    if (idx < _small_values.size()) {
-      uint64_t stored = _small_values[idx];
+    // Scalar reconstruction from flat _data buffer
+    const uint32_t tid = _type_id;
 
-#define RECONSTRUCT_SMALL_VALUE(TYPE) \
-      case value::TypeTraits<TYPE>::type_id(): { \
-        TYPE val; \
-        std::memcpy(&val, &stored, sizeof(TYPE)); \
-        sample->value = value::Value(val); \
-        break; \
-      }
-
-      switch (type_id) {
-        RECONSTRUCT_SMALL_VALUE(value::half)
-        RECONSTRUCT_SMALL_VALUE(float)
-        RECONSTRUCT_SMALL_VALUE(double)
-        RECONSTRUCT_SMALL_VALUE(int32_t)
-        RECONSTRUCT_SMALL_VALUE(uint32_t)
-        RECONSTRUCT_SMALL_VALUE(int64_t)
-        RECONSTRUCT_SMALL_VALUE(uint64_t)
-        case value::TypeTraits<bool>::type_id(): {
-          const bool bval = (stored != 0);
-          sample->value = value::Value(bval);
-          break;
-        }
-        default:
-          break;
-      }
-#undef RECONSTRUCT_SMALL_VALUE
-      return true;
-    }
-
-    if (idx >= _offsets.size()) {
-      return true;
-    }
-
-    const uint64_t encoded_offset = _offsets[idx];
-    const size_t byte_offset = static_cast<size_t>(encoded_offset & OFFSET_VALUE_MASK);
-
-#define RECONSTRUCT_VALUE(TYPE) \
+#define RECONSTRUCT_SCALAR(TYPE) \
     case value::TypeTraits<TYPE>::type_id(): { \
-      if (byte_offset + sizeof(TYPE) <= _values.size()) { \
+      if (static_cast<size_t>(byte_offset) + sizeof(TYPE) <= _data.size()) { \
         TYPE val; \
-        std::memcpy(&val, _values.data() + byte_offset, sizeof(TYPE)); \
+        std::memcpy(&val, _data.data() + byte_offset, sizeof(TYPE)); \
         sample->value = value::Value(val); \
       } \
       break; \
     }
 
-    switch (type_id) {
-      RECONSTRUCT_VALUE(value::float2)
-      RECONSTRUCT_VALUE(value::float3)
-      RECONSTRUCT_VALUE(value::float4)
-      RECONSTRUCT_VALUE(value::double2)
-      RECONSTRUCT_VALUE(value::double3)
-      RECONSTRUCT_VALUE(value::double4)
-      RECONSTRUCT_VALUE(value::int2)
-      RECONSTRUCT_VALUE(value::int3)
-      RECONSTRUCT_VALUE(value::int4)
-      RECONSTRUCT_VALUE(value::half2)
-      RECONSTRUCT_VALUE(value::half3)
-      RECONSTRUCT_VALUE(value::half4)
-      RECONSTRUCT_VALUE(value::quath)
-      RECONSTRUCT_VALUE(value::quatf)
-      RECONSTRUCT_VALUE(value::quatd)
-      RECONSTRUCT_VALUE(value::point3f)
-      RECONSTRUCT_VALUE(value::point3d)
-      RECONSTRUCT_VALUE(value::normal3f)
-      RECONSTRUCT_VALUE(value::normal3d)
-      RECONSTRUCT_VALUE(value::vector3f)
-      RECONSTRUCT_VALUE(value::vector3d)
-      RECONSTRUCT_VALUE(value::color3f)
-      RECONSTRUCT_VALUE(value::color3d)
-      RECONSTRUCT_VALUE(value::color4f)
-      RECONSTRUCT_VALUE(value::color4d)
-      RECONSTRUCT_VALUE(value::texcoord2f)
-      RECONSTRUCT_VALUE(value::texcoord2d)
-      RECONSTRUCT_VALUE(value::texcoord3f)
-      RECONSTRUCT_VALUE(value::texcoord3d)
-      RECONSTRUCT_VALUE(value::matrix2f)
-      RECONSTRUCT_VALUE(value::matrix2d)
-      RECONSTRUCT_VALUE(value::matrix3f)
-      RECONSTRUCT_VALUE(value::matrix3d)
-      RECONSTRUCT_VALUE(value::matrix4f)
-      RECONSTRUCT_VALUE(value::matrix4d)
+    switch (tid) {
+      RECONSTRUCT_SCALAR(value::half)
+      RECONSTRUCT_SCALAR(float)
+      RECONSTRUCT_SCALAR(double)
+      RECONSTRUCT_SCALAR(int32_t)
+      RECONSTRUCT_SCALAR(uint32_t)
+      RECONSTRUCT_SCALAR(int64_t)
+      RECONSTRUCT_SCALAR(uint64_t)
+      case value::TypeTraits<bool>::type_id(): {
+        if (static_cast<size_t>(byte_offset) + 1 <= _data.size()) {
+          bool bval = (_data[byte_offset] != 0);
+          sample->value = value::Value(bval);
+        }
+        break;
+      }
+      RECONSTRUCT_SCALAR(value::float2)
+      RECONSTRUCT_SCALAR(value::float3)
+      RECONSTRUCT_SCALAR(value::float4)
+      RECONSTRUCT_SCALAR(value::double2)
+      RECONSTRUCT_SCALAR(value::double3)
+      RECONSTRUCT_SCALAR(value::double4)
+      RECONSTRUCT_SCALAR(value::int2)
+      RECONSTRUCT_SCALAR(value::int3)
+      RECONSTRUCT_SCALAR(value::int4)
+      RECONSTRUCT_SCALAR(value::half2)
+      RECONSTRUCT_SCALAR(value::half3)
+      RECONSTRUCT_SCALAR(value::half4)
+      RECONSTRUCT_SCALAR(value::quath)
+      RECONSTRUCT_SCALAR(value::quatf)
+      RECONSTRUCT_SCALAR(value::quatd)
+      RECONSTRUCT_SCALAR(value::point3f)
+      RECONSTRUCT_SCALAR(value::point3d)
+      RECONSTRUCT_SCALAR(value::normal3f)
+      RECONSTRUCT_SCALAR(value::normal3d)
+      RECONSTRUCT_SCALAR(value::vector3f)
+      RECONSTRUCT_SCALAR(value::vector3d)
+      RECONSTRUCT_SCALAR(value::color3f)
+      RECONSTRUCT_SCALAR(value::color3d)
+      RECONSTRUCT_SCALAR(value::color4f)
+      RECONSTRUCT_SCALAR(value::color4d)
+      RECONSTRUCT_SCALAR(value::texcoord2f)
+      RECONSTRUCT_SCALAR(value::texcoord2d)
+      RECONSTRUCT_SCALAR(value::texcoord3f)
+      RECONSTRUCT_SCALAR(value::texcoord3d)
+      RECONSTRUCT_SCALAR(value::matrix2f)
+      RECONSTRUCT_SCALAR(value::matrix2d)
+      RECONSTRUCT_SCALAR(value::matrix3f)
+      RECONSTRUCT_SCALAR(value::matrix3d)
+      RECONSTRUCT_SCALAR(value::matrix4f)
+      RECONSTRUCT_SCALAR(value::matrix4d)
       default:
         break;
     }
-
-#undef RECONSTRUCT_VALUE
+#undef RECONSTRUCT_SCALAR
     return true;
-}
-
-bool TimeSamples::reconstruct_unified_sample(size_t idx, Sample* sample) const {
-    if (_storage.uses_value_array()) {
-      return reconstruct_value_array_sample(idx, sample);
-    }
-
-    return reconstruct_binary_sample(idx, sample);
 }
 
 bool TimeSamples::add_sample(const Sample &s, std::string *err) {
@@ -637,10 +295,10 @@ bool TimeSamples::add_sample(const Sample &s, std::string *err) {
       return false;
     }
 
-    if (!is_initialized() && !s.value.is_none()) {
-      init(s.value.type_id());
-    } else if (!s.value.is_none() && is_initialized()) {
-      if (s.value.type_id() != _type_id) {
+    if (!s.value.is_none()) {
+      if (!is_initialized()) {
+        set_type_id(s.value.type_id());
+      } else if (s.value.type_id() != _type_id) {
         if (err) {
           (*err) += "Type mismatch in TimeSamples: expected type_id " +
                     std::to_string(_type_id) + " but got " +
@@ -664,10 +322,10 @@ bool TimeSamples::add_sample(double t, const value::Value &v, std::string *err) 
       return false;
     }
 
-    if (!is_initialized() && !v.is_none()) {
-      init(v.type_id());
-    } else if (!v.is_none() && is_initialized()) {
-      if (v.type_id() != _type_id) {
+    if (!v.is_none()) {
+      if (!is_initialized()) {
+        set_type_id(v.type_id());
+      } else if (v.type_id() != _type_id) {
         if (err) {
           (*err) += "Type mismatch in TimeSamples: expected type_id " +
                     std::to_string(_type_id) + " but got " +
@@ -695,10 +353,10 @@ bool TimeSamples::add_blocked_sample(double t, const value::Value &v, std::strin
       return false;
     }
 
-    if (!is_initialized() && !v.is_none() && v.type_id() != 1) {
-      init(v.type_id());
-    } else if (!v.is_none() && is_initialized() && v.type_id() != 1) {
-      if (v.type_id() != _type_id) {
+    if (!v.is_none() && v.type_id() != 1) {
+      if (!is_initialized()) {
+        set_type_id(v.type_id());
+      } else if (v.type_id() != _type_id) {
         if (err) {
           (*err) += "Type mismatch in TimeSamples (blocked sample): expected type_id " +
                     std::to_string(_type_id) + " but got " +
@@ -717,59 +375,14 @@ bool TimeSamples::add_blocked_sample(double t, const value::Value &v, std::strin
     return true;
 }
 
-bool TimeSamples::add_value_array_sample(double t, value::Value &&v, std::string *err) {
-    if (!v.is_array() || v.is_none()) {
-      if (err) {
-        (*err) += "add_value_array_sample requires a non-blocked array value.\n";
-      }
-      return false;
-    }
-
-    if (!ensure_initialized_type(v.type_id(), err, "add_value_array_sample")) {
-      return false;
-    }
-
-    if (!ensure_array_storage_backend(UnifiedStorageBackend::ValueArray,
-                                      ArrayLayoutKind::None, 0, err,
-                                      "add_value_array_sample")) {
-      return false;
-    }
-
-    size_t storage_index = _value_array_storage.size();
-    _value_array_storage.push_back(std::move(v));
-
-    _times.push_back(t);
-    _blocked.push_back(0);
-    _value_array_refs.push_back(make_value_array_ref(storage_index, false));
-    _array_counts.push_back(_value_array_storage.back().array_size());
-
-    invalidate_reconstructed_samples_cache();
-    _dirty = true;
-    return true;
-}
-
 size_t TimeSamples::estimate_memory_usage() const {
     size_t total = sizeof(TimeSamples);
 
     total += _times.capacity() * sizeof(double);
     total += _blocked.capacity();
-    total += _values.capacity();
-    total += _offsets.capacity() * sizeof(uint64_t);
-    total += _small_values.capacity() * sizeof(uint64_t);
-
-    total += _array_values.capacity() * sizeof(std::unique_ptr<Buffer<16>>);
-    for (const auto& buf : _array_values) {
-      if (buf) {
-        total += sizeof(Buffer<16>) + buf->capacity();
-      }
-    }
-
-    total += _value_array_storage.capacity() * sizeof(value::Value);
-    for (const auto& val : _value_array_storage) {
-      total += val.estimate_memory_usage();
-    }
-    total += _value_array_refs.capacity() * sizeof(uint64_t);
-    total += _array_counts.capacity() * sizeof(size_t);
+    total += _data.capacity();
+    total += _data_offsets.capacity() * sizeof(uint32_t);
+    total += _array_counts.capacity() * sizeof(uint32_t);
 
     total += _samples.capacity() * sizeof(Sample);
     for (const auto &sample : _samples) {
@@ -780,58 +393,43 @@ size_t TimeSamples::estimate_memory_usage() const {
 }
 
 bool TimeSamples::add_dedup_sample(double t, size_t ref_index, std::string *err) {
-    // Check if using value array storage
-    if (_storage.uses_value_array()) {
-      if (ref_index >= _times.size()) {
+    // For generic Value storage
+    if (!has_unified_samples()) {
+      if (ref_index >= _samples.size()) {
         if (err) {
           (*err) += "Invalid ref_index in add_dedup_sample: " +
-                    std::to_string(ref_index) + " >= " + std::to_string(_times.size()) + ".\n";
+                    std::to_string(ref_index) + " >= " + std::to_string(_samples.size()) + ".\n";
         }
         return false;
       }
 
-      uint64_t ref_entry = _value_array_refs[ref_index];
-      size_t storage_index = get_value_array_index(ref_entry);
-
-      if (is_value_array_dedup(ref_entry)) {
-        if (err) {
-          (*err) += "Cannot deduplicate from already deduplicated sample.\n";
-        }
-        return false;
-      }
-
-      _times.push_back(t);
-      _blocked.push_back(0);
-      _value_array_refs.push_back(make_value_array_ref(storage_index, true));
-      const size_t ref_array_count =
-          (ref_index < _array_counts.size()) ? _array_counts[ref_index] : 0;
-      _array_counts.push_back(ref_array_count);
-
-      invalidate_reconstructed_samples_cache();
+      Sample s;
+      s.t = t;
+      s.value = _samples[ref_index].value;
+      s.blocked = _samples[ref_index].blocked;
+      _samples.push_back(s);
       _dirty = true;
       return true;
     }
 
-    // Fallback to old _samples based storage
-    if (has_unified_samples()) {
-      if (err) {
-        (*err) += "add_dedup_sample cannot fall back to generic Value storage once unified storage is active.\n";
-      }
-      return false;
-    }
-    if (ref_index >= _samples.size()) {
+    // For binary storage — share same data offset
+    if (ref_index >= _data_offsets.size()) {
       if (err) {
         (*err) += "Invalid ref_index in add_dedup_sample: " +
-                  std::to_string(ref_index) + " >= " + std::to_string(_samples.size()) + ".\n";
+                  std::to_string(ref_index) + " >= " + std::to_string(_data_offsets.size()) + ".\n";
       }
       return false;
     }
 
-    Sample s;
-    s.t = t;
-    s.value = _samples[ref_index].value;
-    s.blocked = _samples[ref_index].blocked;
-    _samples.push_back(s);
+    _times.push_back(t);
+    _blocked.push_back(0);
+    _data_offsets.push_back(_data_offsets[ref_index]);
+    if (_is_array) {
+      uint32_t ref_count = (ref_index < _array_counts.size()) ? _array_counts[ref_index] : 0;
+      _array_counts.push_back(ref_count);
+    }
+
+    invalidate_reconstructed_samples_cache();
     _dirty = true;
     return true;
 }
@@ -858,7 +456,7 @@ const std::vector<TimeSamples::Sample> &TimeSamples::get_samples() const {
 
       for (size_t i = 0; i < _times.size(); ++i) {
         Sample s;
-        if (!reconstruct_unified_sample(i, &s)) {
+        if (!reconstruct_binary_sample(i, &s)) {
           s.t = (i < _times.size()) ? _times[i] : 0.0;
           s.value = value::Value();
           s.blocked = true;
@@ -1452,134 +1050,69 @@ namespace value {
 TimeSamples::TimeSamples(TimeSamples&& other) noexcept
     : _samples(std::move(other._samples)),
       _times(std::move(other._times)),
-      _small_values(std::move(other._small_values)),
-      _offsets(std::move(other._offsets)),
-      _array_values(std::move(other._array_values)),
       _blocked(std::move(other._blocked)),
-      _values(std::move(other._values)),
-      _value_array_storage(std::move(other._value_array_storage)),
-      _value_array_refs(std::move(other._value_array_refs)),
+      _data(std::move(other._data)),
+      _data_offsets(std::move(other._data_offsets)),
       _array_counts(std::move(other._array_counts)),
-      _storage(other._storage),
-      _blocked_count(other._blocked_count),
-      _dirty_start(other._dirty_start),
-      _dirty_end(other._dirty_end),
       _type_id(other._type_id),
-      _dirty(other._dirty) {
-  // Reset moved-from object to valid empty state
+      _element_size(other._element_size),
+      _dirty(other._dirty),
+      _is_array(other._is_array) {
   other._type_id = 0;
-  other._storage.clear();
-  other._blocked_count = 0;
+  other._element_size = 0;
   other._dirty = false;
-  other._dirty_start = 0;
-  other._dirty_end = 0;
+  other._is_array = false;
 }
 
 // Move assignment operator
 TimeSamples& TimeSamples::operator=(TimeSamples&& other) noexcept {
   if (this != &other) {
-    // Move data from other
     _samples = std::move(other._samples);
     _times = std::move(other._times);
     _blocked = std::move(other._blocked);
-    _values = std::move(other._values);
-    _array_values = std::move(other._array_values);  // Move unique_ptr vector
-    _offsets = std::move(other._offsets);
-    _small_values = std::move(other._small_values);
-    _value_array_storage = std::move(other._value_array_storage);
-    _value_array_refs = std::move(other._value_array_refs);
-    _type_id = other._type_id;
-    _storage = other._storage;
-    _blocked_count = other._blocked_count;
+    _data = std::move(other._data);
+    _data_offsets = std::move(other._data_offsets);
     _array_counts = std::move(other._array_counts);
+    _type_id = other._type_id;
+    _element_size = other._element_size;
     _dirty = other._dirty;
-    _dirty_start = other._dirty_start;
-    _dirty_end = other._dirty_end;
+    _is_array = other._is_array;
 
-    // Reset moved-from object to valid empty state
     other._type_id = 0;
-    other._storage.clear();
-    other._blocked_count = 0;
+    other._element_size = 0;
     other._dirty = false;
-    other._dirty_start = 0;
-    other._dirty_end = 0;
+    other._is_array = false;
   }
   return *this;
 }
 
-// Copy constructor - implements deep copy for _array_values
+// Copy constructor
 TimeSamples::TimeSamples(const TimeSamples& other)
     : _samples(other._samples),
       _times(other._times),
-      _small_values(other._small_values),
-      _offsets(other._offsets),
-      // _array_values deep-copied in body
       _blocked(other._blocked),
-      _values(other._values),
-      // _value_array_storage copied in body to avoid TypeTraits issues
-      _value_array_refs(other._value_array_refs),
+      _data(other._data),
+      _data_offsets(other._data_offsets),
       _array_counts(other._array_counts),
-      _storage(other._storage),
-      _blocked_count(other._blocked_count),
-      _dirty_start(other._dirty_start),
-      _dirty_end(other._dirty_end),
       _type_id(other._type_id),
-      _dirty(other._dirty) {
-  // Copy value array storage in body to avoid TypeTraits instantiation issues
-  _value_array_storage.reserve(other._value_array_storage.size());
-  for (const auto& v : other._value_array_storage) {
-    _value_array_storage.push_back(v);
-  }
-  // Deep copy _array_values (vector of unique_ptr)
-  _array_values.clear();
-  _array_values.reserve(other._array_values.size());
-  for (const auto& array_buffer : other._array_values) {
-    if (array_buffer) {
-      // Create a new Buffer<16> and copy data
-      auto new_buffer = std::make_unique<Buffer<16>>(*array_buffer);
-      _array_values.push_back(std::move(new_buffer));
-    } else {
-      _array_values.push_back(nullptr);
-    }
-  }
+      _element_size(other._element_size),
+      _dirty(other._dirty),
+      _is_array(other._is_array) {
 }
 
-// Copy assignment operator - implements deep copy for _array_values
+// Copy assignment operator
 TimeSamples& TimeSamples::operator=(const TimeSamples& other) {
   if (this != &other) {
     _samples = other._samples;
     _times = other._times;
     _blocked = other._blocked;
-    _values = other._values;
-    _offsets = other._offsets;
-    _type_id = other._type_id;
-    _storage = other._storage;
-    _blocked_count = other._blocked_count;
+    _data = other._data;
+    _data_offsets = other._data_offsets;
     _array_counts = other._array_counts;
+    _type_id = other._type_id;
+    _element_size = other._element_size;
     _dirty = other._dirty;
-    _dirty_start = other._dirty_start;
-    _dirty_end = other._dirty_end;
-    _small_values = other._small_values;
-    _value_array_refs = other._value_array_refs;
-    // Copy value array storage element by element to avoid TypeTraits instantiation issues
-    _value_array_storage.clear();
-    _value_array_storage.reserve(other._value_array_storage.size());
-    for (const auto& v : other._value_array_storage) {
-      _value_array_storage.push_back(v);
-    }
-
-    // Deep copy _array_values (vector of unique_ptr)
-    _array_values.clear();
-    _array_values.reserve(other._array_values.size());
-    for (const auto& array_buffer : other._array_values) {
-      if (array_buffer) {
-        // Create a new Buffer<16> and copy data
-        auto new_buffer = std::make_unique<Buffer<16>>(*array_buffer);
-        _array_values.push_back(std::move(new_buffer));
-      } else {
-        _array_values.push_back(nullptr);
-      }
-    }
+    _is_array = other._is_array;
   }
   return *this;
 }
@@ -1589,19 +1122,13 @@ void TimeSamples::clear() {
   _samples.clear();
   _times.clear();
   _blocked.clear();
-  _values.clear();
-  _array_values.clear();
-  _offsets.clear();
-  _small_values.clear();
-  _value_array_storage.clear();
-  _value_array_refs.clear();
+  _data.clear();
+  _data_offsets.clear();
   _array_counts.clear();
   _type_id = 0;
-  _storage.clear();
-  _blocked_count = 0;
+  _element_size = 0;
   _dirty = true;
-  _dirty_start = 0;
-  _dirty_end = 0;
+  _is_array = false;
 }
 
 
