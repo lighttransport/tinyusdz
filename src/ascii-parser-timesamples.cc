@@ -132,11 +132,9 @@ bool AsciiParser::ParseTypedTimeSamples(value::TimeSamples *ts_out) {
     return false;
   }
 
-  // Try to initialize with unified binary storage.
-  if (!ts_out->init(value::TypeTraits<T>::type_id())) {
-    // Already initialized with different type
-    return false;
-  }
+  // Set type hint for metadata. The add_sample<T>() calls below auto-detect
+  // the backend on first call, so this is just for metadata consistency.
+  ts_out->set_type_id(value::TypeTraits<T>::type_id());
 
   if (!Expect('{')) {
     return false;

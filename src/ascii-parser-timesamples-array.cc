@@ -120,104 +120,7 @@ namespace tinyusdz {
 
 namespace ascii {
 
-//
-// -- Deduplication support for array timesamples
-//
-
-// Compare two value::Value objects for array equality
-// Used for deduplication detection in timesample arrays
-static bool arrays_equal(const value::Value &a, const value::Value &b) {
-  if (a.type_id() != b.type_id()) {
-    return false;
-  }
-
-  if (!a.is_array() || !b.is_array()) {
-    return false;
-  }
-
-  // Type-specific comparisons
-#define COMPARE_ARRAY_TYPE(__type)                              \
-  {                                                             \
-    auto *vec_a = a.as<std::vector<__type>>();               \
-    auto *vec_b = b.as<std::vector<__type>>();               \
-    if (vec_a && vec_b) return *vec_a == *vec_b;              \
-  }
-
-  // Binary-serializable scalar and vector types with operator==
-  COMPARE_ARRAY_TYPE(bool)
-  // int8_t type is not directly supported in Value type system
-  // COMPARE_ARRAY_TYPE(int8_t)
-  COMPARE_ARRAY_TYPE(uint8_t)
-  COMPARE_ARRAY_TYPE(int16_t)
-  COMPARE_ARRAY_TYPE(uint16_t)
-  COMPARE_ARRAY_TYPE(int32_t)
-  COMPARE_ARRAY_TYPE(uint32_t)
-  COMPARE_ARRAY_TYPE(int64_t)
-  COMPARE_ARRAY_TYPE(uint64_t)
-  COMPARE_ARRAY_TYPE(float)
-  COMPARE_ARRAY_TYPE(double)
-
-  // Vector types - these have operator== defined in value-types.hh
-  COMPARE_ARRAY_TYPE(value::int2)
-  COMPARE_ARRAY_TYPE(value::int3)
-  COMPARE_ARRAY_TYPE(value::int4)
-  COMPARE_ARRAY_TYPE(value::float2)
-  COMPARE_ARRAY_TYPE(value::float3)
-  COMPARE_ARRAY_TYPE(value::float4)
-  COMPARE_ARRAY_TYPE(value::double2)
-  COMPARE_ARRAY_TYPE(value::double3)
-  COMPARE_ARRAY_TYPE(value::double4)
-
-  // Half precision types
-  COMPARE_ARRAY_TYPE(value::half)
-  COMPARE_ARRAY_TYPE(value::half2)
-  COMPARE_ARRAY_TYPE(value::half3)
-  COMPARE_ARRAY_TYPE(value::half4)
-
-  // Quaternion types
-  COMPARE_ARRAY_TYPE(value::quath)
-  COMPARE_ARRAY_TYPE(value::quatf)
-  COMPARE_ARRAY_TYPE(value::quatd)
-
-  // Color types
-  COMPARE_ARRAY_TYPE(value::color3h)
-  COMPARE_ARRAY_TYPE(value::color3f)
-  COMPARE_ARRAY_TYPE(value::color3d)
-  COMPARE_ARRAY_TYPE(value::color4h)
-  COMPARE_ARRAY_TYPE(value::color4f)
-  COMPARE_ARRAY_TYPE(value::color4d)
-
-  // Point/normal/vector types
-  COMPARE_ARRAY_TYPE(value::point3h)
-  COMPARE_ARRAY_TYPE(value::point3f)
-  COMPARE_ARRAY_TYPE(value::point3d)
-  COMPARE_ARRAY_TYPE(value::normal3h)
-  COMPARE_ARRAY_TYPE(value::normal3f)
-  COMPARE_ARRAY_TYPE(value::normal3d)
-  COMPARE_ARRAY_TYPE(value::vector3h)
-  COMPARE_ARRAY_TYPE(value::vector3f)
-  COMPARE_ARRAY_TYPE(value::vector3d)
-
-  // Texcoord types
-  COMPARE_ARRAY_TYPE(value::texcoord2h)
-  COMPARE_ARRAY_TYPE(value::texcoord2f)
-  COMPARE_ARRAY_TYPE(value::texcoord2d)
-  COMPARE_ARRAY_TYPE(value::texcoord3h)
-  COMPARE_ARRAY_TYPE(value::texcoord3f)
-  COMPARE_ARRAY_TYPE(value::texcoord3d)
-
-  // Matrix types - now trivial and support binary-storage path with dedup
-  COMPARE_ARRAY_TYPE(value::matrix2f)
-  COMPARE_ARRAY_TYPE(value::matrix2d)
-  COMPARE_ARRAY_TYPE(value::matrix3f)
-  COMPARE_ARRAY_TYPE(value::matrix3d)
-  COMPARE_ARRAY_TYPE(value::matrix4f)
-  COMPARE_ARRAY_TYPE(value::matrix4d)
-
-#undef COMPARE_ARRAY_TYPE
-
-  return false;
-}
+// Deduplication removed — O(n^2) comparison was expensive and rarely triggered.
 
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<bool> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result);
@@ -327,16 +230,9 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
 
   value::TimeSamples ts;
 
-  // Initialize TimeSamples with the array type_id early to enable binary storage.
-  // Only for binary-serializable types — non-binary types (token, string, path)
-  // have dedicated VECTOR type_ids that don't use the TYPE_ID_1D_ARRAY_BIT pattern,
-  // so early init with the wrong type_id would cause add_sample() to reject values.
-  nonstd::optional<uint32_t> array_type_id = value::TryGetTypeId(type_name);
-  if (array_type_id && value::UsesBinaryTimesampleStorageType(array_type_id.value())) {
-    uint32_t full_type_id = array_type_id.value() | value::TYPE_ID_1D_ARRAY_BIT;
-    ts.init(full_type_id);
-    DCOUT("Initialized TimeSamples with array type_id: " << full_type_id << " for type: " << type_name << "[]");
-  }
+  // No early init() needed — add_sample<T>() / add_array_sample<T>() auto-detect
+  // the type on first call. Early init caused a silent data-loss bug for token[]
+  // timeSamples because non-binary types use different type_id patterns.
 
   if (!Expect('{')) {
     return false;
@@ -382,125 +278,9 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
       return false;
     }
 
-    // Helper lambda to check and add array sample with dedup
-    auto add_array_sample_with_dedup = [&]() -> bool {
-      if (value.is_array()) {
-        // Check if this array value has been seen before in existing samples
-        // We need to compare with all previous samples to find duplicates
-        size_t ref_index = std::numeric_limits<size_t>::max();
-
-        // Iterate through all samples added so far to find a match
-        for (size_t i = 0; i < ts.size(); ++i) {
-          // Get the value at sample index i
-          auto existing_value = ts.get_value(i);
-          if (existing_value && existing_value->is_array()) {
-            // Compare the arrays using our arrays_equal function
-            if (arrays_equal(value, *existing_value)) {
-              ref_index = i;
-              DCOUT("Array dedup (ASCII): found duplicate at index " << i << " for time " << timeVal);
-              break;
-            }
-          }
-        }
-
-        // If we found a duplicate, use the dedup methods
-        if (ref_index != std::numeric_limits<size_t>::max()) {
-          DCOUT("Array dedup (ASCII): detected duplicate at index " << ref_index << " for time " << timeVal);
-
-          // Reuse unified binary storage when the array element type supports it.
-          if (ts.is_using_binary_storage() &&
-              value::UsesBinaryTimesampleStorageType(value.type_id())) {
-            // Get the array type ID to determine which typed dedup method to call
-            uint32_t array_tid = value.type_id();
-            uint32_t elem_tid = array_tid & (~value::TYPE_ID_1D_ARRAY_BIT);
-
-            std::string err;
-            bool dedup_added = false;
-
-            // Call the appropriate typed dedup method based on element type
-#define DEDUP_CASE(__type)                                                     \
-  case value::TypeTraits<__type>::type_id():                                   \
-    dedup_added = ts.add_dedup_array_sample<__type>(timeVal, ref_index, &err); \
-    break;
-
-            switch (elem_tid) {
-              DEDUP_CASE(int32_t)
-              DEDUP_CASE(uint32_t)
-              DEDUP_CASE(int64_t)
-              DEDUP_CASE(uint64_t)
-              DEDUP_CASE(float)
-              DEDUP_CASE(double)
-              DEDUP_CASE(value::half)
-              DEDUP_CASE(value::half2)
-              DEDUP_CASE(value::half3)
-              DEDUP_CASE(value::half4)
-              DEDUP_CASE(value::float2)
-              DEDUP_CASE(value::float3)
-              DEDUP_CASE(value::float4)
-              DEDUP_CASE(value::double2)
-              DEDUP_CASE(value::double3)
-              DEDUP_CASE(value::double4)
-              DEDUP_CASE(value::quath)
-              DEDUP_CASE(value::quatf)
-              DEDUP_CASE(value::quatd)
-              DEDUP_CASE(value::color3h)
-              DEDUP_CASE(value::color3f)
-              DEDUP_CASE(value::color3d)
-              DEDUP_CASE(value::color4h)
-              DEDUP_CASE(value::color4f)
-              DEDUP_CASE(value::color4d)
-              DEDUP_CASE(value::point3h)
-              DEDUP_CASE(value::point3f)
-              DEDUP_CASE(value::point3d)
-              DEDUP_CASE(value::normal3h)
-              DEDUP_CASE(value::normal3f)
-              DEDUP_CASE(value::normal3d)
-              DEDUP_CASE(value::vector3h)
-              DEDUP_CASE(value::vector3f)
-              DEDUP_CASE(value::vector3d)
-              DEDUP_CASE(value::texcoord2h)
-              DEDUP_CASE(value::texcoord2f)
-              DEDUP_CASE(value::texcoord2d)
-              DEDUP_CASE(value::texcoord3h)
-              DEDUP_CASE(value::texcoord3f)
-              DEDUP_CASE(value::texcoord3d)
-              DEDUP_CASE(value::matrix2f)
-              DEDUP_CASE(value::matrix3f)
-              DEDUP_CASE(value::matrix4f)
-              DEDUP_CASE(value::matrix2d)
-              DEDUP_CASE(value::matrix3d)
-              DEDUP_CASE(value::matrix4d)
-              default:
-                DCOUT("Array dedup (ASCII): unsupported binary storage type, falling back to regular sample");
-                ts.add_sample(timeVal, value, &err);
-                break;
-            }
-#undef DEDUP_CASE
-
-            if (dedup_added) {
-              DCOUT("Array dedup (ASCII): successfully added dedup reference for time " << timeVal);
-            } else if (!err.empty()) {
-              DCOUT("Array dedup (ASCII): failed to add dedup sample: " << err);
-              // Fall back to regular sample on error
-              ts.add_sample(timeVal, value, &err);
-            }
-          } else {
-            DCOUT("Array dedup (ASCII): falling back to regular sample");
-            std::string err;
-            ts.add_sample(timeVal, value, &err);
-          }
-        } else {
-          // No duplicate found, add as a regular sample
-          DCOUT("Array dedup (ASCII): no duplicate found, adding new sample at index " << ts.size());
-          std::string err;
-          // TODO: Extract typed array data and use typed add_array_sample directly.
-          ts.add_sample(timeVal, value, &err);
-        }
-      } else {
-        // Not an array, just add normally
-        ts.add_sample(timeVal, value);
-      }
-      return true;
+    // Simple add helper (dedup removed — was O(n^2) and rarely triggered)
+    auto add_sample_now = [&]() {
+      ts.add_sample(timeVal, value);
     };
 
     // The last element may have separator ','
@@ -519,9 +299,7 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
       DCOUT("sep = " << sep);
       if (sep == '}') {
         // End of item
-        if (!add_array_sample_with_dedup()) {
-          return false;
-        }
+        add_sample_now();
         break;
       } else if (sep == ',') {
         // ok - continue to next iteration
@@ -539,9 +317,7 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
 
           if (nc == '}') {
             // End of item
-            if (!add_array_sample_with_dedup()) {
-              return false;
-            }
+            add_sample_now();
             break;
           }
         }
@@ -555,10 +331,8 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
       return false;
     }
 
-    // Add the sample with dedup check
-    if (!add_array_sample_with_dedup()) {
-      return false;
-    }
+    // Add the sample
+    add_sample_now();
   }
 
   DCOUT("Parse TimeSamples success. # of items = " << ts.size());
