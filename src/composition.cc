@@ -1234,7 +1234,6 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
     PrimSpec &primspec, std::string *warn, std::string *err) {
   (void)warn;
 
-  // TODO:
   // - propertyNames()
   // - primChildrenNames()
 
@@ -1966,7 +1965,6 @@ bool VariantSelectPrimSpec(
           }
         }
 
-        // TODO:
         // - [ ] update `primChildren` and `properties` metadataum if required.
       }
     }

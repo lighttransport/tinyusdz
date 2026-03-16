@@ -961,7 +961,6 @@ bool UpcastType(const std::string &reqType, value::Value &inout) {
 
   // For array
   if (reqTypeArray) {
-    // TODO
   } else {
     if (tyid == value::TYPE_ID_FLOAT) {
       float dst;

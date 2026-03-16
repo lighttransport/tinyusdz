@@ -89,7 +89,6 @@ struct MtlxModel {
   std::string name_space; // namespace
 
   //mtlx::ColorSpace colorspace{Lin_rec709};
-  // TODO
 
   std::string shader_name;
 

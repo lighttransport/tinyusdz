@@ -1693,8 +1693,6 @@ bool SetupUSDZAssetResolution(
 {
   // https://openusd.org/release/spec_usdz.html
   //
-  // [x] Image: png, jpeg(jpg), exr
-  //
   // TODO(LTE):
   //
   // [ ] USD: usda, usdc, usd

@@ -6,16 +6,6 @@
 //   - [ ] Subdivision surface to polygon mesh conversion.
 //     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis
 //     function of subd surface)
-//   - [x] Support time-varying shader attribute(timeSamples)
-//   - [x] Wide gamut colorspace conversion support
-//     - [x] linear sRGB <-> linear DisplayP3, ACEScg, ACES2065-1, Rec.2020
-//   - [x] Compute tangentes and binormals
-//   - [x] displayColor, displayOpacity primvar(vertex color)
-//   - [x] Support Skeleton
-//   - [x] Support SkelAnimation
-//     - [x] joint animation
-//     - [x] blendshape animation
-//     - [x] explicit joint order
 //   - [ ] Support Inbetween BlendShape
 //   - [ ] Support material binding collection(Collection API)
 //   - [ ] Support multiple skel animation

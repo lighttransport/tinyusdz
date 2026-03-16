@@ -946,7 +946,6 @@ json ToJSON(tinyusdz::GeomBasisCurves& curves) {
   j["name"] = curves.name;
   j["typeName"] = "GeomBasisCurves";
 
-  // TODO
   USDToJSONContext *context = nullptr;
 
   // Points array (point3f[])

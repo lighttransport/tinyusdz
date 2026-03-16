@@ -34,7 +34,6 @@
 // conversion - it produces shortest representation for 100% of values
 
 
-// TODO:
 // - [ ] Print properties based on lexcographically(USDA)
 // - [ ] Refactor variantSet stmt print.
 
@@ -4377,7 +4376,6 @@ std::string to_string(const Path &path, bool show_full_path) {
   if (show_full_path) {
     return path.full_path_name();
   } else {
-    // TODO
     return path.full_path_name();
   }
 }

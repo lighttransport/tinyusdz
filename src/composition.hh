@@ -36,13 +36,8 @@
 #include "asset-resolution.hh"
 #include "prim-types.hh"
 
-// TODO
-// - [x] Compose `references`
-// - [x] Compose `payloads`
 // - [ ] Compose `specializes`
-// - [x] Compose `inherits`
 // - [ ] Compose `variantSets`
-// - [x] Compose `over`
 // - [ ] Consider `active` Prim metadatum
 
 namespace tinyusdz {
