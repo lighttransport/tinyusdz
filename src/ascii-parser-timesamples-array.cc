@@ -327,10 +327,12 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
 
   value::TimeSamples ts;
 
-  // Initialize TimeSamples with the array type_id early to enable binary storage
+  // Initialize TimeSamples with the array type_id early to enable binary storage.
+  // Only for binary-serializable types — non-binary types (token, string, path)
+  // have dedicated VECTOR type_ids that don't use the TYPE_ID_1D_ARRAY_BIT pattern,
+  // so early init with the wrong type_id would cause add_sample() to reject values.
   nonstd::optional<uint32_t> array_type_id = value::TryGetTypeId(type_name);
-  if (array_type_id) {
-    // Add the array bit to the type_id
+  if (array_type_id && value::UsesBinaryTimesampleStorageType(array_type_id.value())) {
     uint32_t full_type_id = array_type_id.value() | value::TYPE_ID_1D_ARRAY_BIT;
     ts.init(full_type_id);
     DCOUT("Initialized TimeSamples with array type_id: " << full_type_id << " for type: " << type_name << "[]");
