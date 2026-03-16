@@ -24,7 +24,6 @@ static bool ComputeGeomBound(const PrimSpec &ps, bool use_extent, Extent &bbox, 
     return false;
   }
 
-  // TODO:
   (void)use_extent;
   (void)bbox;
   (void)t;

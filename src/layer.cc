@@ -451,7 +451,6 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
   }
 
   if (path.is_relative_path()) {
-    // TODO
     PUSH_ERROR_AND_RETURN(fmt::format("TODO: Relative path: {}", path.full_path_name()));
   }
 

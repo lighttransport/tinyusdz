@@ -320,7 +320,6 @@ class Writer {
 
     (void)output;
 
-    // TODO
     return false;
   }
 

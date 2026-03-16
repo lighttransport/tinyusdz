@@ -245,7 +245,6 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
                        uint32_t indent);
 
 // Print properties.
-// TODO: Deprecate this function.
 std::string print_props(const std::map<std::string, Property> &props,
                         uint32_t indent);
 

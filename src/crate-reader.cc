@@ -5,7 +5,6 @@
 // Crate(binary format) reader
 //
 //
-// TODO:
 // - [] Unify BuildDecompressedPathsImpl and BuildNodeHierarchy
 
 #ifdef _MSC_VER
