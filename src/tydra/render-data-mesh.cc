@@ -2424,6 +2424,139 @@ bool RenderSceneConverter::ConvertVertexVariabilityImpl(
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Reorder vertex-varying attributes (points, joint/weights, BlendShape
+// targets) so that they match a new vertex layout.
+//
+// `vert_to_point[v]` gives the original mesh.points index for output vertex v.
+// The array size determines the number of output vertices.
+// ---------------------------------------------------------------------------
+namespace {
+#define PushError(msg) TYDRA_PUSH_ERROR(err, msg)
+
+static bool ReorderVertexVaryingAttributes(
+    RenderMesh &mesh,
+    const std::vector<uint32_t> &vert_to_point,
+    std::string *err) {
+
+  const size_t num_verts = vert_to_point.size();
+  if (num_verts == 0) {
+    PUSH_ERROR_AND_RETURN(
+        "Internal error. vert_to_point is empty in ReorderVertexVaryingAttributes.");
+  }
+
+  // --- Points ---
+  {
+    std::vector<value::float3> tmp_points(num_verts);
+    for (size_t v = 0; v < num_verts; v++) {
+      if (vert_to_point[v] >= mesh.points.size()) {
+        PUSH_ERROR_AND_RETURN("Internal error. point index out-of-range.");
+      }
+      tmp_points[v] = mesh.points[vert_to_point[v]];
+    }
+    mesh.points.swap(tmp_points);
+  }
+
+  // --- Joint indices / weights ---
+  if (mesh.joint_and_weights.jointIndices.size()) {
+    if (mesh.joint_and_weights.elementSize < 1) {
+      PUSH_ERROR_AND_RETURN(
+          "Internal error. Invalid elementSize in mesh.joint_and_weights.");
+    }
+    uint32_t elementSize = uint32_t(mesh.joint_and_weights.elementSize);
+    std::vector<int> tmp_indices(num_verts * size_t(elementSize));
+    std::vector<float> tmp_weights(num_verts * size_t(elementSize));
+    for (size_t v = 0; v < num_verts; v++) {
+      if ((elementSize * vert_to_point[v]) >=
+          mesh.joint_and_weights.jointIndices.size()) {
+        PUSH_ERROR_AND_RETURN(
+            "Internal error. point index exceeds jointIndices.size.");
+      }
+      for (size_t k = 0; k < elementSize; k++) {
+        tmp_indices[size_t(elementSize) * v + k] =
+            mesh.joint_and_weights
+                .jointIndices[size_t(elementSize) * size_t(vert_to_point[v]) + k];
+      }
+
+      if ((elementSize * vert_to_point[v]) >=
+          mesh.joint_and_weights.jointWeights.size()) {
+        PUSH_ERROR_AND_RETURN(
+            "Internal error. point index exceeds jointWeights.size.");
+      }
+
+      for (size_t k = 0; k < elementSize; k++) {
+        tmp_weights[size_t(elementSize) * v + k] =
+            mesh.joint_and_weights
+                .jointWeights[size_t(elementSize) * size_t(vert_to_point[v]) + k];
+      }
+    }
+    mesh.joint_and_weights.jointIndices.swap(tmp_indices);
+    mesh.joint_and_weights.jointWeights.swap(tmp_weights);
+  }
+
+  // --- BlendShape targets ---
+  if (mesh.targets.size()) {
+    // For BlendShape, reordering pointIndices, pointOffsets and normalOffsets is not enough.
+    // Some points could be duplicated, so we need to find a mapping of org pointIdx -> pointIdx list in reordered points,
+    // Then splat point attributes accordingly.
+
+    // org pointIdx -> List of pointIdx in reordered points.
+    std::unordered_map<uint32_t, std::vector<uint32_t>> pointIdxRemap;
+    pointIdxRemap.reserve(num_verts);
+
+    for (size_t v = 0; v < num_verts; v++) {
+      pointIdxRemap[vert_to_point[v]].push_back(uint32_t(v));
+    }
+
+    for (auto &target : mesh.targets) {
+
+      std::vector<value::float3> tmpPointOffsets;
+      std::vector<value::float3> tmpNormalOffsets;
+      std::vector<uint32_t> tmpPointIndices;
+
+      for (size_t i = 0; i < target.second.pointIndices.size(); i++) {
+
+        uint32_t orgPointIdx = target.second.pointIndices[i];
+        auto remap_it = pointIdxRemap.find(orgPointIdx);
+        if (remap_it == pointIdxRemap.end()) {
+          PUSH_ERROR_AND_RETURN("Invalid pointIndices value.");
+        }
+        const std::vector<uint32_t> &dstPointIndices = remap_it->second;
+
+        for (size_t k = 0; k < dstPointIndices.size(); k++) {
+          if (target.second.pointOffsets.size()) {
+            if (i >= target.second.pointOffsets.size()) {
+              PUSH_ERROR_AND_RETURN("Invalid pointOffsets.size.");
+            }
+            tmpPointOffsets.push_back(target.second.pointOffsets[i]);
+          }
+          if (target.second.normalOffsets.size()) {
+            if (i >= target.second.normalOffsets.size()) {
+              PUSH_ERROR_AND_RETURN("Invalid normalOffsets.size.");
+            }
+            tmpNormalOffsets.push_back(target.second.normalOffsets[i]);
+          }
+
+          tmpPointIndices.push_back(dstPointIndices[k]);
+        }
+      }
+
+      target.second.pointIndices.swap(tmpPointIndices);
+      target.second.pointOffsets.swap(tmpPointOffsets);
+      target.second.normalOffsets.swap(tmpNormalOffsets);
+
+    }
+
+    // TODO: Inbetween BlendShapes
+
+  }
+
+  return true;
+}
+
+#undef PushError
+}  // namespace
+
 bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max_vertex_valence, float dedup_eps) {
   //
   // - If mesh is triangulated, use triangulatedFaceVertexIndices, otherwise use
@@ -2671,118 +2804,10 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max
   //
   // Reorder 'vertex' varying attributes(points, jointIndices/jointWeights,
   // BlendShape points, ...)
-  // TODO: Preserve input order as much as possible.
   //
-  if (out_indices.empty()) {
-    PUSH_ERROR_AND_RETURN("Internal error. out_indices is empty after vertex dedup.");
-  }
-  {
-    uint32_t numPoints =
-        *std::max_element(out_indices.begin(), out_indices.end()) + 1;
-    {
-      std::vector<value::float3> tmp_points(numPoints);
-      // TODO: Use vertex_output[i].point_index?
-      for (size_t i = 0; i < out_point_indices.size(); i++) {
-        if (out_point_indices[i] >= mesh.points.size()) {
-          PUSH_ERROR_AND_RETURN("Internal error. point index out-of-range.");
-        }
-        tmp_points[out_indices[i]] = mesh.points[out_point_indices[i]];
-      }
-      mesh.points.swap(tmp_points);
-    }
-
-    if (mesh.joint_and_weights.jointIndices.size()) {
-      if (mesh.joint_and_weights.elementSize < 1) {
-        PUSH_ERROR_AND_RETURN(
-            "Internal error. Invalid elementSize in mesh.joint_and_weights.");
-      }
-      uint32_t elementSize = uint32_t(mesh.joint_and_weights.elementSize);
-      std::vector<int> tmp_indices(size_t(numPoints) * size_t(elementSize));
-      std::vector<float> tmp_weights(size_t(numPoints) * size_t(elementSize));
-      for (size_t i = 0; i < out_point_indices.size(); i++) {
-        if ((elementSize * out_point_indices[i]) >=
-            mesh.joint_and_weights.jointIndices.size()) {
-          PUSH_ERROR_AND_RETURN(
-              "Internal error. point index exceeds jointIndices.size.");
-        }
-        for (size_t k = 0; k < elementSize; k++) {
-          tmp_indices[size_t(elementSize) * size_t(out_indices[i]) + k] =
-              mesh.joint_and_weights
-                  .jointIndices[size_t(elementSize) * size_t(out_point_indices[i]) + k];
-        }
-
-        if ((elementSize * out_point_indices[i]) >=
-            mesh.joint_and_weights.jointWeights.size()) {
-          PUSH_ERROR_AND_RETURN(
-              "Internal error. point index exceeds jointWeights.size.");
-        }
-
-        for (size_t k = 0; k < elementSize; k++) {
-          tmp_weights[size_t(elementSize) * size_t(out_indices[i]) + k] =
-              mesh.joint_and_weights
-                  .jointWeights[size_t(elementSize) * size_t(out_point_indices[i]) + k];
-        }
-      }
-      mesh.joint_and_weights.jointIndices.swap(tmp_indices);
-      mesh.joint_and_weights.jointWeights.swap(tmp_weights);
-    }
-
-    if (mesh.targets.size()) {
-      // For BlendShape, reordering pointIndices, pointOffsets and normalOffsets is not enough.
-      // Some points could be duplicated, so we need to find a mapping of org pointIdx -> pointIdx list in reordered points,
-      // Then splat point attributes accordingly.
-
-      // org pointIdx -> List of pointIdx in reordered points.
-      std::unordered_map<uint32_t, std::vector<uint32_t>> pointIdxRemap;
-      pointIdxRemap.reserve(vertex_output.size());
-
-      for (size_t i = 0; i < vertex_output.size(); i++) {
-        pointIdxRemap[vertex_output.point_indices[i]].push_back(uint32_t(i));
-      }
-
-      for (auto &target : mesh.targets) {
-
-        std::vector<value::float3> tmpPointOffsets;
-        std::vector<value::float3> tmpNormalOffsets;
-        std::vector<uint32_t> tmpPointIndices;
-
-        for (size_t i = 0; i < target.second.pointIndices.size(); i++) {
-
-          uint32_t orgPointIdx = target.second.pointIndices[i];
-          auto remap_it = pointIdxRemap.find(orgPointIdx);
-          if (remap_it == pointIdxRemap.end()) {
-            PUSH_ERROR_AND_RETURN("Invalid pointIndices value.");
-          }
-          const std::vector<uint32_t> &dstPointIndices = remap_it->second;
-
-          for (size_t k = 0; k < dstPointIndices.size(); k++) {
-            if (target.second.pointOffsets.size()) {
-              if (i >= target.second.pointOffsets.size()) {
-                PUSH_ERROR_AND_RETURN("Invalid pointOffsets.size.");
-              }
-              tmpPointOffsets.push_back(target.second.pointOffsets[i]);
-            }
-            if (target.second.normalOffsets.size()) {
-              if (i >= target.second.normalOffsets.size()) {
-                PUSH_ERROR_AND_RETURN("Invalid normalOffsets.size.");
-              }
-              tmpNormalOffsets.push_back(target.second.normalOffsets[i]);
-            }
-
-            tmpPointIndices.push_back(dstPointIndices[k]);
-          }
-        }
-
-        target.second.pointIndices.swap(tmpPointIndices);
-        target.second.pointOffsets.swap(tmpPointOffsets);
-        target.second.normalOffsets.swap(tmpNormalOffsets);
-
-      }
-
-      // TODO: Inbetween BlendShapes
-
-    }
-
+  if (!ReorderVertexVaryingAttributes(mesh, vertex_output.point_indices,
+                                      &_err)) {
+    return false;
   }
 
   // Other 'facevarying' attributes are now 'vertex' variability.
@@ -2910,119 +2935,12 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
   //
   // Reorder 'vertex' varying attributes(points, jointIndices/jointWeights,
   // BlendShape points, ...)
-  // TODO: Preserve input order as much as possible.
   //
-  {
-    uint32_t numPoints = uint32_t(fvIndices.size());
-    {
-      // Reuse buffer to avoid repeated allocation across multiple mesh conversions
-      _tmp_points_buffer.resize(numPoints);
-      // TODO: Use vertex_output[i].point_index?
-      for (size_t i = 0; i < fvIndices.size(); i++) {
-        if (fvIndices[i] >= mesh.points.size()) {
-          PUSH_ERROR_AND_RETURN("Internal error. point index out-of-range.");
-        }
-        _tmp_points_buffer[i] = mesh.points[fvIndices[i]];
-      }
-      mesh.points.swap(_tmp_points_buffer);
-    }
-
-    if (mesh.joint_and_weights.jointIndices.size()) {
-      if (mesh.joint_and_weights.elementSize < 1) {
-        PUSH_ERROR_AND_RETURN(
-            "Internal error. Invalid elementSize in mesh.joint_and_weights.");
-      }
-      uint32_t elementSize = uint32_t(mesh.joint_and_weights.elementSize);
-      std::vector<int> tmp_indices(size_t(numPoints) * size_t(elementSize));
-      std::vector<float> tmp_weights(size_t(numPoints) * size_t(elementSize));
-      for (size_t i = 0; i < fvIndices.size(); i++) {
-        if ((elementSize * fvIndices[i]) >=
-            mesh.joint_and_weights.jointIndices.size()) {
-          PUSH_ERROR_AND_RETURN(
-              "Internal error. point index exceeds jointIndices.size.");
-        }
-        for (size_t k = 0; k < elementSize; k++) {
-          tmp_indices[size_t(elementSize) * size_t(i) + k] =
-              mesh.joint_and_weights
-                  .jointIndices[size_t(elementSize) * size_t(fvIndices[i]) + k];
-        }
-
-        if ((elementSize * fvIndices[i]) >=
-            mesh.joint_and_weights.jointWeights.size()) {
-          PUSH_ERROR_AND_RETURN(
-              "Internal error. point index exceeds jointWeights.size.");
-        }
-
-        for (size_t k = 0; k < elementSize; k++) {
-          tmp_weights[size_t(elementSize) * size_t(i) + k] =
-              mesh.joint_and_weights
-                  .jointWeights[size_t(elementSize) * size_t(fvIndices[i]) + k];
-        }
-      }
-      mesh.joint_and_weights.jointIndices.swap(tmp_indices);
-      mesh.joint_and_weights.jointWeights.swap(tmp_weights);
-    }
-
-    if (mesh.targets.size()) {
-      // For BlendShape, reordering pointIndices, pointOffsets and normalOffsets is not enough.
-      // Some points could be duplicated, so we need to find a mapping of org pointIdx -> pointIdx list in reordered points,
-      // Then splat point attributes accordingly.
-
-      // org pointIdx -> List of pointIdx in reordered points.
-      std::unordered_map<uint32_t, std::vector<uint32_t>> pointIdxRemap;
-      pointIdxRemap.reserve(fvIndices.size());
-
-      for (size_t i = 0; i < fvIndices.size(); i++) {
-        pointIdxRemap[fvIndices[i]].push_back(uint32_t(i));
-      }
-
-      for (auto &target : mesh.targets) {
-
-        std::vector<value::float3> tmpPointOffsets;
-        std::vector<value::float3> tmpNormalOffsets;
-        std::vector<uint32_t> tmpPointIndices;
-
-        for (size_t i = 0; i < target.second.pointIndices.size(); i++) {
-
-          uint32_t orgPointIdx = target.second.pointIndices[i];
-          auto remap_it = pointIdxRemap.find(orgPointIdx);
-          if (remap_it == pointIdxRemap.end()) {
-            PUSH_ERROR_AND_RETURN("Invalid pointIndices value.");
-          }
-          const std::vector<uint32_t> &dstPointIndices = remap_it->second;
-
-          for (size_t k = 0; k < dstPointIndices.size(); k++) {
-            if (target.second.pointOffsets.size()) {
-              if (i >= target.second.pointOffsets.size()) {
-                PUSH_ERROR_AND_RETURN("Invalid pointOffsets.size.");
-              }
-              tmpPointOffsets.push_back(target.second.pointOffsets[i]);
-            }
-            if (target.second.normalOffsets.size()) {
-              if (i >= target.second.normalOffsets.size()) {
-                PUSH_ERROR_AND_RETURN("Invalid normalOffsets.size.");
-              }
-              tmpNormalOffsets.push_back(target.second.normalOffsets[i]);
-            }
-
-            tmpPointIndices.push_back(dstPointIndices[k]);
-          }
-        }
-
-        target.second.pointIndices.swap(tmpPointIndices);
-        target.second.pointOffsets.swap(tmpPointOffsets);
-        target.second.normalOffsets.swap(tmpNormalOffsets);
-
-      }
-
-      // TODO: Inbetween BlendShapes
-
-    }
-
-    //TUSDZ_LOG_I("proc normal");
-
+  if (!ReorderVertexVaryingAttributes(mesh, fvIndices, &_err)) {
+    return false;
   }
 
+  //TUSDZ_LOG_I("proc normal");
 
   // Just change variability
   if (mesh.normals.vertex_count() > 0) {
