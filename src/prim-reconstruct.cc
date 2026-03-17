@@ -267,10 +267,8 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
 {
   Animatable<T> dst;
 
-  if (!var.is_valid()) {
-    DCOUT("is_valid failed");
-    DCOUT("has_value " << var.has_value());
-    DCOUT("has_timesamples " << var.has_timesamples());
+  if (!var.has_value() && !var.has_timesamples()) {
+    DCOUT("PrimVar has neither value nor timesamples");
     return nonstd::nullopt;
   }
 
@@ -321,8 +319,8 @@ nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar 
 {
   Animatable<Extent> dst;
 
-  if (!var.is_valid()) {
-    DCOUT("is_valid failed");
+  if (!var.has_value() && !var.has_timesamples()) {
+    DCOUT("PrimVar has neither value nor timesamples");
     return nonstd::nullopt;
   }
 
@@ -542,7 +540,7 @@ static ParseResult ParseTypedAttributeUnified(
               return ret;
             }
 
-            if (auto pv = attr.get_var().take_value<T>()) {
+            if (auto pv = attr.get_var().get_value<T>()) {
               target.set_value(std::move(pv.value()));
               target.metas() = std::move(prop.attribute().metas());
               table.insert(name);
@@ -571,7 +569,7 @@ static ParseResult ParseTypedAttributeUnified(
 
         // Parse default value (move to avoid copying large arrays)
         if (attr.get_var().has_default()) {
-          if (auto pv = attr.get_var().take_value<T>()) {
+          if (auto pv = attr.get_var().get_value<T>()) {
             animatable_value.set(std::move(pv.value()));
             has_default = true;
           } else {
@@ -592,7 +590,7 @@ static ParseResult ParseTypedAttributeUnified(
       } else {
         // Uniform: only default value (move to avoid copying large arrays)
         if (attr.get_var().has_default()) {
-          if (auto pv = attr.get_var().take_value<T>()) {
+          if (auto pv = attr.get_var().get_value<T>()) {
             target.set_value(std::move(pv.value()));
             has_default = true;
           } else {
@@ -1106,7 +1104,7 @@ bool ParseUniformEnumProperty(
       return true;
     }
 
-    if (attr.get_var().is_timesamples()) {
+    if ((!attr.get_var().has_value() && attr.get_var().has_timesamples())) {
       PUSH_ERROR_AND_RETURN_F("Attribute `{}` is defined as `uniform` variability but TimeSample value is assigned.", prop_name);
     }
 
@@ -1129,7 +1127,7 @@ bool ParseUniformEnumProperty(
 
   } else {
     // uniform or TimeSamples
-    if (attr.get_var().is_scalar()) {
+    if (attr.get_var().has_value() && !attr.get_var().has_timesamples()) {
 
       if (attr.is_blocked()) {
         result->set_blocked(true);
@@ -1151,7 +1149,7 @@ bool ParseUniformEnumProperty(
       } else {
         PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
       }
-    } else if (attr.get_var().is_timesamples()) {
+    } else if ((!attr.get_var().has_value() && attr.get_var().has_timesamples())) {
       PUSH_ERROR_AND_RETURN_F("Attribute `{}` is uniform variability, but TimeSampled value is authored.",
  prop_name);
 
@@ -1193,7 +1191,7 @@ bool ParseTimeSampledEnumProperty(
       return true;
     }
 
-    if (attr.get_var().is_timesamples()) {
+    if ((!attr.get_var().has_value() && attr.get_var().has_timesamples())) {
       PUSH_ERROR_AND_RETURN_F("Attribute `{}` is defined as `uniform` variability but TimeSample value is assigned.", prop_name);
     }
 
@@ -1257,32 +1255,34 @@ bool ParseTimeSampledEnumProperty(
 
         double sample_time{value::TimeCode::Default()};
 
-        if (auto pv = attr.get_var().get_ts_time(i)) {
+        if (auto pv = attr.get_var().ts_raw().get_time(i)) {
           sample_time = pv.value();
         } else {
           // This should not happen.
           PUSH_ERROR_AND_RETURN_F("Internal error. Failed to get timecode for `{}`", prop_name);
         }
 
-        if (auto pv = attr.get_var().is_ts_value_blocked(i)) {
-          if (pv.value() == true) {
+        {
+          const auto &samples = attr.get_var().ts_raw().get_samples();
+          if (i < samples.size() && samples[i].blocked) {
             animatable_value.add_blocked_sample(sample_time);
             continue;
           }
-        } else {
-          // This should not happen.
-          PUSH_ERROR_AND_RETURN_F("Internal error. Failed to get valueblock info for `{}`", prop_name);
         }
 
-        if (auto tok = attr.get_var().get_ts_value<value::token>(i)) {
-          auto e = enum_handler(tok.value().str());
-          if (e) {
-            animatable_value.add_sample(sample_time, e.value());
-          } else if (strict_allowedToken_check) {
-            PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
+        if (auto pv = attr.get_var().ts_raw().get_value(i)) {
+          if (auto tok = pv.value().get_value<value::token>()) {
+            auto e = enum_handler(tok.value().str());
+            if (e) {
+              animatable_value.add_sample(sample_time, e.value());
+            } else if (strict_allowedToken_check) {
+              PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
+            } else {
+              PUSH_WARN_F("Attribute `{}`: `{}` at {}'th timesample is not an allowed token. Ignore it.", prop_name, i, tok.value().str());
+              continue;
+            }
           } else {
-            PUSH_WARN_F("Attribute `{}`: `{}` at {}'th timesample is not an allowed token. Ignore it.", prop_name, i, tok.value().str());
-            continue;
+            PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}`'s {}'th timesample must be type `token`, but got type `{}`", prop_name, i, attr.type_name());
           }
         } else {
           PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}`'s {}'th timesample must be type `token`, but got type `{}`", prop_name, i, attr.type_name());

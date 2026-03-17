@@ -421,7 +421,7 @@ class Attribute {
       return false;
     }
 
-    return _var.is_timesamples();
+    return !_var.has_value() && _var.has_timesamples();
   }
 
   bool has_timesamples() const {
