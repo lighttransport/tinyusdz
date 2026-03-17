@@ -41,17 +41,17 @@ bool ToTerminalAttributeValue(
   DCOUT("var has_default " << var.has_default());
   DCOUT("var has_timesamples " << var.has_default());
   DCOUT("var is_blocked " << var.is_blocked());
-  DCOUT("var is_valid " << var.is_valid());
+  DCOUT("var has_value||has_ts " << (var.has_value() || var.has_timesamples()));
 
-  if (!var.is_valid()) {
+  if (!var.has_value() && !var.has_timesamples()) {
     PUSH_ERROR_AND_RETURN("[InternalError] Attribute is invalid.");
-  } else if (var.is_scalar()) {
+  } else if (var.has_value() && !var.has_timesamples()) {
     const value::Value &v = var.value_raw();
     DCOUT("Attribute is scalar type:" << v.type_name());
     DCOUT("Attribute value = " << pprint_value(v));
 
     value->set_value(v);
-  } else if (var.is_timesamples()) {
+  } else if (!var.has_value() && var.has_timesamples()) {
     value::Value v;
     if (!var.get_interpolated_value(t, tinterp, &v)) {
       PUSH_ERROR_AND_RETURN("Interpolate TimeSamples failed.");
@@ -299,7 +299,7 @@ bool EvaluateAttribute(
     if (prop.is_attribute()) {
       const Attribute &attr = prop.get_attribute();
       const primvar::PrimVar &var = attr.get_var();
-      if (var.is_valid()) {
+      if (var.has_value() || var.has_timesamples()) {
         type_name = var.type_name();
       }
     }

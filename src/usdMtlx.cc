@@ -1114,7 +1114,7 @@ static bool SerializeNodeGraphs(const std::map<std::string, PrimSpec> &nodegraph
           } else {
             // It's a value
             value::Value val;
-            if (attr.get_var().is_scalar()) {
+            if (attr.get_var().has_value() && !attr.get_var().has_timesamples()) {
               val = attr.get_var().value_raw();
             }
 
