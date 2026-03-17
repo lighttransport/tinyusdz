@@ -110,14 +110,6 @@ struct PrimVar {
     return _ts.size() > 0;
   }
 
-  bool is_scalar() const {
-    return has_value() && _ts.empty();
-  }
-
-  bool is_timesamples() const {
-    return !has_value() && _ts.size();
-  }
-
   bool is_blocked() const {
     // Fist check if stored value is ValueBlock, then return _blocked.
     if (_value.type_id() == value::TYPE_ID_VALUEBLOCK) {
@@ -129,21 +121,6 @@ struct PrimVar {
   void set_blocked(bool onoff) {
     // fast path
     _blocked = onoff;
-  }
-
-  bool is_valid() const {
-    if (has_timesamples()) {
-      if ((_ts.type_id() == value::TypeId::TYPE_ID_INVALID) || (_ts.type_id() == value::TypeId::TYPE_ID_NULL)) {
-        return false;
-      }
-
-      // TODO: Check if the type of timesamples is the same with the type of 'default' value
-      return true;
-    }
-
-    // TODO: Make blocked valid?
-
-    return has_value();
   }
 
   std::string type_name() const {
@@ -160,7 +137,7 @@ struct PrimVar {
   }
 
   uint32_t type_id() const {
-    if (!is_valid()) {
+    if (!has_value() && !has_timesamples()) {
       return value::TYPE_ID_INVALID;
     }
 
@@ -177,11 +154,10 @@ struct PrimVar {
 
   }
 
-  // TODO: Deprecate and use `get_default_value`
   // Type-safe way to get concrete value of default value(non-timesamples value).
   // NOTE: This consumes lots of stack size(rougly 1000 bytes),
   // If you need to handle multiple types, use as() insted.
-  // 
+  //
   template <class T>
   nonstd::optional<T> get_value() const {
 
@@ -194,77 +170,6 @@ struct PrimVar {
     }
 
     return _value.get_value<T>();
-  }
-
-  template <class T>
-  nonstd::optional<T> get_default_value() const {
-    return get_value<T>();
-  }
-
-  // Mutable version — moves value out, leaving internal storage empty.
-  template <class T>
-  nonstd::optional<T> take_value() {
-
-    if (is_blocked()) {
-      return nonstd::nullopt;
-    }
-
-    if (!has_default()) {
-      return nonstd::nullopt;
-    }
-
-    return _value.take_value<T>();
-  }
-
-  nonstd::optional<double> get_ts_time(size_t idx) const {
-
-    if (!has_timesamples()) {
-      return nonstd::nullopt;
-    }
-
-    if (idx >= _ts.size()) {
-      return nonstd::nullopt;
-    }
-
-    return _ts.get_time(idx);
-  }
-
-  nonstd::optional<value::TimeSamples::Sample> get_timesample(size_t idx) const {
-    if (idx < _ts.get_samples().size()) {
-      return _ts.get_samples()[idx];
-    }
-    return nonstd::nullopt;
-  }
-
-  // Type-safe way to get concrete value for timesampled variable.
-  // No interpolation.
-  template <class T>
-  nonstd::optional<T> get_ts_value(size_t idx) const {
-
-    if (!has_timesamples()) {
-      return nonstd::nullopt;
-    }
-
-    nonstd::optional<value::Value> pv = _ts.get_value(idx);
-    if (!pv) {
-      return nonstd::nullopt;
-    }
-
-    return pv.value().get_value<T>();
-  }
-
-  // Check if specific TimeSample value for a specified index is ValueBlock or not.
-  nonstd::optional<bool> is_ts_value_blocked(size_t idx) const {
-
-    if (!has_timesamples()) {
-      return nonstd::nullopt;
-    }
-
-    if (idx >= _ts.get_samples().size()) {
-      return nonstd::nullopt;
-    }
-
-    return _ts.get_samples()[idx].blocked;
   }
 
   // For Scalar only
@@ -385,7 +290,7 @@ struct PrimVar {
 
     if (value::TimeCode(t).is_default()) {
 
-      if (auto pv = get_default_value<T>()) {
+      if (auto pv = get_value<T>()) {
         (*v) = pv.value();
         return true;
       }
@@ -400,7 +305,7 @@ struct PrimVar {
     }
 
     if (has_default()) {
-      if (auto pv = get_default_value<T>()) {
+      if (auto pv = get_value<T>()) {
         (*v) = pv.value();
         return true;
       }

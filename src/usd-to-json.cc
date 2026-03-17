@@ -1481,7 +1481,7 @@ json ToJSON(const tinyusdz::Attribute& attribute, USDToJSONContext* /* context *
   } else {
     // Check if attribute has value by accessing the internal value container
     const auto& var = attribute.get_var();
-    if (var.is_valid()) {
+    if (var.has_value() || var.has_timesamples()) {
       j["hasValue"] = true;
       j["valueType"] = "data";
       
