@@ -3552,135 +3552,29 @@ static bool ReconstructPrimvarReaderShaderImpl(
   return true;
 }
 
-template <>
-bool ReconstructShader<UsdPrimvarReader_int>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_int *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
+// All PrimvarReader variants delegate to the shared template impl above.
+#define RECONSTRUCT_PRIMVAR_READER_SHADER(__type) \
+template <> \
+bool ReconstructShader<__type>( \
+    const Specifier &spec, PropertyMap &properties, \
+    const ReferenceList &references, __type *preader, \
+    std::string *warn, std::string *err, \
+    const PrimReconstructOptions &options) { \
+  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options); \
 }
 
-template <>
-bool ReconstructShader<UsdPrimvarReader_float>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_float *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
-}
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_int)
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_float)
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_float2)
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_float3)
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_float4)
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_string)
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_vector)
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_normal)
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_point)
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_matrix)
 
-template <>
-bool ReconstructShader<UsdPrimvarReader_float2>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_float2 *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
-}
-
-template <>
-bool ReconstructShader<UsdPrimvarReader_float3>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_float3 *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
-}
-
-template <>
-bool ReconstructShader<UsdPrimvarReader_float4>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_float4 *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
-}
-
-template <>
-bool ReconstructShader<UsdPrimvarReader_string>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_string *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
-}
-
-template <>
-bool ReconstructShader<UsdPrimvarReader_vector>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_vector *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
-}
-
-template <>
-bool ReconstructShader<UsdPrimvarReader_normal>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_normal *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
-}
-
-template <>
-bool ReconstructShader<UsdPrimvarReader_point>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_point *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
-}
-
-template <>
-bool ReconstructShader<UsdPrimvarReader_matrix>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_matrix *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
-}
+#undef RECONSTRUCT_PRIMVAR_READER_SHADER
 
 template <>
 bool ReconstructShader<MtlxAutodeskStandardSurface>(
