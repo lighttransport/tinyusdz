@@ -58,6 +58,9 @@ list(
   ../../src/usdMtlx.cc
   ../../src/usdObj.cc
   ../../src/tydra/render-data.cc
+  ../../src/tydra/render-data-mesh.cc
+  ../../src/tydra/render-data-material.cc
+  ../../src/tydra/render-data-anim.cc
   ../../src/tydra/scene-access.cc
   ../../src/tydra/shader-network.cc
   ../../src/stage.cc
