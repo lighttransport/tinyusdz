@@ -26,6 +26,8 @@ set(TEST_SOURCES
 	unit-tiny-container.cc
 	unit-usda-roundtrip.cc
 	unit-half-roundtrip.cc
+	unit-prim-reconstruct.cc
+	unit-composition.cc
    )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)
