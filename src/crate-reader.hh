@@ -610,6 +610,11 @@ class CrateReader {
   // RAII Memory budget manager
   mutable MemoryBudgetManager memory_manager_;
 
+  // Shared times cache: deduplicates times arrays that share the same file
+  // offset (ValueRep payload). Multiple TimeSamples in a crate file often
+  // reference the same times array; this avoids redundant copies.
+  std::unordered_map<uint64_t, std::shared_ptr<std::vector<double>>> _shared_times_cache;
+
   // Reusable buffers for integer decompression to avoid repeated allocation
   // These are mutable because they're used as internal working buffers in const-like operations
   mutable std::vector<char> _decomp_comp_buffer;      // Buffer for compressed data

@@ -144,13 +144,21 @@ failures (unchanged from baseline).
 
 These are feature requests tracked in code comments, not bugs or refactoring items:
 
-1. **Deferred TimeSamples loading** (`crate-reader-timesamples.cc:92`) — OpenUSD
-   reads sample values lazily; tinyusdz reads eagerly.
-2. **TimeSamples time deduplication** (`crate-reader-timesamples.cc:120`) — OpenUSD
-   shares `SharedTimes` objects when multiple TimeSamples point to the same times
-   array in the crate file.
-3. **Type validation for times array** (`crate-reader-timesamples.cc:131`) — Validate
-   that the `times` ValueRep is actually `double[]`.
+1. **Deferred TimeSamples loading** — PARTIALLY DONE (2026-03-18).
+   Value loading is already deferred: `ReadTimeSamples()` only reads the times
+   array and ValueRep metadata; actual sample values are unpacked lazily during
+   prim reconstruction.  Full OpenUSD-style lazy loading (deferring even the
+   times read until first access) would require a callback-based TimeSamples
+   container.
+2. **TimeSamples time deduplication** — DONE (2026-03-18).
+   `_shared_times_cache` in CrateReader maps times ValueRep payload offsets to
+   shared `vector<double>` instances.  When multiple TimeSamples reference the
+   same times array in the crate file, the parsed result is reused instead of
+   re-reading and re-decompressing.
+3. **Type validation for times array** — DONE (2026-03-18).
+   Early type check after `ReadValueRep(&times_rep)` validates the type is
+   `double[]` or `DoubleVector` before attempting to unpack.  Previously the
+   check only happened inside `UnpackTimeSampleTimes()`.
 
 ## Other Modules — Review Candidates
 
