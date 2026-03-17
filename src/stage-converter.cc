@@ -482,13 +482,8 @@ bool CrateWriter::ExtractMeshProperties(
         double time;
 
         // Get time from the typed timesamples
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
         time = typed_ts.get_samples()[i].t;
         sample_value = typed_ts.get_samples()[i].value;
-#else
-        time = typed_ts.get_times()[i];
-        sample_value = typed_ts.get_values()[i];
-#endif
 
         value::Value v(sample_value);
         ts.add_sample(time, v);
@@ -2721,13 +2716,8 @@ bool CrateWriter::ExtractGPrimProperties(
         double time;
 
         // Get time and value from the typed timesamples
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
         time = typed_ts.get_samples()[i].t;
         sample_vis = typed_ts.get_samples()[i].value;
-#else
-        time = typed_ts.get_times()[i];
-        sample_vis = typed_ts.get_values()[i];
-#endif
 
         // Convert Visibility enum to token string
         std::string vis_str = to_string(sample_vis);
@@ -3227,13 +3217,8 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
         double time;
         float sample_value;
 
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
         time = typed_ts.get_samples()[i].t;
         sample_value = typed_ts.get_samples()[i].value;
-#else
-        time = typed_ts.get_times()[i];
-        sample_value = typed_ts.get_values()[i];
-#endif
 
         value::Value v(sample_value);
         ts.add_sample(time, v);
@@ -3276,13 +3261,8 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
         double time;
         value::color3f sample_color;
 
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
         time = typed_ts.get_samples()[i].t;
         sample_color = typed_ts.get_samples()[i].value;
-#else
-        time = typed_ts.get_times()[i];
-        sample_color = typed_ts.get_values()[i];
-#endif
 
         // Convert color3f to float3 for crate format
         value::float3 color_as_float3 = {sample_color.r, sample_color.g, sample_color.b};
@@ -3575,13 +3555,8 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
         double time;
         value::texcoord2f sample_value;
 
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
         time = typed_ts.get_samples()[i].t;
         sample_value = typed_ts.get_samples()[i].value;
-#else
-        time = typed_ts.get_times()[i];
-        sample_value = typed_ts.get_values()[i];
-#endif
 
         // Convert texcoord2f to float2 for TimeSamples
         value::float2 sample_as_float2 = {sample_value.s, sample_value.t};
@@ -3850,13 +3825,8 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
         double time;
         value::float2 sample_value;
 
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
         time = typed_ts.get_samples()[i].t;
         sample_value = typed_ts.get_samples()[i].value;
-#else
-        time = typed_ts.get_times()[i];
-        sample_value = typed_ts.get_values()[i];
-#endif
 
         value::Value v(sample_value);
         ts.add_sample(time, v);
@@ -3898,13 +3868,8 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
         double time;
         float sample_value;
 
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
         time = typed_ts.get_samples()[i].t;
         sample_value = typed_ts.get_samples()[i].value;
-#else
-        time = typed_ts.get_times()[i];
-        sample_value = typed_ts.get_values()[i];
-#endif
 
         value::Value v(sample_value);
         ts.add_sample(time, v);
