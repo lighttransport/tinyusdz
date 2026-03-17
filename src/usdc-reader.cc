@@ -309,6 +309,40 @@ class USDCReader::Impl {
   }
 
  private:
+
+  ///
+  /// Result of parsing common prim fields shared by ReconstructPrimNode
+  /// and ReconstructPrimSpecNode.
+  ///
+  struct PrimFieldsResult {
+    nonstd::optional<std::string> typeName;
+    nonstd::optional<Specifier> specifier;
+    std::vector<value::token> primChildren;
+    std::vector<value::token> properties;
+    PrimMeta primMeta;
+    Path elemPath;
+    std::string prim_name;      // from elemPath.prim_part()
+    std::string pTyName;        // TinyUSDZ prim type ("Model" if missing)
+    std::string primTypeName;   // raw type name ("" if missing or __AnyType__)
+  };
+
+  ///
+  /// Parse fields common to both Prim and Variant spec types.
+  /// Calls ParsePrimSpec, resolves element path, validates specifier,
+  /// normalises type name, and validates prim element name.
+  ///
+  /// @param[in] fvs           Field-value pairs for this spec
+  /// @param[in] current       Current node index (for element path lookup)
+  /// @param[in] default_spec  Specifier to use when none is present in the data
+  /// @param[out] result       Parsed fields
+  /// @return true on success
+  ///
+  bool ParseCommonPrimFields(
+      const crate::FieldValuePairVector &fvs,
+      int current,
+      Specifier default_spec,
+      PrimFieldsResult *result);
+
   nonstd::expected<APISchemas, std::string> ToAPISchemas(
       const ListOp<value::token> &, bool ignore_unknown, std::string &warn);
 
@@ -2306,6 +2340,69 @@ bool USDCReader::Impl::ParseVariantSetFields(
   return true;
 }
 
+bool USDCReader::Impl::ParseCommonPrimFields(
+    const crate::FieldValuePairVector &fvs,
+    int current,
+    Specifier default_spec,
+    PrimFieldsResult *result) {
+
+  if (!result) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "(Internal error) null PrimFieldsResult.");
+  }
+
+  // 1. Parse fields from the spec
+  if (!ParsePrimSpec(fvs, result->typeName, result->specifier,
+                     result->primChildren, result->properties,
+                     result->primMeta)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to parse Prim fields.");
+  }
+
+  // 2. Resolve element path
+  if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
+    DCOUT(fmt::format("Element path: {}", pv.value().full_path_name()));
+    result->elemPath = pv.value();
+  } else {
+    PUSH_ERROR_AND_RETURN_TAG(kTag,
+                              "(Internal errror) Element path not found.");
+  }
+
+  // 3. Validate / default specifier
+  if (result->specifier) {
+    if (result->specifier.value() == Specifier::Def) {
+      // ok
+    } else if (result->specifier.value() == Specifier::Class) {
+      // ok
+    } else if (result->specifier.value() == Specifier::Over) {
+      // ok
+    } else {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Specifier.");
+    }
+  } else {
+    result->specifier = default_spec;
+  }
+
+  // 4. Determine TinyUSDZ prim type name
+  if (!result->typeName) {
+    result->pTyName = "Model";
+  } else {
+    result->pTyName = result->typeName.value();
+  }
+
+  // 5. Derive prim_name and primTypeName from element path
+  result->prim_name = result->elemPath.prim_part();
+  result->primTypeName = result->typeName.has_value()
+                             ? result->typeName.value()
+                             : "";
+
+  // __AnyType__ normalisation
+  if (result->typeName.has_value() &&
+      result->typeName.value() == "__AnyType__") {
+    result->primTypeName = "";
+  }
+
+  return true;
+}
+
 bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
                                            bool is_parent_variant,
                                            const PathIndexToSpecIndexMap &psmap,
@@ -2411,89 +2508,39 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
           kTag, "SpecType PseudoRoot in a child node is not supported(yet)");
     }
     case SpecType::Prim: {
-      nonstd::optional<std::string> typeName;
-      nonstd::optional<Specifier> specifier;
-      std::vector<value::token> primChildren;
-      std::vector<value::token> properties;
-
-      PrimMeta primMeta;
-
+      PrimFieldsResult pf;
       DCOUT("== PrimFields begin ==> ");
-
-      if (!ParsePrimSpec(fvs, typeName, specifier, primChildren, properties, primMeta)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to parse Prim fields.");
+      if (!ParseCommonPrimFields(fvs, current, Specifier::Over, &pf)) {
         return false;
       }
-
       DCOUT("<== PrimFields end ===");
 
-      Path elemPath;
-
-      if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
-        DCOUT(fmt::format("Element path: {}", pv.value().full_path_name()));
-        elemPath = pv.value();
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  "(Internal errror) Element path not found.");
-      }
-
-      // Sanity check
-      if (specifier) {
-        if (specifier.value() == Specifier::Def) {
-          // ok
-        } else if (specifier.value() == Specifier::Class) {
-          // ok
-        } else if (specifier.value() == Specifier::Over) {
-          // ok
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Specifier.");
-        }
-      } else {
-        // default `over`
-        specifier = Specifier::Over;
-      }
-
-      std::string pTyName;
-      if (!typeName) {
-        //PUSH_WARN("Treat this node as Model(`typeName` field is missing).");
-        pTyName = "Model";
-      } else {
-        pTyName = typeName.value();
+      // Validation check should be already done in crate-reader, so no
+      // further validation required.
+      if (!ValidatePrimElementName(pf.prim_name)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Prim name.");
       }
 
       {
-        DCOUT("elemPath.prim_name = " << elemPath.prim_part());
-        std::string prim_name = elemPath.prim_part();
-        std::string primTypeName = typeName.has_value() ? typeName.value() : "";
-
-        // __AnyType__
-        if (typeName.has_value() && typeName.value() == "__AnyType__") {
-          primTypeName = "";
-        }
-
-        // Validation check should be already done in crate-reader, so no
-        // further validation required.
-        if (!ValidatePrimElementName(prim_name)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Prim name.");
-        }
+        DCOUT("elemPath.prim_name = " << pf.elemPath.prim_part());
 
         bool is_unsupported_prim{false};
-        auto prim = ReconstructPrimFromTypeName(pTyName, primTypeName, prim_name,
-                                                node, specifier.value(), primChildren, properties,
-                                                psmap, primMeta, &is_unsupported_prim);
+        auto prim = ReconstructPrimFromTypeName(pf.pTyName, pf.primTypeName, pf.prim_name,
+                                                node, pf.specifier.value(), pf.primChildren, pf.properties,
+                                                psmap, pf.primMeta, &is_unsupported_prim);
 
         // Fallback: try to reconstruct as Model if unknown prim type
         if (!prim && _config.allow_unknown_prims && is_unsupported_prim) {
-          prim = ReconstructPrimFromTypeName("Model", primTypeName, prim_name,
-                                             node, specifier.value(), primChildren, properties,
-                                             psmap, primMeta);
+          prim = ReconstructPrimFromTypeName("Model", pf.primTypeName, pf.prim_name,
+                                             node, pf.specifier.value(), pf.primChildren, pf.properties,
+                                             psmap, pf.primMeta);
         }
 
         if (!prim) {
           return false;
         }
 
-        prim->element_path() = elemPath;
+        prim->element_path() = pf.elemPath;
 
         // Move unique_ptr directly to output
         if (primOut) {
@@ -2592,79 +2639,27 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
       DCOUT(fmt::format("[{}] is a Variant node(parent = {}). prim_idx? = {}",
                         current, parent, _prim_table.count(current)));
 
-      nonstd::optional<std::string> typeName;
-      nonstd::optional<Specifier> specifier;
-      std::vector<value::token> primChildren;
-      std::vector<value::token> properties;
-
-      PrimMeta primMeta;
-
+      PrimFieldsResult pf;
       DCOUT("== VariantFields begin ==> ");
-
-      if (!ParsePrimSpec(fvs, typeName, specifier, primChildren, properties, primMeta)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  "Failed to parse Prim fields under Variant.");
+      if (!ParseCommonPrimFields(fvs, current, Specifier::Def, &pf)) {
         return false;
       }
-      
-
       DCOUT("<== VariantFields end === ");
-
-      Path elemPath;
-      if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
-        elemPath = pv.value();
-        DCOUT(fmt::format("Element path: {}", elemPath.full_path_name()));
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  "(Internal errror) Element path not found.");
-      }
-
-      // Sanity check
-      if (specifier) {
-        if (specifier.value() == Specifier::Def) {
-          // ok
-        } else if (specifier.value() == Specifier::Class) {
-          // ok
-        } else if (specifier.value() == Specifier::Over) {
-          // ok
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Specifier.");
-        }
-      } else {
-        // Seems Variant is only composed of Properties.
-        // Create pseudo `def` Prim
-        specifier = Specifier::Def;
-      }
-
-      std::string pTyName; // TinyUSDZ' prim typename
-      if (!typeName) {
-        //PUSH_WARN("Treat this node as Model(where `typeName` is missing).");
-        pTyName = "Model";
-      } else {
-        pTyName = typeName.value();
-      }
 
       std::unique_ptr<Prim> variantPrim;
       {
-        std::string prim_name = elemPath.prim_part();
-        DCOUT("elemPath = " << dump_path(elemPath));
-        DCOUT("prim_name = " << prim_name);
-        if (primMeta.variantSets) {
-          DCOUT("primMeta.variantSets = " << primMeta.variantSets.value().second);
-        }
-
-        std::string primTypeName = typeName.has_value() ? typeName.value() : "";
-        // __AnyType__
-        if (typeName.has_value() && typeName.value() == "__AnyType__") {
-          primTypeName = "";
+        DCOUT("elemPath = " << dump_path(pf.elemPath));
+        DCOUT("prim_name = " << pf.prim_name);
+        if (pf.primMeta.variantSets) {
+          DCOUT("primMeta.variantSets = " << pf.primMeta.variantSets.value().second);
         }
 
         // Something like '{shapeVariant=Capsule}'
 
         std::array<std::string, 2> variantPair;
-        if (!tokenize_variantElement(prim_name, &variantPair)) {
+        if (!tokenize_variantElement(pf.prim_name, &variantPair)) {
           PUSH_ERROR_AND_RETURN_TAG(
-              kTag, fmt::format("Invalid Variant ElementPath '{}'.", elemPath));
+              kTag, fmt::format("Invalid Variant ElementPath '{}'.", pf.elemPath));
         }
 
         std::string variantSetName = variantPair[0];
@@ -2677,7 +2672,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         }
 
         // Fix: Transfer parsed primChildren to primMeta.primChildren
-        primMeta.primChildren = primChildren;
+        pf.primMeta.primChildren = pf.primChildren;
 
 
         // Helper lambda to setup and store variant prim
@@ -2685,8 +2680,8 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
           if (vp->metas().variantSets) {
             DCOUT("variantPrim.meta.variantSets = " << vp->metas().variantSets.value().second);
           }
-          vp->element_path() = elemPath;
-          vp->specifier() = specifier.value();
+          vp->element_path() = pf.elemPath;
+          vp->specifier() = pf.specifier.value();
 
           // Store variantPrim to temporary buffer
           DCOUT(fmt::format("parent {} add prim idx {} as variant: ", parent, current));
@@ -2702,16 +2697,16 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
         bool is_unsupported_prim{false};
         variantPrim = ReconstructPrimFromTypeName(
-            pTyName, primTypeName, variantPrimName, node, specifier.value(), primChildren, properties,
-            psmap, primMeta, &is_unsupported_prim);
+            pf.pTyName, pf.primTypeName, variantPrimName, node, pf.specifier.value(), pf.primChildren, pf.properties,
+            psmap, pf.primMeta, &is_unsupported_prim);
 
         if (variantPrim) {
           setupAndStoreVariantPrim(variantPrim);
         } else if (_config.allow_unknown_prims && is_unsupported_prim) {
           // Fallback: try to reconstruct as Model
           variantPrim = ReconstructPrimFromTypeName(
-              "Model", primTypeName, variantPrimName, node, specifier.value(), primChildren, properties,
-              psmap, primMeta);
+              "Model", pf.primTypeName, variantPrimName, node, pf.specifier.value(), pf.primChildren, pf.properties,
+              psmap, pf.primMeta);
 
           if (variantPrim) {
             setupAndStoreVariantPrim(variantPrim);
@@ -2888,82 +2883,33 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
           kTag, "SpecType PseudoRoot in a child node is not supported(yet)");
     }
     case SpecType::Prim: {
-      nonstd::optional<std::string> typeName;
-      nonstd::optional<Specifier> specifier;
-      std::vector<value::token> primChildren;
-      std::vector<value::token> properties;
-
-      PrimMeta primMeta;
-
+      PrimFieldsResult pf;
       DCOUT("== PrimFields begin ==> ");
-
-      if (!ParsePrimSpec(fvs, typeName, specifier, primChildren, properties, primMeta)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to parse Prim fields.");
+      if (!ParseCommonPrimFields(fvs, current, Specifier::Over, &pf)) {
         return false;
       }
-
       DCOUT("<== PrimFields end ===");
 
-      Path elemPath;
-
-      if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
-        DCOUT(fmt::format("Element path: {}", pv.value().full_path_name()));
-        elemPath = pv.value();
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  "(Internal errror) Element path not found.");
-      }
-
-      // Sanity check
-      if (specifier) {
-        if (specifier.value() == Specifier::Def) {
-          // ok
-        } else if (specifier.value() == Specifier::Class) {
-          // ok
-        } else if (specifier.value() == Specifier::Over) {
-          // ok
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Specifier.");
-        }
-      } else {
-        // Default = Over Prim.
-        specifier = Specifier::Over;
-      }
-
-      std::string pTyName;
-      if (!typeName) {
-        //PUSH_WARN("Treat this node as Model(`typeName` field is missing).");
-        pTyName = "Model";
-      } else {
-        pTyName = typeName.value();
+      // Validation check should be already done in crate-reader, so no
+      // further validation required.
+      if (!ValidatePrimElementName(pf.prim_name)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Prim name.");
       }
 
       {
-        DCOUT("elemPath.prim_name = " << elemPath.prim_part());
-        std::string prim_name = elemPath.prim_part();
-        std::string primTypeName = typeName.has_value() ? typeName.value() : "";
-        // __AnyType__
-        if (typeName.has_value() && typeName.value() == "__AnyType__") {
-          primTypeName = "";
-        }
-
-        // Validation check should be already done in crate-reader, so no
-        // further validation required.
-        if (!ValidatePrimElementName(prim_name)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Prim name.");
-        }
+        DCOUT("elemPath.prim_name = " << pf.elemPath.prim_part());
 
         PrimSpec primspec;
 
-        primspec.typeName() = primTypeName;
-        primspec.name() = prim_name;
+        primspec.typeName() = pf.primTypeName;
+        primspec.name() = pf.prim_name;
 
         prim::PropertyMap props;
         if (!BuildPropertyMap(node.GetChildren(), psmap, &props)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to build PropertyMap.");
         }
         primspec.props() = std::move(props);
-        primspec.metas() = std::move(primMeta);
+        primspec.metas() = std::move(pf.primMeta);
 
         if (primOut) {
           (*primOut) = std::move(primspec);
@@ -3050,7 +2996,6 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
     case SpecType::Variant: {
       // Since the (parent) Prim this Variant node belongs to is not yet reconstructed
       // during the Prim tree traversal, We manage variant node separately
-      
 
       // TODO: Check if corresponding VariantSet Spec(which contains the list of VariantSetNames)
       // is defined a priori.
@@ -3058,75 +3003,23 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
       DCOUT(fmt::format("[{}] is a Variant node(parent = {}). prim_idx? = {}",
                         current, parent, _prim_table.count(current)));
 
-      nonstd::optional<std::string> typeName;
-      nonstd::optional<Specifier> specifier;
-      std::vector<value::token> primChildren;
-      std::vector<value::token> properties;
-
-      PrimMeta primMeta;
-
+      PrimFieldsResult pf;
       DCOUT("== VariantFields begin ==> ");
-
-      if (!ParsePrimSpec(fvs, typeName, specifier, primChildren, properties, primMeta)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  "Failed to parse Prim fields under Variant.");
+      if (!ParseCommonPrimFields(fvs, current, Specifier::Def, &pf)) {
         return false;
       }
-
       DCOUT("<== VariantFields end === ");
 
-      Path elemPath;
-      if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
-        elemPath = pv.value();
-        DCOUT(fmt::format("Element path: {}", elemPath.full_path_name()));
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  "(Internal errror) Element path not found.");
-      }
-
-      // Sanity check
-      if (specifier) {
-        if (specifier.value() == Specifier::Def) {
-          // ok
-        } else if (specifier.value() == Specifier::Class) {
-          // ok
-        } else if (specifier.value() == Specifier::Over) {
-          // ok
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Specifier.");
-        }
-      } else {
-        // Seems Variant is only composed of Properties.
-        // Create pseudo `def` Prim
-        // FIXME: default is `Over`?
-        specifier = Specifier::Def;
-      }
-
-      std::string pTyName; // TinyUSDZ' prim typename
-      if (!typeName) {
-        //PUSH_WARN("Treat this node as Model(where `typeName` is missing).");
-        pTyName = "Model";
-      } else {
-        pTyName = typeName.value();
-      }
-
       {
-        std::string prim_name = elemPath.prim_part();
-        DCOUT("elemPath = " << dump_path(elemPath));
-        DCOUT("prim_name = " << prim_name);
-
-        std::string primTypeName = typeName.has_value() ? typeName.value() : "";
-        // __AnyType__
-        if (typeName.has_value() && typeName.value() == "__AnyType__") {
-          primTypeName = "";
-        }
+        DCOUT("elemPath = " << dump_path(pf.elemPath));
+        DCOUT("prim_name = " << pf.prim_name);
 
         // Something like '{shapeVariant=Capsule}'
 
         std::array<std::string, 2> variantPair;
-        if (!tokenize_variantElement(prim_name, &variantPair)) {
+        if (!tokenize_variantElement(pf.prim_name, &variantPair)) {
           PUSH_ERROR_AND_RETURN_TAG(
-              kTag, fmt::format("Invalid Variant ElementPath '{}'.", elemPath));
+              kTag, fmt::format("Invalid Variant ElementPath '{}'.", pf.elemPath));
         }
 
         std::string variantSetName = variantPair[0];
@@ -3139,15 +3032,15 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         }
 
         PrimSpec variantPrimSpec;
-        variantPrimSpec.typeName() = primTypeName;
-        variantPrimSpec.name() = prim_name;
+        variantPrimSpec.typeName() = pf.primTypeName;
+        variantPrimSpec.name() = pf.prim_name;
 
         prim::PropertyMap props;
         if (!BuildPropertyMap(node.GetChildren(), psmap, &props)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to build PropertyMap.");
         }
         variantPrimSpec.props() = std::move(props);
-        variantPrimSpec.metas() = std::move(primMeta);
+        variantPrimSpec.metas() = std::move(pf.primMeta);
 
         // Store variantPrimSpec to temporary buffer.
         DCOUT(fmt::format("parent {} add primspec idx {} as variant: ", parent, current));
