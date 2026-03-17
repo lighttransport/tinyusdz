@@ -1,0 +1,1938 @@
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2022 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
+//
+// TODO:
+//   - [ ] Subdivision surface to polygon mesh conversion.
+//     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis
+//     function of subd surface)
+//   - [ ] Support Inbetween BlendShape
+//   - [ ] Support material binding collection(Collection API)
+//   - [ ] Support multiple skel animation
+//   https://github.com/PixarAnimationStudios/OpenUSD/issues/2246
+//   - [ ] Adjust normal vector computation with handness?
+//   - [ ] Node xform animation
+//   - [ ] Better build of index buffer
+//     - [ ] Preserve the order of 'points' variable(mesh.points, Skin
+//     indices/weights, BlendShape points, ...) as much as possible.
+//     - Implement spatial hash
+//
+//
+// Animation, skeleton, and light conversion routines split from render-data.cc
+//
+#include <numeric>
+#include <set>
+
+#include "common-utils.hh"
+#include "common-types.hh"
+#include "image-loader.hh"
+#include "image-util.hh"
+#include "image-types.hh"
+#include "linear-algebra.hh"
+#include "math-util.inc"
+#include "pprinter.hh"
+#include "prim-types.hh"
+#include "str-util.hh"
+#include "tiny-format.hh"
+#include "tinyusdz.hh"
+#include "usdGeom.hh"
+#include "usdShade.hh"
+#include "usdLux.hh"
+#include "usdMtlx.hh"
+#include "value-pprint.hh"
+#include "logger.hh"
+#include "bone-util.hh"
+#include "shape-to-mesh.hh"
+#include "materialx-to-json.hh"
+#include "mmap-array-ref.hh"
+
+// Helper macros for iterating over TypedTimeSamples in both AoS and SoA modes
+#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
+#define FOREACH_TIMESAMPLES_BEGIN(ts, var_t, var_value, var_blocked) \
+  { \
+    const auto &_times = (ts).get_times(); \
+    const auto &_values = (ts).get_values(); \
+    const auto &_blocked = (ts).get_blocked(); \
+    for (size_t _idx = 0; _idx < _times.size(); _idx++) { \
+      const double var_t = _times[_idx]; \
+      const auto &var_value = _values[_idx]; \
+      const bool var_blocked = _blocked[_idx]; \
+      if (!var_blocked) {
+
+#define FOREACH_TIMESAMPLES_END() \
+      } \
+    } \
+  }
+
+#define TIMESAMPLES_EMPTY(ts) ((ts).size() == 0)
+
+#else
+#define FOREACH_TIMESAMPLES_BEGIN(ts, var_t, var_value, var_blocked) \
+  for (const auto &_sample : (ts).get_samples()) { \
+    const double var_t = _sample.t; \
+    const auto &var_value = _sample.value; \
+    const bool var_blocked = _sample.blocked; \
+    if (!var_blocked) {
+
+#define FOREACH_TIMESAMPLES_END() \
+    } \
+  }
+
+//#define TIMESAMPLES_EMPTY(ts) ((ts).get_samples().empty())
+#endif
+
+//
+#include "common-macros.inc"
+#include "math-util.inc"
+
+
+//
+#include "tydra/attribute-eval.hh"
+#include "tydra/render-data.hh"
+#include "tydra/render-data-internal.hh"
+#include "tydra/scene-access.hh"
+#include "tydra/shader-network.hh"
+
+namespace tinyusdz {
+
+namespace tydra {
+
+bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &env,
+                                            const Path &abs_path,
+                                            const SkelAnimation &skelAnim,
+                                            int32_t skeleton_id,
+                                            AnimationClip *anim_out) {
+  // The spec says:
+  // "An animation source is only valid if its translation, rotation, and scale components
+  //  are all authored, storing arrays sized to the same size as the authored joints array."
+  //
+  // Convert USD SkelAnimation to glTF/Three.js compatible AnimationClip structure
+  // with flat sampler arrays and channel bindings
+
+  std::vector<value::token> joints;
+
+  if (skelAnim.joints.authored()) {
+    if (!EvaluateTypedAttribute(env.stage, skelAnim.joints, "joints", &joints, &_err)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to evaluate `joints` in SkelAnimation Prim : {}", abs_path));
+    }
+
+    if (!skelAnim.rotations.authored() ||
+        !skelAnim.translations.authored() ||
+        !skelAnim.scales.authored()) {
+
+      PUSH_ERROR_AND_RETURN(fmt::format("`translations`, `rotations` and `scales` must be all authored for SkelAnimation Prim {}. authored flags: translations {}, rotations {}, scales {}", abs_path, skelAnim.translations.authored() ? "yes" : "no",
+      skelAnim.rotations.authored() ? "yes" : "no",
+      skelAnim.scales.authored() ? "yes" : "no"));
+    }
+  }
+
+  // TODO: inbetweens BlendShape
+  std::vector<value::token> blendShapes;
+  if (skelAnim.blendShapes.authored()) {
+    if (!EvaluateTypedAttribute(env.stage, skelAnim.blendShapes, "blendShapes", &blendShapes, &_err)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to evaluate `blendShapes` in SkelAnimation Prim : {}", abs_path));
+    }
+
+    if (!skelAnim.blendShapeWeights.authored()) {
+      PUSH_ERROR_AND_RETURN(fmt::format("`blendShapeWeights` must be authored for SkelAnimation Prim {}", abs_path));
+    }
+  }
+
+  // Setup basic metadata
+  anim_out->abs_path = abs_path.full_path_name();
+  anim_out->prim_name = skelAnim.name;
+  anim_out->name = skelAnim.name;
+  anim_out->display_name = skelAnim.metas().has_displayName() ? skelAnim.metas().get_displayName() : "";
+  anim_out->duration = 0.0f;  // Will be computed below
+  anim_out->source_type = AnimationSourceType::SkelAnimation;
+  anim_out->num_animated_joints = int32_t(joints.size());
+
+  // Joint animations - convert to glTF-style flat arrays
+  // Strategy: Pre-allocate output samplers, then scatter data directly from
+  // TypedTimeSamples into per-joint samplers. Avoids copying all frame data
+  // into intermediate vectors.
+  if (joints.size()) {
+    if (skeleton_id < 0 || skeleton_id >= int32_t(skeletons.size())) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "Invalid skeleton_id {} for SkelAnimation {}",
+          skeleton_id, abs_path.full_path_name()));
+    }
+
+    // SkelAnimation::joints ordering may differ from Skeleton::joints ordering.
+    // Build an explicit animation-joint -> skeleton-joint remap once, then use
+    // canonical skeleton joint IDs in all emitted channels.
+    auto cache_it = _skelNameToIndexCache.find(skeleton_id);
+    if (cache_it == _skelNameToIndexCache.end()) {
+      cache_it = _skelNameToIndexCache
+                     .emplace(skeleton_id,
+                              BuildSkelNameToIndexMap(skeletons[size_t(skeleton_id)]))
+                     .first;
+    }
+    const auto &token_to_index_map = cache_it->second;
+
+    auto normalize_joint_token = [](const std::string &token,
+                                    std::string *out) -> bool {
+      if (!token.empty() && token[0] == '/') {
+        *out = token.substr(1);
+        return true;
+      }
+      return false;
+    };
+
+    Animatable<std::vector<value::float3>> translations;
+    if (!skelAnim.translations.get_value(&translations)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `translations` attribute of SkelAnimation: {}", abs_path));
+    }
+
+    Animatable<std::vector<value::quatf>> rotations;
+    if (!skelAnim.rotations.get_value(&rotations)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `rotations` attribute of SkelAnimation: {}", abs_path));
+    }
+
+    Animatable<std::vector<value::half3>> scales;
+    if (!skelAnim.scales.get_value(&scales)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `scales` attribute of SkelAnimation: {}", abs_path));
+    }
+
+    size_t nJoints = joints.size();
+    std::vector<int32_t> anim_joint_to_skel_joint(nJoints, -1);
+    for (size_t j = 0; j < nJoints; j++) {
+      const std::string joint_token = joints[j].str();
+
+      auto token_it = token_to_index_map.find(joint_token);
+      if (token_it != token_to_index_map.end()) {
+        anim_joint_to_skel_joint[j] = int32_t(token_it->second);
+        continue;
+      }
+
+      std::string normalized_joint_token;
+      if (normalize_joint_token(joint_token, &normalized_joint_token)) {
+        auto norm_it = token_to_index_map.find(normalized_joint_token);
+        if (norm_it != token_to_index_map.end()) {
+          anim_joint_to_skel_joint[j] = int32_t(norm_it->second);
+          continue;
+        }
+      }
+
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "SkelAnimation joint token '{}' is not found in Skeleton {} (id={})",
+          joint_token, skeletons[size_t(skeleton_id)].abs_path, skeleton_id));
+    }
+
+    // Count frames for each property (first pass - no data copy)
+    size_t nTransTimes = 0, nRotTimes = 0, nScaleTimes = 0;
+    if (translations.has_timesamples()) {
+      nTransTimes = translations.get_timesamples().size();
+    } else if (translations.has_value()) {
+      nTransTimes = 1;
+    }
+    if (rotations.has_timesamples()) {
+      nRotTimes = rotations.get_timesamples().size();
+    } else if (rotations.has_value()) {
+      nRotTimes = 1;
+    }
+    if (scales.has_timesamples()) {
+      nScaleTimes = scales.get_timesamples().size();
+    } else if (scales.has_value()) {
+      nScaleTimes = 1;
+    }
+
+    // Pre-allocate all output samplers and channels
+    size_t nProps = (nTransTimes ? 1 : 0) + (nRotTimes ? 1 : 0) + (nScaleTimes ? 1 : 0);
+    size_t totalSamplers = nJoints * nProps;
+    size_t baseSamplerIdx = anim_out->samplers.size();
+    anim_out->samplers.resize(baseSamplerIdx + totalSamplers);
+    size_t baseChannelIdx = anim_out->channels.size();
+    anim_out->channels.resize(baseChannelIdx + totalSamplers);
+
+    // Allocate flat bulk buffers for scatter writes (avoids per-sampler resize zero-fill).
+    // Layout: [joint0_frame0, joint0_frame1, ..., joint1_frame0, ...] (joint-major)
+    // Scatter writes in frame-major order; final copy to per-sampler vectors is joint-major memcpy.
+    size_t transBufTimesSize = nTransTimes ? nJoints * nTransTimes : 0;
+    size_t transBufValsSize  = nTransTimes ? nJoints * nTransTimes * 3 : 0;
+    size_t rotBufTimesSize   = nRotTimes   ? nJoints * nRotTimes : 0;
+    size_t rotBufValsSize    = nRotTimes   ? nJoints * nRotTimes * 4 : 0;
+    size_t scaleBufTimesSize = nScaleTimes ? nJoints * nScaleTimes : 0;
+    size_t scaleBufValsSize  = nScaleTimes ? nJoints * nScaleTimes * 3 : 0;
+
+    // Single allocation for all bulk data
+    size_t totalFloats = transBufTimesSize + transBufValsSize
+                       + rotBufTimesSize + rotBufValsSize
+                       + scaleBufTimesSize + scaleBufValsSize;
+    std::unique_ptr<float[]> bulkBuf(new float[totalFloats]);
+    float *ptr = bulkBuf.get();
+
+    float *transTimesBuf = ptr; ptr += transBufTimesSize;
+    float *transValsBuf  = ptr; ptr += transBufValsSize;
+    float *rotTimesBuf   = ptr; ptr += rotBufTimesSize;
+    float *rotValsBuf    = ptr; ptr += rotBufValsSize;
+    float *scaleTimesBuf = ptr; ptr += scaleBufTimesSize;
+    float *scaleValsBuf  = ptr; ptr += scaleBufValsSize;
+
+    // Setup channels (no value arrays yet — will be assigned after scatter)
+    for (size_t j = 0; j < nJoints; j++) {
+      const int32_t resolved_joint_id = anim_joint_to_skel_joint[j];
+      size_t samplerOff = baseSamplerIdx + j * nProps;
+      size_t channelOff = baseChannelIdx + j * nProps;
+      size_t pi = 0;
+      if (nTransTimes) {
+        anim_out->samplers[samplerOff + pi].interpolation = AnimationInterpolation::Linear;
+        auto &ch = anim_out->channels[channelOff + pi];
+        ch.target_type = ChannelTargetType::SkeletonJoint;
+        ch.path = AnimationPath::Translation;
+        ch.skeleton_id = skeleton_id;
+        ch.joint_id = resolved_joint_id;
+        ch.sampler = int32_t(samplerOff + pi);
+        pi++;
+      }
+      if (nRotTimes) {
+        anim_out->samplers[samplerOff + pi].interpolation = AnimationInterpolation::Linear;
+        auto &ch = anim_out->channels[channelOff + pi];
+        ch.target_type = ChannelTargetType::SkeletonJoint;
+        ch.path = AnimationPath::Rotation;
+        ch.skeleton_id = skeleton_id;
+        ch.joint_id = resolved_joint_id;
+        ch.sampler = int32_t(samplerOff + pi);
+        pi++;
+      }
+      if (nScaleTimes) {
+        anim_out->samplers[samplerOff + pi].interpolation = AnimationInterpolation::Linear;
+        auto &ch = anim_out->channels[channelOff + pi];
+        ch.target_type = ChannelTargetType::SkeletonJoint;
+        ch.path = AnimationPath::Scale;
+        ch.skeleton_id = skeleton_id;
+        ch.joint_id = resolved_joint_id;
+        ch.sampler = int32_t(samplerOff + pi);
+        pi++;
+      }
+    }
+
+    // Scatter into bulk buffers (joint-major layout: [j0_f0, j0_f1, ..., j1_f0, ...])
+    // This avoids per-sampler vector::resize() zero-fill overhead.
+
+    // Scatter translations into bulk buffer
+    if (nTransTimes) {
+      auto scatterTransFrame = [&](size_t frameIdx, float time, const std::vector<value::float3> &frameData) {
+        if (frameData.size() != nJoints) {
+          _err = fmt::format("Array length mismatch: translations.size {} != joints.size {} at frame {}",
+            frameData.size(), nJoints, frameIdx);
+          return false;
+        }
+        if (time > anim_out->duration) anim_out->duration = time;
+        for (size_t j = 0; j < nJoints; j++) {
+          transTimesBuf[j * nTransTimes + frameIdx] = time;
+          memcpy(&transValsBuf[(j * nTransTimes + frameIdx) * 3], frameData[j].data(), 3 * sizeof(float));
+        }
+        return true;
+      };
+
+      if (translations.has_timesamples()) {
+        const auto &ts = translations.get_timesamples();
+        size_t frameIdx = 0;
+        FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+          if (sample_blocked) {
+            continue;
+          }
+          if (!scatterTransFrame(frameIdx, float(sample_t), sample_value)) {
+            PUSH_ERROR_AND_RETURN(_err);
+          }
+          frameIdx++;
+        FOREACH_TIMESAMPLES_END()
+      } else {
+        std::vector<value::float3> default_value;
+        if (!translations.get_scalar(&default_value)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default translations: {}", abs_path));
+        }
+        if (!scatterTransFrame(0, 0.0f, default_value)) {
+          PUSH_ERROR_AND_RETURN(_err);
+        }
+      }
+    }
+
+    // Scatter rotations into bulk buffer
+    // quatf layout: { float3 imag; float real; } = 4 contiguous floats
+    if (nRotTimes) {
+      auto scatterRotFrame = [&](size_t frameIdx, float time, const std::vector<value::quatf> &frameData) {
+        if (frameData.size() != nJoints) {
+          _err = fmt::format("Array length mismatch: rotations.size {} != joints.size {} at frame {}",
+            frameData.size(), nJoints, frameIdx);
+          return false;
+        }
+        if (time > anim_out->duration) anim_out->duration = time;
+        for (size_t j = 0; j < nJoints; j++) {
+          rotTimesBuf[j * nRotTimes + frameIdx] = time;
+          memcpy(&rotValsBuf[(j * nRotTimes + frameIdx) * 4], &frameData[j], 4 * sizeof(float));
+        }
+        return true;
+      };
+
+      if (rotations.has_timesamples()) {
+        const auto &ts = rotations.get_timesamples();
+        size_t frameIdx = 0;
+        FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+          if (sample_blocked) {
+            continue;
+          }
+          if (!scatterRotFrame(frameIdx, float(sample_t), sample_value)) {
+            PUSH_ERROR_AND_RETURN(_err);
+          }
+          frameIdx++;
+        FOREACH_TIMESAMPLES_END()
+      } else {
+        std::vector<value::quatf> default_value;
+        if (!rotations.get_scalar(&default_value)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default rotations: {}", abs_path));
+        }
+        if (!scatterRotFrame(0, 0.0f, default_value)) {
+          PUSH_ERROR_AND_RETURN(_err);
+        }
+      }
+    }
+
+    // Scatter scales into bulk buffer (with half->float conversion)
+    if (nScaleTimes) {
+      auto scatterScaleFrame = [&](size_t frameIdx, float time, const std::vector<value::half3> &frameData) {
+        if (frameData.size() != nJoints) {
+          _err = fmt::format("Array length mismatch: scales.size {} != joints.size {} at frame {}",
+            frameData.size(), nJoints, frameIdx);
+          return false;
+        }
+        if (time > anim_out->duration) anim_out->duration = time;
+        for (size_t j = 0; j < nJoints; j++) {
+          scaleTimesBuf[j * nScaleTimes + frameIdx] = time;
+          float *dst = &scaleValsBuf[(j * nScaleTimes + frameIdx) * 3];
+          const auto &v = frameData[j];
+          dst[0] = value::half_to_float(v[0]);
+          dst[1] = value::half_to_float(v[1]);
+          dst[2] = value::half_to_float(v[2]);
+        }
+        return true;
+      };
+
+      if (scales.has_timesamples()) {
+        const auto &ts = scales.get_timesamples();
+        size_t frameIdx = 0;
+        FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+          if (sample_blocked) {
+            continue;
+          }
+          if (!scatterScaleFrame(frameIdx, float(sample_t), sample_value)) {
+            PUSH_ERROR_AND_RETURN(_err);
+          }
+          frameIdx++;
+        FOREACH_TIMESAMPLES_END()
+      } else {
+        std::vector<value::half3> default_value;
+        if (!scales.get_scalar(&default_value)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default scales: {}", abs_path));
+        }
+        if (!scatterScaleFrame(0, 0.0f, default_value)) {
+          PUSH_ERROR_AND_RETURN(_err);
+        }
+      }
+    }
+
+    // Copy from bulk buffers into per-sampler vectors (single memcpy per sampler,
+    // using assign() which allocates + copies without zero-fill overhead)
+    for (size_t j = 0; j < nJoints; j++) {
+      size_t samplerOff = baseSamplerIdx + j * nProps;
+      size_t pi = 0;
+      if (nTransTimes) {
+        auto &s = anim_out->samplers[samplerOff + pi];
+        const float *tBase = &transTimesBuf[j * nTransTimes];
+        const float *vBase = &transValsBuf[j * nTransTimes * 3];
+        s.times.assign(tBase, tBase + nTransTimes);
+        s.values.assign(vBase, vBase + nTransTimes * 3);
+        pi++;
+      }
+      if (nRotTimes) {
+        auto &s = anim_out->samplers[samplerOff + pi];
+        const float *tBase = &rotTimesBuf[j * nRotTimes];
+        const float *vBase = &rotValsBuf[j * nRotTimes * 4];
+        s.times.assign(tBase, tBase + nRotTimes);
+        s.values.assign(vBase, vBase + nRotTimes * 4);
+        pi++;
+      }
+      if (nScaleTimes) {
+        auto &s = anim_out->samplers[samplerOff + pi];
+        const float *tBase = &scaleTimesBuf[j * nScaleTimes];
+        const float *vBase = &scaleValsBuf[j * nScaleTimes * 3];
+        s.times.assign(tBase, tBase + nScaleTimes);
+        s.values.assign(vBase, vBase + nScaleTimes * 3);
+        pi++;
+      }
+    }
+  }
+
+  // BlendShape animations currently need mesh-node target resolution.
+  // The current conversion stage does not have stable node indices yet, so
+  // emitting Weights channels here would produce invalid target_node values.
+  if (blendShapes.size()) {
+    PUSH_WARN(fmt::format(
+        "Skipping blendShapeWeights conversion for SkelAnimation {} "
+        "(mesh target resolution not implemented yet)",
+        abs_path.full_path_name()));
+  }
+
+  return true;
+}
+
+// Helper function: Quaternion multiplication using direct member access
+// (avoids operator[] pointer arithmetic overhead)
+// q1 * q2, Hamilton convention
+[[maybe_unused]] static inline value::quatf quat_mul(const value::quatf &q1, const value::quatf &q2) {
+  const float x1 = q1.imag[0], y1 = q1.imag[1], z1 = q1.imag[2], w1 = q1.real;
+  const float x2 = q2.imag[0], y2 = q2.imag[1], z2 = q2.imag[2], w2 = q2.real;
+  value::quatf r;
+  r.imag[0] = w1*x2 + x1*w2 + y1*z2 - z1*y2;
+  r.imag[1] = w1*y2 - x1*z2 + y1*w2 + z1*x2;
+  r.imag[2] = w1*z2 + x1*y2 - y1*x2 + z1*w2;
+  r.real    = w1*w2 - x1*x2 - y1*y2 - z1*z2;
+  return r;
+}
+
+// Specialized single-axis angle-to-quaternion (avoids multiply-by-zero for the
+// two unused axis components). Keeps sin_pi/cos_pi for accuracy.
+static inline value::quatf to_quaternion_x(float angle) {
+  float s = float(math::sin_pi(double(angle) / 360.0));
+  float c = float(math::cos_pi(double(angle) / 360.0));
+  value::quatf q;
+  q.imag[0] = s;  q.imag[1] = 0.0f;  q.imag[2] = 0.0f;  q.real = c;
+  return q;
+}
+
+static inline value::quatf to_quaternion_y(float angle) {
+  float s = float(math::sin_pi(double(angle) / 360.0));
+  float c = float(math::cos_pi(double(angle) / 360.0));
+  value::quatf q;
+  q.imag[0] = 0.0f;  q.imag[1] = s;  q.imag[2] = 0.0f;  q.real = c;
+  return q;
+}
+
+static inline value::quatf to_quaternion_z(float angle) {
+  float s = float(math::sin_pi(double(angle) / 360.0));
+  float c = float(math::cos_pi(double(angle) / 360.0));
+  value::quatf q;
+  q.imag[0] = 0.0f;  q.imag[1] = 0.0f;  q.imag[2] = s;  q.real = c;
+  return q;
+}
+
+// Direct Euler-to-quaternion conversion using closed-form formulas.
+// Computes the combined quaternion from 3 axis-aligned rotations in one step,
+// avoiding intermediate quaternion objects and 2 quaternion multiplications.
+// All 6 rotation orders are supported.
+// angles[0] = X angle, angles[1] = Y angle, angles[2] = Z angle (degrees)
+static inline value::quatf euler_to_quatf(
+    const value::double3 &angles, XformOp::OpType rot_order) {
+  // Half-angle trig values (using sin_pi/cos_pi for accuracy)
+  const float sx = float(math::sin_pi(angles[0] / 360.0));
+  const float cx = float(math::cos_pi(angles[0] / 360.0));
+  const float sy = float(math::sin_pi(angles[1] / 360.0));
+  const float cy = float(math::cos_pi(angles[1] / 360.0));
+  const float sz = float(math::sin_pi(angles[2] / 360.0));
+  const float cz = float(math::cos_pi(angles[2] / 360.0));
+
+  value::quatf q;
+
+  switch (rot_order) {
+    case XformOp::OpType::RotateXYZ:
+      // Q = Qz * Qy * Qx
+      q.imag[0] = cz*cy*sx - sz*sy*cx;
+      q.imag[1] = cz*sy*cx + sz*cy*sx;
+      q.imag[2] = sz*cy*cx - cz*sy*sx;
+      q.real    = cz*cy*cx + sz*sy*sx;
+      break;
+    case XformOp::OpType::RotateXZY:
+      // Q = Qy * Qz * Qx
+      q.imag[0] = cy*cz*sx + sy*sz*cx;
+      q.imag[1] = cy*sz*sx + sy*cz*cx;
+      q.imag[2] = cy*sz*cx - sy*cz*sx;
+      q.real    = cy*cz*cx - sy*sz*sx;
+      break;
+    case XformOp::OpType::RotateYXZ:
+      // Q = Qz * Qx * Qy
+      q.imag[0] = cz*sx*cy - sz*cx*sy;
+      q.imag[1] = cz*cx*sy + sz*sx*cy;
+      q.imag[2] = cz*sx*sy + sz*cx*cy;
+      q.real    = cz*cx*cy - sz*sx*sy;
+      break;
+    case XformOp::OpType::RotateYZX:
+      // Q = Qx * Qz * Qy
+      q.imag[0] = sx*cz*cy - cx*sz*sy;
+      q.imag[1] = cx*cz*sy - sx*sz*cy;
+      q.imag[2] = cx*sz*cy + sx*cz*sy;
+      q.real    = cx*cz*cy + sx*sz*sy;
+      break;
+    case XformOp::OpType::RotateZXY:
+      // Q = Qy * Qx * Qz
+      q.imag[0] = cy*sx*cz + sy*cx*sz;
+      q.imag[1] = sy*cx*cz - cy*sx*sz;
+      q.imag[2] = cy*cx*sz - sy*sx*cz;
+      q.real    = cy*cx*cz + sy*sx*sz;
+      break;
+    case XformOp::OpType::RotateZYX:
+      // Q = Qx * Qy * Qz
+      q.imag[0] = cx*sy*sz + sx*cy*cz;
+      q.imag[1] = cx*sy*cz - sx*cy*sz;
+      q.imag[2] = cx*cy*sz + sx*sy*cz;
+      q.real    = cx*cy*cz - sx*sy*sz;
+      break;
+    default:
+      // Fallback: treat as XYZ
+      q.imag[0] = cz*cy*sx - sz*sy*cx;
+      q.imag[1] = cz*sy*cx + sz*cy*sx;
+      q.imag[2] = sz*cy*cx - cz*sy*sx;
+      q.real    = cz*cy*cx + sz*sy*sx;
+      break;
+  }
+
+  return q;
+}
+
+bool RenderSceneConverter::ExtractXformOpAnimation(
+    const RenderSceneConverterEnv &env,
+    const Path &abs_path,
+    const std::string &prim_name,
+    const Xformable &xformable,
+    int32_t target_node_index,
+    AnimationClip *anim_out) {
+
+  (void)env;  // Unused parameter
+
+  if (!anim_out) {
+    PUSH_ERROR_AND_RETURN("anim_out is nullptr");
+  }
+
+  // Check if xformable has any animated xformOps
+  if (!xformable.has_timesamples()) {
+    return false;  // No animation data
+  }
+
+  // Setup basic metadata
+  anim_out->abs_path = abs_path.full_path_name();
+  anim_out->prim_name = prim_name;
+  anim_out->name = prim_name + "_xform";
+  anim_out->duration = 0.0f;  // Will be computed below
+  anim_out->source_type = AnimationSourceType::XformOp;
+  anim_out->num_animated_nodes = 1;
+
+  // Process each xformOp that has time samples
+  for (size_t xform_idx = 0; xform_idx < xformable.xformOps.size(); xform_idx++) {
+    const XformOp &xformOp = xformable.xformOps[xform_idx];
+
+    if (xformOp.op_type == XformOp::OpType::ResetXformStack) {
+      continue;  // Skip reset operations
+    }
+
+    if (!xformOp.has_timesamples()) {
+      continue;  // Skip non-animated ops
+    }
+
+    // Get the time samples
+    auto ts_opt = xformOp.get_timesamples();
+    if (!ts_opt) {
+      continue;
+    }
+
+    const value::TimeSamples &ts = ts_opt.value();
+    if (ts.size() == 0) {
+      continue;
+    }
+
+    // Determine the animation path based on xformOp type
+    AnimationPath anim_path = AnimationPath::Translation;  // Default initialization
+    bool is_supported = false;
+
+    switch (xformOp.op_type) {
+      case XformOp::OpType::Translate:
+        anim_path = AnimationPath::Translation;
+        is_supported = true;
+        break;
+
+      case XformOp::OpType::Scale:
+        anim_path = AnimationPath::Scale;
+        is_supported = true;
+        break;
+
+      case XformOp::OpType::Orient:
+        anim_path = AnimationPath::Rotation;
+        is_supported = true;
+        break;
+
+      case XformOp::OpType::RotateX:
+      case XformOp::OpType::RotateY:
+      case XformOp::OpType::RotateZ:
+      case XformOp::OpType::RotateXYZ:
+      case XformOp::OpType::RotateXZY:
+      case XformOp::OpType::RotateYXZ:
+      case XformOp::OpType::RotateYZX:
+      case XformOp::OpType::RotateZXY:
+      case XformOp::OpType::RotateZYX:
+        anim_path = AnimationPath::Rotation;
+        is_supported = true;
+        break;
+
+      case XformOp::OpType::Transform:
+        // Full matrix transform - decompose into TRS
+        // We'll handle this specially below since it produces multiple animation channels
+        is_supported = true;
+        break;
+
+      case XformOp::OpType::ResetXformStack:
+        // Not animatable - skip
+        is_supported = false;
+        break;
+    }
+
+    if (!is_supported) {
+      continue;
+    }
+
+    // Special handling for Transform (matrix) - decompose into TRS
+    if (xformOp.op_type == XformOp::OpType::Transform) {
+      std::vector<double> times;
+      std::vector<value::double3> translations;
+      std::vector<value::quatd> rotations;
+      std::vector<value::double3> scales;
+
+      // Extract and decompose matrix time samples
+      FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+        if (sample_blocked) {
+          continue;
+        }
+
+        value::matrix4d mat;
+        bool got_value = false;
+
+        if (auto v = sample_value.as<value::matrix4d>()) {
+          mat = *v;
+          got_value = true;
+        } else if (auto vf = sample_value.as<value::matrix4f>()) {
+          // Convert float matrix to double
+          const auto &m = *vf;
+          for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) {
+              mat.m[i][j] = double(m.m[i][j]);
+            }
+          }
+          got_value = true;
+        }
+
+        if (got_value) {
+          value::double3 translation, scale;
+          value::quatd rotation;
+
+          // Decompose the matrix
+          if (decompose(mat, &translation, &rotation, &scale)) {
+            times.push_back(sample_t);
+            translations.push_back(translation);
+            rotations.push_back(rotation);
+            scales.push_back(scale);
+
+            if (float(sample_t) > anim_out->duration) {
+              anim_out->duration = float(sample_t);
+            }
+          } else {
+            PUSH_WARN(fmt::format("Failed to decompose matrix at time {} for xformOp:transform at {}",
+                                 sample_t, abs_path.full_path_name()));
+          }
+        }
+      FOREACH_TIMESAMPLES_END()
+
+      // Create three separate animation channels for T, R, S
+      if (!times.empty()) {
+        // Translation channel
+        {
+          KeyframeSampler sampler;
+          sampler.interpolation = AnimationInterpolation::Linear;
+          sampler.times.reserve(times.size());
+          sampler.values.reserve(times.size() * 3);
+
+          for (size_t i = 0; i < times.size(); i++) {
+            sampler.times.push_back(float(times[i]));
+            sampler.values.push_back(float(translations[i][0]));
+            sampler.values.push_back(float(translations[i][1]));
+            sampler.values.push_back(float(translations[i][2]));
+          }
+
+          int32_t sampler_idx = int32_t(anim_out->samplers.size());
+          anim_out->samplers.push_back(sampler);
+
+          AnimationChannel channel;
+          channel.target_type = ChannelTargetType::SceneNode;
+          channel.path = AnimationPath::Translation;
+          channel.target_node = target_node_index;
+          channel.sampler = sampler_idx;
+          anim_out->channels.push_back(channel);
+        }
+
+        // Rotation channel
+        {
+          KeyframeSampler sampler;
+          sampler.interpolation = AnimationInterpolation::Linear;
+          sampler.times.reserve(times.size());
+          sampler.values.reserve(times.size() * 4);
+
+          for (size_t i = 0; i < times.size(); i++) {
+            sampler.times.push_back(float(times[i]));
+            sampler.values.push_back(float(rotations[i].imag[0]));
+            sampler.values.push_back(float(rotations[i].imag[1]));
+            sampler.values.push_back(float(rotations[i].imag[2]));
+            sampler.values.push_back(float(rotations[i].real));
+          }
+
+          int32_t sampler_idx = int32_t(anim_out->samplers.size());
+          anim_out->samplers.push_back(sampler);
+
+          AnimationChannel channel;
+          channel.target_type = ChannelTargetType::SceneNode;
+          channel.path = AnimationPath::Rotation;
+          channel.target_node = target_node_index;
+          channel.sampler = sampler_idx;
+          anim_out->channels.push_back(channel);
+        }
+
+        // Scale channel
+        {
+          KeyframeSampler sampler;
+          sampler.interpolation = AnimationInterpolation::Linear;
+          sampler.times.reserve(times.size());
+          sampler.values.reserve(times.size() * 3);
+
+          for (size_t i = 0; i < times.size(); i++) {
+            sampler.times.push_back(float(times[i]));
+            sampler.values.push_back(float(scales[i][0]));
+            sampler.values.push_back(float(scales[i][1]));
+            sampler.values.push_back(float(scales[i][2]));
+          }
+
+          int32_t sampler_idx = int32_t(anim_out->samplers.size());
+          anim_out->samplers.push_back(sampler);
+
+          AnimationChannel channel;
+          channel.target_type = ChannelTargetType::SceneNode;
+          channel.path = AnimationPath::Scale;
+          channel.target_node = target_node_index;
+          channel.sampler = sampler_idx;
+          anim_out->channels.push_back(channel);
+        }
+      }
+
+      // Skip the regular processing below
+      continue;
+    }
+
+    // Create a keyframe sampler
+    KeyframeSampler sampler;
+    sampler.interpolation = AnimationInterpolation::Linear;
+
+    // Extract time samples based on the operation type
+    if (anim_path == AnimationPath::Translation || anim_path == AnimationPath::Scale) {
+      // Handle vec3 types (translation, scale)
+      std::vector<double> times;
+      std::vector<value::float3> values;
+
+      FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+        if (sample_blocked) {
+          continue;
+        }
+
+        // Try to get value as various vec3 types
+        value::float3 vec;
+        bool got_value = false;
+
+        if (auto v = sample_value.as<value::float3>()) {
+          vec = *v;
+          got_value = true;
+        } else if (auto vd = sample_value.as<value::double3>()) {
+          vec[0] = float((*vd)[0]);
+          vec[1] = float((*vd)[1]);
+          vec[2] = float((*vd)[2]);
+          got_value = true;
+        } else if (auto vh = sample_value.as<value::half3>()) {
+          vec[0] = value::half_to_float((*vh)[0]);
+          vec[1] = value::half_to_float((*vh)[1]);
+          vec[2] = value::half_to_float((*vh)[2]);
+          got_value = true;
+        }
+
+        if (got_value) {
+          times.push_back(sample_t);
+          values.push_back(vec);
+          if (float(sample_t) > anim_out->duration) {
+            anim_out->duration = float(sample_t);
+          }
+        }
+      FOREACH_TIMESAMPLES_END()
+
+      // Build sampler data
+      if (!times.empty()) {
+        sampler.times.reserve(times.size());
+        sampler.values.reserve(times.size() * 3);
+
+        for (size_t i = 0; i < times.size(); i++) {
+          sampler.times.push_back(float(times[i]));
+          sampler.values.push_back(values[i][0]);
+          sampler.values.push_back(values[i][1]);
+          sampler.values.push_back(values[i][2]);
+        }
+      }
+
+    } else if (anim_path == AnimationPath::Rotation) {
+      // Handle rotation types
+      std::vector<double> times;
+      std::vector<value::quatf> values;
+
+      // For Orient operations, we have quaternions
+      if (xformOp.op_type == XformOp::OpType::Orient) {
+        FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+          if (sample_blocked) {
+            continue;
+          }
+
+          value::quatf quat;
+          bool got_value = false;
+
+          if (auto v = sample_value.as<value::quatf>()) {
+            quat = *v;
+            got_value = true;
+          } else if (auto vd = sample_value.as<value::quatd>()) {
+            quat.imag[0] = float(vd->imag[0]);
+            quat.imag[1] = float(vd->imag[1]);
+            quat.imag[2] = float(vd->imag[2]);
+            quat.real     = float(vd->real);
+            got_value = true;
+          } else if (auto vh = sample_value.as<value::quath>()) {
+            quat.imag[0] = value::half_to_float(vh->imag[0]);
+            quat.imag[1] = value::half_to_float(vh->imag[1]);
+            quat.imag[2] = value::half_to_float(vh->imag[2]);
+            quat.real     = value::half_to_float(vh->real);
+            got_value = true;
+          }
+
+          if (got_value) {
+            times.push_back(sample_t);
+            values.push_back(quat);
+            if (float(sample_t) > anim_out->duration) {
+              anim_out->duration = float(sample_t);
+            }
+          }
+        FOREACH_TIMESAMPLES_END()
+
+      } else {
+        // For Rotate operations, we have angles that need to be converted to quaternions
+        // We'll extract the angle values and convert them to quaternions
+        std::vector<double> angle_times;
+        std::vector<double> angle_values;
+
+        if (xformOp.op_type == XformOp::OpType::RotateX ||
+            xformOp.op_type == XformOp::OpType::RotateY ||
+            xformOp.op_type == XformOp::OpType::RotateZ) {
+          // Single-axis rotation (scalar angle)
+          FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+            if (sample_blocked) {
+              continue;
+            }
+
+            double angle = 0.0;
+            bool got_value = false;
+
+            if (auto v = sample_value.as<double>()) {
+              angle = *v;
+              got_value = true;
+            } else if (auto vf = sample_value.as<float>()) {
+              angle = double(*vf);
+              got_value = true;
+            }
+
+            if (got_value) {
+              angle_times.push_back(sample_t);
+              angle_values.push_back(angle);
+              if (float(sample_t) > anim_out->duration) {
+                anim_out->duration = float(sample_t);
+              }
+            }
+          FOREACH_TIMESAMPLES_END()
+
+          // Convert angles to quaternions using specialized single-axis functions
+          for (size_t i = 0; i < angle_times.size(); i++) {
+            times.push_back(angle_times[i]);
+            if (xformOp.op_type == XformOp::OpType::RotateX) {
+              values.push_back(to_quaternion_x(float(angle_values[i])));
+            } else if (xformOp.op_type == XformOp::OpType::RotateY) {
+              values.push_back(to_quaternion_y(float(angle_values[i])));
+            } else {  // RotateZ
+              values.push_back(to_quaternion_z(float(angle_values[i])));
+            }
+          }
+
+        } else {
+          // Multi-axis rotation (vec3 of angles)
+          // For RotateXYZ and similar, we need to compute the combined quaternion
+          std::vector<value::double3> euler_angles;
+
+          FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+            if (sample_blocked) {
+              continue;
+            }
+
+            value::double3 angles;
+            bool got_value = false;
+
+            if (auto v = sample_value.as<value::float3>()) {
+              angles[0] = double((*v)[0]);
+              angles[1] = double((*v)[1]);
+              angles[2] = double((*v)[2]);
+              got_value = true;
+            } else if (auto vd = sample_value.as<value::double3>()) {
+              angles = *vd;
+              got_value = true;
+            } else if (auto vh = sample_value.as<value::half3>()) {
+              angles[0] = double(value::half_to_float((*vh)[0]));
+              angles[1] = double(value::half_to_float((*vh)[1]));
+              angles[2] = double(value::half_to_float((*vh)[2]));
+              got_value = true;
+            }
+
+            if (got_value) {
+              angle_times.push_back(sample_t);
+              euler_angles.push_back(angles);
+              if (float(sample_t) > anim_out->duration) {
+                anim_out->duration = float(sample_t);
+              }
+            }
+          FOREACH_TIMESAMPLES_END()
+
+          // Convert Euler angles to quaternions using direct closed-form formula
+          // (handles all rotation orders correctly)
+          for (size_t i = 0; i < angle_times.size(); i++) {
+            times.push_back(angle_times[i]);
+            values.push_back(euler_to_quatf(euler_angles[i], xformOp.op_type));
+          }
+        }
+      }
+
+      // Build sampler data for rotations (quaternions)
+      if (!times.empty()) {
+        sampler.times.reserve(times.size());
+        sampler.values.reserve(times.size() * 4);
+
+        for (size_t i = 0; i < times.size(); i++) {
+          sampler.times.push_back(float(times[i]));
+          sampler.values.push_back(values[i].imag[0]);
+          sampler.values.push_back(values[i].imag[1]);
+          sampler.values.push_back(values[i].imag[2]);
+          sampler.values.push_back(values[i].real);
+        }
+      }
+    }
+
+    // Only add if we have valid sampler data
+    if (!sampler.times.empty()) {
+      int32_t sampler_idx = int32_t(anim_out->samplers.size());
+      anim_out->samplers.push_back(sampler);
+
+      AnimationChannel channel;
+      channel.target_type = ChannelTargetType::SceneNode;
+      channel.path = anim_path;
+      channel.target_node = target_node_index;
+      channel.sampler = sampler_idx;
+      anim_out->channels.push_back(channel);
+    }
+  }
+
+  // Return true if we extracted any animation data
+  return !anim_out->channels.empty();
+}
+
+//
+// Light conversion implementations
+//
+
+// Helper to extract common light properties
+template<typename LightType>
+static bool ExtractCommonLightProperties(
+    const RenderSceneConverterEnv &env,
+    const LightType &light,  // BoundableLight or NonboundableLight
+    RenderLight *rlight) {
+
+  // Extract color
+  if (light.color.authored() && !light.color.is_blocked()) {
+    value::color3f col;
+    if (light.color.get_value().get(env.timecode, &col)) {
+      rlight->color[0] = col[0];
+      rlight->color[1] = col[1];
+      rlight->color[2] = col[2];
+    }
+  }
+
+  // Extract intensity
+  if (light.intensity.authored() && !light.intensity.is_blocked()) {
+    float val;
+    if (light.intensity.get_value().get(env.timecode, &val)) {
+      rlight->intensity = val;
+    }
+  }
+
+  // Extract exposure
+  if (light.exposure.authored() && !light.exposure.is_blocked()) {
+    float val;
+    if (light.exposure.get_value().get(env.timecode, &val)) {
+      rlight->exposure = val;
+    }
+  }
+
+  // Extract diffuse multiplier
+  if (light.diffuse.authored() && !light.diffuse.is_blocked()) {
+    float val;
+    if (light.diffuse.get_value().get(env.timecode, &val)) {
+      rlight->diffuse = val;
+    }
+  }
+
+  // Extract specular multiplier
+  if (light.specular.authored() && !light.specular.is_blocked()) {
+    float val;
+    if (light.specular.get_value().get(env.timecode, &val)) {
+      rlight->specular = val;
+    }
+  }
+
+  // Extract normalize flag
+  if (light.normalize.authored() && !light.normalize.is_blocked()) {
+    bool val;
+    if (light.normalize.get_value().get(env.timecode, &val)) {
+      rlight->normalize = val;
+    }
+  }
+
+  // Extract color temperature
+  if (light.enableColorTemperature.authored() && !light.enableColorTemperature.is_blocked()) {
+    bool val;
+    if (light.enableColorTemperature.get_value().get(env.timecode, &val)) {
+      rlight->enableColorTemperature = val;
+    }
+  }
+
+  if (light.colorTemperature.authored() && !light.colorTemperature.is_blocked()) {
+    float val;
+    if (light.colorTemperature.get_value().get(env.timecode, &val)) {
+      rlight->colorTemperature = val;
+    }
+  }
+
+  // Extract shadow properties
+  if (light.shadowEnable.authored() && !light.shadowEnable.is_blocked()) {
+    bool val;
+    if (light.shadowEnable.get_value().get(env.timecode, &val)) {
+      rlight->shadowEnable = val;
+    }
+  }
+
+  if (light.shadowColor.authored() && !light.shadowColor.is_blocked()) {
+    value::color3f col;
+    if (light.shadowColor.get_value().get(env.timecode, &col)) {
+      rlight->shadowColor[0] = col[0];
+      rlight->shadowColor[1] = col[1];
+      rlight->shadowColor[2] = col[2];
+    }
+  }
+
+  if (light.shadowDistance.authored() && !light.shadowDistance.is_blocked()) {
+    float val;
+    if (light.shadowDistance.get_value().get(env.timecode, &val)) {
+      rlight->shadowDistance = val;
+    }
+  }
+
+  if (light.shadowFalloff.authored() && !light.shadowFalloff.is_blocked()) {
+    float val;
+    if (light.shadowFalloff.get_value().get(env.timecode, &val)) {
+      rlight->shadowFalloff = val;
+    }
+  }
+
+  if (light.shadowFalloffGamma.authored() && !light.shadowFalloffGamma.is_blocked()) {
+    float val;
+    if (light.shadowFalloffGamma.get_value().get(env.timecode, &val)) {
+      rlight->shadowFalloffGamma = val;
+    }
+  }
+
+  return true;
+}
+
+// Helper to extract shaping properties (for SphereLight and RectLight)
+template<typename LightType>
+static bool ExtractShapingProperties(
+    const RenderSceneConverterEnv &env,
+    const LightType &light,  // BoundableLight with shapingFocus, etc.
+    RenderLight *rlight) {
+
+  if (light.shapingFocus.authored() && !light.shapingFocus.is_blocked()) {
+    float val;
+    if (light.shapingFocus.get_value().get(env.timecode, &val)) {
+      rlight->shapingFocus = val;
+    }
+  }
+
+  if (light.shapingFocusTint.authored() && !light.shapingFocusTint.is_blocked()) {
+    value::color3f col;
+    if (light.shapingFocusTint.get_value().get(env.timecode, &col)) {
+      rlight->shapingFocusTint[0] = col[0];
+      rlight->shapingFocusTint[1] = col[1];
+      rlight->shapingFocusTint[2] = col[2];
+    }
+  }
+
+  if (light.shapingConeAngle.authored() && !light.shapingConeAngle.is_blocked()) {
+    float val;
+    if (light.shapingConeAngle.get_value().get(env.timecode, &val)) {
+      rlight->shapingConeAngle = val;
+    }
+  }
+
+  if (light.shapingConeSoftness.authored() && !light.shapingConeSoftness.is_blocked()) {
+    float val;
+    if (light.shapingConeSoftness.get_value().get(env.timecode, &val)) {
+      rlight->shapingConeSoftness = val;
+    }
+  }
+
+  return true;
+}
+
+bool RenderSceneConverter::ConvertSphereLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const SphereLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.type = RenderLight::Type::Sphere;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract shaping properties
+  if (!ExtractShapingProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract radius
+  if (light.radius.authored() && !light.radius.is_blocked()) {
+    float val;
+    if (light.radius.get_value().get(env.timecode, &val)) {
+      rlight.radius = val;
+    }
+  }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertDistantLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const DistantLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.type = RenderLight::Type::Distant;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract angle (angular diameter in degrees)
+  if (light.angle.authored() && !light.angle.is_blocked()) {
+    float val;
+    if (light.angle.get_value().get(env.timecode, &val)) {
+      rlight.angle = val;
+    }
+  }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertDomeLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const DomeLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.type = RenderLight::Type::Dome;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract texture file and load envmap image
+  if (light.file.authored() && !light.file.is_blocked()) {
+    value::AssetPath assetPath;
+    if (light.file.get_value()->get(env.timecode, &assetPath)) {
+      rlight.textureFile = assetPath.GetAssetPath();
+
+      // Load the envmap texture if scene config allows
+      if (env.scene_config.load_texture_assets && !assetPath.GetAssetPath().empty()) {
+        TextureImage texImage;
+        BufferData imageBuffer;
+        imageBuffer.componentType = ComponentType::UInt8;
+
+        std::string warn, err;
+
+        TextureImageLoaderFunction tex_loader_fun =
+            env.material_config.texture_image_loader_function;
+        if (!tex_loader_fun) {
+          tex_loader_fun = DefaultTextureImageLoaderFunction;
+        }
+
+        AssetInfo assetInfo;  // Empty asset info for now
+        bool tex_loaded = tex_loader_fun(
+            assetPath, assetInfo, env.asset_resolver, &texImage,
+            &imageBuffer.data,
+            env.material_config.texture_image_loader_function_userdata,
+            &warn, &err);
+
+        if (warn.size()) {
+          PushWarn(warn);
+        }
+
+        if (!tex_loaded) {
+          if (!env.material_config.allow_texture_load_failure) {
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "Failed to load envmap texture: `{}` err = {}",
+                assetPath.GetAssetPath(), err));
+          }
+
+          const std::string load_err =
+              err.empty() ? std::string("loader returned failure") : err;
+          PushWarn(fmt::format(
+              "Failed to decode envmap texture: `{}`. reason = {}. "
+              "Falling back to raw asset storage.",
+              assetPath.GetAssetPath(), load_err));
+        }
+
+        if (tex_loaded) {
+          texImage.asset_identifier = assetPath.GetAssetPath();
+          texImage.decoded = true;
+
+          // HDR images (like EXR) should be treated as linear/Raw colorspace
+          // Most envmaps are HDR and should not have sRGB gamma
+          texImage.usdColorSpace = ColorSpace::Raw;
+          texImage.colorSpace = ColorSpace::Lin_sRGB;
+
+          // Add buffer
+          texImage.buffer_id = int64_t(buffers.size());
+          buffers.emplace_back(imageBuffer);
+
+          // Add image and set envmap_texture_id
+          rlight.envmap_texture_id = int32_t(images.size());
+          images.emplace_back(texImage);
+
+          DCOUT("Loaded envmap texture: " << assetPath.GetAssetPath()
+                << " width=" << texImage.width
+                << " height=" << texImage.height
+                << " channels=" << texImage.channels);
+        } else {
+          // Fallback: store raw asset when decoding fails (e.g., EXR/HDR not supported)
+          // Try to store the raw asset for later decoding (e.g., in JS layer)
+          Asset asset;
+          std::string resolvedPath;
+          std::string readErr;
+          AssetInfo fallbackAssetInfo;
+
+          if (RawAssetRead(assetPath, fallbackAssetInfo, env.asset_resolver, &asset,
+                           resolvedPath, nullptr, nullptr, &readErr)) {
+            TextureImage fallbackTexImage;
+            BufferData fallbackImageBuffer;
+            fallbackImageBuffer.componentType = ComponentType::UInt8;
+
+            fallbackTexImage.asset_identifier = resolvedPath;
+
+            fallbackImageBuffer.data.resize(asset.size());
+            memcpy(fallbackImageBuffer.data.data(), asset.data(), asset.size());
+
+            fallbackTexImage.buffer_id = int64_t(buffers.size());
+            buffers.emplace_back(fallbackImageBuffer);
+
+            fallbackTexImage.decoded = false;
+            fallbackTexImage.usdColorSpace = ColorSpace::Raw;
+
+            rlight.envmap_texture_id = int32_t(images.size());
+            images.emplace_back(fallbackTexImage);
+
+            DCOUT("Stored envmap asset (fallback): " << resolvedPath);
+          } else {
+            PushWarn(fmt::format("Failed to read envmap asset: `{}`. reason = {}",
+                                 assetPath.GetAssetPath(), readErr));
+          }
+        }
+      } else if (!env.scene_config.load_texture_assets) {
+        // Store asset path only without decoding
+        Asset asset;
+        std::string resolvedPath;
+        std::string err;
+        AssetInfo assetInfo;
+
+        if (RawAssetRead(assetPath, assetInfo, env.asset_resolver, &asset,
+                         resolvedPath, nullptr, nullptr, &err)) {
+          TextureImage texImage;
+          BufferData imageBuffer;
+          imageBuffer.componentType = ComponentType::UInt8;
+
+          texImage.asset_identifier = resolvedPath;
+
+          imageBuffer.data.resize(asset.size());
+          memcpy(imageBuffer.data.data(), asset.data(), asset.size());
+
+          texImage.buffer_id = int64_t(buffers.size());
+          buffers.emplace_back(imageBuffer);
+
+          texImage.decoded = false;
+          texImage.usdColorSpace = ColorSpace::Raw;
+
+          rlight.envmap_texture_id = int32_t(images.size());
+          images.emplace_back(texImage);
+
+          DCOUT("Stored envmap asset: " << resolvedPath);
+        } else {
+          PushWarn(fmt::format("Failed to read envmap asset (load_texture_assets=false): `{}`. reason = {}",
+                               assetPath.GetAssetPath(), err));
+        }
+      }
+    }
+  }
+
+  // Extract texture format
+  // Note: textureFormat is typically not time-sampled, use fallback/default
+  if (light.textureFormat.authored() && !light.textureFormat.is_blocked()) {
+    const auto& fmt_animatable = light.textureFormat.get_value();
+    // Get default value directly from Animatable (not time-sampled)
+    if (fmt_animatable.is_scalar()) {
+      DomeLight::TextureFormat fmt;
+      if (fmt_animatable.get_scalar(&fmt)) {
+        switch (fmt) {
+          case DomeLight::TextureFormat::Automatic:
+            rlight.domeTextureFormat = RenderLight::DomeTextureFormat::Automatic;
+            break;
+          case DomeLight::TextureFormat::Latlong:
+            rlight.domeTextureFormat = RenderLight::DomeTextureFormat::Latlong;
+            break;
+          case DomeLight::TextureFormat::MirroredBall:
+            rlight.domeTextureFormat = RenderLight::DomeTextureFormat::MirroredBall;
+            break;
+          case DomeLight::TextureFormat::Angular:
+            rlight.domeTextureFormat = RenderLight::DomeTextureFormat::Angular;
+            break;
+        }
+      }
+    }
+  }
+
+  // Extract guide radius
+  if (light.guideRadius.authored() && !light.guideRadius.is_blocked()) {
+    float val;
+    if (light.guideRadius.get_value().get(env.timecode, &val)) {
+      rlight.guideRadius = val;
+    }
+  }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertRectLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const RectLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.type = RenderLight::Type::Rect;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract shaping properties
+  if (!ExtractShapingProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract width
+  if (light.width.authored() && !light.width.is_blocked()) {
+    float val;
+    if (light.width.get_value().get(env.timecode, &val)) {
+      rlight.width = val;
+    }
+  }
+
+  // Extract height
+  if (light.height.authored() && !light.height.is_blocked()) {
+    float val;
+    if (light.height.get_value().get(env.timecode, &val)) {
+      rlight.height = val;
+    }
+  }
+
+  // Extract texture file (optional)
+  if (light.file.authored() && !light.file.is_blocked()) {
+    value::AssetPath asset;
+    if (light.file.get_value()->get(env.timecode, &asset)) {
+      rlight.textureFile = asset.GetAssetPath();
+    }
+  }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertDiskLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const DiskLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.type = RenderLight::Type::Disk;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract radius
+  if (light.radius.authored() && !light.radius.is_blocked()) {
+    float val;
+    if (light.radius.get_value().get(env.timecode, &val)) {
+      rlight.radius = val;
+    }
+  }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertCylinderLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const CylinderLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.type = RenderLight::Type::Cylinder;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract length
+  if (light.length.authored() && !light.length.is_blocked()) {
+    float val;
+    if (light.length.get_value().get(env.timecode, &val)) {
+      rlight.length = val;
+    }
+  }
+
+  // Extract radius
+  if (light.radius.authored() && !light.radius.is_blocked()) {
+    float val;
+    if (light.radius.get_value().get(env.timecode, &val)) {
+      rlight.radius = val;
+    }
+  }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertGeometryLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const GeometryLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.type = RenderLight::Type::Geometry;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract geometry relationship to find the target mesh
+  // GeometryLight uses a relationship to point to the mesh geometry
+  if (!light.geometry.authored() || light.geometry.is_blocked()) {
+    PUSH_ERROR_AND_RETURN("GeometryLight " << rlight.abs_path
+                           << " missing geometry relationship");
+  }
+
+  const std::vector<Path> targets = light.geometry.get_targetPaths();
+  if (targets.size() != 1) {
+    PUSH_ERROR_AND_RETURN("GeometryLight " << rlight.abs_path
+                           << " must have exactly one geometry target");
+  }
+
+  const Path &target_path = targets[0];
+  const std::string geometry_path = target_path.full_path_name();
+
+  const Prim *geometry_prim{nullptr};
+  std::string err;
+  if (!env.stage.find_prim_at_path(Path(target_path.prim_part(), ""),
+                                   geometry_prim, &err)) {
+    PUSH_ERROR_AND_RETURN(fmt::format(
+        "GeometryLight {} references missing geometry target {}: {}",
+        rlight.abs_path, geometry_path, err));
+  }
+
+  if (!geometry_prim) {
+    PUSH_ERROR_AND_RETURN(fmt::format(
+        "GeometryLight {} references invalid geometry target {}",
+        rlight.abs_path, geometry_path));
+  }
+
+  // The actual mesh_id will be resolved during scene building.
+  rlight.geometry_mesh_id = -1;
+
+  DCOUT("GeometryLight " << rlight.abs_path
+        << " references geometry: " << geometry_path);
+
+  // Default material sync mode for GeometryLight
+  rlight.material_sync_mode = "materialGlowTintsLight";
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+// Helper: populate flat topology/transform arrays on SkelHierarchy from a Skeleton prim.
+static bool PopulateSkelFlatArrays(const Skeleton &skel, SkelHierarchy &dst, std::string *err) {
+  std::vector<value::token> joints;
+  if (!skel.joints.get_value(&joints) || joints.empty()) {
+    return true;  // No joints authored; leave flat arrays empty
+  }
+
+  // Build topology
+  if (!BuildSkelTopology(joints, dst.parent_joint_indices, err)) {
+    return false;
+  }
+
+  // Bind transforms
+  if (skel.bindTransforms.authored()) {
+    if (!skel.bindTransforms.get_value(&dst.bind_transforms)) {
+      dst.bind_transforms.assign(joints.size(), value::matrix4d::identity());
+    }
+  } else {
+    dst.bind_transforms.assign(joints.size(), value::matrix4d::identity());
+  }
+
+  // Rest transforms
+  if (skel.restTransforms.authored()) {
+    if (!skel.restTransforms.get_value(&dst.rest_transforms)) {
+      dst.rest_transforms.assign(joints.size(), value::matrix4d::identity());
+    }
+  } else {
+    dst.rest_transforms.assign(joints.size(), value::matrix4d::identity());
+  }
+
+  return true;
+}
+
+bool RenderSceneConverter::ConvertSkeletonFromPtr(const RenderSceneConverterEnv &env,
+                       const Path &skelPath,
+                       const Skeleton &skel,
+                       const std::string &primName,
+                       SkelHierarchy *out_skel) {
+  (void)env;
+
+  if (!out_skel) {
+    return false;
+  }
+
+  SkelHierarchy dst;
+  SkelNode root;
+  if (!BuildSkelHierarchy(skel, root, &_err)) {
+    return false;
+  }
+  dst.abs_path = skelPath.prim_part();
+  dst.prim_name = primName;
+  dst.display_name = skel.metas().has_displayName() ? skel.metas().get_displayName() : "";
+  dst.root_node = root;
+
+  PopulateSkelFlatArrays(skel, dst, &_err);
+
+  (*out_skel) = std::move(dst);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertSkeletonImplWithPath(const RenderSceneConverterEnv &env, const Path &skelPath,
+                       SkelHierarchy *out_skel) {
+
+  if (!out_skel) {
+    return false;
+  }
+
+  if (skelPath.is_valid()) {
+    const Prim *skelPrim{nullptr};
+    if (!env.stage.find_prim_at_path(skelPath, skelPrim, &_err)) {
+      return false;
+    }
+
+    SkelHierarchy dst;
+    if (const auto pskel = skelPrim->as<Skeleton>()) {
+      SkelNode root;
+      if (!BuildSkelHierarchy((*pskel), root, &_err)) {
+        return false;
+      }
+      dst.abs_path = skelPath.prim_part();
+      dst.prim_name = skelPrim->element_name();
+      dst.display_name = pskel->metas().has_displayName() ? pskel->metas().get_displayName() : "";
+      dst.root_node = root;
+
+      PopulateSkelFlatArrays(*pskel, dst, &_err);
+    } else {
+      PUSH_ERROR_AND_RETURN("Prim is not Skeleton.");
+    }
+
+    (*out_skel) = std::move(dst);
+    return true;
+  }
+
+  PUSH_ERROR_AND_RETURN("`skel:skeleton` path is invalid.");
+}
+
+bool RenderSceneConverter::ConvertAllSkelAnimations(const RenderSceneConverterEnv &env) {
+  // This method processes all SkelAnimation prims discovered during pre-processing.
+  // For each SkelAnimation, we find which Skeleton it belongs to via:
+  //   1. Skeleton's skel:animationSource relationship
+  //   2. SkelRoot's skel:animationSource relationship (inherited per USD spec)
+  //   3. Parent path hierarchy (SkelAnimation as child of Skeleton)
+
+  if (!_allAnimations || _allAnimations->empty()) {
+    return true; // No animations to process
+  }
+
+  DCOUT("ConvertAllSkelAnimations: processing " << _allAnimations->size() << " SkelAnimation prims");
+
+  // Build reverse map: animationPath -> list of skeleton_ids that reference it
+  std::unordered_map<std::string, std::vector<int32_t>, FNV1StringHash>
+      animPathToSkelIds;
+  animPathToSkelIds.reserve(_allAnimations->size());
+
+  // Helper: extract animation paths from a Relationship
+  auto extractAnimPaths = [](const Relationship &rel, std::vector<Path> &out) {
+    if (rel.is_path()) {
+      out.push_back(rel.targetPath);
+    } else if (rel.is_pathvector()) {
+      out.insert(out.end(), rel.targetPathVector.begin(), rel.targetPathVector.end());
+    }
+  };
+
+  // 1. Check Skeleton prims for skel:animationSource
+  for (const auto &skelEntry : _skelPathToIndex) {
+    const std::string &skelPathStr = skelEntry.first;
+    const int32_t skel_id = skelEntry.second;
+
+    Path skelPath(skelPathStr, "");
+    const Prim *skelPrim{nullptr};
+    if (!env.stage.find_prim_at_path(skelPath, skelPrim, &_err)) {
+      continue;
+    }
+
+    const auto *pskel = skelPrim->as<Skeleton>();
+    if (!pskel) continue;
+
+    std::vector<Path> animPaths;
+
+    if (pskel->animationSource.has_value()) {
+      extractAnimPaths(pskel->animationSource.value(), animPaths);
+    }
+
+    // 2. If Skeleton has no animationSource, check ancestor SkelRoot prims
+    //    (implements USD SkelBindingAPI inheritance)
+    if (animPaths.empty() && _allSkelRoots) {
+      // Walk up the path hierarchy to find a SkelRoot with animationSource
+      size_t iter = 0;
+      std::string parentPath = skelPathStr;
+      while (!parentPath.empty()) {
+        if (iter++ >= kMaxDefaultTraversalLimit) break;
+        size_t lastSlash = parentPath.rfind('/');
+        if (lastSlash == 0 || lastSlash == std::string::npos) {
+          parentPath = "/";  // root
+        } else {
+          parentPath = parentPath.substr(0, lastSlash);
+        }
+
+        auto rootIt = _allSkelRoots->find(parentPath);
+        if (rootIt != _allSkelRoots->end() && rootIt->second) {
+          const SkelRoot *pskelRoot = rootIt->second;
+          if (pskelRoot->animationSource.has_value()) {
+            extractAnimPaths(pskelRoot->animationSource.value(), animPaths);
+            DCOUT("Inherited animationSource from SkelRoot " << parentPath
+                  << " for Skeleton " << skelPathStr);
+            break;
+          }
+        }
+        if (parentPath == "/") break;
+      }
+    }
+
+    for (const Path &animPath : animPaths) {
+      std::string ap = animPath.prim_part();
+      animPathToSkelIds[ap].push_back(skel_id);
+    }
+  }
+
+  DCOUT("Built reverse map: " << animPathToSkelIds.size() << " animations referenced by skeletons");
+
+  // 3. For SkelAnimation prims not referenced by any animationSource,
+  //    associate them with a parent Skeleton by path hierarchy.
+  //    This enables multi-clip workflows where SkelAnimation prims are children
+  //    of a Skeleton but not all are the active animationSource.
+  for (const auto &animEntry : *_allAnimations) {
+    const std::string &animPathStr = animEntry.first;
+
+    // Skip if already referenced
+    if (animPathToSkelIds.find(animPathStr) != animPathToSkelIds.end()) {
+      continue;
+    }
+
+    // Walk up parent path to find a Skeleton
+    size_t iter = 0;
+    std::string parentPath = animPathStr;
+    while (!parentPath.empty()) {
+      if (iter++ >= kMaxDefaultTraversalLimit) break;
+      size_t lastSlash = parentPath.rfind('/');
+      if (lastSlash == 0 || lastSlash == std::string::npos) {
+        parentPath.clear();
+        break;
+      }
+      parentPath = parentPath.substr(0, lastSlash);
+
+      auto skelIt = _skelPathToIndex.find(parentPath);
+      if (skelIt != _skelPathToIndex.end()) {
+        animPathToSkelIds[animPathStr].push_back(skelIt->second);
+        DCOUT("Associated SkelAnimation " << animPathStr
+              << " with parent Skeleton " << parentPath
+              << " (skeleton_id=" << skelIt->second << ")");
+        break;
+      }
+    }
+
+    if (animPathToSkelIds.find(animPathStr) == animPathToSkelIds.end()) {
+      DCOUT("SkelAnimation " << animPathStr << " has no associated skeleton (skipping)");
+    }
+  }
+
+  // Now convert each SkelAnimation prim
+  for (const auto &animEntry : *_allAnimations) {
+    const std::string &animPathStr = animEntry.first;
+    const SkelAnimation *panimPtr = animEntry.second;
+
+    if (!panimPtr) {
+      PUSH_WARN("Null SkelAnimation pointer for path: " + animPathStr);
+      continue;
+    }
+
+    auto it = animPathToSkelIds.find(animPathStr);
+    if (it == animPathToSkelIds.end() || it->second.empty()) {
+      DCOUT("SkelAnimation " << animPathStr << " not associated with any skeleton (skipping)");
+      continue;
+    }
+
+    // Convert the animation for each skeleton that references it
+    for (int32_t skeleton_id : it->second) {
+      std::string cacheKey = animPathStr + ":" + std::to_string(skeleton_id);
+      if (_animPathToIndex.find(cacheKey) != _animPathToIndex.end()) {
+        DCOUT("Animation " << animPathStr << " already converted for skeleton " << skeleton_id);
+        continue;
+      }
+
+      Path animPath(animPathStr, "");
+      AnimationClip anim;
+
+      if (!ConvertSkelAnimation(env, animPath, *panimPtr, skeleton_id, &anim)) {
+        PushError(fmt::format(
+            "Failed to convert SkelAnimation: {} for skeleton {}\n",
+            animPathStr, skeleton_id));
+        return false;
+      }
+
+      DCOUT("Converted SkelAnimation " << animPathStr << " for skeleton " << skeleton_id);
+
+      // Add to animations vector
+      int32_t anim_id = int32_t(animations.size());
+      _animPathToIndex[cacheKey] = anim_id;
+      animations.emplace_back(std::move(anim));
+
+      // Update skeleton's animation IDs.
+      if (skeleton_id >= 0 && skeleton_id < int32_t(skeletons.size())) {
+        auto &skel = skeletons[static_cast<size_t>(skeleton_id)];
+        // animPath+skeleton_id is deduplicated via _animPathToIndex cache.
+        skel.anim_ids.push_back(anim_id);
+
+        // Keep legacy default animation field for backward compatibility.
+        if (skeletons[static_cast<size_t>(skeleton_id)].anim_id < 0) {
+          skeletons[static_cast<size_t>(skeleton_id)].anim_id = anim_id;
+          DCOUT("Set skeleton " << skeleton_id << " anim_id to " << anim_id);
+        }
+      }
+    }
+  }
+
+  DCOUT("ConvertAllSkelAnimations: converted " << animations.size() << " animation clips");
+  return true;
+}
+
+}  // namespace tydra
+}  // namespace tinyusdz

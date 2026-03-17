@@ -44,6 +44,9 @@ set(TINYUSDZ_SOURCES
         ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/facial.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/scene-access.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/render-data.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/render-data-mesh.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/render-data-material.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/render-data-anim.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/prim-apply.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/shader-network.cc
         )
