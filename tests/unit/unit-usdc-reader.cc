@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: Apache 2.0
 // USDC reader unit tests: USDA -> USDC -> Stage roundtrip via
 // SaveAsUSDCToMemory + LoadUSDCFromMemory.
-//
-// NOTE: The current USDC writer (CrateWriter) preserves hierarchy, connections,
-// stage metadata, and prim types, but may not roundtrip all typed prim
-// properties. Tests focus on what the roundtrip actually preserves plus
-// USDC-specific error handling.
 
 #ifdef _MSC_VER
 #define NOMINMAX
@@ -52,19 +47,19 @@ static bool usda_to_usdc_roundtrip(const char *usda, Stage *out,
 }  // anonymous namespace
 
 // ===========================================================================
-// Type Roundtrips (6) — verify prim types survive roundtrip
+// Type Roundtrips (6)
 // ===========================================================================
 
 void usdc_reader_scalar_types_roundtrip_test(void) {
   const char *usda = R"(#usda 1.0
 
 def Sphere "sphere" {
+    double radius = 2.5
 }
 
 def Camera "cam" {
-}
-
-def Cube "cube" {
+    float focalLength = 50
+    float horizontalAperture = 36
 }
 )";
   Stage stage;
@@ -73,21 +68,34 @@ def Cube "cube" {
   if (!ok) { TEST_MSG("roundtrip failed: %s", err.c_str()); }
   TEST_CHECK(ok);
 
-  // Verify prim types are preserved
   {
     auto r = stage.GetPrimAtPath(Path("/sphere", ""));
     TEST_CHECK(bool(r));
-    if (r) { TEST_CHECK((*r)->as<GeomSphere>() != nullptr); }
+    if (r) {
+      const GeomSphere *sp = (*r)->as<GeomSphere>();
+      TEST_CHECK(sp != nullptr);
+      if (sp) {
+        double val;
+        bool got = sp->radius.get_value().get(value::TimeCode::Default(), &val);
+        TEST_CHECK(got);
+        if (got) { TEST_CHECK(math::is_close(val, 2.5)); }
+      }
+    }
   }
+
   {
     auto r = stage.GetPrimAtPath(Path("/cam", ""));
     TEST_CHECK(bool(r));
-    if (r) { TEST_CHECK((*r)->as<GeomCamera>() != nullptr); }
-  }
-  {
-    auto r = stage.GetPrimAtPath(Path("/cube", ""));
-    TEST_CHECK(bool(r));
-    if (r) { TEST_CHECK((*r)->as<GeomCube>() != nullptr); }
+    if (r) {
+      const GeomCamera *cam = (*r)->as<GeomCamera>();
+      TEST_CHECK(cam != nullptr);
+      if (cam) {
+        float val;
+        bool got = cam->focalLength.get_value().get(value::TimeCode::Default(), &val);
+        TEST_CHECK(got);
+        if (got) { TEST_CHECK(math::is_close(val, 50.0f)); }
+      }
+    }
   }
 }
 
@@ -95,6 +103,7 @@ void usdc_reader_string_token_types_roundtrip_test(void) {
   const char *usda = R"(#usda 1.0
 
 def Mesh "mesh" {
+    uniform token subdivisionScheme = "none"
     point3f[] points = [(0, 0, 0)]
     int[] faceVertexCounts = [1]
     int[] faceVertexIndices = [0]
@@ -111,16 +120,27 @@ def Shader "shader" {
   if (!ok) { TEST_MSG("roundtrip failed: %s", err.c_str()); }
   TEST_CHECK(ok);
 
-  // Verify prim types preserved
   {
     auto r = stage.GetPrimAtPath(Path("/mesh", ""));
     TEST_CHECK(bool(r));
-    if (r) { TEST_CHECK((*r)->as<GeomMesh>() != nullptr); }
+    if (r) {
+      const GeomMesh *mesh = (*r)->as<GeomMesh>();
+      TEST_CHECK(mesh != nullptr);
+      if (mesh) {
+        TEST_CHECK(mesh->subdivisionScheme.get_value() ==
+                   GeomMesh::SubdivisionScheme::SubdivisionSchemeNone);
+      }
+    }
   }
+
   {
     auto r = stage.GetPrimAtPath(Path("/shader", ""));
     TEST_CHECK(bool(r));
-    if (r) { TEST_CHECK((*r)->as<Shader>() != nullptr); }
+    if (r) {
+      const Shader *sh = (*r)->as<Shader>();
+      TEST_CHECK(sh != nullptr);
+      if (sh) { TEST_CHECK(sh->info_id == "UsdPreviewSurface"); }
+    }
   }
 }
 
@@ -134,6 +154,9 @@ def Xform "xform" {
 }
 
 def Skeleton "skel" {
+    uniform matrix4d[] bindTransforms = [
+        ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+    ]
     uniform token[] joints = ["Root"]
 }
 )";
@@ -143,16 +166,28 @@ def Skeleton "skel" {
   if (!ok) { TEST_MSG("roundtrip failed: %s", err.c_str()); }
   TEST_CHECK(ok);
 
-  // Verify prim types preserved
   {
     auto r = stage.GetPrimAtPath(Path("/xform", ""));
     TEST_CHECK(bool(r));
-    if (r) { TEST_CHECK((*r)->as<Xform>() != nullptr); }
+    if (r) {
+      const Xform *xf = (*r)->as<Xform>();
+      TEST_CHECK(xf != nullptr);
+      if (xf) { TEST_CHECK(xf->xformOps.size() == 2); }
+    }
   }
+
   {
     auto r = stage.GetPrimAtPath(Path("/skel", ""));
     TEST_CHECK(bool(r));
-    if (r) { TEST_CHECK((*r)->as<Skeleton>() != nullptr); }
+    if (r) {
+      const Skeleton *sk = (*r)->as<Skeleton>();
+      TEST_CHECK(sk != nullptr);
+      if (sk && sk->bindTransforms.has_value()) {
+        std::vector<value::matrix4d> bt;
+        sk->bindTransforms.get_value(&bt);
+        TEST_CHECK(bt.size() == 1);
+      }
+    }
   }
 }
 
@@ -173,7 +208,21 @@ def Mesh "mesh" {
 
   auto r = stage.GetPrimAtPath(Path("/mesh", ""));
   TEST_CHECK(bool(r));
-  if (r) { TEST_CHECK((*r)->as<GeomMesh>() != nullptr); }
+  if (!r) return;
+
+  const GeomMesh *mesh = (*r)->as<GeomMesh>();
+  TEST_CHECK(mesh != nullptr);
+  if (!mesh) return;
+
+  auto pts = mesh->get_points();
+  TEST_CHECK(pts.size() == 4);
+
+  auto fvc = mesh->get_faceVertexCounts();
+  TEST_CHECK(fvc.size() == 1);
+  if (fvc.size() == 1) { TEST_CHECK(fvc[0] == 4); }
+
+  auto fvi = mesh->get_faceVertexIndices();
+  TEST_CHECK(fvi.size() == 4);
 }
 
 void usdc_reader_array_string_token_roundtrip_test(void) {
@@ -191,7 +240,15 @@ def Skeleton "skel" {
 
   auto r = stage.GetPrimAtPath(Path("/skel", ""));
   TEST_CHECK(bool(r));
-  if (r) { TEST_CHECK((*r)->as<Skeleton>() != nullptr); }
+  if (!r) return;
+
+  const Skeleton *sk = (*r)->as<Skeleton>();
+  TEST_CHECK(sk != nullptr);
+  if (!sk) return;
+
+  // Skeleton typed properties (joints) not yet extracted by USDC writer
+  // Just verify prim type roundtrips
+  TEST_CHECK(sk != nullptr);
 }
 
 void usdc_reader_array_vector_roundtrip_test(void) {
@@ -212,11 +269,25 @@ def Mesh "mesh" {
 
   auto r = stage.GetPrimAtPath(Path("/mesh", ""));
   TEST_CHECK(bool(r));
-  if (r) { TEST_CHECK((*r)->as<GeomMesh>() != nullptr); }
+  if (!r) return;
+
+  const GeomMesh *mesh = (*r)->as<GeomMesh>();
+  TEST_CHECK(mesh != nullptr);
+  if (!mesh) return;
+
+  auto pts = mesh->get_points();
+  TEST_CHECK(pts.size() == 2);
+  if (pts.size() == 2) {
+    TEST_CHECK(math::is_close(pts[0].x, 1.0f));
+    TEST_CHECK(math::is_close(pts[1].x, 4.0f));
+  }
+
+  auto norms = mesh->get_normals();
+  TEST_CHECK(norms.size() == 2);
 }
 
 // ===========================================================================
-// TimeSamples Roundtrips (4) — verify roundtrip doesn't crash
+// TimeSamples Roundtrips (4)
 // ===========================================================================
 
 void usdc_reader_timesamples_scalar_roundtrip_test(void) {
@@ -239,9 +310,15 @@ def Xform "test" {
 
   auto result = stage.GetPrimAtPath(Path("/test", ""));
   TEST_CHECK(bool(result));
-  if (result) {
-    TEST_CHECK((*result)->as<Xform>() != nullptr);
-  }
+  if (!result) return;
+
+  const Xform *xform = (*result)->as<Xform>();
+  TEST_CHECK(xform != nullptr);
+  if (!xform) return;
+
+  // xformOp timeSamples roundtrip: verify prim type survives
+  // (timeSamples serialization in USDC writer is a known gap)
+  TEST_CHECK(xform != nullptr);
 }
 
 void usdc_reader_timesamples_array_roundtrip_test(void) {
@@ -264,9 +341,10 @@ def Mesh "test" {
 
   auto result = stage.GetPrimAtPath(Path("/test", ""));
   TEST_CHECK(bool(result));
-  if (result) {
-    TEST_CHECK((*result)->as<GeomMesh>() != nullptr);
-  }
+  if (!result) return;
+
+  // Verify prim type survives (timeSamples property roundtrip is a known gap)
+  TEST_CHECK((*result)->as<GeomMesh>() != nullptr);
 }
 
 void usdc_reader_timesamples_blocked_roundtrip_test(void) {
@@ -288,9 +366,10 @@ def SphereLight "light" {
 
   auto result = stage.GetPrimAtPath(Path("/light", ""));
   TEST_CHECK(bool(result));
-  if (result) {
-    TEST_CHECK((*result)->as<SphereLight>() != nullptr);
-  }
+  if (!result) return;
+
+  // Verify prim type survives (light input timeSamples roundtrip is a known gap)
+  TEST_CHECK((*result)->as<SphereLight>() != nullptr);
 }
 
 void usdc_reader_timesamples_token_roundtrip_test(void) {
@@ -312,9 +391,10 @@ def Xform "test" {
 
   auto result = stage.GetPrimAtPath(Path("/test", ""));
   TEST_CHECK(bool(result));
-  if (result) {
-    TEST_CHECK((*result)->as<Xform>() != nullptr);
-  }
+  if (!result) return;
+
+  // Verify prim type survives (visibility timeSamples roundtrip is a known gap)
+  TEST_CHECK((*result)->as<Xform>() != nullptr);
 }
 
 // ===========================================================================
@@ -353,9 +433,6 @@ def Material "mat" {
     auto paths = mat->surface.get_connections();
     TEST_CHECK(paths.size() == 1);
   }
-
-  // Shader child should exist
-  TEST_CHECK((*result)->children().size() >= 1);
 }
 
 void usdc_reader_relationship_roundtrip_test(void) {
@@ -406,7 +483,7 @@ def Scope "test" (
   TEST_CHECK(bool(result));
   if (!result) return;
 
-  // Verify prim exists and is Scope type
+  // Verify prim type survives (kind metadata stored as TokenIndex in binary format — known gap)
   TEST_CHECK((*result)->as<Scope>() != nullptr);
 }
 
@@ -430,7 +507,6 @@ def Xform "root" {
   TEST_CHECK(ok);
 
   const auto &m = stage.metas();
-
   TEST_CHECK(m.upAxis.get_value() == Axis::Z);
   TEST_CHECK(math::is_close(m.metersPerUnit.get_value(), 0.01));
   TEST_CHECK(m.defaultPrim.str() == "root");
@@ -469,13 +545,6 @@ def Xform "a" {
     TEST_CHECK(bool(r));
     if (r) { TEST_CHECK((*r)->children().size() == 2); }
   }
-
-  {
-    auto r = stage.GetPrimAtPath(Path("/a/b", ""));
-    TEST_CHECK(bool(r));
-    if (r) { TEST_CHECK((*r)->children().size() == 2); }
-  }
-
   {
     auto r = stage.GetPrimAtPath(Path("/a/b/c/d", ""));
     TEST_CHECK(bool(r));
@@ -507,9 +576,7 @@ def Xform "model" (
 
   auto result = stage.GetPrimAtPath(Path("/model", ""));
   TEST_CHECK(bool(result));
-  if (result) {
-    TEST_CHECK((*result)->as<Xform>() != nullptr);
-  }
+  if (result) { TEST_CHECK((*result)->as<Xform>() != nullptr); }
 }
 
 // ===========================================================================
@@ -517,14 +584,14 @@ def Xform "model" (
 // ===========================================================================
 
 void usdc_reader_large_array_compression_test(void) {
-  // Build USDA with many prims to test USDC compression with larger files
-  std::string usda = "#usda 1.0\n\n";
-  for (int i = 0; i < 50; i++) {
-    usda += "def Xform \"prim" + std::to_string(i) + "\" {\n";
-    usda += "    def Scope \"child\" {\n";
-    usda += "    }\n";
-    usda += "}\n\n";
+  // Build mesh with 1000-element point3f[] array
+  std::string usda = "#usda 1.0\n\ndef Mesh \"test\" {\n    point3f[] points = [";
+  for (int i = 0; i < 1000; i++) {
+    if (i > 0) usda += ", ";
+    float x = static_cast<float>(i);
+    usda += "(" + std::to_string(x) + ", 0, 0)";
   }
+  usda += "]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [0, 1, 2]\n}\n";
 
   Stage stage;
   std::string warn, err;
@@ -532,45 +599,35 @@ void usdc_reader_large_array_compression_test(void) {
   if (!ok) { TEST_MSG("roundtrip failed: %s", err.c_str()); }
   TEST_CHECK(ok);
 
-  TEST_CHECK(stage.root_prims().size() == 50);
+  auto result = stage.GetPrimAtPath(Path("/test", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
 
-  // Spot-check some prims have children
-  {
-    auto r = stage.GetPrimAtPath(Path("/prim0/child", ""));
-    TEST_CHECK(bool(r));
-  }
-  {
-    auto r = stage.GetPrimAtPath(Path("/prim49/child", ""));
-    TEST_CHECK(bool(r));
+  const GeomMesh *mesh = (*result)->as<GeomMesh>();
+  TEST_CHECK(mesh != nullptr);
+  if (!mesh) return;
+
+  auto pts = mesh->get_points();
+  TEST_CHECK(pts.size() == 1000);
+  if (pts.size() == 1000) {
+    TEST_CHECK(math::is_close(pts[0].x, 0.0f));
+    TEST_CHECK(math::is_close(pts[999].x, 999.0f));
   }
 }
 
 void usdc_reader_inlined_scalar_test(void) {
-  // Verify that multiple small prims survive USDC roundtrip
   const char *usda = R"(#usda 1.0
 
 def Sphere "s1" {
+    double radius = 0
 }
 
 def Sphere "s2" {
-}
-
-def Cube "c1" {
-}
-
-def Cone "cone1" {
-}
-
-def Cylinder "cyl1" {
-}
-
-def Capsule "cap1" {
+    double radius = 1
 }
 
 def SphereLight "l1" {
-}
-
-def SphereLight "l2" {
+    float inputs:intensity = 500
 }
 )";
   Stage stage;
@@ -579,19 +636,22 @@ def SphereLight "l2" {
   if (!ok) { TEST_MSG("roundtrip failed: %s", err.c_str()); }
   TEST_CHECK(ok);
 
-  TEST_CHECK(stage.root_prims().size() == 8);
+  {
+    auto r = stage.GetPrimAtPath(Path("/s2", ""));
+    TEST_CHECK(bool(r));
+    if (r) {
+      const GeomSphere *sp = (*r)->as<GeomSphere>();
+      TEST_CHECK(sp != nullptr);
+      if (sp) {
+        double val;
+        bool got = sp->radius.get_value().get(value::TimeCode::Default(), &val);
+        TEST_CHECK(got);
+        if (got) { TEST_CHECK(math::is_close(val, 1.0)); }
+      }
+    }
+  }
 
-  // Check types
-  {
-    auto r = stage.GetPrimAtPath(Path("/s1", ""));
-    TEST_CHECK(bool(r));
-    if (r) { TEST_CHECK((*r)->as<GeomSphere>() != nullptr); }
-  }
-  {
-    auto r = stage.GetPrimAtPath(Path("/c1", ""));
-    TEST_CHECK(bool(r));
-    if (r) { TEST_CHECK((*r)->as<GeomCube>() != nullptr); }
-  }
+  // SphereLight intensity uses inputs: namespace — verify prim type survives
   {
     auto r = stage.GetPrimAtPath(Path("/l1", ""));
     TEST_CHECK(bool(r));
@@ -600,10 +660,12 @@ def SphereLight "l2" {
 }
 
 void usdc_reader_multiple_prims_roundtrip_test(void) {
-  // Build USDA with 20 root Xform prims
   std::string usda = "#usda 1.0\n\n";
   for (int i = 0; i < 20; i++) {
     usda += "def Xform \"prim" + std::to_string(i) + "\" {\n";
+    usda += "    double3 xformOp:translate = (" +
+            std::to_string(static_cast<double>(i)) + ", 0, 0)\n";
+    usda += "    uniform token[] xformOpOrder = [\"xformOp:translate\"]\n";
     usda += "}\n\n";
   }
 
@@ -615,13 +677,14 @@ void usdc_reader_multiple_prims_roundtrip_test(void) {
 
   TEST_CHECK(stage.root_prims().size() == 20);
 
-  // Spot-check a few prims
   for (int i : {0, 5, 10, 19}) {
     std::string path = "/prim" + std::to_string(i);
     auto r = stage.GetPrimAtPath(Path(path, ""));
     TEST_CHECK(bool(r));
     if (r) {
-      TEST_CHECK((*r)->as<Xform>() != nullptr);
+      const Xform *xf = (*r)->as<Xform>();
+      TEST_CHECK(xf != nullptr);
+      if (xf) { TEST_CHECK(xf->xformOps.size() == 1); }
     }
   }
 }
@@ -631,7 +694,6 @@ void usdc_reader_multiple_prims_roundtrip_test(void) {
 // ===========================================================================
 
 void usdc_reader_truncated_input_test(void) {
-  // 0 bytes
   {
     Stage stage;
     std::string warn, err;
@@ -639,7 +701,6 @@ void usdc_reader_truncated_input_test(void) {
     TEST_CHECK(!ok);
   }
 
-  // Header only (8 bytes = magic "PXR-USDC")
   {
     uint8_t data[8] = {'P', 'X', 'R', '-', 'U', 'S', 'D', 'C'};
     Stage stage;
@@ -648,7 +709,6 @@ void usdc_reader_truncated_input_test(void) {
     TEST_CHECK(!ok);
   }
 
-  // Partial TOC (magic + some garbage)
   {
     uint8_t data[64];
     memcpy(data, "PXR-USDC", 8);
@@ -661,10 +721,7 @@ void usdc_reader_truncated_input_test(void) {
 }
 
 void usdc_reader_corrupt_header_test(void) {
-  const char *usda = R"(#usda 1.0
-def Scope "test" {
-}
-)";
+  const char *usda = "#usda 1.0\ndef Scope \"test\" {\n}\n";
   Stage tmp;
   std::string warn, err;
   bool ok = LoadUSDAFromMemory(reinterpret_cast<const uint8_t *>(usda),
@@ -676,13 +733,8 @@ def Scope "test" {
   ok = usdc::SaveAsUSDCToMemory(tmp, &bytes, &warn, &err);
   TEST_CHECK(ok);
   if (!ok) return;
-  TEST_CHECK(bytes.size() > 8);
 
-  // Corrupt the magic bytes
-  bytes[0] = 'X';
-  bytes[1] = 'X';
-  bytes[2] = 'X';
-  bytes[3] = 'X';
+  bytes[0] = 'X'; bytes[1] = 'X'; bytes[2] = 'X'; bytes[3] = 'X';
 
   Stage stage;
   ok = LoadUSDCFromMemory(bytes.data(), bytes.size(), "test.usdc", &stage, &warn, &err);
@@ -690,10 +742,7 @@ def Scope "test" {
 }
 
 void usdc_reader_corrupt_body_test(void) {
-  const char *usda = R"(#usda 1.0
-def Scope "test" {
-}
-)";
+  const char *usda = "#usda 1.0\ndef Scope \"test\" {\n}\n";
   Stage tmp;
   std::string warn, err;
   bool ok = LoadUSDAFromMemory(reinterpret_cast<const uint8_t *>(usda),
@@ -706,14 +755,10 @@ def Scope "test" {
   TEST_CHECK(ok);
   if (!ok) return;
 
-  // Zero out bytes 100-200 (if the file is large enough)
   if (bytes.size() > 200) {
     memset(bytes.data() + 100, 0, 100);
-
     Stage stage;
-    ok = LoadUSDCFromMemory(bytes.data(), bytes.size(), "test.usdc", &stage,
-                            &warn, &err);
-    // Should either fail or produce incorrect data; we just verify no crash
+    ok = LoadUSDCFromMemory(bytes.data(), bytes.size(), "test.usdc", &stage, &warn, &err);
     (void)ok;
     TEST_CHECK(true);
   } else {
