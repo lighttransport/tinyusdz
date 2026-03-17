@@ -87,9 +87,12 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   // - NumValueReps(int64)
   // - ArrayOfValueRep
   //
-
-  // TODO(syoyo): Deferred loading of TimeSamples?(See USD's implementation for
-  // details)
+  // Note on deferred loading: Value loading is already deferred — this function
+  // only reads the times array and ValueRep metadata.  Actual sample values are
+  // unpacked later during prim reconstruction (ParseProperty → timeSamples
+  // field handling).  Full OpenUSD-style lazy loading (deferring even the times
+  // read) would require a callback-based TimeSamples container, which is not
+  // yet implemented.
 
   DCOUT("ReadTimeSamples: offt before tell = " << _sr->tell());
 
@@ -116,8 +119,6 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
                   std::to_string(offset));
   }
 
-  // TODO(syoyo): Deduplicate times?
-
   crate::ValueRep times_rep{0};
   if (!ReadValueRep(&times_rep)) {
     PUSH_ERROR_AND_RETURN_TAG(
@@ -127,12 +128,39 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   // Save offset
   auto values_offset = _sr->tell();
 
-  // TODO: Enable Check if  type `double[]`
+  // Validate that times ValueRep is double[] or DoubleVector
+  {
+    auto dtype = static_cast<crate::CrateDataTypeId>(times_rep.GetType());
+    if (dtype != crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE &&
+        dtype != crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE_VECTOR) {
+      PUSH_ERROR_AND_RETURN_TAG(
+          kTag, fmt::format("TimeSamples `times` must be double[] or "
+                            "DoubleVector, but got type {}",
+                            GetCrateDataTypeName(times_rep.GetType())));
+    }
+    if (dtype == crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE &&
+        !times_rep.IsArray() && times_rep.GetPayload() != 0) {
+      PUSH_ERROR_AND_RETURN_TAG(
+          kTag, "TimeSamples `times` must be an array, not a scalar double.");
+    }
+  }
 
+  // Deduplicate times arrays: if another TimeSamples already read the same
+  // file offset, share the parsed result instead of re-reading.
   std::vector<double> times;
-  if (!UnpackTimeSampleTimes(times_rep, times)) {
-    PUSH_ERROR_AND_RETURN_TAG(
-        kTag, "Failed to unpack value of TimeSample's `times` element.");
+  uint64_t times_payload = times_rep.GetPayload();
+  auto cache_it = _shared_times_cache.find(times_payload);
+  if (cache_it != _shared_times_cache.end()) {
+    times = *(cache_it->second);
+    DCOUT("TimeSamples times: reused cached array for payload offset "
+          << times_payload << " (" << times.size() << " samples)");
+  } else {
+    if (!UnpackTimeSampleTimes(times_rep, times)) {
+      PUSH_ERROR_AND_RETURN_TAG(
+          kTag, "Failed to unpack value of TimeSample's `times` element.");
+    }
+    _shared_times_cache[times_payload] =
+        std::make_shared<std::vector<double>>(times);
   }
   DCOUT("MARK: timeSamples.times = " << times);
 
