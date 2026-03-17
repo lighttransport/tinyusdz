@@ -27,6 +27,8 @@
 #include "unit-tiny-container.h"
 #include "unit-usda-roundtrip.h"
 #include "unit-half-roundtrip.h"
+#include "unit-prim-reconstruct.h"
+#include "unit-composition.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -196,6 +198,19 @@ TEST_LIST = {
   { "half_roundtrip_exhaustive_test", half_roundtrip_exhaustive_test },
   { "half_roundtrip_edge_cases_test", half_roundtrip_edge_cases_test },
   { "half_shortest_representation_test", half_shortest_representation_test },
+  { "prim_reconstruct_xform_test", prim_reconstruct_xform_test },
+  { "prim_reconstruct_mesh_test", prim_reconstruct_mesh_test },
+  { "prim_reconstruct_material_shader_test", prim_reconstruct_material_shader_test },
+  { "prim_reconstruct_sphere_light_test", prim_reconstruct_sphere_light_test },
+  { "prim_reconstruct_skeleton_test", prim_reconstruct_skeleton_test },
+  { "prim_reconstruct_camera_test", prim_reconstruct_camera_test },
+  { "prim_reconstruct_nested_hierarchy_test", prim_reconstruct_nested_hierarchy_test },
+  { "composition_inherits_test", composition_inherits_test },
+  { "composition_specializes_test", composition_specializes_test },
+  { "composition_variant_test", composition_variant_test },
+  { "composition_has_inherits_test", composition_has_inherits_test },
+  { "composition_has_specializes_test", composition_has_specializes_test },
+  { "composition_has_variants_test", composition_has_variants_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
