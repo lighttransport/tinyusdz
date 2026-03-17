@@ -10,9 +10,6 @@
 /// including both type-erased (TimeSamples) and strongly-typed (TypedTimeSamples)
 /// variants with support for interpolation and value blocking.
 ///
-/// TypedTimeSamples supports both AoS (Array of Structs) and SoA (Structure of Arrays)
-/// layouts for optimal memory access patterns. The layout is controlled by the
-/// TINYUSDZ_USE_TIMESAMPLES_SOA macro.
 ///
 #pragma once
 
@@ -27,10 +24,6 @@
 #include "typed-array.hh"
 #include "value-types.hh"
 #include "buffer-util.hh"
-
-// Enable SoA (Structure of Arrays) layout for TypedTimeSamples
-// Default is AoS (Array of Structs) layout
-// #define TINYUSDZ_USE_TIMESAMPLES_SOA
 
 namespace tinyusdz {
 
@@ -1056,19 +1049,11 @@ struct TimeSamples {
 } // namespace value
 
 ///
-/// Strongly-typed time samples container with SoA/AoS layout support
-///
-/// Supports two memory layouts:
-/// - AoS (Array of Structs): Default layout with Sample structs containing time, value, and blocked flag
-/// - SoA (Structure of Arrays): Separate arrays for times, values, and blocked flags for better cache locality
-///
-/// The layout is controlled by TINYUSDZ_USE_TIMESAMPLES_SOA macro.
+/// Strongly-typed time samples container
 ///
 template <typename T>
 struct TypedTimeSamples {
  public:
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
-  // AoS layout - Array of Structs (default)
   struct Sample {
     double t;
     T value;
@@ -1111,45 +1096,6 @@ struct TypedTimeSamples {
 
     _dirty = false;
   }
-#else
-  // SoA layout - Structure of Arrays
-  bool empty() const { return _times.empty(); }
-
-  void update() const {
-    if (_times.empty()) {
-      _dirty = false;
-      return;
-    }
-
-    // Create index array for sorting
-    std::vector<size_t> indices(_times.size());
-    for (size_t i = 0; i < indices.size(); ++i) {
-      indices[i] = i;
-    }
-
-    // Sort indices based on times
-    std::sort(indices.begin(), indices.end(),
-              [this](size_t a, size_t b) { return _times[a] < _times[b]; });
-
-    // Reorder arrays based on sorted indices
-    std::vector<double> sorted_times(_times.size());
-    std::vector<T> sorted_values(_values.size());
-    std::vector<uint8_t> sorted_blocked(_blocked.size());
-
-    for (size_t i = 0; i < indices.size(); ++i) {
-      sorted_times[i] = _times[indices[i]];
-      sorted_values[i] = _values[indices[i]];
-      sorted_blocked[i] = _blocked[indices[i]];
-    }
-
-    _times = std::move(sorted_times);
-    _values = std::move(sorted_values);
-    _blocked = std::move(sorted_blocked);
-
-    _dirty = false;
-    return;
-  }
-#endif
 
   // Get value at specified time.
   // For non-interpolatable types(includes enums and unknown types)
@@ -1169,71 +1115,32 @@ struct TypedTimeSamples {
            value::TimeSampleInterpolationType interp =
                value::TimeSampleInterpolationType::Linear) const;
 
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
-  // AoS layout - Sample struct available
   void add_sample(const Sample &s) {
     _samples.push_back(s);
     _dirty = true;
   }
-#endif
 
   void add_sample(const double t, const T &v) {
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
     Sample s;
     s.t = t;
     s.value = v;
     _samples.emplace_back(s);
-#else
-    _times.push_back(t);
-    _values.push_back(v);
-    _blocked.push_back(0);  // false = 0
-#endif
     _dirty = true;
   }
 
   void add_blocked_sample(const double t) {
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
     Sample s;
     s.t = t;
     s.blocked = true;
     _samples.emplace_back(s);
-#else
-    _times.push_back(t);
-    _values.emplace_back(); // Default construct value
-    _blocked.push_back(1);  // true = 1
-#endif
     _dirty = true;
   }
-
-#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
-  // Set value at a specific time (SoA only)
-  bool set_value_at(const double t, const T &v) {
-    if (_dirty) {
-      update();
-    }
-
-    const double eps = std::numeric_limits<double>::epsilon();
-    auto it = std::lower_bound(_times.begin(), _times.end(), t - eps);
-    if ((it == _times.end()) || (std::fabs(*it - t) >= eps)) {
-      if ((it == _times.begin()) || (std::fabs(*(it - 1) - t) >= eps)) {
-        return false;
-      }
-      it = it - 1;
-    }
-
-    size_t idx = static_cast<size_t>(std::distance(_times.begin(), it));
-    _values[idx] = v;
-    _blocked[idx] = 0;  // false = 0
-    return true;
-  }
-#endif
 
   bool has_sample_at(const double t) const {
     if (_dirty) {
       update();
     }
 
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
     const double eps = std::numeric_limits<double>::epsilon();
     auto it = std::lower_bound(
         _samples.begin(), _samples.end(), t - eps,
@@ -1246,21 +1153,8 @@ struct TypedTimeSamples {
       return std::fabs((it - 1)->t - t) < eps;
     }
     return false;
-#else
-    const double eps = std::numeric_limits<double>::epsilon();
-    auto it = std::lower_bound(_times.begin(), _times.end(), t - eps);
-
-    if ((it != _times.end()) && (std::fabs(*it - t) < eps)) {
-      return true;
-    }
-    if (it != _times.begin()) {
-      return std::fabs(*(it - 1) - t) < eps;
-    }
-    return false;
-#endif
   }
 
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
   bool get_sample_at(const double t, Sample **dst) {
     if (!dst) {
       return false;
@@ -1284,36 +1178,7 @@ struct TypedTimeSamples {
     (*dst) = &(*it);
     return true;
   }
-#else
-  // SoA layout - return individual components instead of Sample struct
-  bool get_value_at(const double t, T *value, bool *blocked = nullptr) const {
-    if (!value) {
-      return false;
-    }
 
-    if (_dirty) {
-      update();
-    }
-
-    const double eps = std::numeric_limits<double>::epsilon();
-    auto it = std::lower_bound(_times.begin(), _times.end(), t - eps);
-    if ((it == _times.end()) || (std::fabs(*it - t) >= eps)) {
-      if ((it == _times.begin()) || (std::fabs(*(it - 1) - t) >= eps)) {
-        return false;
-      }
-      it = it - 1;
-    }
-
-    size_t idx = static_cast<size_t>(std::distance(_times.begin(), it));
-    *value = _values[idx];
-    if (blocked) {
-      *blocked = _blocked[idx];
-    }
-    return true;
-  }
-#endif
-
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
   const std::vector<Sample> &get_samples() const {
     if (_dirty) {
       update();
@@ -1329,33 +1194,9 @@ struct TypedTimeSamples {
 
     return _samples;
   }
-#else
-  // SoA layout - provide access to individual arrays
-  const std::vector<double> &get_times() const {
-    if (_dirty) {
-      update();
-    }
-    return _times;
-  }
-
-  const std::vector<T> &get_values() const {
-    if (_dirty) {
-      update();
-    }
-    return _values;
-  }
-
-  const std::vector<uint8_t> &get_blocked() const {
-    if (_dirty) {
-      update();
-    }
-    return _blocked;
-  }
-#endif
 
   // From typeless timesamples.
   bool from_timesamples(const value::TimeSamples &ts) {
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
     std::vector<Sample> buf;
     for (size_t i = 0; i < ts.size(); i++) {
       if (ts.get_samples()[i].value.type_id() != value::TypeTraits<T>::type_id()) {
@@ -1374,24 +1215,6 @@ struct TypedTimeSamples {
     }
 
     _samples = std::move(buf);
-#else
-    _times.clear();
-    _values.clear();
-    _blocked.clear();
-
-    for (size_t i = 0; i < ts.size(); i++) {
-      if (ts.get_samples()[i].value.type_id() != value::TypeTraits<T>::type_id()) {
-        return false;
-      }
-      _times.push_back(ts.get_samples()[i].t);
-      _blocked.push_back(ts.get_samples()[i].blocked);
-      if (const auto pv = ts.get_samples()[i].value.as<T>()) {
-        _values.push_back(*pv);
-      } else {
-        return false;
-      }
-    }
-#endif
     _dirty = true;
 
     return true;
@@ -1401,23 +1224,12 @@ struct TypedTimeSamples {
     if (_dirty) {
       update();
     }
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
     return _samples.size();
-#else
-    return _times.size();
-#endif
   }
 
  private:
   // Need to be sorted when looking up the value.
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
   mutable std::vector<Sample> _samples;
-#else
-  // SoA layout - separate arrays for better cache locality
-  mutable std::vector<double> _times;
-  mutable std::vector<T> _values;
-  mutable std::vector<uint8_t> _blocked;
-#endif
   mutable bool _dirty{false};
 };
 

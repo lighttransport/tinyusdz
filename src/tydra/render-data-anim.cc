@@ -46,27 +46,7 @@
 #include "materialx-to-json.hh"
 #include "mmap-array-ref.hh"
 
-// Helper macros for iterating over TypedTimeSamples in both AoS and SoA modes
-#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
-#define FOREACH_TIMESAMPLES_BEGIN(ts, var_t, var_value, var_blocked) \
-  { \
-    const auto &_times = (ts).get_times(); \
-    const auto &_values = (ts).get_values(); \
-    const auto &_blocked = (ts).get_blocked(); \
-    for (size_t _idx = 0; _idx < _times.size(); _idx++) { \
-      const double var_t = _times[_idx]; \
-      const auto &var_value = _values[_idx]; \
-      const bool var_blocked = _blocked[_idx]; \
-      if (!var_blocked) {
-
-#define FOREACH_TIMESAMPLES_END() \
-      } \
-    } \
-  }
-
-#define TIMESAMPLES_EMPTY(ts) ((ts).size() == 0)
-
-#else
+// Helper macros for iterating over TypedTimeSamples
 #define FOREACH_TIMESAMPLES_BEGIN(ts, var_t, var_value, var_blocked) \
   for (const auto &_sample : (ts).get_samples()) { \
     const double var_t = _sample.t; \
@@ -77,9 +57,6 @@
 #define FOREACH_TIMESAMPLES_END() \
     } \
   }
-
-//#define TIMESAMPLES_EMPTY(ts) ((ts).get_samples().empty())
-#endif
 
 //
 #include "common-macros.inc"

@@ -227,21 +227,6 @@ std::string print_typed_timesamples(const TypedTimeSamples<T> &v,
 
   ss << "{\n";
 
-#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
-  const auto &times = v.get_times();
-  const auto &values = v.get_values();
-  const auto &blocked = v.get_blocked();
-
-  for (size_t i = 0; i < times.size(); i++) {
-    ss << pprint::Indent(indent + 1) << times[i] << ": ";
-    if (blocked[i]) {
-      ss << "None";
-    } else {
-      ss << values[i];
-    }
-    ss << ",\n";
-  }
-#else
   const auto &samples = v.get_samples();
 
   for (size_t i = 0; i < samples.size(); i++) {
@@ -253,7 +238,6 @@ std::string print_typed_timesamples(const TypedTimeSamples<T> &v,
     }
     ss << ",\n";
   }
-#endif
 
   ss << pprint::Indent(indent) << "}\n";
 
@@ -267,21 +251,6 @@ std::string print_typed_token_timesamples(const TypedTimeSamples<T> &v,
 
   ss << "{\n";
 
-#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
-  const auto &times = v.get_times();
-  const auto &values = v.get_values();
-  const auto &blocked = v.get_blocked();
-
-  for (size_t i = 0; i < times.size(); i++) {
-    ss << pprint::Indent(indent + 1) << times[i] << ": ";
-    if (blocked[i]) {
-      ss << "None";
-    } else {
-      ss << quote(to_string(values[i]));
-    }
-    ss << ",\n";
-  }
-#else
   const auto &samples = v.get_samples();
 
   for (size_t i = 0; i < samples.size(); i++) {
@@ -293,7 +262,6 @@ std::string print_typed_token_timesamples(const TypedTimeSamples<T> &v,
     }
     ss << ",\n";
   }
-#endif
 
   ss << pprint::Indent(indent) << "}\n";
 
@@ -306,21 +274,6 @@ static std::string print_str_timesamples(const TypedTimeSamples<std::string> &v,
 
   ss << "{\n";
 
-#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
-  const auto &times = v.get_times();
-  const auto &values = v.get_values();
-  const auto &blocked = v.get_blocked();
-
-  for (size_t i = 0; i < times.size(); i++) {
-    ss << pprint::Indent(indent + 1) << times[i] << ": ";
-    if (blocked[i]) {
-      ss << "None";
-    } else {
-      ss << buildEscapedAndQuotedStringForUSDA(values[i]);
-    }
-    ss << ",\n";
-  }
-#else
   const auto &samples = v.get_samples();
 
   for (size_t i = 0; i < samples.size(); i++) {
@@ -332,7 +285,6 @@ static std::string print_str_timesamples(const TypedTimeSamples<std::string> &v,
     }
     ss << ",\n";
   }
-#endif
 
   ss << pprint::Indent(indent) << "}\n";
 

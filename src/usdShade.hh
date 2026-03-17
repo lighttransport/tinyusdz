@@ -516,7 +516,6 @@ inline bool GetHeldEnumTimeSample(const TypedTimeSamples<EnumT> &ts,
   if (!dst) return false;
   if (ts.empty()) return false;
 
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
   const auto &samples = ts.get_samples();
   if (value::TimeCode(t).is_default() || samples.size() == 1) {
     (*dst) = samples[0].value;
@@ -528,18 +527,6 @@ inline bool GetHeldEnumTimeSample(const TypedTimeSamples<EnumT> &ts,
   const auto it_minus_1 = (it == samples.begin()) ? samples.begin() : (it - 1);
   (*dst) = it_minus_1->value;
   return true;
-#else
-  const auto &times = ts.get_times();
-  const auto &values = ts.get_values();
-  if (value::TimeCode(t).is_default() || times.size() == 1) {
-    (*dst) = values[0];
-    return true;
-  }
-  auto it = std::upper_bound(times.begin(), times.end(), t);
-  size_t idx = (it == times.begin()) ? 0 : static_cast<size_t>(std::distance(times.begin(), it) - 1);
-  (*dst) = values[idx];
-  return true;
-#endif
 }
 
 }  // namespace detail
