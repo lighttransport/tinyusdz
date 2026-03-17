@@ -326,8 +326,6 @@ struct PrimVar {
     // Convert TypedTimeSamples to TimeSamples
     value::TimeSamples ts;
     
-    #ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
-    // AoS layout
     for (const auto& sample : typed_ts.get_samples()) {
       if (sample.blocked) {
         ts.add_blocked_sample(sample.t);
@@ -335,21 +333,7 @@ struct PrimVar {
         ts.add_sample(sample.t, value::Value(sample.value));
       }
     }
-    #else
-    // SoA layout
-    const auto& times = typed_ts.get_times();
-    const auto& values = typed_ts.get_values();
-    const auto& blocked = typed_ts.get_blocked();
-    
-    for (size_t i = 0; i < times.size(); ++i) {
-      if (blocked[i]) {
-        ts.add_blocked_sample(times[i]);
-      } else {
-        ts.add_sample(times[i], value::Value(values[i]));
-      }
-    }
-    #endif
-    
+
     _ts = std::move(ts);
   }
 
@@ -358,9 +342,7 @@ struct PrimVar {
   void set_typed_timesamples(const TypedTimeSamples<T> &typed_ts) {
     // Convert TypedTimeSamples to TimeSamples
     value::TimeSamples ts;
-    
-    #ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
-    // AoS layout
+
     for (const auto& sample : typed_ts.get_samples()) {
       if (sample.blocked) {
         ts.add_blocked_sample(sample.t);
@@ -368,21 +350,7 @@ struct PrimVar {
         ts.add_sample(sample.t, value::Value(sample.value));
       }
     }
-    #else
-    // SoA layout
-    const auto& times = typed_ts.get_times();
-    const auto& values = typed_ts.get_values();
-    const auto& blocked = typed_ts.get_blocked();
-    
-    for (size_t i = 0; i < times.size(); ++i) {
-      if (blocked[i]) {
-        ts.add_blocked_sample(times[i]);
-      } else {
-        ts.add_sample(times[i], value::Value(values[i]));
-      }
-    }
-    #endif
-    
+
     _ts = ts;
   }
 

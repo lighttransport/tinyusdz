@@ -110,17 +110,9 @@ bool ConvertTokenAttributeToStringAttribute(
         } else if (toks.is_timesamples()) {
           auto tok_ts = toks.get_timesamples();
 
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
           for (auto &item : tok_ts.get_samples()) {
             strs.add_sample(item.t, item.value.str());
           }
-#else
-          const auto &times = tok_ts.get_times();
-          const auto &values = tok_ts.get_values();
-          for (size_t i = 0; i < times.size(); i++) {
-            strs.add_sample(times[i], values[i].str());
-          }
-#endif
         } else if (toks.is_blocked()) {
           return false;
         }
