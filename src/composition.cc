@@ -1228,6 +1228,98 @@ bool CompositeInherits(const Layer &in_layer, Layer *composited_layer,
   return true;
 }
 
+// Forward declare InheritPrimSpecImpl — reused by Specializes (same semantics)
+namespace detail {
+static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
+                                std::string *warn, std::string *err);
+}  // namespace detail
+
+static bool CompositeSpecializesRec(uint32_t depth, const Layer &layer,
+                                    PrimSpec &primspec /* [inout] */,
+                                    std::string *warn, std::string *err) {
+  if (depth > (1024 * 1024)) {
+    PUSH_ERROR_AND_RETURN("Too deep in CompositeSpecializesRec.");
+  }
+
+  // Traverse children first.
+  for (auto &child : primspec.children()) {
+    if (!CompositeSpecializesRec(depth + 1, layer, child, warn, err)) {
+      return false;
+    }
+  }
+
+  if (primspec.metas().specializes) {
+    for (const auto &specialize_op : primspec.metas().specializes.value()) {
+      const auto &qual = specialize_op.first;
+      const auto &specializes = specialize_op.second;
+
+      if (specializes.empty()) {
+        continue;
+      }
+
+      if (specializes.size() != 1) {
+        if (err) {
+          (*err) += "Multiple specializes targets is not supported.\n";
+        }
+        return false;
+      }
+
+      const Path &specializePath = specializes[0];
+      const PrimSpec *specializePrimSpec{nullptr};
+
+      if (!layer.find_primspec_at(specializePath, &specializePrimSpec, err)) {
+        if (err) {
+          (*err) += "Specialize failed: Path <" +
+                    specializePath.prim_part() + "> not found.\n";
+        }
+        return false;
+      }
+
+      // TODO: Handle ListEditQual properly
+      (void)qual;
+
+      if (specializePrimSpec) {
+        // Specializes uses the same property-override semantics as inherits
+        if (!detail::InheritPrimSpecImpl(primspec, *specializePrimSpec, warn,
+                                         err)) {
+          return false;
+        }
+      } else {
+        if (err) {
+          (*err) += "Internal error: PrimSpec is nullptr in "
+                    "CompositeSpecializesRec.\n";
+        }
+        return false;
+      }
+    }
+
+    // Clear specializes metadata after processing
+    primspec.metas().specializes.reset();
+  }
+
+  return true;
+}
+
+bool CompositeSpecializes(const Layer &in_layer, Layer *composited_layer,
+                          std::string *warn, std::string *err) {
+  if (!composited_layer) {
+    return false;
+  }
+
+  Layer dst = in_layer;
+
+  for (auto &item : dst.primspecs()) {
+    if (!CompositeSpecializesRec(/* depth */ 0, dst, item.second, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Composite `specializes` failed.");
+    }
+  }
+
+  (*composited_layer) = dst;
+
+  DCOUT("Composite `specializes` ok.");
+  return true;
+}
+
 namespace detail {
 
 static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
