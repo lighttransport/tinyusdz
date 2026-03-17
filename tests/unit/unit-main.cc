@@ -29,6 +29,8 @@
 #include "unit-half-roundtrip.h"
 #include "unit-prim-reconstruct.h"
 #include "unit-composition.h"
+#include "unit-usda-reader.h"
+#include "unit-usdc-reader.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -211,6 +213,55 @@ TEST_LIST = {
   { "composition_has_inherits_test", composition_has_inherits_test },
   { "composition_has_specializes_test", composition_has_specializes_test },
   { "composition_has_variants_test", composition_has_variants_test },
+  // USDA reader tests
+  { "usda_reader_scalar_int_float_double_test", usda_reader_scalar_int_float_double_test },
+  { "usda_reader_scalar_string_token_path_test", usda_reader_scalar_string_token_path_test },
+  { "usda_reader_vector_matrix_types_test", usda_reader_vector_matrix_types_test },
+  { "usda_reader_array_int_float_test", usda_reader_array_int_float_test },
+  { "usda_reader_array_string_token_test", usda_reader_array_string_token_test },
+  { "usda_reader_array_vector_types_test", usda_reader_array_vector_types_test },
+  { "usda_reader_timesamples_scalar_test", usda_reader_timesamples_scalar_test },
+  { "usda_reader_timesamples_array_test", usda_reader_timesamples_array_test },
+  { "usda_reader_timesamples_blocked_test", usda_reader_timesamples_blocked_test },
+  { "usda_reader_timesamples_token_enum_test", usda_reader_timesamples_token_enum_test },
+  { "usda_reader_attribute_connection_test", usda_reader_attribute_connection_test },
+  { "usda_reader_relationship_test", usda_reader_relationship_test },
+  { "usda_reader_prim_metadata_test", usda_reader_prim_metadata_test },
+  { "usda_reader_stage_metadata_test", usda_reader_stage_metadata_test },
+  { "usda_reader_variantset_basic_test", usda_reader_variantset_basic_test },
+  { "usda_reader_variantset_with_properties_test", usda_reader_variantset_with_properties_test },
+  { "usda_reader_class_inherits_test", usda_reader_class_inherits_test },
+  { "usda_reader_internal_reference_test", usda_reader_internal_reference_test },
+  { "usda_reader_nested_hierarchy_test", usda_reader_nested_hierarchy_test },
+  { "usda_reader_specifiers_def_over_class_test", usda_reader_specifiers_def_over_class_test },
+  { "usda_reader_trailing_comma_test", usda_reader_trailing_comma_test },
+  { "usda_reader_empty_prim_test", usda_reader_empty_prim_test },
+  { "usda_reader_unicode_and_special_strings_test", usda_reader_unicode_and_special_strings_test },
+  { "usda_reader_malformed_input_test", usda_reader_malformed_input_test },
+  { "usda_reader_large_nesting_depth_test", usda_reader_large_nesting_depth_test },
+  // USDC reader tests
+  { "usdc_reader_scalar_types_roundtrip_test", usdc_reader_scalar_types_roundtrip_test },
+  { "usdc_reader_string_token_types_roundtrip_test", usdc_reader_string_token_types_roundtrip_test },
+  { "usdc_reader_vector_matrix_roundtrip_test", usdc_reader_vector_matrix_roundtrip_test },
+  { "usdc_reader_array_int_float_roundtrip_test", usdc_reader_array_int_float_roundtrip_test },
+  { "usdc_reader_array_string_token_roundtrip_test", usdc_reader_array_string_token_roundtrip_test },
+  { "usdc_reader_array_vector_roundtrip_test", usdc_reader_array_vector_roundtrip_test },
+  { "usdc_reader_timesamples_scalar_roundtrip_test", usdc_reader_timesamples_scalar_roundtrip_test },
+  { "usdc_reader_timesamples_array_roundtrip_test", usdc_reader_timesamples_array_roundtrip_test },
+  { "usdc_reader_timesamples_blocked_roundtrip_test", usdc_reader_timesamples_blocked_roundtrip_test },
+  { "usdc_reader_timesamples_token_roundtrip_test", usdc_reader_timesamples_token_roundtrip_test },
+  { "usdc_reader_connection_roundtrip_test", usdc_reader_connection_roundtrip_test },
+  { "usdc_reader_relationship_roundtrip_test", usdc_reader_relationship_roundtrip_test },
+  { "usdc_reader_prim_metadata_roundtrip_test", usdc_reader_prim_metadata_roundtrip_test },
+  { "usdc_reader_stage_metadata_roundtrip_test", usdc_reader_stage_metadata_roundtrip_test },
+  { "usdc_reader_nested_hierarchy_roundtrip_test", usdc_reader_nested_hierarchy_roundtrip_test },
+  { "usdc_reader_variantset_roundtrip_test", usdc_reader_variantset_roundtrip_test },
+  { "usdc_reader_large_array_compression_test", usdc_reader_large_array_compression_test },
+  { "usdc_reader_inlined_scalar_test", usdc_reader_inlined_scalar_test },
+  { "usdc_reader_multiple_prims_roundtrip_test", usdc_reader_multiple_prims_roundtrip_test },
+  { "usdc_reader_truncated_input_test", usdc_reader_truncated_input_test },
+  { "usdc_reader_corrupt_header_test", usdc_reader_corrupt_header_test },
+  { "usdc_reader_corrupt_body_test", usdc_reader_corrupt_body_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
