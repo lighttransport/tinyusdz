@@ -28,6 +28,8 @@ set(TEST_SOURCES
 	unit-half-roundtrip.cc
 	unit-prim-reconstruct.cc
 	unit-composition.cc
+	unit-usda-reader.cc
+	unit-usdc-reader.cc
    )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)
