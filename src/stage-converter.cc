@@ -9,6 +9,7 @@
 
 #include "crate-writer.hh"
 #include <iostream>
+#include <set>
 #include "layer.hh"
 #include "common-macros.inc"
 #include "pprinter.hh"  // For to_string(Specifier), to_string(Variability)
@@ -207,12 +208,140 @@ bool CrateWriter::ConvertPrimRecursive(
     return false;
   }
 
-  // Add spec for this prim
+  // Split fields: prim-level fields (specifier, typeName) stay on the prim
+  // spec; property fields become separate Attribute specs.
+  crate::FieldValuePairVector prim_fields;
+  // Collect property fields: name -> {default_value, timeSamples_value}
+  struct PropEntry {
+    std::string name;
+    crate::CrateValue default_val;
+    bool has_default{false};
+    crate::CrateValue ts_val;
+    bool has_ts{false};
+    crate::CrateValue variability_val;
+    bool has_variability{false};
+  };
+  std::vector<PropEntry> prop_entries;
+
+  // Set of field names that belong on the prim spec, not as separate attributes
+  static const std::set<std::string> kPrimFields = {
+    "specifier", "typeName", "primChildren", "properties",
+    "variantSetNames", "variantSelection", "kind",
+    "active", "hidden", "documentation", "comment", "customData",
+    "apiSchemas", "inherits", "specializes", "references", "payload",
+  };
+
+  for (auto& fv : fields) {
+    if (kPrimFields.count(fv.first)) {
+      prim_fields.push_back(std::move(fv));
+      continue;
+    }
+
+    // Check for ".timeSamples" suffix
+    std::string base_name = fv.first;
+    bool is_ts = false;
+    const std::string ts_suffix = ".timeSamples";
+    if (base_name.size() > ts_suffix.size() &&
+        base_name.compare(base_name.size() - ts_suffix.size(),
+                          ts_suffix.size(), ts_suffix) == 0) {
+      base_name = base_name.substr(0, base_name.size() - ts_suffix.size());
+      is_ts = true;
+    }
+
+    // Check for "variability" field
+    bool is_variability = (fv.first == "variability");
+    if (is_variability) {
+      // variability belongs on the prim spec
+      prim_fields.push_back(std::move(fv));
+      continue;
+    }
+
+    // Find or create prop entry
+    PropEntry* entry = nullptr;
+    for (auto& pe : prop_entries) {
+      if (pe.name == base_name) {
+        entry = &pe;
+        break;
+      }
+    }
+    if (!entry) {
+      prop_entries.push_back({base_name, {}, false, {}, false, {}, false});
+      entry = &prop_entries.back();
+    }
+
+    if (is_ts) {
+      entry->ts_val = std::move(fv.second);
+      entry->has_ts = true;
+    } else {
+      entry->default_val = std::move(fv.second);
+      entry->has_default = true;
+    }
+  }
+
+  // Add spec for this prim (only prim-level fields)
   SpecType spec_type = SpecType::Prim;
 
-  if (!AddSpec(prim_path, spec_type, fields, err)) {
+  if (!AddSpec(prim_path, spec_type, prim_fields, err)) {
     if (err) *err = "Failed to add spec for: " + abs_path_str + ": " + *err;
     return false;
+  }
+
+  // Known uniform properties (must have Variability::Uniform in their Attribute spec)
+  static const std::set<std::string> kUniformProps = {
+    "offsets", "normalOffsets", "pointIndices",  // BlendShape
+    "subdivisionScheme", "interpolateBoundary", "faceVaryingLinearInterpolation",  // Mesh
+    "elementType", "familyName",  // GeomSubset
+    "projection", "stereoRole",  // Camera
+    "type", "basis", "wrap",  // BasisCurves
+    "joints", "bindTransforms", "restTransforms",  // Skeleton
+    "inactiveIds",  // PointInstancer
+    "purpose",  // GPrim
+  };
+
+  // Create separate Attribute specs for each property
+  for (auto& pe : prop_entries) {
+    Path attr_path = prim_path.AppendProperty(pe.name);
+    crate::FieldValuePairVector attr_fields;
+
+    // Determine type name from the value
+    std::string prop_type_name;
+    if (pe.has_default) {
+      prop_type_name = pe.default_val.type_name();
+    } else if (pe.has_ts) {
+      // For timeSamples, get the element type from the first sample
+      auto ts_opt = pe.ts_val.get_value<value::TimeSamples>();
+      if (ts_opt && ts_opt->size() > 0) {
+        prop_type_name = ts_opt->get_samples()[0].value.type_name();
+      }
+    }
+
+    if (!prop_type_name.empty()) {
+      crate::CrateValue type_value;
+      value::token type_tok(prop_type_name);
+      type_value.Set(type_tok);
+      attr_fields.push_back({"typeName", type_value});
+    }
+
+    // Add variability for uniform properties
+    if (kUniformProps.count(pe.name)) {
+      crate::CrateValue var_value;
+      var_value.Set(Variability::Uniform);
+      attr_fields.push_back({"variability", var_value});
+    }
+
+    if (pe.has_default) {
+      attr_fields.push_back({"default", std::move(pe.default_val)});
+    }
+
+    if (pe.has_ts) {
+      attr_fields.push_back({"timeSamples", std::move(pe.ts_val)});
+    }
+
+    if (!attr_fields.empty()) {
+      if (!AddSpec(attr_path, SpecType::Attribute, attr_fields, err)) {
+        DCOUT("WARNING: Failed to add attribute spec for: " << pe.name);
+      }
+    }
   }
 
   // After adding the prim spec, handle Material outputs as separate attribute specs
@@ -659,10 +788,9 @@ bool CrateWriter::ExtractMeshProperties(
       GeomMesh::InterpolateBoundary interp_val;
       if (interp_boundary_anim.get_default(&interp_val)) {
         crate::CrateValue crate_val;
-        value::Value val(static_cast<int32_t>(interp_val));
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"interpolateBoundary", crate_val});
-        }
+        value::token tok(to_string(interp_val));
+        crate_val.Set(tok);
+        fields.push_back({"interpolateBoundary", crate_val});
       }
     }
   }
@@ -671,10 +799,9 @@ bool CrateWriter::ExtractMeshProperties(
   if (mesh->subdivisionScheme.has_value()) {
     const auto& subdiv_scheme = mesh->subdivisionScheme.get_value();
     crate::CrateValue crate_val;
-    value::Value val(static_cast<int32_t>(subdiv_scheme));
-    if (ConvertValue(val, crate_val, err)) {
-      fields.push_back({"subdivisionScheme", crate_val});
-    }
+    value::token tok(to_string(subdiv_scheme));
+    crate_val.Set(tok);
+    fields.push_back({"subdivisionScheme", crate_val});
   }
 
   // faceVaryingLinearInterpolation - TypedAttributeWithFallback<Animatable<FaceVaryingLinearInterpolation>>
@@ -684,10 +811,9 @@ bool CrateWriter::ExtractMeshProperties(
       GeomMesh::FaceVaryingLinearInterpolation fv_interp_val;
       if (fv_interp_anim.get_default(&fv_interp_val)) {
         crate::CrateValue crate_val;
-        value::Value val(static_cast<int32_t>(fv_interp_val));
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"faceVaryingLinearInterpolation", crate_val});
-        }
+        value::token tok(to_string(fv_interp_val));
+        crate_val.Set(tok);
+        fields.push_back({"faceVaryingLinearInterpolation", crate_val});
       }
     }
   }
@@ -1157,9 +1283,9 @@ bool CrateWriter::ExtractCameraProperties(
     GeomCamera::Projection proj_val;
     if (proj_anim.get_scalar(&proj_val)) {
       std::string proj_str = (proj_val == GeomCamera::Projection::Perspective) ? "perspective" : "orthographic";
-      crate::TokenIndex proj_tok = GetOrCreateToken(proj_str);
       crate::CrateValue crate_val;
-      crate_val.Set(proj_tok.value);
+      value::token tok(proj_str);
+      crate_val.Set(tok);
       fields.push_back({"projection", crate_val});
     }
   }
@@ -1176,9 +1302,9 @@ bool CrateWriter::ExtractCameraProperties(
     } else {
       stereo_str = "mono";  // default
     }
-    crate::TokenIndex stereo_tok = GetOrCreateToken(stereo_str);
     crate::CrateValue crate_val;
-    crate_val.Set(stereo_tok.value);
+    value::token tok(stereo_str);
+    crate_val.Set(tok);
     fields.push_back({"stereoRole", crate_val});
   }
 
@@ -1218,12 +1344,13 @@ bool CrateWriter::ExtractBasisCurvesProperties(
     return false;
   }
 
-  // Helper lambda to convert enum to string
+  // Helper lambda to convert enum to token
   auto add_enum_attribute = [&](const std::string& attr_name, const std::string& enum_val) -> bool {
     crate::CrateValue crate_val;
-    value::Value enum_value(enum_val);
-    return ConvertValue(enum_value, crate_val, err) &&
-           (fields.push_back({attr_name, crate_val}), true);
+    value::token tok(enum_val);
+    crate_val.Set(tok);
+    fields.push_back({attr_name, crate_val});
+    return true;
   };
 
   // Helper lambda to convert array values
@@ -1771,12 +1898,13 @@ bool CrateWriter::ExtractGeomSubsetProperties(
     return false;
   }
 
-  // Helper lambda to convert enum to string
+  // Helper lambda to convert enum to token
   auto add_enum_attribute = [&](const std::string& attr_name, const std::string& enum_val) -> bool {
     crate::CrateValue crate_val;
-    value::Value enum_value(enum_val);
-    return ConvertValue(enum_value, crate_val, err) &&
-           (fields.push_back({attr_name, crate_val}), true);
+    value::token tok(enum_val);
+    crate_val.Set(tok);
+    fields.push_back({attr_name, crate_val});
+    return true;
   };
 
   // Helper lambda to convert array values
@@ -1806,14 +1934,9 @@ bool CrateWriter::ExtractGeomSubsetProperties(
     auto familyname_opt = subset->familyName.get_value();
     if (familyname_opt.has_value()) {
       const value::token& familyname_val = familyname_opt.value();
-      std::string fname_str = familyname_val.str();
       crate::CrateValue crate_val;
-      value::Value familyname_value(fname_str);
-      if (ConvertValue(familyname_value, crate_val, err)) {
-        fields.push_back({"familyName", crate_val});
-      } else {
-        return false;
-      }
+      crate_val.Set(familyname_val);
+      fields.push_back({"familyName", crate_val});
     }
   }
 
@@ -2425,10 +2548,9 @@ bool CrateWriter::ExtractSkelRootProperties(
       Visibility visibility_val;
       if (visibility_anim.get_default(&visibility_val)) {
         crate::CrateValue crate_val;
-        value::Value val(value::token(to_string(visibility_val)));
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"visibility", crate_val});
-        }
+        value::token tok(to_string(visibility_val));
+        crate_val.Set(tok);
+        fields.push_back({"visibility", crate_val});
       }
     }
   }
@@ -2437,10 +2559,9 @@ bool CrateWriter::ExtractSkelRootProperties(
   if (skel_root->purpose.has_value()) {
     const auto& purpose_val = skel_root->purpose.get_value();
     crate::CrateValue crate_val;
-    value::Value val(value::token(to_string(purpose_val)));
-    if (ConvertValue(val, crate_val, err)) {
-      fields.push_back({"purpose", crate_val});
-    }
+    value::token tok(to_string(purpose_val));
+    crate_val.Set(tok);
+    fields.push_back({"purpose", crate_val});
   }
 
   // Extract extent
@@ -2698,8 +2819,8 @@ bool CrateWriter::ExtractGPrimProperties(
       if (vis_animatable.get_default(&vis_val)) {
         if (vis_val != Visibility::Inherited) {  // Only write if not default
           crate::CrateValue vis_crate_val;
-          crate::TokenIndex vis_tok = GetOrCreateToken(to_string(vis_val));
-          vis_crate_val.Set(vis_tok.value);
+          value::token vis_tok(to_string(vis_val));
+          vis_crate_val.Set(vis_tok);
           fields.push_back({"visibility", vis_crate_val});
         }
       }
@@ -2740,8 +2861,8 @@ bool CrateWriter::ExtractGPrimProperties(
     Purpose purpose_val = gprim->purpose.get_value();
     if (purpose_val != Purpose::Default) {  // Only write if not default
       crate::CrateValue purpose_crate_val;
-      crate::TokenIndex purpose_tok = GetOrCreateToken(to_string(purpose_val));
-      purpose_crate_val.Set(purpose_tok.value);
+      value::token purpose_tok(to_string(purpose_val));
+      purpose_crate_val.Set(purpose_tok);
       fields.push_back({"purpose", purpose_crate_val});
     }
   }
@@ -2776,8 +2897,8 @@ bool CrateWriter::ExtractGPrimProperties(
     Orientation orient_val = gprim->orientation.get_value();
     if (orient_val != Orientation::RightHanded) {  // Only write if not default
       crate::CrateValue orient_crate_val;
-      crate::TokenIndex orient_tok = GetOrCreateToken(to_string(orient_val));
-      orient_crate_val.Set(orient_tok.value);
+      value::token orient_tok(to_string(orient_val));
+      orient_crate_val.Set(orient_tok);
       fields.push_back({"orientation", orient_crate_val});
     }
   }
