@@ -64,3 +64,8 @@ void crate_writer_validation_disabled_test(void);
 void crate_writer_compression_test(void);
 void crate_writer_specializes_test(void);
 void crate_writer_nan_dedup_test(void);
+void crate_writer_prim_meta_roundtrip_test(void);
+void crate_writer_props_map_roundtrip_test(void);
+void crate_writer_skeleton_properties_test(void);
+void crate_writer_skelanim_properties_test(void);
+void crate_writer_prim_children_test(void);

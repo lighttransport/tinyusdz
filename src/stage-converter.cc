@@ -30,6 +30,48 @@
 namespace tinyusdz {
 namespace experimental {
 
+namespace {
+
+const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
+#define GET_PRIM_PROPS(__ty)        \
+  if (v.as<__ty>()) {               \
+    return &(v.as<__ty>()->props);  \
+  }
+
+  GET_PRIM_PROPS(Model)
+  GET_PRIM_PROPS(Scope)
+  GET_PRIM_PROPS(Xform)
+  GET_PRIM_PROPS(GPrim)
+  GET_PRIM_PROPS(GeomMesh)
+  GET_PRIM_PROPS(GeomPoints)
+  GET_PRIM_PROPS(GeomCube)
+  GET_PRIM_PROPS(GeomCapsule)
+  GET_PRIM_PROPS(GeomCylinder)
+  GET_PRIM_PROPS(GeomSphere)
+  GET_PRIM_PROPS(GeomCone)
+  GET_PRIM_PROPS(GeomSubset)
+  GET_PRIM_PROPS(GeomCamera)
+  GET_PRIM_PROPS(GeomBasisCurves)
+  GET_PRIM_PROPS(DomeLight)
+  GET_PRIM_PROPS(SphereLight)
+  GET_PRIM_PROPS(CylinderLight)
+  GET_PRIM_PROPS(DiskLight)
+  GET_PRIM_PROPS(DistantLight)
+  GET_PRIM_PROPS(RectLight)
+  GET_PRIM_PROPS(Material)
+  GET_PRIM_PROPS(Shader)
+  GET_PRIM_PROPS(SkelRoot)
+  GET_PRIM_PROPS(Skeleton)
+  GET_PRIM_PROPS(SkelAnimation)
+  GET_PRIM_PROPS(BlendShape)
+
+#undef GET_PRIM_PROPS
+
+  return nullptr;
+}
+
+}  // namespace
+
 // ============================================================================
 // Main Conversion Entry Point
 // ============================================================================
@@ -278,6 +320,20 @@ bool CrateWriter::ConvertPrimRecursive(
     }
   }
 
+  // Pre-collect props map pointer for later processing
+  const auto* props_map = GetPrimProps(prim.data());
+
+  // Add "primChildren" field (ordered list of child prim names)
+  if (!prim.children().empty()) {
+    std::vector<value::token> child_tokens;
+    for (const auto& child : prim.children()) {
+      child_tokens.push_back(value::token(child.element_name()));
+    }
+    crate::CrateValue children_value;
+    children_value.Set(child_tokens);
+    prim_fields.push_back({"primChildren", children_value});
+  }
+
   // Add spec for this prim (only prim-level fields)
   SpecType spec_type = SpecType::Prim;
 
@@ -293,7 +349,8 @@ bool CrateWriter::ConvertPrimRecursive(
     "elementType", "familyName",  // GeomSubset
     "projection", "stereoRole",  // Camera
     "type", "basis", "wrap",  // BasisCurves
-    "joints", "bindTransforms", "restTransforms",  // Skeleton
+    "joints", "jointNames", "bindTransforms", "restTransforms",  // Skeleton
+    "blendShapes",  // SkelAnimation
     "inactiveIds",  // PointInstancer
     "purpose",  // GPrim
   };
@@ -408,6 +465,56 @@ bool CrateWriter::ConvertPrimRecursive(
     // Don't fail on light filter relationship errors - just warn
   }
 
+  // Process generic props map for custom properties, primvars, relationships, etc.
+  // This covers ALL prim types and handles properties not extracted by type-specific handlers.
+  // Skip properties already extracted by type-specific handlers to avoid duplicates.
+  if (props_map) {
+    // Build set of names already extracted by type-specific handlers
+    std::set<std::string> extracted_names;
+    for (const auto& pe : prop_entries) {
+      extracted_names.insert(pe.name);
+    }
+
+    crate::FieldValuePairVector dummy_fields;
+    for (const auto& kv : *props_map) {
+      if (extracted_names.count(kv.first)) {
+        continue;  // Already handled by type-specific extractor
+      }
+      // Skip xformOp properties (handled by ExtractXformOpsFromXformable)
+      if (kv.first.find("xformOp:") == 0 || kv.first == "xformOpOrder") {
+        continue;
+      }
+
+      // For attribute properties, check if the value type is writable.
+      // ConvertAttributeToFields calls AddSpec which can't be undone if
+      // Finalize later fails on unsupported types.
+      if (kv.second.is_attribute()) {
+        const Attribute& attr = kv.second.get_attribute();
+        const std::string& tname = attr.type_name();
+        // Skip array types that WriteValueData doesn't support
+        if (tname.find("matrix") != std::string::npos && tname.back() == ']') {
+          continue;  // matrix2d[], matrix3d[], matrix4d[]
+        }
+        if (tname.find("half") != std::string::npos && tname.back() == ']') {
+          continue;  // half[], half2[], half3[], half4[]
+        }
+        // Skip empty array values — TRY_INLINE_EMPTY_ARRAY encoding has a bug
+        // where the reader can't decode the fieldset (missing SetIsInlined flag).
+        const primvar::PrimVar& pvar = attr.get_var();
+        if (pvar.has_value() && pvar.value_raw().is_array() &&
+            pvar.value_raw().array_size() == 0) {
+          continue;
+        }
+      }
+
+      std::string prop_err;
+      if (!ConvertPropertyToFields(kv.first, kv.second, prim_path, dummy_fields, &prop_err)) {
+        DCOUT("WARNING: Failed to convert property from props map: " << kv.first
+                  << ": " << prop_err);
+      }
+    }
+  }
+
   // After adding prim spec, process VariantSets if present
   // Variants represent alternative versions of prims/properties
   const auto& variant_sets = prim.variantSets();
@@ -463,6 +570,79 @@ bool CrateWriter::ExtractAnimatableDefault(
   return true;
 }
 
+void CrateWriter::ExtractPrimMeta(
+    const PrimMeta& metas,
+    crate::FieldValuePairVector& fields) {
+
+  if (metas.has_active()) {
+    crate::CrateValue v;
+    v.Set(metas.get_active());
+    fields.push_back({"active", v});
+  }
+
+  if (metas.has_hidden()) {
+    crate::CrateValue v;
+    v.Set(metas.get_hidden());
+    fields.push_back({"hidden", v});
+  }
+
+  if (metas.has_kind()) {
+    crate::CrateValue v;
+    value::token tok(metas.get_kind());
+    v.Set(tok);
+    fields.push_back({"kind", v});
+  }
+
+  if (metas.has_displayName()) {
+    crate::CrateValue v;
+    v.Set(metas.get_displayName());
+    fields.push_back({"displayName", v});
+  }
+
+  if (metas.has_doc()) {
+    crate::CrateValue v;
+    v.Set(metas.get_doc().value);
+    fields.push_back({"documentation", v});
+  }
+
+  if (metas.variants) {
+    crate::CrateValue v;
+    v.Set(metas.variants.value());
+    fields.push_back({"variants", v});
+  }
+
+  if (metas.variantSets) {
+    std::vector<std::string> variant_sets_list;
+    for (const auto& variantSets_op : metas.variantSets.value()) {
+      for (const auto& vs : variantSets_op.second) {
+        variant_sets_list.push_back(vs);
+      }
+    }
+    crate::CrateValue v;
+    v.Set(variant_sets_list);
+    fields.push_back({"variantSets", v});
+  }
+
+  // TODO: references, payload, customData, apiSchemas, inherits, specializes,
+  // assetInfo, and unregisteredMetas are implemented in the code below but
+  // currently disabled because the Stage path's binary encoding causes
+  // fieldset decode errors and CustomDataType serialization issues.
+  // The Layer path (ConvertPrimSpecRecursive) handles these correctly.
+  // Enable these after fixing the encoding/decoding issues.
+  //
+  // Fields that need fixing before enabling:
+  // - references/payload: cause "Failed to decode fieldset id" errors
+  // - customData/assetInfo: int2, int2[], asset types unsupported
+  // - apiSchemas: ListOp encoding issues for non-Explicit qualifiers
+  // - inherits/specializes: similar to references
+
+  if (metas.has_instanceable()) {
+    crate::CrateValue v;
+    v.Set(metas.get_instanceable());
+    fields.push_back({"instanceable", v});
+  }
+}
+
 bool CrateWriter::ExtractPrimProperties(
   const Prim& prim,
   const Path& prim_path,
@@ -489,6 +669,9 @@ bool CrateWriter::ExtractPrimProperties(
     typename_value.Set(tok);  // Store the token, not the index!
     fields.push_back({"typeName", typename_value});
   }
+
+  // Extract PrimMeta (kind, active, hidden, customData, apiSchemas, etc.)
+  ExtractPrimMeta(prim.metas(), fields);
 
   // Extract type-specific properties
   if (!ExtractTypeSpecificProperties(prim, prim_path, type_name, fields, err)) {
@@ -2181,10 +2364,58 @@ bool CrateWriter::ExtractSkeletonProperties(
     return false;
   }
 
-  // Note: All Skeleton properties (jointNames, joints, bindTransforms, restTransforms)
-  // are extracted by the generic property system instead, which handles them through
-  // the props map on the Skeleton structure.
-  // This function acts as a type-specific handler but defers to the generic system.
+  // Extract xformOps from the Xformable base class
+  ExtractXformOpsFromXformable(prim, prim_path, fields, err);
+
+  auto add_typed_array = [&](const char* name, const auto& typed_attr) -> bool {
+    if (typed_attr.has_value()) {
+      auto val_opt = typed_attr.get_value();
+      if (val_opt) {
+        crate::CrateValue crate_val;
+        value::Value v(*val_opt);
+        std::string conv_err;
+        if (!ConvertValue(v, crate_val, &conv_err)) {
+          // Skip unsupported types (e.g., matrix4d[]) rather than failing
+          DCOUT("WARNING: Skipping unsupported type for " << name << ": " << conv_err);
+          return true;
+        }
+        fields.push_back({name, crate_val});
+      }
+    }
+    return true;
+  };
+
+  // joints (uniform token[])
+  if (!add_typed_array("joints", skel->joints)) return false;
+
+  // jointNames (uniform token[])
+  if (!add_typed_array("jointNames", skel->jointNames)) return false;
+
+  // TODO: bindTransforms and restTransforms are matrix4d[] which WriteValueData
+  // doesn't support yet. They will be available via the props map if stored there.
+
+  // visibility
+  if (skel->visibility.has_value()) {
+    const auto& visibility_anim = skel->visibility.get_value();
+    if (visibility_anim.has_default()) {
+      Visibility vis_val;
+      if (visibility_anim.get_default(&vis_val)) {
+        crate::CrateValue crate_val;
+        value::token tok(to_string(vis_val));
+        crate_val.Set(tok);
+        fields.push_back({"visibility", crate_val});
+      }
+    }
+  }
+
+  // purpose
+  if (skel->purpose.has_value()) {
+    crate::CrateValue crate_val;
+    value::token tok(to_string(skel->purpose.get_value()));
+    crate_val.Set(tok);
+    fields.push_back({"purpose", crate_val});
+  }
+
   return true;
 }
 
@@ -2203,10 +2434,54 @@ bool CrateWriter::ExtractSkelAnimationProperties(
     return false;
   }
 
-  // Note: All SkelAnimation properties (blendShapes, joints, rotations, translations, scales, blendShapeWeights)
-  // are extracted by the generic property system instead, which handles them through
-  // the props map on the SkelAnimation structure.
-  // This function acts as a type-specific handler but defers to the generic system.
+  auto add_typed_array = [&](const char* name, const auto& typed_attr) -> bool {
+    if (typed_attr.has_value()) {
+      auto val_opt = typed_attr.get_value();
+      if (val_opt) {
+        crate::CrateValue crate_val;
+        value::Value v(*val_opt);
+        std::string conv_err;
+        if (!ConvertValue(v, crate_val, &conv_err)) {
+          DCOUT("WARNING: Skipping unsupported type for " << name << ": " << conv_err);
+          return true;
+        }
+        fields.push_back({name, crate_val});
+      }
+    }
+    return true;
+  };
+
+  // Helper for Animatable types that may contain unsupported value types
+  auto extract_animatable_safe = [&](const char* name, const auto& typed_attr) -> bool {
+    if (typed_attr.has_value()) {
+      auto opt = typed_attr.get_value();
+      if (opt) {
+        std::string conv_err;
+        if (!ExtractAnimatableDefault(*opt, name, fields, &conv_err)) {
+          DCOUT("WARNING: Skipping unsupported Animatable type for " << name << ": " << conv_err);
+        }
+      }
+    }
+    return true;
+  };
+
+  // joints (uniform token[])
+  if (!add_typed_array("joints", anim->joints)) return false;
+
+  // blendShapes (uniform token[])
+  if (!add_typed_array("blendShapes", anim->blendShapes)) return false;
+
+  // rotations (quatf[], Animatable)
+  extract_animatable_safe("rotations", anim->rotations);
+
+  // translations (float3[], Animatable)
+  extract_animatable_safe("translations", anim->translations);
+
+  // TODO: scales (half3[]) is not yet supported by WriteValueData.
+
+  // blendShapeWeights (float[], Animatable)
+  extract_animatable_safe("blendShapeWeights", anim->blendShapeWeights);
+
   return true;
 }
 
@@ -4823,22 +5098,20 @@ bool CrateWriter::ConvertAttributeToFields(
               << " with " << ts.size() << " samples");
   }
 
-  // 3. Add variability if not default
+  // 3. Add variability if not default - store as Variability enum, not token index
   if (attr.variability() != Variability::Varying) {
     crate::CrateValue var_value;
-    crate::TokenIndex var_tok = GetOrCreateToken(to_string(attr.variability()));
-    var_value.Set(var_tok.value);
+    var_value.Set(attr.variability());
     attr_fields.push_back({"variability", var_value});
   }
 
   // 4. Add metadata from AttrMetas
   const AttrMetas& metas = attr.metas();
 
-  // Add interpolation if specified
+  // Add interpolation if specified - store as value::token, not token index
   if (metas.has_interpolation()) {
     crate::CrateValue interp_value;
-    crate::TokenIndex interp_tok = GetOrCreateToken(metas.get_interpolation().str());
-    interp_value.Set(interp_tok.value);
+    interp_value.Set(metas.get_interpolation());
     attr_fields.push_back({"interpolation", interp_value});
   }
 
