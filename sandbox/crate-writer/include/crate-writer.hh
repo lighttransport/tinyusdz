@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -335,19 +336,38 @@ private:
   int64_t value_data_start_offset_ = 0;
   int64_t value_data_end_offset_ = 0;
 
-  // Phase 5: TimeSamples array deduplication
-  // Maps array content hash to file offset where it was written
-  // Only used for numeric arrays in TimeSamples
-  struct ArrayHash {
-    std::size_t operator()(const std::vector<char>& v) const {
-      std::size_t hash = 0;
-      for (char c : v) {
-        hash = hash * 31 + static_cast<std::size_t>(c);
-      }
-      return hash;
+  // Phase 5: TimeSamples value deduplication with NaN-aware hashing.
+  // Follows OpenUSD TfHash pattern: +0.0 and -0.0 hash identically;
+  // all other values hash by bit pattern.
+  struct NanAwareHash {
+    static size_t hash_float(float v) {
+      uint32_t bits = 0;
+      if (v != 0.0f) { std::memcpy(&bits, &v, sizeof(v)); }
+      return std::hash<uint32_t>{}(bits);
     }
+    static size_t hash_double(double v) {
+      uint64_t bits = 0;
+      if (v != 0.0) { std::memcpy(&bits, &v, sizeof(v)); }
+      return std::hash<uint64_t>{}(bits);
+    }
+    static size_t combine(size_t seed, size_t h) {
+      return seed ^ (h + 0x9e3779b9 + (seed << 6) + (seed >> 2));
+    }
+    // Hash a buffer with NaN-aware float/double handling.
+    // element_size: sizeof(float) or sizeof(double) when is_float is true.
+    static size_t hash_buffer(const void *data, size_t byte_count,
+                              size_t element_size, bool is_float);
+    // NaN-aware buffer equality (canonicalizes +0/-0 before comparison).
+    static bool buffers_equal(const void *a, const void *b, size_t byte_count,
+                              size_t element_size, bool is_float);
   };
-  std::unordered_map<std::vector<char>, int64_t, ArrayHash> array_dedup_map_;
+  struct ValueDedupEntry {
+    std::vector<char> bytes;
+    size_t element_size;
+    bool is_float;
+    int64_t offset;
+  };
+  std::unordered_multimap<size_t, ValueDedupEntry> value_dedup_map_;
 };
 
 } // namespace experimental

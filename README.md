@@ -656,3 +656,4 @@ Some helper code is licensed under MIT license.
 * quickjs-ng: MIT license: https://github.com/quickjs-ng/quickjs
 * meshoptimizer: MIT license: https://github.com/zeux/meshoptimizer
 * mikktspace: mikktspace license(zlib-like): https://github.com/mmikk/MikkTSpace
+* xxHash: BSD-2 license. https://github.com/Cyan4973/xxHash
