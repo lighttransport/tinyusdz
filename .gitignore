@@ -386,5 +386,8 @@ Testing/
 
 # Compiled test binaries under tests/feat/
 tests/feat/*/test_*
+tests/feat/*/**_bench
 !tests/feat/*/test_*.cc
 !tests/feat/*/test_*.cpp
+!tests/feat/**/*_bench.cc
+!tests/feat/**/*_bench.cpp
