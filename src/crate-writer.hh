@@ -387,7 +387,12 @@ private:
   // ======================================================================
 
   /// Convert a Prim and its children recursively
-  bool ConvertPrimRecursive(const Prim& prim, const Path& parent_path, std::string* err, uint32_t depth = 0);
+  /// Convert a single prim (no children) and add its specs.
+  /// Returns true on success. Does not recurse into children.
+  bool ConvertSinglePrim(const Prim& prim, const Path& parent_path, std::string* err);
+
+  /// Iterative depth-first conversion of a prim tree.
+  bool ConvertPrimIterative(const Prim& root_prim, const Path& parent_path, std::string* err);
 
   /// Extract properties from a Prim and add as fields
   bool ExtractPrimProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
@@ -520,6 +525,20 @@ private:
   /// Convert TinyUSDZ value to CrateValue
   bool ConvertValue(const value::Value& val, crate::CrateValue& out, std::string* err);
 
+  /// Convert a value::Value to CrateValue and append to fields.
+  bool AddArrayAttribute(const std::string& attr_name, const value::Value& val,
+                         crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Convert an enum string to a token and append to fields.
+  void AddEnumAttribute(const std::string& attr_name, const std::string& enum_val,
+                        crate::FieldValuePairVector& fields);
+
+  /// Convert a typed optional attribute to CrateValue and append to fields.
+  /// Silently skips unsupported types rather than failing.
+  template<typename T>
+  bool AddTypedArrayAttribute(const char* name, const T& typed_attr,
+                              crate::FieldValuePairVector& fields);
+
   /// Extract default value (and time samples if present) from an Animatable<T>
   /// into FieldValuePairVector.  Reduces the 10-line per-attribute boilerplate
   /// in Extract*Properties helpers to a single call.
@@ -532,7 +551,11 @@ private:
   // ======================================================================
 
   /// Convert a PrimSpec and its children recursively
-  bool ConvertPrimSpecRecursive(const PrimSpec& primspec, const Path& parent_path, std::string* err, uint32_t depth = 0);
+  /// Convert a single PrimSpec (no children) and add its specs.
+  bool ConvertSinglePrimSpec(const PrimSpec& primspec, const Path& parent_path, std::string* err);
+
+  /// Iterative depth-first conversion of a PrimSpec tree.
+  bool ConvertPrimSpecIterative(const PrimSpec& primspec, const Path& parent_path, std::string* err);
 
   /// Convert a Property to Fields (handles Attribute, Relationship, Connection)
   bool ConvertPropertyToFields(const std::string& prop_name, const Property& prop,
