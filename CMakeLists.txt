@@ -497,10 +497,7 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-analysis.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-fallback.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable-fallback.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-all.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/command-and-history.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/obj-export.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/usd-export.cc

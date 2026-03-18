@@ -436,6 +436,33 @@ bool CrateWriter::ConvertPrimRecursive(
 // Property Extraction
 // ============================================================================
 
+template<typename T>
+bool CrateWriter::ExtractAnimatableDefault(
+    const Animatable<T>& anim, const char* name,
+    crate::FieldValuePairVector& fields, std::string* err) {
+  if (anim.has_default()) {
+    T val;
+    if (anim.get_default(&val)) {
+      crate::CrateValue crate_val;
+      value::Value v(val);
+      if (!ConvertValue(v, crate_val, err)) return false;
+      fields.push_back({name, crate_val});
+    }
+  }
+  if (anim.has_timesamples()) {
+    const auto& typed_ts = anim.get_timesamples();
+    value::TimeSamples ts;
+    for (size_t i = 0; i < typed_ts.size(); i++) {
+      value::Value v(typed_ts.get_samples()[i].value);
+      ts.add_sample(typed_ts.get_samples()[i].t, v);
+    }
+    crate::CrateValue ts_crate_val;
+    ts_crate_val.Set(ts);
+    fields.push_back({std::string(name) + ".timeSamples", ts_crate_val});
+  }
+  return true;
+}
+
 bool CrateWriter::ExtractPrimProperties(
   const Prim& prim,
   const Path& prim_path,
@@ -860,19 +887,8 @@ bool CrateWriter::ExtractCubeProperties(
     return false;
   }
 
-  // Extract size
   if (cube->size.authored()) {
-    const Animatable<double>& size_animatable = cube->size.get_value();
-    if (size_animatable.has_default()) {
-      double size_val;
-      if (size_animatable.get_default(&size_val)) {
-        crate::CrateValue crate_val;
-        value::Value size_value(size_val);
-        if (ConvertValue(size_value, crate_val, err)) {
-          fields.push_back({"size", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(cube->size.get_value(), "size", fields, err)) return false;
   }
 
   // Extract extent
@@ -913,19 +929,8 @@ bool CrateWriter::ExtractSphereProperties(
     return false;
   }
 
-  // Extract radius
   if (sphere->radius.authored()) {
-    const Animatable<double>& radius_animatable = sphere->radius.get_value();
-    if (radius_animatable.has_default()) {
-      double radius_val;
-      if (radius_animatable.get_default(&radius_val)) {
-        crate::CrateValue crate_val;
-        value::Value radius_value(radius_val);
-        if (ConvertValue(radius_value, crate_val, err)) {
-          fields.push_back({"radius", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(sphere->radius.get_value(), "radius", fields, err)) return false;
   }
 
   return ExtractGPrimProperties(prim, prim_path, fields, err);
@@ -947,34 +952,11 @@ bool CrateWriter::ExtractCylinderProperties(
     return false;
   }
 
-  // Extract radius
   if (cylinder->radius.authored()) {
-    const Animatable<double>& radius_animatable = cylinder->radius.get_value();
-    if (radius_animatable.has_default()) {
-      double radius_val;
-      if (radius_animatable.get_default(&radius_val)) {
-        crate::CrateValue crate_val;
-        value::Value radius_value(radius_val);
-        if (ConvertValue(radius_value, crate_val, err)) {
-          fields.push_back({"radius", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(cylinder->radius.get_value(), "radius", fields, err)) return false;
   }
-
-  // Extract height
   if (cylinder->height.authored()) {
-    const Animatable<double>& height_animatable = cylinder->height.get_value();
-    if (height_animatable.has_default()) {
-      double height_val;
-      if (height_animatable.get_default(&height_val)) {
-        crate::CrateValue crate_val;
-        value::Value height_value(height_val);
-        if (ConvertValue(height_value, crate_val, err)) {
-          fields.push_back({"height", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(cylinder->height.get_value(), "height", fields, err)) return false;
   }
 
   return ExtractGPrimProperties(prim, prim_path, fields, err);
@@ -992,34 +974,11 @@ bool CrateWriter::ExtractConeProperties(
     return false;
   }
 
-  // Extract radius
   if (cone->radius.authored()) {
-    const Animatable<double>& radius_animatable = cone->radius.get_value();
-    if (radius_animatable.has_default()) {
-      double radius_val;
-      if (radius_animatable.get_default(&radius_val)) {
-        crate::CrateValue crate_val;
-        value::Value radius_value(radius_val);
-        if (ConvertValue(radius_value, crate_val, err)) {
-          fields.push_back({"radius", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(cone->radius.get_value(), "radius", fields, err)) return false;
   }
-
-  // Extract height
   if (cone->height.authored()) {
-    const Animatable<double>& height_animatable = cone->height.get_value();
-    if (height_animatable.has_default()) {
-      double height_val;
-      if (height_animatable.get_default(&height_val)) {
-        crate::CrateValue crate_val;
-        value::Value height_value(height_val);
-        if (ConvertValue(height_value, crate_val, err)) {
-          fields.push_back({"height", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(cone->height.get_value(), "height", fields, err)) return false;
   }
 
   // Extract axis
@@ -1047,34 +1006,11 @@ bool CrateWriter::ExtractCapsuleProperties(
     return false;
   }
 
-  // Extract radius
   if (capsule->radius.authored()) {
-    const Animatable<double>& radius_animatable = capsule->radius.get_value();
-    if (radius_animatable.has_default()) {
-      double radius_val;
-      if (radius_animatable.get_default(&radius_val)) {
-        crate::CrateValue crate_val;
-        value::Value radius_value(radius_val);
-        if (ConvertValue(radius_value, crate_val, err)) {
-          fields.push_back({"radius", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(capsule->radius.get_value(), "radius", fields, err)) return false;
   }
-
-  // Extract height
   if (capsule->height.authored()) {
-    const Animatable<double>& height_animatable = capsule->height.get_value();
-    if (height_animatable.has_default()) {
-      double height_val;
-      if (height_animatable.get_default(&height_val)) {
-        crate::CrateValue crate_val;
-        value::Value height_value(height_val);
-        if (ConvertValue(height_value, crate_val, err)) {
-          fields.push_back({"height", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(capsule->height.get_value(), "height", fields, err)) return false;
   }
 
   // Extract axis
@@ -2040,64 +1976,17 @@ bool CrateWriter::ExtractSphereLightProperties(
     return false;
   }
 
-  // Extract radius
   if (light->radius.has_value()) {
-    const Animatable<float>& radius_anim = light->radius.get_value();
-    if (radius_anim.has_default()) {
-      float radius_val;
-      if (radius_anim.get_default(&radius_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(radius_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"radius", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->radius.get_value(), "radius", fields, err)) return false;
   }
-
-  // Extract intensity
   if (light->intensity.has_value()) {
-    const Animatable<float>& intensity_anim = light->intensity.get_value();
-    if (intensity_anim.has_default()) {
-      float intensity_val;
-      if (intensity_anim.get_default(&intensity_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(intensity_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"intensity", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->intensity.get_value(), "intensity", fields, err)) return false;
   }
-
-  // Extract color
   if (light->color.has_value()) {
-    const Animatable<value::color3f>& color_anim = light->color.get_value();
-    if (color_anim.has_default()) {
-      value::color3f color_val;
-      if (color_anim.get_default(&color_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(color_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"color", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->color.get_value(), "color", fields, err)) return false;
   }
-
-  // Extract exposure
   if (light->exposure.has_value()) {
-    const Animatable<float>& exposure_anim = light->exposure.get_value();
-    if (exposure_anim.has_default()) {
-      float exposure_val;
-      if (exposure_anim.get_default(&exposure_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(exposure_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"exposure", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->exposure.get_value(), "exposure", fields, err)) return false;
   }
 
   return true;
@@ -2114,49 +2003,14 @@ bool CrateWriter::ExtractRectLightProperties(
     return false;
   }
 
-  // Extract width
   if (light->width.has_value()) {
-    const Animatable<float>& width_anim = light->width.get_value();
-    if (width_anim.has_default()) {
-      float width_val;
-      if (width_anim.get_default(&width_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(width_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"width", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->width.get_value(), "width", fields, err)) return false;
   }
-
-  // Extract height
   if (light->height.has_value()) {
-    const Animatable<float>& height_anim = light->height.get_value();
-    if (height_anim.has_default()) {
-      float height_val;
-      if (height_anim.get_default(&height_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(height_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"height", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->height.get_value(), "height", fields, err)) return false;
   }
-
-  // Extract intensity
   if (light->intensity.has_value()) {
-    const Animatable<float>& intensity_anim = light->intensity.get_value();
-    if (intensity_anim.has_default()) {
-      float intensity_val;
-      if (intensity_anim.get_default(&intensity_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(intensity_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"intensity", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->intensity.get_value(), "intensity", fields, err)) return false;
   }
 
   return true;
@@ -2173,34 +2027,11 @@ bool CrateWriter::ExtractDiskLightProperties(
     return false;
   }
 
-  // Extract radius
   if (light->radius.has_value()) {
-    const Animatable<float>& radius_anim = light->radius.get_value();
-    if (radius_anim.has_default()) {
-      float radius_val;
-      if (radius_anim.get_default(&radius_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(radius_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"radius", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->radius.get_value(), "radius", fields, err)) return false;
   }
-
-  // Extract intensity
   if (light->intensity.has_value()) {
-    const Animatable<float>& intensity_anim = light->intensity.get_value();
-    if (intensity_anim.has_default()) {
-      float intensity_val;
-      if (intensity_anim.get_default(&intensity_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(intensity_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"intensity", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->intensity.get_value(), "intensity", fields, err)) return false;
   }
 
   return true;
@@ -2217,49 +2048,14 @@ bool CrateWriter::ExtractCylinderLightProperties(
     return false;
   }
 
-  // Extract radius
   if (light->radius.has_value()) {
-    const Animatable<float>& radius_anim = light->radius.get_value();
-    if (radius_anim.has_default()) {
-      float radius_val;
-      if (radius_anim.get_default(&radius_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(radius_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"radius", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->radius.get_value(), "radius", fields, err)) return false;
   }
-
-  // Extract length
   if (light->length.has_value()) {
-    const Animatable<float>& length_anim = light->length.get_value();
-    if (length_anim.has_default()) {
-      float length_val;
-      if (length_anim.get_default(&length_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(length_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"length", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->length.get_value(), "length", fields, err)) return false;
   }
-
-  // Extract intensity
   if (light->intensity.has_value()) {
-    const Animatable<float>& intensity_anim = light->intensity.get_value();
-    if (intensity_anim.has_default()) {
-      float intensity_val;
-      if (intensity_anim.get_default(&intensity_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(intensity_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"intensity", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->intensity.get_value(), "intensity", fields, err)) return false;
   }
 
   return true;
@@ -2276,34 +2072,11 @@ bool CrateWriter::ExtractDistantLightProperties(
     return false;
   }
 
-  // Extract angle
   if (light->angle.has_value()) {
-    const Animatable<float>& angle_anim = light->angle.get_value();
-    if (angle_anim.has_default()) {
-      float angle_val;
-      if (angle_anim.get_default(&angle_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(angle_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"angle", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->angle.get_value(), "angle", fields, err)) return false;
   }
-
-  // Extract intensity
   if (light->intensity.has_value()) {
-    const Animatable<float>& intensity_anim = light->intensity.get_value();
-    if (intensity_anim.has_default()) {
-      float intensity_val;
-      if (intensity_anim.get_default(&intensity_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(intensity_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"intensity", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->intensity.get_value(), "intensity", fields, err)) return false;
   }
 
   return true;
@@ -2320,7 +2093,7 @@ bool CrateWriter::ExtractDomeLightProperties(
     return false;
   }
 
-  // Extract texture file path if present
+  // Extract texture file path if present (special case: optional<Animatable>)
   if (light->file.has_value()) {
     const auto& file_opt = light->file.get_value();
     if (file_opt) {
@@ -2329,7 +2102,6 @@ bool CrateWriter::ExtractDomeLightProperties(
         value::AssetPath file_val;
         if (file_anim.get_default(&file_val)) {
           crate::CrateValue crate_val;
-          // Store asset path as string
           value::Value val(file_val.GetAssetPath());
           if (ConvertValue(val, crate_val, err)) {
             fields.push_back({"file", crate_val});
@@ -2339,19 +2111,8 @@ bool CrateWriter::ExtractDomeLightProperties(
     }
   }
 
-  // Extract intensity
   if (light->intensity.has_value()) {
-    const Animatable<float>& intensity_anim = light->intensity.get_value();
-    if (intensity_anim.has_default()) {
-      float intensity_val;
-      if (intensity_anim.get_default(&intensity_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(intensity_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"intensity", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->intensity.get_value(), "intensity", fields, err)) return false;
   }
 
   return true;
@@ -2368,53 +2129,15 @@ bool CrateWriter::ExtractGeometryLightProperties(
     return false;
   }
 
-  // Extract intensity (inherited from NonboundableLight)
   if (light->intensity.has_value()) {
-    const Animatable<float>& intensity_anim = light->intensity.get_value();
-    if (intensity_anim.has_default()) {
-      float intensity_val;
-      if (intensity_anim.get_default(&intensity_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(intensity_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"intensity", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->intensity.get_value(), "intensity", fields, err)) return false;
   }
-
-  // Extract color (inherited from NonboundableLight)
   if (light->color.has_value()) {
-    const Animatable<value::color3f>& color_anim = light->color.get_value();
-    if (color_anim.has_default()) {
-      value::color3f color_val;
-      if (color_anim.get_default(&color_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(color_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"color", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->color.get_value(), "color", fields, err)) return false;
   }
-
-  // Extract exposure (inherited from NonboundableLight)
   if (light->exposure.has_value()) {
-    const Animatable<float>& exposure_anim = light->exposure.get_value();
-    if (exposure_anim.has_default()) {
-      float exposure_val;
-      if (exposure_anim.get_default(&exposure_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(exposure_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"exposure", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->exposure.get_value(), "exposure", fields, err)) return false;
   }
-
-  // Note: The geometry relationship is extracted by the generic property system
-  // through the props map on the GeometryLight structure, so we don't need to handle it here.
 
   return true;
 }
@@ -2430,53 +2153,15 @@ bool CrateWriter::ExtractPortalLightProperties(
     return false;
   }
 
-  // Extract intensity (inherited from NonboundableLight)
   if (light->intensity.has_value()) {
-    const Animatable<float>& intensity_anim = light->intensity.get_value();
-    if (intensity_anim.has_default()) {
-      float intensity_val;
-      if (intensity_anim.get_default(&intensity_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(intensity_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"intensity", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->intensity.get_value(), "intensity", fields, err)) return false;
   }
-
-  // Extract color (inherited from NonboundableLight)
   if (light->color.has_value()) {
-    const Animatable<value::color3f>& color_anim = light->color.get_value();
-    if (color_anim.has_default()) {
-      value::color3f color_val;
-      if (color_anim.get_default(&color_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(color_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"color", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->color.get_value(), "color", fields, err)) return false;
   }
-
-  // Extract exposure (inherited from NonboundableLight)
   if (light->exposure.has_value()) {
-    const Animatable<float>& exposure_anim = light->exposure.get_value();
-    if (exposure_anim.has_default()) {
-      float exposure_val;
-      if (exposure_anim.get_default(&exposure_val)) {
-        crate::CrateValue crate_val;
-        value::Value val(exposure_val);
-        if (ConvertValue(val, crate_val, err)) {
-          fields.push_back({"exposure", crate_val});
-        }
-      }
-    }
+    if (!ExtractAnimatableDefault(light->exposure.get_value(), "exposure", fields, err)) return false;
   }
-
-  // Note: The geometry relationship is extracted by the generic property system
-  // through the props map on the PortalLight structure, so we don't need to handle it here.
 
   return true;
 }
