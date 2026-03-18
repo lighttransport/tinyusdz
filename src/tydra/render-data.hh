@@ -3096,7 +3096,15 @@ class RenderSceneConverter {
   // and finding which Skeleton(s) reference each via their skel:animationSource relationship.
   bool ConvertAllSkelAnimations(const RenderSceneConverterEnv &env);
 
-  bool BuildNodeHierarchyImpl(
+  /// Process a single XformNode's data into a Node (no children).
+  bool BuildSingleNode(
+    const RenderSceneConverterEnv &env,
+    const std::string &primPath,
+    const XformNode &node,
+    Node &out_rnode);
+
+  /// Iterative depth-first build of Node hierarchy from XformNode tree.
+  bool BuildNodeHierarchyIterative(
     const RenderSceneConverterEnv &env,
     const std::string &parentPrimPath,
     const XformNode &node,

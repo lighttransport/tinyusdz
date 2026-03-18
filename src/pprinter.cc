@@ -2981,15 +2981,7 @@ template<typename GeomT>
 static std::string print_axis_attr(const GeomT& geom, uint32_t indent) {
   if (!geom.axis.authored()) return {};
   std::stringstream ss;
-  std::string axis;
-  if (geom.axis.get_value() == Axis::X) {
-    axis = "\"X\"";
-  } else if (geom.axis.get_value() == Axis::Y) {
-    axis = "\"Y\"";
-  } else {
-    axis = "\"Z\"";
-  }
-  ss << pprint::Indent(indent) << "uniform token axis = " << axis << "\n";
+  ss << pprint::Indent(indent) << "uniform token axis = \"" << to_string(geom.axis.get_value()) << "\"\n";
   return ss.str();
 }
 
@@ -4229,83 +4221,95 @@ namespace prim {
 std::string print_prim(const Prim &prim, const uint32_t indent) {
   std::stringstream ss;
 
-  // Currently, Prim's elementName is read from name variable in concrete Prim
-  // class(e.g. Xform::name).
-  // TODO: use prim.elementPath for elementName.
-  std::string s = pprint_value(prim.data(), indent, /* closing_brace */ false);
+  // Two-phase iterative DFS: ENTER prints header + variant + children-start,
+  // EXIT prints closing brace.
+  enum Phase { ENTER, EXIT };
+  struct WorkItem {
+    const Prim* prim;
+    uint32_t indent;
+    Phase phase;
+    bool need_newline_before;  // for separating siblings
+  };
 
-  bool require_newline = true;
+  constexpr size_t kMaxIter = 1024 * 1024;
+  std::vector<WorkItem> stack;
+  stack.push_back({&prim, indent, ENTER, false});
+  size_t iter = 0;
 
-  // Check last 2 chars.
-  // if it ends with '{\n', no properties are authored so do not emit blank line
-  // before printing VariantSet or child Prims.
-  if (s.size() > 2) {
-    if ((s[s.size() - 2] == '{') && (s[s.size() - 1] == '\n')) {
-      require_newline = false;
+  while (!stack.empty() && iter++ < kMaxIter) {
+    WorkItem item = std::move(stack.back());
+    stack.pop_back();
+
+    if (item.phase == EXIT) {
+      ss << pprint::Indent(item.indent) << "}\n";
+      continue;
     }
-  }
 
-  ss << s;
-
-  //
-  // print variant
-  // TODO: Use print_variantSetStmt()
-  //
-  if (prim.variantSets().size()) {
-    if (require_newline) {
+    // ENTER phase
+    if (item.need_newline_before) {
       ss << "\n";
     }
 
-    ss << print_variantSetStmt(prim.variantSets(), indent + 1);
+    std::string s = pprint_value(item.prim->data(), item.indent, /* closing_brace */ false);
 
-    // need to add blank line after VariantSet stmt and before child Prims,
-    // so set require_newline true
-    require_newline = true;
-  }
-
-  //
-  // primChildren
-  //
-  if (prim.children().size()) {
-    if (require_newline) {
-      ss << "\n";
-      require_newline = false;
-    }
-    if (prim.metas().primChildren.size() == prim.children().size()) {
-      // Use primChildren info to determine the order of the traversal.
-
-      std::map<std::string, const Prim *> primNameTable;
-      for (size_t i = 0; i < prim.children().size(); i++) {
-        primNameTable.emplace(prim.children()[i].element_name(),
-                              &prim.children()[i]);
-      }
-
-      for (size_t i = 0; i < prim.metas().primChildren.size(); i++) {
-        if (i > 0) {
-          ss << "\n";
-        }
-        value::token nameTok = prim.metas().primChildren[i];
-        DCOUT(fmt::format("primChildren  {}/{} = {}", i,
-                          prim.metas().primChildren.size(), nameTok.str()));
-        const auto it = primNameTable.find(nameTok.str());
-        if (it != primNameTable.end()) {
-          ss << print_prim(*(it->second), indent + 1);
-        } else {
-          // TODO: Report warning?
-        }
-      }
-
-    } else {
-      for (size_t i = 0; i < prim.children().size(); i++) {
-        if (i > 0) {
-          ss << "\n";
-        }
-        ss << print_prim(prim.children()[i], indent + 1);
+    bool require_newline = true;
+    if (s.size() > 2) {
+      if ((s[s.size() - 2] == '{') && (s[s.size() - 1] == '\n')) {
+        require_newline = false;
       }
     }
-  }
+    ss << s;
 
-  ss << pprint::Indent(indent) << "}\n";
+    // print variant
+    if (item.prim->variantSets().size()) {
+      if (require_newline) {
+        ss << "\n";
+      }
+      ss << print_variantSetStmt(item.prim->variantSets(), item.indent + 1);
+      require_newline = true;
+    }
+
+    // Push EXIT for closing brace (will be processed after all children)
+    stack.push_back({item.prim, item.indent, EXIT, false});
+
+    // Collect children in the order they should be printed
+    std::vector<const Prim*> ordered_children;
+    if (item.prim->children().size()) {
+      if (require_newline) {
+        ss << "\n";
+      }
+
+      if (item.prim->metas().primChildren.size() == item.prim->children().size()) {
+        std::map<std::string, const Prim *> primNameTable;
+        for (size_t i = 0; i < item.prim->children().size(); i++) {
+          primNameTable.emplace(item.prim->children()[i].element_name(),
+                                &item.prim->children()[i]);
+        }
+        for (size_t i = 0; i < item.prim->metas().primChildren.size(); i++) {
+          value::token nameTok = item.prim->metas().primChildren[i];
+          DCOUT(fmt::format("primChildren  {}/{} = {}", i,
+                            item.prim->metas().primChildren.size(), nameTok.str()));
+          const auto it = primNameTable.find(nameTok.str());
+          if (it != primNameTable.end()) {
+            ordered_children.push_back(it->second);
+          }
+        }
+      } else {
+        for (size_t i = 0; i < item.prim->children().size(); i++) {
+          ordered_children.push_back(&item.prim->children()[i]);
+        }
+      }
+    }
+
+    // Push children in reverse order (so first child is processed first)
+    for (auto it = ordered_children.rbegin(); it != ordered_children.rend(); ++it) {
+      // Since we're iterating in reverse, the first pushed item is the last child.
+      // The first child (last pushed) should NOT have newline before it.
+      // All others should.
+      bool is_first_child = (it + 1 == ordered_children.rend());
+      stack.push_back({*it, item.indent + 1, ENTER, !is_first_child});
+    }
+  }
 
   return ss.str();
 }
@@ -4313,36 +4317,63 @@ std::string print_prim(const Prim &prim, const uint32_t indent) {
 std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(primspec.specifier()) << " ";
-  if (primspec.typeName().empty() || primspec.typeName() == "Model") {
-    // do not emit typeName
-  } else {
-    ss << primspec.typeName() << " ";
-  }
+  // Two-phase iterative DFS
+  enum Phase { ENTER, EXIT };
+  struct WorkItem {
+    const PrimSpec* primspec;
+    uint32_t indent;
+    Phase phase;
+    bool need_separator;  // blank line before sibling
+  };
 
-  ss << "\"" << primspec.name() << "\"\n";
+  constexpr size_t kMaxIter = 1024 * 1024;
+  std::vector<WorkItem> stack;
+  stack.push_back({&primspec, indent, ENTER, false});
+  size_t iter = 0;
 
-  if (primspec.metas().authored()) {
-    ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(primspec.metas(), indent + 1);
-    ss << pprint::Indent(indent) << ")\n";
-  }
-  ss << pprint::Indent(indent) << "{\n";
+  while (!stack.empty() && iter++ < kMaxIter) {
+    WorkItem item = std::move(stack.back());
+    stack.pop_back();
 
-  ss << print_props(primspec.props(), indent + 1);
-
-  // TODO: print according to primChildren metadatum
-  for (size_t i = 0; i < primspec.children().size(); i++) {
-    if (i > 0) {
-      ss << pprint::Indent(indent) << "\n";
+    if (item.phase == EXIT) {
+      ss << print_variantSetSpecStmt(item.primspec->variantSets(), item.indent + 1);
+      ss << pprint::Indent(item.indent) << "}\n";
+      continue;
     }
-    ss << print_primspec(primspec.children()[i], indent + 1);
+
+    // ENTER phase
+    if (item.need_separator) {
+      ss << pprint::Indent(item.indent) << "\n";
+    }
+
+    ss << pprint::Indent(item.indent) << to_string(item.primspec->specifier()) << " ";
+    if (item.primspec->typeName().empty() || item.primspec->typeName() == "Model") {
+      // do not emit typeName
+    } else {
+      ss << item.primspec->typeName() << " ";
+    }
+
+    ss << "\"" << item.primspec->name() << "\"\n";
+
+    if (item.primspec->metas().authored()) {
+      ss << pprint::Indent(item.indent) << "(\n";
+      ss << print_prim_metas(item.primspec->metas(), item.indent + 1);
+      ss << pprint::Indent(item.indent) << ")\n";
+    }
+    ss << pprint::Indent(item.indent) << "{\n";
+
+    ss << print_props(item.primspec->props(), item.indent + 1);
+
+    // Push EXIT (processed after all children)
+    stack.push_back({item.primspec, item.indent, EXIT, false});
+
+    // Push children in reverse order
+    const auto& children = item.primspec->children();
+    for (size_t i = children.size(); i > 0; --i) {
+      bool need_sep = (i < children.size());  // not the first child
+      stack.push_back({&children[i - 1], item.indent + 1, ENTER, need_sep});
+    }
   }
-
-  // ss << "# variant \n";
-  ss << print_variantSetSpecStmt(primspec.variantSets(), indent + 1);
-
-  ss << pprint::Indent(indent) << "}\n";
 
   return ss.str();
 }
