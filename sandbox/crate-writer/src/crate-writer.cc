@@ -8,6 +8,24 @@
 #include <cstring>
 #include <sstream>
 
+// XXH3 hash (header-only mode, namespaced to avoid collision with zstd's copy)
+#define XXH_INLINE_ALL
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wall"
+#pragma GCC diagnostic ignored "-Wextra"
+#pragma GCC diagnostic ignored "-Wold-style-cast"
+#endif
+#include "../../../src/external/xxhash.h"
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+
 // Phase 4: Compression support
 #include "../../../src/lz4-compression.hh"
 #include "../../../src/integerCoding.h"
@@ -45,6 +63,93 @@ CrateWriter::CrateWriter(const std::string& filepath)
 
 CrateWriter::~CrateWriter() {
   Close();
+}
+
+// ============================================================================
+// NanAwareHash implementation
+// ============================================================================
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wused-but-marked-unused"
+#endif
+size_t CrateWriter::NanAwareHash::hash_buffer(const void *data,
+                                               size_t byte_count,
+                                               size_t element_size,
+                                               bool is_float) {
+  if (!is_float) {
+    // Non-float: hash raw bytes directly with XXH3
+    return static_cast<size_t>(XXH_INLINE_XXH3_64bits(data, byte_count));
+  }
+
+  // Float/double: canonicalize +0/-0 into a temp buffer, then XXH3
+  // (We copy to avoid mutating the caller's data.)
+  std::vector<uint8_t> canon(byte_count);
+  std::memcpy(canon.data(), data, byte_count);
+
+  if (element_size == sizeof(float)) {
+    size_t count = byte_count / sizeof(float);
+    for (size_t i = 0; i < count; ++i) {
+      float v;
+      std::memcpy(&v, canon.data() + i * sizeof(float), sizeof(float));
+      if (v == 0.0f) {
+        uint32_t zero = 0;
+        std::memcpy(canon.data() + i * sizeof(float), &zero, sizeof(float));
+      }
+    }
+  } else { // sizeof(double)
+    size_t count = byte_count / sizeof(double);
+    for (size_t i = 0; i < count; ++i) {
+      double v;
+      std::memcpy(&v, canon.data() + i * sizeof(double), sizeof(double));
+      if (v == 0.0) {
+        uint64_t zero = 0;
+        std::memcpy(canon.data() + i * sizeof(double), &zero, sizeof(double));
+      }
+    }
+  }
+
+  return static_cast<size_t>(XXH_INLINE_XXH3_64bits(canon.data(), byte_count));
+}
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+bool CrateWriter::NanAwareHash::buffers_equal(const void *a, const void *b,
+                                               size_t byte_count,
+                                               size_t element_size,
+                                               bool is_float) {
+  const auto *pa = static_cast<const uint8_t *>(a);
+  const auto *pb = static_cast<const uint8_t *>(b);
+
+  if (is_float && element_size == sizeof(float)) {
+    size_t count = byte_count / sizeof(float);
+    for (size_t i = 0; i < count; ++i) {
+      float va, vb;
+      std::memcpy(&va, pa + i * sizeof(float), sizeof(float));
+      std::memcpy(&vb, pb + i * sizeof(float), sizeof(float));
+      // Canonicalize: +0/-0 both become bits=0, all else compare by bits
+      uint32_t ba = 0, bb = 0;
+      if (va != 0.0f) { std::memcpy(&ba, &va, sizeof(float)); }
+      if (vb != 0.0f) { std::memcpy(&bb, &vb, sizeof(float)); }
+      if (ba != bb) return false;
+    }
+    return true;
+  } else if (is_float && element_size == sizeof(double)) {
+    size_t count = byte_count / sizeof(double);
+    for (size_t i = 0; i < count; ++i) {
+      double va, vb;
+      std::memcpy(&va, pa + i * sizeof(double), sizeof(double));
+      std::memcpy(&vb, pb + i * sizeof(double), sizeof(double));
+      uint64_t ba = 0, bb = 0;
+      if (va != 0.0) { std::memcpy(&ba, &va, sizeof(double)); }
+      if (vb != 0.0) { std::memcpy(&bb, &vb, sizeof(double)); }
+      if (ba != bb) return false;
+    }
+    return true;
+  }
+
+  return std::memcmp(a, b, byte_count) == 0;
 }
 
 // ============================================================================
@@ -2713,15 +2818,19 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       if (options_.enable_deduplication) {
         bool is_dedup_candidate = false;
         std::vector<char> value_bytes;
+        size_t dedup_element_size = 1;  // element stride for NaN-aware hash
+        bool dedup_is_float = false;    // true for float/double element types
 
         // ===== NUMERIC ARRAY TYPES =====
         if (auto* float_arr = crate_value.as<std::vector<float>>()) {
           is_dedup_candidate = true;
+          dedup_element_size = sizeof(float); dedup_is_float = true;
           size_t byte_size = float_arr->size() * sizeof(float);
           value_bytes.resize(byte_size);
           std::memcpy(value_bytes.data(), float_arr->data(), byte_size);
         } else if (auto* double_arr = crate_value.as<std::vector<double>>()) {
           is_dedup_candidate = true;
+          dedup_element_size = sizeof(double); dedup_is_float = true;
           size_t byte_size = double_arr->size() * sizeof(double);
           value_bytes.resize(byte_size);
           std::memcpy(value_bytes.data(), double_arr->data(), byte_size);
@@ -2795,21 +2904,25 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
         // ===== VECTOR ARRAY TYPES =====
         else if (auto* float3_arr = crate_value.as<std::vector<value::float3>>()) {
           is_dedup_candidate = true;
+          dedup_element_size = sizeof(float); dedup_is_float = true;
           size_t byte_size = float3_arr->size() * sizeof(value::float3);
           value_bytes.resize(byte_size);
           std::memcpy(value_bytes.data(), float3_arr->data(), byte_size);
         } else if (auto* double3_arr = crate_value.as<std::vector<value::double3>>()) {
           is_dedup_candidate = true;
+          dedup_element_size = sizeof(double); dedup_is_float = true;
           size_t byte_size = double3_arr->size() * sizeof(value::double3);
           value_bytes.resize(byte_size);
           std::memcpy(value_bytes.data(), double3_arr->data(), byte_size);
         } else if (auto* float2_arr = crate_value.as<std::vector<value::float2>>()) {
           is_dedup_candidate = true;
+          dedup_element_size = sizeof(float); dedup_is_float = true;
           size_t byte_size = float2_arr->size() * sizeof(value::float2);
           value_bytes.resize(byte_size);
           std::memcpy(value_bytes.data(), float2_arr->data(), byte_size);
         } else if (auto* float4_arr = crate_value.as<std::vector<value::float4>>()) {
           is_dedup_candidate = true;
+          dedup_element_size = sizeof(float); dedup_is_float = true;
           size_t byte_size = float4_arr->size() * sizeof(value::float4);
           value_bytes.resize(byte_size);
           std::memcpy(value_bytes.data(), float4_arr->data(), byte_size);
@@ -2817,67 +2930,93 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
         // ===== SCALAR MATRIX TYPES =====
         else if (auto* matrix2d = crate_value.as<value::matrix2d>()) {
           is_dedup_candidate = true;
+          dedup_element_size = sizeof(double); dedup_is_float = true;
           value_bytes.resize(sizeof(value::matrix2d));
           std::memcpy(value_bytes.data(), matrix2d, sizeof(value::matrix2d));
         } else if (auto* matrix3d = crate_value.as<value::matrix3d>()) {
           is_dedup_candidate = true;
+          dedup_element_size = sizeof(double); dedup_is_float = true;
           value_bytes.resize(sizeof(value::matrix3d));
           std::memcpy(value_bytes.data(), matrix3d, sizeof(value::matrix3d));
         } else if (auto* matrix4d = crate_value.as<value::matrix4d>()) {
           is_dedup_candidate = true;
+          dedup_element_size = sizeof(double); dedup_is_float = true;
           value_bytes.resize(sizeof(value::matrix4d));
           std::memcpy(value_bytes.data(), matrix4d, sizeof(value::matrix4d));
         }
         // ===== SCALAR QUATERNION TYPES =====
         else if (auto* quatf = crate_value.as<value::quatf>()) {
           is_dedup_candidate = true;
+          dedup_element_size = sizeof(float); dedup_is_float = true;
           value_bytes.resize(sizeof(value::quatf));
           std::memcpy(value_bytes.data(), quatf, sizeof(value::quatf));
         } else if (auto* quatd = crate_value.as<value::quatd>()) {
           is_dedup_candidate = true;
+          dedup_element_size = sizeof(double); dedup_is_float = true;
           value_bytes.resize(sizeof(value::quatd));
           std::memcpy(value_bytes.data(), quatd, sizeof(value::quatd));
         } else if (auto* quath = crate_value.as<value::quath>()) {
           is_dedup_candidate = true;
+          // half is stored as uint16_t, not IEEE float — use raw byte hash
           value_bytes.resize(sizeof(value::quath));
           std::memcpy(value_bytes.data(), quath, sizeof(value::quath));
         }
         // ===== SCALAR VECTOR TYPES =====
         else if (auto* float3 = crate_value.as<value::float3>()) {
           is_dedup_candidate = true;
+          dedup_element_size = sizeof(float); dedup_is_float = true;
           value_bytes.resize(sizeof(value::float3));
           std::memcpy(value_bytes.data(), float3, sizeof(value::float3));
         } else if (auto* double3 = crate_value.as<value::double3>()) {
           is_dedup_candidate = true;
+          dedup_element_size = sizeof(double); dedup_is_float = true;
           value_bytes.resize(sizeof(value::double3));
           std::memcpy(value_bytes.data(), double3, sizeof(value::double3));
         } else if (auto* float2 = crate_value.as<value::float2>()) {
           is_dedup_candidate = true;
+          dedup_element_size = sizeof(float); dedup_is_float = true;
           value_bytes.resize(sizeof(value::float2));
           std::memcpy(value_bytes.data(), float2, sizeof(value::float2));
         } else if (auto* float4 = crate_value.as<value::float4>()) {
           is_dedup_candidate = true;
+          dedup_element_size = sizeof(float); dedup_is_float = true;
           value_bytes.resize(sizeof(value::float4));
           std::memcpy(value_bytes.data(), float4, sizeof(value::float4));
         } else if (auto* double2 = crate_value.as<value::double2>()) {
           is_dedup_candidate = true;
+          dedup_element_size = sizeof(double); dedup_is_float = true;
           value_bytes.resize(sizeof(value::double2));
           std::memcpy(value_bytes.data(), double2, sizeof(value::double2));
         } else if (auto* double4 = crate_value.as<value::double4>()) {
           is_dedup_candidate = true;
+          dedup_element_size = sizeof(double); dedup_is_float = true;
           value_bytes.resize(sizeof(value::double4));
           std::memcpy(value_bytes.data(), double4, sizeof(value::double4));
         }
 
         if (is_dedup_candidate && !value_bytes.empty()) {
-          // Check dedup cache
-          auto it = array_dedup_map_.find(value_bytes);
-          if (it != array_dedup_map_.end()) {
-            // Found duplicate! Reuse the offset without writing data
-            int64_t cached_offset = it->second;
+          // NaN-aware hash lookup
+          size_t h = NanAwareHash::hash_buffer(
+              value_bytes.data(), value_bytes.size(),
+              dedup_element_size, dedup_is_float);
 
-            // Create ValueRep manually without calling PackValue (which would write data)
-            // Determine type ID and whether it's an array
+          int64_t cached_offset = -1;
+          auto range = value_dedup_map_.equal_range(h);
+          for (auto it = range.first; it != range.second; ++it) {
+            const auto &entry = it->second;
+            if (entry.bytes.size() == value_bytes.size() &&
+                entry.element_size == dedup_element_size &&
+                entry.is_float == dedup_is_float &&
+                NanAwareHash::buffers_equal(
+                    entry.bytes.data(), value_bytes.data(),
+                    value_bytes.size(), dedup_element_size, dedup_is_float)) {
+              cached_offset = entry.offset;
+              break;
+            }
+          }
+
+          if (cached_offset >= 0) {
+            // Found duplicate! Reuse the offset without writing data
             crate::CrateDataTypeId type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID;
             bool is_array = false;
 
@@ -2968,7 +3107,7 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
 
             value_rep.SetType(static_cast<int32_t>(type_id));
             if (is_array) {
-              value_rep.SetIsArray();  // Mark as array
+              value_rep.SetIsArray();
             }
             value_rep.SetPayload(static_cast<uint64_t>(cached_offset));
             dedup_attempted = true;
@@ -2982,11 +3121,13 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
               return -1;
             }
             int64_t new_offset = static_cast<int64_t>(value_rep.GetPayload());
-            array_dedup_map_[value_bytes] = new_offset;
+            value_dedup_map_.emplace(h, ValueDedupEntry{
+                std::move(value_bytes), dedup_element_size,
+                dedup_is_float, new_offset});
             dedup_attempted = true;
 
             std::cerr << "[TimeSamples Dedup] Cached new value at offset " << new_offset
-                      << " for sample " << i << " (" << value_bytes.size() << " bytes)\n";
+                      << " for sample " << i << "\n";
           }
         }
       }

@@ -184,6 +184,7 @@ TEST_LIST = {
   { "crate_writer_validation_disabled_test", crate_writer_validation_disabled_test },
   { "crate_writer_compression_test", crate_writer_compression_test },
   { "crate_writer_specializes_test", crate_writer_specializes_test },
+  { "crate_writer_nan_dedup_test", crate_writer_nan_dedup_test },
   { "stage_get_prim_at_path_test", stage_get_prim_at_path_test },
   { "stage_find_prim_by_id_test", stage_find_prim_by_id_test },
   { "stack_vector_basic_test", stack_vector_basic_test },

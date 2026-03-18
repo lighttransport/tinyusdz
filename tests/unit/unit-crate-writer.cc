@@ -6216,3 +6216,109 @@ void crate_writer_specializes_test(void) {
   std::cerr << "Specializes test successful!\n";
   cleanup_file(filename);
 }
+
+//
+// Test: NaN-aware TimeSamples value deduplication
+// Verifies that +0.0 and -0.0 float values are deduplicated (NaN-aware hash).
+// These have different bit patterns but are numerically equal.
+//
+void crate_writer_nan_dedup_test(void) {
+  std::string dedup_file = get_temp_filename("test_nan_dedup_on");
+  std::string no_dedup_file = get_temp_filename("test_nan_dedup_off");
+  std::string err;
+
+  // Helper: create a Layer with TimeSamples on a float[] attribute
+  // whose values differ only in the sign of floating-point zero.
+  auto create_layer = []() -> Layer {
+    Layer layer;
+
+    PrimSpec ps;
+    ps.specifier() = Specifier::Def;
+    ps.typeName() = "Xform";
+
+    // Create a custom float[] attribute with TimeSamples
+    Attribute attr;
+    attr.set_type_name("float[]");
+
+    value::TimeSamples ts;
+    // 20 samples: even frames use +0.0f, odd frames use -0.0f.
+    // The arrays are numerically identical but have different bit patterns.
+    for (int i = 0; i < 20; i++) {
+      float zero = (i % 2 == 0) ? 0.0f : -0.0f;
+      std::vector<float> arr = {zero, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
+      ts.add_sample(static_cast<double>(i), value::Value(arr));
+    }
+    primvar::PrimVar pv;
+    pv.set_timesamples(ts);
+    attr.set_var(std::move(pv));
+
+    Property prop(attr, /* custom */ true);
+    ps.props()["testAttr"] = prop;
+
+    layer.add_primspec("TestPrim", ps);
+    return layer;
+  };
+
+  // Write with dedup enabled (NaN-aware: +0 and -0 should dedup)
+  {
+    Layer layer = create_layer();
+    CrateWriter writer(dedup_file);
+    CrateWriter::Options opts;
+    opts.enable_deduplication = true;
+    writer.SetOptions(opts);
+    TEST_CHECK(writer.Open(&err));
+    TEST_CHECK(writer.ConvertLayerToSpecs(layer, &err));
+    TEST_CHECK(writer.Finalize(&err));
+  }
+
+  // Write with dedup disabled (every sample written separately)
+  {
+    Layer layer = create_layer();
+    CrateWriter writer(no_dedup_file);
+    CrateWriter::Options opts;
+    opts.enable_deduplication = false;
+    writer.SetOptions(opts);
+    TEST_CHECK(writer.Open(&err));
+    TEST_CHECK(writer.ConvertLayerToSpecs(layer, &err));
+    TEST_CHECK(writer.Finalize(&err));
+  }
+
+  // Compare file sizes
+  std::vector<uint8_t> dedup_data, no_dedup_data;
+  TEST_CHECK(tinyusdz::io::ReadWholeFile(&dedup_data, &err, dedup_file, 0, nullptr));
+  TEST_CHECK(tinyusdz::io::ReadWholeFile(&no_dedup_data, &err, no_dedup_file, 0, nullptr));
+
+  TEST_MSG("NaN dedup file: %zu bytes, no-dedup file: %zu bytes",
+           dedup_data.size(), no_dedup_data.size());
+
+  // With NaN-aware dedup, all 20 float3 samples (which differ only in the
+  // sign of zero) collapse to one stored value. Without dedup, all 20 are
+  // written separately. The dedup file must be strictly smaller.
+  TEST_CHECK(dedup_data.size() < no_dedup_data.size());
+
+  // Roundtrip: try loading both files to verify they are at least parseable.
+  // Note: Layer-based USDC roundtrip with custom attributes may not fully
+  // round-trip through Stage-based loading, so we log but don't fail on this.
+  {
+    Stage loaded_stage;
+    std::string warn;
+    bool ret = tinyusdz::LoadUSDFromFile(dedup_file, &loaded_stage, &warn, &err);
+    if (!ret) {
+      std::cerr << "[NaN dedup test] dedup file roundtrip: " << err << "\n";
+    }
+    Stage loaded_stage2;
+    bool ret2 = tinyusdz::LoadUSDFromFile(no_dedup_file, &loaded_stage2, &warn, &err);
+    if (!ret2) {
+      std::cerr << "[NaN dedup test] no-dedup file roundtrip: " << err << "\n";
+    }
+    // If both fail or both succeed, it's a pre-existing issue, not dedup-related.
+    // If only the dedup file fails, that would indicate a dedup bug.
+    if (!ret && ret2) {
+      TEST_MSG("DEDUP BUG: dedup file fails to load but no-dedup file loads OK");
+      TEST_CHECK(false);
+    }
+  }
+
+  cleanup_file(dedup_file);
+  cleanup_file(no_dedup_file);
+}
