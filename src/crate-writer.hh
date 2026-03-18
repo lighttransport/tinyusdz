@@ -517,6 +517,13 @@ private:
   /// Convert TinyUSDZ value to CrateValue
   bool ConvertValue(const value::Value& val, crate::CrateValue& out, std::string* err);
 
+  /// Extract default value (and time samples if present) from an Animatable<T>
+  /// into FieldValuePairVector.  Reduces the 10-line per-attribute boilerplate
+  /// in Extract*Properties helpers to a single call.
+  template<typename T>
+  bool ExtractAnimatableDefault(const Animatable<T>& anim, const char* name,
+                                crate::FieldValuePairVector& fields, std::string* err);
+
   // ======================================================================
   // Layer/PrimSpec conversion helpers
   // ======================================================================
