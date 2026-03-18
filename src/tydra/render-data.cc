@@ -234,17 +234,10 @@ static NodeCategory GetNodeCategoryFromType(NodeType nodeType) {
   return NodeCategory::Group;  // Default
 }
 
-bool RenderSceneConverter::BuildNodeHierarchyImpl(
-    const RenderSceneConverterEnv &env, const std::string &parentPrimPath,
+bool RenderSceneConverter::BuildSingleNode(
+    const RenderSceneConverterEnv &env, const std::string &primPath,
     const XformNode &node, Node &out_rnode) {
   Node rnode;
-
-  std::string primPath;
-  if (parentPrimPath.empty()) {
-    primPath = "/" + node.element_name;
-  } else {
-    primPath = parentPrimPath + "/" + node.element_name;
-  }
 
   const tinyusdz::Prim *prim = node.prim;
   if (prim) {
@@ -504,16 +497,81 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
     rnode.category = GetNodeCategoryFromType(rnode.nodeType);
   }
 
-  for (const auto &child : node.children) {
-    Node child_rnode;
-    if (!BuildNodeHierarchyImpl(env, primPath, child, child_rnode)) {
+  out_rnode = std::move(rnode);
+
+  return true;
+}
+
+bool RenderSceneConverter::BuildNodeHierarchyIterative(
+    const RenderSceneConverterEnv &env, const std::string &parentPrimPath,
+    const XformNode &root_node, Node &out_rnode) {
+
+  // Use a post-order iterative approach:
+  // 1. Process nodes in DFS order, building a flat list of (node_data, child_count)
+  // 2. Then assemble the tree from leaves up using a result stack.
+
+  struct FlatEntry {
+    Node node;           // node data (without children)
+    size_t child_count;  // number of direct children
+  };
+
+  // Phase 1: DFS to build flat entries in pre-order
+  struct WorkItem {
+    const XformNode* xform_node;
+    std::string parent_path;
+  };
+
+  std::vector<FlatEntry> flat;
+  std::vector<WorkItem> stack;
+  stack.push_back({&root_node, parentPrimPath});
+
+  constexpr size_t kMaxIter = 1024 * 1024;
+  size_t iter = 0;
+
+  while (!stack.empty() && iter++ < kMaxIter) {
+    WorkItem item = std::move(stack.back());
+    stack.pop_back();
+
+    std::string primPath;
+    if (item.parent_path.empty()) {
+      primPath = "/" + item.xform_node->element_name;
+    } else {
+      primPath = item.parent_path + "/" + item.xform_node->element_name;
+    }
+
+    Node rnode;
+    if (!BuildSingleNode(env, primPath, *item.xform_node, rnode)) {
       return false;
     }
 
-    rnode.children.emplace_back(std::move(child_rnode));
+    flat.push_back({std::move(rnode), item.xform_node->children.size()});
+
+    // Push children in reverse order so first child is processed first
+    const auto& children = item.xform_node->children;
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+      stack.push_back({&(*it), primPath});
+    }
   }
 
-  out_rnode = std::move(rnode);
+  // Phase 2: Assemble tree from flat list using a result stack.
+  // flat is in pre-order. We process from the end (leaves first).
+  // Each entry knows its child_count; we pop that many from the result stack.
+  std::vector<Node> result_stack;
+  for (size_t i = flat.size(); i > 0; --i) {
+    auto& entry = flat[i - 1];
+    // The last child_count items on result_stack are this node's children
+    // (in reverse order because we process right-to-left)
+    entry.node.children.resize(entry.child_count);
+    for (size_t c = 0; c < entry.child_count; c++) {
+      entry.node.children[c] = std::move(result_stack.back());
+      result_stack.pop_back();
+    }
+    result_stack.push_back(std::move(entry.node));
+  }
+
+  if (!result_stack.empty()) {
+    out_rnode = std::move(result_stack.back());
+  }
 
   return true;
 }
@@ -528,7 +586,7 @@ bool RenderSceneConverter::BuildNodeHierarchy(
 
   for (const auto &rootNode : root.children) {
     Node root_node;
-    if (!BuildNodeHierarchyImpl(env, /* root */ "", rootNode, root_node)) {
+    if (!BuildNodeHierarchyIterative(env, /* root */ "", rootNode, root_node)) {
       return false;
     }
 
@@ -1309,27 +1367,47 @@ size_t RenderMesh::estimate_memory_usage() const {
   return total;
 }
 
-// Helper to estimate Node tree memory recursively.
+// Helper to estimate Node tree memory iteratively.
 static size_t EstimateNodeMemory(const Node& node) {
-  size_t total = sizeof(Node);
-  total += node.prim_name.capacity();
-  total += node.abs_path.capacity();
-  total += node.display_name.capacity();
-  total += node.children.capacity() * sizeof(Node);
-  for (const auto& child : node.children) {
-    total += EstimateNodeMemory(child) - sizeof(Node); // avoid double-counting
+  size_t total = 0;
+  std::vector<const Node*> stack;
+  stack.push_back(&node);
+  size_t iter = 0;
+  constexpr size_t kMaxIter = 1024 * 1024;
+  while (!stack.empty() && iter++ < kMaxIter) {
+    const Node* n = stack.back();
+    stack.pop_back();
+    total += sizeof(Node);
+    total += n->prim_name.capacity();
+    total += n->abs_path.capacity();
+    total += n->display_name.capacity();
+    total += n->children.capacity() * sizeof(Node);
+    for (auto it = n->children.rbegin(); it != n->children.rend(); ++it) {
+      stack.push_back(&(*it));
+      total -= sizeof(Node); // avoid double-counting (same as recursive version)
+    }
   }
   return total;
 }
 
-// Helper to estimate SkelNode tree memory recursively.
+// Helper to estimate SkelNode tree memory iteratively.
 static size_t EstimateSkelNodeMemory(const SkelNode& node) {
-  size_t total = sizeof(SkelNode);
-  total += node.joint_path.capacity();
-  total += node.joint_name.capacity();
-  total += node.children.capacity() * sizeof(SkelNode);
-  for (const auto& child : node.children) {
-    total += EstimateSkelNodeMemory(child) - sizeof(SkelNode);
+  size_t total = 0;
+  std::vector<const SkelNode*> stack;
+  stack.push_back(&node);
+  size_t iter = 0;
+  constexpr size_t kMaxIter = 1024 * 1024;
+  while (!stack.empty() && iter++ < kMaxIter) {
+    const SkelNode* n = stack.back();
+    stack.pop_back();
+    total += sizeof(SkelNode);
+    total += n->joint_path.capacity();
+    total += n->joint_name.capacity();
+    total += n->children.capacity() * sizeof(SkelNode);
+    for (auto it = n->children.rbegin(); it != n->children.rend(); ++it) {
+      stack.push_back(&(*it));
+      total -= sizeof(SkelNode); // avoid double-counting (same as recursive version)
+    }
   }
   return total;
 }

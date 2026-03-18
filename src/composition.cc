@@ -134,7 +134,6 @@ bool IsBuiltinFileFormat(const std::string &name) {
 }
 
 bool ReplaceRootPrimPathRec(
-  uint32_t depth,
   const Path &srcPrefix,
   const Path &dstPrefix,
   PrimSpec &ps,
@@ -146,45 +145,55 @@ bool ReplaceRootPrimPathRec(
   DCOUT("srcPrefix: " << srcPrefix);
   DCOUT("dstPrefix: " << dstPrefix);
 
-  if (depth > (1024 * 1024 * 128)) {
-    PUSH_ERROR_AND_RETURN("PrimSpec tree too deep.");
-  }
+  constexpr size_t kMaxIter = 1024 * 1024 * 128;
 
-  for (auto &prop : ps.props()) {
+  std::vector<PrimSpec *> stack;
+  stack.push_back(&ps);
+  size_t iter = 0;
 
-    if (prop.second.is_relationship()) {
+  while (!stack.empty()) {
+    if (iter++ > kMaxIter) {
+      PUSH_ERROR_AND_RETURN("PrimSpec tree too deep.");
+    }
 
-      Relationship &rel = prop.second.relationship();
+    PrimSpec *current = stack.back();
+    stack.pop_back();
 
-      if (rel.is_path()) {
-        if (rel.targetPath.has_prefix(srcPrefix)) {
-          rel.targetPath.replace_prefix(srcPrefix, dstPrefix);
+    for (auto &prop : current->props()) {
+
+      if (prop.second.is_relationship()) {
+
+        Relationship &rel = prop.second.relationship();
+
+        if (rel.is_path()) {
+          if (rel.targetPath.has_prefix(srcPrefix)) {
+            rel.targetPath.replace_prefix(srcPrefix, dstPrefix);
+          }
+        } else if (rel.is_pathvector()) {
+
+          for (auto &path : rel.targetPathVector) {
+            if (path.has_prefix(srcPrefix)) {
+              path.replace_prefix(srcPrefix, dstPrefix);
+            }
+          }
         }
-      } else if (rel.is_pathvector()) {
 
-        for (auto &path : rel.targetPathVector) {
-          if (path.has_prefix(srcPrefix)) {
-            path.replace_prefix(srcPrefix, dstPrefix);
+      } else if (prop.second.is_attribute_connection()) {
+
+        Attribute &attr = prop.second.attribute();
+        for (auto &connPath : attr.connections()) {
+          if (connPath.has_prefix(srcPrefix)) {
+            connPath.replace_prefix(srcPrefix, dstPrefix);
           }
         }
       }
 
-    } else if (prop.second.is_attribute_connection()) {
-
-      Attribute &attr = prop.second.attribute();
-      for (auto &connPath : attr.connections()) {
-        if (connPath.has_prefix(srcPrefix)) {
-          connPath.replace_prefix(srcPrefix, dstPrefix);
-        }
-      }
     }
 
-  }
-
-  // Combine child primspecs.
-  for (auto &child : ps.children()) {
-    if (!ReplaceRootPrimPathRec(depth + 1, srcPrefix, dstPrefix, child, warn, err)) {
-      return false;
+    // Push children in reverse order to preserve DFS order.
+    auto &children = current->children();
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+      stack.push_back(&(*it));
     }
   }
 
@@ -192,23 +201,32 @@ bool ReplaceRootPrimPathRec(
 }
 
 // Copy assetresolver state to all PrimSpec in the tree.
-bool PropagateAssetResolverState(uint32_t depth, PrimSpec &ps,
+bool PropagateAssetResolverState(PrimSpec &ps,
                                  const std::string &cwp,
                                  const std::vector<std::string> &search_paths) {
-  if (depth > (1024 * 1024 * 512)) {
-    return false;
-  }
+  constexpr size_t kMaxIter = 1024 * 1024 * 512;
 
-  if (depth == 0) {
-    DCOUT("current_working_path: " << cwp);
-    DCOUT("search_paths: " << search_paths);
-  }
+  DCOUT("current_working_path: " << cwp);
+  DCOUT("search_paths: " << search_paths);
 
-  ps.set_asset_resolution_state(cwp, search_paths);
+  std::vector<PrimSpec *> stack;
+  stack.push_back(&ps);
+  size_t iter = 0;
 
-  for (auto &child : ps.children()) {
-    if (!PropagateAssetResolverState(depth + 1, child, cwp, search_paths)) {
+  while (!stack.empty()) {
+    if (iter++ > kMaxIter) {
       return false;
+    }
+
+    PrimSpec *current = stack.back();
+    stack.pop_back();
+
+    current->set_asset_resolution_state(cwp, search_paths);
+
+    // Push children in reverse order to preserve DFS order.
+    auto &children = current->children();
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+      stack.push_back(&(*it));
     }
   }
 
@@ -429,7 +447,7 @@ bool LoadAsset(AssetResolutionResolver &resolver,
       PUSH_ERROR_AND_RETURN("Internal error: PrimSpec pointer is nullptr.");
     }
 
-    if (!PropagateAssetResolverState(0, *const_cast<PrimSpec *>(src_ps),
+    if (!PropagateAssetResolverState(*const_cast<PrimSpec *>(src_ps),
                                      resolver.current_working_path(),
                                      resolver.search_paths())) {
       PUSH_ERROR_AND_RETURN(
@@ -685,7 +703,7 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
           }
 
           // Replace prim path prefix
-          if (!ReplaceRootPrimPathRec(0, reference.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
+          if (!ReplaceRootPrimPathRec(reference.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
             return false;
           }
 
@@ -752,7 +770,7 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
           }
 
           // Replace prim path prefix
-          if (!ReplaceRootPrimPathRec(0, reference.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
+          if (!ReplaceRootPrimPathRec(reference.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
             return false;
           }
 
@@ -851,7 +869,7 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
           }
 
           // Replace prim path prefix
-          if (!ReplaceRootPrimPathRec(0, pl.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
+          if (!ReplaceRootPrimPathRec(pl.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
             return false;
           }
 
@@ -919,7 +937,7 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
           }
 
           // Replace prim path prefix
-          if (!ReplaceRootPrimPathRec(0, pl.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
+          if (!ReplaceRootPrimPathRec(pl.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
             return false;
           }
 
@@ -1044,29 +1062,39 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
   return true;
 }
 
-bool ExtractReferencesAssetPathsImpl(uint32_t depth, const PrimSpec &primspec, std::vector<std::string> &paths) {
+bool ExtractReferencesAssetPathsImpl(const PrimSpec &primspec, std::vector<std::string> &paths) {
 
-  if (depth > 1024*1024) {
-    return false;
-  }
+  constexpr size_t kMaxIter = 1024 * 1024;
 
-  // Traverse children first.
-  for (auto &child : primspec.children()) {
-    if (!ExtractReferencesAssetPathsImpl(depth + 1, child, paths)) {
+  std::vector<const PrimSpec *> stack;
+  stack.push_back(&primspec);
+  size_t iter = 0;
+
+  while (!stack.empty()) {
+    if (iter++ > kMaxIter) {
       return false;
     }
-  }
 
-  if (primspec.metas().references) {
-    // Iterate over all listops (supports multiple listops per arc)
-    for (const auto &ref_op : primspec.metas().references.value()) {
-      // TODO: qualifier
-      //const ListEditQual &qual = ref_op.first;
-      const auto &refecences = ref_op.second;
+    const PrimSpec *current = stack.back();
+    stack.pop_back();
 
-      for (const auto &reference : refecences) {
-        paths.push_back(reference.asset_path.GetAssetPath());
+    if (current->metas().references) {
+      // Iterate over all listops (supports multiple listops per arc)
+      for (const auto &ref_op : current->metas().references.value()) {
+        // TODO: qualifier
+        //const ListEditQual &qual = ref_op.first;
+        const auto &refecences = ref_op.second;
+
+        for (const auto &reference : refecences) {
+          paths.push_back(reference.asset_path.GetAssetPath());
+        }
       }
+    }
+
+    // Push children in reverse order to preserve DFS order.
+    const auto &children = current->children();
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+      stack.push_back(&(*it));
     }
   }
 
@@ -1082,7 +1110,7 @@ std::vector<std::string> ExtractReferencesAssetPaths(const Layer &layer) {
   std::vector<std::string> paths;
 
   for (const auto &ps : layer.primspecs()) {
-    ExtractReferencesAssetPathsImpl(0, ps.second, paths);
+    ExtractReferencesAssetPathsImpl(ps.second, paths);
   }
 
   return paths;
@@ -1118,29 +1146,39 @@ bool CompositeReferences(AssetResolutionResolver &resolver,
 
 namespace {
 
-bool ExtractPayloadAssetPathsImpl(uint32_t depth, const PrimSpec &primspec, std::vector<std::string> &paths) {
+bool ExtractPayloadAssetPathsImpl(const PrimSpec &primspec, std::vector<std::string> &paths) {
 
-  if (depth > 1024*1024) {
-    return false;
-  }
+  constexpr size_t kMaxIter = 1024 * 1024;
 
-  // Traverse children first.
-  for (auto &child : primspec.children()) {
-    if (!ExtractPayloadAssetPathsImpl(depth + 1, child, paths)) {
+  std::vector<const PrimSpec *> stack;
+  stack.push_back(&primspec);
+  size_t iter = 0;
+
+  while (!stack.empty()) {
+    if (iter++ > kMaxIter) {
       return false;
     }
-  }
 
-  if (primspec.metas().payload) {
-    // Iterate over all listops (supports multiple listops per arc)
-    for (const auto &payload_op : primspec.metas().payload.value()) {
-      // TODO: qualifier
-      //const ListEditQual &qual = payload_op.first;
-      const auto &payload = payload_op.second;
+    const PrimSpec *current = stack.back();
+    stack.pop_back();
 
-      for (const auto &pl : payload) {
-        paths.push_back(pl.asset_path.GetAssetPath());
+    if (current->metas().payload) {
+      // Iterate over all listops (supports multiple listops per arc)
+      for (const auto &payload_op : current->metas().payload.value()) {
+        // TODO: qualifier
+        //const ListEditQual &qual = payload_op.first;
+        const auto &payload = payload_op.second;
+
+        for (const auto &pl : payload) {
+          paths.push_back(pl.asset_path.GetAssetPath());
+        }
       }
+    }
+
+    // Push children in reverse order to preserve DFS order.
+    const auto &children = current->children();
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+      stack.push_back(&(*it));
     }
   }
 
@@ -1156,7 +1194,7 @@ std::vector<std::string> ExtractPayloadAssetPaths(const Layer &layer) {
   std::vector<std::string> paths;
 
   for (const auto &ps : layer.primspecs()) {
-    ExtractPayloadAssetPathsImpl(0, ps.second, paths);
+    ExtractPayloadAssetPathsImpl(ps.second, paths);
   }
 
   return paths;
