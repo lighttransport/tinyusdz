@@ -58,22 +58,13 @@ std::string pquote(const Path &p) {
 
 namespace std {
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Visibility v) {
-  ofs << to_string(v);
-  return ofs;
-}
-
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Extent v) {
-  ofs << to_string(v);
-
-  return ofs;
-}
-
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Interpolation v) {
-  ofs << to_string(v);
-
-  return ofs;
-}
+#define DEFINE_OSTREAM_OP(TYPE) \
+  std::ostream &operator<<(std::ostream &ofs, const tinyusdz::TYPE v) { \
+    ofs << to_string(v); return ofs; }
+DEFINE_OSTREAM_OP(Visibility)
+DEFINE_OSTREAM_OP(Extent)
+DEFINE_OSTREAM_OP(Interpolation)
+#undef DEFINE_OSTREAM_OP
 
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Path &v) {
   ofs << tinyusdz::pquote(v);
@@ -2972,34 +2963,46 @@ std::string to_string(const GeomCube &geom, const uint32_t indent,
   return ss.str();
 }
 
+template<typename PrimT>
+static std::string print_prim_header(const PrimT& prim, const char* type_name, uint32_t indent) {
+  std::stringstream ss;
+  ss << pprint::Indent(indent) << to_string(prim.spec) << " " << type_name << " \""
+     << prim.name << "\"\n";
+  if (prim.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(prim.meta, indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+  return ss.str();
+}
+
+template<typename GeomT>
+static std::string print_axis_attr(const GeomT& geom, uint32_t indent) {
+  if (!geom.axis.authored()) return {};
+  std::stringstream ss;
+  std::string axis;
+  if (geom.axis.get_value() == Axis::X) {
+    axis = "\"X\"";
+  } else if (geom.axis.get_value() == Axis::Y) {
+    axis = "\"Y\"";
+  } else {
+    axis = "\"Z\"";
+  }
+  ss << pprint::Indent(indent) << "uniform token axis = " << axis << "\n";
+  return ss.str();
+}
+
 std::string to_string(const GeomCone &geom, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(geom.spec) << " Cone \""
-     << geom.name << "\"\n";
-  if (geom.meta.authored()) {
-    ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(geom.meta, indent + 1);
-    ss << pprint::Indent(indent) << ")\n";
-  }
-  ss << pprint::Indent(indent) << "{\n";
+  ss << print_prim_header(geom, "Cone", indent);
 
   // members
   ss << print_typed_attr(geom.radius, "radius", indent + 1);
   ss << print_typed_attr(geom.height, "height", indent + 1);
-
-  if (geom.axis.authored()) {
-    std::string axis;
-    if (geom.axis.get_value() == Axis::X) {
-      axis = "\"X\"";
-    } else if (geom.axis.get_value() == Axis::Y) {
-      axis = "\"Y\"";
-    } else {
-      axis = "\"Z\"";
-    }
-    ss << pprint::Indent(indent + 1) << "uniform token axis = " << axis << "\n";
-  }
+  ss << print_axis_attr(geom, indent + 1);
 
   ss << print_gprim_predefined(geom, indent + 1);
   ss << print_props(geom.props, indent + 1);
@@ -3015,30 +3018,12 @@ std::string to_string(const GeomCylinder &geom, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(geom.spec) << " Cylinder \""
-     << geom.name << "\"\n";
-  if (geom.meta.authored()) {
-    ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(geom.meta, indent + 1);
-    ss << pprint::Indent(indent) << ")\n";
-  }
-  ss << pprint::Indent(indent) << "{\n";
+  ss << print_prim_header(geom, "Cylinder", indent);
 
   // members
   ss << print_typed_attr(geom.radius, "radius", indent + 1);
   ss << print_typed_attr(geom.height, "height", indent + 1);
-
-  if (geom.axis.authored()) {
-    std::string axis;
-    if (geom.axis.get_value() == Axis::X) {
-      axis = "\"X\"";
-    } else if (geom.axis.get_value() == Axis::Y) {
-      axis = "\"Y\"";
-    } else {
-      axis = "\"Z\"";
-    }
-    ss << pprint::Indent(indent + 1) << "uniform token axis = " << axis << "\n";
-  }
+  ss << print_axis_attr(geom, indent + 1);
 
   ss << print_gprim_predefined(geom, indent + 1);
 
@@ -3053,30 +3038,12 @@ std::string to_string(const GeomCapsule &geom, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(geom.spec) << " Capsule \""
-     << geom.name << "\"\n";
-  if (geom.meta.authored()) {
-    ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(geom.meta, indent + 1);
-    ss << pprint::Indent(indent) << ")\n";
-  }
-  ss << pprint::Indent(indent) << "{\n";
+  ss << print_prim_header(geom, "Capsule", indent);
 
   // members
   ss << print_typed_attr(geom.radius, "radius", indent + 1);
   ss << print_typed_attr(geom.height, "height", indent + 1);
-
-  if (geom.axis.authored()) {
-    std::string axis;
-    if (geom.axis.get_value() == Axis::X) {
-      axis = "\"X\"";
-    } else if (geom.axis.get_value() == Axis::Y) {
-      axis = "\"Y\"";
-    } else {
-      axis = "\"Z\"";
-    }
-    ss << pprint::Indent(indent + 1) << "uniform token axis = " << axis << "\n";
-  }
+  ss << print_axis_attr(geom, indent + 1);
 
   ss << print_gprim_predefined(geom, indent + 1);
   ss << print_props(geom.props, indent + 1);
@@ -3412,111 +3379,8 @@ static std::string print_common_shader_params(const ShaderNode &shader,
   return ss.str();
 }
 
-static std::string print_shader_params(const UsdPrimvarReader_float &shader,
-                                       const uint32_t indent) {
-  std::stringstream ss;
-
-  ss << print_str_attr(shader.varname, "inputs:varname", indent);
-  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
-  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
-
-  ss << print_common_shader_params(shader, indent);
-
-  return ss.str();
-}
-
-static std::string print_shader_params(const UsdPrimvarReader_float2 &shader,
-                                       const uint32_t indent) {
-  std::stringstream ss;
-
-  ss << print_str_attr(shader.varname, "inputs:varname", indent);
-  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
-  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
-
-  ss << print_common_shader_params(shader, indent);
-
-  return ss.str();
-}
-
-static std::string print_shader_params(const UsdPrimvarReader_float3 &shader,
-                                       const uint32_t indent) {
-  std::stringstream ss;
-
-  ss << print_str_attr(shader.varname, "inputs:varname", indent);
-  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
-  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
-
-  ss << print_common_shader_params(shader, indent);
-
-  return ss.str();
-}
-
-static std::string print_shader_params(const UsdPrimvarReader_float4 &shader,
-                                       const uint32_t indent) {
-  std::stringstream ss;
-
-  ss << print_str_attr(shader.varname, "inputs:varname", indent);
-  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
-  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
-
-  ss << print_common_shader_params(shader, indent);
-
-  return ss.str();
-}
-
-static std::string print_shader_params(const UsdPrimvarReader_string &shader,
-                                       const uint32_t indent) {
-  std::stringstream ss;
-
-  ss << print_str_attr(shader.varname, "inputs:varname", indent);
-  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
-  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
-
-  ss << print_common_shader_params(shader, indent);
-
-  return ss.str();
-}
-
-static std::string print_shader_params(const UsdPrimvarReader_normal &shader,
-                                       const uint32_t indent) {
-  std::stringstream ss;
-
-  ss << print_str_attr(shader.varname, "inputs:varname", indent);
-  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
-  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
-
-  ss << print_common_shader_params(shader, indent);
-
-  return ss.str();
-}
-
-static std::string print_shader_params(const UsdPrimvarReader_vector &shader,
-                                       const uint32_t indent) {
-  std::stringstream ss;
-
-  ss << print_str_attr(shader.varname, "inputs:varname", indent);
-  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
-  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
-
-  ss << print_common_shader_params(shader, indent);
-
-  return ss.str();
-}
-
-static std::string print_shader_params(const UsdPrimvarReader_point &shader,
-                                       const uint32_t indent) {
-  std::stringstream ss;
-
-  ss << print_str_attr(shader.varname, "inputs:varname", indent);
-  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
-  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
-
-  ss << print_common_shader_params(shader, indent);
-
-  return ss.str();
-}
-
-static std::string print_shader_params(const UsdPrimvarReader_matrix &shader,
+template<typename PrimvarReaderT>
+static std::string print_shader_params(const PrimvarReaderT &shader,
                                        const uint32_t indent) {
   std::stringstream ss;
 
@@ -3904,405 +3768,149 @@ std::string to_string(const UsdPrimvarReader_float2 &preader,
   return ss.str();
 }
 
-std::string to_string(const SphereLight &light, const uint32_t indent,
-                      bool closing_brace) {
+template<typename LightT>
+static std::string print_light_common_attrs(const LightT& light, uint32_t indent) {
   std::stringstream ss;
+  ss << print_typed_attr(light.color, "inputs:color", indent);
+  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature", indent);
+  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent);
+  ss << print_typed_attr(light.enableColorTemperature, "inputs:enableColorTemperature", indent);
+  ss << print_typed_attr(light.exposure, "inputs:exposure", indent);
+  ss << print_typed_attr(light.intensity, "inputs:intensity", indent);
+  ss << print_typed_attr(light.normalize, "inputs:normalize", indent);
+  ss << print_typed_attr(light.specular, "inputs:specular", indent);
+  return ss.str();
+}
 
-  ss << pprint::Indent(indent) << to_string(light.spec) << " SphereLight \""
-     << light.name << "\"\n";
-  if (light.meta.authored()) {
-    ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(light.meta, indent + 1);
-    ss << pprint::Indent(indent) << ")\n";
-  }
-  ss << pprint::Indent(indent) << "{\n";
+template<typename LightT>
+static std::string print_light_shadow_attrs(const LightT& light, uint32_t indent) {
+  std::stringstream ss;
+  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent);
+  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent);
+  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent);
+  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent);
+  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent);
+  return ss.str();
+}
 
-  // members
-  ss << print_typed_attr(light.color, "inputs:color", indent + 1);
-  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature",
-                         indent + 1);
-  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent + 1);
-  ss << print_typed_attr(light.enableColorTemperature,
-                         "inputs:enableColorTemperature", indent + 1);
-  ss << print_typed_attr(light.exposure, "inputs:exposure", indent + 1);
-  ss << print_typed_attr(light.intensity, "inputs:intensity", indent + 1);
-  ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
-  ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
+template<typename LightT>
+static std::string print_light_shaping_attrs(const LightT& light, uint32_t indent) {
+  std::stringstream ss;
+  ss << print_typed_attr(light.shapingConeAngle, "inputs:shaping:cone:angle", indent);
+  ss << print_typed_attr(light.shapingConeSoftness, "inputs:shaping:cone:softness", indent);
+  ss << print_typed_attr(light.shapingFocus, "inputs:shaping:focus", indent);
+  ss << print_typed_attr(light.shapingFocusTint, "inputs:shaping:focusTint", indent);
+  return ss.str();
+}
 
-  ss << print_typed_attr(light.radius, "inputs:radius", indent + 1);
-
-  // ShadowAPI attributes
-  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
-  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
-  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
-  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
-  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
-
-  // ShapingAPI attributes
-  ss << print_typed_attr(light.shapingConeAngle, "inputs:shaping:cone:angle", indent + 1);
-  ss << print_typed_attr(light.shapingConeSoftness, "inputs:shaping:cone:softness", indent + 1);
-  ss << print_typed_attr(light.shapingFocus, "inputs:shaping:focus", indent + 1);
-  ss << print_typed_attr(light.shapingFocusTint, "inputs:shaping:focusTint", indent + 1);
-
-  ss << print_typed_attr(light.extent, "extent", indent + 1);
+template<typename LightT>
+static std::string print_light_footer(const LightT& light, uint32_t indent, bool closing_brace) {
+  std::stringstream ss;
   ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
   ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
-
   ss << print_xformOps(light.xformOps, indent + 1);
   ss << print_props(light.props, indent + 1);
-
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
   }
+  return ss.str();
+}
 
+std::string to_string(const SphereLight &light, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+  ss << print_prim_header(light, "SphereLight", indent);
+  ss << print_light_common_attrs(light, indent + 1);
+  ss << print_typed_attr(light.radius, "inputs:radius", indent + 1);
+  ss << print_light_shadow_attrs(light, indent + 1);
+  ss << print_light_shaping_attrs(light, indent + 1);
+  ss << print_typed_attr(light.extent, "extent", indent + 1);
+  ss << print_light_footer(light, indent, closing_brace);
   return ss.str();
 }
 
 std::string to_string(const DistantLight &light, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;
-
-  ss << pprint::Indent(indent) << to_string(light.spec) << " DistantLight \""
-     << light.name << "\"\n";
-  if (light.meta.authored()) {
-    ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(light.meta, indent + 1);
-    ss << pprint::Indent(indent) << ")\n";
-  }
-  ss << pprint::Indent(indent) << "{\n";
-
-  // members
-  ss << print_typed_attr(light.color, "inputs:color", indent + 1);
-  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature",
-                         indent + 1);
-  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent + 1);
-  ss << print_typed_attr(light.enableColorTemperature,
-                         "inputs:enableColorTemperature", indent + 1);
-  ss << print_typed_attr(light.exposure, "inputs:exposure", indent + 1);
-  ss << print_typed_attr(light.intensity, "inputs:intensity", indent + 1);
-  ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
-  ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
-
+  ss << print_prim_header(light, "DistantLight", indent);
+  ss << print_light_common_attrs(light, indent + 1);
   ss << print_typed_attr(light.angle, "inputs:angle", indent + 1);
-
-  // ShadowAPI attributes
-  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
-  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
-  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
-  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
-  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
-
-  //ss << print_typed_attr(light.extent, "extent", indent + 1);
-  ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
-  ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
-
-  ss << print_xformOps(light.xformOps, indent + 1);
-  ss << print_props(light.props, indent + 1);
-
-  if (closing_brace) {
-    ss << pprint::Indent(indent) << "}\n";
-  }
-
+  ss << print_light_shadow_attrs(light, indent + 1);
+  ss << print_light_footer(light, indent, closing_brace);
   return ss.str();
 }
 
 std::string to_string(const CylinderLight &light, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;
-
-  ss << pprint::Indent(indent) << to_string(light.spec) << " CylinderLight \""
-     << light.name << "\"\n";
-  if (light.meta.authored()) {
-    ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(light.meta, indent + 1);
-    ss << pprint::Indent(indent) << ")\n";
-  }
-  ss << pprint::Indent(indent) << "{\n";
-
-  // members
-  ss << print_typed_attr(light.color, "inputs:color", indent + 1);
-  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature",
-                         indent + 1);
-  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent + 1);
-  ss << print_typed_attr(light.enableColorTemperature,
-                         "inputs:enableColorTemperature", indent + 1);
-  ss << print_typed_attr(light.exposure, "inputs:exposure", indent + 1);
-  ss << print_typed_attr(light.intensity, "inputs:intensity", indent + 1);
-  ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
-  ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
-
+  ss << print_prim_header(light, "CylinderLight", indent);
+  ss << print_light_common_attrs(light, indent + 1);
   ss << print_typed_attr(light.length, "inputs:length", indent + 1);
   ss << print_typed_attr(light.radius, "inputs:radius", indent + 1);
-
-  // ShadowAPI attributes
-  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
-  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
-  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
-  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
-  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
-
-  // ShapingAPI attributes
-  ss << print_typed_attr(light.shapingConeAngle, "inputs:shaping:cone:angle", indent + 1);
-  ss << print_typed_attr(light.shapingConeSoftness, "inputs:shaping:cone:softness", indent + 1);
-  ss << print_typed_attr(light.shapingFocus, "inputs:shaping:focus", indent + 1);
-  ss << print_typed_attr(light.shapingFocusTint, "inputs:shaping:focusTint", indent + 1);
-
+  ss << print_light_shadow_attrs(light, indent + 1);
+  ss << print_light_shaping_attrs(light, indent + 1);
   ss << print_typed_attr(light.extent, "extent", indent + 1);
-  ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
-  ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
-
-  ss << print_xformOps(light.xformOps, indent + 1);
-  ss << print_props(light.props, indent + 1);
-
-  if (closing_brace) {
-    ss << pprint::Indent(indent) << "}\n";
-  }
-
+  ss << print_light_footer(light, indent, closing_brace);
   return ss.str();
 }
 
 std::string to_string(const DiskLight &light, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;
-
-  ss << pprint::Indent(indent) << to_string(light.spec) << " DiskLight \""
-     << light.name << "\"\n";
-  if (light.meta.authored()) {
-    ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(light.meta, indent + 1);
-    ss << pprint::Indent(indent) << ")\n";
-  }
-  ss << pprint::Indent(indent) << "{\n";
-
-  // members
-  ss << print_typed_attr(light.color, "inputs:color", indent + 1);
-  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature",
-                         indent + 1);
-  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent + 1);
-  ss << print_typed_attr(light.enableColorTemperature,
-                         "inputs:enableColorTemperature", indent + 1);
-  ss << print_typed_attr(light.exposure, "inputs:exposure", indent + 1);
-  ss << print_typed_attr(light.intensity, "inputs:intensity", indent + 1);
-  ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
-  ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
-
+  ss << print_prim_header(light, "DiskLight", indent);
+  ss << print_light_common_attrs(light, indent + 1);
   ss << print_typed_attr(light.radius, "inputs:radius", indent + 1);
-
-  // ShadowAPI attributes
-  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
-  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
-  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
-  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
-  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
-
-  // ShapingAPI attributes
-  ss << print_typed_attr(light.shapingConeAngle, "inputs:shaping:cone:angle", indent + 1);
-  ss << print_typed_attr(light.shapingConeSoftness, "inputs:shaping:cone:softness", indent + 1);
-  ss << print_typed_attr(light.shapingFocus, "inputs:shaping:focus", indent + 1);
-  ss << print_typed_attr(light.shapingFocusTint, "inputs:shaping:focusTint", indent + 1);
-
+  ss << print_light_shadow_attrs(light, indent + 1);
+  ss << print_light_shaping_attrs(light, indent + 1);
   ss << print_typed_attr(light.extent, "extent", indent + 1);
-  ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
-  ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
-
-  ss << print_xformOps(light.xformOps, indent + 1);
-  ss << print_props(light.props, indent + 1);
-
-  if (closing_brace) {
-    ss << pprint::Indent(indent) << "}\n";
-  }
-
+  ss << print_light_footer(light, indent, closing_brace);
   return ss.str();
 }
 
 std::string to_string(const DomeLight &light, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;
-
-  ss << pprint::Indent(indent) << to_string(light.spec) << " DomeLight \""
-     << light.name << "\"\n";
-  if (light.meta.authored()) {
-    ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(light.meta, indent + 1);
-    ss << pprint::Indent(indent) << ")\n";
-  }
-  ss << pprint::Indent(indent) << "{\n";
-
-  // members
-  ss << print_typed_attr(light.color, "inputs:color", indent + 1);
-  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature",
-                         indent + 1);
-  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent + 1);
-  ss << print_typed_attr(light.enableColorTemperature,
-                         "inputs:enableColorTemperature", indent + 1);
-  ss << print_typed_attr(light.exposure, "inputs:exposure", indent + 1);
-  ss << print_typed_attr(light.intensity, "inputs:intensity", indent + 1);
-  ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
-  ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
-
+  ss << print_prim_header(light, "DomeLight", indent);
+  ss << print_light_common_attrs(light, indent + 1);
   ss << print_typed_attr(light.guideRadius, "guideRadius", indent + 1);
   ss << print_typed_attr(light.file, "inputs:texture:file", indent + 1);
-  ss << print_typed_token_attr(light.textureFormat, "inputs:texture:format",
-                               indent + 1);
-
-  //ss << print_typed_attr(light.extent, "extent", indent + 1);
-  ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
-  ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
-
-  ss << print_xformOps(light.xformOps, indent + 1);
-
-  ss << print_props(light.props, indent + 1);
-
-  if (closing_brace) {
-    ss << pprint::Indent(indent) << "}\n";
-  }
-
+  ss << print_typed_token_attr(light.textureFormat, "inputs:texture:format", indent + 1);
+  ss << print_light_footer(light, indent, closing_brace);
   return ss.str();
 }
 
 std::string to_string(const RectLight &light, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;
-
-  ss << pprint::Indent(indent) << to_string(light.spec) << " RectLight \""
-     << light.name << "\"\n";
-  if (light.meta.authored()) {
-    ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(light.meta, indent + 1);
-    ss << pprint::Indent(indent) << ")\n";
-  }
-  ss << pprint::Indent(indent) << "{\n";
-
-  // members
-  ss << print_typed_attr(light.color, "inputs:color", indent + 1);
-  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature",
-                         indent + 1);
-  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent + 1);
-  ss << print_typed_attr(light.enableColorTemperature,
-                         "inputs:enableColorTemperature", indent + 1);
-  ss << print_typed_attr(light.exposure, "inputs:exposure", indent + 1);
-  ss << print_typed_attr(light.intensity, "inputs:intensity", indent + 1);
-  ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
-  ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
-
+  ss << print_prim_header(light, "RectLight", indent);
+  ss << print_light_common_attrs(light, indent + 1);
   ss << print_typed_attr(light.file, "inputs:texture:file", indent + 1);
   ss << print_typed_attr(light.height, "inputs:height", indent + 1);
   ss << print_typed_attr(light.width, "inputs:width", indent + 1);
-
-  // ShadowAPI attributes
-  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
-  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
-  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
-  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
-  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
-
-  // ShapingAPI attributes
-  ss << print_typed_attr(light.shapingConeAngle, "inputs:shaping:cone:angle", indent + 1);
-  ss << print_typed_attr(light.shapingConeSoftness, "inputs:shaping:cone:softness", indent + 1);
-  ss << print_typed_attr(light.shapingFocus, "inputs:shaping:focus", indent + 1);
-  ss << print_typed_attr(light.shapingFocusTint, "inputs:shaping:focusTint", indent + 1);
-
+  ss << print_light_shadow_attrs(light, indent + 1);
+  ss << print_light_shaping_attrs(light, indent + 1);
   ss << print_typed_attr(light.extent, "extent", indent + 1);
-  ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
-  ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
-
-  ss << print_xformOps(light.xformOps, indent + 1);
-  ss << print_props(light.props, indent + 1);
-
-  if (closing_brace) {
-    ss << pprint::Indent(indent) << "}\n";
-  }
-
+  ss << print_light_footer(light, indent, closing_brace);
   return ss.str();
 }
 
 std::string to_string(const GeometryLight &light, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;
-
-  ss << pprint::Indent(indent) << to_string(light.spec) << " GeometryLight \""
-     << light.name << "\"\n";
-  if (light.meta.authored()) {
-    ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(light.meta, indent + 1);
-    ss << pprint::Indent(indent) << ")\n";
-  }
-  ss << pprint::Indent(indent) << "{\n";
-
-  // members
-  ss << print_typed_attr(light.color, "inputs:color", indent + 1);
-  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature",
-                         indent + 1);
-  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent + 1);
-  ss << print_typed_attr(light.enableColorTemperature,
-                         "inputs:enableColorTemperature", indent + 1);
-  ss << print_typed_attr(light.exposure, "inputs:exposure", indent + 1);
-  ss << print_typed_attr(light.intensity, "inputs:intensity", indent + 1);
-  ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
-  ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
-
-  // ShadowAPI attributes
-  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
-  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
-  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
-  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
-  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
-
-  ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
-  ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
-
-  ss << print_xformOps(light.xformOps, indent + 1);
-  ss << print_props(light.props, indent + 1);
-
-  if (closing_brace) {
-    ss << pprint::Indent(indent) << "}\n";
-  }
-
+  ss << print_prim_header(light, "GeometryLight", indent);
+  ss << print_light_common_attrs(light, indent + 1);
+  ss << print_light_shadow_attrs(light, indent + 1);
+  ss << print_light_footer(light, indent, closing_brace);
   return ss.str();
 }
 
 std::string to_string(const PortalLight &light, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;
-
-  ss << pprint::Indent(indent) << to_string(light.spec) << " PortalLight \""
-     << light.name << "\"\n";
-  if (light.meta.authored()) {
-    ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(light.meta, indent + 1);
-    ss << pprint::Indent(indent) << ")\n";
-  }
-  ss << pprint::Indent(indent) << "{\n";
-
-  // members
-  ss << print_typed_attr(light.color, "inputs:color", indent + 1);
-  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature",
-                         indent + 1);
-  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent + 1);
-  ss << print_typed_attr(light.enableColorTemperature,
-                         "inputs:enableColorTemperature", indent + 1);
-  ss << print_typed_attr(light.exposure, "inputs:exposure", indent + 1);
-  ss << print_typed_attr(light.intensity, "inputs:intensity", indent + 1);
-  ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
-  ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
-
-  // ShadowAPI attributes
-  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
-  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
-  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
-  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
-  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
-
-  ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
-  ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
-
-  ss << print_xformOps(light.xformOps, indent + 1);
-  ss << print_props(light.props, indent + 1);
-
-  if (closing_brace) {
-    ss << pprint::Indent(indent) << "}\n";
-  }
-
+  ss << print_prim_header(light, "PortalLight", indent);
+  ss << print_light_common_attrs(light, indent + 1);
+  ss << print_light_shadow_attrs(light, indent + 1);
+  ss << print_light_footer(light, indent, closing_brace);
   return ss.str();
 }
 
