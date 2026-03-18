@@ -10,6 +10,7 @@
 #include "crate-writer.hh"
 #include <iostream>
 #include <set>
+#include <unordered_set>
 #include "layer.hh"
 #include "common-macros.inc"
 #include "pprinter.hh"  // For to_string(Specifier), to_string(Variability)
@@ -71,6 +72,47 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
 }
 
 }  // namespace
+
+// ============================================================================
+// Shared helpers to reduce per-Extract* lambda duplication
+// ============================================================================
+
+bool CrateWriter::AddArrayAttribute(
+    const std::string& attr_name, const value::Value& val,
+    crate::FieldValuePairVector& fields, std::string* err) {
+  crate::CrateValue crate_val;
+  return ConvertValue(val, crate_val, err) &&
+         (fields.push_back({attr_name, crate_val}), true);
+}
+
+void CrateWriter::AddEnumAttribute(
+    const std::string& attr_name, const std::string& enum_val,
+    crate::FieldValuePairVector& fields) {
+  crate::CrateValue crate_val;
+  value::token tok(enum_val);
+  crate_val.Set(tok);
+  fields.push_back({attr_name, crate_val});
+}
+
+template<typename T>
+bool CrateWriter::AddTypedArrayAttribute(
+    const char* name, const T& typed_attr,
+    crate::FieldValuePairVector& fields) {
+  if (typed_attr.has_value()) {
+    auto val_opt = typed_attr.get_value();
+    if (val_opt) {
+      crate::CrateValue crate_val;
+      value::Value v(*val_opt);
+      std::string conv_err;
+      if (!ConvertValue(v, crate_val, &conv_err)) {
+        DCOUT("WARNING: Skipping unsupported type for " << name << ": " << conv_err);
+        return true;
+      }
+      fields.push_back({name, crate_val});
+    }
+  }
+  return true;
+}
 
 // ============================================================================
 // Main Conversion Entry Point
@@ -204,7 +246,7 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
   // Convert all root prims
   for (const auto& prim : stage.root_prims()) {
     Path parent_path("/", "");
-    if (!ConvertPrimRecursive(prim, parent_path, err)) {
+    if (!ConvertPrimIterative(prim, parent_path, err)) {
       if (err) *err = "Failed to convert prim: " + *err;
       return false;
     }
@@ -214,20 +256,14 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
 }
 
 // ============================================================================
-// Recursive Prim Conversion
+// Per-Prim Conversion (no recursion into children)
 // ============================================================================
 
-bool CrateWriter::ConvertPrimRecursive(
+bool CrateWriter::ConvertSinglePrim(
   const Prim& prim,
   const Path& parent_path,
-  std::string* err,
-  uint32_t depth
+  std::string* err
 ) {
-  if (size_t(depth) > kMaxDefaultTraversalLimit) {
-    if (err) *err = "ConvertPrimRecursive: recursion too deep.";
-    return false;
-  }
-
   // Build absolute path for this prim
   std::string prim_name = prim.element_name();
   std::string parent_str = parent_path.prim_part();
@@ -470,7 +506,7 @@ bool CrateWriter::ConvertPrimRecursive(
   // Skip properties already extracted by type-specific handlers to avoid duplicates.
   if (props_map) {
     // Build set of names already extracted by type-specific handlers
-    std::set<std::string> extracted_names;
+    std::unordered_set<std::string> extracted_names;
     for (const auto& pe : prop_entries) {
       extracted_names.insert(pe.name);
     }
@@ -529,10 +565,54 @@ bool CrateWriter::ConvertPrimRecursive(
     }
   }
 
-  // Recursively process children
-  for (const auto& child : prim.children()) {
-    if (!ConvertPrimRecursive(child, prim_path, err, depth + 1)) {
+  return true;
+}
+
+// ============================================================================
+// Iterative Depth-First Prim Conversion
+// ============================================================================
+
+bool CrateWriter::ConvertPrimIterative(
+  const Prim& root_prim,
+  const Path& parent_path,
+  std::string* err
+) {
+  // Explicit DFS stack: (prim pointer, parent path)
+  struct WorkItem {
+    const Prim* prim;
+    Path parent_path;
+  };
+
+  std::vector<WorkItem> stack;
+  stack.push_back({&root_prim, parent_path});
+
+  while (!stack.empty()) {
+    if (stack.size() > kMaxDefaultTraversalLimit) {
+      if (err) *err = "ConvertPrimIterative: tree too deep.";
       return false;
+    }
+
+    WorkItem item = std::move(stack.back());
+    stack.pop_back();
+
+    if (!ConvertSinglePrim(*item.prim, item.parent_path, err)) {
+      return false;
+    }
+
+    // Build this prim's path for its children
+    std::string parent_str = item.parent_path.prim_part();
+    std::string abs_path_str;
+    if (parent_str == "/") {
+      abs_path_str = "/" + item.prim->element_name();
+    } else {
+      abs_path_str = parent_str + "/" + item.prim->element_name();
+    }
+    Path prim_path(abs_path_str, "");
+
+    // Push children in reverse order so left-most child is processed first
+    const auto& children = item.prim->children();
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+      stack.push_back({&(*it), prim_path});
     }
   }
 
@@ -1221,12 +1301,6 @@ bool CrateWriter::ExtractPointsProperties(
     return false;
   }
 
-  // Helper lambda to convert array values
-  auto add_array_attribute = [&](const std::string& attr_name, const value::Value& val) -> bool {
-    crate::CrateValue crate_val;
-    return ConvertValue(val, crate_val, err) &&
-           (fields.push_back({attr_name, crate_val}), true);
-  };
 
   // Extract points (point3f[]) - TypedAttribute returns optional
   if (points->points.authored()) {
@@ -1237,7 +1311,7 @@ bool CrateWriter::ExtractPointsProperties(
         std::vector<value::point3f> points_val;
         if (points_anim.get_default(&points_val)) {
           value::Value points_value(points_val);
-          if (!add_array_attribute("points", points_value)) {
+          if (!AddArrayAttribute("points", points_value, fields, err)) {
             return false;
           }
         }
@@ -1254,7 +1328,7 @@ bool CrateWriter::ExtractPointsProperties(
         std::vector<float> widths_val;
         if (widths_anim.get_default(&widths_val)) {
           value::Value widths_value(widths_val);
-          if (!add_array_attribute("widths", widths_value)) {
+          if (!AddArrayAttribute("widths", widths_value, fields, err)) {
             return false;
           }
         }
@@ -1274,7 +1348,7 @@ bool CrateWriter::ExtractPointsProperties(
         std::vector<value::normal3f> normals_val;
         if (normals_anim.get_default(&normals_val)) {
           value::Value normals_value(normals_val);
-          if (!add_array_attribute("normals", normals_value)) {
+          if (!AddArrayAttribute("normals", normals_value, fields, err)) {
             return false;
           }
         }
@@ -1291,7 +1365,7 @@ bool CrateWriter::ExtractPointsProperties(
         std::vector<value::vector3f> velocities_val;
         if (velocities_anim.get_default(&velocities_val)) {
           value::Value velocities_value(velocities_val);
-          if (!add_array_attribute("velocities", velocities_value)) {
+          if (!AddArrayAttribute("velocities", velocities_value, fields, err)) {
             return false;
           }
         }
@@ -1308,7 +1382,7 @@ bool CrateWriter::ExtractPointsProperties(
         std::vector<value::vector3f> accelerations_val;
         if (accelerations_anim.get_default(&accelerations_val)) {
           value::Value accelerations_value(accelerations_val);
-          if (!add_array_attribute("accelerations", accelerations_value)) {
+          if (!AddArrayAttribute("accelerations", accelerations_value, fields, err)) {
             return false;
           }
         }
@@ -1463,29 +1537,13 @@ bool CrateWriter::ExtractBasisCurvesProperties(
     return false;
   }
 
-  // Helper lambda to convert enum to token
-  auto add_enum_attribute = [&](const std::string& attr_name, const std::string& enum_val) -> bool {
-    crate::CrateValue crate_val;
-    value::token tok(enum_val);
-    crate_val.Set(tok);
-    fields.push_back({attr_name, crate_val});
-    return true;
-  };
 
-  // Helper lambda to convert array values
-  auto add_array_attribute = [&](const std::string& attr_name, const value::Value& val) -> bool {
-    crate::CrateValue crate_val;
-    return ConvertValue(val, crate_val, err) &&
-           (fields.push_back({attr_name, crate_val}), true);
-  };
 
   // Extract type enum (Cubic/Linear)
   {
     const GeomBasisCurves::Type& type_val = basis_curves->type.get_value();
     std::string type_str = (type_val == GeomBasisCurves::Type::Cubic) ? "cubic" : "linear";
-    if (!add_enum_attribute("type", type_str)) {
-      return false;
-    }
+    AddEnumAttribute("type", type_str, fields);
   }
 
   // Extract basis enum (Bezier/Bspline/CatmullRom)
@@ -1499,9 +1557,7 @@ bool CrateWriter::ExtractBasisCurvesProperties(
     } else {  // CatmullRom
       basis_str = "catmullRom";
     }
-    if (!add_enum_attribute("basis", basis_str)) {
-      return false;
-    }
+    AddEnumAttribute("basis", basis_str, fields);
   }
 
   // Extract wrap enum (Nonperiodic/Periodic/Pinned)
@@ -1515,9 +1571,7 @@ bool CrateWriter::ExtractBasisCurvesProperties(
     } else {  // Pinned
       wrap_str = "pinned";
     }
-    if (!add_enum_attribute("wrap", wrap_str)) {
-      return false;
-    }
+    AddEnumAttribute("wrap", wrap_str, fields);
   }
 
   // Extract points (point3f[]) - TypedAttribute returns optional
@@ -1529,7 +1583,7 @@ bool CrateWriter::ExtractBasisCurvesProperties(
         std::vector<value::point3f> points_val;
         if (points_anim.get_default(&points_val)) {
           value::Value points_value(points_val);
-          if (!add_array_attribute("points", points_value)) {
+          if (!AddArrayAttribute("points", points_value, fields, err)) {
             return false;
           }
         }
@@ -1546,7 +1600,7 @@ bool CrateWriter::ExtractBasisCurvesProperties(
         std::vector<int> counts_val;
         if (counts_anim.get_default(&counts_val)) {
           value::Value counts_value(counts_val);
-          if (!add_array_attribute("curveVertexCounts", counts_value)) {
+          if (!AddArrayAttribute("curveVertexCounts", counts_value, fields, err)) {
             return false;
           }
         }
@@ -1563,7 +1617,7 @@ bool CrateWriter::ExtractBasisCurvesProperties(
         std::vector<float> widths_val;
         if (widths_anim.get_default(&widths_val)) {
           value::Value widths_value(widths_val);
-          if (!add_array_attribute("widths", widths_value)) {
+          if (!AddArrayAttribute("widths", widths_value, fields, err)) {
             return false;
           }
         }
@@ -1580,7 +1634,7 @@ bool CrateWriter::ExtractBasisCurvesProperties(
         std::vector<value::normal3f> normals_val;
         if (normals_anim.get_default(&normals_val)) {
           value::Value normals_value(normals_val);
-          if (!add_array_attribute("normals", normals_value)) {
+          if (!AddArrayAttribute("normals", normals_value, fields, err)) {
             return false;
           }
         }
@@ -1597,7 +1651,7 @@ bool CrateWriter::ExtractBasisCurvesProperties(
         std::vector<value::vector3f> velocities_val;
         if (velocities_anim.get_default(&velocities_val)) {
           value::Value velocities_value(velocities_val);
-          if (!add_array_attribute("velocities", velocities_value)) {
+          if (!AddArrayAttribute("velocities", velocities_value, fields, err)) {
             return false;
           }
         }
@@ -1614,7 +1668,7 @@ bool CrateWriter::ExtractBasisCurvesProperties(
         std::vector<value::vector3f> accelerations_val;
         if (accelerations_anim.get_default(&accelerations_val)) {
           value::Value accelerations_value(accelerations_val);
-          if (!add_array_attribute("accelerations", accelerations_value)) {
+          if (!AddArrayAttribute("accelerations", accelerations_value, fields, err)) {
             return false;
           }
         }
@@ -1637,12 +1691,6 @@ bool CrateWriter::ExtractNurbsCurvesProperties(
     return false;
   }
 
-  // Helper lambda to convert array values
-  auto add_array_attribute = [&](const std::string& attr_name, const value::Value& val) -> bool {
-    crate::CrateValue crate_val;
-    return ConvertValue(val, crate_val, err) &&
-           (fields.push_back({attr_name, crate_val}), true);
-  };
 
   // Extract points (point3f[]) - TypedAttribute returns optional
   if (nurbs_curves->points.authored()) {
@@ -1653,7 +1701,7 @@ bool CrateWriter::ExtractNurbsCurvesProperties(
         std::vector<value::point3f> points_val;
         if (points_anim.get_default(&points_val)) {
           value::Value points_value(points_val);
-          if (!add_array_attribute("points", points_value)) {
+          if (!AddArrayAttribute("points", points_value, fields, err)) {
             return false;
           }
         }
@@ -1670,7 +1718,7 @@ bool CrateWriter::ExtractNurbsCurvesProperties(
         std::vector<int> order_val;
         if (order_anim.get_default(&order_val)) {
           value::Value order_value(order_val);
-          if (!add_array_attribute("order", order_value)) {
+          if (!AddArrayAttribute("order", order_value, fields, err)) {
             return false;
           }
         }
@@ -1687,7 +1735,7 @@ bool CrateWriter::ExtractNurbsCurvesProperties(
         std::vector<double> knots_val;
         if (knots_anim.get_default(&knots_val)) {
           value::Value knots_value(knots_val);
-          if (!add_array_attribute("knots", knots_value)) {
+          if (!AddArrayAttribute("knots", knots_value, fields, err)) {
             return false;
           }
         }
@@ -1704,7 +1752,7 @@ bool CrateWriter::ExtractNurbsCurvesProperties(
         std::vector<value::double2> ranges_val;
         if (ranges_anim.get_default(&ranges_val) && !ranges_val.empty()) {
           value::Value ranges_value(ranges_val);
-          if (!add_array_attribute("ranges", ranges_value)) {
+          if (!AddArrayAttribute("ranges", ranges_value, fields, err)) {
             return false;
           }
         }
@@ -1721,7 +1769,7 @@ bool CrateWriter::ExtractNurbsCurvesProperties(
         std::vector<double> weights_val;
         if (weights_anim.get_default(&weights_val)) {
           value::Value weights_value(weights_val);
-          if (!add_array_attribute("pointWeights", weights_value)) {
+          if (!AddArrayAttribute("pointWeights", weights_value, fields, err)) {
             return false;
           }
         }
@@ -1738,7 +1786,7 @@ bool CrateWriter::ExtractNurbsCurvesProperties(
         std::vector<int> counts_val;
         if (counts_anim.get_default(&counts_val)) {
           value::Value counts_value(counts_val);
-          if (!add_array_attribute("curveVertexCounts", counts_value)) {
+          if (!AddArrayAttribute("curveVertexCounts", counts_value, fields, err)) {
             return false;
           }
         }
@@ -1755,7 +1803,7 @@ bool CrateWriter::ExtractNurbsCurvesProperties(
         std::vector<float> widths_val;
         if (widths_anim.get_default(&widths_val)) {
           value::Value widths_value(widths_val);
-          if (!add_array_attribute("widths", widths_value)) {
+          if (!AddArrayAttribute("widths", widths_value, fields, err)) {
             return false;
           }
         }
@@ -1772,7 +1820,7 @@ bool CrateWriter::ExtractNurbsCurvesProperties(
         std::vector<value::normal3f> normals_val;
         if (normals_anim.get_default(&normals_val)) {
           value::Value normals_value(normals_val);
-          if (!add_array_attribute("normals", normals_value)) {
+          if (!AddArrayAttribute("normals", normals_value, fields, err)) {
             return false;
           }
         }
@@ -1789,7 +1837,7 @@ bool CrateWriter::ExtractNurbsCurvesProperties(
         std::vector<value::vector3f> velocities_val;
         if (velocities_anim.get_default(&velocities_val)) {
           value::Value velocities_value(velocities_val);
-          if (!add_array_attribute("velocities", velocities_value)) {
+          if (!AddArrayAttribute("velocities", velocities_value, fields, err)) {
             return false;
           }
         }
@@ -1806,7 +1854,7 @@ bool CrateWriter::ExtractNurbsCurvesProperties(
         std::vector<value::vector3f> accelerations_val;
         if (accelerations_anim.get_default(&accelerations_val)) {
           value::Value accelerations_value(accelerations_val);
-          if (!add_array_attribute("accelerations", accelerations_value)) {
+          if (!AddArrayAttribute("accelerations", accelerations_value, fields, err)) {
             return false;
           }
         }
@@ -1829,12 +1877,6 @@ bool CrateWriter::ExtractPointInstancerProperties(
     return false;
   }
 
-  // Helper lambda to convert array values
-  auto add_array_attribute = [&](const std::string& attr_name, const value::Value& val) -> bool {
-    crate::CrateValue crate_val;
-    return ConvertValue(val, crate_val, err) &&
-           (fields.push_back({attr_name, crate_val}), true);
-  };
 
   // Extract protoIndices (int32[]) - Indices into prototypes array
   if (instancer->protoIndices.authored()) {
@@ -1845,7 +1887,7 @@ bool CrateWriter::ExtractPointInstancerProperties(
         std::vector<int32_t> indices_val;
         if (indices_anim.get_default(&indices_val)) {
           value::Value indices_value(indices_val);
-          if (!add_array_attribute("protoIndices", indices_value)) {
+          if (!AddArrayAttribute("protoIndices", indices_value, fields, err)) {
             return false;
           }
         }
@@ -1862,7 +1904,7 @@ bool CrateWriter::ExtractPointInstancerProperties(
         std::vector<value::point3f> positions_val;
         if (positions_anim.get_default(&positions_val)) {
           value::Value positions_value(positions_val);
-          if (!add_array_attribute("positions", positions_value)) {
+          if (!AddArrayAttribute("positions", positions_value, fields, err)) {
             return false;
           }
         }
@@ -1879,7 +1921,7 @@ bool CrateWriter::ExtractPointInstancerProperties(
         std::vector<value::float3> scales_val;
         if (scales_anim.get_default(&scales_val)) {
           value::Value scales_value(scales_val);
-          if (!add_array_attribute("scales", scales_value)) {
+          if (!AddArrayAttribute("scales", scales_value, fields, err)) {
             return false;
           }
         }
@@ -1896,7 +1938,7 @@ bool CrateWriter::ExtractPointInstancerProperties(
         std::vector<value::vector3f> velocities_val;
         if (velocities_anim.get_default(&velocities_val)) {
           value::Value velocities_value(velocities_val);
-          if (!add_array_attribute("velocities", velocities_value)) {
+          if (!AddArrayAttribute("velocities", velocities_value, fields, err)) {
             return false;
           }
         }
@@ -1913,7 +1955,7 @@ bool CrateWriter::ExtractPointInstancerProperties(
         std::vector<value::vector3f> accelerations_val;
         if (accelerations_anim.get_default(&accelerations_val)) {
           value::Value accelerations_value(accelerations_val);
-          if (!add_array_attribute("accelerations", accelerations_value)) {
+          if (!AddArrayAttribute("accelerations", accelerations_value, fields, err)) {
             return false;
           }
         }
@@ -1930,7 +1972,7 @@ bool CrateWriter::ExtractPointInstancerProperties(
         std::vector<value::vector3f> ang_vel_val;
         if (ang_vel_anim.get_default(&ang_vel_val)) {
           value::Value ang_vel_value(ang_vel_val);
-          if (!add_array_attribute("angularVelocities", ang_vel_value)) {
+          if (!AddArrayAttribute("angularVelocities", ang_vel_value, fields, err)) {
             return false;
           }
         }
@@ -1947,7 +1989,7 @@ bool CrateWriter::ExtractPointInstancerProperties(
         std::vector<int64_t> ids_val;
         if (ids_anim.get_default(&ids_val)) {
           value::Value ids_value(ids_val);
-          if (!add_array_attribute("ids", ids_value)) {
+          if (!AddArrayAttribute("ids", ids_value, fields, err)) {
             return false;
           }
         }
@@ -1964,7 +2006,7 @@ bool CrateWriter::ExtractPointInstancerProperties(
         std::vector<value::quath> orientations_val;
         if (orientations_anim.get_default(&orientations_val)) {
           value::Value orientations_value(orientations_val);
-          if (!add_array_attribute("orientations", orientations_value)) {
+          if (!AddArrayAttribute("orientations", orientations_value, fields, err)) {
             return false;
           }
         }
@@ -1981,7 +2023,7 @@ bool CrateWriter::ExtractPointInstancerProperties(
         std::vector<int64_t> invisible_val;
         if (invisible_anim.get_default(&invisible_val)) {
           value::Value invisible_value(invisible_val);
-          if (!add_array_attribute("invisibleIds", invisible_value)) {
+          if (!AddArrayAttribute("invisibleIds", invisible_value, fields, err)) {
             return false;
           }
         }
@@ -1994,7 +2036,7 @@ bool CrateWriter::ExtractPointInstancerProperties(
     std::vector<int64_t> inactive_val;
     if (instancer->inactiveIds.get_value(&inactive_val)) {
       value::Value inactive_value(inactive_val);
-      if (!add_array_attribute("inactiveIds", inactive_value)) {
+      if (!AddArrayAttribute("inactiveIds", inactive_value, fields, err)) {
         return false;
       }
     }
@@ -2017,21 +2059,7 @@ bool CrateWriter::ExtractGeomSubsetProperties(
     return false;
   }
 
-  // Helper lambda to convert enum to token
-  auto add_enum_attribute = [&](const std::string& attr_name, const std::string& enum_val) -> bool {
-    crate::CrateValue crate_val;
-    value::token tok(enum_val);
-    crate_val.Set(tok);
-    fields.push_back({attr_name, crate_val});
-    return true;
-  };
 
-  // Helper lambda to convert array values
-  auto add_array_attribute = [&](const std::string& attr_name, const value::Value& val) -> bool {
-    crate::CrateValue crate_val;
-    return ConvertValue(val, crate_val, err) &&
-           (fields.push_back({attr_name, crate_val}), true);
-  };
 
   // Extract elementType enum (Face/Point/Edge/Tetrahedron)
   {
@@ -2043,9 +2071,7 @@ bool CrateWriter::ExtractGeomSubsetProperties(
       case GeomSubset::ElementType::Edge: elem_str = "edge"; break;
       case GeomSubset::ElementType::Tetrahedron: elem_str = "tetrahedron"; break;
     }
-    if (!add_enum_attribute("elementType", elem_str)) {
-      return false;
-    }
+    AddEnumAttribute("elementType", elem_str, fields);
   }
 
   // Extract familyName token if authored
@@ -2068,7 +2094,7 @@ bool CrateWriter::ExtractGeomSubsetProperties(
         std::vector<int32_t> indices_val;
         if (indices_anim.get_default(&indices_val)) {
           value::Value indices_value(indices_val);
-          if (!add_array_attribute("indices", indices_value)) {
+          if (!AddArrayAttribute("indices", indices_value, fields, err)) {
             return false;
           }
         }
@@ -2095,19 +2121,13 @@ bool CrateWriter::ExtractBlendShapeProperties(
     return false;
   }
 
-  // Helper lambda to convert array values
-  auto add_array_attribute = [&](const std::string& attr_name, const value::Value& val) -> bool {
-    crate::CrateValue crate_val;
-    return ConvertValue(val, crate_val, err) &&
-           (fields.push_back({attr_name, crate_val}), true);
-  };
 
   // Extract offsets (vector3f[]) - Position deltas for each vertex
   if (blend_shape->offsets.has_value()) {
     auto offsets_val = blend_shape->offsets.get_value();
     if (offsets_val) {
       value::Value offsets_value(*offsets_val);
-      if (!add_array_attribute("offsets", offsets_value)) {
+      if (!AddArrayAttribute("offsets", offsets_value, fields, err)) {
         return false;
       }
     }
@@ -2118,7 +2138,7 @@ bool CrateWriter::ExtractBlendShapeProperties(
     auto normal_offsets_val = blend_shape->normalOffsets.get_value();
     if (normal_offsets_val) {
       value::Value normal_offsets_value(*normal_offsets_val);
-      if (!add_array_attribute("normalOffsets", normal_offsets_value)) {
+      if (!AddArrayAttribute("normalOffsets", normal_offsets_value, fields, err)) {
         return false;
       }
     }
@@ -2129,7 +2149,7 @@ bool CrateWriter::ExtractBlendShapeProperties(
     auto point_indices_val = blend_shape->pointIndices.get_value();
     if (point_indices_val) {
       value::Value point_indices_value(*point_indices_val);
-      if (!add_array_attribute("pointIndices", point_indices_value)) {
+      if (!AddArrayAttribute("pointIndices", point_indices_value, fields, err)) {
         return false;
       }
     }
@@ -2367,29 +2387,11 @@ bool CrateWriter::ExtractSkeletonProperties(
   // Extract xformOps from the Xformable base class
   ExtractXformOpsFromXformable(prim, prim_path, fields, err);
 
-  auto add_typed_array = [&](const char* name, const auto& typed_attr) -> bool {
-    if (typed_attr.has_value()) {
-      auto val_opt = typed_attr.get_value();
-      if (val_opt) {
-        crate::CrateValue crate_val;
-        value::Value v(*val_opt);
-        std::string conv_err;
-        if (!ConvertValue(v, crate_val, &conv_err)) {
-          // Skip unsupported types (e.g., matrix4d[]) rather than failing
-          DCOUT("WARNING: Skipping unsupported type for " << name << ": " << conv_err);
-          return true;
-        }
-        fields.push_back({name, crate_val});
-      }
-    }
-    return true;
-  };
-
   // joints (uniform token[])
-  if (!add_typed_array("joints", skel->joints)) return false;
+  if (!AddTypedArrayAttribute("joints", skel->joints, fields)) return false;
 
   // jointNames (uniform token[])
-  if (!add_typed_array("jointNames", skel->jointNames)) return false;
+  if (!AddTypedArrayAttribute("jointNames", skel->jointNames, fields)) return false;
 
   // TODO: bindTransforms and restTransforms are matrix4d[] which WriteValueData
   // doesn't support yet. They will be available via the props map if stored there.
@@ -2434,53 +2436,46 @@ bool CrateWriter::ExtractSkelAnimationProperties(
     return false;
   }
 
-  auto add_typed_array = [&](const char* name, const auto& typed_attr) -> bool {
-    if (typed_attr.has_value()) {
-      auto val_opt = typed_attr.get_value();
-      if (val_opt) {
-        crate::CrateValue crate_val;
-        value::Value v(*val_opt);
-        std::string conv_err;
-        if (!ConvertValue(v, crate_val, &conv_err)) {
-          DCOUT("WARNING: Skipping unsupported type for " << name << ": " << conv_err);
-          return true;
-        }
-        fields.push_back({name, crate_val});
-      }
-    }
-    return true;
-  };
-
-  // Helper for Animatable types that may contain unsupported value types
-  auto extract_animatable_safe = [&](const char* name, const auto& typed_attr) -> bool {
-    if (typed_attr.has_value()) {
-      auto opt = typed_attr.get_value();
-      if (opt) {
-        std::string conv_err;
-        if (!ExtractAnimatableDefault(*opt, name, fields, &conv_err)) {
-          DCOUT("WARNING: Skipping unsupported Animatable type for " << name << ": " << conv_err);
-        }
-      }
-    }
-    return true;
-  };
-
   // joints (uniform token[])
-  if (!add_typed_array("joints", anim->joints)) return false;
+  if (!AddTypedArrayAttribute("joints", anim->joints, fields)) return false;
 
   // blendShapes (uniform token[])
-  if (!add_typed_array("blendShapes", anim->blendShapes)) return false;
+  if (!AddTypedArrayAttribute("blendShapes", anim->blendShapes, fields)) return false;
 
   // rotations (quatf[], Animatable)
-  extract_animatable_safe("rotations", anim->rotations);
+  if (anim->rotations.has_value()) {
+    auto opt = anim->rotations.get_value();
+    if (opt) {
+      std::string conv_err;
+      if (!ExtractAnimatableDefault(*opt, "rotations", fields, &conv_err)) {
+        DCOUT("WARNING: Skipping unsupported Animatable type for rotations: " << conv_err);
+      }
+    }
+  }
 
   // translations (float3[], Animatable)
-  extract_animatable_safe("translations", anim->translations);
+  if (anim->translations.has_value()) {
+    auto opt = anim->translations.get_value();
+    if (opt) {
+      std::string conv_err;
+      if (!ExtractAnimatableDefault(*opt, "translations", fields, &conv_err)) {
+        DCOUT("WARNING: Skipping unsupported Animatable type for translations: " << conv_err);
+      }
+    }
+  }
 
   // TODO: scales (half3[]) is not yet supported by WriteValueData.
 
   // blendShapeWeights (float[], Animatable)
-  extract_animatable_safe("blendShapeWeights", anim->blendShapeWeights);
+  if (anim->blendShapeWeights.has_value()) {
+    auto opt = anim->blendShapeWeights.get_value();
+    if (opt) {
+      std::string conv_err;
+      if (!ExtractAnimatableDefault(*opt, "blendShapeWeights", fields, &conv_err)) {
+        DCOUT("WARNING: Skipping unsupported Animatable type for blendShapeWeights: " << conv_err);
+      }
+    }
+  }
 
   return true;
 }
@@ -4586,7 +4581,7 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
     // Each top-level primspec is a direct child of root
     Path root_path = Path();  // Root path
 
-    if (!ConvertPrimSpecRecursive(primspec, root_path, err)) {
+    if (!ConvertPrimSpecIterative(primspec, root_path, err)) {
       if (err) *err = "Failed to convert primspec: " + prim_name + ". Error: " + (*err);
       return false;
     }
@@ -4603,16 +4598,10 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
   return true;
 }
 
-bool CrateWriter::ConvertPrimSpecRecursive(
+bool CrateWriter::ConvertSinglePrimSpec(
     const PrimSpec& primspec,
     const Path& parent_path,
-    std::string* err,
-    uint32_t depth) {
-
-  if (size_t(depth) > kMaxDefaultTraversalLimit) {
-    if (err) *err = "ConvertPrimSpecRecursive: recursion too deep.";
-    return false;
-  }
+    std::string* err) {
 
   // 1. Build path for this prim
   Path prim_path = parent_path.AppendPrim(primspec.name());
@@ -4995,10 +4984,46 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     return false;
   }
 
-  // 6. Recursively process children
-  for (const PrimSpec& child : primspec.children()) {
-    if (!ConvertPrimSpecRecursive(child, prim_path, err, depth + 1)) {
+  return true;
+}
+
+// ============================================================================
+// Iterative Depth-First PrimSpec Conversion
+// ============================================================================
+
+bool CrateWriter::ConvertPrimSpecIterative(
+    const PrimSpec& root_primspec,
+    const Path& parent_path,
+    std::string* err) {
+
+  struct WorkItem {
+    const PrimSpec* primspec;
+    Path parent_path;
+  };
+
+  std::vector<WorkItem> stack;
+  stack.push_back({&root_primspec, parent_path});
+
+  while (!stack.empty()) {
+    if (stack.size() > kMaxDefaultTraversalLimit) {
+      if (err) *err = "ConvertPrimSpecIterative: tree too deep.";
       return false;
+    }
+
+    WorkItem item = std::move(stack.back());
+    stack.pop_back();
+
+    if (!ConvertSinglePrimSpec(*item.primspec, item.parent_path, err)) {
+      return false;
+    }
+
+    // Build this prim's path for its children
+    Path prim_path = item.parent_path.AppendPrim(item.primspec->name());
+
+    // Push children in reverse order so left-most child is processed first
+    const auto& children = item.primspec->children();
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+      stack.push_back({&(*it), prim_path});
     }
   }
 
@@ -5463,7 +5488,7 @@ bool CrateWriter::ConvertVariantToFields(
               << " prim children for variant: " << variant_name);
     for (const auto& child_prim : child_prims) {
       // Recursively convert each prim child (they inherit the variant path context)
-      if (!ConvertPrimRecursive(child_prim, v_path, err)) {
+      if (!ConvertPrimIterative(child_prim, v_path, err)) {
         if (err) *err = "Failed to convert variant prim child: " + child_prim.element_name() + ": " + *err;
         return false;
       }

@@ -73,84 +73,88 @@ bool EvaluateAttributeImpl(
     std::string *err, std::set<std::string> &visited_paths, const double t,
     const tinyusdz::value::TimeSampleInterpolationType tinterp) {
 
-  DCOUT("Prim : " << prim.element_path().element_name() << "("
-                  << prim.type_name() << ") attr_name " << attr_name);
+  // Iterative connection-following loop (replaces tail recursion)
+  const Prim *current_prim = &prim;
+  std::string current_attr_name = attr_name;
+  constexpr size_t kMaxConnectionChain = 1024;
 
-  Property prop;
-  if (!GetProperty(prim, attr_name, &prop, err)) {
-    DCOUT("Get property failed: " << attr_name);
-    return false;
-  }
+  for (size_t iter = 0; iter < kMaxConnectionChain; ++iter) {
+    DCOUT("Prim : " << current_prim->element_path().element_name() << "("
+                    << current_prim->type_name() << ") attr_name " << current_attr_name);
 
-  // Evaluation order
-  // - attribute(default value, timeSampled value)
-  // - connection
-
-  if (prop.is_attribute_connection()) {
-    // Follow connection target Path(singple targetPath only).
-    std::vector<Path> pv = prop.get_attribute().connections();
-    Path target;
-    if (!detail::ResolveSingleConnectionTargetPath(pv, attr_name, &target,
-                                                   err)) {
+    Property prop;
+    if (!GetProperty(*current_prim, current_attr_name, &prop, err)) {
+      DCOUT("Get property failed: " << current_attr_name);
       return false;
     }
 
-    std::string targetPrimPath = target.prim_part();
-    std::string targetPrimPropName = target.prop_part();
-    DCOUT("connection targetPath : " << target << "(Prim: " << targetPrimPath
-                                     << ", Prop: " << targetPrimPropName
-                                     << ")");
-
-    auto targetPrimRet =
-        stage.GetPrimAtPath(Path(targetPrimPath, /* prop */ ""));
-    if (targetPrimRet) {
-      // Follow the connetion
-      const Prim *targetPrim = targetPrimRet.value();
-
-      std::string abs_path = target.full_path_name();
-
-      if (visited_paths.count(abs_path)) {
-        PUSH_ERROR_AND_RETURN(fmt::format(
-            "Circular referencing detected. connectionTargetPath = {}",
-            to_string(target)));
+    if (prop.is_attribute_connection()) {
+      // Follow connection target Path(single targetPath only).
+      std::vector<Path> pv = prop.get_attribute().connections();
+      Path target;
+      if (!detail::ResolveSingleConnectionTargetPath(pv, current_attr_name, &target,
+                                                     err)) {
+        return false;
       }
-      visited_paths.insert(abs_path);
 
-      return EvaluateAttributeImpl(stage, *targetPrim, targetPrimPropName,
-                                   value, err, visited_paths, t, tinterp);
+      std::string targetPrimPath = target.prim_part();
+      std::string targetPrimPropName = target.prop_part();
+      DCOUT("connection targetPath : " << target << "(Prim: " << targetPrimPath
+                                       << ", Prop: " << targetPrimPropName
+                                       << ")");
 
-    } else {
-      PUSH_ERROR_AND_RETURN(targetPrimRet.error());
-      return false;
-    }
-  } else if (prop.is_attribute()) {
-    DCOUT("IsAttrib");
+      auto targetPrimRet =
+          stage.GetPrimAtPath(Path(targetPrimPath, /* prop */ ""));
+      if (targetPrimRet) {
+        std::string abs_path = target.full_path_name();
 
-    const Attribute &attr = prop.get_attribute();
+        if (visited_paths.count(abs_path)) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "Circular referencing detected. connectionTargetPath = {}",
+              to_string(target)));
+        }
+        visited_paths.insert(abs_path);
 
-    if (attr.is_blocked()) {
+        // Continue loop with the target prim/attr (iterative tail call)
+        current_prim = targetPrimRet.value();
+        current_attr_name = targetPrimPropName;
+        continue;
+
+      } else {
+        PUSH_ERROR_AND_RETURN(targetPrimRet.error());
+        return false;
+      }
+    } else if (prop.is_attribute()) {
+      DCOUT("IsAttrib");
+
+      const Attribute &attr = prop.get_attribute();
+
+      if (attr.is_blocked()) {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("Attribute `{}` is ValueBlocked(None).", current_attr_name));
+      }
+
+      if (!ToTerminalAttributeValue(attr, value, err, t, tinterp)) {
+        return false;
+      }
+
+      return true;
+
+    } else if (prop.is_relationship()) {
       PUSH_ERROR_AND_RETURN(
-          fmt::format("Attribute `{}` is ValueBlocked(None).", attr_name));
+          fmt::format("Property `{}` is a Relation.", current_attr_name));
+    } else if (prop.is_empty()) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "Attribute `{}` is a define-only attribute(no value assigned).",
+          current_attr_name));
+    } else {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("[InternalError] Invalid Attribute `{}`.", current_attr_name));
     }
-
-    if (!ToTerminalAttributeValue(attr, value, err, t, tinterp)) {
-      return false;
-    }
-
-  } else if (prop.is_relationship()) {
-    PUSH_ERROR_AND_RETURN(
-        fmt::format("Property `{}` is a Relation.", attr_name));
-  } else if (prop.is_empty()) {
-    PUSH_ERROR_AND_RETURN(fmt::format(
-        "Attribute `{}` is a define-only attribute(no value assigned).",
-        attr_name));
-  } else {
-    // ???
-    PUSH_ERROR_AND_RETURN(
-        fmt::format("[InternalError] Invalid Attribute `{}`.", attr_name));
   }
 
-  return true;
+  PUSH_ERROR_AND_RETURN("Connection chain too long (possible cycle).");
+  return false;
 }
 
 bool EvaluateAttributeImpl(
@@ -160,7 +164,7 @@ bool EvaluateAttributeImpl(
     const tinyusdz::value::TimeSampleInterpolationType tinterp) {
 
   if (attr.is_connection()) {
-    // Follow connection target Path(singple targetPath only).
+    // Follow connection target Path(single targetPath only).
     std::vector<Path> pv = attr.connections();
     Path target;
     if (!detail::ResolveSingleConnectionTargetPath(pv, attr_name, &target,
@@ -177,7 +181,6 @@ bool EvaluateAttributeImpl(
     auto targetPrimRet =
         stage.GetPrimAtPath(Path(targetPrimPath, /* prop */ ""));
     if (targetPrimRet) {
-      // Follow the connetion
       const Prim *targetPrim = targetPrimRet.value();
 
       std::string abs_path = target.full_path_name();
@@ -189,6 +192,7 @@ bool EvaluateAttributeImpl(
       }
       visited_paths.insert(abs_path);
 
+      // Delegate to the iterative Prim-based overload
       return EvaluateAttributeImpl(stage, *targetPrim, targetPrimPropName,
                                    value, err, visited_paths, t, tinterp);
 
