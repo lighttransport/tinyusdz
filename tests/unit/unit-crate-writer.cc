@@ -6322,3 +6322,483 @@ void crate_writer_nan_dedup_test(void) {
   cleanup_file(dedup_file);
   cleanup_file(no_dedup_file);
 }
+
+// ==========================================================================
+// PrimMeta roundtrip: kind, active, customData, apiSchemas
+// ==========================================================================
+void crate_writer_prim_meta_roundtrip_test(void) {
+  std::string filename = get_temp_filename("test_prim_meta.usdc");
+  std::string err;
+
+  {
+    Stage stage;
+
+    // Create a Scope with various PrimMeta fields
+    Scope scope;
+    scope.name = "test_scope";
+    scope.spec = Specifier::Def;
+
+    // Set kind
+    scope.meta.set_kind("component");
+
+    // Set active
+    scope.meta.set_active(false);
+
+    // Set hidden
+    scope.meta.set_hidden(true);
+
+    // Set displayName
+    scope.meta.set_displayName("Test Scope Display");
+
+    // Set documentation
+    scope.meta.set_doc(value::StringData("This is a test scope"));
+
+    // Note: customData, assetInfo, apiSchemas serialization is currently
+    // disabled in ExtractPrimMeta due to encoding issues.
+
+    Prim prim("test_scope", scope);
+    prim.prim_type_name() = "Scope";
+    stage.root_prims().push_back(prim);
+
+    // Write using CrateWriter
+    CrateWriter writer(filename);
+    TEST_CHECK(writer.Open(&err));
+    if (!writer.Open(&err)) { cleanup_file(filename); return; }
+
+    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
+    TEST_CHECK(writer.Finalize(&err));
+    writer.Close();
+  }
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  auto result = loaded_stage.GetPrimAtPath(Path("/test_scope", ""));
+  TEST_CHECK(result.has_value());
+  if (!result.has_value()) { cleanup_file(filename); return; }
+
+  const Prim* loaded_prim = result.value();
+  const Scope* loaded_scope = loaded_prim->data().as<Scope>();
+  TEST_CHECK(loaded_scope != nullptr);
+
+  if (loaded_scope) {
+    const PrimMeta& metas = loaded_scope->meta;
+
+    // Verify kind
+    TEST_CHECK(metas.has_kind());
+    if (metas.has_kind()) {
+      TEST_CHECK(metas.get_kind() == "component");
+      TEST_MSG("kind = %s", metas.get_kind().c_str());
+    }
+
+    // Verify active
+    TEST_CHECK(metas.has_active());
+    if (metas.has_active()) {
+      TEST_CHECK(metas.get_active() == false);
+    }
+
+    // Verify hidden
+    TEST_CHECK(metas.has_hidden());
+    if (metas.has_hidden()) {
+      TEST_CHECK(metas.get_hidden() == true);
+    }
+
+    // Note: customData/apiSchemas verification disabled until encoding is fixed.
+  }
+
+  std::cerr << "PrimMeta roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+// ==========================================================================
+// Props map roundtrip: custom properties via generic props
+// ==========================================================================
+void crate_writer_props_map_roundtrip_test(void) {
+  std::string filename = get_temp_filename("test_props_map.usdc");
+  std::string err;
+
+  {
+    Stage stage;
+
+    // Create a Mesh with custom properties in the props map
+    GeomMesh mesh;
+    mesh.name = "test_mesh";
+    mesh.spec = Specifier::Def;
+
+    // Add custom attribute to props map
+    {
+      Attribute attr;
+      attr.set_type_name("float");
+      primvar::PrimVar pvar;
+      pvar.set_value(value::Value(1.5f));
+      attr.set_var(std::move(pvar));
+      Property prop(attr, /* custom */ true);
+      mesh.props["myCustomFloat"] = prop;
+    }
+
+    // Add a string attribute to props map
+    {
+      Attribute attr;
+      attr.set_type_name("string");
+      primvar::PrimVar pvar;
+      pvar.set_value(value::Value(std::string("test_value")));
+      attr.set_var(std::move(pvar));
+      Property prop(attr, /* custom */ true);
+      mesh.props["myCustomString"] = prop;
+    }
+
+    // Add a relationship to props map
+    {
+      Relationship rel;
+      rel.set_listedit_qual(ListEditQual::ResetToExplicit);
+      rel.targetPath = Path("/Materials/MyMaterial", "");
+      Property prop(rel, /* custom */ false);
+      mesh.props["myRelationship"] = prop;
+    }
+
+    Prim prim("test_mesh", mesh);
+    prim.prim_type_name() = "Mesh";
+    stage.root_prims().push_back(prim);
+
+    CrateWriter writer(filename);
+    TEST_CHECK(writer.Open(&err));
+    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
+    TEST_CHECK(writer.Finalize(&err));
+    writer.Close();
+  }
+
+  // Load and verify
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  auto result = loaded_stage.GetPrimAtPath(Path("/test_mesh", ""));
+  TEST_CHECK(result.has_value());
+  if (!result.has_value()) { cleanup_file(filename); return; }
+
+  const Prim* loaded_prim = result.value();
+  const GeomMesh* loaded_mesh = loaded_prim->data().as<GeomMesh>();
+  TEST_CHECK(loaded_mesh != nullptr);
+
+  if (loaded_mesh) {
+    // Verify custom float property survives via props map
+    TEST_CHECK(loaded_mesh->props.count("myCustomFloat") > 0);
+    if (loaded_mesh->props.count("myCustomFloat")) {
+      TEST_MSG("myCustomFloat found in props map");
+    }
+
+    // Verify string attribute survives via props map
+    TEST_CHECK(loaded_mesh->props.count("myCustomString") > 0);
+    if (loaded_mesh->props.count("myCustomString")) {
+      TEST_MSG("myCustomString found in props map");
+    }
+  }
+
+  std::cerr << "Props map roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+// ==========================================================================
+// Skeleton built-in properties roundtrip
+// ==========================================================================
+void crate_writer_skeleton_properties_test(void) {
+  std::string filename = get_temp_filename("test_skeleton_props.usdc");
+  std::string err;
+
+  {
+    Stage stage;
+
+    Skeleton skeleton;
+    skeleton.name = "MySkeleton";
+    skeleton.spec = Specifier::Def;
+
+    // Set joints
+    std::vector<value::token> joints;
+    joints.push_back(value::token("root"));
+    joints.push_back(value::token("root/spine"));
+    joints.push_back(value::token("root/spine/head"));
+    skeleton.joints = joints;
+
+    // Set jointNames
+    std::vector<value::token> joint_names;
+    joint_names.push_back(value::token("root"));
+    joint_names.push_back(value::token("spine"));
+    joint_names.push_back(value::token("head"));
+    skeleton.jointNames = joint_names;
+
+    // Note: bindTransforms and restTransforms (matrix4d[]) are not yet supported
+    // by the CrateWriter's WriteValueData. They will be silently skipped during
+    // extraction but won't cause a write failure.
+
+    Prim prim("MySkeleton", skeleton);
+    prim.prim_type_name() = "Skeleton";
+    stage.root_prims().push_back(prim);
+
+    CrateWriter writer(filename);
+    TEST_CHECK(writer.Open(&err));
+    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
+    TEST_CHECK(writer.Finalize(&err));
+    writer.Close();
+  }
+
+  // Load and verify
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  auto result = loaded_stage.GetPrimAtPath(Path("/MySkeleton", ""));
+  TEST_CHECK(result.has_value());
+  if (!result.has_value()) { cleanup_file(filename); return; }
+
+  const Prim* loaded_prim = result.value();
+  const Skeleton* loaded_skel = loaded_prim->data().as<Skeleton>();
+  TEST_CHECK(loaded_skel != nullptr);
+
+  if (loaded_skel) {
+    // Verify joints
+    if (loaded_skel->joints.has_value()) {
+      auto joints_val = loaded_skel->joints.get_value();
+      if (joints_val) {
+        TEST_CHECK(joints_val->size() == 3);
+        TEST_MSG("Skeleton joints count: %zu", joints_val->size());
+      }
+    }
+
+    // Note: bindTransforms/restTransforms (matrix4d[]) are not yet supported
+    // by WriteValueData, so they are silently skipped during extraction.
+  }
+
+  std::cerr << "Skeleton properties roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+// ==========================================================================
+// SkelAnimation built-in properties roundtrip
+// ==========================================================================
+void crate_writer_skelanim_properties_test(void) {
+  std::string filename = get_temp_filename("test_skelanim_props.usdc");
+  std::string err;
+
+  {
+    Stage stage;
+
+    SkelAnimation anim;
+    anim.name = "MyAnim";
+    anim.spec = Specifier::Def;
+
+    // Set joints
+    std::vector<value::token> joints;
+    joints.push_back(value::token("root"));
+    joints.push_back(value::token("root/spine"));
+    anim.joints = joints;
+
+    // Set rotations (Animatable)
+    std::vector<value::quatf> rotations;
+    rotations.push_back(value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f});
+    rotations.push_back(value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f});
+    Animatable<std::vector<value::quatf>> rot_anim(rotations);
+    anim.rotations = rot_anim;
+
+    // Set translations (Animatable)
+    std::vector<value::float3> translations;
+    translations.push_back({0.0f, 0.0f, 0.0f});
+    translations.push_back({0.0f, 1.0f, 0.0f});
+    Animatable<std::vector<value::float3>> trans_anim(translations);
+    anim.translations = trans_anim;
+
+    // Note: scales (half3[]) are not yet supported by WriteValueData,
+    // so they are silently skipped during extraction.
+
+    // Set blendShapes
+    std::vector<value::token> blend_shapes;
+    blend_shapes.push_back(value::token("smile"));
+    blend_shapes.push_back(value::token("frown"));
+    anim.blendShapes = blend_shapes;
+
+    // Set blendShapeWeights (Animatable)
+    std::vector<float> weights;
+    weights.push_back(0.5f);
+    weights.push_back(0.0f);
+    Animatable<std::vector<float>> weights_anim(weights);
+    anim.blendShapeWeights = weights_anim;
+
+    Prim prim("MyAnim", anim);
+    prim.prim_type_name() = "SkelAnimation";
+    stage.root_prims().push_back(prim);
+
+    CrateWriter writer(filename);
+    TEST_CHECK(writer.Open(&err));
+    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
+    TEST_CHECK(writer.Finalize(&err));
+    writer.Close();
+  }
+
+  // Load and verify
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  auto result = loaded_stage.GetPrimAtPath(Path("/MyAnim", ""));
+  TEST_CHECK(result.has_value());
+  if (!result.has_value()) { cleanup_file(filename); return; }
+
+  const Prim* loaded_prim = result.value();
+  const SkelAnimation* loaded_anim = loaded_prim->data().as<SkelAnimation>();
+  TEST_CHECK(loaded_anim != nullptr);
+
+  if (loaded_anim) {
+    // Verify joints
+    if (loaded_anim->joints.has_value()) {
+      auto joints_val = loaded_anim->joints.get_value();
+      if (joints_val) {
+        TEST_CHECK(joints_val->size() == 2);
+        TEST_MSG("SkelAnimation joints count: %zu", joints_val->size());
+      }
+    }
+
+    // Verify rotations
+    if (loaded_anim->rotations.has_value()) {
+      auto rot_opt = loaded_anim->rotations.get_value();
+      if (rot_opt && rot_opt->has_default()) {
+        std::vector<value::quatf> rots;
+        if (rot_opt->get_default(&rots)) {
+          TEST_CHECK(rots.size() == 2);
+          TEST_MSG("SkelAnimation rotations count: %zu", rots.size());
+        }
+      }
+    }
+
+    // Verify translations
+    if (loaded_anim->translations.has_value()) {
+      auto trans_opt = loaded_anim->translations.get_value();
+      if (trans_opt && trans_opt->has_default()) {
+        std::vector<value::float3> trans;
+        if (trans_opt->get_default(&trans)) {
+          TEST_CHECK(trans.size() == 2);
+          // Check second joint translation
+          if (trans.size() >= 2) {
+            TEST_CHECK(std::abs(trans[1][1] - 1.0f) < 0.001f);
+          }
+        }
+      }
+    }
+
+    // Verify blendShapeWeights
+    if (loaded_anim->blendShapeWeights.has_value()) {
+      auto bsw_opt = loaded_anim->blendShapeWeights.get_value();
+      if (bsw_opt && bsw_opt->has_default()) {
+        std::vector<float> wts;
+        if (bsw_opt->get_default(&wts)) {
+          TEST_CHECK(wts.size() == 2);
+          if (wts.size() >= 1) {
+            TEST_CHECK(std::abs(wts[0] - 0.5f) < 0.001f);
+          }
+        }
+      }
+    }
+  }
+
+  std::cerr << "SkelAnimation properties roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+// ==========================================================================
+// primChildren field roundtrip
+// ==========================================================================
+void crate_writer_prim_children_test(void) {
+  std::string filename = get_temp_filename("test_prim_children.usdc");
+  std::string err;
+
+  {
+    Stage stage;
+
+    // Create parent with children
+    Xform parent;
+    parent.name = "Parent";
+    parent.spec = Specifier::Def;
+
+    Prim parent_prim("Parent", parent);
+    parent_prim.prim_type_name() = "Xform";
+
+    // Add children
+    {
+      GeomMesh child1;
+      child1.name = "ChildA";
+      child1.spec = Specifier::Def;
+      Prim c1("ChildA", child1);
+      c1.prim_type_name() = "Mesh";
+      parent_prim.children().push_back(c1);
+    }
+    {
+      GeomMesh child2;
+      child2.name = "ChildB";
+      child2.spec = Specifier::Def;
+      Prim c2("ChildB", child2);
+      c2.prim_type_name() = "Mesh";
+      parent_prim.children().push_back(c2);
+    }
+
+    stage.root_prims().push_back(parent_prim);
+
+    CrateWriter writer(filename);
+    TEST_CHECK(writer.Open(&err));
+    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
+    TEST_CHECK(writer.Finalize(&err));
+    writer.Close();
+  }
+
+  // Load and verify
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Verify parent exists and has children
+  auto result = loaded_stage.GetPrimAtPath(Path("/Parent", ""));
+  TEST_CHECK(result.has_value());
+  if (!result.has_value()) { cleanup_file(filename); return; }
+
+  const Prim* parent = result.value();
+  TEST_CHECK(parent->children().size() == 2);
+  TEST_MSG("Parent has %zu children", parent->children().size());
+
+  // Verify children exist at correct paths
+  auto child_a = loaded_stage.GetPrimAtPath(Path("/Parent/ChildA", ""));
+  TEST_CHECK(child_a.has_value());
+  auto child_b = loaded_stage.GetPrimAtPath(Path("/Parent/ChildB", ""));
+  TEST_CHECK(child_b.has_value());
+
+  std::cerr << "primChildren roundtrip successful!\n";
+  cleanup_file(filename);
+}

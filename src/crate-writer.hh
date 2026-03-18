@@ -471,6 +471,9 @@ private:
   /// Extract SkelRoot properties (visibility, purpose, extent)
   bool ExtractSkelRootProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
+  /// Extract PrimMeta fields (kind, active, hidden, customData, apiSchemas, references, payload, inherits, specializes, etc.)
+  void ExtractPrimMeta(const PrimMeta& metas, crate::FieldValuePairVector& fields);
+
   /// Extract common GPrim properties (visibility, purpose, etc.)
   bool ExtractGPrimProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
