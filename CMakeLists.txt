@@ -468,6 +468,12 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usdMtlx.cc
     ${PROJECT_SOURCE_DIR}/src/usdObj.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
+    ${PROJECT_SOURCE_DIR}/src/pprint-enum.cc
+    ${PROJECT_SOURCE_DIR}/src/pprint-meta.cc
+    ${PROJECT_SOURCE_DIR}/src/pprint-geom.cc
+    ${PROJECT_SOURCE_DIR}/src/pprint-shader.cc
+    ${PROJECT_SOURCE_DIR}/src/pprint-light.cc
+    ${PROJECT_SOURCE_DIR}/src/pprint-skel.cc
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc
     ${PROJECT_SOURCE_DIR}/src/timesamples-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/timesamples.cc
