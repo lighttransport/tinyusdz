@@ -24,7 +24,7 @@
 #include "ascii-parser.hh"  // To parse color3f value
 #include "common-macros.inc"
 #include "io-util.hh"
-#include "pprinter.hh"
+#include "pprint-enum.hh"
 #include "str-util.hh"  // For dragonbox-based dtos()
 #include "tiny-format.hh"
 #include "value-pprint.hh"

@@ -63,7 +63,7 @@
 
 #include "io-util.hh"
 #include "math-util.inc"
-#include "pprinter.hh"
+#include "pprint-enum.hh"
 #include "prim-types.hh"
 #include "prim-reconstruct.hh"
 #include "primvar.hh"

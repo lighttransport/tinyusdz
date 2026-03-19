@@ -5,7 +5,6 @@
 #include "tiny-format.hh"
 #include "prim-types.hh"
 #include "usdShade.hh"
-#include "pprinter.hh"
 #include "prim-pprint.hh"
 #include "value-pprint.hh"
 #include "stage.hh"

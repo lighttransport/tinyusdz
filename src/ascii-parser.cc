@@ -72,7 +72,7 @@
   } while(0)
 
 #include "io-util.hh"
-#include "pprinter.hh"
+#include "pprint-enum.hh"
 #include "prim-types.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
