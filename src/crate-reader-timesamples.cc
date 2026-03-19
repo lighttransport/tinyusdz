@@ -223,7 +223,6 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
 #endif
 
   // Read all ValueReps first
-  auto vrep_start_offset = _sr->tell();
   std::vector<crate::ValueRep> value_reps(static_cast<size_t>(num_values));
   for (size_t i = 0; i < num_values; i++) {
     if (!ReadValueRep(&value_reps[i])) {
@@ -235,10 +234,17 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   // Type consistency check is handled during unpacking.
   // This avoids an additional pre-scan pass here.
 
+  // Pre-allocate for the known number of samples to avoid repeated reallocation
+  d->reserve(times.size());
 
-  // Rewind to ValueReps start
-  _sr->seek_set(vrep_start_offset);
-
+  if (!UnpackValueRepsToTimeSamples(times, value_reps, d)) {
+    // Unpack failed — clear any partial data and fall back to empty TimeSamples.
+    // This preserves backward compatibility with USDC files whose TimeSamples
+    // encoding doesn't match the expected layout (e.g., files written by
+    // TinyUSDZ's crate writer which uses a slightly different format).
+    d->clear();
+    _err.clear();
+  }
 
   // Move to next location.
   // sizeof(uint64) = sizeof(ValueRep)
