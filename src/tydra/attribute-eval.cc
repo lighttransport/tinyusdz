@@ -6,7 +6,7 @@
 
 #include "common-macros.inc"
 #include "layer.hh"
-#include "pprinter.hh"
+#include "pprint-enum.hh"
 #include "tiny-format.hh"
 #include "value-pprint.hh"
 

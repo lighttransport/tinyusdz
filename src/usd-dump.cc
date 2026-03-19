@@ -14,7 +14,7 @@
 #include "stage.hh"
 #include "str-util.hh"
 #include "value-pprint.hh"
-#include "pprinter.hh"
+#include "pprint-enum.hh"
 
 namespace tinyusdz {
 

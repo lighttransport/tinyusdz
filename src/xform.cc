@@ -14,7 +14,7 @@
 #endif
 
 #include "math-util.inc"
-#include "pprinter.hh"
+#include "pprint-enum.hh"
 #include "value-pprint.hh"
 #include "prim-types.hh"
 #include "tiny-format.hh"

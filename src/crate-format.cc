@@ -9,7 +9,6 @@
 #include "common-macros.inc"
 #include "crate-format.hh"
 #include "external/mapbox/eternal/include/mapbox/eternal.hpp"
-#include "pprinter.hh"
 #include "value-types.hh"
 
 namespace tinyusdz {

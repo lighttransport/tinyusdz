@@ -13,7 +13,6 @@
 //
 
 #include "primvar.hh"
-#include "pprinter.hh"
 #include "value-types.hh"
 #include "value-pprint.hh"
 

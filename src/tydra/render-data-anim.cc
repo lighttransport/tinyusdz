@@ -30,7 +30,6 @@
 #include "image-types.hh"
 #include "linear-algebra.hh"
 #include "math-util.inc"
-#include "pprinter.hh"
 #include "prim-types.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"

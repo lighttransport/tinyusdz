@@ -52,6 +52,11 @@ std::string to_string(const CustomDataType &customData);
 
 std::string to_string(const CollectionInstance::ExpansionRule rule);
 
+// Forward-declare to_string(string) so the vector<T> template below can find
+// it via unqualified lookup when T = std::string (ADL won't help because
+// std::string lives in namespace std, not tinyusdz).
+std::string to_string(const std::string &s);
+
 // --- generic template helpers (inline) ------------------------------------
 
 template <typename T>
