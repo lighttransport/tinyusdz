@@ -131,6 +131,11 @@ inline std::string wquote(const std::string &s,
   return quote_lstr + s + quote_rstr;
 }
 
+// Path quote: wraps string in angle brackets < >
+inline std::string pquote(const std::string &s) {
+  return wquote(s, "<", ">");
+}
+
 inline std::vector<std::string> quote(const std::vector<std::string> &vs,
                                       const std::string &quote_str = "\"") {
   std::vector<std::string> dst;
