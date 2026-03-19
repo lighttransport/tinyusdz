@@ -15,7 +15,7 @@
 #include "usdc-reader.hh"
 #include "usdShade.hh"
 #include "layer.hh"
-#include "pprinter.hh"
+#include "pprint-enum.hh"
 #include <cstdio>
 
 using namespace tinyusdz;

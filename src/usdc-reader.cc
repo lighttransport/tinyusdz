@@ -43,7 +43,7 @@
 #include "integerCoding.h"
 #include "lz4-compression.hh"
 #include "path-util.hh"
-#include "pprinter.hh"
+#include "pprint-enum.hh"
 #include "prim-reconstruct.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"

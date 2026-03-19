@@ -11,7 +11,6 @@
 #include "usdMtlx.hh"
 #include "asset-resolution.hh"
 #include "value-pprint.hh"
-#include "pprinter.hh"
 
 static int g_tests_run = 0;
 static int g_tests_passed = 0;

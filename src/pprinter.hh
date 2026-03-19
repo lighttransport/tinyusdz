@@ -11,8 +11,7 @@
 #include <sstream>
 #include <string>
 
-// Sub-headers (no domain headers needed)
-#include "pprint-enum.hh"
+// Sub-headers (pprint-meta.hh transitively includes pprint-enum.hh)
 #include "pprint-meta.hh"
 
 // Domain headers (for prim-type to_string declarations)

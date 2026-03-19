@@ -83,7 +83,6 @@
 #endif
 
 #include "io-util.hh"
-#include "pprinter.hh"
 #include "prim-types.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
