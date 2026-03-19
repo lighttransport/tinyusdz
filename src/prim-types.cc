@@ -16,7 +16,7 @@
 #include "usdSkel.hh"
 //
 #include "common-macros.inc"
-#include "pprinter.hh"
+#include "pprint-meta.hh"
 #include "value-pprint.hh"
 
 #ifdef __clang__

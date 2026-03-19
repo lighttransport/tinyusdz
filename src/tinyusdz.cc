@@ -27,7 +27,6 @@
 #include "io-util.hh"
 #include "lz4-compression.hh"
 #include "zstd-compression.hh"
-#include "pprinter.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "tiny-format.hh"

@@ -31,7 +31,7 @@
 #include "lz4-compression.hh"
 #include "memory-budget.hh"
 #include "path-util.hh"
-#include "pprinter.hh"
+#include "pprint-meta.hh"
 #include "prim-types.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"

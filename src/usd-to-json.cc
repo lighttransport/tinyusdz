@@ -22,7 +22,7 @@
 #endif
 
 #include "common-macros.inc"
-#include "pprinter.hh"
+#include "pprint-enum.hh"
 #include "str-util.hh"
 
 using namespace nlohmann;

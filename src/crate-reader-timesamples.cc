@@ -32,7 +32,6 @@
 #include "memory-budget.hh"
 #include "parser-timing.hh"
 #include "path-util.hh"
-#include "pprinter.hh"
 #include "prim-types.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"

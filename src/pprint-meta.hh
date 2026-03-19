@@ -10,17 +10,11 @@
 #include <string>
 #include <vector>
 
+#include "pprint-enum.hh"  // enum to_string converters + pprint::Indent
 #include "prim-types.hh"
 #include "value-pprint.hh"
 
 namespace tinyusdz {
-
-namespace pprint {
-
-void SetIndentString(const std::string &s);
-std::string Indent(uint32_t level);
-
-}  // namespace pprint
 
 std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent);
 std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent);
