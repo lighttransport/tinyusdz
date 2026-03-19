@@ -1435,13 +1435,14 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
   }
 #undef UNPACK_CASE
 
+  // Dedup map: ValueRep raw data -> first sample index in TimeSamples.
+  // USDC files often deduplicate time sample values (multiple frames pointing
+  // to the same file offset). Caching avoids redundant reads/decompression.
+  std::unordered_map<uint64_t, size_t> dedup_map;
+  dedup_map.reserve(vreps.size());
+
   for (size_t i = 0; i < vreps.size(); i++) {
     const crate::ValueRep &rep = vreps[i];
-
-    if (!rep.IsInlined()) {
-      _sr->seek_set(rep.GetPayload());
-    }
-
     const double curr_time = times[i];
 
     // Allow VALUE_BLOCK to mix with the actual type
@@ -1452,6 +1453,25 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "Inconsistent ValueRep type in TimeSamples.");
       }
+    }
+
+    // Check dedup: if we've already unpacked an identical ValueRep, share data
+    uint64_t rep_data = rep.GetData();
+    auto dedup_it = dedup_map.find(rep_data);
+    if (dedup_it != dedup_map.end()) {
+      // Duplicate — reuse previously unpacked sample (zero-copy for binary storage)
+      if (!d->duplicate_sample(dedup_it->second, curr_time)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "Failed to duplicate sample in TimeSamples.");
+      }
+      continue;
+    }
+
+    // First occurrence — record index and unpack from file
+    dedup_map[rep_data] = i;
+
+    if (!rep.IsInlined()) {
+      _sr->seek_set(rep.GetPayload());
     }
 
     // Pass expected_total_samples only on the first sample (i == 0) for
