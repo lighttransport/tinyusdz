@@ -85,6 +85,48 @@ struct TimeSamples {
     _blocked.reserve(n);
   }
 
+  /// Duplicate an existing sample at a new time, sharing the underlying data.
+  /// For binary storage, points to the same byte range in _data (zero-copy).
+  /// For generic Value storage, copies the value::Value.
+  /// @param src_idx Index of the source sample to duplicate
+  /// @param new_time Time value for the new sample
+  /// @return true if successful
+  bool duplicate_sample(size_t src_idx, double new_time) {
+    if (!_times.empty()) {
+      // Binary storage path
+      if (src_idx >= _times.size()) return false;
+
+      _times.push_back(new_time);
+      _blocked.push_back(_blocked[src_idx]);
+
+      if (src_idx < _data_offsets.size()) {
+        // Reuse the same byte offset — zero-copy dedup
+        _data_offsets.push_back(_data_offsets[src_idx]);
+      }
+
+      if (_is_array && src_idx < _array_counts.size()) {
+        _array_counts.push_back(_array_counts[src_idx]);
+      }
+
+      invalidate_reconstructed_samples_cache();
+      _dirty = true;
+      return true;
+    }
+
+    // Generic Value storage path
+    if (src_idx < _samples.size()) {
+      Sample s;
+      s.t = new_time;
+      s.value = _samples[src_idx].value;
+      s.blocked = _samples[src_idx].blocked;
+      _samples.push_back(std::move(s));
+      _dirty = true;
+      return true;
+    }
+
+    return false;
+  }
+
   /// Move constructor
   TimeSamples(TimeSamples&& other) noexcept;
 
