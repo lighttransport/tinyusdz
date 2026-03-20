@@ -139,6 +139,9 @@ static std::string sIndentString = "    ";
 #pragma clang diagnostic pop
 #endif
 
+static thread_local uint32_t sColumnLimit = 0;
+static thread_local uint32_t sPrefixColumns = 0;
+
 std::string Indent(uint32_t n) {
   std::stringstream ss;
 
@@ -150,6 +153,15 @@ std::string Indent(uint32_t n) {
 }
 
 void SetIndentString(const std::string &s) { sIndentString = s; }
+
+void SetColumnLimit(uint32_t limit) { sColumnLimit = limit; }
+uint32_t GetColumnLimit() { return sColumnLimit; }
+uint32_t GetPrefixColumns() { return sPrefixColumns; }
+
+ScopedPrefixColumns::ScopedPrefixColumns(uint32_t cols) : prev_(sPrefixColumns) {
+  sPrefixColumns = cols;
+}
+ScopedPrefixColumns::~ScopedPrefixColumns() { sPrefixColumns = prev_; }
 
 }  // namespace pprint
 
@@ -644,6 +656,14 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
           ss << " = None";
         } else {
           // default value
+          // Compute prefix width for column-wrapping of arrays
+          size_t qual_len = 0;
+          if (prop.has_custom()) qual_len += 7;  // "custom "
+          if (attr.variability() == Variability::Uniform) qual_len += 8;  // "uniform "
+          uint32_t pcols = static_cast<uint32_t>(
+              pprint::Indent(indent).size() + qual_len +
+              ty.size() + 1 + prop_name.size() + 3);  // " " + name + " = "
+          pprint::ScopedPrefixColumns spc(pcols);
           std::string value_str = value::pprint_value(attr.get_var().value_raw());
           // Only print " = value" if value_str is not empty
           // (value could be typed but empty when only timeSamples are set)
