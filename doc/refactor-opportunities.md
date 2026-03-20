@@ -160,12 +160,34 @@ These are feature requests tracked in code comments, not bugs or refactoring ite
    `double[]` or `DoubleVector` before attempting to unpack.  Previously the
    check only happened inside `UnpackTimeSampleTimes()`.
 
+### USDC reader — modular split (2026-03-20)
+
+Split `usdc-reader.cc` (4137 lines) into 4 focused modules + 1 private header:
+
+**Before:** single 4137-line file containing Impl class definition, property parsing,
+prim spec parsing, stage meta, type dispatch, prim/primspec node reconstruction,
+recursive/iterative tree traversal, variant handling, crate I/O, and public interface.
+
+**After (5 files):**
+- `usdc-reader-impl.hh` (506) — Impl class definition (private, shared across TUs)
+- `usdc-reader.cc` (433) — Core I/O (ReadUSDC, ReconstructStage, ToLayer, interface)
+- `usdc-reader-property.cc` (714) — ParseProperty, BuildPropertyMap
+- `usdc-reader-prim.cc` (905) — ParsePrimSpec, ReconstrcutStageMeta, ReconstructPrimFromTypeName, type dispatch
+- `usdc-reader-reconstruct.cc` (1335) — ReconstructPrimNode, ReconstructPrimSpecNode, tree traversal, variant handling
+
+**Approach:** Extracted Impl class definition to a private header so member function
+implementations can be split across translation units. Template `DecodeListOp<T>`
+moved to header (inline); `ReconstructPrim<T>` uses explicit instantiations.
+
+**Net result:** Largest file reduced from 4137 to 1335 lines. 0 test failures,
+5/5 ctest suites pass.
+
 ## Other Modules — Review Candidates
 
 The following modules have not been reviewed and may contain similar issues:
 
-- `src/pprinter.cc` — Large file with potential type dispatch duplication
-- `src/usdc-reader.cc` — Main crate reader with potential for similar consolidation
-- `src/usda-writer.cc` / `src/usdc-writer.cc` — Serialization paths
-- `src/composition.cc` — Layer composition logic
-- `src/usdGeom.cc` / `src/usdShade.cc` — Schema implementations
+- ~~`src/pprinter.cc`~~ — Split into 10 focused modules (prior commits)
+- ~~`src/usdc-reader.cc`~~ — Split into 4 focused modules (2026-03-20)
+- `src/usda-writer.cc` / `src/usdc-writer.cc` — Serialization paths (small, low priority)
+- `src/composition.cc` — Layer composition logic (2118 lines, medium priority)
+- `src/usdGeom.cc` / `src/usdShade.cc` — Schema implementations (small, low priority)

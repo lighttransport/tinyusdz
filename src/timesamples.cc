@@ -392,6 +392,23 @@ size_t TimeSamples::estimate_memory_usage() const {
     return total;
 }
 
+size_t TimeSamples::estimate_actual_usage() const {
+    size_t total = sizeof(TimeSamples);
+
+    total += _times.size() * sizeof(double);
+    total += _blocked.size();  // vector<bool> counts elements, matches estimate pattern
+    total += _data.size();
+    total += _data_offsets.size() * sizeof(uint32_t);
+    total += _array_counts.size() * sizeof(uint32_t);
+
+    total += _samples.size() * sizeof(Sample);
+    for (const auto &sample : _samples) {
+      total += sample.value.estimate_actual_usage();
+    }
+
+    return total;
+}
+
 
 std::vector<TimeSamples::Sample> &TimeSamples::samples() {
     if (!_times.empty() && _samples.empty()) {

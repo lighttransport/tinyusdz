@@ -1056,6 +1056,220 @@ size_t Stage::estimate_memory_usage() const {
   return total;
 }
 
+// --- Actual (size-based) helpers for estimate_memory_usage_detail ---
+
+namespace {
+
+static size_t EstimatePropertyMapActualMemory(const std::map<std::string, Property> &props) {
+  size_t total = 0;
+  for (const auto &kv : props) {
+    total += 48; // map node overhead (fixed, same in both modes)
+    total += kv.first.size();
+    total += kv.second.estimate_actual_usage();
+  }
+  return total;
+}
+
+static size_t EstimatePrimPropsActualMemory(const Prim &prim) {
+#define TRY_PROPS_ACTUAL(__ty)                                       \
+  if (auto pv = prim.as<__ty>()) {                                   \
+    return EstimatePropertyMapActualMemory(pv->props);               \
+  }
+
+  TRY_PROPS_ACTUAL(GPrim)
+  TRY_PROPS_ACTUAL(Xform)
+  TRY_PROPS_ACTUAL(GeomMesh)
+  TRY_PROPS_ACTUAL(GeomBasisCurves)
+  TRY_PROPS_ACTUAL(GeomNurbsCurves)
+  TRY_PROPS_ACTUAL(GeomSphere)
+  TRY_PROPS_ACTUAL(GeomCube)
+  TRY_PROPS_ACTUAL(GeomCylinder)
+  TRY_PROPS_ACTUAL(GeomCone)
+  TRY_PROPS_ACTUAL(GeomCapsule)
+  TRY_PROPS_ACTUAL(GeomPoints)
+  TRY_PROPS_ACTUAL(GeomPointInstancer)
+  TRY_PROPS_ACTUAL(GeomCamera)
+  TRY_PROPS_ACTUAL(GeomSubset)
+  TRY_PROPS_ACTUAL(Material)
+  TRY_PROPS_ACTUAL(Shader)
+  TRY_PROPS_ACTUAL(NodeGraph)
+  TRY_PROPS_ACTUAL(SkelRoot)
+  TRY_PROPS_ACTUAL(Skeleton)
+  TRY_PROPS_ACTUAL(SkelAnimation)
+  TRY_PROPS_ACTUAL(BlendShape)
+  TRY_PROPS_ACTUAL(SphereLight)
+  TRY_PROPS_ACTUAL(DomeLight)
+  TRY_PROPS_ACTUAL(CylinderLight)
+  TRY_PROPS_ACTUAL(DiskLight)
+  TRY_PROPS_ACTUAL(RectLight)
+  TRY_PROPS_ACTUAL(DistantLight)
+  TRY_PROPS_ACTUAL(GeometryLight)
+  TRY_PROPS_ACTUAL(PortalLight)
+  TRY_PROPS_ACTUAL(Model)
+  TRY_PROPS_ACTUAL(Scope)
+
+#undef TRY_PROPS_ACTUAL
+
+  return 0;
+}
+
+// Deep memory for typed attributes using size() instead of capacity()
+template <typename E>
+static size_t EstimateTypedTimeSamplesVectorActualMemory(const TypedTimeSamples<std::vector<E>> &ts) {
+  size_t total = 0;
+  if (!ts.empty()) {
+    const auto &samples = ts.get_samples();
+    total += samples.size() * sizeof(typename TypedTimeSamples<std::vector<E>>::Sample);
+    for (const auto &sample : samples) {
+      total += sample.value.size() * sizeof(E);
+    }
+  }
+  return total;
+}
+
+template <typename E>
+static size_t EstimateTypedAttributeVectorActualMemory(const TypedAttribute<Animatable<std::vector<E>>> &attr) {
+  const auto &opt_val = attr.get_value_ref();
+  if (!opt_val) {
+    return 0;
+  }
+  size_t total = 0;
+  const Animatable<std::vector<E>> &anim = *opt_val;
+  if (anim.has_timesamples()) {
+    total += EstimateTypedTimeSamplesVectorActualMemory(anim.get_timesamples());
+  } else if (anim.has_default()) {
+    const std::vector<E> &val = anim.get_scalar_ref();
+    total += val.size() * sizeof(E);
+  }
+  return total;
+}
+
+static size_t EstimateGeomMeshDeepActualMemory(const GeomMesh &mesh) {
+  size_t total = 0;
+  total += EstimateTypedAttributeVectorActualMemory(mesh.points);
+  total += EstimateTypedAttributeVectorActualMemory(mesh.normals);
+  total += EstimateTypedAttributeVectorActualMemory(mesh.velocities);
+  total += EstimateTypedAttributeVectorActualMemory(mesh.faceVertexCounts);
+  total += EstimateTypedAttributeVectorActualMemory(mesh.faceVertexIndices);
+  return total;
+}
+
+static size_t EstimateGeomBasisCurvesDeepActualMemory(const GeomBasisCurves &curves) {
+  size_t total = 0;
+  total += EstimateTypedAttributeVectorActualMemory(curves.points);
+  total += EstimateTypedAttributeVectorActualMemory(curves.normals);
+  total += EstimateTypedAttributeVectorActualMemory(curves.velocities);
+  total += EstimateTypedAttributeVectorActualMemory(curves.curveVertexCounts);
+  total += EstimateTypedAttributeVectorActualMemory(curves.widths);
+  return total;
+}
+
+static size_t EstimateGeomPointsDeepActualMemory(const GeomPoints &pts) {
+  size_t total = 0;
+  total += EstimateTypedAttributeVectorActualMemory(pts.points);
+  total += EstimateTypedAttributeVectorActualMemory(pts.normals);
+  total += EstimateTypedAttributeVectorActualMemory(pts.velocities);
+  total += EstimateTypedAttributeVectorActualMemory(pts.widths);
+  total += EstimateTypedAttributeVectorActualMemory(pts.ids);
+  return total;
+}
+
+static size_t EstimatePrimDataDeepActualMemory(const Prim &prim) {
+  if (auto p = prim.as<GeomMesh>()) {
+    return EstimateGeomMeshDeepActualMemory(*p);
+  }
+  if (auto p = prim.as<GeomBasisCurves>()) {
+    return EstimateGeomBasisCurvesDeepActualMemory(*p);
+  }
+  if (auto p = prim.as<GeomPoints>()) {
+    return EstimateGeomPointsDeepActualMemory(*p);
+  }
+  return 0;
+}
+
+static size_t EstimateSinglePrimActualMemory(const Prim &prim) {
+  size_t total = sizeof(Prim);
+
+  total += prim.data().estimate_actual_usage();
+
+  // Strings: use size() instead of capacity()
+  total += prim.element_name().size();
+  total += prim.element_path().full_path_name().size();
+  total += prim.prim_type_name().size();
+  total += prim.absolute_path().full_path_name().size();
+  total += prim.local_path().full_path_name().size();
+
+  total += EstimatePrimPropsActualMemory(prim);
+  total += EstimatePrimDataDeepActualMemory(prim);
+
+  for (const auto &vs : prim.variantSets()) {
+    total += 48;
+    total += vs.first.size();
+    total += sizeof(VariantSet);
+  }
+
+  return total;
+}
+
+}  // namespace
+
+Stage::MemoryUsageDetail Stage::estimate_memory_usage_detail() const {
+  MemoryUsageDetail detail;
+
+  size_t alloc_base = sizeof(Stage) + sizeof(StageMetas);
+  size_t actual_base = alloc_base;
+
+  struct StackEntry {
+    const std::vector<Prim> *siblings;
+    size_t index;
+  };
+
+  std::vector<StackEntry> stack;
+  if (!_root_nodes.empty()) {
+    alloc_base += _root_nodes.capacity() * sizeof(Prim);
+    actual_base += _root_nodes.size() * sizeof(Prim);
+    stack.push_back({&_root_nodes, 0});
+  }
+
+  size_t alloc_prims = 0;
+  size_t actual_prims = 0;
+
+  while (!stack.empty()) {
+    StackEntry &entry = stack.back();
+    if (entry.index >= entry.siblings->size()) {
+      stack.pop_back();
+      continue;
+    }
+
+    const Prim &prim = (*entry.siblings)[entry.index];
+    entry.index++;
+
+    alloc_prims += EstimateSinglePrimMemory(prim);
+    actual_prims += EstimateSinglePrimActualMemory(prim);
+
+    const auto &children = prim.children();
+    if (!children.empty()) {
+      alloc_base += children.capacity() * sizeof(Prim);
+      actual_base += children.size() * sizeof(Prim);
+      stack.push_back({&children, 0});
+    }
+  }
+
+  // Internal strings
+  alloc_base += _warn.capacity() + _err.capacity();
+  actual_base += _warn.size() + _err.size();
+
+  // Prim ID cache
+  size_t cache_size = _prim_id_cache.size() * (sizeof(uint64_t) + sizeof(const Prim*)) * 2;
+  alloc_base += cache_size;
+  actual_base += cache_size;
+
+  detail.allocated_bytes = alloc_base + alloc_prims;
+  detail.actual_bytes = actual_base + actual_prims;
+
+  return detail;
+}
+
 void Stage::set_mmap_table(MMapArrayTable &&table) {
   _mmap_table.reset(new MMapArrayTable(std::move(table)));
 }
