@@ -7,9 +7,38 @@
 // 
 #pragma once
 
+#include <cstring>
+
 #include "value-types.hh"
 
 namespace tinyusdz {
+
+//
+// Colum-major order(e.g. employed in OpenGL).
+// For example, 12th([3][0]), 13th([3][1]), 14th([3][2]) element corresponds to
+// the translation.
+//
+
+inline void Identity(value::matrix2d *mat) {
+  memset(mat->m, 0, sizeof(value::matrix2d));
+  for (size_t i = 0; i < 2; i++) {
+    mat->m[i][i] = static_cast<double>(1);
+  }
+}
+
+inline void Identity(value::matrix3d *mat) {
+  memset(mat->m, 0, sizeof(value::matrix3d));
+  for (size_t i = 0; i < 3; i++) {
+    mat->m[i][i] = static_cast<double>(1);
+  }
+}
+
+inline void Identity(value::matrix4d *mat) {
+  memset(mat->m, 0, sizeof(value::matrix4d));
+  for (size_t i = 0; i < 4; i++) {
+    mat->m[i][i] = static_cast<double>(1);
+  }
+}
 
 bool is_identity(const value::matrix2f &m);
 bool is_identity(const value::matrix3f &m);

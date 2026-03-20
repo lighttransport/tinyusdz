@@ -32,7 +32,7 @@
 #include "memory-budget.hh"
 #include "path-util.hh"
 #include "pprint-meta.hh"
-#include "prim-types.hh"
+#include "core/prim-spec.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 #include "value-pprint.hh"

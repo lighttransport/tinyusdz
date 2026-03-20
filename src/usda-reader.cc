@@ -19,6 +19,7 @@
 
 #include "ascii-parser.hh"
 //#include "asset-resolution.hh"
+#include "core/model-scope.hh"  // Model, Scope
 #include "usdGeom.hh"
 #include "usdSkel.hh"
 #if defined(__wasi__)
@@ -64,7 +65,8 @@
 #include "io-util.hh"
 #include "math-util.inc"
 #include "pprint-enum.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/prim-spec.hh"
 #include "prim-reconstruct.hh"
 #include "primvar.hh"
 #include "str-util.hh"

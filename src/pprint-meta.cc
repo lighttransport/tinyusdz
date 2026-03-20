@@ -12,7 +12,8 @@
 #include "timesamples-pprint.hh"
 #include "usdGeom.hh"      // kMaterialBinding, kMaterialBindingCollection, etc.
 #include "tiny-format.hh"   // fmt::format (used in variantSet printing)
-#include "layer.hh"         // Layer
+#include "core/layer-types.hh" // SubLayer, LayerMetas
+#include "layer.hh"           // Layer
 //
 #include "common-macros.inc"
 

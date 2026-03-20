@@ -23,9 +23,23 @@
 ///
 #pragma once
 
-#include "prim-types.hh"
+// Core includes (replaces monolithic prim-types.hh)
 #include "value-types.hh"
-#include "xform.hh"
+#include "nonstd/optional.hpp"
+#include "nonstd/expected.hpp"
+#include "core/prim-enums.hh"        // Specifier, Visibility, Purpose
+#include "core/path.hh"              // Path
+#include "core/extent.hh"            // Extent
+#include "core/composition-types.hh" // Reference, Payload, ListEditQual
+#include "core/prim-metas.hh"       // PrimMeta
+#include "core/animatable.hh"       // Animatable
+#include "core/typed-attribute.hh"  // TypedAttribute, TypedAttributeWithFallback
+#include "core/relationship.hh"     // Relationship
+#include "core/attribute.hh"        // Attribute
+#include "core/property.hh"         // Property
+#include "core/xform-op.hh"         // XformOp (needed by Xformable in xform.hh)
+#include "core/variant-types.hh"    // VariantSet
+#include "xform.hh"                 // Xformable
 
 namespace tinyusdz {
 

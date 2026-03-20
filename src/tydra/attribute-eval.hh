@@ -38,7 +38,7 @@
 
 #include <map>
 
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "stage.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"

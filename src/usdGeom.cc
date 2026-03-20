@@ -11,7 +11,7 @@
 
 #include "pprinter.hh"
 #include "value-types.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
 #include "xform.hh"

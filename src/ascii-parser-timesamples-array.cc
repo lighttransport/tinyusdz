@@ -67,7 +67,7 @@
 
 #include "common-macros.inc"
 #include "io-util.hh"
-#include "prim-types.hh"
+#include "core/prim-spec.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"

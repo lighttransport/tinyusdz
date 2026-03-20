@@ -6,7 +6,10 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
+
+#include "value-types.hh"
 
 namespace tinyusdz {
 
@@ -109,5 +112,32 @@ struct ListOpHeader {
 
   uint8_t bits;
 };
+
+// Forward declarations needed for ListOp type traits
+class Path;
+struct Reference;
+struct Payload;
+
+namespace value {
+
+#include "define-type-trait.inc"
+
+DEFINE_TYPE_TRAIT(ListOp<value::token>, "ListOpToken", TYPE_ID_LIST_OP_TOKEN,
+                  1);
+DEFINE_TYPE_TRAIT(ListOp<std::string>, "ListOpString", TYPE_ID_LIST_OP_STRING,
+                  1);
+DEFINE_TYPE_TRAIT(ListOp<Path>, "ListOpPath", TYPE_ID_LIST_OP_PATH, 1);
+DEFINE_TYPE_TRAIT(ListOp<Reference>, "ListOpReference",
+                  TYPE_ID_LIST_OP_REFERENCE, 1);
+DEFINE_TYPE_TRAIT(ListOp<int32_t>, "ListOpInt", TYPE_ID_LIST_OP_INT, 1);
+DEFINE_TYPE_TRAIT(ListOp<uint32_t>, "ListOpUInt", TYPE_ID_LIST_OP_UINT, 1);
+DEFINE_TYPE_TRAIT(ListOp<int64_t>, "ListOpInt64", TYPE_ID_LIST_OP_INT64, 1);
+DEFINE_TYPE_TRAIT(ListOp<uint64_t>, "ListOpUInt64", TYPE_ID_LIST_OP_UINT64, 1);
+DEFINE_TYPE_TRAIT(ListOp<Payload>, "ListOpPayload", TYPE_ID_LIST_OP_PAYLOAD, 1);
+
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
+
+}  // namespace value
 
 }  // namespace tinyusdz

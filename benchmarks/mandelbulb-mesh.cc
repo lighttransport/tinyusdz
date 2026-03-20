@@ -5,7 +5,7 @@
 
 #include "ubench.h"
 #include "value-types.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "usdGeom.hh"
 #include "tinyusdz.hh"
 #include "usda-writer.hh"

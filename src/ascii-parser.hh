@@ -15,7 +15,7 @@
 
 // #include "external/better-enums/enum.h"
 #include "composition.hh"
-#include "prim-types.hh"
+#include "core/prim-spec.hh"  // PrimSpec, Property, composition-types (transitively: prim-enums, prim-metas, variant-types)
 #include "stream-reader.hh"
 #include "string-similarity.hh"
 #include "tinyusdz.hh"
@@ -119,7 +119,7 @@ class AsciiParser {
         strings;  // String only unregistered metadata.
   };
 
-  // TODO: Unifity class with StageMetas in prim-types.hh
+  // TODO: Unifity class with StageMetas in core/layer-types.hh
   struct StageMetas {
     ///
     /// Predefined Stage metas

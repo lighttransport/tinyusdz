@@ -6,7 +6,8 @@
 #include "acutest.h"
 
 #include "unit-stage.h"
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/path.hh"
 #include "tinyusdz.hh"
 #include "usdGeom.hh"
 

@@ -9,7 +9,8 @@
 #include <iomanip>
 #include <cmath>
 
-#include "prim-types.hh"
+#include "core/prim-spec.hh"
+#include "core/layer-types.hh"
 #include "layer.hh"
 #include "stage.hh"
 #include "str-util.hh"

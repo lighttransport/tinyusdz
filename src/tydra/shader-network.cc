@@ -3,7 +3,7 @@
 
 #include "common-macros.inc"
 #include "tiny-format.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "usdShade.hh"
 #include "prim-pprint.hh"
 #include "value-pprint.hh"
