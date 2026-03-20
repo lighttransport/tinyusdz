@@ -189,5 +189,7 @@ The following modules have not been reviewed and may contain similar issues:
 - ~~`src/pprinter.cc`~~ — Split into 10 focused modules (prior commits)
 - ~~`src/usdc-reader.cc`~~ — Split into 4 focused modules (2026-03-20)
 - `src/usda-writer.cc` / `src/usdc-writer.cc` — Serialization paths (small, low priority)
-- `src/composition.cc` — Layer composition logic (2118 lines, medium priority)
+- ~~`src/composition.cc`~~ — Split into 2 focused modules (2026-03-20)
+  - `composition.cc` (1477) — Arc composition logic (sublayers, references, payload, inherits, specializes), CombinePrimSpecRec, Override/Inherit helpers
+  - `composition-reconstruct.cc` (679) — PrimSpec→Prim reconstruction, LayerToStage/InPlace, PrimSpecToPrimInPlace, variant extraction/selection
 - `src/usdGeom.cc` / `src/usdShade.cc` — Schema implementations (small, low priority)

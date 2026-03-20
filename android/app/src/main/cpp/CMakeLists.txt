@@ -8,6 +8,7 @@ set(TINYUSDZ_SOURCES
         ${PROJECT_SOURCE_DIR}/../../../../../src/tinyusdz.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/asset-resolution.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/composition.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/composition-reconstruct.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/prim-types.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/ascii-parser.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/ascii-parser-basetype.cc
