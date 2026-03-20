@@ -141,6 +141,13 @@ class AsciiParser {
     std::map<std::string, MetaVariable> customLayerData;  // `customLayerData`.
     bool customLayerDataAuthored{false};  // Track if customLayerData was explicitly authored
     value::StringData comment;  // String only comment string.
+
+    // AOUSD Core Spec fields
+    nonstd::optional<value::AssetPath> colorConfiguration;
+    nonstd::optional<value::token> colorManagementSystem;
+    nonstd::optional<std::string> owner;
+    nonstd::optional<bool> hasOwnedSubLayers;
+    nonstd::optional<std::map<std::string, MetaVariable>> expressionVariables;
   };
 
   struct ParseState {

@@ -402,6 +402,17 @@ static void RegisterStageMetas(
   metas["kilogramsPerUnit"] =
       AsciiParser::VariableDef(value::kDouble, "kilogramsPerUnit");
 
+  // AOUSD Core Spec fields
+  metas["colorConfiguration"] =
+      AsciiParser::VariableDef(value::kAssetPath, "colorConfiguration");
+  metas["colorManagementSystem"] =
+      AsciiParser::VariableDef(value::kToken, "colorManagementSystem");
+  metas["owner"] = AsciiParser::VariableDef(value::kString, "owner");
+  metas["hasOwnedSubLayers"] =
+      AsciiParser::VariableDef(value::kBool, "hasOwnedSubLayers");
+  metas["expressionVariables"] =
+      AsciiParser::VariableDef(value::kDictionary, "expressionVariables");
+
   // USDZ extension
   metas["autoPlay"] = AsciiParser::VariableDef(value::kBool, "autoPlay");
   metas["playbackMode"] =

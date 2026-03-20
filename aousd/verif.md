@@ -455,9 +455,9 @@ python aousd/compare_usd_example.py test_file.usda
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| All scalar types | YES | bool through uint64, half, timecode, asset |
+| All scalar types | PARTIAL | `uchar` and `timecode` not supported as USDA property types |
 | Dimensioned types | YES | vecN, matrixNd, quatN |
-| Semantic aliases | YES | color3f, point3f, normal3f, vector3f, texCoord2f, etc. |
+| Semantic aliases | PARTIAL | float variants YES; **double variants (color3d, normal3d, point3d, vector3d, texCoord2d/3d) NOT supported**; `texCoord3f` NOT supported; `frame4d` NOT supported |
 | Arrays | YES | T[] for all types |
 | Dictionaries | YES | Nested dictionary support |
 | List operations | YES | Explicit and composable; all ListEditQual values |
@@ -474,11 +474,11 @@ python aousd/compare_usd_example.py test_file.usda
 | timeCodesPerSecond, start/endTimeCode | YES | |
 | framesPerSecond | YES | |
 | documentation, customLayerData | YES | |
-| colorConfiguration, colorManagementSystem | NEEDS VERIFICATION | |
-| owner | NEEDS VERIFICATION | |
-| hasOwnedSubLayers | **NO** | Not found in codebase |
-| expressionVariables | **NO** | Not found in codebase |
-| layerRelocates | **NO** | Not found in codebase |
+| colorConfiguration, colorManagementSystem | **YES** | Added 2026-03-21: parse, store, print |
+| owner | **YES** | Added 2026-03-21: parse, store, print |
+| hasOwnedSubLayers | **YES** | Added 2026-03-21: parse, store, print |
+| expressionVariables | **YES** | Added 2026-03-21: parse, store, print (as dictionary) |
+| layerRelocates | **NO** | Data structure added but no USDA parsing yet (requires path-pair syntax) |
 
 ### File Formats (Spec Ch 16)
 

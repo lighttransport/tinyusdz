@@ -456,7 +456,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
 // Special case for Extent(float3[2]) type.
 // TODO: Reuse code of ParseTypedAttribute as much as possible
-static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout */
+[[maybe_unused]] static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout */
   const std::string prop_name,
   Property &prop,  // Non-const to allow move from metadata
   const std::string &name,
@@ -656,7 +656,7 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
 
 // Allowed syntax:
 //   "token outputs:surface.connect = </path/to/conn/>"
-static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &table, /* inout */
+[[maybe_unused]] static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &table, /* inout */
   const std::string prop_name,
   Property &prop,  // Non-const to allow move from metadata
   const std::string &name,
@@ -831,11 +831,11 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
 
 // Use centralized enum handlers from enum-handlers.hh
 // These wrapper functions maintain backwards compatibility with existing macro usage
-static nonstd::expected<Axis, std::string> AxisEnumHandler(const std::string &tok) {
+[[maybe_unused]] static nonstd::expected<Axis, std::string> AxisEnumHandler(const std::string &tok) {
   return enum_handler::Axis(tok);
 }
 
-static nonstd::expected<Visibility, std::string> VisibilityEnumHandler(const std::string &tok) {
+[[maybe_unused]] static nonstd::expected<Visibility, std::string> VisibilityEnumHandler(const std::string &tok) {
   return enum_handler::Visibility(tok);
 }
 
@@ -843,7 +843,7 @@ static nonstd::expected<Purpose, std::string> PurposeEnumHandler(const std::stri
   return enum_handler::Purpose(tok);
 }
 
-static nonstd::expected<Orientation, std::string> OrientationEnumHandler(const std::string &tok) {
+[[maybe_unused]] static nonstd::expected<Orientation, std::string> OrientationEnumHandler(const std::string &tok) {
   return enum_handler::Orientation(tok);
 }
 

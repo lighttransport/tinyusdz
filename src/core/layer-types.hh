@@ -57,6 +57,21 @@ struct LayerMetas {
   CustomDataType customLayerData;  // customLayerData
   bool customLayerDataAuthored{false};  // Track if customLayerData was explicitly authored (even if empty)
 
+  // AOUSD Core Spec fields (Spec 7.6)
+  // colorConfiguration: asset path to OCIO config
+  nonstd::optional<value::AssetPath> colorConfiguration;
+  // colorManagementSystem: e.g. "ocio"
+  nonstd::optional<value::token> colorManagementSystem;
+  // owner: layer owner string
+  nonstd::optional<std::string> owner;
+  // hasOwnedSubLayers: whether sublayers are "owned" by this layer
+  nonstd::optional<bool> hasOwnedSubLayers;
+  // expressionVariables: dictionary of variable substitutions for asset paths
+  nonstd::optional<CustomDataType> expressionVariables;
+  // layerRelocates: list of (source path, target path) relocations
+  // Each entry maps a source prim path to a target prim path in the namespace
+  std::vector<std::pair<Path, Path>> layerRelocates;
+
   // USDZ extension
   TypedAttributeWithFallback<bool> autoPlay{
       true};  // default(or not authored) = auto play
