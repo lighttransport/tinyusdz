@@ -1,0 +1,1189 @@
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2022 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
+
+///
+/// @file render-data-converter.hh
+/// @brief Converter classes and configs extracted from render-data.hh
+///
+/// Contains RenderSceneConverter, RenderSceneConverterEnv, and related
+/// configuration structs (MeshConverterConfig, MaterialConverterConfig,
+/// RenderSceneConverterConfig) plus vertex dedup helpers.
+///
+
+#pragma once
+
+#include "render-data.hh"
+
+namespace tinyusdz {
+namespace tydra {
+
+///
+/// Texture image loader callback
+///
+/// The callback function should return TextureImage and Raw image data.
+///
+/// NOTE: TextureImage::buffer_id is filled in Tydra side after calling this
+/// callback. NOTE: TextureImage::colorSpace will be overwritten if
+/// `asset:sourceColorSpace` is authored in UsdUVTexture.
+///
+/// @param[in] asset Asset path
+/// @param[in] assetInfo AssetInfo
+/// @param[in] assetResolver AssetResolutionResolver context. Please pass
+/// DefaultAssetResolutionResolver() if you don't have custom
+/// AssetResolutionResolver.
+/// @param[out] texImageOut TextureImage info.
+/// @param[out] imageData Raw texture image data.
+/// @param[inout] userdata User data.
+/// @param[out] warn Optional. Warning message.
+/// @param[out] error Optional. Error message.
+///
+/// @return true upon success.
+/// termination of visiting Prims.
+///
+typedef bool (*TextureImageLoaderFunction)(
+    const value::AssetPath &assetPath, const AssetInfo &assetInfo,
+    const AssetResolutionResolver &assetResolver, TextureImage *imageOut,
+    std::vector<uint8_t> *imageData, void *userdata, std::string *warn,
+    std::string *err);
+
+bool DefaultTextureImageLoaderFunction(const value::AssetPath &assetPath,
+                                       const AssetInfo &assetInfo,
+                                       const AssetResolutionResolver &assetResolver,
+                                       TextureImage *imageOut,
+                                       std::vector<uint8_t> *imageData,
+                                       void *userdata, std::string *warn,
+                                       std::string *err);
+
+///
+/// TODO: UDIM loder
+///
+
+struct MeshConverterConfig {
+  bool triangulate{true};
+
+  // Triangulation method for polygons with 5+ vertices
+  enum class TriangulationMethod {
+    Earcut,     // Use earcut algorithm (robust, handles complex polygons)
+    TriangleFan // Use simple triangle fan (faster, only for convex polygons)
+  };
+
+  TriangulationMethod triangulation_method{TriangulationMethod::Earcut};
+
+  bool validate_geomsubset{true};  // Validate GeomSubset.
+
+  // We may want texcoord data even if the Mesh does not have bound Material.
+  // But we don't know which primvar is used as a texture coordinate when no
+  // Texture assigned to the mesh(no PrimVar Reader assigned to) Use
+  // UsdPreviewSurface setting for it.
+  //
+  // https://openusd.org/release/spec_usdpreviewsurface.html#usd-sample
+  //
+  // Also for tangnents/binormals.
+  //
+  // 'primvars' namespace is omitted.
+  //
+  std::string default_texcoords_primvar_name{"st"};
+  std::string default_texcoords1_primvar_name{
+      "st1"};  // for multi texture(available from iOS 16/macOS 13)
+  std::string default_tangents_primvar_name{"tangents"};
+  std::string default_binormals_primvar_name{"binormals"};
+
+  // TODO: tangents1/binormals1 for multi-frame normal mapping?
+
+  // Upperlimit of the number of skin weights per vertex.
+  // For realtime app, usually up to 64
+  uint32_t max_skin_elementSize = 1024ull * 256ull;
+
+  //
+  // Bone reduction: limit the number of bone influences per vertex for GPU skinning.
+  // When enabled, only the strongest N bone influences are kept and weights are renormalized.
+  //
+  bool enable_bone_reduction{false};
+
+  //
+  // Target number of bone influences per vertex after reduction.
+  // Default is 4, which is standard for real-time GPU skinning (e.g., Three.js, Unity, Unreal).
+  // Common values: 2, 4, 8
+  //
+  uint32_t target_bone_count{4};
+
+  //
+  // Round bone count up to standard GPU skinning values without reducing influences.
+  // When enabled and enable_bone_reduction is false, the elementSize is rounded up
+  // to one of: 4, 8, 16, 32, 48, 64, 80, 96, 128
+  // This allows passing all bone influences while ensuring compatibility with
+  // GPU skinning systems that expect specific bone counts.
+  //
+  bool round_bone_count{false};
+
+  //
+  // Build vertex indices when vertex attributes are converted to `faceverying`?
+  // Similar vertices are merged into single vertex index.
+  // (convert vertex attributes from 'facevarying' to 'vertex' variability)
+  //
+  // Building indices is preferred for renderers which supports single
+  // index-buffer only (e.g. OpenGL/Vulkan)
+  //
+  bool build_vertex_indices{true};
+
+  //
+  // When true, and mesh isn't single_indexable, skip BuildIndices for faster
+  // and reduced temporary memory processing. Vertex attributes are all expanded
+  // to facevertex varying. This option takes precedence over build_vertex_indices
+  // when the mesh cannot be single-indexed.
+  //
+  bool prefer_non_indexed{false};
+
+  //
+  // Compute normals if not present in the mesh.
+  // The algorithm computes smoothed normal for shared vertex.
+  // Normals are also computed when `compute_tangents_and_binormals` is true
+  // and normals primvar is not present in the mesh.
+  //
+  bool compute_normals{true};
+
+  //
+  // Compute tangents and binormals for tangent space normal mapping.
+  // But when primary texcoords primvar is not present, tangents and binormals are not computed.
+  //
+  // NOTE: The algorithm is not robust to compute tangent/binormal for quad/polygons.
+  // Set `triangulate` preferred when you want let Tydra compute tangent/binormal.
+  //
+  // NOTE: Computing tangent frame for multi-texcoord is not supported.
+  //
+  bool compute_tangents_and_binormals{true};
+
+  //
+  // When true, only compute tangents/binormals for meshes that have a bound
+  // material with a normal map texture connected. Saves significant memory
+  // and CPU for meshes that don't need tangent-space normal mapping.
+  //
+  bool compute_tangents_only_with_normal_map{true};
+
+  //
+  // When true, defer tangent computation — don't compute during ConvertMesh.
+  // Instead, mark meshes with tangent_computation_deferred=true.
+  // Call RenderSceneConverter::ComputeDeferredTangents() to compute on demand
+  // (e.g. at first getTangents() call in WASM bindings).
+  //
+  bool defer_tangent_computation{false};
+
+  //
+  // Tangent computation method selection.
+  //
+  enum class TangentComputationMethod {
+    Lengyel,        // Fast, lightweight (default). Good enough for most use cases.
+    MikkTSpace,     // Industry standard (original C impl), higher quality but
+                    // significantly slower and more memory-hungry for large meshes.
+    FastMikkTSpace, // Optimized MikkTSpace reimplementation (~2x faster than
+                    // original, same algorithm semantics at default 180° threshold).
+    Hybrid,         // Lengyel base + MikkTSpace-quality welding/averaging.
+                    // Near-MikkTSpace quality, ~5-10x faster than MikkTSpace.
+  };
+
+  TangentComputationMethod tangent_method{TangentComputationMethod::Lengyel};
+
+  //
+  // Tangent storage format selection.
+  // Controls how computed tangents are stored in RenderMesh.
+  // Packed formats store tangent direction + handedness sign in a single
+  // attribute, eliminating separate binormal storage. Bitangent is
+  // reconstructed in the shader: B = cross(N, T.xyz) * T.w
+  //
+  enum class TangentStorageFormat {
+    Float3,        // float3 tangent + float3 binormal (24 bytes/vertex, baseline)
+    Packed1010102, // INT_2_10_10_10_REV vec4 (4 bytes/vertex, WebGL2 native)
+    PackedSNorm8,  // SNORM8x4 vec4 (4 bytes/vertex, widest compat)
+    PackedFp16,    // FP16x4 vec4 (8 bytes/vertex, highest packed precision)
+  };
+
+#ifdef __EMSCRIPTEN__
+  TangentStorageFormat tangent_storage{TangentStorageFormat::PackedSNorm8};
+#else
+  TangentStorageFormat tangent_storage{TangentStorageFormat::PackedFp16};
+#endif
+
+  //
+  // Normal storage format selection.
+  // PackedSNorm8 reduces normal storage from 12 to 3 bytes/vertex (75% savings).
+  // ~1° angular resolution, sufficient for rendering.
+  //
+  enum class NormalStorageFormat {
+    Float3,         // float3 normals (12 bytes/vertex, baseline)
+    Packed1010102,  // INT_2_10_10_10_REV xyz (4 bytes/vertex)
+    PackedSNorm8,   // SNorm8x3 (3 bytes/vertex, Three.js/glTF compatible)
+    PackedSNorm16,  // SNorm16x3 (6 bytes/vertex, higher precision)
+  };
+
+#ifdef __EMSCRIPTEN__
+  NormalStorageFormat normal_storage{NormalStorageFormat::PackedSNorm8};
+#else
+  NormalStorageFormat normal_storage{NormalStorageFormat::Float3};
+#endif
+
+  //
+  // Allowed relative error to check if vertex data is the same.
+  // Used for 'facevarying' variability to `vertex` variability conversion in
+  // ConvertMesh. Only effective to floating-point vertex data.
+  //
+  float facevarying_to_vertex_eps = std::numeric_limits<float>::epsilon();
+
+  //
+  // Maximum vertex valence (number of face-vertices sharing a position) before
+  // the position-bucketed vertex dedup falls back to flatten mode (no dedup).
+  // This prevents O(N^2) worst case when a single position is referenced by
+  // many faces. When any vertex's degree exceeds this threshold, dedup is
+  // skipped entirely and each face-vertex becomes its own unique vertex.
+  // Set to 0 to disable the safeguard (always dedup).
+  //
+  uint32_t max_vertex_valence{16};
+
+  //
+  // Sphere tessellation settings.
+  // Controls how GeomSphere primitives are tessellated into triangle meshes.
+  //
+  SphereTessellation sphere_tessellation{SphereTessellation::Icosphere};
+  int sphere_subdivisions{4};  // Icosphere subdivision level (0-6, default 4)
+
+  // When true, free GeomMesh data after converting it to save memory usage.
+  // For emscripten.
+  bool lowmem{false};
+};
+
+struct MaterialConverterConfig {
+  // purpose name for two-sided material mapping.
+  // https://github.com/syoyo/tinyusdz/issues/120
+  std::string default_backface_material_purpose_name{"back"};
+
+  // DefaultTextureImageLoader will be used when nullptr;
+  TextureImageLoaderFunction texture_image_loader_function{nullptr};
+  void *texture_image_loader_function_userdata{nullptr};
+
+  // For UsdUVTexture.
+  //
+  // Default configuration:
+  //
+  // - The converter converts 8bit texture to floating point image and texel
+  // value is converted to linear space.
+  // - Allow missing asset(texture) and asset load failure.
+  //
+  // Recommended configuration for mobile/WebGL
+  //
+  // - `preserve_texel_bitdepth` true
+  //   - No floating-point image conversion.
+  // - `linearize_color_space` true
+  //   - Linearlize in CPU, and no sRGB -> Linear conversion in a shader
+  //   required.
+
+  // In the UsdUVTexture spec, 8bit texture image is converted to floating point
+  // image of range `[0.0, 1.0]`. When this flag is set to false, 8bit and 16bit
+  // texture image is converted to floating point image. When this flag is set
+  // to true, 8bit and 16bit texture data is stored as-is to save memory.
+  // Setting true is good if you want to render USD scene on mobile, WebGL, etc.
+  bool preserve_texel_bitdepth{false};
+
+  // Apply the inverse of a color space to make texture image in linear space.
+  // When `preserve_texel_bitdepth` is set to true, linearization also preserse
+  // texel bit depth (i.e, for 8bit sRGB image, 8bit linear-space image is
+  // produced)
+  bool linearize_color_space{false};
+
+  //
+  // Set scene(working space) colorspace. This space must be linear colorspace.
+  // Possible choice is: Linear_sRGB(linear_srgb), Lin_ACEScg(ACEScg/AP1), Lin_DisplayP3(linear_displayp3)
+  // W.I.P: Curently Lin_sRGB is only supported.
+  //
+  ColorSpace scene_color_space{ColorSpace::Lin_sRGB};
+
+  // Allow asset(texture, shader, etc) path with Windows backslashes(e.g.
+  // ".\textures\cat.png")? When true, convert it to forward slash('/') on
+  // Posixish system(otherwise character is escaped(e.g. '\t' -> tab).
+  bool allow_backslash_in_asset_path{true};
+
+  // Allow texture load failure?
+  bool allow_texture_load_failure{true};
+
+  // Allow asset(e.g. texture file/shader file) which does not exit?
+  bool allow_missing_asset{true};
+
+};
+
+struct RenderSceneConverterConfig {
+  // Load texture image data on convert.
+  // false: no actual texture file/asset access.
+  // App/User must setup TextureImage manually after the conversion.
+  bool load_texture_assets{true};
+
+  //
+  // Merge meshes with the same material for performant rendering.
+  //
+  // When enabled, meshes that share the same material and have compatible
+  // properties (static transforms, no per-face materials, no skeletal animation,
+  // no blend shapes) will be merged into a single mesh.
+  //
+  // This optimization reduces draw calls in renderers like Three.js, WebGL,
+  // and other GPU-based renderers where draw call overhead is significant.
+  //
+  // Merge criteria:
+  // - Same material_id (whole mesh material, not per-face)
+  // - No material_subsetMap (per-face materials prevent merging)
+  // - Static mesh (no skeletal animation: skel_id == -1)
+  // - No blend shapes (targets.empty())
+  // - Same global transform matrix (meshes must be in the same world space,
+  //   or transforms will be baked into vertex positions)
+  //
+  // When `bake_transform` is true:
+  // - Meshes with different transforms can be merged by baking their
+  //   global transforms into vertex positions/normals
+  // - This allows more aggressive merging at the cost of losing
+  //   individual mesh transforms
+  //
+  bool merge_meshes{false};
+
+  //
+  // When merging meshes, bake global transforms into vertex data.
+  // This allows merging meshes with different transforms by transforming
+  // their vertices into world space.
+  //
+  // Only effective when merge_meshes is true.
+  //
+  bool merge_meshes_bake_transform{true};
+};
+
+//
+// Simple packed vertex struct & comparator for dedup.
+// https://github.com/huamulan/OpenGL-tutorial/blob/master/common/vboindexer.cpp
+//
+// Up to 2 texcoords.
+// tangent and binormal is included in VertexData, considering the situation
+// that tangent and binormal is supplied through user-defined primvar.
+//
+// TODO: Use spatial hash for robust dedup(consider floating-point eps)
+// TODO: Polish interface to support arbitrary vertex configuration.
+//
+// When TYDRA_USE_INDEX is defined, use array indices instead of values
+// to save memory. Index value of -1 (or ~0u for uint32_t) means no attribute.
+//
+
+// DEPRECATED: DefaultPackedVertexData, DefaultPackedVertexDataHasher,
+// DefaultPackedVertexDataEqual, DefaultVertexInput, DefaultVertexOutput, and
+// BuildIndices are kept for external code compatibility but are no longer used
+// internally. Internal vertex dedup now uses position-bucketed linear scan.
+struct DefaultPackedVertexData {
+  //value::float3 position;
+  uint32_t point_index;
+#ifdef TYDRA_USE_INDEX
+  // Use indices into attribute arrays instead of values
+  // -1 (or ~0u) means no attribute
+  uint32_t normal_index;
+  uint32_t uv0_index;
+  uint32_t uv1_index;
+  uint32_t tangent_index;
+  uint32_t binormal_index;
+  uint32_t color_index;
+  uint32_t opacity_index;
+#else
+  // Use values directly (original behavior)
+  value::float3 normal;
+  value::float2 uv0;
+  value::float2 uv1;
+  value::float3 tangent;
+  value::float3 binormal;
+  value::float3 color;
+  float opacity;
+#endif
+
+  // Basic comparator for std::map (fallback to memcmp)
+  // For epsilon-based comparison, use DefaultPackedVertexDataCompare with attribute arrays
+  bool operator<(const DefaultPackedVertexData &rhs) const {
+    return memcmp(reinterpret_cast<const void *>(this),
+                  reinterpret_cast<const void *>(&rhs),
+                  sizeof(DefaultPackedVertexData)) > 0;
+  }
+};
+
+struct DefaultPackedVertexDataHasher {
+  inline size_t operator()(const DefaultPackedVertexData &v) const {
+    // Simple hasher using FNV1 32bit
+    // TODO: Use 64bit FNV1?
+    // TODO: Use spatial hash or LSH(LocallySensitiveHash) for position value.
+    static constexpr uint32_t kFNV_Prime = 0x01000193;
+    static constexpr uint32_t kFNV_Offset_Basis = 0x811c9dc5;
+
+    const uint8_t *ptr = reinterpret_cast<const uint8_t *>(&v);
+    size_t n = sizeof(DefaultPackedVertexData);
+
+    uint32_t hash = kFNV_Offset_Basis;
+    for (size_t i = 0; i < n; i++) {
+      hash = (kFNV_Prime * hash) ^ (ptr[i]);
+    }
+
+    return size_t(hash);
+  }
+};
+
+struct DefaultPackedVertexDataEqual {
+  bool operator()(const DefaultPackedVertexData &lhs,
+                  const DefaultPackedVertexData &rhs) const {
+    return memcmp(reinterpret_cast<const void *>(&lhs),
+                  reinterpret_cast<const void *>(&rhs),
+                  sizeof(DefaultPackedVertexData)) == 0;
+  }
+};
+
+template <class PackedVert>
+struct DefaultVertexInput {
+  //std::vector<value::float3> positions;
+  std::vector<uint32_t> point_indices; // Keep int array as std::vector
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<value::float3> normals;
+  ChunkedVectorArray<value::float2> uv0s;
+  ChunkedVectorArray<value::float2> uv1s;
+  ChunkedVectorArray<value::float3> tangents;
+  ChunkedVectorArray<value::float3> binormals;
+  ChunkedVectorArray<value::float3> colors;
+  ChunkedVectorArray<float> opacities;
+#else
+  std::vector<value::float3> normals;
+  std::vector<value::float2> uv0s;
+  std::vector<value::float2> uv1s;
+  std::vector<value::float3> tangents;
+  std::vector<value::float3> binormals;
+  std::vector<value::float3> colors;
+  std::vector<float> opacities;
+#endif
+
+#ifdef TYDRA_USE_INDEX
+  // Unique attribute arrays for indexed mode
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<value::float3> unique_normals;
+  ChunkedVectorArray<value::float2> unique_uv0s;
+  ChunkedVectorArray<value::float2> unique_uv1s;
+  ChunkedVectorArray<value::float3> unique_tangents;
+  ChunkedVectorArray<value::float3> unique_binormals;
+  ChunkedVectorArray<value::float3> unique_colors;
+  ChunkedVectorArray<float> unique_opacities;
+#else
+  std::vector<value::float3> unique_normals;
+  std::vector<value::float2> unique_uv0s;
+  std::vector<value::float2> unique_uv1s;
+  std::vector<value::float3> unique_tangents;
+  std::vector<value::float3> unique_binormals;
+  std::vector<value::float3> unique_colors;
+  std::vector<float> unique_opacities;
+#endif
+#endif
+
+  size_t size() const { return point_indices.size(); }
+
+  void get(size_t idx, PackedVert &output) const {
+    if (idx < point_indices.size()) {
+      output.point_index = point_indices[idx];
+    } else {
+      output.point_index = ~0u; // this case should not happen though
+    }
+#ifdef TYDRA_USE_INDEX
+    // In index mode, store indices to unique attribute arrays
+    // The indices will be set by the conversion process
+    // For now, we just mark them as not present if no data
+    output.normal_index = (idx < normals.size()) ? idx : ~0u;
+    output.uv0_index = (idx < uv0s.size()) ? idx : ~0u;
+    output.uv1_index = (idx < uv1s.size()) ? idx : ~0u;
+    output.tangent_index = (idx < tangents.size()) ? idx : ~0u;
+    output.binormal_index = (idx < binormals.size()) ? idx : ~0u;
+    output.color_index = (idx < colors.size()) ? idx : ~0u;
+    output.opacity_index = (idx < opacities.size()) ? idx : ~0u;
+#else
+    // Original behavior: store values directly
+    if (idx < normals.size()) {
+      output.normal = normals[idx];
+    } else {
+      output.normal = {0.0f, 0.0f, 0.0f};
+    }
+    if (idx < uv0s.size()) {
+      output.uv0 = uv0s[idx];
+    } else {
+      output.uv0 = {0.0f, 0.0f};
+    }
+    if (idx < uv1s.size()) {
+      output.uv1 = uv1s[idx];
+    } else {
+      output.uv1 = {0.0f, 0.0f};
+    }
+    if (idx < tangents.size()) {
+      output.tangent = tangents[idx];
+    } else {
+      output.tangent = {0.0f, 0.0f, 0.0f};
+    }
+    if (idx < binormals.size()) {
+      output.binormal = binormals[idx];
+    } else {
+      output.binormal = {0.0f, 0.0f, 0.0f};
+    }
+    if (idx < colors.size()) {
+      output.color = colors[idx];
+    } else {
+      output.color = {0.0f, 0.0f, 0.0f};
+    }
+    if (idx < opacities.size()) {
+      output.opacity = opacities[idx];
+    } else {
+      output.opacity = 0.0f;  // FIXME: Use 1.0?
+    }
+#endif
+  }
+};
+
+template <class PackedVert>
+struct DefaultVertexOutput {
+  //std::vector<value::float3> positions;
+  std::vector<uint32_t> point_indices; // Keep int array as std::vector
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<value::float3> normals;
+  ChunkedVectorArray<value::float2> uv0s;
+  ChunkedVectorArray<value::float2> uv1s;
+  ChunkedVectorArray<value::float3> tangents;
+  ChunkedVectorArray<value::float3> binormals;
+  ChunkedVectorArray<value::float3> colors;
+  ChunkedVectorArray<float> opacities;
+#else
+  std::vector<value::float3> normals;
+  std::vector<value::float2> uv0s;
+  std::vector<value::float2> uv1s;
+  std::vector<value::float3> tangents;
+  std::vector<value::float3> binormals;
+  std::vector<value::float3> colors;
+  std::vector<float> opacities;
+#endif
+
+#ifdef TYDRA_USE_INDEX
+  // Unique attribute arrays for indexed mode
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<value::float3> unique_normals;
+  ChunkedVectorArray<value::float2> unique_uv0s;
+  ChunkedVectorArray<value::float2> unique_uv1s;
+  ChunkedVectorArray<value::float3> unique_tangents;
+  ChunkedVectorArray<value::float3> unique_binormals;
+  ChunkedVectorArray<value::float3> unique_colors;
+  ChunkedVectorArray<float> unique_opacities;
+#else
+  std::vector<value::float3> unique_normals;
+  std::vector<value::float2> unique_uv0s;
+  std::vector<value::float2> unique_uv1s;
+  std::vector<value::float3> unique_tangents;
+  std::vector<value::float3> unique_binormals;
+  std::vector<value::float3> unique_colors;
+  std::vector<float> unique_opacities;
+#endif
+#endif
+
+  size_t size() const { return point_indices.size(); }
+
+  void push_back(const PackedVert &v) {
+    point_indices.push_back(v.point_index);
+#ifdef TYDRA_USE_INDEX
+    // In index mode, we would resolve indices to actual values
+    // from the unique arrays when needed for rendering
+    // For now, we keep the existing interface but store indices
+    // This would need additional logic to resolve indices to values
+    normals.push_back({0.0f, 0.0f, 0.0f}); // placeholder
+    uv0s.push_back({0.0f, 0.0f});
+    uv1s.push_back({0.0f, 0.0f});
+    tangents.push_back({0.0f, 0.0f, 0.0f});
+    binormals.push_back({0.0f, 0.0f, 0.0f});
+    colors.push_back({0.0f, 0.0f, 0.0f});
+    opacities.push_back(0.0f);
+#else
+    normals.push_back(v.normal);
+    uv0s.push_back(v.uv0);
+    uv1s.push_back(v.uv1);
+    tangents.push_back(v.tangent);
+    binormals.push_back(v.binormal);
+    colors.push_back(v.color);
+    opacities.push_back(v.opacity);
+#endif
+  }
+};
+
+// BuildIndices and BuildIndicesWithSpatialHash declarations.
+// Implementations are in render-data.cc with explicit instantiations.
+
+//
+// out_vertex_indices_remap: corresponding vertexIndex in input.
+//
+template <class VertexInput, class VertexOutput, class PackedVert,
+          class PackedVertHasher, class PackedVertEqual>
+void BuildIndices(const VertexInput &input, VertexOutput &output,
+                  std::vector<uint32_t> &out_indices, std::vector<uint32_t> &out_point_indices);
+
+class RenderSceneConverterEnv {
+ public:
+  RenderSceneConverterEnv(const Stage &_stage) : stage(_stage) {}
+
+  RenderSceneConverterConfig scene_config;
+  MeshConverterConfig mesh_config;
+  MaterialConverterConfig material_config;
+
+  AssetResolutionResolver asset_resolver;
+
+  std::string usd_filename; // Corresponding USD filename to Stage.
+
+  void set_search_paths(const std::vector<std::string> &paths) {
+    asset_resolver.set_search_paths(paths);
+  }
+
+  const Stage &stage;  // Point to valid Stage object at constructor
+
+  double timecode{value::TimeCode::Default()};
+  value::TimeSampleInterpolationType tinterp{
+      value::TimeSampleInterpolationType::Linear};
+
+};
+
+//
+// Convert USD scenegraph at specified time
+// TODO: Use RenderSceneConverterEnv(RenderSceneConverterEnv::timecode)
+//
+class RenderSceneConverter {
+ public:
+  RenderSceneConverter() = default;
+  RenderSceneConverter(const RenderSceneConverter &rhs) = delete;
+  RenderSceneConverter(RenderSceneConverter &&rhs) = delete;
+
+  ///
+  /// Set progress callback for monitoring conversion progress.
+  ///
+  /// @param[in] callback Function to call during conversion to report progress
+  /// @param[in] userptr User-provided pointer for custom data
+  ///
+  void SetProgressCallback(ProgressCallback callback, void *userptr = nullptr);
+
+  ///
+  /// Set detailed progress callback for fine-grained progress monitoring.
+  /// This callback provides mesh/material/texture counts during conversion.
+  ///
+  /// @param[in] callback Function to call during conversion with detailed info
+  /// @param[in] userptr User-provided pointer for custom data
+  ///
+  void SetDetailedProgressCallback(DetailedProgressCallback callback, void *userptr = nullptr);
+
+  ///
+  /// Report mesh conversion progress (for use by MeshVisitor).
+  /// Updates internal progress info and calls the detailed callback if set.
+  ///
+  /// @param[in] meshes_processed Number of meshes processed so far
+  /// @param[in] meshes_total Total number of meshes to process
+  /// @param[in] mesh_name Name of the current mesh being processed
+  /// @param[in] message Progress message
+  /// @return true to continue, false to cancel
+  ///
+  bool ReportMeshProgress(size_t meshes_processed, size_t meshes_total,
+                          const std::string& mesh_name, const std::string& message);
+
+  ///
+  /// All-in-one Stage to RenderScene conversion.
+  ///
+  /// Convert Stage to RenderScene.
+  /// Must be called after SetStage, SetMaterialConverterConfig(optional)
+  ///
+  bool ConvertToRenderScene(const RenderSceneConverterEnv &env, RenderScene *scene);
+
+  const std::string &GetInfo() const { return _info; }
+  const std::string &GetWarning() const { return _warn; }
+  const std::string &GetError() const { return _err; }
+
+  // Prim path <-> index for corresponding array
+  // e.g. meshMap: primPath/index to `meshes`.
+
+  // TODO: Move to private?
+  StringAndIdMap root_nodeMap;
+  StringAndIdMap meshMap;
+  StringAndIdMap materialMap;
+  StringAndIdMap cameraMap;
+  StringAndIdMap lightMap;
+  StringAndIdMap textureMap;
+  StringAndIdMap imageMap;
+  StringAndIdMap bufferMap;
+  StringAndIdMap animationMap;
+
+  int default_node{-1};
+
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<Node> root_nodes;
+  ChunkedVectorArray<RenderMesh> meshes;
+  ChunkedVectorArray<RenderMaterial> materials;
+  ChunkedVectorArray<RenderCamera> cameras;
+  ChunkedVectorArray<RenderLight> lights;
+  ChunkedVectorArray<UVTexture> textures;
+  ChunkedVectorArray<TextureImage> images;
+  ChunkedVectorArray<BufferData> buffers;
+  ChunkedVectorArray<SkelHierarchy> skeletons;
+  ChunkedVectorArray<AnimationClip> animations;
+#else
+  std::vector<Node> root_nodes;
+  std::vector<RenderMesh> meshes;
+  std::vector<RenderMaterial> materials;
+  std::vector<RenderCamera> cameras;
+  std::vector<RenderLight> lights;
+  std::vector<UVTexture> textures;
+  std::vector<TextureImage> images;
+  std::vector<BufferData> buffers;
+  std::vector<SkelHierarchy> skeletons;
+  std::vector<AnimationClip> animations;
+#endif
+
+  // Pre-discovered skeleton/animation prims for ancestor-based discovery
+  // These are set temporarily during ConvertToRenderScene
+  const PathPrimMap<Skeleton> *_allSkeletons{nullptr};
+  const PathPrimMap<SkelRoot> *_allSkelRoots{nullptr};
+  const PathPrimMap<SkelAnimation> *_allAnimations{nullptr};
+
+  ///
+  /// Convert GeomMesh to renderer-friendly mesh.
+  /// Also apply triangulation when MeshConverterConfig::triangulate is set to
+  /// true.
+  ///
+  /// normals, texcoords, vertexcolors/opacities vertex attributes(built-in
+  /// primvars) are converterd to either `vertex` variability(i.e. can be drawn
+  /// with single vertex indices) or `facevarying` variability(any of primvars
+  /// is `facevarying`. It can be drawn with no indices, but less
+  /// efficient(especially vertex has skin weights and blendshapes)).
+  ///
+  /// Since preferred variability for OpenGL/Vulkan renderer is `vertex`,
+  /// ConvertMesh tries to convert `facevarying` attribute to `vertex` attribute
+  /// when all shared vertex data is the same. If it fails, but
+  /// `MeshConverterConfig.build_indices` is set to true, ConvertMesh builds
+  /// vertex indices from `facevarying` and convert variability to 'vertex'.
+  ///
+  /// Note that `points`, skin weights and BlendShape attributes are remains
+  /// with `vertex` variability. (so that we can apply some processing per
+  /// point-wise)
+  ///
+  /// Thus, if you want to render a mesh whose normal/texcoord/etc variability
+  /// is `facevarying`, `points`, skin weights and BlendShape attributes would
+  /// also need to be converted to `facevarying` to draw.
+  ///
+  /// Other user defined primvars are not touched by ConvertMesh.
+  /// The app need to manually triangulate, change variability of user-defined
+  /// primvar if required.
+  ///
+  /// It is recommended first convert Materials assigned(bounded) to this
+  /// GeomMesh(and GeomSubsets) or create your own Materials, and supply
+  /// material info with `material_path` and `rmaterial_map`. You may supply
+  /// empty material info and assign Material after ConvertMesh manually, but it
+  /// will need some steps(Need to find texcoord primvar, triangulate texcoord,
+  /// etc). See the implementation of ConvertMesh for details)
+  ///
+  ///
+  /// @param[in] mesh_abs_path USD prim path to this GeomMesh
+  /// @param[in] mesh Input GeomMesh
+  /// @param[in] material_path USD Material Prim path assigned(bound) to this
+  /// GeomMesh. Use tydra::GetBoundPath to get Material path actually assigned
+  /// to the mesh.
+  /// @param[in] subset_material_path_map USD Material Prim path assigned(bound)
+  /// to GeomSubsets in this GeomMesh. key = GeomSubset Prim name.
+  /// @param[in] rmaterial_map USD Material Prim path <-> RenderMaterial index
+  /// map. Use empty map if no material assigned to this Mesh. If the mesh has
+  /// bounded material(including material from GeomSubset), RenderMaterial index
+  /// must be obrained using ConvertMaterial method before calling ConvertMesh.
+  /// @param[in] material_subsets GeomSubset assigned to this Mesh. Can be empty
+  /// when no materialBind GeomSuset assigned to this mesh.
+  /// @param[in] blendshapes BlendShape Prims assigned to this Mesh. Can be
+  /// empty when no BlendShape assigned to this mesh.
+  /// @param[out] dst RenderMesh output
+  ///
+  /// @return true when success.
+  ///
+  ///
+
+  ///
+  /// Convert GeomCube to RenderMesh by generating tessellated geometry
+  ///
+  /// @param[in] env Converter environment
+  /// @param[in] cube_abs_path Absolute path to the cube primitive
+  /// @param[in] cube GeomCube primitive
+  /// @param[in] material_path Material path for the cube
+  /// @param[in] subset_material_path_map Material subset map
+  /// @param[in] rmaterial_map Material ID map
+  /// @param[in] material_subsets GeomSubset array
+  /// @param[in] blendshapes BlendShape array
+  /// @param[out] dst RenderMesh output
+  ///
+  /// @return true when success.
+  ///
+  bool ConvertCube(
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &cube_abs_path,
+      const tinyusdz::GeomCube &cube, const MaterialPath &material_path,
+      const std::map<std::string, MaterialPath> &subset_material_path_map,
+      const StringAndIdMap &rmaterial_map,
+      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+          &blendshapes,
+      RenderMesh *dst);
+
+  ///
+  /// Convert GeomSphere to RenderMesh by generating tessellated geometry
+  ///
+  /// @param[in] env Converter environment
+  /// @param[in] sphere_abs_path Absolute path to the sphere primitive
+  /// @param[in] sphere GeomSphere primitive
+  /// @param[in] material_path Material path for the sphere
+  /// @param[in] subset_material_path_map Material subset map
+  /// @param[in] rmaterial_map Material ID map
+  /// @param[in] material_subsets GeomSubset array
+  /// @param[in] blendshapes BlendShape array
+  /// @param[out] dst RenderMesh output
+  ///
+  /// @return true when success.
+  ///
+  bool ConvertSphere(
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &sphere_abs_path,
+      const tinyusdz::GeomSphere &sphere, const MaterialPath &material_path,
+      const std::map<std::string, MaterialPath> &subset_material_path_map,
+      const StringAndIdMap &rmaterial_map,
+      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+          &blendshapes,
+      RenderMesh *dst);
+
+  bool ConvertMesh(
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &mesh_abs_path,
+      const tinyusdz::GeomMesh &mesh, const MaterialPath &material_path,
+      const std::map<std::string, MaterialPath> &subset_material_path_map,
+      //const std::map<std::string, int64_t> &rmaterial_map,
+      const StringAndIdMap &rmaterial_map,
+      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+          &blendshapes,
+      RenderMesh *dst);
+
+  ///
+  /// Compute tangents/binormals for a RenderMesh that had deferred tangent
+  /// computation (tangent_computation_deferred == true).
+  /// Call this on demand, e.g. from WASM getTangents() binding.
+  /// After successful computation, tangent_computation_deferred is set to false.
+  ///
+  /// @return true on success, false if normals or texcoords are missing.
+  ///
+  static bool ComputeDeferredTangents(
+      RenderMesh *mesh,
+      MeshConverterConfig::TangentComputationMethod method =
+          MeshConverterConfig::TangentComputationMethod::Lengyel,
+      MeshConverterConfig::TangentStorageFormat storage =
+#ifdef __EMSCRIPTEN__
+          MeshConverterConfig::TangentStorageFormat::Packed1010102,
+#else
+          MeshConverterConfig::TangentStorageFormat::PackedFp16,
+#endif
+      std::string *err = nullptr);
+
+  ///
+  /// Convert USD Material/Shader to renderer-friendly Material
+  ///
+  /// @return true when success.
+  ///
+  bool ConvertMaterial(const RenderSceneConverterEnv &env,
+                       const tinyusdz::Path &abs_mat_path,
+                       const tinyusdz::Material &material,
+                       RenderMaterial *rmat_out);
+
+  ///
+  /// Convert UsdPreviewSurface Shader to renderer-friendly PreviewSurfaceShader
+  ///
+  /// @param[in] shader_abs_path USD Path to Shader Prim with UsdPreviewSurface
+  /// info:id.
+  /// @param[in] shader UsdPreviewSurface
+  /// @param[in] pss_put PreviewSurfaceShader
+  ///
+  /// @return true when success.
+  ///
+  bool ConvertPreviewSurfaceShader(const RenderSceneConverterEnv &env,
+                                   const tinyusdz::Path &shader_abs_path,
+                                   const tinyusdz::UsdPreviewSurface &shader,
+                                   PreviewSurfaceShader *pss_out);
+
+  ///
+  /// Convert MaterialX OpenPBR Surface Shader to renderer-friendly OpenPBRSurfaceShader
+  ///
+  /// @param[in] env Conversion environment
+  /// @param[in] shader_abs_path USD Path to Shader Prim with OpenPBRSurface info:id
+  /// @param[in] shader OpenPBRSurface
+  /// @param[out] openpbr_out OpenPBRSurfaceShader
+  ///
+  /// @return true when success.
+  ///
+  bool ConvertOpenPBRSurfaceShader(const RenderSceneConverterEnv &env,
+                                    const tinyusdz::Path &shader_abs_path,
+                                    const tinyusdz::OpenPBRSurface &shader,
+                                    OpenPBRSurfaceShader *openpbr_out);
+
+  ///
+  /// Convert UsdUvTexture to renderer-friendly UVTexture
+  ///
+  /// @param[in] tex_abs_path USD Path to Shader Prim with UsdUVTexture info:id.
+  /// @param[in] assetInfo assetInfo Prim metadata of given Shader Prim
+  /// @param[in] texture UsdUVTexture
+  /// @param[in] tex_out UVTexture
+  ///
+  /// TODO: Retrieve assetInfo from `tex_abs_path`?
+  ///
+  /// @return true when success.
+  ///
+  bool ConvertUVTexture(const RenderSceneConverterEnv &env,
+                        const Path &tex_abs_path, const AssetInfo &assetInfo,
+                        const UsdUVTexture &texture, UVTexture *tex_out);
+
+  ///
+  /// Convert SkelAnimation to Tydra Animation.
+  ///
+  /// @param[in] abs_path USD Path to SkelAnimation Prim
+  /// @param[in] skelAnim SkelAnimation
+  /// @param[in] anim_out AnimationClip
+  ///
+  bool ConvertSkelAnimation(const RenderSceneConverterEnv &env,
+                        const Path &abs_path, const SkelAnimation &skelAnim,
+                        int32_t skeleton_id,
+                        AnimationClip *anim_out);
+
+  ///
+  /// Extract animation data from xformOps time samples and convert to AnimationClip
+  ///
+  /// @param[in] env Converter environment
+  /// @param[in] abs_path Absolute path to the prim
+  /// @param[in] prim_name Prim name
+  /// @param[in] xformable Xformable object containing xformOps
+  /// @param[in] target_node_index Index of the target node in RenderScene
+  /// @param[out] anim_out Output AnimationClip
+  /// @return true if animation was extracted, false otherwise
+  ///
+  bool ExtractXformOpAnimation(const RenderSceneConverterEnv &env,
+                        const Path &abs_path,
+                        const std::string &prim_name,
+                        const Xformable &xformable,
+                        int32_t target_node_index,
+                        AnimationClip *anim_out);
+
+  ///
+  /// @param[in] env
+  /// @param[in] root XformNode
+  ///
+  bool BuildNodeHierarchy(const RenderSceneConverterEnv &env, const XformNode &node);
+
+  ///
+  /// Convert UsdLux lights to renderer-friendly RenderLight
+  ///
+
+  bool ConvertSphereLight(const RenderSceneConverterEnv &env,
+                          const Path &light_abs_path,
+                          const SphereLight &light,
+                          RenderLight *rlight_out);
+
+  bool ConvertDistantLight(const RenderSceneConverterEnv &env,
+                           const Path &light_abs_path,
+                           const DistantLight &light,
+                           RenderLight *rlight_out);
+
+  bool ConvertDomeLight(const RenderSceneConverterEnv &env,
+                        const Path &light_abs_path,
+                        const DomeLight &light,
+                        RenderLight *rlight_out);
+
+  bool ConvertRectLight(const RenderSceneConverterEnv &env,
+                        const Path &light_abs_path,
+                        const RectLight &light,
+                        RenderLight *rlight_out);
+
+  bool ConvertDiskLight(const RenderSceneConverterEnv &env,
+                        const Path &light_abs_path,
+                        const DiskLight &light,
+                        RenderLight *rlight_out);
+
+  bool ConvertCylinderLight(const RenderSceneConverterEnv &env,
+                            const Path &light_abs_path,
+                            const CylinderLight &light,
+                            RenderLight *rlight_out);
+
+  bool ConvertGeometryLight(const RenderSceneConverterEnv &env,
+                            const Path &light_abs_path,
+                            const GeometryLight &light,
+                            RenderLight *rlight_out);
+
+  ///
+  /// Merge two RenderMesh instances into a single mesh.
+  /// The source mesh data is appended to the destination mesh.
+  /// Returns false with `err` filled when the meshes are not merge-compatible.
+  ///
+  bool MergeMeshData(const RenderMesh &src, const value::matrix4d &src_transform,
+                     RenderMesh &dst, std::string *err = nullptr);
+
+  ///
+  /// Merge meshes with the same material for performant rendering.
+  ///
+  /// This function merges meshes that share the same material and have
+  /// compatible properties into a single mesh. It reduces draw calls
+  /// for GPU-based renderers.
+  ///
+  /// @param[in] env Converter environment containing configuration
+  /// @return true upon success
+  ///
+  bool MergeMeshesImpl(const RenderSceneConverterEnv &env);
+
+  // Wrapper around GetBoundMaterial with caching.
+  // Avoids repeated ancestor walks for sibling prims.
+  bool GetBoundMaterialCached(
+      const Stage &stage, const Path &abs_path,
+      const std::string &purpose, Path *materialPath,
+      const Material **material, std::string *err);
+
+ private:
+  ///
+  /// Convert variability of vertex data to 'vertex' or 'facevarying'.
+  ///
+  /// @param[inout] vattr Input/Output VertexAttribute
+  /// @param[in] to_vertex_varing Convert to `vertex` varying when true.
+  /// `facevarying` when false.
+  /// @param[in] faceVertexCounts faceVertexCounts
+  /// @param[in] faceVertexIndices faceVertexIndices
+  ///
+  /// @return true upon success.
+  ///
+  bool ConvertVertexVariabilityImpl(
+      VertexAttribute &vattr, const bool to_vertex_varying,
+      const std::vector<uint32_t> &faceVertexCounts,
+      const std::vector<uint32_t> &faceVertexIndices);
+
+  template <typename T, typename Dty>
+  bool ConvertPreviewSurfaceShaderParam(
+      const RenderSceneConverterEnv &env, const Path &shader_abs_path,
+      const TypedAttributeWithFallback<Animatable<T>> &param,
+      const std::string &param_name, ShaderParam<Dty> &dst_param,
+      bool is_materialx = false);
+
+  ///
+  /// Build (single) vertex indices for RenderMesh.
+  /// existing `RenderMesh::faceVertexIndices` will be replaced with built indices.
+  /// All vertex attributes are converted to 'vertex' variability.
+  ///
+  /// Limitation: Currently we only supports texcoords up to two(primary(0) and secondary(1)).
+  ///
+  /// @param[inout] mesh
+  ///
+  bool BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max_vertex_valence = 16,
+                               float dedup_eps = 0.0f);
+
+  ///
+  /// Build (single) vertex indices for RenderMesh.
+  /// Skip similarity search for faster processing.
+  /// existing `RenderMesh::faceVertexIndices` will be replaced with built indices.
+  /// All vertex attributes are converted to 'vertex' variability.
+  ///
+  /// Limitation: Currently we only supports texcoords up to two(primary(0) and secondary(1)).
+  ///
+  /// @param[inout] mesh
+  ///
+  bool BuildVertexIndicesFastImpl(RenderMesh &mesh);
+
+  //
+  // Convert skeleton from explicit path (for ancestor-discovered skeletons)
+  bool ConvertSkeletonImplWithPath(const RenderSceneConverterEnv &env, const Path &skelPath,
+                       SkelHierarchy *out_skel);
+
+  // Convert skeleton from Skeleton pointer directly (more efficient for pre-discovered skeletons)
+  bool ConvertSkeletonFromPtr(const RenderSceneConverterEnv &env,
+                       const Path &skelPath,
+                       const Skeleton &skel,
+                       const std::string &primName,
+                       SkelHierarchy *out_skel);
+
+  // Convert all SkelAnimation prims after skeleton conversion is complete.
+  // Supports multiple animations per skeleton by processing all discovered SkelAnimation prims
+  // and finding which Skeleton(s) reference each via their skel:animationSource relationship.
+  bool ConvertAllSkelAnimations(const RenderSceneConverterEnv &env);
+
+  /// Process a single XformNode's data into a Node (no children).
+  bool BuildSingleNode(
+    const RenderSceneConverterEnv &env,
+    const std::string &primPath,
+    const XformNode &node,
+    Node &out_rnode);
+
+  /// Iterative depth-first build of Node hierarchy from XformNode tree.
+  bool BuildNodeHierarchyIterative(
+    const RenderSceneConverterEnv &env,
+    const std::string &parentPrimPath,
+    const XformNode &node,
+    Node &out_rnode);
+
+  ///
+  /// Helper to check if a mesh can be merged with others.
+  /// Returns true if the mesh has no skeletal animation, no blend shapes,
+  /// and no per-face materials.
+  ///
+  bool IsMeshMergeable(const RenderMesh &mesh) const;
+
+  void PushInfo(const std::string &msg) { _info += msg + "\n"; }
+  void PushWarn(const std::string &msg) { _warn += msg + "\n"; }
+  void PushError(const std::string &msg) { _err += msg + "\n"; }
+
+  ///
+  /// Call progress callback if set.
+  /// @param[in] progress Progress value between 0.0 and 1.0
+  /// @return true to continue, false to cancel
+  ///
+  bool CallProgressCallback(float progress);
+
+  ///
+  /// Call detailed progress callback if set.
+  /// @param[in] info Detailed progress information
+  /// @return true to continue, false to cancel
+  ///
+  bool CallDetailedProgressCallback(const DetailedProgressInfo &info);
+
+  std::string _info;
+  std::string _err;
+  std::string _warn;
+
+  // Progress callback
+  ProgressCallback _progress_callback{nullptr};
+  void *_progress_userptr{nullptr};
+
+  // Detailed progress callback
+  DetailedProgressCallback _detailed_progress_callback{nullptr};
+  void *_detailed_progress_userptr{nullptr};
+
+  // Progress state for detailed tracking
+  mutable DetailedProgressInfo _progress_info;
+
+  // Reusable buffers for mesh conversion to avoid repeated allocation
+  mutable std::vector<value::float3> _tmp_points_buffer;
+
+  // Lookup caches for O(1) skeleton/animation dedup (populated during ConvertToRenderScene)
+  std::unordered_map<std::string, int32_t, FNV1StringHash> _skelPathToIndex;
+  std::unordered_map<std::string, int32_t, FNV1StringHash> _animPathToIndex;
+
+  // Cached BuildSkelNameToIndexMap results per skeleton ID
+  std::unordered_map<int32_t, SkelNameToIndexMap> _skelNameToIndexCache;
+
+  // Precomputed SkelRoot -> Skeleton mapping for fast ancestor discovery.
+  std::unordered_map<std::string, std::pair<Path, const Skeleton *>,
+                     FNV1StringHash>
+      _skelRootToSkeleton;
+
+  // Cached ListUVNames results per material ID
+  std::unordered_map<int64_t, StringAndIdMap> _uvNameCache;
+
+  // Cached material binding results: key = "prim_path\0purpose" → (found, materialPath, material_ptr).
+  // Avoids repeated ancestor walks for sibling prims.
+  struct MaterialBindingCacheEntry {
+    bool found{false};
+    Path materialPath;
+    const Material *material{nullptr};
+    std::string error;
+  };
+  std::unordered_map<std::string, MaterialBindingCacheEntry> _materialBindingCache;
+
+};
+
+} // namespace tydra
+} // namespace tinyusdz
