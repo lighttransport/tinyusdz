@@ -391,3 +391,6 @@ tests/feat/*/**_bench
 !tests/feat/*/test_*.cpp
 !tests/feat/**/*_bench.cc
 !tests/feat/**/*_bench.cpp
+
+# Derived spec text files (generated from PDF)
+aousd/spec/
