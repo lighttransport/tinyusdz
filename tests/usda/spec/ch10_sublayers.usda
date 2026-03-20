@@ -1,0 +1,11 @@
+#usda 1.0
+(
+    subLayers = [
+        @./ch10_sublayer_stronger.usda@,
+        @./ch10_sublayer_weaker.usda@
+    ]
+)
+
+def "Root" {
+    double value = 1.0
+}
