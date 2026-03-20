@@ -1978,7 +1978,7 @@ static bool ComputeTangentsAndBinormals(
     // Gram-Schmidt orthogonalize: remove the component of Tn along n.
     float d = vdot(n, Tn);
     if (is_finite_f(d)) {
-      Tn = (Tn - n * d);
+      Tn = {Tn[0] - n[0] * d, Tn[1] - n[1] * d, Tn[2] - n[2] * d};
     } else {
       Tn = {0.0f, 0.0f, 0.0f};
     }
@@ -1999,7 +1999,7 @@ static bool ComputeTangentsAndBinormals(
       value::normal3f cross_n_t = vcross(n, Tn);
       float hand = vdot(cross_n_t, Bn);
       if (is_finite_f(hand) && hand < 0.0f) {
-        Tn = Tn * -1.0f;
+        Tn = {Tn[0] * -1.0f, Tn[1] * -1.0f, Tn[2] * -1.0f};
       }
     }
 
@@ -2048,8 +2048,8 @@ inline static value::float3 GeometricNormal(const value::float3 v0,
                                             const value::float3 v1,
                                             const value::float3 v2,
                                             float &area) {
-  const value::float3 v10 = v1 - v0;
-  const value::float3 v20 = v2 - v0;
+  const value::float3 v10 = {v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]};
+  const value::float3 v20 = {v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]};
 
   value::float3 Nf = vcross(v10, v20);  // CCW
   float len = vlength(Nf);
@@ -2124,7 +2124,9 @@ static bool ComputeNormals(const std::vector<vec3> &vertices,
         PUSH_ERROR_AND_RETURN(fmt::format(
             "vertexIndex exceeds vertices.size {}", vertices.size()));
       }
-      normals[vidx] += area * Nf;
+      normals[vidx][0] += area * Nf[0];
+      normals[vidx][1] += area * Nf[1];
+      normals[vidx][2] += area * Nf[2];
     }
 
     faceVertexIndexOffset += nv;

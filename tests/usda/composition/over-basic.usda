@@ -1,0 +1,11 @@
+#usda 1.0
+
+def Scope "MyPrim" {
+    custom int value = 10
+    custom string name = "original"
+}
+
+over "MyPrim" {
+    custom int value = 20
+    custom string extra = "added_by_over"
+}

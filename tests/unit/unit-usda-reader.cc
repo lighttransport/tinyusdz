@@ -16,6 +16,7 @@
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "usdLux.hh"
+#include "core/model-scope.hh"
 #include "math-util.inc"
 
 #include <cstring>
