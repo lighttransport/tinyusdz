@@ -631,10 +631,18 @@ int main(int argc, char **argv) {
       }
 
       if (memstat) {
-        size_t stage_mem = stage.estimate_memory_usage();
+        auto detail = stage.estimate_memory_usage_detail();
         std::cout << "# Memory Statistics (Stage from USDZ)\n";
-        std::cout << "  Stage memory usage: " << format_memory_size(stage_mem) 
-                  << " (" << stage_mem << " bytes)\n\n";
+        std::cout << "  Allocated (capacity): " << format_memory_size(detail.allocated_bytes)
+                  << " (" << detail.allocated_bytes << " bytes)\n";
+        std::cout << "  Actual (in use):      " << format_memory_size(detail.actual_bytes)
+                  << " (" << detail.actual_bytes << " bytes)\n";
+        if (detail.allocated_bytes > 0) {
+          double efficiency = 100.0 * (double(detail.actual_bytes) / double(detail.allocated_bytes));
+          std::cout << "  Efficiency:           " << std::fixed << std::setprecision(1)
+                    << efficiency << " %\n";
+        }
+        std::cout << "\n";
       }
 
       if (json_output) {
@@ -936,10 +944,17 @@ int main(int argc, char **argv) {
 
     if (load_only) {
       if (memstat) {
-        size_t stage_mem = stage.estimate_memory_usage();
+        auto detail = stage.estimate_memory_usage_detail();
         std::cout << "# Memory Statistics (Stage)\n";
-        std::cout << "  Stage memory usage: " << format_memory_size(stage_mem) 
-                  << " (" << stage_mem << " bytes)\n";
+        std::cout << "  Allocated (capacity): " << format_memory_size(detail.allocated_bytes)
+                  << " (" << detail.allocated_bytes << " bytes)\n";
+        std::cout << "  Actual (in use):      " << format_memory_size(detail.actual_bytes)
+                  << " (" << detail.actual_bytes << " bytes)\n";
+        if (detail.allocated_bytes > 0) {
+          double efficiency = 100.0 * (double(detail.actual_bytes) / double(detail.allocated_bytes));
+          std::cout << "  Efficiency:           " << std::fixed << std::setprecision(1)
+                    << efficiency << " %\n";
+        }
         if (has_usdc_memory_report) {
           PrintUSDCParserMemoryReport(usdc_memory_report);
         }
@@ -948,10 +963,18 @@ int main(int argc, char **argv) {
     }
 
     if (memstat) {
-      size_t stage_mem = stage.estimate_memory_usage();
+      auto detail = stage.estimate_memory_usage_detail();
       std::cout << "# Memory Statistics (Stage)\n";
-      std::cout << "  Stage memory usage: " << format_memory_size(stage_mem) 
-                << " (" << stage_mem << " bytes)\n\n";
+      std::cout << "  Allocated (capacity): " << format_memory_size(detail.allocated_bytes)
+                << " (" << detail.allocated_bytes << " bytes)\n";
+      std::cout << "  Actual (in use):      " << format_memory_size(detail.actual_bytes)
+                << " (" << detail.actual_bytes << " bytes)\n";
+      if (detail.allocated_bytes > 0) {
+        double efficiency = 100.0 * (double(detail.actual_bytes) / double(detail.allocated_bytes));
+        std::cout << "  Efficiency:           " << std::fixed << std::setprecision(1)
+                  << efficiency << " %\n";
+      }
+      std::cout << "\n";
       if (has_usdc_memory_report) {
         PrintUSDCParserMemoryReport(usdc_memory_report);
         std::cout << "\n";
