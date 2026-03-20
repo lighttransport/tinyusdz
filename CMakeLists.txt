@@ -423,6 +423,9 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/base122.cc
     ${PROJECT_SOURCE_DIR}/src/usda-reader.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-reader.cc
+    ${PROJECT_SOURCE_DIR}/src/usdc-reader-property.cc
+    ${PROJECT_SOURCE_DIR}/src/usdc-reader-prim.cc
+    ${PROJECT_SOURCE_DIR}/src/usdc-reader-reconstruct.cc
     ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-writer.cc
     ${PROJECT_SOURCE_DIR}/src/composition.cc

@@ -322,6 +322,9 @@ class Property {
 
   size_t estimate_memory_usage() const;
 
+  /// Estimate actual (size-based) memory usage.
+  size_t estimate_actual_usage() const;
+
  private:
   // Variant storage: only one of monostate/Attribute/Relationship is active
   // This saves ~80-150 bytes compared to storing both Attribute and Relationship

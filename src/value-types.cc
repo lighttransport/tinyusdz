@@ -1503,6 +1503,73 @@ size_t Value::estimate_memory_usage() const {
   return total_size;
 }
 
+size_t Value::estimate_actual_usage() const {
+  size_t total_size = sizeof(Value);
+
+  if (is_empty() || is_none()) {
+    return total_size;
+  }
+
+  uint32_t tid = type_id();
+
+  if (tid & TYPE_ID_1D_ARRAY_BIT) {
+    size_t element_size = GetTypeSize(tid);
+    size_t element_count = array_size();
+
+    total_size += sizeof(void*) * 3;  // vector overhead
+    total_size += element_size * element_count;
+
+    // For string arrays, use size() instead of capacity()
+    uint32_t base_type = tid & (~TYPE_ID_1D_ARRAY_BIT);
+    if (base_type == TYPE_ID_STRING || base_type == TYPE_ID_TOKEN ||
+        base_type == TYPE_ID_STRING_DATA || base_type == TYPE_ID_ASSET_PATH) {
+      if (auto* vec = as<std::vector<std::string>>()) {
+        for (const auto& str : *vec) {
+          total_size += str.size();
+        }
+      } else if (auto* tokVec = as<std::vector<value::token>>()) {
+        for (const auto& tok : *tokVec) {
+          total_size += tok.str().size();
+        }
+      }
+    }
+  } else {
+    size_t type_size = GetTypeSize(tid);
+    if (tid >= TYPE_ID_MODEL_BEGIN && tid < TYPE_ID_MODEL_END) {
+      size_t stored_size = sizeof_stored();
+      if (stored_size > 0) {
+        type_size = stored_size;
+      }
+    }
+    total_size += type_size;
+
+    if (tid == TYPE_ID_STRING || tid == TYPE_ID_STRING_DATA) {
+      if (auto* str = as<std::string>()) {
+        total_size += str->size();
+      }
+    } else if (tid == TYPE_ID_TOKEN) {
+      if (auto* tok = as<value::token>()) {
+        total_size += tok->str().size();
+      }
+    } else if (tid == TYPE_ID_ASSET_PATH) {
+      if (auto* path = as<value::AssetPath>()) {
+        total_size += path->GetAssetPath().length();
+        total_size += path->GetResolvedPath().length();
+      }
+    } else if (tid == TYPE_ID_DICT || tid == TYPE_ID_CUSTOMDATA) {
+      if (auto* dict = as<value::dict>()) {
+        total_size += dict->size() * (32 + sizeof(void*) * 4);
+        for (const auto& kv : *dict) {
+          total_size += kv.first.size();
+          total_size += 64;
+        }
+      }
+    }
+  }
+
+  return total_size;
+}
+
 bool TimeSamples::has_sample_at(const double t) const {
   const auto &samples = get_samples();
 

@@ -2102,6 +2102,9 @@ class Value {
 
   size_t estimate_memory_usage() const;
 
+  /// Estimate actual (size-based) memory usage.
+  size_t estimate_actual_usage() const;
+
   /// Return sizeof(T) of the stored concrete type.
   /// This is the shallow struct size, not including heap allocations.
   size_t sizeof_stored() const { return v_.sizeof_stored(); }

@@ -343,6 +343,13 @@ struct PrimVar {
     total += _ts.estimate_memory_usage();
     return total;
   }
+
+  size_t estimate_actual_usage() const {
+    size_t total = sizeof(PrimVar);
+    total += _value.estimate_actual_usage();
+    total += _ts.estimate_actual_usage();
+    return total;
+  }
 };
 
 

@@ -1827,16 +1827,33 @@ size_t Property::estimate_memory_usage() const {
   return total;
 }
 
+size_t Property::estimate_actual_usage() const {
+  size_t total = sizeof(Property);
+
+  if (auto* attr = get_attribute_or_null()) {
+    total += attr->estimate_actual_usage();
+  } else if (auto* rel = get_relationship_or_null()) {
+    total += rel->estimate_actual_usage();
+  }
+
+  return total;
+}
+
 size_t Relationship::estimate_memory_usage() const {
   size_t total = sizeof(Relationship);
 
   total += targetPath.full_path_name().size();
   for (const auto& path : targetPathVector) {
-    // Path internally contains strings, estimate their capacity
     total += path.full_path_name().size();
   }
 
   return total;
+}
+
+size_t Relationship::estimate_actual_usage() const {
+  // Relationship already uses .size() in estimate_memory_usage(),
+  // so actual == allocated for this type.
+  return estimate_memory_usage();
 }
 
 // Memory usage estimation implementation for Attribute
@@ -1859,6 +1876,24 @@ size_t Attribute::estimate_memory_usage() const {
 
   // Attribute metadata
   total += sizeof(AttrMeta); // Basic size of metadata structure
+
+  return total;
+}
+
+size_t Attribute::estimate_actual_usage() const {
+  size_t total = sizeof(Attribute);
+
+  total += _name.size();
+  total += _type_name.size();
+
+  total += _var.estimate_actual_usage();
+
+  total += _paths.size() * sizeof(Path);
+  for (const auto& path : _paths) {
+    total += path.full_path_name().size();
+  }
+
+  total += sizeof(AttrMeta);
 
   return total;
 }
