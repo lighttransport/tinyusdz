@@ -1638,63 +1638,60 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
                                                  pattr)) {
           return false;
         }
-      } else if (type_name == value::kFloat3) {
-        if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name,
-                                               pattr)) {
+      } else if (type_name == value::kMatrix3d) {
+        if (!ParseBasicPrimAttr<value::matrix3d>(array_qual, primattr_name,
+                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kFloat4) {
-        if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name,
-                                               pattr)) {
+      } else if (type_name == value::kMatrix4d) {
+        if (!ParseBasicPrimAttr<value::matrix4d>(array_qual, primattr_name,
+                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kDouble2) {
-        if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name,
+      // AOUSD Core Spec 6.2: uchar scalar type
+      } else if (type_name == value::kUChar) {
+        if (!ParseBasicPrimAttr<uint8_t>(array_qual, primattr_name, pattr)) {
+          return false;
+        }
+      // AOUSD Core Spec 6.2: timecode scalar type (parsed as double)
+      } else if (type_name == value::kTimeCode) {
+        if (!ParseBasicPrimAttr<double>(array_qual, primattr_name, pattr)) {
+          return false;
+        }
+      // AOUSD Core Spec 6.5: Semantic aliases - half-precision variants
+      } else if (type_name == value::kNormal3h) {
+        if (!ParseBasicPrimAttr<value::normal3h>(array_qual, primattr_name,
+                                                 pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kPoint3h) {
+        if (!ParseBasicPrimAttr<value::point3h>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kDouble3) {
-        if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name,
+      } else if (type_name == value::kVector3h) {
+        if (!ParseBasicPrimAttr<value::vector3h>(array_qual, primattr_name,
+                                                 pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kColor3h) {
+        if (!ParseBasicPrimAttr<value::color3h>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kDouble4) {
-        if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name,
+      } else if (type_name == value::kColor4h) {
+        if (!ParseBasicPrimAttr<value::color4h>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kPoint3f) {
-        if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kColor3f) {
-        if (!ParseBasicPrimAttr<value::color3f>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kColor4f) {
-        if (!ParseBasicPrimAttr<value::color4f>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
+      // AOUSD Core Spec 6.5: Semantic aliases - double-precision variants
       } else if (type_name == value::kPoint3d) {
         if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kNormal3f) {
-        if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
       } else if (type_name == value::kNormal3d) {
         if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kVector3f) {
-        if (!ParseBasicPrimAttr<value::vector3f>(array_qual, primattr_name,
                                                  pattr)) {
           return false;
         }
@@ -1713,51 +1710,50 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kMatrix2f) {
-        if (!ParseBasicPrimAttr<value::matrix2f>(array_qual, primattr_name,
-                                                 pattr)) {
+      // AOUSD Core Spec 6.5: texCoord variants (all precisions)
+      } else if (type_name == value::kTexCoord2h) {
+        if (!ParseBasicPrimAttr<value::texcoord2h>(array_qual, primattr_name,
+                                                   pattr)) {
           return false;
         }
-      } else if (type_name == value::kMatrix3f) {
-        if (!ParseBasicPrimAttr<value::matrix3f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix4f) {
-        if (!ParseBasicPrimAttr<value::matrix4f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-
-      } else if (type_name == value::kMatrix2d) {
-        if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix3d) {
-        if (!ParseBasicPrimAttr<value::matrix3d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix4d) {
-        if (!ParseBasicPrimAttr<value::matrix4d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-
       } else if (type_name == value::kTexCoord2f) {
         if (!ParseBasicPrimAttr<value::texcoord2f>(array_qual, primattr_name,
                                                    pattr)) {
           return false;
         }
-
+      } else if (type_name == value::kTexCoord2d) {
+        if (!ParseBasicPrimAttr<value::texcoord2d>(array_qual, primattr_name,
+                                                   pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kTexCoord3h) {
+        if (!ParseBasicPrimAttr<value::texcoord3h>(array_qual, primattr_name,
+                                                   pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kTexCoord3f) {
+        if (!ParseBasicPrimAttr<value::texcoord3f>(array_qual, primattr_name,
+                                                   pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kTexCoord3d) {
+        if (!ParseBasicPrimAttr<value::texcoord3d>(array_qual, primattr_name,
+                                                   pattr)) {
+          return false;
+        }
+      // AOUSD Core Spec 6.5: frame4d (semantic alias for matrix4d)
+      } else if (type_name == value::kFrame4d) {
+        if (!ParseBasicPrimAttr<value::frame4d>(array_qual, primattr_name,
+                                                pattr)) {
+          return false;
+        }
       } else if (type_name == value::kAssetPath) {
         if (!ParseBasicPrimAttr<value::AssetPath>(array_qual, primattr_name,
                                                   pattr)) {
           return false;
         }
       } else {
-        PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
+        PUSH_ERROR_AND_RETURN("Unsupported property attribute type: " + type_name);
       }
     }
 
