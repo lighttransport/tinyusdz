@@ -11,6 +11,8 @@ set(TINYUSDZ_SOURCES
         ${PROJECT_SOURCE_DIR}/../../../../../src/composition-reconstruct.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/prim-types.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/ascii-parser.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/ascii-parser-props.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/ascii-parser-entry.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/ascii-parser-basetype.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/ascii-parser-timesamples.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/ascii-parser-timesamples-array.cc
