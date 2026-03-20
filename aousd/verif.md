@@ -520,5 +520,5 @@ python aousd/compare_usd_example.py test_file.usda
 - [x] ~~typeName resolution from prim definition~~ (Spec 12.2.2): **IMPLEMENTED** -- typeName only taken from defining specs (def/class), not from over
 - [ ] **variability resolution from prim definition** (Spec 12.2.3): fallback = weakest opinion
 - [x] ~~custom field resolution~~ (Spec 12.2.4): **IMPLEMENTED** -- custom flag OR'd across all opinions in composition
-- [ ] Deprecated `add` list op: graceful handling needs verification
+- [x] ~~Deprecated `add` list op~~: **IMPLEMENTED** -- treated as `append` with deprecation warning per Spec 6.6.3.10
 - [ ] Integer coding and LZ4 compression in USDC: verify against spec section 16.3
