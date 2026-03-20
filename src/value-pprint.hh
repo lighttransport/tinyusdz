@@ -10,6 +10,7 @@
 
 #include "value-types.hh"
 #include "typed-array.hh"
+#include "pprint-enum.hh"  // pprint::GetColumnLimit, format_wrapped_array, is_wrappable_element_v
 
 // forward decl
 namespace tinyusdz {
@@ -133,6 +134,21 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::Collection &v);
 // 1D array
 template <typename T>
 std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
+  if constexpr (tinyusdz::pprint::is_wrappable_element_v<T>) {
+    uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+    if (col_limit > 0 && v.size() > 1) {
+      std::vector<std::string> elems;
+      elems.reserve(v.size());
+      for (const auto &e : v) {
+        std::ostringstream ess;
+        ess << e;
+        elems.push_back(ess.str());
+      }
+      os << tinyusdz::pprint::format_wrapped_array(
+          elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+      return os;
+    }
+  }
   os << "[";
   for (size_t i = 0; i < v.size(); i++) {
     os << v[i];
@@ -146,6 +162,21 @@ std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
 
 template <typename T>
 std::ostream &operator<<(std::ostream &os, const tinyusdz::TypedArray<T> &v) {
+  if constexpr (tinyusdz::pprint::is_wrappable_element_v<T>) {
+    uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+    if (col_limit > 0 && v.size() > 1) {
+      std::vector<std::string> elems;
+      elems.reserve(v.size());
+      for (size_t i = 0; i < v.size(); i++) {
+        std::ostringstream ess;
+        ess << v[i];
+        elems.push_back(ess.str());
+      }
+      os << tinyusdz::pprint::format_wrapped_array(
+          elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+      return os;
+    }
+  }
   os << "[";
   for (size_t i = 0; i < v.size(); i++) {
     os << v[i];
@@ -159,6 +190,21 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::TypedArray<T> &v) {
 
 template <typename T>
 std::ostream &operator<<(std::ostream &os, const tinyusdz::ChunkedTypedArray<T> &v) {
+  if constexpr (tinyusdz::pprint::is_wrappable_element_v<T>) {
+    uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+    if (col_limit > 0 && v.size() > 1) {
+      std::vector<std::string> elems;
+      elems.reserve(v.size());
+      for (size_t i = 0; i < v.size(); i++) {
+        std::ostringstream ess;
+        ess << v[i];
+        elems.push_back(ess.str());
+      }
+      os << tinyusdz::pprint::format_wrapped_array(
+          elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+      return os;
+    }
+  }
   os << "[";
   for (size_t i = 0; i < v.size(); i++) {
     os << v[i];

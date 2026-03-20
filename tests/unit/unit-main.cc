@@ -403,6 +403,12 @@ TEST_LIST = {
   { "security_huge_array_test", security_huge_array_test },
   { "security_malformed_utf8_test", security_malformed_utf8_test },
   { "security_recursive_reference_test", security_recursive_reference_test },
+  // Pretty-printer column wrap tests
+  { "column_wrap_disabled_test", column_wrap_disabled_test },
+  { "column_wrap_float3_array_test", column_wrap_float3_array_test },
+  { "column_wrap_int_array_test", column_wrap_int_array_test },
+  { "column_wrap_deep_indent_test", column_wrap_deep_indent_test },
+  { "column_wrap_string_no_wrap_test", column_wrap_string_no_wrap_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
