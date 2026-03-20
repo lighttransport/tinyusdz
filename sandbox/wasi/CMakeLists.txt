@@ -42,6 +42,8 @@ list(
   ../../src/crate-writer.cc
   ../../src/crate-pprint.cc
   ../../src/ascii-parser.cc
+  ../../src/ascii-parser-props.cc
+  ../../src/ascii-parser-entry.cc
   ../../src/ascii-parser-basetype.cc
   ../../src/ascii-parser-timesamples.cc
   ../../src/ascii-parser-timesamples-array.cc
