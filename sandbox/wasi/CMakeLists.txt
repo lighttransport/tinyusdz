@@ -45,6 +45,9 @@ list(
   ../../src/usda-reader.cc
   ../../src/usda-writer.cc
   ../../src/usdc-reader.cc
+  ../../src/usdc-reader-property.cc
+  ../../src/usdc-reader-prim.cc
+  ../../src/usdc-reader-reconstruct.cc
   ../../src/usdc-writer.cc
   ../../src/image-loader.cc
   ../../src/prim-reconstruct.cc

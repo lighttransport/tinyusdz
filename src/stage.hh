@@ -260,6 +260,13 @@ class Stage {
   ///
   size_t estimate_memory_usage() const;
 
+  /// Detailed memory usage report: allocated (capacity) vs actual (size).
+  struct MemoryUsageDetail {
+    size_t allocated_bytes{0};  // capacity-based (what the allocator gave us)
+    size_t actual_bytes{0};     // size-based (what we're actually using)
+  };
+  MemoryUsageDetail estimate_memory_usage_detail() const;
+
  private:
 
 

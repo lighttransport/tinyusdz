@@ -15,6 +15,9 @@ set(TINYUSDZ_SOURCES
         ${PROJECT_SOURCE_DIR}/../../../../../src/ascii-parser-timesamples-array.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/usda-reader.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/usdc-reader.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/usdc-reader-property.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/usdc-reader-prim.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/usdc-reader-reconstruct.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/usdc-writer.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/crate-reader.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/crate-format.cc

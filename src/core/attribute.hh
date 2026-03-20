@@ -449,6 +449,9 @@ class Attribute {
   ///
   size_t estimate_memory_usage() const;
 
+  /// Estimate actual (size-based) memory usage.
+  size_t estimate_actual_usage() const;
+
  private:
   std::string _name;  // attrib name
   Variability _variability{

@@ -780,6 +780,10 @@ struct TimeSamples {
 
   size_t estimate_memory_usage() const;  // Defined in timesamples.cc
 
+  /// Estimate actual (size-based) memory usage, as opposed to
+  /// estimate_memory_usage() which reports allocated (capacity-based) usage.
+  size_t estimate_actual_usage() const;  // Defined in timesamples.cc
+
   //
   // Unified array methods (work directly with TimeSamples storage)
   //
