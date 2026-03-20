@@ -15,6 +15,7 @@
 #include "io-util.hh"
 #include "usdc-reader.hh"
 #include "usdShade.hh"
+#include "core/model-scope.hh"
 #include "layer.hh"
 #include "pprint-enum.hh"
 #include <cstdio>

@@ -1863,6 +1863,59 @@ if(TINYUSDZ_BUILD_TESTS)
       )
   endif()
 
+  #
+  # Feature tests as CTest targets (Phase 0B)
+  #
+  if(TINYUSDZ_WITH_MODULE_USDA_READER)
+    # MaterialX tests
+    add_executable(feat-mtlx-parse tests/feat/mtlx/test_mtlx_parse.cc)
+    target_link_libraries(feat-mtlx-parse PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-mtlx-parse PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-mtlx-parse COMMAND feat-mtlx-parse
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    add_executable(feat-mtlx-import tests/feat/mtlx/test_mtlx_import.cc)
+    target_link_libraries(feat-mtlx-import PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-mtlx-import PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-mtlx-import COMMAND feat-mtlx-import)
+
+    add_executable(feat-mtlx-export tests/feat/mtlx/test_mtlx_export.cc)
+    target_link_libraries(feat-mtlx-export PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-mtlx-export PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-mtlx-export COMMAND feat-mtlx-export)
+
+    # Variant tests
+    add_executable(feat-variant-converter tests/feat/nestedVariantSet/test_variant_converter.cpp)
+    target_link_libraries(feat-variant-converter PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-variant-converter PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-variant-converter COMMAND feat-variant-converter
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    add_executable(feat-variant-applier tests/feat/nestedVariantSet/test_variant_applier.cpp)
+    target_link_libraries(feat-variant-applier PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-variant-applier PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-variant-applier COMMAND feat-variant-applier
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+  endif()
+
+  if(TINYUSDZ_WITH_JSON)
+    add_executable(feat-mtlx-grouped-params tests/feat/mtlx/test_grouped_params.cc)
+    target_link_libraries(feat-mtlx-grouped-params PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-mtlx-grouped-params PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-mtlx-grouped-params COMMAND feat-mtlx-grouped-params)
+  endif()
+
+  #
+  # Benchmarks as CTest targets (Phase 0C) - excluded from default run
+  #
+  if(TINYUSDZ_WITH_MODULE_USDA_READER)
+    add_executable(bench-parse-opt tests/feat/parse-opt/test-parse-opt.cc)
+    target_link_libraries(bench-parse-opt PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(bench-parse-opt PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME bench-parse-opt COMMAND bench-parse-opt)
+    set_tests_properties(bench-parse-opt PROPERTIES LABELS "benchmark")
+  endif()
+
 endif(TINYUSDZ_BUILD_TESTS)
 
 # [VisualStudio]

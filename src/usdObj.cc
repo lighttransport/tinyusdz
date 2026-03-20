@@ -16,6 +16,7 @@
 
 #include "tinyusdz.hh"
 #include "io-util.hh"
+#include "linear-algebra.hh"
 #include "usdObj.hh"
 
 //#include "math-util.inc"

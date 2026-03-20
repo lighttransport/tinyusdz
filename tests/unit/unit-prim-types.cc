@@ -8,6 +8,7 @@
 #include "unit-prim-types.h"
 #include "core/prim.hh"
 #include "core/path.hh"
+#include "core/model-scope.hh"
 
 using namespace tinyusdz;
 

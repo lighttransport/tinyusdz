@@ -7,6 +7,7 @@
 #define TEST_NO_MAIN
 #include "acutest.h"
 
+#include "tinyusdz.hh"
 #include "value-types.hh"
 #include "unit-value-types.h"
 #include "core/prim.hh"
