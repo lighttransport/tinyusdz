@@ -1,6 +1,7 @@
 #include <nanobind/nanobind.h>
 
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/prim-spec.hh"
 #include "usda-reader.hh"
 //#include "ascii-writer.hh"
 

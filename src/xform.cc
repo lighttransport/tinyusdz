@@ -16,10 +16,13 @@
 #include "math-util.inc"
 #include "pprint-enum.hh"
 #include "value-pprint.hh"
-#include "prim-types.hh"
+#include "nonstd/expected.hpp"
+#include "xform.hh"
+#include "core/prim.hh"
+#include "linear-algebra.hh"
+#include "value-eval-util.hh"
 #include "tiny-format.hh"
 #include "value-types.hh"
-#include "xform.hh"
 #include "common-macros.inc"
 
 // Use pxrUSD approach to generate rotation matrix.

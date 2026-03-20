@@ -10,7 +10,7 @@
 #include <cstdio>
 
 #include "mtlx-dom.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "stage.hh"
 #include "usdShade.hh"  // For NodeGraph, Shader, ShaderNode
 #include "usdMtlx.hh"  // For MtlxOpenPBRSurface

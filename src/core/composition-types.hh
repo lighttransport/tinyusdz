@@ -101,4 +101,17 @@ struct Payload {
   }
 };
 
+namespace value {
+
+#include "define-type-trait.inc"
+
+DEFINE_TYPE_TRAIT(Reference, "ref", TYPE_ID_REFERENCE, 1);
+DEFINE_TYPE_TRAIT(Payload, "payload", TYPE_ID_PAYLOAD, 1);
+DEFINE_TYPE_TRAIT(LayerOffset, "LayerOffset", TYPE_ID_LAYER_OFFSET, 1);
+
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
+
+}  // namespace value
+
 }  // namespace tinyusdz

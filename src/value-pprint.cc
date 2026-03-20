@@ -7,7 +7,7 @@
 #include <sstream>
 
 #include "pprinter.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "str-util.hh"
 #include "usdGeom.hh"
 #include "usdLux.hh"

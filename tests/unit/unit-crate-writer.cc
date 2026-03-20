@@ -7,7 +7,8 @@
 
 #include "unit-crate-writer.h"
 #include "tinyusdz.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/prim-spec.hh"
 #include "value-types.hh"
 #include "timesamples.hh"
 #include "crate-writer.hh"

@@ -33,7 +33,8 @@
 #endif
 
 #include "image-types.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"       // Prim (transitively: value-types, path, prim-enums, prim-metas)
+#include "core/prim-spec.hh"  // PrimSpec, Layer, FileFormatHandler
 #include "texture-types.hh"
 #include "usdGeom.hh"
 #include "usdLux.hh"

@@ -9,7 +9,9 @@
 //
 #include "prim-reconstruct.hh"
 
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/prim-spec.hh"
+#include "core/model-scope.hh"  // Model, Scope
 #include "str-util.hh"
 #include "io-util.hh"
 #include "tiny-format.hh"

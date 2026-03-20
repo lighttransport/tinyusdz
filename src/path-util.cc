@@ -3,7 +3,7 @@
 
 #include "path-util.hh"
 #include "str-util.hh"
-#include "prim-types.hh"
+#include "core/path.hh"
 #include "common-macros.inc"
 
 namespace tinyusdz {

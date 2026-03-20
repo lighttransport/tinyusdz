@@ -12,7 +12,11 @@
 #include <memory>
 #include <cstdlib>
 
-#include "prim-types.hh"
+#include "core/prim-enums.hh"        // Specifier, Permission, Variability, SpecType, ListEditQual
+#include "core/path.hh"              // Path
+#include "core/composition-types.hh" // Reference, Payload, LayerOffset
+#include "core/meta-variable.hh"     // MetaVariable, CustomDataType, VariantSelectionMap
+#include "core/list-op.hh"           // ListOp
 #include "value-types.hh"
 #include "typed-array.hh"
 #include "mmap-array-ref.hh"

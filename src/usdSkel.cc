@@ -12,7 +12,7 @@
 
 #include "common-macros.inc"
 #include "tiny-format.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "path-util.hh"
 
 namespace tinyusdz {

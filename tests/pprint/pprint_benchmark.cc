@@ -11,7 +11,7 @@
 #include <cstring>
 #include <iomanip>
 
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "prim-pprint.hh"
 #include "prim-pprint-parallel.hh"
 #include "stream-writer.hh"

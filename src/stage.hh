@@ -7,8 +7,12 @@
 #include <memory>
 #include <unordered_map>
 
+#include "nonstd/expected.hpp"
+
 #include "composition.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"          // Prim class (transitively: path, prim-enums, prim-metas)
+#include "core/layer-types.hh"   // LayerMetas (aliased as StageMetas)
+#include "handle-allocator.hh"   // HandleAllocator
 
 namespace tinyusdz {
 

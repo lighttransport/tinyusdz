@@ -6,7 +6,9 @@
 #include "acutest.h"
 
 #include "unit-timesamples.h"
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/attribute.hh"
+#include "core/animatable.hh"
 #include "math-util.inc"
 
 using namespace tinyusdz;

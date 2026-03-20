@@ -5,7 +5,9 @@
 #include <limits>
 #include <numeric>
 //
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/prim-spec.hh"
+#include "core/model-scope.hh"  // Model, Scope
 #include "str-util.hh"
 #include "tiny-container.hh"
 #include "tiny-format.hh"

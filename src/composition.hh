@@ -34,7 +34,8 @@
 #include <unordered_map>
 
 #include "asset-resolution.hh"
-#include "prim-types.hh"
+#include "core/prim-spec.hh"  // PrimSpec, FileFormatHandler (transitively: property, composition-types, prim-enums, prim-metas, variant-types)
+#include "layer.hh"           // Layer class
 
 // - [ ] Compose `specializes`
 // - [ ] Compose `variantSets`

@@ -2,7 +2,8 @@
 // Copyright 2025 Light Transport Entertainment Inc.
 
 #include "layer.hh"
-#include "prim-types.hh"  // For PrimSpec, LayerMetas, etc.
+#include "core/prim-spec.hh"  // PrimSpec
+#include "core/layer-types.hh"  // LayerMetas
 #include "path-util.hh"   // For Path
 #include "str-util.hh"    // For split function
 #include "tiny-container.hh"

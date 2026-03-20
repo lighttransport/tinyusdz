@@ -8,7 +8,7 @@
 #include <cstring>
 #include <vector>
 
-#include "../prim-types.hh"
+#include "../core/prim.hh"
 #include "../layer.hh"
 #include "../usdGeom.hh"
 #include "../value-types.hh"

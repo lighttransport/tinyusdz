@@ -6,7 +6,8 @@
 #include "acutest.h"
 
 #include "unit-pprint.h"
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/prim-enums.hh"
 #include "value-types.hh"
 #include "value-pprint.hh"
 #include "pprinter.hh"

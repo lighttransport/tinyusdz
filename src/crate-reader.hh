@@ -15,7 +15,7 @@
 #include "crate-format.hh"
 #include "dynamic-bitset.hh"
 #include "memory-budget.hh"
-#include "prim-types.hh"
+#include "core/prim-spec.hh"  // PrimSpec (transitively: property, composition-types, prim-enums, prim-metas, variant-types)
 #include "stream-reader.hh"
 #include "typed-array.hh"
 

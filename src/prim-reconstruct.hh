@@ -6,10 +6,12 @@
 //
 #pragma once
 
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
-#include <map>
-#include "prim-types.hh"
+#include "core/prim-spec.hh"  // PrimSpec, PropertyMap, ReferenceList, Specifier (transitively: property, composition-types, prim-enums)
+#include "core/xform-op.hh"   // XformOp
 
 namespace tinyusdz {
 namespace prim {
