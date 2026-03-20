@@ -116,6 +116,8 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix4d &v);
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::frame4d &v);
 
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::timecode &v);
+
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::AssetPath &v);
 
 // NOTE: Implemented in pprinter.cc
