@@ -3272,6 +3272,82 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::color4d> *value) {
   return false;
 }
 
+// AOUSD Core Spec 6.5: Half-precision semantic alias optional overloads
+bool AsciiParser::ReadBasicType(nonstd::optional<value::normal3h> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::normal3h v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::point3h> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::point3h v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::vector3h> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::vector3h v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::color3h> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::color3h v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::color4h> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::color4h v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
 bool AsciiParser::ReadBasicType(nonstd::optional<int> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;

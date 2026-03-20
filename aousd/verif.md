@@ -455,9 +455,9 @@ python aousd/compare_usd_example.py test_file.usda
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| All scalar types | PARTIAL | `uchar` and `timecode` not supported as USDA property types |
+| All scalar types | **YES** | All 13 spec types parse: bool, uchar, int, uint, int64, uint64, half, float, double, string, token, asset, timecode |
 | Dimensioned types | YES | vecN, matrixNd, quatN |
-| Semantic aliases | PARTIAL | float variants YES; **double variants (color3d, normal3d, point3d, vector3d, texCoord2d/3d) NOT supported**; `texCoord3f` NOT supported; `frame4d` NOT supported |
+| Semantic aliases | **YES** | All 25 role types parse: color{3,4}{h,f,d}, normal3{h,f,d}, point3{h,f,d}, vector3{h,f,d}, texCoord{2,3}{h,f,d}, frame4d. Pretty-print incomplete for color{3,4}h, frame4d, uchar |
 | Arrays | YES | T[] for all types |
 | Dictionaries | YES | Nested dictionary support |
 | List operations | YES | Explicit and composable; all ListEditQual values |

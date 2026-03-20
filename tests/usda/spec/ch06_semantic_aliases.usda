@@ -1,14 +1,33 @@
 #usda 1.0
-# AOUSD Core Spec Section 6.5 - Semantic Aliases
-# Note: double-precision aliases (color3d, normal3d, point3d, vector3d, texCoord2d/3d)
-# are valid spec types but not yet supported as USDA property types in TinyUSDZ.
-# frame4d is also a valid spec type but not supported yet.
+# AOUSD Core Spec Section 6.5 - All Semantic Aliases (Role Types)
 def "SemanticAliases" {
+    # float-precision (most common)
     color3f colorRGB = (1.0, 0.0, 0.0)
     color4f colorRGBA = (1.0, 0.0, 0.0, 1.0)
     normal3f normalF = (0.0, 1.0, 0.0)
     point3f pointF = (1.0, 2.0, 3.0)
     vector3f vectorF = (1.0, 0.0, 0.0)
     texCoord2f tc2f = (0.5, 0.5)
-    # texCoord3f is a valid spec type but not yet supported in TinyUSDZ
+    texCoord3f tc3f = (0.5, 0.5, 0.0)
+
+    # double-precision
+    color3d colorRGBd = (1.0, 0.0, 0.0)
+    color4d colorRGBAd = (1.0, 0.0, 0.0, 1.0)
+    normal3d normalD = (0.0, 1.0, 0.0)
+    point3d pointD = (1.0, 2.0, 3.0)
+    vector3d vectorD = (1.0, 0.0, 0.0)
+    texCoord2d tc2d = (0.5, 0.5)
+    texCoord3d tc3d = (0.5, 0.5, 0.0)
+
+    # half-precision
+    color3h colorRGBh = (1.0, 0.0, 0.0)
+    color4h colorRGBAh = (1.0, 0.0, 0.0, 1.0)
+    normal3h normalH = (0.0, 1.0, 0.0)
+    point3h pointH = (1.0, 2.0, 3.0)
+    vector3h vectorH = (1.0, 0.0, 0.0)
+    texCoord2h tc2h = (0.5, 0.5)
+    texCoord3h tc3h = (0.5, 0.5, 0.0)
+
+    # frame4d (semantic alias for matrix4d)
+    frame4d xform = ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
 }
