@@ -440,14 +440,28 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
     PUSH_ERROR_AND_RETURN("PrimSpec tree too deep.");
   }
 
-  // Combine metadataum
-  dst.metas().update_from(src.metas(), false);
+  // Combine metadataum (weaker fills in where stronger is not authored)
+  dst.metas().update_from(src.metas(), /* override_authored */ false);
+
+  // AOUSD Core Spec 12.2.2 (typeName): Use typeName from defining spec.
+  // If dst has no typeName and src is defining (def/class), take src's.
+  if (dst.typeName().empty() && !src.typeName().empty()) {
+    if (src.specifier() == Specifier::Def ||
+        src.specifier() == Specifier::Class) {
+      dst.typeName() = src.typeName();
+    }
+  }
 
   // Combine properties
   for (const auto &prop : src.props()) {
-    // add if not existent
     if (dst.props().count(prop.first) == 0) {
+      // add if not existent
       dst.props()[prop.first] = prop.second;
+    } else {
+      // AOUSD Core Spec 12.2.4 (custom): true if ANY opinion says true
+      if (prop.second.has_custom() && !dst.props().at(prop.first).has_custom()) {
+        dst.props()[prop.first].set_custom(true);
+      }
     }
   }
 
@@ -1336,10 +1350,18 @@ static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst,
   dst.metas().update_from(src.metas());
   DCOUT("update_from done");
 
-  // Override properties
+  // Override properties with AOUSD Core Spec 12.2.4 (custom) handling:
+  // The `custom` flag is true if ANY opinion in the stack says true.
   for (const auto &prop : src.props()) {
-    // replace
-    dst.props()[prop.first] = prop.second;
+    if (dst.props().count(prop.first)) {
+      bool dst_custom = dst.props().at(prop.first).has_custom();
+      dst.props()[prop.first] = prop.second;
+      if (dst_custom && !prop.second.has_custom()) {
+        dst.props()[prop.first].set_custom(true);
+      }
+    } else {
+      dst.props()[prop.first] = prop.second;
+    }
   }
 
   // Override child primspecs.
@@ -1383,21 +1405,40 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
   // Then override it with `dst`
   PrimSpec ps = src;  // copy
 
-  // Keep PrimSpec name, typeName (if not empty) and spec from `dst`
+  // Keep PrimSpec name from `dst`
   ps.name() = dst.name();
+
+  // AOUSD Core Spec 12.2.2 (typeName): typeName is determined from the
+  // "prim definition" -- only use typeName from defining specs (def/class),
+  // not from `over` specs. Stronger defining opinion wins.
   if (!dst.typeName().empty()) {
+    // dst has a typeName -- if dst is defining (def/class), it wins
     ps.typeName() = dst.typeName();
+  } else if (dst.specifier() == Specifier::Over && !src.typeName().empty()) {
+    // dst is an over with no typeName: inherit from src (the definition)
+    // ps.typeName() already has src's typeName from the copy
   }
+
+  // AOUSD Core Spec 12.2.1 (specifier): Composed specifier resolution.
+  // - If dst (stronger opinion) is `over`, the result depends on whether
+  //   any defining spec exists. For now, keep dst specifier as the
+  //   strongest opinion, which matches the simple case.
+  // - If dst is `def` or `class`, it takes precedence.
   ps.specifier() = dst.specifier();
 
   // Override metadataum
   ps.metas().update_from(dst.metas());
 
-  // Override properties
+  // Override properties with AOUSD Core Spec 12.2.4 (custom) handling:
+  // The `custom` flag is true if ANY opinion in the stack says true.
   for (const auto &prop : dst.props()) {
     if (ps.props().count(prop.first)) {
-      // replace
+      // AOUSD Core Spec 12.2.4: OR the custom flags before replacing
+      bool src_custom = ps.props().at(prop.first).has_custom();
       ps.props().at(prop.first) = prop.second;
+      if (src_custom && !prop.second.has_custom()) {
+        ps.props().at(prop.first).set_custom(true);
+      }
     }
     else {
       // re-add
