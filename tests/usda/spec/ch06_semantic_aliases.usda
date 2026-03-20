@@ -1,0 +1,14 @@
+#usda 1.0
+# AOUSD Core Spec Section 6.5 - Semantic Aliases
+# Note: double-precision aliases (color3d, normal3d, point3d, vector3d, texCoord2d/3d)
+# are valid spec types but not yet supported as USDA property types in TinyUSDZ.
+# frame4d is also a valid spec type but not supported yet.
+def "SemanticAliases" {
+    color3f colorRGB = (1.0, 0.0, 0.0)
+    color4f colorRGBA = (1.0, 0.0, 0.0, 1.0)
+    normal3f normalF = (0.0, 1.0, 0.0)
+    point3f pointF = (1.0, 2.0, 3.0)
+    vector3f vectorF = (1.0, 0.0, 0.0)
+    texCoord2f tc2f = (0.5, 0.5)
+    # texCoord3f is a valid spec type but not yet supported in TinyUSDZ
+}

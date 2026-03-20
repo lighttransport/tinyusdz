@@ -1,0 +1,17 @@
+#usda 1.0
+# AOUSD Core Spec Section 6.2 - Scalar Types
+# Note: uchar is a valid spec type but not supported as USDA property type in TinyUSDZ
+# Note: timecode is a valid spec type but not yet supported as USDA property type
+def "ScalarTypes" {
+    bool boolVal = true
+    int intVal = -42
+    uint uintVal = 42
+    int64 int64Val = -9223372036854775807
+    uint64 uint64Val = 18446744073709551615
+    half halfVal = 1.5
+    float floatVal = 3.14
+    double doubleVal = 2.718281828459045
+    string stringVal = "hello world"
+    token tokenVal = "myToken"
+    asset assetVal = @./test.usda@
+}

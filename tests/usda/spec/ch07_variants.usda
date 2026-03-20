@@ -1,0 +1,21 @@
+#usda 1.0
+def "VariantPrim" (
+    variants = {
+        string shape = "sphere"
+    }
+    variantSets = ["shape"]
+)
+{
+    variantSet "shape" = {
+        "sphere" {
+            def Sphere "Geo" {
+                double radius = 1.0
+            }
+        }
+        "cube" {
+            def Cube "Geo" {
+                double size = 2.0
+            }
+        }
+    }
+}

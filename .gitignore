@@ -359,6 +359,8 @@ CMakeUserPresets.json
 # TinyUSDZ/Crate-Writer specific
 *.usdc
 *.usda
+# But keep spec conformance test fixtures
+!tests/usda/spec/*.usda
 CMakeFiles/
 Makefile
 cmake_install.cmake

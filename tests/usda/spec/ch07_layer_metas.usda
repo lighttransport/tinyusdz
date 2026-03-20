@@ -1,0 +1,25 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    upAxis = "Y"
+    metersPerUnit = 0.01
+    timeCodesPerSecond = 24
+    startTimeCode = 0
+    endTimeCode = 100
+    framesPerSecond = 24
+    documentation = "Test AOUSD Core Spec layer metadata fields"
+    customLayerData = {
+        string creator = "TinyUSDZ spec conformance test"
+    }
+    colorConfiguration = @ocio://default@
+    colorManagementSystem = "ocio"
+    owner = "tinyusdz-test"
+    hasOwnedSubLayers = false
+    expressionVariables = {
+        string PROD = "/prod/shot01"
+        string ASSET_ROOT = "/assets"
+    }
+)
+
+def Xform "Root" {
+}
