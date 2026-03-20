@@ -32,7 +32,7 @@
 #include "memory-budget.hh"
 #include "parser-timing.hh"
 #include "path-util.hh"
-#include "prim-types.hh"
+#include "core/prim-spec.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "tiny-format.hh"

@@ -29,7 +29,18 @@
 ///
 #pragma once
 
-#include "prim-types.hh"
+// Core includes (replaces monolithic prim-types.hh)
+#include "value-types.hh"
+#include "nonstd/optional.hpp"
+#include "core/prim-enums.hh"        // Specifier, Purpose
+#include "core/composition-types.hh" // Reference, Payload, ListEditQual
+#include "core/prim-metas.hh"       // PrimMeta
+#include "core/animatable.hh"       // Animatable
+#include "core/typed-attribute.hh"  // TypedAttribute, TypedAttributeWithFallback, TypedTerminalAttribute
+#include "core/relationship.hh"     // TypedConnection
+#include "core/property.hh"         // Property
+#include "core/material-binding.hh" // MaterialBinding (for DEFINE_TYPE_TRAIT)
+#include "core/variant-types.hh"    // VariantSet
 
 namespace tinyusdz {
 

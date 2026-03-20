@@ -11,7 +11,8 @@
 #include <array>
 
 #include "layer.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/prim-spec.hh"
 #include "tydra/attribute-eval.hh"
 #include "tydra/layer-to-renderscene.hh"
 #include "tydra/render-data.hh"

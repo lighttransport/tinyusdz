@@ -8,7 +8,8 @@
 #include <cmath>
 
 #include "../../../src/tinyusdz.hh"
-#include "../../../src/prim-types.hh"
+#include "../../../src/core/prim.hh"
+#include "../../../src/core/prim-spec.hh"
 #include "../../../src/value-types.hh"
 #include "../../../src/timesamples.hh"
 #include "../src/crate-writer.hh"

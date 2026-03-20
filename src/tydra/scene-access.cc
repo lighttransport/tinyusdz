@@ -6,7 +6,7 @@
 #include "common-macros.inc"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "primvar.hh"
 #include "tiny-container.hh"
 #include "tiny-format.hh"

@@ -7,7 +7,8 @@
 
 #include "unit-composition.h"
 #include "composition.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/prim-spec.hh"
 #include "layer.hh"
 
 using namespace tinyusdz;

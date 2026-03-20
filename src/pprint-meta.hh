@@ -11,10 +11,21 @@
 #include <vector>
 
 #include "pprint-enum.hh"  // enum to_string converters + pprint::Indent
-#include "prim-types.hh"
+#include "core/prim-metas.hh"     // PrimMeta, AttrMeta
+#include "core/property.hh"       // Property
+#include "core/meta-variable.hh"  // MetaVariable, CustomDataType, VariantSelectionMap
+#include "core/variant-types.hh"  // VariantSet, VariantSetSpec
+#include "core/xform-op.hh"       // XformOp
+#include "core/composition-types.hh" // Reference, Payload, LayerOffset
+#include "core/prim-spec.hh"         // ReferenceList, PayloadList
+#include "core/material-binding.hh"  // MaterialBinding
+#include "core/collection-api.hh"    // Collection
+#include "core/model-scope.hh"       // Model, Scope (needed by downstream pprinter.hh)
 #include "value-pprint.hh"
 
 namespace tinyusdz {
+
+class Layer;  // Forward declaration for operator<< below
 
 std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent);
 std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent);

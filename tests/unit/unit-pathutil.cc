@@ -6,7 +6,7 @@
 #include "acutest.h"
 
 #include "unit-pathutil.h"
-#include "prim-types.hh"
+#include "core/path.hh"
 #include "path-util.hh"
 
 using namespace tinyusdz;

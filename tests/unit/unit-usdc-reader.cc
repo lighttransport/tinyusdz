@@ -11,7 +11,7 @@
 
 #include "unit-usdc-reader.h"
 #include "tinyusdz.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "value-types.hh"
 #include "usdc-writer.hh"
 #include "usdGeom.hh"

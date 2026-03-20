@@ -6,6 +6,7 @@
 #include <unordered_set>
 
 #include "usd-export.hh"
+#include "core/model-scope.hh"  // Model, Scope
 #include "common-macros.inc"
 #include "tiny-format.hh"
 #include "math-util.inc"

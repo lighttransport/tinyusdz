@@ -5,7 +5,7 @@
 #include <vector>
 #include <functional>
 
-#include "../prim-types.hh"
+#include "../core/prim.hh"
 #include "common-types.hh"
 #include "render-data.hh"
 

@@ -247,4 +247,15 @@ class TypedConnection {
   ListEditQual _listOpQual{ListEditQual::ResetToExplicit};
 };
 
+namespace value {
+
+#include "define-type-trait.inc"
+
+DEFINE_TYPE_TRAIT(Relationship, "Relationship", TYPE_ID_RELATIONSHIP, 1);
+
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
+
+}  // namespace value
+
 }  // namespace tinyusdz

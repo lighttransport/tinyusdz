@@ -9,7 +9,14 @@
 #include <string>
 #include <vector>
 
-#include "prim-types.hh"
+#include "core/prim-enums.hh"        // Specifier, Permission, Variability, SpecType, Kind, Axis, Visibility, Orientation, Interpolation, Purpose
+#include "core/path.hh"              // Path
+#include "core/composition-types.hh" // Reference, Payload, APISchemas
+#include "core/meta-variable.hh"     // CustomDataType
+#include "core/collection-api.hh"    // CollectionInstance
+#include "core/xform-op.hh"          // XformOp
+#include "core/list-op.hh"           // ListOp
+#include "core/extent.hh"            // Extent
 
 namespace tinyusdz {
 
@@ -21,7 +28,7 @@ std::string Indent(uint32_t level);
 
 }  // namespace pprint
 
-// --- simple enum/struct to_string converters (prim-types.hh only) ---------
+// --- simple enum/struct to_string converters (core/ headers) ---------
 
 std::string to_string(Visibility v);
 std::string to_string(Orientation o);

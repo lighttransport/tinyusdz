@@ -19,6 +19,9 @@
 #include "usdLux.hh"
 #include "usdShade.hh"
 #include "usdSkel.hh"
+#include "core/model-scope.hh"  // Model, Scope
+#include "core/layer-types.hh"  // LayerMetas
+#include "layer.hh"             // Layer
 
 namespace tinyusdz {
 

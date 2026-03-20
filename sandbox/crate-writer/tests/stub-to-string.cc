@@ -6,7 +6,8 @@
 // Include necessary headers for actual type definitions
 #include "crate-format.hh"
 #include "xform.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/prim-enums.hh"
 
 namespace tinyusdz {
 
