@@ -499,22 +499,26 @@ python aousd/compare_usd_example.py test_file.usda
 - [x] ~~Spline specialized type~~: **PARSE ONLY** -- GeomBasisCurves/NurbsCurves types supported; NO time-value spline evaluation for attribute resolution
 - [x] ~~Value clips~~: **PARSE ONLY** -- clips Dictionary parsed and stored; NO evaluation/scheduling/runtime playback
 
+### Resolved (Implemented)
+- [x] ~~expressionVariables on layer spec~~: **IMPLEMENTED** 2026-03-21 -- parse, store, print as dictionary
+- [x] ~~hasOwnedSubLayers layer metadata~~: **IMPLEMENTED** 2026-03-21 -- parse, store, print
+- [x] ~~All scalar types~~: **IMPLEMENTED** 2026-03-21 -- uchar and timecode added to parser and pprinter
+- [x] ~~All semantic aliases~~: **IMPLEMENTED** 2026-03-21 -- all 25 role types parse/store/print including half/double variants, texCoord3, frame4d
+
 ### Remaining Gaps (Not Implemented)
 - [ ] **LIVERPS strength ordering** (Spec 10.4): composition exists but no proper strength ordering between arc types
 - [ ] **Namespace mappings** (Spec 10.5): not implemented; paths not remapped across composition arcs
-- [ ] **Relocates** (Spec 10.3.2.6): not implemented at all -- no `layerRelocates` field, no relocation logic
+- [ ] **Relocates** (Spec 10.3.2.6): not implemented at all -- no relocation logic (data structure added)
 - [ ] **Implied inherit/specialize arcs** (Spec 10.3.2.3): inherits not propagated through upstream layer stacks
 - [ ] **Variant deferred evaluation** (Spec 10.3.2.5): variant selection applied statically, not deferred
 - [ ] **Specializes global weakness** (Spec 10.4.1): specializes not treated as globally weaker
-- [ ] **expressionVariables** on layer spec: not implemented
-- [ ] **hasOwnedSubLayers** layer metadata: not implemented
-- [ ] **layerRelocates** layer metadata: not implemented
+- [ ] **layerRelocates USDA parsing** (Spec 10.3.2.6): data structure exists but no parser for relocates = {} syntax
 - [ ] **Time-value spline evaluation** (Spec 12.3.3): bezier/hermite cubic spline eval for attribute values at time
 - [ ] **Value clip evaluation** (Spec 12.3.4): clip scheduling, time remapping, manifest-based attribute discovery
 - [ ] **Template clip metadata** generation (12.3.4.1.3): templateAssetPath expansion
-- [ ] **specifier resolution rules** (Spec 12.2.1): over/class/def special value resolution
-- [ ] **typeName resolution from prim definition** (Spec 12.2.2): not from strongest opinion
+- [x] ~~specifier resolution rules~~ (Spec 12.2.1): **PARTIAL** -- strongest opinion kept; full defining/undefining semantics require opinion stack
+- [x] ~~typeName resolution from prim definition~~ (Spec 12.2.2): **IMPLEMENTED** -- typeName only taken from defining specs (def/class), not from over
 - [ ] **variability resolution from prim definition** (Spec 12.2.3): fallback = weakest opinion
-- [ ] **custom field resolution** (Spec 12.2.4): true if ANY opinion says true
+- [x] ~~custom field resolution~~ (Spec 12.2.4): **IMPLEMENTED** -- custom flag OR'd across all opinions in composition
 - [ ] Deprecated `add` list op: graceful handling needs verification
 - [ ] Integer coding and LZ4 compression in USDC: verify against spec section 16.3
