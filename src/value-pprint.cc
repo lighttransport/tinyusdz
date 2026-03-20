@@ -489,6 +489,11 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::frame4d &m) {
   return ofs;
 }
 
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::timecode &tc) {
+  ofs << tinyusdz::dtos(tc.value);
+  return ofs;
+}
+
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::token &tok) {
   ofs << tinyusdz::quote(tok.str());
 
@@ -684,6 +689,9 @@ namespace value {
   __FUNC(double2)              \
   __FUNC(double3)              \
   __FUNC(double4)              \
+  __FUNC(matrix2f)             \
+  __FUNC(matrix3f)             \
+  __FUNC(matrix4f)             \
   __FUNC(matrix2d)             \
   __FUNC(matrix3d)             \
   __FUNC(matrix4d)             \
@@ -699,8 +707,10 @@ namespace value {
   __FUNC(point3h)              \
   __FUNC(point3f)              \
   __FUNC(point3d)              \
+  __FUNC(color3h)              \
   __FUNC(color3f)              \
   __FUNC(color3d)              \
+  __FUNC(color4h)              \
   __FUNC(color4f)              \
   __FUNC(color4d)              \
   __FUNC(texcoord2h)           \
@@ -708,7 +718,9 @@ namespace value {
   __FUNC(texcoord2d)           \
   __FUNC(texcoord3h)           \
   __FUNC(texcoord3f)           \
-  __FUNC(texcoord3d)
+  __FUNC(texcoord3d)           \
+  __FUNC(frame4d)              \
+  __FUNC(timecode)
 
 #define CASE_GPRIM_LIST(__FUNC) \
   __FUNC(Model)                 \
@@ -926,6 +938,16 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
         os << (*p);
       } else {
         os << "[InternalError: `string[]` type TypeId mismatch.]";
+      }
+      break;
+    }
+    // uchar (uint8_t) needs special handling: os << uint8_t prints as char
+    case TypeTraits<uint8_t>::type_id(): {
+      auto p = v.as<uint8_t>();
+      if (p) {
+        os << static_cast<int>(*p);
+      } else {
+        os << "[InternalError: uchar TypeId mismatch.]";
       }
       break;
     }
