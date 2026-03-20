@@ -2240,6 +2240,43 @@ bool AsciiParser::ParseStageMetaOpt() {
     } else {
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` isn't a string value.", varname));
     }
+  } else if (varname == "colorConfiguration") {
+    // AOUSD Core Spec: asset path to OCIO config
+    if (auto pv = var.get_value<value::AssetPath>()) {
+      _stage_metas.colorConfiguration = pv.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`colorConfiguration` isn't an asset path value.");
+    }
+  } else if (varname == "colorManagementSystem") {
+    // AOUSD Core Spec: e.g. "ocio"
+    if (auto pv = var.get_value<value::token>()) {
+      _stage_metas.colorManagementSystem = pv.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`colorManagementSystem` isn't a token value.");
+    }
+  } else if (varname == "owner") {
+    // AOUSD Core Spec: layer owner string
+    if (auto pv = var.get_value<value::StringData>()) {
+      _stage_metas.owner = pv.value().value;
+    } else if (auto pvs = var.get_value<std::string>()) {
+      _stage_metas.owner = pvs.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`owner` isn't a string value.");
+    }
+  } else if (varname == "hasOwnedSubLayers") {
+    // AOUSD Core Spec
+    if (auto pv = var.get_value<bool>()) {
+      _stage_metas.hasOwnedSubLayers = pv.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`hasOwnedSubLayers` isn't a bool value.");
+    }
+  } else if (varname == "expressionVariables") {
+    // AOUSD Core Spec: dictionary of variable substitutions
+    if (auto pv = var.get_value<Dictionary>()) {
+      _stage_metas.expressionVariables = pv.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`expressionVariables` isn't a dictionary value.");
+    }
   } else if (varname == "autoPlay") {
     // USDZ extension
     if (auto pv = var.get_value<bool>()) {

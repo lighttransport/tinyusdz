@@ -687,6 +687,23 @@ class USDAReader::Impl {
           _stage.metas().customLayerData = metas.customLayerData;
           _stage.metas().customLayerDataAuthored = metas.customLayerDataAuthored;
 
+          // AOUSD Core Spec layer metadata
+          if (metas.colorConfiguration) {
+            _stage.metas().colorConfiguration = metas.colorConfiguration.value();
+          }
+          if (metas.colorManagementSystem) {
+            _stage.metas().colorManagementSystem = metas.colorManagementSystem.value();
+          }
+          if (metas.owner) {
+            _stage.metas().owner = metas.owner.value();
+          }
+          if (metas.hasOwnedSubLayers) {
+            _stage.metas().hasOwnedSubLayers = metas.hasOwnedSubLayers.value();
+          }
+          if (metas.expressionVariables) {
+            _stage.metas().expressionVariables = metas.expressionVariables.value();
+          }
+
           return true;  // ok
         });
   }
