@@ -18,6 +18,7 @@
 #include "usdShade.hh"
 #include "usdLux.hh"
 #include "usdSkel.hh"
+#include "core/model-scope.hh"
 #include "math-util.inc"
 
 #include <cstring>

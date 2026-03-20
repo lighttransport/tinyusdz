@@ -1,0 +1,331 @@
+#ifdef _MSC_VER
+#define NOMINMAX
+#endif
+
+#define TEST_NO_MAIN
+#include "acutest.h"
+
+#include "unit-layer.h"
+#include "layer.hh"
+#include "core/prim-spec.hh"
+#include "composition.hh"
+#include "tinyusdz.hh"
+
+using namespace tinyusdz;
+
+void layer_create_empty_test(void) {
+  Layer layer;
+  TEST_CHECK(layer.primspecs().empty());
+  TEST_CHECK(layer.name().empty());
+}
+
+void layer_add_primspec_test(void) {
+  Layer layer;
+
+  // Add a PrimSpec
+  PrimSpec ps(Specifier::Def, "Xform", "Root");
+  bool ok = layer.add_primspec("Root", ps);
+  TEST_CHECK(ok);
+  TEST_CHECK(layer.has_primspec("Root"));
+  TEST_CHECK(layer.primspecs().size() == 1);
+
+  // Adding duplicate name should return false
+  PrimSpec ps2(Specifier::Def, "Xform", "Root");
+  bool dup = layer.add_primspec("Root", ps2);
+  TEST_CHECK(!dup);
+  TEST_CHECK(layer.primspecs().size() == 1);
+
+  // Adding with different name should succeed
+  PrimSpec ps3(Specifier::Def, "Mesh", "Child");
+  bool ok2 = layer.add_primspec("Child", ps3);
+  TEST_CHECK(ok2);
+  TEST_CHECK(layer.primspecs().size() == 2);
+  TEST_CHECK(layer.has_primspec("Child"));
+}
+
+void layer_emplace_primspec_test(void) {
+  Layer layer;
+
+  PrimSpec ps(Specifier::Def, "Xform", "Moved");
+  bool ok = layer.emplace_primspec("Moved", std::move(ps));
+  TEST_CHECK(ok);
+  TEST_CHECK(layer.has_primspec("Moved"));
+  TEST_CHECK(layer.primspecs().size() == 1);
+
+  // Verify the PrimSpec data
+  auto it = layer.primspecs().find("Moved");
+  TEST_CHECK(it != layer.primspecs().end());
+  if (it != layer.primspecs().end()) {
+    TEST_CHECK(it->second.typeName() == "Xform");
+  }
+}
+
+void layer_replace_primspec_test(void) {
+  Layer layer;
+
+  // Add a PrimSpec first
+  PrimSpec ps_orig(Specifier::Def, "Xform", "Target");
+  layer.add_primspec("Target", ps_orig);
+  TEST_CHECK(layer.has_primspec("Target"));
+
+  // Replace with a different PrimSpec
+  PrimSpec ps_new(Specifier::Def, "Mesh", "Target");
+  bool ok = layer.replace_primspec("Target", ps_new);
+  TEST_CHECK(ok);
+  TEST_CHECK(layer.primspecs().size() == 1);
+
+  // Verify the replacement happened
+  auto it = layer.primspecs().find("Target");
+  TEST_CHECK(it != layer.primspecs().end());
+  if (it != layer.primspecs().end()) {
+    TEST_CHECK(it->second.typeName() == "Mesh");
+  }
+
+  // Replace for non-existent name should return false
+  PrimSpec ps_missing(Specifier::Def, "Xform", "Missing");
+  bool fail = layer.replace_primspec("NonExistent", ps_missing);
+  TEST_CHECK(!fail);
+}
+
+void layer_find_primspec_at_test(void) {
+  Layer layer;
+
+  // Create root PrimSpec "Root" with child "Child"
+  PrimSpec root_ps(Specifier::Def, "Xform", "Root");
+  PrimSpec child_ps(Specifier::Def, "Mesh", "Child");
+  root_ps.children().push_back(child_ps);
+
+  layer.add_primspec("Root", root_ps);
+
+  // Find the child at "/Root/Child"
+  {
+    const PrimSpec *found = nullptr;
+    std::string err;
+    bool ok = layer.find_primspec_at(Path("/Root/Child", ""), &found, &err);
+    TEST_CHECK(ok);
+    if (ok && found) {
+      TEST_CHECK(found->name() == "Child");
+      TEST_CHECK(found->typeName() == "Mesh");
+    } else {
+      TEST_MSG("find_primspec_at failed: %s", err.c_str());
+    }
+  }
+
+  // Find the root at "/Root"
+  {
+    const PrimSpec *found = nullptr;
+    std::string err;
+    bool ok = layer.find_primspec_at(Path("/Root", ""), &found, &err);
+    TEST_CHECK(ok);
+    if (ok && found) {
+      TEST_CHECK(found->name() == "Root");
+    }
+  }
+
+  // Non-existent path should fail
+  {
+    const PrimSpec *found = nullptr;
+    std::string err;
+    bool ok = layer.find_primspec_at(Path("/Root/NonExistent", ""), &found, &err);
+    TEST_CHECK(!ok);
+  }
+}
+
+void layer_check_unresolved_refs_test(void) {
+  // Layer with references should return true
+  {
+    Layer layer;
+    PrimSpec ps(Specifier::Def, "Xform", "Ref");
+
+    Reference ref;
+    ref.asset_path = value::AssetPath("other.usda");
+    std::vector<std::pair<ListEditQual, std::vector<Reference>>> refs;
+    refs.push_back({ListEditQual::ResetToExplicit, {ref}});
+    ps.metas().references = refs;
+
+    layer.add_primspec("Ref", ps);
+    bool has_refs = layer.check_unresolved_references();
+    TEST_CHECK(has_refs);
+  }
+
+  // Layer without references should return false
+  {
+    Layer layer;
+    PrimSpec ps(Specifier::Def, "Xform", "NoRef");
+    layer.add_primspec("NoRef", ps);
+    bool has_refs = layer.check_unresolved_references();
+    TEST_CHECK(!has_refs);
+  }
+}
+
+void layer_check_unresolved_payload_test(void) {
+  // Layer with payload should return true
+  {
+    Layer layer;
+    PrimSpec ps(Specifier::Def, "Xform", "PL");
+
+    Payload pl;
+    pl.asset_path = value::AssetPath("payload.usda");
+    std::vector<std::pair<ListEditQual, std::vector<Payload>>> payloads;
+    payloads.push_back({ListEditQual::ResetToExplicit, {pl}});
+    ps.metas().payload = payloads;
+
+    layer.add_primspec("PL", ps);
+    bool has_payload = layer.check_unresolved_payload();
+    TEST_CHECK(has_payload);
+  }
+
+  // Layer without payload should return false
+  {
+    Layer layer;
+    PrimSpec ps(Specifier::Def, "Xform", "NoPL");
+    layer.add_primspec("NoPL", ps);
+    bool has_payload = layer.check_unresolved_payload();
+    TEST_CHECK(!has_payload);
+  }
+}
+
+void layer_check_unresolved_inherits_test(void) {
+  // Layer with inherits should return true
+  {
+    Layer layer;
+    PrimSpec ps(Specifier::Def, "Xform", "Inh");
+
+    std::vector<std::pair<ListEditQual, std::vector<Path>>> inherits;
+    inherits.push_back({ListEditQual::ResetToExplicit, {Path("/BaseClass", "")}});
+    ps.metas().inherits = inherits;
+
+    layer.add_primspec("Inh", ps);
+    bool has_inherits = layer.check_unresolved_inherits();
+    TEST_CHECK(has_inherits);
+  }
+
+  // Layer without inherits should return false
+  {
+    Layer layer;
+    PrimSpec ps(Specifier::Def, "Xform", "NoInh");
+    layer.add_primspec("NoInh", ps);
+    bool has_inherits = layer.check_unresolved_inherits();
+    TEST_CHECK(!has_inherits);
+  }
+}
+
+void layer_check_unresolved_specializes_test(void) {
+  // Layer with specializes should return true
+  {
+    Layer layer;
+    PrimSpec ps(Specifier::Def, "Xform", "Spec");
+
+    std::vector<std::pair<ListEditQual, std::vector<Path>>> specializes;
+    specializes.push_back({ListEditQual::ResetToExplicit, {Path("/SpecBase", "")}});
+    ps.metas().specializes = specializes;
+
+    layer.add_primspec("Spec", ps);
+    bool has_spec = layer.check_unresolved_specializes();
+    TEST_CHECK(has_spec);
+  }
+
+  // Layer without specializes should return false
+  {
+    Layer layer;
+    PrimSpec ps(Specifier::Def, "Xform", "NoSpec");
+    layer.add_primspec("NoSpec", ps);
+    bool has_spec = layer.check_unresolved_specializes();
+    TEST_CHECK(!has_spec);
+  }
+}
+
+void layer_check_unresolved_variant_test(void) {
+  // Layer with variant should return true
+  {
+    Layer layer;
+    PrimSpec ps(Specifier::Def, "Xform", "Var");
+
+    VariantSelectionMap vsmap;
+    vsmap["modelingVariant"] = "default";
+    ps.metas().variants = vsmap;
+
+    std::vector<std::pair<ListEditQual, std::vector<std::string>>> variantSets;
+    variantSets.push_back({ListEditQual::ResetToExplicit, {"modelingVariant"}});
+    ps.metas().variantSets = variantSets;
+
+    layer.add_primspec("Var", ps);
+    bool has_variant = layer.check_unresolved_variant();
+    TEST_CHECK(has_variant);
+  }
+
+  // Layer without variant should return false
+  {
+    Layer layer;
+    PrimSpec ps(Specifier::Def, "Xform", "NoVar");
+    layer.add_primspec("NoVar", ps);
+    bool has_variant = layer.check_unresolved_variant();
+    TEST_CHECK(!has_variant);
+  }
+}
+
+void layer_check_over_primspec_test(void) {
+  // Layer with Over specifier should return true
+  {
+    Layer layer;
+    PrimSpec ps(Specifier::Over, "Xform", "OverPrim");
+    layer.add_primspec("OverPrim", ps);
+    bool has_over = layer.check_over_primspec();
+    TEST_CHECK(has_over);
+  }
+
+  // Layer without Over specifier should return false
+  {
+    Layer layer;
+    PrimSpec ps(Specifier::Def, "Xform", "DefPrim");
+    layer.add_primspec("DefPrim", ps);
+    bool has_over = layer.check_over_primspec();
+    TEST_CHECK(!has_over);
+  }
+}
+
+void layer_metas_test(void) {
+  Layer layer;
+
+  // Set layer name
+  layer.set_name("TestLayer");
+  TEST_CHECK(layer.name() == "TestLayer");
+
+  // Set layer metas
+  layer.metas().defaultPrim = value::token("Root");
+  TEST_CHECK(layer.metas().defaultPrim.str() == "Root");
+
+  // Set upAxis
+  layer.metas().upAxis = Axis::Z;
+  TEST_CHECK(layer.metas().upAxis.get_value() == Axis::Z);
+}
+
+void layer_asset_resolution_state_test(void) {
+  Layer layer;
+
+  std::vector<std::string> search_paths = {"path1", "path2"};
+  layer.set_asset_resolution_state("cwd", search_paths);
+
+  TEST_CHECK(layer.get_current_working_path() == "cwd");
+
+  std::vector<std::string> retrieved = layer.get_asset_search_paths();
+  TEST_CHECK(retrieved.size() == 2);
+  if (retrieved.size() == 2) {
+    TEST_CHECK(retrieved[0] == "path1");
+    TEST_CHECK(retrieved[1] == "path2");
+  }
+}
+
+void layer_memory_estimation_test(void) {
+  Layer layer;
+
+  // Add some data
+  PrimSpec ps(Specifier::Def, "Xform", "Root");
+  PrimSpec child(Specifier::Def, "Mesh", "Child");
+  ps.children().push_back(child);
+  layer.add_primspec("Root", ps);
+
+  size_t mem = layer.estimate_memory_usage();
+  TEST_CHECK(mem > 0);
+  TEST_MSG("Layer memory usage estimate: %zu bytes", mem);
+}

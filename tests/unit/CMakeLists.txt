@@ -30,6 +30,24 @@ set(TEST_SOURCES
 	unit-composition.cc
 	unit-usda-reader.cc
 	unit-usdc-reader.cc
+	# Phase 0A: feat tests merged into unit suite
+	unit-value-view.cc
+	unit-typed-array-view.cc
+	unit-typed-array-timesamples.cc
+	# Phase 1: composition arcs
+	unit-composition-arcs.cc
+	# Phase 2: layer API
+	unit-layer.cc
+	# Phase 3: primspec and prim API
+	unit-primspec.cc
+	unit-prim-api.cc
+	# Phase 4: USDA writer
+	unit-usda-writer.cc
+	# Phase 5: Tydra end-to-end + shader
+	unit-tydra-renderscene.cc
+	unit-tydra-shader.cc
+	# Phase 6: security
+	unit-security.cc
    )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)
