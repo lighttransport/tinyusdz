@@ -1,0 +1,22 @@
+#pragma once
+
+void comp_inherits_child_prims_test(void);
+void comp_inherits_multiple_bases_test(void);
+void comp_specializes_child_prims_test(void);
+void comp_variant_two_sets_test(void);
+void comp_variant_no_selection_test(void);
+void comp_variant_nested_children_test(void);
+void comp_override_basic_test(void);
+void comp_override_replace_property_test(void);
+void comp_override_add_new_property_test(void);
+void comp_inherit_primspec_api_test(void);
+void comp_override_primspec_api_test(void);
+void comp_has_references_test(void);
+void comp_has_payload_test(void);
+void comp_has_over_test(void);
+void comp_extract_variants_from_layer_test(void);
+void comp_extract_variants_from_stage_test(void);
+void comp_layer_to_stage_test(void);
+void comp_list_variant_selections_test(void);
+void comp_variant_select_primspec_test(void);
+void comp_apply_variant_selector_test(void);

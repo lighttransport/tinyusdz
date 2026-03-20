@@ -31,6 +31,24 @@
 #include "unit-composition.h"
 #include "unit-usda-reader.h"
 #include "unit-usdc-reader.h"
+// Phase 0A: feat tests merged into unit suite
+#include "unit-value-view.h"
+#include "unit-typed-array-view.h"
+#include "unit-typed-array-timesamples.h"
+// Phase 1: composition arcs
+#include "unit-composition-arcs.h"
+// Phase 2: layer API
+#include "unit-layer.h"
+// Phase 3: primspec and prim API
+#include "unit-primspec.h"
+#include "unit-prim-api.h"
+// Phase 4: USDA writer
+#include "unit-usda-writer.h"
+// Phase 5: Tydra end-to-end + shader
+#include "unit-tydra-renderscene.h"
+#include "unit-tydra-shader.h"
+// Phase 6: security
+#include "unit-security.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -268,6 +286,123 @@ TEST_LIST = {
   { "usdc_reader_truncated_input_test", usdc_reader_truncated_input_test },
   { "usdc_reader_corrupt_header_test", usdc_reader_corrupt_header_test },
   { "usdc_reader_corrupt_body_test", usdc_reader_corrupt_body_test },
+  // Phase 0A: ValueView tests
+  { "value_view_size_test", value_view_size_test },
+  { "value_view_construct_test", value_view_construct_test },
+  { "value_view_vector_test", value_view_vector_test },
+  { "value_view_as_view_test", value_view_as_view_test },
+  { "value_view_reset_test", value_view_reset_test },
+  { "value_view_role_types_test", value_view_role_types_test },
+  { "value_view_storage_flags_test", value_view_storage_flags_test },
+  { "value_view_equality_test", value_view_equality_test },
+  // Phase 0A: TypedArrayView tests
+  { "typed_array_view_binary_float_test", typed_array_view_binary_float_test },
+  { "typed_array_view_vector_storage_test", typed_array_view_vector_storage_test },
+  { "typed_array_view_at_time_test", typed_array_view_at_time_test },
+  { "typed_array_view_blocked_sample_test", typed_array_view_blocked_sample_test },
+  // Phase 0A: TypedArray TimeSamples tests
+  { "typed_array_dedup_int_test", typed_array_dedup_int_test },
+  { "typed_array_dedup_float_double_test", typed_array_dedup_float_double_test },
+  { "typed_array_vector_compat_test", typed_array_vector_compat_test },
+  { "typed_array_scalar_values_test", typed_array_scalar_values_test },
+  // Phase 1: Composition arcs tests
+  { "comp_inherits_child_prims_test", comp_inherits_child_prims_test },
+  { "comp_inherits_multiple_bases_test", comp_inherits_multiple_bases_test },
+  { "comp_specializes_child_prims_test", comp_specializes_child_prims_test },
+  { "comp_variant_two_sets_test", comp_variant_two_sets_test },
+  { "comp_variant_no_selection_test", comp_variant_no_selection_test },
+  { "comp_variant_nested_children_test", comp_variant_nested_children_test },
+  { "comp_override_basic_test", comp_override_basic_test },
+  { "comp_override_replace_property_test", comp_override_replace_property_test },
+  { "comp_override_add_new_property_test", comp_override_add_new_property_test },
+  { "comp_inherit_primspec_api_test", comp_inherit_primspec_api_test },
+  { "comp_override_primspec_api_test", comp_override_primspec_api_test },
+  { "comp_has_references_test", comp_has_references_test },
+  { "comp_has_payload_test", comp_has_payload_test },
+  { "comp_has_over_test", comp_has_over_test },
+  { "comp_extract_variants_from_layer_test", comp_extract_variants_from_layer_test },
+  { "comp_extract_variants_from_stage_test", comp_extract_variants_from_stage_test },
+  { "comp_layer_to_stage_test", comp_layer_to_stage_test },
+  { "comp_list_variant_selections_test", comp_list_variant_selections_test },
+  { "comp_variant_select_primspec_test", comp_variant_select_primspec_test },
+  { "comp_apply_variant_selector_test", comp_apply_variant_selector_test },
+  // Phase 2: Stage API tests (extended)
+  { "stage_add_root_prim_test", stage_add_root_prim_test },
+  { "stage_replace_root_prim_test", stage_replace_root_prim_test },
+  { "stage_export_to_string_test", stage_export_to_string_test },
+  { "stage_commit_prim_id_test", stage_commit_prim_id_test },
+  { "stage_metas_test", stage_metas_test },
+  { "stage_memory_estimation_test", stage_memory_estimation_test },
+  { "stage_empty_test", stage_empty_test },
+  { "stage_nested_hierarchy_test", stage_nested_hierarchy_test },
+  // Phase 2: Layer API tests
+  { "layer_create_empty_test", layer_create_empty_test },
+  { "layer_add_primspec_test", layer_add_primspec_test },
+  { "layer_emplace_primspec_test", layer_emplace_primspec_test },
+  { "layer_replace_primspec_test", layer_replace_primspec_test },
+  { "layer_find_primspec_at_test", layer_find_primspec_at_test },
+  { "layer_check_unresolved_refs_test", layer_check_unresolved_refs_test },
+  { "layer_check_unresolved_payload_test", layer_check_unresolved_payload_test },
+  { "layer_check_unresolved_inherits_test", layer_check_unresolved_inherits_test },
+  { "layer_check_unresolved_specializes_test", layer_check_unresolved_specializes_test },
+  { "layer_check_unresolved_variant_test", layer_check_unresolved_variant_test },
+  { "layer_check_over_primspec_test", layer_check_over_primspec_test },
+  { "layer_metas_test", layer_metas_test },
+  { "layer_asset_resolution_state_test", layer_asset_resolution_state_test },
+  { "layer_memory_estimation_test", layer_memory_estimation_test },
+  // PrimSpec tests
+  { "primspec_create_test", primspec_create_test },
+  { "primspec_specifiers_test", primspec_specifiers_test },
+  { "primspec_properties_test", primspec_properties_test },
+  { "primspec_children_test", primspec_children_test },
+  { "primspec_variant_selection_test", primspec_variant_selection_test },
+  { "primspec_metas_test", primspec_metas_test },
+  // Prim API tests
+  { "prim_type_check_test", prim_type_check_test },
+  { "prim_add_child_test", prim_add_child_test },
+  { "prim_element_name_test", prim_element_name_test },
+  { "prim_specifier_test", prim_specifier_test },
+  { "prim_absolute_path_test", prim_absolute_path_test },
+  { "prim_data_access_test", prim_data_access_test },
+  { "prim_replace_child_test", prim_replace_child_test },
+  // USDA writer tests
+  { "usda_writer_empty_stage_test", usda_writer_empty_stage_test },
+  { "usda_writer_xform_test", usda_writer_xform_test },
+  { "usda_writer_mesh_test", usda_writer_mesh_test },
+  { "usda_writer_material_test", usda_writer_material_test },
+  { "usda_writer_metadata_test", usda_writer_metadata_test },
+  { "usda_writer_hierarchy_test", usda_writer_hierarchy_test },
+  { "usda_writer_special_chars_test", usda_writer_special_chars_test },
+  { "usda_writer_idempotent_test", usda_writer_idempotent_test },
+  { "usda_writer_api_test", usda_writer_api_test },
+  // Phase 5: Tydra RenderScene end-to-end tests
+  { "tydra_renderscene_empty_stage_test", tydra_renderscene_empty_stage_test },
+  { "tydra_renderscene_single_mesh_test", tydra_renderscene_single_mesh_test },
+  { "tydra_renderscene_xform_hierarchy_test",
+    tydra_renderscene_xform_hierarchy_test },
+  { "tydra_renderscene_material_binding_test",
+    tydra_renderscene_material_binding_test },
+  { "tydra_renderscene_sphere_light_test",
+    tydra_renderscene_sphere_light_test },
+  { "tydra_renderscene_camera_test", tydra_renderscene_camera_test },
+  { "tydra_renderscene_memory_estimation_test",
+    tydra_renderscene_memory_estimation_test },
+  // Phase 5: Tydra shader / scene-access tests
+  { "tydra_shader_list_prims_test", tydra_shader_list_prims_test },
+  { "tydra_shader_list_shaders_test", tydra_shader_list_shaders_test },
+  { "tydra_shader_get_bound_material_test",
+    tydra_shader_get_bound_material_test },
+  { "tydra_shader_property_access_test", tydra_shader_property_access_test },
+  { "tydra_shader_xform_node_build_test",
+    tydra_shader_xform_node_build_test },
+  // Security tests
+  { "security_empty_input_test", security_empty_input_test },
+  { "security_truncated_header_test", security_truncated_header_test },
+  { "security_null_bytes_test", security_null_bytes_test },
+  { "security_deeply_nested_test", security_deeply_nested_test },
+  { "security_huge_array_test", security_huge_array_test },
+  { "security_malformed_utf8_test", security_malformed_utf8_test },
+  { "security_recursive_reference_test", security_recursive_reference_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif

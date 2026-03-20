@@ -18,7 +18,7 @@ bool test_apply_single_selection() {
   std::string warn, err;
 
   bool ret = tinyusdz::LoadUSDFromFile(
-      "/mnt/nvme02/work/tinyusdz-repo/variant/tests/feat/nestedVariantSet/basic-2level-001.usda", &stage, &warn, &err);
+      "tests/feat/nestedVariantSet/basic-2level-001.usda", &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
     return false;
@@ -66,7 +66,7 @@ bool test_apply_multiple_selections() {
   std::string warn, err;
 
   bool ret = tinyusdz::LoadUSDFromFile(
-      "/mnt/nvme02/work/tinyusdz-repo/variant/tests/feat/nestedVariantSet/basic-2level-001.usda", &stage, &warn, &err);
+      "tests/feat/nestedVariantSet/basic-2level-001.usda", &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
     return false;
@@ -115,7 +115,7 @@ bool test_update_existing_selection() {
   std::string warn, err;
 
   bool ret = tinyusdz::LoadUSDFromFile(
-      "/mnt/nvme02/work/tinyusdz-repo/variant/tests/feat/nestedVariantSet/basic-2level-001.usda", &stage, &warn, &err);
+      "tests/feat/nestedVariantSet/basic-2level-001.usda", &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
     return false;
@@ -174,7 +174,7 @@ bool test_change_tracking() {
   std::string warn, err;
 
   bool ret = tinyusdz::LoadUSDFromFile(
-      "/mnt/nvme02/work/tinyusdz-repo/variant/tests/feat/nestedVariantSet/with-selection-001.usda", &stage, &warn, &err);
+      "tests/feat/nestedVariantSet/with-selection-001.usda", &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
     return false;
@@ -220,7 +220,7 @@ bool test_reset_to_defaults() {
   std::string warn, err;
 
   bool ret = tinyusdz::LoadUSDFromFile(
-      "/mnt/nvme02/work/tinyusdz-repo/variant/tests/feat/nestedVariantSet/with-selection-001.usda", &stage, &warn, &err);
+      "tests/feat/nestedVariantSet/with-selection-001.usda", &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
     return false;
@@ -274,7 +274,7 @@ bool test_nested_variant_selections() {
   std::string warn, err;
 
   bool ret = tinyusdz::LoadUSDFromFile(
-      "/mnt/nvme02/work/tinyusdz-repo/variant/tests/feat/nestedVariantSet/triple-nesting-001.usda", &stage, &warn, &err);
+      "tests/feat/nestedVariantSet/triple-nesting-001.usda", &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
     return false;
