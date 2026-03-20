@@ -36,6 +36,9 @@ list(
   ../../src/prim-types.cc
   ../../src/crate-format.cc
   ../../src/crate-reader.cc
+  ../../src/crate-reader-arrays.cc
+  ../../src/crate-reader-values.cc
+  ../../src/crate-reader-paths.cc
   ../../src/crate-writer.cc
   ../../src/crate-pprint.cc
   ../../src/ascii-parser.cc

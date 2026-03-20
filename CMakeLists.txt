@@ -432,6 +432,9 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/composition-reconstruct.cc
     ${PROJECT_SOURCE_DIR}/src/chunk-reader.cc
     ${PROJECT_SOURCE_DIR}/src/crate-reader.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-reader-arrays.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-reader-values.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-reader-paths.cc
     ${PROJECT_SOURCE_DIR}/src/crate-reader-timesamples.cc
     ${PROJECT_SOURCE_DIR}/src/crate-format.cc
     ${PROJECT_SOURCE_DIR}/src/crate-writer.cc
