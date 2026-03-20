@@ -2789,27 +2789,44 @@ inline void RegisterPrimAttrTypes(SetType &d, bool include_variant_set = false) 
   d.insert(kQuatf);
   d.insert(kQuatd);
 
+  // AOUSD Core Spec 6.2: uchar and timecode scalar types
+  d.insert(kUChar);
+  d.insert(kTimeCode);
+
+  // AOUSD Core Spec 6.5: All semantic aliases (role types)
+  // normal3{h,f,d}
+  d.insert(kNormal3h);
   d.insert(kNormal3f);
+  d.insert(kNormal3d);
+  // point3{h,f,d}
+  d.insert(kPoint3h);
   d.insert(kPoint3f);
-  d.insert(kTexCoord2h);
-  d.insert(kTexCoord3h);
-  d.insert(kTexCoord4h);
-  d.insert(kTexCoord2f);
-  d.insert(kTexCoord3f);
-  d.insert(kTexCoord4f);
-  d.insert(kTexCoord2d);
-  d.insert(kTexCoord3d);
-  d.insert(kTexCoord4d);
+  d.insert(kPoint3d);
+  // vector3{h,f,d}
+  d.insert(kVector3h);
   d.insert(kVector3f);
-  d.insert(kVector4f);
   d.insert(kVector3d);
+  d.insert(kVector4f);
   d.insert(kVector4d);
+  // color{3,4}{h,f,d}
   d.insert(kColor3h);
   d.insert(kColor3f);
   d.insert(kColor3d);
   d.insert(kColor4h);
   d.insert(kColor4f);
   d.insert(kColor4d);
+  // texCoord{2,3}{h,f,d} + texCoord4{h,f,d}
+  d.insert(kTexCoord2h);
+  d.insert(kTexCoord2f);
+  d.insert(kTexCoord2d);
+  d.insert(kTexCoord3h);
+  d.insert(kTexCoord3f);
+  d.insert(kTexCoord3d);
+  d.insert(kTexCoord4h);
+  d.insert(kTexCoord4f);
+  d.insert(kTexCoord4d);
+  // frame4d
+  d.insert(kFrame4d);
 
   d.insert(kMatrix2f);
   d.insert(kMatrix3f);
@@ -2830,8 +2847,6 @@ inline void RegisterPrimAttrTypes(SetType &d, bool include_variant_set = false) 
   if (include_variant_set) {
     d.insert("variantSet");
   }
-
-  // TODO: Add more types...
 }
 
 }  // namespace value
