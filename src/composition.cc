@@ -702,13 +702,16 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
 
       } else if (qual == ListEditQual::Delete) {
         PUSH_ERROR_AND_RETURN("`delete` references are not supported yet.");
-      } else if (qual == ListEditQual::Add) {
-        PUSH_ERROR_AND_RETURN("`add` references are not supported yet.");
       } else if (qual == ListEditQual::Order) {
         PUSH_ERROR_AND_RETURN("`order` references are not supported yet.");
       } else if (qual == ListEditQual::Invalid) {
         PUSH_ERROR_AND_RETURN("Invalid listedit qualifier to for `references`.");
-      } else if (qual == ListEditQual::Append) {
+      } else if (qual == ListEditQual::Add ||
+                 qual == ListEditQual::Append) {
+        // AOUSD Core Spec 6.6.3.10: `add` is deprecated, treat as `append`
+        if (qual == ListEditQual::Add) {
+          PUSH_WARN("`add` list edit qualifier is deprecated (AOUSD Core Spec 6.6.3.10). Treating as `append`.");
+        }
         for (const auto &reference : refecences) {
           Layer layer;
           const PrimSpec *src_ps{nullptr};
@@ -867,14 +870,17 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
         }
 
       } else if (qual == ListEditQual::Delete) {
-        PUSH_ERROR_AND_RETURN("`delete` references are not supported yet.");
-      } else if (qual == ListEditQual::Add) {
-        PUSH_ERROR_AND_RETURN("`add` references are not supported yet.");
+        PUSH_ERROR_AND_RETURN("`delete` payloads are not supported yet.");
       } else if (qual == ListEditQual::Order) {
-        PUSH_ERROR_AND_RETURN("`order` references are not supported yet.");
+        PUSH_ERROR_AND_RETURN("`order` payloads are not supported yet.");
       } else if (qual == ListEditQual::Invalid) {
-        PUSH_ERROR_AND_RETURN("Invalid listedit qualifier to for `references`.");
-      } else if (qual == ListEditQual::Append) {
+        PUSH_ERROR_AND_RETURN("Invalid listedit qualifier for `payload`.");
+      } else if (qual == ListEditQual::Add ||
+                 qual == ListEditQual::Append) {
+        // AOUSD Core Spec 6.6.3.10: `add` is deprecated, treat as `append`
+        if (qual == ListEditQual::Add) {
+          PUSH_WARN("`add` list edit qualifier is deprecated (AOUSD Core Spec 6.6.3.10). Treating as `append`.");
+        }
         for (const auto &pl : payloads) {
           std::string asset_path = pl.asset_path.GetAssetPath();
 
