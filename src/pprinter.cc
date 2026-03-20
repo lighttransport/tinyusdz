@@ -112,6 +112,35 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
     meta_ss << pprint::Indent(1) << "}\n";
   }
 
+  // AOUSD Core Spec layer metadata
+  if (metas.colorConfiguration) {
+    meta_ss << pprint::Indent(indent)
+            << "colorConfiguration = "
+            << metas.colorConfiguration.value() << "\n";
+  }
+
+  if (metas.colorManagementSystem) {
+    meta_ss << pprint::Indent(indent)
+            << "colorManagementSystem = "
+            << quote(metas.colorManagementSystem.value().str()) << "\n";
+  }
+
+  if (metas.owner) {
+    meta_ss << pprint::Indent(indent)
+            << "owner = " << quote(metas.owner.value()) << "\n";
+  }
+
+  if (metas.hasOwnedSubLayers) {
+    meta_ss << pprint::Indent(indent)
+            << "hasOwnedSubLayers = "
+            << (metas.hasOwnedSubLayers.value() ? "true" : "false") << "\n";
+  }
+
+  if (metas.expressionVariables) {
+    meta_ss << print_customData(metas.expressionVariables.value(),
+                                "expressionVariables", indent);
+  }
+
   return meta_ss.str();
 }
 
