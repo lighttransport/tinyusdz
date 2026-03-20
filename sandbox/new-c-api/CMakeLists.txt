@@ -76,6 +76,7 @@ set(TINYUSDZ_SOURCES
     ${TINYUSDZ_SRC}/composition.cc
     ${TINYUSDZ_SRC}/composition-reconstruct.cc
     ${TINYUSDZ_SRC}/prim-reconstruct.cc
+    ${TINYUSDZ_SRC}/prim-reconstruct-shader.cc
     ${TINYUSDZ_SRC}/path.cc
     ${TINYUSDZ_SRC}/str-util.cc
     ${TINYUSDZ_SRC}/io-util.cc

@@ -56,6 +56,7 @@ list(
   ../../src/usdc-writer.cc
   ../../src/image-loader.cc
   ../../src/prim-reconstruct.cc
+  ../../src/prim-reconstruct-shader.cc
   ../../src/prim-composition.cc
   ../../src/tiny-format.cc
   ../../src/xform.cc
