@@ -66,6 +66,9 @@ set(TINYUSDZ_SOURCES
     ${TINYUSDZ_SRC}/usdc-reader-prim.cc
     ${TINYUSDZ_SRC}/usdc-reader-reconstruct.cc
     ${TINYUSDZ_SRC}/crate-reader.cc
+    ${TINYUSDZ_SRC}/crate-reader-arrays.cc
+    ${TINYUSDZ_SRC}/crate-reader-values.cc
+    ${TINYUSDZ_SRC}/crate-reader-paths.cc
     ${TINYUSDZ_SRC}/ascii-parser.cc
     ${TINYUSDZ_SRC}/asset-resolution.cc
     ${TINYUSDZ_SRC}/composition.cc

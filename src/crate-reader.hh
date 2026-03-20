@@ -627,5 +627,28 @@ class CrateReader {
   Impl *_impl;
 };
 
+// Explicit template instantiation declarations (defined in crate-reader-arrays.cc)
+extern template bool CrateReader::ReadCompressedInts<int32_t>(int32_t*, size_t);
+extern template bool CrateReader::ReadCompressedInts<uint32_t>(uint32_t*, size_t);
+extern template bool CrateReader::ReadCompressedInts<int64_t>(int64_t*, size_t);
+extern template bool CrateReader::ReadCompressedInts<uint64_t>(uint64_t*, size_t);
+extern template bool CrateReader::ReadIntArray<int32_t>(bool, std::vector<int32_t>*);
+extern template bool CrateReader::ReadIntArray<uint32_t>(bool, std::vector<uint32_t>*);
+extern template bool CrateReader::ReadIntArray<int64_t>(bool, std::vector<int64_t>*);
+extern template bool CrateReader::ReadIntArray<uint64_t>(bool, std::vector<uint64_t>*);
+extern template bool CrateReader::ReadIntArrayTyped<int32_t>(bool, TypedArray<int32_t>*);
+extern template bool CrateReader::ReadIntArrayTyped<uint32_t>(bool, TypedArray<uint32_t>*);
+extern template bool CrateReader::ReadIntArrayTyped<int64_t>(bool, TypedArray<int64_t>*);
+extern template bool CrateReader::ReadIntArrayTyped<uint64_t>(bool, TypedArray<uint64_t>*);
+extern template bool CrateReader::ReadListOp<Payload>(ListOp<Payload>*);
+extern template bool CrateReader::ReadListOp<Reference>(ListOp<Reference>*);
+extern template bool CrateReader::ReadListOp<int32_t>(ListOp<int32_t>*);
+extern template bool CrateReader::ReadListOp<int64_t>(ListOp<int64_t>*);
+extern template bool CrateReader::ReadListOp<uint32_t>(ListOp<uint32_t>*);
+extern template bool CrateReader::ReadListOp<uint64_t>(ListOp<uint64_t>*);
+extern template bool CrateReader::ReadListOp<Path>(ListOp<Path>*);
+extern template bool CrateReader::ReadListOp<std::string>(ListOp<std::string>*);
+extern template bool CrateReader::ReadListOp<Token>(ListOp<Token>*);
+
 }  // namespace crate
 }  // namespace tinyusdz
