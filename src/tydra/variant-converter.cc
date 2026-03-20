@@ -10,7 +10,7 @@
 #include <functional>
 #include <sstream>
 
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "render-data.hh"
 #include "stage.hh"
 #include "variant-support.hh"

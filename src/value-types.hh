@@ -1313,7 +1313,10 @@ DEFINE_TYPE_TRAIT(AssetPath, kAssetPath, TYPE_ID_ASSET_PATH, 1);
 
 //
 // Other types(e.g. TYPE_ID_REFERENCE) are defined in corresponding header
-// files(e.g. `prim-types.hh`, `crate-format.hh`(Data types used in Crate data))
+// files(e.g. core/ headers, `crate-format.hh`(Data types used in Crate data))
+//
+// token[] and TimeSamples traits are defined later in this file (after
+// TimeSamples struct is available from timesamples.hh)
 //
 
 #undef DEFINE_TYPE_TRAIT
@@ -2839,6 +2842,16 @@ inline void RegisterPrimAttrTypes(SetType &d, bool include_variant_set = false) 
 
 namespace tinyusdz {
 namespace value {
+
+// token[] and TimeSamples traits - placed here because TimeSamples is defined
+// in timesamples.hh which is included above.
+#include "define-type-trait.inc"
+
+DEFINE_TYPE_TRAIT(std::vector<token>, "token[]", TYPE_ID_TOKEN_VECTOR, 1);
+DEFINE_TYPE_TRAIT(TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
+
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
 
 static_assert(sizeof(quath) == 8, "sizeof(quath) must be 8");
 static_assert(sizeof(quatf) == 16, "sizeof(quatf) must be 16");

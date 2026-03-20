@@ -6,7 +6,8 @@
 #include "acutest.h"
 
 #include "unit-prim-types.h"
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/path.hh"
 
 using namespace tinyusdz;
 

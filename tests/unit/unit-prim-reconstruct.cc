@@ -13,7 +13,7 @@
 
 #include "unit-prim-reconstruct.h"
 #include "tinyusdz.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "usdLux.hh"

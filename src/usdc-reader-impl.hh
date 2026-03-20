@@ -14,7 +14,9 @@
 
 #include "usdc-reader.hh"
 
-#include "prim-types.hh"
+#include "core/prim.hh"        // Prim class
+#include "core/prim-spec.hh"   // PrimSpec, Property (transitively: composition-types, prim-enums, prim-metas, variant-types)
+#include "core/model-scope.hh" // Model, Scope
 #include "layer.hh"
 #include "tinyusdz.hh"
 #include "value-types.hh"

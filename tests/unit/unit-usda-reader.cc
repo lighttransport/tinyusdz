@@ -11,7 +11,7 @@
 
 #include "unit-usda-reader.h"
 #include "tinyusdz.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "value-types.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"

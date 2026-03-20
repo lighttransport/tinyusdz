@@ -46,7 +46,8 @@
 #include <vector>
 
 #include "prim-type-macros.inc"
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/model-scope.hh"  // Model, Scope
 #include "stage.hh"
 #include "tiny-format.hh"
 #include "usdGeom.hh"

@@ -7,7 +7,7 @@
 #include <vector>
 #include <deque>
 
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "../layer.hh"
 
 namespace tinyusdz {

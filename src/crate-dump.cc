@@ -16,7 +16,7 @@
 #include "crate-format.hh"
 #include "crate-reader.hh"
 #include "value-types.hh"
-#include "prim-types.hh"
+#include "core/prim-enums.hh"
 
 // Disable specific clang warnings for this file
 #if defined(__clang__)

@@ -6,7 +6,8 @@
 
 #include "tinyusdz.hh"
 #include "layer.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/prim-spec.hh"
 #include "pprinter.hh"
 #include "str-util.hh"
 #include "io-util.hh"

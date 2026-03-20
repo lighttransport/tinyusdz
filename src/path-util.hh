@@ -4,7 +4,7 @@
 //
 // Utility functions for Path
 
-#include "prim-types.hh"
+#include "core/path.hh"  // Path
 
 namespace tinyusdz {
 namespace pathutil {

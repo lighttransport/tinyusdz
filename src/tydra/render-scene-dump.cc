@@ -11,7 +11,7 @@
 #include "linear-algebra.hh"
 #include "math-util.inc"
 #include "pprint-enum.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"

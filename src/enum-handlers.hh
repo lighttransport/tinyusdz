@@ -17,7 +17,9 @@
 
 #include "nonstd/expected.hpp"
 
-#include "prim-types.hh"
+#include "core/prim-enums.hh"     // Axis, Visibility, Purpose, Orientation, Kind, etc.
+#include "core/collection-api.hh" // CollectionInstance
+#include "core/composition-types.hh" // APISchemas
 #include "usdGeom.hh"
 #include "usdLux.hh"
 #include "usdShade.hh"

@@ -2,7 +2,7 @@
 #include "ubench.h"
 
 #include "value-types.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "timesamples.hh"
 #include "usdGeom.hh"
 

@@ -9,7 +9,8 @@
 
 #include "value-types.hh"
 #include "unit-value-types.h"
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/xform-op.hh"
 #include "math-util.inc"
 #include "xform.hh"
 #include "unit-common.hh"

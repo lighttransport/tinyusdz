@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "nonstd/optional.hpp"
+#include "value-types.hh"
 
 namespace tinyusdz {
 
@@ -376,5 +377,18 @@ class Path {
 };
 
 bool operator==(const Path &lhs, const Path &rhs);
+
+namespace value {
+
+#include "define-type-trait.inc"
+
+DEFINE_TYPE_TRAIT(Path, "Path", TYPE_ID_PATH, 1);
+// TODO(syoyo): Define as 1D array?
+DEFINE_TYPE_TRAIT(std::vector<Path>, "PathVector", TYPE_ID_PATH_VECTOR, 1);
+
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
+
+}  // namespace value
 
 }  // namespace tinyusdz
