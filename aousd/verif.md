@@ -508,14 +508,14 @@ python aousd/compare_usd_example.py test_file.usda
 
 ### Remaining Gaps (Not Implemented)
 - [x] ~~LIVERPS strength ordering~~ (Spec 10.4): **IMPLEMENTED** via CompositeAllArcs() -- applies arcs in I>V>R>P>S order
-- [ ] **Namespace mappings** (Spec 10.5): not implemented; paths not remapped across composition arcs
-- [ ] **Relocates** (Spec 10.3.2.6): not implemented at all -- no relocation logic (data structure added)
+- [x] ~~Namespace mappings~~ (Spec 10.5): **IMPLEMENTED** in src/namespace-mapping.hh -- reference, inherit, relocate mappings + composition
+- [x] ~~Relocates~~ (Spec 10.3.2.6): **PARTIAL** -- parsing done, namespace mapping done, validation done; composition algorithm not wired
 - [ ] **Implied inherit/specialize arcs** (Spec 10.3.2.3): inherits not propagated through upstream layer stacks
 - [ ] **Variant deferred evaluation** (Spec 10.3.2.5): variant selection applied statically, not deferred
 - [x] ~~Specializes global weakness~~ (Spec 10.4.1): **IMPLEMENTED** -- specializes applied last in CompositeAllArcs()
 - [x] ~~layerRelocates USDA parsing~~ (Spec 10.3.2.6): **IMPLEMENTED** -- parse, store, print for `relocates = { <path> : <path>, ... }` syntax
 - [x] ~~Time-value spline evaluation~~ (Spec 12.3.3): **IMPLEMENTED** in src/spline-eval.hh -- Bezier/Hermite cubic, held/linear/curve per-segment, held/linear/sloped/loop extrapolation, anti-regression
-- [ ] **Value clip evaluation** (Spec 12.3.4): clip scheduling, time remapping, manifest-based attribute discovery
+- [x] ~~Value clip evaluation~~ (Spec 12.3.4): **PARTIAL** -- template expansion, active clip finding, stage-to-clip time remapping, query resolution; asset loading not wired
 - [x] ~~Template clip metadata~~ generation (12.3.4.1.3): **IMPLEMENTED** in src/value-clip-utils.hh -- templateAssetPath expansion with ### patterns, stride, activeOffset
 - [x] ~~specifier resolution rules~~ (Spec 12.2.1): **PARTIAL** -- strongest opinion kept; full defining/undefining semantics require opinion stack
 - [x] ~~typeName resolution from prim definition~~ (Spec 12.2.2): **IMPLEMENTED** -- typeName only taken from defining specs (def/class), not from over
