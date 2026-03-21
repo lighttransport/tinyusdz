@@ -18,8 +18,8 @@
 // Other shader types (UsdPreviewSurface, StandardSurface) export paths are
 // disabled until needed. Enable these flags to re-enable those code paths.
 // ============================================================================
-#define TINYUSDZ_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT 0
-#define TINYUSDZ_MTLX_ENABLE_STANDARDSURFACE_EXPORT 0
+#define TINYUSDZ_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT 1
+#define TINYUSDZ_MTLX_ENABLE_STANDARDSURFACE_EXPORT 1
 
 #include "ascii-parser.hh"  // To parse color3f value
 #include "common-macros.inc"
@@ -2756,8 +2756,7 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
 #endif
 
   // Fallback error for unsupported shader types
-  PUSH_ERROR_AND_RETURN("Unknown/unsupported shader type: " << mtlx.shader_name
-    << " (Note: UsdPreviewSurface and StandardSurface export are currently disabled)");
+  PUSH_ERROR_AND_RETURN("Unknown/unsupported shader type: " << mtlx.shader_name);
 
   return false;
 }
