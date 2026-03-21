@@ -184,4 +184,110 @@ inline bool ExpandTemplateClipMetadata(
   return true;
 }
 
+///
+/// Find the active clip index for a given stage time.
+///
+/// Per Spec 12.3.4.3 (Active Clips):
+///   A [stageTime, assetIndex] entry indicates that the clip at assetIndex
+///   is active from that stageTime up to the next entry's stageTime.
+///   The first clip is active for all earlier times, the last for all later.
+///
+/// @param[in] active Sorted list of (stageTime, assetIndex)
+/// @param[in] stageTime The time to query
+/// @return The asset index of the active clip (-1 if no clips)
+///
+inline int FindActiveClipIndex(
+    const std::vector<std::pair<double, int>> &active,
+    double stageTime) {
+  if (active.empty()) return -1;
+
+  // Before first entry: first clip is active
+  if (stageTime < active.front().first) {
+    return active.front().second;
+  }
+
+  // Find the last entry whose stageTime <= stageTime
+  int result = active.front().second;
+  for (const auto &entry : active) {
+    if (entry.first <= stageTime) {
+      result = entry.second;
+    } else {
+      break;
+    }
+  }
+  return result;
+}
+
+///
+/// Remap stage time to clip time using the times metadata.
+///
+/// Per Spec 12.3.4.4 (Stage Time and Clip Time):
+///   The (stageTime, clipTime) pairs define a piecewise-linear timing curve.
+///   Times between entries are linearly interpolated.
+///
+/// @param[in] times Sorted list of (stageTime, clipTime)
+/// @param[in] stageTime The stage time to remap
+/// @return The corresponding clip time
+///
+inline double RemapStageTimeToClipTime(
+    const std::vector<std::pair<double, double>> &times,
+    double stageTime) {
+  if (times.empty()) return stageTime;
+
+  // Before first entry: extrapolate using first segment's slope
+  if (stageTime <= times.front().first) {
+    if (times.size() == 1) return times.front().second;
+    // Clamp to first clip time
+    return times.front().second;
+  }
+
+  // After last entry: clamp to last clip time
+  if (stageTime >= times.back().first) {
+    return times.back().second;
+  }
+
+  // Find segment and linearly interpolate
+  for (size_t i = 0; i + 1 < times.size(); i++) {
+    if (stageTime >= times[i].first && stageTime < times[i + 1].first) {
+      double dt_stage = times[i + 1].first - times[i].first;
+      if (dt_stage <= 0.0) return times[i].second;
+      double u = (stageTime - times[i].first) / dt_stage;
+      return times[i].second + u * (times[i + 1].second - times[i].second);
+    }
+  }
+
+  return times.back().second;
+}
+
+///
+/// Resolve a value clip query: find which clip to load and at what time.
+///
+/// Combines FindActiveClipIndex and RemapStageTimeToClipTime.
+///
+/// @param[in] active Sorted (stageTime, assetIndex) list
+/// @param[in] times Sorted (stageTime, clipTime) list
+/// @param[in] assetPaths List of clip asset paths
+/// @param[in] stageTime The time to query
+/// @param[out] clipAssetPath The resolved clip file path
+/// @param[out] clipTime The time to query within the clip
+/// @return true if a clip was found, false if no clips defined
+///
+inline bool ResolveValueClipQuery(
+    const std::vector<std::pair<double, int>> &active,
+    const std::vector<std::pair<double, double>> &times,
+    const std::vector<std::string> &assetPaths,
+    double stageTime,
+    std::string *clipAssetPath,
+    double *clipTime) {
+  if (active.empty() || assetPaths.empty()) return false;
+
+  int idx = FindActiveClipIndex(active, stageTime);
+  if (idx < 0 || idx >= static_cast<int>(assetPaths.size())) return false;
+
+  if (clipAssetPath) *clipAssetPath = assetPaths[static_cast<size_t>(idx)];
+  if (clipTime) *clipTime = RemapStageTimeToClipTime(times, stageTime);
+
+  return true;
+}
+
 }  // namespace tinyusdz
