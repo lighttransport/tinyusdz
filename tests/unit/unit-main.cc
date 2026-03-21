@@ -49,6 +49,8 @@
 #include "unit-tydra-shader.h"
 // Phase 6: security
 #include "unit-security.h"
+// Phase 7: USDZ writer
+#include "unit-usdz-writer.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -403,6 +405,11 @@ TEST_LIST = {
   { "security_huge_array_test", security_huge_array_test },
   { "security_malformed_utf8_test", security_malformed_utf8_test },
   { "security_recursive_reference_test", security_recursive_reference_test },
+  // USDZ writer tests
+  { "usdz_writer_basic_roundtrip_test", usdz_writer_basic_roundtrip_test },
+  { "usdz_writer_with_assets_test", usdz_writer_with_assets_test },
+  { "usdz_validator_alignment_test", usdz_validator_alignment_test },
+  { "usdz_validator_bad_extension_test", usdz_validator_bad_extension_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
