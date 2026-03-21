@@ -280,6 +280,13 @@ bool InheritPrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
 
 
 ///
+/// Apply `layerRelocates` to the composed layer.
+/// Relocates rename prims in the namespace per AOUSD Core Spec 10.3.2.6.
+///
+bool CompositeRelocates(const Layer &in_layer,
+    Layer *composited_layer, std::string *warn, std::string *err);
+
+///
 /// Composite all composition arcs in LIVERPS order.
 ///
 /// AOUSD Core Spec 10.4: Applies arcs in strength order:
