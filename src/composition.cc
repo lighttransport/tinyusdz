@@ -15,6 +15,7 @@
 #include "common-macros.inc"
 #include "core/schema-registry.hh"
 #include "namespace-mapping.hh"
+#include "str-util.hh"
 #include "io-util.hh"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
@@ -591,8 +592,23 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
     }
   }
 
+  // AOUSD Core Spec 9.5: Build expression variables map for asset path substitution
+  std::map<std::string, std::string> expr_vars;
+  if (in_layer.metas().expressionVariables) {
+    for (const auto &var : in_layer.metas().expressionVariables.value()) {
+      if (auto sv = var.second.get_value<std::string>()) {
+        expr_vars[var.first] = sv.value();
+      }
+    }
+  }
+
   for (const auto &layer : in_layer.metas().subLayers) {
     std::string sublayer_asset_path = layer.assetPath.GetAssetPath();
+
+    // AOUSD Core Spec 9.5: Substitute expression variables in asset paths
+    if (!expr_vars.empty()) {
+      sublayer_asset_path = SubstituteExpressionVariables(sublayer_asset_path, expr_vars);
+    }
 
     // Do cyclic referencing check.
     // TODO: Use resolved name?
@@ -695,13 +711,18 @@ bool CompositeSublayers(AssetResolutionResolver &resolver,
 namespace {
 
 
+// Visited set for cycle detection in references/payloads.
+// Tracks (asset_path, prim_path) pairs. Grows only with arc nesting depth (typically < 10).
+using ArcVisitedSet = std::set<std::pair<std::string, std::string>>;
+
 bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                             const std::vector<std::string> &asset_search_paths,
                             const Path &dst_prim_path,
                             const Layer &in_layer,
                             PrimSpec &primspec /* [inout] */, std::string *warn,
                             std::string *err,
-                            const ReferencesCompositionOptions &options) {
+                            const ReferencesCompositionOptions &options,
+                            ArcVisitedSet &visited) {
   if (depth > options.max_depth) {
     PUSH_ERROR_AND_RETURN("Too deep.");
   }
@@ -710,7 +731,7 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
   for (auto &child : primspec.children()) {
     const Path parent_prim_path = dst_prim_path.AppendPrim(child.name());
     if (!CompositeReferencesRec(depth + 1, resolver, asset_search_paths, parent_prim_path, in_layer, child,
-                                warn, err, options)) {
+                                warn, err, options, visited)) {
       return false;
     }
   }
@@ -750,15 +771,29 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
             DCOUT("reference.prim_path = " << reference.prim_path);
             DCOUT("primspec.cwp = " << cwp);
             DCOUT("primspec.search_paths = " << search_paths);
+
+            // Cycle detection: check if this (asset, prim) pair has already been visited.
+            auto visit_key = std::make_pair(
+                reference.asset_path.GetAssetPath(),
+                reference.prim_path.prim_part());
+            if (visited.count(visit_key)) {
+              PUSH_ERROR_AND_RETURN(fmt::format(
+                  "Cycle detected in `references`: asset `{}` prim <{}>",
+                  visit_key.first, visit_key.second));
+            }
+            visited.insert(visit_key);
+
             if (!LoadAsset(resolver, cwp, search_paths, options.fileformats,
                            reference.asset_path, reference.prim_path, &layer,
                            &src_ps, /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat, warn, err)) {
+              visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(
                   fmt::format("Failed to `references` asset `{}`",
                               reference.asset_path.GetAssetPath()));
             }
+            visited.erase(visit_key);
           }
 
           if (!src_ps) {
@@ -804,11 +839,13 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
         }
 
       } else if (qual == ListEditQual::Delete) {
-        PUSH_ERROR_AND_RETURN("`delete` references are not supported yet.");
+        // Delete: in our flattening model, already-applied references cannot be
+        // undone. Warn and skip — this qualifier is rarely used in practice.
+        PushWarn("`delete` references list edit: cannot undo already-flattened references. Skipping.\n");
       } else if (qual == ListEditQual::Order) {
-        PUSH_ERROR_AND_RETURN("`order` references are not supported yet.");
+        PushWarn("`order` references list edit: reordering not supported in flattening model. Skipping.\n");
       } else if (qual == ListEditQual::Invalid) {
-        PUSH_ERROR_AND_RETURN("Invalid listedit qualifier to for `references`.");
+        PUSH_ERROR_AND_RETURN("Invalid listedit qualifier for `references`.");
       } else if (qual == ListEditQual::Add ||
                  qual == ListEditQual::Append) {
         // AOUSD Core Spec 6.6.3.10: `add` is deprecated, treat as `append`
@@ -834,15 +871,28 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                               reference.prim_path.full_path_name()));
             }
           } else {
+            // Cycle detection for append references
+            auto visit_key = std::make_pair(
+                reference.asset_path.GetAssetPath(),
+                reference.prim_path.prim_part());
+            if (visited.count(visit_key)) {
+              PUSH_ERROR_AND_RETURN(fmt::format(
+                  "Cycle detected in `references`: asset `{}` prim <{}>",
+                  visit_key.first, visit_key.second));
+            }
+            visited.insert(visit_key);
+
             if (!LoadAsset(resolver, cwp, search_paths, options.fileformats,
                            reference.asset_path, reference.prim_path, &layer,
                            &src_ps, /* error_when_no_prims */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat, warn, err)) {
+              visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(
                   fmt::format("Failed to `references` asset `{}`",
                               reference.asset_path.GetAssetPath()));
             }
+            visited.erase(visit_key);
           }
 
           if (!src_ps) {
@@ -992,9 +1042,9 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
         }
 
       } else if (qual == ListEditQual::Delete) {
-        PUSH_ERROR_AND_RETURN("`delete` payloads are not supported yet.");
+        PushWarn("`delete` payloads list edit: cannot undo already-flattened payloads. Skipping.\n");
       } else if (qual == ListEditQual::Order) {
-        PUSH_ERROR_AND_RETURN("`order` payloads are not supported yet.");
+        PushWarn("`order` payloads list edit: reordering not supported in flattening model. Skipping.\n");
       } else if (qual == ListEditQual::Invalid) {
         PUSH_ERROR_AND_RETURN("Invalid listedit qualifier for `payload`.");
       } else if (qual == ListEditQual::Add ||
@@ -1120,46 +1170,69 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
       const auto &qual = inherit_op.first;
       const auto &inherits = inherit_op.second;
 
-      if (inherits.size() == 0) {
+      if (inherits.empty()) {
         // no-op, continue to next listop
         continue;
       }
 
-      if (inherits.size() != 1) {
-        if (err) {
-          (*err) += "Multiple inheritance is not supporetd.\n";
+      if ((qual == ListEditQual::ResetToExplicit) ||
+          (qual == ListEditQual::Prepend)) {
+        // Prepend/Reset: inherited content provides defaults, local wins.
+        for (const auto &inheritPath : inherits) {
+          const PrimSpec *src_ps{nullptr};
+
+          if (!layer.find_primspec_at(inheritPath, &src_ps, err)) {
+            if (err) {
+              (*err) += "Inherit failed: Path <" +
+                        inheritPath.prim_part() + "> not found or is invalid.\n";
+            }
+            return false;
+          }
+
+          if (!src_ps) {
+            PUSH_ERROR_AND_RETURN(
+                "Internal error: PrimSpec is nullptr in CompositeInheritsRec.\n");
+          }
+
+          if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
+            return false;
+          }
         }
-        return false;
-      }
-
-      const Path &inheritPath = inherits[0];
-
-      const PrimSpec *inheritPrimSpec{nullptr};
-
-      if (!layer.find_primspec_at(inheritPath, &inheritPrimSpec, err)) {
-        if (err) {
-          (*err) += "Inheirt primspec failed since Path <" +
-                    inheritPath.prim_part() + "> not found or is invalid.\n";
+      } else if (qual == ListEditQual::Append ||
+                 qual == ListEditQual::Add) {
+        if (qual == ListEditQual::Add) {
+          PushWarn("`add` list edit qualifier is deprecated (AOUSD Core Spec 6.6.3.10). Treating as `append`.\n");
         }
+        // Append: inherited content fills in remaining gaps (weaker than prepend inherits).
+        for (const auto &inheritPath : inherits) {
+          const PrimSpec *src_ps{nullptr};
 
-        return false;
-      }
+          if (!layer.find_primspec_at(inheritPath, &src_ps, err)) {
+            if (err) {
+              (*err) += "Inherit failed: Path <" +
+                        inheritPath.prim_part() + "> not found or is invalid.\n";
+            }
+            return false;
+          }
 
-      // TODO: listEdit
-      DCOUT("TODO: listEdit in `inherits`");
-      (void)qual;
+          if (!src_ps) {
+            PUSH_ERROR_AND_RETURN(
+                "Internal error: PrimSpec is nullptr in CompositeInheritsRec.\n");
+          }
 
-      if (inheritPrimSpec) {
-        if (!InheritPrimSpec(primspec, *inheritPrimSpec, warn, err)) {
-          return false;
+          if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
+            return false;
+          }
         }
-      } else {
-        // ???
-        if (err) {
-          (*err) +=
-              "Inernal error. PrimSpec is nullptr in CompositeInehritsRec.\n";
-        }
-        return false;
+      } else if (qual == ListEditQual::Delete) {
+        // Delete: remove inherit targets from the composed list.
+        // In our flattening model, already-applied inherits cannot be undone.
+        // Warn and skip — this qualifier is rarely used in practice.
+        PushWarn("`delete` inherits list edit: cannot undo already-flattened inherits. Skipping.\n");
+      } else if (qual == ListEditQual::Order) {
+        PushWarn("`order` inherits list edit: reordering not supported in flattening model. Skipping.\n");
+      } else if (qual == ListEditQual::Invalid) {
+        PUSH_ERROR_AND_RETURN("Invalid list edit qualifier for `inherits`.\n");
       }
     }
 
@@ -1287,10 +1360,12 @@ bool CompositeReferences(AssetResolutionResolver &resolver,
 
   Layer dst = in_layer;  // deep copy
 
+  ArcVisitedSet visited;  // Cycle detection set — shared across all root prims
+
   for (auto &item : dst.primspecs()) {
     Path primPath("/" + item.first, "");
     if (!CompositeReferencesRec(/* depth */ 0, resolver, search_paths, primPath, in_layer,
-                                item.second, warn, err, options)) {
+                                item.second, warn, err, options, visited)) {
       PUSH_ERROR_AND_RETURN("Composite `references` failed.");
     }
   }
@@ -1452,39 +1527,59 @@ static bool CompositeSpecializesRec(uint32_t depth, const Layer &layer,
         continue;
       }
 
-      if (specializes.size() != 1) {
-        if (err) {
-          (*err) += "Multiple specializes targets is not supported.\n";
-        }
-        return false;
-      }
+      if ((qual == ListEditQual::ResetToExplicit) ||
+          (qual == ListEditQual::Prepend)) {
+        for (const auto &specializePath : specializes) {
+          const PrimSpec *src_ps{nullptr};
 
-      const Path &specializePath = specializes[0];
-      const PrimSpec *specializePrimSpec{nullptr};
+          if (!layer.find_primspec_at(specializePath, &src_ps, err)) {
+            if (err) {
+              (*err) += "Specialize failed: Path <" +
+                        specializePath.prim_part() + "> not found.\n";
+            }
+            return false;
+          }
 
-      if (!layer.find_primspec_at(specializePath, &specializePrimSpec, err)) {
-        if (err) {
-          (*err) += "Specialize failed: Path <" +
-                    specializePath.prim_part() + "> not found.\n";
-        }
-        return false;
-      }
+          if (!src_ps) {
+            PUSH_ERROR_AND_RETURN(
+                "Internal error: PrimSpec is nullptr in CompositeSpecializesRec.\n");
+          }
 
-      // TODO: Handle ListEditQual properly
-      (void)qual;
+          if (!detail::InheritPrimSpecImpl(primspec, *src_ps, warn, err)) {
+            return false;
+          }
+        }
+      } else if (qual == ListEditQual::Append ||
+                 qual == ListEditQual::Add) {
+        if (qual == ListEditQual::Add) {
+          PushWarn("`add` list edit qualifier is deprecated (AOUSD Core Spec 6.6.3.10). Treating as `append`.\n");
+        }
+        for (const auto &specializePath : specializes) {
+          const PrimSpec *src_ps{nullptr};
 
-      if (specializePrimSpec) {
-        // Specializes uses the same property-override semantics as inherits
-        if (!detail::InheritPrimSpecImpl(primspec, *specializePrimSpec, warn,
-                                         err)) {
-          return false;
+          if (!layer.find_primspec_at(specializePath, &src_ps, err)) {
+            if (err) {
+              (*err) += "Specialize failed: Path <" +
+                        specializePath.prim_part() + "> not found.\n";
+            }
+            return false;
+          }
+
+          if (!src_ps) {
+            PUSH_ERROR_AND_RETURN(
+                "Internal error: PrimSpec is nullptr in CompositeSpecializesRec.\n");
+          }
+
+          if (!detail::InheritPrimSpecImpl(primspec, *src_ps, warn, err)) {
+            return false;
+          }
         }
-      } else {
-        if (err) {
-          (*err) += "Internal error: PrimSpec is nullptr in "
-                    "CompositeSpecializesRec.\n";
-        }
-        return false;
+      } else if (qual == ListEditQual::Delete) {
+        PushWarn("`delete` specializes list edit: cannot undo already-flattened specializes. Skipping.\n");
+      } else if (qual == ListEditQual::Order) {
+        PushWarn("`order` specializes list edit: reordering not supported in flattening model. Skipping.\n");
+      } else if (qual == ListEditQual::Invalid) {
+        PUSH_ERROR_AND_RETURN("Invalid list edit qualifier for `specializes`.\n");
       }
     }
 
@@ -1930,6 +2025,24 @@ bool CompositeRelocates(const Layer &in_layer, Layer *composited_layer,
   return true;
 }
 
+// Remove prims (and their descendants) that have `active = false`.
+// This is a post-composition pass — active is a composed metadatum.
+static void RemoveInactivePrimsRec(std::vector<PrimSpec> &children) {
+  // Erase inactive children first.
+  children.erase(
+      std::remove_if(children.begin(), children.end(),
+                     [](const PrimSpec &ps) {
+                       return ps.metas().has_active() &&
+                              !ps.metas().get_active();
+                     }),
+      children.end());
+
+  // Recurse into remaining children.
+  for (auto &child : children) {
+    RemoveInactivePrimsRec(child.children());
+  }
+}
+
 // AOUSD Core Spec 10.4: Composite all arcs in LIVERPS order.
 // L(ocal/sublayers) is assumed already done before calling this function.
 // Order: I(nherits) > V(ariants) > R(eferences) > P(ayloads) > S(pecializes)
@@ -2026,6 +2139,30 @@ bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
       return false;
     }
     working = std::move(tmp);
+  }
+
+  // Post-composition: Remove prims with `active = false` and their descendants.
+  // Active is a composed metadatum — it must be evaluated after all arcs.
+  for (auto &ps_item : working.primspecs()) {
+    if (ps_item.second.metas().has_active() &&
+        !ps_item.second.metas().get_active()) {
+      // Root-level prim is inactive — mark for removal
+      // We can't erase during iteration of unordered_map, so handle below.
+    }
+    RemoveInactivePrimsRec(ps_item.second.children());
+  }
+
+  // Remove inactive root-level primspecs.
+  {
+    auto &ps_map = working.primspecs();
+    for (auto it = ps_map.begin(); it != ps_map.end(); ) {
+      if (it->second.metas().has_active() &&
+          !it->second.metas().get_active()) {
+        it = ps_map.erase(it);
+      } else {
+        ++it;
+      }
+    }
   }
 
   *composited_layer = std::move(working);

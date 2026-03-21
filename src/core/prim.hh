@@ -239,6 +239,37 @@ class Prim {
   const std::vector<int64_t> &get_child_indices_from_primChildren(
       bool force_update = true, bool *indices_is_valid = nullptr) const;
 
+  //
+  // AOUSD Core Spec 11.5: Stage query predicates
+  //
+
+  /// Returns true if this prim is active (default: true).
+  /// Inactive prims are pruned from traversal.
+  bool IsActive() const { return metas().get_active(); }
+
+  /// Returns true if this prim has a defining specifier (def or class).
+  /// An "undefined" prim only has `over` opinions — no definition.
+  bool IsDefined() const {
+    return _specifier == Specifier::Def || _specifier == Specifier::Class;
+  }
+
+  /// Returns true if this prim has `class` specifier (abstract prim).
+  /// Abstract prims serve as templates and are not rendered.
+  bool IsAbstract() const { return _specifier == Specifier::Class; }
+
+  /// Returns true if this prim is marked as instanceable.
+  bool IsInstance() const { return metas().get_instanceable(); }
+
+  /// Returns true if this prim is a model (has kind metadata).
+  /// Per Spec 11.4, model hierarchy is rooted at kind=component or kind=group.
+  bool IsModel() const { return metas().has_kind(); }
+
+  /// Returns true if this prim is a group model (kind=group or kind=assembly).
+  bool IsGroup() const {
+    Kind k = metas().get_kind_enum();
+    return k == Kind::Group || k == Kind::Assembly;
+  }
+
   // TODO: Add API to get parent Prim directly?
   // (Currently we need to traverse parent Prim using Stage)
 

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -485,5 +486,56 @@ bool GlobMatch(const std::string &pattern, const std::string &str);
 /// @return true if path matches pattern
 ///
 bool GlobMatchPath(const std::string &pattern, const std::string &path);
+
+///
+/// Substitute expression variables in a string.
+///
+/// Per AOUSD Core Spec 9.5, asset paths may contain `${VAR}` references
+/// that are resolved from the layer's `expressionVariables` dictionary.
+///
+/// Example: "${SHOT_DIR}/geo.usd" with {"SHOT_DIR": "/shots/001"} -> "/shots/001/geo.usd"
+///
+/// @param[in] input String potentially containing ${VAR} references
+/// @param[in] variables Map of variable names to values
+/// @return String with all ${VAR} references substituted
+///
+inline std::string SubstituteExpressionVariables(
+    const std::string &input,
+    const std::map<std::string, std::string> &variables) {
+  if (input.find("${") == std::string::npos) {
+    return input;  // fast path: no variables to substitute
+  }
+
+  std::string result;
+  result.reserve(input.size());
+  size_t i = 0;
+
+  while (i < input.size()) {
+    if (i + 1 < input.size() && input[i] == '$' && input[i + 1] == '{') {
+      // Find closing brace
+      size_t close = input.find('}', i + 2);
+      if (close != std::string::npos) {
+        std::string varname = input.substr(i + 2, close - i - 2);
+        auto it = variables.find(varname);
+        if (it != variables.end()) {
+          result += it->second;
+        } else {
+          // Unknown variable: keep original text
+          result += input.substr(i, close - i + 1);
+        }
+        i = close + 1;
+      } else {
+        // No closing brace: keep as-is
+        result += input[i];
+        i++;
+      }
+    } else {
+      result += input[i];
+      i++;
+    }
+  }
+
+  return result;
+}
 
 }  // namespace tinyusdz
