@@ -443,10 +443,11 @@ python aousd/compare_usd_example.py test_file.usda
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Metadata resolution (strongest opinion) | PARTIAL | Basic strongest-opinion; no specifier/typeName special rules |
+| Metadata resolution (strongest opinion) | PARTIAL | typeName from definition (12.2.2), custom OR (12.2.4) implemented; specifier partial |
 | Attribute default values | YES | Implemented |
 | TimeSamples | YES | Parsing and basic interpolation (held/linear) |
-| Spline evaluation (bezier/hermite) | NO | Type/parsing YES (GeomBasisCurves); **no time-value spline eval** |
+| Attribute value resolution priority | **YES** | Spec 12.3 priority: timeSamples > default at specific time; default > timeSamples at default time |
+| Spline evaluation (bezier/hermite) | **YES** | src/spline-eval.hh: Bezier/Hermite cubic, all interpolation/extrapolation modes |
 | Value clips | PARSE ONLY | clips Dictionary parsed/stored; **no scheduling or evaluation** |
 | Blocked values (`None`) | YES | Full support: TYPE_ID_VALUEBLOCK, is_blocked(), set_blocked() |
 | Layer offset/scale on time queries | PARTIAL | Offsets parsed; application to time queries needs verification |
