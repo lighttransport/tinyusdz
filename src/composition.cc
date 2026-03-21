@@ -3,6 +3,7 @@
 
 #include "composition.hh"
 
+#include <algorithm>
 #include <set>
 #include <stack>
 
@@ -13,6 +14,7 @@
 #include "asset-resolution.hh"
 #include "common-macros.inc"
 #include "core/schema-registry.hh"
+#include "namespace-mapping.hh"
 #include "io-util.hh"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
@@ -444,6 +446,16 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
   // Combine metadataum (weaker fills in where stronger is not authored)
   dst.metas().update_from(src.metas(), /* override_authored */ false);
 
+  // AOUSD Core Spec 12.2.1 (specifier): Composed specifier resolution.
+  // If dst (stronger) is `over` but src (weaker) is defining (def/class),
+  // the composed specifier becomes `def` -- the prim IS defined because
+  // at least one opinion provides a definition.
+  if (dst.specifier() == Specifier::Over &&
+      (src.specifier() == Specifier::Def ||
+       src.specifier() == Specifier::Class)) {
+    dst.specifier() = src.specifier();
+  }
+
   // AOUSD Core Spec 12.2.2 (typeName): Use typeName from defining spec.
   // If dst has no typeName and src is defining (def/class), take src's.
   if (dst.typeName().empty() && !src.typeName().empty()) {
@@ -514,6 +526,31 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
 }
 
 
+// AOUSD Core Spec 10.3.1 / 10.3.2.2: Apply LayerOffset to all timeSamples
+// in a PrimSpec tree. The formula per spec is: t_stage = t_layer * scale + offset.
+// So when importing layer times, we transform: t_new = t_old * scale + offset.
+void ApplyLayerOffsetRec(PrimSpec &ps, const LayerOffset &offset) {
+  if (offset._offset == 0.0 && offset._scale == 1.0) {
+    return;  // Identity — nothing to do
+  }
+
+  for (auto &prop_item : ps.props()) {
+    if (prop_item.second.is_attribute()) {
+      Attribute &attr = prop_item.second.attribute();
+      if (attr.has_timesamples()) {
+        auto &samples = attr.get_var().ts_raw().samples();
+        for (auto &sample : samples) {
+          sample.t = sample.t * offset._scale + offset._offset;
+        }
+      }
+    }
+  }
+
+  for (auto &child : ps.children()) {
+    ApplyLayerOffsetRec(child, offset);
+  }
+}
+
 // AOUSD Core Spec 10.3.2.3: Tag PrimSpecs with source layer ID for implied arc tracking.
 void TagPrimSpecArcOriginRec(PrimSpec &ps, const std::string &layer_id) {
   ArcOrigin origin;
@@ -555,7 +592,6 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
   }
 
   for (const auto &layer : in_layer.metas().subLayers) {
-    // TODO: subLayerOffset
     std::string sublayer_asset_path = layer.assetPath.GetAssetPath();
 
     // Do cyclic referencing check.
@@ -583,6 +619,14 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
                    options.error_when_unsupported_fileformat, warn, err)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Load asset in subLayer failed: `{}`", layer.assetPath));
+    }
+
+    // AOUSD Core Spec 10.3.1: Apply sublayer offset/scale to timeSamples.
+    // t_stage = t_layer * scale + offset
+    if (layer.layerOffset._offset != 0.0 || layer.layerOffset._scale != 1.0) {
+      for (auto &ps_item : sublayer.primspecs()) {
+        ApplyLayerOffsetRec(ps_item.second, layer.layerOffset);
+      }
     }
 
     // AOUSD Core Spec 10.3.2.3: Tag sublayer PrimSpecs with source layer ID
@@ -727,6 +771,12 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
             return false;
           }
 
+          // AOUSD Core Spec 10.3.2.2: Apply reference layerOffset to timeSamples.
+          if (reference.layerOffset._offset != 0.0 ||
+              reference.layerOffset._scale != 1.0) {
+            ApplyLayerOffsetRec(*const_cast<PrimSpec *>(src_ps), reference.layerOffset);
+          }
+
           // AOUSD Core Spec 10.3.2.3: Record arc origin for implied inherit propagation
           if (!reference.asset_path.GetAssetPath().empty()) {
             ArcOrigin origin;
@@ -806,6 +856,12 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
             origin.source_layer_id = reference.asset_path.GetAssetPath();
             origin.source_prim_path = reference.prim_path;
             primspec.metas().arc_origins.push_back(origin);
+          }
+
+          // AOUSD Core Spec 10.3.2.2: Apply reference layerOffset to timeSamples.
+          if (reference.layerOffset._offset != 0.0 ||
+              reference.layerOffset._scale != 1.0) {
+            ApplyLayerOffsetRec(*const_cast<PrimSpec *>(src_ps), reference.layerOffset);
           }
 
           // Replace prim path prefix
@@ -907,6 +963,11 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
             continue;
           }
 
+          // AOUSD Core Spec 10.3.2.2: Apply payload layerOffset to timeSamples.
+          if (pl.layerOffset._offset != 0.0 || pl.layerOffset._scale != 1.0) {
+            ApplyLayerOffsetRec(*const_cast<PrimSpec *>(src_ps), pl.layerOffset);
+          }
+
           // Replace prim path prefix
           if (!ReplaceRootPrimPathRec(pl.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
             return false;
@@ -976,6 +1037,11 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
           if (!src_ps) {
             // LoadAsset allowed not-found or unsupported file. so do nothing.
             continue;
+          }
+
+          // AOUSD Core Spec 10.3.2.2: Apply payload layerOffset to timeSamples.
+          if (pl.layerOffset._offset != 0.0 || pl.layerOffset._scale != 1.0) {
+            ApplyLayerOffsetRec(*const_cast<PrimSpec *>(src_ps), pl.layerOffset);
           }
 
           // Replace prim path prefix
@@ -1742,7 +1808,127 @@ bool ApplyDeferredVariantSelectionsRec(
   return true;
 }
 
+// AOUSD Core Spec 10.3.2.6: Apply relocates to a PrimSpec tree.
+// Relocates rename prims in the namespace according to layerRelocates entries.
+bool ApplyRelocatesRec(uint32_t depth,
+                       const std::string &path_prefix,
+                       PrimSpec &primspec,
+                       const std::vector<std::pair<Path, Path>> &relocates,
+                       std::string *warn, std::string *err) {
+  (void)warn;
+  if (depth > (1024 * 1024)) {
+    if (err) { *err += "Too deep in ApplyRelocatesRec.\n"; }
+    return false;
+  }
+
+  std::string prim_path = path_prefix + "/" + primspec.name();
+
+  // Check if this prim should be renamed
+  for (const auto &entry : relocates) {
+    const std::string &src = entry.first.prim_part();
+    const std::string &tgt = entry.second.prim_part();
+
+    if (prim_path == src) {
+      // Extract the new element name from the target path
+      auto last_slash = tgt.rfind('/');
+      if (last_slash != std::string::npos) {
+        std::string new_name = tgt.substr(last_slash + 1);
+        DCOUT("Relocate: " << primspec.name() << " -> " << new_name);
+        primspec.name() = new_name;
+      }
+      break;
+    }
+  }
+
+  // Recurse into children
+  for (auto &child : primspec.children()) {
+    std::string child_prefix = path_prefix + "/" + primspec.name();
+    if (!ApplyRelocatesRec(depth + 1, child_prefix, child, relocates, warn, err)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 }  // namespace
+
+// AOUSD Core Spec 10.3.2.6: Apply layerRelocates to a composed layer.
+// Relocates are applied after all other composition arcs.
+bool CompositeRelocates(const Layer &in_layer, Layer *composited_layer,
+                        std::string *warn, std::string *err) {
+  if (!composited_layer) {
+    return false;
+  }
+
+  const auto &relocates = in_layer.metas().layerRelocates;
+  if (relocates.empty()) {
+    *composited_layer = in_layer;
+    return true;
+  }
+
+  // Validate relocates
+  auto validation_errors = ValidateRelocates(relocates);
+  for (const auto &ve : validation_errors) {
+    if (warn) { (*warn) += "Relocates validation: " + ve + "\n"; }
+  }
+
+  Layer dst = in_layer;
+
+  for (auto &item : dst.primspecs()) {
+    if (!ApplyRelocatesRec(0, "", item.second, relocates, warn, err)) {
+      if (err) { (*err) += "Apply relocates failed.\n"; }
+      return false;
+    }
+  }
+
+  // Also need to remap references to relocated paths in properties
+  // (relationships, connections, etc.)
+  NamespaceMapping relocate_mapping;
+  for (const auto &entry : relocates) {
+    relocate_mapping.entries.push_back(entry);
+  }
+
+  // Apply namespace mapping to remap target paths in relationships/connections
+  for (auto &item : dst.primspecs()) {
+    std::vector<PrimSpec *> stack;
+    stack.push_back(&item.second);
+
+    while (!stack.empty()) {
+      PrimSpec *ps = stack.back();
+      stack.pop_back();
+
+      for (auto &prop : ps->props()) {
+        if (prop.second.is_relationship()) {
+          Relationship &rel = prop.second.relationship();
+          if (rel.is_path()) {
+            rel.targetPath = relocate_mapping.Apply(rel.targetPath);
+          } else if (rel.is_pathvector()) {
+            for (auto &p : rel.targetPathVector) {
+              p = relocate_mapping.Apply(p);
+            }
+          }
+        } else if (prop.second.is_attribute_connection()) {
+          Attribute &attr = prop.second.attribute();
+          for (auto &conn : attr.connections()) {
+            conn = relocate_mapping.Apply(conn);
+          }
+        }
+      }
+
+      for (auto &child : ps->children()) {
+        stack.push_back(&child);
+      }
+    }
+  }
+
+  // Clear layerRelocates after processing
+  dst.metas().layerRelocates.clear();
+
+  *composited_layer = dst;
+  DCOUT("Composite `relocates` ok.");
+  return true;
+}
 
 // AOUSD Core Spec 10.4: Composite all arcs in LIVERPS order.
 // L(ocal/sublayers) is assumed already done before calling this function.
@@ -1827,6 +2013,16 @@ bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
   if (HasSpecializes(working)) {
     Layer tmp;
     if (!CompositeSpecializes(working, &tmp, warn, err)) {
+      return false;
+    }
+    working = std::move(tmp);
+  }
+
+  // Relocates (Spec 10.3.2.6): Applied after all other composition arcs.
+  // Relocates rename prims in the composed namespace.
+  if (!working.metas().layerRelocates.empty()) {
+    Layer tmp;
+    if (!CompositeRelocates(working, &tmp, warn, err)) {
       return false;
     }
     working = std::move(tmp);

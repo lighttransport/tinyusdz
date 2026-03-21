@@ -423,34 +423,34 @@ python aousd/compare_usd_example.py test_file.usda
 
 ---
 
-## Implementation Status Assessment (2026-03-21)
+## Implementation Status Assessment (2026-03-22)
 
 ### Composition Arcs (Spec Ch 10)
 
 | Arc | Parsing | Composition | Strength Ordering | Namespace Mappings | Notes |
 |-----|---------|-------------|-------------------|--------------------|-------|
-| Local (def/over/class) | YES | YES | NO | N/A | OverridePrimSpec in composition.cc |
-| Inherits | YES | YES | NO | NO | CompositeInheritsRec; implied arcs NOT propagated |
-| Variants | YES | PARTIAL | NO | N/A (identity) | Selection not deferred; applied statically |
-| Relocates | NO | NO | N/A | N/A | **Not implemented at all** |
-| References | YES | YES | NO | NO | CompositeReferencesRec; depth limit 1024 |
-| Payloads | YES | YES | NO | NO | CompositePayloadRec; deferred loading supported |
-| Specializes | YES | YES | NO | NO | Uses same impl as inherits; single target only |
+| Local (def/over/class) | YES | YES | YES | N/A | OverridePrimSpec, CombinePrimSpecRec |
+| Inherits | YES | YES | YES | YES | CompositeInheritsRec; implied arcs single-level |
+| Variants | YES | YES | YES | N/A (identity) | Deferred evaluation via CompositeAllArcs |
+| Relocates | YES | YES | N/A | YES | CompositeRelocates; namespace remapping |
+| References | YES | YES | YES | YES | CompositeReferencesRec; layer offset applied |
+| Payloads | YES | YES | YES | YES | CompositePayloadRec; layer offset applied |
+| Specializes | YES | YES | YES | YES | Globally weaker per Spec 10.4.1 |
 
-**Critical gaps**: No LIVERPS strength ordering; no namespace mappings; no relocates.
+**LIVERPS strength ordering**: Implemented via CompositeAllArcs(). Namespace mappings in src/namespace-mapping.hh.
 
 ### Value Resolution (Spec Ch 12)
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Metadata resolution (strongest opinion) | PARTIAL | typeName from definition (12.2.2), custom OR (12.2.4) implemented; specifier partial |
+| Metadata resolution (strongest opinion) | **YES** | typeName (12.2.2), custom OR (12.2.4), variability (12.2.3), specifier (12.2.1) |
 | Attribute default values | YES | Implemented |
 | TimeSamples | YES | Parsing and basic interpolation (held/linear) |
 | Attribute value resolution priority | **YES** | Spec 12.3 priority: timeSamples > default at specific time; default > timeSamples at default time |
 | Spline evaluation (bezier/hermite) | **YES** | src/spline-eval.hh: Bezier/Hermite cubic, all interpolation/extrapolation modes |
 | Value clips | PARSE ONLY | clips Dictionary parsed/stored; **no scheduling or evaluation** |
 | Blocked values (`None`) | YES | Full support: TYPE_ID_VALUEBLOCK, is_blocked(), set_blocked() |
-| Layer offset/scale on time queries | PARTIAL | Offsets parsed; application to time queries needs verification |
+| Layer offset/scale on time queries | **YES** | Applied during sublayer, reference, and payload composition |
 
 ### Data Model & Types (Spec Ch 6-7)
 
@@ -509,7 +509,7 @@ python aousd/compare_usd_example.py test_file.usda
 ### Remaining Gaps (Not Implemented)
 - [x] ~~LIVERPS strength ordering~~ (Spec 10.4): **IMPLEMENTED** via CompositeAllArcs() -- applies arcs in I>V>R>P>S order
 - [x] ~~Namespace mappings~~ (Spec 10.5): **IMPLEMENTED** in src/namespace-mapping.hh -- reference, inherit, relocate mappings + composition
-- [x] ~~Relocates~~ (Spec 10.3.2.6): **PARTIAL** -- parsing done, namespace mapping done, validation done; composition algorithm not wired
+- [x] ~~Relocates~~ (Spec 10.3.2.6): **IMPLEMENTED** -- CompositeRelocates() applies layerRelocates with prim renaming and namespace remapping of relationships/connections
 - [x] ~~Implied inherit/specialize arcs~~ (Spec 10.3.2.3): **PARTIAL** -- ArcOrigin tracking in composition-types.hh, arc origin tagging in CompositeReferencesRec, single-level implied inherit propagation in CompositeInheritsRec; multi-level propagation deferred
 - [x] ~~Variant deferred evaluation~~ (Spec 10.3.2.5): **IMPLEMENTED** -- two-phase variant processing in CompositeAllArcs: opinions collected from I/R/P arcs before variant selection applied
 - [x] ~~Specializes global weakness~~ (Spec 10.4.1): **IMPLEMENTED** -- specializes applied last in CompositeAllArcs()
@@ -517,7 +517,7 @@ python aousd/compare_usd_example.py test_file.usda
 - [x] ~~Time-value spline evaluation~~ (Spec 12.3.3): **IMPLEMENTED** in src/spline-eval.hh -- Bezier/Hermite cubic, held/linear/curve per-segment, held/linear/sloped/loop extrapolation, anti-regression
 - [x] ~~Value clip evaluation~~ (Spec 12.3.4): **PARTIAL** -- template expansion, active clip finding, stage-to-clip time remapping, query resolution; asset loading not wired
 - [x] ~~Template clip metadata~~ generation (12.3.4.1.3): **IMPLEMENTED** in src/value-clip-utils.hh -- templateAssetPath expansion with ### patterns, stride, activeOffset
-- [x] ~~specifier resolution rules~~ (Spec 12.2.1): **PARTIAL** -- strongest opinion kept; full defining/undefining semantics require opinion stack
+- [x] ~~specifier resolution rules~~ (Spec 12.2.1): **IMPLEMENTED** -- over+def/class composites to def/class; defining spec propagates through sublayer composition
 - [x] ~~typeName resolution from prim definition~~ (Spec 12.2.2): **IMPLEMENTED** -- typeName only taken from defining specs (def/class), not from over
 - [x] ~~variability resolution from prim definition~~ (Spec 12.2.3): **IMPLEMENTED** -- SchemaRegistry singleton in schema-registry.hh with ~20 built-in uniform properties; CombinePrimSpecRec consults registry as weakest fallback
 - [x] ~~custom field resolution~~ (Spec 12.2.4): **IMPLEMENTED** -- custom flag OR'd across all opinions in composition
