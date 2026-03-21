@@ -463,7 +463,7 @@ python aousd/compare_usd_example.py test_file.usda
 | Dictionaries | YES | Nested dictionary support |
 | List operations | YES | Explicit and composable; all ListEditQual values |
 | Unicode XID identifiers | YES | Full XID_Start/XID_Continue tables in unicode-xid.hh |
-| `group` (opaque) type | NEEDS VERIFICATION | |
+| `group` (opaque) type | N/A | `group` in spec (6.2) is a type category hint, not a distinct value type; Kind::Group in prim-enums.hh covers the model hierarchy usage |
 
 ### Layer Metadata (Spec 7.6)
 
@@ -479,7 +479,7 @@ python aousd/compare_usd_example.py test_file.usda
 | owner | **YES** | Added 2026-03-21: parse, store, print |
 | hasOwnedSubLayers | **YES** | Added 2026-03-21: parse, store, print |
 | expressionVariables | **YES** | Added 2026-03-21: parse, store, print (as dictionary) |
-| layerRelocates | **NO** | Data structure added but no USDA parsing yet (requires path-pair syntax) |
+| layerRelocates | **YES** | Parse, store, print, composition via CompositeRelocates() |
 
 ### File Formats (Spec Ch 16)
 
