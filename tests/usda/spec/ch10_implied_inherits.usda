@@ -1,0 +1,34 @@
+#usda 1.0
+(
+    doc = "AOUSD Core Spec 10.3.2.3: Implied inherit arcs through references"
+)
+
+# When a referenced layer contains inherits, those inherits should be
+# "implied" in the referencing layer stack.
+
+class "_BaseClass"
+{
+    # Properties defined in the base class should be available
+    # to prims that reference layers which inherit from this class.
+    color3f baseColor = (0.5, 0.5, 0.5)
+    float baseOpacity = 1.0
+}
+
+# This prim directly inherits _BaseClass
+def Xform "DirectInherit" (
+    inherits = </_BaseClass>
+)
+{
+    # Should get baseColor and baseOpacity from _BaseClass
+    float3 xformOp:translate = (0, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+# This prim has no inherits itself, but if it references a layer
+# where the referenced prim inherits from a class, the inherit should
+# be "implied" here (single-level case).
+def Xform "ImpliedInherit"
+{
+    float3 xformOp:translate = (1, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}

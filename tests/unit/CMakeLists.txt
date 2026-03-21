@@ -48,6 +48,8 @@ set(TEST_SOURCES
 	unit-tydra-shader.cc
 	# Phase 6: security
 	unit-security.cc
+	# Phase 7: USDZ writer
+	unit-usdz-writer.cc
    )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)
