@@ -412,6 +412,10 @@ static void RegisterStageMetas(
       AsciiParser::VariableDef(value::kBool, "hasOwnedSubLayers");
   metas["expressionVariables"] =
       AsciiParser::VariableDef(value::kDictionary, "expressionVariables");
+  // relocates: path-to-path map (custom parsing in ParseStageMetaOpt)
+  // Registered as dictionary type for IsStageMeta() lookup only.
+  metas["relocates"] =
+      AsciiParser::VariableDef(value::kDictionary, "relocates");
 
   // USDZ extension
   metas["autoPlay"] = AsciiParser::VariableDef(value::kBool, "autoPlay");
