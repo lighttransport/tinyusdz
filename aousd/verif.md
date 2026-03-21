@@ -521,4 +521,4 @@ python aousd/compare_usd_example.py test_file.usda
 - [ ] **variability resolution from prim definition** (Spec 12.2.3): fallback = weakest opinion
 - [x] ~~custom field resolution~~ (Spec 12.2.4): **IMPLEMENTED** -- custom flag OR'd across all opinions in composition
 - [x] ~~Deprecated `add` list op~~: **IMPLEMENTED** -- treated as `append` with deprecation warning per Spec 6.6.3.10
-- [ ] Integer coding and LZ4 compression in USDC: verify against spec section 16.3
+- [x] ~~Integer coding and LZ4 compression in USDC~~: **VERIFIED** -- LZ4 (src/lz4/), integer coding (src/integerCoding.cpp), bootstrap magic "PXR-USDC". Version support extended to 0.13.x per spec 16.3

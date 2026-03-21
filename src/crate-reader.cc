@@ -2163,11 +2163,12 @@ bool CrateReader::ReadBootStrap() {
     return false;
   }
 
-  // Currently up to 0.9.0
-  if ((version[0] == 0) && (version[1] < 10)) {
+  // AOUSD Core Spec 16.3: Current crate version is 0.13.0
+  // Support versions 0.4.0 through 0.13.x
+  if ((version[0] == 0) && (version[1] <= 13)) {
     // ok
   } else {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Unsupported version {}.{}.{}. TinyUSDZ supports version up to 0.9.0",
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Unsupported crate version {}.{}.{}. TinyUSDZ supports version 0.4.0 through 0.13.x",
       _version[0], _version[1], _version[2]));
   }
 
