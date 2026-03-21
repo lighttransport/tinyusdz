@@ -8,6 +8,8 @@
 #include "layer.hh"
 #include "pprint-enum.hh"
 #include "tiny-format.hh"
+#include "tinyusdz.hh"
+#include "value-clip-utils.hh"
 #include "value-pprint.hh"
 
 namespace tinyusdz {
@@ -95,6 +97,108 @@ bool ToTerminalAttributeValue(
   return true;
 }
 
+// AOUSD Core Spec 12.3.4: Evaluate attribute from value clips.
+// This is the fallback when an attribute has neither timeSamples nor default value.
+// Loads the active clip asset, finds the target prim, and queries the attribute.
+//
+// Simple clip asset cache to avoid reloading the same file repeatedly.
+static std::map<std::string, Layer> s_clip_cache;
+
+bool EvaluateAttributeFromClips(
+    const Prim &prim,
+    const std::string &attr_name,
+    TerminalAttributeValue *value,
+    std::string *err,
+    const double t,
+    const value::TimeSampleInterpolationType tinterp) {
+
+  if (!prim.metas().has_clips()) {
+    return false;
+  }
+
+  Dictionary clips_dict = prim.metas().get_clips();
+  if (clips_dict.empty()) {
+    return false;
+  }
+
+  // Parse clip set metadata
+  std::vector<std::string> assetPaths;
+  std::vector<std::pair<double, double>> times;
+  std::vector<std::pair<double, int>> active;
+  std::string primPath;
+
+  if (!ParseClipSetMetadata(clips_dict, &assetPaths, &times, &active,
+                             &primPath, err)) {
+    return false;
+  }
+
+  if (assetPaths.empty()) {
+    return false;
+  }
+
+  // Resolve which clip and time to use
+  std::string clipAssetPath;
+  double clipTime = 0;
+  if (!ResolveValueClipQuery(active, times, assetPaths, t,
+                              &clipAssetPath, &clipTime)) {
+    return false;
+  }
+
+  DCOUT("Clip query: asset=" << clipAssetPath << " clipTime=" << clipTime);
+
+  // Load the clip asset (with caching)
+  Layer *clip_layer = nullptr;
+  auto cache_it = s_clip_cache.find(clipAssetPath);
+  if (cache_it != s_clip_cache.end()) {
+    clip_layer = &cache_it->second;
+  } else {
+    // Try to load the clip file
+    Layer loaded_layer;
+    std::string warn, load_err;
+    if (LoadLayerFromFile(clipAssetPath, &loaded_layer, &warn, &load_err)) {
+      s_clip_cache[clipAssetPath] = std::move(loaded_layer);
+      clip_layer = &s_clip_cache[clipAssetPath];
+    } else {
+      DCOUT("Failed to load clip asset: " << clipAssetPath << " : " << load_err);
+      return false;  // Clip asset not available — fallback
+    }
+  }
+
+  if (!clip_layer) {
+    return false;
+  }
+
+  // Find the target PrimSpec by primPath
+  const PrimSpec *target_ps = nullptr;
+  std::string find_err;
+  Path clip_prim_path(primPath, "");
+  if (!clip_layer->find_primspec_at(clip_prim_path, &target_ps, &find_err)) {
+    DCOUT("primPath not found in clip: " << primPath);
+    return false;
+  }
+
+  if (!target_ps) {
+    return false;
+  }
+
+  // Find the attribute in the clip PrimSpec
+  const auto &props = target_ps->props();
+  auto prop_it = props.find(attr_name);
+  if (prop_it == props.end()) {
+    DCOUT("Attribute " << attr_name << " not found in clip PrimSpec");
+    return false;
+  }
+
+  if (!prop_it->second.is_attribute()) {
+    return false;
+  }
+
+  const Attribute &clip_attr = prop_it->second.get_attribute();
+
+  // Evaluate at clip time
+  return ToTerminalAttributeValue(clip_attr, value, err, clipTime, tinterp);
+}
+
 //
 // visited_paths : To prevent circular referencing of attribute connection.
 //
@@ -166,6 +270,12 @@ bool EvaluateAttributeImpl(
       }
 
       if (!ToTerminalAttributeValue(attr, value, err, t, tinterp)) {
+        // AOUSD Core Spec 12.3.4: Fallback to value clips
+        // If the attribute has no timeSamples/default, try clips.
+        if (EvaluateAttributeFromClips(*current_prim, current_attr_name,
+                                        value, err, t, tinterp)) {
+          return true;
+        }
         return false;
       }
 
