@@ -141,6 +141,22 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
                                 "expressionVariables", indent);
   }
 
+  // AOUSD Core Spec 10.3.2.6: relocates
+  if (!metas.layerRelocates.empty()) {
+    meta_ss << pprint::Indent(indent) << "relocates = {\n";
+    for (size_t i = 0; i < metas.layerRelocates.size(); i++) {
+      const auto &entry = metas.layerRelocates[i];
+      meta_ss << pprint::Indent(indent + 1)
+              << "<" << entry.first.full_path_name() << "> : "
+              << "<" << entry.second.full_path_name() << ">";
+      if (i + 1 < metas.layerRelocates.size()) {
+        meta_ss << ",";
+      }
+      meta_ss << "\n";
+    }
+    meta_ss << pprint::Indent(indent) << "}\n";
+  }
+
   return meta_ss.str();
 }
 

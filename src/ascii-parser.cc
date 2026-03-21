@@ -2080,6 +2080,61 @@ bool AsciiParser::ParseStageMetaOpt() {
     return false;
   }
 
+  // AOUSD Core Spec 10.3.2.6: relocates has special syntax:
+  //   relocates = { </source> : </target>, ... }
+  // Path-to-path map cannot be parsed by standard ParseMetaValue.
+  if (varname == "relocates") {
+    if (!Expect('{')) {
+      PUSH_ERROR_AND_RETURN("'{' expected for `relocates` value.");
+    }
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
+    }
+
+    while (!Eof()) {
+      char c;
+      if (!LookChar1(&c)) {
+        return false;
+      }
+      if (c == '}') {
+        if (!SeekTo(CurrLoc() + 1)) { return false; }
+        break;
+      }
+
+      // Parse source path: </path>
+      std::string src_path_str;
+      if (!ReadPathIdentifier(&src_path_str)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse source path in `relocates`.");
+      }
+
+      if (!SkipWhitespace()) { return false; }
+      if (!Expect(':')) {
+        PUSH_ERROR_AND_RETURN("':' expected between source and target in `relocates`.");
+      }
+      if (!SkipWhitespace()) { return false; }
+
+      // Parse target path: </path>
+      std::string tgt_path_str;
+      if (!ReadPathIdentifier(&tgt_path_str)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse target path in `relocates`.");
+      }
+
+      _stage_metas.relocates.emplace_back(
+          Path(src_path_str, ""), Path(tgt_path_str, ""));
+
+      if (!SkipCommentAndWhitespaceAndNewline()) { return false; }
+
+      // Optional trailing comma
+      if (!LookChar1(&c)) { return false; }
+      if (c == ',') {
+        if (!SeekTo(CurrLoc() + 1)) { return false; }
+        if (!SkipCommentAndWhitespaceAndNewline()) { return false; }
+      }
+    }
+
+    return true;
+  }
+
   const VariableDef &vardef = _supported_stage_metas.at(varname);
   MetaVariable var;
   if (!ParseMetaValue(vardef, &var)) {
