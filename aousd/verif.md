@@ -516,7 +516,7 @@ python aousd/compare_usd_example.py test_file.usda
 - [x] ~~layerRelocates USDA parsing~~ (Spec 10.3.2.6): **IMPLEMENTED** -- parse, store, print for `relocates = { <path> : <path>, ... }` syntax
 - [x] ~~Time-value spline evaluation~~ (Spec 12.3.3): **IMPLEMENTED** in src/spline-eval.hh -- Bezier/Hermite cubic, held/linear/curve per-segment, held/linear/sloped/loop extrapolation, anti-regression
 - [ ] **Value clip evaluation** (Spec 12.3.4): clip scheduling, time remapping, manifest-based attribute discovery
-- [ ] **Template clip metadata** generation (12.3.4.1.3): templateAssetPath expansion
+- [x] ~~Template clip metadata~~ generation (12.3.4.1.3): **IMPLEMENTED** in src/value-clip-utils.hh -- templateAssetPath expansion with ### patterns, stride, activeOffset
 - [x] ~~specifier resolution rules~~ (Spec 12.2.1): **PARTIAL** -- strongest opinion kept; full defining/undefining semantics require opinion stack
 - [x] ~~typeName resolution from prim definition~~ (Spec 12.2.2): **IMPLEMENTED** -- typeName only taken from defining specs (def/class), not from over
 - [ ] **variability resolution from prim definition** (Spec 12.2.3): fallback = weakest opinion
