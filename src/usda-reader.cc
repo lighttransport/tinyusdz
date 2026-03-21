@@ -704,6 +704,11 @@ class USDAReader::Impl {
             _stage.metas().expressionVariables = metas.expressionVariables.value();
           }
 
+          // AOUSD Core Spec 10.3.2.6: relocates
+          if (!metas.relocates.empty()) {
+            _stage.metas().layerRelocates = metas.relocates;
+          }
+
           return true;  // ok
         });
   }

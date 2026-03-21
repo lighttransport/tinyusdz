@@ -148,6 +148,8 @@ class AsciiParser {
     nonstd::optional<std::string> owner;
     nonstd::optional<bool> hasOwnedSubLayers;
     nonstd::optional<std::map<std::string, MetaVariable>> expressionVariables;
+    // relocates: source path -> target path mappings
+    std::vector<std::pair<Path, Path>> relocates;
   };
 
   struct ParseState {
