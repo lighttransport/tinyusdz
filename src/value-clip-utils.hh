@@ -292,6 +292,16 @@ inline bool ResolveValueClipQuery(
 
 ///
 /// Parse a clips Dictionary to extract clip set metadata.
+/// Result of parsing clip set metadata.
+struct ClipSetMetadata {
+  std::vector<std::string> assetPaths;
+  std::vector<std::pair<double, double>> times;
+  std::vector<std::pair<double, int>> active;
+  std::string primPath;
+  std::string manifestAssetPath;           // optional: lists attributes in clips
+  bool interpolateMissingClipValues{false}; // Spec 12.3.4.6: interpolate across missing clips
+};
+
 ///
 /// @param[in] clips_dict The clips Dictionary from prim metadata
 /// @param[out] assetPaths Extracted asset paths
@@ -400,6 +410,51 @@ inline bool ParseClipSetMetadata(
   }
 
   return false;
+}
+
+///
+/// Parse clip set metadata into a ClipSetMetadata struct.
+/// Extracts all fields including manifestAssetPath and interpolateMissingClipValues.
+///
+inline bool ParseClipSetMetadataFull(
+    const std::map<std::string, MetaVariable> &clips_dict,
+    ClipSetMetadata *result,
+    std::string *err) {
+
+  if (!result) return false;
+
+  if (!ParseClipSetMetadata(clips_dict, &result->assetPaths, &result->times,
+                             &result->active, &result->primPath, err)) {
+    return false;
+  }
+
+  // Extract additional fields from the first clip set
+  for (const auto &clipset_entry : clips_dict) {
+    auto clipset_opt = clipset_entry.second.get_value<Dictionary>();
+    if (!clipset_opt) continue;
+
+    const Dictionary &d = clipset_opt.value();
+
+    // manifestAssetPath
+    auto manifest_it = d.find("manifestAssetPath");
+    if (manifest_it != d.end()) {
+      if (auto v = manifest_it->second.get_value<value::AssetPath>()) {
+        result->manifestAssetPath = v.value().GetAssetPath();
+      }
+    }
+
+    // interpolateMissingClipValues (Spec 12.3.4.6)
+    auto interp_it = d.find("interpolateMissingClipValues");
+    if (interp_it != d.end()) {
+      if (auto v = interp_it->second.get_value<bool>()) {
+        result->interpolateMissingClipValues = v.value();
+      }
+    }
+
+    break;  // first clip set only
+  }
+
+  return true;
 }
 
 }  // namespace tinyusdz

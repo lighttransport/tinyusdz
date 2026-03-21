@@ -11,11 +11,11 @@
 ///
 /// Supported composition arcs:
 /// - References: Include content from other USD files
-/// - Payloads: Deferred loading of heavy content  
-/// - Inherits: Class-like inheritance between prims
-/// - Specializes: Variant-like specialization (TODO)
+/// - Payloads: Deferred loading of heavy content
+/// - Inherits: Class-like inheritance between prims (multiple targets supported)
+/// - Specializes: Globally-weak shared opinions (multiple targets supported)
 /// - SubLayers: Layer-level composition
-/// - VariantSets: Multiple versions of content (TODO)
+/// - VariantSets: Multiple versions of content with deferred evaluation
 /// - Overs: Overrides of existing content
 ///
 /// Key concepts:
@@ -23,11 +23,9 @@
 /// - Stage: Composed result of multiple layers
 /// - Composition arcs: Rules for combining layers
 /// - Load states: Control what gets loaded when
-///
-/// TODO items:
-/// - [ ] Compose `specializes`
-/// - [ ] Compose `variantSets`
-/// - [ ] Consider `active` Prim metadatum
+/// - LIVRPS ordering: L > I > V > R > P > S (via CompositeAllArcs)
+/// - Cycle detection: all arc types detect circular references
+/// - Active metadatum: prims with active=false are excluded post-composition
 ///
 #pragma once
 
@@ -37,9 +35,9 @@
 #include "core/prim-spec.hh"  // PrimSpec, FileFormatHandler (transitively: property, composition-types, prim-enums, prim-metas, variant-types)
 #include "layer.hh"           // Layer class
 
-// - [ ] Compose `specializes`
-// - [ ] Compose `variantSets`
-// - [ ] Consider `active` Prim metadatum
+// Remaining TODO items:
+// - [ ] Multi-level implied inherits propagation
+// - [ ] Lazy payload evaluation (deferred loading)
 
 namespace tinyusdz {
 
