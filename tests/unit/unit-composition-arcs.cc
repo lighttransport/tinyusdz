@@ -127,10 +127,32 @@ void comp_inherits_multiple_bases_test(void) {
   std::string warn, err;
   bool ok = CompositeInherits(layer, &result, &warn, &err);
 
-  // Multiple inheritance is not supported by TinyUSDZ -- CompositeInherits
-  // should return false for inherits lists with more than one base.
-  TEST_CHECK(!ok);
-  TEST_MSG("CompositeInherits should return false for multiple bases");
+  // Multiple inheritance is now supported.
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("CompositeInherits failed: %s", err.c_str());
+    return;
+  }
+
+  // Verify /Derived has properties from both bases.
+  auto it = result.primspecs().find("Derived");
+  TEST_CHECK(it != result.primspecs().end());
+  if (it != result.primspecs().end()) {
+    TEST_CHECK(it->second.props().count("fromBase1") > 0);
+    TEST_CHECK(it->second.props().count("fromBase2") > 0);
+
+    // Verify values
+    if (it->second.props().count("fromBase1")) {
+      const auto &a = it->second.props().at("fromBase1").get_attribute();
+      auto v = a.get_value<int>();
+      TEST_CHECK(v.has_value() && v.value() == 1);
+    }
+    if (it->second.props().count("fromBase2")) {
+      const auto &a = it->second.props().at("fromBase2").get_attribute();
+      auto v = a.get_value<int>();
+      TEST_CHECK(v.has_value() && v.value() == 2);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
