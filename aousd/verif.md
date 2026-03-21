@@ -512,7 +512,7 @@ python aousd/compare_usd_example.py test_file.usda
 - [ ] **Implied inherit/specialize arcs** (Spec 10.3.2.3): inherits not propagated through upstream layer stacks
 - [ ] **Variant deferred evaluation** (Spec 10.3.2.5): variant selection applied statically, not deferred
 - [ ] **Specializes global weakness** (Spec 10.4.1): specializes not treated as globally weaker
-- [ ] **layerRelocates USDA parsing** (Spec 10.3.2.6): data structure exists but no parser for relocates = {} syntax
+- [x] ~~layerRelocates USDA parsing~~ (Spec 10.3.2.6): **IMPLEMENTED** -- parse, store, print for `relocates = { <path> : <path>, ... }` syntax
 - [ ] **Time-value spline evaluation** (Spec 12.3.3): bezier/hermite cubic spline eval for attribute values at time
 - [ ] **Value clip evaluation** (Spec 12.3.4): clip scheduling, time remapping, manifest-based attribute discovery
 - [ ] **Template clip metadata** generation (12.3.4.1.3): templateAssetPath expansion

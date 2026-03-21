@@ -1,0 +1,21 @@
+#usda 1.0
+(
+    # AOUSD Core Spec 10.3.2.6: layerRelocates
+    relocates = {
+        </Root/Child> : </Root/Relocated_Child>,
+        </Other/B> : </Other/C>
+    }
+)
+
+def "Root" (
+    references = @./ch10_relocates_ref.usda@</Ref>
+)
+{
+    over "Relocated_Child"
+    {
+    }
+}
+
+def "Other"
+{
+}
