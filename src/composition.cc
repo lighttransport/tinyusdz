@@ -1522,4 +1522,71 @@ bool HasSpecializes(const Layer &layer) {
   return layer.check_unresolved_specializes();
 }
 
+// AOUSD Core Spec 10.4: Composite all arcs in LIVERPS order.
+// L(ocal/sublayers) is assumed already done before calling this function.
+// Order: I(nherits) > V(ariants) > R(eferences) > P(ayloads) > S(pecializes)
+//
+// Specializes (S) is applied last and is globally weaker than all other
+// opinions per Spec 10.4.1.
+bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
+                      Layer *composited_layer, std::string *warn,
+                      std::string *err) {
+  if (!composited_layer) {
+    if (err) { *err = "composited_layer is nullptr."; }
+    return false;
+  }
+
+  // Start with a copy of the input layer
+  Layer working = layer;
+
+  // I: Inherits (strongest arc type after Local)
+  if (HasInherits(working)) {
+    Layer tmp;
+    if (!CompositeInherits(working, &tmp, warn, err)) {
+      return false;
+    }
+    working = std::move(tmp);
+  }
+
+  // V: Variants
+  if (HasVariants(working)) {
+    Layer tmp;
+    if (!CompositeVariant(working, &tmp, warn, err)) {
+      return false;
+    }
+    working = std::move(tmp);
+  }
+
+  // R: References
+  if (HasReferences(working)) {
+    Layer tmp;
+    if (!CompositeReferences(resolver, working, &tmp, warn, err)) {
+      return false;
+    }
+    working = std::move(tmp);
+  }
+
+  // P: Payloads
+  if (HasPayload(working)) {
+    Layer tmp;
+    if (!CompositePayload(resolver, working, &tmp, warn, err)) {
+      return false;
+    }
+    working = std::move(tmp);
+  }
+
+  // S: Specializes (globally weaker per Spec 10.4.1)
+  // Applied last so all other opinions take precedence.
+  if (HasSpecializes(working)) {
+    Layer tmp;
+    if (!CompositeSpecializes(working, &tmp, warn, err)) {
+      return false;
+    }
+    working = std::move(tmp);
+  }
+
+  *composited_layer = std::move(working);
+  return true;
+}
+
 }  // namespace tinyusdz

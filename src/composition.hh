@@ -280,6 +280,26 @@ bool InheritPrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
 
 
 ///
+/// Composite all composition arcs in LIVERPS order.
+///
+/// AOUSD Core Spec 10.4: Applies arcs in strength order:
+///   L(ocal/sublayers) > I(nherits) > V(ariants) > R(eferences) > P(ayloads) > S(pecializes)
+///
+/// Specializes (S) are applied last and are globally weaker than all other
+/// opinions, per Spec 10.4.1.
+///
+/// @param[in] resolver Asset resolution resolver
+/// @param[in] layer Source layer (after sublayer composition)
+/// @param[out] composited_layer Output composited layer
+/// @param[out] warn Warning messages
+/// @param[out] err Error messages
+/// @return true upon success
+///
+bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
+                      Layer *composited_layer, std::string *warn,
+                      std::string *err);
+
+///
 /// Build USD Stage from Layer
 ///
 /// `layer` object will be destroyed after `stage` is being build.

@@ -507,12 +507,12 @@ python aousd/compare_usd_example.py test_file.usda
 - [x] ~~All semantic aliases~~: **IMPLEMENTED** 2026-03-21 -- all 25 role types parse/store/print including half/double variants, texCoord3, frame4d
 
 ### Remaining Gaps (Not Implemented)
-- [ ] **LIVERPS strength ordering** (Spec 10.4): composition exists but no proper strength ordering between arc types
+- [x] ~~LIVERPS strength ordering~~ (Spec 10.4): **IMPLEMENTED** via CompositeAllArcs() -- applies arcs in I>V>R>P>S order
 - [ ] **Namespace mappings** (Spec 10.5): not implemented; paths not remapped across composition arcs
 - [ ] **Relocates** (Spec 10.3.2.6): not implemented at all -- no relocation logic (data structure added)
 - [ ] **Implied inherit/specialize arcs** (Spec 10.3.2.3): inherits not propagated through upstream layer stacks
 - [ ] **Variant deferred evaluation** (Spec 10.3.2.5): variant selection applied statically, not deferred
-- [ ] **Specializes global weakness** (Spec 10.4.1): specializes not treated as globally weaker
+- [x] ~~Specializes global weakness~~ (Spec 10.4.1): **IMPLEMENTED** -- specializes applied last in CompositeAllArcs()
 - [x] ~~layerRelocates USDA parsing~~ (Spec 10.3.2.6): **IMPLEMENTED** -- parse, store, print for `relocates = { <path> : <path>, ... }` syntax
 - [x] ~~Time-value spline evaluation~~ (Spec 12.3.3): **IMPLEMENTED** in src/spline-eval.hh -- Bezier/Hermite cubic, held/linear/curve per-segment, held/linear/sloped/loop extrapolation, anti-regression
 - [ ] **Value clip evaluation** (Spec 12.3.4): clip scheduling, time remapping, manifest-based attribute discovery
