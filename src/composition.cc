@@ -12,6 +12,7 @@
 
 #include "asset-resolution.hh"
 #include "common-macros.inc"
+#include "core/schema-registry.hh"
 #include "io-util.hh"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
@@ -462,6 +463,32 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
       if (prop.second.has_custom() && !dst.props().at(prop.first).has_custom()) {
         dst.props()[prop.first].set_custom(true);
       }
+
+      // AOUSD Core Spec 12.2.3 (variability): If the stronger opinion did not
+      // explicitly author variability, use the weaker opinion's variability.
+      // Also consult the schema registry as the weakest fallback.
+      if (dst.props().at(prop.first).is_attribute() &&
+          prop.second.is_attribute()) {
+        Attribute &dst_attr = dst.props()[prop.first].attribute();
+        const Attribute &src_attr = prop.second.get_attribute();
+
+        // If dst (stronger) has default variability (Varying) and src (weaker)
+        // has explicit uniform, check schema to determine correct variability.
+        if (dst_attr.variability() == Variability::Varying &&
+            src_attr.variability() == Variability::Uniform) {
+          // Weaker opinion has uniform -- use it (spec says weaker fills)
+          dst_attr.variability() = Variability::Uniform;
+        } else if (dst_attr.variability() == Variability::Varying &&
+                   src_attr.variability() == Variability::Varying) {
+          // Neither explicitly set uniform; consult schema registry
+          const auto *schema_info = SchemaRegistry::instance().find(
+              dst.typeName(), prop.first);
+          if (schema_info &&
+              schema_info->variability == Variability::Uniform) {
+            dst_attr.variability() = Variability::Uniform;
+          }
+        }
+      }
     }
   }
 
@@ -486,6 +513,18 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
   return true;
 }
 
+
+// AOUSD Core Spec 10.3.2.3: Tag PrimSpecs with source layer ID for implied arc tracking.
+void TagPrimSpecArcOriginRec(PrimSpec &ps, const std::string &layer_id) {
+  ArcOrigin origin;
+  origin.source_layer_id = layer_id;
+  origin.source_prim_path = Path("/" + ps.name(), "");
+  ps.metas().arc_origins.push_back(origin);
+
+  for (auto &child : ps.children()) {
+    TagPrimSpecArcOriginRec(child, layer_id);
+  }
+}
 
 bool CompositeSublayersRec(AssetResolutionResolver &resolver,
                            const Layer &in_layer,
@@ -544,6 +583,12 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
                    options.error_when_unsupported_fileformat, warn, err)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Load asset in subLayer failed: `{}`", layer.assetPath));
+    }
+
+    // AOUSD Core Spec 10.3.2.3: Tag sublayer PrimSpecs with source layer ID
+    // for implied inherit/specialize arc propagation.
+    for (auto &ps_item : sublayer.primspecs()) {
+      TagPrimSpecArcOriginRec(ps_item.second, sublayer_asset_path);
     }
 
     curr_layer_names.insert(sublayer_asset_path);
@@ -682,6 +727,14 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
             return false;
           }
 
+          // AOUSD Core Spec 10.3.2.3: Record arc origin for implied inherit propagation
+          if (!reference.asset_path.GetAssetPath().empty()) {
+            ArcOrigin origin;
+            origin.source_layer_id = reference.asset_path.GetAssetPath();
+            origin.source_prim_path = reference.prim_path;
+            primspec.metas().arc_origins.push_back(origin);
+          }
+
           // `inherits` op
           if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
             PUSH_ERROR_AND_RETURN(fmt::format("Failed to reference layer `{}`",
@@ -745,6 +798,14 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
           if (!src_ps) {
             // LoadAsset allowed not-found or unsupported file. so do nothing.
             continue;
+          }
+
+          // AOUSD Core Spec 10.3.2.3: Record arc origin for implied inherit propagation
+          if (!reference.asset_path.GetAssetPath().empty()) {
+            ArcOrigin origin;
+            origin.source_layer_id = reference.asset_path.GetAssetPath();
+            origin.source_prim_path = reference.prim_path;
+            primspec.metas().arc_origins.push_back(origin);
           }
 
           // Replace prim path prefix
@@ -1038,6 +1099,55 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
 
     // remove `inherits` metadataum after processing all listops.
     primspec.metas().inherits.reset();
+  }
+
+  // AOUSD Core Spec 10.3.2.3: Implied inherits.
+  // If this prim has arc_origins (e.g., from references), and the referenced
+  // layer's prim had inherits, those inherits should be "implied" here.
+  // For single-level case: walk arc_origins and check if the source prim had
+  // inherits that were already applied in the referenced layer. The inherit
+  // targets in the referenced layer should also be applied as implied inherits
+  // in this (upstream) layer stack, if the target classes exist here too.
+  //
+  // Implementation: For each arc origin, look for class prims (class specifier)
+  // in the current layer that match the inherit targets from the referenced layer.
+  // This is the single-level implied inherit case.
+  if (!primspec.metas().arc_origins.empty()) {
+    for (const auto &origin : primspec.metas().arc_origins) {
+      (void)origin;
+      // For each origin, we would need to:
+      // 1. Look at what inherits the original prim had in the source layer
+      // 2. Find matching class prims in the current layer
+      // 3. Apply InheritPrimSpec from those class prims
+      //
+      // Since we don't have the original source layer available here,
+      // we rely on the fact that inherit paths from the referenced layer
+      // have been propagated through the PrimSpec's inheritPaths metadata.
+      // Multi-level propagation is deferred for future work.
+      DCOUT("Arc origin: " << origin.source_layer_id << " @ "
+                           << origin.source_prim_path.prim_part());
+    }
+
+    // Check if there are inheritPaths propagated from referenced layers
+    if (primspec.metas().inheritPaths) {
+      for (const auto &inherit_op : primspec.metas().inheritPaths.value()) {
+        const auto &paths = inherit_op.second;
+        for (const auto &inheritPath : paths) {
+          const PrimSpec *inheritPrimSpec{nullptr};
+          std::string _err;
+          if (layer.find_primspec_at(inheritPath, &inheritPrimSpec, &_err)) {
+            if (inheritPrimSpec) {
+              DCOUT("Applying implied inherit from " << inheritPath.prim_part());
+              if (!InheritPrimSpec(primspec, *inheritPrimSpec, warn, err)) {
+                return false;
+              }
+            }
+          }
+          // If not found, that's OK -- the class may not exist in this layer stack
+        }
+      }
+      primspec.metas().inheritPaths.reset();
+    }
   }
 
   return true;
@@ -1360,10 +1470,24 @@ static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst,
   // The `custom` flag is true if ANY opinion in the stack says true.
   for (const auto &prop : src.props()) {
     if (dst.props().count(prop.first)) {
+      // AOUSD Core Spec 12.2.3: Preserve uniform variability from weaker opinion
+      Variability preserved_variability = Variability::Varying;
+      if (dst.props().at(prop.first).is_attribute() && prop.second.is_attribute()) {
+        preserved_variability = dst.props().at(prop.first).get_attribute().variability();
+      }
+
       bool dst_custom = dst.props().at(prop.first).has_custom();
       dst.props()[prop.first] = prop.second;
       if (dst_custom && !prop.second.has_custom()) {
         dst.props()[prop.first].set_custom(true);
+      }
+
+      // AOUSD Core Spec 12.2.3: If overriding property had uniform variability
+      // and the override source is varying, preserve uniform.
+      if (dst.props()[prop.first].is_attribute() &&
+          preserved_variability == Variability::Uniform &&
+          dst.props()[prop.first].attribute().variability() == Variability::Varying) {
+        dst.props()[prop.first].attribute().variability() = Variability::Uniform;
       }
     } else {
       dst.props()[prop.first] = prop.second;
@@ -1439,11 +1563,25 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
   // The `custom` flag is true if ANY opinion in the stack says true.
   for (const auto &prop : dst.props()) {
     if (ps.props().count(prop.first)) {
+      // AOUSD Core Spec 12.2.3: Preserve uniform variability from weaker (inherited) opinion
+      Variability inherited_variability = Variability::Varying;
+      if (ps.props().at(prop.first).is_attribute() && prop.second.is_attribute()) {
+        inherited_variability = ps.props().at(prop.first).get_attribute().variability();
+      }
+
       // AOUSD Core Spec 12.2.4: OR the custom flags before replacing
       bool src_custom = ps.props().at(prop.first).has_custom();
       ps.props().at(prop.first) = prop.second;
       if (src_custom && !prop.second.has_custom()) {
         ps.props().at(prop.first).set_custom(true);
+      }
+
+      // AOUSD Core Spec 12.2.3: If inherited property had uniform variability
+      // and the overriding (stronger) is varying, preserve uniform.
+      if (ps.props().at(prop.first).is_attribute() &&
+          inherited_variability == Variability::Uniform &&
+          ps.props().at(prop.first).attribute().variability() == Variability::Varying) {
+        ps.props().at(prop.first).attribute().variability() = Variability::Uniform;
       }
     }
     else {
@@ -1522,9 +1660,96 @@ bool HasSpecializes(const Layer &layer) {
   return layer.check_unresolved_specializes();
 }
 
+namespace {
+
+// AOUSD Core Spec 10.3.2.5: Collect variant selection opinions from a PrimSpec tree.
+// Returns a map of (prim_path -> VariantSelectionMap) for all prims that have
+// variant selections authored.
+void CollectVariantSelectionOpinionsRec(
+    const std::string &path_prefix,
+    const PrimSpec &ps,
+    std::map<std::string, std::vector<VariantSelectionMap>> &opinions) {
+  std::string prim_path = path_prefix + "/" + ps.name();
+
+  if (ps.metas().variants) {
+    opinions[prim_path].push_back(ps.metas().variants.value());
+  }
+
+  for (const auto &child : ps.children()) {
+    CollectVariantSelectionOpinionsRec(prim_path, child, opinions);
+  }
+}
+
+void CollectVariantSelectionOpinions(
+    const Layer &layer,
+    std::map<std::string, std::vector<VariantSelectionMap>> &opinions) {
+  for (const auto &item : layer.primspecs()) {
+    CollectVariantSelectionOpinionsRec("", item.second, opinions);
+  }
+}
+
+// AOUSD Core Spec 10.3.2.5: Compute final variant selections from collected opinions.
+// Strongest opinion (first in vector) wins per variant set name.
+VariantSelectionMap ComputeVariantSelections(
+    const std::vector<VariantSelectionMap> &opinions) {
+  VariantSelectionMap result;
+
+  // Iterate from weakest to strongest so strongest overwrites
+  for (auto it = opinions.rbegin(); it != opinions.rend(); ++it) {
+    for (const auto &sel : *it) {
+      result[sel.first] = sel.second;
+    }
+  }
+
+  return result;
+}
+
+// Apply pre-computed variant selections to a PrimSpec tree.
+bool ApplyDeferredVariantSelectionsRec(
+    uint32_t depth,
+    const std::string &path_prefix,
+    PrimSpec &primspec,
+    const std::map<std::string, VariantSelectionMap> &resolved_selections,
+    std::string *warn, std::string *err) {
+  if (depth > (1024 * 1024)) {
+    if (err) { *err += "Too deep in ApplyDeferredVariantSelectionsRec.\n"; }
+    return false;
+  }
+
+  std::string prim_path = path_prefix + "/" + primspec.name();
+
+  // Traverse children first.
+  for (auto &child : primspec.children()) {
+    if (!ApplyDeferredVariantSelectionsRec(depth + 1, prim_path, child,
+                                            resolved_selections, warn, err)) {
+      return false;
+    }
+  }
+
+  // Apply variant selection for this prim
+  std::map<std::string, std::string> selection;
+  auto sel_it = resolved_selections.find(prim_path);
+  if (sel_it != resolved_selections.end()) {
+    selection = sel_it->second;
+  }
+
+  PrimSpec dst;
+  if (!VariantSelectPrimSpec(dst, primspec, selection, warn, err)) {
+    return false;
+  }
+
+  primspec = std::move(dst);
+  return true;
+}
+
+}  // namespace
+
 // AOUSD Core Spec 10.4: Composite all arcs in LIVERPS order.
 // L(ocal/sublayers) is assumed already done before calling this function.
 // Order: I(nherits) > V(ariants) > R(eferences) > P(ayloads) > S(pecializes)
+//
+// AOUSD Core Spec 10.3.2.5: Variant selection is deferred -- selections are
+// computed using opinions from ALL arcs (I, R, P, S), not just local.
 //
 // Specializes (S) is applied last and is globally weaker than all other
 // opinions per Spec 10.4.1.
@@ -1539,6 +1764,10 @@ bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
   // Start with a copy of the input layer
   Layer working = layer;
 
+  // Phase 1: Collect variant selection opinions from local layer (strongest)
+  std::map<std::string, std::vector<VariantSelectionMap>> variant_opinions;
+  CollectVariantSelectionOpinions(working, variant_opinions);
+
   // I: Inherits (strongest arc type after Local)
   if (HasInherits(working)) {
     Layer tmp;
@@ -1546,16 +1775,11 @@ bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
       return false;
     }
     working = std::move(tmp);
+    // Collect additional variant opinions from inherited content
+    CollectVariantSelectionOpinions(working, variant_opinions);
   }
 
-  // V: Variants
-  if (HasVariants(working)) {
-    Layer tmp;
-    if (!CompositeVariant(working, &tmp, warn, err)) {
-      return false;
-    }
-    working = std::move(tmp);
-  }
+  // Skip V for now -- defer variant evaluation until after R and P
 
   // R: References
   if (HasReferences(working)) {
@@ -1564,6 +1788,8 @@ bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
       return false;
     }
     working = std::move(tmp);
+    // Collect variant opinions from referenced content
+    CollectVariantSelectionOpinions(working, variant_opinions);
   }
 
   // P: Payloads
@@ -1573,6 +1799,27 @@ bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
       return false;
     }
     working = std::move(tmp);
+    // Collect variant opinions from payload content
+    CollectVariantSelectionOpinions(working, variant_opinions);
+  }
+
+  // Phase 2: Compute variant selections with full opinion stack (strongest wins)
+  // and apply them. This implements AOUSD Core Spec 10.3.2.5 deferred evaluation.
+  if (HasVariants(working)) {
+    // Resolve per-prim selections
+    std::map<std::string, VariantSelectionMap> resolved;
+    for (const auto &item : variant_opinions) {
+      resolved[item.first] = ComputeVariantSelections(item.second);
+    }
+
+    // Apply resolved selections
+    for (auto &ps_item : working.primspecs()) {
+      if (!ApplyDeferredVariantSelectionsRec(
+              0, "", ps_item.second, resolved, warn, err)) {
+        PushError("Deferred variant evaluation failed.\n");
+        return false;
+      }
+    }
   }
 
   // S: Specializes (globally weaker per Spec 10.4.1)

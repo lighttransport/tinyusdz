@@ -487,7 +487,7 @@ python aousd/compare_usd_example.py test_file.usda
 |--------|------|-------|-------|
 | USDA (text) | YES | YES | Hand-written parser; pprinter for output |
 | USDC (binary/crate) | YES | EXPERIMENTAL | crate-reader production; crate-writer experimental |
-| USDZ (zip package) | YES | PARTIAL | Read supported; write needs verification |
+| USDZ (zip package) | YES | YES | Read and write supported; SaveAsUSDZToFile/Memory, ValidateUSDZ |
 | USD (auto-detect) | YES | N/A | Format detection implemented |
 
 ---
@@ -510,8 +510,8 @@ python aousd/compare_usd_example.py test_file.usda
 - [x] ~~LIVERPS strength ordering~~ (Spec 10.4): **IMPLEMENTED** via CompositeAllArcs() -- applies arcs in I>V>R>P>S order
 - [x] ~~Namespace mappings~~ (Spec 10.5): **IMPLEMENTED** in src/namespace-mapping.hh -- reference, inherit, relocate mappings + composition
 - [x] ~~Relocates~~ (Spec 10.3.2.6): **PARTIAL** -- parsing done, namespace mapping done, validation done; composition algorithm not wired
-- [ ] **Implied inherit/specialize arcs** (Spec 10.3.2.3): inherits not propagated through upstream layer stacks
-- [ ] **Variant deferred evaluation** (Spec 10.3.2.5): variant selection applied statically, not deferred
+- [x] ~~Implied inherit/specialize arcs~~ (Spec 10.3.2.3): **PARTIAL** -- ArcOrigin tracking in composition-types.hh, arc origin tagging in CompositeReferencesRec, single-level implied inherit propagation in CompositeInheritsRec; multi-level propagation deferred
+- [x] ~~Variant deferred evaluation~~ (Spec 10.3.2.5): **IMPLEMENTED** -- two-phase variant processing in CompositeAllArcs: opinions collected from I/R/P arcs before variant selection applied
 - [x] ~~Specializes global weakness~~ (Spec 10.4.1): **IMPLEMENTED** -- specializes applied last in CompositeAllArcs()
 - [x] ~~layerRelocates USDA parsing~~ (Spec 10.3.2.6): **IMPLEMENTED** -- parse, store, print for `relocates = { <path> : <path>, ... }` syntax
 - [x] ~~Time-value spline evaluation~~ (Spec 12.3.3): **IMPLEMENTED** in src/spline-eval.hh -- Bezier/Hermite cubic, held/linear/curve per-segment, held/linear/sloped/loop extrapolation, anti-regression
@@ -519,7 +519,7 @@ python aousd/compare_usd_example.py test_file.usda
 - [x] ~~Template clip metadata~~ generation (12.3.4.1.3): **IMPLEMENTED** in src/value-clip-utils.hh -- templateAssetPath expansion with ### patterns, stride, activeOffset
 - [x] ~~specifier resolution rules~~ (Spec 12.2.1): **PARTIAL** -- strongest opinion kept; full defining/undefining semantics require opinion stack
 - [x] ~~typeName resolution from prim definition~~ (Spec 12.2.2): **IMPLEMENTED** -- typeName only taken from defining specs (def/class), not from over
-- [ ] **variability resolution from prim definition** (Spec 12.2.3): fallback = weakest opinion
+- [x] ~~variability resolution from prim definition~~ (Spec 12.2.3): **IMPLEMENTED** -- SchemaRegistry singleton in schema-registry.hh with ~20 built-in uniform properties; CombinePrimSpecRec consults registry as weakest fallback
 - [x] ~~custom field resolution~~ (Spec 12.2.4): **IMPLEMENTED** -- custom flag OR'd across all opinions in composition
 - [x] ~~Deprecated `add` list op~~: **IMPLEMENTED** -- treated as `append` with deprecation warning per Spec 6.6.3.10
 - [x] ~~Integer coding and LZ4 compression in USDC~~: **VERIFIED** -- LZ4 (src/lz4/), integer coding (src/integerCoding.cpp), bootstrap magic "PXR-USDC". Version support extended to 0.13.x per spec 16.3

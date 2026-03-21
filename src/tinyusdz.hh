@@ -489,6 +489,60 @@ bool LoadLayerFromAsset(AssetResolutionResolver &resolver,
 
 
 
+///
+/// Save Stage as USDZ (uncompressed ZIP package) to a file.
+///
+/// The root layer is written as USDC (binary Crate format) as the first
+/// entry in the ZIP archive. Additional assets (images, audio) can be
+/// included via the `assets` parameter.
+///
+/// Conforms to AOUSD Core Spec section 17 (USDZ Package Format):
+/// - Uncompressed ZIP (store method)
+/// - 64-byte data alignment for all entries
+/// - First entry is the root .usdc layer
+/// - Allowed types: .usd, .usda, .usdc, .png, .jpg, .jpeg, .exr, .avif, .m4a, .mp3, .wav
+///
+/// @param[in] filename Output USDZ filename
+/// @param[in] stage USD Stage to write
+/// @param[in] assets Additional assets to include: key=archive name, value=file data
+/// @param[out] warn Warning messages
+/// @param[out] err Error messages
+/// @return true upon success
+///
+bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
+                      const std::map<std::string, std::vector<uint8_t>> &assets,
+                      std::string *warn, std::string *err);
+
+///
+/// Save Stage as USDZ to memory.
+///
+/// @param[in] stage USD Stage to write
+/// @param[in] assets Additional assets to include
+/// @param[out] output Output USDZ data
+/// @param[out] warn Warning messages
+/// @param[out] err Error messages
+/// @return true upon success
+///
+bool SaveAsUSDZToMemory(const Stage &stage,
+                        const std::map<std::string, std::vector<uint8_t>> &assets,
+                        std::vector<uint8_t> *output,
+                        std::string *warn, std::string *err);
+
+///
+/// Validate a USDZ archive against AOUSD Core Spec section 17.
+///
+/// Checks: ZIP magic, uncompressed storage, 64-byte alignment,
+/// root layer is first entry, allowed file extensions.
+///
+/// @param[in] addr Memory address of USDZ data
+/// @param[in] length Byte length
+/// @param[out] warn Warning messages (non-fatal issues)
+/// @param[out] err Error messages (spec violations)
+/// @return true if valid USDZ
+///
+bool ValidateUSDZ(const uint8_t *addr, size_t length,
+                  std::string *warn, std::string *err);
+
 // Test if input is any of USDA/USDC/USDZ format.
 // Optionally returns detected format("usda", "usdc", or "usdz") to
 // `detected_format` when a given file/binary is a USD format.

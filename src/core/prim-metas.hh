@@ -146,6 +146,9 @@ struct PrimMetas : public MetadataBase {
   nonstd::optional<std::vector<std::pair<ListEditQual, std::vector<Path>>>>
       specializes;  // 'specializes'
 
+  // AOUSD Core Spec 10.3.2.3: Arc origins for implied inherit/specialize propagation
+  std::vector<ArcOrigin> arc_origins;
+
   // Unregistered metadatum. value is represented as string.
   std::map<std::string, std::string> unregisteredMetas;
 
