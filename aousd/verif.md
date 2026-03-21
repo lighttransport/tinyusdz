@@ -448,7 +448,7 @@ python aousd/compare_usd_example.py test_file.usda
 | TimeSamples | YES | Parsing and basic interpolation (held/linear) |
 | Attribute value resolution priority | **YES** | Spec 12.3 priority: timeSamples > default at specific time; default > timeSamples at default time |
 | Spline evaluation (bezier/hermite) | **YES** | src/spline-eval.hh: Bezier/Hermite cubic, all interpolation/extrapolation modes |
-| Value clips | PARSE ONLY | clips Dictionary parsed/stored; **no scheduling or evaluation** |
+| Value clips | **YES** | Clip set parsing, template expansion, active clip finding, time remapping, asset loading + caching, attribute evaluation fallback |
 | Blocked values (`None`) | YES | Full support: TYPE_ID_VALUEBLOCK, is_blocked(), set_blocked() |
 | Layer offset/scale on time queries | **YES** | Applied during sublayer, reference, and payload composition |
 
@@ -498,7 +498,7 @@ python aousd/compare_usd_example.py test_file.usda
 - [x] ~~Blocked attribute values~~: **FULLY SUPPORTED** -- TYPE_ID_VALUEBLOCK, set_blocked(), is_blocked() in attribute.hh, primvar.hh, timesamples.hh
 - [x] ~~Unicode XID_Start/XID_Continue~~: **FULLY SUPPORTED** -- unicode-xid.hh with lookup tables, is_valid_utf8_identifier() in str-util.cc
 - [x] ~~Spline specialized type~~: **PARSE ONLY** -- GeomBasisCurves/NurbsCurves types supported; NO time-value spline evaluation for attribute resolution
-- [x] ~~Value clips~~: **PARSE ONLY** -- clips Dictionary parsed and stored; NO evaluation/scheduling/runtime playback
+- [x] ~~Value clips~~: **IMPLEMENTED** -- clips Dictionary parsed, template expansion, active clip finding, time remapping, asset loading + caching, attribute evaluation fallback in tydra
 
 ### Resolved (Implemented)
 - [x] ~~expressionVariables on layer spec~~: **IMPLEMENTED** 2026-03-21 -- parse, store, print as dictionary
@@ -515,7 +515,7 @@ python aousd/compare_usd_example.py test_file.usda
 - [x] ~~Specializes global weakness~~ (Spec 10.4.1): **IMPLEMENTED** -- specializes applied last in CompositeAllArcs()
 - [x] ~~layerRelocates USDA parsing~~ (Spec 10.3.2.6): **IMPLEMENTED** -- parse, store, print for `relocates = { <path> : <path>, ... }` syntax
 - [x] ~~Time-value spline evaluation~~ (Spec 12.3.3): **IMPLEMENTED** in src/spline-eval.hh -- Bezier/Hermite cubic, held/linear/curve per-segment, held/linear/sloped/loop extrapolation, anti-regression
-- [x] ~~Value clip evaluation~~ (Spec 12.3.4): **PARTIAL** -- template expansion, active clip finding, stage-to-clip time remapping, query resolution; asset loading not wired
+- [x] ~~Value clip evaluation~~ (Spec 12.3.4): **IMPLEMENTED** -- template expansion, active clip finding, time remapping, clip asset loading with caching, attribute fallback in EvaluateAttribute
 - [x] ~~Template clip metadata~~ generation (12.3.4.1.3): **IMPLEMENTED** in src/value-clip-utils.hh -- templateAssetPath expansion with ### patterns, stride, activeOffset
 - [x] ~~specifier resolution rules~~ (Spec 12.2.1): **IMPLEMENTED** -- over+def/class composites to def/class; defining spec propagates through sublayer composition
 - [x] ~~typeName resolution from prim definition~~ (Spec 12.2.2): **IMPLEMENTED** -- typeName only taken from defining specs (def/class), not from over
