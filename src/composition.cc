@@ -477,6 +477,27 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
         dst.props()[prop.first].set_custom(true);
       }
 
+      // AOUSD Core Spec 6.5 (type agreement): Warn if composed property types
+      // disagree. Role types (color3f) agree with their underlying type (float3)
+      // but are not equivalent; other mismatches are errors.
+      if (dst.props().at(prop.first).is_attribute() &&
+          prop.second.is_attribute()) {
+        const std::string &dst_type = dst.props().at(prop.first).get_attribute().type_name();
+        const std::string &src_type = prop.second.get_attribute().type_name();
+        if (!dst_type.empty() && !src_type.empty() && dst_type != src_type) {
+          // Check if types agree via role-type relationship
+          // (e.g., color3f agrees with float3, point3f with float3, etc.)
+          uint32_t dst_underlying = value::GetUnderlyingTypeId(dst_type);
+          uint32_t src_underlying = value::GetUnderlyingTypeId(src_type);
+          if (dst_underlying != src_underlying) {
+            PUSH_WARN(fmt::format(
+                "Type mismatch for property `{}`: stronger has `{}`, "
+                "weaker has `{}`. Composed value may be incorrect.",
+                prop.first, dst_type, src_type));
+          }
+        }
+      }
+
       // AOUSD Core Spec 12.2.3 (variability): If the stronger opinion did not
       // explicitly author variability, use the weaker opinion's variability.
       // Also consult the schema registry as the weakest fallback.
@@ -950,7 +971,8 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
                          const Layer &in_layer,
                          PrimSpec &primspec /* [inout] */, std::string *warn,
                          std::string *err,
-                         const PayloadCompositionOptions &options) {
+                         const PayloadCompositionOptions &options,
+                         ArcVisitedSet &visited) {
   if (depth > options.max_depth) {
     PUSH_ERROR_AND_RETURN("Too deep.");
   }
@@ -959,7 +981,7 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
   for (auto &child : primspec.children()) {
     const Path parent_prim_path = dst_prim_path.AppendPrim(child.name());
     if (!CompositePayloadRec(depth + 1, resolver, asset_search_paths, parent_prim_path, in_layer, child,
-                             warn, err, options)) {
+                             warn, err, options, visited)) {
       return false;
     }
   }
@@ -998,14 +1020,27 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
             }
           } else {
 
+            // Cycle detection for payload
+            auto visit_key = std::make_pair(
+                pl.asset_path.GetAssetPath(),
+                pl.prim_path.prim_part());
+            if (visited.count(visit_key)) {
+              PUSH_ERROR_AND_RETURN(fmt::format(
+                  "Cycle detected in `payload`: asset `{}` prim <{}>",
+                  visit_key.first, visit_key.second));
+            }
+            visited.insert(visit_key);
+
             if (!LoadAsset(resolver, cwp, search_paths, options.fileformats,
                            pl.asset_path, pl.prim_path, &layer, &src_ps,
                            /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat, warn, err)) {
-              PUSH_ERROR_AND_RETURN(fmt::format("Failed to `references` asset `{}`",
+              visited.erase(visit_key);
+              PUSH_ERROR_AND_RETURN(fmt::format("Failed to `payload` asset `{}`",
                                                 pl.asset_path.GetAssetPath()));
             }
+            visited.erase(visit_key);
           }
 
           if (!src_ps) {
@@ -1026,7 +1061,7 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
           // `inherits` op
           if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
             PUSH_ERROR_AND_RETURN(
-                fmt::format("Failed to reference layer `{}`", asset_path));
+                fmt::format("Failed to payload layer `{}`", asset_path));
           }
 
           // Modify Prim type if this PrimSpec is Model type.
@@ -1074,14 +1109,27 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
             }
           } else {
 
+            // Cycle detection for append payload
+            auto visit_key = std::make_pair(
+                pl.asset_path.GetAssetPath(),
+                pl.prim_path.prim_part());
+            if (visited.count(visit_key)) {
+              PUSH_ERROR_AND_RETURN(fmt::format(
+                  "Cycle detected in `payload`: asset `{}` prim <{}>",
+                  visit_key.first, visit_key.second));
+            }
+            visited.insert(visit_key);
+
             if (!LoadAsset(resolver, cwp, search_paths, options.fileformats,
                            pl.asset_path, pl.prim_path, &layer, &src_ps,
                            /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat, warn, err)) {
-              PUSH_ERROR_AND_RETURN(fmt::format("Failed to `references` asset `{}`",
+              visited.erase(visit_key);
+              PUSH_ERROR_AND_RETURN(fmt::format("Failed to `payload` asset `{}`",
                                                 pl.asset_path.GetAssetPath()));
             }
+            visited.erase(visit_key);
           }
 
           if (!src_ps) {
@@ -1102,7 +1150,7 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
           // `over` op
           if (!OverridePrimSpec(primspec, *src_ps, warn, err)) {
             PUSH_ERROR_AND_RETURN(
-                fmt::format("Failed to reference layer `{}`", asset_path));
+                fmt::format("Failed to payload layer `{}`", asset_path));
           }
 
           // Modify Prim type if this PrimSpec is Model type.
@@ -1150,23 +1198,31 @@ bool CompositeVariantRec(uint32_t depth, PrimSpec &primspec /* [inout] */,
   return true;
 }
 
+// Visited set for cycle detection in inherits/specializes.
+// Tracks prim paths within the same layer.
+using PathVisitedSet = std::set<std::string>;
+
 bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
                           PrimSpec &primspec /* [inout] */, std::string *warn,
-                          std::string *err) {
+                          std::string *err,
+                          PathVisitedSet &visited) {
   if (depth > (1024 * 1024)) {
     PUSH_ERROR_AND_RETURN("Too deep.");
   }
 
   // Traverse children first.
   for (auto &child : primspec.children()) {
-    if (!CompositeInheritsRec(depth + 1, layer, child, warn, err)) {
+    if (!CompositeInheritsRec(depth + 1, layer, child, warn, err, visited)) {
       return false;
     }
   }
 
   if (primspec.metas().inherits) {
-    // Process all listops in order (supports multiple listops per arc)
-    for (const auto &inherit_op : primspec.metas().inherits.value()) {
+    // Copy inherits data before iterating — InheritPrimSpec replaces primspec
+    // contents via move, invalidating references into metas().inherits.
+    auto inherits_copy = primspec.metas().inherits.value();
+
+    for (const auto &inherit_op : inherits_copy) {
       const auto &qual = inherit_op.first;
       const auto &inherits = inherit_op.second;
 
@@ -1179,9 +1235,18 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
           (qual == ListEditQual::Prepend)) {
         // Prepend/Reset: inherited content provides defaults, local wins.
         for (const auto &inheritPath : inherits) {
+          // Cycle detection
+          std::string key = inheritPath.prim_part();
+          if (visited.count(key)) {
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "Cycle detected in `inherits`: prim <{}>", key));
+          }
+          visited.insert(key);
+
           const PrimSpec *src_ps{nullptr};
 
           if (!layer.find_primspec_at(inheritPath, &src_ps, err)) {
+            visited.erase(key);
             if (err) {
               (*err) += "Inherit failed: Path <" +
                         inheritPath.prim_part() + "> not found or is invalid.\n";
@@ -1190,13 +1255,16 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
           }
 
           if (!src_ps) {
+            visited.erase(key);
             PUSH_ERROR_AND_RETURN(
                 "Internal error: PrimSpec is nullptr in CompositeInheritsRec.\n");
           }
 
           if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
+            visited.erase(key);
             return false;
           }
+          visited.erase(key);
         }
       } else if (qual == ListEditQual::Append ||
                  qual == ListEditQual::Add) {
@@ -1205,9 +1273,18 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
         }
         // Append: inherited content fills in remaining gaps (weaker than prepend inherits).
         for (const auto &inheritPath : inherits) {
+          // Cycle detection
+          std::string key = inheritPath.prim_part();
+          if (visited.count(key)) {
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "Cycle detected in `inherits`: prim <{}>", key));
+          }
+          visited.insert(key);
+
           const PrimSpec *src_ps{nullptr};
 
           if (!layer.find_primspec_at(inheritPath, &src_ps, err)) {
+            visited.erase(key);
             if (err) {
               (*err) += "Inherit failed: Path <" +
                         inheritPath.prim_part() + "> not found or is invalid.\n";
@@ -1216,13 +1293,16 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
           }
 
           if (!src_ps) {
+            visited.erase(key);
             PUSH_ERROR_AND_RETURN(
                 "Internal error: PrimSpec is nullptr in CompositeInheritsRec.\n");
           }
 
           if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
+            visited.erase(key);
             return false;
           }
+          visited.erase(key);
         }
       } else if (qual == ListEditQual::Delete) {
         // Delete: remove inherit targets from the composed list.
@@ -1443,11 +1523,13 @@ bool CompositePayload(AssetResolutionResolver &resolver, const Layer &in_layer,
 
   Layer dst = in_layer;  // deep copy
 
+  ArcVisitedSet visited;  // Cycle detection set — shared across all root prims
+
   for (auto &item : dst.primspecs()) {
     Path primPath("/" + item.first, "");
     if (!CompositePayloadRec(/* depth */ 0, resolver,
                              item.second.get_asset_search_paths(), primPath, in_layer, item.second,
-                             warn, err, options)) {
+                             warn, err, options, visited)) {
       PUSH_ERROR_AND_RETURN("Composite `payload` failed.");
     }
   }
@@ -1486,8 +1568,10 @@ bool CompositeInherits(const Layer &in_layer, Layer *composited_layer,
 
   Layer dst = in_layer;  // deep copy
 
+  PathVisitedSet visited;  // Cycle detection set
+
   for (auto &item : dst.primspecs()) {
-    if (!CompositeInheritsRec(/* depth */ 0, dst, item.second, warn, err)) {
+    if (!CompositeInheritsRec(/* depth */ 0, dst, item.second, warn, err, visited)) {
       PUSH_ERROR_AND_RETURN("Composite `inherits` failed.");
     }
   }
@@ -1506,20 +1590,25 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
 
 static bool CompositeSpecializesRec(uint32_t depth, const Layer &layer,
                                     PrimSpec &primspec /* [inout] */,
-                                    std::string *warn, std::string *err) {
+                                    std::string *warn, std::string *err,
+                                    PathVisitedSet &visited) {
   if (depth > (1024 * 1024)) {
     PUSH_ERROR_AND_RETURN("Too deep in CompositeSpecializesRec.");
   }
 
   // Traverse children first.
   for (auto &child : primspec.children()) {
-    if (!CompositeSpecializesRec(depth + 1, layer, child, warn, err)) {
+    if (!CompositeSpecializesRec(depth + 1, layer, child, warn, err, visited)) {
       return false;
     }
   }
 
   if (primspec.metas().specializes) {
-    for (const auto &specialize_op : primspec.metas().specializes.value()) {
+    // Copy specializes data before iterating — InheritPrimSpecImpl replaces
+    // primspec contents via move, invalidating references into metas().specializes.
+    auto specializes_copy = primspec.metas().specializes.value();
+
+    for (const auto &specialize_op : specializes_copy) {
       const auto &qual = specialize_op.first;
       const auto &specializes = specialize_op.second;
 
@@ -1530,9 +1619,18 @@ static bool CompositeSpecializesRec(uint32_t depth, const Layer &layer,
       if ((qual == ListEditQual::ResetToExplicit) ||
           (qual == ListEditQual::Prepend)) {
         for (const auto &specializePath : specializes) {
+          // Cycle detection
+          std::string key = specializePath.prim_part();
+          if (visited.count(key)) {
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "Cycle detected in `specializes`: prim <{}>", key));
+          }
+          visited.insert(key);
+
           const PrimSpec *src_ps{nullptr};
 
           if (!layer.find_primspec_at(specializePath, &src_ps, err)) {
+            visited.erase(key);
             if (err) {
               (*err) += "Specialize failed: Path <" +
                         specializePath.prim_part() + "> not found.\n";
@@ -1541,13 +1639,16 @@ static bool CompositeSpecializesRec(uint32_t depth, const Layer &layer,
           }
 
           if (!src_ps) {
+            visited.erase(key);
             PUSH_ERROR_AND_RETURN(
                 "Internal error: PrimSpec is nullptr in CompositeSpecializesRec.\n");
           }
 
           if (!detail::InheritPrimSpecImpl(primspec, *src_ps, warn, err)) {
+            visited.erase(key);
             return false;
           }
+          visited.erase(key);
         }
       } else if (qual == ListEditQual::Append ||
                  qual == ListEditQual::Add) {
@@ -1555,9 +1656,18 @@ static bool CompositeSpecializesRec(uint32_t depth, const Layer &layer,
           PushWarn("`add` list edit qualifier is deprecated (AOUSD Core Spec 6.6.3.10). Treating as `append`.\n");
         }
         for (const auto &specializePath : specializes) {
+          // Cycle detection
+          std::string key = specializePath.prim_part();
+          if (visited.count(key)) {
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "Cycle detected in `specializes`: prim <{}>", key));
+          }
+          visited.insert(key);
+
           const PrimSpec *src_ps{nullptr};
 
           if (!layer.find_primspec_at(specializePath, &src_ps, err)) {
+            visited.erase(key);
             if (err) {
               (*err) += "Specialize failed: Path <" +
                         specializePath.prim_part() + "> not found.\n";
@@ -1566,13 +1676,16 @@ static bool CompositeSpecializesRec(uint32_t depth, const Layer &layer,
           }
 
           if (!src_ps) {
+            visited.erase(key);
             PUSH_ERROR_AND_RETURN(
                 "Internal error: PrimSpec is nullptr in CompositeSpecializesRec.\n");
           }
 
           if (!detail::InheritPrimSpecImpl(primspec, *src_ps, warn, err)) {
+            visited.erase(key);
             return false;
           }
+          visited.erase(key);
         }
       } else if (qual == ListEditQual::Delete) {
         PushWarn("`delete` specializes list edit: cannot undo already-flattened specializes. Skipping.\n");
@@ -1598,8 +1711,10 @@ bool CompositeSpecializes(const Layer &in_layer, Layer *composited_layer,
 
   Layer dst = in_layer;
 
+  PathVisitedSet visited;  // Cycle detection set
+
   for (auto &item : dst.primspecs()) {
-    if (!CompositeSpecializesRec(/* depth */ 0, dst, item.second, warn, err)) {
+    if (!CompositeSpecializesRec(/* depth */ 0, dst, item.second, warn, err, visited)) {
       PUSH_ERROR_AND_RETURN("Composite `specializes` failed.");
     }
   }

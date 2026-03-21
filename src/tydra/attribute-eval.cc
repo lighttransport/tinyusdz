@@ -104,6 +104,47 @@ bool ToTerminalAttributeValue(
 // Simple clip asset cache to avoid reloading the same file repeatedly.
 static std::map<std::string, Layer> s_clip_cache;
 
+// Helper: load a clip layer from file with caching.
+static Layer *LoadClipLayer(const std::string &clipAssetPath) {
+  auto cache_it = s_clip_cache.find(clipAssetPath);
+  if (cache_it != s_clip_cache.end()) {
+    return &cache_it->second;
+  }
+
+  Layer loaded_layer;
+  std::string warn, load_err;
+  if (LoadLayerFromFile(clipAssetPath, &loaded_layer, &warn, &load_err)) {
+    s_clip_cache[clipAssetPath] = std::move(loaded_layer);
+    return &s_clip_cache[clipAssetPath];
+  }
+
+  DCOUT("Failed to load clip asset: " << clipAssetPath << " : " << load_err);
+  return nullptr;
+}
+
+// Helper: query an attribute from a clip layer at a given time.
+static bool QueryClipAttribute(
+    Layer *clip_layer, const std::string &primPath,
+    const std::string &attr_name, TerminalAttributeValue *value,
+    std::string *err, double clipTime,
+    value::TimeSampleInterpolationType tinterp) {
+  const PrimSpec *target_ps = nullptr;
+  std::string find_err;
+  Path clip_prim_path(primPath, "");
+  if (!clip_layer->find_primspec_at(clip_prim_path, &target_ps, &find_err)) {
+    return false;
+  }
+  if (!target_ps) return false;
+
+  const auto &props = target_ps->props();
+  auto prop_it = props.find(attr_name);
+  if (prop_it == props.end()) return false;
+  if (!prop_it->second.is_attribute()) return false;
+
+  const Attribute &clip_attr = prop_it->second.get_attribute();
+  return ToTerminalAttributeValue(clip_attr, value, err, clipTime, tinterp);
+}
+
 bool EvaluateAttributeFromClips(
     const Prim &prim,
     const std::string &attr_name,
@@ -121,25 +162,21 @@ bool EvaluateAttributeFromClips(
     return false;
   }
 
-  // Parse clip set metadata
-  std::vector<std::string> assetPaths;
-  std::vector<std::pair<double, double>> times;
-  std::vector<std::pair<double, int>> active;
-  std::string primPath;
-
-  if (!ParseClipSetMetadata(clips_dict, &assetPaths, &times, &active,
-                             &primPath, err)) {
+  // Parse full clip set metadata
+  ClipSetMetadata clipMeta;
+  if (!ParseClipSetMetadataFull(clips_dict, &clipMeta, err)) {
     return false;
   }
 
-  if (assetPaths.empty()) {
+  if (clipMeta.assetPaths.empty()) {
     return false;
   }
 
   // Resolve which clip and time to use
   std::string clipAssetPath;
   double clipTime = 0;
-  if (!ResolveValueClipQuery(active, times, assetPaths, t,
+  if (!ResolveValueClipQuery(clipMeta.active, clipMeta.times,
+                              clipMeta.assetPaths, t,
                               &clipAssetPath, &clipTime)) {
     return false;
   }
@@ -147,56 +184,68 @@ bool EvaluateAttributeFromClips(
   DCOUT("Clip query: asset=" << clipAssetPath << " clipTime=" << clipTime);
 
   // Load the clip asset (with caching)
-  Layer *clip_layer = nullptr;
-  auto cache_it = s_clip_cache.find(clipAssetPath);
-  if (cache_it != s_clip_cache.end()) {
-    clip_layer = &cache_it->second;
-  } else {
-    // Try to load the clip file
-    Layer loaded_layer;
-    std::string warn, load_err;
-    if (LoadLayerFromFile(clipAssetPath, &loaded_layer, &warn, &load_err)) {
-      s_clip_cache[clipAssetPath] = std::move(loaded_layer);
-      clip_layer = &s_clip_cache[clipAssetPath];
-    } else {
-      DCOUT("Failed to load clip asset: " << clipAssetPath << " : " << load_err);
-      return false;  // Clip asset not available — fallback
+  Layer *clip_layer = LoadClipLayer(clipAssetPath);
+
+  if (clip_layer) {
+    if (QueryClipAttribute(clip_layer, clipMeta.primPath, attr_name,
+                            value, err, clipTime, tinterp)) {
+      return true;
     }
   }
 
-  if (!clip_layer) {
-    return false;
+  // AOUSD Core Spec 12.3.4.6: interpolateMissingClipValues
+  // If the active clip is unavailable and this flag is true, try to
+  // interpolate from the nearest available adjacent clips.
+  if (clipMeta.interpolateMissingClipValues && clipMeta.active.size() >= 2) {
+    // Find the previous and next available clips
+    int activeIdx = FindActiveClipIndex(clipMeta.active, t);
+    int prevIdx = -1, nextIdx = -1;
+
+    // Search backward for previous available clip
+    for (int i = activeIdx - 1; i >= 0; i--) {
+      int assetIdx = clipMeta.active[static_cast<size_t>(i)].second;
+      if (assetIdx >= 0 && assetIdx < static_cast<int>(clipMeta.assetPaths.size())) {
+        Layer *prev = LoadClipLayer(clipMeta.assetPaths[static_cast<size_t>(assetIdx)]);
+        if (prev) { prevIdx = i; break; }
+      }
+    }
+
+    // Search forward for next available clip
+    for (size_t i = static_cast<size_t>(activeIdx) + 1; i < clipMeta.active.size(); i++) {
+      int assetIdx = clipMeta.active[i].second;
+      if (assetIdx >= 0 && assetIdx < static_cast<int>(clipMeta.assetPaths.size())) {
+        Layer *next = LoadClipLayer(clipMeta.assetPaths[static_cast<size_t>(assetIdx)]);
+        if (next) { nextIdx = static_cast<int>(i); break; }
+      }
+    }
+
+    // If we found both neighbors, return value from the nearest one
+    // (Full interpolation between two clips requires type-aware lerp
+    // which is complex; for now return the nearest available value)
+    if (prevIdx >= 0) {
+      int assetIdx = clipMeta.active[static_cast<size_t>(prevIdx)].second;
+      Layer *prev = LoadClipLayer(clipMeta.assetPaths[static_cast<size_t>(assetIdx)]);
+      double prevClipTime = RemapStageTimeToClipTime(clipMeta.times,
+          clipMeta.active[static_cast<size_t>(prevIdx)].first);
+      if (prev && QueryClipAttribute(prev, clipMeta.primPath, attr_name,
+                                      value, err, prevClipTime, tinterp)) {
+        return true;
+      }
+    }
+
+    if (nextIdx >= 0) {
+      int assetIdx = clipMeta.active[static_cast<size_t>(nextIdx)].second;
+      Layer *next = LoadClipLayer(clipMeta.assetPaths[static_cast<size_t>(assetIdx)]);
+      double nextClipTime = RemapStageTimeToClipTime(clipMeta.times,
+          clipMeta.active[static_cast<size_t>(nextIdx)].first);
+      if (next && QueryClipAttribute(next, clipMeta.primPath, attr_name,
+                                      value, err, nextClipTime, tinterp)) {
+        return true;
+      }
+    }
   }
 
-  // Find the target PrimSpec by primPath
-  const PrimSpec *target_ps = nullptr;
-  std::string find_err;
-  Path clip_prim_path(primPath, "");
-  if (!clip_layer->find_primspec_at(clip_prim_path, &target_ps, &find_err)) {
-    DCOUT("primPath not found in clip: " << primPath);
-    return false;
-  }
-
-  if (!target_ps) {
-    return false;
-  }
-
-  // Find the attribute in the clip PrimSpec
-  const auto &props = target_ps->props();
-  auto prop_it = props.find(attr_name);
-  if (prop_it == props.end()) {
-    DCOUT("Attribute " << attr_name << " not found in clip PrimSpec");
-    return false;
-  }
-
-  if (!prop_it->second.is_attribute()) {
-    return false;
-  }
-
-  const Attribute &clip_attr = prop_it->second.get_attribute();
-
-  // Evaluate at clip time
-  return ToTerminalAttributeValue(clip_attr, value, err, clipTime, tinterp);
+  return false;
 }
 
 //
