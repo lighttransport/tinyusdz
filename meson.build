@@ -1,10 +1,659 @@
-# TODO(syoyo): OSD support, audio support, tinyexr support
+# TinyUSDZ Meson build
+# Source list synchronized with CMakeLists.txt
 
-project('tinyusdz', 'cpp', default_options : ['cpp_std=c++11'])
+project('tinyusdz', ['c', 'cpp'],
+  version: '0.8.0',
+  default_options: [
+    'cpp_std=c++17',
+    'c_std=c11',
+  ],
+  meson_version: '>= 0.56.0',
+)
 
-incdirs = include_directories('src')
-library('tinyusdz',
-  'src/pxrLZ4/lz4.cpp', 'src/tinyusdz.cc',
-  'src/lz4-compression.cc',
+cc = meson.get_compiler('c')
+cxx = meson.get_compiler('cpp')
+
+# ============================================================================
+# Options
+# ============================================================================
+
+opt_tydra = get_option('tydra')
+opt_builtin_image_loader = get_option('builtin_image_loader')
+opt_usdmtlx = get_option('usdmtlx')
+opt_json = get_option('json')
+opt_usdobj = get_option('usdobj')
+opt_usdvox = get_option('usdvox')
+opt_exr = get_option('exr')
+opt_colorio = get_option('colorio')
+opt_audio = get_option('audio')
+opt_zstd = get_option('zstd')
+opt_pxr_compat_api = get_option('pxr_compat_api')
+opt_usdfbx = get_option('usdfbx')
+opt_opensubdiv = get_option('opensubdiv')
+opt_meshopt = get_option('meshopt')
+opt_alac_audio = get_option('alac_audio')
+opt_mcp_server = get_option('mcp_server')
+opt_qjs = get_option('qjs')
+opt_wamr = get_option('wamr')
+opt_geogram = get_option('geogram')
+opt_remotery = get_option('remotery')
+opt_production_build = get_option('production_build')
+opt_debug_print = get_option('debug_print')
+opt_shared_lib = get_option('shared_lib')
+opt_system_zlib = get_option('system_zlib')
+opt_system_zstd = get_option('system_zstd')
+
+# MCP server requires JSON
+if opt_mcp_server
+  opt_json = true
+endif
+
+# ============================================================================
+# Compile definitions
+# ============================================================================
+
+tinyusdz_defines = []
+
+if opt_json
+  tinyusdz_defines += '-DTINYUSDZ_WITH_JSON'
+endif
+if opt_usdmtlx
+  tinyusdz_defines += '-DTINYUSDZ_USE_USDMTLX'
+endif
+if opt_usdobj
+  tinyusdz_defines += '-DTINYUSDZ_USE_USDOBJ'
+endif
+if opt_usdvox
+  tinyusdz_defines += '-DTINYUSDZ_USE_USDVOX'
+endif
+if opt_usdfbx
+  tinyusdz_defines += '-DTINYUSDZ_USE_USDFBX'
+endif
+if opt_exr
+  tinyusdz_defines += '-DTINYUSDZ_WITH_EXR'
+endif
+if opt_colorio
+  tinyusdz_defines += '-DTINYUSDZ_WITH_COLORIO'
+endif
+if opt_audio
+  tinyusdz_defines += '-DTINYUSDZ_WITH_AUDIO'
+endif
+if opt_alac_audio
+  tinyusdz_defines += '-DTINYUSDZ_WITH_ALAC_AUDIO'
+endif
+if opt_tydra
+  tinyusdz_defines += '-DTINYUSDZ_WITH_TYDRA'
+endif
+if opt_zstd
+  tinyusdz_defines += '-DTINYUSDZ_WITH_ZSTD_COMPRESSION'
+endif
+if opt_opensubdiv
+  tinyusdz_defines += '-DTINYUSDZ_WITH_OPENSUBDIV'
+endif
+if opt_meshopt
+  tinyusdz_defines += '-DTINYUSDZ_WITH_MESHOPT'
+endif
+if opt_geogram
+  tinyusdz_defines += ['-DTINYUSDZ_WITH_GEOGRAM', '-DGEO_STATIC_LIBS', '-DGEOGRAM_WITH_LEGACY_NUMERICS']
+endif
+if opt_wamr
+  tinyusdz_defines += '-DTINYUSDZ_WITH_WAMR'
+  if host_machine.system() == 'windows'
+    tinyusdz_defines += '-DBH_PLATFORM_WINDOWS=1'
+  else
+    tinyusdz_defines += '-DBH_PLATFORM_LINUX=1'
+  endif
+endif
+if opt_mcp_server
+  tinyusdz_defines += ['-DTINYUSDZ_WITH_MCP_SERVER', '-DOPENSSL_API_3_0']
+endif
+if opt_qjs
+  tinyusdz_defines += '-DTINYUSDZ_WITH_QJS'
+endif
+if opt_remotery
+  tinyusdz_defines += '-DRMT_ENABLED=1'
+  if host_machine.system() == 'windows'
+    tinyusdz_defines += '-DRMT_USE_D3D11=0'
+  elif host_machine.system() == 'darwin'
+    tinyusdz_defines += '-DRMT_USE_METAL=0'
+  elif host_machine.system() == 'linux'
+    tinyusdz_defines += '-DRMT_USE_OPENGL=0'
+  endif
+endif
+if opt_production_build
+  tinyusdz_defines += '-DTINYUSDZ_PRODUCTION_BUILD'
+endif
+if opt_debug_print
+  tinyusdz_defines += '-DTINYUSDZ_DEBUG_PRINT'
+endif
+if not get_option('builtin_image_loader')
+  tinyusdz_defines += '-DTINYUSDZ_NO_BUILTIN_IMAGE_LOADER'
+endif
+
+# Inverted module flags
+if not get_option('module_usda_reader')
+  tinyusdz_defines += '-DTINYUSDZ_DISABLE_MODULE_USDA_READER'
+endif
+if not get_option('module_usda_writer')
+  tinyusdz_defines += '-DTINYUSDZ_DISABLE_MODULE_USDA_WRITER'
+endif
+if not get_option('module_usdc_reader')
+  tinyusdz_defines += '-DTINYUSDZ_DISABLE_MODULE_USDC_READER'
+endif
+if not get_option('module_usdc_writer')
+  tinyusdz_defines += '-DTINYUSDZ_DISABLE_MODULE_USDC_WRITER'
+endif
+
+# ============================================================================
+# Core sources (always compiled)
+# ============================================================================
+
+tinyusdz_sources = files(
+  'src/arg-parser.cc',
+  'src/asset-resolution.cc',
+  'src/tinyusdz.cc',
+  'src/xform.cc',
+  'src/performance.cc',
+  'src/ascii-parser.cc',
+  'src/ascii-parser-props.cc',
+  'src/ascii-parser-entry.cc',
+  'src/ascii-parser-basetype.cc',
+  'src/ascii-parser-timesamples.cc',
+  'src/ascii-parser-timesamples-array.cc',
+  'src/audio-loader.cc',
+  'src/base122.cc',
+  'src/usda-reader.cc',
+  'src/usdc-reader.cc',
+  'src/usdc-reader-property.cc',
+  'src/usdc-reader-prim.cc',
+  'src/usdc-reader-reconstruct.cc',
+  'src/usda-writer.cc',
+  'src/usdc-writer.cc',
+  'src/composition.cc',
+  'src/composition-reconstruct.cc',
+  'src/chunk-reader.cc',
+  'src/crate-reader.cc',
+  'src/crate-reader-arrays.cc',
+  'src/crate-reader-values.cc',
+  'src/crate-reader-paths.cc',
+  'src/crate-reader-timesamples.cc',
+  'src/crate-format.cc',
+  'src/crate-writer.cc',
+  'src/stage-converter.cc',
+  'src/sconv-geom.cc',
+  'src/sconv-shader.cc',
+  'src/sconv-light.cc',
+  'src/sconv-skel.cc',
+  'src/sconv-layer.cc',
+  'src/crate-pprint.cc',
+  'src/crate-dump.cc',
+  'src/path-util.cc',
+  'src/prim-reconstruct.cc',
+  'src/prim-reconstruct-shader.cc',
+  'src/prim-composition.cc',
+  'src/prim-types.cc',
+  'src/core/prim-enums.cc',
+  'src/enum-handlers.cc',
+  'src/layer.cc',
+  'src/primvar.cc',
+  'src/str-util.cc',
+  'src/usd-dump.cc',
+  'src/value-pprint.cc',
+  'src/value-types.cc',
+  'src/color-space.cc',
+  'src/tiny-format.cc',
+  'src/tiny-string.cc',
+  'src/io-util.cc',
+  'src/image-loader.cc',
+  'src/image-writer.cc',
+  'src/image-util.cc',
+  'src/linear-algebra.cc',
+  'src/value-eval-util.cc',
+  'src/usdGeom.cc',
+  'src/usdSkel.cc',
+  'src/usdShade.cc',
+  'src/usdLux.cc',
+  'src/mtlx-xml-tokenizer.cc',
+  'src/mtlx-xml-parser.cc',
+  'src/mtlx-dom.cc',
+  'src/mtlx-simple-parser.cc',
+  'src/usdMtlx.cc',
+  'src/usdObj.cc',
+  'src/pprint-enum.cc',
+  'src/pprint-meta.cc',
+  'src/pprint-geom.cc',
+  'src/pprint-shader.cc',
+  'src/pprint-light.cc',
+  'src/pprint-skel.cc',
+  'src/pprinter.cc',
+  'src/timesamples-pprint.cc',
+  'src/timesamples.cc',
+  'src/stage.cc',
+  'src/uuid-gen.cc',
+  'src/parser-timing.cc',
+  'src/sha256.cc',
+  'src/typed-array.cc',
+  'src/task-queue.cc',
+  'src/prim-pprint-parallel.cc',
+)
+
+# ============================================================================
+# Dependency sources (always compiled)
+# ============================================================================
+
+tinyusdz_dep_sources = files(
   'src/integerCoding.cpp',
-  include_directories : incdirs )
+  'src/lz4-compression.cc',
+  'src/lz4/lz4.c',
+)
+
+# ============================================================================
+# Conditional sources
+# ============================================================================
+
+# -- Tydra --
+if opt_tydra
+  tinyusdz_sources += files(
+    'src/tydra/facial.cc',
+    'src/tydra/prim-apply.cc',
+    'src/tydra/scene-access.cc',
+    'src/tydra/scene-analysis.cc',
+    'src/tydra/attribute-eval.cc',
+    'src/tydra/attribute-eval-typed-all.cc',
+    'src/tydra/command-and-history.cc',
+    'src/tydra/obj-export.cc',
+    'src/tydra/usd-export.cc',
+    'src/tydra/shader-network.cc',
+    'src/tydra/render-data.cc',
+    'src/tydra/render-data-mesh.cc',
+    'src/tydra/render-data-material.cc',
+    'src/tydra/render-data-anim.cc',
+    'src/tydra/render-data-pprint.cc',
+    'src/tydra/raytracing-data.cc',
+    'src/tydra/raytracing-scene-converter.cc',
+    'src/tydra/material-serializer.cc',
+    'src/tydra/materialx-to-json.cc',
+    'src/tydra/render-scene-dump.cc',
+    'src/tydra/bone-util.cc',
+    'src/tydra/layer-to-renderscene.cc',
+    'src/tydra/texture-util.cc',
+    'src/tydra/variant-support.cc',
+    'src/tydra/variant-converter.cc',
+    'src/tydra/variant-applier.cc',
+    'src/tydra/mcp.cc',
+    'src/tydra/mcp-tools.cc',
+    'src/tydra/mcp-resources.cc',
+    'src/tydra/mcp-server.cc',
+    'src/tydra/diff-and-compare.cc',
+    'src/tydra/js-script.cc',
+    'src/tydra/threejs-exporter.cc',
+  )
+  tinyusdz_dep_sources += files('src/external/mikktspace/mikktspace.c')
+
+  if opt_wamr
+    tinyusdz_sources += files('src/tydra/wasm-runtime.cc')
+  endif
+endif
+
+# -- pxr compat API --
+if opt_pxr_compat_api
+  tinyusdz_sources += files('src/pxr-compat.cc')
+endif
+
+# -- usdMtlx (pugixml) --
+if opt_usdmtlx
+  tinyusdz_dep_sources += files('src/external/pugixml.cpp')
+endif
+
+# -- JSON --
+if opt_json
+  tinyusdz_sources += files(
+    'src/json-to-usd.cc',
+    'src/usd-to-json.cc',
+    'src/json-writer.cc',
+    'src/json-util.cc',
+  )
+  tinyusdz_dep_sources += files('src/external/yyjson.c')
+endif
+
+# -- usdFbx --
+if opt_usdfbx
+  tinyusdz_sources += files('src/usdFbx.cc')
+  tinyusdz_dep_sources += files('src/external/OpenFBX/src/ofbx.cpp')
+endif
+
+# -- usdObj --
+if opt_usdobj
+  tinyusdz_dep_sources += files('src/external/tiny_obj_loader.cc')
+endif
+
+# -- usdVox --
+if opt_usdvox
+  tinyusdz_sources += files('src/usdVox.cc')
+endif
+
+# -- ALAC audio --
+if opt_alac_audio
+  tinyusdz_dep_sources += files(
+    'src/external/alac/codec/EndianPortable.c',
+    'src/external/alac/codec/ALACBitUtilities.c',
+    'src/external/alac/codec/ALACDecoder.cpp',
+    'src/external/alac/codec/ALACEncoder.cpp',
+    'src/external/alac/codec/ag_dec.c',
+    'src/external/alac/codec/ag_enc.c',
+    'src/external/alac/codec/dp_dec.c',
+    'src/external/alac/codec/dp_enc.c',
+    'src/external/alac/codec/matrix_dec.c',
+    'src/external/alac/codec/matrix_enc.c',
+  )
+endif
+
+# -- MCP server --
+if opt_mcp_server
+  tinyusdz_dep_sources += files('src/external/civetweb/civetweb.c')
+endif
+
+# -- QuickJS --
+if opt_qjs
+  tinyusdz_dep_sources += files(
+    'src/external/quickjs-ng/cutils.c',
+    'src/external/quickjs-ng/libregexp.c',
+    'src/external/quickjs-ng/libunicode.c',
+    'src/external/quickjs-ng/quickjs.c',
+    'src/external/quickjs-ng/xsum.c',
+  )
+endif
+
+# -- meshoptimizer --
+if opt_meshopt
+  tinyusdz_dep_sources += files(
+    'src/external/meshoptimizer/allocator.cpp',
+    'src/external/meshoptimizer/clusterizer.cpp',
+    'src/external/meshoptimizer/indexanalyzer.cpp',
+    'src/external/meshoptimizer/indexcodec.cpp',
+    'src/external/meshoptimizer/indexgenerator.cpp',
+    'src/external/meshoptimizer/overdrawoptimizer.cpp',
+    'src/external/meshoptimizer/partition.cpp',
+    'src/external/meshoptimizer/quantization.cpp',
+    'src/external/meshoptimizer/rasterizer.cpp',
+    'src/external/meshoptimizer/simplifier.cpp',
+    'src/external/meshoptimizer/spatialorder.cpp',
+    'src/external/meshoptimizer/stripifier.cpp',
+    'src/external/meshoptimizer/vcacheoptimizer.cpp',
+    'src/external/meshoptimizer/vertexcodec.cpp',
+    'src/external/meshoptimizer/vertexfilter.cpp',
+    'src/external/meshoptimizer/vfetchoptimizer.cpp',
+  )
+endif
+
+# -- Remotery --
+if opt_remotery
+  tinyusdz_dep_sources += files('src/external/Remotery/Remotery.c')
+endif
+
+# -- Geogram --
+if opt_geogram
+  tinyusdz_dep_sources += files(
+    'src/external/geogram/geogram/third_party/triangle/triangle.c',
+  )
+endif
+
+# ============================================================================
+# Per-file compile flags (built as separate static libs)
+# ============================================================================
+
+extra_link_libs = []
+tinyusdz_inc = include_directories('src')
+
+# -- fpng (needs FPNG_NO_SSE=1) --
+if opt_builtin_image_loader
+  fpng_lib = static_library('tinyusdz_fpng',
+    'src/external/fpng.cpp',
+    include_directories: tinyusdz_inc,
+    cpp_args: ['-DFPNG_NO_SSE=1'],
+    pic: true,
+  )
+  extra_link_libs += fpng_lib
+endif
+
+# -- zstd (needs ZSTD_DISABLE_ASM=1, suppress warnings) --
+if opt_zstd and not opt_system_zstd
+  zstd_lib = static_library('tinyusdz_zstd',
+    'src/external/zstd.c',
+    include_directories: tinyusdz_inc,
+    c_args: ['-DZSTD_DISABLE_ASM=1', '-w'],
+    pic: true,
+  )
+  extra_link_libs += zstd_lib
+  tinyusdz_dep_sources += files('src/zstd-compression.cc')
+elif opt_zstd and opt_system_zstd
+  tinyusdz_dep_sources += files('src/zstd-compression.cc')
+endif
+
+# -- EXR (tinyexr) --
+if opt_exr
+  # Use TinyEXR v3 API by default
+  exr_c_args = []
+  exr_cpp_args = []
+  if opt_system_zlib
+    exr_c_args += ['-DTINYEXR_V3_HAS_DEFLATE=1', '-DTINYEXR_V3_NO_MINIZ=1']
+    exr_cpp_args += ['-DTINYEXR_USE_MINIZ=0']
+  endif
+  exr_inc = [tinyusdz_inc]
+  if not opt_system_zlib
+    exr_inc += include_directories('src/external')
+  endif
+
+  exr_lib = static_library('tinyusdz_exr',
+    'src/external/tinyexr_c_impl.c',
+    'src/external/tinyexr.cc',
+    include_directories: exr_inc,
+    c_args: exr_c_args,
+    cpp_args: exr_cpp_args,
+    pic: true,
+  )
+  extra_link_libs += exr_lib
+endif
+
+# -- miniz (for EXR/TIFF when not using system zlib) --
+if (opt_exr or get_option('usdmtlx')) and not opt_system_zlib
+  miniz_lib = static_library('tinyusdz_miniz',
+    'src/external/miniz.c',
+    include_directories: tinyusdz_inc,
+    c_args: ['-D_LARGEFILE64_SOURCE=1'],
+    pic: true,
+  )
+  extra_link_libs += miniz_lib
+endif
+
+# ============================================================================
+# OpenSubdiv sources
+# ============================================================================
+
+osd_inc = []
+if opt_opensubdiv
+  osd_dir = 'src/osd'
+  tinyusdz_sources += files('src/subdiv.cc')
+  osd_sources = files(
+    osd_dir / 'opensubdiv/far/bilinearPatchBuilder.cpp',
+    osd_dir / 'opensubdiv/far/catmarkPatchBuilder.cpp',
+    osd_dir / 'opensubdiv/far/error.cpp',
+    osd_dir / 'opensubdiv/far/loopPatchBuilder.cpp',
+    osd_dir / 'opensubdiv/far/patchBasis.cpp',
+    osd_dir / 'opensubdiv/far/patchBuilder.cpp',
+    osd_dir / 'opensubdiv/far/patchDescriptor.cpp',
+    osd_dir / 'opensubdiv/far/patchMap.cpp',
+    osd_dir / 'opensubdiv/far/patchTable.cpp',
+    osd_dir / 'opensubdiv/far/patchTableFactory.cpp',
+    osd_dir / 'opensubdiv/far/ptexIndices.cpp',
+    osd_dir / 'opensubdiv/far/stencilTable.cpp',
+    osd_dir / 'opensubdiv/far/stencilTableFactory.cpp',
+    osd_dir / 'opensubdiv/far/stencilBuilder.cpp',
+    osd_dir / 'opensubdiv/far/topologyDescriptor.cpp',
+    osd_dir / 'opensubdiv/far/topologyRefiner.cpp',
+    osd_dir / 'opensubdiv/far/topologyRefinerFactory.cpp',
+    osd_dir / 'opensubdiv/osd/cpuEvaluator.cpp',
+    osd_dir / 'opensubdiv/osd/cpuKernel.cpp',
+    osd_dir / 'opensubdiv/osd/cpuPatchTable.cpp',
+    osd_dir / 'opensubdiv/osd/cpuVertexBuffer.cpp',
+    osd_dir / 'opensubdiv/sdc/typeTraits.cpp',
+    osd_dir / 'opensubdiv/sdc/crease.cpp',
+    osd_dir / 'opensubdiv/vtr/fvarLevel.cpp',
+    osd_dir / 'opensubdiv/vtr/fvarRefinement.cpp',
+    osd_dir / 'opensubdiv/vtr/level.cpp',
+    osd_dir / 'opensubdiv/vtr/quadRefinement.cpp',
+    osd_dir / 'opensubdiv/vtr/refinement.cpp',
+    osd_dir / 'opensubdiv/vtr/sparseSelector.cpp',
+    osd_dir / 'opensubdiv/vtr/triRefinement.cpp',
+  )
+
+  osd_lib = static_library('tinyusdz_osd',
+    osd_sources,
+    include_directories: include_directories('src/osd'),
+    pic: true,
+  )
+  extra_link_libs += osd_lib
+  osd_inc = [include_directories('src/osd')]
+endif
+
+# ============================================================================
+# WAMR sources
+# ============================================================================
+
+wamr_inc = []
+if opt_wamr
+  wamr_sources = files(
+    'src/external/wamr/core/iwasm/common/wasm_runtime_common.c',
+    'src/external/wamr/core/iwasm/common/wasm_native.c',
+    'src/external/wamr/core/iwasm/common/wasm_exec_env.c',
+    'src/external/wamr/core/iwasm/common/wasm_memory.c',
+    'src/external/wamr/core/iwasm/common/wasm_c_api.c',
+    'src/external/wamr/core/iwasm/interpreter/wasm_loader.c',
+    'src/external/wamr/core/iwasm/interpreter/wasm_runtime.c',
+    'src/external/wamr/core/iwasm/interpreter/wasm_interp_classic.c',
+    'src/external/wamr/core/iwasm/libraries/libc-builtin/libc_builtin_wrapper.c',
+    'src/external/wamr/core/shared/mem-alloc/mem_alloc.c',
+    'src/external/wamr/core/shared/mem-alloc/ems/ems_alloc.c',
+    'src/external/wamr/core/shared/mem-alloc/ems/ems_hmu.c',
+    'src/external/wamr/core/shared/mem-alloc/ems/ems_kfc.c',
+    'src/external/wamr/core/shared/utils/bh_assert.c',
+    'src/external/wamr/core/shared/utils/bh_common.c',
+    'src/external/wamr/core/shared/utils/bh_hashmap.c',
+    'src/external/wamr/core/shared/utils/bh_list.c',
+    'src/external/wamr/core/shared/utils/bh_log.c',
+    'src/external/wamr/core/shared/utils/bh_queue.c',
+    'src/external/wamr/core/shared/utils/bh_vector.c',
+    'src/external/wamr/core/shared/utils/runtime_timer.c',
+  )
+  if host_machine.system() == 'windows'
+    wamr_sources += files('src/external/wamr/core/shared/platform/windows/platform_init.c')
+  else
+    wamr_sources += files('src/external/wamr/core/shared/platform/linux/platform_init.c')
+  endif
+
+  wamr_inc_dirs = [
+    include_directories('src/external/wamr/core/iwasm/include'),
+    include_directories('src/external/wamr/core/iwasm/interpreter'),
+    include_directories('src/external/wamr/core/iwasm/common'),
+    include_directories('src/external/wamr/core/shared/utils'),
+    include_directories('src/external/wamr/core/shared/mem-alloc'),
+    include_directories('src/external/wamr/core/shared/platform/include'),
+  ]
+  if host_machine.system() == 'windows'
+    wamr_inc_dirs += include_directories('src/external/wamr/core/shared/platform/windows')
+  else
+    wamr_inc_dirs += include_directories('src/external/wamr/core/shared/platform/linux')
+  endif
+
+  wamr_c_args = []
+  if host_machine.system() == 'windows'
+    wamr_c_args += '-DBH_PLATFORM_WINDOWS=1'
+  else
+    wamr_c_args += '-DBH_PLATFORM_LINUX=1'
+  endif
+
+  wamr_lib = static_library('tinyusdz_wamr',
+    wamr_sources,
+    include_directories: wamr_inc_dirs,
+    c_args: wamr_c_args,
+    pic: true,
+  )
+  extra_link_libs += wamr_lib
+  wamr_inc = wamr_inc_dirs
+endif
+
+# ============================================================================
+# External dependencies
+# ============================================================================
+
+ext_deps = []
+
+# dl library (Linux)
+dl_dep = cc.find_library('dl', required: false)
+if dl_dep.found()
+  ext_deps += dl_dep
+endif
+
+# system zstd
+if opt_zstd and opt_system_zstd
+  ext_deps += dependency('libzstd')
+endif
+
+# system zlib
+if opt_system_zlib
+  ext_deps += dependency('zlib')
+endif
+
+# ============================================================================
+# crate-encoding subproject
+# ============================================================================
+
+subdir('sandbox/path-sort-and-encode-crate')
+
+# ============================================================================
+# Main static library
+# ============================================================================
+
+all_inc = [tinyusdz_inc] + osd_inc + wamr_inc
+if opt_geogram
+  all_inc += include_directories('src/external/geogram')
+endif
+if opt_remotery
+  all_inc += include_directories('src/external/Remotery')
+endif
+
+tinyusdz_static = static_library('tinyusdz_static',
+  tinyusdz_sources + tinyusdz_dep_sources,
+  include_directories: all_inc,
+  dependencies: [crate_encoding_dep] + ext_deps,
+  cpp_args: tinyusdz_defines,
+  c_args: tinyusdz_defines,
+  link_with: extra_link_libs,
+  pic: true,
+)
+
+# ============================================================================
+# Optional shared library
+# ============================================================================
+
+if opt_shared_lib
+  shared_defines = tinyusdz_defines + ['-DTINYUSDZ_COMPILE_LIBRARY', '-DTINYUSDZ_SHARED_LIBRARY']
+
+  tinyusdz_shared = shared_library('tinyusdz',
+    tinyusdz_sources + tinyusdz_dep_sources,
+    include_directories: all_inc,
+    dependencies: [crate_encoding_dep] + ext_deps,
+    cpp_args: shared_defines,
+    c_args: shared_defines,
+    link_with: extra_link_libs,
+  )
+endif
+
+# ============================================================================
+# Declare dependency for subproject consumers
+# ============================================================================
+
+tinyusdz_dep = declare_dependency(
+  link_with: tinyusdz_static,
+  include_directories: tinyusdz_inc,
+)
