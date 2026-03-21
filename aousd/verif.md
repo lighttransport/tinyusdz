@@ -513,7 +513,7 @@ python aousd/compare_usd_example.py test_file.usda
 - [ ] **Variant deferred evaluation** (Spec 10.3.2.5): variant selection applied statically, not deferred
 - [ ] **Specializes global weakness** (Spec 10.4.1): specializes not treated as globally weaker
 - [x] ~~layerRelocates USDA parsing~~ (Spec 10.3.2.6): **IMPLEMENTED** -- parse, store, print for `relocates = { <path> : <path>, ... }` syntax
-- [ ] **Time-value spline evaluation** (Spec 12.3.3): bezier/hermite cubic spline eval for attribute values at time
+- [x] ~~Time-value spline evaluation~~ (Spec 12.3.3): **IMPLEMENTED** in src/spline-eval.hh -- Bezier/Hermite cubic, held/linear/curve per-segment, held/linear/sloped/loop extrapolation, anti-regression
 - [ ] **Value clip evaluation** (Spec 12.3.4): clip scheduling, time remapping, manifest-based attribute discovery
 - [ ] **Template clip metadata** generation (12.3.4.1.3): templateAssetPath expansion
 - [x] ~~specifier resolution rules~~ (Spec 12.2.1): **PARTIAL** -- strongest opinion kept; full defining/undefining semantics require opinion stack
