@@ -45,20 +45,51 @@ bool ToTerminalAttributeValue(
 
   if (!var.has_value() && !var.has_timesamples()) {
     PUSH_ERROR_AND_RETURN("[InternalError] Attribute is invalid.");
-  } else if (var.has_value() && !var.has_timesamples()) {
-    const value::Value &v = var.value_raw();
-    DCOUT("Attribute is scalar type:" << v.type_name());
-    DCOUT("Attribute value = " << pprint_value(v));
+  }
 
-    value->set_value(v);
-  } else if (!var.has_value() && var.has_timesamples()) {
-    value::Value v;
-    if (!var.get_interpolated_value(t, tinterp, &v)) {
-      PUSH_ERROR_AND_RETURN("Interpolate TimeSamples failed.");
-      return false;
+  // AOUSD Core Spec 12.3: Value resolution priority:
+  //   timeSamples > spline > default > clips > fallback
+  //
+  // When time is specified (not default time):
+  //   1. If timeSamples exist, interpolate at time t
+  //   2. Else if default exists, return default (time ignored)
+  //
+  // When time is default:
+  //   1. Return default if it exists
+  //   2. Else return first timeSample value (held at default time)
+
+  bool isDefaultTime = value::TimeCode(t).is_default();
+
+  if (isDefaultTime) {
+    // Default time: prefer default value, fall back to timeSamples
+    if (var.has_value()) {
+      const value::Value &v = var.value_raw();
+      DCOUT("Attribute is scalar type:" << v.type_name());
+      value->set_value(v);
+    } else if (var.has_timesamples()) {
+      // No default, use timeSamples at default time (held behavior)
+      value::Value v;
+      if (!var.get_interpolated_value(t, tinterp, &v)) {
+        PUSH_ERROR_AND_RETURN("Interpolate TimeSamples at default time failed.");
+        return false;
+      }
+      value->set_value(v);
     }
-
-    value->set_value(v);
+  } else {
+    // Specific time: prefer timeSamples, fall back to default
+    if (var.has_timesamples()) {
+      value::Value v;
+      if (!var.get_interpolated_value(t, tinterp, &v)) {
+        PUSH_ERROR_AND_RETURN("Interpolate TimeSamples failed.");
+        return false;
+      }
+      value->set_value(v);
+    } else if (var.has_value()) {
+      // No timeSamples: return default regardless of requested time
+      const value::Value &v = var.value_raw();
+      DCOUT("No timeSamples, returning default value");
+      value->set_value(v);
+    }
   }
 
   return true;
