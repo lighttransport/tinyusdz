@@ -92,6 +92,116 @@ class Collection
     return _instances.erase(name);
   }
 
+  ///
+  /// Compute the set of member paths for a named collection instance.
+  ///
+  /// Per AOUSD Core Spec 15.1:
+  ///   - Start with `includes` relationship targets
+  ///   - If `includeRoot` is true, add the prim itself
+  ///   - Remove `excludes` relationship targets
+  ///   - Apply `expansionRule` to expand prims/properties
+  ///
+  /// Note: This is a simplified implementation that returns the explicit
+  /// include/exclude paths without hierarchical expansion (which requires
+  /// full Stage traversal).
+  ///
+  /// @param[in] name Collection instance name
+  /// @param[in] prim_path Path of the prim bearing this collection
+  /// @param[out] included Output set of included paths
+  /// @param[out] excluded Output set of excluded paths
+  /// @return true if the collection instance was found
+  ///
+  bool ComputeMemberPaths(const std::string &name,
+                           const Path &prim_path,
+                           std::vector<Path> *included,
+                           std::vector<Path> *excluded) const {
+    const CollectionInstance *inst = nullptr;
+    if (!get_instance(name, &inst) || !inst) {
+      return false;
+    }
+
+    if (included) {
+      included->clear();
+
+      // includeRoot: add the prim itself
+      // includeRoot is TypedAttributeWithFallback<Animatable<bool>>
+      bool include_root = false;
+      const auto &ir = inst->includeRoot.get_value();
+      if (ir.has_default()) {
+        include_root = ir.get_scalar_ref();
+      }
+      if (include_root) {
+        included->push_back(prim_path);
+      }
+
+      // includes relationship targets
+      if (inst->includes) {
+        const auto &rel = inst->includes.value();
+        if (rel.is_path()) {
+          included->push_back(rel.targetPath);
+        } else if (rel.is_pathvector()) {
+          for (const auto &p : rel.targetPathVector) {
+            included->push_back(p);
+          }
+        }
+      }
+    }
+
+    if (excluded) {
+      excluded->clear();
+
+      // excludes relationship targets
+      if (inst->excludes) {
+        const auto &rel = inst->excludes.value();
+        if (rel.is_path()) {
+          excluded->push_back(rel.targetPath);
+        } else if (rel.is_pathvector()) {
+          for (const auto &p : rel.targetPathVector) {
+            excluded->push_back(p);
+          }
+        }
+      }
+    }
+
+    return true;
+  }
+
+  /// Check if a path is a member of a named collection.
+  /// Simple check: path is in includes and not in excludes.
+  bool IsMember(const std::string &name, const Path &prim_path,
+                const Path &query_path) const {
+    std::vector<Path> included, excluded;
+    if (!ComputeMemberPaths(name, prim_path, &included, &excluded)) {
+      return false;
+    }
+
+    // Check excluded first
+    for (const auto &ep : excluded) {
+      if (ep == query_path) return false;
+      // Prefix match for hierarchical exclusion
+      const std::string &eps = ep.prim_part();
+      const std::string &qps = query_path.prim_part();
+      if (!eps.empty() && qps.size() > eps.size() &&
+          qps.substr(0, eps.size()) == eps && qps[eps.size()] == '/') {
+        return false;
+      }
+    }
+
+    // Check included
+    for (const auto &ip : included) {
+      if (ip == query_path) return true;
+      // Prefix match for hierarchical inclusion
+      const std::string &ips = ip.prim_part();
+      const std::string &qps = query_path.prim_part();
+      if (!ips.empty() && qps.size() > ips.size() &&
+          qps.substr(0, ips.size()) == ips && qps[ips.size()] == '/') {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
  private:
   ordered_dict<CollectionInstance> _instances;
 };
