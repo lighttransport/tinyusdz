@@ -36,6 +36,8 @@ set(TEST_SOURCES
 	unit-typed-array-timesamples.cc
 	# Phase 1: composition arcs
 	unit-composition-arcs.cc
+	# Phase 1b: DAG-based composition graph
+	unit-composition-graph.cc
 	# Phase 2: layer API
 	unit-layer.cc
 	# Phase 3: primspec and prim API
