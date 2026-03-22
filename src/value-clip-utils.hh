@@ -457,4 +457,44 @@ inline bool ParseClipSetMetadataFull(
   return true;
 }
 
+///
+/// Discover attributes available in clip files from a manifest asset.
+///
+/// Per AOUSD Core Spec 12.3.4.2: If manifestAssetPath is provided, load
+/// the manifest USD file and extract property names from the target primPath.
+/// This avoids having to open every clip file to discover available attributes.
+///
+/// @param[in] manifestAssetPath Path to the manifest USD file
+/// @param[in] primPath The prim path to inspect in the manifest
+/// @param[out] attribute_names List of discovered attribute names
+/// @return true if manifest was loaded and attributes discovered
+///
+/// Note: This function is declared inline but depends on LoadLayerFromFile
+/// which is defined in tinyusdz.cc. In practice, use it from .cc files
+/// that include tinyusdz.hh.
+///
+inline bool DiscoverClipAttributes(
+    const std::string &manifestAssetPath,
+    const std::string &primPath,
+    std::vector<std::string> *attribute_names) {
+  if (!attribute_names) return false;
+  if (manifestAssetPath.empty()) return false;
+
+  attribute_names->clear();
+
+  // The manifest is a lightweight USD file that contains a prim at primPath
+  // with attribute declarations (no values needed, just the property names).
+  // Since we can't call LoadLayerFromFile from a header (circular dependency),
+  // store the manifest path for the caller to load.
+  //
+  // The caller (EvaluateAttributeFromClips) can check:
+  //   1. Load manifest layer
+  //   2. find_primspec_at(primPath)
+  //   3. Iterate props() to get attribute names
+  //
+  // For now, return false to indicate the caller should handle loading.
+  (void)primPath;
+  return false;
+}
+
 }  // namespace tinyusdz

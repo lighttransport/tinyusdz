@@ -19,6 +19,7 @@ namespace tinyusdz {
 struct SchemaPropertyInfo {
   Variability variability{Variability::Varying};
   std::string type_name;  // e.g. "bool", "token", etc.
+  std::string default_value;  // String representation of fallback default (empty = no fallback)
 };
 
 ///
@@ -72,66 +73,67 @@ class SchemaRegistry {
 
   void register_builtins() {
     // UsdGeom common uniform properties (wildcard = all gprim types)
+    // default_value is the schema-defined fallback per UsdGeom spec
     register_property("*", "doubleSided",
-                      {Variability::Uniform, "bool"});
+                      {Variability::Uniform, "bool", "false"});
     register_property("*", "orientation",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", "rightHanded"});
     register_property("*", "purpose",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", "default"});
 
     // UsdGeomMesh
     register_property("Mesh", "subdivisionScheme",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", "catmullClark"});
     register_property("Mesh", "interpolateBoundary",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", "edgeAndCorner"});
     register_property("Mesh", "faceVaryingLinearInterpolation",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", "cornersPlus1"});
     register_property("Mesh", "triangleSubdivisionRule",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", "catmullClark"});
 
     // UsdGeomBasisCurves
     register_property("BasisCurves", "type",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", "cubic"});
     register_property("BasisCurves", "basis",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", "bezier"});
     register_property("BasisCurves", "wrap",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", "nonperiodic"});
 
     // UsdGeomSubset
     register_property("GeomSubset", "elementType",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", "face"});
     register_property("GeomSubset", "familyName",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", ""});
 
     // UsdGeomCamera
     register_property("Camera", "projection",
-                      {Variability::Varying, "token"});
+                      {Variability::Varying, "token", "perspective"});
     register_property("Camera", "stereoRole",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", "mono"});
 
     // UsdGeom primitives (axis alignment)
     register_property("Capsule", "axis",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", "Y"});
     register_property("Cylinder", "axis",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", "Y"});
     register_property("Cone", "axis",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", "Y"});
 
     // UsdShade
     register_property("Material", "surface",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", ""});
     register_property("Material", "displacement",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", ""});
     register_property("Material", "volume",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", ""});
 
     // UsdSkel
     register_property("Skeleton", "joints",
-                      {Variability::Uniform, "token[]"});
+                      {Variability::Uniform, "token[]", ""});
     register_property("Skeleton", "jointNames",
-                      {Variability::Uniform, "token[]"});
+                      {Variability::Uniform, "token[]", ""});
     register_property("SkelRoot", "purpose",
-                      {Variability::Uniform, "token"});
+                      {Variability::Uniform, "token", "default"});
   }
 
   std::unordered_map<std::string, SchemaPropertyInfo> _registry;
