@@ -2218,51 +2218,184 @@ bool ApplyDeferredVariantSelectionsRec(
 
 // AOUSD Core Spec 10.3.2.6: Apply relocates to a PrimSpec tree.
 // Relocates rename prims in the namespace according to layerRelocates entries.
-bool ApplyRelocatesRec(uint32_t depth,
-                       const std::string &path_prefix,
-                       PrimSpec &primspec,
-                       const std::vector<std::pair<Path, Path>> &relocates,
-                       std::string *warn, std::string *err) {
-  (void)warn;
-  if (depth > (1024 * 1024)) {
-    if (err) { *err += "Too deep in ApplyRelocatesRec.\n"; }
-    return false;
-  }
+// Helper: find a mutable PrimSpec at a given absolute path in a PrimSpec tree.
+// Returns nullptr if not found.
+PrimSpec *FindMutablePrimSpec(PrimSpec &root, const std::string &root_path,
+                              const std::string &target_path) {
+  if (root_path == target_path) return &root;
 
-  std::string prim_path = path_prefix + "/" + primspec.name();
+  // Check if target is a descendant of root
+  if (target_path.size() <= root_path.size()) return nullptr;
+  if (target_path.substr(0, root_path.size()) != root_path) return nullptr;
+  if (target_path[root_path.size()] != '/') return nullptr;
 
-  // Check if this prim should be renamed
-  for (const auto &entry : relocates) {
-    const std::string &src = entry.first.prim_part();
-    const std::string &tgt = entry.second.prim_part();
+  // Walk down the tree
+  std::string remaining = target_path.substr(root_path.size() + 1);
+  PrimSpec *current = &root;
+  while (!remaining.empty()) {
+    auto slash = remaining.find('/');
+    std::string segment = (slash == std::string::npos)
+        ? remaining : remaining.substr(0, slash);
 
-    if (prim_path == src) {
-      // Extract the new element name from the target path
-      auto last_slash = tgt.rfind('/');
-      if (last_slash != std::string::npos) {
-        std::string new_name = tgt.substr(last_slash + 1);
-        DCOUT("Relocate: " << primspec.name() << " -> " << new_name);
-        primspec.name() = new_name;
+    PrimSpec *found = nullptr;
+    for (auto &child : current->children()) {
+      if (child.name() == segment) {
+        found = &child;
+        break;
       }
-      break;
+    }
+    if (!found) return nullptr;
+    current = found;
+
+    if (slash == std::string::npos) break;
+    remaining = remaining.substr(slash + 1);
+  }
+  return current;
+}
+
+// Helper: remove a child PrimSpec by name from a parent's children vector.
+// Returns the detached PrimSpec, or nullopt if not found.
+nonstd::optional<PrimSpec> DetachChild(PrimSpec &parent, const std::string &child_name) {
+  auto &children = parent.children();
+  for (auto it = children.begin(); it != children.end(); ++it) {
+    if (it->name() == child_name) {
+      PrimSpec detached = std::move(*it);
+      children.erase(it);
+      return detached;
     }
   }
+  return nonstd::nullopt;
+}
 
-  // Recurse into children
-  for (auto &child : primspec.children()) {
-    std::string child_prefix = path_prefix + "/" + primspec.name();
-    if (!ApplyRelocatesRec(depth + 1, child_prefix, child, relocates, warn, err)) {
-      return false;
+// Helper: get or create a PrimSpec at the given path under a root.
+// Creates intermediate `over` prims as needed.
+PrimSpec *GetOrCreatePrimSpec(PrimSpec &root, const std::string &root_path,
+                              const std::string &target_path) {
+  if (root_path == target_path) return &root;
+  if (target_path.size() <= root_path.size()) return nullptr;
+  if (target_path.substr(0, root_path.size()) != root_path) return nullptr;
+  if (target_path[root_path.size()] != '/') return nullptr;
+
+  std::string remaining = target_path.substr(root_path.size() + 1);
+  PrimSpec *current = &root;
+  while (!remaining.empty()) {
+    auto slash = remaining.find('/');
+    std::string segment = (slash == std::string::npos)
+        ? remaining : remaining.substr(0, slash);
+
+    PrimSpec *found = nullptr;
+    for (auto &child : current->children()) {
+      if (child.name() == segment) {
+        found = &child;
+        break;
+      }
+    }
+    if (!found) {
+      // Create intermediate over prim
+      current->children().emplace_back(Specifier::Over, "", segment);
+      found = &current->children().back();
+    }
+    current = found;
+
+    if (slash == std::string::npos) break;
+    remaining = remaining.substr(slash + 1);
+  }
+  return current;
+}
+
+// Helper: get parent path from a full path. "/Root/Child" -> "/Root"
+std::string GetParentPath(const std::string &path) {
+  auto last_slash = path.rfind('/');
+  if (last_slash == std::string::npos || last_slash == 0) return "";
+  return path.substr(0, last_slash);
+}
+
+// Helper: get element name from a full path. "/Root/Child" -> "Child"
+std::string GetElementName(const std::string &path) {
+  auto last_slash = path.rfind('/');
+  if (last_slash == std::string::npos) return path;
+  return path.substr(last_slash + 1);
+}
+
+// Remap all path references in a PrimSpec tree using a namespace mapping.
+// Handles: relationships, connections, inherits, specializes, references, payloads.
+void RemapPathsInPrimSpecTree(PrimSpec &ps, const NamespaceMapping &mapping) {
+  std::vector<PrimSpec *> stack;
+  stack.push_back(&ps);
+
+  while (!stack.empty()) {
+    PrimSpec *current = stack.back();
+    stack.pop_back();
+
+    // Remap relationship targets and attribute connections
+    for (auto &prop : current->props()) {
+      if (prop.second.is_relationship()) {
+        Relationship &rel = prop.second.relationship();
+        if (rel.is_path()) {
+          rel.targetPath = mapping.Apply(rel.targetPath);
+        } else if (rel.is_pathvector()) {
+          for (auto &p : rel.targetPathVector) {
+            p = mapping.Apply(p);
+          }
+        }
+      } else if (prop.second.is_attribute_connection()) {
+        Attribute &attr = prop.second.attribute();
+        for (auto &conn : attr.connections()) {
+          conn = mapping.Apply(conn);
+        }
+      }
+    }
+
+    // Remap composition arc target paths
+    if (current->metas().inherits) {
+      for (auto &op : current->metas().inherits.value()) {
+        for (auto &p : op.second) {
+          p = mapping.Apply(p);
+        }
+      }
+    }
+    if (current->metas().specializes) {
+      for (auto &op : current->metas().specializes.value()) {
+        for (auto &p : op.second) {
+          p = mapping.Apply(p);
+        }
+      }
+    }
+    if (current->metas().references) {
+      for (auto &op : current->metas().references.value()) {
+        for (auto &ref : op.second) {
+          if (ref.asset_path.GetAssetPath().empty() && ref.prim_path.is_valid()) {
+            // Internal reference — remap the prim path
+            ref.prim_path = mapping.Apply(ref.prim_path);
+          }
+        }
+      }
+    }
+    if (current->metas().payload) {
+      for (auto &op : current->metas().payload.value()) {
+        for (auto &pl : op.second) {
+          if (pl.asset_path.GetAssetPath().empty() && pl.prim_path.is_valid()) {
+            pl.prim_path = mapping.Apply(pl.prim_path);
+          }
+        }
+      }
+    }
+
+    for (auto &child : current->children()) {
+      stack.push_back(&child);
     }
   }
-
-  return true;
 }
 
 }  // namespace
 
 // AOUSD Core Spec 10.3.2.6: Apply layerRelocates to a composed layer.
 // Relocates are applied after all other composition arcs.
+//
+// Implementation:
+// 1. Validate relocate entries
+// 2. For each relocate (src → tgt): detach the prim at src, reattach at tgt
+// 3. Remap all path references throughout the tree
 bool CompositeRelocates(const Layer &in_layer, Layer *composited_layer,
                         std::string *warn, std::string *err) {
   if (!composited_layer) {
@@ -2275,59 +2408,123 @@ bool CompositeRelocates(const Layer &in_layer, Layer *composited_layer,
     return true;
   }
 
-  // Validate relocates
+  // Validate
   auto validation_errors = ValidateRelocates(relocates);
   for (const auto &ve : validation_errors) {
-    if (warn) { (*warn) += "Relocates validation: " + ve + "\n"; }
+    PushWarn("Relocates validation: " + ve + "\n");
   }
 
   Layer dst = in_layer;
 
-  for (auto &item : dst.primspecs()) {
-    if (!ApplyRelocatesRec(0, "", item.second, relocates, warn, err)) {
-      if (err) { (*err) += "Apply relocates failed.\n"; }
-      return false;
-    }
-  }
-
-  // Also need to remap references to relocated paths in properties
-  // (relationships, connections, etc.)
+  // Build namespace mapping for path remapping
   NamespaceMapping relocate_mapping;
   for (const auto &entry : relocates) {
     relocate_mapping.entries.push_back(entry);
   }
 
-  // Apply namespace mapping to remap target paths in relationships/connections
-  for (auto &item : dst.primspecs()) {
-    std::vector<PrimSpec *> stack;
-    stack.push_back(&item.second);
+  // Phase 1: Move prims from source to target locations.
+  // Process relocates sorted by path depth (deepest first) to avoid
+  // invalidating parent paths when moving children.
+  auto sorted_relocates = relocates;
+  std::sort(sorted_relocates.begin(), sorted_relocates.end(),
+            [](const std::pair<Path, Path> &a, const std::pair<Path, Path> &b) {
+              return a.first.prim_part().size() > b.first.prim_part().size();
+            });
 
-    while (!stack.empty()) {
-      PrimSpec *ps = stack.back();
-      stack.pop_back();
+  for (const auto &entry : sorted_relocates) {
+    const std::string &src = entry.first.prim_part();
+    const std::string &tgt = entry.second.prim_part();
+    std::string src_parent = GetParentPath(src);
+    std::string src_name = GetElementName(src);
+    std::string tgt_parent = GetParentPath(tgt);
+    std::string tgt_name = GetElementName(tgt);
 
-      for (auto &prop : ps->props()) {
-        if (prop.second.is_relationship()) {
-          Relationship &rel = prop.second.relationship();
-          if (rel.is_path()) {
-            rel.targetPath = relocate_mapping.Apply(rel.targetPath);
-          } else if (rel.is_pathvector()) {
-            for (auto &p : rel.targetPathVector) {
-              p = relocate_mapping.Apply(p);
+    if (src_parent.empty() || tgt_parent.empty()) {
+      // Root-level relocate: handle via primspecs map
+      if (src_parent.empty() && tgt_parent.empty()) {
+        // Root → Root rename (e.g., /Old → /New)
+        auto it = dst.primspecs().find(src_name);
+        if (it != dst.primspecs().end()) {
+          PrimSpec ps = std::move(it->second);
+          ps.name() = tgt_name;
+          dst.primspecs().erase(it);
+          dst.primspecs()[tgt_name] = std::move(ps);
+          DCOUT("Relocate root: " << src_name << " -> " << tgt_name);
+        }
+      } else if (src_parent.empty()) {
+        // Root → nested: detach from root map, attach under target parent
+        auto it = dst.primspecs().find(src_name);
+        if (it != dst.primspecs().end()) {
+          PrimSpec ps = std::move(it->second);
+          ps.name() = tgt_name;
+          dst.primspecs().erase(it);
+
+          // Find target parent (must be a root prim)
+          std::string tgt_root = tgt_parent.substr(1); // strip leading /
+          auto slash = tgt_root.find('/');
+          std::string tgt_root_name = (slash == std::string::npos) ? tgt_root : tgt_root.substr(0, slash);
+          auto tgt_root_it = dst.primspecs().find(tgt_root_name);
+          if (tgt_root_it != dst.primspecs().end()) {
+            PrimSpec *parent_ps = GetOrCreatePrimSpec(
+                tgt_root_it->second, "/" + tgt_root_name, tgt_parent);
+            if (parent_ps) {
+              parent_ps->children().push_back(std::move(ps));
             }
-          }
-        } else if (prop.second.is_attribute_connection()) {
-          Attribute &attr = prop.second.attribute();
-          for (auto &conn : attr.connections()) {
-            conn = relocate_mapping.Apply(conn);
           }
         }
       }
+      continue;
+    }
 
-      for (auto &child : ps->children()) {
-        stack.push_back(&child);
+    // Non-root relocate: find source parent, detach child, find target parent, reattach
+    // Find root prim for source
+    std::string src_root_name = src.size() > 1 ? src.substr(1) : "";
+    auto slash = src_root_name.find('/');
+    if (slash != std::string::npos) src_root_name = src_root_name.substr(0, slash);
+
+    auto src_root_it = dst.primspecs().find(src_root_name);
+    if (src_root_it == dst.primspecs().end()) continue;
+
+    // Find the source parent PrimSpec
+    PrimSpec *src_parent_ps = nullptr;
+    if (src_parent == "/" + src_root_name) {
+      src_parent_ps = &src_root_it->second;
+    } else {
+      src_parent_ps = FindMutablePrimSpec(
+          src_root_it->second, "/" + src_root_name, src_parent);
+    }
+    if (!src_parent_ps) continue;
+
+    // Detach the child
+    auto detached = DetachChild(*src_parent_ps, src_name);
+    if (!detached) continue;
+
+    detached->name() = tgt_name;
+
+    // Find/create target parent
+    std::string tgt_root_name = tgt.size() > 1 ? tgt.substr(1) : "";
+    auto tslash = tgt_root_name.find('/');
+    if (tslash != std::string::npos) tgt_root_name = tgt_root_name.substr(0, tslash);
+
+    auto tgt_root_it = dst.primspecs().find(tgt_root_name);
+    if (tgt_root_it == dst.primspecs().end()) continue;
+
+    if (tgt_parent == "/" + tgt_root_name) {
+      tgt_root_it->second.children().push_back(std::move(*detached));
+    } else {
+      PrimSpec *tgt_parent_ps = GetOrCreatePrimSpec(
+          tgt_root_it->second, "/" + tgt_root_name, tgt_parent);
+      if (tgt_parent_ps) {
+        tgt_parent_ps->children().push_back(std::move(*detached));
       }
     }
+
+    DCOUT("Relocate: " << src << " -> " << tgt);
+  }
+
+  // Phase 2: Remap all path references throughout the tree
+  for (auto &item : dst.primspecs()) {
+    RemapPathsInPrimSpecTree(item.second, relocate_mapping);
   }
 
   // Clear layerRelocates after processing
@@ -2336,6 +2533,120 @@ bool CompositeRelocates(const Layer &in_layer, Layer *composited_layer,
   *composited_layer = dst;
   DCOUT("Composite `relocates` ok.");
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// ListVariantSelectionMaps / ApplyVariantSelector
+// ---------------------------------------------------------------------------
+
+namespace {
+
+void ListVariantSelectionMapsRec(const std::string &path_prefix,
+                                  const PrimSpec &ps,
+                                  VariantSelectorMap &m) {
+  std::string prim_path = path_prefix + "/" + ps.name();
+
+  if (ps.metas().variants || !ps.variantSets().empty()) {
+    VariantSelector sel;
+    if (ps.metas().variants) {
+      sel.vsmap = ps.metas().variants.value();
+      // Use the first variant set's selection as `selection`
+      if (!sel.vsmap.empty()) {
+        sel.selection = sel.vsmap.begin()->second;
+      }
+    }
+    m[Path(prim_path, "")] = sel;
+  }
+
+  for (const auto &child : ps.children()) {
+    ListVariantSelectionMapsRec(prim_path, child, m);
+  }
+}
+
+bool ApplyVariantSelectorRec(uint32_t depth,
+                              PrimSpec &primspec,
+                              const VariantSelectorMap &vsmap,
+                              const std::string &path_prefix,
+                              std::string *warn, std::string *err) {
+  if (depth > (1024 * 1024)) {
+    if (err) { (*err) += "Too deep in ApplyVariantSelectorRec.\n"; }
+    return false;
+  }
+
+  std::string prim_path = path_prefix + "/" + primspec.name();
+
+  // Check if this prim has a variant selector entry
+  auto it = vsmap.find(Path(prim_path, ""));
+  if (it != vsmap.end()) {
+    // Use the vsmap from the selector, or fall back to the PrimSpec's own variants
+    const auto &selections = it->second.vsmap.empty()
+        ? (primspec.metas().variants ? primspec.metas().variants.value()
+                                     : VariantSelectionMap{})
+        : it->second.vsmap;
+
+    if (!selections.empty()) {
+      PrimSpec dst;
+      if (!VariantSelectPrimSpec(dst, primspec, selections, warn, err)) {
+        return false;
+      }
+      primspec = std::move(dst);
+    }
+  }
+
+  // Recurse into children
+  for (auto &child : primspec.children()) {
+    if (!ApplyVariantSelectorRec(depth + 1, child, vsmap, prim_path, warn, err)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+}  // namespace
+
+bool ListVariantSelectionMaps(const Layer &layer, VariantSelectorMap &m) {
+  m.clear();
+  for (const auto &item : layer.primspecs()) {
+    ListVariantSelectionMapsRec("", item.second, m);
+  }
+  return true;
+}
+
+bool ApplyVariantSelector(const Layer &layer, const VariantSelectorMap &vsmap,
+                          Layer *dst, std::string *warn, std::string *err) {
+  if (!dst) {
+    if (err) { (*err) += "dst is nullptr.\n"; }
+    return false;
+  }
+
+  *dst = layer;  // deep copy
+
+  for (auto &item : dst->primspecs()) {
+    if (!ApplyVariantSelectorRec(0, item.second, vsmap, "", warn, err)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool ApplyVariantSelector(const Layer &layer, const std::string &variant_name,
+                          Layer *dst, std::string *warn, std::string *err) {
+  // Build a VariantSelectorMap from the layer's existing variant info,
+  // overriding all selections with the given variant_name.
+  VariantSelectorMap vsmap;
+  ListVariantSelectionMaps(layer, vsmap);
+
+  for (auto &item : vsmap) {
+    // Override all variant set selections with the given name
+    for (auto &sel : item.second.vsmap) {
+      sel.second = variant_name;
+    }
+    item.second.selection = variant_name;
+  }
+
+  return ApplyVariantSelector(layer, vsmap, dst, warn, err);
 }
 
 // Remove prims (and their descendants) that have `active = false`.
