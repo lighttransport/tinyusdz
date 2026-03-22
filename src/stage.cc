@@ -1282,4 +1282,47 @@ bool Stage::has_mmap_zero_copy() const {
   return _mmap_table && _mmap_source && _mmap_source->is_valid() && !_mmap_table->empty();
 }
 
+// AOUSD Core Spec 11.4: Build instance prototype registry.
+// Scans all prims for instanceable=true and groups by prim type name.
+size_t Stage::BuildInstancePrototypes() {
+  _instance_to_prototype.clear();
+  _prototype_count = 0;
+
+  // Map from prim_type_name to prototype index
+  std::unordered_map<std::string, int> type_to_prototype;
+
+  // Recursive helper
+  std::function<void(const Prim &, const std::string &)> scan;
+  scan = [&](const Prim &prim, const std::string &parent_path) {
+    std::string prim_path = parent_path + "/" + prim.element_name();
+
+    if (prim.IsInstance()) {
+      // Group by prim type name as a simple prototype key
+      // (A full implementation would use the composition arc signature)
+      std::string key = prim.prim_type_name();
+      if (key.empty()) key = "__untyped__";
+
+      auto it = type_to_prototype.find(key);
+      if (it == type_to_prototype.end()) {
+        int idx = static_cast<int>(_prototype_count);
+        type_to_prototype[key] = idx;
+        _prototype_count++;
+        _instance_to_prototype[prim_path] = idx;
+      } else {
+        _instance_to_prototype[prim_path] = it->second;
+      }
+    }
+
+    for (const auto &child : prim.children()) {
+      scan(child, prim_path);
+    }
+  };
+
+  for (const auto &root : _root_nodes) {
+    scan(root, "");
+  }
+
+  return _prototype_count;
+}
+
 }  // namespace tinyusdz

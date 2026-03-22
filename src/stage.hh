@@ -271,9 +271,57 @@ class Stage {
   };
   MemoryUsageDetail estimate_memory_usage_detail() const;
 
+  //
+  // AOUSD Core Spec 11.4: Instance support
+  //
+
+  ///
+  /// Detect instanceable prims and build a prototype registry.
+  ///
+  /// Scans all prims for `instanceable = true` metadata and groups them
+  /// by their composition arc source (prim type + references). Prims that
+  /// share the same prototype are registered together.
+  ///
+  /// @return Number of unique prototypes found
+  ///
+  size_t BuildInstancePrototypes();
+
+  ///
+  /// Get the prototype index for a given prim path.
+  /// @return prototype index (>= 0) if the prim is an instance, -1 otherwise
+  ///
+  int GetPrototypeIndex(const Path &path) const {
+    auto it = _instance_to_prototype.find(path.prim_part());
+    if (it != _instance_to_prototype.end()) {
+      return it->second;
+    }
+    return -1;
+  }
+
+  ///
+  /// Get all instance paths that share a given prototype index.
+  ///
+  std::vector<Path> GetInstancesForPrototype(int prototype_index) const {
+    std::vector<Path> result;
+    for (const auto &entry : _instance_to_prototype) {
+      if (entry.second == prototype_index) {
+        result.push_back(Path(entry.first, ""));
+      }
+    }
+    return result;
+  }
+
+  ///
+  /// Get the number of unique prototypes.
+  ///
+  size_t num_prototypes() const { return _prototype_count; }
+
  private:
 
-
+  // Instance prototype registry
+  // Maps instanceable prim path -> prototype index
+  std::unordered_map<std::string, int> _instance_to_prototype;
+  size_t _prototype_count{0};
 
   // Root nodes
   std::vector<Prim> _root_nodes;

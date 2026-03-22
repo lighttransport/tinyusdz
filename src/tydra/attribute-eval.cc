@@ -78,7 +78,7 @@ bool ToTerminalAttributeValue(
       value->set_value(v);
     }
   } else {
-    // Specific time: prefer timeSamples, fall back to default
+    // Specific time: prefer timeSamples, fall back to spline, then default
     if (var.has_timesamples()) {
       value::Value v;
       if (!var.get_interpolated_value(t, tinterp, &v)) {
@@ -86,8 +86,37 @@ bool ToTerminalAttributeValue(
         return false;
       }
       value->set_value(v);
+    } else if (var.has_spline()) {
+      // AOUSD Core Spec 12.3: Spline is second priority after timeSamples.
+      // Use the spline evaluator for interpolation at time t.
+      // For now, find the nearest knot and return its value (held behavior).
+      // Full cubic evaluation requires typed dispatch through SplineKnot<T>.
+      const auto &spline = var.spline_data();
+      if (!spline.knots.empty()) {
+        // Find the knot segment containing time t
+        size_t idx = 0;
+        for (size_t i = 0; i < spline.knots.size(); i++) {
+          if (spline.knots[i].time <= t) {
+            idx = i;
+          } else {
+            break;
+          }
+        }
+
+        // Held interpolation: return nearest knot value
+        // (Full cubic evaluation is type-dependent and uses spline-eval.hh
+        // EvaluateSpline<T> which requires typed dispatch)
+        const auto &knot = spline.knots[idx];
+        if (knot.hasDualValue && t >= knot.time) {
+          value->set_value(knot.val);
+        } else if (knot.hasDualValue) {
+          value->set_value(knot.preValue);
+        } else {
+          value->set_value(knot.val);
+        }
+      }
     } else if (var.has_value()) {
-      // No timeSamples: return default regardless of requested time
+      // No timeSamples or spline: return default regardless of requested time
       const value::Value &v = var.value_raw();
       DCOUT("No timeSamples, returning default value");
       value->set_value(v);
