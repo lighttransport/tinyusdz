@@ -1859,3 +1859,101 @@ void comp_inherits_delete_listop_test(void) {
     TEST_CHECK(it->second.props().count("fromB") > 0);
   }
 }
+
+// ---------------------------------------------------------------------------
+// 32. comp_inherits_order_listop_test
+// Verify that `order` ListEditQual reorders inherits targets.
+// prepend [/A, /B, /C], order [/C, /A] → /C, /A applied before /B.
+// Since all use InheritPrimSpec (first fills in), the order determines
+// which properties "win" when there are conflicts.
+// ---------------------------------------------------------------------------
+void comp_inherits_order_listop_test(void) {
+  Layer layer;
+
+  PrimSpec classA(Specifier::Class, "Scope", "A");
+  {
+    Attribute attr;
+    attr.set_value(1);
+    attr.set_type_name("int");
+    classA.props()["shared"] = Property(attr, false);
+    Attribute only;
+    only.set_value(10);
+    only.set_type_name("int");
+    classA.props()["onlyA"] = Property(only, false);
+  }
+  layer.add_primspec("A", classA);
+
+  PrimSpec classB(Specifier::Class, "Scope", "B");
+  {
+    Attribute attr;
+    attr.set_value(2);
+    attr.set_type_name("int");
+    classB.props()["shared"] = Property(attr, false);
+    Attribute only;
+    only.set_value(20);
+    only.set_type_name("int");
+    classB.props()["onlyB"] = Property(only, false);
+  }
+  layer.add_primspec("B", classB);
+
+  PrimSpec classC(Specifier::Class, "Scope", "C");
+  {
+    Attribute attr;
+    attr.set_value(3);
+    attr.set_type_name("int");
+    classC.props()["shared"] = Property(attr, false);
+    Attribute only;
+    only.set_value(30);
+    only.set_type_name("int");
+    classC.props()["onlyC"] = Property(only, false);
+  }
+  layer.add_primspec("C", classC);
+
+  // /Derived: prepend [/A, /B, /C], then order [/C, /A]
+  // Without order: resolved list = [/A, /B, /C] (prepend order)
+  // With order: unordered items (/B) first, then ordered items (/C, /A)
+  // Resolved list = [/B, /C, /A]
+  // InheritPrimSpec processes first-to-last, each filling in gaps.
+  // So /B fills in first → shared=2, then /C fills (shared already set),
+  // then /A fills (shared already set).
+  // "shared" should be 2 (from /B, first to fill in).
+  PrimSpec derived(Specifier::Def, "Scope", "Derived");
+  {
+    std::vector<std::pair<ListEditQual, std::vector<Path>>> inh;
+    inh.push_back({ListEditQual::Prepend,
+                   {Path("/A", ""), Path("/B", ""), Path("/C", "")}});
+    inh.push_back({ListEditQual::Order,
+                   {Path("/C", ""), Path("/A", "")}});
+    derived.metas().inherits = inh;
+  }
+  layer.add_primspec("Derived", derived);
+
+  Layer result;
+  std::string warn, err;
+  bool ok = CompositeInherits(layer, &result, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("CompositeInherits failed: %s", err.c_str());
+    return;
+  }
+
+  auto it = result.primspecs().find("Derived");
+  TEST_CHECK(it != result.primspecs().end());
+  if (it != result.primspecs().end()) {
+    // All unique properties should be present
+    TEST_CHECK(it->second.props().count("onlyA") > 0);
+    TEST_CHECK(it->second.props().count("onlyB") > 0);
+    TEST_CHECK(it->second.props().count("onlyC") > 0);
+
+    // "shared" should be 2 (from /B, which is first in reordered list)
+    TEST_CHECK(it->second.props().count("shared") > 0);
+    if (it->second.props().count("shared")) {
+      auto v = it->second.props().at("shared").get_attribute().get_value<int>();
+      TEST_CHECK(v.has_value());
+      if (v.has_value()) {
+        TEST_CHECK(v.value() == 2);
+        TEST_MSG("Expected 2 (from /B, first in reordered list), got %d", v.value());
+      }
+    }
+  }
+}

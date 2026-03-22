@@ -339,6 +339,7 @@ TEST_LIST = {
   { "comp_specializes_globally_weaker_test", comp_specializes_globally_weaker_test },
   { "comp_payload_load_policy_test", comp_payload_load_policy_test },
   { "comp_inherits_delete_listop_test", comp_inherits_delete_listop_test },
+  { "comp_inherits_order_listop_test", comp_inherits_order_listop_test },
   // Phase 2: Stage API tests (extended)
   { "stage_add_root_prim_test", stage_add_root_prim_test },
   { "stage_replace_root_prim_test", stage_replace_root_prim_test },
