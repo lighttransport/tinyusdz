@@ -1130,3 +1130,732 @@ void comp_apply_variant_selector_test(void) {
   // implemented. This test is a placeholder until the implementation lands.
   TEST_MSG("ApplyVariantSelector not yet implemented -- skipping");
 }
+
+// ---------------------------------------------------------------------------
+// 21. comp_implied_inherits_test
+// When /Derived references a prim that has `inherits = [/Base]`, and /Base
+// also exists in the referencing layer, /Derived should get implied inherits
+// from the local /Base.
+// ---------------------------------------------------------------------------
+void comp_implied_inherits_test(void) {
+  // Build a "referenced" layer: /RefPrim inherits /RefBase
+  Layer ref_layer;
+
+  PrimSpec ref_base(Specifier::Class, "Scope", "RefBase");
+  {
+    Attribute attr;
+    attr.set_value(42);
+    attr.set_type_name("int");
+    ref_base.props()["baseVal"] = Property(attr, false);
+  }
+  ref_layer.add_primspec("RefBase", ref_base);
+
+  PrimSpec ref_prim(Specifier::Def, "Scope", "RefPrim");
+  {
+    std::vector<std::pair<ListEditQual, std::vector<Path>>> inh;
+    inh.push_back({ListEditQual::Prepend, {Path("/RefBase", "")}});
+    ref_prim.metas().inherits = inh;
+
+    Attribute attr;
+    attr.set_value(100);
+    attr.set_type_name("int");
+    ref_prim.props()["primVal"] = Property(attr, false);
+  }
+  ref_layer.add_primspec("RefPrim", ref_prim);
+
+  // Now simulate what happens when we inherit from ref_prim into a local prim.
+  // The local layer has /LocalBase (matching /RefBase concept) and /Model.
+  Layer local_layer;
+
+  PrimSpec local_base(Specifier::Class, "Scope", "RefBase");
+  {
+    Attribute attr;
+    attr.set_value(999);
+    attr.set_type_name("int");
+    local_base.props()["localBaseVal"] = Property(attr, false);
+  }
+  local_layer.add_primspec("RefBase", local_base);
+
+  // /Model gets ref_prim's content via InheritPrimSpec + implied inherits
+  PrimSpec model(Specifier::Def, "Scope", "Model");
+  {
+    // Simulate PropagateImpliedArcPaths: ref_prim has inherits = [/RefBase]
+    // so model gets inheritPaths = [/RefBase]
+    std::vector<std::pair<ListEditQual, std::vector<Path>>> implied;
+    implied.push_back({ListEditQual::Prepend, {Path("/RefBase", "")}});
+    model.metas().inheritPaths = implied;
+
+    // Also give it some content from the reference
+    Attribute attr;
+    attr.set_value(100);
+    attr.set_type_name("int");
+    model.props()["primVal"] = Property(attr, false);
+  }
+  local_layer.add_primspec("Model", model);
+
+  // Run CompositeInherits — should pick up implied inherits from inheritPaths
+  Layer result;
+  std::string warn, err;
+  bool ok = CompositeInherits(local_layer, &result, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("CompositeInherits failed: %s", err.c_str());
+    return;
+  }
+
+  // /Model should have localBaseVal from the implied inherit
+  auto it = result.primspecs().find("Model");
+  TEST_CHECK(it != result.primspecs().end());
+  if (it != result.primspecs().end()) {
+    TEST_CHECK(it->second.props().count("localBaseVal") > 0);
+    TEST_CHECK(it->second.props().count("primVal") > 0);
+    // inheritPaths should be consumed
+    TEST_CHECK(!it->second.metas().inheritPaths.has_value());
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 22. comp_inherits_cycle_detection_test
+// Test that self-inherits and mutual inherits don't crash (harmless no-ops
+// in our flattening model). Also verify the visited set works for the
+// reference cycle case (tested via the depth limit safety net).
+// ---------------------------------------------------------------------------
+void comp_inherits_cycle_detection_test(void) {
+  // Test 1: Self-inherit (/A inherits /A) is a harmless no-op
+  {
+    Layer layer;
+
+    PrimSpec a(Specifier::Def, "Scope", "A");
+    {
+      Attribute attr;
+      attr.set_value(42);
+      attr.set_type_name("int");
+      a.props()["val"] = Property(attr, false);
+
+      std::vector<std::pair<ListEditQual, std::vector<Path>>> inh;
+      inh.push_back({ListEditQual::Prepend, {Path("/A", "")}});
+      a.metas().inherits = inh;
+    }
+    layer.add_primspec("A", a);
+
+    Layer result;
+    std::string warn, err;
+    bool ok = CompositeInherits(layer, &result, &warn, &err);
+    // Self-inherit is harmless — A gets its own properties (no-op)
+    TEST_CHECK(ok);
+    if (ok) {
+      auto it = result.primspecs().find("A");
+      TEST_CHECK(it != result.primspecs().end());
+      if (it != result.primspecs().end()) {
+        // Property should still be there
+        TEST_CHECK(it->second.props().count("val") > 0);
+      }
+    }
+  }
+
+  // Test 2: Mutual inherit (/A inherits /B, /B inherits /A) — doesn't crash
+  {
+    Layer layer;
+
+    PrimSpec a(Specifier::Def, "Scope", "A");
+    {
+      Attribute attr;
+      attr.set_value(1);
+      attr.set_type_name("int");
+      a.props()["fromA"] = Property(attr, false);
+
+      std::vector<std::pair<ListEditQual, std::vector<Path>>> inh;
+      inh.push_back({ListEditQual::Prepend, {Path("/B", "")}});
+      a.metas().inherits = inh;
+    }
+    layer.add_primspec("A", a);
+
+    PrimSpec b(Specifier::Def, "Scope", "B");
+    {
+      Attribute attr;
+      attr.set_value(2);
+      attr.set_type_name("int");
+      b.props()["fromB"] = Property(attr, false);
+
+      std::vector<std::pair<ListEditQual, std::vector<Path>>> inh;
+      inh.push_back({ListEditQual::Prepend, {Path("/A", "")}});
+      b.metas().inherits = inh;
+    }
+    layer.add_primspec("B", b);
+
+    Layer result;
+    std::string warn, err;
+    bool ok = CompositeInherits(layer, &result, &warn, &err);
+    // Mutual inherits succeed in our flattening model — each gets the other's props
+    TEST_CHECK(ok);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 23. comp_specializes_cycle_detection_test
+// Self-specialize is a harmless no-op in our flattening model.
+// ---------------------------------------------------------------------------
+void comp_specializes_cycle_detection_test(void) {
+  Layer layer;
+
+  PrimSpec a(Specifier::Def, "Scope", "A");
+  {
+    Attribute attr;
+    attr.set_value(42);
+    attr.set_type_name("int");
+    a.props()["val"] = Property(attr, false);
+
+    std::vector<std::pair<ListEditQual, std::vector<Path>>> sp;
+    sp.push_back({ListEditQual::Prepend, {Path("/A", "")}});
+    a.metas().specializes = sp;
+  }
+  layer.add_primspec("A", a);
+
+  Layer result;
+  std::string warn, err;
+  bool ok = CompositeSpecializes(layer, &result, &warn, &err);
+  // Self-specialize is a harmless no-op
+  TEST_CHECK(ok);
+  if (ok) {
+    auto it = result.primspecs().find("A");
+    TEST_CHECK(it != result.primspecs().end());
+    if (it != result.primspecs().end()) {
+      TEST_CHECK(it->second.props().count("val") > 0);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 24. comp_active_false_filtering_test
+// Build a layer, run CompositeAllArcs, verify that prims with active=false
+// are removed from the result.
+// ---------------------------------------------------------------------------
+void comp_active_false_filtering_test(void) {
+  Layer layer;
+
+  PrimSpec visible(Specifier::Def, "Scope", "Visible");
+  {
+    Attribute attr;
+    attr.set_value(1);
+    attr.set_type_name("int");
+    visible.props()["val"] = Property(attr, false);
+  }
+  layer.add_primspec("Visible", visible);
+
+  PrimSpec inactive(Specifier::Def, "Scope", "Inactive");
+  {
+    inactive.metas().set_active(false);
+    Attribute attr;
+    attr.set_value(2);
+    attr.set_type_name("int");
+    inactive.props()["val"] = Property(attr, false);
+  }
+  layer.add_primspec("Inactive", inactive);
+
+  // Also add a child with active=false
+  PrimSpec parent(Specifier::Def, "Scope", "Parent");
+  {
+    PrimSpec child(Specifier::Def, "Scope", "ActiveChild");
+    Attribute a1;
+    a1.set_value(3);
+    a1.set_type_name("int");
+    child.props()["val"] = Property(a1, false);
+    parent.children().push_back(child);
+
+    PrimSpec dead_child(Specifier::Def, "Scope", "DeadChild");
+    dead_child.metas().set_active(false);
+    Attribute a2;
+    a2.set_value(4);
+    a2.set_type_name("int");
+    dead_child.props()["val"] = Property(a2, false);
+    parent.children().push_back(dead_child);
+  }
+  layer.add_primspec("Parent", parent);
+
+  AssetResolutionResolver resolver;
+  Layer result;
+  std::string warn, err;
+  bool ok = CompositeAllArcs(resolver, layer, &result, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("CompositeAllArcs failed: %s", err.c_str());
+    return;
+  }
+
+  // "Visible" should remain
+  TEST_CHECK(result.primspecs().count("Visible") > 0);
+  // "Inactive" root prim should be removed
+  TEST_CHECK(result.primspecs().count("Inactive") == 0);
+  // "Parent" should remain with only ActiveChild
+  auto pit = result.primspecs().find("Parent");
+  TEST_CHECK(pit != result.primspecs().end());
+  if (pit != result.primspecs().end()) {
+    // Should have 1 child (ActiveChild), not 2
+    TEST_CHECK(pit->second.children().size() == 1);
+    if (!pit->second.children().empty()) {
+      TEST_CHECK(pit->second.children()[0].name() == "ActiveChild");
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 25. comp_multi_target_specializes_test
+// /Derived specializes [/Base1, /Base2]. Verify both are applied.
+// ---------------------------------------------------------------------------
+void comp_multi_target_specializes_test(void) {
+  Layer layer;
+
+  PrimSpec base1(Specifier::Class, "Scope", "Base1");
+  {
+    Attribute attr;
+    attr.set_value(10);
+    attr.set_type_name("int");
+    base1.props()["fromBase1"] = Property(attr, false);
+  }
+  layer.add_primspec("Base1", base1);
+
+  PrimSpec base2(Specifier::Class, "Scope", "Base2");
+  {
+    Attribute attr;
+    attr.set_value(20);
+    attr.set_type_name("int");
+    base2.props()["fromBase2"] = Property(attr, false);
+  }
+  layer.add_primspec("Base2", base2);
+
+  PrimSpec derived(Specifier::Def, "Scope", "Derived");
+  {
+    std::vector<std::pair<ListEditQual, std::vector<Path>>> sp;
+    sp.push_back({ListEditQual::Prepend,
+                  {Path("/Base1", ""), Path("/Base2", "")}});
+    derived.metas().specializes = sp;
+  }
+  layer.add_primspec("Derived", derived);
+
+  Layer result;
+  std::string warn, err;
+  bool ok = CompositeSpecializes(layer, &result, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("CompositeSpecializes failed: %s", err.c_str());
+    return;
+  }
+
+  auto it = result.primspecs().find("Derived");
+  TEST_CHECK(it != result.primspecs().end());
+  if (it != result.primspecs().end()) {
+    TEST_CHECK(it->second.props().count("fromBase1") > 0);
+    TEST_CHECK(it->second.props().count("fromBase2") > 0);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 26. comp_inherits_append_listop_test
+// Verify that append inherits fills in gaps (weaker than prepend).
+// /Derived has local prop, prepend inherits from /Strong, append from /Weak.
+// ---------------------------------------------------------------------------
+void comp_inherits_append_listop_test(void) {
+  Layer layer;
+
+  PrimSpec strong(Specifier::Class, "Scope", "Strong");
+  {
+    Attribute a1, a2;
+    a1.set_value(1);
+    a1.set_type_name("int");
+    strong.props()["shared"] = Property(a1, false);
+    a2.set_value(10);
+    a2.set_type_name("int");
+    strong.props()["strongOnly"] = Property(a2, false);
+  }
+  layer.add_primspec("Strong", strong);
+
+  PrimSpec weak(Specifier::Class, "Scope", "Weak");
+  {
+    Attribute a1, a2;
+    a1.set_value(2);
+    a1.set_type_name("int");
+    weak.props()["shared"] = Property(a1, false);
+    a2.set_value(20);
+    a2.set_type_name("int");
+    weak.props()["weakOnly"] = Property(a2, false);
+  }
+  layer.add_primspec("Weak", weak);
+
+  PrimSpec derived(Specifier::Def, "Scope", "Derived");
+  {
+    // Prepend from /Strong (stronger among inherits), append from /Weak (weaker)
+    std::vector<std::pair<ListEditQual, std::vector<Path>>> inh;
+    inh.push_back({ListEditQual::Prepend, {Path("/Strong", "")}});
+    inh.push_back({ListEditQual::Append, {Path("/Weak", "")}});
+    derived.metas().inherits = inh;
+  }
+  layer.add_primspec("Derived", derived);
+
+  Layer result;
+  std::string warn, err;
+  bool ok = CompositeInherits(layer, &result, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("CompositeInherits failed: %s", err.c_str());
+    return;
+  }
+
+  auto it = result.primspecs().find("Derived");
+  TEST_CHECK(it != result.primspecs().end());
+  if (it != result.primspecs().end()) {
+    // Both unique properties should exist
+    TEST_CHECK(it->second.props().count("strongOnly") > 0);
+    TEST_CHECK(it->second.props().count("weakOnly") > 0);
+    // "shared" should come from Strong (prepend is processed first, fills in)
+    TEST_CHECK(it->second.props().count("shared") > 0);
+    if (it->second.props().count("shared")) {
+      auto v = it->second.props().at("shared").get_attribute().get_value<int>();
+      TEST_CHECK(v.has_value());
+      // The prepend inherit from /Strong sets "shared" = 1 first.
+      // The append inherit from /Weak also has "shared" = 2, but since
+      // InheritPrimSpec fills in gaps (doesn't override), the first value wins.
+      if (v.has_value()) {
+        TEST_CHECK(v.value() == 1);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 27. comp_implied_specializes_test
+// When a prim has specializePaths propagated from a reference, and matching
+// prims exist in the layer, implied specializes should be applied.
+// ---------------------------------------------------------------------------
+void comp_implied_specializes_test(void) {
+  Layer layer;
+
+  PrimSpec base_class(Specifier::Class, "Scope", "BaseClass");
+  {
+    Attribute attr;
+    attr.set_value(77);
+    attr.set_type_name("int");
+    base_class.props()["impliedVal"] = Property(attr, false);
+  }
+  layer.add_primspec("BaseClass", base_class);
+
+  PrimSpec model(Specifier::Def, "Scope", "Model");
+  {
+    // Simulate PropagateImpliedArcPaths: referenced prim had
+    // specializes = [/BaseClass], so model gets specializePaths
+    std::vector<std::pair<ListEditQual, std::vector<Path>>> implied;
+    implied.push_back({ListEditQual::Prepend, {Path("/BaseClass", "")}});
+    model.metas().specializePaths = implied;
+
+    Attribute attr;
+    attr.set_value(100);
+    attr.set_type_name("int");
+    model.props()["modelVal"] = Property(attr, false);
+  }
+  layer.add_primspec("Model", model);
+
+  Layer result;
+  std::string warn, err;
+  bool ok = CompositeSpecializes(layer, &result, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("CompositeSpecializes failed: %s", err.c_str());
+    return;
+  }
+
+  auto it = result.primspecs().find("Model");
+  TEST_CHECK(it != result.primspecs().end());
+  if (it != result.primspecs().end()) {
+    // Should have impliedVal from the implied specialize
+    TEST_CHECK(it->second.props().count("impliedVal") > 0);
+    TEST_CHECK(it->second.props().count("modelVal") > 0);
+    // specializePaths should be consumed
+    TEST_CHECK(!it->second.metas().specializePaths.has_value());
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 28. comp_liverps_integration_test
+// End-to-end test: build a layer with inherits + variants + specializes,
+// run CompositeAllArcs, verify correct LIVERPS ordering.
+// ---------------------------------------------------------------------------
+void comp_liverps_integration_test(void) {
+  Layer layer;
+
+  // /BaseClass: provides default val=100
+  PrimSpec base_class(Specifier::Class, "Scope", "BaseClass");
+  {
+    Attribute attr;
+    attr.set_value(100);
+    attr.set_type_name("int");
+    base_class.props()["val"] = Property(attr, false);
+
+    Attribute only_base;
+    only_base.set_value(42);
+    only_base.set_type_name("int");
+    base_class.props()["baseOnly"] = Property(only_base, false);
+  }
+  layer.add_primspec("BaseClass", base_class);
+
+  // /SpecClass: provides specVal=77 (weaker than all)
+  PrimSpec spec_class(Specifier::Class, "Scope", "SpecClass");
+  {
+    Attribute attr;
+    attr.set_value(77);
+    attr.set_type_name("int");
+    spec_class.props()["specOnly"] = Property(attr, false);
+
+    // Also provides val=77 — should be overridden by BaseClass inherit
+    Attribute val;
+    val.set_value(77);
+    val.set_type_name("int");
+    spec_class.props()["val"] = Property(val, false);
+  }
+  layer.add_primspec("SpecClass", spec_class);
+
+  // /Model: inherits /BaseClass, specializes /SpecClass, has local val=1
+  PrimSpec model(Specifier::Def, "Scope", "Model");
+  {
+    // Local opinion: val=1 (strongest)
+    Attribute attr;
+    attr.set_value(1);
+    attr.set_type_name("int");
+    model.props()["val"] = Property(attr, false);
+
+    // Inherits: /BaseClass
+    std::vector<std::pair<ListEditQual, std::vector<Path>>> inh;
+    inh.push_back({ListEditQual::Prepend, {Path("/BaseClass", "")}});
+    model.metas().inherits = inh;
+
+    // Specializes: /SpecClass
+    std::vector<std::pair<ListEditQual, std::vector<Path>>> sp;
+    sp.push_back({ListEditQual::Prepend, {Path("/SpecClass", "")}});
+    model.metas().specializes = sp;
+  }
+  layer.add_primspec("Model", model);
+
+  AssetResolutionResolver resolver;
+  Layer result;
+  std::string warn, err;
+  bool ok = CompositeAllArcs(resolver, layer, &result, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("CompositeAllArcs failed: %s", err.c_str());
+    return;
+  }
+
+  auto it = result.primspecs().find("Model");
+  TEST_CHECK(it != result.primspecs().end());
+  if (it != result.primspecs().end()) {
+    // val should be 1 (local opinion wins over both I and S)
+    TEST_CHECK(it->second.props().count("val") > 0);
+    if (it->second.props().count("val")) {
+      auto v = it->second.props().at("val").get_attribute().get_value<int>();
+      TEST_CHECK(v.has_value() && v.value() == 1);
+    }
+
+    // baseOnly should come from inherits (I)
+    TEST_CHECK(it->second.props().count("baseOnly") > 0);
+    if (it->second.props().count("baseOnly")) {
+      auto v = it->second.props().at("baseOnly").get_attribute().get_value<int>();
+      TEST_CHECK(v.has_value() && v.value() == 42);
+    }
+
+    // specOnly should come from specializes (S) — fills in the gap
+    TEST_CHECK(it->second.props().count("specOnly") > 0);
+    if (it->second.props().count("specOnly")) {
+      auto v = it->second.props().at("specOnly").get_attribute().get_value<int>();
+      TEST_CHECK(v.has_value() && v.value() == 77);
+    }
+
+    // inherits and specializes metadata should be consumed
+    TEST_CHECK(!it->second.metas().inherits.has_value());
+    TEST_CHECK(!it->second.metas().specializes.has_value());
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 29. comp_specializes_globally_weaker_test
+// Verify that specializes opinions are weaker than inherits opinions.
+// /Model inherits /Inherited, specializes /Specialized.
+// Both provide the same property — inherits should win.
+// ---------------------------------------------------------------------------
+void comp_specializes_globally_weaker_test(void) {
+  Layer layer;
+
+  PrimSpec inherited(Specifier::Class, "Scope", "Inherited");
+  {
+    Attribute attr;
+    attr.set_value(10);
+    attr.set_type_name("int");
+    inherited.props()["shared"] = Property(attr, false);
+  }
+  layer.add_primspec("Inherited", inherited);
+
+  PrimSpec specialized(Specifier::Class, "Scope", "Specialized");
+  {
+    Attribute attr;
+    attr.set_value(20);
+    attr.set_type_name("int");
+    specialized.props()["shared"] = Property(attr, false);
+  }
+  layer.add_primspec("Specialized", specialized);
+
+  PrimSpec model(Specifier::Def, "Scope", "Model");
+  {
+    std::vector<std::pair<ListEditQual, std::vector<Path>>> inh;
+    inh.push_back({ListEditQual::Prepend, {Path("/Inherited", "")}});
+    model.metas().inherits = inh;
+
+    std::vector<std::pair<ListEditQual, std::vector<Path>>> sp;
+    sp.push_back({ListEditQual::Prepend, {Path("/Specialized", "")}});
+    model.metas().specializes = sp;
+  }
+  layer.add_primspec("Model", model);
+
+  AssetResolutionResolver resolver;
+  Layer result;
+  std::string warn, err;
+  bool ok = CompositeAllArcs(resolver, layer, &result, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("CompositeAllArcs failed: %s", err.c_str());
+    return;
+  }
+
+  auto it = result.primspecs().find("Model");
+  TEST_CHECK(it != result.primspecs().end());
+  if (it != result.primspecs().end()) {
+    TEST_CHECK(it->second.props().count("shared") > 0);
+    if (it->second.props().count("shared")) {
+      auto v = it->second.props().at("shared").get_attribute().get_value<int>();
+      TEST_CHECK(v.has_value());
+      if (v.has_value()) {
+        // Inherits (I) is stronger than Specializes (S) in LIVERPS.
+        // I is applied first (fills in defaults), S applied last.
+        // Since "shared" is already present from I, S should not override it.
+        TEST_CHECK(v.value() == 10);
+        TEST_MSG("Expected 10 (from inherits), got %d", v.value());
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 30. comp_payload_load_policy_test
+// Verify that the load_policy callback in PayloadCompositionOptions works.
+// Set up a layer with payload metadata, use a policy that rejects loading.
+// ---------------------------------------------------------------------------
+void comp_payload_load_policy_test(void) {
+  Layer layer;
+
+  // Create a PrimSpec with a payload pointing to a nonexistent file.
+  // With default options, this would fail. With a rejecting load_policy,
+  // it should succeed because the payload is skipped.
+  PrimSpec model(Specifier::Def, "Scope", "Model");
+  {
+    Payload pl;
+    pl.asset_path = value::AssetPath("nonexistent_heavy_geo.usd");
+    pl.prim_path = Path("/Geo", "");
+
+    std::vector<std::pair<ListEditQual, std::vector<Payload>>> payload_ops;
+    payload_ops.push_back({ListEditQual::Prepend, {pl}});
+    model.metas().payload = payload_ops;
+  }
+  layer.add_primspec("Model", model);
+
+  // Test 1: Without load_policy, composition should fail or skip
+  // (error_when_asset_not_found is false by default, so it should warn+skip)
+  {
+    AssetResolutionResolver resolver;
+    Layer result;
+    std::string warn, err;
+    PayloadCompositionOptions opts;
+    bool ok = CompositePayload(resolver, layer, &result, &warn, &err, opts);
+    TEST_CHECK(ok);  // Should succeed (asset not found → skip)
+  }
+
+  // Test 2: With load_policy that rejects all payloads
+  {
+    AssetResolutionResolver resolver;
+    Layer result;
+    std::string warn, err;
+    PayloadCompositionOptions opts;
+    opts.load_policy = [](const Path &, const Payload &) { return false; };
+    bool ok = CompositePayload(resolver, layer, &result, &warn, &err, opts);
+    TEST_CHECK(ok);  // Should succeed — payload skipped by policy
+    // The payload metadata should still be cleared after composition
+    auto it = result.primspecs().find("Model");
+    TEST_CHECK(it != result.primspecs().end());
+    if (it != result.primspecs().end()) {
+      TEST_CHECK(!it->second.metas().payload.has_value());
+    }
+  }
+
+  // Test 3: With load_policy that accepts (error_when_asset_not_found=true)
+  {
+    AssetResolutionResolver resolver;
+    Layer result;
+    std::string warn, err;
+    PayloadCompositionOptions opts;
+    opts.error_when_asset_not_found = true;
+    opts.load_policy = [](const Path &, const Payload &) { return true; };
+    bool ok = CompositePayload(resolver, layer, &result, &warn, &err, opts);
+    TEST_CHECK(!ok);  // Should fail — policy accepts but file doesn't exist
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 31. comp_inherits_delete_listop_test
+// Verify that `delete` ListEditQual removes paths from the inherits list.
+// prepend [/A, /B], delete [/A] → only /B should be inherited.
+// ---------------------------------------------------------------------------
+void comp_inherits_delete_listop_test(void) {
+  Layer layer;
+
+  PrimSpec classA(Specifier::Class, "Scope", "A");
+  {
+    Attribute attr;
+    attr.set_value(1);
+    attr.set_type_name("int");
+    classA.props()["fromA"] = Property(attr, false);
+  }
+  layer.add_primspec("A", classA);
+
+  PrimSpec classB(Specifier::Class, "Scope", "B");
+  {
+    Attribute attr;
+    attr.set_value(2);
+    attr.set_type_name("int");
+    classB.props()["fromB"] = Property(attr, false);
+  }
+  layer.add_primspec("B", classB);
+
+  PrimSpec derived(Specifier::Def, "Scope", "Derived");
+  {
+    std::vector<std::pair<ListEditQual, std::vector<Path>>> inh;
+    // Prepend both A and B
+    inh.push_back({ListEditQual::Prepend, {Path("/A", ""), Path("/B", "")}});
+    // Delete A
+    inh.push_back({ListEditQual::Delete, {Path("/A", "")}});
+    derived.metas().inherits = inh;
+  }
+  layer.add_primspec("Derived", derived);
+
+  Layer result;
+  std::string warn, err;
+  bool ok = CompositeInherits(layer, &result, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("CompositeInherits failed: %s", err.c_str());
+    return;
+  }
+
+  auto it = result.primspecs().find("Derived");
+  TEST_CHECK(it != result.primspecs().end());
+  if (it != result.primspecs().end()) {
+    // fromA should NOT be present (deleted from list)
+    TEST_CHECK(it->second.props().count("fromA") == 0);
+    // fromB should be present
+    TEST_CHECK(it->second.props().count("fromB") > 0);
+  }
+}

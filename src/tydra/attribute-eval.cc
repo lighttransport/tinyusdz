@@ -172,6 +172,25 @@ bool EvaluateAttributeFromClips(
     return false;
   }
 
+  // AOUSD Core Spec 12.3.4.2: Manifest-based attribute discovery.
+  // If a manifest is provided, verify the attribute exists before loading clips.
+  if (!clipMeta.manifestAssetPath.empty()) {
+    Layer *manifest = LoadClipLayer(clipMeta.manifestAssetPath);
+    if (manifest) {
+      const PrimSpec *manifest_ps = nullptr;
+      std::string find_err;
+      Path manifest_prim_path(clipMeta.primPath, "");
+      if (manifest->find_primspec_at(manifest_prim_path, &manifest_ps, &find_err) &&
+          manifest_ps) {
+        // Check if the requested attribute exists in the manifest
+        if (manifest_ps->props().find(attr_name) == manifest_ps->props().end()) {
+          DCOUT("Attribute " << attr_name << " not listed in clip manifest");
+          return false;  // Attribute not available in clips
+        }
+      }
+    }
+  }
+
   // Resolve which clip and time to use
   std::string clipAssetPath;
   double clipTime = 0;
