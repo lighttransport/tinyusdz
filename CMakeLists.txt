@@ -432,6 +432,9 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usdc-writer.cc
     ${PROJECT_SOURCE_DIR}/src/composition.cc
     ${PROJECT_SOURCE_DIR}/src/composition-reconstruct.cc
+    ${PROJECT_SOURCE_DIR}/src/composition-graph.cc
+    ${PROJECT_SOURCE_DIR}/src/core/instance-key.cc
+    ${PROJECT_SOURCE_DIR}/src/hash-util.cc
     ${PROJECT_SOURCE_DIR}/src/chunk-reader.cc
     ${PROJECT_SOURCE_DIR}/src/crate-reader.cc
     ${PROJECT_SOURCE_DIR}/src/crate-reader-arrays.cc
