@@ -113,6 +113,100 @@ struct ListOpHeader {
   uint8_t bits;
 };
 
+///
+/// Compose (reduce) a ListOp into a flat result vector.
+///
+/// Per AOUSD Core Spec 6.6.3:
+///   - If explicit: result = explicit_items
+///   - Otherwise: result = prepended + added + (existing minus deleted) + appended
+///   - Then apply ordering if ordered_items present
+///
+/// @param[in] op The ListOp to reduce
+/// @param[in] existing Existing items from weaker opinion (default: empty)
+/// @return The composed flat list
+///
+template <typename T>
+std::vector<T> ComposeListOp(const ListOp<T> &op,
+                              const std::vector<T> &existing = {}) {
+  if (op.IsExplicit()) {
+    return op.GetExplicitItems();
+  }
+
+  std::vector<T> result;
+
+  // Prepend
+  for (const auto &item : op.GetPrependedItems()) {
+    result.push_back(item);
+  }
+
+  // Added (treat as appended per spec deprecation 6.6.3.10)
+  // and existing items minus deleted
+  auto is_deleted = [&op](const T &item) {
+    for (const auto &d : op.GetDeletedItems()) {
+      if (d == item) return true;
+    }
+    return false;
+  };
+
+  for (const auto &item : existing) {
+    if (!is_deleted(item)) {
+      // Check not already in prepended
+      bool already_prepended = false;
+      for (const auto &p : op.GetPrependedItems()) {
+        if (p == item) { already_prepended = true; break; }
+      }
+      if (!already_prepended) {
+        result.push_back(item);
+      }
+    }
+  }
+
+  for (const auto &item : op.GetAddedItems()) {
+    // Add only if not already present
+    bool found = false;
+    for (const auto &r : result) {
+      if (r == item) { found = true; break; }
+    }
+    if (!found) {
+      result.push_back(item);
+    }
+  }
+
+  // Append
+  for (const auto &item : op.GetAppendedItems()) {
+    // Remove from current position if exists, then append
+    auto it = result.begin();
+    while (it != result.end()) {
+      if (*it == item) { it = result.erase(it); } else { ++it; }
+    }
+    result.push_back(item);
+  }
+
+  // Ordering (reorder items to match ordered_items order)
+  if (op.HasOrderedItems()) {
+    const auto &order = op.GetOrderedItems();
+    std::vector<T> ordered;
+
+    // First add items in the specified order
+    for (const auto &o : order) {
+      for (const auto &r : result) {
+        if (r == o) { ordered.push_back(r); break; }
+      }
+    }
+    // Then add remaining items not in the order list
+    for (const auto &r : result) {
+      bool in_order = false;
+      for (const auto &o : order) {
+        if (r == o) { in_order = true; break; }
+      }
+      if (!in_order) { ordered.push_back(r); }
+    }
+    result = std::move(ordered);
+  }
+
+  return result;
+}
+
 // Forward declarations needed for ListOp type traits
 class Path;
 struct Reference;

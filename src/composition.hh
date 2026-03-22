@@ -29,6 +29,7 @@
 ///
 #pragma once
 
+#include <functional>
 #include <unordered_map>
 
 #include "asset-resolution.hh"
@@ -36,7 +37,7 @@
 #include "layer.hh"           // Layer class
 
 // Remaining TODO items:
-// - [ ] Multi-level implied inherits propagation
+// - [ ] Multi-level implied inherits/specializes propagation (currently single-level)
 // - [ ] Lazy payload evaluation (deferred loading)
 
 namespace tinyusdz {
@@ -103,10 +104,24 @@ struct PayloadCompositionOptions {
 
   // File formats
   std::unordered_map<std::string, FileFormatHandler> fileformats;
-  
+
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management
   size_t max_memory_limit_mb{16384};      // Maximum memory limit in MB
+
+  ///
+  /// Lazy payload loading policy.
+  ///
+  /// When set, this callback is called before loading each payload asset.
+  /// Return true to load the payload, false to skip it (lazy/deferred).
+  ///
+  /// Parameters:
+  ///   prim_path  — The path of the prim that has the payload arc
+  ///   payload    — The Payload descriptor (asset path, prim path, layer offset)
+  ///
+  /// When nullptr (default), all payloads are loaded eagerly.
+  ///
+  std::function<bool(const Path &prim_path, const Payload &payload)> load_policy;
 };
 
 

@@ -477,6 +477,53 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
         dst.props()[prop.first].set_custom(true);
       }
 
+      // AOUSD Core Spec 12.4 (relationships): Compose relationship targets
+      // using list-op semantics across opinions.
+      if (dst.props().at(prop.first).is_relationship() &&
+          prop.second.is_relationship()) {
+        Relationship &dst_rel = dst.props()[prop.first].relationship();
+        const Relationship &src_rel = prop.second.get_relationship();
+
+        // If weaker has targets and stronger doesn't block them,
+        // merge using list-edit semantics
+        if (!dst_rel.is_blocked() && src_rel.is_pathvector() &&
+            dst_rel.is_pathvector()) {
+          ListEditQual src_qual = src_rel.get_listedit_qual();
+
+          if (src_qual == ListEditQual::Prepend) {
+            // Prepend weaker targets before stronger
+            auto combined = src_rel.targetPathVector;
+            for (const auto &p : dst_rel.targetPathVector) {
+              bool dup = false;
+              for (const auto &c : combined) { if (c == p) { dup = true; break; } }
+              if (!dup) combined.push_back(p);
+            }
+            dst_rel.targetPathVector = combined;
+          } else if (src_qual == ListEditQual::Append) {
+            // Append weaker targets after stronger
+            auto combined = dst_rel.targetPathVector;
+            for (const auto &p : src_rel.targetPathVector) {
+              bool dup = false;
+              for (const auto &c : combined) { if (c == p) { dup = true; break; } }
+              if (!dup) combined.push_back(p);
+            }
+            dst_rel.targetPathVector = combined;
+          } else if (src_qual == ListEditQual::Delete) {
+            // Delete weaker targets from stronger
+            std::vector<Path> filtered;
+            for (const auto &p : dst_rel.targetPathVector) {
+              bool del = false;
+              for (const auto &d : src_rel.targetPathVector) {
+                if (d == p) { del = true; break; }
+              }
+              if (!del) filtered.push_back(p);
+            }
+            dst_rel.targetPathVector = filtered;
+          }
+          // ResetToExplicit: stronger already wins (default behavior)
+        }
+      }
+
       // AOUSD Core Spec 6.5 (type agreement): Warn if composed property types
       // disagree. Role types (color3f) agree with their underlying type (float3)
       // but are not equivalent; other mismatches are errors.
@@ -736,6 +783,35 @@ namespace {
 // Tracks (asset_path, prim_path) pairs. Grows only with arc nesting depth (typically < 10).
 using ArcVisitedSet = std::set<std::pair<std::string, std::string>>;
 
+// AOUSD Core Spec 10.3.2.3 / 10.3.2.4: Propagate implied inherit/specialize
+// paths from a referenced/payload PrimSpec to the referencing prim.
+// When prim P references prim Q, and Q has `inherits = [/C]`, then P should
+// also implicitly inherit from /C if it exists in P's layer stack.
+static void PropagateImpliedArcPaths(const PrimSpec &src_ps,
+                                     PrimSpec &dst_ps) {
+  // Propagate inherits paths
+  if (src_ps.metas().inherits) {
+    for (const auto &op : src_ps.metas().inherits.value()) {
+      if (op.second.empty()) continue;
+      if (!dst_ps.metas().inheritPaths) {
+        dst_ps.metas().inheritPaths.emplace();
+      }
+      dst_ps.metas().inheritPaths->push_back(op);
+    }
+  }
+
+  // Propagate specializes paths
+  if (src_ps.metas().specializes) {
+    for (const auto &op : src_ps.metas().specializes.value()) {
+      if (op.second.empty()) continue;
+      if (!dst_ps.metas().specializePaths) {
+        dst_ps.metas().specializePaths.emplace();
+      }
+      dst_ps.metas().specializePaths->push_back(op);
+    }
+  }
+}
+
 bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                             const std::vector<std::string> &asset_search_paths,
                             const Path &dst_prim_path,
@@ -821,6 +897,10 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
             // LoadAsset allowed not-found or unsupported file. so do nothing.
             continue;
           }
+
+          // AOUSD Core Spec 10.3.2.3/10.3.2.4: Propagate implied inherit/specialize
+          // paths from the referenced prim before flattening consumes them.
+          PropagateImpliedArcPaths(*src_ps, primspec);
 
           // Replace prim path prefix
           if (!ReplaceRootPrimPathRec(reference.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
@@ -921,6 +1001,9 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
             continue;
           }
 
+          // AOUSD Core Spec 10.3.2.3/10.3.2.4: Propagate implied arc paths.
+          PropagateImpliedArcPaths(*src_ps, primspec);
+
           // AOUSD Core Spec 10.3.2.3: Record arc origin for implied inherit propagation
           if (!reference.asset_path.GetAssetPath().empty()) {
             ArcOrigin origin;
@@ -999,6 +1082,13 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
       if ((qual == ListEditQual::ResetToExplicit) ||
           (qual == ListEditQual::Prepend)) {
         for (const auto &pl : payloads) {
+          // Lazy payload: check load_policy callback
+          if (options.load_policy &&
+              !options.load_policy(dst_prim_path, pl)) {
+            DCOUT("Payload skipped by load_policy: " << pl.asset_path.GetAssetPath());
+            continue;
+          }
+
           std::string asset_path = pl.asset_path.GetAssetPath();
           DCOUT("asset_path = " << asset_path);
 
@@ -1048,6 +1138,9 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
             continue;
           }
 
+          // AOUSD Core Spec 10.3.2.3/10.3.2.4: Propagate implied arc paths.
+          PropagateImpliedArcPaths(*src_ps, primspec);
+
           // AOUSD Core Spec 10.3.2.2: Apply payload layerOffset to timeSamples.
           if (pl.layerOffset._offset != 0.0 || pl.layerOffset._scale != 1.0) {
             ApplyLayerOffsetRec(*const_cast<PrimSpec *>(src_ps), pl.layerOffset);
@@ -1089,6 +1182,13 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
           PUSH_WARN("`add` list edit qualifier is deprecated (AOUSD Core Spec 6.6.3.10). Treating as `append`.");
         }
         for (const auto &pl : payloads) {
+          // Lazy payload: check load_policy callback
+          if (options.load_policy &&
+              !options.load_policy(dst_prim_path, pl)) {
+            DCOUT("Payload skipped by load_policy: " << pl.asset_path.GetAssetPath());
+            continue;
+          }
+
           std::string asset_path = pl.asset_path.GetAssetPath();
 
           Layer layer;
@@ -1136,6 +1236,9 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
             // LoadAsset allowed not-found or unsupported file. so do nothing.
             continue;
           }
+
+          // AOUSD Core Spec 10.3.2.3/10.3.2.4: Propagate implied arc paths.
+          PropagateImpliedArcPaths(*src_ps, primspec);
 
           // AOUSD Core Spec 10.3.2.2: Apply payload layerOffset to timeSamples.
           if (pl.layerOffset._offset != 0.0 || pl.layerOffset._scale != 1.0) {
@@ -1202,6 +1305,49 @@ bool CompositeVariantRec(uint32_t depth, PrimSpec &primspec /* [inout] */,
 // Tracks prim paths within the same layer.
 using PathVisitedSet = std::set<std::string>;
 
+// Resolve ListEditQual operations into a final ordered list of paths.
+// Implements: resetToExplicit clears + adds, prepend prepends, append appends,
+// delete removes matching paths, order is ignored (warn).
+static std::vector<Path> ResolveListOps(
+    const std::vector<std::pair<ListEditQual, std::vector<Path>>> &listops,
+    std::string *warn) {
+  std::vector<Path> result;
+
+  for (const auto &op : listops) {
+    const auto &qual = op.first;
+    const auto &paths = op.second;
+
+    if (qual == ListEditQual::ResetToExplicit) {
+      result.clear();
+      result.insert(result.end(), paths.begin(), paths.end());
+    } else if (qual == ListEditQual::Prepend) {
+      result.insert(result.begin(), paths.begin(), paths.end());
+    } else if (qual == ListEditQual::Append ||
+               qual == ListEditQual::Add) {
+      if (qual == ListEditQual::Add && warn) {
+        (*warn) += "`add` list edit qualifier is deprecated (AOUSD Core Spec 6.6.3.10). Treating as `append`.\n";
+      }
+      result.insert(result.end(), paths.begin(), paths.end());
+    } else if (qual == ListEditQual::Delete) {
+      // Remove matching paths from the result
+      for (const auto &del_path : paths) {
+        result.erase(
+            std::remove_if(result.begin(), result.end(),
+                           [&del_path](const Path &p) {
+                             return p.prim_part() == del_path.prim_part();
+                           }),
+            result.end());
+      }
+    } else if (qual == ListEditQual::Order) {
+      if (warn) {
+        (*warn) += "`order` list edit: reordering not supported. Skipping.\n";
+      }
+    }
+  }
+
+  return result;
+}
+
 bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
                           PrimSpec &primspec /* [inout] */, std::string *warn,
                           std::string *err,
@@ -1218,105 +1364,46 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
   }
 
   if (primspec.metas().inherits) {
-    // Copy inherits data before iterating — InheritPrimSpec replaces primspec
-    // contents via move, invalidating references into metas().inherits.
+    // Resolve all ListEditQual operations (prepend, append, delete, order)
+    // into a single ordered list of paths before processing.
     auto inherits_copy = primspec.metas().inherits.value();
+    std::vector<Path> resolved = ResolveListOps(inherits_copy, warn);
 
-    for (const auto &inherit_op : inherits_copy) {
-      const auto &qual = inherit_op.first;
-      const auto &inherits = inherit_op.second;
+    // Process the resolved path list — each inherits target fills in defaults.
+    for (const auto &inheritPath : resolved) {
+      // Cycle detection
+      std::string key = inheritPath.prim_part();
+      if (visited.count(key)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Cycle detected in `inherits`: prim <{}>", key));
+      }
+      visited.insert(key);
 
-      if (inherits.empty()) {
-        // no-op, continue to next listop
-        continue;
+      const PrimSpec *src_ps{nullptr};
+
+      if (!layer.find_primspec_at(inheritPath, &src_ps, err)) {
+        visited.erase(key);
+        if (err) {
+          (*err) += "Inherit failed: Path <" +
+                    inheritPath.prim_part() + "> not found or is invalid.\n";
+        }
+        return false;
       }
 
-      if ((qual == ListEditQual::ResetToExplicit) ||
-          (qual == ListEditQual::Prepend)) {
-        // Prepend/Reset: inherited content provides defaults, local wins.
-        for (const auto &inheritPath : inherits) {
-          // Cycle detection
-          std::string key = inheritPath.prim_part();
-          if (visited.count(key)) {
-            PUSH_ERROR_AND_RETURN(fmt::format(
-                "Cycle detected in `inherits`: prim <{}>", key));
-          }
-          visited.insert(key);
-
-          const PrimSpec *src_ps{nullptr};
-
-          if (!layer.find_primspec_at(inheritPath, &src_ps, err)) {
-            visited.erase(key);
-            if (err) {
-              (*err) += "Inherit failed: Path <" +
-                        inheritPath.prim_part() + "> not found or is invalid.\n";
-            }
-            return false;
-          }
-
-          if (!src_ps) {
-            visited.erase(key);
-            PUSH_ERROR_AND_RETURN(
-                "Internal error: PrimSpec is nullptr in CompositeInheritsRec.\n");
-          }
-
-          if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
-            visited.erase(key);
-            return false;
-          }
-          visited.erase(key);
-        }
-      } else if (qual == ListEditQual::Append ||
-                 qual == ListEditQual::Add) {
-        if (qual == ListEditQual::Add) {
-          PushWarn("`add` list edit qualifier is deprecated (AOUSD Core Spec 6.6.3.10). Treating as `append`.\n");
-        }
-        // Append: inherited content fills in remaining gaps (weaker than prepend inherits).
-        for (const auto &inheritPath : inherits) {
-          // Cycle detection
-          std::string key = inheritPath.prim_part();
-          if (visited.count(key)) {
-            PUSH_ERROR_AND_RETURN(fmt::format(
-                "Cycle detected in `inherits`: prim <{}>", key));
-          }
-          visited.insert(key);
-
-          const PrimSpec *src_ps{nullptr};
-
-          if (!layer.find_primspec_at(inheritPath, &src_ps, err)) {
-            visited.erase(key);
-            if (err) {
-              (*err) += "Inherit failed: Path <" +
-                        inheritPath.prim_part() + "> not found or is invalid.\n";
-            }
-            return false;
-          }
-
-          if (!src_ps) {
-            visited.erase(key);
-            PUSH_ERROR_AND_RETURN(
-                "Internal error: PrimSpec is nullptr in CompositeInheritsRec.\n");
-          }
-
-          if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
-            visited.erase(key);
-            return false;
-          }
-          visited.erase(key);
-        }
-      } else if (qual == ListEditQual::Delete) {
-        // Delete: remove inherit targets from the composed list.
-        // In our flattening model, already-applied inherits cannot be undone.
-        // Warn and skip — this qualifier is rarely used in practice.
-        PushWarn("`delete` inherits list edit: cannot undo already-flattened inherits. Skipping.\n");
-      } else if (qual == ListEditQual::Order) {
-        PushWarn("`order` inherits list edit: reordering not supported in flattening model. Skipping.\n");
-      } else if (qual == ListEditQual::Invalid) {
-        PUSH_ERROR_AND_RETURN("Invalid list edit qualifier for `inherits`.\n");
+      if (!src_ps) {
+        visited.erase(key);
+        PUSH_ERROR_AND_RETURN(
+            "Internal error: PrimSpec is nullptr in CompositeInheritsRec.\n");
       }
+
+      if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
+        visited.erase(key);
+        return false;
+      }
+      visited.erase(key);
     }
 
-    // remove `inherits` metadataum after processing all listops.
+    // remove `inherits` metadataum after processing.
     primspec.metas().inherits.reset();
   }
 
@@ -1331,42 +1418,36 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
   // Implementation: For each arc origin, look for class prims (class specifier)
   // in the current layer that match the inherit targets from the referenced layer.
   // This is the single-level implied inherit case.
-  if (!primspec.metas().arc_origins.empty()) {
-    for (const auto &origin : primspec.metas().arc_origins) {
-      (void)origin;
-      // For each origin, we would need to:
-      // 1. Look at what inherits the original prim had in the source layer
-      // 2. Find matching class prims in the current layer
-      // 3. Apply InheritPrimSpec from those class prims
-      //
-      // Since we don't have the original source layer available here,
-      // we rely on the fact that inherit paths from the referenced layer
-      // have been propagated through the PrimSpec's inheritPaths metadata.
-      // Multi-level propagation is deferred for future work.
-      DCOUT("Arc origin: " << origin.source_layer_id << " @ "
-                           << origin.source_prim_path.prim_part());
-    }
-
-    // Check if there are inheritPaths propagated from referenced layers
-    if (primspec.metas().inheritPaths) {
-      for (const auto &inherit_op : primspec.metas().inheritPaths.value()) {
-        const auto &paths = inherit_op.second;
-        for (const auto &inheritPath : paths) {
-          const PrimSpec *inheritPrimSpec{nullptr};
-          std::string _err;
-          if (layer.find_primspec_at(inheritPath, &inheritPrimSpec, &_err)) {
-            if (inheritPrimSpec) {
+  // AOUSD Core Spec 10.3.2.3: Implied inherits.
+  // Process inheritPaths propagated from referenced/payload layers.
+  // These are populated by PropagateImpliedArcPaths() during reference/payload
+  // composition and contain the inherit targets from the referenced prim.
+  // Apply them if matching prims exist in the current layer stack.
+  if (primspec.metas().inheritPaths) {
+    auto ip_copy = primspec.metas().inheritPaths.value();
+    for (const auto &inherit_op : ip_copy) {
+      const auto &paths = inherit_op.second;
+      for (const auto &inheritPath : paths) {
+        const PrimSpec *src_ps{nullptr};
+        std::string _err;
+        if (layer.find_primspec_at(inheritPath, &src_ps, &_err)) {
+          if (src_ps) {
+            std::string key = inheritPath.prim_part();
+            if (!visited.count(key)) {
+              visited.insert(key);
               DCOUT("Applying implied inherit from " << inheritPath.prim_part());
-              if (!InheritPrimSpec(primspec, *inheritPrimSpec, warn, err)) {
+              if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
+                visited.erase(key);
                 return false;
               }
+              visited.erase(key);
             }
           }
-          // If not found, that's OK -- the class may not exist in this layer stack
         }
+        // If not found, that's OK -- the class may not exist in this layer stack
       }
-      primspec.metas().inheritPaths.reset();
     }
+    primspec.metas().inheritPaths.reset();
   }
 
   return true;
@@ -1428,10 +1509,14 @@ std::vector<std::string> ExtractReferencesAssetPaths(const Layer &layer) {
 }
 
 
-bool CompositeReferences(AssetResolutionResolver &resolver,
-                         const Layer &in_layer, Layer *composited_layer,
-                         std::string *warn, std::string *err,
-                         ReferencesCompositionOptions options) {
+namespace {
+
+// Internal implementation that accepts a shared visited set for cross-arc cycle detection.
+bool CompositeReferencesImpl(AssetResolutionResolver &resolver,
+                             const Layer &in_layer, Layer *composited_layer,
+                             std::string *warn, std::string *err,
+                             const ReferencesCompositionOptions &options,
+                             ArcVisitedSet &visited) {
   if (!composited_layer) {
     return false;
   }
@@ -1440,13 +1525,12 @@ bool CompositeReferences(AssetResolutionResolver &resolver,
 
   Layer dst = in_layer;  // deep copy
 
-  ArcVisitedSet visited;  // Cycle detection set — shared across all root prims
-
   for (auto &item : dst.primspecs()) {
     Path primPath("/" + item.first, "");
     if (!CompositeReferencesRec(/* depth */ 0, resolver, search_paths, primPath, in_layer,
                                 item.second, warn, err, options, visited)) {
-      PUSH_ERROR_AND_RETURN("Composite `references` failed.");
+      if (err) { (*err) += "Composite `references` failed.\n"; }
+      return false;
     }
   }
 
@@ -1454,6 +1538,17 @@ bool CompositeReferences(AssetResolutionResolver &resolver,
 
   DCOUT("Composite `references` ok.");
   return true;
+}
+
+}  // namespace
+
+bool CompositeReferences(AssetResolutionResolver &resolver,
+                         const Layer &in_layer, Layer *composited_layer,
+                         std::string *warn, std::string *err,
+                         ReferencesCompositionOptions options) {
+  ArcVisitedSet visited;
+  return CompositeReferencesImpl(resolver, in_layer, composited_layer,
+                                 warn, err, options, visited);
 }
 
 namespace {
@@ -1514,23 +1609,25 @@ std::vector<std::string> ExtractPayloadAssetPaths(const Layer &layer) {
 }
 
 
-bool CompositePayload(AssetResolutionResolver &resolver, const Layer &in_layer,
-                      Layer *composited_layer, std::string *warn,
-                      std::string *err, PayloadCompositionOptions options) {
+namespace {
+
+bool CompositePayloadImpl(AssetResolutionResolver &resolver, const Layer &in_layer,
+                          Layer *composited_layer, std::string *warn,
+                          std::string *err, const PayloadCompositionOptions &options,
+                          ArcVisitedSet &visited) {
   if (!composited_layer) {
     return false;
   }
 
   Layer dst = in_layer;  // deep copy
 
-  ArcVisitedSet visited;  // Cycle detection set — shared across all root prims
-
   for (auto &item : dst.primspecs()) {
     Path primPath("/" + item.first, "");
     if (!CompositePayloadRec(/* depth */ 0, resolver,
                              item.second.get_asset_search_paths(), primPath, in_layer, item.second,
                              warn, err, options, visited)) {
-      PUSH_ERROR_AND_RETURN("Composite `payload` failed.");
+      if (err) { (*err) += "Composite `payload` failed.\n"; }
+      return false;
     }
   }
 
@@ -1538,6 +1635,16 @@ bool CompositePayload(AssetResolutionResolver &resolver, const Layer &in_layer,
 
   DCOUT("Composite `payload` ok.");
   return true;
+}
+
+}  // namespace
+
+bool CompositePayload(AssetResolutionResolver &resolver, const Layer &in_layer,
+                      Layer *composited_layer, std::string *warn,
+                      std::string *err, PayloadCompositionOptions options) {
+  ArcVisitedSet visited;
+  return CompositePayloadImpl(resolver, in_layer, composited_layer,
+                              warn, err, options, visited);
 }
 
 bool CompositeVariant(const Layer &in_layer, Layer *composited_layer,
@@ -1604,100 +1711,76 @@ static bool CompositeSpecializesRec(uint32_t depth, const Layer &layer,
   }
 
   if (primspec.metas().specializes) {
-    // Copy specializes data before iterating — InheritPrimSpecImpl replaces
-    // primspec contents via move, invalidating references into metas().specializes.
+    // Resolve all ListEditQual operations into a single ordered path list.
     auto specializes_copy = primspec.metas().specializes.value();
+    std::vector<Path> resolved = ResolveListOps(specializes_copy, warn);
 
-    for (const auto &specialize_op : specializes_copy) {
-      const auto &qual = specialize_op.first;
-      const auto &specializes = specialize_op.second;
+    // Process the resolved path list.
+    for (const auto &specializePath : resolved) {
+      // Cycle detection
+      std::string key = specializePath.prim_part();
+      if (visited.count(key)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Cycle detected in `specializes`: prim <{}>", key));
+      }
+      visited.insert(key);
 
-      if (specializes.empty()) {
-        continue;
+      const PrimSpec *src_ps{nullptr};
+
+      if (!layer.find_primspec_at(specializePath, &src_ps, err)) {
+        visited.erase(key);
+        if (err) {
+          (*err) += "Specialize failed: Path <" +
+                    specializePath.prim_part() + "> not found.\n";
+        }
+        return false;
       }
 
-      if ((qual == ListEditQual::ResetToExplicit) ||
-          (qual == ListEditQual::Prepend)) {
-        for (const auto &specializePath : specializes) {
-          // Cycle detection
-          std::string key = specializePath.prim_part();
-          if (visited.count(key)) {
-            PUSH_ERROR_AND_RETURN(fmt::format(
-                "Cycle detected in `specializes`: prim <{}>", key));
-          }
-          visited.insert(key);
-
-          const PrimSpec *src_ps{nullptr};
-
-          if (!layer.find_primspec_at(specializePath, &src_ps, err)) {
-            visited.erase(key);
-            if (err) {
-              (*err) += "Specialize failed: Path <" +
-                        specializePath.prim_part() + "> not found.\n";
-            }
-            return false;
-          }
-
-          if (!src_ps) {
-            visited.erase(key);
-            PUSH_ERROR_AND_RETURN(
-                "Internal error: PrimSpec is nullptr in CompositeSpecializesRec.\n");
-          }
-
-          if (!detail::InheritPrimSpecImpl(primspec, *src_ps, warn, err)) {
-            visited.erase(key);
-            return false;
-          }
-          visited.erase(key);
-        }
-      } else if (qual == ListEditQual::Append ||
-                 qual == ListEditQual::Add) {
-        if (qual == ListEditQual::Add) {
-          PushWarn("`add` list edit qualifier is deprecated (AOUSD Core Spec 6.6.3.10). Treating as `append`.\n");
-        }
-        for (const auto &specializePath : specializes) {
-          // Cycle detection
-          std::string key = specializePath.prim_part();
-          if (visited.count(key)) {
-            PUSH_ERROR_AND_RETURN(fmt::format(
-                "Cycle detected in `specializes`: prim <{}>", key));
-          }
-          visited.insert(key);
-
-          const PrimSpec *src_ps{nullptr};
-
-          if (!layer.find_primspec_at(specializePath, &src_ps, err)) {
-            visited.erase(key);
-            if (err) {
-              (*err) += "Specialize failed: Path <" +
-                        specializePath.prim_part() + "> not found.\n";
-            }
-            return false;
-          }
-
-          if (!src_ps) {
-            visited.erase(key);
-            PUSH_ERROR_AND_RETURN(
-                "Internal error: PrimSpec is nullptr in CompositeSpecializesRec.\n");
-          }
-
-          if (!detail::InheritPrimSpecImpl(primspec, *src_ps, warn, err)) {
-            visited.erase(key);
-            return false;
-          }
-          visited.erase(key);
-        }
-      } else if (qual == ListEditQual::Delete) {
-        PushWarn("`delete` specializes list edit: cannot undo already-flattened specializes. Skipping.\n");
-      } else if (qual == ListEditQual::Order) {
-        PushWarn("`order` specializes list edit: reordering not supported in flattening model. Skipping.\n");
-      } else if (qual == ListEditQual::Invalid) {
-        PUSH_ERROR_AND_RETURN("Invalid list edit qualifier for `specializes`.\n");
+      if (!src_ps) {
+        visited.erase(key);
+        PUSH_ERROR_AND_RETURN(
+            "Internal error: PrimSpec is nullptr in CompositeSpecializesRec.\n");
       }
+
+      if (!detail::InheritPrimSpecImpl(primspec, *src_ps, warn, err)) {
+        visited.erase(key);
+        return false;
+      }
+      visited.erase(key);
     }
 
-    // Clear specializes metadata after processing
+    // Clear specializes metadata after processing.
     primspec.metas().specializes.reset();
+  }
+
+  // AOUSD Core Spec 10.3.2.4: Implied specializes.
+  // If this prim has specializePaths propagated from referenced layers,
+  // apply those specializes from matching prims in the current layer.
+  if (primspec.metas().specializePaths) {
+    auto sp_copy = primspec.metas().specializePaths.value();
+    for (const auto &sp_op : sp_copy) {
+      const auto &paths = sp_op.second;
+      for (const auto &spPath : paths) {
+        const PrimSpec *src_ps{nullptr};
+        std::string _err;
+        if (layer.find_primspec_at(spPath, &src_ps, &_err)) {
+          if (src_ps) {
+            std::string key = spPath.prim_part();
+            if (!visited.count(key)) {
+              visited.insert(key);
+              DCOUT("Applying implied specialize from " << spPath.prim_part());
+              if (!detail::InheritPrimSpecImpl(primspec, *src_ps, warn, err)) {
+                visited.erase(key);
+                return false;
+              }
+              visited.erase(key);
+            }
+          }
+        }
+        // If not found, that's OK -- the class may not exist in this layer stack
+      }
+    }
+    primspec.metas().specializePaths.reset();
   }
 
   return true;
@@ -2195,10 +2278,16 @@ bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
 
   // Skip V for now -- defer variant evaluation until after R and P
 
+  // Shared visited set for cross-arc cycle detection between R and P phases.
+  // This catches cycles where an asset is loaded as both a reference and payload.
+  ArcVisitedSet arc_visited;
+
   // R: References
   if (HasReferences(working)) {
     Layer tmp;
-    if (!CompositeReferences(resolver, working, &tmp, warn, err)) {
+    ReferencesCompositionOptions ref_opts;
+    if (!CompositeReferencesImpl(resolver, working, &tmp, warn, err,
+                                 ref_opts, arc_visited)) {
       return false;
     }
     working = std::move(tmp);
@@ -2209,7 +2298,9 @@ bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
   // P: Payloads
   if (HasPayload(working)) {
     Layer tmp;
-    if (!CompositePayload(resolver, working, &tmp, warn, err)) {
+    PayloadCompositionOptions pl_opts;
+    if (!CompositePayloadImpl(resolver, working, &tmp, warn, err,
+                              pl_opts, arc_visited)) {
       return false;
     }
     working = std::move(tmp);
