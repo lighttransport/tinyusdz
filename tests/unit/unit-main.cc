@@ -340,6 +340,10 @@ TEST_LIST = {
   { "comp_payload_load_policy_test", comp_payload_load_policy_test },
   { "comp_inherits_delete_listop_test", comp_inherits_delete_listop_test },
   { "comp_inherits_order_listop_test", comp_inherits_order_listop_test },
+  { "comp_relocates_simple_rename_test", comp_relocates_simple_rename_test },
+  { "comp_relocates_root_rename_test", comp_relocates_root_rename_test },
+  { "comp_relocates_cross_parent_test", comp_relocates_cross_parent_test },
+  { "comp_relocates_path_remap_test", comp_relocates_path_remap_test },
   // Phase 2: Stage API tests (extended)
   { "stage_add_root_prim_test", stage_add_root_prim_test },
   { "stage_replace_root_prim_test", stage_replace_root_prim_test },
@@ -417,10 +421,15 @@ TEST_LIST = {
   { "security_huge_array_test", security_huge_array_test },
   { "security_malformed_utf8_test", security_malformed_utf8_test },
   { "security_recursive_reference_test", security_recursive_reference_test },
-  // USDZ writer tests
+  // USDZ writer and validation tests
   { "usdz_writer_basic_roundtrip_test", usdz_writer_basic_roundtrip_test },
   { "usdz_writer_with_assets_test", usdz_writer_with_assets_test },
   { "usdz_validator_alignment_test", usdz_validator_alignment_test },
+  { "usdz_validator_crc32_test", usdz_validator_crc32_test },
+  { "usdz_validator_size_consistency_test", usdz_validator_size_consistency_test },
+  { "usdz_validator_empty_input_test", usdz_validator_empty_input_test },
+  { "usdz_writer_file_roundtrip_test", usdz_writer_file_roundtrip_test },
+  { "usdz_validator_large_asset_test", usdz_validator_large_asset_test },
   { "usdz_validator_bad_extension_test", usdz_validator_bad_extension_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
