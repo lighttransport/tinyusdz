@@ -32,3 +32,7 @@ void comp_specializes_globally_weaker_test(void);
 void comp_payload_load_policy_test(void);
 void comp_inherits_delete_listop_test(void);
 void comp_inherits_order_listop_test(void);
+void comp_relocates_simple_rename_test(void);
+void comp_relocates_root_rename_test(void);
+void comp_relocates_cross_parent_test(void);
+void comp_relocates_path_remap_test(void);

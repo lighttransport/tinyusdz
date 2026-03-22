@@ -1042,9 +1042,37 @@ void comp_layer_to_stage_test(void) {
 // verify returned map.
 // ---------------------------------------------------------------------------
 void comp_list_variant_selections_test(void) {
-  // ListVariantSelectionMaps() is declared in composition.hh but not yet
-  // implemented. This test is a placeholder until the implementation lands.
-  TEST_MSG("ListVariantSelectionMaps not yet implemented -- skipping");
+  Layer layer;
+
+  // /Model with variant selection: { lodVariant: "high" }
+  PrimSpec model(Specifier::Def, "Scope", "Model");
+  {
+    VariantSelectionMap vsm;
+    vsm["lodVariant"] = "high";
+    model.metas().variants = vsm;
+  }
+  layer.add_primspec("Model", model);
+
+  // /Plain — no variants
+  PrimSpec plain(Specifier::Def, "Scope", "Plain");
+  layer.add_primspec("Plain", plain);
+
+  VariantSelectorMap m;
+  bool ok = ListVariantSelectionMaps(layer, m);
+  TEST_CHECK(ok);
+
+  // Should have one entry for /Model
+  TEST_CHECK(m.size() == 1);
+  if (m.size() == 1) {
+    auto it = m.find(Path("/Model", ""));
+    TEST_CHECK(it != m.end());
+    if (it != m.end()) {
+      TEST_CHECK(it->second.vsmap.count("lodVariant") > 0);
+      if (it->second.vsmap.count("lodVariant")) {
+        TEST_CHECK(it->second.vsmap.at("lodVariant") == "high");
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1126,9 +1154,102 @@ void comp_variant_select_primspec_test(void) {
 // VariantSelectorMap.
 // ---------------------------------------------------------------------------
 void comp_apply_variant_selector_test(void) {
-  // ApplyVariantSelector() is declared in composition.hh but not yet
-  // implemented. This test is a placeholder until the implementation lands.
-  TEST_MSG("ApplyVariantSelector not yet implemented -- skipping");
+  Layer layer;
+
+  // /Model with variantSet "colorVariant" containing "red" and "blue" variants.
+  PrimSpec model(Specifier::Def, "Scope", "Model");
+  {
+    // Set up variantSets metadata
+    std::vector<std::pair<ListEditQual, std::vector<std::string>>> vs_ops;
+    vs_ops.push_back({ListEditQual::ResetToExplicit, {"colorVariant"}});
+    model.metas().variantSets = vs_ops;
+
+    // Set variant selection to "red"
+    VariantSelectionMap vsm;
+    vsm["colorVariant"] = "red";
+    model.metas().variants = vsm;
+
+    // Add variantSet content
+    VariantSetSpec vss;
+    vss.name = "colorVariant";
+
+    {
+      PrimSpec red(Specifier::Def, "", "red");
+      Attribute attr;
+      attr.set_value(value::token("red_color"));
+      attr.set_type_name("token");
+      red.props()["color"] = Property(attr, false);
+      vss.variantSet["red"] = red;
+    }
+
+    {
+      PrimSpec blue(Specifier::Def, "", "blue");
+      Attribute attr;
+      attr.set_value(value::token("blue_color"));
+      attr.set_type_name("token");
+      blue.props()["color"] = Property(attr, false);
+      vss.variantSet["blue"] = blue;
+    }
+
+    model.variantSets()["colorVariant"] = vss;
+  }
+  layer.add_primspec("Model", model);
+
+  // Test 1: Apply with the layer's own selection ("red")
+  {
+    VariantSelectorMap vsmap;
+    ListVariantSelectionMaps(layer, vsmap);
+
+    Layer result;
+    std::string warn, err;
+    bool ok = ApplyVariantSelector(layer, vsmap, &result, &warn, &err);
+    TEST_CHECK(ok);
+    if (!ok) {
+      TEST_MSG("ApplyVariantSelector failed: %s", err.c_str());
+    }
+    if (ok) {
+      auto it = result.primspecs().find("Model");
+      TEST_CHECK(it != result.primspecs().end());
+      if (it != result.primspecs().end()) {
+        TEST_CHECK(it->second.props().count("color") > 0);
+        if (it->second.props().count("color")) {
+          auto v = it->second.props().at("color").get_attribute().get_value<value::token>();
+          TEST_CHECK(v.has_value());
+          if (v.has_value()) {
+            TEST_CHECK(v.value().str() == "red_color");
+          }
+        }
+      }
+    }
+  }
+
+  // Test 2: Override selection to "blue"
+  {
+    VariantSelectorMap vsmap;
+    VariantSelector sel;
+    sel.selection = "blue";
+    sel.vsmap["colorVariant"] = "blue";
+    vsmap[Path("/Model", "")] = sel;
+
+    Layer result;
+    std::string warn, err;
+    bool ok = ApplyVariantSelector(layer, vsmap, &result, &warn, &err);
+    TEST_CHECK(ok);
+    if (ok) {
+      auto it = result.primspecs().find("Model");
+      TEST_CHECK(it != result.primspecs().end());
+      if (it != result.primspecs().end()) {
+        TEST_CHECK(it->second.props().count("color") > 0);
+        if (it->second.props().count("color")) {
+          auto v = it->second.props().at("color").get_attribute().get_value<value::token>();
+          TEST_CHECK(v.has_value());
+          if (v.has_value()) {
+            TEST_CHECK(v.value().str() == "blue_color");
+          }
+        }
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1953,6 +2074,203 @@ void comp_inherits_order_listop_test(void) {
       if (v.has_value()) {
         TEST_CHECK(v.value() == 2);
         TEST_MSG("Expected 2 (from /B, first in reordered list), got %d", v.value());
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 33. comp_relocates_simple_rename_test
+// Relocate /Root/Child -> /Root/NewChild (same-parent rename).
+// ---------------------------------------------------------------------------
+void comp_relocates_simple_rename_test(void) {
+  Layer layer;
+
+  PrimSpec root(Specifier::Def, "Scope", "Root");
+  {
+    PrimSpec child(Specifier::Def, "Scope", "Child");
+    Attribute attr;
+    attr.set_value(42);
+    attr.set_type_name("int");
+    child.props()["val"] = Property(attr, false);
+    root.children().push_back(child);
+  }
+  layer.add_primspec("Root", root);
+  layer.metas().layerRelocates.push_back(
+      {Path("/Root/Child", ""), Path("/Root/NewChild", "")});
+
+  Layer result;
+  std::string warn, err;
+  bool ok = CompositeRelocates(layer, &result, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("CompositeRelocates failed: %s", err.c_str());
+    return;
+  }
+
+  auto it = result.primspecs().find("Root");
+  TEST_CHECK(it != result.primspecs().end());
+  if (it != result.primspecs().end()) {
+    // Should have 1 child named "NewChild", not "Child"
+    TEST_CHECK(it->second.children().size() == 1);
+    if (!it->second.children().empty()) {
+      TEST_CHECK(it->second.children()[0].name() == "NewChild");
+      TEST_CHECK(it->second.children()[0].props().count("val") > 0);
+    }
+  }
+
+  // layerRelocates should be cleared
+  TEST_CHECK(result.metas().layerRelocates.empty());
+}
+
+// ---------------------------------------------------------------------------
+// 34. comp_relocates_root_rename_test
+// Relocate /OldName -> /NewName (root-level prim rename).
+// ---------------------------------------------------------------------------
+void comp_relocates_root_rename_test(void) {
+  Layer layer;
+
+  PrimSpec prim(Specifier::Def, "Scope", "OldName");
+  {
+    Attribute attr;
+    attr.set_value(99);
+    attr.set_type_name("int");
+    prim.props()["val"] = Property(attr, false);
+  }
+  layer.add_primspec("OldName", prim);
+  layer.metas().layerRelocates.push_back(
+      {Path("/OldName", ""), Path("/NewName", "")});
+
+  Layer result;
+  std::string warn, err;
+  bool ok = CompositeRelocates(layer, &result, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("CompositeRelocates failed: %s", err.c_str());
+    return;
+  }
+
+  // "OldName" should be gone, "NewName" should exist
+  TEST_CHECK(result.primspecs().count("OldName") == 0);
+  TEST_CHECK(result.primspecs().count("NewName") > 0);
+  if (result.primspecs().count("NewName")) {
+    TEST_CHECK(result.primspecs().at("NewName").props().count("val") > 0);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 35. comp_relocates_cross_parent_test
+// Relocate /Root/A -> /Root/Group/A (move child under new parent).
+// ---------------------------------------------------------------------------
+void comp_relocates_cross_parent_test(void) {
+  Layer layer;
+
+  PrimSpec root(Specifier::Def, "Scope", "Root");
+  {
+    PrimSpec childA(Specifier::Def, "Scope", "A");
+    Attribute attr;
+    attr.set_value(1);
+    attr.set_type_name("int");
+    childA.props()["val"] = Property(attr, false);
+    root.children().push_back(childA);
+
+    // Pre-create "Group" as an over
+    PrimSpec group(Specifier::Def, "Scope", "Group");
+    root.children().push_back(group);
+  }
+  layer.add_primspec("Root", root);
+  layer.metas().layerRelocates.push_back(
+      {Path("/Root/A", ""), Path("/Root/Group/A", "")});
+
+  Layer result;
+  std::string warn, err;
+  bool ok = CompositeRelocates(layer, &result, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("CompositeRelocates failed: %s", err.c_str());
+    return;
+  }
+
+  auto it = result.primspecs().find("Root");
+  TEST_CHECK(it != result.primspecs().end());
+  if (it != result.primspecs().end()) {
+    // /Root should no longer have direct child "A"
+    bool found_direct_A = false;
+    for (const auto &child : it->second.children()) {
+      if (child.name() == "A") found_direct_A = true;
+    }
+    TEST_CHECK(!found_direct_A);
+
+    // /Root/Group should have child "A"
+    bool found_group = false;
+    for (const auto &child : it->second.children()) {
+      if (child.name() == "Group") {
+        found_group = true;
+        bool found_A = false;
+        for (const auto &gchild : child.children()) {
+          if (gchild.name() == "A") {
+            found_A = true;
+            TEST_CHECK(gchild.props().count("val") > 0);
+          }
+        }
+        TEST_CHECK(found_A);
+      }
+    }
+    TEST_CHECK(found_group);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 36. comp_relocates_path_remap_test
+// Verify that relationship targets and inherits paths are remapped.
+// ---------------------------------------------------------------------------
+void comp_relocates_path_remap_test(void) {
+  Layer layer;
+
+  PrimSpec root(Specifier::Def, "Scope", "Root");
+  {
+    PrimSpec child(Specifier::Def, "Scope", "Child");
+    // Relationship pointing to /Root/Target
+    Relationship rel;
+    rel.set(Path("/Root/Target", ""));
+    child.props()["rel"] = Property(rel, false);
+    root.children().push_back(child);
+
+    PrimSpec target(Specifier::Def, "Scope", "Target");
+    root.children().push_back(target);
+  }
+  layer.add_primspec("Root", root);
+  // Relocate /Root/Target -> /Root/NewTarget
+  layer.metas().layerRelocates.push_back(
+      {Path("/Root/Target", ""), Path("/Root/NewTarget", "")});
+
+  Layer result;
+  std::string warn, err;
+  bool ok = CompositeRelocates(layer, &result, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("CompositeRelocates failed: %s", err.c_str());
+    return;
+  }
+
+  // Check that /Root/Child's relationship now points to /Root/NewTarget
+  auto it = result.primspecs().find("Root");
+  TEST_CHECK(it != result.primspecs().end());
+  if (it != result.primspecs().end()) {
+    for (const auto &child : it->second.children()) {
+      if (child.name() == "Child") {
+        TEST_CHECK(child.props().count("rel") > 0);
+        if (child.props().count("rel")) {
+          const auto &p = child.props().at("rel");
+          TEST_CHECK(p.is_relationship());
+          if (p.is_relationship()) {
+            const auto &r = p.get_relationship();
+            TEST_CHECK(r.is_path());
+            if (r.is_path()) {
+              TEST_CHECK(r.targetPath.prim_part() == "/Root/NewTarget");
+            }
+          }
+        }
       }
     }
   }
