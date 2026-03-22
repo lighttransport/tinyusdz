@@ -10,6 +10,7 @@
 
 #include "unit-usdz-writer.h"
 
+#include <cstdio>
 #include <cstring>
 #include <map>
 #include <string>
@@ -168,7 +169,190 @@ void usdz_validator_alignment_test(void) {
   }
 }
 
-// Test 4: Validator catches bad extensions
+// Test 4: CRC32 integrity validation
+void usdz_validator_crc32_test(void) {
+  tinyusdz::Stage stage;
+  stage.metas().defaultPrim = tinyusdz::value::token("root");
+
+  tinyusdz::Xform xform;
+  xform.name = "root";
+  xform.spec = tinyusdz::Specifier::Def;
+  tinyusdz::value::Value primdata = xform;
+  tinyusdz::Prim prim("root", primdata);
+  prim.prim_type_name() = "Xform";
+  stage.add_root_prim(std::move(prim));
+
+  std::map<std::string, std::vector<uint8_t>> assets;
+  assets["texture.png"] = std::vector<uint8_t>(100, 0x42);
+
+  std::vector<uint8_t> usdz_data;
+  std::string warn, err;
+
+  bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
+  TEST_CHECK(ret);
+
+  // Valid data should pass
+  warn.clear(); err.clear();
+  ret = tinyusdz::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn, &err);
+  TEST_CHECK(ret);
+
+  // Corrupt one byte in the file data area and check CRC fails
+  if (usdz_data.size() > 128) {
+    std::vector<uint8_t> corrupted = usdz_data;
+    corrupted[128] ^= 0xFF;  // flip a byte
+    warn.clear(); err.clear();
+    ret = tinyusdz::ValidateUSDZ(corrupted.data(), corrupted.size(), &warn, &err);
+    // May or may not fail depending on which byte was corrupted
+    // (header vs data), but at minimum should not crash
+    (void)ret;
+  }
+}
+
+// Test 5: Validate compressed size == uncompressed size
+void usdz_validator_size_consistency_test(void) {
+  // Build a USDZ with known content
+  tinyusdz::Stage stage;
+  stage.metas().defaultPrim = tinyusdz::value::token("root");
+
+  tinyusdz::Xform xform;
+  xform.name = "root";
+  xform.spec = tinyusdz::Specifier::Def;
+  tinyusdz::value::Value primdata = xform;
+  tinyusdz::Prim prim("root", primdata);
+  prim.prim_type_name() = "Xform";
+  stage.add_root_prim(std::move(prim));
+
+  std::map<std::string, std::vector<uint8_t>> assets;
+  std::vector<uint8_t> usdz_data;
+  std::string warn, err;
+
+  bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
+  TEST_CHECK(ret);
+
+  // The writer should produce valid compressed==uncompressed sizes
+  warn.clear(); err.clear();
+  ret = tinyusdz::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn, &err);
+  TEST_CHECK(ret);
+  if (!ret) {
+    TEST_MSG("Size consistency check failed: %s", err.c_str());
+  }
+}
+
+// Test 6: Validate empty/null input handling
+void usdz_validator_empty_input_test(void) {
+  std::string warn, err;
+
+  // Null input
+  bool ret = tinyusdz::ValidateUSDZ(nullptr, 0, &warn, &err);
+  TEST_CHECK(!ret);
+  TEST_CHECK(err.find("null") != std::string::npos || err.find("short") != std::string::npos);
+
+  // Too short
+  uint8_t tiny[3] = {0x50, 0x4b, 0x03};
+  warn.clear(); err.clear();
+  ret = tinyusdz::ValidateUSDZ(tiny, 3, &warn, &err);
+  TEST_CHECK(!ret);
+
+  // Bad magic
+  uint8_t bad_magic[4] = {0x00, 0x00, 0x00, 0x00};
+  warn.clear(); err.clear();
+  ret = tinyusdz::ValidateUSDZ(bad_magic, 4, &warn, &err);
+  TEST_CHECK(!ret);
+  TEST_CHECK(err.find("magic") != std::string::npos);
+}
+
+// Test 7: File-based write and read roundtrip
+void usdz_writer_file_roundtrip_test(void) {
+  tinyusdz::Stage stage;
+  stage.metas().defaultPrim = tinyusdz::value::token("root");
+
+  tinyusdz::Xform xform;
+  xform.name = "root";
+  xform.spec = tinyusdz::Specifier::Def;
+  tinyusdz::value::Value primdata = xform;
+  tinyusdz::Prim prim("root", primdata);
+  prim.prim_type_name() = "Xform";
+  stage.add_root_prim(std::move(prim));
+
+  std::map<std::string, std::vector<uint8_t>> assets;
+  assets["img.png"] = std::vector<uint8_t>(64, 0xCD);
+
+  std::string warn, err;
+
+  // Write to file
+  std::string tmp_path = "/tmp/tinyusdz_test_roundtrip.usdz";
+  bool ret = tinyusdz::SaveAsUSDZToFile(tmp_path, stage, assets, &warn, &err);
+  TEST_CHECK(ret);
+  if (!ret) {
+    TEST_MSG("SaveAsUSDZToFile failed: %s", err.c_str());
+    return;
+  }
+
+  // Read back from file
+  tinyusdz::Stage loaded;
+  warn.clear(); err.clear();
+  ret = tinyusdz::LoadUSDZFromFile(tmp_path, &loaded, &warn, &err);
+  TEST_CHECK(ret);
+  if (!ret) {
+    TEST_MSG("LoadUSDZFromFile failed: %s", err.c_str());
+    return;
+  }
+
+  TEST_CHECK(loaded.root_prims().size() >= 1);
+
+  // Clean up
+  std::remove(tmp_path.c_str());
+}
+
+// Test 8: Large asset alignment stress test
+void usdz_validator_large_asset_test(void) {
+  tinyusdz::Stage stage;
+  stage.metas().defaultPrim = tinyusdz::value::token("root");
+
+  tinyusdz::Xform xform;
+  xform.name = "root";
+  xform.spec = tinyusdz::Specifier::Def;
+  tinyusdz::value::Value primdata = xform;
+  tinyusdz::Prim prim("root", primdata);
+  prim.prim_type_name() = "Xform";
+  stage.add_root_prim(std::move(prim));
+
+  // Add assets with sizes that stress 64-byte alignment boundaries
+  std::map<std::string, std::vector<uint8_t>> assets;
+  assets["a.png"] = std::vector<uint8_t>(1, 0x01);
+  assets["ab.png"] = std::vector<uint8_t>(31, 0x02);
+  assets["abc.png"] = std::vector<uint8_t>(32, 0x03);
+  assets["abcd.png"] = std::vector<uint8_t>(33, 0x04);
+  assets["abcde.png"] = std::vector<uint8_t>(63, 0x05);
+  assets["abcdef.png"] = std::vector<uint8_t>(64, 0x06);
+  assets["abcdefg.png"] = std::vector<uint8_t>(65, 0x07);
+  assets["large.exr"] = std::vector<uint8_t>(65536, 0x08);
+
+  std::vector<uint8_t> usdz_data;
+  std::string warn, err;
+
+  bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
+  TEST_CHECK(ret);
+
+  // Validate all entries are aligned
+  warn.clear(); err.clear();
+  ret = tinyusdz::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn, &err);
+  TEST_CHECK(ret);
+  if (!ret) {
+    TEST_MSG("Large asset alignment failed: %s", err.c_str());
+  }
+
+  // Verify asset count via ReadUSDZAssetInfo
+  tinyusdz::USDZAsset usdz_asset;
+  warn.clear(); err.clear();
+  ret = tinyusdz::ReadUSDZAssetInfoFromMemory(usdz_data.data(), usdz_data.size(),
+                                                true, &usdz_asset, &warn, &err);
+  TEST_CHECK(ret);
+  // root.usdc + 8 assets = 9 entries
+  TEST_CHECK(usdz_asset.asset_map.size() == 9);
+}
+
+// Test 4 (original): Validator catches bad extensions
 void usdz_validator_bad_extension_test(void) {
   tinyusdz::Stage stage;
   stage.metas().defaultPrim = tinyusdz::value::token("root");

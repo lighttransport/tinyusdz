@@ -2053,6 +2053,43 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
       valid = false;
     }
 
+    // Compressed size must equal uncompressed size (stored method)
+    uint32_t compr_size;
+    memcpy(&compr_size, &local_header[18], 4);
+    uint32_t uncompr_size_hdr;
+    memcpy(&uncompr_size_hdr, &local_header[22], 4);
+    if (compr_size != uncompr_size_hdr) {
+      if (err) {
+        (*err) += "Entry " + std::to_string(entry_index) +
+                  ": compressed size (" + std::to_string(compr_size) +
+                  ") != uncompressed size (" + std::to_string(uncompr_size_hdr) +
+                  ") for stored method.\n";
+      }
+      valid = false;
+    }
+
+    // General purpose bit flag must be 0 (no encryption, no data descriptor)
+    uint16_t gp_flag;
+    memcpy(&gp_flag, &local_header[6], 2);
+    if (gp_flag != 0) {
+      if (warn) {
+        (*warn) += "Entry " + std::to_string(entry_index) +
+                   ": general purpose bit flag is " + std::to_string(gp_flag) +
+                   " (expected 0 for USDZ).\n";
+      }
+    }
+
+    // Version needed to extract must be <= 20 (2.0, no ZIP64)
+    uint16_t version_needed;
+    memcpy(&version_needed, &local_header[4], 2);
+    if (version_needed > 20) {
+      if (warn) {
+        (*warn) += "Entry " + std::to_string(entry_index) +
+                   ": version needed " + std::to_string(version_needed) +
+                   " > 20 (ZIP64 features not allowed in USDZ).\n";
+      }
+    }
+
     // Filename
     uint16_t name_len;
     memcpy(&name_len, &local_header[26], 2);
@@ -2109,9 +2146,30 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
       }
     }
 
-    // Skip file data
+    // Validate file data CRC32
     uint32_t uncompr_size;
     memcpy(&uncompr_size, &local_header[22], 4);
+
+    uint32_t header_crc;
+    memcpy(&header_crc, &local_header[14], 4);
+
+    if (uncompr_size > 0 && offset + uncompr_size <= length) {
+      uint32_t actual_crc = ComputeCRC32(addr + offset, uncompr_size);
+      if (header_crc != 0 && actual_crc != header_crc) {
+        if (err) {
+          (*err) += "Entry '" + name + "': CRC32 mismatch (header=" +
+                    std::to_string(header_crc) + ", actual=" +
+                    std::to_string(actual_crc) + ").\n";
+        }
+        valid = false;
+      }
+    } else if (uncompr_size > 0 && offset + uncompr_size > length) {
+      if (err) {
+        (*err) += "Entry '" + name + "': data extends beyond file end.\n";
+      }
+      return false;
+    }
+
     offset += uncompr_size;
 
     entry_index++;
@@ -2151,6 +2209,24 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
   if (!found_eocd) {
     if (err) { (*err) += "End of central directory record not found.\n"; }
     valid = false;
+  } else {
+    // Validate central directory entry count matches local headers
+    for (size_t i = length - 22; i >= (length > 65557 ? length - 65557 : 0); i--) {
+      if (addr[i] == 0x50 && addr[i + 1] == 0x4b &&
+          addr[i + 2] == 0x05 && addr[i + 3] == 0x06) {
+        uint16_t cd_entry_count;
+        memcpy(&cd_entry_count, addr + i + 10, 2);
+        if (cd_entry_count != static_cast<uint16_t>(entry_index)) {
+          if (warn) {
+            (*warn) += "Central directory entry count (" +
+                       std::to_string(cd_entry_count) +
+                       ") does not match local header count (" +
+                       std::to_string(entry_index) + ").\n";
+          }
+        }
+        break;
+      }
+    }
   }
 
   return valid;
