@@ -38,7 +38,7 @@
 
 // Remaining TODO items:
 // - [ ] Multi-level implied inherits/specializes propagation (currently single-level)
-// - [ ] Lazy payload evaluation (deferred loading)
+// - [ ] `order` ListEditQual for references/payloads (implemented for inherits/specializes)
 
 namespace tinyusdz {
 

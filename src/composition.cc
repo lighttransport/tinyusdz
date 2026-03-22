@@ -839,6 +839,16 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
 
   if (primspec.metas().references) {
     // Process all listops in order (supports multiple listops per arc)
+    // Pre-pass: collect deleted reference targets so we can skip them.
+    std::set<std::pair<std::string, std::string>> ref_deleted;
+    for (const auto &ref_op : primspec.metas().references.value()) {
+      if (ref_op.first == ListEditQual::Delete) {
+        for (const auto &r : ref_op.second) {
+          ref_deleted.insert({r.asset_path.GetAssetPath(), r.prim_path.prim_part()});
+        }
+      }
+    }
+
     for (const auto &ref_op : primspec.metas().references.value()) {
       const ListEditQual &qual = ref_op.first;
       const auto &refecences = ref_op.second;
@@ -846,6 +856,11 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
       if ((qual == ListEditQual::ResetToExplicit) ||
           (qual == ListEditQual::Prepend)) {
         for (const auto &reference : refecences) {
+          // Skip if this reference was deleted
+          if (ref_deleted.count({reference.asset_path.GetAssetPath(),
+                                 reference.prim_path.prim_part()})) {
+            continue;
+          }
           Layer layer;
           const PrimSpec *src_ps{nullptr};
 
@@ -940,11 +955,9 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
         }
 
       } else if (qual == ListEditQual::Delete) {
-        // Delete: in our flattening model, already-applied references cannot be
-        // undone. Warn and skip — this qualifier is rarely used in practice.
-        PushWarn("`delete` references list edit: cannot undo already-flattened references. Skipping.\n");
+        // Handled in pre-pass above — deleted refs are filtered from prepend/append.
       } else if (qual == ListEditQual::Order) {
-        PushWarn("`order` references list edit: reordering not supported in flattening model. Skipping.\n");
+        PushWarn("`order` references list edit: reordering not supported. Skipping.\n");
       } else if (qual == ListEditQual::Invalid) {
         PUSH_ERROR_AND_RETURN("Invalid listedit qualifier for `references`.");
       } else if (qual == ListEditQual::Add ||
@@ -954,6 +967,11 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
           PUSH_WARN("`add` list edit qualifier is deprecated (AOUSD Core Spec 6.6.3.10). Treating as `append`.");
         }
         for (const auto &reference : refecences) {
+          // Skip if this reference was deleted
+          if (ref_deleted.count({reference.asset_path.GetAssetPath(),
+                                 reference.prim_path.prim_part()})) {
+            continue;
+          }
           Layer layer;
           const PrimSpec *src_ps{nullptr};
 
@@ -1074,7 +1092,16 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
   std::vector<std::string> search_paths = primspec.get_asset_search_paths();
 
   if (primspec.metas().payload) {
-    // Process all listops in order (supports multiple listops per arc)
+    // Pre-pass: collect deleted payload targets so we can skip them.
+    std::set<std::pair<std::string, std::string>> pl_deleted;
+    for (const auto &payload_op : primspec.metas().payload.value()) {
+      if (payload_op.first == ListEditQual::Delete) {
+        for (const auto &p : payload_op.second) {
+          pl_deleted.insert({p.asset_path.GetAssetPath(), p.prim_path.prim_part()});
+        }
+      }
+    }
+
     for (const auto &payload_op : primspec.metas().payload.value()) {
       const ListEditQual &qual = payload_op.first;
       const auto &payloads = payload_op.second;
@@ -1082,6 +1109,11 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
       if ((qual == ListEditQual::ResetToExplicit) ||
           (qual == ListEditQual::Prepend)) {
         for (const auto &pl : payloads) {
+          // Skip if this payload was deleted
+          if (pl_deleted.count({pl.asset_path.GetAssetPath(),
+                                pl.prim_path.prim_part()})) {
+            continue;
+          }
           // Lazy payload: check load_policy callback
           if (options.load_policy &&
               !options.load_policy(dst_prim_path, pl)) {
@@ -1170,9 +1202,9 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
         }
 
       } else if (qual == ListEditQual::Delete) {
-        PushWarn("`delete` payloads list edit: cannot undo already-flattened payloads. Skipping.\n");
+        // Handled in pre-pass above — deleted payloads are filtered from prepend/append.
       } else if (qual == ListEditQual::Order) {
-        PushWarn("`order` payloads list edit: reordering not supported in flattening model. Skipping.\n");
+        PushWarn("`order` payloads list edit: reordering not supported. Skipping.\n");
       } else if (qual == ListEditQual::Invalid) {
         PUSH_ERROR_AND_RETURN("Invalid listedit qualifier for `payload`.");
       } else if (qual == ListEditQual::Add ||
@@ -1182,6 +1214,11 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
           PUSH_WARN("`add` list edit qualifier is deprecated (AOUSD Core Spec 6.6.3.10). Treating as `append`.");
         }
         for (const auto &pl : payloads) {
+          // Skip if this payload was deleted
+          if (pl_deleted.count({pl.asset_path.GetAssetPath(),
+                                pl.prim_path.prim_part()})) {
+            continue;
+          }
           // Lazy payload: check load_policy callback
           if (options.load_policy &&
               !options.load_policy(dst_prim_path, pl)) {
@@ -1305,48 +1342,97 @@ bool CompositeVariantRec(uint32_t depth, PrimSpec &primspec /* [inout] */,
 // Tracks prim paths within the same layer.
 using PathVisitedSet = std::set<std::string>;
 
-// Resolve ListEditQual operations into a final ordered list of paths.
+// Resolve ListEditQual operations into a final ordered list.
 // Implements: resetToExplicit clears + adds, prepend prepends, append appends,
-// delete removes matching paths, order is ignored (warn).
-static std::vector<Path> ResolveListOps(
-    const std::vector<std::pair<ListEditQual, std::vector<Path>>> &listops,
-    std::string *warn) {
-  std::vector<Path> result;
+// delete removes matching items, order is ignored (warn).
+// Template version uses EqPred for matching delete targets.
+template <typename T, typename EqPred>
+static std::vector<T> ResolveListOpsT(
+    const std::vector<std::pair<ListEditQual, std::vector<T>>> &listops,
+    EqPred eq, std::string *warn) {
+  std::vector<T> result;
 
   for (const auto &op : listops) {
     const auto &qual = op.first;
-    const auto &paths = op.second;
+    const auto &items = op.second;
 
     if (qual == ListEditQual::ResetToExplicit) {
       result.clear();
-      result.insert(result.end(), paths.begin(), paths.end());
+      result.insert(result.end(), items.begin(), items.end());
     } else if (qual == ListEditQual::Prepend) {
-      result.insert(result.begin(), paths.begin(), paths.end());
+      result.insert(result.begin(), items.begin(), items.end());
     } else if (qual == ListEditQual::Append ||
                qual == ListEditQual::Add) {
       if (qual == ListEditQual::Add && warn) {
         (*warn) += "`add` list edit qualifier is deprecated (AOUSD Core Spec 6.6.3.10). Treating as `append`.\n";
       }
-      result.insert(result.end(), paths.begin(), paths.end());
+      result.insert(result.end(), items.begin(), items.end());
     } else if (qual == ListEditQual::Delete) {
-      // Remove matching paths from the result
-      for (const auto &del_path : paths) {
+      for (const auto &del_item : items) {
         result.erase(
             std::remove_if(result.begin(), result.end(),
-                           [&del_path](const Path &p) {
-                             return p.prim_part() == del_path.prim_part();
+                           [&del_item, &eq](const T &x) {
+                             return eq(x, del_item);
                            }),
             result.end());
       }
     } else if (qual == ListEditQual::Order) {
-      if (warn) {
-        (*warn) += "`order` list edit: reordering not supported. Skipping.\n";
+      // Reorder items per the order vector.
+      // Items in the order vector are placed in that relative order.
+      // Items NOT in the order vector are prepended in their original order.
+      // This follows the deprecated SdfListOp reorder semantics.
+      if (items.empty() || result.empty()) continue;
+
+      // Build a position map: for each item in `items`, what rank?
+      // Items in `items` get moved to that position, rest stay at front.
+      std::vector<T> ordered;
+      std::vector<T> unordered;
+
+      // Collect items that appear in the order vector (in order)
+      for (const auto &anchor : items) {
+        for (const auto &r : result) {
+          if (eq(r, anchor)) {
+            ordered.push_back(r);
+            break;
+          }
+        }
       }
+
+      // Collect items NOT in the order vector (preserve original order)
+      for (const auto &r : result) {
+        bool found = false;
+        for (const auto &anchor : items) {
+          if (eq(r, anchor)) { found = true; break; }
+        }
+        if (!found) {
+          unordered.push_back(r);
+        }
+      }
+
+      // Reassemble: unordered first, then ordered
+      result.clear();
+      result.insert(result.end(), unordered.begin(), unordered.end());
+      result.insert(result.end(), ordered.begin(), ordered.end());
     }
   }
 
   return result;
 }
+
+// Path version: match by prim_part()
+static std::vector<Path> ResolveListOps(
+    const std::vector<std::pair<ListEditQual, std::vector<Path>>> &listops,
+    std::string *warn) {
+  return ResolveListOpsT<Path>(listops,
+      [](const Path &a, const Path &b) {
+        return a.prim_part() == b.prim_part();
+      }, warn);
+}
+
+// Note: Reference and Payload use a pre-pass approach (collect deleted items
+// into a set, then skip them during processing) rather than ResolveListOpsT,
+// because they need to preserve the prepend/append distinction for different
+// merge semantics (InheritPrimSpec vs OverridePrimSpec).
 
 bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
                           PrimSpec &primspec /* [inout] */, std::string *warn,
@@ -1418,36 +1504,65 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
   // Implementation: For each arc origin, look for class prims (class specifier)
   // in the current layer that match the inherit targets from the referenced layer.
   // This is the single-level implied inherit case.
-  // AOUSD Core Spec 10.3.2.3: Implied inherits.
+  // AOUSD Core Spec 10.3.2.3: Implied inherits (multi-level).
   // Process inheritPaths propagated from referenced/payload layers.
-  // These are populated by PropagateImpliedArcPaths() during reference/payload
-  // composition and contain the inherit targets from the referenced prim.
-  // Apply them if matching prims exist in the current layer stack.
-  if (primspec.metas().inheritPaths) {
-    auto ip_copy = primspec.metas().inheritPaths.value();
-    for (const auto &inherit_op : ip_copy) {
-      const auto &paths = inherit_op.second;
-      for (const auto &inheritPath : paths) {
-        const PrimSpec *src_ps{nullptr};
-        std::string _err;
-        if (layer.find_primspec_at(inheritPath, &src_ps, &_err)) {
-          if (src_ps) {
-            std::string key = inheritPath.prim_part();
-            if (!visited.count(key)) {
-              visited.insert(key);
-              DCOUT("Applying implied inherit from " << inheritPath.prim_part());
-              if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
-                visited.erase(key);
-                return false;
+  // After applying an implied inherit, check if the inherited prim itself
+  // has further inheritPaths that should cascade (multi-level propagation).
+  {
+    std::set<std::string> visited_inherits;
+    constexpr size_t kMaxImpliedDepth = 32;
+    size_t implied_depth = 0;
+
+    auto process_inheritPaths = [&](auto &&self) -> bool {
+      if (!primspec.metas().inheritPaths || implied_depth >= kMaxImpliedDepth) {
+        return true;
+      }
+      implied_depth++;
+
+      auto ip_copy = primspec.metas().inheritPaths.value();
+      primspec.metas().inheritPaths.reset();
+
+      for (const auto &inherit_op : ip_copy) {
+        const auto &ip_paths = inherit_op.second;
+        for (const auto &inheritPath : ip_paths) {
+          std::string key = inheritPath.prim_part();
+          if (visited_inherits.count(key)) continue;  // prevent cycles
+
+          const PrimSpec *src_ps{nullptr};
+          std::string _err;
+          if (layer.find_primspec_at(inheritPath, &src_ps, &_err) && src_ps) {
+            visited_inherits.insert(key);
+            DCOUT("Applying implied inherit (level " << implied_depth
+                  << ") from " << key);
+
+            // If the inherited prim has its own inheritPaths, propagate them
+            // to this prim before applying the inherit.
+            if (src_ps->metas().inheritPaths) {
+              for (const auto &nested_op : src_ps->metas().inheritPaths.value()) {
+                if (!primspec.metas().inheritPaths) {
+                  primspec.metas().inheritPaths.emplace();
+                }
+                primspec.metas().inheritPaths->push_back(nested_op);
               }
-              visited.erase(key);
+            }
+
+            if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
+              return false;
+            }
+
+            // Recursively process any newly added inheritPaths
+            if (!self(self)) {
+              return false;
             }
           }
         }
-        // If not found, that's OK -- the class may not exist in this layer stack
       }
+      return true;
+    };
+
+    if (!process_inheritPaths(process_inheritPaths)) {
+      return false;
     }
-    primspec.metas().inheritPaths.reset();
   }
 
   return true;
@@ -2266,12 +2381,15 @@ bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
   CollectVariantSelectionOpinions(working, variant_opinions);
 
   // I: Inherits (strongest arc type after Local)
+  // Process in-place to avoid deep copy.
   if (HasInherits(working)) {
-    Layer tmp;
-    if (!CompositeInherits(working, &tmp, warn, err)) {
-      return false;
+    PathVisitedSet inh_visited;
+    for (auto &item : working.primspecs()) {
+      if (!CompositeInheritsRec(0, working, item.second, warn, err, inh_visited)) {
+        PushError("Composite `inherits` failed.\n");
+        return false;
+      }
     }
-    working = std::move(tmp);
     // Collect additional variant opinions from inherited content
     CollectVariantSelectionOpinions(working, variant_opinions);
   }
@@ -2329,16 +2447,21 @@ bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
 
   // S: Specializes (globally weaker per Spec 10.4.1)
   // Applied last so all other opinions take precedence.
+  // Process in-place to avoid deep copy.
   if (HasSpecializes(working)) {
-    Layer tmp;
-    if (!CompositeSpecializes(working, &tmp, warn, err)) {
-      return false;
+    PathVisitedSet sp_visited;
+    for (auto &item : working.primspecs()) {
+      if (!CompositeSpecializesRec(0, working, item.second, warn, err, sp_visited)) {
+        PushError("Composite `specializes` failed.\n");
+        return false;
+      }
     }
-    working = std::move(tmp);
   }
 
   // Relocates (Spec 10.3.2.6): Applied after all other composition arcs.
   // Relocates rename prims in the composed namespace.
+  // CompositeRelocates needs to copy because it modifies prim names/paths,
+  // which would invalidate the primspecs map during iteration.
   if (!working.metas().layerRelocates.empty()) {
     Layer tmp;
     if (!CompositeRelocates(working, &tmp, warn, err)) {
