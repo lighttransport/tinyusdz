@@ -37,6 +37,8 @@
 #include "unit-typed-array-timesamples.h"
 // Phase 1: composition arcs
 #include "unit-composition-arcs.h"
+// Phase 1b: DAG-based composition graph
+#include "unit-composition-graph.h"
 // Phase 2: layer API
 #include "unit-layer.h"
 // Phase 3: primspec and prim API
@@ -344,6 +346,25 @@ TEST_LIST = {
   { "comp_relocates_root_rename_test", comp_relocates_root_rename_test },
   { "comp_relocates_cross_parent_test", comp_relocates_cross_parent_test },
   { "comp_relocates_path_remap_test", comp_relocates_path_remap_test },
+  // Phase 1b: DAG-based composition graph tests
+  { "compgraph_basic_prim_index_test", compgraph_basic_prim_index_test },
+  { "compgraph_strength_order_test", compgraph_strength_order_test },
+  { "compgraph_inherits_dag_test", compgraph_inherits_dag_test },
+  { "compgraph_specializes_globally_weak_test", compgraph_specializes_globally_weak_test },
+  { "compgraph_references_dag_test", compgraph_references_dag_test },
+  { "compgraph_variants_deferred_test", compgraph_variants_deferred_test },
+  { "compgraph_cycle_detection_test", compgraph_cycle_detection_test },
+  { "compgraph_implied_inherits_test", compgraph_implied_inherits_test },
+  { "compgraph_instance_key_identical_test", compgraph_instance_key_identical_test },
+  { "compgraph_instance_key_different_test", compgraph_instance_key_different_test },
+  { "compgraph_payload_deferred_test", compgraph_payload_deferred_test },
+  { "compgraph_build_stage_simple_test", compgraph_build_stage_simple_test },
+  { "compgraph_build_stage_inherits_test", compgraph_build_stage_inherits_test },
+  { "compgraph_random_flat_prims_test", compgraph_random_flat_prims_test },
+  { "compgraph_random_deep_hierarchy_test", compgraph_random_deep_hierarchy_test },
+  { "compgraph_random_inherits_chain_test", compgraph_random_inherits_chain_test },
+  { "compgraph_random_mixed_arcs_test", compgraph_random_mixed_arcs_test },
+  { "compgraph_random_specializes_vs_inherits_test", compgraph_random_specializes_vs_inherits_test },
   // Phase 2: Stage API tests (extended)
   { "stage_add_root_prim_test", stage_add_root_prim_test },
   { "stage_replace_root_prim_test", stage_replace_root_prim_test },
