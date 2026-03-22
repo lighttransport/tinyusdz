@@ -497,7 +497,7 @@ python aousd/compare_usd_example.py test_file.usda
 ### Resolved (Investigated)
 - [x] ~~Blocked attribute values~~: **FULLY SUPPORTED** -- TYPE_ID_VALUEBLOCK, set_blocked(), is_blocked() in attribute.hh, primvar.hh, timesamples.hh
 - [x] ~~Unicode XID_Start/XID_Continue~~: **FULLY SUPPORTED** -- unicode-xid.hh with lookup tables, is_valid_utf8_identifier() in str-util.cc
-- [x] ~~Spline specialized type~~: **PARSE ONLY** -- GeomBasisCurves/NurbsCurves types supported; NO time-value spline evaluation for attribute resolution
+- [x] ~~Spline specialized type~~: **IMPLEMENTED** -- SplineData storage in PrimVar, spline evaluation wired into attribute resolution priority chain (timeSamples > spline > default); held interpolation for knots, full cubic via spline-eval.hh
 - [x] ~~Value clips~~: **IMPLEMENTED** -- clips Dictionary parsed, template expansion, active clip finding, time remapping, asset loading + caching, attribute evaluation fallback in tydra
 
 ### Resolved (Implemented)
@@ -510,7 +510,7 @@ python aousd/compare_usd_example.py test_file.usda
 - [x] ~~LIVERPS strength ordering~~ (Spec 10.4): **IMPLEMENTED** via CompositeAllArcs() -- applies arcs in I>V>R>P>S order
 - [x] ~~Namespace mappings~~ (Spec 10.5): **IMPLEMENTED** in src/namespace-mapping.hh -- reference, inherit, relocate mappings + composition
 - [x] ~~Relocates~~ (Spec 10.3.2.6): **IMPLEMENTED** -- CompositeRelocates() applies layerRelocates with prim renaming and namespace remapping of relationships/connections
-- [x] ~~Implied inherit/specialize arcs~~ (Spec 10.3.2.3): **PARTIAL** -- ArcOrigin tracking in composition-types.hh, arc origin tagging in CompositeReferencesRec, single-level implied inherit propagation in CompositeInheritsRec; multi-level propagation deferred
+- [x] ~~Implied inherit/specialize arcs~~ (Spec 10.3.2.3): **IMPLEMENTED** -- ArcOrigin tracking, arc origin tagging in sublayer/reference composition, multi-level implied inherit propagation with cycle detection in CompositeInheritsRec
 - [x] ~~Variant deferred evaluation~~ (Spec 10.3.2.5): **IMPLEMENTED** -- two-phase variant processing in CompositeAllArcs: opinions collected from I/R/P arcs before variant selection applied
 - [x] ~~Specializes global weakness~~ (Spec 10.4.1): **IMPLEMENTED** -- specializes applied last in CompositeAllArcs()
 - [x] ~~layerRelocates USDA parsing~~ (Spec 10.3.2.6): **IMPLEMENTED** -- parse, store, print for `relocates = { <path> : <path>, ... }` syntax

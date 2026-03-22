@@ -350,6 +350,49 @@ struct PrimVar {
     total += _ts.estimate_actual_usage();
     return total;
   }
+
+  //
+  // AOUSD Core Spec 12.3.3 / 7.4.2.4: Spline data storage.
+  // Splines are stored as a separate value source alongside default and timeSamples.
+  // Priority: timeSamples > spline > default (Spec 12.3)
+  //
+
+  /// Spline knot data stored as type-erased values for the spline evaluator.
+  /// Each entry: (time, value, preTangentSlope, preTangentWidth,
+  ///              postTangentSlope, postTangentWidth, interpolationMode)
+  struct SplineKnotData {
+    double time{0.0};
+    value::Value val;        // knot value
+    value::Value preValue;   // dual-valued: value approaching from before
+    bool hasDualValue{false};
+    double preTangentSlope{0.0};
+    double preTangentWidth{0.0};
+    double postTangentSlope{0.0};
+    double postTangentWidth{0.0};
+    int interpolationMode{3};  // 0=none, 1=held, 2=linear, 3=curve
+  };
+
+  struct SplineData {
+    int curveType{0};  // 0=bezier, 1=hermite
+    std::vector<SplineKnotData> knots;
+    int preExtrapolation{1};   // SplineExtrapolationMode::Held
+    int postExtrapolation{1};  // SplineExtrapolationMode::Held
+    double preExtrapolationSlope{0.0};
+    double postExtrapolationSlope{0.0};
+  };
+
+  bool has_spline() const { return !_spline.knots.empty(); }
+
+  const SplineData &spline_data() const { return _spline; }
+  SplineData &spline_data() { return _spline; }
+
+  void set_spline(const SplineData &spline) { _spline = spline; }
+  void set_spline(SplineData &&spline) { _spline = std::move(spline); }
+
+ private:
+  SplineData _spline;
+
+ public:
 };
 
 
