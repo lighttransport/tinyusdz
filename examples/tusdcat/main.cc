@@ -7,6 +7,10 @@
 #include <iostream>
 #include <sstream>
 
+#if !defined(_WIN32)
+#include <sys/resource.h>
+#endif
+
 #include "tinyusdz.hh"
 #include "layer.hh"
 #include "pprinter.hh"
@@ -21,6 +25,7 @@
 
 #include "tydra/scene-access.hh"
 #include "variant-format.hh"
+#include "comp-graph-dump.hh"
 
 struct CompositionFeatures {
   bool subLayers{true};
@@ -324,9 +329,27 @@ void print_help() {
   std::cout << "MaterialX validation options:\n";
   std::cout << "  --strict-mtlx-check Enable strict MaterialX validation\n";
   std::cout << "                      (validates info:id, index bounds, etc.)\n";
+  std::cout << "\n";
+  std::cout << "Composition graph dump options:\n";
+  std::cout << "  --dump-comp-graph[=FMT]  Dump composition graph\n";
+  std::cout << "                           FMT: yaml (default), json, dot\n";
+  std::cout << "  --comp-graph-recursive   Follow external references recursively\n";
+  std::cout << "  --comp-graph-no-payload  Skip payload arcs (payload off mode)\n";
+  std::cout << "  Combined with -l: parse-only mode (validate all files)\n";
+  std::cout << "  Combined with --memstat: per-file memory report\n";
 }
 
 int main(int argc, char **argv) {
+  // Set 32GB virtual memory limit to prevent OOM / memory thrashing
+#if !defined(_WIN32)
+  {
+    struct rlimit mem_limit;
+    mem_limit.rlim_cur = static_cast<rlim_t>(32) * 1024 * 1024 * 1024;  // 32 GB
+    mem_limit.rlim_max = static_cast<rlim_t>(32) * 1024 * 1024 * 1024;
+    setrlimit(RLIMIT_AS, &mem_limit);
+  }
+#endif
+
   // Enable DCOUT output if TINYUSDZ_ENABLE_DCOUT environment variable is set
   const char* enable_dcout_env = std::getenv("TINYUSDZ_ENABLE_DCOUT");
   if (enable_dcout_env != nullptr && std::strlen(enable_dcout_env) > 0) {
@@ -357,6 +380,12 @@ int main(int argc, char **argv) {
 
   // MaterialX validation
   bool strict_mtlx_check{false};
+
+  // Composition graph dump
+  bool do_dump_comp_graph{false};
+  std::string comp_graph_format = "yaml";
+  bool comp_graph_recursive{false};
+  bool comp_graph_no_payload{false};
 
   constexpr int kMaxIteration = 128;
 
@@ -409,6 +438,23 @@ int main(int argc, char **argv) {
       do_dumpcrate = true;
     } else if (arg.compare("--strict-mtlx-check") == 0) {
       strict_mtlx_check = true;
+    } else if (tinyusdz::startsWith(arg, "--dump-comp-graph")) {
+      do_dump_comp_graph = true;
+      std::string rest = arg.substr(strlen("--dump-comp-graph"));
+      if (rest.empty() || rest == "=yaml") {
+        comp_graph_format = "yaml";
+      } else if (rest == "=json") {
+        comp_graph_format = "json";
+      } else if (rest == "=dot") {
+        comp_graph_format = "dot";
+      } else {
+        std::cerr << "Invalid format for --dump-comp-graph. Use: json, yaml, or dot\n";
+        return EXIT_FAILURE;
+      }
+    } else if (arg.compare("--comp-graph-recursive") == 0) {
+      comp_graph_recursive = true;
+    } else if (arg.compare("--comp-graph-no-payload") == 0) {
+      comp_graph_no_payload = true;
     } else if (arg.compare("--inspect") == 0) {
       do_inspect = true;
       inspect_opts.format = tinyusdz::InspectOutputFormat::Yaml;
@@ -560,6 +606,74 @@ int main(int argc, char **argv) {
     if (!tinyusdz::crate::DumpCrate(filepath, dump_opts, &err)) {
       std::cerr << "Failed to dump crate: " << err << "\n";
       return EXIT_FAILURE;
+    }
+
+    return EXIT_SUCCESS;
+  }
+
+  // Handle --dump-comp-graph mode
+  if (do_dump_comp_graph) {
+    comp_graph_dump::ExtractOptions opts;
+    opts.skip_payloads = comp_graph_no_payload;
+    opts.parse_only = load_only;
+    opts.track_memory = memstat;
+
+    comp_graph_dump::CompGraphDump graph;
+
+    if (comp_graph_recursive) {
+      std::string rec_warn, rec_err;
+      if (!comp_graph_dump::ExtractCompGraphRecursive(filepath, &graph, opts,
+                                                      &rec_warn, &rec_err)) {
+        std::cerr << "Failed to extract composition graph: " << rec_err << "\n";
+        return EXIT_FAILURE;
+      }
+      if (!rec_warn.empty()) {
+        std::cerr << rec_warn;
+      }
+    } else {
+      // Single file mode
+      tinyusdz::Layer layer;
+      bool loaded = tinyusdz::LoadLayerFromFile(filepath, &layer, &warn, &err);
+
+      if (!warn.empty()) {
+        std::cerr << "WARN: " << warn << "\n";
+      }
+
+      if (load_only) {
+        // Parse-only single file: use recursive with depth=1
+        comp_graph_dump::ExtractOptions single_opts = opts;
+        comp_graph_dump::ExtractCompGraphRecursive(filepath, &graph, single_opts,
+                                                    &warn, &err);
+      } else {
+        if (!loaded) {
+          std::cerr << "Failed to load USD file as Layer: " << filepath << "\n";
+          if (!err.empty()) {
+            std::cerr << err << "\n";
+          }
+          return EXIT_FAILURE;
+        }
+
+        if (!comp_graph_dump::ExtractCompGraph(layer, filepath, &graph, &err)) {
+          std::cerr << "Failed to extract composition graph: " << err << "\n";
+          return EXIT_FAILURE;
+        }
+
+        // Apply memory tracking to the single node
+        if (memstat && !graph.nodes.empty()) {
+          graph.nodes[0].memory_usage =
+              static_cast<int64_t>(layer.estimate_memory_usage());
+        }
+      }
+    }
+
+    graph.ComputeSizeSummary();
+
+    if (comp_graph_format == "json") {
+      std::cout << comp_graph_dump::CompGraphToJSON(graph);
+    } else if (comp_graph_format == "yaml") {
+      std::cout << comp_graph_dump::CompGraphToYAML(graph);
+    } else if (comp_graph_format == "dot") {
+      std::cout << comp_graph_dump::CompGraphToDOT(graph);
     }
 
     return EXIT_SUCCESS;

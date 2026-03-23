@@ -63,6 +63,31 @@ def Camera "cam" {
     float horizontalAperture = 36
 }
 )";
+
+  // Debug: check if 2.5 is in the USDC bytes
+  {
+    Stage tmp;
+    std::string w2, e2;
+    LoadUSDAFromMemory(reinterpret_cast<const uint8_t *>(usda),
+                        std::strlen(usda), "test.usda", &tmp, &w2, &e2);
+    std::vector<uint8_t> bytes;
+    usdc::SaveAsUSDCToMemory(tmp, &bytes, &w2, &e2);
+    double target = 2.5;
+    uint8_t target_bytes[8];
+    std::memcpy(target_bytes, &target, 8);
+    bool found = false;
+    size_t found_offset = 0;
+    for (size_t i = 0; i + 8 <= bytes.size(); i++) {
+      if (std::memcmp(bytes.data() + i, target_bytes, 8) == 0) {
+        found = true;
+        found_offset = i;
+        break;
+      }
+    }
+    TEST_CHECK(found);
+    TEST_MSG("USDC bytes=%zu, found 2.5 at offset %zu (found=%d)", bytes.size(), found_offset, found);
+  }
+
   Stage stage;
   std::string warn, err;
   bool ok = usda_to_usdc_roundtrip(usda, &stage, &warn, &err);
@@ -76,10 +101,32 @@ def Camera "cam" {
       const GeomSphere *sp = (*r)->as<GeomSphere>();
       TEST_CHECK(sp != nullptr);
       if (sp) {
-        double val;
-        bool got = sp->radius.get_value().get(value::TimeCode::Default(), &val);
+        // Test USDA-only parse first (no roundtrip)
+        {
+          Stage usda_stage;
+          std::string w2, e2;
+          LoadUSDAFromMemory(reinterpret_cast<const uint8_t *>(usda),
+                             std::strlen(usda), "test.usda", &usda_stage, &w2, &e2);
+          auto r2 = usda_stage.GetPrimAtPath(Path("/sphere", ""));
+          if (r2) {
+            const GeomSphere *sp2 = (*r2)->as<GeomSphere>();
+            if (sp2) {
+              double v2 = -1;
+              sp2->radius.get_value().get(value::TimeCode::Default(), &v2);
+              TEST_CHECK(math::is_close(v2, 2.5));
+              TEST_MSG("USDA-only radius: %f", v2);
+            }
+          }
+        }
+
+        double val = -999.0;
+        const auto &anim = sp->radius.get_value();
+        bool got = anim.get(value::TimeCode::Default(), &val);
         TEST_CHECK(got);
-        if (got) { TEST_CHECK(math::is_close(val, 2.5)); }
+        if (got) {
+          TEST_CHECK(math::is_close(val, 2.5));
+          TEST_MSG("USDC roundtrip radius: %f (has_def=%d)", val, anim.has_default());
+        }
       }
     }
   }
