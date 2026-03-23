@@ -260,6 +260,17 @@ class Prim {
   /// Returns true if this prim is marked as instanceable.
   bool IsInstance() const { return metas().get_instanceable(); }
 
+  /// Returns true if this prim has any composition arcs authored
+  /// (references, payload, inherits, specializes, or variantSets).
+  /// Per AOUSD Spec 11.3.3, a prim is only an instance when
+  /// IsInstance() && HasCompositionArcs().
+  bool HasCompositionArcs() const {
+    const auto &m = metas();
+    return m.references.has_value() || m.payload.has_value() ||
+           m.inherits.has_value() || m.specializes.has_value() ||
+           m.variantSets.has_value();
+  }
+
   /// Returns true if this prim is a model (has kind metadata).
   /// Per Spec 11.4, model hierarchy is rooted at kind=component or kind=group.
   bool IsModel() const { return metas().has_kind(); }

@@ -16,6 +16,7 @@
 
 #include "composition-types.hh"
 #include "path.hh"
+#include "prim-metas.hh"
 #include "prim-spec.hh"
 
 namespace tinyusdz {
@@ -58,5 +59,19 @@ struct InstanceKeyHasher {
 /// @return true if the prim has instanceable=true and a key was computed;
 ///         false if not instanceable (key left as default/invalid)
 bool ComputeInstanceKeyFromPrimSpec(const PrimSpec &ps, InstanceKey *key);
+
+/// Compute an InstanceKey directly from PrimMetas and type name.
+///
+/// This overload allows computing keys from a composed Prim's metadata
+/// without needing to construct a PrimSpec. Used by Stage::BuildInstancePrototypes().
+///
+/// @param[in] metas The prim's composed metadata
+/// @param[in] type_name The prim's typeName
+/// @param[out] key The computed key
+/// @return true if the prim has instanceable=true and a key was computed;
+///         false if not instanceable (key left as default/invalid)
+bool ComputeInstanceKeyFromPrimMetas(const PrimMeta &metas,
+                                     const std::string &type_name,
+                                     InstanceKey *key);
 
 }  // namespace tinyusdz

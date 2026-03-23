@@ -1041,7 +1041,32 @@ struct Node {
   // being embedded in the Node structure. This matches glTF/Three.js design and
   // allows animations to be managed independently of the scene hierarchy.
 
+  // Instance support (AOUSD Spec 11.3.3)
+  bool is_instance{false};          // True if this node is a USD instance prim
+  int32_t prototype_index{-1};      // Index to prototype group (-1 = not an instance)
+  int32_t instance_id{-1};          // Index to RenderScene::instances (-1 = not an instance)
+
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+};
+
+/// Instance of geometry with unique transform (AOUSD Spec 11.3.3).
+///
+/// Used for USD instancing: multiple prims share the same mesh data
+/// but have different transforms. The mesh_id references a shared entry
+/// in RenderScene::meshes.
+struct RenderInstance {
+  std::string prim_name;       ///< Instance prim name (element name)
+  std::string abs_path;        ///< Absolute prim path of the instance
+  std::string display_name;    ///< displayName metadata
+
+  int32_t prototype_index{-1}; ///< Index to prototype group
+  int32_t mesh_id{-1};         ///< Index to RenderScene::meshes (shared)
+  int32_t material_id{-1};     ///< Material index (-1 = use mesh default)
+
+  value::matrix4d local_matrix;   ///< Instance local transform
+  value::matrix4d global_matrix;  ///< Instance world transform
+
+  bool visible{true};
 };
 
 // BlendShape shape target.
@@ -1599,6 +1624,7 @@ class RenderScene {
   ChunkedVectorArray<SkelHierarchy> skeletons;
   ChunkedVectorArray<BufferData>
       buffers;  // Various data storage(e.g. texel/image data).
+  ChunkedVectorArray<RenderInstance> instances;  ///< USD instancing (Spec 11.3.3)
 #else
   std::vector<Node> nodes;
   std::vector<TextureImage> images;
@@ -1611,6 +1637,7 @@ class RenderScene {
   std::vector<SkelHierarchy> skeletons;
   std::vector<BufferData>
       buffers;  // Various data storage(e.g. texel/image data).
+  std::vector<RenderInstance> instances;  ///< USD instancing (Spec 11.3.3)
 #endif
 
   ///
