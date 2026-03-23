@@ -165,7 +165,7 @@ void SpookyHash::Hash128(
   }
 
   // handle the last partial block of sc_blockSize bytes
-  remainder = (length - (reinterpret_cast<const uint8_t *>(end)-static_cast<const uint8_t *>(message)));
+  remainder = (length - static_cast<size_t>(reinterpret_cast<const uint8_t *>(end)-static_cast<const uint8_t *>(message)));
   memcpy(buf, end, remainder);
   memset(reinterpret_cast<uint8_t *>(buf)+remainder, 0, sc_blockSize-remainder);
   (reinterpret_cast<uint8_t *>(buf))[sc_blockSize-1] = static_cast<uint8_t>(remainder);
@@ -250,7 +250,7 @@ void SpookyHash::Update(const void *message, size_t length)
 
   // handle all whole blocks of sc_blockSize bytes
   end = u.p64 + (length/sc_blockSize)*sc_numVars;
-  remainder = static_cast<uint8_t>(length - (reinterpret_cast<const uint8_t *>(end) - u.p8));
+  remainder = static_cast<uint8_t>(length - static_cast<size_t>(reinterpret_cast<const uint8_t *>(end) - u.p8));
   while (u.p64 < end)
   {
     Mix(u.p64, h0,h1,h2,h3,h4,h5,h6,h7,h8,h9,h10,h11);

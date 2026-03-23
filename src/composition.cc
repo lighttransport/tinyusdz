@@ -32,14 +32,14 @@
 #include "usda-reader.hh"
 
 #define PushError(s) \
-  if (err) {         \
+  do { if (err) {         \
     (*err) += s;     \
-  }
+  } } while(0)
 
 #define PushWarn(s) \
-  if (warn) {       \
+  do { if (warn) {       \
     (*warn) += s;   \
-  }
+  } } while(0)
 
 namespace tinyusdz {
 
@@ -2397,7 +2397,7 @@ void RemapPathsInPrimSpecTree(PrimSpec &ps, const NamespaceMapping &mapping) {
 // 2. For each relocate (src → tgt): detach the prim at src, reattach at tgt
 // 3. Remap all path references throughout the tree
 bool CompositeRelocates(const Layer &in_layer, Layer *composited_layer,
-                        std::string *warn, std::string *err) {
+                        std::string *warn, std::string * /* err */) {
   if (!composited_layer) {
     return false;
   }
