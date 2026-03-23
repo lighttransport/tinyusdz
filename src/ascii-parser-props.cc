@@ -196,6 +196,8 @@ extern template bool AsciiParser::ParseBasicTypeArray(
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<bool> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<uint8_t> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<int32_t> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<value::int2> *result);
@@ -299,6 +301,8 @@ extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<value::matrix3d> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<value::matrix4d> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::frame4d> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<value::token> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(

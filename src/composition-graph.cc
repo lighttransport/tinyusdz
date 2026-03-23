@@ -22,16 +22,6 @@
 // These are needed for BuildStage (PrimSpec -> Prim reconstruction)
 #include "stage.hh"
 
-#define PushError(s) \
-  if (err) {         \
-    (*err) += s;     \
-  }
-
-#define PushWarn(s) \
-  if (warn) {       \
-    (*warn) += s;   \
-  }
-
 namespace tinyusdz {
 namespace composition_graph {
 
@@ -78,7 +68,7 @@ std::string PrimIndex::DumpToString() const {
   for (size_t i = 0; i < _nodes.size(); i++) {
     const auto &n = _nodes[i];
     ss << "    [" << i << "] " << ArcTypeName(n.arc_type)
-       << " parent=" << n.parent << " depth=" << (int)n.depth
+       << " parent=" << n.parent << " depth=" << static_cast<int>(n.depth)
        << " strength=" << n.strength_order;
     if (_path_table && n.site_path_idx < _path_table->size()) {
       ss << " site=" << (*_path_table)[n.site_path_idx];
@@ -442,7 +432,7 @@ bool PrimIndexBuilder::EvalSubLayers(uint16_t /*node_idx*/,
 // EvalInherits
 // ---------------------------------------------------------------------------
 
-bool PrimIndexBuilder::EvalInherits(uint16_t node_idx, std::string *err) {
+bool PrimIndexBuilder::EvalInherits(uint16_t node_idx, std::string * /* err */) {
   const PrimSpec *ps = GetPrimSpecForNode(node_idx);
   if (!ps) return true;
 
@@ -942,7 +932,7 @@ void PrimIndexBuilder::ResolveAndApplyVariants(std::string *err) {
 // EvalSpecializes
 // ---------------------------------------------------------------------------
 
-bool PrimIndexBuilder::EvalSpecializes(uint16_t node_idx, std::string *err) {
+bool PrimIndexBuilder::EvalSpecializes(uint16_t node_idx, std::string * /* err */) {
   const PrimSpec *ps = GetPrimSpecForNode(node_idx);
   if (!ps) return true;
 
