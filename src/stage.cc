@@ -1282,34 +1282,43 @@ bool Stage::has_mmap_zero_copy() const {
   return _mmap_table && _mmap_source && _mmap_source->is_valid() && !_mmap_table->empty();
 }
 
-// AOUSD Core Spec 11.4: Build instance prototype registry.
-// Scans all prims for instanceable=true and groups by prim type name.
+// AOUSD Core Spec 11.3.3: Build instance prototype registry.
+// Scans all prims for instanceable=true AND composition arcs,
+// groups by InstanceKey (128-bit hash of composition arc signature).
 size_t Stage::BuildInstancePrototypes() {
   _instance_to_prototype.clear();
+  _instance_key_to_prototype.clear();
+  _prototype_source_paths.clear();
   _prototype_count = 0;
 
-  // Map from prim_type_name to prototype index
-  std::unordered_map<std::string, int> type_to_prototype;
+  // If instance data was imported from CompositionGraph, use it directly
+  if (_instance_data_imported) {
+    return _prototype_count;
+  }
 
   // Recursive helper
   std::function<void(const Prim &, const std::string &)> scan;
   scan = [&](const Prim &prim, const std::string &parent_path) {
     std::string prim_path = parent_path + "/" + prim.element_name();
 
-    if (prim.IsInstance()) {
-      // Group by prim type name as a simple prototype key
-      // (A full implementation would use the composition arc signature)
-      std::string key = prim.prim_type_name();
-      if (key.empty()) key = "__untyped__";
-
-      auto it = type_to_prototype.find(key);
-      if (it == type_to_prototype.end()) {
-        int idx = static_cast<int>(_prototype_count);
-        type_to_prototype[key] = idx;
-        _prototype_count++;
-        _instance_to_prototype[prim_path] = idx;
-      } else {
-        _instance_to_prototype[prim_path] = it->second;
+    // Per AOUSD Spec 11.3.3: instanceable=true AND at least one composition arc
+    if (prim.IsInstance() && prim.HasCompositionArcs()) {
+      InstanceKey key;
+      if (ComputeInstanceKeyFromPrimMetas(prim.metas(), prim.prim_type_name(),
+                                          &key) &&
+          key.is_valid()) {
+        auto it = _instance_key_to_prototype.find(key);
+        if (it == _instance_key_to_prototype.end()) {
+          // New prototype
+          int idx = static_cast<int>(_prototype_count);
+          _instance_key_to_prototype[key] = idx;
+          _prototype_source_paths.push_back(prim_path);
+          _prototype_count++;
+          _instance_to_prototype[prim_path] = idx;
+        } else {
+          // Existing prototype
+          _instance_to_prototype[prim_path] = it->second;
+        }
       }
     }
 
@@ -1323,6 +1332,26 @@ size_t Stage::BuildInstancePrototypes() {
   }
 
   return _prototype_count;
+}
+
+void Stage::ImportInstanceData(
+    const std::unordered_map<std::string, int> &instance_to_prototype,
+    size_t prototype_count) {
+  _instance_to_prototype = instance_to_prototype;
+  _prototype_count = prototype_count;
+  _instance_data_imported = true;
+
+  // Rebuild source paths from imported data
+  _prototype_source_paths.resize(prototype_count);
+  for (const auto &entry : _instance_to_prototype) {
+    int idx = entry.second;
+    if (idx >= 0 && static_cast<size_t>(idx) < _prototype_source_paths.size()) {
+      // First path encountered for this prototype becomes the source
+      if (_prototype_source_paths[static_cast<size_t>(idx)].empty()) {
+        _prototype_source_paths[static_cast<size_t>(idx)] = entry.first;
+      }
+    }
+  }
 }
 
 }  // namespace tinyusdz

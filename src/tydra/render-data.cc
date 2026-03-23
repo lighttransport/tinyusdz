@@ -495,6 +495,14 @@ bool RenderSceneConverter::BuildSingleNode(
 
     // Set category based on nodeType
     rnode.category = GetNodeCategoryFromType(rnode.nodeType);
+
+    // AOUSD Spec 11.3.3: Mark instance prims
+    if (prim->IsInstance() && prim->HasCompositionArcs()) {
+      rnode.is_instance = true;
+      int proto_idx = env.stage.GetPrototypeIndex(
+          Path(primPath, /* prop_part */ ""));
+      rnode.prototype_index = proto_idx;
+    }
   }
 
   out_rnode = std::move(rnode);
@@ -1007,6 +1015,59 @@ bool RenderSceneConverter::ConvertToRenderScene(
     return false;
   }
 
+  //
+  // 7b. Build instance registry from Stage (AOUSD Spec 11.3.3)
+  //
+  {
+    // BuildInstancePrototypes must be called on the Stage first.
+    // It's safe to call multiple times (idempotent after first call).
+    Stage &mutable_stage = const_cast<Stage &>(env.stage);
+    size_t num_protos = mutable_stage.BuildInstancePrototypes();
+    if (num_protos > 0) {
+      DCOUT("[Tydra] Found " << num_protos << " instance prototypes");
+
+      // Build prototype_index -> mesh_id mapping from meshMap
+      // Instance prims are typically Xform parents of mesh children,
+      // so we look up child mesh paths for each prototype source.
+      std::unordered_map<int, int32_t> proto_to_mesh;
+
+      // For each instance prim, create a RenderInstance
+      for (size_t proto_idx = 0; proto_idx < num_protos; proto_idx++) {
+        auto inst_paths = mutable_stage.GetInstancesForPrototype(
+            static_cast<int>(proto_idx));
+        for (const auto &inst_path : inst_paths) {
+          const std::string &path_str = inst_path.prim_part();
+
+          // Find mesh_id for this instance's children (if any)
+          int32_t found_mesh_id = -1;
+          for (auto it = meshMap.s_begin(); it != meshMap.s_end(); ++it) {
+            // Check if mesh path starts with instance path
+            if (it->first.size() > path_str.size() &&
+                it->first.compare(0, path_str.size(), path_str) == 0 &&
+                it->first[path_str.size()] == '/') {
+              found_mesh_id = static_cast<int32_t>(it->second);
+              break;
+            }
+          }
+
+          RenderInstance rinst;
+          rinst.abs_path = path_str;
+          rinst.prototype_index = static_cast<int32_t>(proto_idx);
+          rinst.mesh_id = found_mesh_id;
+
+          // Extract prim name from path
+          size_t last_slash = path_str.rfind('/');
+          if (last_slash != std::string::npos) {
+            rinst.prim_name = path_str.substr(last_slash + 1);
+          }
+
+          instances.emplace_back(std::move(rinst));
+        }
+      }
+      DCOUT("[Tydra] Created " << instances.size() << " render instances");
+    }
+  }
+
   // render_scene.meshMap = std::move(meshMap);
   // render_scene.materialMap = std::move(materialMap);
   // render_scene.textureMap = std::move(textureMap);
@@ -1034,6 +1095,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   render_scene.lights = std::move(lights);
   render_scene.skeletons = std::move(skeletons);
   render_scene.animations = std::move(animations);
+  render_scene.instances = std::move(instances);
 
   // Populate scene metadata from Stage
   {

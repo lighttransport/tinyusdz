@@ -720,6 +720,7 @@ class RenderSceneConverter {
   ChunkedVectorArray<BufferData> buffers;
   ChunkedVectorArray<SkelHierarchy> skeletons;
   ChunkedVectorArray<AnimationClip> animations;
+  ChunkedVectorArray<RenderInstance> instances;  ///< USD instancing (Spec 11.3.3)
 #else
   std::vector<Node> root_nodes;
   std::vector<RenderMesh> meshes;
@@ -731,6 +732,7 @@ class RenderSceneConverter {
   std::vector<BufferData> buffers;
   std::vector<SkelHierarchy> skeletons;
   std::vector<AnimationClip> animations;
+  std::vector<RenderInstance> instances;  ///< USD instancing (Spec 11.3.3)
 #endif
 
   // Pre-discovered skeleton/animation prims for ancestor-based discovery
