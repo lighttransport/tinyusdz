@@ -2065,6 +2065,43 @@ class TinyUSDZLoaderNative {
 
   int numMeshes() const { return render_scene_.meshes.size(); }
 
+  // ---- Instance support (AOUSD Spec 11.3.3) ----
+
+  int numInstances() const {
+    return static_cast<int>(render_scene_.instances.size());
+  }
+
+  emscripten::val getInstance(int instance_id) const {
+    if (instance_id < 0 ||
+        static_cast<size_t>(instance_id) >= render_scene_.instances.size()) {
+      return emscripten::val::null();
+    }
+    const auto &inst = render_scene_.instances[static_cast<size_t>(instance_id)];
+    emscripten::val obj = emscripten::val::object();
+    obj.set("primName", inst.prim_name);
+    obj.set("absPath", inst.abs_path);
+    obj.set("displayName", inst.display_name);
+    obj.set("prototypeIndex", inst.prototype_index);
+    obj.set("meshId", inst.mesh_id);
+    obj.set("materialId", inst.material_id);
+    obj.set("localMatrix", detail::toArray(inst.local_matrix));
+    obj.set("globalMatrix", detail::toArray(inst.global_matrix));
+    obj.set("visible", inst.visible);
+    return obj;
+  }
+
+  emscripten::val getInstancesForMesh(int mesh_id) const {
+    emscripten::val arr = emscripten::val::array();
+    for (size_t i = 0; i < render_scene_.instances.size(); i++) {
+      if (render_scene_.instances[i].mesh_id == mesh_id) {
+        arr.call<void>("push", static_cast<int>(i));
+      }
+    }
+    return arr;
+  }
+
+  // ---- End instance support ----
+
   /**
    * Generate bone data texture for GPU skinning with high bone counts.
    *
@@ -4719,6 +4756,11 @@ class TinyUSDZLoaderNative {
     node.set("globalMatrix", globalMatrix);
     node.set("hasResetXform", rnode.has_resetXform);
 
+    // Instance support (AOUSD Spec 11.3.3)
+    node.set("isInstance", rnode.is_instance);
+    node.set("prototypeIndex", rnode.prototype_index);
+    node.set("instanceId", rnode.instance_id);
+
     emscripten::val children = emscripten::val::array();
 
     for (const tinyusdz::tydra::Node &child : rnode.children) {
@@ -5485,6 +5527,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getURI", &TinyUSDZLoaderNative::getURI)
       .function("getMesh", &TinyUSDZLoaderNative::getMesh)
       .function("numMeshes", &TinyUSDZLoaderNative::numMeshes)
+      .function("numInstances", &TinyUSDZLoaderNative::numInstances)
+      .function("getInstance", &TinyUSDZLoaderNative::getInstance)
+      .function("getInstancesForMesh", &TinyUSDZLoaderNative::getInstancesForMesh)
       .function("generateBoneTexture", &TinyUSDZLoaderNative::generateBoneTexture)
       .function("getMaterial", select_overload<emscripten::val(int) const>(&TinyUSDZLoaderNative::getMaterial))
       .function("getMaterialWithFormat", select_overload<emscripten::val(int, const std::string&) const>(&TinyUSDZLoaderNative::getMaterial))
