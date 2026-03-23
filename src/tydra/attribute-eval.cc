@@ -131,20 +131,24 @@ bool ToTerminalAttributeValue(
 // Loads the active clip asset, finds the target prim, and queries the attribute.
 //
 // Simple clip asset cache to avoid reloading the same file repeatedly.
-static std::map<std::string, Layer> s_clip_cache;
+static std::map<std::string, Layer> &GetClipCache() {
+  static std::map<std::string, Layer> s_clip_cache;
+  return s_clip_cache;
+}
 
 // Helper: load a clip layer from file with caching.
 static Layer *LoadClipLayer(const std::string &clipAssetPath) {
-  auto cache_it = s_clip_cache.find(clipAssetPath);
-  if (cache_it != s_clip_cache.end()) {
+  auto &cache = GetClipCache();
+  auto cache_it = cache.find(clipAssetPath);
+  if (cache_it != cache.end()) {
     return &cache_it->second;
   }
 
   Layer loaded_layer;
   std::string warn, load_err;
   if (LoadLayerFromFile(clipAssetPath, &loaded_layer, &warn, &load_err)) {
-    s_clip_cache[clipAssetPath] = std::move(loaded_layer);
-    return &s_clip_cache[clipAssetPath];
+    cache[clipAssetPath] = std::move(loaded_layer);
+    return &cache[clipAssetPath];
   }
 
   DCOUT("Failed to load clip asset: " << clipAssetPath << " : " << load_err);
