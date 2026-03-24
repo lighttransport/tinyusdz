@@ -1,0 +1,86 @@
+#usda 1.0
+(
+    doc = "Hand-written test: Invert color pattern (ND_subtract_color3 + ND_mix_color3)"
+    metersPerUnit = 1
+    upAxis = "Z"
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Sphere "InvertTest"
+    (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        double radius = 1.0
+        rel material:binding = </root/_materials/InvertTest>
+    }
+
+    def Scope "_materials"
+    {
+        def Material "InvertTest"
+        (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            token outputs:surface.connect = </root/_materials/InvertTest/shader.outputs:surface>
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/InvertTest/shader.outputs:surface>
+
+            def Shader "shader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                float inputs:base_weight = 1
+                color3f inputs:base_color.connect = </root/_materials/InvertTest/NodeGraphs.outputs:invert_out>
+                float inputs:base_metalness = 0
+                float inputs:base_diffuse_roughness = 0
+                float inputs:specular_weight = 1
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_roughness = 0.3
+                float inputs:specular_ior = 1.5
+                float inputs:specular_roughness_anisotropy = 0
+                float inputs:transmission_weight = 0
+                color3f inputs:transmission_color = (1, 1, 1)
+                float inputs:transmission_depth = 0
+                color3f inputs:transmission_scatter = (0, 0, 0)
+                float inputs:transmission_scatter_anisotropy = 0
+                float inputs:transmission_dispersion_abbe_number = 0
+                float inputs:coat_weight = 0
+                float inputs:coat_ior = 1.6
+                float inputs:emission_luminance = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                color3f outputs:invert_out.connect = </root/_materials/InvertTest/NodeGraphs/invert_mix.outputs:out>
+
+                def Shader "input_color"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (1, 0.5, 0.1)
+                    color3f outputs:out
+                }
+
+                def Shader "subtract_inv"
+                {
+                    uniform token info:id = "ND_subtract_color3"
+                    color3f inputs:in1 = (1, 1, 1)
+                    color3f inputs:in2.connect = </root/_materials/InvertTest/NodeGraphs/input_color.outputs:out>
+                    color3f outputs:out
+                }
+
+                def Shader "invert_mix"
+                {
+                    uniform token info:id = "ND_mix_color3"
+                    color3f inputs:bg.connect = </root/_materials/InvertTest/NodeGraphs/input_color.outputs:out>
+                    color3f inputs:fg.connect = </root/_materials/InvertTest/NodeGraphs/subtract_inv.outputs:out>
+                    float inputs:mix = 1
+                    color3f outputs:out
+                }
+            }
+        }
+    }
+}
