@@ -53,6 +53,7 @@
 #include "unit-security.h"
 // Phase 7: USDZ writer
 #include "unit-usdz-writer.h"
+#include "unit-usd-validation.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -258,6 +259,10 @@ TEST_LIST = {
   { "usda_reader_stage_metadata_test", usda_reader_stage_metadata_test },
   { "usda_reader_variantset_basic_test", usda_reader_variantset_basic_test },
   { "usda_reader_variantset_with_properties_test", usda_reader_variantset_with_properties_test },
+  { "usd_validation_valid_core_schema_test", usd_validation_valid_core_schema_test },
+  { "usd_validation_invalid_default_prim_test", usd_validation_invalid_default_prim_test },
+  { "usd_validation_invalid_collection_rule_test", usd_validation_invalid_collection_rule_test },
+  { "usd_validation_invalid_color_space_test", usd_validation_invalid_color_space_test },
   { "usda_reader_class_inherits_test", usda_reader_class_inherits_test },
   { "usda_reader_internal_reference_test", usda_reader_internal_reference_test },
   { "usda_reader_nested_hierarchy_test", usda_reader_nested_hierarchy_test },

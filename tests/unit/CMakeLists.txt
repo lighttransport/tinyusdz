@@ -52,7 +52,8 @@ set(TEST_SOURCES
 	unit-security.cc
 	# Phase 7: USDZ writer
 	unit-usdz-writer.cc
-   )
+	unit-usd-validation.cc
+    )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)
     list(APPEND TEST_SOURCES unit-pxr-compat-api.cc)
@@ -89,4 +90,3 @@ if (TINYUSDZ_WITH_PXR_COMPAT_API)
   # FIXME: support dll build
   target_compile_definitions(${TEST_TARGET_NAME} PRIVATE "PXR_STATIC")
 endif ()
-
