@@ -1358,6 +1358,71 @@ void tydra_texture_loader_policy_test(void) {
     TEST_CHECK(converter.GetWarning().find("Infer colorSpace failed") ==
                std::string::npos);
   }
+
+  {
+    Stage stage;
+
+    Material material;
+    material.surface.set(Path("/PreviewSurface", "outputs:surface"));
+
+    UsdPreviewSurface preview_surface;
+    preview_surface.outputsSurface.set_authored(true);
+    preview_surface.diffuseColor.set_connection(Path("/Tex", "outputs:rgb"));
+    preview_surface.diffuseColor.set_value_empty();
+
+    Attribute source_color_space_attr;
+    source_color_space_attr.set_type_name(value::kToken);
+    source_color_space_attr.variability() = Variability::Uniform;
+    primvar::PrimVar source_color_space_pvar;
+    source_color_space_pvar.set_value(value::token("raw"));
+    source_color_space_attr.set_var(std::move(source_color_space_pvar));
+    preview_surface.props["inputs:sourceColorSpace"] =
+        Property(std::move(source_color_space_attr), false);
+
+    Shader preview_shader;
+    preview_shader.info_id = kUsdPreviewSurface;
+    preview_shader.value = preview_surface;
+
+    UsdUVTexture uv_texture;
+    uv_texture.outputsRGB.set_authored(true);
+    uv_texture.file.set_value(
+        Animatable<value::AssetPath>(value::AssetPath("mask.png")));
+    uv_texture.sourceColorSpace.set_connection(
+        Path("/PreviewSurface", "inputs:sourceColorSpace"));
+    uv_texture.sourceColorSpace.set_value_empty();
+
+    Shader tex_shader;
+    tex_shader.info_id = kUsdUVTexture;
+    tex_shader.value = uv_texture;
+
+    GeomMesh mesh = make_mesh();
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(Prim("MaterialPrim", material)));
+    TEST_CHECK(stage.add_root_prim(Prim("PreviewSurface", preview_shader)));
+    TEST_CHECK(stage.add_root_prim(Prim("Tex", tex_shader)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.texture_image_loader_function =
+        SingleChannelTextureImageLoader;
+    env.material_config.allow_texture_load_failure = false;
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.images.size() == 1);
+    if (scene.images.size() == 1) {
+      TEST_CHECK(scene.images[0].decoded);
+      TEST_CHECK(scene.images[0].usdColorSpace == tydra::ColorSpace::Raw);
+      TEST_CHECK(scene.images[0].asset_identifier == "mask.png");
+    }
+    TEST_CHECK(converter.GetWarning().find("inputs:sourceColorSpace") ==
+               std::string::npos);
+  }
 }
 
 void tydra_envmap_loader_policy_test(void) {
