@@ -22,11 +22,17 @@
 #include "value-types.hh"
 
 // For PUSH_ERROR_AND_RETURN
-#define PushError(s) if (err) { (*err) = s + (*err); }
-#define PushWarn(s) if (warn) { (*warn) = s + (*err); }
+#define PushError(s) \
+  if (err) { \
+    (*err) = (s) + (err->empty() ? std::string() : std::string("\n")) + (*err); \
+  }
+#define PushWarn(s) \
+  if (warn) { \
+    (*warn) = (s) + (warn->empty() ? std::string() : std::string("\n")) + (*warn); \
+  }
 
+// __VA_ARGS__ does not allow empty, thus # of args must be 2+
 #define PUSH_WARN_F(s, ...) PUSH_WARN(fmt::format(s, __VA_ARGS__))
-#define PUSH_ERROR_AND_RETURN_F(s, ...) PUSH_ERROR_AND_RETURN(fmt::format(s, __VA_ARGS__))
 
 namespace tinyusdz {
 namespace prim {
@@ -220,6 +226,7 @@ bool ReconstructShader<ShaderNode>(
 {
   (void)spec;
   (void)options;
+  (void)err;
 
   if (!node) {
     return false;
@@ -330,9 +337,23 @@ bool ReconstructShader<UsdUVTexture>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:file", UsdUVTexture, texture->file)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:st", UsdUVTexture,
                           texture->st)
-    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "inputs:sourceColorSpace",
-                       UsdUVTexture::SourceColorSpace, SourceColorSpaceHandler, UsdUVTexture,
-                       texture->sourceColorSpace, options.strict_allowedToken_check)
+    if (prop.first == "inputs:sourceColorSpace") {
+      if (table.count("inputs:sourceColorSpace")) {
+        continue;
+      }
+      const Attribute &attr = prop.second.get_attribute();
+      std::function<nonstd::expected<UsdUVTexture::SourceColorSpace, std::string>(
+          const std::string &)> fun = SourceColorSpaceHandler;
+      if (!ParseTimeSampledEnumProperty(
+              "inputs:sourceColorSpace", options.strict_allowedToken_check, fun,
+              attr, &texture->sourceColorSpace, warn, err, options)) {
+        return false;
+      }
+      texture->sourceColorSpace.metas() =
+          std::move(prop.second.attribute().metas());
+      table.insert("inputs:sourceColorSpace");
+      continue;
+    }
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "inputs:wrapS",
                        UsdUVTexture::Wrap, WrapHandler, UsdUVTexture,
                        texture->wrapS, options.strict_allowedToken_check)
@@ -959,7 +980,7 @@ bool ReconstructPrim<Shader>(
     UsdPreviewSurface surface;
     if (!ReconstructShader<UsdPreviewSurface>(spec, properties, references,
                                               &surface, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPreviewSurface);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kUsdPreviewSurface << "`.");
     }
     shader->info_id = kUsdPreviewSurface;
     shader->value = surface;
@@ -968,7 +989,7 @@ bool ReconstructPrim<Shader>(
     UsdUVTexture texture;
     if (!ReconstructShader<UsdUVTexture>(spec, properties, references,
                                          &texture, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdUVTexture);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kUsdUVTexture << "`.");
     }
     shader->info_id = kUsdUVTexture;
     shader->value = texture;
@@ -976,8 +997,8 @@ bool ReconstructPrim<Shader>(
     UsdPrimvarReader_int preader;
     if (!ReconstructShader<UsdPrimvarReader_int>(spec, properties, references,
                                                  &preader, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdPrimvarReader_int);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdPrimvarReader_int << "`.");
     }
     shader->info_id = kUsdPrimvarReader_int;
     shader->value = preader;
@@ -985,8 +1006,8 @@ bool ReconstructPrim<Shader>(
     UsdPrimvarReader_float preader;
     if (!ReconstructShader<UsdPrimvarReader_float>(spec, properties, references,
                                                    &preader, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdPrimvarReader_float);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdPrimvarReader_float << "`.");
     }
     shader->info_id = kUsdPrimvarReader_float;
     shader->value = preader;
@@ -994,8 +1015,8 @@ bool ReconstructPrim<Shader>(
     UsdPrimvarReader_float2 preader;
     if (!ReconstructShader<UsdPrimvarReader_float2>(spec, properties, references,
                                                     &preader, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdPrimvarReader_float2);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdPrimvarReader_float2 << "`.");
     }
     shader->info_id = kUsdPrimvarReader_float2;
     shader->value = preader;
@@ -1003,8 +1024,8 @@ bool ReconstructPrim<Shader>(
     UsdPrimvarReader_float3 preader;
     if (!ReconstructShader<UsdPrimvarReader_float3>(spec,properties, references,
                                                     &preader, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdPrimvarReader_float3);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdPrimvarReader_float3 << "`.");
     }
     shader->info_id = kUsdPrimvarReader_float3;
     shader->value = preader;
@@ -1012,8 +1033,8 @@ bool ReconstructPrim<Shader>(
     UsdPrimvarReader_float4 preader;
     if (!ReconstructShader<UsdPrimvarReader_float4>(spec,properties, references,
                                                     &preader, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdPrimvarReader_float4);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdPrimvarReader_float4 << "`.");
     }
     shader->info_id = kUsdPrimvarReader_float4;
     shader->value = preader;
@@ -1021,8 +1042,8 @@ bool ReconstructPrim<Shader>(
     UsdPrimvarReader_string preader;
     if (!ReconstructShader<UsdPrimvarReader_string>(spec,properties, references,
                                                     &preader, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdPrimvarReader_string);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdPrimvarReader_string << "`.");
     }
     shader->info_id = kUsdPrimvarReader_string;
     shader->value = preader;
@@ -1030,8 +1051,8 @@ bool ReconstructPrim<Shader>(
     UsdPrimvarReader_vector preader;
     if (!ReconstructShader<UsdPrimvarReader_vector>(spec,properties, references,
                                                     &preader, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdPrimvarReader_vector);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdPrimvarReader_vector << "`.");
     }
     shader->info_id = kUsdPrimvarReader_vector;
     shader->value = preader;
@@ -1039,8 +1060,8 @@ bool ReconstructPrim<Shader>(
     UsdPrimvarReader_normal preader;
     if (!ReconstructShader<UsdPrimvarReader_normal>(spec,properties, references,
                                                     &preader, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdPrimvarReader_normal);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdPrimvarReader_normal << "`.");
     }
     shader->info_id = kUsdPrimvarReader_normal;
     shader->value = preader;
@@ -1048,8 +1069,8 @@ bool ReconstructPrim<Shader>(
     UsdPrimvarReader_point preader;
     if (!ReconstructShader<UsdPrimvarReader_point>(spec,properties, references,
                                                     &preader, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdPrimvarReader_point);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdPrimvarReader_point << "`.");
     }
     shader->info_id = kUsdPrimvarReader_point;
     shader->value = preader;
@@ -1057,8 +1078,8 @@ bool ReconstructPrim<Shader>(
     UsdTransform2d transform;
     if (!ReconstructShader<UsdTransform2d>(spec,properties, references,
                                                     &transform, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdTransform2d);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdTransform2d << "`.");
     }
     shader->info_id = kUsdTransform2d;
     shader->value = transform;
@@ -1066,7 +1087,7 @@ bool ReconstructPrim<Shader>(
     OpenPBRSurface surface;
     if (!ReconstructShader<OpenPBRSurface>(spec, properties, references,
                                            &surface, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kOpenPBRSurface);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kOpenPBRSurface << "`.");
     }
     shader->info_id = kOpenPBRSurface;
     shader->value = surface;
@@ -1074,7 +1095,7 @@ bool ReconstructPrim<Shader>(
     MtlxAutodeskStandardSurface surface;
     if (!ReconstructShader<MtlxAutodeskStandardSurface>(spec, properties, references,
                                                          &surface, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kMtlxAutodeskStandardSurface);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kMtlxAutodeskStandardSurface << "`.");
     }
     shader->info_id = kMtlxAutodeskStandardSurface;
     shader->value = surface;
@@ -1083,7 +1104,7 @@ bool ReconstructPrim<Shader>(
     MtlxAutodeskStandardSurface surface;
     if (!ReconstructShader<MtlxAutodeskStandardSurface>(spec, properties, references,
                                                          &surface, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kNdStandardSurfaceSurfaceshader);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kNdStandardSurfaceSurfaceshader << "`.");
     }
     shader->info_id = kNdStandardSurfaceSurfaceshader;
     shader->value = surface;
@@ -1092,7 +1113,7 @@ bool ReconstructPrim<Shader>(
     MtlxOpenPBRSurface surface;
     if (!ReconstructShader<MtlxOpenPBRSurface>(spec, properties, references,
                                                 &surface, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kNdOpenPbrSurfaceSurfaceshader);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kNdOpenPbrSurfaceSurfaceshader << "`.");
     }
     shader->info_id = kNdOpenPbrSurfaceSurfaceshader;
     shader->value = surface;
@@ -1101,7 +1122,7 @@ bool ReconstructPrim<Shader>(
     ShaderNode surface;
     if (!ReconstructShader<ShaderNode>(spec,properties, references,
                                               &surface, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << shader_type);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << shader_type << "`.");
     }
     if (shader_type.size()) {
       shader->info_id = shader_type;

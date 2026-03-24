@@ -429,7 +429,6 @@ std::string AsciiParser::GetError() {
       ss << "\n  Suggestion: " << diag.suggestion;
     }
 
-    ss << "\n";
   }
 
   return ss.str();
@@ -482,7 +481,6 @@ std::string AsciiParser::GetWarning() {
       ss << "\n  Suggestion: " << diag.suggestion;
     }
 
-    ss << "\n";
   }
 
   return ss.str();
@@ -732,6 +730,14 @@ std::string AsciiParser::GetErrorWithSourceContext(const std::string& filename, 
   }
 
   std::stringstream ss;
+  auto is_blank_line = [](const std::string &s) {
+    for (char ch : s) {
+      if ((ch != ' ') && (ch != '\t')) {
+        return false;
+      }
+    }
+    return true;
+  };
 
   // Use StreamReader instead of re-reading file
   if (!_sr || !_sr->data() || _sr->size() == 0) {
@@ -794,7 +800,8 @@ std::string AsciiParser::GetErrorWithSourceContext(const std::string& filename, 
 
     // Clean and display error message on same line
     std::string clean_err = diag.err;
-    if (!clean_err.empty() && clean_err.back() == '\n') {
+    while (!clean_err.empty() &&
+           ((clean_err.back() == '\n') || (clean_err.back() == '\r'))) {
       clean_err.pop_back();
     }
     ss << clean_err << "\n";
@@ -810,6 +817,14 @@ std::string AsciiParser::GetErrorWithSourceContext(const std::string& filename, 
       if (static_cast<size_t>(diag.cursor.row) < file_lines.size()) {
       int start_line = std::max(0, diag.cursor.row - 1);
       int end_line = std::min(static_cast<int>(file_lines.size()) - 1, diag.cursor.row + 1);
+      while ((end_line > diag.cursor.row) &&
+             is_blank_line(file_lines[static_cast<size_t>(end_line)])) {
+        end_line--;
+      }
+      while ((start_line < diag.cursor.row) &&
+             is_blank_line(file_lines[static_cast<size_t>(start_line)])) {
+        start_line++;
+      }
 
       // Show context lines with proper indentation
       for (int i = start_line; i <= end_line; ++i) {
@@ -866,7 +881,6 @@ std::string AsciiParser::GetErrorWithSourceContext(const std::string& filename, 
       seen_locations.insert(location_key.str());
     }  // End: Display suggestion and context only if not already shown
 
-    ss << "\n";
   }
 
   return ss.str();
@@ -2045,15 +2059,19 @@ bool AsciiParser::SkipUntilNewline() {
 //              |  var '=' value '\n'
 //
 bool AsciiParser::ParseStageMetaOpt() {
+  Cursor layer_meta_cursor = _curr_cursor;
+
   // Maybe string-only comment.
   // Comment cannot have multiple lines. The last one wins
   {
     value::StringData str;
     if (MaybeTripleQuotedString(&str)) {
       _stage_metas.comment = str;
+      RecordLayerMetaCursor("comment", layer_meta_cursor);
       return true;
     } else if (MaybeString(&str)) {
       _stage_metas.comment = str;
+      RecordLayerMetaCursor("comment", layer_meta_cursor);
       return true;
     }
   }
@@ -2142,6 +2160,10 @@ bool AsciiParser::ParseStageMetaOpt() {
     return false;
   }
   var.set_name(varname);
+  RecordLayerMetaCursor(varname, layer_meta_cursor);
+  if (varname == "documentation") {
+    RecordLayerMetaCursor("doc", layer_meta_cursor);
+  }
 
   if (varname == "defaultPrim") {
     value::token tok;

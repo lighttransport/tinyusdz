@@ -655,6 +655,7 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
   config.validate_mtlx_connection_targets = options.validate_mtlx_connection_targets;
   config.validate_mtlx_duplicate_names = options.validate_mtlx_duplicate_names;
   config.validate_mtlx_index_bounds = options.validate_mtlx_index_bounds;
+  config.error_detail = options.error_detail;
   reader.set_reader_config(config);
 
   if (options.progress_callback) {
@@ -1210,6 +1211,7 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
   config.validate_mtlx_connection_targets = options.validate_mtlx_connection_targets;
   config.validate_mtlx_duplicate_names = options.validate_mtlx_duplicate_names;
   config.validate_mtlx_index_bounds = options.validate_mtlx_index_bounds;
+  config.error_detail = options.error_detail;
   reader.set_reader_config(config);
 
   uint32_t load_states = static_cast<uint32_t>(tinyusdz::LoadState::Toplevel);

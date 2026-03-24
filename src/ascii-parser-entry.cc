@@ -624,6 +624,173 @@ void AsciiParser::Setup() {
   value::RegisterPrimAttrTypes(_supported_prim_attr_types, /* include_variant_set */ true);
   RegisterPrimTypes(_supported_prim_types);
   RegisterAPISchemas(_supported_api_schemas);
+  _cursor_store.Clear();
+}
+
+void AsciiParser::RecordLayerMetaCursor(const std::string &meta_name,
+                                        const Cursor &cursor) {
+  _cursor_store.StoreLayerMeta(meta_name, cursor);
+}
+
+void AsciiParser::RecordPrimCursor(const std::string &prim_path,
+                                   const Cursor &cursor) {
+  _cursor_store.StorePrim(prim_path, cursor);
+}
+
+void AsciiParser::RecordPrimAttrCursor(const std::string &prim_path,
+                                       const std::string &property_name,
+                                       const Cursor &cursor) {
+  _cursor_store.StorePrimAttr(prim_path, property_name, cursor);
+}
+
+void AsciiParser::RecordPropertyCursor(const std::string &prim_path,
+                                       const std::string &property_name,
+                                       const Cursor &cursor) {
+  _cursor_store.StoreProperty(prim_path, property_name, cursor);
+}
+
+namespace {
+
+std::string GetSourceLineAtCursor(const tinyusdz::StreamReader *sr, int target_row) {
+  if (!sr || !sr->data() || (target_row < 0)) {
+    return std::string();
+  }
+
+  const uint8_t *data = sr->data();
+  const uint64_t size = sr->size();
+
+  int row = 0;
+  std::string line;
+  for (uint64_t i = 0; i < size; ++i) {
+    const char ch = static_cast<char>(data[i]);
+    if (ch == '\r') {
+      continue;
+    }
+
+    if (ch == '\n') {
+      if (row == target_row) {
+        return std::string(line);
+      }
+      row++;
+      line.clear();
+      continue;
+    }
+
+    if (row == target_row) {
+      line.push_back(ch);
+    }
+  }
+
+  return (row == target_row) ? std::string(line) : std::string();
+}
+
+}  // namespace
+
+std::string AsciiParser::FormatCursorDiagnostic(const Cursor &cursor,
+                                                int column_width) const {
+  if ((cursor.row < 0) || (cursor.col < 0)) {
+    return std::string();
+  }
+
+  if (column_width < 16) {
+    column_width = 16;
+  }
+
+  std::stringstream ss;
+  ss << "Semantic source at line " << (cursor.row + 1) << ", column "
+     << (cursor.col + 1) << ":\n";
+
+  std::string source_line = GetSourceLineAtCursor(_sr, cursor.row);
+  if (source_line.empty()) {
+    std::string diag = ss.str();
+    if (!diag.empty() && diag.back() == '\n') {
+      diag.pop_back();
+    }
+    return diag;
+  }
+
+  std::string display_line = source_line;
+  int caret_offset = cursor.col;
+
+  if (static_cast<int>(source_line.size()) > column_width) {
+    const int half_width = column_width / 2;
+    int start_col = std::max(0, cursor.col - half_width);
+    int end_col = std::min(static_cast<int>(source_line.size()),
+                           start_col + column_width);
+    if ((end_col - start_col) < column_width) {
+      start_col = std::max(0, end_col - column_width);
+    }
+
+    display_line = source_line.substr(
+        static_cast<size_t>(start_col),
+        static_cast<size_t>(end_col - start_col));
+    caret_offset = cursor.col - start_col;
+
+    if (start_col > 0) {
+      display_line = "..." + display_line;
+      caret_offset += 3;
+    }
+
+    if (end_col < static_cast<int>(source_line.size())) {
+      display_line += "...";
+    }
+  }
+
+  ss << "  > " << display_line << "\n";
+  ss << "    ";
+  for (int i = 0; i < caret_offset; ++i) {
+    ss << " ";
+  }
+  ss << "^";
+
+  return ss.str();
+}
+
+std::string AsciiParser::FormatStoredCursorDiagnostic(const StoredCursor *stored,
+                                                      int column_width) const {
+  if (!stored) {
+    return std::string();
+  }
+
+  return FormatCursorDiagnostic(stored->cursor, column_width);
+}
+
+std::string AsciiParser::FormatLayerMetaSourceDiagnostic(
+    const std::string &meta_name, int column_width) const {
+  return FormatStoredCursorDiagnostic(_cursor_store.FindLayerMeta(meta_name),
+                                      column_width);
+}
+
+std::string AsciiParser::FormatPrimSourceDiagnostic(
+    const std::string &prim_path, int column_width) const {
+  return FormatStoredCursorDiagnostic(_cursor_store.FindPrim(prim_path),
+                                      column_width);
+}
+
+std::string AsciiParser::FormatPrimAttrSourceDiagnostic(
+    const std::string &prim_path, const std::string &property_name,
+    int column_width) const {
+  const StoredCursor *stored = _cursor_store.FindPrimAttr(prim_path, property_name);
+  if (!stored) {
+    stored = _cursor_store.FindProperty(prim_path, property_name);
+  }
+  if (!stored) {
+    stored = _cursor_store.FindPrim(prim_path);
+  }
+  return FormatStoredCursorDiagnostic(stored, column_width);
+}
+
+std::string AsciiParser::FormatPropertySourceDiagnostic(
+    const std::string &prim_path, const std::string &property_name,
+    int column_width) const {
+  const StoredCursor *stored = _cursor_store.FindProperty(prim_path, property_name);
+  if (!stored) {
+    stored = _cursor_store.FindPrimAttr(prim_path, property_name);
+  }
+  if (!stored) {
+    stored = _cursor_store.FindPrim(prim_path);
+  }
+  return FormatStoredCursorDiagnostic(stored, column_width);
 }
 
 bool AsciiParser::ReportProgress() {
@@ -912,6 +1079,8 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
     return false;
   }
 
+  Cursor prim_decl_cursor = _curr_cursor;
+
   Identifier def;
   if (!ReadIdentifier(&def)) {
     DCOUT("ReadIdentifier failed");
@@ -1043,6 +1212,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
     } else {
       full_path += "/" + prim_name;
     }
+    RecordPrimCursor(full_path, prim_decl_cursor);
     PushPrimPath(full_path);
   }
 
@@ -1141,7 +1311,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
         // recusive call
         if (!ParseBlock(child_spec, idx, primIdx, depth + 1)) {
           PUSH_ERROR_AND_RETURN(
-              fmt::format("`{}` block parse failed.", to_string(child_spec)));
+              fmt::format("Failed to parse `{}` block.", to_string(child_spec)));
         }
         DCOUT(fmt::format("Done parse `{}` block.", to_string(child_spec)));
       } else {
@@ -1174,7 +1344,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
       if (!ret) {
         // construction failed.
         PUSH_ERROR_AND_RETURN(fmt::format(
-            "Constructing PrimSpec typeName `{}`, elementName `{}` failed: {}",
+            "Failed to construct PrimSpec (type `{}`, element `{}`): {}",
             prim_type, prim_name, ret.error()));
       }
     } else {
@@ -1212,8 +1382,9 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
 
       if (!ret) {
         // construction failed.
-        PUSH_ERROR_AND_RETURN("Constructing Prim type `" + pTy +
-                              "` failed: " + ret.error());
+        PUSH_ERROR_AND_RETURN("Failed to construct prim `" +
+                              fullpath.full_path_name() + "` of type `" + pTy +
+                              "`: " + ret.error());
       }
 
     } else {
@@ -1235,6 +1406,8 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
 bool AsciiParser::Parse(const uint32_t load_states,
                         const AsciiParserOption &parser_option) {
   TINYUSDZ_PROFILE_FUNCTION("ascii-parser");
+
+  _cursor_store.Clear();
 
   _toplevel = (load_states & static_cast<uint32_t>(LoadState::Toplevel));
   _sub_layered = (load_states & static_cast<uint32_t>(LoadState::Sublayer));
