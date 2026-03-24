@@ -2579,6 +2579,12 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max
           ? mesh.triangulatedFaceVertexIndices
           : mesh.usdFaceVertexIndices;
 
+  // Empty mesh (e.g. Blender export with points=[], faceVertexIndices=[]):
+  // nothing to build, just succeed.
+  if (fvIndices.empty()) {
+    return true;
+  }
+
   //std::cout << "triangulatedFaceVertexIndices.max_value: " << *std::max_element(mesh.triangulatedFaceVertexIndices.begin(), mesh.triangulatedFaceVertexIndices.end() << "\n");
 
   //std::cout << "usdFaceVertexIndices.min_value: " << *std::min_element(mesh.usdFaceVertexIndices.begin(), mesh.usdFaceVertexIndices.end() << "\n");
@@ -2900,6 +2906,12 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
       mesh.triangulatedFaceVertexIndices.size()
           ? mesh.triangulatedFaceVertexIndices
           : mesh.usdFaceVertexIndices;
+
+  // Empty mesh (e.g. Blender export with points=[], faceVertexIndices=[]):
+  // nothing to build, just succeed.
+  if (fvIndices.empty()) {
+    return true;
+  }
 
   size_t num_verts = mesh.points.size();
   size_t num_fvs = fvIndices.size();
@@ -4306,9 +4318,10 @@ bool RenderSceneConverter::ConvertMesh(
             hasSkelPath = true;
             DCOUT("Found skeleton by ancestor: " << skelPath.prim_part());
           } else {
-            PUSH_ERROR_AND_RETURN(
-                "Mesh has skinning data but no skeleton found: " +
-                abs_prim_path.full_path_name());
+            PUSH_WARN(
+                "Mesh has skinning data but no skeleton bound: " +
+                abs_prim_path.full_path_name() +
+                ". Skinning data is preserved for later skeleton attachment.");
           }
         }
       }
@@ -4688,6 +4701,12 @@ bool RenderSceneConverter::ConvertMesh(
   //
   // 8a. Build indices
   //
+  // When force_fast_index_build is set, skip tangent computation so that
+  // BuildVertexIndicesFastImpl is always used (reproduces WASM code path).
+  if (env.mesh_config.force_fast_index_build) {
+    compute_tangents = false;
+  }
+
   // Skip fast index build when tangent computation will follow, because
   // BuildVertexIndicesImpl (called after tangent computation) requires
   // facevarying attributes, and BuildVertexIndicesFastImpl converts them
