@@ -847,6 +847,38 @@ static nonstd::expected<Purpose, std::string> PurposeEnumHandler(const std::stri
   return enum_handler::Orientation(tok);
 }
 
+static std::string AppendSemanticSourceDiagnostic(
+    const std::string &msg,
+    const std::string &prop_name,
+    const PrimReconstructOptions &options) {
+  std::string result = msg;
+  bool has_property_source = false;
+
+  if (options.format_property_path) {
+    std::string path = options.format_property_path(prop_name);
+    if (!path.empty()) {
+      result += "\nProperty path: " + path;
+    }
+  }
+
+  if (options.format_property_source_diagnostic) {
+    std::string diag = options.format_property_source_diagnostic(prop_name);
+    if (!diag.empty()) {
+      result += "\n" + diag;
+      has_property_source = true;
+    }
+  }
+
+  if (!has_property_source && options.format_prim_source_diagnostic) {
+    std::string diag = options.format_prim_source_diagnostic();
+    if (!diag.empty()) {
+      result += "\n" + diag;
+    }
+  }
+
+  return result;
+}
+
 #if 1
 
 template<typename T, typename EnumTy>
@@ -857,15 +889,21 @@ bool ParseUniformEnumProperty(
   const Attribute &attr,
   TypedAttributeWithFallback<T> *result,
   std::string *warn = nullptr,
-  std::string *err = nullptr)
+  std::string *err = nullptr,
+  const PrimReconstructOptions &options = PrimReconstructOptions())
 {
 
   if (!result) {
-    PUSH_ERROR_AND_RETURN("[Internal error] `result` arg is nullptr.");
+    PUSH_ERROR_AND_RETURN("[Internal error] `result` must not be null.");
   }
 
   if (attr.is_connection()) {
-    PUSH_ERROR_AND_RETURN_F("Attribute connection is not supported in TinyUSDZ for built-in 'enum' token attribute: {}", prop_name);
+    PUSH_ERROR_AND_RETURN(
+        AppendSemanticSourceDiagnostic(
+            fmt::format(
+                "Connections are not supported for built-in enum token attribute `{}`.",
+                prop_name),
+            prop_name, options));
   }
 
 
@@ -878,7 +916,12 @@ bool ParseUniformEnumProperty(
     }
 
     if ((!attr.get_var().has_value() && attr.get_var().has_timesamples())) {
-      PUSH_ERROR_AND_RETURN_F("Attribute `{}` is defined as `uniform` variability but TimeSample value is assigned.", prop_name);
+      PUSH_ERROR_AND_RETURN(
+          AppendSemanticSourceDiagnostic(
+              fmt::format(
+                  "Attribute `{}` is declared `uniform`, but a time-sampled value was authored.",
+                  prop_name),
+              prop_name, options));
     }
 
     if (auto tok = attr.get_value<value::token>()) {
@@ -887,14 +930,22 @@ bool ParseUniformEnumProperty(
         (*result) = e.value();
         return true;
       } else if (strict_allowedToken_check) {
-        PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
+        PUSH_ERROR_AND_RETURN(
+            AppendSemanticSourceDiagnostic(
+                fmt::format("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str()),
+                prop_name, options));
       } else {
         PUSH_WARN_F("Attribute `{}`: `{}` is not an allowed token. Ignore it.", prop_name, tok.value().str());
         result->set_value_empty();
         return true;
       }
     } else {
-      PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
+      PUSH_ERROR_AND_RETURN(
+          AppendSemanticSourceDiagnostic(
+                  fmt::format(
+                      "Internal error: attribute `{}` must have type `token`, but got `{}`.",
+                            prop_name, attr.type_name()),
+                  prop_name, options));
     }
 
 
@@ -913,21 +964,36 @@ bool ParseUniformEnumProperty(
           (*result) = e.value();
           return true;
         } else if (strict_allowedToken_check) {
-          PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
+          PUSH_ERROR_AND_RETURN(
+              AppendSemanticSourceDiagnostic(
+                  fmt::format("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str()),
+                  prop_name, options));
         } else {
           PUSH_WARN_F("Attribute `{}`: `{}` is not an allowed token. Ignore it.", prop_name, tok.value().str());
           result->set_value_empty();
           return true;
         }
       } else {
-        PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
+        PUSH_ERROR_AND_RETURN(
+            AppendSemanticSourceDiagnostic(
+                fmt::format(
+                    "Internal error: attribute `{}` must have type `token`, but got `{}`.",
+                            prop_name, attr.type_name()),
+                prop_name, options));
       }
     } else if ((!attr.get_var().has_value() && attr.get_var().has_timesamples())) {
-      PUSH_ERROR_AND_RETURN_F("Attribute `{}` is uniform variability, but TimeSampled value is authored.",
- prop_name);
+      PUSH_ERROR_AND_RETURN(
+          AppendSemanticSourceDiagnostic(
+              fmt::format(
+                  "Attribute `{}` is declared `uniform`, but a time-sampled value was authored.",
+                          prop_name),
+              prop_name, options));
 
     } else {
-      PUSH_ERROR_AND_RETURN_F("Internal error. Attribute `{}` is invalid", prop_name);
+      PUSH_ERROR_AND_RETURN(
+          AppendSemanticSourceDiagnostic(
+              fmt::format("Internal error: attribute `{}` is invalid.", prop_name),
+              prop_name, options));
     }
 
   }
@@ -944,15 +1010,21 @@ bool ParseTimeSampledEnumProperty(
   const Attribute &attr,
   TypedAttributeWithFallback<Animatable<T>> *result,
   std::string *warn = nullptr,
-  std::string *err = nullptr)
+  std::string *err = nullptr,
+  const PrimReconstructOptions &options = PrimReconstructOptions())
 {
 
   if (!result) {
-    PUSH_ERROR_AND_RETURN("[Internal error] `result` arg is nullptr.");
+    PUSH_ERROR_AND_RETURN("[Internal error] `result` must not be null.");
   }
 
   if (attr.is_connection()) {
-    PUSH_ERROR_AND_RETURN_F("Attribute connection is not supported in TinyUSDZ for built-in 'enum' token attribute: {}", prop_name);
+    PUSH_ERROR_AND_RETURN(
+        AppendSemanticSourceDiagnostic(
+            fmt::format(
+                "Connections are not supported for built-in enum token attribute `{}`.",
+                prop_name),
+            prop_name, options));
   }
 
 
@@ -965,7 +1037,12 @@ bool ParseTimeSampledEnumProperty(
     }
 
     if ((!attr.get_var().has_value() && attr.get_var().has_timesamples())) {
-      PUSH_ERROR_AND_RETURN_F("Attribute `{}` is defined as `uniform` variability but TimeSample value is assigned.", prop_name);
+      PUSH_ERROR_AND_RETURN(
+          AppendSemanticSourceDiagnostic(
+              fmt::format(
+                  "Attribute `{}` is declared `uniform`, but a time-sampled value was authored.",
+                  prop_name),
+              prop_name, options));
     }
 
     if (auto tok = attr.get_value<value::token>()) {
@@ -974,14 +1051,22 @@ bool ParseTimeSampledEnumProperty(
         (*result) = e.value();
         return true;
       } else if (strict_allowedToken_check) {
-        PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
+        PUSH_ERROR_AND_RETURN(
+            AppendSemanticSourceDiagnostic(
+                fmt::format("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str()),
+                prop_name, options));
       } else {
         PUSH_WARN_F("Attribute `{}`: `{}` is not an allowed token. Ignore it.", prop_name, tok.value().str());
         result->set_value_empty();
         return true;
       }
     } else {
-      PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
+      PUSH_ERROR_AND_RETURN(
+          AppendSemanticSourceDiagnostic(
+                fmt::format(
+                    "Internal error: attribute `{}` must have type `token`, but got `{}`.",
+                            prop_name, attr.type_name()),
+                prop_name, options));
     }
 
 
@@ -1009,14 +1094,22 @@ bool ParseTimeSampledEnumProperty(
           //return true;
 
         } else if (strict_allowedToken_check) {
-          PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
+          PUSH_ERROR_AND_RETURN(
+              AppendSemanticSourceDiagnostic(
+                  fmt::format("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str()),
+                  prop_name, options));
         } else {
           PUSH_WARN_F("Attribute `{}`: `{}` is not an allowed token. Ignore it.", prop_name, tok.value().str());
           //result->set_value_empty();
           //return true;
         }
       } else {
-        PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
+        PUSH_ERROR_AND_RETURN(
+            AppendSemanticSourceDiagnostic(
+                fmt::format(
+                    "Internal error: attribute `{}` must have type `token`, but got `{}`.",
+                            prop_name, attr.type_name()),
+                prop_name, options));
       }
     }
 
@@ -1032,7 +1125,10 @@ bool ParseTimeSampledEnumProperty(
           sample_time = pv.value();
         } else {
           // This should not happen.
-          PUSH_ERROR_AND_RETURN_F("Internal error. Failed to get timecode for `{}`", prop_name);
+          PUSH_ERROR_AND_RETURN(
+              AppendSemanticSourceDiagnostic(
+                  fmt::format("Internal error: failed to get the time code for `{}`.", prop_name),
+                  prop_name, options));
         }
 
         {
@@ -1049,16 +1145,29 @@ bool ParseTimeSampledEnumProperty(
             if (e) {
               animatable_value.add_sample(sample_time, e.value());
             } else if (strict_allowedToken_check) {
-              PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
+              PUSH_ERROR_AND_RETURN(
+                  AppendSemanticSourceDiagnostic(
+                      fmt::format("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str()),
+                      prop_name, options));
             } else {
               PUSH_WARN_F("Attribute `{}`: `{}` at {}'th timesample is not an allowed token. Ignore it.", prop_name, i, tok.value().str());
               continue;
             }
           } else {
-            PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}`'s {}'th timesample must be type `token`, but got type `{}`", prop_name, i, attr.type_name());
+            PUSH_ERROR_AND_RETURN(
+                AppendSemanticSourceDiagnostic(
+                    fmt::format(
+                        "Internal error: timesample {} for attribute `{}` must have type `token`, but got `{}`.",
+                        i, prop_name, attr.type_name()),
+                    prop_name, options));
           }
         } else {
-          PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}`'s {}'th timesample must be type `token`, but got type `{}`", prop_name, i, attr.type_name());
+          PUSH_ERROR_AND_RETURN(
+              AppendSemanticSourceDiagnostic(
+                  fmt::format(
+                      "Internal error: timesample {} for attribute `{}` must have type `token`, but got `{}`.",
+                      i, prop_name, attr.type_name()),
+                  prop_name, options));
         }
       }
 
@@ -1128,7 +1237,7 @@ bool ParseTimeSampledEnumProperty(
         __table.insert(__name);                                                                         \
       } else {                                                                                          \
         std::function<nonstd::expected<__enum_ty, std::string>(const std::string &)> fun = __enum_handler; \
-        if (!ParseUniformEnumProperty(__name, __strict_check, fun, attr, &__target, warn, err)) {       \
+        if (!ParseUniformEnumProperty(__name, __strict_check, fun, attr, &__target, warn, err)) { \
           return false;                                                                                 \
         }                                                                                               \
         __target.metas() = std::move(__prop.second.attribute().metas());                                \

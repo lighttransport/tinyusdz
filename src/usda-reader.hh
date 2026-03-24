@@ -27,6 +27,7 @@ struct USDAReaderConfig {
   bool validate_mtlx_duplicate_names{false};
   bool validate_mtlx_index_bounds{false};
   bool strict_mtlx_check{false};  // Enable all above
+  bool error_detail{false};
 };
 
 ///
