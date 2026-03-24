@@ -22,6 +22,7 @@
 #include "crate-writer.hh"
 #include "crate-dump.hh"
 #include "usdc-reader.hh"
+#include "usd-validation.hh"
 
 #include "tydra/scene-access.hh"
 #include "variant-format.hh"
@@ -331,6 +332,8 @@ void print_help() {
   std::cout << "MaterialX validation options:\n";
   std::cout << "  --strict-mtlx-check Enable strict MaterialX validation\n";
   std::cout << "                      (validates info:id, index bounds, etc.)\n";
+  std::cout << "  --validate         Validate against AOUSD Core semantic rules\n";
+  std::cout << "                      (core schemas/metadata only; no file-format checks)\n";
   std::cout << "\n";
   std::cout << "Composition graph dump options:\n";
   std::cout << "  --dump-comp-graph[=FMT]  Dump composition graph\n";
@@ -383,6 +386,7 @@ int main(int argc, char **argv) {
 
   // MaterialX validation
   bool strict_mtlx_check{false};
+  bool validate_against_core{false};
 
   // Composition graph dump
   bool do_dump_comp_graph{false};
@@ -443,6 +447,8 @@ int main(int argc, char **argv) {
       do_dumpcrate = true;
     } else if (arg.compare("--strict-mtlx-check") == 0) {
       strict_mtlx_check = true;
+    } else if (arg.compare("--validate") == 0) {
+      validate_against_core = true;
     } else if (tinyusdz::startsWith(arg, "--dump-comp-graph")) {
       do_dump_comp_graph = true;
       std::string rest = arg.substr(strlen("--dump-comp-graph"));
@@ -595,6 +601,38 @@ int main(int argc, char **argv) {
   std::string ext = str_tolower(GetFileExtension(filepath));
   std::string base_dir;
   base_dir = tinyusdz::io::GetBaseDir(filepath);
+
+  if (validate_against_core) {
+    if (has_flatten || do_dumpcrate || do_dump_comp_graph || do_inspect ||
+        json_output || has_extract_variants || !output_filepath.empty()) {
+      std::cerr
+          << "--validate cannot be combined with other output/transform modes\n";
+      return EXIT_FAILURE;
+    }
+
+    tinyusdz::USDLoadOptions options;
+    options.error_detail = error_detail;
+
+    tinyusdz::Layer layer;
+    const bool ret =
+        tinyusdz::LoadLayerFromFile(filepath, &layer, &warn, &err, options);
+    if (!warn.empty()) {
+      std::cerr << "WARN: " << warn << "\n";
+    }
+
+    if (!ret) {
+      std::cerr << "Failed to load USD file as Layer: " << filepath << "\n";
+      if (!err.empty()) {
+        std::cerr << err << "\n";
+      }
+      return EXIT_FAILURE;
+    }
+
+    const tinyusdz::USDValidationResult validation =
+        tinyusdz::ValidateLayerAgainstAOUSDCore(layer);
+    std::cout << tinyusdz::FormatValidationResult(validation);
+    return validation.ok() ? EXIT_SUCCESS : EXIT_FAILURE;
+  }
 
   // Handle --dumpcrate mode (low-level USDC crate dump)
   if (do_dumpcrate) {
