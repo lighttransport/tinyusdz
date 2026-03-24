@@ -55,6 +55,10 @@
 // NOTE: HalfEdge is not used atm.
 #include "external/half-edge.hh"
 
+#if defined(TINYUSDZ_WITH_MESHOPT)
+#include "external/meshoptimizer/meshoptimizer.h"
+#endif
+
 // MikkTSpace tangent computation
 #include "mikktspace-tangent.hh"
 // Optimized MikkTSpace reimplementation
