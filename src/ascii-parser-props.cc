@@ -956,6 +956,13 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
     return false;
   }
 
+  Cursor property_cursor = _curr_cursor;
+  const auto record_prim_attr_and_property = [&](const std::string &property_name) {
+    const std::string prim_path = GetCurrentPrimPath();
+    RecordPrimAttrCursor(prim_path, property_name, property_cursor);
+    RecordPropertyCursor(prim_path, property_name, property_cursor);
+  };
+
   ListEditQual listop_qual;
   if (!MaybeListEditQual(&listop_qual)) {
     return false;
@@ -1245,6 +1252,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
     p.attribute().metas() = meta;
 
     (*props)[attr_name] = p;
+    record_prim_attr_and_property(attr_name);
 
     return true;
   }
@@ -1326,6 +1334,8 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
       Property p(std::move(attr), custom_qual);
       (*props)[attr_name] = p;
     }
+
+    record_prim_attr_and_property(attr_name);
 
     DCOUT(fmt::format("Added attribute connection to `{}`", attr_name));
 
@@ -1420,6 +1430,8 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
       p.set_property_type(Property::Type::Attrib);
       (*props)[attr_name] = p;
     }
+
+    record_prim_attr_and_property(attr_name);
 
     return true;
 
@@ -1793,6 +1805,8 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
 
       (*props)[primattr_name] = p;
     }
+
+    record_prim_attr_and_property(attr_name);
 
     return true;
   }

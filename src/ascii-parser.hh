@@ -161,6 +161,71 @@ class AsciiParser {
     int col{0};
   };
 
+  struct StoredCursor {
+    Cursor cursor;
+  };
+
+  struct CursorStore {
+    std::unordered_map<std::string, StoredCursor> layer_metas;
+    std::unordered_map<std::string, StoredCursor> prims;
+    std::unordered_map<std::string, StoredCursor> prim_attrs;
+    std::unordered_map<std::string, StoredCursor> properties;
+
+    static std::string MakePropertyKey(const std::string &prim_path,
+                                       const std::string &property_name) {
+      return prim_path + "." + property_name;
+    }
+
+    void Clear() {
+      layer_metas.clear();
+      prims.clear();
+      prim_attrs.clear();
+      properties.clear();
+    }
+
+    void StoreLayerMeta(const std::string &meta_name, const Cursor &cursor) {
+      layer_metas[meta_name] = StoredCursor{cursor};
+    }
+
+    void StorePrim(const std::string &prim_path, const Cursor &cursor) {
+      prims[prim_path] = StoredCursor{cursor};
+    }
+
+    void StorePrimAttr(const std::string &prim_path,
+                       const std::string &property_name,
+                       const Cursor &cursor) {
+      prim_attrs[MakePropertyKey(prim_path, property_name)] = StoredCursor{cursor};
+    }
+
+    void StoreProperty(const std::string &prim_path,
+                       const std::string &property_name,
+                       const Cursor &cursor) {
+      properties[MakePropertyKey(prim_path, property_name)] = StoredCursor{cursor};
+    }
+
+    const StoredCursor *FindLayerMeta(const std::string &meta_name) const {
+      auto it = layer_metas.find(meta_name);
+      return (it != layer_metas.end()) ? &it->second : nullptr;
+    }
+
+    const StoredCursor *FindPrim(const std::string &prim_path) const {
+      auto it = prims.find(prim_path);
+      return (it != prims.end()) ? &it->second : nullptr;
+    }
+
+    const StoredCursor *FindPrimAttr(const std::string &prim_path,
+                                     const std::string &property_name) const {
+      auto it = prim_attrs.find(MakePropertyKey(prim_path, property_name));
+      return (it != prim_attrs.end()) ? &it->second : nullptr;
+    }
+
+    const StoredCursor *FindProperty(const std::string &prim_path,
+                                     const std::string &property_name) const {
+      auto it = properties.find(MakePropertyKey(prim_path, property_name));
+      return (it != properties.end()) ? &it->second : nullptr;
+    }
+  };
+
   /// Error type enumeration for categorizing parser errors
   enum class ErrorType {
     SyntaxError,      ///< Parse/syntax error
@@ -455,6 +520,18 @@ class AsciiParser {
   /// Set ASCII data stream
   ///
   void SetStream(tinyusdz::StreamReader *sr);
+
+  const CursorStore &GetCursorStore() const { return _cursor_store; }
+  std::string FormatLayerMetaSourceDiagnostic(const std::string &meta_name,
+                                              int column_width = 80) const;
+  std::string FormatPrimSourceDiagnostic(const std::string &prim_path,
+                                         int column_width = 80) const;
+  std::string FormatPrimAttrSourceDiagnostic(const std::string &prim_path,
+                                             const std::string &property_name,
+                                             int column_width = 80) const;
+  std::string FormatPropertySourceDiagnostic(const std::string &prim_path,
+                                             const std::string &property_name,
+                                             int column_width = 80) const;
 
   ///
   /// Set memory limit in MB
@@ -1088,6 +1165,18 @@ class AsciiParser {
   nonstd::optional<VariableDef> GetPropMetaDefinition(const std::string &arg);
 
   std::string GetCurrentPrimPath();
+  void RecordLayerMetaCursor(const std::string &meta_name, const Cursor &cursor);
+  void RecordPrimCursor(const std::string &prim_path, const Cursor &cursor);
+  void RecordPrimAttrCursor(const std::string &prim_path,
+                            const std::string &property_name,
+                            const Cursor &cursor);
+  void RecordPropertyCursor(const std::string &prim_path,
+                            const std::string &property_name,
+                            const Cursor &cursor);
+  std::string FormatStoredCursorDiagnostic(const StoredCursor *stored,
+                                           int column_width) const;
+  std::string FormatCursorDiagnostic(const Cursor &cursor,
+                                     int column_width) const;
   bool PrimPathStackDepth() { return _path_stack.size(); }
   void PushPrimPath(const std::string &abs_path) {
     // TODO: validate `abs_path` is really absolute full path.
@@ -1106,6 +1195,7 @@ class AsciiParser {
   std::stack<std::string> _path_stack;
 
   Cursor _curr_cursor;
+  CursorStore _cursor_store;
 
   // Supported Prim types
   std::unordered_set<std::string> _supported_prim_types;

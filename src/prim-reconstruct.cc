@@ -28,12 +28,17 @@
 #include "value-types.hh"
 
 // For PUSH_ERROR_AND_RETURN
-#define PushError(s) if (err) { (*err) = s + (*err); }
-#define PushWarn(s) if (warn) { (*warn) = s + (*err); }
+#define PushError(s) \
+  if (err) { \
+    (*err) = (s) + (err->empty() ? std::string() : std::string("\n")) + (*err); \
+  }
+#define PushWarn(s) \
+  if (warn) { \
+    (*warn) = (s) + (warn->empty() ? std::string() : std::string("\n")) + (*warn); \
+  }
 
 // __VA_ARGS__ does not allow empty, thus # of args must be 2+
 #define PUSH_WARN_F(s, ...) PUSH_WARN(fmt::format(s, __VA_ARGS__))
-#define PUSH_ERROR_AND_RETURN_F(s, ...) PUSH_ERROR_AND_RETURN(fmt::format(s, __VA_ARGS__))
 
 //
 // NOTE:
@@ -1874,7 +1879,7 @@ bool ReconstructPrim<GeomMesh>(
           TypedAttributeWithFallback<GeomSubset::FamilyType> familyType{GeomSubset::FamilyType::Unrestricted};
           std::function<nonstd::expected<GeomSubset::FamilyType, std::string>(const std::string &)> fun = FamilyTypeHandler;
 
-          if (!ParseUniformEnumProperty(prop.first, options.strict_allowedToken_check, fun, attr, &familyType, warn, err)) {
+          if (!ParseUniformEnumProperty(prop.first, options.strict_allowedToken_check, fun, attr, &familyType, warn, err, options)) {
             return false;
           }
 
