@@ -1270,7 +1270,10 @@ bool RenderSceneConverter::ConvertDomeLight(
   // Extract texture file and load envmap image
   if (light.file.authored() && !light.file.is_blocked()) {
     value::AssetPath assetPath;
-    if (light.file.get_value()->get(env.timecode, &assetPath)) {
+    std::string eval_err;
+    if (EvaluateTypedAnimatableAttribute(
+            env.stage, light.file, "inputs:texture:file", &assetPath,
+            &eval_err, env.timecode, env.tinterp)) {
       rlight.textureFile = assetPath.GetAssetPath();
 
       // Load the envmap texture if scene config allows
@@ -1401,6 +1404,9 @@ bool RenderSceneConverter::ConvertDomeLight(
                                assetPath.GetAssetPath(), err));
         }
       }
+    } else if (!eval_err.empty()) {
+      PUSH_WARN(fmt::format(
+          "Failed to resolve DomeLight `inputs:texture:file`: {}", eval_err));
     }
   }
 
@@ -1486,8 +1492,14 @@ bool RenderSceneConverter::ConvertRectLight(
   // Extract texture file (optional)
   if (light.file.authored() && !light.file.is_blocked()) {
     value::AssetPath asset;
-    if (light.file.get_value()->get(env.timecode, &asset)) {
+    std::string eval_err;
+    if (EvaluateTypedAnimatableAttribute(
+            env.stage, light.file, "inputs:texture:file", &asset, &eval_err,
+            env.timecode, env.tinterp)) {
       rlight.textureFile = asset.GetAssetPath();
+    } else if (!eval_err.empty()) {
+      PUSH_WARN(fmt::format(
+          "Failed to resolve RectLight `inputs:texture:file`: {}", eval_err));
     }
   }
 
