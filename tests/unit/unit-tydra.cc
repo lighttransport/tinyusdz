@@ -1423,6 +1423,102 @@ void tydra_texture_loader_policy_test(void) {
     TEST_CHECK(converter.GetWarning().find("inputs:sourceColorSpace") ==
                std::string::npos);
   }
+
+  {
+    Stage stage;
+
+    auto make_uniform_property = [](const value::Value &val,
+                                    const std::string &type_name) {
+      Attribute attr;
+      attr.set_type_name(type_name);
+      attr.variability() = Variability::Uniform;
+      primvar::PrimVar pvar;
+      pvar.set_value(val);
+      attr.set_var(std::move(pvar));
+      return Property(std::move(attr), false);
+    };
+
+    Material material;
+    material.surface.set(Path("/PreviewSurface", "outputs:surface"));
+
+    UsdPreviewSurface preview_surface;
+    preview_surface.outputsSurface.set_authored(true);
+    preview_surface.diffuseColor.set_connection(Path("/Tex", "outputs:rgb"));
+    preview_surface.diffuseColor.set_value_empty();
+    preview_surface.useSpecularWorkflow.set_connection(
+        Path("/PreviewSurface", "inputs:useSpecularWorkflowDriver"));
+    preview_surface.useSpecularWorkflow.set_value_empty();
+    preview_surface.props["inputs:sourceColorSpace"] = make_uniform_property(
+        value::Value(value::token("raw")), value::kToken);
+    preview_surface.props["inputs:fileDriver"] = make_uniform_property(
+        value::Value(value::AssetPath("mask.png")),
+        value::TypeTraits<value::AssetPath>::type_name());
+    preview_surface.props["inputs:wrapSDriver"] = make_uniform_property(
+        value::Value(value::token("mirror")), value::kToken);
+    preview_surface.props["inputs:wrapTDriver"] = make_uniform_property(
+        value::Value(value::token("repeat")), value::kToken);
+    preview_surface.props["inputs:useSpecularWorkflowDriver"] =
+        make_uniform_property(value::Value(int32_t(1)),
+                              value::TypeTraits<int>::type_name());
+
+    Shader preview_shader;
+    preview_shader.info_id = kUsdPreviewSurface;
+    preview_shader.value = preview_surface;
+
+    UsdUVTexture uv_texture;
+    uv_texture.outputsRGB.set_authored(true);
+    uv_texture.file.set_connection(Path("/PreviewSurface", "inputs:fileDriver"));
+    uv_texture.sourceColorSpace.set_connection(
+        Path("/PreviewSurface", "inputs:sourceColorSpace"));
+    uv_texture.sourceColorSpace.set_value_empty();
+    uv_texture.wrapS.set_connection(Path("/PreviewSurface", "inputs:wrapSDriver"));
+    uv_texture.wrapS.set_value_empty();
+    uv_texture.wrapT.set_connection(Path("/PreviewSurface", "inputs:wrapTDriver"));
+    uv_texture.wrapT.set_value_empty();
+
+    Shader tex_shader;
+    tex_shader.info_id = kUsdUVTexture;
+    tex_shader.value = uv_texture;
+
+    GeomMesh mesh = make_mesh();
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(Prim("MaterialPrim", material)));
+    TEST_CHECK(stage.add_root_prim(Prim("PreviewSurface", preview_shader)));
+    TEST_CHECK(stage.add_root_prim(Prim("Tex", tex_shader)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.texture_image_loader_function =
+        SingleChannelTextureImageLoader;
+    env.material_config.allow_texture_load_failure = false;
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.materials.size() == 1);
+    TEST_CHECK(scene.textures.size() == 1);
+    TEST_CHECK(scene.images.size() == 1);
+    if (scene.materials.size() == 1) {
+      TEST_CHECK(scene.materials[0].surfaceShader.has_value());
+      if (scene.materials[0].surfaceShader.has_value()) {
+        TEST_CHECK(scene.materials[0].surfaceShader->useSpecularWorkflow);
+      }
+    }
+    if (scene.textures.size() == 1) {
+      TEST_CHECK(scene.textures[0].wrapS == tydra::UVTexture::WrapMode::MIRROR);
+      TEST_CHECK(scene.textures[0].wrapT == tydra::UVTexture::WrapMode::REPEAT);
+    }
+    if (scene.images.size() == 1) {
+      TEST_CHECK(scene.images[0].asset_identifier == "mask.png");
+      TEST_CHECK(scene.images[0].usdColorSpace == tydra::ColorSpace::Raw);
+    }
+    TEST_CHECK(converter.GetWarning().find("Failed to resolve") ==
+               std::string::npos);
+  }
 }
 
 void tydra_envmap_loader_policy_test(void) {
