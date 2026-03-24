@@ -248,7 +248,7 @@ const threeState = {
     controls: null,
     pmremGenerator: null,
     envMap: null,
-    clock: new THREE.Clock(),
+    timer: new THREE.Timer(),
     gridHelper: null,
     axesHelper: null
 };
@@ -671,9 +671,9 @@ function setupAnimationFolder() {
                     const action = animationState.mixer.clipAction(clip);
                     action.paused = !value;
                 });
-                // Reset clock delta to avoid jump
+                // Reset timer to avoid jump
                 if (value) {
-                    threeState.clock.getDelta();
+                    threeState.timer.reset();
                 }
             }
         });
@@ -1904,9 +1904,8 @@ function prepareAnimationClips() {
     // This is critical - without this, the paused animation won't show initial state
     animationState.mixer.update(0);
 
-    // Start the clock but don't start playing
-    threeState.clock.start();
-    threeState.clock.getDelta(); // Reset delta to avoid large jump when playing starts
+    // Reset the timer so delta starts fresh when playing begins
+    threeState.timer.reset();
 
     console.log(`Animation prepared: ${animationState.clips.length} clips, starting paused at time ${startTime}`);
 }
@@ -1929,9 +1928,9 @@ function toggleAnimationPlayback() {
         console.log(`  Action "${clip.name}": paused=${action.paused}, time=${action.time.toFixed(3)}`);
     });
 
-    // Reset clock delta to avoid large jump when resuming
+    // Reset timer to avoid large jump when resuming
     if (animationState.params.isPlaying) {
-        threeState.clock.getDelta();
+        threeState.timer.reset();
     }
 }
 
@@ -2512,7 +2511,7 @@ function clearScene() {
     animationState.params.time = 0;
     animationState.params.beginTime = 0;
     animationState.params.endTime = 10;
-    threeState.clock.stop();
+    threeState.timer.reset();
 
     // Clear pick state
     clearSelectionHighlight();
@@ -3576,7 +3575,7 @@ function animate() {
 
     // Animation disabled for now - may revisit later
     // if (animationState.mixer && animationState.params.isPlaying) {
-    //     const delta = threeState.clock.getDelta();
+    //     const delta = threeState.timer.getDelta();
     //     const scaledDelta = delta * (animationState.params.speed / 24.0);
     //     animationState.mixer.update(scaledDelta);
     //
