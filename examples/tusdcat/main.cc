@@ -302,6 +302,8 @@ void print_help() {
   std::cout << "  -o, --output FILE   Write output to USDC file\n";
   std::cout << "  --memstat           Print memory usage statistics\n";
   std::cout << "                      (includes USDC parser budget report for .usdc)\n";
+  std::cout << "  --error-detail      Show full error stack and full source lines\n";
+  std::cout << "                      (disable stack snipping and line truncation)\n";
   std::cout << "  --progress          Show ASCII progress bar\n";
   std::cout << "                      (only shown if loading takes > 3 seconds)\n";
   std::cout << "  --loglevel INT      Set logging level:\n";
@@ -369,6 +371,7 @@ int main(int argc, char **argv) {
   std::string variant_format = "yaml";  // Default format: yaml
   bool json_output{false};
   bool memstat{false};
+  bool error_detail{false};
   bool show_progress{false};
 
   // Inspect options
@@ -432,6 +435,8 @@ int main(int argc, char **argv) {
       }
     } else if (arg.compare("--memstat") == 0) {
       memstat = true;
+    } else if (arg.compare("--error-detail") == 0) {
+      error_detail = true;
     } else if (arg.compare("--progress") == 0) {
       show_progress = true;
     } else if (arg.compare("--dumpcrate") == 0) {
@@ -721,6 +726,7 @@ int main(int argc, char **argv) {
 
       // MaterialX validation
       usdz_options.strict_mtlx_check = strict_mtlx_check;
+      usdz_options.error_detail = error_detail;
 
       // Set up progress callback if requested
       ProgressState usdz_progress_state;
@@ -1025,6 +1031,7 @@ int main(int argc, char **argv) {
 
     // MaterialX validation
     options.strict_mtlx_check = strict_mtlx_check;
+    options.error_detail = error_detail;
 
     // Set up progress callback if requested
     ProgressState progress_state;

@@ -149,6 +149,12 @@ struct USDLoadOptions {
   bool strict_mtlx_check{false};
 
   ///
+  /// Show detailed USDA error reports without stack snipping or source-line
+  /// truncation.
+  ///
+  bool error_detail{false};
+
+  ///
   /// User-defined fileformat hander.
   /// key = file(asset) extension(`.` excluded. example: 'mtlx', 'obj').
   ///

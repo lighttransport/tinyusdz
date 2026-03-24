@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -27,6 +28,13 @@ struct PrimReconstructOptions
   bool validate_mtlx_duplicate_names{false};
   bool validate_mtlx_index_bounds{false};
   bool strict_mtlx_check{false};  // Enable all above
+
+  std::function<std::string(const std::string &property_name)>
+      format_property_source_diagnostic;
+  std::function<std::string()> format_prim_source_diagnostic;
+  std::function<std::string(const std::string &property_name)>
+      format_property_path;
+  std::function<std::string()> format_prim_path;
 };
 
 
