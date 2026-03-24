@@ -66,13 +66,41 @@ namespace tydra {
 
 namespace {
 
-bool ResolveSourceColorSpace(
+template <typename T>
+bool ResolveTypedAnimatableValue(
     const Stage &stage,
-    const TypedAttributeWithFallback<Animatable<UsdUVTexture::SourceColorSpace>>
-        &sourceColorSpace,
+    const TypedAttributeWithFallback<Animatable<T>> &attr,
+    const std::string &attr_name,
     const double timecode,
     const value::TimeSampleInterpolationType tinterp,
-    UsdUVTexture::SourceColorSpace *value_out,
+    T *value_out,
+    std::string *err) {
+  return EvaluateTypedAnimatableAttribute(stage, attr, attr_name, value_out,
+                                          err, timecode, tinterp);
+}
+
+template <typename T>
+bool ResolveTypedAnimatableValue(
+    const Stage &stage,
+    const TypedAttribute<Animatable<T>> &attr,
+    const std::string &attr_name,
+    const double timecode,
+    const value::TimeSampleInterpolationType tinterp,
+    T *value_out,
+    std::string *err) {
+  return EvaluateTypedAnimatableAttribute(stage, attr, attr_name, value_out, err,
+                                          timecode, tinterp);
+}
+
+template <typename EnumTy, typename EnumHandler>
+bool ResolveEnumTokenAnimatableValue(
+    const Stage &stage,
+    const TypedAttributeWithFallback<Animatable<EnumTy>> &attr,
+    const std::string &attr_name,
+    EnumHandler enum_handler,
+    const double timecode,
+    const value::TimeSampleInterpolationType tinterp,
+    EnumTy *value_out,
     std::string *err) {
   if (!value_out) {
     if (err) {
@@ -81,15 +109,15 @@ bool ResolveSourceColorSpace(
     return false;
   }
 
-  if (sourceColorSpace.has_connections()) {
-    Attribute attr;
-    attr.variability() = Variability::Varying;
-    attr.set_type_name(value::kToken);
-    attr.set_connections(sourceColorSpace.connections());
+  if (attr.has_connections()) {
+    Attribute conn_attr;
+    conn_attr.variability() = Variability::Varying;
+    conn_attr.set_type_name(value::kToken);
+    conn_attr.set_connections(attr.connections());
 
     TerminalAttributeValue resolved;
-    if (!EvaluateAttribute(stage, attr, "inputs:sourceColorSpace", &resolved,
-                           err, timecode, tinterp)) {
+    if (!EvaluateAttribute(stage, conn_attr, attr_name, &resolved, err,
+                           timecode, tinterp)) {
       return false;
     }
 
@@ -101,20 +129,18 @@ bool ResolveSourceColorSpace(
     } else {
       if (err) {
         (*err) += fmt::format(
-            "Type mismatch. Value-producing attribute for "
-            "`inputs:sourceColorSpace` has type `{}`, but `token` was "
-            "expected.\n",
-            resolved.type_name());
+            "Type mismatch. Value-producing attribute for `{}` has type `{}`, "
+            "but `token` was expected.\n",
+            attr_name, resolved.type_name());
       }
       return false;
     }
 
-    auto parsed = enum_handler::SourceColorSpace(token_value);
+    auto parsed = enum_handler(token_value);
     if (!parsed) {
       if (err) {
         (*err) += fmt::format(
-            "Failed to resolve `inputs:sourceColorSpace` from connected value "
-            "`{}`: {}\n",
+            "Failed to resolve `{}` from connected value `{}`: {}\n", attr_name,
             token_value, parsed.error());
       }
       return false;
@@ -124,16 +150,42 @@ bool ResolveSourceColorSpace(
     return true;
   }
 
-  const auto &value = sourceColorSpace.get_value();
+  const auto &value = attr.get_value();
   if (value.get(timecode, value_out, tinterp)) {
     return true;
   }
 
   if (err) {
-    (*err) +=
-        "Failed to get `inputs:sourceColorSpace` at the requested time.\n";
+    (*err) += fmt::format("Failed to get `{}` at the requested time.\n",
+                          attr_name);
   }
   return false;
+}
+
+bool ResolveSourceColorSpace(
+    const Stage &stage,
+    const TypedAttributeWithFallback<Animatable<UsdUVTexture::SourceColorSpace>>
+        &sourceColorSpace,
+    const double timecode,
+    const value::TimeSampleInterpolationType tinterp,
+    UsdUVTexture::SourceColorSpace *value_out,
+    std::string *err) {
+  return ResolveEnumTokenAnimatableValue(
+      stage, sourceColorSpace, "inputs:sourceColorSpace",
+      enum_handler::SourceColorSpace, timecode, tinterp, value_out, err);
+}
+
+bool ResolveTextureWrap(
+    const Stage &stage,
+    const TypedAttributeWithFallback<Animatable<UsdUVTexture::Wrap>> &wrap_attr,
+    const std::string &attr_name,
+    const double timecode,
+    const value::TimeSampleInterpolationType tinterp,
+    UsdUVTexture::Wrap *value_out,
+    std::string *err) {
+  return ResolveEnumTokenAnimatableValue(stage, wrap_attr, attr_name,
+                                         enum_handler::TextureWrap, timecode,
+                                         tinterp, value_out, err);
 }
 
 }  // namespace
@@ -895,24 +947,35 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
     const Stage &stage, const Path &tx_abs_path, const UsdTransform2d &tx,
     UVTexture *tex_out, double timecode) {
   float rotation;  // in angles
-  if (!tx.rotation.get_value().get(timecode, &rotation)) {
+  std::string resolve_err;
+  if (!ResolveTypedAnimatableValue(stage, tx.rotation, "inputs:rotation",
+                                   timecode,
+                                   value::TimeSampleInterpolationType::Held,
+                                   &rotation, &resolve_err)) {
     return nonstd::make_unexpected(
-        fmt::format("Failed to retrieve rotation attribute from {}\n",
-                    tx_abs_path.full_path_name()));
+        fmt::format("Failed to resolve rotation attribute from {}: {}",
+                    tx_abs_path.full_path_name(), resolve_err));
   }
 
   value::float2 scale;
-  if (!tx.scale.get_value().get(timecode, &scale)) {
+  resolve_err.clear();
+  if (!ResolveTypedAnimatableValue(stage, tx.scale, "inputs:scale", timecode,
+                                   value::TimeSampleInterpolationType::Held,
+                                   &scale, &resolve_err)) {
     return nonstd::make_unexpected(
-        fmt::format("Failed to retrieve scale attribute from {}\n",
-                    tx_abs_path.full_path_name()));
+        fmt::format("Failed to resolve scale attribute from {}: {}",
+                    tx_abs_path.full_path_name(), resolve_err));
   }
 
   value::float2 translation;
-  if (!tx.translation.get_value().get(timecode, &translation)) {
+  resolve_err.clear();
+  if (!ResolveTypedAnimatableValue(stage, tx.translation, "inputs:translation",
+                                   timecode,
+                                   value::TimeSampleInterpolationType::Held,
+                                   &translation, &resolve_err)) {
     return nonstd::make_unexpected(
-        fmt::format("Failed to retrieve translation attribute from {}\n",
-                    tx_abs_path.full_path_name()));
+        fmt::format("Failed to resolve translation attribute from {}: {}",
+                    tx_abs_path.full_path_name(), resolve_err));
   }
 
   // must be authored and connected to PrimvarReader.
@@ -1708,16 +1771,13 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
   value::AssetPath assetPath;
   if (has_file) {
-    if (auto apath = texture.file.get_value()) {
-      if (!apath.value().get(env.timecode, &assetPath)) {
-        PUSH_ERROR_AND_RETURN(fmt::format(
-            "Failed to get `asset:file` value from Path {} at time {}",
-            tex_abs_path.prim_part(), env.timecode));
-      }
-    } else {
+    std::string asset_eval_err;
+    if (!ResolveTypedAnimatableValue(env.stage, texture.file, "inputs:file",
+                                     env.timecode, env.tinterp, &assetPath,
+                                     &asset_eval_err)) {
       PUSH_ERROR_AND_RETURN(
-          fmt::format("Failed to get `asset:file` value from Path {}",
-                      tex_abs_path.prim_part()));
+          fmt::format("Failed to resolve `asset:file` from {}: {}",
+                      tex_abs_path.prim_part(), asset_eval_err));
     }
   } else {
     PUSH_ERROR_AND_RETURN(fmt::format(
@@ -2342,9 +2402,12 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
   if (texture.wrapS.authored()) {
     tinyusdz::UsdUVTexture::Wrap wrap;
+    std::string wrap_err;
 
-    if (!texture.wrapS.get_value().get(env.timecode, &wrap)) {
-      PUSH_ERROR_AND_RETURN("Invalid UsdUVTexture inputs:wrapS value.");
+    if (!ResolveTextureWrap(env.stage, texture.wrapS, "inputs:wrapS",
+                            env.timecode, env.tinterp, &wrap, &wrap_err)) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Invalid UsdUVTexture `inputs:wrapS` value: {}", wrap_err));
     }
 
     if (wrap == UsdUVTexture::Wrap::Repeat) {
@@ -2362,9 +2425,12 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
   if (texture.wrapT.authored()) {
     tinyusdz::UsdUVTexture::Wrap wrap;
+    std::string wrap_err;
 
-    if (!texture.wrapT.get_value().get(env.timecode, &wrap)) {
-      PUSH_ERROR_AND_RETURN("Invalid UsdUVTexture inputs:wrapT value.");
+    if (!ResolveTextureWrap(env.stage, texture.wrapT, "inputs:wrapT",
+                            env.timecode, env.tinterp, &wrap, &wrap_err)) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Invalid UsdUVTexture `inputs:wrapT` value: {}", wrap_err));
     }
 
     if (wrap == UsdUVTexture::Wrap::Repeat) {
@@ -2651,15 +2717,16 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
     if (shader.useSpecularWorkflow.is_blocked()) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("useSpecularWorkflow attribute is blocked."));
-    } else if (shader.useSpecularWorkflow.is_connection()) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("TODO: useSpecularWorkflow with connection."));
     } else {
       int val;
-      if (!shader.useSpecularWorkflow.get_value().get(env.timecode, &val)) {
+      std::string eval_err;
+      if (!ResolveTypedAnimatableValue(
+              env.stage, shader.useSpecularWorkflow,
+              "inputs:useSpecularWorkflow", env.timecode, env.tinterp, &val,
+              &eval_err)) {
         PUSH_ERROR_AND_RETURN(
-            fmt::format("Failed to get useSpcularWorkflow value at time `{}`.",
-                        env.timecode));
+            fmt::format("Failed to resolve useSpecularWorkflow at time `{}`: {}",
+                        env.timecode, eval_err));
       }
 
       rshader.useSpecularWorkflow = val ? true : false;
