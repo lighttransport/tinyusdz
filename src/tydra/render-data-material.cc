@@ -25,6 +25,7 @@
 
 #include "common-utils.hh"
 #include "common-types.hh"
+#include "enum-handlers.hh"
 #include "image-loader.hh"
 #include "image-util.hh"
 #include "image-types.hh"
@@ -62,6 +63,80 @@
 namespace tinyusdz {
 
 namespace tydra {
+
+namespace {
+
+bool ResolveSourceColorSpace(
+    const Stage &stage,
+    const TypedAttributeWithFallback<Animatable<UsdUVTexture::SourceColorSpace>>
+        &sourceColorSpace,
+    const double timecode,
+    const value::TimeSampleInterpolationType tinterp,
+    UsdUVTexture::SourceColorSpace *value_out,
+    std::string *err) {
+  if (!value_out) {
+    if (err) {
+      (*err) += "`value_out` argument is nullptr.\n";
+    }
+    return false;
+  }
+
+  if (sourceColorSpace.has_connections()) {
+    Attribute attr;
+    attr.variability() = Variability::Varying;
+    attr.set_type_name(value::kToken);
+    attr.set_connections(sourceColorSpace.connections());
+
+    TerminalAttributeValue resolved;
+    if (!EvaluateAttribute(stage, attr, "inputs:sourceColorSpace", &resolved,
+                           err, timecode, tinterp)) {
+      return false;
+    }
+
+    std::string token_value;
+    if (const auto *tok = resolved.as<value::token>()) {
+      token_value = tok->str();
+    } else if (const auto *str = resolved.as<std::string>()) {
+      token_value = *str;
+    } else {
+      if (err) {
+        (*err) += fmt::format(
+            "Type mismatch. Value-producing attribute for "
+            "`inputs:sourceColorSpace` has type `{}`, but `token` was "
+            "expected.\n",
+            resolved.type_name());
+      }
+      return false;
+    }
+
+    auto parsed = enum_handler::SourceColorSpace(token_value);
+    if (!parsed) {
+      if (err) {
+        (*err) += fmt::format(
+            "Failed to resolve `inputs:sourceColorSpace` from connected value "
+            "`{}`: {}\n",
+            token_value, parsed.error());
+      }
+      return false;
+    }
+
+    *value_out = parsed.value();
+    return true;
+  }
+
+  const auto &value = sourceColorSpace.get_value();
+  if (value.get(timecode, value_out, tinterp)) {
+    return true;
+  }
+
+  if (err) {
+    (*err) +=
+        "Failed to get `inputs:sourceColorSpace` at the requested time.\n";
+  }
+  return false;
+}
+
+}  // namespace
 
 bool RawAssetRead(
     const value::AssetPath &assetPath, const AssetInfo &assetInfo,
@@ -1770,7 +1845,10 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
     if (inferColorSpaceFailed || !has_file || !texture.file.metas().has_colorSpace()) {
       if (texture.sourceColorSpace.authored()) {
         UsdUVTexture::SourceColorSpace cs;
-        if (texture.sourceColorSpace.get_value().get(env.timecode, &cs)) {
+        std::string source_color_space_err;
+        if (ResolveSourceColorSpace(env.stage, texture.sourceColorSpace,
+                                    env.timecode, env.tinterp, &cs,
+                                    &source_color_space_err)) {
           if (cs == UsdUVTexture::SourceColorSpace::SRGB) {
             texImage.usdColorSpace = tydra::ColorSpace::sRGB;
             sourceColorSpaceSet = true;
@@ -1801,6 +1879,10 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
               sourceColorSpaceSet = true;
             }
           }
+        } else if (!source_color_space_err.empty()) {
+          PUSH_WARN(fmt::format(
+              "Failed to resolve `inputs:sourceColorSpace`: {}",
+              source_color_space_err));
         }
       }
     }

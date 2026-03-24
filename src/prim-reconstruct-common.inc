@@ -898,12 +898,9 @@ bool ParseUniformEnumProperty(
   }
 
   if (attr.is_connection()) {
-    PUSH_ERROR_AND_RETURN(
-        AppendSemanticSourceDiagnostic(
-            fmt::format(
-                "Connections are not supported for built-in enum token attribute `{}`.",
-                prop_name),
-            prop_name, options));
+    result->set_connections(attr.connections());
+    result->set_value_empty();
+    return true;
   }
 
 
@@ -1019,12 +1016,9 @@ bool ParseTimeSampledEnumProperty(
   }
 
   if (attr.is_connection()) {
-    PUSH_ERROR_AND_RETURN(
-        AppendSemanticSourceDiagnostic(
-            fmt::format(
-                "Connections are not supported for built-in enum token attribute `{}`.",
-                prop_name),
-            prop_name, options));
+    result->set_connections(attr.connections());
+    result->set_value_empty();
+    return true;
   }
 
 
