@@ -10,7 +10,7 @@ extern bool g_enable_dcout_output;
 
 // Default limit for recursive/iterative traversals to prevent infinite loops.
 // Used as max recursion depth or max iteration count in tree/graph traversals.
-constexpr size_t kMaxDefaultTraversalLimit = 1024 * 16;
+constexpr size_t kMaxDefaultTraversalLimit = 1024 * 1024;
 }
 
 #if !defined(TINYUSDZ_PRODUCTION_BUILD) && !defined(TINYUSDZ_FUZZER_BUILD)
