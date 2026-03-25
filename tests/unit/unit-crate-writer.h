@@ -62,6 +62,8 @@ void crate_writer_limit_disable_test(void);
 void crate_writer_validation_enabled_test(void);
 void crate_writer_validation_disabled_test(void);
 void crate_writer_compression_test(void);
+void crate_writer_compressed_int_array_roundtrip_test(void);
+void crate_writer_compressed_uint_array_roundtrip_test(void);
 void crate_writer_specializes_test(void);
 void crate_writer_nan_dedup_test(void);
 void crate_writer_prim_meta_roundtrip_test(void);

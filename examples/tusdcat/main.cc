@@ -5,6 +5,7 @@
 #include <cstring>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <sstream>
 
 #if !defined(_WIN32)
@@ -19,9 +20,10 @@
 #include "usd-to-json.hh"
 #include "usd-dump.hh"
 #include "logger.hh"
-#include "crate-writer.hh"
 #include "crate-dump.hh"
 #include "usdc-reader.hh"
+#include "usdc-writer.hh"
+#include "usda-writer.hh"
 #include "usd-validation.hh"
 
 #include "tydra/scene-access.hh"
@@ -37,6 +39,13 @@ struct CompositionFeatures {
   bool specializes{true};
 };
 
+enum class OutputFormat {
+  Infer,
+  USDA,
+  USDC,
+  USDZ
+};
+
 static std::string GetFileExtension(const std::string &filename) {
   if (filename.find_last_of('.') != std::string::npos)
     return filename.substr(filename.find_last_of('.') + 1);
@@ -48,6 +57,63 @@ static std::string str_tolower(std::string s) {
                  [](unsigned char c) { return std::tolower(c); }
   );
   return s;
+}
+
+static bool ParseOutputFormat(const std::string &value, OutputFormat *format) {
+  if (!format) {
+    return false;
+  }
+
+  const std::string fmt = str_tolower(value);
+  if (fmt == "usda") {
+    *format = OutputFormat::USDA;
+    return true;
+  }
+  if (fmt == "usdc") {
+    *format = OutputFormat::USDC;
+    return true;
+  }
+  if (fmt == "usdz") {
+    *format = OutputFormat::USDZ;
+    return true;
+  }
+
+  return false;
+}
+
+static bool InferOutputFormatFromFilename(const std::string &filename,
+                                          OutputFormat *format,
+                                          std::string *err) {
+  if (!format) {
+    if (err) {
+      (*err) = "`format` is nullptr.";
+    }
+    return false;
+  }
+
+  const std::string lower = str_tolower(filename);
+  if (tinyusdz::endsWith(lower, ".usda") ||
+      tinyusdz::endsWith(lower, ".usda.zst")) {
+    *format = OutputFormat::USDA;
+    return true;
+  }
+  if (tinyusdz::endsWith(lower, ".usdc") ||
+      tinyusdz::endsWith(lower, ".usdc.zst")) {
+    *format = OutputFormat::USDC;
+    return true;
+  }
+  if (tinyusdz::endsWith(lower, ".usdz")) {
+    *format = OutputFormat::USDZ;
+    return true;
+  }
+
+  if (err) {
+    (*err) =
+        "Failed to infer output format from filename `" + filename +
+        "`. Use .usda, .usdc, .usdz (or .usda.zst/.usdc.zst), or specify "
+        "--output-format=usda|usdc|usdz.";
+  }
+  return false;
 }
 
 static std::string format_memory_size(size_t bytes) {
@@ -70,33 +136,43 @@ static std::string format_memory_size(size_t bytes) {
   return ss.str();
 }
 
-// Helper function to write Stage to USDC file
-static bool WriteStageToUSdc(const tinyusdz::Stage& stage, const std::string& output_path) {
-  using namespace tinyusdz::experimental;
-
-  std::cout << "Writing USDC to: " << output_path << "\n";
-
-  CrateWriter writer(output_path);
+static bool WriteStageToFile(const tinyusdz::Stage &stage,
+                             const std::string &output_path,
+                             OutputFormat format) {
+  std::string warn;
   std::string err;
 
-  if (!writer.Open(&err)) {
-    std::cerr << "Failed to open USDC writer: " << err << "\n";
-    return false;
+  switch (format) {
+    case OutputFormat::USDA:
+      if (!tinyusdz::usda::SaveAsUSDA(output_path, stage, &warn, &err)) {
+        std::cerr << "Failed to write USDA file: " << err << "\n";
+        return false;
+      }
+      break;
+    case OutputFormat::USDC:
+      if (!tinyusdz::usdc::SaveAsUSDCToFile(output_path, stage, &warn, &err)) {
+        std::cerr << "Failed to write USDC file: " << err << "\n";
+        return false;
+      }
+      break;
+    case OutputFormat::USDZ: {
+      const std::map<std::string, std::vector<uint8_t>> assets;
+      if (!tinyusdz::SaveAsUSDZToFile(output_path, stage, assets, &warn, &err)) {
+        std::cerr << "Failed to write USDZ file: " << err << "\n";
+        return false;
+      }
+      std::cout << "Wrote USDZ to [" << output_path << "]\n";
+      break;
+    }
+    case OutputFormat::Infer:
+      std::cerr << "Internal error: output format was not resolved.\n";
+      return false;
   }
 
-  if (!writer.ConvertStageToSpecs(stage, &err)) {
-    std::cerr << "Failed to convert Stage to USDC specs: " << err << "\n";
-    return false;
+  if (!warn.empty()) {
+    std::cerr << "WARN: " << warn << "\n";
   }
 
-  if (!writer.Finalize(&err)) {
-    std::cerr << "Failed to finalize USDC file: " << err << "\n";
-    return false;
-  }
-
-  writer.Close();
-
-  std::cout << "Successfully wrote USDC file: " << output_path << "\n";
   return true;
 }
 
@@ -300,7 +376,9 @@ void print_help() {
   std::cout << "  --relative          Print Path as relative Path (not implemented)\n";
   std::cout << "  -l, --loadOnly      Load/parse USD file only (validate input)\n";
   std::cout << "  -j, --json          Output parsed USD as JSON string\n";
-  std::cout << "  -o, --output FILE   Write output to USDC file\n";
+  std::cout << "  -o, --output FILE   Write output to FILE\n";
+  std::cout << "  --output-format FMT Output format: usda, usdc, usdz\n";
+  std::cout << "                      Default: infer from output filename extension\n";
   std::cout << "  --memstat           Print memory usage statistics\n";
   std::cout << "                      (includes USDC parser budget report for .usdc)\n";
   std::cout << "  --error-detail      Show full error stack and full source lines\n";
@@ -376,6 +454,7 @@ int main(int argc, char **argv) {
   bool memstat{false};
   bool error_detail{false};
   bool show_progress{false};
+  OutputFormat output_format{OutputFormat::Infer};
 
   // Inspect options
   bool do_inspect{false};
@@ -422,6 +501,17 @@ int main(int argc, char **argv) {
       }
       i++; // Move to next argument
       output_filepath = argv[i];
+    } else if (tinyusdz::startsWith(arg, "--output-format=")) {
+      std::string fmt = tinyusdz::removePrefix(arg, "--output-format=");
+      if (fmt.empty()) {
+        std::cerr << "No format specified to --output-format.\n";
+        return EXIT_FAILURE;
+      }
+      if (!ParseOutputFormat(fmt, &output_format)) {
+        std::cerr << "Invalid output format: " << fmt
+                  << ". Must be 'usda', 'usdc', or 'usdz'.\n";
+        return EXIT_FAILURE;
+      }
     } else if (arg.compare("--extract-variants") == 0) {
       has_extract_variants = true;
     } else if (tinyusdz::startsWith(arg, "--variant-format=")) {
@@ -599,8 +689,22 @@ int main(int argc, char **argv) {
   std::string err;
 
   std::string ext = str_tolower(GetFileExtension(filepath));
+  const bool has_output_file = !output_filepath.empty();
+  const bool suppress_usd_text_output = has_output_file;
   std::string base_dir;
   base_dir = tinyusdz::io::GetBaseDir(filepath);
+
+  if ((output_format != OutputFormat::Infer) && !has_output_file) {
+    std::cerr << "--output-format requires -o/--output.\n";
+    return EXIT_FAILURE;
+  }
+
+  if (has_output_file && (output_format == OutputFormat::Infer)) {
+    if (!InferOutputFormatFromFilename(output_filepath, &output_format, &err)) {
+      std::cerr << err << "\n";
+      return EXIT_FAILURE;
+    }
+  }
 
   if (validate_against_core) {
     if (has_flatten || do_dumpcrate || do_dump_comp_graph || do_inspect ||
@@ -812,12 +916,18 @@ int main(int argc, char **argv) {
           std::cerr << "Failed to convert USDZ stage to JSON: " << json_result.error() << "\n";
           return EXIT_FAILURE;
         }
-      } else {
+      } else if (!suppress_usd_text_output) {
         std::cout << to_string(stage) << "\n";
 #else
       std::cerr << "JSON output is not supported in this build\n";
       return EXIT_FAILURE;
 #endif
+      }
+
+      if (has_output_file) {
+        if (!WriteStageToFile(stage, output_filepath, output_format)) {
+          return EXIT_FAILURE;
+        }
       }
 
       return EXIT_SUCCESS;
@@ -842,8 +952,10 @@ int main(int argc, char **argv) {
                 << " (" << layer_mem << " bytes)\n\n";
     }
 
-    std::cout << "# input\n";
-    std::cout << root_layer << "\n";
+    if (!suppress_usd_text_output) {
+      std::cout << "# input\n";
+      std::cout << root_layer << "\n";
+    }
 
     tinyusdz::Stage stage;
     stage.metas() = root_layer.metas();
@@ -876,8 +988,10 @@ int main(int argc, char **argv) {
         std::cout << "WARN: " << warn << "\n";
       }
 
-      std::cout << "# `subLayers` composited\n";
-      std::cout << composited_layer << "\n";
+      if (!suppress_usd_text_output) {
+        std::cout << "# `subLayers` composited\n";
+        std::cout << composited_layer << "\n";
+      }
 
       src_layer = std::move(composited_layer);
     }
@@ -903,8 +1017,10 @@ int main(int argc, char **argv) {
             std::cout << "WARN: " << warn << "\n";
           }
 
-          std::cout << "# `references` composited\n";
-          std::cout << composited_layer << "\n";
+          if (!suppress_usd_text_output) {
+            std::cout << "# `references` composited\n";
+            std::cout << composited_layer << "\n";
+          }
 
           src_layer = std::move(composited_layer);
         }
@@ -926,8 +1042,10 @@ int main(int argc, char **argv) {
             std::cout << "WARN: " << warn << "\n";
           }
 
-          std::cout << "# `payload` composited\n";
-          std::cout << composited_layer << "\n";
+          if (!suppress_usd_text_output) {
+            std::cout << "# `payload` composited\n";
+            std::cout << composited_layer << "\n";
+          }
 
           src_layer = std::move(composited_layer);
         }
@@ -949,8 +1067,10 @@ int main(int argc, char **argv) {
             std::cout << "WARN: " << warn << "\n";
           }
 
-          std::cout << "# `inherits` composited\n";
-          std::cout << composited_layer << "\n";
+          if (!suppress_usd_text_output) {
+            std::cout << "# `inherits` composited\n";
+            std::cout << composited_layer << "\n";
+          }
 
           src_layer = std::move(composited_layer);
         }
@@ -972,8 +1092,10 @@ int main(int argc, char **argv) {
             std::cout << "WARN: " << warn << "\n";
           }
 
-          std::cout << "# `variantSet` composited\n";
-          std::cout << composited_layer << "\n";
+          if (!suppress_usd_text_output) {
+            std::cout << "# `variantSet` composited\n";
+            std::cout << composited_layer << "\n";
+          }
 
           src_layer = std::move(composited_layer);
         }
@@ -1038,13 +1160,12 @@ int main(int argc, char **argv) {
 #else
       std::cerr << "JSON output is not supported in this build\n";
 #endif
-    } else {
+    } else if (!suppress_usd_text_output) {
       std::cout << comp_stage.ExportToString() << "\n";
     }
 
-    // Write to USDC if output file is specified
-    if (!output_filepath.empty()) {
-      if (!WriteStageToUSdc(comp_stage, output_filepath)) {
+    if (has_output_file) {
+      if (!WriteStageToFile(comp_stage, output_filepath, output_format)) {
         return EXIT_FAILURE;
       }
     }
@@ -1152,14 +1273,13 @@ int main(int argc, char **argv) {
 #else
       std::cerr << "JSON output is not supported in this build\n";
 #endif
-    } else {
+    } else if (!suppress_usd_text_output) {
       std::string s = stage.ExportToString(has_relative);
       std::cout << s << "\n";
     }
 
-    // Write to USDC if output file is specified
-    if (!output_filepath.empty()) {
-      if (!WriteStageToUSdc(stage, output_filepath)) {
+    if (has_output_file) {
+      if (!WriteStageToFile(stage, output_filepath, output_format)) {
         return EXIT_FAILURE;
       }
     }
