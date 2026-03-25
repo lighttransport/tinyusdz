@@ -293,11 +293,13 @@ class StreamReader {
       return false;
     }
 
-    float value{};
-    if (!read4(reinterpret_cast<int *>(&value))) {
+    uint32_t bits = 0;
+    if (!read4(&bits)) {
       return false;
     }
 
+    float value{};
+    std::memcpy(&value, &bits, sizeof(value));
     (*ret) = value;
 
     return true;
@@ -308,11 +310,13 @@ class StreamReader {
       return false;
     }
 
-    double value{};
-    if (!read8(reinterpret_cast<uint64_t *>(&value))) {
+    uint64_t bits = 0;
+    if (!read8(&bits)) {
       return false;
     }
 
+    double value{};
+    std::memcpy(&value, &bits, sizeof(value));
     (*ret) = value;
 
     return true;
