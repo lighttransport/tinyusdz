@@ -600,7 +600,8 @@ private:
 
   /// Write a value to the value data section
   /// Returns the file offset where the value was written
-  int64_t WriteValueData(const crate::CrateValue& value, std::string* err);
+  int64_t WriteValueData(const crate::CrateValue& value, bool* is_compressed,
+                         std::string* err);
 
   /// Try to inline a value in ValueRep payload (optimization)
   bool TryInlineValue(const crate::CrateValue& value, crate::ValueRep* rep);
@@ -647,17 +648,21 @@ private:
 
   /// Write a compressed integer array (32-bit) using Usd_IntegerCompression.
   /// If compression fails or count < 16, writes uncompressed.
+  /// Sets `is_compressed` to match the bytes actually written.
   /// The data pointer must point to count uint32_t values.
   /// Returns -1 on I/O error.
   int64_t WriteCompressedArray32(const uint32_t* data, uint64_t count,
-                                 const char* typeName, std::string* err);
+                                 const char* typeName, bool* is_compressed,
+                                 std::string* err);
 
   /// Write a compressed integer array (64-bit) using Usd_IntegerCompression64.
   /// If compression fails or count < 16, writes uncompressed.
+  /// Sets `is_compressed` to match the bytes actually written.
   /// The data pointer must point to count uint64_t values.
   /// Returns -1 on I/O error.
   int64_t WriteCompressedArray64(const uint64_t* data, uint64_t count,
-                                 const char* typeName, std::string* err);
+                                 const char* typeName, bool* is_compressed,
+                                 std::string* err);
 
   // ======================================================================
   // I/O utilities
