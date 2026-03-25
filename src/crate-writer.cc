@@ -1725,35 +1725,30 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
   else if (auto* half_array = value.as<std::vector<value::half>>()) {
     uint64_t count = half_array->size();
     if (!Write(count)) { if (err) *err = "Failed to write half array count"; return -1; }
-    std::vector<uint32_t> uint_values;
-    uint_values.reserve(count);
-    for (const auto& val : *half_array) { uint_values.push_back(static_cast<uint32_t>(val.value)); }
-    if (WriteCompressedArray32(uint_values.data(), count, "half",
-                               is_compressed, err) < 0) {
-      return -1;
+    for (const auto& val : *half_array) {
+      if (!Write(val.value)) {
+        if (err) *err = "Failed to write half array element";
+        return -1;
+      }
     }
   }
-  // Float array — reinterpret as uint32 for compression
+  // Float arrays use a tagged compression format in the reader.
+  // Until the writer emits that exact format, keep them uncompressed.
   else if (auto* float_array = value.as<std::vector<float>>()) {
     uint64_t count = float_array->size();
     if (!Write(count)) { if (err) *err = "Failed to write float array count"; return -1; }
-    std::vector<uint32_t> uint_values;
-    uint_values.reserve(count);
-    for (float val : *float_array) { uint32_t u; std::memcpy(&u, &val, sizeof(u)); uint_values.push_back(u); }
-    if (WriteCompressedArray32(uint_values.data(), count, "float",
-                               is_compressed, err) < 0) {
+    if (!WriteBytes(float_array->data(), float_array->size() * sizeof(float))) {
+      if (err) *err = "Failed to write float array data";
       return -1;
     }
   }
-  // Double array — reinterpret as uint64 for compression
+  // Double arrays use a tagged compression format in the reader.
+  // Until the writer emits that exact format, keep them uncompressed.
   else if (auto* double_array = value.as<std::vector<double>>()) {
     uint64_t count = double_array->size();
     if (!Write(count)) { if (err) *err = "Failed to write double array count"; return -1; }
-    std::vector<uint64_t> uint_values;
-    uint_values.reserve(count);
-    for (double val : *double_array) { uint64_t u; std::memcpy(&u, &val, sizeof(u)); uint_values.push_back(u); }
-    if (WriteCompressedArray64(uint_values.data(), count, "double",
-                               is_compressed, err) < 0) {
+    if (!WriteBytes(double_array->data(), double_array->size() * sizeof(double))) {
+      if (err) *err = "Failed to write double array data";
       return -1;
     }
   }

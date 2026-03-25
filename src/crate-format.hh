@@ -190,7 +190,7 @@ struct Index {
 struct ValueRep {
   friend class CrateFile;
 
-  ValueRep() = default;
+  constexpr ValueRep() : data(0) {}
 
   explicit constexpr ValueRep(uint64_t d) : data(d) {}
 
@@ -566,5 +566,4 @@ namespace value {
 } // namespace value
 
 } // namespace tinyusdz
-
 
