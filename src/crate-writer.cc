@@ -1404,7 +1404,8 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   }
 
   // Value cannot be inlined, write to value data section
-  int64_t offset = WriteValueData(value, err);
+  bool is_compressed = false;
+  int64_t offset = WriteValueData(value, &is_compressed, err);
   if (offset < 0 || (err && !err->empty())) {
     return crate::ValueRep();
   }
@@ -1534,11 +1535,20 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   }
 
   rep.SetPayload(static_cast<uint64_t>(offset));
+  if (is_compressed) {
+    rep.SetIsCompressed();
+  }
 
   return rep;
 }
 
-int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string* err) {
+int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
+                                    bool* is_compressed,
+                                    std::string* err) {
+  if (is_compressed) {
+    (*is_compressed) = false;
+  }
+
   // Save current position
   int64_t current_pos = Tell();
 
@@ -1682,22 +1692,34 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
     uint64_t count = int_array->size();
     if (!Write(count)) { if (err) *err = "Failed to write int array count"; return -1; }
     // int32 data is bit-compatible with uint32 for compression
-    if (WriteCompressedArray32(reinterpret_cast<const uint32_t*>(int_array->data()), count, "int", err) < 0) return -1;
+    if (WriteCompressedArray32(reinterpret_cast<const uint32_t*>(int_array->data()),
+                               count, "int", is_compressed, err) < 0) {
+      return -1;
+    }
   }
   else if (auto* uint_array = value.as<std::vector<uint32_t>>()) {
     uint64_t count = uint_array->size();
     if (!Write(count)) { if (err) *err = "Failed to write uint array count"; return -1; }
-    if (WriteCompressedArray32(uint_array->data(), count, "uint", err) < 0) return -1;
+    if (WriteCompressedArray32(uint_array->data(), count, "uint",
+                               is_compressed, err) < 0) {
+      return -1;
+    }
   }
   else if (auto* int64_array = value.as<std::vector<int64_t>>()) {
     uint64_t count = int64_array->size();
     if (!Write(count)) { if (err) *err = "Failed to write int64 array count"; return -1; }
-    if (WriteCompressedArray64(reinterpret_cast<const uint64_t*>(int64_array->data()), count, "int64", err) < 0) return -1;
+    if (WriteCompressedArray64(reinterpret_cast<const uint64_t*>(int64_array->data()),
+                               count, "int64", is_compressed, err) < 0) {
+      return -1;
+    }
   }
   else if (auto* uint64_array = value.as<std::vector<uint64_t>>()) {
     uint64_t count = uint64_array->size();
     if (!Write(count)) { if (err) *err = "Failed to write uint64 array count"; return -1; }
-    if (WriteCompressedArray64(uint64_array->data(), count, "uint64", err) < 0) return -1;
+    if (WriteCompressedArray64(uint64_array->data(), count, "uint64",
+                               is_compressed, err) < 0) {
+      return -1;
+    }
   }
   // Half array — convert to uint32 for compression
   else if (auto* half_array = value.as<std::vector<value::half>>()) {
@@ -1706,7 +1728,10 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
     std::vector<uint32_t> uint_values;
     uint_values.reserve(count);
     for (const auto& val : *half_array) { uint_values.push_back(static_cast<uint32_t>(val.value)); }
-    if (WriteCompressedArray32(uint_values.data(), count, "half", err) < 0) return -1;
+    if (WriteCompressedArray32(uint_values.data(), count, "half",
+                               is_compressed, err) < 0) {
+      return -1;
+    }
   }
   // Float array — reinterpret as uint32 for compression
   else if (auto* float_array = value.as<std::vector<float>>()) {
@@ -1715,7 +1740,10 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
     std::vector<uint32_t> uint_values;
     uint_values.reserve(count);
     for (float val : *float_array) { uint32_t u; std::memcpy(&u, &val, sizeof(u)); uint_values.push_back(u); }
-    if (WriteCompressedArray32(uint_values.data(), count, "float", err) < 0) return -1;
+    if (WriteCompressedArray32(uint_values.data(), count, "float",
+                               is_compressed, err) < 0) {
+      return -1;
+    }
   }
   // Double array — reinterpret as uint64 for compression
   else if (auto* double_array = value.as<std::vector<double>>()) {
@@ -1724,7 +1752,10 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
     std::vector<uint64_t> uint_values;
     uint_values.reserve(count);
     for (double val : *double_array) { uint64_t u; std::memcpy(&u, &val, sizeof(u)); uint_values.push_back(u); }
-    if (WriteCompressedArray64(uint_values.data(), count, "double", err) < 0) return -1;
+    if (WriteCompressedArray64(uint_values.data(), count, "double",
+                               is_compressed, err) < 0) {
+      return -1;
+    }
   }
   // Vector/Quaternion array macros
 #define WRITE_VEC_ARRAY(ElemType, N, TypeName) \
@@ -3103,7 +3134,11 @@ crate::FieldSetIndex CrateWriter::GetOrCreateFieldSet(const std::vector<crate::F
 
 int64_t CrateWriter::WriteCompressedArray32(
     const uint32_t* data, uint64_t count,
-    const char* typeName, std::string* err) {
+    const char* typeName, bool* is_compressed, std::string* err) {
+  if (is_compressed) {
+    (*is_compressed) = false;
+  }
+
   if (count >= 16 && options_.enable_compression) {
     size_t compBufSize = Usd_IntegerCompression::GetCompressedBufferSize(count);
     std::vector<char> compressed(compBufSize);
@@ -3114,6 +3149,9 @@ int64_t CrateWriter::WriteCompressedArray32(
       uint64_t cs = static_cast<uint64_t>(compSize);
       if (!Write(cs)) { if (err) { *err = "Failed to write compressed "; *err += typeName; *err += " array size"; } return -1; }
       if (!WriteBytes(compressed.data(), compSize)) { if (err) { *err = "Failed to write compressed "; *err += typeName; *err += " array data"; } return -1; }
+      if (is_compressed) {
+        (*is_compressed) = true;
+      }
       return 0;
     }
   }
@@ -3126,7 +3164,11 @@ int64_t CrateWriter::WriteCompressedArray32(
 
 int64_t CrateWriter::WriteCompressedArray64(
     const uint64_t* data, uint64_t count,
-    const char* typeName, std::string* err) {
+    const char* typeName, bool* is_compressed, std::string* err) {
+  if (is_compressed) {
+    (*is_compressed) = false;
+  }
+
   if (count >= 16 && options_.enable_compression) {
     size_t compBufSize = Usd_IntegerCompression64::GetCompressedBufferSize(count);
     std::vector<char> compressed(compBufSize);
@@ -3137,6 +3179,9 @@ int64_t CrateWriter::WriteCompressedArray64(
       uint64_t cs = static_cast<uint64_t>(compSize);
       if (!Write(cs)) { if (err) { *err = "Failed to write compressed "; *err += typeName; *err += " array size"; } return -1; }
       if (!WriteBytes(compressed.data(), compSize)) { if (err) { *err = "Failed to write compressed "; *err += typeName; *err += " array data"; } return -1; }
+      if (is_compressed) {
+        (*is_compressed) = true;
+      }
       return 0;
     }
   }

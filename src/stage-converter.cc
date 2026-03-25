@@ -1030,6 +1030,11 @@ bool CrateWriter::ConvertValue(
       out.Set(*v);
       return true;
     }
+  } else if (type_name == "uint[]" || type_name == "uint32[]") {
+    if (auto v = val.get_value<std::vector<uint32_t>>()) {
+      out.Set(*v);
+      return true;
+    }
   } else if (type_name == "float[]") {
     if (auto v = val.get_value<std::vector<float>>()) {
       out.Set(*v);
