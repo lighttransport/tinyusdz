@@ -5,8 +5,10 @@
 //
 #pragma once
 
+#include <cstdint>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "core/prim-enums.hh"        // Specifier, Permission, Variability, SpecType, Kind, Axis, Visibility, Orientation, Interpolation, Purpose
@@ -17,6 +19,7 @@
 #include "core/xform-op.hh"          // XformOp
 #include "core/list-op.hh"           // ListOp
 #include "core/extent.hh"            // Extent
+#include "value-types.hh"            // value:: numeric types
 
 namespace tinyusdz {
 
@@ -25,6 +28,68 @@ namespace pprint {
 // Declared here, defined in pprint-meta.cc (or pprinter.cc).
 void SetIndentString(const std::string &s);
 std::string Indent(uint32_t level);
+
+// Column-wrap support for numeric arrays.
+// SetColumnLimit(0) disables wrapping (default).
+void SetColumnLimit(uint32_t limit);
+uint32_t GetColumnLimit();
+uint32_t GetPrefixColumns();
+
+// RAII helper: sets prefix_columns in thread-local context, restores on
+// destruction. Use before emitting an array value so that operator<< can
+// compute continuation indentation.
+class ScopedPrefixColumns {
+ public:
+  explicit ScopedPrefixColumns(uint32_t cols);
+  ~ScopedPrefixColumns();
+  ScopedPrefixColumns(const ScopedPrefixColumns &) = delete;
+  ScopedPrefixColumns &operator=(const ScopedPrefixColumns &) = delete;
+
+ private:
+  uint32_t prev_;
+};
+
+// Column-aware array formatting (defined in value-pprint.cc).
+// Takes pre-formatted element strings and packs them into lines.
+std::string format_wrapped_array(const std::vector<std::string> &elements,
+                                 uint32_t prefix_cols, uint32_t column_limit);
+
+// Compile-time trait: true for value types whose arrays should be
+// column-wrapped (i.e. numeric / geometric types, not strings/tokens).
+template <typename T>
+inline constexpr bool is_wrappable_element_v =
+    std::is_same_v<T, float> || std::is_same_v<T, double> ||
+    std::is_same_v<T, value::half> ||
+    std::is_same_v<T, int32_t> || std::is_same_v<T, uint32_t> ||
+    std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t> ||
+    std::is_same_v<T, value::half2> || std::is_same_v<T, value::half3> ||
+    std::is_same_v<T, value::half4> ||
+    std::is_same_v<T, value::int2> || std::is_same_v<T, value::int3> ||
+    std::is_same_v<T, value::int4> ||
+    std::is_same_v<T, value::uint2> || std::is_same_v<T, value::uint3> ||
+    std::is_same_v<T, value::uint4> ||
+    std::is_same_v<T, value::float2> || std::is_same_v<T, value::float3> ||
+    std::is_same_v<T, value::float4> ||
+    std::is_same_v<T, value::double2> || std::is_same_v<T, value::double3> ||
+    std::is_same_v<T, value::double4> ||
+    std::is_same_v<T, value::quath> || std::is_same_v<T, value::quatf> ||
+    std::is_same_v<T, value::quatd> ||
+    std::is_same_v<T, value::normal3h> || std::is_same_v<T, value::normal3f> ||
+    std::is_same_v<T, value::normal3d> ||
+    std::is_same_v<T, value::vector3h> || std::is_same_v<T, value::vector3f> ||
+    std::is_same_v<T, value::vector3d> ||
+    std::is_same_v<T, value::point3h> || std::is_same_v<T, value::point3f> ||
+    std::is_same_v<T, value::point3d> ||
+    std::is_same_v<T, value::color3h> || std::is_same_v<T, value::color3f> ||
+    std::is_same_v<T, value::color3d> ||
+    std::is_same_v<T, value::color4h> || std::is_same_v<T, value::color4f> ||
+    std::is_same_v<T, value::color4d> ||
+    std::is_same_v<T, value::texcoord2h> || std::is_same_v<T, value::texcoord2f> ||
+    std::is_same_v<T, value::texcoord2d> ||
+    std::is_same_v<T, value::texcoord3h> || std::is_same_v<T, value::texcoord3f> ||
+    std::is_same_v<T, value::texcoord3d> ||
+    std::is_same_v<T, value::matrix2d> || std::is_same_v<T, value::matrix3d> ||
+    std::is_same_v<T, value::matrix4d>;
 
 }  // namespace pprint
 

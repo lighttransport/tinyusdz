@@ -136,6 +136,14 @@ struct MeshConverterConfig {
   bool prefer_non_indexed{false};
 
   //
+  // When true, always use BuildVertexIndicesFastImpl (no vertex deduplication)
+  // instead of BuildVertexIndicesImpl. This matches the WASM code path where
+  // tangent computation is typically skipped. Useful for reproducing
+  // WASM-specific behavior in native builds.
+  //
+  bool force_fast_index_build{false};
+
+  //
   // Compute normals if not present in the mesh.
   // The algorithm computes smoothed normal for shared vertex.
   // Normals are also computed when `compute_tangents_and_binormals` is true
