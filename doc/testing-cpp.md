@@ -2,142 +2,301 @@
 
 How to build, run, and extend the TinyUSDZ C++ test suite.
 
-## Quick Start
+## Overview
+
+The C++ test infrastructure is split into four layers:
+
+1. `ctest`-registered tests for parser coverage, roundtrip coverage, feature tests, and the main Acutest unit suite.
+2. A large Acutest executable, `unit-test-tinyusdz`, which aggregates the unit coverage from `tests/unit/unit-main.cc`.
+3. Standalone/manual runners under `tests/` for broader corpus checks, especially parser and Tydra conversion sweeps.
+4. Fuzzer targets under `tests/fuzzer/` built separately with Meson/libFuzzer.
+
+Core functionality is tested by the parser, reader, writer, composition, and crate-writer coverage. Tydra is covered in both the Acutest suite and the manual `tydra_to_renderscene` corpus runner.
+
+## Build
+
+Configure the native build with tests enabled:
 
 ```bash
-# Build with tests enabled
-mkdir build && cd build
+mkdir build
+cd build
 cmake .. -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_EXAMPLES=ON
 make -j16
-
-# Run all ctest-registered tests
-ctest --output-on-failure
 ```
 
-## Test Executables
+Relevant options in the current build configuration:
 
-| Executable | Source | Purpose |
-|-----------|--------|---------|
-| `unit-test-tinyusdz` | `tests/unit/unit-main.cc` + 20+ unit files | Acutest unit tests (140+ cases) |
-| `test_tinyusdz` | `tests/test-main.cc` | Standalone USD file loader (used by Python runners) |
-| `usda_roundtrip` | `tests/usda-roundtrip.cc` | USDA parse -> export -> reparse -> compare |
-| `usdc_roundtrip` | `tests/usdc-roundtrip.cc` | USDA -> USDC -> reparse -> compare |
-| `test-decompress-int` | `tests/decompress-int/` | Integer decompression tests |
-| `pprint_benchmark` | `tests/pprint/` | Pretty-printer benchmark |
-| `tydra_to_renderscene` | `examples/tydra_to_renderscene/` | Tydra Stage-to-RenderScene conversion (used by integration runner) |
+- `TINYUSDZ_BUILD_TESTS=ON`
+- `TINYUSDZ_BUILD_EXAMPLES=ON`
+- `TINYUSDZ_WITH_JSON=ON`
+- `TINYUSDZ_WITH_MODULE_USDA_READER=ON`
+- `TINYUSDZ_WITH_MODULE_USDC_READER=ON`
+- `TINYUSDZ_WITH_MODULE_USDC_WRITER=ON`
+- `TINYUSDZ_WITH_TYDRA=ON`
+- `TINYUSDZ_WITH_PXR_COMPAT_API=ON`
 
-## ctest-Registered Tests
+## ctest Suite
 
-These run when you invoke `ctest`:
+Top-level CMake registers these tests when the corresponding targets are built:
 
-| ctest Name | What It Runs |
-|-----------|--------------|
-| `unit-test-tinyusdz` | All Acutest unit tests (single executable) |
-| `usda-parser-unit-test` | `python3 tests/usda/unit-runner.py` — runs `test_tinyusdz` on all `tests/usda/*.usda` files and `tests/usda/fail-case/*.usda` expected-failure files |
-| `usdc-parser-unit-test` | `python3 tests/usdc/unit-runner.py` — runs `test_tinyusdz` on all `tests/usdc/*.usdc` files |
-| `usda-roundtrip-test` | `python3 tests/usda/roundtrip-runner.py` — USDA export-reparse roundtrip on all `tests/usda/*.usda` |
-| `usdc-roundtrip-test` | `python3 tests/usda/usdc-roundtrip-runner.py` — USDC write-reparse roundtrip on all `tests/usda/*.usda` |
+| ctest name | Kind | Backing executable/script |
+| --- | --- | --- |
+| `usda-parser-unit-test` | Parser corpus runner | `python3 tests/usda/unit-runner.py --app build/test_tinyusdz` |
+| `usda-roundtrip-test` | USDA roundtrip corpus runner | `python3 tests/usda/roundtrip-runner.py --app build/usda_roundtrip` |
+| `usdc-roundtrip-test` | USDA -> USDC -> reparse corpus runner | `python3 tests/usda/usdc-roundtrip-runner.py --app build/usdc_roundtrip` |
+| `usdc-parser-unit-test` | Parser corpus runner | `python3 tests/usdc/unit-runner.py --app build/test_tinyusdz` |
+| `feat-mtlx-parse` | Feature test | `build/feat-mtlx-parse` |
+| `feat-mtlx-import` | Feature test | `build/feat-mtlx-import` |
+| `feat-mtlx-export` | Feature test | `build/feat-mtlx-export` |
+| `feat-variant-converter` | Feature test | `build/feat-variant-converter` |
+| `feat-variant-applier` | Feature test | `build/feat-variant-applier` |
+| `feat-mtlx-grouped-params` | Feature test | `build/feat-mtlx-grouped-params` |
+| `bench-parse-opt` | Benchmark target | `build/bench-parse-opt` |
+| `unit-test-tinyusdz` | Acutest unit suite | `build/unit-test-tinyusdz` |
+
+Only `bench-parse-opt` has a `ctest` label today:
 
 ```bash
-# Run a specific ctest by name
+ctest --print-labels
+# benchmark
+```
+
+Useful commands:
+
+```bash
+cd build
+
+# List configured tests
+ctest -N
+
+# Run everything registered with ctest
+ctest --output-on-failure
+
+# Run just the Acutest suite
 ctest -R unit-test-tinyusdz --output-on-failure
 
-# Run only roundtrip tests
+# Run parser corpus tests only
+ctest -R 'parser-unit-test' --output-on-failure
+
+# Run roundtrip corpus tests only
 ctest -R roundtrip --output-on-failure
 
-# Parallel execution
-ctest -j16 --output-on-failure
-
-# Verbose output
-ctest -V
+# Exclude benchmark-labeled tests
+ctest --output-on-failure -LE benchmark
 ```
 
-## Unit Tests (Acutest)
+## Fixture Coverage
 
-Framework: [Acutest](https://github.com/mity/acutest) — single-header C/C++ unit test library (`tests/unit/acutest.h`).
+Primary fixture locations in the repository:
 
-### Structure
+- `tests/usda/*.usda`
+- `tests/usda/fail-case/*.usda`
+- `tests/usdc/*.usdc`
+- `models/`
 
-```
-tests/unit/
-  acutest.h              Framework header
-  unit-common.hh         Shared helpers (temp files, comparison utils)
-  unit-main.cc           Test registration (TEST_LIST array)
-  unit-ascii-parse.cc    ASCII parser tests
-  unit-crate-writer.cc   Crate writer tests (61 tests)
-  unit-math.cc           Math/vector tests
-  unit-xform.cc          Transform tests
-  unit-stage.cc          Stage operations
-  unit-materialx.cc      MaterialX tests
-  unit-usda-roundtrip.cc USDA roundtrip tests
-  ...                    (20+ files total)
-```
+The `ctest` parser and roundtrip runners only operate on top-level `*.usda` or `*.usdc` files in their configured fixture directories. They do not recurse.
 
-### How test registration works
+## Acutest Unit Suite
 
-Each `unit-*.cc` file defines `#define TEST_NO_MAIN` before including `acutest.h`, then exports test functions declared in a corresponding `.h` header:
+The main unit executable is built from `tests/unit/CMakeLists.txt` and registered through `tests/unit/unit-main.cc`.
 
-```cpp
-// unit-foo.h
-void foo_basic_test(void);
-void foo_edge_case_test(void);
+Coverage spans Core parser/value/stage/composition/writer functionality plus Tydra scene-access, RenderScene conversion, and shader queries.
 
-// unit-foo.cc
-#define TEST_NO_MAIN
-#include "acutest.h"
-void foo_basic_test(void) {
-  TEST_CHECK(some_condition);
-  TEST_MSG("diagnostic info: %d", value);
-}
-```
+Major source groups in `tests/unit/`:
 
-`unit-main.cc` collects all tests into a single `TEST_LIST`:
+- Core parsing and value handling: `unit-ascii-parse`, `unit-value-types`, `unit-timesamples`, `unit-fp-parse-print`
+- Scene graph and composition: `unit-stage`, `unit-composition`, `unit-composition-arcs`, `unit-composition-graph`, `unit-layer`, `unit-primspec`, `unit-prim-api`
+- Reader/writer coverage: `unit-usda-reader`, `unit-usdc-reader`, `unit-usda-writer`, `unit-usda-roundtrip`, `unit-usdz-writer`, `unit-crate-writer`
+- Tydra coverage: `unit-tydra`, `unit-tydra-renderscene`, `unit-tydra-shader`
+- Security and utility coverage: `unit-security`, `unit-task-queue`, `unit-tiny-container`, `unit-ioutil`, `unit-pathutil`
 
-```cpp
-TEST_LIST = {
-  {"foo_basic_test", foo_basic_test},
-  {"foo_edge_case_test", foo_edge_case_test},
-  // ...
-  {nullptr, nullptr}  // sentinel
-};
-```
-
-### Key assertion macros
-
-| Macro | Behavior |
-|-------|----------|
-| `TEST_CHECK(cond)` | Check condition, continue on failure |
-| `TEST_ASSERT(cond)` | Check condition, abort test on failure |
-| `TEST_CHECK_(cond, fmt, ...)` | Check with custom message |
-| `TEST_MSG(fmt, ...)` | Print diagnostic message |
-
-### Running individual unit tests
-
-The Acutest executable supports running individual tests by name:
+Run it directly:
 
 ```bash
-# List all available tests
-./build/unit-test-tinyusdz --list
-
-# Run a single test
-./build/unit-test-tinyusdz crate_writer_cone_test
-
-# Run tests matching a pattern
-./build/unit-test-tinyusdz crate_writer_*
+./build/unit-test-tinyusdz
 ```
 
-### Adding a new unit test
+List individual Acutest cases:
 
-1. Add the test function declaration to the relevant `.h` file (e.g., `unit-crate-writer.h`)
-2. Implement the function in the corresponding `.cc` file
-3. Register it in `unit-main.cc` by adding `{"test_name", test_function}` to `TEST_LIST`
-4. Rebuild and run: `make -j16 && ctest -R unit-test-tinyusdz --output-on-failure`
+```bash
+./build/unit-test-tinyusdz --list
+```
 
-## Roundtrip Comparison (tusdcat vs pxrUSD usdcat)
+Run one case:
 
-Compares TinyUSDZ `tusdcat` output against Pixar's `usdcat` for correctness. Requires both tools to be built/installed.
+```bash
+./build/unit-test-tinyusdz crate_writer_cone_test
+```
 
-### Batch run
+Representative Tydra-related cases:
+
+- `tydra_connection_validation_test`
+- `tydra_scene_access_helper_test`
+- `tydra_shader_scene_access_test`
+- `tydra_skel_scene_access_test`
+- `tydra_renderscene_single_mesh_test`
+- `tydra_renderscene_material_binding_test`
+- `tydra_shader_get_bound_material_test`
+
+## Parser Corpus Runners
+
+These are the Python scripts used by `ctest`.
+
+### USDA parser runner
+
+`tests/usda/unit-runner.py` runs:
+
+- every top-level `*.usda` file under `--basedir` as a success case
+- every `fail-case/*.usda` file under `--basedir` as an expected failure
+
+It exits nonzero when any success case fails to parse.
+
+```bash
+python3 tests/usda/unit-runner.py \
+  --app ./build/test_tinyusdz \
+  --basedir tests/usda
+```
+
+### USDC parser runner
+
+`tests/usdc/unit-runner.py` runs:
+
+- every top-level `*.usdc` file under `--basedir` as a success case
+- every `failure-case/*.usdc` file under `--basedir` as an expected failure
+
+It exits nonzero when any success case fails, or when an expected-failure file parses successfully.
+
+```bash
+python3 tests/usdc/unit-runner.py \
+  --app ./build/test_tinyusdz \
+  --basedir tests/usdc
+```
+
+### Standalone loader binary
+
+The parser runners above use `test_tinyusdz`, built from `tests/test-main.cc`.
+
+`test_tinyusdz`:
+
+- dispatches by extension to `LoadUSDAFromFile`, `LoadUSDCFromFile`, `LoadUSDZFromFile`, or `LoadUSDFromFile`
+- returns success/failure based on the parser result
+- supports an optional `--verbose`
+- is marked in source as a candidate for future deprecation in favor of `tusdcat`
+
+## Roundtrip Runners
+
+### USDA roundtrip
+
+`tests/usda/roundtrip-runner.py` runs `usda_roundtrip` over top-level `*.usda` fixtures and supports:
+
+- `--verbose`
+- `--dump-on-fail`
+- `--skip-file`
+- `--no-skip-known`
+
+The runner supports a `KNOWN_FAILURES` skip list.
+
+```bash
+python3 tests/usda/roundtrip-runner.py \
+  --app ./build/usda_roundtrip \
+  --basedir tests/usda \
+  --verbose
+```
+
+### USDC roundtrip
+
+`tests/usda/usdc-roundtrip-runner.py` runs `usdc_roundtrip` over top-level `*.usda` fixtures and reports pass/fail per file.
+
+```bash
+python3 tests/usda/usdc-roundtrip-runner.py \
+  --app ./build/usdc_roundtrip \
+  --basedir tests/usda \
+  --verbose
+```
+
+## Feature Tests
+
+The feature-test layer is now partially integrated into `ctest`.
+
+Registered feature executables include:
+
+- MaterialX: `feat-mtlx-parse`, `feat-mtlx-import`, `feat-mtlx-export`, `feat-mtlx-grouped-params`
+- Variant support: `feat-variant-converter`, `feat-variant-applier`
+
+Some older feature work still exists outside `ctest` under `tests/feat/` as standalone programs, benchmarks, or notes. Not everything under `tests/feat/` is automatically built or registered.
+
+## Tydra Testing
+
+Tydra is covered in two different ways.
+
+### Unit coverage inside `unit-test-tinyusdz`
+
+The Tydra unit sources are:
+
+- `tests/unit/unit-tydra.cc`
+- `tests/unit/unit-tydra-renderscene.cc`
+- `tests/unit/unit-tydra-shader.cc`
+
+These cover:
+
+- scene-access helpers
+- material binding validation
+- texture and envmap loader policy
+- skeletal animation and skin binding validation
+- RenderScene conversion for empty stages, mesh stages, transforms, materials, lights, cameras, and memory estimation
+- shader listing and material query behavior
+
+### Manual corpus conversion runner
+
+The `tydra_to_renderscene` example target is built from `examples/tydra_to_renderscene/CMakeLists.txt` and lands in `build/tydra_to_renderscene`.
+
+`tests/tydra_to_renderscene/runner.py`:
+
+- is not registered with `ctest`
+- assumes it is launched from `build/`
+- executes `./tydra_to_renderscene`
+- recursively scans a USD tree with case-insensitive matching for `.usd`, `.usda`, `.usdc`, and `.usdz`
+- prints success and failure lists, but does not currently `sys.exit(1)` on failures
+
+Typical usage:
+
+```bash
+cd build
+python3 ../tests/tydra_to_renderscene/runner.py ../models
+```
+
+## Standalone and Manual Targets
+
+These targets exist in the CMake test infrastructure but are not currently registered with `ctest`:
+
+- `test-decompress-int`
+- `pprint_benchmark`
+
+`test-decompress-int` is defined in `tests/decompress-int/CMakeLists.txt` but its `add_test(...)` block is still commented out.
+
+`pprint_benchmark` is defined in `tests/pprint/CMakeLists.txt` as a standalone benchmark executable.
+
+## Additional Corpus Runner
+
+`tests/parse_usd/runner.py` is a separate broad parser sweep tool. It is not used by `ctest`.
+
+Important current behavior:
+
+- it looks for `build_release/tusdcat`, not `build/test_tinyusdz`
+- it recursively scans a target tree for `.usd`, `.usda`, `.usdc`, and `.usdz`
+- it invokes `tusdcat -l <file>`
+- it supports `--timeout`
+- it prints failures but does not currently return a failing process exit code based on the failure list
+
+Typical usage:
+
+```bash
+python3 tests/parse_usd/runner.py models --timeout 180
+```
+
+## Roundtrip Comparison Against Pixar USD
+
+For USDA textual comparison against Pixar's `usdcat`, use:
 
 ```bash
 TUSDCAT_PATH=./build/tusdcat \
@@ -145,101 +304,70 @@ USDCAT_PATH=~/local/USD/dist/bin/usdcat \
   bash tests/run-usdcat-compare.sh
 ```
 
-Options:
-- `--no-detailed-diff` — summary only (faster)
-- `--no-failure-summary` — skip the end-of-run failure list
-- `--timeout MS` — per-file timeout (default 60000)
-
-Results are saved to `tests/comparison-results/results_<timestamp>.log`.
-
-### Single-file comparison
+Single-file mode:
 
 ```bash
 node tests/compare-usda.js \
   --tusdcat ./build/tusdcat \
   --usdcat ~/local/USD/dist/bin/usdcat \
   --detailed-diff \
-  tests/usda/cube.usda
+  tests/usda/somefile.usda
 ```
-
-The comparison script (`tests/compare-usda.js`) does structural comparison at the Prim/Attribute level, ignoring ordering differences.
-
-## Python Test Runners
-
-These are called by ctest but can also be invoked directly:
-
-```bash
-# USDA parse tests (success + expected failure cases)
-python3 tests/usda/unit-runner.py \
-  --app ./build/test_tinyusdz \
-  --basedir tests/usda
-
-# USDA roundtrip
-python3 tests/usda/roundtrip-runner.py \
-  --app ./build/usda_roundtrip \
-  --basedir tests/usda
-
-# USDC roundtrip
-python3 tests/usda/usdc-roundtrip-runner.py \
-  --app ./build/usdc_roundtrip \
-  --basedir tests/usda
-```
-
-## Integration Test Runners
-
-These standalone Python runners exercise parsing and Tydra conversion on real USD files. They are **not** registered with ctest — run them manually.
-
-### Parse test (`tests/parse_usd/runner.py`)
-
-Runs `test_tinyusdz` on all USD/USDA/USDC/USDZ files under a directory. Requires the `test_tinyusdz` binary (or symlink) in the same directory as the runner.
-
-```bash
-cd tests/parse_usd
-ln -sf ../../build/test_tinyusdz .
-python3 runner.py ../../models
-```
-
-Reports success/failure per file. Exit code 0 even if some files fail — check the "Failure cases" section in output.
-
-### Tydra conversion test (`tests/tydra_to_renderscene/runner.py`)
-
-Runs `tydra_to_renderscene` on all USD files under `../models/`. Verifies that Stage-to-RenderScene conversion succeeds. Requires the `tydra_to_renderscene` binary (or symlink) in the same directory.
-
-```bash
-cd tests/tydra_to_renderscene
-ln -sf ../../build/tydra_to_renderscene .
-python3 runner.py
-```
-
-Uses case-insensitive glob matching for file extensions. Test data is in `tests/models/` (symlink or copy of `models/`).
-
-## Test Data
-
-| Directory | Contents |
-|-----------|----------|
-| `tests/usda/` | USDA test fixtures (success cases) |
-| `tests/usda/fail-case/` | USDA expected-failure cases |
-| `tests/usdc/` | USDC binary test fixtures |
-| `tests/feat/` | Feature-specific test data and standalone test programs |
-| `models/` | Larger USD test files for development |
 
 ## Fuzzing
 
-Fuzzer targets are in `tests/fuzzer/` and use the Meson build system with libFuzzer:
+Fuzzer targets live under `tests/fuzzer/`. They are built separately from the CMake test suite using Meson and libFuzzer.
 
-- `tinyusdz_fuzzmain.cc` — main USD parser
-- `usdaparser_fuzzmain.cc` — USDA parser
-- `usdcparser_fuzzmain.cc` — USDC parser
-- `lz4_decompress_fuzzmain.cc` — LZ4 decompression
-- `intCoding_decompress_fuzzmain.cc` — integer decompression
+Documented setup in `tests/fuzzer/README.md`:
 
-## CMake Options
+```bash
+CXX=clang++ CC=clang meson build -Db_sanitize=address
+cd build
+ninja
+```
 
-| Option | Default | Effect |
-|--------|---------|--------|
-| `TINYUSDZ_BUILD_TESTS` | ON (top-level) | Build test executables and register ctest targets |
-| `TINYUSDZ_BUILD_EXAMPLES` | ON (top-level) | Build `tusdcat` and other example apps |
-| `TINYUSDZ_WITH_MODULE_USDA_READER` | ON | Enable USDA parser tests |
-| `TINYUSDZ_WITH_MODULE_USDC_READER` | ON | Enable USDC parser tests |
-| `TINYUSDZ_WITH_MODULE_USDC_WRITER` | ON | Enable USDC roundtrip test |
-| `TINYUSDZ_WITH_PXR_COMPAT_API` | OFF | Build pxrUSD compatibility API tests |
+Examples from the current README:
+
+```bash
+./fuzz_tinyusdz -max_len=128m
+./fuzz_intcoding_decompress -rss_limit_mb=8192 -jobs 4
+```
+
+Relevant fuzz entry points include:
+
+- `tinyusdz_fuzzmain.cc`
+- `usdaparser_fuzzmain.cc`
+- `usdcparser_fuzzmain.cc`
+- `lz4_decompress_fuzzmain.cc`
+- `intCoding_decompress_fuzzmain.cc`
+
+## Adding or Updating Tests
+
+### Add a new Acutest unit
+
+1. Declare the test function in the corresponding `tests/unit/unit-*.h` header.
+2. Implement it in the matching `tests/unit/unit-*.cc` file with `TEST_CHECK` or `TEST_ASSERT`.
+3. Register it in `tests/unit/unit-main.cc`.
+4. Rebuild and run `ctest -R unit-test-tinyusdz --output-on-failure`.
+
+### Add a new `ctest` target
+
+1. Add the executable in the top-level `CMakeLists.txt` under `if(TINYUSDZ_BUILD_TESTS)`.
+2. Register it with `add_test(...)`.
+3. If it is a benchmark, label it consistently, as `bench-parse-opt` already does with `LABELS "benchmark"`.
+
+### Add parser or roundtrip fixtures
+
+1. Place the fixture in the relevant top-level directory:
+   `tests/usda/`, `tests/usda/fail-case/`, `tests/usdc/`, or `tests/usdc/failure-case/`.
+2. Keep in mind the current runners do not recurse for the `ctest` corpus tests.
+3. Re-run the matching parser or roundtrip runner.
+
+## Known Gaps
+
+The current infrastructure has a few operational gaps worth keeping in mind:
+
+- `ctest` can be fully configured even when the test executables are not yet built.
+- `tests/tydra_to_renderscene/runner.py` and `tests/parse_usd/runner.py` are manual tools and do not currently fail the process based on collected failures.
+- `tests/decompress-int` and `tests/pprint` are built outside the main `ctest` suite.
+- Some standalone feature tests under `tests/feat/` are documentation or benchmark artifacts rather than automatically run test targets.
