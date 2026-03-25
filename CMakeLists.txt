@@ -1916,7 +1916,7 @@ if(TINYUSDZ_BUILD_TESTS)
     add_executable(bench-parse-opt tests/feat/parse-opt/test-parse-opt.cc)
     target_link_libraries(bench-parse-opt PRIVATE ${TINYUSDZ_TARGET_STATIC})
     target_include_directories(bench-parse-opt PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME bench-parse-opt COMMAND bench-parse-opt)
+    add_test(NAME bench-parse-opt COMMAND bench-parse-opt --quick)
     set_tests_properties(bench-parse-opt PROPERTIES LABELS "benchmark")
   endif()
 
