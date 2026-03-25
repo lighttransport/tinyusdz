@@ -3855,7 +3855,11 @@ XXH_PUBLIC_API XXH64_hash_t XXH64_hashFromCanonical(XXH_NOESCAPE const XXH64_can
 #  endif
 #endif
 
-#if defined(__GNUC__) || defined(__clang__)
+#ifndef XXH_VECTOR
+#  define XXH_VECTOR 0
+#endif
+
+#if (defined(__GNUC__) || defined(__clang__)) && (XXH_VECTOR != 0)
 #  if defined(__ARM_FEATURE_SVE)
 #    include <arm_sve.h>
 #  endif
@@ -3990,36 +3994,8 @@ XXH_PUBLIC_API XXH64_hash_t XXH64_hashFromCanonical(XXH_NOESCAPE const XXH64_can
 #endif
 
 #ifndef XXH_VECTOR    /* can be defined on command line */
-#  if ( \
-        defined(__ARM_NEON__) || defined(__ARM_NEON) /* gcc */ \
-     || defined(_M_ARM) || defined(_M_ARM64) || defined(_M_ARM64EC) /* msvc */ \
-     || (defined(__wasm_simd128__) && XXH_HAS_INCLUDE(<arm_neon.h>)) /* wasm simd128 via SIMDe */ \
-   ) && ( \
-        defined(_WIN32) || defined(__LITTLE_ENDIAN__) /* little endian only */ \
-    || (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) \
-   )
-#    define XXH_VECTOR XXH_NEON
-#  elif defined(__ARM_FEATURE_SVE)
-#    define XXH_VECTOR XXH_SVE
-#  elif defined(__AVX512F__)
-#    define XXH_VECTOR XXH_AVX512
-#  elif defined(__AVX2__)
-#    define XXH_VECTOR XXH_AVX2
-#  elif defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && (_M_IX86_FP == 2))
-#    define XXH_VECTOR XXH_SSE2
-#  elif (defined(__PPC64__) && defined(__POWER8_VECTOR__)) \
-     || (defined(__s390x__) && defined(__VEC__)) \
-     && defined(__GNUC__) /* TODO: IBM XL */
-#    define XXH_VECTOR XXH_VSX
-#  elif defined(__loongarch_asx)
-#    define XXH_VECTOR XXH_LASX
-#  elif defined(__loongarch_sx)
-#    define XXH_VECTOR XXH_LSX
-#  elif defined(__riscv_vector)
-#    define XXH_VECTOR XXH_RVV
-#  else
-#    define XXH_VECTOR XXH_SCALAR
-#  endif
+/* tinyusdz default: keep xxHash scalar unless explicitly overridden. */
+#  define XXH_VECTOR XXH_SCALAR
 #endif
 
 /* __ARM_FEATURE_SVE is only supported by GCC & Clang. */

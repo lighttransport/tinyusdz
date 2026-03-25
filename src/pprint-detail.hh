@@ -216,6 +216,12 @@ inline std::string print_typed_attr(
         T a;
         if (pv.value().get_scalar(&a)) {
           std::stringstream val_ss;
+          // Set prefix_columns for column-wrapping of arrays
+          uint32_t pcols = static_cast<uint32_t>(
+              pprint::Indent(indent).size() +
+              std::string(value::TypeTraits<T>::type_name()).size() +
+              1 + name.size() + 3);  // " " + name + " = "
+          pprint::ScopedPrefixColumns spc(pcols);
           val_ss << a;
           std::string val_str = val_ss.str();
           if (!val_str.empty()) {
@@ -355,6 +361,12 @@ inline std::string print_typed_attr(const TypedAttribute<T> &attr,
       } else {
         auto pv = attr.get_value();
         if (pv) {
+          // Set prefix_columns for column-wrapping of arrays
+          uint32_t pcols = static_cast<uint32_t>(
+              pprint::Indent(indent).size() + 8 +  // "uniform "
+              std::string(value::TypeTraits<T>::type_name()).size() +
+              1 + name.size() + 3);  // " " + name + " = "
+          pprint::ScopedPrefixColumns spc(pcols);
           ss << " = " << pv.value();
         }
       }
@@ -428,7 +440,14 @@ inline std::string print_typed_attr(
       } else if (has_default) {
         ss << pprint::Indent(indent);
         ss << value::TypeTraits<T>::type_name() << " " << name;
-        ss << " = " << print_animatable_default(v, indent);
+        {
+          uint32_t pcols = static_cast<uint32_t>(
+              pprint::Indent(indent).size() +
+              std::string(value::TypeTraits<T>::type_name()).size() +
+              1 + name.size() + 3);
+          pprint::ScopedPrefixColumns spc(pcols);
+          ss << " = " << print_animatable_default(v, indent);
+        }
       } else {
         ss << pprint::Indent(indent);
         ss << value::TypeTraits<T>::type_name() << " " << name;
@@ -520,6 +539,11 @@ inline std::string print_typed_attr(
       } else if (attr.is_value_empty()) {
         // Definition only - no value to output
       } else {
+        uint32_t pcols = static_cast<uint32_t>(
+            pprint::Indent(indent).size() + 8 +  // "uniform "
+            std::string(value::TypeTraits<T>::type_name()).size() +
+            1 + name.size() + 3);
+        pprint::ScopedPrefixColumns spc(pcols);
         ss << " = " << attr.get_value();
       }
 
