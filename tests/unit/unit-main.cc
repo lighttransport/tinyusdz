@@ -206,6 +206,8 @@ TEST_LIST = {
   { "crate_writer_validation_enabled_test", crate_writer_validation_enabled_test },
   { "crate_writer_validation_disabled_test", crate_writer_validation_disabled_test },
   { "crate_writer_compression_test", crate_writer_compression_test },
+  { "crate_writer_compressed_int_array_roundtrip_test", crate_writer_compressed_int_array_roundtrip_test },
+  { "crate_writer_compressed_uint_array_roundtrip_test", crate_writer_compressed_uint_array_roundtrip_test },
   { "crate_writer_specializes_test", crate_writer_specializes_test },
   { "crate_writer_nan_dedup_test", crate_writer_nan_dedup_test },
   { "crate_writer_prim_meta_roundtrip_test", crate_writer_prim_meta_roundtrip_test },

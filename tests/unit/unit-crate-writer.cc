@@ -12,6 +12,7 @@
 #include "value-types.hh"
 #include "timesamples.hh"
 #include "crate-writer.hh"
+#include "crate-reader.hh"
 #include "io-util.hh"
 #include "usdc-reader.hh"
 #include "usdShade.hh"
@@ -5185,6 +5186,42 @@ void crate_writer_large_array_types_test(void) {
   TEST_CHECK(large_mesh.has_value());
 
   if (large_points.has_value() && large_mesh.has_value()) {
+    const Prim* loaded_mesh_prim = large_mesh.value();
+    TEST_CHECK(loaded_mesh_prim != nullptr);
+
+    const GeomMesh* loaded_mesh = loaded_mesh_prim ? loaded_mesh_prim->data().as<GeomMesh>() : nullptr;
+    TEST_CHECK(loaded_mesh != nullptr);
+
+    if (loaded_mesh) {
+      auto face_indices_anim = loaded_mesh->faceVertexIndices.get_value();
+      TEST_CHECK(face_indices_anim.has_value());
+      TEST_CHECK(face_indices_anim && face_indices_anim->has_default());
+      if (face_indices_anim && face_indices_anim->has_default()) {
+        std::vector<int32_t> loaded_face_indices;
+        TEST_CHECK(face_indices_anim->get_default(&loaded_face_indices));
+        TEST_CHECK(loaded_face_indices.size() == 400);
+        TEST_CHECK(loaded_face_indices.front() == 0);
+        TEST_CHECK(loaded_face_indices[1] == 1);
+        TEST_CHECK(loaded_face_indices[2] == 12);
+        TEST_CHECK(loaded_face_indices[3] == 11);
+        TEST_CHECK(loaded_face_indices[396] == 108);
+        TEST_CHECK(loaded_face_indices[397] == 109);
+        TEST_CHECK(loaded_face_indices[398] == 120);
+        TEST_CHECK(loaded_face_indices[399] == 119);
+      }
+
+      auto face_counts_anim = loaded_mesh->faceVertexCounts.get_value();
+      TEST_CHECK(face_counts_anim.has_value());
+      TEST_CHECK(face_counts_anim && face_counts_anim->has_default());
+      if (face_counts_anim && face_counts_anim->has_default()) {
+        std::vector<int32_t> loaded_face_counts;
+        TEST_CHECK(face_counts_anim->get_default(&loaded_face_counts));
+        TEST_CHECK(loaded_face_counts.size() == 100);
+        TEST_CHECK(std::all_of(loaded_face_counts.cbegin(), loaded_face_counts.cend(),
+                               [](int32_t count) { return count == 4; }));
+      }
+    }
+
     TEST_MSG("Large array types successfully loaded and preserved");
     TEST_MSG("Points array (100 items), IDs (int64[100]), Widths (float[100]), Face indices (int[400]), Face counts (int[100])");
   }
@@ -6090,6 +6127,270 @@ void crate_writer_compression_test(void) {
   TEST_MSG("Compression enabled: LZ4 for arrays >= 16 elements (float, etc.)");
 
   std::cerr << "Compression test successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_compressed_int_array_roundtrip_test(void) {
+  std::string filename = get_temp_filename("test_compressed_int_array");
+  std::string err;
+
+  Stage stage;
+
+  GeomMesh mesh;
+  mesh.name = "CompressedMesh";
+  mesh.spec = Specifier::Def;
+
+  std::vector<value::point3f> points = {
+    value::point3f{-1.0f, -1.0f, -1.0f},
+    value::point3f{-1.0f, -1.0f, 1.0f},
+    value::point3f{-1.0f, 1.0f, -1.0f},
+    value::point3f{-1.0f, 1.0f, 1.0f},
+    value::point3f{1.0f, -1.0f, -1.0f},
+    value::point3f{1.0f, -1.0f, 1.0f},
+    value::point3f{1.0f, 1.0f, -1.0f},
+    value::point3f{1.0f, 1.0f, 1.0f}
+  };
+  mesh.points.set_value(points);
+
+  const std::vector<int32_t> face_vertex_indices = {
+    0, 4, 6, 2, 3, 2, 6, 7, 7, 6, 4, 5,
+    5, 1, 3, 7, 1, 0, 2, 3, 5, 4, 0, 1
+  };
+  const std::vector<int32_t> face_vertex_counts = {4, 4, 4, 4, 4, 4};
+  mesh.faceVertexIndices.set_value(face_vertex_indices);
+  mesh.faceVertexCounts.set_value(face_vertex_counts);
+
+  Prim mesh_prim("CompressedMesh", mesh);
+  mesh_prim.prim_type_name() = "Mesh";
+  stage.root_prims().push_back(mesh_prim);
+
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  opts.enable_compression = true;
+  writer.SetOptions(opts);
+
+  bool ret = writer.Open(&err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    cleanup_file(filename);
+    return;
+  }
+
+  ret = writer.ConvertStageToSpecs(stage, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    writer.Close();
+    cleanup_file(filename);
+    return;
+  }
+
+  ret = writer.Finalize(&err);
+  TEST_CHECK(ret == true);
+  writer.Close();
+  if (!ret) {
+    cleanup_file(filename);
+    return;
+  }
+
+  Stage loaded_stage;
+  std::string warn;
+  ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  auto mesh_result = loaded_stage.GetPrimAtPath(Path("/CompressedMesh", ""));
+  TEST_CHECK(mesh_result.has_value());
+  if (!mesh_result.has_value()) {
+    cleanup_file(filename);
+    return;
+  }
+
+  const Prim* loaded_mesh_prim = mesh_result.value();
+  TEST_CHECK(loaded_mesh_prim != nullptr);
+  if (!loaded_mesh_prim) {
+    cleanup_file(filename);
+    return;
+  }
+
+  const GeomMesh* loaded_mesh = loaded_mesh_prim->data().as<GeomMesh>();
+  TEST_CHECK(loaded_mesh != nullptr);
+  if (!loaded_mesh) {
+    cleanup_file(filename);
+    return;
+  }
+
+  auto face_indices_anim = loaded_mesh->faceVertexIndices.get_value();
+  TEST_CHECK(face_indices_anim.has_value());
+  TEST_CHECK(face_indices_anim && face_indices_anim->has_default());
+  if (face_indices_anim && face_indices_anim->has_default()) {
+    std::vector<int32_t> loaded_face_indices;
+    TEST_CHECK(face_indices_anim->get_default(&loaded_face_indices));
+    TEST_CHECK(loaded_face_indices == face_vertex_indices);
+  }
+
+  auto face_counts_anim = loaded_mesh->faceVertexCounts.get_value();
+  TEST_CHECK(face_counts_anim.has_value());
+  TEST_CHECK(face_counts_anim && face_counts_anim->has_default());
+  if (face_counts_anim && face_counts_anim->has_default()) {
+    std::vector<int32_t> loaded_face_counts;
+    TEST_CHECK(face_counts_anim->get_default(&loaded_face_counts));
+    TEST_CHECK(loaded_face_counts == face_vertex_counts);
+  }
+
+  cleanup_file(filename);
+}
+
+void crate_writer_compressed_uint_array_roundtrip_test(void) {
+  std::string filename = get_temp_filename("test_compressed_uint_array");
+  std::string err;
+
+  Stage stage;
+
+  GeomMesh mesh;
+  mesh.name = "CompressedUintMesh";
+  mesh.spec = Specifier::Def;
+
+  Attribute attr;
+  attr.set_type_name("uint[]");
+  primvar::PrimVar pvar;
+  const std::vector<uint32_t> values = {
+    0u, 4u, 6u, 2u, 3u, 2u, 6u, 7u, 7u, 6u, 4u, 5u,
+    5u, 1u, 3u, 7u, 1u, 0u, 2u, 3u, 5u, 4u, 0u, 1u
+  };
+  pvar.set_value(value::Value(values));
+  attr.set_var(std::move(pvar));
+  mesh.props["myUintArray"] = Property(attr, /* custom */ true);
+
+  Prim mesh_prim("CompressedUintMesh", mesh);
+  mesh_prim.prim_type_name() = "Mesh";
+  stage.root_prims().push_back(mesh_prim);
+
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  opts.enable_compression = true;
+  writer.SetOptions(opts);
+
+  bool ret = writer.Open(&err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    cleanup_file(filename);
+    return;
+  }
+
+  ret = writer.ConvertStageToSpecs(stage, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    writer.Close();
+    cleanup_file(filename);
+    return;
+  }
+
+  ret = writer.Finalize(&err);
+  TEST_CHECK(ret == true);
+  writer.Close();
+  if (!ret) {
+    cleanup_file(filename);
+    return;
+  }
+
+  std::vector<uint8_t> data;
+  ret = tinyusdz::io::ReadWholeFile(&data, &err, filename, 0, nullptr);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    cleanup_file(filename);
+    return;
+  }
+
+  StreamReader sr(data.data(), data.size(), /* swap_endian */ false);
+  tinyusdz::crate::CrateReaderConfig config;
+  config.numThreads = 1;
+  tinyusdz::crate::CrateReader reader(&sr, config);
+
+  TEST_CHECK(reader.ReadBootStrap());
+  TEST_CHECK(reader.ReadTOC());
+  TEST_CHECK(reader.ReadTokens());
+  TEST_CHECK(reader.ReadStrings());
+  TEST_CHECK(reader.ReadFields());
+  TEST_CHECK(reader.ReadFieldSets());
+  TEST_CHECK(reader.ReadPaths());
+  TEST_CHECK(reader.ReadSpecs());
+
+  if (!reader.GetError().empty()) {
+    TEST_MSG("CrateReader error: %s", reader.GetError().c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  bool found_spec = false;
+  bool found_values = false;
+  bool found_compressed = false;
+
+  for (const auto& spec : reader.GetSpecs()) {
+    auto path = reader.GetPathString(spec.path_index);
+    if (!path || (path->find("myUintArray") == std::string::npos)) {
+      continue;
+    }
+
+    found_spec = true;
+
+    tinyusdz::crate::FieldValuePairVector pairs;
+    TEST_CHECK(reader.DecodeFieldSet(spec.fieldset_index, &pairs));
+    if (!pairs.empty()) {
+      for (const auto& pair : pairs) {
+        if (pair.first != "default") {
+          continue;
+        }
+
+        auto loaded_values = pair.second.get_value<std::vector<uint32_t>>();
+        TEST_CHECK(loaded_values.has_value());
+        if (loaded_values) {
+          TEST_CHECK(*loaded_values == values);
+          found_values = true;
+        }
+      }
+    }
+
+    const auto& fieldset_indices = reader.GetFieldsetIndices();
+    for (size_t idx = spec.fieldset_index.value;
+         idx < fieldset_indices.size() &&
+         fieldset_indices[idx] != tinyusdz::crate::Index();
+         ++idx) {
+      const tinyusdz::crate::Index field_index = fieldset_indices[idx];
+      if (field_index.value >= reader.GetFields().size()) {
+        continue;
+      }
+
+      const auto& field = reader.GetFields()[field_index.value];
+      auto token = reader.GetToken(field.token_index);
+      if (token && token->str() == "default") {
+        TEST_CHECK(field.value_rep.IsArray());
+        TEST_CHECK(field.value_rep.IsCompressed());
+        if (field.value_rep.IsArray() && field.value_rep.IsCompressed()) {
+          found_compressed = true;
+        }
+        break;
+      }
+    }
+
+    if (found_values && found_compressed) {
+      break;
+    }
+  }
+
+  TEST_CHECK(found_spec);
+  TEST_CHECK(found_values);
+  TEST_CHECK(found_compressed);
+
   cleanup_file(filename);
 }
 
