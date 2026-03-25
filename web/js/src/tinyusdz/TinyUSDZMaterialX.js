@@ -1452,7 +1452,7 @@ function _detectChannelToGrayscalePattern(nodes, nodeMap) {
  * Detect unused extract outputs (dead code)
  * Extract nodes whose outputs are never used can be removed
  */
-function _detectUnusedExtractPattern(nodes, nodeMap) {
+function _detectUnusedExtractPattern(nodes, nodeMap, ngOutputs) {
     const patterns = [];
 
     // Build a map of all node inputs (connections)
@@ -1462,6 +1462,15 @@ function _detectUnusedExtractPattern(nodes, nodeMap) {
         for (const input of node.inputs) {
             if (input.nodename) {
                 usedOutputs.add(`${input.nodename}:${input.output || 'out'}`);
+            }
+        }
+    }
+
+    // Also mark nodes referenced by NodeGraph outputs as used
+    if (ngOutputs) {
+        for (const output of ngOutputs) {
+            if (output.nodename) {
+                usedOutputs.add(`${output.nodename}:${output.output || 'out'}`);
             }
         }
     }
@@ -3044,7 +3053,7 @@ function optimizeNodeGraph(nodeGraph, level = NodeGraphOptimizationLevel.STANDAR
             // Extract channel patterns
             ..._detectSwizzlePattern(nodes, nodeMap),
             ..._detectChannelToGrayscalePattern(nodes, nodeMap),
-            ..._detectUnusedExtractPattern(nodes, nodeMap),
+            ..._detectUnusedExtractPattern(nodes, nodeMap, nodeGraph.nodegraph.outputs),
             ..._detectSingleChannelModPattern(nodes, nodeMap),
             // Math inverse patterns
             ..._detectAddSubtractInversePattern(nodes, nodeMap),
@@ -3113,7 +3122,7 @@ function analyzeNodeGraph(nodeGraph) {
     // New extract channel patterns
     const swizzlePatterns = _detectSwizzlePattern(nodes, nodeMap);
     const channelToGrayscalePatterns = _detectChannelToGrayscalePattern(nodes, nodeMap);
-    const unusedExtractPatterns = _detectUnusedExtractPattern(nodes, nodeMap);
+    const unusedExtractPatterns = _detectUnusedExtractPattern(nodes, nodeMap, nodeGraph?.nodegraph?.outputs);
     const singleChannelModPatterns = _detectSingleChannelModPattern(nodes, nodeMap);
     // New math patterns
     const addSubtractInversePatterns = _detectAddSubtractInversePattern(nodes, nodeMap);

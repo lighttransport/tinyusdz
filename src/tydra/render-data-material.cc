@@ -260,6 +260,583 @@ struct MtlxNodeGraphInfo {
 
 // Extract MaterialX NodeGraph info by traversing connections
 // Returns the extracted info or an error message
+// Multi-component constant value used by the MaterialX constant evaluator.
+// Represents float (1 component) or color3f (3 components).
+struct MtlxConstVal {
+  std::array<float, 3> v{{0.0f, 0.0f, 0.0f}};
+  int n{0};  // number of components: 1=float, 3=color3
+
+  static MtlxConstVal Float(float f) { MtlxConstVal r; r.v[0]=f; r.n=1; return r; }
+  static MtlxConstVal Color3(float r, float g, float b) {
+    MtlxConstVal c; c.v = {{r, g, b}}; c.n = 3; return c;
+  }
+
+  bool is_float() const { return n == 1; }
+  bool is_color3() const { return n == 3; }
+  float as_float() const { return v[0]; }
+};
+
+// Resolve a shader node within a NodeGraph prim by its absolute path.
+// Tries stage lookup first, then falls back to searching NodeGraph children.
+static const Shader *FindShaderInNodeGraph(
+    const Stage &stage, const Prim *ng_prim,
+    const std::string &prim_path) {
+  std::string err;
+  const Prim *prim{nullptr};
+  if (stage.find_prim_at_path(Path(prim_path, ""), prim, &err) && prim) {
+    return prim->as<Shader>();
+  }
+  if (ng_prim) {
+    size_t last_slash = prim_path.rfind('/');
+    if (last_slash != std::string::npos) {
+      std::string child_name = prim_path.substr(last_slash + 1);
+      for (const auto &child : ng_prim->children()) {
+        if (child.element_name() == child_name) {
+          return child.as<Shader>();
+        }
+      }
+    }
+  }
+  return nullptr;
+}
+
+// Forward declaration
+static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
+    const Stage &stage, const Prim *ng_prim, const Shader *shader,
+    int max_depth);
+
+// Helper: get the property map for a shader (prefer ShaderNode props if present)
+static const std::map<std::string, Property> &GetShaderProps(
+    const Shader *shader) {
+  const ShaderNode *sn = shader->value.as<ShaderNode>();
+  if (sn && !sn->props.empty()) return sn->props;
+  return shader->props;
+}
+
+// Helper: resolve a generic input to MtlxConstVal (constant or connected)
+static nonstd::expected<MtlxConstVal, std::string> ResolveInput(
+    const Stage &stage, const Prim *ng_prim,
+    const std::map<std::string, Property> &props,
+    const std::string &input_name, const std::string &node_type,
+    int max_depth) {
+  auto it = props.find(input_name);
+  if (it == props.end()) {
+    return nonstd::make_unexpected(
+        fmt::format("{} not found in {}", input_name, node_type));
+  }
+  if (!it->second.is_attribute()) {
+    return nonstd::make_unexpected(
+        fmt::format("{} is not an attribute", input_name));
+  }
+  const Attribute &attr = it->second.get_attribute();
+
+  // If connected, follow recursively
+  if (attr.has_connections() && !attr.connections().empty()) {
+    const Shader *next = FindShaderInNodeGraph(
+        stage, ng_prim, attr.connections()[0].prim_part());
+    if (!next) {
+      return nonstd::make_unexpected(
+          fmt::format("Cannot find shader at {}",
+                      attr.connections()[0].prim_part()));
+    }
+    return EvaluateMtlxConstant(stage, ng_prim, next, max_depth - 1);
+  }
+
+  // Read constant value
+  if (auto vf = attr.get_value<float>()) {
+    return MtlxConstVal::Float(*vf);
+  }
+  if (auto vc = attr.get_value<value::color3f>()) {
+    return MtlxConstVal::Color3((*vc)[0], (*vc)[1], (*vc)[2]);
+  }
+  if (auto vf3 = attr.get_value<value::float3>()) {
+    return MtlxConstVal::Color3((*vf3)[0], (*vf3)[1], (*vf3)[2]);
+  }
+  if (auto vi = attr.get_value<int>()) {
+    return MtlxConstVal::Float(static_cast<float>(*vi));
+  }
+  return nonstd::make_unexpected(
+      fmt::format("Cannot read value from {}", input_name));
+}
+
+// Helper: convenience wrapper for ResolveInput
+static nonstd::expected<MtlxConstVal, std::string> RI(
+    const Stage &stage, const Prim *ng_prim,
+    const std::map<std::string, Property> &props,
+    const std::string &input_name, const std::string &node_type,
+    int max_depth) {
+  return ResolveInput(stage, ng_prim, props, input_name, node_type, max_depth);
+}
+
+// Per-component binary operation on MtlxConstVal
+static MtlxConstVal BinOp(const MtlxConstVal &a, const MtlxConstVal &b,
+                           float (*op)(float, float)) {
+  int nc = (std::max)(a.n, b.n);
+  MtlxConstVal r; r.n = nc;
+  for (int i = 0; i < nc; ++i) {
+    float va = (i < a.n) ? a.v[static_cast<size_t>(i)] : a.v[0];
+    float vb = (i < b.n) ? b.v[static_cast<size_t>(i)] : b.v[0];
+    r.v[static_cast<size_t>(i)] = op(va, vb);
+  }
+  return r;
+}
+
+// Simple RGB-to-HSV and HSV-to-RGB conversions (used by ND_hsv_adjust_color3).
+static void RGBtoHSV(float r, float g, float b, float &h, float &s, float &v) {
+  float mx = (std::max)({r, g, b});
+  float mn = (std::min)({r, g, b});
+  float d = mx - mn;
+  v = mx;
+  s = (mx > 0.0f) ? d / mx : 0.0f;
+  if (d < 1e-7f) { h = 0.0f; return; }
+  if (r >= mx)      h = (g - b) / d;
+  else if (g >= mx) h = 2.0f + (b - r) / d;
+  else              h = 4.0f + (r - g) / d;
+  h /= 6.0f;
+  if (h < 0.0f) h += 1.0f;
+}
+
+static void HSVtoRGB(float h, float s, float v, float &r, float &g, float &b) {
+  if (s <= 0.0f) { r = g = b = v; return; }
+  float hh = h * 6.0f;
+  if (hh >= 6.0f) hh = 0.0f;
+  int i = static_cast<int>(hh);
+  float ff = hh - static_cast<float>(i);
+  float p = v * (1.0f - s);
+  float q = v * (1.0f - s * ff);
+  float t = v * (1.0f - s * (1.0f - ff));
+  switch (i) {
+    case 0: r=v; g=t; b=p; break;
+    case 1: r=q; g=v; b=p; break;
+    case 2: r=p; g=v; b=t; break;
+    case 3: r=p; g=q; b=v; break;
+    case 4: r=t; g=p; b=v; break;
+    default: r=v; g=p; b=q; break;
+  }
+}
+
+// Evaluate a MaterialX node graph expression that produces a constant value.
+// Supports float and color3 node types with constant or connected inputs.
+// Returns the evaluated value or an error.
+static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
+    const Stage &stage,
+    const Prim *ng_prim,
+    const Shader *shader,
+    int max_depth = 10) {
+  if (max_depth <= 0) {
+    return nonstd::make_unexpected("Max evaluation depth exceeded");
+  }
+  if (!shader) {
+    return nonstd::make_unexpected("Null shader");
+  }
+
+  const std::string &nt = shader->info_id;
+  const auto &props = GetShaderProps(shader);
+
+  // Macro-style shorthand for resolving inputs
+  #define RESOLVE(name) RI(stage, ng_prim, props, name, nt, max_depth)
+
+  // --- Constant nodes ---
+  if (nt == "ND_constant_float" || nt == "ND_constant_color3" ||
+      nt == "ND_constant_vector3") {
+    auto r = RESOLVE("inputs:value");
+    if (!r) return nonstd::make_unexpected(r.error());
+    if (nt == "ND_constant_float") return MtlxConstVal::Float(r->as_float());
+    return *r;
+  }
+
+  // --- Binary float/color ops ---
+  if (nt.find("ND_add_") == 0 || nt.find("ND_subtract_") == 0 ||
+      nt.find("ND_multiply_") == 0 || nt.find("ND_divide_") == 0 ||
+      nt.find("ND_min_") == 0 || nt.find("ND_max_") == 0 ||
+      nt.find("ND_power_") == 0 || nt.find("ND_modulo_") == 0 ||
+      nt.find("ND_atan2_") == 0) {
+    auto a = RESOLVE("inputs:in1");
+    if (!a) return nonstd::make_unexpected(a.error());
+    auto b = RESOLVE("inputs:in2");
+    if (!b) return nonstd::make_unexpected(b.error());
+
+    if (nt.find("ND_add_") == 0)
+      return BinOp(*a, *b, [](float x, float y) { return x + y; });
+    if (nt.find("ND_subtract_") == 0)
+      return BinOp(*a, *b, [](float x, float y) { return x - y; });
+    if (nt.find("ND_multiply_") == 0)
+      return BinOp(*a, *b, [](float x, float y) { return x * y; });
+    if (nt.find("ND_divide_") == 0)
+      return BinOp(*a, *b, [](float x, float y) { return (y != 0.0f) ? x / y : 0.0f; });
+    if (nt.find("ND_power_") == 0)
+      return BinOp(*a, *b, [](float x, float y) { return std::pow(x, y); });
+    if (nt.find("ND_min_") == 0)
+      return BinOp(*a, *b, [](float x, float y) { return (std::min)(x, y); });
+    if (nt.find("ND_max_") == 0)
+      return BinOp(*a, *b, [](float x, float y) { return (std::max)(x, y); });
+    if (nt.find("ND_modulo_") == 0)
+      return BinOp(*a, *b, [](float x, float y) { return (y != 0.0f) ? std::fmod(x, y) : 0.0f; });
+    if (nt.find("ND_atan2_") == 0)
+      return BinOp(*a, *b, [](float x, float y) { return std::atan2(x, y); });
+  }
+
+  // --- Clamp (float or color3) ---
+  if (nt.find("ND_clamp_") == 0) {
+    auto v = RESOLVE("inputs:in");
+    if (!v) return nonstd::make_unexpected(v.error());
+    auto lo = RESOLVE("inputs:low");
+    if (!lo) return nonstd::make_unexpected(lo.error());
+    auto hi = RESOLVE("inputs:high");
+    if (!hi) return nonstd::make_unexpected(hi.error());
+    auto clamped = BinOp(*v, *lo, [](float x, float y) { return (std::max)(x, y); });
+    return BinOp(clamped, *hi, [](float x, float y) { return (std::min)(x, y); });
+  }
+
+  // --- Unary math ops (single input → single output) ---
+  // ND_absval, ND_sign, ND_floor, ND_ceil, ND_round, ND_fract,
+  // ND_sqrt, ND_invsqrt, ND_exp, ND_log,
+  // ND_sin, ND_cos, ND_tan, ND_asin, ND_acos
+  if (nt.find("ND_absval_") == 0 || nt.find("ND_sign_") == 0 ||
+      nt.find("ND_floor_") == 0 || nt.find("ND_ceil_") == 0 ||
+      nt.find("ND_round_") == 0 || nt.find("ND_fract_") == 0 ||
+      nt.find("ND_sqrt_") == 0 || nt.find("ND_invsqrt_") == 0 ||
+      nt.find("ND_exp_") == 0 || nt.find("ND_log_") == 0 ||
+      nt.find("ND_sin_") == 0 || nt.find("ND_cos_") == 0 ||
+      nt.find("ND_tan_") == 0 || nt.find("ND_asin_") == 0 ||
+      nt.find("ND_acos_") == 0) {
+    auto v = RESOLVE("inputs:in");
+    if (!v) return nonstd::make_unexpected(v.error());
+    MtlxConstVal r; r.n = v->n;
+    for (int i = 0; i < v->n; ++i) {
+      float x = v->v[static_cast<size_t>(i)];
+      float y = 0.0f;
+      if (nt.find("ND_absval_") == 0) y = std::abs(x);
+      else if (nt.find("ND_sign_") == 0) y = (x > 0.0f) ? 1.0f : ((x < 0.0f) ? -1.0f : 0.0f);
+      else if (nt.find("ND_floor_") == 0) y = std::floor(x);
+      else if (nt.find("ND_ceil_") == 0) y = std::ceil(x);
+      else if (nt.find("ND_round_") == 0) y = std::round(x);
+      else if (nt.find("ND_fract_") == 0) y = x - std::floor(x);
+      else if (nt.find("ND_sqrt_") == 0) y = (x >= 0.0f) ? std::sqrt(x) : 0.0f;
+      else if (nt.find("ND_invsqrt_") == 0) y = (x > 0.0f) ? 1.0f / std::sqrt(x) : 0.0f;
+      else if (nt.find("ND_exp_") == 0) y = std::exp(x);
+      else if (nt.find("ND_log_") == 0) y = (x > 0.0f) ? std::log(x) : 0.0f;
+      else if (nt.find("ND_sin_") == 0) y = std::sin(x);
+      else if (nt.find("ND_cos_") == 0) y = std::cos(x);
+      else if (nt.find("ND_tan_") == 0) y = std::tan(x);
+      else if (nt.find("ND_asin_") == 0) y = std::asin((std::max)(-1.0f, (std::min)(1.0f, x)));
+      else if (nt.find("ND_acos_") == 0) y = std::acos((std::max)(-1.0f, (std::min)(1.0f, x)));
+      r.v[static_cast<size_t>(i)] = y;
+    }
+    return r;
+  }
+
+  // --- Convert (type conversion passthrough) ---
+  if (nt.find("ND_convert_") == 0) {
+    auto v = RESOLVE("inputs:in");
+    if (!v) return nonstd::make_unexpected(v.error());
+    // float→color3: broadcast, color3→float: take first component
+    if (nt.find("_float_color3") != std::string::npos ||
+        nt.find("_float_vector3") != std::string::npos) {
+      return MtlxConstVal::Color3(v->as_float(), v->as_float(), v->as_float());
+    }
+    if (nt.find("_color3_float") != std::string::npos ||
+        nt.find("_vector3_float") != std::string::npos) {
+      return MtlxConstVal::Float(v->v[0]);
+    }
+    // color3<->vector3 are the same layout
+    return *v;
+  }
+
+  // --- Luminance (color3 → float via Rec.709 coefficients) ---
+  if (nt == "ND_luminance_color3") {
+    auto v = RESOLVE("inputs:in");
+    if (!v) return nonstd::make_unexpected(v.error());
+    // Rec.709 luminance coefficients
+    float lum = 0.2126f * v->v[0] + 0.7152f * v->v[1] + 0.0722f * v->v[2];
+    return MtlxConstVal::Color3(lum, lum, lum);
+  }
+
+  // --- Dot product (vector3 → float) ---
+  if (nt.find("ND_dotproduct_") == 0) {
+    auto a = RESOLVE("inputs:in1");
+    if (!a) return nonstd::make_unexpected(a.error());
+    auto b = RESOLVE("inputs:in2");
+    if (!b) return nonstd::make_unexpected(b.error());
+    float dot = 0.0f;
+    int nc = (std::min)(a->n, b->n);
+    for (int i = 0; i < nc; ++i) dot += a->v[static_cast<size_t>(i)] * b->v[static_cast<size_t>(i)];
+    return MtlxConstVal::Float(dot);
+  }
+
+  // --- Cross product (vector3 × vector3 → vector3) ---
+  if (nt.find("ND_crossproduct_") == 0) {
+    auto a = RESOLVE("inputs:in1");
+    if (!a) return nonstd::make_unexpected(a.error());
+    auto b = RESOLVE("inputs:in2");
+    if (!b) return nonstd::make_unexpected(b.error());
+    return MtlxConstVal::Color3(
+        a->v[1] * b->v[2] - a->v[2] * b->v[1],
+        a->v[2] * b->v[0] - a->v[0] * b->v[2],
+        a->v[0] * b->v[1] - a->v[1] * b->v[0]);
+  }
+
+  // --- Magnitude (vector3 → float) ---
+  if (nt.find("ND_magnitude_") == 0) {
+    auto v = RESOLVE("inputs:in");
+    if (!v) return nonstd::make_unexpected(v.error());
+    float mag = 0.0f;
+    for (int i = 0; i < v->n; ++i) mag += v->v[static_cast<size_t>(i)] * v->v[static_cast<size_t>(i)];
+    return MtlxConstVal::Float(std::sqrt(mag));
+  }
+
+  // --- Normalize (vector3 → vector3) ---
+  if (nt.find("ND_normalize_") == 0) {
+    auto v = RESOLVE("inputs:in");
+    if (!v) return nonstd::make_unexpected(v.error());
+    float mag = 0.0f;
+    for (int i = 0; i < v->n; ++i) mag += v->v[static_cast<size_t>(i)] * v->v[static_cast<size_t>(i)];
+    mag = std::sqrt(mag);
+    if (mag < 1e-7f) return *v;
+    MtlxConstVal r; r.n = v->n;
+    for (int i = 0; i < v->n; ++i) r.v[static_cast<size_t>(i)] = v->v[static_cast<size_t>(i)] / mag;
+    return r;
+  }
+
+  // --- Conditional: ifgreater (float) ---
+  if (nt == "ND_ifgreater_float") {
+    auto val1 = RESOLVE("inputs:value1");
+    if (!val1) return nonstd::make_unexpected(val1.error());
+    auto val2 = RESOLVE("inputs:value2");
+    if (!val2) return nonstd::make_unexpected(val2.error());
+    auto in1 = RESOLVE("inputs:in1");
+    if (!in1) return nonstd::make_unexpected(in1.error());
+    auto in2 = RESOLVE("inputs:in2");
+    if (!in2) return nonstd::make_unexpected(in2.error());
+    return (val1->as_float() > val2->as_float()) ? *in1 : *in2;
+  }
+
+  // --- Mix (lerp between bg and fg) ---
+  if (nt.find("ND_mix_") == 0) {
+    auto bg = RESOLVE("inputs:bg");
+    if (!bg) return nonstd::make_unexpected(bg.error());
+    auto fg = RESOLVE("inputs:fg");
+    if (!fg) return nonstd::make_unexpected(fg.error());
+    auto mx = RESOLVE("inputs:mix");
+    if (!mx) return nonstd::make_unexpected(mx.error());
+    float t = mx->as_float();
+    int nc = (std::max)(bg->n, fg->n);
+    MtlxConstVal r; r.n = nc;
+    for (int i = 0; i < nc; ++i) {
+      float a = (i < bg->n) ? bg->v[static_cast<size_t>(i)] : bg->v[0];
+      float b = (i < fg->n) ? fg->v[static_cast<size_t>(i)] : fg->v[0];
+      r.v[static_cast<size_t>(i)] = a * (1.0f - t) + b * t;
+    }
+    return r;
+  }
+
+  // --- Remap: linearly remap from [inlow,inhigh] to [outlow,outhigh] ---
+  if (nt.find("ND_remap_") == 0) {
+    auto v = RESOLVE("inputs:in");
+    if (!v) return nonstd::make_unexpected(v.error());
+    auto inlo = RESOLVE("inputs:inlow");
+    if (!inlo) return nonstd::make_unexpected(inlo.error());
+    auto inhi = RESOLVE("inputs:inhigh");
+    if (!inhi) return nonstd::make_unexpected(inhi.error());
+    auto outlo = RESOLVE("inputs:outlow");
+    if (!outlo) return nonstd::make_unexpected(outlo.error());
+    auto outhi = RESOLVE("inputs:outhigh");
+    if (!outhi) return nonstd::make_unexpected(outhi.error());
+    int nc = v->n;
+    MtlxConstVal r; r.n = nc;
+    for (int i = 0; i < nc; ++i) {
+      size_t ui = static_cast<size_t>(i);
+      float vi = v->v[ui];
+      float il = (i < inlo->n) ? inlo->v[ui] : inlo->v[0];
+      float ih = (i < inhi->n) ? inhi->v[ui] : inhi->v[0];
+      float ol = (i < outlo->n) ? outlo->v[ui] : outlo->v[0];
+      float oh = (i < outhi->n) ? outhi->v[ui] : outhi->v[0];
+      float denom = ih - il;
+      float t_val = (std::abs(denom) > 1e-7f) ? (vi - il) / denom : 0.0f;
+      r.v[ui] = ol + t_val * (oh - ol);
+    }
+    return r;
+  }
+
+  // --- Combine3 (three floats → color3) ---
+  if (nt.find("ND_combine3_") == 0) {
+    auto c1 = RESOLVE("inputs:in1");
+    if (!c1) return nonstd::make_unexpected(c1.error());
+    auto c2 = RESOLVE("inputs:in2");
+    if (!c2) return nonstd::make_unexpected(c2.error());
+    auto c3 = RESOLVE("inputs:in3");
+    if (!c3) return nonstd::make_unexpected(c3.error());
+    return MtlxConstVal::Color3(c1->as_float(), c2->as_float(), c3->as_float());
+  }
+
+  // --- Extract (color3 → float by index) ---
+  if (nt.find("ND_extract_") == 0) {
+    auto in_v = RESOLVE("inputs:in");
+    if (!in_v) return nonstd::make_unexpected(in_v.error());
+    auto idx = RESOLVE("inputs:index");
+    if (!idx) return nonstd::make_unexpected(idx.error());
+    int i = static_cast<int>(idx->as_float());
+    if (i < 0 || i >= in_v->n) i = 0;
+    return MtlxConstVal::Float(in_v->v[static_cast<size_t>(i)]);
+  }
+
+  // --- Separate3 (color3 → 3 outputs, but we return the full color3) ---
+  if (nt.find("ND_separate3_") == 0) {
+    auto in_v = RESOLVE("inputs:in");
+    if (!in_v) return nonstd::make_unexpected(in_v.error());
+    return *in_v;
+  }
+
+  // --- HSV adjust (two variants) ---
+  // ND_hsv_adjust_color3: separate hue/saturation/value/fac inputs
+  // ND_hsvadjust_color3: Blender export variant with inputs:amount (float3: h,s,v)
+  if (nt == "ND_hsv_adjust_color3") {
+    auto in_v = RESOLVE("inputs:in");
+    if (!in_v) return nonstd::make_unexpected(in_v.error());
+    auto hue = RESOLVE("inputs:hue");
+    if (!hue) return nonstd::make_unexpected(hue.error());
+    auto sat = RESOLVE("inputs:saturation");
+    if (!sat) return nonstd::make_unexpected(sat.error());
+    auto val = RESOLVE("inputs:value");
+    if (!val) return nonstd::make_unexpected(val.error());
+    auto fac = RESOLVE("inputs:fac");
+    if (!fac) return nonstd::make_unexpected(fac.error());
+
+    float h, s, v_hsv;
+    RGBtoHSV(in_v->v[0], in_v->v[1], in_v->v[2], h, s, v_hsv);
+    h += hue->as_float();
+    if (h > 1.0f) h -= 1.0f;
+    if (h < 0.0f) h += 1.0f;
+    s *= sat->as_float();
+    v_hsv *= val->as_float();
+
+    float or_r, or_g, or_b;
+    HSVtoRGB(h, s, v_hsv, or_r, or_g, or_b);
+
+    float f = fac->as_float();
+    return MtlxConstVal::Color3(
+        in_v->v[0] * (1.0f - f) + or_r * f,
+        in_v->v[1] * (1.0f - f) + or_g * f,
+        in_v->v[2] * (1.0f - f) + or_b * f);
+  }
+
+  if (nt == "ND_hsvadjust_color3") {
+    auto in_v = RESOLVE("inputs:in");
+    if (!in_v) return nonstd::make_unexpected(in_v.error());
+    auto amount = RESOLVE("inputs:amount");
+    if (!amount) return nonstd::make_unexpected(amount.error());
+
+    float h, s, v_hsv;
+    RGBtoHSV(in_v->v[0], in_v->v[1], in_v->v[2], h, s, v_hsv);
+    // amount.v[0]=hue shift, amount.v[1]=saturation mult, amount.v[2]=value mult
+    h += amount->v[0];
+    if (h > 1.0f) h -= 1.0f;
+    if (h < 0.0f) h += 1.0f;
+    s *= amount->v[1];
+    v_hsv *= amount->v[2];
+
+    float or_r, or_g, or_b;
+    HSVtoRGB(h, s, v_hsv, or_r, or_g, or_b);
+    return MtlxConstVal::Color3(or_r, or_g, or_b);
+  }
+
+  #undef RESOLVE
+
+  return nonstd::make_unexpected(
+      fmt::format("Unsupported node type for constant evaluation: {}", nt));
+}
+
+// Resolve a NodeGraph connection path to the NodeGraph prim and target shader.
+// Shared logic for both float and color3 evaluation entry points.
+static nonstd::expected<std::pair<const Prim *, const Shader *>, std::string>
+ResolveNodeGraphTarget(const Stage &stage, const Path &connection_path) {
+  const std::string prim_part = connection_path.prim_part();
+  const std::string prop_part = connection_path.prop_part();
+
+  std::string err;
+  const Prim *ng_prim{nullptr};
+  bool found = stage.find_prim_at_path(Path(prim_part, ""), ng_prim, &err);
+
+  if (!found || !ng_prim) {
+    size_t last_slash = prim_part.rfind('/');
+    if (last_slash == std::string::npos) {
+      return nonstd::make_unexpected("Invalid path");
+    }
+    std::string parent_path = prim_part.substr(0, last_slash);
+    std::string ng_name = prim_part.substr(last_slash + 1);
+    const Prim *parent_prim{nullptr};
+    if (stage.find_prim_at_path(Path(parent_path, ""), parent_prim, &err) &&
+        parent_prim) {
+      for (const auto &child : parent_prim->children()) {
+        if (child.element_name() == ng_name ||
+            child.data().type_name() == "NodeGraph") {
+          ng_prim = &child;
+          break;
+        }
+      }
+    }
+    if (!ng_prim) {
+      return nonstd::make_unexpected(
+          fmt::format("NodeGraph not found at {}", prim_part));
+    }
+  }
+
+  const NodeGraph *ng = ng_prim->as<NodeGraph>();
+  if (!ng) {
+    return nonstd::make_unexpected("Not a NodeGraph");
+  }
+
+  std::string output_name = prop_part;
+  if (startsWith(output_name, "outputs:")) {
+    output_name = output_name.substr(8);
+  }
+
+  Path target_path;
+  bool found_conn = false;
+  for (const auto &suffix : {"outputs:" + output_name + ".connect",
+                              "outputs:" + output_name}) {
+    auto it = ng->props.find(suffix);
+    if (it != ng->props.end()) {
+      if (it->second.is_attribute()) {
+        const Attribute &attr = it->second.get_attribute();
+        if (attr.has_connections() && !attr.connections().empty()) {
+          target_path = attr.connections()[0];
+          found_conn = true;
+          break;
+        }
+      } else if (it->second.is_relationship()) {
+        auto targets = it->second.get_relationTargets();
+        if (!targets.empty()) {
+          target_path = targets[0];
+          found_conn = true;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!found_conn) {
+    return nonstd::make_unexpected("No output connection found");
+  }
+
+  const Shader *target_shader =
+      FindShaderInNodeGraph(stage, ng_prim, target_path.prim_part());
+  if (!target_shader) {
+    return nonstd::make_unexpected(
+        fmt::format("Shader not found at {}", target_path.prim_part()));
+  }
+
+  return std::make_pair(ng_prim, target_shader);
+}
+
+// Evaluate a MaterialX NodeGraph connection as a constant value (float or color3).
+static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxNodeGraphAsConstant(
+    const Stage &stage, const Path &connection_path) {
+  auto target = ResolveNodeGraphTarget(stage, connection_path);
+  if (!target) return nonstd::make_unexpected(target.error());
+  return EvaluateMtlxConstant(stage, target->first, target->second);
+}
+
 static nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
     const Stage &stage,
     const Prim *material_prim,
@@ -1780,9 +2357,12 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                       tex_abs_path.prim_part(), asset_eval_err));
     }
   } else {
-    PUSH_ERROR_AND_RETURN(fmt::format(
-        "`asset:file` is not authored for UsdUVTexture at {}.",
+    // Blender export bug workaround: create placeholder texture
+    PUSH_WARN(fmt::format(
+        "`asset:file` is not authored for UsdUVTexture at {}. "
+        "This is likely a Blender export bug. Creating placeholder texture.",
         tex_abs_path.prim_part()));
+    assetPath = value::AssetPath("");  // empty path
   }
 
   // TextureImage and BufferData
@@ -2621,6 +3201,42 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
 
           return true;
         } else {
+          // No texture found — try evaluating the node graph as a constant
+          // value (e.g., ND_add_float or ND_multiply_color3 with constant inputs).
+          auto const_result =
+              EvaluateMtlxNodeGraphAsConstant(env.stage, conn_path);
+          if (const_result) {
+            DCOUT(fmt::format("MaterialX constant evaluation {}.{} components={}",
+                              shader_abs_path.prim_part(), param_name,
+                              const_result->n));
+            if (std::is_same<T, float>::value && const_result->is_float()) {
+              float v = const_result->as_float();
+              memcpy(&dst_param.value, &v, sizeof(float));
+              return true;
+            }
+            if (std::is_same<T, value::color3f>::value && const_result->is_color3()) {
+              value::color3f c;
+              c[0] = const_result->v[0];
+              c[1] = const_result->v[1];
+              c[2] = const_result->v[2];
+              memcpy(&dst_param.value, &c, sizeof(value::color3f));
+              return true;
+            }
+            // Float result can also be used for color3 (broadcast)
+            if (std::is_same<T, value::color3f>::value && const_result->is_float()) {
+              float f = const_result->as_float();
+              value::color3f c;
+              c[0] = f; c[1] = f; c[2] = f;
+              memcpy(&dst_param.value, &c, sizeof(value::color3f));
+              return true;
+            }
+            // Color3 result used for float (take first component)
+            if (std::is_same<T, float>::value && const_result->is_color3()) {
+              float v = const_result->v[0];
+              memcpy(&dst_param.value, &v, sizeof(float));
+              return true;
+            }
+          }
           PUSH_ERROR_AND_RETURN(fmt::format(
               "Failed to find MaterialX texture for {}: {}",
               param_name, mtlx_result.error()));
@@ -3256,9 +3872,21 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
       }
       surfacePath = paths[0];
     } else {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("{}'s outputs:surface isn't authored.\n",
-                      mat_abs_path.full_path_name()));
+      // Material without outputs:surface (e.g. stub/empty material).
+      // Create a default material and return successfully.
+      PUSH_WARN(fmt::format(
+          "{}'s outputs:surface isn't authored. "
+          "Using default material.",
+          mat_abs_path.full_path_name()));
+
+      rmat.name = material.name;
+      rmat.abs_path = mat_abs_path.full_path_name();
+
+      uint64_t mat_id = materials.size();
+      materials.push_back(rmat);
+      materialMap.add(mat_id, mat_abs_path.prim_part());
+
+      return true;
     }
 
     const Prim *shaderPrim{nullptr};

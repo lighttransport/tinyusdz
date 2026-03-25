@@ -220,6 +220,7 @@ static void print_help(const char* prog_name) {
   std::cout << "  --mmap-lowmem         Enable mmap zero-copy for uncompressed USDC arrays\n";
   std::cout << "  --lowmem              Free GeomMesh data after conversion (reduces peak memory)\n";
   std::cout << "  --snorm8              Use SNorm8x3 normals (3 bytes) and SNorm8x4 tangents (4 bytes)\n";
+  std::cout << "  --fast-index-build    Force BuildVertexIndicesFastImpl (reproduces WASM code path)\n";
 }
 
 int main(int argc, char **argv) {
@@ -249,6 +250,7 @@ int main(int argc, char **argv) {
   bool mmap_lowmem = false;
   bool lowmem = false;
   bool snorm8 = false;
+  bool force_fast_index = false;
   auto tangent_method = tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel;
   std::string output_format = "yaml";  // "yaml" (human-readable), "json" (machine-readable)
 
@@ -318,6 +320,8 @@ int main(int argc, char **argv) {
       lowmem = true;
     } else if (strcmp(argv[i], "--snorm8") == 0) {
       snorm8 = true;
+    } else if (strcmp(argv[i], "--fast-index-build") == 0) {
+      force_fast_index = true;
     } else {
       filepath = argv[i];
     }
@@ -444,6 +448,11 @@ int main(int argc, char **argv) {
   if (lowmem) {
     env.mesh_config.lowmem = true;
     config_info.push_back({"lowmem", "true"});
+  }
+
+  if (force_fast_index) {
+    env.mesh_config.force_fast_index_build = true;
+    config_info.push_back({"force_fast_index_build", "true"});
   }
 
   if (snorm8) {

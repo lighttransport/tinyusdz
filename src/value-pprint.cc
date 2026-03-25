@@ -46,6 +46,88 @@ inline void append_float_to_stream(std::ostream &os, float v) {
 
 }  // namespace
 
+namespace tinyusdz {
+namespace pprint {
+
+std::string format_wrapped_array(const std::vector<std::string> &elements,
+                                 uint32_t prefix_cols, uint32_t column_limit) {
+  if (elements.empty()) {
+    return "[]";
+  }
+
+  // Check if single-line fits
+  size_t total_len = 2;  // "[" and "]"
+  for (size_t i = 0; i < elements.size(); i++) {
+    total_len += elements[i].size();
+    if (i > 0) total_len += 2;  // ", "
+  }
+
+  if (prefix_cols + total_len <= column_limit) {
+    // Fits on one line
+    std::string result = "[";
+    for (size_t i = 0; i < elements.size(); i++) {
+      if (i > 0) result += ", ";
+      result += elements[i];
+    }
+    result += "]";
+    return result;
+  }
+
+  // Need wrapping. Compute continuation indent (column after '[').
+  uint32_t cont_indent = prefix_cols + 1;
+  bool deep_indent = false;
+
+  // If too deep (>60% of column limit), fall back to newline + single indent
+  if (cont_indent > column_limit * 3 / 5) {
+    deep_indent = true;
+    // Single indent width (default 4 spaces)
+    cont_indent = static_cast<uint32_t>(Indent(1).size());
+  }
+
+  std::string result;
+  uint32_t cur_col;
+
+  if (deep_indent) {
+    // Start array on next line with single indentation
+    result = "\n";
+    result += Indent(1);
+    result += "[";
+    cur_col = cont_indent + 1;
+  } else {
+    result = "[";
+    cur_col = prefix_cols + 1;
+  }
+
+  for (size_t i = 0; i < elements.size(); i++) {
+    const auto &elem = elements[i];
+    // Width needed: element itself + trailing ", " (except for last element)
+    uint32_t elem_width = static_cast<uint32_t>(elem.size());
+
+    if (i > 0) {
+      // Check if this element fits on the current line
+      // +2 for the ", " separator before it
+      if (cur_col + 2 + elem_width > column_limit) {
+        // Wrap: emit comma at end of previous line, then newline
+        result += ",\n";
+        result += std::string(cont_indent, ' ');
+        cur_col = cont_indent;
+      } else {
+        result += ", ";
+        cur_col += 2;
+      }
+    }
+
+    result += elem;
+    cur_col += elem_width;
+  }
+
+  result += "]";
+  return result;
+}
+
+}  // namespace pprint
+}  // namespace tinyusdz
+
 namespace std {
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half &v) {
@@ -538,12 +620,23 @@ std::ostream &operator<<(std::ostream &ofs,
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
+  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  if (col_limit > 0 && v.size() > 1) {
+    std::vector<std::string> elems;
+    elems.reserve(v.size());
+    for (const auto &e : v) {
+      elems.push_back(tinyusdz::dtos(e));
+    }
+    ofs << tinyusdz::pprint::format_wrapped_array(
+        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    return ofs;
+  }
   ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
     }
-    ofs << tinyusdz::dtos(v[i]);  // use dragonbox for shortest representation
+    ofs << tinyusdz::dtos(v[i]);
   }
   ofs << "]";
 
@@ -552,12 +645,23 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
+  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  if (col_limit > 0 && v.size() > 1) {
+    std::vector<std::string> elems;
+    elems.reserve(v.size());
+    for (const auto &e : v) {
+      elems.push_back(tinyusdz::dtos(e));
+    }
+    ofs << tinyusdz::pprint::format_wrapped_array(
+        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    return ofs;
+  }
   ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
     }
-    ofs << tinyusdz::dtos(v[i]);  // use float-precision dragonbox path
+    ofs << tinyusdz::dtos(v[i]);
   }
   ofs << "]";
 
@@ -566,6 +670,19 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
+  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  if (col_limit > 0 && v.size() > 1) {
+    std::vector<std::string> elems;
+    elems.reserve(v.size());
+    for (const auto &e : v) {
+      std::ostringstream ess;
+      ess << e;
+      elems.push_back(ess.str());
+    }
+    ofs << tinyusdz::pprint::format_wrapped_array(
+        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    return ofs;
+  }
 #if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
   // numeric_limits<uint64_t>::digits10 is 19, so 32 should suffice.
   char buf[32];
@@ -590,6 +707,19 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
+  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  if (col_limit > 0 && v.size() > 1) {
+    std::vector<std::string> elems;
+    elems.reserve(v.size());
+    for (const auto &e : v) {
+      std::ostringstream ess;
+      ess << e;
+      elems.push_back(ess.str());
+    }
+    ofs << tinyusdz::pprint::format_wrapped_array(
+        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    return ofs;
+  }
 #if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
   char buf[32];
 #endif
@@ -613,6 +743,19 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<int64_t> &v) {
+  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  if (col_limit > 0 && v.size() > 1) {
+    std::vector<std::string> elems;
+    elems.reserve(v.size());
+    for (const auto &e : v) {
+      std::ostringstream ess;
+      ess << e;
+      elems.push_back(ess.str());
+    }
+    ofs << tinyusdz::pprint::format_wrapped_array(
+        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    return ofs;
+  }
 #if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
   // numeric_limits<uint64_t>::digits10 is 19, so 32 should suffice.
   char buf[32];
@@ -637,6 +780,19 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int64_t> &v) {
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<uint64_t> &v) {
+  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  if (col_limit > 0 && v.size() > 1) {
+    std::vector<std::string> elems;
+    elems.reserve(v.size());
+    for (const auto &e : v) {
+      std::ostringstream ess;
+      ess << e;
+      elems.push_back(ess.str());
+    }
+    ofs << tinyusdz::pprint::format_wrapped_array(
+        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    return ofs;
+  }
 #if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
   char buf[32];
 #endif
