@@ -2357,12 +2357,9 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                       tex_abs_path.prim_part(), asset_eval_err));
     }
   } else {
-    // Blender export bug workaround: create placeholder texture
-    PUSH_WARN(fmt::format(
-        "`asset:file` is not authored for UsdUVTexture at {}. "
-        "This is likely a Blender export bug. Creating placeholder texture.",
+    PUSH_ERROR_AND_RETURN(fmt::format(
+        "`asset:file` is not authored for UsdUVTexture at {}.",
         tex_abs_path.prim_part()));
-    assetPath = value::AssetPath("");  // empty path
   }
 
   // TextureImage and BufferData
@@ -3872,21 +3869,9 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
       }
       surfacePath = paths[0];
     } else {
-      // Material without outputs:surface (e.g. stub/empty material).
-      // Create a default material and return successfully.
-      PUSH_WARN(fmt::format(
-          "{}'s outputs:surface isn't authored. "
-          "Using default material.",
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "{}'s outputs:surface isn't authored.",
           mat_abs_path.full_path_name()));
-
-      rmat.name = material.name;
-      rmat.abs_path = mat_abs_path.full_path_name();
-
-      uint64_t mat_id = materials.size();
-      materials.push_back(rmat);
-      materialMap.add(mat_id, mat_abs_path.prim_part());
-
-      return true;
     }
 
     const Prim *shaderPrim{nullptr};

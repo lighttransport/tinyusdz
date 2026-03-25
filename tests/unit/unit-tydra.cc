@@ -1937,10 +1937,11 @@ void tydra_skin_binding_validation_test(void) {
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
-    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
-    TEST_CHECK(converter.GetError().find(
-                   "Mesh has skinning data but no skeleton found") !=
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.meshes.size() == 1);
+    TEST_CHECK(converter.GetWarning().find(
+                   "Mesh has skinning data but no skeleton bound") !=
                std::string::npos);
-    TEST_CHECK(converter.GetError().find("/MeshPrim") != std::string::npos);
+    TEST_CHECK(converter.GetWarning().find("/MeshPrim") != std::string::npos);
   }
 }
