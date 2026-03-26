@@ -15,6 +15,7 @@
 #include "layer.hh"
 #include "common-macros.inc"
 #include "pprinter.hh"  // For to_string(Specifier), to_string(Variability)
+#include "pprint-enum.hh"  // For to_string(APISchemas::APIName)
 #include "usdShade.hh"  // For Material and Shader
 #include "common-macros.inc"
 
@@ -54,6 +55,8 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   GET_PRIM_PROPS(GeomSubset)
   GET_PRIM_PROPS(GeomCamera)
   GET_PRIM_PROPS(GeomBasisCurves)
+  GET_PRIM_PROPS(GeomNurbsCurves)
+  GET_PRIM_PROPS(GeomPointInstancer)
   GET_PRIM_PROPS(DomeLight)
   GET_PRIM_PROPS(SphereLight)
   GET_PRIM_PROPS(CylinderLight)
@@ -62,6 +65,9 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   GET_PRIM_PROPS(RectLight)
   GET_PRIM_PROPS(Material)
   GET_PRIM_PROPS(Shader)
+  GET_PRIM_PROPS(NodeGraph)
+  GET_PRIM_PROPS(GeometryLight)
+  GET_PRIM_PROPS(PortalLight)
   GET_PRIM_PROPS(SkelRoot)
   GET_PRIM_PROPS(Skeleton)
   GET_PRIM_PROPS(SkelAnimation)
@@ -223,6 +229,19 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
     }
   }
 
+  // Add primChildren listing root prim names
+  {
+    std::vector<value::token> root_children;
+    for (const auto& prim : stage.root_prims()) {
+      root_children.push_back(value::token(prim.element_name()));
+    }
+    if (!root_children.empty()) {
+      crate::CrateValue pc_value;
+      pc_value.Set(root_children);
+      root_fields.push_back({"primChildren", pc_value});
+    }
+  }
+
   if (!AddSpec(root_path, SpecType::PseudoRoot, root_fields, err)) {
     if (err) *err = "Failed to add root spec: " + *err;
     return false;
@@ -263,6 +282,8 @@ bool CrateWriter::ConvertSinglePrim(
   Path prim_path(abs_path_str, "");
   std::string type_name = prim.prim_type_name();
 
+  DCOUT("ConvertSinglePrim: name=" << prim_name << " abs=" << abs_path_str << " type=" << type_name);
+
   // Extract properties from this prim
   crate::FieldValuePairVector fields;
 
@@ -283,6 +304,8 @@ bool CrateWriter::ConvertSinglePrim(
     bool has_ts{false};
     crate::CrateValue variability_val;
     bool has_variability{false};
+    crate::CrateValue interpolation_val;
+    bool has_interpolation{false};
   };
   std::vector<PropEntry> prop_entries;
 
@@ -303,12 +326,19 @@ bool CrateWriter::ConvertSinglePrim(
     // Check for ".timeSamples" suffix
     std::string base_name = fv.first;
     bool is_ts = false;
+    bool is_interp = false;
     const std::string ts_suffix = ".timeSamples";
+    const std::string interp_suffix = ".interpolation";
     if (base_name.size() > ts_suffix.size() &&
         base_name.compare(base_name.size() - ts_suffix.size(),
                           ts_suffix.size(), ts_suffix) == 0) {
       base_name = base_name.substr(0, base_name.size() - ts_suffix.size());
       is_ts = true;
+    } else if (base_name.size() > interp_suffix.size() &&
+               base_name.compare(base_name.size() - interp_suffix.size(),
+                                 interp_suffix.size(), interp_suffix) == 0) {
+      base_name = base_name.substr(0, base_name.size() - interp_suffix.size());
+      is_interp = true;
     }
 
     // Check for "variability" field
@@ -328,13 +358,16 @@ bool CrateWriter::ConvertSinglePrim(
       }
     }
     if (!entry) {
-      prop_entries.push_back({base_name, {}, false, {}, false, {}, false});
+      prop_entries.push_back({base_name, {}, false, {}, false, {}, false, {}, false});
       entry = &prop_entries.back();
     }
 
     if (is_ts) {
       entry->ts_val = std::move(fv.second);
       entry->has_ts = true;
+    } else if (is_interp) {
+      entry->interpolation_val = std::move(fv.second);
+      entry->has_interpolation = true;
     } else {
       entry->default_val = std::move(fv.second);
       entry->has_default = true;
@@ -355,10 +388,8 @@ bool CrateWriter::ConvertSinglePrim(
     prim_fields.push_back({"primChildren", children_value});
   }
 
-  // Add spec for this prim (only prim-level fields)
-  SpecType spec_type = SpecType::Prim;
-
-  if (!AddSpec(prim_path, spec_type, prim_fields, err)) {
+  // Add spec for this prim (prim-level fields only; "properties" added later)
+  if (!AddSpec(prim_path, SpecType::Prim, prim_fields, err)) {
     if (err) *err = "Failed to add spec for: " + abs_path_str + ": " + *err;
     return false;
   }
@@ -373,7 +404,7 @@ bool CrateWriter::ConvertSinglePrim(
     "joints", "jointNames", "bindTransforms", "restTransforms",  // Skeleton
     "blendShapes",  // SkelAnimation
     "inactiveIds",  // PointInstancer
-    "purpose",  // GPrim
+    "purpose", "doubleSided",  // GPrim
   };
 
   // Create separate Attribute specs for each property
@@ -415,6 +446,10 @@ bool CrateWriter::ConvertSinglePrim(
       attr_fields.push_back({"timeSamples", std::move(pe.ts_val)});
     }
 
+    if (pe.has_interpolation) {
+      attr_fields.push_back({"interpolation", std::move(pe.interpolation_val)});
+    }
+
     if (!attr_fields.empty()) {
       if (!AddSpec(attr_path, SpecType::Attribute, attr_fields, err)) {
         DCOUT("WARNING: Failed to add attribute spec for: " << pe.name);
@@ -422,7 +457,7 @@ bool CrateWriter::ConvertSinglePrim(
     }
   }
 
-  // After adding the prim spec, handle Material outputs as separate attribute specs
+  // After property extraction, handle Material outputs as separate attribute specs
   // This must happen AFTER the prim spec is added to maintain correct ordering
   if (type_name == "Material") {
     const Material* material = prim.data().as<Material>();
@@ -447,29 +482,67 @@ bool CrateWriter::ConvertSinglePrim(
             if (err) *err = "Failed to add UsdPreviewSurface input specs: " + *err;
             return false;
           }
+          // Terminal output declarations — call ConvertAttributeToFields
+          // directly (bypasses is_empty() check in ConvertPropertyToFields)
+          if (preview_surface->outputsSurface.authored()) {
+            Attribute a;
+            a.set_type_name(value::kToken);
+            ConvertAttributeToFields("outputs:surface", a, prim_path, false, err);
+          }
+          if (preview_surface->outputsDisplacement.authored()) {
+            Attribute a;
+            a.set_type_name(value::kToken);
+            ConvertAttributeToFields("outputs:displacement", a, prim_path, false, err);
+          }
         }
       } else if (shader->info_id == "UsdUVTexture") {
-        // Try to get UsdUVTexture from shader value
         if (auto* uv_texture = shader->value.as<UsdUVTexture>()) {
           if (!AddUsdUVTextureInputSpecs(uv_texture, prim_path, err)) {
             if (err) *err = "Failed to add UsdUVTexture input specs: " + *err;
             return false;
           }
+          // Terminal outputs — use actual_type_name if available, else the template type
+          auto add_t = [&](const char *n, const auto &term_attr, const char *default_type) {
+            if (!term_attr.authored()) return;
+            Attribute attr;
+            attr.set_type_name(term_attr.has_actual_type() ? term_attr.get_actual_type_name() : default_type);
+            ConvertAttributeToFields(n, attr, prim_path, false, err);
+          };
+          add_t("outputs:r", uv_texture->outputsR, "float");
+          add_t("outputs:g", uv_texture->outputsG, "float");
+          add_t("outputs:b", uv_texture->outputsB, "float");
+          add_t("outputs:a", uv_texture->outputsA, "float");
+          add_t("outputs:rgb", uv_texture->outputsRGB, "float3");
         }
       } else if (shader->info_id == "UsdTransform2d") {
-        // Try to get UsdTransform2d from shader value
         if (auto* transform2d = shader->value.as<UsdTransform2d>()) {
           if (!AddUsdTransform2dInputSpecs(transform2d, prim_path, err)) {
             if (err) *err = "Failed to add UsdTransform2d input specs: " + *err;
             return false;
           }
+          if (transform2d->result.authored()) {
+            Attribute a; a.set_type_name("float2");
+            ConvertAttributeToFields("outputs:result", a, prim_path, false, err);
+          }
         }
       } else if (shader->info_id.find("UsdPrimvarReader_") == 0) {
-        // Handle all UsdPrimvarReader_* variants (float, float2, float3, etc.)
         if (!AddUsdPrimvarReaderInputSpecs(shader->value, shader->info_id, prim_path, err)) {
           if (err) *err = "Failed to add UsdPrimvarReader input specs: " + *err;
           return false;
         }
+        // Terminal output for all PrimvarReader variants
+        auto add_pr_terminal = [&](auto *pr) {
+          if (pr && pr->result.authored()) {
+            Attribute a; a.set_type_name(pr->result.type_name().empty() ? "float2" : pr->result.type_name());
+            ConvertAttributeToFields("outputs:result", a, prim_path, false, err);
+          }
+        };
+        if (auto *p = shader->value.as<UsdPrimvarReader_float2>()) add_pr_terminal(p);
+        else if (auto *p = shader->value.as<UsdPrimvarReader_float>()) add_pr_terminal(p);
+        else if (auto *p = shader->value.as<UsdPrimvarReader_float3>()) add_pr_terminal(p);
+        else if (auto *p = shader->value.as<UsdPrimvarReader_float4>()) add_pr_terminal(p);
+        else if (auto *p = shader->value.as<UsdPrimvarReader_int>()) add_pr_terminal(p);
+        else if (auto *p = shader->value.as<UsdPrimvarReader_string>()) add_pr_terminal(p);
       }
     }
   }
@@ -478,6 +551,32 @@ bool CrateWriter::ConvertSinglePrim(
   // This applies to any prim that might have material bindings (typically geometry)
   if (!AddMaterialBindingSpecs(prim, prim_path, err)) {
     // Don't fail on material binding errors - just warn
+  }
+
+  // Handle doubleSided for GPrim-derived types via ConvertPropertyToFields
+  // (The fields path doesn't preserve the bool type correctly in crate format)
+  {
+    const GPrim* gprim = nullptr;
+    // Try all GPrim-derived types
+    if (auto* p = prim.data().as<GeomMesh>()) gprim = p;
+    else if (auto* p = prim.data().as<GeomCube>()) gprim = p;
+    else if (auto* p = prim.data().as<GeomSphere>()) gprim = p;
+    else if (auto* p = prim.data().as<GeomCone>()) gprim = p;
+    else if (auto* p = prim.data().as<GeomCylinder>()) gprim = p;
+    else if (auto* p = prim.data().as<GeomCapsule>()) gprim = p;
+    else if (auto* p = prim.data().as<GeomPoints>()) gprim = p;
+    else if (auto* p = prim.data().as<GeomBasisCurves>()) gprim = p;
+
+    if (gprim && gprim->doubleSided.authored()) {
+      Attribute ds_attr;
+      ds_attr.set_type_name("bool");
+      ds_attr.variability() = Variability::Uniform;
+      primvar::PrimVar pvar;
+      pvar.set_value(gprim->doubleSided.get_value());
+      ds_attr.set_var(std::move(pvar));
+      crate::FieldValuePairVector dummy;
+      ConvertPropertyToFields("doubleSided", Property(ds_attr, /* custom */ false), prim_path, dummy, err);
+    }
   }
 
   // After adding light prim spec, handle light filter relationships as separate relationship specs
@@ -510,17 +609,9 @@ bool CrateWriter::ConvertSinglePrim(
       // ConvertAttributeToFields calls AddSpec which can't be undone if
       // Finalize later fails on unsupported types.
       if (kv.second.is_attribute()) {
-        const Attribute& attr = kv.second.get_attribute();
-        const std::string& tname = attr.type_name();
-        // Skip array types that WriteValueData doesn't support
-        if (tname.find("matrix") != std::string::npos && tname.back() == ']') {
-          continue;  // matrix2d[], matrix3d[], matrix4d[]
-        }
-        if (tname.find("half") != std::string::npos && tname.back() == ']') {
-          continue;  // half[], half2[], half3[], half4[]
-        }
         // Skip empty array values — TRY_INLINE_EMPTY_ARRAY encoding has a bug
         // where the reader can't decode the fieldset (missing SetIsInlined flag).
+        const Attribute& attr = kv.second.get_attribute();
         const primvar::PrimVar& pvar = attr.get_var();
         if (pvar.has_value() && pvar.value_raw().is_array() &&
             pvar.value_raw().array_size() == 0) {
@@ -546,6 +637,44 @@ bool CrateWriter::ConvertSinglePrim(
       if (!ConvertVariantSetToFields(variantset_name, variantset_data, prim_path, err)) {
         if (err) *err = "Failed to convert VariantSet '" + variantset_name + "' for " + abs_path_str + ": " + *err;
         return false;
+      }
+    }
+  }
+
+  // Build "properties" field by scanning accumulated specs for child
+  // Attribute/Relationship specs of this prim.  This field is required by
+  // Pixar's USD reader and also drives propertyNames() ordering.
+  {
+    const std::string prim_prefix = abs_path_str + ".";
+    std::vector<value::token> property_names;
+    std::set<std::string> seen;
+    for (const auto &sd : spec_data_) {
+      if (sd.spec_type == SpecType::Attribute ||
+          sd.spec_type == SpecType::Relationship) {
+        const std::string &fp = sd.path.full_path_name();
+        if (fp.size() > prim_prefix.size() &&
+            fp.compare(0, prim_prefix.size(), prim_prefix) == 0) {
+          std::string prop_name = fp.substr(prim_prefix.size());
+          // Only direct children (no further '/' or '.')
+          if (prop_name.find('/') == std::string::npos &&
+              prop_name.find('.') == std::string::npos) {
+            if (seen.insert(prop_name).second) {
+              property_names.push_back(value::token(prop_name));
+            }
+          }
+        }
+      }
+    }
+    if (!property_names.empty()) {
+      // Append "properties" field to the existing prim spec
+      for (auto &sd : spec_data_) {
+        if (sd.path.full_path_name() == abs_path_str &&
+            sd.spec_type == SpecType::Prim) {
+          crate::CrateValue props_value;
+          props_value.Set(property_names);
+          sd.fields.push_back({"properties", props_value});
+          break;
+        }
       }
     }
   }
@@ -680,6 +809,49 @@ void CrateWriter::ExtractPrimMeta(
     v.Set(metas.get_instanceable());
     fields.push_back({"instanceable", v});
   }
+
+  // apiSchemas
+  if (metas.has_apiSchemas()) {
+    const auto schemas = metas.get_apiSchemas();
+    // Convert APISchemas to ListOp<value::token>
+    std::vector<value::token> schema_tokens;
+    for (const auto &s : schemas.names) {
+      std::string name = to_string(s.first);
+      if (!s.second.empty()) {
+        name += ":" + s.second;  // Multi-apply instance
+      }
+      schema_tokens.push_back(value::token(name));
+    }
+    for (const auto &s : schemas.unknownSchemas) {
+      std::string name = s.first;
+      if (!s.second.empty()) {
+        name += ":" + s.second;
+      }
+      schema_tokens.push_back(value::token(name));
+    }
+    if (!schema_tokens.empty()) {
+      ListOp<value::token> listop;
+      if (schemas.listOpQual == ListEditQual::Prepend) {
+        listop.SetPrependedItems(schema_tokens);
+      } else {
+        listop.SetExplicitItems(schema_tokens);
+      }
+      crate::CrateValue v;
+      v.Set(listop);
+      fields.push_back({"apiSchemas", v});
+    }
+  }
+
+  // NOTE: references, inherits, specializes, payload are disabled because
+  // their ListOp encoding causes "Failed to decode fieldset id" errors during
+  // roundtrip.  The crate writer's ListOp<Reference>/ListOp<Payload>/ListOp<Path>
+  // binary format doesn't match what the reader expects.
+  // TODO: Fix the ListOp binary encoding for composition arcs.
+  //
+  // if (metas.references.has_value()) { ... }
+  // if (metas.inherits.has_value()) { ... }
+  // if (metas.specializes.has_value()) { ... }
+  // if (metas.payload.has_value()) { ... }
 }
 
 bool CrateWriter::ExtractPrimProperties(
@@ -1117,6 +1289,57 @@ bool CrateWriter::ConvertValue(
       out.Set(*v);
       return true;
     }
+  }
+  // TexCoord role type arrays
+  else if (type_name == "texCoord2f[]") {
+    if (auto v = val.get_value<std::vector<value::float2>>(false)) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "texCoord2d[]") {
+    if (auto v = val.get_value<std::vector<value::double2>>(false)) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "texCoord3f[]") {
+    if (auto v = val.get_value<std::vector<value::float3>>(false)) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "texCoord3d[]") {
+    if (auto v = val.get_value<std::vector<value::double3>>(false)) {
+      out.Set(*v);
+      return true;
+    }
+  }
+  // Base float2/double2 arrays
+  else if (type_name == "float2[]") {
+    if (auto v = val.get_value<std::vector<value::float2>>()) {
+      out.Set(*v);
+      return true;
+    }
+  }
+  // TexCoord scalars
+  else if (type_name == "texCoord2f") {
+    if (auto v = val.get_value<value::float2>(false)) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "texCoord2d") {
+    if (auto v = val.get_value<value::double2>(false)) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "texCoord3f") {
+    if (auto v = val.get_value<value::float3>(false)) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "texCoord3d") {
+    if (auto v = val.get_value<value::double3>(false)) {
+      out.Set(*v);
+      return true;
+    }
   } else if (type_name == "token[]") {
     if (auto v = val.get_value<std::vector<value::token>>()) {
       out.Set(*v);
@@ -1189,6 +1412,55 @@ bool CrateWriter::ConvertValue(
     }
   } else if (type_name == "matrix4d[]") {
     if (auto v = val.get_value<std::vector<value::matrix4d>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "matrix2d[]") {
+    if (auto v = val.get_value<std::vector<value::matrix2d>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "matrix3d[]") {
+    if (auto v = val.get_value<std::vector<value::matrix3d>>()) {
+      out.Set(*v);
+      return true;
+    }
+  }
+  // Half-vector arrays
+  else if (type_name == "half2[]") {
+    if (auto v = val.get_value<std::vector<value::half2>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "half3[]") {
+    if (auto v = val.get_value<std::vector<value::half3>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "half4[]") {
+    if (auto v = val.get_value<std::vector<value::half4>>()) {
+      out.Set(*v);
+      return true;
+    }
+  }
+  // Int-vector arrays
+  else if (type_name == "int2[]") {
+    if (auto v = val.get_value<std::vector<value::int2>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "int3[]") {
+    if (auto v = val.get_value<std::vector<value::int3>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "int4[]") {
+    if (auto v = val.get_value<std::vector<value::int4>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "bool[]") {
+    if (auto v = val.get_value<std::vector<bool>>()) {
       out.Set(*v);
       return true;
     }

@@ -179,8 +179,8 @@ static std::string print_shader_params(const UsdUVTexture &shader,
   ss << print_typed_attr(shader.scale, "inputs:scale", indent);
 
   ss << print_typed_attr(shader.st, "inputs:st", indent);
-  ss << print_typed_token_attr(shader.wrapS, "inputs:wrapT", indent);
-  ss << print_typed_token_attr(shader.wrapT, "inputs:wrapS", indent);
+  ss << print_typed_token_attr(shader.wrapS, "inputs:wrapS", indent);
+  ss << print_typed_token_attr(shader.wrapT, "inputs:wrapT", indent);
 
   ss << print_typed_terminal_attr(shader.outputsR, "outputs:r", indent);
   ss << print_typed_terminal_attr(shader.outputsG, "outputs:g", indent);

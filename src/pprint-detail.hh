@@ -584,18 +584,22 @@ inline std::string print_typed_token_attr(
   if (attr.authored()) {
 
     const auto &v = attr.get_value();
+    bool has_authored_default = !attr.is_value_empty() && v.has_default();
+    bool has_timesamples = v.has_timesamples();
+    bool is_connection = attr.has_connections();
 
-    if (attr.metas().authored() || v.has_value() || attr.is_value_empty()) {
+    bool should_emit_declaration =
+        attr.metas().authored() || attr.is_blocked() || has_authored_default ||
+        attr.is_value_empty() || ((!is_connection) && (!has_timesamples));
+    if (should_emit_declaration) {
       ss << pprint::Indent(indent);
-      ss << "token " << name << " = ";
+      ss << "token " << name;
       if (v.is_blocked()) {
-        ss << "None";
-      } else {
+        ss << " = None";
+      } else if (has_authored_default) {
         T a;
         if (v.get_scalar(&a)) {
-          ss << quote(to_string(a));
-        } else {
-          ss << "[Animatable: InternalError]";
+          ss << " = " << quote(to_string(a));
         }
       }
 
