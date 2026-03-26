@@ -333,6 +333,16 @@ bool CrateWriter::Finalize(std::string* err) {
   // Step 1: Process all specs and build internal tables
   // ========================================================================
 
+  // Reserve token index 0 with a sentinel that can't be a valid path element.
+  // OpenUSD does the same (crateFile.cpp line 2594-2601, github issue #811).
+  // The compressed path format uses negative token indices for property path
+  // elements.  Because -0 == 0, a property at index 0 would be misread as a
+  // prim element.  Inserting ";-)" here before any other token ensures no real
+  // element gets index 0.
+  if (tokens_.empty()) {
+    GetOrCreateToken(";-)");
+  }
+
   // Phase 5: Sort specs for better compression and correct hierarchy
   // CRITICAL: Sort specs using the same USD path comparison algorithm
   // that will be used in WritePathsSection (SortSimplePaths).
@@ -467,89 +477,16 @@ bool CrateWriter::Finalize(std::string* err) {
   // during PackValue() calls above. Do NOT reset it here.
 
   // ========================================================================
-  // Prepare path tree and extract tokens (must happen before TOKENS section)
-  // ========================================================================
-
-  // Build the path tree now so we can extract tokens
-  std::vector<pathlib::SimplePath> simple_paths_prep;
-
-  // Check if root exists
-  bool has_root_prep = false;
+  // Pre-register path element tokens before writing TOKENS section.
+  // WritePathsSection uses GetOrCreateToken during tree building.
   for (const auto& path : paths_) {
-    if (path.prim_part() == "/" && path.prop_part().empty()) {
-      has_root_prep = true;
-      break;
+    std::string elem = path.element_name();
+    if (!elem.empty() && elem != "/") {
+      GetOrCreateToken(elem);
     }
-  }
-
-  if (!has_root_prep) {
-    simple_paths_prep.emplace_back("/", "");
-  }
-
-  for (const auto& path : paths_) {
-    simple_paths_prep.emplace_back(path.prim_part(), path.prop_part());
-  }
-
-  // Sort and encode
-  pathlib::SortSimplePaths(simple_paths_prep);
-  pathlib::CompressedPathTree tree_prep = pathlib::EncodePaths(simple_paths_prep);
-
-  // Extract tokens from path tree and merge with existing tokens
-  // The path tree has its own token table, but we need to merge it with
-  // field name tokens that were already registered in AddSpec()
-  const auto& reverse_tokens_prep = tree_prep.token_table.GetReverseTokens();
-
-  // Build a map of path tree tokens (original index -> token string)
-  // CRITICAL: Include BOTH positive (prim) and negative (property) indices
-  std::map<int32_t, std::string> path_tree_tokens;
-  for (const auto& pair : reverse_tokens_prep) {
-    // Store both positive and negative indices
-    // Properties use negative indices, prims use positive indices
-    path_tree_tokens[pair.first] = pair.second;
-  }
-
-  // For each path tree token, check if it already exists in our token table
-  // If it exists, we can reuse it. If not, append it.
-  // CRITICAL: Keep path tree indices WITH THEIR ORIGINAL SIGN!
-  // Both +N and -N can exist as different tokens (prims vs properties).
-  // We need to store them separately to avoid collisions.
-  std::map<int32_t, uint32_t> path_tree_to_our_index;  // Maps path tree index (with sign!) -> our token index
-
-  for (const auto& pair : path_tree_tokens) {
-    int32_t path_tree_idx = pair.first;  // Keep original sign!
-    const std::string& token_str = pair.second;
-
-    // Skip empty string tokens - root path doesn't need a token entry
-    // The root is implicit in the path tree structure
-    if (token_str.empty()) {
-      // Map to token index 0 (will be replaced with actual first token)
-      path_tree_to_our_index[path_tree_idx] = 0;
-      continue;
+    if (!path.prop_part().empty()) {
+      GetOrCreateToken(path.prop_part());
     }
-
-    // Check if this token already exists in our token table
-    auto it = token_to_index_.find(token_str);
-    if (it != token_to_index_.end()) {
-      // Token already exists, reuse it
-      path_tree_to_our_index[path_tree_idx] = it->second.value;  // Store with ORIGINAL sign
-    } else {
-      // New token, append it
-      uint32_t new_idx = static_cast<uint32_t>(tokens_.size());
-      tokens_.push_back(token_str);
-      token_to_index_[token_str] = crate::TokenIndex(new_idx);
-      path_tree_to_our_index[path_tree_idx] = new_idx;  // Store with ORIGINAL sign
-    }
-  }
-
-  // Store the mapping for later use when writing the path tree
-  path_tree_token_remap_ = path_tree_to_our_index;
-
-  // Ensure we have at least one token - USD Crate format requires non-empty TOKENS section
-  // The reader checks: (3 + num_tokens) <= uncompressedSize, so minimum is token of length 3+
-  if (tokens_.empty()) {
-    // Add a minimal valid token (";-)" is used in pxrUSD as a sentinel/placeholder)
-    tokens_.push_back(";-)");
-    token_to_index_[";-)"] = crate::TokenIndex(0);
   }
 
   // Seek to the end of value data section before writing structural sections
@@ -1040,157 +977,200 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   //
   // See: pxr/usd/sdf/crateFile.cpp _WriteCompressedPathData()
 
-  // Use the path sorting and encoding library
-  // Convert TinyUSDZ Path to SimplePath for encoding
-  std::vector<pathlib::SimplePath> simple_paths;
-
-  // CRITICAL: Always include the root "/" path first
-  // OpenUSD requires root to be in the paths list
-  bool has_root = false;
-  for (const auto& path : paths_) {
-    if (path.prim_part() == "/" && path.prop_part().empty()) {
-      has_root = true;
-      break;
-    }
+  // Build sorted paths with pre-assigned PathIndex values.
+  // This matches OpenUSD's approach: each path has a pre-assigned index into
+  // the _paths vector. The tree encoding references these indices directly.
+  std::vector<std::pair<Path, crate::PathIndex>> sorted_paths;
+  for (const auto& kv : path_to_index_) {
+    const Path& path = kv.first;
+    // Skip empty/invalid paths
+    if (path.prim_part().empty() && path.prop_part().empty()) continue;
+    sorted_paths.emplace_back(path, kv.second);
   }
 
-  if (!has_root) {
-    simple_paths.emplace_back("/", "");  // Add root path
+  // Sort using Path::operator< (lexicographic USD path comparison)
+  std::sort(sorted_paths.begin(), sorted_paths.end(),
+    [](const std::pair<Path, crate::PathIndex>& a,
+       const std::pair<Path, crate::PathIndex>& b) {
+      return a.first < b.first;
+    });
+
+  size_t num_encoded_paths = sorted_paths.size();
+  if (num_encoded_paths == 0) {
+    if (err) *err = "No paths to encode";
+    return false;
   }
 
-  for (const auto& path : paths_) {
-    simple_paths.emplace_back(path.prim_part(), path.prop_part());
-  }
+  // Build the three compressed arrays directly from sorted paths
+  // (matches OpenUSD's _BuildCompressedPathDataRecursive)
+  std::vector<uint32_t> encoded_path_indices(num_encoded_paths);
+  std::vector<int32_t> element_token_indices(num_encoded_paths);
+  std::vector<int32_t> jump_indices(num_encoded_paths);
 
-  // paths_ is already sorted (re-sorted in Finalize after all paths were collected).
-  // Spec path_indexes have been updated to match the sorted order.
-  // No additional sorting needed here.
+  // Fill with invalid sentinel
+  for (auto& idx : encoded_path_indices) idx = crate::PathIndex().value;
 
-  // Encode to compressed tree
-  pathlib::CompressedPathTree tree = pathlib::EncodePaths(simple_paths);
+  // Recursive tree builder (matches OpenUSD's algorithm)
+  std::function<bool(uint32_t&, uint32_t, uint32_t, uint32_t&)>
+  buildImpl = [&](uint32_t& currentIdx, uint32_t startIdx, uint32_t endIdx,
+                  uint32_t& nextIdxOut) -> bool {
+    if (currentIdx >= num_encoded_paths) return false;
+    if (startIdx > endIdx) return false;
 
-  // Replace UINT64_MAX sentinel values (intermediate tree nodes that don't
-  // correspond to any input path) with valid indices.  Actual paths occupy
-  // indices [0, simple_paths.size()), so intermediates get the next available
-  // indices.  This keeps path_count == tree.size() correct.
-  {
-    uint64_t next_idx = static_cast<uint64_t>(simple_paths.size());
-    for (auto& pi : tree.path_indexes) {
-      if (pi == UINT64_MAX) {
-        pi = next_idx++;
+    auto getNextSubtree = [&](uint32_t sidx, uint32_t eidx) -> uint32_t {
+      if (sidx >= eidx) return eidx;
+      for (uint32_t i = sidx; i < eidx; i++) {
+        if (!sorted_paths[i].first.has_prefix(sorted_paths[sidx].first))
+          return i;
       }
-    }
-  }
+      return eidx;
+    };
 
-  // Remap the path tree token indices to our token indices
-  // The path tree has its own token indices, but we need to use our global token indices
-  // that were computed in Finalize() to preserve field name tokens
-  std::vector<int32_t> remapped_element_token_indexes;
-  remapped_element_token_indexes.reserve(tree.element_token_indexes.size());
+    for (uint32_t pIdx = startIdx, nextIdx = pIdx; pIdx < endIdx; pIdx = nextIdx) {
+      uint32_t nextSubtreeIdx = getNextSubtree(pIdx, endIdx);
+      nextIdx = pIdx + 1;
 
-  for (int32_t path_tree_idx : tree.element_token_indexes) {
-    // Look up using the ORIGINAL signed index (map now stores with sign)
-    auto it = path_tree_token_remap_.find(path_tree_idx);
-    if (it != path_tree_token_remap_.end()) {
-      // Found the mapping
-      if (path_tree_idx < 0) {
-        // Property: negate the result to keep it negative
-        remapped_element_token_indexes.push_back(-static_cast<int32_t>(it->second));
+      bool has_child = false;
+      bool has_sibling = false;
+
+      if (nextIdx != nextSubtreeIdx && nextIdx < num_encoded_paths) {
+        if (sorted_paths[pIdx].first.is_root_path()) {
+          has_child = true;
+        } else if (sorted_paths[nextIdx].first.get_parent_path().full_path_name() ==
+                   sorted_paths[pIdx].first.full_path_name()) {
+          has_child = true;
+        }
+      }
+
+      if (nextSubtreeIdx != endIdx && nextSubtreeIdx < num_encoded_paths) {
+        if (!sorted_paths[pIdx].first.is_root_path() &&
+            sorted_paths[nextSubtreeIdx].first.get_parent_path().full_path_name() ==
+            sorted_paths[pIdx].first.get_parent_path().full_path_name()) {
+          has_sibling = true;
+        }
+      }
+
+      const auto& p = sorted_paths[pIdx];
+      bool is_prop = p.first.is_prim_property_path();
+      std::string elem = is_prop ? p.first.prop_part() : p.first.element_name();
+      if (elem == "/") elem.clear();  // Root uses empty token
+
+      uint32_t thisIdx = currentIdx++;
+      encoded_path_indices[thisIdx] = p.second.value;
+      element_token_indices[thisIdx] =
+          static_cast<int32_t>(GetOrCreateToken(elem).value);
+      if (is_prop) {
+        element_token_indices[thisIdx] = -element_token_indices[thisIdx];
+      }
+
+      if (has_child) {
+        uint32_t childNextOut = 0;
+        if (!buildImpl(currentIdx, nextIdx, endIdx, childNextOut))
+          return false;
+        nextIdx = childNextOut;
+      }
+
+      if (has_sibling && has_child) {
+        jump_indices[thisIdx] = static_cast<int32_t>(currentIdx - thisIdx);
+      } else if (has_sibling) {
+        jump_indices[thisIdx] = 0;
+      } else if (has_child) {
+        jump_indices[thisIdx] = -1;
       } else {
-        // Prim: use positive result
-        remapped_element_token_indexes.push_back(static_cast<int32_t>(it->second));
+        jump_indices[thisIdx] = -2;
       }
-    } else {
-      // Not found - shouldn't happen, but preserve original
-      remapped_element_token_indexes.push_back(path_tree_idx);
+
+      if (!has_sibling) {
+        nextIdxOut = nextIdx;
+        return true;
+      }
     }
-  }
 
-  // Replace the tree's token indices with our remapped ones
-  tree.element_token_indexes = remapped_element_token_indexes;
+    nextIdxOut = endIdx;
+    return true;
+  };
 
-  // CRITICAL: OpenUSD expects TWO uint64_t values:
-  // 1. Total number of paths (for resizing _paths vector)
-  // 2. Number of encoded paths in the tree
-  // For the tree encoding, these values are identical.
-  uint64_t path_count = static_cast<uint64_t>(tree.size());
-  if (!Write(path_count)) {
-    if (err) *err = "Failed to write total path count";
-    return false;
-  }
-
-  // Write the same value again for numEncodedPaths
-  if (!Write(path_count)) {
-    if (err) *err = "Failed to write encoded path count";
-    return false;
-  }
-
-  // Convert path_indexes from uint64_t to uint32_t
-  // (USD paths typically won't exceed 2^32 entries)
-  std::vector<uint32_t> path_indexes_32(tree.path_indexes.size());
-  for (size_t i = 0; i < tree.path_indexes.size(); ++i) {
-    path_indexes_32[i] = static_cast<uint32_t>(tree.path_indexes[i]);
-  }
-
-  // Compress and write pathIndexes array (uint32_t)
   {
-    size_t buffer_size = Usd_IntegerCompression::GetCompressedBufferSize(path_indexes_32.size());
-    std::vector<char> compressed(buffer_size);
-
-    std::string compress_err;
-    size_t compressed_size = Usd_IntegerCompression::CompressToBuffer(
-        path_indexes_32.data(), path_indexes_32.size(), compressed.data(), &compress_err);
-
-    if (compressed_size == 0) {
-      if (err) *err = std::string("Failed to compress pathIndexes: ") + compress_err;
+    uint32_t currentIdx = 0;
+    uint32_t nextIdx = 0;
+    if (!buildImpl(currentIdx, 0, static_cast<uint32_t>(num_encoded_paths), nextIdx)) {
+      if (err) *err = "Failed to build path indices from sorted paths";
       return false;
     }
+  }
 
-    uint64_t size = static_cast<uint64_t>(compressed_size);
-    if (!Write(size) || !WriteBytes(compressed.data(), compressed_size)) {
+  // Verify all indices were filled
+  for (size_t i = 0; i < encoded_path_indices.size(); i++) {
+    if (encoded_path_indices[i] == crate::PathIndex().value) {
+      if (err) *err = "Internal error: path index " + std::to_string(i) + " not filled";
+      return false;
+    }
+  }
+
+  // Write PATHS section:
+  // 1. uint64_t numPaths (total paths — reader allocates _paths of this size)
+  uint64_t num_paths = static_cast<uint64_t>(paths_.size());
+  if (!Write(num_paths)) {
+    if (err) *err = "Failed to write numPaths";
+    return false;
+  }
+
+  // 2. uint64_t numEncodedPaths (may be <= numPaths; excludes empty/inactive)
+  uint64_t num_enc = static_cast<uint64_t>(num_encoded_paths);
+  if (!Write(num_enc)) {
+    if (err) *err = "Failed to write numEncodedPaths";
+    return false;
+  }
+
+  // 3. Compressed pathIndexes
+  {
+    size_t buf_size = Usd_IntegerCompression::GetCompressedBufferSize(num_encoded_paths);
+    std::vector<char> comp(buf_size);
+    std::string cerr;
+    size_t csz = Usd_IntegerCompression::CompressToBuffer(
+        encoded_path_indices.data(), num_encoded_paths, comp.data(), &cerr);
+    if (csz == 0) {
+      if (err) *err = "Compress pathIndexes failed: " + cerr;
+      return false;
+    }
+    uint64_t sz = static_cast<uint64_t>(csz);
+    if (!Write(sz) || !WriteBytes(comp.data(), csz)) {
       if (err) *err = "Failed to write pathIndexes";
       return false;
     }
   }
 
-  // Compress and write elementTokenIndexes array (int32_t - can be negative)
+  // 4. Compressed elementTokenIndexes
   {
-    size_t buffer_size = Usd_IntegerCompression::GetCompressedBufferSize(tree.element_token_indexes.size());
-    std::vector<char> compressed(buffer_size);
-
-    std::string compress_err;
-    size_t compressed_size = Usd_IntegerCompression::CompressToBuffer(
-        tree.element_token_indexes.data(), tree.element_token_indexes.size(),
-        compressed.data(), &compress_err);
-
-    if (compressed_size == 0) {
-      if (err) *err = std::string("Failed to compress elementTokenIndexes: ") + compress_err;
+    size_t buf_size = Usd_IntegerCompression::GetCompressedBufferSize(num_encoded_paths);
+    std::vector<char> comp(buf_size);
+    std::string cerr;
+    size_t csz = Usd_IntegerCompression::CompressToBuffer(
+        element_token_indices.data(), num_encoded_paths, comp.data(), &cerr);
+    if (csz == 0) {
+      if (err) *err = "Compress elementTokenIndexes failed: " + cerr;
       return false;
     }
-
-    uint64_t size = static_cast<uint64_t>(compressed_size);
-    if (!Write(size) || !WriteBytes(compressed.data(), compressed_size)) {
+    uint64_t sz = static_cast<uint64_t>(csz);
+    if (!Write(sz) || !WriteBytes(comp.data(), csz)) {
       if (err) *err = "Failed to write elementTokenIndexes";
       return false;
     }
   }
 
-  // Compress and write jumps array (int32_t)
+  // 5. Compressed jumps
   {
-    size_t buffer_size = Usd_IntegerCompression::GetCompressedBufferSize(tree.jumps.size());
-    std::vector<char> compressed(buffer_size);
-
-    std::string compress_err;
-    size_t compressed_size = Usd_IntegerCompression::CompressToBuffer(
-        tree.jumps.data(), tree.jumps.size(), compressed.data(), &compress_err);
-
-    if (compressed_size == 0) {
-      if (err) *err = std::string("Failed to compress jumps: ") + compress_err;
+    size_t buf_size = Usd_IntegerCompression::GetCompressedBufferSize(num_encoded_paths);
+    std::vector<char> comp(buf_size);
+    std::string cerr;
+    size_t csz = Usd_IntegerCompression::CompressToBuffer(
+        jump_indices.data(), num_encoded_paths, comp.data(), &cerr);
+    if (csz == 0) {
+      if (err) *err = "Compress jumps failed: " + cerr;
       return false;
     }
-
-    uint64_t size = static_cast<uint64_t>(compressed_size);
-    if (!Write(size) || !WriteBytes(compressed.data(), compressed_size)) {
+    uint64_t sz = static_cast<uint64_t>(csz);
+    if (!Write(sz) || !WriteBytes(comp.data(), csz)) {
       if (err) *err = "Failed to write jumps";
       return false;
     }
@@ -1788,13 +1768,52 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
   WRITE_VEC_ARRAY(value::double2, 2, "Vec2d")
   WRITE_VEC_ARRAY(value::double3, 3, "Vec3d")
   WRITE_VEC_ARRAY(value::double4, 4, "Vec4d")
+  WRITE_VEC_ARRAY(value::int2, 2, "Vec2i")
+  WRITE_VEC_ARRAY(value::int3, 3, "Vec3i")
+  WRITE_VEC_ARRAY(value::int4, 4, "Vec4i")
+  WRITE_VEC_ARRAY(value::uint2, 2, "Vec2u")
+  WRITE_VEC_ARRAY(value::uint3, 3, "Vec3u")
+  WRITE_VEC_ARRAY(value::uint4, 4, "Vec4u")
   WRITE_QUATH_ARRAY(value::quath, "Quath")
   WRITE_QUAT_ARRAY(value::quatf, "Quatf")
   WRITE_QUAT_ARRAY(value::quatd, "Quatd")
 
+  // Half-vector arrays — write raw uint16 per component
+#define WRITE_HALFVEC_ARRAY(ElemType, N, TypeName) \
+  else if (auto* arr = value.as<std::vector<ElemType>>()) { \
+    uint64_t count = arr->size(); \
+    if (!Write(count)) { if (err) *err = "Failed to write " TypeName " array count"; return -1; } \
+    for (const auto& elem : *arr) { \
+      for (size_t i = 0; i < N; ++i) { \
+        if (!Write(elem[i].value)) { if (err) *err = "Failed to write " TypeName " array element"; return -1; } \
+      } \
+    } \
+  }
+
+  WRITE_HALFVEC_ARRAY(value::half2, 2, "Half2")
+  WRITE_HALFVEC_ARRAY(value::half3, 3, "Half3")
+  WRITE_HALFVEC_ARRAY(value::half4, 4, "Half4")
+
+  // Matrix arrays — write raw doubles (sizeof(ElemType) doubles per element)
+#define WRITE_MATRIX_ARRAY(ElemType, TypeName) \
+  else if (auto* arr = value.as<std::vector<ElemType>>()) { \
+    uint64_t count = arr->size(); \
+    if (!Write(count)) { if (err) *err = "Failed to write " TypeName " array count"; return -1; } \
+    if (count > 0 && !WriteBytes(arr->data(), count * sizeof(ElemType))) { \
+      if (err) *err = "Failed to write " TypeName " array data"; \
+      return -1; \
+    } \
+  }
+
+  WRITE_MATRIX_ARRAY(value::matrix2d, "Matrix2d")
+  WRITE_MATRIX_ARRAY(value::matrix3d, "Matrix3d")
+  WRITE_MATRIX_ARRAY(value::matrix4d, "Matrix4d")
+
 #undef WRITE_VEC_ARRAY
 #undef WRITE_QUAT_ARRAY
 #undef WRITE_QUATH_ARRAY
+#undef WRITE_HALFVEC_ARRAY
+#undef WRITE_MATRIX_ARRAY
   // String array - special handling (strings are stored as indices)
   else if (auto* string_array = value.as<std::vector<std::string>>()) {
     uint64_t count = string_array->size();

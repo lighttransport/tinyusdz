@@ -1854,6 +1854,19 @@ if(TINYUSDZ_BUILD_TESTS)
       COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/usdc-roundtrip-runner.py --app
               "$<TARGET_FILE:usdc_roundtrip>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
       )
+
+    # USDC writer roundtrip: tusdcat writes USDC -> read back as USDA -> tusddiff
+    # Uses --report-only so it does not fail the suite (informational baseline).
+    # Run without --report-only for strict validation:
+    #   python3 tests/usdc-writer/usdc-writer-runner.py --tusdcat ./build/tusdcat --tusddiff ./build/tusddiff --basedir tests/usda --verbose
+    add_test(
+      NAME usdc-writer-diff-test
+      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usdc-writer/usdc-writer-runner.py
+              --tusdcat "$<TARGET_FILE:tusdcat>"
+              --tusddiff "$<TARGET_FILE:tusddiff>"
+              --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
+              --report-only
+      )
   endif()
 
   #

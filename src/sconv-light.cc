@@ -21,8 +21,41 @@ namespace experimental {
 // UsdLux Light Property Extraction
 // ============================================================================
 
-/// Helper function to extract common light properties
-// Helper to extract common light properties (implemented inline in each light type extractor)
+// Macros to reduce boilerplate for common light property extraction.
+// These use the same `light`, `fields`, `err` names from the enclosing scope.
+#define EXTRACT_SHADOW_API(light) \
+  if ((light)->shadowEnable.authored()) \
+    if (!ExtractAnimatableDefault((light)->shadowEnable.get_value(), "inputs:shadow:enable", fields, err)) return false; \
+  if ((light)->shadowColor.authored()) \
+    if (!ExtractAnimatableDefault((light)->shadowColor.get_value(), "inputs:shadow:color", fields, err)) return false; \
+  if ((light)->shadowDistance.authored()) \
+    if (!ExtractAnimatableDefault((light)->shadowDistance.get_value(), "inputs:shadow:distance", fields, err)) return false; \
+  if ((light)->shadowFalloff.authored()) \
+    if (!ExtractAnimatableDefault((light)->shadowFalloff.get_value(), "inputs:shadow:falloff", fields, err)) return false; \
+  if ((light)->shadowFalloffGamma.authored()) \
+    if (!ExtractAnimatableDefault((light)->shadowFalloffGamma.get_value(), "inputs:shadow:falloffGamma", fields, err)) return false;
+
+#define EXTRACT_SHAPING_API(light) \
+  if ((light)->shapingFocus.authored()) \
+    if (!ExtractAnimatableDefault((light)->shapingFocus.get_value(), "inputs:shaping:focus", fields, err)) return false; \
+  if ((light)->shapingFocusTint.authored()) \
+    if (!ExtractAnimatableDefault((light)->shapingFocusTint.get_value(), "inputs:shaping:focusTint", fields, err)) return false; \
+  if ((light)->shapingConeAngle.authored()) \
+    if (!ExtractAnimatableDefault((light)->shapingConeAngle.get_value(), "inputs:shaping:cone:angle", fields, err)) return false; \
+  if ((light)->shapingConeSoftness.authored()) \
+    if (!ExtractAnimatableDefault((light)->shapingConeSoftness.get_value(), "inputs:shaping:cone:softness", fields, err)) return false;
+
+#define EXTRACT_COMMON_LIGHT(light) \
+  if ((light)->specular.authored()) \
+    if (!ExtractAnimatableDefault((light)->specular.get_value(), "inputs:specular", fields, err)) return false; \
+  if ((light)->diffuse.authored()) \
+    if (!ExtractAnimatableDefault((light)->diffuse.get_value(), "inputs:diffuse", fields, err)) return false; \
+  if ((light)->normalize.authored()) \
+    if (!ExtractAnimatableDefault((light)->normalize.get_value(), "inputs:normalize", fields, err)) return false; \
+  if ((light)->enableColorTemperature.authored()) \
+    if (!ExtractAnimatableDefault((light)->enableColorTemperature.get_value(), "inputs:enableColorTemperature", fields, err)) return false; \
+  if ((light)->colorTemperature.authored()) \
+    if (!ExtractAnimatableDefault((light)->colorTemperature.get_value(), "inputs:colorTemperature", fields, err)) return false;
 
 bool CrateWriter::ExtractSphereLightProperties(
     const Prim& prim,
@@ -35,18 +68,18 @@ bool CrateWriter::ExtractSphereLightProperties(
     return false;
   }
 
-  if (light->radius.has_value()) {
-    if (!ExtractAnimatableDefault(light->radius.get_value(), "radius", fields, err)) return false;
-  }
-  if (light->intensity.has_value()) {
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "intensity", fields, err)) return false;
-  }
-  if (light->color.has_value()) {
-    if (!ExtractAnimatableDefault(light->color.get_value(), "color", fields, err)) return false;
-  }
-  if (light->exposure.has_value()) {
-    if (!ExtractAnimatableDefault(light->exposure.get_value(), "exposure", fields, err)) return false;
-  }
+  if (light->radius.authored())
+    if (!ExtractAnimatableDefault(light->radius.get_value(), "inputs:radius", fields, err)) return false;
+  if (light->intensity.authored())
+    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
+  if (light->color.authored())
+    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+  if (light->exposure.authored())
+    if (!ExtractAnimatableDefault(light->exposure.get_value(), "inputs:exposure", fields, err)) return false;
+
+  EXTRACT_COMMON_LIGHT(light)
+  EXTRACT_SHADOW_API(light)
+  EXTRACT_SHAPING_API(light)
 
   return true;
 }
@@ -62,15 +95,18 @@ bool CrateWriter::ExtractRectLightProperties(
     return false;
   }
 
-  if (light->width.has_value()) {
-    if (!ExtractAnimatableDefault(light->width.get_value(), "width", fields, err)) return false;
-  }
-  if (light->height.has_value()) {
-    if (!ExtractAnimatableDefault(light->height.get_value(), "height", fields, err)) return false;
-  }
-  if (light->intensity.has_value()) {
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "intensity", fields, err)) return false;
-  }
+  if (light->width.authored())
+    if (!ExtractAnimatableDefault(light->width.get_value(), "inputs:width", fields, err)) return false;
+  if (light->height.authored())
+    if (!ExtractAnimatableDefault(light->height.get_value(), "inputs:height", fields, err)) return false;
+  if (light->intensity.authored())
+    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
+  if (light->color.authored())
+    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+
+  EXTRACT_COMMON_LIGHT(light)
+  EXTRACT_SHADOW_API(light)
+  EXTRACT_SHAPING_API(light)
 
   return true;
 }
@@ -86,12 +122,16 @@ bool CrateWriter::ExtractDiskLightProperties(
     return false;
   }
 
-  if (light->radius.has_value()) {
-    if (!ExtractAnimatableDefault(light->radius.get_value(), "radius", fields, err)) return false;
-  }
-  if (light->intensity.has_value()) {
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "intensity", fields, err)) return false;
-  }
+  if (light->radius.authored())
+    if (!ExtractAnimatableDefault(light->radius.get_value(), "inputs:radius", fields, err)) return false;
+  if (light->intensity.authored())
+    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
+  if (light->color.authored())
+    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+
+  EXTRACT_COMMON_LIGHT(light)
+  EXTRACT_SHADOW_API(light)
+  EXTRACT_SHAPING_API(light)
 
   return true;
 }
@@ -107,15 +147,18 @@ bool CrateWriter::ExtractCylinderLightProperties(
     return false;
   }
 
-  if (light->radius.has_value()) {
-    if (!ExtractAnimatableDefault(light->radius.get_value(), "radius", fields, err)) return false;
-  }
-  if (light->length.has_value()) {
-    if (!ExtractAnimatableDefault(light->length.get_value(), "length", fields, err)) return false;
-  }
-  if (light->intensity.has_value()) {
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "intensity", fields, err)) return false;
-  }
+  if (light->radius.authored())
+    if (!ExtractAnimatableDefault(light->radius.get_value(), "inputs:radius", fields, err)) return false;
+  if (light->length.authored())
+    if (!ExtractAnimatableDefault(light->length.get_value(), "inputs:length", fields, err)) return false;
+  if (light->intensity.authored())
+    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
+  if (light->color.authored())
+    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+
+  EXTRACT_COMMON_LIGHT(light)
+  EXTRACT_SHADOW_API(light)
+  EXTRACT_SHAPING_API(light)
 
   return true;
 }
@@ -131,12 +174,15 @@ bool CrateWriter::ExtractDistantLightProperties(
     return false;
   }
 
-  if (light->angle.has_value()) {
-    if (!ExtractAnimatableDefault(light->angle.get_value(), "angle", fields, err)) return false;
-  }
-  if (light->intensity.has_value()) {
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "intensity", fields, err)) return false;
-  }
+  if (light->angle.authored())
+    if (!ExtractAnimatableDefault(light->angle.get_value(), "inputs:angle", fields, err)) return false;
+  if (light->intensity.authored())
+    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
+  if (light->color.authored())
+    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+
+  EXTRACT_COMMON_LIGHT(light)
+  EXTRACT_SHADOW_API(light)
 
   return true;
 }
@@ -153,7 +199,7 @@ bool CrateWriter::ExtractDomeLightProperties(
   }
 
   // Extract texture file path if present (special case: optional<Animatable>)
-  if (light->file.has_value()) {
+  if (light->file.authored()) {
     const auto& file_opt = light->file.get_value();
     if (file_opt) {
       const Animatable<value::AssetPath>& file_anim = *file_opt;
@@ -161,18 +207,20 @@ bool CrateWriter::ExtractDomeLightProperties(
         value::AssetPath file_val;
         if (file_anim.get_default(&file_val)) {
           crate::CrateValue crate_val;
-          value::Value val(file_val.GetAssetPath());
-          if (ConvertValue(val, crate_val, err)) {
-            fields.push_back({"file", crate_val});
-          }
+          crate_val.Set(file_val);
+          fields.push_back({"inputs:texture:file", crate_val});
         }
       }
     }
   }
 
-  if (light->intensity.has_value()) {
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "intensity", fields, err)) return false;
-  }
+  if (light->intensity.authored())
+    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
+  if (light->color.authored())
+    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+
+  EXTRACT_COMMON_LIGHT(light)
+  EXTRACT_SHADOW_API(light)
 
   return true;
 }
@@ -188,15 +236,15 @@ bool CrateWriter::ExtractGeometryLightProperties(
     return false;
   }
 
-  if (light->intensity.has_value()) {
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "intensity", fields, err)) return false;
-  }
-  if (light->color.has_value()) {
-    if (!ExtractAnimatableDefault(light->color.get_value(), "color", fields, err)) return false;
-  }
-  if (light->exposure.has_value()) {
-    if (!ExtractAnimatableDefault(light->exposure.get_value(), "exposure", fields, err)) return false;
-  }
+  if (light->intensity.authored())
+    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
+  if (light->color.authored())
+    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+  if (light->exposure.authored())
+    if (!ExtractAnimatableDefault(light->exposure.get_value(), "inputs:exposure", fields, err)) return false;
+
+  EXTRACT_COMMON_LIGHT(light)
+  EXTRACT_SHADOW_API(light)
 
   return true;
 }
@@ -212,15 +260,15 @@ bool CrateWriter::ExtractPortalLightProperties(
     return false;
   }
 
-  if (light->intensity.has_value()) {
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "intensity", fields, err)) return false;
-  }
-  if (light->color.has_value()) {
-    if (!ExtractAnimatableDefault(light->color.get_value(), "color", fields, err)) return false;
-  }
-  if (light->exposure.has_value()) {
-    if (!ExtractAnimatableDefault(light->exposure.get_value(), "exposure", fields, err)) return false;
-  }
+  if (light->intensity.authored())
+    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
+  if (light->color.authored())
+    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+  if (light->exposure.authored())
+    if (!ExtractAnimatableDefault(light->exposure.get_value(), "inputs:exposure", fields, err)) return false;
+
+  EXTRACT_COMMON_LIGHT(light)
+  EXTRACT_SHADOW_API(light)
 
   return true;
 }
