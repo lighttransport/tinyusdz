@@ -495,6 +495,17 @@ TEST_LIST = {
   { "usdc_writer_light_shadow_shaping_test", usdc_writer_light_shadow_shaping_test },
   { "usdc_writer_apischemas_test", usdc_writer_apischemas_test },
   { "usdc_writer_materialx_config_test", usdc_writer_materialx_config_test },
+  // Path utility and tree encoding tests
+  { "path_lessthan_basic_test", path_lessthan_basic_test },
+  { "path_lessthan_variant_test", path_lessthan_variant_test },
+  { "path_has_prefix_basic_test", path_has_prefix_basic_test },
+  { "path_has_prefix_variant_test", path_has_prefix_variant_test },
+  { "path_get_parent_basic_test", path_get_parent_basic_test },
+  { "path_get_parent_variant_test", path_get_parent_variant_test },
+  { "path_tree_flat_siblings_test", path_tree_flat_siblings_test },
+  { "path_tree_deep_hierarchy_test", path_tree_deep_hierarchy_test },
+  { "path_tree_mixed_props_test", path_tree_mixed_props_test },
+  { "path_tree_variant_basic_test", path_tree_variant_basic_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif

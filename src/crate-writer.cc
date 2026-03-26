@@ -1011,20 +1011,27 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   for (auto& idx : encoded_path_indices) idx = crate::PathIndex().value;
 
   // Recursive tree builder (matches OpenUSD's algorithm)
-  std::function<bool(uint32_t&, uint32_t, uint32_t, uint32_t&)>
-  buildImpl = [&](uint32_t& currentIdx, uint32_t startIdx, uint32_t endIdx,
-                  uint32_t& nextIdxOut) -> bool {
-    if (currentIdx >= num_encoded_paths) return false;
-    if (startIdx > endIdx) return false;
+  // Build path tree recursively with depth guard.
+  // Matches OpenUSD's _BuildCompressedPathDataRecursive algorithm.
+  auto getNextSubtree = [&](uint32_t sidx, uint32_t eidx) -> uint32_t {
+    if (sidx >= eidx) return eidx;
+    for (uint32_t i = sidx; i < eidx; i++) {
+      if (!sorted_paths[i].first.has_prefix(sorted_paths[sidx].first))
+        return i;
+    }
+    return eidx;
+  };
 
-    auto getNextSubtree = [&](uint32_t sidx, uint32_t eidx) -> uint32_t {
-      if (sidx >= eidx) return eidx;
-      for (uint32_t i = sidx; i < eidx; i++) {
-        if (!sorted_paths[i].first.has_prefix(sorted_paths[sidx].first))
-          return i;
-      }
-      return eidx;
-    };
+  constexpr uint32_t kMaxPathTreeDepth = 512;
+
+  std::function<bool(uint32_t&, uint32_t, uint32_t, uint32_t, uint32_t&)>
+  buildPathTree = [&](uint32_t& currentIdx, uint32_t startIdx, uint32_t endIdx,
+                      uint32_t depth, uint32_t& nextIdxOut) -> bool {
+    if (depth > kMaxPathTreeDepth) {
+      if (err) *err = "Path tree too deep (>" + std::to_string(kMaxPathTreeDepth) + " levels)";
+      return false;
+    }
+    if (currentIdx >= num_encoded_paths || startIdx > endIdx) return false;
 
     for (uint32_t pIdx = startIdx, nextIdx = pIdx; pIdx < endIdx; pIdx = nextIdx) {
       uint32_t nextSubtreeIdx = getNextSubtree(pIdx, endIdx);
@@ -1053,7 +1060,7 @@ bool CrateWriter::WritePathsSection(std::string* err) {
       const auto& p = sorted_paths[pIdx];
       bool is_prop = p.first.is_prim_property_path();
       std::string elem = is_prop ? p.first.prop_part() : p.first.element_name();
-      if (elem == "/") elem.clear();  // Root uses empty token
+      if (elem == "/") elem.clear();
 
       uint32_t thisIdx = currentIdx++;
       encoded_path_indices[thisIdx] = p.second.value;
@@ -1063,13 +1070,9 @@ bool CrateWriter::WritePathsSection(std::string* err) {
         element_token_indices[thisIdx] = -element_token_indices[thisIdx];
       }
 
-      DCOUT("TREE: thisIdx=" << thisIdx << " pIdx=" << pIdx
-            << " path=" << p.first.full_path_name()
-            << " child=" << has_child << " sib=" << has_sibling);
-
       if (has_child) {
         uint32_t childNextOut = 0;
-        if (!buildImpl(currentIdx, nextIdx, endIdx, childNextOut))
+        if (!buildPathTree(currentIdx, nextIdx, endIdx, depth + 1, childNextOut))
           return false;
         nextIdx = childNextOut;
       }
@@ -1097,7 +1100,7 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   {
     uint32_t currentIdx = 0;
     uint32_t nextIdx = 0;
-    if (!buildImpl(currentIdx, 0, static_cast<uint32_t>(num_encoded_paths), nextIdx)) {
+    if (!buildPathTree(currentIdx, 0, static_cast<uint32_t>(num_encoded_paths), 0, nextIdx)) {
       if (err) *err = "Failed to build path indices from sorted paths";
       return false;
     }
