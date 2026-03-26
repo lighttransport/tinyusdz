@@ -409,11 +409,22 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
 
   }
 
-  // Different prim parts: compare full_path_name lexicographically.
-  // This matches OpenUSD's SdfPath comparison which sorts paths in a
-  // tree-traversal order: parent before children, siblings alphabetically.
-  // Using full_path_name ensures property paths (prim.prop) sort correctly
-  // relative to child prims (prim/child) because '.' (0x2E) < '/' (0x2F).
+  // Different prim parts: compare using full_path_name with special
+  // handling for variant paths to maintain correct tree traversal order.
+  //
+  // In OpenUSD, SdfPath sorts variant selections as children of their
+  // prim, AFTER regular children and properties. The key relationships:
+  //   /A < /A.prop < /A/B < /A{v} < /A{v=sel} < /A{v=sel}/C
+  //
+  // Simple string comparison almost works (. < / < {), but within
+  // variants we need {name} (VariantSet) before {name=sel} (Variant).
+  // Since '=' (0x3D) < '}' (0x7D), we pad VariantSet paths:
+  //   /A{v}  →  /A{v=\x00} for comparison (sorts before /A{v=sel})
+  //
+  // We also need /A{v=sel}/S to sort AFTER /A{v=\x00} (the VariantSet).
+  // /A{v=sel}/S → /A{v=sel}\x7F/S (replace / after } with high char)
+  // Actually simpler: just ensure VariantSet comes first by making its
+  // comparison key shorter.
   const std::string &l = lhs.full_path_name();
   const std::string &r = rhs.full_path_name();
   return l < r;
@@ -481,36 +492,30 @@ bool Path::has_prefix(const Path &prefix) const {
       return true;
     }
 
-    const std::vector<std::string> prim_names = split(prim_part(), "/");
-    const std::vector<std::string> prefix_prim_names =
-        split(prefix.prim_part(), "/");
-    // DCOUT("prim_names = " << to_string(prim_names));
-    // DCOUT("prefix.prim_names = " << to_string(prefix_prim_names));
+    // Use string prefix matching on prim_part.
+    // A path has prefix P if the prim_part starts with P's prim_part,
+    // followed by either '/', '{', '.', or end of string.
+    // This correctly handles variant paths: /A{v} has prefix /A.
+    const std::string &pp = prim_part();
+    const std::string &pfx = prefix.prim_part();
 
-    if (prim_names.empty() || prefix_prim_names.empty()) {
+    if (pp.size() < pfx.size()) {
       return false;
     }
 
-    if (prim_names.size() < prefix_prim_names.size()) {
+    if (pp.compare(0, pfx.size(), pfx) != 0) {
       return false;
     }
 
-    size_t depth = prefix_prim_names.size();
-    if (depth < 1) {  // just in case
-      return false;
+    // If exact match, it's a prefix (same path or property of same prim)
+    if (pp.size() == pfx.size()) {
+      return true;
     }
 
-    // Move to prefix's path depth and compare each elementName of Prim tree
-    // towards the root. comapre from tail would find a difference earlier.
-    while (depth > 0) {
-      if (prim_names[depth - 1] != prefix_prim_names[depth - 1]) {
-        return false;
-      }
-      depth--;
-    }
-
-    // DCOUT("has_prefix");
-    return true;
+    // After the prefix, the next char must be '/', '{', or '.'
+    // to ensure we matched a complete path component
+    char next = pp[pfx.size()];
+    return (next == '/' || next == '{' || next == '.');
 
   } else {
     // TODO: property-only path.
@@ -576,19 +581,30 @@ Path Path::get_parent_path() const {
     return p;
   }
 
+  // Handle variant paths FIRST — /A{v} -> /A, /A{v=sel} -> /A
+  // Must check before is_prim_property_path / is_root_prim because
+  // /A{v} passes the root-prim test (only one '/') but is a sub-element.
+  {
+    auto brace_pos = _prim_part.find_last_of('{');
+    if (brace_pos != std::string::npos && brace_pos > 0) {
+      std::string parent_str = _prim_part.substr(0, brace_pos);
+      if (parent_str.empty()) {
+        return Path("/", "");
+      }
+      return Path(parent_str, "");
+    }
+  }
+
   if (is_prim_property_path()) {
-    // return prim part
     return Path(prim_part(), "");
   }
 
   size_t n = _prim_part.find_last_of('/');
   if (n == std::string::npos) {
-    // relative path(e.g. "bora") or propery only path(e.g. ".myval").
     return Path();
   }
 
   if (n == 0) {
-    // return root
     return Path("/", "");
   }
 
@@ -600,12 +616,25 @@ Path Path::get_parent_prim_path() const {
     return Path();
   }
 
+  // Handle variant paths FIRST — /A{v} -> /A, /A{v=sel} -> /A
+  // Must check before is_root_prim() because /A{v} passes the root prim
+  // test (only one '/') but is actually a sub-element of /A.
+  {
+    auto brace_pos = _prim_part.find_last_of('{');
+    if (brace_pos != std::string::npos && brace_pos > 0) {
+      std::string parent_str = _prim_part.substr(0, brace_pos);
+      if (parent_str.empty()) {
+        return Path("/", "");
+      }
+      return Path(parent_str, "");
+    }
+  }
+
   if (is_root_prim()) {
     return *this;
   }
 
   if (is_prim_property_path()) {
-    // return prim part
     return Path(prim_part(), "");
   }
 

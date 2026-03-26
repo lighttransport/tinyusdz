@@ -80,14 +80,20 @@ bool USDCReader::Impl::AttachVariantPrimChildrenToOwner(int32_t owner_node_id,
     Prim &vp = vp_it->second;
     DCOUT(fmt::format("  variantPrim name {}", vp.element_name()));
 
-    // element_name must be variant: "{variant=value}"
-    if (!is_variantElementName(vp.element_name())) {
+    // element_name contains the full path (e.g., "/A{v=sel}").
+    // Extract just the variant element "{v=sel}" for validation.
+    std::string ve = vp.element_name();
+    {
+      auto bp = ve.find('{');
+      if (bp != std::string::npos) ve = ve.substr(bp);
+    }
+    if (!is_variantElementName(ve)) {
       PUSH_ERROR_AND_RETURN(
-          "Corrupted Crate. Variant Prim has invalid element_name.");
+          "Corrupted Crate. Variant Prim has invalid element_name: " + vp.element_name());
     }
 
     std::array<std::string, 2> toks;
-    if (!tokenize_variantElement(vp.element_name(), &toks)) {
+    if (!tokenize_variantElement(ve, &toks)) {
       PUSH_ERROR_AND_RETURN("Invalid variant element_name.");
     }
 
@@ -986,8 +992,19 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         Prim *variantOwnerPrim =
             resolveVariantOwnerPrimFromStack(entry, /* include_current */ true);
         if (!variantOwnerPrim) {
+          // Debug: dump stack state
+          std::string dbg = "Stack trace for variant owner resolution:\n";
+          dbg += "  current_id=" + std::to_string(entry.current_id);
+          dbg += " parent_id=" + std::to_string(entry.parent_id);
+          dbg += " parent_entry_idx=" + std::to_string(entry.parent_entry_idx) + "\n";
+          for (size_t si = 0; si < stack.size(); si++) {
+            dbg += "  stack[" + std::to_string(si) + "] id=" + std::to_string(stack[si].current_id)
+                 + " parent=" + std::to_string(stack[si].parent_id)
+                 + " hasPrim=" + std::to_string(stack[si].prim != nullptr)
+                 + " isVariant=" + std::to_string(_variantPrims.count(stack[si].current_id) > 0) + "\n";
+          }
           PUSH_ERROR_AND_RETURN(
-              "Internal error: failed to resolve variant owner Prim.");
+              "Internal error: failed to resolve variant owner Prim. " + dbg);
         }
 
         if (!AttachVariantPrimChildrenToOwner(entry.current_id, variantOwnerPrim)) {

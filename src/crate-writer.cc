@@ -1063,6 +1063,10 @@ bool CrateWriter::WritePathsSection(std::string* err) {
         element_token_indices[thisIdx] = -element_token_indices[thisIdx];
       }
 
+      DCOUT("TREE: thisIdx=" << thisIdx << " pIdx=" << pIdx
+            << " path=" << p.first.full_path_name()
+            << " child=" << has_child << " sib=" << has_sibling);
+
       if (has_child) {
         uint32_t childNextOut = 0;
         if (!buildImpl(currentIdx, nextIdx, endIdx, childNextOut))
