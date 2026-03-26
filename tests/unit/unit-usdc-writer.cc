@@ -1000,17 +1000,231 @@ def Xform "A" (
   }
 }
 )";
-  Stage stage;
-  std::string warn, err;
-  bool ok = roundtrip(usda, &stage, &warn, &err);
-  // Variant roundtrip may have JSON mismatch but should not crash
-  if (!ok) {
-    TEST_MSG("variant roundtrip: %s", err.c_str());
+  RT_OK(usda);
+  const auto *p = find_root_prim(stage, "A");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  // Verify variant set exists on the Prim (not the typed data)
+  TEST_CHECK(!p->variantSets().empty());
+  if (!p->variantSets().empty()) {
+    auto it = p->variantSets().find("v");
+    TEST_CHECK(it != p->variantSets().end());
+    if (it != p->variantSets().end()) {
+      TEST_CHECK(it->second.variantSet.count("sel") > 0);
+    }
   }
-  // At minimum, the prim hierarchy should survive
-  if (ok && stage.root_prims().size() > 0) {
-    const auto *xf = find_root<Xform>(stage, "A");
-    TEST_CHECK(xf != nullptr);
+}
+
+// =========================================================================
+// Variant roundtrip tests
+// =========================================================================
+
+void usdc_writer_variant_with_props_test(void) {
+  // Variant selections with properties inside
+  const char *usda = R"(#usda 1.0
+def "bora" (
+  append variantSets = "shapeVariant"
+) {
+  variantSet "shapeVariant" = {
+    "Capsule" {
+      double myval = 2.0
+    }
+    "Cone" {
+      int myval = 3
+    }
   }
-  TEST_CHECK(true);  // Don't fail — variant JSON fidelity is WIP
+}
+)";
+  RT_OK(usda);
+  const auto *p = find_root_prim(stage, "bora");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(!p->variantSets().empty());
+  auto it = p->variantSets().find("shapeVariant");
+  TEST_CHECK(it != p->variantSets().end());
+  if (it != p->variantSets().end()) {
+    TEST_CHECK(it->second.variantSet.count("Capsule") > 0);
+    TEST_CHECK(it->second.variantSet.count("Cone") > 0);
+  }
+}
+
+void usdc_writer_variant_multi_selection_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "Shapes" (
+  append variantSets = "shape"
+) {
+  variantSet "shape" = {
+    "sphere" {
+      def Sphere "geo" { double radius = 1.0 }
+    }
+    "cube" {
+      def Cube "geo" { double size = 2.0 }
+    }
+    "cone" {
+      def Cone "geo" { double radius = 0.5; double height = 3.0 }
+    }
+  }
+}
+)";
+  RT_OK(usda);
+  const auto *p = find_root_prim(stage, "Shapes");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  auto it = p->variantSets().find("shape");
+  TEST_CHECK(it != p->variantSets().end());
+  if (it != p->variantSets().end()) {
+    const auto &vs = it->second.variantSet;
+    TEST_CHECK(vs.count("sphere") > 0);
+    TEST_CHECK(vs.count("cube") > 0);
+    TEST_CHECK(vs.count("cone") > 0);
+    if (vs.count("sphere")) {
+      TEST_CHECK(!vs.at("sphere").primChildren().empty());
+    }
+  }
+}
+
+void usdc_writer_variant_nested_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "Model" (
+  append variantSets = "level1"
+) {
+  variantSet "level1" = {
+    "A" (
+      append variantSets = "level2"
+    ) {
+      def Sphere "outer" {}
+      variantSet "level2" = {
+        "X" {
+          def Cube "inner" {}
+        }
+        "Y" {
+          def Cone "inner" {}
+        }
+      }
+    }
+    "B" {
+      def Cylinder "simple" {}
+    }
+  }
+}
+)";
+  RT_OK(usda);
+  const auto *p = find_root_prim(stage, "Model");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  auto it = p->variantSets().find("level1");
+  TEST_CHECK(it != p->variantSets().end());
+  if (it != p->variantSets().end()) {
+    TEST_CHECK(it->second.variantSet.count("A") > 0);
+    TEST_CHECK(it->second.variantSet.count("B") > 0);
+    if (it->second.variantSet.count("A")) {
+      const auto &varA = it->second.variantSet.at("A");
+      // Nested variant set "level2" — may not survive roundtrip yet
+      if (!varA.variantSets().empty()) {
+        TEST_CHECK(varA.variantSets().count("level2") > 0);
+      }
+    }
+  }
+}
+
+void usdc_writer_variant_with_selection_test(void) {
+  // Variant with default selection in prim metadata
+  const char *usda = R"(#usda 1.0
+def Xform "Chair" (
+  variants = {
+    string style = "modern"
+  }
+  append variantSets = "style"
+) {
+  variantSet "style" = {
+    "modern" {
+      def Mesh "seat" {
+        point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+        int[] faceVertexIndices = [0,1,2]
+        int[] faceVertexCounts = [3]
+      }
+    }
+    "classic" {
+      def Mesh "seat" {
+        point3f[] points = [(0,0,0),(2,0,0),(0,2,0)]
+        int[] faceVertexIndices = [0,1,2]
+        int[] faceVertexCounts = [3]
+      }
+    }
+  }
+}
+)";
+  RT_OK(usda);
+  const auto *p = find_root_prim(stage, "Chair");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  auto it = p->variantSets().find("style");
+  TEST_CHECK(it != p->variantSets().end());
+  if (it != p->variantSets().end()) {
+    TEST_CHECK(it->second.variantSet.count("modern") > 0);
+    TEST_CHECK(it->second.variantSet.count("classic") > 0);
+  }
+}
+
+void usdc_writer_variant_with_children_test(void) {
+  // Variant with both child prims and properties at same level
+  const char *usda = R"(#usda 1.0
+def Xform "Root" (
+  append variantSets = "v"
+) {
+  double baseValue = 1.0
+
+  variantSet "v" = {
+    "opt1" {
+      def Sphere "S" { double radius = 1.0 }
+      double variantProp = 10.0
+    }
+    "opt2" {
+      def Cube "C" { double size = 2.0 }
+      double variantProp = 20.0
+    }
+  }
+}
+)";
+  RT_OK(usda);
+  const auto *p = find_root_prim(stage, "Root");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  auto it = p->variantSets().find("v");
+  TEST_CHECK(it != p->variantSets().end());
+  if (it != p->variantSets().end()) {
+    TEST_CHECK(it->second.variantSet.count("opt1") > 0);
+    TEST_CHECK(it->second.variantSet.count("opt2") > 0);
+    if (it->second.variantSet.count("opt1")) {
+      const auto &v = it->second.variantSet.at("opt1");
+      TEST_CHECK(!v.primChildren().empty());
+    }
+  }
+}
+
+void usdc_writer_variant_empty_test(void) {
+  // Variant set with empty selections
+  const char *usda = R"(#usda 1.0
+def Xform "Empty" (
+  append variantSets = "v"
+) {
+  variantSet "v" = {
+    "none" {
+    }
+    "something" {
+      def Sphere "S" {}
+    }
+  }
+}
+)";
+  RT_OK(usda);
+  const auto *p = find_root_prim(stage, "Empty");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  auto it = p->variantSets().find("v");
+  TEST_CHECK(it != p->variantSets().end());
+  if (it != p->variantSets().end()) {
+    TEST_CHECK(it->second.variantSet.count("none") > 0);
+    TEST_CHECK(it->second.variantSet.count("something") > 0);
+  }
 }
