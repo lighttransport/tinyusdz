@@ -1102,7 +1102,14 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   // Verify all indices were filled
   for (size_t i = 0; i < encoded_path_indices.size(); i++) {
     if (encoded_path_indices[i] == crate::PathIndex().value) {
-      if (err) *err = "Internal error: path index " + std::to_string(i) + " not filled";
+      // Dump sorted paths for debugging
+      std::string dbg = "path index " + std::to_string(i) + " not filled. Sorted paths:\n";
+      for (size_t j = 0; j < sorted_paths.size(); j++) {
+        dbg += "  [" + std::to_string(j) + "] " + sorted_paths[j].first.full_path_name()
+             + " idx=" + std::to_string(sorted_paths[j].second.value)
+             + (j == i ? " <-- UNFILLED" : "") + "\n";
+      }
+      if (err) *err = "Internal error: " + dbg;
       return false;
     }
   }

@@ -407,51 +407,16 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
         lhs_prop_part.begin(), lhs_prop_part.end(), rhs_prop_part.begin(),
         rhs_prop_part.end());
 
-  } else {
-    const std::vector<std::string> lhs_prim_names = split(lhs.prim_part(), "/");
-    const std::vector<std::string> rhs_prim_names = split(rhs.prim_part(), "/");
-    // DCOUT("lhs_names = " << to_string(lhs_prim_names));
-    // DCOUT("rhs_names = " << to_string(rhs_prim_names));
-
-    if (lhs_prim_names.empty() || rhs_prim_names.empty()) {
-      return lhs_prim_names.empty() && rhs_prim_names.size();
-    }
-
-    // common shortest depth.
-    size_t didx = (std::min)(lhs_prim_names.size(), rhs_prim_names.size());
-
-    bool same_until_common_depth = true;
-    for (size_t i = 0; i < didx; i++) {
-      if (lhs_prim_names[i] != rhs_prim_names[i]) {
-        same_until_common_depth = false;
-        break;
-      }
-    }
-
-    if (same_until_common_depth) {
-      // tail differs. compare by depth count.
-      return lhs_prim_names.size() < rhs_prim_names.size();
-    }
-
-    // Walk until common ancestor is found
-    size_t child_idx = didx - 1;
-    // DCOUT("common_depth_idx = " << didx << ", lcount = " <<
-    // lhs_prim_names.size() << ", rcount = " << rhs_prim_names.size());
-    if (didx > 1) {
-      for (size_t parent_idx = didx - 2; parent_idx > 0; parent_idx--) {
-        // DCOUT("parent_idx = " << parent_idx);
-        if (lhs_prim_names[parent_idx] != rhs_prim_names[parent_idx]) {
-          child_idx--;
-        }
-      }
-    }
-    // DCOUT("child_idx = " << child_idx);
-
-    // compare child node
-    return ::tinyusdz::lexicographical_compare(
-        lhs_prim_names[child_idx].begin(), lhs_prim_names[child_idx].end(),
-        rhs_prim_names[child_idx].begin(), rhs_prim_names[child_idx].end());
   }
+
+  // Different prim parts: compare full_path_name lexicographically.
+  // This matches OpenUSD's SdfPath comparison which sorts paths in a
+  // tree-traversal order: parent before children, siblings alphabetically.
+  // Using full_path_name ensures property paths (prim.prop) sort correctly
+  // relative to child prims (prim/child) because '.' (0x2E) < '/' (0x2F).
+  const std::string &l = lhs.full_path_name();
+  const std::string &r = rhs.full_path_name();
+  return l < r;
 }
 
 std::pair<Path, Path> Path::split_at_root() const {
