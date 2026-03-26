@@ -46,3 +46,17 @@ void usdc_writer_apischemas_test(void);
 
 // MaterialX
 void usdc_writer_materialx_config_test(void);
+
+// Path utilities
+void path_lessthan_basic_test(void);
+void path_lessthan_variant_test(void);
+void path_has_prefix_basic_test(void);
+void path_has_prefix_variant_test(void);
+void path_get_parent_basic_test(void);
+void path_get_parent_variant_test(void);
+
+// Path tree roundtrip (USDC)
+void path_tree_flat_siblings_test(void);
+void path_tree_deep_hierarchy_test(void);
+void path_tree_mixed_props_test(void);
+void path_tree_variant_basic_test(void);
