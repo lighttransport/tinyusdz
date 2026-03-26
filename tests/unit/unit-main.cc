@@ -506,6 +506,13 @@ TEST_LIST = {
   { "path_tree_deep_hierarchy_test", path_tree_deep_hierarchy_test },
   { "path_tree_mixed_props_test", path_tree_mixed_props_test },
   { "path_tree_variant_basic_test", path_tree_variant_basic_test },
+  // Variant roundtrip tests
+  { "usdc_writer_variant_with_props_test", usdc_writer_variant_with_props_test },
+  { "usdc_writer_variant_multi_selection_test", usdc_writer_variant_multi_selection_test },
+  { "usdc_writer_variant_nested_test", usdc_writer_variant_nested_test },
+  { "usdc_writer_variant_with_selection_test", usdc_writer_variant_with_selection_test },
+  { "usdc_writer_variant_with_children_test", usdc_writer_variant_with_children_test },
+  { "usdc_writer_variant_empty_test", usdc_writer_variant_empty_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif

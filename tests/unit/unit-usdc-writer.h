@@ -60,3 +60,11 @@ void path_tree_flat_siblings_test(void);
 void path_tree_deep_hierarchy_test(void);
 void path_tree_mixed_props_test(void);
 void path_tree_variant_basic_test(void);
+
+// Variant roundtrip tests
+void usdc_writer_variant_with_props_test(void);
+void usdc_writer_variant_multi_selection_test(void);
+void usdc_writer_variant_nested_test(void);
+void usdc_writer_variant_with_selection_test(void);
+void usdc_writer_variant_with_children_test(void);
+void usdc_writer_variant_empty_test(void);
