@@ -581,22 +581,25 @@ Path Path::get_parent_path() const {
     return p;
   }
 
-  // Handle variant paths FIRST — /A{v} -> /A, /A{v=sel} -> /A
-  // Must check before is_prim_property_path / is_root_prim because
-  // /A{v} passes the root-prim test (only one '/') but is a sub-element.
+  if (is_prim_property_path()) {
+    return Path(prim_part(), "");
+  }
+
+  // Handle variant paths where the LAST element is a variant: /A{v} -> /A
+  // Only applies when there's no '/' after the last '{'.
+  // For /A{v=sel}/C, the normal '/' splitting handles it → parent is /A{v=sel}.
   {
     auto brace_pos = _prim_part.find_last_of('{');
-    if (brace_pos != std::string::npos && brace_pos > 0) {
+    auto last_slash = _prim_part.find_last_of('/');
+    if (brace_pos != std::string::npos && brace_pos > 0 &&
+        (last_slash == std::string::npos || last_slash < brace_pos)) {
+      // The variant element is the last component (no '/' after it)
       std::string parent_str = _prim_part.substr(0, brace_pos);
       if (parent_str.empty()) {
         return Path("/", "");
       }
       return Path(parent_str, "");
     }
-  }
-
-  if (is_prim_property_path()) {
-    return Path(prim_part(), "");
   }
 
   size_t n = _prim_part.find_last_of('/');
