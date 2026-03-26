@@ -38,8 +38,30 @@ bool CrateWriter::ExtractMaterialProperties(
   // by AddMaterialOutputSpecs() which is called AFTER the Material prim spec is added
   // This ensures correct ordering in the spec list
 
-  // Material prims typically don't have additional properties besides their outputs
-  // Any generic properties would be added here
+  // MaterialXConfigAPI properties
+  if (material->materialXConfig) {
+    const auto &cfg = *material->materialXConfig;
+    if (cfg.mtlx_version.authored()) {
+      crate::CrateValue cv;
+      cv.Set(cfg.mtlx_version.get_value());
+      fields.push_back({"config:mtlx:version", cv});
+    }
+    if (cfg.mtlx_namespace.authored()) {
+      crate::CrateValue cv;
+      cv.Set(cfg.mtlx_namespace.get_value());
+      fields.push_back({"config:mtlx:namespace", cv});
+    }
+    if (cfg.mtlx_colorspace.authored()) {
+      crate::CrateValue cv;
+      cv.Set(cfg.mtlx_colorspace.get_value());
+      fields.push_back({"config:mtlx:colorspace", cv});
+    }
+    if (cfg.mtlx_sourceUri.authored()) {
+      crate::CrateValue cv;
+      cv.Set(cfg.mtlx_sourceUri.get_value());
+      fields.push_back({"config:mtlx:sourceUri", cv});
+    }
+  }
 
   return true;
 }

@@ -53,6 +53,7 @@
 #include "unit-security.h"
 // Phase 7: USDZ writer
 #include "unit-usdz-writer.h"
+#include "unit-usdc-writer.h"
 #include "unit-usd-validation.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
@@ -465,6 +466,35 @@ TEST_LIST = {
   { "column_wrap_int_array_test", column_wrap_int_array_test },
   { "column_wrap_deep_indent_test", column_wrap_deep_indent_test },
   { "column_wrap_string_no_wrap_test", column_wrap_string_no_wrap_test },
+  // USDC writer — usdGeom and usdSkel roundtrip
+  { "usdc_writer_mesh_basic_test", usdc_writer_mesh_basic_test },
+  { "usdc_writer_mesh_subdiv_test", usdc_writer_mesh_subdiv_test },
+  { "usdc_writer_mesh_velocities_test", usdc_writer_mesh_velocities_test },
+  { "usdc_writer_points_test", usdc_writer_points_test },
+  { "usdc_writer_basiscurves_test", usdc_writer_basiscurves_test },
+  { "usdc_writer_geomsubset_test", usdc_writer_geomsubset_test },
+  { "usdc_writer_camera_test", usdc_writer_camera_test },
+  { "usdc_writer_primitives_test", usdc_writer_primitives_test },
+  { "usdc_writer_skeleton_test", usdc_writer_skeleton_test },
+  { "usdc_writer_skelanimation_test", usdc_writer_skelanimation_test },
+  { "usdc_writer_blendshape_test", usdc_writer_blendshape_test },
+  { "usdc_writer_skelroot_test", usdc_writer_skelroot_test },
+  { "usdc_writer_shader_terminal_test", usdc_writer_shader_terminal_test },
+  { "usdc_writer_material_outputs_test", usdc_writer_material_outputs_test },
+  { "usdc_writer_uvtexture_test", usdc_writer_uvtexture_test },
+  { "usdc_writer_primvarreader_test", usdc_writer_primvarreader_test },
+  { "usdc_writer_transform2d_test", usdc_writer_transform2d_test },
+  { "usdc_writer_previewsurface_full_test", usdc_writer_previewsurface_full_test },
+  { "usdc_writer_nurbscurves_test", usdc_writer_nurbscurves_test },
+  { "usdc_writer_pointinstancer_test", usdc_writer_pointinstancer_test },
+  { "usdc_writer_pointinstancer_prototypes_test", usdc_writer_pointinstancer_prototypes_test },
+  { "usdc_writer_instanceable_test", usdc_writer_instanceable_test },
+  { "usdc_writer_sphere_light_test", usdc_writer_sphere_light_test },
+  { "usdc_writer_distant_light_test", usdc_writer_distant_light_test },
+  { "usdc_writer_dome_light_test", usdc_writer_dome_light_test },
+  { "usdc_writer_light_shadow_shaping_test", usdc_writer_light_shadow_shaping_test },
+  { "usdc_writer_apischemas_test", usdc_writer_apischemas_test },
+  { "usdc_writer_materialx_config_test", usdc_writer_materialx_config_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif

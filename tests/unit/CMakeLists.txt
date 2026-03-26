@@ -52,6 +52,7 @@ set(TEST_SOURCES
 	unit-security.cc
 	# Phase 7: USDZ writer
 	unit-usdz-writer.cc
+	unit-usdc-writer.cc
 	unit-usd-validation.cc
     )
 

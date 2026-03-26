@@ -51,7 +51,8 @@ Top-level CMake registers these tests when the corresponding targets are built:
 | `feat-variant-converter` | Feature test | `build/feat-variant-converter` |
 | `feat-variant-applier` | Feature test | `build/feat-variant-applier` |
 | `feat-mtlx-grouped-params` | Feature test | `build/feat-mtlx-grouped-params` |
-| `bench-parse-opt` | Benchmark target | `build/bench-parse-opt` |
+| `bench-parse-opt` | Benchmark target | `build/bench-parse-opt --quick` |
+| `usdc-writer-diff-test` | USDC writer roundtrip diff (informational) | `python3 tests/usdc-writer/usdc-writer-runner.py` |
 | `unit-test-tinyusdz` | Acutest unit suite | `build/unit-test-tinyusdz` |
 
 Only `bench-parse-opt` has a `ctest` label today:
@@ -85,6 +86,11 @@ ctest -R roundtrip --output-on-failure
 ctest --output-on-failure -LE benchmark
 ```
 
+`bench-parse-opt` is intentionally split into two profiles:
+
+- `ctest` runs `bench-parse-opt --quick` to keep suite wall time short.
+- Manual benchmark runs can still use the default full profile via `./build/bench-parse-opt`.
+
 ## Fixture Coverage
 
 Primary fixture locations in the repository:
@@ -100,7 +106,7 @@ The `ctest` parser and roundtrip runners only operate on top-level `*.usda` or `
 
 The main unit executable is built from `tests/unit/CMakeLists.txt` and registered through `tests/unit/unit-main.cc`.
 
-Coverage spans Core parser/value/stage/composition/writer functionality plus Tydra scene-access, RenderScene conversion, and shader queries.
+The suite currently contains roughly 370+ registered test cases. Coverage spans Core parser/value/stage/composition/writer functionality plus Tydra scene-access, RenderScene conversion, and shader queries.
 
 Major source groups in `tests/unit/`:
 
@@ -108,7 +114,9 @@ Major source groups in `tests/unit/`:
 - Scene graph and composition: `unit-stage`, `unit-composition`, `unit-composition-arcs`, `unit-composition-graph`, `unit-layer`, `unit-primspec`, `unit-prim-api`
 - Reader/writer coverage: `unit-usda-reader`, `unit-usdc-reader`, `unit-usda-writer`, `unit-usda-roundtrip`, `unit-usdz-writer`, `unit-crate-writer`
 - Tydra coverage: `unit-tydra`, `unit-tydra-renderscene`, `unit-tydra-shader`
+- USDZ writer coverage: `unit-usdz-writer`
 - Security and utility coverage: `unit-security`, `unit-task-queue`, `unit-tiny-container`, `unit-ioutil`, `unit-pathutil`
+- PXR compat API: `unit-pxr-compat` (conditionally compiled with `TINYUSDZ_WITH_PXR_COMPAT_API`)
 
 Run it directly:
 
@@ -214,6 +222,43 @@ python3 tests/usda/usdc-roundtrip-runner.py \
   --verbose
 ```
 
+## USDC Writer Diff Test
+
+`usdc-writer-diff-test` exercises the full USDC write/read cycle with Layer-level diff comparison.
+
+Pipeline per file:
+
+1. `tusdcat input.usda -o temp.usdc` — TinyUSDZ writes USDC
+2. `tusdcat temp.usdc -o temp_rt.usda` — TinyUSDZ reads USDC back as USDA
+3. `tusddiff input.usda temp_rt.usda` — Layer-level diff of original vs roundtripped USDA
+
+The `ctest` target runs in `--report-only` mode (informational — always exits 0) because the USDC writer does not yet preserve all property and metadata details.
+
+For strict validation:
+
+```bash
+python3 tests/usdc-writer/usdc-writer-runner.py \
+  --tusdcat ./build/tusdcat \
+  --tusddiff ./build/tusddiff \
+  --basedir tests/usda \
+  --verbose
+```
+
+### tusddiff
+
+`tusddiff` is the Layer-level diff tool built from `examples/usddiff/`. It loads both files via `LoadLayerFromFile` (PrimSpec tree) and reports added, deleted, and modified prims and properties.
+
+```bash
+# Text diff
+./build/tusddiff file1.usda file2.usda
+
+# JSON diff
+./build/tusddiff --json file1.usda file2.usda
+
+# Quiet mode (exit code only: 0 = identical, 1 = different, 2 = error)
+./build/tusddiff --quiet file1.usda file2.usda
+```
+
 ## Feature Tests
 
 The feature-test layer is now partially integrated into `ctest`.
@@ -224,6 +269,12 @@ Registered feature executables include:
 - Variant support: `feat-variant-converter`, `feat-variant-applier`
 
 Some older feature work still exists outside `ctest` under `tests/feat/` as standalone programs, benchmarks, or notes. Not everything under `tests/feat/` is automatically built or registered.
+
+For `bench-parse-opt` specifically:
+
+- `ctest -R bench-parse-opt` exercises the reduced `--quick` profile.
+- `./build/bench-parse-opt` runs the full synthetic workload for ad hoc performance work.
+- `./build/bench-parse-opt --quick` runs the same reduced profile directly.
 
 ## Tydra Testing
 
@@ -267,14 +318,46 @@ python3 ../tests/tydra_to_renderscene/runner.py ../models
 
 ## Standalone and Manual Targets
 
+### CMake targets not in ctest
+
 These targets exist in the CMake test infrastructure but are not currently registered with `ctest`:
 
-- `test-decompress-int`
-- `pprint_benchmark`
+- `test-decompress-int` — defined in `tests/decompress-int/CMakeLists.txt` but its `add_test(...)` block is still commented out.
+- `pprint_benchmark` — defined in `tests/pprint/CMakeLists.txt` as a standalone benchmark executable.
 
-`test-decompress-int` is defined in `tests/decompress-int/CMakeLists.txt` but its `add_test(...)` block is still commented out.
+### Feature-directory standalone tools
 
-`pprint_benchmark` is defined in `tests/pprint/CMakeLists.txt` as a standalone benchmark executable.
+Several directories under `tests/feat/` contain standalone programs built via local Makefiles, not through CMake or `ctest`. These are developer tools for ad hoc benchmarking and manual testing:
+
+| Directory | Contents | Notes |
+| --- | --- | --- |
+| `hash/` | `hash_bench.cc` | Hash function microbenchmark |
+| `tangent/` | `bench_tangent.cc` | Tangent computation benchmark |
+| `tydra-mesh-build/` | `bench_mesh_build.cc` | RenderScene mesh-build benchmark |
+| `zstdusd/` | `test_zstd_usd.cc`, `compress_usda.cc` | Zstd-compressed USD read/write tools |
+| `nestedVariantSet/` | `test_variant_api.cpp` | Standalone variant API exerciser (the ctest-registered tests are `feat-variant-converter` and `feat-variant-applier`) |
+
+Some earlier standalone tests have been folded into the Acutest unit suite (`typed-array-view`, `typed-array-timesamples`, `value-view`). Their `tests/feat/` Makefiles still exist but the canonical coverage now lives in `unit-test-tinyusdz`.
+
+### Feature fixture directories
+
+These directories hold `.usda` fixtures used by feature tests or as reference material. They are not scanned by any `ctest` runner:
+
+| Directory | Contents |
+| --- | --- |
+| `tests/feat/lux/` | Light shader and mesh-light test scenes (7 USDA files + MaterialX reference) |
+| `tests/feat/node-mtlx/` | Blender-style MaterialX node USDA files (CombineColor, MapRange, Math, etc.) |
+| `tests/feat/skinning/` | Skeletal animation fixtures (static, timesampled, mixed) |
+
+### MaterialX standalone tests
+
+Three MaterialX source files under `tests/feat/mtlx/` are not part of the four ctest-registered `feat-mtlx-*` targets:
+
+- `test_nodegraph_export.cc` — nodegraph export coverage
+- `test_parser_debug.cc` — debug-only parser exercise
+- `threejs_mtlx_export_example.cc` — Three.js-oriented export example
+
+These build via the local Makefile in `tests/feat/mtlx/`.
 
 ## Additional Corpus Runner
 
@@ -312,6 +395,15 @@ node tests/compare-usda.js \
   --usdcat ~/local/USD/dist/bin/usdcat \
   --detailed-diff \
   tests/usda/somefile.usda
+```
+
+## Python Bindings Test
+
+`tests/python/test_basic.py` contains pytest-based tests for the Python bindings module (`tinyusdz`). This is not integrated into `ctest` and requires the Python bindings to be built and installed separately.
+
+```bash
+cd tests/python
+pytest test_basic.py
 ```
 
 ## Fuzzing
@@ -370,4 +462,6 @@ The current infrastructure has a few operational gaps worth keeping in mind:
 - `ctest` can be fully configured even when the test executables are not yet built.
 - `tests/tydra_to_renderscene/runner.py` and `tests/parse_usd/runner.py` are manual tools and do not currently fail the process based on collected failures.
 - `tests/decompress-int` and `tests/pprint` are built outside the main `ctest` suite.
-- Some standalone feature tests under `tests/feat/` are documentation or benchmark artifacts rather than automatically run test targets.
+- Several standalone feature benchmarks and tools under `tests/feat/` (hash, tangent, tydra-mesh-build, zstdusd) use local Makefiles and are not part of CMake or `ctest`.
+- The Python bindings test (`tests/python/test_basic.py`) is not integrated into `ctest`.
+- Feature fixture directories (`lux/`, `node-mtlx/`, `skinning/`) provide test data but are not exercised by any automated runner.

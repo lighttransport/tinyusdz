@@ -126,6 +126,27 @@ bool CrateWriter::ExtractMeshProperties(
         }
       }
     }
+    // Preserve interpolation metadata (e.g. "faceVarying")
+    if (mesh->normals.metas().has_interpolation()) {
+      crate::CrateValue interp_val;
+      interp_val.Set(mesh->normals.metas().get_interpolation());
+      fields.push_back({"normals.interpolation", interp_val});
+    }
+  }
+
+  // Extract velocities (vector3f[])
+  if (mesh->velocities.authored()) {
+    auto vel_opt = mesh->velocities.get_value();
+    if (vel_opt.has_value() && vel_opt.value().has_default()) {
+      std::vector<value::vector3f> vel_val;
+      if (vel_opt.value().get_default(&vel_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(vel_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"velocities", crate_val});
+        }
+      }
+    }
   }
 
   // Extract faceVertexCounts
@@ -252,7 +273,7 @@ bool CrateWriter::ExtractMeshProperties(
 
   // Extract subdivision control attributes
   // interpolateBoundary - TypedAttributeWithFallback<Animatable<InterpolateBoundary>>
-  if (mesh->interpolateBoundary.has_value()) {
+  if (mesh->interpolateBoundary.authored()) {
     auto interp_boundary_anim = mesh->interpolateBoundary.get_value();
     if (interp_boundary_anim.has_default()) {
       GeomMesh::InterpolateBoundary interp_val;
@@ -266,7 +287,7 @@ bool CrateWriter::ExtractMeshProperties(
   }
 
   // subdivisionScheme - TypedAttributeWithFallback<SubdivisionScheme> (no Animatable!)
-  if (mesh->subdivisionScheme.has_value()) {
+  if (mesh->subdivisionScheme.authored()) {
     const auto& subdiv_scheme = mesh->subdivisionScheme.get_value();
     crate::CrateValue crate_val;
     value::token tok(to_string(subdiv_scheme));
@@ -275,7 +296,7 @@ bool CrateWriter::ExtractMeshProperties(
   }
 
   // faceVaryingLinearInterpolation - TypedAttributeWithFallback<Animatable<FaceVaryingLinearInterpolation>>
-  if (mesh->faceVaryingLinearInterpolation.has_value()) {
+  if (mesh->faceVaryingLinearInterpolation.authored()) {
     auto fv_interp_anim = mesh->faceVaryingLinearInterpolation.get_value();
     if (fv_interp_anim.has_default()) {
       GeomMesh::FaceVaryingLinearInterpolation fv_interp_val;
@@ -516,8 +537,20 @@ bool CrateWriter::ExtractPointsProperties(
     }
   }
 
-  // Note: ids (int64[]) is not yet supported by ConvertValue
-  // This can be added in future when int64[] conversion is implemented
+  // Extract ids (int64[])
+  if (points->ids.authored()) {
+    auto ids_opt = points->ids.get_value();
+    if (ids_opt.has_value() && ids_opt.value().has_default()) {
+      std::vector<int64_t> ids_val;
+      if (ids_opt.value().get_default(&ids_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(ids_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"ids", crate_val});
+        }
+      }
+    }
+  }
 
   // Extract normals (normal3f[]) - TypedAttribute returns optional
   if (points->normals.authored()) {
@@ -585,37 +618,36 @@ bool CrateWriter::ExtractCameraProperties(
     return false;
   }
 
-  // Helper lambda to add float attributes with fallback
-  // TypedAttributeWithFallback<Animatable<T>>::get_value() returns const Animatable<T>&
+  // Helper lambda to add float attributes with fallback.
+  // Only writes when the attribute was actually authored.
   auto add_float_attr = [&](const std::string& name, const TypedAttributeWithFallback<Animatable<float>>& attr) -> bool {
-    const Animatable<float>& anim = attr.get_value();  // Returns either authored or fallback value
+    if (!attr.authored()) return true;
+    const Animatable<float>& anim = attr.get_value();
     float scalar_val;
     if (anim.get_scalar(&scalar_val)) {
       crate::CrateValue crate_val;
       crate_val.Set(scalar_val);
       fields.push_back({name, crate_val});
-      return true;
     }
     return true;
   };
 
-  // Helper lambda to add double attributes with fallback
-  // TypedAttributeWithFallback<Animatable<T>>::get_value() returns const Animatable<T>&
+  // Helper lambda to add double attributes with fallback.
+  // Only writes when the attribute was actually authored.
   auto add_double_attr = [&](const std::string& name, const TypedAttributeWithFallback<Animatable<double>>& attr) -> bool {
-    const Animatable<double>& anim = attr.get_value();  // Returns either authored or fallback value
+    if (!attr.authored()) return true;
+    const Animatable<double>& anim = attr.get_value();
     double scalar_val;
     if (anim.get_scalar(&scalar_val)) {
       crate::CrateValue crate_val;
       crate_val.Set(scalar_val);
       fields.push_back({name, crate_val});
-      return true;
     }
     return true;
   };
 
   // Extract float2 clippingRange
-  // clippingRange is TypedAttributeWithFallback<Animatable<float2>>, so get_value() returns the Animatable
-  {
+  if (camera->clippingRange.authored()) {
     const Animatable<value::float2>& anim = camera->clippingRange.get_value();
     value::float2 range_val;
     if (anim.get_scalar(&range_val)) {
@@ -650,8 +682,7 @@ bool CrateWriter::ExtractCameraProperties(
   add_float_attr("fStop", camera->fStop);
 
   // Extract projection (token enum)
-  // projection is TypedAttributeWithFallback<Animatable<Projection>>, so get_value() returns the Animatable
-  {
+  if (camera->projection.authored()) {
     const Animatable<GeomCamera::Projection>& proj_anim = camera->projection.get_value();
     GeomCamera::Projection proj_val;
     if (proj_anim.get_scalar(&proj_val)) {
@@ -664,8 +695,7 @@ bool CrateWriter::ExtractCameraProperties(
   }
 
   // Extract stereoRole (uniform token enum)
-  // stereoRole is TypedAttributeWithFallback<StereoRole>, so get_value() returns the StereoRole
-  {
+  if (camera->stereoRole.authored()) {
     std::string stereo_str;
     const GeomCamera::StereoRole& stereo = camera->stereoRole.get_value();
     if (stereo == GeomCamera::StereoRole::Left) {
@@ -673,7 +703,7 @@ bool CrateWriter::ExtractCameraProperties(
     } else if (stereo == GeomCamera::StereoRole::Right) {
       stereo_str = "right";
     } else {
-      stereo_str = "mono";  // default
+      stereo_str = "mono";
     }
     crate::CrateValue crate_val;
     value::token tok(stereo_str);
@@ -1640,13 +1670,8 @@ bool CrateWriter::ExtractGPrimProperties(
     }
   }
 
-  // Extract doubleSided
-  if (gprim->doubleSided.authored()) {
-    bool double_sided_val = gprim->doubleSided.get_value();
-    crate::CrateValue ds_crate_val;
-    ds_crate_val.Set(double_sided_val);
-    fields.push_back({"doubleSided", ds_crate_val});
-  }
+  // doubleSided is handled in ConvertSinglePrim via ConvertPropertyToFields
+  // (routing through the fields path doesn't preserve the bool type correctly)
 
   // Extract orientation
   if (gprim->orientation.authored()) {
