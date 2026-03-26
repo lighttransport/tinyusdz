@@ -277,7 +277,15 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
         DCOUT(fmt::format("Element path: {}", dump_path(elemPath)));
 
-        if (!tokenize_variantElement(elemPath.full_path_name(), &toks)) {
+        // Extract the variant element {name} or {name=sel} from the full path.
+        // The path is like "/Prim{varSet}" — extract just "{varSet}".
+        std::string fp = elemPath.full_path_name();
+        auto brace_pos = fp.find('{');
+        std::string variant_elem = (brace_pos != std::string::npos)
+                                     ? fp.substr(brace_pos)
+                                     : fp;
+
+        if (!tokenize_variantElement(variant_elem, &toks)) {
           PUSH_ERROR_AND_RETURN_TAG(
               kTag, fmt::format("Invalid Variant ElementPath '{}'.", elemPath));
         }
@@ -348,8 +356,18 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
           DCOUT("primMeta.variantSets = " << pf.primMeta.variantSets.value().second);
         }
 
+        // Extract variant element {name=sel} from the full path.
+        // pf.prim_name is like "/Prim{varSet=sel}" — extract "{varSet=sel}".
+        std::string variant_elem_str = pf.prim_name;
+        {
+          auto brace_pos = variant_elem_str.find('{');
+          if (brace_pos != std::string::npos) {
+            variant_elem_str = variant_elem_str.substr(brace_pos);
+          }
+        }
+
         std::array<std::string, 2> variantPair;
-        if (!tokenize_variantElement(pf.prim_name, &variantPair)) {
+        if (!tokenize_variantElement(variant_elem_str, &variantPair)) {
           PUSH_ERROR_AND_RETURN_TAG(
               kTag, fmt::format("Invalid Variant ElementPath '{}'.", pf.elemPath));
         }
@@ -602,7 +620,14 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 
         DCOUT(fmt::format("Element path: {}", dump_path(elemPath)));
 
-        if (!tokenize_variantElement(elemPath.full_path_name(), &toks)) {
+        // Extract variant element {name} from the full path.
+        std::string fp2 = elemPath.full_path_name();
+        auto brace_pos2 = fp2.find('{');
+        std::string variant_elem2 = (brace_pos2 != std::string::npos)
+                                      ? fp2.substr(brace_pos2)
+                                      : fp2;
+
+        if (!tokenize_variantElement(variant_elem2, &toks)) {
           PUSH_ERROR_AND_RETURN_TAG(
               kTag, fmt::format("Invalid Variant ElementPath '{}'.", elemPath));
         }
@@ -657,8 +682,18 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         DCOUT("elemPath = " << dump_path(pf.elemPath));
         DCOUT("prim_name = " << pf.prim_name);
 
+        // Extract variant element {name=sel} from the full path.
+        // pf.prim_name is like "/Prim{varSet=sel}" — extract "{varSet=sel}".
+        std::string variant_elem_str = pf.prim_name;
+        {
+          auto brace_pos = variant_elem_str.find('{');
+          if (brace_pos != std::string::npos) {
+            variant_elem_str = variant_elem_str.substr(brace_pos);
+          }
+        }
+
         std::array<std::string, 2> variantPair;
-        if (!tokenize_variantElement(pf.prim_name, &variantPair)) {
+        if (!tokenize_variantElement(variant_elem_str, &variantPair)) {
           PUSH_ERROR_AND_RETURN_TAG(
               kTag, fmt::format("Invalid Variant ElementPath '{}'.", pf.elemPath));
         }
