@@ -953,12 +953,18 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
         DCOUT("variant prim name: " << variantPrim.element_name());
 
-        if (!is_variantElementName(variantPrim.element_name())) {
-          PUSH_ERROR_AND_RETURN("Corrupted Crate. VariantAttribute is not the child of VariantPrim.");
+        // Extract variant element from full path (e.g., "/A{v=sel}" → "{v=sel}")
+        std::string ve2 = variantPrim.element_name();
+        {
+          auto bp2 = ve2.find('{');
+          if (bp2 != std::string::npos) ve2 = ve2.substr(bp2);
+        }
+        if (!is_variantElementName(ve2)) {
+          PUSH_ERROR_AND_RETURN("Corrupted Crate. VariantAttribute is not the child of VariantPrim: " + variantPrim.element_name());
         }
 
         std::array<std::string, 2> toks;
-        if (!tokenize_variantElement(variantPrim.element_name(), &toks)) {
+        if (!tokenize_variantElement(ve2, &toks)) {
           PUSH_ERROR_AND_RETURN("Invalid variant element_name.");
         }
 
