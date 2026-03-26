@@ -251,6 +251,9 @@ void Path::_update(const std::string &p, const std::string &prop) {
       _prim_part = p;
       if (prop.size()) {
         _prop_part = prop;
+        _element = prop;
+      } else {
+        _element = p;
       }
       _valid = true;
     } else if (ndots == 1) {
@@ -853,6 +856,7 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(GeomSubset)
   EXTRACT_NAME_AND_RETURN_PATH(GeomCamera)
   EXTRACT_NAME_AND_RETURN_PATH(GeomBasisCurves)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomNurbsCurves)
   EXTRACT_NAME_AND_RETURN_PATH(GeomPointInstancer)
   EXTRACT_NAME_AND_RETURN_PATH(DomeLight)
   EXTRACT_NAME_AND_RETURN_PATH(SphereLight)
@@ -913,6 +917,7 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   SET_ELEMENT_NAME(elementName, GeomSubset)
   SET_ELEMENT_NAME(elementName, GeomCamera)
   SET_ELEMENT_NAME(elementName, GeomBasisCurves)
+  SET_ELEMENT_NAME(elementName, GeomNurbsCurves)
   SET_ELEMENT_NAME(elementName, GeomPointInstancer)
   SET_ELEMENT_NAME(elementName, DomeLight)
   SET_ELEMENT_NAME(elementName, SphereLight)

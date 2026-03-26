@@ -37,8 +37,31 @@ bool CrateWriter::ExtractSkeletonProperties(
   // jointNames (uniform token[])
   if (!AddTypedArrayAttribute("jointNames", skel->jointNames, fields)) return false;
 
-  // TODO: bindTransforms and restTransforms are matrix4d[] which WriteValueData
-  // doesn't support yet. They will be available via the props map if stored there.
+  // bindTransforms (uniform matrix4d[])
+  if (skel->bindTransforms.authored()) {
+    auto bt_opt = skel->bindTransforms.get_value();
+    if (bt_opt.has_value()) {
+      const auto &bt_val = bt_opt.value();
+      crate::CrateValue crate_val;
+      value::Value val(bt_val);
+      if (ConvertValue(val, crate_val, err)) {
+        fields.push_back({"bindTransforms", crate_val});
+      }
+    }
+  }
+
+  // restTransforms (uniform matrix4d[])
+  if (skel->restTransforms.authored()) {
+    auto rt_opt = skel->restTransforms.get_value();
+    if (rt_opt.has_value()) {
+      const auto &rt_val = rt_opt.value();
+      crate::CrateValue crate_val;
+      value::Value val(rt_val);
+      if (ConvertValue(val, crate_val, err)) {
+        fields.push_back({"restTransforms", crate_val});
+      }
+    }
+  }
 
   // visibility
   if (skel->visibility.has_value()) {
@@ -108,7 +131,16 @@ bool CrateWriter::ExtractSkelAnimationProperties(
     }
   }
 
-  // TODO: scales (half3[]) is not yet supported by WriteValueData.
+  // scales (half3[], Animatable)
+  if (anim->scales.has_value()) {
+    auto opt = anim->scales.get_value();
+    if (opt) {
+      std::string conv_err;
+      if (!ExtractAnimatableDefault(*opt, "scales", fields, &conv_err)) {
+        DCOUT("WARNING: Skipping unsupported Animatable type for scales: " << conv_err);
+      }
+    }
+  }
 
   // blendShapeWeights (float[], Animatable)
   if (anim->blendShapeWeights.has_value()) {

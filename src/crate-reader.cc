@@ -1694,14 +1694,13 @@ bool CrateReader::BuildFieldSetBoundaryIndex() {
       return false;
     }
 
-    if ((start > static_cast<size_t>(std::numeric_limits<uint32_t>::max())) ||
-        (end > static_cast<size_t>(std::numeric_limits<uint32_t>::max()))) {
+    const uint32_t start_u32 = static_cast<uint32_t>(start);
+    const uint32_t end_u32 = static_cast<uint32_t>(end);
+    if ((static_cast<size_t>(start_u32) != start) ||
+        (static_cast<size_t>(end_u32) != end)) {
       PUSH_ERROR("Fieldset boundary index overflow.");
       return false;
     }
-
-    const uint32_t start_u32 = static_cast<uint32_t>(start);
-    const uint32_t end_u32 = static_cast<uint32_t>(end);
     _fieldset_start_indices.push_back(start_u32);
     _fieldset_end_indices[start_u32] = end_u32;
 

@@ -1317,8 +1317,31 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
       } else {
         DCOUT("Enter ParsePrimProps.");
         // Assume PrimAttr
+        int row_before = _curr_cursor.row;
         if (!ParsePrimProps(&props, &propNames)) {
           PUSH_ERROR_AND_RETURN("Failed to parse Prim attribute.");
+        }
+
+        // Each property statement must be terminated by a newline (or
+        // comment / closing brace / EOF).  Reject multiple statements
+        // crammed onto a single line separated only by whitespace.
+        // Only check when ParsePrimProps stayed on the same line (some
+        // code paths inside ParsePrimProps consume trailing newlines).
+        if (_curr_cursor.row == row_before && !Eof()) {
+          if (!SkipWhitespace()) {
+            return false;
+          }
+          if (!Eof()) {
+            char nc;
+            if (!LookChar1(&nc)) {
+              return false;
+            }
+            if (nc != '\n' && nc != '\r' && nc != '#' && nc != '}' && nc != ';') {
+              PUSH_ERROR_AND_RETURN(
+                  "Newline expected after property statement. "
+                  "Multiple property statements on a single line are not allowed.");
+            }
+          }
         }
       }
 

@@ -765,8 +765,13 @@ static bool TryReadMMapArray(
   if (!ref) return false;
   const T *ptr = stage.mmap_source()->get_ptr<T>(*ref);
   if (!ptr) return false;
+  if (ref->element_count >
+      (uint64_t(std::numeric_limits<size_t>::max()) / sizeof(T))) {
+    return false;
+  }
   out->resize(static_cast<size_t>(ref->element_count));
-  memcpy(out->data(), ptr, ref->element_count * sizeof(T));
+  const size_t byte_count = static_cast<size_t>(ref->element_count) * sizeof(T);
+  memcpy(out->data(), ptr, byte_count);
   return true;
 }
 
