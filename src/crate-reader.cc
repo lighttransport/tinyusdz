@@ -66,10 +66,10 @@ namespace crate {
 #define kTag "[Crate]"
 
 #define CHECK_MEMORY_USAGE(__nbytes) \
-  MEMORY_BUDGET_CHECK(memory_manager_, (__nbytes), kTag)
+  MEMORY_BUDGET_CHECK((*memory_manager_), (__nbytes), kTag)
 
 #define REDUCE_MEMORY_USAGE(__nbytes) \
-  memory_manager_.Release(__nbytes)
+  memory_manager_->Release(__nbytes)
 
 
 
@@ -79,7 +79,7 @@ namespace crate {
 // --
 //
 CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config) 
-    : _sr(sr), memory_manager_(config.maxMemoryBudget), _impl(nullptr) {
+    : _sr(sr), owned_memory_manager_(config.maxMemoryBudget), memory_manager_(&owned_memory_manager_), _impl(nullptr) {
   _config = config;
   if (_config.numThreads == -1) {
 #if defined(__wasi__)
@@ -1339,7 +1339,7 @@ bool CrateReader::ReadTokens() {
     }
 
     if (len > _config.maxTokenLength) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Token string length {} exceeds limit {}.", len, _config.maxTokenLength));
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Token string length {} exceeds limit {}. Increase CrateReaderConfig.maxTokenLength to allow longer tokens.", len, _config.maxTokenLength));
     }
     std::string str;
     if (len > 0) {

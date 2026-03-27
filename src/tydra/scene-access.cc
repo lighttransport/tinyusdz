@@ -1217,8 +1217,8 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   TO_PROPERTY("familyName", subset.familyName);
 
   if (prop_name == "material:binding") {
-    if (subset.materialBinding) {
-      const Relationship &rel = subset.materialBinding.value();
+    if (subset.materialBinding.authored()) {
+      const Relationship &rel = subset.materialBinding.relationship();
       (*out_prop) = Property(rel, /* custom */ false);
     } else {
       return false;
@@ -1830,15 +1830,15 @@ bool GetGPrimPropertyNamesImpl(const GPrim *gprim,
   }
 
   if (rel_prop) {
-    if (gprim->materialBinding) {
+    if (gprim->materialBinding.authored()) {
       prop_names->push_back(kMaterialBinding);
     }
 
-    if (gprim->materialBindingPreview) {
+    if (gprim->materialBindingPreview.authored()) {
       prop_names->push_back(kMaterialBindingPreview);
     }
 
-    if (gprim->materialBindingFull) {
+    if (gprim->materialBindingFull.authored()) {
       prop_names->push_back(kMaterialBindingFull);
     }
 
@@ -2005,7 +2005,7 @@ bool GetPrimPropertyNamesImpl(const GeomSubset &subset,
     DCOUT("TODO: more attrs...");
   }
 
-  if (rel_prop && subset.materialBinding) {
+  if (rel_prop && subset.materialBinding.authored()) {
     prop_names->push_back("material:binding");
   }
 
