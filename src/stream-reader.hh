@@ -137,6 +137,12 @@ class StreamReader {
   }
 
   uint64_t read(const uint64_t n, const uint64_t dst_len, uint8_t *dst) const {
+    // 0-byte read is a no-op success. Return a truthy value (1) so callers
+    // that check `if (!read(...))` don't treat it as failure.
+    if (n == 0) {
+      return 1;
+    }
+
     uint64_t len = n;
     if ((idx_ + len) > length_) {
       len = length_ - uint64_t(idx_);

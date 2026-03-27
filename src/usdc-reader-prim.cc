@@ -329,6 +329,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
     } else if (fv.first == "customLayerData") {
       if (auto v = fv.second.get_value<CustomDataType>()) {
         metas->customLayerData = v.value();
+        metas->customLayerDataAuthored = true;
       } else {
         PUSH_ERROR_AND_RETURN(
             "customLayerData must be `dictionary` type, but got type `" +
