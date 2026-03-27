@@ -5,7 +5,7 @@
 #include <vector>
 #include <functional>
 
-#include "../prim-types.hh"
+#include "../core/prim.hh"
 #include "common-types.hh"
 #include "render-data.hh"
 
@@ -15,6 +15,23 @@ class Layer;
 class PrimSpec;
 
 namespace tydra {
+
+namespace detail {
+
+struct MemoryUsageState {
+  size_t peak_memory_usage{0};
+  size_t current_memory_usage{0};
+};
+
+void ApplyMemoryUsageDelta(
+    size_t bytes_allocated,
+    size_t bytes_freed,
+    size_t max_memory_limit_mb,
+    MemoryUsageState* state,
+    const std::function<void(const std::string&)>& progress_callback,
+    const std::function<void(size_t)>& memory_freed_callback);
+
+}  // namespace detail
 
 struct DirectConversionConfig {
   bool triangulate{true};
@@ -128,4 +145,3 @@ inline size_t EstimateMemorySize(const std::vector<uint32_t>& data) {
 
 }  // namespace tydra
 }  // namespace tinyusdz
-

@@ -17,14 +17,27 @@
 /// - Mesh, Cube, Sphere, etc.: Specific geometry types
 /// - Xform: Transformation primitive
 ///
-/// TODO:
-/// - [ ] Replace nonstd::optional<T> member to RelationshipProperty or TypedAttribute***<T>
 ///
 #pragma once
 
-#include "prim-types.hh"
+// Core includes (replaces monolithic prim-types.hh)
 #include "value-types.hh"
-#include "xform.hh"
+#include "nonstd/optional.hpp"
+#include "nonstd/expected.hpp"
+#include "core/prim-enums.hh"        // Specifier, Orientation, Visibility, Purpose, Axis, Interpolation
+#include "core/extent.hh"            // Extent
+#include "core/composition-types.hh" // Reference, Payload, ListEditQual
+#include "core/prim-metas.hh"       // PrimMeta
+#include "core/animatable.hh"       // Animatable
+#include "core/typed-attribute.hh"  // TypedAttribute, TypedAttributeWithFallback
+#include "core/relationship.hh"     // Relationship, RelationshipProperty
+#include "core/attribute.hh"        // Attribute
+#include "core/property.hh"         // Property
+#include "core/xform-op.hh"         // XformOp (needed by Xformable in xform.hh)
+#include "core/collection-api.hh"   // Collection
+#include "core/material-binding.hh" // MaterialBinding
+#include "core/variant-types.hh"    // VariantSet
+#include "xform.hh"                 // Xformable, Identity functions
 #include "usdShade.hh"
 
 namespace tinyusdz {
@@ -106,70 +119,10 @@ class GeomPrimvar {
     _has_value = true;
   }
 
-  GeomPrimvar(const GeomPrimvar &rhs) {
-    //TUSDZ_LOG_I("GeomPrimvar copy constructor called");
-    _name = rhs._name;
-    _attr = rhs._attr;
-    _indices = rhs._indices;
-    _ts_indices = rhs._ts_indices;
-    _has_value = rhs._has_value;
-    if (rhs._elementSize) {
-      _elementSize = rhs._elementSize;
-    }
-
-    if (rhs._interpolation) {
-      _interpolation = rhs._interpolation;
-    }
-    _unauthoredValuesIndex = rhs._unauthoredValuesIndex;
-  }
-
-  GeomPrimvar &operator=(const GeomPrimvar &rhs) {
-    //TUSDZ_LOG_I("GeomPrimvar copy assignment operator called");
-    _name = rhs._name;
-    _attr = rhs._attr;
-    _indices = rhs._indices;
-    _ts_indices = rhs._ts_indices;
-    _has_value = rhs._has_value;
-    if (rhs._elementSize) {
-      _elementSize = rhs._elementSize;
-    }
-
-    if (rhs._interpolation) {
-      _interpolation = rhs._interpolation;
-    }
-    _unauthoredValuesIndex = rhs._unauthoredValuesIndex;
-
-    return *this;
-  }
-
-  // Move constructor
-  GeomPrimvar(GeomPrimvar&& rhs) noexcept
-      : _name(std::move(rhs._name)),
-        _has_value(rhs._has_value),
-        _attr(std::move(rhs._attr)),
-        _indices(std::move(rhs._indices)),
-        _ts_indices(std::move(rhs._ts_indices)),
-        _unauthoredValuesIndex(rhs._unauthoredValuesIndex),
-        _elementSize(rhs._elementSize),
-        _interpolation(rhs._interpolation) {
-    //TUSDZ_LOG_I("GeomPrimvar move constructor called");
-  }
-
-  // Move assignment operator
-  GeomPrimvar& operator=(GeomPrimvar&& rhs) noexcept {
-    //TUSDZ_LOG_I("GeomPrimvar move assignment operator called");
-    if (this != &rhs) {
-      _name = std::move(rhs._name);
-      _attr = std::move(rhs._attr);
-      _indices = std::move(rhs._indices);
-      _ts_indices = std::move(rhs._ts_indices);
-      _has_value = rhs._has_value;
-      _elementSize = rhs._elementSize;
-      _interpolation = rhs._interpolation;
-      _unauthoredValuesIndex = rhs._unauthoredValuesIndex;
-    }
-    return *this;
-  }
+  GeomPrimvar(const GeomPrimvar &) = default;
+  GeomPrimvar &operator=(const GeomPrimvar &) = default;
+  GeomPrimvar(GeomPrimvar &&) noexcept = default;
+  GeomPrimvar &operator=(GeomPrimvar &&) noexcept = default;
 
   ///
   /// For Indexed Primvar(array value + indices)
@@ -199,8 +152,7 @@ class GeomPrimvar {
   bool flatten_with_indices(double t, std::vector<T> *dst, value::TimeSampleInterpolationType tinerp = value::TimeSampleInterpolationType::Linear, std::string *err = nullptr) const;
 
 
-  // Generic Value version.
-  // TODO: return Attribute?
+  // Generic Value version (returns flattened value::Value, not raw Attribute).
   bool flatten_with_indices(value::Value *dst, std::string *err = nullptr) const;
   bool flatten_with_indices(double t, value::Value *dst, value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear, std::string *err = nullptr) const;
 
@@ -346,6 +298,12 @@ class GeomPrimvar {
 
  private:
 
+  // Resolve indices at time `t`. Returns a const ref — either to `_indices`
+  // directly (zero-copy) or to `buf` when fetched from timesamples.
+  const std::vector<int32_t> &resolve_indices_at(
+      double t, value::TimeSampleInterpolationType tinterp,
+      std::vector<int32_t> &buf) const;
+
   std::string _name;
   bool _has_value{false};
   Attribute _attr;
@@ -362,7 +320,9 @@ class GeomPrimvar {
 // Geometric Prim. Encapsulates Imagable + Boundable in pxrUSD schema.
 // <pxrUSD>/pxr/usd/usdGeom/schema.udsa
 //
-// TODO: inherit UsdShagePrim?
+// Note: In OpenUSD, UsdGeomGprim inherits UsdGeomBoundable -> UsdGeomImageable
+// -> UsdTyped. It does NOT inherit from UsdShadePrim; shading is accessed via
+// MaterialBinding API schema (which TinyUSDZ already mixes in).
 
 struct GPrim : Xformable, MaterialBinding, Collection {
   std::string name;
@@ -628,7 +588,7 @@ struct GeomMesh : GPrim {
       faceVertexIndices;  // int[] faceVertexIndices
 
   // Make SkelBindingAPI first citizen.
-  RelationshipProperty skeleton;  // rel skel:skeleton
+  nonstd::optional<Relationship> skeleton;  // rel skel:skeleton
 
   //
   // Utility functions
@@ -713,12 +673,12 @@ struct GeomMesh : GPrim {
               CornersPlus1};  // token faceVaryingLinearInterpolation
 
   TypedAttribute<std::vector<value::token>> blendShapes; // uniform token[] skel:blendShapes
-  RelationshipProperty blendShapeTargets; // rel skel:blendShapeTargets (Path[])
+  nonstd::optional<Relationship> blendShapeTargets; // rel skel:blendShapeTargets (Path[])
 
-  //
-  // TODO: Make these primvars first citizen?
-  // - int[] primvars:skel:jointIndices
-  // - float[] primvars:skel:jointWeights
+  // Note: In OpenUSD, skel:jointIndices and skel:jointWeights are primvars
+  // accessed via UsdGeomPrimvarsAPI (a NonAppliedAPI schema), not first-class
+  // struct members. TinyUSDZ follows the same approach: these are stored in
+  // the `props` map and accessed via get_primvar()/GeomPrimvar.
 
 
   ///
@@ -768,6 +728,13 @@ struct GeomMesh : GPrim {
   // Get Explicit Joint orders: `uniform token[] skel:joints`
   std::vector<value::token> get_joints() const;
 
+  ///
+  /// Validate mesh topology.
+  /// Checks faceVertexCounts/faceVertexIndices consistency, index bounds,
+  /// and subdivision surface attributes (corners, creases, holes).
+  ///
+  bool ValidateTopology(std::string *err = nullptr,
+      double time = value::TimeCode::Default()) const;
 };
 
 struct GeomCamera : public GPrim {
@@ -892,6 +859,25 @@ struct GeomBasisCurves : public GPrim {
       velocities;  // vector3f
   TypedAttribute<Animatable<std::vector<value::vector3f>>>
       accelerations;  // vector3f
+
+  // Convenience getters
+  const std::vector<value::point3f> get_points(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  const std::vector<value::normal3f> get_normals(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  const std::vector<int> get_curveVertexCounts(
+      double time = value::TimeCode::Default()) const;
+
+  const std::vector<float> get_widths(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
 };
 
 struct GeomNurbsCurves : public GPrim {
@@ -917,6 +903,31 @@ struct GeomNurbsCurves : public GPrim {
   TypedAttribute<Animatable<std::vector<double>>> knots;
   TypedAttribute<Animatable<std::vector<value::double2>>> ranges;
   TypedAttribute<Animatable<std::vector<double>>> pointWeights;
+
+  // Convenience getters
+  const std::vector<value::point3f> get_points(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  const std::vector<value::normal3f> get_normals(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  const std::vector<int> get_curveVertexCounts(
+      double time = value::TimeCode::Default()) const;
+
+  const std::vector<float> get_widths(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  const std::vector<int> get_order(
+      double time = value::TimeCode::Default()) const;
+
+  const std::vector<double> get_knots(
+      double time = value::TimeCode::Default()) const;
 };
 
 //
@@ -936,13 +947,35 @@ struct GeomPoints : public GPrim {
       velocities;  // vector3f[]
   TypedAttribute<Animatable<std::vector<value::vector3f>>>
       accelerations;  // vector3f[]
+
+  // Convenience getters
+  const std::vector<value::point3f> get_points(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  const std::vector<value::normal3f> get_normals(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  const std::vector<float> get_widths(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  const std::vector<int64_t> get_ids(
+      double time = value::TimeCode::Default()) const;
 };
 
-//
-// Point instancer(TODO).
-//
+// Point instancer.
+// In OpenUSD, UsdGeomPointInstancer provides ComputeExtentAtTime() which
+// evaluates instance transforms at a given time and computes a union of
+// transformed prototype extents. TinyUSDZ stores the raw attributes;
+// extent computation requires resolving prototype prims and is handled
+// at the Tydra/application level.
 struct GeomPointInstancer : public GPrim {
-  RelationshipProperty prototypes;  // rel prototypes
+  nonstd::optional<Relationship> prototypes;  // rel prototypes
 
   TypedAttribute<Animatable<std::vector<int32_t>>>
       protoIndices;                                      // int[] protoIndices
@@ -965,6 +998,35 @@ struct GeomPointInstancer : public GPrim {
       inactiveIds;  // int64[] inactiveIds
 };
 
+
+// --- ComputeExtent helpers ---
+
+bool ComputeExtent(const GeomMesh &mesh, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
+
+bool ComputeExtent(const GeomPoints &pts, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
+
+bool ComputeExtent(const GeomSphere &sphere, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
+
+bool ComputeExtent(const GeomCube &cube, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
+
+bool ComputeExtent(const GeomCone &cone, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
+
+bool ComputeExtent(const GeomCylinder &cylinder, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
+
+bool ComputeExtent(const GeomCapsule &capsule, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
+
+bool ComputeExtent(const GeomBasisCurves &curves, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
+
+bool ComputeExtent(const GeomNurbsCurves &curves, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"
@@ -1052,12 +1114,6 @@ DEFINE_TYPE_TRAIT(GeomPointInstancer, kPointInstancer, TYPE_ID_GEOM_POINT_INSTAN
   __FUNC(value::texcoord3h)           \
   __FUNC(value::texcoord3f)           \
   __FUNC(value::texcoord3d)
-
-// TODO: 64bit int/uint seems not supported on pxrUSD. Enable it in TinyUSDZ?
-#if 0
-  __FUNC(int64_t) \
-  __FUNC(uint64_t)
-#endif
 
 #define EXTERN_TEMPLATE_GET_VALUE(__ty) \
   extern template bool GeomPrimvar::get_value(__ty *dest, std::string *err) const; \

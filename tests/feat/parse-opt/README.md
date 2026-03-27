@@ -2,40 +2,52 @@
 
 This benchmark tests the performance of optimized array parsing in TinyUSDZ's ASCII parser.
 
+It supports two execution profiles:
+
+- Full profile: default when you run `bench-parse-opt` directly
+- Quick profile: reduced workload used by `ctest` via `bench-parse-opt --quick`
+
 ## Features
 
 The benchmark generates synthetic test data and measures parsing performance for:
 
 ### Array Types
-- **float[]** - Simple float arrays (1K to 1M elements)
-- **float3[]** - Vector arrays with 3 components (1K to 100K vectors)
-- **double[]** - Double precision arrays (1K to 1M elements)
-- **matrix4d[]** - 4x4 matrix arrays (100 to 10K matrices)
+- **float[]** - Simple float arrays
+- **float3[]** - Vector arrays with 3 components
+- **double[]** - Double precision arrays
+- **matrix4d[]** - 4x4 matrix arrays
 
 ### TimeSamples
-- **float[] timeSamples** - Animated float arrays (10-100 frames × 1K-10K elements)
-- **float3[] timeSamples** - Animated point arrays (10-100 frames × 1K-10K points)
+- **float[] timeSamples** - Animated float arrays
+- **float3[] timeSamples** - Animated point arrays
 
 ### Complete USDA Files
-- Full USDA file parsing with realistic mesh data (10K points)
+- Full USDA file parsing with realistic mesh data
 
 ## Building
 
 ```bash
-make
+cmake -S . -B build -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_EXAMPLES=ON
+cmake --build build -j16 --target bench-parse-opt
 ```
-
-This will automatically build the required libtinyusdz_static.a library if needed.
 
 ## Running
 
 ```bash
-make run
+./build/bench-parse-opt
 ```
 
-Or directly:
+Quick profile:
+
 ```bash
-./test-parse-opt
+./build/bench-parse-opt --quick
+```
+
+The `ctest` target is wired to the quick profile:
+
+```bash
+cd build
+ctest -R bench-parse-opt --output-on-failure
 ```
 
 ## Optimizations Tested
@@ -45,6 +57,12 @@ The benchmark exercises the following optimizations:
 1. **Zero-copy array scanning** - Direct pointer access to input buffer instead of character-by-character string building
 2. **fast_float parsing** - Using the fast_float library for optimal float/double parsing
 3. **Pointer-based lexing** - Avoiding temporary std::string allocations during lexing
+
+## Profiles
+
+The full profile keeps the larger synthetic cases for manual performance work.
+
+The quick profile scales down the largest arrays and time-sample cases so it can remain inside the regular `ctest` suite without dominating total suite time.
 
 ## Expected Performance
 
@@ -71,6 +89,7 @@ The benchmark reports:
 
 ## Notes
 
-- The benchmark uses random data generation with a fixed seed for reproducibility
+- The benchmark uses synthetic random data generated at runtime
 - Timings exclude data generation time, only measuring parse performance
 - Results may vary based on CPU, memory, and compiler optimization level
+- The quick profile is intended for test-suite smoke coverage, not stable performance tracking

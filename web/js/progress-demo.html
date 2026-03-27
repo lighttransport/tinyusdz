@@ -141,6 +141,25 @@
             background: #388E3C;
         }
 
+        .btn.toggle {
+            background: #666;
+            font-size: 11px;
+            padding: 6px 12px;
+        }
+
+        .btn.toggle:hover {
+            background: #777;
+        }
+
+        .btn.toggle.active {
+            background: #9C27B0;
+            box-shadow: 0 0 8px rgba(156, 39, 176, 0.4);
+        }
+
+        .btn.toggle.active:hover {
+            background: #7B1FA2;
+        }
+
         #file-input {
             display: none;
         }
@@ -602,6 +621,14 @@
         </button>
         <button class="btn secondary" onclick="loadSampleModel()">
             Sample Model
+        </button>
+        <button class="btn toggle active" id="worker-btn" onclick="toggleWorkerMode()" title="Toggle Web Worker mode for responsive UI during loading">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                <line x1="8" y1="21" x2="16" y2="21"/>
+                <line x1="12" y1="17" x2="12" y2="21"/>
+            </svg>
+            Worker
         </button>
         <button class="btn warning" id="upaxis-btn" onclick="toggleUpAxisConversion()" style="display: none;" title="Z-up to Y-up conversion">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

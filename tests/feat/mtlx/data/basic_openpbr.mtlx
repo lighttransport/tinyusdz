@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<materialx version="1.38" colorspace="lin_rec709">
+  <open_pbr_surface name="OpenPBR_Gold" type="surfaceshader">
+    <input name="base_weight" type="float" value="1.0" />
+    <input name="base_color" type="color3" value="0.944, 0.776, 0.373" />
+    <input name="base_metalness" type="float" value="1.0" />
+    <input name="specular_weight" type="float" value="1.0" />
+    <input name="specular_roughness" type="float" value="0.2" />
+    <input name="specular_ior" type="float" value="1.5" />
+    <input name="coat_weight" type="float" value="0.0" />
+    <input name="emission_luminance" type="float" value="0.0" />
+    <input name="emission_color" type="color3" value="0.0, 0.0, 0.0" />
+  </open_pbr_surface>
+  <surfacematerial name="Gold_Material" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="OpenPBR_Gold" />
+  </surfacematerial>
+</materialx>

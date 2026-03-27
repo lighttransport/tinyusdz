@@ -20,6 +20,7 @@ import {
   createAckMessage,
   createErrorMessage,
   createPongMessage,
+  createExportRequestMessage,
   MessageType,
   TargetType
 } from './lib/message-protocol.js';
@@ -294,6 +295,48 @@ function handleMessage(ws, clientId, sessionId, clientType, header, payload) {
 
     case MessageType.PONG:
       connectionManager.handlePong(clientId);
+      break;
+
+    case MessageType.EXPORT_REQUEST:
+      // Browser requesting scene export from Blender
+      if (clientType === 'browser') {
+        console.log(`Export request from browser: session=${sessionId}`);
+        // Forward to Blender
+        const exportMsg = encodeMessage({
+          type: MessageType.EXPORT_REQUEST,
+          messageId: header.messageId,
+          exportOptions: header.exportOptions || {}
+        });
+        const sent = connectionManager.sendToBlender(sessionId, exportMsg);
+        if (!sent) {
+          ws.send(createErrorMessage(header.messageId, 'NO_BLENDER', 'Blender not connected to this session'));
+        }
+      }
+      break;
+
+    case MessageType.EXECUTE_CODE:
+      // Browser requesting code execution in Blender
+      if (clientType === 'browser') {
+        console.log(`Code execution request from browser: session=${sessionId}`);
+        const codeMsg = encodeMessage({
+          type: MessageType.EXECUTE_CODE,
+          messageId: header.messageId,
+          code: header.code
+        });
+        const sent = connectionManager.sendToBlender(sessionId, codeMsg);
+        if (!sent) {
+          ws.send(createErrorMessage(header.messageId, 'NO_BLENDER', 'Blender not connected to this session'));
+        }
+      }
+      break;
+
+    case MessageType.EXPORT_STARTED:
+    case MessageType.EXPORT_PROGRESS:
+    case MessageType.CODE_RESULT:
+      // Blender -> Browser responses, forward to browsers
+      if (clientType === 'blender') {
+        connectionManager.broadcastToBrowsers(sessionId, encodeMessage(header, payload));
+      }
       break;
 
     default:

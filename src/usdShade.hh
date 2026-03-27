@@ -22,15 +22,25 @@
 /// - UsdTransform2d: 2D transformations
 /// - UsdPrimvarReader_*: Primitive variable readers
 ///
-/// TODO:
-/// - [ ] Consider `interfaceOnly` connection
-/// - [ ] Strict usdShade interpretation https://graphics.pixar.com/usd/release/api/usd_shade_page_front.html
-/// - [ ] MaterialX support (in usdMtlx.hh)
-/// - [ ] NodeGraph support
+/// Notes:
+/// - `interfaceOnly` connections are partially supported (wrapS/wrapT etc.)
+/// - MaterialX support is in usdMtlx.{hh,cc}
+/// - NodeGraph is defined below with child shader management via prim hierarchy
 ///
 #pragma once
 
-#include "prim-types.hh"
+// Core includes (replaces monolithic prim-types.hh)
+#include "value-types.hh"
+#include "nonstd/optional.hpp"
+#include "core/prim-enums.hh"        // Specifier, Purpose
+#include "core/composition-types.hh" // Reference, Payload, ListEditQual
+#include "core/prim-metas.hh"       // PrimMeta
+#include "core/animatable.hh"       // Animatable
+#include "core/typed-attribute.hh"  // TypedAttribute, TypedAttributeWithFallback, TypedTerminalAttribute
+#include "core/relationship.hh"     // TypedConnection
+#include "core/property.hh"         // Property
+#include "core/material-binding.hh" // MaterialBinding (for DEFINE_TYPE_TRAIT)
+#include "core/variant-types.hh"    // VariantSet
 
 namespace tinyusdz {
 
@@ -58,14 +68,15 @@ constexpr auto kUsdPrimvarReader_matrix = "UsdPrimvarReader_matrix";
 
 constexpr auto kOpenPBRSurface = "OpenPBRSurface";
 
-// TODO: Inherit from Prim?
+// In OpenUSD, UsdShadeShader/Material/NodeGraph inherit from UsdTyped (not Prim).
+// TinyUSDZ uses a separate UsdShadePrim base to hold common fields (name, meta, props).
 struct UsdShadePrim {
   std::string name;
   Specifier spec{Specifier::Def};
 
   int64_t parent_id{-1};
 
-  PrimMeta meta; // TODO: move to private
+  PrimMeta meta;
 
   const PrimMeta &metas() const { return meta; }
   PrimMeta &metas() { return meta; }
@@ -155,18 +166,6 @@ struct NodeGraph : UsdShadePrim {
   // These are stored in the inherited props map from UsdShadePrim
   // Child nodes are stored as children in the USD hierarchy, not directly here
 
-  // Optional properties for shader network node management
-  // Child shaders and their connections are managed through the standard prim children mechanism
-  // Interface inputs/outputs can be defined through typed attributes
-  // Note: Uses inherited `props` from UsdShadePrim for additional properties
-  std::vector<value::token> _primChildren;  // Child prim names
-  std::vector<value::token> _properties;    // Property names
-
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
-
   // Optional MaterialX-specific attributes
   TypedAttribute<std::string> nodedef;  // Reference to a nodedef
   TypedAttribute<std::string> nodegraph_type;  // Type of the nodegraph
@@ -249,7 +248,7 @@ struct UsdUVTexture : ShaderNode {
   TypedAttributeWithFallback<Animatable<Wrap>> wrapS{Wrap::UseMetadata}; // "token inputs:wrapS" interfaceOnly
   TypedAttributeWithFallback<Animatable<Wrap>> wrapT{Wrap::UseMetadata}; // "token inputs:wrapT" interfaceOnly
 
-  TypedAttributeWithFallback<value::color4f> fallback{{0.0f, 0.0f, 0.0f, 1.0f}}; // "inputs:fallback" Fallback value when no texture is connected(TODO: Disallow Relation?(i.e, `fallback.connect = </Path/To/FallbackColor>`)
+  TypedAttributeWithFallback<value::color4f> fallback{{0.0f, 0.0f, 0.0f, 1.0f}}; // "inputs:fallback" Fallback value when no texture is connected
 
   TypedAttributeWithFallback<Animatable<SourceColorSpace>> sourceColorSpace{SourceColorSpace::Auto}; // "token inputs:sourceColorSpace" interfaceOnly
 
@@ -267,8 +266,8 @@ struct UsdUVTexture : ShaderNode {
   TypedTerminalAttribute<float> outputsA; // "float outputs:a"
   TypedTerminalAttribute<value::float3> outputsRGB; // "float outputs:rgb" in schema. Allow color3f as well(please use TypedTerminalAttribute::get_actual_type_name() to get a actual type name in USDA/USDC).
 
-  // TODO: orientation?
-  // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
+  // Note: Texture coordinate orientation follows USD convention (origin at bottom-left).
+  // See: https://openusd.org/release/spec_usdpreviewsurface.html
 };
 
 // UsdPreviewSurface
@@ -304,14 +303,14 @@ struct UsdPreviewSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<float>> roughness{0.5f};  // "inputs:roughness"
   TypedAttributeWithFallback<Animatable<float>> opacity{1.0f};  // "inputs:opacity"
 
-  TypedAttributeWithFallback<Animatable<OpacityMode>> opacityMode{OpacityMode::Transparent};  // "inputs:opacityMode"
+  TypedAttributeWithFallback<Animatable<OpacityMode>> opacityMode{OpacityMode::Opacity};  // "inputs:opacityMode"
 
   TypedAttributeWithFallback<Animatable<float>> opacityThreshold{0.0f};  // "inputs:opacityThreshold"
   TypedAttributeWithFallback<Animatable<float>> ior{1.5f};  // "inputs:ior"
 
   TypedAttributeWithFallback<Animatable<value::normal3f>> normal{value::normal3f{0.0f, 0.0f, 1.0f}}; // "inputs:normal"
   TypedAttributeWithFallback<Animatable<float>> displacement{0.0f}; // "inputs:displacement"
-  TypedAttributeWithFallback<Animatable<float>> occlusion{0.0f}; // "inputs:occlusion"
+  TypedAttributeWithFallback<Animatable<float>> occlusion{1.0f}; // "inputs:occlusion"
 
   ///
   /// Outputs
@@ -365,6 +364,7 @@ struct OpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<float>> specular_ior_level{0.5f}; // "inputs:specular_ior_level"
   TypedAttributeWithFallback<Animatable<float>> specular_anisotropy{0.0f}; // "inputs:specular_anisotropy"
   TypedAttributeWithFallback<Animatable<float>> specular_rotation{0.0f}; // "inputs:specular_rotation"
+  TypedAttributeWithFallback<Animatable<float>> specular_roughness_anisotropy{0.0f}; // "inputs:specular_roughness_anisotropy"
 
   // Transmission properties
   TypedAttributeWithFallback<Animatable<float>> transmission_weight{0.0f}; // "inputs:transmission_weight"
@@ -373,6 +373,8 @@ struct OpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<value::color3f>> transmission_scatter{value::color3f{0.0f, 0.0f, 0.0f}}; // "inputs:transmission_scatter"
   TypedAttributeWithFallback<Animatable<float>> transmission_scatter_anisotropy{0.0f}; // "inputs:transmission_scatter_anisotropy"
   TypedAttributeWithFallback<Animatable<float>> transmission_dispersion{0.0f}; // "inputs:transmission_dispersion"
+  TypedAttributeWithFallback<Animatable<float>> transmission_dispersion_abbe_number{0.0f}; // "inputs:transmission_dispersion_abbe_number"
+  TypedAttributeWithFallback<Animatable<float>> transmission_dispersion_scale{0.0f}; // "inputs:transmission_dispersion_scale"
 
   // Subsurface properties
   TypedAttributeWithFallback<Animatable<float>> subsurface_weight{0.0f}; // "inputs:subsurface_weight"
@@ -381,6 +383,7 @@ struct OpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_radius_scale{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:subsurface_radius_scale"
   TypedAttributeWithFallback<Animatable<float>> subsurface_scale{1.0f}; // "inputs:subsurface_scale"
   TypedAttributeWithFallback<Animatable<float>> subsurface_anisotropy{0.0f}; // "inputs:subsurface_anisotropy"
+  TypedAttributeWithFallback<Animatable<float>> subsurface_scatter_anisotropy{0.0f}; // "inputs:subsurface_scatter_anisotropy"
 
   // Sheen properties
   TypedAttributeWithFallback<Animatable<float>> sheen_weight{0.0f}; // "inputs:sheen_weight"
@@ -404,8 +407,10 @@ struct OpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<float>> coat_anisotropy{0.0f}; // "inputs:coat_anisotropy"
   TypedAttributeWithFallback<Animatable<float>> coat_rotation{0.0f}; // "inputs:coat_rotation"
   TypedAttributeWithFallback<Animatable<float>> coat_ior{1.5f}; // "inputs:coat_ior"
-  TypedAttributeWithFallback<Animatable<value::color3f>> coat_affect_color{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:coat_affect_color"
+  TypedAttributeWithFallback<Animatable<float>> coat_affect_color{0.0f}; // "inputs:coat_affect_color"
   TypedAttributeWithFallback<Animatable<float>> coat_affect_roughness{0.0f}; // "inputs:coat_affect_roughness"
+  TypedAttributeWithFallback<Animatable<float>> coat_roughness_anisotropy{0.0f}; // "inputs:coat_roughness_anisotropy"
+  TypedAttributeWithFallback<Animatable<float>> coat_darkening{0.0f}; // "inputs:coat_darkening"
 
   // Emission properties
   TypedAttributeWithFallback<Animatable<float>> emission_luminance{0.0f}; // "inputs:emission_luminance"
@@ -428,16 +433,10 @@ struct Shader : UsdShadePrim {
 
   std::string info_id;  // ShaderNode type.
 
-  // ShaderNode, UsdPreviewSurface, UsdUVTexture, UsdPrimvarReader_float2, ...
-  // TODO: Use ShaderNode *?
+  // Holds the concrete ShaderNode (UsdPreviewSurface, UsdUVTexture,
+  // UsdPrimvarReader_*, OpenPBRSurface, MaterialX nodes, etc.)
+  // stored as value::Value for type-erased polymorphism.
   value::Value value;
-#if 0
-  // Currently we only support PreviewSurface, UVTexture and
-  // PrimvarReader_float2
-  tinyusdz::variant<tinyusdz::monostate, PreviewSurface, UVTexture,
-                    PrimvarReader_float2>
-      value;
-#endif
 
 };
 
@@ -496,12 +495,11 @@ DEFINE_TYPE_TRAIT(MaterialBinding, "MaterialBindingAPI",
 DEFINE_TYPE_TRAIT(MaterialXConfigAPI, kMaterialXConfigAPI,
                   TYPE_ID_MATERIALX_CONFIG_API, 1);
 
-// FIXME: assign unique id
-// Add TypeTraits for SourceColorSpace enum
+// TypeTraits for SourceColorSpace enum
 template <>
 struct TypeTraits<UsdUVTexture::SourceColorSpace> {
   static constexpr uint32_t type_id() {
-    return TYPE_ID_SHADER + 100; // Use an arbitrary offset from shader type ID
+    return TYPE_ID_IMAGING_SOURCE_COLORSPACE;
   }
   static constexpr bool is_a_pod_type() { return true; }
   static constexpr bool is_a_container() { return false; }
@@ -516,127 +514,52 @@ struct TypeTraits<UsdUVTexture::SourceColorSpace> {
 
 }  // namespace value
 
-// Provide inline implementations for UsdUVTexture enum types
-// These enum types require special handling and cannot use extern templates
+// Provide inline implementations for UsdUVTexture enum types.
+// These enum types require special handling and cannot use extern templates.
+// The held-interpolation logic is identical for all enum TimeSamples types,
+// so we share it via a helper and generate the thin specializations below.
 
-// Implementation for UsdUVTexture::SourceColorSpace
+namespace detail {
+
+template <typename EnumT>
+inline bool GetHeldEnumTimeSample(const TypedTimeSamples<EnumT> &ts,
+                                  EnumT *dst, double t) {
+  if (!dst) return false;
+  if (ts.empty()) return false;
+
+  const auto &samples = ts.get_samples();
+  if (value::TimeCode(t).is_default() || samples.size() == 1) {
+    (*dst) = samples[0].value;
+    return true;
+  }
+  auto it = std::upper_bound(
+    samples.begin(), samples.end(), t,
+    [](double tval, const typename TypedTimeSamples<EnumT>::Sample &a) { return tval < a.t; });
+  const auto it_minus_1 = (it == samples.begin()) ? samples.begin() : (it - 1);
+  (*dst) = it_minus_1->value;
+  return true;
+}
+
+}  // namespace detail
+
 template<>
 template<>
 inline bool TypedTimeSamples<UsdUVTexture::SourceColorSpace>::get<UsdUVTexture::SourceColorSpace>(
     UsdUVTexture::SourceColorSpace *dst, double t,
     value::TimeSampleInterpolationType interp) const {
-
-  (void)interp;  // Enums are not interpolatable
-
-  if (!dst) {
-    return false;
-  }
-
-  if (empty()) {
-    return false;
-  }
-
-  if (_dirty) {
-    update();
-  }
-
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
-  // AoS layout
-  if (value::TimeCode(t).is_default()) {
-    (*dst) = _samples[0].value;
-    return true;
-  } else {
-    if (_samples.size() == 1) {
-      (*dst) = _samples[0].value;
-      return true;
-    }
-
-    // Held = nearest preceding value for a given time
-    auto it = std::upper_bound(
-      _samples.begin(), _samples.end(), t,
-      [](double tval, const Sample &a) { return tval < a.t; });
-
-    const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
-    (*dst) = it_minus_1->value;
-    return true;
-  }
-#else
-  // SoA layout
-  if (value::TimeCode(t).is_default()) {
-    (*dst) = _values[0];
-    return true;
-  } else {
-    if (_times.size() == 1) {
-      (*dst) = _values[0];
-      return true;
-    }
-
-    auto it = std::upper_bound(_times.begin(), _times.end(), t);
-    size_t idx = (it == _times.begin()) ? 0 : static_cast<size_t>(std::distance(_times.begin(), it) - 1);
-    (*dst) = _values[idx];
-    return true;
-  }
-#endif
+  (void)interp;
+  if (_dirty) update();
+  return detail::GetHeldEnumTimeSample(*this, dst, t);
 }
 
-// Implementation for UsdUVTexture::Wrap
 template<>
 template<>
 inline bool TypedTimeSamples<UsdUVTexture::Wrap>::get<UsdUVTexture::Wrap>(
     UsdUVTexture::Wrap *dst, double t,
     value::TimeSampleInterpolationType interp) const {
-
-  (void)interp;  // Enums are not interpolatable
-
-  if (!dst) {
-    return false;
-  }
-
-  if (empty()) {
-    return false;
-  }
-
-  if (_dirty) {
-    update();
-  }
-
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
-  // AoS layout
-  if (value::TimeCode(t).is_default()) {
-    (*dst) = _samples[0].value;
-    return true;
-  } else {
-    if (_samples.size() == 1) {
-      (*dst) = _samples[0].value;
-      return true;
-    }
-
-    // Held = nearest preceding value for a given time
-    auto it = std::upper_bound(
-      _samples.begin(), _samples.end(), t,
-      [](double tval, const Sample &a) { return tval < a.t; });
-
-    const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
-    (*dst) = it_minus_1->value;
-    return true;
-  }
-#else
-  // SoA layout
-  if (value::TimeCode(t).is_default()) {
-    (*dst) = _values[0];
-    return true;
-  } else {
-    if (_times.size() == 1) {
-      (*dst) = _values[0];
-      return true;
-    }
-
-    auto it = std::upper_bound(_times.begin(), _times.end(), t);
-    size_t idx = (it == _times.begin()) ? 0 : static_cast<size_t>(std::distance(_times.begin(), it) - 1);
-    (*dst) = _values[idx];
-    return true;
-  }
-#endif
+  (void)interp;
+  if (_dirty) update();
+  return detail::GetHeldEnumTimeSample(*this, dst, t);
 }
 
 }  // namespace tinyusdz

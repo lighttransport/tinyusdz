@@ -18,7 +18,7 @@ using namespace tinyusdz;
 template<typename T>
 bool test_typed_array_dedup() {
     value::TimeSamples ts;
-    // POD optimization is enabled automatically via init() or first add_sample_pod call
+    // binary storage is selected automatically via init() or the first typed add_sample call
 
     // Create a TypedArray
     TypedArrayImpl<T> arr_impl(100);
@@ -29,19 +29,19 @@ bool test_typed_array_dedup() {
 
     // Add the same array at different times
     std::string err;
-    bool ret = ts.add_array_sample_pod<T>(0.0, arr, &err);
+    bool ret = ts.add_array_sample<T>(0.0, arr, &err);
     if (!ret) {
         std::cerr << "Failed to add array sample at t=0.0: " << err << std::endl;
         return false;
     }
 
-    ret = ts.add_array_sample_pod<T>(1.0, arr, &err);
+    ret = ts.add_array_sample<T>(1.0, arr, &err);
     if (!ret) {
         std::cerr << "Failed to add array sample at t=1.0: " << err << std::endl;
         return false;
     }
 
-    ret = ts.add_array_sample_pod<T>(2.0, arr, &err);
+    ret = ts.add_array_sample<T>(2.0, arr, &err);
     if (!ret) {
         std::cerr << "Failed to add array sample at t=2.0: " << err << std::endl;
         return false;
@@ -62,7 +62,7 @@ bool test_typed_array_dedup() {
 template<typename T>
 bool test_vector_compatibility() {
     value::TimeSamples ts;
-    // POD optimization is enabled automatically
+    // binary storage is selected automatically
 
     std::vector<T> vec(50);
     for (size_t i = 0; i < 50; i++) {
@@ -70,7 +70,7 @@ bool test_vector_compatibility() {
     }
 
     std::string err;
-    bool ret = ts.add_array_sample_pod<T>(0.0, vec, &err);
+    bool ret = ts.add_array_sample<T>(0.0, vec, &err);
     if (!ret) {
         std::cerr << "Failed to add vector sample: " << err << std::endl;
         return false;
@@ -90,19 +90,19 @@ bool test_vector_compatibility() {
 template<typename T>
 bool test_scalar_values() {
     value::TimeSamples ts;
-    // POD optimization is enabled automatically
+    // binary storage is selected automatically
 
     std::string err;
     T val1 = static_cast<T>(42);
     T val2 = static_cast<T>(84);
 
-    bool ret = ts.add_sample_pod<T>(0.0, val1, &err);
+    bool ret = ts.add_sample<T>(0.0, val1, &err);
     if (!ret) {
         std::cerr << "Failed to add scalar sample at t=0.0: " << err << std::endl;
         return false;
     }
 
-    ret = ts.add_sample_pod<T>(1.0, val2, &err);
+    ret = ts.add_sample<T>(1.0, val2, &err);
     if (!ret) {
         std::cerr << "Failed to add scalar sample at t=1.0: " << err << std::endl;
         return false;

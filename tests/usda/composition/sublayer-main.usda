@@ -1,0 +1,10 @@
+#usda 1.0
+(
+    subLayers = [
+        @sublayer-base.usda@
+    ]
+)
+
+over "SharedPrim" {
+    custom int overrideValue = 999
+}

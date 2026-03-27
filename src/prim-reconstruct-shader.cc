@@ -2,24 +2,217 @@
 // Copyright 2021 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
-// Reconstruct Shader Prims - split from prim-reconstruct.cc for parallel compilation
+// Shader/Material/NodeGraph reconstruction specializations.
+// Split from prim-reconstruct.cc
 //
-#include "prim-reconstruct-internal.hh"
+#include "prim-reconstruct.hh"
+
+#include "core/prim.hh"
+#include "core/prim-spec.hh"
+#include "str-util.hh"
+#include "io-util.hh"
+#include "tiny-format.hh"
+#include "enum-handlers.hh"
+#include "prim-property-tables.hh"
+
 #include "usdShade.hh"
 #include "usdMtlx.hh"
 
-// For PUSH_ERROR_AND_RETURN
-#define PushError(s) if (err) { (*err) = s + (*err); }
-#define PushWarn(s) if (warn) { (*warn) = s + (*err); }
+#include "common-macros.inc"
+#include "value-types.hh"
 
+// For PUSH_ERROR_AND_RETURN
+#define PushError(s) \
+  if (err) { \
+    (*err) = (s) + (err->empty() ? std::string() : std::string("\n")) + (*err); \
+  }
+#define PushWarn(s) \
+  if (warn) { \
+    (*warn) = (s) + (warn->empty() ? std::string() : std::string("\n")) + (*warn); \
+  }
+
+// __VA_ARGS__ does not allow empty, thus # of args must be 2+
 #define PUSH_WARN_F(s, ...) PUSH_WARN(fmt::format(s, __VA_ARGS__))
-#define PUSH_ERROR_AND_RETURN_F(s, ...) PUSH_ERROR_AND_RETURN(fmt::format(s, __VA_ARGS__))
 
 namespace tinyusdz {
 namespace prim {
 
-// Include implementation helpers
-#include "prim-reconstruct-impl.inc"
+constexpr auto kInputsVarname = "inputs:varname";
+constexpr auto kPurpose = "purpose";
+
+// MaterialX Validation Helpers
+// ==========================================================================
+
+namespace mtlx_validation {
+
+// Known MaterialX node categories (from MaterialX spec)
+static const std::set<std::string> &GetKnownNodeCategories() {
+  static const std::set<std::string> s = {
+    // Math operations
+    "add", "subtract", "multiply", "divide", "power", "min", "max",
+    "absval", "floor", "ceil", "round", "sqrt", "sin", "cos", "tan",
+    "asin", "acos", "atan", "atan2", "exp", "log", "ln", "sign",
+    "clamp", "mix", "remap", "smoothstep", "modulo", "invert",
+    // Channel operations
+    "extract", "combine2", "combine3", "combine4", "separate2", "separate3", "separate4",
+    "swizzle", "convert", "luminance",
+    // Color operations
+    "hsvadjust", "saturate", "contrast", "range",
+    // Vector operations
+    "normalize", "magnitude", "dotproduct", "crossproduct", "rotate3d",
+    "transformpoint", "transformvector", "transformnormal",
+    // Geometry
+    "position", "normal", "tangent", "bitangent", "texcoord", "geomcolor",
+    // Texture
+    "image", "tiledimage", "constant", "noise2d", "noise3d",
+    "cellnoise2d", "cellnoise3d", "fractal3d", "worleynoise2d", "worleynoise3d",
+    // Procedural
+    "ramp4", "splitlr", "splittb", "checkerboard",
+    // Surface shaders
+    "open_pbr_surface", "standard_surface", "UsdPreviewSurface"
+  };
+  return s;
+}
+
+// Known MaterialX types
+static const std::set<std::string> &GetKnownTypes() {
+  static const std::set<std::string> s = {
+    "float", "color3", "color4", "vector2", "vector3", "vector4",
+    "matrix33", "matrix44", "string", "filename", "boolean", "integer",
+    "surfaceshader", "displacementshader", "volumeshader"
+  };
+  return s;
+}
+
+// Check if info:id follows MaterialX naming convention: ND_<category>_<type>
+// Returns true if valid or if validation is disabled
+static bool ValidateInfoId(const std::string &info_id,
+                           const PrimReconstructOptions &options,
+                           std::string *warn,
+                           std::string *err) {
+  if (!options.validate_mtlx_info_id && !options.strict_mtlx_check) {
+    return true;
+  }
+
+  // Check for ND_ prefix (MaterialX node definition)
+  if (info_id.rfind("ND_", 0) != 0) {
+    // Not a MaterialX node definition - might be UsdPreviewSurface etc.
+    return true;
+  }
+
+  // Parse ND_<category>_<type>
+  std::string rest = info_id.substr(3);  // Remove "ND_"
+  size_t lastUnderscore = rest.rfind('_');
+  if (lastUnderscore == std::string::npos || lastUnderscore == 0) {
+    if (err) {
+      *err = fmt::format("Invalid MaterialX info:id format: '{}'. Expected ND_<category>_<type>", info_id);
+    }
+    return false;
+  }
+
+  std::string category = rest.substr(0, lastUnderscore);
+  std::string type = rest.substr(lastUnderscore + 1);
+
+  // Handle multi-part categories like "convert_color3_vector3"
+  // These should be parsed as category="convert_color3" type="vector3"
+  // Actually, format is ND_<category>_<outputtype>, where category may include input type
+  // Let's be more lenient - just check if the base category is known
+
+  // Extract base category (first part before any type specifiers)
+  size_t firstUnderscore = category.find('_');
+  std::string baseCategory = (firstUnderscore != std::string::npos)
+                             ? category.substr(0, firstUnderscore)
+                             : category;
+
+  if (GetKnownNodeCategories().find(baseCategory) == GetKnownNodeCategories().end()) {
+    // Check full category name as well
+    if (GetKnownNodeCategories().find(category) == GetKnownNodeCategories().end()) {
+      if (warn) {
+        *warn += fmt::format("Unknown MaterialX node category '{}' in info:id '{}'\n",
+                            category, info_id);
+      }
+      // Don't fail - just warn for unknown categories
+    }
+  }
+
+  if (GetKnownTypes().find(type) == GetKnownTypes().end()) {
+    if (warn) {
+      *warn += fmt::format("Unknown MaterialX type '{}' in info:id '{}'\n", type, info_id);
+    }
+    // Don't fail - just warn for unknown types
+  }
+
+  return true;
+}
+
+// Validate extract/combine index bounds
+[[maybe_unused]]
+static bool ValidateIndexBounds(const std::string &info_id,
+                                int index,
+                                const PrimReconstructOptions &options,
+                                std::string * /* warn */,
+                                std::string *err) {
+  if (!options.validate_mtlx_index_bounds && !options.strict_mtlx_check) {
+    return true;
+  }
+
+  int maxIndex = 2;  // Default for color3/vector3
+
+  // Determine max index based on type
+  if (info_id.find("color4") != std::string::npos ||
+      info_id.find("vector4") != std::string::npos) {
+    maxIndex = 3;
+  } else if (info_id.find("color2") != std::string::npos ||
+             info_id.find("vector2") != std::string::npos ||
+             info_id.find("float2") != std::string::npos) {
+    maxIndex = 1;
+  }
+
+  if (index < 0) {
+    if (err) {
+      *err = fmt::format("Negative index {} for extract/combine in '{}'", index, info_id);
+    }
+    return false;
+  }
+
+  if (index > maxIndex) {
+    if (err) {
+      *err = fmt::format("Index {} out of bounds (max {}) for extract/combine in '{}'",
+                        index, maxIndex, info_id);
+    }
+    return false;
+  }
+
+  return true;
+}
+
+// Get expected type for a connection based on property name/type
+[[maybe_unused]]
+static std::string GetExpectedConnectionType(const std::string &propName,
+                                             const value::Value &propValue) {
+  (void)propValue;
+  // Map common property names to expected types
+  if (propName.find("color") != std::string::npos) return "color3";
+  if (propName.find("normal") != std::string::npos) return "vector3";
+  if (propName.find("metalness") != std::string::npos) return "float";
+  if (propName.find("roughness") != std::string::npos) return "float";
+  return "";  // Unknown
+}
+
+}  // namespace mtlx_validation
+
+
+template <typename T>
+bool ReconstructShader(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    T *out,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options);
+
+#include "prim-reconstruct-common.inc"
 
 template <>
 bool ReconstructShader<ShaderNode>(
@@ -33,13 +226,13 @@ bool ReconstructShader<ShaderNode>(
 {
   (void)spec;
   (void)options;
+  (void)err;
 
   if (!node) {
     return false;
   }
 
-  // NOTE: References are not commonly used for ShaderNode (shader connections
-  // are handled via properties/connections). Ignoring references here.
+  // TODO: references
   (void)references;
 
   std::set<std::string> table;
@@ -144,9 +337,23 @@ bool ReconstructShader<UsdUVTexture>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:file", UsdUVTexture, texture->file)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:st", UsdUVTexture,
                           texture->st)
-    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "inputs:sourceColorSpace",
-                       UsdUVTexture::SourceColorSpace, SourceColorSpaceHandler, UsdUVTexture,
-                       texture->sourceColorSpace, options.strict_allowedToken_check)
+    if (prop.first == "inputs:sourceColorSpace") {
+      if (table.count("inputs:sourceColorSpace")) {
+        continue;
+      }
+      const Attribute &attr = prop.second.get_attribute();
+      std::function<nonstd::expected<UsdUVTexture::SourceColorSpace, std::string>(
+          const std::string &)> fun = SourceColorSpaceHandler;
+      if (!ParseTimeSampledEnumProperty(
+              "inputs:sourceColorSpace", options.strict_allowedToken_check, fun,
+              attr, &texture->sourceColorSpace, warn, err, options)) {
+        return false;
+      }
+      texture->sourceColorSpace.metas() =
+          std::move(prop.second.attribute().metas());
+      table.insert("inputs:sourceColorSpace");
+      continue;
+    }
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "inputs:wrapS",
                        UsdUVTexture::Wrap, WrapHandler, UsdUVTexture,
                        texture->wrapS, options.strict_allowedToken_check)
@@ -228,135 +435,29 @@ static bool ReconstructPrimvarReaderShaderImpl(
   return true;
 }
 
-template <>
-bool ReconstructShader<UsdPrimvarReader_int>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_int *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
+// All PrimvarReader variants delegate to the shared template impl above.
+#define RECONSTRUCT_PRIMVAR_READER_SHADER(__type) \
+template <> \
+bool ReconstructShader<__type>( \
+    const Specifier &spec, PropertyMap &properties, \
+    const ReferenceList &references, __type *preader, \
+    std::string *warn, std::string *err, \
+    const PrimReconstructOptions &options) { \
+  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options); \
 }
 
-template <>
-bool ReconstructShader<UsdPrimvarReader_float>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_float *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
-}
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_int)
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_float)
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_float2)
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_float3)
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_float4)
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_string)
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_vector)
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_normal)
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_point)
+RECONSTRUCT_PRIMVAR_READER_SHADER(UsdPrimvarReader_matrix)
 
-template <>
-bool ReconstructShader<UsdPrimvarReader_float2>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_float2 *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
-}
-
-template <>
-bool ReconstructShader<UsdPrimvarReader_float3>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_float3 *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
-}
-
-template <>
-bool ReconstructShader<UsdPrimvarReader_float4>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_float4 *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
-}
-
-template <>
-bool ReconstructShader<UsdPrimvarReader_string>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_string *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
-}
-
-template <>
-bool ReconstructShader<UsdPrimvarReader_vector>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_vector *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
-}
-
-template <>
-bool ReconstructShader<UsdPrimvarReader_normal>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_normal *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
-}
-
-template <>
-bool ReconstructShader<UsdPrimvarReader_point>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_point *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
-}
-
-template <>
-bool ReconstructShader<UsdPrimvarReader_matrix>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    UsdPrimvarReader_matrix *preader,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options)
-{
-  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
-}
+#undef RECONSTRUCT_PRIMVAR_READER_SHADER
 
 template <>
 bool ReconstructShader<MtlxAutodeskStandardSurface>(
@@ -679,6 +780,8 @@ bool ReconstructShader<OpenPBRSurface>(
                          surface->specular_anisotropy)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_rotation", OpenPBRSurface,
                          surface->specular_rotation)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_roughness_anisotropy", OpenPBRSurface,
+                         surface->specular_roughness_anisotropy)
 
     // Transmission properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_weight", OpenPBRSurface,
@@ -693,6 +796,10 @@ bool ReconstructShader<OpenPBRSurface>(
                          surface->transmission_scatter_anisotropy)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_dispersion", OpenPBRSurface,
                          surface->transmission_dispersion)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_dispersion_abbe_number", OpenPBRSurface,
+                         surface->transmission_dispersion_abbe_number)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_dispersion_scale", OpenPBRSurface,
+                         surface->transmission_dispersion_scale)
 
     // Subsurface properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_weight", OpenPBRSurface,
@@ -705,6 +812,8 @@ bool ReconstructShader<OpenPBRSurface>(
                          surface->subsurface_scale)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_anisotropy", OpenPBRSurface,
                          surface->subsurface_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_scatter_anisotropy", OpenPBRSurface,
+                         surface->subsurface_scatter_anisotropy)
 
     // Sheen properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:sheen_weight", OpenPBRSurface,
@@ -747,6 +856,10 @@ bool ReconstructShader<OpenPBRSurface>(
                          surface->coat_affect_color)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_affect_roughness", OpenPBRSurface,
                          surface->coat_affect_roughness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_roughness_anisotropy", OpenPBRSurface,
+                         surface->coat_roughness_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_darkening", OpenPBRSurface,
+                         surface->coat_darkening)
 
     // Emission properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:emission_luminance", OpenPBRSurface,
@@ -855,6 +968,11 @@ bool ReconstructPrim<Shader>(
     }
 
     DCOUT("info:id = " << shader_type);
+
+    // Validate MaterialX info:id if validation is enabled
+    if (!mtlx_validation::ValidateInfoId(shader_type, options, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Invalid MaterialX info:id: " << shader_type);
+    }
   }
 
 
@@ -862,7 +980,7 @@ bool ReconstructPrim<Shader>(
     UsdPreviewSurface surface;
     if (!ReconstructShader<UsdPreviewSurface>(spec, properties, references,
                                               &surface, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPreviewSurface);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kUsdPreviewSurface << "`.");
     }
     shader->info_id = kUsdPreviewSurface;
     shader->value = surface;
@@ -871,7 +989,7 @@ bool ReconstructPrim<Shader>(
     UsdUVTexture texture;
     if (!ReconstructShader<UsdUVTexture>(spec, properties, references,
                                          &texture, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdUVTexture);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kUsdUVTexture << "`.");
     }
     shader->info_id = kUsdUVTexture;
     shader->value = texture;
@@ -879,8 +997,8 @@ bool ReconstructPrim<Shader>(
     UsdPrimvarReader_int preader;
     if (!ReconstructShader<UsdPrimvarReader_int>(spec, properties, references,
                                                  &preader, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdPrimvarReader_int);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdPrimvarReader_int << "`.");
     }
     shader->info_id = kUsdPrimvarReader_int;
     shader->value = preader;
@@ -888,8 +1006,8 @@ bool ReconstructPrim<Shader>(
     UsdPrimvarReader_float preader;
     if (!ReconstructShader<UsdPrimvarReader_float>(spec, properties, references,
                                                    &preader, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdPrimvarReader_float);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdPrimvarReader_float << "`.");
     }
     shader->info_id = kUsdPrimvarReader_float;
     shader->value = preader;
@@ -897,8 +1015,8 @@ bool ReconstructPrim<Shader>(
     UsdPrimvarReader_float2 preader;
     if (!ReconstructShader<UsdPrimvarReader_float2>(spec, properties, references,
                                                     &preader, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdPrimvarReader_float2);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdPrimvarReader_float2 << "`.");
     }
     shader->info_id = kUsdPrimvarReader_float2;
     shader->value = preader;
@@ -906,8 +1024,8 @@ bool ReconstructPrim<Shader>(
     UsdPrimvarReader_float3 preader;
     if (!ReconstructShader<UsdPrimvarReader_float3>(spec,properties, references,
                                                     &preader, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdPrimvarReader_float3);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdPrimvarReader_float3 << "`.");
     }
     shader->info_id = kUsdPrimvarReader_float3;
     shader->value = preader;
@@ -915,8 +1033,8 @@ bool ReconstructPrim<Shader>(
     UsdPrimvarReader_float4 preader;
     if (!ReconstructShader<UsdPrimvarReader_float4>(spec,properties, references,
                                                     &preader, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdPrimvarReader_float4);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdPrimvarReader_float4 << "`.");
     }
     shader->info_id = kUsdPrimvarReader_float4;
     shader->value = preader;
@@ -924,8 +1042,8 @@ bool ReconstructPrim<Shader>(
     UsdPrimvarReader_string preader;
     if (!ReconstructShader<UsdPrimvarReader_string>(spec,properties, references,
                                                     &preader, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdPrimvarReader_string);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdPrimvarReader_string << "`.");
     }
     shader->info_id = kUsdPrimvarReader_string;
     shader->value = preader;
@@ -933,8 +1051,8 @@ bool ReconstructPrim<Shader>(
     UsdPrimvarReader_vector preader;
     if (!ReconstructShader<UsdPrimvarReader_vector>(spec,properties, references,
                                                     &preader, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdPrimvarReader_vector);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdPrimvarReader_vector << "`.");
     }
     shader->info_id = kUsdPrimvarReader_vector;
     shader->value = preader;
@@ -942,8 +1060,8 @@ bool ReconstructPrim<Shader>(
     UsdPrimvarReader_normal preader;
     if (!ReconstructShader<UsdPrimvarReader_normal>(spec,properties, references,
                                                     &preader, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdPrimvarReader_normal);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdPrimvarReader_normal << "`.");
     }
     shader->info_id = kUsdPrimvarReader_normal;
     shader->value = preader;
@@ -951,8 +1069,8 @@ bool ReconstructPrim<Shader>(
     UsdPrimvarReader_point preader;
     if (!ReconstructShader<UsdPrimvarReader_point>(spec,properties, references,
                                                     &preader, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdPrimvarReader_point);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdPrimvarReader_point << "`.");
     }
     shader->info_id = kUsdPrimvarReader_point;
     shader->value = preader;
@@ -960,8 +1078,8 @@ bool ReconstructPrim<Shader>(
     UsdTransform2d transform;
     if (!ReconstructShader<UsdTransform2d>(spec,properties, references,
                                                     &transform, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                            << kUsdTransform2d);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `"
+                            << kUsdTransform2d << "`.");
     }
     shader->info_id = kUsdTransform2d;
     shader->value = transform;
@@ -969,7 +1087,7 @@ bool ReconstructPrim<Shader>(
     OpenPBRSurface surface;
     if (!ReconstructShader<OpenPBRSurface>(spec, properties, references,
                                            &surface, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kOpenPBRSurface);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kOpenPBRSurface << "`.");
     }
     shader->info_id = kOpenPBRSurface;
     shader->value = surface;
@@ -977,16 +1095,25 @@ bool ReconstructPrim<Shader>(
     MtlxAutodeskStandardSurface surface;
     if (!ReconstructShader<MtlxAutodeskStandardSurface>(spec, properties, references,
                                                          &surface, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kMtlxAutodeskStandardSurface);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kMtlxAutodeskStandardSurface << "`.");
     }
     shader->info_id = kMtlxAutodeskStandardSurface;
+    shader->value = surface;
+  } else if (shader_type.compare(kNdStandardSurfaceSurfaceshader) == 0) {
+    // MaterialX Standard Surface via ND_standard_surface_surfaceshader info:id
+    MtlxAutodeskStandardSurface surface;
+    if (!ReconstructShader<MtlxAutodeskStandardSurface>(spec, properties, references,
+                                                         &surface, warn, err, options)) {
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kNdStandardSurfaceSurfaceshader << "`.");
+    }
+    shader->info_id = kNdStandardSurfaceSurfaceshader;
     shader->value = surface;
   } else if (shader_type.compare(kNdOpenPbrSurfaceSurfaceshader) == 0) {
     // Blender v4.5 MaterialX OpenPBR Surface export
     MtlxOpenPBRSurface surface;
     if (!ReconstructShader<MtlxOpenPBRSurface>(spec, properties, references,
                                                 &surface, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kNdOpenPbrSurfaceSurfaceshader);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kNdOpenPbrSurfaceSurfaceshader << "`.");
     }
     shader->info_id = kNdOpenPbrSurfaceSurfaceshader;
     shader->value = surface;
@@ -995,7 +1122,7 @@ bool ReconstructPrim<Shader>(
     ShaderNode surface;
     if (!ReconstructShader<ShaderNode>(spec,properties, references,
                                               &surface, warn, err, options)) {
-      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << shader_type);
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << shader_type << "`.");
     }
     if (shader_type.size()) {
       shader->info_id = shader_type;
@@ -1023,9 +1150,7 @@ bool ReconstructPrim<Material>(
   (void)options;
   std::set<std::string> table;
 
-  // NOTE: Properties with 'inputs' and 'outputs' namespace are handled as
-  // generic properties and stored in Material::props. Terminal outputs like
-  // `outputs:surface` are treated as input attributes with connections.
+  // TODO: special treatment for properties with 'inputs' and 'outputs' namespace.
 
   // Check if MaterialXConfigAPI is applied
   bool hasMaterialXConfig = false;
@@ -1098,7 +1223,10 @@ bool ReconstructPrim<NodeGraph>(
   return true;
 }
 
-// PrimSpec versions
+///
+/// -- PrimSpec wrappers for Shader/Material/NodeGraph
+///
+
 #define RECONSTRUCT_PRIM_PRIMSPEC_IMPL(__prim_ty) \
 template <> \
 bool ReconstructPrim<__prim_ty>( \
@@ -1107,7 +1235,9 @@ bool ReconstructPrim<__prim_ty>( \
     std::string *warn, \
     std::string *err, \
     const PrimReconstructOptions &options) { \
-  ReferenceList references; \
+ \
+  ReferenceList references; /* dummy */ \
+ \
   return ReconstructPrim<__prim_ty>(primspec.specifier(), primspec.props(), references, prim, warn, err, options); \
 }
 
@@ -1115,5 +1245,5 @@ RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Shader)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Material)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(NodeGraph)
 
-}  // namespace prim
-}  // namespace tinyusdz
+} // namespace prim
+} // namespace tinyusdz

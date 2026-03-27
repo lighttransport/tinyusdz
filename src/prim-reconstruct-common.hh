@@ -15,7 +15,7 @@
 #include <functional>
 #include <set>
 
-#include "prim-types.hh"
+#include "core/property.hh"  // Property (transitively: attribute, relationship, path, prim-enums)
 
 namespace tinyusdz {
 namespace prim {

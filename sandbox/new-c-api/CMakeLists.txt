@@ -62,11 +62,21 @@ set(TINYUSDZ_SOURCES
     ${TINYUSDZ_SRC}/usdSkel.cc
     ${TINYUSDZ_SRC}/usda-reader.cc
     ${TINYUSDZ_SRC}/usdc-reader.cc
+    ${TINYUSDZ_SRC}/usdc-reader-property.cc
+    ${TINYUSDZ_SRC}/usdc-reader-prim.cc
+    ${TINYUSDZ_SRC}/usdc-reader-reconstruct.cc
     ${TINYUSDZ_SRC}/crate-reader.cc
+    ${TINYUSDZ_SRC}/crate-reader-arrays.cc
+    ${TINYUSDZ_SRC}/crate-reader-values.cc
+    ${TINYUSDZ_SRC}/crate-reader-paths.cc
     ${TINYUSDZ_SRC}/ascii-parser.cc
+    ${TINYUSDZ_SRC}/ascii-parser-props.cc
+    ${TINYUSDZ_SRC}/ascii-parser-entry.cc
     ${TINYUSDZ_SRC}/asset-resolution.cc
     ${TINYUSDZ_SRC}/composition.cc
+    ${TINYUSDZ_SRC}/composition-reconstruct.cc
     ${TINYUSDZ_SRC}/prim-reconstruct.cc
+    ${TINYUSDZ_SRC}/prim-reconstruct-shader.cc
     ${TINYUSDZ_SRC}/path.cc
     ${TINYUSDZ_SRC}/str-util.cc
     ${TINYUSDZ_SRC}/io-util.cc

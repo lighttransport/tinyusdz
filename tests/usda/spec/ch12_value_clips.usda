@@ -1,0 +1,36 @@
+#usda 1.0
+(
+    doc = "AOUSD Core Spec 12.3.4: Value clips metadata"
+)
+
+# This prim has clips metadata with explicit clip set definition.
+# The clips point to external USD files that provide time-sampled values.
+over "AnimatedGeo" (
+    clips = {
+        dictionary default_clip = {
+            double2[] active = [(0, 0), (10, 1)]
+            asset[] assetPaths = [@clip_0.usdc@, @clip_1.usdc@]
+            string primPath = "/Root/Geo"
+            double2[] times = [(0, 0), (10, 10)]
+        }
+    }
+)
+{
+    # This attribute has no local value — value should come from clips
+    float3[] points
+}
+
+# This prim uses template-based clip metadata
+over "TemplateClipGeo" (
+    clips = {
+        dictionary anim = {
+            asset templateAssetPath = @clips/anim.###.usd@
+            double templateStartTime = 100
+            double templateEndTime = 105
+            double templateStride = 1
+        }
+    }
+)
+{
+    float3[] points
+}

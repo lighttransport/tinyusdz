@@ -7,14 +7,31 @@
 #include "usdSkel.hh"
 
 #include <sstream>
+#include <cstdint>
+#include <unordered_map>
 
 #include "common-macros.inc"
 #include "tiny-format.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "path-util.hh"
 
 namespace tinyusdz {
-namespace {}  // namespace
+namespace {
+
+struct FNV1StringHash {
+  size_t operator()(const std::string &s) const noexcept {
+    static constexpr uint64_t kFNV_Prime = 0x00000100000001B3ull;
+    static constexpr uint64_t kFNV_Offset_Basis = 0xcbf29ce484222325ull;
+
+    uint64_t hash = kFNV_Offset_Basis;
+    for (char ch : s) {
+      hash = (kFNV_Prime * hash) ^ static_cast<unsigned char>(ch);
+    }
+    return static_cast<size_t>(hash);
+  }
+};
+
+}  // namespace
 
 constexpr auto kInbetweensNamespace = "inbetweens";
 
@@ -97,6 +114,78 @@ bool SkelAnimation::get_translations(
   return false;
 }
 
+bool SkelNormalizeWeights(std::vector<float> &weights,
+                          int numInfluencesPerComponent, const float eps) {
+  if (numInfluencesPerComponent < 1) {
+    return false;
+  }
+
+  size_t numInfluences = size_t(numInfluencesPerComponent);
+  if ((weights.size() % numInfluences) != 0) {
+    return false;
+  }
+
+  size_t numComponents = weights.size() / numInfluences;
+
+  for (size_t c = 0; c < numComponents; c++) {
+    size_t offset = c * numInfluences;
+
+    float sum = 0.0f;
+    for (size_t i = 0; i < numInfluences; i++) {
+      sum += weights[offset + i];
+    }
+
+    if (sum > eps) {
+      float invSum = 1.0f / sum;
+      for (size_t i = 0; i < numInfluences; i++) {
+        weights[offset + i] *= invSum;
+      }
+    } else {
+      // All weights are effectively zero; leave them as-is.
+    }
+  }
+
+  return true;
+}
+
+bool SkelSortInfluences(std::vector<int> &indices, std::vector<float> &weights,
+                         int numInfluencesPerComponent) {
+  if (numInfluencesPerComponent < 1) {
+    return false;
+  }
+
+  size_t numInfluences = size_t(numInfluencesPerComponent);
+  if (indices.size() != weights.size()) {
+    return false;
+  }
+  if ((indices.size() % numInfluences) != 0) {
+    return false;
+  }
+
+  size_t numComponents = indices.size() / numInfluences;
+
+  // Sort each group by weight descending using simple insertion sort
+  // (groups are typically very small, e.g. 4 or 8 elements)
+  for (size_t c = 0; c < numComponents; c++) {
+    size_t offset = c * numInfluences;
+
+    for (size_t i = 1; i < numInfluences; i++) {
+      float keyW = weights[offset + i];
+      int keyI = indices[offset + i];
+      size_t j = i;
+      while (j > 0 && weights[offset + j - 1] < keyW) {
+        weights[offset + j] = weights[offset + j - 1];
+        indices[offset + j] = indices[offset + j - 1];
+        j--;
+      }
+      weights[offset + j] = keyW;
+      indices[offset + j] = keyI;
+    }
+  }
+
+  return true;
+}
+
 bool BuildSkelTopology(
   const std::vector<value::token> &joints,
   std::vector<int> &dst,
@@ -137,12 +226,14 @@ bool BuildSkelTopology(
   }
 
   // path name <-> index map
-  std::map<std::string, int> pathMap;
+  std::unordered_map<std::string, int, FNV1StringHash> pathMap;
+  pathMap.reserve(paths.size());
   for (size_t i = 0; i < paths.size(); i++) {
     pathMap[paths[i].prim_part()] = int(i); 
   }
 
-  auto GetParentIndex = [](const std::map<std::string, int> &_pathMap, const Path &path) -> int {
+  auto GetParentIndex = [](const std::unordered_map<std::string, int, FNV1StringHash> &_pathMap,
+                           const Path &path) -> int {
     if (path.is_root_path()) {
       return -1;
     }
@@ -160,9 +251,9 @@ bool BuildSkelTopology(
     uint32_t depth = 0;
     while (parentPath.is_valid() && !parentPath.is_root_path()) {
 
-      if (_pathMap.count(parentPath.prim_part())) {
-        return _pathMap.at(parentPath.prim_part());
-      } else {
+      auto it = _pathMap.find(parentPath.prim_part());
+      if (it != _pathMap.end()) {
+        return it->second;
       }
 
       parentPath = parentPath.get_parent_prim_path();
@@ -185,5 +276,56 @@ bool BuildSkelTopology(
   return true;
 }
 
-}  // namespace tinyusdz
+bool SkelValidateTopology(
+  const std::vector<int> &topology,
+  std::string *err) {
 
+  if (topology.empty()) {
+    return true;
+  }
+
+  int numJoints = int(topology.size());
+  int numRoots = 0;
+
+  for (int i = 0; i < numJoints; i++) {
+    int parent = topology[size_t(i)];
+
+    if (parent < 0) {
+      numRoots++;
+      continue;
+    }
+
+    if (parent >= numJoints) {
+      if (err) {
+        (*err) += fmt::format("Joint {} has out-of-range parent index {}.", i, parent);
+      }
+      return false;
+    }
+
+    if (parent >= i) {
+      if (err) {
+        (*err) += fmt::format("Joint {} has parent {} which is not ordered before it. "
+                              "Parent indices must be less than child indices.", i, parent);
+      }
+      return false;
+    }
+  }
+
+  if (numRoots == 0) {
+    if (err) {
+      (*err) += "No root joint found (no joint with parent index -1). Possible cycle.";
+    }
+    return false;
+  }
+
+  if (numRoots > 1) {
+    if (err) {
+      (*err) += fmt::format("Topology must be single-rooted but has {} roots.", numRoots);
+    }
+    return false;
+  }
+
+  return true;
+}
+
+}  // namespace tinyusdz

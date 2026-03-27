@@ -5,7 +5,8 @@
 
 #include <unordered_map>
 
-#include "prim-types.hh"
+#include "core/prim-spec.hh"
+#include "core/layer-types.hh"
 
 namespace tinyusdz {
 namespace tydra {

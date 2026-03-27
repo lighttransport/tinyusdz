@@ -160,6 +160,10 @@ struct Animatable {
 
   const TypedTimeSamples<T> &get_timesamples() const { return _ts; }
 
+  /// Get const reference to the scalar/default value (no copy).
+  /// Only valid when has_default() is true.
+  const T &get_scalar_ref() const { return _value; }
+
   Animatable() {}
 
   Animatable(const T &v) {

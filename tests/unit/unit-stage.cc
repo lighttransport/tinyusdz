@@ -6,9 +6,12 @@
 #include "acutest.h"
 
 #include "unit-stage.h"
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/path.hh"
 #include "tinyusdz.hh"
 #include "usdGeom.hh"
+#include "usda-writer.hh"
+#include "stage.hh"
 
 using namespace tinyusdz;
 
@@ -243,5 +246,308 @@ void stage_find_prim_by_id_test(void) {
 
     TEST_CHECK(ok1 && ok2);
     TEST_CHECK(found1 == found2);  // Same pointer from cache
+  }
+}
+
+void stage_add_root_prim_test(void) {
+  // Start with empty stage
+  Stage stage;
+  TEST_CHECK(stage.root_prims().size() == 0);
+
+  // Add first root prim
+  {
+    Xform xf;
+    xf.name = "First";
+    Prim prim("First", xf);
+    bool ok = stage.add_root_prim(std::move(prim), false);
+    TEST_CHECK(ok);
+    TEST_CHECK(stage.root_prims().size() == 1);
+    TEST_CHECK(stage.root_prims()[0].element_name() == "First");
+  }
+
+  // Add second root prim with different name
+  {
+    Xform xf;
+    xf.name = "Second";
+    Prim prim("Second", xf);
+    bool ok = stage.add_root_prim(std::move(prim), false);
+    TEST_CHECK(ok);
+    TEST_CHECK(stage.root_prims().size() == 2);
+    TEST_CHECK(stage.root_prims()[1].element_name() == "Second");
+  }
+
+  // Adding prim with same name and rename_prim_name=true should succeed
+  {
+    Xform xf;
+    xf.name = "First";
+    Prim prim("First", xf);
+    bool ok = stage.add_root_prim(std::move(prim), true);
+    TEST_CHECK(ok);
+    TEST_CHECK(stage.root_prims().size() == 3);
+    // The name should have been renamed to avoid collision
+    TEST_MSG("Third prim name after rename: %s",
+             stage.root_prims()[2].element_name().c_str());
+  }
+}
+
+void stage_replace_root_prim_test(void) {
+  Stage stage;
+
+  // Add an Xform root prim named "A"
+  {
+    Xform xf;
+    xf.name = "A";
+    Prim prim("A", xf);
+    stage.add_root_prim(std::move(prim), false);
+  }
+  TEST_CHECK(stage.root_prims().size() == 1);
+  TEST_CHECK(stage.root_prims()[0].type_name() == "Xform");
+
+  // Replace "A" with a GeomMesh prim
+  {
+    GeomMesh mesh;
+    mesh.name = "A";
+    Prim prim("A", mesh);
+    bool ok = stage.replace_root_prim("A", std::move(prim));
+    TEST_CHECK(ok);
+    TEST_CHECK(stage.root_prims().size() == 1);
+    TEST_CHECK(stage.root_prims()[0].type_name() == "Mesh");
+    TEST_CHECK(stage.root_prims()[0].element_name() == "A");
+  }
+
+  // replace_root_prim for non-existent name should add it
+  {
+    Xform xf;
+    xf.name = "NonExistent";
+    Prim prim("NonExistent", xf);
+    bool ok = stage.replace_root_prim("NonExistent", std::move(prim));
+    TEST_CHECK(ok);
+    TEST_CHECK(stage.root_prims().size() == 2);
+  }
+
+  // replace_root_prim with empty name should fail
+  {
+    Xform xf;
+    Prim prim("Dummy", xf);
+    bool ok = stage.replace_root_prim("", std::move(prim));
+    TEST_CHECK(!ok);
+  }
+}
+
+void stage_export_to_string_test(void) {
+  Stage stage;
+
+  // Add an Xform root prim
+  Xform xf;
+  xf.name = "MyXform";
+  Prim prim("MyXform", xf);
+  stage.add_root_prim(std::move(prim), false);
+
+  // Export to string
+  std::string usda = stage.ExportToString();
+  TEST_CHECK(!usda.empty());
+  TEST_CHECK(usda.find("#usda 1.0") != std::string::npos);
+  TEST_MSG("USDA output contains header");
+  TEST_CHECK(usda.find("MyXform") != std::string::npos);
+  TEST_MSG("USDA output contains prim name");
+
+  // Round-trip: re-parse the USDA string
+  Stage stage2;
+  std::string warn, err;
+  bool ok = LoadUSDAFromMemory(
+      reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+      "", &stage2, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+    return;
+  }
+  TEST_CHECK(stage2.root_prims().size() == 1);
+  TEST_CHECK(stage2.root_prims()[0].element_name() == "MyXform");
+}
+
+void stage_commit_prim_id_test(void) {
+  Stage stage;
+
+  // Build a small hierarchy: /Root/Child
+  Xform root_xf;
+  root_xf.name = "Root";
+  Prim root_prim("Root", root_xf);
+
+  Xform child_xf;
+  child_xf.name = "Child";
+  Prim child_prim("Child", child_xf);
+  root_prim.add_child(std::move(child_prim));
+
+  stage.add_root_prim(std::move(root_prim), false);
+
+  // commit() assigns prim IDs
+  bool ok = stage.commit();
+  TEST_CHECK(ok);
+
+  // Verify Root prim has a valid prim_id
+  {
+    Path path("/Root", "");
+    auto result = stage.GetPrimAtPath(path);
+    TEST_CHECK(result.has_value());
+    if (result) {
+      int64_t id = result.value()->prim_id();
+      TEST_CHECK(id > 0);
+      TEST_MSG("Root prim_id = %lld", (long long)id);
+    }
+  }
+
+  // Verify Child prim has a valid and different prim_id
+  {
+    Path root_path("/Root", "");
+    Path child_path("/Root/Child", "");
+    auto root_result = stage.GetPrimAtPath(root_path);
+    auto child_result = stage.GetPrimAtPath(child_path);
+    TEST_CHECK(root_result.has_value());
+    TEST_CHECK(child_result.has_value());
+    if (root_result && child_result) {
+      int64_t root_id = root_result.value()->prim_id();
+      int64_t child_id = child_result.value()->prim_id();
+      TEST_CHECK(child_id > 0);
+      TEST_CHECK(root_id != child_id);
+      TEST_MSG("Root prim_id = %lld, Child prim_id = %lld",
+               (long long)root_id, (long long)child_id);
+    }
+  }
+}
+
+void stage_metas_test(void) {
+  Stage stage;
+
+  // Set stage metadata
+  stage.metas().defaultPrim = value::token("Root");
+  stage.metas().upAxis = Axis::Y;
+  stage.metas().metersPerUnit = 0.01;
+
+  // Verify locally
+  TEST_CHECK(stage.metas().defaultPrim.str() == "Root");
+  TEST_CHECK(stage.metas().upAxis.get_value() == Axis::Y);
+  TEST_CHECK(stage.metas().metersPerUnit.get_value() == 0.01);
+
+  // Add a root prim so we have valid USDA
+  Xform xf;
+  xf.name = "Root";
+  Prim prim("Root", xf);
+  stage.add_root_prim(std::move(prim), false);
+
+  // Export and round-trip
+  std::string usda = stage.ExportToString();
+  TEST_CHECK(!usda.empty());
+
+  Stage stage2;
+  std::string warn, err;
+  bool ok = LoadUSDAFromMemory(
+      reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+      "", &stage2, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+    return;
+  }
+
+  // Check re-parsed metas
+  TEST_CHECK(stage2.metas().defaultPrim.str() == "Root");
+  TEST_CHECK(stage2.metas().upAxis.get_value() == Axis::Y);
+
+  // Check metersPerUnit with tolerance for floating point
+  double mpu = stage2.metas().metersPerUnit.get_value();
+  TEST_CHECK(mpu > 0.009 && mpu < 0.011);
+  TEST_MSG("Re-parsed metersPerUnit = %f", mpu);
+}
+
+void stage_memory_estimation_test(void) {
+  Stage stage = build_test_stage();
+  size_t mem = stage.estimate_memory_usage();
+  TEST_CHECK(mem > 0);
+  TEST_MSG("Memory usage estimate: %zu bytes", mem);
+}
+
+void stage_empty_test(void) {
+  Stage stage;
+
+  // Empty stage should have no root prims
+  TEST_CHECK(stage.root_prims().empty());
+
+  // ExportToString should still produce valid USDA with header
+  std::string usda = stage.ExportToString();
+  TEST_CHECK(!usda.empty());
+  TEST_CHECK(usda.find("#usda 1.0") != std::string::npos);
+  TEST_MSG("Empty stage USDA: %.80s...", usda.c_str());
+}
+
+void stage_nested_hierarchy_test(void) {
+  Stage stage;
+
+  // Build 4-level hierarchy: /Root/A/B/C
+  Xform xf_c;
+  xf_c.name = "C";
+  Prim prim_c("C", xf_c);
+
+  Xform xf_b;
+  xf_b.name = "B";
+  Prim prim_b("B", xf_b);
+  prim_b.add_child(std::move(prim_c));
+
+  Xform xf_a;
+  xf_a.name = "A";
+  Prim prim_a("A", xf_a);
+  prim_a.add_child(std::move(prim_b));
+
+  Xform xf_root;
+  xf_root.name = "Root";
+  Prim prim_root("Root", xf_root);
+  prim_root.add_child(std::move(prim_a));
+
+  stage.add_root_prim(std::move(prim_root), false);
+  bool ok = stage.commit();
+  TEST_CHECK(ok);
+
+  // Verify all 4 levels are reachable via GetPrimAtPath
+  {
+    Path p("/Root", "");
+    auto r = stage.GetPrimAtPath(p);
+    TEST_CHECK(r.has_value());
+    if (r) {
+      TEST_CHECK(r.value()->element_name() == "Root");
+    }
+  }
+
+  {
+    Path p("/Root/A", "");
+    auto r = stage.GetPrimAtPath(p);
+    TEST_CHECK(r.has_value());
+    if (r) {
+      TEST_CHECK(r.value()->element_name() == "A");
+    }
+  }
+
+  {
+    Path p("/Root/A/B", "");
+    auto r = stage.GetPrimAtPath(p);
+    TEST_CHECK(r.has_value());
+    if (r) {
+      TEST_CHECK(r.value()->element_name() == "B");
+    }
+  }
+
+  {
+    Path p("/Root/A/B/C", "");
+    auto r = stage.GetPrimAtPath(p);
+    TEST_CHECK(r.has_value());
+    if (r) {
+      TEST_CHECK(r.value()->element_name() == "C");
+    }
+  }
+
+  // Non-existent deep path
+  {
+    Path p("/Root/A/B/C/D", "");
+    auto r = stage.GetPrimAtPath(p);
+    TEST_CHECK(!r.has_value());
   }
 }

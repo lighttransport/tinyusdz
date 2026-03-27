@@ -4,6 +4,7 @@ set(EXAMPLE_TARGET "tusdcat")
 set(TINYUSDZ_SIMPLE_DUMP_SOURCES
     main.cc
     variant-format.cc
+    comp-graph-dump.cc
     )
 
 add_executable(${EXAMPLE_TARGET} ${TINYUSDZ_SIMPLE_DUMP_SOURCES})

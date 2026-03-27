@@ -2,7 +2,8 @@
 // Copyright 2025 Light Transport Entertainment Inc.
 
 #include "layer.hh"
-#include "prim-types.hh"  // For PrimSpec, LayerMetas, etc.
+#include "core/prim-spec.hh"  // PrimSpec
+#include "core/layer-types.hh"  // LayerMetas
 #include "path-util.hh"   // For Path
 #include "str-util.hh"    // For split function
 #include "tiny-container.hh"
@@ -34,7 +35,11 @@ bool HasPrimSpecWithCondition(const PrimSpec &root, Predicate pred) {
     stack.emplace_back(&root, 0);
   }
 
+  size_t iter = 0;
   while (!stack.empty()) {
+    if (iter++ >= kMaxDefaultTraversalLimit) {
+      break;
+    }
     auto &top = stack.back();
     const PrimSpec *current = top.first;
     size_t &child_idx = top.second;
@@ -179,33 +184,41 @@ nonstd::optional<const PrimSpec *> GetPrimSpecAtPathFromRoot(
 // Helper function to estimate PrimSpec memory usage
 static size_t EstimatePrimSpecMemory(const PrimSpec& ps);
 
+static size_t EstimateVariantSetSpecMemory(const VariantSetSpec& vs) {
+  size_t total = sizeof(VariantSetSpec);
+  total += vs.name.capacity();
+  // VariantSetSpec maps variant names to PrimSpec
+  for (const auto& v_pair : vs.variantSet) {
+    total += v_pair.first.capacity();
+    total += EstimatePrimSpecMemory(v_pair.second);
+  }
+  return total;
+}
+
 static size_t EstimatePrimSpecMemory(const PrimSpec& ps) {
   size_t total = sizeof(PrimSpec);
-  
+
   // String members
   total += ps.name().capacity();
   total += ps.typeName().capacity();
-  
+
   // Properties map
   for (const auto& prop_pair : ps.props()) {
     total += prop_pair.first.capacity(); // key string
-    total += prop_pair.second.estimate_memory_usage(); 
+    total += prop_pair.second.estimate_memory_usage();
   }
-  
+
   // Children vector
   for (const auto& child : ps.children()) {
     total += EstimatePrimSpecMemory(child); // Recursive estimation
   }
-  
+
   // VariantSets map
   for (const auto& vs_pair : ps.variantSets()) {
-    total += vs_pair.first.capacity(); // key string
-    total += sizeof(VariantSet); // VariantSet base size
+    total += vs_pair.first.capacity();
+    total += EstimateVariantSetSpecMemory(vs_pair.second);
   }
-  
-  // TODO: Add more accurate memory estimation for complex nested types
-  // like PrimMeta, Property values, etc.
-  
+
   return total;
 }
 
@@ -439,7 +452,6 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
   }
 
   if (path.is_relative_path()) {
-    // TODO
     PUSH_ERROR_AND_RETURN(fmt::format("TODO: Relative path: {}", path.full_path_name()));
   }
 

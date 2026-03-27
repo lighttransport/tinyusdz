@@ -15,6 +15,8 @@
 #include <cassert>
 #include <cmath>
 #include <cstring>
+#include <functional>
+#include <iostream>
 #include <limits>
 #include <map>
 #include <memory>
@@ -59,10 +61,8 @@
 #include "typed-array.hh"
 #include "common-macros.inc"
 
-// forward decl
-namespace linb {
-class any;
-};
+// forward decl of any_value (defined below after TypeTraits)
+namespace tinyusdz { namespace value { class any_value; } }
 
 namespace tinyusdz {
 
@@ -188,8 +188,13 @@ struct StringData {
 
   StringData() = default;
   StringData(const std::string &v) : value(v) {}
+  StringData(std::string &&v) : value(std::move(v)) {}
   StringData &operator=(const std::string &v) {
     value = v;
+    return (*this);
+  }
+  StringData &operator=(std::string &&v) {
+    value = std::move(v);
     return (*this);
   }
 
@@ -211,8 +216,11 @@ class AssetPath {
  public:
   AssetPath() = default;
   AssetPath(const std::string &a) : asset_path_(a) {}
+  AssetPath(std::string &&a) : asset_path_(std::move(a)) {}
   AssetPath(const std::string &a, const std::string &r)
       : asset_path_(a), resolved_path_(r) {}
+  AssetPath(std::string &&a, std::string &&r)
+      : asset_path_(std::move(a)), resolved_path_(std::move(r)) {}
 
   bool Resolve() {
     // TODO;
@@ -221,7 +229,7 @@ class AssetPath {
 
   const std::string &GetAssetPath() const { return asset_path_; }
 
-  const std::string GetResolvedPath() const { return resolved_path_; }
+  const std::string &GetResolvedPath() const { return resolved_path_; }
 
  private:
   std::string asset_path_;
@@ -430,6 +438,7 @@ enum TypeId {
   TYPE_ID_TIMESAMPLES,
   TYPE_ID_VARIANT_SELECION_MAP,
 
+
   // Types in crate-format.hh
   TYPE_ID_CRATE_BEGIN = 256,
   TYPE_ID_CRATE_VALUE,
@@ -504,6 +513,7 @@ enum TypeId {
   TYPE_ID_IMAGING_MTLX_MEASUREDEDF,
   TYPE_ID_IMAGING_MTLX_LIGHT,
   TYPE_ID_IMAGING_OPENPBR_SURFACE,
+  TYPE_ID_IMAGING_SOURCE_COLORSPACE,
 
   TYPE_ID_IMAGING_END,
 
@@ -547,84 +557,43 @@ struct timecode {
 
 struct half {
   uint16_t value;
+
+  // Bitwise comparison (matches OpenUSD GfHalf semantics).
+  bool operator==(const half &rhs) const { return value == rhs.value; }
+  bool operator!=(const half &rhs) const { return value != rhs.value; }
 };
 
 using half2 = std::array<half, 2>;
 using half3 = std::array<half, 3>;
 using half4 = std::array<half, 4>;
 
+///
+/// Convert half-precision float to single-precision float.
+/// Uses portable bit manipulation that works on both little-endian and big-endian.
+///
 float half_to_float(value::half h);
+
 half float_to_half_full(float f);
 
-inline half operator+(const half &a, const half &b) {
-  return float_to_half_full(half_to_float(a) + half_to_float(b));
-}
+half operator+(const half &a, const half &b);
+half operator-(const half &a, const half &b);
+half operator*(const half &a, const half &b);
+half operator/(const half &a, const half &b);
 
-inline half operator-(const half &a, const half &b) {
-  return float_to_half_full(half_to_float(a) - half_to_float(b));
-}
+half& operator+=(half &a, const half &b);
+half& operator-=(half &a, const half &b);
+half& operator*=(half &a, const half &b);
+half& operator/=(half &a, const half &b);
 
-inline half operator*(const half &a, const half &b) {
-  return float_to_half_full(half_to_float(a) * half_to_float(b));
-}
+half operator+(const half &a, float b);
+half operator-(const half &a, float b);
+half operator*(const half &a, float b);
+half operator/(const half &a, float b);
 
-// TODO: save div
-inline half operator/(const half &a, const half &b) {
-  return float_to_half_full(half_to_float(a) / half_to_float(b));
-}
-
-inline half& operator+=(half &a, const half &b) {
-  a = float_to_half_full(half_to_float(a) + half_to_float(b));
-  return a;
-}
-
-inline half& operator-=(half &a, const half &b) {
-  a = float_to_half_full(half_to_float(a) - half_to_float(b));
-  return a;
-}
-
-inline half& operator*=(half &a, const half &b) {
-  a = float_to_half_full(half_to_float(a) * half_to_float(b));
-  return a;
-}
-
-// TODO: save div
-inline half& operator/=(half &a, const half &b) {
-  a = float_to_half_full(half_to_float(a) / half_to_float(b));
-  return a;
-}
-
-inline half operator+(const half &a, float b) {
-  return float_to_half_full(half_to_float(a) + b);
-}
-
-inline half operator-(const half &a, float b) {
-  return float_to_half_full(half_to_float(a) - b);
-}
-
-inline half operator*(const half &a, float b) {
-  return float_to_half_full(half_to_float(a) * b);
-}
-
-inline half operator/(const half &a, float b) {
-  return float_to_half_full(half_to_float(a) / b);
-}
-
-inline half operator+(float a, const half &b) {
-  return float_to_half_full(a + half_to_float(b));
-}
-
-inline half operator-(float a, const half &b) {
-  return float_to_half_full(a - half_to_float(b));
-}
-
-inline half operator*(float a, const half &b) {
-  return float_to_half_full(a * half_to_float(b));
-}
-
-inline half operator/(float a, const half &b) {
-  return float_to_half_full(a / half_to_float(b));
-}
+half operator+(float a, const half &b);
+half operator-(float a, const half &b);
+half operator*(float a, const half &b);
+half operator/(float a, const half &b);
 
 using char2 = std::array<char, 2>;
 using char3 = std::array<char, 3>;
@@ -679,20 +648,8 @@ struct matrix2f {
   matrix2f& operator=(const matrix2f&) = default;
   matrix2f& operator=(matrix2f&&) = default;
 
-  inline void set_row(uint32_t row, float x, float y) {
-    if (row < 2) {
-      m[row][0] = x;
-      m[row][1] = y;
-    }
-  }
-
-  inline void set_scale(float sx, float sy) {
-    m[0][0] = sx;
-    m[0][1] = 0.0f;
-
-    m[1][0] = 0.0f;
-    m[1][1] = sy;
-  }
+  void set_row(uint32_t row, float x, float y);
+  void set_scale(float sx, float sy);
 
   static matrix2f identity() {
     matrix2f mat{};
@@ -719,33 +676,9 @@ struct matrix3f {
   matrix3f& operator=(const matrix3f&) = default;
   matrix3f& operator=(matrix3f&&) = default;
 
-  inline void set_row(uint32_t row, float x, float y, float z) {
-    if (row < 3) {
-      m[row][0] = x;
-      m[row][1] = y;
-      m[row][2] = z;
-    }
-  }
-
-  inline void set_scale(float sx, float sy, float sz) {
-    m[0][0] = sx;
-    m[0][1] = 0.0f;
-    m[0][2] = 0.0f;
-
-    m[1][0] = 0.0f;
-    m[1][1] = sy;
-    m[1][2] = 0.0f;
-
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = sz;
-  }
-
-  inline void set_translation(float tx, float ty, float tz) {
-    m[2][0] = tx;
-    m[2][1] = ty;
-    m[2][2] = tz;
-  }
+  void set_row(uint32_t row, float x, float y, float z);
+  void set_scale(float sx, float sy, float sz);
+  void set_translation(float tx, float ty, float tz);
 
   static matrix3f identity() {
     matrix3f mat{};
@@ -774,42 +707,9 @@ struct matrix4f {
   matrix4f& operator=(const matrix4f&) = default;
   matrix4f& operator=(matrix4f&&) = default;
 
-  inline void set_row(uint32_t row, float x, float y, float z, float w) {
-    if (row < 4) {
-      m[row][0] = x;
-      m[row][1] = y;
-      m[row][2] = z;
-      m[row][3] = w;
-    }
-  }
-
-  inline void set_scale(float sx, float sy, float sz) {
-    m[0][0] = sx;
-    m[0][1] = 0.0f;
-    m[0][2] = 0.0f;
-    m[0][3] = 0.0f;
-
-    m[1][0] = 0.0f;
-    m[1][1] = sy;
-    m[1][2] = 0.0f;
-    m[1][3] = 0.0f;
-
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = sz;
-    m[2][3] = 0.0f;
-
-    m[3][0] = 0.0f;
-    m[3][1] = 0.0f;
-    m[3][2] = 0.0f;
-    m[3][3] = 1.0f;
-  }
-
-  inline void set_translation(float tx, float ty, float tz) {
-    m[3][0] = tx;
-    m[3][1] = ty;
-    m[3][2] = tz;
-  }
+  void set_row(uint32_t row, float x, float y, float z, float w);
+  void set_scale(float sx, float sy, float sz);
+  void set_translation(float tx, float ty, float tz);
 
   static matrix4f identity() {
     matrix4f mat{};
@@ -834,20 +734,8 @@ struct matrix2d {
   matrix2d& operator=(const matrix2d&) = default;
   matrix2d& operator=(matrix2d&&) = default;
 
-  inline void set_row(uint32_t row, double x, double y) {
-    if (row < 2) {
-      m[row][0] = x;
-      m[row][1] = y;
-    }
-  }
-
-  inline void set_scale(double sx, double sy) {
-    m[0][0] = sx;
-    m[0][1] = 0.0;
-
-    m[1][0] = 0.0;
-    m[1][1] = sy;
-  }
+  void set_row(uint32_t row, double x, double y);
+  void set_scale(double sx, double sy);
 
   static matrix2d identity() {
     matrix2d mat{};
@@ -868,27 +756,8 @@ struct matrix3d {
   matrix3d& operator=(const matrix3d&) = default;
   matrix3d& operator=(matrix3d&&) = default;
 
-  inline void set_row(uint32_t row, double x, double y, double z) {
-    if (row < 3) {
-      m[row][0] = x;
-      m[row][1] = y;
-      m[row][2] = z;
-    }
-  }
-
-  inline void set_scale(double sx, double sy, double sz) {
-    m[0][0] = sx;
-    m[0][1] = 0.0;
-    m[0][2] = 0.0;
-
-    m[1][0] = 0.0;
-    m[1][1] = sy;
-    m[1][2] = 0.0;
-
-    m[2][0] = 0.0;
-    m[2][1] = 0.0;
-    m[2][2] = sz;
-  }
+  void set_row(uint32_t row, double x, double y, double z);
+  void set_scale(double sx, double sy, double sz);
 
   static matrix3d identity() {
     matrix3d mat{};
@@ -910,36 +779,8 @@ struct matrix4d {
   matrix4d& operator=(const matrix4d&) = default;
   matrix4d& operator=(matrix4d&&) = default;
 
-  inline void set_row(uint32_t row, double x, double y, double z, double w) {
-    if (row < 4) {
-      m[row][0] = x;
-      m[row][1] = y;
-      m[row][2] = z;
-      m[row][3] = w;
-    }
-  }
-
-  inline void set_scale(double sx, double sy, double sz) {
-    m[0][0] = sx;
-    m[0][1] = 0.0;
-    m[0][2] = 0.0;
-    m[0][3] = 0.0;
-
-    m[1][0] = 0.0;
-    m[1][1] = sy;
-    m[1][2] = 0.0;
-    m[1][3] = 0.0;
-
-    m[2][0] = 0.0;
-    m[2][1] = 0.0;
-    m[2][2] = sz;
-    m[2][3] = 0.0;
-
-    m[3][0] = 0.0;
-    m[3][1] = 0.0;
-    m[3][2] = 0.0;
-    m[3][3] = 1.0;
-  }
+  void set_row(uint32_t row, double x, double y, double z, double w);
+  void set_scale(double sx, double sy, double sz);
 
   static matrix4d identity() {
     matrix4d mat{};
@@ -991,34 +832,21 @@ struct frame4d {
 //
 // node.world = parent.world * node.local
 //            = Mult(parent.world, node.local)
-template <typename MTy, typename STy, size_t N>
-MTy Mult(const MTy &m, const MTy &n) {
-  MTy ret;
-  //memset(ret.m, 0, sizeof(MTy));
+// Matrix multiply (implementations in value-types.cc)
+matrix2f Mult(const matrix2f &m, const matrix2f &n);
+matrix3f Mult(const matrix3f &m, const matrix3f &n);
+matrix4f Mult(const matrix4f &m, const matrix4f &n);
+matrix2d Mult(const matrix2d &m, const matrix2d &n);
+matrix3d Mult(const matrix3d &m, const matrix3d &n);
+matrix4d Mult(const matrix4d &m, const matrix4d &n);
 
-  for (size_t j = 0; j < N; j++) {
-    for (size_t i = 0; i < N; i++) {
-      STy value = static_cast<STy>(0);
-      for (size_t k = 0; k < N; k++) {
-        value += m.m[j][k] * n.m[k][i];
-      }
-      ret.m[j][i] = value;
-    }
-  }
-
-  return ret;
-}
-
-// ret = matrix x vector
-// Assume matrixN >= vecN
+// Matrix-vector multiply (implementations in value-types.cc)
+// Kept as template since it's used with many type combinations in xform.cc
 template <typename MTy, typename VTy, typename MBaseTy, typename VBaseTy, size_t N>
 VTy MultV(const MTy &m, const VTy &v) {
-  // MBaseTy must be float or double
-  // TODO: use std::enable_if?
   static_assert(std::is_same<MBaseTy, double>::value || std::is_same<MBaseTy, float>::value,
     "Matrix element type must be `float` or `double`");
 
-  // Intermediate type. Choose higher precision based on its size.
   typedef typename std::conditional<sizeof(MBaseTy) >= sizeof(VBaseTy), MBaseTy, VBaseTy>::type Ty;
 
   VTy ret;
@@ -1034,125 +862,47 @@ VTy MultV(const MTy &m, const VTy &v) {
   return ret;
 }
 
-template <typename MTy, typename STy, size_t N>
-MTy MatAdd(const MTy &m, const MTy &n) {
-  MTy ret;
-  memset(ret.m, 0, sizeof(MTy));
+// Matrix add (implementations in value-types.cc)
+matrix2f MatAdd(const matrix2f &a, const matrix2f &b);
+matrix3f MatAdd(const matrix3f &a, const matrix3f &b);
+matrix4f MatAdd(const matrix4f &a, const matrix4f &b);
+matrix2d MatAdd(const matrix2d &a, const matrix2d &b);
+matrix3d MatAdd(const matrix3d &a, const matrix3d &b);
+matrix4d MatAdd(const matrix4d &a, const matrix4d &b);
 
-  for (size_t j = 0; j < N; j++) {
-    for (size_t i = 0; i < N; i++) {
-      ret.m[j][i] = m.m[j][i] + n.m[j][i];
-    }
-  }
-
-  return ret;
-}
-
-template <typename MTy, typename STy, size_t N>
-MTy MatSub(const MTy &m, const MTy &n) {
-  MTy ret;
-  memset(ret.m, 0, sizeof(MTy));
-
-  for (size_t j = 0; j < N; j++) {
-    for (size_t i = 0; i < N; i++) {
-      ret.m[j][i] = m.m[j][i] - n.m[j][i];
-    }
-  }
-
-  return ret;
-}
+// Matrix subtract (implementations in value-types.cc)
+matrix2f MatSub(const matrix2f &a, const matrix2f &b);
+matrix3f MatSub(const matrix3f &a, const matrix3f &b);
+matrix4f MatSub(const matrix4f &a, const matrix4f &b);
+matrix2d MatSub(const matrix2d &a, const matrix2d &b);
+matrix3d MatSub(const matrix3d &a, const matrix3d &b);
+matrix4d MatSub(const matrix4d &a, const matrix4d &b);
 
 // TODO: division
 
-inline matrix2f operator+(const matrix2f &a, const matrix2f &b) {
-  matrix2f ret = MatAdd<matrix2f, float, 2>(a, b);
-  return ret;
-}
+inline matrix2f operator+(const matrix2f &a, const matrix2f &b) { return MatAdd(a, b); }
+inline matrix2f operator-(const matrix2f &a, const matrix2f &b) { return MatSub(a, b); }
+inline matrix2f operator*(const matrix2f &a, const matrix2f &b) { return Mult(a, b); }
 
-inline matrix2f operator-(const matrix2f &a, const matrix2f &b) {
-  matrix2f ret = MatSub<matrix2f, float, 2>(a, b);
-  return ret;
-}
+inline matrix3f operator+(const matrix3f &a, const matrix3f &b) { return MatAdd(a, b); }
+inline matrix3f operator-(const matrix3f &a, const matrix3f &b) { return MatSub(a, b); }
+inline matrix3f operator*(const matrix3f &a, const matrix3f &b) { return Mult(a, b); }
 
-inline matrix2f operator*(const matrix2f &a, const matrix2f &b) {
-  matrix2f ret = Mult<matrix2f, float, 2>(a, b);
-  return ret;
-}
+inline matrix4f operator+(const matrix4f &a, const matrix4f &b) { return MatAdd(a, b); }
+inline matrix4f operator-(const matrix4f &a, const matrix4f &b) { return MatSub(a, b); }
+inline matrix4f operator*(const matrix4f &a, const matrix4f &b) { return Mult(a, b); }
 
-inline matrix3f operator+(const matrix3f &a, const matrix3f &b) {
-  matrix3f ret = MatAdd<matrix3f, float, 3>(a, b);
-  return ret;
-}
+inline matrix2d operator+(const matrix2d &a, const matrix2d &b) { return MatAdd(a, b); }
+inline matrix2d operator-(const matrix2d &a, const matrix2d &b) { return MatSub(a, b); }
+inline matrix2d operator*(const matrix2d &a, const matrix2d &b) { return Mult(a, b); }
 
-inline matrix3f operator-(const matrix3f &a, const matrix3f &b) {
-  matrix3f ret = MatSub<matrix3f, float, 3>(a, b);
-  return ret;
-}
+inline matrix3d operator+(const matrix3d &a, const matrix3d &b) { return MatAdd(a, b); }
+inline matrix3d operator-(const matrix3d &a, const matrix3d &b) { return MatSub(a, b); }
+inline matrix3d operator*(const matrix3d &a, const matrix3d &b) { return Mult(a, b); }
 
-inline matrix3f operator*(const matrix3f &a, const matrix3f &b) {
-  matrix3f ret = Mult<matrix3f, float, 3>(a, b);
-  return ret;
-}
-
-inline matrix4f operator+(const matrix4f &a, const matrix4f &b) {
-  matrix4f ret = MatAdd<matrix4f, float, 4>(a, b);
-  return ret;
-}
-
-inline matrix4f operator-(const matrix4f &a, const matrix4f &b) {
-  matrix4f ret = MatSub<matrix4f, float, 4>(a, b);
-  return ret;
-}
-
-inline matrix4f operator*(const matrix4f &a, const matrix4f &b) {
-  matrix4f ret = Mult<matrix4f, float, 4>(a, b);
-  return ret;
-}
-
-inline matrix2d operator+(const matrix2d &a, const matrix2d &b) {
-  matrix2d ret = MatAdd<matrix2d, double, 2>(a, b);
-  return ret;
-}
-
-inline matrix2d operator-(const matrix2d &a, const matrix2d &b) {
-  matrix2d ret = MatSub<matrix2d, double, 2>(a, b);
-  return ret;
-}
-
-inline matrix2d operator*(const matrix2d &a, const matrix2d &b) {
-  matrix2d ret = Mult<matrix2d, double, 2>(a, b);
-  return ret;
-}
-
-inline matrix3d operator+(const matrix3d &a, const matrix3d &b) {
-  matrix3d ret = MatAdd<matrix3d, double, 3>(a, b);
-  return ret;
-}
-
-inline matrix3d operator-(const matrix3d &a, const matrix3d &b) {
-  matrix3d ret = MatSub<matrix3d, double, 3>(a, b);
-  return ret;
-}
-
-inline matrix3d operator*(const matrix3d &a, const matrix3d &b) {
-  matrix3d ret = Mult<matrix3d, double, 3>(a, b);
-  return ret;
-}
-
-inline matrix4d operator+(const matrix4d &a, const matrix4d &b) {
-  matrix4d ret = MatAdd<matrix4d, double, 4>(a, b);
-  return ret;
-}
-
-inline matrix4d operator-(const matrix4d &a, const matrix4d &b) {
-  matrix4d ret = MatSub<matrix4d, double, 4>(a, b);
-  return ret;
-}
-
-inline matrix4d operator*(const matrix4d &a, const matrix4d &b) {
-  matrix4d ret = Mult<matrix4d, double, 4>(a, b);
-  return ret;
-}
+inline matrix4d operator+(const matrix4d &a, const matrix4d &b) { return MatAdd(a, b); }
+inline matrix4d operator-(const matrix4d &a, const matrix4d &b) { return MatSub(a, b); }
+inline matrix4d operator*(const matrix4d &a, const matrix4d &b) { return Mult(a, b); }
 
 // Equality operators for matrix types
 // Use floating-point aware comparison (suitable for dedup)
@@ -1173,6 +923,8 @@ struct quath {
   half real;
   half operator[](size_t idx) const { return *(&imag[0] + idx); }
   half &operator[](size_t idx) { return *(&imag[0] + idx); }
+  bool operator==(const quath &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const quath &rhs) const { return !(*this == rhs); }
 };
 
 struct quatf {
@@ -1180,6 +932,8 @@ struct quatf {
   float real;
   float operator[](size_t idx) const { return *(&imag[0] + idx); }
   float &operator[](size_t idx) { return *(&imag[0] + idx); }
+  bool operator==(const quatf &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const quatf &rhs) const { return !(*this == rhs); }
 };
 
 struct quatd {
@@ -1187,6 +941,8 @@ struct quatd {
   double real;
   double operator[](size_t idx) const { return *(&imag[0] + idx); }
   double &operator[](size_t idx) { return *(&imag[0] + idx); }
+  bool operator==(const quatd &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const quatd &rhs) const { return !(*this == rhs); }
 };
 
 struct vector3h {
@@ -1194,6 +950,8 @@ struct vector3h {
 
   half operator[](size_t idx) const { return *(&x + idx); }
   half &operator[](size_t idx) { return *(&x + idx); }
+  bool operator==(const vector3h &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const vector3h &rhs) const { return !(*this == rhs); }
 };
 
 struct vector3f {
@@ -1201,6 +959,8 @@ struct vector3f {
 
   float operator[](size_t idx) const { return *(&x + idx); }
   float &operator[](size_t idx) { return *(&x + idx); }
+  bool operator==(const vector3f &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const vector3f &rhs) const { return !(*this == rhs); }
 };
 
 struct vector3d {
@@ -1208,6 +968,8 @@ struct vector3d {
 
   double operator[](size_t idx) const { return *(&x + idx); }
   double &operator[](size_t idx) { return *(&x + idx); }
+  bool operator==(const vector3d &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const vector3d &rhs) const { return !(*this == rhs); }
 };
 
 struct normal3h {
@@ -1215,6 +977,8 @@ struct normal3h {
 
   half operator[](size_t idx) const { return *(&x + idx); }
   half &operator[](size_t idx) { return *(&x + idx); }
+  bool operator==(const normal3h &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const normal3h &rhs) const { return !(*this == rhs); }
 };
 
 struct normal3f {
@@ -1222,6 +986,8 @@ struct normal3f {
 
   float operator[](size_t idx) const { return *(&x + idx); }
   float &operator[](size_t idx) { return *(&x + idx); }
+  bool operator==(const normal3f &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const normal3f &rhs) const { return !(*this == rhs); }
 };
 
 struct normal3d {
@@ -1229,6 +995,8 @@ struct normal3d {
 
   double operator[](size_t idx) const { return *(&x + idx); }
   double &operator[](size_t idx) { return *(&x + idx); }
+  bool operator==(const normal3d &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const normal3d &rhs) const { return !(*this == rhs); }
 };
 
 struct point3h {
@@ -1236,27 +1004,38 @@ struct point3h {
 
   half operator[](size_t idx) const { return *(&x + idx); }
   half &operator[](size_t idx) { return *(&x + idx); }
+  bool operator==(const point3h &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const point3h &rhs) const { return !(*this == rhs); }
 };
+
 
 struct point3f {
   float x, y, z;
 
   float operator[](size_t idx) const { return *(&x + idx); }
   float &operator[](size_t idx) { return *(&x + idx); }
+  bool operator==(const point3f &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const point3f &rhs) const { return !(*this == rhs); }
 };
+
 
 struct point3d {
   double x, y, z;
 
   double operator[](size_t idx) const { return *(&x + idx); }
   double &operator[](size_t idx) { return *(&x + idx); }
+  bool operator==(const point3d &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const point3d &rhs) const { return !(*this == rhs); }
 };
+
 
 struct color3h {
   half r, g, b;
 
   half operator[](size_t idx) const { return *(&r + idx); }
   half &operator[](size_t idx) { return *(&r + idx); }
+  bool operator==(const color3h &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const color3h &rhs) const { return !(*this == rhs); }
 };
 
 struct color3f {
@@ -1264,6 +1043,8 @@ struct color3f {
 
   float operator[](size_t idx) const { return *(&r + idx); }
   float &operator[](size_t idx) { return *(&r + idx); }
+  bool operator==(const color3f &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const color3f &rhs) const { return !(*this == rhs); }
 };
 
 struct color4h {
@@ -1271,6 +1052,8 @@ struct color4h {
 
   half operator[](size_t idx) const { return *(&r + idx); }
   half &operator[](size_t idx) { return *(&r + idx); }
+  bool operator==(const color4h &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const color4h &rhs) const { return !(*this == rhs); }
 };
 
 struct color4f {
@@ -1278,6 +1061,8 @@ struct color4f {
 
   float operator[](size_t idx) const { return *(&r + idx); }
   float &operator[](size_t idx) { return *(&r + idx); }
+  bool operator==(const color4f &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const color4f &rhs) const { return !(*this == rhs); }
 };
 
 struct color3d {
@@ -1285,6 +1070,8 @@ struct color3d {
 
   double operator[](size_t idx) const { return *(&r + idx); }
   double &operator[](size_t idx) { return *(&r + idx); }
+  bool operator==(const color3d &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const color3d &rhs) const { return !(*this == rhs); }
 };
 
 struct color4d {
@@ -1292,42 +1079,56 @@ struct color4d {
 
   double operator[](size_t idx) const { return *(&r + idx); }
   double &operator[](size_t idx) { return *(&r + idx); }
+  bool operator==(const color4d &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const color4d &rhs) const { return !(*this == rhs); }
 };
 
 struct texcoord2h {
   half s, t;
   half operator[](size_t idx) const { return *(&s + idx); }
   half &operator[](size_t idx) { return *(&s + idx); }
+  bool operator==(const texcoord2h &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const texcoord2h &rhs) const { return !(*this == rhs); }
 };
 
 struct texcoord2f {
   float s, t;
   float operator[](size_t idx) const { return *(&s + idx); }
   float &operator[](size_t idx) { return *(&s + idx); }
+  bool operator==(const texcoord2f &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const texcoord2f &rhs) const { return !(*this == rhs); }
 };
 
 struct texcoord2d {
   double s, t;
   double operator[](size_t idx) const { return *(&s + idx); }
   double &operator[](size_t idx) { return *(&s + idx); }
+  bool operator==(const texcoord2d &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const texcoord2d &rhs) const { return !(*this == rhs); }
 };
 
 struct texcoord3h {
   half s, t, r;
   half operator[](size_t idx) const { return *(&s + idx); }
   half &operator[](size_t idx) { return *(&s + idx); }
+  bool operator==(const texcoord3h &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const texcoord3h &rhs) const { return !(*this == rhs); }
 };
 
 struct texcoord3f {
   float s, t, r;
   float operator[](size_t idx) const { return *(&s + idx); }
   float &operator[](size_t idx) { return *(&s + idx); }
+  bool operator==(const texcoord3f &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const texcoord3f &rhs) const { return !(*this == rhs); }
 };
 
 struct texcoord3d {
   double s, t, r;
   double operator[](size_t idx) const { return *(&s + idx); }
   double &operator[](size_t idx) { return *(&s + idx); }
+  bool operator==(const texcoord3d &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const texcoord3d &rhs) const { return !(*this == rhs); }
 };
 
 
@@ -1339,12 +1140,26 @@ using double2 = std::array<double, 2>;
 using double3 = std::array<double, 3>;
 using double4 = std::array<double, 4>;
 
-// struct any_value;
-// using dict = std::map<std::string, any_value>;
-using dict = std::map<std::string, linb::any>;
+using dict = std::map<std::string, any_value>;
 
 template <class dtype>
 struct TypeTraits;
+
+template <typename T>
+inline constexpr bool is_binary_serializable_v =
+    std::is_standard_layout_v<T> && std::is_trivially_copyable_v<T>;
+
+template <typename T>
+using timesample_storage_type_t = typename std::decay<T>::type;
+
+template <typename T>
+inline constexpr bool uses_binary_timesample_scalar_storage_v =
+    is_binary_serializable_v<timesample_storage_type_t<T>> &&
+    !std::is_same_v<timesample_storage_type_t<T>, bool>;
+
+template <typename T>
+inline constexpr bool uses_binary_timesample_array_storage_v =
+    uses_binary_timesample_scalar_storage_v<T>;
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"
@@ -1498,7 +1313,10 @@ DEFINE_TYPE_TRAIT(AssetPath, kAssetPath, TYPE_ID_ASSET_PATH, 1);
 
 //
 // Other types(e.g. TYPE_ID_REFERENCE) are defined in corresponding header
-// files(e.g. `prim-types.hh`, `crate-format.hh`(Data types used in Crate data))
+// files(e.g. core/ headers, `crate-format.hh`(Data types used in Crate data))
+//
+// token[] and TimeSamples traits are defined later in this file (after
+// TimeSamples struct is available from timesamples.hh)
 //
 
 #undef DEFINE_TYPE_TRAIT
@@ -1569,24 +1387,6 @@ struct TypeTraits<ChunkedTypedArray<T>> {
 };
 
 
-#if 0  // Current pxrUSD does not support 2D array
-// 2D Array
-// TODO(syoyo): support 3D array?
-template <typename T>
-struct TypeTraits<std::vector<std::vector<T>>> {
-  using value_type = std::vector<std::vector<T>>;
-  static constexpr uint32_t ndim = 2; /* array dim */
-  static constexpr uint32_t ncomp = TypeTraits<T>::ncomp;
-  static constexpr uint32_t type_id =
-      TypeTraits<T>::type_id | TYPE_ID_2D_ARRAY_BIT;
-  static constexpr uint32_t underlying_type_id =
-      TypeTraits<T>::underlying_type_id | TYPE_ID_2D_ARRAY_BIT;
-  static std::string type_name() { return TypeTraits<T>::type_name() + "[][]"; }
-  static std::string underlying_type_name() {
-    return TypeTraits<T>::underlying_type_name() + "[][]";
-  }
-};
-#endif
 
 // Lookup TypeTraits<T>::type_name from type_id
 // Return nullopt when the input is invalid type id.
@@ -1617,7 +1417,100 @@ std::string GetUnderlyingTypeName(uint32_t tyid);
 nonstd::optional<uint32_t> TryGetUnderlyingTypeId(const std::string &tyname);
 uint32_t GetUnderlyingTypeId(const std::string &tyname);
 
-// TODO: uint32_t GetUnderlyingTypeId(const uint32_t tyid)
+constexpr inline uint32_t GetUnderlyingTypeId(const uint32_t tyid) {
+  const bool is_array = (tyid & TYPE_ID_1D_ARRAY_BIT) != 0;
+  const uint32_t base_type_id = tyid & (~TYPE_ID_1D_ARRAY_BIT);
+
+  uint32_t underlying = base_type_id;
+  switch (base_type_id) {
+    case TYPE_ID_POINT3H: underlying = TYPE_ID_HALF3; break;
+    case TYPE_ID_POINT3F: underlying = TYPE_ID_FLOAT3; break;
+    case TYPE_ID_POINT3D: underlying = TYPE_ID_DOUBLE3; break;
+    case TYPE_ID_VECTOR3H: underlying = TYPE_ID_HALF3; break;
+    case TYPE_ID_VECTOR3F: underlying = TYPE_ID_FLOAT3; break;
+    case TYPE_ID_VECTOR3D: underlying = TYPE_ID_DOUBLE3; break;
+    case TYPE_ID_NORMAL3H: underlying = TYPE_ID_HALF3; break;
+    case TYPE_ID_NORMAL3F: underlying = TYPE_ID_FLOAT3; break;
+    case TYPE_ID_NORMAL3D: underlying = TYPE_ID_DOUBLE3; break;
+    case TYPE_ID_COLOR3H: underlying = TYPE_ID_HALF3; break;
+    case TYPE_ID_COLOR3F: underlying = TYPE_ID_FLOAT3; break;
+    case TYPE_ID_COLOR3D: underlying = TYPE_ID_DOUBLE3; break;
+    case TYPE_ID_COLOR4H: underlying = TYPE_ID_HALF4; break;
+    case TYPE_ID_COLOR4F: underlying = TYPE_ID_FLOAT4; break;
+    case TYPE_ID_COLOR4D: underlying = TYPE_ID_DOUBLE4; break;
+    case TYPE_ID_TEXCOORD2H: underlying = TYPE_ID_HALF2; break;
+    case TYPE_ID_TEXCOORD2F: underlying = TYPE_ID_FLOAT2; break;
+    case TYPE_ID_TEXCOORD2D: underlying = TYPE_ID_DOUBLE2; break;
+    case TYPE_ID_TEXCOORD3H: underlying = TYPE_ID_HALF3; break;
+    case TYPE_ID_TEXCOORD3F: underlying = TYPE_ID_FLOAT3; break;
+    case TYPE_ID_TEXCOORD3D: underlying = TYPE_ID_DOUBLE3; break;
+    case TYPE_ID_FRAME4D: underlying = TYPE_ID_MATRIX4D; break;
+    default: break;
+  }
+
+  return is_array ? (underlying | TYPE_ID_1D_ARRAY_BIT) : underlying;
+}
+
+constexpr inline bool UsesBinaryTimesampleStorageType(const uint32_t tyid) {
+  switch (GetUnderlyingTypeId(tyid) & (~TYPE_ID_1D_ARRAY_BIT)) {
+    case TYPE_ID_BOOL:
+      return false;
+    case TYPE_ID_CHAR:
+    case TYPE_ID_CHAR2:
+    case TYPE_ID_CHAR3:
+    case TYPE_ID_CHAR4:
+    case TYPE_ID_UCHAR:
+    case TYPE_ID_UCHAR2:
+    case TYPE_ID_UCHAR3:
+    case TYPE_ID_UCHAR4:
+    case TYPE_ID_SHORT:
+    case TYPE_ID_SHORT2:
+    case TYPE_ID_SHORT3:
+    case TYPE_ID_SHORT4:
+    case TYPE_ID_USHORT:
+    case TYPE_ID_USHORT2:
+    case TYPE_ID_USHORT3:
+    case TYPE_ID_USHORT4:
+    case TYPE_ID_INT32:
+    case TYPE_ID_INT2:
+    case TYPE_ID_INT3:
+    case TYPE_ID_INT4:
+    case TYPE_ID_UINT32:
+    case TYPE_ID_UINT2:
+    case TYPE_ID_UINT3:
+    case TYPE_ID_UINT4:
+    case TYPE_ID_INT64:
+    case TYPE_ID_UINT64:
+    case TYPE_ID_HALF:
+    case TYPE_ID_HALF2:
+    case TYPE_ID_HALF3:
+    case TYPE_ID_HALF4:
+    case TYPE_ID_FLOAT:
+    case TYPE_ID_FLOAT2:
+    case TYPE_ID_FLOAT3:
+    case TYPE_ID_FLOAT4:
+    case TYPE_ID_DOUBLE:
+    case TYPE_ID_DOUBLE2:
+    case TYPE_ID_DOUBLE3:
+    case TYPE_ID_DOUBLE4:
+    case TYPE_ID_QUATH:
+    case TYPE_ID_QUATF:
+    case TYPE_ID_QUATD:
+    case TYPE_ID_MATRIX2F:
+    case TYPE_ID_MATRIX3F:
+    case TYPE_ID_MATRIX4F:
+    case TYPE_ID_MATRIX2D:
+    case TYPE_ID_MATRIX3D:
+    case TYPE_ID_MATRIX4D:
+      return true;
+    default:
+      return false;
+  }
+}
+
+constexpr inline bool IsBinarySerializableType(const uint32_t tyid) {
+  return UsesBinaryTimesampleStorageType(tyid);
+}
 
 /// @brief Check if given typeName string is a role-type(e.g. "vector3f")
 /// @param[in] tyname typeName string
@@ -1632,15 +1525,304 @@ bool IsRoleType(const uint32_t tyid);
 }  // namespace value
 }  // namespace tinyusdz
 
-#include "tiny-any.inc"
-
 namespace tinyusdz {
 namespace value {
 
 ///
-/// Generic Value class using any
-/// TODO: Type-check when casting with underlying_type(Need to modify linb::any
-/// class)
+/// any_value — Purpose-built type-erased container for USD value types.
+///
+/// Replaces linb::any with a design tailored for TinyUSDZ:
+/// - 48-byte SBO buffer (avoids heap for string, vector control blocks, most binary-serializable values)
+/// - Direct type_id/underlying_type_id members (no vtable indirection for type queries)
+/// - 3-op dispatch (destroy, copy, move) instead of 9-entry vtable
+///
+class any_value {
+ public:
+  any_value() noexcept = default;
+  ~any_value() { destroy(); }
+
+  any_value(const any_value& other)
+      : ops_(other.ops_),
+        type_name_fn_(other.type_name_fn_),
+        underlying_type_name_fn_(other.underlying_type_name_fn_),
+        type_id_(other.type_id_),
+        underlying_type_id_(other.underlying_type_id_),
+        is_inline_(other.is_inline_),
+        sizeof_stored_type_(other.sizeof_stored_type_) {
+    if (ops_) {
+      ops_->copy(&storage_, &other.storage_);
+    }
+  }
+
+  any_value(any_value&& other) noexcept
+      : ops_(other.ops_),
+        type_name_fn_(other.type_name_fn_),
+        underlying_type_name_fn_(other.underlying_type_name_fn_),
+        type_id_(other.type_id_),
+        underlying_type_id_(other.underlying_type_id_),
+        is_inline_(other.is_inline_),
+        sizeof_stored_type_(other.sizeof_stored_type_) {
+    if (ops_) {
+      ops_->move(&storage_, &other.storage_);
+      other.ops_ = nullptr;
+      other.type_name_fn_ = nullptr;
+      other.underlying_type_name_fn_ = nullptr;
+      other.type_id_ = 0;
+      other.underlying_type_id_ = 0;
+      other.is_inline_ = true;
+      other.sizeof_stored_type_ = 0;
+    }
+  }
+
+  any_value& operator=(const any_value& other) {
+    if (this != &other) {
+      any_value tmp(other);
+      swap(tmp);
+    }
+    return *this;
+  }
+
+  any_value& operator=(any_value&& other) noexcept {
+    if (this != &other) {
+      destroy();
+      ops_ = other.ops_;
+      type_name_fn_ = other.type_name_fn_;
+      underlying_type_name_fn_ = other.underlying_type_name_fn_;
+      type_id_ = other.type_id_;
+      underlying_type_id_ = other.underlying_type_id_;
+      is_inline_ = other.is_inline_;
+      sizeof_stored_type_ = other.sizeof_stored_type_;
+      if (ops_) {
+        ops_->move(&storage_, &other.storage_);
+        other.ops_ = nullptr;
+        other.type_name_fn_ = nullptr;
+        other.underlying_type_name_fn_ = nullptr;
+        other.type_id_ = 0;
+        other.underlying_type_id_ = 0;
+        other.is_inline_ = true;
+        other.sizeof_stored_type_ = 0;
+      }
+    }
+    return *this;
+  }
+
+  // Typed constructor
+  template <typename T,
+            typename = typename std::enable_if<
+                !std::is_same<typename std::decay<T>::type, any_value>::value>::type>
+  any_value(T&& val) {
+    construct(std::forward<T>(val));
+  }
+
+  // Typed assignment
+  template <typename T,
+            typename = typename std::enable_if<
+                !std::is_same<typename std::decay<T>::type, any_value>::value>::type>
+  any_value& operator=(T&& val) {
+    any_value tmp(std::forward<T>(val));
+    swap(tmp);
+    return *this;
+  }
+
+  // Type queries
+  uint32_t type_id() const noexcept { return type_id_; }
+  uint32_t underlying_type_id() const noexcept { return underlying_type_id_; }
+  bool empty() const noexcept { return ops_ == nullptr; }
+
+  const std::string type_name() const noexcept {
+    if (!type_name_fn_) return TypeTraits<void>::type_name();
+    return type_name_fn_();
+  }
+
+  const std::string underlying_type_name() const noexcept {
+    if (!underlying_type_name_fn_) return TypeTraits<void>::underlying_type_name();
+    return underlying_type_name_fn_();
+  }
+
+  void clear() noexcept {
+    destroy();
+    ops_ = nullptr;
+    type_name_fn_ = nullptr;
+    underlying_type_name_fn_ = nullptr;
+    type_id_ = 0;
+    underlying_type_id_ = 0;
+    is_inline_ = true;
+    sizeof_stored_type_ = 0;
+  }
+
+  void swap(any_value& other) noexcept {
+    // Simple swap via moves through a temporary
+    any_value tmp(std::move(other));
+    other = std::move(*this);
+    *this = std::move(tmp);
+  }
+
+  /// Reinterpret as a different type without copying (for role type casting).
+  /// Caller must ensure NewType has identical memory layout to the current type.
+  template <typename NewType>
+  void unsafe_reinterpret_as() noexcept {
+    if (!empty()) {
+      type_id_ = TypeTraits<NewType>::type_id();
+      underlying_type_id_ = TypeTraits<NewType>::underlying_type_id();
+      type_name_fn_ = &TypeTraits<NewType>::type_name;
+      underlying_type_name_fn_ = &TypeTraits<NewType>::underlying_type_name;
+      // ops_ stays the same — layout-compatible types have identical destroy/copy/move
+    }
+  }
+
+  /// Raw pointer to stored value (no type check). Const version.
+  template <typename T>
+  const T* cast() const noexcept {
+    return is_inline_ ? reinterpret_cast<const T*>(&storage_)
+                      : *reinterpret_cast<T* const*>(&storage_);
+  }
+
+  /// Raw pointer to stored value (no type check). Mutable version.
+  template <typename T>
+  T* cast() noexcept {
+    return is_inline_ ? reinterpret_cast<T*>(&storage_)
+                      : *reinterpret_cast<T**>(&storage_);
+  }
+
+ private:
+  static constexpr size_t kBufferSize = 48;
+  static constexpr size_t kBufferAlign = 8;
+
+  struct Ops {
+    void (*destroy)(void* storage) noexcept;
+    void (*copy)(void* dst, const void* src);
+    void (*move)(void* dst, void* src) noexcept;
+  };
+
+  // Inline storage ops (T fits in buffer)
+  template <typename T>
+  struct InlineOps {
+    static void destroy(void* s) noexcept {
+      static_cast<T*>(s)->~T();
+    }
+    static void copy(void* d, const void* s) {
+      new (d) T(*static_cast<const T*>(s));
+    }
+    static void move(void* d, void* s) noexcept {
+      new (d) T(std::move(*static_cast<T*>(s)));
+      static_cast<T*>(s)->~T();
+    }
+  };
+
+  // Heap storage ops (T too large for buffer)
+  template <typename T>
+  struct HeapOps {
+    static void destroy(void* s) noexcept {
+      delete *static_cast<T**>(s);
+    }
+    static void copy(void* d, const void* s) {
+      *static_cast<T**>(d) = new T(**static_cast<T* const*>(s));
+    }
+    static void move(void* d, void* s) noexcept {
+      *static_cast<T**>(d) = *static_cast<T**>(s);
+      *static_cast<T**>(s) = nullptr;
+    }
+  };
+
+  template <typename T>
+  static constexpr bool fits_inline() {
+    return sizeof(T) <= kBufferSize &&
+           alignof(T) <= kBufferAlign &&
+           std::is_nothrow_move_constructible<T>::value;
+  }
+
+  template <typename T>
+  static const Ops* ops_for_type() {
+    using DecayT = typename std::decay<T>::type;
+    using OpsType = typename std::conditional<fits_inline<DecayT>(),
+                                               InlineOps<DecayT>,
+                                               HeapOps<DecayT>>::type;
+    static const Ops ops = {OpsType::destroy, OpsType::copy, OpsType::move};
+    return &ops;
+  }
+
+  template <typename ValueType, typename T>
+  typename std::enable_if<fits_inline<T>()>::type
+  do_construct(ValueType&& val) {
+    new (&storage_) T(std::forward<ValueType>(val));
+  }
+
+  template <typename ValueType, typename T>
+  typename std::enable_if<!fits_inline<T>()>::type
+  do_construct(ValueType&& val) {
+    *reinterpret_cast<T**>(&storage_) = new T(std::forward<ValueType>(val));
+  }
+
+  template <typename ValueType>
+  void construct(ValueType&& val) {
+    using T = typename std::decay<ValueType>::type;
+    static_assert(std::is_copy_constructible<T>::value,
+                  "T shall satisfy the CopyConstructible requirements.");
+    ops_ = ops_for_type<T>();
+    type_name_fn_ = &TypeTraits<T>::type_name;
+    underlying_type_name_fn_ = &TypeTraits<T>::underlying_type_name;
+    type_id_ = TypeTraits<T>::type_id();
+    underlying_type_id_ = TypeTraits<T>::underlying_type_id();
+    is_inline_ = fits_inline<T>();
+    sizeof_stored_type_ = sizeof(T);
+    do_construct<ValueType, T>(std::forward<ValueType>(val));
+  }
+
+  void destroy() noexcept {
+    if (ops_) {
+      ops_->destroy(&storage_);
+    }
+  }
+
+  using name_fn_t = std::string (*)();
+
+  typename std::aligned_storage<kBufferSize, kBufferAlign>::type storage_{};
+  const Ops* ops_ = nullptr;
+  name_fn_t type_name_fn_ = nullptr;
+  name_fn_t underlying_type_name_fn_ = nullptr;
+  uint32_t type_id_ = 0;
+  uint32_t underlying_type_id_ = 0;
+  bool is_inline_ = true;
+  size_t sizeof_stored_type_ = 0;  // sizeof(T) of the stored type, set at construct time
+
+ public:
+  /// Return sizeof(T) of the stored type.
+  /// This is the shallow size of the concrete object, not including heap allocations.
+  size_t sizeof_stored() const { return sizeof_stored_type_; }
+};
+
+// Type-checked cast (returns nullptr on type mismatch)
+template <typename T>
+inline const T* any_value_cast(const any_value* av) noexcept {
+  using DecayT = typename std::decay<T>::type;
+  if (av && av->type_id() == TypeTraits<DecayT>::type_id()) {
+    return av->cast<T>();
+  }
+  return nullptr;
+}
+
+template <typename T>
+inline T* any_value_cast(any_value* av) noexcept {
+  using DecayT = typename std::decay<T>::type;
+  if (av && av->type_id() == TypeTraits<DecayT>::type_id()) {
+    return av->cast<T>();
+  }
+  return nullptr;
+}
+
+// Force cast (no type check) — equivalent to linb::cast
+template <typename T>
+inline const T* any_value_raw_cast(const any_value* av) noexcept {
+  return av->cast<T>();
+}
+
+template <typename T>
+inline T* any_value_raw_cast(any_value* av) noexcept {
+  return av->cast<T>();
+}
+
+///
+/// Generic Value class using any_value
 ///
 class Value {
  public:
@@ -1689,16 +1871,15 @@ class Value {
   template <class T>
   const T *as(bool strict_cast = false) const {
     if (TypeTraits<T>::type_id() == v_.type_id()) {
-      return linb::any_cast<const T>(&v_);
+      return any_value_cast<const T>(&v_);
     } else if (!strict_cast) {
-      // NOTE: linb::any_cast does type_id check, so use linb::cast(~= reinterpret_cast) here
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          return linb::cast<const T>(&v_);
+          return any_value_raw_cast<const T>(&v_);
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-          return linb::cast<const T>(&v_);
+          return any_value_raw_cast<const T>(&v_);
         }
       }
     }
@@ -1712,15 +1893,15 @@ class Value {
   template <class T>
   T *as(bool strict_cast = false) {
     if (TypeTraits<T>::type_id() == v_.type_id()) {
-      return linb::any_cast<T>(&v_);
+      return any_value_cast<T>(&v_);
     } else if (!strict_cast) {
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          return linb::cast<T>(&v_);
+          return any_value_raw_cast<T>(&v_);
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-          return linb::cast<T>(&v_);
+          return any_value_raw_cast<T>(&v_);
         }
       }
     }
@@ -1801,6 +1982,8 @@ class Value {
   }
 
 
+
+
   // Helper to check vector size bounds
   template <typename T>
   static bool check_vector_size(const std::vector<T>& vec) {
@@ -1818,28 +2001,51 @@ class Value {
     return true;
   }
 
-  // Type-safe way to get concrete value.
+  // Type-safe way to get concrete value (const version — copies).
   template <class T>
   nonstd::optional<T> get_value(bool strict_cast = false) const {
     if (TypeTraits<T>::type_id() == v_.type_id()) {
-      const T *pv = linb::any_cast<const T>(&v_);
+      const T *pv = any_value_cast<const T>(&v_);
       if (!pv) {
-        // ???
         return nonstd::nullopt;
       }
+      return *pv;
+    } else if (!strict_cast) {
 
-      //TUSDZ_LOG_I("get_value: about to move/copy value of type " << TypeTraits<T>::type_name());
-      //log_vector_size(*pv);
+      if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
+        if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
+          const T* pv = any_value_raw_cast<const T>(&v_);
+          if (pv) {
+            if (!check_vector_size(*pv)) {
+              return nonstd::nullopt;
+            }
+          }
+          return *pv;
+        }
+      } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
+        if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
+          return *any_value_raw_cast<const T>(&v_);
+        }
+      }
+    }
+    return nonstd::nullopt;
+  }
+
+  // Type-safe way to extract concrete value (mutable version — moves, leaves Value empty).
+  template <class T>
+  nonstd::optional<T> take_value(bool strict_cast = false) {
+    if (TypeTraits<T>::type_id() == v_.type_id()) {
+      T *pv = any_value_cast<T>(&v_);
+      if (!pv) {
+        return nonstd::nullopt;
+      }
       return std::move(*pv);
     } else if (!strict_cast) {
 
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          //TUSDZ_LOG_I("get_value: strict_cast=false, both are array types, about to cast for type " << TypeTraits<T>::type_name());
-          const T* pv = linb::cast<const T>(&v_);
-          //TUSDZ_LOG_I("get_value: cast successful, pv=" << (pv ? "valid" : "null"));
+          T* pv = any_value_raw_cast<T>(&v_);
           if (pv) {
-            //log_vector_size(*pv);
             if (!check_vector_size(*pv)) {
               return nonstd::nullopt;
             }
@@ -1848,7 +2054,7 @@ class Value {
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-          return std::move(*linb::cast<const T>(&v_));
+          return std::move(*any_value_raw_cast<T>(&v_));
         }
       }
     }
@@ -1881,8 +2087,9 @@ class Value {
     return (*this);
   }
 
-  const linb::any &get_raw() const { return v_; }
-  linb::any &get_raw_mutable() { return v_; }
+
+  const any_value &get_raw() const { return v_; }
+  any_value &get_raw_mutable() { return v_; }
 
   bool is_array() const { return (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT); }
 
@@ -1892,15 +2099,21 @@ class Value {
   // ...)
   size_t array_size() const;
 
-  bool is_empty() const { return v_.type_id() == value::TYPE_ID_NULL; }
+  bool is_empty() const { return v_.empty() || v_.type_id() == value::TYPE_ID_NULL; }
 
   bool is_none() const { return v_.type_id() == value::TYPE_ID_VALUEBLOCK; }
 
   size_t estimate_memory_usage() const;
 
+  /// Estimate actual (size-based) memory usage.
+  size_t estimate_actual_usage() const;
+
+  /// Return sizeof(T) of the stored concrete type.
+  /// This is the shallow struct size, not including heap allocations.
+  size_t sizeof_stored() const { return v_.sizeof_stored(); }
+
  private:
-  // any_value v_;
-  linb::any v_{nullptr};
+  any_value v_;
 
   // Helper methods for as_view() implementation
   template <class T>
@@ -2103,7 +2316,10 @@ class ValueView {
   };
 
   // Default constructor - creates an invalid view
-  ValueView() noexcept : ptr_(nullptr), type_id_(TYPE_ID_INVALID), flags_(FLAG_NONE) {
+  ValueView() noexcept
+    : ptr_(nullptr),
+      type_id_(static_cast<uint32_t>(TYPE_ID_INVALID)),
+      flags_(FLAG_NONE) {
     std::memset(padding_, 0, sizeof(padding_));
   }
 
@@ -2331,7 +2547,7 @@ class ValueView {
   // Reset the view
   void reset() noexcept {
     ptr_ = nullptr;
-    type_id_ = TYPE_ID_INVALID;
+    type_id_ = static_cast<uint32_t>(TYPE_ID_INVALID);
     flags_ = FLAG_NONE;
   }
 
@@ -2531,17 +2747,130 @@ bool RoleTypeCast(const uint32_t roleTyId, value::Value &inout);
 ///
 bool UpcastType(const std::string &toType, value::Value &inout);
 
+///
+/// Register known primitive attribute type names into a set-like container.
+/// Works with std::set<std::string>, std::unordered_set<std::string>, etc.
+///
+/// @param d Container to populate (cleared first).
+/// @param include_variant_set If true, include "variantSet" entry.
+///
+template <typename SetType>
+inline void RegisterPrimAttrTypes(SetType &d, bool include_variant_set = false) {
+  d.clear();
+
+  d.insert(kBool);
+
+  d.insert(kInt64);
+
+  d.insert(kInt);
+  d.insert(kInt2);
+  d.insert(kInt3);
+  d.insert(kInt4);
+
+  d.insert(kUInt64);
+
+  d.insert(kUInt);
+  d.insert(kUInt2);
+  d.insert(kUInt3);
+  d.insert(kUInt4);
+
+  d.insert(kFloat);
+  d.insert(kFloat2);
+  d.insert(kFloat3);
+  d.insert(kFloat4);
+
+  d.insert(kDouble);
+  d.insert(kDouble2);
+  d.insert(kDouble3);
+  d.insert(kDouble4);
+
+  d.insert(kHalf);
+  d.insert(kHalf2);
+  d.insert(kHalf3);
+  d.insert(kHalf4);
+
+  d.insert(kQuath);
+  d.insert(kQuatf);
+  d.insert(kQuatd);
+
+  // AOUSD Core Spec 6.2: uchar and timecode scalar types
+  d.insert(kUChar);
+  d.insert(kTimeCode);
+
+  // AOUSD Core Spec 6.5: All semantic aliases (role types)
+  // normal3{h,f,d}
+  d.insert(kNormal3h);
+  d.insert(kNormal3f);
+  d.insert(kNormal3d);
+  // point3{h,f,d}
+  d.insert(kPoint3h);
+  d.insert(kPoint3f);
+  d.insert(kPoint3d);
+  // vector3{h,f,d}
+  d.insert(kVector3h);
+  d.insert(kVector3f);
+  d.insert(kVector3d);
+  d.insert(kVector4f);
+  d.insert(kVector4d);
+  // color{3,4}{h,f,d}
+  d.insert(kColor3h);
+  d.insert(kColor3f);
+  d.insert(kColor3d);
+  d.insert(kColor4h);
+  d.insert(kColor4f);
+  d.insert(kColor4d);
+  // texCoord{2,3}{h,f,d} + texCoord4{h,f,d}
+  d.insert(kTexCoord2h);
+  d.insert(kTexCoord2f);
+  d.insert(kTexCoord2d);
+  d.insert(kTexCoord3h);
+  d.insert(kTexCoord3f);
+  d.insert(kTexCoord3d);
+  d.insert(kTexCoord4h);
+  d.insert(kTexCoord4f);
+  d.insert(kTexCoord4d);
+  // frame4d
+  d.insert(kFrame4d);
+
+  d.insert(kMatrix2f);
+  d.insert(kMatrix3f);
+  d.insert(kMatrix4f);
+
+  d.insert(kMatrix2d);
+  d.insert(kMatrix3d);
+  d.insert(kMatrix4d);
+
+  d.insert(kToken);
+  d.insert(kString);
+
+  d.insert(kRelationship);
+  d.insert(kAssetPath);
+
+  d.insert(kDictionary);
+
+  if (include_variant_set) {
+    d.insert("variantSet");
+  }
+}
+
 }  // namespace value
 
 }  // namespace tinyusdz
 
-// NOTE: timesamples.hh is NOT included here to avoid circular dependencies
-// and reduce compile times. Include timesamples.hh directly if needed.
-
-#include <set>  // for RegisterPrimAttrTypes
+#include "timesamples.hh"
 
 namespace tinyusdz {
 namespace value {
+
+// token[] and TimeSamples traits - placed here because TimeSamples is defined
+// in timesamples.hh which is included above.
+#include "define-type-trait.inc"
+
+DEFINE_TYPE_TRAIT(std::vector<token>, "token[]", TYPE_ID_TOKEN_VECTOR, 1);
+DEFINE_TYPE_TRAIT(TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
+
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
 
 static_assert(sizeof(quath) == 8, "sizeof(quath) must be 8");
 static_assert(sizeof(quatf) == 16, "sizeof(quatf) must be 16");
@@ -2555,94 +2884,5 @@ static_assert(sizeof(color3f) == 12, "sizeof(color3f) must be 12");
 static_assert(sizeof(color4f) == 16, "sizeof(color4f) must be 16");
 
 }  // namespace value
-
-///
-/// Register supported primitive attribute type names into a set.
-/// Used by USDA and USDC readers for type validation.
-///
-/// @param[out] d Set to populate with supported type names
-/// @param[in] include_variantset Whether to include "variantSet" (USDA needs it, USDC doesn't)
-///
-inline void RegisterPrimAttrTypes(std::set<std::string> &d, bool include_variantset = true) {
-  d.clear();
-
-  d.insert(value::kBool);
-
-  d.insert(value::kInt64);
-
-  d.insert(value::kInt);
-  d.insert(value::kInt2);
-  d.insert(value::kInt3);
-  d.insert(value::kInt4);
-
-  d.insert(value::kUInt64);
-
-  d.insert(value::kUInt);
-  d.insert(value::kUInt2);
-  d.insert(value::kUInt3);
-  d.insert(value::kUInt4);
-
-  d.insert(value::kFloat);
-  d.insert(value::kFloat2);
-  d.insert(value::kFloat3);
-  d.insert(value::kFloat4);
-
-  d.insert(value::kDouble);
-  d.insert(value::kDouble2);
-  d.insert(value::kDouble3);
-  d.insert(value::kDouble4);
-
-  d.insert(value::kHalf);
-  d.insert(value::kHalf2);
-  d.insert(value::kHalf3);
-  d.insert(value::kHalf4);
-
-  d.insert(value::kQuath);
-  d.insert(value::kQuatf);
-  d.insert(value::kQuatd);
-
-  d.insert(value::kNormal3f);
-  d.insert(value::kPoint3f);
-  d.insert(value::kTexCoord2h);
-  d.insert(value::kTexCoord3h);
-  d.insert(value::kTexCoord4h);
-  d.insert(value::kTexCoord2f);
-  d.insert(value::kTexCoord3f);
-  d.insert(value::kTexCoord4f);
-  d.insert(value::kTexCoord2d);
-  d.insert(value::kTexCoord3d);
-  d.insert(value::kTexCoord4d);
-  d.insert(value::kVector3f);
-  d.insert(value::kVector4f);
-  d.insert(value::kVector3d);
-  d.insert(value::kVector4d);
-  d.insert(value::kColor3h);
-  d.insert(value::kColor3f);
-  d.insert(value::kColor3d);
-  d.insert(value::kColor4h);
-  d.insert(value::kColor4f);
-  d.insert(value::kColor4d);
-
-  d.insert(value::kMatrix2f);
-  d.insert(value::kMatrix3f);
-  d.insert(value::kMatrix4f);
-
-  d.insert(value::kMatrix2d);
-  d.insert(value::kMatrix3d);
-  d.insert(value::kMatrix4d);
-
-  d.insert(value::kToken);
-  d.insert(value::kString);
-
-  d.insert(value::kRelationship);
-  d.insert(value::kAssetPath);
-
-  d.insert(value::kDictionary);
-
-  // variantSet requires special treatment in USDA parser
-  if (include_variantset) {
-    d.insert("variantSet");
-  }
-}
 
 }  // namespace tinyusdz

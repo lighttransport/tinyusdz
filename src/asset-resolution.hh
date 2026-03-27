@@ -90,7 +90,6 @@ class Asset {
 struct ResolverAssetInfo {
   std::string version;
   std::string assetName;
-  // std::string repoPath;  deprecated in pxrUSD Ar 2.0
 
   value::Value resolverInfo;
 };
@@ -151,19 +150,6 @@ struct AssetResolutionHandler {
   void *userdata{nullptr};
 };
 
-#if 0 // deprecated.
-///
-/// @param[in] path Path string to be resolved.
-/// @param[in] assetInfo nullptr when no `assetInfo` assigned to this path.
-/// @param[inout] userdata Userdata pointer passed by callee. could be nullptr
-/// @param[out] resolvedPath Resolved Path string.
-/// @param[out] err Error message.
-//
-typedef bool (*ResolvePathHandler)(const std::string &path,
-                                   const ResolverAssetInfo *assetInfo,
-                                   void *userdata, std::string *resolvedPath,
-                                   std::string *err);
-#endif
 
 class AssetResolutionResolver {
  public:
@@ -274,17 +260,6 @@ class AssetResolutionResolver {
   }
 
 
-#if 0
-  ///
-  /// Register user defined asset path resolver.
-  /// Default = find file from search paths.
-  ///
-  void register_resolve_path_handler(ResolvePathHandler handler) {
-    _resolve_path_handler = handler;
-  }
-
-  void unregister_resolve_path_handler() { _resolve_path_handler = nullptr; }
-#endif
 
   ///
   /// Check if input asset exists(do asset resolution inside the function).

@@ -8,7 +8,6 @@ USD_API UsdStageRefPtr UsdStage::Open(const std::string &filepath, InitialLoadSe
   (void)filepath;
   (void)loadset;
 
-  // TODO:
   return std::shared_ptr<UsdStage>(nullptr);
 };
 
@@ -16,7 +15,6 @@ USD_API UsdStageRefPtr UsdStage::CreateNew(const std::string &filepath, InitialL
   (void)filepath;
   (void)loadset;
 
-  // TODO:
   return std::shared_ptr<UsdStage>(nullptr);
 };
 

@@ -3,11 +3,12 @@
 #include "common-types.hh"
 
 #include <algorithm>
+#include <limits>
 #include <unordered_map>
 #include <cstring>
 #include <vector>
 
-#include "../prim-types.hh"
+#include "../core/prim.hh"
 #include "../layer.hh"
 #include "../usdGeom.hh"
 #include "../value-types.hh"
@@ -21,30 +22,12 @@ namespace tydra {
 
 namespace {
 
-#if 0
-template<typename T>
-void MoveVector(std::vector<T>& src, std::vector<T>& dst) {
-  dst = std::move(src);
-  src.clear();
-  src.shrink_to_fit();
-}
-#endif
+constexpr const char* kInPlaceConversionDisabledMessage =
+    "In-place LayerToRenderScene conversion is temporarily disabled because "
+    "destructive source transfer is not implemented safely yet. Use "
+    "ConvertLayer or ConvertPrimSpec instead.";
 
-#if 0
-template<typename T>
-void ExtractAndClearAnimatable(Animatable<T>& src, T* default_val, TypedTimeSamples<T>* ts) {
-  if (src.has_value() && default_val) {
-    src.get_scalar(default_val);
-  }
-  
-  if (src.has_timesamples() && ts) {
-    *ts = std::move(const_cast<TypedTimeSamples<T>&>(src.get_timesamples()));
-  }
-  
-  src.clear_scalar();
-  src.clear_timesamples();
-}
-#endif
+
 
 // TODO: Fix these functions once Property API is clarified
 // bool ConvertPrimvarToVertexAttribute(
@@ -98,6 +81,51 @@ void ExtractAndClearAnimatable(Animatable<T>& src, T* default_val, TypedTimeSamp
 // }
 
 }  // anonymous namespace
+
+namespace detail {
+
+namespace {
+
+size_t SaturatingAdd(const size_t lhs, const size_t rhs) {
+  if (rhs > (std::numeric_limits<size_t>::max() - lhs)) {
+    return std::numeric_limits<size_t>::max();
+  }
+  return lhs + rhs;
+}
+
+}  // namespace
+
+void ApplyMemoryUsageDelta(
+    const size_t bytes_allocated,
+    const size_t bytes_freed,
+    const size_t max_memory_limit_mb,
+    MemoryUsageState* state,
+    const std::function<void(const std::string&)>& progress_callback,
+    const std::function<void(size_t)>& memory_freed_callback) {
+  if (!state) {
+    return;
+  }
+
+  const size_t current_after_alloc =
+      SaturatingAdd(state->current_memory_usage, bytes_allocated);
+  state->peak_memory_usage =
+      std::max(state->peak_memory_usage, current_after_alloc);
+
+  const size_t actual_bytes_freed = std::min(bytes_freed, current_after_alloc);
+  state->current_memory_usage = current_after_alloc - actual_bytes_freed;
+
+  if (actual_bytes_freed > 0 && memory_freed_callback) {
+    memory_freed_callback(actual_bytes_freed);
+  }
+
+  if (state->current_memory_usage > max_memory_limit_mb * 1024 * 1024) {
+    if (progress_callback) {
+      progress_callback("Warning: Memory limit exceeded");
+    }
+  }
+}
+
+}  // namespace detail
 
 struct LayerToRenderSceneConverter::Impl {
   std::unordered_map<std::string, int> material_path_to_id;
@@ -191,7 +219,7 @@ bool LayerToRenderSceneConverter::ConvertLayerInPlace(
     RenderScene* render_scene,
     std::string* warn,
     std::string* err) {
-  
+
   (void)warn;
   if (!layer || !render_scene) {
     if (err) {
@@ -205,74 +233,16 @@ bool LayerToRenderSceneConverter::ConvertLayerInPlace(
   if (config_.progress_callback) {
     config_.progress_callback("Starting in-place Layer to RenderScene conversion");
   }
-  
-  auto& primspecs = layer->primspecs();
-  std::vector<std::string> paths_to_remove;
-  
-  for (auto& item : primspecs) {
-    const std::string& path = item.first;
-    PrimSpec& primspec = item.second;
-    if (config_.progress_callback) {
-      config_.progress_callback("Processing: " + path);
-    }
-    
-    // Skip invalid primspecs if needed
-    
-    const std::string& typeName = primspec.typeName();
-    size_t memory_before = current_memory_usage_;
-    
-    if (typeName == "Mesh") {
-      RenderMesh mesh;
-      if (ConvertGeomMeshPrimSpec(&primspec, &mesh, true)) {
-        mesh.prim_name = primspec.name();
-        mesh.abs_path = path;
-        
-        int mesh_id = static_cast<int>(render_scene->meshes.size());
-        render_scene->meshes.push_back(std::move(mesh));
-        impl_->mesh_path_to_id[path] = mesh_id;
-        
-        paths_to_remove.push_back(path);
-      }
-    } else if (typeName == "Material") {
-      RenderMaterial material;
-      if (ConvertMaterialPrimSpec(&primspec, &material, true)) {
-        material.name = primspec.name();
-        material.abs_path = path;
-        
-        int material_id = static_cast<int>(render_scene->materials.size());
-        render_scene->materials.push_back(std::move(material));
-        impl_->material_path_to_id[path] = material_id;
-        
-        paths_to_remove.push_back(path);
-      }
-    } else if (typeName == "Xform" || typeName == "Scope") {
-      Node node;
-      if (ConvertXformPrimSpec(&primspec, &node, true)) {
-        node.prim_name = primspec.name();
-        node.abs_path = path;
-        render_scene->nodes.push_back(std::move(node));
-        
-        paths_to_remove.push_back(path);
-      }
-    }
-    
-    size_t memory_freed = memory_before - current_memory_usage_;
-    if (memory_freed > 0 && config_.memory_freed_callback) {
-      config_.memory_freed_callback(memory_freed);
-    }
+
+  if (err) {
+    *err = kInPlaceConversionDisabledMessage;
   }
-  
-  for (const auto& path : paths_to_remove) {
-    primspecs.erase(path);
-  }
-  
-  layer.reset();
-  
+
   if (config_.progress_callback) {
-    config_.progress_callback("In-place conversion complete");
+    config_.progress_callback("In-place conversion aborted: unsafe transfer path is disabled");
   }
-  
-  return true;
+
+  return false;
 }
 
 bool LayerToRenderSceneConverter::ConvertPrimSpec(
@@ -298,7 +268,7 @@ bool LayerToRenderSceneConverter::ConvertPrimSpecInPlace(
     RenderMesh* render_mesh,
     std::string* warn,
     std::string* err) {
-  
+
   (void)warn;
 
   if (!prim_spec || !render_mesh) {
@@ -307,12 +277,16 @@ bool LayerToRenderSceneConverter::ConvertPrimSpecInPlace(
     }
     return false;
   }
-  
-  bool result = ConvertGeomMeshPrimSpec(prim_spec.get(), render_mesh, true);
-  
-  prim_spec.reset();
-  
-  return result;
+
+  if (err) {
+    *err = kInPlaceConversionDisabledMessage;
+  }
+
+  if (config_.progress_callback) {
+    config_.progress_callback("In-place PrimSpec conversion aborted: unsafe transfer path is disabled");
+  }
+
+  return false;
 }
 
 bool LayerToRenderSceneConverter::ConvertGeomMeshPrimSpec(
@@ -518,18 +492,13 @@ bool LayerToRenderSceneConverter::ConvertXformPrimSpec(
 }
 
 void LayerToRenderSceneConverter::TrackMemoryUsage(size_t bytes_allocated, size_t bytes_freed) {
-  current_memory_usage_ += bytes_allocated;
-  current_memory_usage_ -= bytes_freed;
-  
-  if (current_memory_usage_ > peak_memory_usage_) {
-    peak_memory_usage_ = current_memory_usage_;
-  }
-  
-  if (current_memory_usage_ > config_.max_memory_limit_mb * 1024 * 1024) {
-    if (config_.progress_callback) {
-      config_.progress_callback("Warning: Memory limit exceeded");
-    }
-  }
+  detail::MemoryUsageState state{peak_memory_usage_, current_memory_usage_};
+  detail::ApplyMemoryUsageDelta(bytes_allocated, bytes_freed,
+                                config_.max_memory_limit_mb, &state,
+                                config_.progress_callback,
+                                config_.memory_freed_callback);
+  peak_memory_usage_ = state.peak_memory_usage;
+  current_memory_usage_ = state.current_memory_usage;
 }
 
 }  // namespace tydra

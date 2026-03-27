@@ -7,6 +7,14 @@ import * as THREE from 'three/webgpu';
 
 // Import custom OpenPBR TSL material
 import { createOpenPBRMaterial, MtlxNodes, MtlxNodeGraphProcessor } from 'tinyusdz/TinyUSDZOpenPBR_TSL.js';
+import {
+    createColor,
+    extractValue,
+    hasTexture,
+    getTextureId,
+    applyOpenPBRNormalMapFromGetter,
+    loadTextureFromUSD
+} from 'tinyusdz/TinyUSDZMaterialX.js';
 
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
@@ -536,131 +544,6 @@ function updateEnvIntensity() {
 // ============================================================================
 
 /**
- * Extract scalar or color value from OpenPBR parameter
- */
-function extractValue(param) {
-    if (param === undefined || param === null) return undefined;
-    if (typeof param === 'number') return param;
-    if (Array.isArray(param)) return param;
-    if (typeof param === 'object') {
-        if (param.value !== undefined) return param.value;
-        if (param.type === 'value') return param.value;
-    }
-    return param;
-}
-
-/**
- * Check if parameter has a texture
- */
-function hasTexture(param) {
-    if (!param || typeof param !== 'object') return false;
-    return param.textureId !== undefined && param.textureId >= 0;
-}
-
-/**
- * Get texture ID from parameter
- */
-function getTextureId(param) {
-    if (!hasTexture(param)) return -1;
-    return param.textureId;
-}
-
-/**
- * Create THREE.Color from RGB array
- */
-function createColor(rgb) {
-    if (!rgb || !Array.isArray(rgb)) return new THREE.Color(1, 1, 1);
-    return new THREE.Color(rgb[0], rgb[1], rgb[2]);
-}
-
-/**
- * Detect MIME type from image data
- */
-function getMimeType(imgData) {
-    if (imgData.uri) {
-        const ext = imgData.uri.split('.').pop().toLowerCase().split('?')[0];
-        const mimeTypes = {
-            'png': 'image/png',
-            'jpg': 'image/jpeg',
-            'jpeg': 'image/jpeg',
-            'webp': 'image/webp',
-            'gif': 'image/gif'
-        };
-        if (mimeTypes[ext]) return mimeTypes[ext];
-    }
-
-    if (imgData.data && imgData.data.length >= 4) {
-        const data = new Uint8Array(imgData.data);
-        if (data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4E && data[3] === 0x47) return 'image/png';
-        if (data[0] === 0xFF && data[1] === 0xD8 && data[2] === 0xFF) return 'image/jpeg';
-        if (data[0] === 0x52 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x46) return 'image/webp';
-    }
-
-    return 'image/png';
-}
-
-/**
- * Load texture from USD scene
- */
-async function loadTextureFromUSD(usdScene, textureId, cache = null) {
-    if (textureId === undefined || textureId < 0) return null;
-
-    if (cache && cache.has(textureId)) {
-        return cache.get(textureId);
-    }
-
-    try {
-        const texData = usdScene.getTexture(textureId);
-        if (!texData || texData.textureImageId === undefined || texData.textureImageId < 0) {
-            return null;
-        }
-
-        const imgData = usdScene.getImage(texData.textureImageId);
-        if (!imgData) {
-            return null;
-        }
-
-        let texture = null;
-
-        if (imgData.uri && (imgData.bufferId === -1 || imgData.bufferId === undefined)) {
-            const loader = new THREE.TextureLoader();
-            texture = await loader.loadAsync(imgData.uri);
-        } else if (imgData.bufferId >= 0 && imgData.data) {
-            if (imgData.decoded) {
-                const image8Array = new Uint8ClampedArray(imgData.data);
-                texture = new THREE.DataTexture(image8Array, imgData.width, imgData.height);
-
-                if (imgData.channels === 1) texture.format = THREE.RedFormat;
-                else if (imgData.channels === 2) texture.format = THREE.RGFormat;
-                else if (imgData.channels === 4) texture.format = THREE.RGBAFormat;
-                else return null;
-
-                texture.flipY = true;
-                texture.needsUpdate = true;
-            } else {
-                const mimeType = getMimeType(imgData);
-                const blob = new Blob([imgData.data], { type: mimeType });
-                const blobUrl = URL.createObjectURL(blob);
-
-                const loader = new THREE.TextureLoader();
-                texture = await loader.loadAsync(blobUrl);
-                URL.revokeObjectURL(blobUrl);
-            }
-        }
-
-        if (texture && cache) {
-            cache.set(textureId, texture);
-        }
-
-        return texture;
-
-    } catch (error) {
-        console.error(`Failed to load texture ${textureId}:`, error);
-        return null;
-    }
-}
-
-/**
  * Convert OpenPBR material data to custom OpenPBRNodeMaterial (TSL)
  *
  * This creates a custom NodeMaterial that implements the OpenPBR shading model
@@ -821,15 +704,8 @@ async function convertOpenPBRToTSLMaterial(materialData, usdScene = null, option
         }
     }
 
-    // Normal map
-    const normalParam = getParam('normal', 'geometry') ?? getParam('geometry_normal', 'geometry');
-    if (normalParam !== undefined && usdScene && hasTexture(normalParam)) {
-        const texture = await loadTextureFromUSD(usdScene, getTextureId(normalParam), textureCache);
-        if (texture) {
-            material.normalMap = texture;
-            material.userData.textures.normalMap = { textureId: getTextureId(normalParam), texture };
-        }
-    }
+    await applyOpenPBRNormalMapFromGetter(
+        material, getParam, usdScene, textureCache, loadTextureFromUSD);
 
     // Set material name
     if (materialData.name) {
@@ -1060,16 +936,8 @@ async function convertOpenPBRToNodeMaterial(materialData, usdScene = null, optio
         }
     }
 
-    // Normal map
-    const normalParam = getParam('normal', 'geometry') ?? getParam('geometry_normal', 'geometry');
-    if (normalParam !== undefined && usdScene && hasTexture(normalParam)) {
-        const texture = await loadTextureFromUSD(usdScene, getTextureId(normalParam), textureCache);
-        if (texture) {
-            material.normalMap = texture;
-            material.normalScale = new THREE.Vector2(1, 1);
-            material.userData.textures.normalMap = { textureId: getTextureId(normalParam), texture };
-        }
-    }
+    await applyOpenPBRNormalMapFromGetter(
+        material, getParam, usdScene, textureCache, loadTextureFromUSD);
 
     // ========== Environment Map ==========
     if (options.envMap) {
@@ -1616,7 +1484,16 @@ function convertUsdMeshToThreeMesh(mesh) {
     }
 
     if (mesh.normals) {
-        geometry.setAttribute('normal', new THREE.BufferAttribute(mesh.normals, 3));
+        if (mesh.normalsFormat === 'snorm8') {
+            geometry.setAttribute('normal',
+                new THREE.BufferAttribute(new Int8Array(mesh.normals), 3, true));
+        } else if (mesh.normalsFormat === 'snorm16') {
+            geometry.setAttribute('normal',
+                new THREE.BufferAttribute(new Int16Array(mesh.normals), 3, true));
+        } else {
+            geometry.setAttribute('normal',
+                new THREE.BufferAttribute(new Float32Array(mesh.normals), 3));
+        }
     } else {
         geometry.computeVertexNormals();
     }
@@ -1626,7 +1503,7 @@ function convertUsdMeshToThreeMesh(mesh) {
     }
 
     if (mesh.tangents) {
-        geometry.setAttribute('tangent', new THREE.BufferAttribute(mesh.tangents, 3));
+        geometry.setAttribute('tangent', new THREE.BufferAttribute(mesh.tangents, 4));
     } else if (mesh.texcoords && (mesh.normals || geometry.attributes.normal)) {
         geometry.computeTangents();
     }
