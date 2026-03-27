@@ -54,9 +54,11 @@ bool USDCReader::Impl::ResolveFieldValuePairs(
 
     uint64_t budget_before = crate_reader->GetMemoryUsageInBytes();
     if (!crate_reader->DecodeFieldSet(spec.fieldset_index, scratch)) {
+      std::string inner = crate_reader->GetError();
       PUSH_ERROR_AND_RETURN_TAG(
           kTag, "Failed to decode fieldset id: " +
-                    std::to_string(spec.fieldset_index.value));
+                    std::to_string(spec.fieldset_index.value) +
+                    (inner.empty() ? "" : "\n  " + inner));
     }
     _scratch_budget_reserved =
         crate_reader->GetMemoryUsageInBytes() - budget_before;
