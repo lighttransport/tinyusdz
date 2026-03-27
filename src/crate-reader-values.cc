@@ -470,13 +470,14 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H: {
-      // Value is represented in int8
-      int8_t data[2];
-      memcpy(&data, &d, 2);
+      // half2 (4 bytes) fits in uint32 → "always inlined" in Pixar's crate:
+      // raw half bit patterns stored directly, NOT int8 compact encoding.
+      uint16_t data[2];
+      memcpy(data, &d, sizeof(data));
 
       value::half2 v;
-      v[0] = value::float_to_half_full(float(data[0]));
-      v[1] = value::float_to_half_full(float(data[1]));
+      v[0].value = data[0];
+      v[1].value = data[1];
 
       DCOUT("value.half2 = " << v);
 
@@ -532,7 +533,7 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H: {
-      // Value is represented in int8
+      // Value is represented in int8 (Pixar convention: small integer compact)
       int8_t data[3];
       memcpy(&data, &d, 3);
 
@@ -857,8 +858,6 @@ bool CrateReader::DescribeValueRep(const crate::ValueRep &rep,
 
 bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
                                  crate::CrateValue *value) {
-
-  //TUSDZ_LOG_I("unpack . ty " << GetCrateDataTypeName(rep.GetType()) << ", inlined " << rep.IsInlined());
 
   if (rep.IsInlined()) {
     return UnpackInlinedValueRep(rep, value);

@@ -1430,6 +1430,8 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   PACK_SCALAR_TYPE(value::float3, CRATE_DATA_TYPE_VEC3F)
   PACK_SCALAR_TYPE(value::double3, CRATE_DATA_TYPE_VEC3D)
   PACK_SCALAR_TYPE(value::int3, CRATE_DATA_TYPE_VEC3I)
+  PACK_SCALAR_TYPE(value::half2, CRATE_DATA_TYPE_VEC2H)
+  PACK_SCALAR_TYPE(value::half3, CRATE_DATA_TYPE_VEC3H)
   PACK_SCALAR_TYPE(value::half4, CRATE_DATA_TYPE_VEC4H)
   PACK_SCALAR_TYPE(value::float4, CRATE_DATA_TYPE_VEC4F)
   PACK_SCALAR_TYPE(value::double4, CRATE_DATA_TYPE_VEC4D)
@@ -1632,6 +1634,8 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
   WRITE_VEC_SCALAR(value::float3, 3, "Vec3f")
   WRITE_VEC_SCALAR(value::double3, 3, "Vec3d")
   WRITE_VEC_SCALAR(value::int3, 3, "Vec3i")
+  WRITE_HALFVEC_SCALAR(value::half2, 2, "Vec2h")
+  WRITE_HALFVEC_SCALAR(value::half3, 3, "Vec3h")
   WRITE_HALFVEC_SCALAR(value::half4, 4, "Vec4h")
   WRITE_VEC_SCALAR(value::float4, 4, "Vec4f")
   WRITE_VEC_SCALAR(value::double4, 4, "Vec4d")
@@ -2941,12 +2945,14 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
   // Vec2h (4 bytes), Vec2f/Vec2i (8 bytes) cannot be inlined
   // Vec3/Vec4 cannot be inlined (12+ bytes)
 
-  // Vec2h - half2 (4 bytes, can inline)
+  // Vec2h - half2 (4 bytes = sizeof(uint32_t)): "always inlined" in Pixar's
+  // crate format — raw half bit patterns stored directly via memcpy, NOT int8.
   if (auto* vec2h_val = value.as<value::half2>()) {
     rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H));
     rep->SetIsInlined();
-    // Pack two 16-bit halfs into 32 bits
-    uint32_t packed = (uint32_t((*vec2h_val)[0].value) << 16) | uint32_t((*vec2h_val)[1].value);
+    uint32_t packed = 0;
+    uint16_t data[2] = {(*vec2h_val)[0].value, (*vec2h_val)[1].value};
+    memcpy(&packed, data, sizeof(data));
     rep->SetPayload(static_cast<uint64_t>(packed));
     return true;
   }
@@ -2959,15 +2965,31 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
   CANNOT_INLINE(value::double2)  // 16 bytes
   CANNOT_INLINE(value::int2)     // 8 bytes
 
-  // Vec3h - half3 (6 bytes, can inline!)
+  // Vec3h - half3: inline only if each component is exactly int8
   if (auto* vec3h_val = value.as<value::half3>()) {
     rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H));
-    rep->SetIsInlined();
-    uint64_t packed = (uint64_t((*vec3h_val)[0].value) << 32) |
-                      (uint64_t((*vec3h_val)[1].value) << 16) |
-                       uint64_t((*vec3h_val)[2].value);
-    rep->SetPayload(packed);
-    return true;
+    float f[3];
+    f[0] = value::half_to_float((*vec3h_val)[0]);
+    f[1] = value::half_to_float((*vec3h_val)[1]);
+    f[2] = value::half_to_float((*vec3h_val)[2]);
+    bool can_inline = true;
+    int8_t ivec[3];
+    for (int i = 0; i < 3; ++i) {
+      if (f[i] < -128.0f || f[i] > 127.0f ||
+          static_cast<float>(static_cast<int8_t>(f[i])) != f[i]) {
+        can_inline = false;
+        break;
+      }
+      ivec[i] = static_cast<int8_t>(f[i]);
+    }
+    if (can_inline) {
+      uint32_t packed = 0;
+      memcpy(&packed, ivec, sizeof(ivec));
+      rep->SetIsInlined();
+      rep->SetPayload(static_cast<uint64_t>(packed));
+      return true;
+    }
+    return false;  // can't inline, write out-of-line
   }
 
   CANNOT_INLINE(value::float3)   // 12 bytes
