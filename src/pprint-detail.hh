@@ -696,7 +696,9 @@ inline std::string print_rel_only(const Relationship &rel,
   } else if (rel.is_path()) {
     ss << " = " << rel.targetPath;
   } else if (rel.is_pathvector()) {
-    if (rel.targetPathVector.size() == 1) {
+    if (rel.targetPathVector.empty()) {
+      ss << " = None";
+    } else if (rel.targetPathVector.size() == 1) {
       ss << " = " << rel.targetPathVector[0];
     } else {
       ss << " = " << rel.targetPathVector;

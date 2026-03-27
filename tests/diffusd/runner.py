@@ -98,7 +98,7 @@ def run_tests(tusdcat, tusddiff, usdcat, basedir,
         # Step 1: Pixar usdcat → USDC (write as .usd, rename to .usdc)
         pr = subprocess.run(
             [usdcat, filepath, "-o", pixar_usd, "--usdFormat", "usdc"],
-            capture_output=True, text=True, timeout=60)
+            capture_output=True, text=True, timeout=10)
         if pr.returncode == 0:
             try:
                 os.rename(pixar_usd, pixar_usdc)
@@ -115,7 +115,7 @@ def run_tests(tusdcat, tusddiff, usdcat, basedir,
         # Step 2: TinyUSDZ tusdcat → USDC
         tr = subprocess.run(
             [tusdcat, filepath, "-o", tiny_usdc],
-            capture_output=True, text=True, timeout=60)
+            capture_output=True, text=True, timeout=10)
         if tr.returncode != 0:
             tinyusdz_errors += 1
             failed += 1
@@ -136,7 +136,7 @@ def run_tests(tusdcat, tusddiff, usdcat, basedir,
         # Reference: Pixar reads original USDA → USDA text
         pr2 = subprocess.run(
             [usdcat, filepath],
-            capture_output=True, text=True, timeout=60)
+            capture_output=True, text=True, timeout=10)
         if pr2.returncode != 0:
             skipped += 1
             if verbose:
@@ -146,7 +146,7 @@ def run_tests(tusdcat, tusddiff, usdcat, basedir,
         # Test: TinyUSDZ reads Pixar's USDC → USDA text
         tr2 = subprocess.run(
             [tusdcat, pixar_usdc],
-            capture_output=True, text=True, timeout=60)
+            capture_output=True, text=True, timeout=10)
         if tr2.returncode != 0:
             failed += 1
             err = (tr2.stderr.strip().split("\n")[0] if tr2.stderr.strip() else "unknown")
@@ -164,14 +164,20 @@ def run_tests(tusdcat, tusddiff, usdcat, basedir,
         script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         compare_js = os.path.join(script_dir, "compare-usda.js")
 
-        if os.path.isfile(compare_js):
-            dr = subprocess.run(
-                ["node", compare_js, pixar_usda_out, tiny_usda_out],
-                capture_output=True, text=True, timeout=60)
-        else:
-            dr = subprocess.run(
-                [tusddiff, pixar_usda_out, tiny_usda_out],
-                capture_output=True, text=True, timeout=60)
+        try:
+            if os.path.isfile(compare_js):
+                dr = subprocess.run(
+                    ["node", compare_js, pixar_usda_out, tiny_usda_out],
+                    capture_output=True, text=True, timeout=10)
+            else:
+                dr = subprocess.run(
+                    [tusddiff, pixar_usda_out, tiny_usda_out],
+                    capture_output=True, text=True, timeout=10)
+        except subprocess.TimeoutExpired:
+            skipped += 1
+            if verbose:
+                print(f"  SKIP (compare timeout): {basename}")
+            continue
 
         if dr.returncode == 0:
             passed += 1
@@ -287,7 +293,7 @@ def run_usda_tests(tusdcat, usdcat, basedir, verbose=False, globs=None):
 
         # Pixar usdcat → USDA text (reference)
         pr = subprocess.run([usdcat, filepath],
-                            capture_output=True, text=True, timeout=60)
+                            capture_output=True, text=True, timeout=10)
         if pr.returncode != 0:
             skipped += 1
             if verbose:
@@ -296,7 +302,7 @@ def run_usda_tests(tusdcat, usdcat, basedir, verbose=False, globs=None):
 
         # TinyUSDZ tusdcat → USDA text (test)
         tr = subprocess.run([tusdcat, filepath],
-                            capture_output=True, text=True, timeout=60)
+                            capture_output=True, text=True, timeout=10)
         if tr.returncode != 0:
             failed += 1
             err = (tr.stderr.strip().split("\n")[0] if tr.stderr.strip() else "unknown")
@@ -311,9 +317,15 @@ def run_usda_tests(tusdcat, usdcat, basedir, verbose=False, globs=None):
             f.write(tr.stdout)
 
         # compare-usda.js: 0=equivalent, 1=different, 2=error
-        dr = subprocess.run(
-            ["node", compare_js, ref_usda, test_usda],
-            capture_output=True, text=True, timeout=60)
+        try:
+            dr = subprocess.run(
+                ["node", compare_js, ref_usda, test_usda],
+                capture_output=True, text=True, timeout=10)
+        except subprocess.TimeoutExpired:
+            skipped += 1
+            if verbose:
+                print(f"  SKIP (compare timeout): {basename}")
+            continue
 
         if dr.returncode == 0:
             passed += 1

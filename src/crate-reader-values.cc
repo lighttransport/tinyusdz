@@ -919,6 +919,17 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
   // payload is the offset to data.
   uint64_t offset = rep.GetPayload();
+
+  // Handle empty arrays: non-inlined array with payload=0 means no data was
+  // written (Pixar uses this encoding for empty arrays like `string[] = []`).
+  if (rep.IsArray() && offset == 0 && !rep.IsInlined()) {
+    // Set empty typed value based on data type
+    // For now, set a generic empty value
+    DCOUT("Empty array (non-inlined, payload=0) type=" << crate::GetCrateDataTypeName(rep.GetType()));
+    // Return empty CrateValue — caller handles the type
+    return true;
+  }
+
   if (!_sr->seek_set(offset)) {
     PUSH_ERROR("Invalid offset.");
     return false;
