@@ -155,6 +155,18 @@ def run_tests(tusdcat, tusddiff, usdcat, basedir,
                 print(f"  FAIL (read pixar USDC): {basename}")
             continue
 
+        # Check for VALUE_PPRINT placeholder (pprinter bug in TinyUSDZ)
+        if "VALUE_PPRINT" in tr2.stdout:
+            failed += 1
+            vp_lines = [l.strip() for l in tr2.stdout.split("\n")
+                        if "VALUE_PPRINT" in l]
+            failures.append((basename, f"VALUE_PPRINT bug: {vp_lines[0][:120]}"))
+            if verbose:
+                print(f"  FAIL (VALUE_PPRINT): {basename}")
+                for vl in vp_lines[:3]:
+                    print(f"        {vl[:120]}")
+            continue
+
         # Compare using compare-usda.js (semantic, order-independent)
         with open(pixar_usda_out, "w") as fp:
             fp.write(pr2.stdout)
@@ -309,6 +321,18 @@ def run_usda_tests(tusdcat, usdcat, basedir, verbose=False, globs=None):
             failures.append((basename, f"tusdcat failed: {err}"))
             if verbose:
                 print(f"  FAIL (tusdcat): {basename}")
+            continue
+
+        # Check for VALUE_PPRINT placeholder (pprinter bug in TinyUSDZ)
+        if "VALUE_PPRINT" in tr.stdout:
+            failed += 1
+            vp_lines = [l.strip() for l in tr.stdout.split("\n")
+                        if "VALUE_PPRINT" in l]
+            failures.append((basename, f"VALUE_PPRINT bug: {vp_lines[0][:120]}"))
+            if verbose:
+                print(f"  FAIL (VALUE_PPRINT): {basename}")
+                for vl in vp_lines[:3]:
+                    print(f"        {vl[:120]}")
             continue
 
         with open(ref_usda, "w") as f:
