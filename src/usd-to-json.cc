@@ -22,7 +22,7 @@
 #endif
 
 #include "common-macros.inc"
-#include "pprinter.hh"
+#include "pprint-enum.hh"
 #include "str-util.hh"
 
 using namespace nlohmann;
@@ -946,7 +946,6 @@ json ToJSON(tinyusdz::GeomBasisCurves& curves) {
   j["name"] = curves.name;
   j["typeName"] = "GeomBasisCurves";
 
-  // TODO
   USDToJSONContext *context = nullptr;
 
   // Points array (point3f[])
@@ -1013,7 +1012,11 @@ bool PrimToJSONIterative(json &root, const tinyusdz::Prim& root_prim) {
   // Initialize with root prim
   stack.emplace_back(&root_prim);
 
+  size_t iter = 0;
   while (!stack.empty()) {
+    if (iter++ >= kMaxDefaultTraversalLimit) {
+      break;
+    }
     StackEntry &curr = stack.back();
     const auto &children = curr.prim->children();
 
@@ -1478,7 +1481,7 @@ json ToJSON(const tinyusdz::Attribute& attribute, USDToJSONContext* /* context *
   } else {
     // Check if attribute has value by accessing the internal value container
     const auto& var = attribute.get_var();
-    if (var.is_valid()) {
+    if (var.has_value() || var.has_timesamples()) {
       j["hasValue"] = true;
       j["valueType"] = "data";
       

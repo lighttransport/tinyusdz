@@ -1,0 +1,10 @@
+#usda 1.0
+def Scope "Test" {
+    custom float[] weights = [
+        # root weights
+        1.0, 0.0, 1.0, 0.0,
+        # blended weights
+        0.6, 0.4, 0.8, 0.2
+        # trailing comment before bracket
+    ]
+}

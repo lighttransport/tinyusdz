@@ -1,0 +1,18 @@
+#usda 1.0
+def Scope "Test" {
+    custom color3f[] colors = [
+        # red
+        (1, 0, 0),
+        # green
+        (0, 1, 0),
+        # blue
+        (0, 0, 1)
+    ]
+
+    custom color4f[] colorsAlpha = [
+        # opaque white
+        (1, 1, 1, 1),
+        # semi-transparent black
+        (0, 0, 0, 0.5)
+    ]
+}

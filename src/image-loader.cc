@@ -5,8 +5,6 @@
 // - TIFF/DNG(through TinyDNG). 8bit, 16bit and 32bit
 // - PNG(8bit, 16bit), Jpeg, bmp, tga, ...(through stb_image or wuffs).
 //
-// TODO:
-//
 // - [ ] Use fpng for 8bit PNG when `stb_image` is used
 // - [ ] 10bit, 12bit and 14bit DNG image
 // - [ ] Support LoD tile, multi-channel for TIFF image
@@ -220,7 +218,7 @@ bool GetImageInfoSTB(const uint8_t *bytes, const size_t size,
                     std::string *err) {
   (void)warn;
   (void)uri;
-  (void)err; // TODO
+  (void)err;
 
   int w = 0, h = 0, comp = 0;
 

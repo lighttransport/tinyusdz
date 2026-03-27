@@ -7,6 +7,7 @@
 
 #include <string>
 #include "nonstd/optional.hpp"
+#include "value-types.hh"
 
 namespace tinyusdz {
 
@@ -127,5 +128,18 @@ enum class Variability {
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);
 nonstd::optional<Orientation> OrientationFromString(const std::string &v);
 nonstd::optional<Kind> KindFromString(const std::string &v);
+
+namespace value {
+
+#include "define-type-trait.inc"
+
+DEFINE_TYPE_TRAIT(Specifier, "specifier", TYPE_ID_SPECIFIER, 1);
+DEFINE_TYPE_TRAIT(Permission, "permission", TYPE_ID_PERMISSION, 1);
+DEFINE_TYPE_TRAIT(Variability, "variability", TYPE_ID_VARIABILITY, 1);
+
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
+
+}  // namespace value
 
 }  // namespace tinyusdz

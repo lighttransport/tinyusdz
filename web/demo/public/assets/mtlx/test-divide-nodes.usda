@@ -1,0 +1,62 @@
+#usda 1.0
+(
+    doc = "Hand-written test: ND_divide_float node for base_metalness"
+    metersPerUnit = 1
+    upAxis = "Z"
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Sphere "DivideTest"
+    (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        double radius = 1.0
+        rel material:binding = </root/_materials/DivideTest>
+    }
+
+    def Scope "_materials"
+    {
+        def Material "DivideTest"
+        (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            token outputs:surface.connect = </root/_materials/DivideTest/shader.outputs:surface>
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/DivideTest/shader.outputs:surface>
+
+            def Shader "shader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                float inputs:base_weight = 1
+                color3f inputs:base_color = (0.2, 0.6, 0.9)
+                float inputs:base_metalness.connect = </root/_materials/DivideTest/NodeGraphs.outputs:divide_metalness_out>
+                float inputs:base_diffuse_roughness = 0
+                float inputs:specular_weight = 1
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_roughness = 0.3
+                float inputs:specular_ior = 1.5
+                float inputs:coat_weight = 0
+                float inputs:emission_luminance = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                float outputs:divide_metalness_out.connect = </root/_materials/DivideTest/NodeGraphs/divide_metalness.outputs:out>
+
+                def Shader "divide_metalness"
+                {
+                    uniform token info:id = "ND_divide_float"
+                    float inputs:in1 = 0.8
+                    float inputs:in2 = 2.0
+                    float outputs:out
+                }
+            }
+        }
+    }
+}

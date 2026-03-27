@@ -79,7 +79,7 @@ struct XformOp {
 
   void set_timesamples(value::TimeSamples &&v) { _var.set_timesamples(std::move(v)); }
 
-  bool is_timesamples() const { return _var.is_timesamples(); }
+  bool is_timesamples() const { return !_var.has_value() && _var.has_timesamples(); }
   bool has_timesamples() const { return _var.has_timesamples(); }
 
   void set_blocked(bool onoff) { _is_blocked = onoff; }
@@ -88,7 +88,7 @@ struct XformOp {
   // check if 'default' value is ValueBlock.
   bool is_blocked() const { return _is_blocked || _var.is_blocked(); }
 
-  bool is_default() const { return _var.is_scalar(); }
+  bool is_default() const { return _var.has_value() && !_var.has_timesamples(); }
   bool has_default() const { return _var.has_default(); }
 
   nonstd::optional<value::TimeSamples> get_timesamples() const {

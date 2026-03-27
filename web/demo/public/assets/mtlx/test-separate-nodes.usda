@@ -1,0 +1,78 @@
+#usda 1.0
+(
+    doc = "Hand-written test: ND_extract_color3 (Separate RGB) with constant color input"
+    metersPerUnit = 1
+    upAxis = "Z"
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Sphere "SeparateTest"
+    (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        double radius = 1.0
+        rel material:binding = </root/_materials/SeparateTest>
+    }
+
+    def Scope "_materials"
+    {
+        def Material "SeparateTest"
+        (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            token outputs:surface.connect = </root/_materials/SeparateTest/shader.outputs:surface>
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/SeparateTest/shader.outputs:surface>
+
+            def Shader "shader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                float inputs:base_weight = 1
+                color3f inputs:base_color = (0.8, 0.8, 0.8)
+                float inputs:base_metalness.connect = </root/_materials/SeparateTest/NodeGraphs.outputs:green_out>
+                float inputs:base_diffuse_roughness = 0
+                float inputs:specular_weight = 1
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_roughness.connect = </root/_materials/SeparateTest/NodeGraphs.outputs:blue_out>
+                float inputs:specular_ior = 1.5
+                float inputs:coat_weight = 0
+                float inputs:emission_luminance = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                float outputs:green_out.connect = </root/_materials/SeparateTest/NodeGraphs/extract_green.outputs:out>
+                float outputs:blue_out.connect = </root/_materials/SeparateTest/NodeGraphs/extract_blue.outputs:out>
+
+                def Shader "input_color"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (0.9, 0.6, 0.3)
+                    color3f outputs:out
+                }
+
+                def Shader "extract_green"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </root/_materials/SeparateTest/NodeGraphs/input_color.outputs:out>
+                    int inputs:index = 1
+                    float outputs:out
+                }
+
+                def Shader "extract_blue"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </root/_materials/SeparateTest/NodeGraphs/input_color.outputs:out>
+                    int inputs:index = 2
+                    float outputs:out
+                }
+            }
+        }
+    }
+}

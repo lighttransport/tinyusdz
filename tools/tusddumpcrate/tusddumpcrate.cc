@@ -21,7 +21,8 @@
 #include "crate-format.hh"
 #include "crate-reader.hh"
 #include "value-types.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/prim-spec.hh"
 
 using namespace tinyusdz;
 using namespace tinyusdz::crate;

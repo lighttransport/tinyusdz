@@ -12,9 +12,14 @@
 #include <memory>
 #include <cstdlib>
 
-#include "prim-types.hh"
+#include "core/prim-enums.hh"        // Specifier, Permission, Variability, SpecType, ListEditQual
+#include "core/path.hh"              // Path
+#include "core/composition-types.hh" // Reference, Payload, LayerOffset
+#include "core/meta-variable.hh"     // MetaVariable, CustomDataType, VariantSelectionMap
+#include "core/list-op.hh"           // ListOp
 #include "value-types.hh"
 #include "typed-array.hh"
+#include "mmap-array-ref.hh"
 
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -185,7 +190,7 @@ struct Index {
 struct ValueRep {
   friend class CrateFile;
 
-  ValueRep() = default;
+  constexpr ValueRep() : data(0) {}
 
   explicit constexpr ValueRep(uint64_t d) : data(d) {}
 
@@ -487,6 +492,7 @@ class CrateValue {
   SET_TYPE_LIST(SET_TYPE_CHUNKED_TYPED_ARRAY)
   SET_TYPE_LIST(MOVE_SET_TYPE_CHUNKED_TYPED_ARRAY)
 
+
   // Type-safe way to get concrete value.
   template <class T>
   nonstd::optional<T> get_value() const {
@@ -519,8 +525,18 @@ class CrateValue {
     return &value_;
   }
 
+  // mmap zero-copy: set when value was described but not materialized
+  bool has_mmap_ref() const { return _has_mmap_ref; }
+  const MMapArrayRef &mmap_ref() const { return _mmap_ref; }
+  void set_mmap_ref(const MMapArrayRef &ref) {
+    _mmap_ref = ref;
+    _has_mmap_ref = true;
+  }
+
  private:
   value::Value value_;
+  MMapArrayRef _mmap_ref{};
+  bool _has_mmap_ref{false};
 };
 
 // In-memory storage for a single "spec" -- prim, property, etc.
@@ -550,5 +566,4 @@ namespace value {
 } // namespace value
 
 } // namespace tinyusdz
-
 

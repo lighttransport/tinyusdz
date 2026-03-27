@@ -6,6 +6,7 @@
 #include <unordered_set>
 
 #include "usd-export.hh"
+#include "core/model-scope.hh"  // Model, Scope
 #include "common-macros.inc"
 #include "tiny-format.hh"
 #include "math-util.inc"
@@ -21,19 +22,29 @@ namespace tydra {
 
 namespace detail {
 
-static void CountNodes(const SkelNode &node, size_t &count) {
+static void CountNodes(const SkelNode &node, size_t &count, int32_t depth = 0) {
+  if (size_t(depth) >= kMaxDefaultTraversalLimit) return;
+
   count++;
 
   for (const auto &child : node.children) {
-    CountNodes(child, count);
-  } 
+    CountNodes(child, count, depth + 1);
+  }
 }
 
 static bool FlattenSkelNode(const SkelNode &node,
   std::vector<value::token> &joints,
   std::vector<value::token> &jointNames,
   std::vector<value::matrix4d> &bindTransforms,
-  std::vector<value::matrix4d> &restTransforms, std::string *err) {
+  std::vector<value::matrix4d> &restTransforms, std::string *err,
+  int32_t depth = 0) {
+
+  if (size_t(depth) >= kMaxDefaultTraversalLimit) {
+    if (err) {
+      (*err) += "FlattenSkelNode: recursion too deep.\n";
+    }
+    return false;
+  }
 
   size_t idx = size_t(node.joint_id);
   if (idx >= joints.size()) {
@@ -49,7 +60,7 @@ static bool FlattenSkelNode(const SkelNode &node,
   restTransforms[idx] = node.rest_transform;
 
   for (const auto &child : node.children) {
-    if (!FlattenSkelNode(child, joints, jointNames, bindTransforms, restTransforms, err)) {
+    if (!FlattenSkelNode(child, joints, jointNames, bindTransforms, restTransforms, err, depth + 1)) {
       return false;
     }
   }
@@ -58,7 +69,9 @@ static bool FlattenSkelNode(const SkelNode &node,
 }
 
 
-static bool ExportSkeleton(const SkelHierarchy &skel, const std::string &animSourcePath, Skeleton *dst, std::string *err) {
+static bool ExportSkeleton(const SkelHierarchy &skel,
+                           const std::vector<std::string> &animSourcePaths,
+                           Skeleton *dst, std::string *err) {
 
   size_t num_joints{0};
   CountNodes(skel.root_node, num_joints);
@@ -91,11 +104,20 @@ static bool ExportSkeleton(const SkelHierarchy &skel, const std::string &animSou
   dst->bindTransforms.set_value(bindTransforms);
   dst->restTransforms.set_value(restTransforms);
 
-  if (animSourcePath.size()) {
-    Path animSourceTarget(animSourcePath, ""); 
+  if (animSourcePaths.size() == 1) {
+    Path animSourceTarget(animSourcePaths[0], "");
     Relationship animSourceRel;
     animSourceRel.set(animSourceTarget);
     // TODO: add `prepend` qualifier?
+    dst->animationSource = animSourceRel;
+  } else if (animSourcePaths.size() > 1) {
+    std::vector<Path> animSourceTargets;
+    animSourceTargets.reserve(animSourcePaths.size());
+    for (const auto &path : animSourcePaths) {
+      animSourceTargets.emplace_back(path, "");
+    }
+    Relationship animSourceRel;
+    animSourceRel.set(animSourceTargets);
     dst->animationSource = animSourceRel;
   }
 
@@ -889,13 +911,20 @@ bool export_to_usda(const RenderScene &scene,
       if (!skelMap.count(skel_id)) {
         const SkelHierarchy &src_skel = scene.skeletons[size_t(scene.meshes[i].skel_id)];
 
-        std::string src_animsource; // empty = no animationSource
-        if (src_skel.anim_id > -1) {
-          src_animsource = "/animations/" + scene.animations[size_t(src_skel.anim_id)].prim_name;
+        std::vector<std::string> src_animsources;
+        if (!src_skel.anim_ids.empty()) {
+          src_animsources.reserve(src_skel.anim_ids.size());
+          for (int anim_id : src_skel.anim_ids) {
+            if ((anim_id > -1) && (size_t(anim_id) < scene.animations.size())) {
+              src_animsources.push_back("/animations/" + scene.animations[size_t(anim_id)].prim_name);
+            }
+          }
+        } else if ((src_skel.anim_id > -1) && (size_t(src_skel.anim_id) < scene.animations.size())) {
+          src_animsources.push_back("/animations/" + scene.animations[size_t(src_skel.anim_id)].prim_name);
         }
 
         Skeleton skel;
-        if (!detail::ExportSkeleton(src_skel, src_animsource, &skel, err)) {
+        if (!detail::ExportSkeleton(src_skel, src_animsources, &skel, err)) {
           return false;
         }
         skel_name = skel.name;
@@ -1074,4 +1103,3 @@ bool export_to_usda(const RenderScene &scene,
 
 } // namespace tydra
 } // namespace tinyusdz
-

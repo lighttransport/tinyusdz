@@ -11,7 +11,7 @@
 // Include TinyUSDZ headers - adjust paths as needed
 #include "../../src/tinyusdz.hh"
 #include "../../src/stage.hh"
-#include "../../src/prim-types.hh"
+#include "../../src/core/prim.hh"
 #include "../../src/value-types.hh"
 #include "../../src/usdGeom.hh"
 #include "../../src/usdShade.hh"

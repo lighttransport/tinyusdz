@@ -12,7 +12,12 @@ export const MessageType = {
   ERROR: 'error',
   PING: 'ping',
   PONG: 'pong',
-  SESSION_CREATED: 'session_created'
+  SESSION_CREATED: 'session_created',
+  EXPORT_REQUEST: 'export_request',
+  EXECUTE_CODE: 'execute_code',
+  EXPORT_STARTED: 'export_started',
+  EXPORT_PROGRESS: 'export_progress',
+  CODE_RESULT: 'code_result'
 };
 
 /**
@@ -228,6 +233,31 @@ export class BridgeClient extends EventTarget {
           }));
           break;
 
+        case MessageType.EXPORT_STARTED:
+          console.log('Export started');
+          this.dispatchEvent(new CustomEvent('export-started', {
+            detail: { refMessageId: header.refMessageId }
+          }));
+          break;
+
+        case MessageType.EXPORT_PROGRESS:
+          this.dispatchEvent(new CustomEvent('export-progress', {
+            detail: { progress: header.progress, refMessageId: header.refMessageId }
+          }));
+          break;
+
+        case MessageType.CODE_RESULT:
+          console.log('Code result:', header.success ? 'success' : 'failed');
+          this.dispatchEvent(new CustomEvent('code-result', {
+            detail: {
+              success: header.success,
+              output: header.output,
+              error: header.error,
+              refMessageId: header.refMessageId
+            }
+          }));
+          break;
+
         default:
           console.log('Unknown message type:', header.type);
       }
@@ -339,6 +369,101 @@ export class BridgeClient extends EventTarget {
     });
 
     this.ws.send(msg);
+  }
+
+  /**
+   * Request scene export from Blender
+   * The scene will be sent via the 'scene-upload' event when ready.
+   *
+   * @param {Object} [options] - Export options
+   * @param {boolean} [options.materialx=true] - Include MaterialX networks
+   * @param {boolean} [options.animation=false] - Include animations
+   * @param {boolean} [options.selectedOnly=false] - Export selected objects only
+   * @returns {Promise<Object>} Resolves when scene is received
+   */
+  requestExport(options = {}) {
+    return new Promise((resolve, reject) => {
+      if (!this.connected || !this.ws) {
+        reject(new Error('Not connected'));
+        return;
+      }
+
+      const messageId = crypto.randomUUID();
+
+      // Set up one-time listener for the scene
+      const onScene = (event) => {
+        this.removeEventListener('scene-upload', onScene);
+        this.removeEventListener('server-error', onError);
+        resolve(event.detail);
+      };
+
+      const onError = (event) => {
+        this.removeEventListener('scene-upload', onScene);
+        this.removeEventListener('server-error', onError);
+        reject(new Error(event.detail.message || 'Export failed'));
+      };
+
+      this.addEventListener('scene-upload', onScene);
+      this.addEventListener('server-error', onError);
+
+      // Send export request
+      const msg = encodeMessage({
+        type: MessageType.EXPORT_REQUEST,
+        messageId: messageId,
+        exportOptions: {
+          materialx: options.materialx !== false,
+          animation: options.animation || false,
+          selectedOnly: options.selectedOnly || false
+        }
+      });
+
+      this.ws.send(msg);
+
+      // Timeout after 60 seconds
+      setTimeout(() => {
+        this.removeEventListener('scene-upload', onScene);
+        this.removeEventListener('server-error', onError);
+        reject(new Error('Export timeout'));
+      }, 60000);
+    });
+  }
+
+  /**
+   * Execute Python code in Blender
+   *
+   * @param {string} code - Python code to execute
+   * @returns {Promise<Object>} Result with success, output, or error
+   */
+  executeCode(code) {
+    return new Promise((resolve, reject) => {
+      if (!this.connected || !this.ws) {
+        reject(new Error('Not connected'));
+        return;
+      }
+
+      const messageId = crypto.randomUUID();
+
+      const onResult = (event) => {
+        this.removeEventListener('code-result', onResult);
+        resolve(event.detail);
+      };
+
+      this.addEventListener('code-result', onResult);
+
+      const msg = encodeMessage({
+        type: MessageType.EXECUTE_CODE,
+        messageId: messageId,
+        code: code
+      });
+
+      this.ws.send(msg);
+
+      // Timeout after 30 seconds
+      setTimeout(() => {
+        this.removeEventListener('code-result', onResult);
+        reject(new Error('Code execution timeout'));
+      }, 30000);
+    });
   }
 }
 

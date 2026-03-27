@@ -108,14 +108,6 @@ struct PrimVar {
     return _ts.size() > 0;
   }
 
-  bool is_scalar() const {
-    return has_value() && _ts.empty();
-  }
-
-  bool is_timesamples() const {
-    return !has_value() && _ts.size();
-  }
-
   bool is_blocked() const {
     // Fist check if stored value is ValueBlock, then return _blocked.
     if (_value.type_id() == value::TYPE_ID_VALUEBLOCK) {
@@ -127,21 +119,6 @@ struct PrimVar {
   void set_blocked(bool onoff) {
     // fast path
     _blocked = onoff;
-  }
-
-  bool is_valid() const {
-    if (has_timesamples()) {
-      if ((_ts.type_id() == value::TypeId::TYPE_ID_INVALID) || (_ts.type_id() == value::TypeId::TYPE_ID_NULL)) {
-        return false;
-      }
-
-      // TODO: Check if the type of timesamples is the same with the type of 'default' value
-      return true;
-    }
-
-    // TODO: Make blocked valid?
-
-    return has_value();
   }
 
   std::string type_name() const {
@@ -158,7 +135,7 @@ struct PrimVar {
   }
 
   uint32_t type_id() const {
-    if (!is_valid()) {
+    if (!has_value() && !has_timesamples()) {
       return value::TYPE_ID_INVALID;
     }
 
@@ -175,11 +152,10 @@ struct PrimVar {
 
   }
 
-  // TODO: Deprecate and use `get_default_value`
   // Type-safe way to get concrete value of default value(non-timesamples value).
   // NOTE: This consumes lots of stack size(rougly 1000 bytes),
   // If you need to handle multiple types, use as() insted.
-  // 
+  //
   template <class T>
   nonstd::optional<T> get_value() const {
 
@@ -192,62 +168,6 @@ struct PrimVar {
     }
 
     return _value.get_value<T>();
-  }
-
-  template <class T>
-  nonstd::optional<T> get_default_value() const {
-    return get_value<T>();
-  }
-
-  nonstd::optional<double> get_ts_time(size_t idx) const {
-
-    if (!has_timesamples()) {
-      return nonstd::nullopt;
-    }
-
-    if (idx >= _ts.size()) {
-      return nonstd::nullopt;
-    }
-
-    return _ts.get_time(idx);
-  }
-
-  nonstd::optional<value::TimeSamples::Sample> get_timesample(size_t idx) const {
-    if (idx < _ts.get_samples().size()) {
-      return _ts.get_samples()[idx];
-    }
-    return nonstd::nullopt;
-  }
-
-  // Type-safe way to get concrete value for timesampled variable.
-  // No interpolation.
-  template <class T>
-  nonstd::optional<T> get_ts_value(size_t idx) const {
-
-    if (!has_timesamples()) {
-      return nonstd::nullopt;
-    }
-
-    nonstd::optional<value::Value> pv = _ts.get_value(idx);
-    if (!pv) {
-      return nonstd::nullopt;
-    }
-
-    return pv.value().get_value<T>();
-  }
-
-  // Check if specific TimeSample value for a specified index is ValueBlock or not.
-  nonstd::optional<bool> is_ts_value_blocked(size_t idx) const {
-
-    if (!has_timesamples()) {
-      return nonstd::nullopt;
-    }
-
-    if (idx >= _ts.get_samples().size()) {
-      return nonstd::nullopt;
-    }
-
-    return _ts.get_samples()[idx].blocked;
   }
 
   // For Scalar only
@@ -274,8 +194,7 @@ struct PrimVar {
   void set_value(T &&v, typename std::enable_if<!std::is_lvalue_reference<T>::value && !std::is_same<typename std::decay<T>::type, value::Value>::value>::type* = nullptr) {
     //TUSDZ_LOG_I("set_value move");
 
-    // Value's underlying linb::any does not provide templated move constructor.
-    // so create Value object first, then call move ctor.
+    // Create Value object first, then call move ctor.
     value::Value src(std::move(v));
     _value = std::move(src);
   }
@@ -310,8 +229,6 @@ struct PrimVar {
     // Convert TypedTimeSamples to TimeSamples
     value::TimeSamples ts;
     
-    #ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
-    // AoS layout
     for (const auto& sample : typed_ts.get_samples()) {
       if (sample.blocked) {
         ts.add_blocked_sample(sample.t);
@@ -319,21 +236,7 @@ struct PrimVar {
         ts.add_sample(sample.t, value::Value(sample.value));
       }
     }
-    #else
-    // SoA layout
-    const auto& times = typed_ts.get_times();
-    const auto& values = typed_ts.get_values();
-    const auto& blocked = typed_ts.get_blocked();
-    
-    for (size_t i = 0; i < times.size(); ++i) {
-      if (blocked[i]) {
-        ts.add_blocked_sample(times[i]);
-      } else {
-        ts.add_sample(times[i], value::Value(values[i]));
-      }
-    }
-    #endif
-    
+
     _ts = std::move(ts);
   }
 
@@ -342,9 +245,7 @@ struct PrimVar {
   void set_typed_timesamples(const TypedTimeSamples<T> &typed_ts) {
     // Convert TypedTimeSamples to TimeSamples
     value::TimeSamples ts;
-    
-    #ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
-    // AoS layout
+
     for (const auto& sample : typed_ts.get_samples()) {
       if (sample.blocked) {
         ts.add_blocked_sample(sample.t);
@@ -352,21 +253,7 @@ struct PrimVar {
         ts.add_sample(sample.t, value::Value(sample.value));
       }
     }
-    #else
-    // SoA layout
-    const auto& times = typed_ts.get_times();
-    const auto& values = typed_ts.get_values();
-    const auto& blocked = typed_ts.get_blocked();
-    
-    for (size_t i = 0; i < times.size(); ++i) {
-      if (blocked[i]) {
-        ts.add_blocked_sample(times[i]);
-      } else {
-        ts.add_sample(times[i], value::Value(values[i]));
-      }
-    }
-    #endif
-    
+
     _ts = ts;
   }
 
@@ -384,41 +271,6 @@ struct PrimVar {
   }
 
 
-#if 0 // TODO
-  ///
-  /// Get typed TimesSamples
-  ///
-  template<typename T>
-  bool get_timesamples(TypedTimeSamples<T> *dst) {
-    if (!is_timesamples()) {
-      return false;
-    }
-
-    TypedTimeSamples<T> tss;
-    std::vector<TimedTimeSample::Sample<T>> buf;
-    for (size_t i = 0; i < ts.size(); i++) {
-      if (ts.get_samples()[i].value.type_id() != value::TypeTraits<T>::type_id()) {
-        return false;
-      }
-      Sample s;
-      s.t = ts.get_samples()[i].t;
-      s.blocked = ts.get_samples()[i].blocked;
-      if (const auto pv = ts.get_samples()[i].value.as<T>()) {
-        s.value = ts.get_samples()[i].value;
-      } else {
-        return false;
-      }
-   
-      buf.push_back(s);
-    }
-  
-  
-      _samples = std::move(buf);
-      _dirty = true;
-  
-      return true;
-    }
-#endif
 
 
   ///
@@ -436,7 +288,7 @@ struct PrimVar {
 
     if (value::TimeCode(t).is_default()) {
 
-      if (auto pv = get_default_value<T>()) {
+      if (auto pv = get_value<T>()) {
         (*v) = pv.value();
         return true;
       }
@@ -451,7 +303,7 @@ struct PrimVar {
     }
 
     if (has_default()) {
-      if (auto pv = get_default_value<T>()) {
+      if (auto pv = get_value<T>()) {
         (*v) = pv.value();
         return true;
       }
@@ -489,6 +341,56 @@ struct PrimVar {
     total += _ts.estimate_memory_usage();
     return total;
   }
+
+  size_t estimate_actual_usage() const {
+    size_t total = sizeof(PrimVar);
+    total += _value.estimate_actual_usage();
+    total += _ts.estimate_actual_usage();
+    return total;
+  }
+
+  //
+  // AOUSD Core Spec 12.3.3 / 7.4.2.4: Spline data storage.
+  // Splines are stored as a separate value source alongside default and timeSamples.
+  // Priority: timeSamples > spline > default (Spec 12.3)
+  //
+
+  /// Spline knot data stored as type-erased values for the spline evaluator.
+  /// Each entry: (time, value, preTangentSlope, preTangentWidth,
+  ///              postTangentSlope, postTangentWidth, interpolationMode)
+  struct SplineKnotData {
+    double time{0.0};
+    value::Value val;        // knot value
+    value::Value preValue;   // dual-valued: value approaching from before
+    bool hasDualValue{false};
+    double preTangentSlope{0.0};
+    double preTangentWidth{0.0};
+    double postTangentSlope{0.0};
+    double postTangentWidth{0.0};
+    int interpolationMode{3};  // 0=none, 1=held, 2=linear, 3=curve
+  };
+
+  struct SplineData {
+    int curveType{0};  // 0=bezier, 1=hermite
+    std::vector<SplineKnotData> knots;
+    int preExtrapolation{1};   // SplineExtrapolationMode::Held
+    int postExtrapolation{1};  // SplineExtrapolationMode::Held
+    double preExtrapolationSlope{0.0};
+    double postExtrapolationSlope{0.0};
+  };
+
+  bool has_spline() const { return !_spline.knots.empty(); }
+
+  const SplineData &spline_data() const { return _spline; }
+  SplineData &spline_data() { return _spline; }
+
+  void set_spline(const SplineData &spline) { _spline = spline; }
+  void set_spline(SplineData &&spline) { _spline = std::move(spline); }
+
+ private:
+  SplineData _spline;
+
+ public:
 };
 
 

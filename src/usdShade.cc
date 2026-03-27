@@ -16,7 +16,7 @@ namespace tinyusdz {
 std::string to_string(const MaterialBindingStrength strength) {
   switch (strength) {
     case MaterialBindingStrength::WeakerThanDescendants: {
-      return kWeaderThanDescendants;
+      return kWeakerThanDescendants;
     }
     case MaterialBindingStrength::StrongerThanDescendants: {
       return kStrongerThanDescendants;
@@ -110,7 +110,7 @@ value::token MaterialBinding::get_materialBindingStrength(const value::token &pu
     }
   }
 
-  return value::token(kWeaderThanDescendants);
+  return value::token(kWeakerThanDescendants);
 }
 
 value::token MaterialBinding::get_materialBindingStrengthCollection(const value::token &coll_name, const value::token &purpose) {
@@ -132,7 +132,7 @@ value::token MaterialBinding::get_materialBindingStrengthCollection(const value:
     }
   }
 
-  return value::token(kWeaderThanDescendants);
+  return value::token(kWeakerThanDescendants);
 }
 
 namespace {

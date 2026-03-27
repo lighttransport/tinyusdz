@@ -146,6 +146,9 @@ struct PrimMetas : public MetadataBase {
   nonstd::optional<std::vector<std::pair<ListEditQual, std::vector<Path>>>>
       specializes;  // 'specializes'
 
+  // AOUSD Core Spec 10.3.2.3: Arc origins for implied inherit/specialize propagation
+  std::vector<ArcOrigin> arc_origins;
+
   // Unregistered metadatum. value is represented as string.
   std::map<std::string, std::string> unregisteredMetas;
 
@@ -182,7 +185,11 @@ struct PrimMetas : public MetadataBase {
   // USDA: By appearance. USDC: "properties" TokenVector field
   std::vector<value::token> properties;
 
+  // Implied inherit/specialize paths propagated from referenced layers.
+  // These are populated during reference/payload composition and consumed
+  // during the inherits/specializes composition phase.
   nonstd::optional<std::vector<std::pair<ListEditQual, std::vector<Path>>>> inheritPaths;
+  nonstd::optional<std::vector<std::pair<ListEditQual, std::vector<Path>>>> specializePaths;
 
   nonstd::optional<std::vector<value::token>> variantChildren;
   nonstd::optional<std::vector<value::token>> variantSetChildren;

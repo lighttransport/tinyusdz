@@ -1,0 +1,23 @@
+#usda 1.0
+
+def Xform "Prototype" {
+    custom string label = "prototype"
+
+    def Mesh "Geo" {
+        point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0,1,2]
+    }
+}
+
+def Xform "InstanceA" (
+    prepend references = </Prototype>
+) {
+    custom string label = "instanceA"
+}
+
+def Xform "InstanceB" (
+    prepend references = </Prototype>
+) {
+    custom string label = "instanceB"
+}

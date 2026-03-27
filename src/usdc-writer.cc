@@ -77,6 +77,7 @@ std::wstring UTF8ToWchar(const std::string &str) {
                       int(wstr.size()));
   return wstr;
 }
+
 #endif
 
 struct Section {
@@ -94,6 +95,15 @@ struct TableOfContents {
   // int64_t GetMinimumSectionStart() const;
   std::vector<Section> sections;
 };
+
+//struct Field {
+//  // FIXME(syoyo): Do we need 4 bytes padding as done in pxrUSD?
+//  // uint32_t padding_;
+//
+//  crate::TokenIndex token_index;
+//  crate::ValueRep value_rep;
+//};
+
 
 class Packer {
  public:
@@ -126,6 +136,7 @@ class Packer {
       fieldsets_;  // flattened 1D array of FieldSets. Each span is terminated
                    // by Index()(= ~0)
 };
+
 
 class Writer {
  public:
@@ -309,7 +320,6 @@ class Writer {
 
     (void)output;
 
-    // TODO
     return false;
   }
 
@@ -436,45 +446,13 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
     return false;
   }
 
-  // Use experimental CrateWriter via temporary file approach
-  // This is not optimal but provides a working implementation
-  // TODO: Implement memory-based CrateWriter for better performance
+  // Write directly to memory via MemoryOutputStream
+  auto mem_stream = std::unique_ptr<experimental::MemoryOutputStream>(
+      new experimental::MemoryOutputStream());
+  auto* mem_ptr = mem_stream.get();
 
-  // Generate a temporary file path
-#ifdef _WIN32
-  char temp_path[MAX_PATH];
-  if (GetTempPathA(MAX_PATH, temp_path) == 0) {
-    if (err) {
-      (*err) += "Failed to get temp path.\n";
-    }
-    return false;
-  }
-  char temp_file[MAX_PATH];
-  if (GetTempFileNameA(temp_path, "usd", 0, temp_file) == 0) {
-    if (err) {
-      (*err) += "Failed to create temp file name.\n";
-    }
-    return false;
-  }
-  std::string temp_filepath = temp_file;
-#else
-  // On Unix, use /tmp with a unique name
-  char temp_template[] = "/tmp/tinyusdz_XXXXXX";
-  int fd = mkstemp(temp_template);
-  if (fd == -1) {
-    if (err) {
-      (*err) += "Failed to create temp file: ";
-      (*err) += std::strerror(errno);
-      (*err) += "\n";
-    }
-    return false;
-  }
-  close(fd);
-  std::string temp_filepath = temp_template;
-#endif
-
-  // Create CrateWriter and write to temp file
-  experimental::CrateWriter writer(temp_filepath);
+  experimental::CrateWriter writer(
+      std::unique_ptr<experimental::IOutputStream>(std::move(mem_stream)));
 
   experimental::CrateWriter::Options opts;
   opts.version_major = 0;
@@ -486,7 +464,6 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
 
   std::string open_err;
   if (!writer.Open(&open_err)) {
-    std::remove(temp_filepath.c_str());
     if (err) {
       (*err) += "Failed to open CrateWriter: " + open_err + "\n";
     }
@@ -495,8 +472,6 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
 
   std::string convert_err;
   if (!writer.ConvertStageToSpecs(stage, &convert_err)) {
-    writer.Close();
-    std::remove(temp_filepath.c_str());
     if (err) {
       (*err) += "Failed to convert Stage to USDC: " + convert_err + "\n";
     }
@@ -505,8 +480,6 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
 
   std::string finalize_err;
   if (!writer.Finalize(&finalize_err)) {
-    writer.Close();
-    std::remove(temp_filepath.c_str());
     if (err) {
       (*err) += "Failed to finalize USDC: " + finalize_err + "\n";
     }
@@ -515,33 +488,7 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
 
   writer.Close();
 
-  // Read the temp file into memory
-  std::ifstream file(temp_filepath, std::ios::binary | std::ios::ate);
-  if (!file) {
-    std::remove(temp_filepath.c_str());
-    if (err) {
-      (*err) += "Failed to read temp USDC file.\n";
-    }
-    return false;
-  }
-
-  std::streamsize size = file.tellg();
-  file.seekg(0, std::ios::beg);
-
-  output->resize(static_cast<size_t>(size));
-  if (!file.read(reinterpret_cast<char*>(output->data()), size)) {
-    std::remove(temp_filepath.c_str());
-    if (err) {
-      (*err) += "Failed to read USDC data into memory.\n";
-    }
-    return false;
-  }
-
-  file.close();
-
-  // Clean up temp file
-  std::remove(temp_filepath.c_str());
-
+  *output = mem_ptr->TakeBuffer();
   return true;
 }
 

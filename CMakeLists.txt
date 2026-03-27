@@ -78,6 +78,7 @@ option(TINYUSDZ_BUILD_BENCHMARKS
 option(TINYUSDZ_BUILD_EXAMPLES
        "Build examples(but not all examples in `examples` folder are being built)"
        ${TINYUSDZ_DEFAULT_BUILD_EXAMPLES})
+option(TINYUSDZ_BUILD_TOOLS "Build tools (tusddumpcrate, etc.)" OFF)
 option(TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER
        "Build with built-in image loader(stb_image and fpng). When disabled, app need to provide image loader callback to load images."
        ${TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER})
@@ -405,16 +406,18 @@ if(TINYUSDZ_WITH_PYTHON)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/pybind11)
 endif()
 
-# Add path-sort-and-encode-crate library for USDC crate writer
-add_subdirectory(${PROJECT_SOURCE_DIR}/sandbox/path-sort-and-encode-crate ${CMAKE_CURRENT_BINARY_DIR}/path-sort-and-encode-crate)
-
 set(TINYUSDZ_SOURCES
+    # Crate path utilities (path sorting/tree encoding for USDC writer)
+    ${PROJECT_SOURCE_DIR}/src/crate-path-utils/path_sort.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-path-utils/tree_encode.cc
     ${PROJECT_SOURCE_DIR}/src/arg-parser.cc
     ${PROJECT_SOURCE_DIR}/src/asset-resolution.cc
     ${PROJECT_SOURCE_DIR}/src/tinyusdz.cc
     ${PROJECT_SOURCE_DIR}/src/xform.cc
     ${PROJECT_SOURCE_DIR}/src/performance.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser.cc
+    ${PROJECT_SOURCE_DIR}/src/ascii-parser-props.cc
+    ${PROJECT_SOURCE_DIR}/src/ascii-parser-entry.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-basetype.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-basetype-typedarray.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-timesamples.cc
@@ -423,22 +426,34 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/base122.cc
     ${PROJECT_SOURCE_DIR}/src/usda-reader.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-reader.cc
+    ${PROJECT_SOURCE_DIR}/src/usdc-reader-property.cc
+    ${PROJECT_SOURCE_DIR}/src/usdc-reader-prim.cc
+    ${PROJECT_SOURCE_DIR}/src/usdc-reader-reconstruct.cc
     ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-writer.cc
     ${PROJECT_SOURCE_DIR}/src/composition.cc
+    ${PROJECT_SOURCE_DIR}/src/composition-reconstruct.cc
+    ${PROJECT_SOURCE_DIR}/src/composition-graph.cc
+    ${PROJECT_SOURCE_DIR}/src/core/instance-key.cc
+    ${PROJECT_SOURCE_DIR}/src/hash-util.cc
     ${PROJECT_SOURCE_DIR}/src/chunk-reader.cc
     ${PROJECT_SOURCE_DIR}/src/crate-reader.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-reader-arrays.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-reader-values.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-reader-paths.cc
     ${PROJECT_SOURCE_DIR}/src/crate-reader-timesamples.cc
     ${PROJECT_SOURCE_DIR}/src/crate-format.cc
     ${PROJECT_SOURCE_DIR}/src/crate-writer.cc
     ${PROJECT_SOURCE_DIR}/src/stage-converter.cc
+    ${PROJECT_SOURCE_DIR}/src/sconv-geom.cc
+    ${PROJECT_SOURCE_DIR}/src/sconv-shader.cc
+    ${PROJECT_SOURCE_DIR}/src/sconv-light.cc
+    ${PROJECT_SOURCE_DIR}/src/sconv-skel.cc
+    ${PROJECT_SOURCE_DIR}/src/sconv-layer.cc
     ${PROJECT_SOURCE_DIR}/src/crate-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/crate-dump.cc
     ${PROJECT_SOURCE_DIR}/src/path-util.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-skel.cc
-    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-light.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader.cc
     ${PROJECT_SOURCE_DIR}/src/prim-composition.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
@@ -452,6 +467,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/value-types.cc
     ${PROJECT_SOURCE_DIR}/src/color-space.cc
     ${PROJECT_SOURCE_DIR}/src/color-space.hh
+    ${PROJECT_SOURCE_DIR}/src/usd-validation.cc
     ${PROJECT_SOURCE_DIR}/src/tiny-format.cc
     ${PROJECT_SOURCE_DIR}/src/tiny-string.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
@@ -459,6 +475,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/image-writer.cc
     ${PROJECT_SOURCE_DIR}/src/image-util.cc
     ${PROJECT_SOURCE_DIR}/src/linear-algebra.cc
+    ${PROJECT_SOURCE_DIR}/src/value-eval-util.cc
     ${PROJECT_SOURCE_DIR}/src/usdGeom.cc
     ${PROJECT_SOURCE_DIR}/src/usdSkel.cc
     ${PROJECT_SOURCE_DIR}/src/usdShade.cc
@@ -471,6 +488,12 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usdMtlx.cc
     ${PROJECT_SOURCE_DIR}/src/usdObj.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
+    ${PROJECT_SOURCE_DIR}/src/pprint-enum.cc
+    ${PROJECT_SOURCE_DIR}/src/pprint-meta.cc
+    ${PROJECT_SOURCE_DIR}/src/pprint-geom.cc
+    ${PROJECT_SOURCE_DIR}/src/pprint-shader.cc
+    ${PROJECT_SOURCE_DIR}/src/pprint-light.cc
+    ${PROJECT_SOURCE_DIR}/src/pprint-skel.cc
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc
     ${PROJECT_SOURCE_DIR}/src/timesamples-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/timesamples.cc
@@ -505,27 +528,18 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-analysis.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable-inst-scalar.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable-inst-array.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-fallback.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable-fallback.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable-fallback-inst-scalar.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable-fallback-inst-array.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-all.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/command-and-history.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/obj-export.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/usd-export.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-mesh.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-anim.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-internal.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-light-converter.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-mesh-merge.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-animation-converter.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-texture-converter.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/render-index-builder.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-data.cc
@@ -587,6 +601,11 @@ set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/lz4/lz4.c
     #${PROJECT_SOURCE_DIR}/src/external/pystring.cpp
 )
+
+# MikkTSpace tangent computation (public domain, by Morten S. Mikkelsen)
+if(TINYUSDZ_WITH_TYDRA)
+  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/mikktspace/mikktspace.c)
+endif()
 
 if (TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER)
   list(APPEND TINYUSDZ_DEP_SOURCES  ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp)
@@ -1050,8 +1069,12 @@ endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 
   set(TUSDZ_COMPILE_FLAGS
-      "-Weverything -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function"
+      "-Weverything -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function -Wno-switch-enum -Wno-exit-time-destructors"
   )
+
+  # Suppress pragma message warnings from external libraries (miniz.c)
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-#pragma-messages")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-#pragma-messages")
 
   option(TINYUSDZ_NO_WERROR "Don't set -Werror when building the tinyusdz library" ${TINYUSDZ_DEFAULT_NO_WERROR})
   if (NOT TINYUSDZ_NO_WERROR)
@@ -1433,8 +1456,7 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   endif()
 
   target_link_libraries(${TINYUSDZ_LIB_TARGET} ${TINYUSDZ_EXT_LIBRARIES}
-                        ${CMAKE_DL_LIBS}
-                        crate-encoding)
+                        ${CMAKE_DL_LIBS})
 
   if (TINYUSDZ_ENABLE_THREAD)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
@@ -1704,7 +1726,9 @@ if(TINYUSDZ_BUILD_EXAMPLES)
 endif(TINYUSDZ_BUILD_EXAMPLES)
 
 # Tools
-add_subdirectory(tools/tusddumpcrate)
+if(TINYUSDZ_BUILD_TOOLS)
+  add_subdirectory(tools/tusddumpcrate)
+endif()
 
 if(TINYUSDZ_BUILD_BENCHMARKS)
 
@@ -1773,8 +1797,9 @@ if(TINYUSDZ_BUILD_TESTS)
 
   #
   # Compression tester
+  # (its not involved with tinyusdz codes, and well tested now. so disabled. will be removed in future release)
   #
-  add_subdirectory(${PROJECT_SOURCE_DIR}/tests/decompress-int)
+  # add_subdirectory(${PROJECT_SOURCE_DIR}/tests/decompress-int)
 
   #
   # Pretty-print benchmark
@@ -1835,6 +1860,19 @@ if(TINYUSDZ_BUILD_TESTS)
       COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/usdc-roundtrip-runner.py --app
               "$<TARGET_FILE:usdc_roundtrip>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
       )
+
+    # USDC writer roundtrip: tusdcat writes USDC -> read back as USDA -> tusddiff
+    # Uses --report-only so it does not fail the suite (informational baseline).
+    # Run without --report-only for strict validation:
+    #   python3 tests/usdc-writer/usdc-writer-runner.py --tusdcat ./build/tusdcat --tusddiff ./build/tusddiff --basedir tests/usda --verbose
+    add_test(
+      NAME usdc-writer-diff-test
+      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usdc-writer/usdc-writer-runner.py
+              --tusdcat "$<TARGET_FILE:tusdcat>"
+              --tusddiff "$<TARGET_FILE:tusddiff>"
+              --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
+              --report-only
+      )
   endif()
 
   #
@@ -1846,6 +1884,59 @@ if(TINYUSDZ_BUILD_TESTS)
       COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usdc/unit-runner.py --app
               "$<TARGET_FILE:test_tinyusdz>" --basedir "${PROJECT_SOURCE_DIR}/tests/usdc"
       )
+  endif()
+
+  #
+  # Feature tests as CTest targets (Phase 0B)
+  #
+  if(TINYUSDZ_WITH_MODULE_USDA_READER)
+    # MaterialX tests
+    add_executable(feat-mtlx-parse tests/feat/mtlx/test_mtlx_parse.cc)
+    target_link_libraries(feat-mtlx-parse PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-mtlx-parse PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-mtlx-parse COMMAND feat-mtlx-parse
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    add_executable(feat-mtlx-import tests/feat/mtlx/test_mtlx_import.cc)
+    target_link_libraries(feat-mtlx-import PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-mtlx-import PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-mtlx-import COMMAND feat-mtlx-import)
+
+    add_executable(feat-mtlx-export tests/feat/mtlx/test_mtlx_export.cc)
+    target_link_libraries(feat-mtlx-export PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-mtlx-export PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-mtlx-export COMMAND feat-mtlx-export)
+
+    # Variant tests
+    add_executable(feat-variant-converter tests/feat/nestedVariantSet/test_variant_converter.cpp)
+    target_link_libraries(feat-variant-converter PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-variant-converter PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-variant-converter COMMAND feat-variant-converter
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    add_executable(feat-variant-applier tests/feat/nestedVariantSet/test_variant_applier.cpp)
+    target_link_libraries(feat-variant-applier PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-variant-applier PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-variant-applier COMMAND feat-variant-applier
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+  endif()
+
+  if(TINYUSDZ_WITH_JSON)
+    add_executable(feat-mtlx-grouped-params tests/feat/mtlx/test_grouped_params.cc)
+    target_link_libraries(feat-mtlx-grouped-params PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-mtlx-grouped-params PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-mtlx-grouped-params COMMAND feat-mtlx-grouped-params)
+  endif()
+
+  #
+  # Benchmarks as CTest targets (Phase 0C) - excluded from default run
+  #
+  if(TINYUSDZ_WITH_MODULE_USDA_READER)
+    add_executable(bench-parse-opt tests/feat/parse-opt/test-parse-opt.cc)
+    target_link_libraries(bench-parse-opt PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(bench-parse-opt PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME bench-parse-opt COMMAND bench-parse-opt --quick)
+    set_tests_properties(bench-parse-opt PROPERTIES LABELS "benchmark")
   endif()
 
 endif(TINYUSDZ_BUILD_TESTS)

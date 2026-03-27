@@ -161,21 +161,6 @@ struct variant_helper_static {
   }
 };
 
-#if 0  // not used
-// Given a uint8_t i, selects the ith type from the list of item types
-template <uint8_t i, typename... Items>
-struct variant_alternative;
-
-template <typename HeadItem, typename... TailItems>
-struct variant_alternative<0, HeadItem, TailItems...> {
-  using type = HeadItem;
-};
-
-template <uint8_t i, typename HeadItem, typename... TailItems>
-struct variant_alternative<i, HeadItem, TailItems...> {
-  using type = typename variant_alternative<i - 1, TailItems...>::type;
-};
-#endif
 
 template <uint8_t n, typename... Ts>
 struct variant_get_rec;

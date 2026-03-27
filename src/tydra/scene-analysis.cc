@@ -13,13 +13,6 @@ namespace tydra {
 
 namespace {
 
-#if 0
-// For PUSH_ERROR_AND_RETURN
-#define PushError(msg) \
-  if (err) {           \
-    (*err) += msg;     \
-  }
-#endif
 
 } // namespace 
 
@@ -31,7 +24,6 @@ static bool ComputeGeomBound(const PrimSpec &ps, bool use_extent, Extent &bbox, 
     return false;
   }
 
-  // TODO:
   (void)use_extent;
   (void)bbox;
   (void)t;

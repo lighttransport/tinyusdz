@@ -10,13 +10,12 @@
 #include <stdio.h>
 
 #include <stack>
-#include <string>
-#include <vector>
+#include <unordered_map>
+#include <unordered_set>
 
 // #include "external/better-enums/enum.h"
 #include "composition.hh"
-#include "memory-budget.hh"
-#include "prim-types.hh"
+#include "core/prim-spec.hh"  // PrimSpec, Property, composition-types (transitively: prim-enums, prim-metas, variant-types)
 #include "stream-reader.hh"
 #include "string-similarity.hh"
 #include "tinyusdz.hh"
@@ -120,7 +119,7 @@ class AsciiParser {
         strings;  // String only unregistered metadata.
   };
 
-  // TODO: Unifity class with StageMetas in prim-types.hh
+  // TODO: Unifity class with StageMetas in core/layer-types.hh
   struct StageMetas {
     ///
     /// Predefined Stage metas
@@ -142,6 +141,15 @@ class AsciiParser {
     std::map<std::string, MetaVariable> customLayerData;  // `customLayerData`.
     bool customLayerDataAuthored{false};  // Track if customLayerData was explicitly authored
     value::StringData comment;  // String only comment string.
+
+    // AOUSD Core Spec fields
+    nonstd::optional<value::AssetPath> colorConfiguration;
+    nonstd::optional<value::token> colorManagementSystem;
+    nonstd::optional<std::string> owner;
+    nonstd::optional<bool> hasOwnedSubLayers;
+    nonstd::optional<std::map<std::string, MetaVariable>> expressionVariables;
+    // relocates: source path -> target path mappings
+    std::vector<std::pair<Path, Path>> relocates;
   };
 
   struct ParseState {
@@ -151,6 +159,71 @@ class AsciiParser {
   struct Cursor {
     int row{0};
     int col{0};
+  };
+
+  struct StoredCursor {
+    Cursor cursor;
+  };
+
+  struct CursorStore {
+    std::unordered_map<std::string, StoredCursor> layer_metas;
+    std::unordered_map<std::string, StoredCursor> prims;
+    std::unordered_map<std::string, StoredCursor> prim_attrs;
+    std::unordered_map<std::string, StoredCursor> properties;
+
+    static std::string MakePropertyKey(const std::string &prim_path,
+                                       const std::string &property_name) {
+      return prim_path + "." + property_name;
+    }
+
+    void Clear() {
+      layer_metas.clear();
+      prims.clear();
+      prim_attrs.clear();
+      properties.clear();
+    }
+
+    void StoreLayerMeta(const std::string &meta_name, const Cursor &cursor) {
+      layer_metas[meta_name] = StoredCursor{cursor};
+    }
+
+    void StorePrim(const std::string &prim_path, const Cursor &cursor) {
+      prims[prim_path] = StoredCursor{cursor};
+    }
+
+    void StorePrimAttr(const std::string &prim_path,
+                       const std::string &property_name,
+                       const Cursor &cursor) {
+      prim_attrs[MakePropertyKey(prim_path, property_name)] = StoredCursor{cursor};
+    }
+
+    void StoreProperty(const std::string &prim_path,
+                       const std::string &property_name,
+                       const Cursor &cursor) {
+      properties[MakePropertyKey(prim_path, property_name)] = StoredCursor{cursor};
+    }
+
+    const StoredCursor *FindLayerMeta(const std::string &meta_name) const {
+      auto it = layer_metas.find(meta_name);
+      return (it != layer_metas.end()) ? &it->second : nullptr;
+    }
+
+    const StoredCursor *FindPrim(const std::string &prim_path) const {
+      auto it = prims.find(prim_path);
+      return (it != prims.end()) ? &it->second : nullptr;
+    }
+
+    const StoredCursor *FindPrimAttr(const std::string &prim_path,
+                                     const std::string &property_name) const {
+      auto it = prim_attrs.find(MakePropertyKey(prim_path, property_name));
+      return (it != prim_attrs.end()) ? &it->second : nullptr;
+    }
+
+    const StoredCursor *FindProperty(const std::string &prim_path,
+                                     const std::string &property_name) const {
+      auto it = properties.find(MakePropertyKey(prim_path, property_name));
+      return (it != properties.end()) ? &it->second : nullptr;
+    }
   };
 
   /// Error type enumeration for categorizing parser errors
@@ -448,11 +521,23 @@ class AsciiParser {
   ///
   void SetStream(tinyusdz::StreamReader *sr);
 
+  const CursorStore &GetCursorStore() const { return _cursor_store; }
+  std::string FormatLayerMetaSourceDiagnostic(const std::string &meta_name,
+                                              int column_width = 80) const;
+  std::string FormatPrimSourceDiagnostic(const std::string &prim_path,
+                                         int column_width = 80) const;
+  std::string FormatPrimAttrSourceDiagnostic(const std::string &prim_path,
+                                             const std::string &property_name,
+                                             int column_width = 80) const;
+  std::string FormatPropertySourceDiagnostic(const std::string &prim_path,
+                                             const std::string &property_name,
+                                             int column_width = 80) const;
+
   ///
   /// Set memory limit in MB
   ///
   void SetMaxMemoryLimit(size_t limit_mb) {
-    _memory_manager.SetMaxBudget(limit_mb * 1024ull * 1024ull);
+    _max_memory_limit_bytes = limit_mb * 1024ull * 1024ull;
   }
 
   ///
@@ -770,6 +855,22 @@ class AsciiParser {
   bool ParseIntArrayOptimized(std::vector<int32_t> *result);
 
   ///
+  /// Optimized compound-type array parsing using tiny-string
+  ///
+  bool ParseFloat2ArrayOptimized(std::vector<value::float2> *result);
+  bool ParseFloat3ArrayOptimized(std::vector<value::float3> *result);
+  bool ParseFloat4ArrayOptimized(std::vector<value::float4> *result);
+  bool ParseDouble2ArrayOptimized(std::vector<value::double2> *result);
+  bool ParseDouble3ArrayOptimized(std::vector<value::double3> *result);
+  bool ParseDouble4ArrayOptimized(std::vector<value::double4> *result);
+  bool ParseMatrix2fArrayOptimized(std::vector<value::matrix2f> *result);
+  bool ParseMatrix3fArrayOptimized(std::vector<value::matrix3f> *result);
+  bool ParseMatrix4fArrayOptimized(std::vector<value::matrix4f> *result);
+  bool ParseMatrix2dArrayOptimized(std::vector<value::matrix2d> *result);
+  bool ParseMatrix3dArrayOptimized(std::vector<value::matrix3d> *result);
+  bool ParseMatrix4dArrayOptimized(std::vector<value::matrix4d> *result);
+
+  ///
   /// Parses 1 or more occurences of value with basic type 'T', separated by
   /// `sep`
   ///
@@ -805,8 +906,8 @@ class AsciiParser {
   bool ParseDict(std::map<std::string, MetaVariable> *out_dict);
 
   ///
-  /// Parse TimeSample data with concrete type for optimized POD storage.
-  /// This template function is optimized for POD types and uses direct
+  /// Parse TimeSample data with concrete type for optimized binary storage.
+  /// This template function is optimized for binary-serializable types and uses direct
   /// storage without value::Value wrapping for better performance.
   ///
   /// @tparam T The concrete type for time sample values
@@ -860,17 +961,6 @@ class AsciiParser {
   ///
   bool ParseAssetIdentifier(value::AssetPath *out, bool *triple_deliminated);
 
-#if 0
-  ///
-  ///
-  ///
-  std::string GetDefaultPrimName() const;
-
-  ///
-  /// Get parsed toplevel "def" nodes(GPrim)
-  ///
-  std::vector<GPrim> GetGPrims();
-#endif
   class PrimIterator;
   using const_iterator = PrimIterator;
   const_iterator begin() const;
@@ -927,16 +1017,6 @@ class AsciiParser {
   ///
   std::string GetErrorWithSourceContext(const std::string& filename, int context_lines = 2, int column_width = 40);
 
-#if 0
-  // Return the flag if the .usda is read from `references`
-  bool IsReferenced() { return _referenced; }
-
-  // Return the flag if the .usda is read from `subLayers`
-  bool IsSubLayered() { return _sub_layered; }
-
-  // Return the flag if the .usda is read from `payload`
-  bool IsPayloaded() { return _payloaded; }
-#endif
 
   // Return true if the .udsa is read in the top layer(stage)
   bool IsToplevel() {
@@ -1054,68 +1134,6 @@ class AsciiParser {
                        const uint32_t depth,
                        VariantSetContent *variantSetContent);
 
-  //
-  // Type-specific non-template parser wrappers for registry-based dispatch.
-  // These wrap the template ParseBasicPrimAttr<T> to enable function pointer storage.
-  // Declared public for access by PrimAttrParserRegistry.
-  //
-  // Scalars
-  bool ParsePrimAttr_bool(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_int(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_uint(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_int64(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_uint64(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_half(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_float(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_double(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_string(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_token(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_asset(bool array_qual, const std::string& name, Attribute* attr);
-  // Int vectors
-  bool ParsePrimAttr_int2(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_int3(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_int4(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_uint2(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_uint3(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_uint4(bool array_qual, const std::string& name, Attribute* attr);
-  // Half vectors
-  bool ParsePrimAttr_half2(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_half3(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_half4(bool array_qual, const std::string& name, Attribute* attr);
-  // Float vectors
-  bool ParsePrimAttr_float2(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_float3(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_float4(bool array_qual, const std::string& name, Attribute* attr);
-  // Double vectors
-  bool ParsePrimAttr_double2(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_double3(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_double4(bool array_qual, const std::string& name, Attribute* attr);
-  // Quaternions
-  bool ParsePrimAttr_quath(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_quatf(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_quatd(bool array_qual, const std::string& name, Attribute* attr);
-  // Geometric types (point, normal, vector)
-  bool ParsePrimAttr_point3f(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_point3d(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_normal3f(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_normal3d(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_vector3f(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_vector3d(bool array_qual, const std::string& name, Attribute* attr);
-  // Color types
-  bool ParsePrimAttr_color3f(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_color3d(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_color4f(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_color4d(bool array_qual, const std::string& name, Attribute* attr);
-  // Matrix types
-  bool ParsePrimAttr_matrix2f(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_matrix2d(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_matrix3f(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_matrix3d(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_matrix4f(bool array_qual, const std::string& name, Attribute* attr);
-  bool ParsePrimAttr_matrix4d(bool array_qual, const std::string& name, Attribute* attr);
-  // Texture coordinates
-  bool ParsePrimAttr_texcoord2f(bool array_qual, const std::string& name, Attribute* attr);
-
   // --------------------------------------------
 
  private:
@@ -1126,22 +1144,6 @@ class AsciiParser {
   /// @return Suggestion string (e.g. "Did you mean 'def'?"), or empty if no match
   ///
   std::string GenerateSuggestion(const std::string& invalid_token);
-
-  /// Options for diagnostic formatting.
-  struct DiagnosticFormatOptions {
-    bool show_suggestion{false};   ///< Show suggestion from ErrorDiagnostic
-    bool show_caret{false};        ///< Show caret (^) indicator at error column
-    bool show_hints{false};        ///< Show recovery hints from ErrorDiagnostic
-    bool show_counts{false};       ///< Show occurrence counts for repeated errors
-    bool dedupe_by_message{false}; ///< Dedupe by message only (vs location+message)
-  };
-
-  /// Format diagnostics from a stack into a string.
-  /// @param[inout] diag_stack Stack of diagnostics (will be emptied)
-  /// @param[in] opts Formatting options
-  /// @return Formatted diagnostic string
-  std::string FormatDiagnostics(std::stack<ErrorDiagnostic>& diag_stack,
-                                const DiagnosticFormatOptions& opts);
 
   ///
   /// Do common setups. Assume called in ctor.
@@ -1163,6 +1165,18 @@ class AsciiParser {
   nonstd::optional<VariableDef> GetPropMetaDefinition(const std::string &arg);
 
   std::string GetCurrentPrimPath();
+  void RecordLayerMetaCursor(const std::string &meta_name, const Cursor &cursor);
+  void RecordPrimCursor(const std::string &prim_path, const Cursor &cursor);
+  void RecordPrimAttrCursor(const std::string &prim_path,
+                            const std::string &property_name,
+                            const Cursor &cursor);
+  void RecordPropertyCursor(const std::string &prim_path,
+                            const std::string &property_name,
+                            const Cursor &cursor);
+  std::string FormatStoredCursorDiagnostic(const StoredCursor *stored,
+                                           int column_width) const;
+  std::string FormatCursorDiagnostic(const Cursor &cursor,
+                                     int column_width) const;
   bool PrimPathStackDepth() { return _path_stack.size(); }
   void PushPrimPath(const std::string &abs_path) {
     // TODO: validate `abs_path` is really absolute full path.
@@ -1181,22 +1195,23 @@ class AsciiParser {
   std::stack<std::string> _path_stack;
 
   Cursor _curr_cursor;
+  CursorStore _cursor_store;
 
   // Supported Prim types
-  std::set<std::string> _supported_prim_types;
-  std::set<std::string> _supported_prim_attr_types;
+  std::unordered_set<std::string> _supported_prim_types;
+  std::unordered_set<std::string> _supported_prim_attr_types;
 
   // Supported API schemas
-  std::set<std::string> _supported_api_schemas;
+  std::unordered_set<std::string> _supported_api_schemas;
 
   // Supported metadataum for Stage
-  std::map<std::string, VariableDef> _supported_stage_metas;
+  std::unordered_map<std::string, VariableDef> _supported_stage_metas;
 
   // Supported metadataum for Prim.
-  std::map<std::string, VariableDef> _supported_prim_metas;
+  std::unordered_map<std::string, VariableDef> _supported_prim_metas;
 
   // Supported metadataum for Property(Attribute and Relation).
-  std::map<std::string, VariableDef> _supported_prop_metas;
+  std::unordered_map<std::string, VariableDef> _supported_prop_metas;
 
   std::stack<ErrorDiagnostic> err_stack;
   std::stack<ErrorDiagnostic> warn_stack;
@@ -1218,90 +1233,9 @@ class AsciiParser {
   StageMetas _stage_metas;
 
   // Memory tracking
-  MemoryBudgetManager _memory_manager{128ull * 1024ull * 1024ull * 1024ull}; // Default 128GB
-
-  bool CheckAndReserveMemory(uint64_t bytes) {
-    if (!_memory_manager.CheckAndReserve(bytes)) {
-      PushError("Memory limit exceeded. Limit: " +
-                std::to_string(_memory_manager.GetMaxBudget() / (1024 * 1024)) +
-                " MB, Current usage: " +
-                std::to_string(_memory_manager.GetCurrentUsage() / (1024 * 1024)) +
-                " MB");
-      return false;
-    }
-    return true;
-  }
-
-  void ReleaseMemory(uint64_t bytes) { _memory_manager.Release(bytes); }
-
-  bool ReserveStringLikeMemory(const std::string &str) {
-    return CheckAndReserveMemory(uint64_t(str.size()));
-  }
-
-  bool ReserveStringLikeMemory(const value::StringData &str) {
-    return CheckAndReserveMemory(uint64_t(str.value.size()));
-  }
-
-  bool ReserveStringLikeMemory(const value::AssetPath &path) {
-    return CheckAndReserveMemory(uint64_t(path.GetAssetPath().size()));
-  }
-
-  template <typename T>
-  bool ReserveStringLikeMemory(const std::vector<T> &vec) {
-    for (const auto &item : vec) {
-      if (!ReserveStringLikeMemory(item)) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  template <typename T>
-  bool ReserveStringLikeMemory(const T &) {
-    return true;
-  }
-
-  bool ReserveStringLikeMemory(const value::Value &v);
-  bool ReserveMetaVariableMemory(const MetaVariable &var);
-  bool ReserveDictionaryStringMemory(const Dictionary &dict);
-
-  template <typename T>
-  bool ReserveVectorGrowth(const std::vector<T> &vec, size_t old_capacity) {
-    size_t new_capacity = vec.capacity();
-    if (new_capacity > old_capacity) {
-      return CheckAndReserveMemory(uint64_t(new_capacity - old_capacity) * sizeof(T));
-    }
-    return true;
-  }
-
-  template <typename T>
-  bool ReserveTypedArrayGrowth(const TypedArray<T> &arr, size_t old_capacity) {
-    size_t new_capacity = arr.capacity();
-    if (new_capacity > old_capacity) {
-      return CheckAndReserveMemory(uint64_t(new_capacity - old_capacity) * sizeof(T));
-    }
-    return true;
-  }
-
-  template <typename T>
-  class ScopedVectorMemoryRelease {
-   public:
-    ScopedVectorMemoryRelease(AsciiParser *parser, std::vector<T> *vec)
-        : parser_(parser), vec_(vec) {}
-
-    ~ScopedVectorMemoryRelease() {
-      if (parser_ && vec_) {
-        parser_->ReleaseMemory(uint64_t(vec_->capacity()) * sizeof(T));
-      }
-    }
-
-    ScopedVectorMemoryRelease(const ScopedVectorMemoryRelease &) = delete;
-    ScopedVectorMemoryRelease &operator=(const ScopedVectorMemoryRelease &) = delete;
-
-   private:
-    AsciiParser *parser_;
-    std::vector<T> *vec_;
-  };
+  uint64_t _max_memory_limit_bytes{128ull * 1024ull * 1024ull * 1024ull}; // Default 128GB
+  uint64_t _memory_usage{0};
+  uint32_t _dict_nesting_depth{0}; ///< Tracks ParseDict recursion depth
 
   //
   // Callbacks
@@ -1309,8 +1243,8 @@ class AsciiParser {
   PrimIdxAssignFunctin _prim_idx_assign_fun;
   StageMetaProcessFunction _stage_meta_process_fun;
   // PrimMetaProcessFunction _prim_meta_process_fun;
-  std::map<std::string, PrimConstructFunction> _prim_construct_fun_map;
-  std::map<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
+  std::unordered_map<std::string, PrimConstructFunction> _prim_construct_fun_map;
+  std::unordered_map<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
 
   bool _primspec_mode{false};
 

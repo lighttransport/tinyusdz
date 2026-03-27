@@ -23,9 +23,23 @@
 ///
 #pragma once
 
-#include "prim-types.hh"
+// Core includes (replaces monolithic prim-types.hh)
 #include "value-types.hh"
-#include "xform.hh"
+#include "nonstd/optional.hpp"
+#include "nonstd/expected.hpp"
+#include "core/prim-enums.hh"        // Specifier, Visibility, Purpose
+#include "core/path.hh"              // Path
+#include "core/extent.hh"            // Extent
+#include "core/composition-types.hh" // Reference, Payload, ListEditQual
+#include "core/prim-metas.hh"       // PrimMeta
+#include "core/animatable.hh"       // Animatable
+#include "core/typed-attribute.hh"  // TypedAttribute, TypedAttributeWithFallback
+#include "core/relationship.hh"     // Relationship
+#include "core/attribute.hh"        // Attribute
+#include "core/property.hh"         // Property
+#include "core/xform-op.hh"         // XformOp (needed by Xformable in xform.hh)
+#include "core/variant-types.hh"    // VariantSet
+#include "xform.hh"                 // Xformable
 
 namespace tinyusdz {
 
@@ -122,10 +136,11 @@ struct Skeleton : Xformable {
       restTransforms;  // uniform matrix4d[] rest-pose transforms of each
                        // joint in local coordinate.
 
-  RelationshipProperty proxyPrim;  // rel proxyPrim
+  nonstd::optional<Relationship> proxyPrim;  // rel proxyPrim
 
   // SkelBindingAPI
-  RelationshipProperty animationSource;  // rel skel:animationSource = </path/...>
+  nonstd::optional<Relationship>
+      animationSource;  // rel skel:animationSource = </path/...>
 
   TypedAttributeWithFallback<Animatable<Visibility>> visibility{
       Visibility::Inherited};  // "token visibility"
@@ -157,26 +172,28 @@ struct Skeleton : Xformable {
       return false;
     }
 
-    if (!animationSource.authored()) {
+    if (!animationSource.has_value()) {
       return false;
     }
 
-    const Relationship &rel = animationSource.relationship();
+    const Relationship &rel = animationSource.value();
     if (qual) {
       (*qual) = rel.get_listedit_qual();
     }
 
     if (rel.is_path()) {
       (*path) = rel.targetPath;
-      return true;
     } else if (rel.is_pathvector()) {
       if (rel.targetPathVector.size()) {
         (*path) = rel.targetPathVector[0];
-        return true;
+      } else {
+        return false;
       }
+    } else {
+      return false;
     }
 
-    return false;
+    return true;
   }
 
   const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
@@ -215,10 +232,14 @@ struct SkelRoot : Xformable {
   TypedAttributeWithFallback<Animatable<Visibility>> visibility{
     Visibility::Inherited};  // "token visibility"
 
-  RelationshipProperty proxyPrim;  // rel proxyPrim
+  nonstd::optional<Relationship> proxyPrim;  // rel proxyPrim
+  //std::vector<XformOp> xformOps;
 
-  // TODO: Add function to check if SkelRoot contains `Skeleton` and `GeomMesh`
-  // node?
+  // SkelBindingAPI
+  nonstd::optional<Relationship>
+      animationSource;  // rel skel:animationSource = </path/...>
+  nonstd::optional<Relationship>
+      skeleton;          // rel skel:skeleton = </path/...>
 
 
   std::pair<ListEditQual, std::vector<Reference>> references;
@@ -319,30 +340,18 @@ struct SkelAnimation {
   std::vector<value::token> _properties;
 };
 
-// PackedJointAnimation is deprecated(Convert to SkelAnimation)
-// struct PackedJointAnimation {
-// };
-
 //
 // Some usdSkel utility functions
 //
 
-// Equivalent to pxrUSd's UsdSkelNormalizeWeights
-bool SkelNormalizeWeights(const std::vector<float> &weights, int numInfluencesPerComponent, const float eps = std::numeric_limits<float>::epsilon());
-bool SkelSortInfluences(const std::vector<int> indices, const std::vector<float> &weights, int numInfluencesPerComponent);
+// Equivalent to pxrUSD's UsdSkelNormalizeWeights
+// Normalizes weight values in-place so that each group of numInfluencesPerComponent
+// weights sums to 1.0 (or 0.0 if all weights in a group are below eps).
+bool SkelNormalizeWeights(std::vector<float> &weights, int numInfluencesPerComponent, const float eps = std::numeric_limits<float>::epsilon());
 
-#if 0 // move to Tydra
-struct SkelNode
-{
-  std::string joint;
-  std::string jointName;
-  int32_t parentIndex{-1}; // Index of parent SkelNode.
-  int32_t index; // Index of this SkelNode.
-  
-  value::matrix4d bindTransform{value::matrix4d::identity()};
-  value::matrix4d restTransform{value::matrix4d::identity()};
-};
-#endif
+// Equivalent to pxrUSD's UsdSkelSortInfluences
+// Sorts joint indices and weights per component group by weight (descending).
+bool SkelSortInfluences(std::vector<int> &indices, std::vector<float> &weights, int numInfluencesPerComponent);
 
 //
 // Build Skeleleton Topology(hierarchy) from Skeleton's joints.
@@ -359,6 +368,22 @@ struct SkelNode
 bool BuildSkelTopology(
   const std::vector<value::token> &joints,
   std::vector<int> &dst,
+  std::string *err);
+
+///
+/// Validate a skeleton topology (parent indices array).
+///
+/// Checks for: single root, no cycles, valid parent indices,
+/// parent ordering (parent index < child index).
+///
+/// Equivalent to pxrUSD's UsdSkelTopology::Validate.
+///
+/// @param[in] topology Parent indices (-1 for root)
+/// @param[out] err Error message when invalid
+/// @return true if topology is valid
+///
+bool SkelValidateTopology(
+  const std::vector<int> &topology,
   std::string *err);
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT

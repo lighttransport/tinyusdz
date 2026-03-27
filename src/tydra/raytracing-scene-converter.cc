@@ -8,7 +8,7 @@
 #include <limits>
 #include <unordered_map>
 
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "scene-access.hh"
 #include "tinyusdz.hh"
 #include "usdGeom.hh"

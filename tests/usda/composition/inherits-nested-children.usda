@@ -1,0 +1,17 @@
+#usda 1.0
+
+class Xform "BaseXform" {
+    custom double3 translate = (0, 0, 0)
+
+    def Mesh "Geometry" {
+        point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0,1,2]
+    }
+}
+
+def Xform "Instance" (
+    inherits = </BaseXform>
+) {
+    custom double3 translate = (10, 0, 0)
+}

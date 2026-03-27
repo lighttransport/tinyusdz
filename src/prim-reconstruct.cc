@@ -4,9 +4,14 @@
 //
 // Reconstruct concrete Prim from PropertyMap or PrimSpec.
 //
+// TODO:
+//   - [ ] Refactor code
+//
 #include "prim-reconstruct.hh"
 
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/prim-spec.hh"
+#include "core/model-scope.hh"  // Model, Scope
 #include "str-util.hh"
 #include "io-util.hh"
 #include "tiny-format.hh"
@@ -23,12 +28,17 @@
 #include "value-types.hh"
 
 // For PUSH_ERROR_AND_RETURN
-#define PushError(s) if (err) { (*err) = s + (*err); }
-#define PushWarn(s) if (warn) { (*warn) = s + (*err); }
+#define PushError(s) \
+  if (err) { \
+    (*err) = (s) + (err->empty() ? std::string() : std::string("\n")) + (*err); \
+  }
+#define PushWarn(s) \
+  if (warn) { \
+    (*warn) = (s) + (warn->empty() ? std::string() : std::string("\n")) + (*warn); \
+  }
 
 // __VA_ARGS__ does not allow empty, thus # of args must be 2+
 #define PUSH_WARN_F(s, ...) PUSH_WARN(fmt::format(s, __VA_ARGS__))
-#define PUSH_ERROR_AND_RETURN_F(s, ...) PUSH_ERROR_AND_RETURN(fmt::format(s, __VA_ARGS__))
 
 //
 // NOTE:
@@ -57,7 +67,10 @@ constexpr auto kSkelSkeleton = "skel:skeleton";
 constexpr auto kSkelAnimationSource = "skel:animationSource";
 constexpr auto kSkelBlendShapes = "skel:blendShapes";
 constexpr auto kSkelBlendShapeTargets = "skel:blendShapeTargets";
-constexpr auto kInputsVarname = "inputs:varname";
+// kInputsVarname moved to prim-reconstruct-shader.cc
+
+// MaterialX Validation Helpers moved to prim-reconstruct-shader.cc
+
 
 ///
 /// TinyUSDZ reconstruct some frequently used shaders(e.g. UsdPreviewSurface)
@@ -73,1087 +86,9 @@ bool ReconstructShader(
     std::string *err,
     const PrimReconstructOptions &options);
 
-namespace {
 
+#include "prim-reconstruct-common.inc"
 
-struct ParseResult
-{
-  enum class ResultCode
-  {
-    Success,
-    Unmatched,
-    AlreadyProcessed,
-    TypeMismatch,
-    VariabilityMismatch,
-    ConnectionNotAllowed,
-    InvalidConnection,
-    PropertyTypeMismatch,
-    InternalError,
-  };
-
-  ResultCode code;
-  std::string err;
-  std::string warn;
-};
-
-template<typename T>
-static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVar &var)
-{
-  Animatable<T> dst;
-
-  if (!var.is_valid()) {
-    DCOUT("is_valid failed");
-    DCOUT("has_value " << var.has_value());
-    DCOUT("has_timesamples " << var.has_timesamples());
-    return nonstd::nullopt;
-  }
-
-  bool ok = false;
-
-  if (var.has_value()) {
-
-    if (auto pv = var.get_value<T>()) {
-      dst.set_default(pv.value());
-
-      ok = true;
-      //return std::move(dst);
-    }
-  }
-
-  if (var.has_timesamples()) {
-    const auto &samples = var.ts_raw().get_samples();
-
-    for (size_t i = 0; i < samples.size(); i++) {
-      const value::TimeSamples::Sample &s = samples[i];
-
-      // Attribute Block?
-      if (s.blocked || s.value.is_none()) {
-        dst.add_blocked_sample(s.t);
-      } else if (auto pv = s.value.get_value<T>()) {
-        dst.add_sample(s.t, pv.value());
-      } else {
-        // Type mismatch
-        DCOUT(i << "/" << var.ts_raw().size() << " type mismatch. expected " << value::TypeTraits<T>::type_name() << ", but got " << s.value.type_name());
-        return nonstd::nullopt;
-      }
-    }
-
-    ok = true;
-  }
-
-  if (ok) {
-    return std::move(dst);
-  }
-
-  DCOUT("???");
-  return nonstd::nullopt;
-}
-
-// Require special treatment for Extent(float3[2])
-template<>
-nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar &var)
-{
-  Animatable<Extent> dst;
-
-  if (!var.is_valid()) {
-    DCOUT("is_valid failed");
-    return nonstd::nullopt;
-  }
-
-  bool value_ok = false;
-
-  if (var.has_default()) {
-
-    if (auto pv = var.get_value<std::vector<value::float3>>()) {
-      if (pv.value().size() == 2) {
-        Extent ext;
-        ext.lower = pv.value()[0];
-        ext.upper = pv.value()[1];
-
-        dst.set_default(ext);
-
-      } else {
-        return nonstd::nullopt;
-      }
-
-      //return std::move(dst);
-    }
-    value_ok = true;
-  }
-
-  if (var.has_timesamples()) {
-    for (size_t i = 0; i < var.ts_raw().size(); i++) {
-      const value::TimeSamples::Sample &s = var.ts_raw().get_samples()[i];
-
-      // Attribute Block?
-      if (s.blocked || s.value.is_none()) {
-        dst.add_blocked_sample(s.t);
-      } else if (auto pv = s.value.get_value<std::vector<value::float3>>()) {
-        if (pv.value().size() == 2) {
-          Extent ext;
-          ext.lower = pv.value()[0];
-          ext.upper = pv.value()[1];
-          dst.add_sample(s.t, ext);
-        } else {
-          DCOUT(i << "/" << var.ts_raw().size() << " array size mismatch.");
-          return nonstd::nullopt;
-        }
-      } else {
-        // Type mismatch
-        DCOUT(i << "/" << var.ts_raw().size() << " type mismatch.");
-        return nonstd::nullopt;
-      }
-    }
-
-    value_ok = true;
-    //return std::move(dst);
-  }
-
-  if (value_ok) {
-    return std::move(dst);
-  }
-
-  DCOUT("???");
-  return nonstd::nullopt;
-}
-
-// ============================================================================
-// Traits for ParseTypedAttribute unification
-// ============================================================================
-
-// Detect if type is Animatable<T>
-template<typename T>
-struct is_animatable : std::false_type {
-  using value_type = T;
-};
-
-template<typename T>
-struct is_animatable<Animatable<T>> : std::true_type {
-  using value_type = T;
-};
-
-// Detect if type is TypedAttributeWithFallback<T>
-template<typename T>
-struct is_with_fallback : std::false_type {};
-
-template<typename T>
-struct is_with_fallback<TypedAttributeWithFallback<T>> : std::true_type {};
-
-// Storage type name trait - returns the USD type name for storage
-// For most types this is the same as type_name, but for special types
-// like Extent (stored as float3[]), this returns the actual storage type.
-template<typename T>
-struct storage_type_trait {
-  static std::string type_name() { return value::TypeTraits<T>::type_name(); }
-};
-
-// Specialization for Extent - stored as float3[] in USD
-template<>
-struct storage_type_trait<Extent> {
-  static std::string type_name() { return "float3[]"; }
-};
-
-// Extract value type from target
-template<typename Target>
-struct target_traits; // Forward declaration
-
-// Specialization for TypedAttribute<T>
-template<typename T>
-struct target_traits<TypedAttribute<T>> {
-  using value_type = T;
-  static constexpr bool has_fallback = false;
-  static constexpr bool is_varying = is_animatable<T>::value;
-  using underlying_type = typename is_animatable<T>::value_type;
-};
-
-// Specialization for TypedAttributeWithFallback<T>
-template<typename T>
-struct target_traits<TypedAttributeWithFallback<T>> {
-  using value_type = T;
-  static constexpr bool has_fallback = true;
-  static constexpr bool is_varying = is_animatable<T>::value;
-  using underlying_type = typename is_animatable<T>::value_type;
-};
-
-// ============================================================================
-// Unified ParseTypedAttribute implementation
-// ============================================================================
-
-template<typename Target>
-static ParseResult ParseTypedAttributeUnified(
-    std::set<std::string> &table,
-    const std::string prop_name,
-    Property &prop,
-    const std::string &name,
-    Target &target)
-{
-  using Traits = target_traits<Target>;
-  using T = typename Traits::underlying_type;
-  constexpr bool is_varying = Traits::is_varying;
-  constexpr bool has_fallback = Traits::has_fallback;
-
-  ParseResult ret;
-
-  if (prop_name.compare(name) != 0) {
-    ret.code = ParseResult::ResultCode::Unmatched;
-    return ret;
-  }
-
-  // Check if property is relationship (should be attribute)
-  if (prop.is_relationship()) {
-    ret.code = ParseResult::ResultCode::PropertyTypeMismatch;
-    ret.err = fmt::format("Property `{}` must be Attribute, but declared as Relationship.", name);
-    return ret;
-  }
-
-  const Attribute &attr = prop.get_attribute();
-  std::string attr_type_name = attr.type_name();
-
-  // Check type match - also check storage type for types like Extent (stored as float3[])
-  if ((value::TypeTraits<T>::type_name() != attr_type_name) &&
-      (value::TypeTraits<T>::underlying_type_name() != attr_type_name) &&
-      (storage_type_trait<T>::type_name() != attr_type_name)) {
-    DCOUT("tyname = " << value::TypeTraits<T>::type_name() << ", attr.type = " << attr_type_name);
-    ret.code = ParseResult::ResultCode::TypeMismatch;
-    ret.err = fmt::format("Property type mismatch. {} expects type `{}` but defined as type `{}`",
-                          name, value::TypeTraits<T>::type_name(), attr_type_name);
-    return ret;
-  }
-
-  bool has_connections = false;
-  bool has_default = false;
-  bool has_timesamples = false;
-
-  // Handle connections
-  if (attr.has_connections()) {
-    target.set_connections(attr.connections());
-    has_connections = true;
-  }
-
-  // Handle empty attribute
-  if (prop.get_property_type() == Property::Type::EmptyAttrib) {
-    DCOUT("Added prop with empty value: " << name);
-    target.set_value_empty();
-    target.metas() = std::move(prop.attribute().metas());
-    table.insert(name);
-    ret.code = ParseResult::ResultCode::Success;
-    return ret;
-  }
-
-  // Handle non-empty attribute
-  // Note: Type::Connection means the attribute has connections, but it may also have values.
-  // Connections are already extracted above, so we need to also parse any values.
-  if (prop.get_property_type() == Property::Type::Attrib ||
-      prop.get_property_type() == Property::Type::Connection) {
-    DCOUT("Adding typed prop: " << name);
-
-    // Check blocked attribute
-    if (attr.is_blocked()) {
-      target.set_blocked(true);
-      has_default = true;
-    } else {
-      // Variability checks
-      bool is_config_attr = (name.find("config:") == 0);
-
-      if constexpr (!is_varying) {
-        // Uniform attribute - no timeSamples allowed
-        if (!is_config_attr && attr.variability() != Variability::Uniform) {
-          // If `varying` wasn't explicitly authored, allow schema-default uniform.
-          if (!(attr.variability() == Variability::Varying && !attr.is_varying_authored())) {
-            ret.code = ParseResult::ResultCode::VariabilityMismatch;
-            ret.err = fmt::format("Attribute `{}` must be `uniform` variability.", name);
-            return ret;
-          }
-        }
-
-        if (is_config_attr && attr.variability() != Variability::Uniform) {
-          if (attr.is_varying_authored()) {
-            ret.warn = fmt::format("Config attribute `{}` should have explicit `uniform` variability.", name);
-          }
-        }
-
-        if (attr.get_var().has_timesamples()) {
-          ret.code = ParseResult::ResultCode::VariabilityMismatch;
-          ret.err = "TimeSample assigned to a property where `uniform` variability is set.";
-          return ret;
-        }
-      }
-
-      // Extract value based on varying vs uniform
-      if constexpr (is_varying) {
-        // Varying: can have both timeSamples and default
-        typename Traits::value_type animatable_value;
-
-        // Check uniform variability for attributes with fallback
-        if constexpr (has_fallback) {
-          if (attr.variability() == Variability::Uniform) {
-            if (attr.get_var().has_timesamples()) {
-              ret.code = ParseResult::ResultCode::VariabilityMismatch;
-              ret.err = fmt::format("TimeSample value is assigned to `uniform` property `{}`", name);
-              return ret;
-            }
-
-            if (auto pv = attr.get_value<T>()) {
-              target.set_value(std::move(pv.value()));
-              target.metas() = std::move(prop.attribute().metas());
-              table.insert(name);
-              ret.code = ParseResult::ResultCode::Success;
-              return ret;
-            } else {
-              ret.code = ParseResult::ResultCode::TypeMismatch;
-              ret.err = fmt::format("Failed to retrieve value with requested type `{}`.", value::TypeTraits<T>::type_name());
-              return ret;
-            }
-          }
-        }
-
-        // Parse default value and/or timeSamples using ConvertToAnimatable
-        // This handles special type conversions (e.g., float3[] -> Extent)
-        if (attr.get_var().has_default() || attr.get_var().has_timesamples()) {
-          if (auto av = ConvertToAnimatable<T>(attr.get_var())) {
-            animatable_value = std::move(av.value());
-            has_default = attr.get_var().has_default();
-            has_timesamples = attr.get_var().has_timesamples();
-          } else {
-            ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = fmt::format("ConvertToAnimatable<{}> failed for `{}`. Attribute has type {}",
-                                  value::TypeTraits<T>::type_name(), prop_name, attr.get_var().type_name());
-            return ret;
-          }
-        }
-
-        if (has_timesamples || has_default) {
-          target.set_value(std::move(animatable_value));
-        } else if (!has_connections) {
-          // No value, default, timeSamples, or connections - use default-constructed
-          target.set_value(typename Traits::value_type());
-        }
-
-      } else {
-        // Uniform: only default value
-        if (attr.get_var().has_default()) {
-          if (auto pv = attr.get_value<T>()) {
-            target.set_value(std::move(pv.value()));
-            has_default = true;
-          } else {
-            ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = "Internal data corrupted.";
-            return ret;
-          }
-        } else if (!has_connections) {
-          ret.code = ParseResult::ResultCode::VariabilityMismatch;
-          ret.err = "TimeSample or corrupted value assigned to a property where `uniform` variability is set.";
-          return ret;
-        }
-      }
-    }
-  } else {
-    ret.code = ParseResult::ResultCode::InternalError;
-    ret.err = "ParseTypedAttribute: Invalid Property type(internal error)";
-    return ret;
-  }
-
-  // Connections only case
-  if (has_connections && !has_timesamples && !has_default) {
-    target.set_value_empty();
-  }
-
-  // Success cases
-  if (has_connections || has_timesamples || has_default) {
-    target.metas() = std::move(prop.attribute().metas());
-    table.insert(name);
-    ret.code = ParseResult::ResultCode::Success;
-    return ret;
-  }
-
-  ret.code = ParseResult::ResultCode::InternalError;
-  ret.err = "ParseTypedAttribute: No valid data found(internal error)";
-  return ret;
-}
-
-// ============================================================================
-// Overload wrappers (delegate to unified implementation)
-// ============================================================================
-
-// For animatable attribute(`varying`) with fallback
-template<typename T>
-static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
-  Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
-  TypedAttributeWithFallback<Animatable<T>> &target)
-{
-  return ParseTypedAttributeUnified(table, prop_name, prop, name, target);
-}
-
-// For 'uniform' attribute with fallback
-template<typename T>
-static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
-  Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
-  TypedAttributeWithFallback<T> &target) /* out */
-{
-  return ParseTypedAttributeUnified(table, prop_name, prop, name, target);
-}
-
-// For animatable attribute(`varying`) without fallback
-template<typename T>
-static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
-  Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
-  TypedAttribute<Animatable<T>> &target) /* out */
-{
-  return ParseTypedAttributeUnified(table, prop_name, prop, name, target);
-}
-
-// For uniform attribute without fallback
-template<typename T>
-static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
-  Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
-  TypedAttribute<T> &target) /* out */
-{
-  return ParseTypedAttributeUnified(table, prop_name, prop, name, target);
-}
-
-// Special case for Extent(float3[2]) type.
-// Extent is stored as float3[] in USD but converted to Extent struct via
-// ConvertToAnimatable<Extent> specialization. The storage_type_trait<Extent>
-// handles the type matching.
-static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
-  Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
-  TypedAttribute<Animatable<Extent>> &target) /* out */
-{
-  return ParseTypedAttributeUnified(table, prop_name, prop, name, target);
-}
-
-
-// CheckAllowedTokens template removed - now in enum-handlers.cc
-
-// Allowed syntax:
-//   "T varname"
-template<typename T>
-static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
-  Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
-  TypedTerminalAttribute<T> &target) /* out */
-{
-  ParseResult ret;
-
-  if (prop_name.compare(name) == 0) {
-    if (table.count(name)) {
-      ret.code = ParseResult::ResultCode::AlreadyProcessed;
-      return ret;
-    }
-
-    if (prop.is_attribute_connection()) {
-      ret.code = ParseResult::ResultCode::ConnectionNotAllowed;
-      ret.err = "Connection is not allowed for output terminal attribute.";
-      return ret;
-    } else {
-
-      if (prop.get_property_type() != Property::Type::EmptyAttrib) {
-          DCOUT("Output Invalid shader output terminal attribute");
-          ret.err = "No value should be assigned for shader output terminal attribute.";
-          ret.code = ParseResult::ResultCode::InvalidConnection;
-          return ret;
-      }
-
-      const Attribute &attr = prop.get_attribute();
-
-      std::string attr_type_name = attr.type_name();
-
-      bool attr_is_role_type = value::IsRoleType(attr_type_name);
-
-      DCOUT("attrname = " << name);
-      DCOUT("value typename = " << value::TypeTraits<T>::type_name());
-      DCOUT("attr-type_name = " << attr_type_name);
-
-
-      // First check if both types are same, then
-      // Allow either type is role-types(e.g. allow color3f attribute for TypedTerminalAttribute<float3>)
-      // NOTE: Both-role-types case (e.g. point3f for vector3f) is intentionally disallowed
-      // to prevent semantic confusion between different role types.
-      if (value::TypeTraits<T>::type_name() == attr_type_name) {
-        DCOUT("Author output terminal attribute: " << name);
-        target.set_authored(true);
-        target.metas() = prop.get_attribute().metas();
-        table.insert(name);
-        ret.code = ParseResult::ResultCode::Success;
-        return ret;
-      } else if (value::TypeTraits<T>::is_role_type()) {
-        if (attr_is_role_type) {
-          ret.code = ParseResult::ResultCode::TypeMismatch;
-          ret.err = fmt::format("Attribute type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
-          return ret;
-        } else {
-          if (value::TypeTraits<T>::underlying_type_name() == attr_type_name) {
-            target.set_authored(true);
-            target.set_actual_type_name(attr_type_name);
-            target.metas() = prop.get_attribute().metas();
-            table.insert(name);
-            ret.code = ParseResult::ResultCode::Success;
-            return ret;
-          } else {
-            ret.code = ParseResult::ResultCode::TypeMismatch;
-            ret.err = fmt::format("Attribute type mismatch. {} expects type `{}`(and its underlying types) but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
-            return ret;
-          }
-        }
-      } else if (attr_is_role_type) {
-        if (value::TypeTraits<T>::is_role_type()) {
-          ret.code = ParseResult::ResultCode::TypeMismatch;
-          ret.err = fmt::format("Attribute type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
-          return ret;
-        } else {
-          uint32_t attr_underlying_type_id = value::GetUnderlyingTypeId(attr_type_name);
-          if (value::TypeTraits<T>::type_id() == attr_underlying_type_id) {
-            target.set_authored(true);
-            target.set_actual_type_name(attr_type_name);
-            target.metas() = prop.get_attribute().metas();
-            table.insert(name);
-            ret.code = ParseResult::ResultCode::Success;
-            return ret;
-          } else {
-            ret.code = ParseResult::ResultCode::TypeMismatch;
-            ret.err = fmt::format("Attribute type mismatch. {} expects type `{}` but defined as type `{}`(and its underlying types).", name, value::TypeTraits<T>::type_name(), attr_type_name);
-            return ret;
-          }
-        }
-
-      } else {
-        DCOUT("attr.type = " << attr_type_name);
-        ret.code = ParseResult::ResultCode::TypeMismatch;
-        ret.err = fmt::format("Property type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
-        return ret;
-      }
-    }
-  }
-
-  ret.code = ParseResult::ResultCode::Unmatched;
-  return ret;
-}
-
-// Allowed syntax:
-//   "token outputs:surface.connect = </path/to/conn/>"
-#if defined(__GNUC__) || defined(__clang__)
-__attribute__((unused))
-#endif
-static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
-  Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
-  TypedConnection<value::token> &target) /* out */
-{
-  ParseResult ret;
-  ret.code = ParseResult::ResultCode::InternalError;
-
-  if (prop_name.compare(name) == 0) {
-    if (table.count(name)) {
-      ret.code = ParseResult::ResultCode::AlreadyProcessed;
-      return ret;
-    }
-
-    DCOUT("is_attribute = " << prop.is_attribute());
-    DCOUT("is_attribute_connection = " << prop.is_attribute_connection());
-
-    // allow empty value
-    if (prop.is_empty()) {
-      target.set_empty();
-      target.metas() = prop.get_attribute().metas();
-      table.insert(prop_name);
-      ret.code = ParseResult::ResultCode::Success;
-      return ret;
-    } else if (prop.is_attribute_connection()) {
-      const Attribute &attr = prop.get_attribute();
-      if (attr.is_connection()) {
-        target.set(attr.connections());
-        target.metas() = prop.get_attribute().metas();
-
-        table.insert(prop_name);
-        ret.code = ParseResult::ResultCode::Success;
-        return ret;
-      } else {
-        ret.code = ParseResult::ResultCode::InternalError;
-        ret.err = "Property is invalid Attribute connection.";
-        return ret;
-      }
-    } else {
-      ret.code = ParseResult::ResultCode::InternalError;
-      ret.err = fmt::format("Property `{}` must be Attribute connection.", prop_name);
-      return ret;
-    }
-  }
-
-  ret.code = ParseResult::ResultCode::Unmatched;
-  return ret;
-}
-
-// Rel with single targetPath(or empty)
-#define PARSE_SINGLE_TARGET_PATH_RELATION(__table, __prop, __propname, __target) \
-  if (prop.first == __propname) { \
-    if (__table.count(__propname)) { \
-       continue; \
-    } \
-    if (!prop.second.is_relationship()) { \
-      PUSH_ERROR_AND_RETURN(fmt::format("Property `{}` must be a Relationship.", __propname)); \
-    } \
-    const Relationship &rel = prop.second.get_relationship(); \
-    if (rel.is_path()) { \
-      __target = rel; \
-      table.insert(prop.first); \
-      DCOUT("Added rel " << __propname); \
-      continue; \
-    } else if (rel.is_pathvector()) { \
-      if (rel.targetPathVector.size() == 1) { \
-        __target = rel; \
-        table.insert(prop.first); \
-        DCOUT("Added rel " << __propname); \
-        continue; \
-      } \
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` target is empty or has mutiple Paths. Must be single Path.", __propname)); \
-    } else if (!rel.has_value()) { \
-      /* define-only. accept  */ \
-      __target = rel; \
-      table.insert(prop.first); \
-      DCOUT("Added rel " << __propname); \
-    } else if (rel.is_blocked()) { \
-      __target = rel; \
-      table.insert(prop.first); \
-      DCOUT("Added ValueBlocked rel " << __propname); \
-    } else { \
-      PUSH_ERROR_AND_RETURN(fmt::format("Internal error. Property `{}` is not a valid Relationship.", __propname)); \
-    } \
-  }
-
-// Rel with targetPaths(single path or array of Paths)
-#define PARSE_TARGET_PATHS_RELATION(__table, __prop, __propname, __target) \
-  if (prop.first == __propname) { \
-    if (__table.count(__propname)) { \
-       continue; \
-    } \
-    if (!prop.second.is_relationship()) { \
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship", __propname)); \
-    } \
-    const Relationship &rel = prop.second.get_relationship(); \
-    __target = rel; \
-    table.insert(prop.first); \
-    DCOUT("Added rel " << __propname); \
-    continue; \
-  }
-
-
-#define PARSE_SHADER_TERMINAL_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
-  ParseResult ret = ParseShaderOutputTerminalAttribute(__table, __prop.first, __prop.second, __name, __target); \
-  if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
-    DCOUT("Added shader terminal attribute: " << __name); \
-    continue; /* got it */\
-  } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
-    /* go next */ \
-  } else { \
-    PUSH_ERROR_AND_RETURN(fmt::format("Parsing shader output property `{}` failed. Error: {}", __name, ret.err)); \
-  } \
-}
-
-#define PARSE_SHADER_INPUT_CONNECTION_PROPERTY(__table, __prop, __name, __klass, __target) { \
-  ParseResult ret = ParseShaderInputConnectionProperty(__table, __prop.first, __prop.second, __name, __target); \
-  if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
-    DCOUT("Added shader input connection: " << __name); \
-    continue; /* got it */\
-  } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
-    /* go next */ \
-  } else { \
-    PUSH_ERROR_AND_RETURN(fmt::format("Parsing shader property `{}` failed. Error: {}", __name, ret.err)); \
-  } \
-}
-
-// EnumHandler and CheckAllowedTokens templates removed.
-// Enum handling is now done via centralized handlers in enum-handlers.cc
-
-} // namespace
-
-#define PARSE_TYPED_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
-  ParseResult ret = ParseTypedAttribute(__table, __prop.first, __prop.second, __name, __target); \
-  if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
-    if (!ret.warn.empty()) { \
-      PUSH_WARN(ret.warn); \
-    } \
-    continue; /* got it */\
-  } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
-    /* go next */ \
-  } else { \
-    PUSH_ERROR_AND_RETURN(fmt::format("Parsing attribute `{}` failed. Error: {}", __name, ret.err)); \
-  } \
-}
-
-#define PARSE_TYPED_ATTRIBUTE_NOCONTINUE(__table, __prop, __name, __klass, __target) { \
-  ParseResult ret = ParseTypedAttribute(__table, __prop.first, __prop.second, __name, __target); \
-  if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
-    if (!ret.warn.empty()) { \
-      PUSH_WARN(ret.warn); \
-    } \
-    /* do nothing */ \
-  } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
-    /* go next */ \
-  } else { \
-    PUSH_ERROR_AND_RETURN(fmt::format("Parsing attribute `{}` failed. Error: {}", __name, ret.err)); \
-  } \
-}
-
-#define PARSE_EXTENT_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
-  ParseResult ret = ParseExtentAttribute(__table, __prop.first, __prop.second, __name, __target); \
-  if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
-    continue; /* got it */\
-  } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
-    /* go next */ \
-  } else { \
-    PUSH_ERROR_AND_RETURN(fmt::format("Parsing attribute `extent` failed. Error: {}", ret.err)); \
-  } \
-}
-
-// Use centralized enum handlers from enum-handlers.hh
-// These wrapper functions maintain backwards compatibility with existing macro usage
-#if defined(__GNUC__) || defined(__clang__)
-__attribute__((unused))
-#endif
-static nonstd::expected<Axis, std::string> AxisEnumHandler(const std::string &tok) {
-  return enum_handler::Axis(tok);
-}
-
-static nonstd::expected<Visibility, std::string> VisibilityEnumHandler(const std::string &tok) {
-  return enum_handler::Visibility(tok);
-}
-
-static nonstd::expected<Purpose, std::string> PurposeEnumHandler(const std::string &tok) {
-  return enum_handler::Purpose(tok);
-}
-
-static nonstd::expected<Orientation, std::string> OrientationEnumHandler(const std::string &tok) {
-  return enum_handler::Orientation(tok);
-}
-
-#if 1
-
-template<typename T, typename EnumTy>
-bool ParseUniformEnumProperty(
-  const std::string &prop_name,
-  bool strict_allowedToken_check,
-  EnumHandlerFun<EnumTy> enum_handler,
-  const Attribute &attr,
-  TypedAttributeWithFallback<T> *result,
-  std::string *warn = nullptr,
-  std::string *err = nullptr)
-{
-
-  if (!result) {
-    PUSH_ERROR_AND_RETURN("[Internal error] `result` arg is nullptr.");
-  }
-
-  if (attr.is_connection()) {
-    PUSH_ERROR_AND_RETURN_F("Attribute connection is not supported in TinyUSDZ for built-in 'enum' token attribute: {}", prop_name);
-  }
-
-
-  if (attr.variability() == Variability::Uniform) {
-    // scalar
-
-    if (attr.is_blocked()) {
-      result->set_blocked(true);
-      return true;
-    }
-
-    if (attr.get_var().is_timesamples()) {
-      PUSH_ERROR_AND_RETURN_F("Attribute `{}` is defined as `uniform` variability but TimeSample value is assigned.", prop_name);
-    }
-
-    if (auto tok = attr.get_value<value::token>()) {
-      auto e = enum_handler(tok.value().str());
-      if (e) {
-        (*result) = e.value();
-        return true;
-      } else if (strict_allowedToken_check) {
-        PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
-      } else {
-        PUSH_WARN_F("Attribute `{}`: `{}` is not an allowed token. Ignore it.", prop_name, tok.value().str());
-        result->set_value_empty();
-        return true;
-      }
-    } else {
-      PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
-    }
-
-
-  } else {
-    // uniform or TimeSamples
-    if (attr.get_var().is_scalar()) {
-
-      if (attr.is_blocked()) {
-        result->set_blocked(true);
-        return true;
-      }
-
-      if (auto tok = attr.get_value<value::token>()) {
-        auto e = enum_handler(tok.value().str());
-        if (e) {
-          (*result) = e.value();
-          return true;
-        } else if (strict_allowedToken_check) {
-          PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
-        } else {
-          PUSH_WARN_F("Attribute `{}`: `{}` is not an allowed token. Ignore it.", prop_name, tok.value().str());
-          result->set_value_empty();
-          return true;
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
-      }
-    } else if (attr.get_var().is_timesamples()) {
-      PUSH_ERROR_AND_RETURN_F("Attribute `{}` is uniform variability, but TimeSampled value is authored.",
- prop_name);
-
-    } else {
-      PUSH_ERROR_AND_RETURN_F("Internal error. Attribute `{}` is invalid", prop_name);
-    }
-
-  }
-
-  return false;
-}
-
-// Animatable enum tokens
-template<typename T, typename EnumTy>
-bool ParseTimeSampledEnumProperty(
-  const std::string &prop_name,
-  bool strict_allowedToken_check,
-  EnumHandlerFun<EnumTy> enum_handler,
-  const Attribute &attr,
-  TypedAttributeWithFallback<Animatable<T>> *result,
-  std::string *warn = nullptr,
-  std::string *err = nullptr)
-{
-
-  if (!result) {
-    PUSH_ERROR_AND_RETURN("[Internal error] `result` arg is nullptr.");
-  }
-
-  if (attr.is_connection()) {
-    PUSH_ERROR_AND_RETURN_F("Attribute connection is not supported in TinyUSDZ for built-in 'enum' token attribute: {}", prop_name);
-  }
-
-
-  if (attr.variability() == Variability::Uniform) {
-    // scalar
-
-    if (attr.is_blocked()) {
-      result->set_blocked(true);
-      return true;
-    }
-
-    if (attr.get_var().is_timesamples()) {
-      PUSH_ERROR_AND_RETURN_F("Attribute `{}` is defined as `uniform` variability but TimeSample value is assigned.", prop_name);
-    }
-
-    if (auto tok = attr.get_value<value::token>()) {
-      auto e = enum_handler(tok.value().str());
-      if (e) {
-        (*result) = e.value();
-        return true;
-      } else if (strict_allowedToken_check) {
-        PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
-      } else {
-        PUSH_WARN_F("Attribute `{}`: `{}` is not an allowed token. Ignore it.", prop_name, tok.value().str());
-        result->set_value_empty();
-        return true;
-      }
-    } else {
-      PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
-    }
-
-
-  } else {
-    // default and/or TimeSamples
-    bool has_default{false};
-    bool has_timesamples{false};
-
-    Animatable<T> animatable_value;
-
-    if (attr.is_blocked()) {
-      result->set_blocked(true);
-      has_default = true;
-      //return true;
-    }
-
-    if (attr.get_var().has_default()) {
-      DCOUT("has default.");
-
-      if (auto tok = attr.get_value<value::token>()) {
-        auto e = enum_handler(tok.value().str());
-        if (e) {
-          animatable_value.set_default(e.value());
-          has_default = true;
-          //return true;
-
-        } else if (strict_allowedToken_check) {
-          PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
-        } else {
-          PUSH_WARN_F("Attribute `{}`: `{}` is not an allowed token. Ignore it.", prop_name, tok.value().str());
-          //result->set_value_empty();
-          //return true;
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
-      }
-    }
-
-    if (attr.get_var().has_timesamples()) {
-      DCOUT("has timesamples.");
-      size_t n = attr.get_var().num_timesamples();
-
-      for (size_t i = 0; i < n; i++) {
-
-        double sample_time{value::TimeCode::Default()};
-
-        if (auto pv = attr.get_var().get_ts_time(i)) {
-          sample_time = pv.value();
-        } else {
-          // This should not happen.
-          PUSH_ERROR_AND_RETURN_F("Internal error. Failed to get timecode for `{}`", prop_name);
-        }
-
-        if (auto pv = attr.get_var().is_ts_value_blocked(i)) {
-          if (pv.value() == true) {
-            animatable_value.add_blocked_sample(sample_time);
-            continue;
-          }
-        } else {
-          // This should not happen.
-          PUSH_ERROR_AND_RETURN_F("Internal error. Failed to get valueblock info for `{}`", prop_name);
-        }
-
-        if (auto tok = attr.get_var().get_ts_value<value::token>(i)) {
-          auto e = enum_handler(tok.value().str());
-          if (e) {
-            animatable_value.add_sample(sample_time, e.value());
-          } else if (strict_allowedToken_check) {
-            PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
-          } else {
-            PUSH_WARN_F("Attribute `{}`: `{}` at {}'th timesample is not an allowed token. Ignore it.", prop_name, i, tok.value().str());
-            continue;
-          }
-        } else {
-          PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}`'s {}'th timesample must be type `token`, but got type `{}`", prop_name, i, attr.type_name());
-        }
-      }
-
-      has_timesamples = true;
-      //return true;
-
-    }
-
-    if (has_default || has_timesamples) {
-      result->set_value(animatable_value);
-    }
-
-    return true;
-
-  }
-
-  return false;
-}
-#endif
-
-
-// Unified enum property parsing macro
-// __parser_fn should be ParseUniformEnumProperty or ParseTimeSampledEnumProperty
-#define PARSE_ENUM_PROPERTY_IMPL(__table, __prop, __name, __enum_ty, __enum_handler, __klass, \
-                                 __target, __strict_check, __parser_fn) {        \
-  if (__prop.first == __name) {                                                  \
-    if (__table.count(__name)) { continue; }                                     \
-    const Attribute &attr = __prop.second.get_attribute();                       \
-    if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) && \
-        __prop.second.is_attribute() && __prop.second.is_empty()) {              \
-      PUSH_WARN("No value assigned to `" << __name << "` token attribute. Set default token value."); \
-      __target.metas() = std::move(__prop.second.attribute().metas());           \
-      __table.insert(__name);                                                    \
-      continue;                                                                  \
-    }                                                                            \
-    std::function<nonstd::expected<__enum_ty, std::string>(const std::string &)> fun = __enum_handler; \
-    if (!__parser_fn(__name, __strict_check, fun, attr, &__target, warn, err)) { \
-      return false;                                                              \
-    }                                                                            \
-    __target.metas() = std::move(__prop.second.attribute().metas());             \
-    __table.insert(__name);                                                      \
-    continue;                                                                    \
-  }                                                                              \
-}
-
-// Convenience wrappers for backward compatibility
-#define PARSE_UNIFORM_ENUM_PROPERTY(__table, __prop, __name, __enum_ty, __enum_handler, __klass, \
-                                    __target, __strict_check) \
-  PARSE_ENUM_PROPERTY_IMPL(__table, __prop, __name, __enum_ty, __enum_handler, __klass, \
-                           __target, __strict_check, ParseUniformEnumProperty)
-
-#define PARSE_TIMESAMPLED_ENUM_PROPERTY(__table, __prop, __name, __enum_ty, __enum_handler, __klass, \
-                                        __target, __strict_check) \
-  PARSE_ENUM_PROPERTY_IMPL(__table, __prop, __name, __enum_ty, __enum_handler, __klass, \
-                           __target, __strict_check, ParseTimeSampledEnumProperty)
-
-// NOCONTINUE version for use within if-else branches where we need to do additional work after parsing
-#define PARSE_UNIFORM_ENUM_PROPERTY_NOCONTINUE(__table, __prop, __name, __enum_ty, __enum_handler, __klass, \
-                                               __target, __strict_check) {                              \
-  if (__prop.first == __name) {                                                                         \
-    if (!__table.count(__name)) {                                                                       \
-      const Attribute &attr = __prop.second.get_attribute();                                            \
-      if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) &&          \
-          __prop.second.is_attribute() && __prop.second.is_empty()) {                                   \
-        PUSH_WARN("No value assigned to `" << __name << "` token attribute. Set default token value."); \
-        __target.metas() = std::move(__prop.second.attribute().metas());                                \
-        __table.insert(__name);                                                                         \
-      } else {                                                                                          \
-        std::function<nonstd::expected<__enum_ty, std::string>(const std::string &)> fun = __enum_handler; \
-        if (!ParseUniformEnumProperty(__name, __strict_check, fun, attr, &__target, warn, err)) {       \
-          return false;                                                                                 \
-        }                                                                                               \
-        __target.metas() = std::move(__prop.second.attribute().metas());                                \
-        __table.insert(__name);                                                                         \
-      }                                                                                                 \
-    }                                                                                                   \
-  }                                                                                                     \
-}
-
-
-// Add custom property(including property with "primvars" prefix)
-// Please call this macro after listing up all predefined property with
-// `PARSE_PROPERTY` and `PARSE_***_ENUM_PROPERTY`
-#define ADD_PROPERTY(__table, __prop, __klass, __dst) {        \
-  /* Check if the property name is a predefined property */  \
-  if (!__table.count(__prop.first)) {                        \
-    DCOUT("custom property added: name = " << __prop.first); \
-    __dst[__prop.first] = std::move(__prop.second);          \
-    __table.insert(__prop.first);                            \
-  } \
- }
-
-// This code path should not be reached though.
-#define PARSE_PROPERTY_END_MAKE_ERROR(__table, __prop) {                     \
-  if (!__table.count(__prop.first)) {                              \
-    PUSH_ERROR_AND_RETURN("Unsupported/unimplemented property: " + \
-                          __prop.first);                           \
-  } \
- }
-
-// This code path should not be reached though.
-#define PARSE_PROPERTY_END_MAKE_WARN(__table, __prop) { \
-  if (!__table.count(__prop.first)) { \
-    PUSH_WARN("Unsupported/unimplemented property: " + __prop.first); \
-   } \
- }
 
 static bool ReconstructXformOpFromToken(
 
@@ -1248,13 +183,13 @@ static bool ReconstructXformOpFromToken(
         if (it == properties.end()) {
           PUSH_ERROR_AND_RETURN("Property `" + tok + "` not found.");
         }
-        const Attribute &attr = it->second.get_attribute();
-
-        // Store connections if present
-        // Note: An attribute can have both connections AND values/timeSamples
-        if (attr.has_connections()) {
-          op.set_connections(attr.connections());
+        if (it->second.is_attribute_connection()) {
+          PUSH_ERROR_AND_RETURN(
+              "Connection(.connect) for xformOp attribute is not yet supported: "
+              "`" +
+              tok + "`");
         }
+        const Attribute &attr = it->second.get_attribute();
 
         // Check `xformOp` namespace
         if (auto xfm = SplitXformOpToken(tok, kTransform)) {
@@ -1284,17 +219,6 @@ static bool ReconstructXformOpFromToken(
             } else {
               PUSH_ERROR_AND_RETURN(
                   "`xformOp:transform` must be type `matrix4d`, but got type `" +
-                  attr.type_name() + "`.");
-            }
-          } else if (op.has_connections() && !op.has_timesamples()) {
-            // Connection-only: set dummy value for type info
-            if (attr.type_id() == value::TypeTraits<value::matrix4d>::type_id()) {
-              value::matrix4d dummy{value::matrix4d::identity()};
-              op.set_value(dummy);
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:transform` must be type `matrix4d`, but got "
-                  "type `" +
                   attr.type_name() + "`.");
             }
           }
@@ -1334,20 +258,6 @@ static bool ReconstructXformOpFromToken(
                   "got type `" +
                   attr.type_name() + "`.");
             }
-          } else if (op.has_connections() && !op.has_timesamples()) {
-            // Connection-only: set dummy value for type info
-            if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
-              value::double3 dummy{0.0, 0.0, 0.0};
-              op.set_value(dummy);
-            } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
-              value::float3 dummy{0.0f, 0.0f, 0.0f};
-              op.set_value(dummy);
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:translate` must be type `double3` or `float3`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
           }
         } else if (auto scale = SplitXformOpToken(tok, kScale)) {
           op.op_type = XformOp::OpType::Scale;
@@ -1378,20 +288,6 @@ static bool ReconstructXformOpFromToken(
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<value::float3>()) {
               op.set_value(pvf.value());
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:scale` must be type `double3` or `float3`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
-          } else if (op.has_connections() && !op.has_timesamples()) {
-            // Connection-only: set dummy value for type info
-            if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
-              value::double3 dummy{1.0, 1.0, 1.0};
-              op.set_value(dummy);
-            } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
-              value::float3 dummy{1.0f, 1.0f, 1.0f};
-              op.set_value(dummy);
             } else {
               PUSH_ERROR_AND_RETURN(
                   "`xformOp:scale` must be type `double3` or `float3`, but got "
@@ -1434,20 +330,6 @@ static bool ReconstructXformOpFromToken(
                   "type `" +
                   attr.type_name() + "`.");
             }
-          } else if (op.has_connections() && !op.has_timesamples()) {
-            // Connection-only: set dummy value for type info
-            if (attr.type_id() == value::TypeTraits<double>::type_id()) {
-              double dummy(0.0);
-              op.set_value(dummy);
-            } else if (attr.type_id() == value::TypeTraits<float>::type_id()) {
-              float dummy(0.0f);
-              op.set_value(dummy);
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:rotateX` must be type `double` or `float`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
           }
         } else if (auto rotY = SplitXformOpToken(tok, kRotateY)) {
           op.op_type = XformOp::OpType::RotateY;
@@ -1478,20 +360,6 @@ static bool ReconstructXformOpFromToken(
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<float>()) {
               op.set_value(pvf.value());
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:rotateY` must be type `double` or `float`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
-          } else if (op.has_connections() && !op.has_timesamples()) {
-            // Connection-only: set dummy value for type info
-            if (attr.type_id() == value::TypeTraits<double>::type_id()) {
-              double dummy(0.0);
-              op.set_value(dummy);
-            } else if (attr.type_id() == value::TypeTraits<float>::type_id()) {
-              float dummy(0.0f);
-              op.set_value(dummy);
             } else {
               PUSH_ERROR_AND_RETURN(
                   "`xformOp:rotateY` must be type `double` or `float`, but got "
@@ -1534,20 +402,6 @@ static bool ReconstructXformOpFromToken(
                   "type `" +
                   attr.type_name() + "`.");
             }
-          } else if (op.has_connections() && !op.has_timesamples()) {
-            // Connection-only: set dummy value for type info
-            if (attr.type_id() == value::TypeTraits<double>::type_id()) {
-              double dummy(0.0);
-              op.set_value(dummy);
-            } else if (attr.type_id() == value::TypeTraits<float>::type_id()) {
-              float dummy(0.0f);
-              op.set_value(dummy);
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:rotateZ` must be type `double` or `float`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
           }
         } else if (auto rotateXYZ = SplitXformOpToken(tok, kRotateXYZ)) {
           op.op_type = XformOp::OpType::RotateXYZ;
@@ -1578,20 +432,6 @@ static bool ReconstructXformOpFromToken(
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<value::float3>()) {
               op.set_value(pvf.value());
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:rotateXYZ` must be type `double3` or `float3`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
-          } else if (op.has_connections() && !op.has_timesamples()) {
-            // Connection-only: set dummy value for type info
-            if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
-              value::double3 dummy{0.0, 0.0, 0.0};
-              op.set_value(dummy);
-            } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
-              value::float3 dummy{0.0f, 0.0f, 0.0f};
-              op.set_value(dummy);
             } else {
               PUSH_ERROR_AND_RETURN(
                   "`xformOp:rotateXYZ` must be type `double3` or `float3`, but got "
@@ -1634,20 +474,6 @@ static bool ReconstructXformOpFromToken(
                   "type `" +
                   attr.type_name() + "`.");
             }
-          } else if (op.has_connections() && !op.has_timesamples()) {
-            // Connection-only: set dummy value for type info
-            if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
-              value::double3 dummy{0.0, 0.0, 0.0};
-              op.set_value(dummy);
-            } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
-              value::float3 dummy{0.0f, 0.0f, 0.0f};
-              op.set_value(dummy);
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:rotateXZY` must be type `double3` or `float3`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
           }
         } else if (auto rotateYXZ = SplitXformOpToken(tok, kRotateYXZ)) {
           op.op_type = XformOp::OpType::RotateYXZ;
@@ -1678,20 +504,6 @@ static bool ReconstructXformOpFromToken(
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<value::float3>()) {
               op.set_value(pvf.value());
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:rotateYXZ` must be type `double3` or `float3`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
-          } else if (op.has_connections() && !op.has_timesamples()) {
-            // Connection-only: set dummy value for type info
-            if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
-              value::double3 dummy{0.0, 0.0, 0.0};
-              op.set_value(dummy);
-            } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
-              value::float3 dummy{0.0f, 0.0f, 0.0f};
-              op.set_value(dummy);
             } else {
               PUSH_ERROR_AND_RETURN(
                   "`xformOp:rotateYXZ` must be type `double3` or `float3`, but got "
@@ -1734,20 +546,6 @@ static bool ReconstructXformOpFromToken(
                   "type `" +
                   attr.type_name() + "`.");
             }
-          } else if (op.has_connections() && !op.has_timesamples()) {
-            // Connection-only: set dummy value for type info
-            if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
-              value::double3 dummy{0.0, 0.0, 0.0};
-              op.set_value(dummy);
-            } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
-              value::float3 dummy{0.0f, 0.0f, 0.0f};
-              op.set_value(dummy);
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:rotateYZX` must be type `double3` or `float3`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
           }
         } else if (auto rotateZXY = SplitXformOpToken(tok, kRotateZXY)) {
           op.op_type = XformOp::OpType::RotateZXY;
@@ -1784,20 +582,6 @@ static bool ReconstructXformOpFromToken(
                   "type `" +
                   attr.type_name() + "`.");
             }
-          } else if (op.has_connections() && !op.has_timesamples()) {
-            // Connection-only: set dummy value for type info
-            if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
-              value::double3 dummy{0.0, 0.0, 0.0};
-              op.set_value(dummy);
-            } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
-              value::float3 dummy{0.0f, 0.0f, 0.0f};
-              op.set_value(dummy);
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:rotateZXY` must be type `double3` or `float3`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
           }
         } else if (auto rotateZYX = SplitXformOpToken(tok, kRotateZYX)) {
           op.op_type = XformOp::OpType::RotateZYX;
@@ -1828,20 +612,6 @@ static bool ReconstructXformOpFromToken(
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<value::float3>()) {
               op.set_value(pvf.value());
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:rotateZYX` must be type `double3` or `float3`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
-          } else if (op.has_connections() && !op.has_timesamples()) {
-            // Connection-only: set dummy value for type info
-            if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
-              value::double3 dummy{0.0, 0.0, 0.0};
-              op.set_value(dummy);
-            } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
-              value::float3 dummy{0.0f, 0.0f, 0.0f};
-              op.set_value(dummy);
             } else {
               PUSH_ERROR_AND_RETURN(
                   "`xformOp:rotateZYX` must be type `double3` or `float3`, but got "
@@ -1888,24 +658,6 @@ static bool ReconstructXformOpFromToken(
                   "type `" +
                   attr.type_name() + "`.");
             }
-          } else if (op.has_connections() && !op.has_timesamples()) {
-            // Connection-only: set dummy value for type info
-            if (attr.type_id() == value::TypeTraits<value::quatf>::type_id()) {
-              value::quatf q;
-              q.real = 1.0f;
-              q.imag = {0.0f, 0.0f, 0.0f};
-              op.set_value(q);
-            } else if (attr.type_id() == value::TypeTraits<value::quatd>::type_id()) {
-              value::quatd q;
-              q.real = 1.0;
-              q.imag = {0.0, 0.0, 0.0};
-              op.set_value(q);
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:orient` must be type `quatf` or `quatd`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
           }
         } else {
           PUSH_ERROR_AND_RETURN(
@@ -1932,9 +684,9 @@ bool ReconstructXformOpsFromProperties(
     return true;
   }
 
+
   // Lookup xform values from `xformOpOrder`
-  // Note: xformOp connections are stored but not evaluated here - evaluation
-  // requires Stage access to resolve connection targets at runtime.
+  // TODO: TimeSamples, Connection
   if (properties.count("xformOpOrder")) {
     // array of string
     auto prop = properties.at("xformOpOrder");
@@ -2296,14 +1048,1007 @@ bool ReconstructPrim<Scope>(
   return true;
 }
 
-// NOTE: Geometry, Skeleton, Light, and Shader prims are now in separate split files:
-// - prim-reconstruct-geom.cc
-// - prim-reconstruct-skel.cc
-// - prim-reconstruct-light.cc
-// - prim-reconstruct-shader.cc
+template <>
+bool ReconstructPrim<SkelRoot>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    SkelRoot *root,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+
+  (void)references;
+  (void)options;
+
+  std::set<std::string> table;
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &root->xformOps, err)) {
+    return false;
+  }
+
+  // SkelRoot is something like a grouping node, having 1 Skeleton and possibly
+  // multiple Prim hierarchy containing GeomMesh.
+  // SkelBindingAPI properties (skel:animationSource, skel:skeleton) can be
+  // authored on SkelRoot and inherited by child prims per the USD spec.
+
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
+
+    // SkelBindingAPI: animationSource relationship
+    if (prop.first == kSkelAnimationSource) {
+      if (prop.second.is_relationship()) {
+        const Relationship &rel = prop.second.get_relationship();
+        if (rel.is_path() || rel.is_pathvector()) {
+          root->animationSource = rel;
+          table.insert(kSkelAnimationSource);
+        } else {
+          PUSH_WARN("`" << kSkelAnimationSource << "` target must be Path.");
+        }
+      }
+    }
+
+    // SkelBindingAPI: skeleton relationship
+    if (prop.first == kSkelSkeleton) {
+      if (prop.second.is_relationship()) {
+        const Relationship &rel = prop.second.get_relationship();
+        if (rel.is_path() || rel.is_pathvector()) {
+          root->skeleton = rel;
+          table.insert(kSkelSkeleton);
+        } else {
+          PUSH_WARN("`" << kSkelSkeleton << "` target must be Path.");
+        }
+      }
+    }
+
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, SkelRoot,
+                   root->visibility, options.strict_allowedToken_check)
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, SkelRoot,
+                       root->purpose, options.strict_allowedToken_check)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, SkelRoot, root->extent)
+    ADD_PROPERTY(table, prop, SkelRoot, root->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim<Skeleton>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    Skeleton *skel,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+
+  (void)warn;
+  (void)references;
+
+  std::set<std::string> table;
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &skel->xformOps, err)) {
+    return false;
+  }
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ Skeleton
+#define PRIM_PTR_ skel
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+  for (auto &prop : properties) {
+
+    // SkelBindingAPI: animationSource relationship
+    if (prop.first == kSkelAnimationSource) {
+      // Must be relation of type Path.
+      if (prop.second.is_relationship() && prop.second.get_relationship().is_path()) {
+        const Relationship &rel = prop.second.get_relationship();
+        if (rel.is_path()) {
+          skel->animationSource = rel;
+          table.insert(kSkelAnimationSource);
+        } else {
+          PUSH_ERROR_AND_RETURN("`" << kSkelAnimationSource << "` target must be Path.");
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "`" << kSkelAnimationSource << "` must be a Relationship with Path target.");
+      }
+    }
+
+    SKELETON_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, Skeleton,
+                   skel->visibility, options.strict_allowedToken_check)
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "purpose", Purpose, PurposeEnumHandler, Skeleton,
+                       skel->purpose, options.strict_allowedToken_check)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", Skeleton, skel->extent)
+    ADD_PROPERTY(table, prop, Skeleton, skel->props)
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
+  }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim<SkelAnimation>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    SkelAnimation *skelanim,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+
+  (void)spec;
+  (void)warn;
+  (void)references;
+  (void)options;
+
+  std::set<std::string> table;
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ SkelAnimation
+#define PRIM_PTR_ skelanim
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+  for (auto &prop : properties) {
+    SKEL_ANIMATION_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    ADD_PROPERTY(table, prop, SkelAnimation, skelanim->props)
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
+  }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim<BlendShape>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    BlendShape *bs,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  (void)spec;
+  (void)warn;
+  (void)references;
+  (void)options;
+
+  DCOUT("Reconstruct BlendShape");
+
+  std::set<std::string> table;
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ BlendShape
+#define PRIM_PTR_ bs
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+  for (auto &prop : properties) {
+    BLEND_SHAPE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    ADD_PROPERTY(table, prop, BlendShape, bs->props)
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
+  }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    GPrim *gprim,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  (void)gprim;
+  (void)err;
+
+  (void)references;
+  (void)properties;
+
+  std::set<std::string> table;
+  if (!ReconstructGPrimProperties(spec, table, properties, gprim, warn, err, options.strict_allowedToken_check)) {
+    return false;
+  }
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    GeomBasisCurves *curves,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  (void)references;
+
+  DCOUT("GeomBasisCurves");
+
+  // Use centralized enum handlers
+  auto BasisHandler = enum_handler::BasisCurvesBasis;
+  auto TypeHandler = enum_handler::BasisCurvesType;
+  auto WrapHandler = enum_handler::BasisCurvesWrap;
+
+  std::set<std::string> table;
+  if (!ReconstructGPrimProperties(spec, table, properties, curves, warn, err, options.strict_allowedToken_check)) {
+    return false;
+  }
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomBasisCurves
+#define PRIM_PTR_ curves
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
+    GEOM_BASIS_CURVES_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    GEOM_BASIS_CURVES_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
+    ADD_PROPERTY(table, prop, GeomBasisCurves, curves->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    GeomNurbsCurves *curves,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  (void)references;
+  (void)options;
+
+  std::set<std::string> table;
+  if (!ReconstructGPrimProperties(spec, table, properties, curves, warn, err, options.strict_allowedToken_check)) {
+    return false;
+  }
+
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
+    PARSE_TYPED_ATTRIBUTE(table, prop, "curveVertexCounts", GeomNurbsCurves,
+                         curves->curveVertexCounts)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "points", GeomNurbsCurves, curves->points)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "velocities", GeomNurbsCurves,
+                          curves->velocities)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "normals", GeomNurbsCurves,
+                  curves->normals)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "accelerations", GeomNurbsCurves,
+                 curves->accelerations)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "widths", GeomNurbsCurves, curves->widths)
+
+    //
+    PARSE_TYPED_ATTRIBUTE(table, prop, "order", GeomNurbsCurves, curves->order)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "knots", GeomNurbsCurves, curves->knots)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "ranges", GeomNurbsCurves, curves->ranges)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "pointWeights", GeomNurbsCurves, curves->pointWeights)
+
+    ADD_PROPERTY(table, prop, GeomBasisCurves, curves->props)
+
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
+// ============================================================================
+// Generic macro for light prim reconstruction
+// ============================================================================
+// Consolidates the common pattern for all light types:
+// SphereLight, RectLight, DiskLight, CylinderLight, DistantLight, GeometryLight, DomeLight
+//
+// IMPORTANT: Caller must define PRIM_CLASS_ and PRIM_PTR_ macros before calling
+//            this macro, and undef them afterward. These are required by
+//            EXPAND_TYPED_ATTR macros.
+//
+// Parameters:
+//   LightClass: The light class (e.g., SphereLight, RectLight)
+//   light_ptr: Pointer to the light instance
+//   TYPED_ATTRS: Property table macro (e.g., SPHERE_LIGHT_TYPED_ATTRS)
+//   COMMON_ATTRS: Light common attrs macro (LIGHT_COMMON_ATTRS_WITH_SHAPING or LIGHT_COMMON_ATTRS_NO_SHAPING)
+//   EXTENT_HANDLING: Either PARSE_EXTENT_ATTRIBUTE(...) or /* no extent */
+//   SPECIAL_HANDLING: Special attribute handling for exceptions like RectLight's texture:file or /* no special handling */
+#define RECONSTRUCT_LIGHT_PRIM_BODY(LightClass, light_ptr, TYPED_ATTRS, COMMON_ATTRS, EXTENT_HANDLING, SPECIAL_HANDLING) \
+  (void)references; \
+  \
+  std::set<std::string> table; \
+  \
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light_ptr->xformOps, err)) { \
+    return false; \
+  } \
+  \
+  for (auto &prop : properties) { \
+    SPECIAL_HANDLING \
+    TYPED_ATTRS(EXPAND_TYPED_ATTR) \
+    COMMON_ATTRS(EXPAND_TYPED_ATTR) \
+    EXTENT_HANDLING \
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, LightClass, \
+                       light_ptr->visibility, options.strict_allowedToken_check) \
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, LightClass, \
+                       light_ptr->purpose, options.strict_allowedToken_check) \
+    ADD_PROPERTY(table, prop, LightClass, light_ptr->props) \
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop) \
+  } \
+  \
+  return true;
+
+template <>
+bool ReconstructPrim<SphereLight>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    SphereLight *light,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ SphereLight
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  RECONSTRUCT_LIGHT_PRIM_BODY(SphereLight, light, SPHERE_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_WITH_SHAPING,
+                              PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, SphereLight, light->extent),
+                              /* no special handling */)
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<RectLight>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    RectLight *light,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ RectLight
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  // Special case: texture:file uses UsdUVTexture type
+  RECONSTRUCT_LIGHT_PRIM_BODY(RectLight, light, RECT_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_WITH_SHAPING,
+                              PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, RectLight, light->extent),
+                              PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:texture:file", UsdUVTexture, light->file))
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<DiskLight>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    DiskLight *light,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ DiskLight
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  RECONSTRUCT_LIGHT_PRIM_BODY(DiskLight, light, DISK_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_WITH_SHAPING,
+                              PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, DiskLight, light->extent),
+                              /* no special handling */)
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<CylinderLight>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    CylinderLight *light,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ CylinderLight
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  RECONSTRUCT_LIGHT_PRIM_BODY(CylinderLight, light, CYLINDER_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_WITH_SHAPING,
+                              PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, CylinderLight, light->extent),
+                              /* no special handling */)
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<DistantLight>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    DistantLight *light,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ DistantLight
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  RECONSTRUCT_LIGHT_PRIM_BODY(DistantLight, light, DISTANT_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_NO_SHAPING,
+                              /* no extent */,
+                              /* no special handling */)
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<GeometryLight>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    GeometryLight *light,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeometryLight
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  RECONSTRUCT_LIGHT_PRIM_BODY(GeometryLight, light, GEOMETRY_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_NO_SHAPING,
+                              /* no extent */,
+                              /* no special handling */)
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<PortalLight>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    PortalLight *light,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ PortalLight
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  RECONSTRUCT_LIGHT_PRIM_BODY(PortalLight, light, GEOMETRY_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_NO_SHAPING,
+                              /* no extent */,
+                              /* no special handling */)
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<DomeLight>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    DomeLight *light,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ DomeLight
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  DCOUT("Implement DomeLight");
+  RECONSTRUCT_LIGHT_PRIM_BODY(DomeLight, light, DOME_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_NO_SHAPING,
+                              /* no extent */,
+                              /* no special handling */)
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+// ============================================================================
+// Generic macro for simple geometry prim reconstruction
+// ============================================================================
+// Consolidates the common pattern for GeomSphere, GeomCone, GeomCylinder,
+// GeomCapsule, GeomCube: ReconstructGPrimProperties + property loop
+//
+// IMPORTANT: Caller must define PRIM_CLASS_ and PRIM_PTR_ macros before calling
+//            this macro, and undef them afterward. These are required by
+//            EXPAND_TYPED_ATTR and EXPAND_UNIFORM_ENUM macros.
+//
+// Parameters:
+//   PrimClass: The geometry class (e.g., GeomSphere, GeomCone)
+//   prim_ptr: Pointer to the prim instance
+//   TYPED_ATTRS: Property table macro (e.g., GEOM_SPHERE_TYPED_ATTRS)
+//   ENUM_EXPANSION: Enum handling macro call or empty
+//                   - For shapes without enums: /* empty */
+//                   - For shapes with enums: GEOM_XXX_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
+#define RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(PrimClass, prim_ptr, TYPED_ATTRS, ENUM_EXPANSION) \
+  (void)references; \
+  \
+  std::set<std::string> table; \
+  if (!ReconstructGPrimProperties(spec, table, properties, prim_ptr, warn, err, \
+                                   options.strict_allowedToken_check)) { \
+    return false; \
+  } \
+  \
+  for (auto &prop : properties) { \
+    TYPED_ATTRS(EXPAND_TYPED_ATTR) \
+    ENUM_EXPANSION \
+    ADD_PROPERTY(table, prop, PrimClass, prim_ptr->props) \
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop) \
+  } \
+  \
+  return true;
+
+template <>
+bool ReconstructPrim<GeomSphere>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    GeomSphere *sphere,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  DCOUT("Reconstruct Sphere.");
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomSphere
+#define PRIM_PTR_ sphere
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomSphere, sphere, GEOM_SPHERE_TYPED_ATTRS, /* no enums */)
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<GeomPoints>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    GeomPoints *points,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+
+  (void)references;
+
+  DCOUT("Reconstruct Points.");
+
+  std::set<std::string> table;
+  if (!ReconstructGPrimProperties(spec, table, properties, points, warn, err, options.strict_allowedToken_check)) {
+    return false;
+  }
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomPoints
+#define PRIM_PTR_ points
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
+    DCOUT("prop: " << prop.first);
+    GEOM_POINTS_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    ADD_PROPERTY(table, prop, GeomPoints, points->props)
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
+  }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim<GeomCone>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    GeomCone *cone,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomCone
+#define PRIM_PTR_ cone
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomCone, cone, GEOM_CONE_TYPED_ATTRS,
+                                     GEOM_CONE_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM))
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<GeomCylinder>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    GeomCylinder *cylinder,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomCylinder
+#define PRIM_PTR_ cylinder
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomCylinder, cylinder, GEOM_CYLINDER_TYPED_ATTRS,
+                                     GEOM_CYLINDER_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM))
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<GeomCapsule>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    GeomCapsule *capsule,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomCapsule
+#define PRIM_PTR_ capsule
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomCapsule, capsule, GEOM_CAPSULE_TYPED_ATTRS,
+                                     GEOM_CAPSULE_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM))
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<GeomCube>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    GeomCube *cube,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  // pxrUSD says... "If you author size you must also author extent."
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomCube
+#define PRIM_PTR_ cube
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomCube, cube, GEOM_CUBE_TYPED_ATTRS, /* no enums */)
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<GeomMesh>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    GeomMesh *mesh,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+
+  (void)references;
+
+  DCOUT("GeomMesh");
+
+  // Use centralized enum handlers (aliased for macro expansion)
+  auto SubdivisionSchemeHandler = enum_handler::SubdivisionScheme;
+  auto InterpolateBoundaryHandler = enum_handler::InterpolateBoundary;
+  auto FaceVaryingLinearInterpolationHandler = enum_handler::FaceVaryingLinearInterpolation;
+  auto FamilyTypeHandler = enum_handler::FamilyType;
+
+  std::set<std::string> table;
+  if (!ReconstructGPrimProperties(spec, table, properties, mesh, warn, err, options.strict_allowedToken_check)) {
+    return false;
+  }
+
+  // Define context for property table expansion macros
+  // (suppress unused-macros warning since these are used inside X-macro expansion)
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomMesh
+#define PRIM_PTR_ mesh
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+  for (auto &prop : properties) {
+    DCOUT("GeomMesh prop: " << prop.first);
+
+    // Relations (using property table)
+    GEOM_MESH_RELATIONS(EXPAND_SINGLE_REL, EXPAND_MULTI_REL)
+
+    // Typed attributes (using property table)
+    GEOM_MESH_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+
+    // Skel-related typed attributes
+    GEOM_MESH_SKEL_ATTRS(EXPAND_TYPED_ATTR)
+
+    // Enum properties (using property table)
+    GEOM_MESH_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
+    GEOM_MESH_TIMESAMPLED_ENUMS(EXPAND_TIMESAMPLED_ENUM)
+
+    // Special handling: subsetFamily for GeomSubset (cannot be table-driven)
+    if (startsWith(prop.first, "subsetFamily")) {
+      // uniform subsetFamily::<FAMILYNAME>:familyType = ...
+      std::vector<std::string> names = split(prop.first, ":");
+
+      if ((names.size() == 3) &&
+          (names[0] == "subsetFamily") &&
+          (names[2] == "familyType")) {
+
+        if (table.count(prop.first)) {
+          // Already processed
+        } else if ((prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) &&
+                   prop.second.is_attribute() &&
+                   !prop.second.is_empty()) {
+          // Parse the token enum value
+          const Attribute &attr = prop.second.get_attribute();
+          TypedAttributeWithFallback<GeomSubset::FamilyType> familyType{GeomSubset::FamilyType::Unrestricted};
+          std::function<nonstd::expected<GeomSubset::FamilyType, std::string>(const std::string &)> fun = FamilyTypeHandler;
+
+          if (!ParseUniformEnumProperty(prop.first, options.strict_allowedToken_check, fun, attr, &familyType, warn, err, options)) {
+            return false;
+          }
+
+          // NOTE: Ignore metadata of familyType.
+          // TODO: Validate familyName
+          mesh->subsetFamilyTypeMap[value::token(names[1])] = familyType.get_value();
+          table.insert(prop.first);
+        }
+      }
+    }
+
+    // generic property handling
+    ADD_PROPERTY(table, prop, GeomMesh, mesh->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+
+  return true;
+}
+
+
+template <>
+bool ReconstructPrim<GeomCamera>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    GeomCamera *camera,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  (void)references;
+  (void)warn;
+
+  // Use centralized enum handlers
+  auto ProjectionHandler = enum_handler::CameraProjection;
+  auto StereoRoleHandler = enum_handler::CameraStereoRole;
+
+  std::set<std::string> table;
+  if (!ReconstructGPrimProperties(spec, table, properties, camera, warn, err, options.strict_allowedToken_check)) {
+    return false;
+  }
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomCamera
+#define PRIM_PTR_ camera
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
+    GEOM_CAMERA_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    GEOM_CAMERA_TIMESAMPLED_ENUMS(EXPAND_TIMESAMPLED_ENUM)
+    GEOM_CAMERA_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
+    ADD_PROPERTY(table, prop, GeomCamera, camera->props)
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
+  }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim<GeomSubset>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    GeomSubset *subset,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+
+  (void)spec;
+  (void)references;
+
+  DCOUT("GeomSubset");
+
+  // Use centralized enum handler
+  auto ElementTypeHandler = enum_handler::ElementType;
+
+  std::set<std::string> table;
+
+  if (!prim::ReconstructMaterialBindingProperties(table, properties, subset, err)) {
+    return false;
+  }
+
+  if (!prim::ReconstructCollectionProperties(
+    table, properties, subset, warn, err, options.strict_allowedToken_check)) {
+    return false;
+  }
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomSubset
+#define PRIM_PTR_ subset
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
+    GEOM_SUBSET_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    GEOM_SUBSET_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
+    ADD_PROPERTY(table, prop, GeomSubset, subset->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim<GeomPointInstancer>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    GeomPointInstancer *instancer,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+
+  (void)warn;
+  (void)references;
+
+  DCOUT("Reconstruct GeomPointInstancer.");
+
+  std::set<std::string> table;
+  if (!ReconstructGPrimProperties(spec, table, properties, instancer, warn, err, options.strict_allowedToken_check)) {
+    return false;
+  }
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomPointInstancer
+#define PRIM_PTR_ instancer
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
+    GEOM_POINT_INSTANCER_RELATIONS(EXPAND_SINGLE_REL, EXPAND_MULTI_REL)
+    GEOM_POINT_INSTANCER_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    ADD_PROPERTY(table, prop, GeomPointInstancer, instancer->props)
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
+  }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+
+  return true;
+}
+
+
+// Shader/Material/NodeGraph reconstruction moved to prim-reconstruct-shader.cc
+
 
 ///
-/// -- PrimSpec versions for base prims
+/// -- PrimSpec
 ///
 
 #define RECONSTRUCT_PRIM_PRIMSPEC_IMPL(__prim_ty) \
@@ -2323,6 +2068,31 @@ bool ReconstructPrim<__prim_ty>( \
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Xform)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Model)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Scope)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomMesh)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomPoints)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomCylinder)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomCube)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomCone)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomSphere)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomCapsule)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomBasisCurves)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomCamera)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomSubset)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomPointInstancer)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SphereLight)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DomeLight)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(CylinderLight)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DiskLight)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DistantLight)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(RectLight)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeometryLight)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PortalLight)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SkelRoot)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Skeleton)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SkelAnimation)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(BlendShape)
+// Shader, Material, NodeGraph PrimSpec wrappers are in prim-reconstruct-shader.cc
+
 
 } // namespace prim
 

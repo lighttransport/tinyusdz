@@ -226,9 +226,11 @@ bool DeserializeArrayFromBase64(const std::string& base64_data, std::vector<T>* 
   return true;
 }
 
+
 static bool DeserializeFloatArrayFromBase64(const std::string& base64_data, std::vector<float>* result) {
   return DeserializeArrayFromBase64(base64_data, result);
 }
+
 
 // Attribute metadata deserialization
 static bool DeserializeAttributeMetadata(const nlohmann::json& metadata_json, AttrMetas* metas, std::string* err = nullptr) {
@@ -629,6 +631,7 @@ static bool JSONToGeomMesh(const nlohmann::json& j, GeomMesh* mesh, JSONToUSDCon
 }
 
 } // namespace detail
+
 
 static bool JSONToPrimSpecImpl(const nlohmann::json &j, PrimSpec *ps, std::string *warn, std::string *err) {
   (void)err;

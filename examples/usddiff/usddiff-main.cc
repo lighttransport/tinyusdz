@@ -8,6 +8,11 @@
 //   usddiff --json file1.usd file2.usd
 //   usddiff --help
 //
+// Exit codes:
+//   0 = no differences found
+//   1 = differences found
+//   2 = error (file not found, parse failure, etc.)
+//
 
 #include <iostream>
 #include <fstream>
@@ -16,9 +21,7 @@
 
 #include "tinyusdz.hh"
 #include "layer.hh"
-#include "prim-types.hh"
 #include "tydra/diff-and-compare.hh"
-#include "io-util.hh"
 
 namespace {
 
@@ -30,58 +33,22 @@ void print_usage() {
   std::cout << "\n";
   std::cout << "OPTIONS:\n";
   std::cout << "  --json      Output diff in JSON format\n";
+  std::cout << "  --quiet     Suppress diff output, exit code only\n";
   std::cout << "  --help      Show this help message\n";
   std::cout << "  -h          Show this help message\n";
+  std::cout << "\n";
+  std::cout << "EXIT CODES:\n";
+  std::cout << "  0  No differences found\n";
+  std::cout << "  1  Differences found\n";
+  std::cout << "  2  Error (file not found, parse failure, etc.)\n";
   std::cout << "\n";
   std::cout << "EXAMPLES:\n";
   std::cout << "  usddiff old.usd new.usd\n";
   std::cout << "  usddiff --json scene1.usda scene2.usda\n";
-  std::cout << "  usddiff model_v1.usdc model_v2.usdc\n";
+  std::cout << "  usddiff --quiet model.usda model.usdc\n";
   std::cout << "\n";
   std::cout << "SUPPORTED FORMATS:\n";
   std::cout << "  .usd, .usda, .usdc, .usdz\n";
-}
-
-bool load_usd_file(const std::string &filename, tinyusdz::Layer *layer, std::string *error) {
-  if (!layer) {
-    if (error) *error = "Invalid layer pointer";
-    return false;
-  }
-
-  // Check if file exists
-  if (!tinyusdz::io::FileExists(filename)) {
-    if (error) *error = "File does not exist: " + filename;
-    return false;
-  }
-
-  // Try to load as USD
-  tinyusdz::Stage stage;
-  std::string warn, err;
-  
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &stage, &warn, &err);
-  if (!ret) {
-    if (error) *error = "Failed to load USD file '" + filename + "': " + err;
-    return false;
-  }
-
-  if (!warn.empty()) {
-    std::cerr << "Warning loading " << filename << ": " << warn << std::endl;
-  }
-
-  // Convert Stage to Layer for diffing
-  // For now, we'll create a simple layer from the stage's root prims
-  layer->set_name(filename);
-  
-  // Add root prims to layer
-  for (const auto &rootPrim : stage.root_prims()) {
-    tinyusdz::PrimSpec primSpec(tinyusdz::Specifier::Def, rootPrim.element_name());
-    
-    // Convert Prim to PrimSpec (simplified)
-    // TODO: This could be enhanced to preserve more Prim information
-    layer->add_primspec(rootPrim.element_name(), primSpec);
-  }
-  
-  return true;
 }
 
 } // namespace
@@ -93,6 +60,7 @@ int main(int argc, char **argv) {
   }
 
   bool json_output = false;
+  bool quiet = false;
   std::string file1, file2;
 
   // Parse command line arguments
@@ -102,6 +70,8 @@ int main(int argc, char **argv) {
       return 0;
     } else if (args[i] == "--json") {
       json_output = true;
+    } else if (args[i] == "--quiet") {
+      quiet = true;
     } else if (file1.empty()) {
       file1 = args[i];
     } else if (file2.empty()) {
@@ -109,43 +79,59 @@ int main(int argc, char **argv) {
     } else {
       std::cerr << "Error: Too many arguments\n";
       print_usage();
-      return 1;
+      return 2;
     }
   }
 
   if (file1.empty() || file2.empty()) {
     std::cerr << "Error: Please specify two USD files to compare\n";
     print_usage();
-    return 1;
+    return 2;
   }
 
-  // Load both USD files
+  // Load both USD files as Layers (preserves full PrimSpec tree)
   tinyusdz::Layer layer1, layer2;
-  std::string error;
+  std::string warn, err;
 
-  if (!load_usd_file(file1, &layer1, &error)) {
-    std::cerr << "Error loading " << file1 << ": " << error << std::endl;
-    return 1;
+  if (!tinyusdz::LoadLayerFromFile(file1, &layer1, &warn, &err)) {
+    std::cerr << "Error loading " << file1 << ": " << err << std::endl;
+    return 2;
+  }
+  if (!warn.empty()) {
+    std::cerr << "Warning loading " << file1 << ": " << warn << std::endl;
   }
 
-  if (!load_usd_file(file2, &layer2, &error)) {
-    std::cerr << "Error loading " << file2 << ": " << error << std::endl;
-    return 1;
+  warn.clear();
+  err.clear();
+
+  if (!tinyusdz::LoadLayerFromFile(file2, &layer2, &warn, &err)) {
+    std::cerr << "Error loading " << file2 << ": " << err << std::endl;
+    return 2;
+  }
+  if (!warn.empty()) {
+    std::cerr << "Warning loading " << file2 << ": " << warn << std::endl;
   }
 
   // Perform diff
-  try {
+  std::unordered_map<std::string, tinyusdz::tydra::PrimSpecDiff> psDiffs;
+  std::unordered_map<std::string, tinyusdz::tydra::PropDiff> propDiffs;
+  tinyusdz::tydra::Diff(layer1, layer2, psDiffs, propDiffs);
+
+  bool has_diffs = !psDiffs.empty() || !propDiffs.empty();
+
+  if (!quiet) {
     if (json_output) {
       std::string jsonDiff = tinyusdz::tydra::DiffToJSON(layer1, layer2, file1, file2);
       std::cout << jsonDiff;
     } else {
-      std::string textDiff = tinyusdz::tydra::DiffToText(layer1, layer2, file1, file2);
-      std::cout << textDiff;
+      if (has_diffs) {
+        std::string textDiff = tinyusdz::tydra::DiffToText(layer1, layer2, file1, file2);
+        std::cout << textDiff;
+      } else {
+        std::cout << "No differences found." << std::endl;
+      }
     }
-  } catch (const std::exception &e) {
-    std::cerr << "Error computing diff: " << e.what() << std::endl;
-    return 1;
   }
 
-  return 0;
+  return has_diffs ? 1 : 0;
 }

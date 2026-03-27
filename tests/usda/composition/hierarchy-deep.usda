@@ -1,0 +1,15 @@
+#usda 1.0
+
+def Xform "Level0" {
+    def Xform "Level1" {
+        def Xform "Level2" {
+            def Xform "Level3" {
+                def Mesh "LeafMesh" {
+                    point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+                    int[] faceVertexCounts = [3]
+                    int[] faceVertexIndices = [0,1,2]
+                }
+            }
+        }
+    }
+}
