@@ -1675,6 +1675,8 @@ bool CrateReader::ReadFieldSets() {
 bool CrateReader::BuildFieldSetBoundaryIndex() {
   static constexpr uint32_t kInvalidFieldSetEnd = ~0u;
 
+  DCOUT("BuildFieldSetBoundaryIndex: _fieldset_indices.size() = " << _fieldset_indices.size());
+
   _fieldset_end_indices.clear();
   _fieldset_start_indices.clear();
 
@@ -1791,6 +1793,7 @@ bool CrateReader::BuildLiveFieldSets() {
 bool CrateReader::DecodeFieldSet(crate::Index fieldset_index,
                                  FieldValuePairVector *pairs) {
   static constexpr uint32_t kInvalidFieldSetEnd = ~0u;
+  DCOUT("DecodeFieldSet: idx=" << fieldset_index.value);
 
   if (!pairs) {
     PUSH_ERROR("`pairs` argument is nullptr.");
