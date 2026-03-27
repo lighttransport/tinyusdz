@@ -776,7 +776,7 @@ class UsdaParser {
     this.tokens = tokens;
     this.pos = 0;
     this.iterations = 0;
-    this.maxIterations = 50000000;  // Large limit for files with huge arrays (e.g., suzanne with 7800 vertices)
+    this.maxIterations = 5000000;  // Safety limit — abort if parser gets stuck
   }
 
   checkIterations() {
@@ -1053,6 +1053,8 @@ class UsdaParser {
     const entries = {};
 
     while (this.peek().type !== TokenType.RBRACE && this.peek().type !== TokenType.EOF) {
+      this.checkIterations();
+      const savedPos = this.pos;
       // Dictionary entry format: type key = value
       // e.g., "string name = "baked_mesh""
       const key = this.parseDictionaryKey();
@@ -1060,6 +1062,10 @@ class UsdaParser {
         entries[key] = this.parseValue();
       }
       this.match(TokenType.COMMA);
+      // Guard: if no tokens consumed, skip one token to avoid infinite loop
+      if (this.pos === savedPos) {
+        this.advance();
+      }
     }
 
     this.expect(TokenType.RBRACE);
@@ -1103,8 +1109,11 @@ class UsdaParser {
     const elements = [];
 
     while (this.peek().type !== TokenType.RBRACKET && this.peek().type !== TokenType.EOF) {
+      this.checkIterations();
+      const savedPos = this.pos;
       elements.push(this.parseValue());
       this.match(TokenType.COMMA);
+      if (this.pos === savedPos) this.advance();
     }
 
     this.expect(TokenType.RBRACKET);
@@ -1116,8 +1125,11 @@ class UsdaParser {
     const elements = [];
 
     while (this.peek().type !== TokenType.RPAREN && this.peek().type !== TokenType.EOF) {
+      this.checkIterations();
+      const savedPos2 = this.pos;
       elements.push(this.parseValue());
       this.match(TokenType.COMMA);
+      if (this.pos === savedPos2) this.advance();
     }
 
     this.expect(TokenType.RPAREN);
@@ -1186,6 +1198,8 @@ class UsdaParser {
       this.expect(TokenType.LBRACE);
 
       while (this.peek().type !== TokenType.RBRACE && this.peek().type !== TokenType.EOF) {
+        this.checkIterations();
+        const bodyPos = this.pos;
         const token = this.peek();
 
         // Child prim
