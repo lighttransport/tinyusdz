@@ -32,17 +32,24 @@ import sys
 import tempfile
 
 
-# Files that Pixar's usdcat can't parse (skip silently)
-PIXAR_SKIP = {
-    "material-binding-005.usda",
-    "rel-value-block-with-meta-001.usda",
-    "shader-transform2d-000.usda",
-}
-
 # Files known to produce expected diffs (document reason)
 KNOWN_DIFFS = {
     # Add filenames here if specific files are expected to differ
 }
+
+
+def get_xfail_tag(filepath):
+    """Read first 5 lines of a file for '# XFAIL: <tag>' marker.
+    Returns the tag string if found, or None."""
+    try:
+        with open(filepath) as f:
+            for _ in range(5):
+                line = f.readline()
+                if line.startswith("# XFAIL:"):
+                    return line[len("# XFAIL:"):].strip()
+    except OSError:
+        pass
+    return None
 
 
 def run_tests(tusdcat, tusddiff, usdcat, basedir,
@@ -80,13 +87,17 @@ def run_tests(tusdcat, tusddiff, usdcat, basedir,
     print(f"  tmpdir:   {tmpdir}")
     print()
 
+    xfail_count = 0
+
     for filepath in files:
         basename = os.path.basename(filepath)
 
-        if basename in PIXAR_SKIP:
+        xfail = get_xfail_tag(filepath)
+        if xfail and "pixar" in xfail.lower():
+            xfail_count += 1
             skipped += 1
             if verbose:
-                print(f"  SKIP (pixar): {basename}")
+                print(f"  XFAIL (pixar): {basename} — {xfail}")
             continue
 
         stem = basename.rsplit(".", 1)[0]
@@ -225,7 +236,7 @@ def run_tests(tusdcat, tusddiff, usdcat, basedir,
     # Summary
     print()
     print(f"Results: {passed}/{total} passed, {failed} failed, "
-          f"{skipped} skipped ({pixar_errors} pixar parse errors)")
+          f"{skipped} skipped ({xfail_count} xfail, {pixar_errors} pixar parse errors)")
 
     if failures:
         print(f"\nFailed files ({len(failures)}):")
@@ -290,13 +301,17 @@ def run_usda_tests(tusdcat, usdcat, basedir, verbose=False, globs=None):
     print(f"  usdcat:  {usdcat}")
     print()
 
+    xfail_count = 0
+
     for filepath in files:
         basename = os.path.basename(filepath)
 
-        if basename in PIXAR_SKIP:
+        xfail = get_xfail_tag(filepath)
+        if xfail and "pixar" in xfail.lower():
+            xfail_count += 1
             skipped += 1
             if verbose:
-                print(f"  SKIP (pixar): {basename}")
+                print(f"  XFAIL (pixar): {basename} — {xfail}")
             continue
 
         stem = basename.rsplit(".", 1)[0]
@@ -377,7 +392,8 @@ def run_usda_tests(tusdcat, usdcat, basedir, verbose=False, globs=None):
                 print(f"  FAIL (compare error): {basename}")
 
     print()
-    print(f"Results: {passed}/{total} passed, {failed} failed, {skipped} skipped")
+    print(f"Results: {passed}/{total} passed, {failed} failed, "
+          f"{skipped} skipped ({xfail_count} xfail)")
 
     if failures:
         print(f"\nFailed files ({len(failures)}):")

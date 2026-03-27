@@ -22,9 +22,9 @@
 #include "usdLux.hh"
 
 // Path sorting and encoding library
-#include "../sandbox/path-sort-and-encode-crate/include/crate/path_interface.hh"
-#include "../sandbox/path-sort-and-encode-crate/include/crate/path_sort.hh"
-#include "../sandbox/path-sort-and-encode-crate/include/crate/tree_encode.hh"
+#include "crate-path-utils/path_interface.hh"
+#include "crate-path-utils/path_sort.hh"
+#include "crate-path-utils/tree_encode.hh"
 
 namespace tinyusdz {
 namespace experimental {

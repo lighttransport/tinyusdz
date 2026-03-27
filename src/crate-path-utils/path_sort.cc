@@ -2,7 +2,7 @@
 // Path sorting implementation
 // SPDX-License-Identifier: Apache 2.0
 //
-#include "crate/path_sort.hh"
+#include "path_sort.hh"
 #include <algorithm>
 #include <vector>
 #include <string>
