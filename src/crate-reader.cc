@@ -1839,8 +1839,8 @@ bool CrateReader::DecodeFieldSet(crate::Index fieldset_index,
     if (auto tokv = GetToken(field.token_index)) {
       (*pairs)[i].first = tokv.value().str();
       if (!UnpackValueRep(field.value_rep, &(*pairs)[i].second)) {
-        PUSH_ERROR("DecodeFieldSet: Failed to unpack ValueRep : "
-                   << field.value_rep.GetStringRepr());
+        PUSH_ERROR("DecodeFieldSet: Failed to unpack field '" << tokv.value().str()
+                   << "' ValueRep : " << field.value_rep.GetStringRepr());
         return false;
       }
     } else {

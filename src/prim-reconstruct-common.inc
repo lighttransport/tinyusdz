@@ -722,13 +722,14 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
       DCOUT("Added rel " << __propname); \
       continue; \
     } else if (rel.is_pathvector()) { \
-      if (rel.targetPathVector.size() == 1) { \
+      if (rel.targetPathVector.size() <= 1) { \
+        /* 0 targets = None/blocked, 1 target = normal */ \
         __target = rel; \
         table.insert(prop.first); \
         DCOUT("Added rel " << __propname); \
         continue; \
       } \
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` target is empty or has mutiple Paths. Must be single Path.", __propname)); \
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` has multiple target Paths ({}).", __propname, rel.targetPathVector.size())); \
     } else if (!rel.has_value()) { \
       /* define-only. accept  */ \
       __target = rel; \
