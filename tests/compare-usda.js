@@ -2115,6 +2115,19 @@ function compareSingleFile(inputFile, options) {
     content2: null
   };
 
+  // Check for XFAIL marker in first 5 lines
+  try {
+    const head = fs.readFileSync(inputFile, 'utf-8').split('\n').slice(0, 5);
+    for (const line of head) {
+      if (line.startsWith('# XFAIL:')) {
+        const tag = line.slice('# XFAIL:'.length).trim();
+        result.status = 'xfail';
+        result.error = tag;
+        return result;
+      }
+    }
+  } catch (e) { /* ignore read errors, will fail later */ }
+
   try {
     let content1, content2;
 
@@ -2432,6 +2445,7 @@ function main() {
       let equivalent = 0;
       let different = 0;
       let errors = 0;
+      let xfails = 0;
 
       for (let i = 0; i < expandedFiles.length; i++) {
         const inputFile = expandedFiles[i];
@@ -2447,7 +2461,12 @@ function main() {
         const result = compareSingleFile(inputFile, options);
         results.push(result);
 
-        if (result.status === 'equivalent') {
+        if (result.status === 'xfail') {
+          xfails++;
+          if (!options.quiet && !options.json) {
+            console.log(`  XFAIL: ${result.error}\n`);
+          }
+        } else if (result.status === 'equivalent') {
           equivalent++;
           if (!options.quiet && !options.json) {
             console.log(`  ✓ Equivalent\n`);
@@ -2486,6 +2505,7 @@ function main() {
           equivalent,
           different,
           errors,
+          xfails,
           results: options.summary ? undefined : results
         }, null, 2));
       } else if (!options.quiet) {
@@ -2493,6 +2513,9 @@ function main() {
         console.log(`Summary: ${expandedFiles.length} file(s) processed`);
         console.log(`  ✓ Equivalent: ${equivalent}`);
         console.log(`  ✗ Different:  ${different}`);
+        if (xfails > 0) {
+          console.log(`  XFAIL:        ${xfails}`);
+        }
         if (errors > 0) {
           console.log(`  ⚠ Errors:     ${errors}`);
         }
