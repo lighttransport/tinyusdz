@@ -1791,8 +1791,9 @@ if(TINYUSDZ_BUILD_TESTS)
 
   #
   # Compression tester
+  # (its not involved with tinyusdz codes, and well tested now. so disabled. will be removed in future release)
   #
-  add_subdirectory(${PROJECT_SOURCE_DIR}/tests/decompress-int)
+  # add_subdirectory(${PROJECT_SOURCE_DIR}/tests/decompress-int)
 
   #
   # Pretty-print benchmark
