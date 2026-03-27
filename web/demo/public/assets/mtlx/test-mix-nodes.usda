@@ -1,0 +1,77 @@
+#usda 1.0
+(
+    doc = "Hand-written test: ND_mix_color3 node for base_color"
+    metersPerUnit = 1
+    upAxis = "Z"
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Sphere "MixTest"
+    (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        double radius = 1.0
+        rel material:binding = </root/_materials/MixTest>
+    }
+
+    def Scope "_materials"
+    {
+        def Material "MixTest"
+        (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            token outputs:surface.connect = </root/_materials/MixTest/shader.outputs:surface>
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/MixTest/shader.outputs:surface>
+
+            def Shader "shader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                float inputs:base_weight = 1
+                color3f inputs:base_color.connect = </root/_materials/MixTest/NodeGraphs.outputs:mix_color_out>
+                float inputs:base_metalness = 0
+                float inputs:base_diffuse_roughness = 0
+                float inputs:specular_weight = 1
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_roughness = 0.4
+                float inputs:specular_ior = 1.5
+                float inputs:coat_weight = 0
+                float inputs:emission_luminance = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                color3f outputs:mix_color_out.connect = </root/_materials/MixTest/NodeGraphs/mix_color.outputs:out>
+
+                def Shader "color_a"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (1, 0, 0)
+                    color3f outputs:out
+                }
+
+                def Shader "color_b"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (0, 0, 1)
+                    color3f outputs:out
+                }
+
+                def Shader "mix_color"
+                {
+                    uniform token info:id = "ND_mix_color3"
+                    color3f inputs:bg.connect = </root/_materials/MixTest/NodeGraphs/color_a.outputs:out>
+                    color3f inputs:fg.connect = </root/_materials/MixTest/NodeGraphs/color_b.outputs:out>
+                    float inputs:mix = 0.5
+                    color3f outputs:out
+                }
+            }
+        }
+    }
+}

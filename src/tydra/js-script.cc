@@ -1,5 +1,5 @@
 #include "js-script.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "layer.hh"
 #include "tinyusdz.hh"
 

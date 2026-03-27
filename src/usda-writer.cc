@@ -13,7 +13,6 @@
 #include <iostream>
 #include <sstream>
 
-#include "pprinter.hh"
 #include "value-pprint.hh"
 #include "tinyusdz.hh"
 #include "io-util.hh"

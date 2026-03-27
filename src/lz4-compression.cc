@@ -48,13 +48,8 @@
 // language governing permissions and limitations under the Apache License.
 //
 
-#if 0
-//#include "pxrLZ4/lz4.h"
-//using namespace pxr_lz4;
-#else
 // TinyUSDZ : Use orignal lz4.
 #include "lz4/lz4.h"
-#endif
 
 namespace tinyusdz {
 

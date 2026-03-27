@@ -6,6 +6,7 @@
 #include "acutest.h"
 
 #include "unit-primvar.h"
+#include "tinyusdz.hh"
 #include "primvar.hh"
 #include "value-pprint.hh"
 #include "usdGeom.hh"

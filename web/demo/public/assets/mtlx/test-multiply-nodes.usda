@@ -1,0 +1,76 @@
+#usda 1.0
+(
+    doc = "Hand-written test: ND_multiply_color3 node for base_color"
+    metersPerUnit = 1
+    upAxis = "Z"
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Sphere "MultiplyTest"
+    (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        double radius = 1.0
+        rel material:binding = </root/_materials/MultiplyTest>
+    }
+
+    def Scope "_materials"
+    {
+        def Material "MultiplyTest"
+        (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            token outputs:surface.connect = </root/_materials/MultiplyTest/shader.outputs:surface>
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/MultiplyTest/shader.outputs:surface>
+
+            def Shader "shader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                float inputs:base_weight = 1
+                color3f inputs:base_color.connect = </root/_materials/MultiplyTest/NodeGraphs.outputs:mul_color_out>
+                float inputs:base_metalness = 0.3
+                float inputs:base_diffuse_roughness = 0
+                float inputs:specular_weight = 1
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_roughness = 0.4
+                float inputs:specular_ior = 1.5
+                float inputs:coat_weight = 0
+                float inputs:emission_luminance = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                color3f outputs:mul_color_out.connect = </root/_materials/MultiplyTest/NodeGraphs/mul_color.outputs:out>
+
+                def Shader "base_color"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (0.9, 0.2, 0.05)
+                    color3f outputs:out
+                }
+
+                def Shader "mul_factor"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (1, 1, 1)
+                    color3f outputs:out
+                }
+
+                def Shader "mul_color"
+                {
+                    uniform token info:id = "ND_multiply_color3"
+                    color3f inputs:in1.connect = </root/_materials/MultiplyTest/NodeGraphs/base_color.outputs:out>
+                    color3f inputs:in2.connect = </root/_materials/MultiplyTest/NodeGraphs/mul_factor.outputs:out>
+                    color3f outputs:out
+                }
+            }
+        }
+    }
+}

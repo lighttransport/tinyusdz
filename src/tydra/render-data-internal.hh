@@ -1,125 +1,241 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
-
-///
-/// @file render-data-internal.hh
-/// @brief Internal shared declarations for render-data modules
-///
-
+//
+// Internal header shared across render-data split files.
+// NOT part of the public API.
+//
 #pragma once
 
-#include <algorithm>
-#include <cmath>
-#include <cstring>
-#include <functional>
-#include <limits>
-#include <map>
-#include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
-#include "asset-resolution.hh"
-#include "common.hh"
-#include "image-loader.hh"
-#include "io-util.hh"
-#include "math-util.inc"
-#include "pprinter.hh"
-#include "prim-types.hh"
-#include "str-util.hh"
-#include "tiny-format.hh"
-#include "usdGeom.hh"
-#include "usdLux.hh"
-#include "usdShade.hh"
+#include "tydra/render-data.hh"
 #include "usdSkel.hh"
 #include "value-types.hh"
-
 #include "common-macros.inc"
 
-#include "render-data.hh"
-#include "scene-access.hh"
-#include "shader-network.hh"
-
 namespace tinyusdz {
+
+// Forward declarations
+class Stage;
+class Prim;
+class Path;
+struct Skeleton;
+struct SkelRoot;
+struct SkelAnimation;
+struct AssetInfo;
+
 namespace tydra {
 
-//
-// Internal error handling macros
-//
+// -----------------------------------------------------------------------
+// SkelRootSkeletonResolver
+// Resolves Skeleton prims from SkelRoot ancestor hierarchy.
+// Used by both ConvertMesh (render-data-mesh.cc) and
+// ConvertToRenderScene (render-data.cc).
+// -----------------------------------------------------------------------
+class SkelRootSkeletonResolver {
+ public:
+  using SkelRootToSkeletonMap =
+      std::unordered_map<std::string, std::pair<Path, const Skeleton *>,
+                         FNV1StringHash>;
 
-#define PUSH_ERROR_AND_RETURN(msg) \
-  do {                             \
-    _err += msg;                   \
-    _err += "\n";                  \
-    return false;                  \
-  } while (0)
+  static void BuildMap(const PathPrimMap<Skeleton> &allSkeletons,
+                       const PathPrimMap<SkelRoot> &allSkelRoots,
+                       SkelRootToSkeletonMap *out_map) {
+    if (!out_map) {
+      return;
+    }
 
-#define PUSH_WARN(msg) \
-  do {                 \
-    _warn += msg;      \
-    _warn += "\n";     \
-  } while (0)
+    out_map->clear();
+    out_map->reserve(allSkelRoots.size());
 
-//
-// Internal helper function declarations
-//
+    for (const auto &kv : allSkeletons) {
+      const std::string &skel_path_str = kv.first;
+      const Skeleton *skel_ptr = kv.second;
+      Path current_path(skel_path_str, "");
 
-// Forward declarations for internal types
-struct RenderSceneConverterEnv;
+      size_t iter = 0;
+      while (current_path.is_valid() && !current_path.is_root_path()
+             && !current_path.is_root_prim()) {
+        if (iter++ >= kMaxDefaultTraversalLimit) break;
+        Path parent_path = current_path.get_parent_prim_path();
+        const std::string parent_path_str = parent_path.prim_part();
 
-// Variability conversion helpers (render-attribute-converter.cc)
-template <typename T>
-bool UniformToVertex(const std::vector<uint32_t> &faceVertexCounts,
-                     const std::vector<T> &uniform_data,
-                     std::vector<T> &vertex_data);
+        if (allSkelRoots.find(parent_path_str) != allSkelRoots.end()) {
+          // Deterministic selection: if multiple Skeletons exist under one
+          // SkelRoot, keep lexicographically smallest absolute skeleton path.
+          auto it = out_map->find(parent_path_str);
+          if (it == out_map->end()) {
+            out_map->emplace(parent_path_str,
+                             std::make_pair(Path(skel_path_str, ""), skel_ptr));
+          } else if (skel_path_str < it->second.first.prim_part()) {
+            it->second = std::make_pair(Path(skel_path_str, ""), skel_ptr);
+          }
+          break;
+        }
 
-template <typename T>
-bool UniformToFaceVarying(const std::vector<uint32_t> &faceVertexCounts,
-                          const std::vector<T> &uniform_data,
-                          std::vector<T> &facevarying_data);
+        current_path = parent_path;
+      }
+    }
+  }
 
-template <typename T>
-bool VertexToFaceVarying(const std::vector<uint32_t> &faceVertexCounts,
-                         const std::vector<uint32_t> &faceVertexIndices,
-                         const std::vector<T> &vertex_data,
-                         std::vector<T> &facevarying_data);
+  // Find skeleton for mesh by walking up ancestor hierarchy.
+  // Returns true if skeleton found, with path and skeleton pointer stored.
+  static bool FindByAncestor(const Path &meshPath,
+                             const PathPrimMap<Skeleton> &allSkeletons,
+                             const PathPrimMap<SkelRoot> &allSkelRoots,
+                             const SkelRootToSkeletonMap *skelRootToSkeleton,
+                             Path *outSkelPath, const Skeleton **outSkelPtr) {
+    if (allSkeletons.empty()) {
+      return false;
+    }
 
-template <typename T>
-bool ConstantToVertex(const std::vector<uint32_t> &faceVertexCounts,
-                      const std::vector<uint32_t> &faceVertexIndices,
-                      const T &constant_data,
-                      std::vector<T> &vertex_data);
+    // Walk up ancestor chain
+    size_t iter = 0;
+    Path currentPath = meshPath;
+    while (currentPath.is_valid() && !currentPath.is_root_path()
+           && !currentPath.is_root_prim()) {
+      if (iter++ >= kMaxDefaultTraversalLimit) break;
+      Path parentPath = currentPath.get_parent_prim_path();
+      std::string parentPathStr = parentPath.prim_part();
 
-// Helper to check if two floating point values are approximately equal
-template <typename T>
-inline bool IsNearlyEqual(T a, T b, T epsilon = T(1e-6)) {
-  return std::abs(a - b) <= epsilon;
-}
+      DCOUT("FindSkeletonByAncestor: checking parent " << parentPathStr);
 
-// Check if a matrix4d is identity
-bool IsIdentityMatrix(const value::matrix4d &m);
+      // Check if parent is a SkelRoot
+      auto skelRootIt = allSkelRoots.find(parentPathStr);
+      if (skelRootIt != allSkelRoots.end()) {
+        DCOUT("Found SkelRoot ancestor: " << parentPathStr);
 
-// Quaternion multiplication helper
-value::quatf quat_mul(const value::quatf &a, const value::quatf &b);
+        if (skelRootToSkeleton) {
+          auto mapped = skelRootToSkeleton->find(parentPathStr);
+          if (mapped != skelRootToSkeleton->end()) {
+            *outSkelPath = mapped->second.first;
+            if (outSkelPtr) *outSkelPtr = mapped->second.second;
+            DCOUT("Found skeleton under SkelRoot from cache: "
+                  << mapped->second.first.prim_part());
+            return true;
+          }
+        }
 
-// Quaternion from axis-angle
-value::quatf to_quaternion(const value::float3 &axis, float angle_rad);
+        // Found SkelRoot ancestor - search its children for Skeleton
+        std::string bestSkelPath;
+        const Skeleton *bestSkelPtr{nullptr};
+        for (const auto &kv : allSkeletons) {
+          const std::string &skelPath = kv.first;
+          const Skeleton *skelPtr = kv.second;
 
-// Transform point by matrix4d
-vec3 TransformPoint(const value::matrix4d &m, const vec3 &p);
+          if (IsStrictDescendantPath(skelPath, parentPathStr)) {
+            if (!bestSkelPtr || skelPath < bestSkelPath) {
+              bestSkelPath = skelPath;
+              bestSkelPtr = skelPtr;
+            }
+          }
+        }
 
-// Transform direction (normal) by matrix4d
-vec3 TransformNormal(const value::matrix4d &m, const vec3 &n);
+        if (bestSkelPtr) {
+          *outSkelPath = Path(bestSkelPath, "");
+          if (outSkelPtr) *outSkelPtr = bestSkelPtr;
+          DCOUT("Found skeleton under SkelRoot: " << bestSkelPath);
+          return true;
+        }
+      }
 
-// Internal texture loading helper
-bool RawAssetRead(const value::AssetPath &assetPath,
-                  const AssetInfo &assetInfo,
-                  const AssetResolutionResolver &assetResolver,
-                  Asset *asset,
-                  std::string &resolvedPath,
-                  std::string *warn,
-                  std::string *err,
-                  std::string *readErr);
+      // Also check if parent itself is a Skeleton
+      auto skelIt = allSkeletons.find(parentPathStr);
+      if (skelIt != allSkeletons.end()) {
+        *outSkelPath = Path(parentPathStr, "");
+        if (outSkelPtr) *outSkelPtr = skelIt->second;
+        DCOUT("Found skeleton as ancestor: " << parentPathStr);
+        return true;
+      }
+
+      currentPath = parentPath;
+    }
+
+    // Fallback: if only one skeleton in scene, use it
+    if (allSkeletons.size() == 1) {
+      *outSkelPath = Path(allSkeletons.begin()->first, "");
+      if (outSkelPtr) *outSkelPtr = allSkeletons.begin()->second;
+      DCOUT("Fallback: using only skeleton in scene: "
+            << allSkeletons.begin()->first);
+      return true;
+    }
+
+    return false;
+  }
+
+ private:
+  static bool IsStrictDescendantPath(const std::string &descendantPath,
+                                     const std::string &ancestorPath) {
+    if (ancestorPath.empty() || descendantPath.empty()) {
+      return false;
+    }
+
+    // All absolute prim paths are expected to start with '/'.
+    if (descendantPath[0] != '/' || ancestorPath[0] != '/') {
+      return false;
+    }
+
+    if (descendantPath.size() <= ancestorPath.size()) {
+      return false;
+    }
+
+    if (descendantPath.compare(0, ancestorPath.size(), ancestorPath) != 0) {
+      return false;
+    }
+
+    // Require a path-segment boundary:
+    // "/A/SkelRoot/Skel" is a descendant of "/A/SkelRoot", but
+    // "/A/SkelRootExtra/Skel" is not.
+    return descendantPath[ancestorPath.size()] == '/';
+  }
+};
+
+// -----------------------------------------------------------------------
+// MeshVisitorEnv / MeshVisitor
+// Scene traversal visitor for mesh and material conversion.
+// Defined in render-data-material.cc, used in render-data.cc.
+// -----------------------------------------------------------------------
+struct MeshVisitorEnv {
+  RenderSceneConverter *converter{nullptr};
+  const RenderSceneConverterEnv *env{nullptr};
+
+  // Progress tracking for detailed progress reporting
+  size_t meshes_processed{0};
+  size_t meshes_total{0};
+  size_t materials_processed{0};
+  size_t materials_total{0};
+
+  // Pre-discovered skeleton/animation prims for ancestor-based discovery
+  const PathPrimMap<Skeleton> *allSkeletons{nullptr};
+  const PathPrimMap<SkelRoot> *allSkelRoots{nullptr};
+  const PathPrimMap<SkelAnimation> *allAnimations{nullptr};
+};
+
+bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
+                 const int32_t level, void *userdata, std::string *err);
+
+// -----------------------------------------------------------------------
+// ConnectionResolveCache reset
+// Defined in render-data-material.cc, called from render-data.cc.
+// -----------------------------------------------------------------------
+void ResetConnectionResolveCache(const Stage &stage);
+
+// -----------------------------------------------------------------------
+// RawAssetRead
+// Shared utility for reading raw assets through the asset resolver.
+// Used by render-data-material.cc (ConvertUVTexture) and
+// render-data-anim.cc (ConvertDomeLight).
+// -----------------------------------------------------------------------
+bool RawAssetRead(
+    const value::AssetPath &assetPath, const AssetInfo &assetInfo,
+    const AssetResolutionResolver &assetResolver,
+    Asset *assetOut,
+    std::string &resolvedPathOut,
+    void *userdata, std::string *warn,
+    std::string *err);
 
 }  // namespace tydra
 }  // namespace tinyusdz

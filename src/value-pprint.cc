@@ -7,7 +7,7 @@
 #include <sstream>
 
 #include "pprinter.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "str-util.hh"
 #include "usdGeom.hh"
 #include "usdLux.hh"
@@ -45,6 +45,88 @@ inline void append_float_to_stream(std::ostream &os, float v) {
 }
 
 }  // namespace
+
+namespace tinyusdz {
+namespace pprint {
+
+std::string format_wrapped_array(const std::vector<std::string> &elements,
+                                 uint32_t prefix_cols, uint32_t column_limit) {
+  if (elements.empty()) {
+    return "[]";
+  }
+
+  // Check if single-line fits
+  size_t total_len = 2;  // "[" and "]"
+  for (size_t i = 0; i < elements.size(); i++) {
+    total_len += elements[i].size();
+    if (i > 0) total_len += 2;  // ", "
+  }
+
+  if (prefix_cols + total_len <= column_limit) {
+    // Fits on one line
+    std::string result = "[";
+    for (size_t i = 0; i < elements.size(); i++) {
+      if (i > 0) result += ", ";
+      result += elements[i];
+    }
+    result += "]";
+    return result;
+  }
+
+  // Need wrapping. Compute continuation indent (column after '[').
+  uint32_t cont_indent = prefix_cols + 1;
+  bool deep_indent = false;
+
+  // If too deep (>60% of column limit), fall back to newline + single indent
+  if (cont_indent > column_limit * 3 / 5) {
+    deep_indent = true;
+    // Single indent width (default 4 spaces)
+    cont_indent = static_cast<uint32_t>(Indent(1).size());
+  }
+
+  std::string result;
+  uint32_t cur_col;
+
+  if (deep_indent) {
+    // Start array on next line with single indentation
+    result = "\n";
+    result += Indent(1);
+    result += "[";
+    cur_col = cont_indent + 1;
+  } else {
+    result = "[";
+    cur_col = prefix_cols + 1;
+  }
+
+  for (size_t i = 0; i < elements.size(); i++) {
+    const auto &elem = elements[i];
+    // Width needed: element itself + trailing ", " (except for last element)
+    uint32_t elem_width = static_cast<uint32_t>(elem.size());
+
+    if (i > 0) {
+      // Check if this element fits on the current line
+      // +2 for the ", " separator before it
+      if (cur_col + 2 + elem_width > column_limit) {
+        // Wrap: emit comma at end of previous line, then newline
+        result += ",\n";
+        result += std::string(cont_indent, ' ');
+        cur_col = cont_indent;
+      } else {
+        result += ", ";
+        cur_col += 2;
+      }
+    }
+
+    result += elem;
+    cur_col += elem_width;
+  }
+
+  result += "]";
+  return result;
+}
+
+}  // namespace pprint
+}  // namespace tinyusdz
 
 namespace std {
 
@@ -489,24 +571,17 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::frame4d &m) {
   return ofs;
 }
 
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::timecode &tc) {
+  ofs << tinyusdz::dtos(tc.value);
+  return ofs;
+}
+
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::token &tok) {
   ofs << tinyusdz::quote(tok.str());
 
   return ofs;
 }
 
-#if 0
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::dict &m) {
-  ofs << "{\n";
-  for (const auto &item : m) {
-    ofs << item.first << " = " << tinyusdz::value::pprint_any(item.second)
-        << "\n";
-  }
-  ofs << "}";
-
-  return ofs;
-}
-#endif
 
 std::ostream &operator<<(std::ostream &ofs,
                          const tinyusdz::value::AssetPath &asset) {
@@ -545,12 +620,23 @@ std::ostream &operator<<(std::ostream &ofs,
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
+  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  if (col_limit > 0 && v.size() > 1) {
+    std::vector<std::string> elems;
+    elems.reserve(v.size());
+    for (const auto &e : v) {
+      elems.push_back(tinyusdz::dtos(e));
+    }
+    ofs << tinyusdz::pprint::format_wrapped_array(
+        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    return ofs;
+  }
   ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
     }
-    ofs << tinyusdz::dtos(v[i]);  // use dragonbox for shortest representation
+    ofs << tinyusdz::dtos(v[i]);
   }
   ofs << "]";
 
@@ -559,12 +645,23 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
+  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  if (col_limit > 0 && v.size() > 1) {
+    std::vector<std::string> elems;
+    elems.reserve(v.size());
+    for (const auto &e : v) {
+      elems.push_back(tinyusdz::dtos(e));
+    }
+    ofs << tinyusdz::pprint::format_wrapped_array(
+        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    return ofs;
+  }
   ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
     }
-    ofs << tinyusdz::dtos(v[i]);  // use float-precision dragonbox path
+    ofs << tinyusdz::dtos(v[i]);
   }
   ofs << "]";
 
@@ -573,6 +670,19 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
+  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  if (col_limit > 0 && v.size() > 1) {
+    std::vector<std::string> elems;
+    elems.reserve(v.size());
+    for (const auto &e : v) {
+      std::ostringstream ess;
+      ess << e;
+      elems.push_back(ess.str());
+    }
+    ofs << tinyusdz::pprint::format_wrapped_array(
+        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    return ofs;
+  }
 #if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
   // numeric_limits<uint64_t>::digits10 is 19, so 32 should suffice.
   char buf[32];
@@ -597,6 +707,19 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
+  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  if (col_limit > 0 && v.size() > 1) {
+    std::vector<std::string> elems;
+    elems.reserve(v.size());
+    for (const auto &e : v) {
+      std::ostringstream ess;
+      ess << e;
+      elems.push_back(ess.str());
+    }
+    ofs << tinyusdz::pprint::format_wrapped_array(
+        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    return ofs;
+  }
 #if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
   char buf[32];
 #endif
@@ -620,6 +743,19 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<int64_t> &v) {
+  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  if (col_limit > 0 && v.size() > 1) {
+    std::vector<std::string> elems;
+    elems.reserve(v.size());
+    for (const auto &e : v) {
+      std::ostringstream ess;
+      ess << e;
+      elems.push_back(ess.str());
+    }
+    ofs << tinyusdz::pprint::format_wrapped_array(
+        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    return ofs;
+  }
 #if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
   // numeric_limits<uint64_t>::digits10 is 19, so 32 should suffice.
   char buf[32];
@@ -644,6 +780,19 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int64_t> &v) {
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<uint64_t> &v) {
+  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  if (col_limit > 0 && v.size() > 1) {
+    std::vector<std::string> elems;
+    elems.reserve(v.size());
+    for (const auto &e : v) {
+      std::ostringstream ess;
+      ess << e;
+      elems.push_back(ess.str());
+    }
+    ofs << tinyusdz::pprint::format_wrapped_array(
+        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    return ofs;
+  }
 #if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
   char buf[32];
 #endif
@@ -696,6 +845,9 @@ namespace value {
   __FUNC(double2)              \
   __FUNC(double3)              \
   __FUNC(double4)              \
+  __FUNC(matrix2f)             \
+  __FUNC(matrix3f)             \
+  __FUNC(matrix4f)             \
   __FUNC(matrix2d)             \
   __FUNC(matrix3d)             \
   __FUNC(matrix4d)             \
@@ -711,8 +863,10 @@ namespace value {
   __FUNC(point3h)              \
   __FUNC(point3f)              \
   __FUNC(point3d)              \
+  __FUNC(color3h)              \
   __FUNC(color3f)              \
   __FUNC(color3d)              \
+  __FUNC(color4h)              \
   __FUNC(color4f)              \
   __FUNC(color4d)              \
   __FUNC(texcoord2h)           \
@@ -720,7 +874,9 @@ namespace value {
   __FUNC(texcoord2d)           \
   __FUNC(texcoord3h)           \
   __FUNC(texcoord3f)           \
-  __FUNC(texcoord3d)
+  __FUNC(texcoord3d)           \
+  __FUNC(frame4d)              \
+  __FUNC(timecode)
 
 #define CASE_GPRIM_LIST(__FUNC) \
   __FUNC(Model)                 \
@@ -744,6 +900,8 @@ namespace value {
   __FUNC(DistantLight)          \
   __FUNC(CylinderLight)         \
   __FUNC(RectLight)             \
+  __FUNC(GeometryLight)         \
+  __FUNC(PortalLight)           \
   __FUNC(SkelRoot)              \
   __FUNC(Skeleton)              \
   __FUNC(SkelAnimation)         \
@@ -752,101 +910,6 @@ namespace value {
   __FUNC(Shader)                \
   __FUNC(NodeGraph)
 
-#if 0  // remove
-// std::ostream &operator<<(std::ostream &os, const any_value &v) {
-// std::ostream &operator<<(std::ostream &os, const linb::any &v) {
-std::string pprint_any(const linb::any &v, const uint32_t indent,
-                       bool closing_brace) {
-#define BASETYPE_CASE_EXPR(__ty)         \
-  case TypeTraits<__ty>::type_id(): {    \
-    os << linb::any_cast<const __ty>(v); \
-    break;                               \
-  }
-
-#define PRIMTYPE_CASE_EXPR(__ty)                                           \
-  case TypeTraits<__ty>::type_id(): {                                      \
-    os << to_string(linb::any_cast<const __ty>(v), indent, closing_brace); \
-    break;                                                                 \
-  }
-
-#define ARRAY1DTYPE_CASE_EXPR(__ty)                   \
-  case TypeTraits<std::vector<__ty>>::type_id(): {    \
-    os << linb::any_cast<const std::vector<__ty>>(v); \
-    break;                                            \
-  }
-
-#define ARRAY2DTYPE_CASE_EXPR(__ty)                                \
-  case TypeTraits<std::vector<std::vector<__ty>>>::type_id(): {    \
-    os << linb::any_cast<const std::vector<std::vector<__ty>>>(v); \
-    break;                                                         \
-  }
-
-  std::stringstream os;
-
-  switch (v.type_id()) {
-    // no `bool` type for 1D and 2D array
-    BASETYPE_CASE_EXPR(bool)
-
-    // no std::vector<dict> and std::vector<std::vector<dict>>, ...
-    BASETYPE_CASE_EXPR(dict)
-
-    // base type
-    CASE_EXPR_LIST(BASETYPE_CASE_EXPR)
-
-    // 1D array
-    CASE_EXPR_LIST(ARRAY1DTYPE_CASE_EXPR)
-
-    // 2D array
-    CASE_EXPR_LIST(ARRAY2DTYPE_CASE_EXPR)
-    // Assume no 2D array of string-like data.
-
-    // GPrim
-    CASE_GPRIM_LIST(PRIMTYPE_CASE_EXPR)
-
-    // token, str: wrap with '"'
-    case TypeTraits<value::token>::type_id(): {
-      os << quote(linb::any_cast<const value::token>(v).str());
-      break;
-    }
-    case TypeTraits<std::vector<value::token>>::type_id(): {
-      const std::vector<value::token> &lst =
-          linb::any_cast<const std::vector<value::token>>(v);
-      std::vector<std::string> vs;
-      std::transform(lst.begin(), lst.end(), std::back_inserter(vs),
-                     [](const value::token &tok) { return tok.str(); });
-
-      os << quote(vs);
-      break;
-    }
-    case TypeTraits<std::string>::type_id(): {
-      os << quote(linb::any_cast<const std::string>(v));
-      break;
-    }
-    case TypeTraits<std::vector<std::string>>::type_id(): {
-      const std::vector<std::string> &vs =
-          linb::any_cast<const std::vector<std::string>>(v);
-      os << quote(vs);
-      break;
-    }
-    case TypeTraits<value::ValueBlock>::type_id(): {
-      os << "None";
-      break;
-    }
-
-    // TODO: List-up all case and remove `default` clause.
-    default: {
-      os << "ANY_PPRINT: TODO: (type: " << v.type_name() << ") ";
-    }
-  }
-
-#undef BASETYPE_CASE_EXPR
-#undef PRIMTYPE_CASE_EXPR
-#undef ARRAY1DTYPE_CASE_EXPR
-#undef ARRAY2DTYPE_CASE_EXPR
-
-  return os.str();
-}
-#endif
 
 std::string pprint_value(const value::Value &v, const uint32_t indent,
                          bool closing_brace) {
@@ -1031,6 +1094,16 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
         os << (*p);
       } else {
         os << "[InternalError: `string[]` type TypeId mismatch.]";
+      }
+      break;
+    }
+    // uchar (uint8_t) needs special handling: os << uint8_t prints as char
+    case TypeTraits<uint8_t>::type_id(): {
+      auto p = v.as<uint8_t>();
+      if (p) {
+        os << static_cast<int>(*p);
+      } else {
+        os << "[InternalError: uchar TypeId mismatch.]";
       }
       break;
     }

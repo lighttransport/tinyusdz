@@ -1,5 +1,4 @@
 #include "mcp-resources.hh"
-#include "pprinter.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push

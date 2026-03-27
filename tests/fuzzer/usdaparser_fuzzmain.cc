@@ -10,17 +10,23 @@ static void parse_usda(const uint8_t *data, size_t size)
 
   std::vector<uint8_t> buf;
   buf.resize(content.size() + size);
-  memcpy(&buf[0], &content[0], content.size());
-  
-  memcpy(&buf[content.size()], data, size);
+  memcpy(buf.data(), content.data(), content.size());
+
+  if (size > 0 && data) {
+    memcpy(buf.data() + content.size(), data, size);
+  }
 
   size_t total_size = content.size() + size;
 
   tinyusdz::StreamReader sr(buf.data(), total_size, /* endianswap */false);
 
+  tinyusdz::usda::USDAReaderConfig config;
+  config.max_memory_limit_in_mb = 1024 * 4; // 4GB for fuzzer
+
   tinyusdz::usda::USDAReader reader(&sr);
-  
-  bool ret = reader.Read(); 
+  reader.set_reader_config(config);
+
+  bool ret = reader.Read();
   (void)ret;
 
   return;

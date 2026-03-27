@@ -1,0 +1,72 @@
+#usda 1.0
+(
+    doc = "Hand-written test: ND_hsv_adjust_color3 node with hue/saturation/value/fac"
+    metersPerUnit = 1
+    upAxis = "Z"
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Sphere "HsvAdjustTest"
+    (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        double radius = 1.0
+        rel material:binding = </root/_materials/HsvAdjustTest>
+    }
+
+    def Scope "_materials"
+    {
+        def Material "HsvAdjustTest"
+        (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            token outputs:surface.connect = </root/_materials/HsvAdjustTest/shader.outputs:surface>
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/HsvAdjustTest/shader.outputs:surface>
+
+            def Shader "shader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                float inputs:base_weight = 1
+                color3f inputs:base_color.connect = </root/_materials/HsvAdjustTest/NodeGraphs.outputs:hsv_out>
+                float inputs:base_metalness = 0
+                float inputs:base_diffuse_roughness = 0
+                float inputs:specular_weight = 1
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_roughness = 0.4
+                float inputs:specular_ior = 1.5
+                float inputs:coat_weight = 0
+                float inputs:emission_luminance = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                color3f outputs:hsv_out.connect = </root/_materials/HsvAdjustTest/NodeGraphs/hsv_adjust.outputs:out>
+
+                def Shader "input_color"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (0.8, 0.2, 0.1)
+                    color3f outputs:out
+                }
+
+                def Shader "hsv_adjust"
+                {
+                    uniform token info:id = "ND_hsv_adjust_color3"
+                    color3f inputs:in.connect = </root/_materials/HsvAdjustTest/NodeGraphs/input_color.outputs:out>
+                    float inputs:hue = 0.5
+                    float inputs:saturation = 1.0
+                    float inputs:value = 1.0
+                    float inputs:fac = 1.0
+                    color3f outputs:out
+                }
+            }
+        }
+    }
+}

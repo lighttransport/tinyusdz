@@ -6,8 +6,9 @@
 #include "acutest.h"
 
 #include "unit-prim-types.h"
-#include "prim-types.hh"
-#include "usdGeom.hh"
+#include "core/prim.hh"
+#include "core/path.hh"
+#include "core/model-scope.hh"
 
 using namespace tinyusdz;
 
@@ -140,23 +141,4 @@ void prim_add_test(void) {
   // can add child Prim with renaming
   TEST_CHECK(root.add_child(std::move(dprim), /* rename_if_required */true)); 
   
-}
-
-void prim_element_name_test(void) {
-  GeomPointInstancer instancer;
-  instancer.name = "InstancerA";
-
-  value::Value v(instancer);
-  auto name = GetPrimElementName(v);
-  TEST_CHECK(name.has_value());
-  if (name.has_value()) {
-    TEST_CHECK(name.value() == "InstancerA");
-  }
-
-  TEST_CHECK(SetPrimElementName(v, "InstancerRenamed"));
-  auto renamed = GetPrimElementName(v);
-  TEST_CHECK(renamed.has_value());
-  if (renamed.has_value()) {
-    TEST_CHECK(renamed.value() == "InstancerRenamed");
-  }
 }

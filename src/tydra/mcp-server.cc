@@ -24,8 +24,6 @@
 #include <string>
 #include <unordered_set>
 
-// TODO
-//
 // [ ] Roots(from Protocol revision 2025-06-18)
 // [ ] Use mcp-session-id in resources and tools.
 // [ ] Server notification
@@ -322,7 +320,6 @@ void MCPServer::Impl::register_method(const std::string& method, MethodHandler h
 }
 
 bool MCPServer::Impl::init(int port, const std::string &host) {
-  // TODO
   (void)host;
 
   register_method("ping", [](const nlohmann::json& params, const std::string &sess_id, std::string &err) -> nlohmann::json {

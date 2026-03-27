@@ -33,3 +33,40 @@ static bool float_array_equals(const T *a, const T *b, const int n) {
 }
 
 }  // namespace tinyusdz_test
+
+// Forward declarations for test helpers
+namespace tinyusdz {
+class Stage;
+class Layer;
+}
+
+#include <cstring>
+#include "tinyusdz.hh"
+
+namespace tinyusdz_test {
+
+/// Parse USDA string into a Stage. Returns true on success.
+static inline bool parse_usda_to_stage(const char *usda, tinyusdz::Stage *stage,
+                                        std::string *warn = nullptr,
+                                        std::string *err = nullptr) {
+  std::string w, e;
+  if (!warn) warn = &w;
+  if (!err) err = &e;
+  return tinyusdz::LoadUSDAFromMemory(
+      reinterpret_cast<const uint8_t *>(usda), std::strlen(usda),
+      "test.usda", stage, warn, err);
+}
+
+/// Parse USDA string into a Layer. Returns true on success.
+static inline bool parse_usda_to_layer(const char *usda, tinyusdz::Layer *layer,
+                                        std::string *warn = nullptr,
+                                        std::string *err = nullptr) {
+  std::string w, e;
+  if (!warn) warn = &w;
+  if (!err) err = &e;
+  return tinyusdz::LoadLayerFromMemory(
+      reinterpret_cast<const uint8_t *>(usda), std::strlen(usda),
+      "test.usda", layer, warn, err);
+}
+
+}  // namespace tinyusdz_test

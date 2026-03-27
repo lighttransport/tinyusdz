@@ -8,6 +8,7 @@
 #include "unit-strutil.h"
 #include "str-util.hh"
 #include "tiny-string.hh"
+#include "value-types.hh"
 #include <cmath>
 
 using namespace tinyusdz;
@@ -326,6 +327,774 @@ void dtoa_test(void) {
 
     TEST_CHECK(result == "42.0");
     TEST_MSG("integer-like result: %s", result.c_str());
+  }
+}
+
+void parse_array_test(void) {
+  using namespace tinyusdz::str;
+  using namespace tinyusdz::value;
+
+  // ===== float2 =====
+  {
+    tstring_view sv("[(1, 2), (3.5, 4.5)]");
+    std::vector<float2> result;
+    TEST_CHECK(parse_float2_array(sv, &result));
+    TEST_CHECK(result.size() == 2);
+    TEST_CHECK(result[0][0] == 1.0f);
+    TEST_CHECK(result[0][1] == 2.0f);
+    TEST_CHECK(result[1][0] == 3.5f);
+    TEST_CHECK(result[1][1] == 4.5f);
+  }
+
+  // ===== float3 =====
+  {
+    tstring_view sv("[(1, 2, 3), (4.5, 5.5, 6.5)]");
+    std::vector<float3> result;
+    TEST_CHECK(parse_float3_array(sv, &result));
+    TEST_CHECK(result.size() == 2);
+    TEST_CHECK(result[0][0] == 1.0f);
+    TEST_CHECK(result[0][2] == 3.0f);
+    TEST_CHECK(result[1][1] == 5.5f);
+  }
+
+  // ===== float4 =====
+  {
+    tstring_view sv("[(1, 2, 3, 4)]");
+    std::vector<float4> result;
+    TEST_CHECK(parse_float4_array(sv, &result));
+    TEST_CHECK(result.size() == 1);
+    TEST_CHECK(result[0][0] == 1.0f);
+    TEST_CHECK(result[0][3] == 4.0f);
+  }
+
+  // ===== double2 =====
+  {
+    tstring_view sv("[(1.5, 2.5), (3.5, 4.5)]");
+    std::vector<double2> result;
+    TEST_CHECK(parse_double2_array(sv, &result));
+    TEST_CHECK(result.size() == 2);
+    TEST_CHECK(result[0][0] == 1.5);
+    TEST_CHECK(result[1][1] == 4.5);
+  }
+
+  // ===== double3 =====
+  {
+    tstring_view sv("[(1, 2, 3)]");
+    std::vector<double3> result;
+    TEST_CHECK(parse_double3_array(sv, &result));
+    TEST_CHECK(result.size() == 1);
+    TEST_CHECK(result[0][0] == 1.0);
+    TEST_CHECK(result[0][1] == 2.0);
+    TEST_CHECK(result[0][2] == 3.0);
+  }
+
+  // ===== double4 =====
+  {
+    tstring_view sv("[(1, 2, 3, 4), (5, 6, 7, 8)]");
+    std::vector<double4> result;
+    TEST_CHECK(parse_double4_array(sv, &result));
+    TEST_CHECK(result.size() == 2);
+    TEST_CHECK(result[0][0] == 1.0);
+    TEST_CHECK(result[1][3] == 8.0);
+  }
+
+  // ===== matrix2f =====
+  {
+    tstring_view sv("[((1, 0), (0, 1))]");
+    std::vector<matrix2f> result;
+    TEST_CHECK(parse_matrix2f_array(sv, &result));
+    TEST_CHECK(result.size() == 1);
+    TEST_CHECK(result[0].m[0][0] == 1.0f);
+    TEST_CHECK(result[0].m[0][1] == 0.0f);
+    TEST_CHECK(result[0].m[1][0] == 0.0f);
+    TEST_CHECK(result[0].m[1][1] == 1.0f);
+  }
+
+  // ===== matrix3f =====
+  {
+    tstring_view sv("[((1, 0, 0), (0, 1, 0), (0, 0, 1))]");
+    std::vector<matrix3f> result;
+    TEST_CHECK(parse_matrix3f_array(sv, &result));
+    TEST_CHECK(result.size() == 1);
+    TEST_CHECK(result[0].m[0][0] == 1.0f);
+    TEST_CHECK(result[0].m[1][1] == 1.0f);
+    TEST_CHECK(result[0].m[2][2] == 1.0f);
+    TEST_CHECK(result[0].m[0][1] == 0.0f);
+  }
+
+  // ===== matrix4f =====
+  {
+    tstring_view sv("[((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))]");
+    std::vector<matrix4f> result;
+    TEST_CHECK(parse_matrix4f_array(sv, &result));
+    TEST_CHECK(result.size() == 1);
+    TEST_CHECK(result[0].m[0][0] == 1.0f);
+    TEST_CHECK(result[0].m[3][3] == 1.0f);
+    TEST_CHECK(result[0].m[1][0] == 0.0f);
+  }
+
+  // ===== matrix2d =====
+  {
+    tstring_view sv("[((2, 0), (0, 2))]");
+    std::vector<matrix2d> result;
+    TEST_CHECK(parse_matrix2d_array(sv, &result));
+    TEST_CHECK(result.size() == 1);
+    TEST_CHECK(result[0].m[0][0] == 2.0);
+    TEST_CHECK(result[0].m[1][1] == 2.0);
+  }
+
+  // ===== matrix3d =====
+  {
+    tstring_view sv("[((1, 0, 0), (0, 1, 0), (0, 0, 1))]");
+    std::vector<matrix3d> result;
+    TEST_CHECK(parse_matrix3d_array(sv, &result));
+    TEST_CHECK(result.size() == 1);
+    TEST_CHECK(result[0].m[0][0] == 1.0);
+    TEST_CHECK(result[0].m[2][2] == 1.0);
+  }
+
+  // ===== matrix4d =====
+  {
+    tstring_view sv("[((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))]");
+    std::vector<matrix4d> result;
+    TEST_CHECK(parse_matrix4d_array(sv, &result));
+    TEST_CHECK(result.size() == 1);
+    TEST_CHECK(result[0].m[0][0] == 1.0);
+    TEST_CHECK(result[0].m[3][3] == 1.0);
+  }
+
+  // ===== Empty arrays =====
+  {
+    tstring_view sv("[]");
+    std::vector<float2> result;
+    TEST_CHECK(parse_float2_array(sv, &result));
+    TEST_CHECK(result.size() == 0);
+  }
+  {
+    tstring_view sv("[]");
+    std::vector<matrix4d> result;
+    TEST_CHECK(parse_matrix4d_array(sv, &result));
+    TEST_CHECK(result.size() == 0);
+  }
+
+  // ===== Null pointer =====
+  {
+    tstring_view sv("[(1, 2)]");
+    TEST_CHECK(!parse_float2_array(sv, nullptr));
+  }
+
+  // ===== Empty string =====
+  {
+    tstring_view sv("");
+    std::vector<float3> result;
+    TEST_CHECK(!parse_float3_array(sv, &result));
+  }
+
+  // ===== Multi-element matrix array =====
+  {
+    tstring_view sv("[((1, 0), (0, 1)), ((0, 1), (1, 0))]");
+    std::vector<matrix2f> result;
+    TEST_CHECK(parse_matrix2f_array(sv, &result));
+    TEST_CHECK(result.size() == 2);
+    TEST_CHECK(result[0].m[0][0] == 1.0f);
+    TEST_CHECK(result[1].m[0][0] == 0.0f);
+    TEST_CHECK(result[1].m[0][1] == 1.0f);
+  }
+
+  // ===== matrix4d compact format (no spaces, as found in real USDA files) =====
+  {
+    tstring_view sv("[((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,2,1))]");
+    std::vector<matrix4d> result;
+    TEST_CHECK(parse_matrix4d_array(sv, &result));
+    TEST_CHECK(result.size() == 2);
+    TEST_CHECK(result[0].m[0][0] == 1.0);
+    TEST_CHECK(result[0].m[3][3] == 1.0);
+    TEST_CHECK(result[1].m[3][2] == 2.0);
+    TEST_CHECK(result[1].m[3][3] == 1.0);
+  }
+
+  // ==========================================================================
+  // Scalar array error cases (float, double, int)
+  // ==========================================================================
+
+  // --- float array ---
+  {
+    // Null pointer
+    tstring_view sv("[1.0, 2.0]");
+    TEST_CHECK(!parse_float_array(sv, (std::vector<float> *)nullptr));
+  }
+  {
+    // Empty string
+    tstring_view sv("");
+    std::vector<float> r;
+    TEST_CHECK(!parse_float_array(sv, &r));
+  }
+  {
+    // Missing opening bracket
+    tstring_view sv("1.0, 2.0]");
+    std::vector<float> r;
+    TEST_CHECK(!parse_float_array(sv, &r));
+  }
+  {
+    // Non-numeric content
+    tstring_view sv("[abc, def]");
+    std::vector<float> r;
+    TEST_CHECK(!parse_float_array(sv, &r));
+  }
+  {
+    // Empty array
+    tstring_view sv("[]");
+    std::vector<float> r;
+    TEST_CHECK(parse_float_array(sv, &r));
+    TEST_CHECK(r.size() == 0);
+  }
+  {
+    // Single element
+    tstring_view sv("[3.14]");
+    std::vector<float> r;
+    TEST_CHECK(parse_float_array(sv, &r));
+    TEST_CHECK(r.size() == 1);
+    TEST_CHECK(r[0] == 3.14f);
+  }
+  {
+    // Whitespace around values
+    tstring_view sv("[  1.0 , 2.0 , 3.0  ]");
+    std::vector<float> r;
+    TEST_CHECK(parse_float_array(sv, &r));
+    TEST_CHECK(r.size() == 3);
+  }
+
+  // --- double array ---
+  {
+    tstring_view sv("");
+    std::vector<double> r;
+    TEST_CHECK(!parse_double_array(sv, &r));
+  }
+  {
+    tstring_view sv("[abc]");
+    std::vector<double> r;
+    TEST_CHECK(!parse_double_array(sv, &r));
+  }
+  {
+    tstring_view sv("[]");
+    std::vector<double> r;
+    TEST_CHECK(parse_double_array(sv, &r));
+    TEST_CHECK(r.size() == 0);
+  }
+  {
+    tstring_view sv("[1.0]");
+    std::vector<double> r;
+    TEST_CHECK(parse_double_array(sv, &r));
+    TEST_CHECK(r.size() == 1);
+    TEST_CHECK(r[0] == 1.0);
+  }
+
+  // --- int array ---
+  {
+    tstring_view sv("");
+    std::vector<int32_t> r;
+    TEST_CHECK(!parse_int_array(sv, &r));
+  }
+  {
+    tstring_view sv("[abc]");
+    std::vector<int32_t> r;
+    TEST_CHECK(!parse_int_array(sv, &r));
+  }
+  {
+    tstring_view sv("[]");
+    std::vector<int32_t> r;
+    TEST_CHECK(parse_int_array(sv, &r));
+    TEST_CHECK(r.size() == 0);
+  }
+  {
+    tstring_view sv("[1, -2, 3]");
+    std::vector<int32_t> r;
+    TEST_CHECK(parse_int_array(sv, &r));
+    TEST_CHECK(r.size() == 3);
+    TEST_CHECK(r[0] == 1);
+    TEST_CHECK(r[1] == -2);
+    TEST_CHECK(r[2] == 3);
+  }
+
+  // ==========================================================================
+  // Compound vector (float2/3/4, double2/3/4) error cases
+  // ==========================================================================
+
+  // --- Null pointer for each type ---
+  {
+    tstring_view sv("[(1, 2)]");
+    TEST_CHECK(!parse_float2_array(sv, (std::vector<float2> *)nullptr));
+    TEST_CHECK(!parse_float3_array(sv, (std::vector<float3> *)nullptr));
+    TEST_CHECK(!parse_float4_array(sv, (std::vector<float4> *)nullptr));
+    TEST_CHECK(!parse_double2_array(sv, (std::vector<double2> *)nullptr));
+    TEST_CHECK(!parse_double3_array(sv, (std::vector<double3> *)nullptr));
+    TEST_CHECK(!parse_double4_array(sv, (std::vector<double4> *)nullptr));
+  }
+
+  // --- Empty string for each type ---
+  {
+    tstring_view sv("");
+    std::vector<float2> f2; std::vector<float3> f3; std::vector<float4> f4;
+    std::vector<double2> d2; std::vector<double3> d3; std::vector<double4> d4;
+    TEST_CHECK(!parse_float2_array(sv, &f2));
+    TEST_CHECK(!parse_float3_array(sv, &f3));
+    TEST_CHECK(!parse_float4_array(sv, &f4));
+    TEST_CHECK(!parse_double2_array(sv, &d2));
+    TEST_CHECK(!parse_double3_array(sv, &d3));
+    TEST_CHECK(!parse_double4_array(sv, &d4));
+  }
+
+  // --- Empty arrays for each type ---
+  {
+    tstring_view sv("[]");
+    std::vector<float2> f2; std::vector<float3> f3; std::vector<float4> f4;
+    std::vector<double2> d2; std::vector<double3> d3; std::vector<double4> d4;
+    TEST_CHECK(parse_float2_array(sv, &f2)); TEST_CHECK(f2.empty());
+    TEST_CHECK(parse_float3_array(sv, &f3)); TEST_CHECK(f3.empty());
+    TEST_CHECK(parse_float4_array(sv, &f4)); TEST_CHECK(f4.empty());
+    TEST_CHECK(parse_double2_array(sv, &d2)); TEST_CHECK(d2.empty());
+    TEST_CHECK(parse_double3_array(sv, &d3)); TEST_CHECK(d3.empty());
+    TEST_CHECK(parse_double4_array(sv, &d4)); TEST_CHECK(d4.empty());
+  }
+
+  // --- Missing opening bracket ---
+  {
+    tstring_view sv("(1, 2)");
+    std::vector<float2> r;
+    TEST_CHECK(!parse_float2_array(sv, &r));
+  }
+  {
+    tstring_view sv("1, 2, 3");
+    std::vector<float3> r;
+    TEST_CHECK(!parse_float3_array(sv, &r));
+  }
+
+  // --- Missing opening paren for tuple ---
+  {
+    tstring_view sv("[1, 2]");  // no parens around tuple
+    std::vector<float2> r;
+    TEST_CHECK(!parse_float2_array(sv, &r));
+  }
+  {
+    tstring_view sv("[1, 2, 3]");
+    std::vector<double3> r;
+    TEST_CHECK(!parse_double3_array(sv, &r));
+  }
+
+  // --- Missing closing paren for tuple ---
+  {
+    tstring_view sv("[(1, 2]");  // missing ')'
+    std::vector<float2> r;
+    TEST_CHECK(!parse_float2_array(sv, &r));
+  }
+  {
+    tstring_view sv("[(1, 2, 3]");
+    std::vector<float3> r;
+    TEST_CHECK(!parse_float3_array(sv, &r));
+  }
+  {
+    tstring_view sv("[(1, 2, 3, 4]");
+    std::vector<double4> r;
+    TEST_CHECK(!parse_double4_array(sv, &r));
+  }
+
+  // --- Missing comma between elements in tuple ---
+  {
+    tstring_view sv("[(1 2)]");  // missing comma
+    std::vector<float2> r;
+    TEST_CHECK(!parse_float2_array(sv, &r));
+  }
+  {
+    tstring_view sv("[(1 2 3)]");
+    std::vector<float3> r;
+    TEST_CHECK(!parse_float3_array(sv, &r));
+  }
+  {
+    tstring_view sv("[(1 2 3 4)]");
+    std::vector<double4> r;
+    TEST_CHECK(!parse_double4_array(sv, &r));
+  }
+
+  // --- Non-numeric content in tuple ---
+  {
+    tstring_view sv("[(abc, 2)]");
+    std::vector<float2> r;
+    TEST_CHECK(!parse_float2_array(sv, &r));
+  }
+  {
+    tstring_view sv("[(1, abc)]");
+    std::vector<float2> r;
+    TEST_CHECK(!parse_float2_array(sv, &r));
+  }
+  {
+    tstring_view sv("[(1, abc, 3)]");
+    std::vector<double3> r;
+    TEST_CHECK(!parse_double3_array(sv, &r));
+  }
+
+  // --- Too few elements in tuple ---
+  {
+    tstring_view sv("[(1)]");  // float2 needs 2
+    std::vector<float2> r;
+    TEST_CHECK(!parse_float2_array(sv, &r));
+  }
+  {
+    tstring_view sv("[(1, 2)]");  // float3 needs 3
+    std::vector<float3> r;
+    TEST_CHECK(!parse_float3_array(sv, &r));
+  }
+  {
+    tstring_view sv("[(1, 2, 3)]");  // float4 needs 4
+    std::vector<float4> r;
+    TEST_CHECK(!parse_float4_array(sv, &r));
+  }
+
+  // --- Truncated input (abrupt end) ---
+  {
+    tstring_view sv("[(1,");  // ends mid-tuple
+    std::vector<float2> r;
+    TEST_CHECK(!parse_float2_array(sv, &r));
+  }
+  {
+    tstring_view sv("[(1, 2");  // no closing paren or bracket
+    std::vector<float2> r;
+    TEST_CHECK(!parse_float2_array(sv, &r));
+  }
+  {
+    tstring_view sv("[");  // just opening bracket, no content — parser returns empty
+    std::vector<float3> r;
+    TEST_CHECK(parse_float3_array(sv, &r));
+    TEST_CHECK(r.empty());
+  }
+  {
+    tstring_view sv("[(");  // opening bracket and paren
+    std::vector<double4> r;
+    TEST_CHECK(!parse_double4_array(sv, &r));
+  }
+
+  // --- Negative and scientific notation values ---
+  {
+    tstring_view sv("[(-1.5, 2.5e3), (-3.14, 0)]");
+    std::vector<float2> r;
+    TEST_CHECK(parse_float2_array(sv, &r));
+    TEST_CHECK(r.size() == 2);
+    TEST_CHECK(r[0][0] == -1.5f);
+    TEST_CHECK(r[0][1] == 2500.0f);
+    TEST_CHECK(r[1][0] == -3.14f);
+    TEST_CHECK(r[1][1] == 0.0f);
+  }
+  {
+    tstring_view sv("[(-1e-5, 2.0e+10, -3)]");
+    std::vector<double3> r;
+    TEST_CHECK(parse_double3_array(sv, &r));
+    TEST_CHECK(r.size() == 1);
+    TEST_CHECK(r[0][0] == -1e-5);
+    TEST_CHECK(r[0][1] == 2.0e+10);
+    TEST_CHECK(r[0][2] == -3.0);
+  }
+
+  // --- Whitespace variations ---
+  {
+    tstring_view sv(" [ ( 1 , 2 ) , ( 3 , 4 ) ] ");
+    std::vector<float2> r;
+    TEST_CHECK(parse_float2_array(sv, &r));
+    TEST_CHECK(r.size() == 2);
+    TEST_CHECK(r[0][0] == 1.0f);
+    TEST_CHECK(r[1][1] == 4.0f);
+  }
+  {
+    // Newlines and tabs (multi-line format as in USDA files)
+    tstring_view sv("[\n\t(1, 2, 3),\n\t(4, 5, 6)\n]");
+    std::vector<float3> r;
+    TEST_CHECK(parse_float3_array(sv, &r));
+    TEST_CHECK(r.size() == 2);
+    TEST_CHECK(r[0][0] == 1.0f);
+    TEST_CHECK(r[1][2] == 6.0f);
+  }
+
+  // --- Trailing comma after last tuple (common in USDA) ---
+  {
+    tstring_view sv("[(1, 2),]");
+    std::vector<float2> r;
+    // Trailing comma before ']' — parser skips whitespace and sees ']'
+    TEST_CHECK(parse_float2_array(sv, &r));
+    TEST_CHECK(r.size() == 1);
+  }
+  {
+    tstring_view sv("[(1, 2, 3),]");
+    std::vector<double3> r;
+    TEST_CHECK(parse_double3_array(sv, &r));
+    TEST_CHECK(r.size() == 1);
+  }
+
+  // ==========================================================================
+  // Matrix error cases
+  // ==========================================================================
+
+  // --- Null pointer for each matrix type ---
+  {
+    tstring_view sv("[((1, 0), (0, 1))]");
+    TEST_CHECK(!parse_matrix2f_array(sv, (std::vector<matrix2f> *)nullptr));
+    TEST_CHECK(!parse_matrix3f_array(sv, (std::vector<matrix3f> *)nullptr));
+    TEST_CHECK(!parse_matrix4f_array(sv, (std::vector<matrix4f> *)nullptr));
+    TEST_CHECK(!parse_matrix2d_array(sv, (std::vector<matrix2d> *)nullptr));
+    TEST_CHECK(!parse_matrix3d_array(sv, (std::vector<matrix3d> *)nullptr));
+    TEST_CHECK(!parse_matrix4d_array(sv, (std::vector<matrix4d> *)nullptr));
+  }
+
+  // --- Empty string for each matrix type ---
+  {
+    tstring_view sv("");
+    std::vector<matrix2f> m2f; std::vector<matrix3f> m3f; std::vector<matrix4f> m4f;
+    std::vector<matrix2d> m2d; std::vector<matrix3d> m3d; std::vector<matrix4d> m4d;
+    TEST_CHECK(!parse_matrix2f_array(sv, &m2f));
+    TEST_CHECK(!parse_matrix3f_array(sv, &m3f));
+    TEST_CHECK(!parse_matrix4f_array(sv, &m4f));
+    TEST_CHECK(!parse_matrix2d_array(sv, &m2d));
+    TEST_CHECK(!parse_matrix3d_array(sv, &m3d));
+    TEST_CHECK(!parse_matrix4d_array(sv, &m4d));
+  }
+
+  // --- Empty arrays for each matrix type ---
+  {
+    tstring_view sv("[]");
+    std::vector<matrix2f> m2f; std::vector<matrix3f> m3f; std::vector<matrix4f> m4f;
+    std::vector<matrix2d> m2d; std::vector<matrix3d> m3d; std::vector<matrix4d> m4d;
+    TEST_CHECK(parse_matrix2f_array(sv, &m2f)); TEST_CHECK(m2f.empty());
+    TEST_CHECK(parse_matrix3f_array(sv, &m3f)); TEST_CHECK(m3f.empty());
+    TEST_CHECK(parse_matrix4f_array(sv, &m4f)); TEST_CHECK(m4f.empty());
+    TEST_CHECK(parse_matrix2d_array(sv, &m2d)); TEST_CHECK(m2d.empty());
+    TEST_CHECK(parse_matrix3d_array(sv, &m3d)); TEST_CHECK(m3d.empty());
+    TEST_CHECK(parse_matrix4d_array(sv, &m4d)); TEST_CHECK(m4d.empty());
+  }
+
+  // --- Missing opening bracket ---
+  {
+    tstring_view sv("((1, 0), (0, 1))");
+    std::vector<matrix2f> r;
+    TEST_CHECK(!parse_matrix2f_array(sv, &r));
+  }
+
+  // --- Missing outer '(' for matrix element ---
+  {
+    tstring_view sv("[(1, 0), (0, 1)]");  // no outer parens wrapping rows
+    std::vector<matrix2d> r;
+    TEST_CHECK(!parse_matrix2d_array(sv, &r));
+  }
+
+  // --- Missing inner '(' for row ---
+  {
+    tstring_view sv("[(1, 0, 0, 1)]");  // flat tuple instead of nested rows
+    std::vector<matrix2f> r;
+    TEST_CHECK(!parse_matrix2f_array(sv, &r));
+  }
+  {
+    tstring_view sv("[(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)]");  // flat
+    std::vector<matrix4d> r;
+    TEST_CHECK(!parse_matrix4d_array(sv, &r));
+  }
+
+  // --- Missing inner ')' for row ---
+  {
+    tstring_view sv("[((1, 0, (0, 1))]");  // first row missing ')'
+    std::vector<matrix2f> r;
+    TEST_CHECK(!parse_matrix2f_array(sv, &r));
+  }
+
+  // --- Missing outer ')' for matrix element ---
+  {
+    tstring_view sv("[((1, 0), (0, 1)]");  // missing outer ')'
+    std::vector<matrix2f> r;
+    TEST_CHECK(!parse_matrix2f_array(sv, &r));
+  }
+
+  // --- Non-numeric content in matrix ---
+  {
+    tstring_view sv("[((abc, 0), (0, 1))]");
+    std::vector<matrix2f> r;
+    TEST_CHECK(!parse_matrix2f_array(sv, &r));
+  }
+  {
+    tstring_view sv("[((1, xyz), (0, 1))]");
+    std::vector<matrix2d> r;
+    TEST_CHECK(!parse_matrix2d_array(sv, &r));
+  }
+
+  // --- Missing comma between row elements ---
+  {
+    tstring_view sv("[((1 0), (0, 1))]");  // missing comma in first row
+    std::vector<matrix2f> r;
+    TEST_CHECK(!parse_matrix2f_array(sv, &r));
+  }
+
+  // --- Truncated matrix input ---
+  {
+    tstring_view sv("[((1, 0), (0,");  // ends mid-row
+    std::vector<matrix2d> r;
+    TEST_CHECK(!parse_matrix2d_array(sv, &r));
+  }
+  {
+    tstring_view sv("[((1, 0),");  // ends between rows
+    std::vector<matrix2f> r;
+    TEST_CHECK(!parse_matrix2f_array(sv, &r));
+  }
+  {
+    tstring_view sv("[((1,");  // ends mid-first-row
+    std::vector<matrix2f> r;
+    TEST_CHECK(!parse_matrix2f_array(sv, &r));
+  }
+  {
+    tstring_view sv("[((");  // just outer and inner opening parens
+    std::vector<matrix4d> r;
+    TEST_CHECK(!parse_matrix4d_array(sv, &r));
+  }
+
+  // --- Too few rows ---
+  {
+    tstring_view sv("[((1, 0))]");  // matrix2f needs 2 rows, only 1
+    std::vector<matrix2f> r;
+    TEST_CHECK(!parse_matrix2f_array(sv, &r));
+  }
+
+  // --- Matrix with whitespace/newlines (real USDA multi-line format) ---
+  {
+    tstring_view sv(
+      "[\n"
+      "  ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1)),\n"
+      "  ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 2, 1))\n"
+      "]"
+    );
+    std::vector<matrix4d> r;
+    TEST_CHECK(parse_matrix4d_array(sv, &r));
+    TEST_CHECK(r.size() == 2);
+    TEST_CHECK(r[0].m[0][0] == 1.0);
+    TEST_CHECK(r[0].m[3][3] == 1.0);
+    TEST_CHECK(r[1].m[3][2] == 2.0);
+  }
+
+  // --- Trailing comma after last matrix (common in USDA) ---
+  {
+    tstring_view sv("[((1, 0), (0, 1)),]");
+    std::vector<matrix2f> r;
+    TEST_CHECK(parse_matrix2f_array(sv, &r));
+    TEST_CHECK(r.size() == 1);
+  }
+  {
+    tstring_view sv(
+      "[\n"
+      "  ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),\n"
+      "  ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,4,1)),\n"
+      "]"
+    );
+    std::vector<matrix4d> r;
+    TEST_CHECK(parse_matrix4d_array(sv, &r));
+    TEST_CHECK(r.size() == 2);
+    TEST_CHECK(r[1].m[3][2] == 4.0);
+  }
+
+  // --- Matrix with negative and scientific values ---
+  {
+    tstring_view sv("[((-1.5, 2e3), (0, -0.5))]");
+    std::vector<matrix2f> r;
+    TEST_CHECK(parse_matrix2f_array(sv, &r));
+    TEST_CHECK(r.size() == 1);
+    TEST_CHECK(r[0].m[0][0] == -1.5f);
+    TEST_CHECK(r[0].m[0][1] == 2000.0f);
+    TEST_CHECK(r[0].m[1][1] == -0.5f);
+  }
+
+  // --- Three-element matrix4d array (real skeleton bindTransforms) ---
+  {
+    tstring_view sv(
+      "[((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),"
+      "((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,2,1)),"
+      "((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,4,1))]"
+    );
+    std::vector<matrix4d> r;
+    TEST_CHECK(parse_matrix4d_array(sv, &r));
+    TEST_CHECK(r.size() == 3);
+    TEST_CHECK(r[0].m[3][2] == 0.0);
+    TEST_CHECK(r[1].m[3][2] == 2.0);
+    TEST_CHECK(r[2].m[3][2] == 4.0);
+  }
+
+  // --- matrix4d with fractional values from real USDA ---
+  {
+    tstring_view sv(
+      "["
+      "((0.3778795897960663, 2.9802322387695312e-8, -0.9258614778518677, 0),"
+      " (0.37193965911865234, 0.9152927398681641, 0.15180081129074097, 0),"
+      " (0.8473281860351562, -0.40277791023254395, 0.34588557481765747, 0),"
+      " (0, 0, 0, 1))"
+      "]"
+    );
+    std::vector<matrix4d> r;
+    TEST_CHECK(parse_matrix4d_array(sv, &r));
+    TEST_CHECK(r.size() == 1);
+    // Spot-check a few values
+    TEST_CHECK(r[0].m[0][0] == 0.3778795897960663);
+    TEST_CHECK(r[0].m[3][3] == 1.0);
+    TEST_CHECK(r[0].m[0][3] == 0.0);
+  }
+
+  // --- Only whitespace (no array) ---
+  {
+    tstring_view sv("   ");
+    std::vector<float2> r;
+    TEST_CHECK(!parse_float2_array(sv, &r));
+  }
+  {
+    tstring_view sv("  \n\t  ");
+    std::vector<matrix4d> r;
+    TEST_CHECK(!parse_matrix4d_array(sv, &r));
+  }
+
+  // --- Garbage after valid array (parser doesn't look past ']') ---
+  {
+    tstring_view sv("[(1, 2)]garbage");
+    std::vector<float2> r;
+    TEST_CHECK(parse_float2_array(sv, &r));
+    TEST_CHECK(r.size() == 1);
+    TEST_CHECK(r[0][0] == 1.0f);
+    TEST_CHECK(r[0][1] == 2.0f);
+  }
+
+  // --- Single-element arrays ---
+  {
+    tstring_view sv("[(42.0, -1.0)]");
+    std::vector<float2> r;
+    TEST_CHECK(parse_float2_array(sv, &r));
+    TEST_CHECK(r.size() == 1);
+  }
+  {
+    tstring_view sv("[(1, 2, 3, 4)]");
+    std::vector<double4> r;
+    TEST_CHECK(parse_double4_array(sv, &r));
+    TEST_CHECK(r.size() == 1);
+    TEST_CHECK(r[0][0] == 1.0);
+    TEST_CHECK(r[0][1] == 2.0);
+    TEST_CHECK(r[0][2] == 3.0);
+    TEST_CHECK(r[0][3] == 4.0);
+  }
+  {
+    tstring_view sv("[((1, 0, 0), (0, 1, 0), (0, 0, 1))]");
+    std::vector<matrix3d> r;
+    TEST_CHECK(parse_matrix3d_array(sv, &r));
+    TEST_CHECK(r.size() == 1);
+  }
+
+  // --- Empty array with whitespace ---
+  {
+    tstring_view sv("[  ]");
+    std::vector<float3> r;
+    TEST_CHECK(parse_float3_array(sv, &r));
+    TEST_CHECK(r.empty());
+  }
+  {
+    tstring_view sv("[ \n\t ]");
+    std::vector<matrix4d> r;
+    TEST_CHECK(parse_matrix4d_array(sv, &r));
+    TEST_CHECK(r.empty());
   }
 }
 

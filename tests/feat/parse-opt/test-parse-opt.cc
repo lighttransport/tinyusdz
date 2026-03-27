@@ -8,6 +8,8 @@
 #include <chrono>
 #include <random>
 #include <iomanip>
+#include <string>
+#include <vector>
 
 #include "tinyusdz.hh"
 #include "ascii-parser.hh"
@@ -15,6 +17,11 @@
 #include "value-types.hh"
 
 using namespace tinyusdz;
+
+enum class BenchmarkProfile {
+  Full,
+  Quick,
+};
 
 // Generate random float arrays
 std::string generate_float_array(size_t count) {
@@ -194,10 +201,13 @@ double benchmark(const std::string& name, Func func, int iterations = 1) {
 }
 
 // Test parsing float arrays
-void test_float_array_parsing() {
+void test_float_array_parsing(BenchmarkProfile profile) {
   std::cout << "\n=== Float Array Parsing ===" << std::endl;
 
-  const size_t sizes[] = {10000, 100000, 1000000, 5000000, 10000000};
+  const std::vector<size_t> sizes =
+      (profile == BenchmarkProfile::Quick)
+          ? std::vector<size_t>{10000, 100000, 500000}
+          : std::vector<size_t>{10000, 100000, 1000000, 5000000, 10000000};
 
   for (size_t size : sizes) {
     std::cout << "\nArray size: " << size << " elements" << std::endl;
@@ -215,10 +225,13 @@ void test_float_array_parsing() {
 }
 
 // Test parsing float3 arrays
-void test_float3_array_parsing() {
+void test_float3_array_parsing(BenchmarkProfile profile) {
   std::cout << "\n=== Float3 Array Parsing ===" << std::endl;
 
-  const size_t sizes[] = {10000, 100000, 500000, 1000000};
+  const std::vector<size_t> sizes =
+      (profile == BenchmarkProfile::Quick)
+          ? std::vector<size_t>{10000, 50000, 100000}
+          : std::vector<size_t>{10000, 100000, 500000, 1000000};
 
   for (size_t size : sizes) {
     std::cout << "\nArray size: " << size << " float3 vectors" << std::endl;
@@ -236,10 +249,13 @@ void test_float3_array_parsing() {
 }
 
 // Test parsing double arrays
-void test_double_array_parsing() {
+void test_double_array_parsing(BenchmarkProfile profile) {
   std::cout << "\n=== Double Array Parsing ===" << std::endl;
 
-  const size_t sizes[] = {10000, 100000, 1000000, 5000000};
+  const std::vector<size_t> sizes =
+      (profile == BenchmarkProfile::Quick)
+          ? std::vector<size_t>{10000, 50000, 100000}
+          : std::vector<size_t>{10000, 100000, 1000000, 5000000};
 
   for (size_t size : sizes) {
     std::cout << "\nArray size: " << size << " elements" << std::endl;
@@ -257,10 +273,13 @@ void test_double_array_parsing() {
 }
 
 // Test parsing matrix4d arrays
-void test_matrix4d_array_parsing() {
+void test_matrix4d_array_parsing(BenchmarkProfile profile) {
   std::cout << "\n=== Matrix4d Array Parsing ===" << std::endl;
 
-  const size_t sizes[] = {1000, 10000, 50000, 100000};
+  const std::vector<size_t> sizes =
+      (profile == BenchmarkProfile::Quick)
+          ? std::vector<size_t>{1000, 5000, 10000}
+          : std::vector<size_t>{1000, 10000, 50000, 100000};
 
   for (size_t size : sizes) {
     std::cout << "\nArray size: " << size << " matrix4d matrices" << std::endl;
@@ -278,7 +297,7 @@ void test_matrix4d_array_parsing() {
 }
 
 // Test parsing timeSamples with float arrays
-void test_timesample_float_arrays() {
+void test_timesample_float_arrays(BenchmarkProfile profile) {
   std::cout << "\n=== TimeSamples with Float Arrays ===" << std::endl;
 
   struct TestCase {
@@ -286,12 +305,13 @@ void test_timesample_float_arrays() {
     size_t array_size;
   };
 
-  const TestCase cases[] = {
-    {100, 10000},
-    {500, 10000},
-    {100, 100000},
-    {500, 100000}
-  };
+  const std::vector<TestCase> cases =
+      (profile == BenchmarkProfile::Quick)
+          ? std::vector<TestCase>{{25, 5000}, {50, 5000}, {25, 20000}}
+          : std::vector<TestCase>{{100, 10000},
+                                  {500, 10000},
+                                  {100, 100000},
+                                  {500, 100000}};
 
   for (const auto& tc : cases) {
     std::cout << "\nTimeSamples: " << tc.num_samples << " frames × "
@@ -310,7 +330,7 @@ void test_timesample_float_arrays() {
 }
 
 // Test parsing timeSamples with float3 arrays (e.g., points)
-void test_timesample_float3_arrays() {
+void test_timesample_float3_arrays(BenchmarkProfile profile) {
   std::cout << "\n=== TimeSamples with Float3 Arrays (e.g., points) ===" << std::endl;
 
   struct TestCase {
@@ -318,12 +338,13 @@ void test_timesample_float3_arrays() {
     size_t array_size;
   };
 
-  const TestCase cases[] = {
-    {100, 10000},
-    {500, 10000},
-    {100, 50000},
-    {500, 50000}
-  };
+  const std::vector<TestCase> cases =
+      (profile == BenchmarkProfile::Quick)
+          ? std::vector<TestCase>{{25, 5000}, {50, 5000}, {25, 10000}}
+          : std::vector<TestCase>{{100, 10000},
+                                  {500, 10000},
+                                  {100, 50000},
+                                  {500, 50000}};
 
   for (const auto& tc : cases) {
     std::cout << "\nTimeSamples: " << tc.num_samples << " frames × "
@@ -342,8 +363,15 @@ void test_timesample_float3_arrays() {
 }
 
 // Test complete USDA snippet with arrays
-void test_complete_usda_snippet() {
+void test_complete_usda_snippet(BenchmarkProfile profile) {
   std::cout << "\n=== Complete USDA Snippet Parsing ===" << std::endl;
+
+  const size_t points_count =
+      (profile == BenchmarkProfile::Quick) ? 25000 : 100000;
+  const size_t face_vertex_counts_count =
+      (profile == BenchmarkProfile::Quick) ? 7500 : 30000;
+  const size_t face_vertex_indices_count =
+      (profile == BenchmarkProfile::Quick) ? 22500 : 90000;
 
   std::stringstream ss;
   ss << "#usda 1.0\n";
@@ -351,9 +379,11 @@ void test_complete_usda_snippet() {
   ss << "  defaultPrim = \"TestMesh\"\n";
   ss << ")\n\n";
   ss << "def Mesh \"TestMesh\" {\n";
-  ss << "  float3[] points = " << generate_float3_array(100000) << "\n";
-  ss << "  int[] faceVertexCounts = " << generate_float_array(30000) << "\n";  // Reusing float gen for ints
-  ss << "  int[] faceVertexIndices = " << generate_float_array(90000) << "\n";
+  ss << "  float3[] points = " << generate_float3_array(points_count) << "\n";
+  ss << "  int[] faceVertexCounts = "
+     << generate_float_array(face_vertex_counts_count) << "\n";
+  ss << "  int[] faceVertexIndices = "
+     << generate_float_array(face_vertex_indices_count) << "\n";
   ss << "}\n";
 
   std::string data = ss.str();
@@ -370,19 +400,35 @@ void test_complete_usda_snippet() {
   });
 }
 
-int main(int /* argc */, char** /* argv */) {
+BenchmarkProfile ParseProfile(int argc, char** argv) {
+  for (int i = 1; i < argc; i++) {
+    const std::string arg(argv[i]);
+    if (arg == "--quick") {
+      return BenchmarkProfile::Quick;
+    }
+  }
+
+  return BenchmarkProfile::Full;
+}
+
+int main(int argc, char** argv) {
+  const BenchmarkProfile profile = ParseProfile(argc, argv);
+
   std::cout << "========================================" << std::endl;
   std::cout << "TinyUSDZ Array Parsing Benchmark" << std::endl;
+  std::cout << "Profile: "
+            << ((profile == BenchmarkProfile::Quick) ? "quick" : "full")
+            << std::endl;
   std::cout << "========================================" << std::endl;
 
   // Run all benchmarks
-  test_float_array_parsing();
-  test_float3_array_parsing();
-  test_double_array_parsing();
-  test_matrix4d_array_parsing();
-  test_timesample_float_arrays();
-  test_timesample_float3_arrays();
-  test_complete_usda_snippet();
+  test_float_array_parsing(profile);
+  test_float3_array_parsing(profile);
+  test_double_array_parsing(profile);
+  test_matrix4d_array_parsing(profile);
+  test_timesample_float_arrays(profile);
+  test_timesample_float3_arrays(profile);
+  test_complete_usda_snippet(profile);
 
   std::cout << "\n========================================" << std::endl;
   std::cout << "Benchmark Complete" << std::endl;

@@ -1,0 +1,26 @@
+#usda 1.0
+(
+    subLayers = [
+        @./ch12_metadata_resolution_over.usda@
+    ]
+)
+
+# AOUSD Core Spec 12.2 - Metadata Resolution Tests
+# This is the stronger layer (root). The sublayer provides weaker opinions.
+
+# Test 12.2.1 (specifier): def takes precedence over over
+def Mesh "DefinedPrim" {
+    double radius = 1.0
+}
+
+# Test 12.2.2 (typeName): typeName from defining spec
+# This layer defines it as Mesh, even if sublayer says Sphere
+def Mesh "TypeNameTest" {
+    double value = 1.0
+}
+
+# Test 12.2.4 (custom): custom is true if ANY opinion says true
+def "CustomTest" {
+    custom double myCustomAttr = 1.0
+    double schemaAttr = 2.0
+}

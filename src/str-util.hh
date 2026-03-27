@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -131,19 +132,11 @@ inline std::string wquote(const std::string &s,
   return quote_lstr + s + quote_rstr;
 }
 
-#if 0
-template<typename It>
-inline It quote(const It& v, const std::string &quote_str = "\"") {
-
-  It dst;
-
-  for (typename It::const_iterator it = v.begin(); it != v.end(); ++it) {
-    dst.emplace_back(quote((*it), quote_str));
-  }
-
-  return dst;
+// Path quote: wraps string in angle brackets < >
+inline std::string pquote(const std::string &s) {
+  return wquote(s, "<", ">");
 }
-#else
+
 inline std::vector<std::string> quote(const std::vector<std::string> &vs,
                                       const std::string &quote_str = "\"") {
   std::vector<std::string> dst;
@@ -154,7 +147,6 @@ inline std::vector<std::string> quote(const std::vector<std::string> &vs,
 
   return dst;
 }
-#endif
 
 // Python like join  ", ".join(v)
 template <typename It>
@@ -368,43 +360,8 @@ inline std::string codepoint_to_utf8(uint32_t code) {
 char *dtoa(float f, char *buf);
 char *dtoa(double f, char *buf);
 
-#if 0 // TODO
-///
-/// Convert UTF-8 code to UTF-8 char
-///
-/// Return empty string when input `code` is not a valid UTF-8 code.
-std::string to_utf8_char(const uint32_t code);
-#endif
 
-#if 0
-template<typename It>
-inline std::string quote_then_join(const std::string& sep, const It& v, const std::string &quote = "\"")
-{
-  std::ostringstream oss;
-  if (!v.empty()) {
-    typename It::const_iterator it = v.begin();
-    oss << wrap(*it++;
-    for (typename It::const_iterator e = v.end(); it != e; ++it)
-      oss << sep << *it;
-  }
-  return oss.str();
-}
-#endif
 
-#if 0
-template<typename It>
-inline std::string join(const std::string& sep, It& v)
-{
-  std::ostringstream oss;
-  if (!v.empty()) {
-    typename It::iterator it = v.begin();
-    oss << *it++;
-    for (typename It::iterator e = v.end(); it != e; ++it)
-      oss << sep << *it;
-  }
-  return oss.str();
-}
-#endif
 
 // Simple atof replacement
 // Returns qNaN for invalid input.
@@ -504,11 +461,6 @@ size_t print_double3(const value::double3& v, char* buffer);
 size_t print_double4(const value::double4& v, char* buffer);
 
 // Half precision functions - only available when linking with value-types
-#if 0
-size_t print_half2(const value::half2& v, char* buffer);
-size_t print_half3(const value::half3& v, char* buffer);
-size_t print_half4(const value::half4& v, char* buffer);
-#endif
 
 size_t print_matrix2d(const value::matrix2d& m, char* buffer);
 size_t print_matrix3d(const value::matrix3d& m, char* buffer);
@@ -534,5 +486,56 @@ bool GlobMatch(const std::string &pattern, const std::string &str);
 /// @return true if path matches pattern
 ///
 bool GlobMatchPath(const std::string &pattern, const std::string &path);
+
+///
+/// Substitute expression variables in a string.
+///
+/// Per AOUSD Core Spec 9.5, asset paths may contain `${VAR}` references
+/// that are resolved from the layer's `expressionVariables` dictionary.
+///
+/// Example: "${SHOT_DIR}/geo.usd" with {"SHOT_DIR": "/shots/001"} -> "/shots/001/geo.usd"
+///
+/// @param[in] input String potentially containing ${VAR} references
+/// @param[in] variables Map of variable names to values
+/// @return String with all ${VAR} references substituted
+///
+inline std::string SubstituteExpressionVariables(
+    const std::string &input,
+    const std::map<std::string, std::string> &variables) {
+  if (input.find("${") == std::string::npos) {
+    return input;  // fast path: no variables to substitute
+  }
+
+  std::string result;
+  result.reserve(input.size());
+  size_t i = 0;
+
+  while (i < input.size()) {
+    if (i + 1 < input.size() && input[i] == '$' && input[i + 1] == '{') {
+      // Find closing brace
+      size_t close = input.find('}', i + 2);
+      if (close != std::string::npos) {
+        std::string varname = input.substr(i + 2, close - i - 2);
+        auto it = variables.find(varname);
+        if (it != variables.end()) {
+          result += it->second;
+        } else {
+          // Unknown variable: keep original text
+          result += input.substr(i, close - i + 1);
+        }
+        i = close + 1;
+      } else {
+        // No closing brace: keep as-is
+        result += input[i];
+        i++;
+      }
+    } else {
+      result += input[i];
+      i++;
+    }
+  }
+
+  return result;
+}
 
 }  // namespace tinyusdz

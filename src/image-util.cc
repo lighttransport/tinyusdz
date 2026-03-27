@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2023-Present, Light Transport Entertainment Inc.
 //
-// TODO
 // - [ ] Optimize Rec.709 conversion
 //
 #include <cmath>

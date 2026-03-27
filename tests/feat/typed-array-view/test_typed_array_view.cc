@@ -9,24 +9,23 @@
 using namespace tinyusdz;
 using namespace tinyusdz::value;
 
-void test_pod_timesamples_view() {
-    std::cout << "Testing PODTimeSamples TypedArrayView for float arrays...\n";
+void test_timesamples_binary_view() {
+    std::cout << "Testing TimeSamples TypedArrayView for binary float arrays...\n";
 
-    PODTimeSamples pod_samples;
+    TimeSamples samples;
 
     // Add some array samples
     float data1[] = {1.0f, 2.0f, 3.0f};
     float data2[] = {4.0f, 5.0f, 6.0f};
     float data3[] = {7.0f, 8.0f, 9.0f};
 
-    pod_samples.add_array_sample(1.0, data1, 3);
-    pod_samples.add_array_sample(2.0, data2, 3);
-    pod_samples.add_blocked_array_sample(3.0, 3); // Blocked sample
-    pod_samples.add_array_sample(4.0, data3, 3);
+    samples.add_array_sample(1.0, data1, 3);
+    samples.add_array_sample(2.0, data2, 3);
+    samples.add_array_sample(4.0, data3, 3);
 
     // Test get_typed_array_view_at
     {
-        auto view = pod_samples.get_typed_array_view_at<float>(0);
+        auto view = samples.get_typed_array_view_at<float>(0);
         assert(view.size() == 3);
         assert(view[0] == 1.0f);
         assert(view[1] == 2.0f);
@@ -35,7 +34,7 @@ void test_pod_timesamples_view() {
     }
 
     {
-        auto view = pod_samples.get_typed_array_view_at<float>(1);
+        auto view = samples.get_typed_array_view_at<float>(1);
         assert(view.size() == 3);
         assert(view[0] == 4.0f);
         assert(view[1] == 5.0f);
@@ -43,38 +42,31 @@ void test_pod_timesamples_view() {
         std::cout << "  ✓ get_typed_array_view_at(1) works\n";
     }
 
-    // Test blocked sample (should return empty view)
-    {
-        auto view = pod_samples.get_typed_array_view_at<float>(2);
-        assert(view.empty());
-        std::cout << "  ✓ get_typed_array_view_at(2) returns empty for blocked\n";
-    }
-
     // Test get_typed_array_view_at_time
     {
-        auto view = pod_samples.get_typed_array_view_at_time<float>(1.0);
+        auto view = samples.get_typed_array_view_at_time<float>(1.0);
         assert(view.size() == 3);
         assert(view[0] == 1.0f);
         std::cout << "  ✓ get_typed_array_view_at_time(1.0) works\n";
     }
 
     {
-        auto view = pod_samples.get_typed_array_view_at_time<float>(2.0);
+        auto view = samples.get_typed_array_view_at_time<float>(2.0);
         assert(view.size() == 3);
         assert(view[0] == 4.0f);
         std::cout << "  ✓ get_typed_array_view_at_time(2.0) works\n";
     }
 
-    // Test blocked time (should return empty view)
+    // Test non-existent time
     {
-        auto view = pod_samples.get_typed_array_view_at_time<float>(3.0);
+        auto view = samples.get_typed_array_view_at_time<float>(3.0);
         assert(view.empty());
-        std::cout << "  ✓ get_typed_array_view_at_time(3.0) returns empty for blocked\n";
+        std::cout << "  ✓ get_typed_array_view_at_time(3.0) returns empty for non-existent\n";
     }
 
     // Test non-existent time
     {
-        auto view = pod_samples.get_typed_array_view_at_time<float>(5.0);
+        auto view = samples.get_typed_array_view_at_time<float>(5.0);
         assert(view.empty());
         std::cout << "  ✓ get_typed_array_view_at_time(5.0) returns empty for non-existent\n";
     }
@@ -129,8 +121,8 @@ void test_timesamples_vector_view() {
 int main() {
     std::cout << "Testing TypedArrayView methods in TimeSamples...\n\n";
 
-    // Test PODTimeSamples
-    test_pod_timesamples_view();
+    // Test TimeSamples with binary array storage
+    test_timesamples_binary_view();
 
     // Test TimeSamples with std::vector storage
     test_timesamples_vector_view();

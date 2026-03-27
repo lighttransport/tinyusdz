@@ -1,0 +1,250 @@
+#usda 1.0
+(
+    defaultPrim = "SkelRoot"
+    startTimeCode = 0
+    endTimeCode = 72
+    timeCodesPerSecond = 24
+    upAxis = "Y"
+    doc = """Multi-clip skeleton test asset for animation mixing demo.
+             Contains 3 SkelAnimation prims: Idle, Wave, Nod."""
+)
+
+def SkelRoot "SkelRoot" (
+    prepend apiSchemas = ["SkelBindingAPI"]
+)
+{
+    rel skel:animationSource = </SkelRoot/Skeleton/IdleAnim>
+    rel skel:skeleton = </SkelRoot/Skeleton>
+
+    def Skeleton "Skeleton"
+    {
+        uniform token[] joints = [
+            "Root",
+            "Root/Spine",
+            "Root/Spine/Head"
+        ]
+
+        uniform matrix4d[] bindTransforms = [
+            ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ),
+            ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1, 0, 1) ),
+            ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 2, 0, 1) )
+        ]
+
+        uniform matrix4d[] restTransforms = [
+            ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ),
+            ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1, 0, 1) ),
+            ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 2, 0, 1) )
+        ]
+
+        # Idle: gentle sway + breathing, 24 frames (1 second loop)
+        # Root bobs up/down, Spine sways side-to-side X + Z-rot, Head counter-leans
+        # quatf is (w, x, y, z) in USD
+        # Z-rot 15deg:  sin(7.5)=0.1305  cos(7.5)=0.9914  => (0.9914, 0, 0, 0.1305)
+        # Z-rot -15deg: => (0.9914, 0, 0, -0.1305)
+        # Z-rot 10deg (head counter): sin(5)=0.0872 cos(5)=0.9962 => (0.9962, 0, 0, 0.0872)
+        def SkelAnimation "IdleAnim"
+        {
+            uniform token[] joints = ["Root", "Root/Spine", "Root/Spine/Head"]
+
+            float3[] translations.timeSamples = {
+                0:  [(0, 0, 0),          (0, 1, 0),          (0, 2, 0)],
+                6:  [(0.05, 0.08, 0),    (0.12, 1.06, 0),    (0, 2, 0)],
+                12: [(0, 0.15, 0),       (0, 1.08, 0),       (0, 2, 0)],
+                18: [(-0.05, 0.08, 0),   (-0.12, 1.06, 0),   (0, 2, 0)],
+                24: [(0, 0, 0),          (0, 1, 0),           (0, 2, 0)]
+            }
+
+            quatf[] rotations.timeSamples = {
+                0:  [(1, 0, 0, 0),            (1, 0, 0, 0),            (1, 0, 0, 0)],
+                6:  [(1, 0, 0, 0),            (0.9914, 0, 0, 0.1305),  (0.9962, 0, 0, -0.0872)],
+                12: [(1, 0, 0, 0),            (1, 0, 0, 0),            (1, 0, 0, 0)],
+                18: [(1, 0, 0, 0),            (0.9914, 0, 0, -0.1305), (0.9962, 0, 0, 0.0872)],
+                24: [(1, 0, 0, 0),            (1, 0, 0, 0),            (1, 0, 0, 0)]
+            }
+
+            half3[] scales.timeSamples = {
+                0:  [(1, 1, 1),    (1, 1, 1),      (1, 1, 1)],
+                6:  [(1, 1, 1),    (1, 1.06, 1),   (1, 1, 1)],
+                12: [(1, 1, 1),    (1, 1.1, 1),    (1, 1, 1)],
+                18: [(1, 1, 1),    (1, 1.06, 1),   (1, 1, 1)],
+                24: [(1, 1, 1),    (1, 1, 1),      (1, 1, 1)]
+            }
+        }
+
+        # Wave: dramatic side-to-side dance, 48 frames (2 seconds)
+        # Spine leans +-30deg Z + shifts X +-0.2, Head rotates +-60deg Y
+        # Root shifts laterally +-0.3 to follow centre of mass
+        # Z-rot 30deg:  sin(15)=0.2588 cos(15)=0.9659 => (0.9659, 0, 0, 0.2588)
+        # Z-rot -30deg: => (0.9659, 0, 0, -0.2588)
+        # Y-rot 60deg:  sin(30)=0.5    cos(30)=0.866  => (0.866, 0, 0.5, 0)
+        # Y-rot -60deg: => (0.866, 0, -0.5, 0)
+        def SkelAnimation "WaveAnim"
+        {
+            uniform token[] joints = ["Root", "Root/Spine", "Root/Spine/Head"]
+
+            float3[] translations.timeSamples = {
+                0:  [(0, 0, 0),          (0, 1, 0),          (0, 2, 0)],
+                12: [(0.3, 0, 0),        (0.2, 0.92, 0),     (0, 2, 0)],
+                24: [(0, 0, 0),          (0, 1, 0),          (0, 2, 0)],
+                36: [(-0.3, 0, 0),       (-0.2, 0.92, 0),    (0, 2, 0)],
+                48: [(0, 0, 0),          (0, 1, 0),          (0, 2, 0)]
+            }
+
+            quatf[] rotations.timeSamples = {
+                0:  [(1, 0, 0, 0),            (1, 0, 0, 0),          (1, 0, 0, 0)],
+                12: [(1, 0, 0, 0),            (0.9659, 0, 0, 0.2588),(0.866, 0, 0.5, 0)],
+                24: [(1, 0, 0, 0),            (1, 0, 0, 0),          (1, 0, 0, 0)],
+                36: [(1, 0, 0, 0),            (0.9659, 0, 0,-0.2588),(0.866, 0, -0.5, 0)],
+                48: [(1, 0, 0, 0),            (1, 0, 0, 0),          (1, 0, 0, 0)]
+            }
+
+            half3[] scales.timeSamples = {
+                0:  [(1, 1, 1), (1, 1, 1), (1, 1, 1)],
+                12: [(1, 1, 1), (1, 1, 1), (1, 1, 1)],
+                24: [(1, 1, 1), (1, 1, 1), (1, 1, 1)],
+                36: [(1, 1, 1), (1, 1, 1), (1, 1, 1)],
+                48: [(1, 1, 1), (1, 1, 1), (1, 1, 1)]
+            }
+        }
+
+        # Nod: dramatic forward/backward bow, 36 frames (1.5 seconds)
+        # Spine bends +-30deg X + shifts Z +-0.15 + compresses Y, Head nods +-55deg X
+        # Root shifts forward/backward +-0.2 to follow
+        # X-rot 30deg:  sin(15)=0.2588 cos(15)=0.9659 => (0.9659, 0.2588, 0, 0)
+        # X-rot -30deg: => (0.9659, -0.2588, 0, 0)
+        # X-rot 55deg:  sin(27.5)=0.4617 cos(27.5)=0.8870 => (0.8870, 0.4617, 0, 0)
+        # X-rot -40deg: sin(-20)=-0.3420 cos(20)=0.9397 => (0.9397, -0.3420, 0, 0)
+        def SkelAnimation "NodAnim"
+        {
+            uniform token[] joints = ["Root", "Root/Spine", "Root/Spine/Head"]
+
+            float3[] translations.timeSamples = {
+                0:  [(0, 0, 0),          (0, 1, 0),          (0, 2, 0)],
+                9:  [(0, 0, 0.2),        (0, 0.9, 0.15),     (0, 2, 0)],
+                18: [(0, 0, 0),          (0, 1, 0),          (0, 2, 0)],
+                27: [(0, 0, -0.15),      (0, 0.92, -0.12),   (0, 2, 0)],
+                36: [(0, 0, 0),          (0, 1, 0),          (0, 2, 0)]
+            }
+
+            quatf[] rotations.timeSamples = {
+                0:  [(1, 0, 0, 0),            (1, 0, 0, 0),            (1, 0, 0, 0)],
+                9:  [(1, 0, 0, 0),            (0.9659, 0.2588, 0, 0),  (0.8870, 0.4617, 0, 0)],
+                18: [(1, 0, 0, 0),            (1, 0, 0, 0),            (1, 0, 0, 0)],
+                27: [(1, 0, 0, 0),            (0.9659, -0.2588, 0, 0), (0.9397, -0.3420, 0, 0)],
+                36: [(1, 0, 0, 0),            (1, 0, 0, 0),            (1, 0, 0, 0)]
+            }
+
+            half3[] scales.timeSamples = {
+                0:  [(1, 1, 1), (1, 1, 1),    (1, 1, 1)],
+                9:  [(1, 1, 1), (1, 0.92, 1), (1, 1, 1)],
+                18: [(1, 1, 1), (1, 1, 1),    (1, 1, 1)],
+                27: [(1, 1, 1), (1, 0.94, 1), (1, 1, 1)],
+                36: [(1, 1, 1), (1, 1, 1),    (1, 1, 1)]
+            }
+        }
+    }
+
+    # Simple box mesh bound to the skeleton
+    # 8 vertices forming a box from (-0.3, 0, -0.3) to (0.3, 2.5, 0.3)
+    # Bottom vertices weighted to Root, middle to Spine, top to Head
+    def Mesh "Body" (
+        prepend apiSchemas = ["SkelBindingAPI"]
+    )
+    {
+        # Box vertices (Y-up)
+        point3f[] points = [
+            (-0.3, 0.0, -0.3), (0.3, 0.0, -0.3), (0.3, 0.0, 0.3), (-0.3, 0.0, 0.3),
+            (-0.3, 0.8, -0.3), (0.3, 0.8, -0.3), (0.3, 0.8, 0.3), (-0.3, 0.8, 0.3),
+            (-0.25, 1.2, -0.25), (0.25, 1.2, -0.25), (0.25, 1.2, 0.25), (-0.25, 1.2, 0.25),
+            (-0.2, 1.8, -0.2), (0.2, 1.8, -0.2), (0.2, 1.8, 0.2), (-0.2, 1.8, 0.2),
+            (-0.25, 2.2, -0.25), (0.25, 2.2, -0.25), (0.25, 2.2, 0.25), (-0.25, 2.2, 0.25),
+            (-0.15, 2.5, -0.15), (0.15, 2.5, -0.15), (0.15, 2.5, 0.15), (-0.15, 2.5, 0.15)
+        ]
+
+        # 6 rings of 4 verts each, connect with quads
+        int[] faceVertexCounts = [
+            4, 4, 4, 4,
+            4, 4, 4, 4,
+            4, 4, 4, 4,
+            4, 4, 4, 4,
+            4, 4, 4, 4,
+            4, 4
+        ]
+
+        int[] faceVertexIndices = [
+            # Bottom cap
+            0, 3, 2, 1,
+            # Ring 0-1 sides
+            0, 1, 5, 4,
+            1, 2, 6, 5,
+            2, 3, 7, 6,
+            3, 0, 4, 7,
+            # Ring 1-2 sides
+            4, 5, 9, 8,
+            5, 6, 10, 9,
+            6, 7, 11, 10,
+            7, 4, 8, 11,
+            # Ring 2-3 sides
+            8, 9, 13, 12,
+            9, 10, 14, 13,
+            10, 11, 15, 14,
+            11, 8, 12, 15,
+            # Ring 3-4 sides
+            12, 13, 17, 16,
+            13, 14, 18, 17,
+            14, 15, 19, 18,
+            15, 12, 16, 19,
+            # Ring 4-5 sides
+            16, 17, 21, 20,
+            17, 18, 22, 21,
+            18, 19, 23, 22,
+            19, 16, 20, 23,
+            # Top cap
+            20, 21, 22, 23
+        ]
+
+        # Skeletal binding
+        rel skel:skeleton = </SkelRoot/Skeleton>
+
+        # Joint indices (per-vertex, 2 influences each for smooth blending)
+        int[] primvars:skel:jointIndices = [
+            # Ring 0 (y=0.0): Root only
+            0, 0,  0, 0,  0, 0,  0, 0,
+            # Ring 1 (y=0.8): Root + Spine blend
+            0, 1,  0, 1,  0, 1,  0, 1,
+            # Ring 2 (y=1.2): Spine dominant
+            1, 0,  1, 0,  1, 0,  1, 0,
+            # Ring 3 (y=1.8): Spine + Head blend
+            1, 2,  1, 2,  1, 2,  1, 2,
+            # Ring 4 (y=2.2): Head dominant
+            2, 1,  2, 1,  2, 1,  2, 1,
+            # Ring 5 (y=2.5): Head only
+            2, 2,  2, 2,  2, 2,  2, 2
+        ] (
+            interpolation = "vertex"
+            elementSize = 2
+        )
+
+        float[] primvars:skel:jointWeights = [
+            # Ring 0: Root 100%
+            1.0, 0.0,  1.0, 0.0,  1.0, 0.0,  1.0, 0.0,
+            # Ring 1: Root 60%, Spine 40%
+            0.6, 0.4,  0.6, 0.4,  0.6, 0.4,  0.6, 0.4,
+            # Ring 2: Spine 80%, Root 20%
+            0.8, 0.2,  0.8, 0.2,  0.8, 0.2,  0.8, 0.2,
+            # Ring 3: Spine 50%, Head 50%
+            0.5, 0.5,  0.5, 0.5,  0.5, 0.5,  0.5, 0.5,
+            # Ring 4: Head 80%, Spine 20%
+            0.8, 0.2,  0.8, 0.2,  0.8, 0.2,  0.8, 0.2,
+            # Ring 5: Head 100%
+            1.0, 0.0,  1.0, 0.0,  1.0, 0.0,  1.0, 0.0
+        ] (
+            interpolation = "vertex"
+            elementSize = 2
+        )
+
+        # Simple grey material
+        color3f[] primvars:displayColor = [(0.6, 0.6, 0.7)]
+        uniform token subdivisionScheme = "none"
+    }
+}

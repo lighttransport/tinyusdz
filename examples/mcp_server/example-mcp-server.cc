@@ -6,7 +6,7 @@
 #include <unistd.h>
 #endif
 
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "tydra/mcp-server.hh"
 #include "tydra/command-and-history.hh"
 #include "arg-parser.hh"

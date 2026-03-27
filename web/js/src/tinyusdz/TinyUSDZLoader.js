@@ -58,20 +58,30 @@ class FileFetcher {
         throw new Error(`Failed to read file: ${url} - ${error.message}`);
       }
     } else {
-      // Browser environment or blob URL - use fetch API and convert to File
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch: ${response.statusText}`);
-      }
+      // Browser environment or blob URL - use XMLHttpRequest for better large file handling
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', url, true);
+        xhr.responseType = 'arraybuffer';
 
-      const blob = await response.blob();
-      const fileName = url.split('/').pop() || 'unknown';
-      const file = new File([blob], fileName, {
-        type: blob.type || 'application/octet-stream',
-        lastModified: Date.now()
+        xhr.onload = function() {
+          if (xhr.status === 200 || xhr.status === 206) {
+            const arrayBuffer = xhr.response;
+            // Return object with arrayBuffer method for consistency
+            resolve({
+              arrayBuffer: async () => arrayBuffer
+            });
+          } else {
+            reject(new Error(`Failed to fetch: ${xhr.statusText}`));
+          }
+        };
+
+        xhr.onerror = function() {
+          reject(new Error(`Network error fetching: ${url}`));
+        };
+
+        xhr.send();
       });
-
-      return file;
     }
   }
 }
@@ -85,12 +95,16 @@ class FetchAssetResolver {
 
     async resolveAsync(uri) {
         try {
-            const response = await fetch(uri);
-            if (!response.ok) {
+            const response = await fetch(uri, {
+                cache: 'no-store',
+                headers: {
+                    'Accept': '*/*',
+                }
+            });
+            if (!response.ok && response.status !== 206) {
                 throw new Error(`Failed to fetch asset: ${uri}`);
             }
             const data = await response.arrayBuffer();
-            //console.log(`Fetched asset ${uri} successfully, size: ${data.byteLength} bytes`);
             this.assetCache.set(uri, data);
             return Promise.resolve([uri, data]);
         } catch (error) {
@@ -181,15 +195,12 @@ class TinyUSDZLoader extends Loader {
 
             const wasmURL = new URL(compressedPath, import.meta.url).href;
 
-            //console.log(`Loading compressed WASM from: ${wasmURL}`);
             const response = await fetch(wasmURL);
-            //console.log(response);
             if (!response.ok) {
                 throw new Error(`Failed to fetch compressed WASM: ${response.statusText}`);
             }
 
             const compressedData = await response.arrayBuffer();
-            //console.log(`Compressed WASM size: ${compressedData.byteLength} bytes`);
 
             if (compressedData.byteLength < 1024*64) {
                 throw new Error('Compressed WASM size is unusually small, may not be valid zstd compressed data.');
@@ -198,8 +209,6 @@ class TinyUSDZLoader extends Loader {
             // Check zstd magic number (0x28B52FFD in little-endian)
             const magicBytes = new Uint8Array(compressedData, 0, 4);
             const expectedMagic = [0x28, 0xB5, 0x2F, 0xFD]; // Little-endian representation
-            //console.log(magicBytes);
-            //console.log(expectedMagic);
             
             if (compressedData.byteLength < 4 || 
                 magicBytes[0] !== expectedMagic[0] || 
@@ -211,7 +220,6 @@ class TinyUSDZLoader extends Loader {
 
             // Decompress using zstd
             const decompressedData = fzstd.decompress(new Uint8Array(compressedData));
-            //console.log(`Decompressed WASM size: ${decompressedData.byteLength} bytes`);
 
             return decompressedData;
         } catch (error) {
@@ -233,7 +241,6 @@ class TinyUSDZLoader extends Loader {
         }
 
         if (!this.native_) {
-            //console.log('Initializing native module...');
           
             // WASM module of TinyUSDZ.
             const url = new URL(import.meta.url);
@@ -241,23 +248,19 @@ class TinyUSDZLoader extends Loader {
             //let initTinyUSDZNative = null;
           
 
-            //console.log("arg:", url.searchParams.get("memory64"));
             let use_memory64 = this.useMemory64_;
             if (url.searchParams.get("memory64") == "true") {
               use_memory64 = true;
             }
-            //console.log(use_memory64);
 
 
             let initTinyUSDZNative = null;
 
             // Use dynamic import based on memory64 parameter
             if (use_memory64) {
-                //console.log("Loading 64bit module");
                 const module = await import('./tinyusdz_64.js');
                 initTinyUSDZNative = module.default;
             } else {
-                //console.log("Loading 32bit module");
                 const module = await import('./tinyusdz.js');
                 initTinyUSDZNative = module.default;
             }
@@ -299,7 +302,6 @@ class TinyUSDZLoader extends Loader {
             if (!this.native_) {
                 throw new Error('TinyUSDZLoader: Failed to initialize native module.');
             }
-            //console.log('Native module initialized');
         }
         return this;
     }
@@ -405,11 +407,11 @@ class TinyUSDZLoader extends Loader {
 
     /**
      * Set target bone count for bone reduction
-     * @param {number} count - Target number of bone influences per vertex (1-64)
+     * @param {number} count - Target number of bone influences per vertex (1-128)
      */
     setTargetBoneCount(count) {
-        if (typeof count !== 'number' || count < 1 || count > 64) {
-            throw new Error('Target bone count must be between 1 and 64');
+        if (typeof count !== 'number' || count < 1 || count > 128) {
+            throw new Error('Target bone count must be between 1 and 128');
         }
         this.targetBoneCount_ = count;
     }
@@ -422,6 +424,53 @@ class TinyUSDZLoader extends Loader {
         return this.targetBoneCount_ || 4;
     }
 
+    /**
+     * Enable or disable bone count rounding (round up to standard GPU skinning values)
+     * When enabled, bone counts are rounded up to: 4, 8, 16, 32, 48, 64, 80, 96, 128
+     * This keeps all bone influences but pads to standard sizes for GPU compatibility
+     * @param {boolean} enabled - Enable bone count rounding
+     */
+    setRoundBoneCount(enabled) {
+        this.roundBoneCount_ = !!enabled;
+    }
+
+    /**
+     * Get bone count rounding setting
+     * @returns {boolean} Whether bone count rounding is enabled
+     */
+    getRoundBoneCount() {
+        return this.roundBoneCount_ || false;
+    }
+
+    /**
+     * Set sphere tessellation subdivision level (0-6, default 4)
+     * @param {number} subdivisions - Icosphere subdivision level
+     */
+    setSphereSubdivisions(subdivisions) {
+        this.sphereSubdivisions_ = subdivisions;
+    }
+
+    getSphereSubdivisions() {
+        return this.sphereSubdivisions_ ?? 4;
+    }
+
+    /**
+     * Apply configured skinning options to a native USD loader instance.
+     * @param {Object} usd - TinyUSDZLoaderNative instance
+     * @private
+     */
+    _applySkinningLoadOptions(usd) {
+        if (!usd) return;
+        if (this.enableBoneReduction_) {
+            usd.setEnableBoneReduction(true);
+            usd.setTargetBoneCount(this.targetBoneCount_ || 4);
+        } else if (this.roundBoneCount_) {
+            usd.setRoundBoneCount(true);
+        }
+        if (this.sphereSubdivisions_ !== undefined) {
+            usd.setSphereSubdivisions(this.sphereSubdivisions_);
+        }
+    }
 
     // TODO: remove
     // Set AssetResolver callback.
@@ -595,13 +644,16 @@ class TinyUSDZLoader extends Loader {
             usd.setMaxMemoryLimitMB(memoryLimit);
         }
 
-        // Set bone reduction configuration
-        if (this.enableBoneReduction_) {
-            usd.setEnableBoneReduction(true);
-            usd.setTargetBoneCount(this.targetBoneCount_ || 4);
-        }
+        this._applySkinningLoadOptions(usd);
 
-        const ok = usd.loadFromBinary(binary, filePath);
+        let ok;
+        try {
+            ok = usd.loadFromBinary(binary, filePath);
+        } catch (e) {
+            // Catch WASM traps (e.g. Emscripten OOM abort, unreachable instruction)
+            _onError(e instanceof Error ? e : new Error(String(e)));
+            return;
+        }
         if (!ok) {
             const fileInfo = filePath ? ` (file: ${filePath})` : '';
             _onError(new Error(`TinyUSDZLoader: Failed to load USD from binary data${fileInfo}.`, {cause: usd.error()}));
@@ -642,11 +694,7 @@ class TinyUSDZLoader extends Loader {
                 usd.setMaxMemoryLimitMB(memoryLimit);
             }
 
-            // Set bone reduction configuration
-            if (this.enableBoneReduction_) {
-                usd.setEnableBoneReduction(true);
-                usd.setTargetBoneCount(this.targetBoneCount_ || 4);
-            }
+            this._applySkinningLoadOptions(usd);
 
             // Handle AbortController cancellation
             if (options.signal) {
@@ -755,11 +803,7 @@ class TinyUSDZLoader extends Loader {
             usd.setMaxMemoryLimitMB(memoryLimit);
         }
 
-        // Set bone reduction configuration
-        if (this.enableBoneReduction_) {
-            usd.setEnableBoneReduction(true);
-            usd.setTargetBoneCount(this.targetBoneCount_ || 4);
-        }
+        this._applySkinningLoadOptions(usd);
 
         // Set up async phase callback on Module if provided
         if (options.onPhaseStart) {
@@ -767,12 +811,21 @@ class TinyUSDZLoader extends Loader {
         }
 
         try {
-            // Call the C++20 coroutine-based async loader
-            // This returns a Promise that resolves to { success, error?, meshCount?, materialCount?, textureCount? }
-            const result = await usd.loadFromBinaryAsync(binary, filePath || '');
+            // Check if the C++20 coroutine-based async loader is available
+            if (typeof usd.loadFromBinaryAsync === 'function') {
+                // Call the C++20 coroutine-based async loader
+                // This returns a Promise that resolves to { success, error?, meshCount?, materialCount?, textureCount? }
+                const result = await usd.loadFromBinaryAsync(binary, filePath || '');
 
-            if (!result.success) {
-                throw new Error(`TinyUSDZLoader: Failed to load USD: ${result.error || 'unknown error'}`);
+                if (!result.success) {
+                    throw new Error(`TinyUSDZLoader: Failed to load USD: ${result.error || 'unknown error'}`);
+                }
+            } else {
+                // Fall back to synchronous loading
+                const ok = usd.loadFromBinary(binary, filePath || '');
+                if (!ok) {
+                    throw new Error(`TinyUSDZLoader: Failed to load USD: ${usd.error()}`);
+                }
             }
 
             return usd;
@@ -1307,11 +1360,7 @@ class TinyUSDZLoader extends Loader {
             usd.setMaxMemoryLimitMB(memoryLimit);
         }
 
-        // Set bone reduction configuration
-        if (this.enableBoneReduction_) {
-            usd.setEnableBoneReduction(true);
-            usd.setTargetBoneCount(this.targetBoneCount_ || 4);
-        }
+        this._applySkinningLoadOptions(usd);
 
         // Stream fetch to WASM using the same instance
         const streamResult = await this.streamFetchToWasm(url, assetPath, {
@@ -1473,7 +1522,6 @@ class TinyUSDZLoader extends Loader {
      * @param {number} options.maxMemoryLimitMB - Override memory limit for this load
      */
     loadAsLayer(url, onLoad, onProgress, onError, options = {}) {
-        //console.log('url', url);
 
         const scope = this;
 
@@ -1500,7 +1548,6 @@ class TinyUSDZLoader extends Loader {
 
         initPromise
             .then(() => {
-                //usd_ = new this.native_.TinyUSDZLoaderNative();
                 return fetch(url);
             })
             .then((response) => {
@@ -1511,7 +1558,6 @@ class TinyUSDZLoader extends Loader {
                 console.log('usd_data done:', url);
                 const usd_binary = new Uint8Array(usd_data);
 
-                //console.log('Loaded USD binary data:', usd_binary.length, 'bytes');
                 //return this.parse(usd_binary);
 
                 const usd = new this.native_.TinyUSDZLoaderNative();
@@ -1522,11 +1568,7 @@ class TinyUSDZLoader extends Loader {
                     usd.setMaxMemoryLimitMB(memoryLimit);
                 }
 
-                // Set bone reduction configuration
-                if (scope.enableBoneReduction_) {
-                    usd.setEnableBoneReduction(true);
-                    usd.setTargetBoneCount(scope.targetBoneCount_ || 4);
-                }
+                scope._applySkinningLoadOptions(usd);
 
                 const ok = usd.loadAsLayerFromBinary(usd_binary, url);
                 if (!ok) {
@@ -1596,14 +1638,9 @@ class TinyUSDZLoader extends Loader {
                     usd.setMaxMemoryLimitMB(memoryLimit);
                 }
 
-                // Set bone reduction configuration
-                if (this.enableBoneReduction_) {
-                    usd.setEnableBoneReduction(true);
-                    usd.setTargetBoneCount(this.targetBoneCount_ || 4);
-                }
+                scope._applySkinningLoadOptions(usd);
 
                 const u8data = new Uint8Array(usd_data);
-                //console.log(u8data);
                 const ok = usd.loadTest(url, u8data);
                 if (!ok) {
                     _onError(new Error('TinyUSDZLoader: Failed to load USD as Layer from binary data. url: ' + url, {cause: usd.error()}));
@@ -1743,11 +1780,7 @@ class TinyUSDZLoader extends Loader {
                     usd.setMaxMemoryLimitMB(memoryLimit);
                 }
 
-                // Set bone reduction configuration
-                if (scope.enableBoneReduction_) {
-                    usd.setEnableBoneReduction(true);
-                    usd.setTargetBoneCount(scope.targetBoneCount_ || 4);
-                }
+                scope._applySkinningLoadOptions(usd);
 
                 const ok = usd.loadFromBinary(usd_binary, url);
                 if (!ok) {

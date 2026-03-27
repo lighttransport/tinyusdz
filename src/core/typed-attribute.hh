@@ -67,6 +67,11 @@ class TypedAttribute {
     return _attrib;
   }
 
+  /// Get const reference to the internal optional value (no copy)
+  const nonstd::optional<T> &get_value_ref() const {
+    return _attrib;
+  }
+
   bool get_value(T *dst) const {
     if (!dst) return false;
 

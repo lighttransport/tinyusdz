@@ -12,13 +12,6 @@
 namespace tinyusdz {
 namespace tydra {
 
-#if 0
-#define PushError(msg) { \
-  if (err) { \
-    (*err) += msg + "\n"; \
-  } \
-}
-#endif
 
 bool export_to_json(const RenderScene &scene, bool asset_as_binary,
   std::string &json_str, std::string &binary_str, std::string *warn, std::string *err) {

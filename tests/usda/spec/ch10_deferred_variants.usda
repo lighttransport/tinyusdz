@@ -1,0 +1,58 @@
+#usda 1.0
+(
+    doc = "AOUSD Core Spec 10.3.2.5: Variant selection uses opinions from ALL arcs"
+)
+
+# This test verifies that variant selection is deferred until all composition
+# arcs have been processed, allowing stronger opinions from references/payloads
+# to influence variant selection.
+
+class "_ColorBase"
+{
+    # Base class with variant selection that could be overridden by references
+}
+
+def Xform "MyModel" (
+    variants = {
+        string colorVariant = "red"
+    }
+    variantSets = ["colorVariant"]
+)
+{
+    variantSet "colorVariant" = {
+        "red" {
+            color3f color = (1, 0, 0)
+        }
+        "green" {
+            color3f color = (0, 1, 0)
+        }
+        "blue" {
+            color3f color = (0, 0, 1)
+        }
+    }
+
+    float3 xformOp:translate = (0, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+# A second prim that inherits and overrides variant selection
+def Xform "MyModelGreen" (
+    inherits = </_ColorBase>
+    variants = {
+        string colorVariant = "green"
+    }
+    variantSets = ["colorVariant"]
+)
+{
+    variantSet "colorVariant" = {
+        "red" {
+            color3f color = (1, 0, 0)
+        }
+        "green" {
+            color3f color = (0, 1, 0)
+        }
+        "blue" {
+            color3f color = (0, 0, 1)
+        }
+    }
+}

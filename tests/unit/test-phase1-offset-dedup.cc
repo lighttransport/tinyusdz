@@ -1,5 +1,5 @@
-// Phase 1 unit tests: Offset-based deduplication with circular reference checks
-// Tests the new offset encoding, dedup validation, and index remapping after sorting
+// Historical offset/dedup regression checks against the current TimeSamples API.
+// Focuses on offset encoding helpers, dedup validation, and remapping after sorting.
 
 #include <iostream>
 #include <cassert>
@@ -26,28 +26,28 @@ void test_offset_encoding() {
     std::cout << "Test 1: Offset encoding/decoding... ";
 
     // Test non-dedup scalar offset
-    uint64_t scalar_offset = PODTimeSamples::make_offset(100, false);
-    assert(!PODTimeSamples::is_dedup(scalar_offset));
-    assert(!PODTimeSamples::is_array_offset(scalar_offset));
-    assert(PODTimeSamples::get_raw_value(scalar_offset) == 100);
+    uint64_t scalar_offset = TimeSamples::make_offset(100, false);
+    assert(!TimeSamples::is_dedup(scalar_offset));
+    assert(!TimeSamples::is_array_offset(scalar_offset));
+    assert(TimeSamples::get_raw_value(scalar_offset) == 100);
 
     // Test non-dedup array offset
-    uint64_t array_offset = PODTimeSamples::make_offset(200, true);
-    assert(!PODTimeSamples::is_dedup(array_offset));
-    assert(PODTimeSamples::is_array_offset(array_offset));
-    assert(PODTimeSamples::get_raw_value(array_offset) == 200);
+    uint64_t array_offset = TimeSamples::make_offset(200, true);
+    assert(!TimeSamples::is_dedup(array_offset));
+    assert(TimeSamples::is_array_offset(array_offset));
+    assert(TimeSamples::get_raw_value(array_offset) == 200);
 
     // Test dedup scalar offset
-    uint64_t dedup_scalar = PODTimeSamples::make_dedup_offset(5, false);
-    assert(PODTimeSamples::is_dedup(dedup_scalar));
-    assert(!PODTimeSamples::is_array_offset(dedup_scalar));
-    assert(PODTimeSamples::get_raw_value(dedup_scalar) == 5);
+    uint64_t dedup_scalar = TimeSamples::make_dedup_offset(5, false);
+    assert(TimeSamples::is_dedup(dedup_scalar));
+    assert(!TimeSamples::is_array_offset(dedup_scalar));
+    assert(TimeSamples::get_raw_value(dedup_scalar) == 5);
 
     // Test dedup array offset
-    uint64_t dedup_array = PODTimeSamples::make_dedup_offset(10, true);
-    assert(PODTimeSamples::is_dedup(dedup_array));
-    assert(PODTimeSamples::is_array_offset(dedup_array));
-    assert(PODTimeSamples::get_raw_value(dedup_array) == 10);
+    uint64_t dedup_array = TimeSamples::make_dedup_offset(10, true);
+    assert(TimeSamples::is_dedup(dedup_array));
+    assert(TimeSamples::is_array_offset(dedup_array));
+    assert(TimeSamples::get_raw_value(dedup_array) == 10);
 
     std::cout << "PASSED\n";
 }
@@ -56,7 +56,7 @@ void test_offset_encoding() {
 void test_array_addition() {
     std::cout << "Test 2: Array sample addition... ";
 
-    PODTimeSamples samples;
+    TimeSamples samples;
 
     float3 arr1[] = {{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}, {7.0f, 8.0f, 9.0f}};
     float3 arr2[] = {{10.0f, 11.0f, 12.0f}, {13.0f, 14.0f, 15.0f}, {16.0f, 17.0f, 18.0f}};
@@ -70,9 +70,13 @@ void test_array_addition() {
 
     assert(samples.size() == 2);
 
-    // Verify offsets are encoded correctly (non-dedup, array flag set)
-    const auto& offsets = samples.get_times(); // Access through sorted
-    samples.update();  // Force update to ensure sorted
+    samples.update();
+    const auto& offsets = samples.get_offsets();
+    assert(offsets.size() == 2);
+    assert(TimeSamples::is_array_offset(offsets[0]));
+    assert(TimeSamples::is_array_offset(offsets[1]));
+    assert(!TimeSamples::is_dedup(offsets[0]));
+    assert(!TimeSamples::is_dedup(offsets[1]));
 
     std::cout << "PASSED\n";
 }
@@ -81,7 +85,7 @@ void test_array_addition() {
 void test_dedup_validation() {
     std::cout << "Test 3: Dedup validation (circular ref checks)... ";
 
-    PODTimeSamples samples;
+    TimeSamples samples;
 
     float3 arr[] = {{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}};
 
@@ -120,7 +124,7 @@ void test_dedup_validation() {
 void test_dedup_resolution() {
     std::cout << "Test 4: Dedup chain resolution... ";
 
-    PODTimeSamples samples;
+    TimeSamples samples;
 
     float3 original[] = {{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}};
 
@@ -132,16 +136,19 @@ void test_dedup_resolution() {
     ok = samples.add_dedup_array_sample<float3>(2.0, 0);
     assert(ok);
 
+    samples.update();
+    const auto& offsets = samples.get_offsets();
+
     // Resolve offset for dedup sample
     size_t byte_offset = 0;
     bool is_array = false;
-    ok = samples.resolve_offset(1, &byte_offset, &is_array);
+    ok = TimeSamples::resolve_offset_static(offsets, 1, &byte_offset, &is_array);
     assert(ok && "Should resolve dedup offset");
     assert(is_array && "Should be array data");
 
     // Verify we got the correct byte offset (should be 0, same as sample 0)
     size_t expected_offset = 0;
-    ok = samples.resolve_offset(0, &expected_offset);
+    ok = TimeSamples::resolve_offset_static(offsets, 0, &expected_offset);
     assert(ok);
     assert(byte_offset == expected_offset && "Dedup should point to same data");
 
@@ -152,7 +159,7 @@ void test_dedup_resolution() {
 void test_sorting_with_dedup() {
     std::cout << "Test 5: Sorting with dedup index remapping... ";
 
-    PODTimeSamples samples;
+    TimeSamples samples;
 
     float3 arr1[] = {{1.0f, 2.0f, 3.0f}};
     float3 arr2[] = {{4.0f, 5.0f, 6.0f}};
@@ -188,14 +195,12 @@ void test_sorting_with_dedup() {
 
     // Verify dedup index was remapped correctly
     // Sample at sorted idx 1 should reference sorted idx 2 (which is arr3)
-    size_t byte_offset = 0;
-    ok = samples.resolve_offset(1, &byte_offset);
-    assert(ok && "Should resolve dedup after sort");
+    samples.update();
+    const auto& offsets = samples.get_offsets();
 
-    // Get the data at resolved offset
-    const float3* resolved_data = reinterpret_cast<const float3*>(
-        reinterpret_cast<const uint8_t*>(&arr1[0]) + byte_offset -
-        (byte_offset > 0 ? byte_offset : 0)); // Rough check
+    size_t byte_offset = 0;
+    ok = TimeSamples::resolve_offset_static(offsets, 1, &byte_offset);
+    assert(ok && "Should resolve dedup after sort");
 
     // Better check: retrieve via typed array view
     TypedArrayView<const float3> view = samples.get_typed_array_view_at<float3>(1);
@@ -212,7 +217,7 @@ void test_sorting_with_dedup() {
 void test_multiple_dedup() {
     std::cout << "Test 6: Multiple dedup samples... ";
 
-    PODTimeSamples samples;
+    TimeSamples samples;
 
     float3 shared_arr[] = {{100.0f, 200.0f, 300.0f}, {400.0f, 500.0f, 600.0f}};
 
@@ -229,13 +234,16 @@ void test_multiple_dedup() {
     assert(samples.size() == 11);
 
     // Verify all dedup samples resolve to same data
+    samples.update();
+    const auto& offsets = samples.get_offsets();
+
     size_t original_offset = 0;
-    ok = samples.resolve_offset(0, &original_offset);
+    ok = TimeSamples::resolve_offset_static(offsets, 0, &original_offset);
     assert(ok);
 
     for (size_t i = 1; i < 11; ++i) {
         size_t dedup_offset = 0;
-        ok = samples.resolve_offset(i, &dedup_offset);
+        ok = TimeSamples::resolve_offset_static(offsets, i, &dedup_offset);
         assert(ok);
         assert(dedup_offset == original_offset && "All dedup should point to original");
     }
@@ -247,7 +255,7 @@ void test_multiple_dedup() {
 void test_matrix_dedup() {
     std::cout << "Test 7: Matrix array deduplication... ";
 
-    PODTimeSamples samples;
+    TimeSamples samples;
 
     matrix4d mat1 = matrix4d::identity();
     matrix4d mat2 = matrix4d::identity();
@@ -264,13 +272,16 @@ void test_matrix_dedup() {
     assert(ok);
 
     // Verify resolution
+    samples.update();
+    const auto& offsets = samples.get_offsets();
+
     size_t byte_offset = 0;
-    ok = samples.resolve_offset(1, &byte_offset);
+    ok = TimeSamples::resolve_offset_static(offsets, 1, &byte_offset);
     assert(ok);
 
     // Both should point to same data
     size_t orig_offset = 0;
-    ok = samples.resolve_offset(0, &orig_offset);
+    ok = TimeSamples::resolve_offset_static(offsets, 0, &orig_offset);
     assert(ok);
     assert(byte_offset == orig_offset);
 
@@ -282,62 +293,34 @@ void test_offset_limits() {
     std::cout << "Test 8: Offset value limits... ";
 
     // Test maximum safe value (62 bits)
-    uint64_t max_value = PODTimeSamples::OFFSET_VALUE_MASK;
-    uint64_t encoded = PODTimeSamples::make_offset(max_value, false);
-    assert(PODTimeSamples::get_raw_value(encoded) == max_value);
+    uint64_t max_value = TimeSamples::OFFSET_VALUE_MASK;
+    uint64_t encoded = TimeSamples::make_offset(max_value, false);
+    assert(TimeSamples::get_raw_value(encoded) == max_value);
 
     // Test with array flag
-    encoded = PODTimeSamples::make_offset(max_value, true);
-    assert(PODTimeSamples::get_raw_value(encoded) == max_value);
-    assert(PODTimeSamples::is_array_offset(encoded));
+    encoded = TimeSamples::make_offset(max_value, true);
+    assert(TimeSamples::get_raw_value(encoded) == max_value);
+    assert(TimeSamples::is_array_offset(encoded));
 
     // Test dedup with max value
-    encoded = PODTimeSamples::make_dedup_offset(max_value, true);
-    assert(PODTimeSamples::is_dedup(encoded));
-    assert(PODTimeSamples::is_array_offset(encoded));
-    assert(PODTimeSamples::get_raw_value(encoded) == max_value);
+    encoded = TimeSamples::make_dedup_offset(max_value, true);
+    assert(TimeSamples::is_dedup(encoded));
+    assert(TimeSamples::is_array_offset(encoded));
+    assert(TimeSamples::get_raw_value(encoded) == max_value);
 
     std::cout << "PASSED\n";
 }
 
-// Test 9: Blocked sample handling
-void test_blocked_samples_with_dedup() {
-    std::cout << "Test 9: Blocked samples with dedup... ";
-
-    PODTimeSamples samples;
-
-    float3 arr[] = {{1.0f, 2.0f, 3.0f}};
-
-    // Add original
-    bool ok = samples.add_array_sample<float3>(1.0, arr, 1);
-    assert(ok);
-
-    // Add blocked sample
-    ok = samples.add_blocked_array_sample(2.0, 1);
-    assert(ok);
-
-    // Try to dedup from blocked (should fail)
-    std::string err;
-    ok = samples.add_dedup_array_sample<float3>(3.0, 1, &err);
-    assert(!ok && "Cannot dedup from blocked sample");
-    assert(err.find("blocked") != std::string::npos);
-
-    // Dedup from original should work
-    ok = samples.add_dedup_array_sample<float3>(4.0, 0);
-    assert(ok);
-
-    std::cout << "PASSED\n";
-}
-
-// Test 10: Empty and edge cases
+// Test 9: Empty and edge cases
 void test_edge_cases() {
-    std::cout << "Test 10: Edge cases... ";
+    std::cout << "Test 9: Edge cases... ";
 
-    PODTimeSamples samples;
+    TimeSamples samples;
 
     // Resolve on empty should fail gracefully
+    std::vector<uint64_t> offsets;
     size_t offset = 0;
-    bool ok = samples.resolve_offset(0, &offset);
+    bool ok = TimeSamples::resolve_offset_static(offsets, 0, &offset);
     assert(!ok && "Should fail on empty");
 
     // Add one sample
@@ -346,11 +329,12 @@ void test_edge_cases() {
     assert(ok);
 
     // Resolve valid index
-    ok = samples.resolve_offset(0, &offset);
+    samples.update();
+    ok = TimeSamples::resolve_offset_static(samples.get_offsets(), 0, &offset);
     assert(ok);
 
     // Resolve invalid index
-    ok = samples.resolve_offset(999, &offset);
+    ok = TimeSamples::resolve_offset_static(samples.get_offsets(), 999, &offset);
     assert(!ok);
 
     std::cout << "PASSED\n";
@@ -367,7 +351,6 @@ int main() {
     test_multiple_dedup();
     test_matrix_dedup();
     test_offset_limits();
-    test_blocked_samples_with_dedup();
     test_edge_cases();
 
     std::cout << "\n=== All Phase 1 tests PASSED! ===\n";

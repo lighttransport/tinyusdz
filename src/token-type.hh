@@ -164,16 +164,6 @@ class Token {
   }
 
   // No string hash for TinyUSDZ
-#if 0
-  uint64_t hash() const {
-    if (!str_) {
-      return 0;
-    }
-
-    // Assume non-zero hash value for non-empty string.
-    return str_.value().hash_code();
-  }
-#endif
 
  private:
   std::string str_;

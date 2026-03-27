@@ -5,6 +5,7 @@
 //
 #pragma once
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -100,5 +101,36 @@ struct Payload {
     return asset_path.GetAssetPath().empty() && !prim_path.is_valid();
   }
 };
+
+// AOUSD Core Spec 10.3.2.5: Deferred variant evaluation.
+// Variant selection should use opinions from ALL composition arcs, not just
+// the arc at V position. This struct collects selection opinions across arcs.
+struct DeferredVariantInfo {
+  // key = variant set name
+  // value = ordered list of selection opinions (strongest first)
+  // Each opinion is a VariantSelectionMap from a given arc.
+  std::map<std::string, std::vector<VariantSelectionMap>> selection_opinions;
+};
+
+// AOUSD Core Spec 10.3.2.3: Arc origin tracking for implied inherits/specializes.
+// When a referenced layer contains inherits or specializes, those arcs should
+// be "implied" in all upstream layer stacks.
+struct ArcOrigin {
+  std::string source_layer_id;  // Layer identifier where the arc was authored
+  Path source_prim_path;        // Prim path in that layer
+};
+
+namespace value {
+
+#include "define-type-trait.inc"
+
+DEFINE_TYPE_TRAIT(Reference, "ref", TYPE_ID_REFERENCE, 1);
+DEFINE_TYPE_TRAIT(Payload, "payload", TYPE_ID_PAYLOAD, 1);
+DEFINE_TYPE_TRAIT(LayerOffset, "LayerOffset", TYPE_ID_LAYER_OFFSET, 1);
+
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
+
+}  // namespace value
 
 }  // namespace tinyusdz
