@@ -2675,9 +2675,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       // std::vector<Index>
       uint64_t n{0};
       if (!_sr->read8(&n)) {
-        PUSH_ERROR("Failed to read the number of array elements.");
+        PUSH_ERROR("Failed to read the number of TokenVector elements (offset=" +
+                   std::to_string(offset) + ").");
         return false;
       }
+      DCOUT("TokenVector: n=" << n << " at offset=" << offset);
 
       if (n > _config.maxArrayElements) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
@@ -2686,11 +2688,13 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
 
       std::vector<crate::Index> indices(static_cast<size_t>(n));
-      if (!_sr->read(static_cast<size_t>(n) * sizeof(crate::Index),
-                     static_cast<size_t>(n) * sizeof(crate::Index),
-                     reinterpret_cast<uint8_t *>(indices.data()))) {
-        PUSH_ERROR("Failed to read TokenVector value.");
-        return false;
+      if (n > 0) {
+        if (!_sr->read(static_cast<size_t>(n) * sizeof(crate::Index),
+                       static_cast<size_t>(n) * sizeof(crate::Index),
+                       reinterpret_cast<uint8_t *>(indices.data()))) {
+          PUSH_ERROR("Failed to read TokenVector value.");
+          return false;
+        }
       }
 
       DCOUT("TokenVector(index) = " << indices);
