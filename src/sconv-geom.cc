@@ -1755,7 +1755,7 @@ bool CrateWriter::AddMaterialBindingSpecs(
 
   // Add material:binding relationship if present
   if (mat_binding->has_materialBinding()) {
-    const Relationship& binding = mat_binding->materialBinding.value();
+    const Relationship& binding = mat_binding->materialBinding.relationship();
     if (!ConvertRelationshipToFields("material:binding", binding, prim_path, err)) {
       if (err) *err = "Failed to add material:binding relationship: " + *err;
       return false;
@@ -1764,7 +1764,7 @@ bool CrateWriter::AddMaterialBindingSpecs(
 
   // Add material:binding:preview relationship if present
   if (mat_binding->has_materialBindingPreview()) {
-    const Relationship& binding = mat_binding->materialBindingPreview.value();
+    const Relationship& binding = mat_binding->materialBindingPreview.relationship();
     if (!ConvertRelationshipToFields("material:binding:preview", binding, prim_path, err)) {
       if (err) *err = "Failed to add material:binding:preview relationship: " + *err;
       return false;
@@ -1773,7 +1773,7 @@ bool CrateWriter::AddMaterialBindingSpecs(
 
   // Add material:binding:full relationship if present
   if (mat_binding->has_materialBindingFull()) {
-    const Relationship& binding = mat_binding->materialBindingFull.value();
+    const Relationship& binding = mat_binding->materialBindingFull.relationship();
     if (!ConvertRelationshipToFields("material:binding:full", binding, prim_path, err)) {
       if (err) *err = "Failed to add material:binding:full relationship: " + *err;
       return false;

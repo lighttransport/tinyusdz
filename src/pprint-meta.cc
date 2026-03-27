@@ -905,23 +905,23 @@ std::string print_material_binding(const MaterialBinding *mb, const uint32_t ind
 
   std::stringstream ss;
 
-  if (mb->materialBinding) {
-    ss << print_relationship(mb->materialBinding.value(),
-                             mb->materialBinding.value().get_listedit_qual(),
+  if (mb->materialBinding.authored()) {
+    ss << print_relationship(mb->materialBinding.relationship(),
+                             mb->materialBinding.relationship().get_listedit_qual(),
                              /* custom */ false, kMaterialBinding, indent);
   }
 
-  if (mb->materialBindingPreview) {
+  if (mb->materialBindingPreview.authored()) {
     ss << print_relationship(
-        mb->materialBindingPreview.value(),
-        mb->materialBindingPreview.value().get_listedit_qual(),
+        mb->materialBindingPreview.relationship(),
+        mb->materialBindingPreview.relationship().get_listedit_qual(),
         /* custom */ false, kMaterialBindingPreview, indent);
   }
 
-  if (mb->materialBindingFull) {
+  if (mb->materialBindingFull.authored()) {
     ss << print_relationship(
-        mb->materialBindingFull.value(),
-        mb->materialBindingFull.value().get_listedit_qual(),
+        mb->materialBindingFull.relationship(),
+        mb->materialBindingFull.relationship().get_listedit_qual(),
         /* custom */ false, kMaterialBindingFull, indent);
   }
 
@@ -1008,18 +1008,18 @@ std::string print_collection(const Collection *coll, const uint32_t indent) {
       ss << print_typed_attr(instance.includeRoot, prefix + ":includeRoot", indent);
     }
 
-    if (instance.includes) {
+    if (instance.includes.authored()) {
       ss << print_relationship(
-          instance.includes.value(),
-          instance.includes.value().get_listedit_qual(),
+          instance.includes.relationship(),
+          instance.includes.relationship().get_listedit_qual(),
           /* custom */ false, prefix + ":includes", indent);
 
     }
 
-    if (instance.excludes) {
+    if (instance.excludes.authored()) {
       ss << print_relationship(
-          instance.excludes.value(),
-          instance.excludes.value().get_listedit_qual(),
+          instance.excludes.relationship(),
+          instance.excludes.relationship().get_listedit_qual(),
           /* custom */ false, prefix + ":excludes", indent);
 
     }
