@@ -2317,6 +2317,24 @@ function main() {
       const content1 = fs.readFileSync(options.files[0], 'utf-8');
       const content2 = fs.readFileSync(options.files[1], 'utf-8');
 
+      // Check for VALUE_PPRINT placeholder (TinyUSDZ pprinter bug)
+      const vprintWarnings = [];
+      for (const [content, label] of [[content1, label1], [content2, label2]]) {
+        const vpLines = content.split('\n')
+          .map((line, i) => ({ line: line.trim(), num: i + 1 }))
+          .filter(({ line }) => line.includes('VALUE_PPRINT'));
+        for (const { line, num } of vpLines) {
+          vprintWarnings.push({ file: label, lineNum: num, text: line });
+        }
+      }
+      if (vprintWarnings.length > 0 && !options.quiet && !options.json) {
+        console.error(`\nWARNING: VALUE_PPRINT placeholder detected (TinyUSDZ pprinter bug):`);
+        for (const w of vprintWarnings) {
+          console.error(`  ${w.file}:${w.lineNum}: ${w.text.substring(0, 120)}`);
+        }
+        console.error('');
+      }
+
       // Parse both USDA contents
       if (!options.quiet && !options.json) {
         console.log('Parsing USDA files...');
@@ -2331,6 +2349,15 @@ function main() {
       }
 
       let differences = compareUsda(usda1, usda2, options);
+
+      // Add VALUE_PPRINT as explicit differences if any were found
+      for (const w of vprintWarnings) {
+        differences.push({
+          type: 'value_pprint_todo',
+          path: w.file,
+          message: `VALUE_PPRINT bug in ${w.file}:${w.lineNum}: ${w.text.substring(0, 120)}`
+        });
+      }
 
       // Filter differences based on options
       if (options.ignoreMetadata) {

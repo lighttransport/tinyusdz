@@ -110,6 +110,23 @@ def run_tests(tusdcat: str, tusddiff: str, basedir: str,
                 print(f"        {err_line}")
             continue
 
+        # Check for VALUE_PPRINT placeholder in roundtripped USDA
+        try:
+            with open(usda_rt_path) as f:
+                rt_content = f.read()
+            if "VALUE_PPRINT" in rt_content:
+                failed += 1
+                vp_lines = [l.strip() for l in rt_content.split("\n")
+                            if "VALUE_PPRINT" in l]
+                failures.append((basename, f"VALUE_PPRINT bug: {vp_lines[0][:120]}"))
+                if verbose:
+                    print(f"  FAIL (VALUE_PPRINT): {basename}")
+                    for vl in vp_lines[:3]:
+                        print(f"        {vl[:120]}")
+                continue
+        except OSError:
+            pass
+
         # Step 3: Diff original USDA vs roundtripped USDA
         dr = subprocess.run([tusddiff, filepath, usda_rt_path],
                             capture_output=True, text=True, timeout=60)
