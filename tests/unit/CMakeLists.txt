@@ -30,6 +30,7 @@ set(TEST_SOURCES
 	unit-composition.cc
 	unit-usda-reader.cc
 	unit-usdc-reader.cc
+	unit-usdc-reconstruct.cc
 	# Phase 0A: feat tests merged into unit suite
 	unit-value-view.cc
 	unit-typed-array-view.cc

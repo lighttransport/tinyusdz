@@ -59,7 +59,7 @@ struct CrateReaderConfig {
   size_t maxArrayElements = 1024 * 1024 * 1024;  ///< Max array elements (1B)
   size_t maxAssetPathElements = 512;              ///< Max asset path components
 
-  size_t maxTokenLength = 4096;                   ///< Max token string length
+  size_t maxTokenLength = 1024 * 64;               ///< Max token string length (64K)
   size_t maxStringLength = 1024 * 1024 * 64;     ///< Max string length (64MB)
 
   size_t maxVariantsMapElements = 128;            ///< Max variant map elements
@@ -269,38 +269,38 @@ class CrateReader {
   }
 
   uint64_t GetMemoryUsageInBytes() const {
-    return memory_manager_.GetCurrentUsage();
+    return memory_manager_->GetCurrentUsage();
   }
 
   uint64_t GetPeakMemoryUsageInBytes() const {
-    return memory_manager_.GetPeakUsage();
+    return memory_manager_->GetPeakUsage();
   }
 
   uint64_t GetMemoryBudgetInBytes() const {
-    return memory_manager_.GetMaxBudget();
+    return memory_manager_->GetMaxBudget();
   }
 
   uint64_t GetRemainingMemoryBudgetInBytes() const {
-    return memory_manager_.GetRemainingBudget();
+    return memory_manager_->GetRemainingBudget();
   }
 
   // Release memory budget externally (e.g., when scratch buffers are freed
   // after lazy DecodeFieldSet)
   void ReleaseMemoryBudget(uint64_t bytes) {
-    memory_manager_.Release(bytes);
+    memory_manager_->Release(bytes);
   }
 
   /// Release decompression buffers and return their budget.
   /// Call after parsing is complete to reclaim memory.
   void ShrinkDecompressionBuffers() {
     if (_decomp_comp_buffer_budget > 0) {
-      memory_manager_.Release(_decomp_comp_buffer_budget);
+      memory_manager_->Release(_decomp_comp_buffer_budget);
       _decomp_comp_buffer_budget = 0;
     }
     { std::vector<char> tmp; _decomp_comp_buffer.swap(tmp); }
 
     if (_decomp_working_buffer_budget > 0) {
-      memory_manager_.Release(_decomp_working_buffer_budget);
+      memory_manager_->Release(_decomp_working_buffer_budget);
       _decomp_working_buffer_budget = 0;
     }
     { std::vector<char> tmp; _decomp_working_buffer.swap(tmp); }
@@ -556,7 +556,7 @@ class CrateReader {
   template <typename T>
   bool ReadTimeSampleScalarValue(T *value, size_t nbytes,
                                  const char *read_error) {
-    MEMORY_BUDGET_CHECK(memory_manager_, nbytes, "[Crate]");
+    MEMORY_BUDGET_CHECK((*memory_manager_), nbytes, "[Crate]");
     if (!_sr->read(nbytes, nbytes, reinterpret_cast<uint8_t *>(value))) {
       PushError(std::string(__func__) + "(): " + read_error);
       return false;

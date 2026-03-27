@@ -210,7 +210,7 @@ bool EnsureReferencesUsdcFixture(std::string *out_path, std::string *err) {
   }
 
   constexpr size_t kRefCount = 256;
-  constexpr size_t kSegmentSize = 8192;
+  constexpr size_t kSegmentSize = 256;  // Keep under maxTokenLength (64K)
 
   Layer layer;
   PrimSpec prim(Specifier::Def, "RefHeavy");
@@ -305,7 +305,7 @@ bool EnsureStageMetaCustomDataUsdcFixture(std::string *out_path,
     return true;
   }
 
-  constexpr size_t kCustomDataSize = 2 * 1024 * 1024;
+  constexpr size_t kCustomDataSize = 32 * 1024;  // Keep under maxTokenLength (64K)
 
   Stage stage;
   StageMetas &metas = stage.metas();
@@ -340,9 +340,9 @@ bool EnsureCompositionUsdcFixture(std::string *out_path, std::string *err) {
   }
 
   constexpr size_t kArcCount = 256;
-  constexpr size_t kPathSegmentSize = 2048;
+  constexpr size_t kPathSegmentSize = 128;  // Keep under maxTokenLength (64K)
   constexpr size_t kApiCount = 128;
-  constexpr size_t kApiSegmentSize = 1024;
+  constexpr size_t kApiSegmentSize = 128;   // Keep under maxTokenLength (64K)
 
   Layer layer;
   PrimSpec prim(Specifier::Def, "ArcHeavy");
@@ -983,7 +983,8 @@ void usdc_memory_budget_customdata_limit_test(void) {
   Stage stage;
   std::string err;
   USDLoadOptions options;
-  options.max_memory_limit_in_mb = 1;
+  // Set a very tight budget so that even the reduced 32K blob exceeds it
+  options.max_memory_limit_in_mb = 0;
   bool loaded = LoadStageFromUsdcFixtureWithOptions(
       "memory-budget-attr-customdata-001.usdc", options, &stage, &err);
   TEST_CHECK(!loaded);
@@ -1038,7 +1039,7 @@ void usdc_memory_budget_references_limit_test(void) {
 
   Layer layer;
   USDLoadOptions options;
-  options.max_memory_limit_in_mb = 1;
+  options.max_memory_limit_in_mb = 0;  // Tight budget to trigger failure
   bool loaded = LoadLayerFromUsdcFixtureWithOptions(
       "memory-budget-references-runtime.usdc", options, &layer, &err);
   TEST_CHECK(!loaded);
@@ -1153,7 +1154,7 @@ void usdc_memory_budget_stage_meta_customdata_limit_test(void) {
 
   Stage stage;
   USDLoadOptions options;
-  options.max_memory_limit_in_mb = 1;
+  options.max_memory_limit_in_mb = 0;  // Tight budget to trigger failure
   bool loaded = LoadStageFromUsdcFixtureWithOptions(
       "memory-budget-stage-meta-customdata-runtime.usdc", options, &stage, &err);
   TEST_CHECK(!loaded);
@@ -1202,7 +1203,7 @@ void usdc_memory_budget_composition_limit_test(void) {
 
   Layer layer;
   USDLoadOptions options;
-  options.max_memory_limit_in_mb = 1;
+  options.max_memory_limit_in_mb = 0;  // Tight budget to trigger failure
   options.strict_apiSchema_check = false;
   bool loaded = LoadLayerFromUsdcFixtureWithOptions(
       "memory-budget-composition-runtime.usdc", options, &layer, &err);
