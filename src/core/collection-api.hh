@@ -135,8 +135,8 @@ class Collection
       }
 
       // includes relationship targets
-      if (inst->includes) {
-        const auto &rel = inst->includes.value();
+      if (inst->includes.authored()) {
+        const auto &rel = inst->includes.relationship();
         if (rel.is_path()) {
           included->push_back(rel.targetPath);
         } else if (rel.is_pathvector()) {
@@ -151,8 +151,8 @@ class Collection
       excluded->clear();
 
       // excludes relationship targets
-      if (inst->excludes) {
-        const auto &rel = inst->excludes.value();
+      if (inst->excludes.authored()) {
+        const auto &rel = inst->excludes.relationship();
         if (rel.is_path()) {
           excluded->push_back(rel.targetPath);
         } else if (rel.is_pathvector()) {
