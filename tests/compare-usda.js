@@ -2327,12 +2327,13 @@ function main() {
           vprintWarnings.push({ file: label, lineNum: num, text: line });
         }
       }
-      if (vprintWarnings.length > 0 && !options.quiet && !options.json) {
-        console.error(`\nWARNING: VALUE_PPRINT placeholder detected (TinyUSDZ pprinter bug):`);
+      if (vprintWarnings.length > 0) {
+        console.error(`\nERROR: VALUE_PPRINT placeholder detected (TinyUSDZ pprinter bug):`);
         for (const w of vprintWarnings) {
           console.error(`  ${w.file}:${w.lineNum}: ${w.text.substring(0, 120)}`);
         }
         console.error('');
+        process.exit(2);
       }
 
       // Parse both USDA contents
@@ -2349,15 +2350,6 @@ function main() {
       }
 
       let differences = compareUsda(usda1, usda2, options);
-
-      // Add VALUE_PPRINT as explicit differences if any were found
-      for (const w of vprintWarnings) {
-        differences.push({
-          type: 'value_pprint_todo',
-          path: w.file,
-          message: `VALUE_PPRINT bug in ${w.file}:${w.lineNum}: ${w.text.substring(0, 120)}`
-        });
-      }
 
       // Filter differences based on options
       if (options.ignoreMetadata) {
