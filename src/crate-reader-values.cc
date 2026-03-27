@@ -923,10 +923,47 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
   // Handle empty arrays: non-inlined array with payload=0 means no data was
   // written (Pixar uses this encoding for empty arrays like `string[] = []`).
   if (rep.IsArray() && offset == 0 && !rep.IsInlined()) {
-    // Set empty typed value based on data type
-    // For now, set a generic empty value
-    DCOUT("Empty array (non-inlined, payload=0) type=" << crate::GetCrateDataTypeName(rep.GetType()));
-    // Return empty CrateValue — caller handles the type
+    auto tyRet0 = crate::GetCrateDataType(rep.GetType());
+    if (!tyRet0) {
+      PUSH_ERROR("Invalid type for empty array.");
+      return false;
+    }
+
+    // Set a properly-typed empty array value
+    switch (tyRet0.value().dtype_id) {
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL:   value->Set(std::vector<bool>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT:    value->Set(std::vector<int32_t>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT:   value->Set(std::vector<uint32_t>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64:  value->Set(std::vector<int64_t>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64: value->Set(std::vector<uint64_t>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF:   value->Set(std::vector<value::half>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT:  value->Set(std::vector<float>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE: value->Set(std::vector<double>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING: value->Set(std::vector<std::string>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN:  value->Set(std::vector<value::token>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH: value->Set(std::vector<value::AssetPath>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F:  value->Set(std::vector<value::float2>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F:  value->Set(std::vector<value::float3>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F:  value->Set(std::vector<value::float4>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D:  value->Set(std::vector<value::double2>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D:  value->Set(std::vector<value::double3>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D:  value->Set(std::vector<value::double4>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2I:  value->Set(std::vector<value::int2>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3I:  value->Set(std::vector<value::int3>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4I:  value->Set(std::vector<value::int4>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H:  value->Set(std::vector<value::half2>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H:  value->Set(std::vector<value::half3>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4H:  value->Set(std::vector<value::half4>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF:  value->Set(std::vector<value::quatf>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD:  value->Set(std::vector<value::quatd>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATH:  value->Set(std::vector<value::quath>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D: value->Set(std::vector<value::matrix2d>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D: value->Set(std::vector<value::matrix3d>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D: value->Set(std::vector<value::matrix4d>()); break;
+      default:
+        DCOUT("Empty array: unhandled type " << crate::GetCrateDataTypeName(tyRet0.value().dtype_id));
+        break;  // leave as void — pprint will show TODO
+    }
     return true;
   }
 
