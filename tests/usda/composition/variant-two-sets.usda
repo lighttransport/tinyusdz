@@ -1,0 +1,27 @@
+#usda 1.0
+
+def Scope "Furniture" (
+    variants = {
+        string styleVariant = "modern"
+        string materialVariant = "wood"
+    }
+    prepend variantSets = ["styleVariant", "materialVariant"]
+) {
+    variantSet "styleVariant" = {
+        "modern" {
+            custom token style = "modern"
+        }
+        "classic" {
+            custom token style = "classic"
+        }
+    }
+
+    variantSet "materialVariant" = {
+        "wood" {
+            custom token material = "wood"
+        }
+        "metal" {
+            custom token material = "metal"
+        }
+    }
+}

@@ -80,4 +80,15 @@ struct Extent {
   }
 };
 
+namespace value {
+
+#include "define-type-trait.inc"
+
+DEFINE_TYPE_TRAIT(Extent, "float3[]", TYPE_ID_EXTENT, 2);  // float3[2]
+
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
+
+}  // namespace value
+
 }  // namespace tinyusdz

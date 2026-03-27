@@ -29,7 +29,9 @@
 ///
 #pragma once
 
-#include "prim-types.hh"
+#include "core/prim-spec.hh"
+#include "core/layer-types.hh"
+#include "core/extent.hh"
 #include "value-types.hh"
 
 namespace tinyusdz {

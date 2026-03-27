@@ -1,0 +1,20 @@
+#usda 1.0
+
+# Weaker sublayer providing override opinions
+
+# Test 12.2.1: over should not override the def specifier
+over "DefinedPrim" {
+    double radius = 2.0
+    string fromWeaker = "yes"
+}
+
+# Test 12.2.2: typeName from this over should not override the def Mesh
+over "TypeNameTest" {
+    double value = 99.0
+    string weakerProp = "from sublayer"
+}
+
+# Test 12.2.4: custom flag should propagate (OR semantics)
+over "CustomTest" {
+    double schemaAttr = 3.0
+}

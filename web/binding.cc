@@ -15,6 +15,7 @@
 #include <sstream>
 #include <iomanip>
 #include <set>
+#include <unordered_set>
 
 //#include "external/fast_float/include/fast_float/bigint.h"
 #include "tinyusdz.hh"
@@ -22,6 +23,7 @@
 #include "typed-array.hh"
 #include "value-types.hh"
 #include "tydra/render-data.hh"
+#include "tydra/tangent-quantize.hh"
 #include "tydra/scene-access.hh"
 #include "tydra/material-serializer.hh"
 
@@ -70,6 +72,53 @@
 
 using namespace emscripten;
 
+// Fix degenerate tangent: when a tangent vector is zero, near-zero, NaN, or
+// Inf, generate a fallback perpendicular to the normal.  Also handles
+// degenerate/NaN normals.  Modifies tx/ty/tz in place.
+static inline void FixupZeroTangent(float &tx, float &ty, float &tz,
+                                     float nx, float ny, float nz) {
+  // Check if tangent is valid (finite and non-trivially long)
+  if (std::isfinite(tx) && std::isfinite(ty) && std::isfinite(tz)) {
+    float len2 = tx * tx + ty * ty + tz * tz;
+    if (std::isfinite(len2) && len2 > 1.0e-12f) {
+      return;  // tangent is fine
+    }
+  }
+
+  // Ensure normal is usable (finite and non-zero)
+  if (!std::isfinite(nx) || !std::isfinite(ny) || !std::isfinite(nz)) {
+    nx = 0.0f; ny = 1.0f; nz = 0.0f;  // arbitrary up
+  } else {
+    float nlen2 = nx * nx + ny * ny + nz * nz;
+    if (!std::isfinite(nlen2) || nlen2 < 1.0e-12f) {
+      nx = 0.0f; ny = 1.0f; nz = 0.0f;
+    } else {
+      float inv = 1.0f / std::sqrt(nlen2);
+      nx *= inv; ny *= inv; nz *= inv;
+    }
+  }
+
+  // Generate perpendicular to normal via cross with a reference axis
+  float rx, ry, rz;
+  if (std::fabs(ny) < 0.9f) {
+    rx = 0.0f; ry = 1.0f; rz = 0.0f;
+  } else {
+    rx = 1.0f; ry = 0.0f; rz = 0.0f;
+  }
+  // cross(N, ref)
+  tx = ny * rz - nz * ry;
+  ty = nz * rx - nx * rz;
+  tz = nx * ry - ny * rx;
+  float len2 = tx * tx + ty * ty + tz * tz;
+  if (std::isfinite(len2) && len2 > 1.0e-20f) {
+    float inv = 1.0f / std::sqrt(len2);
+    tx *= inv; ty *= inv; tz *= inv;
+  } else {
+    // Last resort: normal was along both reference axes (shouldn't happen)
+    tx = 1.0f; ty = 0.0f; tz = 0.0f;
+  }
+}
+
 // ============================================================================
 // EM_JS: Synchronous JavaScript callbacks for progress reporting
 // These functions are called from C++ during Tydra conversion to report
@@ -78,13 +127,16 @@ using namespace emscripten;
 
 // Report mesh conversion progress
 // Called for each mesh during Tydra conversion
+// NOTE: const char* params are BigInt in MEMORY64 mode, but UTF8ToString
+// expects Number. Using Number() is a no-op for regular numbers (32-bit)
+// and converts BigInt→Number (64-bit), so it works for both modes.
 EM_JS(void, reportTydraProgress, (int current, int total, const char* stage, const char* meshName, float progress), {
   if (typeof Module.onTydraProgress === 'function') {
     Module.onTydraProgress({
       meshCurrent: current,
       meshTotal: total,
-      stage: UTF8ToString(stage),
-      meshName: UTF8ToString(meshName),
+      stage: UTF8ToString(Number(stage)),
+      meshName: UTF8ToString(Number(meshName)),
       progress: progress
     });
   }
@@ -94,8 +146,8 @@ EM_JS(void, reportTydraProgress, (int current, int total, const char* stage, con
 EM_JS(void, reportTydraStage, (const char* stage, const char* message), {
   if (typeof Module.onTydraStage === 'function') {
     Module.onTydraStage({
-      stage: UTF8ToString(stage),
-      message: UTF8ToString(message)
+      stage: UTF8ToString(Number(stage)),
+      message: UTF8ToString(Number(message))
     });
   }
 });
@@ -122,18 +174,30 @@ EM_JS(void, reportTydraComplete, (int meshCount, int materialCount, int textureC
 
 #if defined(TINYUSDZ_USE_COROUTINE)
 
+// NOTE: EM_VAL is a pointer type (struct _EM_VAL*). In MEMORY64 mode,
+// pointers are i64 and must be returned as BigInt from JS→WASM imports.
+// Emval.toHandle() returns a Number, so we wrap with BigInt() for MEMORY64.
+#if defined(TINYUSDZ_WASM_MEMORY64)
 EM_JS(emscripten::EM_VAL, yieldToEventLoop_impl, (), {
-  // Return a Promise that resolves on next animation frame
-  // This gives the browser a chance to repaint
+  return BigInt(Emval.toHandle(new Promise(resolve => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => resolve());
+    } else {
+      setTimeout(resolve, 0);
+    }
+  })));
+});
+#else
+EM_JS(emscripten::EM_VAL, yieldToEventLoop_impl, (), {
   return Emval.toHandle(new Promise(resolve => {
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(() => resolve());
     } else {
-      // Fallback for non-browser environments (Node.js)
       setTimeout(resolve, 0);
     }
   }));
 });
+#endif
 
 // Wrapper for co_await usage
 inline emscripten::val yieldToEventLoop() {
@@ -141,11 +205,19 @@ inline emscripten::val yieldToEventLoop() {
 }
 
 // Helper to yield with a custom delay (milliseconds)
+#if defined(TINYUSDZ_WASM_MEMORY64)
+EM_JS(emscripten::EM_VAL, yieldWithDelay_impl, (int delayMs), {
+  return BigInt(Emval.toHandle(new Promise(resolve => {
+    setTimeout(resolve, delayMs);
+  })));
+});
+#else
 EM_JS(emscripten::EM_VAL, yieldWithDelay_impl, (int delayMs), {
   return Emval.toHandle(new Promise(resolve => {
     setTimeout(resolve, delayMs);
   }));
 });
+#endif
 
 inline emscripten::val yieldWithDelay(int delayMs) {
   return emscripten::val::take_ownership(yieldWithDelay_impl(delayMs));
@@ -155,7 +227,7 @@ inline emscripten::val yieldWithDelay(int delayMs) {
 EM_JS(void, reportAsyncPhaseStart, (const char* phase, float progress), {
   if (typeof Module.onAsyncPhaseStart === 'function') {
     Module.onAsyncPhaseStart({
-      phase: UTF8ToString(phase),
+      phase: UTF8ToString(Number(phase)),
       progress: progress
     });
   }
@@ -528,9 +600,18 @@ struct EMAssetResolutionResolver {
   // Assume content is loaded in JS layer.
   bool add(const std::string &asset_name, const std::string &binary) {
     bool overwritten = has(asset_name);
-      
+
+    // Enforce cache size limit before adding
+    if (max_cache_size_bytes_ > 0 && !overwritten) {
+      size_t new_size = getCacheSizeBytes() + asset_name.size() + binary.size();
+      if (new_size > max_cache_size_bytes_) {
+        evictToFitBytes(max_cache_size_bytes_ - std::min(max_cache_size_bytes_,
+                        asset_name.size() + binary.size()));
+      }
+    }
+
     cache[asset_name] = AssetCacheEntry(binary);
-    
+
     return overwritten;
   }
 
@@ -855,6 +936,42 @@ struct EMAssetResolutionResolver {
     return result;
   }
 
+  /// Get total cache memory usage in bytes (all caches combined).
+  size_t getCacheSizeBytes() const {
+    size_t total = 0;
+    for (const auto &pair : cache) {
+      total += pair.first.size() + pair.second.binary.size();
+    }
+    for (const auto &pair : streaming_cache) {
+      total += pair.first.size() + pair.second.current_size;
+    }
+    for (const auto &pair : zerocopy_buffers) {
+      total += pair.first.size() + pair.second.total_size;
+    }
+    return total;
+  }
+
+  /// Set maximum cache size in bytes. 0 = unlimited (default).
+  /// When adding assets that would exceed this limit, the oldest
+  /// finalized assets are evicted first.
+  void setMaxCacheSizeBytes(size_t max_bytes) {
+    max_cache_size_bytes_ = max_bytes;
+  }
+
+  size_t getMaxCacheSizeBytes() const { return max_cache_size_bytes_; }
+
+  /// Evict oldest finalized cache entries until total size <= target.
+  /// Returns number of entries evicted.
+  size_t evictToFitBytes(size_t target_bytes) {
+    size_t evicted = 0;
+    while (getCacheSizeBytes() > target_bytes && !cache.empty()) {
+      // std::map is sorted by key; evict first entry as simple policy
+      cache.erase(cache.begin());
+      evicted++;
+    }
+    return evicted;
+  }
+
   // TODO: Use IndexDB?
   //
   // <uri, AssetCacheEntry>
@@ -862,6 +979,7 @@ struct EMAssetResolutionResolver {
   std::map<std::string, StreamingAssetEntry> streaming_cache;
   std::map<std::string, ZeroCopyStreamingBuffer> zerocopy_buffers;
   AssetCacheEntry empty_entry_;
+  size_t max_cache_size_bytes_{0};  // 0 = unlimited
 };
 
 ///
@@ -1017,14 +1135,25 @@ class TinyUSDZLoaderNative {
     // Free GeomMesh data in stage after using it to save memory.
     env.mesh_config.lowmem = true;
 
+    // Defer tangent computation to save memory and time during initial load.
+    // Tangents will be computed on demand via computeMeshTangents().
+    env.mesh_config.defer_tangent_computation = defer_tangent_computation_;
+
+    // Only compute tangents for meshes with normal map textures.
+    env.mesh_config.compute_tangents_only_with_normal_map = true;
+
     // Do not try to build indices(avoid temp memory consumption of vertex similarity search)
     //env.mesh_config.prefer_non_indexed = true;
 
     //env.mesh_config.build_index_method = 0; // simple
 
+    // Sphere tessellation
+    env.mesh_config.sphere_subdivisions = sphere_subdivisions_;
+
     // Bone reduction configuration
     env.mesh_config.enable_bone_reduction = enable_bone_reduction_;
     env.mesh_config.target_bone_count = target_bone_count_;
+    env.mesh_config.round_bone_count = round_bone_count_;
 
     if (is_usdz) {
       // TODO: Support USDZ + Composition
@@ -1153,6 +1282,7 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
+    options.mmap_zero_copy = mmap_zero_copy_;
 
     tinyusdz::Stage stage;
     loaded_ = tinyusdz::LoadUSDFromMemory(
@@ -1166,7 +1296,7 @@ class TinyUSDZLoaderNative {
     loaded_as_layer_ = false;
     filename_ = filename;
 
-    std::cout << "loaded\n";
+    //std::cout << "[tusd:loadFromBinary] loaded << " filename << "\n";
 #if 0
     tinyusdz::tydra::RenderSceneConverterEnv env(stage);
 
@@ -1303,6 +1433,7 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
+    options.mmap_zero_copy = mmap_zero_copy_;
 
     tinyusdz::Stage stage;
     loaded_ = tinyusdz::LoadUSDFromMemory(
@@ -1329,8 +1460,12 @@ class TinyUSDZLoaderNative {
     env.scene_config.load_texture_assets = loadTextureInNative_;
     env.material_config.preserve_texel_bitdepth = true;
     env.mesh_config.lowmem = true;
+    env.mesh_config.defer_tangent_computation = defer_tangent_computation_;
+    env.mesh_config.compute_tangents_only_with_normal_map = true;
+    env.mesh_config.sphere_subdivisions = sphere_subdivisions_;
     env.mesh_config.enable_bone_reduction = enable_bone_reduction_;
     env.mesh_config.target_bone_count = target_bone_count_;
+    env.mesh_config.round_bone_count = round_bone_count_;
 
     // Yield after setup
     co_await yieldToEventLoop();
@@ -1930,6 +2065,181 @@ class TinyUSDZLoaderNative {
 
   int numMeshes() const { return render_scene_.meshes.size(); }
 
+  // ---- Instance support (AOUSD Spec 11.3.3) ----
+
+  int numInstances() const {
+    return static_cast<int>(render_scene_.instances.size());
+  }
+
+  emscripten::val getInstance(int instance_id) const {
+    if (instance_id < 0 ||
+        static_cast<size_t>(instance_id) >= render_scene_.instances.size()) {
+      return emscripten::val::null();
+    }
+    const auto &inst = render_scene_.instances[static_cast<size_t>(instance_id)];
+    emscripten::val obj = emscripten::val::object();
+    obj.set("primName", inst.prim_name);
+    obj.set("absPath", inst.abs_path);
+    obj.set("displayName", inst.display_name);
+    obj.set("prototypeIndex", inst.prototype_index);
+    obj.set("meshId", inst.mesh_id);
+    obj.set("materialId", inst.material_id);
+    obj.set("localMatrix", detail::toArray(inst.local_matrix));
+    obj.set("globalMatrix", detail::toArray(inst.global_matrix));
+    obj.set("visible", inst.visible);
+    return obj;
+  }
+
+  emscripten::val getInstancesForMesh(int mesh_id) const {
+    emscripten::val arr = emscripten::val::array();
+    for (size_t i = 0; i < render_scene_.instances.size(); i++) {
+      if (render_scene_.instances[i].mesh_id == mesh_id) {
+        arr.call<void>("push", static_cast<int>(i));
+      }
+    }
+    return arr;
+  }
+
+  // ---- End instance support ----
+
+  /**
+   * Generate bone data texture for GPU skinning with high bone counts.
+   *
+   * The texture stores bone indices and weights in RGBA format:
+   * - R: bone index 0, G: weight 0, B: bone index 1, A: weight 1
+   * - Each texel contains 2 bone influences
+   *
+   * @param mesh_id Mesh index
+   * @param max_influences Maximum influences per vertex (0 = use mesh's elementSize)
+   * @return Object with textureData, dimensions, and metadata
+   */
+  emscripten::val generateBoneTexture(int mesh_id, int max_influences = 0) const {
+    emscripten::val result = emscripten::val::object();
+
+    if (!loaded_ || mesh_id < 0 || mesh_id >= static_cast<int>(render_scene_.meshes.size())) {
+      result.set("error", "Invalid mesh ID or scene not loaded");
+      return result;
+    }
+
+    const auto &rmesh = render_scene_.meshes[size_t(mesh_id)];
+    const auto &jw = rmesh.joint_and_weights;
+
+    if (jw.jointIndices.empty() || jw.jointWeights.empty()) {
+      result.set("error", "Mesh has no skinning data");
+      return result;
+    }
+
+    int elementSize = jw.elementSize;
+    int vertexCount = static_cast<int>(jw.jointIndices.size()) / elementSize;
+
+    // Determine max influences for texture
+    int maxInfl = (max_influences > 0) ? max_influences : elementSize;
+
+    // Round up to standard GPU skinning values if needed
+    auto roundUp = [](int count) -> int {
+      const int standardCounts[] = {4, 8, 16, 32, 48, 64, 80, 96, 128};
+      for (int stdCount : standardCounts) {
+        if (count <= stdCount) return stdCount;
+      }
+      return 128;
+    };
+    maxInfl = roundUp(maxInfl);
+
+    // Calculate texture dimensions
+    // Each texel stores 2 influences (boneIdx0, weight0, boneIdx1, weight1)
+    int influencesPerTexel = 2;
+    int texelsPerVertex = (maxInfl + influencesPerTexel - 1) / influencesPerTexel;
+    int totalTexels = vertexCount * texelsPerVertex;
+
+    // Find optimal texture dimensions (prefer power of 2)
+    int texWidth = 1;
+    while (texWidth * texWidth < totalTexels && texWidth < 4096) {
+      texWidth *= 2;
+    }
+    int texHeight = (totalTexels + texWidth - 1) / texWidth;
+
+    // Allocate texture data (RGBA float)
+    std::vector<float> textureData(texWidth * texHeight * 4, 0.0f);
+
+    // Fill texture with bone data
+    for (int v = 0; v < vertexCount; v++) {
+      int texelOffset = v * texelsPerVertex;
+
+      // Collect influences for this vertex, sorted by weight (descending)
+      std::vector<std::pair<int, float>> influences;
+      for (int j = 0; j < elementSize && j < maxInfl; j++) {
+        int srcIdx = v * elementSize + j;
+        if (srcIdx < static_cast<int>(jw.jointIndices.size())) {
+          int boneIdx = jw.jointIndices[srcIdx];
+          float weight = jw.jointWeights[srcIdx];
+          if (weight > 0.0f) {
+            influences.push_back({boneIdx, weight});
+          }
+        }
+      }
+
+      // Sort by weight descending for potential early termination in shader
+      std::sort(influences.begin(), influences.end(),
+                [](const auto &a, const auto &b) { return a.second > b.second; });
+
+      // Write to texture (2 influences per texel)
+      for (int t = 0; t < texelsPerVertex; t++) {
+        int texelIdx = (texelOffset + t) * 4;
+        if (texelIdx + 3 >= static_cast<int>(textureData.size())) break;
+
+        // First influence in texel (RG)
+        int infIdx0 = t * 2;
+        if (infIdx0 < static_cast<int>(influences.size())) {
+          textureData[texelIdx + 0] = static_cast<float>(influences[infIdx0].first);  // R: bone index
+          textureData[texelIdx + 1] = influences[infIdx0].second;  // G: weight
+        } else {
+          textureData[texelIdx + 0] = -1.0f;  // Invalid bone index
+          textureData[texelIdx + 1] = 0.0f;
+        }
+
+        // Second influence in texel (BA)
+        int infIdx1 = t * 2 + 1;
+        if (infIdx1 < static_cast<int>(influences.size())) {
+          textureData[texelIdx + 2] = static_cast<float>(influences[infIdx1].first);  // B: bone index
+          textureData[texelIdx + 3] = influences[infIdx1].second;  // A: weight
+        } else {
+          textureData[texelIdx + 2] = -1.0f;  // Invalid bone index
+          textureData[texelIdx + 3] = 0.0f;
+        }
+      }
+    }
+
+    // Generate vertex offset array (where each vertex's data starts in texture)
+    std::vector<float> vertexOffsets(vertexCount);
+    for (int v = 0; v < vertexCount; v++) {
+      vertexOffsets[v] = static_cast<float>(v * texelsPerVertex);
+    }
+
+    // Return result
+    result.set("textureData", emscripten::val(emscripten::typed_memory_view(
+        textureData.size(), textureData.data())));
+    result.set("textureWidth", texWidth);
+    result.set("textureHeight", texHeight);
+    result.set("texelsPerVertex", texelsPerVertex);
+    result.set("maxInfluences", maxInfl);
+    result.set("vertexCount", vertexCount);
+    result.set("originalElementSize", elementSize);
+    result.set("vertexOffsets", emscripten::val(emscripten::typed_memory_view(
+        vertexOffsets.size(), vertexOffsets.data())));
+
+    // Store in member to keep memory alive
+    bone_texture_data_ = std::move(textureData);
+    bone_vertex_offsets_ = std::move(vertexOffsets);
+
+    // Re-set with valid pointers
+    result.set("textureData", emscripten::val(emscripten::typed_memory_view(
+        bone_texture_data_.size(), bone_texture_data_.data())));
+    result.set("vertexOffsets", emscripten::val(emscripten::typed_memory_view(
+        bone_vertex_offsets_.size(), bone_vertex_offsets_.data())));
+
+    return result;
+  }
+
   int numMaterials() const { return render_scene_.materials.size(); }
 
   int numTextures() const { return render_scene_.textures.size(); }
@@ -2296,6 +2606,48 @@ class TinyUSDZLoaderNative {
     return lights;
   }
 
+  int numCameras() const { return static_cast<int>(render_scene_.cameras.size()); }
+
+  emscripten::val getCamera(int camera_id) const {
+    emscripten::val cam = emscripten::val::object();
+
+    if (!loaded_) {
+      cam.set("error", "Scene not loaded");
+      return cam;
+    }
+
+    if (camera_id < 0 || camera_id >= static_cast<int>(render_scene_.cameras.size())) {
+      cam.set("error", "Invalid camera ID");
+      return cam;
+    }
+
+    const auto &c = render_scene_.cameras[static_cast<size_t>(camera_id)];
+
+    cam.set("name", c.name);
+    cam.set("absPath", c.abs_path);
+    cam.set("displayName", c.display_name);
+    cam.set("focalLength", c.focalLength);
+    cam.set("verticalAperture", c.verticalAperture);
+    cam.set("horizontalAperture", c.horizontalAperture);
+    cam.set("znear", c.znear);
+    cam.set("zfar", c.zfar);
+
+    // Compute FOV in radians
+    cam.set("yfov", 2.0f * std::atan(0.5f * c.verticalAperture / c.focalLength));
+    cam.set("xfov", 2.0f * std::atan(0.5f * c.horizontalAperture / c.focalLength));
+    cam.set("aspectRatio", c.horizontalAperture / c.verticalAperture);
+
+    // Projection type
+    std::string projStr;
+    switch (c.projection) {
+      case tinyusdz::GeomCamera::Projection::Perspective: projStr = "perspective"; break;
+      case tinyusdz::GeomCamera::Projection::Orthographic: projStr = "orthographic"; break;
+    }
+    cam.set("projection", projStr);
+
+    return cam;
+  }
+
   emscripten::val getTexture(int tex_id) const {
     emscripten::val tex = emscripten::val::object();
 
@@ -2396,11 +2748,42 @@ class TinyUSDZLoaderNative {
                                                      points_ptr));
 
     if (!rmesh.normals.empty()) {
-      const float *normals_ptr =
-          reinterpret_cast<const float *>(rmesh.normals.data.data());
-
-      mesh.set("normals", emscripten::typed_memory_view(
-                              rmesh.normals.vertex_count() * 3, normals_ptr));
+      using tinyusdz::tydra::VertexAttributeFormat;
+      if (rmesh.normals.format == VertexAttributeFormat::Char3) {
+        // SNorm8x3 — pass as Int8Array; Three.js uses normalized=true
+        const int8_t *normals_ptr =
+            reinterpret_cast<const int8_t *>(rmesh.normals.data.data());
+        mesh.set("normals", emscripten::typed_memory_view(
+                                rmesh.normals.vertex_count() * 3, normals_ptr));
+        mesh.set("normalsFormat", std::string("snorm8"));
+      } else if (rmesh.normals.format == VertexAttributeFormat::Short3) {
+        // SNorm16x3 — pass as Int16Array; Three.js uses normalized=true
+        const int16_t *normals_ptr =
+            reinterpret_cast<const int16_t *>(rmesh.normals.data.data());
+        mesh.set("normals", emscripten::typed_memory_view(
+                                rmesh.normals.vertex_count() * 3, normals_ptr));
+        mesh.set("normalsFormat", std::string("snorm16"));
+      } else if (rmesh.normals.format == VertexAttributeFormat::Uint) {
+        // Packed 1010102 — Three.js can't use this; unpack to float3 cache
+        using namespace tinyusdz::tydra::tangent_quantize;
+        size_t nv = rmesh.normals.vertex_count();
+        auto &cache = normals_cache_[mesh_id];
+        cache.resize(nv * 3);
+        const uint32_t *P =
+            reinterpret_cast<const uint32_t *>(rmesh.normals.data.data());
+        for (size_t i = 0; i < nv; i++) {
+          unpack_normal_1010102(P[i], cache[i*3+0], cache[i*3+1], cache[i*3+2]);
+        }
+        mesh.set("normals", emscripten::typed_memory_view(nv * 3, cache.data()));
+        mesh.set("normalsFormat", std::string("float32"));
+      } else {
+        // Float3 (Vec3) — pass as Float32Array
+        const float *normals_ptr =
+            reinterpret_cast<const float *>(rmesh.normals.data.data());
+        mesh.set("normals", emscripten::typed_memory_view(
+                                rmesh.normals.vertex_count() * 3, normals_ptr));
+        mesh.set("normalsFormat", std::string("float32"));
+      }
     }
 
     {
@@ -2437,12 +2820,117 @@ class TinyUSDZLoaderNative {
       }
     }
 
+    // Expose tangents as vec4 float (xyz=tangent direction, w=handedness sign).
+    // Three.js expects vec4 tangent where w = sign(dot(cross(N, T), B)).
+    // Supports both packed formats (10_10_10_2, SNorm8, Fp16) and legacy Vec3.
     if (!rmesh.tangents.empty()) {
-      const float *tangents_ptr =
-          reinterpret_cast<const float *>(rmesh.tangents.data.data());
+      using namespace tinyusdz::tydra;
+      size_t nv = rmesh.tangents.vertex_count();
+      auto &cache = tangents4_cache_[mesh_id];
+      cache.resize(nv * 4);
 
-      mesh.set("tangents", emscripten::typed_memory_view(
-                              rmesh.tangents.vertex_count() * 3, tangents_ptr));
+      if (rmesh.tangents.format == VertexAttributeFormat::Uint) {
+        // Packed INT_2_10_10_10_REV — unpack to vec4 float
+        const tangent_quantize::PackedTangent1010102 *P =
+            reinterpret_cast<const tangent_quantize::PackedTangent1010102 *>(
+                rmesh.tangents.data.data());
+        for (size_t i = 0; i < nv; i++) {
+          tangent_quantize::unpack_tangent_1010102(
+              P[i], cache[i*4+0], cache[i*4+1], cache[i*4+2], cache[i*4+3]);
+        }
+      } else if (rmesh.tangents.format == VertexAttributeFormat::Char4) {
+        // Packed SNorm8x4 — unpack to vec4 float
+        const tangent_quantize::PackedTangentSNorm8x4 *P =
+            reinterpret_cast<const tangent_quantize::PackedTangentSNorm8x4 *>(
+                rmesh.tangents.data.data());
+        for (size_t i = 0; i < nv; i++) {
+          tangent_quantize::unpack_tangent_snorm8(
+              P[i], cache[i*4+0], cache[i*4+1], cache[i*4+2], cache[i*4+3]);
+        }
+      } else if (rmesh.tangents.format == VertexAttributeFormat::Half4) {
+        // Packed FP16x4 — unpack to vec4 float
+        const tangent_quantize::PackedTangentFp16x4 *P =
+            reinterpret_cast<const tangent_quantize::PackedTangentFp16x4 *>(
+                rmesh.tangents.data.data());
+        for (size_t i = 0; i < nv; i++) {
+          tangent_quantize::unpack_tangent_fp16(
+              P[i], cache[i*4+0], cache[i*4+1], cache[i*4+2], cache[i*4+3]);
+        }
+      } else if (rmesh.tangents.format == VertexAttributeFormat::Vec3 &&
+                 !rmesh.normals.empty() && !rmesh.binormals.empty()) {
+        // Legacy Vec3 float tangent + binormal — compute sign from cross product.
+        // Normals may be packed; use unpacked cache if available.
+        const float *T = reinterpret_cast<const float *>(rmesh.tangents.data.data());
+        const float *N = nullptr;
+        if (rmesh.normals.format == VertexAttributeFormat::Uint) {
+          // Packed normals — ensure cache is populated
+          auto &nc = normals3_cache_[mesh_id];
+          if (nc.empty()) {
+            nc.resize(nv * 3);
+            const uint32_t *packed = reinterpret_cast<const uint32_t *>(
+                rmesh.normals.data.data());
+            for (size_t j = 0; j < nv; j++) {
+              tangent_quantize::unpack_normal_1010102(
+                  packed[j], nc[j*3+0], nc[j*3+1], nc[j*3+2]);
+            }
+          }
+          N = nc.data();
+        } else {
+          N = reinterpret_cast<const float *>(rmesh.normals.data.data());
+        }
+        const float *B = reinterpret_cast<const float *>(rmesh.binormals.data.data());
+        for (size_t i = 0; i < nv; i++) {
+          float tx = T[i*3+0], ty = T[i*3+1], tz = T[i*3+2];
+          FixupZeroTangent(tx, ty, tz, N[i*3+0], N[i*3+1], N[i*3+2]);
+          cache[i*4+0] = tx;
+          cache[i*4+1] = ty;
+          cache[i*4+2] = tz;
+          float cx = N[i*3+1]*tz - N[i*3+2]*ty;
+          float cy = N[i*3+2]*tx - N[i*3+0]*tz;
+          float cz = N[i*3+0]*ty - N[i*3+1]*tx;
+          float d = cx*B[i*3+0] + cy*B[i*3+1] + cz*B[i*3+2];
+          cache[i*4+3] = (std::isfinite(d) && d < 0.0f) ? -1.0f : 1.0f;
+        }
+      } else if (rmesh.tangents.format == VertexAttributeFormat::Vec3) {
+        // Vec3 float tangent, no binormals — assume w=1
+        const float *T = reinterpret_cast<const float *>(rmesh.tangents.data.data());
+        const float *N = nullptr;
+        if (!rmesh.normals.empty()) {
+          if (rmesh.normals.format == VertexAttributeFormat::Uint) {
+            auto &nc = normals3_cache_[mesh_id];
+            if (nc.empty()) {
+              nc.resize(nv * 3);
+              const uint32_t *packed = reinterpret_cast<const uint32_t *>(
+                  rmesh.normals.data.data());
+              for (size_t j = 0; j < nv; j++) {
+                tangent_quantize::unpack_normal_1010102(
+                    packed[j], nc[j*3+0], nc[j*3+1], nc[j*3+2]);
+              }
+            }
+            N = nc.data();
+          } else {
+            N = reinterpret_cast<const float *>(rmesh.normals.data.data());
+          }
+        }
+        for (size_t i = 0; i < nv; i++) {
+          float tx = T[i*3+0], ty = T[i*3+1], tz = T[i*3+2];
+          if (N) FixupZeroTangent(tx, ty, tz, N[i*3+0], N[i*3+1], N[i*3+2]);
+          cache[i*4+0] = tx;
+          cache[i*4+1] = ty;
+          cache[i*4+2] = tz;
+          cache[i*4+3] = 1.0f;
+        }
+      }
+      mesh.set("tangents", emscripten::typed_memory_view(cache.size(), cache.data()));
+
+      // Also expose raw packed tangent buffer for direct WebGL2 upload
+      if (rmesh.tangents.format == VertexAttributeFormat::Uint) {
+        // Uint32Array for GL_INT_2_10_10_10_REV
+        const uint32_t *raw = reinterpret_cast<const uint32_t *>(
+            rmesh.tangents.data.data());
+        mesh.set("tangentsPacked", emscripten::typed_memory_view(nv, raw));
+        mesh.set("tangentsPackedFormat", emscripten::val("INT_2_10_10_10_REV"));
+      }
     }
 
     mesh.set("materialId", rmesh.material_id);
@@ -2485,11 +2973,15 @@ class TinyUSDZLoaderNative {
     }
 
     // Export geomBindTransform matrix (4x4 matrix as 16 doubles)
+    // If not authored in USD, defaults to identity matrix
     const double *geom_bind_ptr =
         reinterpret_cast<const double *>(
             rmesh.joint_and_weights.geomBindTransform.m);
     mesh.set("geomBindTransform",
              emscripten::typed_memory_view(16, geom_bind_ptr));
+    // Flag indicating whether geomBindTransform was explicitly authored in USD
+    // If false, the identity matrix is being used as a fallback
+    mesh.set("hasGeomBindTransform", rmesh.joint_and_weights.hasGeomBindTransform);
 
     // Export GeomSubsets (per-face materials) as optimized submeshes
     // Reorder triangles by material so each material has exactly one contiguous group
@@ -2497,6 +2989,9 @@ class TinyUSDZLoaderNative {
       // Step 1: Group face indices by material
       std::map<int, std::vector<int>> materialToFaces;
       size_t totalFaces = 0;
+
+      // Track which faces are covered by GeomSubsets
+      std::unordered_set<int> coveredFaces;
 
       for (const auto& subset_pair : rmesh.material_subsetMap) {
         const tinyusdz::tydra::MaterialSubset& subset = subset_pair.second;
@@ -2511,6 +3006,27 @@ class TinyUSDZLoaderNative {
         materialToFaces[matId].insert(materialToFaces[matId].end(),
                                       faceIndices.begin(), faceIndices.end());
         totalFaces += faceIndices.size();
+
+        for (int fi : faceIndices) {
+          coveredFaces.insert(fi);
+        }
+      }
+
+      // Include faces not covered by any GeomSubset — assign mesh-level material_id
+      {
+        size_t numMeshFaces = rmesh.faceVertexCounts().size();
+        std::vector<int> uncoveredFaces;
+        for (size_t i = 0; i < numMeshFaces; i++) {
+          if (coveredFaces.find(static_cast<int>(i)) == coveredFaces.end()) {
+            uncoveredFaces.push_back(static_cast<int>(i));
+          }
+        }
+        if (!uncoveredFaces.empty()) {
+          int fallbackMatId = rmesh.material_id;
+          materialToFaces[fallbackMatId].insert(materialToFaces[fallbackMatId].end(),
+                                                uncoveredFaces.begin(), uncoveredFaces.end());
+          totalFaces += uncoveredFaces.size();
+        }
       }
 
       // Step 2: Build reordering map - new triangle index -> old triangle index
@@ -2548,21 +3064,33 @@ class TinyUSDZLoaderNative {
       mesh.set("submeshes", submeshes);
 
       // Step 3: Reorder vertex attributes based on reorderMap
-      // For facevarying attributes, each triangle has 3 vertices
+      // Each entry in reorderMap maps a new triangle index to an old triangle index.
+      // The output is facevarying (3 vertices per triangle, sequential indices).
+      //
+      // IMPORTANT: rmesh.points is ALWAYS per-vertex (shared vertices with index
+      // buffer). When is_single_indexable, normals/texcoords/tangents are also
+      // per-vertex. When NOT single_indexable, they may be facevarying.
+      // Per-vertex attributes must be looked up via faceVertexIndices[triIdx*3+v],
+      // while facevarying attributes are accessed directly at triIdx*3+v.
       size_t numNewTriangles = reorderMap.size();
+      const auto& fvIndices = rmesh.faceVertexIndices();
+      const bool singleIndexable = rmesh.is_single_indexable;
 
-      // Reorder points (vec3)
+      // Reorder points (vec3) — ALWAYS per-vertex, must go through index buffer
       if (!rmesh.points.empty()) {
         std::vector<float> reorderedPoints(numNewTriangles * 3 * 3);  // numTris * 3 verts * 3 components
         for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
           int oldTriIdx = reorderMap[newTriIdx];
           for (int v = 0; v < 3; v++) {  // 3 vertices per triangle
-            size_t oldVertIdx = static_cast<size_t>(oldTriIdx) * 3 + static_cast<size_t>(v);
+            size_t oldFaceVertIdx = static_cast<size_t>(oldTriIdx) * 3 + static_cast<size_t>(v);
             size_t newVertIdx = newTriIdx * 3 + static_cast<size_t>(v);
-            if (oldVertIdx < rmesh.points.size()) {
-              reorderedPoints[newVertIdx * 3 + 0] = rmesh.points[oldVertIdx][0];
-              reorderedPoints[newVertIdx * 3 + 1] = rmesh.points[oldVertIdx][1];
-              reorderedPoints[newVertIdx * 3 + 2] = rmesh.points[oldVertIdx][2];
+            if (oldFaceVertIdx < fvIndices.size()) {
+              uint32_t vertIdx = fvIndices[oldFaceVertIdx];
+              if (vertIdx < rmesh.points.size()) {
+                reorderedPoints[newVertIdx * 3 + 0] = rmesh.points[vertIdx][0];
+                reorderedPoints[newVertIdx * 3 + 1] = rmesh.points[vertIdx][1];
+                reorderedPoints[newVertIdx * 3 + 2] = rmesh.points[vertIdx][2];
+              }
             }
           }
         }
@@ -2572,28 +3100,100 @@ class TinyUSDZLoaderNative {
         mesh.set("points", emscripten::typed_memory_view(cache.points.size(), cache.points.data()));
       }
 
-      // Reorder normals (vec3) - data is raw uint8_t buffer, cast to float*
+      // Reorder normals - per-vertex if single_indexable, facevarying otherwise
+      // Handles SNorm8x3 (Char3), SNorm16x3 (Short3), and float3 (Vec3) formats.
       if (!rmesh.normals.empty()) {
-        const float* normalsData = reinterpret_cast<const float*>(rmesh.normals.data.data());
-        std::vector<float> reorderedNormals(numNewTriangles * 3 * 3);
-        for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
-          int oldTriIdx = reorderMap[newTriIdx];
-          for (int v = 0; v < 3; v++) {
-            size_t oldVertIdx = static_cast<size_t>(oldTriIdx) * 3 + static_cast<size_t>(v);
-            size_t newVertIdx = newTriIdx * 3 + static_cast<size_t>(v);
-            if (oldVertIdx < rmesh.normals.vertex_count()) {
-              reorderedNormals[newVertIdx * 3 + 0] = normalsData[oldVertIdx * 3 + 0];
-              reorderedNormals[newVertIdx * 3 + 1] = normalsData[oldVertIdx * 3 + 1];
-              reorderedNormals[newVertIdx * 3 + 2] = normalsData[oldVertIdx * 3 + 2];
+        using tinyusdz::tydra::VertexAttributeFormat;
+        const bool isSnorm8 = (rmesh.normals.format == VertexAttributeFormat::Char3);
+        const bool isSnorm16 = (rmesh.normals.format == VertexAttributeFormat::Short3);
+        const size_t totalVerts = numNewTriangles * 3;
+
+        if (isSnorm16) {
+          const int16_t* src = reinterpret_cast<const int16_t*>(rmesh.normals.data.data());
+          std::vector<int16_t> reordered(totalVerts * 3, 0);
+          for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
+            int oldTriIdx = reorderMap[newTriIdx];
+            for (int v = 0; v < 3; v++) {
+              size_t oldFV = size_t(oldTriIdx) * 3 + size_t(v);
+              size_t newV = newTriIdx * 3 + size_t(v);
+              uint32_t vi = singleIndexable
+                  ? (oldFV < fvIndices.size() ? fvIndices[oldFV] : 0)
+                  : uint32_t(oldFV);
+              if (vi < rmesh.normals.vertex_count()) {
+                reordered[newV*3+0] = src[vi*3+0];
+                reordered[newV*3+1] = src[vi*3+1];
+                reordered[newV*3+2] = src[vi*3+2];
+              }
             }
           }
+          auto& cache = reordered_mesh_cache_[mesh_id];
+          cache.normals_i16 = std::move(reordered);
+          mesh.set("normals", emscripten::typed_memory_view(
+              cache.normals_i16.size(), cache.normals_i16.data()));
+          mesh.set("normalsFormat", std::string("snorm16"));
+        } else if (isSnorm8) {
+          const int8_t* src = reinterpret_cast<const int8_t*>(rmesh.normals.data.data());
+          std::vector<int8_t> reordered(totalVerts * 3, 0);
+          for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
+            int oldTriIdx = reorderMap[newTriIdx];
+            for (int v = 0; v < 3; v++) {
+              size_t oldFV = size_t(oldTriIdx) * 3 + size_t(v);
+              size_t newV = newTriIdx * 3 + size_t(v);
+              uint32_t vi = singleIndexable
+                  ? (oldFV < fvIndices.size() ? fvIndices[oldFV] : 0)
+                  : uint32_t(oldFV);
+              if (vi < rmesh.normals.vertex_count()) {
+                reordered[newV*3+0] = src[vi*3+0];
+                reordered[newV*3+1] = src[vi*3+1];
+                reordered[newV*3+2] = src[vi*3+2];
+              }
+            }
+          }
+          auto& cache = reordered_mesh_cache_[mesh_id];
+          cache.normals_i8 = std::move(reordered);
+          mesh.set("normals", emscripten::typed_memory_view(
+              cache.normals_i8.size(), cache.normals_i8.data()));
+          mesh.set("normalsFormat", std::string("snorm8"));
+        } else {
+          // Float3 (Vec3) or unpacked from 1010102
+          const float* src;
+          bool useCache = false;
+          if (rmesh.normals.format == VertexAttributeFormat::Uint) {
+            // 1010102 was already unpacked to normals_cache_ by the primary export above
+            if (normals_cache_.count(mesh_id)) {
+              src = normals_cache_[mesh_id].data();
+              useCache = true;
+            } else {
+              src = reinterpret_cast<const float*>(rmesh.normals.data.data());
+            }
+          } else {
+            src = reinterpret_cast<const float*>(rmesh.normals.data.data());
+          }
+          std::vector<float> reordered(totalVerts * 3, 0.0f);
+          for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
+            int oldTriIdx = reorderMap[newTriIdx];
+            for (int v = 0; v < 3; v++) {
+              size_t oldFV = size_t(oldTriIdx) * 3 + size_t(v);
+              size_t newV = newTriIdx * 3 + size_t(v);
+              uint32_t vi = singleIndexable
+                  ? (oldFV < fvIndices.size() ? fvIndices[oldFV] : 0)
+                  : uint32_t(oldFV);
+              if (vi < rmesh.normals.vertex_count()) {
+                reordered[newV*3+0] = src[vi*3+0];
+                reordered[newV*3+1] = src[vi*3+1];
+                reordered[newV*3+2] = src[vi*3+2];
+              }
+            }
+          }
+          auto& cache = reordered_mesh_cache_[mesh_id];
+          cache.normals = std::move(reordered);
+          mesh.set("normals", emscripten::typed_memory_view(
+              cache.normals.size(), cache.normals.data()));
+          mesh.set("normalsFormat", std::string("float32"));
         }
-        auto& cache = reordered_mesh_cache_[mesh_id];
-        cache.normals = std::move(reorderedNormals);
-        mesh.set("normals", emscripten::typed_memory_view(cache.normals.size(), cache.normals.data()));
       }
 
-      // Reorder texcoords (vec2) - slot 0
+      // Reorder texcoords (vec2) - slot 0; per-vertex if single_indexable
       if (rmesh.texcoords.count(0) && !rmesh.texcoords.at(0).data.empty()) {
         const auto& uvData = rmesh.texcoords.at(0);
         const float* uvDataPtr = reinterpret_cast<const float*>(uvData.data.data());
@@ -2601,11 +3201,21 @@ class TinyUSDZLoaderNative {
         for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
           int oldTriIdx = reorderMap[newTriIdx];
           for (int v = 0; v < 3; v++) {
-            size_t oldVertIdx = static_cast<size_t>(oldTriIdx) * 3 + static_cast<size_t>(v);
+            size_t oldFaceVertIdx = static_cast<size_t>(oldTriIdx) * 3 + static_cast<size_t>(v);
             size_t newVertIdx = newTriIdx * 3 + static_cast<size_t>(v);
-            if (oldVertIdx < uvData.vertex_count()) {
-              reorderedTexcoords[newVertIdx * 2 + 0] = uvDataPtr[oldVertIdx * 2 + 0];
-              reorderedTexcoords[newVertIdx * 2 + 1] = uvDataPtr[oldVertIdx * 2 + 1];
+            if (singleIndexable) {
+              if (oldFaceVertIdx < fvIndices.size()) {
+                uint32_t vertIdx = fvIndices[oldFaceVertIdx];
+                if (vertIdx < uvData.vertex_count()) {
+                  reorderedTexcoords[newVertIdx * 2 + 0] = uvDataPtr[vertIdx * 2 + 0];
+                  reorderedTexcoords[newVertIdx * 2 + 1] = uvDataPtr[vertIdx * 2 + 1];
+                }
+              }
+            } else {
+              if (oldFaceVertIdx < uvData.vertex_count()) {
+                reorderedTexcoords[newVertIdx * 2 + 0] = uvDataPtr[oldFaceVertIdx * 2 + 0];
+                reorderedTexcoords[newVertIdx * 2 + 1] = uvDataPtr[oldFaceVertIdx * 2 + 1];
+              }
             }
           }
         }
@@ -2614,19 +3224,27 @@ class TinyUSDZLoaderNative {
         mesh.set("texcoords", emscripten::typed_memory_view(cache.texcoords.size(), cache.texcoords.data()));
       }
 
-      // Reorder tangents (vec3)
-      if (!rmesh.tangents.empty()) {
-        const float* tangentsData = reinterpret_cast<const float*>(rmesh.tangents.data.data());
-        std::vector<float> reorderedTangents(numNewTriangles * 3 * 3);
+      // Reorder tangents as vec4 — use tangents4_cache_ (already unpacked from any
+      // packed format by the non-reorder tangent export path above).
+      if (tangents4_cache_.count(mesh_id) && !tangents4_cache_[mesh_id].empty()) {
+        const float* t4 = tangents4_cache_[mesh_id].data();
+        size_t tangentVertCount = tangents4_cache_[mesh_id].size() / 4;
+        std::vector<float> reorderedTangents(numNewTriangles * 3 * 4);
         for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
           int oldTriIdx = reorderMap[newTriIdx];
           for (int v = 0; v < 3; v++) {
-            size_t oldVertIdx = static_cast<size_t>(oldTriIdx) * 3 + static_cast<size_t>(v);
-            size_t newVertIdx = newTriIdx * 3 + static_cast<size_t>(v);
-            if (oldVertIdx < rmesh.tangents.vertex_count()) {
-              reorderedTangents[newVertIdx * 3 + 0] = tangentsData[oldVertIdx * 3 + 0];
-              reorderedTangents[newVertIdx * 3 + 1] = tangentsData[oldVertIdx * 3 + 1];
-              reorderedTangents[newVertIdx * 3 + 2] = tangentsData[oldVertIdx * 3 + 2];
+            size_t oldFV = size_t(oldTriIdx) * 3 + size_t(v);
+            size_t newV = newTriIdx * 3 + size_t(v);
+            uint32_t vi = singleIndexable
+                ? (oldFV < fvIndices.size() ? fvIndices[oldFV] : 0)
+                : uint32_t(oldFV);
+            if (vi < tangentVertCount) {
+              reorderedTangents[newV*4+0] = t4[vi*4+0];
+              reorderedTangents[newV*4+1] = t4[vi*4+1];
+              reorderedTangents[newV*4+2] = t4[vi*4+2];
+              reorderedTangents[newV*4+3] = t4[vi*4+3];
+            } else {
+              reorderedTangents[newV*4+3] = 1.0f;  // default w=1
             }
           }
         }
@@ -2636,7 +3254,7 @@ class TinyUSDZLoaderNative {
       }
 
       // Generate new sequential indices (0, 1, 2, 3, 4, 5, ...)
-      // Since we reordered the vertex data, indices are now sequential
+      // Since we reordered the vertex data to facevarying, indices are sequential
       std::vector<uint32_t> newIndices(numNewTriangles * 3);
       for (size_t i = 0; i < numNewTriangles * 3; i++) {
         newIndices[i] = static_cast<uint32_t>(i);
@@ -2731,6 +3349,20 @@ class TinyUSDZLoaderNative {
     anim.set("absPath", clip.abs_path);
     anim.set("displayName", clip.display_name);
     anim.set("duration", clip.duration);
+
+    // Source type metadata
+    {
+      std::string sourceTypeStr = "Unknown";
+      switch (clip.source_type) {
+        case tinyusdz::tydra::AnimationSourceType::XformOp: sourceTypeStr = "XformOp"; break;
+        case tinyusdz::tydra::AnimationSourceType::SkelAnimation: sourceTypeStr = "SkelAnimation"; break;
+        case tinyusdz::tydra::AnimationSourceType::BlendShape: sourceTypeStr = "BlendShape"; break;
+        default: break;
+      }
+      anim.set("sourceType", sourceTypeStr);
+      anim.set("numAnimatedJoints", clip.num_animated_joints);
+      anim.set("numAnimatedNodes", clip.num_animated_nodes);
+    }
 
     // Convert samplers to Three.js KeyframeTrack format
     emscripten::val tracks = emscripten::val::array();
@@ -2924,6 +3556,20 @@ class TinyUSDZLoaderNative {
       }
     }
     info.set("numTargetNodes", int(targetNodes.size()));
+
+    // Source type metadata
+    {
+      std::string sourceTypeStr = "Unknown";
+      switch (clip.source_type) {
+        case tinyusdz::tydra::AnimationSourceType::XformOp: sourceTypeStr = "XformOp"; break;
+        case tinyusdz::tydra::AnimationSourceType::SkelAnimation: sourceTypeStr = "SkelAnimation"; break;
+        case tinyusdz::tydra::AnimationSourceType::BlendShape: sourceTypeStr = "BlendShape"; break;
+        default: break;
+      }
+      info.set("sourceType", sourceTypeStr);
+      info.set("numAnimatedJoints", clip.num_animated_joints);
+      info.set("numAnimatedNodes", clip.num_animated_nodes);
+    }
 
     return info;
   }
@@ -3119,6 +3765,17 @@ class TinyUSDZLoaderNative {
     return max_memory_limit_mb_;
   }
 
+  // Sphere tessellation
+  void setSphereSubdivisions(int subdivisions) {
+    if (subdivisions >= 0 && subdivisions <= 6) {
+      sphere_subdivisions_ = subdivisions;
+    }
+  }
+
+  int getSphereSubdivisions() const {
+    return sphere_subdivisions_;
+  }
+
   // Bone reduction configuration
   void setEnableBoneReduction(bool enabled) {
     enable_bone_reduction_ = enabled;
@@ -3129,13 +3786,73 @@ class TinyUSDZLoaderNative {
   }
 
   void setTargetBoneCount(uint32_t count) {
-    if (count > 0 && count <= 64) {  // Sanity check: 1-64 bones
+    if (count > 0 && count <= 128) {  // Sanity check: 1-128 bones
       target_bone_count_ = count;
     }
   }
 
   uint32_t getTargetBoneCount() const {
     return target_bone_count_;
+  }
+
+  void setRoundBoneCount(bool enabled) {
+    round_bone_count_ = enabled;
+  }
+
+  bool getRoundBoneCount() const {
+    return round_bone_count_;
+  }
+
+  // Deferred tangent computation
+  void setDeferTangentComputation(bool enabled) {
+    defer_tangent_computation_ = enabled;
+  }
+
+  bool getDeferTangentComputation() const {
+    return defer_tangent_computation_;
+  }
+
+  // MMap zero-copy configuration
+  void setMMapZeroCopy(bool enabled) {
+    mmap_zero_copy_ = enabled;
+  }
+
+  bool getMMapZeroCopy() const {
+    return mmap_zero_copy_;
+  }
+
+  // Compute tangents for a specific mesh on demand (lazy tangent computation).
+  // Returns true on success. Call this before accessing tangent data for meshes
+  // that had tangent computation deferred.
+  bool computeMeshTangents(int mesh_index) {
+    if (mesh_index < 0 || mesh_index >= static_cast<int>(render_scene_.meshes.size())) {
+      return false;
+    }
+
+    auto &mesh = render_scene_.meshes[size_t(mesh_index)];
+    if (!mesh.tangent_computation_deferred) {
+      // Already computed or not deferred
+      return true;
+    }
+
+    std::string err;
+    // Use Lengyel (default) for deferred computation — fast and lightweight for WASM.
+    // Use Packed1010102 for WASM (WebGL2 native, 4 bytes/vertex).
+    bool ok = tinyusdz::tydra::RenderSceneConverter::ComputeDeferredTangents(
+        &mesh,
+        tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel,
+        tinyusdz::tydra::MeshConverterConfig::TangentStorageFormat::Packed1010102,
+        &err);
+    if (!ok) {
+      std::cerr << "computeMeshTangents failed for mesh " << mesh_index << ": " << err << "\n";
+    }
+
+    // Invalidate caches for this mesh since we just computed new data
+    tangents4_cache_.erase(mesh_index);
+    normals_cache_.erase(mesh_index);
+    reordered_mesh_cache_.erase(mesh_index);
+
+    return ok;
   }
 
   emscripten::val getAssetSearchPaths() const {
@@ -3428,6 +4145,7 @@ class TinyUSDZLoaderNative {
 
     // Clear reordered mesh cache
     reordered_mesh_cache_.clear();
+    normals_cache_.clear();
 
     // Reset parsing progress
     parsing_progress_.reset();
@@ -3454,8 +4172,10 @@ class TinyUSDZLoaderNative {
     stats.set("bufferMemoryBytes", static_cast<double>(bufferMemory));
     stats.set("bufferMemoryMB", static_cast<double>(bufferMemory) / (1024.0 * 1024.0));
 
-    // Asset cache count
+    // Asset cache
     stats.set("assetCacheCount", static_cast<int>(em_resolver_.cache.size()));
+    stats.set("assetCacheSizeBytes", static_cast<double>(em_resolver_.getCacheSizeBytes()));
+    stats.set("assetCacheMaxBytes", static_cast<double>(em_resolver_.getMaxCacheSizeBytes()));
 
     // Reordered mesh cache count
     stats.set("reorderedMeshCacheCount", static_cast<int>(reordered_mesh_cache_.size()));
@@ -3618,6 +4338,19 @@ class TinyUSDZLoaderNative {
   // Get number of cached assets
   size_t getAssetCount() const {
     return em_resolver_.cache.size();
+  }
+
+  // Cache size management
+  size_t getAssetCacheSizeBytes() const {
+    return em_resolver_.getCacheSizeBytes();
+  }
+
+  void setAssetCacheMaxSizeBytes(size_t max_bytes) {
+    em_resolver_.setMaxCacheSizeBytes(max_bytes);
+  }
+
+  size_t getAssetCacheMaxSizeBytes() const {
+    return em_resolver_.getMaxCacheSizeBytes();
   }
 
   // Check if asset exists (by name or UUID)
@@ -3894,6 +4627,7 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
+    options.mmap_zero_copy = mmap_zero_copy_;
 
     // Set up progress callback
     options.progress_callback = [](float progress, void *userptr) -> bool {
@@ -4022,6 +4756,11 @@ class TinyUSDZLoaderNative {
     node.set("globalMatrix", globalMatrix);
     node.set("hasResetXform", rnode.has_resetXform);
 
+    // Instance support (AOUSD Spec 11.3.3)
+    node.set("isInstance", rnode.is_instance);
+    node.set("prototypeIndex", rnode.prototype_index);
+    node.set("instanceId", rnode.instance_id);
+
     emscripten::val children = emscripten::val::array();
 
     for (const tinyusdz::tydra::Node &child : rnode.children) {
@@ -4048,9 +4787,27 @@ class TinyUSDZLoaderNative {
   int32_t max_memory_limit_mb_{2048}; // 2GB for 32-bit WASM
 #endif
 
+  // Defer tangent computation until explicitly requested via computeMeshTangents()
+  bool defer_tangent_computation_{true};  // default true for WASM to save memory
+
+  // MMap zero-copy: record mmap offsets during USDC parsing so Tydra can read
+  // large float/double arrays directly from the input buffer, skipping the
+  // EvaluateTypedAnimatableAttribute copy.  Default off; will be enabled after
+  // more testing.  The input binary buffer must stay alive while the Stage is
+  // in use (guaranteed by loadFromBinary / loadFromBinaryAsync call flow).
+  bool mmap_zero_copy_{false};
+
+  // Sphere tessellation
+  int sphere_subdivisions_{4};  // Default to 4 subdivisions
+
   // Bone reduction configuration (disabled by default for backward compatibility)
   bool enable_bone_reduction_{false};
   uint32_t target_bone_count_{4};  // Default to 4 bones (standard for WebGL/Three.js)
+  bool round_bone_count_{false};   // Round up to standard GPU skinning values (4,8,16,32,48,64,80,96,128)
+
+  // Bone texture data cache (mutable for const member function)
+  mutable std::vector<float> bone_texture_data_;
+  mutable std::vector<float> bone_vertex_offsets_;
 
   std::string filename_;
   std::string warn_;
@@ -4069,12 +4826,21 @@ class TinyUSDZLoaderNative {
   // Cache for reordered mesh data (triangles sorted by material for optimal submesh grouping)
   struct ReorderedMeshCache {
     std::vector<float> points;
-    std::vector<float> normals;
+    std::vector<float> normals;        // float3 normals
+    std::vector<int8_t> normals_i8;    // SNorm8x3 normals
+    std::vector<int16_t> normals_i16;  // SNorm16x3 normals
     std::vector<float> texcoords;
     std::vector<float> tangents;
     std::vector<uint32_t> faceVertexIndices;
   };
   mutable std::unordered_map<int, ReorderedMeshCache> reordered_mesh_cache_;
+
+  // Cache for unpacked float3 normals (used when format is Uint/1010102)
+  mutable std::unordered_map<int, std::vector<float>> normals_cache_;
+
+  // Cache for vec4 tangents (xyz=tangent, w=handedness) in the non-reordered path
+  mutable std::unordered_map<int, std::vector<float>> tangents4_cache_;
+  mutable std::unordered_map<int, std::vector<float>> normals3_cache_;
 
   // key = session_id
   std::unordered_map<std::string, tinyusdz::tydra::mcp::Context> mcp_ctx_;
@@ -4761,6 +5527,10 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getURI", &TinyUSDZLoaderNative::getURI)
       .function("getMesh", &TinyUSDZLoaderNative::getMesh)
       .function("numMeshes", &TinyUSDZLoaderNative::numMeshes)
+      .function("numInstances", &TinyUSDZLoaderNative::numInstances)
+      .function("getInstance", &TinyUSDZLoaderNative::getInstance)
+      .function("getInstancesForMesh", &TinyUSDZLoaderNative::getInstancesForMesh)
+      .function("generateBoneTexture", &TinyUSDZLoaderNative::generateBoneTexture)
       .function("getMaterial", select_overload<emscripten::val(int) const>(&TinyUSDZLoaderNative::getMaterial))
       .function("getMaterialWithFormat", select_overload<emscripten::val(int, const std::string&) const>(&TinyUSDZLoaderNative::getMaterial))
       .function("numMaterials", &TinyUSDZLoaderNative::numMaterials)
@@ -4768,6 +5538,8 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getLightWithFormat", &TinyUSDZLoaderNative::getLightWithFormat)
       .function("getAllLights", &TinyUSDZLoaderNative::getAllLights)
       .function("numLights", &TinyUSDZLoaderNative::numLights)
+      .function("getCamera", &TinyUSDZLoaderNative::getCamera)
+      .function("numCameras", &TinyUSDZLoaderNative::numCameras)
       .function("getTexture", &TinyUSDZLoaderNative::getTexture)
       .function("numTextures", &TinyUSDZLoaderNative::numTextures)
       .function("getImage", &TinyUSDZLoaderNative::getImage)
@@ -4804,6 +5576,12 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::getMaxMemoryLimitMB)
 
       // Bone reduction configuration
+      // Sphere tessellation
+      .function("setSphereSubdivisions",
+                &TinyUSDZLoaderNative::setSphereSubdivisions)
+      .function("getSphereSubdivisions",
+                &TinyUSDZLoaderNative::getSphereSubdivisions)
+
       .function("setEnableBoneReduction",
                 &TinyUSDZLoaderNative::setEnableBoneReduction)
       .function("getEnableBoneReduction",
@@ -4812,6 +5590,24 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::setTargetBoneCount)
       .function("getTargetBoneCount",
                 &TinyUSDZLoaderNative::getTargetBoneCount)
+      .function("setRoundBoneCount",
+                &TinyUSDZLoaderNative::setRoundBoneCount)
+      .function("getRoundBoneCount",
+                &TinyUSDZLoaderNative::getRoundBoneCount)
+
+      // Deferred tangent computation
+      .function("setDeferTangentComputation",
+                &TinyUSDZLoaderNative::setDeferTangentComputation)
+      .function("getDeferTangentComputation",
+                &TinyUSDZLoaderNative::getDeferTangentComputation)
+      .function("computeMeshTangents",
+                &TinyUSDZLoaderNative::computeMeshTangents)
+
+      // MMap zero-copy (experimental, default off)
+      .function("setMMapZeroCopy",
+                &TinyUSDZLoaderNative::setMMapZeroCopy)
+      .function("getMMapZeroCopy",
+                &TinyUSDZLoaderNative::getMMapZeroCopy)
 
       .function("setEnableComposition",
                 &TinyUSDZLoaderNative::setEnableComposition)
@@ -4915,6 +5711,12 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::deleteAssetByName)
       .function("getAssetCount",
                 &TinyUSDZLoaderNative::getAssetCount)
+      .function("getAssetCacheSizeBytes",
+                &TinyUSDZLoaderNative::getAssetCacheSizeBytes)
+      .function("setAssetCacheMaxSizeBytes",
+                &TinyUSDZLoaderNative::setAssetCacheMaxSizeBytes)
+      .function("getAssetCacheMaxSizeBytes",
+                &TinyUSDZLoaderNative::getAssetCacheMaxSizeBytes)
       .function("assetExists",
                 &TinyUSDZLoaderNative::assetExists)
       .function("clearAssets",

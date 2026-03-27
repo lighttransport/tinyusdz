@@ -106,23 +106,7 @@ bool subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *o
 
   // TODO(syoyo): Support various vertex attributes.
 
-#if 0  // TODO
-    int channelUV = 0;
-    int channelColor = 1;
-
-    // Create a face-varying channel descriptor
-    Descriptor::FVarChannel channels[2];
-    channels[channelUV].numValues = g_nuvs;
-    channels[channelUV].valueIndices = g_uvIndices;
-    channels[channelColor].numValues = g_ncolors;
-    channels[channelColor].valueIndices = g_colorIndices;
-
-    // Add the channel topology to the main descriptor
-    desc.numFVarChannels = 2;
-    desc.fvarChannels = channels;
-#else
   desc.numFVarChannels = 0;
-#endif
 
   // Instantiate a Far::TopologyRefiner from the descriptor
   Far::TopologyRefiner *refiner =
@@ -149,25 +133,6 @@ bool subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *o
                          in_mesh.vertices[3 * i + 2]);
   }
 
-#if 0
-    // Allocate and initialize the first channel of 'face-varying' primvar data (UVs)
-    std::vector<FVarVertexUV> fvBufferUV(refiner->GetNumFVarValuesTotal(channelUV));
-    FVarVertexUV * fvVertsUV = &fvBufferUV[0];
-    for (int i=0; i<g_nuvs; ++i) {
-        fvVertsUV[i].u = in_mesh.facevarying_uvs[2 * i + 0];
-        fvVertsUV[i].v = in_mesh.facevarying_uvs[2 * i + 1];
-    }
-
-    // Allocate & interpolate the 'face-varying' primvar data (colors)
-    std::vector<FVarVertexColor> fvBufferColor(refiner->GetNumFVarValuesTotal(channelColor));
-    FVarVertexColor * fvVertsColor = &fvBufferColor[0];
-    for (int i=0; i<g_ncolors; ++i) {
-        fvVertsColor[i].r = g_colors[i][0];
-        fvVertsColor[i].g = g_colors[i][1];
-        fvVertsColor[i].b = g_colors[i][2];
-        fvVertsColor[i].a = g_colors[i][3];
-    }
-#endif
 
   // Interpolate both vertex and face-varying primvar data
   Far::PrimvarRefiner primvarRefiner(*refiner);
@@ -222,23 +187,6 @@ bool subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *o
       out_mesh->vertices[3 * vert + 2] = pos[2];
     }
 
-#if 0
-        // Print uvs
-        int firstOfLastUvs = refiner->GetNumFVarValuesTotal(channelUV) - nuvs;
-
-        for (int fvvert = 0; fvvert < nuvs; ++fvvert) {
-            FVarVertexUV const & uv = fvVertsUV[firstOfLastUvs + fvvert];
-            printf("vt %f %f\n", uv.u, uv.v);
-        }
-
-        // Print colors
-        int firstOfLastColors = refiner->GetNumFVarValuesTotal(channelColor) - ncolors;
-
-        for (int fvvert = 0; fvvert < nuvs; ++fvvert) {
-            FVarVertexColor const & c = fvVertsColor[firstOfLastColors + fvvert];
-            printf("c %f %f %f %f\n", c.r, c.g, c.b, c.a);
-        }
-#endif
 
     out_mesh->triangulated_indices.clear();
     out_mesh->face_num_verts.clear();

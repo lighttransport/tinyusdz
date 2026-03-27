@@ -10,7 +10,7 @@
 #include <functional>
 #include <sstream>
 
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "render-data.hh"
 #include "stage.hh"
 #include "variant-support.hh"
@@ -107,7 +107,7 @@ tydra::VariantSet VariantConverter::ExtractVariantSetDefinition(
   vs.default_option_index = 0;  // Default to first option
 
   // Extract each variant option
-  int32_t option_idx = 0;
+  // int32_t option_idx = 0;  // Currently unused
   for (const auto &var_pair : usd_variant_set.variantSet) {
     const std::string &var_name = var_pair.first;
     const tinyusdz::Variant &usd_variant = var_pair.second;
@@ -115,7 +115,7 @@ tydra::VariantSet VariantConverter::ExtractVariantSetDefinition(
     auto extracted_option = ExtractVariantOption(var_name, usd_variant, scene, err);
     vs.options.push_back(extracted_option);
 
-    option_idx++;
+    // option_idx++;
   }
 
   return vs;
@@ -169,6 +169,7 @@ bool VariantConverter::ExtractVariantSelections(
     int32_t group_index,
     RenderScene *scene,
     std::string *err) {
+  (void)err;
   if (group_index < 0 ||
       group_index >= static_cast<int32_t>(scene->variant_groups.size())) {
     return false;

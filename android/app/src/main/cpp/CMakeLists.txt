@@ -8,15 +8,24 @@ set(TINYUSDZ_SOURCES
         ${PROJECT_SOURCE_DIR}/../../../../../src/tinyusdz.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/asset-resolution.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/composition.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/composition-reconstruct.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/prim-types.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/ascii-parser.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/ascii-parser-props.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/ascii-parser-entry.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/ascii-parser-basetype.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/ascii-parser-timesamples.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/ascii-parser-timesamples-array.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/usda-reader.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/usdc-reader.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/usdc-reader-property.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/usdc-reader-prim.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/usdc-reader-reconstruct.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/usdc-writer.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/crate-reader.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/crate-reader-arrays.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/crate-reader-values.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/crate-reader-paths.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/crate-format.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/crate-pprint.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/io-util.cc
@@ -26,6 +35,7 @@ set(TINYUSDZ_SOURCES
         ${PROJECT_SOURCE_DIR}/../../../../../src/value-pprint.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/primvar.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/prim-reconstruct.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/prim-reconstruct-shader.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/prim-composition.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/image-loader.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/usda-writer.cc
@@ -44,6 +54,9 @@ set(TINYUSDZ_SOURCES
         ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/facial.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/scene-access.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/render-data.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/render-data-mesh.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/render-data-material.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/render-data-anim.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/prim-apply.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/shader-network.cc
         )

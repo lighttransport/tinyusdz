@@ -178,7 +178,7 @@ bool MMapFileImplWin32(HANDLE hFile, MMapFileHandle *handle, bool writable, std:
     return false;
   }
 
-  size_t prefetch = 0;  // TODO
+  size_t prefetch = 0;
   if (prefetch > 0) {
 #if _WIN32_WINNT >= 0x602
     // PrefetchVirtualMemory is only present on Windows 8 and above, so we

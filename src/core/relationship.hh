@@ -90,6 +90,9 @@ class Relationship {
 
   size_t estimate_memory_usage() const;
 
+  /// Estimate actual (size-based) memory usage.
+  size_t estimate_actual_usage() const;
+
  private:
   AttrMeta _metas;
 
@@ -260,5 +263,16 @@ class TypedConnection {
   AttrMeta _metas;
   ListEditQual _listOpQual{ListEditQual::ResetToExplicit};
 };
+
+namespace value {
+
+#include "define-type-trait.inc"
+
+DEFINE_TYPE_TRAIT(Relationship, "Relationship", TYPE_ID_RELATIONSHIP, 1);
+
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
+
+}  // namespace value
 
 }  // namespace tinyusdz

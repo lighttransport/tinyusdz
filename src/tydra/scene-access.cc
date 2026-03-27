@@ -6,7 +6,7 @@
 #include "common-macros.inc"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "primvar.hh"
 #include "tiny-container.hh"
 #include "tiny-format.hh"
@@ -16,10 +16,13 @@
 #include "usdShade.hh"
 #include "usdSkel.hh"
 #include "value-pprint.hh"
+#include "xform.hh"  // For matrix inverse
 
 // src/tydra
 #include "attribute-eval.hh"
 #include "scene-access.hh"
+
+#include <unordered_set>
 
 namespace tinyusdz {
 namespace tydra {
@@ -39,20 +42,6 @@ template <typename T>
 value::TimeSamples ToTypelessTimeSamples(const TypedTimeSamples<T> &ts) {
   value::TimeSamples dst;
 
-#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
-  const auto &times = ts.get_times();
-  const auto &values = ts.get_values();
-  const auto &blocked = ts.get_blocked();
-
-  for (size_t i = 0; i < times.size(); i++) {
-    if (blocked[i]) {
-      // For untyped TimeSamples, blocked samples need a dummy value
-      dst.add_blocked_sample(times[i], value::Value());
-    } else {
-      dst.add_sample(times[i], values[i]);
-    }
-  }
-#else
   const std::vector<typename TypedTimeSamples<T>::Sample> &samples =
       ts.get_samples();
 
@@ -64,7 +53,6 @@ value::TimeSamples ToTypelessTimeSamples(const TypedTimeSamples<T> &ts) {
       dst.add_sample(samples[i].t, samples[i].value);
     }
   }
-#endif
 
   return dst;
 }
@@ -75,22 +63,6 @@ value::TimeSamples EnumTimeSamplesToTypelessTimeSamples(
     const TypedTimeSamples<T> &ts) {
   value::TimeSamples dst;
 
-#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
-  const auto &times = ts.get_times();
-  const auto &values = ts.get_values();
-  const auto &blocked = ts.get_blocked();
-
-  for (size_t i = 0; i < times.size(); i++) {
-    if (blocked[i]) {
-      // For untyped TimeSamples, blocked samples need a dummy value
-      dst.add_blocked_sample(times[i], value::Value());
-    } else {
-      // to token
-      value::token tok(to_string(values[i]));
-      dst.add_sample(times[i], tok);
-    }
-  }
-#else
   const std::vector<typename TypedTimeSamples<T>::Sample> &samples =
       ts.get_samples();
 
@@ -104,7 +76,6 @@ value::TimeSamples EnumTimeSamplesToTypelessTimeSamples(
       dst.add_sample(samples[i].t, tok);
     }
   }
-#endif
 
   return dst;
 }
@@ -112,7 +83,8 @@ value::TimeSamples EnumTimeSamplesToTypelessTimeSamples(
 // Optimized iterative traversal using explicit stack
 // Avoids recursion and reuses path buffer to minimize string allocations
 template <typename T>
-bool TraverseIterative(const tinyusdz::Prim &root_prim, PathPrimMap<T> &itemmap) {
+bool TraverseIterative(const tinyusdz::Prim &root_prim, PathPrimMap<T> &itemmap,
+                       size_t max_iter = kMaxDefaultTraversalLimit) {
   // Stack stores: (prim pointer, child index, path length before this prim)
   StackVector<std::tuple<const tinyusdz::Prim *, size_t, size_t>, 4> stack;
   stack.reserve(64);
@@ -135,7 +107,9 @@ bool TraverseIterative(const tinyusdz::Prim &root_prim, PathPrimMap<T> &itemmap)
     stack.emplace_back(&root_prim, 0, 0);  // path_len=0 since "/" is implicit
   }
 
+  size_t iter = 0;
   while (!stack.empty()) {
+    if (iter++ >= max_iter) break;
     auto &top = stack.back();
     const tinyusdz::Prim *parent = std::get<0>(top);
     size_t &child_idx = std::get<1>(top);
@@ -181,7 +155,8 @@ bool TraverseIterative(const tinyusdz::Prim &root_prim, PathPrimMap<T> &itemmap)
 // Avoids recursion and reuses path buffer to minimize string allocations
 template <typename ShaderTy>
 bool TraverseShaderIterative(const tinyusdz::Prim &root_prim,
-                             PathShaderMap<ShaderTy> &itemmap) {
+                             PathShaderMap<ShaderTy> &itemmap,
+                             size_t max_iter = kMaxDefaultTraversalLimit) {
   // Stack stores: (prim pointer, child index, path length before this prim)
   StackVector<std::tuple<const tinyusdz::Prim *, size_t, size_t>, 4> stack;
   stack.reserve(64);
@@ -204,7 +179,9 @@ bool TraverseShaderIterative(const tinyusdz::Prim &root_prim,
     stack.emplace_back(&root_prim, 0, 0);
   }
 
+  size_t iter = 0;
   while (!stack.empty()) {
+    if (iter++ >= max_iter) break;
     auto &top = stack.back();
     const tinyusdz::Prim *parent = std::get<0>(top);
     size_t &child_idx = std::get<1>(top);
@@ -250,7 +227,7 @@ bool ListSceneNamesRec(const tinyusdz::Prim &root, uint32_t depth,
     return false;
   }
 
-  if (depth > 1024 * 128) {
+  if (depth > kMaxDefaultTraversalLimit) {
     // Too deep
     return false;
   }
@@ -399,7 +376,8 @@ namespace {
 bool VisitPrimsIterative(const tinyusdz::Path &start_abs_path,
                          const tinyusdz::Prim &start_prim, int32_t start_level,
                          VisitPrimFunction visitor_fun, void *userdata,
-                         std::string *err) {
+                         std::string *err,
+                         size_t max_iter = kMaxDefaultTraversalLimit) {
   // Stack entry: (prim pointer, ordered children to visit, current child index, level, parent path)
   struct StackEntry {
     const tinyusdz::Prim *prim;
@@ -426,7 +404,9 @@ bool VisitPrimsIterative(const tinyusdz::Path &start_abs_path,
 
     // If primChildren metadata matches children count, use it for ordering
     if (prim.metas().primChildren.size() == prim.children().size()) {
-      std::map<std::string, const tinyusdz::Prim *> primNameTable;
+      std::unordered_map<std::string, const tinyusdz::Prim *, FNV1StringHash>
+          primNameTable;
+      primNameTable.reserve(prim.children().size());
       for (size_t i = 0; i < prim.children().size(); i++) {
         primNameTable.emplace(prim.children()[i].element_name(),
                               &prim.children()[i]);
@@ -489,7 +469,14 @@ bool VisitPrimsIterative(const tinyusdz::Path &start_abs_path,
   }
 
   // Iterative traversal
+  size_t iter = 0;
   while (!stack.empty()) {
+    if (iter++ >= max_iter) {
+      if (err) {
+        (*err) += "VisitPrims exceeded max iteration limit.\n";
+      }
+      return false;
+    }
     auto &top = stack.back();
 
     if (top.child_idx >= top.ordered_children.size()) {
@@ -538,10 +525,13 @@ bool VisitPrimsIterative(const tinyusdz::Path &start_abs_path,
   return true;
 }
 
+
 // Scalar-valued attribute.
 // TypedAttribute* => Attribute defined in USD schema, so not a custom attr.
 template <typename T>
 bool ToProperty(const TypedAttribute<T> &input, Property &output, std::string *err) {
+
+
   Attribute attr;
   attr.variability() = Variability::Uniform;
   attr.set_type_name(value::TypeTraits<T>::type_name());
@@ -574,6 +564,7 @@ bool ToProperty(const TypedAttribute<T> &input, Property &output, std::string *e
   attr.metas() = input.metas();
 
   output = Property(std::move(attr), /* custom */false);
+
 
   return true;
 }
@@ -649,6 +640,35 @@ bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, st
   return true;
 }
 
+template <typename T>
+bool ToProperty(const TypedAttributeWithFallback<T> &input, Property &output,
+                std::string *err) {
+
+  Attribute attr;
+  attr.variability() = Variability::Uniform;
+  attr.set_type_name(value::TypeTraits<T>::type_name());
+
+  if (input.is_blocked()) {
+    attr.set_blocked(input.is_blocked());
+  }
+
+  if (input.has_connections()) {
+    attr.set_connections(input.get_connections());
+  }
+
+  if (!input.is_value_empty()) {
+    primvar::PrimVar pvar;
+    pvar.set_value(value::Value(input.get_value()));
+    attr.set_var(std::move(pvar));
+  }
+
+  attr.metas() = input.metas();
+  output = Property(std::move(attr), /* custom */ false);
+
+  (void)err;
+  return true;
+}
+
 // Scalar or TimeSample-valued attribute.
 // TypedAttribute* => Attribute defined in USD schema, so not a custom attr.
 //
@@ -656,6 +676,7 @@ bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, st
 template <typename T>
 bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
                 Property &output, std::string *err) {
+
   Attribute attr;
   attr.variability() = Variability::Varying;
   attr.set_type_name(value::TypeTraits<T>::type_name());
@@ -705,6 +726,7 @@ bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
 
   output = Property(std::move(attr), /* custom */ false);
 
+
   return true;
 }
 
@@ -712,6 +734,7 @@ bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
 template <typename T>
 bool ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
                      Property &output, std::string *err) {
+
   Attribute attr;
   attr.variability() = Variability::Varying;
   attr.set_type_name(value::kToken);
@@ -768,6 +791,8 @@ bool ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
 template <typename T>
 bool ToTokenProperty(const TypedAttributeWithFallback<T> &input,
                      Property &output, std::string *err) {
+  (void)err;
+
   Attribute attr;
   attr.variability() = Variability::Uniform;
   attr.set_type_name(value::kToken);
@@ -781,29 +806,13 @@ bool ToTokenProperty(const TypedAttributeWithFallback<T> &input,
   }
 
   {
-    // Includes !authored()
-    // FIXME: Currently scalar only.
-    const Animatable<T> &v = input.get_value();
-
-    primvar::PrimVar pvar;
-
-    if (v.has_default()) {
-      T a;
-      if (v.get_scalar(&a)) {
-        // to token type
-        value::token tok(to_string(a));
-        value::Value val(tok);
-        pvar.set_value(val);
-      } else {
-        if (err) {
-          (*err) += "[InternalError] Invalid value.";
-        }
-        return false;
-      }
-
+    if (!input.is_value_empty()) {
+      primvar::PrimVar pvar;
+      value::token tok(to_string(input.get_value()));
+      value::Value val(tok);
+      pvar.set_value(val);
       attr.set_var(std::move(pvar));
     }
-
   }
 
   attr.metas() = input.metas();
@@ -869,6 +878,87 @@ bool XformOpToProperty(const XformOp &x, Property &prop) {
   return true;
 }
 
+bool ToRelationshipProperty(const nonstd::optional<Relationship> &rel,
+                            Property *out_prop) {
+  if (!out_prop) {
+    return false;
+  }
+
+  if (!rel) {
+    return false;
+  }
+
+  (*out_prop) = Property(rel.value(), /* custom */ false);
+  return true;
+}
+
+bool GetXformablePropertyImpl(const Xformable &xformable,
+                              const std::map<std::string, Property> &props,
+                              const std::string &prop_name,
+                              Property *out_prop) {
+  if (!out_prop) {
+    return false;
+  }
+
+  if (prop_name == "xformOpOrder") {
+    std::vector<value::token> toks = xformable.xformOpOrder();
+    primvar::PrimVar pvar;
+    pvar.set_value(toks);
+
+    Attribute attr;
+    attr.set_var(std::move(pvar));
+    attr.variability() = Variability::Uniform;
+
+    Property prop;
+    prop.set_attribute(attr);
+    (*out_prop) = prop;
+    return true;
+  }
+
+  for (const auto &item : xformable.xformOps) {
+    std::string op_name = to_string(item.op_type);
+    if (!item.suffix.empty()) {
+      op_name += ":" + item.suffix;
+    }
+
+    if (op_name == prop_name) {
+      return XformOpToProperty(item, *out_prop);
+    }
+  }
+
+  const auto it = props.find(prop_name);
+  if (it == props.end()) {
+    return false;
+  }
+
+  (*out_prop) = it->second;
+  return true;
+}
+
+void AppendXformablePropertyNames(const Xformable &xformable,
+                                  std::vector<std::string> *prop_names) {
+  if (!prop_names) {
+    return;
+  }
+
+  for (const auto &xop : xformable.xformOps) {
+    if (xop.op_type == XformOp::OpType::ResetXformStack) {
+      continue;
+    }
+
+    std::string varname = to_string(xop.op_type);
+    if (!xop.suffix.empty()) {
+      varname += ":" + xop.suffix;
+    }
+
+    prop_names->push_back(varname);
+  }
+
+  if (!xformable.xformOps.empty()) {
+    prop_names->push_back("xformOpOrder");
+  }
+}
+
 #define TO_PROPERTY(__prop_name, __v)                                         \
   if (prop_name == __prop_name) {                                             \
     if (!ToProperty(__v, *out_prop, &err)) {                                  \
@@ -882,6 +972,14 @@ bool XformOpToProperty(const XformOp &x, Property &prop) {
     if (!ToTokenProperty(__v, *out_prop, &err)) {                             \
       return nonstd::make_unexpected(                                         \
           fmt::format("Convert Property {} failed: {}\n", __prop_name, err)); \
+    }                                                                         \
+  } else
+
+#define TO_COMPAT_PROPERTY(__canonical_name, __legacy_name, __v)              \
+  if ((prop_name == __canonical_name) || (prop_name == __legacy_name)) {      \
+    if (!ToProperty(__v, *out_prop, &err)) {                                  \
+      return nonstd::make_unexpected(fmt::format(                             \
+          "Convert Property {} failed: {}\n", __canonical_name, err));        \
     }                                                                         \
   } else
 
@@ -899,6 +997,103 @@ bool GetPrimPropertyNamesImpl(const T &prim,
 template <typename T>
 nonstd::expected<bool, std::string> GetPrimProperty(
     const T &prim, const std::string &prop_name, Property *out_prop);
+
+template <typename T>
+void AppendPropertyNameIfAuthored(const T &prop, const std::string &name,
+                                  std::vector<std::string> *prop_names) {
+  if (!prop_names) {
+    return;
+  }
+
+  if (prop.authored()) {
+    prop_names->push_back(name);
+  }
+}
+
+template <typename T>
+void AppendPropertyNamesFromCustomProps(const std::map<std::string, T> &props,
+                                        std::vector<std::string> *prop_names,
+                                        bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return;
+  }
+
+  for (const auto &prop : props) {
+    if (prop.second.is_relationship()) {
+      if (rel_prop) {
+        prop_names->push_back(prop.first);
+      }
+    } else if (attr_prop) {
+      prop_names->push_back(prop.first);
+    }
+  }
+}
+
+void AppendRelationshipPropertyNameIfAuthored(
+    const nonstd::optional<Relationship> &rel, const std::string &name,
+    std::vector<std::string> *prop_names) {
+  if (!prop_names) {
+    return;
+  }
+
+  if (rel) {
+    prop_names->push_back(name);
+  }
+}
+
+template <typename T>
+nonstd::expected<bool, std::string> GetPrimvarReaderPropertyImpl(
+    const UsdPrimvarReader<T> &preader, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  DCOUT("prop_name = " << prop_name);
+  std::string err;
+
+  TO_PROPERTY("inputs:fallback", preader.fallback)
+  TO_PROPERTY("inputs:varname", preader.varname)
+
+  if (prop_name == "outputs:result") {
+    if (auto pv = TypedTerminalAttributeToProperty(preader.result)) {
+      (*out_prop) = pv.value();
+    } else {
+      return false;
+    }
+  } else {
+    const auto it = preader.props.find(prop_name);
+    if (it == preader.props.end()) {
+      return false;
+    }
+
+    (*out_prop) = it->second;
+  }
+
+  return true;
+}
+
+template <typename T>
+bool GetPrimvarReaderPropertyNamesImpl(const UsdPrimvarReader<T> &preader,
+                                       std::vector<std::string> *prop_names,
+                                       bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(preader.fallback, "inputs:fallback",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(preader.varname, "inputs:varname", prop_names);
+    AppendPropertyNameIfAuthored(preader.result, "outputs:result", prop_names);
+  }
+
+  AppendPropertyNamesFromCustomProps(preader.props, prop_names, attr_prop,
+                                     rel_prop);
+
+  return true;
+}
 
 template <>
 nonstd::expected<bool, std::string> GetPrimProperty(
@@ -946,41 +1141,8 @@ nonstd::expected<bool, std::string> GetPrimProperty(
         "[InternalError] nullptr in output Property is not allowed.");
   }
 
-  if (prop_name == "xformOpOrder") {
-    // To token[]
-    std::vector<value::token> toks = xform.xformOpOrder();
-    value::Value val(toks);
-    primvar::PrimVar pvar;
-    pvar.set_value(toks);
-
-    Attribute attr;
-    attr.set_var(std::move(pvar));
-    attr.variability() = Variability::Uniform;
-    Property prop;
-    prop.set_attribute(attr);
-
-    (*out_prop) = prop;
-
-  } else {
-    // XformOp?
-    for (const auto &item : xform.xformOps) {
-      std::string op_name = to_string(item.op_type);
-      if (item.suffix.size()) {
-        op_name += ":" + item.suffix;
-      }
-
-      if (op_name == prop_name) {
-        return XformOpToProperty(item, *out_prop);
-      }
-    }
-
-    const auto it = xform.props.find(prop_name);
-    if (it == xform.props.end()) {
-      // Attribute not found.
-      return false;
-    }
-
-    (*out_prop) = it->second;
+  if (!GetXformablePropertyImpl(xform, xform.props, prop_name, out_prop)) {
+    return false;
   }
 
   return true;
@@ -999,7 +1161,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
   TO_PROPERTY("points", mesh.points)
   TO_PROPERTY("faceVertexCounts", mesh.faceVertexCounts)
-  TO_PROPERTY("faceVertexIndices", mesh.faceVertexCounts)
+  TO_PROPERTY("faceVertexIndices", mesh.faceVertexIndices)
   TO_PROPERTY("normals", mesh.normals)
   TO_PROPERTY("velocities", mesh.velocities)
   TO_PROPERTY("cornerIndices", mesh.cornerIndices)
@@ -1013,8 +1175,8 @@ nonstd::expected<bool, std::string> GetPrimProperty(
                     mesh.faceVaryingLinearInterpolation)
 
   if (prop_name == "skeleton") {
-    if (mesh.skeleton.authored()) {
-      const Relationship &rel = mesh.skeleton.relationship();
+    if (mesh.skeleton) {
+      const Relationship &rel = mesh.skeleton.value();
       (*out_prop) = Property(rel, /* custom */ false);
     } else {
       // empty
@@ -1055,8 +1217,8 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   TO_PROPERTY("familyName", subset.familyName);
 
   if (prop_name == "material:binding") {
-    if (subset.materialBinding.authored()) {
-      const Relationship &rel = subset.materialBinding.relationship();
+    if (subset.materialBinding) {
+      const Relationship &rel = subset.materialBinding.value();
       (*out_prop) = Property(rel, /* custom */ false);
     } else {
       return false;
@@ -1088,8 +1250,47 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   std::string err;
 
   TO_PROPERTY("inputs:file", tex.file)
+  TO_PROPERTY("inputs:st", tex.st)
+  TO_PROPERTY("inputs:uv_set", tex.uv_set)
+  TO_PROPERTY("inputs:uv_set_name", tex.uv_set_name)
+  TO_TOKEN_PROPERTY("inputs:wrapS", tex.wrapS)
+  TO_TOKEN_PROPERTY("inputs:wrapT", tex.wrapT)
+  TO_PROPERTY("inputs:fallback", tex.fallback)
+  TO_TOKEN_PROPERTY("inputs:sourceColorSpace", tex.sourceColorSpace)
+  TO_PROPERTY("inputs:scale", tex.scale)
+  TO_PROPERTY("inputs:bias", tex.bias)
 
-  {
+  if (prop_name == "outputs:r") {
+    if (auto pv = TypedTerminalAttributeToProperty(tex.outputsR)) {
+      (*out_prop) = pv.value();
+    } else {
+      return false;
+    }
+  } else if (prop_name == "outputs:g") {
+    if (auto pv = TypedTerminalAttributeToProperty(tex.outputsG)) {
+      (*out_prop) = pv.value();
+    } else {
+      return false;
+    }
+  } else if (prop_name == "outputs:b") {
+    if (auto pv = TypedTerminalAttributeToProperty(tex.outputsB)) {
+      (*out_prop) = pv.value();
+    } else {
+      return false;
+    }
+  } else if (prop_name == "outputs:a") {
+    if (auto pv = TypedTerminalAttributeToProperty(tex.outputsA)) {
+      (*out_prop) = pv.value();
+    } else {
+      return false;
+    }
+  } else if (prop_name == "outputs:rgb") {
+    if (auto pv = TypedTerminalAttributeToProperty(tex.outputsRGB)) {
+      (*out_prop) = pv.value();
+    } else {
+      return false;
+    }
+  } else {
     const auto it = tex.props.find(prop_name);
     if (it == tex.props.end()) {
       // Attribute not found.
@@ -1106,108 +1307,70 @@ template <>
 nonstd::expected<bool, std::string> GetPrimProperty(
     const UsdPrimvarReader_float2 &preader, const std::string &prop_name,
     Property *out_prop) {
-  if (!out_prop) {
-    return nonstd::make_unexpected(
-        "[InternalError] nullptr in output Property is not allowed.");
-  }
-
-  DCOUT("prop_name = " << prop_name);
-  std::string err;
-
-  TO_PROPERTY("inputs:varname", preader.varname) {
-    const auto it = preader.props.find(prop_name);
-    if (it == preader.props.end()) {
-      // Attribute not found.
-      return false;
-    }
-
-    (*out_prop) = it->second;
-  }
-  DCOUT("prop_name found = " << prop_name);
-
-  return true;
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
 }
 
 template <>
 nonstd::expected<bool, std::string> GetPrimProperty(
     const UsdPrimvarReader_float3 &preader, const std::string &prop_name,
     Property *out_prop) {
-  if (!out_prop) {
-    return nonstd::make_unexpected(
-        "[InternalError] nullptr in output Property is not allowed.");
-  }
-
-  DCOUT("prop_name = " << prop_name);
-  std::string err;
-
-  TO_PROPERTY("inputs:varname", preader.varname)
-
-  {
-    const auto it = preader.props.find(prop_name);
-    if (it == preader.props.end()) {
-      // Attribute not found.
-      return false;
-    }
-
-    (*out_prop) = it->second;
-  }
-
-  return true;
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
 }
 
 template <>
 nonstd::expected<bool, std::string> GetPrimProperty(
     const UsdPrimvarReader_float4 &preader, const std::string &prop_name,
     Property *out_prop) {
-  if (!out_prop) {
-    return nonstd::make_unexpected(
-        "[InternalError] nullptr in output Property is not allowed.");
-  }
-
-  DCOUT("prop_name = " << prop_name);
-  std::string err;
-
-  TO_PROPERTY("inputs:varname", preader.varname)
-
-  {
-    const auto it = preader.props.find(prop_name);
-    if (it == preader.props.end()) {
-      // Attribute not found.
-      return false;
-    }
-
-    (*out_prop) = it->second;
-  }
-
-  return true;
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
 }
 
 template <>
 nonstd::expected<bool, std::string> GetPrimProperty(
     const UsdPrimvarReader_float &preader, const std::string &prop_name,
     Property *out_prop) {
-  if (!out_prop) {
-    return nonstd::make_unexpected(
-        "[InternalError] nullptr in output Property is not allowed.");
-  }
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
+}
 
-  DCOUT("prop_name = " << prop_name);
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const UsdPrimvarReader_int &preader, const std::string &prop_name,
+    Property *out_prop) {
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
+}
 
-  std::string err;
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const UsdPrimvarReader_string &preader, const std::string &prop_name,
+    Property *out_prop) {
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
+}
 
-  TO_PROPERTY("inputs:varname", preader.varname)
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const UsdPrimvarReader_vector &preader, const std::string &prop_name,
+    Property *out_prop) {
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
+}
 
-  {
-    const auto it = preader.props.find(prop_name);
-    if (it == preader.props.end()) {
-      // Attribute not found.
-      return false;
-    }
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const UsdPrimvarReader_normal &preader, const std::string &prop_name,
+    Property *out_prop) {
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
+}
 
-    (*out_prop) = it->second;
-  }
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const UsdPrimvarReader_point &preader, const std::string &prop_name,
+    Property *out_prop) {
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
+}
 
-  return true;
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const UsdPrimvarReader_matrix &preader, const std::string &prop_name,
+    Property *out_prop) {
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
 }
 
 template <>
@@ -1222,9 +1385,10 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   DCOUT("prop_name = " << prop_name);
   std::string err;
 
-  TO_PROPERTY("rotation", tx.rotation)
-  TO_PROPERTY("scale", tx.scale)
-  TO_PROPERTY("translation", tx.translation)
+  TO_COMPAT_PROPERTY("inputs:in", "in", tx.in)
+  TO_COMPAT_PROPERTY("inputs:rotation", "rotation", tx.rotation)
+  TO_COMPAT_PROPERTY("inputs:scale", "scale", tx.scale)
+  TO_COMPAT_PROPERTY("inputs:translation", "translation", tx.translation)
 
   if (prop_name == "outputs:result") {
     // Terminal attribute
@@ -1263,20 +1427,24 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   DCOUT("prop_name = " << prop_name);
   std::string err;
 
-  TO_PROPERTY("diffuseColor", surface.diffuseColor)
-  TO_PROPERTY("emissiveColor", surface.emissiveColor)
-  TO_PROPERTY("specularColor", surface.specularColor)
-  TO_PROPERTY("useSpecularWorkflow", surface.useSpecularWorkflow)
-  TO_PROPERTY("metallic", surface.metallic)
-  TO_PROPERTY("clearcoat", surface.clearcoat)
-  TO_PROPERTY("clearcoatRoughness", surface.clearcoatRoughness)
-  TO_PROPERTY("roughness", surface.roughness)
-  TO_PROPERTY("opacity", surface.opacity)
-  TO_PROPERTY("opacityThreshold", surface.opacityThreshold)
-  TO_PROPERTY("ior", surface.ior)
-  TO_PROPERTY("normal", surface.normal)
-  TO_PROPERTY("displacement", surface.displacement)
-  TO_PROPERTY("occlusion", surface.occlusion)
+  TO_COMPAT_PROPERTY("inputs:diffuseColor", "diffuseColor", surface.diffuseColor)
+  TO_COMPAT_PROPERTY("inputs:emissiveColor", "emissiveColor", surface.emissiveColor)
+  TO_COMPAT_PROPERTY("inputs:specularColor", "specularColor", surface.specularColor)
+  TO_COMPAT_PROPERTY("inputs:useSpecularWorkflow", "useSpecularWorkflow",
+                     surface.useSpecularWorkflow)
+  TO_COMPAT_PROPERTY("inputs:metallic", "metallic", surface.metallic)
+  TO_COMPAT_PROPERTY("inputs:clearcoat", "clearcoat", surface.clearcoat)
+  TO_COMPAT_PROPERTY("inputs:clearcoatRoughness", "clearcoatRoughness",
+                     surface.clearcoatRoughness)
+  TO_COMPAT_PROPERTY("inputs:roughness", "roughness", surface.roughness)
+  TO_COMPAT_PROPERTY("inputs:opacity", "opacity", surface.opacity)
+  TO_COMPAT_PROPERTY("inputs:opacityThreshold", "opacityThreshold",
+                     surface.opacityThreshold)
+  TO_COMPAT_PROPERTY("inputs:ior", "ior", surface.ior)
+  TO_COMPAT_PROPERTY("inputs:normal", "normal", surface.normal)
+  TO_COMPAT_PROPERTY("inputs:displacement", "displacement",
+                     surface.displacement)
+  TO_COMPAT_PROPERTY("inputs:occlusion", "occlusion", surface.occlusion)
 
   if (prop_name == "outputs:surface") {
     if (surface.outputsSurface.authored()) {
@@ -1383,14 +1551,27 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   }
 
   DCOUT("prop_name = " << prop_name);
-  {
-    const auto it = skelroot.props.find(prop_name);
-    if (it == skelroot.props.end()) {
-      // Attribute not found.
+  std::string err;
+
+  TO_PROPERTY("extent", skelroot.extent)
+  TO_TOKEN_PROPERTY("purpose", skelroot.purpose)
+  TO_TOKEN_PROPERTY("visibility", skelroot.visibility)
+
+  if (prop_name == "proxyPrim") {
+    if (!ToRelationshipProperty(skelroot.proxyPrim, out_prop)) {
       return false;
     }
-
-    (*out_prop) = it->second;
+  } else if (prop_name == "animationSource") {
+    if (!ToRelationshipProperty(skelroot.animationSource, out_prop)) {
+      return false;
+    }
+  } else if (prop_name == "skeleton") {
+    if (!ToRelationshipProperty(skelroot.skeleton, out_prop)) {
+      return false;
+    }
+  } else if (!GetXformablePropertyImpl(skelroot, skelroot.props, prop_name,
+                                       out_prop)) {
+    return false;
   }
   DCOUT("Prop found: " << prop_name
                        << ", ty = " << out_prop->value_type_name());
@@ -1443,23 +1624,20 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   TO_PROPERTY("jointNames", skel.jointNames)
   TO_PROPERTY("joints", skel.joints)
   TO_PROPERTY("restTransforms", skel.restTransforms)
+  TO_PROPERTY("extent", skel.extent)
+  TO_TOKEN_PROPERTY("purpose", skel.purpose)
+  TO_TOKEN_PROPERTY("visibility", skel.visibility)
 
-  if (prop_name == "animationSource") {
-    if (skel.animationSource.authored()) {
-      const Relationship &rel = skel.animationSource.relationship();
-      (*out_prop) = Property(rel, /* custom */ false);
-    } else {
-      // empty
+  if (prop_name == "proxyPrim") {
+    if (!ToRelationshipProperty(skel.proxyPrim, out_prop)) {
       return false;
     }
-  } else {
-    const auto it = skel.props.find(prop_name);
-    if (it == skel.props.end()) {
-      // Attribute not found.
+  } else if (prop_name == "animationSource") {
+    if (!ToRelationshipProperty(skel.animationSource, out_prop)) {
       return false;
     }
-
-    (*out_prop) = it->second;
+  } else if (!GetXformablePropertyImpl(skel, skel.props, prop_name, out_prop)) {
+    return false;
   }
   DCOUT("Prop found: " << prop_name
                        << ", ty = " << out_prop->value_type_name());
@@ -1507,6 +1685,17 @@ nonstd::expected<bool, std::string> GetPrimProperty(
         "[InternalError] nullptr in output Property is not allowed.");
   }
 
+  if (prop_name == kInfoId) {
+    if (shader.info_id.empty()) {
+      return false;
+    }
+
+    (*out_prop) =
+        Property(Attribute::Uniform(value::token(shader.info_id)),
+                 /* custom */ false);
+    return true;
+  }
+
   if (const auto preader_f = shader.value.as<UsdPrimvarReader_float>()) {
     return GetPrimProperty(*preader_f, prop_name, out_prop);
   } else if (const auto preader_f2 =
@@ -1518,6 +1707,23 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   } else if (const auto preader_f4 =
                  shader.value.as<UsdPrimvarReader_float4>()) {
     return GetPrimProperty(*preader_f4, prop_name, out_prop);
+  } else if (const auto preader_i = shader.value.as<UsdPrimvarReader_int>()) {
+    return GetPrimProperty(*preader_i, prop_name, out_prop);
+  } else if (const auto preader_s =
+                 shader.value.as<UsdPrimvarReader_string>()) {
+    return GetPrimProperty(*preader_s, prop_name, out_prop);
+  } else if (const auto preader_v =
+                 shader.value.as<UsdPrimvarReader_vector>()) {
+    return GetPrimProperty(*preader_v, prop_name, out_prop);
+  } else if (const auto preader_n =
+                 shader.value.as<UsdPrimvarReader_normal>()) {
+    return GetPrimProperty(*preader_n, prop_name, out_prop);
+  } else if (const auto preader_p =
+                 shader.value.as<UsdPrimvarReader_point>()) {
+    return GetPrimProperty(*preader_p, prop_name, out_prop);
+  } else if (const auto preader_m =
+                 shader.value.as<UsdPrimvarReader_matrix>()) {
+    return GetPrimProperty(*preader_m, prop_name, out_prop);
   } else if (const auto ptx2d = shader.value.as<UsdTransform2d>()) {
     return GetPrimProperty(*ptx2d, prop_name, out_prop);
   } else if (const auto ptex = shader.value.as<UsdUVTexture>()) {
@@ -1624,15 +1830,15 @@ bool GetGPrimPropertyNamesImpl(const GPrim *gprim,
   }
 
   if (rel_prop) {
-    if (gprim->materialBinding.authored()) {
+    if (gprim->materialBinding) {
       prop_names->push_back(kMaterialBinding);
     }
 
-    if (gprim->materialBindingPreview.authored()) {
+    if (gprim->materialBindingPreview) {
       prop_names->push_back(kMaterialBindingPreview);
     }
 
-    if (gprim->materialBindingFull.authored()) {
+    if (gprim->materialBindingFull) {
       prop_names->push_back(kMaterialBindingFull);
     }
 
@@ -1689,7 +1895,15 @@ bool GetPrimPropertyNamesImpl(const Xform &xform,
     return false;
   }
 
-  return GetGPrimPropertyNamesImpl(&xform, prop_names, attr_prop, rel_prop);
+  if (!GetGPrimPropertyNamesImpl(&xform, prop_names, attr_prop, rel_prop)) {
+    return false;
+  }
+
+  if (attr_prop && !xform.xformOps.empty()) {
+    prop_names->push_back("xformOpOrder");
+  }
+
+  return true;
 }
 
 template <>
@@ -1709,11 +1923,57 @@ bool GetPrimPropertyNamesImpl(const GeomMesh &mesh,
       prop_names->push_back("points");
     }
 
+    if (mesh.faceVertexCounts.authored()) {
+      prop_names->push_back("faceVertexCounts");
+    }
+
+    if (mesh.faceVertexIndices.authored()) {
+      prop_names->push_back("faceVertexIndices");
+    }
+
     if (mesh.normals.authored()) {
       prop_names->push_back("normals");
     }
 
-    DCOUT("TODO: more attrs...");
+    if (mesh.velocities.authored()) {
+      prop_names->push_back("velocities");
+    }
+
+    if (mesh.cornerIndices.authored()) {
+      prop_names->push_back("cornerIndices");
+    }
+
+    if (mesh.cornerSharpnesses.authored()) {
+      prop_names->push_back("cornerSharpnesses");
+    }
+
+    if (mesh.creaseIndices.authored()) {
+      prop_names->push_back("creaseIndices");
+    }
+
+    if (mesh.creaseSharpnesses.authored()) {
+      prop_names->push_back("creaseSharpnesses");
+    }
+
+    if (mesh.holeIndices.authored()) {
+      prop_names->push_back("holeIndices");
+    }
+
+    if (mesh.interpolateBoundary.authored()) {
+      prop_names->push_back("interpolateBoundary");
+    }
+
+    if (mesh.subdivisionScheme.authored()) {
+      prop_names->push_back("subdivisionScheme");
+    }
+
+    if (mesh.faceVaryingLinearInterpolation.authored()) {
+      prop_names->push_back("faceVaryingLinearInterpolation");
+    }
+  }
+
+  if (rel_prop && mesh.skeleton) {
+    prop_names->push_back("skeleton");
   }
 
   return true;
@@ -1745,11 +2005,393 @@ bool GetPrimPropertyNamesImpl(const GeomSubset &subset,
     DCOUT("TODO: more attrs...");
   }
 
+  if (rel_prop && subset.materialBinding) {
+    prop_names->push_back("material:binding");
+  }
+
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const SkelRoot &skelroot,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(skelroot.extent, "extent", prop_names);
+    AppendPropertyNameIfAuthored(skelroot.purpose, "purpose", prop_names);
+    AppendPropertyNameIfAuthored(skelroot.visibility, "visibility",
+                                 prop_names);
+    AppendXformablePropertyNames(skelroot, prop_names);
+  }
+
+  if (rel_prop) {
+    AppendRelationshipPropertyNameIfAuthored(skelroot.proxyPrim, "proxyPrim",
+                                             prop_names);
+    AppendRelationshipPropertyNameIfAuthored(skelroot.animationSource,
+                                             "animationSource", prop_names);
+    AppendRelationshipPropertyNameIfAuthored(skelroot.skeleton, "skeleton",
+                                             prop_names);
+  }
+
+  AppendPropertyNamesFromCustomProps(skelroot.props, prop_names, attr_prop,
+                                     rel_prop);
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const BlendShape &blendshape,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(blendshape.offsets, "offsets", prop_names);
+    AppendPropertyNameIfAuthored(blendshape.normalOffsets, "normalOffsets",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(blendshape.pointIndices, "pointIndices",
+                                 prop_names);
+  }
+
+  AppendPropertyNamesFromCustomProps(blendshape.props, prop_names, attr_prop,
+                                     rel_prop);
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const Skeleton &skel,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(skel.bindTransforms, "bindTransforms",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(skel.jointNames, "jointNames", prop_names);
+    AppendPropertyNameIfAuthored(skel.joints, "joints", prop_names);
+    AppendPropertyNameIfAuthored(skel.restTransforms, "restTransforms",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(skel.extent, "extent", prop_names);
+    AppendPropertyNameIfAuthored(skel.purpose, "purpose", prop_names);
+    AppendPropertyNameIfAuthored(skel.visibility, "visibility", prop_names);
+    AppendXformablePropertyNames(skel, prop_names);
+  }
+
+  if (rel_prop) {
+    AppendRelationshipPropertyNameIfAuthored(skel.proxyPrim, "proxyPrim",
+                                             prop_names);
+    AppendRelationshipPropertyNameIfAuthored(skel.animationSource,
+                                             "animationSource", prop_names);
+  }
+
+  AppendPropertyNamesFromCustomProps(skel.props, prop_names, attr_prop,
+                                     rel_prop);
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const SkelAnimation &anim,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(anim.blendShapes, "blendShapes", prop_names);
+    AppendPropertyNameIfAuthored(anim.blendShapeWeights,
+                                 "blendShapeWeights", prop_names);
+    AppendPropertyNameIfAuthored(anim.joints, "joints", prop_names);
+    AppendPropertyNameIfAuthored(anim.rotations, "rotations", prop_names);
+    AppendPropertyNameIfAuthored(anim.scales, "scales", prop_names);
+    AppendPropertyNameIfAuthored(anim.translations, "translations", prop_names);
+  }
+
+  AppendPropertyNamesFromCustomProps(anim.props, prop_names, attr_prop,
+                                     rel_prop);
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdUVTexture &tex,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(tex.file, "inputs:file", prop_names);
+    AppendPropertyNameIfAuthored(tex.st, "inputs:st", prop_names);
+    AppendPropertyNameIfAuthored(tex.uv_set, "inputs:uv_set", prop_names);
+    AppendPropertyNameIfAuthored(tex.uv_set_name, "inputs:uv_set_name",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(tex.wrapS, "inputs:wrapS", prop_names);
+    AppendPropertyNameIfAuthored(tex.wrapT, "inputs:wrapT", prop_names);
+    AppendPropertyNameIfAuthored(tex.fallback, "inputs:fallback", prop_names);
+    AppendPropertyNameIfAuthored(tex.sourceColorSpace,
+                                 "inputs:sourceColorSpace", prop_names);
+    AppendPropertyNameIfAuthored(tex.scale, "inputs:scale", prop_names);
+    AppendPropertyNameIfAuthored(tex.bias, "inputs:bias", prop_names);
+    AppendPropertyNameIfAuthored(tex.outputsR, "outputs:r", prop_names);
+    AppendPropertyNameIfAuthored(tex.outputsG, "outputs:g", prop_names);
+    AppendPropertyNameIfAuthored(tex.outputsB, "outputs:b", prop_names);
+    AppendPropertyNameIfAuthored(tex.outputsA, "outputs:a", prop_names);
+    AppendPropertyNameIfAuthored(tex.outputsRGB, "outputs:rgb", prop_names);
+  }
+
+  AppendPropertyNamesFromCustomProps(tex.props, prop_names, attr_prop,
+                                     rel_prop);
+
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_float &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_float2 &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_float3 &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_float4 &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_int &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_string &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_vector &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_normal &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_point &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_matrix &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdTransform2d &tx,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(tx.in, "inputs:in", prop_names);
+    AppendPropertyNameIfAuthored(tx.rotation, "inputs:rotation", prop_names);
+    AppendPropertyNameIfAuthored(tx.scale, "inputs:scale", prop_names);
+    AppendPropertyNameIfAuthored(tx.translation, "inputs:translation",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(tx.result, "outputs:result", prop_names);
+  }
+
+  AppendPropertyNamesFromCustomProps(tx.props, prop_names, attr_prop,
+                                     rel_prop);
+
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPreviewSurface &surface,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(surface.diffuseColor, "inputs:diffuseColor",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(surface.emissiveColor,
+                                 "inputs:emissiveColor", prop_names);
+    AppendPropertyNameIfAuthored(surface.specularColor,
+                                 "inputs:specularColor", prop_names);
+    AppendPropertyNameIfAuthored(surface.useSpecularWorkflow,
+                                 "inputs:useSpecularWorkflow", prop_names);
+    AppendPropertyNameIfAuthored(surface.metallic, "inputs:metallic",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(surface.clearcoat, "inputs:clearcoat",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(surface.clearcoatRoughness,
+                                 "inputs:clearcoatRoughness", prop_names);
+    AppendPropertyNameIfAuthored(surface.roughness, "inputs:roughness",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(surface.opacity, "inputs:opacity",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(surface.opacityThreshold,
+                                 "inputs:opacityThreshold", prop_names);
+    AppendPropertyNameIfAuthored(surface.ior, "inputs:ior", prop_names);
+    AppendPropertyNameIfAuthored(surface.normal, "inputs:normal", prop_names);
+    AppendPropertyNameIfAuthored(surface.displacement,
+                                 "inputs:displacement", prop_names);
+    AppendPropertyNameIfAuthored(surface.occlusion, "inputs:occlusion",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(surface.outputsSurface, "outputs:surface",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(surface.outputsDisplacement,
+                                 "outputs:displacement", prop_names);
+  }
+
+  AppendPropertyNamesFromCustomProps(surface.props, prop_names, attr_prop,
+                                     rel_prop);
+
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const Material &material,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(material.surface, "outputs:surface",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(material.displacement,
+                                 "outputs:displacement", prop_names);
+    AppendPropertyNameIfAuthored(material.volume, "outputs:volume",
+                                 prop_names);
+  }
+
+  AppendPropertyNamesFromCustomProps(material.props, prop_names, attr_prop,
+                                     rel_prop);
+
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const Shader &shader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop && !shader.info_id.empty()) {
+    prop_names->push_back(kInfoId);
+  }
+
+  if (const auto preader_f = shader.value.as<UsdPrimvarReader_float>()) {
+    return GetPrimPropertyNamesImpl(*preader_f, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto preader_f2 =
+                 shader.value.as<UsdPrimvarReader_float2>()) {
+    return GetPrimPropertyNamesImpl(*preader_f2, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto preader_f3 =
+                 shader.value.as<UsdPrimvarReader_float3>()) {
+    return GetPrimPropertyNamesImpl(*preader_f3, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto preader_f4 =
+                 shader.value.as<UsdPrimvarReader_float4>()) {
+    return GetPrimPropertyNamesImpl(*preader_f4, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto preader_i = shader.value.as<UsdPrimvarReader_int>()) {
+    return GetPrimPropertyNamesImpl(*preader_i, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto preader_s =
+                 shader.value.as<UsdPrimvarReader_string>()) {
+    return GetPrimPropertyNamesImpl(*preader_s, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto preader_v =
+                 shader.value.as<UsdPrimvarReader_vector>()) {
+    return GetPrimPropertyNamesImpl(*preader_v, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto preader_n =
+                 shader.value.as<UsdPrimvarReader_normal>()) {
+    return GetPrimPropertyNamesImpl(*preader_n, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto preader_p =
+                 shader.value.as<UsdPrimvarReader_point>()) {
+    return GetPrimPropertyNamesImpl(*preader_p, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto preader_m =
+                 shader.value.as<UsdPrimvarReader_matrix>()) {
+    return GetPrimPropertyNamesImpl(*preader_m, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto ptx2d = shader.value.as<UsdTransform2d>()) {
+    return GetPrimPropertyNamesImpl(*ptx2d, prop_names, attr_prop, rel_prop);
+  } else if (const auto ptex = shader.value.as<UsdUVTexture>()) {
+    return GetPrimPropertyNamesImpl(*ptex, prop_names, attr_prop, rel_prop);
+  } else if (const auto psurf = shader.value.as<UsdPreviewSurface>()) {
+    return GetPrimPropertyNamesImpl(*psurf, prop_names, attr_prop, rel_prop);
+  }
+
+  AppendPropertyNamesFromCustomProps(shader.props, prop_names, attr_prop,
+                                     rel_prop);
   return true;
 }
 
 #undef TO_PROPERTY
 #undef TO_TOKEN_PROPERTY
+#undef TO_COMPAT_PROPERTY
 
 }  // namespace
 
@@ -1757,7 +2399,8 @@ bool VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
                 void *userdata, std::string *err) {
   // if `primChildren` is available, use it
   if (stage.metas().primChildren.size() == stage.root_prims().size()) {
-    std::map<std::string, const Prim *> primNameTable;
+    std::unordered_map<std::string, const Prim *, FNV1StringHash> primNameTable;
+    primNameTable.reserve(stage.root_prims().size());
     for (size_t i = 0; i < stage.root_prims().size(); i++) {
       primNameTable.emplace(stage.root_prims()[i].element_name(),
                             &stage.root_prims()[i]);
@@ -1851,18 +2494,50 @@ bool GetPropertyNames(const tinyusdz::Prim &prim,
   GET_PRIM_PROPERTY_NAMES(Scope)
   GET_PRIM_PROPERTY_NAMES(GeomMesh)
   GET_PRIM_PROPERTY_NAMES(GeomSubset)
-  // TODO
-  // GET_PRIM_PROPERTY_NAMES(Shader)
-  // GET_PRIM_PROPERTY_NAMES(Material)
-  // GET_PRIM_PROPERTY_NAMES(SkelRoot)
-  // GET_PRIM_PROPERTY_NAMES(BlendShape)
-  // GET_PRIM_PROPERTY_NAMES(Skeleton)
-  // GET_PRIM_PROPERTY_NAMES(SkelAnimation)
+  GET_PRIM_PROPERTY_NAMES(Shader)
+  GET_PRIM_PROPERTY_NAMES(Material)
+  GET_PRIM_PROPERTY_NAMES(SkelRoot)
+  GET_PRIM_PROPERTY_NAMES(BlendShape)
+  GET_PRIM_PROPERTY_NAMES(Skeleton)
+  GET_PRIM_PROPERTY_NAMES(SkelAnimation)
   {
     PUSH_ERROR_AND_RETURN("TODO: Prim type " << prim.type_name());
   }
 
 #undef GET_PRIM_PROPERTY_NAMES
+
+  return true;
+}
+
+bool GetAttributeNames(const tinyusdz::Prim &prim,
+                       std::vector<std::string> *out_attr_names,
+                       std::string *err) {
+#define GET_PRIM_ATTRIBUTE_NAMES(__ty)                                       \
+  if (prim.is<__ty>()) {                                                     \
+    auto ret = GetPrimPropertyNamesImpl(*prim.as<__ty>(), out_attr_names,    \
+                                        true, false);                        \
+    if (!ret) {                                                              \
+      PUSH_ERROR_AND_RETURN(                                                 \
+          fmt::format("Failed to list up Attribute names of Prim type {}",   \
+                      value::TypeTraits<__ty>::type_name()));                \
+    }                                                                        \
+  } else
+
+  GET_PRIM_ATTRIBUTE_NAMES(Model)
+  GET_PRIM_ATTRIBUTE_NAMES(Xform)
+  GET_PRIM_ATTRIBUTE_NAMES(Scope)
+  GET_PRIM_ATTRIBUTE_NAMES(GeomMesh)
+  GET_PRIM_ATTRIBUTE_NAMES(GeomSubset)
+  GET_PRIM_ATTRIBUTE_NAMES(Shader)
+  GET_PRIM_ATTRIBUTE_NAMES(Material)
+  GET_PRIM_ATTRIBUTE_NAMES(SkelRoot)
+  GET_PRIM_ATTRIBUTE_NAMES(BlendShape)
+  GET_PRIM_ATTRIBUTE_NAMES(Skeleton)
+  GET_PRIM_ATTRIBUTE_NAMES(SkelAnimation) {
+    PUSH_ERROR_AND_RETURN("TODO: Prim type " << prim.type_name());
+  }
+
+#undef GET_PRIM_ATTRIBUTE_NAMES
 
   return true;
 }
@@ -1885,13 +2560,13 @@ bool GetRelationshipNames(const tinyusdz::Prim &prim,
   GET_PRIM_RELATIONSHIP_NAMES(Xform)
   GET_PRIM_RELATIONSHIP_NAMES(Scope)
   GET_PRIM_RELATIONSHIP_NAMES(GeomMesh)
-  // GET_PRIM_RELATIONSHIP_NAMES(GeomSubset)
-  // GET_PRIM_RELATIONSHIP_NAMES(Shader)
-  // GET_PRIM_RELATIONSHIP_NAMES(Material)
-  // GET_PRIM_RELATIONSHIP_NAMES(SkelRoot)
-  // GET_PRIM_RELATIONSHIP_NAMES(BlendShape)
-  // GET_PRIM_RELATIONSHIP_NAMES(Skeleton)
-  // GET_PRIM_RELATIONSHIP_NAMES(SkelAnimation)
+  GET_PRIM_RELATIONSHIP_NAMES(GeomSubset)
+  GET_PRIM_RELATIONSHIP_NAMES(Shader)
+  GET_PRIM_RELATIONSHIP_NAMES(Material)
+  GET_PRIM_RELATIONSHIP_NAMES(SkelRoot)
+  GET_PRIM_RELATIONSHIP_NAMES(BlendShape)
+  GET_PRIM_RELATIONSHIP_NAMES(Skeleton)
+  GET_PRIM_RELATIONSHIP_NAMES(SkelAnimation)
   {
     PUSH_ERROR_AND_RETURN("TODO: Prim type " << prim.type_name());
   }
@@ -1935,6 +2610,7 @@ bool GetRelationship(const tinyusdz::Prim &prim, const std::string &rel_name,
 
   if (prop.is_relationship()) {
     (*out_rel) = std::move(prop.get_relationship());
+    return true;
   }
 
   PUSH_ERROR_AND_RETURN(fmt::format("{} is not a Relationship.", rel_name));
@@ -2023,7 +2699,8 @@ bool BuildXformNodeFromStageIterative(
     const tinyusdz::Stage &stage, const Path &initial_parent_path, const Prim *root_prim,
     XformNode *nodeOut, /* out */
     value::matrix4d rootMat, const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+    const tinyusdz::value::TimeSampleInterpolationType tinterp,
+    size_t max_iter = kMaxDefaultTraversalLimit) {
 
   (void)stage;  // Currently unused
 
@@ -2053,7 +2730,9 @@ bool BuildXformNodeFromStageIterative(
   ComputeXformNodeProperties(root_prim, initial_parent_path, rootMat, t, tinterp,
                              stack.back().node);
 
+  size_t iter = 0;
   while (!stack.empty()) {
+    if (iter++ >= max_iter) break;
     StackEntry &curr = stack.back();
     const auto &children = curr.prim->children();
 
@@ -2091,7 +2770,8 @@ bool BuildXformNodeFromStageIterative(
 }
 
 // Iterative version of DumpXformNode using explicit stack
-std::string DumpXformNodeIterative(const XformNode &root) {
+std::string DumpXformNodeIterative(const XformNode &root,
+                                   size_t max_iter = kMaxDefaultTraversalLimit) {
   std::stringstream ss;
 
   // Stack entry: (node pointer, indent, child index, closing_brace_pending)
@@ -2108,7 +2788,9 @@ std::string DumpXformNodeIterative(const XformNode &root) {
   stack.reserve(64);
   stack.emplace_back(&root, 0);
 
+  size_t iter = 0;
   while (!stack.empty()) {
+    if (iter++ >= max_iter) break;
     StackEntry &entry = stack.back();
 
     if (entry.child_idx == SIZE_MAX) {
@@ -2363,6 +3045,7 @@ std::vector<const GeomSubset *> GetGeomSubsetChildren(
   return result;
 }
 
+
 bool GetCollection(const Prim &prim, const Collection **dst) {
   if (!dst) {
     return false;
@@ -2426,7 +3109,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
       return dst;
     }
 
-    if (pmesh->blendShapeTargets.relationship().is_path()) {
+    if (pmesh->blendShapeTargets.value().is_path()) {
       if (blendShapeNames.size() != 1) {
         if (err) {
           (*err) +=
@@ -2436,7 +3119,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
         return dst;
       }
 
-      const Path &targetPath = pmesh->blendShapeTargets.relationship().targetPath;
+      const Path &targetPath = pmesh->blendShapeTargets.value().targetPath;
       const Prim *bsprim{nullptr};
       if (!stage.find_prim_at_path(targetPath, bsprim, err)) {
         return dst;
@@ -2458,9 +3141,9 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
         return dst;
       }
 
-    } else if (pmesh->blendShapeTargets.relationship().is_pathvector()) {
+    } else if (pmesh->blendShapeTargets.value().is_pathvector()) {
       if (blendShapeNames.size() !=
-          pmesh->blendShapeTargets.relationship().targetPathVector.size()) {
+          pmesh->blendShapeTargets.value().targetPathVector.size()) {
         if (err) {
           (*err) +=
               "Array size mismatch with `skel:blendShapes` and "
@@ -2478,9 +3161,9 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
     }
 
     for (size_t i = 0;
-         i < pmesh->blendShapeTargets.relationship().targetPathVector.size(); i++) {
+         i < pmesh->blendShapeTargets.value().targetPathVector.size(); i++) {
       const Path &targetPath =
-          pmesh->blendShapeTargets.relationship().targetPathVector[i];
+          pmesh->blendShapeTargets.value().targetPathVector[i];
       const Prim *bsprim{nullptr};
       if (!stage.find_prim_at_path(targetPath, bsprim, err)) {
         return dst;
@@ -2493,7 +3176,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
       }
 
       if (const auto *bs = bsprim->as<BlendShape>()) {
-        dst.push_back(std::make_pair(blendShapeNames[0].str(), bs));
+        dst.push_back(std::make_pair(blendShapeNames[i].str(), bs));
       } else {
         if (err) {
           (*err) += fmt::format("{} is not BlendShape Prim.",
@@ -2673,6 +3356,71 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
   return true;
 }
 
+bool FindPrimvarWithInheritance(const Stage &stage, const Path &prim_path,
+    const std::string &primvar_name, GeomPrimvar *out,
+    std::string *err) {
+  if (!out) {
+    if (err) (*err) = "Output GeomPrimvar is nullptr.\n";
+    return false;
+  }
+
+  if (!prim_path.is_valid() || !prim_path.is_absolute_path()) {
+    if (err) (*err) = "Input path must be a valid absolute path.\n";
+    return false;
+  }
+
+  Path current = prim_path;
+
+  while (true) {
+    auto ret = stage.GetPrimAtPath(current);
+    if (!ret) {
+      break;
+    }
+
+    const Prim *prim = ret.value();
+    const GPrim *gprim = nullptr;
+
+    // Try to get GPrim from prim. Use value::TypeTraits approach.
+    // GPrim is the base for geometry types, so we need to check the actual type.
+    if (auto p = prim->as<GeomMesh>()) {
+      gprim = p;
+    } else if (auto p2 = prim->as<GeomPoints>()) {
+      gprim = p2;
+    } else if (auto p3 = prim->as<GeomBasisCurves>()) {
+      gprim = p3;
+    } else if (auto p4 = prim->as<GeomNurbsCurves>()) {
+      gprim = p4;
+    } else if (auto p5 = prim->as<GeomSphere>()) {
+      gprim = p5;
+    } else if (auto p6 = prim->as<GeomCube>()) {
+      gprim = p6;
+    } else if (auto p7 = prim->as<GeomCone>()) {
+      gprim = p7;
+    } else if (auto p8 = prim->as<GeomCylinder>()) {
+      gprim = p8;
+    } else if (auto p9 = prim->as<GeomCapsule>()) {
+      gprim = p9;
+    } else if (auto p10 = prim->as<Xform>()) {
+      gprim = p10;
+    }
+
+    if (gprim) {
+      GeomPrimvar primvar;
+      if (GetGeomPrimvar(stage, gprim, primvar_name, &primvar)) {
+        *out = primvar;
+        return true;
+      }
+    }
+
+    if (current.is_root_prim() || current.is_root_path()) {
+      break;
+    }
+    current = current.get_parent_prim_path();
+  }
+
+  return false;
+}
+
 namespace {
 
 //
@@ -2682,7 +3430,8 @@ bool GetTerminalAttributeImpl(const tinyusdz::Stage &stage,
                               const tinyusdz::Prim &prim,
                               const std::string &attr_name, Attribute *value,
                               std::string *err,
-                              std::set<std::string> &visited_paths) {
+                              std::unordered_set<std::string, FNV1StringHash>
+                                  &visited_paths) {
   DCOUT("Prim : " << prim.element_path().element_name() << "("
                   << prim.type_name() << ") attr_name " << attr_name);
 
@@ -2720,12 +3469,11 @@ bool GetTerminalAttributeImpl(const tinyusdz::Stage &stage,
 
       std::string abs_path = target.full_path_name();
 
-      if (visited_paths.count(abs_path)) {
+      if (!visited_paths.emplace(abs_path).second) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "Circular referencing detected. connectionTargetPath = {}",
             to_string(target)));
       }
-      visited_paths.insert(abs_path);
 
       return GetTerminalAttributeImpl(stage, *targetPrim, targetPrimPropName,
                                       value, err, visited_paths);
@@ -2762,7 +3510,8 @@ bool GetTerminalAttribute(const tinyusdz::Stage &stage,
     PUSH_ERROR_AND_RETURN("`value` arg is nullptr.");
   }
 
-  std::set<std::string> visited_paths;
+  std::unordered_set<std::string, FNV1StringHash> visited_paths;
+  visited_paths.reserve(16);
 
   if (attr.is_connection()) {
     std::vector<Path> pv = attr.connections();
@@ -2792,12 +3541,11 @@ bool GetTerminalAttribute(const tinyusdz::Stage &stage,
 
       std::string abs_path = target.full_path_name();
 
-      if (visited_paths.count(abs_path)) {
+      if (!visited_paths.emplace(abs_path).second) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "Circular referencing detected. connectionTargetPath = {}",
             to_string(target)));
       }
-      visited_paths.insert(abs_path);
 
       return GetTerminalAttributeImpl(stage, *targetPrim, targetPrimPropName,
                                       value, err, visited_paths);
@@ -2817,41 +3565,61 @@ bool GetTerminalAttribute(const tinyusdz::Stage &stage,
 namespace detail {
 
 static bool BuildSkelHierarchyImpl(
-    /* inout */ std::set<size_t> &visitSet,
-    /* inout */ SkelNode &parentNode,
-    const std::vector<int> &parentJointIds,
+    /* inout */ SkelNode &rootNode,
+    const std::vector<std::vector<size_t>> &childrenMap,
     const std::vector<value::token> &joints,
     const std::vector<value::token> &jointNames,
     const std::vector<value::matrix4d> &bindTransforms,
     const std::vector<value::matrix4d> &restTransforms,
     std::string *err = nullptr) {
-  // Simple linear search
-  for (size_t i = 0; i < parentJointIds.size(); i++) {
-    if (visitSet.count(i)) {
+  // Iterative traversal using explicit stack to avoid stack overflow on deep hierarchies
+  struct StackEntry {
+    SkelNode *parent;
+    size_t child_list_idx;  // index into childrenMap[parentIdx]
+  };
+
+  // Guard: max iterations = total number of joints (each joint is visited exactly once)
+  // plus one pop per stack frame. A reasonable upper bound is 2 * joints.size() + 1.
+  const size_t kMaxIter = joints.size() * 2 + 1;
+  size_t iter = 0;
+
+  std::vector<StackEntry> stack;
+  stack.push_back({&rootNode, 0});
+
+  while (!stack.empty()) {
+    if (iter++ >= kMaxIter) {
+      if (err) {
+        (*err) += "BuildSkelHierarchyImpl: exceeded maximum iteration count. "
+                  "Possible cycle in skeleton hierarchy.";
+      }
+      return false;
+    }
+
+    auto &top = stack.back();
+    size_t parentIdx = size_t(top.parent->joint_id);
+
+    if (parentIdx >= childrenMap.size() ||
+        top.child_list_idx >= childrenMap[parentIdx].size()) {
+      stack.pop_back();
       continue;
     }
 
-    int parentJointIdOfCurrIdx = parentJointIds[i];
-    if (parentNode.joint_id == parentJointIdOfCurrIdx) {
-      DCOUT("add joint " << i << "(parent = " << parentJointIdOfCurrIdx << ")");
-      SkelNode node;
-      node.joint_id = int(i);
-      node.joint_path = joints[i].str();
-      node.joint_name = jointNames[i].str();
-      node.bind_transform = bindTransforms[i];
-      node.rest_transform = restTransforms[i];
+    size_t i = childrenMap[parentIdx][top.child_list_idx];
+    top.child_list_idx++;
 
-      visitSet.insert(i);
+    DCOUT("add joint " << i << "(parent = " << top.parent->joint_id << ")");
+    SkelNode node;
+    node.joint_id = int(i);
+    node.joint_path = joints[i].str();
+    node.joint_name = jointNames[i].str();
+    node.bind_transform = bindTransforms[i];
+    node.rest_transform = restTransforms[i];
 
-      // Recursively traverse children
-      if (!BuildSkelHierarchyImpl(visitSet, node,
-                                  parentJointIds, joints, jointNames, bindTransforms,
-                                  restTransforms, err)) {
-        return false;
-      }
+    top.parent->children.emplace_back(std::move(node));
 
-      parentNode.children.emplace_back(std::move(node));
-    }
+    // Push newly added child to process its children
+    SkelNode *childPtr = &top.parent->children.back();
+    stack.push_back({childPtr, 0});
   }
 
   return true;
@@ -2862,18 +3630,18 @@ static bool BuildSkelHierarchyImpl(
 bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
   if (!skel.joints.authored()) {
     PUSH_ERROR_AND_RETURN(fmt::format(
-        "Skeleton.joints attrbitue is not authored: {}", skel.name));
+        "Skeleton.joints attribute is not authored: {}", skel.name));
   }
 
   std::vector<value::token> joints;
   if (!skel.joints.get_value(&joints)) {
     PUSH_ERROR_AND_RETURN(
-        fmt::format("Failed to get Skeleton.joints attrbitue: {}", skel.name));
+        fmt::format("Failed to get Skeleton.joints attribute: {}", skel.name));
   }
 
   if (joints.empty()) {
     PUSH_ERROR_AND_RETURN(
-        fmt::format("Skeleton.joints attrbitue is empty: {}", skel.name));
+        fmt::format("Skeleton.joints attribute is empty: {}", skel.name));
   }
 
   std::vector<value::token> jointNames;
@@ -2881,7 +3649,7 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
   if (skel.jointNames.authored()) {
     if (!skel.jointNames.get_value(&jointNames)) {
       PUSH_ERROR_AND_RETURN(fmt::format(
-          "Failed to get Skeleton.jointNames attrbitue: {}", skel.name));
+          "Failed to get Skeleton.jointNames attribute: {}", skel.name));
     }
 
     if (joints.size() != jointNames.size()) {
@@ -2899,36 +3667,17 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
   }
 
 
-  std::vector<value::matrix4d> restTransforms;
-  if (skel.restTransforms.authored()) {
-    DCOUT("restTransforms is authored");
-    if (!skel.restTransforms.get_value(&restTransforms)) {
-      PUSH_ERROR_AND_RETURN(fmt::format(
-          "Failed to get Skeleton.restTransforms attrbitue: {}", skel.name));
-    }
-    DCOUT("restTransforms.size() = " << restTransforms.size());
-    if (restTransforms.size() > 0) {
-      DCOUT("restTransforms[0] = " << restTransforms[0]);
-    }
-  } else {
-    DCOUT("restTransforms is NOT authored - using identity");
-    // TODO: Report error when `restTransforms` attribute is omitted?
-    restTransforms.assign(joints.size(), value::matrix4d::identity());
-  }
+  // Track whether restTransforms is authored (for fallback computation later)
+  bool restTransformsAuthored = skel.restTransforms.authored();
+  bool bindTransformsAuthored = skel.bindTransforms.authored();
 
-  if (joints.size() != restTransforms.size()) {
-    PUSH_ERROR_AND_RETURN(
-        fmt::format("Skeleton.joints.size {} must be equal to "
-                    "Skeleton.restTransforms.size {}: {}",
-                    joints.size(), restTransforms.size(), skel.name));
-  }
-
+  // Read bindTransforms first (needed for potential restTransforms fallback)
   std::vector<value::matrix4d> bindTransforms;
-  if (skel.bindTransforms.authored()) {
+  if (bindTransformsAuthored) {
     DCOUT("bindTransforms is authored");
     if (!skel.bindTransforms.get_value(&bindTransforms)) {
       PUSH_ERROR_AND_RETURN(fmt::format(
-          "Failed to get Skeleton.bindTransforms attrbitue: {}", skel.name));
+          "Failed to get Skeleton.bindTransforms attribute: {}", skel.name));
     }
     DCOUT("bindTransforms.size() = " << bindTransforms.size());
     if (bindTransforms.size() > 0) {
@@ -2947,11 +3696,62 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
                     joints.size(), bindTransforms.size(), skel.name));
   }
 
-  // Get flattened representation of joint hierarchy with BuildSkelTopology.
-  // For root node, parentJointId = -1.
+  std::vector<value::matrix4d> restTransforms;
+  if (restTransformsAuthored) {
+    DCOUT("restTransforms is authored");
+    if (!skel.restTransforms.get_value(&restTransforms)) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "Failed to get Skeleton.restTransforms attribute: {}", skel.name));
+    }
+    DCOUT("restTransforms.size() = " << restTransforms.size());
+    if (restTransforms.size() > 0) {
+      DCOUT("restTransforms[0] = " << restTransforms[0]);
+    }
+  } else if (bindTransformsAuthored) {
+    // Fallback: compute restTransforms (local) from bindTransforms (world)
+    // restTransform[i] = inverse(bindTransform[parent[i]]) * bindTransform[i]
+    // For root joints (no parent), restTransform = bindTransform
+    DCOUT("restTransforms is NOT authored - computing from bindTransforms");
+  } else {
+    DCOUT("restTransforms is NOT authored - using identity");
+    // Neither authored: use identity matrices
+    restTransforms.assign(joints.size(), value::matrix4d::identity());
+  }
+
+  // Build topology once (used for both restTransforms fallback and hierarchy construction)
   std::vector<int> parentJointIds;
   if (!BuildSkelTopology(joints, parentJointIds, err)) {
     return false;
+  }
+
+  // Compute restTransforms from bindTransforms if needed (uses parentJointIds built above)
+  if (!restTransformsAuthored && bindTransformsAuthored) {
+    restTransforms.resize(joints.size());
+    for (size_t i = 0; i < joints.size(); i++) {
+      int parentIdx = parentJointIds[i];
+      if (parentIdx < 0) {
+        // Root joint: use bindTransform directly (world space becomes local space)
+        restTransforms[i] = bindTransforms[i];
+      } else {
+        // Child joint: compute local transform from world transforms
+        // localTransform = inverse(parentWorldTransform) * childWorldTransform
+        value::matrix4d parentInverse;
+        if (!inverse(bindTransforms[size_t(parentIdx)], parentInverse)) {
+          DCOUT("Failed to compute inverse of parent bindTransform, using identity for restTransform");
+          restTransforms[i] = value::matrix4d::identity();
+        } else {
+          restTransforms[i] = parentInverse * bindTransforms[i];
+        }
+      }
+    }
+    DCOUT("Computed restTransforms from bindTransforms");
+  }
+
+  if (joints.size() != restTransforms.size()) {
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Skeleton.joints.size {} must be equal to "
+                    "Skeleton.restTransforms.size {}: {}",
+                    joints.size(), restTransforms.size(), skel.name));
   }
 
   // Just in case. Chek if topology is single-rooted.
@@ -2970,16 +3770,19 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
                     nroots, skel.name));
   }
 
-  std::set<size_t> visitSet;
+  // Build parent -> children map for O(n) hierarchy construction
+  std::vector<std::vector<size_t>> childrenMap(joints.size());
+  size_t rootIdx = 0;
+  for (size_t i = 0; i < parentJointIds.size(); i++) {
+    int parentId = parentJointIds[i];
+    if (parentId < 0) {
+      rootIdx = i;
+    } else {
+      childrenMap[size_t(parentId)].push_back(i);
+    }
+  }
 
   SkelNode root;
-
-  auto it = std::find(parentJointIds.begin(), parentJointIds.end(), -1);
-  if (it == parentJointIds.end()) {
-    PUSH_ERROR_AND_RETURN("Internal error.");
-  }
-  size_t rootIdx = size_t(std::distance(parentJointIds.begin(), it));
-
   root.joint_name = jointNames[rootIdx].str();
   root.joint_path = joints[rootIdx].str();
   root.joint_id = int(rootIdx);
@@ -2987,9 +3790,9 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
   root.rest_transform = restTransforms[rootIdx];
 
   DCOUT("parentJointIds = " << parentJointIds);
- 
-  // Construct hierachy from flattened id array.
-  if (!detail::BuildSkelHierarchyImpl(visitSet, root, parentJointIds, joints, jointNames,
+
+  // Construct hierarchy from children map.
+  if (!detail::BuildSkelHierarchyImpl(root, childrenMap, joints, jointNames,
                                       bindTransforms, restTransforms,
                                       err)) {
     return false;
@@ -3002,22 +3805,63 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
 
 namespace {
 
+size_t CountSkelNodesIterative(const SkelNode &root) {
+  size_t count = 0;
+  StackVector<const SkelNode *, 4> stack;
+  stack.reserve(64);
+  stack.emplace_back(&root);
+
+  while (!stack.empty()) {
+    const SkelNode *node = stack.back();
+    stack.pop_back();
+    ++count;
+    for (const auto &child : node->children) {
+      stack.emplace_back(&child);
+    }
+  }
+
+  return count;
+}
+
 // Iterative version of BuildSkelNameToIndexMap using explicit stack
-void BuildSkelNameToIndexMapIterative(const SkelNode &root, std::map<std::string, int> &m) {
+void BuildSkelNameToIndexMapIterative(const SkelNode &root,
+                                      SkelNameToIndexMap &m,
+                                      size_t max_iter = kMaxDefaultTraversalLimit) {
   // Stack for DFS traversal
   StackVector<std::pair<const SkelNode *, size_t>, 4> stack;
   stack.reserve(64);
   stack.emplace_back(&root, 0);
 
+  size_t iter = 0;
   while (!stack.empty()) {
+    if (iter++ >= max_iter) break;
     std::pair<const SkelNode *, size_t> &entry = stack.back();
     const SkelNode *node = entry.first;
     size_t &child_idx = entry.second;
 
     // Process current node on first visit (child_idx == 0)
     if (child_idx == 0) {
-      if (node->joint_name.size() && (node->joint_id >= 0)) {
-        m[node->joint_name] = node->joint_id;
+      if (node->joint_id >= 0) {
+        auto add_key = [&](const std::string &key) {
+          if (key.empty()) {
+            return;
+          }
+          // Keep the first authored mapping if duplicates appear.
+          m.emplace(key, node->joint_id);
+        };
+
+        add_key(node->joint_name);
+        add_key(node->joint_path);
+
+        // Also register absolute/relative variants to handle mixed token forms
+        // (e.g. "root/hip" vs "/root/hip") between Skeleton and SkelAnimation data.
+        if (!node->joint_path.empty()) {
+          if (node->joint_path[0] == '/') {
+            add_key(node->joint_path.substr(1));
+          } else {
+            add_key("/" + node->joint_path);
+          }
+        }
       }
     }
 
@@ -3033,13 +3877,502 @@ void BuildSkelNameToIndexMapIterative(const SkelNode &root, std::map<std::string
 
 } // namespace
 
-std::map<std::string, int> BuildSkelNameToIndexMap(const SkelHierarchy &skel) {
+SkelNameToIndexMap BuildSkelNameToIndexMap(const SkelHierarchy &skel) {
 
-  std::map<std::string, int> m;
+  SkelNameToIndexMap m;
+  m.reserve(CountSkelNodesIterative(skel.root_node) * 3);
 
   BuildSkelNameToIndexMapIterative(skel.root_node, m);
 
   return m;
+}
+
+//
+// Skeletal mesh extent computation
+//
+
+bool ComputeJointsExtent(
+    const std::vector<value::matrix4d> &jointXforms,
+    Extent *extent,
+    float padding,
+    const value::matrix4d *rootXform) {
+
+  if (!extent) {
+    return false;
+  }
+
+  if (jointXforms.empty()) {
+    return false;
+  }
+
+  Extent e;  // initialized to +inf/-inf
+
+  for (const auto &xf : jointXforms) {
+    // Extract translation (pivot) from joint transform.
+    // Row-major layout: translation is in row 3.
+    value::float3 pivot;
+    pivot[0] = float(xf.m[3][0]);
+    pivot[1] = float(xf.m[3][1]);
+    pivot[2] = float(xf.m[3][2]);
+
+    if (rootXform) {
+      // Transform pivot through rootXform: pivot * rootXform
+      double px = double(pivot[0]);
+      double py = double(pivot[1]);
+      double pz = double(pivot[2]);
+
+      double rx = px * rootXform->m[0][0] + py * rootXform->m[1][0] + pz * rootXform->m[2][0] + rootXform->m[3][0];
+      double ry = px * rootXform->m[0][1] + py * rootXform->m[1][1] + pz * rootXform->m[2][1] + rootXform->m[3][1];
+      double rz = px * rootXform->m[0][2] + py * rootXform->m[1][2] + pz * rootXform->m[2][2] + rootXform->m[3][2];
+      double rw = px * rootXform->m[0][3] + py * rootXform->m[1][3] + pz * rootXform->m[2][3] + rootXform->m[3][3];
+
+      if (std::abs(rw) > 1e-10) {
+        rx /= rw;
+        ry /= rw;
+        rz /= rw;
+      }
+
+      pivot[0] = float(rx);
+      pivot[1] = float(ry);
+      pivot[2] = float(rz);
+    }
+
+    e.union_with(pivot);
+  }
+
+  if (padding > 0.0f) {
+    e.lower[0] -= padding;
+    e.lower[1] -= padding;
+    e.lower[2] -= padding;
+    e.upper[0] += padding;
+    e.upper[1] += padding;
+    e.upper[2] += padding;
+  }
+
+  *extent = e;
+  return true;
+}
+
+float ComputeSkinnedExtentPadding(
+    const std::vector<value::matrix4d> &restJointXforms,
+    const Extent &meshRestExtent,
+    const value::matrix4d &geomBindTransform) {
+
+  if (restJointXforms.empty() || !meshRestExtent.is_valid()) {
+    return 0.0f;
+  }
+
+  // Compute pivot extent from rest-pose joints
+  Extent jointExtent;
+  if (!ComputeJointsExtent(restJointXforms, &jointExtent)) {
+    return 0.0f;
+  }
+
+  // Transform mesh rest extent corners by geomBindTransform
+  // We need the 8 corners of the AABB transformed, then compute the new AABB
+  const value::float3 &lo = meshRestExtent.lower;
+  const value::float3 &hi = meshRestExtent.upper;
+
+  Extent transformedMeshExtent;
+
+  for (int i = 0; i < 8; i++) {
+    float cx = (i & 1) ? hi[0] : lo[0];
+    float cy = (i & 2) ? hi[1] : lo[1];
+    float cz = (i & 4) ? hi[2] : lo[2];
+
+    double px = double(cx);
+    double py = double(cy);
+    double pz = double(cz);
+
+    // point * matrix (row-major, row-vector convention)
+    double rx = px * geomBindTransform.m[0][0] + py * geomBindTransform.m[1][0] + pz * geomBindTransform.m[2][0] + geomBindTransform.m[3][0];
+    double ry = px * geomBindTransform.m[0][1] + py * geomBindTransform.m[1][1] + pz * geomBindTransform.m[2][1] + geomBindTransform.m[3][1];
+    double rz = px * geomBindTransform.m[0][2] + py * geomBindTransform.m[1][2] + pz * geomBindTransform.m[2][2] + geomBindTransform.m[3][2];
+    double rw = px * geomBindTransform.m[0][3] + py * geomBindTransform.m[1][3] + pz * geomBindTransform.m[2][3] + geomBindTransform.m[3][3];
+
+    if (std::abs(rw) > 1e-10) {
+      rx /= rw;
+      ry /= rw;
+      rz /= rw;
+    }
+
+    value::float3 tp;
+    tp[0] = float(rx);
+    tp[1] = float(ry);
+    tp[2] = float(rz);
+    transformedMeshExtent.union_with(tp);
+  }
+
+  // Padding = max distance that the mesh extent exceeds the joint extent
+  // on any axis in any direction
+  float padding = 0.0f;
+
+  for (size_t i = 0; i < 3; i++) {
+    float diffLo = jointExtent.lower[i] - transformedMeshExtent.lower[i];
+    float diffHi = transformedMeshExtent.upper[i] - jointExtent.upper[i];
+
+    padding = (std::max)(padding, (std::max)(diffLo, 0.0f));
+    padding = (std::max)(padding, (std::max)(diffHi, 0.0f));
+  }
+
+  return padding;
+}
+
+bool SkinPointsLBS(
+    const std::vector<value::point3f> &restPoints,
+    const value::matrix4d &geomBindTransform,
+    const std::vector<value::matrix4d> &jointXforms,
+    const std::vector<int> &jointIndices,
+    const std::vector<float> &jointWeights,
+    int numInfluencesPerPoint,
+    std::vector<value::point3f> *skinnedPoints,
+    std::string *err) {
+
+  if (!skinnedPoints) {
+    if (err) { *err = "skinnedPoints is null."; }
+    return false;
+  }
+
+  if (numInfluencesPerPoint < 1) {
+    if (err) { *err = "numInfluencesPerPoint must be >= 1."; }
+    return false;
+  }
+
+  size_t numPoints = restPoints.size();
+  size_t expectedSize = numPoints * size_t(numInfluencesPerPoint);
+
+  if (jointIndices.size() != expectedSize) {
+    if (err) {
+      *err = "jointIndices size mismatch: expected " +
+             std::to_string(expectedSize) + ", got " +
+             std::to_string(jointIndices.size()) + ".";
+    }
+    return false;
+  }
+
+  if (jointWeights.size() != expectedSize) {
+    if (err) {
+      *err = "jointWeights size mismatch: expected " +
+             std::to_string(expectedSize) + ", got " +
+             std::to_string(jointWeights.size()) + ".";
+    }
+    return false;
+  }
+
+  int numJoints = int(jointXforms.size());
+
+  skinnedPoints->resize(numPoints);
+
+  for (size_t pi = 0; pi < numPoints; pi++) {
+    // Transform rest point into skeleton space via geomBindTransform
+    const value::point3f &rp = restPoints[pi];
+    double px = double(rp.x);
+    double py = double(rp.y);
+    double pz = double(rp.z);
+
+    double sx = px * geomBindTransform.m[0][0] + py * geomBindTransform.m[1][0] + pz * geomBindTransform.m[2][0] + geomBindTransform.m[3][0];
+    double sy = px * geomBindTransform.m[0][1] + py * geomBindTransform.m[1][1] + pz * geomBindTransform.m[2][1] + geomBindTransform.m[3][1];
+    double sz = px * geomBindTransform.m[0][2] + py * geomBindTransform.m[1][2] + pz * geomBindTransform.m[2][2] + geomBindTransform.m[3][2];
+    double sw = px * geomBindTransform.m[0][3] + py * geomBindTransform.m[1][3] + pz * geomBindTransform.m[2][3] + geomBindTransform.m[3][3];
+
+    if (std::abs(sw) > 1e-10) {
+      sx /= sw;
+      sy /= sw;
+      sz /= sw;
+    }
+
+    // Accumulate weighted joint transforms
+    double outx = 0.0, outy = 0.0, outz = 0.0;
+
+    size_t base = pi * size_t(numInfluencesPerPoint);
+    for (int ji = 0; ji < numInfluencesPerPoint; ji++) {
+      int idx = jointIndices[base + size_t(ji)];
+      float w = jointWeights[base + size_t(ji)];
+
+      if (w == 0.0f || idx < 0 || idx >= numJoints) {
+        continue;
+      }
+
+      const value::matrix4d &jx = jointXforms[size_t(idx)];
+
+      // skelPoint * jointXform
+      double tx = sx * jx.m[0][0] + sy * jx.m[1][0] + sz * jx.m[2][0] + jx.m[3][0];
+      double ty = sx * jx.m[0][1] + sy * jx.m[1][1] + sz * jx.m[2][1] + jx.m[3][1];
+      double tz = sx * jx.m[0][2] + sy * jx.m[1][2] + sz * jx.m[2][2] + jx.m[3][2];
+
+      outx += double(w) * tx;
+      outy += double(w) * ty;
+      outz += double(w) * tz;
+    }
+
+    (*skinnedPoints)[pi].x = float(outx);
+    (*skinnedPoints)[pi].y = float(outy);
+    (*skinnedPoints)[pi].z = float(outz);
+  }
+
+  return true;
+}
+
+bool ComputeSkinnedMeshExtent(
+    const std::vector<value::matrix4d> &jointXforms,
+    const std::vector<value::matrix4d> &restJointXforms,
+    const Extent &meshRestExtent,
+    const value::matrix4d &geomBindTransform,
+    Extent *extent,
+    const value::matrix4d *rootXform) {
+
+  if (!extent) {
+    return false;
+  }
+
+  float padding = ComputeSkinnedExtentPadding(
+      restJointXforms, meshRestExtent, geomBindTransform);
+
+  return ComputeJointsExtent(jointXforms, extent, padding, rootXform);
+}
+
+//
+// Skeleton transform utilities (ported from OpenUSD UsdSkelUtils)
+//
+
+bool ConcatJointTransforms(
+    const std::vector<int> &topology,
+    const std::vector<value::matrix4d> &localXforms,
+    std::vector<value::matrix4d> *worldXforms,
+    const value::matrix4d *rootXform) {
+
+  if (!worldXforms) {
+    return false;
+  }
+
+  size_t numJoints = topology.size();
+  if (localXforms.size() != numJoints) {
+    return false;
+  }
+
+  worldXforms->resize(numJoints);
+
+  // Topology guarantees parent index < child index, so a single forward pass
+  // computes all world-space transforms.
+  for (size_t i = 0; i < numJoints; i++) {
+    int parent = topology[i];
+    if (parent < 0) {
+      // Root joint
+      if (rootXform) {
+        (*worldXforms)[i] = localXforms[i] * (*rootXform);
+      } else {
+        (*worldXforms)[i] = localXforms[i];
+      }
+    } else if (size_t(parent) < numJoints) {
+      (*worldXforms)[i] = localXforms[i] * (*worldXforms)[size_t(parent)];
+    } else {
+      // Invalid parent - treat as root
+      (*worldXforms)[i] = localXforms[i];
+    }
+  }
+
+  return true;
+}
+
+bool ComputeJointLocalTransforms(
+    const std::vector<int> &topology,
+    const std::vector<value::matrix4d> &worldXforms,
+    std::vector<value::matrix4d> *localXforms,
+    const value::matrix4d *inverseRootXform) {
+
+  if (!localXforms) {
+    return false;
+  }
+
+  size_t numJoints = topology.size();
+  if (worldXforms.size() != numJoints) {
+    return false;
+  }
+
+  localXforms->resize(numJoints);
+
+  for (size_t i = 0; i < numJoints; i++) {
+    int parent = topology[i];
+    if (parent < 0) {
+      // Root joint
+      if (inverseRootXform) {
+        (*localXforms)[i] = worldXforms[i] * (*inverseRootXform);
+      } else {
+        (*localXforms)[i] = worldXforms[i];
+      }
+    } else if (size_t(parent) < numJoints) {
+      value::matrix4d parentInv = inverse(worldXforms[size_t(parent)]);
+      (*localXforms)[i] = worldXforms[i] * parentInv;
+    } else {
+      (*localXforms)[i] = worldXforms[i];
+    }
+  }
+
+  return true;
+}
+
+value::matrix4d SkelMakeTransform(
+    const value::float3 &translation,
+    const value::quatf &rotation,
+    const value::half3 &scale) {
+
+  // Build rotation matrix from quaternion
+  value::matrix4d rotMat = to_matrix(rotation);
+
+  // Apply scale to the rotation matrix (upper-left 3x3)
+  double sx = double(half_to_float(scale[0]));
+  double sy = double(half_to_float(scale[1]));
+  double sz = double(half_to_float(scale[2]));
+
+  rotMat.m[0][0] *= sx; rotMat.m[0][1] *= sx; rotMat.m[0][2] *= sx;
+  rotMat.m[1][0] *= sy; rotMat.m[1][1] *= sy; rotMat.m[1][2] *= sy;
+  rotMat.m[2][0] *= sz; rotMat.m[2][1] *= sz; rotMat.m[2][2] *= sz;
+
+  // Set translation
+  rotMat.m[3][0] = double(translation[0]);
+  rotMat.m[3][1] = double(translation[1]);
+  rotMat.m[3][2] = double(translation[2]);
+
+  return rotMat;
+}
+
+bool SkinNormalsLBS(
+    const std::vector<value::normal3f> &restNormals,
+    const value::matrix4d &geomBindTransform,
+    const std::vector<value::matrix4d> &jointXforms,
+    const std::vector<int> &jointIndices,
+    const std::vector<float> &jointWeights,
+    int numInfluencesPerPoint,
+    std::vector<value::normal3f> *skinnedNormals,
+    std::string *err) {
+
+  if (!skinnedNormals) {
+    if (err) { *err = "skinnedNormals is null."; }
+    return false;
+  }
+
+  if (numInfluencesPerPoint < 1) {
+    if (err) { *err = "numInfluencesPerPoint must be >= 1."; }
+    return false;
+  }
+
+  size_t numPoints = restNormals.size();
+  size_t expectedSize = numPoints * size_t(numInfluencesPerPoint);
+
+  if (jointIndices.size() != expectedSize) {
+    if (err) {
+      *err = "jointIndices size mismatch: expected " +
+             std::to_string(expectedSize) + ", got " +
+             std::to_string(jointIndices.size()) + ".";
+    }
+    return false;
+  }
+
+  if (jointWeights.size() != expectedSize) {
+    if (err) {
+      *err = "jointWeights size mismatch: expected " +
+             std::to_string(expectedSize) + ", got " +
+             std::to_string(jointWeights.size()) + ".";
+    }
+    return false;
+  }
+
+  int numJoints = int(jointXforms.size());
+
+  skinnedNormals->resize(numPoints);
+
+  // For normals, we use inverse-transpose of the skinning matrix.
+  // Since we accumulate the weighted skinning matrix per vertex first,
+  // we can compute its inverse-transpose at the end. But for LBS where
+  // weights sum to 1, we can skin normals with the upper-left 3x3
+  // (direction only, no translation) and then renormalize.
+
+  for (size_t pi = 0; pi < numPoints; pi++) {
+    const value::normal3f &rn = restNormals[pi];
+    double nx = double(rn[0]);
+    double ny = double(rn[1]);
+    double nz = double(rn[2]);
+
+    // Transform normal into skeleton space via geomBindTransform (direction only)
+    double snx = nx * geomBindTransform.m[0][0] + ny * geomBindTransform.m[1][0] + nz * geomBindTransform.m[2][0];
+    double sny = nx * geomBindTransform.m[0][1] + ny * geomBindTransform.m[1][1] + nz * geomBindTransform.m[2][1];
+    double snz = nx * geomBindTransform.m[0][2] + ny * geomBindTransform.m[1][2] + nz * geomBindTransform.m[2][2];
+
+    // Accumulate weighted joint transforms (direction only)
+    double outx = 0.0, outy = 0.0, outz = 0.0;
+
+    size_t base = pi * size_t(numInfluencesPerPoint);
+    for (int ji = 0; ji < numInfluencesPerPoint; ji++) {
+      int idx = jointIndices[base + size_t(ji)];
+      float w = jointWeights[base + size_t(ji)];
+
+      if (w == 0.0f || idx < 0 || idx >= numJoints) {
+        continue;
+      }
+
+      const value::matrix4d &jx = jointXforms[size_t(idx)];
+
+      // skelNormal * jointXform (3x3 only for directions)
+      double tx = snx * jx.m[0][0] + sny * jx.m[1][0] + snz * jx.m[2][0];
+      double ty = snx * jx.m[0][1] + sny * jx.m[1][1] + snz * jx.m[2][1];
+      double tz = snx * jx.m[0][2] + sny * jx.m[1][2] + snz * jx.m[2][2];
+
+      outx += double(w) * tx;
+      outy += double(w) * ty;
+      outz += double(w) * tz;
+    }
+
+    // Renormalize
+    double len = std::sqrt(outx * outx + outy * outy + outz * outz);
+    if (len > 1e-10) {
+      outx /= len;
+      outy /= len;
+      outz /= len;
+    }
+
+    (*skinnedNormals)[pi][0] = float(outx);
+    (*skinnedNormals)[pi][1] = float(outy);
+    (*skinnedNormals)[pi][2] = float(outz);
+  }
+
+  return true;
+}
+
+bool ExpandConstantInfluencesToVarying(
+    const std::vector<int> &indices,
+    const std::vector<float> &weights,
+    size_t numVertices,
+    std::vector<int> *expandedIndices,
+    std::vector<float> *expandedWeights) {
+
+  if (!expandedIndices || !expandedWeights) {
+    return false;
+  }
+
+  if (indices.size() != weights.size()) {
+    return false;
+  }
+
+  size_t numInfluences = indices.size();
+  if (numInfluences == 0 || numVertices == 0) {
+    expandedIndices->clear();
+    expandedWeights->clear();
+    return true;
+  }
+
+  size_t totalSize = numVertices * numInfluences;
+  expandedIndices->resize(totalSize);
+  expandedWeights->resize(totalSize);
+
+  for (size_t v = 0; v < numVertices; v++) {
+    size_t offset = v * numInfluences;
+    for (size_t i = 0; i < numInfluences; i++) {
+      (*expandedIndices)[offset + i] = indices[i];
+      (*expandedWeights)[offset + i] = weights[i];
+    }
+  }
+
+  return true;
 }
 
 }  // namespace tydra

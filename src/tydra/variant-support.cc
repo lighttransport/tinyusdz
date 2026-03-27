@@ -10,9 +10,13 @@
 #include <functional>
 #include <sstream>
 #include "nonstd/expected.hpp"
+#include "common-macros.inc"
 
 namespace tinyusdz {
 namespace tydra {
+
+// Out-of-line virtual destructor to avoid weak vtables warning
+VariantManager::~VariantManager() = default;
 
 const std::vector<VariantGroup>& DefaultVariantManager::GetVariantGroups() const {
   return _variant_groups;
@@ -24,7 +28,7 @@ const VariantGroup* DefaultVariantManager::FindVariantGroup(
   if (it != _variant_group_map.end()) {
     int32_t idx = it->second;
     if (idx >= 0 && idx < static_cast<int32_t>(_variant_groups.size())) {
-      return &_variant_groups[idx];
+      return &_variant_groups[static_cast<size_t>(idx)];
     }
   }
   return nullptr;
@@ -116,7 +120,7 @@ void DefaultVariantManager::ResetToDefaults() {
     for (const auto& vs : group.variant_sets) {
       if (vs.default_option_index >= 0 &&
           vs.default_option_index < static_cast<int32_t>(vs.options.size())) {
-        VariantSelection sel(vs.name, vs.options[vs.default_option_index].name,
+        VariantSelection sel(vs.name, vs.options[static_cast<size_t>(vs.default_option_index)].name,
                             group.prim_path);
         _current_selections.push_back(sel);
       }
@@ -135,13 +139,14 @@ VariantStatistics DefaultVariantManager::GetStatistics() const {
     stats.num_variant_sets += static_cast<uint32_t>(group.variant_sets.size());
 
     // Calculate nesting depth for this group
-    std::function<uint32_t(const VariantSet&)> calc_depth =
-        [&](const VariantSet& vs) -> uint32_t {
+    std::function<uint32_t(const VariantSet&, uint32_t)> calc_depth =
+        [&](const VariantSet& vs, uint32_t rec_depth) -> uint32_t {
+      if (size_t(rec_depth) >= kMaxDefaultTraversalLimit) return 1;
       uint32_t depth = 1;
       for (const auto& opt : vs.options) {
         if (!opt.nested_variant_sets.empty()) {
           for (const auto& nested_vs : opt.nested_variant_sets) {
-            depth = std::max(depth, 1 + calc_depth(*nested_vs));
+            depth = std::max(depth, 1 + calc_depth(*nested_vs, rec_depth + 1));
           }
         }
       }
@@ -150,7 +155,7 @@ VariantStatistics DefaultVariantManager::GetStatistics() const {
 
     for (const auto& vs : group.variant_sets) {
       stats.num_variant_options += static_cast<uint32_t>(vs.options.size());
-      max_depth = std::max(max_depth, calc_depth(vs));
+      max_depth = std::max(max_depth, calc_depth(vs, 0));
     }
   }
 

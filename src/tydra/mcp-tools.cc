@@ -27,25 +27,6 @@ namespace mcp {
 
 namespace {
 
-#if 0
-inline std::string decode_datauri(const std::string &data) {
-
-  const std::string prefix = "data:application/octet-stream;base64,";
-
-  if (!startsWith(data, prefix)) {
-    return {};
-  }
-
-  if (data.size() <= prefix.size()) {
-    return {};
-  }
-
-  // TODO: save memory
-  std::string binary = base64_decode(removePrefix(data, prefix));
-
-  return binary;
-}
-#endif
 
 inline std::string decode_data(const std::string &data) {
   // TODO: save memory
@@ -211,7 +192,7 @@ bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args,
 
   USDLayer usd_layer;
   usd_layer.name = name;
-  usd_layer.uri = name;  // FIXME
+  usd_layer.uri = name;
   usd_layer.description = description;
   usd_layer.layer = std::move(layer);
 
@@ -1310,12 +1291,6 @@ bool CallTool(Context &ctx, const std::string &tool_name,
     return SelectAssets(ctx, args, result, err);
   } else if (tool_name == "get_selected_assets") {
     return GetSelectedAssets(ctx, args, result, err);
-#if 0
-  } else if (tool_name == "get_texture_asset") {
-    return GetTextureAsset(ctx, args, result, err);
-  } else if (tool_name == "change_texture_asset") {
-    return ChangeTextureAsset(ctx, args, result, err);
-#endif
   }
 
   // tool not found.

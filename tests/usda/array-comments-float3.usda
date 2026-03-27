@@ -1,0 +1,18 @@
+#usda 1.0
+def Scope "Test" {
+    custom float3[] positions = [
+        # origin
+        (0, 0, 0),
+        # unit axes
+        (1, 0, 0),
+        (0, 1, 0),
+        (0, 0, 1)
+    ]
+
+    custom point3f[] pts = [
+        # bottom ring
+        (-0.3, 0.0, -0.3), (0.3, 0.0, -0.3),
+        # top ring
+        (-0.3, 1.0, -0.3), (0.3, 1.0, -0.3)
+    ]
+}

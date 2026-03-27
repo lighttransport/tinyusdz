@@ -1,0 +1,40 @@
+#usda 1.0
+(
+    startTimeCode = 0
+    endTimeCode = 100
+)
+
+def "DefaultOnly" {
+    double radius = 5.0
+}
+
+def "TimeSamplesOnly" {
+    double radius.timeSamples = {
+        0: 1.0,
+        50: 5.0,
+        100: 10.0,
+    }
+}
+
+def "DefaultAndTimeSamples" {
+    double radius = 3.0
+    double radius.timeSamples = {
+        0: 1.0,
+        100: 10.0,
+    }
+}
+
+def "BlockedValue" {
+    double radius = None
+}
+
+def "Interpolation" {
+    double held.timeSamples = {
+        0: 0.0,
+        10: 10.0,
+    }
+    double linear.timeSamples = {
+        0: 0.0,
+        10: 10.0,
+    }
+}

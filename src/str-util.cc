@@ -590,7 +590,7 @@ std::vector<std::string> to_utf8_chars(const std::string &str) {
   std::vector<std::string> utf8_chars;
   size_t sz = str.size();
 
-  for (size_t i = 0; i <= sz;) {
+  for (size_t i = 0; i < sz;) {
     int len = 0;
     std::string s = detail::extract_utf8_char(str, uint32_t(i), len);
     if (len == 0) {
@@ -659,6 +659,8 @@ uint32_t to_utf8_code(const std::string &s) {
 
   return code;
 }
+
+
 
 bool is_valid_utf8(const std::string &str) {
   // TODO: Consider UTF-BOM?
@@ -1810,6 +1812,9 @@ size_t print_double3(const value::double3& v, char* buffer) {
 size_t print_double4(const value::double4& v, char* buffer) {
   return print_vector_impl(v, buffer);
 }
+
+// Half vectors (convert to float for printing)
+// Note: These functions are only available when linking with value-types
 
 // Matrix printing: ( (row0), (row1), ... ) - with spaces for USD compatibility
 size_t print_matrix2d(const value::matrix2d& m, char* buffer) {

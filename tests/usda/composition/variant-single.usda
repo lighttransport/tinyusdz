@@ -1,0 +1,21 @@
+#usda 1.0
+
+def Scope "Asset" (
+    variants = { string colorVariant = "green" }
+    prepend variantSets = "colorVariant"
+) {
+    variantSet "colorVariant" = {
+        "red" {
+            custom token color = "red"
+            custom float intensity = 1.0
+        }
+        "green" {
+            custom token color = "green"
+            custom float intensity = 0.8
+        }
+        "blue" {
+            custom token color = "blue"
+            custom float intensity = 0.6
+        }
+    }
+}

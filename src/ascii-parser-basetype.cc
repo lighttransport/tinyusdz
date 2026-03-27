@@ -17,13 +17,13 @@
 #include <array>
 //#include <cassert>
 #include <cstdlib>
-// NOTE: <fstream> and <iostream> removed - unused
+#include <fstream>
+#include <iostream>
 #include <iterator>
 #include <map>
 #include <set>
 #include <sstream>
 #include <stack>
-#include <utility>
 #if defined(__wasi__)
 #else
 #include <mutex>
@@ -32,9 +32,10 @@
 #include <vector>
 
 #include "ascii-parser.hh"
-// NOTE: str-util.hh, typed-array.hh already included via ascii-parser.hh
+#include "str-util.hh"
 #include "path-util.hh"
 #include "tiny-format.hh"
+#include "typed-array.hh"
 
 //
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
@@ -51,13 +52,18 @@
 #include "external/fast_float/include/fast_float/fast_float.h"
 
 #define CHECK_MEMORY_USAGE(__nbytes) do { \
-  if (!CheckAndReserveMemory(__nbytes)) { \
+  _memory_usage += (__nbytes); \
+  if (_memory_usage > _max_memory_limit_bytes) { \
+    PushError(fmt::format("Memory limit exceeded. Limit: {} MB, Current usage: {} MB", \
+      _max_memory_limit_bytes / (1024*1024), _memory_usage / (1024*1024))); \
     return false; \
-  } \
+  }  \
   } while(0)
 
 #define REDUCE_MEMORY_USAGE(__nbytes) do { \
-  ReleaseMemory(__nbytes); \
+  if (_memory_usage >= (__nbytes)) { \
+    _memory_usage -= (__nbytes); \
+  } \
   } while(0)
 #include "external/jsteemann/atoi.h"
 //#include "external/simple_match/include/simple_match/simple_match.hpp"
@@ -77,19 +83,15 @@
 #endif
 
 #include "io-util.hh"
-#include "pprinter.hh"
-// NOTE: prim-types.hh, str-util.hh, stream-reader.hh, tinyusdz.hh, value-types.hh
-// already included via ascii-parser.hh
+#include "core/prim-spec.hh"
+#include "str-util.hh"
+#include "stream-reader.hh"
+#include "tinyusdz.hh"
 #include "value-pprint.hh"
+#include "value-types.hh"
 
 #include "common-macros.inc"
 #include "tiny-string.hh"
-
-// When compiling this file directly (not included by another file),
-// skip TypedArray instantiations - they are compiled in ascii-parser-basetype-typedarray.cc
-#ifndef TINYUSDZ_BASETYPE_TYPEDARRAY_INST_ONLY
-#define TINYUSDZ_BASETYPE_SKIP_TYPEDARRAY_INST
-#endif
 
 namespace tinyusdz {
 
@@ -128,6 +130,12 @@ int parseInt(const std::string &s, int *out_result) {
   while (idx < n) {
     if ((c[idx] >= '0') && (c[idx] <= '9')) {
       int digit = int(c[idx] - '0');
+
+      // Check for overflow before multiplication
+      if (result > (std::numeric_limits<int>::max)() / 10) {
+        return negative ? -3 : -2;
+      }
+
       result = result * 10 + digit;
     } else {
       // bad input
@@ -194,8 +202,6 @@ bool AsciiParser::ParseMatrix(value::matrix2f *result) {
   }
 
   std::vector<std::array<float, 2>> content;
-  ScopedVectorMemoryRelease<std::array<float, 2>> content_release(this, &content);
-  (void)content_release;
   if (!SepBy1TupleType<float, 2>(',', &content)) {
     return false;
   }
@@ -225,8 +231,6 @@ bool AsciiParser::ParseMatrix(value::matrix3f *result) {
   }
 
   std::vector<std::array<float, 3>> content;
-  ScopedVectorMemoryRelease<std::array<float, 3>> content_release(this, &content);
-  (void)content_release;
   if (!SepBy1TupleType<float, 3>(',', &content)) {
     return false;
   }
@@ -257,8 +261,6 @@ bool AsciiParser::ParseMatrix(value::matrix4f *result) {
   }
 
   std::vector<std::array<float, 4>> content;
-  ScopedVectorMemoryRelease<std::array<float, 4>> content_release(this, &content);
-  (void)content_release;
   if (!SepBy1TupleType<float, 4>(',', &content)) {
     return false;
   }
@@ -290,8 +292,6 @@ bool AsciiParser::ParseMatrix(value::matrix2d *result) {
   }
 
   std::vector<std::array<double, 2>> content;
-  ScopedVectorMemoryRelease<std::array<double, 2>> content_release(this, &content);
-  (void)content_release;
   if (!SepBy1TupleType<double, 2>(',', &content)) {
     return false;
   }
@@ -321,8 +321,6 @@ bool AsciiParser::ParseMatrix(value::matrix3d *result) {
   }
 
   std::vector<std::array<double, 3>> content;
-  ScopedVectorMemoryRelease<std::array<double, 3>> content_release(this, &content);
-  (void)content_release;
   if (!SepBy1TupleType<double, 3>(',', &content)) {
     return false;
   }
@@ -353,8 +351,6 @@ bool AsciiParser::ParseMatrix(value::matrix4d *result) {
   }
 
   std::vector<std::array<double, 4>> content;
-  ScopedVectorMemoryRelease<std::array<double, 4>> content_release(this, &content);
-  (void)content_release;
   if (!SepBy1TupleType<double, 4>(',', &content)) {
     return false;
   }
@@ -1901,21 +1897,6 @@ bool AsciiParser::ReadBasicType(value::color3d *value) {
   return false;
 }
 
-#if 0
-template <>
-bool AsciiParser::ReadBasicType(value::point4h *value) {
-  // parse as float4
-  value::float4 v;
-  if (ParseBasicTypeTuple(&v)) {
-    value->x = value::float_to_half_full(v[0]);
-    value->y = value::float_to_half_full(v[1]);
-    value->z = value::float_to_half_full(v[2]);
-    value->w = value::float_to_half_full(v[3]);
-    return true;
-  }
-  return false;
-}
-#endif
 
 bool AsciiParser::ReadBasicType(value::color4h *value) {
   // parse as float4
@@ -2001,11 +1982,8 @@ bool AsciiParser::SepBy1BasicType(const char sep,
       return false;
     }
 
-    size_t old_capacity = result->capacity();
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
-    if (!ReserveVectorGrowth(*result, old_capacity)) {
-      return false;
-    }
   }
 
   while (!Eof()) {
@@ -2034,11 +2012,8 @@ bool AsciiParser::SepBy1BasicType(const char sep,
       break;
     }
 
-    size_t old_capacity = result->capacity();
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
-    if (!ReserveVectorGrowth(*result, old_capacity)) {
-      return false;
-    }
   }
 
   if (result->empty()) {
@@ -2068,12 +2043,11 @@ bool AsciiParser::SepBy1BasicType(const char sep, std::vector<T> *result) {
       return false;
     }
 
-    size_t old_capacity = result->capacity();
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
-    if (!ReserveVectorGrowth(*result, old_capacity)) {
-      return false;
-    }
   }
+
+  constexpr size_t kMaxArrayElements = 1024ull * 1024ull * 128ull; // 128M elements max
 
   while (!Eof()) {
     // sep
@@ -2101,11 +2075,12 @@ bool AsciiParser::SepBy1BasicType(const char sep, std::vector<T> *result) {
       break;
     }
 
-    size_t old_capacity = result->capacity();
-    result->push_back(value);
-    if (!ReserveVectorGrowth(*result, old_capacity)) {
+    if (result->size() >= kMaxArrayElements) {
+      PushError(fmt::format("Array element count exceeds limit ({}).\n", kMaxArrayElements));
       return false;
     }
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
+    result->push_back(value);
   }
 
   if (result->empty()) {
@@ -2136,12 +2111,11 @@ bool AsciiParser::SepBy1BasicType(const char sep, const char end_symbol, std::ve
       return false;
     }
 
-    size_t old_capacity = result->capacity();
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
-    if (!ReserveVectorGrowth(*result, old_capacity)) {
-      return false;
-    }
   }
+
+  constexpr size_t kMaxArrayElements = 1024ull * 1024ull * 128ull; // 128M elements max
 
   while (!Eof()) {
     if (!SkipCommentAndWhitespaceAndNewline()) {
@@ -2186,12 +2160,12 @@ bool AsciiParser::SepBy1BasicType(const char sep, const char end_symbol, std::ve
       break;
     }
 
-    size_t old_capacity = result->capacity();
-    result->push_back(value);
-    if (!ReserveVectorGrowth(*result, old_capacity)) {
+    if (result->size() >= kMaxArrayElements) {
+      PushError(fmt::format("Array element count exceeds limit ({}).\n", kMaxArrayElements));
       return false;
     }
-
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
+    result->push_back(value);
 
   }
 
@@ -2217,11 +2191,7 @@ bool AsciiParser::SepBy1TupleType(
   }
 
   if (MaybeNone()) {
-    size_t old_capacity = result->capacity();
     result->push_back(nonstd::nullopt);
-    if (!ReserveVectorGrowth(*result, old_capacity)) {
-      return false;
-    }
   } else {
     std::array<T, N> value;
     if (!ParseBasicTypeTuple<T, N>(&value)) {
@@ -2229,11 +2199,8 @@ bool AsciiParser::SepBy1TupleType(
       return false;
     }
 
-    size_t old_capacity = result->capacity();
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
-    if (!ReserveVectorGrowth(*result, old_capacity)) {
-      return false;
-    }
   }
 
   while (!Eof()) {
@@ -2256,22 +2223,20 @@ bool AsciiParser::SepBy1TupleType(
       return false;
     }
 
+    constexpr size_t kMaxArrayElements = 1024ull * 1024ull * 128ull;
+    if (result->size() >= kMaxArrayElements) {
+      PushError(fmt::format("Tuple array element count exceeds limit ({}).\n", kMaxArrayElements));
+      return false;
+    }
     if (MaybeNone()) {
-      size_t old_capacity = result->capacity();
       result->push_back(nonstd::nullopt);
-      if (!ReserveVectorGrowth(*result, old_capacity)) {
-        return false;
-      }
     } else {
       std::array<T, N> value;
       if (!ParseBasicTypeTuple<T, N>(&value)) {
         break;
       }
-      size_t old_capacity = result->capacity();
-      result->push_back(value);
-      if (!ReserveVectorGrowth(*result, old_capacity)) {
-        return false;
-      }
+      CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
+    result->push_back(value);
     }
   }
 
@@ -2303,11 +2268,8 @@ bool AsciiParser::SepBy1TupleType(const char sep,
       return false;
     }
 
-    size_t old_capacity = result->capacity();
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
-    if (!ReserveVectorGrowth(*result, old_capacity)) {
-      return false;
-    }
   }
 
   while (!Eof()) {
@@ -2335,11 +2297,13 @@ bool AsciiParser::SepBy1TupleType(const char sep,
       break;
     }
 
-    size_t old_capacity = result->capacity();
-    result->push_back(value);
-    if (!ReserveVectorGrowth(*result, old_capacity)) {
+    constexpr size_t kMaxArrayElements = 1024ull * 1024ull * 128ull;
+    if (result->size() >= kMaxArrayElements) {
+      PushError(fmt::format("Tuple array element count exceeds limit ({}).\n", kMaxArrayElements));
       return false;
     }
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
+    result->push_back(value);
   }
 
   if (result->empty()) {
@@ -2466,8 +2430,6 @@ bool AsciiParser::ParseBasicTypeArray(TypedArray<T> *result) {
 
   // Parse elements into a temporary vector first
   std::vector<T> temp_result;
-  ScopedVectorMemoryRelease<T> temp_release(this, &temp_result);
-  (void)temp_release;
   if (!SepBy1BasicType<T>(',', ']', &temp_result)) {
     return false;
   }
@@ -2482,17 +2444,9 @@ bool AsciiParser::ParseBasicTypeArray(TypedArray<T> *result) {
 
   // Transfer to TypedArray for memory optimization
   result->clear();
-  size_t old_capacity = result->capacity();
   result->reserve(temp_result.size());
-  if (!ReserveTypedArrayGrowth(*result, old_capacity)) {
-    return false;
-  }
   for (const auto& item : temp_result) {
-    old_capacity = result->capacity();
     result->push_back(item);
-    if (!ReserveTypedArrayGrowth(*result, old_capacity)) {
-      return false;
-    }
   }
   
   return true;
@@ -2524,11 +2478,8 @@ bool AsciiParser::SepBy1BasicType(const char sep,
 
     (void)triple_deliminated;
 
-    size_t old_capacity = result->capacity();
+    CHECK_MEMORY_USAGE(sizeof(Reference));
     result->push_back(ref);
-    if (!ReserveVectorGrowth(*result, old_capacity)) {
-      return false;
-    }
   }
 
   while (!Eof()) {
@@ -2576,11 +2527,8 @@ bool AsciiParser::SepBy1BasicType(const char sep,
     }
 
     (void)triple_deliminated;
-    size_t old_capacity = result->capacity();
+    CHECK_MEMORY_USAGE(sizeof(Reference));
     result->push_back(ref);
-    if (!ReserveVectorGrowth(*result, old_capacity)) {
-      return false;
-    }
   }
 
   if (result->empty()) {
@@ -2627,8 +2575,6 @@ bool AsciiParser::ParseBasicTypeTuple(std::array<T, N> *result) {
   }
 
   std::vector<T> values;
-  ScopedVectorMemoryRelease<T> values_release(this, &values);
-  (void)values_release;
   if (!SepBy1BasicType<T>(',', &values)) {
     return false;
   }
@@ -2665,8 +2611,6 @@ bool AsciiParser::ParseBasicTypeTuple(
   }
 
   std::vector<T> values;
-  ScopedVectorMemoryRelease<T> values_release(this, &values);
-  (void)values_release;
   if (!SepBy1BasicType<T>(',', &values)) {
     return false;
   }
@@ -2718,11 +2662,8 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result) {
 
     (void)triple_deliminated;
     result->clear();
-    size_t old_capacity = result->capacity();
+    CHECK_MEMORY_USAGE(sizeof(Reference));
     result->push_back(ref);
-    if (!ReserveVectorGrowth(*result, old_capacity)) {
-      return false;
-    }
 
   } else {
 
@@ -3054,8 +2995,6 @@ bool AsciiParser::ReadBasicType(value::texcoord3d *value) {
   }
 
   std::vector<double> values;
-  ScopedVectorMemoryRelease<double> values_release(this, &values);
-  (void)values_release;
   if (!SepBy1BasicType<double>(',', &values)) {
     return false;
   }
@@ -3325,6 +3264,82 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::color4d> *value) {
   }
 
   value::color4d v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+// AOUSD Core Spec 6.5: Half-precision semantic alias optional overloads
+bool AsciiParser::ReadBasicType(nonstd::optional<value::normal3h> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::normal3h v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::point3h> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::point3h v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::vector3h> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::vector3h v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::color3h> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::color3h v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::color4h> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::color4h v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -3752,7 +3767,7 @@ bool AsciiParser::ReadBasicType(nonstd::optional<std::vector<T>> *value) {
 
   std::vector<T> v;
   if (ParseBasicTypeArray(&v)) {
-    (*value) = std::move(v);
+    (*value) = v;
     return true;
   }
 
@@ -3787,7 +3802,12 @@ bool AsciiParser::ParseFloatArrayOptimized(std::vector<float> *result) {
       return false;
     }
 
-    if (c == '[') {
+    if (c == '#') {
+      // Skip comment to end of line
+      while (Char1(&c)) {
+        if (c == '\n') break;
+      }
+    } else if (c == '[') {
       bracket_depth++;
     } else if (c == ']') {
       bracket_depth--;
@@ -3802,7 +3822,7 @@ bool AsciiParser::ParseFloatArrayOptimized(std::vector<float> *result) {
   size_t array_len = static_cast<size_t>(end_loc - start_loc);
   tstring_view sv(array_start, array_len);
 
-  if (!str::parse_float_arary(sv, result)) {
+  if (!str::parse_float_array(sv, result)) {
     PushError("Failed to parse float array with tiny-string");
     return false;
   }
@@ -3832,7 +3852,12 @@ bool AsciiParser::ParseDoubleArrayOptimized(std::vector<double> *result) {
       return false;
     }
 
-    if (c == '[') {
+    if (c == '#') {
+      // Skip comment to end of line
+      while (Char1(&c)) {
+        if (c == '\n') break;
+      }
+    } else if (c == '[') {
       bracket_depth++;
     } else if (c == ']') {
       bracket_depth--;
@@ -3847,7 +3872,7 @@ bool AsciiParser::ParseDoubleArrayOptimized(std::vector<double> *result) {
   size_t array_len = static_cast<size_t>(end_loc - start_loc);
   tstring_view sv(array_start, array_len);
 
-  if (!str::parse_double_arary(sv, result)) {
+  if (!str::parse_double_array(sv, result)) {
     PushError("Failed to parse double array with tiny-string");
     return false;
   }
@@ -3867,17 +3892,23 @@ bool AsciiParser::ParseIntArrayOptimized(std::vector<int32_t> *result) {
   
   int bracket_depth = 1;
   std::string array_str = "[";
-  
+
   while (bracket_depth > 0) {
     char c;
     if (!Char1(&c)) {
       PushError("Unexpected end of input while parsing int array");
       return false;
     }
-    
+
     array_str += c;
-    
-    if (c == '[') {
+
+    if (c == '#') {
+      // Skip comment to end of line
+      while (Char1(&c)) {
+        array_str += c;
+        if (c == '\n') break;
+      }
+    } else if (c == '[') {
       bracket_depth++;
     } else if (c == ']') {
       bracket_depth--;
@@ -3886,13 +3917,89 @@ bool AsciiParser::ParseIntArrayOptimized(std::vector<int32_t> *result) {
   
   // Use tiny-string optimized parsing
   tstring_view sv(array_str.c_str());
-  if (!str::parse_int_arary(sv, result)) {
+  if (!str::parse_int_array(sv, result)) {
     PushError("Failed to parse int array with tiny-string");
     return false;
   }
-  
+
   return true;
 }
+
+//
+// Optimized compound-type array parsing methods
+// These use zero-copy tstring_view into the input buffer + str::parse_*_array()
+//
+
+#define DEFINE_COMPOUND_ARRAY_OPTIMIZED(MethodName, TypeName, parse_func, err_msg) \
+bool AsciiParser::Parse##MethodName##ArrayOptimized(std::vector<value::TypeName> *result) { \
+  if (!result) { return false; } \
+  uint64_t start_loc = CurrLoc(); \
+  if (!Expect('[')) { return false; } \
+  int bracket_depth = 1; \
+  while (bracket_depth > 0) { \
+    char c; \
+    if (!Char1(&c)) { \
+      PushError("Unexpected end of input while parsing " err_msg " array"); \
+      return false; \
+    } \
+    if (c == '[') { bracket_depth++; } \
+    else if (c == ']') { bracket_depth--; } \
+  } \
+  uint64_t end_loc = CurrLoc(); \
+  const char *array_start = reinterpret_cast<const char *>(_sr->data() + start_loc); \
+  size_t array_len = static_cast<size_t>(end_loc - start_loc); \
+  tstring_view sv(array_start, array_len); \
+  if (!str::parse_func(sv, result)) { \
+    PushError("Failed to parse " err_msg " array with tiny-string"); \
+    return false; \
+  } \
+  return true; \
+}
+
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Float2, float2, parse_float2_array, "float2")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Float3, float3, parse_float3_array, "float3")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Float4, float4, parse_float4_array, "float4")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Double2, double2, parse_double2_array, "double2")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Double3, double3, parse_double3_array, "double3")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Double4, double4, parse_double4_array, "double4")
+
+#undef DEFINE_COMPOUND_ARRAY_OPTIMIZED
+
+// Matrix types: method name (Matrix2f) differs from value type (matrix2f)
+#define DEFINE_MATRIX_ARRAY_OPTIMIZED(MethodName, TypeName, parse_func, err_msg) \
+bool AsciiParser::Parse##MethodName##ArrayOptimized(std::vector<value::TypeName> *result) { \
+  if (!result) { return false; } \
+  uint64_t start_loc = CurrLoc(); \
+  if (!Expect('[')) { return false; } \
+  int bracket_depth = 1; \
+  while (bracket_depth > 0) { \
+    char c; \
+    if (!Char1(&c)) { \
+      PushError("Unexpected end of input while parsing " err_msg " array"); \
+      return false; \
+    } \
+    if (c == '[') { bracket_depth++; } \
+    else if (c == ']') { bracket_depth--; } \
+  } \
+  uint64_t end_loc = CurrLoc(); \
+  const char *array_start = reinterpret_cast<const char *>(_sr->data() + start_loc); \
+  size_t array_len = static_cast<size_t>(end_loc - start_loc); \
+  tstring_view sv(array_start, array_len); \
+  if (!str::parse_func(sv, result)) { \
+    PushError("Failed to parse " err_msg " array with tiny-string"); \
+    return false; \
+  } \
+  return true; \
+}
+
+DEFINE_MATRIX_ARRAY_OPTIMIZED(Matrix2f, matrix2f, parse_matrix2f_array, "matrix2f")
+DEFINE_MATRIX_ARRAY_OPTIMIZED(Matrix3f, matrix3f, parse_matrix3f_array, "matrix3f")
+DEFINE_MATRIX_ARRAY_OPTIMIZED(Matrix4f, matrix4f, parse_matrix4f_array, "matrix4f")
+DEFINE_MATRIX_ARRAY_OPTIMIZED(Matrix2d, matrix2d, parse_matrix2d_array, "matrix2d")
+DEFINE_MATRIX_ARRAY_OPTIMIZED(Matrix3d, matrix3d, parse_matrix3d_array, "matrix3d")
+DEFINE_MATRIX_ARRAY_OPTIMIZED(Matrix4d, matrix4d, parse_matrix4d_array, "matrix4d")
+
+#undef DEFINE_MATRIX_ARRAY_OPTIMIZED
 
 //
 // Template specializations for optimized parsing
@@ -3908,84 +4015,71 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<double> *result) {
   return ParseDoubleArrayOptimized(result);
 }
 
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::float2> *result) {
+  return ParseFloat2ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::float3> *result) {
+  return ParseFloat3ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::float4> *result) {
+  return ParseFloat4ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::double2> *result) {
+  return ParseDouble2ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::double3> *result) {
+  return ParseDouble3ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::double4> *result) {
+  return ParseDouble4ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2f> *result) {
+  return ParseMatrix2fArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3f> *result) {
+  return ParseMatrix3fArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4f> *result) {
+  return ParseMatrix4fArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2d> *result) {
+  return ParseMatrix2dArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3d> *result) {
+  return ParseMatrix3dArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result) {
+  return ParseMatrix4dArrayOptimized(result);
+}
+
 //
 // Explicit template instanciations
 //
 
-#if 0
-//template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<bool>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<int32_t>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::int2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint32_t>> *result);
-// char types (optional)
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<char>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::char2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::char3>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::char4>> *result);
-// uchar types (optional)
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint8_t>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::uchar2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::uchar3>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::uchar4>> *result);
-// short types (optional)
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<int16_t>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::short2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::short3>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::short4>> *result);
-// ushort types (optional)
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint16_t>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::ushort2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::ushort3>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::ushort4>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<int64_t>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint64_t>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::half>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::half2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::half3>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::half4>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<float>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::float2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::float3>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::float4>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<double>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::double2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::double3>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::double4>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord2h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord2f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord2d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord3h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord3f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord3d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::point3h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::point3f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::point3d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::normal3h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::normal3f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::normal3d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::vector3h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::vector3f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::vector3d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color3h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color3f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color3d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color4h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color4f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color4d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix2d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix3d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix4d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::frame4d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::token>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::StringData>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<std::string>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<Reference>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<Path>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::AssetPath>> *result);
-#endif
 
-#ifndef TINYUSDZ_BASETYPE_TYPEDARRAY_INST_ONLY
-// std::vector explicit instantiations
 template bool AsciiParser::ParseBasicTypeArray(std::vector<bool> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int2> *result);
@@ -4021,15 +4115,15 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half> *result)
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half4> *result);
-// Note: float and double arrays now use optimized implementations
+// Note: float, double, float2/3/4, double2/3/4 arrays now use optimized implementations
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<float> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float2> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float3> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float4> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float2> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float3> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float4> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<double> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double2> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double3> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double4> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double2> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double3> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double4> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord2h> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord2f> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord2d> *result);
@@ -4051,12 +4145,13 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color3d> *resu
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4h> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4f> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4d> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2f> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3f> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4f> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2d> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3d> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result);
+// Note: matrix arrays now use optimized implementations
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2f> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3f> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4f> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2d> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3d> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::frame4d> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quath> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatf> *result);
@@ -4067,12 +4162,10 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<std::string> *result)
 //template bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result);
 //template bool AsciiParser::ParseBasicTypeArray(std::vector<Path> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::AssetPath> *result);
-#endif  // TINYUSDZ_BASETYPE_TYPEDARRAY_INST_ONLY
 
-//
+// 
 // TypedArray template instantiations for memory optimization
 //
-#ifndef TINYUSDZ_BASETYPE_SKIP_TYPEDARRAY_INST
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<bool> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<int32_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::int2> *result);
@@ -4151,7 +4244,6 @@ template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::token> *result)
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::StringData> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<std::string> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::AssetPath> *result);
-#endif  // TINYUSDZ_BASETYPE_SKIP_TYPEDARRAY_INST
 
 
 }  // namespace ascii

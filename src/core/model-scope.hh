@@ -224,4 +224,16 @@ struct Scope : Collection, MaterialBinding {
   std::vector<value::token> _properties;
 };
 
+namespace value {
+
+#include "define-type-trait.inc"
+
+DEFINE_TYPE_TRAIT(Model, "Model", TYPE_ID_MODEL, 1);
+DEFINE_TYPE_TRAIT(Scope, "Scope", TYPE_ID_SCOPE, 1);
+
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
+
+}  // namespace value
+
 }  // namespace tinyusdz

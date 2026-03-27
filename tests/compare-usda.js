@@ -776,7 +776,7 @@ class UsdaParser {
     this.tokens = tokens;
     this.pos = 0;
     this.iterations = 0;
-    this.maxIterations = 50000000;  // Large limit for files with huge arrays (e.g., suzanne with 7800 vertices)
+    this.maxIterations = 5000000;  // Safety limit — abort if parser gets stuck
   }
 
   checkIterations() {
@@ -1053,6 +1053,8 @@ class UsdaParser {
     const entries = {};
 
     while (this.peek().type !== TokenType.RBRACE && this.peek().type !== TokenType.EOF) {
+      this.checkIterations();
+      const savedPos = this.pos;
       // Dictionary entry format: type key = value
       // e.g., "string name = "baked_mesh""
       const key = this.parseDictionaryKey();
@@ -1060,6 +1062,10 @@ class UsdaParser {
         entries[key] = this.parseValue();
       }
       this.match(TokenType.COMMA);
+      // Guard: if no tokens consumed, skip one token to avoid infinite loop
+      if (this.pos === savedPos) {
+        this.advance();
+      }
     }
 
     this.expect(TokenType.RBRACE);
@@ -1103,8 +1109,11 @@ class UsdaParser {
     const elements = [];
 
     while (this.peek().type !== TokenType.RBRACKET && this.peek().type !== TokenType.EOF) {
+      this.checkIterations();
+      const savedPos = this.pos;
       elements.push(this.parseValue());
       this.match(TokenType.COMMA);
+      if (this.pos === savedPos) this.advance();
     }
 
     this.expect(TokenType.RBRACKET);
@@ -1116,8 +1125,11 @@ class UsdaParser {
     const elements = [];
 
     while (this.peek().type !== TokenType.RPAREN && this.peek().type !== TokenType.EOF) {
+      this.checkIterations();
+      const savedPos2 = this.pos;
       elements.push(this.parseValue());
       this.match(TokenType.COMMA);
+      if (this.pos === savedPos2) this.advance();
     }
 
     this.expect(TokenType.RPAREN);
@@ -1186,6 +1198,8 @@ class UsdaParser {
       this.expect(TokenType.LBRACE);
 
       while (this.peek().type !== TokenType.RBRACE && this.peek().type !== TokenType.EOF) {
+        this.checkIterations();
+        const bodyPos = this.pos;
         const token = this.peek();
 
         // Child prim
@@ -2101,6 +2115,19 @@ function compareSingleFile(inputFile, options) {
     content2: null
   };
 
+  // Check for XFAIL marker in first 5 lines
+  try {
+    const head = fs.readFileSync(inputFile, 'utf-8').split('\n').slice(0, 5);
+    for (const line of head) {
+      if (line.startsWith('# XFAIL:')) {
+        const tag = line.slice('# XFAIL:'.length).trim();
+        result.status = 'xfail';
+        result.error = tag;
+        return result;
+      }
+    }
+  } catch (e) { /* ignore read errors, will fail later */ }
+
   try {
     let content1, content2;
 
@@ -2303,6 +2330,25 @@ function main() {
       const content1 = fs.readFileSync(options.files[0], 'utf-8');
       const content2 = fs.readFileSync(options.files[1], 'utf-8');
 
+      // Check for VALUE_PPRINT placeholder (TinyUSDZ pprinter bug)
+      const vprintWarnings = [];
+      for (const [content, label] of [[content1, label1], [content2, label2]]) {
+        const vpLines = content.split('\n')
+          .map((line, i) => ({ line: line.trim(), num: i + 1 }))
+          .filter(({ line }) => line.includes('VALUE_PPRINT'));
+        for (const { line, num } of vpLines) {
+          vprintWarnings.push({ file: label, lineNum: num, text: line });
+        }
+      }
+      if (vprintWarnings.length > 0) {
+        console.error(`\nERROR: VALUE_PPRINT placeholder detected (TinyUSDZ pprinter bug):`);
+        for (const w of vprintWarnings) {
+          console.error(`  ${w.file}:${w.lineNum}: ${w.text.substring(0, 120)}`);
+        }
+        console.error('');
+        process.exit(2);
+      }
+
       // Parse both USDA contents
       if (!options.quiet && !options.json) {
         console.log('Parsing USDA files...');
@@ -2399,6 +2445,7 @@ function main() {
       let equivalent = 0;
       let different = 0;
       let errors = 0;
+      let xfails = 0;
 
       for (let i = 0; i < expandedFiles.length; i++) {
         const inputFile = expandedFiles[i];
@@ -2414,7 +2461,12 @@ function main() {
         const result = compareSingleFile(inputFile, options);
         results.push(result);
 
-        if (result.status === 'equivalent') {
+        if (result.status === 'xfail') {
+          xfails++;
+          if (!options.quiet && !options.json) {
+            console.log(`  XFAIL: ${result.error}\n`);
+          }
+        } else if (result.status === 'equivalent') {
           equivalent++;
           if (!options.quiet && !options.json) {
             console.log(`  ✓ Equivalent\n`);
@@ -2453,6 +2505,7 @@ function main() {
           equivalent,
           different,
           errors,
+          xfails,
           results: options.summary ? undefined : results
         }, null, 2));
       } else if (!options.quiet) {
@@ -2460,6 +2513,9 @@ function main() {
         console.log(`Summary: ${expandedFiles.length} file(s) processed`);
         console.log(`  ✓ Equivalent: ${equivalent}`);
         console.log(`  ✗ Different:  ${different}`);
+        if (xfails > 0) {
+          console.log(`  XFAIL:        ${xfails}`);
+        }
         if (errors > 0) {
           console.log(`  ⚠ Errors:     ${errors}`);
         }

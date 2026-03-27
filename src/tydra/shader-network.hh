@@ -129,15 +129,6 @@ bool DirectBindingStrongerThanDescendants(
 /// @return true when bound Material Path is found.
 ///
 
-#if 0 // TODO
-bool GetBoundMaterial(
-  const Stage &stage,
-  const Prim &prim,
-  const std::string &purpose,
-  Path *materialPath, 
-  const Material **material,
-  std::string *err);
-#endif
 
 ///
 /// `Path` version of `GetBoundMaterial`

@@ -1,0 +1,14 @@
+#usda 1.0
+def "ListOps" (
+    prepend references = @./ref1.usda@</Ref1>
+    append references = @./ref2.usda@</Ref2>
+    delete references = @./ref3.usda@</Ref3>
+)
+{
+}
+
+def "ExplicitListOp" (
+    references = @./only_ref.usda@</OnlyRef>
+)
+{
+}

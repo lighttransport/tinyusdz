@@ -51,66 +51,22 @@ inline float CalculateWeightError(const std::vector<float> &original,
   return std::sqrt(error);
 }
 
-// Find root bone by traversing up the hierarchy
-inline int FindRootBone(int bone_idx, const std::vector<int> &parent_indices) {
-  int current = bone_idx;
-  int max_iterations = static_cast<int>(parent_indices.size()) + 1;
-  int iterations = 0;
-
-  while (current >= 0 && current < static_cast<int>(parent_indices.size())) {
-    if (parent_indices[static_cast<size_t>(current)] < 0) {
-      return current;  // Found root
-    }
-    current = parent_indices[static_cast<size_t>(current)];
-
-    // Safety check against cycles
-    iterations++;
-    if (iterations > max_iterations) {
-      return -1;  // Cycle detected
+// Compute an affinity bonus for a candidate bone based on chain distance
+// to already-selected bones.  Closer bones in the hierarchy get a higher bonus.
+inline float ComputeAffinityBonus(int candidate_joint,
+                                   const std::vector<BoneInfluence> &selected,
+                                   const std::vector<int> &parent_indices) {
+  float best_bonus = 0.0f;
+  for (const auto &sel : selected) {
+    int dist = FindBoneChainDistance(candidate_joint, sel.joint_index, parent_indices);
+    if (dist >= 0) {
+      // Inverse distance bonus: adjacent bones (dist==1) get 1.0, dist==2 gets 0.5, etc.
+      float bonus = 1.0f / static_cast<float>(dist + 1);
+      best_bonus = std::max(best_bonus, bonus);
     }
   }
-  return current;
+  return best_bonus;
 }
-
-// Assign chain groups to bones (bones in same chain get same group ID)
-// Currently unused, but kept for future hierarchical reduction enhancements
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunused-function"
-#elif defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-function"
-#endif
-static void AssignChainGroups(const std::vector<int> &bone_indices,
-                       const std::vector<int> &parent_indices,
-                       std::vector<int> &out_chain_groups) {
-  out_chain_groups.resize(bone_indices.size(), -1);
-
-  std::unordered_map<int, int> root_to_group;
-  int next_group_id = 0;
-
-  for (size_t i = 0; i < bone_indices.size(); i++) {
-    int bone_idx = bone_indices[i];
-    if (bone_idx < 0 || bone_idx >= static_cast<int>(parent_indices.size())) {
-      continue;
-    }
-
-    int root = FindRootBone(bone_idx, parent_indices);
-    if (root < 0) {
-      continue;
-    }
-
-    if (root_to_group.find(root) == root_to_group.end()) {
-      root_to_group[root] = next_group_id++;
-    }
-    out_chain_groups[i] = root_to_group[root];
-  }
-}
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#elif defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
 
 }  // namespace
 
@@ -318,27 +274,41 @@ bool ReduceHierarchical(const std::vector<BoneInfluence> &influences, uint32_t t
   // Always include the strongest bone
   out_selected.push_back(sorted[0]);
 
-  // For remaining slots, prefer bones in same chain as already selected bones
-  for (uint32_t i = 1; i < sorted.size() && out_selected.size() < target_count; i++) {
-    const BoneInfluence &candidate = sorted[i];
+  if (target_count == 1 || sorted.size() <= 1) {
+    return true;
+  }
 
-    // Calculate affinity score: higher if close to already selected bones
-    // Note: Currently unused but kept for potential future use
-    (void)candidate;  // Suppress unused warning
-    (void)out_selected;  // Suppress unused warning
-    for (const auto &selected : out_selected) {
-      int dist = FindBoneChainDistance(candidate.joint_index, selected.joint_index,
-                                       parent_indices);
-      if (dist >= 0) {
-        // Closer bones get higher score (calculation done but not used in current implementation)
-      } else {
-        // Not in same chain, small penalty
-      }
+  // For remaining slots, score candidates by weight * affinity_bonus.
+  // This prefers bones that are both heavy AND close in the hierarchy.
+  struct ScoredCandidate {
+    size_t index;  // index into sorted[]
+    float score;
+  };
+
+  std::vector<ScoredCandidate> candidates;
+  candidates.reserve(sorted.size() - 1);
+
+  for (size_t i = 1; i < sorted.size(); i++) {
+    float affinity = ComputeAffinityBonus(sorted[i].joint_index, out_selected, parent_indices);
+    // Blend weight with affinity: weight is primary, affinity provides a bonus up to 50%
+    float score = sorted[i].weight * (1.0f + 0.5f * affinity);
+    candidates.push_back({i, score});
+  }
+
+  // Greedily pick best candidate, recompute affinities as selection grows
+  while (out_selected.size() < target_count && !candidates.empty()) {
+    // Find best candidate
+    auto best_it = std::max_element(candidates.begin(), candidates.end(),
+        [](const ScoredCandidate &a, const ScoredCandidate &b) { return a.score < b.score; });
+
+    out_selected.push_back(sorted[best_it->index]);
+    candidates.erase(best_it);
+
+    // Recompute scores with updated selection set
+    for (auto &c : candidates) {
+      float affinity = ComputeAffinityBonus(sorted[c.index].joint_index, out_selected, parent_indices);
+      c.score = sorted[c.index].weight * (1.0f + 0.5f * affinity);
     }
-
-    // For now, just use weight as primary criteria with affinity as tiebreaker
-    // In practice, this preserves bone chains while respecting weights
-    out_selected.push_back(candidate);
   }
 
   return true;
@@ -366,14 +336,21 @@ bool ReduceErrorMetric(const std::vector<BoneInfluence> &influences, uint32_t ta
   float captured_weight = 0.0f;
   float target_weight = total_weight * (1.0f - error_tolerance * 0.1f);  // Keep 90%+ of weight
 
-  for (uint32_t i = 0; i < sorted.size() && out_selected.size() < target_count; i++) {
-    out_selected.push_back(sorted[i]);
-    captured_weight += sorted[i].weight;
+  uint32_t next_idx = 0;
+  for (; next_idx < uint32_t(sorted.size()) && out_selected.size() < target_count; next_idx++) {
+    out_selected.push_back(sorted[next_idx]);
+    captured_weight += sorted[next_idx].weight;
 
-    // If we've captured enough weight and met minimum count, can stop
-    if (captured_weight >= target_weight && out_selected.size() >= target_count / 2) {
+    // If we've captured enough weight, stop the weight-driven loop
+    if (captured_weight >= target_weight) {
+      next_idx++;
       break;
     }
+  }
+
+  // Fill remaining slots up to target_count with next-heaviest bones
+  for (; next_idx < uint32_t(sorted.size()) && out_selected.size() < target_count; next_idx++) {
+    out_selected.push_back(sorted[next_idx]);
   }
 
   // Ensure we have at least one bone

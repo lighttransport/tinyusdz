@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+import { RGBELoader as HDRLoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 
 import { LoaderUtils } from "three"
@@ -145,7 +145,7 @@ class TextureLoadingManager {
                     material[mapProperty] = texture;
 
                     // Apply special options (e.g., normal map scale)
-                    if (taskOptions.normalScale && mapProperty === 'normalMap' && material.normalScale) {
+                    if (taskOptions.normalScale !== undefined && mapProperty === 'normalMap' && material.normalScale) {
                         material.normalScale.set(taskOptions.normalScale, taskOptions.normalScale);
                     }
 
@@ -280,23 +280,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         return TinyUSDZLoaderUtils._tinyusdz;
     }
 
-    static async getDataFromURI(uri) {
-        try {
-            const response = await fetch(url);
-            if (!response.ok) {
-                return [null, new Error(`Response status: ${response.status}`)];
-            }
-
-            const buf = await response.arrayBuiffer();
-            const data = new Uint8Array(buf);
-
-            return [data, null];
-
-        } catch (error) {
-            return [null, error];
-        }
-    }
-
     // Extract file extension from URI/path
     static getFileExtension(uri) {
         if (!uri || typeof uri !== 'string') return '';
@@ -395,7 +378,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         const tex = usdScene.getTexture(textureId);
 
         const texImage = usdScene.getImage(tex.textureImageId);
-        //console.log("Loading texture from URI:", texImage);
 
         // there are 3 states for texture:
         // 1. URI only. Need to fetch texture(file) from URI in JS layer.
@@ -418,10 +400,8 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             }
 
         } else if (texImage.bufferId >= 0 && texImage.data) {
-            //console.log("case 2 or 3");
 
             if (texImage.decoded) {
-                //console.log("case 3");
 
                 const image8Array = new Uint8ClampedArray(texImage.data);
                 const texture = new THREE.DataTexture(image8Array, texImage.width, texImage.height);
@@ -500,7 +480,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             }
 
         } else {
-            //console.log("case 3");
             return Promise.reject(new Error("Invalid USD texture info"));
         }
     }
@@ -672,7 +651,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
     // Usage:
     //   const materialData = usdScene.getMaterial(materialId, 'json');
     //   const typeInfo = TinyUSDZLoaderUtils.getMaterialType(materialData);
-    //   console.log(`Material has OpenPBR: ${typeInfo.hasOpenPBR}, UsdPreviewSurface: ${typeInfo.hasUsdPreviewSurface}`);
     //
     static getMaterialType(materialData) {
         // Parse JSON if needed
@@ -871,7 +849,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         // Log material type selection for debugging
         if (typeInfo.hasBoth) {
-            //console.log(`Material has both OpenPBR and UsdPreviewSurface. Using: ${useOpenPBR ? 'OpenPBR' : 'UsdPreviewSurface'} (preferred: ${preferredType})`);
         }
 
         // Convert using selected material type
@@ -890,40 +867,79 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
     static convertUsdMeshToThreeMesh(mesh) {
         const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.BufferAttribute(mesh.points, 3));
+        // IMPORTANT: Copy all typed arrays from WASM heap into JS-owned buffers.
+        // The C++ TinyUSDZLoaderNative object is explicitly deleted via .delete()
+        // at the end of processUSDScene to free WASM heap memory. After deletion,
+        // typed_memory_view references into render_scene_ become stale (data freed
+        // by C++ destructor, overwritten by allocator bookkeeping).
+
+        // Validate WASM buffer health before copying.
+        // Emscripten typed_memory_view returns TypedArrays sharing the WASM
+        // heap's ArrayBuffer. If memory.grow() is called (heap resize), ALL
+        // existing views' backing buffer is detached (byteLength becomes 0).
+        // Detect this and re-fetch the mesh from WASM if needed.
+        const meshName = mesh.primName || mesh.absPath || '(unknown)';
+        if (mesh.points && mesh.points.buffer && mesh.points.buffer.byteLength === 0) {
+          console.error(`[WASM] DETACHED buffer for mesh "${meshName}" points! WASM heap likely grew.`);
+        }
+        if (mesh.faceVertexIndices && mesh.faceVertexIndices.buffer && mesh.faceVertexIndices.buffer.byteLength === 0) {
+          console.error(`[WASM] DETACHED buffer for mesh "${meshName}" faceVertexIndices! WASM heap likely grew.`);
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(mesh.points), 3));
 
         if (Object.prototype.hasOwnProperty.call(mesh, 'faceVertexIndices')) {
           if (mesh.faceVertexIndices.length >0 ) {
-            //console.log("setIndex", mesh.faceVertexIndices.length);
-            // Assume mesh is triangulated.
-            // itemsize = 1 since Index expects IntArray for VertexIndices in Three.js?
-            geometry.setIndex(new THREE.BufferAttribute(mesh.faceVertexIndices, 1));
-          } else {
-            //console.log("noindex");
+            const indices = new Uint32Array(mesh.faceVertexIndices);
+            // Validate: check for out-of-range indices (common corruption indicator)
+            const numVertices = mesh.points.length / 3;
+            let maxIdx = 0, oobCount = 0, zeroIdxCount = 0;
+            for (let i = 0; i < indices.length; i++) {
+              if (indices[i] >= numVertices) oobCount++;
+              if (indices[i] === 0) zeroIdxCount++;
+              if (indices[i] > maxIdx) maxIdx = indices[i];
+            }
+            if (oobCount > 0) {
+              console.error(`[MESH] "${meshName}": ${oobCount}/${indices.length} indices OUT OF RANGE (max idx=${maxIdx}, numVerts=${numVertices})`);
+            }
+            // High zero-index ratio can indicate corrupted/zeroed-out index data
+            const zeroRatio = zeroIdxCount / indices.length;
+            if (zeroRatio > 0.3 && indices.length > 100) {
+              console.warn(`[MESH] "${meshName}": ${(zeroRatio*100).toFixed(1)}% of indices are 0 (${zeroIdxCount}/${indices.length}) — possible data corruption`);
+            }
+            geometry.setIndex(new THREE.BufferAttribute(indices, 1));
           }
         }
 
         if (Object.prototype.hasOwnProperty.call(mesh, 'texcoords')) {
-            geometry.setAttribute('uv', new THREE.BufferAttribute(mesh.texcoords, 2));
+            geometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(mesh.texcoords), 2));
         }
 
         // TODO: uv1
 
-        // faceVarying normals
+        // faceVarying normals — SNorm8/SNorm16 (normalized int) or Float32
         if (Object.prototype.hasOwnProperty.call(mesh, 'normals')) {
-            geometry.setAttribute('normal', new THREE.BufferAttribute(mesh.normals, 3));
+            if (mesh.normalsFormat === 'snorm8') {
+                geometry.setAttribute('normal',
+                    new THREE.BufferAttribute(new Int8Array(mesh.normals), 3, true));
+            } else if (mesh.normalsFormat === 'snorm16') {
+                geometry.setAttribute('normal',
+                    new THREE.BufferAttribute(new Int16Array(mesh.normals), 3, true));
+            } else {
+                geometry.setAttribute('normal',
+                    new THREE.BufferAttribute(new Float32Array(mesh.normals), 3));
+            }
         } else {
             geometry.computeVertexNormals();
         }
 
         if (Object.prototype.hasOwnProperty.call(mesh, 'vertexColors')) {
-            geometry.setAttribute('color', new THREE.BufferAttribute(mesh.vertexColors, 3));
-
+            geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(mesh.vertexColors), 3));
         }
 
         // Only compute tangents if we have both UV coordinates and normals
         if (Object.prototype.hasOwnProperty.call(mesh, 'tangents')) {
-            geometry.setAttribute('tangent', new THREE.BufferAttribute(mesh.tangents, 3));
+            geometry.setAttribute('tangent', new THREE.BufferAttribute(new Float32Array(mesh.tangents), 4));
         } else if (Object.prototype.hasOwnProperty.call(mesh, 'texcoords') && (Object.prototype.hasOwnProperty.call(mesh, 'normals') || geometry.attributes.normal)) {
             // TODO: try MikTSpace tangent algorithm: https://threejs.org/docs/#examples/en/utils/BufferGeometryUtils.computeMikkTSpaceTangents 
             geometry.computeTangents();
@@ -935,15 +951,12 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         // Store doubleSided param to customData
         if (Object.prototype.hasOwnProperty.call(mesh, 'doubleSided')) {
           geometry.userData['doubleSided'] = mesh.doubleSided;
-          //console.log(`USD Mesh doubleSided attribute: ${mesh.doubleSided}`);
         } else {
-          //console.log('USD Mesh has no doubleSided attribute (will default to FrontSide)');
         }
 
         // Store submesh data for multi-material support (pre-computed in C++)
         if (Object.prototype.hasOwnProperty.call(mesh, 'submeshes') && mesh.submeshes.length > 0) {
           geometry.userData['submeshes'] = mesh.submeshes;
-          //console.log(`USD Mesh has ${mesh.submeshes.length} pre-computed submesh group(s)`);
         }
 
         return geometry;
@@ -957,7 +970,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         let mtl = null;
 
-        //console.log("overrideMaterial:", options.overrideMaterial);
         if (options.overrideMaterial) {
             mtl = defaultMtl || normalMtl
         } else {
@@ -983,7 +995,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 }
             }
 
-            //console.log(`Mesh materialId: ${mesh.materialId}, hasMaterial: ${hasMaterial}, usdMaterial: ${usdMaterialData ? 'valid' : 'null'}`);
 
             let pbrMaterial;
             if (usdMaterialData) {
@@ -1014,20 +1025,16 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             pbrMaterial.envMap = options.envMap || null;
             pbrMaterial.envMapIntensity = options.envMapIntensity || 1.0;
 
-            //console.log("envmap:", options.envMap);
 
             // Sideness is determined by the mesh's USD doubleSided attribute
             if (Object.prototype.hasOwnProperty.call(geometry.userData, 'doubleSided')) {
               if (geometry.userData.doubleSided) {
-                //console.log(`  Setting material to DoubleSide (from USD doubleSided=true)`);
                 pbrMaterial.side = THREE.DoubleSide;
               } else {
-                //console.log(`  Setting material to FrontSide (from USD doubleSided=false)`);
                 pbrMaterial.side = THREE.FrontSide;
               }
             } else {
               // No doubleSided attribute in USD - default to FrontSide
-              //console.log(`  Setting material to FrontSide (no USD doubleSided attribute)`);
               pbrMaterial.side = THREE.FrontSide;
             }
 
@@ -1037,7 +1044,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         // Handle GeomSubsets (per-face materials)
         if (geometry.userData['submeshes'] && geometry.userData['submeshes'].length > 0) {
             const submeshes = geometry.userData['submeshes'];
-            //console.log(`Setting up multi-material mesh with ${submeshes.length} pre-computed submesh groups`);
 
             // Build materials array indexed by materialId
             const materials = [];
@@ -1078,7 +1084,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                     material.userData.typeString = this.getMaterialTypeString(materialData);
 
                     materials[matIndex] = material;
-                    //console.log(`  Loaded material ${matId} -> index ${matIndex}`);
                 } else {
                     materials[matIndex] = mtl; // Use default material
                 }
@@ -1090,7 +1095,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 geometry.addGroup(submesh.start, submesh.count, matIndex);
             }
 
-            //console.log(`  Created ${submeshes.length} geometry groups for ${materials.length} unique materials (pre-computed in WASM)`);
 
             // Create mesh with multi-material array
             const threeMesh = new THREE.Mesh(geometry, materials);
@@ -1192,7 +1196,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         var node = new THREE.Group();
 
-        //console.log("usdNode.nodeType:", usdNode.nodeType, "primName:", usdNode.primName, "absPath:", usdNode.absPath);
         if (usdNode.nodeType == 'xform') {
 
             // intermediate xform node
@@ -1202,6 +1205,26 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             // Decompose the matrix into position, rotation, and scale
             // This is necessary for Three.js to properly handle the transform
             node.applyMatrix4(matrix);
+
+        } else if (usdNode.nodeType == 'skelroot') {
+
+            // UsdSkelRoot: encapsulation prim for skinned subtree.
+            // Its world transform (skelLocalToWorld) positions skinned results in world space.
+            // Treated as a group node with transform in Three.js.
+            if (usdNode.localMatrix) {
+                const matrix = this.toMatrix4(usdNode.localMatrix);
+                node.applyMatrix4(matrix);
+            }
+
+        } else if (usdNode.nodeType == 'skeleton') {
+
+            // UsdSkeleton: joint hierarchy prim.
+            // Its transform contributes to skelLocalToWorld.
+            // Treated as a group node with transform in Three.js.
+            if (usdNode.localMatrix) {
+                const matrix = this.toMatrix4(usdNode.localMatrix);
+                node.applyMatrix4(matrix);
+            }
 
         } else if (usdNode.nodeType == 'mesh') {
 
@@ -1248,6 +1271,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         node.name = usdNode.primName;
         node.userData['primMeta.displayName'] = usdNode.displayName;
         node.userData['primMeta.absPath'] = usdNode.absPath;
+        if (usdNode.nodeCategory) node.userData['nodeCategory'] = usdNode.nodeCategory;
+        if (usdNode.nodeType) node.userData['nodeType'] = usdNode.nodeType;
+        if (usdNode.contentId !== undefined) node.userData['contentId'] = usdNode.contentId;
 
         // Update progress after processing this node
         if (options._progressState) {
@@ -1852,18 +1878,35 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             if (result) return result;
         }
 
+        // Check for Blender-convention constant-color filename (color_RRGGBB.exr)
+        // before attempting a network fetch that will fail for embedded USDZ assets
+        if (textureFile) {
+            const colorMatch = textureFile.match(/color_([0-9A-Fa-f]{6})\.\w+$/);
+            if (colorMatch) {
+                const hex = '#' + colorMatch[1];
+                const envMap = this.createConstantColorEnvironment(hex, 'linear', pmremGenerator);
+                const intensity = this.calculateDomeLightIntensity(light);
+                console.log(`DomeLight: Using constant color ${hex} from filename '${textureFile}'`);
+                return {
+                    texture: envMap,
+                    intensity,
+                    colorHex: hex,
+                    name: light.name,
+                    textureFile,
+                    color: light.color,
+                    exposure: light.exposure
+                };
+            }
+        }
+
         // Fallback: direct file load
         if (textureFile) {
             const result = await this.loadDomeLightFromFile(light, textureFile, pmremGenerator);
             if (result) return result;
         }
 
-        // Final fallback: constant color
-        if (!textureFile && (envmapTextureId === undefined || envmapTextureId < 0)) {
-            return this.loadDomeLightAsConstantColor(light, pmremGenerator);
-        }
-
-        return null;
+        // Final fallback: constant color from light.color
+        return this.loadDomeLightAsConstantColor(light, pmremGenerator);
     }
 
     /**

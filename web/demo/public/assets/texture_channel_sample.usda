@@ -1,0 +1,470 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    # =========================================================================
+    # Material 1: Channel Extraction (R->roughness, G->metallic, B->color mix)
+    # =========================================================================
+    def Sphere "Sphere_ChannelExtraction" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </World/Materials/ChannelExtraction>
+        double3 xformOp:translate = (-3, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        double radius = 0.8
+    }
+
+    # =========================================================================
+    # Material 2: Channel Swizzle (RGB -> BGR)
+    # =========================================================================
+    def Sphere "Sphere_Swizzle" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </World/Materials/ChannelSwizzle>
+        double3 xformOp:translate = (-1.5, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        double radius = 0.8
+    }
+
+    # =========================================================================
+    # Material 3: Grayscale from R channel
+    # =========================================================================
+    def Sphere "Sphere_Grayscale" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </World/Materials/GrayscaleFromR>
+        double3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        double radius = 0.8
+    }
+
+    # =========================================================================
+    # Material 4: Single Channel Modification (invert G)
+    # =========================================================================
+    def Sphere "Sphere_SingleMod" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </World/Materials/SingleChannelMod>
+        double3 xformOp:translate = (1.5, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        double radius = 0.8
+    }
+
+    # =========================================================================
+    # Material 5: Mask-based Blending
+    # =========================================================================
+    def Sphere "Sphere_MaskBlend" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </World/Materials/MaskBlend>
+        double3 xformOp:translate = (3, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        double radius = 0.8
+    }
+
+    # =========================================================================
+    # Materials Scope
+    # =========================================================================
+    def Scope "Materials"
+    {
+        # ---------------------------------------------------------------------
+        # Material 1: Channel Extraction
+        # Demonstrates extracting RGB channels for different material properties
+        # R -> roughness, G -> metalness, B -> mix factor for color
+        # ---------------------------------------------------------------------
+        def Material "ChannelExtraction"
+        {
+            token outputs:mtlx:surface.connect = </World/Materials/ChannelExtraction/mtlx_surface.outputs:out>
+
+            def Shader "mtlx_surface"
+            {
+                uniform token info:id = "ND_standard_surface_surfaceshader"
+                color3f inputs:base_color.connect = </World/Materials/ChannelExtraction/NG_extraction/mix_color.outputs:out>
+                float inputs:base = 1.0
+                float inputs:metalness.connect = </World/Materials/ChannelExtraction/NG_extraction/extract_g.outputs:out>
+                float inputs:specular_roughness.connect = </World/Materials/ChannelExtraction/NG_extraction/extract_r.outputs:out>
+                token outputs:out
+            }
+
+            def NodeGraph "NG_extraction"
+            {
+                def Shader "texcoord"
+                {
+                    uniform token info:id = "ND_texcoord_vector2"
+                    int inputs:index = 0
+                    vector2f outputs:out
+                }
+
+                def Shader "image_rgb"
+                {
+                    uniform token info:id = "ND_image_color3"
+                    asset inputs:file = @textures/channel_test_rgb.png@
+                    vector2f inputs:texcoord.connect = </World/Materials/ChannelExtraction/NG_extraction/texcoord.outputs:out>
+                    color3f outputs:out
+                }
+
+                def Shader "extract_r"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </World/Materials/ChannelExtraction/NG_extraction/image_rgb.outputs:out>
+                    int inputs:index = 0
+                    float outputs:out
+                }
+
+                def Shader "extract_g"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </World/Materials/ChannelExtraction/NG_extraction/image_rgb.outputs:out>
+                    int inputs:index = 1
+                    float outputs:out
+                }
+
+                def Shader "extract_b"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </World/Materials/ChannelExtraction/NG_extraction/image_rgb.outputs:out>
+                    int inputs:index = 2
+                    float outputs:out
+                }
+
+                def Shader "color1"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (0.8, 0.4, 0.2)
+                    color3f outputs:out
+                }
+
+                def Shader "color2"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (0.2, 0.5, 0.9)
+                    color3f outputs:out
+                }
+
+                def Shader "mix_color"
+                {
+                    uniform token info:id = "ND_mix_color3"
+                    color3f inputs:bg.connect = </World/Materials/ChannelExtraction/NG_extraction/color1.outputs:out>
+                    color3f inputs:fg.connect = </World/Materials/ChannelExtraction/NG_extraction/color2.outputs:out>
+                    float inputs:mix.connect = </World/Materials/ChannelExtraction/NG_extraction/extract_b.outputs:out>
+                    color3f outputs:out
+                }
+            }
+        }
+
+        # ---------------------------------------------------------------------
+        # Material 2: Channel Swizzle (RGB -> BGR)
+        # ---------------------------------------------------------------------
+        def Material "ChannelSwizzle"
+        {
+            token outputs:mtlx:surface.connect = </World/Materials/ChannelSwizzle/mtlx_surface.outputs:out>
+
+            def Shader "mtlx_surface"
+            {
+                uniform token info:id = "ND_standard_surface_surfaceshader"
+                color3f inputs:base_color.connect = </World/Materials/ChannelSwizzle/NG_swizzle/combine_bgr.outputs:out>
+                float inputs:base = 1.0
+                float inputs:specular_roughness = 0.4
+                token outputs:out
+            }
+
+            def NodeGraph "NG_swizzle"
+            {
+                def Shader "texcoord"
+                {
+                    uniform token info:id = "ND_texcoord_vector2"
+                    int inputs:index = 0
+                    vector2f outputs:out
+                }
+
+                def Shader "image_rgb"
+                {
+                    uniform token info:id = "ND_image_color3"
+                    asset inputs:file = @textures/channel_test_rgb.png@
+                    vector2f inputs:texcoord.connect = </World/Materials/ChannelSwizzle/NG_swizzle/texcoord.outputs:out>
+                    color3f outputs:out
+                }
+
+                def Shader "extract_r"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </World/Materials/ChannelSwizzle/NG_swizzle/image_rgb.outputs:out>
+                    int inputs:index = 0
+                    float outputs:out
+                }
+
+                def Shader "extract_g"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </World/Materials/ChannelSwizzle/NG_swizzle/image_rgb.outputs:out>
+                    int inputs:index = 1
+                    float outputs:out
+                }
+
+                def Shader "extract_b"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </World/Materials/ChannelSwizzle/NG_swizzle/image_rgb.outputs:out>
+                    int inputs:index = 2
+                    float outputs:out
+                }
+
+                def Shader "combine_bgr"
+                {
+                    uniform token info:id = "ND_combine3_color3"
+                    float inputs:in1.connect = </World/Materials/ChannelSwizzle/NG_swizzle/extract_b.outputs:out>
+                    float inputs:in2.connect = </World/Materials/ChannelSwizzle/NG_swizzle/extract_g.outputs:out>
+                    float inputs:in3.connect = </World/Materials/ChannelSwizzle/NG_swizzle/extract_r.outputs:out>
+                    color3f outputs:out
+                }
+            }
+        }
+
+        # ---------------------------------------------------------------------
+        # Material 3: Grayscale from R channel
+        # ---------------------------------------------------------------------
+        def Material "GrayscaleFromR"
+        {
+            token outputs:mtlx:surface.connect = </World/Materials/GrayscaleFromR/mtlx_surface.outputs:out>
+
+            def Shader "mtlx_surface"
+            {
+                uniform token info:id = "ND_standard_surface_surfaceshader"
+                color3f inputs:base_color.connect = </World/Materials/GrayscaleFromR/NG_grayscale/combine_rrr.outputs:out>
+                float inputs:base = 1.0
+                float inputs:specular_roughness = 0.5
+                token outputs:out
+            }
+
+            def NodeGraph "NG_grayscale"
+            {
+                def Shader "texcoord"
+                {
+                    uniform token info:id = "ND_texcoord_vector2"
+                    int inputs:index = 0
+                    vector2f outputs:out
+                }
+
+                def Shader "image_rgb"
+                {
+                    uniform token info:id = "ND_image_color3"
+                    asset inputs:file = @textures/channel_test_rgb.png@
+                    vector2f inputs:texcoord.connect = </World/Materials/GrayscaleFromR/NG_grayscale/texcoord.outputs:out>
+                    color3f outputs:out
+                }
+
+                def Shader "extract_r"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </World/Materials/GrayscaleFromR/NG_grayscale/image_rgb.outputs:out>
+                    int inputs:index = 0
+                    float outputs:out
+                }
+
+                def Shader "combine_rrr"
+                {
+                    uniform token info:id = "ND_combine3_color3"
+                    float inputs:in1.connect = </World/Materials/GrayscaleFromR/NG_grayscale/extract_r.outputs:out>
+                    float inputs:in2.connect = </World/Materials/GrayscaleFromR/NG_grayscale/extract_r.outputs:out>
+                    float inputs:in3.connect = </World/Materials/GrayscaleFromR/NG_grayscale/extract_r.outputs:out>
+                    color3f outputs:out
+                }
+            }
+        }
+
+        # ---------------------------------------------------------------------
+        # Material 4: Single Channel Modification (invert G only)
+        # ---------------------------------------------------------------------
+        def Material "SingleChannelMod"
+        {
+            token outputs:mtlx:surface.connect = </World/Materials/SingleChannelMod/mtlx_surface.outputs:out>
+
+            def Shader "mtlx_surface"
+            {
+                uniform token info:id = "ND_standard_surface_surfaceshader"
+                color3f inputs:base_color.connect = </World/Materials/SingleChannelMod/NG_single_mod/combine_modified.outputs:out>
+                float inputs:base = 1.0
+                float inputs:specular_roughness = 0.3
+                token outputs:out
+            }
+
+            def NodeGraph "NG_single_mod"
+            {
+                def Shader "texcoord"
+                {
+                    uniform token info:id = "ND_texcoord_vector2"
+                    int inputs:index = 0
+                    vector2f outputs:out
+                }
+
+                def Shader "image_rgb"
+                {
+                    uniform token info:id = "ND_image_color3"
+                    asset inputs:file = @textures/channel_test_rgb.png@
+                    vector2f inputs:texcoord.connect = </World/Materials/SingleChannelMod/NG_single_mod/texcoord.outputs:out>
+                    color3f outputs:out
+                }
+
+                def Shader "extract_r"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </World/Materials/SingleChannelMod/NG_single_mod/image_rgb.outputs:out>
+                    int inputs:index = 0
+                    float outputs:out
+                }
+
+                def Shader "extract_g"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </World/Materials/SingleChannelMod/NG_single_mod/image_rgb.outputs:out>
+                    int inputs:index = 1
+                    float outputs:out
+                }
+
+                def Shader "extract_b"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </World/Materials/SingleChannelMod/NG_single_mod/image_rgb.outputs:out>
+                    int inputs:index = 2
+                    float outputs:out
+                }
+
+                def Shader "const_one"
+                {
+                    uniform token info:id = "ND_constant_float"
+                    float inputs:value = 1.0
+                    float outputs:out
+                }
+
+                def Shader "invert_g"
+                {
+                    uniform token info:id = "ND_subtract_float"
+                    float inputs:in1.connect = </World/Materials/SingleChannelMod/NG_single_mod/const_one.outputs:out>
+                    float inputs:in2.connect = </World/Materials/SingleChannelMod/NG_single_mod/extract_g.outputs:out>
+                    float outputs:out
+                }
+
+                def Shader "combine_modified"
+                {
+                    uniform token info:id = "ND_combine3_color3"
+                    float inputs:in1.connect = </World/Materials/SingleChannelMod/NG_single_mod/extract_r.outputs:out>
+                    float inputs:in2.connect = </World/Materials/SingleChannelMod/NG_single_mod/invert_g.outputs:out>
+                    float inputs:in3.connect = </World/Materials/SingleChannelMod/NG_single_mod/extract_b.outputs:out>
+                    color3f outputs:out
+                }
+            }
+        }
+
+        # ---------------------------------------------------------------------
+        # Material 5: Mask-based Blending
+        # Uses mask texture channels to control blending
+        # R (checkerboard) -> mix red/green, G (stripes) -> mix with texture
+        # B (smooth) -> roughness
+        # ---------------------------------------------------------------------
+        def Material "MaskBlend"
+        {
+            token outputs:mtlx:surface.connect = </World/Materials/MaskBlend/mtlx_surface.outputs:out>
+
+            def Shader "mtlx_surface"
+            {
+                uniform token info:id = "ND_standard_surface_surfaceshader"
+                color3f inputs:base_color.connect = </World/Materials/MaskBlend/NG_mask_blend/final_mix.outputs:out>
+                float inputs:base = 1.0
+                float inputs:specular_roughness.connect = </World/Materials/MaskBlend/NG_mask_blend/extract_mask_b.outputs:out>
+                token outputs:out
+            }
+
+            def NodeGraph "NG_mask_blend"
+            {
+                def Shader "texcoord"
+                {
+                    uniform token info:id = "ND_texcoord_vector2"
+                    int inputs:index = 0
+                    vector2f outputs:out
+                }
+
+                def Shader "image_color"
+                {
+                    uniform token info:id = "ND_image_color3"
+                    asset inputs:file = @textures/channel_test_rgb.png@
+                    vector2f inputs:texcoord.connect = </World/Materials/MaskBlend/NG_mask_blend/texcoord.outputs:out>
+                    color3f outputs:out
+                }
+
+                def Shader "image_mask"
+                {
+                    uniform token info:id = "ND_image_color3"
+                    asset inputs:file = @textures/channel_mask.png@
+                    vector2f inputs:texcoord.connect = </World/Materials/MaskBlend/NG_mask_blend/texcoord.outputs:out>
+                    color3f outputs:out
+                }
+
+                def Shader "extract_mask_r"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </World/Materials/MaskBlend/NG_mask_blend/image_mask.outputs:out>
+                    int inputs:index = 0
+                    float outputs:out
+                }
+
+                def Shader "extract_mask_g"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </World/Materials/MaskBlend/NG_mask_blend/image_mask.outputs:out>
+                    int inputs:index = 1
+                    float outputs:out
+                }
+
+                def Shader "extract_mask_b"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </World/Materials/MaskBlend/NG_mask_blend/image_mask.outputs:out>
+                    int inputs:index = 2
+                    float outputs:out
+                }
+
+                def Shader "color_red"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (1.0, 0.2, 0.2)
+                    color3f outputs:out
+                }
+
+                def Shader "color_green"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (0.2, 1.0, 0.2)
+                    color3f outputs:out
+                }
+
+                def Shader "mix1"
+                {
+                    uniform token info:id = "ND_mix_color3"
+                    color3f inputs:bg.connect = </World/Materials/MaskBlend/NG_mask_blend/color_red.outputs:out>
+                    color3f inputs:fg.connect = </World/Materials/MaskBlend/NG_mask_blend/color_green.outputs:out>
+                    float inputs:mix.connect = </World/Materials/MaskBlend/NG_mask_blend/extract_mask_r.outputs:out>
+                    color3f outputs:out
+                }
+
+                def Shader "final_mix"
+                {
+                    uniform token info:id = "ND_mix_color3"
+                    color3f inputs:bg.connect = </World/Materials/MaskBlend/NG_mask_blend/mix1.outputs:out>
+                    color3f inputs:fg.connect = </World/Materials/MaskBlend/NG_mask_blend/image_color.outputs:out>
+                    float inputs:mix.connect = </World/Materials/MaskBlend/NG_mask_blend/extract_mask_g.outputs:out>
+                    color3f outputs:out
+                }
+            }
+        }
+    }
+}
