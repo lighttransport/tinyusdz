@@ -406,10 +406,10 @@ if(TINYUSDZ_WITH_PYTHON)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/pybind11)
 endif()
 
-# Add path-sort-and-encode-crate library for USDC crate writer
-add_subdirectory(${PROJECT_SOURCE_DIR}/sandbox/path-sort-and-encode-crate ${CMAKE_CURRENT_BINARY_DIR}/path-sort-and-encode-crate)
-
 set(TINYUSDZ_SOURCES
+    # Crate path utilities (path sorting/tree encoding for USDC writer)
+    ${PROJECT_SOURCE_DIR}/src/crate-path-utils/path_sort.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-path-utils/tree_encode.cc
     ${PROJECT_SOURCE_DIR}/src/arg-parser.cc
     ${PROJECT_SOURCE_DIR}/src/asset-resolution.cc
     ${PROJECT_SOURCE_DIR}/src/tinyusdz.cc
@@ -1450,8 +1450,7 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   endif()
 
   target_link_libraries(${TINYUSDZ_LIB_TARGET} ${TINYUSDZ_EXT_LIBRARIES}
-                        ${CMAKE_DL_LIBS}
-                        crate-encoding)
+                        ${CMAKE_DL_LIBS})
 
   if (TINYUSDZ_ENABLE_THREAD)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
