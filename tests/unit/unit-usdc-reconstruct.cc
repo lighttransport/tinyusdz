@@ -1643,34 +1643,20 @@ void usdc_layer_nested_variant_props_roundtrip_test(void) {
     VariantSetSpec inner_vs;
     inner_vs.name = "lod";
 
-    // Inner variant "High" with a property and a child prim
-    PrimSpec high_variant;
-    high_variant.specifier() = Specifier::Def;
-    {
+    auto makeVariantWithProp = [](float val, const char *childType,
+                                   const char *childName) {
+      PrimSpec vs;
+      vs.specifier() = Specifier::Def;
       Attribute attr;
-      attr.set_value(1.0f);
+      attr.set_value(float(val));
       attr.variability() = Variability::Varying;
-      Property prop(attr, /* custom */ false);
-      high_variant.props()["detail"] = prop;
-    }
-    PrimSpec high_child(Specifier::Def, "Mesh", "HighMesh");
-    high_variant.children().push_back(std::move(high_child));
+      vs.props()["detail"] = Property(attr, /* custom */ false);
+      vs.children().emplace_back(Specifier::Def, childType, childName);
+      return vs;
+    };
 
-    // Inner variant "Low" with a different property value
-    PrimSpec low_variant;
-    low_variant.specifier() = Specifier::Def;
-    {
-      Attribute attr;
-      attr.set_value(0.25f);
-      attr.variability() = Variability::Varying;
-      Property prop(attr, /* custom */ false);
-      low_variant.props()["detail"] = prop;
-    }
-    PrimSpec low_child(Specifier::Def, "Mesh", "LowMesh");
-    low_variant.children().push_back(std::move(low_child));
-
-    inner_vs.variantSet["High"] = std::move(high_variant);
-    inner_vs.variantSet["Low"] = std::move(low_variant);
+    inner_vs.variantSet["High"] = makeVariantWithProp(1.0f, "Mesh", "HighMesh");
+    inner_vs.variantSet["Low"] = makeVariantWithProp(0.25f, "Mesh", "LowMesh");
 
     capsule_spec.variantSets()["lod"] = std::move(inner_vs);
     outer_vs.variantSet["Capsule"] = std::move(capsule_spec);

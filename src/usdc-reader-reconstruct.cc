@@ -517,8 +517,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 
   if ((spec.spec_type == SpecType::Attribute) ||
       (spec.spec_type == SpecType::Relationship)) {
-    // Skip Attribute/Relationship children whose parent was already
-    // reconstructed — BuildPropertyMap already captured them.
+    // BuildPropertyMap already captured these during parent reconstruction.
     if (_prim_table.count(parent) || _variantPrimSpecs.count(parent)) {
       return true;
     }
@@ -1288,7 +1287,8 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
 
   if (_variantPropChildren.count(current)) {
 
-    if (!_variantPrimSpecs.count(current)) {
+    auto vps_it = _variantPrimSpecs.find(current);
+    if (vps_it == _variantPrimSpecs.end()) {
       PUSH_ERROR_AND_RETURN("Internal error: variant attribute is not a child of VariantPrimSpec.");
     }
 
@@ -1296,7 +1296,7 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
       PUSH_ERROR_AND_RETURN("Internal error: parentPrimSpec should exist.");
     }
 
-    const PrimSpec &variantPrimSpec = _variantPrimSpecs.at(current);
+    const PrimSpec &variantPrimSpec = vps_it->second;
 
     DCOUT("variant primspec name: " << variantPrimSpec.name());
 
