@@ -68,3 +68,7 @@ void usdc_writer_variant_nested_test(void);
 void usdc_writer_variant_with_selection_test(void);
 void usdc_writer_variant_with_children_test(void);
 void usdc_writer_variant_empty_test(void);
+void usdc_writer_variant_multiple_sets_test(void);
+void usdc_writer_variant_props_and_children_roundtrip_test(void);
+void usdc_writer_variant_3level_nested_test(void);
+void usdc_writer_variant_nested_with_props_test(void);

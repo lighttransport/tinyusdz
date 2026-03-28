@@ -243,6 +243,9 @@ TEST_LIST = {
   { "usdc_layer_variant_name_collision_test", usdc_layer_variant_name_collision_test },
   { "usdc_layer_variant_selection_test", usdc_layer_variant_selection_test },
   { "usdc_layer_nested_variant_props_roundtrip_test", usdc_layer_nested_variant_props_roundtrip_test },
+  { "usdc_layer_multiple_variant_sets_roundtrip_test", usdc_layer_multiple_variant_sets_roundtrip_test },
+  { "usdc_layer_3level_nested_roundtrip_test", usdc_layer_3level_nested_roundtrip_test },
+  { "usdc_stage_variant_props_roundtrip_test", usdc_stage_variant_props_roundtrip_test },
   { "stack_vector_basic_test", stack_vector_basic_test },
   { "stack_vector_overflow_test", stack_vector_overflow_test },
   { "stack_vector_copy_test", stack_vector_copy_test },
@@ -538,6 +541,10 @@ TEST_LIST = {
   { "usdc_writer_variant_with_selection_test", usdc_writer_variant_with_selection_test },
   { "usdc_writer_variant_with_children_test", usdc_writer_variant_with_children_test },
   { "usdc_writer_variant_empty_test", usdc_writer_variant_empty_test },
+  { "usdc_writer_variant_multiple_sets_test", usdc_writer_variant_multiple_sets_test },
+  { "usdc_writer_variant_props_and_children_roundtrip_test", usdc_writer_variant_props_and_children_roundtrip_test },
+  { "usdc_writer_variant_3level_nested_test", usdc_writer_variant_3level_nested_test },
+  { "usdc_writer_variant_nested_with_props_test", usdc_writer_variant_nested_with_props_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
