@@ -130,9 +130,9 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
     const auto& prim_name = item.first;
     const auto& primspec = item.second;
     // Each top-level primspec is a direct child of root
-    Path root_path = Path();  // Root path
+    Path root_path("/", "");
 
-    if (!ConvertPrimSpecIterative(primspec, root_path, err)) {
+    if (!ConvertPrimSpecIterative(primspec, root_path, err, prim_name)) {
       if (err) *err = "Failed to convert primspec: " + prim_name + ". Error: " + (*err);
       return false;
     }
@@ -155,7 +155,9 @@ bool CrateWriter::ConvertSinglePrimSpec(
     std::string* err) {
 
   // 1. Build path for this prim
-  Path prim_path = parent_path.AppendPrim(primspec.name());
+  Path prim_path = primspec.name().empty()
+      ? parent_path
+      : parent_path.AppendPrim(primspec.name());
 
   // 2. Create fields for this prim spec
   crate::FieldValuePairVector fields;
@@ -231,29 +233,48 @@ bool CrateWriter::ConvertSinglePrimSpec(
     const VariantSelectionMap& variant_map = metas.variants.value();
     crate::CrateValue variant_value;
     variant_value.Set(variant_map);
-    fields.push_back({"variants", variant_value});
+    fields.push_back({"variantSelection", variant_value});
 
     DCOUT("[ConvertPrimSpecRecursive] Added variants field with "
               << variant_map.size() << " selections");
   }
 
-  // Add variantSets list if present
+  // Add variantSetNames if present (crate format uses ListOp<String>)
   if (metas.variantSets) {
-    // Collect all variant sets from all listops
-    std::vector<std::string> variant_sets_list;
+    ListOp<std::string> vs_listop;
+
     for (const auto& variantSets_op : metas.variantSets.value()) {
-      for (const auto& vs : variantSets_op.second) {
-        variant_sets_list.push_back(vs);
+      const ListEditQual& qual = variantSets_op.first;
+      const std::vector<std::string>& vs_list = variantSets_op.second;
+
+      switch (qual) {
+        case ListEditQual::ResetToExplicit:
+          vs_listop.ClearAndMakeExplicit();
+          vs_listop.SetExplicitItems(vs_list);
+          break;
+        case ListEditQual::Append:
+          vs_listop.SetAppendedItems(vs_list);
+          break;
+        case ListEditQual::Prepend:
+          vs_listop.SetPrependedItems(vs_list);
+          break;
+        case ListEditQual::Add:
+          vs_listop.SetAddedItems(vs_list);
+          break;
+        case ListEditQual::Delete:
+          vs_listop.SetDeletedItems(vs_list);
+          break;
+        default:
+          vs_listop.SetPrependedItems(vs_list);
+          break;
       }
     }
 
-    // Convert to string array for CrateValue
     crate::CrateValue variant_sets_value;
-    variant_sets_value.Set(variant_sets_list);
-    fields.push_back({"variantSets", variant_sets_value});
+    variant_sets_value.Set(vs_listop);
+    fields.push_back({"variantSetNames", variant_sets_value});
 
-    DCOUT("[ConvertPrimSpecRecursive] Added variantSets field with "
-              << variant_sets_list.size() << " sets");
+    DCOUT("[ConvertPrimSpecRecursive] Added variantSetNames field");
   }
 
   // Add references if present
@@ -535,6 +556,15 @@ bool CrateWriter::ConvertSinglePrimSpec(
     return false;
   }
 
+  // 6. Process variant sets (must happen after parent prim spec is added)
+  for (const auto& vs_item : primspec.variantSets()) {
+    if (!ConvertVariantSetSpecToFields(vs_item.first, vs_item.second, prim_path, err)) {
+      if (err) *err = "Failed to convert VariantSetSpec '" + vs_item.first
+                     + "' for " + prim_path.full_path_name() + ": " + *err;
+      return false;
+    }
+  }
+
   return true;
 }
 
@@ -545,15 +575,25 @@ bool CrateWriter::ConvertSinglePrimSpec(
 bool CrateWriter::ConvertPrimSpecIterative(
     const PrimSpec& root_primspec,
     const Path& parent_path,
-    std::string* err) {
+    std::string* err,
+    const std::string& name_override) {
 
   struct WorkItem {
     const PrimSpec* primspec;
     Path parent_path;
   };
 
+  // For the root item, use name_override if PrimSpec has no name set
+  Path effective_parent = parent_path;
+  if (root_primspec.name().empty() && !name_override.empty()) {
+    // Pre-build the prim path so ConvertSinglePrimSpec finds it via the
+    // empty-name fallback (prim_path = parent_path when name is empty)
+    effective_parent = parent_path.AppendPrim(name_override);
+  }
+
   std::vector<WorkItem> stack;
-  stack.push_back({&root_primspec, parent_path});
+  stack.push_back({&root_primspec,
+                   root_primspec.name().empty() ? effective_parent : parent_path});
 
   while (!stack.empty()) {
     if (stack.size() > kMaxDefaultTraversalLimit) {
@@ -569,12 +609,191 @@ bool CrateWriter::ConvertPrimSpecIterative(
     }
 
     // Build this prim's path for its children
-    Path prim_path = item.parent_path.AppendPrim(item.primspec->name());
+    Path prim_path = item.primspec->name().empty()
+        ? item.parent_path  // ConvertSinglePrimSpec used parent_path directly
+        : item.parent_path.AppendPrim(item.primspec->name());
 
     // Push children in reverse order so left-most child is processed first
     const auto& children = item.primspec->children();
     for (auto it = children.rbegin(); it != children.rend(); ++it) {
-      stack.push_back({&(*it), prim_path});
+      stack.push_back({&(*it), prim_path});  // children use their own name()
+    }
+  }
+
+  return true;
+}
+
+// ============================================================================
+// VariantSetSpec / VariantSpec Conversion (Layer/PrimSpec path)
+// ============================================================================
+
+bool CrateWriter::ConvertVariantSetSpecToFields(
+    const std::string& variantset_name,
+    const VariantSetSpec& variantset,
+    const Path& parent_path,
+    std::string* err) {
+
+  // VariantSet path: parent{variantSetName} (e.g., /Chair{materialVariant})
+  std::string variantset_path_str = parent_path.prim_part() + "{" + variantset_name + "}";
+  Path vs_path(variantset_path_str, "");
+
+  DCOUT("[ConvertVariantSetSpecToFields] Creating VariantSet spec: "
+            << vs_path.full_path_name());
+
+  // VariantSet spec needs "variantChildren" field listing all variant names
+  crate::FieldValuePairVector vs_fields;
+
+  std::vector<value::token> variant_tokens;
+  for (const auto& variant_item : variantset.variantSet) {
+    variant_tokens.push_back(value::token(variant_item.first));
+  }
+
+  crate::CrateValue variant_children_value;
+  variant_children_value.Set(variant_tokens);
+  vs_fields.push_back({"variantChildren", variant_children_value});
+
+  if (!AddSpec(vs_path, SpecType::VariantSet, vs_fields, err)) {
+    if (err) *err = "Failed to add VariantSet spec: " + vs_path.full_path_name() + ": " + *err;
+    return false;
+  }
+
+  DCOUT("[ConvertVariantSetSpecToFields] Created VariantSet with "
+            << variantset.variantSet.size() << " variants");
+
+  // For each variant, create a Variant spec
+  // IMPORTANT: Pass parent_path (the Prim), not vs_path (the VariantSet)
+  // Variant path should be /Prim{variantSet=value}, NOT /Prim{variantSet}{variantSet=value}
+  for (const auto& variant_item : variantset.variantSet) {
+    const auto& variant_name = variant_item.first;
+    const auto& variant_primspec = variant_item.second;
+
+    if (!ConvertVariantSpecToFields(variant_name, variant_primspec, parent_path, variantset_name, err)) {
+      if (err) *err = "Failed to convert variant '" + variant_name + "': " + *err;
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool CrateWriter::ConvertVariantSpecToFields(
+    const std::string& variant_name,
+    const PrimSpec& variant_primspec,
+    const Path& parent_prim_path,
+    const std::string& variantset_name,
+    std::string* err) {
+
+  // Variant path: parent_prim_path{variantSetName=variant_name}
+  // (e.g., /Chair{materialVariant=plastic})
+  // NOTE: The variant path is based on the prim path, NOT the variantSet path
+  std::string variant_path_str = parent_prim_path.prim_part() + "{" +
+                                 variantset_name + "=" + variant_name + "}";
+  Path v_path(variant_path_str, "");
+
+  DCOUT("[ConvertVariantSpecToFields] Creating Variant spec: "
+            << v_path.full_path_name());
+
+  // Variant spec contains variant metadata and prim children
+  crate::FieldValuePairVector v_fields;
+
+  // Add variant specifier
+  Specifier spec = variant_primspec.specifier();
+  if (spec == Specifier::Invalid) {
+    spec = Specifier::Def;
+  }
+  crate::CrateValue spec_value;
+  spec_value.Set(spec);
+  v_fields.push_back({"specifier", spec_value});
+
+  // Add typeName if present
+  if (!variant_primspec.typeName().empty()) {
+    crate::CrateValue type_value;
+    value::token tok(variant_primspec.typeName());
+    type_value.Set(tok);
+    v_fields.push_back({"typeName", type_value});
+  }
+
+  // Add variant metadata (hidden, active, etc.)
+  const PrimMeta& metas = variant_primspec.metas();
+
+  if (metas.has_hidden()) {
+    crate::CrateValue hidden_value;
+    hidden_value.Set(metas.get_hidden());
+    v_fields.push_back({"hidden", hidden_value});
+  }
+
+  if (metas.has_active()) {
+    crate::CrateValue active_value;
+    active_value.Set(metas.get_active());
+    v_fields.push_back({"active", active_value});
+  }
+
+  if (metas.has_doc()) {
+    crate::CrateValue doc_value;
+    doc_value.Set(metas.get_doc().value);
+    v_fields.push_back({"documentation", doc_value});
+  }
+
+  // Add variantSets list if variant has nested variant sets
+  if (metas.variantSets) {
+    std::vector<std::string> variant_sets_list;
+    for (const auto& variantSets_op : metas.variantSets.value()) {
+      for (const auto& vs : variantSets_op.second) {
+        variant_sets_list.push_back(vs);
+      }
+    }
+    crate::CrateValue variant_sets_value;
+    variant_sets_value.Set(variant_sets_list);
+    v_fields.push_back({"variantSets", variant_sets_value});
+  }
+
+  // Add variant properties as separate attribute/relationship specs
+  for (const auto& prop_item : variant_primspec.props()) {
+    const auto& prop_name = prop_item.first;
+    const auto& prop = prop_item.second;
+
+    if (prop.is_attribute()) {
+      if (!ConvertAttributeToFields(prop_name, prop.get_attribute(), v_path, prop.has_custom(), err)) {
+        if (err) *err = "Failed to convert variant attribute: " + prop_name;
+        return false;
+      }
+    } else if (prop.is_relationship()) {
+      if (!ConvertRelationshipToFields(prop_name, prop.get_relationship(), v_path, err)) {
+        if (err) *err = "Failed to convert variant relationship: " + prop_name;
+        return false;
+      }
+    }
+  }
+
+  // Create the variant spec BEFORE adding child prims
+  // The parent spec must exist before children in the spec list
+  if (!AddSpec(v_path, SpecType::Variant, v_fields, err)) {
+    if (err) *err = "Failed to add Variant spec: " + v_path.full_path_name() + ": " + *err;
+    return false;
+  }
+
+  DCOUT("[ConvertVariantSpecToFields] Created Variant spec with "
+            << v_fields.size() << " fields");
+
+  // Add variant prim children (recursively convert each child PrimSpec)
+  const auto& children = variant_primspec.children();
+  if (!children.empty()) {
+    DCOUT("[ConvertVariantSpecToFields] Processing " << children.size()
+              << " prim children for variant: " << variant_name);
+    for (const auto& child : children) {
+      if (!ConvertPrimSpecIterative(child, v_path, err)) {
+        if (err) *err = "Failed to convert variant prim child: " + child.name() + ": " + *err;
+        return false;
+      }
+    }
+  }
+
+  // Process nested variant sets
+  for (const auto& vs_item : variant_primspec.variantSets()) {
+    if (!ConvertVariantSetSpecToFields(vs_item.first, vs_item.second, v_path, err)) {
+      if (err) *err = "Failed to convert nested VariantSetSpec '" + vs_item.first
+                     + "' in variant " + variant_name + ": " + *err;
+      return false;
     }
   }
 

@@ -228,23 +228,24 @@ TEST_LIST = {
   { "usdc_reconstruct_variant_selection_test", usdc_reconstruct_variant_selection_test },
   { "usdc_memory_budget_customdata_limit_test", usdc_memory_budget_customdata_limit_test },
   { "usdc_memory_budget_customdata_success_test", usdc_memory_budget_customdata_success_test },
-  // TODO: Re-enable after updating CrateWriter Layer writing to match
-  // spec-2026-mar's improved USDC format. These tests generate runtime
-  // fixtures via CrateWriter::ConvertLayerToSpecs which is incompatible.
-  // { "usdc_memory_budget_references_limit_test", usdc_memory_budget_references_limit_test },
-  // { "usdc_memory_budget_references_success_test", usdc_memory_budget_references_success_test },
+  { "usdc_memory_budget_references_limit_test", usdc_memory_budget_references_limit_test },
+  { "usdc_memory_budget_references_success_test", usdc_memory_budget_references_success_test },
   { "usdc_memory_budget_stage_meta_sublayers_limit_test", usdc_memory_budget_stage_meta_sublayers_limit_test },
   { "usdc_memory_budget_stage_meta_sublayers_success_test", usdc_memory_budget_stage_meta_sublayers_success_test },
   { "usdc_memory_budget_stage_meta_customdata_limit_test", usdc_memory_budget_stage_meta_customdata_limit_test },
   { "usdc_memory_budget_stage_meta_customdata_success_test", usdc_memory_budget_stage_meta_customdata_success_test },
-  // { "usdc_memory_budget_composition_limit_test", usdc_memory_budget_composition_limit_test },
-  // { "usdc_memory_budget_composition_success_test", usdc_memory_budget_composition_success_test },
-  // { "usdc_layer_variant_roundtrip_test", usdc_layer_variant_roundtrip_test },
-  // { "usdc_layer_variant_nested_roundtrip_test", usdc_layer_variant_nested_roundtrip_test },
+  { "usdc_memory_budget_composition_limit_test", usdc_memory_budget_composition_limit_test },
+  { "usdc_memory_budget_composition_success_test", usdc_memory_budget_composition_success_test },
+  { "usdc_layer_variant_roundtrip_test", usdc_layer_variant_roundtrip_test },
+  { "usdc_layer_variant_nested_roundtrip_test", usdc_layer_variant_nested_roundtrip_test },
+  // TODO: Re-enable after fixing Stage path nested variant reconstruction.
+  // The Stage writer correctly writes nested variant specs, but the Stage
+  // reader's ReconstructPrimRecursively does not attach nested variantSets
+  // to Variant objects.
   // { "usdc_stage_variant_roundtrip_test", usdc_stage_variant_roundtrip_test },
-  // { "usdc_layer_nested_variant_sets_test", usdc_layer_nested_variant_sets_test },
-  // { "usdc_layer_variant_name_collision_test", usdc_layer_variant_name_collision_test },
-  // { "usdc_layer_variant_selection_test", usdc_layer_variant_selection_test },
+  { "usdc_layer_nested_variant_sets_test", usdc_layer_nested_variant_sets_test },
+  { "usdc_layer_variant_name_collision_test", usdc_layer_variant_name_collision_test },
+  { "usdc_layer_variant_selection_test", usdc_layer_variant_selection_test },
   { "stack_vector_basic_test", stack_vector_basic_test },
   { "stack_vector_overflow_test", stack_vector_overflow_test },
   { "stack_vector_copy_test", stack_vector_copy_test },

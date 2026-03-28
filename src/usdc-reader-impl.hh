@@ -213,7 +213,7 @@ class USDCReader::Impl {
   bool ReconstructPrimSpecNode(int parent, int current, int level,
                            bool is_parent_variant,
                            const PathIndexToSpecIndexMap &psmap, Layer *layer,
-                           PrimSpec *primOut);
+                           std::unique_ptr<PrimSpec> *primOut);
 
   ///
   /// Reconstruct Prim from given `typeName` string(e.g. "Xform")
