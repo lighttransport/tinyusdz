@@ -1290,16 +1290,17 @@ def Xform "Car" (
   }
 
   // Each set has its variants
-  if (p->variantSets().count("color")) {
-    const auto &vs = p->variantSets().at("color").variantSet;
+  auto color_it = p->variantSets().find("color");
+  auto engine_it = p->variantSets().find("engine");
+  TEST_CHECK(color_it != p->variantSets().end());
+  TEST_CHECK(engine_it != p->variantSets().end());
+  if (color_it != p->variantSets().end()) {
+    const auto &vs = color_it->second.variantSet;
     TEST_CHECK(vs.count("red") > 0);
     TEST_CHECK(vs.count("blue") > 0);
-    if (vs.count("red")) {
-      TEST_CHECK(!vs.at("red").properties().empty());
-    }
   }
-  if (p->variantSets().count("engine")) {
-    const auto &vs = p->variantSets().at("engine").variantSet;
+  if (engine_it != p->variantSets().end()) {
+    const auto &vs = engine_it->second.variantSet;
     TEST_CHECK(vs.count("electric") > 0);
     TEST_CHECK(vs.count("gas") > 0);
   }
@@ -1337,15 +1338,17 @@ def Xform "Asset" (
   const auto &vs = it->second.variantSet;
 
   // Both variants have children AND properties
-  TEST_CHECK(vs.count("high") > 0);
-  TEST_CHECK(vs.count("low") > 0);
-  if (vs.count("high")) {
-    TEST_CHECK(!vs.at("high").primChildren().empty());
-    TEST_CHECK(!vs.at("high").properties().empty());
+  auto high_it = vs.find("high");
+  auto low_it = vs.find("low");
+  TEST_CHECK(high_it != vs.end());
+  TEST_CHECK(low_it != vs.end());
+  if (high_it != vs.end()) {
+    TEST_CHECK(!high_it->second.primChildren().empty());
+    TEST_CHECK(!high_it->second.properties().empty());
   }
-  if (vs.count("low")) {
-    TEST_CHECK(!vs.at("low").primChildren().empty());
-    TEST_CHECK(!vs.at("low").properties().empty());
+  if (low_it != vs.end()) {
+    TEST_CHECK(!low_it->second.primChildren().empty());
+    TEST_CHECK(!low_it->second.properties().empty());
   }
 }
 
@@ -1386,26 +1389,27 @@ def Xform "Root" (
   auto l1_it = p->variantSets().find("L1");
   TEST_CHECK(l1_it != p->variantSets().end());
   if (l1_it == p->variantSets().end()) return;
-  TEST_CHECK(l1_it->second.variantSet.count("A") > 0);
-  if (!l1_it->second.variantSet.count("A")) return;
-  const auto &varA = l1_it->second.variantSet.at("A");
+  auto a_it = l1_it->second.variantSet.find("A");
+  TEST_CHECK(a_it != l1_it->second.variantSet.end());
+  if (a_it == l1_it->second.variantSet.end()) return;
 
   // L2
-  TEST_CHECK(varA.variantSets().count("L2") > 0);
-  if (!varA.variantSets().count("L2")) return;
-  const auto &l2 = varA.variantSets().at("L2");
-  TEST_CHECK(l2.variantSet.count("X") > 0);
-  if (!l2.variantSet.count("X")) return;
-  const auto &varX = l2.variantSet.at("X");
+  auto l2_it = a_it->second.variantSets().find("L2");
+  TEST_CHECK(l2_it != a_it->second.variantSets().end());
+  if (l2_it == a_it->second.variantSets().end()) return;
+  auto x_it = l2_it->second.variantSet.find("X");
+  TEST_CHECK(x_it != l2_it->second.variantSet.end());
+  if (x_it == l2_it->second.variantSet.end()) return;
 
   // L3
-  TEST_CHECK(varX.variantSets().count("L3") > 0);
-  if (!varX.variantSets().count("L3")) return;
-  const auto &l3 = varX.variantSets().at("L3");
-  TEST_CHECK(l3.variantSet.count("P") > 0);
-  TEST_CHECK(l3.variantSet.count("Q") > 0);
-  if (l3.variantSet.count("P")) {
-    TEST_CHECK(!l3.variantSet.at("P").primChildren().empty());
+  auto l3_it = x_it->second.variantSets().find("L3");
+  TEST_CHECK(l3_it != x_it->second.variantSets().end());
+  if (l3_it == x_it->second.variantSets().end()) return;
+  auto lp_it = l3_it->second.variantSet.find("P");
+  TEST_CHECK(lp_it != l3_it->second.variantSet.end());
+  TEST_CHECK(l3_it->second.variantSet.count("Q") > 0);
+  if (lp_it != l3_it->second.variantSet.end()) {
+    TEST_CHECK(!lp_it->second.primChildren().empty());
   }
 }
 
@@ -1442,25 +1446,26 @@ def Xform "Widget" (
   TEST_CHECK(it != p->variantSets().end());
   if (it == p->variantSets().end()) return;
 
-  TEST_CHECK(it->second.variantSet.count("round") > 0);
-  if (!it->second.variantSet.count("round")) return;
-  const auto &round = it->second.variantSet.at("round");
+  auto round_it = it->second.variantSet.find("round");
+  TEST_CHECK(round_it != it->second.variantSet.end());
+  if (round_it == it->second.variantSet.end()) return;
 
   // Outer variant has prim children
-  TEST_CHECK(!round.primChildren().empty());
+  TEST_CHECK(!round_it->second.primChildren().empty());
 
   // Nested variant set "detail"
-  TEST_CHECK(round.variantSets().count("detail") > 0);
-  if (!round.variantSets().count("detail")) return;
-  const auto &detail = round.variantSets().at("detail");
-  TEST_CHECK(detail.variantSet.count("fine") > 0);
-  TEST_CHECK(detail.variantSet.count("coarse") > 0);
+  auto detail_it = round_it->second.variantSets().find("detail");
+  TEST_CHECK(detail_it != round_it->second.variantSets().end());
+  if (detail_it == round_it->second.variantSets().end()) return;
+  auto fine_it = detail_it->second.variantSet.find("fine");
+  auto coarse_it = detail_it->second.variantSet.find("coarse");
+  TEST_CHECK(fine_it != detail_it->second.variantSet.end());
+  TEST_CHECK(coarse_it != detail_it->second.variantSet.end());
 
-  // Inner variants have properties
-  if (detail.variantSet.count("fine")) {
-    TEST_CHECK(!detail.variantSet.at("fine").properties().empty());
+  if (fine_it != detail_it->second.variantSet.end()) {
+    TEST_CHECK(!fine_it->second.properties().empty());
   }
-  if (detail.variantSet.count("coarse")) {
-    TEST_CHECK(!detail.variantSet.at("coarse").properties().empty());
+  if (coarse_it != detail_it->second.variantSet.end()) {
+    TEST_CHECK(!coarse_it->second.properties().empty());
   }
 }
