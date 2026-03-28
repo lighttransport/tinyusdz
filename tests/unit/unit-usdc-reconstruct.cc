@@ -1733,3 +1733,239 @@ void usdc_layer_nested_variant_props_roundtrip_test(void) {
     }
   }
 }
+
+// Layer roundtrip: multiple variant sets on a single prim
+void usdc_layer_multiple_variant_sets_roundtrip_test(void) {
+  std::string err;
+  std::string path = GetUsdcFixturePath("variant-layer-multi-sets-runtime.usdc");
+
+  {
+    Layer layer;
+    PrimSpec prim(Specifier::Def, "Xform", "Car");
+    PrimMeta &meta = prim.metas();
+    VariantSelectionMap selections;
+    selections["color"] = "red";
+    selections["engine"] = "electric";
+    meta.variants = selections;
+
+    VariantSetSpec color_vs;
+    color_vs.name = "color";
+    PrimSpec red_spec(Specifier::Def, "", "RedBody");
+    PrimSpec blue_spec(Specifier::Def, "", "BlueBody");
+    color_vs.variantSet["red"] = std::move(red_spec);
+    color_vs.variantSet["blue"] = std::move(blue_spec);
+
+    VariantSetSpec engine_vs;
+    engine_vs.name = "engine";
+    PrimSpec elec_spec(Specifier::Def, "", "ElecDrive");
+    PrimSpec gas_spec(Specifier::Def, "", "GasDrive");
+    engine_vs.variantSet["electric"] = std::move(elec_spec);
+    engine_vs.variantSet["gas"] = std::move(gas_spec);
+
+    prim.variantSets()["color"] = std::move(color_vs);
+    prim.variantSets()["engine"] = std::move(engine_vs);
+
+    if (!layer.emplace_primspec("Car", std::move(prim))) {
+      TEST_CHECK(false);
+      return;
+    }
+    if (!WriteLayerToUsdc(layer, path, &err)) {
+      TEST_MSG("Write failed: %s", err.c_str());
+      TEST_CHECK(false);
+      return;
+    }
+  }
+
+  Layer layer;
+  bool loaded = LoadLayerFromUsdcFixture(
+      "variant-layer-multi-sets-runtime.usdc", &layer, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  auto prim_it = layer.primspecs().find("Car");
+  TEST_CHECK(prim_it != layer.primspecs().end());
+  if (prim_it == layer.primspecs().end()) return;
+
+  // Both variant sets exist
+  TEST_CHECK(prim_it->second.variantSets().count("color") > 0);
+  TEST_CHECK(prim_it->second.variantSets().count("engine") > 0);
+
+  // Variant selections preserved
+  const auto &meta = prim_it->second.metas();
+  TEST_CHECK(meta.variants.has_value());
+  if (meta.variants.has_value()) {
+    auto c_it = meta.variants.value().find("color");
+    auto e_it = meta.variants.value().find("engine");
+    TEST_CHECK(c_it != meta.variants.value().end());
+    TEST_CHECK(e_it != meta.variants.value().end());
+    if (c_it != meta.variants.value().end()) TEST_CHECK(c_it->second == "red");
+    if (e_it != meta.variants.value().end()) TEST_CHECK(e_it->second == "electric");
+  }
+
+  // Variant contents
+  if (prim_it->second.variantSets().count("color")) {
+    const auto &vs = prim_it->second.variantSets().at("color");
+    TEST_CHECK(vs.variantSet.count("red") > 0);
+    TEST_CHECK(vs.variantSet.count("blue") > 0);
+  }
+  if (prim_it->second.variantSets().count("engine")) {
+    const auto &vs = prim_it->second.variantSets().at("engine");
+    TEST_CHECK(vs.variantSet.count("electric") > 0);
+    TEST_CHECK(vs.variantSet.count("gas") > 0);
+  }
+}
+
+// Layer roundtrip: 3-level nested variant sets
+void usdc_layer_3level_nested_roundtrip_test(void) {
+  std::string err;
+  std::string path = GetUsdcFixturePath("variant-layer-3level-runtime.usdc");
+
+  {
+    Layer layer;
+    PrimSpec prim(Specifier::Def, "Xform", "Root");
+
+    // L1 → L2 → L3
+    VariantSetSpec l3;
+    l3.name = "L3";
+    PrimSpec l3_p(Specifier::Def, "Sphere", "DeepGeo");
+    PrimSpec l3_q(Specifier::Def, "Cube", "DeepGeo");
+    l3.variantSet["P"] = std::move(l3_p);
+    l3.variantSet["Q"] = std::move(l3_q);
+
+    PrimSpec l2_x;
+    l2_x.specifier() = Specifier::Def;
+    l2_x.variantSets()["L3"] = std::move(l3);
+    VariantSetSpec l2;
+    l2.name = "L2";
+    l2.variantSet["X"] = std::move(l2_x);
+
+    PrimSpec l1_a;
+    l1_a.specifier() = Specifier::Def;
+    l1_a.variantSets()["L2"] = std::move(l2);
+    VariantSetSpec l1;
+    l1.name = "L1";
+    l1.variantSet["A"] = std::move(l1_a);
+
+    prim.variantSets()["L1"] = std::move(l1);
+
+    if (!layer.emplace_primspec("Root", std::move(prim))) {
+      TEST_CHECK(false);
+      return;
+    }
+    if (!WriteLayerToUsdc(layer, path, &err)) {
+      TEST_MSG("Write failed: %s", err.c_str());
+      TEST_CHECK(false);
+      return;
+    }
+  }
+
+  Layer layer;
+  bool loaded = LoadLayerFromUsdcFixture(
+      "variant-layer-3level-runtime.usdc", &layer, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  auto prim_it = layer.primspecs().find("Root");
+  TEST_CHECK(prim_it != layer.primspecs().end());
+  if (prim_it == layer.primspecs().end()) return;
+
+  // L1
+  auto l1_it = prim_it->second.variantSets().find("L1");
+  TEST_CHECK(l1_it != prim_it->second.variantSets().end());
+  if (l1_it == prim_it->second.variantSets().end()) return;
+  auto a_it = l1_it->second.variantSet.find("A");
+  TEST_CHECK(a_it != l1_it->second.variantSet.end());
+  if (a_it == l1_it->second.variantSet.end()) return;
+
+  // L2
+  auto l2_it = a_it->second.variantSets().find("L2");
+  TEST_CHECK(l2_it != a_it->second.variantSets().end());
+  if (l2_it == a_it->second.variantSets().end()) return;
+  auto x_it = l2_it->second.variantSet.find("X");
+  TEST_CHECK(x_it != l2_it->second.variantSet.end());
+  if (x_it == l2_it->second.variantSet.end()) return;
+
+  // L3
+  auto l3_it = x_it->second.variantSets().find("L3");
+  TEST_CHECK(l3_it != x_it->second.variantSets().end());
+  if (l3_it == x_it->second.variantSets().end()) return;
+  TEST_CHECK(l3_it->second.variantSet.count("P") > 0);
+  TEST_CHECK(l3_it->second.variantSet.count("Q") > 0);
+  if (l3_it->second.variantSet.count("P")) {
+    TEST_CHECK(l3_it->second.variantSet.at("P").typeName() == "Sphere");
+  }
+  if (l3_it->second.variantSet.count("Q")) {
+    TEST_CHECK(l3_it->second.variantSet.at("Q").typeName() == "Cube");
+  }
+}
+
+// Stage roundtrip: variant with properties (not just prim children)
+void usdc_stage_variant_props_roundtrip_test(void) {
+  std::string err;
+  std::string path = GetUsdcFixturePath("variant-stage-props-runtime.usdc");
+
+  {
+    Stage stage;
+    Xform root_xform;
+    root_xform.name = "PropOwner";
+    Prim root_prim(root_xform);
+    root_prim.prim_type_name() = "Xform";
+
+    PrimMeta &meta = root_prim.metas();
+    meta.variantSets = std::vector<std::pair<ListEditQual, std::vector<std::string>>>();
+    meta.variantSets->push_back(
+        std::make_pair(ListEditQual::Prepend, std::vector<std::string>{"quality"}));
+
+    VariantSet vs;
+    vs.name = "quality";
+    Variant high;
+    {
+      Attribute attr;
+      attr.set_value(4.0);
+      high.properties()["detail"] = Property(attr, /* custom */ false);
+    }
+    Variant low;
+    {
+      Attribute attr;
+      attr.set_value(1.0);
+      low.properties()["detail"] = Property(attr, /* custom */ false);
+    }
+    vs.variantSet["high"] = std::move(high);
+    vs.variantSet["low"] = std::move(low);
+    root_prim.variantSets()["quality"] = std::move(vs);
+
+    if (!stage.add_root_prim(std::move(root_prim))) {
+      TEST_CHECK(false);
+      return;
+    }
+    stage.commit();
+    if (!WriteStageToUsdc(stage, path, &err)) {
+      TEST_MSG("Write failed: %s", err.c_str());
+      TEST_CHECK(false);
+      return;
+    }
+  }
+
+  Stage stage;
+  bool loaded = LoadStageFromUsdcFixture(
+      "variant-stage-props-runtime.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/PropOwner");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+
+  auto vs_it = prim->variantSets().find("quality");
+  TEST_CHECK(vs_it != prim->variantSets().end());
+  if (vs_it == prim->variantSets().end()) return;
+
+  TEST_CHECK(vs_it->second.variantSet.count("high") > 0);
+  TEST_CHECK(vs_it->second.variantSet.count("low") > 0);
+  if (vs_it->second.variantSet.count("high")) {
+    TEST_CHECK(!vs_it->second.variantSet.at("high").properties().empty());
+  }
+  if (vs_it->second.variantSet.count("low")) {
+    TEST_CHECK(!vs_it->second.variantSet.at("low").properties().empty());
+  }
+}
