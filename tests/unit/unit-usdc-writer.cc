@@ -1119,10 +1119,20 @@ def Xform "Model" (
     TEST_CHECK(it->second.variantSet.count("B") > 0);
     if (it->second.variantSet.count("A")) {
       const auto &varA = it->second.variantSet.at("A");
-      // Nested variant set "level2" — may not survive roundtrip yet
-      if (!varA.variantSets().empty()) {
-        TEST_CHECK(varA.variantSets().count("level2") > 0);
+      TEST_CHECK(!varA.primChildren().empty());
+      TEST_CHECK(!varA.variantSets().empty());
+      TEST_CHECK(varA.variantSets().count("level2") > 0);
+      if (varA.variantSets().count("level2")) {
+        const auto &l2 = varA.variantSets().at("level2");
+        TEST_CHECK(l2.variantSet.count("X") > 0);
+        TEST_CHECK(l2.variantSet.count("Y") > 0);
+        if (l2.variantSet.count("X")) {
+          TEST_CHECK(!l2.variantSet.at("X").primChildren().empty());
+        }
       }
+    }
+    if (it->second.variantSet.count("B")) {
+      TEST_CHECK(!it->second.variantSet.at("B").primChildren().empty());
     }
   }
 }
@@ -1226,5 +1236,231 @@ def Xform "Empty" (
   if (it != p->variantSets().end()) {
     TEST_CHECK(it->second.variantSet.count("none") > 0);
     TEST_CHECK(it->second.variantSet.count("something") > 0);
+  }
+}
+
+void usdc_writer_variant_multiple_sets_test(void) {
+  // Two independent variant sets on the same prim with selections
+  const char *usda = R"(#usda 1.0
+def Xform "Car" (
+  variants = {
+    string color = "red"
+    string engine = "electric"
+  }
+  prepend variantSets = ["color", "engine"]
+) {
+  variantSet "color" = {
+    "red" {
+      float3 displayColor = (1, 0, 0)
+    }
+    "blue" {
+      float3 displayColor = (0, 0, 1)
+    }
+  }
+  variantSet "engine" = {
+    "electric" {
+      double range = 300.0
+    }
+    "gas" {
+      double range = 500.0
+    }
+  }
+}
+)";
+  RT_OK(usda);
+  const auto *p = find_root_prim(stage, "Car");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+
+  // Both variant sets exist
+  TEST_CHECK(p->variantSets().count("color") > 0);
+  TEST_CHECK(p->variantSets().count("engine") > 0);
+
+  // Variant selections preserved
+  const auto &meta = p->metas();
+  TEST_CHECK(meta.variants.has_value());
+  if (meta.variants.has_value()) {
+    const auto &sel = meta.variants.value();
+    auto c_it = sel.find("color");
+    auto e_it = sel.find("engine");
+    TEST_CHECK(c_it != sel.end());
+    TEST_CHECK(e_it != sel.end());
+    if (c_it != sel.end()) TEST_CHECK(c_it->second == "red");
+    if (e_it != sel.end()) TEST_CHECK(e_it->second == "electric");
+  }
+
+  // Each set has its variants
+  if (p->variantSets().count("color")) {
+    const auto &vs = p->variantSets().at("color").variantSet;
+    TEST_CHECK(vs.count("red") > 0);
+    TEST_CHECK(vs.count("blue") > 0);
+    if (vs.count("red")) {
+      TEST_CHECK(!vs.at("red").properties().empty());
+    }
+  }
+  if (p->variantSets().count("engine")) {
+    const auto &vs = p->variantSets().at("engine").variantSet;
+    TEST_CHECK(vs.count("electric") > 0);
+    TEST_CHECK(vs.count("gas") > 0);
+  }
+}
+
+void usdc_writer_variant_props_and_children_roundtrip_test(void) {
+  // Verify that variant properties survive USDA→USDC→Stage roundtrip
+  const char *usda = R"(#usda 1.0
+def Xform "Asset" (
+  append variantSets = "quality"
+) {
+  variantSet "quality" = {
+    "high" {
+      def Sphere "Geo" {
+        double radius = 2.0
+      }
+      double lodBias = 0.0
+    }
+    "low" {
+      def Sphere "Geo" {
+        double radius = 1.0
+      }
+      double lodBias = 2.0
+    }
+  }
+}
+)";
+  RT_OK(usda);
+  const auto *p = find_root_prim(stage, "Asset");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  auto it = p->variantSets().find("quality");
+  TEST_CHECK(it != p->variantSets().end());
+  if (it == p->variantSets().end()) return;
+  const auto &vs = it->second.variantSet;
+
+  // Both variants have children AND properties
+  TEST_CHECK(vs.count("high") > 0);
+  TEST_CHECK(vs.count("low") > 0);
+  if (vs.count("high")) {
+    TEST_CHECK(!vs.at("high").primChildren().empty());
+    TEST_CHECK(!vs.at("high").properties().empty());
+  }
+  if (vs.count("low")) {
+    TEST_CHECK(!vs.at("low").primChildren().empty());
+    TEST_CHECK(!vs.at("low").properties().empty());
+  }
+}
+
+void usdc_writer_variant_3level_nested_test(void) {
+  // 3-level nested variant sets
+  const char *usda = R"(#usda 1.0
+def Xform "Root" (
+  append variantSets = "L1"
+) {
+  variantSet "L1" = {
+    "A" (
+      append variantSets = "L2"
+    ) {
+      variantSet "L2" = {
+        "X" (
+          append variantSets = "L3"
+        ) {
+          variantSet "L3" = {
+            "P" {
+              def Sphere "deepGeo" {}
+            }
+            "Q" {
+              def Cube "deepGeo" {}
+            }
+          }
+        }
+      }
+    }
+  }
+}
+)";
+  RT_OK(usda);
+  const auto *p = find_root_prim(stage, "Root");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+
+  // L1
+  auto l1_it = p->variantSets().find("L1");
+  TEST_CHECK(l1_it != p->variantSets().end());
+  if (l1_it == p->variantSets().end()) return;
+  TEST_CHECK(l1_it->second.variantSet.count("A") > 0);
+  if (!l1_it->second.variantSet.count("A")) return;
+  const auto &varA = l1_it->second.variantSet.at("A");
+
+  // L2
+  TEST_CHECK(varA.variantSets().count("L2") > 0);
+  if (!varA.variantSets().count("L2")) return;
+  const auto &l2 = varA.variantSets().at("L2");
+  TEST_CHECK(l2.variantSet.count("X") > 0);
+  if (!l2.variantSet.count("X")) return;
+  const auto &varX = l2.variantSet.at("X");
+
+  // L3
+  TEST_CHECK(varX.variantSets().count("L3") > 0);
+  if (!varX.variantSets().count("L3")) return;
+  const auto &l3 = varX.variantSets().at("L3");
+  TEST_CHECK(l3.variantSet.count("P") > 0);
+  TEST_CHECK(l3.variantSet.count("Q") > 0);
+  if (l3.variantSet.count("P")) {
+    TEST_CHECK(!l3.variantSet.at("P").primChildren().empty());
+  }
+}
+
+void usdc_writer_variant_nested_with_props_test(void) {
+  // Nested variant where inner variant has properties (not just children)
+  const char *usda = R"(#usda 1.0
+def Xform "Widget" (
+  append variantSets = "shape"
+) {
+  variantSet "shape" = {
+    "round" (
+      append variantSets = "detail"
+    ) {
+      def Sphere "geo" {}
+      variantSet "detail" = {
+        "fine" {
+          int subdivLevel = 4
+          double radius = 1.0
+        }
+        "coarse" {
+          int subdivLevel = 1
+          double radius = 1.0
+        }
+      }
+    }
+  }
+}
+)";
+  RT_OK(usda);
+  const auto *p = find_root_prim(stage, "Widget");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  auto it = p->variantSets().find("shape");
+  TEST_CHECK(it != p->variantSets().end());
+  if (it == p->variantSets().end()) return;
+
+  TEST_CHECK(it->second.variantSet.count("round") > 0);
+  if (!it->second.variantSet.count("round")) return;
+  const auto &round = it->second.variantSet.at("round");
+
+  // Outer variant has prim children
+  TEST_CHECK(!round.primChildren().empty());
+
+  // Nested variant set "detail"
+  TEST_CHECK(round.variantSets().count("detail") > 0);
+  if (!round.variantSets().count("detail")) return;
+  const auto &detail = round.variantSets().at("detail");
+  TEST_CHECK(detail.variantSet.count("fine") > 0);
+  TEST_CHECK(detail.variantSet.count("coarse") > 0);
+
+  // Inner variants have properties
+  if (detail.variantSet.count("fine")) {
+    TEST_CHECK(!detail.variantSet.at("fine").properties().empty());
+  }
+  if (detail.variantSet.count("coarse")) {
+    TEST_CHECK(!detail.variantSet.at("coarse").properties().empty());
   }
 }
