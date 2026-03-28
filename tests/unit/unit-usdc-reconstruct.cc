@@ -1620,3 +1620,130 @@ void usdc_layer_variant_selection_test(void) {
   }
   TEST_CHECK(HasVariantSetName(prim_it->second.metas(), "shapeVariant"));
 }
+
+// Roundtrip test: nested variants with properties on the inner variant.
+// Exercises Layer write→read for nested VariantSetSpec where the inner
+// variant carries both a property and a child PrimSpec.
+void usdc_layer_nested_variant_props_roundtrip_test(void) {
+  std::string err;
+  std::string path = GetUsdcFixturePath("variant-layer-nested-props-runtime.usdc");
+
+  // --- Build Layer with nested variants + properties ---
+  {
+    Layer layer;
+    PrimSpec prim(Specifier::Def, "Xform", "Root");
+
+    // Outer variant set "shape" with variant "Capsule"
+    VariantSetSpec outer_vs;
+    outer_vs.name = "shape";
+
+    PrimSpec capsule_spec(Specifier::Def, "Xform", "CapsuleChild");
+
+    // Inner variant set "lod" on the Capsule variant
+    VariantSetSpec inner_vs;
+    inner_vs.name = "lod";
+
+    // Inner variant "High" with a property and a child prim
+    PrimSpec high_variant;
+    high_variant.specifier() = Specifier::Def;
+    {
+      Attribute attr;
+      attr.set_value(1.0f);
+      attr.variability() = Variability::Varying;
+      Property prop(attr, /* custom */ false);
+      high_variant.props()["detail"] = prop;
+    }
+    PrimSpec high_child(Specifier::Def, "Mesh", "HighMesh");
+    high_variant.children().push_back(std::move(high_child));
+
+    // Inner variant "Low" with a different property value
+    PrimSpec low_variant;
+    low_variant.specifier() = Specifier::Def;
+    {
+      Attribute attr;
+      attr.set_value(0.25f);
+      attr.variability() = Variability::Varying;
+      Property prop(attr, /* custom */ false);
+      low_variant.props()["detail"] = prop;
+    }
+    PrimSpec low_child(Specifier::Def, "Mesh", "LowMesh");
+    low_variant.children().push_back(std::move(low_child));
+
+    inner_vs.variantSet["High"] = std::move(high_variant);
+    inner_vs.variantSet["Low"] = std::move(low_variant);
+
+    capsule_spec.variantSets()["lod"] = std::move(inner_vs);
+    outer_vs.variantSet["Capsule"] = std::move(capsule_spec);
+    prim.variantSets()["shape"] = std::move(outer_vs);
+
+    if (!layer.emplace_primspec("Root", std::move(prim))) {
+      TEST_MSG("Failed to add primspec.");
+      TEST_CHECK(false);
+      return;
+    }
+    if (!WriteLayerToUsdc(layer, path, &err)) {
+      TEST_MSG("Write failed: %s", err.c_str());
+      TEST_CHECK(false);
+      return;
+    }
+  }
+
+  // --- Read back and verify ---
+  Layer layer;
+  bool loaded = LoadLayerFromUsdcFixture(
+      "variant-layer-nested-props-runtime.usdc", &layer, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) {
+    TEST_MSG("Load failed: %s", err.c_str());
+    return;
+  }
+
+  auto prim_it = layer.primspecs().find("Root");
+  TEST_CHECK(prim_it != layer.primspecs().end());
+  if (prim_it == layer.primspecs().end()) return;
+
+  // Outer variant set "shape"
+  auto vs_it = prim_it->second.variantSets().find("shape");
+  TEST_CHECK(vs_it != prim_it->second.variantSets().end());
+  if (vs_it == prim_it->second.variantSets().end()) return;
+
+  // Outer variant "Capsule"
+  auto cap_it = vs_it->second.variantSet.find("Capsule");
+  TEST_CHECK(cap_it != vs_it->second.variantSet.end());
+  if (cap_it == vs_it->second.variantSet.end()) return;
+
+  // Nested variant set "lod"
+  auto nested_it = cap_it->second.variantSets().find("lod");
+  TEST_CHECK(nested_it != cap_it->second.variantSets().end());
+  if (nested_it == cap_it->second.variantSets().end()) return;
+
+  // Check "High" variant
+  auto high_it = nested_it->second.variantSet.find("High");
+  TEST_CHECK(high_it != nested_it->second.variantSet.end());
+  if (high_it != nested_it->second.variantSet.end()) {
+    // Verify property on inner variant
+    float detail = 0.0f;
+    TEST_CHECK(GetPrimSpecFloatProp(high_it->second, "detail", &detail));
+    TEST_CHECK(std::fabs(detail - 1.0f) < 1e-6f);
+
+    // Verify child prim
+    TEST_CHECK(high_it->second.children().size() == 1);
+    if (!high_it->second.children().empty()) {
+      TEST_CHECK(high_it->second.children()[0].name() == "HighMesh");
+    }
+  }
+
+  // Check "Low" variant
+  auto low_it = nested_it->second.variantSet.find("Low");
+  TEST_CHECK(low_it != nested_it->second.variantSet.end());
+  if (low_it != nested_it->second.variantSet.end()) {
+    float detail = 0.0f;
+    TEST_CHECK(GetPrimSpecFloatProp(low_it->second, "detail", &detail));
+    TEST_CHECK(std::fabs(detail - 0.25f) < 1e-6f);
+
+    TEST_CHECK(low_it->second.children().size() == 1);
+    if (!low_it->second.children().empty()) {
+      TEST_CHECK(low_it->second.children()[0].name() == "LowMesh");
+    }
+  }
+}
