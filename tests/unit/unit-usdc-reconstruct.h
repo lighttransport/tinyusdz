@@ -21,3 +21,4 @@ void usdc_stage_variant_roundtrip_test(void);
 void usdc_layer_nested_variant_sets_test(void);
 void usdc_layer_variant_name_collision_test(void);
 void usdc_layer_variant_selection_test(void);
+void usdc_layer_nested_variant_props_roundtrip_test(void);
