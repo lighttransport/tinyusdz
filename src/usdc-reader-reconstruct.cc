@@ -1281,59 +1281,14 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
   DCOUT(fmt::format("---- reconstruct variant ---"));
   DCOUT(fmt::format("parent {}, current {}", parent, current));
 
-  DCOUT(fmt::format("  has variant properties {}, has variant children {}",
-    _variantPropChildren.count(current),
+  DCOUT(fmt::format("  has variant children {}",
     _variantPrimChildren.count(current)));
 
-  if (_variantPropChildren.count(current)) {
-
-    auto vps_it = _variantPrimSpecs.find(current);
-    if (vps_it == _variantPrimSpecs.end()) {
-      PUSH_ERROR_AND_RETURN("Internal error: variant attribute is not a child of VariantPrimSpec.");
-    }
-
-    if (!parentPrimSpec) {
-      PUSH_ERROR_AND_RETURN("Internal error: parentPrimSpec should exist.");
-    }
-
-    const PrimSpec &variantPrimSpec = vps_it->second;
-
-    DCOUT("variant primspec name: " << variantPrimSpec.name());
-
-    if (!is_variantElementName(variantPrimSpec.name())) {
-      PUSH_ERROR_AND_RETURN("Corrupted Crate. VariantAttribute is not the child of VariantPrimSpec.");
-    }
-
-    std::array<std::string, 2> toks;
-    if (!tokenize_variantElement(variantPrimSpec.name(), &toks)) {
-      PUSH_ERROR_AND_RETURN("Invalid variant element_name.");
-    }
-
-    std::string variantSetName = toks[0];
-    std::string variantName = toks[1];
-
-    PrimSpec variant;
-
-    for (const auto &item : _variantPropChildren.at(current)) {
-      if (!_variantProps.count(item)) {
-        PUSH_ERROR_AND_RETURN("Internal error: variant Property not found.");
-      }
-      const std::pair<Path, Property> &pp = _variantProps.at(item);
-
-      std::string prop_name = std::get<0>(pp).prop_part();
-      DCOUT(fmt::format("  node_index = {}, prop name {}", item, prop_name));
-
-      variant.props()[prop_name] = std::move(std::get<1>(pp));
-    }
-
-    VariantSetSpec &vs = parentPrimSpec->variantSets()[variantSetName];
-
-    if (vs.name.empty()) {
-      vs.name = variantSetName;
-    }
-    vs.variantSet[variantName] = variant;
-
-  }
+  // Note: _variantPropChildren is not used in the Layer path — the
+  // early-exit guard in ReconstructPrimSpecNode skips Attribute children
+  // whose parent Variant was already reconstructed by BuildPropertyMap.
+  // Properties are carried through _variantPrimSpecs[].props() and
+  // transferred below via dest.props() = vp.props().
 
   if (_variantPrimChildren.count(current)) {
 
