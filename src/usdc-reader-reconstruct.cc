@@ -84,7 +84,7 @@ bool USDCReader::Impl::AttachVariantPrimChildrenToOwner(int32_t owner_node_id,
     // Extract just the variant element "{v=sel}" for validation.
     std::string ve = vp.element_name();
     {
-      auto bp = ve.find('{');
+      auto bp = ve.rfind('{');
       if (bp != std::string::npos) ve = ve.substr(bp);
     }
     if (!is_variantElementName(ve)) {
@@ -286,7 +286,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         // Extract the variant element {name} or {name=sel} from the full path.
         // The path is like "/Prim{varSet}" — extract just "{varSet}".
         std::string fp = elemPath.full_path_name();
-        auto brace_pos = fp.find('{');
+        auto brace_pos = fp.rfind('{');
         std::string variant_elem = (brace_pos != std::string::npos)
                                      ? fp.substr(brace_pos)
                                      : fp;
@@ -366,7 +366,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         // pf.prim_name is like "/Prim{varSet=sel}" — extract "{varSet=sel}".
         std::string variant_elem_str = pf.prim_name;
         {
-          auto brace_pos = variant_elem_str.find('{');
+          auto brace_pos = variant_elem_str.rfind('{');
           if (brace_pos != std::string::npos) {
             variant_elem_str = variant_elem_str.substr(brace_pos);
           }
@@ -492,7 +492,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
                                            bool is_parent_variant,
                                            const PathIndexToSpecIndexMap &psmap,
                                            Layer *layer,
-                                           PrimSpec *primOut) {
+                                           std::unique_ptr<PrimSpec> *primOut) {
   (void)level;
   const crate::CrateReader::Node &node = (*_nodes)[size_t(current)];
 
@@ -581,20 +581,20 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
       {
         DCOUT("elemPath.prim_name = " << pf.elemPath.prim_part());
 
-        PrimSpec primspec;
+        auto primspec = std::make_unique<PrimSpec>();
 
-        primspec.typeName() = pf.primTypeName;
-        primspec.name() = pf.prim_name;
+        primspec->typeName() = pf.primTypeName;
+        primspec->name() = pf.prim_name;
 
         prim::PropertyMap props;
         if (!BuildPropertyMap(node.GetChildren(), psmap, &props)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to build PropertyMap.");
         }
-        primspec.props() = std::move(props);
-        primspec.metas() = std::move(pf.primMeta);
+        primspec->props() = std::move(props);
+        primspec->metas() = std::move(pf.primMeta);
 
         if (primOut) {
-          (*primOut) = std::move(primspec);
+          *primOut = std::move(primspec);
         }
       }
 
@@ -609,9 +609,11 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
     }
     case SpecType::VariantSet: {
 
-      if (!_prim_table.count(parent)) {
+      // Parent can be a Prim (in _prim_table) or a Variant (in
+      // _variantPrimSpecs) for nested variant sets.
+      if (!_prim_table.count(parent) && !_variantPrimSpecs.count(parent)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  "Parent Prim for this VariantSet not found.");
+                                  "Parent Prim/Variant for this VariantSet not found.");
       }
 
       DCOUT(
@@ -628,7 +630,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 
         // Extract variant element {name} from the full path.
         std::string fp2 = elemPath.full_path_name();
-        auto brace_pos2 = fp2.find('{');
+        auto brace_pos2 = fp2.rfind('{');
         std::string variant_elem2 = (brace_pos2 != std::string::npos)
                                       ? fp2.substr(brace_pos2)
                                       : fp2;
@@ -692,7 +694,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         // pf.prim_name is like "/Prim{varSet=sel}" — extract "{varSet=sel}".
         std::string variant_elem_str = pf.prim_name;
         {
-          auto brace_pos = variant_elem_str.find('{');
+          auto brace_pos = variant_elem_str.rfind('{');
           if (brace_pos != std::string::npos) {
             variant_elem_str = variant_elem_str.substr(brace_pos);
           }
@@ -715,7 +717,9 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 
         PrimSpec variantPrimSpec;
         variantPrimSpec.typeName() = pf.primTypeName;
-        variantPrimSpec.name() = pf.prim_name;
+        // Store the variant element name (e.g., "{varSet=sel}"), not the full
+        // path, so that downstream attachment code can parse it correctly.
+        variantPrimSpec.name() = variant_elem_str;
 
         prim::PropertyMap props;
         if (!BuildPropertyMap(node.GetChildren(), psmap, &props)) {
@@ -956,7 +960,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         // Extract variant element from full path (e.g., "/A{v=sel}" → "{v=sel}")
         std::string ve2 = variantPrim.element_name();
         {
-          auto bp2 = ve2.find('{');
+          auto bp2 = ve2.rfind('{');
           if (bp2 != std::string::npos) ve2 = ve2.substr(bp2);
         }
         if (!is_variantElementName(ve2)) {
@@ -1232,18 +1236,28 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
   }
 
   PrimSpec *currPrimSpecPtr = nullptr;
-  PrimSpec *primspecPtr{nullptr};
+  std::unique_ptr<PrimSpec> primspec;
 
   bool is_parent_variant = _variantPrims.count(parent);
 
   if (!ReconstructPrimSpecNode(parent, current, level, is_parent_variant, psmap,
-                           layer, primspecPtr)) {
+                           layer, &primspec)) {
     return false;
   }
 
-  if (primspecPtr) {
-    currPrimSpecPtr = primspecPtr;
+  if (primspec) {
+    currPrimSpecPtr = primspec.get();
+  } else {
+    // For Variant nodes, point to the variant's PrimSpec so that
+    // children (including nested VariantSets) have a valid parent.
+    auto vps_it = _variantPrimSpecs.find(current);
+    if (vps_it != _variantPrimSpecs.end()) {
+      currPrimSpecPtr = &(vps_it->second);
+    }
   }
+
+  // Pass currPrimSpecPtr (or fall back to parentPrimSpec) to children
+  PrimSpec *nextParentPrimSpec = currPrimSpecPtr ? currPrimSpecPtr : parentPrimSpec;
 
   {
     const crate::CrateReader::Node &node = (*_nodes)[size_t(current)];
@@ -1252,7 +1266,7 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
       DCOUT("Reconstuct Prim children: " << i << " / "
                                          << node.GetChildren().size());
       if (!ReconstructPrimSpecRecursively(current, int(node.GetChildren()[i]),
-                                      currPrimSpecPtr, level + 1, psmap, layer)) {
+                                      nextParentPrimSpec, level + 1, psmap, layer)) {
         return false;
       }
       DCOUT("DONE Reconstuct PrimSpec children: " << i << " / "
@@ -1321,11 +1335,22 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
 
   if (_variantPrimChildren.count(current)) {
 
-    if (!primspecPtr) {
-      PUSH_ERROR_AND_RETURN("Internal error: must be Prim.");
+    // Owner can be a Prim (primspec), a Variant (_variantPrimSpecs), or
+    // the parent PrimSpec (when current is a VariantSet node).
+    PrimSpec *ownerPrimSpec = nullptr;
+    if (primspec) {
+      ownerPrimSpec = primspec.get();
+    } else if (_variantPrimSpecs.count(current)) {
+      ownerPrimSpec = &_variantPrimSpecs.at(current);
+    } else if (parentPrimSpec) {
+      ownerPrimSpec = parentPrimSpec;
     }
 
-    DCOUT(fmt::format("{} has variant PrimSpec ", primspecPtr->name()));
+    if (!ownerPrimSpec) {
+      PUSH_ERROR_AND_RETURN("Internal error: must be Prim or Variant.");
+    }
+
+    DCOUT(fmt::format("{} has variant PrimSpec ", ownerPrimSpec->name()));
 
     for (const auto &item : _variantPrimChildren.at(current)) {
 
@@ -1349,14 +1374,19 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
       std::string variantSetName = toks[0];
       std::string variantName = toks[1];
 
-      VariantSetSpec &vs = primspecPtr->variantSets()[variantSetName];
+      VariantSetSpec &vs = ownerPrimSpec->variantSets()[variantSetName];
 
       if (vs.name.empty()) {
         vs.name = variantSetName;
       }
-      vs.variantSet[variantName].metas() = vp.metas();
+      PrimSpec &dest = vs.variantSet[variantName];
+      dest.metas() = vp.metas();
+      dest.props() = vp.props();
+      dest.typeName() = vp.typeName();
+      dest.specifier() = vp.specifier();
       DCOUT("# of primChildren = " << vp.children().size());
-      vs.variantSet[variantName].children() = std::move(vp.children());
+      dest.children() = std::move(vp.children());
+      dest.variantSets() = std::move(vp.variantSets());
 
     }
   }
@@ -1364,23 +1394,23 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
   DCOUT(fmt::format("-<---"));
 
   if (parent == 0) {  // root prim
-    if (primspecPtr) {
-      std::string name = primspecPtr->name();
-      layer->primspecs()[name] = std::move(*primspecPtr);
+    if (primspec) {
+      std::string name = primspec->name();
+      layer->primspecs()[name] = std::move(*primspec);
     }
   } else {
     if (_variantPrimSpecs.count(parent)) {
       DCOUT("parent is variantPrim: " << parent);
-      if (!primspecPtr) {
+      if (!primspec) {
         PUSH_WARN("parent is variantPrim, but current is not Prim.");
       } else {
         DCOUT("Adding prim to child...");
         PrimSpec &vps = _variantPrimSpecs.at(parent);
-        vps.children().emplace_back(std::move(*primspecPtr));
+        vps.children().emplace_back(std::move(*primspec));
       }
-    } else if (primspecPtr && parentPrimSpec) {
+    } else if (primspec && parentPrimSpec) {
       parentPrimSpec->children().resize(parentPrimSpec->children().size() + 1);
-      parentPrimSpec->children().back() = std::move(*primspecPtr);
+      parentPrimSpec->children().back() = std::move(*primspec);
     }
   }
 
