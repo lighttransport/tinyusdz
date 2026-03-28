@@ -517,7 +517,9 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 
   if ((spec.spec_type == SpecType::Attribute) ||
       (spec.spec_type == SpecType::Relationship)) {
-    if (_prim_table.count(parent)) {
+    // Skip Attribute/Relationship children whose parent was already
+    // reconstructed — BuildPropertyMap already captured them.
+    if (_prim_table.count(parent) || _variantPrimSpecs.count(parent)) {
       return true;
     }
   }
@@ -1238,7 +1240,7 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
   PrimSpec *currPrimSpecPtr = nullptr;
   std::unique_ptr<PrimSpec> primspec;
 
-  bool is_parent_variant = _variantPrims.count(parent);
+  bool is_parent_variant = _variantPrimSpecs.count(parent);
 
   if (!ReconstructPrimSpecNode(parent, current, level, is_parent_variant, psmap,
                            layer, &primspec)) {
@@ -1286,24 +1288,24 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
 
   if (_variantPropChildren.count(current)) {
 
-    if (!_variantPrims.count(current)) {
-      PUSH_ERROR_AND_RETURN("Internal error: variant attribute is not a child of VariantPrim.");
+    if (!_variantPrimSpecs.count(current)) {
+      PUSH_ERROR_AND_RETURN("Internal error: variant attribute is not a child of VariantPrimSpec.");
     }
 
     if (!parentPrimSpec) {
       PUSH_ERROR_AND_RETURN("Internal error: parentPrimSpec should exist.");
     }
 
-    const Prim &variantPrim = _variantPrims.at(current);
+    const PrimSpec &variantPrimSpec = _variantPrimSpecs.at(current);
 
-    DCOUT("variant prim name: " << variantPrim.element_name());
+    DCOUT("variant primspec name: " << variantPrimSpec.name());
 
-    if (!is_variantElementName(variantPrim.element_name())) {
-      PUSH_ERROR_AND_RETURN("Corrupted Crate. VariantAttribute is not the child of VariantPrim.");
+    if (!is_variantElementName(variantPrimSpec.name())) {
+      PUSH_ERROR_AND_RETURN("Corrupted Crate. VariantAttribute is not the child of VariantPrimSpec.");
     }
 
     std::array<std::string, 2> toks;
-    if (!tokenize_variantElement(variantPrim.element_name(), &toks)) {
+    if (!tokenize_variantElement(variantPrimSpec.name(), &toks)) {
       PUSH_ERROR_AND_RETURN("Invalid variant element_name.");
     }
 
