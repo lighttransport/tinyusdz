@@ -238,14 +238,11 @@ TEST_LIST = {
   { "usdc_memory_budget_composition_success_test", usdc_memory_budget_composition_success_test },
   { "usdc_layer_variant_roundtrip_test", usdc_layer_variant_roundtrip_test },
   { "usdc_layer_variant_nested_roundtrip_test", usdc_layer_variant_nested_roundtrip_test },
-  // TODO: Re-enable after fixing Stage path nested variant reconstruction.
-  // The Stage writer correctly writes nested variant specs, but the Stage
-  // reader's ReconstructPrimRecursively does not attach nested variantSets
-  // to Variant objects.
-  // { "usdc_stage_variant_roundtrip_test", usdc_stage_variant_roundtrip_test },
+  { "usdc_stage_variant_roundtrip_test", usdc_stage_variant_roundtrip_test },
   { "usdc_layer_nested_variant_sets_test", usdc_layer_nested_variant_sets_test },
   { "usdc_layer_variant_name_collision_test", usdc_layer_variant_name_collision_test },
   { "usdc_layer_variant_selection_test", usdc_layer_variant_selection_test },
+  { "usdc_layer_nested_variant_props_roundtrip_test", usdc_layer_nested_variant_props_roundtrip_test },
   { "stack_vector_basic_test", stack_vector_basic_test },
   { "stack_vector_overflow_test", stack_vector_overflow_test },
   { "stack_vector_copy_test", stack_vector_copy_test },

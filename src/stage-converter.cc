@@ -1961,6 +1961,15 @@ bool CrateWriter::ConvertVariantToFields(
     }
   }
 
+  // Process nested variant sets
+  for (const auto& vs_item : variant.variantSets()) {
+    if (!ConvertVariantSetToFields(vs_item.first, vs_item.second, v_path, err)) {
+      if (err) *err = "Failed to convert nested VariantSet '" + vs_item.first
+                     + "' in variant " + variant_name + ": " + *err;
+      return false;
+    }
+  }
+
   return true;
 }
 
