@@ -559,7 +559,10 @@ private:
   bool ConvertSinglePrimSpec(const PrimSpec& primspec, const Path& parent_path, std::string* err);
 
   /// Iterative depth-first conversion of a PrimSpec tree.
-  bool ConvertPrimSpecIterative(const PrimSpec& primspec, const Path& parent_path, std::string* err);
+  /// name_override is used when the root PrimSpec has an empty name()
+  /// (e.g., when the name lives only in the Layer's primspecs map key).
+  bool ConvertPrimSpecIterative(const PrimSpec& primspec, const Path& parent_path,
+                                std::string* err, const std::string& name_override = "");
 
   /// Convert a Property to Fields (handles Attribute, Relationship, Connection)
   bool ConvertPropertyToFields(const std::string& prop_name, const Property& prop,

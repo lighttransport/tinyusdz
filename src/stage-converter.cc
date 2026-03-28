@@ -776,19 +776,42 @@ void CrateWriter::ExtractPrimMeta(
   if (metas.variants) {
     crate::CrateValue v;
     v.Set(metas.variants.value());
-    fields.push_back({"variants", v});
+    fields.push_back({"variantSelection", v});
   }
 
   if (metas.variantSets) {
-    std::vector<std::string> variant_sets_list;
+    ListOp<std::string> vs_listop;
+
     for (const auto& variantSets_op : metas.variantSets.value()) {
-      for (const auto& vs : variantSets_op.second) {
-        variant_sets_list.push_back(vs);
+      const ListEditQual& qual = variantSets_op.first;
+      const std::vector<std::string>& vs_list = variantSets_op.second;
+
+      switch (qual) {
+        case ListEditQual::ResetToExplicit:
+          vs_listop.ClearAndMakeExplicit();
+          vs_listop.SetExplicitItems(vs_list);
+          break;
+        case ListEditQual::Append:
+          vs_listop.SetAppendedItems(vs_list);
+          break;
+        case ListEditQual::Prepend:
+          vs_listop.SetPrependedItems(vs_list);
+          break;
+        case ListEditQual::Add:
+          vs_listop.SetAddedItems(vs_list);
+          break;
+        case ListEditQual::Delete:
+          vs_listop.SetDeletedItems(vs_list);
+          break;
+        default:
+          vs_listop.SetPrependedItems(vs_list);
+          break;
       }
     }
+
     crate::CrateValue v;
-    v.Set(variant_sets_list);
-    fields.push_back({"variantSets", v});
+    v.Set(vs_listop);
+    fields.push_back({"variantSetNames", v});
   }
 
   // TODO: references, payload, customData, apiSchemas, inherits, specializes,
