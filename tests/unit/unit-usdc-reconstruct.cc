@@ -1794,24 +1794,28 @@ void usdc_layer_multiple_variant_sets_roundtrip_test(void) {
   const auto &meta = prim_it->second.metas();
   TEST_CHECK(meta.variants.has_value());
   if (meta.variants.has_value()) {
-    auto c_it = meta.variants.value().find("color");
-    auto e_it = meta.variants.value().find("engine");
-    TEST_CHECK(c_it != meta.variants.value().end());
-    TEST_CHECK(e_it != meta.variants.value().end());
-    if (c_it != meta.variants.value().end()) TEST_CHECK(c_it->second == "red");
-    if (e_it != meta.variants.value().end()) TEST_CHECK(e_it->second == "electric");
+    const auto &sel = meta.variants.value();
+    auto c_it = sel.find("color");
+    auto e_it = sel.find("engine");
+    TEST_CHECK(c_it != sel.end());
+    TEST_CHECK(e_it != sel.end());
+    if (c_it != sel.end()) TEST_CHECK(c_it->second == "red");
+    if (e_it != sel.end()) TEST_CHECK(e_it->second == "electric");
   }
 
   // Variant contents
-  if (prim_it->second.variantSets().count("color")) {
-    const auto &vs = prim_it->second.variantSets().at("color");
-    TEST_CHECK(vs.variantSet.count("red") > 0);
-    TEST_CHECK(vs.variantSet.count("blue") > 0);
+  const auto &vsets = prim_it->second.variantSets();
+  auto color_it = vsets.find("color");
+  auto engine_it = vsets.find("engine");
+  TEST_CHECK(color_it != vsets.end());
+  TEST_CHECK(engine_it != vsets.end());
+  if (color_it != vsets.end()) {
+    TEST_CHECK(color_it->second.variantSet.count("red") > 0);
+    TEST_CHECK(color_it->second.variantSet.count("blue") > 0);
   }
-  if (prim_it->second.variantSets().count("engine")) {
-    const auto &vs = prim_it->second.variantSets().at("engine");
-    TEST_CHECK(vs.variantSet.count("electric") > 0);
-    TEST_CHECK(vs.variantSet.count("gas") > 0);
+  if (engine_it != vsets.end()) {
+    TEST_CHECK(engine_it->second.variantSet.count("electric") > 0);
+    TEST_CHECK(engine_it->second.variantSet.count("gas") > 0);
   }
 }
 
@@ -1889,13 +1893,15 @@ void usdc_layer_3level_nested_roundtrip_test(void) {
   auto l3_it = x_it->second.variantSets().find("L3");
   TEST_CHECK(l3_it != x_it->second.variantSets().end());
   if (l3_it == x_it->second.variantSets().end()) return;
-  TEST_CHECK(l3_it->second.variantSet.count("P") > 0);
-  TEST_CHECK(l3_it->second.variantSet.count("Q") > 0);
-  if (l3_it->second.variantSet.count("P")) {
-    TEST_CHECK(l3_it->second.variantSet.at("P").typeName() == "Sphere");
+  auto p_it = l3_it->second.variantSet.find("P");
+  auto q_it = l3_it->second.variantSet.find("Q");
+  TEST_CHECK(p_it != l3_it->second.variantSet.end());
+  TEST_CHECK(q_it != l3_it->second.variantSet.end());
+  if (p_it != l3_it->second.variantSet.end()) {
+    TEST_CHECK(p_it->second.typeName() == "Sphere");
   }
-  if (l3_it->second.variantSet.count("Q")) {
-    TEST_CHECK(l3_it->second.variantSet.at("Q").typeName() == "Cube");
+  if (q_it != l3_it->second.variantSet.end()) {
+    TEST_CHECK(q_it->second.typeName() == "Cube");
   }
 }
 
@@ -1916,22 +1922,18 @@ void usdc_stage_variant_props_roundtrip_test(void) {
     meta.variantSets->push_back(
         std::make_pair(ListEditQual::Prepend, std::vector<std::string>{"quality"}));
 
+    auto makeVariantWithDoubleProp = [](const char *name, double val) {
+      Variant v;
+      Attribute attr;
+      attr.set_value(double(val));
+      v.properties()[name] = Property(attr, /* custom */ false);
+      return v;
+    };
+
     VariantSet vs;
     vs.name = "quality";
-    Variant high;
-    {
-      Attribute attr;
-      attr.set_value(4.0);
-      high.properties()["detail"] = Property(attr, /* custom */ false);
-    }
-    Variant low;
-    {
-      Attribute attr;
-      attr.set_value(1.0);
-      low.properties()["detail"] = Property(attr, /* custom */ false);
-    }
-    vs.variantSet["high"] = std::move(high);
-    vs.variantSet["low"] = std::move(low);
+    vs.variantSet["high"] = makeVariantWithDoubleProp("detail", 4.0);
+    vs.variantSet["low"] = makeVariantWithDoubleProp("detail", 1.0);
     root_prim.variantSets()["quality"] = std::move(vs);
 
     if (!stage.add_root_prim(std::move(root_prim))) {
@@ -1960,12 +1962,14 @@ void usdc_stage_variant_props_roundtrip_test(void) {
   TEST_CHECK(vs_it != prim->variantSets().end());
   if (vs_it == prim->variantSets().end()) return;
 
-  TEST_CHECK(vs_it->second.variantSet.count("high") > 0);
-  TEST_CHECK(vs_it->second.variantSet.count("low") > 0);
-  if (vs_it->second.variantSet.count("high")) {
-    TEST_CHECK(!vs_it->second.variantSet.at("high").properties().empty());
+  auto high_it = vs_it->second.variantSet.find("high");
+  auto low_it = vs_it->second.variantSet.find("low");
+  TEST_CHECK(high_it != vs_it->second.variantSet.end());
+  TEST_CHECK(low_it != vs_it->second.variantSet.end());
+  if (high_it != vs_it->second.variantSet.end()) {
+    TEST_CHECK(high_it->second.properties().count("detail") > 0);
   }
-  if (vs_it->second.variantSet.count("low")) {
-    TEST_CHECK(!vs_it->second.variantSet.at("low").properties().empty());
+  if (low_it != vs_it->second.variantSet.end()) {
+    TEST_CHECK(low_it->second.properties().count("detail") > 0);
   }
 }
