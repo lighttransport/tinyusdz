@@ -16,7 +16,7 @@ namespace tinyusdz {
 std::string to_string(const MaterialBindingStrength strength) {
   switch (strength) {
     case MaterialBindingStrength::WeakerThanDescendants: {
-      return kWeaderThanDescendants;
+      return kWeakerThanDescendants;
     }
     case MaterialBindingStrength::StrongerThanDescendants: {
       return kStrongerThanDescendants;
@@ -90,16 +90,16 @@ bool UsdShadePrim::set_sdr_metadata(const std::string &key, const std::string &s
 value::token MaterialBinding::get_materialBindingStrength(const value::token &purpose) {
 
   if (purpose.str() == kAllPurpose().str()) {
-    if (materialBinding && materialBinding.value().metas().has_bindMaterialAs()) {
-      return materialBinding.value().metas().get_bindMaterialAs();
+    if (materialBinding.authored() && materialBinding.relationship().metas().has_bindMaterialAs()) {
+      return materialBinding.relationship().metas().get_bindMaterialAs();
     }
   } else if (purpose.str() == "full") {
-    if (materialBindingFull && materialBindingFull.value().metas().has_bindMaterialAs()) {
-      return materialBindingFull.value().metas().get_bindMaterialAs();
+    if (materialBindingFull.authored() && materialBindingFull.relationship().metas().has_bindMaterialAs()) {
+      return materialBindingFull.relationship().metas().get_bindMaterialAs();
     }
   } else if (purpose.str() == "preview") {
-    if (materialBindingPreview && materialBindingPreview.value().metas().has_bindMaterialAs()) {
-      return materialBindingPreview.value().metas().get_bindMaterialAs();
+    if (materialBindingPreview.authored() && materialBindingPreview.relationship().metas().has_bindMaterialAs()) {
+      return materialBindingPreview.relationship().metas().get_bindMaterialAs();
     }
   } else {
     if (_materialBindingMap.count(purpose.str())) {
@@ -110,7 +110,7 @@ value::token MaterialBinding::get_materialBindingStrength(const value::token &pu
     }
   }
 
-  return value::token(kWeaderThanDescendants);
+  return value::token(kWeakerThanDescendants);
 }
 
 value::token MaterialBinding::get_materialBindingStrengthCollection(const value::token &coll_name, const value::token &purpose) {
@@ -132,7 +132,7 @@ value::token MaterialBinding::get_materialBindingStrengthCollection(const value:
     }
   }
 
-  return value::token(kWeaderThanDescendants);
+  return value::token(kWeakerThanDescendants);
 }
 
 namespace {

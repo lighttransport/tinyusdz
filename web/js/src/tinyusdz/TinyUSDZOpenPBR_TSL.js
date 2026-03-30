@@ -125,6 +125,34 @@ export const MtlxNodes = {
     cross: (a, b) => cross(a, b),
     reflect: (i, n) => reflect(i, n),
 
+    // Rotation — Rodrigues' formula matching MaterialX GLSL mx_rotationMatrix
+    rotate3d: (v, amount, axis) => {
+        const rad = mul(amount, float(Math.PI / 180));
+        const s = sin(rad);
+        const c = cos(rad);
+        const oc = sub(float(1), c);
+        const a = normalize(axis);
+        const ax = a.x, ay = a.y, az = a.z;
+        // Row 0
+        const r00 = add(mul(oc, mul(ax, ax)), c);
+        const r01 = add(mul(oc, mul(ax, ay)), mul(az, s));
+        const r02 = sub(mul(oc, mul(az, ax)), mul(ay, s));
+        // Row 1
+        const r10 = sub(mul(oc, mul(ax, ay)), mul(az, s));
+        const r11 = add(mul(oc, mul(ay, ay)), c);
+        const r12 = add(mul(oc, mul(ay, az)), mul(ax, s));
+        // Row 2
+        const r20 = add(mul(oc, mul(az, ax)), mul(ay, s));
+        const r21 = sub(mul(oc, mul(ay, az)), mul(ax, s));
+        const r22 = add(mul(oc, mul(az, az)), c);
+
+        return vec3(
+            add(add(mul(r00, v.x), mul(r01, v.y)), mul(r02, v.z)),
+            add(add(mul(r10, v.x), mul(r11, v.y)), mul(r12, v.z)),
+            add(add(mul(r20, v.x), mul(r21, v.y)), mul(r22, v.z))
+        );
+    },
+
     // Color operations
     luminance: (c) => dot(c, vec3(0.2126, 0.7152, 0.0722)),
 
@@ -168,7 +196,104 @@ export const MtlxNodes = {
     combine2: (x, y) => vec2(x, y),
     combine3: (x, y, z) => vec3(x, y, z),
     combine4: (x, y, z, w) => vec4(x, y, z, w),
-    extract: (v, index) => v.element(index)
+    extract: (v, index) => v.element(index),
+
+    // ========================================================================
+    // Colorspace Conversion Functions
+    // ========================================================================
+
+    /**
+     * Convert sRGB to Linear RGB (proper sRGB transfer function)
+     * Uses the official sRGB specification with linear segment
+     * @param {Node} color - sRGB color (vec3 or single channel)
+     * @returns {Node} Linear RGB color
+     */
+    srgbToLinear: (color) => {
+        // sRGB to Linear:
+        // if c <= 0.04045: c / 12.92
+        // else: pow((c + 0.055) / 1.055, 2.4)
+        const threshold = float(0.04045);
+        const linearPart = div(color, float(12.92));
+        const gammaPart = pow(div(add(color, float(0.055)), float(1.055)), float(2.4));
+        return select(color.lessThanEqual(threshold), linearPart, gammaPart);
+    },
+
+    /**
+     * Convert sRGB to Linear RGB (simplified gamma 2.2)
+     * Faster but less accurate than proper sRGB conversion
+     * @param {Node} color - sRGB color
+     * @returns {Node} Linear RGB color
+     */
+    srgbToLinearFast: (color) => {
+        return pow(color, float(2.2));
+    },
+
+    /**
+     * Convert Linear RGB to sRGB (proper sRGB transfer function)
+     * Uses the official sRGB specification with linear segment
+     * @param {Node} color - Linear RGB color
+     * @returns {Node} sRGB color
+     */
+    linearToSrgb: (color) => {
+        // Linear to sRGB:
+        // if c <= 0.0031308: c * 12.92
+        // else: 1.055 * pow(c, 1/2.4) - 0.055
+        const threshold = float(0.0031308);
+        const linearPart = mul(color, float(12.92));
+        const gammaPart = sub(mul(float(1.055), pow(color, float(1.0 / 2.4))), float(0.055));
+        return select(color.lessThanEqual(threshold), linearPart, gammaPart);
+    },
+
+    /**
+     * Convert Linear RGB to sRGB (simplified gamma 2.2)
+     * Faster but less accurate than proper sRGB conversion
+     * @param {Node} color - Linear RGB color
+     * @returns {Node} sRGB color
+     */
+    linearToSrgbFast: (color) => {
+        return pow(color, float(1.0 / 2.2));
+    },
+
+    /**
+     * Apply colorspace conversion based on source and target colorspace
+     * @param {Node} color - Input color
+     * @param {string} sourceColorspace - Source colorspace (e.g., 'srgb_texture', 'lin_rec709')
+     * @param {string} targetColorspace - Target colorspace (default: 'lin_rec709')
+     * @returns {Node} Converted color
+     */
+    convertColorspace: (color, sourceColorspace, targetColorspace = 'lin_rec709') => {
+        // Normalize colorspace names
+        const src = (sourceColorspace || '').toLowerCase().replace(/[_-]/g, '');
+        const tgt = (targetColorspace || 'linrec709').toLowerCase().replace(/[_-]/g, '');
+
+        // If same colorspace, no conversion needed
+        if (src === tgt) return color;
+
+        // Source is sRGB, target is linear
+        if ((src === 'srgb' || src === 'srgbtexture') &&
+            (tgt === 'linrec709' || tgt === 'linsrgb' || tgt === 'linear')) {
+            return MtlxNodes.srgbToLinear(color);
+        }
+
+        // Source is linear, target is sRGB
+        if ((src === 'linrec709' || src === 'linsrgb' || src === 'linear') &&
+            (tgt === 'srgb' || tgt === 'srgbtexture')) {
+            return MtlxNodes.linearToSrgb(color);
+        }
+
+        // Raw/data textures - no conversion
+        if (src === 'raw' || tgt === 'raw') {
+            return color;
+        }
+
+        // Default: assume sRGB source needs linearization for rendering
+        if (src === 'srgbtexture' || src === 'srgb') {
+            return MtlxNodes.srgbToLinear(color);
+        }
+
+        // No conversion for unrecognized colorspaces
+        return color;
+    }
 };
 
 // ============================================================================
@@ -243,6 +368,69 @@ export const DEFAULT_OPENPBR_PARAMS = {
 };
 
 // ============================================================================
+// Colorspace Conversion Utilities (JavaScript-side)
+// ============================================================================
+
+/**
+ * Convert a single sRGB value to linear
+ * @param {number} value - sRGB value [0, 1]
+ * @returns {number} Linear value
+ */
+function srgbToLinearValue(value) {
+    return value <= 0.04045
+        ? value / 12.92
+        : Math.pow((value + 0.055) / 1.055, 2.4);
+}
+
+/**
+ * Convert a single linear value to sRGB
+ * @param {number} value - Linear value [0, 1]
+ * @returns {number} sRGB value
+ */
+function linearToSrgbValue(value) {
+    return value <= 0.0031308
+        ? value * 12.92
+        : 1.055 * Math.pow(value, 1.0 / 2.4) - 0.055;
+}
+
+/**
+ * Convert color array from source colorspace to target colorspace
+ * @param {Array|number} color - Color value(s)
+ * @param {string} sourceColorspace - Source colorspace
+ * @param {string} targetColorspace - Target colorspace (default: 'lin_rec709')
+ * @returns {Array|number} Converted color
+ */
+export function convertColorJS(color, sourceColorspace, targetColorspace = 'lin_rec709') {
+    const src = (sourceColorspace || '').toLowerCase().replace(/[_-]/g, '');
+    const tgt = (targetColorspace || 'linrec709').toLowerCase().replace(/[_-]/g, '');
+
+    // Same colorspace, no conversion
+    if (src === tgt) return color;
+
+    // Determine conversion function
+    let convertFn = null;
+
+    if ((src === 'srgb' || src === 'srgbtexture') &&
+        (tgt === 'linrec709' || tgt === 'linsrgb' || tgt === 'linear')) {
+        convertFn = srgbToLinearValue;
+    } else if ((src === 'linrec709' || src === 'linsrgb' || src === 'linear') &&
+               (tgt === 'srgb' || tgt === 'srgbtexture')) {
+        convertFn = linearToSrgbValue;
+    }
+
+    if (!convertFn) return color;
+
+    // Apply conversion
+    if (typeof color === 'number') {
+        return convertFn(color);
+    }
+    if (Array.isArray(color)) {
+        return color.map(c => convertFn(c));
+    }
+    return color;
+}
+
+// ============================================================================
 // OpenPBR TSL Material Class
 // ============================================================================
 
@@ -251,8 +439,15 @@ export const DEFAULT_OPENPBR_PARAMS = {
  *
  * This factory function creates a MeshPhysicalMaterial with OpenPBR parameter
  * naming and proper integration with Three.js WebGPU rendering.
+ *
+ * @param {Object} params - OpenPBR parameters
+ * @param {Object} options - Additional options
+ * @param {string} options.inputColorspace - Colorspace of input color values (default: 'srgb')
+ *        - 'srgb': Input colors are in sRGB, will be converted to linear
+ *        - 'lin_rec709' or 'linear': Input colors are already linear, no conversion
  */
-export function createOpenPBRMaterial(params = {}) {
+export function createOpenPBRMaterial(params = {}, options = {}) {
+    const inputColorspace = options.inputColorspace || 'srgb';
     const material = new THREE.MeshPhysicalMaterial();
 
     // Flag for type checking
@@ -266,8 +461,16 @@ export function createOpenPBRMaterial(params = {}) {
         thin_film_thickness: params.thin_film_thickness ?? DEFAULT_OPENPBR_PARAMS.thin_film_thickness,
     };
 
+    // Helper to convert color based on input colorspace
+    // Three.js WebGPU expects linear color values
+    const toLinearColor = (color) => {
+        if (!color) return color;
+        // Convert to linear if input is sRGB
+        return convertColorJS(color, inputColorspace, 'lin_rec709');
+    };
+
     // Set default/provided OpenPBR values mapped to MeshPhysicalMaterial
-    const baseColor = params.base_color ?? DEFAULT_OPENPBR_PARAMS.base_color;
+    const baseColor = toLinearColor(params.base_color ?? DEFAULT_OPENPBR_PARAMS.base_color);
     material.color = Array.isArray(baseColor)
         ? new THREE.Color(baseColor[0], baseColor[1], baseColor[2])
         : new THREE.Color(baseColor);
@@ -281,7 +484,7 @@ export function createOpenPBRMaterial(params = {}) {
 
     material.sheen = params.sheen_weight ?? DEFAULT_OPENPBR_PARAMS.sheen_weight;
     material.sheenRoughness = params.sheen_roughness ?? DEFAULT_OPENPBR_PARAMS.sheen_roughness;
-    const sheenColor = params.sheen_color ?? DEFAULT_OPENPBR_PARAMS.sheen_color;
+    const sheenColor = toLinearColor(params.sheen_color ?? DEFAULT_OPENPBR_PARAMS.sheen_color);
     material.sheenColor = Array.isArray(sheenColor)
         ? new THREE.Color(sheenColor[0], sheenColor[1], sheenColor[2])
         : new THREE.Color(sheenColor);
@@ -291,7 +494,7 @@ export function createOpenPBRMaterial(params = {}) {
 
     material.transmission = params.transmission_weight ?? DEFAULT_OPENPBR_PARAMS.transmission_weight;
 
-    const emissionColor = params.emission_color ?? DEFAULT_OPENPBR_PARAMS.emission_color;
+    const emissionColor = toLinearColor(params.emission_color ?? DEFAULT_OPENPBR_PARAMS.emission_color);
     material.emissive = Array.isArray(emissionColor)
         ? new THREE.Color(emissionColor[0], emissionColor[1], emissionColor[2])
         : new THREE.Color(emissionColor);
@@ -381,7 +584,7 @@ export class MtlxNodeGraphProcessor {
 
         switch (nodeType) {
             case 'constant':
-                return this._processConstant(nodeData);
+                return this._processConstant(nodeData, inputs);
 
             case 'add':
                 return MtlxNodes.add(inputs.in1, inputs.in2);
@@ -457,14 +660,22 @@ export class MtlxNodeGraphProcessor {
             case 'ifgreater':
                 return MtlxNodes.ifgreater(inputs.value1, inputs.value2, inputs.in1, inputs.in2);
 
+            case 'rotate3d':
+                return MtlxNodes.rotate3d(
+                    inputs.in || vec3(0, 0, 0),
+                    inputs.amount || float(0),
+                    inputs.axis || vec3(0, 1, 0)
+                );
+
             default:
                 console.warn(`Unknown MaterialX node type: ${nodeType}`);
                 return float(0);
         }
     }
 
-    _processConstant(nodeData) {
-        const value = nodeData.value;
+    _processConstant(nodeData, inputs = {}) {
+        // Prefer resolved inputs (from processGraph), fall back to nodeData.value
+        const value = (inputs && inputs.value !== undefined) ? inputs.value : nodeData.value;
         const valueType = nodeData.valueType || 'float';
 
         switch (valueType) {
@@ -484,12 +695,30 @@ export class MtlxNodeGraphProcessor {
     }
 
     _processImage(nodeData, inputs) {
-        // In a real implementation, we would load the texture
-        // For now, return a placeholder
+        // Process texture with colorspace conversion
         const texCoord = inputs.texcoord || uv();
 
         if (nodeData.texture) {
-            return texture(nodeData.texture, texCoord);
+            // Sample the texture
+            let texColor = texture(nodeData.texture, texCoord);
+
+            // Apply colorspace conversion if specified
+            // Default assumption: color textures are in sRGB and need linearization
+            const colorspace = nodeData.colorspace || nodeData.sourceColorspace || 'srgb_texture';
+            const isColorTexture = !nodeData.isData && !nodeData.isNormalMap;
+
+            if (isColorTexture) {
+                // Convert color channels (RGB) from source colorspace to linear
+                // Alpha channel is not affected by colorspace conversion
+                const linearRGB = MtlxNodes.convertColorspace(
+                    vec3(texColor.x, texColor.y, texColor.z),
+                    colorspace,
+                    'lin_rec709'
+                );
+                texColor = vec4(linearRGB.x, linearRGB.y, linearRGB.z, texColor.w);
+            }
+
+            return texColor;
         }
 
         // Return white if no texture

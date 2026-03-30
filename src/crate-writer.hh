@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -21,9 +22,9 @@
 #include "usdLux.hh"
 
 // Path sorting and encoding library
-#include "../sandbox/path-sort-and-encode-crate/include/crate/path_interface.hh"
-#include "../sandbox/path-sort-and-encode-crate/include/crate/path_sort.hh"
-#include "../sandbox/path-sort-and-encode-crate/include/crate/tree_encode.hh"
+#include "crate-path-utils/path_interface.hh"
+#include "crate-path-utils/path_sort.hh"
+#include "crate-path-utils/tree_encode.hh"
 
 namespace tinyusdz {
 namespace experimental {
@@ -93,6 +94,58 @@ class ErrorContextStack {
 };
 
 ///
+/// IOutputStream - Abstract output stream for CrateWriter I/O
+///
+/// Allows CrateWriter to write to files or memory buffers interchangeably.
+///
+class IOutputStream {
+public:
+  virtual ~IOutputStream();
+  virtual bool Open(std::string* err) = 0;
+  virtual void Close() = 0;
+  virtual bool IsOpen() const = 0;
+  virtual int64_t Tell() = 0;
+  virtual bool Seek(int64_t pos) = 0;
+  virtual bool Write(const void* data, size_t size) = 0;
+  virtual bool Flush() = 0;
+};
+
+///
+/// MemoryOutputStream - Writes to an in-memory buffer
+///
+/// Used by SaveAsUSDCToMemory to avoid temp-file round-trips.
+///
+class MemoryOutputStream : public IOutputStream {
+public:
+  MemoryOutputStream() = default;
+  ~MemoryOutputStream() override;
+  bool Open(std::string*) override { pos_ = 0; buffer_.clear(); return true; }
+  void Close() override {}
+  bool IsOpen() const override { return true; }
+  int64_t Tell() override { return static_cast<int64_t>(pos_); }
+  bool Seek(int64_t pos) override {
+    if (pos < 0) return false;
+    size_t p = static_cast<size_t>(pos);
+    if (p > buffer_.size()) buffer_.resize(p, 0);
+    pos_ = p;
+    return true;
+  }
+  bool Write(const void* data, size_t size) override {
+    if (pos_ + size > buffer_.size()) buffer_.resize(pos_ + size);
+    std::memcpy(buffer_.data() + pos_, data, size);
+    pos_ += size;
+    return true;
+  }
+  bool Flush() override { return true; }
+
+  std::vector<uint8_t> TakeBuffer() { return std::move(buffer_); }
+  const std::vector<uint8_t>& GetBuffer() const { return buffer_; }
+private:
+  std::vector<uint8_t> buffer_;
+  size_t pos_ = 0;
+};
+
+///
 /// CrateWriter - Experimental framework for writing USDC binary files
 ///
 /// This is a bare-bones implementation focusing on core structure.
@@ -115,6 +168,9 @@ class CrateWriter {
 public:
   /// Create a new crate writer for the given file path
   explicit CrateWriter(const std::string& filepath);
+
+  /// Create a new crate writer with a custom output stream
+  explicit CrateWriter(std::unique_ptr<IOutputStream> stream);
 
   ~CrateWriter();
 
@@ -331,7 +387,12 @@ private:
   // ======================================================================
 
   /// Convert a Prim and its children recursively
-  bool ConvertPrimRecursive(const Prim& prim, const Path& parent_path, std::string* err);
+  /// Convert a single prim (no children) and add its specs.
+  /// Returns true on success. Does not recurse into children.
+  bool ConvertSinglePrim(const Prim& prim, const Path& parent_path, std::string* err);
+
+  /// Iterative depth-first conversion of a prim tree.
+  bool ConvertPrimIterative(const Prim& root_prim, const Path& parent_path, std::string* err);
 
   /// Extract properties from a Prim and add as fields
   bool ExtractPrimProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
@@ -415,6 +476,9 @@ private:
   /// Extract SkelRoot properties (visibility, purpose, extent)
   bool ExtractSkelRootProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
+  /// Extract PrimMeta fields (kind, active, hidden, customData, apiSchemas, references, payload, inherits, specializes, etc.)
+  void ExtractPrimMeta(const PrimMeta& metas, crate::FieldValuePairVector& fields);
+
   /// Extract common GPrim properties (visibility, purpose, etc.)
   bool ExtractGPrimProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
@@ -451,6 +515,9 @@ private:
   /// Handles light:filters relationships for SphereLight, RectLight, DiskLight, CylinderLight, DistantLight, DomeLight
   bool AddLightFilterSpecs(const Prim& prim, const Path& prim_path, std::string* err);
 
+  /// Add PointInstancer prototypes relationship as separate relationship spec
+  bool AddPointInstancerPrototypesSpec(const Prim& prim, const Path& prim_path, std::string* err);
+
   /// Extract xformOps from Xformable (GPrim or Xform)
   /// Creates separate Attribute specs for each xformOp property
   bool ExtractXformOpsFromXformable(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
@@ -458,12 +525,44 @@ private:
   /// Convert TinyUSDZ value to CrateValue
   bool ConvertValue(const value::Value& val, crate::CrateValue& out, std::string* err);
 
+  /// Convert a value::Value to CrateValue and append to fields.
+  bool AddArrayAttribute(const std::string& attr_name, const value::Value& val,
+                         crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Convert an enum string to a token and append to fields.
+  void AddEnumAttribute(const std::string& attr_name, const std::string& enum_val,
+                        crate::FieldValuePairVector& fields);
+
+  /// Convert a typed optional attribute to CrateValue and append to fields.
+  /// Silently skips unsupported types rather than failing.
+  template<typename T>
+  bool AddTypedArrayAttribute(const char* name, const T& typed_attr,
+                              crate::FieldValuePairVector& fields);
+
+  /// Extract default value (and time samples if present) from an Animatable<T>
+  /// into FieldValuePairVector.  Reduces the 10-line per-attribute boilerplate
+  /// in Extract*Properties helpers to a single call.
+  template<typename T>
+  bool ExtractAnimatableDefault(const Animatable<T>& anim, const char* name,
+                                crate::FieldValuePairVector& fields, std::string* err);
+
   // ======================================================================
   // Layer/PrimSpec conversion helpers
   // ======================================================================
 
+  /// Build fields for a PrimSpec (shared by PrimSpec/VariantSpec writers)
+  bool BuildPrimSpecFields(const PrimSpec& primspec, const Path& prim_path,
+                           crate::FieldValuePairVector& fields, std::string* err);
+
   /// Convert a PrimSpec and its children recursively
-  bool ConvertPrimSpecRecursive(const PrimSpec& primspec, const Path& parent_path, std::string* err);
+  /// Convert a single PrimSpec (no children) and add its specs.
+  bool ConvertSinglePrimSpec(const PrimSpec& primspec, const Path& parent_path, std::string* err);
+
+  /// Iterative depth-first conversion of a PrimSpec tree.
+  /// name_override is used when the root PrimSpec has an empty name()
+  /// (e.g., when the name lives only in the Layer's primspecs map key).
+  bool ConvertPrimSpecIterative(const PrimSpec& primspec, const Path& parent_path,
+                                std::string* err, const std::string& name_override = "");
 
   /// Convert a Property to Fields (handles Attribute, Relationship, Connection)
   bool ConvertPropertyToFields(const std::string& prop_name, const Property& prop,
@@ -491,12 +590,24 @@ private:
                                  const VariantSet& variantset,
                                  const Path& parent_path, std::string* err);
 
+  /// Convert a VariantSetSpec to separate specs (Layer/PrimSpec variant data)
+  bool ConvertVariantSetSpecToFields(const std::string& variantset_name,
+                                     const VariantSetSpec& variantset,
+                                     const Path& parent_path, std::string* err);
+
   /// Convert a Variant to separate spec (proper USD format)
   /// Creates a spec with SpecType::Variant containing variant properties and children
   bool ConvertVariantToFields(const std::string& variant_name,
                               const Variant& variant,
                               const Path& variantset_path,
                               const std::string& variantset_name, std::string* err);
+
+  /// Convert a Variant PrimSpec to separate spec (Layer/PrimSpec variant data)
+  bool ConvertVariantSpecToFields(const std::string& variant_name,
+                                  const PrimSpec& variant_primspec,
+                                  const Path& parent_prim_path,
+                                  const std::string& variantset_name,
+                                  std::string* err);
 
   // ======================================================================
   // Value encoding
@@ -508,7 +619,8 @@ private:
 
   /// Write a value to the value data section
   /// Returns the file offset where the value was written
-  int64_t WriteValueData(const crate::CrateValue& value, std::string* err);
+  int64_t WriteValueData(const crate::CrateValue& value, bool* is_compressed,
+                         std::string* err);
 
   /// Try to inline a value in ValueRep payload (optimization)
   bool TryInlineValue(const crate::CrateValue& value, crate::ValueRep* rep);
@@ -516,6 +628,17 @@ private:
   // ======================================================================
   // Deduplication
   // ======================================================================
+
+  /// Generic get-or-create for deduplication tables
+  template<typename KeyType, typename IndexType, typename MapType, typename VecType>
+  IndexType GetOrCreateImpl(const KeyType& key, MapType& map, VecType& vec) {
+    auto it = map.find(key);
+    if (it != map.end()) return it->second;
+    IndexType idx(static_cast<uint32_t>(vec.size()));
+    vec.push_back(key);
+    map[key] = idx;
+    return idx;
+  }
 
   /// Get or create token index for a token
   crate::TokenIndex GetOrCreateToken(const std::string& token);
@@ -542,6 +665,24 @@ private:
   bool CompressData(const char* input, size_t inputSize,
                     std::vector<char>* compressed, std::string* err);
 
+  /// Write a compressed integer array (32-bit) using Usd_IntegerCompression.
+  /// If compression fails or count < 16, writes uncompressed.
+  /// Sets `is_compressed` to match the bytes actually written.
+  /// The data pointer must point to count uint32_t values.
+  /// Returns -1 on I/O error.
+  int64_t WriteCompressedArray32(const uint32_t* data, uint64_t count,
+                                 const char* typeName, bool* is_compressed,
+                                 std::string* err);
+
+  /// Write a compressed integer array (64-bit) using Usd_IntegerCompression64.
+  /// If compression fails or count < 16, writes uncompressed.
+  /// Sets `is_compressed` to match the bytes actually written.
+  /// The data pointer must point to count uint64_t values.
+  /// Returns -1 on I/O error.
+  int64_t WriteCompressedArray64(const uint64_t* data, uint64_t count,
+                                 const char* typeName, bool* is_compressed,
+                                 std::string* err);
+
   // ======================================================================
   // I/O utilities
   // ======================================================================
@@ -566,7 +707,7 @@ private:
   // ======================================================================
 
   std::string filepath_;
-  std::fstream file_;  // Changed from ofstream to support read+write for bootstrap
+  std::unique_ptr<IOutputStream> stream_;
   Options options_;
 
   bool is_open_ = false;
@@ -612,19 +753,38 @@ private:
   int64_t value_data_start_offset_ = 0;
   int64_t value_data_end_offset_ = 0;
 
-  // Phase 5: TimeSamples array deduplication
-  // Maps array content hash to file offset where it was written
-  // Only used for numeric arrays in TimeSamples
-  struct ArrayHash {
-    std::size_t operator()(const std::vector<char>& v) const {
-      std::size_t hash = 0;
-      for (char c : v) {
-        hash = hash * 31 + static_cast<std::size_t>(c);
-      }
-      return hash;
+  // Phase 5: TimeSamples value deduplication with NaN-aware hashing.
+  // Follows OpenUSD TfHash pattern: +0.0 and -0.0 hash identically;
+  // all other values hash by bit pattern.
+  struct NanAwareHash {
+    static size_t hash_float(float v) {
+      uint32_t bits = 0;
+      if (v != 0.0f) { std::memcpy(&bits, &v, sizeof(v)); }
+      return std::hash<uint32_t>{}(bits);
     }
+    static size_t hash_double(double v) {
+      uint64_t bits = 0;
+      if (v != 0.0) { std::memcpy(&bits, &v, sizeof(v)); }
+      return std::hash<uint64_t>{}(bits);
+    }
+    static size_t combine(size_t seed, size_t h) {
+      return seed ^ (h + 0x9e3779b9 + (seed << 6) + (seed >> 2));
+    }
+    // Hash a buffer with NaN-aware float/double handling.
+    // element_size: sizeof(float) or sizeof(double) when is_float is true.
+    static size_t hash_buffer(const void *data, size_t byte_count,
+                              size_t element_size, bool is_float);
+    // NaN-aware buffer equality (canonicalizes +0/-0 before comparison).
+    static bool buffers_equal(const void *a, const void *b, size_t byte_count,
+                              size_t element_size, bool is_float);
   };
-  std::unordered_map<std::vector<char>, int64_t, ArrayHash> array_dedup_map_;
+  struct ValueDedupEntry {
+    std::vector<char> bytes;
+    size_t element_size;
+    bool is_float;
+    int64_t offset;
+  };
+  std::unordered_multimap<size_t, ValueDedupEntry> value_dedup_map_;
 };
 
 } // namespace experimental

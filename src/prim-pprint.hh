@@ -7,7 +7,8 @@
 #include <string>
 #include <cstdint>
 
-#include "prim-types.hh"
+#include "core/prim.hh"       // Prim class (transitively: prim-enums, prim-metas, path)
+#include "core/prim-spec.hh"  // PrimSpec, ReferenceList, PayloadList, LayerOffset
 
 namespace tinyusdz {
 

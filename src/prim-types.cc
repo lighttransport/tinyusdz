@@ -5,7 +5,9 @@
 #include <limits>
 #include <numeric>
 //
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/prim-spec.hh"
+#include "core/model-scope.hh"  // Model, Scope
 #include "str-util.hh"
 #include "tiny-container.hh"
 #include "tiny-format.hh"
@@ -16,7 +18,7 @@
 #include "usdSkel.hh"
 //
 #include "common-macros.inc"
-#include "pprinter.hh"
+#include "pprint-meta.hh"
 #include "value-pprint.hh"
 
 #ifdef __clang__
@@ -110,19 +112,10 @@ bool ConvertTokenAttributeToStringAttribute(
         } else if (toks.is_timesamples()) {
           auto tok_ts = toks.get_timesamples();
 
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
           for (auto &item : tok_ts.get_samples()) {
             strs.add_sample(item.t, item.value.str());
           }
-#else
-          const auto &times = tok_ts.get_times();
-          const auto &values = tok_ts.get_values();
-          for (size_t i = 0; i < times.size(); i++) {
-            strs.add_sample(times[i], values[i].str());
-          }
-#endif
         } else if (toks.is_blocked()) {
-          // TODO
           return false;
         }
       }
@@ -235,17 +228,6 @@ void Path::_update(const std::string &p, const std::string &prop) {
     // maybe relative(e.g. "./xform", "../xform")
     // FIXME: Support relative path fully
 
-#if 0
-    auto nslashes = std::count_if(p.begin(), p.end(), slash_fun);
-    if (nslashes > 0) {
-      _valid = false;
-      return;
-    }
-
-    _prop_part = p;
-    _prop_part = _prop_part.erase(0, 1);
-    _valid = true;
-#else
     _prim_part = p;
     if (prop.size()) {
       _prop_part = prop;
@@ -259,7 +241,6 @@ void Path::_update(const std::string &p, const std::string &prop) {
     }
     _valid = true;
 
-#endif
 
   } else {
     // prim.prop
@@ -270,6 +251,9 @@ void Path::_update(const std::string &p, const std::string &prop) {
       _prim_part = p;
       if (prop.size()) {
         _prop_part = prop;
+        _element = prop;
+      } else {
+        _element = p;
       }
       _valid = true;
     } else if (ndots == 1) {
@@ -423,51 +407,27 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
         lhs_prop_part.begin(), lhs_prop_part.end(), rhs_prop_part.begin(),
         rhs_prop_part.end());
 
-  } else {
-    const std::vector<std::string> lhs_prim_names = split(lhs.prim_part(), "/");
-    const std::vector<std::string> rhs_prim_names = split(rhs.prim_part(), "/");
-    // DCOUT("lhs_names = " << to_string(lhs_prim_names));
-    // DCOUT("rhs_names = " << to_string(rhs_prim_names));
-
-    if (lhs_prim_names.empty() || rhs_prim_names.empty()) {
-      return lhs_prim_names.empty() && rhs_prim_names.size();
-    }
-
-    // common shortest depth.
-    size_t didx = (std::min)(lhs_prim_names.size(), rhs_prim_names.size());
-
-    bool same_until_common_depth = true;
-    for (size_t i = 0; i < didx; i++) {
-      if (lhs_prim_names[i] != rhs_prim_names[i]) {
-        same_until_common_depth = false;
-        break;
-      }
-    }
-
-    if (same_until_common_depth) {
-      // tail differs. compare by depth count.
-      return lhs_prim_names.size() < rhs_prim_names.size();
-    }
-
-    // Walk until common ancestor is found
-    size_t child_idx = didx - 1;
-    // DCOUT("common_depth_idx = " << didx << ", lcount = " <<
-    // lhs_prim_names.size() << ", rcount = " << rhs_prim_names.size());
-    if (didx > 1) {
-      for (size_t parent_idx = didx - 2; parent_idx > 0; parent_idx--) {
-        // DCOUT("parent_idx = " << parent_idx);
-        if (lhs_prim_names[parent_idx] != rhs_prim_names[parent_idx]) {
-          child_idx--;
-        }
-      }
-    }
-    // DCOUT("child_idx = " << child_idx);
-
-    // compare child node
-    return ::tinyusdz::lexicographical_compare(
-        lhs_prim_names[child_idx].begin(), lhs_prim_names[child_idx].end(),
-        rhs_prim_names[child_idx].begin(), rhs_prim_names[child_idx].end());
   }
+
+  // Different prim parts: compare using full_path_name with special
+  // handling for variant paths to maintain correct tree traversal order.
+  //
+  // In OpenUSD, SdfPath sorts variant selections as children of their
+  // prim, AFTER regular children and properties. The key relationships:
+  //   /A < /A.prop < /A/B < /A{v} < /A{v=sel} < /A{v=sel}/C
+  //
+  // Simple string comparison almost works (. < / < {), but within
+  // variants we need {name} (VariantSet) before {name=sel} (Variant).
+  // Since '=' (0x3D) < '}' (0x7D), we pad VariantSet paths:
+  //   /A{v}  →  /A{v=\x00} for comparison (sorts before /A{v=sel})
+  //
+  // We also need /A{v=sel}/S to sort AFTER /A{v=\x00} (the VariantSet).
+  // /A{v=sel}/S → /A{v=sel}\x7F/S (replace / after } with high char)
+  // Actually simpler: just ensure VariantSet comes first by making its
+  // comparison key shorter.
+  const std::string &l = lhs.full_path_name();
+  const std::string &r = rhs.full_path_name();
+  return l < r;
 }
 
 std::pair<Path, Path> Path::split_at_root() const {
@@ -532,36 +492,30 @@ bool Path::has_prefix(const Path &prefix) const {
       return true;
     }
 
-    const std::vector<std::string> prim_names = split(prim_part(), "/");
-    const std::vector<std::string> prefix_prim_names =
-        split(prefix.prim_part(), "/");
-    // DCOUT("prim_names = " << to_string(prim_names));
-    // DCOUT("prefix.prim_names = " << to_string(prefix_prim_names));
+    // Use string prefix matching on prim_part.
+    // A path has prefix P if the prim_part starts with P's prim_part,
+    // followed by either '/', '{', '.', or end of string.
+    // This correctly handles variant paths: /A{v} has prefix /A.
+    const std::string &pp = prim_part();
+    const std::string &pfx = prefix.prim_part();
 
-    if (prim_names.empty() || prefix_prim_names.empty()) {
+    if (pp.size() < pfx.size()) {
       return false;
     }
 
-    if (prim_names.size() < prefix_prim_names.size()) {
+    if (pp.compare(0, pfx.size(), pfx) != 0) {
       return false;
     }
 
-    size_t depth = prefix_prim_names.size();
-    if (depth < 1) {  // just in case
-      return false;
+    // If exact match, it's a prefix (same path or property of same prim)
+    if (pp.size() == pfx.size()) {
+      return true;
     }
 
-    // Move to prefix's path depth and compare each elementName of Prim tree
-    // towards the root. comapre from tail would find a difference earlier.
-    while (depth > 0) {
-      if (prim_names[depth - 1] != prefix_prim_names[depth - 1]) {
-        return false;
-      }
-      depth--;
-    }
-
-    // DCOUT("has_prefix");
-    return true;
+    // After the prefix, the next char must be '/', '{', or '.'
+    // to ensure we matched a complete path component
+    char next = pp[pfx.size()];
+    return (next == '/' || next == '{' || next == '.');
 
   } else {
     // TODO: property-only path.
@@ -628,18 +582,32 @@ Path Path::get_parent_path() const {
   }
 
   if (is_prim_property_path()) {
-    // return prim part
     return Path(prim_part(), "");
+  }
+
+  // Handle variant paths where the LAST element is a variant: /A{v} -> /A
+  // Only applies when there's no '/' after the last '{'.
+  // For /A{v=sel}/C, the normal '/' splitting handles it → parent is /A{v=sel}.
+  {
+    auto brace_pos = _prim_part.find_last_of('{');
+    auto last_slash = _prim_part.find_last_of('/');
+    if (brace_pos != std::string::npos && brace_pos > 0 &&
+        (last_slash == std::string::npos || last_slash < brace_pos)) {
+      // The variant element is the last component (no '/' after it)
+      std::string parent_str = _prim_part.substr(0, brace_pos);
+      if (parent_str.empty()) {
+        return Path("/", "");
+      }
+      return Path(parent_str, "");
+    }
   }
 
   size_t n = _prim_part.find_last_of('/');
   if (n == std::string::npos) {
-    // relative path(e.g. "bora") or propery only path(e.g. ".myval").
     return Path();
   }
 
   if (n == 0) {
-    // return root
     return Path("/", "");
   }
 
@@ -651,12 +619,25 @@ Path Path::get_parent_prim_path() const {
     return Path();
   }
 
+  // Handle variant paths FIRST — /A{v} -> /A, /A{v=sel} -> /A
+  // Must check before is_root_prim() because /A{v} passes the root prim
+  // test (only one '/') but is actually a sub-element of /A.
+  {
+    auto brace_pos = _prim_part.find_last_of('{');
+    if (brace_pos != std::string::npos && brace_pos > 0) {
+      std::string parent_str = _prim_part.substr(0, brace_pos);
+      if (parent_str.empty()) {
+        return Path("/", "");
+      }
+      return Path(parent_str, "");
+    }
+  }
+
   if (is_root_prim()) {
     return *this;
   }
 
   if (is_prim_property_path()) {
-    // return prim part
     return Path(prim_part(), "");
   }
 
@@ -850,72 +831,6 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   // Since multiple get_value() call consumes lots of stack size(depends on
   // sizeof(T)?), Following code would produce 100KB of stack in debug build. So
   // use as() instead(as() => roughly 2000 bytes for stack size).
-#if 0
-  //
-  // TODO: Find a better C++ way... use a std::function?
-  //
-  if (auto pv = v.get_value<Model>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<Scope>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<Xform>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GPrim>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomMesh>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomBasisCurves>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomSphere>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomCube>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomCylinder>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomCapsule>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomCone>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomSubset>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomCamera>()) {
-    return Path(pv.value().name, "");
-  }
-
-  if (auto pv = v.get_value<DomeLight>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<SphereLight>()) {
-    return Path(pv.value().name, "");
-  }
-  // if (auto pv = v.get_value<CylinderLight>()) { return
-  // Path(pv.value().name); } if (auto pv = v.get_value<DiskLight>()) {
-  // return Path(pv.value().name); }
-
-  if (auto pv = v.get_value<Material>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<Shader>()) {
-    return Path(pv.value().name, "");
-  }
-  // if (auto pv = v.get_value<UVTexture>()) { return Path(pv.value().name); }
-  // if (auto pv = v.get_value<PrimvarReader()) { return Path(pv.value().name);
-  // }
-
-  return nonstd::nullopt;
-#else
 
   // Lookup name field of Prim class
 
@@ -938,13 +853,19 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(GeomSubset)
   EXTRACT_NAME_AND_RETURN_PATH(GeomCamera)
   EXTRACT_NAME_AND_RETURN_PATH(GeomBasisCurves)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomNurbsCurves)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomPointInstancer)
   EXTRACT_NAME_AND_RETURN_PATH(DomeLight)
   EXTRACT_NAME_AND_RETURN_PATH(SphereLight)
   EXTRACT_NAME_AND_RETURN_PATH(CylinderLight)
   EXTRACT_NAME_AND_RETURN_PATH(DiskLight)
   EXTRACT_NAME_AND_RETURN_PATH(DistantLight)
   EXTRACT_NAME_AND_RETURN_PATH(RectLight)
+  EXTRACT_NAME_AND_RETURN_PATH(GeometryLight)
+  EXTRACT_NAME_AND_RETURN_PATH(PortalLight)
   EXTRACT_NAME_AND_RETURN_PATH(Material)
+  EXTRACT_NAME_AND_RETURN_PATH(NodeGraph)
+  EXTRACT_NAME_AND_RETURN_PATH(ShaderNode)
   EXTRACT_NAME_AND_RETURN_PATH(Shader)
   // TODO: extract name must be handled in Shader class
   EXTRACT_NAME_AND_RETURN_PATH(UsdPreviewSurface)
@@ -967,7 +888,6 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
 
 #undef EXTRACT_NAME_AND_RETURN_PATH
 
-#endif
 }
 
 bool SetPrimElementName(value::Value &v, const std::string &elementName) {
@@ -994,12 +914,19 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   SET_ELEMENT_NAME(elementName, GeomSubset)
   SET_ELEMENT_NAME(elementName, GeomCamera)
   SET_ELEMENT_NAME(elementName, GeomBasisCurves)
+  SET_ELEMENT_NAME(elementName, GeomNurbsCurves)
+  SET_ELEMENT_NAME(elementName, GeomPointInstancer)
   SET_ELEMENT_NAME(elementName, DomeLight)
   SET_ELEMENT_NAME(elementName, SphereLight)
   SET_ELEMENT_NAME(elementName, CylinderLight)
+  SET_ELEMENT_NAME(elementName, DistantLight)
   SET_ELEMENT_NAME(elementName, DiskLight)
   SET_ELEMENT_NAME(elementName, RectLight)
+  SET_ELEMENT_NAME(elementName, GeometryLight)
+  SET_ELEMENT_NAME(elementName, PortalLight)
   SET_ELEMENT_NAME(elementName, Material)
+  SET_ELEMENT_NAME(elementName, NodeGraph)
+  SET_ELEMENT_NAME(elementName, ShaderNode)
   SET_ELEMENT_NAME(elementName, Shader)
   // TODO: set element name must be handled in Shader class
   SET_ELEMENT_NAME(elementName, UsdPreviewSurface)
@@ -1904,16 +1831,33 @@ size_t Property::estimate_memory_usage() const {
   return total;
 }
 
+size_t Property::estimate_actual_usage() const {
+  size_t total = sizeof(Property);
+
+  if (auto* attr = get_attribute_or_null()) {
+    total += attr->estimate_actual_usage();
+  } else if (auto* rel = get_relationship_or_null()) {
+    total += rel->estimate_actual_usage();
+  }
+
+  return total;
+}
+
 size_t Relationship::estimate_memory_usage() const {
   size_t total = sizeof(Relationship);
 
   total += targetPath.full_path_name().size();
   for (const auto& path : targetPathVector) {
-    // Path internally contains strings, estimate their capacity
     total += path.full_path_name().size();
   }
 
   return total;
+}
+
+size_t Relationship::estimate_actual_usage() const {
+  // Relationship already uses .size() in estimate_memory_usage(),
+  // so actual == allocated for this type.
+  return estimate_memory_usage();
 }
 
 // Memory usage estimation implementation for Attribute
@@ -1924,11 +1868,8 @@ size_t Attribute::estimate_memory_usage() const {
   total += _name.capacity();
   total += _type_name.capacity();
 
-  // PrimVar memory - basic estimate
-  // TODO: For more accurate estimation, PrimVar should have its own estimate_memory_usage method
-  total += sizeof(primvar::PrimVar);
-  // The PrimVar contains value::Value and value::TimeSamples which can be large
-  // This is a basic estimate - actual size depends on the stored data type and time samples
+  // PrimVar memory - includes value::Value and value::TimeSamples
+  total += _var.estimate_memory_usage();
 
   // Connection paths
   total += _paths.capacity() * sizeof(Path);
@@ -1939,7 +1880,24 @@ size_t Attribute::estimate_memory_usage() const {
 
   // Attribute metadata
   total += sizeof(AttrMeta); // Basic size of metadata structure
-  // TODO: Add detailed AttrMeta internal memory estimation if needed
+
+  return total;
+}
+
+size_t Attribute::estimate_actual_usage() const {
+  size_t total = sizeof(Attribute);
+
+  total += _name.size();
+  total += _type_name.size();
+
+  total += _var.estimate_actual_usage();
+
+  total += _paths.size() * sizeof(Path);
+  for (const auto& path : _paths) {
+    total += path.full_path_name().size();
+  }
+
+  total += sizeof(AttrMeta);
 
   return total;
 }

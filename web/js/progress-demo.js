@@ -1,12 +1,14 @@
 // TinyUSDZ Progress Demo with OpenPBR Material Support
 // Demonstrates progress callbacks for USD loading with detailed stage reporting
+// Supports both main-thread and Web Worker loading modes
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { TinyUSDZWorkerLoader } from 'tinyusdz/TinyUSDZWorkerLoader.js';
 import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import { setTinyUSDZ as setMaterialXTinyUSDZ } from 'tinyusdz/TinyUSDZMaterialX.js';
-import { OpenPBRMaterial } from './OpenPBRMaterial.js';
+import { OpenPBRMaterial } from 'tinyusdz/TinyUSDZOpenPBRSimple.js';
 
 // ============================================================================
 // Constants
@@ -36,7 +38,9 @@ const threeState = {
 
 const loaderState = {
     loader: null,
-    nativeLoader: null
+    workerLoader: null,
+    nativeLoader: null,
+    useWorker: true  // Use Web Worker by default for responsive UI
 };
 
 const sceneState = {
@@ -754,7 +758,7 @@ function cleanupScene() {
     }
     hideTextureProgress();
 
-    // Clear WASM memory
+    // Clear WASM memory - native loader
     if (loaderState.nativeLoader) {
         try {
             // Try reset() first (clears all internal state)
@@ -772,6 +776,23 @@ function cleanupScene() {
             }
         }
         loaderState.nativeLoader = null;
+    }
+
+    // Clear WASM memory - worker loader
+    // Dispose and recreate worker to free WASM memory in the worker thread
+    if (loaderState.workerLoader) {
+        try {
+            loaderState.workerLoader.dispose();
+        } catch (e) {
+            console.warn('Could not dispose worker loader:', e);
+        }
+        loaderState.workerLoader = null;
+    }
+
+    // Clear main-thread loader (will be recreated on next load)
+    // This ensures WASM module can be garbage collected
+    if (loaderState.loader) {
+        loaderState.loader = null;
     }
 
     // Reset scene state
@@ -987,6 +1008,60 @@ function applyUpAxisConversion() {
     }
 }
 
+// ============================================================================
+// Worker Mode Toggle
+// ============================================================================
+
+/**
+ * Toggle between Web Worker and main-thread loading modes
+ */
+function toggleWorkerMode() {
+    loaderState.useWorker = !loaderState.useWorker;
+    updateWorkerButton();
+
+    // Persist preference
+    try {
+        localStorage.setItem('tinyusdz-use-worker', loaderState.useWorker ? 'true' : 'false');
+    } catch (e) {
+        // Ignore localStorage errors
+    }
+
+    // Show toast notification
+    const mode = loaderState.useWorker ? 'Web Worker' : 'Main Thread';
+    showToast(`Loading mode: ${mode}`);
+}
+
+/**
+ * Update the worker toggle button appearance
+ */
+function updateWorkerButton() {
+    const btn = document.getElementById('worker-btn');
+    if (!btn) return;
+
+    if (loaderState.useWorker) {
+        btn.classList.add('active');
+        btn.title = 'Web Worker mode: ON (responsive UI during loading)';
+    } else {
+        btn.classList.remove('active');
+        btn.title = 'Main Thread mode (may freeze UI during loading)';
+    }
+}
+
+/**
+ * Initialize worker mode from saved preference
+ */
+function initWorkerMode() {
+    try {
+        const saved = localStorage.getItem('tinyusdz-use-worker');
+        if (saved !== null) {
+            loaderState.useWorker = saved === 'true';
+        }
+    } catch (e) {
+        // Ignore localStorage errors
+    }
+    updateWorkerButton();
+}
+
 /**
  * Toggle Z-up to Y-up conversion
  */
@@ -1033,7 +1108,150 @@ function updateFitButton() {
 // ============================================================================
 
 /**
+ * Load USD using Web Worker (keeps main thread responsive)
+ */
+async function loadWithWorker(source, isFile) {
+    console.log('[Progress Demo] Using Web Worker for responsive loading');
+
+    // Initialize worker loader if needed
+    if (!loaderState.workerLoader) {
+        loaderState.workerLoader = new TinyUSDZWorkerLoader({
+            onProgress: (info) => {
+                // Worker reports progress - UI updates immediately since main thread is free!
+                const phaseMap = {
+                    'downloading': { stage: 'downloading', pctBase: 0, pctRange: 30 },
+                    'parsing': { stage: 'parsing', pctBase: 30, pctRange: 30 },
+                    'extracting': { stage: 'parsing', pctBase: 60, pctRange: 10 },
+                    'extracting_meshes': { stage: 'parsing', pctBase: 60, pctRange: 15 },
+                    'complete': { stage: 'building', pctBase: 80, pctRange: 0 }
+                };
+                const mapped = phaseMap[info.phase] || { stage: 'parsing', pctBase: 30, pctRange: 50 };
+                const pct = mapped.pctBase + (info.progress * mapped.pctRange);
+
+                updateProgressUI({
+                    stage: mapped.stage,
+                    percentage: pct,
+                    message: info.message || `${info.phase}...`
+                });
+            },
+            onTydraProgress: (info) => {
+                // Tydra conversion progress - this updates smoothly since it's from worker!
+                const meshProgress = info.meshTotal > 0
+                    ? `${info.meshCurrent}/${info.meshTotal}`
+                    : '';
+                const meshName = info.meshName ? info.meshName.split('/').pop() : '';
+
+                updateProgressUI({
+                    stage: 'parsing',
+                    percentage: 30 + (info.progress * 50),
+                    message: meshProgress
+                        ? `Converting: ${meshProgress} ${meshName}`
+                        : `Converting: ${info.stage}`
+                });
+            },
+            onTydraComplete: (info) => {
+                console.log(`[Worker] Tydra complete: ${info.meshCount} meshes`);
+                updateProgressUI({
+                    stage: 'building',
+                    percentage: 80,
+                    message: `Building ${info.meshCount} meshes...`
+                });
+            }
+        });
+
+        await loaderState.workerLoader.init();
+    }
+
+    let usd;
+    if (isFile) {
+        // Load from File object
+        updateProgressUI({ stage: 'downloading', percentage: 0, message: 'Reading file...' });
+        const arrayBuffer = await source.arrayBuffer();
+        usd = await loaderState.workerLoader.parse(new Uint8Array(arrayBuffer), source.name);
+    } else {
+        // Load from URL - worker handles download progress
+        usd = await loaderState.workerLoader.load(source);
+    }
+
+    return usd;
+}
+
+/**
+ * Load USD on main thread (legacy mode, may freeze UI during parsing)
+ */
+async function loadWithMainThread(source, isFile) {
+    console.log('[Progress Demo] Using main thread loading (UI may freeze during parsing)');
+
+    // Initialize loader if needed
+    if (!loaderState.loader) {
+        loaderState.loader = new TinyUSDZLoader(undefined, {
+            onTydraProgress: (info) => {
+                const meshProgress = info.meshTotal > 0
+                    ? `${info.meshCurrent}/${info.meshTotal}`
+                    : '';
+                const meshName = info.meshName ? info.meshName.split('/').pop() : '';
+
+                updateProgressUI({
+                    stage: 'parsing',
+                    percentage: 30 + (info.progress * 50),
+                    message: meshProgress
+                        ? `Converting: ${meshProgress} ${meshName}`
+                        : `Converting: ${info.stage}`
+                });
+            },
+            onTydraComplete: (info) => {
+                console.log(`[Tydra] Complete: ${info.meshCount} meshes`);
+                updateProgressUI({
+                    stage: 'building',
+                    percentage: 80,
+                    message: `Building ${info.meshCount} meshes...`
+                });
+            }
+        });
+        await loaderState.loader.init();
+        setMaterialXTinyUSDZ(loaderState.loader);
+    }
+
+    let usd;
+    if (isFile) {
+        updateProgressUI({ stage: 'downloading', percentage: 0, message: 'Reading file...' });
+        const arrayBuffer = await source.arrayBuffer();
+        updateProgressUI({ stage: 'parsing', percentage: 30, message: 'Parsing USD...' });
+        usd = await new Promise((resolve, reject) => {
+            loaderState.loader.parse(new Uint8Array(arrayBuffer), source.name, resolve, reject);
+        });
+    } else {
+        usd = await new Promise((resolve, reject) => {
+            loaderState.loader.load(
+                source,
+                resolve,
+                (event) => {
+                    if (event.stage === 'downloading') {
+                        const pct = event.total > 0 ? Math.round((event.loaded / event.total) * 100) : 0;
+                        updateProgressUI({
+                            stage: 'downloading',
+                            percentage: pct * 0.3,
+                            message: `Downloading... ${pct}%`
+                        });
+                    } else if (event.stage === 'parsing') {
+                        updateProgressUI({
+                            stage: 'parsing',
+                            percentage: 30 + event.percentage * 0.2,
+                            message: 'Parsing USD...'
+                        });
+                    }
+                },
+                reject
+            );
+        });
+    }
+
+    return usd;
+}
+
+/**
  * Load USD file with full progress reporting
+ * Uses Web Worker by default for responsive UI during heavy parsing
  */
 async function loadUSDWithProgress(source, isFile = false) {
     showProgress();
@@ -1044,195 +1262,13 @@ async function loadUSDWithProgress(source, isFile = false) {
     cleanupScene();
 
     try {
-        // Initialize loader if needed
-        if (!loaderState.loader) {
-            loaderState.loader = new TinyUSDZLoader(undefined, {
-                // EM_JS synchronous progress callback - called directly from C++ during conversion
-                onTydraProgress: (info) => {
-                    // info: {meshCurrent, meshTotal, stage, meshName, progress}
-                    const meshProgress = info.meshTotal > 0
-                        ? `${info.meshCurrent}/${info.meshTotal}`
-                        : '';
-                    const meshName = info.meshName ? info.meshName.split('/').pop() : '';
-
-                    updateProgressUI({
-                        stage: 'parsing',
-                        percentage: 30 + (info.progress * 50), // parsing takes 30-80%
-                        message: meshProgress
-                            ? `Converting: ${meshProgress} ${meshName}`
-                            : `Converting: ${info.stage}`
-                    });
-                },
-                onTydraComplete: (info) => {
-                    // info: {meshCount, materialCount, textureCount}
-                    console.log(`[Tydra] Complete: ${info.meshCount} meshes, ${info.materialCount} materials, ${info.textureCount} textures`);
-                    updateProgressUI({
-                        stage: 'building',
-                        percentage: 80,
-                        message: `Building ${info.meshCount} meshes...`
-                    });
-                }
-            });
-            await loaderState.loader.init();
-
-            // Setup TinyUSDZ for MaterialX texture decoding
-            setMaterialXTinyUSDZ(loaderState.loader);
-        }
-
         let usd;
 
-        // Check if coroutine-based async loading is available
-        const hasCoroutineAsync = loaderState.loader.hasAsyncSupport && loaderState.loader.hasAsyncSupport();
-        if (hasCoroutineAsync) {
-            console.log('[Progress Demo] Using C++20 coroutine async loading');
+        // Use Web Worker for responsive UI during parsing
+        if (loaderState.useWorker) {
+            usd = await loadWithWorker(source, isFile);
         } else {
-            console.log('[Progress Demo] Using standard Promise-based loading');
-        }
-
-        if (isFile) {
-            // Load from File object
-            updateProgressUI({ stage: 'downloading', percentage: 0, message: 'Reading file...' });
-            const arrayBuffer = await source.arrayBuffer();
-
-            if (hasCoroutineAsync) {
-                // Use coroutine-based async loading - yields to browser between phases
-                updateProgressUI({ stage: 'parsing', percentage: 30, message: 'Parsing USD (coroutine async)...' });
-                usd = await loaderState.loader.parseAsync(
-                    new Uint8Array(arrayBuffer),
-                    source.name,
-                    {
-                        onPhaseStart: (info) => {
-                            // Map coroutine phases to our progress stages
-                            const phaseMap = {
-                                'detecting': { stage: 'parsing', pct: 30, msg: 'Detecting format...' },
-                                'parsing': { stage: 'parsing', pct: 35, msg: 'Parsing USD...' },
-                                'setup': { stage: 'parsing', pct: 45, msg: 'Setting up converter...' },
-                                'assets': { stage: 'parsing', pct: 50, msg: 'Resolving assets...' },
-                                'meshes': { stage: 'parsing', pct: 55, msg: 'Converting meshes...' },
-                                'complete': { stage: 'building', pct: 80, msg: 'Building scene...' }
-                            };
-                            const mapped = phaseMap[info.phase] || { stage: 'parsing', pct: 30 + info.progress * 50, msg: info.phase };
-                            updateProgressUI({
-                                stage: mapped.stage,
-                                percentage: mapped.pct,
-                                message: mapped.msg
-                            });
-                        }
-                    }
-                );
-            } else {
-                // Fallback to standard Promise-based loading
-                updateProgressUI({ stage: 'parsing', percentage: 30, message: 'Parsing USD...' });
-                usd = await new Promise((resolve, reject) => {
-                    loaderState.loader.parse(
-                        new Uint8Array(arrayBuffer),
-                        source.name,
-                        resolve,
-                        reject
-                    );
-                });
-            }
-        } else {
-            // Load from URL
-            if (hasCoroutineAsync) {
-                // Use coroutine-based async loading for URL
-                // First fetch the file manually for download progress, then use parseAsync
-                updateProgressUI({ stage: 'downloading', percentage: 0, message: 'Downloading...' });
-
-                const response = await fetch(source);
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch ${source}: ${response.status}`);
-                }
-
-                const contentLength = response.headers.get('content-length');
-                const total = contentLength ? parseInt(contentLength, 10) : 0;
-
-                let loaded = 0;
-                const reader = response.body.getReader();
-                const chunks = [];
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    chunks.push(value);
-                    loaded += value.length;
-
-                    const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
-                    updateProgressUI({
-                        stage: 'downloading',
-                        percentage: pct * 0.3,
-                        message: `Downloading... ${pct}%`
-                    });
-                }
-
-                // Combine chunks into single Uint8Array
-                const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-                const binary = new Uint8Array(totalLength);
-                let offset = 0;
-                for (const chunk of chunks) {
-                    binary.set(chunk, offset);
-                    offset += chunk.length;
-                }
-
-                // Use coroutine-based async parsing
-                updateProgressUI({ stage: 'parsing', percentage: 30, message: 'Parsing USD (coroutine async)...' });
-                usd = await loaderState.loader.parseAsync(
-                    binary,
-                    source,
-                    {
-                        onPhaseStart: (info) => {
-                            // Map coroutine phases to our progress stages
-                            const phaseMap = {
-                                'detecting': { stage: 'parsing', pct: 30, msg: 'Detecting format...' },
-                                'parsing': { stage: 'parsing', pct: 35, msg: 'Parsing USD...' },
-                                'setup': { stage: 'parsing', pct: 45, msg: 'Setting up converter...' },
-                                'assets': { stage: 'parsing', pct: 50, msg: 'Resolving assets...' },
-                                'meshes': { stage: 'parsing', pct: 55, msg: 'Converting meshes...' },
-                                'complete': { stage: 'building', pct: 80, msg: 'Building scene...' }
-                            };
-                            const mapped = phaseMap[info.phase] || { stage: 'parsing', pct: 30 + info.progress * 50, msg: info.phase };
-                            updateProgressUI({
-                                stage: mapped.stage,
-                                percentage: mapped.pct,
-                                message: mapped.msg
-                            });
-                        }
-                    }
-                );
-            } else {
-                // Fallback: Load from URL with standard progress
-                usd = await new Promise((resolve, reject) => {
-                    loaderState.loader.load(
-                        source,
-                        resolve,
-                        (event) => {
-                            if (event.stage === 'downloading') {
-                                const pct = event.total > 0 ? Math.round((event.loaded / event.total) * 100) : 0;
-                                updateProgressUI({
-                                    stage: 'downloading',
-                                    percentage: pct * 0.3,
-                                    message: event.message || `Downloading... ${pct}%`
-                                });
-                            } else if (event.stage === 'parsing') {
-                                // Show mesh progress if available from detailed callback
-                                let message = 'Parsing USD...';
-                                if (event.meshesTotal && event.meshesTotal > 0) {
-                                    message = `Converting meshes (${event.meshesProcessed || 0}/${event.meshesTotal})...`;
-                                } else if (event.tydraStage) {
-                                    message = `Converting: ${event.tydraStage}`;
-                                }
-                                updateProgressUI({
-                                    stage: 'parsing',
-                                    percentage: 30 + event.percentage * 0.2,
-                                    message: message
-                                });
-                            }
-                        },
-                        reject
-                    );
-                });
-            }
+            usd = await loadWithMainThread(source, isFile);
         }
 
         loaderState.nativeLoader = usd;
@@ -1505,6 +1541,7 @@ async function init() {
     initThreeJS();
     setupDragAndDrop();
     initMemoryGraph();
+    initWorkerMode();
 
     // Setup file input handler
     document.getElementById('file-input').addEventListener('change', handleFileSelect);
@@ -1516,6 +1553,7 @@ async function init() {
 window.loadFile = loadFile;
 window.loadSampleModel = loadSampleModel;
 window.toggleUpAxisConversion = toggleUpAxisConversion;
+window.toggleWorkerMode = toggleWorkerMode;
 window.fitToScene = fitToScene;
 
 // Start the app

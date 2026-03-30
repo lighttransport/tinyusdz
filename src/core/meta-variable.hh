@@ -7,6 +7,7 @@
 
 #include <map>
 #include <string>
+#include <utility>
 
 #include "nonstd/optional.hpp"
 #include "value-types.hh"
@@ -94,6 +95,16 @@ class MetaVariable {
     _name = name;
   }
 
+  void set_value(value::Value &&v) {
+    _value = std::move(v);
+    _name = std::string();
+  }
+
+  void set_value(const std::string &name, value::Value &&v) {
+    _value = std::move(v);
+    _name = name;
+  }
+
   template <typename T>
   bool get_value(T *dst) const {
     if (!dst) {
@@ -143,5 +154,19 @@ class MetaVariable {
   value::Value _value{nullptr};
   std::string _name;
 };
+
+namespace value {
+
+#include "define-type-trait.inc"
+
+DEFINE_TYPE_TRAIT(VariantSelectionMap, "variants", TYPE_ID_VARIANT_SELECION_MAP,
+                  0);
+DEFINE_TYPE_TRAIT(CustomDataType, "customData", TYPE_ID_CUSTOMDATA,
+                  1);  // TODO: Unify with `dict`?
+
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
+
+}  // namespace value
 
 }  // namespace tinyusdz

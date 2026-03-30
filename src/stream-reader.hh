@@ -137,6 +137,12 @@ class StreamReader {
   }
 
   uint64_t read(const uint64_t n, const uint64_t dst_len, uint8_t *dst) const {
+    // 0-byte read is a no-op success. Return a truthy value (1) so callers
+    // that check `if (!read(...))` don't treat it as failure.
+    if (n == 0) {
+      return 1;
+    }
+
     uint64_t len = n;
     if ((idx_ + len) > length_) {
       len = length_ - uint64_t(idx_);
@@ -293,11 +299,13 @@ class StreamReader {
       return false;
     }
 
-    float value{};
-    if (!read4(reinterpret_cast<int *>(&value))) {
+    uint32_t bits = 0;
+    if (!read4(&bits)) {
       return false;
     }
 
+    float value{};
+    std::memcpy(&value, &bits, sizeof(value));
     (*ret) = value;
 
     return true;
@@ -308,44 +316,18 @@ class StreamReader {
       return false;
     }
 
-    double value{};
-    if (!read8(reinterpret_cast<uint64_t *>(&value))) {
+    uint64_t bits = 0;
+    if (!read8(&bits)) {
       return false;
     }
 
+    double value{};
+    std::memcpy(&value, &bits, sizeof(value));
     (*ret) = value;
 
     return true;
   }
 
-#if 0
-  bool read_value(Value *inout) {
-    if (!inout) {
-      return false;
-    }
-
-    if (inout->Type() == VALUE_TYPE_FLOAT) {
-      float value;
-      if (!read_float(&value)) {
-        return false;
-      }
-
-      (*inout) = Value(value);
-    } else if (inout->Type() == VALUE_TYPE_INT) {
-      int value;
-      if (!read4(&value)) {
-        return false;
-      }
-
-      (*inout) = Value(value);
-    } else {
-      TINYVDBIO_ASSERT(0);
-      return false;
-    }
-
-    return true;
-  }
-#endif
 
   uint64_t tell() const { return uint64_t(idx_); }
   bool eof() const { return idx_ >= length_; }

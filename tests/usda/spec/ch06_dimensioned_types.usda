@@ -1,0 +1,21 @@
+#usda 1.0
+def "DimensionedTypes" {
+    float2 vec2f = (1.0, 2.0)
+    float3 vec3f = (1.0, 2.0, 3.0)
+    float4 vec4f = (1.0, 2.0, 3.0, 4.0)
+    double2 vec2d = (1.0, 2.0)
+    double3 vec3d = (1.0, 2.0, 3.0)
+    double4 vec4d = (1.0, 2.0, 3.0, 4.0)
+    half2 vec2h = (1.0, 2.0)
+    half3 vec3h = (1.0, 2.0, 3.0)
+    half4 vec4h = (1.0, 2.0, 3.0, 4.0)
+    int2 vec2i = (1, 2)
+    int3 vec3i = (1, 2, 3)
+    int4 vec4i = (1, 2, 3, 4)
+    matrix2d mat2 = ((1, 0), (0, 1))
+    matrix3d mat3 = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
+    matrix4d mat4 = ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+    quatd quatD = (0, 0, 0, 1)
+    quatf quatF = (0, 0, 0, 1)
+    quath quatH = (0, 0, 0, 1)
+}

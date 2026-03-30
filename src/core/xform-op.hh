@@ -6,8 +6,10 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "nonstd/optional.hpp"
+#include "path.hh"
 #include "primvar.hh"
 #include "value-types.hh"
 
@@ -77,7 +79,7 @@ struct XformOp {
 
   void set_timesamples(value::TimeSamples &&v) { _var.set_timesamples(std::move(v)); }
 
-  bool is_timesamples() const { return _var.is_timesamples(); }
+  bool is_timesamples() const { return !_var.has_value() && _var.has_timesamples(); }
   bool has_timesamples() const { return _var.has_timesamples(); }
 
   void set_blocked(bool onoff) { _is_blocked = onoff; }
@@ -86,7 +88,7 @@ struct XformOp {
   // check if 'default' value is ValueBlock.
   bool is_blocked() const { return _is_blocked || _var.is_blocked(); }
 
-  bool is_default() const { return _var.is_scalar(); }
+  bool is_default() const { return _var.has_value() && !_var.has_timesamples(); }
   bool has_default() const { return _var.has_default(); }
 
   nonstd::optional<value::TimeSamples> get_timesamples() const {
@@ -133,9 +135,37 @@ struct XformOp {
 
   primvar::PrimVar &var() { return _var; }
 
+  // Connection support
+  bool has_connections() const { return !_connections.empty(); }
+
+  void set_connection(const Path &path) {
+    _connections.clear();
+    _connections.push_back(path);
+  }
+
+  void set_connections(const std::vector<Path> &paths) {
+    _connections = paths;
+  }
+
+  nonstd::optional<Path> get_connection() const {
+    if (_connections.size() == 1) {
+      return _connections[0];
+    }
+    return nonstd::nullopt;
+  }
+
+  const std::vector<Path> &connections() const { return _connections; }
+  std::vector<Path> &connections() { return _connections; }
+
+  // Check if this xformOp is connection-only (no default value or timeSamples)
+  bool is_connection_only() const {
+    return has_connections() && !has_default() && !has_timesamples();
+  }
+
  private:
 
   bool _is_blocked{false};
+  std::vector<Path> _connections;  // Connection targets for this xformOp
 };
 
 }  // namespace tinyusdz

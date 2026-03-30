@@ -421,7 +421,7 @@ class Attribute {
       return false;
     }
 
-    return _var.is_timesamples();
+    return !_var.has_value() && _var.has_timesamples();
   }
 
   bool has_timesamples() const {
@@ -448,6 +448,9 @@ class Attribute {
   /// Estimate memory usage of this Attribute in bytes
   ///
   size_t estimate_memory_usage() const;
+
+  /// Estimate actual (size-based) memory usage.
+  size_t estimate_actual_usage() const;
 
  private:
   std::string _name;  // attrib name

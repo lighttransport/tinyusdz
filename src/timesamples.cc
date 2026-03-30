@@ -14,203 +14,19 @@
 
 namespace tinyusdz {
 
-// ============================================================================
-// TimeSamples Sorting Strategy Helper Methods
-// ============================================================================
-
 namespace {
 
-// ============================================================================
-// Adaptive Insertion Sort for Nearly-Sorted TimeSamples
-// ============================================================================
-//
-// TimeSamples data is typically already sorted or nearly sorted because:
-// 1. USD files store time samples in order
-// 2. Animation data is naturally sequential
-//
-// Insertion sort is optimal for nearly-sorted data:
-// - O(n) best case (already sorted)
-// - O(n + d) where d = number of inversions (nearly sorted)
-// - In-place sorting (no extra memory allocation)
-// - Stable sort (preserves order of equal elements)
-
-// Count inversions to decide if data is nearly sorted
-// Returns the number of out-of-order pairs (limited scan for efficiency)
-inline size_t count_inversions(const std::vector<double>& times, size_t max_scan = 100) {
-  if (times.size() < 2) return 0;
-
-  size_t inversions = 0;
-  size_t scan_limit = std::min(times.size() - 1, max_scan);
-
-  for (size_t i = 0; i < scan_limit; ++i) {
-    if (times[i] > times[i + 1]) {
-      ++inversions;
-    }
-  }
-  return inversions;
-}
-
-// In-place insertion sort for times with parallel arrays (offsets version)
-// O(n) for nearly sorted data, O(n²) worst case
-inline void insertion_sort_with_offsets(
-    std::vector<double>& times,
-    Buffer<16>& blocked,
-    std::vector<uint64_t>& offsets) {
-
-  const size_t n = times.size();
-  if (n < 2) return;
-
-  // Verify sizes match
-  if (times.size() != offsets.size() || times.size() != blocked.size()) {
-    return;
-  }
-
-  for (size_t i = 1; i < n; ++i) {
-    // If current element is already in order, skip (fast path for sorted data)
-    if (times[i] >= times[i - 1]) {
-      continue;
-    }
-
-    // Save the element to insert
-    double key_time = times[i];
-    uint8_t key_blocked = blocked[i];
-    uint64_t key_offset = offsets[i];
-
-    // Find insertion position and shift elements
-    size_t j = i;
-    while (j > 0 && times[j - 1] > key_time) {
-      times[j] = times[j - 1];
-      blocked[j] = blocked[j - 1];
-      offsets[j] = offsets[j - 1];
-      --j;
-    }
-
-    // Insert the element
-    times[j] = key_time;
-    blocked[j] = key_blocked;
-    offsets[j] = key_offset;
-  }
-
-  // After sorting, we need to remap dedup indices in offsets
-  // Build old_position -> new_position map by tracking where each original index ended up
-  // This is complex for in-place sort, so we do a second pass if needed
-
-  // Check if any offsets have dedup flags that need remapping
-  bool has_dedup = false;
-  for (size_t i = 0; i < n; ++i) {
-    if (offsets[i] & value::TimeSamples::OFFSET_DEDUP_FLAG) {
-      has_dedup = true;
-      break;
-    }
-  }
-
-  if (has_dedup) {
-    // For dedup remapping, we need to know the original positions
-    // Since we sorted in-place, we need to rebuild the mapping
-    // by finding where each time value ended up
-    // This is a limitation of in-place sort for this use case
-    // For now, dedup references remain valid as long as the referenced
-    // entry moved to the same relative position (which is usually the case
-    // for nearly-sorted data)
-  }
-}
-
-
-// Helper: Create sorted index array based on time values
-// Used as fallback when in-place sort is not suitable
-inline std::vector<size_t> create_sort_indices(const std::vector<double>& times) {
-  std::vector<size_t> indices(times.size());
-  for (size_t i = 0; i < indices.size(); ++i) {
-    indices[i] = i;
-  }
-  std::sort(indices.begin(), indices.end(),
-            [&times](size_t a, size_t b) { return times[a] < times[b]; });
-  return indices;
-}
-
-// Strategy 1: Offset-backed sorting with dedup index remapping
-// Used when offset table exists - values don't need reordering
-// But dedup indices need to be remapped to new sorted positions
-inline void sort_with_offsets(
-    const std::vector<size_t>& indices,
-    std::vector<double>& times,
-    Buffer<16>& blocked,
-    std::vector<uint64_t>& offsets) {
-
-  // Verify all arrays have consistent sizes
-  if (times.size() != offsets.size() || times.size() != blocked.size()) {
-    // Sizes don't match - this shouldn't happen, but handle gracefully
-    return;
-  }
-
-  // Verify all indices are within bounds
-  for (size_t i = 0; i < indices.size(); ++i) {
-    if (indices[i] >= times.size()) {
-      // Invalid index - abort sorting
-      return;
-    }
-  }
-
-  std::vector<double> sorted_times(times.size());
-  Buffer<16> sorted_blocked;
-  sorted_blocked.resize(blocked.size());
-  std::vector<uint64_t> sorted_offsets(offsets.size());
-
-  // Create index mapping: old_idx -> new_idx
-  std::vector<size_t> index_map(times.size());
-  for (size_t new_idx = 0; new_idx < indices.size(); ++new_idx) {
-    index_map[indices[new_idx]] = new_idx;
-  }
-
-  // Copy and reorder data
-  for (size_t i = 0; i < indices.size(); ++i) {
-    sorted_times[i] = times[indices[i]];
-    sorted_blocked[i] = blocked[indices[i]];
-
-    uint64_t offset_val = offsets[indices[i]];
-
-    // If this is a dedup offset, remap the index to new position
-    if (offset_val & value::TimeSamples::OFFSET_DEDUP_FLAG) {
-      // Extract old reference index
-      size_t old_ref_idx = static_cast<size_t>(offset_val & value::TimeSamples::OFFSET_VALUE_MASK);
-
-      // Bounds check before accessing index_map
-      if (old_ref_idx < index_map.size()) {
-        // Map to new index
-        size_t new_ref_idx = index_map[old_ref_idx];
-
-        // Reconstruct offset with new index, preserving flags
-        offset_val = (offset_val & value::TimeSamples::OFFSET_FLAGS_MASK) | new_ref_idx;
-      }
-      // If out of bounds, keep the offset as-is (invalid but won't crash)
-    }
-
-    sorted_offsets[i] = offset_val;
-  }
-
-  times = std::move(sorted_times);
-  blocked = std::move(sorted_blocked);
-  offsets = std::move(sorted_offsets);
-  // Note: values array doesn't need reordering as offsets handle the mapping
-}
-
-
-
-} // anonymous namespace
-
-namespace value {
-
 // Insertion sort for Sample array (nearly-sorted optimization)
-inline void insertion_sort_samples(std::vector<TimeSamples::Sample>& samples) {
+inline void insertion_sort_samples(std::vector<value::TimeSamples::Sample>& samples) {
   const size_t n = samples.size();
   if (n < 2) return;
 
   for (size_t i = 1; i < n; ++i) {
     if (samples[i].t >= samples[i - 1].t) {
-      continue;  // Already in order - fast path
+      continue;
     }
 
-    TimeSamples::Sample key = std::move(samples[i]);
+    value::TimeSamples::Sample key = std::move(samples[i]);
     size_t j = i;
 
     while (j > 0 && samples[j - 1].t > key.t) {
@@ -222,58 +38,77 @@ inline void insertion_sort_samples(std::vector<TimeSamples::Sample>& samples) {
   }
 }
 
+// Sort flat binary storage by permuting parallel arrays
+inline void sort_flat_storage(
+    std::vector<double>& times,
+    Buffer<16>& blocked,
+    std::vector<uint32_t>& data_offsets,
+    std::vector<uint32_t>* array_counts) {
+
+  const size_t n = times.size();
+  if (n < 2) return;
+
+  // Create index array
+  std::vector<size_t> indices(n);
+  for (size_t i = 0; i < n; ++i) indices[i] = i;
+  std::sort(indices.begin(), indices.end(),
+            [&times](size_t a, size_t b) { return times[a] < times[b]; });
+
+  std::vector<double> sorted_times(n);
+  Buffer<16> sorted_blocked;
+  sorted_blocked.resize(n);
+  std::vector<uint32_t> sorted_offsets(data_offsets.size());
+  std::vector<uint32_t> sorted_counts;
+  if (array_counts && array_counts->size() == n) {
+    sorted_counts.resize(n);
+  }
+
+  for (size_t i = 0; i < n; ++i) {
+    sorted_times[i] = times[indices[i]];
+    sorted_blocked[i] = blocked[indices[i]];
+    if (indices[i] < data_offsets.size()) {
+      sorted_offsets[i] = data_offsets[indices[i]];
+    }
+    if (!sorted_counts.empty()) {
+      sorted_counts[i] = (*array_counts)[indices[i]];
+    }
+  }
+
+  times = std::move(sorted_times);
+  blocked = std::move(sorted_blocked);
+  data_offsets = std::move(sorted_offsets);
+  if (!sorted_counts.empty()) {
+    (*array_counts) = std::move(sorted_counts);
+  }
+}
+
+} // anonymous namespace
+
+namespace value {
+
 // TimeSamples::update() implementation
 void TimeSamples::update() const {
-  // Check which storage is in use
   if (!_times.empty()) {
-    // Unified POD storage (new approach)
-    // Fast path: check if already sorted to avoid unnecessary work
-    if (std::is_sorted(_times.begin(), _times.end())) {
+    // Flat binary storage
+    if (_times.size() < 2 || std::is_sorted(_times.begin(), _times.end())) {
       _dirty = false;
       return;
     }
 
-    // Check if nearly sorted to choose optimal algorithm
-    const size_t n = _times.size();
-    size_t inversions = count_inversions(_times);
-    const bool use_insertion_sort = (inversions * 20 < n);
-
-    // Sort using offset table strategy
-    if (!_offsets.empty()) {
-      if (use_insertion_sort) {
-        insertion_sort_with_offsets(_times, _blocked, _offsets);
-      } else {
-        std::vector<size_t> indices = create_sort_indices(_times);
-        sort_with_offsets(indices, _times, _blocked, _offsets);
-      }
-    } else {
-      // Handle case without offsets
-      std::vector<std::pair<size_t, double>> temp;
-      temp.reserve(_times.size());
-      for (size_t i = 0; i < _times.size(); ++i) {
-        temp.emplace_back(i, _times[i]);
-      }
-      std::stable_sort(temp.begin(), temp.end(),
-                      [](const auto& a, const auto& b) { return a.second < b.second; });
-      for (size_t i = 0; i < temp.size(); ++i) {
-        _times[i] = temp[i].second;
-      }
-    }
+    sort_flat_storage(_times, _blocked, _data_offsets,
+                      _is_array ? &_array_counts : nullptr);
   } else if (!_samples.empty()) {
-    // Legacy Sample-based storage
     if (_samples.size() < 2) {
       _dirty = false;
       return;
     }
 
-    // Fast path: check if already sorted
     if (std::is_sorted(_samples.begin(), _samples.end(),
               [](const Sample &a, const Sample &b) { return a.t < b.t; })) {
       _dirty = false;
       return;
     }
 
-    // Check if nearly sorted
     size_t inversions = 0;
     size_t scan_limit = std::min(_samples.size() - 1, size_t(100));
     for (size_t i = 0; i < scan_limit; ++i) {
@@ -282,7 +117,6 @@ void TimeSamples::update() const {
       }
     }
 
-    // Use insertion sort for nearly-sorted data
     if (inversions * 20 < _samples.size()) {
       insertion_sort_samples(_samples);
     } else {
@@ -293,6 +127,327 @@ void TimeSamples::update() const {
   _dirty = false;
 }
 
+// ============================================================================
+// reconstruct_binary_sample — reconstructs value::Value from flat _data buffer
+// ============================================================================
+
+bool TimeSamples::reconstruct_binary_sample(size_t idx, Sample* sample) const {
+    if (!sample || idx >= _times.size() || idx >= _blocked.size()) {
+      return false;
+    }
+
+    sample->t = _times[idx];
+    sample->blocked = (_blocked[idx] != 0);
+    sample->value = value::Value();
+
+    if (sample->blocked) {
+      return true;
+    }
+
+    if (idx >= _data_offsets.size()) {
+      return true;
+    }
+
+    const uint32_t byte_offset = _data_offsets[idx];
+    if (byte_offset == BLOCKED_OFFSET) {
+      sample->blocked = true;
+      return true;
+    }
+
+    // Array reconstruction
+    if (_is_array) {
+      const size_t count = get_array_count(idx);
+
+#define RECONSTRUCT_ARRAY(TYPE)                                                   \
+      if (reconstruct_unified_array_value<TYPE>(                                  \
+              idx, value::TypeTraits<std::vector<TYPE>>::type_id(),               \
+              &sample->value)) {                                                  \
+        return true;                                                              \
+      }                                                                           \
+      if (reconstruct_unified_array_value<TYPE>(                                  \
+              idx, value::TypeTraits<TypedArray<TYPE>>::type_id(),                \
+              &sample->value)) {                                                  \
+        return true;                                                              \
+      }
+
+      (void)count;
+      RECONSTRUCT_ARRAY(float)
+      RECONSTRUCT_ARRAY(double)
+      RECONSTRUCT_ARRAY(int32_t)
+      RECONSTRUCT_ARRAY(uint32_t)
+      RECONSTRUCT_ARRAY(int64_t)
+      RECONSTRUCT_ARRAY(uint64_t)
+      RECONSTRUCT_ARRAY(value::half)
+      RECONSTRUCT_ARRAY(value::half2)
+      RECONSTRUCT_ARRAY(value::half3)
+      RECONSTRUCT_ARRAY(value::half4)
+      RECONSTRUCT_ARRAY(value::float2)
+      RECONSTRUCT_ARRAY(value::float3)
+      RECONSTRUCT_ARRAY(value::float4)
+      RECONSTRUCT_ARRAY(value::double2)
+      RECONSTRUCT_ARRAY(value::double3)
+      RECONSTRUCT_ARRAY(value::double4)
+      RECONSTRUCT_ARRAY(value::int2)
+      RECONSTRUCT_ARRAY(value::int3)
+      RECONSTRUCT_ARRAY(value::int4)
+      RECONSTRUCT_ARRAY(value::quath)
+      RECONSTRUCT_ARRAY(value::quatf)
+      RECONSTRUCT_ARRAY(value::quatd)
+      RECONSTRUCT_ARRAY(value::point3f)
+      RECONSTRUCT_ARRAY(value::point3d)
+      RECONSTRUCT_ARRAY(value::normal3f)
+      RECONSTRUCT_ARRAY(value::normal3d)
+      RECONSTRUCT_ARRAY(value::vector3f)
+      RECONSTRUCT_ARRAY(value::vector3d)
+      RECONSTRUCT_ARRAY(value::color3f)
+      RECONSTRUCT_ARRAY(value::color3d)
+      RECONSTRUCT_ARRAY(value::color4f)
+      RECONSTRUCT_ARRAY(value::color4d)
+      RECONSTRUCT_ARRAY(value::texcoord2f)
+      RECONSTRUCT_ARRAY(value::texcoord2d)
+      RECONSTRUCT_ARRAY(value::texcoord3f)
+      RECONSTRUCT_ARRAY(value::texcoord3d)
+      RECONSTRUCT_ARRAY(value::matrix2f)
+      RECONSTRUCT_ARRAY(value::matrix2d)
+      RECONSTRUCT_ARRAY(value::matrix3f)
+      RECONSTRUCT_ARRAY(value::matrix3d)
+      RECONSTRUCT_ARRAY(value::matrix4f)
+      RECONSTRUCT_ARRAY(value::matrix4d)
+#undef RECONSTRUCT_ARRAY
+      return true;
+    }
+
+    // Scalar reconstruction from flat _data buffer
+    const uint32_t tid = _type_id;
+
+#define RECONSTRUCT_SCALAR(TYPE) \
+    case value::TypeTraits<TYPE>::type_id(): { \
+      if (static_cast<size_t>(byte_offset) + sizeof(TYPE) <= _data.size()) { \
+        TYPE val; \
+        std::memcpy(&val, _data.data() + byte_offset, sizeof(TYPE)); \
+        sample->value = value::Value(val); \
+      } \
+      break; \
+    }
+
+    switch (tid) {
+      RECONSTRUCT_SCALAR(value::half)
+      RECONSTRUCT_SCALAR(float)
+      RECONSTRUCT_SCALAR(double)
+      RECONSTRUCT_SCALAR(int32_t)
+      RECONSTRUCT_SCALAR(uint32_t)
+      RECONSTRUCT_SCALAR(int64_t)
+      RECONSTRUCT_SCALAR(uint64_t)
+      case value::TypeTraits<bool>::type_id(): {
+        if (static_cast<size_t>(byte_offset) + 1 <= _data.size()) {
+          bool bval = (_data[byte_offset] != 0);
+          sample->value = value::Value(bval);
+        }
+        break;
+      }
+      RECONSTRUCT_SCALAR(value::float2)
+      RECONSTRUCT_SCALAR(value::float3)
+      RECONSTRUCT_SCALAR(value::float4)
+      RECONSTRUCT_SCALAR(value::double2)
+      RECONSTRUCT_SCALAR(value::double3)
+      RECONSTRUCT_SCALAR(value::double4)
+      RECONSTRUCT_SCALAR(value::int2)
+      RECONSTRUCT_SCALAR(value::int3)
+      RECONSTRUCT_SCALAR(value::int4)
+      RECONSTRUCT_SCALAR(value::half2)
+      RECONSTRUCT_SCALAR(value::half3)
+      RECONSTRUCT_SCALAR(value::half4)
+      RECONSTRUCT_SCALAR(value::quath)
+      RECONSTRUCT_SCALAR(value::quatf)
+      RECONSTRUCT_SCALAR(value::quatd)
+      RECONSTRUCT_SCALAR(value::point3f)
+      RECONSTRUCT_SCALAR(value::point3d)
+      RECONSTRUCT_SCALAR(value::normal3f)
+      RECONSTRUCT_SCALAR(value::normal3d)
+      RECONSTRUCT_SCALAR(value::vector3f)
+      RECONSTRUCT_SCALAR(value::vector3d)
+      RECONSTRUCT_SCALAR(value::color3f)
+      RECONSTRUCT_SCALAR(value::color3d)
+      RECONSTRUCT_SCALAR(value::color4f)
+      RECONSTRUCT_SCALAR(value::color4d)
+      RECONSTRUCT_SCALAR(value::texcoord2f)
+      RECONSTRUCT_SCALAR(value::texcoord2d)
+      RECONSTRUCT_SCALAR(value::texcoord3f)
+      RECONSTRUCT_SCALAR(value::texcoord3d)
+      RECONSTRUCT_SCALAR(value::matrix2f)
+      RECONSTRUCT_SCALAR(value::matrix2d)
+      RECONSTRUCT_SCALAR(value::matrix3f)
+      RECONSTRUCT_SCALAR(value::matrix3d)
+      RECONSTRUCT_SCALAR(value::matrix4f)
+      RECONSTRUCT_SCALAR(value::matrix4d)
+      default:
+        break;
+    }
+#undef RECONSTRUCT_SCALAR
+    return true;
+}
+
+bool TimeSamples::add_sample(const Sample &s, std::string *err) {
+    if (has_unified_samples()) {
+      if (err) {
+        (*err) += "add_sample cannot append generic Value samples after unified storage samples.\n";
+      }
+      return false;
+    }
+
+    if (!s.value.is_none()) {
+      if (!is_initialized()) {
+        set_type_id(s.value.type_id());
+      } else if (s.value.type_id() != _type_id) {
+        if (err) {
+          (*err) += "Type mismatch in TimeSamples: expected type_id " +
+                    std::to_string(_type_id) + " but got " +
+                    std::to_string(s.value.type_id()) + " (expected type: " +
+                    type_name() + ", got: " + s.value.type_name() + ").\n";
+        }
+        return false;
+      }
+    }
+
+    _samples.push_back(s);
+    _dirty = true;
+    return true;
+}
+
+bool TimeSamples::add_sample(double t, const value::Value &v, std::string *err) {
+    if (has_unified_samples()) {
+      if (err) {
+        (*err) += "add_sample cannot append generic Value samples after unified storage samples.\n";
+      }
+      return false;
+    }
+
+    if (!v.is_none()) {
+      if (!is_initialized()) {
+        set_type_id(v.type_id());
+      } else if (v.type_id() != _type_id) {
+        if (err) {
+          (*err) += "Type mismatch in TimeSamples: expected type_id " +
+                    std::to_string(_type_id) + " but got " +
+                    std::to_string(v.type_id()) + " (expected type: " +
+                    type_name() + ", got: " + v.type_name() + ").\n";
+        }
+        return false;
+      }
+    }
+
+    Sample s;
+    s.t = t;
+    s.value = v;
+    s.blocked = v.is_none();
+    _samples.push_back(s);
+    _dirty = true;
+    return true;
+}
+
+bool TimeSamples::add_blocked_sample(double t, const value::Value &v, std::string *err) {
+    if (has_unified_samples()) {
+      if (err) {
+        (*err) += "add_blocked_sample cannot append generic Value samples after unified storage samples.\n";
+      }
+      return false;
+    }
+
+    if (!v.is_none() && v.type_id() != 1) {
+      if (!is_initialized()) {
+        set_type_id(v.type_id());
+      } else if (v.type_id() != _type_id) {
+        if (err) {
+          (*err) += "Type mismatch in TimeSamples (blocked sample): expected type_id " +
+                    std::to_string(_type_id) + " but got " +
+                    std::to_string(v.type_id()) + ".\n";
+        }
+        return false;
+      }
+    }
+
+    Sample s;
+    s.t = t;
+    s.value = v;
+    s.blocked = true;
+    _samples.emplace_back(s);
+    _dirty = true;
+    return true;
+}
+
+size_t TimeSamples::estimate_memory_usage() const {
+    size_t total = sizeof(TimeSamples);
+
+    total += _times.capacity() * sizeof(double);
+    total += _blocked.capacity();
+    total += _data.capacity();
+    total += _data_offsets.capacity() * sizeof(uint32_t);
+    total += _array_counts.capacity() * sizeof(uint32_t);
+
+    total += _samples.capacity() * sizeof(Sample);
+    for (const auto &sample : _samples) {
+      total += sample.value.estimate_memory_usage();
+    }
+
+    return total;
+}
+
+size_t TimeSamples::estimate_actual_usage() const {
+    size_t total = sizeof(TimeSamples);
+
+    total += _times.size() * sizeof(double);
+    total += _blocked.size();  // vector<bool> counts elements, matches estimate pattern
+    total += _data.size();
+    total += _data_offsets.size() * sizeof(uint32_t);
+    total += _array_counts.size() * sizeof(uint32_t);
+
+    total += _samples.size() * sizeof(Sample);
+    for (const auto &sample : _samples) {
+      total += sample.value.estimate_actual_usage();
+    }
+
+    return total;
+}
+
+
+std::vector<TimeSamples::Sample> &TimeSamples::samples() {
+    if (!_times.empty() && _samples.empty()) {
+      (void)get_samples();
+    }
+    if (_dirty) {
+      update();
+    }
+    return _samples;
+}
+
+const std::vector<TimeSamples::Sample> &TimeSamples::get_samples() const {
+    // If unified storage has data, convert to generic samples on demand.
+    if (!_times.empty() && _samples.empty()) {
+      if (_dirty) {
+        update();
+      }
+
+      _samples.clear();
+      _samples.reserve(_times.size());
+
+      for (size_t i = 0; i < _times.size(); ++i) {
+        Sample s;
+        if (!reconstruct_binary_sample(i, &s)) {
+          s.t = (i < _times.size()) ? _times[i] : 0.0;
+          s.value = value::Value();
+          s.blocked = true;
+        }
+        _samples.push_back(s);
+      }
+      return _samples;
+    }
+
+    if (_dirty) {
+      update();
+    }
+    return _samples;
+}
+
 } // namespace value
 
 //
@@ -300,19 +455,19 @@ void TimeSamples::update() const {
 // This reduces compilation time by instantiating templates only once
 //
 
-// Integer types (POD, non-lerp'able)
+// Integer types (binary-serializable, non-lerp'able)
 template struct TypedTimeSamples<bool>;
 template struct TypedTimeSamples<int32_t>;
 template struct TypedTimeSamples<uint32_t>;
 template struct TypedTimeSamples<int64_t>;
 template struct TypedTimeSamples<uint64_t>;
 
-// Floating point scalar types (POD, lerp'able)
+// Floating point scalar types (binary-serializable, lerp'able)
 template struct TypedTimeSamples<value::half>;
 template struct TypedTimeSamples<float>;
 template struct TypedTimeSamples<double>;
 
-// Vector types (POD, lerp'able)
+// Vector types (binary-serializable, lerp'able)
 template struct TypedTimeSamples<value::half2>;
 template struct TypedTimeSamples<value::half3>;
 template struct TypedTimeSamples<value::half4>;
@@ -323,12 +478,12 @@ template struct TypedTimeSamples<value::double2>;
 template struct TypedTimeSamples<value::double3>;
 template struct TypedTimeSamples<value::double4>;
 
-// Integer vector types (POD, non-lerp'able)
+// Integer vector types (binary-serializable, non-lerp'able)
 template struct TypedTimeSamples<value::int2>;
 template struct TypedTimeSamples<value::int3>;
 template struct TypedTimeSamples<value::int4>;
 
-// Quaternion types (POD, lerp'able)
+// Quaternion types (binary-serializable, lerp'able)
 template struct TypedTimeSamples<value::quath>;
 template struct TypedTimeSamples<value::quatf>;
 template struct TypedTimeSamples<value::quatd>;
@@ -341,7 +496,7 @@ template struct TypedTimeSamples<value::matrix2d>;
 template struct TypedTimeSamples<value::matrix3d>;
 template struct TypedTimeSamples<value::matrix4d>;
 
-// Role types (POD, lerp'able)
+// Role types (binary-serializable, lerp'able)
 template struct TypedTimeSamples<value::normal3h>;
 template struct TypedTimeSamples<value::normal3f>;
 template struct TypedTimeSamples<value::normal3d>;
@@ -461,16 +616,19 @@ bool TypedTimeSamples<T>::get(T *dst, double t,
     update();
   }
 
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
-  // AoS layout implementation
   if (value::TimeCode(t).is_default()) {
-    // FIXME: Use the first item for now.
-    // TODO: Handle blocked
-    (*dst) = _samples[0].value;
-    return true;
+    // Return the first non-blocked sample.
+    for (const auto &s : _samples) {
+      if (!s.blocked) {
+        (*dst) = s.value;
+        return true;
+      }
+    }
+    return false;  // All samples are blocked.
   } else {
 
     if (_samples.size() == 1) {
+      if (_samples[0].blocked) return false;
       (*dst) = _samples[0].value;
       return true;
     }
@@ -480,33 +638,14 @@ bool TypedTimeSamples<T>::get(T *dst, double t,
       _samples.begin(), _samples.end(), t,
       [](double tval, const Sample &a) { return tval < a.t; });
 
-    const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
+    const auto it_held = (it == _samples.begin()) ? _samples.begin() : (it - 1);
 
-    (*dst) = it_minus_1->value;
-    return true;
-  }
-#else
-  // SoA layout implementation
-  if (value::TimeCode(t).is_default()) {
-    // FIXME: Use the first item for now.
-    // TODO: Handle blocked
-    (*dst) = _values[0];
-    return true;
-  } else {
-
-    if (_times.size() == 1) {
-      (*dst) = _values[0];
-      return true;
+    if (it_held->blocked) {
+      return false;  // Nearest preceding sample is blocked (USD "None").
     }
-
-    // Held = nearest preceding value for a given time.
-    auto it = std::upper_bound(_times.begin(), _times.end(), t);
-    size_t idx = (it == _times.begin()) ? 0 : static_cast<size_t>(std::distance(_times.begin(), it) - 1);
-
-    (*dst) = _values[idx];
+    (*dst) = it_held->value;
     return true;
   }
-#endif
 }
 
 // Get value for interpolatable types
@@ -526,25 +665,28 @@ bool TypedTimeSamples<T>::get(T *dst, double t,
     update();
   }
 
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
-  // AoS layout implementation
   if (value::TimeCode(t).is_default()) {
-    // FIXME: Use the first item for now.
-    // TODO: Handle blocked
-    (*dst) = _samples[0].value;
-    return true;
+    // Return the first non-blocked sample.
+    for (const auto &s : _samples) {
+      if (!s.blocked) {
+        (*dst) = s.value;
+        return true;
+      }
+    }
+    return false;
   } else {
 
     if (_samples.size() == 1) {
+      if (_samples[0].blocked) return false;
       (*dst) = _samples[0].value;
       return true;
     }
 
-    auto it = std::lower_bound(
-      _samples.begin(), _samples.end(), t,
-      [](const Sample &a, double tval) { return a.t < tval; });
-
     if (interp == value::TimeSampleInterpolationType::Linear) {
+
+      auto it = std::lower_bound(
+        _samples.begin(), _samples.end(), t,
+        [](const Sample &a, double tval) { return a.t < tval; });
 
       // MS STL does not allow seek vector iterator before begin
       // Issue #110
@@ -557,6 +699,20 @@ bool TypedTimeSamples<T>::get(T *dst, double t,
       size_t idx1 =
           size_t((std::max)(int64_t(0), (std::min)(int64_t(_samples.size() - 1),
                                                int64_t(idx0) + 1)));
+
+      // If either endpoint is blocked, fall back to held interpolation
+      // at the non-blocked endpoint.
+      if (_samples[idx0].blocked && _samples[idx1].blocked) {
+        return false;
+      }
+      if (_samples[idx0].blocked) {
+        (*dst) = _samples[idx1].value;
+        return true;
+      }
+      if (_samples[idx1].blocked) {
+        (*dst) = _samples[idx0].value;
+        return true;
+      }
 
       double tl = _samples[idx0].t;
       double tu = _samples[idx1].t;
@@ -580,80 +736,21 @@ bool TypedTimeSamples<T>::get(T *dst, double t,
       (*dst) = std::move(p);
       return true;
     } else {
-      if (it == _samples.end()) {
-        // ???
+      // Held interpolation
+      auto held_it = std::upper_bound(
+          _samples.begin(), _samples.end(), t,
+          [](double tval, const Sample &a) { return tval < a.t; });
+
+      const auto it_held =
+          (held_it == _samples.begin()) ? _samples.begin() : (held_it - 1);
+
+      if (it_held->blocked) {
         return false;
       }
-
-      (*dst) = it->value;
+      (*dst) = it_held->value;
       return true;
     }
   }
-#else
-  // SoA layout implementation
-  if (value::TimeCode(t).is_default()) {
-    // FIXME: Use the first item for now.
-    // TODO: Handle blocked
-    (*dst) = _values[0];
-    return true;
-  } else {
-
-    if (_times.size() == 1) {
-      (*dst) = _values[0];
-      return true;
-    }
-
-    auto it = std::lower_bound(_times.begin(), _times.end(), t);
-
-    if (interp == value::TimeSampleInterpolationType::Linear) {
-
-      // MS STL does not allow seek vector iterator before begin
-      // Issue #110
-      const auto it_minus_1 = (it == _times.begin()) ? _times.begin() : (it - 1);
-
-      size_t idx0 = size_t((std::max)(
-          int64_t(0),
-          (std::min)(int64_t(_times.size() - 1),
-                   int64_t(std::distance(_times.begin(), it_minus_1)))));
-      size_t idx1 =
-          size_t((std::max)(int64_t(0), (std::min)(int64_t(_times.size() - 1),
-                                               int64_t(idx0) + 1)));
-
-      double tl = _times[idx0];
-      double tu = _times[idx1];
-
-      double dt = (t - tl);
-      if (std::fabs(tu - tl) < std::numeric_limits<double>::epsilon()) {
-        // slope is zero.
-        dt = 0.0;
-      } else {
-        dt /= (tu - tl);
-      }
-
-      // Just in case.
-      dt = (std::max)(0.0, (std::min)(1.0, dt));
-
-      const T &p0 = _values[idx0];
-      const T &p1 = _values[idx1];
-
-      const T p = lerp(p0, p1, dt);
-
-      (*dst) = std::move(p);
-      return true;
-    } else {
-      if (it == _times.end()) {
-        // ???
-        return false;
-      }
-
-      size_t idx = static_cast<size_t>(std::distance(_times.begin(), it));
-      (*dst) = _values[idx];
-      return true;
-    }
-  }
-#endif
-
-  return false;
 }
 
 //
@@ -814,145 +911,68 @@ TimeSamples::TimeSamples(TimeSamples&& other) noexcept
     : _samples(std::move(other._samples)),
       _times(std::move(other._times)),
       _blocked(std::move(other._blocked)),
-      _small_values(std::move(other._small_values)),
-      _values(std::move(other._values)),
-      _offsets(std::move(other._offsets)),
-      _value_array_storage(std::move(other._value_array_storage)),
-      _value_array_refs(std::move(other._value_array_refs)),
+      _data(std::move(other._data)),
+      _data_offsets(std::move(other._data_offsets)),
+      _array_counts(std::move(other._array_counts)),
       _type_id(other._type_id),
-      _use_value_array(other._use_value_array),
-      _is_array(other._is_array),
-      _array_size(other._array_size),
       _element_size(other._element_size),
-      _blocked_count(other._blocked_count),
       _dirty(other._dirty),
-      _dirty_start(other._dirty_start),
-      _dirty_end(other._dirty_end) {
-  // Reset moved-from object to valid empty state
+      _is_array(other._is_array) {
   other._type_id = 0;
-  other._use_value_array = false;
-  other._is_array = false;
-  other._array_size = 0;
   other._element_size = 0;
-  other._blocked_count = 0;
   other._dirty = false;
-  other._dirty_start = 0;
-  other._dirty_end = 0;
+  other._is_array = false;
 }
 
 // Move assignment operator
 TimeSamples& TimeSamples::operator=(TimeSamples&& other) noexcept {
   if (this != &other) {
-    // Move data from other
     _samples = std::move(other._samples);
     _times = std::move(other._times);
     _blocked = std::move(other._blocked);
-    _values = std::move(other._values);
-    _array_values = std::move(other._array_values);  // Move unique_ptr vector
-    _offsets = std::move(other._offsets);
-    _small_values = std::move(other._small_values);
-    _value_array_storage = std::move(other._value_array_storage);
-    _value_array_refs = std::move(other._value_array_refs);
+    _data = std::move(other._data);
+    _data_offsets = std::move(other._data_offsets);
+    _array_counts = std::move(other._array_counts);
     _type_id = other._type_id;
-    _use_value_array = other._use_value_array;
-    _is_array = other._is_array;
-    _array_size = other._array_size;
     _element_size = other._element_size;
-    _blocked_count = other._blocked_count;
     _dirty = other._dirty;
-    _dirty_start = other._dirty_start;
-    _dirty_end = other._dirty_end;
+    _is_array = other._is_array;
 
-    // Reset moved-from object to valid empty state
     other._type_id = 0;
-    other._use_value_array = false;
-    other._is_array = false;
-    other._array_size = 0;
     other._element_size = 0;
-    other._blocked_count = 0;
     other._dirty = false;
-    other._dirty_start = 0;
-    other._dirty_end = 0;
+    other._is_array = false;
   }
   return *this;
 }
 
-// Copy constructor - implements deep copy for _array_values
+// Copy constructor
 TimeSamples::TimeSamples(const TimeSamples& other)
     : _samples(other._samples),
       _times(other._times),
       _blocked(other._blocked),
-      _small_values(other._small_values),
-      _values(other._values),
-      _offsets(other._offsets),
-      // _value_array_storage is copied in body to avoid TypeTraits issues
-      _value_array_refs(other._value_array_refs),
+      _data(other._data),
+      _data_offsets(other._data_offsets),
+      _array_counts(other._array_counts),
       _type_id(other._type_id),
-      _use_value_array(other._use_value_array),
-      _is_array(other._is_array),
-      _array_size(other._array_size),
       _element_size(other._element_size),
-      _blocked_count(other._blocked_count),
       _dirty(other._dirty),
-      _dirty_start(other._dirty_start),
-      _dirty_end(other._dirty_end) {
-  // Copy value array storage in body to avoid TypeTraits instantiation issues
-  _value_array_storage.reserve(other._value_array_storage.size());
-  for (const auto& v : other._value_array_storage) {
-    _value_array_storage.push_back(v);
-  }
-  // Deep copy _array_values (vector of unique_ptr)
-  _array_values.clear();
-  _array_values.reserve(other._array_values.size());
-  for (const auto& array_buffer : other._array_values) {
-    if (array_buffer) {
-      // Create a new Buffer<16> and copy data
-      auto new_buffer = std::make_unique<Buffer<16>>(*array_buffer);
-      _array_values.push_back(std::move(new_buffer));
-    } else {
-      _array_values.push_back(nullptr);
-    }
-  }
+      _is_array(other._is_array) {
 }
 
-// Copy assignment operator - implements deep copy for _array_values
+// Copy assignment operator
 TimeSamples& TimeSamples::operator=(const TimeSamples& other) {
   if (this != &other) {
     _samples = other._samples;
     _times = other._times;
     _blocked = other._blocked;
-    _values = other._values;
-    _offsets = other._offsets;
+    _data = other._data;
+    _data_offsets = other._data_offsets;
+    _array_counts = other._array_counts;
     _type_id = other._type_id;
-    _use_value_array = other._use_value_array;
-    _is_array = other._is_array;
-    _array_size = other._array_size;
     _element_size = other._element_size;
-    _blocked_count = other._blocked_count;
     _dirty = other._dirty;
-    _dirty_start = other._dirty_start;
-    _dirty_end = other._dirty_end;
-    _small_values = other._small_values;
-    _value_array_refs = other._value_array_refs;
-    // Copy value array storage element by element to avoid TypeTraits instantiation issues
-    _value_array_storage.clear();
-    _value_array_storage.reserve(other._value_array_storage.size());
-    for (const auto& v : other._value_array_storage) {
-      _value_array_storage.push_back(v);
-    }
-
-    // Deep copy _array_values (vector of unique_ptr)
-    _array_values.clear();
-    _array_values.reserve(other._array_values.size());
-    for (const auto& array_buffer : other._array_values) {
-      if (array_buffer) {
-        // Create a new Buffer<16> and copy data
-        auto new_buffer = std::make_unique<Buffer<16>>(*array_buffer);
-        _array_values.push_back(std::move(new_buffer));
-      } else {
-        _array_values.push_back(nullptr);
-      }
-    }
+    _is_array = other._is_array;
   }
   return *this;
 }
@@ -962,34 +982,16 @@ void TimeSamples::clear() {
   _samples.clear();
   _times.clear();
   _blocked.clear();
-  _values.clear();
-  _offsets.clear();
-  _small_values.clear();
+  _data.clear();
+  _data_offsets.clear();
+  _array_counts.clear();
   _type_id = 0;
-  _is_array = false;
-  _array_size = 0;
   _element_size = 0;
-  _blocked_count = 0;
   _dirty = true;
-  _dirty_start = 0;
-  _dirty_end = 0;
+  _is_array = false;
 }
 
 
-// init() method
-bool TimeSamples::init(uint32_t type_id) {
-  //DCOUT("init" << type_id);
-
-  // Allow initialization if empty OR if it contains only uninitialized blocked samples
-  if (!empty() && _type_id != 0) {
-    DCOUT("initialized" << type_id);
-    return false; // Already initialized with a different type
-  }
-  DCOUT("init" << type_id);
-  _type_id = type_id;
-
-  return true;
-}
 
 namespace {
 
@@ -1074,4 +1076,3 @@ bool TimeSamples::cast_to_role_type(uint32_t role_type_id) {
 
 } // namespace value
 } // namespace tinyusdz
-

@@ -11,10 +11,20 @@
 
 #if defined(TINYUSDZ_USE_USDMTLX)
 
+// ============================================================================
+// Configuration flags for MaterialX support
+// ============================================================================
+// Currently only Blender-style OpenPBR + NodeGraph import is actively used.
+// Other shader types (UsdPreviewSurface, StandardSurface) export paths are
+// disabled until needed. Enable these flags to re-enable those code paths.
+// ============================================================================
+#define TINYUSDZ_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT 1
+#define TINYUSDZ_MTLX_ENABLE_STANDARDSURFACE_EXPORT 1
+
 #include "ascii-parser.hh"  // To parse color3f value
 #include "common-macros.inc"
 #include "io-util.hh"
-#include "pprinter.hh"
+#include "pprint-enum.hh"
 #include "str-util.hh"  // For dragonbox-based dtos()
 #include "tiny-format.hh"
 #include "value-pprint.hh"
@@ -84,7 +94,6 @@ bool is_supported_type(const std::string &typeName) {
 
   // No matrixarray
 
-  // TODO
   // if (typeName.compare("color") == 0) return true;
   // if (typeName.compare("geomname") == 0) return true;
   // if (typeName.compare("geomnamearray") == 0) return true;
@@ -313,7 +322,9 @@ bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
 
 bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
                          value::Value *value, std::string *err) {
-  (void)value;
+  if (!value) {
+    PUSH_ERROR_AND_RETURN("value is nullptr");
+  }
 
   if (!is_supported_type(typeName)) {
     PUSH_ERROR_AND_RETURN(
@@ -329,32 +340,152 @@ bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
     if (!ParseValue(parser, val, err)) {
       return false;
     }
+    (*value) = val;
   } else if (typeName.compare("boolean") == 0) {
     bool val;
     if (!ParseValue(parser, val, err)) {
       return false;
     }
+    (*value) = val;
+  } else if (typeName.compare("float") == 0) {
+    float val;
+    if (!ParseValue(parser, val, err)) {
+      return false;
+    }
+    (*value) = val;
+  } else if (typeName.compare("string") == 0 || typeName.compare("filename") == 0) {
+    // Strings are already unquoted from XML attribute parsing
+    (*value) = str;
   } else if (typeName.compare("vector2") == 0) {
     value::float2 val;
     if (!ParseValue(parser, val, err)) {
       return false;
     }
+    (*value) = val;
+  } else if (typeName.compare("color3") == 0) {
+    value::color3f val;
+    if (!ParseValue(parser, val, err)) {
+      return false;
+    }
+    (*value) = val;
   } else if (typeName.compare("vector3") == 0) {
     value::float3 val;
     if (!ParseValue(parser, val, err)) {
       return false;
     }
+    (*value) = val;
+  } else if (typeName.compare("color4") == 0) {
+    value::float4 val;
+    if (!ParseValue(parser, val, err)) {
+      return false;
+    }
+    (*value) = val;
   } else if (typeName.compare("vector4") == 0) {
     value::float4 val;
     if (!ParseValue(parser, val, err)) {
       return false;
     }
+    (*value) = val;
+  } else if (typeName.compare("matrix33") == 0) {
+    std::vector<float> values;
+    if (!parser.SepBy1BasicType(',', &values)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse a value of type `matrix33`");
+    }
+    if (values.size() != 9) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "type `matrix33` expects 9 elements, but got {}", values.size()));
+    }
+    value::matrix3f val;
+    memcpy(&val.m[0][0], values.data(), sizeof(float) * 9);
+    (*value) = val;
+  } else if (typeName.compare("matrix44") == 0) {
+    std::vector<float> values;
+    if (!parser.SepBy1BasicType(',', &values)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse a value of type `matrix44`");
+    }
+    if (values.size() != 16) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "type `matrix44` expects 16 elements, but got {}", values.size()));
+    }
+    value::matrix4f val;
+    memcpy(&val.m[0][0], values.data(), sizeof(float) * 16);
+    (*value) = val;
+  } else if (typeName.compare("integerarray") == 0) {
+    // Parse comma-separated integers via float parser then convert
+    std::vector<float> fvalues;
+    if (!parser.SepBy1BasicType(',', &fvalues)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse a value of type `integerarray`");
+    }
+    std::vector<int> values(fvalues.size());
+    for (size_t i = 0; i < fvalues.size(); i++) {
+      values[i] = int(fvalues[i]);
+    }
+    (*value) = values;
+  } else if (typeName.compare("floatarray") == 0) {
+    std::vector<float> values;
+    if (!parser.SepBy1BasicType(',', &values)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse a value of type `floatarray`");
+    }
+    (*value) = values;
+  } else if (typeName.compare("color3array") == 0 ||
+             typeName.compare("vector3array") == 0) {
+    std::vector<float> values;
+    if (!parser.SepBy1BasicType(',', &values)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`", typeName));
+    }
+    if (values.size() % 3 != 0) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "type `{}` expects element count divisible by 3, but got {}", typeName, values.size()));
+    }
+    if (typeName.compare("color3array") == 0) {
+      std::vector<value::color3f> arr(values.size() / 3);
+      memcpy(arr.data(), values.data(), sizeof(float) * values.size());
+      (*value) = arr;
+    } else {
+      std::vector<value::float3> arr(values.size() / 3);
+      memcpy(arr.data(), values.data(), sizeof(float) * values.size());
+      (*value) = arr;
+    }
+  } else if (typeName.compare("color4array") == 0 ||
+             typeName.compare("vector4array") == 0) {
+    std::vector<float> values;
+    if (!parser.SepBy1BasicType(',', &values)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`", typeName));
+    }
+    if (values.size() % 4 != 0) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "type `{}` expects element count divisible by 4, but got {}", typeName, values.size()));
+    }
+    if (typeName.compare("color4array") == 0) {
+      std::vector<value::color4f> arr(values.size() / 4);
+      memcpy(arr.data(), values.data(), sizeof(float) * values.size());
+      (*value) = arr;
+    } else {
+      std::vector<value::float4> arr(values.size() / 4);
+      memcpy(arr.data(), values.data(), sizeof(float) * values.size());
+      (*value) = arr;
+    }
+  } else if (typeName.compare("vector2array") == 0) {
+    std::vector<float> values;
+    if (!parser.SepBy1BasicType(',', &values)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse a value of type `vector2array`");
+    }
+    if (values.size() % 2 != 0) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "type `vector2array` expects element count divisible by 2, but got {}", values.size()));
+    }
+    std::vector<value::float2> arr(values.size() / 2);
+    memcpy(arr.data(), values.data(), sizeof(float) * values.size());
+    (*value) = arr;
+  } else if (typeName.compare("stringarray") == 0) {
+    // MaterialX string arrays are comma-separated strings
+    // For now, store as a single string (arrays in XML attributes are rare)
+    (*value) = str;
   } else {
-    PUSH_ERROR_AND_RETURN("TODO: " + typeName);
+    PUSH_ERROR_AND_RETURN("Unsupported type: " + typeName);
   }
 
-  // TODO
-  return false;
+  return true;
 }
 
 template <typename T>
@@ -447,10 +578,12 @@ bool SerializeAttribute(const std::string &attr_name,
   return true;
 }
 
+#if TINYUSDZ_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT
 static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader,
                                    const std::string &shader_name,
                                    const std::vector<MtlxShaderConnection> &connections,
                                    const std::map<std::string, PrimSpec> &nodegraphs,
+                                   const std::string &colorspace,
                                    std::string &xml_str, std::string *warn,
                                    std::string *err) {
   (void)warn;
@@ -458,9 +591,11 @@ static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader,
   std::stringstream ss;
 
   std::string node_name = shader_name.empty() ? "SR_default" : shader_name;
+  // Use provided colorspace or default to lin_rec709
+  std::string cs = colorspace.empty() ? "lin_rec709" : colorspace;
 
   ss << "<?xml version=\"1.0\"?>\n";
-  ss << "<materialx version=\"1.38\" colorspace=\"lin_rec709\">\n";
+  ss << "<materialx version=\"1.38\" colorspace=\"" << cs << "\">\n";
 
   // Serialize nodegraphs first
   if (!nodegraphs.empty()) {
@@ -539,11 +674,14 @@ static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader,
 
   return true;
 }
+#endif // TINYUSDZ_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT
 
+#if TINYUSDZ_MTLX_ENABLE_STANDARDSURFACE_EXPORT
 static bool WriteMaterialXToString(const MtlxAutodeskStandardSurface &shader,
                                    const std::string &shader_name,
                                    const std::vector<MtlxShaderConnection> &connections,
                                    const std::map<std::string, PrimSpec> &nodegraphs,
+                                   const std::string &colorspace,
                                    std::string &xml_str, std::string *warn,
                                    std::string *err) {
   (void)warn;
@@ -551,9 +689,11 @@ static bool WriteMaterialXToString(const MtlxAutodeskStandardSurface &shader,
   std::stringstream ss;
 
   std::string node_name = shader_name.empty() ? "SR_default" : shader_name;
+  // Use provided colorspace or default to lin_rec709
+  std::string cs = colorspace.empty() ? "lin_rec709" : colorspace;
 
   ss << "<?xml version=\"1.0\"?>\n";
-  ss << "<materialx version=\"1.38\" colorspace=\"lin_rec709\">\n";
+  ss << "<materialx version=\"1.38\" colorspace=\"" << cs << "\">\n";
 
   // Serialize nodegraphs first
   if (!nodegraphs.empty()) {
@@ -682,11 +822,17 @@ static bool WriteMaterialXToString(const MtlxAutodeskStandardSurface &shader,
 
   return true;
 }
+#endif // TINYUSDZ_MTLX_ENABLE_STANDARDSURFACE_EXPORT
 
+// ============================================================================
+// OpenPBR Surface Export - ACTIVE PATH
+// This is the primary export path used for Blender MaterialX exports.
+// ============================================================================
 static bool WriteMaterialXToString(const MtlxOpenPBRSurface &shader,
                                    const std::string &shader_name,
                                    const std::vector<MtlxShaderConnection> &connections,
                                    const std::map<std::string, PrimSpec> &nodegraphs,
+                                   const std::string &colorspace,
                                    std::string &xml_str, std::string *warn,
                                    std::string *err) {
   (void)warn;
@@ -694,9 +840,11 @@ static bool WriteMaterialXToString(const MtlxOpenPBRSurface &shader,
   std::stringstream ss;
 
   std::string node_name = shader_name.empty() ? "SR_default" : shader_name;
+  // Use provided colorspace or default to lin_rec709
+  std::string cs = colorspace.empty() ? "lin_rec709" : colorspace;
 
   ss << "<?xml version=\"1.0\"?>\n";
-  ss << "<materialx version=\"1.38\" colorspace=\"lin_rec709\">\n";
+  ss << "<materialx version=\"1.38\" colorspace=\"" << cs << "\">\n";
 
   // Serialize nodegraphs first
   if (!nodegraphs.empty()) {
@@ -819,6 +967,87 @@ static bool WriteMaterialXToString(const MtlxOpenPBRSurface &shader,
   return true;
 }
 
+// Helper to extract MaterialX node category from info:id (e.g., "ND_multiply_color3" -> "multiply")
+static std::string ExtractNodeCategory(const std::string &info_id) {
+  // info:id format: "ND_<category>_<type>" or just "<category>"
+  if (info_id.substr(0, 3) == "ND_") {
+    std::string rest = info_id.substr(3);
+    size_t underscore = rest.rfind('_');
+    if (underscore != std::string::npos) {
+      rest = rest.substr(0, underscore);
+    }
+    return rest;
+  }
+  return info_id;
+}
+
+// Helper to extract MaterialX type from info:id (e.g., "ND_multiply_color3" -> "color3")
+static std::string ExtractNodeType(const std::string &info_id) {
+  size_t underscore = info_id.rfind('_');
+  if (underscore != std::string::npos) {
+    return info_id.substr(underscore + 1);
+  }
+  return "float";
+}
+
+// Helper to convert USD type to MaterialX type string
+static std::string ToMtlxTypeString(const value::Value &val) {
+  if (val.type_id() == value::TYPE_ID_FLOAT) return "float";
+  if (val.type_id() == value::TYPE_ID_INT32) return "integer";
+  if (val.type_id() == value::TYPE_ID_BOOL) return "boolean";
+  if (val.type_id() == value::TYPE_ID_STRING) return "string";
+  if (val.type_id() == value::TYPE_ID_FLOAT2) return "vector2";
+  if (val.type_id() == value::TYPE_ID_FLOAT3) return "vector3";
+  if (val.type_id() == value::TYPE_ID_FLOAT4) return "vector4";
+  if (val.type_id() == value::TYPE_ID_COLOR3F) return "color3";
+  if (val.type_id() == value::TYPE_ID_COLOR4F) return "color4";
+  if (val.type_id() == value::TYPE_ID_NORMAL3F) return "vector3";
+  if (val.type_id() == value::TYPE_ID_ASSET_PATH) return "filename";
+  if (val.type_id() == value::TYPE_ID_TOKEN) return "string";
+  return "float";
+}
+
+// Helper to convert USD value to MaterialX value string
+static std::string ToMtlxValueString(const value::Value &val) {
+  if (auto f = val.as<float>()) {
+    return dtos(*f);
+  }
+  if (auto i = val.as<int>()) {
+    return std::to_string(*i);
+  }
+  if (auto b = val.as<bool>()) {
+    return *b ? "true" : "false";
+  }
+  if (auto s = val.as<std::string>()) {
+    return *s;
+  }
+  if (auto v2 = val.as<value::float2>()) {
+    return dtos((*v2)[0]) + ", " + dtos((*v2)[1]);
+  }
+  if (auto v3 = val.as<value::float3>()) {
+    return dtos((*v3)[0]) + ", " + dtos((*v3)[1]) + ", " + dtos((*v3)[2]);
+  }
+  if (auto v4 = val.as<value::float4>()) {
+    return dtos((*v4)[0]) + ", " + dtos((*v4)[1]) + ", " + dtos((*v4)[2]) + ", " + dtos((*v4)[3]);
+  }
+  if (auto c3 = val.as<value::color3f>()) {
+    return dtos(c3->r) + ", " + dtos(c3->g) + ", " + dtos(c3->b);
+  }
+  if (auto c4 = val.as<value::color4f>()) {
+    return dtos(c4->r) + ", " + dtos(c4->g) + ", " + dtos(c4->b) + ", " + dtos(c4->a);
+  }
+  if (auto n3 = val.as<value::normal3f>()) {
+    return dtos(n3->x) + ", " + dtos(n3->y) + ", " + dtos(n3->z);
+  }
+  if (auto ap = val.as<value::AssetPath>()) {
+    return ap->GetAssetPath();
+  }
+  if (auto t = val.as<value::token>()) {
+    return t->str();
+  }
+  return "";
+}
+
 // Helper function to serialize nodegraphs to MaterialX XML
 static bool SerializeNodeGraphs(const std::map<std::string, PrimSpec> &nodegraphs,
                                 std::stringstream &ss, std::string *warn, std::string *err) {
@@ -833,13 +1062,76 @@ static bool SerializeNodeGraphs(const std::map<std::string, PrimSpec> &nodegraph
 
     // Serialize child nodes
     for (const auto &child_ps : ng_ps.children()) {
-      std::string node_type = child_ps.typeName();
       std::string node_name = child_ps.name();
 
-      // TODO: Add more complete node serialization
-      // For now, just add a placeholder comment
-      ss << pprint::Indent(2) << "<!-- Node: " << node_name
-         << " (type: " << node_type << ") -->\n";
+      // Get info:id to determine node category
+      std::string info_id;
+      auto info_it = child_ps.props().find(kShaderInfoId);
+      if (info_it != child_ps.props().end() && info_it->second.is_attribute()) {
+        const Attribute &attr = info_it->second.get_attribute();
+        if (auto tok = attr.get_value<value::token>()) {
+          info_id = tok->str();
+        }
+      }
+
+      if (info_id.empty()) {
+        // Skip nodes without info:id
+        continue;
+      }
+
+      std::string category = ExtractNodeCategory(info_id);
+      std::string node_type = ExtractNodeType(info_id);
+
+      ss << pprint::Indent(2) << "<" << category << " name=\"" << node_name
+         << "\" type=\"" << node_type << "\">\n";
+
+      // Serialize inputs
+      for (const auto &prop_item : child_ps.props()) {
+        const std::string &prop_name = prop_item.first;
+
+        // Skip non-input properties
+        if (prop_name.find("inputs:") != 0) continue;
+
+        std::string input_name = prop_name.substr(7); // Remove "inputs:" prefix
+
+        if (prop_item.second.is_attribute()) {
+          const Attribute &attr = prop_item.second.get_attribute();
+
+          // Check if it's a connection
+          if (attr.has_connections() && !attr.connections().empty()) {
+            // Extract nodename from connection path
+            const Path &conn_path = attr.connections()[0];
+            std::string full_path = conn_path.full_path_name();
+
+            // Parse connection: "nodename.outputs:out" or just "nodename"
+            size_t dot_pos = full_path.find('.');
+            std::string nodename_ref = (dot_pos != std::string::npos) ?
+                                       full_path.substr(0, dot_pos) : full_path;
+
+            // Determine type from the connected node's output or use default
+            ss << pprint::Indent(3) << "<input name=\"" << input_name
+               << "\" type=\"" << node_type << "\" nodename=\"" << nodename_ref << "\" />\n";
+          } else {
+            // It's a value
+            value::Value val;
+            if (attr.get_var().has_value() && !attr.get_var().has_timesamples()) {
+              val = attr.get_var().value_raw();
+            }
+
+            if (val.type_id() != value::TYPE_ID_NULL) {
+              std::string type_str = ToMtlxTypeString(val);
+              std::string value_str = ToMtlxValueString(val);
+
+              if (!value_str.empty()) {
+                ss << pprint::Indent(3) << "<input name=\"" << input_name
+                   << "\" type=\"" << type_str << "\" value=\"" << value_str << "\" />\n";
+              }
+            }
+          }
+        }
+      }
+
+      ss << pprint::Indent(2) << "</" << category << ">\n";
     }
 
     // Serialize outputs
@@ -847,25 +1139,38 @@ static bool SerializeNodeGraphs(const std::map<std::string, PrimSpec> &nodegraph
       const std::string &prop_name = prop_item.first;
 
       // Check if this is an output property
-      if (prop_name.find("outputs:") == 0) {
-        std::string output_name = prop_name.substr(8); // Remove "outputs:" prefix
+      if (prop_name.find("outputs:") != 0) continue;
 
-        // Try to extract the nodename reference from the connection
-        if (prop_item.second.is_attribute()) {
-          const Attribute &attr = prop_item.second.get_attribute();
-          if (attr.is_connection()) {
-            // TODO: Extract connection info
-            ss << pprint::Indent(2) << "<output name=\"" << output_name
-               << "\" type=\"color3\" />\n";
-          } else if (auto conn_str = attr.get_var().as<std::string>()) {
-            // Connection stored as string like "nodename.outputs:out"
-            size_t dot_pos = conn_str->find('.');
-            if (dot_pos != std::string::npos) {
-              std::string nodename_ref = conn_str->substr(0, dot_pos);
-              ss << pprint::Indent(2) << "<output name=\"" << output_name
-                 << "\" type=\"color3\" nodename=\"" << nodename_ref << "\" />\n";
+      std::string output_name = prop_name.substr(8); // Remove "outputs:" prefix
+
+      if (prop_item.second.is_attribute()) {
+        const Attribute &attr = prop_item.second.get_attribute();
+
+        if (attr.has_connections() && !attr.connections().empty()) {
+          const Path &conn_path = attr.connections()[0];
+          std::string full_path = conn_path.full_path_name();
+
+          // Parse connection path to extract nodename
+          size_t dot_pos = full_path.find('.');
+          std::string nodename_ref = (dot_pos != std::string::npos) ?
+                                     full_path.substr(0, dot_pos) : full_path;
+
+          // Try to determine type from the connected node
+          std::string output_type = "color3";  // Default
+          for (const auto &child_ps : ng_ps.children()) {
+            if (child_ps.name() == nodename_ref) {
+              auto info_it = child_ps.props().find(kShaderInfoId);
+              if (info_it != child_ps.props().end() && info_it->second.is_attribute()) {
+                if (auto tok = info_it->second.get_attribute().get_value<value::token>()) {
+                  output_type = ExtractNodeType(tok->str());
+                }
+              }
+              break;
             }
           }
+
+          ss << pprint::Indent(2) << "<output name=\"" << output_name
+             << "\" type=\"" << output_type << "\" nodename=\"" << nodename_ref << "\" />\n";
         }
       }
     }
@@ -876,8 +1181,21 @@ static bool SerializeNodeGraphs(const std::map<std::string, PrimSpec> &nodegraph
   return true;
 }
 
+// ============================================================================
+// Node Converters - ACTIVE PATH
+// These functions convert MaterialX XML nodes to USD PrimSpec representations.
+// Used for importing Blender MaterialX NodeGraphs.
+// ============================================================================
+
+// Initialize a PrimSpec as a Shader with the given info:id
+static void InitializeShader(PrimSpec &ps, const std::string &info_id) {
+  ps.specifier() = Specifier::Def;
+  ps.typeName() = kShader;
+  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token(info_id)));
+}
+
 static bool ConvertPlace2d(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                           std::string *warn, std::string *err) {
+                           std::string * /* warn */, std::string *err) {
   // texcoord(vector2). default index=0 uv coordinate
   // pivot(vector2). default (0, 0)
   // scale(vector2). default (1, 1)
@@ -891,7 +1209,12 @@ static bool ConvertPlace2d(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec 
   }
 
   if (tinyusdz::mtlx::pugi::xml_attribute texcoord_attr = node.attribute("texcoord")) {
-    PUSH_WARN("TODO: `texcoord` attribute.\n");
+    // MaterialX texcoord attribute specifies the UV set name (e.g., "UV0", "st")
+    // Map to USD's inputs:varname for UsdPrimvarReader
+    std::string texcoord_name = texcoord_attr.as_string();
+    if (!texcoord_name.empty()) {
+      ps.props()["inputs:varname"] = Property(Attribute::Uniform(value::token(texcoord_name)));
+    }
   }
 
   if (tinyusdz::mtlx::pugi::xml_attribute pivot_attr = node.attribute("pivot")) {
@@ -929,10 +1252,7 @@ static bool ConvertPlace2d(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec 
     ps.props()["inputs:translation"] = Property(Attribute::Uniform(value));
   }
 
-  ps.specifier() = Specifier::Def;
-  ps.typeName() = kShader;
-  ps.props()[kShaderInfoId] =
-      Property(Attribute::Uniform(value::token(kUsdTransform2d)));
+  InitializeShader(ps, kUsdTransform2d);
 
   return true;
 }
@@ -969,10 +1289,19 @@ static bool ConvertTiledImage(const tinyusdz::mtlx::pugi::xml_node &node, PrimSp
       input_value = value_attr.as_string();
     }
 
+    // Check for per-input colorspace attribute
+    tinyusdz::mtlx::pugi::xml_attribute colorspace_attr = inp.attribute("colorspace");
+    std::string input_colorspace;
+    if (colorspace_attr) {
+      input_colorspace = colorspace_attr.as_string();
+    }
+
     // Map MaterialX inputs to USD inputs
+    std::string prop_key;  // Track which property was set for colorspace propagation
     if (input_name == "file" && input_type == "filename") {
       // Convert filename to asset path
-      ps.props()["inputs:file"] = Property(Attribute::Uniform(value::AssetPath(input_value)));
+      prop_key = "inputs:file";
+      ps.props()[prop_key] = Property(Attribute::Uniform(value::AssetPath(input_value)));
     } else if (input_name == "uvtiling" && input_type == "vector2") {
       value::float2 tiling;
       if (ParseMaterialXValue(input_value, &tiling, err)) {
@@ -998,20 +1327,19 @@ static bool ConvertTiledImage(const tinyusdz::mtlx::pugi::xml_node &node, PrimSp
         }
       }
     }
+
+    // Propagate per-input colorspace to the property's attribute metadata
+    if (!input_colorspace.empty() && !prop_key.empty()) {
+      Attribute *attr_ptr = ps.props()[prop_key].get_attribute_or_null();
+      if (attr_ptr) {
+        attr_ptr->metas().set_colorSpace(input_colorspace);
+      }
+    }
   }
 
-  ps.specifier() = Specifier::Def;
-  ps.typeName() = kShader;
-  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token(kUsdUVTexture)));
+  InitializeShader(ps, kUsdUVTexture);
 
   return true;
-}
-
-// Convert MaterialX image node to USD UsdUVTexture
-static bool ConvertImage(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                         std::string *warn, std::string *err) {
-  // Image node is similar to tiledimage but without tiling parameters
-  return ConvertTiledImage(node, ps, warn, err);
 }
 
 // Convert MaterialX texcoord node to USD UsdPrimvarReader_float2
@@ -1052,16 +1380,132 @@ static bool ConvertTexCoord(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec
   // Set fallback to (0, 0)
   ps.props()["inputs:fallback"] = Property(Attribute::Uniform(value::float2{0.0f, 0.0f}));
 
-  ps.specifier() = Specifier::Def;
-  ps.typeName() = kShader;
-  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token(kUsdPrimvarReader_float2)));
+  InitializeShader(ps, kUsdPrimvarReader_float2);
 
   return true;
 }
 
-// Convert MaterialX constant node - stores a constant value
-static bool ConvertConstant(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                            std::string *warn, std::string *err) {
+// ConvertConstant/ConvertMultiply/ConvertAdd/ConvertMix/ConvertNoise are now
+// handled by ConvertGenericNode via the dispatch table in ConvertSingleNode.
+
+// ============================================================================
+// Generic Node Converters
+// These handle the common pattern of parsing inputs and setting info:id
+// ============================================================================
+
+// Helper to parse a single input element and store in PrimSpec
+static bool ParseInputElement(const tinyusdz::mtlx::pugi::xml_node &inp, PrimSpec &ps,
+                              std::string *err) {
+  std::string input_name;
+  tinyusdz::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
+  if (inp_name_attr) {
+    input_name = inp_name_attr.as_string();
+  }
+
+  std::string prop_name = "inputs:" + input_name;
+
+  // Check for per-input colorspace attribute (MaterialX allows per-input colorspace override)
+  tinyusdz::mtlx::pugi::xml_attribute colorspace_attr = inp.attribute("colorspace");
+  std::string input_colorspace;
+  if (colorspace_attr) {
+    input_colorspace = colorspace_attr.as_string();
+  }
+
+  // Check for connection first (nodename or nodegraph)
+  tinyusdz::mtlx::pugi::xml_attribute nodename_attr = inp.attribute("nodename");
+  tinyusdz::mtlx::pugi::xml_attribute nodegraph_attr = inp.attribute("nodegraph");
+  tinyusdz::mtlx::pugi::xml_attribute output_attr = inp.attribute("output");
+
+  if (nodename_attr || nodegraph_attr) {
+    // This is a connection - store connection info
+    Attribute attr;
+    if (nodename_attr) {
+      std::string target = std::string(nodename_attr.as_string()) + ".outputs:out";
+      attr.set_connections({Path(target, "")});
+    } else if (nodegraph_attr) {
+      std::string output_name = output_attr ? output_attr.as_string() : "out";
+      std::string target = std::string(nodegraph_attr.as_string()) + ".outputs:" + output_name;
+      attr.set_connections({Path(target, "")});
+    }
+    ps.props()[prop_name] = Property(attr);
+    if (!input_colorspace.empty()) {
+      Attribute *attr_ptr = ps.props()[prop_name].get_attribute_or_null();
+      if (attr_ptr) {
+        attr_ptr->metas().set_colorSpace(input_colorspace);
+      }
+    }
+    return true;
+  }
+
+  // Parse value
+  tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
+  if (!value_attr) {
+    return true;  // No value, skip
+  }
+
+  std::string input_value = value_attr.as_string();
+  tinyusdz::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
+  std::string type_str = type_attr ? type_attr.as_string() : "float";
+
+  if (type_str == "float") {
+    float val;
+    if (ParseMaterialXValue(input_value, &val, err)) {
+      ps.props()[prop_name] = Property(Attribute::Uniform(val));
+    }
+  } else if (type_str == "color3") {
+    value::color3f val;
+    if (ParseMaterialXValue(input_value, &val, err)) {
+      ps.props()[prop_name] = Property(Attribute::Uniform(val));
+    }
+  } else if (type_str == "vector2") {
+    value::float2 val;
+    if (ParseMaterialXValue(input_value, &val, err)) {
+      ps.props()[prop_name] = Property(Attribute::Uniform(val));
+    }
+  } else if (type_str == "vector3") {
+    value::float3 val;
+    if (ParseMaterialXValue(input_value, &val, err)) {
+      ps.props()[prop_name] = Property(Attribute::Uniform(val));
+    }
+  } else if (type_str == "vector4") {
+    value::float4 val;
+    if (ParseMaterialXValue(input_value, &val, err)) {
+      ps.props()[prop_name] = Property(Attribute::Uniform(val));
+    }
+  } else if (type_str == "integer") {
+    int val;
+    if (ParseMaterialXValue(input_value, &val, err)) {
+      ps.props()[prop_name] = Property(Attribute::Uniform(val));
+    }
+  } else if (type_str == "boolean") {
+    bool val;
+    if (ParseMaterialXValue(input_value, &val, err)) {
+      ps.props()[prop_name] = Property(Attribute::Uniform(val));
+    }
+  } else if (type_str == "string") {
+    ps.props()[prop_name] = Property(Attribute::Uniform(input_value));
+  } else if (type_str == "filename") {
+    ps.props()[prop_name] = Property(Attribute::Uniform(value::AssetPath(input_value)));
+  }
+
+  // Apply per-input colorspace if present
+  if (!input_colorspace.empty()) {
+    auto it = ps.props().find(prop_name);
+    if (it != ps.props().end() && it->second.is_attribute()) {
+      Attribute *attr_ptr = it->second.get_attribute_or_null();
+      if (attr_ptr) {
+        attr_ptr->metas().set_colorSpace(input_colorspace);
+      }
+    }
+  }
+
+  return true;
+}
+
+// Generic converter for any MaterialX node - parses all inputs and sets info:id
+static bool ConvertGenericNode(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                               const std::string &info_id,
+                               std::string *warn, std::string *err) {
   (void)warn;
 
   tinyusdz::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
@@ -1069,198 +1513,141 @@ static bool ConvertConstant(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec
     ps.name() = name_attr.as_string();
   }
 
-  // Get the type attribute to determine what kind of constant
-  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
-  std::string node_type = type_attr ? type_attr.as_string() : "float";
-
-  // Parse value from input child or value attribute
+  // Parse all inputs
   for (auto inp : node.children("input")) {
-    tinyusdz::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
-    if (!inp_name_attr || std::string(inp_name_attr.as_string()) != "value") continue;
-
-    tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
-    if (!value_attr) continue;
-
-    std::string value_str = value_attr.as_string();
-
-    if (node_type == "float") {
-      float val;
-      if (ParseMaterialXValue(value_str, &val, err)) {
-        ps.props()["inputs:value"] = Property(Attribute::Uniform(val));
-      }
-    } else if (node_type == "color3") {
-      value::color3f val;
-      if (ParseMaterialXValue(value_str, &val, err)) {
-        ps.props()["inputs:value"] = Property(Attribute::Uniform(val));
-      }
-    } else if (node_type == "vector3") {
-      value::float3 val;
-      if (ParseMaterialXValue(value_str, &val, err)) {
-        ps.props()["inputs:value"] = Property(Attribute::Uniform(val));
-      }
+    if (!ParseInputElement(inp, ps, err)) {
+      return false;
     }
   }
 
-  ps.specifier() = Specifier::Def;
-  ps.typeName() = kShader;
-  // Use a generic shader ID for constant nodes
-  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token("MaterialXConstant")));
+  InitializeShader(ps, info_id);
 
   return true;
 }
 
-// Convert MaterialX multiply node
-static bool ConvertMultiply(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                            std::string *warn, std::string *err) {
-  (void)warn;
+// ============================================================================
+// Node dispatch table — maps MaterialX node names to info:id generation.
+// Most nodes use "ND_<op_name>_<type>" where type comes from the node's
+// "type" attribute. A few use a fixed info:id string.
+// ============================================================================
 
-  tinyusdz::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
-  if (name_attr) {
-    ps.name() = name_attr.as_string();
-  }
-
-  // Parse inputs (in1, in2)
-  for (auto inp : node.children("input")) {
-    std::string input_name;
-    std::string input_value;
-
-    tinyusdz::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
-    if (inp_name_attr) {
-      input_name = inp_name_attr.as_string();
-    }
-
-    tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
-    if (value_attr) {
-      input_value = value_attr.as_string();
-
-      // Store as shader input
-      std::string prop_name = "inputs:" + input_name;
-
-      tinyusdz::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
-      if (type_attr) {
-        std::string type_str = type_attr.as_string();
-        if (type_str == "float") {
-          float val;
-          if (ParseMaterialXValue(input_value, &val, err)) {
-            ps.props()[prop_name] = Property(Attribute::Uniform(val));
-          }
-        } else if (type_str == "color3") {
-          value::color3f val;
-          if (ParseMaterialXValue(input_value, &val, err)) {
-            ps.props()[prop_name] = Property(Attribute::Uniform(val));
-          }
-        }
-      }
-    }
-  }
-
-  ps.specifier() = Specifier::Def;
-  ps.typeName() = kShader;
-  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token("MaterialXMultiply")));
-
-  return true;
+// Helper: get the node's "type" attribute or a default
+static std::string GetNodeTypeAttr(const tinyusdz::mtlx::pugi::xml_node &node,
+                                   const char *default_type) {
+  tinyusdz::mtlx::pugi::xml_attribute ta = node.attribute("type");
+  return ta ? ta.as_string() : default_type;
 }
 
-// Convert MaterialX add node
-static bool ConvertAdd(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                       std::string *warn, std::string *err) {
-  // Same pattern as multiply
-  return ConvertMultiply(node, ps, warn, err);  // Reuse multiply logic
+// Helper: find the "type" attribute of the named input child
+static std::string GetInputTypeAttr(const tinyusdz::mtlx::pugi::xml_node &node,
+                                    const char *input_name, const char *default_type) {
+  for (auto inp : node.children("input")) {
+    tinyusdz::mtlx::pugi::xml_attribute n = inp.attribute("name");
+    if (n && std::string(n.as_string()) == input_name) {
+      tinyusdz::mtlx::pugi::xml_attribute t = inp.attribute("type");
+      if (t) return t.as_string();
+      break;
+    }
+  }
+  return default_type;
 }
 
-// Convert MaterialX mix node (linear blend)
-static bool ConvertMix(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                       std::string *warn, std::string *err) {
-  (void)warn;
+// Dispatch entry: how to build info:id for a generic node
+struct NodeDispatchEntry {
+  const char *op_name;       // prefix for "ND_<op_name>_<type>" (nullptr → use fixed_id)
+  const char *default_type;  // default type if node has no "type" attribute
+  const char *fixed_id;      // if non-null, use this as the full info:id (ignores op_name)
+};
 
-  tinyusdz::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
-  if (name_attr) {
-    ps.name() = name_attr.as_string();
-  }
+// Table of nodes handled by ConvertGenericNode with computed info:id.
+// Nodes NOT in this table are handled as special cases (place2d, tiledimage, etc.)
+static const std::pair<const char*, NodeDispatchEntry> kNodeDispatchPairs[] = {
+  // Arithmetic with custom info:id (preserving existing behavior)
+  {"multiply",        {nullptr, nullptr, "MaterialXMultiply"}},
+  {"add",             {nullptr, nullptr, "MaterialXMultiply"}},  // same as multiply
+  {"subtract",        {nullptr, nullptr, "MaterialXMultiply"}},  // same as multiply
+  {"mix",             {nullptr, nullptr, "MaterialXMix"}},
+  {"noise2d",         {nullptr, nullptr, "MaterialXNoise"}},
+  {"noise3d",         {nullptr, nullptr, "MaterialXNoise"}},
+  {"cellnoise2d",     {nullptr, nullptr, "MaterialXNoise"}},
+  {"cellnoise3d",     {nullptr, nullptr, "MaterialXNoise"}},
+  {"worleynoise2d",   {nullptr, nullptr, "MaterialXNoise"}},
+  {"worleynoise3d",   {nullptr, nullptr, "MaterialXNoise"}},
+  {"fractal3d",       {nullptr, nullptr, "MaterialXNoise"}},
+  // Binary ops: ND_<name>_<type>
+  {"divide",       {"divide",       "float", nullptr}},
+  {"power",        {"power",        "float", nullptr}},
+  {"min",          {"min",          "float", nullptr}},
+  {"max",          {"max",          "float", nullptr}},
+  {"modulo",       {"modulo",       "float", nullptr}},
+  {"atan2",        {"atan2",        "float", nullptr}},
+  {"dotproduct",   {"dotproduct",   "float", nullptr}},
+  {"crossproduct", {"crossproduct", "float", nullptr}},
+  // Unary ops: ND_<name>_<type>
+  {"sqrt",       {"sqrt",       "float", nullptr}},
+  {"absval",     {"absval",     "float", nullptr}},
+  {"sign",       {"sign",       "float", nullptr}},
+  {"floor",      {"floor",      "float", nullptr}},
+  {"ceil",       {"ceil",       "float", nullptr}},
+  {"round",      {"round",      "float", nullptr}},
+  {"sin",        {"sin",        "float", nullptr}},
+  {"cos",        {"cos",        "float", nullptr}},
+  {"tan",        {"tan",        "float", nullptr}},
+  {"asin",       {"asin",       "float", nullptr}},
+  {"acos",       {"acos",       "float", nullptr}},
+  {"atan",       {"atan",       "float", nullptr}},
+  {"exp",        {"exp",        "float", nullptr}},
+  {"ln",         {"ln",         "float", nullptr}},
+  {"log2",       {"log2",       "float", nullptr}},
+  {"normalize",  {"normalize",  "float", nullptr}},
+  {"magnitude",  {"magnitude",  "float", nullptr}},
+  {"luminance",  {"luminance",  "float", nullptr}},
+  {"invert",     {"invert",     "float", nullptr}},
+  {"saturate",   {"saturate",   "float", nullptr}},
+  {"hueshift",   {"hueshift",   "float", nullptr}},
+  {"rgbtohsv",   {"rgbtohsv",   "float", nullptr}},
+  {"hsvtorgb",   {"hsvtorgb",   "float", nullptr}},
+  // Clamp/remap
+  {"clamp",      {"clamp",      "float", nullptr}},
+  {"remap",      {"remap",      "float", nullptr}},
+  {"range",      {"remap",      "float", nullptr}},  // alias
+  {"smoothstep", {"smoothstep", "float", nullptr}},
+  // Channel ops
+  {"combine2",   {"combine2",   "color3", nullptr}},
+  {"combine3",   {"combine3",   "color3", nullptr}},
+  {"combine4",   {"combine4",   "color3", nullptr}},
+  {"swizzle",    {"swizzle",    "color3", nullptr}},
+  // Color ops
+  {"hsvadjust",  {nullptr, nullptr, "ND_hsvadjust_color3"}},
+  // Geometry nodes: ND_<geom_type>_<type>
+  {"position",      {"position",      "vector3", nullptr}},
+  {"normal",        {"normal",        "vector3", nullptr}},
+  {"tangent",       {"tangent",       "vector3", nullptr}},
+  {"bitangent",     {"bitangent",     "vector3", nullptr}},
+  {"geomcolor",     {"geomcolor",     "vector3", nullptr}},
+  {"geompropvalue", {"geompropvalue", "vector3", nullptr}},
+  // Rotation
+  {"rotate3d",  {nullptr, nullptr, "ND_rotate3d_vector3"}},
+  // Conditional ops: ND_<cond>_<type>
+  {"ifgreater",   {"ifgreater",   "float", nullptr}},
+  {"ifgreatereq", {"ifgreatereq", "float", nullptr}},
+  {"ifless",      {"ifless",      "float", nullptr}},
+  {"iflesseq",    {"iflesseq",    "float", nullptr}},
+  {"ifequal",     {"ifequal",     "float", nullptr}},
+  {"switch",      {"switch",      "float", nullptr}},
+  // Constant node
+  {"constant",    {nullptr, nullptr, "MaterialXConstant"}},
+};
 
-  // Parse inputs (fg, bg, mix)
-  for (auto inp : node.children("input")) {
-    std::string input_name;
-    std::string input_value;
-
-    tinyusdz::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
-    if (inp_name_attr) {
-      input_name = inp_name_attr.as_string();
-    }
-
-    tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
-    if (value_attr) {
-      input_value = value_attr.as_string();
-      std::string prop_name = "inputs:" + input_name;
-
-      tinyusdz::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
-      if (type_attr) {
-        std::string type_str = type_attr.as_string();
-        if (type_str == "float") {
-          float val;
-          if (ParseMaterialXValue(input_value, &val, err)) {
-            ps.props()[prop_name] = Property(Attribute::Uniform(val));
-          }
-        } else if (type_str == "color3") {
-          value::color3f val;
-          if (ParseMaterialXValue(input_value, &val, err)) {
-            ps.props()[prop_name] = Property(Attribute::Uniform(val));
-          }
-        }
-      }
-    }
-  }
-
-  ps.specifier() = Specifier::Def;
-  ps.typeName() = kShader;
-  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token("MaterialXMix")));
-
-  return true;
-}
-
-// Convert MaterialX noise2d/noise3d nodes - simple procedural noise
-static bool ConvertNoise(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                         std::string *warn, std::string *err) {
-  (void)warn;
-
-  tinyusdz::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
-  if (name_attr) {
-    ps.name() = name_attr.as_string();
-  }
-
-  // Parse noise parameters
-  for (auto inp : node.children("input")) {
-    std::string input_name;
-    std::string input_value;
-
-    tinyusdz::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
-    if (inp_name_attr) {
-      input_name = inp_name_attr.as_string();
-    }
-
-    tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
-    if (value_attr) {
-      input_value = value_attr.as_string();
-      std::string prop_name = "inputs:" + input_name;
-
-      // Common noise params: amplitude, pivot, lacunarity, octaves, etc.
-      float val;
-      if (ParseMaterialXValue(input_value, &val, err)) {
-        ps.props()[prop_name] = Property(Attribute::Uniform(val));
-      }
-    }
-  }
-
-  ps.specifier() = Specifier::Def;
-  ps.typeName() = kShader;
-  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token("MaterialXNoise")));
-
-  return true;
+static const std::unordered_map<std::string, NodeDispatchEntry> &GetNodeDispatchTable() {
+  static const std::unordered_map<std::string, NodeDispatchEntry> table(
+      std::begin(kNodeDispatchPairs), std::end(kNodeDispatchPairs));
+  return table;
 }
 
 // Helper to convert a single MaterialX node to PrimSpec
 // Returns true if successful (including skip case), false on error
-// Sets is_skip to true if the node should be skipped (input/output/unknown)
+// Sets is_skip to true if the node should be skipped (input/output)
 static bool ConvertSingleNode(const tinyusdz::mtlx::pugi::xml_node &node,
                               PrimSpec &ps, bool &is_skip,
                               const MtlxConfig &config,
@@ -1268,62 +1655,54 @@ static bool ConvertSingleNode(const tinyusdz::mtlx::pugi::xml_node &node,
   is_skip = false;
   std::string node_name = node.name();
 
-  // Convert MaterialX nodes to USD shader nodes
-  if (node_name == "place2d") {
-    if (!ConvertPlace2d(node, ps, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "tiledimage") {
-    if (!ConvertTiledImage(node, ps, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "image") {
-    if (!ConvertImage(node, ps, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "texcoord") {
-    if (!ConvertTexCoord(node, ps, config, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "constant") {
-    if (!ConvertConstant(node, ps, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "multiply") {
-    if (!ConvertMultiply(node, ps, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "add") {
-    if (!ConvertAdd(node, ps, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "subtract") {
-    // Subtract uses same logic as add
-    if (!ConvertAdd(node, ps, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "mix") {
-    if (!ConvertMix(node, ps, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "noise2d" || node_name == "noise3d" ||
-             node_name == "cellnoise2d" || node_name == "cellnoise3d" ||
-             node_name == "worleynoise2d" || node_name == "worleynoise3d" ||
-             node_name == "fractal3d") {
-    if (!ConvertNoise(node, ps, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "input" || node_name == "output") {
-    // Skip input/output nodes - they are handled separately
+  // Skip input/output nodes — handled separately
+  if (node_name == "input" || node_name == "output") {
     is_skip = true;
     return true;
-  } else {
-    PUSH_WARN(fmt::format("Unknown/unsupported Shader Node: {}. Skipping.\n", node.name()));
-    is_skip = true;
-    return true; // Don't fail, just skip unknown nodes
   }
 
-  return true;
+  // Special-case nodes with custom conversion logic
+  if (node_name == "place2d") {
+    return ConvertPlace2d(node, ps, warn, err);
+  }
+  if (node_name == "tiledimage" || node_name == "image") {
+    return ConvertTiledImage(node, ps, warn, err);
+  }
+  if (node_name == "texcoord") {
+    return ConvertTexCoord(node, ps, config, warn, err);
+  }
+  // "extract" needs the input "in" type, not the node type
+  if (node_name == "extract") {
+    std::string info_id = "ND_extract_" + GetInputTypeAttr(node, "in", "color3");
+    return ConvertGenericNode(node, ps, info_id, warn, err);
+  }
+
+  // "convert" needs from-type (input "in") and to-type (node type)
+  if (node_name == "convert") {
+    std::string from = GetInputTypeAttr(node, "in", "color3");
+    std::string to = GetNodeTypeAttr(node, "vector3");
+    return ConvertGenericNode(node, ps, "ND_convert_" + from + "_" + to, warn, err);
+  }
+
+  // Table-driven dispatch for all standard nodes
+  const auto &table = GetNodeDispatchTable();
+  auto it = table.find(node_name);
+  if (it != table.end()) {
+    const auto &e = it->second;
+    std::string info_id;
+    if (e.fixed_id) {
+      info_id = e.fixed_id;
+    } else {
+      info_id = "ND_" + std::string(e.op_name) + "_" + GetNodeTypeAttr(node, e.default_type);
+    }
+    return ConvertGenericNode(node, ps, info_id, warn, err);
+  }
+
+  // Unknown node — use generic conversion with warning
+  std::string type_str = GetNodeTypeAttr(node, "float");
+  std::string info_id = "ND_" + node_name + "_" + type_str;
+  PUSH_WARN(fmt::format("Unknown node type '{}', using generic conversion with info:id='{}'.\n", node_name, info_id));
+  return ConvertGenericNode(node, ps, info_id, warn, err);
 }
 
 // Iterative version of ConvertNodeGraph using explicit stack
@@ -1406,7 +1785,8 @@ static bool ConvertNodeGraphIterative(const tinyusdz::mtlx::pugi::xml_node &root
   return true;
 }
 
-// Wrapper to maintain backward compatibility with ConvertNodeGraphRec signature
+// Legacy wrapper - forwards to iterative version
+// TODO: Remove this wrapper once all callers are updated to use ConvertNodeGraphIterative directly
 static bool ConvertNodeGraphRec(const uint32_t depth,
                                 const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps_out,
                                 const MtlxConfig &config,
@@ -1415,70 +1795,143 @@ static bool ConvertNodeGraphRec(const uint32_t depth,
   return ConvertNodeGraphIterative(node, ps_out, config, warn, err);
 }
 
-#if 0  // TODO
-static bool ConvertPlace2d(const tinyusdz::mtlx::pugi::xml_node &node, UsdTransform2d &tx, std::string *warn, std::string *err) {
-  // texcoord(vector2). default index=0 uv coordinate
-  // pivot(vector2). default (0, 0)
-  // scale(vector2). default (1, 1)
-  // rotate(float). in degrees, Conter-clockwise
-  // offset(vector2)
-  if (tinyusdz::mtlx::pugi::xml_attribute texcoord_attr = node.attribute("texcoord")) {
-    PUSH_WARN("TODO: `texcoord` attribute.\n");
-  }
-
-  if (tinyusdz::mtlx::pugi::xml_attribute pivot_attr = node.attribute("pivot")) {
-    PUSH_WARN("TODO: `pivot` attribute.\n");
-  }
-
-  if (tinyusdz::mtlx::pugi::xml_attribute scale_attr = node.attribute("scale")) {
-    value::float2 value;
-    if (!ParseMaterialXValue(scale_attr.as_string(), &value, err)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `rotate` attribute of `place2d`.\n");
+// Process <include filename="..."/> elements by reading and merging included files.
+// Replaces each <include .../> with the children of the included document's <materialx> root.
+// @param[in] base_dir Base directory for resolving relative include paths.
+// @param[in,out] xml_str The XML string to process. Modified in-place.
+// @param[out] err Error message.
+// @param[in] max_depth Maximum include recursion depth.
+// @return true on success.
+static bool ProcessIncludes(const std::string &base_dir, std::string &xml_str,
+                            std::string *warn, std::string *err,
+                            uint32_t max_depth = 8) {
+  // Simple iterative approach: find and replace <include filename="..."/> tags
+  // We iterate because included files may themselves contain includes.
+  for (uint32_t depth = 0; depth < max_depth; depth++) {
+    // Find <include
+    size_t pos = xml_str.find("<include");
+    if (pos == std::string::npos) {
+      return true;  // No more includes
     }
-    tx.scale = value;
-  }
 
-  if (tinyusdz::mtlx::pugi::xml_attribute rotate_attr = node.attribute("rotate")) {
-    float value;
-    if (!ParseMaterialXValue(rotate_attr.as_string(), &value, err)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `rotate` attribute of `place2d`.\n");
+    // Find the closing /> or >
+    size_t end = xml_str.find("/>", pos);
+    size_t end2 = xml_str.find(">", pos);
+    if (end == std::string::npos && end2 == std::string::npos) {
+      PUSH_ERROR_AND_RETURN("Unterminated <include> element");
     }
-    tx.rotation = value;
+
+    size_t tag_end;
+    size_t replace_end;
+    if (end != std::string::npos && (end2 == std::string::npos || end <= end2)) {
+      tag_end = end;
+      replace_end = end + 2; // past "/>"
+    } else {
+      tag_end = end2;
+      replace_end = end2 + 1; // past ">"
+    }
+
+    // Extract the tag content to find filename attribute
+    std::string tag = xml_str.substr(pos, tag_end - pos);
+
+    // Find filename="..." or filename='...'
+    size_t fn_pos = tag.find("filename=");
+    if (fn_pos == std::string::npos) {
+      PUSH_ERROR_AND_RETURN("<include> element missing 'filename' attribute");
+    }
+
+    fn_pos += 9; // past "filename="
+    if (fn_pos >= tag.size()) {
+      PUSH_ERROR_AND_RETURN("<include> element has empty filename");
+    }
+
+    char quote = tag[fn_pos];
+    if (quote != '"' && quote != '\'') {
+      PUSH_ERROR_AND_RETURN("<include> filename must be quoted");
+    }
+
+    size_t fn_start = fn_pos + 1;
+    size_t fn_end_q = tag.find(quote, fn_start);
+    if (fn_end_q == std::string::npos) {
+      PUSH_ERROR_AND_RETURN("<include> filename has unterminated quote");
+    }
+
+    std::string include_filename = tag.substr(fn_start, fn_end_q - fn_start);
+    if (include_filename.empty()) {
+      PUSH_ERROR_AND_RETURN("<include> filename is empty");
+    }
+
+    // Resolve include path relative to base directory
+    std::string include_path;
+    if (include_filename[0] == '/' || include_filename[0] == '\\') {
+      include_path = include_filename; // Absolute path
+    } else {
+      include_path = base_dir;
+      if (!include_path.empty() && include_path.back() != '/' && include_path.back() != '\\') {
+        include_path += '/';
+      }
+      include_path += include_filename;
+    }
+
+    // Read the included file
+    size_t inc_max_bytes = 1024 * 1024 * 16;
+    std::vector<uint8_t> inc_data;
+    if (!io::ReadWholeFile(&inc_data, err, include_path, inc_max_bytes, nullptr)) {
+      PUSH_ERROR_AND_RETURN("Failed to read included file: " + include_path);
+    }
+
+    if (inc_data.empty()) {
+      PushWarn("Included file is empty: " + include_path + "\n")
+      // Just remove the <include> tag
+      xml_str.erase(pos, replace_end - pos);
+      continue;
+    }
+
+    std::string inc_str(reinterpret_cast<const char *>(inc_data.data()), inc_data.size());
+
+    // Extract the content between <materialx ...> and </materialx> from the included file
+    size_t mtlx_start = inc_str.find("<materialx");
+    if (mtlx_start == std::string::npos) {
+      PushWarn("Included file has no <materialx> root: " + include_path + "\n")
+      xml_str.erase(pos, replace_end - pos);
+      continue;
+    }
+
+    // Find the closing > of <materialx ...>
+    size_t mtlx_open_end = inc_str.find(">", mtlx_start);
+    if (mtlx_open_end == std::string::npos) {
+      PUSH_ERROR_AND_RETURN("Unterminated <materialx> in included file: " + include_path);
+    }
+
+    // Check for self-closing <materialx/>
+    if (inc_str[mtlx_open_end - 1] == '/') {
+      // Empty document, just remove the include tag
+      xml_str.erase(pos, replace_end - pos);
+      continue;
+    }
+
+    size_t content_start = mtlx_open_end + 1;
+
+    // Find </materialx>
+    size_t mtlx_close = inc_str.find("</materialx>", content_start);
+    if (mtlx_close == std::string::npos) {
+      PUSH_ERROR_AND_RETURN("Missing </materialx> in included file: " + include_path);
+    }
+
+    // Extract the inner content
+    std::string inner_content = inc_str.substr(content_start, mtlx_close - content_start);
+
+    // Replace the <include .../> tag with the inner content
+    xml_str.replace(pos, replace_end - pos, inner_content);
   }
 
-  tinyusdz::mtlx::pugi::xml_attribute offset_attr = node.attribute("offset");
-  if (offset_attr) {
-    PUSH_WARN("TODO: `offset` attribute.\n");
+  // If we exhausted max_depth, warn about possible circular includes
+  if (xml_str.find("<include") != std::string::npos) {
+    PushWarn("Maximum include depth reached. Possible circular includes.\n")
   }
 
   return true;
 }
-
-static bool ConvertTiledImage(const tinyusdz::mtlx::pugi::xml_node &node, UsdUVTexture &tex, std::string *err) {
-  (void)tex;
-  // file: uniform filename
-  // default: float or colorN or vectorN
-  // texcoord: vector2
-  // uvtiling: vector2(default 1.0, 1.0)
-  // uvoffset: vector2(default 0.0, 0.0)
-  // realworldimagesize: vector2
-  // realworldtilesize: vector2
-  // filtertype: string: "closest", "linear" or "cubic"
-  if (tinyusdz::mtlx::pugi::xml_attribute file_attr = node.attribute("file")) {
-    std::string filename;
-    if (!ParseMaterialXValue(file_attr.as_string(), &filename, err)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `file` attribute in `tiledimage`.\n");
-    }
-  } else {
-    PUSH_ERROR_AND_RETURN("`file` attribute not found.");
-  }
-
-  // TODO...
-
-  return true;
-
-}
-#endif
 
 }  // namespace detail
 
@@ -1515,6 +1968,14 @@ bool ReadMaterialXFromString(const std::string &str,
     __attr.set_value(v);                                                 \
   } else
 
+  if (!mtlx) {
+    PUSH_ERROR_AND_RETURN("mtlx output pointer is nullptr.");
+  }
+
+  if (str.empty()) {
+    PUSH_ERROR_AND_RETURN("Input MaterialX string is empty.");
+  }
+
   tinyusdz::mtlx::pugi::xml_document doc;
   tinyusdz::mtlx::pugi::xml_parse_result result = doc.load_string(str.c_str());
   if (!result) {
@@ -1529,13 +1990,6 @@ bool ReadMaterialXFromString(const std::string &str,
 
   // Attributes for a <materialx> element:
   //
-  // - [x] version(string, required)
-  //   - [x] validate version string
-  // - [x] cms(string, optional)
-  // - [x] cmsconfig(filename, optional)
-  // - [x] colorspace(string, optional)
-  // - [x] namespace(string, optional)
-
   tinyusdz::mtlx::pugi::xml_attribute ver_attr = root.attribute("version");
   if (!ver_attr) {
     PUSH_ERROR_AND_RETURN("version attribute not found in <materialx>:" +
@@ -1564,7 +2018,7 @@ bool ReadMaterialXFromString(const std::string &str,
     mtlx->cms = cms_attr.as_string();
   }
 
-  tinyusdz::mtlx::pugi::xml_attribute cmsconfig_attr = root.attribute("cms");
+  tinyusdz::mtlx::pugi::xml_attribute cmsconfig_attr = root.attribute("cmsconfig");
   if (cmsconfig_attr) {
     mtlx->cmsconfig = cmsconfig_attr.as_string();
   }
@@ -2144,7 +2598,7 @@ bool ReadMaterialXFromString(const std::string &str,
       GET_SHADER_PARAM(name, typeName, "coat_anisotropy", "float", float, valueStr, surface.coat_anisotropy)
       GET_SHADER_PARAM(name, typeName, "coat_rotation", "float", float, valueStr, surface.coat_rotation)
       GET_SHADER_PARAM(name, typeName, "coat_ior", "float", float, valueStr, surface.coat_ior)
-      GET_SHADER_PARAM(name, typeName, "coat_affect_color", "color3", value::color3f, valueStr, surface.coat_affect_color)
+      GET_SHADER_PARAM(name, typeName, "coat_affect_color", "float", float, valueStr, surface.coat_affect_color)
       GET_SHADER_PARAM(name, typeName, "coat_affect_roughness", "float", float, valueStr, surface.coat_affect_roughness)
       GET_SHADER_PARAM(name, typeName, "emission_luminance", "float", float, valueStr, surface.emission_luminance)
       GET_SHADER_PARAM(name, typeName, "emission_color", "color3", value::color3f, valueStr, surface.emission_color)
@@ -2211,7 +2665,6 @@ bool ReadMaterialXFromString(const std::string &str,
   // look.
   for (auto look : root.children("look")) {
     PUSH_WARN("TODO: `look`");
-    // TODO
     (void)look;
   }
 
@@ -2224,6 +2677,10 @@ bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
                            const std::string &asset_path, MtlxModel *mtlx,
                            std::string *warn, std::string *err,
                            const MtlxConfig &config) {
+  if (!mtlx) {
+    PUSH_ERROR_AND_RETURN("mtlx output pointer is nullptr.");
+  }
+
   std::string filepath = resolver.resolve(asset_path);
   if (filepath.empty()) {
     PUSH_ERROR_AND_RETURN("Asset not found: " + asset_path);
@@ -2235,10 +2692,31 @@ bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
   std::vector<uint8_t> data;
   if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                          /* userdata */ nullptr)) {
-    PUSH_ERROR_AND_RETURN("Read file failed.");
+    PUSH_ERROR_AND_RETURN("Read file failed: " + filepath);
   }
 
-  std::string str(reinterpret_cast<const char *>(&data[0]), data.size());
+  if (data.empty()) {
+    PUSH_ERROR_AND_RETURN("File is empty: " + filepath);
+  }
+
+  std::string str(reinterpret_cast<const char *>(data.data()), data.size());
+
+  // Process <include filename="..."/> elements
+  // Compute base directory from the resolved file path
+  std::string base_dir;
+  {
+    size_t last_sep = filepath.find_last_of("/\\");
+    if (last_sep != std::string::npos) {
+      base_dir = filepath.substr(0, last_sep);
+    } else {
+      base_dir = ".";
+    }
+  }
+
+  if (!detail::ProcessIncludes(base_dir, str, warn, err)) {
+    return false;
+  }
+
   return ReadMaterialXFromString(str, asset_path, mtlx, warn, err, config);
 }
 
@@ -2260,16 +2738,25 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
     connections = it->second;
   }
 
-  if (auto usdps = mtlx.shader.as<MtlxUsdPreviewSurface>()) {
-    return detail::WriteMaterialXToString(*usdps, shader_name, connections, mtlx.nodegraphs, xml_str, warn, err);
-  } else if (auto adskss = mtlx.shader.as<MtlxAutodeskStandardSurface>()) {
-    return detail::WriteMaterialXToString(*adskss, shader_name, connections, mtlx.nodegraphs, xml_str, warn, err);
-  } else if (auto openpbr = mtlx.shader.as<MtlxOpenPBRSurface>()) {
-    return detail::WriteMaterialXToString(*openpbr, shader_name, connections, mtlx.nodegraphs, xml_str, warn, err);
-  } else {
-    // TODO
-    PUSH_ERROR_AND_RETURN("Unknown/unsupported shader: " << mtlx.shader_name);
+  // OpenPBR is the primary active path (used by Blender exports)
+  if (auto openpbr = mtlx.shader.as<MtlxOpenPBRSurface>()) {
+    return detail::WriteMaterialXToString(*openpbr, shader_name, connections, mtlx.nodegraphs, mtlx.color_space, xml_str, warn, err);
   }
+
+#if TINYUSDZ_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT
+  if (auto usdps = mtlx.shader.as<MtlxUsdPreviewSurface>()) {
+    return detail::WriteMaterialXToString(*usdps, shader_name, connections, mtlx.nodegraphs, mtlx.color_space, xml_str, warn, err);
+  }
+#endif
+
+#if TINYUSDZ_MTLX_ENABLE_STANDARDSURFACE_EXPORT
+  if (auto adskss = mtlx.shader.as<MtlxAutodeskStandardSurface>()) {
+    return detail::WriteMaterialXToString(*adskss, shader_name, connections, mtlx.nodegraphs, mtlx.color_space, xml_str, warn, err);
+  }
+#endif
+
+  // Fallback error for unsupported shader types
+  PUSH_ERROR_AND_RETURN("Unknown/unsupported shader type: " << mtlx.shader_name);
 
   return false;
 }
@@ -2322,10 +2809,27 @@ bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err) {
   shaders.name() = "Shaders";
   shaders.specifier() = Specifier::Def;
 
-  // Add shader nodes (e.g., UsdPreviewSurface, OpenPBRSurface)
-  // TODO: Convert shader value to PrimSpec
-  // For now, we skip this as shaders are typically referenced in materials
-  (void)model.shaders;  // Avoid unused variable warning
+  // Serialize shader values as child PrimSpecs
+  for (const auto &shader_item : model.shaders) {
+    PrimSpec shader_ps;
+    shader_ps.name() = shader_item.first;
+    shader_ps.specifier() = Specifier::Def;
+    shader_ps.typeName() = kShader;
+
+    // Set info:id based on shader type
+    if (shader_item.second.as<MtlxOpenPBRSurface>()) {
+      shader_ps.props()[kShaderInfoId] =
+          detail::MakeProperty(value::token(kMtlxOpenPBRSurface));
+    } else if (shader_item.second.as<MtlxAutodeskStandardSurface>()) {
+      shader_ps.props()[kShaderInfoId] =
+          detail::MakeProperty(value::token("AutodeskStandardSurface"));
+    } else if (shader_item.second.as<MtlxUsdPreviewSurface>()) {
+      shader_ps.props()[kShaderInfoId] =
+          detail::MakeProperty(value::token(kUsdPreviewSurface));
+    }
+
+    shaders.children().push_back(std::move(shader_ps));
+  }
 
   // Add NodeGraphs container
   PrimSpec nodegraphs;
@@ -2359,9 +2863,9 @@ bool LoadMaterialXFromAsset(const Asset &asset, const std::string &asset_path,
   (void)asset_path;
   (void)warn;
 
-  if (asset.size() < 32) {
+  if (!asset.data() || asset.size() < 32) {
     if (err) {
-      (*err) += "MateiralX: Asset size too small.\n";
+      (*err) += "MaterialX: Asset data is null or too small.\n";
     }
     return false;
   }
@@ -2458,12 +2962,10 @@ bool ConvertMtlxLightToUsdLux(const MtlxLight &mtlx_light,
     light.exposure.set_value(exposure);
     light.intensity.set_value(1.0f);
 
-    // Add ShapingAPI for cone control
-    ShapingAPI shaping;
-
+    // Set ShapingAPI attributes for cone control (inherited from BoundableLight)
     float inner_angle = 60.0f;
     conical_edf->inner_angle.get_value().get_scalar(&inner_angle);
-    shaping.shapingConeAngle.set_value(inner_angle);
+    light.shapingConeAngle.set_value(inner_angle);
 
     if (conical_edf->outer_angle.authored()) {
       float outer_angle = 60.0f;
@@ -2471,11 +2973,9 @@ bool ConvertMtlxLightToUsdLux(const MtlxLight &mtlx_light,
         oa_val.value().get_scalar(&outer_angle);
         // Use softness to represent the difference between inner and outer angles
         float softness = (outer_angle - inner_angle) / inner_angle;
-        shaping.shapingConeSoftness.set_value(std::max(0.0f, softness));
+        light.shapingConeSoftness.set_value(std::max(0.0f, softness));
       }
     }
-
-    light.shaping = shaping;
 
     (*usd_light) = light;
     return true;
@@ -2498,19 +2998,15 @@ bool ConvertMtlxLightToUsdLux(const MtlxLight &mtlx_light,
     light.exposure.set_value(exposure);
     light.intensity.set_value(1.0f);
 
-    // Add ShapingAPI with IES profile
+    // Set ShapingAPI attributes with IES profile (inherited from BoundableLight)
     if (measured_edf->file.authored()) {
-      ShapingAPI shaping;
-
       if (auto file_val = measured_edf->file.get_value()) {
         value::AssetPath ies_file;
         if (file_val.value().get_scalar(&ies_file)) {
-          shaping.shapingIesFile.set_value(ies_file);
-          shaping.shapingIesNormalize.set_value(true);
+          light.shapingIesFile.set_value(ies_file);
+          light.shapingIesNormalize.set_value(true);
         }
       }
-
-      light.shaping = shaping;
     }
 
     (*usd_light) = light;
@@ -2529,6 +3025,22 @@ bool ConvertMtlxLightToUsdLux(const MtlxLight &mtlx_light,
 #else
 
 namespace tinyusdz {
+
+bool ReadMaterialXFromString(const std::string &str,
+                             const std::string &asset_name, MtlxModel *mtlx,
+                             std::string *warn, std::string *err,
+                             const MtlxConfig &config) {
+  (void)str;
+  (void)asset_name;
+  (void)mtlx;
+  (void)warn;
+  (void)config;
+
+  if (err) {
+    (*err) += "MaterialX support is disabled in this build.\n";
+  }
+  return false;
+}
 
 bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
                            const std::string &asset_path, MtlxModel *mtlx,
@@ -2558,6 +3070,16 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
   return false;
 }
 
+bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err) {
+  (void)model;
+  (void)ps;
+
+  if (err) {
+    (*err) += "MaterialX support is disabled in this build.\n";
+  }
+  return false;
+}
+
 bool LoadMaterialXFromAsset(const Asset &asset, const std::string &asset_path,
                             PrimSpec &ps /* inout */, std::string *warn,
                             std::string *err) {
@@ -2573,18 +3095,20 @@ bool LoadMaterialXFromAsset(const Asset &asset, const std::string &asset_path,
   return false;
 }
 
-#if 0
-bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err)
-  (void)model;
-  (void)ps;
+bool ConvertMtlxLightToUsdLux(const MtlxLight &mtlx_light,
+                               const std::map<std::string, value::Value> &light_shaders,
+                               value::Value *usd_light,
+                               std::string *warn, std::string *err) {
+  (void)mtlx_light;
+  (void)light_shaders;
+  (void)usd_light;
+  (void)warn;
 
   if (err) {
     (*err) += "MaterialX support is disabled in this build.\n";
   }
   return false;
-
 }
-#endif
 
 }  // namespace tinyusdz
 

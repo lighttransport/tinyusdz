@@ -10,8 +10,8 @@
 #include "image-types.hh"
 #include "linear-algebra.hh"
 #include "math-util.inc"
-#include "pprinter.hh"
-#include "prim-types.hh"
+#include "pprint-enum.hh"
+#include "core/prim.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
@@ -149,37 +149,56 @@ std::string DumpVertexAttribute(const VertexAttribute &vattr, uint32_t indent) {
 }
 
 
-// Internal helper to avoid creating new stringstream for each recursive call
+// Internal helper using iterative DFS to avoid deep recursion.
 static void DumpNodeImpl(std::stringstream &ss, const Node &node, uint32_t indent) {
-  ss << pprint::Indent(indent) << "node {\n";
+  enum Phase { ENTER, EXIT };
+  struct WorkItem {
+    const Node *node;
+    uint32_t indent;
+    Phase phase;
+  };
 
-  ss << pprint::Indent(indent + 1) << "category " << quote(to_string(node.category))
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "type " << quote(to_string(node.nodeType))
-     << "\n";
+  constexpr size_t kMaxNodeTraversalLimit = 1024 * 1024;
+  std::vector<WorkItem> stack;
+  stack.push_back({&node, indent, ENTER});
+  size_t iter = 0;
 
-  ss << pprint::Indent(indent + 1) << "id " << node.id << "\n";
+  while (!stack.empty() && iter++ < kMaxNodeTraversalLimit) {
+    WorkItem item = stack.back();
+    stack.pop_back();
+    const Node &n = *item.node;
+    uint32_t ind = item.indent;
 
-  ss << pprint::Indent(indent + 1) << "prim_name " << quote(node.prim_name)
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "abs_path " << quote(node.abs_path)
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "display_name "
-     << quote(node.display_name) << "\n";
-  ss << pprint::Indent(indent + 1) << "local_matrix "
-     << quote(tinyusdz::to_string(node.local_matrix)) << "\n";
-  ss << pprint::Indent(indent + 1) << "global_matrix "
-     << quote(tinyusdz::to_string(node.global_matrix)) << "\n";
-
-  if (node.children.size()) {
-    ss << pprint::Indent(indent + 1) << "children {\n";
-    for (const auto &child : node.children) {
-      DumpNodeImpl(ss, child, indent + 1);  // Reuse same stringstream
+    if (item.phase == EXIT) {
+      // Close the "children" block and the node block
+      ss << pprint::Indent(ind + 1) << "}\n";
+      ss << pprint::Indent(ind) << "}\n";
+      continue;
     }
-    ss << pprint::Indent(indent + 1) << "}\n";
-  }
 
-  ss << pprint::Indent(indent) << "}\n";
+    // ENTER phase: write node header
+    ss << pprint::Indent(ind) << "node {\n";
+    ss << pprint::Indent(ind + 1) << "category " << quote(to_string(n.category)) << "\n";
+    ss << pprint::Indent(ind + 1) << "type " << quote(to_string(n.nodeType)) << "\n";
+    ss << pprint::Indent(ind + 1) << "id " << n.id << "\n";
+    ss << pprint::Indent(ind + 1) << "prim_name " << quote(n.prim_name) << "\n";
+    ss << pprint::Indent(ind + 1) << "abs_path " << quote(n.abs_path) << "\n";
+    ss << pprint::Indent(ind + 1) << "display_name " << quote(n.display_name) << "\n";
+    ss << pprint::Indent(ind + 1) << "local_matrix " << quote(tinyusdz::to_string(n.local_matrix)) << "\n";
+    ss << pprint::Indent(ind + 1) << "global_matrix " << quote(tinyusdz::to_string(n.global_matrix)) << "\n";
+
+    if (n.children.size()) {
+      ss << pprint::Indent(ind + 1) << "children {\n";
+      // Push EXIT to close braces after all children are processed
+      stack.push_back({item.node, ind, EXIT});
+      // Push children in reverse order so first child is processed first
+      for (auto it = n.children.rbegin(); it != n.children.rend(); ++it) {
+        stack.push_back({&(*it), ind + 1, ENTER});
+      }
+    } else {
+      ss << pprint::Indent(ind) << "}\n";
+    }
+  }
 }
 
 std::string DumpNode(const Node &node, uint32_t indent) {
@@ -299,23 +318,50 @@ std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
 namespace detail {
 
 void DumpSkelNode(std::stringstream &ss, const SkelNode &node, uint32_t indent) {
+  enum Phase { ENTER, EXIT };
+  struct WorkItem {
+    const SkelNode *node;
+    uint32_t indent;
+    Phase phase;
+  };
 
-  ss << pprint::Indent(indent) << node.joint_name << " {\n";
+  constexpr size_t kMaxNodeTraversalLimit = 1024 * 1024;
+  std::vector<WorkItem> stack;
+  stack.push_back({&node, indent, ENTER});
+  size_t iter = 0;
 
-  ss << pprint::Indent(indent + 1) << "joint_path " << quote(node.joint_path) << "\n";
-  ss << pprint::Indent(indent + 1) << "joint_id " << node.joint_id << "\n";
-  ss << pprint::Indent(indent + 1) << "bind_transform " << quote(tinyusdz::to_string(node.bind_transform)) << "\n";
-  ss << pprint::Indent(indent + 1) << "rest_transform " << quote(tinyusdz::to_string(node.rest_transform)) << "\n";
+  while (!stack.empty() && iter++ < kMaxNodeTraversalLimit) {
+    WorkItem item = stack.back();
+    stack.pop_back();
+    const SkelNode &n = *item.node;
+    uint32_t ind = item.indent;
 
-  if (node.children.size()) {
-    ss << pprint::Indent(indent + 1) << "children {\n";
-    for (const auto &child : node.children) {
-      DumpSkelNode(ss, child, indent + 2);
+    if (item.phase == EXIT) {
+      // Close the "children" block and the node block
+      ss << pprint::Indent(ind + 1) << "}\n";
+      ss << pprint::Indent(ind) << "}\n";
+      continue;
     }
-    ss << pprint::Indent(indent + 1) << "}\n";
-  }
 
-  ss << pprint::Indent(indent) << "}\n";
+    // ENTER phase: write node header
+    ss << pprint::Indent(ind) << n.joint_name << " {\n";
+    ss << pprint::Indent(ind + 1) << "joint_path " << quote(n.joint_path) << "\n";
+    ss << pprint::Indent(ind + 1) << "joint_id " << n.joint_id << "\n";
+    ss << pprint::Indent(ind + 1) << "bind_transform " << quote(tinyusdz::to_string(n.bind_transform)) << "\n";
+    ss << pprint::Indent(ind + 1) << "rest_transform " << quote(tinyusdz::to_string(n.rest_transform)) << "\n";
+
+    if (n.children.size()) {
+      ss << pprint::Indent(ind + 1) << "children {\n";
+      // Push EXIT to close braces after all children are processed
+      stack.push_back({item.node, ind, EXIT});
+      // Push children in reverse order so first child is processed first
+      for (auto it = n.children.rbegin(); it != n.children.rend(); ++it) {
+        stack.push_back({&(*it), ind + 2, ENTER});
+      }
+    } else {
+      ss << pprint::Indent(ind) << "}\n";
+    }
+  }
 }
 
 
@@ -331,6 +377,10 @@ std::string DumpSkeleton(const SkelHierarchy &skel, uint32_t indent) {
      << "\n";
   ss << pprint::Indent(indent + 1) << "anim_id " << skel.anim_id
      << "\n";
+  if (!skel.anim_ids.empty()) {
+    ss << pprint::Indent(indent + 1) << "anim_ids "
+       << quote(value::print_array_snipped(skel.anim_ids)) << "\n";
+  }
   ss << pprint::Indent(indent + 1) << "display_name "
      << quote(skel.display_name) << "\n";
 
@@ -345,24 +395,6 @@ std::string DumpSkeleton(const SkelHierarchy &skel, uint32_t indent) {
 
 namespace detail {
 
-#if 0 // unused
-template<typename T>
-std::string PrintAnimationSamples(const std::vector<AnimationSample<T>> &samples) {
-  std::stringstream ss;
-
-  ss << "[";
-  for (size_t i = 0; i < samples.size(); i++) {
-    if (i > 0) {
-      ss << ", ";
-    }
-
-    ss << "(" << samples[i].t << ", " << samples[i].value << ")";
-  }
-  ss << "]";
-
-  return ss.str();
-}
-#endif
 
 // void DumpAnimChannel(std::stringstream &ss, const std::string &name, const std::map<AnimationChannel::ChannelType, AnimationChannel> &channels, uint32_t indent) {
 // 
@@ -873,20 +905,36 @@ static std::string json_indent(uint32_t level) {
 // YAML format output functions
 //
 
-static void DumpNodeYAML(std::stringstream &ss, const Node &node, uint32_t indent);
-
 static void DumpNodeYAML(std::stringstream &ss, const Node &node, uint32_t indent) {
-  ss << yaml_indent(indent) << "- type: " << yaml_escape(to_string(node.nodeType)) << "\n";
-  ss << yaml_indent(indent) << "  id: " << node.id << "\n";
-  ss << yaml_indent(indent) << "  prim_name: " << yaml_escape(node.prim_name) << "\n";
-  ss << yaml_indent(indent) << "  abs_path: " << yaml_escape(node.abs_path) << "\n";
-  ss << yaml_indent(indent) << "  display_name: " << yaml_escape(node.display_name) << "\n";
-  ss << yaml_indent(indent) << "  local_matrix: " << yaml_escape(tinyusdz::to_string(node.local_matrix)) << "\n";
-  ss << yaml_indent(indent) << "  global_matrix: " << yaml_escape(tinyusdz::to_string(node.global_matrix)) << "\n";
-  if (!node.children.empty()) {
-    ss << yaml_indent(indent) << "  children:\n";
-    for (const auto &child : node.children) {
-      DumpNodeYAML(ss, child, indent + 2);
+  struct WorkItem {
+    const Node *node;
+    uint32_t indent;
+  };
+
+  constexpr size_t kMaxNodeTraversalLimit = 1024 * 1024;
+  std::vector<WorkItem> stack;
+  stack.push_back({&node, indent});
+  size_t iter = 0;
+
+  while (!stack.empty() && iter++ < kMaxNodeTraversalLimit) {
+    WorkItem item = stack.back();
+    stack.pop_back();
+    const Node &n = *item.node;
+    uint32_t ind = item.indent;
+
+    ss << yaml_indent(ind) << "- type: " << yaml_escape(to_string(n.nodeType)) << "\n";
+    ss << yaml_indent(ind) << "  id: " << n.id << "\n";
+    ss << yaml_indent(ind) << "  prim_name: " << yaml_escape(n.prim_name) << "\n";
+    ss << yaml_indent(ind) << "  abs_path: " << yaml_escape(n.abs_path) << "\n";
+    ss << yaml_indent(ind) << "  display_name: " << yaml_escape(n.display_name) << "\n";
+    ss << yaml_indent(ind) << "  local_matrix: " << yaml_escape(tinyusdz::to_string(n.local_matrix)) << "\n";
+    ss << yaml_indent(ind) << "  global_matrix: " << yaml_escape(tinyusdz::to_string(n.global_matrix)) << "\n";
+    if (!n.children.empty()) {
+      ss << yaml_indent(ind) << "  children:\n";
+      // Push children in reverse order so first child is processed first
+      for (auto it = n.children.rbegin(); it != n.children.rend(); ++it) {
+        stack.push_back({&(*it), ind + 2});
+      }
     }
   }
 }
@@ -958,15 +1006,33 @@ static void DumpMeshYAML(std::stringstream &ss, const RenderMesh &mesh, uint32_t
 }
 
 static void DumpSkelNodeYAML(std::stringstream &ss, const SkelNode &node, uint32_t indent) {
-  ss << yaml_indent(indent) << "- joint_name: " << yaml_escape(node.joint_name) << "\n";
-  ss << yaml_indent(indent) << "  joint_path: " << yaml_escape(node.joint_path) << "\n";
-  ss << yaml_indent(indent) << "  joint_id: " << node.joint_id << "\n";
-  ss << yaml_indent(indent) << "  bind_transform: " << yaml_escape(tinyusdz::to_string(node.bind_transform)) << "\n";
-  ss << yaml_indent(indent) << "  rest_transform: " << yaml_escape(tinyusdz::to_string(node.rest_transform)) << "\n";
-  if (!node.children.empty()) {
-    ss << yaml_indent(indent) << "  children:\n";
-    for (const auto &child : node.children) {
-      DumpSkelNodeYAML(ss, child, indent + 2);
+  struct WorkItem {
+    const SkelNode *node;
+    uint32_t indent;
+  };
+
+  constexpr size_t kMaxNodeTraversalLimit = 1024 * 1024;
+  std::vector<WorkItem> stack;
+  stack.push_back({&node, indent});
+  size_t iter = 0;
+
+  while (!stack.empty() && iter++ < kMaxNodeTraversalLimit) {
+    WorkItem item = stack.back();
+    stack.pop_back();
+    const SkelNode &n = *item.node;
+    uint32_t ind = item.indent;
+
+    ss << yaml_indent(ind) << "- joint_name: " << yaml_escape(n.joint_name) << "\n";
+    ss << yaml_indent(ind) << "  joint_path: " << yaml_escape(n.joint_path) << "\n";
+    ss << yaml_indent(ind) << "  joint_id: " << n.joint_id << "\n";
+    ss << yaml_indent(ind) << "  bind_transform: " << yaml_escape(tinyusdz::to_string(n.bind_transform)) << "\n";
+    ss << yaml_indent(ind) << "  rest_transform: " << yaml_escape(tinyusdz::to_string(n.rest_transform)) << "\n";
+    if (!n.children.empty()) {
+      ss << yaml_indent(ind) << "  children:\n";
+      // Push children in reverse order so first child is processed first
+      for (auto it = n.children.rbegin(); it != n.children.rend(); ++it) {
+        stack.push_back({&(*it), ind + 2});
+      }
     }
   }
 }
@@ -975,6 +1041,9 @@ static void DumpSkeletonYAML(std::stringstream &ss, const SkelHierarchy &skel, u
   ss << yaml_indent(indent) << "- name: " << yaml_escape(skel.prim_name) << "\n";
   ss << yaml_indent(indent) << "  abs_path: " << yaml_escape(skel.abs_path) << "\n";
   ss << yaml_indent(indent) << "  anim_id: " << skel.anim_id << "\n";
+  if (!skel.anim_ids.empty()) {
+    ss << yaml_indent(indent) << "  anim_ids: " << yaml_escape(value::print_array_snipped(skel.anim_ids)) << "\n";
+  }
   ss << yaml_indent(indent) << "  display_name: " << yaml_escape(skel.display_name) << "\n";
   ss << yaml_indent(indent) << "  root_node:\n";
   DumpSkelNodeYAML(ss, skel.root_node, indent + 2);
@@ -1244,27 +1313,56 @@ static std::string DumpRenderSceneYAML(const RenderScene &scene) {
 // JSON format output functions
 //
 
-static void DumpNodeJSON(std::stringstream &ss, const Node &node, uint32_t indent, bool last);
-
 static void DumpNodeJSON(std::stringstream &ss, const Node &node, uint32_t indent, bool last) {
-  ss << json_indent(indent) << "{\n";
-  ss << json_indent(indent + 1) << "\"type\": \"" << json_escape(to_string(node.nodeType)) << "\",\n";
-  ss << json_indent(indent + 1) << "\"id\": " << node.id << ",\n";
-  ss << json_indent(indent + 1) << "\"prim_name\": \"" << json_escape(node.prim_name) << "\",\n";
-  ss << json_indent(indent + 1) << "\"abs_path\": \"" << json_escape(node.abs_path) << "\",\n";
-  ss << json_indent(indent + 1) << "\"display_name\": \"" << json_escape(node.display_name) << "\",\n";
-  ss << json_indent(indent + 1) << "\"local_matrix\": \"" << json_escape(tinyusdz::to_string(node.local_matrix)) << "\",\n";
-  ss << json_indent(indent + 1) << "\"global_matrix\": \"" << json_escape(tinyusdz::to_string(node.global_matrix)) << "\"";
-  if (!node.children.empty()) {
-    ss << ",\n" << json_indent(indent + 1) << "\"children\": [\n";
-    for (size_t i = 0; i < node.children.size(); i++) {
-      DumpNodeJSON(ss, node.children[i], indent + 2, i == node.children.size() - 1);
+  enum Phase { ENTER, EXIT };
+  struct WorkItem {
+    const Node *node;
+    uint32_t indent;
+    Phase phase;
+    bool last;  // whether this is the last sibling (for comma placement)
+  };
+
+  constexpr size_t kMaxNodeTraversalLimit = 1024 * 1024;
+  std::vector<WorkItem> stack;
+  stack.push_back({&node, indent, ENTER, last});
+  size_t iter = 0;
+
+  while (!stack.empty() && iter++ < kMaxNodeTraversalLimit) {
+    WorkItem item = stack.back();
+    stack.pop_back();
+    const Node &n = *item.node;
+    uint32_t ind = item.indent;
+
+    if (item.phase == EXIT) {
+      // Close the children array and the node object
+      ss << json_indent(ind + 1) << "]\n";
+      ss << json_indent(ind) << "}" << (item.last ? "" : ",") << "\n";
+      continue;
     }
-    ss << json_indent(indent + 1) << "]\n";
-  } else {
-    ss << "\n";
+
+    // ENTER phase: write node header
+    ss << json_indent(ind) << "{\n";
+    ss << json_indent(ind + 1) << "\"type\": \"" << json_escape(to_string(n.nodeType)) << "\",\n";
+    ss << json_indent(ind + 1) << "\"id\": " << n.id << ",\n";
+    ss << json_indent(ind + 1) << "\"prim_name\": \"" << json_escape(n.prim_name) << "\",\n";
+    ss << json_indent(ind + 1) << "\"abs_path\": \"" << json_escape(n.abs_path) << "\",\n";
+    ss << json_indent(ind + 1) << "\"display_name\": \"" << json_escape(n.display_name) << "\",\n";
+    ss << json_indent(ind + 1) << "\"local_matrix\": \"" << json_escape(tinyusdz::to_string(n.local_matrix)) << "\",\n";
+    ss << json_indent(ind + 1) << "\"global_matrix\": \"" << json_escape(tinyusdz::to_string(n.global_matrix)) << "\"";
+    if (!n.children.empty()) {
+      ss << ",\n" << json_indent(ind + 1) << "\"children\": [\n";
+      // Push EXIT to close array/object after all children are processed
+      stack.push_back({item.node, ind, EXIT, item.last});
+      // Push children in reverse order so first child is processed first
+      for (size_t i = n.children.size(); i > 0; --i) {
+        bool child_last = (i == n.children.size());
+        stack.push_back({&n.children[i - 1], ind + 2, ENTER, child_last});
+      }
+    } else {
+      ss << "\n";
+      ss << json_indent(ind) << "}" << (item.last ? "" : ",") << "\n";
+    }
   }
-  ss << json_indent(indent) << "}" << (last ? "" : ",") << "\n";
 }
 
 static void DumpVertexAttributeJSON(std::stringstream &ss, const VertexAttribute &vattr, uint32_t indent, bool last) {
@@ -1302,22 +1400,53 @@ static void DumpMeshJSON(std::stringstream &ss, const RenderMesh &mesh, uint32_t
 }
 
 static void DumpSkelNodeJSON(std::stringstream &ss, const SkelNode &node, uint32_t indent, bool last) {
-  ss << json_indent(indent) << "{\n";
-  ss << json_indent(indent + 1) << "\"joint_name\": \"" << json_escape(node.joint_name) << "\",\n";
-  ss << json_indent(indent + 1) << "\"joint_path\": \"" << json_escape(node.joint_path) << "\",\n";
-  ss << json_indent(indent + 1) << "\"joint_id\": " << node.joint_id << ",\n";
-  ss << json_indent(indent + 1) << "\"bind_transform\": \"" << json_escape(tinyusdz::to_string(node.bind_transform)) << "\",\n";
-  ss << json_indent(indent + 1) << "\"rest_transform\": \"" << json_escape(tinyusdz::to_string(node.rest_transform)) << "\"";
-  if (!node.children.empty()) {
-    ss << ",\n" << json_indent(indent + 1) << "\"children\": [\n";
-    for (size_t i = 0; i < node.children.size(); i++) {
-      DumpSkelNodeJSON(ss, node.children[i], indent + 2, i == node.children.size() - 1);
+  enum Phase { ENTER, EXIT };
+  struct WorkItem {
+    const SkelNode *node;
+    uint32_t indent;
+    Phase phase;
+    bool last;  // whether this is the last sibling (for comma placement)
+  };
+
+  constexpr size_t kMaxNodeTraversalLimit = 1024 * 1024;
+  std::vector<WorkItem> stack;
+  stack.push_back({&node, indent, ENTER, last});
+  size_t iter = 0;
+
+  while (!stack.empty() && iter++ < kMaxNodeTraversalLimit) {
+    WorkItem item = stack.back();
+    stack.pop_back();
+    const SkelNode &n = *item.node;
+    uint32_t ind = item.indent;
+
+    if (item.phase == EXIT) {
+      // Close the children array and the node object
+      ss << json_indent(ind + 1) << "]\n";
+      ss << json_indent(ind) << "}" << (item.last ? "" : ",") << "\n";
+      continue;
     }
-    ss << json_indent(indent + 1) << "]\n";
-  } else {
-    ss << "\n";
+
+    // ENTER phase: write node header
+    ss << json_indent(ind) << "{\n";
+    ss << json_indent(ind + 1) << "\"joint_name\": \"" << json_escape(n.joint_name) << "\",\n";
+    ss << json_indent(ind + 1) << "\"joint_path\": \"" << json_escape(n.joint_path) << "\",\n";
+    ss << json_indent(ind + 1) << "\"joint_id\": " << n.joint_id << ",\n";
+    ss << json_indent(ind + 1) << "\"bind_transform\": \"" << json_escape(tinyusdz::to_string(n.bind_transform)) << "\",\n";
+    ss << json_indent(ind + 1) << "\"rest_transform\": \"" << json_escape(tinyusdz::to_string(n.rest_transform)) << "\"";
+    if (!n.children.empty()) {
+      ss << ",\n" << json_indent(ind + 1) << "\"children\": [\n";
+      // Push EXIT to close array/object after all children are processed
+      stack.push_back({item.node, ind, EXIT, item.last});
+      // Push children in reverse order so first child is processed first
+      for (size_t i = n.children.size(); i > 0; --i) {
+        bool child_last = (i == n.children.size());
+        stack.push_back({&n.children[i - 1], ind + 2, ENTER, child_last});
+      }
+    } else {
+      ss << "\n";
+      ss << json_indent(ind) << "}" << (item.last ? "" : ",") << "\n";
+    }
   }
-  ss << json_indent(indent) << "}" << (last ? "" : ",") << "\n";
 }
 
 static void DumpSkeletonJSON(std::stringstream &ss, const SkelHierarchy &skel, uint32_t indent, bool last) {
@@ -1325,6 +1454,14 @@ static void DumpSkeletonJSON(std::stringstream &ss, const SkelHierarchy &skel, u
   ss << json_indent(indent + 1) << "\"name\": \"" << json_escape(skel.prim_name) << "\",\n";
   ss << json_indent(indent + 1) << "\"abs_path\": \"" << json_escape(skel.abs_path) << "\",\n";
   ss << json_indent(indent + 1) << "\"anim_id\": " << skel.anim_id << ",\n";
+  ss << json_indent(indent + 1) << "\"anim_ids\": [";
+  for (size_t i = 0; i < skel.anim_ids.size(); i++) {
+    if (i > 0) {
+      ss << ", ";
+    }
+    ss << skel.anim_ids[i];
+  }
+  ss << "],\n";
   ss << json_indent(indent + 1) << "\"display_name\": \"" << json_escape(skel.display_name) << "\",\n";
   ss << json_indent(indent + 1) << "\"root_node\": ";
   DumpSkelNodeJSON(ss, skel.root_node, indent + 1, true);

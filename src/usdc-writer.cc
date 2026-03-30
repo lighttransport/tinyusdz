@@ -78,16 +78,6 @@ std::wstring UTF8ToWchar(const std::string &str) {
   return wstr;
 }
 
-#if 0
-std::string WcharToUTF8(const std::wstring &wstr) {
-  int str_size = WideCharToMultiByte(CP_UTF8, 0, wstr.data(), int(wstr.size()),
-                                     nullptr, 0, nullptr, nullptr);
-  std::string str(size_t(str_size), 0);
-  WideCharToMultiByte(CP_UTF8, 0, wstr.data(), int(wstr.size()), &str[0],
-                      int(str.size()), nullptr, nullptr);
-  return str;
-}
-#endif
 #endif
 
 struct Section {
@@ -114,83 +104,6 @@ struct TableOfContents {
 //  crate::ValueRep value_rep;
 //};
 
-#if 0
-// For unordered_map
-
-// https://stackoverflow.com/questions/8513911/how-to-create-a-good-hash-combine-with-64-bit-output-inspired-by-boosthash-co
-// From CityHash code.
-template <class T>
-inline void hash_combine(std::size_t &seed, const T &v) {
-#ifdef __wasi__  // 32bit platform
-  // Use boost version.
-  std::hash<T> hasher;
-  seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-#else
-  std::hash<T> hasher;
-  const uint64_t kMul = 0x9ddfea08eb382d69ULL;
-  std::size_t a = (hasher(v) ^ seed) * kMul;
-  a ^= (a >> 47);
-  std::size_t b = (seed ^ a) * kMul;
-  b ^= (b >> 47);
-  seed = b * kMul;
-#endif
-}
-
-struct PathHasher {
-  size_t operator()(const Path &path) const {
-    size_t seed = std::hash<std::string>()(path.GetPrimPart());
-    hash_combine(seed, std::hash<std::string>()(path.GetPropPart()));
-    hash_combine(seed, std::hash<std::string>()(path.GetLocalPart()));
-    hash_combine(seed, std::hash<bool>()(path.IsValid()));
-
-    return seed;
-  }
-};
-
-struct PathKeyEqual {
-  bool operator()(const Path &lhs, const Path &rhs) const {
-    bool ret = lhs.GetPrimPart() == rhs.GetPrimPart();
-    ret &= lhs.GetPropPart() == rhs.GetPropPart();
-    ret &= lhs.GetLocalPart() == rhs.GetLocalPart();
-    ret &= lhs.IsValid() == rhs.IsValid();
-
-    return ret;
-  }
-};
-
-struct FieldHasher {
-  size_t operator()(const Field &field) const {
-    size_t seed = std::hash<uint32_t>()(field.token_index.value);
-    hash_combine(seed, std::hash<uint64_t>()(field.value_rep.GetData()));
-
-    return seed;
-  }
-};
-
-struct FieldKeyEqual {
-  bool operator()(const Field &lhs, const Field &rhs) const {
-    bool ret = lhs.token_index == rhs.token_index;
-    ret &= lhs.value_rep == rhs.value_rep;
-
-    return ret;
-  }
-};
-
-struct FieldSetHasher {
-  size_t operator()(const std::vector<crate::FieldIndex> &fieldset) const {
-    if (fieldset.empty()) {
-      return 0;
-    }
-
-    size_t seed = std::hash<uint32_t>()(fieldset[0].value);
-    for (size_t i = 1; i < fieldset.size(); i++) {
-      hash_combine(seed, std::hash<uint32_t>()(fieldset[i].value));
-    }
-
-    return seed;
-  }
-};
-#endif
 
 class Packer {
  public:
@@ -224,71 +137,6 @@ class Packer {
                    // by Index()(= ~0)
 };
 
-#if 0 // not used atm.
-crate::TokenIndex Packer::AddToken(const Token &token) {
-  if (token_to_index_map.count(token)) {
-    return token_to_index_map[token];
-  }
-
-  // index = size of umap
-  token_to_index_map[token] = crate::TokenIndex(uint32_t(tokens_.size()));
-  tokens_.emplace_back(token);
-
-  return token_to_index_map[token];
-}
-
-crate::StringIndex Packer::AddString(const std::string &str) {
-  if (string_to_index_map.count(str)) {
-    return string_to_index_map[str];
-  }
-
-  // index = size of umap
-  string_to_index_map[str] = crate::StringIndex(uint32_t(strings_.size()));
-  strings_.emplace_back(str);
-
-  return string_to_index_map[str];
-}
-
-crate::PathIndex Packer::AddPath(const Path &path) {
-  if (path_to_index_map.count(path)) {
-    return path_to_index_map[path];
-  }
-
-  // index = size of umap
-  path_to_index_map[path] = crate::PathIndex(uint32_t(paths_.size()));
-  paths_.emplace_back(path);
-
-  return path_to_index_map[path];
-}
-
-crate::FieldIndex Packer::AddField(const crate::Field &field) {
-  if (field_to_index_map.count(field)) {
-    return field_to_index_map[field];
-  }
-
-  // index = size of umap
-  field_to_index_map[field] = crate::FieldIndex(uint32_t(fields_.size()));
-  fields_.emplace_back(field);
-
-  return field_to_index_map[field];
-}
-
-crate::FieldSetIndex Packer::AddFieldSet(
-    const std::vector<crate::FieldIndex> &fieldset) {
-  if (fieldset_to_index_map.count(fieldset)) {
-    return fieldset_to_index_map[fieldset];
-  }
-
-  // index = size of umap = star index of FieldSet span.
-  fieldset_to_index_map[fieldset] =
-      crate::FieldSetIndex(uint32_t(fieldsets_.size()));
-
-  fieldsets_.insert(fieldsets_.end(), fieldset.begin(), fieldset.end());
-  fieldsets_.push_back(crate::FieldIndex());  // terminator(~0)
-
-  return fieldset_to_index_map[fieldset];
-}
-#endif
 
 class Writer {
  public:
@@ -472,7 +320,6 @@ class Writer {
 
     (void)output;
 
-    // TODO
     return false;
   }
 
@@ -599,45 +446,13 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
     return false;
   }
 
-  // Use experimental CrateWriter via temporary file approach
-  // This is not optimal but provides a working implementation
-  // TODO: Implement memory-based CrateWriter for better performance
+  // Write directly to memory via MemoryOutputStream
+  auto mem_stream = std::unique_ptr<experimental::MemoryOutputStream>(
+      new experimental::MemoryOutputStream());
+  auto* mem_ptr = mem_stream.get();
 
-  // Generate a temporary file path
-#ifdef _WIN32
-  char temp_path[MAX_PATH];
-  if (GetTempPathA(MAX_PATH, temp_path) == 0) {
-    if (err) {
-      (*err) += "Failed to get temp path.\n";
-    }
-    return false;
-  }
-  char temp_file[MAX_PATH];
-  if (GetTempFileNameA(temp_path, "usd", 0, temp_file) == 0) {
-    if (err) {
-      (*err) += "Failed to create temp file name.\n";
-    }
-    return false;
-  }
-  std::string temp_filepath = temp_file;
-#else
-  // On Unix, use /tmp with a unique name
-  char temp_template[] = "/tmp/tinyusdz_XXXXXX";
-  int fd = mkstemp(temp_template);
-  if (fd == -1) {
-    if (err) {
-      (*err) += "Failed to create temp file: ";
-      (*err) += std::strerror(errno);
-      (*err) += "\n";
-    }
-    return false;
-  }
-  close(fd);
-  std::string temp_filepath = temp_template;
-#endif
-
-  // Create CrateWriter and write to temp file
-  experimental::CrateWriter writer(temp_filepath);
+  experimental::CrateWriter writer(
+      std::unique_ptr<experimental::IOutputStream>(std::move(mem_stream)));
 
   experimental::CrateWriter::Options opts;
   opts.version_major = 0;
@@ -649,7 +464,6 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
 
   std::string open_err;
   if (!writer.Open(&open_err)) {
-    std::remove(temp_filepath.c_str());
     if (err) {
       (*err) += "Failed to open CrateWriter: " + open_err + "\n";
     }
@@ -658,8 +472,6 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
 
   std::string convert_err;
   if (!writer.ConvertStageToSpecs(stage, &convert_err)) {
-    writer.Close();
-    std::remove(temp_filepath.c_str());
     if (err) {
       (*err) += "Failed to convert Stage to USDC: " + convert_err + "\n";
     }
@@ -668,8 +480,6 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
 
   std::string finalize_err;
   if (!writer.Finalize(&finalize_err)) {
-    writer.Close();
-    std::remove(temp_filepath.c_str());
     if (err) {
       (*err) += "Failed to finalize USDC: " + finalize_err + "\n";
     }
@@ -678,33 +488,7 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
 
   writer.Close();
 
-  // Read the temp file into memory
-  std::ifstream file(temp_filepath, std::ios::binary | std::ios::ate);
-  if (!file) {
-    std::remove(temp_filepath.c_str());
-    if (err) {
-      (*err) += "Failed to read temp USDC file.\n";
-    }
-    return false;
-  }
-
-  std::streamsize size = file.tellg();
-  file.seekg(0, std::ios::beg);
-
-  output->resize(static_cast<size_t>(size));
-  if (!file.read(reinterpret_cast<char*>(output->data()), size)) {
-    std::remove(temp_filepath.c_str());
-    if (err) {
-      (*err) += "Failed to read USDC data into memory.\n";
-    }
-    return false;
-  }
-
-  file.close();
-
-  // Clean up temp file
-  std::remove(temp_filepath.c_str());
-
+  *output = mem_ptr->TakeBuffer();
   return true;
 }
 

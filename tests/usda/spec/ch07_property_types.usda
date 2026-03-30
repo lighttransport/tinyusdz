@@ -1,0 +1,14 @@
+#usda 1.0
+def "Properties" {
+    double myAttr = 1.0
+    uniform token uniformToken = "constant"
+    custom double customAttr = 42.0
+    double blockedAttr = None
+
+    rel myRel = </Properties/Target>
+    rel multiRel = [</Properties/Target1>, </Properties/Target2>]
+
+    def "Target" {}
+    def "Target1" {}
+    def "Target2" {}
+}

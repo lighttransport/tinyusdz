@@ -57,6 +57,21 @@ struct LayerMetas {
   CustomDataType customLayerData;  // customLayerData
   bool customLayerDataAuthored{false};  // Track if customLayerData was explicitly authored (even if empty)
 
+  // AOUSD Core Spec fields (Spec 7.6)
+  // colorConfiguration: asset path to OCIO config
+  nonstd::optional<value::AssetPath> colorConfiguration;
+  // colorManagementSystem: e.g. "ocio"
+  nonstd::optional<value::token> colorManagementSystem;
+  // owner: layer owner string
+  nonstd::optional<std::string> owner;
+  // hasOwnedSubLayers: whether sublayers are "owned" by this layer
+  nonstd::optional<bool> hasOwnedSubLayers;
+  // expressionVariables: dictionary of variable substitutions for asset paths
+  nonstd::optional<CustomDataType> expressionVariables;
+  // layerRelocates: list of (source path, target path) relocations
+  // Each entry maps a source prim path to a target prim path in the namespace
+  std::vector<std::pair<Path, Path>> layerRelocates;
+
   // USDZ extension
   TypedAttributeWithFallback<bool> autoPlay{
       true};  // default(or not authored) = auto play
@@ -65,6 +80,34 @@ struct LayerMetas {
 
   // Indirectly used.
   std::vector<value::token> primChildren;
+
+  ///
+  /// Estimate memory usage of this LayerMetas in bytes
+  ///
+  size_t estimate_memory_usage() const {
+    size_t total = sizeof(LayerMetas);
+    // defaultPrim token
+    total += defaultPrim.str().capacity();
+    // subLayers
+    for (const auto& sl : subLayers) {
+      total += sizeof(SubLayer);
+      total += sl.assetPath.GetAssetPath().capacity();
+      total += sl.assetPath.GetResolvedPath().capacity();
+    }
+    // comment and doc strings
+    total += comment.value.capacity();
+    total += doc.value.capacity();
+    // customLayerData (rough estimate - map of string to MetaVariable)
+    for (const auto& kv : customLayerData) {
+      total += kv.first.capacity();
+      total += sizeof(MetaVariable);  // MetaVariable internal estimation not detailed
+    }
+    // primChildren tokens
+    for (const auto& tok : primChildren) {
+      total += tok.str().capacity();
+    }
+    return total;
+  }
 };
 
 // Forward declaration for Layer class

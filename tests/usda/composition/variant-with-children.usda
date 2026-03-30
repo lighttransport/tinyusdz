@@ -1,0 +1,29 @@
+#usda 1.0
+
+def Xform "Vehicle" (
+    variants = { string typeVariant = "car" }
+    prepend variantSets = "typeVariant"
+) {
+    variantSet "typeVariant" = {
+        "car" {
+            def Mesh "Body" {
+                point3f[] points = [(0,0,0),(2,0,0),(2,1,0),(0,1,0)]
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0,1,2,3]
+            }
+
+            def Mesh "Wheels" {
+                point3f[] points = [(0,0,0),(0.5,0,0),(0.25,0.5,0)]
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0,1,2]
+            }
+        }
+        "bike" {
+            def Mesh "Frame" {
+                point3f[] points = [(0,0,0),(1,0,0),(0.5,1,0)]
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0,1,2]
+            }
+        }
+    }
+}

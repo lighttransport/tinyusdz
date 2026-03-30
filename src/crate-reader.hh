@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 //
@@ -14,7 +15,7 @@
 #include "crate-format.hh"
 #include "dynamic-bitset.hh"
 #include "memory-budget.hh"
-#include "prim-types.hh"
+#include "core/prim-spec.hh"  // PrimSpec (transitively: property, composition-types, prim-enums, prim-metas, variant-types)
 #include "stream-reader.hh"
 #include "typed-array.hh"
 
@@ -58,7 +59,7 @@ struct CrateReaderConfig {
   size_t maxArrayElements = 1024 * 1024 * 1024;  ///< Max array elements (1B)
   size_t maxAssetPathElements = 512;              ///< Max asset path components
 
-  size_t maxTokenLength = 4096;                   ///< Max token string length
+  size_t maxTokenLength = 1024 * 64;               ///< Max token string length (64K)
   size_t maxStringLength = 1024 * 1024 * 64;     ///< Max string length (64MB)
 
   size_t maxVariantsMapElements = 128;            ///< Max variant map elements
@@ -70,6 +71,10 @@ struct CrateReaderConfig {
 
   ///< Total memory budget for uncompressed data in bytes (default 2GB)
   size_t maxMemoryBudget = std::numeric_limits<int32_t>::max();
+
+  /// Optional external memory budget manager shared with other components.
+  /// If set, CrateReader uses this manager instead of an internal one.
+  MemoryBudgetManager *memory_budget_manager = nullptr;
 };
 
 // Enable SoA (Struct of Arrays) layout for TypedTimeSamples
@@ -108,6 +113,24 @@ void clear_all_timesamples_dedup_entries();
 
 /// Clear dedup entries for a specific TimeSamples pointer
 void clear_timesamples_dedup_entries(void* timesamples_ptr);
+
+struct CrateIndexFNV1Hash {
+  size_t operator()(const crate::Index &idx) const noexcept {
+    static constexpr uint64_t kFNV_Prime = 0x00000100000001B3ull;
+    static constexpr uint64_t kFNV_Offset_Basis = 0xcbf29ce484222325ull;
+
+    uint64_t hash = kFNV_Offset_Basis;
+    const uint8_t *ptr = reinterpret_cast<const uint8_t *>(&idx.value);
+    for (size_t i = 0; i < sizeof(idx.value); ++i) {
+      hash = (kFNV_Prime * hash) ^ ptr[i];
+    }
+    return static_cast<size_t>(hash);
+  }
+};
+
+using LiveFieldSetMap =
+    std::unordered_map<crate::Index, crate::FieldValuePairVector,
+                       CrateIndexFNV1Hash>;
 
 class CrateReader {
  public:
@@ -233,12 +256,54 @@ class CrateReader {
 
   bool BuildLiveFieldSets();
 
+  /// Decode one fieldset on demand from `fieldset_index`.
+  /// Unlike BuildLiveFieldSets(), this does not materialize all fieldsets.
+  bool DecodeFieldSet(crate::Index fieldset_index, FieldValuePairVector *pairs);
+
   std::string GetError();
   std::string GetWarning();
 
   // Approximated memory usage in [mb]
   size_t GetMemoryUsageInMB() const {
-    return memory_manager_.GetUsageInMB();
+    return memory_manager_->GetUsageInMB();
+  }
+
+  uint64_t GetMemoryUsageInBytes() const {
+    return memory_manager_->GetCurrentUsage();
+  }
+
+  uint64_t GetPeakMemoryUsageInBytes() const {
+    return memory_manager_->GetPeakUsage();
+  }
+
+  uint64_t GetMemoryBudgetInBytes() const {
+    return memory_manager_->GetMaxBudget();
+  }
+
+  uint64_t GetRemainingMemoryBudgetInBytes() const {
+    return memory_manager_->GetRemainingBudget();
+  }
+
+  // Release memory budget externally (e.g., when scratch buffers are freed
+  // after lazy DecodeFieldSet)
+  void ReleaseMemoryBudget(uint64_t bytes) {
+    memory_manager_->Release(bytes);
+  }
+
+  /// Release decompression buffers and return their budget.
+  /// Call after parsing is complete to reclaim memory.
+  void ShrinkDecompressionBuffers() {
+    if (_decomp_comp_buffer_budget > 0) {
+      memory_manager_->Release(_decomp_comp_buffer_budget);
+      _decomp_comp_buffer_budget = 0;
+    }
+    { std::vector<char> tmp; _decomp_comp_buffer.swap(tmp); }
+
+    if (_decomp_working_buffer_budget > 0) {
+      memory_manager_->Release(_decomp_working_buffer_budget);
+      _decomp_working_buffer_budget = 0;
+    }
+    { std::vector<char> tmp; _decomp_working_buffer.swap(tmp); }
   }
 
   /// -------------------------------------
@@ -266,16 +331,10 @@ class CrateReader {
 
   const std::vector<crate::Spec> &GetSpecs() const { return _specs; }
 
-  const std::map<crate::Index, FieldValuePairVector> &GetLiveFieldSets() const {
+  const LiveFieldSetMap &GetLiveFieldSets() const {
     return _live_fieldsets;
   }
 
-#if 0
-  // FIXME: May not need this
-  const std::vector<Path> &GetPaths() const {
-    return _paths;
-  }
-#endif
 
   const nonstd::optional<value::token> GetToken(crate::Index token_index) const;
   const nonstd::optional<value::token> GetStringToken(
@@ -361,8 +420,11 @@ class CrateReader {
   bool UnpackInlinedValueRep(const crate::ValueRep &rep,
                              crate::CrateValue *value);
 
-  // TODO: deprecated
-  //bool UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint64_t offset, crate::CrateValue *value);
+  /// Describe an uncompressed array ValueRep without reading data.
+  /// Records offset/count in *ref, sets *value to empty typed array.
+  /// Returns false if the ValueRep is not eligible (compressed, inlined, scalar).
+  bool DescribeValueRep(const crate::ValueRep &rep,
+                        MMapArrayRef *ref, crate::CrateValue *value);
 
   bool UnpackValueRepsToTimeSamples(const std::vector<double> &times,
     const std::vector<crate::ValueRep> &vreps,
@@ -410,6 +472,9 @@ class CrateReader {
                                        // circular referencing
       size_t curIndex, int64_t parentNodeIndex);
 
+  // Build O(1) lookup table for fieldset start -> end(terminator) index.
+  bool BuildFieldSetBoundaryIndex();
+
   bool ReadCompressedPaths(const uint64_t ref_num_paths);
 
   template <class Int>
@@ -433,13 +498,6 @@ class CrateReader {
 
   bool ReadTimeSamples(value::TimeSamples *d);
 
-#if 0
-  template<typename T>
-  bool CrateTypedTimeSamples(const std::vector<double> &times,
-                              const std::vector<crate::ValueRep> &value_reps,
-                              uint64_t vrep_start_offset,
-                              value::TimeSamples *d);
-#endif
 
   // integral array
   template <typename T>
@@ -495,6 +553,17 @@ class CrateReader {
   // Read 64bit uint with range check
   bool ReadNum(uint64_t &n, uint64_t maxnum);
 
+  template <typename T>
+  bool ReadTimeSampleScalarValue(T *value, size_t nbytes,
+                                 const char *read_error) {
+    MEMORY_BUDGET_CHECK((*memory_manager_), nbytes, "[Crate]");
+    if (!_sr->read(nbytes, nbytes, reinterpret_cast<uint8_t *>(value))) {
+      PushError(std::string(__func__) + "(): " + read_error);
+      return false;
+    }
+    return true;
+  }
+
   // Header(bootstrap)
   uint8_t _version[3] = {0, 0, 0};
 
@@ -514,6 +583,8 @@ class CrateReader {
   std::vector<crate::Index> _string_indices;
   std::vector<crate::Field> _fields;
   std::vector<crate::Index> _fieldset_indices;
+  std::vector<uint32_t> _fieldset_end_indices;   // valid only at fieldset starts
+  std::vector<uint32_t> _fieldset_start_indices; // list of fieldset starts
   std::vector<crate::Spec> _specs;
   std::vector<Path> _paths;
   std::vector<Path> _elemPaths;
@@ -522,8 +593,7 @@ class CrateReader {
                              //
   // `_live_fieldsets` contains unpacked value keyed by fieldset index.
   // Used for reconstructing Scene object
-  // TODO(syoyo): Use unordered_map?
-  std::map<crate::Index, FieldValuePairVector>
+  LiveFieldSetMap
       _live_fieldsets;  // <fieldset index, List of field with unpacked Values>
 
   const StreamReader *_sr{};
@@ -541,94 +611,49 @@ class CrateReader {
 
   CrateReaderConfig _config;
 
-  // RAII Memory budget manager
-  mutable MemoryBudgetManager memory_manager_;
+  // RAII Memory budget manager (owned) and optional external manager.
+  mutable MemoryBudgetManager owned_memory_manager_;
+  MemoryBudgetManager *memory_manager_{nullptr};
 
-  // TimeSamples deduplication caches: ValueRep -> decoded value
-  // Caches decoded values to avoid redundant file reads when same ValueRep appears
-
-  // Integer types (scalar and array)
-  std::unordered_map<crate::ValueRep, bool, crate::ValueRep::Hash> _dedup_bool;
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_bool_array;
-  std::unordered_map<crate::ValueRep, int32_t, crate::ValueRep::Hash> _dedup_int32;
-  std::unordered_map<crate::ValueRep, uint32_t, crate::ValueRep::Hash> _dedup_uint32;
-  std::unordered_map<crate::ValueRep, int64_t, crate::ValueRep::Hash> _dedup_int64;
-  std::unordered_map<crate::ValueRep, uint64_t, crate::ValueRep::Hash> _dedup_uint64;
-  // Stores ref_index (sample index) for deduplication
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_int32_array;
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_uint32_array;
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_int64_array;
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_uint64_array;
-
-  // Half types (scalar and array)
-  std::unordered_map<crate::ValueRep, value::half, crate::ValueRep::Hash> _dedup_half;
-  std::unordered_map<crate::ValueRep, value::half2, crate::ValueRep::Hash> _dedup_half2;
-  std::unordered_map<crate::ValueRep, value::half3, crate::ValueRep::Hash> _dedup_half3;
-  std::unordered_map<crate::ValueRep, value::half4, crate::ValueRep::Hash> _dedup_half4;
-  // Stores ref_index (sample index) for deduplication
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_half_array;
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_half2_array;
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_half3_array;
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_half4_array;
-
-  // Float types (scalar and array)
-  std::unordered_map<crate::ValueRep, float, crate::ValueRep::Hash> _dedup_float;
-  std::unordered_map<crate::ValueRep, value::float2, crate::ValueRep::Hash> _dedup_float2;
-  std::unordered_map<crate::ValueRep, value::float3, crate::ValueRep::Hash> _dedup_float3;
-  std::unordered_map<crate::ValueRep, value::float4, crate::ValueRep::Hash> _dedup_float4;
-  // Stores ref_index (sample index) for deduplication
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_float_array;
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_float2_array;
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_float3_array;
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_float4_array;
-
-  // Double types (scalar and array)
-  std::unordered_map<crate::ValueRep, double, crate::ValueRep::Hash> _dedup_double;
-  std::unordered_map<crate::ValueRep, value::double2, crate::ValueRep::Hash> _dedup_double2;
-  std::unordered_map<crate::ValueRep, value::double3, crate::ValueRep::Hash> _dedup_double3;
-  std::unordered_map<crate::ValueRep, value::double4, crate::ValueRep::Hash> _dedup_double4;
-  // Stores ref_index (sample index) for deduplication
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_double_array;
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_double2_array;
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_double3_array;
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_double4_array;
-
-  // Quaternion types (scalar and array)
-  std::unordered_map<crate::ValueRep, value::quath, crate::ValueRep::Hash> _dedup_quath;
-  std::unordered_map<crate::ValueRep, value::quatf, crate::ValueRep::Hash> _dedup_quatf;
-  std::unordered_map<crate::ValueRep, value::quatd, crate::ValueRep::Hash> _dedup_quatd;
-  // Stores ref_index (sample index) for deduplication
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_quath_array;
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_quatf_array;
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_quatd_array;
-
-  // Matrix types (scalar and array)
-  std::unordered_map<crate::ValueRep, value::matrix2d, crate::ValueRep::Hash> _dedup_matrix2d;
-  std::unordered_map<crate::ValueRep, value::matrix3d, crate::ValueRep::Hash> _dedup_matrix3d;
-  std::unordered_map<crate::ValueRep, value::matrix4d, crate::ValueRep::Hash> _dedup_matrix4d;
-  // Stores ref_index (sample index) for deduplication
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_matrix2d_array;
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_matrix3d_array;
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_matrix4d_array;
-
-  // String type (scalar and array)
-  std::unordered_map<crate::ValueRep, std::string, crate::ValueRep::Hash> _dedup_string;
-  // Stores ref_index (sample index) for deduplication
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_string_array;
-
-  // Token type (scalar and array)
-  std::unordered_map<crate::ValueRep, value::token, crate::ValueRep::Hash> _dedup_token;
-  // Stores ref_index (sample index) for deduplication
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_token_array;
+  // Shared times cache: deduplicates times arrays that share the same file
+  // offset (ValueRep payload). Multiple TimeSamples in a crate file often
+  // reference the same times array; this avoids redundant copies.
+  std::unordered_map<uint64_t, std::shared_ptr<std::vector<double>>> _shared_times_cache;
 
   // Reusable buffers for integer decompression to avoid repeated allocation
   // These are mutable because they're used as internal working buffers in const-like operations
   mutable std::vector<char> _decomp_comp_buffer;      // Buffer for compressed data
   mutable std::vector<char> _decomp_working_buffer;   // Buffer for decompression working space
+  // Budget already reserved for the persistent decompression buffers above
+  mutable size_t _decomp_comp_buffer_budget{0};
+  mutable size_t _decomp_working_buffer_budget{0};
 
   class Impl;
   Impl *_impl;
 };
+
+// Explicit template instantiation declarations (defined in crate-reader-arrays.cc)
+extern template bool CrateReader::ReadCompressedInts<int32_t>(int32_t*, size_t);
+extern template bool CrateReader::ReadCompressedInts<uint32_t>(uint32_t*, size_t);
+extern template bool CrateReader::ReadCompressedInts<int64_t>(int64_t*, size_t);
+extern template bool CrateReader::ReadCompressedInts<uint64_t>(uint64_t*, size_t);
+extern template bool CrateReader::ReadIntArray<int32_t>(bool, std::vector<int32_t>*);
+extern template bool CrateReader::ReadIntArray<uint32_t>(bool, std::vector<uint32_t>*);
+extern template bool CrateReader::ReadIntArray<int64_t>(bool, std::vector<int64_t>*);
+extern template bool CrateReader::ReadIntArray<uint64_t>(bool, std::vector<uint64_t>*);
+extern template bool CrateReader::ReadIntArrayTyped<int32_t>(bool, TypedArray<int32_t>*);
+extern template bool CrateReader::ReadIntArrayTyped<uint32_t>(bool, TypedArray<uint32_t>*);
+extern template bool CrateReader::ReadIntArrayTyped<int64_t>(bool, TypedArray<int64_t>*);
+extern template bool CrateReader::ReadIntArrayTyped<uint64_t>(bool, TypedArray<uint64_t>*);
+extern template bool CrateReader::ReadListOp<Payload>(ListOp<Payload>*);
+extern template bool CrateReader::ReadListOp<Reference>(ListOp<Reference>*);
+extern template bool CrateReader::ReadListOp<int32_t>(ListOp<int32_t>*);
+extern template bool CrateReader::ReadListOp<int64_t>(ListOp<int64_t>*);
+extern template bool CrateReader::ReadListOp<uint32_t>(ListOp<uint32_t>*);
+extern template bool CrateReader::ReadListOp<uint64_t>(ListOp<uint64_t>*);
+extern template bool CrateReader::ReadListOp<Path>(ListOp<Path>*);
+extern template bool CrateReader::ReadListOp<std::string>(ListOp<std::string>*);
+extern template bool CrateReader::ReadListOp<Token>(ListOp<Token>*);
 
 }  // namespace crate
 }  // namespace tinyusdz

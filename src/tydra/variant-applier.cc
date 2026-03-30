@@ -11,6 +11,7 @@
 
 #include "render-data.hh"
 #include "variant-support.hh"
+#include "common-macros.inc"
 
 namespace tinyusdz {
 namespace tydra {
@@ -111,7 +112,7 @@ bool VariantApplier::ResetToDefaults(RenderScene *scene,
     for (const auto &vs : group.variant_sets) {
       if (vs.default_option_index >= 0 &&
           vs.default_option_index < static_cast<int32_t>(vs.options.size())) {
-        const auto &default_option = vs.options[vs.default_option_index];
+        const auto &default_option = vs.options[static_cast<size_t>(vs.default_option_index)];
 
         if (!ApplyVariantSelection(scene, group.prim_path, vs.name,
                                    default_option.name, err)) {
@@ -157,7 +158,7 @@ bool VariantApplier::ExtractVariantContent(RenderScene *scene,
     return false;
   }
 
-  const auto &group = scene->variant_groups[group_idx];
+  const auto &group = scene->variant_groups[static_cast<size_t>(group_idx)];
 
   // Find the variant set
   auto vs_it = std::find_if(
@@ -200,15 +201,17 @@ bool VariantApplier::SwapNodeMesh(RenderScene *scene,
   }
 
   // Find the node with matching absolute path
-  std::function<Node *(std::vector<Node> &, const std::string &)>
+  std::function<Node *(std::vector<Node> &, const std::string &, int32_t)>
       find_node_recursive = [&](std::vector<Node> &nodes,
-                                 const std::string &target_path) -> Node * {
+                                 const std::string &target_path,
+                                 int32_t depth) -> Node * {
+    if (size_t(depth) >= kMaxDefaultTraversalLimit) return nullptr;
     for (auto &node : nodes) {
       if (node.abs_path == target_path) {
         return &node;
       }
       if (!node.children.empty()) {
-        auto *result = find_node_recursive(node.children, target_path);
+        auto *result = find_node_recursive(node.children, target_path, depth + 1);
         if (result) {
           return result;
         }
@@ -217,7 +220,7 @@ bool VariantApplier::SwapNodeMesh(RenderScene *scene,
     return nullptr;
   };
 
-  Node *target_node = find_node_recursive(scene->nodes, node_abs_path);
+  Node *target_node = find_node_recursive(scene->nodes, node_abs_path, 0);
   if (!target_node) {
     if (err) {
       (*err) += "Node not found: " + node_abs_path + "\n";
@@ -254,7 +257,7 @@ bool VariantApplier::SwapMeshMaterial(RenderScene *scene, int32_t mesh_id,
     return false;
   }
 
-  auto &mesh = scene->meshes[mesh_id];
+  auto &mesh = scene->meshes[static_cast<size_t>(mesh_id)];
 
   // Record the change
   VariantContentChange change;
@@ -281,15 +284,17 @@ bool VariantApplier::SetNodeVisibility(RenderScene *scene,
   // This would require extending RenderScene or the Node structure.
   // For now, we can use mesh_id = -1 to indicate "hidden"
 
-  std::function<Node *(std::vector<Node> &, const std::string &)>
+  std::function<Node *(std::vector<Node> &, const std::string &, int32_t)>
       find_node_recursive = [&](std::vector<Node> &nodes,
-                                 const std::string &target_path) -> Node * {
+                                 const std::string &target_path,
+                                 int32_t depth) -> Node * {
+    if (size_t(depth) >= kMaxDefaultTraversalLimit) return nullptr;
     for (auto &node : nodes) {
       if (node.abs_path == target_path) {
         return &node;
       }
       if (!node.children.empty()) {
-        auto *result = find_node_recursive(node.children, target_path);
+        auto *result = find_node_recursive(node.children, target_path, depth + 1);
         if (result) {
           return result;
         }
@@ -298,7 +303,7 @@ bool VariantApplier::SetNodeVisibility(RenderScene *scene,
     return nullptr;
   };
 
-  Node *target_node = find_node_recursive(scene->nodes, node_abs_path);
+  Node *target_node = find_node_recursive(scene->nodes, node_abs_path, 0);
   if (!target_node) {
     if (err) {
       (*err) += "Node not found: " + node_abs_path + "\n";
@@ -329,6 +334,7 @@ bool VariantApplier::SetNodeVisibility(RenderScene *scene,
 int32_t VariantApplier::FindVariantMesh(RenderScene *scene,
                                          const std::string &prim_path,
                                          const std::string &variant_option_name) {
+  (void)scene;
   if (!enable_caching_) {
     // Without caching, would need to extract from variant definitions
     // Not implemented in this basic version
@@ -347,6 +353,7 @@ int32_t VariantApplier::FindVariantMesh(RenderScene *scene,
 int32_t VariantApplier::FindVariantMaterial(RenderScene *scene,
                                              const std::string &prim_path,
                                              const std::string &variant_option_name) {
+  (void)scene;
   if (!enable_caching_) {
     // Without caching, would need to extract from variant definitions
     // Not implemented in this basic version

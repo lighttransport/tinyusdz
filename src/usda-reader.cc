@@ -3,11 +3,11 @@
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
 // USDA reader
-// TODO:
 //   - [ ] Refactor and unify Prim and PrimSpec related code.
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cerrno>
 #include <cstdlib>
 #include <fstream>
@@ -20,6 +20,7 @@
 
 #include "ascii-parser.hh"
 //#include "asset-resolution.hh"
+#include "core/model-scope.hh"  // Model, Scope
 #include "usdGeom.hh"
 #include "usdSkel.hh"
 #if defined(__wasi__)
@@ -64,8 +65,9 @@
 
 #include "io-util.hh"
 #include "math-util.inc"
-#include "pprinter.hh"
-#include "prim-types.hh"
+#include "pprint-enum.hh"
+#include "core/prim.hh"
+#include "core/prim-spec.hh"
 #include "prim-reconstruct.hh"
 #include "primvar.hh"
 #include "str-util.hh"
@@ -100,6 +102,7 @@ RECONSTRUCT_PRIM_DECL(DiskLight);
 RECONSTRUCT_PRIM_DECL(DistantLight);
 RECONSTRUCT_PRIM_DECL(RectLight);
 RECONSTRUCT_PRIM_DECL(GeometryLight);
+RECONSTRUCT_PRIM_DECL(PortalLight);
 RECONSTRUCT_PRIM_DECL(GPrim);
 RECONSTRUCT_PRIM_DECL(GeomMesh);
 RECONSTRUCT_PRIM_DECL(GeomSubset);
@@ -126,6 +129,403 @@ namespace usda {
 constexpr auto kTag = "[USDA]";
 
 namespace {
+
+static std::string TrimTrailingNewlines(std::string s) {
+  while (!s.empty() && ((s.back() == '\n') || (s.back() == '\r'))) {
+    s.pop_back();
+  }
+  return s;
+}
+
+static bool IsStructuredErrorHeader(const std::string &line) {
+  if (line.empty()) {
+    return false;
+  }
+
+  if ((line.rfind("Error at line ", 0) == 0) ||
+      (line.rfind("Syntax Error at line ", 0) == 0) ||
+      (line.rfind("Semantic Error at line ", 0) == 0) ||
+      (line.rfind("Validation Error at line ", 0) == 0) ||
+      (line.rfind("IO Error at line ", 0) == 0)) {
+    return true;
+  }
+
+  return (line.find("():") != std::string::npos) &&
+         ((line.rfind("/", 0) == 0) || (line.rfind("[", 0) == 0));
+}
+
+static std::vector<std::string> SplitStructuredErrorBlocks(
+    const std::string &text) {
+  std::vector<std::string> blocks;
+  std::stringstream input(text);
+  std::string line;
+  std::string current;
+
+  while (std::getline(input, line)) {
+    if (line.empty()) {
+      continue;
+    }
+
+    if (IsStructuredErrorHeader(line) && !current.empty()) {
+      blocks.emplace_back(TrimTrailingNewlines(current));
+      current.clear();
+    }
+
+    if (!current.empty()) {
+      current += "\n";
+    }
+    current += line;
+  }
+
+  if (!current.empty()) {
+    blocks.emplace_back(TrimTrailingNewlines(current));
+  }
+
+  return blocks;
+}
+
+static std::vector<std::string> SplitBlockLines(const std::string &block) {
+  std::vector<std::string> lines;
+  std::stringstream input(block);
+  std::string line;
+  while (std::getline(input, line)) {
+    lines.emplace_back(line);
+  }
+  return lines;
+}
+
+static std::string JoinBlockLines(const std::vector<std::string> &lines) {
+  std::stringstream ss;
+  for (size_t i = 0; i < lines.size(); ++i) {
+    if (i) {
+      ss << "\n";
+    }
+    ss << lines[i];
+  }
+  return ss.str();
+}
+
+static std::string GetBlockHeaderLine(const std::string &block) {
+  size_t eol = block.find('\n');
+  if (eol == std::string::npos) {
+    return block;
+  }
+
+  return block.substr(0, eol);
+}
+
+static std::string ExtractStructuredMessage(const std::string &header_line) {
+  size_t sig = header_line.rfind("):");
+  if (sig == std::string::npos) {
+    return header_line;
+  }
+
+  size_t space = header_line.find(' ', sig + 2);
+  if (space == std::string::npos) {
+    return header_line;
+  }
+
+  return header_line.substr(space + 1);
+}
+
+static std::string NormalizeRedundantMessage(std::string msg) {
+  msg = TrimTrailingNewlines(msg);
+
+  auto remove_prefix = [&](const std::string &prefix) {
+    if (msg.rfind(prefix, 0) == 0) {
+      msg = msg.substr(prefix.size());
+      return true;
+    }
+    return false;
+  };
+
+  auto remove_suffix = [&](const std::string &suffix) {
+    if ((msg.size() >= suffix.size()) &&
+        (msg.compare(msg.size() - suffix.size(), suffix.size(), suffix) == 0)) {
+      msg.resize(msg.size() - suffix.size());
+      return true;
+    }
+    return false;
+  };
+
+  remove_prefix("Failed to parse ");
+  remove_prefix("Failed to parse");
+  remove_suffix(" parse failed.");
+  remove_suffix(" parse failed");
+  remove_suffix(" failed.");
+  remove_suffix(" failed");
+
+  std::string normalized;
+  normalized.reserve(msg.size());
+  for (char ch : msg) {
+    if ((ch == '`') || (ch == '\'') || (ch == '"') || (ch == '.') ||
+        (ch == ',') || (ch == ':')) {
+      continue;
+    }
+
+    normalized.push_back(static_cast<char>(
+        std::tolower(static_cast<unsigned char>(ch))));
+  }
+
+  return normalized;
+}
+
+static bool IsGenericReconstructWrapperMessage(const std::string &msg) {
+  if (msg.rfind("Failed to reconstruct ", 0) != 0) {
+    return false;
+  }
+
+  return (msg.find(" Prim") != std::string::npos) ||
+         (msg.find(" prim") != std::string::npos);
+}
+
+static bool IsSpecificReconstructMessage(const std::string &msg) {
+  return (msg.rfind("Failed to Reconstruct ", 0) == 0) ||
+         (msg.rfind("Failed to reconstruct ", 0) == 0);
+}
+
+static bool HasTrailingReconstructPrimMarker(const std::string &msg) {
+  return msg.find(": Failed to reconstruct Prim: ") != std::string::npos;
+}
+
+static std::string StripTrailingReconstructPrimMarker(
+    const std::string &block) {
+  std::vector<std::string> lines = SplitBlockLines(block);
+  if (lines.empty()) {
+    return block;
+  }
+
+  const std::string marker = ": Failed to reconstruct Prim: ";
+  size_t pos = lines[0].find(marker);
+  if (pos == std::string::npos) {
+    return block;
+  }
+
+  lines[0] = lines[0].substr(0, pos);
+  return JoinBlockLines(lines);
+}
+
+static bool ShouldStripTrailingReconstructPrimMarker(
+    const std::string &parent_block, const std::string &child_block) {
+  const std::string parent_msg =
+      ExtractStructuredMessage(GetBlockHeaderLine(parent_block));
+  const std::string child_msg =
+      ExtractStructuredMessage(GetBlockHeaderLine(child_block));
+
+  return HasTrailingReconstructPrimMarker(parent_msg) &&
+         IsSpecificReconstructMessage(child_msg);
+}
+
+static bool AreRedundantStructuredBlocks(const std::string &parent_block,
+                                         const std::string &child_block) {
+  const std::string parent_header = GetBlockHeaderLine(parent_block);
+  const std::string child_header = GetBlockHeaderLine(child_block);
+
+  if ((parent_header.rfind("Error at line ", 0) != 0) ||
+      (child_header.rfind("Error at line ", 0) != 0)) {
+    return false;
+  }
+
+  const std::string parent_msg =
+      NormalizeRedundantMessage(ExtractStructuredMessage(parent_header));
+  const std::string child_msg =
+      NormalizeRedundantMessage(ExtractStructuredMessage(child_header));
+
+  if (parent_msg.empty() || child_msg.empty()) {
+    return false;
+  }
+
+  return parent_msg == child_msg;
+}
+
+static std::string MergeParentDetailsIntoChild(const std::string &parent_block,
+                                               const std::string &child_block) {
+  std::vector<std::string> parent_lines = SplitBlockLines(parent_block);
+  std::vector<std::string> child_lines = SplitBlockLines(child_block);
+  if (child_lines.empty()) {
+    return child_block;
+  }
+
+  std::vector<std::string> merged;
+  merged.reserve(parent_lines.size() + child_lines.size());
+  merged.emplace_back(child_lines[0]);
+
+  for (size_t i = 1; i < parent_lines.size(); ++i) {
+    if (parent_lines[i].empty()) {
+      continue;
+    }
+
+    bool duplicate = false;
+    for (size_t j = 1; j < child_lines.size(); ++j) {
+      if (child_lines[j] == parent_lines[i]) {
+        duplicate = true;
+        break;
+      }
+    }
+
+    if (!duplicate) {
+      merged.emplace_back(parent_lines[i]);
+    }
+  }
+
+  for (size_t i = 1; i < child_lines.size(); ++i) {
+    merged.emplace_back(child_lines[i]);
+  }
+
+  return JoinBlockLines(merged);
+}
+
+static bool ShouldMergeReconstructWrapper(const std::string &parent_block,
+                                          const std::string &child_block) {
+  const std::string parent_msg =
+      ExtractStructuredMessage(GetBlockHeaderLine(parent_block));
+  const std::string child_msg =
+      ExtractStructuredMessage(GetBlockHeaderLine(child_block));
+
+  if (!IsGenericReconstructWrapperMessage(parent_msg)) {
+    return false;
+  }
+
+  if (!IsSpecificReconstructMessage(child_msg)) {
+    return false;
+  }
+
+  return NormalizeRedundantMessage(parent_msg) !=
+         NormalizeRedundantMessage(child_msg);
+}
+
+static std::vector<std::string> DeduplicateStructuredBlocks(
+    const std::vector<std::string> &blocks) {
+  std::vector<std::string> deduped;
+  deduped.reserve(blocks.size());
+
+  size_t i = 0;
+  while (i < blocks.size()) {
+    std::string current = blocks[i];
+
+    if ((i + 1) < blocks.size()) {
+      std::string next = blocks[i + 1];
+
+      if (ShouldStripTrailingReconstructPrimMarker(current, next)) {
+        current = StripTrailingReconstructPrimMarker(current);
+      }
+
+      if (AreRedundantStructuredBlocks(current, next)) {
+        ++i;
+        continue;
+      }
+
+      if (ShouldMergeReconstructWrapper(current, next)) {
+        deduped.emplace_back(MergeParentDetailsIntoChild(current, next));
+        i += 2;
+        continue;
+      }
+    }
+
+    deduped.emplace_back(current);
+    ++i;
+  }
+
+  return deduped;
+}
+
+static void AppendIndentedBlock(std::stringstream &ss,
+                                const std::string &block,
+                                size_t depth) {
+  std::stringstream input(block);
+  std::string line;
+  bool first_line = true;
+  const std::string indent(depth * 2, ' ');
+  const std::string detail_indent((depth * 2) + 2, ' ');
+  bool first_detail_line = true;
+
+  while (std::getline(input, line)) {
+    if (first_line) {
+      ss << indent << "- " << line << "\n";
+      first_line = false;
+    } else {
+      if (IsStructuredErrorHeader(line) && first_detail_line) {
+        ss << detail_indent << "-> " << line << "\n";
+      } else {
+        ss << detail_indent << line << "\n";
+      }
+      first_detail_line = false;
+    }
+  }
+}
+
+static std::string FormatStructuredErrorStack(
+    const std::vector<std::string> &blocks,
+    size_t max_blocks = 8) {
+  if (blocks.empty()) {
+    return std::string();
+  }
+
+  std::stringstream ss;
+  ss << "Error stack:\n";
+
+  size_t display_count = blocks.size();
+  bool snipped = false;
+  if ((max_blocks > 0) && (display_count > max_blocks)) {
+    display_count = max_blocks - 1;
+    snipped = true;
+  }
+
+  for (size_t i = 0; i < display_count; ++i) {
+    AppendIndentedBlock(ss, blocks[i], i);
+  }
+
+  if (snipped) {
+    const size_t omitted = blocks.size() - display_count;
+    ss << std::string(display_count * 2, ' ')
+       << "- ... " << omitted << " more frame"
+       << ((omitted == 1) ? "" : "s") << " omitted ...";
+  }
+
+  return TrimTrailingNewlines(ss.str());
+}
+
+static std::string AppendPrimPath(const std::string &msg,
+                                  const std::string &prim_path) {
+  if (prim_path.empty()) {
+    return msg;
+  }
+
+  size_t newline_pos = msg.find('\n');
+  if (newline_pos == std::string::npos) {
+    return msg + "\nPrim path: " + prim_path;
+  }
+
+  std::string result = msg.substr(0, newline_pos);
+  result += "\nPrim path: " + prim_path;
+  result += msg.substr(newline_pos);
+  return result;
+}
+
+static std::string BuildStructuredReadErrorReport(
+    const std::string &read_frame,
+    const std::string &parser_error,
+    const std::string &reconstruct_error,
+    size_t max_blocks) {
+  std::vector<std::string> blocks;
+  blocks.emplace_back(read_frame);
+
+  std::vector<std::string> parser_blocks =
+      SplitStructuredErrorBlocks(parser_error);
+  std::reverse(parser_blocks.begin(), parser_blocks.end());
+  for (const auto &block : parser_blocks) {
+    blocks.emplace_back(block);
+  }
+
+  std::vector<std::string> reconstruct_blocks =
+      SplitStructuredErrorBlocks(reconstruct_error);
+  for (const auto &block : reconstruct_blocks) {
+    blocks.emplace_back(block);
+  }
+
+  return FormatStructuredErrorStack(DeduplicateStructuredBlocks(blocks),
+                                    max_blocks);
+}
 
 // intermediate data structure for VariantSet stmt
 struct VariantNode {
@@ -199,6 +599,7 @@ DEFINE_PRIM_TYPE(DistantLight, kDistantLight, value::TYPE_ID_LUX_DISTANT);
 DEFINE_PRIM_TYPE(CylinderLight, kCylinderLight, value::TYPE_ID_LUX_CYLINDER);
 DEFINE_PRIM_TYPE(RectLight, kRectLight, value::TYPE_ID_LUX_RECT);
 DEFINE_PRIM_TYPE(GeometryLight, kGeometryLight, value::TYPE_ID_LUX_GEOMETRY);
+DEFINE_PRIM_TYPE(PortalLight, kPortalLight, value::TYPE_ID_LUX_PORTAL);
 DEFINE_PRIM_TYPE(Material, kMaterial, value::TYPE_ID_MATERIAL);
 DEFINE_PRIM_TYPE(Shader, kShader, value::TYPE_ID_SHADER);
 DEFINE_PRIM_TYPE(NodeGraph, kNodeGraph, value::TYPE_ID_NODEGRAPH);
@@ -259,33 +660,11 @@ class USDAReader::Impl {
  public:
   Impl(StreamReader *sr) { _parser.SetStream(sr); }
 
-#if 0 // TODO: Remove
-  // Return the flag if the .usda is read from `references`
-  bool IsReferenced() { return _referenced; }
-
-  // Return the flag if the .usda is read from `subLayers`
-  bool IsSubLayered() { return _sub_layered; }
-
-  // Return the flag if the .usda is read from `payload`
-  bool IsPayloaded() { return _payloaded; }
-
-  // Return true if the .udsa is read in the top layer(stage)
-  bool IsToplevel() {
-    return !IsReferenced() && !IsSubLayered() && !IsPayloaded();
-  }
-#endif
 
   void SetBaseDir(const std::string &str) { _base_dir = str; }
 
   void SetFilename(const std::string &str) { _filename = str; }
 
-#if 0
-  ///
-  /// True: create PrimSpec instead of typed Prim.
-  /// Set true if you do USD composition.
-  ///
-  void set_primspec_mode(bool onoff) { _primspec_mode = onoff; }
-#endif
 
   void set_reader_config(const USDAReaderConfig &config) {
     _config = config;
@@ -319,23 +698,30 @@ class USDAReader::Impl {
   }
 
   void PushError(const std::string &s) {
+    if (!_err.empty()) {
+      _err += "\n";
+    }
     _err += s;
   }
 
   void PushWarn(const std::string &s) {
+    if (!_warn.empty()) {
+      _warn += "\n";
+    }
     _warn += s;
   }
 
   template <typename T>
   bool ReconstructPrim(
+      const Path &full_path,
       const Specifier &spec,
       prim::PropertyMap &properties,
       const prim::ReferenceList &references,
       T *out);
 
   bool ProcessVariantSetContent(const uint32_t depth, const std::map<std::string, ascii::AsciiParser::VariantSetContent> &in_variants, std::map<std::string, std::map<std::string, VariantNode>> &dst) {
-    if (depth > 1024 * 1024) {
-      PUSH_ERROR_AND_RETURN("Too deep.");
+    if (depth > 512) {
+      PUSH_ERROR_AND_RETURN("VariantSet nesting too deep (> 512).");
     }
 
     //
@@ -459,7 +845,7 @@ class USDAReader::Impl {
             references = prim.meta.references.value();
           }
 
-          bool ret = ReconstructPrim<T>(spec, properties, references, &prim);
+          bool ret = ReconstructPrim<T>(full_path, spec, properties, references, &prim);
 
           if (!ret) {
             return nonstd::make_unexpected("Failed to reconstruct Prim: " +
@@ -474,45 +860,9 @@ class USDAReader::Impl {
           // NOTE: variantChildren setup is delayed. It will be processed in ConstructPrimSpecTreeRec
           //
           std::map<std::string, std::map<std::string, VariantNode>> variantSets;
-#if 0
-          for (const auto &variantContext : in_variants) {
-            const std::string variant_name = variantContext.first;
-
-            // Convert VariantContent -> VariantNode
-            std::map<std::string, VariantNode> variantNodes;
-            for (const auto &item : variantContext.second) {
-              VariantNode variant;
-              if (!ReconstructPrimMeta(item.second.metas, &variant.metas)) {
-                return nonstd::make_unexpected(fmt::format("Failed to process Prim metadataum in variantSet {} item {} ", variant_name, item.first));
-              }
-              variant.props = item.second.props;
-
-              // child Prim should be already reconstructed.
-              for (const auto &childPrimIdx : item.second.primIndices) {
-                if (childPrimIdx < 0) {
-                  return nonstd::make_unexpected(fmt::format("[InternalError] Invalid primIndex found within VariantSet."));
-                }
-
-                if (size_t(childPrimIdx) >= _prim_nodes.size()) {
-                  return nonstd::make_unexpected(fmt::format("[InternalError] Invalid primIndex found within VariantSet. variantChildPrimIdsx {} Exceeds _prim_nodes.size() {}", childPrimIdx, _prim_nodes.size()));
-                }
-
-                variant.primChildren.push_back(childPrimIdx);
-
-                //_prim_nodes[size_t(childPrimIdx)].parent_is_variant = true;
-              }
-              DCOUT("Add variant: " << item.first);
-              variantNodes.emplace(item.first, std::move(variant));
-            }
-
-            DCOUT("Add variantSet: " << variant_name);
-            variantSets.emplace(variant_name, std::move(variantNodes));
-          }
-#else
           if (!ProcessVariantSetContent(0, in_variants, variantSets)) {
             return nonstd::make_unexpected(fmt::format("[InternalError] Failed to process VariantSet"));
           }
-#endif
 
           // Add to scene graph.
           // NOTE: Scene graph is constructed from bottom up manner(Children
@@ -741,6 +1091,28 @@ class USDAReader::Impl {
 
           _stage.metas().customLayerData = metas.customLayerData;
           _stage.metas().customLayerDataAuthored = metas.customLayerDataAuthored;
+
+          // AOUSD Core Spec layer metadata
+          if (metas.colorConfiguration) {
+            _stage.metas().colorConfiguration = metas.colorConfiguration.value();
+          }
+          if (metas.colorManagementSystem) {
+            _stage.metas().colorManagementSystem = metas.colorManagementSystem.value();
+          }
+          if (metas.owner) {
+            _stage.metas().owner = metas.owner.value();
+          }
+          if (metas.hasOwnedSubLayers) {
+            _stage.metas().hasOwnedSubLayers = metas.hasOwnedSubLayers.value();
+          }
+          if (metas.expressionVariables) {
+            _stage.metas().expressionVariables = metas.expressionVariables.value();
+          }
+
+          // AOUSD Core Spec 10.3.2.6: relocates
+          if (!metas.relocates.empty()) {
+            _stage.metas().layerRelocates = metas.relocates;
+          }
 
           return true;  // ok
         });
@@ -1160,6 +1532,16 @@ class USDAReader::Impl {
               "Payload. got type `"
               << var.type_name() << "`");
         }
+      } else if (meta.first == "doc") {
+        if (auto pv = var.get_value<value::StringData>()) {
+          out->set_doc(pv.value());
+        } else if (auto spv = var.get_value<std::string>()) {
+          out->set_doc(spv.value());
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "(Internal error?) `doc` metadataum is not type `string`. got `"
+              << var.type_name() << "`.");
+        }
       } else if (meta.first == "comment") {
         if (auto pv = var.get_value<value::StringData>()) {
           // Preserve full StringData including has_comment_prefix flag
@@ -1170,14 +1552,14 @@ class USDAReader::Impl {
           out->set_comment(sdata);
         }
       } else {
-        // Must be string value for unregisteredMeta for now.
-        // TODO: infer int, string, token, int[], string[] and token[] type from the value for custom(unregisteredMeta) metadata.
+        // Store unregistered metadata as raw string (OpenUSD-compatible).
+        // The value is stored verbatim and written back unquoted to USDA.
         if (auto spv = var.get_value<std::string>()) {
           out->unregisteredMetas[meta.first] = spv.value();
         } else {
-          PUSH_WARN("(Internal) unregistered Metadata must be type string for now, but got type " + var.type_name());
+          // Convert non-string values to their string representation
+          out->unregisteredMetas[meta.first] = value::pprint_value(var.get_raw_value());
         }
-
       }
     }
 
@@ -1217,43 +1599,6 @@ class USDAReader::Impl {
  private:
   //bool stage_reconstructed_{false};
 
-#if 0
-  ///
-  /// -- Iterators --
-  ///
-  class PrimIterator {
-   public:
-    PrimIterator(const std::vector<size_t> &indices,
-                 const std::vector<value::Value> &values, size_t idx = 0)
-        : _indices(indices), _values(values), _idx(idx) {}
-
-    const value::Value &operator*() const { return _values[_indices[_idx]]; }
-
-    PrimIterator &operator++() {
-      _idx++;
-      return *this;
-    }
-    bool operator!=(const PrimIterator &rhs) { return _idx != rhs._idx; }
-
-   private:
-    const std::vector<size_t> &_indices;
-    const std::vector<value::Value> &_values;
-    size_t _idx{0};
-  };
-  friend class PrimIterator;
-
-  // currently const only
-  using const_prim_iterator = const PrimIterator;
-
-  // Iterate over toplevel prims
-  const_prim_iterator PrimBegin() {
-    return PrimIterator(_toplevel_prims, _prims);
-  }
-  const_prim_iterator PrimEnd() {
-    return PrimIterator(_toplevel_prims, _prims, _toplevel_prims.size());
-  }
-  size_t PrimSize() { return _toplevel_prims.size(); }
-#endif
 
   ///
   /// -- Members --
@@ -1268,9 +1613,6 @@ class USDAReader::Impl {
   std::string _filename;  // Used for displaying error context from source file
   //AssetResolutionResolver _arr;
 
-#if 0 // TODO: Remove since not used.
-  nonstd::optional<tinyusdz::Stage> _imported_scene;  // Imported scene.
-#endif
 
   // "class" defs
   //std::map<std::string, Klass> _klasses;
@@ -1501,20 +1843,6 @@ bool ConstructVariantPrimTreeRec(const size_t variantPrimIdx,
           return false;
         }
 
-#if 0
-        // extract variant part.
-        DCOUT("childVariant.size " << variantChildPrim.variantSets().size());
-        for (auto &childVariantItem : variantChildPrim.variantSets())
-        {
-          DCOUT("childVariant " << childVariantItem.first);
-          std::map<std::string, Variant> childVariant;
-          for (auto &vitem : childVariantItem.second.variantSet) {
-            childVariant[vitem.first] = vitem.second;
-          }
-          variant.variantSets()[item.first].name = item.first;
-          variant.variantSets()[item.first].variantSet = childVariant;
-        }
-#endif
       }
 
       for (const int64_t vidx : item.second.primChildren) {
@@ -1638,20 +1966,6 @@ bool ConstructPrimTreeRec(const size_t primIdx,
           return false;
         }
 
-#if 0
-        // extract variant part.
-        DCOUT("childVariant.size " << variantChildPrim.variantSets().size());
-        for (auto &childVariantItem : variantChildPrim.variantSets())
-        {
-          DCOUT("childVariant " << childVariantItem.first);
-          std::map<std::string, Variant> childVariant;
-          for (auto &vitem : childVariantItem.second.variantSet) {
-            childVariant[vitem.first] = vitem.second;
-          }
-          variant.variantSets()[item.first].name = item.first;
-          variant.variantSets()[item.first].variantSet = childVariant;
-        }
-#endif
       }
 
       for (const int64_t vidx : item.second.primChildren) {
@@ -1743,71 +2057,86 @@ bool USDAReader::Impl::ReconstructStage() {
 
 template <>
 bool USDAReader::Impl::ReconstructPrim(
+    const Path &full_path,
     const Specifier &spec,
     prim::PropertyMap &properties,
     const prim::ReferenceList &references,
     Xform *xform) {
 
+  prim::PrimReconstructOptions options;
+  const int source_column_width = _config.error_detail ? (1024 * 1024) : 40;
+  options.format_property_source_diagnostic =
+      [&](const std::string &property_name) {
+        return _parser.FormatPrimAttrSourceDiagnostic(
+            full_path.full_path_name(), property_name, source_column_width);
+      };
+  options.format_property_path =
+      [&](const std::string &property_name) {
+        return full_path.full_path_name() + "." + property_name;
+      };
+  options.format_prim_source_diagnostic = [&]() {
+    return _parser.FormatPrimSourceDiagnostic(full_path.full_path_name(),
+                                             source_column_width);
+  };
+  options.format_prim_path = [&]() {
+    return full_path.full_path_name();
+  };
+
   std::string err;
-  if (!prim::ReconstructPrim(spec, properties, references, xform, &_warn, &err)) {
-    PUSH_ERROR_AND_RETURN("Failed to reconstruct Xform Prim: " << err);
+  if (!prim::ReconstructPrim(spec, properties, references, xform, &_warn, &err,
+                             options)) {
+    PUSH_ERROR_AND_RETURN(
+        AppendPrimPath("Failed to reconstruct `Xform` prim:\n" + err,
+                       full_path.full_path_name()));
   }
   return true;
 }
 
-#if 0
-///
-/// -- RegisterReconstructCallback specializations
-///
-
-template <>
-bool USDAReader::Impl::ReconstructPrim(
-    const Specifier &spec,
-    const prim::PropertyMap &properties,
-    const prim::ReferenceList &references,
-    GPrim *gprim) {
-  (void)spec;
-  (void)gprim;
-
-  DCOUT("TODO: Reconstruct GPrim.");
-
-  PUSH_WARN("TODO: Reconstruct GPrim.");
-
-  return true;
-}
-
-
-template <>
-bool USDAReader::Impl::ReconstructPrim<NodeGraph>(
-    const Specifier &spec,
-    const prim::PropertyMap &properties,
-    const prim::ReferenceList &references,
-    NodeGraph *graph) {
-  (void)properties;
-  (void)references;
-  (void)graph;
-
-  PUSH_WARN("TODO: reconstruct NodeGrah.");
-
-  return true;
-}
-#endif
 
 // Generic Prim handler. T = Xform, GeomMesh, ...
 template <typename T>
 bool USDAReader::Impl::ReconstructPrim(
+    const Path &full_path,
     const Specifier &spec,
     prim::PropertyMap &properties,
     const prim::ReferenceList &references,
     T *prim) {
 
   prim::PrimReconstructOptions options;
+  const int source_column_width = _config.error_detail ? (1024 * 1024) : 40;
   options.strict_allowedToken_check = _config.strict_allowedToken_check;
+  // MaterialX validation options
+  options.validate_mtlx_connection_types = _config.validate_mtlx_connection_types || _config.strict_mtlx_check;
+  options.validate_mtlx_info_id = _config.validate_mtlx_info_id || _config.strict_mtlx_check;
+  options.validate_mtlx_connection_targets = _config.validate_mtlx_connection_targets || _config.strict_mtlx_check;
+  options.validate_mtlx_duplicate_names = _config.validate_mtlx_duplicate_names || _config.strict_mtlx_check;
+  options.validate_mtlx_index_bounds = _config.validate_mtlx_index_bounds || _config.strict_mtlx_check;
+  options.strict_mtlx_check = _config.strict_mtlx_check;
+  options.format_property_source_diagnostic =
+      [&](const std::string &property_name) {
+        return _parser.FormatPrimAttrSourceDiagnostic(
+            full_path.full_path_name(), property_name, source_column_width);
+      };
+  options.format_property_path =
+      [&](const std::string &property_name) {
+        return full_path.full_path_name() + "." + property_name;
+      };
+  options.format_prim_source_diagnostic = [&]() {
+    return _parser.FormatPrimSourceDiagnostic(full_path.full_path_name(),
+                                             source_column_width);
+  };
+  options.format_prim_path = [&]() {
+    return full_path.full_path_name();
+  };
   DCOUT("strict_allowedToken_check " << options.strict_allowedToken_check);
 
   std::string err;
   if (!prim::ReconstructPrim(spec, properties, references, prim, &_warn, &err, options)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Failed to reconstruct {} Prim: {}", value::TypeTraits<T>::type_name(), err));
+    PUSH_ERROR_AND_RETURN(
+        AppendPrimPath(
+            fmt::format("Failed to reconstruct `{}` prim:\n{}",
+                        value::TypeTraits<T>::type_name(), err),
+            full_path.full_path_name()));
   }
   return true;
 }
@@ -1858,6 +2187,7 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<GeomBasisCurves>();
   RegisterReconstructCallback<GeomNurbsCurves>();
   RegisterReconstructCallback<GeomCamera>();
+  RegisterReconstructCallback<GeomPointInstancer>();
 
   RegisterReconstructCallback<Material>();
   RegisterReconstructCallback<Shader>();
@@ -1872,6 +2202,7 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<CylinderLight>();
   RegisterReconstructCallback<RectLight>();
   RegisterReconstructCallback<GeometryLight>();
+  RegisterReconstructCallback<PortalLight>();
 
   RegisterReconstructCallback<SkelRoot>();
   RegisterReconstructCallback<Skeleton>();
@@ -1889,13 +2220,18 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
 
   if (!ret) {
     std::string error_msg;
+    const int source_column_width = _config.error_detail ? (1024 * 1024) : 40;
     if (!_filename.empty()) {
-      error_msg = _parser.GetErrorWithSourceContext(_filename);
+      error_msg = _parser.GetErrorWithSourceContext(_filename, 2,
+                                                   source_column_width);
     }
     if (error_msg.empty()) {
       error_msg = _parser.GetError();
     }
-    PUSH_ERROR_AND_RETURN("Parse failed:\n" + error_msg);
+    _err = BuildStructuredReadErrorReport(
+        fmt::format("{}:Read():{} Failed to parse USDA", __FILE__, __LINE__),
+        error_msg, _err, _config.error_detail ? size_t(0) : size_t(8));
+    return false;
   }
 
 

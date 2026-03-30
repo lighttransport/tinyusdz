@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "nonstd/optional.hpp"
+#include "value-types.hh"
 
 namespace tinyusdz {
 
@@ -359,6 +360,20 @@ class Path {
     return LessThan(*this, rhs);
   }
 
+  ///
+  /// Estimate memory usage of this Path in bytes
+  ///
+  size_t estimate_memory_usage() const {
+    size_t total = sizeof(Path);
+    total += _prim_part.capacity();
+    total += _prop_part.capacity();
+    total += _variant_part.capacity();
+    total += _variant_selection_part.capacity();
+    total += _variant_part_str.capacity();
+    total += _element.capacity();
+    return total;
+  }
+
  private:
   void _update(const std::string &p, const std::string &prop);
 
@@ -376,5 +391,18 @@ class Path {
 };
 
 bool operator==(const Path &lhs, const Path &rhs);
+
+namespace value {
+
+#include "define-type-trait.inc"
+
+DEFINE_TYPE_TRAIT(Path, "Path", TYPE_ID_PATH, 1);
+// TODO(syoyo): Define as 1D array?
+DEFINE_TYPE_TRAIT(std::vector<Path>, "PathVector", TYPE_ID_PATH_VECTOR, 1);
+
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
+
+}  // namespace value
 
 }  // namespace tinyusdz

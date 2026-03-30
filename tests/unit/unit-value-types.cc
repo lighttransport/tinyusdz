@@ -270,3 +270,21 @@ void role_type_cast_test(void) {
 
 }
 
+void value_types_typed_array_memory_test(void) {
+  {
+    TypedArray<float> arr;
+    arr.reserve(4096);
+    arr.resize(16);
+
+    value::Value val(arr);
+    size_t estimate = val.estimate_memory_usage();
+    TEST_CHECK(estimate >= arr.memory_usage());
+  }
+
+  {
+    ChunkedTypedArray<float> arr(4096);
+    value::Value val(arr);
+    size_t estimate = val.estimate_memory_usage();
+    TEST_CHECK(estimate >= arr.memory_usage());
+  }
+}

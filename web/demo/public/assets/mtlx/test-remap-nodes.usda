@@ -1,0 +1,77 @@
+#usda 1.0
+(
+    doc = "Hand-written test: ND_remap_float nodes for metalness and roughness"
+    metersPerUnit = 1
+    upAxis = "Z"
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Sphere "RemapTest"
+    (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        double radius = 1.0
+        rel material:binding = </root/_materials/RemapTest>
+    }
+
+    def Scope "_materials"
+    {
+        def Material "RemapTest"
+        (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            token outputs:surface.connect = </root/_materials/RemapTest/shader.outputs:surface>
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/RemapTest/shader.outputs:surface>
+
+            def Shader "shader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                float inputs:base_weight = 1
+                color3f inputs:base_color = (0.6, 0.1, 0.9)
+                float inputs:base_metalness.connect = </root/_materials/RemapTest/NodeGraphs.outputs:remap_metalness_out>
+                float inputs:base_diffuse_roughness = 0
+                float inputs:specular_weight = 1
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_roughness.connect = </root/_materials/RemapTest/NodeGraphs.outputs:remap_roughness_out>
+                float inputs:specular_ior = 1.5
+                float inputs:coat_weight = 0
+                float inputs:emission_luminance = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                float outputs:remap_metalness_out.connect = </root/_materials/RemapTest/NodeGraphs/remap_metalness.outputs:out>
+                float outputs:remap_roughness_out.connect = </root/_materials/RemapTest/NodeGraphs/remap_roughness.outputs:out>
+
+                def Shader "remap_metalness"
+                {
+                    uniform token info:id = "ND_remap_float"
+                    float inputs:in = 0.5
+                    float inputs:inlow = 0
+                    float inputs:inhigh = 1
+                    float inputs:outlow = 0.2
+                    float inputs:outhigh = 0.8
+                    float outputs:out
+                }
+
+                def Shader "remap_roughness"
+                {
+                    uniform token info:id = "ND_remap_float"
+                    float inputs:in = 0.7
+                    float inputs:inlow = 0
+                    float inputs:inhigh = 1
+                    float inputs:outlow = 0.1
+                    float inputs:outhigh = 0.6
+                    float outputs:out
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,19 @@
+#usda 1.0
+def "Containers" (
+    customData = {
+        string key1 = "value1"
+        int key2 = 42
+        dictionary nested = {
+            bool flag = true
+            float[] arr = [1.0, 2.0, 3.0]
+        }
+    }
+)
+{
+    float[] emptyArray = []
+    int[] intArray = [1, 2, 3, 4, 5]
+    float3[] pointArray = [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
+    string[] stringArray = ["hello", "world"]
+    color3f[] colorArray = [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
+    matrix4d[] matrixArray = [((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))]
+}

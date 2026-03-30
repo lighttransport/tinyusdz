@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "nonstd/optional.hpp"
@@ -60,6 +61,11 @@ class Relationship {
     type = Type::PathVector;
   }
 
+  void set(std::vector<Path> &&pv) {
+    targetPathVector = std::move(pv);
+    type = Type::PathVector;
+  }
+
   void set(const value::ValueBlock &v) {
     (void)v;
     type = Type::ValueBlock;
@@ -83,6 +89,9 @@ class Relationship {
   AttrMeta &metas() { return _metas; }
 
   size_t estimate_memory_usage() const;
+
+  /// Estimate actual (size-based) memory usage.
+  size_t estimate_actual_usage() const;
 
  private:
   AttrMeta _metas;
@@ -126,6 +135,12 @@ class RelationshipProperty {
 
   bool authored() const { return _authored; }
 
+  // Clear the relationship and reset authored state
+  void reset() {
+    _authored = false;
+    _relationship = Relationship();
+  }
+
   // Declare-only: e.g. `rel myrel`
   void set_empty() {
     _relationship.set_novalue();
@@ -139,6 +154,11 @@ class RelationshipProperty {
 
   void set(const std::vector<Path> &pv) {
     _relationship.set(pv);
+    _authored = true;
+  }
+
+  void set(std::vector<Path> &&pv) {
+    _relationship.set(std::move(pv));
     _authored = true;
   }
 
@@ -243,5 +263,16 @@ class TypedConnection {
   AttrMeta _metas;
   ListEditQual _listOpQual{ListEditQual::ResetToExplicit};
 };
+
+namespace value {
+
+#include "define-type-trait.inc"
+
+DEFINE_TYPE_TRAIT(Relationship, "Relationship", TYPE_ID_RELATIONSHIP, 1);
+
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
+
+}  // namespace value
 
 }  // namespace tinyusdz

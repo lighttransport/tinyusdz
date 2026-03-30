@@ -381,7 +381,7 @@ json ThreeJSMaterialExporter::ConvertOpenPBRToNodeMaterial(const OpenPBRSurfaceS
   add_param("coat_anisotropy", shader.coat_anisotropy);
   add_param("coat_rotation", shader.coat_rotation);
   add_param("coat_ior", shader.coat_ior);
-  setJsonParameter(surface_node["inputs"], "coat_affect_color", vec3ToJson(shader.coat_affect_color.value), use_grouped);
+  add_param("coat_affect_color", shader.coat_affect_color);
   add_param("coat_affect_roughness", shader.coat_affect_roughness);
 
   // Emission
@@ -713,7 +713,7 @@ bool ThreeJSMaterialExporter::ExportMaterialX(const RenderMaterial& material,
     export_float("coat_anisotropy", shader.coat_anisotropy);
     export_float("coat_rotation", shader.coat_rotation);
     export_float("coat_ior", shader.coat_ior);
-    export_color3("coat_affect_color", shader.coat_affect_color);
+    export_float("coat_affect_color", shader.coat_affect_color);
     export_float("coat_affect_roughness", shader.coat_affect_roughness);
 
     // Emission parameters
@@ -784,7 +784,7 @@ bool ThreeJSMaterialExporter::ExportMaterialX(const RenderMaterial& material,
     export_texture_node("coat_anisotropy", shader.coat_anisotropy, "float");
     export_texture_node("coat_rotation", shader.coat_rotation, "float");
     export_texture_node("coat_ior", shader.coat_ior, "float");
-    export_texture_node_vec3("coat_affect_color", shader.coat_affect_color, "color3");
+    export_texture_node("coat_affect_color", shader.coat_affect_color, "float");
     export_texture_node("coat_affect_roughness", shader.coat_affect_roughness, "float");
 
     export_texture_node("emission_luminance", shader.emission_luminance, "float");
@@ -949,14 +949,12 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
   switch (node.nodeType) {
     case NodeType::Mesh:
       obj["type"] = "Mesh";
-      // Find associated mesh data
-      for (const auto& mesh : scene.meshes) {
-        if (mesh.prim_name == node.prim_name) {
-          obj["geometry"] = std::to_string(mesh.handle);
-          if (mesh.material_id != -1 && static_cast<size_t>(mesh.material_id) < scene.materials.size()) {
-            obj["material"] = std::to_string(scene.materials[static_cast<size_t>(mesh.material_id)].handle);
-          }
-          break;
+      // Use node.id to directly index mesh data (O(1) instead of O(N) scan)
+      if (node.id >= 0 && static_cast<size_t>(node.id) < scene.meshes.size()) {
+        const auto& mesh = scene.meshes[static_cast<size_t>(node.id)];
+        obj["geometry"] = std::to_string(mesh.handle);
+        if (mesh.material_id != -1 && static_cast<size_t>(mesh.material_id) < scene.materials.size()) {
+          obj["material"] = std::to_string(scene.materials[static_cast<size_t>(mesh.material_id)].handle);
         }
       }
       break;
@@ -965,6 +963,9 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
       break;
     case NodeType::Camera:
       obj["type"] = "Camera";
+      break;
+    case NodeType::SkelRoot:
+      obj["type"] = "SkelRoot";
       break;
     case NodeType::Skeleton:
       obj["type"] = "Skeleton";
@@ -1254,7 +1255,8 @@ json ThreeJSSceneExporter::ConvertAnimation(const AnimationClip& anim) {
     if (channel.target_type == ChannelTargetType::SceneNode) {
       target_name = "node_" + std::to_string(channel.target_node);
     } else {
-      target_name = "joint_" + std::to_string(channel.joint_id);
+      target_name = "skel_" + std::to_string(channel.skeleton_id) +
+                    "_joint_" + std::to_string(channel.joint_id);
     }
 
     // Create track based on animation path

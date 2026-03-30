@@ -5,8 +5,6 @@
 // To deal with too many sections in generated .obj error(happens in MinGW and MSVC)
 // Split ParseTimeSamples to two .cc files.
 //
-// TODO
-// - [x] Rewrite code with less C++ template code.
 
 #include <cstdio>
 #ifdef _MSC_VER
@@ -68,14 +66,13 @@
 #include "tiny-format.hh"
 //
 #include "io-util.hh"
-#include "pprinter.hh"
-#include "prim-types.hh"
+#include "core/prim-spec.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
-#include "timesamples.hh"  // For PODTimeSamples
+#include "timesamples.hh"  // For unified binary storage
 //
 #include "common-macros.inc"
 
@@ -83,23 +80,58 @@ namespace tinyusdz {
 
 namespace ascii {
 
-// Templated function to parse typed TimeSamples for POD types
+#define TINYUSDZ_FOR_EACH_BINARY_TIMESAMPLE_TYPE(X) \
+  X(int32_t)                                        \
+  X(uint32_t)                                       \
+  X(int64_t)                                        \
+  X(uint64_t)                                       \
+  X(value::half)                                    \
+  X(value::half2)                                   \
+  X(value::half3)                                   \
+  X(value::half4)                                   \
+  X(float)                                          \
+  X(value::float2)                                  \
+  X(value::float3)                                  \
+  X(value::float4)                                  \
+  X(double)                                         \
+  X(value::double2)                                 \
+  X(value::double3)                                 \
+  X(value::double4)                                 \
+  X(value::int2)                                    \
+  X(value::int3)                                    \
+  X(value::int4)                                    \
+  X(value::quath)                                   \
+  X(value::quatf)                                   \
+  X(value::quatd)                                   \
+  X(value::color3f)                                 \
+  X(value::color4f)                                 \
+  X(value::color3d)                                 \
+  X(value::color4d)                                 \
+  X(value::vector3f)                                \
+  X(value::normal3f)                                \
+  X(value::point3f)                                 \
+  X(value::texcoord2f)                              \
+  X(value::texcoord3f)                              \
+  X(value::matrix2f)                                \
+  X(value::matrix3f)                                \
+  X(value::matrix4f)                                \
+  X(value::matrix2d)                                \
+  X(value::matrix3d)                                \
+  X(value::matrix4d)
+
+// Templated function to parse typed TimeSamples for types that use binary storage.
 template<typename T>
 bool AsciiParser::ParseTypedTimeSamples(value::TimeSamples *ts_out) {
-  // Check if T is POD
-  if (!(std::is_trivial<T>::value && std::is_standard_layout<T>::value)) {
-    // Non-POD type - return false to use fallback
+  if (!value::UsesBinaryTimesampleStorageType(value::TypeTraits<T>::type_id())) {
     return false;
   }
   if (!ts_out) {
     return false;
   }
 
-  // Try to initialize with POD storage
-  if (!ts_out->init(value::TypeTraits<T>::type_id())) {
-    // Already initialized with different type
-    return false;
-  }
+  // Set type hint for metadata. The add_sample<T>() calls below auto-detect
+  // the backend on first call, so this is just for metadata consistency.
+  ts_out->set_type_id(value::TypeTraits<T>::type_id());
 
   if (!Expect('{')) {
     return false;
@@ -145,7 +177,7 @@ bool AsciiParser::ParseTypedTimeSamples(value::TimeSamples *ts_out) {
     // Check for None/ValueBlock
     if (MaybeNone()) {
       std::string err;
-      if (!ts_out->add_pod_blocked_sample<T>(timeVal, &err)) {
+      if (!ts_out->add_blocked_sample<T>(timeVal, &err)) {
         if (!err.empty()) {
           PushError(err);
         }
@@ -160,7 +192,7 @@ bool AsciiParser::ParseTypedTimeSamples(value::TimeSamples *ts_out) {
       }
 
       std::string err;
-      if (!ts_out->add_pod_sample(timeVal, typed_val, &err)) {
+      if (!ts_out->add_sample(timeVal, typed_val, &err)) {
         if (!err.empty()) {
           PushError(err);
         }
@@ -232,102 +264,8 @@ bool AsciiParser::ParseTimeSampleValue(const uint32_t type_id, value::Value *res
     val = value::Value(typed_val); \
   } else
 
-  // NOTE: `string` does not support multi-line string.
-  PARSE_TYPE(type_id, value::AssetPath)
-  PARSE_TYPE(type_id, value::token)
-  PARSE_TYPE(type_id, std::string)
-  // Boolean
-  PARSE_TYPE(type_id, bool)
-  // Int types
-  PARSE_TYPE(type_id, int32_t)
-  PARSE_TYPE(type_id, value::int2)
-  PARSE_TYPE(type_id, value::int3)
-  PARSE_TYPE(type_id, value::int4)
-  // Unsigned int types
-  PARSE_TYPE(type_id, uint32_t)
-  PARSE_TYPE(type_id, value::uint2)
-  PARSE_TYPE(type_id, value::uint3)
-  PARSE_TYPE(type_id, value::uint4)
-  // Char types (int8_t)
-  PARSE_TYPE(type_id, char)
-  PARSE_TYPE(type_id, value::char2)
-  PARSE_TYPE(type_id, value::char3)
-  PARSE_TYPE(type_id, value::char4)
-  // Uchar types (uint8_t)
-  PARSE_TYPE(type_id, uint8_t)
-  PARSE_TYPE(type_id, value::uchar2)
-  PARSE_TYPE(type_id, value::uchar3)
-  PARSE_TYPE(type_id, value::uchar4)
-  // Short types (int16_t)
-  PARSE_TYPE(type_id, int16_t)
-  PARSE_TYPE(type_id, value::short2)
-  PARSE_TYPE(type_id, value::short3)
-  PARSE_TYPE(type_id, value::short4)
-  // Ushort types (uint16_t)
-  PARSE_TYPE(type_id, uint16_t)
-  PARSE_TYPE(type_id, value::ushort2)
-  PARSE_TYPE(type_id, value::ushort3)
-  PARSE_TYPE(type_id, value::ushort4)
-  // 64-bit integer types
-  PARSE_TYPE(type_id, int64_t)
-  PARSE_TYPE(type_id, uint64_t)
-  // Half precision types
-  PARSE_TYPE(type_id, value::half)
-  PARSE_TYPE(type_id, value::half2)
-  PARSE_TYPE(type_id, value::half3)
-  PARSE_TYPE(type_id, value::half4)
-  // Float types
-  PARSE_TYPE(type_id, float)
-  PARSE_TYPE(type_id, value::float2)
-  PARSE_TYPE(type_id, value::float3)
-  PARSE_TYPE(type_id, value::float4)
-  // Double types
-  PARSE_TYPE(type_id, double)
-  PARSE_TYPE(type_id, value::double2)
-  PARSE_TYPE(type_id, value::double3)
-  PARSE_TYPE(type_id, value::double4)
-  // Quaternion types
-  PARSE_TYPE(type_id, value::quath)
-  PARSE_TYPE(type_id, value::quatf)
-  PARSE_TYPE(type_id, value::quatd)
-  // Color types (half precision)
-  PARSE_TYPE(type_id, value::color3h)
-  PARSE_TYPE(type_id, value::color4h)
-  // Color types (float precision)
-  PARSE_TYPE(type_id, value::color3f)
-  PARSE_TYPE(type_id, value::color4f)
-  // Color types (double precision)
-  PARSE_TYPE(type_id, value::color3d)
-  PARSE_TYPE(type_id, value::color4d)
-  // Vector types
-  PARSE_TYPE(type_id, value::vector3h)
-  PARSE_TYPE(type_id, value::vector3f)
-  PARSE_TYPE(type_id, value::vector3d)
-  // Normal types
-  PARSE_TYPE(type_id, value::normal3h)
-  PARSE_TYPE(type_id, value::normal3f)
-  PARSE_TYPE(type_id, value::normal3d)
-  // Point types
-  PARSE_TYPE(type_id, value::point3h)
-  PARSE_TYPE(type_id, value::point3f)
-  PARSE_TYPE(type_id, value::point3d)
-  // Texcoord types
-  PARSE_TYPE(type_id, value::texcoord2h)
-  PARSE_TYPE(type_id, value::texcoord2f)
-  PARSE_TYPE(type_id, value::texcoord2d)
-  PARSE_TYPE(type_id, value::texcoord3h)
-  PARSE_TYPE(type_id, value::texcoord3f)
-  PARSE_TYPE(type_id, value::texcoord3d)
-  // Matrix types (float)
-  PARSE_TYPE(type_id, value::matrix2f)
-  PARSE_TYPE(type_id, value::matrix3f)
-  PARSE_TYPE(type_id, value::matrix4f)
-  // Matrix types (double)
-  PARSE_TYPE(type_id, value::matrix2d)
-  PARSE_TYPE(type_id, value::matrix3d)
-  PARSE_TYPE(type_id, value::matrix4d)
-  // Frame type (same as matrix4d)
-  PARSE_TYPE(type_id, value::frame4d) {
+#include "ascii-parser-timesamples-type-list.inc"
+  {
     PUSH_ERROR_AND_RETURN(" : TODO: timeSamples type " + value::GetTypeName(type_id));
   }
 
@@ -353,7 +291,7 @@ bool AsciiParser::ParseTimeSampleValue(const std::string &type_name, value::Valu
 bool AsciiParser::ParseTimeSamples(const std::string &type_name,
                                    value::TimeSamples *ts_out) {
 
-  // Get type_id to check if it's a POD type
+  // Get type_id to check whether unified binary storage can be used.
   nonstd::optional<uint32_t> type_id = value::TryGetTypeId(type_name);
   if (!type_id) {
     PUSH_ERROR_AND_RETURN("Unknown type for timeSamples: " + type_name);
@@ -365,66 +303,27 @@ bool AsciiParser::ParseTimeSamples(const std::string &type_name,
     ts_out->clear();
   }
 
-  // Try optimized path for POD types first
-  // IMPORTANT: Save cursor position BEFORE attempting POD path
-  // The POD path will consume the '{' if it tries to parse,
+  // Try optimized binary-serializable parsing first.
+  // IMPORTANT: Save cursor position BEFORE attempting binary-storage path
+  // The typed path will consume the '{' if it tries to parse,
   // but we need to restore position for the generic fallback path
   uint64_t saved_cursor = CurrLoc();
-#define TRY_POD_TYPE(__type)                                        \
-  if (type_id.value() == value::TypeTraits<__type>::type_id()) {   \
-    if (ParseTypedTimeSamples<__type>(ts_out)) {                    \
-      return true;                                                  \
-    }                                                                \
-    /* POD path failed - restore cursor to original position */ \
-    /* so the generic fallback can parse from the beginning */ \
-    SeekTo(saved_cursor);                                           \
+#define TRY_BINARY_TYPE(__type)                                   \
+  if (type_id.value() == value::TypeTraits<__type>::type_id()) {  \
+    if (ParseTypedTimeSamples<__type>(ts_out)) {                  \
+      return true;                                                \
+    }                                                             \
+    /* typed path failed - restore cursor to original position */ \
+    /* so the generic fallback can parse from the beginning */    \
+    SeekTo(saved_cursor);                                         \
   }
 
-  // Try POD types with optimized parsing
-  // Note: only truly POD types - those that are trivial and standard layout
-  TRY_POD_TYPE(bool)
-  TRY_POD_TYPE(int32_t)
-  TRY_POD_TYPE(uint32_t)
-  TRY_POD_TYPE(int64_t)
-  TRY_POD_TYPE(uint64_t)
-  TRY_POD_TYPE(value::half)
-  TRY_POD_TYPE(value::half2)
-  TRY_POD_TYPE(value::half3)
-  TRY_POD_TYPE(value::half4)
-  TRY_POD_TYPE(float)
-  TRY_POD_TYPE(value::float2)
-  TRY_POD_TYPE(value::float3)
-  TRY_POD_TYPE(value::float4)
-  TRY_POD_TYPE(double)
-  TRY_POD_TYPE(value::double2)
-  TRY_POD_TYPE(value::double3)
-  TRY_POD_TYPE(value::double4)
-  TRY_POD_TYPE(value::int2)
-  TRY_POD_TYPE(value::int3)
-  TRY_POD_TYPE(value::int4)
-  TRY_POD_TYPE(value::quath)
-  TRY_POD_TYPE(value::quatf)
-  TRY_POD_TYPE(value::quatd)
-  TRY_POD_TYPE(value::color3f)
-  TRY_POD_TYPE(value::color4f)
-  TRY_POD_TYPE(value::color3d)
-  TRY_POD_TYPE(value::color4d)
-  TRY_POD_TYPE(value::vector3f)
-  TRY_POD_TYPE(value::normal3f)
-  TRY_POD_TYPE(value::point3f)
-  TRY_POD_TYPE(value::texcoord2f)
-  TRY_POD_TYPE(value::texcoord3f)
-  // Matrix types - now trivial with default constructors
-  TRY_POD_TYPE(value::matrix2f)
-  TRY_POD_TYPE(value::matrix3f)
-  TRY_POD_TYPE(value::matrix4f)
-  TRY_POD_TYPE(value::matrix2d)
-  TRY_POD_TYPE(value::matrix3d)
-  TRY_POD_TYPE(value::matrix4d)
+  // Try binary-storage numeric, role, quaternion, and matrix types.
+  TINYUSDZ_FOR_EACH_BINARY_TIMESAMPLE_TYPE(TRY_BINARY_TYPE)
 
-#undef TRY_POD_TYPE
+#undef TRY_BINARY_TYPE
 
-  // Fall back to generic value::Value-based parsing for non-POD types
+  // Fall back to generic value::Value-based parsing for other types.
   // (strings, tokens, paths, arrays, etc.)
   value::TimeSamples ts;
 
@@ -532,46 +431,14 @@ bool AsciiParser::ParseTimeSamples(const std::string &type_name,
   return true;
 }
 
-// Explicit template instantiations for POD types
-template bool AsciiParser::ParseTypedTimeSamples<bool>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<int32_t>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<uint32_t>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<int64_t>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<uint64_t>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::half>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::half2>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::half3>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::half4>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<float>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::float2>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::float3>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::float4>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<double>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::double2>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::double3>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::double4>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::int2>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::int3>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::int4>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::quath>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::quatf>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::quatd>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::color3f>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::color4f>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::color3d>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::color4d>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::vector3f>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::normal3f>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::point3f>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::texcoord2f>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::texcoord3f>(value::TimeSamples*);
-// Matrix types - now trivial with default constructors
-template bool AsciiParser::ParseTypedTimeSamples<value::matrix2f>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::matrix3f>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::matrix4f>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::matrix2d>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::matrix3d>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::matrix4d>(value::TimeSamples*);
+// Explicit template instantiations for binary-storage types.
+#define INSTANTIATE_BINARY_TIMESAMPLE_TYPE(__type) \
+  template bool AsciiParser::ParseTypedTimeSamples<__type>(value::TimeSamples*);
+
+TINYUSDZ_FOR_EACH_BINARY_TIMESAMPLE_TYPE(INSTANTIATE_BINARY_TIMESAMPLE_TYPE)
+
+#undef INSTANTIATE_BINARY_TIMESAMPLE_TYPE
+#undef TINYUSDZ_FOR_EACH_BINARY_TIMESAMPLE_TYPE
 
 }  // namespace ascii
 }  // namespace tinyusdz

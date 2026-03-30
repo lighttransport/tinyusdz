@@ -14,7 +14,8 @@
 #include "task-queue.hh"
 #endif
 
-#include "prim-types.hh"
+#include "core/prim.hh"       // Prim class
+#include "core/prim-spec.hh"  // PrimSpec class
 #include "stage.hh"
 #include "layer.hh"
 
