@@ -256,10 +256,20 @@ class TinyUSDZLoader extends Loader {
 
             let initTinyUSDZNative = null;
 
-            // Use dynamic import based on memory64 parameter
+            // Use dynamic import based on memory64 parameter.
+            // Build the 64-bit module path via URL so Vite's static import
+            // analysis does not fail when tinyusdz_64.js is absent.
             if (use_memory64) {
-                const module = await import('./tinyusdz_64.js');
-                initTinyUSDZNative = module.default;
+                try {
+                    const wasm64Url = new URL('./tinyusdz_64.js', import.meta.url).href;
+                    const module = await import(/* @vite-ignore */ wasm64Url);
+                    initTinyUSDZNative = module.default;
+                } catch (e) {
+                    console.warn('[TinyUSDZLoader] WASM64 module (tinyusdz_64.js) not found, falling back to 32-bit module.', e.message);
+                    use_memory64 = false;
+                    const module = await import('./tinyusdz.js');
+                    initTinyUSDZNative = module.default;
+                }
             } else {
                 const module = await import('./tinyusdz.js');
                 initTinyUSDZNative = module.default;
