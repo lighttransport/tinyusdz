@@ -98,6 +98,8 @@ std::string to_string(const ListOp<T> &op, const uint32_t indent_level = 0) {
   ss << pprint::Indent(indent_level)
      << "  added_items = " << to_string(op.GetAddedItems()) << "\n";
   ss << pprint::Indent(indent_level)
+     << "  appended_items = " << to_string(op.GetAppendedItems()) << "\n";
+  ss << pprint::Indent(indent_level)
      << "  prepended_items = " << to_string(op.GetPrependedItems()) << "\n";
   ss << pprint::Indent(indent_level)
      << "  deleted_items = " << to_string(op.GetDeletedItems()) << "\n";
@@ -187,6 +189,9 @@ std::string to_string(const PluginLight &light, const uint32_t indent = 0,
 std::string to_string(const DomeLight::TextureFormat &texformat);
 
 std::string to_string(const Material &material, const uint32_t indent = 0,
+                      bool closing_brace = true);
+
+std::string to_string(const NodeGraph &nodegraph, const uint32_t indent = 0,
                       bool closing_brace = true);
 
 // It will delegate to to_string() of concrete Shader type(e.g.
@@ -283,5 +288,8 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Visibility v);
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Extent v);
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Interpolation v);
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Layer &layer);
+
+// StringData needs proper quoting for USDA output
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::StringData &v);
 
 }  // namespace std

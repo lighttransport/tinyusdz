@@ -15,6 +15,8 @@ function parseArgs() {
     format: 'json', // 'json', 'yaml', or 'xml'
     outputFile: null,
     materialId: null, // null means all materials
+    meshId: null, // null means no mesh dump, number means dump specific mesh
+    dumpMesh: false, // dump mesh vertex data
     pretty: true,
     verbose: false
   };
@@ -35,6 +37,12 @@ function parseArgs() {
       options.outputFile = args[++i];
     } else if (arg === '-m' || arg === '--material') {
       options.materialId = parseInt(args[++i], 10);
+    } else if (arg === '--mesh') {
+      options.dumpMesh = true;
+      const nextArg = args[i + 1];
+      if (nextArg && !nextArg.startsWith('-')) {
+        options.meshId = parseInt(args[++i], 10);
+      }
     } else if (arg === '--no-pretty') {
       options.pretty = false;
     } else if (arg === '-v' || arg === '--verbose') {
@@ -66,6 +74,7 @@ Options:
   -f, --format <format>   Output format: 'json', 'yaml', or 'xml' (default: json)
   -o, --output <file>     Write output to file instead of stdout
   -m, --material <id>     Dump only specific material by ID (default: all)
+  --mesh [id]             Dump mesh vertex data (all meshes or specific mesh by ID)
   --no-pretty             Disable pretty-printing for JSON/YAML
   -v, --verbose           Enable verbose logging
   -h, --help              Show this help message
@@ -108,6 +117,144 @@ function formatMaterialOutput(materialData, format, pretty) {
     // XML format - already a string
     return materialData;
   }
+}
+
+// Dump mesh vertex data for verification
+function dumpMeshData(mesh, meshId) {
+  const result = {
+    meshId: meshId,
+    name: mesh.name || mesh.primName || `Mesh_${meshId}`,
+    numPoints: 0,
+    numIndices: 0,
+    points: [],
+    faceVertexIndices: [],
+    normals: [],
+    texcoords: []
+  };
+
+  // Dump points (positions)
+  if (mesh.points) {
+    result.numPoints = mesh.points.length / 3;
+    // Show first few points
+    for (let i = 0; i < Math.min(result.numPoints, 10); i++) {
+      result.points.push([
+        mesh.points[i * 3],
+        mesh.points[i * 3 + 1],
+        mesh.points[i * 3 + 2]
+      ]);
+    }
+    if (result.numPoints > 10) {
+      result.points.push(`... and ${result.numPoints - 10} more`);
+    }
+  }
+
+  // Dump face vertex indices
+  if (mesh.faceVertexIndices) {
+    result.numIndices = mesh.faceVertexIndices.length;
+    // Show all indices for small meshes, first 30 for larger
+    const maxIndices = Math.min(result.numIndices, 30);
+    for (let i = 0; i < maxIndices; i++) {
+      result.faceVertexIndices.push(mesh.faceVertexIndices[i]);
+    }
+    if (result.numIndices > 30) {
+      result.faceVertexIndices.push(`... and ${result.numIndices - 30} more`);
+    }
+
+    // Also show triangles for clarity
+    result.triangles = [];
+    for (let i = 0; i < Math.min(result.numIndices, 30); i += 3) {
+      if (i + 2 < result.numIndices) {
+        result.triangles.push([
+          mesh.faceVertexIndices[i],
+          mesh.faceVertexIndices[i + 1],
+          mesh.faceVertexIndices[i + 2]
+        ]);
+      }
+    }
+  }
+
+  // Dump normals
+  if (mesh.normals) {
+    result.numNormals = mesh.normals.length / 3;
+    // Show first few normals
+    for (let i = 0; i < Math.min(result.numNormals, 10); i++) {
+      result.normals.push([
+        mesh.normals[i * 3],
+        mesh.normals[i * 3 + 1],
+        mesh.normals[i * 3 + 2]
+      ]);
+    }
+    if (result.numNormals > 10) {
+      result.normals.push(`... and ${result.numNormals - 10} more`);
+    }
+  }
+
+  // Dump texcoords
+  if (mesh.texcoords) {
+    result.numTexcoords = mesh.texcoords.length / 2;
+    // Show first few texcoords
+    for (let i = 0; i < Math.min(result.numTexcoords, 10); i++) {
+      result.texcoords.push([
+        mesh.texcoords[i * 2],
+        mesh.texcoords[i * 2 + 1]
+      ]);
+    }
+    if (result.numTexcoords > 10) {
+      result.texcoords.push(`... and ${result.numTexcoords - 10} more`);
+    }
+  }
+
+  // Compute face normal from first triangle winding to verify
+  if (mesh.points && mesh.faceVertexIndices && mesh.faceVertexIndices.length >= 3) {
+    const i0 = mesh.faceVertexIndices[0];
+    const i1 = mesh.faceVertexIndices[1];
+    const i2 = mesh.faceVertexIndices[2];
+
+    const v0 = [mesh.points[i0 * 3], mesh.points[i0 * 3 + 1], mesh.points[i0 * 3 + 2]];
+    const v1 = [mesh.points[i1 * 3], mesh.points[i1 * 3 + 1], mesh.points[i1 * 3 + 2]];
+    const v2 = [mesh.points[i2 * 3], mesh.points[i2 * 3 + 1], mesh.points[i2 * 3 + 2]];
+
+    // edge1 = v1 - v0, edge2 = v2 - v0
+    const edge1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
+    const edge2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
+
+    // cross product
+    const cross = [
+      edge1[1] * edge2[2] - edge1[2] * edge2[1],
+      edge1[2] * edge2[0] - edge1[0] * edge2[2],
+      edge1[0] * edge2[1] - edge1[1] * edge2[0]
+    ];
+
+    // normalize
+    const len = Math.sqrt(cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]);
+    const faceNormal = len > 0 ? [cross[0] / len, cross[1] / len, cross[2] / len] : [0, 0, 0];
+
+    result.windingAnalysis = {
+      firstTriangle: {
+        indices: [i0, i1, i2],
+        v0: v0,
+        v1: v1,
+        v2: v2
+      },
+      computedFaceNormal: faceNormal.map(n => parseFloat(n.toFixed(4))),
+      vertexNormal: mesh.normals ? [
+        mesh.normals[i0 * 3],
+        mesh.normals[i0 * 3 + 1],
+        mesh.normals[i0 * 3 + 2]
+      ] : null
+    };
+
+    // Check if face normal matches vertex normal
+    if (mesh.normals) {
+      const vn = result.windingAnalysis.vertexNormal;
+      const fn = result.windingAnalysis.computedFaceNormal;
+      const dot = fn[0] * vn[0] + fn[1] * vn[1] + fn[2] * vn[2];
+      result.windingAnalysis.dotProduct = parseFloat(dot.toFixed(4));
+      result.windingAnalysis.windingCorrect = dot > 0;
+    }
+  }
+
+  return result;
 }
 
 async function dumpMaterials(options) {
@@ -154,11 +301,73 @@ async function dumpMaterials(options) {
     console.error('USD file loaded successfully');
   }
 
-  // Get number of materials
+  // Get number of materials and meshes
   const numMaterials = usd.numMaterials();
+  const numMeshes = usd.numMeshes();
 
   if (options.verbose) {
-    console.error(`Found ${numMaterials} material(s)`);
+    console.error(`Found ${numMaterials} material(s), ${numMeshes} mesh(es)`);
+
+    // Check for meshes with GeomSubsets
+    let subsetsFound = 0;
+    for (let i = 0; i < numMeshes; i++) {
+      const mesh = usd.getMesh(i);
+      if (mesh.materialSubsets && mesh.materialSubsets.length > 0) {
+        subsetsFound++;
+        console.error(`  Mesh ${i} "${mesh.primName}" has ${mesh.materialSubsets.length} material subset(s)`);
+      }
+    }
+    if (subsetsFound > 0) {
+      console.error(`Total: ${subsetsFound} mesh(es) with GeomSubsets (per-face materials)`);
+    }
+  }
+
+  // Dump mesh data if requested
+  if (options.dumpMesh) {
+    const meshResults = [];
+    const meshIds = options.meshId !== null
+      ? [options.meshId]
+      : Array.from({ length: numMeshes }, (_, i) => i);
+
+    for (const meshId of meshIds) {
+      if (meshId >= numMeshes) {
+        console.error(`Warning: Mesh ID ${meshId} out of range (0-${numMeshes - 1})`);
+        continue;
+      }
+
+      const mesh = usd.getMesh(meshId);
+      if (!mesh) {
+        console.error(`Warning: Could not get mesh ${meshId}`);
+        continue;
+      }
+
+      const meshData = dumpMeshData(mesh, meshId);
+      meshResults.push(meshData);
+    }
+
+    // Output mesh data
+    let output;
+    if (options.format === 'yaml') {
+      output = YAML.stringify(meshResults, {
+        indent: 2,
+        lineWidth: 0,
+        minContentWidth: 0
+      });
+    } else {
+      output = options.pretty
+        ? JSON.stringify(meshResults, null, 2)
+        : JSON.stringify(meshResults);
+    }
+
+    if (options.outputFile) {
+      fs.writeFileSync(options.outputFile, output, 'utf8');
+      if (options.verbose) {
+        console.error(`\nMesh data written to: ${options.outputFile}`);
+      }
+    } else {
+      console.log(output);
+    }
+    return;
   }
 
   if (numMaterials === 0) {

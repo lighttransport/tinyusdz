@@ -1,0 +1,124 @@
+#usda 1.0
+(
+    doc = "Nested variantSet with explicit variant selections"
+)
+
+def Xform "SceneObject" (
+    variantSets = ["category"]
+    variants = {
+        string category = "furniture"
+    }
+)
+{
+    variantSet "category" = {
+        "furniture" {
+            variantSet "type" = {
+                "chair" (
+                    variants = {
+                        string style = "office"
+                    }
+                ) {
+                    variantSet "style" = {
+                        "office" {
+                            def Xform "OfficeChair"
+                            {
+                                def Cylinder "Base"
+                                {
+                                    double radius = 0.3
+                                    double height = 0.5
+                                }
+
+                                def Cube "Seat"
+                                {
+                                    double size = 0.5
+                                }
+
+                                def Cube "Back"
+                                {
+                                    double size = 0.6
+                                }
+                            }
+                        }
+                        "dining" {
+                            def Xform "DiningChair"
+                            {
+                                def Cube "Legs"
+                                {
+                                    double size = 0.05
+                                }
+
+                                def Cube "Seat"
+                                {
+                                    double size = 0.4
+                                }
+
+                                def Cube "Back"
+                                {
+                                    double size = 0.5
+                                }
+                            }
+                        }
+                    }
+                }
+                "table" (
+                    variants = {
+                        string style = "desk"
+                    }
+                ) {
+                    variantSet "style" = {
+                        "desk" {
+                            def Xform "DeskTable"
+                            {
+                                def Cube "Top"
+                                {
+                                    double size = 2.0
+                                }
+
+                                def Cube "Legs"
+                                {
+                                    double size = 0.1
+                                }
+                            }
+                        }
+                        "dining" {
+                            def Xform "DiningTable"
+                            {
+                                def Cylinder "Top"
+                                {
+                                    double radius = 1.0
+                                    double height = 0.05
+                                }
+
+                                def Cylinder "Pedestal"
+                                {
+                                    double radius = 0.2
+                                    double height = 0.8
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "appliance" {
+            variantSet "type" = {
+                "refrigerator" {
+                    variantSet "size" = {
+                        "compact" {
+                            def Cube "CompactFridge"
+                            {
+                                double size = 0.6
+                            }
+                        }
+                        "full" {
+                            def Cube "FullFridge"
+                            {
+                                double size = 1.8
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

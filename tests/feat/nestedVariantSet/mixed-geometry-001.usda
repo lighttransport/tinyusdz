@@ -1,0 +1,99 @@
+#usda 1.0
+(
+    doc = "Nested variantSet with mixed geometry types"
+)
+
+def Xform "Building" (
+    variantSets = ["style"]
+)
+{
+    variantSet "style" = {
+        "modern" {
+            variantSet "detail" = {
+                "simple" {
+                    def Cube "ModernSimple"
+                    {
+                        double size = 10.0
+                    }
+                }
+                "detailed" {
+                    def Xform "ModernDetailed"
+                    {
+                        def Cube "Base"
+                        {
+                            double size = 10.0
+                        }
+
+                        def Cylinder "Column1"
+                        {
+                            double radius = 0.5
+                            double height = 12.0
+                        }
+
+                        def Cylinder "Column2"
+                        {
+                            double radius = 0.5
+                            double height = 12.0
+                        }
+                    }
+                }
+            }
+        }
+        "classic" {
+            variantSet "detail" = {
+                "simple" {
+                    def Sphere "ClassicDome"
+                    {
+                        double radius = 5.0
+                    }
+                }
+                "detailed" {
+                    def Xform "ClassicDetailed"
+                    {
+                        def Cube "Foundation"
+                        {
+                            double size = 8.0
+                        }
+
+                        def Cylinder "Pillar"
+                        {
+                            double radius = 0.8
+                            double height = 10.0
+                        }
+
+                        def Sphere "Dome"
+                        {
+                            double radius = 6.0
+                        }
+
+                        def Cone "Spire"
+                        {
+                            double radius = 1.0
+                            double height = 3.0
+                        }
+                    }
+                }
+                "ornate" {
+                    def Xform "ClassicOrnate"
+                    {
+                        def Cube "Foundation"
+                        {
+                            double size = 9.0
+                        }
+
+                        def Sphere "MainDome"
+                        {
+                            double radius = 7.0
+                        }
+
+                        def Capsule "Tower"
+                        {
+                            double radius = 1.2
+                            double height = 15.0
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

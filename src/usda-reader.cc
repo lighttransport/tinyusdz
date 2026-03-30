@@ -32,6 +32,7 @@
 #include "usda-reader.hh"
 #include "layer.hh"
 #include "parser-timing.hh"
+#include "enum-handlers.hh"
 
 //
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
@@ -97,6 +98,8 @@ RECONSTRUCT_PRIM_DECL(SphereLight);
 RECONSTRUCT_PRIM_DECL(CylinderLight);
 RECONSTRUCT_PRIM_DECL(DiskLight);
 RECONSTRUCT_PRIM_DECL(DistantLight);
+RECONSTRUCT_PRIM_DECL(RectLight);
+RECONSTRUCT_PRIM_DECL(GeometryLight);
 RECONSTRUCT_PRIM_DECL(GPrim);
 RECONSTRUCT_PRIM_DECL(GeomMesh);
 RECONSTRUCT_PRIM_DECL(GeomSubset);
@@ -129,6 +132,8 @@ struct VariantNode {
   PrimMeta metas;
   std::map<std::string, Property> props;
   std::vector<int64_t> primChildren;
+  int64_t variantPrimIdx{-1};
+  std::map<std::string, std::map<std::string, VariantNode>> variantSets;
 };
 
 struct PrimNode {
@@ -191,7 +196,9 @@ DEFINE_PRIM_TYPE(SphereLight, kSphereLight, value::TYPE_ID_LUX_SPHERE);
 DEFINE_PRIM_TYPE(DomeLight, kDomeLight, value::TYPE_ID_LUX_DOME);
 DEFINE_PRIM_TYPE(DiskLight, kDiskLight, value::TYPE_ID_LUX_DISK);
 DEFINE_PRIM_TYPE(DistantLight, kDistantLight, value::TYPE_ID_LUX_DISTANT);
-DEFINE_PRIM_TYPE(CylinderLight,  kCylinderLight, value::TYPE_ID_LUX_CYLINDER);
+DEFINE_PRIM_TYPE(CylinderLight, kCylinderLight, value::TYPE_ID_LUX_CYLINDER);
+DEFINE_PRIM_TYPE(RectLight, kRectLight, value::TYPE_ID_LUX_RECT);
+DEFINE_PRIM_TYPE(GeometryLight, kGeometryLight, value::TYPE_ID_LUX_GEOMETRY);
 DEFINE_PRIM_TYPE(Material, kMaterial, value::TYPE_ID_MATERIAL);
 DEFINE_PRIM_TYPE(Shader, kShader, value::TYPE_ID_SHADER);
 DEFINE_PRIM_TYPE(NodeGraph, kNodeGraph, value::TYPE_ID_NODEGRAPH);
@@ -242,49 +249,8 @@ inline bool hasOutputs(const std::string &str) {
   return startsWith(str, "outputs:");
 }
 
-template <class E>
-static nonstd::expected<bool, std::string> CheckAllowedTokens(
-    const std::vector<std::pair<E, const char *>> &allowedTokens,
-    const std::string &tok) {
-  if (allowedTokens.empty()) {
-    return true;
-  }
-
-  for (size_t i = 0; i < allowedTokens.size(); i++) {
-    if (tok.compare(std::get<1>(allowedTokens[i])) == 0) {
-      return true;
-    }
-  }
-
-  std::vector<std::string> toks;
-  for (size_t i = 0; i < allowedTokens.size(); i++) {
-    toks.push_back(std::get<1>(allowedTokens[i]));
-  }
-
-  std::string s = join(", ", tinyusdz::quote(toks));
-
-  return nonstd::make_unexpected("Allowed tokens are [" + s + "] but got " +
-                                 quote(tok) + ".");
-};
-
-template <typename T>
-nonstd::expected<T, std::string> EnumHandler(
-    const std::string &prop_name, const std::string &tok,
-    const std::vector<std::pair<T, const char *>> &enums) {
-  auto ret = CheckAllowedTokens<T>(enums, tok);
-  if (!ret) {
-    return nonstd::make_unexpected(ret.error());
-  }
-
-  for (auto &item : enums) {
-    if (tok == item.second) {
-      return item.first;
-    }
-  }
-  // Should never reach here, though.
-  return nonstd::make_unexpected(
-      quote(tok) + " is an invalid token for attribute `" + prop_name + "`");
-}
+// NOTE: CheckAllowedTokens and EnumHandler templates removed.
+// Use centralized handlers from enum-handlers.hh instead.
 
 class USDAReader::Impl {
  private:
@@ -330,6 +296,10 @@ class USDAReader::Impl {
     return _config;
   }
 
+  void SetProgressCallback(std::function<bool(float progress, void *userptr)> callback, void *userptr) {
+    _parser.SetProgressCallback(callback, userptr);
+  }
+
   std::string GetCurrentPath() {
     if (_path_stack.empty()) {
       return "/";
@@ -363,6 +333,71 @@ class USDAReader::Impl {
       const prim::ReferenceList &references,
       T *out);
 
+  bool ProcessVariantSetContent(const uint32_t depth, const std::map<std::string, ascii::AsciiParser::VariantSetContent> &in_variants, std::map<std::string, std::map<std::string, VariantNode>> &dst) {
+    if (depth > 1024 * 1024) {
+      PUSH_ERROR_AND_RETURN("Too deep.");
+    }
+
+    //
+    // variantSet
+    // NOTE: variantChildren setup is delayed. It will be processed in ConstructPrimSpecTreeRec
+    //
+    std::map<std::string, std::map<std::string, VariantNode>> variantSets;
+    for (const auto &variantContext : in_variants) {
+      const std::string variant_name = variantContext.first;
+
+      DCOUT("variantName: " << variant_name);
+
+      // Convert VariantContent -> VariantNode
+      std::map<std::string, VariantNode> variantNodes;
+      for (const auto &item : variantContext.second.variantSets) {
+
+        // process child variantSet first.
+        std::map<std::string, std::map<std::string, VariantNode>> childVariantSets;
+        if (!ProcessVariantSetContent(depth+1, item.second.variantSets, childVariantSets))
+        {
+          return false;
+        }
+
+        VariantNode variant;
+
+        DCOUT("variantPrimIdx = " << variantContext.second.variantPrimIdx);
+        variant.variantPrimIdx = variantContext.second.variantPrimIdx;
+        DCOUT("child variantSets.size " << childVariantSets.size());
+        variant.variantSets = std::move(childVariantSets);
+
+        if (!ReconstructPrimMeta(item.second.metas, &variant.metas)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to process Prim metadataum in variantSet {} item {} ", variant_name, item.first));
+        }
+        variant.props = item.second.props;
+
+        // child Prim should be already reconstructed.
+        for (const auto &childPrimIdx : item.second.primIndices) {
+          if (childPrimIdx < 0) {
+            PUSH_ERROR_AND_RETURN(fmt::format("[InternalError] Invalid primIndex found within VariantSet."));
+          }
+
+          if (size_t(childPrimIdx) >= _prim_nodes.size()) {
+            PUSH_ERROR_AND_RETURN(fmt::format("[InternalError] Invalid primIndex found within VariantSet. variantChildPrimIdsx {} Exceeds _prim_nodes.size() {}", childPrimIdx, _prim_nodes.size()));
+          }
+
+          variant.primChildren.push_back(childPrimIdx);
+
+          //_prim_nodes[size_t(childPrimIdx)].parent_is_variant = true;
+        }
+        DCOUT("Add variant: " << item.first);
+        variantNodes[item.first] = std::move(variant);
+      }
+
+      DCOUT("Add variantSet: " << variant_name);
+      variantSets[variant_name] = std::move(variantNodes);
+    }
+
+    DCOUT("variantSets.size = " << variantSets.size());
+    dst = std::move(variantSets);
+
+    return true;
+  }
 
   template <typename T>
   bool RegisterReconstructCallback() {
@@ -439,6 +474,7 @@ class USDAReader::Impl {
           // NOTE: variantChildren setup is delayed. It will be processed in ConstructPrimSpecTreeRec
           //
           std::map<std::string, std::map<std::string, VariantNode>> variantSets;
+#if 0
           for (const auto &variantContext : in_variants) {
             const std::string variant_name = variantContext.first;
 
@@ -472,6 +508,11 @@ class USDAReader::Impl {
             DCOUT("Add variantSet: " << variant_name);
             variantSets.emplace(variant_name, std::move(variantNodes));
           }
+#else
+          if (!ProcessVariantSetContent(0, in_variants, variantSets)) {
+            return nonstd::make_unexpected(fmt::format("[InternalError] Failed to process VariantSet"));
+          }
+#endif
 
           // Add to scene graph.
           // NOTE: Scene graph is constructed from bottom up manner(Children
@@ -575,7 +616,7 @@ class USDAReader::Impl {
 
             // Convert VariantContent -> VariantNode
             std::map<std::string, VariantNode> variantNodes;
-            for (const auto &item : variantContext.second) {
+            for (const auto &item : variantContext.second.variantSets) {
               VariantNode variant;
               if (!ReconstructPrimMeta(item.second.metas, &variant.metas)) {
                 return nonstd::make_unexpected(fmt::format("Failed to process Prim metadataum in variantSet {} item {} ", variant_name, item.first));
@@ -699,7 +740,7 @@ class USDAReader::Impl {
           }
 
           _stage.metas().customLayerData = metas.customLayerData;
-
+          _stage.metas().customLayerDataAuthored = metas.customLayerDataAuthored;
 
           return true;  // ok
         });
@@ -726,55 +767,8 @@ class USDAReader::Impl {
   bool ReconstructPrimMeta(const ascii::AsciiParser::PrimMetaMap &in_meta,
                            PrimMeta *out) {
 
-    auto ApiSchemaHandler = [](const std::string &tok)
-        -> nonstd::expected<APISchemas::APIName, std::string> {
-      using EnumTy = std::pair<APISchemas::APIName, const char *>;
-      const std::vector<EnumTy> enums = {
-          std::make_pair(APISchemas::APIName::SkelBindingAPI, "SkelBindingAPI"),
-          std::make_pair(APISchemas::APIName::CollectionAPI, "CollectionAPI"),
-          std::make_pair(APISchemas::APIName::MaterialBindingAPI,
-                         "MaterialBindingAPI"),
-          std::make_pair(APISchemas::APIName::ShapingAPI,
-                         "ShapingAPI"),
-          std::make_pair(APISchemas::APIName::ShadowAPI,
-                         "ShadowAPI"),
-          std::make_pair(APISchemas::APIName::VolumeLightAPI,
-                         "VolumeLightAPI"),
-          std::make_pair(APISchemas::APIName::Preliminary_PhysicsMaterialAPI,
-                         "Preliminary_PhysicsMaterialAPI"),
-          std::make_pair(APISchemas::APIName::Preliminary_PhysicsRigidBodyAPI,
-                         "Preliminary_PhysicsRigidBodyAPI"),
-          std::make_pair(APISchemas::APIName::Preliminary_PhysicsColliderAPI,
-                         "Preliminary_PhysicsColliderAPI"),
-          std::make_pair(APISchemas::APIName::Preliminary_AnchoringAPI,
-                         "Preliminary_AnchoringAPI"),
-          std::make_pair(APISchemas::APIName::LightAPI,
-                         "LightAPI"),
-          std::make_pair(APISchemas::APIName::MeshLightAPI,
-                         "MeshLightAPI"),
-          std::make_pair(APISchemas::APIName::LightListAPI,
-                         "LightListAPI"),
-          std::make_pair(APISchemas::APIName::ListAPI,
-                         "ListAPI"),
-          std::make_pair(APISchemas::APIName::MotionAPI,
-                         "MotionAPI"),
-          std::make_pair(APISchemas::APIName::PrimvarsAPI,
-                         "PrimvarsAPI"),
-          std::make_pair(APISchemas::APIName::GeomModelAPI,
-                         "GeomModelAPI"),
-          std::make_pair(APISchemas::APIName::VisibilityAPI,
-                         "VisibilityAPI"),
-          std::make_pair(APISchemas::APIName::XformCommonAPI,
-                         "XformCommonAPI"),
-          std::make_pair(APISchemas::APIName::NodeDefAPI,
-                         "NodeDefAPI"),
-          std::make_pair(APISchemas::APIName::CoordSysAPI,
-                         "CoordSysAPI"),
-          std::make_pair(APISchemas::APIName::ConnectableAPI,
-                         "ConnectableAPI")
-      };
-      return EnumHandler<APISchemas::APIName>("apiSchemas", tok, enums);
-    };
+    // Use centralized handler from enum-handlers.hh
+    auto ApiSchemaHandler = enum_handler::APISchemaName;
 
     auto BuildVariants = [](const Dictionary &dict) -> nonstd::expected<VariantSelectionMap, std::string> {
 
@@ -809,7 +803,7 @@ class USDAReader::Impl {
         DCOUT("active. type = " << var.type_name());
         if (var.type_name() == "bool") {
           if (auto pv = var.get_value<bool>()) {
-            out->active = pv.value();
+            out->set_active(pv.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "(Internal error?) `active` metadataum is not type `bool`.");
@@ -823,7 +817,7 @@ class USDAReader::Impl {
         DCOUT("hidden. type = " << var.type_name());
         if (var.type_name() == "bool") {
           if (auto pv = var.get_value<bool>()) {
-            out->hidden = pv.value();
+            out->set_hidden(pv.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "(Internal error?) `hidden` metadataum is not type `bool`.");
@@ -838,7 +832,7 @@ class USDAReader::Impl {
         DCOUT("instanceable. type = " << var.type_name());
         if (var.type_name() == "bool") {
           if (auto pv = var.get_value<bool>()) {
-            out->instanceable = pv.value();
+            out->set_instanceable(pv.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "(Internal error?) `instanceable` metadataum is not type `bool`.");
@@ -853,7 +847,7 @@ class USDAReader::Impl {
         DCOUT("sceneName. type = " << var.type_name());
         if (var.type_name() == value::kString) {
           if (auto pv = var.get_value<std::string>()) {
-            out->sceneName = pv.value();
+            out->set_sceneName(pv.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "(Internal error?) `sceneName` metadataum is not type `string`.");
@@ -867,7 +861,7 @@ class USDAReader::Impl {
         DCOUT("displayName. type = " << var.type_name());
         if (var.type_name() == value::kString) {
           if (auto pv = var.get_value<std::string>()) {
-            out->displayName = pv.value();
+            out->set_displayName(pv.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "(Internal error?) `displayName` metadataum is not type `string`.");
@@ -885,25 +879,24 @@ class USDAReader::Impl {
           if (auto pv = var.get_value<value::token>()) {
             const value::token tok = pv.value();
             if (tok.str() == "subcomponent") {
-              out->kind = Kind::Subcomponent;
+              out->set_kind(Kind::Subcomponent);
             } else if (tok.str() == "component") {
-              out->kind = Kind::Component;
+              out->set_kind(Kind::Component);
             } else if (tok.str() == "model") {
-              out->kind = Kind::Model;
+              out->set_kind(Kind::Model);
             } else if (tok.str() == "group") {
-              out->kind = Kind::Group;
+              out->set_kind(Kind::Group);
             } else if (tok.str() == "assembly") {
-              out->kind = Kind::Assembly;
+              out->set_kind(Kind::Assembly);
             } else if (tok.str() == "sceneLibrary") {
               // USDZ specific: https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/scenelibrary
-              out->kind = Kind::SceneLibrary;
+              out->set_kind(Kind::SceneLibrary);
             } else {
               // NOTE: empty token allowed.
-
-              out->kind = Kind::UserDef;
-              out->_kind_str = tok.str();
+              // For user-defined kind, store the string directly
+              out->set_kind(tok.str());
             }
-            DCOUT("Added kind: " << to_string(out->kind.value()));
+            DCOUT("Added kind: " << out->get_kind_str());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "(Internal error?) `kind` metadataum is not type `token`.");
@@ -918,7 +911,7 @@ class USDAReader::Impl {
         if (var.type_id() == value::TypeTraits<Dictionary>::type_id()) {
           if (auto pv = var.get_value<Dictionary>()) {
             // TODO: Check if all items are string type.
-            out->sdrMetadata = pv.value();
+            out->set_sdrMetadata(pv.value());
           } else {
             PUSH_ERROR_AND_RETURN_TAG(kTag,
                 "(Internal error?) `sdrMetadata` metadataum is not type "
@@ -936,7 +929,7 @@ class USDAReader::Impl {
         DCOUT("customData. type = " << var.type_name());
         if (var.type_id() == value::TypeTraits<Dictionary>::type_id()) {
           if (auto pv = var.get_value<Dictionary>()) {
-            out->customData = pv.value();
+            out->set_customData(pv.value());
           } else {
             PUSH_ERROR_AND_RETURN_TAG(kTag,
                 "(Internal error?) `customData` metadataum is not type "
@@ -954,7 +947,7 @@ class USDAReader::Impl {
         DCOUT("clips. type = " << var.type_name());
         if (var.type_id() == value::TypeTraits<Dictionary>::type_id()) {
           if (auto pv = var.get_value<Dictionary>()) {
-            out->clips = pv.value();
+            out->set_clips(pv.value());
           } else {
             PUSH_ERROR_AND_RETURN_TAG(kTag,
                 "(Internal error?) `clips` metadataum is not type "
@@ -971,7 +964,7 @@ class USDAReader::Impl {
       } else if (meta.first == "assetInfo") {
         DCOUT("assetInfo. type = " << var.type_name());
         if (auto pv = var.get_value<Dictionary>()) {
-          out->assetInfo = pv.value();
+          out->set_assetInfo(pv.value());
         } else {
           PUSH_ERROR_AND_RETURN_TAG(kTag,
               "(Internal error?) `assetInfo` metadataum is not type "
@@ -992,20 +985,24 @@ class USDAReader::Impl {
               << var.type_name() << "`");
         }
       } else if (meta.first == "inherits") {
+        // Initialize vector if not present
+        if (!out->inherits) {
+          out->inherits = std::vector<std::pair<ListEditQual, std::vector<Path>>>();
+        }
         if (auto pvb = var.get_value<value::ValueBlock>()) {
           if (listEditQual != ListEditQual::ResetToExplicit) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
-          out->inherits = std::make_pair(listEditQual, std::vector<Path>());
+          out->inherits->push_back(std::make_pair(listEditQual, std::vector<Path>()));
         } else if (auto pv = var.get_value<std::vector<Path>>()) {
           if (pv.value().empty() && (listEditQual != ListEditQual::ResetToExplicit)) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
-          out->inherits = std::make_pair(listEditQual, pv.value());
+          out->inherits->push_back(std::make_pair(listEditQual, pv.value()));
         } else if (auto pvp = var.get_value<Path>()) {
           std::vector<Path> vs;
           vs.push_back(pvp.value());
-          out->inherits = std::make_pair(listEditQual, vs);
+          out->inherits->push_back(std::make_pair(listEditQual, vs));
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `inherits` metadataum should be either `path` or `path[]`. "
@@ -1014,20 +1011,24 @@ class USDAReader::Impl {
         }
 
       } else if (meta.first == "specializes") {
+        // Initialize vector if not present
+        if (!out->specializes) {
+          out->specializes = std::vector<std::pair<ListEditQual, std::vector<Path>>>();
+        }
         if (auto pvb = var.get_value<value::ValueBlock>()) {
           if (listEditQual != ListEditQual::ResetToExplicit) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
-          out->specializes = std::make_pair(listEditQual, std::vector<Path>());
+          out->specializes->push_back(std::make_pair(listEditQual, std::vector<Path>()));
         } else if (auto pv = var.get_value<std::vector<Path>>()) {
           if (pv.value().empty() && (listEditQual != ListEditQual::ResetToExplicit)) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
-          out->specializes = std::make_pair(listEditQual, pv.value());
+          out->specializes->push_back(std::make_pair(listEditQual, pv.value()));
         } else if (auto pvp = var.get_value<Path>()) {
           std::vector<Path> vs;
           vs.push_back(pvp.value());
-          out->specializes = std::make_pair(listEditQual, vs);
+          out->specializes->push_back(std::make_pair(listEditQual, vs));
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `specializes` metadataum should be either `path` or `path[]`. "
@@ -1036,25 +1037,29 @@ class USDAReader::Impl {
         }
 
       } else if (meta.first == "variantSets") {
+        // Initialize vector if not present
+        if (!out->variantSets) {
+          out->variantSets = std::vector<std::pair<ListEditQual, std::vector<std::string>>>();
+        }
         // treat as `string`
         if (auto pvb = var.get_value<value::ValueBlock>()) {
           if (listEditQual != ListEditQual::ResetToExplicit) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
-          out->variantSets = std::make_pair(listEditQual, std::vector<std::string>());
+          out->variantSets->push_back(std::make_pair(listEditQual, std::vector<std::string>()));
         } else if (auto pv = var.get_value<value::StringData>()) {
           std::vector<std::string> vs;
           vs.push_back(pv.value().value);
-          out->variantSets = std::make_pair(listEditQual, vs);
+          out->variantSets->push_back(std::make_pair(listEditQual, vs));
         } else if (auto pvs = var.get_value<std::string>()) {
           std::vector<std::string> vs;
           vs.push_back(pvs.value());
-          out->variantSets = std::make_pair(listEditQual, vs);
+          out->variantSets->push_back(std::make_pair(listEditQual, vs));
         } else if (auto pva = var.get_value<std::vector<std::string>>()) {
           if (pva.value().empty() && (listEditQual != ListEditQual::ResetToExplicit)) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
-          out->variantSets = std::make_pair(listEditQual, pva.value());
+          out->variantSets->push_back(std::make_pair(listEditQual, pva.value()));
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `variantSets` metadataum is not type "
@@ -1078,7 +1083,10 @@ class USDAReader::Impl {
               if (ret) {
                 apiSchemas.names.push_back({ret.value(), /* instanceName */""});
               } else if (_config.allow_unknown_apiSchema) {
-                PUSH_WARN("(PrimMeta) " << ret.error());
+                // Store unknown schema instead of just warning
+                std::string instanceName = "";  // TODO: parse instance name if present
+                apiSchemas.unknownSchemas.push_back({item.str(), instanceName});
+                PUSH_WARN("(PrimMeta) Preserving unknown API schema: " << item.str());
               } else {
                 PUSH_ERROR_AND_RETURN("Unknown or invalid apiSchema: " + ret.error());
               }
@@ -1089,32 +1097,35 @@ class USDAReader::Impl {
             << var.type_name() << "`");
           }
 
-          out->apiSchemas = std::move(apiSchemas);
+          out->set_apiSchemas(std::move(apiSchemas));
         } else {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "(Internal error?) `apiSchemas` metadataum is not type "
           "`token[]`. got type `"
           << var.type_name() << "`");
         }
       } else if (meta.first == "references") {
-
+        // Initialize vector if not present
+        if (!out->references) {
+          out->references = std::vector<std::pair<ListEditQual, std::vector<Reference>>>();
+        }
         if (var.is_blocked()) {
           // Treat as empty list
-          // empty list must be qualified as 'explicit' 
+          // empty list must be qualified as 'explicit'
           if (listEditQual != ListEditQual::ResetToExplicit) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
           std::vector<Reference> refs;
-          out->references = std::make_pair(listEditQual, refs);
+          out->references->push_back(std::make_pair(listEditQual, refs));
         } else if (auto pv = var.get_value<Reference>()) {
           // To Reference
           std::vector<Reference> refs;
           refs.emplace_back(pv.value());
-          out->references = std::make_pair(listEditQual, refs);
+          out->references->push_back(std::make_pair(listEditQual, refs));
         } else if (auto pva = var.get_value<std::vector<Reference>>()) {
           if (pva.value().empty() && (listEditQual != ListEditQual::ResetToExplicit)) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
-          out->references = std::make_pair(listEditQual, pva.value());
+          out->references->push_back(std::make_pair(listEditQual, pva.value()));
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `references` metadataum is not type "
@@ -1122,24 +1133,27 @@ class USDAReader::Impl {
               << var.type_name() << "`");
         }
       } else if (meta.first == "payload") {
-
+        // Initialize vector if not present
+        if (!out->payload) {
+          out->payload = std::vector<std::pair<ListEditQual, std::vector<Payload>>>();
+        }
         if (var.is_blocked()) {
           if (listEditQual != ListEditQual::ResetToExplicit) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
           // make empty
           std::vector<Payload> refs;
-          out->payload = std::make_pair(listEditQual, refs);
+          out->payload->push_back(std::make_pair(listEditQual, refs));
         } else if (auto pv = var.get_value<Payload>()) {
           // To Payload
           std::vector<Payload> pls;
           pls.emplace_back(pv.value());
-          out->payload = std::make_pair(listEditQual, pls);
+          out->payload->push_back(std::make_pair(listEditQual, pls));
         } else if (auto pva = var.get_value<std::vector<Payload>>()) {
           if (pva.value().empty() && (listEditQual != ListEditQual::ResetToExplicit)) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
-          out->payload = std::make_pair(listEditQual, pva.value());
+          out->payload->push_back(std::make_pair(listEditQual, pva.value()));
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error) `payload` metadataum is not type "
@@ -1148,9 +1162,12 @@ class USDAReader::Impl {
         }
       } else if (meta.first == "comment") {
         if (auto pv = var.get_value<value::StringData>()) {
-          out->comment = pv.value().value;
+          // Preserve full StringData including has_comment_prefix flag
+          out->set_comment(pv.value());
         } else if (auto spv = var.get_value<std::string>()) {
-          out->comment = spv.value();
+          value::StringData sdata;
+          sdata.value = spv.value();
+          out->set_comment(sdata);
         }
       } else {
         // Must be string value for unregisteredMeta for now.
@@ -1437,10 +1454,134 @@ bool USDAReader::Impl::GetAsLayer(Layer *layer) {
 namespace {
 
 //
+// TODO: Refeactor ConstructPrimTreeRec and ConstructVariantPrimTreeRec
+//
+bool ConstructPrimTreeRec(const size_t primIdx,
+                        const std::vector<PrimNode> &prim_nodes,
+                        const bool parent_is_variant,
+                        Prim *destPrim,
+                        std::string *err);
+
+//
+// Construct VariantPrim from with botom-up approach
+//
+bool ConstructVariantPrimTreeRec(const size_t variantPrimIdx,
+                        const std::vector<PrimNode> &prim_nodes,
+                        const std::string &variantName,
+                        const std::map<std::string, VariantNode> &variantNodeMap,
+                        std::map<std::string, VariantSet> &destVariantSets, /* inout */
+                        std::string *err) {
+
+  if (variantPrimIdx >= prim_nodes.size()) {
+    if (err) {
+      (*err) = "primIndex exceeds prim_nodes.size()\n";
+    }
+    return false;
+  }
+
+  const auto &node = prim_nodes[variantPrimIdx];
+
+  std::set<int64_t> variantChildrenIndices; // record variantChildren indices
+
+  std::map<std::string, VariantSet> variantSets;
+  VariantSet variantSet;
+  for (const auto &item : variantNodeMap) {
+
+      DCOUT("variant " << item.first);
+      Variant variant;
+
+      // Firstly process nested variants.
+      for (const auto &childVariantNode: item.second.variantSets) {
+        DCOUT("variantSet child " << childVariantNode.first);
+        DCOUT("  variantPrimIdx " << variantPrimIdx);
+
+        const std::string childVariantName = childVariantNode.first;
+        Prim variantChildPrim(value::Value(nullptr)); // dummy
+        if (!ConstructVariantPrimTreeRec(size_t(variantPrimIdx), prim_nodes, childVariantName, childVariantNode.second, variant.variantSets(), err)) {
+          return false;
+        }
+
+#if 0
+        // extract variant part.
+        DCOUT("childVariant.size " << variantChildPrim.variantSets().size());
+        for (auto &childVariantItem : variantChildPrim.variantSets())
+        {
+          DCOUT("childVariant " << childVariantItem.first);
+          std::map<std::string, Variant> childVariant;
+          for (auto &vitem : childVariantItem.second.variantSet) {
+            childVariant[vitem.first] = vitem.second;
+          }
+          variant.variantSets()[item.first].name = item.first;
+          variant.variantSets()[item.first].variantSet = childVariant;
+        }
+#endif
+      }
+
+      for (const int64_t vidx : item.second.primChildren) {
+        if (variantChildrenIndices.count(vidx)) {
+          // Duplicated variant childrenIndices
+          if (err) {
+            (*err) = fmt::format("variant primIdx {} is referenced multiple times.\n", vidx);
+          }
+          return false;
+        } else {
+          // Add prim to variants
+          if ((vidx >= 0) && (size_t(vidx) <= prim_nodes.size())) {
+
+            Prim variantChildPrim(value::Value(nullptr)); // dummy
+            if (!ConstructPrimTreeRec(size_t(vidx), prim_nodes, /* parent_is_variant */true, &variantChildPrim, err)) {
+              return false;
+            }
+
+            variant.primChildren().emplace_back(variantChildPrim);
+          } else {
+            if (err) {
+              (*err) = "primIndex exceeds prim_nodes.size()\n";
+            }
+            return false;
+          }
+
+          variantChildrenIndices.insert(vidx);
+        }
+      }
+      variant.metas() = std::move(item.second.metas);
+      variant.properties() = std::move(item.second.props);
+
+      variantSet.name = item.first;
+      variantSet.variantSet[item.first] = std::move(variant);
+    }
+
+  destVariantSets[variantName] = std::move(variantSet);
+
+  for (const auto &cidx : node.children) {
+    DCOUT("parent: " << variantPrimIdx << ", child: " << cidx);
+    if (variantChildrenIndices.count(int64_t(cidx))) {
+      DCOUT("primIdx " << cidx << " processed");
+      // Prim is processed
+      continue;
+    }
+
+    Prim childPrim(value::Value(nullptr)); // dummy
+    if (!ConstructPrimTreeRec(cidx, prim_nodes, /*parent_is_variant*/true, &childPrim, err)) {
+      return false;
+    }
+
+    //DCOUT("Add childPrim " << childPrim.element_name() << " to Prim " << prim.element_name());
+    //prim.children().emplace_back(std::move(childPrim));
+  }
+
+  //prim.variantSets() = std::move(variantSets);
+  //(*destPrim) = std::move(prim);
+
+  return true;
+}
+
+//
 // Construct Prim from PrimNode with botom-up approach
 //
 bool ConstructPrimTreeRec(const size_t primIdx,
                         const std::vector<PrimNode> &prim_nodes,
+                        const bool parent_is_variant,
                         Prim *destPrim,
                         std::string *err) {
 
@@ -1463,6 +1604,7 @@ bool ConstructPrimTreeRec(const size_t primIdx,
   Prim prim(node.prim);
   prim.prim_type_name() = node.typeName;
 
+  DCOUT("prim[" << primIdx << "].name = " << prim.element_name());
   DCOUT("prim[" << primIdx << "].type = " << node.prim.type_name());
   DCOUT("prim[" << primIdx << "].variantNodeMap.size = " << node.variantNodeMap.size());
   //prim.prim_id() = int64_t(idx);
@@ -1477,6 +1619,41 @@ bool ConstructPrimTreeRec(const size_t primIdx,
     for (const auto &item : variantNodes.second) {
       DCOUT("variant " << item.first);
       Variant variant;
+
+      int64_t variantPrimIdx = item.second.variantPrimIdx;
+      if (item.second.variantSets.size() && (variantPrimIdx < 0)) {
+        if (err) {
+          (*err) = "variantPrimIdx is not set.\n";
+        }
+        return false;
+      }
+
+      DCOUT("# of child variantSet " << item.second.variantSets.size());
+      for (const auto &childVariantNode: item.second.variantSets) {
+        DCOUT("variantSet node " << childVariantNode.first);
+        DCOUT("  variantPrimIdx " << variantPrimIdx);
+
+        Prim variantChildPrim(value::Value(nullptr)); // dummy
+        if (!ConstructVariantPrimTreeRec(size_t(variantPrimIdx), prim_nodes, childVariantNode.first, childVariantNode.second, variant.variantSets(), err)) {
+          return false;
+        }
+
+#if 0
+        // extract variant part.
+        DCOUT("childVariant.size " << variantChildPrim.variantSets().size());
+        for (auto &childVariantItem : variantChildPrim.variantSets())
+        {
+          DCOUT("childVariant " << childVariantItem.first);
+          std::map<std::string, Variant> childVariant;
+          for (auto &vitem : childVariantItem.second.variantSet) {
+            childVariant[vitem.first] = vitem.second;
+          }
+          variant.variantSets()[item.first].name = item.first;
+          variant.variantSets()[item.first].variantSet = childVariant;
+        }
+#endif
+      }
+
       for (const int64_t vidx : item.second.primChildren) {
         if (variantChildrenIndices.count(vidx)) {
           // Duplicated variant childrenIndices
@@ -1489,7 +1666,7 @@ bool ConstructPrimTreeRec(const size_t primIdx,
           if ((vidx >= 0) && (size_t(vidx) <= prim_nodes.size())) {
 
             Prim variantChildPrim(value::Value(nullptr)); // dummy
-            if (!ConstructPrimTreeRec(size_t(vidx), prim_nodes, &variantChildPrim, err)) {
+            if (!ConstructPrimTreeRec(size_t(vidx), prim_nodes, /* parent_is_variant */true, &variantChildPrim, err)) {
               return false;
             }
 
@@ -1509,27 +1686,32 @@ bool ConstructPrimTreeRec(const size_t primIdx,
       variant.properties() = std::move(item.second.props);
 
       variantSet.name = variantNodes.first;
-      variantSet.variantSet.emplace(item.first, std::move(variant));
+      variantSet.variantSet[item.first] = std::move(variant);
     }
-    variantSets.emplace(variantNodes.first, std::move(variantSet));
+    variantSets[variantNodes.first] = std::move(variantSet);
   }
-  prim.variantSets() = std::move(variantSets);
 
   for (const auto &cidx : node.children) {
+    DCOUT("parent: " << primIdx << ", child: " << cidx);
     if (variantChildrenIndices.count(int64_t(cidx))) {
+      DCOUT("primIdx " << cidx << " processed");
       // Prim is processed
       continue;
     }
 
     Prim childPrim(value::Value(nullptr)); // dummy
-    if (!ConstructPrimTreeRec(cidx, prim_nodes, &childPrim, err)) {
+    // inherit `parent_is_variant`
+    if (!ConstructPrimTreeRec(cidx, prim_nodes, parent_is_variant, &childPrim, err)) {
       return false;
     }
 
+    DCOUT("Add childPrim " << childPrim.element_name() << " to Prim " << prim.element_name());
     prim.children().emplace_back(std::move(childPrim));
   }
 
+  prim.variantSets() = std::move(variantSets);
   (*destPrim) = std::move(prim);
+
   return true;
 }
 
@@ -1544,7 +1726,7 @@ bool USDAReader::Impl::ReconstructStage() {
     DCOUT("Toplevel prim idx: " << std::to_string(idx));
 
     Prim prim(value::Value(nullptr)); // init with dummy Prim
-    if (!ConstructPrimTreeRec(idx, _prim_nodes, &prim, &_err)) {
+    if (!ConstructPrimTreeRec(idx, _prim_nodes, /* parent_is_variant */false, &prim, &_err)) {
       return false;
     }
 
@@ -1679,6 +1861,7 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
 
   RegisterReconstructCallback<Material>();
   RegisterReconstructCallback<Shader>();
+  RegisterReconstructCallback<NodeGraph>();
 
   RegisterReconstructCallback<Scope>();
 
@@ -1687,6 +1870,8 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<DiskLight>();
   RegisterReconstructCallback<DistantLight>();
   RegisterReconstructCallback<CylinderLight>();
+  RegisterReconstructCallback<RectLight>();
+  RegisterReconstructCallback<GeometryLight>();
 
   RegisterReconstructCallback<SkelRoot>();
   RegisterReconstructCallback<Skeleton>();
@@ -1778,6 +1963,10 @@ const USDAReaderConfig USDAReader::get_reader_config() const {
   return _impl->get_reader_config();
 }
 
+void USDAReader::SetProgressCallback(std::function<bool(float progress, void *userptr)> callback, void *userptr) {
+  _impl->SetProgressCallback(callback, userptr);
+}
+
 }  // namespace usda
 }  // namespace tinyusdz
 
@@ -1828,6 +2017,11 @@ void USDAReader::set_reader_config(const USDAReaderConfig &config) {
 
 USDAReaderConfig USDAReader::get_reader_config() const {
   return USDAReaderConfig();
+}
+
+void USDAReader::SetProgressCallback(std::function<bool(float progress, void *userptr)> callback, void *userptr) {
+  (void)callback;
+  (void)userptr;
 }
 
 }  // namespace usda

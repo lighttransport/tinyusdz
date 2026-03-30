@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <map>
 #include <string>
@@ -119,6 +120,15 @@ struct USDLoadOptions {
   std::map<std::string, FileFormatHandler> fileformats;
 
   Axis upAxis{Axis::Y};
+
+  ///
+  /// Progress callback function type.
+  /// @param[in] progress Progress value between 0.0 and 1.0
+  /// @param[in] userptr User-provided pointer for custom data
+  /// @return true to continue parsing, false to cancel
+  ///
+  std::function<bool(float progress, void *userptr)> progress_callback{nullptr};
+  void *progress_userptr{nullptr};
 };
 
 
@@ -128,13 +138,24 @@ struct USDLoadOptions {
 // - Realtime(moderate resource size limit)
 // - DCC(for data conversion. Unlimited resource size)
 
-#if 0  // TODO
-//struct USDWriteOptions
-//{
-//
-//
-//};
-#endif
+///
+/// Options for writing USD files.
+///
+struct USDWriteOptions {
+  ///
+  /// Enable zstd compression for output file.
+  /// When enabled, the entire USD file is wrapped with zstd compression.
+  /// Also auto-detected when filename ends with ".zst" extension.
+  ///
+  bool use_zstd_compression{false};
+
+  ///
+  /// Zstd compression level (1-22).
+  /// Higher values give better compression but slower speed.
+  /// Default is 5 (good balance of speed and ratio).
+  ///
+  int zstd_compression_level{5};
+};
 
 //
 
@@ -458,6 +479,10 @@ bool IsUSDC(const uint8_t *addr, const size_t length);
 // Test if input is USDZ(Uncompressed ZIP) format.
 bool IsUSDZ(const std::string &filename);
 bool IsUSDZ(const uint8_t *addr, const size_t length);
+
+// Test if input is zstd-compressed data (by magic number).
+// This is for file-level compression, not internal USDC LZ4 compression.
+bool IsZstdCompressed(const uint8_t *addr, const size_t length);
 
 }  // namespace tinyusdz
 

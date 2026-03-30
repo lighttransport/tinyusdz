@@ -16,8 +16,15 @@ set(TEST_SOURCES
 	unit-math.cc
 	unit-ioutil.cc
 	unit-timesamples.cc
+	unit-fp-parse-print.cc
 	unit-materialx.cc
 	unit-task-queue.cc
+	# unit-dedup.cc  # Temporarily disabled - needs API updates
+	unit-crate-writer.cc
+	unit-stage.cc
+	unit-tiny-container.cc
+	unit-usda-roundtrip.cc
+	unit-half-roundtrip.cc
    )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)
@@ -40,6 +47,12 @@ endif (WIN32)
 
 target_link_libraries(${TEST_TARGET_NAME} PRIVATE tinyusdz_static ${CMAKE_DL_LIBS})
 target_include_directories(${TEST_TARGET_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
+# Add crate-writer library and includes for dedup tests
+if(TARGET crate-writer)
+  target_link_libraries(${TEST_TARGET_NAME} PRIVATE crate-writer)
+  target_include_directories(${TEST_TARGET_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/sandbox/crate-writer/include)
+endif()
 
 set_target_properties(${TEST_TARGET_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 

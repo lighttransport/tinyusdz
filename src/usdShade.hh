@@ -137,9 +137,11 @@ struct Material : UsdShadePrim {
 };
 
 ///
-/// NodeGraph
+/// NodeGraph (Shader Network Container)
 ///
 /// A NodeGraph is a container for shading nodes that can expose arbitrary outputs.
+/// Container for organizing shader nodes and connections in a network.
+/// Can contain multiple shader nodes as children and provide interface inputs/outputs.
 /// Unlike Material which has fixed outputs (surface, displacement, volume),
 /// NodeGraph outputs are stored in the props map with the "outputs:" prefix.
 ///
@@ -148,11 +150,22 @@ struct Material : UsdShadePrim {
 ///     float3 outputs:result.connect = </path/to/shader.outputs:out>
 ///   }
 ///
-// NodeGraph Prim - A container for shading nodes that defines a shading graph
 struct NodeGraph : UsdShadePrim {
   // NodeGraph can have arbitrary inputs and outputs (e.g., outputs:result, outputs:normal, etc.)
   // These are stored in the inherited props map from UsdShadePrim
   // Child nodes are stored as children in the USD hierarchy, not directly here
+
+  // Optional properties for shader network node management
+  // Child shaders and their connections are managed through the standard prim children mechanism
+  // Interface inputs/outputs can be defined through typed attributes
+  // Note: Uses inherited `props` from UsdShadePrim for additional properties
+  std::vector<value::token> _primChildren;  // Child prim names
+  std::vector<value::token> _properties;    // Property names
+
+  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const { return _properties; }
+  std::vector<value::token> &primChildrenNames() { return _primChildren; }
+  std::vector<value::token> &propertyNames() { return _properties; }
 
   // Optional MaterialX-specific attributes
   TypedAttribute<std::string> nodedef;  // Reference to a nodedef
@@ -273,8 +286,9 @@ struct UsdUVTexture : ShaderNode {
 struct UsdPreviewSurface : ShaderNode {
   
   // From 2.6
-  // NOTE: When opacityThreshold is non-zero, opacityMode is ignored. 
+  // NOTE: When opacityThreshold is non-zero, opacityMode is ignored.
   enum class OpacityMode {
+    Opacity, // "opacity" : treat opacity as standard alpha (legacy name)
     Transparent, // "transparent" : the material will still receive a lighting response
     Presence, // "presence" : no lighting response
   };
@@ -348,6 +362,7 @@ struct OpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<value::color3f>> base_color{value::color3f{0.8f, 0.8f, 0.8f}}; // "inputs:base_color"
   TypedAttributeWithFallback<Animatable<float>> base_roughness{0.0f}; // "inputs:base_roughness"
   TypedAttributeWithFallback<Animatable<float>> base_metalness{0.0f}; // "inputs:base_metalness"
+  TypedAttributeWithFallback<Animatable<float>> base_diffuse_roughness{0.0f}; // "inputs:base_diffuse_roughness"
 
   // Specular properties  
   TypedAttributeWithFallback<Animatable<float>> specular_weight{1.0f}; // "inputs:specular_weight"
@@ -369,7 +384,8 @@ struct OpenPBRSurface : ShaderNode {
   // Subsurface properties
   TypedAttributeWithFallback<Animatable<float>> subsurface_weight{0.0f}; // "inputs:subsurface_weight"
   TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_color{value::color3f{0.8f, 0.8f, 0.8f}}; // "inputs:subsurface_color"
-  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_radius{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:subsurface_radius"
+  TypedAttributeWithFallback<Animatable<float>> subsurface_radius{1.0f}; // "inputs:subsurface_radius"
+  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_radius_scale{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:subsurface_radius_scale"
   TypedAttributeWithFallback<Animatable<float>> subsurface_scale{1.0f}; // "inputs:subsurface_scale"
   TypedAttributeWithFallback<Animatable<float>> subsurface_anisotropy{0.0f}; // "inputs:subsurface_anisotropy"
 
@@ -377,6 +393,16 @@ struct OpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<float>> sheen_weight{0.0f}; // "inputs:sheen_weight"
   TypedAttributeWithFallback<Animatable<value::color3f>> sheen_color{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:sheen_color"
   TypedAttributeWithFallback<Animatable<float>> sheen_roughness{0.3f}; // "inputs:sheen_roughness"
+
+  // Fuzz properties - velvet/fabric-like appearance
+  TypedAttributeWithFallback<Animatable<float>> fuzz_weight{0.0f}; // "inputs:fuzz_weight"
+  TypedAttributeWithFallback<Animatable<value::color3f>> fuzz_color{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:fuzz_color"
+  TypedAttributeWithFallback<Animatable<float>> fuzz_roughness{0.5f}; // "inputs:fuzz_roughness"
+
+  // Thin film properties - iridescence from thin film interference
+  TypedAttributeWithFallback<Animatable<float>> thin_film_weight{0.0f}; // "inputs:thin_film_weight"
+  TypedAttributeWithFallback<Animatable<float>> thin_film_thickness{500.0f}; // "inputs:thin_film_thickness" (nanometers)
+  TypedAttributeWithFallback<Animatable<float>> thin_film_ior{1.5f}; // "inputs:thin_film_ior"
 
   // Coat properties
   TypedAttributeWithFallback<Animatable<float>> coat_weight{0.0f}; // "inputs:coat_weight"
@@ -393,7 +419,7 @@ struct OpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<value::color3f>> emission_color{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:emission_color"
 
   // Geometry properties
-  TypedAttributeWithFallback<Animatable<float>> opacity{1.0f}; // "inputs:opacity"
+  TypedAttributeWithFallback<Animatable<float>> opacity{1.0f}; // "inputs:opacity" or "inputs:geometry_opacity" (maps to alpha in Three.js)
   TypedAttributeWithFallback<Animatable<value::normal3f>> normal{value::normal3f{0.0f, 0.0f, 1.0f}}; // "inputs:normal"
   TypedAttributeWithFallback<Animatable<value::vector3f>> tangent{value::vector3f{1.0f, 0.0f, 0.0f}}; // "inputs:tangent"
 

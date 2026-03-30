@@ -415,4 +415,124 @@ std::string base64_encode(unsigned char const *bytes_to_encode,
                           unsigned int in_len);
 std::string base64_decode(std::string const &encoded_string);
 
+///
+/// Fast floating-point to string conversion using Dragonbox algorithm
+/// - Shortest representation that round-trips correctly
+/// - Human-readable format for typical ranges: [1e-4, 1e16) for double, [1e-4, 1e7) for float
+/// - Scientific notation for extreme values
+/// - Fast path optimization for 1.0 and -1.0 (23x faster)
+///
+std::string dtos(float v);
+std::string dtos(double v);
+
+///
+/// Buffer-based version for efficient printing (avoids std::string construction)
+/// Writes the string representation to buffer and returns the length
+/// Buffer must be at least DTOS_MAX_CHARS_FLOAT/DOUBLE bytes
+///
+constexpr size_t DTOS_MAX_CHARS_FLOAT = 24;
+constexpr size_t DTOS_MAX_CHARS_DOUBLE = 32;
+
+size_t dtos(float v, char* buffer);
+size_t dtos(double v, char* buffer);
+
+// Forward declarations for types (actual definitions in value-types.hh)
+namespace value {
+struct half;
+}  // namespace value (forward declaration only)
+
+///
+/// Half-precision float to string conversion using direct dragonbox algorithm
+/// Produces shortest representation that uniquely identifies the half value
+/// Maximum output length: 16 characters (including null terminator)
+///
+constexpr size_t DTOS_MAX_CHARS_HALF = 16;
+
+std::string dtos(value::half v);
+size_t dtos(value::half v, char* buffer);
+
+// Continue forward declarations
+namespace value {
+struct matrix2d;
+struct matrix3d;
+struct matrix4d;
+
+// Vector type aliases (must match value-types.hh)
+using float2 = std::array<float, 2>;
+using float3 = std::array<float, 3>;
+using float4 = std::array<float, 4>;
+using double2 = std::array<double, 2>;
+using double3 = std::array<double, 3>;
+using double4 = std::array<double, 4>;
+using half2 = std::array<half, 2>;
+using half3 = std::array<half, 3>;
+using half4 = std::array<half, 4>;
+}  // namespace value
+
+///
+/// Maximum buffer sizes for printing vector/matrix types
+/// Format: (v0, v1, ..., vN) with separators
+///
+constexpr size_t PRINT_FLOAT2_MAX_CHARS = 2 * DTOS_MAX_CHARS_FLOAT + 6;   // (f, f)
+constexpr size_t PRINT_FLOAT3_MAX_CHARS = 3 * DTOS_MAX_CHARS_FLOAT + 8;   // (f, f, f)
+constexpr size_t PRINT_FLOAT4_MAX_CHARS = 4 * DTOS_MAX_CHARS_FLOAT + 10;  // (f, f, f, f)
+
+constexpr size_t PRINT_DOUBLE2_MAX_CHARS = 2 * DTOS_MAX_CHARS_DOUBLE + 6;
+constexpr size_t PRINT_DOUBLE3_MAX_CHARS = 3 * DTOS_MAX_CHARS_DOUBLE + 8;
+constexpr size_t PRINT_DOUBLE4_MAX_CHARS = 4 * DTOS_MAX_CHARS_DOUBLE + 10;
+
+constexpr size_t PRINT_HALF2_MAX_CHARS = 2 * DTOS_MAX_CHARS_FLOAT + 6;
+constexpr size_t PRINT_HALF3_MAX_CHARS = 3 * DTOS_MAX_CHARS_FLOAT + 8;
+constexpr size_t PRINT_HALF4_MAX_CHARS = 4 * DTOS_MAX_CHARS_FLOAT + 10;
+
+// Matrix: ((row0), (row1), ...) format
+constexpr size_t PRINT_MATRIX2D_MAX_CHARS = 2 * (2 * DTOS_MAX_CHARS_DOUBLE + 6) + 6;   // 2 rows of double2
+constexpr size_t PRINT_MATRIX3D_MAX_CHARS = 3 * (3 * DTOS_MAX_CHARS_DOUBLE + 8) + 8;   // 3 rows of double3
+constexpr size_t PRINT_MATRIX4D_MAX_CHARS = 4 * (4 * DTOS_MAX_CHARS_DOUBLE + 10) + 10; // 4 rows of double4
+
+///
+/// Efficient vector/matrix printing functions
+/// Returns number of characters written to buffer
+/// Buffer must be at least PRINT_***_MAX_CHARS bytes
+///
+size_t print_float2(const value::float2& v, char* buffer);
+size_t print_float3(const value::float3& v, char* buffer);
+size_t print_float4(const value::float4& v, char* buffer);
+
+size_t print_double2(const value::double2& v, char* buffer);
+size_t print_double3(const value::double3& v, char* buffer);
+size_t print_double4(const value::double4& v, char* buffer);
+
+// Half precision functions - only available when linking with value-types
+#if 0
+size_t print_half2(const value::half2& v, char* buffer);
+size_t print_half3(const value::half3& v, char* buffer);
+size_t print_half4(const value::half4& v, char* buffer);
+#endif
+
+size_t print_matrix2d(const value::matrix2d& m, char* buffer);
+size_t print_matrix3d(const value::matrix3d& m, char* buffer);
+size_t print_matrix4d(const value::matrix4d& m, char* buffer);
+
+/// Simple glob pattern matching.
+/// Supports * (match any characters) and ? (match single character).
+///
+/// @param[in] pattern Glob pattern
+/// @param[in] str String to match
+/// @return true if str matches pattern
+///
+bool GlobMatch(const std::string &pattern, const std::string &str);
+
+///
+/// Glob pattern matching for paths with ** support.
+/// ** matches zero or more path segments (including /)
+/// * matches any characters except /
+/// ? matches single character except /
+///
+/// @param[in] pattern Glob pattern (e.g., "/Suzanne/**", "/**/Mesh")
+/// @param[in] path Path string to match
+/// @return true if path matches pattern
+///
+bool GlobMatchPath(const std::string &pattern, const std::string &path);
+
 }  // namespace tinyusdz

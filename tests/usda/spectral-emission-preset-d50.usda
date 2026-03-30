@@ -1,0 +1,15 @@
+#usda 1.0
+(
+    doc = "Test: Spectral emission with D50 illuminant preset"
+)
+
+def DistantLight "TestLight"
+{
+    float inputs:intensity = 1.0
+    color3f inputs:color = (1.0, 0.95, 0.9)
+    float2[] wavelength:emission = [] (
+        customData = {
+            string illuminantPreset = "d50"
+        }
+    )
+}

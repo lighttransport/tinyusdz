@@ -11,12 +11,11 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#if defined(__GNUC__)
+#if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC diagnostic ignored "-Wunused-parameter"
-#pragma GCC diagnostic ignored "-Wdisabled-macro-expansion"
 #endif
 
 #include "external/quickjs-ng/quickjs.h"
@@ -25,7 +24,7 @@
 #pragma clang diagnostic pop
 #endif
 
-#if defined(__GNUC__)
+#if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
 
@@ -34,6 +33,7 @@
 #include <cmath>
 #include <cstring>
 #include "value-types.hh"
+#include "str-util.hh"  // For dragonbox-based dtos()
 #endif
 
 namespace tinyusdz {
@@ -48,12 +48,11 @@ namespace tydra {
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#if defined(__GNUC__)
+#if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC diagnostic ignored "-Wunused-parameter"
-#pragma GCC diagnostic ignored "-Wdisabled-macro-expansion"
 #endif
 
 static std::string LayerMetasToJSON(const LayerMetas* metas) {
@@ -486,7 +485,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         for (int i = 0; i < 3; i++) {
           for (int j = 0; j < 3; j++) {
             if (i > 0 || j > 0) oss << ",";
-            oss << v.value().m[i][j];
+            oss << dtos(v.value().m[i][j]);
           }
         }
         oss << "]";
@@ -501,7 +500,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         for (int i = 0; i < 4; i++) {
           for (int j = 0; j < 4; j++) {
             if (i > 0 || j > 0) oss << ",";
-            oss << v.value().m[i][j];
+            oss << dtos(v.value().m[i][j]);
           }
         }
         oss << "]";
@@ -514,7 +513,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
     else if (tid == value::TypeTraits<value::half2>::type_id()) {
       auto v = attr->get_value<value::half2>();
       if (v) {
-        oss << "[" << value::half_to_float(v.value()[0]) << "," << value::half_to_float(v.value()[1]) << "]";
+        oss << "[" << dtos(value::half_to_float(v.value()[0])) << "," << dtos(value::half_to_float(v.value()[1])) << "]";
       } else {
         oss << "null";
       }
@@ -523,7 +522,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
     else if (tid == value::TypeTraits<value::half3>::type_id()) {
       auto v = attr->get_value<value::half3>();
       if (v) {
-        oss << "[" << value::half_to_float(v.value()[0]) << "," << value::half_to_float(v.value()[1]) << "," << value::half_to_float(v.value()[2]) << "]";
+        oss << "[" << dtos(value::half_to_float(v.value()[0])) << "," << dtos(value::half_to_float(v.value()[1])) << "," << dtos(value::half_to_float(v.value()[2])) << "]";
       } else {
         oss << "null";
       }
@@ -532,8 +531,8 @@ static std::string AttributeToJSON(const Attribute* attr) {
     else if (tid == value::TypeTraits<value::half4>::type_id()) {
       auto v = attr->get_value<value::half4>();
       if (v) {
-        oss << "[" << value::half_to_float(v.value()[0]) << "," << value::half_to_float(v.value()[1]) << "," 
-            << value::half_to_float(v.value()[2]) << "," << value::half_to_float(v.value()[3]) << "]";
+        oss << "[" << dtos(value::half_to_float(v.value()[0])) << "," << dtos(value::half_to_float(v.value()[1])) << ","
+            << dtos(value::half_to_float(v.value()[2])) << "," << dtos(value::half_to_float(v.value()[3])) << "]";
       } else {
         oss << "null";
       }
@@ -556,7 +555,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         oss << "[";
         for (size_t i = 0; i < v.value().size(); i++) {
           if (i > 0) oss << ",";
-          oss << v.value()[i];
+          oss << dtos(v.value()[i]);
         }
         oss << "]";
       } else {
@@ -583,7 +582,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         for (size_t i = 0; i < v.value().size(); i++) {
           if (i > 0) oss << ",";
           // Flatten each float3 into the main array
-          oss << v.value()[i][0] << "," << v.value()[i][1] << "," << v.value()[i][2];
+          oss << dtos(v.value()[i][0]) << "," << dtos(v.value()[i][1]) << "," << dtos(v.value()[i][2]);
         }
         oss << "]";
       } else {
@@ -598,7 +597,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         oss << "[";
         for (size_t i = 0; i < v.value().size(); i++) {
           if (i > 0) oss << ",";
-          oss << v.value()[i];
+          oss << dtos(v.value()[i]);
         }
         oss << "]";
       } else {
@@ -612,7 +611,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         for (size_t i = 0; i < v.value().size(); i++) {
           if (i > 0) oss << ",";
           // Flatten each double2 into the main array
-          oss << v.value()[i][0] << "," << v.value()[i][1];
+          oss << dtos(v.value()[i][0]) << "," << dtos(v.value()[i][1]);
         }
         oss << "]";
       } else {
@@ -626,7 +625,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         for (size_t i = 0; i < v.value().size(); i++) {
           if (i > 0) oss << ",";
           // Flatten each double3 into the main array
-          oss << v.value()[i][0] << "," << v.value()[i][1] << "," << v.value()[i][2];
+          oss << dtos(v.value()[i][0]) << "," << dtos(v.value()[i][1]) << "," << dtos(v.value()[i][2]);
         }
         oss << "]";
       } else {
@@ -640,7 +639,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         for (size_t i = 0; i < v.value().size(); i++) {
           if (i > 0) oss << ",";
           // Flatten each double4 into the main array
-          oss << v.value()[i][0] << "," << v.value()[i][1] << "," << v.value()[i][2] << "," << v.value()[i][3];
+          oss << dtos(v.value()[i][0]) << "," << dtos(v.value()[i][1]) << "," << dtos(v.value()[i][2]) << "," << dtos(v.value()[i][3]);
         }
         oss << "]";
       } else {
@@ -703,7 +702,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
           for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 3; col++) {
               if (row > 0 || col > 0) oss << ",";
-              oss << v.value()[i].m[row][col];
+              oss << dtos(v.value()[i].m[row][col]);
             }
           }
         }
@@ -722,7 +721,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
           for (int row = 0; row < 4; row++) {
             for (int col = 0; col < 4; col++) {
               if (row > 0 || col > 0) oss << ",";
-              oss << v.value()[i].m[row][col];
+              oss << dtos(v.value()[i].m[row][col]);
             }
           }
         }
@@ -739,7 +738,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         oss << "[";
         for (size_t i = 0; i < v.value().size(); ++i) {
           if (i > 0) oss << ",";
-          oss << value::half_to_float(v.value()[i]);
+          oss << dtos(value::half_to_float(v.value()[i]));
         }
         oss << "]";
       } else {
@@ -753,7 +752,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         oss << "[";
         for (size_t i = 0; i < v.value().size(); ++i) {
           if (i > 0) oss << ",";
-          oss << value::half_to_float(v.value()[i][0]) << "," << value::half_to_float(v.value()[i][1]);
+          oss << dtos(value::half_to_float(v.value()[i][0])) << "," << dtos(value::half_to_float(v.value()[i][1]));
         }
         oss << "]";
       } else {
@@ -767,8 +766,8 @@ static std::string AttributeToJSON(const Attribute* attr) {
         oss << "[";
         for (size_t i = 0; i < v.value().size(); ++i) {
           if (i > 0) oss << ",";
-          oss << value::half_to_float(v.value()[i][0]) << "," << value::half_to_float(v.value()[i][1]) << "," 
-              << value::half_to_float(v.value()[i][2]);
+          oss << dtos(value::half_to_float(v.value()[i][0])) << "," << dtos(value::half_to_float(v.value()[i][1])) << ","
+              << dtos(value::half_to_float(v.value()[i][2]));
         }
         oss << "]";
       } else {
@@ -782,8 +781,8 @@ static std::string AttributeToJSON(const Attribute* attr) {
         oss << "[";
         for (size_t i = 0; i < v.value().size(); ++i) {
           if (i > 0) oss << ",";
-          oss << value::half_to_float(v.value()[i][0]) << "," << value::half_to_float(v.value()[i][1]) << "," 
-              << value::half_to_float(v.value()[i][2]) << "," << value::half_to_float(v.value()[i][3]);
+          oss << dtos(value::half_to_float(v.value()[i][0])) << "," << dtos(value::half_to_float(v.value()[i][1])) << ","
+              << dtos(value::half_to_float(v.value()[i][2])) << "," << dtos(value::half_to_float(v.value()[i][3]));
         }
         oss << "]";
       } else {
@@ -859,61 +858,61 @@ static std::string PrimMetasToJSON(const PrimMeta* metas) {
   
   // Basic metadata flags
   oss << "\"active\":";
-  if (metas->active.has_value()) {
-    oss << (metas->active.value() ? "true" : "false");
+  if (metas->has_active()) {
+    oss << (metas->get_active() ? "true" : "false");
   } else {
     oss << "null";
   }
   oss << ",";
-  
+
   oss << "\"hidden\":";
-  if (metas->hidden.has_value()) {
-    oss << (metas->hidden.value() ? "true" : "false");
+  if (metas->has_hidden()) {
+    oss << (metas->get_hidden() ? "true" : "false");
   } else {
     oss << "null";
   }
   oss << ",";
-  
+
   oss << "\"instanceable\":";
-  if (metas->instanceable.has_value()) {
-    oss << (metas->instanceable.value() ? "true" : "false");
+  if (metas->has_instanceable()) {
+    oss << (metas->get_instanceable() ? "true" : "false");
   } else {
     oss << "null";
   }
   oss << ",";
-  
+
   // Kind
   oss << "\"kind\":\"" << metas->get_kind() << "\",";
-  
+
   // Documentation and comment
   oss << "\"documentation\":";
-  if (metas->doc.has_value()) {
-    oss << "\"" << metas->doc.value().value << "\"";
+  if (metas->has_doc()) {
+    oss << "\"" << metas->get_doc().value << "\"";
   } else {
     oss << "null";
   }
   oss << ",";
-  
+
   oss << "\"comment\":";
-  if (metas->comment.has_value()) {
-    oss << "\"" << metas->comment.value().value << "\"";
+  if (metas->has_comment()) {
+    oss << "\"" << metas->get_comment().value << "\"";
   } else {
     oss << "null";
   }
   oss << ",";
-  
+
   // Display name and scene name (extensions)
   oss << "\"displayName\":";
-  if (metas->displayName.has_value()) {
-    oss << "\"" << metas->displayName.value() << "\"";
+  if (metas->has_displayName()) {
+    oss << "\"" << metas->get_displayName() << "\"";
   } else {
     oss << "null";
   }
   oss << ",";
-  
+
   oss << "\"sceneName\":";
-  if (metas->sceneName.has_value()) {
-    oss << "\"" << metas->sceneName.value() << "\"";
+  if (metas->has_sceneName()) {
+    oss << "\"" << metas->get_sceneName() << "\"";
   } else {
     oss << "null";
   }
@@ -921,9 +920,13 @@ static std::string PrimMetasToJSON(const PrimMeta* metas) {
   
   // References count
   oss << "\"hasReferences\":";
-  if (metas->references.has_value() && !metas->references.value().second.empty()) {
-    oss << "true,";
-    oss << "\"referencesCount\":" << metas->references.value().second.size();
+  if (metas->references.has_value() && !metas->references.value().empty()) {
+    size_t total_refs = 0;
+    for (const auto& p : metas->references.value()) {
+      total_refs += p.second.size();
+    }
+    oss << (total_refs > 0 ? "true" : "false") << ",";
+    oss << "\"referencesCount\":" << total_refs;
   } else {
     oss << "false,";
     oss << "\"referencesCount\":0";
@@ -932,9 +935,13 @@ static std::string PrimMetasToJSON(const PrimMeta* metas) {
   
   // Payload count
   oss << "\"hasPayload\":";
-  if (metas->payload.has_value() && !metas->payload.value().second.empty()) {
-    oss << "true,";
-    oss << "\"payloadCount\":" << metas->payload.value().second.size();
+  if (metas->payload.has_value() && !metas->payload.value().empty()) {
+    size_t total_payloads = 0;
+    for (const auto& p : metas->payload.value()) {
+      total_payloads += p.second.size();
+    }
+    oss << (total_payloads > 0 ? "true" : "false") << ",";
+    oss << "\"payloadCount\":" << total_payloads;
   } else {
     oss << "false,";
     oss << "\"payloadCount\":0";
@@ -943,9 +950,13 @@ static std::string PrimMetasToJSON(const PrimMeta* metas) {
   
   // Inherits count
   oss << "\"hasInherits\":";
-  if (metas->inherits.has_value() && !metas->inherits.value().second.empty()) {
-    oss << "true,";
-    oss << "\"inheritsCount\":" << metas->inherits.value().second.size();
+  if (metas->inherits.has_value() && !metas->inherits.value().empty()) {
+    size_t total_inherits = 0;
+    for (const auto& p : metas->inherits.value()) {
+      total_inherits += p.second.size();
+    }
+    oss << (total_inherits > 0 ? "true" : "false") << ",";
+    oss << "\"inheritsCount\":" << total_inherits;
   } else {
     oss << "false,";
     oss << "\"inheritsCount\":0";
@@ -974,12 +985,18 @@ static std::string PrimMetasToJSON(const PrimMeta* metas) {
   
   // VariantSets info
   oss << "\"hasVariantSets\":";
-  if (metas->variantSets.has_value() && !metas->variantSets.value().second.empty()) {
-    oss << "true,";
-    oss << "\"variantSetsCount\":" << metas->variantSets.value().second.size() << ",";
+  if (metas->variantSets.has_value() && !metas->variantSets.value().empty()) {
+    std::vector<std::string> all_varset_names;
+    for (const auto& p : metas->variantSets.value()) {
+      for (const auto& varSet : p.second) {
+        all_varset_names.push_back(varSet);
+      }
+    }
+    oss << (!all_varset_names.empty() ? "true" : "false") << ",";
+    oss << "\"variantSetsCount\":" << all_varset_names.size() << ",";
     oss << "\"variantSetNames\":[";
     bool first = true;
-    for (const auto& varSet : metas->variantSets.value().second) {
+    for (const auto& varSet : all_varset_names) {
       if (!first) oss << ",";
       oss << "\"" << varSet << "\"";
       first = false;
@@ -993,8 +1010,8 @@ static std::string PrimMetasToJSON(const PrimMeta* metas) {
   oss << ",";
   
   // Custom data and unregistered metas
-  oss << "\"hasCustomData\":" << (metas->customData.has_value() ? "true" : "false") << ",";
-  oss << "\"hasAssetInfo\":" << (metas->assetInfo.has_value() ? "true" : "false") << ",";
+  oss << "\"hasCustomData\":" << (metas->has_customData() ? "true" : "false") << ",";
+  oss << "\"hasAssetInfo\":" << (metas->has_assetInfo() ? "true" : "false") << ",";
   oss << "\"unregisteredMetasCount\":" << metas->unregisteredMetas.size() << ",";
   
   // Unregistered metadata names

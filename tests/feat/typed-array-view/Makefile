@@ -1,7 +1,7 @@
 # Makefile for TypedArrayView test
 
 CXX = g++
-CXXFLAGS = -std=c++14 -Wall -Wextra -I../../../ -I../../../src
+CXXFLAGS = -std=c++17 -Wall -Wextra -I../../../ -I../../../src
 LDFLAGS =
 
 # Source files

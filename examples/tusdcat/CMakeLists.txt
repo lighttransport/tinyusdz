@@ -3,6 +3,7 @@ set(EXAMPLE_TARGET "tusdcat")
 
 set(TINYUSDZ_SIMPLE_DUMP_SOURCES
     main.cc
+    variant-format.cc
     )
 
 add_executable(${EXAMPLE_TARGET} ${TINYUSDZ_SIMPLE_DUMP_SOURCES})

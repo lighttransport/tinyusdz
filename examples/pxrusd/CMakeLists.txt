@@ -20,8 +20,8 @@ find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
 
 find_package(Threads REQUIRED)
 
-# Require strict C++14
-set(CMAKE_CXX_STANDARD 14)
+# Require strict C++17
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
