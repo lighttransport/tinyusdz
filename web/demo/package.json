@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "setup:local": "ln -sfn ../../js/src/tinyusdz node_modules/tinyusdz",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
