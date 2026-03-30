@@ -62,6 +62,10 @@ bool DefaultTextureImageLoaderFunction(const value::AssetPath &assetPath,
 struct MeshConverterConfig {
   bool triangulate{true};
 
+  // Subdivision surface tessellation level. When > 0, meshes with authored
+  // subdivisionScheme are tessellated before downstream Tydra mesh conversion.
+  int32_t subdivision_level{0};
+
   // Triangulation method for polygons with 5+ vertices
   enum class TriangulationMethod {
     Earcut,     // Use earcut algorithm (robust, handles complex polygons)

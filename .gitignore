@@ -5,6 +5,7 @@
 
 # App-specific
 build/
+build-tinysubdiv/
 
 # User-specific files
 *.rsuser

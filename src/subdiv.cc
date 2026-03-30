@@ -71,9 +71,9 @@ struct FVarVertexColor {
   float r, g, b, a;
 };
 
-bool subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *out_mesh,
-               std::string *err,
-               bool dump) {
+bool subdivide(int subd_level, const ControlQuadMesh &in_mesh,
+               SubdividedMesh *out_mesh, std::string *err,
+               subdiv::SubdivisionScheme scheme, bool dump) {
   if (subd_level < 0) {
     subd_level = 0;
   }
@@ -92,6 +92,17 @@ bool subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *o
   typedef Far::TopologyDescriptor Descriptor;
 
   Sdc::SchemeType type = OpenSubdiv::Sdc::SCHEME_CATMARK;
+  switch (scheme) {
+    case subdiv::SubdivisionScheme::CatmullClark:
+      type = OpenSubdiv::Sdc::SCHEME_CATMARK;
+      break;
+    case subdiv::SubdivisionScheme::Loop:
+      type = OpenSubdiv::Sdc::SCHEME_LOOP;
+      break;
+    case subdiv::SubdivisionScheme::Bilinear:
+      type = OpenSubdiv::Sdc::SCHEME_BILINEAR;
+      break;
+  }
 
   Sdc::Options options;
   options.SetVtxBoundaryInterpolation(Sdc::Options::VTX_BOUNDARY_EDGE_ONLY);

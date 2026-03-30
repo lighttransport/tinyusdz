@@ -142,15 +142,32 @@ option(TINYUSDZ_WITH_USD_TO_GLTF "Build with USD to glTF example" ON)
 option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
 option(TINYUSDZ_WITH_USDFBX "Build with usdFbx support(import FBX .fbx)"
-       OFF)
+        OFF)
 option(TINYUSDZ_WITH_USDVOX
        "Build with usdVox support(import MagicaVoxel .vox)" ON)
+
+set(TINYUSDZ_DEFAULT_WITH_OPENSUBDIV OFF)
+set(TINYUSDZ_DEFAULT_WITH_TINYSUBDIV ON)
+
 option(
   TINYUSDZ_WITH_OPENSUBDIV
   "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)"
-  OFF)
+  ${TINYUSDZ_DEFAULT_WITH_OPENSUBDIV})
 # Use embedded version of OpenSubdiv code by default
 set(osd_DIR ${PROJECT_SOURCE_DIR}/src/osd)
+
+option(
+  TINYUSDZ_WITH_TINYSUBDIV
+  "Build with TinyUSDZ's own dependency-free subdivision surface library (Catmull-Clark, Loop, Bilinear)"
+  ${TINYUSDZ_DEFAULT_WITH_TINYSUBDIV})
+
+# Mutual exclusivity check
+if(TINYUSDZ_WITH_OPENSUBDIV AND TINYUSDZ_WITH_TINYSUBDIV)
+  message(FATAL_ERROR
+          "Cannot enable both TINYUSDZ_WITH_OPENSUBDIV and "
+          "TINYUSDZ_WITH_TINYSUBDIV. TinySubdiv is the default backend; "
+          "disable one subdivision backend before configuring.")
+endif()
 
 option(TINYUSDZ_WITH_AUDIO "Build with Audio support(MP3 and WAV)" ON)
 option(TINYUSDZ_WITH_ALAC_AUDIO "Build with ALAC(as M4A) Audio support" OFF)
@@ -901,6 +918,19 @@ if(TINYUSDZ_WITH_OPENSUBDIV)
 
 endif(TINYUSDZ_WITH_OPENSUBDIV)
 
+if(TINYUSDZ_WITH_TINYSUBDIV)
+  message(STATUS "Using TinyUSDZ's own subdivision surface library")
+
+  # Add our subdivision library sources
+  list(APPEND TINYUSDZ_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/subdivision.cc
+    ${PROJECT_SOURCE_DIR}/src/subdiv-tinyusdz.cc
+  )
+
+  # primvar-interpolation.hh is header-only, no .cc needed
+
+endif(TINYUSDZ_WITH_TINYSUBDIV)
+
 if(TINYUSDZ_WITH_GEOGRAM)
   # Geogram basic core files (header-only minimal set)
   set(GEOGRAM_BASIC_SOURCES
@@ -1521,6 +1551,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "TINYUSDZ_WITH_OPENSUBDIV")
   endif(TINYUSDZ_WITH_OPENSUBDIV)
 
+  if(TINYUSDZ_WITH_TINYSUBDIV)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_TINYSUBDIV")
+  endif(TINYUSDZ_WITH_TINYSUBDIV)
+
   if(TINYUSDZ_WITH_TYDRA)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_TYDRA")
@@ -1750,6 +1785,11 @@ if(TINYUSDZ_BUILD_BENCHMARKS)
     target_compile_definitions(${TINYUSDZ_BENCHMARK_TARGET}
                                PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
   endif(TINYUSDZ_WITH_OPENSUBDIV)
+
+  if(TINYUSDZ_WITH_TINYSUBDIV)
+    target_compile_definitions(${TINYUSDZ_BENCHMARK_TARGET}
+                               PRIVATE "TINYUSDZ_USE_TINYSUBDIV")
+  endif(TINYUSDZ_WITH_TINYSUBDIV)
 
 endif(TINYUSDZ_BUILD_BENCHMARKS)
 
