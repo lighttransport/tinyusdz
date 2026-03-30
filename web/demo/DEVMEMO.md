@@ -1,210 +1,65 @@
 # Development Memo: Local TinyUSDZ Module Integration with Vite
 
 ## Overview
-This document describes how to configure the Vite development environment to use the local TinyUSDZ module from `../js/src/tinyusdz/` instead of the npm package, enabling live reload for rapid development.
 
-## Directory Structure
-```
-web/
-├── demo/                    # Current directory (Vite project)
-│   ├── package.json
-│   ├── vite.config.js
-│   └── ...
-└── js/
-    └── src/
-        └── tinyusdz/       # Local TinyUSDZ module source
-            ├── TinyUSDZLoader.js
-            ├── TinyUSDZComposer.js
-            ├── TinyUSDZLoaderUtils.js
-            └── TinyUSDZMCPClient.js
-```
+For local development, `node_modules/tinyusdz` is replaced with a symlink pointing to the local source at `../js/src/tinyusdz/`. Combined with `preserveSymlinks: true` in `vite.config.js`, this lets Vite serve files from the local source while resolving bare imports (`three`, `fzstd`) from the demo's `node_modules`.
 
-## Configuration Steps
+## How It Works
 
-### Step 1: Create package.json for Local TinyUSDZ Module
+1. **Symlink** replaces the npm-installed package with local source:
+   ```
+   node_modules/tinyusdz -> ../../js/src/tinyusdz
+   ```
 
-Create `web/js/src/tinyusdz/package.json`:
+2. **`preserveSymlinks: true`** in `vite.config.js` tells Vite to keep the `node_modules/tinyusdz/` path instead of following the symlink to the real path. This means bare imports like `three` and `fzstd` in `TinyUSDZLoader.js` resolve from the demo's `node_modules/`, not from the real file location.
 
-```json
-{
-  "name": "tinyusdz",
-  "version": "0.0.1",
-  "type": "module",
-  "main": "./TinyUSDZLoader.js",
-  "exports": {
-    ".": "./TinyUSDZLoader.js",
-    "./TinyUSDZLoader": "./TinyUSDZLoader.js",
-    "./TinyUSDZComposer": "./TinyUSDZComposer.js",
-    "./TinyUSDZLoaderUtils": "./TinyUSDZLoaderUtils.js",
-    "./TinyUSDZMCPClient": "./TinyUSDZMCPClient.js"
-  }
-}
-```
+3. **`resolve.alias`** maps `tinyusdz` → `node_modules/tinyusdz` so that `from 'tinyusdz/TinyUSDZLoader.js'` resolves correctly (the symlinked dir has no `package.json` with exports).
 
-### Step 2: Update demo/package.json
+4. **WASM loading** works because `tinyusdz.js` uses `new URL('tinyusdz.wasm', import.meta.url)`, and the `.wasm` file is co-located with the `.js` file in the symlinked directory.
 
-Replace the npm package with a local file reference:
-
-```json
-{
-  "dependencies": {
-    // Remove this line:
-    // "tinyusdz": "0.9.5-rc.7",
-
-    // Add this line:
-    "tinyusdz": "file:../js/src/tinyusdz",
-
-    // ... other dependencies
-  }
-}
-```
-
-### Step 3: Update vite.config.js
-
-Add path resolution and watch configuration:
-
-```javascript
-import { defineConfig } from 'vite'
-import path from 'path'
-import { compression } from 'vite-plugin-compression2'
-import { viteStaticCopy } from 'vite-plugin-static-copy'
-
-export default defineConfig({
-    base: "./",
-    server: {
-        headers: {
-            'Cross-Origin-Opener-Policy': 'same-origin',
-            'Cross-Origin-Embedder-Policy': 'require-corp',
-        },
-        // Enable watching for local module changes
-        watch: {
-            // Don't ignore the local TinyUSDZ module
-            ignored: ['!**/web/js/src/tinyusdz/**']
-        }
-    },
-    resolve: {
-        alias: {
-            // Direct alias to local module (optional but recommended)
-            'tinyusdz': path.resolve(__dirname, '../js/src/tinyusdz')
-        }
-    },
-    build: {
-        rollupOptions: {
-            input: {
-                main: path.resolve(__dirname, 'index.html'),
-                demos: path.resolve(__dirname, 'demos.html'),
-                basic_usd_composite: path.resolve(__dirname, 'basic-usd-composite.html'),
-                usda_load: path.resolve(__dirname, 'usda-load.html'),
-            },
-        },
-        minify: false,
-        terserOptions: false,
-    },
-    optimizeDeps: {
-        // Exclude from pre-bundling for better HMR
-        exclude: ['tinyusdz'],
-    },
-    plugins: [
-        compression({algorithms: ['gzip']}),
-        viteStaticCopy({
-            targets: [
-                // Update path if WASM file is in local module
-                {
-                    src: '../js/src/tinyusdz/tinyusdz.wasm.zst',
-                    dest: 'assets/'
-                },
-            ],
-        }),
-    ],
-});
-```
-
-### Step 4: Install Dependencies
-
-After making the above changes:
+## Setup
 
 ```bash
 cd web/demo
-npm install  # This will create a symlink to the local module
+npm install          # install all deps (puts npm tinyusdz in node_modules)
+npm run setup:local  # replace with symlink to local source
+npm run dev          # start Vite dev server
 ```
 
-### Alternative: Using npm link (Symlink Method)
-
-Instead of the file reference, you can use npm link for a cleaner setup:
-
+Or manually:
 ```bash
-# First, register the local module
-cd web/js/src/tinyusdz
-npm link
-
-# Then link it in the demo project
-cd web/demo
-npm link tinyusdz
+ln -sfn ../../js/src/tinyusdz node_modules/tinyusdz
 ```
 
-## Usage in Code
-
-After configuration, import TinyUSDZ modules as normal:
-
-```javascript
-// Default export
-import TinyUSDZLoader from 'tinyusdz';
-
-// Named exports
-import { TinyUSDZLoader } from 'tinyusdz';
-
-// Specific module imports
-import TinyUSDZComposer from 'tinyusdz/TinyUSDZComposer';
-import TinyUSDZLoaderUtils from 'tinyusdz/TinyUSDZLoaderUtils';
-import TinyUSDZMCPClient from 'tinyusdz/TinyUSDZMCPClient';
-```
+**Note:** `npm install` will overwrite the symlink with the npm package. Run `npm run setup:local` again after any `npm install`.
 
 ## Development Workflow
 
-1. **Start the dev server:**
+1. **Build WASM** (if needed):
    ```bash
-   npm run dev
+   cd web && ./bootstrap-linux.sh && cd build && make
+   ```
+   Outputs `tinyusdz.js` and `tinyusdz.wasm` to `web/js/src/tinyusdz/`.
+
+2. **Run demo dev server:**
+   ```bash
+   cd web/demo && npm run dev
    ```
 
-2. **Edit files in `web/js/src/tinyusdz/`**
-   - Changes will trigger automatic HMR (Hot Module Replacement)
-   - The browser will reload with your changes instantly
+3. **Edit JS helpers** in `web/js/src/tinyusdz/` — Vite detects changes and reloads.
 
-3. **Benefits:**
-   - ✅ No need to rebuild/republish npm packages
-   - ✅ Instant feedback on code changes
-   - ✅ Direct debugging of source code
-   - ✅ Simplified development workflow
+4. **Rebuild WASM** after C++ changes — `cd web/build && make`, then refresh browser.
 
-## Troubleshooting
+## Switching Back to npm Package
 
-### Issue: Changes not triggering reload
-- Check that the watch configuration in vite.config.js is correct
-- Ensure the path in the alias points to the correct directory
-- Try restarting the Vite dev server
+```bash
+cd web/demo
+npm install   # restores npm tinyusdz package
+```
 
-### Issue: Module not found errors
-- Verify the package.json exists in `web/js/src/tinyusdz/`
-- Check that the exports field correctly maps to existing files
-- Run `npm install` again after configuration changes
+## WASM64 (Optional)
 
-### Issue: WASM file not loading
-- Update the vite-plugin-static-copy path to match your WASM file location
-- Ensure the WASM file exists at the specified path
-
-## Notes
-
-- The `optimizeDeps.exclude` setting prevents Vite from pre-bundling the local module, ensuring HMR works correctly
-- The watch configuration tells Vite to monitor the local module directory for changes
-- Using `type: "module"` in both package.json files ensures ES module compatibility
-- The file reference (`file:../js/src/tinyusdz`) creates a symlink in node_modules, treating the local folder as a package
-
-## Production Build
-
-For production builds, you may want to switch back to the published npm package:
-1. Update package.json to use the npm version
-2. Run `npm install`
-3. Build with `npm run build`
+`tinyusdz_64.js` is the 64-bit WASM build. If it's not present, `TinyUSDZLoader.js` will warn and fall back to the 32-bit module automatically.
 
 ---
-*Last updated: 2025-10-27*
+*Last updated: 2026-03-31*
