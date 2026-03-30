@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include "subdivision.hh"
+
 namespace tinyusdz {
 
 ///
@@ -100,11 +102,15 @@ struct Vertex {
 /// Uniformly subdivide the mesh.
 ///
 /// @param[in] level Subdivision level.
-/// @param[in] in_mesh Input quad mesh.
+/// @param[in] in_mesh Input control mesh.
 /// @param[out] out_mesh Subdivided mesh.
+/// @param[in] scheme Subdivision scheme to apply.
 /// @param[in] dump Dump .obj for debugging.
 ///
 bool subdivide(int level, const ControlQuadMesh &in_mesh,
-               SubdividedMesh *out_mesh, std::string *err, bool dump = false);
+               SubdividedMesh *out_mesh, std::string *err,
+               subdiv::SubdivisionScheme scheme =
+                   subdiv::SubdivisionScheme::CatmullClark,
+               bool dump = false);
 
 }  // namespace tinyusdz

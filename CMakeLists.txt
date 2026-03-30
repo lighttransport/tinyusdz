@@ -142,24 +142,31 @@ option(TINYUSDZ_WITH_USD_TO_GLTF "Build with USD to glTF example" ON)
 option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
 option(TINYUSDZ_WITH_USDFBX "Build with usdFbx support(import FBX .fbx)"
-       OFF)
+        OFF)
 option(TINYUSDZ_WITH_USDVOX
        "Build with usdVox support(import MagicaVoxel .vox)" ON)
+
+set(TINYUSDZ_DEFAULT_WITH_OPENSUBDIV OFF)
+set(TINYUSDZ_DEFAULT_WITH_TINYSUBDIV ON)
+
 option(
   TINYUSDZ_WITH_OPENSUBDIV
   "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)"
-  OFF)
+  ${TINYUSDZ_DEFAULT_WITH_OPENSUBDIV})
 # Use embedded version of OpenSubdiv code by default
 set(osd_DIR ${PROJECT_SOURCE_DIR}/src/osd)
 
 option(
   TINYUSDZ_WITH_TINYSUBDIV
   "Build with TinyUSDZ's own dependency-free subdivision surface library (Catmull-Clark, Loop, Bilinear)"
-  ON)
+  ${TINYUSDZ_DEFAULT_WITH_TINYSUBDIV})
 
 # Mutual exclusivity check
 if(TINYUSDZ_WITH_OPENSUBDIV AND TINYUSDZ_WITH_TINYSUBDIV)
-  message(FATAL_ERROR "Cannot enable both TINYUSDZ_WITH_OPENSUBDIV and TINYUSDZ_WITH_TINYSUBDIV. Choose one subdivision backend.")
+  message(FATAL_ERROR
+          "Cannot enable both TINYUSDZ_WITH_OPENSUBDIV and "
+          "TINYUSDZ_WITH_TINYSUBDIV. TinySubdiv is the default backend; "
+          "disable one subdivision backend before configuring.")
 endif()
 
 option(TINYUSDZ_WITH_AUDIO "Build with Audio support(MP3 and WAV)" ON)

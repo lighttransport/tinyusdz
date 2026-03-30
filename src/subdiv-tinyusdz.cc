@@ -176,7 +176,8 @@ static void ComputeFaceVaryingNormals(SubdividedMesh *mesh) {
 }
 
 bool subdivide(int subd_level, const ControlQuadMesh &in_mesh,
-               SubdividedMesh *out_mesh, std::string *err, bool dump) {
+               SubdividedMesh *out_mesh, std::string *err,
+               subdiv::SubdivisionScheme scheme, bool dump) {
   if (!out_mesh) {
     if (err) {
       *err = "Output mesh pointer is null";
@@ -198,17 +199,32 @@ bool subdivide(int subd_level, const ControlQuadMesh &in_mesh,
     return false;
   }
 
-  // Perform subdivision
-  CatmullClarkSubdivider subdivider;
-  subdivider.SetBoundaryInterpolation(BoundaryInterpolation::EdgeOnly);
-
   HalfEdgeMesh subdivided_mesh;
-
   if (subd_level == 0) {
-    // No subdivision, just triangulate
     subdivided_mesh = input_half_edge;
   } else {
-    SubdivResult result = subdivider.Subdivide(input_half_edge, subdivided_mesh, subd_level);
+    SubdivResult result(false, "Unknown subdivision scheme");
+
+    switch (scheme) {
+      case subdiv::SubdivisionScheme::CatmullClark: {
+        CatmullClarkSubdivider subdivider;
+        subdivider.SetBoundaryInterpolation(BoundaryInterpolation::EdgeOnly);
+        result = subdivider.Subdivide(input_half_edge, subdivided_mesh, subd_level);
+        break;
+      }
+      case subdiv::SubdivisionScheme::Loop: {
+        LoopSubdivider subdivider;
+        subdivider.SetBoundaryInterpolation(BoundaryInterpolation::EdgeOnly);
+        result = subdivider.Subdivide(input_half_edge, subdivided_mesh, subd_level);
+        break;
+      }
+      case subdiv::SubdivisionScheme::Bilinear: {
+        BilinearSubdivider subdivider;
+        result = subdivider.Subdivide(input_half_edge, subdivided_mesh, subd_level);
+        break;
+      }
+    }
+
     if (!result.success) {
       if (err) {
         *err = "Subdivision failed: " + result.error;

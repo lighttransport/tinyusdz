@@ -45,6 +45,9 @@
 #include "shape-to-mesh.hh"
 #include "materialx-to-json.hh"
 #include "mmap-array-ref.hh"
+#if defined(TINYUSDZ_WITH_OPENSUBDIV) || defined(TINYUSDZ_WITH_TINYSUBDIV)
+#include "subdiv.hh"
+#endif
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -95,6 +98,117 @@ namespace tydra {
 namespace {
 
 #define PushError(msg) TYDRA_PUSH_ERROR(err, msg)
+
+#if defined(TINYUSDZ_WITH_OPENSUBDIV) || defined(TINYUSDZ_WITH_TINYSUBDIV)
+static subdiv::SubdivisionScheme ToSubdivScheme(
+    GeomMesh::SubdivisionScheme scheme) {
+  switch (scheme) {
+    case GeomMesh::SubdivisionScheme::CatmullClark:
+      return subdiv::SubdivisionScheme::CatmullClark;
+    case GeomMesh::SubdivisionScheme::Loop:
+      return subdiv::SubdivisionScheme::Loop;
+    case GeomMesh::SubdivisionScheme::Bilinear:
+      return subdiv::SubdivisionScheme::Bilinear;
+    case GeomMesh::SubdivisionScheme::SubdivisionSchemeNone:
+      return subdiv::SubdivisionScheme::CatmullClark;
+  }
+
+  return subdiv::SubdivisionScheme::CatmullClark;
+}
+
+static bool RemapSubdivisionMaterialSubsets(
+    const std::vector<uint32_t> &src_face_vertex_counts,
+    GeomMesh::SubdivisionScheme scheme, int32_t subdivision_level,
+    std::map<std::string, MaterialSubset> *material_subset_map,
+    std::string *err) {
+  if (!material_subset_map) {
+    if (err) {
+      (*err) += "material_subset_map is null.\n";
+    }
+    return false;
+  }
+
+  auto pow4 = [](int32_t level) -> uint64_t {
+    uint64_t value = 1;
+    for (int32_t i = 0; i < level; ++i) {
+      value *= 4;
+    }
+    return value;
+  };
+
+  std::vector<std::vector<int>> triangulated_faces(src_face_vertex_counts.size());
+  size_t tri_face_offset = 0;
+  for (size_t src_face = 0; src_face < src_face_vertex_counts.size(); ++src_face) {
+    uint32_t src_count = src_face_vertex_counts[src_face];
+    uint64_t tri_face_count = 0;
+
+    switch (scheme) {
+      case GeomMesh::SubdivisionScheme::Loop:
+        tri_face_count = pow4(subdivision_level);
+        break;
+      case GeomMesh::SubdivisionScheme::CatmullClark:
+        tri_face_count = uint64_t(src_count) * 2u * pow4(subdivision_level - 1);
+        break;
+      case GeomMesh::SubdivisionScheme::Bilinear:
+        if (src_count == 3) {
+          tri_face_count = pow4(subdivision_level);
+        } else {
+          tri_face_count = uint64_t(src_count) * 2u * pow4(subdivision_level - 1);
+        }
+        break;
+      case GeomMesh::SubdivisionScheme::SubdivisionSchemeNone:
+        tri_face_count = 0;
+        break;
+    }
+
+    if (tri_face_count > size_t((std::numeric_limits<int>::max)())) {
+      if (err) {
+        (*err) += fmt::format(
+            "Subdivision generated too many triangles ({}) for source face {}.\n",
+            tri_face_count, src_face);
+      }
+      return false;
+    }
+
+    triangulated_faces[src_face].reserve(size_t(tri_face_count));
+    for (uint64_t i = 0; i < tri_face_count; ++i) {
+      triangulated_faces[src_face].push_back(int(tri_face_offset + i));
+    }
+    tri_face_offset += size_t(tri_face_count);
+  }
+
+  for (auto &it : *material_subset_map) {
+    std::vector<int> remapped_indices;
+    for (int src_face_index : it.second.usdIndices) {
+      if (src_face_index < 0) {
+        if (err) {
+          (*err) += fmt::format(
+              "MaterialSubset `{}` contains negative face index {}.\n",
+              it.first, src_face_index);
+        }
+        return false;
+      }
+
+      size_t src_face = size_t(src_face_index);
+      if (src_face >= triangulated_faces.size()) {
+        if (err) {
+          (*err) += fmt::format(
+              "MaterialSubset `{}` face index {} exceeds source face count {}.\n",
+              it.first, src_face_index, src_face_vertex_counts.size());
+        }
+        return false;
+      }
+
+      remapped_indices.insert(remapped_indices.end(),
+                              triangulated_faces[src_face].begin(),
+                              triangulated_faces[src_face].end());
+    }
+    it.second.triangulatedIndices = std::move(remapped_indices);
+  }
+
+  return true;
+}
+#endif
 
 
 //
@@ -3394,6 +3508,99 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
+  const uint32_t src_num_faces = uint32_t(dst.usdFaceVertexCounts.size());
+  bool subdivision_applied{false};
+  std::vector<uint32_t> src_face_vertex_counts;
+  src_face_vertex_counts = dst.usdFaceVertexCounts;
+  GeomMesh::SubdivisionScheme subdivision_scheme =
+      GeomMesh::SubdivisionScheme::SubdivisionSchemeNone;
+
+#if defined(TINYUSDZ_WITH_OPENSUBDIV) || defined(TINYUSDZ_WITH_TINYSUBDIV)
+  if (env.mesh_config.subdivision_level > 0) {
+    GeomMesh::SubdivisionScheme scheme = mesh.subdivisionScheme.get_value();
+    if (scheme != GeomMesh::SubdivisionScheme::SubdivisionSchemeNone) {
+      subdivision_scheme = scheme;
+      if (mesh.has_primvar("displayColor") ||
+          mesh.has_primvar("displayOpacity")) {
+        PUSH_ERROR_AND_RETURN(
+            "Subdivision is not yet supported for meshes with authored "
+            "`displayColor` or `displayOpacity` primvars in Tydra conversion.");
+      }
+
+      if (mesh.has_primvar(env.mesh_config.default_tangents_primvar_name) ||
+          mesh.has_primvar(env.mesh_config.default_binormals_primvar_name)) {
+        PUSH_ERROR_AND_RETURN(
+            "Subdivision is not yet supported for meshes with authored tangent "
+            "or binormal primvars in Tydra conversion.");
+      }
+
+      if (mesh.has_primvar("skel:jointIndices") ||
+          mesh.has_primvar("skel:jointWeights")) {
+        PUSH_ERROR_AND_RETURN(
+            "Subdivision is not yet supported for skinned meshes in Tydra "
+            "conversion.");
+      }
+
+      if (!blendshapes.empty()) {
+        PUSH_ERROR_AND_RETURN(
+            "Subdivision is not yet supported for meshes with BlendShapes in "
+            "Tydra conversion.");
+      }
+
+      if (mesh.has_primvar("normals") || mesh.normals.authored()) {
+        PUSH_WARN(
+            "Subdivision currently ignores authored normals and recomputes "
+            "normals from the subdivided topology.");
+      }
+
+      ControlQuadMesh control_mesh;
+      control_mesh.vertices.resize(dst.points.size() * 3);
+      memcpy(control_mesh.vertices.data(), dst.points.data(),
+             dst.points.size() * sizeof(value::float3));
+
+      control_mesh.indices.reserve(dst.usdFaceVertexIndices.size());
+      for (uint32_t idx : dst.usdFaceVertexIndices) {
+        control_mesh.indices.push_back(int(idx));
+      }
+
+      control_mesh.verts_per_faces.reserve(dst.usdFaceVertexCounts.size());
+      for (uint32_t count : dst.usdFaceVertexCounts) {
+        control_mesh.verts_per_faces.push_back(int(count));
+      }
+
+      SubdividedMesh subdivided_mesh;
+      std::string subdiv_err;
+      if (!subdivide(env.mesh_config.subdivision_level, control_mesh,
+                     &subdivided_mesh, &subdiv_err, ToSubdivScheme(scheme))) {
+        PUSH_ERROR_AND_RETURN("Subdivision failed: " + subdiv_err);
+      }
+
+      if ((subdivided_mesh.vertices.size() % 3) != 0) {
+        PUSH_ERROR_AND_RETURN(
+            "Subdivision produced invalid vertex buffer length.");
+      }
+      if ((subdivided_mesh.triangulated_indices.size() % 3) != 0) {
+        PUSH_ERROR_AND_RETURN(
+            "Subdivision produced invalid triangle index buffer length.");
+      }
+      if (subdivided_mesh.face_ids.size() !=
+          (subdivided_mesh.triangulated_indices.size() / 3)) {
+        PUSH_ERROR_AND_RETURN(
+            "Subdivision produced inconsistent face provenance data.");
+      }
+
+      dst.points.resize(subdivided_mesh.vertices.size() / 3);
+      memcpy(dst.points.data(), subdivided_mesh.vertices.data(),
+             subdivided_mesh.vertices.size() * sizeof(float));
+
+      dst.usdFaceVertexIndices = std::move(subdivided_mesh.triangulated_indices);
+      dst.usdFaceVertexCounts.assign(dst.usdFaceVertexIndices.size() / 3, 3);
+
+      subdivision_applied = true;
+    }
+  }
+#endif
+
 
   //
   // 2. bindMaterial GeoMesh and GeomSubset.
@@ -3415,7 +3622,7 @@ bool RenderSceneConverter::ConvertMesh(
   }
 
   if (env.mesh_config.validate_geomsubset) {
-    size_t elementCount = dst.usdFaceVertexCounts.size();
+    size_t elementCount = src_num_faces;
 
     if (material_subsets.size()) {
       auto family_it =
@@ -3474,6 +3681,18 @@ bool RenderSceneConverter::ConvertMesh(
 
     // TODO: Ensure prim_name is unique.
     dst.material_subsetMap[ms.prim_name] = ms;
+  }
+
+  if (subdivision_applied) {
+#if defined(TINYUSDZ_WITH_OPENSUBDIV) || defined(TINYUSDZ_WITH_TINYSUBDIV)
+    if (!dst.material_subsetMap.empty() &&
+        !RemapSubdivisionMaterialSubsets(src_face_vertex_counts,
+                                        subdivision_scheme,
+                                        env.mesh_config.subdivision_level,
+                                        &dst.material_subsetMap, &_err)) {
+      return false;
+    }
+#endif
   }
 
   uint32_t num_vertices = uint32_t(dst.points.size());
@@ -3598,9 +3817,16 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
+  if (subdivision_applied && !uvAttrs.empty()) {
+    PUSH_ERROR_AND_RETURN(
+        "Subdivision is not yet supported for meshes requiring UV primvars in "
+        "Tydra conversion.");
+  }
+
   //TUSDZ_LOG_I("done uvAttr");
 
-  if (mesh.has_primvar(env.mesh_config.default_tangents_primvar_name)) {
+  if (!subdivision_applied &&
+      mesh.has_primvar(env.mesh_config.default_tangents_primvar_name)) {
     GeomPrimvar pvar;
 
     if (!GetGeomPrimvar(env.stage, &mesh,
@@ -3621,7 +3847,8 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
-  if (mesh.has_primvar(env.mesh_config.default_binormals_primvar_name)) {
+  if (!subdivision_applied &&
+      mesh.has_primvar(env.mesh_config.default_binormals_primvar_name)) {
     GeomPrimvar pvar;
 
     if (!GetGeomPrimvar(env.stage, &mesh,
@@ -3643,7 +3870,7 @@ bool RenderSceneConverter::ConvertMesh(
   }
 
   constexpr auto kDisplayColor = "displayColor";
-  if (mesh.has_primvar(kDisplayColor)) {
+  if (!subdivision_applied && mesh.has_primvar(kDisplayColor)) {
     GeomPrimvar pvar;
 
     if (!GetGeomPrimvar(env.stage, &mesh, kDisplayColor, &pvar, &_err)) {
@@ -3670,7 +3897,7 @@ bool RenderSceneConverter::ConvertMesh(
   }
 
   constexpr auto kDisplayOpacity = "displayOpacity";
-  if (mesh.has_primvar(kDisplayOpacity)) {
+  if (!subdivision_applied && mesh.has_primvar(kDisplayOpacity)) {
     GeomPrimvar pvar;
     if (!GetGeomPrimvar(env.stage, &mesh, kDisplayOpacity, &pvar, &_err)) {
       return false;
@@ -3716,7 +3943,7 @@ bool RenderSceneConverter::ConvertMesh(
   //
   // Convert normals
   //
-  {
+  if (!subdivision_applied) {
     Interpolation interp = mesh.get_normalsInterpolation();
     std::vector<value::normal3f> normals;
 
@@ -3971,7 +4198,7 @@ bool RenderSceneConverter::ConvertMesh(
   ///  - Triangulate vertex attributes(normals, uvcoords, vertex
   ///  colors/opacities).
   ///
-  bool triangulate = env.mesh_config.triangulate;
+  bool triangulate = env.mesh_config.triangulate && !subdivision_applied;
   if (triangulate) {
     DCOUT("Triangulate mesh");
     std::vector<uint32_t> triangulatedFaceVertexCounts;  // should be all 3's

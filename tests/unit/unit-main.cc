@@ -21,6 +21,7 @@
 #include "unit-materialx.h"
 #include "unit-task-queue.h"
 #include "unit-tydra.h"
+#include "unit-tydra-subdivision.h"
 //#include "unit-dedup.h"  // Temporarily disabled - needs API updates
 #include "unit-crate-writer.h"
 #include "unit-stage.h"
@@ -118,6 +119,25 @@ TEST_LIST = {
   { "nodegraph_support_test", nodegraph_support_test },
   { "materialx_shader_constants_test", materialx_shader_constants_test },
   { "materialx_shader_fallback_values_test", materialx_shader_fallback_values_test },
+  { "tydra_subdivision_catmullclark_test", tydra_subdivision_catmullclark_test },
+  { "tydra_subdivision_loop_test", tydra_subdivision_loop_test },
+  { "tydra_subdivision_bilinear_test", tydra_subdivision_bilinear_test },
+  { "tydra_subdivision_remaps_material_subset_faces_test", tydra_subdivision_remaps_material_subset_faces_test },
+  { "tydra_subdivision_multiple_material_subsets_disjoint_test", tydra_subdivision_multiple_material_subsets_disjoint_test },
+  { "tydra_subdivision_level2_subset_remap_test", tydra_subdivision_level2_subset_remap_test },
+  { "tydra_subdivision_loop_subset_remap_test", tydra_subdivision_loop_subset_remap_test },
+  { "tydra_subdivision_bilinear_mixed_topology_subset_test", tydra_subdivision_bilinear_mixed_topology_subset_test },
+  { "tydra_subdivision_level_zero_keeps_base_mesh_test", tydra_subdivision_level_zero_keeps_base_mesh_test },
+  { "tydra_subdivision_scheme_none_ignores_requested_level_test", tydra_subdivision_scheme_none_ignores_requested_level_test },
+  { "tydra_subdivision_subset_with_multiple_source_faces_test", tydra_subdivision_subset_with_multiple_source_faces_test },
+  { "tydra_subdivision_incomplete_partition_warns_but_converts_test", tydra_subdivision_incomplete_partition_warns_but_converts_test },
+  { "tydra_subdivision_recomputes_authored_normals_with_warning_test", tydra_subdivision_recomputes_authored_normals_with_warning_test },
+  { "tydra_subdivision_rejects_facevarying_uv_test", tydra_subdivision_rejects_facevarying_uv_test },
+  { "tydra_subdivision_rejects_display_color_test", tydra_subdivision_rejects_display_color_test },
+  { "tydra_subdivision_rejects_display_opacity_test", tydra_subdivision_rejects_display_opacity_test },
+  { "tydra_subdivision_rejects_tangents_test", tydra_subdivision_rejects_tangents_test },
+  { "tydra_subdivision_rejects_binormals_test", tydra_subdivision_rejects_binormals_test },
+  { "tydra_subdivision_rejects_skinning_test", tydra_subdivision_rejects_skinning_test },
   { "task_queue_basic_test", task_queue_basic_test },
   { "task_queue_func_test", task_queue_func_test },
   { "task_queue_full_test", task_queue_full_test },

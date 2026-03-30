@@ -20,6 +20,7 @@ set(TEST_SOURCES
 	unit-materialx.cc
 	unit-task-queue.cc
 	unit-tydra.cc
+	unit-tydra-subdivision.cc
 	# unit-dedup.cc  # Temporarily disabled - needs API updates
 	unit-crate-writer.cc
 	unit-stage.cc

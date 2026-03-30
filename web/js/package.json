@@ -10,6 +10,7 @@
     "dev:clips": "vite --open /anim-clips.html",
     "dev:mtlx": "vite --open /materialx.html",
     "dev:lux": "vite --open /usdlux.html",
+    "dev:subdiv": "vite --open /subdiv.html",
     "dev:nodegraph": "vite --open /openpbr-nodegraph-demo.html",
     "dev:offscreengl": "vite --open /offscreengl.html",
     "dev:progress": "vite --open /progress-demo.html",
