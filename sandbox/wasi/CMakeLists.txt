@@ -36,18 +36,27 @@ list(
   ../../src/prim-types.cc
   ../../src/crate-format.cc
   ../../src/crate-reader.cc
+  ../../src/crate-reader-arrays.cc
+  ../../src/crate-reader-values.cc
+  ../../src/crate-reader-paths.cc
   ../../src/crate-writer.cc
   ../../src/crate-pprint.cc
   ../../src/ascii-parser.cc
+  ../../src/ascii-parser-props.cc
+  ../../src/ascii-parser-entry.cc
   ../../src/ascii-parser-basetype.cc
   ../../src/ascii-parser-timesamples.cc
   ../../src/ascii-parser-timesamples-array.cc
   ../../src/usda-reader.cc
   ../../src/usda-writer.cc
   ../../src/usdc-reader.cc
+  ../../src/usdc-reader-property.cc
+  ../../src/usdc-reader-prim.cc
+  ../../src/usdc-reader-reconstruct.cc
   ../../src/usdc-writer.cc
   ../../src/image-loader.cc
   ../../src/prim-reconstruct.cc
+  ../../src/prim-reconstruct-shader.cc
   ../../src/prim-composition.cc
   ../../src/tiny-format.cc
   ../../src/xform.cc
@@ -58,6 +67,9 @@ list(
   ../../src/usdMtlx.cc
   ../../src/usdObj.cc
   ../../src/tydra/render-data.cc
+  ../../src/tydra/render-data-mesh.cc
+  ../../src/tydra/render-data-material.cc
+  ../../src/tydra/render-data-anim.cc
   ../../src/tydra/scene-access.cc
   ../../src/tydra/shader-network.cc
   ../../src/stage.cc

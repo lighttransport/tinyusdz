@@ -1,21 +1,44 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022-Present Light Transport Entertainment Inc.
-//
-// Layer and Prim composition features.
-//
+
+///
+/// @file composition.hh
+/// @brief USD Layer and Prim composition system
+///
+/// Implements USD's composition arcs system for building complex scenes
+/// from multiple layers and referenced assets. Composition allows USD
+/// scenes to reference, inherit from, and specialize other USD files.
+///
+/// Supported composition arcs:
+/// - References: Include content from other USD files
+/// - Payloads: Deferred loading of heavy content
+/// - Inherits: Class-like inheritance between prims (multiple targets supported)
+/// - Specializes: Globally-weak shared opinions (multiple targets supported)
+/// - SubLayers: Layer-level composition
+/// - VariantSets: Multiple versions of content with deferred evaluation
+/// - Overs: Overrides of existing content
+///
+/// Key concepts:
+/// - Layer: Individual USD file or memory content
+/// - Stage: Composed result of multiple layers
+/// - Composition arcs: Rules for combining layers
+/// - Load states: Control what gets loaded when
+/// - LIVRPS ordering: L > I > V > R > P > S (via CompositeAllArcs)
+/// - Cycle detection: all arc types detect circular references
+/// - Active metadatum: prims with active=false are excluded post-composition
+///
 #pragma once
 
-#include "asset-resolution.hh"
-#include "prim-types.hh"
+#include <functional>
+#include <unordered_map>
 
-// TODO
-// - [x] Compose `references`
-// - [x] Compose `payloads`
-// - [ ] Compose `specializes`
-// - [x] Compose `inherits`
-// - [ ] Compose `variantSets`
-// - [x] Compose `over`
-// - [ ] Consider `active` Prim metadatum
+#include "asset-resolution.hh"
+#include "core/prim-spec.hh"  // PrimSpec, FileFormatHandler (transitively: property, composition-types, prim-enums, prim-metas, variant-types)
+#include "layer.hh"           // Layer class
+
+// Remaining TODO items:
+// - [ ] Multi-level implied inherits/specializes propagation (currently single-level)
+// - [ ] `order` ListEditQual for references/payloads (implemented for inherits/specializes)
 
 namespace tinyusdz {
 
@@ -44,7 +67,11 @@ struct SublayersCompositionOptions {
   bool error_when_unsupported_fileformat{false};
 
   // File formats
-  std::map<std::string, FileFormatHandler> fileformats;
+  std::unordered_map<std::string, FileFormatHandler> fileformats;
+  
+  // Memory optimization options
+  bool enable_inplace_composition{false};  // Enable in-place memory management
+  size_t max_memory_limit_mb{16384};      // Maximum memory limit in MB
 };
 
 struct ReferencesCompositionOptions {
@@ -58,7 +85,11 @@ struct ReferencesCompositionOptions {
   bool error_when_unsupported_fileformat{false};
 
   // File formats
-  std::map<std::string, FileFormatHandler> fileformats;
+  std::unordered_map<std::string, FileFormatHandler> fileformats;
+  
+  // Memory optimization options
+  bool enable_inplace_composition{false};  // Enable in-place memory management
+  size_t max_memory_limit_mb{16384};      // Maximum memory limit in MB
 };
 
 struct PayloadCompositionOptions {
@@ -72,7 +103,25 @@ struct PayloadCompositionOptions {
   bool error_when_unsupported_fileformat{false};
 
   // File formats
-  std::map<std::string, FileFormatHandler> fileformats;
+  std::unordered_map<std::string, FileFormatHandler> fileformats;
+
+  // Memory optimization options
+  bool enable_inplace_composition{false};  // Enable in-place memory management
+  size_t max_memory_limit_mb{16384};      // Maximum memory limit in MB
+
+  ///
+  /// Lazy payload loading policy.
+  ///
+  /// When set, this callback is called before loading each payload asset.
+  /// Return true to load the payload, false to skip it (lazy/deferred).
+  ///
+  /// Parameters:
+  ///   prim_path  — The path of the prim that has the payload arc
+  ///   payload    — The Payload descriptor (asset path, prim path, layer offset)
+  ///
+  /// When nullptr (default), all payloads are loaded eagerly.
+  ///
+  std::function<bool(const Path &prim_path, const Payload &payload)> load_policy;
 };
 
 
@@ -140,16 +189,6 @@ bool HasVariants(const Layer &layer);
 ///
 bool HasOver(const Layer &layer);
 
-#if 0 // deprecate it.
-///
-/// Load subLayer USD files in `layer`, and return composited(flattened) Layer
-/// to `composited_layer` Supply search_path with `base_dir`
-///
-bool CompositeSublayers(
-    const std::string &base_dir, const Layer &layer, Layer *composited_layer,
-    std::string *warn, std::string *err,
-    const SublayersCompositionOptions options = SublayersCompositionOptions());
-#endif
 
 ///
 /// Load subLayer USD files in `layer`, and return composited(flattened) Layer
@@ -157,6 +196,14 @@ bool CompositeSublayers(
 ///
 bool CompositeSublayers(
     AssetResolutionResolver &resolver /* inout */, const Layer &layer,
+    Layer *composited_layer, std::string *warn, std::string *err,
+    const SublayersCompositionOptions options = SublayersCompositionOptions());
+
+///
+/// In-place version of CompositeSublayers that frees memory progressively
+///
+bool CompositeSublayersInPlace(
+    AssetResolutionResolver &resolver /* inout */, std::unique_ptr<Layer> layer,
     Layer *composited_layer, std::string *warn, std::string *err,
     const SublayersCompositionOptions options = SublayersCompositionOptions());
 
@@ -171,11 +218,28 @@ bool CompositeReferences(AssetResolutionResolver &resolver /* inout */,
                              ReferencesCompositionOptions());
 
 ///
+/// In-place version of CompositeReferences that frees memory progressively
+///
+bool CompositeReferencesInPlace(AssetResolutionResolver &resolver /* inout */,
+                                std::unique_ptr<Layer> layer, Layer *composited_layer,
+                                std::string *warn, std::string *err,
+                                const ReferencesCompositionOptions options =
+                                    ReferencesCompositionOptions());
+
+///
 /// Resolve `payload` for each PrimSpec, and return composited(flattened) Layer
 /// to `composited_layer` in `layer`.
 ///
 bool CompositePayload(
     AssetResolutionResolver &resolver /* inout */, const Layer &layer,
+    Layer *composited_layer, std::string *warn, std::string *err,
+    const PayloadCompositionOptions options = PayloadCompositionOptions());
+
+///
+/// In-place version of CompositePayload that frees memory progressively
+///
+bool CompositePayloadInPlace(
+    AssetResolutionResolver &resolver /* inout */, std::unique_ptr<Layer> layer,
     Layer *composited_layer, std::string *warn, std::string *err,
     const PayloadCompositionOptions options = PayloadCompositionOptions());
 
@@ -227,11 +291,33 @@ bool OverridePrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
 bool InheritPrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
                      std::string *err);
 
+
 ///
-/// Build USD Stage from Layer
+/// Apply `layerRelocates` to the composed layer.
+/// Relocates rename prims in the namespace per AOUSD Core Spec 10.3.2.6.
 ///
-bool LayerToStage(const Layer &layer, Stage *stage, std::string *warn,
-                  std::string *err);
+bool CompositeRelocates(const Layer &in_layer,
+    Layer *composited_layer, std::string *warn, std::string *err);
+
+///
+/// Composite all composition arcs in LIVERPS order.
+///
+/// AOUSD Core Spec 10.4: Applies arcs in strength order:
+///   L(ocal/sublayers) > I(nherits) > V(ariants) > R(eferences) > P(ayloads) > S(pecializes)
+///
+/// Specializes (S) are applied last and are globally weaker than all other
+/// opinions, per Spec 10.4.1.
+///
+/// @param[in] resolver Asset resolution resolver
+/// @param[in] layer Source layer (after sublayer composition)
+/// @param[out] composited_layer Output composited layer
+/// @param[out] warn Warning messages
+/// @param[out] err Error messages
+/// @return true upon success
+///
+bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
+                      Layer *composited_layer, std::string *warn,
+                      std::string *err);
 
 ///
 /// Build USD Stage from Layer
@@ -240,6 +326,38 @@ bool LayerToStage(const Layer &layer, Stage *stage, std::string *warn,
 ///
 bool LayerToStage(Layer &&layer, Stage *stage, std::string *warn,
                   std::string *err);
+
+///
+/// Build USD Stage from Layer with in-place memory management
+///
+/// This version takes ownership of the Layer via unique_ptr and progressively
+/// frees memory as PrimSpecs are converted to Prims. This significantly reduces
+/// peak memory usage during conversion.
+///
+/// @param[in] layer Unique pointer to Layer. Will be reset after conversion.
+/// @param[out] stage Output Stage
+/// @param[out] warn Warning messages
+/// @param[out] err Error messages
+/// @return true upon success
+///
+bool LayerToStageInPlace(std::unique_ptr<Layer> layer, Stage *stage, 
+                         std::string *warn, std::string *err);
+
+///
+/// Convert PrimSpec to Prim with in-place memory management
+///
+/// Takes ownership of PrimSpec and frees its memory after conversion.
+/// This is useful for converting individual PrimSpecs without keeping
+/// the source data in memory.
+///
+/// @param[in] primspec Unique pointer to PrimSpec. Will be reset after conversion.
+/// @param[out] prim Output Prim
+/// @param[out] warn Warning messages
+/// @param[out] err Error messages
+/// @return true upon success
+///
+bool PrimSpecToPrimInPlace(std::unique_ptr<PrimSpec> primspec, Prim *prim,
+                           std::string *warn, std::string *err);
 
 struct VariantSelector {
   std::string selection;  // current selection
@@ -318,11 +436,5 @@ bool ExtractVariants(const Layer &layer, Dictionary *dict, std::string *err);
 ///
 bool ExtractVariants(const Stage &stage, Dictionary *dict, std::string *err);
 
-#if 0  // TODO
-///
-/// Implementation of `references`
-///
-bool ReferenceLayersToPrimSpec(PrimSpec &dst, const std::vector<Layer> &layers
-#endif
 
 }  // namespace tinyusdz

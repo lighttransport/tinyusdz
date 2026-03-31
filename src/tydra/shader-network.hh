@@ -1,8 +1,33 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - Present, Light Transport Entertainment, Inc.
-//
-// Shader network evaluation
 
+///
+/// @file shader-network.hh
+/// @brief USD shader network evaluation and material processing
+///
+/// Provides utilities for evaluating USD shader networks and resolving
+/// material connections. This includes following shader attribute connections,
+/// evaluating shader nodes, and extracting final material parameters.
+///
+/// Key features:
+/// - Shader attribute connection resolution
+/// - Material binding evaluation  
+/// - UsdPreviewSurface parameter extraction
+/// - Texture coordinate and primvar evaluation
+/// - Shader network traversal and evaluation
+///
+/// Main functions:
+/// - EvaluateShaderAttribute(): Follow connections and evaluate values
+/// - ResolveMaterialBinding(): Find materials bound to geometry
+/// - ExtractShaderParameters(): Get final shader node values
+///
+/// The shader evaluation system handles:
+/// - Direct attribute values
+/// - Time-sampled animations
+/// - Shader node connections
+/// - Primvar readers and texture coordinates
+/// - Material inheritance and overrides
+///
 #pragma once
 
 #include <unordered_map>
@@ -104,15 +129,6 @@ bool DirectBindingStrongerThanDescendants(
 /// @return true when bound Material Path is found.
 ///
 
-#if 0 // TODO
-bool GetBoundMaterial(
-  const Stage &stage,
-  const Prim &prim,
-  const std::string &purpose,
-  tinyusdz::Path *materialPath, 
-  const Material **material,
-  std::string *err);
-#endif
 
 ///
 /// `Path` version of `GetBoundMaterial`
@@ -121,7 +137,7 @@ bool GetBoundMaterial(
   const Stage &stage,
   const Path &abs_path,
   const std::string &purpose,
-  tinyusdz::Path *materialPath, 
+  Path *materialPath, 
   const Material **material,
   std::string *err);
 
@@ -143,7 +159,7 @@ bool GetDirectlyBoundMaterial(
   const Stage &stage,
   const Prim &prim,
   const std::string &purpose,
-  tinyusdz::Path *materialPath, 
+  Path *materialPath, 
   const Material **material,
   std::string *err);
 
@@ -155,7 +171,7 @@ bool GetDirectlyBoundMaterial(
   const Stage &stage,
   const Path &abs_path,
   const std::string &purpose,
-  tinyusdz::Path *materialPath, 
+  Path *materialPath, 
   const Material **material,
   std::string *err);
 
@@ -166,7 +182,7 @@ bool GetDirectlyBoundMaterial(
   const Layer& layer,
   const PrimSpec &ps,
   const std::string &purpose,
-  tinyusdz::Path *materialPath, 
+  Path *materialPath, 
   const Material **material,
   std::string *err);
 
@@ -177,7 +193,7 @@ bool GetDirectlyBoundMaterial(
   const Layer& layer,
   const Path &abs_path,
   const std::string &purpose,
-  tinyusdz::Path *materialPath, 
+  Path *materialPath, 
   const Material **material,
   std::string *err);
 
@@ -200,7 +216,7 @@ bool GetDirectCollectionMaterialBinding(
   const Stage &stage,
   const Prim &prim,
   const std::string &purpose,
-  tinyusdz::Path *materialPath, 
+  Path *materialPath, 
   const Material **material,
   std::string *err);
 
@@ -211,7 +227,7 @@ bool GetDirectCollectionMaterialBinding(
   const Stage &stage,
   const Path &abs_path,
   const std::string &purpose,
-  tinyusdz::Path *materialPath, 
+  Path *materialPath, 
   const Material **material,
   std::string *err);
 

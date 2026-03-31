@@ -5,8 +5,6 @@
 // To deal with too many sections in generated .obj error(happens in MinGW and MSVC)
 // Split ParseTimeSamples to two .cc files.
 //
-// TODO
-// - [x] Rewrite code with less C++ template code.
 
 #include <cstdio>
 #ifdef _MSC_VER
@@ -69,17 +67,57 @@
 
 #include "common-macros.inc"
 #include "io-util.hh"
-#include "pprinter.hh"
-#include "prim-types.hh"
+#include "core/prim-spec.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
 
+// Extern template declarations for ParseBasicTypeArray
+// These templates are explicitly instantiated in ascii-parser-basetype.cc
+namespace tinyusdz {
+namespace ascii {
+
+// Int tuple types
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int4> *result);
+// Uint tuple types
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint4> *result);
+// Char types
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<char> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::char2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::char3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::char4> *result);
+// Uchar types
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<uint8_t> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uchar2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uchar3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uchar4> *result);
+// Short types
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<int16_t> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::short2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::short3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::short4> *result);
+// Ushort types
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<uint16_t> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::ushort2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::ushort3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::ushort4> *result);
+// Frame type
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::frame4d> *result);
+
+}  // namespace ascii
+}  // namespace tinyusdz
+
 namespace tinyusdz {
 
 namespace ascii {
+
+// Deduplication removed — O(n^2) comparison was expensive and rarely triggered.
 
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<bool> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result);
@@ -161,45 +199,8 @@ bool AsciiParser::ParseTimeSampleValueOfArrayType(const uint32_t type_id, value:
     val = value::Value(typed_val); \
   } else
 
-  // NOTE: `string` does not support multi-line string.
-  PARSE_TYPE(type_id, value::AssetPath)
-  PARSE_TYPE(type_id, value::token)
-  PARSE_TYPE(type_id, std::string)
-  PARSE_TYPE(type_id, float)
-  PARSE_TYPE(type_id, int32_t)
-  PARSE_TYPE(type_id, uint32_t)
-  PARSE_TYPE(type_id, int64_t)
-  PARSE_TYPE(type_id, uint64_t)
-  PARSE_TYPE(type_id, value::half)
-  PARSE_TYPE(type_id, value::half2)
-  PARSE_TYPE(type_id, value::half3)
-  PARSE_TYPE(type_id, value::half4)
-  PARSE_TYPE(type_id, float)
-  PARSE_TYPE(type_id, value::float2)
-  PARSE_TYPE(type_id, value::float3)
-  PARSE_TYPE(type_id, value::float4)
-  PARSE_TYPE(type_id, double)
-  PARSE_TYPE(type_id, value::double2)
-  PARSE_TYPE(type_id, value::double3)
-  PARSE_TYPE(type_id, value::double4)
-  PARSE_TYPE(type_id, value::quath)
-  PARSE_TYPE(type_id, value::quatf)
-  PARSE_TYPE(type_id, value::quatd)
-  PARSE_TYPE(type_id, value::color3f)
-  PARSE_TYPE(type_id, value::color4f)
-  PARSE_TYPE(type_id, value::color3d)
-  PARSE_TYPE(type_id, value::color4d)
-  PARSE_TYPE(type_id, value::vector3f)
-  PARSE_TYPE(type_id, value::normal3f)
-  PARSE_TYPE(type_id, value::point3f)
-  PARSE_TYPE(type_id, value::texcoord2f)
-  PARSE_TYPE(type_id, value::texcoord3f)
-  PARSE_TYPE(type_id, value::matrix2f)
-  PARSE_TYPE(type_id, value::matrix3f)
-  PARSE_TYPE(type_id, value::matrix4f)
-  PARSE_TYPE(type_id, value::matrix2d)
-  PARSE_TYPE(type_id, value::matrix3d)
-  PARSE_TYPE(type_id, value::matrix4d) {
+#include "ascii-parser-timesamples-type-list.inc"
+  {
     PUSH_ERROR_AND_RETURN(" : TODO: timeSamples type " + value::GetTypeName(type_id));
   }
 
@@ -225,6 +226,10 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
                                    value::TimeSamples *ts_out) {
 
   value::TimeSamples ts;
+
+  // No early init() needed — add_sample<T>() / add_array_sample<T>() auto-detect
+  // the type on first call. Early init caused a silent data-loss bug for token[]
+  // timeSamples because non-binary types use different type_id patterns.
 
   if (!Expect('{')) {
     return false;
@@ -270,6 +275,11 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
       return false;
     }
 
+    // Simple add helper (dedup removed — was O(n^2) and rarely triggered)
+    auto add_sample_now = [&]() {
+      ts.add_sample(timeVal, value);
+    };
+
     // The last element may have separator ','
     {
       // Semicolon ';' is not allowed as a separator for timeSamples array
@@ -286,10 +296,10 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
       DCOUT("sep = " << sep);
       if (sep == '}') {
         // End of item
-        ts.add_sample(timeVal, value);
+        add_sample_now();
         break;
       } else if (sep == ',') {
-        // ok
+        // ok - continue to next iteration
       } else {
         Rewind(1);
 
@@ -304,7 +314,7 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
 
           if (nc == '}') {
             // End of item
-            ts.add_sample(timeVal, value);
+            add_sample_now();
             break;
           }
         }
@@ -318,7 +328,8 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
       return false;
     }
 
-    ts.add_sample(timeVal, value);
+    // Add the sample
+    add_sample_now();
   }
 
   DCOUT("Parse TimeSamples success. # of items = " << ts.size());

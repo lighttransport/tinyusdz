@@ -8,7 +8,7 @@
 #include <memory>
 #include <string>
 
-#include "prim-types.hh"
+#include "value-types.hh"  // value::token, value::Value, value::TypeId
 
 #if !defined(PXR_DYNAMIC)
   #define USD_API

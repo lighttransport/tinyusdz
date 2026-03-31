@@ -1,0 +1,218 @@
+#usda 1.0
+(
+    doc = """LTE SpectralAPI Light Source Examples
+    Demonstrates wavelength-dependent light emission using the wavelength: namespace.
+    See doc/lte_spectral_api.md for specification.
+
+    Examples include:
+    - D65 standard illuminant (daylight)
+    - D50 standard illuminant (horizon light)
+    - Illuminant A (incandescent)
+    - Custom spectral emission (warm LED)
+    - Fluorescent light (F2)
+    """
+    metersPerUnit = 1
+    upAxis = "Y"
+    customLayerData = {
+        string unitForWavelength = "nanometers"
+    }
+)
+
+def Xform "Lights"
+{
+    # D65 Daylight using illuminant preset
+    def DistantLight "D65_Sunlight" (
+        doc = "CIE Standard Illuminant D65 (noon daylight, 6504K)"
+    )
+    {
+        float inputs:intensity = 1.0
+        color3f inputs:color = (1.0, 1.0, 1.0)
+        float3 xformOp:rotateXYZ = (-45, 30, 0)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+
+        # LTE SpectralAPI: D65 illuminant preset
+        # Empty samples with preset metadata
+        float2[] wavelength:emission = [] (
+            customData = {
+                string illuminantPreset = "d65"
+            }
+        )
+    }
+
+    # D50 Horizon light using illuminant preset
+    def DistantLight "D50_HorizonLight" (
+        doc = "CIE Standard Illuminant D50 (horizon daylight, 5003K)"
+    )
+    {
+        float inputs:intensity = 0.8
+        color3f inputs:color = (1.0, 0.95, 0.9)
+        float3 xformOp:rotateXYZ = (-15, -60, 0)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+
+        # LTE SpectralAPI: D50 illuminant preset
+        float2[] wavelength:emission = [] (
+            customData = {
+                string illuminantPreset = "d50"
+            }
+        )
+    }
+
+    # Illuminant A (incandescent/tungsten)
+    def SphereLight "IncandescentBulb" (
+        doc = "CIE Standard Illuminant A (incandescent, 2856K)"
+    )
+    {
+        float inputs:intensity = 500
+        color3f inputs:color = (1.0, 0.85, 0.65)
+        float inputs:radius = 0.05
+        double3 xformOp:translate = (2, 3, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        # LTE SpectralAPI: Illuminant A preset
+        float2[] wavelength:emission = [] (
+            customData = {
+                string illuminantPreset = "a"
+            }
+        )
+    }
+
+    # Custom warm LED spectrum
+    def RectLight "WarmLED" (
+        doc = "Custom warm white LED spectral power distribution"
+    )
+    {
+        float inputs:intensity = 200
+        color3f inputs:color = (1.0, 0.9, 0.75)
+        float inputs:width = 0.5
+        float inputs:height = 0.5
+        double3 xformOp:translate = (-2, 3, 0)
+        float3 xformOp:rotateXYZ = (90, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+
+        # LTE SpectralAPI: Custom LED SPD
+        # Blue pump peak + phosphor emission
+        float2[] wavelength:emission = [
+            (380, 0.02), (400, 0.05), (420, 0.15), (440, 0.45),
+            (450, 0.85), (455, 1.00), (460, 0.90), (470, 0.40),
+            (480, 0.25), (500, 0.35), (520, 0.50), (540, 0.65),
+            (560, 0.80), (580, 0.90), (600, 0.88), (620, 0.75),
+            (640, 0.58), (660, 0.40), (680, 0.25), (700, 0.15),
+            (720, 0.08), (740, 0.04), (760, 0.02), (780, 0.01)
+        ] (
+            customData = {
+                string interpolation = "linear"
+            }
+        )
+    }
+
+    # F2 Cool White Fluorescent
+    def RectLight "FluorescentPanel" (
+        doc = "CIE Fluorescent Illuminant F2 (cool white fluorescent)"
+    )
+    {
+        float inputs:intensity = 150
+        color3f inputs:color = (1.0, 1.0, 0.95)
+        float inputs:width = 1.2
+        float inputs:height = 0.3
+        double3 xformOp:translate = (0, 4, 0)
+        float3 xformOp:rotateXYZ = (90, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+
+        # LTE SpectralAPI: F2 fluorescent preset
+        float2[] wavelength:emission = [] (
+            customData = {
+                string illuminantPreset = "f2"
+            }
+        )
+    }
+
+    # Explicit D65 SPD (relative spectral power distribution)
+    def DistantLight "D65_Explicit" (
+        doc = "D65 with explicit SPD data (normalized at 560nm)"
+    )
+    {
+        float inputs:intensity = 0.5
+        color3f inputs:color = (1.0, 1.0, 1.0)
+        float3 xformOp:rotateXYZ = (-60, 90, 0)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+
+        # LTE SpectralAPI: Explicit D65 relative SPD
+        # Values normalized so 560nm = 100.0
+        float2[] wavelength:emission = [
+            (380, 49.98), (390, 52.31), (400, 54.65), (410, 68.70),
+            (420, 82.75), (430, 87.12), (440, 91.49), (450, 92.46),
+            (460, 93.43), (470, 90.06), (480, 86.68), (490, 95.77),
+            (500, 104.86), (510, 110.94), (520, 117.01), (530, 117.41),
+            (540, 117.81), (550, 116.34), (560, 100.00), (570, 108.40),
+            (580, 103.90), (590, 104.05), (600, 100.00), (610, 96.33),
+            (620, 95.79), (630, 88.69), (640, 90.01), (650, 89.60),
+            (660, 87.70), (670, 83.29), (680, 83.70), (690, 80.03),
+            (700, 80.21), (710, 82.28), (720, 78.28), (730, 69.72),
+            (740, 71.61), (750, 74.35), (760, 61.60), (770, 69.89), (780, 75.09)
+        ] (
+            customData = {
+                string interpolation = "linear"
+            }
+        )
+    }
+
+    # Monochromatic sodium lamp
+    def SphereLight "SodiumLamp" (
+        doc = "Low-pressure sodium lamp (nearly monochromatic at 589nm)"
+    )
+    {
+        float inputs:intensity = 300
+        color3f inputs:color = (1.0, 0.83, 0.0)
+        float inputs:radius = 0.1
+        double3 xformOp:translate = (3, 2.5, -2)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        # LTE SpectralAPI: Narrow-band sodium emission
+        # Dominant 589nm D-line
+        float2[] wavelength:emission = [
+            (380, 0.0), (500, 0.0), (580, 0.01), (585, 0.10),
+            (587, 0.50), (589, 1.00), (591, 0.50), (593, 0.10),
+            (600, 0.01), (700, 0.0), (780, 0.0)
+        ] (
+            customData = {
+                string interpolation = "linear"
+            }
+        )
+    }
+}
+
+def Xform "Geometry"
+{
+    # Test spheres to see lighting
+    def Sphere "TestSphere1"
+    {
+        double radius = 0.3
+        double3 xformOp:translate = (-1.5, 0.3, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Sphere "TestSphere2"
+    {
+        double radius = 0.3
+        double3 xformOp:translate = (0, 0.3, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Sphere "TestSphere3"
+    {
+        double radius = 0.3
+        double3 xformOp:translate = (1.5, 0.3, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    # Ground plane
+    def Mesh "Ground"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-5, 0, -5), (5, 0, -5), (5, 0, 5), (-5, 0, 5)]
+        normal3f[] primvars:normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+            interpolation = "vertex"
+        )
+    }
+}

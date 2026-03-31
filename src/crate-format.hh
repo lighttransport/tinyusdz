@@ -12,8 +12,14 @@
 #include <memory>
 #include <cstdlib>
 
-#include "prim-types.hh"
+#include "core/prim-enums.hh"        // Specifier, Permission, Variability, SpecType, ListEditQual
+#include "core/path.hh"              // Path
+#include "core/composition-types.hh" // Reference, Payload, LayerOffset
+#include "core/meta-variable.hh"     // MetaVariable, CustomDataType, VariantSelectionMap
+#include "core/list-op.hh"           // ListOp
 #include "value-types.hh"
+#include "typed-array.hh"
+#include "mmap-array-ref.hh"
 
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -184,7 +190,7 @@ struct Index {
 struct ValueRep {
   friend class CrateFile;
 
-  ValueRep() = default;
+  constexpr ValueRep() : data(0) {}
 
   explicit constexpr ValueRep(uint64_t d) : data(d) {}
 
@@ -226,9 +232,12 @@ struct ValueRep {
   bool operator==(ValueRep other) const { return data == other.data; }
   bool operator!=(ValueRep other) const { return !(*this == other); }
 
-  // friend inline size_t hash_value(ValueRep v) {
-  //  return static_cast<size_t>(v.data);
-  //}
+  // Hash function for use with unordered_map
+  struct Hash {
+    size_t operator()(const ValueRep& v) const {
+      return std::hash<uint64_t>{}(v.data);
+    }
+  };
 
   std::string GetStringRepr() const {
     std::stringstream ss;
@@ -248,6 +257,10 @@ struct ValueRep {
 
   uint64_t data;
 };
+
+inline std::string to_string(const ValueRep &rep) {
+  return rep.GetStringRepr();
+}
 
 struct TokenIndex : Index { using Index::Index; };
 struct StringIndex : Index { using Index::Index; };
@@ -386,8 +399,13 @@ class CrateValue {
   //std::string GetTypeName() const;
   //uint32_t GetTypeId() const;
 
-#define SET_TYPE_SCALAR(__ty) void Set(const __ty& v) { value_ = v; }
+#define SET_TYPE_SCALAR(__ty) void Set(const __ty& v) { value_ = v; } void Set(__ty&& v) { value::Value src(std::move(v)); value_ = std::move(src); }
+//#define MOVE_SET_TYPE_SCALAR(__ty) void MoveSet(__ty&& v) { TUSDZ_LOG_I("move set"); value::Value src(std::move(v)); value_ = std::move(src); }
+
 #define SET_TYPE_1D(__ty) void Set(const std::vector<__ty> &v) { value_ = v; }
+
+// TODO: Use TypedArray
+#define MOVE_SET_TYPE_1D(__ty) void Set(std::vector<__ty> &&v) { value::Value src(std::move(v)); value_ = std::move(src); }
 
 #define SET_TYPE_LIST(__FUNC) \
   __FUNC(int64_t) \
@@ -455,21 +473,25 @@ class CrateValue {
   SET_TYPE_SCALAR(CustomDataType) // for (type-restricted) dist
 
   SET_TYPE_LIST(SET_TYPE_SCALAR)
+  //SET_TYPE_LIST(MOVE_SET_TYPE_SCALAR)
 
 
   SET_TYPE_LIST(SET_TYPE_1D)
+  SET_TYPE_LIST(MOVE_SET_TYPE_1D)
 
-#if 0 // TODO: Unsafe so Remove
-  // Useful function to retrieve concrete value with type T.
-  // Undefined behavior(usually will triger segmentation fault) when
-  // type-mismatch. (We don't throw exception)
-  template <class T>
-  const T value() const {
-    //return (*reinterpret_cast<const T *>(value_.value()));
-    //return linb::any_cast<const T>(value_);
-    return value_.value<T>();
-  }
-#endif
+  // TypedArray Set methods for efficient array handling with mmap support
+#define SET_TYPE_TYPED_ARRAY(__ty) void Set(const TypedArray<__ty> &v) { value_ = v; }
+#define MOVE_SET_TYPE_TYPED_ARRAY(__ty) void Set(TypedArray<__ty> &&v) { value::Value src(std::move(v)); value_ = std::move(src); }
+
+  SET_TYPE_LIST(SET_TYPE_TYPED_ARRAY)
+  SET_TYPE_LIST(MOVE_SET_TYPE_TYPED_ARRAY)
+
+#define SET_TYPE_CHUNKED_TYPED_ARRAY(__ty) void Set(const ChunkedTypedArray<__ty> &v) { value_ = v; }
+#define MOVE_SET_TYPE_CHUNKED_TYPED_ARRAY(__ty) void Set(ChunkedTypedArray<__ty> &&v) { value::Value src(std::move(v)); value_ = std::move(src); }
+  
+  SET_TYPE_LIST(SET_TYPE_CHUNKED_TYPED_ARRAY)
+  SET_TYPE_LIST(MOVE_SET_TYPE_CHUNKED_TYPED_ARRAY)
+
 
   // Type-safe way to get concrete value.
   template <class T>
@@ -495,8 +517,26 @@ class CrateValue {
     return value_;
   }
 
+  value::Value &get_raw() {
+    return value_;
+  }
+
+  const value::Value *get_raw_ptr() const {
+    return &value_;
+  }
+
+  // mmap zero-copy: set when value was described but not materialized
+  bool has_mmap_ref() const { return _has_mmap_ref; }
+  const MMapArrayRef &mmap_ref() const { return _mmap_ref; }
+  void set_mmap_ref(const MMapArrayRef &ref) {
+    _mmap_ref = ref;
+    _has_mmap_ref = true;
+  }
+
  private:
   value::Value value_;
+  MMapArrayRef _mmap_ref{};
+  bool _has_mmap_ref{false};
 };
 
 // In-memory storage for a single "spec" -- prim, property, etc.
@@ -526,5 +566,4 @@ namespace value {
 } // namespace value
 
 } // namespace tinyusdz
-
 

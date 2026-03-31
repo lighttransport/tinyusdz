@@ -16,7 +16,7 @@ namespace tinyusdz {
 std::string to_string(const MaterialBindingStrength strength) {
   switch (strength) {
     case MaterialBindingStrength::WeakerThanDescendants: {
-      return kWeaderThanDescendants;
+      return kWeakerThanDescendants;
     }
     case MaterialBindingStrength::StrongerThanDescendants: {
       return kStrongerThanDescendants;
@@ -27,11 +27,11 @@ std::string to_string(const MaterialBindingStrength strength) {
 }
 
 bool UsdShadePrim::has_sdr_metadata(const std::string &key) {
-  if (!metas().sdrMetadata.has_value()) {
+  if (!metas().has_sdrMetadata()) {
     return false;
   }
 
-  const Dictionary &dict = metas().sdrMetadata.value();
+  const Dictionary dict = metas().get_sdrMetadata();
 
   if (!HasCustomDataKey(dict, key)) {
     return false;
@@ -51,65 +51,66 @@ bool UsdShadePrim::has_sdr_metadata(const std::string &key) {
 }
 
 const std::string UsdShadePrim::get_sdr_metadata(const std::string &key) {
-  if (!metas().sdrMetadata.has_value()) {
-    return std::string();
-  }
-
-  const Dictionary &dict = metas().sdrMetadata.value();
-
-  if (!HasCustomDataKey(dict, key)) {
-    return std::string();
-  }
-
-  // check the type of value.
-  MetaVariable var;
-  if (!GetCustomDataByKey(dict, key, &var)) {
-    return std::string();
-  }
-
-  if (var.type_id() != value::TypeTraits<std::string>::type_id()) {
-    return std::string();
-  }
-
   std::string svalue;
-  if (!var.get_value(&svalue)) {
-    return std::string();
+
+  if (metas().has_sdrMetadata()) {
+
+    const Dictionary dict = metas().get_sdrMetadata();
+
+    if (HasCustomDataKey(dict, key)) {
+
+      // check the type of value.
+      MetaVariable var;
+      if (GetCustomDataByKey(dict, key, &var)) {
+
+        if (var.type_id() == value::TypeTraits<std::string>::type_id()) {
+          if (!var.get_value(&svalue)) {
+            svalue = std::string();
+          }
+        }
+
+      }
+    }
   }
+
 
   return svalue;
 }
 
-bool UsdShadePrim::set_sdr_metadata(const std::string &key, const std::string &value) {
+bool UsdShadePrim::set_sdr_metadata(const std::string &key, const std::string &sdr_value) {
 
-  Dictionary &dict = metas().sdrMetadata.value();
-  bool ret = SetCustomDataByKey(key, value, dict);
+  Dictionary dict = metas().get_sdrMetadata();
+  bool ret = SetCustomDataByKey(key, sdr_value, dict);
+  if (ret) {
+    metas().set_sdrMetadata(dict);
+  }
   return ret;
 }
 
 value::token MaterialBinding::get_materialBindingStrength(const value::token &purpose) {
 
   if (purpose.str() == kAllPurpose().str()) {
-    if (materialBinding && materialBinding.value().metas().bindMaterialAs) {
-      return materialBinding.value().metas().bindMaterialAs.value();
+    if (materialBinding.authored() && materialBinding.relationship().metas().has_bindMaterialAs()) {
+      return materialBinding.relationship().metas().get_bindMaterialAs();
     }
   } else if (purpose.str() == "full") {
-    if (materialBindingFull && materialBindingFull.value().metas().bindMaterialAs) {
-      return materialBindingFull.value().metas().bindMaterialAs.value();
+    if (materialBindingFull.authored() && materialBindingFull.relationship().metas().has_bindMaterialAs()) {
+      return materialBindingFull.relationship().metas().get_bindMaterialAs();
     }
   } else if (purpose.str() == "preview") {
-    if (materialBindingPreview && materialBindingPreview.value().metas().bindMaterialAs) {
-      return materialBindingPreview.value().metas().bindMaterialAs.value();
+    if (materialBindingPreview.authored() && materialBindingPreview.relationship().metas().has_bindMaterialAs()) {
+      return materialBindingPreview.relationship().metas().get_bindMaterialAs();
     }
   } else {
     if (_materialBindingMap.count(purpose.str())) {
       const auto &m = _materialBindingMap.at(purpose.str());
-      if (m.metas().bindMaterialAs) {
-        return m.metas().bindMaterialAs.value();
+      if (m.metas().has_bindMaterialAs()) {
+        return m.metas().get_bindMaterialAs();
       }
     }
   }
 
-  return value::token(kWeaderThanDescendants);
+  return value::token(kWeakerThanDescendants);
 }
 
 value::token MaterialBinding::get_materialBindingStrengthCollection(const value::token &coll_name, const value::token &purpose) {
@@ -124,14 +125,14 @@ value::token MaterialBinding::get_materialBindingStrengthCollection(const value:
     if (coll_mb.count(purpose.str())) {
       const Relationship *prel{nullptr};
       if (coll_mb.at(purpose.str(), &prel)) {
-        if (prel->metas().bindMaterialAs) {
-          return prel->metas().bindMaterialAs.value();
+        if (prel->metas().has_bindMaterialAs()) {
+          return prel->metas().get_bindMaterialAs();
         }
       }
     }
   }
 
-  return value::token(kWeaderThanDescendants);
+  return value::token(kWeakerThanDescendants);
 }
 
 namespace {

@@ -1,0 +1,56 @@
+#usda 1.0
+(
+    defaultPrim = "mesh"
+    metersPerUnit = 1
+    timeCodesPerSecond = 24
+    upAxis = "Y"
+)
+
+def Mesh "mesh"
+{
+    rel material:binding = </mat>
+
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] (
+        interpolation = "vertex"
+    )
+}
+
+def Material "mat"
+{
+    token outputs:surface.connect = </mat/pbr.outputs:surface>
+
+    def Shader "pbr"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </mat/difftex.outputs:rgb>
+        int inputs:useSpecularWorkflowDriver = 1
+        int inputs:useSpecularWorkflow.connect = </mat/pbr.inputs:useSpecularWorkflowDriver>
+        token inputs:sourceColorSpace = "raw"
+        asset inputs:fileDriver = @mask.png@
+        token inputs:wrapSDriver = "mirror"
+        token inputs:wrapTDriver = "repeat"
+        token outputs:surface
+    }
+
+    def Shader "difftex"
+    {
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file.connect = </mat/pbr.inputs:fileDriver>
+        token inputs:sourceColorSpace.connect = </mat/pbr.inputs:sourceColorSpace>
+        token inputs:wrapS.connect = </mat/pbr.inputs:wrapSDriver>
+        token inputs:wrapT.connect = </mat/pbr.inputs:wrapTDriver>
+        float2 inputs:st.connect = </mat/uvreader.outputs:result>
+        float3 outputs:rgb
+    }
+
+    def Shader "uvreader"
+    {
+        uniform token info:id = "UsdPrimvarReader_float2"
+        string inputs:varname = "st"
+        float2 outputs:result
+    }
+}

@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TinyUSDZ Progress Demo (OffscreenCanvas)</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+        }
+
+        #gl {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            touch-action: none;
+        }
+
+        /* Info overlay - top left */
+        #info-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 8px;
+            min-width: 280px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            pointer-events: none;
+        }
+
+        #info-panel h2 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            font-weight: 500;
+            color: #2196F3;
+        }
+
+        #status {
+            font-size: 13px;
+            color: #999;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #status.error {
+            color: #f44336;
+        }
+
+        #model-info {
+            display: none;
+            font-size: 12px;
+            line-height: 1.8;
+        }
+
+        #model-info span {
+            color: #4CAF50;
+            font-weight: 500;
+        }
+
+        /* Toolbar - top center */
+        #toolbar {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px 15px;
+            border-radius: 8px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            pointer-events: all;
+        }
+
+        .btn {
+            background: #2196F3;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn:hover {
+            background: #1976D2;
+            transform: translateY(-1px);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn.secondary {
+            background: #4CAF50;
+        }
+
+        .btn.secondary:hover {
+            background: #388E3C;
+        }
+
+        .btn.warning {
+            background: #FF9800;
+        }
+
+        .btn.warning:hover {
+            background: #F57C00;
+        }
+
+        .btn.warning.active {
+            background: #4CAF50;
+            box-shadow: 0 0 10px rgba(76, 175, 80, 0.5);
+        }
+
+        .btn.warning.active:hover {
+            background: #388E3C;
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        /* Progress bar container */
+        #progress-container {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.95);
+            padding: 30px 40px;
+            border-radius: 12px;
+            min-width: 400px;
+            max-width: 500px;
+            display: none;
+            z-index: 10000;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(20px);
+        }
+
+        #progress-container.visible {
+            display: block;
+        }
+
+        #progress-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #fff;
+        }
+
+        #progress-bar-wrapper {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            height: 12px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+
+        #progress-bar {
+            height: 100%;
+            width: 100%;
+            background: linear-gradient(90deg, #2196F3, #4CAF50);
+            border-radius: 8px;
+            transform-origin: left center;
+            transform: scaleX(0);
+            will-change: transform;
+            position: relative;
+        }
+
+        /* Animated stripe overlay */
+        #progress-bar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(
+                90deg,
+                transparent 0%,
+                rgba(255,255,255,0.3) 50%,
+                transparent 100%
+            );
+            animation: progress-shimmer 1.5s ease-in-out infinite;
+            background-size: 200% 100%;
+        }
+
+        @keyframes progress-shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        #progress-bar.complete::after {
+            display: none;
+        }
+
+        #progress-bar.paused {
+            background: linear-gradient(90deg, #FF9800, #FFB74D);
+        }
+
+        #progress-bar.paused::after {
+            animation: none;
+        }
+
+        #progress-percentage {
+            font-size: 24px;
+            font-weight: 700;
+            color: #2196F3;
+            text-align: center;
+            margin-bottom: 15px;
+        }
+
+        #progress-stage {
+            font-size: 14px;
+            color: #999;
+            text-align: center;
+            margin-bottom: 8px;
+        }
+
+        #progress-details {
+            font-size: 12px;
+            color: #666;
+            text-align: center;
+            min-height: 20px;
+        }
+
+        /* Progress stages list */
+        #progress-stages {
+            margin-top: 20px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .progress-stage-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 0;
+            font-size: 13px;
+            color: #666;
+        }
+
+        .progress-stage-item.active {
+            color: #2196F3;
+        }
+
+        .progress-stage-item.completed {
+            color: #4CAF50;
+        }
+
+        .progress-stage-item .stage-icon {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            flex-shrink: 0;
+        }
+
+        .progress-stage-item .stage-icon.pending {
+            background: rgba(255, 255, 255, 0.1);
+            color: #666;
+        }
+
+        .progress-stage-item .stage-icon.active {
+            background: #2196F3;
+            color: white;
+            animation: pulse 1s infinite;
+        }
+
+        .progress-stage-item .stage-icon.completed {
+            background: #4CAF50;
+            color: white;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        #progress-debug-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 14px;
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+            font-size: 12px;
+            color: #888;
+        }
+
+        #progress-debug-label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+            color: #aaa;
+            user-select: none;
+        }
+
+        #progress-debug-toggle {
+            accent-color: #FF9800;
+        }
+
+        #progress-debug-delay {
+            width: 64px;
+            padding: 3px 6px;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 4px;
+            color: #ccc;
+            font-size: 12px;
+            text-align: center;
+        }
+
+        #progress-debug-delay:disabled {
+            opacity: 0.3;
+        }
+
+        #progress-debug-unit {
+            color: #666;
+        }
+
+        #progress-btn-row {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        #progress-pause-btn, #progress-stop-btn {
+            padding: 8px 24px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.2s, border-color 0.2s;
+        }
+
+        #progress-pause-btn {
+            background: rgba(255, 152, 0, 0.15);
+            color: #FFB74D;
+            border: 1px solid rgba(255, 152, 0, 0.4);
+        }
+
+        #progress-pause-btn:hover {
+            background: rgba(255, 152, 0, 0.3);
+            border-color: #FFB74D;
+        }
+
+        #progress-pause-btn.paused {
+            background: rgba(76, 175, 80, 0.15);
+            color: #81C784;
+            border-color: rgba(76, 175, 80, 0.4);
+        }
+
+        #progress-pause-btn.paused:hover {
+            background: rgba(76, 175, 80, 0.3);
+            border-color: #81C784;
+        }
+
+        #progress-stop-btn {
+            background: rgba(244, 67, 54, 0.15);
+            color: #ef5350;
+            border: 1px solid rgba(244, 67, 54, 0.4);
+        }
+
+        #progress-stop-btn:hover {
+            background: rgba(244, 67, 54, 0.3);
+            border-color: #ef5350;
+        }
+
+        /* Texture Loading Progress Bar */
+        #texture-progress-container {
+            position: fixed;
+            bottom: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 12px 20px;
+            border-radius: 8px;
+            min-width: 300px;
+            max-width: 400px;
+            display: none;
+            z-index: 9999;
+            border: 1px solid rgba(76, 175, 80, 0.3);
+            backdrop-filter: blur(10px);
+        }
+
+        #texture-progress-container.visible {
+            display: block;
+        }
+
+        #texture-progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        #texture-progress-title {
+            font-size: 13px;
+            font-weight: 500;
+            color: #4CAF50;
+        }
+
+        #texture-progress-count {
+            font-size: 12px;
+            color: #888;
+            font-family: monospace;
+        }
+
+        #texture-progress-bar-wrapper {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            height: 6px;
+            overflow: hidden;
+            margin-bottom: 6px;
+        }
+
+        #texture-progress-bar {
+            height: 100%;
+            width: 100%;
+            background: linear-gradient(90deg, #4CAF50, #8BC34A);
+            border-radius: 4px;
+            transform-origin: left center;
+            transform: scaleX(0);
+            will-change: transform;
+            transition: transform 0.1s ease-out;
+        }
+
+        #texture-progress-details {
+            font-size: 11px;
+            color: #666;
+            text-align: center;
+            min-height: 14px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Worker badge */
+        #worker-badge {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            border: 1px solid rgba(156, 39, 176, 0.5);
+            color: #CE93D8;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            pointer-events: none;
+        }
+
+        /* Help overlay */
+        #help-overlay {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 11px;
+            color: #888;
+            line-height: 1.6;
+            pointer-events: none;
+        }
+
+        #help-overlay kbd {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+
+        /* Memory Panel */
+        #memory-panel {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 15px;
+            border-radius: 8px;
+            min-width: 320px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            pointer-events: none;
+        }
+
+        #memory-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            font-weight: 500;
+            color: #FF9800;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #memory-panel h3::before {
+            content: '';
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background: #FF9800;
+            border-radius: 50%;
+        }
+
+        #memory-graph-container {
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+
+        #memory-graph {
+            width: 100%;
+            height: 120px;
+            background: #111;
+            border-radius: 4px;
+        }
+
+        #memory-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            font-size: 11px;
+        }
+
+        .memory-stat {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+        }
+
+        .memory-stat .label {
+            color: #888;
+        }
+
+        .memory-stat .value {
+            color: #4CAF50;
+            font-weight: 600;
+            font-family: monospace;
+        }
+
+        .memory-stat .value.warning {
+            color: #FF9800;
+        }
+
+        .memory-stat .value.critical {
+            color: #f44336;
+        }
+
+        #memory-legend {
+            display: flex;
+            gap: 15px;
+            margin-top: 8px;
+            font-size: 10px;
+            color: #666;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 3px;
+            border-radius: 2px;
+        }
+
+        .legend-color.used {
+            background: #4CAF50;
+        }
+
+        .legend-color.total {
+            background: #2196F3;
+        }
+
+        .legend-color.limit {
+            background: #f44336;
+            opacity: 0.5;
+        }
+
+        #memory-warning {
+            display: none;
+            margin-top: 10px;
+            padding: 8px;
+            background: rgba(255, 152, 0, 0.2);
+            border: 1px solid rgba(255, 152, 0, 0.5);
+            border-radius: 4px;
+            font-size: 11px;
+            color: #FF9800;
+        }
+
+        #memory-warning.visible {
+            display: block;
+        }
+
+        /* Toast notifications */
+        #toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+        #toast.visible {
+            opacity: 1;
+        }
+
+        /* Drag-over overlay */
+        body.drag-over::after {
+            content: 'Drop USD file here';
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            font-weight: 600;
+            color: #2196F3;
+            background: rgba(0, 0, 0, 0.6);
+            border: 3px dashed #2196F3;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        /* Error overlay for unsupported browsers */
+        #unsupported-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: #1a1a1a;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 12px;
+            z-index: 999;
+            text-align: center;
+            padding: 20px;
+        }
+
+        #unsupported-overlay.visible {
+            display: flex;
+        }
+
+        #unsupported-overlay h1 {
+            color: #f44336;
+            font-size: 20px;
+        }
+
+        #unsupported-overlay p {
+            color: #aaa;
+            font-size: 14px;
+            max-width: 480px;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            #toolbar {
+                flex-wrap: wrap;
+                max-width: 90%;
+            }
+
+            #info-panel {
+                max-width: calc(100% - 20px);
+            }
+
+            #progress-container {
+                min-width: 300px;
+                max-width: calc(100% - 40px);
+            }
+
+            #memory-panel {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Full-screen canvas -- control transferred to worker -->
+    <canvas id="gl"></canvas>
+
+    <!-- Info Panel -->
+    <div id="info-panel">
+        <h2>TinyUSDZ Progress (OffscreenCanvas)</h2>
+        <div id="status">Initializing...</div>
+        <div id="model-info">
+            <div>Meshes: <span id="mesh-count">0</span></div>
+            <div>Materials: <span id="material-count">0</span></div>
+            <div>Textures: <span id="texture-count">0</span></div>
+        </div>
+    </div>
+
+    <!-- Toolbar -->
+    <div id="toolbar">
+        <button class="btn" id="load-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            Load USD
+        </button>
+        <button class="btn secondary" id="sample-btn">
+            Sample Model
+        </button>
+        <button class="btn warning" id="upaxis-btn" style="display: none;" title="Z-up to Y-up conversion">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 19V5M5 12l7-7 7 7"/>
+            </svg>
+            Z-Y
+        </button>
+        <button class="btn secondary" id="fit-btn" style="display: none;" title="Fit camera to scene">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M3 9h2M3 15h2M19 9h2M19 15h2M9 3v2M15 3v2M9 19v2M15 19v2"/>
+            </svg>
+            Fit
+        </button>
+        <input type="file" id="file-input" accept=".usd,.usda,.usdc,.usdz">
+    </div>
+
+    <!-- Worker badge (top-right) -->
+    <div id="worker-badge">OffscreenCanvas + WebWorker</div>
+
+    <!-- Progress Container -->
+    <div id="progress-container">
+        <div id="progress-title">Loading USD File</div>
+        <div id="progress-bar-wrapper">
+            <div id="progress-bar"></div>
+        </div>
+        <div id="progress-percentage">0%</div>
+        <div id="progress-stage">Preparing...</div>
+        <div id="progress-details"></div>
+        <div id="progress-stages">
+            <div class="progress-stage-item" data-stage="downloading">
+                <span class="stage-icon pending">1</span>
+                <span>Downloading file</span>
+            </div>
+            <div class="progress-stage-item" data-stage="parsing">
+                <span class="stage-icon pending">2</span>
+                <span>Parsing USD (Worker)</span>
+            </div>
+            <div class="progress-stage-item" data-stage="building">
+                <span class="stage-icon pending">3</span>
+                <span>Building meshes</span>
+            </div>
+            <div class="progress-stage-item" data-stage="materials">
+                <span class="stage-icon pending">4</span>
+                <span>Converting materials</span>
+            </div>
+            <div class="progress-stage-item" data-stage="textures">
+                <span class="stage-icon pending">5</span>
+                <span>Decoding textures</span>
+            </div>
+            <div class="progress-stage-item" data-stage="complete">
+                <span class="stage-icon pending">6</span>
+                <span>Complete</span>
+            </div>
+        </div>
+        <div id="progress-debug-row">
+            <label id="progress-debug-label">
+                <input type="checkbox" id="progress-debug-toggle" checked>
+                Debug delay
+            </label>
+            <input type="number" id="progress-debug-delay" value="500" min="0" max="30000" step="100">
+            <span id="progress-debug-unit">ms</span>
+        </div>
+        <div id="progress-btn-row">
+            <button id="progress-pause-btn">Pause</button>
+            <button id="progress-stop-btn">Stop Loading</button>
+        </div>
+    </div>
+
+    <!-- Texture Loading Progress -->
+    <div id="texture-progress-container">
+        <div id="texture-progress-header">
+            <span id="texture-progress-title">Loading Textures</span>
+            <span id="texture-progress-count">0/0</span>
+        </div>
+        <div id="texture-progress-bar-wrapper">
+            <div id="texture-progress-bar"></div>
+        </div>
+        <div id="texture-progress-details"></div>
+    </div>
+
+    <!-- Help Overlay -->
+    <div id="help-overlay">
+        <kbd>Drag & Drop</kbd> USD files to load |
+        <kbd>Scroll</kbd> to zoom |
+        <kbd>Drag</kbd> to orbit |
+        <kbd>Right-drag</kbd> to pan
+    </div>
+
+    <!-- Toast -->
+    <div id="toast"></div>
+
+    <!-- Memory Panel -->
+    <div id="memory-panel">
+        <h3>Memory Usage</h3>
+        <div id="memory-graph-container">
+            <canvas id="memory-graph"></canvas>
+        </div>
+        <div id="memory-stats">
+            <div class="memory-stat">
+                <span class="label">Used Heap</span>
+                <span class="value" id="mem-used">--</span>
+            </div>
+            <div class="memory-stat">
+                <span class="label">Total Heap</span>
+                <span class="value" id="mem-total">--</span>
+            </div>
+            <div class="memory-stat">
+                <span class="label">Heap Limit</span>
+                <span class="value" id="mem-limit">--</span>
+            </div>
+            <div class="memory-stat">
+                <span class="label">Data Points</span>
+                <span class="value" id="mem-points">0</span>
+            </div>
+        </div>
+        <div id="memory-legend">
+            <div class="legend-item">
+                <span class="legend-color used"></span>
+                <span>Used Heap</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color total"></span>
+                <span>Total Heap</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color limit"></span>
+                <span>Limit</span>
+            </div>
+        </div>
+        <div id="memory-warning">
+            Memory API not available. Enable chrome://flags/#enable-precise-memory-info in Chrome.
+        </div>
+    </div>
+
+    <!-- Unsupported browser overlay -->
+    <div id="unsupported-overlay">
+        <h1>OffscreenCanvas Not Supported</h1>
+        <p>This demo requires <strong>OffscreenCanvas</strong> support (Chrome 69+, Firefox 105+, Safari 16.4+).</p>
+        <p>Please use the <a href="progress-demo.html" style="color:#2196F3">main-thread progress demo</a> instead.</p>
+    </div>
+
+    <script type="module" src="./progress-offscreenwebgl.js"></script>
+</body>
+</html>

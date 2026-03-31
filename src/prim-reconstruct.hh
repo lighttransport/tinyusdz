@@ -6,10 +6,13 @@
 //
 #pragma once
 
+#include <functional>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
-#include <map>
-#include "prim-types.hh"
+#include "core/prim-spec.hh"  // PrimSpec, PropertyMap, ReferenceList, Specifier (transitively: property, composition-types, prim-enums)
+#include "core/xform-op.hh"   // XformOp
 
 namespace tinyusdz {
 namespace prim {
@@ -17,6 +20,21 @@ namespace prim {
 struct PrimReconstructOptions
 {
   bool strict_allowedToken_check{false};
+
+  // MaterialX validation options
+  bool validate_mtlx_connection_types{false};
+  bool validate_mtlx_info_id{false};
+  bool validate_mtlx_connection_targets{false};
+  bool validate_mtlx_duplicate_names{false};
+  bool validate_mtlx_index_bounds{false};
+  bool strict_mtlx_check{false};  // Enable all above
+
+  std::function<std::string(const std::string &property_name)>
+      format_property_source_diagnostic;
+  std::function<std::string()> format_prim_source_diagnostic;
+  std::function<std::string(const std::string &property_name)>
+      format_property_path;
+  std::function<std::string()> format_prim_path;
 };
 
 
@@ -29,7 +47,7 @@ struct PrimReconstructOptions
 bool ReconstructXformOpsFromProperties(
       const Specifier &spec,
       std::set<std::string> &table, /* inout */
-      const PropertyMap &properties,
+      PropertyMap &properties,
       std::vector<XformOp> *xformOps,
       std::string *err);
 
@@ -39,7 +57,7 @@ bool ReconstructXformOpsFromProperties(
 template <typename T>
 bool ReconstructPrim(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties, // modified
     const ReferenceList &references,
     T *out,
     std::string *warn,
@@ -51,7 +69,7 @@ bool ReconstructPrim(
 ///
 template <typename T>
 bool ReconstructPrim(
-    const PrimSpec &primspec,
+    PrimSpec &primspec,
     T *out,
     std::string *warn,
     std::string *err,

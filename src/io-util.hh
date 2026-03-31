@@ -190,5 +190,39 @@ bool USDFileExists(const std::string &filepath);
 bool SplitUDIMPath(const std::string &filepath, std::string *pre,
                    std::string *post);
 
+///
+/// Parse a packaged resource path per AOUSD Core Spec 9.7.
+///
+/// Syntax: "archive.usdz[internal/path/file.usdc]"
+///
+/// @param[in] path The full path string
+/// @param[out] archive_path The archive file path (e.g. "archive.usdz")
+/// @param[out] internal_path The path inside the archive (e.g. "internal/path/file.usdc")
+/// @return true if the path contains bracket notation, false if it's a plain path
+///
+inline bool ParsePackagedResourcePath(const std::string &path,
+                                       std::string *archive_path,
+                                       std::string *internal_path) {
+  auto bracket_open = path.find('[');
+  if (bracket_open == std::string::npos) {
+    return false;  // Not a packaged path
+  }
+
+  auto bracket_close = path.find(']', bracket_open);
+  if (bracket_close == std::string::npos) {
+    return false;  // Malformed
+  }
+
+  if (archive_path) {
+    *archive_path = path.substr(0, bracket_open);
+  }
+  if (internal_path) {
+    *internal_path = path.substr(bracket_open + 1,
+                                  bracket_close - bracket_open - 1);
+  }
+
+  return true;
+}
+
 }  // namespace io
 }  // namespace tinyusdz

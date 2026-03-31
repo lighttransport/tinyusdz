@@ -3,9 +3,8 @@
 
 #include "common-macros.inc"
 #include "tiny-format.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
 #include "usdShade.hh"
-#include "pprinter.hh"
 #include "prim-pprint.hh"
 #include "value-pprint.hh"
 #include "stage.hh"
@@ -206,6 +205,9 @@ bool GetDirectlyBoundMaterial(
         return true;
       } else {
         (*material) = nullptr;
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("{} is not a Material Prim.",
+                        materialPath->full_path_name()));
       }
     }
 
@@ -293,7 +295,7 @@ bool DirectBindingStrongerThanDescendants(
       return false;
     }
 
-    const value::token strength = mat_rel.metas().bindMaterialAs.value_or(kWeaderThanDescendants);
+    const value::token strength = mat_rel.metas().has_bindMaterialAs() ? mat_rel.metas().get_bindMaterialAs() : value::token(kWeakerThanDescendants);
     return strength.str() == kStrongerThanDescendants;
 
   };
@@ -316,24 +318,6 @@ bool DirectBindingStrongerThanDescendants(
   return false;
 }
 
-#if 0 // TODO
-bool GetBoundMaterial(
-  const Stage &_stage,
-  const Prim &prim,
-  const std::string &purpose,
-  tinyusdz::Path *materialPath,
-  const Material **materiand,
-  std::string *err) {
-
-  if (materialPath == nullptr) {
-    return false;
-  }
-
-  if (material == nullptr) {
-    return false;
-  }
-}
-#endif
 
 bool GetBoundMaterial(
   const Stage &_stage,
@@ -395,7 +379,7 @@ bool GetBoundMaterial(
     // We need to climb up to the root in any case.
     // TODO: Cache result.
     uint32_t depth = 0;
-    while (depth < 1024*128) { // to avoid infinite loop.
+    while (size_t(depth) < kMaxDefaultTraversalLimit) { // to avoid infinite loop.
 
       if (!currentPath.is_valid() || currentPath.is_root_path()) {
         break;

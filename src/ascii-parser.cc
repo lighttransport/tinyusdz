@@ -22,6 +22,8 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <unordered_map>
+#include <unordered_set>
 #include <stack>
 #if defined(__wasi__)
 #else
@@ -31,6 +33,7 @@
 #include <vector>
 
 #include "ascii-parser.hh"
+#include "parser-timing.hh"
 #include "path-util.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
@@ -57,9 +60,20 @@
 //
 
 #include "common-macros.inc"
+
+#define CHECK_MEMORY_USAGE(__nbytes) do { \
+  uint64_t _chk_nbytes = static_cast<uint64_t>(__nbytes); \
+  if (_chk_nbytes > (_max_memory_limit_bytes - _memory_usage)) { \
+    PushError(fmt::format("Memory limit exceeded. Limit: {} MB, Current usage: {} MB", \
+      _max_memory_limit_bytes / (1024*1024), _memory_usage / (1024*1024))); \
+    return false; \
+  } \
+  _memory_usage += _chk_nbytes; \
+  } while(0)
+
 #include "io-util.hh"
-#include "pprinter.hh"
-#include "prim-types.hh"
+#include "pprint-enum.hh"
+#include "core/prim-spec.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
@@ -70,11 +84,11 @@ namespace tinyusdz {
 
 namespace ascii {
 
-constexpr auto kRel = "rel";
-constexpr auto kTimeSamplesSuffix = ".timeSamples";
-constexpr auto kConnectSuffix = ".connect";
 
 constexpr auto kAscii = "[ASCII]";
+
+// Register functions moved to ascii-parser-entry.cc
+
 
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<nonstd::optional<bool>> *result);
@@ -318,282 +332,8 @@ extern template bool AsciiParser::ParseBasicTypeArray(
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<value::AssetPath> *result);
 
-static void RegisterStageMetas(
-    std::map<std::string, AsciiParser::VariableDef> &metas) {
-  metas.clear();
-  metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
-  metas["documentation"] =
-      AsciiParser::VariableDef(value::kString, "doc");  // alias to 'doc'
+// Register functions (RegisterStageMetas, RegisterPrimMetas, etc.) moved to ascii-parser-entry.cc
 
-  metas["comment"] = AsciiParser::VariableDef(value::kString, "comment");
-
-  // TODO: both support float and double?
-  metas["metersPerUnit"] =
-      AsciiParser::VariableDef(value::kDouble, "metersPerUnit");
-  metas["timeCodesPerSecond"] =
-      AsciiParser::VariableDef(value::kDouble, "timeCodesPerSecond");
-  metas["framesPerSecond"] =
-      AsciiParser::VariableDef(value::kDouble, "framesPerSecond");
-
-  metas["startTimeCode"] =
-      AsciiParser::VariableDef(value::kDouble, "startTimeCode");
-  metas["endTimeCode"] =
-      AsciiParser::VariableDef(value::kDouble, "endTimeCode");
-
-  metas["defaultPrim"] = AsciiParser::VariableDef(value::kToken, "defaultPrim");
-  metas["upAxis"] = AsciiParser::VariableDef(value::kToken, "upAxis");
-  metas["customLayerData"] =
-      AsciiParser::VariableDef(value::kDictionary, "customLayerData");
-
-  // Composition arc.
-  // Type can be array. i.e. asset, asset[]
-  metas["subLayers"] = AsciiParser::VariableDef(value::kAssetPath, "subLayers",
-                                                /* allow array type */ true);
-
-  // UsdPhysics
-  metas["kilogramsPerUnit"] =
-      AsciiParser::VariableDef(value::kDouble, "kilogramsPerUnit");
-
-  // USDZ extension
-  metas["autoPlay"] = AsciiParser::VariableDef(value::kBool, "autoPlay");
-  metas["playbackMode"] =
-      AsciiParser::VariableDef(value::kToken, "playbackMode");
-}
-
-static void RegisterPrimMetas(
-    std::map<std::string, AsciiParser::VariableDef> &metas) {
-  metas.clear();
-
-  metas["kind"] = AsciiParser::VariableDef(value::kToken, "kind");
-  metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
-
-  //
-  // Composition arcs -----------------------
-  //
-
-  // Type can be array. i.e. path, path[]
-  metas["references"] = AsciiParser::VariableDef("Reference", "references",
-                                                 /* allow array type */ true);
-
-  // TODO: Use relatioship type?
-  metas["inherits"] = AsciiParser::VariableDef(value::kPath, "inherits", true);
-  metas["payload"] = AsciiParser::VariableDef("Payload", "payload", true);
-  metas["specializes"] =
-      AsciiParser::VariableDef(value::kPath, "specializes", true);
-
-  // Use `string`
-  metas["variantSets"] = AsciiParser::VariableDef(value::kString, "variantSets",
-                                                  /* allow array type */ true);
-
-  // Parse as dict. TODO: Use ParseVariants()
-  metas["variants"] = AsciiParser::VariableDef(value::kDictionary, "variants");
-
-  // ------------------------------------------
-
-  metas["assetInfo"] =
-      AsciiParser::VariableDef(value::kDictionary, "assetInfo");
-  metas["customData"] =
-      AsciiParser::VariableDef(value::kDictionary, "customData");
-
-  metas["active"] = AsciiParser::VariableDef(value::kBool, "active");
-  metas["hidden"] = AsciiParser::VariableDef(value::kBool, "hidden");
-  metas["instanceable"] =
-      AsciiParser::VariableDef(value::kBool, "instanceable");
-
-  // ListOp
-  metas["apiSchemas"] = AsciiParser::VariableDef(
-      value::Add1DArraySuffix(value::kToken), "apiSchemas");
-
-  // usdShade
-  // NOTE: items are expected to be all string type.
-  metas["sdrMetadata"] =
-      AsciiParser::VariableDef(value::kDictionary, "sdrMetadata");
-
-  metas["clips"] = AsciiParser::VariableDef(value::kDictionary, "clips");
-
-  // USDZ extension
-  metas["sceneName"] = AsciiParser::VariableDef(value::kString, "sceneName");
-
-  // Builtin from pxrUSD 23.xx
-  metas["displayName"] =
-      AsciiParser::VariableDef(value::kString, "displayName");
-
-}
-
-static void RegisterPropMetas(
-    std::map<std::string, AsciiParser::VariableDef> &metas) {
-  metas.clear();
-
-  metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
-  metas["active"] = AsciiParser::VariableDef(value::kBool, "active");
-  metas["hidden"] = AsciiParser::VariableDef(value::kBool, "hidden");
-  metas["customData"] =
-      AsciiParser::VariableDef(value::kDictionary, "customData");
-
-  // for sparse primvars
-  metas["unauthoredValuesIndex"] =
-      AsciiParser::VariableDef(value::kInt, "unauthoredValuesIndex");
-
-  // usdSkel
-  metas["elementSize"] = AsciiParser::VariableDef(value::kInt, "elementSize");
-
-  // usdSkel inbetween BlendShape
-  // use Double in TinyUSDZ. its float type in pxrUSD.
-  metas["weight"] = AsciiParser::VariableDef(value::kDouble, "weight");
-
-  // usdShade?
-  metas["colorSpace"] = AsciiParser::VariableDef(value::kToken, "colorSpace");
-
-  metas["interpolation"] =
-      AsciiParser::VariableDef(value::kToken, "interpolation");
-
-  // usdShade
-  metas["bindMaterialAs"] =
-      AsciiParser::VariableDef(value::kToken, "bindMaterialAs");
-  metas["connectability"] =
-      AsciiParser::VariableDef(value::kToken, "connectability");
-  metas["renderType"] = AsciiParser::VariableDef(value::kToken, "renderType");
-  metas["outputName"] = AsciiParser::VariableDef(value::kToken, "outputName");
-  metas["sdrMetadata"] =
-      AsciiParser::VariableDef(value::kDictionary, "sdrMetadata");
-
-  // Builtin from pxrUSD 23.xx
-  metas["displayName"] =
-      AsciiParser::VariableDef(value::kString, "displayName");
-
-  // Builtin from pxrUSD 24.xx?
-  metas["displayGroup"] =
-      AsciiParser::VariableDef(value::kString, "displayGroup");
-}
-
-static void RegisterPrimAttrTypes(std::set<std::string> &d) {
-  d.clear();
-
-  d.insert(value::kBool);
-
-  d.insert(value::kInt64);
-
-  d.insert(value::kInt);
-  d.insert(value::kInt2);
-  d.insert(value::kInt3);
-  d.insert(value::kInt4);
-
-  d.insert(value::kUInt64);
-
-  d.insert(value::kUInt);
-  d.insert(value::kUInt2);
-  d.insert(value::kUInt3);
-  d.insert(value::kUInt4);
-
-  d.insert(value::kFloat);
-  d.insert(value::kFloat2);
-  d.insert(value::kFloat3);
-  d.insert(value::kFloat4);
-
-  d.insert(value::kDouble);
-  d.insert(value::kDouble2);
-  d.insert(value::kDouble3);
-  d.insert(value::kDouble4);
-
-  d.insert(value::kHalf);
-  d.insert(value::kHalf2);
-  d.insert(value::kHalf3);
-  d.insert(value::kHalf4);
-
-  d.insert(value::kQuath);
-  d.insert(value::kQuatf);
-  d.insert(value::kQuatd);
-
-  d.insert(value::kNormal3f);
-  d.insert(value::kPoint3f);
-  d.insert(value::kTexCoord2h);
-  d.insert(value::kTexCoord3h);
-  d.insert(value::kTexCoord4h);
-  d.insert(value::kTexCoord2f);
-  d.insert(value::kTexCoord3f);
-  d.insert(value::kTexCoord4f);
-  d.insert(value::kTexCoord2d);
-  d.insert(value::kTexCoord3d);
-  d.insert(value::kTexCoord4d);
-  d.insert(value::kVector3f);
-  d.insert(value::kVector4f);
-  d.insert(value::kVector3d);
-  d.insert(value::kVector4d);
-  d.insert(value::kColor3h);
-  d.insert(value::kColor3f);
-  d.insert(value::kColor3d);
-  d.insert(value::kColor4h);
-  d.insert(value::kColor4f);
-  d.insert(value::kColor4d);
-
-  d.insert(value::kMatrix2f);
-  d.insert(value::kMatrix3f);
-  d.insert(value::kMatrix4f);
-
-  d.insert(value::kMatrix2d);
-  d.insert(value::kMatrix3d);
-  d.insert(value::kMatrix4d);
-
-  d.insert(value::kToken);
-  d.insert(value::kString);
-
-  d.insert(value::kRelationship);
-  d.insert(value::kAssetPath);
-
-  d.insert(value::kDictionary);
-
-  // variantSet. Require special treatment.
-  d.insert("variantSet");
-
-  // TODO: Add more types...
-}
-
-static void RegisterPrimTypes(std::set<std::string> &d) {
-  d.insert("Xform");
-  d.insert("Sphere");
-  d.insert("Cube");
-  d.insert("Cone");
-  d.insert("Cylinder");
-  d.insert("Capsule");
-  d.insert("BasisCurves");
-  d.insert("Mesh");
-  d.insert("Points");
-  d.insert("GeomSubset");
-  d.insert("Scope");
-  d.insert("Material");
-  d.insert("NodeGraph");
-  d.insert("Shader");
-  d.insert("SphereLight");
-  d.insert("DomeLight");
-  d.insert("DiskLight");
-  d.insert("DistantLight");
-  d.insert("CylinderLight");
-  // d.insert("PortalLight");
-  d.insert("Camera");
-  d.insert("SkelRoot");
-  d.insert("Skeleton");
-  d.insert("SkelAnimation");
-  d.insert("BlendShape");
-
-  d.insert("GPrim");
-}
-
-// TinyUSDZ does not allow user-defined API schema at the moment
-// (Primarily for security reason, secondary it requires re-design of Prim
-// classes to support user-defined API schema)
-static void RegisterAPISchemas(std::set<std::string> &d) {
-  d.insert("MaterialBindingAPI");
-  d.insert("SkelBindingAPI");
-
-  // TODO:
-  // d.insert("PhysicsCollisionAPI");
-  // d.insert("PhysicsRigidBodyAPI");
-
-  // TODO: Support Multi-apply API(`CollectionAPI`)
-  // d.insert("PhysicsLimitAPI");
-  // d.insert("PhysicsDriveAPI");
-  // d.insert("CollectionAPI");
-}
 
 namespace {
 
@@ -648,14 +388,47 @@ std::string AsciiParser::GetError() {
   }
 
   std::stringstream ss;
+  
+  // Track unique error messages to avoid duplicates
+  std::set<std::string> seen_errors;
+  std::vector<ErrorDiagnostic> errors;
+  
+  // Collect all errors
   while (!err_stack.empty()) {
-    ErrorDiagnostic diag = err_stack.top();
-
-    ss << "err_stack[" << (err_stack.size() - 1) << "] USDA source near line "
-       << (diag.cursor.row + 1) << ", col " << (diag.cursor.col + 1) << ": ";
-    ss << diag.err;  // assume message contains newline.
-
+    errors.push_back(err_stack.top());
     err_stack.pop();
+  }
+  
+  // Process errors in reverse order (oldest first)
+  for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+    
+    // Create a unique key for this error location and message
+    std::stringstream error_key;
+    error_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
+    
+    // Skip duplicate errors
+    if (seen_errors.count(error_key.str()) > 0) {
+      continue;
+    }
+    seen_errors.insert(error_key.str());
+    
+    // Format error with error type and precise location
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
+       << ", column " << (diag.cursor.col + 1) << ": ";
+
+    // Remove redundant newlines from error message
+    std::string clean_err = diag.err;
+    if (!clean_err.empty() && clean_err.back() == '\n') {
+      clean_err.pop_back();
+    }
+    ss << clean_err;
+
+    // Add suggestion if available (Priority 5)
+    if (!diag.suggestion.empty()) {
+      ss << "\n  Suggestion: " << diag.suggestion;
+    }
+
   }
 
   return ss.str();
@@ -667,14 +440,447 @@ std::string AsciiParser::GetWarning() {
   }
 
   std::stringstream ss;
+  
+  // Track unique warning messages to avoid duplicates
+  std::set<std::string> seen_warnings;
+  std::vector<ErrorDiagnostic> warnings;
+  
+  // Collect all warnings
   while (!warn_stack.empty()) {
-    ErrorDiagnostic diag = warn_stack.top();
-
-    ss << "USDA source near line " << (diag.cursor.row + 1) << ", col "
-       << (diag.cursor.col + 1) << ": ";
-    ss << diag.err;  // assume message contains newline.
-
+    warnings.push_back(warn_stack.top());
     warn_stack.pop();
+  }
+  
+  // Process warnings in reverse order (oldest first)
+  for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+    
+    // Create a unique key for this warning location and message
+    std::stringstream warning_key;
+    warning_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
+    
+    // Skip duplicate warnings
+    if (seen_warnings.count(warning_key.str()) > 0) {
+      continue;
+    }
+    seen_warnings.insert(warning_key.str());
+    
+    // Format warning with error type and precise location
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
+       << ", column " << (diag.cursor.col + 1) << ": ";
+
+    // Remove redundant newlines from warning message
+    std::string clean_warn = diag.err;
+    if (!clean_warn.empty() && clean_warn.back() == '\n') {
+      clean_warn.pop_back();
+    }
+    ss << clean_warn;
+
+    // Add suggestion if available (Priority 5)
+    if (!diag.suggestion.empty()) {
+      ss << "\n  Suggestion: " << diag.suggestion;
+    }
+
+  }
+
+  return ss.str();
+}
+
+std::string AsciiParser::GetErrorWithContext(int context_lines) {
+  (void)context_lines;  // Not yet implemented - parameter reserved for future use
+  if (err_stack.empty()) {
+    return std::string();
+  }
+
+  std::stringstream ss;
+
+  // Track unique error messages to avoid duplicates
+  std::set<std::string> seen_errors;
+  std::vector<ErrorDiagnostic> errors;
+
+  // Collect all errors
+  while (!err_stack.empty()) {
+    errors.push_back(err_stack.top());
+    err_stack.pop();
+  }
+
+  // Process errors in reverse order (oldest first)
+  for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+
+    // Create a unique key for this error location and message
+    std::stringstream error_key;
+    error_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
+
+    // Skip duplicate errors
+    if (seen_errors.count(error_key.str()) > 0) {
+      continue;
+    }
+    seen_errors.insert(error_key.str());
+
+    // Format error with error type and precise location
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
+       << ", column " << (diag.cursor.col + 1) << ":\n";
+
+    // Remove redundant newlines from error message
+    std::string clean_err = diag.err;
+    if (!clean_err.empty() && clean_err.back() == '\n') {
+      clean_err.pop_back();
+    }
+    ss << "  " << clean_err << "\n";
+
+    // Add visual caret indicator for error location
+    if (diag.cursor.col > 0) {
+      ss << "  ";
+      for (int i = 0; i < diag.cursor.col; i++) {
+        ss << " ";
+      }
+      ss << "^\n";
+    }
+  }
+
+  return ss.str();
+}
+
+std::string AsciiParser::GetWarningWithContext(int context_lines) {
+  (void)context_lines;  // Not yet implemented - parameter reserved for future use
+  if (warn_stack.empty()) {
+    return std::string();
+  }
+
+  std::stringstream ss;
+
+  // Track unique warning messages to avoid duplicates
+  std::set<std::string> seen_warnings;
+  std::vector<ErrorDiagnostic> warnings;
+
+  // Collect all warnings
+  while (!warn_stack.empty()) {
+    warnings.push_back(warn_stack.top());
+    warn_stack.pop();
+  }
+
+  // Process warnings in reverse order (oldest first)
+  for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+
+    // Create a unique key for this warning location and message
+    std::stringstream warning_key;
+    warning_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
+
+    // Skip duplicate warnings
+    if (seen_warnings.count(warning_key.str()) > 0) {
+      continue;
+    }
+    seen_warnings.insert(warning_key.str());
+
+    // Format warning with error type and precise location
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
+       << ", column " << (diag.cursor.col + 1) << ":\n";
+
+    // Remove redundant newlines from warning message
+    std::string clean_warn = diag.err;
+    if (!clean_warn.empty() && clean_warn.back() == '\n') {
+      clean_warn.pop_back();
+    }
+    ss << "  " << clean_warn << "\n";
+
+    // Add visual caret indicator for warning location
+    if (diag.cursor.col > 0) {
+      ss << "  ";
+      for (int i = 0; i < diag.cursor.col; i++) {
+        ss << " ";
+      }
+      ss << "^\n";
+    }
+  }
+
+  return ss.str();
+}
+
+std::string AsciiParser::GetErrorWithHints(bool show_hints) {
+  (void)show_hints;  // Not yet implemented - parameter reserved for future use
+  if (err_stack.empty()) {
+    return std::string();
+  }
+
+  std::stringstream ss;
+  std::set<std::string> seen_errors;
+  std::vector<ErrorDiagnostic> errors;
+
+  // Collect all errors
+  while (!err_stack.empty()) {
+    errors.push_back(err_stack.top());
+    err_stack.pop();
+  }
+
+  // Process errors in reverse order (oldest first) with aggressive deduplication
+  std::map<std::string, int> error_counts;  // Group similar errors by message
+  for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+    error_counts[diag.err]++;
+  }
+
+  // Now output with counts for grouped errors
+  std::set<std::string> seen_messages;
+  for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+
+    if (seen_messages.count(diag.err) > 0) {
+      continue;
+    }
+    seen_messages.insert(diag.err);
+
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
+       << ", column " << (diag.cursor.col + 1) << ": ";
+
+    std::string clean_err = diag.err;
+    if (!clean_err.empty() && clean_err.back() == '\n') {
+      clean_err.pop_back();
+    }
+    ss << clean_err;
+
+    // Add occurrence count if this error appears multiple times
+    int count = error_counts[diag.err];
+    if (count > 1) {
+      ss << " [" << count << " occurrence" << (count > 1 ? "s" : "") << "]";
+    }
+
+    ss << "\n";
+
+    // Add recovery hint if requested
+    if (show_hints && diag.hint != ErrorRecoveryHint::NoHint) {
+      const char* hint = diag.GetHint();
+      if (hint && std::strlen(hint) > 0) {
+        ss << "  Hint: " << hint << "\n";
+      }
+    }
+  }
+
+  return ss.str();
+}
+
+std::string AsciiParser::GetWarningWithHints(bool show_hints) {
+  (void)show_hints;  // Not yet implemented - parameter reserved for future use
+  if (warn_stack.empty()) {
+    return std::string();
+  }
+
+  std::stringstream ss;
+  std::set<std::string> seen_warnings;
+  std::vector<ErrorDiagnostic> warnings;
+
+  // Collect all warnings
+  while (!warn_stack.empty()) {
+    warnings.push_back(warn_stack.top());
+    warn_stack.pop();
+  }
+
+  // Process warnings in reverse order (oldest first) with aggressive deduplication
+  std::map<std::string, int> warning_counts;  // Group similar warnings by message
+  for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+    warning_counts[diag.err]++;
+  }
+
+  // Now output with counts for grouped warnings
+  std::set<std::string> seen_messages;
+  for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+
+    if (seen_messages.count(diag.err) > 0) {
+      continue;
+    }
+    seen_messages.insert(diag.err);
+
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
+       << ", column " << (diag.cursor.col + 1) << ": ";
+
+    std::string clean_warn = diag.err;
+    if (!clean_warn.empty() && clean_warn.back() == '\n') {
+      clean_warn.pop_back();
+    }
+    ss << clean_warn;
+
+    // Add occurrence count if this warning appears multiple times
+    int count = warning_counts[diag.err];
+    if (count > 1) {
+      ss << " [" << count << " occurrence" << (count > 1 ? "s" : "") << "]";
+    }
+
+    ss << "\n";
+
+    // Add recovery hint if requested
+    if (show_hints && diag.hint != ErrorRecoveryHint::NoHint) {
+      const char* hint = diag.GetHint();
+      if (hint && std::strlen(hint) > 0) {
+        ss << "  Hint: " << hint << "\n";
+      }
+    }
+  }
+
+  return ss.str();
+}
+
+std::string AsciiParser::GetErrorWithSourceContext(const std::string& filename, int context_lines, int column_width) {
+  (void)filename;  // Filename no longer needed as we use StreamReader
+  (void)context_lines;  // Parameter reserved for future use
+  if (err_stack.empty()) {
+    return std::string();
+  }
+
+  std::stringstream ss;
+  auto is_blank_line = [](const std::string &s) {
+    for (char ch : s) {
+      if ((ch != ' ') && (ch != '\t')) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  // Use StreamReader instead of re-reading file
+  if (!_sr || !_sr->data() || _sr->size() == 0) {
+    // Fallback to basic error display if StreamReader not available
+    return GetError();
+  }
+
+  // Parse lines from StreamReader data
+  std::vector<std::string> file_lines;
+  const uint8_t* data = _sr->data();
+  uint64_t size = _sr->size();
+  std::string line;
+
+  for (uint64_t i = 0; i < size; ++i) {
+    if (data[i] == '\n') {
+      file_lines.push_back(line);
+      line.clear();
+    } else if (data[i] != '\r') {  // Skip CR in CRLF
+      line += static_cast<char>(data[i]);
+    }
+  }
+  // Add last line if file doesn't end with newline
+  if (!line.empty()) {
+    file_lines.push_back(line);
+  }
+
+  std::set<std::string> seen_errors;
+  std::set<std::string> seen_locations;  // Track locations where context was shown
+  std::vector<ErrorDiagnostic> errors;
+
+  // Collect all errors
+  while (!err_stack.empty()) {
+    errors.push_back(err_stack.top());
+    err_stack.pop();
+  }
+
+  // Process errors in reverse order (oldest first)
+  for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+
+    // Create unique key and skip duplicate error messages
+    std::stringstream error_key;
+    error_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
+
+    if (seen_errors.count(error_key.str()) > 0) {
+      continue;
+    }
+    seen_errors.insert(error_key.str());
+
+    // Check if we've already shown context for this location
+    std::stringstream location_key;
+    location_key << diag.cursor.row << ":" << diag.cursor.col;
+    bool context_already_shown = (seen_locations.count(location_key.str()) > 0);
+
+    // Display error type and location (without header decoration)
+    // Use "at" for exact position, "near" for approximate position
+    const char* position_word = (diag.position_mode == ErrorPositionMode::Exact) ? "at" : "near";
+    ss << diag.TypeName() << " " << position_word << " line " << (diag.cursor.row + 1)
+       << ", column " << (diag.cursor.col + 1) << ": ";
+
+    // Clean and display error message on same line
+    std::string clean_err = diag.err;
+    while (!clean_err.empty() &&
+           ((clean_err.back() == '\n') || (clean_err.back() == '\r'))) {
+      clean_err.pop_back();
+    }
+    ss << clean_err << "\n";
+
+    // Display suggestion and context only if not already shown for this location
+    if (!context_already_shown) {
+      // Display suggestion if available
+      if (!diag.suggestion.empty()) {
+        ss << "  Suggestion: " << diag.suggestion << "\n";
+      }
+
+      // Display source context if file lines are available
+      if (static_cast<size_t>(diag.cursor.row) < file_lines.size()) {
+      int start_line = std::max(0, diag.cursor.row - 1);
+      int end_line = std::min(static_cast<int>(file_lines.size()) - 1, diag.cursor.row + 1);
+      while ((end_line > diag.cursor.row) &&
+             is_blank_line(file_lines[static_cast<size_t>(end_line)])) {
+        end_line--;
+      }
+      while ((start_line < diag.cursor.row) &&
+             is_blank_line(file_lines[static_cast<size_t>(start_line)])) {
+        start_line++;
+      }
+
+      // Show context lines with proper indentation
+      for (int i = start_line; i <= end_line; ++i) {
+        bool is_error_line = (i == diag.cursor.row);
+        const std::string& source_line = file_lines[static_cast<size_t>(i)];
+
+        // Column snipping for long lines (centered around error column)
+        std::string display_line = source_line;
+        int caret_offset = diag.cursor.col;
+
+        if (is_error_line && static_cast<int>(source_line.length()) > column_width) {
+          int half_width = column_width / 2;
+          int start_col = std::max(0, diag.cursor.col - half_width);
+          int end_col = std::min(static_cast<int>(source_line.length()), start_col + column_width);
+
+          // Adjust start if we're near the end
+          if (end_col - start_col < column_width) {
+            start_col = std::max(0, end_col - column_width);
+          }
+
+          std::string snippet = source_line.substr(static_cast<size_t>(start_col), static_cast<size_t>(end_col - start_col));
+
+          // Add ellipsis indicators
+          if (start_col > 0) {
+            display_line = "..." + snippet;
+            caret_offset = diag.cursor.col - start_col + 3;  // Account for "..."
+          } else {
+            display_line = snippet;
+            caret_offset = diag.cursor.col;
+          }
+
+          if (end_col < static_cast<int>(source_line.length())) {
+            display_line += "...";
+          }
+        }
+
+        // Show source line with indicator
+        ss << "  " << (is_error_line ? ">" : " ") << " " << display_line << "\n";
+
+        // Show caret indicator on error line
+        if (is_error_line) {
+          ss << "    ";
+          // Add spaces up to the error column (adjusted for snipping)
+          for (int col = 0; col < caret_offset; col++) {
+            ss << " ";
+          }
+          // Add visual indicator (caret)
+          ss << "^\n";
+        }
+      }
+      }  // End: Display source context if file lines are available
+
+      // Mark this location as having had context shown
+      seen_locations.insert(location_key.str());
+    }  // End: Display suggestion and context only if not already shown
+
   }
 
   return ss.str();
@@ -935,6 +1141,15 @@ bool AsciiParser::MaybeCustom() {
 
 bool AsciiParser::ParseDict(std::map<std::string, MetaVariable> *out_dict) {
   // '{' comment | (type name '=' value)+ '}'
+  if (_dict_nesting_depth > 64) {
+    PUSH_ERROR_AND_RETURN_TAG(kAscii, "Dictionary nesting depth limit exceeded (> 64).");
+  }
+  _dict_nesting_depth++;
+  struct DictDepthGuard {
+    uint32_t &depth;
+    ~DictDepthGuard() { depth--; }
+  } dict_depth_guard{_dict_nesting_depth};
+
   if (!Expect('{')) {
     return false;
   }
@@ -1194,7 +1409,8 @@ bool AsciiParser::IsSupportedAPISchema(const std::string &ty) {
 }
 
 bool AsciiParser::ReadStringLiteral(std::string *literal) {
-  std::stringstream ss;
+  std::string buf;
+  buf.reserve(64);
 
   char c0;
   if (!Char1(&c0)) {
@@ -1239,7 +1455,7 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
       break;
     }
 
-    ss << c;
+    buf += c;
   }
 
   if (!end_with_quotation) {
@@ -1248,7 +1464,7 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
                     single_quote ? "'" : "\""));
   }
 
-  (*literal) = ss.str();
+  (*literal) = std::move(buf);
 
   _curr_cursor.col += int(literal->size() + 2);  // +2 for quotation chars
 
@@ -1256,7 +1472,8 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
 }
 
 bool AsciiParser::MaybeString(value::StringData *str) {
-  std::stringstream ss;
+  std::string buf;
+  buf.reserve(64);
 
   if (!str) {
     return false;
@@ -1302,11 +1519,11 @@ bool AsciiParser::MaybeString(value::StringData *str) {
       }
 
       if (nc == '\'') {
-        ss << "'";
+        buf += '\'';
         _sr->seek_from_current(1);  // advance 1 char
         continue;
       } else if (nc == '"') {
-        ss << "\"";
+        buf += '"';
         _sr->seek_from_current(1);  // advance 1 char
         continue;
       }
@@ -1324,7 +1541,13 @@ bool AsciiParser::MaybeString(value::StringData *str) {
       }
     }
 
-    ss << c;
+    constexpr size_t kMaxStringLen = 64 * 1024 * 1024; // 64MB
+    if (buf.size() >= kMaxStringLen) {
+      SeekTo(loc);
+      PushError(fmt::format("String literal too large (> {} bytes).", kMaxStringLen));
+      return false;
+    }
+    buf += c;
   }
 
   if (!end_with_quotation) {
@@ -1335,8 +1558,8 @@ bool AsciiParser::MaybeString(value::StringData *str) {
   DCOUT("Single quoted string found. col " << start_cursor.col << ", row "
                                            << start_cursor.row);
 
-  size_t displayed_string_len = ss.str().size();
-  str->value = unescapeControlSequence(ss.str());
+  size_t displayed_string_len = buf.size();
+  str->value = unescapeControlSequence(buf);
   str->line_col = start_cursor.col;
   str->line_row = start_cursor.row;
   str->is_triple_quoted = false;
@@ -1347,8 +1570,6 @@ bool AsciiParser::MaybeString(value::StringData *str) {
 }
 
 bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
-  std::stringstream ss;
-
   auto loc = CurrLoc();
   auto start_cursor = _curr_cursor;
 
@@ -1378,7 +1599,10 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
   }
 
   // Read until next triple-quote `"""` or "'''"
-  std::stringstream str_buf;
+  // Limit to prevent OOM from unclosed/huge triple-quoted strings.
+  constexpr size_t kMaxTripleQuotedStringLen = 64 * 1024 * 1024; // 64MB
+  std::string str_buf;
+  str_buf.reserve(256);
 
   auto locinfo = _curr_cursor;
 
@@ -1405,13 +1629,13 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
       }
 
       if (buf[0] == '\'' && buf[1] == '\'' && buf[2] == '\'') {
-        str_buf << "'''";
+        str_buf += "'''";
         // advance
         _sr->seek_from_current(3);
         locinfo.col += 3;
         continue;
       } else if (buf[0] == '"' && buf[1] == '"' && buf[2] == '"') {
-        str_buf << "\"\"\"";
+        str_buf += "\"\"\"";
         // advance
         _sr->seek_from_current(3);
         locinfo.col += 3;
@@ -1419,7 +1643,11 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
       }
     }
 
-    str_buf << c;
+    if (str_buf.size() >= kMaxTripleQuotedStringLen) {
+      SeekTo(loc);
+      PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Triple-quoted string literal too large (> {} bytes).", kMaxTripleQuotedStringLen));
+    }
+    str_buf += c;
 
     if (c == '"') {
       double_quote_count++;
@@ -1449,7 +1677,7 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
 
         if (d == '\n') {
           // CRLF
-          str_buf << d;
+          str_buf += d;
         } else {
           // unwind 1 char
           if (!_sr->seek_from_current(-1)) {
@@ -1474,7 +1702,8 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
     }
     if (single_quote_count == 3) {
       // got '''
-      if (double_quote_count) {
+      if (!single_quote) {
+        // inside """ string, ''' doesn't close it
         // continue
       } else {
         got_closing_triple_quote = true;
@@ -1494,14 +1723,13 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
 
   // remove last '"""' or '''
   str->single_quote = single_quote;
-  std::string s = str_buf.str();
-  if (s.size() > 3) {  // just in case
-    s.erase(s.size() - 3);
+  if (str_buf.size() > 3) {  // just in case
+    str_buf.erase(str_buf.size() - 3);
   }
 
-  DCOUT("str = " << s);
+  DCOUT("str = " << str_buf);
 
-  str->value = unescapeControlSequence(s);
+  str->value = unescapeControlSequence(str_buf);
 
   DCOUT("unescape str = " << str->value);
 
@@ -1519,7 +1747,36 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
   // - xformOp:transform
   // - primvars:uvmap1
 
-  std::stringstream ss;
+  std::string buf;
+  buf.reserve(64);
+  Cursor start_cursor;  // Will be set at the first character
+  bool first_char = true;
+
+  // Save stream position and row before reading any characters
+  uint64_t start_stream_pos = _sr->tell();
+  int start_row = _curr_cursor.row;
+
+  // Helper lambda to calculate correct column from stream position
+  auto calculate_cursor_from_stream_pos = [&]() {
+    uint64_t line_start_pos = start_stream_pos;
+    uint64_t saved_pos = _sr->tell();
+    _sr->seek_set(start_stream_pos);
+
+    int col_offset = 0;
+    while (line_start_pos > 0) {
+      _sr->seek_set(line_start_pos - 1);
+      char c_tmp;
+      if (_sr->read1(&c_tmp) && (c_tmp == '\n' || c_tmp == '\r')) {
+        break;
+      }
+      line_start_pos--;
+      col_offset++;
+    }
+
+    _sr->seek_set(saved_pos);
+    _curr_cursor.row = start_row;
+    _curr_cursor.col = col_offset;
+  };
 
   while (!Eof()) {
     char c;
@@ -1532,18 +1789,21 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
       // ok
     } else if (c == ':') {  // namespace
       // ':' must lie in the middle of string literal
-      if (ss.str().size() == 0) {
+      if (buf.empty()) {
+        calculate_cursor_from_stream_pos();
         PUSH_ERROR_AND_RETURN("PrimAttr name must not starts with `:`");
       }
     } else if (c == '.') {  // delimiter for `connect`
       // '.' must lie in the middle of string literal
-      if (ss.str().size() == 0) {
+      if (buf.empty()) {
+        calculate_cursor_from_stream_pos();
         PUSH_ERROR_AND_RETURN("PrimAttr name must not starts with `.`");
       }
     } else if (std::isalnum(int(c))) {
       // number must not be allowed for the first char.
-      if (ss.str().size() == 0) {
+      if (buf.empty()) {
         if (!std::isalpha(int(c))) {
+          calculate_cursor_from_stream_pos();
           PUSH_ERROR_AND_RETURN("PrimAttr name must not starts with number.");
         }
       }
@@ -1554,30 +1814,44 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
 
     _curr_cursor.col++;
 
-    ss << c;
+    // Save cursor position after reading the first character
+    if (first_char) {
+      start_cursor = _curr_cursor;
+      first_char = false;
+    }
+
+    buf += c;
   }
 
   {
     std::string name_err;
-    if (!pathutil::ValidatePropPath(Path("", ss.str()), &name_err)) {
+    if (!pathutil::ValidatePropPath(Path("", buf), &name_err)) {
+      calculate_cursor_from_stream_pos();
       PUSH_ERROR_AND_RETURN_TAG(
           kAscii,
-          fmt::format("Invalid Property name `{}`: {}", ss.str(), name_err));
+          fmt::format("Invalid Property name `{}`: {}", buf, name_err));
     }
   }
 
-  // '.' must lie in the middle of string literal
-  if (ss.str().back() == '.') {
-    PUSH_ERROR_AND_RETURN("PrimAttr name must not ends with `.`\n");
-    return false;
+  if (buf.empty()) {
+    calculate_cursor_from_stream_pos();
+    PUSH_ERROR_AND_RETURN("Empty PrimAttr identifier.");
   }
 
-  std::string tok = ss.str();
+  // '.' must lie in the middle of string literal
+  if (buf.back() == '.') {
+    calculate_cursor_from_stream_pos();
+    PUSH_ERROR_AND_RETURN("PrimAttr name must not ends with `.`\n");
+  }
+
+  std::string tok = std::move(buf);
 
   if (contains(tok, '.')) {
     if (endsWith(tok, ".connect") || endsWith(tok, ".timeSamples")) {
       // OK
     } else {
+      // Restore cursor to start position for accurate error reporting
+      _curr_cursor = start_cursor;
       PUSH_ERROR_AND_RETURN_TAG(
           kAscii, fmt::format("Must ends with `.connect` or `.timeSamples` for "
                               "attrbute name: `{}`",
@@ -1586,6 +1860,8 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
 
     // Multiple `.` is not allowed(e.g. attr.connect.timeSamples)
     if (counts(tok, '.') > 1) {
+      // Restore cursor to start position for accurate error reporting
+      _curr_cursor = start_cursor;
       PUSH_ERROR_AND_RETURN_TAG(
           kAscii, fmt::format("Attribute identifier `{}` containing multiple "
                               "`.` is not allowed.",
@@ -1593,14 +1869,15 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
     }
   }
 
-  (*token) = ss.str();
+  (*token) = std::move(tok);
   DCOUT("primAttr identifier = " << (*token));
   return true;
 }
 
 bool AsciiParser::ReadIdentifier(std::string *token) {
   // identifier = (`_` | [a-zA-Z]) (`_` | [a-zA-Z0-9]+)
-  std::stringstream ss;
+  std::string buf;
+  buf.reserve(64);
 
   // The first character.
   {
@@ -1620,7 +1897,7 @@ bool AsciiParser::ReadIdentifier(std::string *token) {
     }
     _curr_cursor.col++;
 
-    ss << c;
+    buf += c;
   }
 
   while (!Eof()) {
@@ -1639,16 +1916,17 @@ bool AsciiParser::ReadIdentifier(std::string *token) {
 
     _curr_cursor.col++;
 
-    ss << c;
+    buf += c;
   }
 
-  (*token) = ss.str();
+  (*token) = std::move(buf);
   return true;
 }
 
 bool AsciiParser::ReadPathIdentifier(std::string *path_identifier) {
   // path_identifier = `<` string `>`
-  std::stringstream ss;
+  std::string buf;
+  buf.reserve(64);
 
   if (!Expect('<')) {
     return false;
@@ -1675,21 +1953,22 @@ bool AsciiParser::ReadPathIdentifier(std::string *path_identifier) {
     }
 
     // TODO: Check if character is valid for path identifier
-    ss << c;
+    buf += c;
   }
 
   if (!ok) {
     return false;
   }
 
-  (*path_identifier) = TrimString(ss.str());
+  (*path_identifier) = TrimString(buf);
   // std::cout << "PathIdentifier: " << (*path_identifier) << "\n";
 
   return true;
 }
 
 bool AsciiParser::ReadUntilNewline(std::string *str) {
-  std::stringstream ss;
+  std::string buf;
+  buf.reserve(128);
 
   while (!Eof()) {
     char c;
@@ -1723,13 +2002,13 @@ bool AsciiParser::ReadUntilNewline(std::string *str) {
       }
     }
 
-    ss << c;
+    buf += c;
   }
 
   _curr_cursor.row++;
   _curr_cursor.col = 0;
 
-  (*str) = ss.str();
+  (*str) = std::move(buf);
 
   return true;
 }
@@ -1780,15 +2059,19 @@ bool AsciiParser::SkipUntilNewline() {
 //              |  var '=' value '\n'
 //
 bool AsciiParser::ParseStageMetaOpt() {
+  Cursor layer_meta_cursor = _curr_cursor;
+
   // Maybe string-only comment.
   // Comment cannot have multiple lines. The last one wins
   {
     value::StringData str;
     if (MaybeTripleQuotedString(&str)) {
       _stage_metas.comment = str;
+      RecordLayerMetaCursor("comment", layer_meta_cursor);
       return true;
     } else if (MaybeString(&str)) {
       _stage_metas.comment = str;
+      RecordLayerMetaCursor("comment", layer_meta_cursor);
       return true;
     }
   }
@@ -1815,6 +2098,61 @@ bool AsciiParser::ParseStageMetaOpt() {
     return false;
   }
 
+  // AOUSD Core Spec 10.3.2.6: relocates has special syntax:
+  //   relocates = { </source> : </target>, ... }
+  // Path-to-path map cannot be parsed by standard ParseMetaValue.
+  if (varname == "relocates") {
+    if (!Expect('{')) {
+      PUSH_ERROR_AND_RETURN("'{' expected for `relocates` value.");
+    }
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
+    }
+
+    while (!Eof()) {
+      char c;
+      if (!LookChar1(&c)) {
+        return false;
+      }
+      if (c == '}') {
+        if (!SeekTo(CurrLoc() + 1)) { return false; }
+        break;
+      }
+
+      // Parse source path: </path>
+      std::string src_path_str;
+      if (!ReadPathIdentifier(&src_path_str)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse source path in `relocates`.");
+      }
+
+      if (!SkipWhitespace()) { return false; }
+      if (!Expect(':')) {
+        PUSH_ERROR_AND_RETURN("':' expected between source and target in `relocates`.");
+      }
+      if (!SkipWhitespace()) { return false; }
+
+      // Parse target path: </path>
+      std::string tgt_path_str;
+      if (!ReadPathIdentifier(&tgt_path_str)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse target path in `relocates`.");
+      }
+
+      _stage_metas.relocates.emplace_back(
+          Path(src_path_str, ""), Path(tgt_path_str, ""));
+
+      if (!SkipCommentAndWhitespaceAndNewline()) { return false; }
+
+      // Optional trailing comma
+      if (!LookChar1(&c)) { return false; }
+      if (c == ',') {
+        if (!SeekTo(CurrLoc() + 1)) { return false; }
+        if (!SkipCommentAndWhitespaceAndNewline()) { return false; }
+      }
+    }
+
+    return true;
+  }
+
   const VariableDef &vardef = _supported_stage_metas.at(varname);
   MetaVariable var;
   if (!ParseMetaValue(vardef, &var)) {
@@ -1822,6 +2160,10 @@ bool AsciiParser::ParseStageMetaOpt() {
     return false;
   }
   var.set_name(varname);
+  RecordLayerMetaCursor(varname, layer_meta_cursor);
+  if (varname == "documentation") {
+    RecordLayerMetaCursor("doc", layer_meta_cursor);
+  }
 
   if (varname == "defaultPrim") {
     value::token tok;
@@ -1836,6 +2178,7 @@ bool AsciiParser::ParseStageMetaOpt() {
     if (var.get_value(&paths)) {
       DCOUT("subLayers = " << paths);
       for (const auto &item : paths) {
+        CHECK_MEMORY_USAGE(sizeof(value::AssetPath) + item.GetAssetPath().length());
         _stage_metas.subLayers.push_back(item);
       }
     } else {
@@ -1958,6 +2301,7 @@ bool AsciiParser::ParseStageMetaOpt() {
   } else if (varname == "customLayerData") {
     if (auto pv = var.get_value<Dictionary>()) {
       _stage_metas.customLayerData = pv.value();
+      _stage_metas.customLayerDataAuthored = true;  // Mark as authored even if empty
     } else {
       PUSH_ERROR_AND_RETURN("`customLayerData` isn't a dictionary value.");
     }
@@ -1972,6 +2316,57 @@ bool AsciiParser::ParseStageMetaOpt() {
       _stage_metas.comment = sdata;
     } else {
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` isn't a string value.", varname));
+    }
+  } else if (varname == "colorConfiguration") {
+    // AOUSD Core Spec: asset path to OCIO config
+    if (auto pv = var.get_value<value::AssetPath>()) {
+      _stage_metas.colorConfiguration = pv.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`colorConfiguration` isn't an asset path value.");
+    }
+  } else if (varname == "colorManagementSystem") {
+    // AOUSD Core Spec: e.g. "ocio"
+    if (auto pv = var.get_value<value::token>()) {
+      _stage_metas.colorManagementSystem = pv.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`colorManagementSystem` isn't a token value.");
+    }
+  } else if (varname == "owner") {
+    // AOUSD Core Spec: layer owner string
+    if (auto pv = var.get_value<value::StringData>()) {
+      _stage_metas.owner = pv.value().value;
+    } else if (auto pvs = var.get_value<std::string>()) {
+      _stage_metas.owner = pvs.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`owner` isn't a string value.");
+    }
+  } else if (varname == "hasOwnedSubLayers") {
+    // AOUSD Core Spec
+    if (auto pv = var.get_value<bool>()) {
+      _stage_metas.hasOwnedSubLayers = pv.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`hasOwnedSubLayers` isn't a bool value.");
+    }
+  } else if (varname == "expressionVariables") {
+    // AOUSD Core Spec: dictionary of variable substitutions
+    if (auto pv = var.get_value<Dictionary>()) {
+      _stage_metas.expressionVariables = pv.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`expressionVariables` isn't a dictionary value.");
+    }
+  } else if (varname == "autoPlay") {
+    // USDZ extension
+    if (auto pv = var.get_value<bool>()) {
+      _stage_metas.autoPlay = pv.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`autoPlay` isn't a bool value.");
+    }
+  } else if (varname == "playbackMode") {
+    // USDZ extension
+    if (auto pv = var.get_value<value::token>()) {
+      _stage_metas.playbackMode = pv.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`playbackMode` isn't a token value.");
     }
   } else {
     DCOUT("TODO: Stage meta: " << varname);
@@ -2087,6 +2482,10 @@ bool AsciiParser::CharN(size_t n, std::vector<char> *nc) {
   }
 
   return ok;
+}
+
+bool AsciiParser::CharN(size_t n, char *dst) {
+  return _sr->read(n, n, reinterpret_cast<uint8_t*>(dst));
 }
 
 bool AsciiParser::Rewind(size_t offset) {
@@ -3073,2223 +3472,14 @@ bool AsciiParser::ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out) {
   return true;
 }
 
-nonstd::optional<std::pair<ListEditQual, MetaVariable>>
-AsciiParser::ParsePrimMeta() {
-  if (!SkipCommentAndWhitespaceAndNewline()) {
-    return nonstd::nullopt;
-  }
-
-  tinyusdz::ListEditQual qual{ListEditQual::ResetToExplicit};
-
-  // May be string only(varname is "comment")
-  // For some reason, string-only data is just stored in `MetaVariable` and
-  // reconstructed in ReconstructPrimMeta in usda-reader.cc later
-  //
-  {
-    value::StringData sdata;
-    if (MaybeTripleQuotedString(&sdata)) {
-      MetaVariable var;
-      // empty name
-      var.set_value("comment", sdata);
-
-      return std::make_pair(qual, var);
-
-    } else if (MaybeString(&sdata)) {
-      MetaVariable var;
-      var.set_value("comment", sdata);
-
-      return std::make_pair(qual, var);
-    }
-  }
-
-  if (!MaybeListEditQual(&qual)) {
-    return nonstd::nullopt;
-  }
-
-  DCOUT("list-edit qual: " << tinyusdz::to_string(qual));
-
-  if (!SkipWhitespaceAndNewline()) {
-    return nonstd::nullopt;
-  }
-
-  std::string varname;
-  if (!ReadIdentifier(&varname)) {
-    return nonstd::nullopt;
-  }
-
-  DCOUT("Identifier = " << varname);
-
-  bool registered_meta = IsRegisteredPrimMeta(varname);
-
-  if (!Expect('=')) {
-    PUSH_ERROR("'=' expected in Prim Metadata line.");
-    return nonstd::nullopt;
-  }
-  SkipWhitespace();
-
-  if (!registered_meta) {
-    // parse as string until newline
-
-    std::string content;
-    if (!ReadUntilNewline(&content)) {
-      PUSH_ERROR("Failed to parse unregistered Prim metadata.");
-      return nonstd::nullopt;
-    }
-
-    MetaVariable var;
-    var.set_value(varname, content);
-
-    return std::make_pair(qual, var);
-  } else {
-    if (auto pv = GetPrimMetaDefinition(varname)) {
-      MetaVariable var;
-      const auto vardef = pv.value();
-      if (!ParseMetaValue(vardef, &var)) {
-        PUSH_ERROR("Failed to parse Prim meta value.");
-        return nonstd::nullopt;
-      }
-      var.set_name(varname);
-
-      return std::make_pair(qual, var);
-    } else {
-      PUSH_ERROR(fmt::format(
-          "[Internal error] Unsupported/unimplemented PrimSpec metadata {}",
-          varname));
-      return nonstd::nullopt;
-    }
-  }
-}
-
-bool AsciiParser::ParsePrimMetas(PrimMetaMap *args) {
-  // '(' args ')'
-  // args = list of argument, separated by newline.
-
-  if (!Expect('(')) {
-    return false;
-  }
-
-  if (!SkipCommentAndWhitespaceAndNewline()) {
-    // std::cout << "skip comment/whitespace/nl failed\n";
-    DCOUT("SkipCommentAndWhitespaceAndNewline failed.");
-    return false;
-  }
-
-  while (!Eof()) {
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      // std::cout << "2: skip comment/whitespace/nl failed\n";
-      return false;
-    }
-
-    char s;
-    if (!Char1(&s)) {
-      return false;
-    }
-
-    if (s == ')') {
-      DCOUT("Prim meta end");
-      // End
-      break;
-    }
-
-    Rewind(1);
-
-    DCOUT("Start PrimMeta parse.");
-
-    // ty = std::pair<ListEditQual, MetaVariable>;
-    if (auto m = ParsePrimMeta()) {
-      DCOUT("PrimMeta: list-edit qual = "
-            << tinyusdz::to_string(std::get<0>(m.value()))
-            << ", name = " << std::get<1>(m.value()).get_name());
-
-      if (std::get<1>(m.value()).get_name().empty()) {
-        PUSH_ERROR_AND_RETURN("[InternalError] Metadataum name is empty.");
-      }
-
-      (*args)[std::get<1>(m.value()).get_name()] = m.value();
-    } else {
-      PUSH_ERROR_AND_RETURN("Failed to parse Meta value.");
-    }
-  }
-
-  return true;
-}
-
-bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
-  // '(' metas ')'
-  //
-  // currently we only support 'interpolation', 'elementSize' and 'cutomData'
-
-  if (!SkipWhitespace()) {
-    return false;
-  }
-
-  // The first character.
-  {
-    char c;
-    if (!Char1(&c)) {
-      // this should not happen.
-      return false;
-    }
-
-    if (c == '(') {
-      // ok
-    } else {
-      _sr->seek_from_current(-1);
-
-      // Still ok. No meta
-      DCOUT("No attribute meta.");
-      return true;
-    }
-  }
-
-  if (!SkipWhitespaceAndNewline()) {
-    return false;
-  }
-
-  while (!Eof()) {
-    char c;
-    if (!Char1(&c)) {
-      return false;
-    }
-
-    if (c == ')') {
-      // end meta
-      break;
-    } else {
-      if (!Rewind(1)) {
-        return false;
-      }
-
-      // May be string only
-      {
-        value::StringData sdata;
-        if (MaybeTripleQuotedString(&sdata)) {
-          out_meta->stringData.push_back(sdata);
-
-          DCOUT("Add triple-quoted string to attr meta:" << to_string(sdata));
-          if (!SkipWhitespaceAndNewline()) {
-            return false;
-          }
-          continue;
-        } else if (MaybeString(&sdata)) {
-          out_meta->stringData.push_back(sdata);
-
-          DCOUT("Add string to attr meta:" << to_string(sdata));
-          if (!SkipWhitespaceAndNewline()) {
-            return false;
-          }
-          continue;
-        }
-      }
-
-      std::string varname;
-      if (!ReadIdentifier(&varname)) {
-        return false;
-      }
-
-      DCOUT("Property/Attribute meta name: " << varname);
-
-      bool supported = _supported_prop_metas.count(varname);
-      if (!supported) {
-        PUSH_ERROR_AND_RETURN_TAG(
-            kAscii,
-            fmt::format("Unsupported Property metadatum name: {}", varname));
-      }
-
-      {
-        std::string name_err;
-        if (!pathutil::ValidatePropPath(Path("", varname), &name_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kAscii,
-              fmt::format("Invalid Property name `{}`: {}", varname, name_err));
-        }
-      }
-
-      if (!SkipWhitespaceAndNewline()) {
-        return false;
-      }
-
-      if (!Expect('=')) {
-        return false;
-      }
-
-      if (!SkipWhitespaceAndNewline()) {
-        return false;
-      }
-
-      //
-      // First-class predefind prop metas.
-      //
-      if (varname == "interpolation") {
-        std::string value;
-        if (!ReadStringLiteral(&value)) {
-          return false;
-        }
-
-        DCOUT("Got `interpolation` meta : " << value);
-        out_meta->interpolation = InterpolationFromString(value);
-      } else if (varname == "elementSize") {
-        uint32_t value;
-        if (!ReadBasicType(&value)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `elementSize`");
-        }
-
-        DCOUT("Got `elementSize` meta : " << value);
-        out_meta->elementSize = value;
-      } else if (varname == "colorSpace") {
-        value::token tok;
-        if (!ReadBasicType(&tok)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `colorSpace`");
-        }
-        // Add as custom meta value.
-        MetaVariable metavar;
-        metavar.set_value("colorSpace", tok);
-        out_meta->meta["colorSpace"] = metavar;
-      } else if (varname == "unauthoredValuesIndex") {
-        int value;
-        if (!ReadBasicType(&value)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `unauthoredValuesIndex`");
-        }
-
-        DCOUT("Got `unauthoredValuesIndex` meta : " << value);
-        MetaVariable metavar;
-        metavar.set_value("unauthoredValuesIndex", value);
-        out_meta->meta["unauthoredValuesIndex"] = metavar;
-      } else if (varname == "customData") {
-        Dictionary dict;
-
-        if (!ParseDict(&dict)) {
-          return false;
-        }
-
-        DCOUT("Got `customData` meta");
-        out_meta->customData = dict;
-
-      } else if (varname == "weight") {
-        double value;
-        if (!ReadBasicType(&value)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `weight`");
-        }
-
-        DCOUT("Got `weight` meta : " << value);
-        out_meta->weight = value;
-      } else if (varname == "bindMaterialAs") {
-        value::token tok;
-        if (!ReadBasicType(&tok)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `bindMaterialAs`");
-        }
-        if ((tok.str() == kWeaderThanDescendants) ||
-            (tok.str() == kStrongerThanDescendants)) {
-          // ok
-        } else {
-          // still valid though
-          PUSH_WARN("Unsupported token for bindMaterialAs: " << tok.str());
-        }
-        DCOUT("bindMaterialAs: " << tok);
-        out_meta->bindMaterialAs = tok;
-      } else if (varname == "displayName") {
-        std::string str;
-        if (!ReadStringLiteral(&str)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `displayName`(string type)");
-        }
-        DCOUT("displayName: " << str);
-        out_meta->displayName = str;
-      } else if (varname == "displayGroup") {
-        std::string str;
-        if (!ReadStringLiteral(&str)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `displayGroup`(string type)");
-        }
-        DCOUT("displayGroup: " << str);
-        out_meta->displayGroup = str;
-
-      } else if (varname == "connectability") {
-        value::token tok;
-        if (!ReadBasicType(&tok)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `connectability`");
-        }
-        DCOUT("connectability: " << tok);
-        out_meta->connectability = tok;
-      } else if (varname == "renderType") {
-        value::token tok;
-        if (!ReadBasicType(&tok)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `renderType`");
-        }
-        DCOUT("renderType: " << tok);
-        out_meta->renderType = tok;
-      } else if (varname == "outputName") {
-        value::token tok;
-        if (!ReadBasicType(&tok)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `outputName`");
-        }
-        DCOUT("outputName: " << tok);
-        out_meta->outputName = tok;
-      } else if (varname == "sdrMetadata") {
-        Dictionary dict;
-
-        if (!ParseDict(&dict)) {
-          return false;
-        }
-
-        out_meta->sdrMetadata = dict;
-      } else {
-        if (auto pv = GetPropMetaDefinition(varname)) {
-          // Parse as generic metadata variable
-          MetaVariable metavar;
-          const auto &vardef = pv.value();
-
-          if (!ParseMetaValue(vardef, &metavar)) {
-            return false;
-          }
-          metavar.set_name(varname);
-
-          // add to custom meta
-          out_meta->meta[varname] = metavar;
-
-        } else {
-          // This should not happen though.
-          PUSH_ERROR_AND_RETURN_TAG(
-              kAscii,
-              fmt::format(
-                  "[InternalErrror] Failed to parse Property metadataum `{}`",
-                  varname));
-        }
-      }
-
-      if (!SkipWhitespaceAndNewline()) {
-        return false;
-      }
-    }
-  }
-
-  return true;
-}
-
-bool IsUSDA(const std::string &filename, size_t max_filesize) {
-  // TODO: Read only first N bytes
-  std::vector<uint8_t> data;
-  std::string err;
-
-  if (!io::ReadWholeFile(&data, &err, filename, max_filesize)) {
-    return false;
-  }
-
-  tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
-  tinyusdz::ascii::AsciiParser parser(&sr);
-
-  return parser.CheckHeader();
-}
-
-//
-// -- Impl
-//
-
-///
-/// Parse `rel`
-///
-bool AsciiParser::ParseRelationship(Relationship *result) {
-  char c;
-  if (!LookChar1(&c)) {
-    return false;
-  }
-
-  if (c == '<') {
-    // Path
-    Path value;
-    if (!ReadBasicType(&value)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse Path.");
-    }
-
-    // Resolve relative path here.
-    // NOTE: Internally, USD(Crate) does not allow relative path.
-    Path base_prim_path(GetCurrentPrimPath(), "");
-    Path abs_path;
-    std::string err;
-    if (!pathutil::ResolveRelativePath(base_prim_path, value, &abs_path,
-                                       &err)) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Invalid relative Path: {}. error = {}", value, err));
-    }
-
-    result->set(abs_path);
-  } else if (c == '[') {
-    // PathVector
-    std::vector<Path> values;
-    if (!ParseBasicTypeArray(&values)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse PathVector.");
-    }
-
-    // Resolve relative path here.
-    // NOTE: Internally, USD(Crate) does not allow relative path.
-    for (size_t i = 0; i < values.size(); i++) {
-      Path base_prim_path(GetCurrentPrimPath(), "");
-      Path abs_path;
-      if (!pathutil::ResolveRelativePath(base_prim_path, values[i],
-                                         &abs_path)) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}.",
-                                          values[i].full_path_name()));
-      }
-
-      // replace
-      values[i] = abs_path;
-    }
-
-    result->set(values);
-  } else if (c == 'N') {
-    // None
-    nonstd::optional<Path> value;
-    if (!ReadBasicType(&value)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse None.");
-    }
-
-    // Should be empty for None.
-    if (value.has_value()) {
-      PUSH_ERROR_AND_RETURN("Failed to parse None.");
-    }
-
-    DCOUT("Relationship valueblock.");
-    result->set_blocked();
-  } else {
-    PUSH_ERROR_AND_RETURN("Unexpected char \"" + std::to_string(c) +
-                          "\" found. Expects Path or PathVector.");
-  }
-
-  if (!SkipWhitespaceAndNewline()) {
-    return false;
-  }
-
-  return true;
-}
-
-template <typename T>
-bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
-                                     const std::string &primattr_name,
-                                     Attribute *out_attr) {
-  Attribute attr;
-  primvar::PrimVar var;
-  bool blocked{false};
-
-  if (array_qual) {
-    if (MaybeNone()) {
-    } else {
-      std::vector<T> value;
-      if (!ParseBasicTypeArray(&value)) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse Primtive Attribute {} type = {}[]", primattr_name,
-                              std::string(value::TypeTraits<T>::type_name())));
-      }
-
-      // Empty array allowed.
-      DCOUT("Got it: primatrr " << primattr_name << ", ty = " + std::string(value::TypeTraits<T>::type_name()) +
-            ", sz = " + std::to_string(value.size()));
-      var.set_value(value);
-    }
-
-#if 0
-  // FIXME: Disable duplicated parsing attribute connection here, since parsing attribute connection will be handled in ParsePrimProps().
-  } else if (hasConnect(primattr_name)) {
-    std::string value;  // TODO: Use Path
-    if (!ReadPathIdentifier(&value)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse path identifier.");
-    }
-
-    // validate.
-    Path connectionPath = pathutil::FromString(value);
-    if (!connectionPath.is_valid()) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Invalid connectionPath: {}.", value));
-    }
-
-    // Resolve relative path here.
-    // NOTE: Internally, USD(Crate) does not allow relative path.
-    Path base_prim_path(GetCurrentPrimPath(), "");
-    Path abs_path;
-    if (!pathutil::ResolveRelativePath(base_prim_path, connectionPath,
-                                       &abs_path)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}.", value));
-    }
-
-    // TODO: Use Path
-    var.set_value(abs_path.full_path_name());
-
-    // Check if attribute metadatum is not authored.
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      return false;
-    }
-
-    char c;
-    if (!LookChar1(&c)) {
-      return false;
-    }
-
-    if (c == '(') {
-      PUSH_ERROR_AND_RETURN(fmt::format("Attribute connection cannot have attribute metadataum: {}", primattr_name));
-    }
-
-#endif
-  } else {
-    nonstd::optional<T> value;
-    if (!ReadBasicType(&value)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse " +
-                            std::string(value::TypeTraits<T>::type_name()));
-    }
-
-    if (value) {
-      DCOUT("ParseBasicPrimAttr: " << value::TypeTraits<T>::type_name() << " = "
-                                   << (*value));
-
-      var.set_value(value.value());
-
-    } else {
-      blocked = true;
-      // std::cout << "ParseBasicPrimAttr: " <<
-      // value::TypeTraits<T>::type_name()
-      //           << " = None\n";
-    }
-  }
-
-  // optional: attribute meta.
-  AttrMeta meta;
-  if (!ParseAttrMeta(&meta)) {
-    PUSH_ERROR_AND_RETURN("Failed to parse Attribute meta.");
-  }
-  attr.metas() = meta;
-
-  if (blocked) {
-    // There is still have a type for ValueBlock.
-    value::ValueBlock noneval;
-    attr.set_value(noneval);
-    attr.set_blocked(true);
-    if (array_qual) {
-      attr.set_type_name(value::TypeTraits<T>::type_name() + "[]");
-    } else {
-      attr.set_type_name(value::TypeTraits<T>::type_name());
-    }
-  } else {
-    attr.set_var(std::move(var));
-  }
-
-  (*out_attr) = std::move(attr);
-
-  return true;
-}
-
-bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
-                                 std::vector<value::token> *propNames) {
-  (void)propNames;
-
-  // prim_prop : (custom?) (variability?) type (array_qual?) name '=' value
-  //           | (custom?) type (array_qual?) name '=' value interpolation?
-  //           | (custom?) (variability?) type (array_qual?) name interpolation?
-  //           | (custom?) (listeditqual?) (variability?) rel attr_name = None
-  //           | (custom?) (listeditqual?) (variability?) rel attr_name = string
-  //           meta | (custom?) (listeditqual?) (variability?) rel attr_name =
-  //           path meta | (custom?) (listeditqual?) (variability?) rel
-  //           attr_name = pathvector meta | (custom?) (listeditqual?)
-  //           (variability?) rel attr_name meta
-  //           ;
-
-  // NOTE:
-  //  custom append varying ... is not allowed.
-  //  append varying custom ... is not allowed.
-  //  append custom varying ... is allowed(decomposed into `custom varying ...`
-  //  and `append varying ...`
-
-  // Skip comment
-  if (!SkipCommentAndWhitespaceAndNewline()) {
-    return false;
-  }
-
-  // Parse `custom`
-  bool custom_qual = MaybeCustom();
-
-  if (!SkipWhitespace()) {
-    return false;
-  }
-
-  ListEditQual listop_qual;
-  if (!MaybeListEditQual(&listop_qual)) {
-    return false;
-  }
-
-  // `custom` then listop is not allowed.
-  if (listop_qual != ListEditQual::ResetToExplicit) {
-    if (custom_qual) {
-      PUSH_ERROR_AND_RETURN("`custom` then ListEdit qualifier is not allowed.");
-    }
-
-    // listop then `custom` is allowed.
-    custom_qual = MaybeCustom();
-  }
-
-  bool varying_authored{false};
-  tinyusdz::Variability variability{tinyusdz::Variability::Varying};
-
-  if (!MaybeVariability(&variability, &varying_authored)) {
-    return false;
-  }
-  DCOUT("variability = " << to_string(variability) << ", varying_authored "
-                         << varying_authored);
-
-  std::string type_name;
-
-  if (!ReadIdentifier(&type_name)) {
-    return false;
-  }
-
-  if (!SkipWhitespace()) {
-    return false;
-  }
-
-  DCOUT("type_name = " << type_name);
-
-  // `uniform` or `varying`
-
-  // Relation('rel')
-  if (type_name == kRel) {
-    DCOUT("relation");
-
-    if (variability == Variability::Uniform) {
-      PUSH_ERROR_AND_RETURN(
-          "Explicit `uniform` variability keyword is not allowed for "
-          "Relationship.");
-    }
-
-    // - prim_identifier
-    // - prim_identifier, '(' metadataum ')'
-    // - prim_identifier, '=', (None|string|path|pathvector)
-    // NOTE: There should be no 'uniform rel'
-
-    std::string attr_name;
-
-    if (!ReadPrimAttrIdentifier(&attr_name)) {
-      PUSH_ERROR_AND_RETURN(
-          "Attribute name(Identifier) expected but got non-identifier.");
-    }
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    char c;
-    if (!LookChar1(&c)) {
-      return false;
-    }
-
-    nonstd::optional<AttrMeta> metap;
-
-    if (c == '(') {
-      // FIXME: Implement Relation specific metadatum parser?
-      AttrMeta meta;
-      if (!ParseAttrMeta(&meta)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse metadataum.");
-      }
-
-      metap = meta;
-
-      if (!LookChar1(&c)) {
-        return false;
-      }
-    }
-
-    if (c != '=') {
-      DCOUT("Relationship with no target: " << attr_name);
-
-      // No targets. Define only.
-      Property p;
-      p.set_property_type(Property::Type::NoTargetsRelation);
-      p.set_listedit_qual(listop_qual);
-
-      if (varying_authored) {
-        p.relationship().set_varying_authored();
-      }
-
-      if (metap) {
-        // TODO: metadataum for Rel
-        p.relationship().metas() = metap.value();
-      }
-
-      (*props)[attr_name] = p;
-
-      return true;
-    }
-
-    // has targets
-    if (!Expect('=')) {
-      return false;
-    }
-
-    if (metap) {
-      PUSH_ERROR_AND_RETURN_TAG(
-          kAscii,
-          "Syntax error. Property metadatum must be defined after `=` and "
-          "relationship target(s).");
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    Relationship rel;
-    if (!ParseRelationship(&rel)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `rel` property.");
-    }
-
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      return false;
-    }
-
-    if (!LookChar1(&c)) {
-      return false;
-    }
-
-    if (c == '(') {
-      if (metap) {
-        PUSH_ERROR_AND_RETURN_TAG(kAscii, "[InternalError] parser error.");
-      }
-
-      AttrMeta meta;
-
-      // FIXME: Implement Relation specific metadatum parser?
-      if (!ParseAttrMeta(&meta)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse metadataum.");
-      }
-
-      metap = meta;
-    }
-
-    DCOUT("Relationship with target: " << attr_name);
-    Property p(rel, custom_qual);
-    p.set_listedit_qual(listop_qual);
-
-    if (varying_authored) {
-      p.relationship().set_varying_authored();
-    }
-
-    if (metap) {
-      p.relationship().metas() = metap.value();
-    }
-
-    (*props)[attr_name] = p;
-
-    return true;
-  }
-
-  //
-  // Attrib.
-  //
-  
-  // Attribute cannot have 'varying' keyword
-  if (varying_authored) {
-    PUSH_ERROR_AND_RETURN_TAG(
-        kAscii, "Syntax error. `varying` keyword is not allowed for Attribute.");
-  }
-
-  if (listop_qual != ListEditQual::ResetToExplicit) {
-    PUSH_ERROR_AND_RETURN_TAG(
-        kAscii, "List editing qualifier is not allowed for Attribute.");
-  }
-
-  if (!IsSupportedPrimAttrType(type_name)) {
-    PUSH_ERROR_AND_RETURN("Unknown or unsupported primtive attribute type `" +
-                          type_name);
-  }
-
-  // Has array qualifier? `[]`
-  bool array_qual = false;
-  {
-    char c0, c1;
-    if (!Char1(&c0)) {
-      return false;
-    }
-
-    if (c0 == '[') {
-      if (!Char1(&c1)) {
-        return false;
-      }
-
-      if (c1 == ']') {
-        array_qual = true;
-      } else {
-        // Invalid syntax
-        PUSH_ERROR_AND_RETURN("Invalid syntax found.");
-      }
-
-    } else {
-      if (!Rewind(1)) {
-        return false;
-      }
-    }
-  }
-
-  if (!SkipWhitespace()) {
-    return false;
-  }
-
-  std::string primattr_name;
-  if (!ReadPrimAttrIdentifier(&primattr_name)) {
-    PUSH_ERROR_AND_RETURN("Failed to parse primAttr identifier.");
-  }
-
-  if (!SkipWhitespace()) {
-    return false;
-  }
-
-  bool isTimeSample = endsWith(primattr_name, kTimeSamplesSuffix);
-  bool isConnection = endsWith(primattr_name, kConnectSuffix);
-
-  // Remove suffix
-  std::string attr_name = primattr_name;
-  if (isTimeSample) {
-    attr_name = removeSuffix(primattr_name, kTimeSamplesSuffix);
-  }
-  if (isConnection) {
-    attr_name = removeSuffix(primattr_name, kConnectSuffix);
-  }
-
-  bool define_only = false;
-  {
-    char c;
-    if (!Char1(&c)) {
-      return false;
-    }
-
-    if (c != '=') {
-      // Define only(e.g. output variable)
-      define_only = true;
-    }
-  }
-
-  DCOUT("define only:" << define_only);
-
-  if (define_only) {
-    Rewind(1);
-
-    // optional: attribute meta.
-    AttrMeta meta;
-    if (!ParseAttrMeta(&meta)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse Attribute meta.");
-    }
-
-    DCOUT("Define only property = " + primattr_name);
-
-    // Empty Attribute. type info only
-    Property p;
-    p.set_property_type(Property::Type::EmptyAttrib);
-    p.set_custom(custom_qual);
-    std::string typeName = type_name;
-    if (array_qual) {
-      typeName += "[]";
-    }
-    p.attribute().set_type_name(typeName);
-
-    p.attribute().variability() = variability;
-    if (varying_authored) {
-      p.attribute().set_varying_authored();
-    }
-
-    p.attribute().metas() = meta;
-
-    (*props)[attr_name] = p;
-
-    return true;
-  }
-
-  // Continue to parse argument
-  if (!SkipWhitespace()) {
-    return false;
-  }
-
-  bool value_blocked{false};
-
-  if (MaybeNone()) {
-    value_blocked = true;
-  }
-
-  if (isConnection) {
-    // atribute connection
-    DCOUT("isConnection");
-
-    Path path;
-    if (!value_blocked) {
-      // Target Must be Path
-      if (!ReadBasicType(&path)) {
-        PUSH_ERROR_AND_RETURN("Path expected for .connect target.");
-      }
-    }
-
-    // Resolve relative path.
-    Path base_abs_path(GetCurrentPrimPath(), "");
-    Path abs_path;
-    std::string err;
-    if (!pathutil::ResolveRelativePath(base_abs_path, path, &abs_path, &err)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}. error = {}",
-                                        path.full_path_name(), err));
-    }
-
-    // Check if attribute metadatum is not authored.
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      return false;
-    }
-
-    char c;
-    if (!LookChar1(&c)) {
-      return false;
-    }
-
-    if (c == '(') {
-      PUSH_ERROR_AND_RETURN(fmt::format("Attribute connection cannot have attribute metadataum: {}", attr_name));
-    }
-
-    bool attr_exists = props->count(attr_name) && props->at(attr_name).is_attribute();
-    if (attr_exists) {
-
-      // TODO: Check if type is the same.
-
-      // Check if variability is the same
-      if (props->at(attr_name).attribute().variability() != variability) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Variability mismatch. Attribute `{}` already has variability `{}`, but timeSampled value has variability `{}`.", attr_name, to_string(props->at(attr_name).attribute().variability()), to_string(variability)));
-      }
-
-      props->at(attr_name).attribute().set_connection(abs_path);
-
-      // Set PropType to Attrib(since previously created Property may have EmptyAttrib).
-      props->at(attr_name).set_property_type(Property::Type::Attrib);
-    } else {
-
-      Attribute attr;
-      attr.set_type_name(type_name);
-      attr.set_connection(abs_path);
-      attr.variability() = variability;
-
-      //Property p(abs_path, /* value typename */ type_name, custom_qual);
-
-      //p.attribute().variability() = variability;
-      //if (varying_authored) {
-      //  p.attribute().set_varying_authored();
-      //}
-
-      Property p(std::move(attr), custom_qual);
-      (*props)[attr_name] = p;
-    }
-
-    DCOUT(fmt::format("Added attribute connection to `{}`", attr_name));
-
-    return true;
-
-  } else if (isTimeSample) {
-    // float.timeSamples = None is syntax error.
-    if (value_blocked) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Syntax error. ValueBlock to .timeSamples is invalid: {}", attr_name));
-    }
-
-    //
-    // TODO(syoyo): Refactror and implement value parser dispatcher.
-    //
-    if (array_qual) {
-      DCOUT("timeSample data. type = " << type_name << "[]");
-    } else {
-      DCOUT("timeSample data. type = " << type_name);
-    }
-
-    value::TimeSamples ts;
-    if (array_qual) {
-      if (!ParseTimeSamplesOfArray(type_name, &ts)) {
-        PUSH_ERROR_AND_RETURN_TAG(
-            kAscii,
-            fmt::format("Failed to parse TimeSamples of type {}[]", type_name));
-      }
-    } else {
-      if (!ParseTimeSamples(type_name, &ts)) {
-        PUSH_ERROR_AND_RETURN_TAG(
-            kAscii,
-            fmt::format("Failed to parse TimeSamples of type {}", type_name));
-      }
-    }
-
-    // Attribute metadatum is not allowed for timeSamples.
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      return false;
-    }
-
-    char c;
-    if (!LookChar1(&c)) {
-      return false;
-    }
-
-    if (c == '(') {
-      PUSH_ERROR_AND_RETURN(fmt::format("TimeSampled Attribute cannot have attribute metadataum: {}", attr_name));
-    }
-
-    DCOUT("timeSamples primattr: type = " << type_name
-                                          << ", name = " << attr_name);
-
-    Attribute attr;
-    Attribute *pattr{nullptr};
-    bool attr_exists = props->count(attr_name) && props->at(attr_name).is_attribute();
-    if (attr_exists) {
-      DCOUT("Attr exists");
-      // Add timeSamples to existing Attribute
-      pattr = &(props->at(attr_name).attribute());
-
-      // Check if variability is the same
-      if (pattr->variability() != variability) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Variability mismatch. Attribute `{}` already has variability `{}`, but timeSampled value has variability `{}`.", attr_name, to_string(pattr->variability()), to_string(variability)));
-      }
-
-      pattr->get_var().set_timesamples(ts);
-
-      // Set PropType to Attrib(since previously created Property may have EmptyAttrib).
-      props->at(attr_name).set_property_type(Property::Type::Attrib);
-
-    } else {
-      // new Attribute
-      pattr = &attr;  
-
-      primvar::PrimVar var;
-      var.set_timesamples(ts);
-      if (array_qual) {
-        pattr->set_type_name(type_name + "[]");
-      } else {
-        pattr->set_type_name(type_name);
-      }
-      pattr->set_var(std::move(var));
-      pattr->variability() = variability;
-
-      //if (varying_authored) {
-      //  pattr->set_varying_authored();
-      //}
-
-      pattr->name() = attr_name;
-
-      Property p(attr, custom_qual);
-      p.set_property_type(Property::Type::Attrib);
-      (*props)[attr_name] = p;
-    }
-
-    return true;
-
-  } else {
-
-    Attribute _attr;
-    Attribute *pattr{nullptr};
-    bool attr_exists = props->count(attr_name) && props->at(attr_name).is_attribute();
-    DCOUT("attr_exists " << attr_exists);
-    if (attr_exists) {
-      pattr = &(props->at(attr_name).attribute());
-    } else {
-      pattr = &_attr;
-      pattr->set_name(primattr_name);
-    }
-
-    if (!value_blocked) {
-      // TODO: Refactor. ParseAttrMeta is currently called inside
-      // ParseBasicPrimAttr()
-      if (type_name == value::kBool) {
-        if (!ParseBasicPrimAttr<bool>(array_qual, primattr_name, pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kInt) {
-        if (!ParseBasicPrimAttr<int>(array_qual, primattr_name, pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kInt2) {
-        if (!ParseBasicPrimAttr<value::int2>(array_qual, primattr_name,
-                                             pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kInt3) {
-        if (!ParseBasicPrimAttr<value::int3>(array_qual, primattr_name,
-                                             pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kInt4) {
-        if (!ParseBasicPrimAttr<value::int4>(array_qual, primattr_name,
-                                             pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kUInt) {
-        if (!ParseBasicPrimAttr<uint32_t>(array_qual, primattr_name, pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kUInt2) {
-        if (!ParseBasicPrimAttr<value::uint2>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kUInt3) {
-        if (!ParseBasicPrimAttr<value::uint3>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kUInt4) {
-        if (!ParseBasicPrimAttr<value::uint4>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kInt64) {
-        if (!ParseBasicPrimAttr<int64_t>(array_qual, primattr_name, pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kUInt64) {
-        if (!ParseBasicPrimAttr<uint64_t>(array_qual, primattr_name, pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kDouble) {
-        if (!ParseBasicPrimAttr<double>(array_qual, primattr_name, pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kString) {
-        if (!ParseBasicPrimAttr<std::string>(array_qual, primattr_name,
-                                                   pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kToken) {
-        if (!ParseBasicPrimAttr<value::token>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kHalf) {
-        if (!ParseBasicPrimAttr<value::half>(array_qual, primattr_name,
-                                             pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kHalf2) {
-        if (!ParseBasicPrimAttr<value::half2>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kHalf3) {
-        if (!ParseBasicPrimAttr<value::half3>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kHalf4) {
-        if (!ParseBasicPrimAttr<value::half4>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kFloat) {
-        if (!ParseBasicPrimAttr<float>(array_qual, primattr_name, pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kFloat2) {
-        if (!ParseBasicPrimAttr<value::float2>(array_qual, primattr_name,
-                                               pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kFloat3) {
-        if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name,
-                                               pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kFloat4) {
-        if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name,
-                                               pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kDouble2) {
-        if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kDouble3) {
-        if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kDouble4) {
-        if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kQuath) {
-        if (!ParseBasicPrimAttr<value::quath>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kQuatf) {
-        if (!ParseBasicPrimAttr<value::quatf>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kQuatd) {
-        if (!ParseBasicPrimAttr<value::quatd>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kPoint3f) {
-        if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kColor3f) {
-        if (!ParseBasicPrimAttr<value::color3f>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kColor4f) {
-        if (!ParseBasicPrimAttr<value::color4f>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kPoint3d) {
-        if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kNormal3f) {
-        if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kNormal3d) {
-        if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kVector3f) {
-        if (!ParseBasicPrimAttr<value::vector3f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kVector3d) {
-        if (!ParseBasicPrimAttr<value::vector3d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kColor3d) {
-        if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kColor4d) {
-        if (!ParseBasicPrimAttr<value::color4d>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix2f) {
-        if (!ParseBasicPrimAttr<value::matrix2f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix3f) {
-        if (!ParseBasicPrimAttr<value::matrix3f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix4f) {
-        if (!ParseBasicPrimAttr<value::matrix4f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix2d) {
-        if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kFloat3) {
-        if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name,
-                                               pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kFloat4) {
-        if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name,
-                                               pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kDouble2) {
-        if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kDouble3) {
-        if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kDouble4) {
-        if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kPoint3f) {
-        if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kColor3f) {
-        if (!ParseBasicPrimAttr<value::color3f>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kColor4f) {
-        if (!ParseBasicPrimAttr<value::color4f>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kPoint3d) {
-        if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kNormal3f) {
-        if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kNormal3d) {
-        if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kVector3f) {
-        if (!ParseBasicPrimAttr<value::vector3f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kVector3d) {
-        if (!ParseBasicPrimAttr<value::vector3d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kColor3d) {
-        if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kColor4d) {
-        if (!ParseBasicPrimAttr<value::color4d>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix2f) {
-        if (!ParseBasicPrimAttr<value::matrix2f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix3f) {
-        if (!ParseBasicPrimAttr<value::matrix3f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix4f) {
-        if (!ParseBasicPrimAttr<value::matrix4f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-
-      } else if (type_name == value::kMatrix2d) {
-        if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix3d) {
-        if (!ParseBasicPrimAttr<value::matrix3d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix4d) {
-        if (!ParseBasicPrimAttr<value::matrix4d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-
-      } else if (type_name == value::kTexCoord2f) {
-        if (!ParseBasicPrimAttr<value::texcoord2f>(array_qual, primattr_name,
-                                                   pattr)) {
-          return false;
-        }
-
-      } else if (type_name == value::kAssetPath) {
-        if (!ParseBasicPrimAttr<value::AssetPath>(array_qual, primattr_name,
-                                                  pattr)) {
-          return false;
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
-      }
-    }
-
-
-    if (varying_authored) {
-      pattr->set_varying_authored();
-    }
-
-    // TODO: Check if type is the same with existing attribute.
-    if (value_blocked) {
-      if (array_qual) {
-        pattr->set_type_name(type_name + "[]");
-      } else {
-        pattr->set_type_name(type_name);
-      }
-      pattr->set_blocked(true);
-    }
-
-    DCOUT("primattr: type = " << type_name << ", name = " << primattr_name);
-    DCOUT(" value_blocked " << value_blocked);
-
-    if (attr_exists) {
-      // Check if variability is the same
-      if (pattr->variability() != variability) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Variability mismatch. Attribute `{}` already has variability `{}`, but 'default' value has variability `{}`.", attr_name, to_string(pattr->variability()), to_string(variability)));
-      }
-
-      // Set PropType to Attrib(since previously created Property may have EmptyAttrib).
-      props->at(attr_name).set_property_type(Property::Type::Attrib);
-    } else {
-      pattr->variability() = variability;
-      Property p(*pattr, custom_qual);
-
-      (*props)[primattr_name] = p;
-    }
-
-    return true;
-  }
-}
-
-// propNames stores list of property name in its appearance order.
-bool AsciiParser::ParseProperties(std::map<std::string, Property> *props,
-                                  std::vector<value::token> *propNames) {
-  // property : primm_attr
-  //          | 'rel' name '=' path
-  //          ;
-
-  if (!SkipWhitespace()) {
-    return false;
-  }
-
-  // rel?
-  {
-    uint64_t loc = CurrLoc();
-    std::string tok;
-
-    if (!ReadIdentifier(&tok)) {
-      return false;
-    }
-
-    if (tok == "rel") {
-      PUSH_ERROR_AND_RETURN("TODO: Parse rel");
-    } else {
-      SeekTo(loc);
-    }
-  }
-
-  // attribute
-  return ParsePrimProps(props, propNames);
-}
-
-std::string AsciiParser::GetCurrentPrimPath() {
-  if (_path_stack.empty()) {
-    return "/";
-  }
-
-  return _path_stack.top();
-}
-
-//
-// -- ctor, dtor
-//
-
-AsciiParser::AsciiParser() { Setup(); }
-
-AsciiParser::AsciiParser(StreamReader *sr) : _sr(sr) { Setup(); }
-
-void AsciiParser::Setup() {
-  RegisterStageMetas(_supported_stage_metas);
-  RegisterPrimMetas(_supported_prim_metas);
-  RegisterPropMetas(_supported_prop_metas);
-  RegisterPrimAttrTypes(_supported_prim_attr_types);
-  RegisterPrimTypes(_supported_prim_types);
-  RegisterAPISchemas(_supported_api_schemas);
-}
-
-AsciiParser::~AsciiParser() {}
-
-bool AsciiParser::CheckHeader() { return ParseMagicHeader(); }
-
-bool AsciiParser::IsRegisteredPrimMeta(const std::string &name) {
-  return _supported_prim_metas.count(name) ? true : false;
-}
-
-bool AsciiParser::IsStageMeta(const std::string &name) {
-  return _supported_stage_metas.count(name) ? true : false;
-}
-
-bool AsciiParser::ParseVariantSet(
-    const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth,
-    std::map<std::string, VariantContent> *variantSetOut) {
-  if (!variantSetOut) {
-    PUSH_ERROR_AND_RETURN_TAG(kAscii,
-                              "[InternalError] variantSetOut arg is nullptr.");
-  }
-
-  // variantSet =
-  // {
-  //   "variantName0" ( metas ) { ... }
-  //   "variantName1" ( metas ) { ... }
-  //   ...
-  // }
-  if (!Expect('{')) {
-    return false;
-  }
-
-  if (!SkipCommentAndWhitespaceAndNewline()) {
-    return false;
-  }
-
-  std::map<std::string, VariantContent> variantContentMap;
-
-  // for each variantStatement
-  while (!Eof()) {
-    {
-      char c;
-      if (!Char1(&c)) {
-        return false;
-      }
-
-      if (c == '}') {
-        // end
-        break;
-      }
-
-      Rewind(1);
-    }
-
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      return false;
-    }
-
-    // string
-    std::string variantName;
-    if (!ReadBasicType(&variantName)) {
-      PUSH_ERROR_AND_RETURN_TAG(
-          kAscii, "Failed to parse variant name for `variantSet` statement.");
-    }
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    // Optional: PrimSpec meta
-    PrimMetaMap metas;
-    {
-      char mc;
-      if (!LookChar1(&mc)) {
-        return false;
-      }
-
-      if (mc == '(') {
-        if (!ParsePrimMetas(&metas)) {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kAscii, "Failed to parse PrimSpec metas in variant statement.");
-        }
-      }
-    }
-
-    if (!Expect('{')) {
-      return false;
-    }
-
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      return false;
-    }
-
-    VariantContent variantContent;
-
-    while (!Eof()) {
-      {
-        char c;
-        if (!Char1(&c)) {
-          return false;
-        }
-
-        if (c == '}') {
-          DCOUT("End block in variantSet stmt.");
-          // end block
-          break;
-        }
-      }
-
-      if (!Rewind(1)) {
-        return false;
-      }
-
-      DCOUT("Read first token in VariantSet stmt");
-      Identifier tok;
-      if (!ReadBasicType(&tok)) {
-        PUSH_ERROR_AND_RETURN(
-            "Failed to parse an identifier in variantSet block statement.");
-      }
-
-      if (!Rewind(tok.size())) {
-        return false;
-      }
-
-      if (tok == "variantSet") {
-        PUSH_ERROR_AND_RETURN("Nested `variantSet` is not supported yet.");
-      }
-
-      Specifier child_spec{Specifier::Invalid};
-      if (tok == "def") {
-        child_spec = Specifier::Def;
-      } else if (tok == "over") {
-        child_spec = Specifier::Over;
-      } else if (tok == "class") {
-        child_spec = Specifier::Class;
-      }
-
-      // No specifier => Assume properties only.
-      // Has specifier => Prim
-      if (child_spec != Specifier::Invalid) {
-        // FIXME: Assign idx dedicated for variant.
-        int64_t idx = _prim_idx_assign_fun(parentPrimIdx);
-        DCOUT("enter parseBlock in variantSet. spec = "
-              << to_string(child_spec) << ", idx = " << idx
-              << ", rootIdx = " << primIdx);
-
-        // recusive call
-        if (!ParseBlock(child_spec, idx, primIdx, depth + 1,
-                        /* in_variantStmt */ true)) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("`{}` block parse failed.", to_string(child_spec)));
-        }
-        DCOUT(fmt::format("Done parse `{}` block.", to_string(child_spec)));
-
-        DCOUT(fmt::format("Add primIdx {} to variant {}", idx, variantName));
-        variantContent.primIndices.push_back(idx);
-
-      } else {
-        DCOUT("Enter ParsePrimProps.");
-        if (!ParsePrimProps(&variantContent.props,
-                            &variantContent.properties)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse Prim attribute.");
-        }
-        DCOUT(fmt::format("Done parse ParsePrimProps."));
-      }
-
-      if (!SkipCommentAndWhitespaceAndNewline()) {
-        return false;
-      }
-    }
-
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      return false;
-    }
-
-    DCOUT(fmt::format("variantSet item {} parsed.", variantName));
-
-    variantContent.metas = metas;
-    variantContentMap.emplace(variantName, variantContent);
-  }
-
-  (*variantSetOut) = std::move(variantContentMap);
-
-  return true;
-}
-
-///
-/// Parse block.
-///
-/// block = spec prim_type? token metas? { ... }
-/// metas = '(' args ')'
-///
-/// spec = `def`, `over` or `class`
-///
-///
-bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
-                             const int64_t parentPrimIdx, const uint32_t depth,
-                             const bool in_variantStaement) {
-  (void)in_variantStaement;
-
-  DCOUT("ParseBlock");
-
-  if (!SkipCommentAndWhitespaceAndNewline()) {
-    DCOUT("SkipCommentAndWhitespaceAndNewline failed");
-    return false;
-  }
-
-  Identifier def;
-  if (!ReadIdentifier(&def)) {
-    DCOUT("ReadIdentifier failed");
-    return false;
-  }
-  DCOUT("spec = " << def);
-
-  if ((def == "def") || (def == "over") || (def == "class")) {
-    // ok
-  } else {
-    PUSH_ERROR_AND_RETURN("Invalid specifier.");
-  }
-
-  // Ensure spec and def is same.
-  if (def == "def") {
-    if (spec != Specifier::Def) {
-      PUSH_ERROR_AND_RETURN_TAG(
-          kAscii, "Internal error. Invalid Specifier token combination. def = "
-                      << def << ", spec = " << to_string(spec));
-    }
-  } else if (def == "over") {
-    if (spec != Specifier::Over) {
-      PUSH_ERROR_AND_RETURN_TAG(
-          kAscii, "Internal error. Invalid Specifier token combination. def = "
-                      << def << ", spec = " << to_string(spec));
-    }
-  } else if (def == "class") {
-    if (spec != Specifier::Class) {
-      PUSH_ERROR_AND_RETURN_TAG(
-          kAscii, "Internal error. Invalid Specifier token combination. def = "
-                      << def << ", spec = " << to_string(spec));
-    }
-  }
-
-  if (!SkipWhitespaceAndNewline()) {
-    return false;
-  }
-
-  // look ahead
-  bool has_primtype = false;
-  {
-    char c;
-    if (!Char1(&c)) {
-      return false;
-    }
-
-    if (!Rewind(1)) {
-      return false;
-    }
-
-    if (c == '"') {
-      // token
-      has_primtype = false;
-    } else {
-      has_primtype = true;
-    }
-  }
-
-  Identifier prim_type;
-
-  DCOUT("has_primtype = " << has_primtype);
-
-  if (has_primtype) {
-    if (!ReadIdentifier(&prim_type)) {
-      return false;
-    }
-  }
-
-  if (!SkipWhitespaceAndNewline()) {
-    return false;
-  }
-
-  std::string prim_name;
-  if (!ReadBasicType(&prim_name)) {
-    return false;
-  }
-
-  DCOUT("prim name = " << prim_name);
-  if (!ValidatePrimElementName(prim_name)) {
-    PUSH_ERROR_AND_RETURN_TAG(kAscii, "Prim name contains invalid chacracter.");
-  }
-
-  if (!SkipWhitespaceAndNewline()) {
-    return false;
-  }
-
-  std::map<std::string, std::pair<ListEditQual, MetaVariable>> in_metas;
-  {
-    // look ahead
-    char c;
-    if (!LookChar1(&c)) {
-      return false;
-    }
-
-    if (c == '(') {
-      // meta
-
-      if (!ParsePrimMetas(&in_metas)) {
-        DCOUT("Parse Prim metas failed.");
-        return false;
-      }
-
-      if (!SkipWhitespaceAndNewline()) {
-        return false;
-      }
-    }
-  }
-
-  if (!SkipCommentAndWhitespaceAndNewline()) {
-    return false;
-  }
-
-  if (!Expect('{')) {
-    return false;
-  }
-
-  if (!SkipWhitespaceAndNewline()) {
-    return false;
-  }
-
-  std::map<std::string, Property> props;
-  std::vector<value::token> propNames;
-  VariantSetList variantSetList;
-
-  {
-    std::string full_path = GetCurrentPrimPath();
-    if (full_path == "/") {
-      full_path += prim_name;
-    } else {
-      full_path += "/" + prim_name;
-    }
-    PushPrimPath(full_path);
-  }
-
-  // expect = '}'
-  //        | def_block
-  //        | prim_attr+
-  //        | variantSet '{' ... '}'
-  while (!Eof()) {
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      return false;
-    }
-
-    char c;
-    if (!Char1(&c)) {
-      return false;
-    }
-
-    if (c == '}') {
-      // end block
-      break;
-    } else {
-      if (!Rewind(1)) {
-        return false;
-      }
-
-      DCOUT("Read stmt token");
-      Identifier tok;
-      if (!ReadBasicType(&tok)) {
-        // maybe ';'?
-
-        if (LookChar1(&c)) {
-          if (c == ';') {
-            PUSH_ERROR_AND_RETURN(
-                "Semicolon is not allowd in `def` block statement.");
-          }
-        }
-        PUSH_ERROR_AND_RETURN(
-            "Failed to parse an identifier in `def` block statement.");
-      }
-
-      if (tok == "variantSet") {
-        if (!SkipWhitespace()) {
-          return false;
-        }
-
-        std::string variantName;
-        if (!ReadBasicType(&variantName)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `variantSet` statement.");
-        }
-
-        DCOUT("variantName = " << variantName);
-
-        if (!SkipWhitespace()) {
-          return false;
-        }
-
-        if (!Expect('=')) {
-          return false;
-        }
-
-        if (!SkipWhitespace()) {
-          return false;
-        }
-
-        std::map<std::string, VariantContent> vmap;
-        if (!ParseVariantSet(primIdx, parentPrimIdx, depth, &vmap)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `variantSet` statement.");
-        }
-
-        variantSetList.emplace(variantName, vmap);
-
-        continue;
-      }
-
-      if (!Rewind(tok.size())) {
-        return false;
-      }
-
-      Specifier child_spec{Specifier::Invalid};
-      if (tok == "def") {
-        child_spec = Specifier::Def;
-      } else if (tok == "over") {
-        child_spec = Specifier::Over;
-      } else if (tok == "class") {
-        child_spec = Specifier::Class;
-      }
-
-      if (child_spec != Specifier::Invalid) {
-        int64_t idx = _prim_idx_assign_fun(parentPrimIdx);
-        DCOUT("enter parseDef. spec = " << to_string(child_spec) << ", idx = "
-                                        << idx << ", rootIdx = " << primIdx);
-
-        // recusive call
-        if (!ParseBlock(child_spec, idx, primIdx, depth + 1)) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("`{}` block parse failed.", to_string(child_spec)));
-        }
-        DCOUT(fmt::format("Done parse `{}` block.", to_string(child_spec)));
-      } else {
-        DCOUT("Enter ParsePrimProps.");
-        // Assume PrimAttr
-        if (!ParsePrimProps(&props, &propNames)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse Prim attribute.");
-        }
-      }
-
-      if (!SkipWhitespaceAndNewline()) {
-        return false;
-      }
-    }
-  }
-
-  std::string pTy = prim_type;
-
-  if (_primspec_mode) {
-    // Load scene as PrimSpec tree
-    if (_primspec_fun) {
-      Path fullpath(GetCurrentPrimPath(), "");
-      Path pname(prim_name, "");
-
-      // pass prim_type as is(empty = empty string)
-      nonstd::expected<bool, std::string> ret =
-          _primspec_fun(fullpath, spec, prim_type, pname, primIdx,
-                        parentPrimIdx, props, in_metas, variantSetList);
-
-      if (!ret) {
-        // construction failed.
-        PUSH_ERROR_AND_RETURN(fmt::format(
-            "Constructing PrimSpec typeName `{}`, elementName `{}` failed: {}",
-            prim_type, prim_name, ret.error()));
-      }
-    } else {
-      PUSH_ERROR_AND_RETURN_TAG(
-          kAscii, "[Internal Error] PrimSpec handler is not found.");
-    }
-
-  } else {
-    // Create typed Prim.
-
-    if (prim_type.empty()) {
-      // No Prim type specified. Treat it as Model
-
-      pTy = "Model";
-    }
-
-    if (!_prim_construct_fun_map.count(pTy)) {
-      if (_option.allow_unknown_prim) {
-        // Unknown Prim type specified. Treat it as Model
-        // Prim's type name will be storead in Model::prim_type_name
-        pTy = "Model";
-      }
-    }
-
-    if (_prim_construct_fun_map.count(pTy)) {
-      auto construct_fun = _prim_construct_fun_map[pTy];
-
-      Path fullpath(GetCurrentPrimPath(), "");
-      Path pname(prim_name, "");
-      nonstd::expected<bool, std::string> ret =
-          construct_fun(fullpath, spec, prim_type, pname, primIdx,
-                        parentPrimIdx, props, in_metas, variantSetList);
-
-      if (!ret) {
-        // construction failed.
-        PUSH_ERROR_AND_RETURN("Constructing Prim type `" + pTy +
-                              "` failed: " + ret.error());
-      }
-
-    } else {
-      PUSH_WARN(fmt::format(
-          "TODO: Unsupported/Unimplemented Prim type: `{}`. Skipping parsing.",
-          pTy));
-    }
-  }
-
-  PopPrimPath();
-
-  return true;
-}
-
-///
-/// Parser entry point
-/// TODO: Refactor and use unified code path regardless of LoadState.
-///
-bool AsciiParser::Parse(const uint32_t load_states,
-                        const AsciiParserOption &parser_option) {
-  _toplevel = (load_states & static_cast<uint32_t>(LoadState::Toplevel));
-  _sub_layered = (load_states & static_cast<uint32_t>(LoadState::Sublayer));
-  _referenced = (load_states & static_cast<uint32_t>(LoadState::Reference));
-  _payloaded = (load_states & static_cast<uint32_t>(LoadState::Payload));
-  _option = parser_option;
-
-  bool header_ok = ParseMagicHeader();
-  if (!header_ok) {
-    PUSH_ERROR_AND_RETURN("Failed to parse USDA magic header.\n");
-  }
-
-  SkipCommentAndWhitespaceAndNewline();
-
-  if (Eof()) {
-    // Empty USDA
-    return true;
-  }
-
-  {
-    char c;
-    if (!LookChar1(&c)) {
-      return false;
-    }
-
-    if (c == '(') {
-      // stage meta.
-      if (!ParseStageMetas()) {
-        PUSH_ERROR_AND_RETURN("Failed to parse Stage metas.");
-      }
-    }
-  }
-
-  if (_stage_meta_process_fun) {
-    DCOUT("Invoke StageMeta callback.");
-    bool ret = _stage_meta_process_fun(_stage_metas);
-    if (!ret) {
-      PUSH_ERROR_AND_RETURN("Failed to reconstruct Stage metas.");
-    }
-  } else {
-    // TODO: Report error when StageMeta callback is not set?
-    PUSH_WARN("Stage metadata processing callback is not set.");
-  }
-
-  PushPrimPath("/");
-
-  // parse blocks
-  while (!Eof()) {
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      return false;
-    }
-
-    if (Eof()) {
-      // Whitespaces in the end of line.
-      break;
-    }
-
-    // Look ahead token
-    auto curr_loc = _sr->tell();
-
-    Identifier tok;
-    if (!ReadBasicType(&tok)) {
-      PUSH_ERROR_AND_RETURN("Identifier expected.\n");
-    }
-
-    // Rewind
-    if (!SeekTo(curr_loc)) {
-      return false;
-    }
-
-    Specifier spec{Specifier::Invalid};
-    if (tok == "def") {
-      spec = Specifier::Def;
-    } else if (tok == "over") {
-      spec = Specifier::Over;
-    } else if (tok == "class") {
-      spec = Specifier::Class;
-    } else {
-      PUSH_ERROR_AND_RETURN("Invalid specifier token '" + tok + "'");
-    }
-
-    int64_t primIdx = _prim_idx_assign_fun(-1);
-    DCOUT("Enter parseDef. primIdx = " << primIdx
-                                       << ", parentPrimIdx = root(-1)");
-    bool block_ok = ParseBlock(spec, primIdx, /* parent */ -1, /* depth */ 0,
-                               /* in_variantStmt */ false);
-    if (!block_ok) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `def` block.");
-    }
-  }
-
-  return true;
-}
-
-bool ParseUnregistredValue(const std::string &_typeName, const std::string &str,
-                           value::Value *value, std::string *err) {
-  if (!value) {
-    if (err) {
-      (*err) += "`value` argument is nullptr.\n";
-    }
-    return false;
-  }
-
-  bool array_qual = false;
-  std::string typeName = _typeName;
-  if (endsWith(typeName, "[]")) {
-    typeName = removeSuffix(typeName, "[]");
-    array_qual = true;
-  }
-
-  nonstd::optional<uint32_t> typeId = value::TryGetTypeId(typeName);
-
-  if (!typeId) {
-    if (err) {
-      (*err) += "Unsupported type: " + typeName + "\n";
-    }
-    return false;
-  }
-
-  tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()),
-                            str.size(), /* swap endian */ false);
-  tinyusdz::ascii::AsciiParser parser(&sr);
-
-#define PARSE_BASE_TYPE(__ty)                                            \
-  case value::TypeTraits<__ty>::type_id(): {                             \
-    if (array_qual) {                                                    \
-      std::vector<__ty> vss;                                             \
-      if (!parser.ParseBasicTypeArray(&vss)) {                           \
-        if (err) {                                                       \
-          (*err) = fmt::format("Failed to parse a value of type `{}[]`", \
-                               value::TypeTraits<__ty>::type_name());    \
-        }                                                                \
-        return false;                                                    \
-      }                                                                  \
-      dst = vss;                                                         \
-    } else {                                                             \
-      __ty val;                                                          \
-      if (!parser.ReadBasicType(&val)) {                                 \
-        if (err) {                                                       \
-          (*err) = fmt::format("Failed to parse a value of type `{}`",   \
-                               value::TypeTraits<__ty>::type_name());    \
-        }                                                                \
-        return false;                                                    \
-      }                                                                  \
-      dst = val;                                                         \
-    }                                                                    \
-    break;                                                               \
-  }
-
-  value::Value dst;
-
-  switch (typeId.value()) {
-    PARSE_BASE_TYPE(value::uint2)
-    PARSE_BASE_TYPE(value::uint3)
-    PARSE_BASE_TYPE(value::uint4)
-    default: {
-      if (err) {
-        (*err) =
-            fmt::format("Unsupported or unimplemeneted type `{}`", typeName);
-      }
-      return false;
-    }
-  }
-
-  (*value) = std::move(dst);
-
-  return true;
-}
+// Property and attribute parsing moved to ascii-parser-props.cc
+// (ParsePrimMeta, ParsePrimMetas, ParseAttrMeta, ParseRelationship,
+//  ParseBasicPrimAttr, ParsePrimProps, ParseProperties)
+
+// Entry point, block parsing, and utilities moved to ascii-parser-entry.cc
+// (GetCurrentPrimPath, AsciiParser ctors, Setup, ReportProgress,
+//  GenerateSuggestion, CheckHeader, IsRegisteredPrimMeta, IsStageMeta,
+//  ParseVariantSet, ParseBlock, Parse)
 
 }  // namespace ascii
 }  // namespace tinyusdz

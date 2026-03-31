@@ -5,6 +5,9 @@
 #include <sstream>
 
 #include "tinyusdz.hh"
+#include "layer.hh"
+#include "core/prim.hh"
+#include "core/prim-spec.hh"
 #include "pprinter.hh"
 #include "str-util.hh"
 #include "io-util.hh"
@@ -346,7 +349,7 @@ int main(int argc, char **argv) {
     }
 
     tinyusdz::Stage comp_stage;
-    ret = LayerToStage(src_layer, &comp_stage, &warn, &err);
+    ret = LayerToStage(std::move(src_layer), &comp_stage, &warn, &err);
     if (warn.size()) {
       std::cout << warn<< "\n";
     }
@@ -357,7 +360,7 @@ int main(int argc, char **argv) {
     
     std::cout << comp_stage.ExportToString() << "\n";
 
-    using MeshMap = std::map<std::string, const tinyusdz::GeomMesh *>;
+    using MeshMap = tinyusdz::tydra::PathPrimMap<tinyusdz::GeomMesh>;
     MeshMap meshmap;
 
     tinyusdz::tydra::ListPrims(comp_stage, meshmap);

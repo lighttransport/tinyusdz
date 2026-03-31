@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TinyUSDZ MaterialX/OpenPBR WebGPU Demo</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+        }
+
+        #canvas-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #canvas-container.drag-over {
+            box-shadow: inset 0 0 50px rgba(33, 150, 243, 0.5);
+        }
+
+        #canvas-container.drag-over::after {
+            content: 'Drop USD file here';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 24px;
+            color: #2196F3;
+            pointer-events: none;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+        }
+
+        #info-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 8px;
+            max-width: 280px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #info-panel h2 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            font-weight: 500;
+            color: #00BCD4;
+        }
+
+        .webgpu-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            background: linear-gradient(135deg, #00BCD4, #9C27B0);
+            color: white;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+
+        #status {
+            font-size: 13px;
+            color: #999;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            word-wrap: break-word;
+        }
+
+        #model-info {
+            display: none;
+            font-size: 12px;
+            line-height: 1.8;
+        }
+
+        #model-info span {
+            color: #4CAF50;
+            font-weight: 500;
+        }
+
+        #toolbar {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px 15px;
+            border-radius: 8px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .btn {
+            background: #00BCD4;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn:hover {
+            background: #00ACC1;
+            transform: translateY(-1px);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        #help-overlay {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 11px;
+            color: #888;
+            line-height: 1.6;
+        }
+
+        #help-overlay kbd {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+
+        /* Error message for unsupported browsers */
+        #webgpu-error {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(200, 50, 50, 0.95);
+            padding: 30px 40px;
+            border-radius: 10px;
+            text-align: center;
+            z-index: 10000;
+        }
+
+        #webgpu-error h2 {
+            margin: 0 0 15px 0;
+            font-size: 20px;
+        }
+
+        #webgpu-error p {
+            margin: 0;
+            font-size: 14px;
+            color: #ffcccc;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            #toolbar {
+                flex-wrap: wrap;
+                max-width: 90%;
+            }
+
+            #info-panel {
+                max-width: calc(100% - 20px);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container">
+        <!-- Three.js WebGPU canvas will be appended here -->
+    </div>
+
+    <!-- Info Panel -->
+    <div id="info-panel">
+        <h2>TinyUSDZ MaterialX <span class="webgpu-badge">WebGPU + TSL</span></h2>
+        <div id="status">Initializing WebGPU...</div>
+        <div id="model-info">
+            <div>Meshes: <span id="mesh-count">0</span></div>
+            <div>Materials: <span id="material-count">0</span></div>
+        </div>
+    </div>
+
+    <!-- Toolbar -->
+    <div id="toolbar">
+        <button class="btn" onclick="loadFile()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            Load USD
+        </button>
+        <input type="file" id="file-input" accept=".usd,.usda,.usdc,.usdz">
+    </div>
+
+    <!-- Help Overlay -->
+    <div id="help-overlay">
+        <kbd>Drag & Drop</kbd> USD files to load |
+        <kbd>Scroll</kbd> to zoom |
+        <kbd>Drag</kbd> to orbit |
+        <kbd>Right-drag</kbd> to pan |
+        <kbd>Click</kbd> to select
+    </div>
+
+    <!-- WebGPU Error Message -->
+    <div id="webgpu-error">
+        <h2>WebGPU Not Supported</h2>
+        <p>Your browser does not support WebGPU.<br>Please use Chrome 113+, Edge 113+, or Firefox 121+.</p>
+    </div>
+
+    <!-- Module Script -->
+    <script type="module" src="materialx-webgpu.js"></script>
+</body>
+</html>

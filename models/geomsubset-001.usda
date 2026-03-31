@@ -31,7 +31,7 @@ def Xform "grid2" (
         uniform token subsetFamily:materialBind:familyType = "partition"
         def GeomSubset "subset"
         {
-            uniform token elementName = "face"
+            uniform token elementType = "face"
             uniform token familyName = "materialBind"
             int[] indices = [0, 1, 2]
             rel material:binding = </Looks/sampleMat>

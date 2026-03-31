@@ -1,0 +1,72 @@
+# Makefile for comprehensive float parsing tests
+
+CXX = g++
+CXXFLAGS = -std=c++17 -O3 -march=native -pthread -Wall -Wextra
+CXXFLAGS_DEBUG = -std=c++17 -g -O0 -pthread -Wall -Wextra -fsanitize=address
+
+# Include path for fast_float (adjust this path as needed)
+INCLUDES = -I../../src/external/fast_float/include
+
+# Targets
+TARGETS = test_parse_fp_comprehensive test_exhaustive_float32 test_edge_cases
+
+# Default target
+all: $(TARGETS)
+
+# Comprehensive test suite
+test_parse_fp_comprehensive: test_parse_fp_comprehensive.cc
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $< -o $@ -lpthread
+
+# Exhaustive float32 test
+test_exhaustive_float32: test_exhaustive_float32.cc
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $< -o $@ -lpthread
+
+# Edge cases unit test
+test_edge_cases: test_edge_cases.cc
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $< -o $@ -lpthread
+
+# Debug versions
+debug: CXXFLAGS = $(CXXFLAGS_DEBUG)
+debug: $(TARGETS)
+
+# Quick test - runs basic tests
+test-quick: test_parse_fp_comprehensive test_edge_cases
+	./test_edge_cases && ./test_parse_fp_comprehensive --random 100000
+
+# Unit test for edge cases
+test-edge: test_edge_cases
+	./test_edge_cases
+
+# Exhaustive test quick mode (first 100M patterns)
+test-exhaustive-quick: test_exhaustive_float32
+	./test_exhaustive_float32 --quick --threads 16
+
+# Full exhaustive test (WARNING: takes hours!)
+test-exhaustive-full: test_exhaustive_float32
+	./test_exhaustive_float32 --threads 16
+
+# Clean
+clean:
+	rm -f $(TARGETS) *.o
+
+# Help
+help:
+	@echo "Available targets:"
+	@echo "  all                    - Build all test programs"
+	@echo "  debug                  - Build with debug flags and sanitizers"
+	@echo "  test-quick             - Run quick comprehensive tests"
+	@echo "  test-exhaustive-quick  - Run exhaustive test on first 100M patterns"
+	@echo "  test-exhaustive-full   - Run full exhaustive test (4.3B patterns - takes hours!)"
+	@echo "  clean                  - Remove built executables"
+	@echo ""
+	@echo "Test programs:"
+	@echo "  test_parse_fp_comprehensive - Comprehensive test suite with edge cases"
+	@echo "  test_exhaustive_float32     - Exhaustive test for all 32-bit float patterns"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make all                          - Build all tests"
+	@echo "  make test-quick                   - Run quick tests"
+	@echo "  ./test_parse_fp_comprehensive --help  - Show comprehensive test options"
+	@echo "  ./test_exhaustive_float32 --help      - Show exhaustive test options"
+
+.PHONY: all debug test-quick test-exhaustive-quick test-exhaustive-full clean help

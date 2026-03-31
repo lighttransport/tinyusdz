@@ -7,7 +7,8 @@
 
 #include "unit-customdata.h"
 #include "value-pprint.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/meta-variable.hh"
 
 using namespace tinyusdz;
 

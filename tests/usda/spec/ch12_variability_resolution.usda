@@ -1,0 +1,31 @@
+#usda 1.0
+(
+    doc = "AOUSD Core Spec 12.2.3: Variability resolution from prim definition"
+)
+
+# Schema-defined uniform properties should retain uniform variability
+# even when not explicitly authored with 'uniform' keyword.
+
+def Mesh "meshWithSchemaVariability"
+{
+    # subdivisionScheme is defined as uniform in the Mesh schema.
+    # Even without explicit 'uniform' keyword, schema defines it as uniform.
+    uniform token subdivisionScheme = "catmullClark"
+
+    # doubleSided is also schema-defined as uniform
+    uniform bool doubleSided = true
+
+    # orientation is schema-defined as uniform
+    uniform token orientation = "rightHanded"
+
+    # A varying property (not uniform in schema)
+    float3[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+}
+
+def Xform "xformWithPurpose"
+{
+    # purpose is defined as uniform in the schema for all Imageable types
+    uniform token purpose = "render"
+}

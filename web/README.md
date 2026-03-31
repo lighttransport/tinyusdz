@@ -16,16 +16,49 @@ See `js` folder for JS codes.
 ## Building WASM module
 
 Emscripten and emcmake required.
+TinyUSDZ is beging built with C++20 to use C++20 coruntine to support async over JS/WASM boundary, without requiring sASYNCIFY and JSPI(JavaScript Promise Integration)
 
-See <tinyusdz>/.github/workflows/wasmPublish.yml or
+### Standard WASM32 build (2GB memory limit)
 
-```
+```bash
 $ ./bootstrap-linux.sh
 $ cd build
 $ make
 ```
 
+### WASM64/MEMORY64 build (8GB memory limit)
+
+```bash
+$ rm -rf build
+$ emcmake cmake -DCMAKE_BUILD_TYPE=MinSizeRel -DTINYUSDZ_WASM64=ON -Bbuild
+$ cd build
+$ make
+```
+
+### Memory Limit Defaults
+
+- **WASM32 (standard)**: 2GB default memory limit
+- **WASM64 (MEMORY64)**: 8GB default memory limit
+
+The JavaScript wrapper automatically uses the appropriate native default based on the build architecture.
+
+**Note**: WASM64/MEMORY64 requires browsers with MEMORY64 support (Chrome 109+, Firefox 102+ with flags enabled).
+
 wasm module(tinyusdz.js and tinyusdz.wasm) will be output to `js/src/tinyusdz` folder.
+
+See also: `bootstrap-examples.sh` for build configuration examples.
+
+## Known Issues
+
+### shared_ptr TimeSamples dedup breaks skeletal animation (2026-02)
+
+Commit `243928d9` ("Add shared_ptr TimeSamples dedup, move semantics, and half_to_float LUT") introduced a shared_ptr-based TimeSamples deduplication optimization in `primvar.hh` and `usdc-reader.cc`. This optimization causes SkelAnimation attributes (translations, rotations, scales) to lose their TimeSamples data during prim reconstruction, resulting in 0 animation channels/samplers.
+
+**Symptom**: Skeletal animations (e.g. CesiumMan.usdz) load as static meshes with no animation playback. Debug output shows `translations.has_timesamples()=0, has_value()=0, authored()=1`.
+
+**Root cause**: The mutable `ConvertToAnimatable` overload in `prim-reconstruct.cc` and the COW (copy-on-write) shared TimeSamples mechanism in `PrimVar` interact incorrectly during SkelAnimation property parsing. The branch was reset to `c62dc69a` (the last known good commit before the optimization).
+
+**Files involved**: `src/primvar.hh`, `src/prim-reconstruct.cc`, `src/usdc-reader.cc`, `src/crate-reader.hh`.
 
 ## Note
 

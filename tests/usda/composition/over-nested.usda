@@ -1,0 +1,14 @@
+#usda 1.0
+
+def Xform "Root" {
+    def Scope "Child" {
+        custom float opacity = 1.0
+    }
+}
+
+over "Root" {
+    over "Child" {
+        custom float opacity = 0.5
+        custom bool visible = true
+    }
+}

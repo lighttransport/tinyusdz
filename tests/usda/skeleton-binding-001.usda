@@ -1,0 +1,277 @@
+#usda 1.0
+(
+    doc = "Full skeleton binding test - complete skinning setup with weights"
+    defaultPrim = "SkeletonBindingTests"
+    startTimeCode = 1
+    endTimeCode = 120
+)
+
+def Xform "SkeletonBindingTests"
+{
+    # =========================================================================
+    # Complete skinned character setup
+    # =========================================================================
+    def SkelRoot "SkinnedCharacter"
+    {
+        # The skeleton definition
+        def Skeleton "Skeleton"
+        {
+            uniform token[] joints = [
+                "Root",
+                "Root/Hips",
+                "Root/Hips/LeftUpLeg",
+                "Root/Hips/LeftUpLeg/LeftLeg",
+                "Root/Hips/LeftUpLeg/LeftLeg/LeftFoot",
+                "Root/Hips/RightUpLeg",
+                "Root/Hips/RightUpLeg/RightLeg",
+                "Root/Hips/RightUpLeg/RightLeg/RightFoot",
+                "Root/Spine",
+                "Root/Spine/Spine1",
+                "Root/Spine/Spine1/Spine2",
+                "Root/Spine/Spine1/Spine2/Neck",
+                "Root/Spine/Spine1/Spine2/Neck/Head",
+                "Root/Spine/Spine1/Spine2/LeftShoulder",
+                "Root/Spine/Spine1/Spine2/LeftShoulder/LeftArm",
+                "Root/Spine/Spine1/Spine2/LeftShoulder/LeftArm/LeftForeArm",
+                "Root/Spine/Spine1/Spine2/LeftShoulder/LeftArm/LeftForeArm/LeftHand",
+                "Root/Spine/Spine1/Spine2/RightShoulder",
+                "Root/Spine/Spine1/Spine2/RightShoulder/RightArm",
+                "Root/Spine/Spine1/Spine2/RightShoulder/RightArm/RightForeArm",
+                "Root/Spine/Spine1/Spine2/RightShoulder/RightArm/RightForeArm/RightHand"
+            ]
+
+            uniform matrix4d[] bindTransforms = [
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,1,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(-0.1,0.9,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(-0.1,0.5,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(-0.1,0.1,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0.1,0.9,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0.1,0.5,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0.1,0.1,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,1.2,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,1.4,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,1.6,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,1.8,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,2.0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(-0.15,1.7,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(-0.35,1.7,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(-0.55,1.7,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(-0.75,1.7,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0.15,1.7,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0.35,1.7,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0.55,1.7,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0.75,1.7,0,1))
+            ]
+
+            uniform matrix4d[] restTransforms = [
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,1,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(-0.1,-0.1,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,-0.4,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,-0.4,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0.1,-0.1,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,-0.4,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,-0.4,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0.2,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0.2,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0.2,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0.2,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0.2,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(-0.15,0.1,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(-0.2,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(-0.2,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(-0.2,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0.15,0.1,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0.2,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0.2,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0.2,0,0,1))
+            ]
+
+            rel skel:animationSource = </SkeletonBindingTests/SkinnedCharacter/WalkAnimation>
+        }
+
+        # Animation for the skeleton
+        def SkelAnimation "WalkAnimation"
+        {
+            uniform token[] joints = [
+                "Root",
+                "Root/Hips",
+                "Root/Hips/LeftUpLeg",
+                "Root/Hips/LeftUpLeg/LeftLeg",
+                "Root/Hips/LeftUpLeg/LeftLeg/LeftFoot",
+                "Root/Hips/RightUpLeg",
+                "Root/Hips/RightUpLeg/RightLeg",
+                "Root/Hips/RightUpLeg/RightLeg/RightFoot",
+                "Root/Spine",
+                "Root/Spine/Spine1",
+                "Root/Spine/Spine1/Spine2",
+                "Root/Spine/Spine1/Spine2/Neck",
+                "Root/Spine/Spine1/Spine2/Neck/Head",
+                "Root/Spine/Spine1/Spine2/LeftShoulder",
+                "Root/Spine/Spine1/Spine2/LeftShoulder/LeftArm",
+                "Root/Spine/Spine1/Spine2/LeftShoulder/LeftArm/LeftForeArm",
+                "Root/Spine/Spine1/Spine2/LeftShoulder/LeftArm/LeftForeArm/LeftHand",
+                "Root/Spine/Spine1/Spine2/RightShoulder",
+                "Root/Spine/Spine1/Spine2/RightShoulder/RightArm",
+                "Root/Spine/Spine1/Spine2/RightShoulder/RightArm/RightForeArm",
+                "Root/Spine/Spine1/Spine2/RightShoulder/RightArm/RightForeArm/RightHand"
+            ]
+
+            float3[] translations = [
+                (0, 0, 0), (0, 1, 0),
+                (-0.1, -0.1, 0), (0, -0.4, 0), (0, -0.4, 0),
+                (0.1, -0.1, 0), (0, -0.4, 0), (0, -0.4, 0),
+                (0, 0.2, 0), (0, 0.2, 0), (0, 0.2, 0), (0, 0.2, 0), (0, 0.2, 0),
+                (-0.15, 0.1, 0), (-0.2, 0, 0), (-0.2, 0, 0), (-0.2, 0, 0),
+                (0.15, 0.1, 0), (0.2, 0, 0), (0.2, 0, 0), (0.2, 0, 0)
+            ]
+
+            quatf[] rotations.timeSamples = {
+                1: [
+                    (1,0,0,0), (1,0,0,0),
+                    (0.966,0.259,0,0), (0.966,-0.259,0,0), (1,0,0,0),
+                    (0.966,-0.259,0,0), (0.966,0.259,0,0), (1,0,0,0),
+                    (1,0,0,0), (1,0,0,0), (1,0,0,0), (1,0,0,0), (1,0,0,0),
+                    (1,0,0,0), (0.966,0,0,0.259), (1,0,0,0), (1,0,0,0),
+                    (1,0,0,0), (0.966,0,0,-0.259), (1,0,0,0), (1,0,0,0)
+                ],
+                60: [
+                    (1,0,0,0), (1,0,0,0),
+                    (0.966,-0.259,0,0), (0.966,0.259,0,0), (1,0,0,0),
+                    (0.966,0.259,0,0), (0.966,-0.259,0,0), (1,0,0,0),
+                    (1,0,0,0), (1,0,0,0), (1,0,0,0), (1,0,0,0), (1,0,0,0),
+                    (1,0,0,0), (0.966,0,0,-0.259), (1,0,0,0), (1,0,0,0),
+                    (1,0,0,0), (0.966,0,0,0.259), (1,0,0,0), (1,0,0,0)
+                ],
+                120: [
+                    (1,0,0,0), (1,0,0,0),
+                    (0.966,0.259,0,0), (0.966,-0.259,0,0), (1,0,0,0),
+                    (0.966,-0.259,0,0), (0.966,0.259,0,0), (1,0,0,0),
+                    (1,0,0,0), (1,0,0,0), (1,0,0,0), (1,0,0,0), (1,0,0,0),
+                    (1,0,0,0), (0.966,0,0,0.259), (1,0,0,0), (1,0,0,0),
+                    (1,0,0,0), (0.966,0,0,-0.259), (1,0,0,0), (1,0,0,0)
+                ]
+            }
+
+            half3[] scales = [
+                (1,1,1), (1,1,1), (1,1,1), (1,1,1), (1,1,1),
+                (1,1,1), (1,1,1), (1,1,1), (1,1,1), (1,1,1),
+                (1,1,1), (1,1,1), (1,1,1), (1,1,1), (1,1,1),
+                (1,1,1), (1,1,1), (1,1,1), (1,1,1), (1,1,1),
+                (1,1,1)
+            ]
+        }
+
+        # Skinned mesh with joint weights
+        def Mesh "Body" (
+            prepend apiSchemas = ["SkelBindingAPI"]
+        )
+        {
+            # Simple tube-like body mesh (20 vertices)
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [
+                0, 1, 5, 4,  1, 2, 6, 5,  2, 3, 7, 6,  3, 0, 4, 7,
+                4, 5, 9, 8,  5, 6, 10, 9, 6, 7, 11, 10, 7, 4, 8, 11,
+                8, 9, 13, 12, 9, 10, 14, 13, 10, 11, 15, 14, 11, 8, 12, 15,
+                12, 13, 17, 16, 13, 14, 18, 17, 14, 15, 19, 18, 15, 12, 16, 19
+            ]
+            point3f[] points = [
+                # Bottom ring (feet level)
+                (-0.15, 0, -0.1), (0.15, 0, -0.1), (0.15, 0, 0.1), (-0.15, 0, 0.1),
+                # Lower ring (knee level)
+                (-0.12, 0.5, -0.08), (0.12, 0.5, -0.08), (0.12, 0.5, 0.08), (-0.12, 0.5, 0.08),
+                # Middle ring (hip level)
+                (-0.15, 1.0, -0.1), (0.15, 1.0, -0.1), (0.15, 1.0, 0.1), (-0.15, 1.0, 0.1),
+                # Upper ring (chest level)
+                (-0.2, 1.6, -0.12), (0.2, 1.6, -0.12), (0.2, 1.6, 0.12), (-0.2, 1.6, 0.12),
+                # Top ring (head level)
+                (-0.1, 2.0, -0.08), (0.1, 2.0, -0.08), (0.1, 2.0, 0.08), (-0.1, 2.0, 0.08)
+            ]
+
+            # Skeleton binding
+            rel skel:skeleton = </SkeletonBindingTests/SkinnedCharacter/Skeleton>
+
+            # Joint indices (4 influences per vertex)
+            int[] primvars:skel:jointIndices = [
+                4, 3, 2, 1,  7, 6, 5, 1,  7, 6, 5, 1,  4, 3, 2, 1,
+                3, 2, 1, 0,  6, 5, 1, 0,  6, 5, 1, 0,  3, 2, 1, 0,
+                1, 8, 0, 0,  1, 8, 0, 0,  1, 8, 0, 0,  1, 8, 0, 0,
+                10, 9, 8, 1,  10, 9, 8, 1,  10, 9, 8, 1,  10, 9, 8, 1,
+                12, 11, 10, 9,  12, 11, 10, 9,  12, 11, 10, 9,  12, 11, 10, 9
+            ] (
+                elementSize = 4
+            )
+
+            # Joint weights (4 weights per vertex, must sum to 1)
+            float[] primvars:skel:jointWeights = [
+                0.6, 0.3, 0.08, 0.02,  0.6, 0.3, 0.08, 0.02,  0.6, 0.3, 0.08, 0.02,  0.6, 0.3, 0.08, 0.02,
+                0.5, 0.35, 0.1, 0.05,  0.5, 0.35, 0.1, 0.05,  0.5, 0.35, 0.1, 0.05,  0.5, 0.35, 0.1, 0.05,
+                0.7, 0.2, 0.1, 0.0,  0.7, 0.2, 0.1, 0.0,  0.7, 0.2, 0.1, 0.0,  0.7, 0.2, 0.1, 0.0,
+                0.5, 0.3, 0.15, 0.05,  0.5, 0.3, 0.15, 0.05,  0.5, 0.3, 0.15, 0.05,  0.5, 0.3, 0.15, 0.05,
+                0.6, 0.25, 0.1, 0.05,  0.6, 0.25, 0.1, 0.05,  0.6, 0.25, 0.1, 0.05,  0.6, 0.25, 0.1, 0.05
+            ] (
+                elementSize = 4
+            )
+
+            # Bind-time geometry extent
+            float3[] extent = [(-0.2, 0, -0.12), (0.2, 2.0, 0.12)]
+        }
+    }
+
+    # =========================================================================
+    # Simple 2-bone arm for basic testing
+    # =========================================================================
+    def SkelRoot "SimpleArm"
+    {
+        def Skeleton "Skeleton"
+        {
+            uniform token[] joints = ["Shoulder", "Shoulder/Elbow", "Shoulder/Elbow/Wrist"]
+            uniform matrix4d[] bindTransforms = [
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(2,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(4,0,0,1))
+            ]
+            uniform matrix4d[] restTransforms = [
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(2,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(2,0,0,1))
+            ]
+        }
+
+        def Mesh "ArmMesh" (
+            prepend apiSchemas = ["SkelBindingAPI"]
+        )
+        {
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [
+                0,1,5,4, 1,2,6,5, 2,3,7,6,
+                4,5,9,8, 5,6,10,9, 6,7,11,10
+            ]
+            point3f[] points = [
+                (0,-0.2,-0.2), (0,0.2,-0.2), (0,0.2,0.2), (0,-0.2,0.2),
+                (2,-0.15,-0.15), (2,0.15,-0.15), (2,0.15,0.15), (2,-0.15,0.15),
+                (4,-0.1,-0.1), (4,0.1,-0.1), (4,0.1,0.1), (4,-0.1,0.1)
+            ]
+
+            rel skel:skeleton = </SkeletonBindingTests/SimpleArm/Skeleton>
+
+            # 2 influences per vertex
+            int[] primvars:skel:jointIndices = [
+                0,1, 0,1, 0,1, 0,1,
+                0,1, 0,1, 0,1, 0,1,
+                1,2, 1,2, 1,2, 1,2
+            ] (
+                elementSize = 2
+            )
+
+            float[] primvars:skel:jointWeights = [
+                1.0,0.0, 1.0,0.0, 1.0,0.0, 1.0,0.0,
+                0.3,0.7, 0.3,0.7, 0.3,0.7, 0.3,0.7,
+                0.0,1.0, 0.0,1.0, 0.0,1.0, 0.0,1.0
+            ] (
+                elementSize = 2
+            )
+        }
+    }
+}

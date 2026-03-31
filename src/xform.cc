@@ -14,12 +14,15 @@
 #endif
 
 #include "math-util.inc"
-#include "pprinter.hh"
+#include "pprint-enum.hh"
 #include "value-pprint.hh"
-#include "prim-types.hh"
+#include "nonstd/expected.hpp"
+#include "xform.hh"
+#include "core/prim.hh"
+#include "linear-algebra.hh"
+#include "value-eval-util.hh"
 #include "tiny-format.hh"
 #include "value-types.hh"
-#include "xform.hh"
 #include "common-macros.inc"
 
 // Use pxrUSD approach to generate rotation matrix.
@@ -370,6 +373,130 @@ value::matrix4d to_matrix(const value::quatd &q) {
   return m;
 }
 
+bool decompose(const value::matrix4d &m,
+               value::double3 *translation,
+               value::quatd *rotation,
+               value::double3 *scale) {
+  if (!translation || !rotation || !scale) {
+    return false;
+  }
+
+  // Extract translation from last column (row 3 in row-major)
+  (*translation)[0] = m.m[3][0];
+  (*translation)[1] = m.m[3][1];
+  (*translation)[2] = m.m[3][2];
+
+  // Extract basis vectors
+  value::double3 basis_x = {m.m[0][0], m.m[0][1], m.m[0][2]};
+  value::double3 basis_y = {m.m[1][0], m.m[1][1], m.m[1][2]};
+  value::double3 basis_z = {m.m[2][0], m.m[2][1], m.m[2][2]};
+
+  // Compute scale as length of basis vectors
+  double sx = std::sqrt(basis_x[0] * basis_x[0] + basis_x[1] * basis_x[1] + basis_x[2] * basis_x[2]);
+  double sy = std::sqrt(basis_y[0] * basis_y[0] + basis_y[1] * basis_y[1] + basis_y[2] * basis_y[2]);
+  double sz = std::sqrt(basis_z[0] * basis_z[0] + basis_z[1] * basis_z[1] + basis_z[2] * basis_z[2]);
+
+  (*scale)[0] = sx;
+  (*scale)[1] = sy;
+  (*scale)[2] = sz;
+
+  // Check for zero or near-zero scale (would make normalization impossible)
+  constexpr double kEpsilon = 1e-10;
+  if (sx < kEpsilon || sy < kEpsilon || sz < kEpsilon) {
+    // Return identity rotation for degenerate scale
+    rotation->real = 1.0;
+    rotation->imag[0] = 0.0;
+    rotation->imag[1] = 0.0;
+    rotation->imag[2] = 0.0;
+    return true;
+  }
+
+  // Normalize basis vectors to get pure rotation matrix
+  value::matrix3d rot_matrix;
+  rot_matrix.m[0][0] = basis_x[0] / sx;
+  rot_matrix.m[0][1] = basis_x[1] / sx;
+  rot_matrix.m[0][2] = basis_x[2] / sx;
+  rot_matrix.m[1][0] = basis_y[0] / sy;
+  rot_matrix.m[1][1] = basis_y[1] / sy;
+  rot_matrix.m[1][2] = basis_y[2] / sy;
+  rot_matrix.m[2][0] = basis_z[0] / sz;
+  rot_matrix.m[2][1] = basis_z[1] / sz;
+  rot_matrix.m[2][2] = basis_z[2] / sz;
+
+  // Check for negative scale (reflection) by computing determinant
+  // If det < 0, we have a reflection, which we'll encode in the scale
+  double det = determinant(rot_matrix);
+  if (det < 0.0) {
+    // Flip one scale component to account for reflection
+    (*scale)[0] = -sx;
+    // Negate the corresponding basis to maintain proper rotation matrix
+    rot_matrix.m[0][0] = -rot_matrix.m[0][0];
+    rot_matrix.m[0][1] = -rot_matrix.m[0][1];
+    rot_matrix.m[0][2] = -rot_matrix.m[0][2];
+  }
+
+  // Convert rotation matrix to quaternion using Shepperd's method
+  // This is numerically stable for all cases
+  //
+  // NOTE: TinyUSDZ uses row-vector convention (v' = v * M), so the rotation
+  // matrix is the TRANSPOSE of the column-vector convention matrix.
+  // The standard Shepperd formulas assume column-vector convention, so we
+  // reverse the subtraction order in all antisymmetric terms (R[i][j]-R[j][i]
+  // becomes R[j][i]-R[i][j]). Symmetric terms (R[i][j]+R[j][i]) and diagonal
+  // terms are unaffected by transposition.
+  double trace = rot_matrix.m[0][0] + rot_matrix.m[1][1] + rot_matrix.m[2][2];
+
+  if (trace > 0.0) {
+    // w is the largest component
+    double s = std::sqrt(trace + 1.0) * 2.0; // s = 4 * w
+    rotation->real = 0.25 * s;
+    rotation->imag[0] = (rot_matrix.m[1][2] - rot_matrix.m[2][1]) / s;
+    rotation->imag[1] = (rot_matrix.m[2][0] - rot_matrix.m[0][2]) / s;
+    rotation->imag[2] = (rot_matrix.m[0][1] - rot_matrix.m[1][0]) / s;
+  } else if ((rot_matrix.m[0][0] > rot_matrix.m[1][1]) && (rot_matrix.m[0][0] > rot_matrix.m[2][2])) {
+    // x is the largest component
+    double s = std::sqrt(1.0 + rot_matrix.m[0][0] - rot_matrix.m[1][1] - rot_matrix.m[2][2]) * 2.0; // s = 4 * x
+    rotation->real = (rot_matrix.m[1][2] - rot_matrix.m[2][1]) / s;
+    rotation->imag[0] = 0.25 * s;
+    rotation->imag[1] = (rot_matrix.m[0][1] + rot_matrix.m[1][0]) / s;
+    rotation->imag[2] = (rot_matrix.m[0][2] + rot_matrix.m[2][0]) / s;
+  } else if (rot_matrix.m[1][1] > rot_matrix.m[2][2]) {
+    // y is the largest component
+    double s = std::sqrt(1.0 + rot_matrix.m[1][1] - rot_matrix.m[0][0] - rot_matrix.m[2][2]) * 2.0; // s = 4 * y
+    rotation->real = (rot_matrix.m[2][0] - rot_matrix.m[0][2]) / s;
+    rotation->imag[0] = (rot_matrix.m[0][1] + rot_matrix.m[1][0]) / s;
+    rotation->imag[1] = 0.25 * s;
+    rotation->imag[2] = (rot_matrix.m[1][2] + rot_matrix.m[2][1]) / s;
+  } else {
+    // z is the largest component
+    double s = std::sqrt(1.0 + rot_matrix.m[2][2] - rot_matrix.m[0][0] - rot_matrix.m[1][1]) * 2.0; // s = 4 * z
+    rotation->real = (rot_matrix.m[0][1] - rot_matrix.m[1][0]) / s;
+    rotation->imag[0] = (rot_matrix.m[0][2] + rot_matrix.m[2][0]) / s;
+    rotation->imag[1] = (rot_matrix.m[1][2] + rot_matrix.m[2][1]) / s;
+    rotation->imag[2] = 0.25 * s;
+  }
+
+  // Normalize quaternion
+  double qlen = std::sqrt(rotation->real * rotation->real +
+                         rotation->imag[0] * rotation->imag[0] +
+                         rotation->imag[1] * rotation->imag[1] +
+                         rotation->imag[2] * rotation->imag[2]);
+  if (qlen > kEpsilon) {
+    rotation->real /= qlen;
+    rotation->imag[0] /= qlen;
+    rotation->imag[1] /= qlen;
+    rotation->imag[2] /= qlen;
+  } else {
+    // Degenerate case, return identity
+    rotation->real = 1.0;
+    rotation->imag[0] = 0.0;
+    rotation->imag[1] = 0.0;
+    rotation->imag[2] = 0.0;
+  }
+
+  return true;
+}
+
 value::matrix4d inverse(const value::matrix4d &_m) {
   matrix44d m;
   // memory layout is same
@@ -419,24 +546,31 @@ double determinant(const value::matrix3d &_m) {
 }
 
 bool inverse(const value::matrix4d &_m, value::matrix4d &inv_m, double eps) {
-  double det = determinant(_m);
+  matrix44d m;
+  memcpy(&m[0][0], _m.m, sizeof(double) * 4 * 4);
 
+  double det = linalg::determinant(m);
   if (math::is_close(std::fabs(det), 0.0, eps)) {
     return false;
   }
 
-  inv_m = inverse(_m);
+  // Compute adjugate/det directly (avoids recomputing determinant inside linalg::inverse)
+  matrix44d result = linalg::adjugate(m) / det;
+  memcpy(inv_m.m, &result[0][0], sizeof(double) * 4 * 4);
   return true;
 }
 
 bool inverse(const value::matrix3d &_m, value::matrix3d &inv_m, double eps) {
-  double det = determinant(_m);
+  matrix33d m;
+  memcpy(&m[0][0], _m.m, sizeof(double) * 3 * 3);
 
+  double det = linalg::determinant(m);
   if (math::is_close(std::fabs(det), 0.0, eps)) {
     return false;
   }
 
-  inv_m = inverse(_m);
+  matrix33d result = linalg::adjugate(m) / det;
+  memcpy(inv_m.m, &result[0][0], sizeof(double) * 3 * 3);
   return true;
 }
 

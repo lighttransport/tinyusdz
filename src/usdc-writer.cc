@@ -37,10 +37,19 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <cstdio>    // for remove
+#include <cstring>   // for strerror
+#include <cerrno>    // for errno
+
+#ifndef _WIN32
+#include <unistd.h>  // for close, mkstemp
+#endif
 
 #include "crate-format.hh"
+#include "crate-writer.hh"  // experimental CrateWriter
 #include "io-util.hh"
 #include "lz4-compression.hh"
+#include "zstd-compression.hh"
 #include "token-type.hh"
 
 #include "common-macros.inc"
@@ -49,6 +58,13 @@ namespace tinyusdz {
 namespace usdc {
 
 namespace {
+
+// Check if filename ends with ".zst" extension (case-insensitive)
+bool HasZstdExtension(const std::string &filename) {
+  if (filename.size() < 4) return false;
+  std::string ext = filename.substr(filename.size() - 4);
+  return (ext == ".zst" || ext == ".ZST");
+}
 
 constexpr size_t kSectionNameMaxLength = 15;
 
@@ -62,16 +78,6 @@ std::wstring UTF8ToWchar(const std::string &str) {
   return wstr;
 }
 
-#if 0
-std::string WcharToUTF8(const std::wstring &wstr) {
-  int str_size = WideCharToMultiByte(CP_UTF8, 0, wstr.data(), int(wstr.size()),
-                                     nullptr, 0, nullptr, nullptr);
-  std::string str(size_t(str_size), 0);
-  WideCharToMultiByte(CP_UTF8, 0, wstr.data(), int(wstr.size()), &str[0],
-                      int(str.size()), nullptr, nullptr);
-  return str;
-}
-#endif
 #endif
 
 struct Section {
@@ -98,83 +104,6 @@ struct TableOfContents {
 //  crate::ValueRep value_rep;
 //};
 
-#if 0
-// For unordered_map
-
-// https://stackoverflow.com/questions/8513911/how-to-create-a-good-hash-combine-with-64-bit-output-inspired-by-boosthash-co
-// From CityHash code.
-template <class T>
-inline void hash_combine(std::size_t &seed, const T &v) {
-#ifdef __wasi__  // 32bit platform
-  // Use boost version.
-  std::hash<T> hasher;
-  seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-#else
-  std::hash<T> hasher;
-  const uint64_t kMul = 0x9ddfea08eb382d69ULL;
-  std::size_t a = (hasher(v) ^ seed) * kMul;
-  a ^= (a >> 47);
-  std::size_t b = (seed ^ a) * kMul;
-  b ^= (b >> 47);
-  seed = b * kMul;
-#endif
-}
-
-struct PathHasher {
-  size_t operator()(const Path &path) const {
-    size_t seed = std::hash<std::string>()(path.GetPrimPart());
-    hash_combine(seed, std::hash<std::string>()(path.GetPropPart()));
-    hash_combine(seed, std::hash<std::string>()(path.GetLocalPart()));
-    hash_combine(seed, std::hash<bool>()(path.IsValid()));
-
-    return seed;
-  }
-};
-
-struct PathKeyEqual {
-  bool operator()(const Path &lhs, const Path &rhs) const {
-    bool ret = lhs.GetPrimPart() == rhs.GetPrimPart();
-    ret &= lhs.GetPropPart() == rhs.GetPropPart();
-    ret &= lhs.GetLocalPart() == rhs.GetLocalPart();
-    ret &= lhs.IsValid() == rhs.IsValid();
-
-    return ret;
-  }
-};
-
-struct FieldHasher {
-  size_t operator()(const Field &field) const {
-    size_t seed = std::hash<uint32_t>()(field.token_index.value);
-    hash_combine(seed, std::hash<uint64_t>()(field.value_rep.GetData()));
-
-    return seed;
-  }
-};
-
-struct FieldKeyEqual {
-  bool operator()(const Field &lhs, const Field &rhs) const {
-    bool ret = lhs.token_index == rhs.token_index;
-    ret &= lhs.value_rep == rhs.value_rep;
-
-    return ret;
-  }
-};
-
-struct FieldSetHasher {
-  size_t operator()(const std::vector<crate::FieldIndex> &fieldset) const {
-    if (fieldset.empty()) {
-      return 0;
-    }
-
-    size_t seed = std::hash<uint32_t>()(fieldset[0].value);
-    for (size_t i = 1; i < fieldset.size(); i++) {
-      hash_combine(seed, std::hash<uint32_t>()(fieldset[i].value));
-    }
-
-    return seed;
-  }
-};
-#endif
 
 class Packer {
  public:
@@ -208,71 +137,6 @@ class Packer {
                    // by Index()(= ~0)
 };
 
-#if 0 // not used atm.
-crate::TokenIndex Packer::AddToken(const Token &token) {
-  if (token_to_index_map.count(token)) {
-    return token_to_index_map[token];
-  }
-
-  // index = size of umap
-  token_to_index_map[token] = crate::TokenIndex(uint32_t(tokens_.size()));
-  tokens_.emplace_back(token);
-
-  return token_to_index_map[token];
-}
-
-crate::StringIndex Packer::AddString(const std::string &str) {
-  if (string_to_index_map.count(str)) {
-    return string_to_index_map[str];
-  }
-
-  // index = size of umap
-  string_to_index_map[str] = crate::StringIndex(uint32_t(strings_.size()));
-  strings_.emplace_back(str);
-
-  return string_to_index_map[str];
-}
-
-crate::PathIndex Packer::AddPath(const Path &path) {
-  if (path_to_index_map.count(path)) {
-    return path_to_index_map[path];
-  }
-
-  // index = size of umap
-  path_to_index_map[path] = crate::PathIndex(uint32_t(paths_.size()));
-  paths_.emplace_back(path);
-
-  return path_to_index_map[path];
-}
-
-crate::FieldIndex Packer::AddField(const crate::Field &field) {
-  if (field_to_index_map.count(field)) {
-    return field_to_index_map[field];
-  }
-
-  // index = size of umap
-  field_to_index_map[field] = crate::FieldIndex(uint32_t(fields_.size()));
-  fields_.emplace_back(field);
-
-  return field_to_index_map[field];
-}
-
-crate::FieldSetIndex Packer::AddFieldSet(
-    const std::vector<crate::FieldIndex> &fieldset) {
-  if (fieldset_to_index_map.count(fieldset)) {
-    return fieldset_to_index_map[fieldset];
-  }
-
-  // index = size of umap = star index of FieldSet span.
-  fieldset_to_index_map[fieldset] =
-      crate::FieldSetIndex(uint32_t(fieldsets_.size()));
-
-  fieldsets_.insert(fieldsets_.end(), fieldset.begin(), fieldset.end());
-  fieldsets_.push_back(crate::FieldIndex());  // terminator(~0)
-
-  return fieldset_to_index_map[fieldset];
-}
-#endif
 
 class Writer {
  public:
@@ -456,7 +320,6 @@ class Writer {
 
     (void)output;
 
-    // TODO
     return false;
   }
 
@@ -480,11 +343,13 @@ class Writer {
 }  // namespace
 
 bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
-                      std::string *warn, std::string *err) {
+                      std::string *warn, std::string *err,
+                      const USDWriteOptions &options) {
 #ifdef __ANDROID__
   (void)filename;
   (void)stage;
   (void)warn;
+  (void)options;
 
   if (err) {
     (*err) += "Saving USDC to a file is not supported for Android platform(at the moment).\n";
@@ -496,6 +361,30 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
 
   if (!SaveAsUSDCToMemory(stage, &output, warn, err)) {
     return false;
+  }
+
+  // Check if we should use zstd compression
+  bool use_compression = options.use_zstd_compression || HasZstdExtension(filename);
+
+  const uint8_t *write_data = output.data();
+  size_t write_size = output.size();
+  std::vector<uint8_t> compressed;
+
+  if (use_compression) {
+#ifdef TINYUSDZ_WITH_ZSTD_COMPRESSION
+    if (!ZstdCompression::Compress(output.data(), output.size(),
+                                   &compressed, options.zstd_compression_level, err)) {
+      return false;
+    }
+    write_data = compressed.data();
+    write_size = compressed.size();
+    std::cout << "Compressing USDC with zstd (" << output.size() << " -> " << compressed.size() << " bytes)\n";
+#else
+    if (err) {
+      (*err) = "zstd compression requested but TINYUSDZ_WITH_ZSTD_COMPRESSION is not enabled.\n";
+    }
+    return false;
+#endif
   }
 
 #ifdef _WIN32
@@ -530,9 +419,11 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
   }
 #endif
 
-  size_t n = fwrite(output.data(), /* size */ 1, /* count */ output.size(), fp);
-  if (n < output.size()) {
-    // TODO: Retry writing data when n < output.size()
+  size_t n = fwrite(write_data, /* size */ 1, /* count */ write_size, fp);
+  fclose(fp);
+
+  if (n < write_size) {
+    // TODO: Retry writing data when n < write_size
 
     if (err) {
       (*err) += "Failed to write data to a file.\n";
@@ -547,16 +438,58 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
 bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
                         std::string *warn, std::string *err) {
   (void)warn;
-  (void)output;
 
-  // TODO
-  Writer writer(stage);
-
-  if (err) {
-    (*err) += "USDC writer is not yet implemented.\n";
+  if (!output) {
+    if (err) {
+      (*err) += "Output buffer is null.\n";
+    }
+    return false;
   }
 
-  return false;
+  // Write directly to memory via MemoryOutputStream
+  auto mem_stream = std::unique_ptr<experimental::MemoryOutputStream>(
+      new experimental::MemoryOutputStream());
+  auto* mem_ptr = mem_stream.get();
+
+  experimental::CrateWriter writer(
+      std::unique_ptr<experimental::IOutputStream>(std::move(mem_stream)));
+
+  experimental::CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  opts.enable_compression = true;
+  opts.enable_deduplication = true;
+  writer.SetOptions(opts);
+
+  std::string open_err;
+  if (!writer.Open(&open_err)) {
+    if (err) {
+      (*err) += "Failed to open CrateWriter: " + open_err + "\n";
+    }
+    return false;
+  }
+
+  std::string convert_err;
+  if (!writer.ConvertStageToSpecs(stage, &convert_err)) {
+    if (err) {
+      (*err) += "Failed to convert Stage to USDC: " + convert_err + "\n";
+    }
+    return false;
+  }
+
+  std::string finalize_err;
+  if (!writer.Finalize(&finalize_err)) {
+    if (err) {
+      (*err) += "Failed to finalize USDC: " + finalize_err + "\n";
+    }
+    return false;
+  }
+
+  writer.Close();
+
+  *output = mem_ptr->TakeBuffer();
+  return true;
 }
 
 }  // namespace usdc
@@ -568,10 +501,12 @@ namespace tinyusdz {
 namespace usdc {
 
 bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
-                      std::string *warn, std::string *err) {
+                      std::string *warn, std::string *err,
+                      const USDWriteOptions &options) {
   (void)filename;
   (void)stage;
   (void)warn;
+  (void)options;
 
   if (err) {
     (*err) = "USDC writer feature is disabled in this build.\n";
