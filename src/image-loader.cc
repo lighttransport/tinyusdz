@@ -1,10 +1,9 @@
 // Support files
 //
 // - OpenEXR(through TinyEXR). 16bit and 32bit
+// - HDR/RGBE (Radiance) through stb_image. float32
 // - TIFF/DNG(through TinyDNG). 8bit, 16bit and 32bit
 // - PNG(8bit, 16bit), Jpeg, bmp, tga, ...(through stb_image or wuffs).
-//
-// TODO:
 //
 // - [ ] Use fpng for 8bit PNG when `stb_image` is used
 // - [ ] 10bit, 12bit and 14bit DNG image
@@ -102,6 +101,8 @@
 #if defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif
+
+#include <cstring>  // for std::memcpy
 
 #include "image-loader.hh"
 #include "io-util.hh"
@@ -217,7 +218,7 @@ bool GetImageInfoSTB(const uint8_t *bytes, const size_t size,
                     std::string *err) {
   (void)warn;
   (void)uri;
-  (void)err; // TODO
+  (void)err;
 
   int w = 0, h = 0, comp = 0;
 
@@ -231,6 +232,79 @@ bool GetImageInfoSTB(const uint8_t *bytes, const size_t size,
     if (width) { (*width) = uint32_t(w); }
     if (height) { (*height) = uint32_t(h); }
     if (channels) { (*channels) = uint32_t(comp); }
+    return true;
+  }
+
+  return false;
+}
+
+// Check if the image is HDR (Radiance RGBE format)
+bool IsHDRFromMemory(const uint8_t *bytes, const size_t size) {
+  return stbi_is_hdr_from_memory(bytes, int(size)) != 0;
+}
+
+// Decode HDR (Radiance RGBE) image using stbi_loadf_from_memory
+// Returns float32 RGBA data
+bool DecodeImageHDR(const uint8_t *bytes, const size_t size,
+                    const std::string &uri, Image *image, std::string *warn,
+                    std::string *err) {
+  (void)warn;
+
+  int w = 0, h = 0, comp = 0;
+
+  // Request 4 channels (RGBA) for consistency with other loaders
+  float *data = stbi_loadf_from_memory(bytes, int(size), &w, &h, &comp, 4);
+
+  if (!data) {
+    if (err) {
+      (*err) += "Failed to decode HDR image: " + uri + " - " + stbi_failure_reason() + "\n";
+    }
+    return false;
+  }
+
+  if ((w < 1) || (h < 1)) {
+    stbi_image_free(data);
+    if (err) {
+      (*err) += "Invalid HDR image data for: " + uri + "\n";
+    }
+    return false;
+  }
+
+  image->width = w;
+  image->height = h;
+  image->channels = 4;  // Always RGBA
+  image->bpp = 32;      // 32-bit float per channel
+  image->format = Image::PixelFormat::Float;
+
+  // Copy float data to image buffer
+  size_t dataSize = size_t(w) * size_t(h) * 4 * sizeof(float);
+  image->data.resize(dataSize);
+  std::memcpy(image->data.data(), data, dataSize);
+
+  stbi_image_free(data);
+
+  return true;
+}
+
+bool GetImageInfoHDR(const uint8_t *bytes, const size_t size,
+                    const std::string &uri, uint32_t *width, uint32_t *height, uint32_t *channels, std::string *warn,
+                    std::string *err) {
+  (void)warn;
+  (void)uri;
+  (void)err;
+
+  int w = 0, h = 0, comp = 0;
+
+  // Use stbi_info to get HDR image dimensions
+  int ret = stbi_info_from_memory(bytes, int(size), &w, &h, &comp);
+
+  if (w < 0) w = 0;
+  if (h < 0) h = 0;
+
+  if (ret == 1) {
+    if (width) { (*width) = uint32_t(w); }
+    if (height) { (*height) = uint32_t(h); }
+    if (channels) { (*channels) = 4; }  // Always return RGBA for HDR
     return true;
   }
 
@@ -394,6 +468,20 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
   }
 #endif
 
+  // HDR (Radiance RGBE) detection - must be before generic STB fallback
+  // to ensure we decode as float instead of uint8
+#if !defined(TINYUSDZ_NO_BUILTIN_IMAGE_LOADER) && !defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+  if (IsHDRFromMemory(addr, sz)) {
+    bool ok = DecodeImageHDR(addr, sz, uri, &ret.image, &ret.warning, &err);
+
+    if (!ok) {
+      return nonstd::make_unexpected(err);
+    }
+
+    return std::move(ret);
+  }
+#endif
+
 #if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
   bool ok = DecodeImageWUFF(addr, sz, uri, &ret.image, &ret.warning, &err);
 #elif !defined(TINYUSDZ_NO_BUILTIN_IMAGE_LOADER)
@@ -430,6 +518,17 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
 
       return nonstd::make_unexpected("TODO: TIFF/DNG format");
 
+  }
+#endif
+
+  // HDR (Radiance RGBE) detection
+#if !defined(TINYUSDZ_NO_BUILTIN_IMAGE_LOADER) && !defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+  if (IsHDRFromMemory(addr, sz)) {
+    bool ok = GetImageInfoHDR(addr, sz, uri, &ret.width, &ret.height, &ret.channels, &ret.warning, &err);
+    if (!ok) {
+      return nonstd::make_unexpected(err);
+    }
+    return std::move(ret);
   }
 #endif
 

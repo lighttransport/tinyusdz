@@ -14,7 +14,7 @@
   __FUNC(GeomBasisCurves) \
   __FUNC(GeomNurbsCurves) \
   __FUNC(GeomCamera) \
-  __FUNC(PointInstancer) \
+  __FUNC(GeomPointInstancer) \
   __FUNC(GeomSubset) \
   __FUNC(SphereLight) \
   __FUNC(DomeLight) \

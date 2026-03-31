@@ -1,5 +1,7 @@
 // All-in-one TinyUSDZ core
 #include "tinyusdz.hh"
+#include "layer.hh"
+#include "core/prim.hh"
 
 // Import to_string() and operator<< features
 #include <iostream>

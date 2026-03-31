@@ -7,6 +7,8 @@
 #include "tinyusdz.hh"
 #include "prim-pprint.hh"
 #include "tydra/render-data.hh"
+#include "tydra/variant-support.hh"
+#include "tydra/variant-converter.hh"
 //
 #include "value-type-macros.inc"
 
@@ -25,18 +27,6 @@
 namespace py = pybind11;
 
 
-#if 0
-
-#define MAKE_OPAQUE_ARRAY_TYPE(__ty) \
-  PYBIND11_MAKE_OPAQUE(std::vector<__ty>);
-
-using namespace tinyusdz;
-
-APPLY_FUNC_TO_NUMERIC_VALUE_TYPES(MAKE_OPAQUE_ARRAY_TYPE)
-
-#undef MAKE_OPAQUE_ARRAY_TYPE
-
-#endif
 
 //PYBIND11_MAKE_OPAQUE(std::vector<int>);
 PYBIND11_MAKE_OPAQUE(std::vector<tinyusdz::Prim>);
@@ -333,168 +323,6 @@ PYBIND11_MODULE(ctinyusdz, m) {
   //   .def(py::init<>())
   //   .def
 
-#if 0
-
-#if 1
-
-#if 0
-#define DEFINE_ARRAY_TYPE(__ty, __name) \
-  py::class_<std::vector<__ty>>(m, __name) \
-      .def(py::init<>()) \
-      .def("clear", &std::vector<__ty>::clear) \
-      .def( \
-          "append", \
-          [](std::vector<__ty> &pv, const __ty &v) { pv.push_back(v); }, \
-          py::keep_alive<1, 2>()) \
-      .def("__len__", [](const std::vector<__ty> &v) { return v.size(); }) \
-      .def( \
-          "__iter__", \
-          [](std::vector<__ty> &v) { \
-            return py::make_iterator(v.begin(), v.end()); \
-          }, \
-          py::keep_alive<0, 1>())
-#else
-
-#define DEFINE_ARRAY_TYPE(__ty, __name) \
-  py::class_<std::vector<__ty>>(m, __name) \
-      .def(py::init<>()) \
-      .def("clear", &std::vector<__ty>::clear) 
-
-#endif
-
-  DEFINE_ARRAY_TYPE(float, "FloatVector");
-  DEFINE_ARRAY_TYPE(bool, "BoolVector");
-  DEFINE_ARRAY_TYPE(uint8_t, "ByteVector");
-  DEFINE_ARRAY_TYPE(uint16_t, "UInt16Vector"); // TODO: deprecate?
-  DEFINE_ARRAY_TYPE(int32_t, "IntVector");
-  DEFINE_ARRAY_TYPE(value::int2, "Int2Vector");
-  DEFINE_ARRAY_TYPE(value::int3, "Int3Vector");
-  DEFINE_ARRAY_TYPE(value::int4, "Int4Vector");
-  DEFINE_ARRAY_TYPE(uint32_t, "UIntVector");
-  DEFINE_ARRAY_TYPE(value::uint2, "UInt2Vector");
-  DEFINE_ARRAY_TYPE(value::uint3, "UInt3Vector");
-  DEFINE_ARRAY_TYPE(value::uint4, "UInt4Vector");
-
-  DEFINE_ARRAY_TYPE(int64_t, "Int64Vector");
-  DEFINE_ARRAY_TYPE(uint64_t, "UInt64Vector");
-  DEFINE_ARRAY_TYPE(value::half, "HalfVector");
-  DEFINE_ARRAY_TYPE(value::half2, "Half2Vector");
-  DEFINE_ARRAY_TYPE(value::half3, "Half3Vector");
-  DEFINE_ARRAY_TYPE(value::half4, "Half4Vector");
-  DEFINE_ARRAY_TYPE(float, "FloatVector");
-  DEFINE_ARRAY_TYPE(value::float2, "Float2Vector");
-  DEFINE_ARRAY_TYPE(value::float3, "Float3Vector");
-  DEFINE_ARRAY_TYPE(value::float4, "Float4Vector");
-  DEFINE_ARRAY_TYPE(double, "DoubleVector");
-  DEFINE_ARRAY_TYPE(value::double2, "Double2Vector");
-  DEFINE_ARRAY_TYPE(value::double3, "Double3Vector");
-  DEFINE_ARRAY_TYPE(value::double4, "Double4Vector");
-
-  DEFINE_ARRAY_TYPE(value::quath, "QuathVector");
-  DEFINE_ARRAY_TYPE(value::quatf, "QuatfVector");
-  DEFINE_ARRAY_TYPE(value::quatd, "QuatdVector");
-
-  DEFINE_ARRAY_TYPE(value::normal3h, "Normal3hVector");
-  DEFINE_ARRAY_TYPE(value::normal3f, "Normal3fVector");
-  DEFINE_ARRAY_TYPE(value::normal3d, "Normal3dVector");
-
-  DEFINE_ARRAY_TYPE(value::vector3h, "Vector3hVector");
-  DEFINE_ARRAY_TYPE(value::vector3f, "Vector3fVector");
-  DEFINE_ARRAY_TYPE(value::vector3d, "Vector3dVector");
-
-  DEFINE_ARRAY_TYPE(value::point3h, "Point2hVector");
-  DEFINE_ARRAY_TYPE(value::point3f, "Point3fVector");
-  DEFINE_ARRAY_TYPE(value::point3d, "Point3dVector");
-
-  DEFINE_ARRAY_TYPE(value::color3h, "Color3hVector");
-  DEFINE_ARRAY_TYPE(value::color3f, "Color3fVector");
-  DEFINE_ARRAY_TYPE(value::color3d, "Color3dVector");
-  DEFINE_ARRAY_TYPE(value::color4h, "Color4hVector");
-  DEFINE_ARRAY_TYPE(value::color4f, "Color4fVector");
-  DEFINE_ARRAY_TYPE(value::color4d, "Color4dVector");
-
-  DEFINE_ARRAY_TYPE(value::texcoord2h, "Texcoord2hVector");
-  DEFINE_ARRAY_TYPE(value::texcoord2f, "Texcoord2fVector");
-  DEFINE_ARRAY_TYPE(value::texcoord2d, "Texcoord2dVector");
-  DEFINE_ARRAY_TYPE(value::texcoord3h, "Texcoord3hVector");
-  DEFINE_ARRAY_TYPE(value::texcoord3f, "Texcoord3fVector");
-  DEFINE_ARRAY_TYPE(value::texcoord3d, "Texcoord3dVector");
-
-  DEFINE_ARRAY_TYPE(value::matrix2d, "Matrix2dVector");
-  DEFINE_ARRAY_TYPE(value::matrix3d, "Matrix3dVector");
-  DEFINE_ARRAY_TYPE(value::matrix4d, "Matrix4dVector");
-  DEFINE_ARRAY_TYPE(value::frame4d, "Frame4dVector");
-
-#undef DEFINE_ARRAY_TYPE
-
-
-#else
-
-  // very slow to compile...
-  py::bind_vector<std::vector<bool>>(m, "BoolVector");
-  py::bind_vector<std::vector<uint8_t>>(m, "ByteVector");
-  py::bind_vector<std::vector<uint16_t>>(m, "UInt16Vector"); // TODO: deprecate?
-  py::bind_vector<std::vector<int32_t>>(m, "IntVector");
-  py::bind_vector<std::vector<value::int2>>(m, "Int2Vector");
-  py::bind_vector<std::vector<value::int3>>(m, "Int3Vector");
-  py::bind_vector<std::vector<value::int4>>(m, "Int4Vector");
-  py::bind_vector<std::vector<uint32_t>>(m, "UIntVector");
-  py::bind_vector<std::vector<value::uint2>>(m, "UInt2Vector");
-  py::bind_vector<std::vector<value::uint3>>(m, "UInt3Vector");
-  py::bind_vector<std::vector<value::uint4>>(m, "UInt4Vector");
-
-  py::bind_vector<std::vector<int64_t>>(m, "Int64Vector");
-  py::bind_vector<std::vector<uint64_t>>(m, "UInt64Vector");
-  py::bind_vector<std::vector<value::half>>(m, "HalfVector");
-  py::bind_vector<std::vector<value::half2>>(m, "Half2Vector");
-  py::bind_vector<std::vector<value::half3>>(m, "Half3Vector");
-  py::bind_vector<std::vector<value::half4>>(m, "Half4Vector");
-  py::bind_vector<std::vector<float>>(m, "FloatVector");
-  py::bind_vector<std::vector<value::float2>>(m, "Float2Vector");
-  py::bind_vector<std::vector<value::float3>>(m, "Float3Vector");
-  py::bind_vector<std::vector<value::float4>>(m, "Float4Vector");
-  py::bind_vector<std::vector<double>>(m, "DoubleVector");
-  py::bind_vector<std::vector<value::double2>>(m, "Double2Vector");
-  py::bind_vector<std::vector<value::double3>>(m, "Double3Vector");
-  py::bind_vector<std::vector<value::double4>>(m, "Double4Vector");
-
-  py::bind_vector<std::vector<value::quath>>(m, "QuathVector");
-  py::bind_vector<std::vector<value::quatf>>(m, "QuatfVector");
-  py::bind_vector<std::vector<value::quatd>>(m, "QuatdVector");
-
-  py::bind_vector<std::vector<value::normal3h>>(m, "Normal3hVector");
-  py::bind_vector<std::vector<value::normal3f>>(m, "Normal3fVector");
-  py::bind_vector<std::vector<value::normal3d>>(m, "Normal3dVector");
-
-  py::bind_vector<std::vector<value::vector3h>>(m, "Vector3hVector");
-  py::bind_vector<std::vector<value::vector3f>>(m, "Vector3fVector");
-  py::bind_vector<std::vector<value::vector3d>>(m, "Vector3dVector");
-
-  py::bind_vector<std::vector<value::point3h>>(m, "Point3hVector");
-  py::bind_vector<std::vector<value::point3f>>(m, "Point3fVector");
-  py::bind_vector<std::vector<value::point3d>>(m, "Point3dVector");
-
-  py::bind_vector<std::vector<value::color3h>>(m, "Color3hVector");
-  py::bind_vector<std::vector<value::color3f>>(m, "Color3fVector");
-  py::bind_vector<std::vector<value::color3d>>(m, "Color3dVector");
-  py::bind_vector<std::vector<value::color4h>>(m, "Color4hVector");
-  py::bind_vector<std::vector<value::color4f>>(m, "Color4fVector");
-  py::bind_vector<std::vector<value::color4d>>(m, "Color4dVector");
-
-  py::bind_vector<std::vector<value::texcoord2h>>(m, "Texcoord2hVector");
-  py::bind_vector<std::vector<value::texcoord2f>>(m, "Texcoord2fVector");
-  py::bind_vector<std::vector<value::texcoord2d>>(m, "Texcoord2dVector");
-  py::bind_vector<std::vector<value::texcoord3h>>(m, "Texcoord3hVector");
-  py::bind_vector<std::vector<value::texcoord3f>>(m, "Texcoord3fVector");
-  py::bind_vector<std::vector<value::texcoord3d>>(m, "Texcoord3dVector");
-
-  py::bind_vector<std::vector<value::matrix2d>>(m, "Matrix2dVector");
-  py::bind_vector<std::vector<value::matrix3d>>(m, "Matrix3dVector");
-  py::bind_vector<std::vector<value::matrix4d>>(m, "Matrix4dVector");
-  py::bind_vector<std::vector<value::frame4d>>(m, "Frame4dVector");
-#endif
-
-#endif
 
   // Tydra
   {
@@ -508,5 +336,94 @@ PYBIND11_MODULE(ctinyusdz, m) {
     m_tydra.def("to_render_scene", [](const Stage &stage) {
       py::print("TODO");
     }, py::arg("config") = tydra::RenderSceneConverterConfig());
+
+    // Variant support bindings
+    py::class_<tydra::VariantOption>(m_tydra, "VariantOption")
+      .def(py::init<>())
+      .def_readwrite("name", &tydra::VariantOption::name)
+      .def_readwrite("description", &tydra::VariantOption::description)
+      .def_readwrite("mesh_ids", &tydra::VariantOption::mesh_ids)
+      .def_readwrite("material_ids", &tydra::VariantOption::material_ids)
+      .def_readwrite("node_ids", &tydra::VariantOption::node_ids)
+      .def_readwrite("animation_ids", &tydra::VariantOption::animation_ids)
+      .def_readwrite("property_overrides", &tydra::VariantOption::property_overrides)
+    ;
+
+    py::class_<tydra::VariantSet>(m_tydra, "VariantSet")
+      .def(py::init<>())
+      .def_readwrite("name", &tydra::VariantSet::name)
+      .def_readwrite("options", &tydra::VariantSet::options)
+      .def_readwrite("default_option_index", &tydra::VariantSet::default_option_index)
+      .def_readwrite("parent_prim_id", &tydra::VariantSet::parent_prim_id)
+      .def_readwrite("parent_variant_option_name", &tydra::VariantSet::parent_variant_option_name)
+    ;
+
+    py::class_<tydra::VariantGroup>(m_tydra, "VariantGroup")
+      .def(py::init<>())
+      .def_readwrite("prim_path", &tydra::VariantGroup::prim_path)
+      .def_readwrite("variant_sets", &tydra::VariantGroup::variant_sets)
+      .def_readwrite("affected_node_id", &tydra::VariantGroup::affected_node_id)
+      .def_readwrite("secondary_node_ids", &tydra::VariantGroup::secondary_node_ids)
+    ;
+
+    py::class_<tydra::VariantSelection>(m_tydra, "VariantSelection")
+      .def(py::init<>())
+      .def_readwrite("variant_group_id", &tydra::VariantSelection::variant_group_id)
+      .def_readwrite("variant_set_id", &tydra::VariantSelection::variant_set_id)
+      .def_readwrite("selected_option_index", &tydra::VariantSelection::selected_option_index)
+    ;
+
+    py::class_<tydra::VariantConverter>(m_tydra, "VariantConverter")
+      .def(py::init<>())
+      .def("convert_variants", [](tydra::VariantConverter &converter, const Stage &stage, RenderScene &scene) -> bool {
+        std::string err;
+        return converter.ConvertVariants(stage, &scene, &err);
+      }, py::arg("stage"), py::arg("scene"))
+    ;
+
+    // VariantStatistics
+    py::class_<tydra::VariantStatistics>(m_tydra, "VariantStatistics")
+      .def(py::init<>())
+      .def_readwrite("num_variant_groups", &tydra::VariantStatistics::num_variant_groups)
+      .def_readwrite("num_variant_sets", &tydra::VariantStatistics::num_variant_sets)
+      .def_readwrite("num_variant_options", &tydra::VariantStatistics::num_variant_options)
+      .def_readwrite("max_nesting_depth", &tydra::VariantStatistics::max_nesting_depth)
+    ;
+
+    py::class_<tydra::DefaultVariantManager>(m_tydra, "DefaultVariantManager")
+      .def(py::init<>())
+      .def("has_variants", &tydra::DefaultVariantManager::HasVariants)
+      .def("find_variant_group", &tydra::DefaultVariantManager::FindVariantGroup,
+           py::arg("prim_path"), py::return_value_policy::reference)
+      .def("find_variant_set", [](tydra::DefaultVariantManager &mgr, int32_t group_id, const std::string &set_name) -> tydra::VariantSet* {
+           return mgr.FindVariantSet(group_id, set_name);
+      }, py::arg("group_id"), py::arg("set_name"), py::return_value_policy::reference)
+      .def("find_variant_option", [](tydra::DefaultVariantManager &mgr, int32_t group_id, int32_t set_id, const std::string &option_name) -> tydra::VariantOption* {
+           return mgr.FindVariantOption(group_id, set_id, option_name);
+      }, py::arg("group_id"), py::arg("set_id"), py::arg("option_name"), py::return_value_policy::reference)
+      .def("select_variant", [](tydra::DefaultVariantManager &mgr, int32_t group_id, const std::string &set_name, const std::string &option_name) -> bool {
+           std::string err;
+           return mgr.SelectVariant(group_id, set_name, option_name, &err);
+      }, py::arg("group_id"), py::arg("set_name"), py::arg("option_name"))
+      .def("select_variant_by_index", [](tydra::DefaultVariantManager &mgr, int32_t group_id, int32_t set_id, int32_t option_index) -> bool {
+           std::string err;
+           return mgr.SelectVariantByIndex(group_id, set_id, option_index, &err);
+      }, py::arg("group_id"), py::arg("set_id"), py::arg("option_index"))
+      .def("get_current_selection", &tydra::DefaultVariantManager::GetCurrentSelection,
+           py::arg("group_id"), py::return_value_policy::reference)
+      .def("get_all_selections", &tydra::DefaultVariantManager::GetAllSelections,
+           py::return_value_policy::reference)
+      .def("reset_to_defaults", [](tydra::DefaultVariantManager &mgr) -> bool {
+           std::string err;
+           return mgr.ResetToDefaults(&err);
+      })
+      .def("get_mutable_variant_groups", &tydra::DefaultVariantManager::GetMutableVariantGroups,
+           py::return_value_policy::reference)
+      .def("get_variant_groups", &tydra::DefaultVariantManager::GetVariantGroups,
+           py::return_value_policy::reference)
+      .def("set_variant_groups", &tydra::DefaultVariantManager::SetVariantGroups,
+           py::arg("groups"))
+      .def("get_statistics", &tydra::DefaultVariantManager::GetStatistics)
+    ;
   }
 }

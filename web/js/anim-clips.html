@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<title>TinyUSDZ Animation Clip Mixing Demo</title>
+		<style>
+			body {
+				margin: 0;
+				overflow: hidden;
+				font-family: Arial, sans-serif;
+			}
+			canvas {
+				display: block;
+			}
+			#info {
+				position: absolute;
+				top: 10px;
+				left: 10px;
+				color: white;
+				background: rgba(0, 0, 0, 0.7);
+				padding: 10px;
+				border-radius: 5px;
+				font-size: 14px;
+				max-width: 350px;
+			}
+			#info h3 {
+				margin-top: 0;
+				margin-bottom: 10px;
+				color: #6bb6ff;
+			}
+			#info p {
+				margin: 5px 0;
+				font-size: 12px;
+			}
+			#file-controls {
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+			}
+			#fileInput {
+				display: none;
+			}
+			.button {
+				display: inline-block;
+				padding: 6px 12px;
+				background: #4CAF50;
+				color: white;
+				border: none;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 12px;
+				margin-right: 5px;
+			}
+			.button:hover {
+				background: #45a049;
+			}
+
+			/* Clip panel on the right */
+			#clip-panel {
+				position: absolute;
+				top: 10px;
+				right: 10px;
+				color: white;
+				background: rgba(0, 0, 0, 0.8);
+				padding: 12px;
+				border-radius: 5px;
+				font-size: 12px;
+				width: 320px;
+				max-height: calc(100vh - 40px);
+				overflow-y: auto;
+			}
+			#clip-panel h3 {
+				margin-top: 0;
+				margin-bottom: 8px;
+				color: #ffa040;
+				font-size: 14px;
+			}
+			.clip-item {
+				padding: 8px;
+				margin: 4px 0;
+				background: rgba(255, 255, 255, 0.08);
+				border-radius: 4px;
+				border-left: 3px solid #555;
+			}
+			.clip-item.active {
+				border-left-color: #4CAF50;
+				background: rgba(76, 175, 80, 0.15);
+			}
+			.clip-name {
+				font-weight: bold;
+				color: #ddd;
+				font-size: 13px;
+			}
+			.clip-meta {
+				font-size: 10px;
+				color: #999;
+				margin-top: 2px;
+			}
+			.clip-buttons {
+				margin-top: 6px;
+			}
+			.clip-buttons button {
+				padding: 3px 8px;
+				font-size: 10px;
+				border: none;
+				border-radius: 3px;
+				cursor: pointer;
+				margin-right: 4px;
+			}
+			.btn-solo {
+				background: #2196F3;
+				color: white;
+			}
+			.btn-solo:hover { background: #1976D2; }
+			.btn-crossfade {
+				background: #FF9800;
+				color: white;
+			}
+			.btn-crossfade:hover { background: #F57C00; }
+			.section-header {
+				color: #aaa;
+				font-size: 11px;
+				text-transform: uppercase;
+				letter-spacing: 1px;
+				margin-top: 12px;
+				margin-bottom: 6px;
+				border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+				padding-bottom: 4px;
+			}
+			.blend-row {
+				display: flex;
+				align-items: center;
+				margin: 4px 0;
+				gap: 6px;
+			}
+			.blend-row label {
+				flex: 0 0 80px;
+				font-size: 11px;
+				color: #ccc;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			.blend-row input[type="range"] {
+				flex: 1;
+			}
+			.blend-row .weight-val {
+				flex: 0 0 32px;
+				text-align: right;
+				font-size: 10px;
+				color: #aaa;
+				font-family: monospace;
+			}
+			.mode-toggle {
+				display: flex;
+				gap: 4px;
+				margin-bottom: 8px;
+			}
+			.mode-toggle button {
+				flex: 1;
+				padding: 5px;
+				font-size: 11px;
+				border: 1px solid #555;
+				background: rgba(255, 255, 255, 0.05);
+				color: #aaa;
+				border-radius: 3px;
+				cursor: pointer;
+			}
+			.mode-toggle button.active {
+				background: rgba(76, 175, 80, 0.3);
+				color: #fff;
+				border-color: #4CAF50;
+			}
+			.playback-controls {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				margin-top: 8px;
+				padding-top: 8px;
+				border-top: 1px solid rgba(255, 255, 255, 0.15);
+			}
+			.playback-controls button {
+				padding: 4px 10px;
+				font-size: 11px;
+				border: none;
+				border-radius: 3px;
+				cursor: pointer;
+				background: #555;
+				color: white;
+			}
+			.playback-controls button:hover { background: #666; }
+			.playback-controls input[type="range"] {
+				flex: 1;
+			}
+			.crossfade-dur {
+				display: flex;
+				align-items: center;
+				gap: 4px;
+				margin-top: 6px;
+				font-size: 10px;
+				color: #aaa;
+			}
+			.crossfade-dur input {
+				width: 60px;
+			}
+			.crossfade-dur span {
+				font-family: monospace;
+			}
+			/* Object group */
+			.object-group {
+				margin: 6px 0;
+				border: 1px solid rgba(255, 255, 255, 0.1);
+				border-radius: 5px;
+				overflow: hidden;
+			}
+			.object-group.selected {
+				border-color: #4CAF50;
+				box-shadow: 0 0 6px rgba(76, 175, 80, 0.3);
+			}
+			.object-header {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				padding: 6px 8px;
+				background: rgba(255, 255, 255, 0.06);
+				cursor: pointer;
+				user-select: none;
+			}
+			.object-header:hover {
+				background: rgba(255, 255, 255, 0.1);
+			}
+			.object-header .obj-name {
+				font-weight: bold;
+				font-size: 12px;
+				color: #ddd;
+			}
+			.object-header .obj-type {
+				font-size: 10px;
+				color: #888;
+				margin-left: 6px;
+			}
+			.object-controls {
+				display: flex;
+				align-items: center;
+				gap: 4px;
+				padding: 4px 8px;
+				background: rgba(255, 255, 255, 0.03);
+				border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+			}
+			.object-controls button {
+				padding: 2px 8px;
+				font-size: 10px;
+				border: 1px solid #555;
+				border-radius: 3px;
+				cursor: pointer;
+				background: rgba(255, 255, 255, 0.05);
+				color: #aaa;
+			}
+			.object-controls button.active {
+				background: rgba(76, 175, 80, 0.3);
+				color: #fff;
+				border-color: #4CAF50;
+			}
+			.object-controls button:hover {
+				background: rgba(255, 255, 255, 0.12);
+			}
+			.object-clips {
+				padding: 4px 8px 6px;
+			}
+			/* Filter bar */
+			.filter-bar {
+				display: flex;
+				gap: 4px;
+				margin-bottom: 8px;
+			}
+			.filter-bar button {
+				flex: 1;
+				padding: 4px;
+				font-size: 10px;
+				border: 1px solid #555;
+				background: rgba(255, 255, 255, 0.05);
+				color: #aaa;
+				border-radius: 3px;
+				cursor: pointer;
+			}
+			.filter-bar button.active {
+				background: rgba(33, 150, 243, 0.3);
+				color: #fff;
+				border-color: #2196F3;
+			}
+			/* Global controls */
+			.global-controls {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				margin-top: 8px;
+				padding-top: 8px;
+				border-top: 1px solid rgba(255, 255, 255, 0.15);
+			}
+			.global-controls button {
+				padding: 4px 10px;
+				font-size: 10px;
+				border: none;
+				border-radius: 3px;
+				cursor: pointer;
+				background: #555;
+				color: white;
+			}
+			.global-controls button:hover { background: #666; }
+
+			#clip-panel::-webkit-scrollbar {
+				width: 6px;
+			}
+			#clip-panel::-webkit-scrollbar-track {
+				background: rgba(255,255,255,0.05);
+			}
+			#clip-panel::-webkit-scrollbar-thumb {
+				background: rgba(255,255,255,0.2);
+				border-radius: 3px;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="info">
+			<h3>Animation Clip Mixing Demo</h3>
+			<p>
+				Multi-clip playback with per-object controls.
+				Click a mesh to select its animation object.
+			</p>
+			<p>
+				<strong>Current file:</strong> <span id="currentFile">Loading...</span>
+			</p>
+			<div id="file-controls">
+				<input type="file" id="fileInput" accept=".usd,.usda,.usdc,.usdz">
+				<button class="button" onclick="document.getElementById('fileInput').click()">Load USD File</button>
+			</div>
+		</div>
+
+		<div id="clip-panel">
+			<h3>Animation Clips</h3>
+			<div id="clip-content">
+				<p style="color: #888;">No clips loaded</p>
+			</div>
+		</div>
+
+		<script type="module">
+			// Handle file upload — dispatch custom event for the main script
+			document.getElementById('fileInput').addEventListener('change', async (event) => {
+				const file = event.target.files[0];
+				if (!file) return;
+				document.getElementById('currentFile').textContent = file.name;
+				window.dispatchEvent(new CustomEvent('loadUSDFile', { detail: { file } }));
+			});
+		</script>
+
+		<script type="module" src="./anim-clips.js"></script>
+	</body>
+</html>

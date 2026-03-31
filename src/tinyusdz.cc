@@ -26,46 +26,26 @@
 #include "integerCoding.h"
 #include "io-util.hh"
 #include "lz4-compression.hh"
-#include "pprinter.hh"
+#include "zstd-compression.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
+#include "layer.hh"
 #include "usda-reader.hh"
 #include "usdc-reader.hh"
+#include "usdc-writer.hh"
+#include "mmap-array-ref.hh"
 #include "value-pprint.hh"
 
-#if 0
-#if defined(TINYUSDZ_WITH_AUDIO)
-
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#endif
-
-#define DR_WAV_IMPLEMENTATION
-#include "external/dr_wav.h"
-
-#define DR_MP3_IMPLEMENTATION
-#include "external/dr_mp3.h"
-
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif
-
-#endif  // TINYUSDZ_WITH_AUDIO
-
-#if defined(TINYUSDZ_WITH_OPENSUBDIV)
-
-#include "subdiv.hh"
-
-#endif
-
-#endif
 
 #include "common-macros.inc"
 
 namespace tinyusdz {
+
+// Global flag to control DCOUT output. Defaults to false to suppress flood of output.
+// Set to true via TINYUSDZ_ENABLE_DCOUT environment variable.
+bool g_enable_dcout_output = false;
 
 // constexpr auto kTagUSDA = "[USDA]";
 // constexpr auto kTagUSDC = "[USDC]";
@@ -77,6 +57,31 @@ namespace tinyusdz {
     (*err) += s;     \
   }
 //#define PushWarn(s) if (warn) { (*warn) += s; }
+
+// Helper function to format magic header bytes for error messages
+static std::string FormatMagicHeader(const uint8_t *addr, const size_t length, size_t max_bytes = 16) {
+  if (!addr || length == 0) {
+    return "(empty)";
+  }
+  
+  std::string result = "0x";
+  size_t bytes_to_show = std::min(length, max_bytes);
+  
+  for (size_t i = 0; i < bytes_to_show; i++) {
+    char hex[3];
+    snprintf(hex, sizeof(hex), "%02x", addr[i]);
+    result += hex;
+    if (i < bytes_to_show - 1) {
+      result += " ";
+    }
+  }
+  
+  if (length > max_bytes) {
+    result += "...";
+  }
+  
+  return result;
+}
 
 bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
                         const std::string &filename, Stage *stage,
@@ -125,7 +130,13 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
   usdc::USDCReaderConfig config;
   config.numThreads = options.num_threads;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
+  config.kMaxAllowedMemoryInMB = size_t(options.max_memory_limit_in_mb);
+  config.mmap_zero_copy = options.mmap_zero_copy;
   usdc::USDCReader reader(&sr, config);
+
+  if (options.progress_callback) {
+    reader.SetProgressCallback(options.progress_callback, options.progress_userptr);
+  }
 
   if (!reader.ReadUSDC()) {
     if (warn) {
@@ -152,6 +163,11 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
         (*err) = reader.GetError();
       }
       return false;
+    }
+
+    // Set mmap data source on Stage for zero-copy array access
+    if (options.mmap_zero_copy) {
+      stage->set_mmap_source(MMapDataSource(addr, length));
     }
   }
 
@@ -528,103 +544,6 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
     }
   }
 
-#if 0 // TODO: Remove
-  // Decode images
-  for (size_t i = 0; i < assets.size(); i++) {
-    const std::string &uri = assets[i].filename;
-    const std::string ext = GetFileExtension(uri);
-
-    if ((ext.compare("png") == 0) || (ext.compare("jpg") == 0) ||
-        (ext.compare("jpeg") == 0)) {
-      const size_t start_addr_offset = assets[i].byte_begin;
-      const size_t end_addr_offset = assets[i].byte_end;
-      const size_t asset_size = end_addr_offset - start_addr_offset;
-      const uint8_t *asset_addr = addr + start_addr_offset;
-
-      if (end_addr_offset < start_addr_offset) {
-        if (err) {
-          (*err) += "Invalid start/end offset of asset #" + std::to_string(i) +
-                    " in USDZ data: [" + filename + "].\n";
-        }
-        return false;
-      }
-
-      if (start_addr_offset > length) {
-        if (err) {
-          (*err) += "Invalid start offset of asset #" + std::to_string(i) +
-                    " in USDZ data: [" + filename + "].\n";
-        }
-        return false;
-      }
-
-      if (end_addr_offset > length) {
-        if (err) {
-          (*err) += "Invalid end offset of asset #" + std::to_string(i) +
-                    " in USDZ data: [" + filename + "].\n";
-        }
-        return false;
-      }
-
-      if (asset_size > (options.max_allowed_asset_size_in_mb * 1024ull * 1024ull)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, fmt::format("Asset no[{}] file size too large. {} bytes (max_allowed_asset_size {})",
-          i, asset_size, options.max_allowed_asset_size_in_mb * 1024ull * 1024ull));
-      }
-
-      DCOUT("Image asset size: " << asset_size);
-
-      {
-        nonstd::expected<image::ImageInfoResult, std::string> info =
-            image::GetImageInfoFromMemory(asset_addr, asset_size, uri);
-
-        if (info) {
-          if (info->width == 0) {
-            PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, fmt::format("Assset no[{}] Image has zero width.", i));
-          }
-
-          if (info->width > options.max_image_width) {
-            PUSH_ERROR_AND_RETURN_TAG(
-                kTagUSDZ, fmt::format("Asset no[{}] Image width too large. {} (max_image_width {})", i, info->width, options.max_image_width));
-          }
-
-          if (info->height == 0) {
-            PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, fmt::format("Asset no[{}] Image has zero height.", i));
-          }
-
-          if (info->height > options.max_image_height) {
-            PUSH_ERROR_AND_RETURN_TAG(
-                kTagUSDZ,
-                fmt::format("Asset no[{}] Image height too large. {} (max_image_height {})", i, info->height, options.max_image_height));
-          }
-
-          if (info->channels == 0) {
-            PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, fmt::format("Asset no[{}] Image has zero channels.", i));
-          }
-
-          if (info->channels > options.max_image_channels) {
-            PUSH_ERROR_AND_RETURN_TAG(
-                kTagUSDZ,
-                fmt::format("Asset no[{}] Image channels too much", i));
-          }
-        }
-      }
-
-      Image image;
-      nonstd::expected<image::ImageResult, std::string> ret =
-          image::LoadImageFromMemory(asset_addr, asset_size, uri);
-
-      if (!ret) {
-        (*err) += ret.error();
-      } else {
-        image = (*ret).image;
-        if (!(*ret).warning.empty()) {
-          (*warn) += (*ret).warning;
-        }
-      }
-    } else {
-      // TODO: Support other asserts(e.g. audio mp3)
-    }
-  }
-#endif
 
   return true;
 }
@@ -728,9 +647,23 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
   tinyusdz::usda::USDAReaderConfig config;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
   config.allow_unknown_apiSchema = !options.strict_apiSchema_check;
+  config.max_memory_limit_in_mb = size_t(options.max_memory_limit_in_mb);
+  // MaterialX validation options
+  config.strict_mtlx_check = options.strict_mtlx_check;
+  config.validate_mtlx_info_id = options.validate_mtlx_info_id;
+  config.validate_mtlx_connection_types = options.validate_mtlx_connection_types;
+  config.validate_mtlx_connection_targets = options.validate_mtlx_connection_targets;
+  config.validate_mtlx_duplicate_names = options.validate_mtlx_duplicate_names;
+  config.validate_mtlx_index_bounds = options.validate_mtlx_index_bounds;
+  config.error_detail = options.error_detail;
   reader.set_reader_config(config);
 
+  if (options.progress_callback) {
+    reader.SetProgressCallback(options.progress_callback, options.progress_userptr);
+  }
+
   reader.SetBaseDir(base_dir);
+  reader.set_filename(base_dir);  // Pass filename for error context display
 
   {
     bool ret = reader.Read();
@@ -816,7 +749,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
       }
     }
 
-    return LoadUSDAFromMemory(data.data(), data.size(), base_dir, stage, warn,
+    return LoadUSDAFromMemory(data.data(), data.size(), filepath, stage, warn,
                               err, options);
   }
 }
@@ -879,6 +812,51 @@ bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
                        const std::string &base_dir, Stage *stage,
                        std::string *warn, std::string *err,
                        const USDLoadOptions &options) {
+  // Check for zstd-compressed data first (file-level compression)
+  if (IsZstdCompressed(addr, length)) {
+    DCOUT("Detected as zstd-compressed USD.");
+#ifdef TINYUSDZ_WITH_ZSTD_COMPRESSION
+    // Get decompressed size for memory budget check
+    std::string zstd_err;
+    size_t decompressed_size = ZstdCompression::GetDecompressedSize(addr, length, &zstd_err);
+    if (decompressed_size == 0) {
+      if (err) {
+        (*err) += "Failed to get zstd decompressed size: " + zstd_err + "\n";
+      }
+      return false;
+    }
+
+    // Check against memory budget
+    size_t max_length = size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
+    if (decompressed_size > max_length) {
+      if (err) {
+        (*err) += "Decompressed USD size (" + std::to_string(decompressed_size) +
+                  " bytes) exceeds memory limit (" + std::to_string(max_length) + " bytes)\n";
+      }
+      return false;
+    }
+
+    // Decompress
+    std::vector<uint8_t> decompressed_data;
+    if (!ZstdCompression::Decompress(addr, length, &decompressed_data, &zstd_err)) {
+      if (err) {
+        (*err) += "Failed to decompress zstd data: " + zstd_err + "\n";
+      }
+      return false;
+    }
+
+    // Recursively call LoadUSDFromMemory with decompressed data
+    return LoadUSDFromMemory(decompressed_data.data(), decompressed_data.size(),
+                            base_dir, stage, warn, err, options);
+#else
+    if (err) {
+      (*err) += "zstd-compressed USD file detected, but zstd compression support is not enabled. "
+                "Rebuild with TINYUSDZ_WITH_ZSTD_COMPRESSION=ON.\n";
+    }
+    return false;
+#endif
+  }
+
   if (IsUSDC(addr, length)) {
     DCOUT("Detected as USDC.");
     return LoadUSDCFromMemory(addr, length, base_dir, stage, warn, err,
@@ -893,7 +871,11 @@ bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
                               options);
   } else {
     if (err) {
-      (*err) += "Couldn't determine USD format(USDA/USDC/USDZ).\n";
+      (*err) += "Couldn't determine USD format(USDA/USDC/USDZ). ";
+      (*err) += "Found magic header: " + FormatMagicHeader(addr, length, 8) + ", ";
+      (*err) += "expected: \"#usda 1.0\" (0x23 75 73 64 61 20 31 2e 30) for USDA, ";
+      (*err) += "\"PXR-USDC\" (0x50 58 52 2d 55 53 44 43) for USDC, ";
+      (*err) += "or ZIP signature (0x50 4b 03 04) for USDZ.\n";
     }
     return false;
   }
@@ -1039,6 +1021,10 @@ bool IsUSDZ(const uint8_t *addr, const size_t length) {
   std::string err;
 
   return ParseUSDZHeader(addr, length, /* [out] assets */ nullptr, &warn, &err);
+}
+
+bool IsZstdCompressed(const uint8_t *addr, const size_t length) {
+  return ZstdCompression::IsZstdCompressed(addr, length);
 }
 
 bool IsUSD(const std::string &filename, std::string *detected_format) {
@@ -1218,6 +1204,14 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
 
   tinyusdz::usda::USDAReaderConfig config;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
+  // MaterialX validation options
+  config.strict_mtlx_check = options.strict_mtlx_check;
+  config.validate_mtlx_info_id = options.validate_mtlx_info_id;
+  config.validate_mtlx_connection_types = options.validate_mtlx_connection_types;
+  config.validate_mtlx_connection_targets = options.validate_mtlx_connection_targets;
+  config.validate_mtlx_duplicate_names = options.validate_mtlx_duplicate_names;
+  config.validate_mtlx_index_bounds = options.validate_mtlx_index_bounds;
+  config.error_detail = options.error_detail;
   reader.set_reader_config(config);
 
   uint32_t load_states = static_cast<uint32_t>(tinyusdz::LoadState::Toplevel);
@@ -1470,7 +1464,11 @@ bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
 #endif
   } else {
     if (err) {
-      (*err) += "Couldn't determine USD format(USDA/USDC/USDZ).\n";
+      (*err) += "Couldn't determine USD format(USDA/USDC/USDZ). ";
+      (*err) += "Found magic header: " + FormatMagicHeader(addr, length, 8) + ", ";
+      (*err) += "expected: \"#usda 1.0\" (0x23 75 73 64 61 20 31 2e 30) for USDA, ";
+      (*err) += "\"PXR-USDC\" (0x50 58 52 2d 55 53 44 43) for USDC, ";
+      (*err) += "or ZIP signature (0x50 4b 03 04) for USDZ.\n";
     }
     return false;
   }
@@ -1697,8 +1695,6 @@ bool SetupUSDZAssetResolution(
 {
   // https://openusd.org/release/spec_usdz.html
   //
-  // [x] Image: png, jpeg(jpg), exr
-  //
   // TODO(LTE):
   //
   // [ ] USD: usda, usdc, usd
@@ -1724,8 +1720,518 @@ bool SetupUSDZAssetResolution(
   resolver.register_asset_resolution_handler("JPEG", handler);
   resolver.register_asset_resolution_handler("exr", handler);
   resolver.register_asset_resolution_handler("EXR", handler);
+  // HDR (Radiance HDR format) - commonly used for environment maps
+  resolver.register_asset_resolution_handler("hdr", handler);
+  resolver.register_asset_resolution_handler("HDR", handler);
 
   return true;
+}
+
+// ============================================================================
+// USDZ Writer (AOUSD Core Spec Section 17)
+// ============================================================================
+
+namespace {
+
+// CRC32 lookup table (IEEE 802.3 polynomial)
+static uint32_t usdz_crc32_table[256];
+static bool usdz_crc32_table_initialized = false;
+
+static void InitCRC32Table() {
+  for (uint32_t i = 0; i < 256; i++) {
+    uint32_t c = i;
+    for (int j = 0; j < 8; j++) {
+      c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+    }
+    usdz_crc32_table[i] = c;
+  }
+  usdz_crc32_table_initialized = true;
+}
+
+static uint32_t ComputeCRC32(const uint8_t *data, size_t len) {
+  if (!usdz_crc32_table_initialized) {
+    InitCRC32Table();
+  }
+  uint32_t crc = 0xFFFFFFFFu;
+  for (size_t i = 0; i < len; i++) {
+    crc = usdz_crc32_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
+  }
+  return crc ^ 0xFFFFFFFFu;
+}
+
+// USDZ requires all file data to be aligned at 64-byte boundaries.
+// ZIP local file header: 30 bytes fixed + filename_len + extra_field_len
+// We use extra_field padding to achieve alignment.
+constexpr size_t kUSDZAlignment = 64;
+
+// ZIP local file header fixed size
+constexpr size_t kZipLocalHeaderSize = 30;
+
+// Allowed file extensions per AOUSD Core Spec 17.2
+bool IsAllowedUSDZExtension(const std::string &filename) {
+  std::string ext;
+  auto dot = filename.rfind('.');
+  if (dot != std::string::npos) {
+    ext = filename.substr(dot + 1);
+  }
+  // Convert to lowercase
+  std::string lower_ext;
+  for (char c : ext) {
+    lower_ext += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return (lower_ext == "usd" || lower_ext == "usda" || lower_ext == "usdc" ||
+          lower_ext == "png" || lower_ext == "jpg" || lower_ext == "jpeg" ||
+          lower_ext == "exr" || lower_ext == "avif" ||
+          lower_ext == "m4a" || lower_ext == "mp3" || lower_ext == "wav");
+}
+
+// Write a single entry to a USDZ archive buffer with 64-byte alignment.
+// Returns false on error.
+bool WriteUSDZEntry(std::vector<uint8_t> &buf,
+                    std::vector<std::tuple<std::string, uint32_t, uint32_t, size_t>> &central_dir_entries,
+                    const std::string &name, const uint8_t *data, size_t data_size,
+                    std::string *err) {
+  // Calculate padding needed for 64-byte alignment of file data
+  size_t header_size = kZipLocalHeaderSize + name.size();
+  size_t padding = 0;
+  size_t remainder = (buf.size() + header_size) % kUSDZAlignment;
+  if (remainder != 0) {
+    padding = kUSDZAlignment - remainder;
+  }
+
+  size_t local_header_offset = buf.size();
+
+  // CRC32
+  uint32_t crc = 0;
+  if (data && data_size > 0) {
+    crc = ComputeCRC32(data, data_size);
+  }
+
+  // Build local file header
+  uint8_t header[kZipLocalHeaderSize];
+  memset(header, 0, sizeof(header));
+
+  // Signature: PK\003\004
+  header[0] = 0x50; header[1] = 0x4b; header[2] = 0x03; header[3] = 0x04;
+  // Version needed: 2.0
+  header[4] = 20; header[5] = 0;
+  // General purpose bit flag: 0
+  // Compression method: 0 (stored/uncompressed)
+  // Last mod time/date: 0
+  // CRC-32
+  memcpy(&header[14], &crc, 4);
+  // Compressed size == uncompressed size (stored)
+  uint32_t sz32 = static_cast<uint32_t>(data_size);
+  memcpy(&header[18], &sz32, 4);
+  memcpy(&header[22], &sz32, 4);
+  // Filename length
+  uint16_t name_len = static_cast<uint16_t>(name.size());
+  memcpy(&header[26], &name_len, 2);
+  // Extra field length (for alignment padding)
+  uint16_t extra_len = static_cast<uint16_t>(padding);
+  memcpy(&header[28], &extra_len, 2);
+
+  // Write header
+  buf.insert(buf.end(), header, header + kZipLocalHeaderSize);
+  // Write filename
+  buf.insert(buf.end(), name.begin(), name.end());
+  // Write padding (extra field)
+  if (padding > 0) {
+    buf.insert(buf.end(), padding, 0);
+  }
+
+  // Verify alignment
+  if ((buf.size() % kUSDZAlignment) != 0) {
+    if (err) {
+      (*err) += "Internal error: USDZ alignment failed for entry '" + name + "'\n";
+    }
+    return false;
+  }
+
+  // Write file data
+  if (data && data_size > 0) {
+    buf.insert(buf.end(), data, data + data_size);
+  }
+
+  // Record for central directory
+  central_dir_entries.emplace_back(name, crc, sz32, local_header_offset);
+
+  return true;
+}
+
+// Write the central directory and end-of-central-directory record.
+void WriteUSDZCentralDirectory(
+    std::vector<uint8_t> &buf,
+    const std::vector<std::tuple<std::string, uint32_t, uint32_t, size_t>> &entries) {
+  size_t cd_offset = buf.size();
+
+  for (const auto &entry : entries) {
+    const auto &name = std::get<0>(entry);
+    uint32_t crc = std::get<1>(entry);
+    uint32_t size = std::get<2>(entry);
+    uint32_t local_offset = static_cast<uint32_t>(std::get<3>(entry));
+
+    uint8_t cdr[46];
+    memset(cdr, 0, sizeof(cdr));
+
+    // Signature: PK\001\002
+    cdr[0] = 0x50; cdr[1] = 0x4b; cdr[2] = 0x01; cdr[3] = 0x02;
+    // Version made by: 2.0
+    cdr[4] = 20; cdr[5] = 0;
+    // Version needed: 2.0
+    cdr[6] = 20; cdr[7] = 0;
+    // CRC-32
+    memcpy(&cdr[16], &crc, 4);
+    // Compressed size
+    memcpy(&cdr[20], &size, 4);
+    // Uncompressed size
+    memcpy(&cdr[24], &size, 4);
+    // Filename length
+    uint16_t name_len = static_cast<uint16_t>(name.size());
+    memcpy(&cdr[28], &name_len, 2);
+    // Relative offset of local header
+    memcpy(&cdr[42], &local_offset, 4);
+
+    buf.insert(buf.end(), cdr, cdr + 46);
+    buf.insert(buf.end(), name.begin(), name.end());
+  }
+
+  size_t cd_size = buf.size() - cd_offset;
+
+  // End of central directory record
+  uint8_t eocd[22];
+  memset(eocd, 0, sizeof(eocd));
+  // Signature: PK\005\006
+  eocd[0] = 0x50; eocd[1] = 0x4b; eocd[2] = 0x05; eocd[3] = 0x06;
+  // Number of entries on this disk
+  uint16_t num_entries = static_cast<uint16_t>(entries.size());
+  memcpy(&eocd[8], &num_entries, 2);
+  // Total number of entries
+  memcpy(&eocd[10], &num_entries, 2);
+  // Size of central directory
+  uint32_t cd_size32 = static_cast<uint32_t>(cd_size);
+  memcpy(&eocd[12], &cd_size32, 4);
+  // Offset of start of central directory
+  uint32_t cd_offset32 = static_cast<uint32_t>(cd_offset);
+  memcpy(&eocd[16], &cd_offset32, 4);
+
+  buf.insert(buf.end(), eocd, eocd + 22);
+}
+
+}  // namespace
+
+bool SaveAsUSDZToMemory(const Stage &stage,
+                        const std::map<std::string, std::vector<uint8_t>> &assets,
+                        std::vector<uint8_t> *output,
+                        std::string *warn, std::string *err) {
+  if (!output) {
+    if (err) { (*err) += "`output` is nullptr.\n"; }
+    return false;
+  }
+
+  // Step 1: Serialize the root layer as USDC to memory
+  std::vector<uint8_t> usdc_data;
+  if (!usdc::SaveAsUSDCToMemory(stage, &usdc_data, warn, err)) {
+    if (err) { (*err) += "Failed to serialize root layer as USDC.\n"; }
+    return false;
+  }
+
+  if (usdc_data.empty()) {
+    if (err) { (*err) += "USDC serialization produced empty data.\n"; }
+    return false;
+  }
+
+  // Step 2: Build USDZ archive
+  std::vector<uint8_t> buf;
+  buf.reserve(usdc_data.size() + 4096);  // rough estimate
+
+  // entries: (name, crc32, size, local_header_offset)
+  std::vector<std::tuple<std::string, uint32_t, uint32_t, size_t>> central_dir_entries;
+
+  // Root layer must be the first entry (AOUSD Core Spec 17.2)
+  std::string root_name = "root.usdc";
+  if (stage.metas().defaultPrim.valid()) {
+    // Use defaultPrim name for the root file if available
+  }
+
+  if (!WriteUSDZEntry(buf, central_dir_entries, root_name,
+                       usdc_data.data(), usdc_data.size(), err)) {
+    return false;
+  }
+
+  // Step 3: Add additional assets
+  for (const auto &asset : assets) {
+    if (!IsAllowedUSDZExtension(asset.first)) {
+      if (warn) {
+        (*warn) += "Skipping asset with disallowed extension: " + asset.first + "\n";
+      }
+      continue;
+    }
+
+    if (!WriteUSDZEntry(buf, central_dir_entries, asset.first,
+                         asset.second.data(), asset.second.size(), err)) {
+      return false;
+    }
+  }
+
+  // Step 4: Write central directory (must be at the end with no padding)
+  WriteUSDZCentralDirectory(buf, central_dir_entries);
+
+  *output = std::move(buf);
+  return true;
+}
+
+bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
+                      const std::map<std::string, std::vector<uint8_t>> &assets,
+                      std::string *warn, std::string *err) {
+  std::vector<uint8_t> usdz_data;
+
+  if (!SaveAsUSDZToMemory(stage, assets, &usdz_data, warn, err)) {
+    return false;
+  }
+
+  std::ofstream ofs(filename, std::ios::binary);
+  if (!ofs) {
+    if (err) {
+      (*err) += "Failed to open file for writing: " + filename + "\n";
+    }
+    return false;
+  }
+
+  ofs.write(reinterpret_cast<const char *>(usdz_data.data()),
+            static_cast<std::streamsize>(usdz_data.size()));
+  if (!ofs) {
+    if (err) {
+      (*err) += "Failed to write USDZ data to file: " + filename + "\n";
+    }
+    return false;
+  }
+
+  return true;
+}
+
+// ============================================================================
+// USDZ Validator (AOUSD Core Spec Section 17)
+// ============================================================================
+
+bool ValidateUSDZ(const uint8_t *addr, size_t length,
+                  std::string *warn, std::string *err) {
+  if (!addr || length < 4) {
+    if (err) { (*err) += "Input data is null or too short.\n"; }
+    return false;
+  }
+
+  // Check ZIP magic
+  if (addr[0] != 0x50 || addr[1] != 0x4b || addr[2] != 0x03 || addr[3] != 0x04) {
+    if (err) { (*err) += "Not a valid ZIP file (bad magic).\n"; }
+    return false;
+  }
+
+  bool valid = true;
+  size_t offset = 0;
+  size_t entry_index = 0;
+  bool found_usd_root = false;
+
+  while ((offset + kZipLocalHeaderSize) <= length) {
+    // Check for local file header signature
+    if (addr[offset] != 0x50 || addr[offset + 1] != 0x4b ||
+        addr[offset + 2] != 0x03 || addr[offset + 3] != 0x04) {
+      break;  // No more local headers
+    }
+
+    uint8_t local_header[30];
+    memcpy(local_header, addr + offset, 30);
+    offset += 30;
+
+    // Compression method must be 0 (stored)
+    uint16_t compr_method;
+    memcpy(&compr_method, &local_header[8], 2);
+    if (compr_method != 0) {
+      if (err) {
+        (*err) += "Entry " + std::to_string(entry_index) +
+                  ": compression method must be 0 (stored), got " +
+                  std::to_string(compr_method) + ".\n";
+      }
+      valid = false;
+    }
+
+    // Compressed size must equal uncompressed size (stored method)
+    uint32_t compr_size;
+    memcpy(&compr_size, &local_header[18], 4);
+    uint32_t uncompr_size_hdr;
+    memcpy(&uncompr_size_hdr, &local_header[22], 4);
+    if (compr_size != uncompr_size_hdr) {
+      if (err) {
+        (*err) += "Entry " + std::to_string(entry_index) +
+                  ": compressed size (" + std::to_string(compr_size) +
+                  ") != uncompressed size (" + std::to_string(uncompr_size_hdr) +
+                  ") for stored method.\n";
+      }
+      valid = false;
+    }
+
+    // General purpose bit flag must be 0 (no encryption, no data descriptor)
+    uint16_t gp_flag;
+    memcpy(&gp_flag, &local_header[6], 2);
+    if (gp_flag != 0) {
+      if (warn) {
+        (*warn) += "Entry " + std::to_string(entry_index) +
+                   ": general purpose bit flag is " + std::to_string(gp_flag) +
+                   " (expected 0 for USDZ).\n";
+      }
+    }
+
+    // Version needed to extract must be <= 20 (2.0, no ZIP64)
+    uint16_t version_needed;
+    memcpy(&version_needed, &local_header[4], 2);
+    if (version_needed > 20) {
+      if (warn) {
+        (*warn) += "Entry " + std::to_string(entry_index) +
+                   ": version needed " + std::to_string(version_needed) +
+                   " > 20 (ZIP64 features not allowed in USDZ).\n";
+      }
+    }
+
+    // Filename
+    uint16_t name_len;
+    memcpy(&name_len, &local_header[26], 2);
+    if (offset + name_len > length) {
+      if (err) { (*err) += "Truncated filename.\n"; }
+      return false;
+    }
+
+    std::string name(reinterpret_cast<const char *>(addr + offset), name_len);
+    offset += name_len;
+
+    // Extra field
+    uint16_t extra_len;
+    memcpy(&extra_len, &local_header[28], 2);
+    if (offset + extra_len > length) {
+      if (err) { (*err) += "Truncated extra field.\n"; }
+      return false;
+    }
+    offset += extra_len;
+
+    // 64-byte alignment check
+    if ((offset % kUSDZAlignment) != 0) {
+      if (err) {
+        (*err) += "Entry '" + name + "': data offset " +
+                  std::to_string(offset) + " is not 64-byte aligned.\n";
+      }
+      valid = false;
+    }
+
+    // Check allowed extensions
+    if (!IsAllowedUSDZExtension(name)) {
+      if (warn) {
+        (*warn) += "Entry '" + name +
+                   "': file extension is not in the USDZ allowed list.\n";
+      }
+    }
+
+    // First entry must be a USD file (root layer)
+    if (entry_index == 0) {
+      std::string lower_name;
+      for (char c : name) {
+        lower_name += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+      }
+      if (lower_name.find(".usdc") != std::string::npos ||
+          lower_name.find(".usda") != std::string::npos ||
+          lower_name.find(".usd") != std::string::npos) {
+        found_usd_root = true;
+      } else {
+        if (err) {
+          (*err) += "First entry must be a USD file (root layer), got '" +
+                    name + "'.\n";
+        }
+        valid = false;
+      }
+    }
+
+    // Validate file data CRC32
+    uint32_t uncompr_size;
+    memcpy(&uncompr_size, &local_header[22], 4);
+
+    uint32_t header_crc;
+    memcpy(&header_crc, &local_header[14], 4);
+
+    if (uncompr_size > 0 && offset + uncompr_size <= length) {
+      uint32_t actual_crc = ComputeCRC32(addr + offset, uncompr_size);
+      if (header_crc != 0 && actual_crc != header_crc) {
+        if (err) {
+          (*err) += "Entry '" + name + "': CRC32 mismatch (header=" +
+                    std::to_string(header_crc) + ", actual=" +
+                    std::to_string(actual_crc) + ").\n";
+        }
+        valid = false;
+      }
+    } else if (uncompr_size > 0 && offset + uncompr_size > length) {
+      if (err) {
+        (*err) += "Entry '" + name + "': data extends beyond file end.\n";
+      }
+      return false;
+    }
+
+    offset += uncompr_size;
+
+    entry_index++;
+  }
+
+  if (entry_index == 0) {
+    if (err) { (*err) += "No entries found in ZIP archive.\n"; }
+    return false;
+  }
+
+  if (!found_usd_root) {
+    if (err) { (*err) += "No USD root layer found as first entry.\n"; }
+    valid = false;
+  }
+
+  // Check that end-of-central-directory exists somewhere after the local headers
+  // A minimal check: look for EOCD signature near the end
+  bool found_eocd = false;
+  if (length >= 22) {
+    for (size_t i = length - 22; i >= (length > 65557 ? length - 65557 : 0); i--) {
+      if (addr[i] == 0x50 && addr[i + 1] == 0x4b &&
+          addr[i + 2] == 0x05 && addr[i + 3] == 0x06) {
+        found_eocd = true;
+        // Per spec: EOCD must be at the very end (no trailing data after comment)
+        uint16_t comment_len;
+        memcpy(&comment_len, addr + i + 20, 2);
+        if (i + 22 + comment_len != length) {
+          if (warn) {
+            (*warn) += "End of central directory is not at the exact end of file.\n";
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  if (!found_eocd) {
+    if (err) { (*err) += "End of central directory record not found.\n"; }
+    valid = false;
+  } else {
+    // Validate central directory entry count matches local headers
+    for (size_t i = length - 22; i >= (length > 65557 ? length - 65557 : 0); i--) {
+      if (addr[i] == 0x50 && addr[i + 1] == 0x4b &&
+          addr[i + 2] == 0x05 && addr[i + 3] == 0x06) {
+        uint16_t cd_entry_count;
+        memcpy(&cd_entry_count, addr + i + 10, 2);
+        if (cd_entry_count != static_cast<uint16_t>(entry_index)) {
+          if (warn) {
+            (*warn) += "Central directory entry count (" +
+                       std::to_string(cd_entry_count) +
+                       ") does not match local header count (" +
+                       std::to_string(entry_index) + ").\n";
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  return valid;
 }
 
 }  // namespace tinyusdz

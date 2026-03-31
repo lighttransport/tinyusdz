@@ -1,0 +1,46 @@
+# Simple Makefile for array benchmark
+CXX ?= clang++
+CXXFLAGS = -std=c++14 -O3 -Wall -Wextra -pthread
+INCLUDES = -I../../src
+LDFLAGS = -pthread
+
+# Library path
+LIBDIR = ../../build
+LIBS = -L$(LIBDIR) -ltinyusdz_static
+
+TARGET = simple_array_benchmark
+SOURCES = simple_array_benchmark.cc
+
+.PHONY: all clean run
+
+all: $(TARGET)
+
+$(TARGET): $(SOURCES)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $< $(LIBS) $(LDFLAGS)
+
+clean:
+	rm -f $(TARGET)
+
+run: $(TARGET)
+	./$(TARGET)
+
+run-small: $(TARGET)
+	./$(TARGET) 10000 5000
+
+run-medium: $(TARGET)
+	./$(TARGET) 100000 50000
+
+run-large: $(TARGET)
+	./$(TARGET) 500000 250000
+
+help:
+	@echo "Usage:"
+	@echo "  make          - Build the benchmark"
+	@echo "  make run      - Run with default settings (100K/50K elements)"
+	@echo "  make run-small   - Run with small dataset (10K/5K)"
+	@echo "  make run-medium  - Run with medium dataset (100K/50K)"
+	@echo "  make run-large   - Run with large dataset (500K/250K)"
+	@echo "  make clean    - Remove build artifacts"
+	@echo ""
+	@echo "Note: Make sure to build the main tinyusdz library first:"
+	@echo "  cd ../../build && make tinyusdz_static"

@@ -1,0 +1,21 @@
+{
+  "name": "blender-bridge",
+  "version": "0.1.0",
+  "description": "WebSocket bridge for streaming Blender scenes to browser via TinyUSDZ",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "server": "node server.js",
+    "dev": "vite viewer",
+    "build": "vite build viewer"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "three": "^0.182.0",
+    "uuid": "^9.0.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}

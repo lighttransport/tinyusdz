@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<title>TinyUSDZ Three.js Skeletal Animation Demo</title>
+		<style>
+			body {
+				margin: 0;
+				overflow: hidden;
+				font-family: Arial, sans-serif;
+			}
+			canvas {
+				display: block;
+			}
+			#info {
+				position: absolute;
+				top: 10px;
+				left: 10px;
+				color: white;
+				background: rgba(0, 0, 0, 0.7);
+				padding: 10px;
+				border-radius: 5px;
+				font-size: 14px;
+				max-width: 400px;
+			}
+			#info h3 {
+				margin-top: 0;
+				margin-bottom: 10px;
+				color: #6bb6ff;
+			}
+			#info p {
+				margin: 5px 0;
+				font-size: 12px;
+			}
+			#file-controls {
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+			}
+			#fileInput {
+				display: none;
+			}
+			.button {
+				display: inline-block;
+				padding: 6px 12px;
+				background: #4CAF50;
+				color: white;
+				border: none;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 12px;
+				margin-right: 5px;
+			}
+			.button:hover {
+				background: #45a049;
+			}
+			#animation-info {
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+				font-size: 11px;
+				color: #95e06c;
+			}
+			.animation-list {
+				margin-top: 5px;
+				max-height: 150px;
+				overflow-y: auto;
+			}
+			.animation-item {
+				padding: 3px 5px;
+				margin: 2px 0;
+				background: rgba(255, 255, 255, 0.1);
+				border-radius: 3px;
+			}
+			#skeleton-info {
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+				font-size: 11px;
+				color: #ff9966;
+			}
+			#joint-hierarchy {
+				position: absolute;
+				top: 10px;
+				left: 420px;
+				color: white;
+				background: rgba(30, 30, 30, 0.95);
+				padding: 10px;
+				border-radius: 3px;
+				font-size: 11px;
+				width: 200px;
+				max-height: calc(100vh - 40px);
+				overflow-y: auto;
+				display: none;
+				border: 1px solid #444;
+			}
+			#geombind-info {
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+				font-size: 10px;
+				color: #88ccff;
+			}
+			#geombind-info .matrix-row {
+				font-family: monospace;
+				margin: 2px 0;
+				color: #aaddff;
+			}
+			#joint-hierarchy h3 {
+				margin-top: 0;
+				margin-bottom: 5px;
+				color: #ff9966;
+				font-size: 14px;
+			}
+			#selected-joint-indicator {
+				margin-bottom: 10px;
+				padding: 5px 8px;
+				background: rgba(255, 255, 255, 0.1);
+				border-radius: 3px;
+				font-size: 11px;
+				color: #ffd700;
+				display: none;
+			}
+			#selected-joint-indicator strong {
+				color: #fff;
+			}
+			#joint-hierarchy::-webkit-scrollbar {
+				width: 8px;
+			}
+			#joint-hierarchy::-webkit-scrollbar-track {
+				background: rgba(255, 255, 255, 0.1);
+				border-radius: 4px;
+			}
+			#joint-hierarchy::-webkit-scrollbar-thumb {
+				background: rgba(255, 255, 255, 0.3);
+				border-radius: 4px;
+			}
+			#joint-hierarchy::-webkit-scrollbar-thumb:hover {
+				background: rgba(255, 255, 255, 0.5);
+			}
+			#gui-toggle {
+			position: fixed;
+			top: 10px;
+			right: 10px;
+			width: 32px;
+			height: 32px;
+			border-radius: 50%;
+			border: none;
+			background: rgba(255, 255, 255, 0.15);
+			color: white;
+			font-size: 18px;
+			cursor: pointer;
+			z-index: 10000;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			line-height: 1;
+		}
+		#gui-toggle:hover {
+			background: rgba(255, 255, 255, 0.3);
+		}
+		/* Push lil-gui panel below the toggle button */
+		.lil-gui.root {
+			margin-top: 48px !important;
+		}
+		/* Make animation checkbox labels horizontally scrollable */
+			.lil-gui .controller.boolean {
+				overflow-x: auto;
+				overflow-y: hidden;
+			}
+			.lil-gui .controller.boolean .name {
+				white-space: nowrap;
+				overflow: visible;
+			}
+		</style>
+	</head>
+	<body>
+		<button id="gui-toggle" title="Show GUI (H)">⚙</button>
+		<div id="info">
+			<h3>TinyUSDZ Skeletal Animation Demo</h3>
+			<p>
+				This demo shows USD skeletal animation (SkelAnimation) extraction and playback using Three.js SkinnedMesh.<br>
+				Load a USD file with skeletal animations to see character rigs in action.
+			</p>
+			<p style="font-size: 11px; color: #999; margin-top: 5px;">
+				<strong>Shortcuts:</strong> G=Translate, R=Rotate, S=Scale, X=Toggle Space, Space=Play/Pause, ESC=Deselect, H=Hide GUI
+			</p>
+			<p>
+				<strong>Current file:</strong> <span id="currentFile">No file loaded</span>
+			</p>
+			<div id="file-controls">
+				<input type="file" id="fileInput" accept=".usd,.usda,.usdc,.usdz">
+				<button class="button" onclick="document.getElementById('fileInput').click()">Load USD File</button>
+			</div>
+			<div id="skeleton-info" style="display:none;">
+				<strong>Skeleton Information:</strong>
+				<div id="skeletonDetails"></div>
+			</div>
+			<div id="geombind-info" style="display:none;">
+				<strong>geomBindTransform:</strong>
+				<div id="geombindMatrix"></div>
+			</div>
+			<div id="animation-info" style="display:none;">
+				<strong>Skeletal Animations Found:</strong>
+				<div class="animation-list" id="animationList"></div>
+			</div>
+		</div>
+
+		<div id="joint-hierarchy">
+			<h3>Joint Hierarchy</h3>
+			<div id="selected-joint-indicator">
+				<strong>Selected:</strong> <span id="selected-joint-name">None</span>
+			</div>
+			<div id="joint-hierarchy-content">
+				<p style="color: #888;">No skeleton loaded</p>
+			</div>
+		</div>
+
+		<script type="module">
+			// Handle file upload
+			document.getElementById('fileInput').addEventListener('change', async (event) => {
+				const file = event.target.files[0];
+				if (!file) return;
+
+				document.getElementById('currentFile').textContent = file.name;
+
+				// Trigger custom event that skining-anim.js can listen to
+				const customEvent = new CustomEvent('loadUSDFile', {
+					detail: { file }
+				});
+				window.dispatchEvent(customEvent);
+			});
+
+			// Function to update skeleton information display
+			window.updateSkeletonInfo = function(skeletonCount, totalJoints) {
+				const skelInfo = document.getElementById('skeleton-info');
+				const skelDetails = document.getElementById('skeletonDetails');
+
+				if (skeletonCount > 0) {
+					skelInfo.style.display = 'block';
+					skelDetails.innerHTML = `Skeletons: ${skeletonCount}<br>Total Joints: ${totalJoints}`;
+				} else {
+					skelInfo.style.display = 'none';
+				}
+			};
+
+			// Function to update geomBindTransform display
+			window.updateGeomBindTransform = function(matrix) {
+				const geomInfo = document.getElementById('geombind-info');
+				const geomMatrix = document.getElementById('geombindMatrix');
+
+				if (matrix && matrix.length === 16) {
+					geomInfo.style.display = 'block';
+					// Format matrix as 4x4 display (column-major to row-major for display)
+					const fmt = (v) => v.toFixed(3).padStart(7);
+					const m = matrix;
+					// Three.js stores in column-major, display as row-major
+					geomMatrix.innerHTML = `
+						<div class="matrix-row">[${fmt(m[0])} ${fmt(m[4])} ${fmt(m[8])} ${fmt(m[12])}]</div>
+						<div class="matrix-row">[${fmt(m[1])} ${fmt(m[5])} ${fmt(m[9])} ${fmt(m[13])}]</div>
+						<div class="matrix-row">[${fmt(m[2])} ${fmt(m[6])} ${fmt(m[10])} ${fmt(m[14])}]</div>
+						<div class="matrix-row">[${fmt(m[3])} ${fmt(m[7])} ${fmt(m[11])} ${fmt(m[15])}]</div>
+					`;
+				} else if (matrix === null) {
+					geomInfo.style.display = 'block';
+					geomMatrix.innerHTML = '<span style="color: #888;">Identity (not specified)</span>';
+				} else {
+					geomInfo.style.display = 'none';
+				}
+			};
+
+			// Function to update animation list display
+			window.updateAnimationList = function(animations, animationInfos) {
+				const animInfo = document.getElementById('animation-info');
+				const animList = document.getElementById('animationList');
+
+				if (animations && animations.length > 0) {
+					animInfo.style.display = 'block';
+					animList.innerHTML = '';
+
+					animations.forEach((anim, index) => {
+						const item = document.createElement('div');
+						item.className = 'animation-item';
+
+						// Get animation type information if available
+						let jointInfo = '';
+						if (animationInfos && animationInfos[index]) {
+							const info = animationInfos[index];
+							if (info.has_skeletal_animation) {
+								jointInfo = ` <span style="color: #ff9966;">[Skeletal]</span>`;
+							}
+						}
+
+						const trackCount = anim.tracks ? anim.tracks.length : 0;
+						item.innerHTML = `<strong>${index}:</strong> ${anim.name || 'Unnamed'} - ${anim.duration.toFixed(2)}s, ${trackCount} tracks${jointInfo}`;
+						animList.appendChild(item);
+					});
+				} else {
+					animInfo.style.display = 'none';
+				}
+			};
+
+			// Function to update joint hierarchy display (deprecated - now using GUI)
+			// Kept for backward compatibility but panel is always hidden
+			window.updateJointHierarchy = function(hierarchyHTML) {
+				// Panel is now integrated into lil-gui, keep HTML panel hidden
+				const hierarchyPanel = document.getElementById('joint-hierarchy');
+				if (hierarchyPanel) {
+					hierarchyPanel.style.display = 'none';
+				}
+			};
+
+			// Function to update selected joint indicator (deprecated - now using GUI)
+			// Kept for backward compatibility
+			window.updateSelectedJoint = function(jointName) {
+				// Now handled by GUI, no-op for HTML panel
+			};
+		</script>
+
+		<script type="module" src="./skin-anim.js"></script>
+	</body>
+</html>

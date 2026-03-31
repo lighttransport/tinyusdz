@@ -18,6 +18,16 @@ struct USDAReaderConfig {
   bool allow_unknown_shader{true};
   bool allow_unknown_apiSchema{true};
   bool strict_allowedToken_check{false};
+  size_t max_memory_limit_in_mb{1024ull*128ull}; // Default 128GB
+
+  // MaterialX validation options
+  bool validate_mtlx_connection_types{false};
+  bool validate_mtlx_info_id{false};
+  bool validate_mtlx_connection_targets{false};
+  bool validate_mtlx_duplicate_names{false};
+  bool validate_mtlx_index_bounds{false};
+  bool strict_mtlx_check{false};  // Enable all above
+  bool error_detail{false};
 };
 
 ///
@@ -42,11 +52,18 @@ class USDAReader {
 
   ///
   /// Base filesystem directory to search asset files.
-  /// TODO: Not used so remove it.
   ///
-  void set_base_dir(const std::string &base_dir); 
-  void SetBaseDir(const std::string &base_dir) { // Deprecared
+  void set_base_dir(const std::string &base_dir);
+  void SetBaseDir(const std::string &base_dir) { // Deprecated
     set_base_dir(base_dir);
+  }
+
+  ///
+  /// Set source filename for displaying surrounding context in error messages
+  ///
+  void set_filename(const std::string &filename);
+  void SetFilename(const std::string &filename) { // Deprecated
+    set_filename(filename);
   }
 
   ///
@@ -58,6 +75,14 @@ class USDAReader {
   /// Set reader option
   ///
   void set_reader_config(const USDAReaderConfig &config);
+
+  ///
+  /// Set progress callback for monitoring parsing progress.
+  ///
+  /// @param[in] callback Function to call during parsing to report progress
+  /// @param[in] userptr User-provided pointer for custom data
+  ///
+  void SetProgressCallback(std::function<bool(float progress, void *userptr)> callback, void *userptr = nullptr);
 
   ///
   /// Get reader option

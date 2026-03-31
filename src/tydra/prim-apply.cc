@@ -1,6 +1,7 @@
 #include "prim-apply.hh"
 
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/model-scope.hh"  // Model, Scope
 #include "usdGeom.hh"
 #include "usdSkel.hh"
 #include "usdLux.hh"

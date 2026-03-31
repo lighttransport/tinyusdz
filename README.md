@@ -1,6 +1,6 @@
-# Tiny USDZ/USDA/USDC library in C++14
+# Tiny USDZ/USDA/USDC library in C++17
 
-`TinyUSDZ` is secure, portable and dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD/OpenUSD library!) USDZ/USDC/USDA library written in C++14.
+`TinyUSDZ` is secure, portable and dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD/OpenUSD library!) USDZ/USDC/USDA library written in C++17.
 
 [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-❤️-pink?logo=github)](https://github.com/sponsors/lighttransport)
 
@@ -10,11 +10,31 @@
  </a>
 </p>
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/lighttransport/tinyusdz)
+
 [![npm version](https://img.shields.io/npm/v/tinyusdz.svg)](https://www.npmjs.com/package/tinyusdz)
 
 ## Releases
 
-### 25.07 v0.9.x 
+### 26.xx v0.10.x (In development)
+
+* C++17 is now the default: https://github.com/lighttransport/tinyusdz/issues/220
+* Robust USDA/USDC/USDZ parsing (production-grade).
+* Robust USDA writer.
+* USDC(Crate) writer (experimental, binary v0.8.0). See [doc/crate-writer.md](doc/crate-writer.md)
+* MaterialX support: XML parsing (v1.36-1.39), OpenPBR Surface, Autodesk Standard Surface, color space conversions, JS MaterialX pipeline. See [doc/materialx.md](doc/materialx.md)
+* Tydra: Convert USD model to OpenGL/Vulkan/Three.js friendly scene graph.
+  * Tangent computation: MikkTSpace, FastMikkTSpace, Hybrid methods with GPU-friendly quantized formats (INT_2_10_10_10_REV, FP16, SNorm8). See [doc/tydra-tangent.md](doc/tydra-tangent.md)
+  * Normal quantization (INT_2_10_10_10_REV, 67% memory savings)
+  * Animation support: SkelAnimation, xformOp timeSamples, blend shapes. See [doc/skinning.md](doc/skinning.md)
+* USD composition (subLayers, references, payloads, inherits, variants).
+  * Nested variant support (up to 3 levels). See [doc/variant.md](doc/variant.md)
+* TimeSamples evaluation matching OpenUSD behavior (interpolation, held, extrapolation). See [doc/timesamples.md](doc/timesamples.md)
+* JS/WASM binding with Three.js integration. See [doc/threejs.md](doc/threejs.md) and https://github.com/lighttransport/tinyusdz/tree/release/web
+* Memory budget system with comprehensive memory estimation and profiling. See [doc/memory-usage-tasks.md](doc/memory-usage-tasks.md)
+* MCP(ModelContextProtocol) support (W.I.P.). See [doc/mcp.md](doc/mcp.md)
+
+### 25.07 v0.9.x
 
 * Robust USDA/USDC/USDZ parsing.
 * Robust USDA writer.
@@ -22,22 +42,19 @@
 * Basic USD composition.
 * JS/WASM binding of TinyUSDZ. https://github.com/lighttransport/tinyusdz/tree/release/web
 
-More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/status.md
+## Upcoming
 
-## Next release(Early 2026 planned)
-
-* We plan to use C++17 by default: https://github.com/lighttransport/tinyusdz/issues/220
-* JS/WASM binding
-* MCP(ModelContextProtocol) support 
-  * USDJ(JSON representation of USD)
-  * Scripting USD with JavaScript(using embedded JS runtime(QuickJS-ng)) 
-* Various optimization
-* Better animation(TimeSamples) support https://github.com/lighttransport/tinyusdz/tree/skinning
-* MaterialX support https://github.com/lighttransport/tinyusdz/tree/mtlx-2025
-* USDC writer(experimental) https://github.com/lighttransport/tinyusdz/issues/261
 * Subdivision surface https://github.com/lighttransport/tinyusdz/tree/subdiv-2025
 * Curves(hairs) https://github.com/lighttransport/tinyusdz/tree/curves-2025
-  
+* PCP composition(experimental) https://github.com/lighttransport/tinyusdz/issues/262
+  * Documentation(w.i.p) https://lighttransport.github.io/tinyusdz/pcp.html
+* LTE Spectral API extension (draft). See [doc/lte_spectral_api.md](doc/lte_spectral_api.md)
+
+## Lab project
+
+* LightUSD: https://github.com/lighttransport/tinyusdz/tree/lightusd/sandbox/lightusd
+  * USD for 3D genAI/VLM/LLM
+
 ## Branches
 
 * `release` Release branch
@@ -48,45 +65,47 @@ More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/
 ## High priority
 
 * Support MCP interface for AI agents: https://github.com/lighttransport/tinyusdz/issues/243
-* MaterialX https://github.com/syoyo/tinyusdz/issues/86
-  * Write our own MaterialX parser
-  * OpenPBR shading model support https://github.com/lighttransport/tinyusdz/issues/172
-  * USD + MateriralX + OpenPBR rendering verification using pbrlab? https://github.com/lighttransport/pbrlab
+* [x] MaterialX https://github.com/syoyo/tinyusdz/issues/86
+  * [x] Write our own MaterialX parser
+  * [x] OpenPBR shading model support https://github.com/lighttransport/tinyusdz/issues/172
+  * [ ] USD + MaterialX + OpenPBR rendering verification using pbrlab? https://github.com/lighttransport/pbrlab
 * Enhancement for wasm, webgpu https://github.com/syoyo/tinyusdz/issues/118
-  * Three.js loader addon(TinyUSDZLoader) https://github.com/lighttransport/tinyusdz/issues/185 
-* Improve Animation(timeSamples) support in JS/WASM
-  * Support rigid node animation(xformOp + timeSamples)
-  * Skinning support
-  * Convert USD animation data to Three.js friendly format.
-    
+  * Three.js loader addon(TinyUSDZLoader) https://github.com/lighttransport/tinyusdz/issues/185
+* [x] Improve Animation(timeSamples) support in JS/WASM
+  * [x] Support rigid node animation(xformOp + timeSamples)
+  * [x] Skinning support
+  * [x] Convert USD animation data to Three.js friendly format.
+
 ## Mid-term todo
 
 * USD import/export feature using TinyUSDZ for robotics/sim2real/digitalTwin/genAI tools https://github.com/lighttransport/tinyusdz/issues/226
-* Write/improve examples and demos 
+* Write/improve examples and demos
   * For Vulkan and Android Vulkan example, please refer https://github.com/syoyo/Vulkan-glTF-USDZ-PBR for a while
   * For OpenGL + MaterialX example, please refer ASF MaterialXViewer fork to load USD model through TinyUSDZ https://github.com/lighttransport/materialx
 * Support PLY and point primitive for Gaussian Splatting https://github.com/lighttransport/tinyusdz/issues/190
-* Performace optimization https://github.com/syoyo/tinyusdz/issues/164
-* Nested variantSet https://github.com/lighttransport/tinyusdz/issues/94 
-* better colorspace + wide-gamut support https://github.com/syoyo/tinyusdz/issues/142
+* Performance optimization https://github.com/syoyo/tinyusdz/issues/164
+* [x] Nested variantSet https://github.com/lighttransport/tinyusdz/issues/94
+* [x] better colorspace + wide-gamut support https://github.com/syoyo/tinyusdz/issues/142
+  * sRGB, ACEScg (AP1), Display P3, Rec.2020, Adobe RGB, CIE XYZ-D65, gamma 2.2/1.8
 * Better skinning + blendshapes support
-  * Write example using mediapipe for motion tracking and face tracking with rigged USDZ model.  
+  * Write example using mediapipe for motion tracking and face tracking with rigged USDZ model.
 * Improve interoperability with Blender USD export/import https://github.com/syoyo/tinyusdz/issues/98
+  * [x] Blender MaterialX export (Principled BSDF -> OpenPBR Surface) support
 * Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31
   * [x] USD to RenderScene(OpenGL/Vulkan-like API friendly data structure) conversion https://github.com/syoyo/tinyusdz/issues/109
-  * [x] GeomSubset/Material Binding API support for shading/texturing https://github.com/syoyo/tinyusdz/issues/103 
+  * [x] GeomSubset/Material Binding API support for shading/texturing https://github.com/syoyo/tinyusdz/issues/103
 * [x] UTF8 Identifier support https://github.com/syoyo/tinyusdz/issues/47
 * Collection API
   * [ ] https://github.com/syoyo/tinyusdz/issues/108
-* Experimental composition support https://github.com/syoyo/tinyusdz/issues/25
+* Composition support https://github.com/syoyo/tinyusdz/issues/25
   * [x] subLayers
   * [x] references
   * [x] payload(no delayed load)
-  * [x] inherits 
+  * [x] inherits
   * [x] variantSet
   * [ ] Validate composition is correctly operated.
-* Better usdLux support https://github.com/syoyo/tinyusdz/issues/101 
-* [ ] Support parsing usd-wg USD aasets
+* Better usdLux support https://github.com/syoyo/tinyusdz/issues/101
+* [ ] Support parsing usd-wg USD assets
   * https://github.com/syoyo/tinyusdz/issues/135
 * Support reading & compose some production USD scenes
   * [ ] Moana island v2.1 https://github.com/syoyo/tinyusdz/issues/90
@@ -135,34 +154,60 @@ NOTE: Windows ARM64 binary is provided using cross-compiling. Its not well teste
 ## Status
 
 Core loading feature(both USDA and USDC) is now working and production-grade(And no seg fault for corrupted USDA/USDC/USDZ input).
-Somewhat working Tydra framwork for rendering USD model with OpenGL/Vulkan-like renderer. https://github.com/syoyo/tinyusdz/issues/148
+Tydra framework for rendering USD model with OpenGL/Vulkan/Three.js-like renderer is production-ready with MaterialX support.
 
-v0.9.0 has better JS/WASM support and some USD composition features(including composition in JS/WASM).
+### Thread Safety
+
+**Important:** The TinyUSDZ API is **not thread-safe**. Core classes (`Stage`, `Prim`, `Layer`, `PrimSpec`) do not provide internal synchronization. Applications must implement their own synchronization mechanisms (e.g., mutexes, locks) when accessing these objects from multiple threads concurrently.
+
+### Parsing and Writing
 
 * [x] USDZ/USDC(Crate) parser
   * USDC Crate version v0.8.0(most commonly used version as of 2022 Nov) or higher is supported.
-* [ ] USDZ/USDC(Crate) writer (Work-in-progress)
+* [x] USDC(Crate) writer (experimental, Crate v0.8.0). See [doc/crate-writer.md](doc/crate-writer.md)
+  * Geometry, Materials, Lights, Skeletal animation, Metadata, Composition arcs, TimeSamples
 * [x] USDA parser(Hand-written from a scratch. No Bison/Flex dependency!)
-* [x] USDA writer
-* [x] Support basic Primitives(Xform, Mesh, BasisCurves, etc.), basic Lights and Shaders(UsdPreviewSurface, UsdUVTexture, UsdPrimvarReader)
-* **Experimental** support of some Composition features https://github.com/syoyo/tinyusdz/issues/25
-  * [x] subLayers
-  * [x] references
-  * [x] payload 
-  * [x] inherits
-  * [x] variants
-  * [ ] specializes
-* [x] web demo
-        
-**Please see** [doc/status.md](doc/status.md) **for more details**
+* [x] USDA writer (production)
+* [x] Support basic Primitives(Xform, Mesh, BasisCurves, GeomPoints, GeomCamera, GeomNurbsCurves, GeomSubset, GeomPointInstancer, Cone, Cylinder, Capsule, etc.), basic Lights(SphereLight, RectLight, DistantLight, DomeLight) and Shaders(UsdPreviewSurface, UsdUVTexture, UsdPrimvarReader, UsdTransform2d)
 
+### Composition
+
+* [x] subLayers
+* [x] references
+* [x] payload
+* [x] inherits
+* [x] variants (including nested variants up to 3 levels). See [doc/variant.md](doc/variant.md)
+* [ ] specializes
+
+### MaterialX
+
+* [x] MaterialX XML parsing (v1.36-1.39)
+* [x] OpenPBR Surface, Autodesk Standard Surface, UsdPreviewSurface shader support
+* [x] Color space conversions (sRGB, ACEScg, Display P3, Rec.2020, Adobe RGB, CIE XYZ, gamma)
+* [x] StandardSurface to OpenPBR conversion
+* [x] Tydra: NodeGraph traversal with texture/normal/tangent extraction
+* [x] JS: OpenPBR to Three.js MeshPhysicalMaterial conversion
+* [x] JS: NodeGraph optimizer (identity removal, pattern recognition, constant folding)
+* See [doc/materialx.md](doc/materialx.md) for full details
+
+### Tydra (Render Data Conversion)
+
+* [x] USD Stage to RenderScene(OpenGL/Vulkan-friendly) conversion
+* [x] Multiple tangent computation methods (Lengyel, MikkTSpace, FastMikkTSpace, Hybrid)
+* [x] Tangent/Normal quantization (INT_2_10_10_10_REV, FP16, SNorm8)
+* [x] Skeletal animation (SkelAnimation, blend shapes, joint TRS)
+* [x] xformOp timeSamples animation
+* [x] TimeSamples evaluation matching OpenUSD behavior
+* [x] Comprehensive memory estimation (`estimate_memory_usage()` API)
+* See [doc/tydra-tangent.md](doc/tydra-tangent.md), [doc/skinning.md](doc/skinning.md), [doc/timesamples.md](doc/timesamples.md)
+
+### Other
+
+* [x] Web/WASM demo with Three.js integration. See [doc/threejs.md](doc/threejs.md)
+* [x] Memory budget system for secure loading. See [doc/memory-usage-tasks.md](doc/memory-usage-tasks.md)
+* [x] Unregistered value handling (matching OpenUSD behavior). See [doc/unregistered-value.md](doc/unregistered-value.md)
 * [ ] Basic C API(`c-tinyusd`) for language bindings
-  * [ ]  [examples/c_api_example](examples/c_api_example)
-  * [ ] Basic Python binding
-* [ ] Write simple SDL viewer example(2025 Spring expected)
-* [ ] Write iOS and Android example(2025  expected)
-* [ ] Write Vision OS example?
-* [ ] Vulkan or OptiX/HIP RT raytracing viewer example
+* [ ] MCP(ModelContextProtocol) support (W.I.P.). See [doc/mcp.md](doc/mcp.md)
 * [ ] USD <-> glTF converter example
   * There is an independent work of USD to glTF binary GLB converter: https://github.com/fynv/usd2glb
 
@@ -251,18 +296,16 @@ We are also looking for sponsors. If you are interested in sponsoring(or donatin
 
 ## Requirements
 
-* C++14 compiler
-  * [x] gcc 4.9 or later
+* C++17 compiler
+  * [x] gcc 7 or later (gcc 9+ recommended)
   * [x] Visual Studio 2019 or later. 2022 recommended.
     * You can use `CMakePresets.json`, but seems a bit troublesome in VS2022 https://github.com/lighttransport/tinyusdz/pull/182#issuecomment-2236676598 . If you encounter an issue, use `vcsetup.bat` to setup .sln for a while.
     * [x] Can be compiled with standalone MSVC compilers(Build Tools for Visual Studio 2019)
-  * [x] clang 3.4 or later https://clang.llvm.org/cxx_status.html
+  * [x] clang 5 or later https://clang.llvm.org/cxx_status.html
   * [x] llvm-mingw(clang) supported
   * [x] MinGW gcc supported, but not recommended(You may got compilation failure depending on your build configuration: https://github.com/syoyo/tinyusdz/issues/33 , and linking takes too much time if you use default bfd linker.). If you want to compile TinyUSDZ in MinGW environment, llvm-mingw(clang) is recommended to use.
 
-
-Compilation with C++17 is also supported. 
-Compile on C++20 and C++23 could be possible, but not well tested, since C++20/C++23 compiler is not yet mature(as of 2024/01))
+Compilation with C++20 is also supported (required for coroutine support via `TINYUSDZ_WITH_COROUTINE`).
 
 ## Build
 
@@ -365,7 +408,8 @@ Edit path to MSVC SDK and Windows SDK in `bootstrap-clang-cl-win64.bat`, then
 ### Tools and Examples
 
 * [tusdcat](examples/tusdcat/) Parse USDZ/USDA/USDC and print it as Ascii(similar to `usdcat` in pxrUSD).
-  * `tusdcat` also do USD composition(`flatten`) and contains TinyUSDZ Composition API usecase.
+  * `tusdcat` also does USD composition(`flatten`) and contains TinyUSDZ Composition API usecase.
+  * Supports USDA to USDC conversion: `tusdcat input.usda -o output.usdc`
 * Deprecated. Use `tusdcat` [usda_parser](examples/usda_parser/) Parse USDA and print it as Ascii.
 * Deprecated. Use `tusdcat` [usdc_parser](examples/usdc_parser/) Parse USDC and print it as Ascii.
 * [Simple SDL viewer](examples/sdlviewer/)
@@ -382,9 +426,21 @@ See [examples](examples) directory for more examples, but may not actively maint
 * Vulkan rendering of USDZ model by extending Vulkan-glTF-PBR https://github.com/syoyo/Vulkan-glTF-USDZ-PBR
   * Uses `rendermesh-refactor` branch
   
-### USDZ Data format
+### USD Data format and Documentation
 
-See [prim_format.md](doc/prim_format.md) and [preview_surface.md](doc/preview_surface.md)
+See [doc/](doc/) directory for detailed documentation:
+
+* [doc/materialx.md](doc/materialx.md) - MaterialX support (shaders, color spaces, NodeGraph, Three.js integration)
+* [doc/skinning.md](doc/skinning.md) - UsdSkel skinning (LBS, DQS, blend shapes, Tydra export)
+* [doc/crate-writer.md](doc/crate-writer.md) - USDC binary writer
+* [doc/variant.md](doc/variant.md) - USD Variant support
+* [doc/timesamples.md](doc/timesamples.md) - TimeSamples evaluation
+* [doc/tydra-tangent.md](doc/tydra-tangent.md) - Tangent computation and quantization
+* [doc/memory-usage-tasks.md](doc/memory-usage-tasks.md) - Memory profiling and optimization
+* [doc/unregistered-value.md](doc/unregistered-value.md) - Unregistered value handling
+* [doc/threejs.md](doc/threejs.md) - Three.js integration (animation, MaterialX)
+* [doc/mcp.md](doc/mcp.md) - MCP (Model Context Protocol) support
+* [doc/python_binding.md](doc/python_binding.md) - Python binding
 
 ## Example
 
@@ -458,25 +514,27 @@ Please see [tydra_api](examples/tydra_api/)
 
 * [x] Support Crate(binary) version 0.8.0(USD v20.11 default)
 * [x] Read USD data with bounded memory size. This feature is especially useful for mobile platform(e.g. in terms of security, memory consumption, etc)
-  * Mostly done
-* [ ] USDC writer
-* [ ] MaterialX support
-  * [ ] Parse XML file using tinyxml2
+* [x] USDC writer (experimental). See [doc/crate-writer.md](doc/crate-writer.md)
+* [x] MaterialX support. See [doc/materialx.md](doc/materialx.md)
+  * [x] MaterialX XML parsing (v1.36-1.39)
+  * [x] OpenPBR Surface, StandardSurface, UsdPreviewSurface shader support
+  * [x] Color space conversions
+  * [ ] Procedural nodes (`noise2d`, `fractal3d`)
+  * [ ] MaterialX `<xi:include>` / library resolution
 
 ### Middle priority
 
 * [ ] Support Nested USDZ
 * [ ] UDIM texture support
-* [ ] usdSkel utilities
-  * [ ] Joint hierachy reconstruction and compute skinning matrix(usdSkel)
-  * [ ] Blend shapes
-    * [x] Basic Blendshapes support
-    * [ ] In-between blend shapes
-* [ ] Built-in usdObj(wavefront .obj mesh) support.
-  * via tinyobjloader.
+* [x] usdSkel utilities. See [doc/skinning.md](doc/skinning.md)
+  * [x] Joint hierarchy reconstruction and compute skinning matrix(usdSkel)
+  * [x] Blend shapes (basic)
+  * [ ] In-between blend shapes
+* [ ] Built-in usdObj(wavefront .obj mesh) support via tinyobjloader.
 * [ ] Composition arcs
-  * [x] Basic composition
-  * [ ] Advanced composition 
+  * [x] Basic composition (subLayers, references, payloads, inherits, variants)
+  * [ ] Advanced composition (specializes)
+  * [ ] USDC writer variant/variantSet specs
 * [ ] Code refactoring, code optimization
 
 ### Lower priority
@@ -493,9 +551,9 @@ Please see [tydra_api](examples/tydra_api/)
 * [ ] Write parser based on the schema definition.
 * [ ] Support big endian architecture.
 
-## Python binding and prebuit packages
+## Python binding and prebuilt packages
 
-Python binding and prebuilt packages(uploadded on PyPI) are provided.
+Python binding and prebuilt packages(uploaded on PyPI) are provided.
 
 See [python/README.md](python/README.md) and [doc/python_binding.md](doc/python_binding.md) for details.
 
@@ -554,6 +612,8 @@ Some helper code is licensed under MIT license.
 * SDL2 : zlib license. https://www.libsdl.org/index.php
 * optional-lite: BSL 1.0 license. https://github.com/martinmoene/optional-lite
 * expected-lite: BSL 1.0 license. https://github.com/martinmoene/expected-lite
+* span-lite: BSL 1.0 license. https://github.com/martinmoene/span-lite
+* string-view-lite: BSL 1.0 license. https://github.com/martinmoene/string-view-lite
 * mapbox/earcut.hpp: ISC license. https://github.com/mapbox/earcut.hpp
 * par_shapes.h generate parametric surfaces and other simple shapes: MIT license https://github.com/prideout/par
 * MaterialX: Apache 2.0 license. https://github.com/AcademySoftwareFoundation/MaterialX
@@ -588,5 +648,12 @@ Some helper code is licensed under MIT license.
 * pugixml: MIT license. https://github.com/zeux/pugixml
 * nanoflann: 2-clause BSD license. https://github.com/jlblancoc/nanoflann
 * tinymeshutils: MIT license. https://github.com/syoyo/tinymeshutils
+* dragonbox : Apache 2.0 or Boost 1.0 license(tinyusdz prefer Boost 1.0 license) https://github.com/jk-jeon/dragonbox
 * criterion(for benchmark): MIT license. https://github.com/p-ranav/criterion
 * yyjson: MIT license. https://github.com/ibireme/yyjson
+* civetweb: MIT license. https://github.com/civetweb/civetweb
+* libsais: Apache 2.0 license. https://github.com/IlyaGrebnov/libsais
+* quickjs-ng: MIT license: https://github.com/quickjs-ng/quickjs
+* meshoptimizer: MIT license: https://github.com/zeux/meshoptimizer
+* mikktspace: mikktspace license(zlib-like): https://github.com/mmikk/MikkTSpace
+* xxHash: BSD-2 license. https://github.com/Cyan4973/xxHash

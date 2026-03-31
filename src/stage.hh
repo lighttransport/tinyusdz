@@ -4,16 +4,23 @@
 // Stage: Similar to Scene or Scene graph
 #pragma once
 
-#include "composition.hh"
-#include "prim-types.hh"
+#include <memory>
+#include <unordered_map>
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
-#include <mutex>
-#endif
+#include "nonstd/expected.hpp"
+
+#include "composition.hh"
+#include "core/instance-key.hh"  // InstanceKey, InstanceKeyHasher
+#include "core/prim.hh"          // Prim class (transitively: path, prim-enums, prim-metas)
+#include "core/layer-types.hh"   // LayerMetas (aliased as StageMetas)
+#include "handle-allocator.hh"   // HandleAllocator
 
 namespace tinyusdz {
 
-// TODO: Use LayerMetas?
+// Forward declarations for mmap zero-copy support
+class MMapArrayTable;
+class MMapDataSource;
+
 using StageMetas = LayerMetas;
 
 class PrimRange;
@@ -23,6 +30,14 @@ class Stage {
  public:
   // pxrUSD compat API ----------------------------------------
   static Stage CreateInMemory() { return Stage(); }
+
+  // Special member functions
+  Stage();
+  ~Stage();
+  Stage(const Stage&);
+  Stage& operator=(const Stage&);
+  Stage(Stage&&) noexcept;
+  Stage& operator=(Stage&&) noexcept;
 
   ///
   /// Traverse by depth-first order.
@@ -50,8 +65,9 @@ class Stage {
   ///
   /// Dump Stage as ASCII(USDA) representation.
   /// @param[in] relative_path (optional) Print Path as relative Path.
+  /// @param[in] parallel (optional) Use parallel printing for Prims.
   ///
-  std::string ExportToString(bool relative_path = false) const;
+  std::string ExportToString(bool relative_path = false, bool parallel = false) const;
 
   // pxrUSD compat API end -------------------------------------
 
@@ -242,46 +258,116 @@ class Stage {
     return _err;
   }
 
+  ///
+  /// Estimate memory usage of this Stage in bytes
+  ///
+  /// @return Estimated memory usage in bytes
+  ///
+  size_t estimate_memory_usage() const;
+
+  /// Detailed memory usage report: allocated (capacity) vs actual (size).
+  struct MemoryUsageDetail {
+    size_t allocated_bytes{0};  // capacity-based (what the allocator gave us)
+    size_t actual_bytes{0};     // size-based (what we're actually using)
+  };
+  MemoryUsageDetail estimate_memory_usage_detail() const;
+
+  //
+  // AOUSD Core Spec 11.3.3: Scene Graph Instancing
+  //
+
+  ///
+  /// Detect instanceable prims and build a prototype registry.
+  ///
+  /// Scans all prims for `instanceable = true` metadata AND at least one
+  /// composition arc (references, payload, inherits, specializes, variantSets).
+  /// Groups instances by their InstanceKey (128-bit hash of composition arcs).
+  /// Prims sharing the same InstanceKey share a prototype.
+  ///
+  /// @return Number of unique prototypes found
+  ///
+  size_t BuildInstancePrototypes();
+
+  ///
+  /// Get the prototype index for a given prim path.
+  /// @return prototype index (>= 0) if the prim is an instance, -1 otherwise
+  ///
+  int GetPrototypeIndex(const Path &path) const {
+    auto it = _instance_to_prototype.find(path.prim_part());
+    if (it != _instance_to_prototype.end()) {
+      return it->second;
+    }
+    return -1;
+  }
+
+  ///
+  /// Check if a prim path is registered as an instance.
+  ///
+  bool IsInstancePrim(const Path &path) const {
+    return _instance_to_prototype.count(path.prim_part()) > 0;
+  }
+
+  ///
+  /// Get the prototype index for a given instance prim path.
+  /// Alias for GetPrototypeIndex().
+  /// @return prototype index (>= 0) if the prim is an instance, -1 otherwise
+  ///
+  int GetPrototypeIndexForInstance(const Path &path) const {
+    return GetPrototypeIndex(path);
+  }
+
+  ///
+  /// Get all instance paths that share a given prototype index.
+  ///
+  std::vector<Path> GetInstancesForPrototype(int prototype_index) const {
+    std::vector<Path> result;
+    for (const auto &entry : _instance_to_prototype) {
+      if (entry.second == prototype_index) {
+        result.push_back(Path(entry.first, ""));
+      }
+    }
+    return result;
+  }
+
+  ///
+  /// Get the source path (first instance) for a prototype.
+  /// @return source prim path, or empty string if index is invalid
+  ///
+  std::string GetPrototypeSourcePath(int prototype_index) const {
+    if (prototype_index >= 0 &&
+        static_cast<size_t>(prototype_index) < _prototype_source_paths.size()) {
+      return _prototype_source_paths[static_cast<size_t>(prototype_index)];
+    }
+    return {};
+  }
+
+  ///
+  /// Get the number of unique prototypes.
+  ///
+  size_t num_prototypes() const { return _prototype_count; }
+
+  ///
+  /// Import instance data from CompositionGraph.
+  /// Called by CompositionGraph::BuildStage() to transfer pre-computed
+  /// instance information.
+  ///
+  void ImportInstanceData(
+      const std::unordered_map<std::string, int> &instance_to_prototype,
+      size_t prototype_count);
+
  private:
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  mutable std::mutex _mutex;
-#endif
-
-#if 0 // Deprecated. remove.
-  ///
-  /// Loads USD from and return it as Layer
-  ///
-  /// @param[in] filename USD filename
-  /// @param[in] resolver AssetResolutionResolver
-  /// @param[out] layer Layer representation of USD data.
-  /// @param[in] load_states Bitmask of LoadState(optional)
-  ///
-  bool LoadLayerFromFile(const std::string &filename, const AssetResolutionResolver &resolver, Layer *layer, const uint32_t load_states = static_cast<uint32_t>(LoadState::Toplevel));
-
-  ///
-  /// Loads USD asset from memory and return it as Layer
-  ///
-  /// @param[in] addr Memory address
-  /// @param[in] nbytes Num bytes
-  /// @param[in] asset_name Asset name(usually filename)
-  /// @param[out] layer Layer representation of USD data.
-  /// @param[in] load_states Bitmask of LoadState(optional)
-  ///
-  bool LoadLayerFromMemory(const uint8_t *addr, const size_t nbytes, const std::string &asset_name, Layer *layer, const uint32_t load_states = static_cast<uint32_t>(LoadState::Toplevel));
-#endif
-
-#if 0 // Deprecated. moved to composition.hh
-  ///
-  /// Loads `reference` USD asset and return it as Layer
-  ///
-  bool LoadReference(const Reference &reference, Layer *dest);
-
-  ///
-  /// Loads USD assets described in `subLayers` Stage/Layer meta and return it as Layers
-  ///
-  bool LoadSubLayers(std::vector<Layer> *dest_sublayers);
-#endif
+  // Instance prototype registry (AOUSD Spec 11.3.3)
+  // Maps instanceable prim path -> prototype index
+  std::unordered_map<std::string, int> _instance_to_prototype;
+  // Maps InstanceKey -> prototype index (for dedup)
+  std::unordered_map<InstanceKey, int, InstanceKeyHasher>
+      _instance_key_to_prototype;
+  // First instance path per prototype (used as source/reference)
+  std::vector<std::string> _prototype_source_paths;
+  size_t _prototype_count{0};
+  // True if instance data was imported from CompositionGraph
+  bool _instance_data_imported{false};
 
   // Root nodes
   std::vector<Prim> _root_nodes;
@@ -297,17 +383,28 @@ class Stage {
 
   // Cached prim path.
   // key : prim_part string (e.g. "/path/bora")
-  mutable std::map<std::string, const Prim *> _prim_path_cache;
+  mutable std::unordered_map<std::string, const Prim *> _prim_path_cache;
 
   // Cached prim_id -> Prim lookup
   // key : prim_id
-  mutable std::map<uint64_t, const Prim *> _prim_id_cache;
+  mutable std::unordered_map<uint64_t, const Prim *> _prim_id_cache;
 
   mutable bool _dirty{true}; // True when Stage content changes(addition, deletion, composition/flatten, etc.)
 
   mutable bool _prim_id_dirty{true}; // True when Prim Id assignent changed(TODO: Unify with `_dirty` flag)
 
   mutable HandleAllocator<uint64_t> _prim_id_allocator;
+
+  // mmap zero-copy support (optional, set by USDC reader)
+  std::unique_ptr<MMapArrayTable> _mmap_table;
+  std::unique_ptr<MMapDataSource> _mmap_source;
+
+ public:
+  void set_mmap_table(MMapArrayTable &&table);
+  void set_mmap_source(const MMapDataSource &src);
+  const MMapArrayTable *mmap_table() const { return _mmap_table.get(); }
+  const MMapDataSource *mmap_source() const { return _mmap_source.get(); }
+  bool has_mmap_zero_copy() const;
 };
 
 inline std::string to_string(const Stage &stage, bool relative_path = false) {

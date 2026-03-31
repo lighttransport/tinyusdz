@@ -1,0 +1,12 @@
+#usda 1.0
+
+class Scope "Base" {
+    custom int shared = 100
+    custom string baseOnly = "base"
+}
+
+def Scope "Child" (
+    inherits = </Base>
+) {
+    custom int shared = 999
+}

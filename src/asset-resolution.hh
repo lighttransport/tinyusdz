@@ -1,11 +1,29 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - Present, Light Transport Entertainment, Inc.
-//
-// Asset Resolution utilities
-// https://graphics.pixar.com/usd/release/api/ar_page_front.html
-//
-// To avoid a confusion with AR(Argumented Reality), we doesn't use abberation
-// `ar`, `Ar` and `AR`. ;-)
+
+///
+/// @file asset-resolution.hh
+/// @brief Asset resolution system for USD files and resources
+///
+/// Provides abstraction for loading assets from various sources (filesystem,
+/// memory, URLs, custom storage, etc.). Similar to ArAsset system in pxrUSD.
+/// 
+/// Key classes:
+/// - Asset: Abstract asset container with data buffer
+/// - AssetResolutionResolver: Resolver for finding and loading assets
+/// - FileSystemHandler: Interface for custom file systems
+///
+/// The system allows USD to load assets from:
+/// - Local filesystem
+/// - Memory buffers  
+/// - Network URLs
+/// - Custom storage backends (databases, cloud storage, etc.)
+///
+/// Note: To avoid confusion with AR (Augmented Reality), we don't use
+/// abbreviations like `ar`, `Ar` and `AR`. 
+///
+/// Reference: https://graphics.pixar.com/usd/release/api/ar_page_front.html
+///
 #pragma once
 
 #include <cstdint>
@@ -72,7 +90,6 @@ class Asset {
 struct ResolverAssetInfo {
   std::string version;
   std::string assetName;
-  // std::string repoPath;  deprecated in pxrUSD Ar 2.0
 
   value::Value resolverInfo;
 };
@@ -133,19 +150,6 @@ struct AssetResolutionHandler {
   void *userdata{nullptr};
 };
 
-#if 0 // deprecated.
-///
-/// @param[in] path Path string to be resolved.
-/// @param[in] assetInfo nullptr when no `assetInfo` assigned to this path.
-/// @param[inout] userdata Userdata pointer passed by callee. could be nullptr
-/// @param[out] resolvedPath Resolved Path string.
-/// @param[out] err Error message.
-//
-typedef bool (*ResolvePathHandler)(const std::string &path,
-                                   const ResolverAssetInfo *assetInfo,
-                                   void *userdata, std::string *resolvedPath,
-                                   std::string *err);
-#endif
 
 class AssetResolutionResolver {
  public:
@@ -256,17 +260,6 @@ class AssetResolutionResolver {
   }
 
 
-#if 0
-  ///
-  /// Register user defined asset path resolver.
-  /// Default = find file from search paths.
-  ///
-  void register_resolve_path_handler(ResolvePathHandler handler) {
-    _resolve_path_handler = handler;
-  }
-
-  void unregister_resolve_path_handler() { _resolve_path_handler = nullptr; }
-#endif
 
   ///
   /// Check if input asset exists(do asset resolution inside the function).

@@ -5,18 +5,56 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:anim": "vite --open /animation.html",
+    "dev:skel": "vite --open /skin-anim.html",
+    "dev:clips": "vite --open /anim-clips.html",
+    "dev:mtlx": "vite --open /materialx.html",
+    "dev:lux": "vite --open /usdlux.html",
+    "dev:nodegraph": "vite --open /openpbr-nodegraph-demo.html",
+    "dev:offscreengl": "vite --open /offscreengl.html",
+    "dev:progress": "vite --open /progress-demo.html",
+    "dev:progress-offscreen": "vite --open /progress-offscreenwebgl.html",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "__following_is_experiment_and_for_debug__": "",
+    "dev:webgpu": "vite --open /materialx-webgpu.html",
+    "dev:webgpu-raw": "vite --open /mtlx-webgpu.html",
+    "dev:webgl2": "vite --open /materialx-webgl2.html",
+    "cli": "vite-node cli/load-test-node.js",
+    "test:memory": "vite-node cli/memory-usage-test.js",
+    "test:streaming": "vite-node cli/load-test-node.js",
+    "dump-materialx": "vite-node cli/dump-materialx-cli.js",
+    "dump-mtlx-node": "vite-node cli/dump-mtlx-node.js",
+    "optimize-mtlx-node": "vite-node cli/optimize-mtlx-node.js",
+    "dump-lights": "vite-node cli/dump-usdlux-cli.js",
+    "test:usdlux": "node cli/test-usdlux-parsing.js",
+    "anim-info": "vite-node cli/animation-info.js",
+    "anim-info:detailed": "vite-node cli/animation-info.js --detailed",
+    "verify-materialx": "vite-node cli/verify-materialx.js",
+    "test:colorspace": "vite-node tests/colorspace-test.js",
+    "benchmark:exr": "vite-node cli/benchmark-exr.js",
+    "generate:exr": "vite-node cli/generate-test-exr.js",
+    "test:exr-decoder": "vite-node cli/test-exr-decoder.js",
+    "test:progress": "node cli/test-progress-cli.js",
+    "test:usdskel": "vite-node tests/usdskel-animation-test.js"
   },
   "devDependencies": {
+    "@types/bun": "latest",
     "@types/three": "^0.160.0",
     "typescript": "^5.8.3",
-    "vite": "^6.1.6",
-    "@types/bun": "latest"
+    "vite": "^6.1.6"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.16.0",
+    "commander": "^12.1.0",
     "fzstd": "^0.1.1",
-    "three": ">=0.177.0"
+    "pixelmatch": "^6.0.0",
+    "pngjs": "^7.0.0",
+    "puppeteer": "^24.25.0",
+    "socket.io": "^4.8.3",
+    "three": ">=0.177.0",
+    "vite-node": "^3.2.4",
+    "yaml": "^2.6.1"
   },
   "0module": "index.ts"
 }

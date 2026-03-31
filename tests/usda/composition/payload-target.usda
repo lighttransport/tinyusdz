@@ -1,0 +1,14 @@
+#usda 1.0
+(
+    defaultPrim = "PayloadContent"
+)
+
+def Xform "PayloadContent" {
+    custom string description = "heavy_geometry"
+
+    def Mesh "DetailedMesh" {
+        point3f[] points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0),(0.5,0.5,1)]
+        int[] faceVertexCounts = [3,3,3,3]
+        int[] faceVertexIndices = [0,1,4, 1,2,4, 2,3,4, 3,0,4]
+    }
+}

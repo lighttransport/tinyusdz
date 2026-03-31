@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <map>
 #include <string>
@@ -32,7 +33,8 @@
 #endif
 
 #include "image-types.hh"
-#include "prim-types.hh"
+#include "core/prim.hh"       // Prim (transitively: value-types, path, prim-enums, prim-metas)
+#include "core/prim-spec.hh"  // PrimSpec, Layer, FileFormatHandler
 #include "texture-types.hh"
 #include "usdGeom.hh"
 #include "usdLux.hh"
@@ -111,14 +113,69 @@ struct USDLoadOptions {
   /// apiSchema
   ///
   bool strict_apiSchema_check{false}; // Make parse error when unknown apiSchema
-  
+
+  // ==========================================================================
+  // MaterialX Validation Options
+  // ==========================================================================
+
+  ///
+  /// Validate MaterialX connection types (e.g., color3f output to float input)
+  ///
+  bool validate_mtlx_connection_types{false};
+
+  ///
+  /// Validate MaterialX info:id against known shader definitions
+  ///
+  bool validate_mtlx_info_id{false};
+
+  ///
+  /// Validate MaterialX connection targets exist
+  ///
+  bool validate_mtlx_connection_targets{false};
+
+  ///
+  /// Check for duplicate prim names within a scope (e.g., NodeGraph)
+  ///
+  bool validate_mtlx_duplicate_names{false};
+
+  ///
+  /// Validate extract/combine index bounds (0-2 for color3/vector3)
+  ///
+  bool validate_mtlx_index_bounds{false};
+
+  ///
+  /// Enable all MaterialX validation options at once
+  ///
+  bool strict_mtlx_check{false};
+
+  ///
+  /// Show detailed USDA error reports without stack snipping or source-line
+  /// truncation.
+  ///
+  bool error_detail{false};
+
   ///
   /// User-defined fileformat hander.
   /// key = file(asset) extension(`.` excluded. example: 'mtlx', 'obj').
   ///
   std::map<std::string, FileFormatHandler> fileformats;
 
+  /// Enable mmap zero-copy for uncompressed USDC arrays.
+  /// When true and data is loaded from mmap, defers reading uncompressed
+  /// float/double arrays and records their mmap offsets instead.
+  /// The mmap must remain valid for the lifetime of the Stage.
+  bool mmap_zero_copy{false};
+
   Axis upAxis{Axis::Y};
+
+  ///
+  /// Progress callback function type.
+  /// @param[in] progress Progress value between 0.0 and 1.0
+  /// @param[in] userptr User-provided pointer for custom data
+  /// @return true to continue parsing, false to cancel
+  ///
+  std::function<bool(float progress, void *userptr)> progress_callback{nullptr};
+  void *progress_userptr{nullptr};
 };
 
 
@@ -128,13 +185,24 @@ struct USDLoadOptions {
 // - Realtime(moderate resource size limit)
 // - DCC(for data conversion. Unlimited resource size)
 
-#if 0  // TODO
-//struct USDWriteOptions
-//{
-//
-//
-//};
-#endif
+///
+/// Options for writing USD files.
+///
+struct USDWriteOptions {
+  ///
+  /// Enable zstd compression for output file.
+  /// When enabled, the entire USD file is wrapped with zstd compression.
+  /// Also auto-detected when filename ends with ".zst" extension.
+  ///
+  bool use_zstd_compression{false};
+
+  ///
+  /// Zstd compression level (1-22).
+  /// Higher values give better compression but slower speed.
+  /// Default is 5 (good balance of speed and ratio).
+  ///
+  int zstd_compression_level{5};
+};
 
 //
 
@@ -365,7 +433,7 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
 ///
 /// @return true upon success
 ///
-bool LoadLayerFromFile(const std::string &filename, Layer *stage,
+bool LoadLayerFromFile(const std::string &filename, Layer *layer,
                      std::string *warn, std::string *err,
                      const USDLoadOptions &options = USDLoadOptions());
 
@@ -426,19 +494,60 @@ bool LoadLayerFromAsset(AssetResolutionResolver &resolver,
                        const USDLoadOptions &options = USDLoadOptions());
 
 
-#if 0  // TODO
+
 ///
-/// Write stage as USDC to a file.
+/// Save Stage as USDZ (uncompressed ZIP package) to a file.
 ///
-/// @param[in] filename USDC filename
-/// @param[out] err Error message(filled when the function returns false)
-/// @param[in] options Write options(optional)
+/// The root layer is written as USDC (binary Crate format) as the first
+/// entry in the ZIP archive. Additional assets (images, audio) can be
+/// included via the `assets` parameter.
 ///
+/// Conforms to AOUSD Core Spec section 17 (USDZ Package Format):
+/// - Uncompressed ZIP (store method)
+/// - 64-byte data alignment for all entries
+/// - First entry is the root .usdc layer
+/// - Allowed types: .usd, .usda, .usdc, .png, .jpg, .jpeg, .exr, .avif, .m4a, .mp3, .wav
+///
+/// @param[in] filename Output USDZ filename
+/// @param[in] stage USD Stage to write
+/// @param[in] assets Additional assets to include: key=archive name, value=file data
+/// @param[out] warn Warning messages
+/// @param[out] err Error messages
 /// @return true upon success
 ///
-bool WriteAsUSDCToFile(const std::string &filename, std::string *err, const USDCWriteOptions &options = USDCWriteOptions());
+bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
+                      const std::map<std::string, std::vector<uint8_t>> &assets,
+                      std::string *warn, std::string *err);
 
-#endif
+///
+/// Save Stage as USDZ to memory.
+///
+/// @param[in] stage USD Stage to write
+/// @param[in] assets Additional assets to include
+/// @param[out] output Output USDZ data
+/// @param[out] warn Warning messages
+/// @param[out] err Error messages
+/// @return true upon success
+///
+bool SaveAsUSDZToMemory(const Stage &stage,
+                        const std::map<std::string, std::vector<uint8_t>> &assets,
+                        std::vector<uint8_t> *output,
+                        std::string *warn, std::string *err);
+
+///
+/// Validate a USDZ archive against AOUSD Core Spec section 17.
+///
+/// Checks: ZIP magic, uncompressed storage, 64-byte alignment,
+/// root layer is first entry, allowed file extensions.
+///
+/// @param[in] addr Memory address of USDZ data
+/// @param[in] length Byte length
+/// @param[out] warn Warning messages (non-fatal issues)
+/// @param[out] err Error messages (spec violations)
+/// @return true if valid USDZ
+///
+bool ValidateUSDZ(const uint8_t *addr, size_t length,
+                  std::string *warn, std::string *err);
 
 // Test if input is any of USDA/USDC/USDZ format.
 // Optionally returns detected format("usda", "usdc", or "usdz") to
@@ -458,6 +567,10 @@ bool IsUSDC(const uint8_t *addr, const size_t length);
 // Test if input is USDZ(Uncompressed ZIP) format.
 bool IsUSDZ(const std::string &filename);
 bool IsUSDZ(const uint8_t *addr, const size_t length);
+
+// Test if input is zstd-compressed data (by magic number).
+// This is for file-level compression, not internal USDC LZ4 compression.
+bool IsZstdCompressed(const uint8_t *addr, const size_t length);
 
 }  // namespace tinyusdz
 

@@ -23,9 +23,12 @@
 #include <vector>
 
 #include "io-util.hh"
+#include "mmap-array-ref.hh"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
+#include "prim-pprint-parallel.hh"
 #include "str-util.hh"
+#include "tiny-container.hh"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
 #include "usdLux.hh"
@@ -45,44 +48,69 @@ namespace tinyusdz {
 
 namespace {
 
-nonstd::optional<const Prim *> GetPrimAtPathRec(const Prim *parent,
-                                                const std::string &parent_path,
-                                                const Path &path,
-                                                const uint32_t depth) {
+// Optimized version: iterative traversal using path components
+// Avoids string concatenation and recursion by directly navigating to target
+nonstd::optional<const Prim *> GetPrimAtPathIterative(
+    const std::vector<Prim> &root_nodes,
+    const Path &path) {
 
-  if (!parent) {
+  const std::string &target_path = path.full_path_name();
+
+  // Must be absolute path starting with '/'
+  if (target_path.empty() || target_path[0] != '/') {
     return nonstd::nullopt;
   }
 
-  std::string abs_path;
-  // if (auto pv = GetPrimElementName(parent->data())) {
-  {
-    std::string elementName = parent->element_path().prim_part();
-    // DCOUT(pprint::Indent(depth) << "Prim elementName = " << elementName);
-    // DCOUT(pprint::Indent(depth) << "Given Path = " << path);
-    //  fully absolute path
-    abs_path = parent_path + "/" + elementName;
-    // DCOUT(pprint::Indent(depth) << "abs_path = " << abs_path);
-    // DCOUT(pprint::Indent(depth)
-    //       << "queriying path = " << path.full_path_name());
-    if (abs_path == path.full_path_name()) {
-      // DCOUT(pprint::Indent(depth)
-      //       << "Got it! Found Prim at Path = " << abs_path);
-      return parent;
-    }
+  // For paths like "/" only (root path), we don't have a prim
+  if (target_path.size() == 1) {
+    return nonstd::nullopt;
   }
 
-  // DCOUT(pprint::Indent(depth)
-  //       << "# of children : " << parent->children().size());
-  for (const auto &child : parent->children()) {
-    // const std::string &p = parent->elementPath.full_path_name();
-    // DCOUT(pprint::Indent(depth + 1) << "Parent path : " << abs_path);
-    if (auto pv = GetPrimAtPathRec(&child, abs_path, path, depth + 1)) {
-      return pv.value();
+  // Iteratively parse and traverse path components
+  // No string allocations - uses compare() with indices
+  const Prim *current = nullptr;
+  const std::vector<Prim> *current_children = &root_nodes;
+
+  size_t start = 1;  // skip leading '/'
+  const size_t len = target_path.size();
+
+  while (start < len) {
+    // Find end of current component
+    size_t end = start;
+    while (end < len && target_path[end] != '/') {
+      ++end;
     }
+
+    if (end == start) {
+      // Empty component (double slash), skip
+      start = end + 1;
+      continue;
+    }
+
+    // Search for matching child using direct string comparison
+    // No string allocation - compare against substring
+    const Prim *found = nullptr;
+    const size_t component_len = end - start;
+
+    for (const auto &child : *current_children) {
+      const std::string &name = child.element_name();
+      if (name.size() == component_len &&
+          target_path.compare(start, component_len, name) == 0) {
+        found = &child;
+        break;
+      }
+    }
+
+    if (!found) {
+      return nonstd::nullopt;
+    }
+
+    current = found;
+    current_children = &current->children();
+    start = end + 1;
   }
 
-  return nonstd::nullopt;
+  return current;
 }
 
 }  // namespace
@@ -90,6 +118,44 @@ nonstd::optional<const Prim *> GetPrimAtPathRec(const Prim *parent,
 //
 // -- Stage
 //
+
+Stage::Stage() = default;
+Stage::~Stage() = default;
+
+Stage::Stage(const Stage &other)
+    : _root_nodes(other._root_nodes),
+      _root_node_nameSet(other._root_node_nameSet),
+      name(other.name),
+      default_root_node(other.default_root_node),
+      stage_metas(other.stage_metas),
+      _err(other._err),
+      _warn(other._warn),
+      _dirty(other._dirty),
+      _prim_id_dirty(other._prim_id_dirty) {
+  // unique_ptr members (_mmap_table, _mmap_source) are not copied.
+  // mmap data is only valid for the original Stage loaded from USDC.
+}
+
+Stage &Stage::operator=(const Stage &other) {
+  if (this != &other) {
+    _root_nodes = other._root_nodes;
+    _root_node_nameSet = other._root_node_nameSet;
+    name = other.name;
+    default_root_node = other.default_root_node;
+    stage_metas = other.stage_metas;
+    _err = other._err;
+    _warn = other._warn;
+    _dirty = other._dirty;
+    _prim_id_dirty = other._prim_id_dirty;
+    // unique_ptr members are not copied (mmap data is not transferable)
+    _mmap_table.reset();
+    _mmap_source.reset();
+  }
+  return *this;
+}
+
+Stage::Stage(Stage &&) noexcept = default;
+Stage &Stage::operator=(Stage &&) noexcept = default;
 
 nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
     const Path &path) const {
@@ -103,7 +169,6 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
 
   if (path.is_relative_path()) {
     DCOUT("Relative path is todo.");
-    // TODO:
     return nonstd::make_unexpected("Relative path is TODO.\n");
   }
 
@@ -129,15 +194,12 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
   }
 
 
-  // Brute-force search.
-  for (const auto &parent : _root_nodes) {
-    if (auto pv =
-            GetPrimAtPathRec(&parent, /* root */ "", path, /* depth */ 0)) {
-      // Add to cache.
-      // Assume pointer address does not change unless dirty state.
-      _prim_path_cache[path.prim_part()] = pv.value();
-      return pv.value();
-    }
+  // Direct path-based lookup (no brute-force search)
+  if (auto pv = GetPrimAtPathIterative(_root_nodes, path)) {
+    // Add to cache.
+    // Assume pointer address does not change unless dirty state.
+    _prim_path_cache[path.prim_part()] = pv.value();
+    return pv.value();
   }
 
   DCOUT("Not found.");
@@ -180,35 +242,60 @@ bool Stage::find_prim_at_path(const Path &path, int64_t *prim_id,
   }
 }
 
-namespace {
-
-bool FindPrimByPrimIdRec(uint64_t prim_id, const Prim *root,
-                         const Prim **primFound, int level, std::string *err) {
-  if (level > 1024 * 1024 * 128) {
-    // too deep node.
-    return false;
-  }
-
+// Optimized iterative version using explicit stack
+// Avoids recursion to save stack memory for deep hierarchies
+static bool FindPrimByPrimIdIterative(uint64_t prim_id,
+                               const std::vector<Prim> &root_nodes,
+                               const Prim **primFound) {
   if (!primFound) {
     return false;
   }
 
-  if (root->prim_id() == int64_t(prim_id)) {
-    (*primFound) = root;
-    return true;
+  // Use explicit stack for DFS traversal (StackVector for stack allocation)
+  // Store pointer to prim and current child index
+  StackVector<std::pair<const Prim *, size_t>, 4> stack;
+  stack.reserve(64);  // Pre-allocate for typical depth
+
+  // Initialize stack with root nodes
+  for (const auto &root : root_nodes) {
+    if (root.prim_id() == int64_t(prim_id)) {
+      (*primFound) = &root;
+      return true;
+    }
+    if (!root.children().empty()) {
+      stack.emplace_back(&root, 0);
+    }
   }
 
-  // Brute-force search.
-  for (const auto &child : root->children()) {
-    if (FindPrimByPrimIdRec(prim_id, &child, primFound, level + 1, err)) {
+  // Iterative DFS
+  while (!stack.empty()) {
+    auto &top = stack.back();
+    const Prim *current = top.first;
+    size_t &child_idx = top.second;
+
+    if (child_idx >= current->children().size()) {
+      // All children processed, backtrack
+      stack.pop_back();
+      continue;
+    }
+
+    const Prim &child = current->children()[child_idx];
+    ++child_idx;  // Move to next child for when we return
+
+    // Check if this is the target
+    if (child.prim_id() == int64_t(prim_id)) {
+      (*primFound) = &child;
       return true;
+    }
+
+    // Push child to stack if it has children
+    if (!child.children().empty()) {
+      stack.emplace_back(&child, 0);
     }
   }
 
   return false;
 }
-
-}  // namespace
 
 bool Stage::find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim,
                                  std::string *err) const {
@@ -236,12 +323,10 @@ bool Stage::find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim,
   }
 
   const Prim *p{nullptr};
-  for (const auto &root : root_prims()) {
-    if (FindPrimByPrimIdRec(prim_id, &root, &p, 0, err)) {
-      _prim_id_cache[prim_id] = p;
-      prim = p;
-      return true;
-    }
+  if (FindPrimByPrimIdIterative(prim_id, _root_nodes, &p)) {
+    _prim_id_cache[prim_id] = p;
+    prim = p;
+    return true;
   }
 
   return false;
@@ -280,25 +365,8 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimFromRelativePath(
     return nonstd::make_unexpected("Invalid Path.\n");
   }
 
-#if 0  // TODO
-  Path abs_path = root.element_path();
-  abs_path.AppendElement(path.GetPrimPart());
-
-  DCOUT("root path = " << root.path());
-  DCOUT("abs path = " << abs_path);
-
-  // Brute-force search from Stage root.
-  if (auto pv = GetPrimAtPathRec(&root, /* root */"", abs_path, /* depth */0)) {
-    return pv.value();
-  }
-
-  return nonstd::make_unexpected("Cannot find path <" + path.full_path_name() +
-                                 "> under Prim: " + to_string(root.path) +
-                                 "\n");
-#else
   (void)root;
   return nonstd::make_unexpected("GetPrimFromRelativePath is TODO");
-#endif
 }
 
 bool Stage::find_prim_from_relative_path(const Prim &root,
@@ -320,148 +388,14 @@ bool Stage::find_prim_from_relative_path(const Prim &root,
 
 namespace {
 
-#if 0 // Deprecated. TODO: remove
-void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
-  // Currently, Prim's elementName is read from name variable in concrete Prim
-  // class(e.g. Xform::name).
-  // TODO: use prim.elementPath for elementName.
-  std::string s = pprint_value(prim.data(), indent, /* closing_brace */ false);
-
-  bool require_newline = true;
-
-  // Check last 2 chars.
-  // if it ends with '{\n', no properties are authored so do not emit blank line
-  // before printing VariantSet or child Prims.
-  if (s.size() > 2) {
-    if ((s[s.size() - 2] == '{') && (s[s.size() - 1] == '\n')) {
-      require_newline = false;
-    }
-  }
-
-  ss << s;
-
-  //
-  // print variant
-  //
-  if (prim.variantSets().size()) {
-    if (require_newline) {
-      ss << "\n";
-    }
-
-    // need to add blank line after VariantSet stmt and before child Prims,
-    // so set require_newline true
-    require_newline = true;
-
-    for (const auto &variantSet : prim.variantSets()) {
-      ss << pprint::Indent(indent + 1) << "variantSet "
-         << quote(variantSet.first) << " = {\n";
-
-      for (const auto &variantItem : variantSet.second.variantSet) {
-        ss << pprint::Indent(indent + 2) << quote(variantItem.first);
-
-        const Variant &variant = variantItem.second;
-
-        if (variant.metas().authored()) {
-          ss << " (\n";
-          ss << print_prim_metas(variant.metas(), indent + 3);
-          ss << pprint::Indent(indent + 2) << ")";
-        }
-
-        ss << " {\n";
-
-        ss << print_props(variant.properties(), indent + 3);
-
-        if (variant.metas().variantChildren.has_value() &&
-            (variant.metas().variantChildren.value().size() ==
-             variant.primChildren().size())) {
-          std::map<std::string, const Prim *> primNameTable;
-          for (size_t i = 0; i < variant.primChildren().size(); i++) {
-            primNameTable.emplace(variant.primChildren()[i].element_name(),
-                                  &variant.primChildren()[i]);
-          }
-
-          for (size_t i = 0; i < variant.metas().variantChildren.value().size();
-               i++) {
-            value::token nameTok = variant.metas().variantChildren.value()[i];
-            const auto it = primNameTable.find(nameTok.str());
-            if (it != primNameTable.end()) {
-              PrimPrintRec(ss, *(it->second), indent + 3);
-              if (i != (variant.primChildren().size() - 1)) {
-                ss << "\n";
-              }
-            } else {
-              // TODO: Report warning?
-            }
-          }
-
-        } else {
-          for (size_t i = 0; i < variant.primChildren().size(); i++) {
-            PrimPrintRec(ss, variant.primChildren()[i], indent + 3);
-            if (i != (variant.primChildren().size() - 1)) {
-              ss << "\n";
-            }
-          }
-        }
-
-        ss << pprint::Indent(indent + 2) << "}\n";
-      }
-
-      ss << pprint::Indent(indent + 1) << "}\n";
-    }
-  }
-
-  DCOUT(prim.element_name() << " num_children = " << prim.children().size());
-
-  //
-  // primChildren
-  //
-  if (prim.children().size()) {
-    if (require_newline) {
-      ss << "\n";
-      require_newline = false;
-    }
-    if (prim.metas().primChildren.size() == prim.children().size()) {
-      // Use primChildren info to determine the order of the traversal.
-
-      std::map<std::string, const Prim *> primNameTable;
-      for (size_t i = 0; i < prim.children().size(); i++) {
-        primNameTable.emplace(prim.children()[i].element_name(),
-                              &prim.children()[i]);
-      }
-
-      for (size_t i = 0; i < prim.metas().primChildren.size(); i++) {
-        if (i > 0) {
-          ss << "\n";
-        }
-        value::token nameTok = prim.metas().primChildren[i];
-        DCOUT(fmt::format("primChildren  {}/{} = {}", i,
-                          prim.metas().primChildren.size(), nameTok.str()));
-        const auto it = primNameTable.find(nameTok.str());
-        if (it != primNameTable.end()) {
-          PrimPrintRec(ss, *(it->second), indent + 1);
-        } else {
-          // TODO: Report warning?
-        }
-      }
-
-    } else {
-      for (size_t i = 0; i < prim.children().size(); i++) {
-        if (i > 0) {
-          ss << "\n";
-        }
-        PrimPrintRec(ss, prim.children()[i], indent + 1);
-      }
-    }
-  }
-
-  ss << pprint::Indent(indent) << "}\n";
-}
-#endif
 
 }  // namespace
 
-std::string Stage::ExportToString(bool relative_path) const {
-  (void)relative_path; // TODO
+std::string Stage::ExportToString(bool relative_path, bool parallel) const {
+  (void)relative_path;
+#if !defined(TINYUSDZ_ENABLE_THREAD)
+  (void)parallel; // Threading disabled
+#endif
 
   std::stringstream ss;
 
@@ -483,28 +417,65 @@ std::string Stage::ExportToString(bool relative_path) const {
       primNameTable.emplace(_root_nodes[i].element_name(), &_root_nodes[i]);
     }
 
-    for (size_t i = 0; i < stage_metas.primChildren.size(); i++) {
-      value::token nameTok = stage_metas.primChildren[i];
-      DCOUT(fmt::format("primChildren  {}/{} = {}", i,
-                        stage_metas.primChildren.size(), nameTok.str()));
-      const auto it = primNameTable.find(nameTok.str());
-      if (it != primNameTable.end()) {
-        //PrimPrintRec(ss, *(it->second), 0);
-        ss << prim::print_prim(*(it->second), 0);
-        if (i != (stage_metas.primChildren.size() - 1)) {
-          ss << "\n";
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (parallel) {
+      // Parallel printing path
+      std::vector<const Prim*> ordered_prims;
+      ordered_prims.reserve(stage_metas.primChildren.size());
+
+      for (size_t i = 0; i < stage_metas.primChildren.size(); i++) {
+        value::token nameTok = stage_metas.primChildren[i];
+        const auto it = primNameTable.find(nameTok.str());
+        if (it != primNameTable.end()) {
+          ordered_prims.push_back(it->second);
         }
-      } else {
-        // TODO: Report warning?
+      }
+
+      prim::ParallelPrintConfig config;
+      ss << prim::print_prims_parallel(ordered_prims, 0, config);
+    } else
+#endif  // TINYUSDZ_ENABLE_THREAD
+    {
+      // Sequential printing path (original)
+      for (size_t i = 0; i < stage_metas.primChildren.size(); i++) {
+        value::token nameTok = stage_metas.primChildren[i];
+        DCOUT(fmt::format("primChildren  {}/{} = {}", i,
+                          stage_metas.primChildren.size(), nameTok.str()));
+        const auto it = primNameTable.find(nameTok.str());
+        if (it != primNameTable.end()) {
+          //PrimPrintRec(ss, *(it->second), 0);
+          ss << prim::print_prim(*(it->second), 0);
+          if (i != (stage_metas.primChildren.size() - 1)) {
+            ss << "\n";
+          }
+        } else {
+          // TODO: Report warning?
+        }
       }
     }
   } else {
-    for (size_t i = 0; i < _root_nodes.size(); i++) {
-      //PrimPrintRec(ss, _root_nodes[i], 0);
-      ss << prim::print_prim(_root_nodes[i], 0);
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (parallel) {
+      // Parallel printing path
+      std::vector<const Prim*> prims;
+      prims.reserve(_root_nodes.size());
+      for (size_t i = 0; i < _root_nodes.size(); i++) {
+        prims.push_back(&_root_nodes[i]);
+      }
 
-      if (i != (_root_nodes.size() - 1)) {
-        ss << "\n";
+      prim::ParallelPrintConfig config;
+      ss << prim::print_prims_parallel(prims, 0, config);
+    } else
+#endif  // TINYUSDZ_ENABLE_THREAD
+    {
+      // Sequential printing path (original)
+      for (size_t i = 0; i < _root_nodes.size(); i++) {
+        //PrimPrintRec(ss, _root_nodes[i], 0);
+        ss << prim::print_prim(_root_nodes[i], 0);
+
+        if (i != (_root_nodes.size() - 1)) {
+          ss << "\n";
+        }
       }
     }
   }
@@ -536,49 +507,98 @@ bool Stage::has_prim_id(const uint64_t prim_id) const {
 
 namespace {
 
-bool ComputeAbsPathAndAssignPrimIdRec(const Stage &stage, Prim &prim,
-                                      const Path &parentPath, uint32_t depth,
-                                      bool assign_prim_id,
-                                      bool force_assign_prim_id = true,
-                                      std::string *err = nullptr) {
-  if (depth > 1024 * 1024 * 128) {
-    // too deep node.
-    if (err) {
-      (*err) += "Prim hierarchy too deep.\n";
+// Iterative version of ComputeAbsPathAndAssignPrimIdRec
+// Uses explicit stack to avoid recursion
+bool ComputeAbsPathAndAssignPrimIdIterative(const Stage &stage,
+                                            std::vector<Prim> &root_prims,
+                                            bool assign_prim_id,
+                                            bool force_assign_prim_id,
+                                            std::string *err) {
+  // Stack entry: (prim pointer, parent path, child index)
+  struct StackEntry {
+    Prim *prim;
+    Path parent_path;
+    size_t child_idx;
+
+    StackEntry(Prim *p, Path pp) : prim(p), parent_path(std::move(pp)), child_idx(0) {}
+  };
+
+  StackVector<StackEntry, 4> stack;
+  stack.reserve(64);
+
+  Path root_path("/", "");
+
+  // Process each root prim
+  for (Prim &root : root_prims) {
+    if (root.element_name().empty()) {
+      if (err) {
+        (*err) += "Prim's elementName is empty. Prim's parent Path = /\n";
+      }
+      return false;
     }
-    return false;
-  }
 
-  if (prim.element_name().empty()) {
-    // Prim's elementName must not be empty.
-    if (err) {
-      (*err) += "Prim's elementName is empty. Prim's parent Path = " +
-                parentPath.full_path_name() + "\n";
+    // Compute path and assign ID for root
+    Path abs_path = root_path.AppendPrim(root.element_name());
+    root.absolute_path() = abs_path;
+
+    if (assign_prim_id) {
+      if (force_assign_prim_id || (root.prim_id() < 1)) {
+        uint64_t prim_id{0};
+        if (!stage.allocate_prim_id(&prim_id)) {
+          if (err) {
+            (*err) += "Failed to assign unique Prim ID.\n";
+          }
+          return false;
+        }
+        root.prim_id() = int64_t(prim_id);
+      }
     }
-    return false;
-  }
 
-  Path abs_path = parentPath.AppendPrim(prim.element_name());
+    if (!root.children().empty()) {
+      stack.emplace_back(&root, abs_path);
+    }
 
-  prim.absolute_path() = abs_path;
-  if (assign_prim_id) {
-    if (force_assign_prim_id || (prim.prim_id() < 1)) {
-      uint64_t prim_id{0};
-      if (!stage.allocate_prim_id(&prim_id)) {
+    // Process tree iteratively
+    while (!stack.empty()) {
+      auto &top = stack.back();
+      Prim *current = top.prim;
+      size_t &child_idx = top.child_idx;
+
+      if (child_idx >= current->children().size()) {
+        stack.pop_back();
+        continue;
+      }
+
+      Prim &child = current->children()[child_idx];
+      ++child_idx;
+
+      if (child.element_name().empty()) {
         if (err) {
-          (*err) += "Failed to assign unique Prim ID.\n";
+          (*err) += "Prim's elementName is empty. Prim's parent Path = " +
+                    top.parent_path.full_path_name() + "\n";
         }
         return false;
       }
-      prim.prim_id() = int64_t(prim_id);
-    }
-  }
 
-  for (Prim &child : prim.children()) {
-    if (!ComputeAbsPathAndAssignPrimIdRec(stage, child, abs_path, depth + 1,
-                                          assign_prim_id, force_assign_prim_id,
-                                          err)) {
-      return false;
+      Path child_abs_path = top.parent_path.AppendPrim(child.element_name());
+      child.absolute_path() = child_abs_path;
+
+      if (assign_prim_id) {
+        if (force_assign_prim_id || (child.prim_id() < 1)) {
+          uint64_t prim_id{0};
+          if (!stage.allocate_prim_id(&prim_id)) {
+            if (err) {
+              (*err) += "Failed to assign unique Prim ID.\n";
+            }
+            return false;
+          }
+          child.prim_id() = int64_t(prim_id);
+        }
+      }
+
+      if (!child.children().empty()) {
+        stack.emplace_back(&child, child_abs_path);
+      }
     }
   }
 
@@ -589,13 +609,10 @@ bool ComputeAbsPathAndAssignPrimIdRec(const Stage &stage, Prim &prim,
 
 bool Stage::compute_absolute_prim_path_and_assign_prim_id(
     bool force_assign_prim_id) {
-  Path rootPath("/", "");
-  for (Prim &root : root_prims()) {
-    if (!ComputeAbsPathAndAssignPrimIdRec(*this, root, rootPath, 1,
-                                          /* assign_prim_id */ true,
-                                          force_assign_prim_id, &_err)) {
-      return false;
-    }
+  if (!ComputeAbsPathAndAssignPrimIdIterative(*this, _root_nodes,
+                                              /* assign_prim_id */ true,
+                                              force_assign_prim_id, &_err)) {
+    return false;
   }
 
   // TODO: Only set dirty when prim_id changed.
@@ -605,26 +622,17 @@ bool Stage::compute_absolute_prim_path_and_assign_prim_id(
 }
 
 bool Stage::compute_absolute_prim_path() {
-  Path rootPath("/", "");
-  for (Prim &root : root_prims()) {
-    if (!ComputeAbsPathAndAssignPrimIdRec(
-            *this, root, rootPath, 1, /* assign prim_id */ false,
-            /* force_assign_prim_id */ true, &_err)) {
-      return false;
-    }
+  if (!ComputeAbsPathAndAssignPrimIdIterative(*this, _root_nodes,
+                                              /* assign_prim_id */ false,
+                                              /* force_assign_prim_id */ true,
+                                              &_err)) {
+    return false;
   }
 
   return true;
 }
 
 bool Stage::add_root_prim(Prim &&prim, bool rename_prim_name) {
-
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_mutex);
-#endif
-
-
   std::string elementName = prim.element_name();
 
   if (elementName.empty()) {
@@ -690,11 +698,6 @@ bool Stage::add_root_prim(Prim &&prim, bool rename_prim_name) {
 
 bool Stage::replace_root_prim(const std::string &prim_name, Prim &&prim) {
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_mutex);
-#endif
-
   if (prim_name.empty()) {
     PUSH_ERROR_AND_RETURN(fmt::format("prim_name is empty."));
   }
@@ -753,21 +756,57 @@ bool Stage::replace_root_prim(const std::string &prim_name, Prim &&prim) {
 
 namespace {
 
-std::string DumpPrimTreeRec(const Prim &prim, uint32_t depth) {
+// Iterative version of DumpPrimTree using explicit stack
+// Avoids recursion to save stack memory for deep hierarchies
+std::string DumpPrimTreeIterative(const std::vector<Prim> &root_prims) {
   std::stringstream ss;
 
-  if (depth > 1024 * 1024 * 128) {
-    // too deep node.
-    return ss.str();
+  // Stack entries: (prim pointer, depth, child index)
+  // child_idx == SIZE_MAX means we haven't processed this node yet
+  struct StackEntry {
+    const Prim *prim;
+    uint32_t depth;
+    size_t child_idx;
+    StackEntry(const Prim *p, uint32_t d) : prim(p), depth(d), child_idx(SIZE_MAX) {}
+  };
+
+  StackVector<StackEntry, 4> stack;
+  stack.reserve(64);
+
+  // Push root prims in reverse order to process in forward order
+  for (auto it = root_prims.rbegin(); it != root_prims.rend(); ++it) {
+    stack.emplace_back(&(*it), 0);
   }
 
-  ss << pprint::Indent(depth) << "\"" << prim.element_name() << "\" "
-     << prim.absolute_path() << "\n";
-  ss << pprint::Indent(depth + 1) << fmt::format("prim_id {}", prim.prim_id())
-     << "\n";
+  constexpr uint32_t kMaxDepth = 1024 * 1024 * 128;
 
-  for (const Prim &child : prim.children()) {
-    ss << DumpPrimTreeRec(child, depth + 1);
+  while (!stack.empty()) {
+    StackEntry &entry = stack.back();
+
+    if (entry.depth > kMaxDepth) {
+      stack.pop_back();
+      continue;
+    }
+
+    if (entry.child_idx == SIZE_MAX) {
+      // First visit: output this node
+      ss << pprint::Indent(entry.depth) << "\"" << entry.prim->element_name() << "\" "
+         << entry.prim->absolute_path() << "\n";
+      ss << pprint::Indent(entry.depth + 1) << fmt::format("prim_id {}", entry.prim->prim_id())
+         << "\n";
+      entry.child_idx = 0;
+    }
+
+    // Process children
+    const auto &children = entry.prim->children();
+    if (entry.child_idx < children.size()) {
+      // Push next child and increment index
+      size_t idx = entry.child_idx++;
+      stack.emplace_back(&children[idx], entry.depth + 1);
+    } else {
+      // All children processed, pop this node
+      stack.pop_back();
+    }
   }
 
   return ss.str();
@@ -776,12 +815,543 @@ std::string DumpPrimTreeRec(const Prim &prim, uint32_t depth) {
 }  // namespace
 
 std::string Stage::dump_prim_tree() const {
-  std::stringstream ss;
+  return DumpPrimTreeIterative(_root_nodes);
+}
 
-  for (const Prim &root : root_prims()) {
-    ss << DumpPrimTreeRec(root, 0);
+namespace {
+
+// Helper: estimate deep memory for TypedTimeSamples<std::vector<E>>
+// Counts heap data inside each sample's vector
+template <typename E>
+static size_t EstimateTypedTimeSamplesVectorMemory(const TypedTimeSamples<std::vector<E>> &ts) {
+  size_t total = 0;
+  if (!ts.empty()) {
+    const auto &samples = ts.get_samples();
+    total += samples.capacity() * sizeof(typename TypedTimeSamples<std::vector<E>>::Sample);
+    for (const auto &sample : samples) {
+      total += sample.value.capacity() * sizeof(E);
+    }
   }
-  return ss.str();
+  return total;
+}
+
+// Helper: estimate deep memory of TypedAttribute<Animatable<std::vector<E>>>
+// Uses get_value_ref() to avoid copying large data.
+template <typename E>
+static size_t EstimateTypedAttributeVectorMemory(const TypedAttribute<Animatable<std::vector<E>>> &attr) {
+  const auto &opt_val = attr.get_value_ref();
+  if (!opt_val) {
+    return 0;
+  }
+  size_t total = 0;
+  const Animatable<std::vector<E>> &anim = *opt_val;
+  if (anim.has_timesamples()) {
+    total += EstimateTypedTimeSamplesVectorMemory(anim.get_timesamples());
+  } else if (anim.has_default()) {
+    // Use const reference to avoid copying large arrays
+    const std::vector<E> &val = anim.get_scalar_ref();
+    total += val.capacity() * sizeof(E);
+  }
+  return total;
+}
+
+// Estimate deep memory for GeomMesh predefined attributes
+static size_t EstimateGeomMeshDeepMemory(const GeomMesh &mesh) {
+  size_t total = 0;
+  total += EstimateTypedAttributeVectorMemory(mesh.points);
+  total += EstimateTypedAttributeVectorMemory(mesh.normals);
+  total += EstimateTypedAttributeVectorMemory(mesh.velocities);
+  total += EstimateTypedAttributeVectorMemory(mesh.faceVertexCounts);
+  total += EstimateTypedAttributeVectorMemory(mesh.faceVertexIndices);
+  return total;
+}
+
+// Estimate deep memory for GeomBasisCurves predefined attributes
+static size_t EstimateGeomBasisCurvesDeepMemory(const GeomBasisCurves &curves) {
+  size_t total = 0;
+  total += EstimateTypedAttributeVectorMemory(curves.points);
+  total += EstimateTypedAttributeVectorMemory(curves.normals);
+  total += EstimateTypedAttributeVectorMemory(curves.velocities);
+  total += EstimateTypedAttributeVectorMemory(curves.curveVertexCounts);
+  total += EstimateTypedAttributeVectorMemory(curves.widths);
+  return total;
+}
+
+// Estimate deep memory for GeomPoints predefined attributes
+static size_t EstimateGeomPointsDeepMemory(const GeomPoints &pts) {
+  size_t total = 0;
+  total += EstimateTypedAttributeVectorMemory(pts.points);
+  total += EstimateTypedAttributeVectorMemory(pts.normals);
+  total += EstimateTypedAttributeVectorMemory(pts.velocities);
+  total += EstimateTypedAttributeVectorMemory(pts.widths);
+  total += EstimateTypedAttributeVectorMemory(pts.ids);
+  return total;
+}
+
+// Dispatch to estimate deep memory (heap-allocated data inside typed attributes)
+// for known concrete prim types. Returns 0 for unknown types.
+static size_t EstimatePrimDataDeepMemory(const Prim &prim) {
+  if (auto p = prim.as<GeomMesh>()) {
+    return EstimateGeomMeshDeepMemory(*p);
+  }
+  if (auto p = prim.as<GeomBasisCurves>()) {
+    return EstimateGeomBasisCurvesDeepMemory(*p);
+  }
+  if (auto p = prim.as<GeomPoints>()) {
+    return EstimateGeomPointsDeepMemory(*p);
+  }
+  // Other types have smaller predefined attributes; props map handles extras
+  return 0;
+}
+
+// Helper: estimate memory for a Property map
+static size_t EstimatePropertyMapMemory(const std::map<std::string, Property> &props) {
+  size_t total = 0;
+  // std::map node overhead: ~48 bytes per node (key+value+pointers+color)
+  for (const auto &kv : props) {
+    total += 48; // map node overhead
+    total += kv.first.capacity();
+    total += kv.second.estimate_memory_usage();
+  }
+  return total;
+}
+
+// Helper: try to get the props map from a Prim by dispatching on its concrete type.
+// Returns the estimated memory of the props map, or 0 if the type doesn't have props.
+static size_t EstimatePrimPropsMemory(const Prim &prim) {
+  // Macro to try casting to a concrete type and estimating its props
+#define TRY_PROPS(__ty)                                         \
+  if (auto pv = prim.as<__ty>()) {                              \
+    return EstimatePropertyMapMemory(pv->props);                \
+  }
+
+  // GPrim-derived types (usdGeom)
+  TRY_PROPS(GPrim)
+  TRY_PROPS(Xform)
+  TRY_PROPS(GeomMesh)
+  TRY_PROPS(GeomBasisCurves)
+  TRY_PROPS(GeomNurbsCurves)
+  TRY_PROPS(GeomSphere)
+  TRY_PROPS(GeomCube)
+  TRY_PROPS(GeomCylinder)
+  TRY_PROPS(GeomCone)
+  TRY_PROPS(GeomCapsule)
+  TRY_PROPS(GeomPoints)
+  TRY_PROPS(GeomPointInstancer)
+  TRY_PROPS(GeomCamera)
+  TRY_PROPS(GeomSubset)
+
+  // usdShade types (Material, Shader, NodeGraph share UsdShadePrim::props)
+  TRY_PROPS(Material)
+  TRY_PROPS(Shader)
+  TRY_PROPS(NodeGraph)
+
+  // usdSkel types
+  TRY_PROPS(SkelRoot)
+  TRY_PROPS(Skeleton)
+  TRY_PROPS(SkelAnimation)
+  TRY_PROPS(BlendShape)
+
+  // usdLux light types
+  TRY_PROPS(SphereLight)
+  TRY_PROPS(DomeLight)
+  TRY_PROPS(CylinderLight)
+  TRY_PROPS(DiskLight)
+  TRY_PROPS(RectLight)
+  TRY_PROPS(DistantLight)
+  TRY_PROPS(GeometryLight)
+  TRY_PROPS(PortalLight)
+
+  // Model and Scope (generic/unknown prim types)
+  TRY_PROPS(Model)
+  TRY_PROPS(Scope)
+
+#undef TRY_PROPS
+
+  return 0;
+}
+
+// Helper: estimate memory for a single Prim (not including children)
+static size_t EstimateSinglePrimMemory(const Prim &prim) {
+  size_t total = sizeof(Prim);
+
+  // Concrete prim data stored in _data (value::Value)
+  // This now uses sizeof_stored() for MODEL types to get the correct struct size
+  total += prim.data().estimate_memory_usage();
+
+  // String members
+  total += prim.element_name().capacity();
+  total += prim.element_path().full_path_name().capacity();
+  total += prim.prim_type_name().capacity();
+  total += prim.absolute_path().full_path_name().capacity();
+  total += prim.local_path().full_path_name().capacity();
+
+  // Properties stored in the concrete prim type's props map
+  total += EstimatePrimPropsMemory(prim);
+
+  // Deep memory for predefined typed attributes (points, normals, etc.)
+  total += EstimatePrimDataDeepMemory(prim);
+
+  // Variant sets
+  for (const auto &vs : prim.variantSets()) {
+    total += 48; // map node overhead
+    total += vs.first.capacity();
+    total += sizeof(VariantSet);
+  }
+
+  return total;
+}
+
+}  // namespace
+
+size_t Stage::estimate_memory_usage() const {
+  size_t total = sizeof(Stage);
+
+  // Stage metadata
+  total += sizeof(StageMetas);
+
+  // Iteratively walk the entire Prim tree using a stack (avoid recursion for deep trees)
+  struct StackEntry {
+    const std::vector<Prim> *siblings;
+    size_t index;
+  };
+
+  std::vector<StackEntry> stack;
+  if (!_root_nodes.empty()) {
+    // Account for root vector capacity
+    total += _root_nodes.capacity() * sizeof(Prim);
+    stack.push_back({&_root_nodes, 0});
+  }
+
+  while (!stack.empty()) {
+    StackEntry &entry = stack.back();
+    if (entry.index >= entry.siblings->size()) {
+      stack.pop_back();
+      continue;
+    }
+
+    const Prim &prim = (*entry.siblings)[entry.index];
+    entry.index++;
+
+    // Estimate this prim's memory (excluding children, which we'll traverse)
+    total += EstimateSinglePrimMemory(prim);
+
+    // Push children onto the stack
+    const auto &children = prim.children();
+    if (!children.empty()) {
+      // Account for children vector capacity (the Prim objects themselves
+      // are accounted for when we visit each child)
+      total += children.capacity() * sizeof(Prim);
+      stack.push_back({&children, 0});
+    }
+  }
+
+  // Internal string storage
+  total += _warn.capacity();
+  total += _err.capacity();
+
+  // Prim ID management
+  total += _prim_id_cache.size() * (sizeof(uint64_t) + sizeof(const Prim*)) * 2;
+
+  return total;
+}
+
+// --- Actual (size-based) helpers for estimate_memory_usage_detail ---
+
+namespace {
+
+static size_t EstimatePropertyMapActualMemory(const std::map<std::string, Property> &props) {
+  size_t total = 0;
+  for (const auto &kv : props) {
+    total += 48; // map node overhead (fixed, same in both modes)
+    total += kv.first.size();
+    total += kv.second.estimate_actual_usage();
+  }
+  return total;
+}
+
+static size_t EstimatePrimPropsActualMemory(const Prim &prim) {
+#define TRY_PROPS_ACTUAL(__ty)                                       \
+  if (auto pv = prim.as<__ty>()) {                                   \
+    return EstimatePropertyMapActualMemory(pv->props);               \
+  }
+
+  TRY_PROPS_ACTUAL(GPrim)
+  TRY_PROPS_ACTUAL(Xform)
+  TRY_PROPS_ACTUAL(GeomMesh)
+  TRY_PROPS_ACTUAL(GeomBasisCurves)
+  TRY_PROPS_ACTUAL(GeomNurbsCurves)
+  TRY_PROPS_ACTUAL(GeomSphere)
+  TRY_PROPS_ACTUAL(GeomCube)
+  TRY_PROPS_ACTUAL(GeomCylinder)
+  TRY_PROPS_ACTUAL(GeomCone)
+  TRY_PROPS_ACTUAL(GeomCapsule)
+  TRY_PROPS_ACTUAL(GeomPoints)
+  TRY_PROPS_ACTUAL(GeomPointInstancer)
+  TRY_PROPS_ACTUAL(GeomCamera)
+  TRY_PROPS_ACTUAL(GeomSubset)
+  TRY_PROPS_ACTUAL(Material)
+  TRY_PROPS_ACTUAL(Shader)
+  TRY_PROPS_ACTUAL(NodeGraph)
+  TRY_PROPS_ACTUAL(SkelRoot)
+  TRY_PROPS_ACTUAL(Skeleton)
+  TRY_PROPS_ACTUAL(SkelAnimation)
+  TRY_PROPS_ACTUAL(BlendShape)
+  TRY_PROPS_ACTUAL(SphereLight)
+  TRY_PROPS_ACTUAL(DomeLight)
+  TRY_PROPS_ACTUAL(CylinderLight)
+  TRY_PROPS_ACTUAL(DiskLight)
+  TRY_PROPS_ACTUAL(RectLight)
+  TRY_PROPS_ACTUAL(DistantLight)
+  TRY_PROPS_ACTUAL(GeometryLight)
+  TRY_PROPS_ACTUAL(PortalLight)
+  TRY_PROPS_ACTUAL(Model)
+  TRY_PROPS_ACTUAL(Scope)
+
+#undef TRY_PROPS_ACTUAL
+
+  return 0;
+}
+
+// Deep memory for typed attributes using size() instead of capacity()
+template <typename E>
+static size_t EstimateTypedTimeSamplesVectorActualMemory(const TypedTimeSamples<std::vector<E>> &ts) {
+  size_t total = 0;
+  if (!ts.empty()) {
+    const auto &samples = ts.get_samples();
+    total += samples.size() * sizeof(typename TypedTimeSamples<std::vector<E>>::Sample);
+    for (const auto &sample : samples) {
+      total += sample.value.size() * sizeof(E);
+    }
+  }
+  return total;
+}
+
+template <typename E>
+static size_t EstimateTypedAttributeVectorActualMemory(const TypedAttribute<Animatable<std::vector<E>>> &attr) {
+  const auto &opt_val = attr.get_value_ref();
+  if (!opt_val) {
+    return 0;
+  }
+  size_t total = 0;
+  const Animatable<std::vector<E>> &anim = *opt_val;
+  if (anim.has_timesamples()) {
+    total += EstimateTypedTimeSamplesVectorActualMemory(anim.get_timesamples());
+  } else if (anim.has_default()) {
+    const std::vector<E> &val = anim.get_scalar_ref();
+    total += val.size() * sizeof(E);
+  }
+  return total;
+}
+
+static size_t EstimateGeomMeshDeepActualMemory(const GeomMesh &mesh) {
+  size_t total = 0;
+  total += EstimateTypedAttributeVectorActualMemory(mesh.points);
+  total += EstimateTypedAttributeVectorActualMemory(mesh.normals);
+  total += EstimateTypedAttributeVectorActualMemory(mesh.velocities);
+  total += EstimateTypedAttributeVectorActualMemory(mesh.faceVertexCounts);
+  total += EstimateTypedAttributeVectorActualMemory(mesh.faceVertexIndices);
+  return total;
+}
+
+static size_t EstimateGeomBasisCurvesDeepActualMemory(const GeomBasisCurves &curves) {
+  size_t total = 0;
+  total += EstimateTypedAttributeVectorActualMemory(curves.points);
+  total += EstimateTypedAttributeVectorActualMemory(curves.normals);
+  total += EstimateTypedAttributeVectorActualMemory(curves.velocities);
+  total += EstimateTypedAttributeVectorActualMemory(curves.curveVertexCounts);
+  total += EstimateTypedAttributeVectorActualMemory(curves.widths);
+  return total;
+}
+
+static size_t EstimateGeomPointsDeepActualMemory(const GeomPoints &pts) {
+  size_t total = 0;
+  total += EstimateTypedAttributeVectorActualMemory(pts.points);
+  total += EstimateTypedAttributeVectorActualMemory(pts.normals);
+  total += EstimateTypedAttributeVectorActualMemory(pts.velocities);
+  total += EstimateTypedAttributeVectorActualMemory(pts.widths);
+  total += EstimateTypedAttributeVectorActualMemory(pts.ids);
+  return total;
+}
+
+static size_t EstimatePrimDataDeepActualMemory(const Prim &prim) {
+  if (auto p = prim.as<GeomMesh>()) {
+    return EstimateGeomMeshDeepActualMemory(*p);
+  }
+  if (auto p = prim.as<GeomBasisCurves>()) {
+    return EstimateGeomBasisCurvesDeepActualMemory(*p);
+  }
+  if (auto p = prim.as<GeomPoints>()) {
+    return EstimateGeomPointsDeepActualMemory(*p);
+  }
+  return 0;
+}
+
+static size_t EstimateSinglePrimActualMemory(const Prim &prim) {
+  size_t total = sizeof(Prim);
+
+  total += prim.data().estimate_actual_usage();
+
+  // Strings: use size() instead of capacity()
+  total += prim.element_name().size();
+  total += prim.element_path().full_path_name().size();
+  total += prim.prim_type_name().size();
+  total += prim.absolute_path().full_path_name().size();
+  total += prim.local_path().full_path_name().size();
+
+  total += EstimatePrimPropsActualMemory(prim);
+  total += EstimatePrimDataDeepActualMemory(prim);
+
+  for (const auto &vs : prim.variantSets()) {
+    total += 48;
+    total += vs.first.size();
+    total += sizeof(VariantSet);
+  }
+
+  return total;
+}
+
+}  // namespace
+
+Stage::MemoryUsageDetail Stage::estimate_memory_usage_detail() const {
+  MemoryUsageDetail detail;
+
+  size_t alloc_base = sizeof(Stage) + sizeof(StageMetas);
+  size_t actual_base = alloc_base;
+
+  struct StackEntry {
+    const std::vector<Prim> *siblings;
+    size_t index;
+  };
+
+  std::vector<StackEntry> stack;
+  if (!_root_nodes.empty()) {
+    alloc_base += _root_nodes.capacity() * sizeof(Prim);
+    actual_base += _root_nodes.size() * sizeof(Prim);
+    stack.push_back({&_root_nodes, 0});
+  }
+
+  size_t alloc_prims = 0;
+  size_t actual_prims = 0;
+
+  while (!stack.empty()) {
+    StackEntry &entry = stack.back();
+    if (entry.index >= entry.siblings->size()) {
+      stack.pop_back();
+      continue;
+    }
+
+    const Prim &prim = (*entry.siblings)[entry.index];
+    entry.index++;
+
+    alloc_prims += EstimateSinglePrimMemory(prim);
+    actual_prims += EstimateSinglePrimActualMemory(prim);
+
+    const auto &children = prim.children();
+    if (!children.empty()) {
+      alloc_base += children.capacity() * sizeof(Prim);
+      actual_base += children.size() * sizeof(Prim);
+      stack.push_back({&children, 0});
+    }
+  }
+
+  // Internal strings
+  alloc_base += _warn.capacity() + _err.capacity();
+  actual_base += _warn.size() + _err.size();
+
+  // Prim ID cache
+  size_t cache_size = _prim_id_cache.size() * (sizeof(uint64_t) + sizeof(const Prim*)) * 2;
+  alloc_base += cache_size;
+  actual_base += cache_size;
+
+  detail.allocated_bytes = alloc_base + alloc_prims;
+  detail.actual_bytes = actual_base + actual_prims;
+
+  return detail;
+}
+
+void Stage::set_mmap_table(MMapArrayTable &&table) {
+  _mmap_table.reset(new MMapArrayTable(std::move(table)));
+}
+
+void Stage::set_mmap_source(const MMapDataSource &src) {
+  _mmap_source.reset(new MMapDataSource(src));
+}
+
+bool Stage::has_mmap_zero_copy() const {
+  return _mmap_table && _mmap_source && _mmap_source->is_valid() && !_mmap_table->empty();
+}
+
+// AOUSD Core Spec 11.3.3: Build instance prototype registry.
+// Scans all prims for instanceable=true AND composition arcs,
+// groups by InstanceKey (128-bit hash of composition arc signature).
+size_t Stage::BuildInstancePrototypes() {
+  _instance_to_prototype.clear();
+  _instance_key_to_prototype.clear();
+  _prototype_source_paths.clear();
+  _prototype_count = 0;
+
+  // If instance data was imported from CompositionGraph, use it directly
+  if (_instance_data_imported) {
+    return _prototype_count;
+  }
+
+  // Recursive helper
+  std::function<void(const Prim &, const std::string &)> scan;
+  scan = [&](const Prim &prim, const std::string &parent_path) {
+    std::string prim_path = parent_path + "/" + prim.element_name();
+
+    // Per AOUSD Spec 11.3.3: instanceable=true AND at least one composition arc
+    if (prim.IsInstance() && prim.HasCompositionArcs()) {
+      InstanceKey key;
+      if (ComputeInstanceKeyFromPrimMetas(prim.metas(), prim.prim_type_name(),
+                                          &key) &&
+          key.is_valid()) {
+        auto it = _instance_key_to_prototype.find(key);
+        if (it == _instance_key_to_prototype.end()) {
+          // New prototype
+          int idx = static_cast<int>(_prototype_count);
+          _instance_key_to_prototype[key] = idx;
+          _prototype_source_paths.push_back(prim_path);
+          _prototype_count++;
+          _instance_to_prototype[prim_path] = idx;
+        } else {
+          // Existing prototype
+          _instance_to_prototype[prim_path] = it->second;
+        }
+      }
+    }
+
+    for (const auto &child : prim.children()) {
+      scan(child, prim_path);
+    }
+  };
+
+  for (const auto &root : _root_nodes) {
+    scan(root, "");
+  }
+
+  return _prototype_count;
+}
+
+void Stage::ImportInstanceData(
+    const std::unordered_map<std::string, int> &instance_to_prototype,
+    size_t prototype_count) {
+  _instance_to_prototype = instance_to_prototype;
+  _prototype_count = prototype_count;
+  _instance_data_imported = true;
+
+  // Rebuild source paths from imported data
+  _prototype_source_paths.resize(prototype_count);
+  for (const auto &entry : _instance_to_prototype) {
+    int idx = entry.second;
+    if (idx >= 0 && static_cast<size_t>(idx) < _prototype_source_paths.size()) {
+      // First path encountered for this prototype becomes the source
+      if (_prototype_source_paths[static_cast<size_t>(idx)].empty()) {
+        _prototype_source_paths[static_cast<size_t>(idx)] = entry.first;
+      }
+    }
+  }
 }
 
 }  // namespace tinyusdz

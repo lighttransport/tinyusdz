@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <array>
 //#include <cassert>
 #include <cstdlib>
 #include <fstream>
@@ -34,6 +35,7 @@
 #include "str-util.hh"
 #include "path-util.hh"
 #include "tiny-format.hh"
+#include "typed-array.hh"
 
 //
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
@@ -48,6 +50,21 @@
 // external
 
 #include "external/fast_float/include/fast_float/fast_float.h"
+
+#define CHECK_MEMORY_USAGE(__nbytes) do { \
+  _memory_usage += (__nbytes); \
+  if (_memory_usage > _max_memory_limit_bytes) { \
+    PushError(fmt::format("Memory limit exceeded. Limit: {} MB, Current usage: {} MB", \
+      _max_memory_limit_bytes / (1024*1024), _memory_usage / (1024*1024))); \
+    return false; \
+  }  \
+  } while(0)
+
+#define REDUCE_MEMORY_USAGE(__nbytes) do { \
+  if (_memory_usage >= (__nbytes)) { \
+    _memory_usage -= (__nbytes); \
+  } \
+  } while(0)
 #include "external/jsteemann/atoi.h"
 //#include "external/simple_match/include/simple_match/simple_match.hpp"
 #include "nonstd/expected.hpp"
@@ -66,8 +83,7 @@
 #endif
 
 #include "io-util.hh"
-#include "pprinter.hh"
-#include "prim-types.hh"
+#include "core/prim-spec.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
@@ -75,6 +91,7 @@
 #include "value-types.hh"
 
 #include "common-macros.inc"
+#include "tiny-string.hh"
 
 namespace tinyusdz {
 
@@ -113,6 +130,12 @@ int parseInt(const std::string &s, int *out_result) {
   while (idx < n) {
     if ((c[idx] >= '0') && (c[idx] <= '9')) {
       int digit = int(c[idx] - '0');
+
+      // Check for overflow before multiplication
+      if (result > (std::numeric_limits<int>::max)() / 10) {
+        return negative ? -3 : -2;
+      }
+
       result = result * 10 + digit;
     } else {
       // bad input
@@ -444,6 +467,35 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::matrix4d> *value) {
   }
 
   value::matrix4d v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+// frame4d - same data layout as matrix4d
+bool AsciiParser::ReadBasicType(value::frame4d *value) {
+  if (!value) {
+    return false;
+  }
+  value::matrix4d mat;
+  if (!ParseMatrix(&mat)) {
+    return false;
+  }
+  // Copy data from matrix4d to frame4d (same layout)
+  memcpy(value->m, mat.m, sizeof(value->m));
+  return true;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::frame4d> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::frame4d v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -796,6 +848,10 @@ bool AsciiParser::ReadBasicType(nonstd::optional<bool> *value) {
 bool AsciiParser::ReadBasicType(int *value) {
   std::stringstream ss;
 
+  // Maximum digits for int32_t is 10 (2147483647)
+  // Add small buffer for safety but prevent huge strings
+  constexpr size_t kMaxDigits = 12;
+
   // pxrUSD allow floating-point value to `int` type.
   // so first try fp parsing.
   auto loc = CurrLoc();
@@ -841,6 +897,7 @@ bool AsciiParser::ReadBasicType(int *value) {
     ss << sc;
   }
 
+  size_t digit_count = has_sign ? 0 : 1;  // Count digits excluding sign
   while (!Eof()) {
     char c;
     if (!Char1(&c)) {
@@ -848,6 +905,12 @@ bool AsciiParser::ReadBasicType(int *value) {
     }
 
     if ((c >= '0') && (c <= '9')) {
+      digit_count++;
+      if (digit_count > kMaxDigits) {
+        PushError("Integer literal exceeds maximum allowed digits (" +
+                  std::to_string(kMaxDigits) + ").\n");
+        return false;
+      }
       ss << c;
     } else {
       _sr->seek_from_current(-1);
@@ -1005,10 +1068,356 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::uint4> *value) {
   return false;
 }
 
+// char (int8_t) - parse as int32_t and range check
+bool AsciiParser::ReadBasicType(char *value) {
+  int32_t v;
+  if (!ReadBasicType(&v)) {
+    return false;
+  }
+  if (v < -128 || v > 127) {
+    PushError("Value out of range for char (int8): " + std::to_string(v));
+    return false;
+  }
+  (*value) = static_cast<char>(v);
+  return true;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<char> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  char v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::char2 *value) {
+  return ParseBasicTypeTuple<char, 2>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::char2> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::char2 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::char3 *value) {
+  return ParseBasicTypeTuple<char, 3>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::char3> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::char3 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::char4 *value) {
+  return ParseBasicTypeTuple<char, 4>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::char4> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::char4 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+// uchar (uint8_t) - parse as uint32_t and range check
+bool AsciiParser::ReadBasicType(uint8_t *value) {
+  uint32_t v;
+  if (!ReadBasicType(&v)) {
+    return false;
+  }
+  if (v > 255) {
+    PushError("Value out of range for uchar (uint8): " + std::to_string(v));
+    return false;
+  }
+  (*value) = static_cast<uint8_t>(v);
+  return true;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<uint8_t> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  uint8_t v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::uchar2 *value) {
+  return ParseBasicTypeTuple<uint8_t, 2>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::uchar2> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::uchar2 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::uchar3 *value) {
+  return ParseBasicTypeTuple<uint8_t, 3>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::uchar3> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::uchar3 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::uchar4 *value) {
+  return ParseBasicTypeTuple<uint8_t, 4>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::uchar4> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::uchar4 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+// short (int16_t) - parse as int32_t and range check
+bool AsciiParser::ReadBasicType(int16_t *value) {
+  int32_t v;
+  if (!ReadBasicType(&v)) {
+    return false;
+  }
+  if (v < -32768 || v > 32767) {
+    PushError("Value out of range for short (int16): " + std::to_string(v));
+    return false;
+  }
+  (*value) = static_cast<int16_t>(v);
+  return true;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<int16_t> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  int16_t v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::short2 *value) {
+  return ParseBasicTypeTuple<int16_t, 2>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::short2> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::short2 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::short3 *value) {
+  return ParseBasicTypeTuple<int16_t, 3>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::short3> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::short3 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::short4 *value) {
+  return ParseBasicTypeTuple<int16_t, 4>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::short4> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::short4 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+// ushort (uint16_t) - parse as uint32_t and range check
+bool AsciiParser::ReadBasicType(uint16_t *value) {
+  uint32_t v;
+  if (!ReadBasicType(&v)) {
+    return false;
+  }
+  if (v > 65535) {
+    PushError("Value out of range for ushort (uint16): " + std::to_string(v));
+    return false;
+  }
+  (*value) = static_cast<uint16_t>(v);
+  return true;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<uint16_t> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  uint16_t v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::ushort2 *value) {
+  return ParseBasicTypeTuple<uint16_t, 2>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::ushort2> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::ushort2 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::ushort3 *value) {
+  return ParseBasicTypeTuple<uint16_t, 3>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::ushort3> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::ushort3 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::ushort4 *value) {
+  return ParseBasicTypeTuple<uint16_t, 4>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::ushort4> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::ushort4 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
 
 bool AsciiParser::ReadBasicType(uint32_t *value) {
   std::stringstream ss;
-  constexpr uint32_t kMaxDigits = 100;
+
+  // Maximum digits for uint32_t is 10 (4294967295)
+  // Add small buffer for safety but prevent huge strings
+  constexpr size_t kMaxDigits = 12;
 
   // head character
   bool has_sign = false;
@@ -1043,21 +1452,21 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
     return false;
   }
 
-  uint32_t digits=0;
+  size_t digit_count = has_sign ? 0 : 1;  // Count digits excluding sign
   while (!Eof()) {
-
-    if (digits > kMaxDigits) {
-      return false;
-    }
-
     char c;
     if (!Char1(&c)) {
       return false;
     }
 
     if ((c >= '0') && (c <= '9')) {
+      digit_count++;
+      if (digit_count > kMaxDigits) {
+        PushError("Integer literal exceeds maximum allowed digits (" +
+                  std::to_string(kMaxDigits) + ").\n");
+        return false;
+      }
       ss << c;
-      digits++;
     } else {
       _sr->seek_from_current(-1);
       break;
@@ -1094,14 +1503,17 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
   return true;
 #else
   // use jsteemann/atoi
-  int retcode = 0;
+  // IMPORTANT: Store the string first to avoid temporary object issues
   const char* start = str.c_str();
   const char* end = str.c_str() + str.size();
-  auto result = jsteemann::atoi<uint32_t>(
-      start, end, retcode);
+
+  int retcode = 0;
+  auto result = jsteemann::atoi<uint32_t>(start, end, retcode);
+
   DCOUT("sz = " << str.size());
   DCOUT("ss = " << str << ", retcode = " << retcode
                 << ", result = " << result);
+
   if (retcode == jsteemann::SUCCESS) {
     (*value) = result;
     return true;
@@ -1124,9 +1536,12 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
 bool AsciiParser::ReadBasicType(int64_t *value) {
   std::stringstream ss;
 
+  // Maximum digits for int64_t is 19 (9223372036854775807)
+  // Add small buffer for safety but prevent huge strings
+  constexpr size_t kMaxDigits = 21;
+
   // head character
   bool has_sign = false;
-  bool negative = false;
   {
     char sc;
     if (!Char1(&sc)) {
@@ -1136,10 +1551,8 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
 
     // sign or [0-9]
     if (sc == '+') {
-      negative = false;
       has_sign = true;
     } else if (sc == '-') {
-      negative = true;
       has_sign = true;
     } else if ((sc >= '0') && (sc <= '9')) {
       // ok
@@ -1152,11 +1565,9 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
     ss << sc;
   }
 
-  if (negative) {
-    PushError("Unsigned value expected but got '-' sign.");
-    return false;
-  }
+  // Allow negative values for signed int64 type
 
+  size_t digit_count = has_sign ? 0 : 1;  // Count digits excluding sign
   while (!Eof()) {
     char c;
     if (!Char1(&c)) {
@@ -1164,6 +1575,12 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
     }
 
     if ((c >= '0') && (c <= '9')) {
+      digit_count++;
+      if (digit_count > kMaxDigits) {
+        PushError("Integer literal exceeds maximum allowed digits (" +
+                  std::to_string(kMaxDigits) + ").\n");
+        return false;
+      }
       ss << c;
     } else {
       _sr->seek_from_current(-1);
@@ -1189,25 +1606,25 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
   // TODO(syoyo): Use ryu parse.
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
-    (*value) = std::stoull(str);
+    (*value) = std::stoll(ss.str());  // Use stoll for signed int64
   } catch (const std::invalid_argument &e) {
     (void)e;
-    PushError("Not an 64bit unsigned integer literal.\n");
+    PushError("Not an 64bit signed integer literal.\n");
     return false;
   } catch (const std::out_of_range &e) {
     (void)e;
-    PushError("64bit unsigned integer value out of range.\n");
+    PushError("64bit signed integer value out of range.\n");
     return false;
   }
 
   return true;
 #else
   // use jsteemann/atoi
-  int retcode;
   const char* start = str.c_str();
   const char* end = str.c_str() + str.size();
-  auto result = jsteemann::atoi<int64_t>(
-      start, end, retcode);
+
+  int retcode;
+  auto result = jsteemann::atoi<int64_t>(start, end, retcode);
   if (retcode == jsteemann::SUCCESS) {
     (*value) = result;
     return true;
@@ -1232,6 +1649,10 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
 bool AsciiParser::ReadBasicType(uint64_t *value) {
   std::stringstream ss;
 
+  // Maximum digits for uint64_t is 20 (18446744073709551615)
+  // Add small buffer for safety but prevent huge strings
+  constexpr size_t kMaxDigits = 22;
+
   // head character
   bool has_sign = false;
   bool negative = false;
@@ -1265,6 +1686,7 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
     return false;
   }
 
+  size_t digit_count = has_sign ? 0 : 1;  // Count digits excluding sign
   while (!Eof()) {
     char c;
     if (!Char1(&c)) {
@@ -1272,6 +1694,12 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
     }
 
     if ((c >= '0') && (c <= '9')) {
+      digit_count++;
+      if (digit_count > kMaxDigits) {
+        PushError("Integer literal exceeds maximum allowed digits (" +
+                  std::to_string(kMaxDigits) + ").\n");
+        return false;
+      }
       ss << c;
     } else {
       _sr->seek_from_current(-1);
@@ -1311,11 +1739,11 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
   return true;
 #else
   // use jsteemann/atoi
-  int retcode;
   const char* start = str.c_str();
   const char* end = str.c_str() + str.size();
-  auto result = jsteemann::atoi<uint64_t>(
-      start, end, retcode);
+
+  int retcode;
+  auto result = jsteemann::atoi<uint64_t>(start, end, retcode);
   if (retcode == jsteemann::SUCCESS) {
     (*value) = result;
     return true;
@@ -1469,21 +1897,6 @@ bool AsciiParser::ReadBasicType(value::color3d *value) {
   return false;
 }
 
-#if 0
-template <>
-bool AsciiParser::ReadBasicType(value::point4h *value) {
-  // parse as float4
-  value::float4 v;
-  if (ParseBasicTypeTuple(&v)) {
-    value->x = value::float_to_half_full(v[0]);
-    value->y = value::float_to_half_full(v[1]);
-    value->z = value::float_to_half_full(v[2]);
-    value->w = value::float_to_half_full(v[3]);
-    return true;
-  }
-  return false;
-}
-#endif
 
 bool AsciiParser::ReadBasicType(value::color4h *value) {
   // parse as float4
@@ -1569,6 +1982,7 @@ bool AsciiParser::SepBy1BasicType(const char sep,
       return false;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1598,6 +2012,7 @@ bool AsciiParser::SepBy1BasicType(const char sep,
       break;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1628,8 +2043,11 @@ bool AsciiParser::SepBy1BasicType(const char sep, std::vector<T> *result) {
       return false;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
+
+  constexpr size_t kMaxArrayElements = 1024ull * 1024ull * 128ull; // 128M elements max
 
   while (!Eof()) {
     // sep
@@ -1657,6 +2075,11 @@ bool AsciiParser::SepBy1BasicType(const char sep, std::vector<T> *result) {
       break;
     }
 
+    if (result->size() >= kMaxArrayElements) {
+      PushError(fmt::format("Array element count exceeds limit ({}).\n", kMaxArrayElements));
+      return false;
+    }
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1688,8 +2111,11 @@ bool AsciiParser::SepBy1BasicType(const char sep, const char end_symbol, std::ve
       return false;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
+
+  constexpr size_t kMaxArrayElements = 1024ull * 1024ull * 128ull; // 128M elements max
 
   while (!Eof()) {
     if (!SkipCommentAndWhitespaceAndNewline()) {
@@ -1734,8 +2160,12 @@ bool AsciiParser::SepBy1BasicType(const char sep, const char end_symbol, std::ve
       break;
     }
 
+    if (result->size() >= kMaxArrayElements) {
+      PushError(fmt::format("Array element count exceeds limit ({}).\n", kMaxArrayElements));
+      return false;
+    }
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
-
 
   }
 
@@ -1769,6 +2199,7 @@ bool AsciiParser::SepBy1TupleType(
       return false;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1792,6 +2223,11 @@ bool AsciiParser::SepBy1TupleType(
       return false;
     }
 
+    constexpr size_t kMaxArrayElements = 1024ull * 1024ull * 128ull;
+    if (result->size() >= kMaxArrayElements) {
+      PushError(fmt::format("Tuple array element count exceeds limit ({}).\n", kMaxArrayElements));
+      return false;
+    }
     if (MaybeNone()) {
       result->push_back(nonstd::nullopt);
     } else {
@@ -1799,7 +2235,8 @@ bool AsciiParser::SepBy1TupleType(
       if (!ParseBasicTypeTuple<T, N>(&value)) {
         break;
       }
-      result->push_back(value);
+      CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
+    result->push_back(value);
     }
   }
 
@@ -1831,6 +2268,7 @@ bool AsciiParser::SepBy1TupleType(const char sep,
       return false;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1859,6 +2297,12 @@ bool AsciiParser::SepBy1TupleType(const char sep,
       break;
     }
 
+    constexpr size_t kMaxArrayElements = 1024ull * 1024ull * 128ull;
+    if (result->size() >= kMaxArrayElements) {
+      PushError(fmt::format("Tuple array element count exceeds limit ({}).\n", kMaxArrayElements));
+      return false;
+    }
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1957,6 +2401,58 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<T> *result) {
 }
 
 ///
+/// Parse '[', Sep1By(','), ']' using TypedArray<T> for memory optimization
+///
+template <typename T>
+bool AsciiParser::ParseBasicTypeArray(TypedArray<T> *result) {
+  if (!Expect('[')) {
+    return false;
+  }
+
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+
+  // Empty array?
+  {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+
+    if (c == ']') {
+      result->clear();
+      return true;
+    }
+
+    Rewind(1);
+  }
+
+  // Parse elements into a temporary vector first
+  std::vector<T> temp_result;
+  if (!SepBy1BasicType<T>(',', ']', &temp_result)) {
+    return false;
+  }
+
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+
+  if (!Expect(']')) {
+    return false;
+  }
+
+  // Transfer to TypedArray for memory optimization
+  result->clear();
+  result->reserve(temp_result.size());
+  for (const auto& item : temp_result) {
+    result->push_back(item);
+  }
+  
+  return true;
+}
+
+///
 /// Parses 1 or more occurences of asset references, separated by
 /// `sep`
 /// TODO: Parse LayerOffset: e.g. `(offset = 10; scale = 2)`
@@ -1982,6 +2478,7 @@ bool AsciiParser::SepBy1BasicType(const char sep,
 
     (void)triple_deliminated;
 
+    CHECK_MEMORY_USAGE(sizeof(Reference));
     result->push_back(ref);
   }
 
@@ -2030,6 +2527,7 @@ bool AsciiParser::SepBy1BasicType(const char sep,
     }
 
     (void)triple_deliminated;
+    CHECK_MEMORY_USAGE(sizeof(Reference));
     result->push_back(ref);
   }
 
@@ -2164,6 +2662,7 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result) {
 
     (void)triple_deliminated;
     result->clear();
+    CHECK_MEMORY_USAGE(sizeof(Reference));
     result->push_back(ref);
 
   } else {
@@ -2326,8 +2825,8 @@ bool AsciiParser::MaybeNonFinite(T *out) {
   auto loc = CurrLoc();
 
   // "-inf", "inf" or "nan"
-  std::vector<char> buf(4);
-  if (!CharN(3, &buf)) {
+  std::array<char, 4> buf;
+  if (!CharN(3, &buf[0])) {
     return false;
   }
   SeekTo(loc);
@@ -2342,7 +2841,7 @@ bool AsciiParser::MaybeNonFinite(T *out) {
     return true;
   }
 
-  bool ok = CharN(4, &buf);
+  bool ok = CharN(4, &buf[0]);
   SeekTo(loc);
 
   if (ok) {
@@ -2353,6 +2852,7 @@ bool AsciiParser::MaybeNonFinite(T *out) {
     }
 
     // NOTE: support "-nan"?
+    // FYI pxrusd does not support -nan
   }
 
   return false;
@@ -2764,6 +3264,82 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::color4d> *value) {
   }
 
   value::color4d v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+// AOUSD Core Spec 6.5: Half-precision semantic alias optional overloads
+bool AsciiParser::ReadBasicType(nonstd::optional<value::normal3h> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::normal3h v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::point3h> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::point3h v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::vector3h> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::vector3h v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::color3h> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::color3h v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::color4h> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::color4h v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -3201,59 +3777,308 @@ bool AsciiParser::ReadBasicType(nonstd::optional<std::vector<T>> *value) {
 // -- end basic
 
 //
+// Optimized array parsing using tiny-string
+//
+
+bool AsciiParser::ParseFloatArrayOptimized(std::vector<float> *result) {
+  if (!result) {
+    return false;
+  }
+
+  // Save the starting position (before '[')
+  uint64_t start_loc = CurrLoc();
+
+  // Find the end of the array by matching brackets
+  if (!Expect('[')) {
+    return false;
+  }
+
+  int bracket_depth = 1;
+
+  while (bracket_depth > 0) {
+    char c;
+    if (!Char1(&c)) {
+      PushError("Unexpected end of input while parsing float array");
+      return false;
+    }
+
+    if (c == '#') {
+      // Skip comment to end of line
+      while (Char1(&c)) {
+        if (c == '\n') break;
+      }
+    } else if (c == '[') {
+      bracket_depth++;
+    } else if (c == ']') {
+      bracket_depth--;
+    }
+  }
+
+  // Get the end position (after ']')
+  uint64_t end_loc = CurrLoc();
+
+  // Create a string_view directly from the input buffer without copying
+  const char *array_start = reinterpret_cast<const char *>(_sr->data() + start_loc);
+  size_t array_len = static_cast<size_t>(end_loc - start_loc);
+  tstring_view sv(array_start, array_len);
+
+  if (!str::parse_float_array(sv, result)) {
+    PushError("Failed to parse float array with tiny-string");
+    return false;
+  }
+
+  return true;
+}
+
+bool AsciiParser::ParseDoubleArrayOptimized(std::vector<double> *result) {
+  if (!result) {
+    return false;
+  }
+
+  // Save the starting position (before '[')
+  uint64_t start_loc = CurrLoc();
+
+  // Find the end of the array by matching brackets
+  if (!Expect('[')) {
+    return false;
+  }
+
+  int bracket_depth = 1;
+
+  while (bracket_depth > 0) {
+    char c;
+    if (!Char1(&c)) {
+      PushError("Unexpected end of input while parsing double array");
+      return false;
+    }
+
+    if (c == '#') {
+      // Skip comment to end of line
+      while (Char1(&c)) {
+        if (c == '\n') break;
+      }
+    } else if (c == '[') {
+      bracket_depth++;
+    } else if (c == ']') {
+      bracket_depth--;
+    }
+  }
+
+  // Get the end position (after ']')
+  uint64_t end_loc = CurrLoc();
+
+  // Create a string_view directly from the input buffer without copying
+  const char *array_start = reinterpret_cast<const char *>(_sr->data() + start_loc);
+  size_t array_len = static_cast<size_t>(end_loc - start_loc);
+  tstring_view sv(array_start, array_len);
+
+  if (!str::parse_double_array(sv, result)) {
+    PushError("Failed to parse double array with tiny-string");
+    return false;
+  }
+
+  return true;
+}
+
+bool AsciiParser::ParseIntArrayOptimized(std::vector<int32_t> *result) {
+  if (!result) {
+    return false;
+  }
+
+  // Find the end of the array by matching brackets
+  if (!Expect('[')) {
+    return false;
+  }
+  
+  int bracket_depth = 1;
+  std::string array_str = "[";
+
+  while (bracket_depth > 0) {
+    char c;
+    if (!Char1(&c)) {
+      PushError("Unexpected end of input while parsing int array");
+      return false;
+    }
+
+    array_str += c;
+
+    if (c == '#') {
+      // Skip comment to end of line
+      while (Char1(&c)) {
+        array_str += c;
+        if (c == '\n') break;
+      }
+    } else if (c == '[') {
+      bracket_depth++;
+    } else if (c == ']') {
+      bracket_depth--;
+    }
+  }
+  
+  // Use tiny-string optimized parsing
+  tstring_view sv(array_str.c_str());
+  if (!str::parse_int_array(sv, result)) {
+    PushError("Failed to parse int array with tiny-string");
+    return false;
+  }
+
+  return true;
+}
+
+//
+// Optimized compound-type array parsing methods
+// These use zero-copy tstring_view into the input buffer + str::parse_*_array()
+//
+
+#define DEFINE_COMPOUND_ARRAY_OPTIMIZED(MethodName, TypeName, parse_func, err_msg) \
+bool AsciiParser::Parse##MethodName##ArrayOptimized(std::vector<value::TypeName> *result) { \
+  if (!result) { return false; } \
+  uint64_t start_loc = CurrLoc(); \
+  if (!Expect('[')) { return false; } \
+  int bracket_depth = 1; \
+  while (bracket_depth > 0) { \
+    char c; \
+    if (!Char1(&c)) { \
+      PushError("Unexpected end of input while parsing " err_msg " array"); \
+      return false; \
+    } \
+    if (c == '[') { bracket_depth++; } \
+    else if (c == ']') { bracket_depth--; } \
+  } \
+  uint64_t end_loc = CurrLoc(); \
+  const char *array_start = reinterpret_cast<const char *>(_sr->data() + start_loc); \
+  size_t array_len = static_cast<size_t>(end_loc - start_loc); \
+  tstring_view sv(array_start, array_len); \
+  if (!str::parse_func(sv, result)) { \
+    PushError("Failed to parse " err_msg " array with tiny-string"); \
+    return false; \
+  } \
+  return true; \
+}
+
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Float2, float2, parse_float2_array, "float2")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Float3, float3, parse_float3_array, "float3")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Float4, float4, parse_float4_array, "float4")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Double2, double2, parse_double2_array, "double2")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Double3, double3, parse_double3_array, "double3")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Double4, double4, parse_double4_array, "double4")
+
+#undef DEFINE_COMPOUND_ARRAY_OPTIMIZED
+
+// Matrix types: method name (Matrix2f) differs from value type (matrix2f)
+#define DEFINE_MATRIX_ARRAY_OPTIMIZED(MethodName, TypeName, parse_func, err_msg) \
+bool AsciiParser::Parse##MethodName##ArrayOptimized(std::vector<value::TypeName> *result) { \
+  if (!result) { return false; } \
+  uint64_t start_loc = CurrLoc(); \
+  if (!Expect('[')) { return false; } \
+  int bracket_depth = 1; \
+  while (bracket_depth > 0) { \
+    char c; \
+    if (!Char1(&c)) { \
+      PushError("Unexpected end of input while parsing " err_msg " array"); \
+      return false; \
+    } \
+    if (c == '[') { bracket_depth++; } \
+    else if (c == ']') { bracket_depth--; } \
+  } \
+  uint64_t end_loc = CurrLoc(); \
+  const char *array_start = reinterpret_cast<const char *>(_sr->data() + start_loc); \
+  size_t array_len = static_cast<size_t>(end_loc - start_loc); \
+  tstring_view sv(array_start, array_len); \
+  if (!str::parse_func(sv, result)) { \
+    PushError("Failed to parse " err_msg " array with tiny-string"); \
+    return false; \
+  } \
+  return true; \
+}
+
+DEFINE_MATRIX_ARRAY_OPTIMIZED(Matrix2f, matrix2f, parse_matrix2f_array, "matrix2f")
+DEFINE_MATRIX_ARRAY_OPTIMIZED(Matrix3f, matrix3f, parse_matrix3f_array, "matrix3f")
+DEFINE_MATRIX_ARRAY_OPTIMIZED(Matrix4f, matrix4f, parse_matrix4f_array, "matrix4f")
+DEFINE_MATRIX_ARRAY_OPTIMIZED(Matrix2d, matrix2d, parse_matrix2d_array, "matrix2d")
+DEFINE_MATRIX_ARRAY_OPTIMIZED(Matrix3d, matrix3d, parse_matrix3d_array, "matrix3d")
+DEFINE_MATRIX_ARRAY_OPTIMIZED(Matrix4d, matrix4d, parse_matrix4d_array, "matrix4d")
+
+#undef DEFINE_MATRIX_ARRAY_OPTIMIZED
+
+//
+// Template specializations for optimized parsing
+//
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<float> *result) {
+  return ParseFloatArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<double> *result) {
+  return ParseDoubleArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::float2> *result) {
+  return ParseFloat2ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::float3> *result) {
+  return ParseFloat3ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::float4> *result) {
+  return ParseFloat4ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::double2> *result) {
+  return ParseDouble2ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::double3> *result) {
+  return ParseDouble3ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::double4> *result) {
+  return ParseDouble4ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2f> *result) {
+  return ParseMatrix2fArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3f> *result) {
+  return ParseMatrix3fArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4f> *result) {
+  return ParseMatrix4fArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2d> *result) {
+  return ParseMatrix2dArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3d> *result) {
+  return ParseMatrix3dArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result) {
+  return ParseMatrix4dArrayOptimized(result);
+}
+
+//
 // Explicit template instanciations
 //
 
-#if 0
-//template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<bool>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<int32_t>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::int2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint32_t>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<int64_t>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint64_t>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::half>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::half2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::half3>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::half4>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<float>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::float2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::float3>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::float4>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<double>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::double2>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::double3>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::double4>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord2h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord2f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord2d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord3h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord3f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord3d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::point3h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::point3f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::point3d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::normal3h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::normal3f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::normal3d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::vector3h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::vector3f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::vector3d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color3h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color3f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color3d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color4h>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color4f>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color4d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix2d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix3d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix4d>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::token>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::StringData>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<std::string>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<Reference>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<Path>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::AssetPath>> *result);
-#endif
 
 template bool AsciiParser::ParseBasicTypeArray(std::vector<bool> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result);
@@ -3264,20 +4089,41 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<uint32_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint4> *result);
+// char types
+template bool AsciiParser::ParseBasicTypeArray(std::vector<char> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::char2> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::char3> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::char4> *result);
+// uchar types
+template bool AsciiParser::ParseBasicTypeArray(std::vector<uint8_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uchar2> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uchar3> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uchar4> *result);
+// short types
+template bool AsciiParser::ParseBasicTypeArray(std::vector<int16_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::short2> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::short3> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::short4> *result);
+// ushort types
+template bool AsciiParser::ParseBasicTypeArray(std::vector<uint16_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::ushort2> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::ushort3> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::ushort4> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<int64_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<uint64_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half4> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<float> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float2> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float3> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float4> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<double> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double2> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double3> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double4> *result);
+// Note: float, double, float2/3/4, double2/3/4 arrays now use optimized implementations
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<float> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float2> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float3> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float4> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<double> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double2> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double3> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double4> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord2h> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord2f> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord2d> *result);
@@ -3299,12 +4145,14 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color3d> *resu
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4h> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4f> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4d> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2f> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3f> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4f> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2d> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3d> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result);
+// Note: matrix arrays now use optimized implementations
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2f> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3f> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4f> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2d> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3d> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::frame4d> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quath> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatf> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatd> *result);
@@ -3314,6 +4162,88 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<std::string> *result)
 //template bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result);
 //template bool AsciiParser::ParseBasicTypeArray(std::vector<Path> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::AssetPath> *result);
+
+// 
+// TypedArray template instantiations for memory optimization
+//
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<bool> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<int32_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::int2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::int3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::int4> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<uint32_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::uint2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::uint3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::uint4> *result);
+// char types
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<char> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::char2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::char3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::char4> *result);
+// uchar types
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<uint8_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::uchar2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::uchar3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::uchar4> *result);
+// short types
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<int16_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::short2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::short3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::short4> *result);
+// ushort types
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<uint16_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::ushort2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::ushort3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::ushort4> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<int64_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<uint64_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::half> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::half2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::half3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::half4> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<float> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::float2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::float3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::float4> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<double> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::double2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::double3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::double4> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::texcoord2h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::texcoord2f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::texcoord2d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::texcoord3h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::texcoord3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::texcoord3d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::point3h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::point3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::point3d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::normal3h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::normal3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::normal3d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::vector3h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::vector3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::vector3d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::color3h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::color3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::color3d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::color4h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::color4f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::color4d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix2f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix4f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix2d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix3d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix4d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::frame4d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::quath> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::quatf> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::quatd> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::token> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::StringData> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<std::string> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::AssetPath> *result);
 
 
 }  // namespace ascii

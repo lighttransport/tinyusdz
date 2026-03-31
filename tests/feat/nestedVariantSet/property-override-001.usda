@@ -1,0 +1,82 @@
+#usda 1.0
+(
+    doc = "Nested variantSet with property overrides"
+)
+
+def Xform "Vehicle" (
+    variantSets = ["type"]
+)
+{
+    variantSet "type" = {
+        "car" {
+            variantSet "color" = {
+                "red" {
+                    def Xform "CarBody"
+                    {
+                        color3f color = (1.0, 0.0, 0.0)
+                        string name = "RedCar"
+
+                        def Mesh "Body"
+                        {
+                            color3f[] primvars:displayColor = [(1.0, 0.0, 0.0)]
+                        }
+                    }
+                }
+                "blue" {
+                    def Xform "CarBody"
+                    {
+                        color3f color = (0.0, 0.0, 1.0)
+                        string name = "BlueCar"
+
+                        def Mesh "Body"
+                        {
+                            color3f[] primvars:displayColor = [(0.0, 0.0, 1.0)]
+                        }
+                    }
+                }
+                "green" {
+                    def Xform "CarBody"
+                    {
+                        color3f color = (0.0, 1.0, 0.0)
+                        string name = "GreenCar"
+
+                        def Mesh "Body"
+                        {
+                            color3f[] primvars:displayColor = [(0.0, 1.0, 0.0)]
+                        }
+                    }
+                }
+            }
+        }
+        "truck" {
+            variantSet "color" = {
+                "red" {
+                    def Xform "TruckBody"
+                    {
+                        color3f color = (0.8, 0.0, 0.0)
+                        string name = "RedTruck"
+                        double scale = 1.5
+
+                        def Mesh "Body"
+                        {
+                            color3f[] primvars:displayColor = [(0.8, 0.0, 0.0)]
+                        }
+                    }
+                }
+                "yellow" {
+                    def Xform "TruckBody"
+                    {
+                        color3f color = (1.0, 1.0, 0.0)
+                        string name = "YellowTruck"
+                        double scale = 1.5
+
+                        def Mesh "Body"
+                        {
+                            color3f[] primvars:displayColor = [(1.0, 1.0, 0.0)]
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,11 @@
+#usda 1.0
+
+class Scope "BaseClass" {
+    custom int baseValue = 42
+    custom string baseName = "from_base"
+}
+
+def Scope "Derived" (
+    inherits = </BaseClass>
+) {
+}

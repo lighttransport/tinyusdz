@@ -6,16 +6,26 @@
 
 #pragma once
 
-// #include <functional>
+#include <functional>
 #include <stdio.h>
 
 #include <stack>
+#include <unordered_map>
+#include <unordered_set>
 
 // #include "external/better-enums/enum.h"
 #include "composition.hh"
-#include "prim-types.hh"
+#include "core/prim-spec.hh"  // PrimSpec, Property, composition-types (transitively: prim-enums, prim-metas, variant-types)
 #include "stream-reader.hh"
+#include "string-similarity.hh"
 #include "tinyusdz.hh"
+#include "typed-array.hh"
+
+// Configuration flag for enabling fix suggestions in parse errors
+// When enabled, parser will suggest similar keywords/identifiers for unrecognized tokens
+#ifndef TINYUSDZ_ENABLE_SUGGEST_FIX
+#define TINYUSDZ_ENABLE_SUGGEST_FIX 1
+#endif
 
 //
 #ifdef __clang__
@@ -52,20 +62,51 @@ struct PathIdentifier : std::string {
   // using std::string;
 };
 
-// Parser option.
-// For strict configuration(e.g. read USDZ on Mobile), should disallow unknown
-// items.
+///
+/// Progress callback function type.
+/// @param[in] progress Progress value between 0.0 and 1.0
+/// @param[in] userptr User-provided pointer for custom data
+/// @return true to continue parsing, false to cancel
+///
+using ProgressCallback = std::function<bool(float progress, void *userptr)>;
+
+///
+/// Parser configuration options.
+/// For strict configurations (e.g. reading USDZ on mobile devices), 
+/// should disallow unknown items for security and performance.
+///
 struct AsciiParserOption {
-  bool allow_unknown_prim{true};
-  bool allow_unknown_apiSchema{true};
-  bool strict_allowedToken_check{false};
+  bool allow_unknown_prim{true};         ///< Allow parsing unknown prim types
+  bool allow_unknown_apiSchema{true};    ///< Allow parsing unknown API schemas
+  bool strict_allowedToken_check{false}; ///< Enforce strict token validation
 };
 
 ///
 /// Test if input file is USDA ascii format.
 ///
+/// @param[in] filename Path to file to check
+/// @param[in] max_filesize Maximum file size to read (0 = no limit)
+/// @return true if file is in USDA ASCII format
+///
 bool IsUSDA(const std::string &filename, size_t max_filesize = 0);
 
+///
+/// Hand-written USDA (USD ASCII) format parser.
+/// This parser provides secure, dependency-free parsing of USD ASCII files
+/// with comprehensive error handling and configurable strictness levels.
+///
+/// Usage:
+/// ```cpp
+/// tinyusdz::StreamReader reader(filename);
+/// tinyusdz::ascii::AsciiParser parser(&reader);
+/// tinyusdz::Layer layer;
+/// if (parser.Parse(&layer)) {
+///   // Success - use the layer
+/// } else {
+///   std::cerr << "Parse error: " << parser.GetError() << std::endl;
+/// }
+/// ```
+///
 class AsciiParser {
  public:
   // TODO: refactor
@@ -78,7 +119,7 @@ class AsciiParser {
         strings;  // String only unregistered metadata.
   };
 
-  // TODO: Unifity class with StageMetas in prim-types.hh
+  // TODO: Unifity class with StageMetas in core/layer-types.hh
   struct StageMetas {
     ///
     /// Predefined Stage metas
@@ -98,7 +139,17 @@ class AsciiParser {
     nonstd::optional<value::token> playbackMode;  // 'none' or 'loop'
 
     std::map<std::string, MetaVariable> customLayerData;  // `customLayerData`.
+    bool customLayerDataAuthored{false};  // Track if customLayerData was explicitly authored
     value::StringData comment;  // String only comment string.
+
+    // AOUSD Core Spec fields
+    nonstd::optional<value::AssetPath> colorConfiguration;
+    nonstd::optional<value::token> colorManagementSystem;
+    nonstd::optional<std::string> owner;
+    nonstd::optional<bool> hasOwnedSubLayers;
+    nonstd::optional<std::map<std::string, MetaVariable>> expressionVariables;
+    // relocates: source path -> target path mappings
+    std::vector<std::pair<Path, Path>> relocates;
   };
 
   struct ParseState {
@@ -110,16 +161,157 @@ class AsciiParser {
     int col{0};
   };
 
-  struct ErrorDiagnostic {
-    std::string err;
+  struct StoredCursor {
     Cursor cursor;
   };
 
-  void PushError(const std::string &msg) {
+  struct CursorStore {
+    std::unordered_map<std::string, StoredCursor> layer_metas;
+    std::unordered_map<std::string, StoredCursor> prims;
+    std::unordered_map<std::string, StoredCursor> prim_attrs;
+    std::unordered_map<std::string, StoredCursor> properties;
+
+    static std::string MakePropertyKey(const std::string &prim_path,
+                                       const std::string &property_name) {
+      return prim_path + "." + property_name;
+    }
+
+    void Clear() {
+      layer_metas.clear();
+      prims.clear();
+      prim_attrs.clear();
+      properties.clear();
+    }
+
+    void StoreLayerMeta(const std::string &meta_name, const Cursor &cursor) {
+      layer_metas[meta_name] = StoredCursor{cursor};
+    }
+
+    void StorePrim(const std::string &prim_path, const Cursor &cursor) {
+      prims[prim_path] = StoredCursor{cursor};
+    }
+
+    void StorePrimAttr(const std::string &prim_path,
+                       const std::string &property_name,
+                       const Cursor &cursor) {
+      prim_attrs[MakePropertyKey(prim_path, property_name)] = StoredCursor{cursor};
+    }
+
+    void StoreProperty(const std::string &prim_path,
+                       const std::string &property_name,
+                       const Cursor &cursor) {
+      properties[MakePropertyKey(prim_path, property_name)] = StoredCursor{cursor};
+    }
+
+    const StoredCursor *FindLayerMeta(const std::string &meta_name) const {
+      auto it = layer_metas.find(meta_name);
+      return (it != layer_metas.end()) ? &it->second : nullptr;
+    }
+
+    const StoredCursor *FindPrim(const std::string &prim_path) const {
+      auto it = prims.find(prim_path);
+      return (it != prims.end()) ? &it->second : nullptr;
+    }
+
+    const StoredCursor *FindPrimAttr(const std::string &prim_path,
+                                     const std::string &property_name) const {
+      auto it = prim_attrs.find(MakePropertyKey(prim_path, property_name));
+      return (it != prim_attrs.end()) ? &it->second : nullptr;
+    }
+
+    const StoredCursor *FindProperty(const std::string &prim_path,
+                                     const std::string &property_name) const {
+      auto it = properties.find(MakePropertyKey(prim_path, property_name));
+      return (it != properties.end()) ? &it->second : nullptr;
+    }
+  };
+
+  /// Error type enumeration for categorizing parser errors
+  enum class ErrorType {
+    SyntaxError,      ///< Parse/syntax error
+    SemanticError,    ///< Type or value error
+    ValidationError,  ///< Constraint violation
+    IOError,          ///< File access error
+    UnknownError      ///< Uncategorized error
+  };
+
+  /// Error recovery suggestion enumeration (Priority 4c)
+  enum class ErrorRecoveryHint {
+    NoHint,                     ///< No suggestion available
+    CheckBracketMatching,      ///< Check if brackets/parens are balanced
+    CheckQuotes,               ///< Check if strings are properly quoted
+    CheckTypeName,             ///< Verify type name is correct
+    CheckAttributeName,        ///< Verify attribute name syntax
+    CheckIndentation,          ///< Check file indentation
+    CheckLineEndings           ///< Check for mixed line endings
+  };
+
+  /// Error position mode - whether cursor position is exact or approximate
+  enum class ErrorPositionMode {
+    Exact,  ///< Exact cursor position is known
+    Near    ///< Approximate position (error happened near this location)
+  };
+
+  struct ErrorDiagnostic {
+    std::string err;
+    Cursor cursor;
+    ErrorType type{ErrorType::UnknownError};  ///< Error category
+    ErrorRecoveryHint hint{ErrorRecoveryHint::NoHint};  ///< Recovery suggestion (Priority 4c)
+    std::string suggestion;  ///< Suggested fix for the error (Priority 5)
+    ErrorPositionMode position_mode{ErrorPositionMode::Exact};  ///< Whether position is exact or approximate
+
+    /// Get a human-readable error type name
+    const char* TypeName() const {
+      switch (type) {
+        case ErrorType::SyntaxError:
+          return "Syntax Error";
+        case ErrorType::SemanticError:
+          return "Semantic Error";
+        case ErrorType::ValidationError:
+          return "Validation Error";
+        case ErrorType::IOError:
+          return "IO Error";
+        case ErrorType::UnknownError:
+          return "Error";
+      }
+      return "Error";  // Unreachable but satisfies compilers
+    }
+
+    /// Get human-readable recovery hint (Priority 4c)
+    const char* GetHint() const {
+      switch (hint) {
+        case ErrorRecoveryHint::NoHint:
+          return "";
+        case ErrorRecoveryHint::CheckBracketMatching:
+          return "Check bracket/parenthesis matching";
+        case ErrorRecoveryHint::CheckQuotes:
+          return "Check string quote matching";
+        case ErrorRecoveryHint::CheckTypeName:
+          return "Verify type name is valid USD type";
+        case ErrorRecoveryHint::CheckAttributeName:
+          return "Verify attribute name follows USD naming conventions";
+        case ErrorRecoveryHint::CheckIndentation:
+          return "Check file indentation for consistency";
+        case ErrorRecoveryHint::CheckLineEndings:
+          return "Check for mixed line endings (LF vs CRLF)";
+      }
+      return "";
+    }
+  };
+
+  void PushError(const std::string &msg,
+                 ErrorType type = ErrorType::UnknownError,
+                 ErrorRecoveryHint hint = ErrorRecoveryHint::NoHint,
+                 const std::string &suggestion = "",
+                 ErrorPositionMode position_mode = ErrorPositionMode::Exact) {
     ErrorDiagnostic diag;
     diag.cursor.row = _curr_cursor.row;
     diag.cursor.col = _curr_cursor.col;
     diag.err = msg;
+    diag.type = type;
+    diag.hint = hint;
+    diag.suggestion = suggestion;
+    diag.position_mode = position_mode;
     err_stack.push(diag);
   }
 
@@ -130,11 +322,19 @@ class AsciiParser {
     }
   }
 
-  void PushWarn(const std::string &msg) {
+  void PushWarn(const std::string &msg,
+                ErrorType type = ErrorType::UnknownError,
+                ErrorRecoveryHint hint = ErrorRecoveryHint::NoHint,
+                const std::string &suggestion = "",
+                ErrorPositionMode position_mode = ErrorPositionMode::Exact) {
     ErrorDiagnostic diag;
     diag.cursor.row = _curr_cursor.row;
     diag.cursor.col = _curr_cursor.col;
     diag.err = msg;
+    diag.type = type;
+    diag.hint = hint;
+    diag.suggestion = suggestion;
+    diag.position_mode = position_mode;
     warn_stack.push(diag);
   }
 
@@ -185,8 +385,23 @@ class AsciiParser {
     //}
   };
 
+  // Use multimap to support multiple listop qualifiers per composition arc
+  // (e.g., both "delete references" and "prepend references" on same prim)
   using PrimMetaMap =
-      std::map<std::string, std::pair<ListEditQual, MetaVariable>>;
+      std::multimap<std::string, std::pair<ListEditQual, MetaVariable>>;
+
+  struct VariantContent;
+
+  //
+  // variantSet "keyname" = {
+  //    "key0" : { ... }
+  //    "key1" : { ... }
+  // }
+  // 
+  struct VariantSetContent {
+    int64_t variantPrimIdx{-1}; // Pseudo Prim Idx for `variantSet`. -1 = no variantSet node
+    std::map<std::string, VariantContent> variantSets;
+  };
 
   struct VariantContent {
     PrimMetaMap metas;
@@ -195,12 +410,14 @@ class AsciiParser {
     std::vector<value::token> properties;
 
     // for nested `variantSet` 
-    std::map<std::string, std::map<std::string, VariantContent>> variantSets;
+    std::map<std::string, VariantSetContent> variantSets;
   };
+
+  
 
   // TODO: Use std::vector instead of std::map?
   using VariantSetList =
-      std::map<std::string, std::map<std::string, VariantContent>>;
+      std::map<std::string, VariantSetContent>;
 
   AsciiParser();
   AsciiParser(tinyusdz::StreamReader *sr);
@@ -257,7 +474,7 @@ class AsciiParser {
           const Path &full_path, const Specifier spec,
           const std::string &primTypeName, const Path &prim_name,
           const int64_t primIdx, const int64_t parentPrimIdx,
-          const std::map<std::string, Property> &properties,
+          std::map<std::string, Property> &properties,
           const PrimMetaMap &in_meta, const VariantSetList &in_variantSetList)>;
 
   ///
@@ -303,6 +520,35 @@ class AsciiParser {
   /// Set ASCII data stream
   ///
   void SetStream(tinyusdz::StreamReader *sr);
+
+  const CursorStore &GetCursorStore() const { return _cursor_store; }
+  std::string FormatLayerMetaSourceDiagnostic(const std::string &meta_name,
+                                              int column_width = 80) const;
+  std::string FormatPrimSourceDiagnostic(const std::string &prim_path,
+                                         int column_width = 80) const;
+  std::string FormatPrimAttrSourceDiagnostic(const std::string &prim_path,
+                                             const std::string &property_name,
+                                             int column_width = 80) const;
+  std::string FormatPropertySourceDiagnostic(const std::string &prim_path,
+                                             const std::string &property_name,
+                                             int column_width = 80) const;
+
+  ///
+  /// Set memory limit in MB
+  ///
+  void SetMaxMemoryLimit(size_t limit_mb) {
+    _max_memory_limit_bytes = limit_mb * 1024ull * 1024ull;
+  }
+
+  ///
+  /// Set progress callback function
+  /// @param[in] callback Progress callback function
+  /// @param[in] userptr User-provided pointer for custom data
+  ///
+  void SetProgressCallback(ProgressCallback callback, void *userptr = nullptr) {
+    _progress_callback = callback;
+    _progress_userptr = userptr;
+  }
 
   ///
   /// Check if header data is USDA
@@ -377,6 +623,26 @@ class AsciiParser {
   bool ReadBasicType(nonstd::optional<value::uint2> *value);
   bool ReadBasicType(nonstd::optional<value::uint3> *value);
   bool ReadBasicType(nonstd::optional<value::uint4> *value);
+  // char types (int8_t)
+  bool ReadBasicType(nonstd::optional<char> *value);
+  bool ReadBasicType(nonstd::optional<value::char2> *value);
+  bool ReadBasicType(nonstd::optional<value::char3> *value);
+  bool ReadBasicType(nonstd::optional<value::char4> *value);
+  // uchar types (uint8_t)
+  bool ReadBasicType(nonstd::optional<uint8_t> *value);
+  bool ReadBasicType(nonstd::optional<value::uchar2> *value);
+  bool ReadBasicType(nonstd::optional<value::uchar3> *value);
+  bool ReadBasicType(nonstd::optional<value::uchar4> *value);
+  // short types (int16_t)
+  bool ReadBasicType(nonstd::optional<int16_t> *value);
+  bool ReadBasicType(nonstd::optional<value::short2> *value);
+  bool ReadBasicType(nonstd::optional<value::short3> *value);
+  bool ReadBasicType(nonstd::optional<value::short4> *value);
+  // ushort types (uint16_t)
+  bool ReadBasicType(nonstd::optional<uint16_t> *value);
+  bool ReadBasicType(nonstd::optional<value::ushort2> *value);
+  bool ReadBasicType(nonstd::optional<value::ushort3> *value);
+  bool ReadBasicType(nonstd::optional<value::ushort4> *value);
   bool ReadBasicType(nonstd::optional<int64_t> *value);
   bool ReadBasicType(nonstd::optional<uint64_t> *value);
   bool ReadBasicType(nonstd::optional<float> *value);
@@ -411,6 +677,7 @@ class AsciiParser {
   bool ReadBasicType(nonstd::optional<value::matrix2d> *value);
   bool ReadBasicType(nonstd::optional<value::matrix3d> *value);
   bool ReadBasicType(nonstd::optional<value::matrix4d> *value);
+  bool ReadBasicType(nonstd::optional<value::frame4d> *value);
   bool ReadBasicType(nonstd::optional<value::texcoord2h> *value);
   bool ReadBasicType(nonstd::optional<value::texcoord2f> *value);
   bool ReadBasicType(nonstd::optional<value::texcoord2d> *value);
@@ -443,6 +710,26 @@ class AsciiParser {
   bool ReadBasicType(value::uint2 *value);
   bool ReadBasicType(value::uint3 *value);
   bool ReadBasicType(value::uint4 *value);
+  // char types (int8_t)
+  bool ReadBasicType(char *value);
+  bool ReadBasicType(value::char2 *value);
+  bool ReadBasicType(value::char3 *value);
+  bool ReadBasicType(value::char4 *value);
+  // uchar types (uint8_t)
+  bool ReadBasicType(uint8_t *value);
+  bool ReadBasicType(value::uchar2 *value);
+  bool ReadBasicType(value::uchar3 *value);
+  bool ReadBasicType(value::uchar4 *value);
+  // short types (int16_t)
+  bool ReadBasicType(int16_t *value);
+  bool ReadBasicType(value::short2 *value);
+  bool ReadBasicType(value::short3 *value);
+  bool ReadBasicType(value::short4 *value);
+  // ushort types (uint16_t)
+  bool ReadBasicType(uint16_t *value);
+  bool ReadBasicType(value::ushort2 *value);
+  bool ReadBasicType(value::ushort3 *value);
+  bool ReadBasicType(value::ushort4 *value);
   bool ReadBasicType(int64_t *value);
   bool ReadBasicType(uint64_t *value);
   bool ReadBasicType(float *value);
@@ -483,6 +770,7 @@ class AsciiParser {
   bool ReadBasicType(value::matrix2d *value);
   bool ReadBasicType(value::matrix3d *value);
   bool ReadBasicType(value::matrix4d *value);
+  bool ReadBasicType(value::frame4d *value);
   bool ReadBasicType(value::StringData *value);
   bool ReadBasicType(std::string *value);
   bool ReadBasicType(value::token *value);
@@ -554,6 +842,35 @@ class AsciiParser {
   bool ParseBasicTypeArray(std::vector<T> *result);
 
   ///
+  /// Parse '[', Sep1By(','), ']' using TypedArray<T> for memory optimization
+  ///
+  template <typename T>
+  bool ParseBasicTypeArray(TypedArray<T> *result);
+
+  ///
+  /// Optimized float array parsing using tiny-string
+  ///
+  bool ParseFloatArrayOptimized(std::vector<float> *result);
+  bool ParseDoubleArrayOptimized(std::vector<double> *result);
+  bool ParseIntArrayOptimized(std::vector<int32_t> *result);
+
+  ///
+  /// Optimized compound-type array parsing using tiny-string
+  ///
+  bool ParseFloat2ArrayOptimized(std::vector<value::float2> *result);
+  bool ParseFloat3ArrayOptimized(std::vector<value::float3> *result);
+  bool ParseFloat4ArrayOptimized(std::vector<value::float4> *result);
+  bool ParseDouble2ArrayOptimized(std::vector<value::double2> *result);
+  bool ParseDouble3ArrayOptimized(std::vector<value::double3> *result);
+  bool ParseDouble4ArrayOptimized(std::vector<value::double4> *result);
+  bool ParseMatrix2fArrayOptimized(std::vector<value::matrix2f> *result);
+  bool ParseMatrix3fArrayOptimized(std::vector<value::matrix3f> *result);
+  bool ParseMatrix4fArrayOptimized(std::vector<value::matrix4f> *result);
+  bool ParseMatrix2dArrayOptimized(std::vector<value::matrix2d> *result);
+  bool ParseMatrix3dArrayOptimized(std::vector<value::matrix3d> *result);
+  bool ParseMatrix4dArrayOptimized(std::vector<value::matrix4d> *result);
+
+  ///
   /// Parses 1 or more occurences of value with basic type 'T', separated by
   /// `sep`
   ///
@@ -587,6 +904,18 @@ class AsciiParser {
 
   bool ParseDictElement(std::string *out_key, MetaVariable *out_var);
   bool ParseDict(std::map<std::string, MetaVariable> *out_dict);
+
+  ///
+  /// Parse TimeSample data with concrete type for optimized binary storage.
+  /// This template function is optimized for binary-serializable types and uses direct
+  /// storage without value::Value wrapping for better performance.
+  ///
+  /// @tparam T The concrete type for time sample values
+  /// @param ts Output TimeSamples container
+  /// @return true if parsing succeeded with optimized path, false otherwise
+  ///
+  template<typename T>
+  bool ParseTypedTimeSamples(value::TimeSamples *ts);
 
   ///
   /// Parse TimeSample data(scalar type) and store it to type-erased data
@@ -632,17 +961,6 @@ class AsciiParser {
   ///
   bool ParseAssetIdentifier(value::AssetPath *out, bool *triple_deliminated);
 
-#if 0
-  ///
-  ///
-  ///
-  std::string GetDefaultPrimName() const;
-
-  ///
-  /// Get parsed toplevel "def" nodes(GPrim)
-  ///
-  std::vector<GPrim> GetGPrims();
-#endif
   class PrimIterator;
   using const_iterator = PrimIterator;
   const_iterator begin() const;
@@ -658,16 +976,47 @@ class AsciiParser {
   ///
   std::string GetWarning();
 
-#if 0
-  // Return the flag if the .usda is read from `references`
-  bool IsReferenced() { return _referenced; }
+  ///
+  /// Get error message with context showing surrounding source lines.
+  /// @param[in] context_lines Number of lines of context to show around error
+  /// (default 2)
+  /// @return Formatted error message with source code context and caret indicator
+  ///
+  std::string GetErrorWithContext(int context_lines = 2);
 
-  // Return the flag if the .usda is read from `subLayers`
-  bool IsSubLayered() { return _sub_layered; }
+  ///
+  /// Get warning message with context showing surrounding source lines.
+  /// @param[in] context_lines Number of lines of context to show around warning
+  /// (default 2)
+  /// @return Formatted warning message with source code context and caret
+  /// indicator
+  ///
+  std::string GetWarningWithContext(int context_lines = 2);
 
-  // Return the flag if the .usda is read from `payload`
-  bool IsPayloaded() { return _payloaded; }
-#endif
+  ///
+  /// Get error message with aggressive deduplication and recovery hints (Priority 4b & 4c).
+  /// Groups similar errors and provides recovery suggestions based on error type.
+  /// @param[in] show_hints If true, include recovery hints for each error type
+  /// @return Formatted error messages with deduplication and optional hints
+  ///
+  std::string GetErrorWithHints(bool show_hints = true);
+
+  ///
+  /// Get warning message with aggressive deduplication and recovery hints (Priority 4b & 4c).
+  /// @param[in] show_hints If true, include recovery hints for each warning type
+  /// @return Formatted warning messages with deduplication and optional hints
+  ///
+  std::string GetWarningWithHints(bool show_hints = true);
+
+  ///
+  /// Get error message with source code context including surrounding lines.
+  /// Shows actual file content with caret (^) and visual indicators (~~~~).
+  /// @param[in] filename Path to the source USDA file (for context retrieval)
+  /// @param[in] context_lines Number of lines of context to show around error
+  /// @return Formatted error messages with source code context and visual indicators
+  ///
+  std::string GetErrorWithSourceContext(const std::string& filename, int context_lines = 2, int column_width = 40);
+
 
   // Return true if the .udsa is read in the top layer(stage)
   bool IsToplevel() {
@@ -751,6 +1100,7 @@ class AsciiParser {
 
   bool Char1(char *c);
   bool CharN(size_t n, std::vector<char> *nc);
+  bool CharN(size_t n, char *dst); // assume dest has n >= bytes
 
   bool Rewind(size_t offset);
   uint64_t CurrLoc();
@@ -779,14 +1129,22 @@ class AsciiParser {
                   const int64_t parentPrimIdx, const uint32_t depth,
                   const bool in_variant = false);
 
-  // Parse `varianntSet` stmt
+  // Parse `variantSet` stmt
   bool ParseVariantSet(const int64_t primIdx, const int64_t parentPrimIdx,
                        const uint32_t depth,
-                       std::map<std::string, VariantContent> *variantSetMap);
+                       VariantSetContent *variantSetContent);
 
   // --------------------------------------------
 
  private:
+  ///
+  /// Generate a fix suggestion for an invalid token (Priority 5).
+  /// Uses string similarity matching to suggest corrections.
+  /// @param[in] invalid_token The unrecognized token
+  /// @return Suggestion string (e.g. "Did you mean 'def'?"), or empty if no match
+  ///
+  std::string GenerateSuggestion(const std::string& invalid_token);
+
   ///
   /// Do common setups. Assume called in ctor.
   ///
@@ -807,6 +1165,18 @@ class AsciiParser {
   nonstd::optional<VariableDef> GetPropMetaDefinition(const std::string &arg);
 
   std::string GetCurrentPrimPath();
+  void RecordLayerMetaCursor(const std::string &meta_name, const Cursor &cursor);
+  void RecordPrimCursor(const std::string &prim_path, const Cursor &cursor);
+  void RecordPrimAttrCursor(const std::string &prim_path,
+                            const std::string &property_name,
+                            const Cursor &cursor);
+  void RecordPropertyCursor(const std::string &prim_path,
+                            const std::string &property_name,
+                            const Cursor &cursor);
+  std::string FormatStoredCursorDiagnostic(const StoredCursor *stored,
+                                           int column_width) const;
+  std::string FormatCursorDiagnostic(const Cursor &cursor,
+                                     int column_width) const;
   bool PrimPathStackDepth() { return _path_stack.size(); }
   void PushPrimPath(const std::string &abs_path) {
     // TODO: validate `abs_path` is really absolute full path.
@@ -825,22 +1195,23 @@ class AsciiParser {
   std::stack<std::string> _path_stack;
 
   Cursor _curr_cursor;
+  CursorStore _cursor_store;
 
   // Supported Prim types
-  std::set<std::string> _supported_prim_types;
-  std::set<std::string> _supported_prim_attr_types;
+  std::unordered_set<std::string> _supported_prim_types;
+  std::unordered_set<std::string> _supported_prim_attr_types;
 
   // Supported API schemas
-  std::set<std::string> _supported_api_schemas;
+  std::unordered_set<std::string> _supported_api_schemas;
 
   // Supported metadataum for Stage
-  std::map<std::string, VariableDef> _supported_stage_metas;
+  std::unordered_map<std::string, VariableDef> _supported_stage_metas;
 
   // Supported metadataum for Prim.
-  std::map<std::string, VariableDef> _supported_prim_metas;
+  std::unordered_map<std::string, VariableDef> _supported_prim_metas;
 
   // Supported metadataum for Property(Attribute and Relation).
-  std::map<std::string, VariableDef> _supported_prop_metas;
+  std::unordered_map<std::string, VariableDef> _supported_prop_metas;
 
   std::stack<ErrorDiagnostic> err_stack;
   std::stack<ErrorDiagnostic> warn_stack;
@@ -861,19 +1232,33 @@ class AsciiParser {
 
   StageMetas _stage_metas;
 
+  // Memory tracking
+  uint64_t _max_memory_limit_bytes{128ull * 1024ull * 1024ull * 1024ull}; // Default 128GB
+  uint64_t _memory_usage{0};
+  uint32_t _dict_nesting_depth{0}; ///< Tracks ParseDict recursion depth
+
   //
   // Callbacks
   //
   PrimIdxAssignFunctin _prim_idx_assign_fun;
   StageMetaProcessFunction _stage_meta_process_fun;
   // PrimMetaProcessFunction _prim_meta_process_fun;
-  std::map<std::string, PrimConstructFunction> _prim_construct_fun_map;
-  std::map<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
+  std::unordered_map<std::string, PrimConstructFunction> _prim_construct_fun_map;
+  std::unordered_map<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
 
   bool _primspec_mode{false};
 
   // For composition. PrimSpec is typeless so single callback function only.
   PrimSpecFunction _primspec_fun{nullptr};
+
+  // Progress callback
+  ProgressCallback _progress_callback;  // Default-initialized (empty)
+  void *_progress_userptr{nullptr};
+
+  ///
+  /// Call progress callback and return false if parsing should be cancelled
+  ///
+  bool ReportProgress();
 };
 
 ///

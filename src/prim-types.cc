@@ -5,8 +5,11 @@
 #include <limits>
 #include <numeric>
 //
-#include "prim-types.hh"
+#include "core/prim.hh"
+#include "core/prim-spec.hh"
+#include "core/model-scope.hh"  // Model, Scope
 #include "str-util.hh"
+#include "tiny-container.hh"
 #include "tiny-format.hh"
 //
 #include "usdGeom.hh"
@@ -15,7 +18,7 @@
 #include "usdSkel.hh"
 //
 #include "common-macros.inc"
-#include "pprinter.hh"
+#include "pprint-meta.hh"
 #include "value-pprint.hh"
 
 #ifdef __clang__
@@ -29,12 +32,7 @@
 #pragma clang diagnostic pop
 #endif
 
-#define PushError(msg) \
-  do {                 \
-    if (err) {         \
-      (*err) += msg;   \
-    }                  \
-  } while (0)
+// PushError macro removed - Layer implementation moved to layer.cc
 
 namespace tinyusdz {
 
@@ -49,7 +47,7 @@ bool lexicographical_compare(InputIt1 first1, InputIt1 last1,
         if (*first2 < *first1)
             return false;
     }
- 
+
     return (first1 == last1) && (first2 != last2);
 }
 
@@ -94,9 +92,9 @@ bool operator==(const Path &lhs, const Path &rhs) {
 bool ConvertTokenAttributeToStringAttribute(
     const TypedAttribute<Animatable<value::token>> &inp,
     TypedAttribute<Animatable<std::string>> &out) {
-  
+
     out.metas() = inp.metas();
-  
+
     if (inp.is_blocked()) {
       out.set_blocked(true);
     } else if (inp.is_value_empty()) {
@@ -113,21 +111,20 @@ bool ConvertTokenAttributeToStringAttribute(
           strs.set(tok.str());
         } else if (toks.is_timesamples()) {
           auto tok_ts = toks.get_timesamples();
-  
+
           for (auto &item : tok_ts.get_samples()) {
             strs.add_sample(item.t, item.value.str());
           }
         } else if (toks.is_blocked()) {
-          // TODO
           return false;
         }
       }
       out.set_value(strs);
     }
-  
+
     return true;
   }
-  
+
 
 
 //
@@ -231,17 +228,6 @@ void Path::_update(const std::string &p, const std::string &prop) {
     // maybe relative(e.g. "./xform", "../xform")
     // FIXME: Support relative path fully
 
-#if 0
-    auto nslashes = std::count_if(p.begin(), p.end(), slash_fun);
-    if (nslashes > 0) {
-      _valid = false;
-      return;
-    }
-
-    _prop_part = p;
-    _prop_part = _prop_part.erase(0, 1);
-    _valid = true;
-#else
     _prim_part = p;
     if (prop.size()) {
       _prop_part = prop;
@@ -255,7 +241,6 @@ void Path::_update(const std::string &p, const std::string &prop) {
     }
     _valid = true;
 
-#endif
 
   } else {
     // prim.prop
@@ -266,6 +251,9 @@ void Path::_update(const std::string &p, const std::string &prop) {
       _prim_part = p;
       if (prop.size()) {
         _prop_part = prop;
+        _element = prop;
+      } else {
+        _element = p;
       }
       _valid = true;
     } else if (ndots == 1) {
@@ -309,7 +297,7 @@ void Path::_update(const std::string &p, const std::string &prop) {
 }
 
 Path::Path(const std::string &p, const std::string &prop) {
-  _update(p, prop); 
+  _update(p, prop);
 }
 
 Path Path::append_property(const std::string &elem) {
@@ -419,51 +407,27 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
         lhs_prop_part.begin(), lhs_prop_part.end(), rhs_prop_part.begin(),
         rhs_prop_part.end());
 
-  } else {
-    const std::vector<std::string> lhs_prim_names = split(lhs.prim_part(), "/");
-    const std::vector<std::string> rhs_prim_names = split(rhs.prim_part(), "/");
-    // DCOUT("lhs_names = " << to_string(lhs_prim_names));
-    // DCOUT("rhs_names = " << to_string(rhs_prim_names));
-
-    if (lhs_prim_names.empty() || rhs_prim_names.empty()) {
-      return lhs_prim_names.empty() && rhs_prim_names.size();
-    }
-
-    // common shortest depth.
-    size_t didx = (std::min)(lhs_prim_names.size(), rhs_prim_names.size());
-
-    bool same_until_common_depth = true;
-    for (size_t i = 0; i < didx; i++) {
-      if (lhs_prim_names[i] != rhs_prim_names[i]) {
-        same_until_common_depth = false;
-        break;
-      }
-    }
-
-    if (same_until_common_depth) {
-      // tail differs. compare by depth count.
-      return lhs_prim_names.size() < rhs_prim_names.size();
-    }
-
-    // Walk until common ancestor is found
-    size_t child_idx = didx - 1;
-    // DCOUT("common_depth_idx = " << didx << ", lcount = " <<
-    // lhs_prim_names.size() << ", rcount = " << rhs_prim_names.size());
-    if (didx > 1) {
-      for (size_t parent_idx = didx - 2; parent_idx > 0; parent_idx--) {
-        // DCOUT("parent_idx = " << parent_idx);
-        if (lhs_prim_names[parent_idx] != rhs_prim_names[parent_idx]) {
-          child_idx--;
-        }
-      }
-    }
-    // DCOUT("child_idx = " << child_idx);
-
-    // compare child node
-    return ::tinyusdz::lexicographical_compare(
-        lhs_prim_names[child_idx].begin(), lhs_prim_names[child_idx].end(),
-        rhs_prim_names[child_idx].begin(), rhs_prim_names[child_idx].end());
   }
+
+  // Different prim parts: compare using full_path_name with special
+  // handling for variant paths to maintain correct tree traversal order.
+  //
+  // In OpenUSD, SdfPath sorts variant selections as children of their
+  // prim, AFTER regular children and properties. The key relationships:
+  //   /A < /A.prop < /A/B < /A{v} < /A{v=sel} < /A{v=sel}/C
+  //
+  // Simple string comparison almost works (. < / < {), but within
+  // variants we need {name} (VariantSet) before {name=sel} (Variant).
+  // Since '=' (0x3D) < '}' (0x7D), we pad VariantSet paths:
+  //   /A{v}  →  /A{v=\x00} for comparison (sorts before /A{v=sel})
+  //
+  // We also need /A{v=sel}/S to sort AFTER /A{v=\x00} (the VariantSet).
+  // /A{v=sel}/S → /A{v=sel}\x7F/S (replace / after } with high char)
+  // Actually simpler: just ensure VariantSet comes first by making its
+  // comparison key shorter.
+  const std::string &l = lhs.full_path_name();
+  const std::string &r = rhs.full_path_name();
+  return l < r;
 }
 
 std::pair<Path, Path> Path::split_at_root() const {
@@ -528,36 +492,30 @@ bool Path::has_prefix(const Path &prefix) const {
       return true;
     }
 
-    const std::vector<std::string> prim_names = split(prim_part(), "/");
-    const std::vector<std::string> prefix_prim_names =
-        split(prefix.prim_part(), "/");
-    // DCOUT("prim_names = " << to_string(prim_names));
-    // DCOUT("prefix.prim_names = " << to_string(prefix_prim_names));
+    // Use string prefix matching on prim_part.
+    // A path has prefix P if the prim_part starts with P's prim_part,
+    // followed by either '/', '{', '.', or end of string.
+    // This correctly handles variant paths: /A{v} has prefix /A.
+    const std::string &pp = prim_part();
+    const std::string &pfx = prefix.prim_part();
 
-    if (prim_names.empty() || prefix_prim_names.empty()) {
+    if (pp.size() < pfx.size()) {
       return false;
     }
 
-    if (prim_names.size() < prefix_prim_names.size()) {
+    if (pp.compare(0, pfx.size(), pfx) != 0) {
       return false;
     }
 
-    size_t depth = prefix_prim_names.size();
-    if (depth < 1) {  // just in case
-      return false;
+    // If exact match, it's a prefix (same path or property of same prim)
+    if (pp.size() == pfx.size()) {
+      return true;
     }
 
-    // Move to prefix's path depth and compare each elementName of Prim tree
-    // towards the root. comapre from tail would find a difference earlier.
-    while (depth > 0) {
-      if (prim_names[depth - 1] != prefix_prim_names[depth - 1]) {
-        return false;
-      }
-      depth--;
-    }
-
-    // DCOUT("has_prefix");
-    return true;
+    // After the prefix, the next char must be '/', '{', or '.'
+    // to ensure we matched a complete path component
+    char next = pp[pfx.size()];
+    return (next == '/' || next == '{' || next == '.');
 
   } else {
     // TODO: property-only path.
@@ -624,18 +582,32 @@ Path Path::get_parent_path() const {
   }
 
   if (is_prim_property_path()) {
-    // return prim part
     return Path(prim_part(), "");
+  }
+
+  // Handle variant paths where the LAST element is a variant: /A{v} -> /A
+  // Only applies when there's no '/' after the last '{'.
+  // For /A{v=sel}/C, the normal '/' splitting handles it → parent is /A{v=sel}.
+  {
+    auto brace_pos = _prim_part.find_last_of('{');
+    auto last_slash = _prim_part.find_last_of('/');
+    if (brace_pos != std::string::npos && brace_pos > 0 &&
+        (last_slash == std::string::npos || last_slash < brace_pos)) {
+      // The variant element is the last component (no '/' after it)
+      std::string parent_str = _prim_part.substr(0, brace_pos);
+      if (parent_str.empty()) {
+        return Path("/", "");
+      }
+      return Path(parent_str, "");
+    }
   }
 
   size_t n = _prim_part.find_last_of('/');
   if (n == std::string::npos) {
-    // relative path(e.g. "bora") or propery only path(e.g. ".myval").
     return Path();
   }
 
   if (n == 0) {
-    // return root
     return Path("/", "");
   }
 
@@ -647,12 +619,25 @@ Path Path::get_parent_prim_path() const {
     return Path();
   }
 
+  // Handle variant paths FIRST — /A{v} -> /A, /A{v=sel} -> /A
+  // Must check before is_root_prim() because /A{v} passes the root prim
+  // test (only one '/') but is actually a sub-element of /A.
+  {
+    auto brace_pos = _prim_part.find_last_of('{');
+    if (brace_pos != std::string::npos && brace_pos > 0) {
+      std::string parent_str = _prim_part.substr(0, brace_pos);
+      if (parent_str.empty()) {
+        return Path("/", "");
+      }
+      return Path(parent_str, "");
+    }
+  }
+
   if (is_root_prim()) {
     return *this;
   }
 
   if (is_prim_property_path()) {
-    // return prim part
     return Path(prim_part(), "");
   }
 
@@ -764,6 +749,7 @@ const PrimMeta *GetPrimMeta(const value::Value &v) {
   GET_PRIM_META(SphereLight)
   GET_PRIM_META(CylinderLight)
   GET_PRIM_META(DiskLight)
+  GET_PRIM_META(DistantLight)
   GET_PRIM_META(RectLight)
   GET_PRIM_META(Material)
   GET_PRIM_META(Shader)
@@ -810,6 +796,7 @@ PrimMeta *GetPrimMeta(value::Value &v) {
   GET_PRIM_META(SphereLight)
   GET_PRIM_META(CylinderLight)
   GET_PRIM_META(DiskLight)
+  GET_PRIM_META(DistantLight)
   GET_PRIM_META(RectLight)
   GET_PRIM_META(Material)
   GET_PRIM_META(Shader)
@@ -844,72 +831,6 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   // Since multiple get_value() call consumes lots of stack size(depends on
   // sizeof(T)?), Following code would produce 100KB of stack in debug build. So
   // use as() instead(as() => roughly 2000 bytes for stack size).
-#if 0
-  //
-  // TODO: Find a better C++ way... use a std::function?
-  //
-  if (auto pv = v.get_value<Model>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<Scope>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<Xform>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GPrim>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomMesh>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomBasisCurves>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomSphere>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomCube>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomCylinder>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomCapsule>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomCone>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomSubset>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomCamera>()) {
-    return Path(pv.value().name, "");
-  }
-
-  if (auto pv = v.get_value<DomeLight>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<SphereLight>()) {
-    return Path(pv.value().name, "");
-  }
-  // if (auto pv = v.get_value<CylinderLight>()) { return
-  // Path(pv.value().name); } if (auto pv = v.get_value<DiskLight>()) {
-  // return Path(pv.value().name); }
-
-  if (auto pv = v.get_value<Material>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<Shader>()) {
-    return Path(pv.value().name, "");
-  }
-  // if (auto pv = v.get_value<UVTexture>()) { return Path(pv.value().name); }
-  // if (auto pv = v.get_value<PrimvarReader()) { return Path(pv.value().name);
-  // }
-
-  return nonstd::nullopt;
-#else
 
   // Lookup name field of Prim class
 
@@ -932,12 +853,19 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(GeomSubset)
   EXTRACT_NAME_AND_RETURN_PATH(GeomCamera)
   EXTRACT_NAME_AND_RETURN_PATH(GeomBasisCurves)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomNurbsCurves)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomPointInstancer)
   EXTRACT_NAME_AND_RETURN_PATH(DomeLight)
   EXTRACT_NAME_AND_RETURN_PATH(SphereLight)
   EXTRACT_NAME_AND_RETURN_PATH(CylinderLight)
   EXTRACT_NAME_AND_RETURN_PATH(DiskLight)
+  EXTRACT_NAME_AND_RETURN_PATH(DistantLight)
   EXTRACT_NAME_AND_RETURN_PATH(RectLight)
+  EXTRACT_NAME_AND_RETURN_PATH(GeometryLight)
+  EXTRACT_NAME_AND_RETURN_PATH(PortalLight)
   EXTRACT_NAME_AND_RETURN_PATH(Material)
+  EXTRACT_NAME_AND_RETURN_PATH(NodeGraph)
+  EXTRACT_NAME_AND_RETURN_PATH(ShaderNode)
   EXTRACT_NAME_AND_RETURN_PATH(Shader)
   // TODO: extract name must be handled in Shader class
   EXTRACT_NAME_AND_RETURN_PATH(UsdPreviewSurface)
@@ -960,7 +888,6 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
 
 #undef EXTRACT_NAME_AND_RETURN_PATH
 
-#endif
 }
 
 bool SetPrimElementName(value::Value &v, const std::string &elementName) {
@@ -987,12 +914,19 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   SET_ELEMENT_NAME(elementName, GeomSubset)
   SET_ELEMENT_NAME(elementName, GeomCamera)
   SET_ELEMENT_NAME(elementName, GeomBasisCurves)
+  SET_ELEMENT_NAME(elementName, GeomNurbsCurves)
+  SET_ELEMENT_NAME(elementName, GeomPointInstancer)
   SET_ELEMENT_NAME(elementName, DomeLight)
   SET_ELEMENT_NAME(elementName, SphereLight)
   SET_ELEMENT_NAME(elementName, CylinderLight)
+  SET_ELEMENT_NAME(elementName, DistantLight)
   SET_ELEMENT_NAME(elementName, DiskLight)
   SET_ELEMENT_NAME(elementName, RectLight)
+  SET_ELEMENT_NAME(elementName, GeometryLight)
+  SET_ELEMENT_NAME(elementName, PortalLight)
   SET_ELEMENT_NAME(elementName, Material)
+  SET_ELEMENT_NAME(elementName, NodeGraph)
+  SET_ELEMENT_NAME(elementName, ShaderNode)
   SET_ELEMENT_NAME(elementName, Shader)
   // TODO: set element name must be handled in Shader class
   SET_ELEMENT_NAME(elementName, UsdPreviewSurface)
@@ -1079,11 +1013,6 @@ Prim::Prim(const std::string &elementPath, value::Value &&rhs) {
 
 bool Prim::add_child(Prim &&rhs, const bool rename_prim_name,
                      std::string *err) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_mutex);
-#endif
-
   std::string elementName = rhs.element_name();
 
   if (elementName.empty()) {
@@ -1190,11 +1119,6 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name,
 
 bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs,
                          std::string *err) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_mutex);
-#endif
-
   if (child_prim_name.empty()) {
     if (err) {
       (*err) += "child_prim_name is empty.\n";
@@ -1274,11 +1198,6 @@ bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs,
 
 const std::vector<int64_t> &Prim::get_child_indices_from_primChildren(
     bool force_update, bool *indices_is_valid) const {
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_mutex);
-#endif
-
   if (!force_update && (_primChildrenIndices.size() == _children.size()) &&
       !_child_dirty) {
     // got cache.
@@ -1556,63 +1475,69 @@ bool GetCustomDataByKey(const CustomDataType &custom, const std::string &key,
 
 namespace {
 
-bool OverrideCustomDataRec(uint32_t depth, CustomDataType &dst,
-                           const CustomDataType &src, const bool override_existing) {
-  if (depth > (1024 * 1024 * 128)) {
-    // too deep
-    return false;
-  }
+// Iterative version of dictionary override using explicit stack
+// Avoids recursion for deeply nested dictionary structures
+void OverrideCustomDataIterative(CustomDataType &dst, const CustomDataType &src,
+                                 const bool override_existing) {
+  // Stack of pairs: (dst_dict pointer, src_dict pointer)
+  StackVector<std::pair<CustomDataType *, const CustomDataType *>, 4> stack;
+  stack.reserve(16);
 
-  for (const auto &item : src) {
-    if (dst.count(item.first)) {
-      if (override_existing) {
-        CustomDataType *dst_dict =
-            dst.at(item.first).get_raw_value().as<CustomDataType>();
+  // Start with the root dictionaries
+  stack.emplace_back(&dst, &src);
 
-        const value::Value &src_data = item.second.get_raw_value();
-        const CustomDataType *src_dict = src_data.as<CustomDataType>();
+  while (!stack.empty()) {
+    auto current = stack.back();
+    stack.pop_back();
 
-        //
-        // Recursively apply override op both types are dict.
-        //
-        if (src_dict && dst_dict) {
-          // recursively override dict
-          if (!OverrideCustomDataRec(depth + 1, (*dst_dict), (*src_dict), override_existing)) {
-            return false;
+    CustomDataType *current_dst = current.first;
+    const CustomDataType *current_src = current.second;
+
+    for (const auto &item : *current_src) {
+      if (current_dst->count(item.first)) {
+        if (override_existing) {
+          CustomDataType *dst_dict =
+              current_dst->at(item.first).get_raw_value().as<CustomDataType>();
+
+          const value::Value &src_data = item.second.get_raw_value();
+          const CustomDataType *src_dict = src_data.as<CustomDataType>();
+
+          // If both are dicts, push to stack for later processing
+          if (src_dict && dst_dict) {
+            stack.emplace_back(dst_dict, src_dict);
+          } else {
+            (*current_dst)[item.first] = item.second;
           }
-
-        } else {
-          dst[item.first] = item.second;
         }
+      } else {
+        // add dict value
+        current_dst->emplace(item.first, item.second);
       }
-    } else {
-      // add dict value
-      dst.emplace(item.first, item.second);
     }
   }
-
-  return true;
 }
 
 }  // namespace
 
 void OverrideDictionary(CustomDataType &dst, const CustomDataType &src, const bool override_existing) {
-  OverrideCustomDataRec(0, dst, src, override_existing);
+  OverrideCustomDataIterative(dst, src, override_existing);
 }
 
-AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
+AssetInfo PrimMetas::get_assetInfo_struct(bool *is_authored) const {
   AssetInfo ainfo;
 
+  bool has_assetinfo = has_assetInfo();
   if (is_authored) {
-    (*is_authored) = authored();
+    (*is_authored) = has_assetinfo;
   }
 
-  if (authored()) {
-    ainfo._fields = meta;
+  if (has_assetinfo) {
+    Dictionary asset_dict = get_assetInfo();
+    ainfo._fields = asset_dict;
 
     {
       MetaVariable identifier_var;
-      if (GetCustomDataByKey(meta, "identifier", &identifier_var)) {
+      if (GetCustomDataByKey(asset_dict, "identifier", &identifier_var)) {
         std::string identifier;
         if (identifier_var.get_value<std::string>(&identifier)) {
           ainfo.identifier = identifier;
@@ -1623,7 +1548,7 @@ AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
 
     {
       MetaVariable name_var;
-      if (GetCustomDataByKey(meta, "name", &name_var)) {
+      if (GetCustomDataByKey(asset_dict, "name", &name_var)) {
         std::string name;
         if (name_var.get_value<std::string>(&name)) {
           ainfo.name = name;
@@ -1634,7 +1559,7 @@ AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
 
     {
       MetaVariable payloadDeps_var;
-      if (GetCustomDataByKey(meta, "payloadAssetDependencies",
+      if (GetCustomDataByKey(asset_dict, "payloadAssetDependencies",
                              &payloadDeps_var)) {
         std::vector<value::AssetPath> assets;
         if (payloadDeps_var.get_value<std::vector<value::AssetPath>>(&assets)) {
@@ -1646,7 +1571,7 @@ AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
 
     {
       MetaVariable version_var;
-      if (GetCustomDataByKey(meta, "version", &version_var)) {
+      if (GetCustomDataByKey(asset_dict, "version", &version_var)) {
         std::string version;
         if (version_var.get_value<std::string>(&version)) {
           ainfo.version = version;
@@ -1659,18 +1584,7 @@ AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
   return ainfo;
 }
 
-const std::string PrimMeta::get_kind() const {
-
-  if (kind.has_value()) {
-    if (kind.value() == Kind::UserDef) {
-      return _kind_str;
-    } else {
-      return to_string(kind.value());
-    }
-  }
-
-  return "";
-}
+// NOTE: PrimMetas::get_kind() is now implemented inline in the header
 
 bool IsXformablePrim(const Prim &prim) {
   uint32_t tyid = prim.type_id();
@@ -1776,7 +1690,7 @@ bool CastToXformable(const Prim &prim, const Xformable **xformable) {
   TRY_CAST(GeomCone)
   TRY_CAST(GeomCapsule)
   TRY_CAST(GeomPoints)
-  // TRY_CAST(GeomPointInstancer)
+  TRY_CAST(GeomPointInstancer)
   TRY_CAST(GeomCamera)
   TRY_CAST(SkelRoot)
   TRY_CAST(Skeleton)
@@ -1817,7 +1731,6 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack,
       return value::matrix4d::identity();
     }
 
-    value::matrix4d m;
     bool rxs{false};
     nonstd::expected<value::matrix4d, std::string> ret =
         xformable->GetLocalMatrix(t, tinterp, &rxs);
@@ -1833,92 +1746,17 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack,
 }
 
 void PrimMetas::update_from(const PrimMetas &rhs, const bool override_authored) {
-  if (rhs.active.has_value()) {
-    if (override_authored || !active.has_value()) {
-      active = rhs.active;
+  // Simple metadata fields - use MetadataBase merge
+  merge_from(rhs, override_authored);
+
+  // apiSchemas (special handling since it's a custom type)
+  if (rhs.has_apiSchemas()) {
+    if (override_authored || !has_apiSchemas()) {
+      set_apiSchemas(rhs.get_apiSchemas());
     }
   }
 
-  if (rhs.hidden.has_value()) {
-    if (override_authored || !hidden.has_value()) {
-      hidden = rhs.hidden;
-    }
-  }
-
-  if (rhs.kind.has_value()) {
-    if (override_authored || !kind.has_value()) {
-      kind = rhs.kind;
-    }
-  }
-
-  if (rhs.instanceable.has_value()) {
-    if (override_authored || !instanceable.has_value()) {
-      instanceable = rhs.instanceable;
-    }
-  }
-
-  if (rhs.assetInfo) {
-    if (assetInfo) {
-      OverrideDictionary(assetInfo.value(), rhs.assetInfo.value(), override_authored);
-    } else if (override_authored) {
-      assetInfo = rhs.assetInfo;
-    }
-  }
-
-  if (rhs.clips) {
-    if (clips) {
-      OverrideDictionary(clips.value(), rhs.clips.value(), override_authored);
-    } else if (override_authored) {
-      clips = rhs.clips;
-    }
-  }
-
-  if (rhs.customData) {
-    if (customData) {
-      OverrideDictionary(customData.value(), rhs.customData.value(), override_authored);
-    } else if (override_authored) {
-      customData = rhs.customData;
-    }
-  }
-
-  if (rhs.doc) {
-    if (override_authored || !doc.has_value()) {
-      doc = rhs.doc;
-    }
-  }
-
-  if (rhs.comment) {
-    if (override_authored || !comment.has_value()) {
-      comment = rhs.comment;
-    }
-  }
-
-  if (rhs.apiSchemas) {
-    if (override_authored || !apiSchemas.has_value()) {
-      apiSchemas = rhs.apiSchemas;
-    }
-  }
-
-  if (rhs.sdrMetadata) {
-    if (sdrMetadata) {
-      OverrideDictionary(sdrMetadata.value(), rhs.sdrMetadata.value(), override_authored);
-    } else if (override_authored) {
-      sdrMetadata = rhs.sdrMetadata;
-    }
-  }
-
-  if (rhs.sceneName) {
-    if (override_authored || !sceneName.has_value()) {
-      sceneName = rhs.sceneName;
-    }
-  }
-
-  if (rhs.displayName) {
-    if (override_authored || !displayName.has_value()) {
-      displayName = rhs.displayName;
-    }
-  }
-
+  // Composition fields
   if (rhs.references) {
     if (override_authored || !references.has_value()) {
       references = rhs.references;
@@ -1950,354 +1788,118 @@ void PrimMetas::update_from(const PrimMetas &rhs, const bool override_authored) 
     }
   }
 
-  if (rhs.unregisteredMetas.size()) {
+  // Unregistered metadata
+  if (!rhs.unregisteredMetas.empty()) {
     for (const auto &item : rhs.unregisteredMetas) {
       if (unregisteredMetas.count(item.first)) {
         if (override_authored) {
           unregisteredMetas[item.first] = item.second;
-        } 
+        }
       } else {
         unregisteredMetas[item.first] = item.second;
       }
     }
   }
 
+  // Legacy meta dictionary
   OverrideDictionary(meta, rhs.meta, override_authored);
 }
 
-bool AttrMetas::has_colorSpace() const {
-  return meta.count("colorSpace");
-}
-
-value::token AttrMetas::get_colorSpace() const {
-  if (!has_colorSpace()) {
-    return value::token();
-  }
-
-  const MetaVariable &mv = meta.at("colorSpace");
-  value::token tok;
-  if (mv.get_value<value::token>(&tok)) {
-    return tok;
-  }
-
-  return value::token();
-}
-
-bool AttrMetas::has_unauthoredValuesIndex() const {
-  return meta.count("unauthoredValuesIndex");
-}
-
-int AttrMetas::get_unauthoredValuesIndex() const {
-  if (!has_unauthoredValuesIndex()) {
-    return -1;
-  }
-
-  const MetaVariable &mv = meta.at("unauthoredValuesIndex");
-  int v;
-  if (mv.get_value<int>(&v)) {
-    return v;
-  }
-
-  return -1;
-}
+// NOTE: AttrMetas accessors (has_colorSpace, get_colorSpace, has_unauthoredValuesIndex,
+// get_unauthoredValuesIndex) are now provided by MetadataBase base class
 
 namespace {
 
-nonstd::optional<const PrimSpec *> GetPrimSpecAtPathRec(
-    const PrimSpec *parent, const std::string &parent_path, const Path &path,
-    uint32_t depth) {
-  if (depth > (1024 * 1024 * 128)) {
-    // Too deep.
-    return nonstd::nullopt;
-  }
+// GetPrimSpecAtPathRec function moved to layer.cc
 
-  if (!parent) {
-    return nonstd::nullopt;
-  }
-
-  std::string abs_path;
-  {
-    std::string elementName = parent->name();
-
-    abs_path = parent_path + "/" + elementName;
-
-    if (abs_path == path.full_path_name()) {
-      return parent;
-    }
-  }
-
-  for (const auto &child : parent->children()) {
-    if (auto pv = GetPrimSpecAtPathRec(&child, abs_path, path, depth + 1)) {
-      return pv.value();
-    }
-  }
-
-  // not found
-  return nonstd::nullopt;
-}
-
-bool HasReferencesRec(uint32_t depth, const PrimSpec &primspec,
-                      const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.metas().references) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasReferencesRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool HasPayloadRec(uint32_t depth, const PrimSpec &primspec,
-                   const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.metas().payload) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasPayloadRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool HasVariantRec(uint32_t depth, const PrimSpec &primspec,
-                   const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  // TODO: Also check if PrimSpec::variantSets is empty?
-  if (primspec.metas().variants && primspec.metas().variantSets) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasVariantRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool HasInheritsRec(uint32_t depth, const PrimSpec &primspec,
-                    const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.metas().inherits) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasInheritsRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool HasSpecializesRec(uint32_t depth, const PrimSpec &primspec,
-                    const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.metas().specializes) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasSpecializesRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool HasOverRec(uint32_t depth, const PrimSpec &primspec,
-                       const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.specifier() == Specifier::Over) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasOverRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
-}
+// Helper functions moved to layer.cc
 
 }  // namespace
 
-bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
-                             std::string *err) const {
-  if (!ps) {
-    PUSH_ERROR_AND_RETURN("Invalid PrimSpec dst argument");
+// All Layer methods moved to layer.cc
+
+size_t Property::estimate_memory_usage() const {
+  size_t total = sizeof(Property);
+
+  // Add storage for the active variant member
+  if (auto* attr = get_attribute_or_null()) {
+    total += attr->estimate_memory_usage();
+  } else if (auto* rel = get_relationship_or_null()) {
+    total += rel->estimate_memory_usage();
   }
 
-  if (!path.is_valid()) {
-    DCOUT("Invalid path.");
-    PUSH_ERROR_AND_RETURN("Invalid path");
-  }
-
-  if (path.is_relative_path()) {
-    // TODO
-    PUSH_ERROR_AND_RETURN(fmt::format("TODO: Relative path: {}", path.full_path_name()));
-  }
-
-  if (!path.is_absolute_path()) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Path is not absolute path: {}", path.full_path_name()));
-  }
-
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_mutex);
-#endif
-
-  if (_dirty) {
-    DCOUT("clear cache.");
-    // Clear cache.
-    _primspec_path_cache.clear();
-
-    _dirty = false;
-  } else {
-    // First find from a cache.
-    auto ret = _primspec_path_cache.find(path.prim_part());
-    if (ret != _primspec_path_cache.end()) {
-      DCOUT("Found cache.");
-      (*ps) = ret->second;
-      return true;
-    }
-  }
-
-  // Brute-force search.
-  for (const auto &parent : _prim_specs) {
-    if (auto pv = GetPrimSpecAtPathRec(&parent.second, /* parent_path */ "",
-                                       path, /* depth */ 0)) {
-      (*ps) = pv.value();
-
-      // Add to cache.
-      // Assume pointer address does not change unless dirty state changes.
-      _primspec_path_cache[path.prim_part()] = pv.value();
-      return true;
-    }
-  }
-
-  return false;
+  return total;
 }
 
-bool Layer::check_unresolved_references(const uint32_t max_depth) const {
-  bool ret = false;
+size_t Property::estimate_actual_usage() const {
+  size_t total = sizeof(Property);
 
-  for (const auto &item : _prim_specs) {
-    if (HasReferencesRec(/* depth */ 0, item.second, max_depth)) {
-      ret = true;
-      break;
-    }
+  if (auto* attr = get_attribute_or_null()) {
+    total += attr->estimate_actual_usage();
+  } else if (auto* rel = get_relationship_or_null()) {
+    total += rel->estimate_actual_usage();
   }
 
-  _has_unresolved_references = ret;
-  return _has_unresolved_references;
+  return total;
 }
 
-bool Layer::check_unresolved_payload(const uint32_t max_depth) const {
-  bool ret = false;
+size_t Relationship::estimate_memory_usage() const {
+  size_t total = sizeof(Relationship);
 
-  for (const auto &item : _prim_specs) {
-    if (HasPayloadRec(/* depth */ 0, item.second, max_depth)) {
-      ret = true;
-      break;
-    }
+  total += targetPath.full_path_name().size();
+  for (const auto& path : targetPathVector) {
+    total += path.full_path_name().size();
   }
 
-  _has_unresolved_payload = ret;
-  return _has_unresolved_payload;
+  return total;
 }
 
-bool Layer::check_unresolved_variant(const uint32_t max_depth) const {
-  bool ret = false;
-
-  for (const auto &item : _prim_specs) {
-    if (HasVariantRec(/* depth */ 0, item.second, max_depth)) {
-      ret = true;
-      break;
-    }
-  }
-
-  _has_unresolved_variant = ret;
-  return _has_unresolved_variant;
+size_t Relationship::estimate_actual_usage() const {
+  // Relationship already uses .size() in estimate_memory_usage(),
+  // so actual == allocated for this type.
+  return estimate_memory_usage();
 }
 
-bool Layer::check_unresolved_inherits(const uint32_t max_depth) const {
-  bool ret = false;
+// Memory usage estimation implementation for Attribute
+size_t Attribute::estimate_memory_usage() const {
+  size_t total = sizeof(Attribute);
 
-  for (const auto &item : _prim_specs) {
-    if (HasInheritsRec(/* depth */ 0, item.second, max_depth)) {
-      ret = true;
-      break;
-    }
+  // String storage
+  total += _name.capacity();
+  total += _type_name.capacity();
+
+  // PrimVar memory - includes value::Value and value::TimeSamples
+  total += _var.estimate_memory_usage();
+
+  // Connection paths
+  total += _paths.capacity() * sizeof(Path);
+  for (const auto& path : _paths) {
+    // Path internally contains strings, estimate their capacity
+    total += path.full_path_name().capacity();
   }
 
-  _has_unresolved_inherits = ret;
-  return _has_unresolved_inherits;
+  // Attribute metadata
+  total += sizeof(AttrMeta); // Basic size of metadata structure
+
+  return total;
 }
 
-bool Layer::check_unresolved_specializes(const uint32_t max_depth) const {
-  bool ret = false;
+size_t Attribute::estimate_actual_usage() const {
+  size_t total = sizeof(Attribute);
 
-  for (const auto &item : _prim_specs) {
-    if (HasSpecializesRec(/* depth */ 0, item.second, max_depth)) {
-      ret = true;
-      break;
-    }
+  total += _name.size();
+  total += _type_name.size();
+
+  total += _var.estimate_actual_usage();
+
+  total += _paths.size() * sizeof(Path);
+  for (const auto& path : _paths) {
+    total += path.full_path_name().size();
   }
 
-  _has_unresolved_specializes = ret;
-  return _has_unresolved_specializes;
-}
+  total += sizeof(AttrMeta);
 
-bool Layer::check_over_primspec(const uint32_t max_depth) const {
-  bool ret = false;
-
-  for (const auto &item : _prim_specs) {
-    if (HasOverRec(/* depth */ 0, item.second, max_depth)) {
-      ret = true;
-      break;
-    }
-  }
-
-  _has_over_primspec = ret;
-  return _has_over_primspec;
+  return total;
 }
 
 }  // namespace tinyusdz

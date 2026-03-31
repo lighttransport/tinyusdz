@@ -4,6 +4,31 @@
 
 #include "unicode-xid.hh"
 #include "common-macros.inc"
+#include "value-types.hh"
+
+#include <cstring>
+#include <cstdint>
+#include <cmath>
+#include <array>
+
+// Disable dragonbox's internal asserts for hardened builds
+// We handle all special cases (inf, nan, zero) before calling dragonbox
+#ifndef NDEBUG
+#define TINYUSDZ_DRAGONBOX_NDEBUG_DEFINED
+#define NDEBUG
+#endif
+#include "external/dragonbox/dragonbox_to_chars.h"
+#ifdef TINYUSDZ_DRAGONBOX_NDEBUG_DEFINED
+#undef NDEBUG
+#undef TINYUSDZ_DRAGONBOX_NDEBUG_DEFINED
+#endif
+
+// Note: dragonbox_binary16.hh exists for direct fp16 conversion but needs work
+// Currently using half→float→dragonbox for correct output
+
+#ifdef __SSE2__
+#include <emmintrin.h>
+#endif
 
 namespace tinyusdz {
 
@@ -112,43 +137,69 @@ std::string unescapeControlSequence(const std::string &str) {
   std::string s;
 
   if (str.size() < 2) {
-    return str;
-  }
+    s = str;
+  } else {
 
-  for (size_t i = 0; i < str.size(); i++) {
-    if (str[i] == '\\') {
-      if (i + 1 < str.size()) {
-        if (str[i + 1] == 'a') {
-          s += '\a';
-          i++;
-        } else if (str[i + 1] == 'b') {
-          s += '\b';
-          i++;
-        } else if (str[i + 1] == 't') {
-          s += '\t';
-          i++;
-        } else if (str[i + 1] == 'v') {
-          s += '\v';
-          i++;
-        } else if (str[i + 1] == 'f') {
-          s += '\f';
-          i++;
-        } else if (str[i + 1] == 'n') {
-          s += '\n';
-          i++;
-        } else if (str[i + 1] == 'r') {
-          s += '\r';
-          i++;
-        } else if (str[i + 1] == '\\') {
-          s += "\\";
+    for (size_t i = 0; i < str.size(); i++) {
+      if (str[i] == '\\') {
+        if (i + 1 < str.size()) {
+          if (str[i + 1] == 'a') {
+            s += '\a';
+            i++;
+          } else if (str[i + 1] == 'b') {
+            s += '\b';
+            i++;
+          } else if (str[i + 1] == 't') {
+            s += '\t';
+            i++;
+          } else if (str[i + 1] == 'v') {
+            s += '\v';
+            i++;
+          } else if (str[i + 1] == 'f') {
+            s += '\f';
+            i++;
+          } else if (str[i + 1] == 'n') {
+            s += '\n';
+            i++;
+          } else if (str[i + 1] == 'r') {
+            s += '\r';
+            i++;
+          } else if (str[i + 1] == '\\') {
+            s += "\\";
+            i++;
+          } else if (str[i + 1] == 'x') {
+            // Hex escape: \xNN
+            if (i + 3 < str.size()) {
+              char h1 = str[i + 2];
+              char h2 = str[i + 3];
+              auto hex_digit = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return -1;
+              };
+              int d1 = hex_digit(h1);
+              int d2 = hex_digit(h2);
+              if (d1 >= 0 && d2 >= 0) {
+                s += static_cast<char>((d1 << 4) | d2);
+                i += 3;
+              } else {
+                // Invalid hex, keep backslash
+                s += str[i];
+              }
+            } else {
+              // Not enough characters for \xNN
+              s += str[i];
+            }
+          } else {
+            // ignore backslash
+          }
         } else {
           // ignore backslash
         }
       } else {
-        // ignore backslash
+        s += str[i];
       }
-    } else {
-      s += str[i];
     }
   }
 
@@ -539,12 +590,14 @@ std::vector<std::string> to_utf8_chars(const std::string &str) {
   std::vector<std::string> utf8_chars;
   size_t sz = str.size();
 
-  for (size_t i = 0; i <= sz;) {
+  for (size_t i = 0; i < sz;) {
     int len = 0;
     std::string s = detail::extract_utf8_char(str, uint32_t(i), len);
     if (len == 0) {
       // invalid char
-      return std::vector<std::string>();
+      //return std::vector<std::string>();
+      utf8_chars = std::vector<std::string>();
+      break;
     }
 
     i += uint64_t(len);
@@ -608,17 +661,6 @@ uint32_t to_utf8_code(const std::string &s) {
 }
 
 
-#if 0
-std::string to_utf8_char(const uint32_t code) {
-
-  if (code < 128) {
-    std::string s = static_cast<char>(code);
-    return s;
-  }
-  // TODO
-
-}
-#endif
 
 bool is_valid_utf8(const std::string &str) {
   // TODO: Consider UTF-BOM?
@@ -641,7 +683,9 @@ std::vector<uint32_t> to_codepoints(const std::string &str) {
     uint32_t cp = detail::to_codepoint(str.c_str() + i, char_len);
 
     if ((cp > kMaxUTF8Codepoint) || (char_len == 0)) {
-      return std::vector<uint32_t>();
+      cps = std::vector<uint32_t>();
+      break;
+      //return std::vector<uint32_t>();
     }
 
     cps.push_back(cp);
@@ -661,7 +705,7 @@ bool is_valid_utf8_identifier(const std::string &str) {
   }
 
   // (XID_Start|_) (XID_Continue|_)+
-  
+
   if ((codepoints[0] != '_') && !unicode_xid::is_xid_start(codepoints[0])) {
     return false;
   }
@@ -672,7 +716,7 @@ bool is_valid_utf8_identifier(const std::string &str) {
     }
   }
 
-  return true; 
+  return true;
 }
 
 std::string makeIdentifierValid(const std::string &str, bool is_utf8) {
@@ -683,28 +727,1295 @@ std::string makeIdentifierValid(const std::string &str, bool is_utf8) {
 
   if (str.empty()) {
     // return '_'
-    return "_";
-  }
-
-  // first char
-  // [a-ZA-Z_]
-  if ((('a' <= str[0]) && (str[0] <= 'z')) || (('A' <= str[0]) && (str[0] <= 'Z')) || (str[0] == '_')) {
-    s.push_back(str[0]);
+    s =  "_";
   } else {
-    s.push_back('_');
-  }
 
-  // remain chars
-  // [a-ZA-Z0-9_]
-  for (size_t i = 1; i < str.length(); i++) {
-    if ((('a' <= str[i]) && (str[i] <= 'z')) || (('A' <= str[i]) && (str[i] <= 'Z')) || (('0' <= str[i]) && (str[i] <= '9')) || (str[i] == '_')) {
-      s.push_back(str[i]);
+    // first char
+    // [a-ZA-Z_]
+    if ((('a' <= str[0]) && (str[0] <= 'z')) || (('A' <= str[0]) && (str[0] <= 'Z')) || (str[0] == '_')) {
+      s.push_back(str[0]);
     } else {
       s.push_back('_');
+    }
+
+    // remain chars
+    // [a-ZA-Z0-9_]
+    for (size_t i = 1; i < str.length(); i++) {
+      if ((('a' <= str[i]) && (str[i] <= 'z')) || (('A' <= str[i]) && (str[i] <= 'Z')) || (('0' <= str[i]) && (str[i] <= '9')) || (str[i] == '_')) {
+        s.push_back(str[i]);
+      } else {
+        s.push_back('_');
+      }
     }
   }
 
   return s;
+}
+
+double atof(const char *p) {
+  // TODO: Use from_chars
+  return std::atof(p);
+}
+
+double atof(const std::string &s) {
+  return atof(s.c_str());
+}
+
+/*
+   base64.cpp and base64.h
+
+   Copyright (C) 2004-2008 René Nyffenegger
+
+   This source code is provided 'as-is', without any express or implied
+   warranty. In no event will the author be held liable for any damages
+   arising from the use of this software.
+
+   Permission is granted to anyone to use this software for any purpose,
+   including commercial applications, and to alter it and redistribute it
+   freely, subject to the following restrictions:
+
+   1. The origin of this source code must not be misrepresented; you must not
+      claim that you wrote the original source code. If you use this source code
+      in a product, an acknowledgment in the product documentation would be
+      appreciated but is not required.
+
+   2. Altered source versions must be plainly marked as such, and must not be
+      misrepresented as being the original source code.
+
+   3. This notice may not be removed or altered from any source distribution.
+
+   René Nyffenegger rene.nyffenegger@adp-gmbh.ch
+
+*/
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#pragma clang diagnostic ignored "-Wconversion"
+#endif
+
+#ifdef __SSE2__
+#else
+static inline bool is_base64(unsigned char c) {
+  return (isalnum(c) || (c == '+') || (c == '/'));
+}
+#endif
+
+#ifdef __SSE2__
+#else
+// Fallback implementation (original)
+static std::string base64_encode_scalar(unsigned char const *bytes_to_encode,
+                                       unsigned int in_len) {
+  std::string ret;
+  int i = 0;
+  int j = 0;
+  unsigned char char_array_3[3];
+  unsigned char char_array_4[4];
+
+  const char *base64_chars =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      "abcdefghijklmnopqrstuvwxyz"
+      "0123456789+/";
+
+  while (in_len--) {
+    char_array_3[i++] = *(bytes_to_encode++);
+    if (i == 3) {
+      char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+      char_array_4[1] =
+          ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+      char_array_4[2] =
+          ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+      char_array_4[3] = char_array_3[2] & 0x3f;
+
+      for (i = 0; (i < 4); i++) ret += base64_chars[char_array_4[i]];
+      i = 0;
+    }
+  }
+
+  if (i) {
+    for (j = i; j < 3; j++) char_array_3[j] = '\0';
+
+    char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+    char_array_4[1] =
+        ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+    char_array_4[2] =
+        ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+
+    for (j = 0; (j < i + 1); j++) ret += base64_chars[char_array_4[j]];
+
+    while ((i++ < 3)) ret += '=';
+  }
+
+  return ret;
+}
+#endif
+
+// SSE2-optimized base64 encode implementation
+#ifdef __SSE2__
+static std::string base64_encode_sse(unsigned char const *bytes_to_encode, unsigned int in_len) {
+  if (in_len == 0) return std::string();
+
+  const char base64_chars[64] = {
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+    'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+    'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '/'
+  };
+
+  // Calculate output size
+  const size_t output_len = ((in_len + 2) / 3) * 4;
+  std::string result;
+  result.reserve(output_len);
+
+  size_t input_pos = 0;
+
+  // Process 12 bytes at a time using SSE2 (produces 16 base64 characters)
+  while (input_pos + 12 <= in_len) {
+    // Load 12 input bytes (will process as 4 groups of 3 bytes each)
+    alignas(16) uint8_t input_block[16] = {0};
+
+    // Copy 12 bytes, leaving last 4 bytes as zero padding
+    for (int i = 0; i < 12; i++) {
+      input_block[i] = bytes_to_encode[input_pos + i];
+    }
+
+    // Load input data into SSE register (currently unused but reserved for future vectorization)
+    (void)_mm_load_si128(reinterpret_cast<const __m128i*>(input_block));
+
+    // Process 4 groups of 3 bytes each
+    alignas(16) uint8_t output_indices[16];
+
+    for (int group = 0; group < 4; group++) {
+      int base_idx = group * 3;
+
+      // Extract 3 bytes for this group
+      uint8_t b0 = input_block[base_idx];
+      uint8_t b1 = input_block[base_idx + 1];
+      uint8_t b2 = input_block[base_idx + 2];
+
+      // Convert 3 bytes to 4 base64 indices
+      output_indices[group * 4] = (b0 >> 2) & 0x3F;
+      output_indices[group * 4 + 1] = ((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0F);
+      output_indices[group * 4 + 2] = ((b1 & 0x0F) << 2) | ((b2 >> 6) & 0x03);
+      output_indices[group * 4 + 3] = b2 & 0x3F;
+    }
+
+    // Convert indices to base64 characters using table lookup
+    for (int i = 0; i < 16; i++) {
+      result.push_back(base64_chars[output_indices[i]]);
+    }
+
+    input_pos += 12;
+  }
+
+  // Handle remaining bytes with scalar code
+  while (input_pos + 3 <= in_len) {
+    uint8_t b0 = bytes_to_encode[input_pos];
+    uint8_t b1 = bytes_to_encode[input_pos + 1];
+    uint8_t b2 = bytes_to_encode[input_pos + 2];
+
+    result.push_back(base64_chars[(b0 >> 2) & 0x3F]);
+    result.push_back(base64_chars[((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0F)]);
+    result.push_back(base64_chars[((b1 & 0x0F) << 2) | ((b2 >> 6) & 0x03)]);
+    result.push_back(base64_chars[b2 & 0x3F]);
+
+    input_pos += 3;
+  }
+
+  // Handle final 1-2 bytes if present
+  if (input_pos < in_len) {
+    uint8_t b0 = bytes_to_encode[input_pos];
+    uint8_t b1 = (input_pos + 1 < in_len) ? bytes_to_encode[input_pos + 1] : 0;
+
+    result.push_back(base64_chars[(b0 >> 2) & 0x3F]);
+    result.push_back(base64_chars[((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0F)]);
+
+    if (input_pos + 1 < in_len) {
+      result.push_back(base64_chars[((b1 & 0x0F) << 2)]);
+    } else {
+      result.push_back('=');
+    }
+    result.push_back('=');
+  }
+
+  return result;
+}
+#endif // __SSE2__
+
+std::string base64_encode(unsigned char const *bytes_to_encode,
+                          unsigned int in_len) {
+#ifdef __SSE2__
+  // Use SSE2 optimized version if available
+  return base64_encode_sse(bytes_to_encode, in_len);
+#else
+  // Use scalar fallback implementation
+  return base64_encode_scalar(bytes_to_encode, in_len);
+#endif
+}
+
+// SSE2-optimized base64 decode implementation
+#ifdef __SSE2__
+static std::string base64_decode_sse(std::string const &encoded_string) {
+  const size_t input_len = encoded_string.size();
+  if (input_len == 0) return std::string();
+
+  // Lookup table for base64 decoding (256 entries, -1 for invalid chars)
+  static const int8_t decode_table[256] = {
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,62, -1,-1,-1,63,
+    52,53,54,55, 56,57,58,59, 60,61,-1,-1, -1,-2,-1,-1,
+    -1, 0, 1, 2,  3, 4, 5, 6,  7, 8, 9,10, 11,12,13,14,
+    15,16,17,18, 19,20,21,22, 23,24,25,-1, -1,-1,-1,-1,
+    -1,26,27,28, 29,30,31,32, 33,34,35,36, 37,38,39,40,
+    41,42,43,44, 45,46,47,48, 49,50,51,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1
+  };
+
+  // Calculate output size (remove padding)
+  size_t padding = 0;
+  if (input_len >= 1 && encoded_string[input_len - 1] == '=') padding++;
+  if (input_len >= 2 && encoded_string[input_len - 2] == '=') padding++;
+
+  const size_t output_len = (input_len * 3) / 4 - padding;
+  std::string result;
+  result.reserve(output_len);
+
+  const uint8_t* input = reinterpret_cast<const uint8_t*>(encoded_string.data());
+  size_t input_pos = 0;
+
+  // Process 16 bytes at a time using SSE2
+  while (input_pos + 16 <= input_len) {
+    // Load 16 input bytes
+    __m128i input_chunk = _mm_loadu_si128(reinterpret_cast<const __m128i*>(input + input_pos));
+
+    // Decode using lookup table (split into two 8-byte chunks for table lookup)
+    alignas(16) uint8_t input_bytes[16];
+    _mm_store_si128(reinterpret_cast<__m128i*>(input_bytes), input_chunk);
+
+    alignas(16) int8_t decoded[16];
+    bool valid = true;
+
+    for (int i = 0; i < 16; i++) {
+      decoded[i] = decode_table[input_bytes[i]];
+      if (decoded[i] < 0 && input_bytes[i] != '=') {
+        valid = false;
+        break;
+      }
+    }
+
+    if (!valid) break; // Fall back to scalar processing for invalid chars
+
+    // Pack groups of 4 decoded bytes into 3 output bytes
+    for (int group = 0; group < 4; group++) {
+      if (input_pos + group * 4 + 3 >= input_len) break;
+
+      int base_idx = group * 4;
+      if (decoded[base_idx] >= 0 && decoded[base_idx + 1] >= 0 &&
+          decoded[base_idx + 2] >= 0 && decoded[base_idx + 3] >= 0) {
+
+        uint32_t combined = (static_cast<uint32_t>(decoded[base_idx]) << 18) |
+                           (static_cast<uint32_t>(decoded[base_idx + 1]) << 12) |
+                           (static_cast<uint32_t>(decoded[base_idx + 2]) << 6) |
+                           static_cast<uint32_t>(decoded[base_idx + 3]);
+
+        result.push_back(static_cast<char>((combined >> 16) & 0xFF));
+        result.push_back(static_cast<char>((combined >> 8) & 0xFF));
+        result.push_back(static_cast<char>(combined & 0xFF));
+      }
+    }
+
+    input_pos += 16;
+  }
+
+  // Process remaining bytes with scalar code
+  while (input_pos + 4 <= input_len) {
+    uint8_t a = input[input_pos];
+    uint8_t b = input[input_pos + 1];
+    uint8_t c = input[input_pos + 2];
+    uint8_t d = input[input_pos + 3];
+
+    if (a == '=' || b == '=') break;
+
+    int8_t da = decode_table[a];
+    int8_t db = decode_table[b];
+    int8_t dc = decode_table[c];
+    int8_t dd = decode_table[d];
+
+    if (da < 0 || db < 0) break;
+
+    uint32_t combined = (static_cast<uint32_t>(da) << 18) |
+                       (static_cast<uint32_t>(db) << 12);
+
+    result.push_back(static_cast<char>((combined >> 16) & 0xFF));
+
+    if (c != '=' && dc >= 0) {
+      combined |= static_cast<uint32_t>(dc) << 6;
+      result.push_back(static_cast<char>((combined >> 8) & 0xFF));
+
+      if (d != '=' && dd >= 0) {
+        combined |= static_cast<uint32_t>(dd);
+        result.push_back(static_cast<char>(combined & 0xFF));
+      }
+    }
+
+    input_pos += 4;
+  }
+
+  return result;
+}
+#endif // __SSE2__
+
+// Fallback implementation (original)
+std::string base64_decode(std::string const &encoded_string) {
+#ifdef __SSE2__
+  // Use SSE2 optimized version if available
+  return base64_decode_sse(encoded_string);
+#else
+  // Original scalar implementation
+  int in_len = static_cast<int>(encoded_string.size());
+  int i = 0;
+  int j = 0;
+  int in_ = 0;
+  unsigned char char_array_4[4], char_array_3[3];
+  std::string ret;
+
+  const std::string base64_chars =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      "abcdefghijklmnopqrstuvwxyz"
+      "0123456789+/";
+
+  while (in_len-- && (encoded_string[in_] != '=') &&
+         is_base64(encoded_string[in_])) {
+    char_array_4[i++] = encoded_string[in_];
+    in_++;
+    if (i == 4) {
+      for (i = 0; i < 4; i++)
+        char_array_4[i] =
+            static_cast<unsigned char>(base64_chars.find(char_array_4[i]));
+
+      char_array_3[0] =
+          (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+      char_array_3[1] =
+          ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+      char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+
+      for (i = 0; (i < 3); i++) ret += char_array_3[i];
+      i = 0;
+    }
+  }
+
+  if (i) {
+    for (j = i; j < 4; j++) char_array_4[j] = 0;
+
+    for (j = 0; j < 4; j++)
+      char_array_4[j] =
+          static_cast<unsigned char>(base64_chars.find(char_array_4[j]));
+
+    char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+    char_array_3[1] =
+        ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+    char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+
+    for (j = 0; (j < i - 1); j++) ret += char_array_3[j];
+  }
+
+  return ret;
+#endif // __SSE2__
+}
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
+/*
+   -- end base64.cpp and base64.h
+*/
+
+// ============================================================================
+// dtoa_dragonbox - Fast floating-point to string conversion
+// Based on Dragonbox algorithm by Junekey Jeon
+// ============================================================================
+
+namespace {
+
+// Helper functions for dragonbox formatting
+template <typename T>
+inline int count_digits(T n) {
+  int count = 1;
+  for (;;) {
+    if (n < 10) return count;
+    if (n < 100) return count + 1;
+    if (n < 1000) return count + 2;
+    if (n < 10000) return count + 3;
+    n /= 10000u;
+    count += 4;
+  }
+}
+
+inline auto digits2(size_t value) -> const char* {
+  alignas(2) static const char data[] =
+      "0001020304050607080910111213141516171819"
+      "2021222324252627282930313233343536373839"
+      "4041424344454647484950515253545556575859"
+      "6061626364656667686970717273747576777879"
+      "8081828384858687888990919293949596979899";
+  return &data[value * 2];
+}
+
+inline void write2digits(char* out, size_t value) {
+  *out++ = static_cast<char>('0' + value / 10);
+  *out = static_cast<char>('0' + value % 10);
+}
+
+char* write_exponent(int exp, char* out) {
+  if (exp < 0) {
+    *out++ = '-';
+    exp = -exp;
+  } else {
+    *out++ = '+';
+  }
+  auto uexp = static_cast<uint32_t>(exp);
+  if (uexp >= 100u) {
+    const char* top = digits2(uexp / 100);
+    if (uexp >= 1000u) *out++ = top[0];
+    *out++ = static_cast<char>(top[1]);
+    uexp %= 100;
+  }
+  const char* d = digits2(uexp);
+  *out++ = static_cast<char>(d[0]);
+  *out++ = static_cast<char>(d[1]);
+  return out;
+}
+
+inline char* fill_n(char* p, int n, char c) {
+  for (int i = 0; i < n; i++, p++) {
+    *p = c;
+  }
+  return p;
+}
+
+inline void format_decimal_impl(char* out, uint64_t value, uint32_t size) {
+  unsigned n = size;
+  while (value >= 100) {
+    n -= 2;
+    write2digits(out + n, static_cast<unsigned>(value % 100));
+    value /= 100;
+  }
+  if (value >= 10) {
+    n -= 2;
+    write2digits(out + n, static_cast<unsigned>(value));
+  } else {
+    out[--n] = static_cast<char>('0' + value);
+  }
+}
+
+inline char* format_decimal(char* out, uint64_t value, uint32_t num_digits) {
+  format_decimal_impl(out, value, num_digits);
+  return out + num_digits;
+}
+
+inline char* write_significand_e(char* out, uint64_t significand,
+                                 int significand_size, int exponent) {
+  out = format_decimal(out, significand, static_cast<uint32_t>(significand_size));
+  return fill_n(out, exponent, '0');
+}
+
+inline char* write_significand(char* out, uint64_t significand,
+                               int significand_size, int integral_size,
+                               char decimal_point) {
+  if (!decimal_point) return format_decimal(out, significand, static_cast<uint32_t>(significand_size));
+  out += significand_size + 1;
+  char* end = out;
+  int floating_size = significand_size - integral_size;
+  for (int i = floating_size / 2; i > 0; --i) {
+    out -= 2;
+    write2digits(out, static_cast<std::size_t>(significand % 100));
+    significand /= 100;
+  }
+  if (floating_size % 2 != 0) {
+    *--out = static_cast<char>('0' + significand % 10);
+    significand /= 10;
+  }
+  *--out = decimal_point;
+  format_decimal(out - integral_size, significand, static_cast<uint32_t>(integral_size));
+  return end;
+}
+
+// Template implementation for both float and double
+// max_digits: maximum significant digits (9 for float, 17 for double)
+// exp_upper: threshold for switching to exponential notation
+// Returns nullptr on invalid input (null buffer)
+template<typename Float>
+char* dtoa_dragonbox_impl_t(const Float f, char* buf, int max_digits, int exp_upper) {
+  // Null buffer check - return nullptr for invalid input
+  if (!buf) {
+    return nullptr;
+  }
+
+  // Handle special cases first (dragonbox requires finite, non-zero values)
+  if (std::isnan(f)) {
+    std::memcpy(buf, "nan", 3);
+    return buf + 3;
+  }
+  if (std::isinf(f)) {
+    if (std::signbit(f)) {
+      std::memcpy(buf, "-inf", 4);
+      return buf + 4;
+    } else {
+      std::memcpy(buf, "inf", 3);
+      return buf + 3;
+    }
+  }
+
+  bool is_negative = std::signbit(f);
+
+  // Handle zero specially (use fpclassify to avoid float comparison warning)
+  if (std::fpclassify(f) == FP_ZERO) {
+    *buf++ = '0';
+    return buf;
+  }
+
+  // Final safety guard: ensure value is finite before calling dragonbox
+  // This should never trigger given the checks above, but provides defense in depth
+  if (!std::isfinite(f)) {
+    // Fallback for any unexpected non-finite value
+    std::memcpy(buf, "0", 1);
+    return buf + 1;
+  }
+
+  // Use dragonbox directly on the original type (float or double)
+  auto ret = jkj::dragonbox::to_decimal(f);
+
+  // print human-readable float for the value in range [1e-exp_lower, 1e+exp_upper]
+  const int exp_lower = -4;
+  char exp_char = 'e';
+  char zero_char = '0';
+
+  auto significand = ret.significand;
+  int significand_size = count_digits(significand);
+  int exponent = ret.exponent;
+
+  // Limit to max_digits significant digits (round half to even)
+  if (significand_size > max_digits) {
+    int digits_to_remove = significand_size - max_digits;
+    uint64_t divisor = 1;
+    for (int i = 0; i < digits_to_remove; i++) {
+      divisor *= 10;
+    }
+    uint64_t remainder = significand % divisor;
+    significand /= divisor;
+    exponent += digits_to_remove;
+
+    // Round half to even
+    uint64_t half = divisor / 2;
+    if (remainder > half || (remainder == half && (significand & 1))) {
+      significand++;
+      // Check if rounding caused overflow (e.g., 999 -> 1000)
+      if (count_digits(significand) > max_digits) {
+        significand /= 10;
+        exponent++;
+      }
+    }
+    significand_size = count_digits(significand);
+  }
+
+  size_t size = size_t(significand_size) + (is_negative ? 1u : 0u);
+  (void)size;  // Used for tracking output size, may be used in future optimizations
+
+  int output_exp = exponent + significand_size - 1;
+  bool use_exp_format = (output_exp < exp_lower) || (output_exp >= exp_upper);
+
+  char decimal_point = '.';
+  if (use_exp_format) {
+    int num_zeros = 0;
+    if (significand_size == 1) {
+      decimal_point = '\0';
+    }
+    auto abs_output_exp = output_exp >= 0 ? output_exp : -output_exp;
+    int exp_digits = 2;
+    if (abs_output_exp >= 100) exp_digits = abs_output_exp >= 1000 ? 4 : 3;
+
+    size += (decimal_point ? 1u : 0u) + 2u + size_t(exp_digits);
+
+    if (is_negative) {
+      *buf++ = '-';
+    }
+
+    buf = write_significand(buf, significand, significand_size, 1, decimal_point);
+
+    if (num_zeros > 0) buf = fill_n(buf, num_zeros, zero_char);
+    *buf++ = exp_char;
+    return write_exponent(output_exp, buf);
+  }
+
+  int exp = exponent + significand_size;
+  if (exponent >= 0) {
+    size += static_cast<size_t>(exponent);
+
+    if (is_negative) {
+      *buf++ = '-';
+    }
+
+    return write_significand_e(buf, significand, significand_size,
+                               exponent);
+
+  } else if (exp > 0) {
+    size += 1;
+    if (is_negative) {
+      *buf++ = '-';
+    }
+
+    return write_significand(buf, significand, significand_size, exp,
+                             decimal_point);
+  }
+
+  int num_zeros = -exp;
+  bool pointy = num_zeros != 0 || significand_size != 0;
+  size += 1u + (pointy ? 1u : 0u) + size_t(num_zeros);
+
+  if (is_negative) {
+    *buf++ = '-';
+  }
+
+  *buf++ = zero_char;
+
+  if (!pointy) return buf;
+  *buf++ = decimal_point;
+  buf = fill_n(buf, num_zeros, zero_char);
+
+  return format_decimal(buf, significand, static_cast<uint32_t>(significand_size));
+}
+
+// Double precision: max 17 significant digits (std::numeric_limits<double>::max_digits10)
+// Returns nullptr on invalid input (null buffer)
+char* dtoa_dragonbox_impl(const double f, char* buf, int exp_upper = 16) {
+  // Null buffer check
+  if (!buf) {
+    return nullptr;
+  }
+
+  // Fast path for common values 1.0 and -1.0 (bitwise comparison)
+  // IEEE 754 double precision: 1.0 = 0x3FF0000000000000, -1.0 = 0xBFF0000000000000
+  uint64_t bits;
+  std::memcpy(&bits, &f, sizeof(double));
+
+  if (bits == 0x3FF0000000000000ULL) {
+    // Exactly 1.0
+    *buf++ = '1';
+    return buf;
+  }
+  if (bits == 0xBFF0000000000000ULL) {
+    // Exactly -1.0
+    *buf++ = '-';
+    *buf++ = '1';
+    return buf;
+  }
+
+  constexpr int kMaxDigits10Double = 17;  // std::numeric_limits<double>::max_digits10
+  return dtoa_dragonbox_impl_t(f, buf, kMaxDigits10Double, exp_upper);
+}
+
+// Single precision: max 9 significant digits (std::numeric_limits<float>::max_digits10)
+// Returns nullptr on invalid input (null buffer)
+char* dtoa_dragonbox_impl(const float f, char* buf) {
+  // Null buffer check
+  if (!buf) {
+    return nullptr;
+  }
+
+  // Fast path for common values 1.0f and -1.0f (bitwise comparison)
+  // IEEE 754 single precision: 1.0f = 0x3F800000, -1.0f = 0xBF800000
+  uint32_t bits;
+  std::memcpy(&bits, &f, sizeof(float));
+
+  if (bits == 0x3F800000U) {
+    // Exactly 1.0f
+    *buf++ = '1';
+    return buf;
+  }
+  if (bits == 0xBF800000U) {
+    // Exactly -1.0f
+    *buf++ = '-';
+    *buf++ = '1';
+    return buf;
+  }
+
+  constexpr int kMaxDigits10Float = 9;  // std::numeric_limits<float>::max_digits10
+  constexpr int kExpUpperFloat = 7;     // Use exponential notation for values >= 1e7
+  return dtoa_dragonbox_impl_t(f, buf, kMaxDigits10Float, kExpUpperFloat);
+}
+
+} // anonymous namespace
+
+// Public API for dtos - std::string version
+std::string dtos(float v) {
+  constexpr size_t kBufferSize = 24; // DTOA_DRAGONBOX_BUFFER_SIZE_FLOAT
+  char buffer[kBufferSize];
+  char* end = dtoa_dragonbox_impl(v, buffer);
+  return std::string(buffer, end);
+}
+
+std::string dtos(double v) {
+  constexpr size_t kBufferSize = 32; // DTOA_DRAGONBOX_BUFFER_SIZE_DOUBLE
+  char buffer[kBufferSize];
+  char* end = dtoa_dragonbox_impl(v, buffer);
+  return std::string(buffer, end);
+}
+
+// Public API for dtos - buffer version (efficient, no std::string construction)
+// Returns 0 if buffer is null
+size_t dtos(float v, char* buffer) {
+  char* end = dtoa_dragonbox_impl(v, buffer);
+  if (!end) {
+    return 0;  // Invalid input (null buffer)
+  }
+  return static_cast<size_t>(end - buffer);
+}
+
+// Returns 0 if buffer is null
+size_t dtos(double v, char* buffer) {
+  char* end = dtoa_dragonbox_impl(v, buffer);
+  if (!end) {
+    return 0;  // Invalid input (null buffer)
+  }
+  return static_cast<size_t>(end - buffer);
+}
+
+// ============================================================================
+// Half-precision (fp16) to string conversion
+// Produces shortest decimal representation that round-trips through fp16.
+// Half-precision has ~3.31 decimal digits of precision (11-bit mantissa).
+// We find the shortest decimal that, when parsed back, gives the same fp16.
+// ============================================================================
+
+namespace {
+
+// Round a decimal mantissa to N significant digits
+// Returns the rounded value and adjusts exponent if needed
+uint64_t round_to_digits(uint64_t mantissa, int num_digits, int& exp_adjust) {
+  exp_adjust = 0;
+  if (mantissa == 0) return 0;
+
+  // Count digits in mantissa
+  uint64_t temp = mantissa;
+  int digits = 0;
+  while (temp > 0) {
+    digits++;
+    temp /= 10;
+  }
+
+  if (digits <= num_digits) return mantissa;
+
+  // Need to round off (digits - num_digits) digits
+  int to_remove = digits - num_digits;
+  exp_adjust = to_remove;
+
+  // Compute divisor and remainder for rounding
+  uint64_t divisor = 1;
+  for (int i = 0; i < to_remove; i++) divisor *= 10;
+
+  uint64_t result = mantissa / divisor;
+  uint64_t remainder = mantissa % divisor;
+
+  // Round half-even (banker's rounding)
+  uint64_t half = divisor / 2;
+  if (remainder > half || (remainder == half && (result & 1))) {
+    result++;
+    // Check for overflow (e.g., 999 -> 1000)
+    temp = result;
+    int new_digits = 0;
+    while (temp > 0) {
+      new_digits++;
+      temp /= 10;
+    }
+    if (new_digits > num_digits) {
+      result /= 10;
+      exp_adjust++;
+    }
+  }
+
+  return result;
+}
+
+// Parse a decimal string back to float (simplified parser)
+float parse_decimal(uint64_t mantissa, int exponent) {
+  double result = static_cast<double>(mantissa);
+  if (exponent > 0) {
+    for (int i = 0; i < exponent; i++) result *= 10.0;
+  } else if (exponent < 0) {
+    for (int i = 0; i < -exponent; i++) result /= 10.0;
+  }
+  return static_cast<float>(result);
+}
+
+// Format mantissa with exponent into buffer
+// Returns number of chars written
+size_t format_decimal(uint64_t mantissa, int exponent, char* buffer) {
+  if (mantissa == 0) {
+    buffer[0] = '0';
+    return 1;
+  }
+
+  char* p = buffer;
+
+  // Convert mantissa to string (reversed)
+  char digits[20];
+  int num_digits = 0;
+  uint64_t temp = mantissa;
+  while (temp > 0) {
+    digits[num_digits++] = '0' + static_cast<char>(temp % 10);
+    temp /= 10;
+  }
+
+  // Total exponent adjustment for decimal point position
+  int total_exp = exponent + num_digits - 1;
+
+  // Decide on format: fixed or scientific
+  // For values in range [0.0001, 10000), use fixed notation
+  // Otherwise use scientific
+
+  if (total_exp >= -4 && total_exp < 5) {
+    // Fixed notation
+    if (total_exp >= 0) {
+      // Value >= 1
+      int int_digits = total_exp + 1;
+      int frac_digits = num_digits - int_digits;
+
+      // Write integer part
+      for (int i = num_digits - 1; i >= num_digits - int_digits && i >= 0; i--) {
+        *p++ = digits[i];
+      }
+      // Pad with zeros if needed
+      for (int i = 0; i < int_digits - num_digits; i++) {
+        *p++ = '0';
+      }
+
+      // Write fractional part if any
+      if (frac_digits > 0) {
+        *p++ = '.';
+        for (int i = num_digits - int_digits - 1; i >= 0; i--) {
+          *p++ = digits[i];
+        }
+      }
+    } else {
+      // Value < 1
+      *p++ = '0';
+      *p++ = '.';
+      // Leading zeros
+      for (int i = 0; i < -total_exp - 1; i++) {
+        *p++ = '0';
+      }
+      // Digits
+      for (int i = num_digits - 1; i >= 0; i--) {
+        *p++ = digits[i];
+      }
+    }
+  } else {
+    // Scientific notation (but USD prefers fixed, so we'll extend fixed range)
+    // For half-precision, values are in range [~6e-8, 65504]
+    // Let's use fixed notation for most cases
+
+    if (total_exp >= 0) {
+      // Large value - still use fixed
+      int int_digits = total_exp + 1;
+
+      for (int i = num_digits - 1; i >= 0; i--) {
+        *p++ = digits[i];
+      }
+      for (int i = 0; i < int_digits - num_digits; i++) {
+        *p++ = '0';
+      }
+    } else {
+      // Small value
+      *p++ = '0';
+      *p++ = '.';
+      for (int i = 0; i < -total_exp - 1; i++) {
+        *p++ = '0';
+      }
+      for (int i = num_digits - 1; i >= 0; i--) {
+        *p++ = digits[i];
+      }
+    }
+  }
+
+  return static_cast<size_t>(p - buffer);
+}
+
+} // anonymous namespace
+
+// Public API for dtos - half-precision version (std::string)
+std::string dtos(value::half h) {
+  float f = value::half_to_float(h);
+
+  // Handle special cases
+  if (std::isnan(f)) return "nan";
+  if (std::isinf(f)) return f > 0 ? "inf" : "-inf";
+  if (f == 0.0f) return h.value & 0x8000 ? "-0" : "0";
+
+  bool negative = f < 0;
+  if (negative) f = -f;
+
+  // Get dragonbox result for float
+  char float_buf[32];
+  size_t float_len = dtos(f, float_buf);
+  float_buf[float_len] = '\0';
+
+  // Parse the dragonbox output to get mantissa and exponent
+  uint64_t mantissa = 0;
+  int exponent = 0;
+  bool in_frac = false;
+  int frac_digits = 0;
+  bool in_exp = false;
+  bool exp_neg = false;
+  int exp_val = 0;
+
+  for (size_t i = 0; i < float_len; i++) {
+    char c = float_buf[i];
+    if (c == '.') {
+      in_frac = true;
+    } else if (c == 'e' || c == 'E') {
+      in_exp = true;
+    } else if (in_exp) {
+      if (c == '-') {
+        exp_neg = true;
+      } else if (c == '+') {
+        // skip
+      } else if (c >= '0' && c <= '9') {
+        exp_val = exp_val * 10 + (c - '0');
+      }
+    } else if (c >= '0' && c <= '9') {
+      mantissa = mantissa * 10 + static_cast<uint64_t>(c - '0');
+      if (in_frac) frac_digits++;
+    }
+  }
+
+  exponent = (exp_neg ? -exp_val : exp_val) - frac_digits;
+
+  // Now try to find shortest representation that round-trips
+  // Start with 4 digits (minimum for half precision) and go up to 7
+  char result_buf[32];
+  size_t result_len = 0;
+
+  for (int precision = 4; precision <= 7; precision++) {
+    int exp_adjust = 0;
+    uint64_t rounded = round_to_digits(mantissa, precision, exp_adjust);
+    int new_exp = exponent + exp_adjust;
+
+    // Strip trailing zeros from mantissa
+    while (rounded > 0 && rounded % 10 == 0) {
+      rounded /= 10;
+      new_exp++;
+    }
+
+    // Format and parse back
+    char test_buf[32];
+    size_t test_len = format_decimal(rounded, new_exp, test_buf);
+    test_buf[test_len] = '\0';
+
+    // Parse back to float, then convert to half
+    float parsed_f = parse_decimal(rounded, new_exp);
+    value::half parsed_h = value::float_to_half_full(parsed_f);
+
+    // Check if round-trip succeeds (ignoring sign bit which we handle separately)
+    uint16_t original_bits = h.value & 0x7FFF;
+    uint16_t parsed_bits = parsed_h.value & 0x7FFF;
+
+    if (original_bits == parsed_bits) {
+      // Found shortest representation
+      if (negative) {
+        result_buf[0] = '-';
+        std::memcpy(result_buf + 1, test_buf, test_len);
+        result_len = test_len + 1;
+      } else {
+        std::memcpy(result_buf, test_buf, test_len);
+        result_len = test_len;
+      }
+      break;
+    }
+  }
+
+  // If no short representation found, use full float precision
+  if (result_len == 0) {
+    if (negative) {
+      result_buf[0] = '-';
+      std::memcpy(result_buf + 1, float_buf, float_len);
+      result_len = float_len + 1;
+    } else {
+      std::memcpy(result_buf, float_buf, float_len);
+      result_len = float_len;
+    }
+  }
+
+  return std::string(result_buf, result_len);
+}
+
+// Public API for dtos - half-precision buffer version
+size_t dtos(value::half h, char* buffer) {
+  std::string s = dtos(h);
+  std::memcpy(buffer, s.c_str(), s.size());
+  return s.size();
+}
+
+// ============================================================================
+// Vector and Matrix Printing Functions
+// ============================================================================
+
+// Helper template for printing vector types
+template<typename T, size_t N>
+size_t print_vector_impl(const std::array<T, N>& v, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t i = 0; i < N; i++) {
+    if (i > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    size_t len = dtos(static_cast<T>(v[i]), p);
+    p += len;
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+// Float vectors
+size_t print_float2(const value::float2& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+size_t print_float3(const value::float3& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+size_t print_float4(const value::float4& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+// Double vectors
+size_t print_double2(const value::double2& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+size_t print_double3(const value::double3& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+size_t print_double4(const value::double4& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+// Half vectors (convert to float for printing)
+// Note: These functions are only available when linking with value-types
+
+// Matrix printing: ( (row0), (row1), ... ) - with spaces for USD compatibility
+size_t print_matrix2d(const value::matrix2d& m, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+  *p++ = ' ';  // Space after opening paren for USD compatibility
+
+  for (size_t row = 0; row < 2; row++) {
+    if (row > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    *p++ = '(';
+    for (size_t col = 0; col < 2; col++) {
+      if (col > 0) {
+        *p++ = ',';
+        *p++ = ' ';
+      }
+      size_t len = dtos(m.m[row][col], p);
+      p += len;
+    }
+    *p++ = ')';
+  }
+
+  *p++ = ' ';  // Space before closing paren for USD compatibility
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+size_t print_matrix3d(const value::matrix3d& m, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+  *p++ = ' ';  // Space after opening paren for USD compatibility
+
+  for (size_t row = 0; row < 3; row++) {
+    if (row > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    *p++ = '(';
+    for (size_t col = 0; col < 3; col++) {
+      if (col > 0) {
+        *p++ = ',';
+        *p++ = ' ';
+      }
+      size_t len = dtos(m.m[row][col], p);
+      p += len;
+    }
+    *p++ = ')';
+  }
+
+  *p++ = ' ';  // Space before closing paren for USD compatibility
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+size_t print_matrix4d(const value::matrix4d& m, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+  *p++ = ' ';  // Space after opening paren for USD compatibility
+
+  for (size_t row = 0; row < 4; row++) {
+    if (row > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    *p++ = '(';
+    for (size_t col = 0; col < 4; col++) {
+      if (col > 0) {
+        *p++ = ',';
+        *p++ = ' ';
+      }
+      size_t len = dtos(m.m[row][col], p);
+      p += len;
+    }
+    *p++ = ')';
+  }
+
+  *p++ = ' ';  // Space before closing paren for USD compatibility
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+bool GlobMatch(const std::string &pattern, const std::string &str) {
+  // Simple glob matching with * (any chars) and ? (single char)
+  // Uses dynamic programming approach
+
+  size_t p = 0;  // pattern index
+  size_t s = 0;  // string index
+  size_t starIdx = std::string::npos;
+  size_t matchIdx = 0;
+
+  while (s < str.size()) {
+    if (p < pattern.size() && (pattern[p] == '?' || pattern[p] == str[s])) {
+      // Current characters match, or pattern has ?
+      p++;
+      s++;
+    } else if (p < pattern.size() && pattern[p] == '*') {
+      // Star found, remember position
+      starIdx = p;
+      matchIdx = s;
+      p++;
+    } else if (starIdx != std::string::npos) {
+      // Mismatch, but we have a previous star
+      // Backtrack: try matching one more character with the star
+      p = starIdx + 1;
+      matchIdx++;
+      s = matchIdx;
+    } else {
+      // No match and no star to backtrack
+      return false;
+    }
+  }
+
+  // Check remaining pattern characters (should all be *)
+  while (p < pattern.size() && pattern[p] == '*') {
+    p++;
+  }
+
+  return p == pattern.size();
+}
+
+bool GlobMatchPath(const std::string &pattern, const std::string &path) {
+  // Glob matching for paths with ** support for recursive matching
+  // ** matches zero or more path segments (including /)
+  // * matches any characters except /
+  // ? matches single character except /
+
+  size_t p = 0;
+  size_t s = 0;
+  size_t starStarIdx = std::string::npos;
+  size_t starStarMatchIdx = 0;
+  size_t starIdx = std::string::npos;
+  size_t matchIdx = 0;
+
+  while (s < path.size()) {
+    // Check for **
+    if (p + 1 < pattern.size() && pattern[p] == '*' && pattern[p + 1] == '*') {
+      starStarIdx = p;
+      starStarMatchIdx = s;
+      p += 2;
+      // Skip trailing / after **
+      if (p < pattern.size() && pattern[p] == '/') {
+        p++;
+      }
+      continue;
+    }
+
+    if (p < pattern.size() && pattern[p] == '*' &&
+        (p + 1 >= pattern.size() || pattern[p + 1] != '*')) {
+      // Single * - matches any except /
+      starIdx = p;
+      matchIdx = s;
+      p++;
+    } else if (p < pattern.size() &&
+               ((pattern[p] == '?' && path[s] != '/') || pattern[p] == path[s])) {
+      p++;
+      s++;
+    } else if (starIdx != std::string::npos && path[s] != '/') {
+      // Backtrack to single star
+      p = starIdx + 1;
+      matchIdx++;
+      s = matchIdx;
+    } else if (starStarIdx != std::string::npos) {
+      // Backtrack to double star
+      p = starStarIdx + 2;
+      if (p < pattern.size() && pattern[p] == '/') {
+        p++;
+      }
+      starStarMatchIdx++;
+      s = starStarMatchIdx;
+      starIdx = std::string::npos;
+    } else {
+      return false;
+    }
+  }
+
+  // Check remaining pattern
+  while (p < pattern.size()) {
+    if (pattern[p] == '*') {
+      p++;
+    } else if (p + 1 < pattern.size() && pattern[p] == '*' && pattern[p + 1] == '*') {
+      p += 2;
+    } else {
+      break;
+    }
+  }
+
+  return p == pattern.size();
+}
+
+char *dtoa(float f, char *buf) {
+  // Use dragonbox for float-to-string conversion
+  size_t len = dtos(f, buf);
+  return buf + len;
+}
+
+char *dtoa(double d, char *buf) {
+  // Use dragonbox for double-to-string conversion
+  size_t len = dtos(d, buf);
+  return buf + len;
 }
 
 }  // namespace tinyusdz

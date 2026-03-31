@@ -6,6 +6,7 @@
 #include "acutest.h"
 
 #include "unit-primvar.h"
+#include "tinyusdz.hh"
 #include "primvar.hh"
 #include "value-pprint.hh"
 #include "usdGeom.hh"
@@ -20,7 +21,7 @@ void primvar_test(void) {
     tinyusdz::GeomMesh mesh;
     std::vector<float> scalar_array = {1.0, 2.0, 3.0, 4.0};
     tinyusdz::Attribute attr;
-    attr.set_value(scalar_array);
+    attr.set_value(std::move(scalar_array));
     tinyusdz::Property prop(attr, /* custom */false);
 
     mesh.props.emplace("primvars:myvar", prop);

@@ -9,6 +9,8 @@
 #include <sstream>
 
 #include "value-types.hh"
+#include "typed-array.hh"
+#include "pprint-enum.hh"  // pprint::GetColumnLimit, format_wrapped_array, is_wrappable_element_v
 
 // forward decl
 namespace tinyusdz {
@@ -20,6 +22,10 @@ struct Payload;
 struct LayerOffset;
 struct SubLayer;
 class Collection;
+
+namespace value {
+struct TimeSamples;
+}  // namespace value
 
 }  // namespace tinyusdz
 
@@ -53,6 +59,8 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half2 &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half3 &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half4 &v);
+
+// Note: operator<< for StringData is declared in pprinter.hh
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float2 &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float3 &v);
@@ -113,6 +121,8 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix4d &v);
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::frame4d &v);
 
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::timecode &v);
+
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::AssetPath &v);
 
 // NOTE: Implemented in pprinter.cc
@@ -130,6 +140,77 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::Collection &v);
 // 1D array
 template <typename T>
 std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
+  if constexpr (tinyusdz::pprint::is_wrappable_element_v<T>) {
+    uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+    if (col_limit > 0 && v.size() > 1) {
+      std::vector<std::string> elems;
+      elems.reserve(v.size());
+      for (const auto &e : v) {
+        std::ostringstream ess;
+        ess << e;
+        elems.push_back(ess.str());
+      }
+      os << tinyusdz::pprint::format_wrapped_array(
+          elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+      return os;
+    }
+  }
+  os << "[";
+  for (size_t i = 0; i < v.size(); i++) {
+    os << v[i];
+    if (i != (v.size() - 1)) {
+      os << ", ";
+    }
+  }
+  os << "]";
+  return os;
+}
+
+template <typename T>
+std::ostream &operator<<(std::ostream &os, const tinyusdz::TypedArray<T> &v) {
+  if constexpr (tinyusdz::pprint::is_wrappable_element_v<T>) {
+    uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+    if (col_limit > 0 && v.size() > 1) {
+      std::vector<std::string> elems;
+      elems.reserve(v.size());
+      for (size_t i = 0; i < v.size(); i++) {
+        std::ostringstream ess;
+        ess << v[i];
+        elems.push_back(ess.str());
+      }
+      os << tinyusdz::pprint::format_wrapped_array(
+          elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+      return os;
+    }
+  }
+  os << "[";
+  for (size_t i = 0; i < v.size(); i++) {
+    os << v[i];
+    if (i != (v.size() - 1)) {
+      os << ", ";
+    }
+  }
+  os << "]";
+  return os;
+}
+
+template <typename T>
+std::ostream &operator<<(std::ostream &os, const tinyusdz::ChunkedTypedArray<T> &v) {
+  if constexpr (tinyusdz::pprint::is_wrappable_element_v<T>) {
+    uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+    if (col_limit > 0 && v.size() > 1) {
+      std::vector<std::string> elems;
+      elems.reserve(v.size());
+      for (size_t i = 0; i < v.size(); i++) {
+        std::ostringstream ess;
+        ess << v[i];
+        elems.push_back(ess.str());
+      }
+      os << tinyusdz::pprint::format_wrapped_array(
+          elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+      return os;
+    }
+  }
   os << "[";
   for (size_t i = 0; i < v.size(); i++) {
     os << v[i];
@@ -364,9 +445,88 @@ std::string print_array_snipped(const std::vector<T> &vals, size_t N = 16) {
   return os.str();
 }
 
-// TODO: Remove
-// std::string pprint_any(const linb::any &v, const uint32_t indent = 0, bool
-// closing_brace = true);
+// Print first N and last N items.
+// 0 = print all items.
+// Useful when dump
+template <typename T>
+std::string print_array_snipped(const TypedArray<T> &vals, size_t N = 16) {
+  std::stringstream os;
+
+  if ((N == 0) || ((N * 2) >= vals.size())) {
+    os << "[";
+    for (size_t i = 0; i < vals.size(); i++) {
+      if (i > 0) {
+        os << ", ";
+      }
+      os << vals[i];
+    }
+    os << "]";
+  } else {
+    size_t head_end = (std::min)(N, vals.size());
+    size_t tail_start = (std::max)(vals.size() - N, head_end);
+
+    os << "[";
+
+    for (size_t i = 0; i < head_end; i++) {
+      if (i > 0) {
+        os << ", ";
+      }
+      os << vals[i];
+    }
+
+    os << ", ..., ";
+
+    for (size_t i = tail_start; i < vals.size(); i++) {
+      if (i > tail_start) {
+        os << ", ";
+      }
+      os << vals[i];
+    }
+
+    os << "]";
+  }
+  return os.str();
+}
+
+template <typename T>
+std::string print_array_snipped(const ChunkedTypedArray<T> &vals, size_t N = 16) {
+  std::stringstream os;
+
+  if ((N == 0) || ((N * 2) >= vals.size())) {
+    os << "[";
+    for (size_t i = 0; i < vals.size(); i++) {
+      if (i > 0) {
+        os << ", ";
+      }
+      os << vals[i];
+    }
+    os << "]";
+  } else {
+    size_t head_end = (std::min)(N, vals.size());
+    size_t tail_start = (std::max)(vals.size() - N, head_end);
+
+    os << "[";
+
+    for (size_t i = 0; i < head_end; i++) {
+      if (i > 0) {
+        os << ", ";
+      }
+      os << vals[i];
+    }
+
+    os << ", ..., ";
+
+    for (size_t i = tail_start; i < vals.size(); i++) {
+      if (i > tail_start) {
+        os << ", ";
+      }
+      os << vals[i];
+    }
+
+    os << "]";
+  }
+  return os.str();
+}
 
 }  // namespace value
 }  // namespace tinyusdz

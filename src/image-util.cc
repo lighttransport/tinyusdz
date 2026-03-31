@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2023-Present, Light Transport Entertainment Inc.
 //
-// TODO
 // - [ ] Optimize Rec.709 conversion
 //
 #include <cmath>
@@ -1064,6 +1063,709 @@ bool displayp3_f16_to_linear_f32(const std::vector<value::half> &in_img, size_t 
         float in_val = value::half_to_float(in_img[idx]);
         float f = in_val * alpha_scale_factor + alpha_bias;
         (*out_img)[idx] = f;
+      }
+    }
+  }
+
+  return true;
+}
+
+// Rec.2020 / Rec.2100 gamma conversion functions
+// https://en.wikipedia.org/wiki/Rec._2020
+// Rec.2020 uses the same OETF as Rec.709 but with wider color gamut
+
+namespace detail {
+
+// Rec.2020 uses the same transfer function as Rec.709
+static float Rec2020ToLinear(float v) {
+  float L;
+  if (v <= 0.0f) {
+    L = 0.0f;
+  } else if (v < 0.08124285829863530f) { // β * 4.5 where β = 0.018054 (for 10-bit)
+    L = v / 4.5f;
+  } else {
+    // α = 1.09929682680944 for 10-bit quantization
+    L = std::pow((v + 0.09929682680944f) / 1.09929682680944f, 1.0f / 0.45f);
+  }
+  return L;
+}
+
+static float linearToRec2020(float L) {
+  float V;
+  if (L <= 0.0f) {
+    V = 0.0f;
+  } else if (L < 0.018054f) { // β = 0.018054 for 10-bit
+    V = 4.5f * L;
+  } else {
+    // α = 1.09929682680944 for 10-bit quantization
+    V = 1.09929682680944f * std::pow(L, 0.45f) - 0.09929682680944f;
+  }
+  return V;
+}
+
+static uint8_t linearToRec2020_8bit(float L) {
+  float V = linearToRec2020(L);
+  return static_cast<uint8_t>((std::max)(0, (std::min)(255, int(V * 255.0f))));
+}
+
+static float Rec2020_8bit_ToLinear(uint8_t v) {
+  float V = v / 255.0f;
+  return Rec2020ToLinear(V);
+}
+
+} // namespace detail
+
+bool rec2020_8bit_to_linear_f32(const std::vector<uint8_t> &in_img, size_t width,
+                         size_t width_byte_stride, size_t height,
+                         size_t channels, size_t channel_stride,
+                         std::vector<float> *out_img, std::string *err) {
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
+  }
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if (channels == 0) {
+    PUSH_ERROR_AND_RETURN("channels is zero.");
+  }
+
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
+  }
+
+  if (channel_stride == 0) {
+    channel_stride = channels;
+  } else {
+    if (channel_stride < channels) {
+      PUSH_ERROR_AND_RETURN(fmt::format("channel_stride {} is smaller than input channels {}", channel_stride, channels));
+    }
+  }
+
+  if (width_byte_stride == 0) {
+    width_byte_stride = width * channel_stride;
+  }
+
+  size_t dest_size = size_t(width) * size_t(height) * channel_stride;
+  if (dest_size > in_img.size()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", dest_size, in_img.size()));
+  }
+
+  out_img->resize(dest_size);
+
+  for (size_t y = 0; y < height; y++) {
+    for (size_t x = 0; x < width; x++) {
+      // Apply Rec.2020 gamma to linear conversion for RGB channels
+      for (size_t c = 0; c < channels; c++) {
+        uint8_t v = in_img[y * width_byte_stride + x * channel_stride + c];
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] = detail::Rec2020_8bit_ToLinear(v);
+      }
+
+      // Copy remaining channels (e.g., alpha) without conversion
+      for (size_t c = channels; c < channel_stride; c++) {
+        uint8_t v = in_img[y * width_byte_stride + x * channel_stride + c];
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] = v / 255.0f;
+      }
+    }
+  }
+
+  return true;
+}
+
+bool linear_f32_to_rec2020_8bit(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels, size_t channel_stride,
+                         std::vector<uint8_t> *out_img, std::string *err) {
+  
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
+  }
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if (channels == 0) {
+    PUSH_ERROR_AND_RETURN("channels is zero.");
+  }
+
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
+  }
+
+  if (channel_stride == 0) {
+    channel_stride = channels;
+  } else {
+    if (channel_stride < channels) {
+      PUSH_ERROR_AND_RETURN(fmt::format("channel_stride {} is smaller than input channels {}", channel_stride, channels));
+    }
+  }
+
+  size_t src_size = size_t(width) * size_t(height) * channel_stride;
+  if (src_size > in_img.size()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", src_size, in_img.size()));
+  }
+
+  out_img->resize(src_size);
+
+  for (size_t y = 0; y < height; y++) {
+    for (size_t x = 0; x < width; x++) {
+      // Apply linear to Rec.2020 gamma conversion for RGB channels
+      for (size_t c = 0; c < channels; c++) {
+        float L = in_img[y * width * channel_stride + x * channel_stride + c];
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] = detail::linearToRec2020_8bit(L);
+      }
+
+      // Copy remaining channels (e.g., alpha) with simple linear to 8-bit conversion
+      for (size_t c = channels; c < channel_stride; c++) {
+        float v = in_img[y * width * channel_stride + x * channel_stride + c];
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] = detail::f32_to_u8(v);
+      }
+    }
+  }
+
+  return true;
+}
+
+bool linear_rec2020_to_linear_sRGB(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels,
+                         std::vector<float> *out_img, std::string *err) {
+
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
+  }
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if ((channels != 3) && (channels != 4)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("channels must be 3 or 4, but got {}", channels));
+  }
+
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
+  }
+
+  if (in_img.size() != (width * height * channels)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", (width * height * channels), in_img.size()));
+  }
+
+  out_img->resize(in_img.size());
+
+  // Color space conversion matrix from Rec.2020 to sRGB
+  // Reference: http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
+  // This is derived from the primaries:
+  // Rec.2020: R(0.708, 0.292), G(0.170, 0.797), B(0.131, 0.046)
+  // sRGB: R(0.64, 0.33), G(0.30, 0.60), B(0.15, 0.06)
+  // Matrix values from: https://www.itu.int/rec/R-REC-BT.2020/en
+
+  if (channels == 3) {
+    for (size_t y = 0; y < height; y++) {
+      for (size_t x = 0; x < width; x++) {
+        float r = in_img[3 * (y * width + x) + 0];
+        float g = in_img[3 * (y * width + x) + 1];
+        float b = in_img[3 * (y * width + x) + 2];
+
+        // Rec.2020 to XYZ to sRGB conversion matrix
+        float out_rgb[3];
+        out_rgb[0] =  1.6604910f * r - 0.5876411f * g - 0.0728499f * b;
+        out_rgb[1] = -0.1245505f * r + 1.1328999f * g - 0.0083494f * b;
+        out_rgb[2] = -0.0181508f * r - 0.1005789f * g + 1.1187297f * b;
+
+        // Clamp negative values
+        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
+        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
+        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
+
+        (*out_img)[3 * (y * width + x) + 0] = out_rgb[0];
+        (*out_img)[3 * (y * width + x) + 1] = out_rgb[1];
+        (*out_img)[3 * (y * width + x) + 2] = out_rgb[2];
+      }
+    }
+  } else { // rgba
+    for (size_t y = 0; y < height; y++) {
+      for (size_t x = 0; x < width; x++) {
+        float r = in_img[4 * (y * width + x) + 0];
+        float g = in_img[4 * (y * width + x) + 1];
+        float b = in_img[4 * (y * width + x) + 2];
+        float a = in_img[4 * (y * width + x) + 3];
+
+        // Rec.2020 to XYZ to sRGB conversion matrix
+        float out_rgb[3];
+        out_rgb[0] =  1.6604910f * r - 0.5876411f * g - 0.0728499f * b;
+        out_rgb[1] = -0.1245505f * r + 1.1328999f * g - 0.0083494f * b;
+        out_rgb[2] = -0.0181508f * r - 0.1005789f * g + 1.1187297f * b;
+
+        // Clamp negative values
+        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
+        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
+        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
+
+        (*out_img)[4 * (y * width + x) + 0] = out_rgb[0];
+        (*out_img)[4 * (y * width + x) + 1] = out_rgb[1];
+        (*out_img)[4 * (y * width + x) + 2] = out_rgb[2];
+        (*out_img)[4 * (y * width + x) + 3] = a;
+      }
+    }
+  }
+
+  return true;
+}
+
+bool linear_sRGB_to_linear_rec2020(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels,
+                         std::vector<float> *out_img, std::string *err) {
+
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
+  }
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if ((channels != 3) && (channels != 4)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("channels must be 3 or 4, but got {}", channels));
+  }
+
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
+  }
+
+  if (in_img.size() != (width * height * channels)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", (width * height * channels), in_img.size()));
+  }
+
+  out_img->resize(in_img.size());
+
+  // Color space conversion matrix from sRGB to Rec.2020
+  // This is the inverse of the Rec.2020 to sRGB matrix
+
+  if (channels == 3) {
+    for (size_t y = 0; y < height; y++) {
+      for (size_t x = 0; x < width; x++) {
+        float r = in_img[3 * (y * width + x) + 0];
+        float g = in_img[3 * (y * width + x) + 1];
+        float b = in_img[3 * (y * width + x) + 2];
+
+        // sRGB to XYZ to Rec.2020 conversion matrix
+        float out_rgb[3];
+        out_rgb[0] = 0.6274040f * r + 0.3292820f * g + 0.0433136f * b;
+        out_rgb[1] = 0.0690970f * r + 0.9195404f * g + 0.0113612f * b;
+        out_rgb[2] = 0.0163916f * r + 0.0880133f * g + 0.8955950f * b;
+
+        // No need to clamp as this conversion shouldn't produce negative values
+        // when input is valid sRGB
+
+        (*out_img)[3 * (y * width + x) + 0] = out_rgb[0];
+        (*out_img)[3 * (y * width + x) + 1] = out_rgb[1];
+        (*out_img)[3 * (y * width + x) + 2] = out_rgb[2];
+      }
+    }
+  } else { // rgba
+    for (size_t y = 0; y < height; y++) {
+      for (size_t x = 0; x < width; x++) {
+        float r = in_img[4 * (y * width + x) + 0];
+        float g = in_img[4 * (y * width + x) + 1];
+        float b = in_img[4 * (y * width + x) + 2];
+        float a = in_img[4 * (y * width + x) + 3];
+
+        // sRGB to XYZ to Rec.2020 conversion matrix
+        float out_rgb[3];
+        out_rgb[0] = 0.6274040f * r + 0.3292820f * g + 0.0433136f * b;
+        out_rgb[1] = 0.0690970f * r + 0.9195404f * g + 0.0113612f * b;
+        out_rgb[2] = 0.0163916f * r + 0.0880133f * g + 0.8955950f * b;
+
+        (*out_img)[4 * (y * width + x) + 0] = out_rgb[0];
+        (*out_img)[4 * (y * width + x) + 1] = out_rgb[1];
+        (*out_img)[4 * (y * width + x) + 2] = out_rgb[2];
+        (*out_img)[4 * (y * width + x) + 3] = a;
+      }
+    }
+  }
+
+  return true;
+}
+
+// Gamma 2.2 and Gamma 1.8 conversion functions
+bool gamma22_f32_to_linear_f32(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels, size_t channel_stride,
+                         std::vector<float> *out_img, std::string *err) {
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
+  }
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if (channels == 0) {
+    PUSH_ERROR_AND_RETURN("channels is zero.");
+  }
+
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
+  }
+
+  if (channel_stride == 0) {
+    channel_stride = channels;
+  } else {
+    if (channel_stride < channels) {
+      PUSH_ERROR_AND_RETURN(fmt::format("channel_stride {} is smaller than input channels {}", channel_stride, channels));
+    }
+  }
+
+  size_t src_size = size_t(width) * size_t(height) * channel_stride;
+  if (src_size > in_img.size()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", src_size, in_img.size()));
+  }
+
+  out_img->resize(src_size);
+
+  const float gamma = 2.2f;
+  
+  for (size_t y = 0; y < height; y++) {
+    for (size_t x = 0; x < width; x++) {
+      // Apply gamma 2.2 to linear conversion for specified channels
+      for (size_t c = 0; c < channels; c++) {
+        float v = in_img[y * width * channel_stride + x * channel_stride + c];
+        // Simple power law gamma correction
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] = 
+          (v <= 0.0f) ? 0.0f : std::pow(v, gamma);
+      }
+
+      // Copy remaining channels without conversion
+      for (size_t c = channels; c < channel_stride; c++) {
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] = 
+          in_img[y * width * channel_stride + x * channel_stride + c];
+      }
+    }
+  }
+
+  return true;
+}
+
+bool linear_f32_to_gamma22_f32(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels, size_t channel_stride,
+                         std::vector<float> *out_img, std::string *err) {
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
+  }
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if (channels == 0) {
+    PUSH_ERROR_AND_RETURN("channels is zero.");
+  }
+
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
+  }
+
+  if (channel_stride == 0) {
+    channel_stride = channels;
+  } else {
+    if (channel_stride < channels) {
+      PUSH_ERROR_AND_RETURN(fmt::format("channel_stride {} is smaller than input channels {}", channel_stride, channels));
+    }
+  }
+
+  size_t src_size = size_t(width) * size_t(height) * channel_stride;
+  if (src_size > in_img.size()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", src_size, in_img.size()));
+  }
+
+  out_img->resize(src_size);
+
+  const float inv_gamma = 1.0f / 2.2f;
+  
+  for (size_t y = 0; y < height; y++) {
+    for (size_t x = 0; x < width; x++) {
+      // Apply linear to gamma 2.2 conversion for specified channels
+      for (size_t c = 0; c < channels; c++) {
+        float L = in_img[y * width * channel_stride + x * channel_stride + c];
+        // Simple inverse power law gamma correction
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] = 
+          (L <= 0.0f) ? 0.0f : std::pow(L, inv_gamma);
+      }
+
+      // Copy remaining channels without conversion
+      for (size_t c = channels; c < channel_stride; c++) {
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] = 
+          in_img[y * width * channel_stride + x * channel_stride + c];
+      }
+    }
+  }
+
+  return true;
+}
+
+bool gamma18_f32_to_linear_f32(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels, size_t channel_stride,
+                         std::vector<float> *out_img, std::string *err) {
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
+  }
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if (channels == 0) {
+    PUSH_ERROR_AND_RETURN("channels is zero.");
+  }
+
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
+  }
+
+  if (channel_stride == 0) {
+    channel_stride = channels;
+  } else {
+    if (channel_stride < channels) {
+      PUSH_ERROR_AND_RETURN(fmt::format("channel_stride {} is smaller than input channels {}", channel_stride, channels));
+    }
+  }
+
+  size_t src_size = size_t(width) * size_t(height) * channel_stride;
+  if (src_size > in_img.size()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", src_size, in_img.size()));
+  }
+
+  out_img->resize(src_size);
+
+  const float gamma = 1.8f;
+  
+  for (size_t y = 0; y < height; y++) {
+    for (size_t x = 0; x < width; x++) {
+      // Apply gamma 1.8 to linear conversion for specified channels
+      for (size_t c = 0; c < channels; c++) {
+        float v = in_img[y * width * channel_stride + x * channel_stride + c];
+        // Simple power law gamma correction
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] = 
+          (v <= 0.0f) ? 0.0f : std::pow(v, gamma);
+      }
+
+      // Copy remaining channels without conversion
+      for (size_t c = channels; c < channel_stride; c++) {
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] = 
+          in_img[y * width * channel_stride + x * channel_stride + c];
+      }
+    }
+  }
+
+  return true;
+}
+
+bool linear_f32_to_gamma18_f32(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels, size_t channel_stride,
+                         std::vector<float> *out_img, std::string *err) {
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
+  }
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if (channels == 0) {
+    PUSH_ERROR_AND_RETURN("channels is zero.");
+  }
+
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
+  }
+
+  if (channel_stride == 0) {
+    channel_stride = channels;
+  } else {
+    if (channel_stride < channels) {
+      PUSH_ERROR_AND_RETURN(fmt::format("channel_stride {} is smaller than input channels {}", channel_stride, channels));
+    }
+  }
+
+  size_t src_size = size_t(width) * size_t(height) * channel_stride;
+  if (src_size > in_img.size()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", src_size, in_img.size()));
+  }
+
+  out_img->resize(src_size);
+
+  const float inv_gamma = 1.0f / 1.8f;
+  
+  for (size_t y = 0; y < height; y++) {
+    for (size_t x = 0; x < width; x++) {
+      // Apply linear to gamma 1.8 conversion for specified channels
+      for (size_t c = 0; c < channels; c++) {
+        float L = in_img[y * width * channel_stride + x * channel_stride + c];
+        // Simple inverse power law gamma correction
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] = 
+          (L <= 0.0f) ? 0.0f : std::pow(L, inv_gamma);
+      }
+
+      // Copy remaining channels without conversion
+      for (size_t c = channels; c < channel_stride; c++) {
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] = 
+          in_img[y * width * channel_stride + x * channel_stride + c];
+      }
+    }
+  }
+
+  return true;
+}
+
+// ACES 2065-1 (AP0) color space conversions
+bool linear_sRGB_to_ACES2065_1(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels,
+                         std::vector<float> *out_img, std::string *err) {
+
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
+  }
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if ((channels != 3) && (channels != 4)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("channels must be 3 or 4, but got {}", channels));
+  }
+
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
+  }
+
+  if (in_img.size() != (width * height * channels)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", (width * height * channels), in_img.size()));
+  }
+
+  out_img->resize(in_img.size());
+
+  // sRGB/Rec.709 to ACES 2065-1 (AP0) conversion matrix
+  // Reference: https://www.oscars.org/science-technology/sci-tech-projects/aces
+  // Matrix from sRGB primaries to ACES AP0 primaries
+
+  if (channels == 3) {
+    for (size_t y = 0; y < height; y++) {
+      for (size_t x = 0; x < width; x++) {
+        float r = in_img[3 * (y * width + x) + 0];
+        float g = in_img[3 * (y * width + x) + 1];
+        float b = in_img[3 * (y * width + x) + 2];
+
+        // sRGB to ACES 2065-1 (AP0) conversion matrix
+        float out_rgb[3];
+        out_rgb[0] = 0.4397010f * r + 0.3829780f * g + 0.1773350f * b;
+        out_rgb[1] = 0.0897923f * r + 0.8134207f * g + 0.0967616f * b;
+        out_rgb[2] = 0.0175440f * r + 0.1115440f * g + 0.8707127f * b;
+
+        (*out_img)[3 * (y * width + x) + 0] = out_rgb[0];
+        (*out_img)[3 * (y * width + x) + 1] = out_rgb[1];
+        (*out_img)[3 * (y * width + x) + 2] = out_rgb[2];
+      }
+    }
+  } else { // rgba
+    for (size_t y = 0; y < height; y++) {
+      for (size_t x = 0; x < width; x++) {
+        float r = in_img[4 * (y * width + x) + 0];
+        float g = in_img[4 * (y * width + x) + 1];
+        float b = in_img[4 * (y * width + x) + 2];
+        float a = in_img[4 * (y * width + x) + 3];
+
+        // sRGB to ACES 2065-1 (AP0) conversion matrix
+        float out_rgb[3];
+        out_rgb[0] = 0.4397010f * r + 0.3829780f * g + 0.1773350f * b;
+        out_rgb[1] = 0.0897923f * r + 0.8134207f * g + 0.0967616f * b;
+        out_rgb[2] = 0.0175440f * r + 0.1115440f * g + 0.8707127f * b;
+
+        (*out_img)[4 * (y * width + x) + 0] = out_rgb[0];
+        (*out_img)[4 * (y * width + x) + 1] = out_rgb[1];
+        (*out_img)[4 * (y * width + x) + 2] = out_rgb[2];
+        (*out_img)[4 * (y * width + x) + 3] = a;
+      }
+    }
+  }
+
+  return true;
+}
+
+bool ACES2065_1_to_linear_sRGB(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels,
+                         std::vector<float> *out_img, std::string *err) {
+
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
+  }
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if ((channels != 3) && (channels != 4)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("channels must be 3 or 4, but got {}", channels));
+  }
+
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
+  }
+
+  if (in_img.size() != (width * height * channels)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", (width * height * channels), in_img.size()));
+  }
+
+  out_img->resize(in_img.size());
+
+  // ACES 2065-1 (AP0) to sRGB/Rec.709 conversion matrix
+  // This is the inverse of the sRGB to ACES 2065-1 matrix
+
+  if (channels == 3) {
+    for (size_t y = 0; y < height; y++) {
+      for (size_t x = 0; x < width; x++) {
+        float r = in_img[3 * (y * width + x) + 0];
+        float g = in_img[3 * (y * width + x) + 1];
+        float b = in_img[3 * (y * width + x) + 2];
+
+        // ACES 2065-1 (AP0) to sRGB conversion matrix
+        float out_rgb[3];
+        out_rgb[0] =  2.5216490f * r - 1.1368901f * g - 0.3847580f * b;
+        out_rgb[1] = -0.2764799f * r + 1.3727190f * g - 0.0962386f * b;
+        out_rgb[2] = -0.0153780f * r - 0.1529968f * g + 1.1683748f * b;
+
+        // Clamp negative values
+        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
+        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
+        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
+
+        (*out_img)[3 * (y * width + x) + 0] = out_rgb[0];
+        (*out_img)[3 * (y * width + x) + 1] = out_rgb[1];
+        (*out_img)[3 * (y * width + x) + 2] = out_rgb[2];
+      }
+    }
+  } else { // rgba
+    for (size_t y = 0; y < height; y++) {
+      for (size_t x = 0; x < width; x++) {
+        float r = in_img[4 * (y * width + x) + 0];
+        float g = in_img[4 * (y * width + x) + 1];
+        float b = in_img[4 * (y * width + x) + 2];
+        float a = in_img[4 * (y * width + x) + 3];
+
+        // ACES 2065-1 (AP0) to sRGB conversion matrix
+        float out_rgb[3];
+        out_rgb[0] =  2.5216490f * r - 1.1368901f * g - 0.3847580f * b;
+        out_rgb[1] = -0.2764799f * r + 1.3727190f * g - 0.0962386f * b;
+        out_rgb[2] = -0.0153780f * r - 0.1529968f * g + 1.1683748f * b;
+
+        // Clamp negative values
+        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
+        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
+        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
+
+        (*out_img)[4 * (y * width + x) + 0] = out_rgb[0];
+        (*out_img)[4 * (y * width + x) + 1] = out_rgb[1];
+        (*out_img)[4 * (y * width + x) + 2] = out_rgb[2];
+        (*out_img)[4 * (y * width + x) + 3] = a;
       }
     }
   }

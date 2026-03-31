@@ -24,7 +24,6 @@
 //
 //
 
-#include <iostream>
 #include <string>
 
 #include "nonstd/optional.hpp"
@@ -88,6 +87,9 @@ class Token {
   explicit Token(const std::string &str) {
     str_ = sid::string_id(str.c_str(), TokenStorage::GetInstance());
   }
+
+  Token(Token &&str) = default;
+  
 
   explicit Token(const char *str) {
     str_ = sid::string_id(str, TokenStorage::GetInstance());
@@ -162,16 +164,6 @@ class Token {
   }
 
   // No string hash for TinyUSDZ
-#if 0
-  uint64_t hash() const {
-    if (!str_) {
-      return 0;
-    }
-
-    // Assume non-zero hash value for non-empty string.
-    return str_.value().hash_code();
-  }
-#endif
 
  private:
   std::string str_;

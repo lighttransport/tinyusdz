@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<materialx version="1.38">
+  <surfacematerial name="RedMetal" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="RedMetal_shader" />
+  </surfacematerial>
+
+  <open_pbr_surface name="RedMetal_shader" type="surfaceshader">
+    <input name="base_color" type="color3" value="0.8, 0.2, 0.2" />
+    <input name="base_weight" type="float" value="1.0" />
+    <input name="base_metalness" type="float" value="0.9" />
+    <input name="specular_roughness" type="float" value="0.3" />
+    <input name="specular_ior" type="float" value="1.5" />
+  </open_pbr_surface>
+</materialx>

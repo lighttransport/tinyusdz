@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenPBR NodeGraph Demo</title>
+
+    <!-- LiteGraph.js from CDN -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/litegraph.js@0.7.18/css/litegraph.css">
+    <script src="https://cdn.jsdelivr.net/npm/litegraph.js@0.7.18/build/litegraph.min.js"></script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* Left panel - 3D view */
+        .viewer-panel {
+            flex: 1;
+            position: relative;
+            min-width: 400px;
+            border-right: 2px solid #333;
+        }
+
+        #canvas-3d {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .viewer-info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            z-index: 100;
+            max-width: 280px;
+        }
+
+        .viewer-info h3 {
+            margin: 0 0 8px 0;
+            color: #4CAF50;
+            font-size: 14px;
+        }
+
+        .viewer-info p {
+            margin: 4px 0;
+            color: #aaa;
+        }
+
+        .viewer-info span {
+            color: #81D4FA;
+        }
+
+        /* Right panel - Node graph */
+        .nodegraph-panel {
+            flex: 1;
+            position: relative;
+            min-width: 500px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .nodegraph-header {
+            background: #252540;
+            padding: 10px 15px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #333;
+        }
+
+        .nodegraph-header h2 {
+            font-size: 14px;
+            font-weight: 500;
+            color: #4CAF50;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #nodegraph-collapse-btn {
+            background: rgba(255, 255, 255, 0.15);
+            border: none;
+            color: #4CAF50;
+            width: 22px;
+            height: 22px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 22px;
+            text-align: center;
+            padding: 0;
+            transition: background 0.2s, transform 0.2s;
+            flex-shrink: 0;
+        }
+
+        #nodegraph-collapse-btn:hover {
+            background: rgba(255, 255, 255, 0.25);
+        }
+
+        #nodegraph-collapse-btn.collapsed {
+        }
+
+        .nodegraph-panel.collapsed {
+            flex: 0 0 auto;
+            min-width: 0;
+        }
+
+        .nodegraph-panel.collapsed #nodegraph-canvas,
+        .nodegraph-panel.collapsed .ng-material-bar,
+        .nodegraph-panel.collapsed .node-stats {
+            display: none;
+        }
+
+        .nodegraph-panel.collapsed .nodegraph-controls {
+            display: none;
+        }
+
+        .nodegraph-controls {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .btn {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 6px 14px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            background: #388E3C;
+        }
+
+        .btn.secondary {
+            background: #2196F3;
+        }
+
+        .btn.secondary:hover {
+            background: #1976D2;
+        }
+
+        .btn.warning {
+            background: #FF9800;
+        }
+
+        .btn.warning:hover {
+            background: #F57C00;
+        }
+
+        #nodegraph-canvas {
+            flex: 1;
+            width: 100%;
+        }
+
+        /* Toolbar */
+        .toolbar {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.85);
+            padding: 8px 12px;
+            border-radius: 8px;
+            display: flex;
+            gap: 10px;
+            z-index: 100;
+        }
+
+        /* Toast */
+        #toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+        #toast.visible {
+            opacity: 1;
+        }
+
+        /* Loading */
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        }
+
+        #loading.visible {
+            display: flex;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #4CAF50;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* File input */
+        #file-input {
+            display: none;
+        }
+
+        /* Help text */
+        .help-text {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-size: 11px;
+            color: #888;
+        }
+
+        .help-text kbd {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+
+        /* Material selector */
+        .material-selector {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px;
+            border-radius: 8px;
+            z-index: 100;
+        }
+
+        .material-selector label {
+            font-size: 12px;
+            color: #aaa;
+            margin-right: 8px;
+        }
+
+        .material-selector select {
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        /* Resizer */
+        .resizer {
+            width: 6px;
+            background: #333;
+            cursor: col-resize;
+            transition: background 0.2s;
+        }
+
+        .resizer:hover {
+            background: #4CAF50;
+        }
+
+        /* NodeGraph material selector bar */
+        .ng-material-bar {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 12px;
+            background: #1e1e30;
+            border-top: 1px solid #2a2a44;
+            border-bottom: 1px solid #2a2a44;
+            font-size: 12px;
+            flex-shrink: 0;
+        }
+
+        .ng-material-bar.visible {
+            display: flex;
+        }
+
+        .ng-material-bar label {
+            color: #aaa;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+
+        .ng-material-bar select {
+            flex: 1;
+            background: #2a2a42;
+            color: #eee;
+            border: 1px solid #444;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .ng-material-bar select:focus {
+            outline: 1px solid #4CAF50;
+        }
+
+        .ng-material-bar .mat-count {
+            color: #666;
+            font-size: 10px;
+            font-family: monospace;
+            white-space: nowrap;
+        }
+
+        /* Node graph stats */
+        .nodegraph-stats {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-size: 11px;
+            color: #888;
+        }
+
+        .nodegraph-stats span {
+            color: #4CAF50;
+        }
+
+        /* Bridge panel */
+        .bridge-panel {
+            position: absolute;
+            top: 50px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 12px;
+            border-radius: 8px;
+            z-index: 100;
+            display: none;
+            min-width: 200px;
+        }
+
+        .bridge-panel.visible {
+            display: block;
+        }
+
+        .bridge-panel h4 {
+            margin: 0 0 10px 0;
+            color: #E91E63;
+            font-size: 12px;
+        }
+
+        .bridge-panel .status {
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 8px;
+        }
+
+        .bridge-panel .status.connected {
+            color: #4CAF50;
+        }
+
+        .bridge-panel input {
+            width: 100%;
+            background: #333;
+            border: 1px solid #555;
+            color: #fff;
+            padding: 5px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            margin-bottom: 8px;
+        }
+
+        .bridge-panel .btn-row {
+            display: flex;
+            gap: 6px;
+        }
+
+        .bridge-panel .btn {
+            flex: 1;
+            font-size: 11px;
+            padding: 5px 8px;
+        }
+
+        /* Interactive toggle */
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 11px;
+            color: #aaa;
+            white-space: nowrap;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 34px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #555;
+            border-radius: 9px;
+            transition: background 0.2s;
+        }
+
+        .toggle-slider::before {
+            content: '';
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            left: 2px;
+            top: 2px;
+            background: #ccc;
+            border-radius: 50%;
+            transition: transform 0.2s;
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background: #4CAF50;
+        }
+
+        .toggle-switch input:checked + .toggle-slider::before {
+            transform: translateX(16px);
+        }
+
+        /* Separator line */
+        .controls-separator {
+            width: 1px;
+            height: 24px;
+            background: #555;
+            margin: 0 4px;
+        }
+
+        /* Fit button group */
+        .fit-group {
+            display: flex;
+            gap: 2px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 4px;
+            padding: 2px;
+        }
+
+        .fit-group .btn-fit {
+            background: #555;
+            color: #ccc;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 500;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            white-space: nowrap;
+        }
+
+        .fit-group .btn-fit:hover {
+            background: #FF9800;
+            color: white;
+        }
+
+        .fit-group .btn-fit svg {
+            width: 14px;
+            height: 14px;
+            fill: currentColor;
+        }
+
+        .fit-group .btn-fit .kbd {
+            font-size: 9px;
+            background: rgba(255, 255, 255, 0.15);
+            padding: 1px 4px;
+            border-radius: 2px;
+            font-family: monospace;
+        }
+
+        /* Undo/Redo button group */
+        .undo-group {
+            display: flex;
+            gap: 2px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 4px;
+            padding: 2px;
+        }
+
+        .undo-group .btn-undo {
+            background: #555;
+            color: #ccc;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 500;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            white-space: nowrap;
+        }
+
+        .undo-group .btn-undo:hover:not(:disabled) {
+            background: #2196F3;
+            color: white;
+        }
+
+        .undo-group .btn-undo:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .undo-group .btn-undo .kbd {
+            font-size: 9px;
+            background: rgba(255, 255, 255, 0.15);
+            padding: 1px 4px;
+            border-radius: 2px;
+            font-family: monospace;
+        }
+
+        /* Edit mode indicator */
+        .edit-indicator {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(76, 175, 80, 0.85);
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            color: white;
+            display: none;
+        }
+
+        .edit-indicator.visible {
+            display: block;
+        }
+
+        /* Lighting controls */
+        .lighting-controls {
+            position: absolute;
+            bottom: 40px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 10px 12px;
+            border-radius: 8px;
+            z-index: 100;
+            min-width: 220px;
+            font-size: 12px;
+        }
+
+        .lighting-controls h4 {
+            margin: 0 0 8px 0;
+            color: #81D4FA;
+            font-size: 12px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .lighting-controls h4::before {
+            content: '\25BC ';
+            font-size: 9px;
+        }
+
+        .lighting-controls.collapsed h4::before {
+            content: '\25B6 ';
+        }
+
+        .lighting-controls.collapsed .lighting-body {
+            display: none;
+        }
+
+        .lighting-controls .control-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 6px;
+        }
+
+        .lighting-controls .control-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .lighting-controls label {
+            color: #aaa;
+            font-size: 11px;
+            min-width: 55px;
+            white-space: nowrap;
+        }
+
+        .lighting-controls select {
+            flex: 1;
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+            padding: 3px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+        }
+
+        .lighting-controls input[type="range"] {
+            flex: 1;
+            height: 4px;
+            accent-color: #81D4FA;
+        }
+
+        .lighting-controls .val-display {
+            color: #81D4FA;
+            font-size: 10px;
+            min-width: 28px;
+            text-align: right;
+            font-family: monospace;
+        }
+
+        .lighting-controls input[type="checkbox"] {
+            accent-color: #81D4FA;
+        }
+
+        /* Light list */
+        .light-list-header {
+            color: #aaa;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin: 8px 0 4px 0;
+            padding-top: 6px;
+            border-top: 1px solid #444;
+        }
+
+        .light-list {
+            max-height: 160px;
+            overflow-y: auto;
+        }
+
+        .light-list::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .light-list::-webkit-scrollbar-thumb {
+            background: #555;
+            border-radius: 2px;
+        }
+
+        .light-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 2px 0;
+            font-size: 11px;
+        }
+
+        .light-item input[type="checkbox"] {
+            width: 13px;
+            height: 13px;
+            accent-color: #81D4FA;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .light-swatch {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+            border: 1px solid #666;
+            flex-shrink: 0;
+        }
+
+        .light-label {
+            color: #ccc;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .light-type {
+            color: #777;
+            font-size: 9px;
+            font-family: monospace;
+            flex-shrink: 0;
+        }
+
+        /* Shading controls */
+        .shading-controls {
+            position: absolute;
+            bottom: 40px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 10px 12px;
+            border-radius: 8px;
+            z-index: 100;
+            min-width: 190px;
+            font-size: 12px;
+        }
+
+        .shading-controls h4 {
+            margin: 0 0 8px 0;
+            color: #CE93D8;
+            font-size: 12px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .shading-controls h4::before {
+            content: '\25BC ';
+            font-size: 9px;
+        }
+
+        .shading-controls.collapsed h4::before {
+            content: '\25B6 ';
+        }
+
+        .shading-controls.collapsed .shading-body {
+            display: none;
+        }
+
+        .shading-controls .control-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 6px;
+        }
+
+        .shading-controls .control-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .shading-controls label {
+            color: #aaa;
+            font-size: 11px;
+            min-width: 40px;
+            white-space: nowrap;
+        }
+
+        .shading-controls select {
+            flex: 1;
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+            padding: 3px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 3D Viewer Panel -->
+        <div class="viewer-panel" id="viewer-panel">
+            <canvas id="canvas-3d"></canvas>
+
+            <div class="viewer-info">
+                <h3>OpenPBR Material Preview</h3>
+                <p>Status: <span id="status">Initializing...</span></p>
+                <p>Meshes: <span id="mesh-count">0</span></p>
+                <p>Materials: <span id="material-count">0</span></p>
+            </div>
+
+            <div class="material-selector" id="material-selector" style="display: none;">
+                <label>Material:</label>
+                <select id="material-select"></select>
+            </div>
+
+            <div class="help-text">
+                <kbd>Scroll</kbd> zoom | <kbd>Drag</kbd> orbit | <kbd>Right-drag</kbd> pan
+            </div>
+
+            <!-- Shading Controls -->
+            <div class="shading-controls" id="shading-controls">
+                <h4 onclick="toggleShadingPanel()">Shading</h4>
+                <div class="shading-body">
+                    <div class="control-row">
+                        <label>Mode:</label>
+                        <select id="shading-mode-select" onchange="setShadingMode(this.value)">
+                            <option value="solid">Beauty</option>
+                            <option value="normal_mapped">Normal Mapped</option>
+                            <option value="normal_geometry">Normal Geometry</option>
+                            <option value="tangent">Tangent</option>
+                            <option value="bitangent">Bitangent</option>
+                            <option value="tangent_w">Tangent W (handedness)</option>
+                            <option value="base_color">Base Color</option>
+                            <option value="base_metalness">Base Metalness</option>
+                            <option value="base_diffuse_roughness">Base Diffuse Roughness</option>
+                            <option value="specular_color">Specular Color</option>
+                            <option value="specular_roughness">Specular Roughness</option>
+                            <option value="coat_color">Coat Color</option>
+                            <option value="fuzz_color">Fuzz Color</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Lighting Controls -->
+            <div class="lighting-controls" id="lighting-controls">
+                <h4 onclick="toggleLightingPanel()">Lighting</h4>
+                <div class="lighting-body">
+                    <div class="control-row">
+                        <label>Env:</label>
+                        <select id="env-select" onchange="changeEnvironment(this.value)">
+                            <option value="studio">Studio</option>
+                            <option value="usd_dome">USD DomeLight</option>
+                            <option value="goegap">Goegap (HDR)</option>
+                            <option value="pisa">Pisa (Cube)</option>
+                            <option value="constant_white">White</option>
+                            <option value="constant_warm">Warm</option>
+                            <option value="constant_cool">Cool</option>
+                        </select>
+                    </div>
+                    <div class="control-row">
+                        <label>Intensity:</label>
+                        <input type="range" id="env-intensity" min="0" max="5" step="0.1" value="1"
+                               oninput="changeEnvIntensity(parseFloat(this.value))">
+                        <span class="val-display" id="env-intensity-val">1.0</span>
+                    </div>
+                    <div class="control-row">
+                        <label>Exposure:</label>
+                        <input type="range" id="exposure" min="0" max="5" step="0.1" value="1"
+                               oninput="changeExposure(parseFloat(this.value))">
+                        <span class="val-display" id="exposure-val">1.0</span>
+                    </div>
+                    <div class="control-row">
+                        <label>Tonemap:</label>
+                        <select id="tonemap-select" onchange="changeToneMapping(this.value)">
+                            <option value="aces" selected>ACES</option>
+                            <option value="agx">AgX</option>
+                            <option value="neutral">Neutral</option>
+                            <option value="reinhard">Reinhard</option>
+                            <option value="linear">Linear</option>
+                            <option value="none">None</option>
+                        </select>
+                    </div>
+                    <div class="control-row">
+                        <label>Show BG:</label>
+                        <input type="checkbox" id="show-bg" checked onchange="toggleBackground(this.checked)">
+                    </div>
+                    <div class="light-list-header">Lights</div>
+                    <div class="light-list" id="light-list">
+                        <!-- Populated dynamically by buildLightListUI() -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Resizer -->
+        <div class="resizer" id="resizer"></div>
+
+        <!-- Node Graph Panel -->
+        <div class="nodegraph-panel" id="nodegraph-panel">
+            <div class="nodegraph-header">
+                <h2><button id="nodegraph-collapse-btn" onclick="toggleNodeGraphCollapse()" title="Hide node graph">&gt;</button>MaterialX NodeGraph</h2>
+                <div class="nodegraph-controls">
+                    <button class="btn" onclick="loadFile()">Load USD</button>
+                    <button class="btn secondary" onclick="loadSample()">Sample</button>
+                    <select id="blender-sample-select" style="height:26px;font-size:11px;background:#2a2a3e;color:#ccc;border:1px solid #555;border-radius:3px;padding:0 4px;max-width:160px">
+                        <option value="texture_channel_blender.usdz">Texture channels</option>
+                        <option value="colorspace-gamut-test.usdz">Colorspace (gamut)</option>
+                        <option value="colorspace-constant-test.usdz">Colorspace (constant)</option>
+                        <option value="colorspace-texture-test.usdz">Colorspace (texture)</option>
+                        <optgroup label="Node Tests">
+                            <option value="mtlx/test-add-sub-nodes.usda">Math Add/Sub</option>
+                            <option value="mtlx/test-invert-nodes.usda">Invert</option>
+                            <option value="mtlx/test-combine-nodes.usda">Combine RGB</option>
+                            <option value="mtlx/test-mix-nodes.usda">Mix</option>
+                            <option value="mtlx/test-multiply-nodes.usda">Multiply</option>
+                            <option value="mtlx/test-separate-nodes.usda">Separate RGB</option>
+                            <option value="mtlx/test-texture-extract-nodes.usdz">Texture RGBA Extract</option>
+                            <option value="mtlx/test-clamp-nodes.usda">Clamp</option>
+                            <option value="mtlx/test-remap-nodes.usda">Remap (MapRange)</option>
+                            <option value="mtlx/test-hsv-adjust-nodes.usda">HSV Adjust</option>
+                            <option value="mtlx/test-normalmap.usdz">Normal Map</option>
+                            <option value="mtlx/test-power-nodes.usda">Power</option>
+                            <option value="mtlx/test-divide-nodes.usda">Divide</option>
+                            <option value="mtlx/test-min-nodes.usda">Min</option>
+                            <option value="mtlx/test-max-nodes.usda">Max</option>
+                            <option value="mtlx/test-complex-chain.usdz">Complex Chain</option>
+                        </optgroup>
+                    </select>
+                    <button class="btn" style="background:#9C27B0" onclick="loadBlenderSample()">Load</button>
+                    <button class="btn" style="background:#E91E63" id="btn-bridge" onclick="toggleBridge()">Connect</button>
+                    <div class="fit-group">
+                        <button class="btn-fit" onclick="fitGraphWidth()" title="Fit Width (F)">
+                            <svg viewBox="0 0 24 24"><path d="M4 9h2V6h12v3h2V5a1 1 0 00-1-1H5a1 1 0 00-1 1v4zm0 6h2v3h12v-3h2v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm-3-3l3-3v6l-3-3zm22 0l-3 3V9l3 3z"/></svg>
+                            <span class="kbd">F</span>
+                        </button>
+                        <button class="btn-fit" onclick="fitGraphHeight()" title="Fit Height (A)">
+                            <svg viewBox="0 0 24 24"><path d="M9 4v2H6v12h3v2H5a1 1 0 01-1-1V5a1 1 0 011-1h4zm6 0v2h3v12h-3v2h4a1 1 0 001-1V5a1 1 0 00-1-1h-4zM12 1l-3 3h6l-3-3zm0 22l3-3H9l3 3z"/></svg>
+                            <span class="kbd">A</span>
+                        </button>
+                        <button class="btn-fit" onclick="fitGraphAll()" title="Fit All">
+                            <svg viewBox="0 0 24 24"><path d="M3 3h7V1H2a1 1 0 00-1 1v8h2V3zm0 18h7v2H2a1 1 0 01-1-1v-8h2v7zm18 0h-7v2h8a1 1 0 001-1v-8h-2v7zm0-18h-7V1h8a1 1 0 011 1v8h-2V3z"/></svg>
+                        </button>
+                    </div>
+                    <div class="undo-group">
+                        <button class="btn-undo" id="btn-undo" onclick="historyUndo()" title="Undo (Ctrl+Z)" disabled>
+                            ↩ <span class="kbd">Z</span>
+                        </button>
+                        <button class="btn-undo" id="btn-redo" onclick="historyRedo()" title="Redo (Ctrl+Y)" disabled>
+                            ↪ <span class="kbd">Y</span>
+                        </button>
+                    </div>
+                    <div class="controls-separator"></div>
+                    <button class="btn" id="btn-update" onclick="updateMaterialFromGraph()">Update</button>
+                    <label class="toggle-container">
+                        <span>Live</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="interactive-toggle" onchange="toggleInteractiveUpdate(this.checked)" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </label>
+                </div>
+            </div>
+            <canvas id="nodegraph-canvas"></canvas>
+
+            <!-- Material selector bar (above node/connection stats) -->
+            <div class="ng-material-bar" id="ng-material-bar">
+                <label>Material:</label>
+                <select id="ng-material-select" onchange="selectMaterial(parseInt(this.value))"></select>
+                <span class="mat-count" id="ng-material-count"></span>
+            </div>
+
+            <div class="nodegraph-stats">
+                Nodes: <span id="node-count">0</span> |
+                Connections: <span id="connection-count">0</span>
+                <span id="hidden-nodes-info"></span>
+                <label class="toggle-container" style="margin-left:8px" title="Show all nodes including unused (dead) nodes">
+                    <span>Show all nodes</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="show-all-toggle" onchange="toggleShowAllNodes(this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </label>
+                <label class="toggle-container" style="margin-left:8px" title="Run NodeGraph optimizer (simplifies constant-foldable and identity nodes)">
+                    <span>Optimize</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="optimize-toggle" checked onchange="toggleOptimizeGraph(this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </label>
+            </div>
+            <div class="edit-indicator" id="edit-indicator">Graph modified - click Update or enable Live</div>
+
+            <!-- Bridge connection panel -->
+            <div class="bridge-panel" id="bridge-panel">
+                <h4>Blender Bridge</h4>
+                <div class="status" id="bridge-status">Disconnected</div>
+                <input type="text" id="bridge-session" placeholder="Session ID (from Blender)">
+                <div class="btn-row">
+                    <button class="btn secondary" onclick="bridgeConnect()">Connect</button>
+                    <button class="btn" style="background:#E91E63" onclick="bridgePullScene()">Pull Scene</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <input type="file" id="file-input" accept=".usd,.usda,.usdc,.usdz">
+
+    <div id="loading">
+        <div class="spinner"></div>
+    </div>
+
+    <div id="toast"></div>
+
+    <!-- Import maps -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+                "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/",
+                "tinyusdz/": "./src/tinyusdz/"
+            }
+        }
+    </script>
+
+    <script type="module" src="openpbr-nodegraph-demo.js"></script>
+</body>
+</html>
