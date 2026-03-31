@@ -56,6 +56,10 @@
   ],
   "author": "Light Transport Entertainment Inc. and many contributors",
   "license": "Apache 2.0 and MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lighttransport/tinyusdz"
+  },
   "funding": {
     "type": "github",
     "url": "https://github.com/sponsors/lighttransport"
