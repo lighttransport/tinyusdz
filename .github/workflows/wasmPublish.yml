@@ -51,13 +51,13 @@ jobs:
           cd web
           mkdir cmake-build
           cd cmake-build
-          emcmake cmake .. -DCMAKE_BUILD_TYPE=MinSizeRel
+          emcmake cmake .. -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel
 
       - name: Build WASM
         working-directory: ${{ github.workspace }}/web/cmake-build
         run: |
           source ../../emsdk/emsdk_env.sh
-          make
+          ninja
 
       - name: Configure64
         run: |
@@ -65,13 +65,13 @@ jobs:
           cd web
           mkdir cmake-build64
           cd cmake-build64
-          emcmake cmake .. -DCMAKE_BUILD_TYPE=MinSizeRel -DTINYUSDZ_WASM64=1
+          emcmake cmake .. -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DTINYUSDZ_WASM64=1
 
       - name: Build WASM64
         working-directory: ${{ github.workspace }}/web/cmake-build64
         run: |
           source ../../emsdk/emsdk_env.sh
-          make
+          ninja
 
       - name: Prepare npm
         working-directory: ${{ github.workspace }}/web/npm
