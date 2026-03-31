@@ -537,12 +537,12 @@ bool CrateWriter::ConvertSinglePrim(
             ConvertAttributeToFields("outputs:result", a, prim_path, false, err);
           }
         };
-        if (auto *p = shader->value.as<UsdPrimvarReader_float2>()) add_pr_terminal(p);
-        else if (auto *p = shader->value.as<UsdPrimvarReader_float>()) add_pr_terminal(p);
-        else if (auto *p = shader->value.as<UsdPrimvarReader_float3>()) add_pr_terminal(p);
-        else if (auto *p = shader->value.as<UsdPrimvarReader_float4>()) add_pr_terminal(p);
-        else if (auto *p = shader->value.as<UsdPrimvarReader_int>()) add_pr_terminal(p);
-        else if (auto *p = shader->value.as<UsdPrimvarReader_string>()) add_pr_terminal(p);
+        if (auto *p0 = shader->value.as<UsdPrimvarReader_float2>()) add_pr_terminal(p0);
+        else if (auto *p1 = shader->value.as<UsdPrimvarReader_float>()) add_pr_terminal(p1);
+        else if (auto *p2 = shader->value.as<UsdPrimvarReader_float3>()) add_pr_terminal(p2);
+        else if (auto *p3 = shader->value.as<UsdPrimvarReader_float4>()) add_pr_terminal(p3);
+        else if (auto *p4 = shader->value.as<UsdPrimvarReader_int>()) add_pr_terminal(p4);
+        else if (auto *p5 = shader->value.as<UsdPrimvarReader_string>()) add_pr_terminal(p5);
       }
     }
   }
@@ -558,14 +558,14 @@ bool CrateWriter::ConvertSinglePrim(
   {
     const GPrim* gprim = nullptr;
     // Try all GPrim-derived types
-    if (auto* p = prim.data().as<GeomMesh>()) gprim = p;
-    else if (auto* p = prim.data().as<GeomCube>()) gprim = p;
-    else if (auto* p = prim.data().as<GeomSphere>()) gprim = p;
-    else if (auto* p = prim.data().as<GeomCone>()) gprim = p;
-    else if (auto* p = prim.data().as<GeomCylinder>()) gprim = p;
-    else if (auto* p = prim.data().as<GeomCapsule>()) gprim = p;
-    else if (auto* p = prim.data().as<GeomPoints>()) gprim = p;
-    else if (auto* p = prim.data().as<GeomBasisCurves>()) gprim = p;
+    if (auto* g0 = prim.data().as<GeomMesh>()) gprim = g0;
+    else if (auto* g1 = prim.data().as<GeomCube>()) gprim = g1;
+    else if (auto* g2 = prim.data().as<GeomSphere>()) gprim = g2;
+    else if (auto* g3 = prim.data().as<GeomCone>()) gprim = g3;
+    else if (auto* g4 = prim.data().as<GeomCylinder>()) gprim = g4;
+    else if (auto* g5 = prim.data().as<GeomCapsule>()) gprim = g5;
+    else if (auto* g6 = prim.data().as<GeomPoints>()) gprim = g6;
+    else if (auto* g7 = prim.data().as<GeomBasisCurves>()) gprim = g7;
 
     if (gprim && gprim->doubleSided.authored()) {
       Attribute ds_attr;

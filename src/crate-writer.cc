@@ -2975,8 +2975,9 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     bool can_inline = true;
     int8_t ivec[3];
     for (int i = 0; i < 3; ++i) {
+      float roundtripped = static_cast<float>(static_cast<int8_t>(f[i]));
       if (f[i] < -128.0f || f[i] > 127.0f ||
-          static_cast<float>(static_cast<int8_t>(f[i])) != f[i]) {
+          std::memcmp(&roundtripped, &f[i], sizeof(float)) != 0) {
         can_inline = false;
         break;
       }
