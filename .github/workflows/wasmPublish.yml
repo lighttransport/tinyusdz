@@ -22,7 +22,7 @@ on:
 jobs:
   tinyusdz-wasm:
     runs-on: ubuntu-latest
-    permissins:
+    permissions:
       id-token: write
     steps:
       - name: Checkout
