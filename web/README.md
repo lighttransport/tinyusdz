@@ -91,6 +91,13 @@ See js/src/tinyusdz/TinyUSDZLoader.js to how to load zstd compressed wasm.
 
 ## npm packaging
 
-See `npm` folder and `<tinyusdz>/.github/workflows/wasmPublish.yml` for npm publish.
+Use `web/npm` for packaging metadata and staging scripts.
 
+```bash
+cd web/npm
+npm run build
+npm run validate
+```
+
+The GitHub publish workflow is in `<tinyusdz>/.github/workflows/wasmPublish.yml`.
 

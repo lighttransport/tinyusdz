@@ -5,6 +5,12 @@
 
 # App-specific
 build/
+web/cmake-build/
+web/cmake-build64/
+web/npm/dist/
+web/npm/.tmp-package-smoke/
+web/npm/.nodejs/
+web/npm/.emsdk/
 
 # User-specific files
 *.rsuser
