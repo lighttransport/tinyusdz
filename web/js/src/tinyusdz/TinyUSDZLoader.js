@@ -188,6 +188,73 @@ class TinyUSDZLoader extends Loader {
         this.onTydraComplete_ = options.onTydraComplete || null;
     }
 
+    _getBinarySize(binary) {
+        if (binary == null) {
+            return null;
+        }
+
+        if (typeof binary.byteLength === 'number') {
+            return binary.byteLength;
+        }
+
+        if (typeof binary.length === 'number') {
+            return binary.length;
+        }
+
+        if (typeof binary.size === 'number') {
+            return binary.size;
+        }
+
+        return null;
+    }
+
+    _describeUSDInput(binary, filePath) {
+        const details = {};
+        const byteLength = this._getBinarySize(binary);
+
+        if (byteLength !== null) {
+            details.bytes = byteLength;
+        }
+
+        if (typeof filePath === 'string' && filePath.length > 0) {
+            if (filePath.startsWith('blob:')) {
+                details.sourceType = 'blob';
+                details.uri = filePath;
+            } else if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(filePath)) {
+                details.sourceType = 'uri';
+                details.uri = filePath;
+            } else {
+                details.sourceType = 'filename';
+                details.filename = filePath;
+            }
+        } else if (typeof File !== 'undefined' && filePath instanceof File) {
+            details.sourceType = 'file';
+            details.filename = filePath.name;
+            details.bytes = filePath.size;
+            if (filePath.type) {
+                details.mimeType = filePath.type;
+            }
+        } else if (typeof Blob !== 'undefined' && filePath instanceof Blob) {
+            details.sourceType = 'blob';
+            details.bytes = filePath.size;
+            if (filePath.type) {
+                details.mimeType = filePath.type;
+            }
+        }
+
+        return details;
+    }
+
+    _logFailedUSDInput(binary, filePath, errorText) {
+        const details = this._describeUSDInput(binary, filePath);
+
+        if (errorText) {
+            details.error = errorText;
+        }
+
+        console.log('[TinyUSDZLoader] Failed USD input:', details);
+    }
+
     // Decompress zstd compressed WASM
     async decompressZstdWasm(compressedPath) {
         try {
@@ -661,10 +728,12 @@ class TinyUSDZLoader extends Loader {
             ok = usd.loadFromBinary(binary, filePath);
         } catch (e) {
             // Catch WASM traps (e.g. Emscripten OOM abort, unreachable instruction)
+            this._logFailedUSDInput(binary, filePath, e instanceof Error ? e.message : String(e));
             _onError(e instanceof Error ? e : new Error(String(e)));
             return;
         }
         if (!ok) {
+            this._logFailedUSDInput(binary, filePath, usd.error());
             const fileInfo = filePath ? ` (file: ${filePath})` : '';
             _onError(new Error(`TinyUSDZLoader: Failed to load USD from binary data${fileInfo}.`, {cause: usd.error()}));
         } else {
@@ -747,6 +816,7 @@ class TinyUSDZLoader extends Loader {
                         if (usd.wasCancelled()) {
                             reject(new DOMException('Parsing cancelled', 'AbortError'));
                         } else {
+                            this._logFailedUSDInput(binary, filePath, usd.error());
                             const fileInfo = filePath ? ` (file: ${filePath})` : '';
                             reject(new Error(`TinyUSDZLoader: Failed to load USD from binary data${fileInfo}.`, {cause: usd.error()}));
                         }
@@ -828,12 +898,14 @@ class TinyUSDZLoader extends Loader {
                 const result = await usd.loadFromBinaryAsync(binary, filePath || '');
 
                 if (!result.success) {
+                    this._logFailedUSDInput(binary, filePath, result.error || 'unknown error');
                     throw new Error(`TinyUSDZLoader: Failed to load USD: ${result.error || 'unknown error'}`);
                 }
             } else {
                 // Fall back to synchronous loading
                 const ok = usd.loadFromBinary(binary, filePath || '');
                 if (!ok) {
+                    this._logFailedUSDInput(binary, filePath, usd.error());
                     throw new Error(`TinyUSDZLoader: Failed to load USD: ${usd.error()}`);
                 }
             }
