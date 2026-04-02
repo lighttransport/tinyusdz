@@ -1,0 +1,362 @@
+# USD Physics and MuJoCo mjcPhysics Schema Reference
+
+This document describes the USD Physics schema and MuJoCo's **mjcPhysics** custom schema
+extension as implemented in TinyUSDZ.
+
+## Overview
+
+TinyUSDZ supports two physics schema families:
+
+- **UsdPhysics** (standard) — rigid bodies, collisions, joints, materials, scenes
+- **mjcPhysics** (MuJoCo extension) — simulation options, solver params, actuators,
+  tendons, keyframes
+
+The mjcPhysics schema extends standard `UsdPhysics` (RigidBodyAPI, CollisionAPI, etc.) with
+MuJoCo-specific attributes. Both the standard and custom APIs are applied together on prims.
+
+### Source Reference
+
+- MuJoCo mjcPhysics schema: `schema.usda` from MuJoCo's `src/experimental/usd/mjcPhysics/`
+- USD Physics schema: OpenUSD `pxr/usd/usdPhysics/`
+
+---
+
+## 1. MjcSceneAPI — Global Simulation Options
+
+Applied to `UsdPhysicsScene` prims. Maps to MJCF `<option>`, `<option/flag>`, and `<compiler>`.
+
+### 1.1 Simulation Options (`mjc:option:*`)
+
+| USD Attribute | Type | Default | Description |
+|---|---|---|---|
+| `mjc:option:timestep` | double | 0.002 | Simulation timestep in seconds |
+| `mjc:option:impratio` | double | 1.0 | Ratio of frictional-to-normal constraint impedance |
+| `mjc:option:wind` | double3 | (0,0,0) | Velocity vector of medium (wind) |
+| `mjc:option:magnetic` | double3 | (0,-0.5,0) | Global magnetic flux |
+| `mjc:option:density` | double | 0.0 | Density of medium |
+| `mjc:option:viscosity` | double | 0.0 | Viscosity of medium |
+| `mjc:option:o_margin` | double | 0.0 | Contact override margin |
+| `mjc:option:o_solref` | double[] | [0.02, 1.0] | Contact override solver reference |
+| `mjc:option:o_solimp` | double[] | [0.9, 0.95, 0.001, 0.5, 2.0] | Contact override solver impedance |
+| `mjc:option:o_friction` | double[] | [1.0, 1.0, 0.005, 0.0001, 0.0001] | Contact override friction |
+| `mjc:option:integrator` | token | `euler` | Numerical integrator (`euler`, `rk4`, `implicit`, `implicitfast`) |
+| `mjc:option:cone` | token | `pyramidal` | Contact friction cone type (`pyramidal`, `elliptic`) |
+| `mjc:option:jacobian` | token | `auto` | Constraint Jacobian type (`auto`, `dense`, `sparse`) |
+| `mjc:option:solver` | token | `newton` | Constraint solver algorithm (`pgs`, `cg`, `newton`) |
+| `mjc:option:iterations` | int | 100 | Max solver iterations |
+| `mjc:option:tolerance` | double | 1e-8 | Solver early-termination tolerance |
+| `mjc:option:ls_iterations` | int | 50 | Max linesearch iterations (CG/Newton) |
+| `mjc:option:ls_tolerance` | double | 0.01 | Linesearch tolerance |
+| `mjc:option:noslip_iterations` | int | 0 | Max Noslip solver iterations |
+| `mjc:option:noslip_tolerance` | double | 1e-6 | Noslip solver tolerance |
+| `mjc:option:ccd_iterations` | int | 35 | Max convex collision iterations |
+| `mjc:option:ccd_tolerance` | double | 1e-6 | Convex collision tolerance |
+| `mjc:option:sdf_iterations` | int | 10 | SDF collision iterations per initial point |
+| `mjc:option:sdf_initpoints` | int | 40 | Number of SDF starting points |
+| `mjc:option:actuatorgroupdisable` | int[] | [] | List of actuator groups to disable |
+
+### 1.2 Simulation Flags (`mjc:flag:*`)
+
+All are `bool` type. Default is `True` unless noted.
+
+| USD Attribute | Default | Description |
+|---|---|---|
+| `mjc:flag:constraint` | True | Enable constraint solver |
+| `mjc:flag:equality` | True | Enable equality constraints |
+| `mjc:flag:frictionloss` | True | Enable friction loss constraints |
+| `mjc:flag:limit` | True | Enable joint/tendon limit constraints |
+| `mjc:flag:contact` | True | Enable collision detection and contact constraints |
+| `mjc:flag:spring` | True | Enable joint and tendon springs |
+| `mjc:flag:damper` | True | Enable joint and tendon dampers |
+| `mjc:flag:gravity` | True | Enable gravity |
+| `mjc:flag:clampctrl` | True | Clamp control inputs to actuator ranges |
+| `mjc:flag:warmstart` | True | Warm-start constraint solver from previous step |
+| `mjc:flag:filterparent` | True | Filter parent-child contact pairs |
+| `mjc:flag:actuation` | True | Enable actuator forces |
+| `mjc:flag:refsafe` | True | Prevent instabilities from small solref[0] |
+| `mjc:flag:sensor` | True | Enable sensor computations |
+| `mjc:flag:midphase` | True | Enable mid-phase collision filtering (AABB BVH) |
+| `mjc:flag:nativeccd` | True | Use native convex collision pipeline |
+| `mjc:flag:eulerdamp` | True | Implicit damping in Euler integrator |
+| `mjc:flag:autoreset` | True | Auto-reset on numerical issues |
+| `mjc:flag:island` | True | Enable constraint island discovery |
+| `mjc:flag:override` | **False** | Enable contact override mechanism |
+| `mjc:flag:energy` | **False** | Compute potential/kinetic energy |
+| `mjc:flag:fwdinv` | **False** | Compare forward/inverse dynamics |
+| `mjc:flag:invdiscrete` | **False** | Discrete-time inverse dynamics |
+| `mjc:flag:multiccd` | **False** | Multi-contact CCD for convex pairs |
+
+### 1.3 Compiler Settings (`mjc:compiler:*`)
+
+| USD Attribute | Type | Default | Description |
+|---|---|---|---|
+| `mjc:compiler:autoLimits` | bool | True | Infer limit flags from range attributes |
+| `mjc:compiler:boundMass` | double | 0.0 | Lower bound on body mass |
+| `mjc:compiler:boundInertia` | double | 0.0 | Lower bound on diagonal inertia |
+| `mjc:compiler:setTotalMass` | double | -1.0 | Scale all masses so total equals this value (disabled if negative) |
+| `mjc:compiler:useThread` | bool | True | Multi-threaded compilation |
+| `mjc:compiler:balanceInertia` | bool | False | Auto-fix invalid diagonal inertia |
+| `mjc:compiler:angle` | token | `degree` | Angle unit (`degree`, `radian`) |
+| `mjc:compiler:fitAABB` | bool | False | Use AABB (vs equivalent-inertia box) for mesh-to-primitive fitting |
+| `mjc:compiler:fuseStatic` | bool | False | Fuse static bodies with parent |
+| `mjc:compiler:inertiaFromGeom` | token | `auto` | Infer body mass/inertia from geoms (`false`, `true`, `auto`) |
+| `mjc:compiler:alignFree` | bool | False | Align free-joint body frame with inertial frame |
+| `mjc:compiler:inertiaGroupRange:min` | int | 0 | Min geom group for inertia inference |
+| `mjc:compiler:inertiaGroupRange:max` | int | 5 | Max geom group for inertia inference |
+| `mjc:compiler:saveInertial` | bool | False | Save explicit inertial clauses for all bodies |
+
+---
+
+## 2. MjcJointAPI — Joint Physics Properties
+
+Applied to `UsdPhysicsJoint` prims alongside standard joint APIs.
+
+| USD Attribute | Type | Default | Description |
+|---|---|---|---|
+| `mjc:group` | int | 0 | Joint group |
+| `mjc:stiffness` | double | 0 | Spring stiffness (equilibrium at `springref`) |
+| `mjc:damping` | double | 0 | Velocity-linear damping force |
+| `mjc:armature` | double | 0 | Additional rotor/transmission inertia |
+| `mjc:frictionloss` | double | 0 | Dry friction loss |
+| `mjc:springdamper` | double[] | [0, 0] | Auto-set stiffness/damping from [time_constant, damping_ratio] |
+| `mjc:springref` | double | 0 | Spring equilibrium position/angle |
+| `mjc:ref` | double | 0 | Reference position/angle for initial config |
+| `mjc:margin` | double | 0 | Distance threshold for limit activation |
+| `mjc:solreflimit` | double[] | [0.02, 1.0] | Solver reference for joint limits |
+| `mjc:solimplimit` | double[] | [0.9, 0.95, 0.001, 0.5, 2.0] | Solver impedance for joint limits |
+| `mjc:solreffriction` | double[] | [0.02, 1.0] | Solver reference for dry friction |
+| `mjc:solimpfriction` | double[] | [0.9, 0.95, 0.001, 0.5, 2.0] | Solver impedance for dry friction |
+| `mjc:actuatorfrcrange:min` | double | 0 | Min actuator force clamp (hinge/slide only) |
+| `mjc:actuatorfrcrange:max` | double | 0 | Max actuator force clamp (hinge/slide only) |
+| `mjc:actuatorfrclimited` | token | `auto` | Enable actuator force clamping (`false`, `true`, `auto`) |
+| `mjc:actuatorgravcomp` | bool | false | Add gravity compensation to actuator forces |
+
+---
+
+## 3. MjcCollisionAPI — Collision Geometry Properties
+
+Applied to prims **alongside** `UsdPhysicsCollisionAPI`. Both APIs must be present.
+
+| USD Attribute | Type | Default | Description |
+|---|---|---|---|
+| `mjc:group` | int | 0 | Collision group |
+| `mjc:priority` | int | 0 | Determines how two colliders' properties are combined |
+| `mjc:condim` | int | 3 | Contact space dimensionality (max of pair) |
+| `mjc:solmix` | double | 1.0 | Weight for averaging contact parameters |
+| `mjc:solref` | double[] | [0.02, 1.0] | Solver reference (time constant, damping) |
+| `mjc:solimp` | double[] | [0.9, 0.95, 0.001, 0.5, 2.0] | Solver impedance |
+| `mjc:margin` | double | 0.0 | Contact detection distance threshold |
+| `mjc:gap` | double | 0.0 | Distance for inactive contacts (for custom computations) |
+| `mjc:shellinertia` | bool | False | Compute inertia assuming mass on surface |
+
+### Collision Setup in USD
+
+To make a prim collidable in MuJoCo:
+
+```usda
+def Mesh "table" (
+    prepend apiSchemas = ["PhysicsCollisionAPI", "MjcCollisionAPI"]
+)
+{
+    # Standard UsdPhysics collision
+    bool physics:collisionEnabled = true
+
+    # MuJoCo-specific collision parameters
+    int mjc:condim = 3
+    double mjc:margin = 0.001
+    double[] mjc:solref = [0.02, 1.0]
+    double[] mjc:solimp = [0.9, 0.95, 0.001, 0.5, 2.0]
+    int mjc:priority = 0
+}
+```
+
+The contact dimensionality (`condim`) values:
+- **1**: Frictionless contact (normal force only)
+- **3**: Regular frictional contact (default — normal + 2 tangent)
+- **4**: + torsional friction
+- **6**: + rolling friction (full)
+
+---
+
+## 4. MjcMeshCollisionAPI — Mesh Collision Properties
+
+Applied to mesh collision prims alongside `UsdPhysicsMeshCollisionAPI`.
+
+| USD Attribute | Type | Default | Description |
+|---|---|---|---|
+| `mjc:inertia` | token | `legacy` | Mesh inertia computation mode (`legacy`, `convex`, `exact`, `shell`) |
+| `mjc:maxhullvert` | int | -1 | Max vertices in convex hull (-1 = unlimited) |
+
+---
+
+## 5. MjcMaterialAPI — Physical Material Properties
+
+Applied alongside `UsdPhysicsMaterialAPI`. Standard friction and restitution come from
+`UsdPhysicsMaterialAPI`; these add MuJoCo-specific friction types.
+
+| USD Attribute | Type | Default | Description |
+|---|---|---|---|
+| `mjc:torsionalfriction` | double | 0.005 | Friction around contact normal |
+| `mjc:rollingfriction` | double | 0.0001 | Friction on contact tangent plane (both axes) |
+
+---
+
+## 6. MjcActuator — Force Transmission
+
+Concrete typed prim representing actuators. Applies force to joints, bodies, or sites via relationships.
+
+| USD Attribute | Type | Default | Description |
+|---|---|---|---|
+| `mjc:group` | int | 0 | Actuator group |
+| `mjc:target` | rel | — | Transmission target (joint, body, or site) |
+| `mjc:gear` | double[] | [1,0,0,0,0,0] | Length/force scaling vector |
+| `mjc:crankLength` | double | 0.0 | Connecting rod length (slider-crank only) |
+| `mjc:jointInParent` | bool | False | Define rotation axis in parent frame |
+| `mjc:refSite` | rel | — | Reference site for relative measurement |
+| `mjc:sliderSite` | rel | — | Slider-crank pin site |
+| `mjc:dynType` | token | `none` | Activation dynamics (`none`, `integrator`, `filter`, `filterexact`, `muscle`, `user`) |
+| `mjc:gainType` | token | `fixed` | Gain type (`fixed`, `affine`, `muscle`, `user`) |
+| `mjc:biasType` | token | `none` | Bias type (`none`, `affine`, `muscle`, `user`) |
+| `mjc:dynPrm` | double[] | [1,0,...] | Dynamics parameters (10 elements) |
+| `mjc:gainPrm` | double[] | [1,0,...] | Gain parameters (10 elements) |
+| `mjc:biasPrm` | double[] | [0,0,...] | Bias parameters (10 elements) |
+| `mjc:actDim` | int | -1 | Activation state dimension (-1 = auto) |
+| `mjc:actEarly` | bool | False | Use next activation value for force |
+| `mjc:ctrlLimited` | token | `auto` | Clamp control input (`false`, `true`, `auto`) |
+| `mjc:forceLimited` | token | `auto` | Clamp force output (`false`, `true`, `auto`) |
+| `mjc:actLimited` | token | `auto` | Clamp activation state (`false`, `true`, `auto`) |
+| `mjc:ctrlRange:min/max` | double | 0 | Control input clamp range |
+| `mjc:forceRange:min/max` | double | 0 | Force output clamp range |
+| `mjc:actRange:min/max` | double | 0 | Activation clamp range |
+| `mjc:lengthRange:min/max` | double | 0 | Feasible transmission length range |
+| `mjc:inheritRange` | double | 0 | Auto-set ctrlrange from target range (0 = disabled) |
+
+---
+
+## 7. MjcTendon — Fixed and Spatial Tendons
+
+Concrete typed prim for tendons.
+
+| USD Attribute | Type | Default | Description |
+|---|---|---|---|
+| `mjc:type` | token | `spatial` | Tendon type (`spatial`, `fixed`) |
+| `mjc:path` | rel | — | Sites/geoms (spatial) or joints (fixed) the tendon wraps |
+| `mjc:path:indices` | int[] | [] | Wrap order for path targets |
+| `mjc:path:coef` | double[] | [] | Joint coefficients (fixed tendons) |
+| `mjc:path:segments` | int[] | [] | Segment indices for path points |
+| `mjc:path:divisors` | double[] | [] | Segment length divisors |
+| `mjc:sideSites` | rel | — | Side sites for geom wrapping direction |
+| `mjc:sideSites:indices` | int[] | [] | Index mapping for side sites |
+| `mjc:group` | int | 0 | Tendon group |
+| `mjc:stiffness` | double | 0.0 | Spring stiffness along tendon |
+| `mjc:damping` | double | 0.0 | Velocity-linear damping along tendon |
+| `mjc:armature` | double | 0.0 | Inertia for tendon length changes |
+| `mjc:frictionloss` | double | 0.0 | Dry friction loss |
+| `mjc:springlength` | double[] | [-1, -1] | Spring rest length or dead-band range (-1 = auto) |
+| `mjc:limited` | token | `auto` | Enable length limits (`auto`, `true`, `false`) |
+| `mjc:range:min/max` | double | 0 | Allowed tendon length range |
+| `mjc:margin` | double | 0.0 | Limit activation distance |
+| `mjc:solreflimit` | double[] | [0.02, 1.0] | Solver reference for limits |
+| `mjc:solimplimit` | double[] | [0.9, 0.95, 0.001, 0.5, 2.0] | Solver impedance for limits |
+| `mjc:solreffriction` | double[] | [0.02, 1.0] | Solver reference for friction |
+| `mjc:solimpfriction` | double[] | [0.9, 0.95, 0.001, 0.5, 2.0] | Solver impedance for friction |
+| `mjc:actuatorfrclimited` | token | `auto` | Clamp actuator forces on tendon |
+| `mjc:actuatorfrcrange:min/max` | double | 0 | Actuator force clamp range |
+| `mjc:width` | double | 0.003 | Rendering radius |
+| `mjc:rgba` | color4f | (0.5, 0.5, 0.5, 1.0) | Rendering color |
+
+---
+
+## 8. MjcEqualityAPI — Equality Constraints
+
+Base API applied to constraint prims. Specialized by Connect, Weld, and Joint sub-APIs.
+
+### 8.1 Base (MjcEqualityAPI)
+
+| USD Attribute | Type | Default | Description |
+|---|---|---|---|
+| `mjc:target` | rel | — | Secondary constraint target |
+| `mjc:solref` | double[] | [0.02, 1.0] | Solver reference |
+| `mjc:solimp` | double[] | [0.9, 0.95, 0.001, 0.5, 2.0] | Solver impedance |
+
+### 8.2 MjcEqualityWeldAPI
+
+Inherits MjcEqualityAPI, adds:
+
+| USD Attribute | Type | Default | Description |
+|---|---|---|---|
+| `mjc:torqueScale` | float | 1.0 | Scale factor for angular residual (units: torque/force = length) |
+
+### 8.3 MjcEqualityConnectAPI
+
+Inherits MjcEqualityAPI. No additional attributes.
+
+### 8.4 MjcEqualityJointAPI
+
+Inherits MjcEqualityAPI. Constrains one joint as a quartic polynomial of another.
+
+| USD Attribute | Type | Default | Description |
+|---|---|---|---|
+| `mjc:coef0` | double | 0 | Constant coefficient a0 |
+| `mjc:coef1` | double | 1 | Linear coefficient a1 |
+| `mjc:coef2` | double | 0 | Quadratic coefficient a2 |
+| `mjc:coef3` | double | 0 | Cubic coefficient a3 |
+| `mjc:coef4` | double | 0 | Quartic coefficient a4 |
+
+Constraint: `y = y0 + a0 + a1*(x-x0) + a2*(x-x0)^2 + a3*(x-x0)^3 + a4*(x-x0)^4`
+
+---
+
+## 9. MjcSiteAPI / MjcImageableAPI
+
+| Schema | USD Attribute | Type | Default | Description |
+|---|---|---|---|---|
+| MjcSiteAPI | `mjc:group` | int | 0 | Site group |
+| MjcImageableAPI | `mjc:group` | int | 0 | Visual-only entity group |
+
+MjcSiteAPI is applied to UsdGeomSphere, UsdGeomCapsule, UsdGeomCylinder, or UsdGeomCube.
+MjcImageableAPI marks entities as strictly visual (contype = conaffinity = 0).
+
+---
+
+## 10. MjcKeyframe — Simulation State Snapshots
+
+| USD Attribute | Type | Description |
+|---|---|---|
+| `mjc:qpos` | double[] | Joint positions → `mjData.qpos` |
+| `mjc:qvel` | double[] | Joint velocities → `mjData.qvel` |
+| `mjc:act` | double[] | Actuator activations → `mjData.act` |
+| `mjc:ctrl` | double[] | Controls → `mjData.ctrl` |
+| `mjc:mpos` | double[] | Mocap body positions → `mjData.mocap_pos` |
+| `mjc:mquat` | double[] | Mocap body quaternions → `mjData.mocap_quat` |
+
+---
+
+## TinyUSDZ Implementation Status
+
+### Core (parsing + reconstruction)
+
+| Feature | Status | Files |
+|---|---|---|
+| UsdPhysics type definitions | Done | `src/usdPhysics.hh` |
+| mjcPhysics type definitions | Done | `src/mjcPhysics.hh` |
+| USDA parsing (all 9 concrete prims) | Done | `src/prim-reconstruct-physics.cc`, `src/usda-reader.cc` |
+| USDC parsing | Done | `src/usdc-reader-prim.cc` |
+| Pretty-printing (USDA output) | Done | `src/pprint-physics.cc` |
+| Tydra JSON export | Done | `src/tydra/physics-to-json.cc` |
+
+### API schemas supported
+
+- **UsdPhysics**: PhysicsRigidBodyAPI, PhysicsCollisionAPI, PhysicsMaterialAPI, PhysicsMeshCollisionAPI
+- **mjcPhysics**: MjcSceneAPI, MjcJointAPI, MjcCollisionAPI, MjcMeshCollisionAPI, MjcMaterialAPI, MjcSiteAPI, MjcImageableAPI, MjcEqualityAPI (+ Connect, Weld, Joint variants)
+
+### Concrete prim types
+
+- **UsdPhysics**: PhysicsScene, PhysicsRevoluteJoint, PhysicsPrismaticJoint, PhysicsSphericalJoint, PhysicsFixedJoint, PhysicsDistanceJoint
+- **mjcPhysics**: MjcActuator, MjcTendon, MjcKeyframe
+
+### Known gaps
+
+- pprint does not emit all vector-valued mjc attributes (o_solref, o_solimp, springdamper)
+- JSON export covers key fields but not every attribute
+- No PhysicsSphericalJoint dedicated unit test
