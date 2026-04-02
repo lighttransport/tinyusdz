@@ -56,6 +56,8 @@
 #include "unit-usdz-writer.h"
 #include "unit-usdc-writer.h"
 #include "unit-usd-validation.h"
+// Physics + MuJoCo
+#include "unit-physics.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -545,6 +547,19 @@ TEST_LIST = {
   { "usdc_writer_variant_props_and_children_roundtrip_test", usdc_writer_variant_props_and_children_roundtrip_test },
   { "usdc_writer_variant_3level_nested_test", usdc_writer_variant_3level_nested_test },
   { "usdc_writer_variant_nested_with_props_test", usdc_writer_variant_nested_with_props_test },
+  // Physics + MuJoCo
+  { "physics_scene_reconstruct_test", physics_scene_reconstruct_test },
+  { "physics_scene_mjc_scene_api_test", physics_scene_mjc_scene_api_test },
+  { "physics_revolute_joint_test", physics_revolute_joint_test },
+  { "physics_prismatic_joint_test", physics_prismatic_joint_test },
+  { "physics_fixed_joint_test", physics_fixed_joint_test },
+  { "physics_distance_joint_test", physics_distance_joint_test },
+  { "physics_joint_mjc_api_test", physics_joint_mjc_api_test },
+  { "mjc_actuator_test", mjc_actuator_test },
+  { "mjc_tendon_test", mjc_tendon_test },
+  { "mjc_keyframe_test", mjc_keyframe_test },
+  { "physics_pprint_roundtrip_test", physics_pprint_roundtrip_test },
+  { "physics_to_json_test", physics_to_json_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif

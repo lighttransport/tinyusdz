@@ -282,9 +282,13 @@ static ParseResult ParseTypedAttributeUnified(
       if constexpr (!is_varying) {
         // Uniform attribute - no timeSamples allowed
         if (!is_config_attr && attr.variability() != Variability::Uniform) {
-          ret.code = ParseResult::ResultCode::VariabilityMismatch;
-          ret.err = fmt::format("Attribute `{}` must be `uniform` variability.", name);
-          return ret;
+          // Allow schema-default varying (not explicitly authored as `varying`)
+          // Only error when `varying` was explicitly authored in USDA
+          if (!(attr.variability() == Variability::Varying && !attr.is_varying_authored())) {
+            ret.code = ParseResult::ResultCode::VariabilityMismatch;
+            ret.err = fmt::format("Attribute `{}` must be `uniform` variability.", name);
+            return ret;
+          }
         }
 
         // TODO: Re-enable this warning after test files are updated

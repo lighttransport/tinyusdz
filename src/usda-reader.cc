@@ -23,6 +23,8 @@
 #include "core/model-scope.hh"  // Model, Scope
 #include "usdGeom.hh"
 #include "usdSkel.hh"
+#include "usdPhysics.hh"
+#include "mjcPhysics.hh"
 #if defined(__wasi__)
 #else
 #include <mutex>
@@ -119,6 +121,16 @@ RECONSTRUCT_PRIM_DECL(GeomPointInstancer);
 RECONSTRUCT_PRIM_DECL(Material);
 RECONSTRUCT_PRIM_DECL(Shader);
 RECONSTRUCT_PRIM_DECL(NodeGraph);
+// UsdPhysics + mjcPhysics
+RECONSTRUCT_PRIM_DECL(PhysicsScene);
+RECONSTRUCT_PRIM_DECL(PhysicsRevoluteJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsPrismaticJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsSphericalJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsFixedJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsDistanceJoint);
+RECONSTRUCT_PRIM_DECL(MjcActuator);
+RECONSTRUCT_PRIM_DECL(MjcTendon);
+RECONSTRUCT_PRIM_DECL(MjcKeyframe);
 
 #undef RECONSTRUCT_PRIM_DECL
 
@@ -609,6 +621,16 @@ DEFINE_PRIM_TYPE(SkelAnimation, kSkelAnimation, value::TYPE_ID_SKELANIMATION);
 DEFINE_PRIM_TYPE(BlendShape, kBlendShape, value::TYPE_ID_BLENDSHAPE);
 DEFINE_PRIM_TYPE(GeomCamera, kGeomCamera, value::TYPE_ID_GEOM_CAMERA);
 DEFINE_PRIM_TYPE(GeomPointInstancer, kPointInstancer, value::TYPE_ID_GEOM_POINT_INSTANCER);
+// UsdPhysics + mjcPhysics
+DEFINE_PRIM_TYPE(PhysicsScene, kPhysicsScene, value::TYPE_ID_PHYSICS_SCENE);
+DEFINE_PRIM_TYPE(PhysicsRevoluteJoint, kPhysicsRevoluteJoint, value::TYPE_ID_PHYSICS_REVOLUTE_JOINT);
+DEFINE_PRIM_TYPE(PhysicsPrismaticJoint, kPhysicsPrismaticJoint, value::TYPE_ID_PHYSICS_PRISMATIC_JOINT);
+DEFINE_PRIM_TYPE(PhysicsSphericalJoint, kPhysicsSphericalJoint, value::TYPE_ID_PHYSICS_SPHERICAL_JOINT);
+DEFINE_PRIM_TYPE(PhysicsFixedJoint, kPhysicsFixedJoint, value::TYPE_ID_PHYSICS_FIXED_JOINT);
+DEFINE_PRIM_TYPE(PhysicsDistanceJoint, kPhysicsDistanceJoint, value::TYPE_ID_PHYSICS_DISTANCE_JOINT);
+DEFINE_PRIM_TYPE(MjcActuator, kMjcActuator, value::TYPE_ID_MJC_ACTUATOR);
+DEFINE_PRIM_TYPE(MjcTendon, kMjcTendon, value::TYPE_ID_MJC_TENDON);
+DEFINE_PRIM_TYPE(MjcKeyframe, kMjcKeyframe, value::TYPE_ID_MJC_KEYFRAME);
 DEFINE_PRIM_TYPE(Scope, "Scope", value::TYPE_ID_SCOPE);
 
 DEFINE_PRIM_TYPE(GPrim, "GPrim", value::TYPE_ID_GPRIM);
@@ -2208,6 +2230,17 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<Skeleton>();
   RegisterReconstructCallback<SkelAnimation>();
   RegisterReconstructCallback<BlendShape>();
+
+  // UsdPhysics + mjcPhysics
+  RegisterReconstructCallback<PhysicsScene>();
+  RegisterReconstructCallback<PhysicsRevoluteJoint>();
+  RegisterReconstructCallback<PhysicsPrismaticJoint>();
+  RegisterReconstructCallback<PhysicsSphericalJoint>();
+  RegisterReconstructCallback<PhysicsFixedJoint>();
+  RegisterReconstructCallback<PhysicsDistanceJoint>();
+  RegisterReconstructCallback<MjcActuator>();
+  RegisterReconstructCallback<MjcTendon>();
+  RegisterReconstructCallback<MjcKeyframe>();
 
   _parser.set_primspec_mode(as_primspec);
 

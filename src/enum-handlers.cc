@@ -275,7 +275,7 @@ ExpansionRule(const std::string &tok) {
 nonstd::expected<APISchemas::APIName, std::string>
 APISchemaName(const std::string &tok) {
   using E = APISchemas::APIName;
-  constexpr std::array<std::pair<E, const char *>, 22> enums = {{
+  constexpr std::array<std::pair<E, const char *>, 37> enums = {{
       {E::SkelBindingAPI, "SkelBindingAPI"},
       {E::CollectionAPI, "CollectionAPI"},
       {E::MaterialBindingAPI, "MaterialBindingAPI"},
@@ -298,6 +298,23 @@ APISchemaName(const std::string &tok) {
       {E::NodeDefAPI, "NodeDefAPI"},
       {E::CoordSysAPI, "CoordSysAPI"},
       {E::ConnectableAPI, "ConnectableAPI"},
+      // UsdPhysics
+      {E::PhysicsRigidBodyAPI, "PhysicsRigidBodyAPI"},
+      {E::PhysicsCollisionAPI, "PhysicsCollisionAPI"},
+      {E::PhysicsMaterialAPI, "PhysicsMaterialAPI"},
+      {E::PhysicsMeshCollisionAPI, "PhysicsMeshCollisionAPI"},
+      // MuJoCo (mjcPhysics)
+      {E::MjcSceneAPI, "MjcSceneAPI"},
+      {E::MjcJointAPI, "MjcJointAPI"},
+      {E::MjcCollisionAPI, "MjcCollisionAPI"},
+      {E::MjcMeshCollisionAPI, "MjcMeshCollisionAPI"},
+      {E::MjcMaterialAPI, "MjcMaterialAPI"},
+      {E::MjcSiteAPI, "MjcSiteAPI"},
+      {E::MjcImageableAPI, "MjcImageableAPI"},
+      {E::MjcEqualityAPI, "MjcEqualityAPI"},
+      {E::MjcEqualityConnectAPI, "MjcEqualityConnectAPI"},
+      {E::MjcEqualityWeldAPI, "MjcEqualityWeldAPI"},
+      {E::MjcEqualityJointAPI, "MjcEqualityJointAPI"},
   }};
   return LookupEnum("apiSchemas", tok, enums);
 }

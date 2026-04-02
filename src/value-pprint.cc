@@ -908,7 +908,16 @@ namespace value {
   __FUNC(BlendShape)            \
   __FUNC(Material)              \
   __FUNC(Shader)                \
-  __FUNC(NodeGraph)
+  __FUNC(NodeGraph)             \
+  __FUNC(PhysicsScene)          \
+  __FUNC(PhysicsRevoluteJoint)  \
+  __FUNC(PhysicsPrismaticJoint) \
+  __FUNC(PhysicsSphericalJoint) \
+  __FUNC(PhysicsFixedJoint)     \
+  __FUNC(PhysicsDistanceJoint)  \
+  __FUNC(MjcActuator)           \
+  __FUNC(MjcTendon)             \
+  __FUNC(MjcKeyframe)
 
 
 std::string pprint_value(const value::Value &v, const uint32_t indent,

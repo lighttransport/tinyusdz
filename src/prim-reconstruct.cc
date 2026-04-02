@@ -2045,6 +2045,7 @@ bool ReconstructPrim<GeomPointInstancer>(
 
 
 // Shader/Material/NodeGraph reconstruction moved to prim-reconstruct-shader.cc
+// Physics + MuJoCo reconstruction moved to prim-reconstruct-physics.cc
 
 
 ///
@@ -2092,6 +2093,7 @@ RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Skeleton)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SkelAnimation)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(BlendShape)
 // Shader, Material, NodeGraph PrimSpec wrappers are in prim-reconstruct-shader.cc
+// Physics + MuJoCo PrimSpec wrappers are in prim-reconstruct-physics.cc
 
 
 } // namespace prim

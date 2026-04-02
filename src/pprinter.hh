@@ -19,6 +19,8 @@
 #include "usdLux.hh"
 #include "usdShade.hh"
 #include "usdSkel.hh"
+#include "usdPhysics.hh"
+#include "mjcPhysics.hh"
 #include "core/model-scope.hh"  // Model, Scope
 #include "core/layer-types.hh"  // LayerMetas
 #include "layer.hh"             // Layer
@@ -84,6 +86,26 @@ std::string to_string(const Skeleton &skel, const uint32_t indent = 0,
 std::string to_string(const SkelAnimation &anim, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const BlendShape &bs, const uint32_t indent = 0,
+                      bool closing_brace = true);
+
+// Physics prim to_string (defined in pprint-physics.cc)
+std::string to_string(const PhysicsScene &scene, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const PhysicsRevoluteJoint &joint, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const PhysicsPrismaticJoint &joint, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const PhysicsSphericalJoint &joint, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const PhysicsFixedJoint &joint, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const PhysicsDistanceJoint &joint, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const MjcActuator &actuator, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const MjcTendon &tendon, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const MjcKeyframe &keyframe, const uint32_t indent = 0,
                       bool closing_brace = true);
 
 // Light prim to_string (defined in pprint-light.cc)
