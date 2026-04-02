@@ -554,6 +554,7 @@ TEST_LIST = {
   { "physics_prismatic_joint_test", physics_prismatic_joint_test },
   { "physics_fixed_joint_test", physics_fixed_joint_test },
   { "physics_distance_joint_test", physics_distance_joint_test },
+  { "physics_spherical_joint_test", physics_spherical_joint_test },
   { "physics_joint_mjc_api_test", physics_joint_mjc_api_test },
   { "mjc_actuator_test", mjc_actuator_test },
   { "mjc_tendon_test", mjc_tendon_test },

@@ -281,6 +281,73 @@ def PhysicsDistanceJoint "DistJoint"
 }
 
 // ---------------------------------------------------------------------------
+// 6b. PhysicsSphericalJoint
+// ---------------------------------------------------------------------------
+void physics_spherical_joint_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsSphericalJoint "BallJoint"
+{
+    rel physics:body0 = </BodyA>
+    rel physics:body1 = </BodyB>
+    token physics:axis = "Y"
+    float physics:coneAngle0Limit = 45
+    float physics:coneAngle1Limit = 30
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = parse_usda(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("parse failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+
+  auto result = stage.GetPrimAtPath(Path("/BallJoint", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+
+  const Prim *prim = *result;
+  TEST_CHECK(prim->is<PhysicsSphericalJoint>());
+
+  const auto *joint = prim->as<PhysicsSphericalJoint>();
+  TEST_CHECK(joint != nullptr);
+  if (!joint) return;
+
+  auto axis_opt = joint->axis.get_value();
+  TEST_CHECK(axis_opt.has_value());
+  if (axis_opt.has_value()) {
+    TEST_CHECK(axis_opt.value().str() == "Y");
+  }
+
+  auto cone0_opt = joint->coneAngle0Limit.get_value();
+  TEST_CHECK(cone0_opt.has_value());
+  if (cone0_opt.has_value()) {
+    TEST_CHECK(cone0_opt.value() == 45.0f);
+  }
+
+  auto cone1_opt = joint->coneAngle1Limit.get_value();
+  TEST_CHECK(cone1_opt.has_value());
+  if (cone1_opt.has_value()) {
+    TEST_CHECK(cone1_opt.value() == 30.0f);
+  }
+
+  // Check body0 relationship
+  TEST_CHECK(joint->body0.authored());
+  auto paths0 = joint->body0.get_targetPaths();
+  TEST_CHECK(paths0.size() == 1);
+  if (paths0.size() == 1) {
+    TEST_CHECK(paths0[0].prim_part() == "/BodyA");
+  }
+
+  // Check body1 relationship
+  TEST_CHECK(joint->body1.authored());
+  auto paths1 = joint->body1.get_targetPaths();
+  TEST_CHECK(paths1.size() == 1);
+  if (paths1.size() == 1) {
+    TEST_CHECK(paths1[0].prim_part() == "/BodyB");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 7. PhysicsRevoluteJoint with MjcJointAPI
 // ---------------------------------------------------------------------------
 void physics_joint_mjc_api_test(void) {
