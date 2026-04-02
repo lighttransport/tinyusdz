@@ -13,6 +13,8 @@
 #endif
 
 #include "usdc-reader-impl.hh"
+#include "usdPhysics.hh"
+#include "mjcPhysics.hh"
 
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDC_READER)
 
@@ -152,6 +154,16 @@ INSTANTIATE_RECONSTRUCT_PRIM(BlendShape);
 INSTANTIATE_RECONSTRUCT_PRIM(Material);
 INSTANTIATE_RECONSTRUCT_PRIM(Shader);
 INSTANTIATE_RECONSTRUCT_PRIM(NodeGraph);
+// UsdPhysics + mjcPhysics
+INSTANTIATE_RECONSTRUCT_PRIM(PhysicsScene);
+INSTANTIATE_RECONSTRUCT_PRIM(PhysicsRevoluteJoint);
+INSTANTIATE_RECONSTRUCT_PRIM(PhysicsPrismaticJoint);
+INSTANTIATE_RECONSTRUCT_PRIM(PhysicsSphericalJoint);
+INSTANTIATE_RECONSTRUCT_PRIM(PhysicsFixedJoint);
+INSTANTIATE_RECONSTRUCT_PRIM(PhysicsDistanceJoint);
+INSTANTIATE_RECONSTRUCT_PRIM(MjcActuator);
+INSTANTIATE_RECONSTRUCT_PRIM(MjcTendon);
+INSTANTIATE_RECONSTRUCT_PRIM(MjcKeyframe);
 
 #undef INSTANTIATE_RECONSTRUCT_PRIM
 
@@ -478,6 +490,16 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(BlendShape, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Shader, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(NodeGraph, typeName, prim_name, spec)
+  // UsdPhysics + mjcPhysics
+  RECONSTRUCT_PRIM(PhysicsScene, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(PhysicsRevoluteJoint, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(PhysicsPrismaticJoint, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(PhysicsSphericalJoint, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(PhysicsFixedJoint, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(PhysicsDistanceJoint, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(MjcActuator, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(MjcTendon, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(MjcKeyframe, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Material, typeName, prim_name, spec) {
     PUSH_WARN("TODO or unsupported prim type: " << typeName);
     if (is_unsupported_prim) {

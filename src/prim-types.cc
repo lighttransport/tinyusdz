@@ -16,6 +16,8 @@
 #include "usdLux.hh"
 #include "usdShade.hh"
 #include "usdSkel.hh"
+#include "mjcPhysics.hh"
+#include "usdPhysics.hh"
 //
 #include "common-macros.inc"
 #include "pprint-meta.hh"
@@ -884,7 +886,17 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(SkelRoot)
   EXTRACT_NAME_AND_RETURN_PATH(Skeleton)
   EXTRACT_NAME_AND_RETURN_PATH(SkelAnimation)
-  EXTRACT_NAME_AND_RETURN_PATH(BlendShape) { return nonstd::nullopt; }
+  EXTRACT_NAME_AND_RETURN_PATH(BlendShape)
+  // UsdPhysics + mjcPhysics
+  EXTRACT_NAME_AND_RETURN_PATH(PhysicsScene)
+  EXTRACT_NAME_AND_RETURN_PATH(PhysicsRevoluteJoint)
+  EXTRACT_NAME_AND_RETURN_PATH(PhysicsPrismaticJoint)
+  EXTRACT_NAME_AND_RETURN_PATH(PhysicsSphericalJoint)
+  EXTRACT_NAME_AND_RETURN_PATH(PhysicsFixedJoint)
+  EXTRACT_NAME_AND_RETURN_PATH(PhysicsDistanceJoint)
+  EXTRACT_NAME_AND_RETURN_PATH(MjcActuator)
+  EXTRACT_NAME_AND_RETURN_PATH(MjcTendon)
+  EXTRACT_NAME_AND_RETURN_PATH(MjcKeyframe) { return nonstd::nullopt; }
 
 #undef EXTRACT_NAME_AND_RETURN_PATH
 
@@ -945,7 +957,17 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   SET_ELEMENT_NAME(elementName, SkelRoot)
   SET_ELEMENT_NAME(elementName, Skeleton)
   SET_ELEMENT_NAME(elementName, SkelAnimation)
-  SET_ELEMENT_NAME(elementName, BlendShape) { return false; }
+  SET_ELEMENT_NAME(elementName, BlendShape)
+  // UsdPhysics + mjcPhysics
+  SET_ELEMENT_NAME(elementName, PhysicsScene)
+  SET_ELEMENT_NAME(elementName, PhysicsRevoluteJoint)
+  SET_ELEMENT_NAME(elementName, PhysicsPrismaticJoint)
+  SET_ELEMENT_NAME(elementName, PhysicsSphericalJoint)
+  SET_ELEMENT_NAME(elementName, PhysicsFixedJoint)
+  SET_ELEMENT_NAME(elementName, PhysicsDistanceJoint)
+  SET_ELEMENT_NAME(elementName, MjcActuator)
+  SET_ELEMENT_NAME(elementName, MjcTendon)
+  SET_ELEMENT_NAME(elementName, MjcKeyframe) { return false; }
 
 #undef SET_ELEMENT_NAME
 

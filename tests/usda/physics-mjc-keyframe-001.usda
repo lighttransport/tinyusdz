@@ -1,0 +1,31 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Z"
+)
+
+def Xform "World"
+{
+    def PhysicsScene "SimScene" (
+        prepend apiSchemas = ["MjcSceneAPI"]
+    )
+    {
+        double3 physics:gravityDirection = (0, 0, -1)
+        double physics:gravityMagnitude = 9.81
+        uniform double mjc:option:timestep = 0.002
+    }
+
+    def MjcKeyframe "Home"
+    {
+        uniform double[] mjc:qpos = [0, 0, 0.5, 1, 0, 0, 0]
+        uniform double[] mjc:qvel = [0, 0, 0, 0, 0, 0]
+        uniform double[] mjc:ctrl = [0, 0, 0]
+    }
+
+    def MjcKeyframe "Extended"
+    {
+        uniform double[] mjc:qpos = [0, 0, 1.0, 1, 0, 0, 0, 0.5, -0.3]
+        uniform double[] mjc:qvel = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+        uniform double[] mjc:ctrl = [0.5, -0.2, 0.1]
+    }
+}

@@ -61,6 +61,25 @@ struct APISchemas {
     Preliminary_PhysicsColliderAPI,
     Preliminary_PhysicsMaterialAPI,
     Preliminary_PhysicsRigidBodyAPI,
+
+    // UsdPhysics API schemas
+    PhysicsRigidBodyAPI,
+    PhysicsCollisionAPI,
+    PhysicsMaterialAPI,
+    PhysicsMeshCollisionAPI,
+
+    // MuJoCo (mjcPhysics) API schemas
+    MjcSceneAPI,
+    MjcJointAPI,
+    MjcCollisionAPI,
+    MjcMeshCollisionAPI,
+    MjcMaterialAPI,
+    MjcSiteAPI,
+    MjcImageableAPI,
+    MjcEqualityAPI,
+    MjcEqualityConnectAPI,
+    MjcEqualityWeldAPI,
+    MjcEqualityJointAPI,
   };
 
   ListEditQual listOpQual{ListEditQual::ResetToExplicit};  // must be 'prepend'
