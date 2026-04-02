@@ -1,68 +1,59 @@
 {
   "name": "tinyusdz",
+  "private": true,
   "version": "0.9.9",
-  "description": "Tinyusdz wasm",
-  "main": "tinyusdz.js",
+  "description": "TinyUSDZ WebAssembly and JavaScript loaders for USD and USDZ assets",
+  "type": "module",
+  "main": "./index.js",
+  "module": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json",
+    "./*.js": "./*.js",
+    "./*.wasm": "./*.wasm",
+    "./*.wasm.zst": "./*.wasm.zst"
+  },
   "files": [
-    "AnimClipUtils.js",
-    "EXRDecoder.js",
-    "ExtendedSkinning.js",
-    "JointHierarchyUtils.js",
-    "LoaderConfigUtils.js",
-    "SceneGraphUtils.js",
-    "SceneHelpers.js",
-    "SkinnedMeshUtils.js",
-    "TinyUSDZComposer.js",
-    "TinyUSDZLoader.js",
-    "TinyUSDZLoaderUtils.js",
-    "TinyUSDZMCPClient.js",
-    "TinyUSDZMaterialX.js",
-    "TinyUSDZOpenPBRSimple.js",
-    "TinyUSDZOpenPBR_TSL.js",
-    "TinyUSDZOpenPBR_WebGL.js",
-    "TinyUSDZWorker.js",
-    "TinyUSDZWorkerLoader.js",
-    "TypedArrayOwnership.js",
-    "USDAnimationConverter.js",
-    "USDSceneAnimationPipeline.js",
-    "USDSceneMetadata.js",
-    "USDSceneSkinningData.js",
-    "USDSceneSkinningPipeline.js",
-    "USDSkeletalHelper.js",
-    "USDSkeletonData.js",
-    "tinyusdz.js",
-    "tinyusdz.wasm",
-    "tinyusdz.wasm.zst",
-    "tinyusdz_64.js",
-    "tinyusdz_64.wasm",
-    "tinyusdz_64.wasm.zst",
-    "LICENSE"
+    "*.js",
+    "*.wasm",
+    "*.wasm.zst",
+    "LICENSE",
+    "README.md"
   ],
   "scripts": {
-    "copy:lic": "node -e \"fs.mkdirSync('dist',{recursive:true});fs.cpSync('../../LICENSE','dist/LICENSE')\"",
-    "copy:js": "node -e \"const s='../js/src/tinyusdz/';fs.readdirSync(s).filter(f=>f.endsWith('.js')).forEach(f=>fs.cpSync(s+f,'dist/'+f))\"",
-    "copy:wasm": "node -e \"const s='../js/src/tinyusdz/';fs.readdirSync(s).filter(f=>f.endsWith('.wasm')).forEach(f=>fs.cpSync(s+f,'dist/'+f))\"",
-    "copy:pkg": "node -e \"fs.cpSync('package.json','dist/package.json')\"",
-    "copy:md": "node -e \"fs.cpSync('readme.md','dist/readme.md')\"",
-    "copy:all": "npm run copy:lic && npm run copy:wasm && npm run copy:js && npm run copy:pkg && npm run copy:md",
-    "comp:wasm": "zstd -19 -f ./dist/tinyusdz.wasm && zstd -19 -f ./dist/tinyusdz_64.wasm",
-    "build": "npm run copy:all && npm run comp:wasm",
-    "build:clean": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\" && npm run build",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "./build-package.sh",
+    "build:package": "./build-package.sh",
+    "build:wasm": "./build-wasm.sh",
+    "build:stage": "node ./scripts/stage-package.mjs",
+    "build:clean": "./build-package.sh",
+    "validate": "node ./scripts/validate-package.mjs",
+    "pack:dry-run": "node ./scripts/validate-package.mjs --pack-only",
+    "test": "npm run validate"
   },
   "keywords": [
     "usd",
     "usdz"
   ],
   "author": "Light Transport Entertainment Inc. and many contributors",
-  "license": "Apache 2.0 and MIT",
+  "license": "Apache-2.0 OR MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/lighttransport/tinyusdz"
+    "url": "git+https://github.com/lighttransport/tinyusdz.git",
+    "directory": "web/npm"
+  },
+  "homepage": "https://github.com/lighttransport/tinyusdz/tree/release/web",
+  "bugs": {
+    "url": "https://github.com/lighttransport/tinyusdz/issues"
   },
   "funding": {
     "type": "github",
     "url": "https://github.com/sponsors/lighttransport"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=24"
   },
   "dependencies": {
     "three": ">=0.177.0"

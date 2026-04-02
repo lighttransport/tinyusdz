@@ -160,6 +160,7 @@ async function loadScenes() {
   const useMemory64 = checkMemory64Support();
   console.log('64-bit memory support:', useMemory64);
   await loader.init({useMemory64});
+  TinyUSDZLoaderUtils.setTinyUSDZ(loader.native_);
 
   // You can set memory limit for USD loading.
   // The limit is only effective to USD loading.
@@ -199,7 +200,7 @@ async function loadScenes() {
 
     const usdRootNode = usd_scene.getDefaultRootNode();
 
-    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+    const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 
     if (usd_scene.getURI().includes('UsdCookie')) {
       // Add exra scaling
