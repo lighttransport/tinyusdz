@@ -56,6 +56,12 @@ std::string JsonNum(T v) {
   return oss.str();
 }
 
+std::string JsonVec3f(const value::vector3f &v) {
+  std::ostringstream oss;
+  oss << "[" << v[0] << ", " << v[1] << ", " << v[2] << "]";
+  return oss.str();
+}
+
 std::string JsonDouble3(const value::double3 &v) {
   std::ostringstream oss;
   oss << "[" << v[0] << ", " << v[1] << ", " << v[2] << "]";
@@ -289,7 +295,7 @@ bool ConvertPhysicsToJson(
     EmitKV(ss, 2, sp, "path", JsonStr(path));
     auto gd_opt = scene->gravityDirection.get_value();
     if (gd_opt.has_value()) {
-      EmitKV(ss, 2, sp, "gravityDirection", JsonDouble3(gd_opt.value()));
+      EmitKV(ss, 2, sp, "gravityDirection", JsonVec3f(gd_opt.value()));
     }
     auto gm_opt = scene->gravityMagnitude.get_value();
     if (gm_opt.has_value()) {

@@ -43,8 +43,8 @@ void physics_scene_reconstruct_test(void) {
 
 def PhysicsScene "SimScene"
 {
-    double3 physics:gravityDirection = (0, 0, -1)
-    double physics:gravityMagnitude = 9.81
+    vector3f physics:gravityDirection = (0, 0, -1)
+    float physics:gravityMagnitude = 9.81
 }
 )";
   Stage stage;
@@ -71,16 +71,16 @@ def PhysicsScene "SimScene"
   TEST_CHECK(gd_opt.has_value());
   if (gd_opt.has_value()) {
     auto gd = gd_opt.value();
-    TEST_CHECK(gd[0] == 0.0);
-    TEST_CHECK(gd[1] == 0.0);
-    TEST_CHECK(gd[2] == -1.0);
+    TEST_CHECK(gd[0] == 0.0f);
+    TEST_CHECK(gd[1] == 0.0f);
+    TEST_CHECK(gd[2] == -1.0f);
   }
 
   // Check gravity magnitude
   auto gm_opt = scene->gravityMagnitude.get_value();
   TEST_CHECK(gm_opt.has_value());
   if (gm_opt.has_value()) {
-    TEST_CHECK(gm_opt.value() == 9.81);
+    TEST_CHECK(std::fabs(gm_opt.value() - 9.81f) < 1e-5f);
   }
 
   // No MjcSceneAPI since no mjc: properties
@@ -97,8 +97,8 @@ def PhysicsScene "SimScene" (
     prepend apiSchemas = ["MjcSceneAPI"]
 )
 {
-    double3 physics:gravityDirection = (0, 0, -1)
-    double physics:gravityMagnitude = 9.81
+    vector3f physics:gravityDirection = (0, 0, -1)
+    float physics:gravityMagnitude = 9.81
     uniform double mjc:option:timestep = 0.005
     uniform token mjc:option:integrator = "implicit"
     uniform token mjc:option:solver = "newton"
@@ -558,8 +558,8 @@ void physics_pprint_roundtrip_test(void) {
 
 def PhysicsScene "Scene"
 {
-    double3 physics:gravityDirection = (0, -1, 0)
-    double physics:gravityMagnitude = 9.81
+    vector3f physics:gravityDirection = (0, -1, 0)
+    float physics:gravityMagnitude = 9.81
 }
 
 def PhysicsRevoluteJoint "Joint1"
@@ -637,8 +637,8 @@ void physics_to_json_test(void) {
 
 def PhysicsScene "Scene"
 {
-    double3 physics:gravityDirection = (0, 0, -1)
-    double physics:gravityMagnitude = 9.81
+    vector3f physics:gravityDirection = (0, 0, -1)
+    float physics:gravityMagnitude = 9.81
     uniform double mjc:option:timestep = 0.002
     uniform token mjc:option:integrator = "euler"
 }
