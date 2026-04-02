@@ -556,6 +556,9 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/materialx-to-json.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/physics-to-json.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/physics-to-json.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/ik-solver.h
+        ${PROJECT_SOURCE_DIR}/src/tydra/ik-solver.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/ik-solver.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/bone-util.cc
