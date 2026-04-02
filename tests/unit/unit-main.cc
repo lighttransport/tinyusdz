@@ -58,6 +58,8 @@
 #include "unit-usd-validation.h"
 // Physics + MuJoCo
 #include "unit-physics.h"
+// IK solver
+#include "unit-ik.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -561,6 +563,12 @@ TEST_LIST = {
   { "mjc_keyframe_test", mjc_keyframe_test },
   { "physics_pprint_roundtrip_test", physics_pprint_roundtrip_test },
   { "physics_to_json_test", physics_to_json_test },
+  // IK solver
+  { "ik_forward_kinematics_test", ik_forward_kinematics_test },
+  { "ik_ccd_solve_test", ik_ccd_solve_test },
+  { "ik_fabrik_solve_test", ik_fabrik_solve_test },
+  { "ik_joint_limits_test", ik_joint_limits_test },
+  { "ik_unreachable_target_test", ik_unreachable_target_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif

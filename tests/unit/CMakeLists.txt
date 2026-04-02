@@ -57,6 +57,8 @@ set(TEST_SOURCES
 	unit-usd-validation.cc
 	# Physics + MuJoCo
 	unit-physics.cc
+	# IK solver
+	unit-ik.cc
     )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)
