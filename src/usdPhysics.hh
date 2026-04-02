@@ -95,8 +95,8 @@ struct PhysicsScene {
   const Specifier &specifier() const { return spec; }
 
   // Standard UsdPhysics attributes (varying — no uniform required)
-  TypedAttribute<value::double3> gravityDirection;   // physics:gravityDirection
-  TypedAttribute<double> gravityMagnitude;           // physics:gravityMagnitude
+  TypedAttribute<value::vector3f> gravityDirection;  // physics:gravityDirection (vector3f per USD spec)
+  TypedAttribute<float> gravityMagnitude;            // physics:gravityMagnitude (float per USD spec)
 
   // MuJoCo scene API (optional)
   nonstd::optional<MjcSceneAPI> mjcScene;

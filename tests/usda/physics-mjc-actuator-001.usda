@@ -10,8 +10,8 @@ def Xform "World"
         prepend apiSchemas = ["MjcSceneAPI"]
     )
     {
-        double3 physics:gravityDirection = (0, 0, -1)
-        double physics:gravityMagnitude = 9.81
+        vector3f physics:gravityDirection = (0, 0, -1)
+        float physics:gravityMagnitude = 9.81
         uniform double mjc:option:timestep = 0.002
         uniform token mjc:option:integrator = "implicit"
         uniform bool mjc:flag:gravity = 1

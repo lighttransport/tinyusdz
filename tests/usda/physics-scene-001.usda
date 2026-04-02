@@ -7,6 +7,6 @@
 
 def PhysicsScene "World"
 {
-    double3 physics:gravityDirection = (0, 0, -1)
-    double physics:gravityMagnitude = 9.81
+    vector3f physics:gravityDirection = (0, 0, -1)
+    float physics:gravityMagnitude = 9.81
 }
