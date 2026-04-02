@@ -19,6 +19,15 @@ MuJoCo-specific attributes. Both the standard and custom APIs are applied togeth
 - MuJoCo mjcPhysics schema: `schema.usda` from MuJoCo's `src/experimental/usd/mjcPhysics/`
 - USD Physics schema: OpenUSD `pxr/usd/usdPhysics/`
 
+### PhysicsScene Attributes
+
+Per the official USD Physics schema (`pxr.UsdPhysics.Scene`):
+
+| Attribute | USD Type | TinyUSDZ C++ Type | Description |
+|---|---|---|---|
+| `physics:gravityDirection` | `vector3f` | `TypedAttribute<value::vector3f>` | Gravity direction unit vector |
+| `physics:gravityMagnitude` | `float` | `TypedAttribute<float>` | Gravity magnitude (m/s^2) |
+
 ---
 
 ## 1. MjcSceneAPI — Global Simulation Options
@@ -355,7 +364,13 @@ MjcImageableAPI marks entities as strictly visual (contype = conaffinity = 0).
 - **UsdPhysics**: PhysicsScene, PhysicsRevoluteJoint, PhysicsPrismaticJoint, PhysicsSphericalJoint, PhysicsFixedJoint, PhysicsDistanceJoint
 - **mjcPhysics**: MjcActuator, MjcTendon, MjcKeyframe
 
+### Blender integration
+
+- `blender/usd_physics_hook.py` — Blender addon (4.0+) with USD export/import hooks
+- See [`doc/blender-physics.md`](blender-physics.md) for usage details
+
 ### Test coverage
 
 - 13 unit tests covering all 9 concrete prim types, API schemas, pprint roundtrip, and JSON export
 - 8 synthetic USDA test files for roundtrip testing (`tests/usda/physics-*.usda`)
+- Blender export roundtrip test: `models/blender-physics.usda`
