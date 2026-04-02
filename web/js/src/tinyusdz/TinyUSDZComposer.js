@@ -1,4 +1,4 @@
-import { FetchAssetResolver } from "./TinyUSDZLoader";  
+import { FetchAssetResolver } from "./TinyUSDZLoader.js";
 
 class TinyUSDZComposer {
 
