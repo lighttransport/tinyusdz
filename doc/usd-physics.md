@@ -355,8 +355,7 @@ MjcImageableAPI marks entities as strictly visual (contype = conaffinity = 0).
 - **UsdPhysics**: PhysicsScene, PhysicsRevoluteJoint, PhysicsPrismaticJoint, PhysicsSphericalJoint, PhysicsFixedJoint, PhysicsDistanceJoint
 - **mjcPhysics**: MjcActuator, MjcTendon, MjcKeyframe
 
-### Known gaps
+### Test coverage
 
-- pprint does not emit all vector-valued mjc attributes (o_solref, o_solimp, springdamper)
-- JSON export covers key fields but not every attribute
-- No PhysicsSphericalJoint dedicated unit test
+- 13 unit tests covering all 9 concrete prim types, API schemas, pprint roundtrip, and JSON export
+- 8 synthetic USDA test files for roundtrip testing (`tests/usda/physics-*.usda`)
