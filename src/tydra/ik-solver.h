@@ -56,12 +56,14 @@ typedef enum {
 } TydraIKResult;
 
 /* ======================================================================== */
-/* Math types (plain C, float precision)                                    */
+/* Math types — aliases to shared rb-math.h types                           */
 /* ======================================================================== */
 
-typedef struct { float x, y, z; }       TydraIKVec3;
-typedef struct { float x, y, z, w; }    TydraIKQuat;   /* w = real (Hamilton) */
-typedef struct { float m[16]; }         TydraIKMat4;   /* row-major 4x4      */
+#include "rb-math.h"
+
+typedef TydraPhysVec3 TydraIKVec3;
+typedef TydraPhysQuat TydraIKQuat;
+typedef TydraPhysMat4 TydraIKMat4;
 
 /* ======================================================================== */
 /* IK Joint                                                                 */
