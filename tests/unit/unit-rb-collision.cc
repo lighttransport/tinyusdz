@@ -240,4 +240,19 @@ void rb_gjk_box_box_test(void) {
   xb = xform_at(2.0f, 0, 0);
   n = tydra_phys_narrow_phase(&a, &xa, &b, &xb, contacts, 4);
   TEST_CHECK(n == 0);
+
+  // Rotated box: B at 45 deg around Z, overlapping
+  xb.position = tp_v3(0.9f, 0, 0);
+  xb.rotation = tp_q_from_axis_angle(tp_v3(0, 0, 1), 3.14159f / 4.0f);
+  n = tydra_phys_narrow_phase(&a, &xa, &b, &xb, contacts, 4);
+  TEST_CHECK(n >= 1);
+  if (n > 0) {
+    TEST_CHECK(contacts[0].depth > 0);
+    TEST_MSG("rotated box-box depth = %f", contacts[0].depth);
+  }
+
+  // Rotated box: separated
+  xb.position = tp_v3(1.6f, 0, 0);
+  n = tydra_phys_narrow_phase(&a, &xa, &b, &xb, contacts, 4);
+  TEST_CHECK(n == 0);
 }

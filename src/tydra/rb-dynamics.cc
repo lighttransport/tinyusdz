@@ -924,16 +924,17 @@ static void detect_islands(TydraPhysWorld *world) {
     counts[root]++;
   }
 
-  /* Assign island indices to roots */
+  /* Assign island indices to roots.
+   * Reuse island_body_buf[0..num_bodies-1] as root_to_island map (safe
+   * because we rebuild it below and num_bodies <= max_bodies). */
   int32_t island_count = 0;
-  /* Reuse counts: root -> island_id mapping stored via bodies */
-  int32_t root_to_island[1024]; /* Temporary; cap for simplicity */
-  memset(root_to_island, -1, sizeof(root_to_island));
+  int32_t *root_to_island = world->island_body_buf; /* size = max_bodies */
+  for (i = 0; i < num_bodies; i++) root_to_island[i] = -1;
 
   for (i = 0; i < num_bodies && island_count < world->max_islands; i++) {
     if (world->bodies[i].body_type == TYDRA_PHYS_BODY_STATIC) continue;
     int32_t root = world->island_union[i];
-    if (root < 1024 && root_to_island[root] < 0) {
+    if (root >= 0 && root < num_bodies && root_to_island[root] < 0) {
       root_to_island[root] = island_count;
       world->islands[island_count].num_bodies = 0;
       world->islands[island_count].sleeping = 0;
@@ -942,24 +943,21 @@ static void detect_islands(TydraPhysWorld *world) {
   }
   world->num_islands = island_count;
 
-  /* Build body lists: use island_body_buf after the counts area */
+  /* Build body lists: use island_body_buf after the root_to_island area.
+   * Layout: [root_to_island: num_bodies] [body lists: remaining] */
   int32_t *body_buf = world->island_body_buf + num_bodies;
-  int32_t offsets[256]; /* per-island offset into body_buf */
-  memset(offsets, 0, sizeof(offsets));
 
-  /* Compute offsets (prefix sum of counts) */
+  /* Compute per-island offsets into body_buf */
   {
     int32_t offset = 0;
-    for (i = 0; i < island_count && i < 256; i++) {
-      offsets[i] = offset;
+    for (i = 0; i < island_count && i < world->max_islands; i++) {
       world->islands[i].body_indices = &body_buf[offset];
-      /* We'll fill num_bodies in the next pass */
-      offset += counts[i]; /* approximate; we use total */
+      offset += counts[i];
     }
   }
 
   /* Reset counts for fill pass */
-  for (i = 0; i < island_count && i < 256; i++) {
+  for (i = 0; i < island_count; i++) {
     world->islands[i].num_bodies = 0;
   }
 
@@ -967,10 +965,10 @@ static void detect_islands(TydraPhysWorld *world) {
   for (i = 0; i < num_bodies; i++) {
     if (world->bodies[i].body_type == TYDRA_PHYS_BODY_STATIC) continue;
     int32_t root = world->island_union[i];
-    int32_t isl = (root < 1024) ? root_to_island[root] : -1;
-    if (isl >= 0 && isl < island_count && isl < 256) {
-      int32_t idx = offsets[isl] + world->islands[isl].num_bodies;
-      body_buf[idx] = i;
+    int32_t isl = (root >= 0 && root < num_bodies) ? root_to_island[root] : -1;
+    if (isl >= 0 && isl < island_count) {
+      int32_t idx = world->islands[isl].num_bodies;
+      world->islands[isl].body_indices[idx] = i;
       world->islands[isl].num_bodies++;
       world->bodies[i].island_id = isl;
     }
@@ -1230,26 +1228,6 @@ bool GetFloatProp(const std::map<std::string, Property> &props,
   }
   return false;
 }
-
-/* Helper to get a vec3f property (currently unused but reserved for velocity import) */
-#if 0
-bool GetVec3fProp(const std::map<std::string, Property> &props,
-                  const std::string &name, value::vector3f *out) {
-  auto it = props.find(name);
-  if (it == props.end()) return false;
-
-  const Property &prop = it->second;
-  if (prop.is_attribute()) {
-    const Attribute &attr = prop.get_attribute();
-    value::vector3f v;
-    if (attr.get_value(&v)) {
-      *out = v;
-      return true;
-    }
-  }
-  return false;
-}
-#endif
 
 /* Relationship target path extraction */
 std::string GetRelTargetPath(const RelationshipProperty &rp) {
