@@ -150,6 +150,11 @@ typedef struct {
   int32_t            num_contacts;
   int32_t            max_contacts;
 
+  /* Contact constraint cache (opaque, allocated by BuildPhysWorld or user).
+   * Must be at least max_contacts * sizeof(internal constraint cache entry).
+   * If NULL, a static global array is used (NOT thread-safe). */
+  void              *contact_cache;
+
   /* Broadphase */
   TydraPhysBroadphase broadphase;
 
