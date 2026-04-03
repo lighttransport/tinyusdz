@@ -41,10 +41,6 @@
 #define ik_axis_vector     tp_axis_vector
 #define ik_clampf          tp_clampf
 
-// Old ik_* function definitions removed — now aliased to tp_* via #define above.
-// The math implementations live in rb-math.h as static inline functions.
-
-// (All math function bodies removed — now provided by rb-math.h via #define aliases above)
 
 // ============================================================================
 // Forward Kinematics

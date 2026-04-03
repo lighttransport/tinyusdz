@@ -5,6 +5,7 @@
 //
 
 #include "physics-to-json.hh"
+#include "materialx-to-json.hh"  // for EscapeJsonString
 
 #include <sstream>
 #include <functional>
@@ -20,29 +21,13 @@ namespace tydra {
 
 namespace {
 
-std::string EscapeJson(const std::string &input) {
-  std::string output;
-  output.reserve(input.size() + 16);
-  for (char c : input) {
-    switch (c) {
-      case '\"': output += "\\\""; break;
-      case '\\': output += "\\\\"; break;
-      case '\n': output += "\\n"; break;
-      case '\r': output += "\\r"; break;
-      case '\t': output += "\\t"; break;
-      default: output += c; break;
-    }
-  }
-  return output;
-}
-
 std::string Indent(int level, int spaces) {
   return std::string(static_cast<size_t>(level * spaces), ' ');
 }
 
 // JSON value helpers
 std::string JsonStr(const std::string &s) {
-  return "\"" + EscapeJson(s) + "\"";
+  return "\"" + EscapeJsonString(s) + "\"";
 }
 
 std::string JsonBool(bool b) {
@@ -450,7 +435,21 @@ bool ConvertPhysicsToJson(
 
   ss << "}\n";
 
-  *json_str = ss.str();
+  // Strip trailing commas before } and ] to produce valid JSON
+  // (EmitKV/EmitOptionalArray may leave trailing commas when optional fields are absent)
+  std::string result = ss.str();
+  for (size_t i = 0; i < result.size(); i++) {
+    if (result[i] == ',' && i + 1 < result.size()) {
+      size_t j = i + 1;
+      while (j < result.size() && (result[j] == ' ' || result[j] == '\n'))
+        j++;
+      if (j < result.size() && (result[j] == '}' || result[j] == ']')) {
+        result.erase(i, 1);
+        i--;
+      }
+    }
+  }
+  *json_str = std::move(result);
   return true;
 }
 

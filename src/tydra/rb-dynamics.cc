@@ -26,7 +26,14 @@ typedef struct {
   TydraPhysVec3 tangent[2];       /* tangent vectors */
 } ContactConstraint;
 
-static ContactConstraint s_contact_cache[TYDRA_MAX_CONTACT_CACHE];
+/* Fallback cache for single-world use. If world->contact_cache is set,
+ * that per-world buffer is used instead (thread-safe). */
+static ContactConstraint s_contact_cache_fallback[TYDRA_MAX_CONTACT_CACHE];
+
+static ContactConstraint *get_contact_cache(TydraPhysWorld *world) {
+  if (world->contact_cache) return (ContactConstraint *)world->contact_cache;
+  return s_contact_cache_fallback;
+}
 
 /* ======================================================================== */
 /* PART 1: C Implementation                                                 */
@@ -338,13 +345,13 @@ static void prepare_contacts(TydraPhysWorld *world) {
   float inv_dt = (dt > TP_EPSILON) ? (1.0f / dt) : 0.0f;
   int32_t num = world->num_contacts;
 
-  if (num > TYDRA_MAX_CONTACT_CACHE) {
-    num = TYDRA_MAX_CONTACT_CACHE;
-  }
+  int32_t cache_cap = world->contact_cache ? world->max_contacts
+                                           : TYDRA_MAX_CONTACT_CACHE;
+  if (num > cache_cap) num = cache_cap;
 
   for (i = 0; i < num; i++) {
     TydraPhysContact *c = &world->contacts[i];
-    ContactConstraint *cc = &s_contact_cache[i];
+    ContactConstraint *cc = &get_contact_cache(world)[i];
     TydraPhysBody *ba = &world->bodies[c->body_a];
     TydraPhysBody *bb = &world->bodies[c->body_b];
 
@@ -404,11 +411,13 @@ static void prepare_contacts(TydraPhysWorld *world) {
 static void solve_contacts(TydraPhysWorld *world) {
   int32_t i;
   int32_t num = world->num_contacts;
-  if (num > TYDRA_MAX_CONTACT_CACHE) num = TYDRA_MAX_CONTACT_CACHE;
+  int32_t cache_cap2 = world->contact_cache ? world->max_contacts
+                                            : TYDRA_MAX_CONTACT_CACHE;
+  if (num > cache_cap2) num = cache_cap2;
 
   for (i = 0; i < num; i++) {
     TydraPhysContact *c = &world->contacts[i];
-    ContactConstraint *cc = &s_contact_cache[i];
+    ContactConstraint *cc = &get_contact_cache(world)[i];
     TydraPhysBody *ba = &world->bodies[c->body_a];
     TydraPhysBody *bb = &world->bodies[c->body_b];
 
@@ -534,20 +543,24 @@ static void solve_angular_constraint(
   }
 }
 
+/* Resolve joint body pointers. If body index < 0, use a static dummy. */
+static void resolve_joint_bodies(TydraPhysWorld *world, TydraPhysJoint *j,
+                                  TydraPhysBody *dummy,
+                                  TydraPhysBody **ba, TydraPhysBody **bb) {
+  tydra_phys_body_default(dummy);
+  dummy->body_type = TYDRA_PHYS_BODY_STATIC;
+  dummy->inverse_mass = 0.0f;
+  dummy->local_inv_inertia = tp_v3(0, 0, 0);
+  dummy->inv_inertia_world = tp_m3_identity();
+  memset(dummy->inv_inertia_world.m, 0, sizeof(dummy->inv_inertia_world.m));
+  *ba = (j->body_a >= 0) ? &world->bodies[j->body_a] : dummy;
+  *bb = (j->body_b >= 0) ? &world->bodies[j->body_b] : dummy;
+}
+
 /* Solve a single ball joint (3 positional constraints) */
 static void solve_ball_joint(TydraPhysWorld *world, TydraPhysJoint *j) {
-  TydraPhysBody dummy;
-  TydraPhysBody *ba, *bb;
-
-  tydra_phys_body_default(&dummy);
-  dummy.body_type = TYDRA_PHYS_BODY_STATIC;
-  dummy.inverse_mass = 0.0f;
-  dummy.local_inv_inertia = tp_v3(0, 0, 0);
-  dummy.inv_inertia_world = tp_m3_identity();
-  memset(dummy.inv_inertia_world.m, 0, sizeof(dummy.inv_inertia_world.m));
-
-  ba = (j->body_a >= 0) ? &world->bodies[j->body_a] : &dummy;
-  bb = (j->body_b >= 0) ? &world->bodies[j->body_b] : &dummy;
+  TydraPhysBody dummy, *ba, *bb;
+  resolve_joint_bodies(world, j, &dummy, &ba, &bb);
 
   if (j->body_a < 0) {
     dummy.xform = tp_xform_identity();
@@ -571,18 +584,8 @@ static void solve_ball_joint(TydraPhysWorld *world, TydraPhysJoint *j) {
 
 /* Solve a hinge joint (3 positional + 2 angular + optional limit) */
 static void solve_hinge_joint(TydraPhysWorld *world, TydraPhysJoint *j) {
-  TydraPhysBody dummy;
-  TydraPhysBody *ba, *bb;
-
-  tydra_phys_body_default(&dummy);
-  dummy.body_type = TYDRA_PHYS_BODY_STATIC;
-  dummy.inverse_mass = 0.0f;
-  dummy.local_inv_inertia = tp_v3(0, 0, 0);
-  dummy.inv_inertia_world = tp_m3_identity();
-  memset(dummy.inv_inertia_world.m, 0, sizeof(dummy.inv_inertia_world.m));
-
-  ba = (j->body_a >= 0) ? &world->bodies[j->body_a] : &dummy;
-  bb = (j->body_b >= 0) ? &world->bodies[j->body_b] : &dummy;
+  TydraPhysBody dummy, *ba, *bb;
+  resolve_joint_bodies(world, j, &dummy, &ba, &bb);
 
   if (j->body_a < 0) dummy.xform = tp_xform_identity();
 
@@ -654,18 +657,8 @@ static void solve_hinge_joint(TydraPhysWorld *world, TydraPhysJoint *j) {
 
 /* Solve a slider/prismatic joint (2 positional + 3 angular + optional limit) */
 static void solve_slider_joint(TydraPhysWorld *world, TydraPhysJoint *j) {
-  TydraPhysBody dummy;
-  TydraPhysBody *ba, *bb;
-
-  tydra_phys_body_default(&dummy);
-  dummy.body_type = TYDRA_PHYS_BODY_STATIC;
-  dummy.inverse_mass = 0.0f;
-  dummy.local_inv_inertia = tp_v3(0, 0, 0);
-  dummy.inv_inertia_world = tp_m3_identity();
-  memset(dummy.inv_inertia_world.m, 0, sizeof(dummy.inv_inertia_world.m));
-
-  ba = (j->body_a >= 0) ? &world->bodies[j->body_a] : &dummy;
-  bb = (j->body_b >= 0) ? &world->bodies[j->body_b] : &dummy;
+  TydraPhysBody dummy, *ba, *bb;
+  resolve_joint_bodies(world, j, &dummy, &ba, &bb);
 
   if (j->body_a < 0) dummy.xform = tp_xform_identity();
 
@@ -723,18 +716,8 @@ static void solve_slider_joint(TydraPhysWorld *world, TydraPhysJoint *j) {
 
 /* Solve a fixed joint (3 positional + 3 angular) */
 static void solve_fixed_joint(TydraPhysWorld *world, TydraPhysJoint *j) {
-  TydraPhysBody dummy;
-  TydraPhysBody *ba, *bb;
-
-  tydra_phys_body_default(&dummy);
-  dummy.body_type = TYDRA_PHYS_BODY_STATIC;
-  dummy.inverse_mass = 0.0f;
-  dummy.local_inv_inertia = tp_v3(0, 0, 0);
-  dummy.inv_inertia_world = tp_m3_identity();
-  memset(dummy.inv_inertia_world.m, 0, sizeof(dummy.inv_inertia_world.m));
-
-  ba = (j->body_a >= 0) ? &world->bodies[j->body_a] : &dummy;
-  bb = (j->body_b >= 0) ? &world->bodies[j->body_b] : &dummy;
+  TydraPhysBody dummy, *ba, *bb;
+  resolve_joint_bodies(world, j, &dummy, &ba, &bb);
 
   if (j->body_a < 0) dummy.xform = tp_xform_identity();
 
@@ -770,18 +753,8 @@ static void solve_fixed_joint(TydraPhysWorld *world, TydraPhysJoint *j) {
 
 /* Solve a distance joint (1 constraint) */
 static void solve_distance_joint(TydraPhysWorld *world, TydraPhysJoint *j) {
-  TydraPhysBody dummy;
-  TydraPhysBody *ba, *bb;
-
-  tydra_phys_body_default(&dummy);
-  dummy.body_type = TYDRA_PHYS_BODY_STATIC;
-  dummy.inverse_mass = 0.0f;
-  dummy.local_inv_inertia = tp_v3(0, 0, 0);
-  dummy.inv_inertia_world = tp_m3_identity();
-  memset(dummy.inv_inertia_world.m, 0, sizeof(dummy.inv_inertia_world.m));
-
-  ba = (j->body_a >= 0) ? &world->bodies[j->body_a] : &dummy;
-  bb = (j->body_b >= 0) ? &world->bodies[j->body_b] : &dummy;
+  TydraPhysBody dummy, *ba, *bb;
+  resolve_joint_bodies(world, j, &dummy, &ba, &bb);
 
   if (j->body_a < 0) dummy.xform = tp_xform_identity();
 
@@ -1369,6 +1342,10 @@ bool BuildPhysWorld(
                          union_buf,
                          island_body_buf);
 
+  /* Per-world contact constraint cache (thread-safe, unlike static fallback) */
+  out_world->contact_cache = new ContactConstraint[
+      static_cast<size_t>(options.max_contacts)];
+
   /* Maps for resolving prim paths to body indices */
   std::unordered_map<std::string, int32_t> path_to_body;
   std::vector<std::string> body_paths; /* parallel to body indices */
@@ -1629,6 +1606,7 @@ void FreePhysWorld(TydraPhysWorld *world) {
   delete[] world->islands;
   delete[] world->island_union;
   delete[] world->island_body_buf;
+  delete[] static_cast<ContactConstraint *>(world->contact_cache);
 
   memset(world, 0, sizeof(TydraPhysWorld));
 }
