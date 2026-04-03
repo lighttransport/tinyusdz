@@ -559,6 +559,12 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/ik-solver.h
         ${PROJECT_SOURCE_DIR}/src/tydra/ik-solver.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/ik-solver.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/rb-math.h
+        ${PROJECT_SOURCE_DIR}/src/tydra/rb-collision.h
+        ${PROJECT_SOURCE_DIR}/src/tydra/rb-collision.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/rb-dynamics.h
+        ${PROJECT_SOURCE_DIR}/src/tydra/rb-dynamics.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/rb-dynamics.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/bone-util.cc

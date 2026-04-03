@@ -6,224 +6,45 @@
 
 #include "ik-solver.h"
 
-#include <math.h>
-#include <string.h>
-#include <float.h>
+// Math is provided by rb-math.h (included via ik-solver.h).
+// Aliases from old ik_ prefix to tp_ prefix for minimal diff.
 
-// ============================================================================
-// Internal float math (self-contained, no C++ dependencies)
-// ============================================================================
+#define IK_PI       TP_PI
+#define IK_EPSILON  TP_EPSILON
+#define IK_UNLIMITED TP_UNLIMITED
 
-static const float IK_PI = 3.14159265358979323846f;
-static const float IK_EPSILON = 1e-7f;
-static const float IK_UNLIMITED = 1e18f;
+// Alias ik_* functions to tp_* from rb-math.h
+#define ik_v3              tp_v3
+#define ik_v3_add          tp_v3_add
+#define ik_v3_sub          tp_v3_sub
+#define ik_v3_scale        tp_v3_scale
+#define ik_v3_dot          tp_v3_dot
+#define ik_v3_cross        tp_v3_cross
+#define ik_v3_length       tp_v3_length
+#define ik_v3_normalize    tp_v3_normalize
+#define ik_q               tp_q
+#define ik_q_identity      tp_q_identity
+#define ik_q_mul           tp_q_mul
+#define ik_q_conjugate     tp_q_conjugate
+#define ik_q_normalize     tp_q_normalize
+#define ik_q_from_axis_angle tp_q_from_axis_angle
+#define ik_q_to_axis_angle tp_q_to_axis_angle
+#define ik_q_rotate        tp_q_rotate
+#define ik_m4_identity     tp_m4_identity
+#define ik_m4_mul          tp_m4_mul
+#define ik_m4_get_translation tp_m4_get_translation
+#define ik_m4_set_translation tp_m4_set_translation
+#define ik_m4_to_quat      tp_m4_to_quat
+#define ik_q_to_m4         tp_q_to_m4
+#define ik_m4_inverse_rigid tp_m4_inverse_rigid
+#define ik_make_local_transform tp_make_local_transform
+#define ik_axis_vector     tp_axis_vector
+#define ik_clampf          tp_clampf
 
-// --- Vec3 ---
+// Old ik_* function definitions removed — now aliased to tp_* via #define above.
+// The math implementations live in rb-math.h as static inline functions.
 
-static TydraIKVec3 ik_v3(float x, float y, float z) {
-  TydraIKVec3 v; v.x = x; v.y = y; v.z = z; return v;
-}
-
-static TydraIKVec3 ik_v3_add(TydraIKVec3 a, TydraIKVec3 b) {
-  return ik_v3(a.x+b.x, a.y+b.y, a.z+b.z);
-}
-
-static TydraIKVec3 ik_v3_sub(TydraIKVec3 a, TydraIKVec3 b) {
-  return ik_v3(a.x-b.x, a.y-b.y, a.z-b.z);
-}
-
-static TydraIKVec3 ik_v3_scale(TydraIKVec3 v, float s) {
-  return ik_v3(v.x*s, v.y*s, v.z*s);
-}
-
-static float ik_v3_dot(TydraIKVec3 a, TydraIKVec3 b) {
-  return a.x*b.x + a.y*b.y + a.z*b.z;
-}
-
-static TydraIKVec3 ik_v3_cross(TydraIKVec3 a, TydraIKVec3 b) {
-  return ik_v3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x);
-}
-
-static float ik_v3_length(TydraIKVec3 v) {
-  return sqrtf(ik_v3_dot(v, v));
-}
-
-static TydraIKVec3 ik_v3_normalize(TydraIKVec3 v) {
-  float len = ik_v3_length(v);
-  if (len < IK_EPSILON) return ik_v3(0, 0, 0);
-  float inv = 1.0f / len;
-  return ik_v3(v.x*inv, v.y*inv, v.z*inv);
-}
-
-// --- Quat ---
-
-static TydraIKQuat ik_q(float x, float y, float z, float w) {
-  TydraIKQuat q; q.x = x; q.y = y; q.z = z; q.w = w; return q;
-}
-
-static TydraIKQuat ik_q_identity(void) {
-  return ik_q(0, 0, 0, 1);
-}
-
-static TydraIKQuat ik_q_mul(TydraIKQuat a, TydraIKQuat b) {
-  return ik_q(
-    a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y,
-    a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x,
-    a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w,
-    a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z
-  );
-}
-
-static TydraIKQuat ik_q_conjugate(TydraIKQuat q) {
-  return ik_q(-q.x, -q.y, -q.z, q.w);
-}
-
-static TydraIKQuat ik_q_normalize(TydraIKQuat q) {
-  float len = sqrtf(q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w);
-  if (len < IK_EPSILON) return ik_q_identity();
-  float inv = 1.0f / len;
-  return ik_q(q.x*inv, q.y*inv, q.z*inv, q.w*inv);
-}
-
-static TydraIKQuat ik_q_from_axis_angle(TydraIKVec3 axis, float angle) {
-  float half = angle * 0.5f;
-  float s = sinf(half);
-  return ik_q(axis.x*s, axis.y*s, axis.z*s, cosf(half));
-}
-
-// Extract axis-angle from quaternion. Returns angle in radians.
-static float ik_q_to_axis_angle(TydraIKQuat q, TydraIKVec3 *axis) {
-  q = ik_q_normalize(q);
-  if (q.w < 0) { q.x = -q.x; q.y = -q.y; q.z = -q.z; q.w = -q.w; }
-  float sin_half = sqrtf(q.x*q.x + q.y*q.y + q.z*q.z);
-  if (sin_half < IK_EPSILON) {
-    *axis = ik_v3(1, 0, 0);
-    return 0.0f;
-  }
-  float inv = 1.0f / sin_half;
-  *axis = ik_v3(q.x*inv, q.y*inv, q.z*inv);
-  return 2.0f * atan2f(sin_half, q.w);
-}
-
-static TydraIKVec3 ik_q_rotate(TydraIKQuat q, TydraIKVec3 v) {
-  // q * (0,v) * q^-1
-  TydraIKQuat qv = ik_q(v.x, v.y, v.z, 0);
-  TydraIKQuat r = ik_q_mul(ik_q_mul(q, qv), ik_q_conjugate(q));
-  return ik_v3(r.x, r.y, r.z);
-}
-
-// --- Mat4 (row-major) ---
-// m[row*4 + col], rows 0-3
-
-static void ik_m4_identity(TydraIKMat4 *m) {
-  memset(m->m, 0, sizeof(m->m));
-  m->m[0] = m->m[5] = m->m[10] = m->m[15] = 1.0f;
-}
-
-static void ik_m4_mul(const TydraIKMat4 *a, const TydraIKMat4 *b, TydraIKMat4 *out) {
-  TydraIKMat4 r;
-  for (int i = 0; i < 4; i++) {
-    for (int j = 0; j < 4; j++) {
-      float sum = 0;
-      for (int k = 0; k < 4; k++) {
-        sum += a->m[i*4+k] * b->m[k*4+j];
-      }
-      r.m[i*4+j] = sum;
-    }
-  }
-  *out = r;
-}
-
-static TydraIKVec3 ik_m4_get_translation(const TydraIKMat4 *m) {
-  return ik_v3(m->m[3], m->m[7], m->m[11]);
-}
-
-static void ik_m4_set_translation(TydraIKMat4 *m, TydraIKVec3 t) {
-  m->m[3] = t.x; m->m[7] = t.y; m->m[11] = t.z;
-}
-
-static TydraIKQuat ik_m4_to_quat(const TydraIKMat4 *m) {
-  // Shepperd's method for rotation matrix -> quaternion
-  float m00 = m->m[0], m01 = m->m[1], m02 = m->m[2];
-  float m10 = m->m[4], m11 = m->m[5], m12 = m->m[6];
-  float m20 = m->m[8], m21 = m->m[9], m22 = m->m[10];
-  float trace = m00 + m11 + m22;
-  TydraIKQuat q;
-  if (trace > 0) {
-    float s = sqrtf(trace + 1.0f) * 2.0f;
-    q.w = 0.25f * s;
-    q.x = (m21 - m12) / s;
-    q.y = (m02 - m20) / s;
-    q.z = (m10 - m01) / s;
-  } else if (m00 > m11 && m00 > m22) {
-    float s = sqrtf(1.0f + m00 - m11 - m22) * 2.0f;
-    q.w = (m21 - m12) / s;
-    q.x = 0.25f * s;
-    q.y = (m01 + m10) / s;
-    q.z = (m02 + m20) / s;
-  } else if (m11 > m22) {
-    float s = sqrtf(1.0f + m11 - m00 - m22) * 2.0f;
-    q.w = (m02 - m20) / s;
-    q.x = (m01 + m10) / s;
-    q.y = 0.25f * s;
-    q.z = (m12 + m21) / s;
-  } else {
-    float s = sqrtf(1.0f + m22 - m00 - m11) * 2.0f;
-    q.w = (m10 - m01) / s;
-    q.x = (m02 + m20) / s;
-    q.y = (m12 + m21) / s;
-    q.z = 0.25f * s;
-  }
-  return ik_q_normalize(q);
-}
-
-static void ik_q_to_m4(TydraIKQuat q, TydraIKMat4 *m) {
-  q = ik_q_normalize(q);
-  float xx = q.x*q.x, yy = q.y*q.y, zz = q.z*q.z;
-  float xy = q.x*q.y, xz = q.x*q.z, yz = q.y*q.z;
-  float wx = q.w*q.x, wy = q.w*q.y, wz = q.w*q.z;
-  ik_m4_identity(m);
-  m->m[0]  = 1 - 2*(yy+zz); m->m[1]  = 2*(xy-wz);     m->m[2]  = 2*(xz+wy);
-  m->m[4]  = 2*(xy+wz);     m->m[5]  = 1 - 2*(xx+zz); m->m[6]  = 2*(yz-wx);
-  m->m[8]  = 2*(xz-wy);     m->m[9]  = 2*(yz+wx);     m->m[10] = 1 - 2*(xx+yy);
-}
-
-// Build local transform from rotation quat + translation
-static void ik_make_local_transform(TydraIKQuat rot, TydraIKVec3 trans, TydraIKMat4 *out) {
-  ik_q_to_m4(rot, out);
-  ik_m4_set_translation(out, trans);
-}
-
-// Invert a rigid transform (rotation + translation only, no scale)
-static void ik_m4_inverse_rigid(const TydraIKMat4 *m, TydraIKMat4 *out) {
-  // Transpose the 3x3 rotation part
-  TydraIKMat4 r;
-  ik_m4_identity(&r);
-  r.m[0] = m->m[0]; r.m[1] = m->m[4]; r.m[2]  = m->m[8];
-  r.m[4] = m->m[1]; r.m[5] = m->m[5]; r.m[6]  = m->m[9];
-  r.m[8] = m->m[2]; r.m[9] = m->m[6]; r.m[10] = m->m[10];
-  // -R^T * t
-  TydraIKVec3 t = ik_m4_get_translation(m);
-  r.m[3]  = -(r.m[0]*t.x + r.m[1]*t.y + r.m[2]*t.z);
-  r.m[7]  = -(r.m[4]*t.x + r.m[5]*t.y + r.m[6]*t.z);
-  r.m[11] = -(r.m[8]*t.x + r.m[9]*t.y + r.m[10]*t.z);
-  *out = r;
-}
-
-static TydraIKVec3 ik_axis_vector(TydraIKAxis axis) {
-  switch (axis) {
-    case TYDRA_IK_AXIS_X: return ik_v3(1, 0, 0);
-    case TYDRA_IK_AXIS_Y: return ik_v3(0, 1, 0);
-    case TYDRA_IK_AXIS_Z: return ik_v3(0, 0, 1);
-  }
-  return ik_v3(0, 1, 0);
-}
-
-static float ik_clampf(float v, float lo, float hi) {
-  if (v < lo) return lo;
-  if (v > hi) return hi;
-  return v;
-}
+// (All math function bodies removed — now provided by rb-math.h via #define aliases above)
 
 // ============================================================================
 // Forward Kinematics

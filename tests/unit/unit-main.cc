@@ -60,6 +60,9 @@
 #include "unit-physics.h"
 // IK solver
 #include "unit-ik.h"
+// Rigid body simulation
+#include "unit-rb-collision.h"
+#include "unit-rb-dynamics.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -569,6 +572,17 @@ TEST_LIST = {
   { "ik_fabrik_solve_test", ik_fabrik_solve_test },
   { "ik_joint_limits_test", ik_joint_limits_test },
   { "ik_unreachable_target_test", ik_unreachable_target_test },
+  // Rigid body collision
+  { "rb_sphere_sphere_test", rb_sphere_sphere_test },
+  { "rb_sphere_plane_test", rb_sphere_plane_test },
+  { "rb_sphere_box_test", rb_sphere_box_test },
+  { "rb_capsule_sphere_test", rb_capsule_sphere_test },
+  { "rb_aabb_broadphase_test", rb_aabb_broadphase_test },
+  { "rb_gjk_box_box_test", rb_gjk_box_box_test },
+  // Rigid body dynamics
+  { "rb_falling_sphere_test", rb_falling_sphere_test },
+  { "rb_pendulum_hinge_test", rb_pendulum_hinge_test },
+  { "rb_stacking_sleep_test", rb_stacking_sleep_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
