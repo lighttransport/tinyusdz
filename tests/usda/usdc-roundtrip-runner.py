@@ -15,16 +15,8 @@ import sys
 
 
 
-# Files expected to fail USDC roundtrip (e.g., Relationship serialization not yet supported).
-XFAIL_FILES = {
-    "physics-joints-001.usda",          # rel physics:body0/body1
-    "physics-revolute-joint-001.usda",  # rel physics:body0/body1
-    "physics-mjc-actuator-001.usda",    # rel physics:body0/body1 + rel mjc:target
-    "physics-mjc-joint-001.usda",       # rel physics:body0/body1
-    "physics-mjc-tendon-001.usda",      # rel mjc:path + token roundtrip issue
-    "physics-collision-group-001.usda", # rel physics:filteredGroups
-    "physics-drive-limit-001.usda",     # rel physics:body0/body1
-}
+# Files expected to fail USDC roundtrip.
+XFAIL_FILES = set()
 
 
 def run_tests(app_path: str, basedir: str, verbose: bool = False) -> int:

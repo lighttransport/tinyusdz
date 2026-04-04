@@ -11,7 +11,8 @@
 namespace tinyusdz {
 namespace experimental {
 
-// Helper macro: extract a TypedAttribute<T> as a crate field using ConvertValue
+// Helper macro: extract a TypedAttribute<T> as a crate field.
+// Goes through value::Value -> ConvertValue for general types.
 #define EXTRACT_TYPED(attr, name) do { \
   auto _opt = (attr).get_value(); \
   if (_opt.has_value()) { \
@@ -24,7 +25,7 @@ namespace experimental {
   } \
 } while(0)
 
-// Helper macro: extract a TypedAttributeWithFallback<T> (always has a value)
+// Helper macro: extract a TypedAttributeWithFallback<T>
 #define EXTRACT_FALLBACK(attr, name) do { \
   crate::CrateValue _cv; \
   value::Value _v((attr).get_value()); \
@@ -34,19 +35,30 @@ namespace experimental {
   } \
 } while(0)
 
-// Helper: extract a RelationshipProperty
-static void ExtractRelProp(const RelationshipProperty &rp, const char *name,
-                           crate::FieldValuePairVector &fields) {
-  if (!rp.authored()) return;
-  const auto &rel = rp.relationship();
-  if (rel.is_path()) {
-    crate::CrateValue cv;
-    std::vector<Path> targets;
-    targets.push_back(rel.targetPath);
-    cv.Set(targets);
-    fields.push_back({name, cv});
-  }
-}
+// Helper macro: extract a token TypedAttribute directly (not as uint index)
+#define EXTRACT_TOKEN(attr, name) do { \
+  auto _opt = (attr).get_value(); \
+  if (_opt.has_value()) { \
+    crate::CrateValue _cv; \
+    _cv.Set(_opt.value()); \
+    fields.push_back({(name), _cv}); \
+  } \
+} while(0)
+
+// Helper macro: extract a token TypedAttributeWithFallback directly
+#define EXTRACT_TOKEN_FALLBACK(attr, name) do { \
+  crate::CrateValue _cv; \
+  _cv.Set((attr).get_value()); \
+  fields.push_back({(name), _cv}); \
+} while(0)
+
+// Helper: write a RelationshipProperty as a separate relationship spec
+// (relationships must be separate SpecType::Relationship specs, not prim fields)
+#define EXTRACT_REL(rp, name) do { \
+  if ((rp).authored()) { \
+    ConvertRelationshipToFields((name), (rp).relationship(), prim_path, err); \
+  } \
+} while(0)
 
 // ============================================================================
 // PhysicsScene
@@ -62,7 +74,7 @@ bool CrateWriter::ExtractPhysicsSceneProperties(
   }
   EXTRACT_TYPED(scene->gravityDirection, "physics:gravityDirection");
   EXTRACT_TYPED(scene->gravityMagnitude, "physics:gravityMagnitude");
-  (void)prim_path; (void)err;
+  (void)prim_path;
   return true;
 }
 
@@ -71,8 +83,8 @@ bool CrateWriter::ExtractPhysicsSceneProperties(
 // ============================================================================
 
 #define EXTRACT_JOINT_BASE(j) do { \
-  ExtractRelProp((j).body0, "physics:body0", fields); \
-  ExtractRelProp((j).body1, "physics:body1", fields); \
+  EXTRACT_REL((j).body0, "physics:body0"); \
+  EXTRACT_REL((j).body1, "physics:body1"); \
   EXTRACT_TYPED((j).localPos0, "physics:localPos0"); \
   EXTRACT_TYPED((j).localPos1, "physics:localPos1"); \
   EXTRACT_TYPED((j).localRot0, "physics:localRot0"); \
@@ -90,10 +102,9 @@ bool CrateWriter::ExtractPhysicsRevoluteJointProperties(
   const PhysicsRevoluteJoint *j = prim.data().as<PhysicsRevoluteJoint>();
   if (!j) { if (err) *err = "Failed to cast to PhysicsRevoluteJoint"; return false; }
   EXTRACT_JOINT_BASE(*j);
-  EXTRACT_TYPED(j->axis, "physics:axis");
+  EXTRACT_TOKEN(j->axis, "physics:axis");
   EXTRACT_TYPED(j->lowerLimit, "physics:lowerLimit");
   EXTRACT_TYPED(j->upperLimit, "physics:upperLimit");
-  (void)prim_path;
   return true;
 }
 
@@ -103,10 +114,9 @@ bool CrateWriter::ExtractPhysicsPrismaticJointProperties(
   const PhysicsPrismaticJoint *j = prim.data().as<PhysicsPrismaticJoint>();
   if (!j) { if (err) *err = "Failed to cast to PhysicsPrismaticJoint"; return false; }
   EXTRACT_JOINT_BASE(*j);
-  EXTRACT_TYPED(j->axis, "physics:axis");
+  EXTRACT_TOKEN(j->axis, "physics:axis");
   EXTRACT_TYPED(j->lowerLimit, "physics:lowerLimit");
   EXTRACT_TYPED(j->upperLimit, "physics:upperLimit");
-  (void)prim_path;
   return true;
 }
 
@@ -116,10 +126,9 @@ bool CrateWriter::ExtractPhysicsSphericalJointProperties(
   const PhysicsSphericalJoint *j = prim.data().as<PhysicsSphericalJoint>();
   if (!j) { if (err) *err = "Failed to cast to PhysicsSphericalJoint"; return false; }
   EXTRACT_JOINT_BASE(*j);
-  EXTRACT_TYPED(j->axis, "physics:axis");
+  EXTRACT_TOKEN(j->axis, "physics:axis");
   EXTRACT_TYPED(j->coneAngle0Limit, "physics:coneAngle0Limit");
   EXTRACT_TYPED(j->coneAngle1Limit, "physics:coneAngle1Limit");
-  (void)prim_path;
   return true;
 }
 
@@ -129,7 +138,6 @@ bool CrateWriter::ExtractPhysicsFixedJointProperties(
   const PhysicsFixedJoint *j = prim.data().as<PhysicsFixedJoint>();
   if (!j) { if (err) *err = "Failed to cast to PhysicsFixedJoint"; return false; }
   EXTRACT_JOINT_BASE(*j);
-  (void)prim_path;
   return true;
 }
 
@@ -141,7 +149,6 @@ bool CrateWriter::ExtractPhysicsDistanceJointProperties(
   EXTRACT_JOINT_BASE(*j);
   EXTRACT_TYPED(j->minDistance, "physics:minDistance");
   EXTRACT_TYPED(j->maxDistance, "physics:maxDistance");
-  (void)prim_path;
   return true;
 }
 
@@ -154,10 +161,9 @@ bool CrateWriter::ExtractPhysicsCollisionGroupProperties(
     crate::FieldValuePairVector &fields, std::string *err) {
   const PhysicsCollisionGroup *g = prim.data().as<PhysicsCollisionGroup>();
   if (!g) { if (err) *err = "Failed to cast to PhysicsCollisionGroup"; return false; }
-  EXTRACT_TYPED(g->mergeGroup, "physics:mergeGroup");
+  EXTRACT_TOKEN(g->mergeGroup, "physics:mergeGroup");
   EXTRACT_FALLBACK(g->invertFilteredGroups, "physics:invertFilteredGroups");
-  ExtractRelProp(g->filteredGroups, "physics:filteredGroups", fields);
-  (void)prim_path;
+  EXTRACT_REL(g->filteredGroups, "physics:filteredGroups");
   return true;
 }
 
@@ -171,11 +177,10 @@ bool CrateWriter::ExtractMjcActuatorProperties(
   const MjcActuator *a = prim.data().as<MjcActuator>();
   if (!a) { if (err) *err = "Failed to cast to MjcActuator"; return false; }
   EXTRACT_FALLBACK(a->group, "mjc:group");
-  ExtractRelProp(a->target, "mjc:target", fields);
-  EXTRACT_FALLBACK(a->dynType, "mjc:dynType");
-  EXTRACT_FALLBACK(a->gainType, "mjc:gainType");
-  EXTRACT_FALLBACK(a->biasType, "mjc:biasType");
-  (void)prim_path;
+  EXTRACT_REL(a->target, "mjc:target");
+  EXTRACT_TOKEN_FALLBACK(a->dynType, "mjc:dynType");
+  EXTRACT_TOKEN_FALLBACK(a->gainType, "mjc:gainType");
+  EXTRACT_TOKEN_FALLBACK(a->biasType, "mjc:biasType");
   return true;
 }
 
@@ -184,12 +189,11 @@ bool CrateWriter::ExtractMjcTendonProperties(
     crate::FieldValuePairVector &fields, std::string *err) {
   const MjcTendon *t = prim.data().as<MjcTendon>();
   if (!t) { if (err) *err = "Failed to cast to MjcTendon"; return false; }
-  EXTRACT_FALLBACK(t->type, "mjc:type");
+  EXTRACT_TOKEN_FALLBACK(t->type, "mjc:type");
   EXTRACT_FALLBACK(t->group, "mjc:group");
   EXTRACT_FALLBACK(t->stiffness, "mjc:stiffness");
   EXTRACT_FALLBACK(t->damping, "mjc:damping");
-  ExtractRelProp(t->path, "mjc:path", fields);
-  (void)prim_path;
+  EXTRACT_REL(t->path, "mjc:path");
   return true;
 }
 
@@ -210,6 +214,7 @@ bool CrateWriter::ExtractMjcKeyframeProperties(
 
 #undef EXTRACT_TYPED
 #undef EXTRACT_FALLBACK
+#undef EXTRACT_REL
 #undef EXTRACT_JOINT_BASE
 
 }  // namespace experimental
