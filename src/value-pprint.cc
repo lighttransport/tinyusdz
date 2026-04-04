@@ -918,6 +918,7 @@ namespace value {
   __FUNC(Material)              \
   __FUNC(Shader)                \
   __FUNC(NodeGraph)             \
+  __FUNC(PhysicsJoint)           \
   __FUNC(PhysicsScene)          \
   __FUNC(PhysicsRevoluteJoint)  \
   __FUNC(PhysicsPrismaticJoint) \

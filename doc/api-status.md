@@ -130,7 +130,7 @@ Coverage of OpenUSD schema domains in tinyusdz.
 |--------|------|--------|-------|
 | PhysicsScene | concrete | done | |
 | PhysicsCollisionGroup | concrete | done | |
-| PhysicsJoint | concrete | -- | Base joint type; tinyusdz has the 5 specific subtypes |
+| PhysicsJoint | concrete | done | Generic D6 joint (all DOFs free) |
 | PhysicsRevoluteJoint | concrete | done | |
 | PhysicsPrismaticJoint | concrete | done | |
 | PhysicsSphericalJoint | concrete | done | |
@@ -149,7 +149,7 @@ Coverage of OpenUSD schema domains in tinyusdz.
 **Also: MuJoCo extensions** (tinyusdz-specific, not in OpenUSD):
 MjcActuator, MjcTendon, MjcKeyframe (concrete); MjcSceneAPI, MjcJointAPI, MjcCollisionAPI, MjcMeshCollisionAPI, MjcMaterialAPI, MjcSiteAPI, MjcImageableAPI, MjcEqualityAPI and variants (API schemas).
 
-**Coverage: 7/8 concrete, 9/9 API -- 94%**
+**Coverage: 8/8 concrete, 9/9 API -- 100%**
 
 ---
 
@@ -240,16 +240,15 @@ These prims are preserved as generic `Model` prims when encountered, so data is 
 | UsdLux | 12/12 (100%) | 7/7 (100%) | 19/19 (100%) |
 | UsdShade | 3/3 (100%) | 4/4 (100%) | 7/7 (100%) |
 | UsdSkel | 4/4 (100%) | 1/1 (100%) | 5/5 (100%) |
-| UsdPhysics | 7/8 (88%) | 9/9 (100%) | 16/17 (94%) |
+| UsdPhysics | 8/8 (100%) | 9/9 (100%) | 17/17 (100%) |
 | UsdMedia | 1/1 (100%) | 1/1 (100%) | 2/2 (100%) |
 | Preliminary AR | 7/7 (100%) | 4/4 (100%) | 11/11 (100%) |
 | UsdVol | 0/9 (0%) | 0/11 (0%) | 0/20 (0%) |
 | UsdRender | 0/5 (0%) | -- | 0/5 (0%) |
-| **Total (supported)** | **54/69 (78%)** | **36/42 (86%)** | **90/111 (81%)** |
+| **Total (supported)** | **55/69 (80%)** | **36/42 (86%)** | **91/111 (82%)** |
 | Unsupported | -- | -- | 12 schemas (UsdRi, UsdHydra, UsdUI, UsdProc) |
 
 ### Remaining gaps
 
 1. **UsdVol** -- Volume and Gaussian splat support (20 schemas)
 2. **UsdRender** -- Render settings for offline rendering (5 schemas)
-3. **UsdPhysics** -- PhysicsJoint base type (1 schema; subtypes all implemented)

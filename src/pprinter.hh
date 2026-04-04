@@ -103,6 +103,8 @@ std::string to_string(const BlendShape &bs, const uint32_t indent = 0,
                       bool closing_brace = true);
 
 // Physics prim to_string (defined in pprint-physics.cc)
+std::string to_string(const PhysicsJoint &joint, const uint32_t indent = 0,
+                      bool closing_brace = true);
 std::string to_string(const PhysicsScene &scene, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const PhysicsRevoluteJoint &joint, const uint32_t indent = 0,

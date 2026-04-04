@@ -222,6 +222,18 @@ std::string to_string(const PhysicsSphericalJoint &joint, const uint32_t indent,
   return ss.str();
 }
 
+std::string to_string(const PhysicsJoint &joint, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+
+  PRINT_PRIM_HEADER(joint, "PhysicsJoint");
+
+  ss << print_joint_base(joint, indent + 1);
+
+  PRINT_PRIM_FOOTER(joint);
+  return ss.str();
+}
+
 std::string to_string(const PhysicsFixedJoint &joint, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;

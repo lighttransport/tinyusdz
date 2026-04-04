@@ -86,6 +86,31 @@ static bool ReconstructJointBaseProperties(
 }
 
 // ============================================================================
+// PhysicsJoint (generic D6 joint)
+// ============================================================================
+template <>
+bool ReconstructPrim<PhysicsJoint>(
+    const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
+    PhysicsJoint *joint, std::string *warn, std::string *err,
+    const PrimReconstructOptions &options) {
+  (void)spec; (void)references;
+  std::set<std::string> table;
+  if (!ReconstructJointBaseProperties(table, properties, joint, warn, err, options)) return false;
+#define PRIM_CLASS_ PhysicsJoint
+#define PRIM_PTR_ joint
+  for (auto &prop : properties) {
+    PHYSICS_JOINT_BASE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    PHYSICS_JOINT_BASE_RELS(EXPAND_SINGLE_REL)
+    if (joint->mjcJoint.has_value()) { MJC_JOINT_TYPED_ATTRS(EXPAND_TYPED_ATTR) }
+    ADD_PROPERTY(table, prop, PhysicsJoint, joint->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+  return true;
+}
+
+// ============================================================================
 // PhysicsScene
 // ============================================================================
 template <>

@@ -124,6 +124,7 @@ struct PhysicsLimitAPI {
 // Concrete Prim types
 //
 
+constexpr auto kPhysicsJoint = "PhysicsJoint";
 constexpr auto kPhysicsCollisionGroup = "PhysicsCollisionGroup";
 
 struct PhysicsScene {
@@ -182,6 +183,36 @@ struct PhysicsJointBase {
 
   // MuJoCo joint API (optional)
   nonstd::optional<MjcJointAPI> mjcJoint;
+};
+
+// PhysicsJoint — generic D6 joint (all DOFs free by default)
+struct PhysicsJoint : PhysicsJointBase {
+  std::string name;
+  Specifier spec{Specifier::Def};
+  int64_t parent_id{-1};
+
+  void set_name(const std::string &name_) { name = name_; }
+  const std::string &get_name() const { return name; }
+  Specifier &specifier() { return spec; }
+  const Specifier &specifier() const { return spec; }
+
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
+  std::map<std::string, VariantSet> variantSet;
+  std::map<std::string, Property> props;
+
+  PrimMeta meta;
+  PrimMeta &metas() { return meta; }
+  const PrimMeta &metas() const { return meta; }
+
+  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const { return _properties; }
+  std::vector<value::token> &primChildrenNames() { return _primChildren; }
+  std::vector<value::token> &propertyNames() { return _properties; }
+
+ private:
+  std::vector<value::token> _primChildren;
+  std::vector<value::token> _properties;
 };
 
 struct PhysicsRevoluteJoint : PhysicsJointBase {
@@ -382,6 +413,7 @@ namespace value {
 
 // Register UsdPhysics Prim types.
 #include "define-type-trait.inc"
+DEFINE_TYPE_TRAIT(PhysicsJoint, kPhysicsJoint, TYPE_ID_PHYSICS_JOINT, 1);
 DEFINE_TYPE_TRAIT(PhysicsScene, kPhysicsScene, TYPE_ID_PHYSICS_SCENE, 1);
 DEFINE_TYPE_TRAIT(PhysicsRevoluteJoint, kPhysicsRevoluteJoint, TYPE_ID_PHYSICS_REVOLUTE_JOINT, 1);
 DEFINE_TYPE_TRAIT(PhysicsPrismaticJoint, kPhysicsPrismaticJoint, TYPE_ID_PHYSICS_PRISMATIC_JOINT, 1);

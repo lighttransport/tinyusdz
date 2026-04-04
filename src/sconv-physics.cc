@@ -96,6 +96,15 @@ bool CrateWriter::ExtractPhysicsSceneProperties(
   EXTRACT_TYPED((j).excludeFromArticulation, "physics:excludeFromArticulation"); \
 } while(0)
 
+bool CrateWriter::ExtractPhysicsJointProperties(
+    const Prim &prim, const Path &prim_path,
+    crate::FieldValuePairVector &fields, std::string *err) {
+  const PhysicsJoint *j = prim.data().as<PhysicsJoint>();
+  if (!j) { if (err) *err = "Failed to cast to PhysicsJoint"; return false; }
+  EXTRACT_JOINT_BASE(*j);
+  return true;
+}
+
 bool CrateWriter::ExtractPhysicsRevoluteJointProperties(
     const Prim &prim, const Path &prim_path,
     crate::FieldValuePairVector &fields, std::string *err) {

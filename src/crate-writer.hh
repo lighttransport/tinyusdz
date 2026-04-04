@@ -504,6 +504,7 @@ private:
   bool ExtractSkelRootProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Physics prim properties
+  bool ExtractPhysicsJointProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
   bool ExtractPhysicsSceneProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
   bool ExtractPhysicsRevoluteJointProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
   bool ExtractPhysicsPrismaticJointProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
