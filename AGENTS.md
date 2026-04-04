@@ -138,6 +138,10 @@ node tests/compare-usda.js --detailed-diff \
 - `DCOUT()` macro for debug logging (compiled out in production builds)
 - Headers must be self-contained
 
+## Adding a New USD Schema / Prim Type
+
+See **[doc/how-to-implement-feature.md](doc/how-to-implement-feature.md)** for the full step-by-step procedure covering research, file-by-file implementation checklist, type mapping, testing, and common pitfalls. The Physics (`src/usdPhysics.hh`) and AR (`src/usdAR.hh`) implementations are the canonical references.
+
 ## Security
 
 - Memory budget controls: `USDLoadOptions::max_memory_limit_in_mb`
