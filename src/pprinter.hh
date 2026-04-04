@@ -70,6 +70,18 @@ std::string to_string(const GeomSubset::FamilyType ty);
 std::string to_string(const GeomBasisCurves::Wrap &v);
 std::string to_string(const GeomBasisCurves::Type &v);
 std::string to_string(const GeomBasisCurves::Basis &v);
+std::string to_string(const GeomPlane &geom, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const GeomCylinder_1 &geom, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const GeomCapsule_1 &geom, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const GeomTetMesh &geom, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const GeomNurbsPatch &geom, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const GeomHermiteCurves &geom, const uint32_t indent = 0,
+                      bool closing_brace = true);
 std::string to_string(const GeomPointInstancer &instancer,
                       const uint32_t indent = 0, bool closing_brace = true);
 
@@ -148,6 +160,13 @@ std::string to_string(const RectLight &light, const uint32_t indent = 0,
 std::string to_string(const GeometryLight &light, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const PortalLight &light, const uint32_t indent = 0,
+                      bool closing_brace = true);
+
+std::string to_string(const DomeLight_1 &light, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const LightFilter &filter, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const PluginLightFilter &filter, const uint32_t indent = 0,
                       bool closing_brace = true);
 
 std::string to_string(const DomeLight::TextureFormat &texformat);

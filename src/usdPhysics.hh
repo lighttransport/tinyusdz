@@ -80,6 +80,21 @@ struct PhysicsMeshCollisionAPI {
   TypedAttributeWithFallback<value::token> approximation{value::token("none")}; // physics:approximation
 };
 
+struct PhysicsMassAPI {
+  TypedAttributeWithFallback<float> mass{0.0f};                // physics:mass
+  TypedAttributeWithFallback<float> density_{0.0f};             // physics:density (name avoids collision with MaterialAPI)
+  TypedAttribute<value::point3f> centerOfMass;                  // physics:centerOfMass
+  TypedAttribute<value::float3> diagonalInertia;                // physics:diagonalInertia
+  TypedAttribute<value::quatf> principalAxes;                   // physics:principalAxes
+};
+
+struct PhysicsFilteredPairsAPI {
+  RelationshipProperty filteredPairs;  // physics:filteredPairs
+};
+
+// PhysicsArticulationRootAPI — marker schema, no properties
+struct PhysicsArticulationRootAPI {};
+
 // PhysicsDriveAPI — multi-apply API schema for motorized joints.
 // Applied per-DOF, e.g. apiSchemas = ["PhysicsDriveAPI:rotX"].
 // Attributes are namespaced: physics:drive:<dof>:type, etc.

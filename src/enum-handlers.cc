@@ -275,7 +275,7 @@ ExpansionRule(const std::string &tok) {
 nonstd::expected<APISchemas::APIName, std::string>
 APISchemaName(const std::string &tok) {
   using E = APISchemas::APIName;
-  constexpr std::array<std::pair<E, const char *>, 39> enums = {{
+  constexpr std::array<std::pair<E, const char *>, 43> enums = {{
       {E::SkelBindingAPI, "SkelBindingAPI"},
       {E::CollectionAPI, "CollectionAPI"},
       {E::MaterialBindingAPI, "MaterialBindingAPI"},
@@ -315,6 +315,12 @@ APISchemaName(const std::string &tok) {
       {E::MjcEqualityConnectAPI, "MjcEqualityConnectAPI"},
       {E::MjcEqualityWeldAPI, "MjcEqualityWeldAPI"},
       {E::MjcEqualityJointAPI, "MjcEqualityJointAPI"},
+      // Additional UsdPhysics
+      {E::PhysicsMassAPI, "PhysicsMassAPI"},
+      {E::PhysicsFilteredPairsAPI, "PhysicsFilteredPairsAPI"},
+      {E::PhysicsArticulationRootAPI, "PhysicsArticulationRootAPI"},
+      // UsdMedia
+      {E::AssetPreviewsAPI, "AssetPreviewsAPI"},
       // Multi-apply
       {E::PhysicsDriveAPI, "PhysicsDriveAPI"},
       {E::PhysicsLimitAPI, "PhysicsLimitAPI"},

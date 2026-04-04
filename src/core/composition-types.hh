@@ -81,6 +81,14 @@ struct APISchemas {
     MjcEqualityWeldAPI,
     MjcEqualityJointAPI,
 
+    // Additional UsdPhysics API schemas
+    PhysicsMassAPI,
+    PhysicsFilteredPairsAPI,
+    PhysicsArticulationRootAPI,
+
+    // UsdMedia API schemas
+    AssetPreviewsAPI,
+
     // Multi-apply UsdPhysics API schemas
     PhysicsDriveAPI,
     PhysicsLimitAPI,

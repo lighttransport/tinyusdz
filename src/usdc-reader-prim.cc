@@ -140,6 +140,12 @@ INSTANTIATE_RECONSTRUCT_PRIM(GeomSphere);
 INSTANTIATE_RECONSTRUCT_PRIM(GeomSubset);
 INSTANTIATE_RECONSTRUCT_PRIM(GeomBasisCurves);
 INSTANTIATE_RECONSTRUCT_PRIM(GeomNurbsCurves);
+INSTANTIATE_RECONSTRUCT_PRIM(GeomPlane);
+INSTANTIATE_RECONSTRUCT_PRIM(GeomCylinder_1);
+INSTANTIATE_RECONSTRUCT_PRIM(GeomCapsule_1);
+INSTANTIATE_RECONSTRUCT_PRIM(GeomTetMesh);
+INSTANTIATE_RECONSTRUCT_PRIM(GeomNurbsPatch);
+INSTANTIATE_RECONSTRUCT_PRIM(GeomHermiteCurves);
 INSTANTIATE_RECONSTRUCT_PRIM(GeomCamera);
 INSTANTIATE_RECONSTRUCT_PRIM(GeomPointInstancer);
 INSTANTIATE_RECONSTRUCT_PRIM(SphereLight);
@@ -149,6 +155,9 @@ INSTANTIATE_RECONSTRUCT_PRIM(DistantLight);
 INSTANTIATE_RECONSTRUCT_PRIM(CylinderLight);
 INSTANTIATE_RECONSTRUCT_PRIM(RectLight);
 INSTANTIATE_RECONSTRUCT_PRIM(GeometryLight);
+INSTANTIATE_RECONSTRUCT_PRIM(DomeLight_1);
+INSTANTIATE_RECONSTRUCT_PRIM(LightFilter);
+INSTANTIATE_RECONSTRUCT_PRIM(PluginLightFilter);
 INSTANTIATE_RECONSTRUCT_PRIM(SkelRoot);
 INSTANTIATE_RECONSTRUCT_PRIM(SkelAnimation);
 INSTANTIATE_RECONSTRUCT_PRIM(Skeleton);
@@ -487,6 +496,12 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(GeomCapsule, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomBasisCurves, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomNurbsCurves, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomPlane, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomCylinder_1, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomCapsule_1, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomTetMesh, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomNurbsPatch, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomHermiteCurves, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomPointInstancer, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomCamera, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomSubset, typeName, prim_name, spec)
@@ -497,6 +512,9 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(DistantLight, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(RectLight, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeometryLight, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(DomeLight_1, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(LightFilter, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(PluginLightFilter, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(SkelRoot, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Skeleton, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(SkelAnimation, typeName, prim_name, spec)

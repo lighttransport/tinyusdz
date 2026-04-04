@@ -178,6 +178,87 @@
   X("axis", Axis, AxisEnumHandler, axis)
 
 // ============================================================================
+// GeomPlane Properties
+// ============================================================================
+#define GEOM_PLANE_TYPED_ATTRS(X) \
+  X("width", width) \
+  X("length", length)
+
+#define GEOM_PLANE_UNIFORM_ENUMS(X) \
+  X("axis", Axis, AxisEnumHandler, axis)
+
+// ============================================================================
+// GeomCylinder_1 Properties
+// ============================================================================
+#define GEOM_CYLINDER_1_TYPED_ATTRS(X) \
+  X("height", height) \
+  X("radiusTop", radiusTop) \
+  X("radiusBottom", radiusBottom)
+
+#define GEOM_CYLINDER_1_UNIFORM_ENUMS(X) \
+  X("axis", Axis, AxisEnumHandler, axis)
+
+// ============================================================================
+// GeomCapsule_1 Properties
+// ============================================================================
+#define GEOM_CAPSULE_1_TYPED_ATTRS(X) \
+  X("height", height) \
+  X("radiusTop", radiusTop) \
+  X("radiusBottom", radiusBottom)
+
+#define GEOM_CAPSULE_1_UNIFORM_ENUMS(X) \
+  X("axis", Axis, AxisEnumHandler, axis)
+
+// ============================================================================
+// GeomTetMesh Properties
+// ============================================================================
+#define GEOM_TET_MESH_TYPED_ATTRS(X) \
+  X("points", points) \
+  X("velocities", velocities) \
+  X("accelerations", accelerations) \
+  X("normals", normals) \
+  X("tetVertexIndices", tetVertexIndices) \
+  X("surfaceFaceVertexIndices", surfaceFaceVertexIndices)
+
+// ============================================================================
+// GeomNurbsPatch Properties
+// ============================================================================
+#define GEOM_NURBS_PATCH_TYPED_ATTRS(X) \
+  X("points", points) \
+  X("velocities", velocities) \
+  X("accelerations", accelerations) \
+  X("normals", normals) \
+  X("uVertexCount", uVertexCount) \
+  X("vVertexCount", vVertexCount) \
+  X("uOrder", uOrder) \
+  X("vOrder", vOrder) \
+  X("uKnots", uKnots) \
+  X("vKnots", vKnots) \
+  X("uForm", uForm) \
+  X("vForm", vForm) \
+  X("uRange", uRange) \
+  X("vRange", vRange) \
+  X("pointWeights", pointWeights) \
+  X("trimCurve:counts", trimCurve_counts) \
+  X("trimCurve:orders", trimCurve_orders) \
+  X("trimCurve:vertexCounts", trimCurve_vertexCounts) \
+  X("trimCurve:knots", trimCurve_knots) \
+  X("trimCurve:ranges", trimCurve_ranges) \
+  X("trimCurve:points", trimCurve_points)
+
+// ============================================================================
+// GeomHermiteCurves Properties
+// ============================================================================
+#define GEOM_HERMITE_CURVES_TYPED_ATTRS(X) \
+  X("points", points) \
+  X("velocities", velocities) \
+  X("accelerations", accelerations) \
+  X("normals", normals) \
+  X("curveVertexCounts", curveVertexCounts) \
+  X("widths", widths) \
+  X("tangents", tangents)
+
+// ============================================================================
 // Skeleton Properties
 // ============================================================================
 #define SKELETON_TYPED_ATTRS(X) \

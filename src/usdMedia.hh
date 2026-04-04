@@ -60,6 +60,10 @@ struct SpatialAudio {
   std::vector<value::token> _properties;
 };
 
+// AssetPreviewsAPI — marker schema for thumbnail/preview metadata.
+// Preview data is stored in assetInfo metadata, not as prim properties.
+struct AssetPreviewsAPI {};
+
 namespace value {
 
 #include "define-type-trait.inc"

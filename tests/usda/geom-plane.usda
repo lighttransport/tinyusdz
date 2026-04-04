@@ -1,0 +1,44 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    upAxis = "Y"
+)
+
+def Xform "Root"
+{
+    def Plane "Floor"
+    {
+        double width = 10
+        double length = 10
+        uniform token axis = "Y"
+    }
+
+    def Cylinder_1 "TaperedCylinder"
+    {
+        double height = 3
+        double radiusTop = 0.5
+        double radiusBottom = 1.0
+        uniform token axis = "Y"
+    }
+
+    def Capsule_1 "TaperedCapsule"
+    {
+        double height = 2
+        double radiusTop = 0.3
+        double radiusBottom = 0.6
+        uniform token axis = "Z"
+    }
+
+    def TetMesh "SoftBody"
+    {
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)]
+        int4[] tetVertexIndices = [(0, 1, 2, 3)]
+    }
+
+    def HermiteCurves "Hair"
+    {
+        int[] curveVertexCounts = [4]
+        point3f[] points = [(0, 0, 0), (0, 1, 0), (0, 2, 0), (0, 3, 0)]
+        vector3f[] tangents = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
+    }
+}
