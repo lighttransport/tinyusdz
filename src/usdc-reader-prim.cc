@@ -161,6 +161,7 @@ INSTANTIATE_RECONSTRUCT_PRIM(PhysicsPrismaticJoint);
 INSTANTIATE_RECONSTRUCT_PRIM(PhysicsSphericalJoint);
 INSTANTIATE_RECONSTRUCT_PRIM(PhysicsFixedJoint);
 INSTANTIATE_RECONSTRUCT_PRIM(PhysicsDistanceJoint);
+INSTANTIATE_RECONSTRUCT_PRIM(PhysicsCollisionGroup);
 INSTANTIATE_RECONSTRUCT_PRIM(MjcActuator);
 INSTANTIATE_RECONSTRUCT_PRIM(MjcTendon);
 INSTANTIATE_RECONSTRUCT_PRIM(MjcKeyframe);
@@ -497,6 +498,7 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(PhysicsSphericalJoint, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(PhysicsFixedJoint, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(PhysicsDistanceJoint, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(PhysicsCollisionGroup, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(MjcActuator, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(MjcTendon, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(MjcKeyframe, typeName, prim_name, spec)

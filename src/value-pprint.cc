@@ -915,6 +915,7 @@ namespace value {
   __FUNC(PhysicsSphericalJoint) \
   __FUNC(PhysicsFixedJoint)     \
   __FUNC(PhysicsDistanceJoint)  \
+  __FUNC(PhysicsCollisionGroup) \
   __FUNC(MjcActuator)           \
   __FUNC(MjcTendon)             \
   __FUNC(MjcKeyframe)

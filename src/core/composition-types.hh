@@ -80,6 +80,10 @@ struct APISchemas {
     MjcEqualityConnectAPI,
     MjcEqualityWeldAPI,
     MjcEqualityJointAPI,
+
+    // Multi-apply UsdPhysics API schemas
+    PhysicsDriveAPI,
+    PhysicsLimitAPI,
   };
 
   ListEditQual listOpQual{ListEditQual::ResetToExplicit};  // must be 'prepend'

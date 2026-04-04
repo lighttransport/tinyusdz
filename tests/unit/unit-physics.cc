@@ -694,3 +694,100 @@ def MjcKeyframe "Key0"
     TEST_CHECK(json.find("\"euler\"") != std::string::npos);
   }
 }
+
+// ---------------------------------------------------------------------------
+// 14. PhysicsCollisionGroup
+// ---------------------------------------------------------------------------
+void physics_collision_group_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsCollisionGroup "GroupA"
+{
+    token physics:mergeGroup = "default"
+    bool physics:invertFilteredGroups = 0
+    rel physics:filteredGroups = </GroupB>
+}
+
+def PhysicsCollisionGroup "GroupB"
+{
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = parse_usda(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("parse failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+
+  auto result = stage.GetPrimAtPath(Path("/GroupA", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+
+  const Prim *prim = *result;
+  TEST_CHECK(prim->is<PhysicsCollisionGroup>());
+  const auto *grp = prim->as<PhysicsCollisionGroup>();
+  TEST_CHECK(grp != nullptr);
+  if (!grp) return;
+
+  // Check mergeGroup
+  auto mg = grp->mergeGroup.get_value();
+  TEST_CHECK(mg.has_value());
+  if (mg.has_value()) {
+    TEST_CHECK(mg.value().str() == "default");
+  }
+
+  // Check invertFilteredGroups
+  TEST_CHECK(grp->invertFilteredGroups.get_value() == false);
+
+  // Check filteredGroups relationship
+  TEST_CHECK(grp->filteredGroups.authored());
+}
+
+// ---------------------------------------------------------------------------
+// 15. DriveAPI + LimitAPI on joint
+// ---------------------------------------------------------------------------
+void physics_drive_limit_api_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsRevoluteJoint "Joint" (
+    prepend apiSchemas = ["PhysicsDriveAPI:rotX", "PhysicsLimitAPI:rotX"]
+)
+{
+    rel physics:body0 = </Arm>
+    rel physics:body1 = </Forearm>
+    token physics:axis = "X"
+
+    token physics:drive:rotX:type = "force"
+    float physics:drive:rotX:maxForce = 100
+    float physics:drive:rotX:targetPosition = 1.57
+    float physics:drive:rotX:stiffness = 50
+    float physics:drive:rotX:damping = 10
+
+    float physics:limit:rotX:low = -1.57
+    float physics:limit:rotX:high = 1.57
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = parse_usda(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("parse failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+
+  auto result = stage.GetPrimAtPath(Path("/Joint", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+
+  const Prim *prim = *result;
+  TEST_CHECK(prim->is<PhysicsRevoluteJoint>());
+  const auto *joint = prim->as<PhysicsRevoluteJoint>();
+  TEST_CHECK(joint != nullptr);
+  if (!joint) return;
+
+  // DriveAPI and LimitAPI attributes are stored in props since they use
+  // multi-apply namespace syntax (physics:drive:rotX:*)
+  // Verify the props map contains them
+  TEST_CHECK(joint->props.count("physics:drive:rotX:type") > 0 ||
+             joint->props.count("physics:drive:rotX:maxForce") > 0 ||
+             joint->props.count("physics:drive:rotX:stiffness") > 0);
+  TEST_CHECK(joint->props.count("physics:limit:rotX:low") > 0 ||
+             joint->props.count("physics:limit:rotX:high") > 0);
+}

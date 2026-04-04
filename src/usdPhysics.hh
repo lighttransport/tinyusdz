@@ -80,9 +80,36 @@ struct PhysicsMeshCollisionAPI {
   TypedAttributeWithFallback<value::token> approximation{value::token("none")}; // physics:approximation
 };
 
+// PhysicsDriveAPI — multi-apply API schema for motorized joints.
+// Applied per-DOF, e.g. apiSchemas = ["PhysicsDriveAPI:rotX"].
+// Attributes are namespaced: physics:drive:<dof>:type, etc.
+struct PhysicsDriveAPI {
+  std::string dof;  // "transX", "transY", "transZ", "rotX", "rotY", "rotZ"
+
+  // "force" or "acceleration"
+  TypedAttributeWithFallback<value::token> type{value::token("force")}; // physics:drive:<dof>:type
+  TypedAttribute<float> maxForce;          // physics:drive:<dof>:maxForce (default inf)
+  TypedAttribute<float> targetPosition;    // physics:drive:<dof>:targetPosition
+  TypedAttribute<float> targetVelocity;    // physics:drive:<dof>:targetVelocity
+  TypedAttribute<float> damping;           // physics:drive:<dof>:damping
+  TypedAttribute<float> stiffness;         // physics:drive:<dof>:stiffness
+};
+
+// PhysicsLimitAPI — multi-apply API schema for per-DOF joint limits.
+// Applied per-DOF, e.g. apiSchemas = ["PhysicsLimitAPI:rotX"].
+// Attributes are namespaced: physics:limit:<dof>:low, etc.
+struct PhysicsLimitAPI {
+  std::string dof;  // "transX", "transY", "transZ", "rotX", "rotY", "rotZ", "distance"
+
+  TypedAttribute<float> low;   // physics:limit:<dof>:low  (default -inf)
+  TypedAttribute<float> high;  // physics:limit:<dof>:high (default inf)
+};
+
 //
 // Concrete Prim types
 //
+
+constexpr auto kPhysicsCollisionGroup = "PhysicsCollisionGroup";
 
 struct PhysicsScene {
   std::string name;
@@ -133,6 +160,10 @@ struct PhysicsJointBase {
   TypedAttribute<float> breakForce;          // physics:breakForce
   TypedAttribute<float> breakTorque;         // physics:breakTorque
   TypedAttribute<bool> excludeFromArticulation;  // physics:excludeFromArticulation
+
+  // Multi-apply API schemas (keyed by DOF name: "rotX", "transY", etc.)
+  std::map<std::string, PhysicsDriveAPI> drives;   // PhysicsDriveAPI:*
+  std::map<std::string, PhysicsLimitAPI> limits;    // PhysicsLimitAPI:*
 
   // MuJoCo joint API (optional)
   nonstd::optional<MjcJointAPI> mjcJoint;
@@ -298,6 +329,40 @@ struct PhysicsDistanceJoint : PhysicsJointBase {
   std::vector<value::token> _properties;
 };
 
+// PhysicsCollisionGroup — concrete prim for collision filtering
+struct PhysicsCollisionGroup {
+  std::string name;
+  Specifier spec{Specifier::Def};
+  int64_t parent_id{-1};
+
+  void set_name(const std::string &name_) { name = name_; }
+  const std::string &get_name() const { return name; }
+  Specifier &specifier() { return spec; }
+  const Specifier &specifier() const { return spec; }
+
+  TypedAttribute<value::token> mergeGroup;             // physics:mergeGroup
+  TypedAttributeWithFallback<bool> invertFilteredGroups{false}; // physics:invertFilteredGroups
+  RelationshipProperty filteredGroups;                  // physics:filteredGroups
+
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
+  std::map<std::string, VariantSet> variantSet;
+  std::map<std::string, Property> props;
+
+  PrimMeta meta;
+  PrimMeta &metas() { return meta; }
+  const PrimMeta &metas() const { return meta; }
+
+  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const { return _properties; }
+  std::vector<value::token> &primChildrenNames() { return _primChildren; }
+  std::vector<value::token> &propertyNames() { return _properties; }
+
+ private:
+  std::vector<value::token> _primChildren;
+  std::vector<value::token> _properties;
+};
+
 namespace value {
 
 // Register UsdPhysics Prim types.
@@ -308,6 +373,7 @@ DEFINE_TYPE_TRAIT(PhysicsPrismaticJoint, kPhysicsPrismaticJoint, TYPE_ID_PHYSICS
 DEFINE_TYPE_TRAIT(PhysicsSphericalJoint, kPhysicsSphericalJoint, TYPE_ID_PHYSICS_SPHERICAL_JOINT, 1);
 DEFINE_TYPE_TRAIT(PhysicsFixedJoint, kPhysicsFixedJoint, TYPE_ID_PHYSICS_FIXED_JOINT, 1);
 DEFINE_TYPE_TRAIT(PhysicsDistanceJoint, kPhysicsDistanceJoint, TYPE_ID_PHYSICS_DISTANCE_JOINT, 1);
+DEFINE_TYPE_TRAIT(PhysicsCollisionGroup, kPhysicsCollisionGroup, TYPE_ID_PHYSICS_COLLISION_GROUP, 1);
 
 #undef DEFINE_TYPE_TRAIT
 

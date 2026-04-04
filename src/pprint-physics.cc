@@ -248,6 +248,20 @@ std::string to_string(const PhysicsDistanceJoint &joint, const uint32_t indent,
   return ss.str();
 }
 
+std::string to_string(const PhysicsCollisionGroup &group, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+
+  PRINT_PRIM_HEADER(group, "PhysicsCollisionGroup");
+
+  ss << print_typed_attr(group.mergeGroup, "physics:mergeGroup", indent + 1);
+  ss << print_typed_attr(group.invertFilteredGroups, "physics:invertFilteredGroups", indent + 1);
+  ss << print_rel_prop(group.filteredGroups, "physics:filteredGroups", indent + 1);
+
+  PRINT_PRIM_FOOTER(group);
+  return ss.str();
+}
+
 std::string to_string(const MjcActuator &actuator, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;
