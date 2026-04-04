@@ -20,6 +20,8 @@
 #include "usdShade.hh"
 #include "usdSkel.hh"
 #include "usdPhysics.hh"
+#include "usdAR.hh"
+#include "usdMedia.hh"
 #include "mjcPhysics.hh"
 #include "core/model-scope.hh"  // Model, Scope
 #include "core/layer-types.hh"  // LayerMetas
@@ -108,6 +110,26 @@ std::string to_string(const MjcActuator &actuator, const uint32_t indent = 0,
 std::string to_string(const MjcTendon &tendon, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const MjcKeyframe &keyframe, const uint32_t indent = 0,
+                      bool closing_brace = true);
+
+// AR/Interactive prim to_string (defined in pprint-ar.cc)
+std::string to_string(const Preliminary_PhysicsGravitationalForce &prim, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const Preliminary_InfiniteColliderPlane &prim, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const Preliminary_ReferenceImage &prim, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const Preliminary_Behavior &prim, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const Preliminary_Trigger &prim, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const Preliminary_Action &prim, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const Preliminary_Text &prim, const uint32_t indent = 0,
+                      bool closing_brace = true);
+
+// usdMedia prim to_string (defined in pprint-media.cc)
+std::string to_string(const SpatialAudio &prim, const uint32_t indent = 0,
                       bool closing_brace = true);
 
 // Light prim to_string (defined in pprint-light.cc)

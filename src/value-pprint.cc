@@ -918,7 +918,15 @@ namespace value {
   __FUNC(PhysicsCollisionGroup) \
   __FUNC(MjcActuator)           \
   __FUNC(MjcTendon)             \
-  __FUNC(MjcKeyframe)
+  __FUNC(MjcKeyframe)           \
+  __FUNC(Preliminary_PhysicsGravitationalForce) \
+  __FUNC(Preliminary_InfiniteColliderPlane) \
+  __FUNC(Preliminary_ReferenceImage) \
+  __FUNC(Preliminary_Behavior)  \
+  __FUNC(Preliminary_Trigger)   \
+  __FUNC(Preliminary_Action)    \
+  __FUNC(Preliminary_Text)      \
+  __FUNC(SpatialAudio)
 
 
 std::string pprint_value(const value::Value &v, const uint32_t indent,

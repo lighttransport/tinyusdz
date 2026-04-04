@@ -14,6 +14,8 @@
 
 #include "usdc-reader-impl.hh"
 #include "usdPhysics.hh"
+#include "usdAR.hh"
+#include "usdMedia.hh"
 #include "mjcPhysics.hh"
 
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDC_READER)
@@ -165,6 +167,16 @@ INSTANTIATE_RECONSTRUCT_PRIM(PhysicsCollisionGroup);
 INSTANTIATE_RECONSTRUCT_PRIM(MjcActuator);
 INSTANTIATE_RECONSTRUCT_PRIM(MjcTendon);
 INSTANTIATE_RECONSTRUCT_PRIM(MjcKeyframe);
+// AR/Interactive (Apple Preliminary_*)
+INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_PhysicsGravitationalForce);
+INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_InfiniteColliderPlane);
+INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_ReferenceImage);
+INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_Behavior);
+INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_Trigger);
+INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_Action);
+INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_Text);
+// usdMedia
+INSTANTIATE_RECONSTRUCT_PRIM(SpatialAudio);
 
 #undef INSTANTIATE_RECONSTRUCT_PRIM
 
@@ -502,6 +514,16 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(MjcActuator, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(MjcTendon, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(MjcKeyframe, typeName, prim_name, spec)
+  // AR/Interactive (Apple Preliminary_*)
+  RECONSTRUCT_PRIM(Preliminary_PhysicsGravitationalForce, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Preliminary_InfiniteColliderPlane, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Preliminary_ReferenceImage, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Preliminary_Behavior, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Preliminary_Trigger, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Preliminary_Action, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Preliminary_Text, typeName, prim_name, spec)
+  // usdMedia
+  RECONSTRUCT_PRIM(SpatialAudio, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Material, typeName, prim_name, spec) {
     PUSH_WARN("TODO or unsupported prim type: " << typeName);
     if (is_unsupported_prim) {

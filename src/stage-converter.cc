@@ -1008,6 +1008,24 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractMjcTendonProperties(prim, prim_path, fields, err);
   } else if (type_name == "MjcKeyframe") {
     return ExtractMjcKeyframeProperties(prim, prim_path, fields, err);
+  // AR/Interactive (Apple Preliminary_*)
+  } else if (type_name == "Preliminary_PhysicsGravitationalForce") {
+    return ExtractPreliminaryGravitationalForceProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Preliminary_InfiniteColliderPlane") {
+    return ExtractPreliminaryInfiniteColliderPlaneProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Preliminary_ReferenceImage") {
+    return ExtractPreliminaryReferenceImageProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Preliminary_Behavior") {
+    return ExtractPreliminaryBehaviorProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Preliminary_Trigger") {
+    return ExtractPreliminaryTriggerProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Preliminary_Action") {
+    return ExtractPreliminaryActionProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Preliminary_Text") {
+    return ExtractPreliminaryTextProperties(prim, prim_path, fields, err);
+  // usdMedia
+  } else if (type_name == "SpatialAudio") {
+    return ExtractSpatialAudioProperties(prim, prim_path, fields, err);
   }
 
   // For unknown types or types without specific handlers,
