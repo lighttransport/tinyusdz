@@ -446,6 +446,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/crate-writer.cc
     ${PROJECT_SOURCE_DIR}/src/stage-converter.cc
     ${PROJECT_SOURCE_DIR}/src/sconv-geom.cc
+    ${PROJECT_SOURCE_DIR}/src/sconv-physics.cc
     ${PROJECT_SOURCE_DIR}/src/sconv-shader.cc
     ${PROJECT_SOURCE_DIR}/src/sconv-light.cc
     ${PROJECT_SOURCE_DIR}/src/sconv-skel.cc

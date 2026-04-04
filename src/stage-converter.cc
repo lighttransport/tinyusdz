@@ -987,6 +987,29 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractSkelRootProperties(prim, prim_path, fields, err);
   }
 
+  // UsdPhysics + mjcPhysics
+  else if (type_name == "PhysicsScene") {
+    return ExtractPhysicsSceneProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsRevoluteJoint") {
+    return ExtractPhysicsRevoluteJointProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsPrismaticJoint") {
+    return ExtractPhysicsPrismaticJointProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsSphericalJoint") {
+    return ExtractPhysicsSphericalJointProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsFixedJoint") {
+    return ExtractPhysicsFixedJointProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsDistanceJoint") {
+    return ExtractPhysicsDistanceJointProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsCollisionGroup") {
+    return ExtractPhysicsCollisionGroupProperties(prim, prim_path, fields, err);
+  } else if (type_name == "MjcActuator") {
+    return ExtractMjcActuatorProperties(prim, prim_path, fields, err);
+  } else if (type_name == "MjcTendon") {
+    return ExtractMjcTendonProperties(prim, prim_path, fields, err);
+  } else if (type_name == "MjcKeyframe") {
+    return ExtractMjcKeyframeProperties(prim, prim_path, fields, err);
+  }
+
   // For unknown types or types without specific handlers,
   // try extracting from the generic GPrim properties
   return ExtractGPrimProperties(prim, prim_path, fields, err);
