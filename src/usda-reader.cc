@@ -128,6 +128,7 @@ RECONSTRUCT_PRIM_DECL(PhysicsPrismaticJoint);
 RECONSTRUCT_PRIM_DECL(PhysicsSphericalJoint);
 RECONSTRUCT_PRIM_DECL(PhysicsFixedJoint);
 RECONSTRUCT_PRIM_DECL(PhysicsDistanceJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsCollisionGroup);
 RECONSTRUCT_PRIM_DECL(MjcActuator);
 RECONSTRUCT_PRIM_DECL(MjcTendon);
 RECONSTRUCT_PRIM_DECL(MjcKeyframe);
@@ -628,6 +629,7 @@ DEFINE_PRIM_TYPE(PhysicsPrismaticJoint, kPhysicsPrismaticJoint, value::TYPE_ID_P
 DEFINE_PRIM_TYPE(PhysicsSphericalJoint, kPhysicsSphericalJoint, value::TYPE_ID_PHYSICS_SPHERICAL_JOINT);
 DEFINE_PRIM_TYPE(PhysicsFixedJoint, kPhysicsFixedJoint, value::TYPE_ID_PHYSICS_FIXED_JOINT);
 DEFINE_PRIM_TYPE(PhysicsDistanceJoint, kPhysicsDistanceJoint, value::TYPE_ID_PHYSICS_DISTANCE_JOINT);
+DEFINE_PRIM_TYPE(PhysicsCollisionGroup, kPhysicsCollisionGroup, value::TYPE_ID_PHYSICS_COLLISION_GROUP);
 DEFINE_PRIM_TYPE(MjcActuator, kMjcActuator, value::TYPE_ID_MJC_ACTUATOR);
 DEFINE_PRIM_TYPE(MjcTendon, kMjcTendon, value::TYPE_ID_MJC_TENDON);
 DEFINE_PRIM_TYPE(MjcKeyframe, kMjcKeyframe, value::TYPE_ID_MJC_KEYFRAME);
@@ -2238,6 +2240,7 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<PhysicsSphericalJoint>();
   RegisterReconstructCallback<PhysicsFixedJoint>();
   RegisterReconstructCallback<PhysicsDistanceJoint>();
+  RegisterReconstructCallback<PhysicsCollisionGroup>();
   RegisterReconstructCallback<MjcActuator>();
   RegisterReconstructCallback<MjcTendon>();
   RegisterReconstructCallback<MjcKeyframe>();

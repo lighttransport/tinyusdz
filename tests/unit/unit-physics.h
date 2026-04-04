@@ -16,3 +16,5 @@ void mjc_keyframe_test(void);
 void physics_pprint_roundtrip_test(void);
 void physics_spherical_joint_test(void);
 void physics_to_json_test(void);
+void physics_collision_group_test(void);
+void physics_drive_limit_api_test(void);

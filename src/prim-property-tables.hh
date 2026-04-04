@@ -559,3 +559,11 @@
   X("mjc:mpos", mpos) \
   X("mjc:mquat", mquat)
 
+// PhysicsCollisionGroup
+#define PHYSICS_COLLISION_GROUP_TYPED_ATTRS(X) \
+  X("physics:mergeGroup", mergeGroup) \
+  X("physics:invertFilteredGroups", invertFilteredGroups)
+
+#define PHYSICS_COLLISION_GROUP_RELS(X) \
+  X("physics:filteredGroups", filteredGroups)
+

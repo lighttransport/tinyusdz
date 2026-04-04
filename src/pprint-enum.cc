@@ -174,6 +174,14 @@ std::string to_string(const APISchemas::APIName &name) {
       s = "MjcEqualityJointAPI";
       break;
     }
+    case APISchemas::APIName::PhysicsDriveAPI: {
+      s = "PhysicsDriveAPI";
+      break;
+    }
+    case APISchemas::APIName::PhysicsLimitAPI: {
+      s = "PhysicsLimitAPI";
+      break;
+    }
   }
 
   return s;

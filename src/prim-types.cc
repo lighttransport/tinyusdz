@@ -894,6 +894,7 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(PhysicsSphericalJoint)
   EXTRACT_NAME_AND_RETURN_PATH(PhysicsFixedJoint)
   EXTRACT_NAME_AND_RETURN_PATH(PhysicsDistanceJoint)
+  EXTRACT_NAME_AND_RETURN_PATH(PhysicsCollisionGroup)
   EXTRACT_NAME_AND_RETURN_PATH(MjcActuator)
   EXTRACT_NAME_AND_RETURN_PATH(MjcTendon)
   EXTRACT_NAME_AND_RETURN_PATH(MjcKeyframe) { return nonstd::nullopt; }
@@ -965,6 +966,7 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   SET_ELEMENT_NAME(elementName, PhysicsSphericalJoint)
   SET_ELEMENT_NAME(elementName, PhysicsFixedJoint)
   SET_ELEMENT_NAME(elementName, PhysicsDistanceJoint)
+  SET_ELEMENT_NAME(elementName, PhysicsCollisionGroup)
   SET_ELEMENT_NAME(elementName, MjcActuator)
   SET_ELEMENT_NAME(elementName, MjcTendon)
   SET_ELEMENT_NAME(elementName, MjcKeyframe) { return false; }

@@ -327,6 +327,29 @@ bool ReconstructPrim<MjcKeyframe>(
 }
 
 // ============================================================================
+// PhysicsCollisionGroup
+// ============================================================================
+template <>
+bool ReconstructPrim<PhysicsCollisionGroup>(
+    const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
+    PhysicsCollisionGroup *group, std::string *warn, std::string *err,
+    const PrimReconstructOptions &options) {
+  (void)spec; (void)references;
+  std::set<std::string> table;
+#define PRIM_CLASS_ PhysicsCollisionGroup
+#define PRIM_PTR_ group
+  for (auto &prop : properties) {
+    PHYSICS_COLLISION_GROUP_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    PHYSICS_COLLISION_GROUP_RELS(EXPAND_SINGLE_REL)
+    ADD_PROPERTY(table, prop, PhysicsCollisionGroup, group->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+  return true;
+}
+
+// ============================================================================
 // PrimSpec wrappers
 // ============================================================================
 
@@ -350,6 +373,7 @@ RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PhysicsPrismaticJoint)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PhysicsSphericalJoint)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PhysicsFixedJoint)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PhysicsDistanceJoint)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PhysicsCollisionGroup)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(MjcActuator)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(MjcTendon)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(MjcKeyframe)

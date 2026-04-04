@@ -566,6 +566,8 @@ TEST_LIST = {
   { "mjc_keyframe_test", mjc_keyframe_test },
   { "physics_pprint_roundtrip_test", physics_pprint_roundtrip_test },
   { "physics_to_json_test", physics_to_json_test },
+  { "physics_collision_group_test", physics_collision_group_test },
+  { "physics_drive_limit_api_test", physics_drive_limit_api_test },
   // IK solver
   { "ik_forward_kinematics_test", ik_forward_kinematics_test },
   { "ik_ccd_solve_test", ik_ccd_solve_test },
