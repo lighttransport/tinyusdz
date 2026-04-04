@@ -899,6 +899,7 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(SkelAnimation)
   EXTRACT_NAME_AND_RETURN_PATH(BlendShape)
   // UsdPhysics + mjcPhysics
+  EXTRACT_NAME_AND_RETURN_PATH(PhysicsJoint)
   EXTRACT_NAME_AND_RETURN_PATH(PhysicsScene)
   EXTRACT_NAME_AND_RETURN_PATH(PhysicsRevoluteJoint)
   EXTRACT_NAME_AND_RETURN_PATH(PhysicsPrismaticJoint)
@@ -990,6 +991,7 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   SET_ELEMENT_NAME(elementName, SkelAnimation)
   SET_ELEMENT_NAME(elementName, BlendShape)
   // UsdPhysics + mjcPhysics
+  SET_ELEMENT_NAME(elementName, PhysicsJoint)
   SET_ELEMENT_NAME(elementName, PhysicsScene)
   SET_ELEMENT_NAME(elementName, PhysicsRevoluteJoint)
   SET_ELEMENT_NAME(elementName, PhysicsPrismaticJoint)

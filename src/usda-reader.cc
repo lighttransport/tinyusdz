@@ -133,6 +133,7 @@ RECONSTRUCT_PRIM_DECL(Material);
 RECONSTRUCT_PRIM_DECL(Shader);
 RECONSTRUCT_PRIM_DECL(NodeGraph);
 // UsdPhysics + mjcPhysics
+RECONSTRUCT_PRIM_DECL(PhysicsJoint);
 RECONSTRUCT_PRIM_DECL(PhysicsScene);
 RECONSTRUCT_PRIM_DECL(PhysicsRevoluteJoint);
 RECONSTRUCT_PRIM_DECL(PhysicsPrismaticJoint);
@@ -653,6 +654,7 @@ DEFINE_PRIM_TYPE(BlendShape, kBlendShape, value::TYPE_ID_BLENDSHAPE);
 DEFINE_PRIM_TYPE(GeomCamera, kGeomCamera, value::TYPE_ID_GEOM_CAMERA);
 DEFINE_PRIM_TYPE(GeomPointInstancer, kPointInstancer, value::TYPE_ID_GEOM_POINT_INSTANCER);
 // UsdPhysics + mjcPhysics
+DEFINE_PRIM_TYPE(PhysicsJoint, kPhysicsJoint, value::TYPE_ID_PHYSICS_JOINT);
 DEFINE_PRIM_TYPE(PhysicsScene, kPhysicsScene, value::TYPE_ID_PHYSICS_SCENE);
 DEFINE_PRIM_TYPE(PhysicsRevoluteJoint, kPhysicsRevoluteJoint, value::TYPE_ID_PHYSICS_REVOLUTE_JOINT);
 DEFINE_PRIM_TYPE(PhysicsPrismaticJoint, kPhysicsPrismaticJoint, value::TYPE_ID_PHYSICS_PRISMATIC_JOINT);
@@ -2283,6 +2285,7 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<BlendShape>();
 
   // UsdPhysics + mjcPhysics
+  RegisterReconstructCallback<PhysicsJoint>();
   RegisterReconstructCallback<PhysicsScene>();
   RegisterReconstructCallback<PhysicsRevoluteJoint>();
   RegisterReconstructCallback<PhysicsPrismaticJoint>();

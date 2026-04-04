@@ -166,6 +166,7 @@ INSTANTIATE_RECONSTRUCT_PRIM(Material);
 INSTANTIATE_RECONSTRUCT_PRIM(Shader);
 INSTANTIATE_RECONSTRUCT_PRIM(NodeGraph);
 // UsdPhysics + mjcPhysics
+INSTANTIATE_RECONSTRUCT_PRIM(PhysicsJoint);
 INSTANTIATE_RECONSTRUCT_PRIM(PhysicsScene);
 INSTANTIATE_RECONSTRUCT_PRIM(PhysicsRevoluteJoint);
 INSTANTIATE_RECONSTRUCT_PRIM(PhysicsPrismaticJoint);
@@ -522,6 +523,7 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(Shader, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(NodeGraph, typeName, prim_name, spec)
   // UsdPhysics + mjcPhysics
+  RECONSTRUCT_PRIM(PhysicsJoint, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(PhysicsScene, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(PhysicsRevoluteJoint, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(PhysicsPrismaticJoint, typeName, prim_name, spec)

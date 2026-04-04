@@ -1006,7 +1006,9 @@ bool CrateWriter::ExtractTypeSpecificProperties(
   }
 
   // UsdPhysics + mjcPhysics
-  else if (type_name == "PhysicsScene") {
+  else if (type_name == "PhysicsJoint") {
+    return ExtractPhysicsJointProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsScene") {
     return ExtractPhysicsSceneProperties(prim, prim_path, fields, err);
   } else if (type_name == "PhysicsRevoluteJoint") {
     return ExtractPhysicsRevoluteJointProperties(prim, prim_path, fields, err);
