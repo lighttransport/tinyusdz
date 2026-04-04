@@ -892,6 +892,12 @@ namespace value {
   __FUNC(GeomCone)              \
   __FUNC(GeomBasisCurves)       \
   __FUNC(GeomNurbsCurves)       \
+  __FUNC(GeomPlane)             \
+  __FUNC(GeomCylinder_1)        \
+  __FUNC(GeomCapsule_1)         \
+  __FUNC(GeomTetMesh)           \
+  __FUNC(GeomNurbsPatch)        \
+  __FUNC(GeomHermiteCurves)     \
   __FUNC(GeomCamera)            \
   __FUNC(GeomPointInstancer)        \
   __FUNC(SphereLight)           \
@@ -902,6 +908,9 @@ namespace value {
   __FUNC(RectLight)             \
   __FUNC(GeometryLight)         \
   __FUNC(PortalLight)           \
+  __FUNC(DomeLight_1)           \
+  __FUNC(LightFilter)           \
+  __FUNC(PluginLightFilter)     \
   __FUNC(SkelRoot)              \
   __FUNC(Skeleton)              \
   __FUNC(SkelAnimation)         \

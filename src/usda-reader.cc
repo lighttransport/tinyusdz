@@ -107,6 +107,9 @@ RECONSTRUCT_PRIM_DECL(DistantLight);
 RECONSTRUCT_PRIM_DECL(RectLight);
 RECONSTRUCT_PRIM_DECL(GeometryLight);
 RECONSTRUCT_PRIM_DECL(PortalLight);
+RECONSTRUCT_PRIM_DECL(DomeLight_1);
+RECONSTRUCT_PRIM_DECL(LightFilter);
+RECONSTRUCT_PRIM_DECL(PluginLightFilter);
 RECONSTRUCT_PRIM_DECL(GPrim);
 RECONSTRUCT_PRIM_DECL(GeomMesh);
 RECONSTRUCT_PRIM_DECL(GeomSubset);
@@ -118,6 +121,12 @@ RECONSTRUCT_PRIM_DECL(GeomCylinder);
 RECONSTRUCT_PRIM_DECL(GeomCapsule);
 RECONSTRUCT_PRIM_DECL(GeomBasisCurves);
 RECONSTRUCT_PRIM_DECL(GeomNurbsCurves);
+RECONSTRUCT_PRIM_DECL(GeomPlane);
+RECONSTRUCT_PRIM_DECL(GeomCylinder_1);
+RECONSTRUCT_PRIM_DECL(GeomCapsule_1);
+RECONSTRUCT_PRIM_DECL(GeomTetMesh);
+RECONSTRUCT_PRIM_DECL(GeomNurbsPatch);
+RECONSTRUCT_PRIM_DECL(GeomHermiteCurves);
 RECONSTRUCT_PRIM_DECL(GeomCamera);
 RECONSTRUCT_PRIM_DECL(GeomPointInstancer);
 RECONSTRUCT_PRIM_DECL(Material);
@@ -616,6 +625,12 @@ DEFINE_PRIM_TYPE(GeomBasisCurves, kGeomBasisCurves,
                  value::TYPE_ID_GEOM_BASIS_CURVES);
 DEFINE_PRIM_TYPE(GeomNurbsCurves, kGeomNurbsCurves,
                  value::TYPE_ID_GEOM_NURBS_CURVES);
+DEFINE_PRIM_TYPE(GeomPlane, kGeomPlane, value::TYPE_ID_GEOM_PLANE);
+DEFINE_PRIM_TYPE(GeomCylinder_1, kGeomCylinder_1, value::TYPE_ID_GEOM_CYLINDER_1);
+DEFINE_PRIM_TYPE(GeomCapsule_1, kGeomCapsule_1, value::TYPE_ID_GEOM_CAPSULE_1);
+DEFINE_PRIM_TYPE(GeomTetMesh, kGeomTetMesh, value::TYPE_ID_GEOM_TET_MESH);
+DEFINE_PRIM_TYPE(GeomNurbsPatch, kGeomNurbsPatch, value::TYPE_ID_GEOM_NURBS_PATCH);
+DEFINE_PRIM_TYPE(GeomHermiteCurves, kGeomHermiteCurves, value::TYPE_ID_GEOM_HERMITE_CURVES);
 DEFINE_PRIM_TYPE(GeomSubset, kGeomSubset, value::TYPE_ID_GEOM_GEOMSUBSET);
 DEFINE_PRIM_TYPE(SphereLight, kSphereLight, value::TYPE_ID_LUX_SPHERE);
 DEFINE_PRIM_TYPE(DomeLight, kDomeLight, value::TYPE_ID_LUX_DOME);
@@ -625,6 +640,9 @@ DEFINE_PRIM_TYPE(CylinderLight, kCylinderLight, value::TYPE_ID_LUX_CYLINDER);
 DEFINE_PRIM_TYPE(RectLight, kRectLight, value::TYPE_ID_LUX_RECT);
 DEFINE_PRIM_TYPE(GeometryLight, kGeometryLight, value::TYPE_ID_LUX_GEOMETRY);
 DEFINE_PRIM_TYPE(PortalLight, kPortalLight, value::TYPE_ID_LUX_PORTAL);
+DEFINE_PRIM_TYPE(DomeLight_1, kDomeLight_1, value::TYPE_ID_LUX_DOME_1);
+DEFINE_PRIM_TYPE(LightFilter, kLightFilter, value::TYPE_ID_LUX_LIGHT_FILTER);
+DEFINE_PRIM_TYPE(PluginLightFilter, kPluginLightFilter, value::TYPE_ID_LUX_PLUGIN_LIGHT_FILTER);
 DEFINE_PRIM_TYPE(Material, kMaterial, value::TYPE_ID_MATERIAL);
 DEFINE_PRIM_TYPE(Shader, kShader, value::TYPE_ID_SHADER);
 DEFINE_PRIM_TYPE(NodeGraph, kNodeGraph, value::TYPE_ID_NODEGRAPH);
@@ -2232,6 +2250,12 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<GeomSubset>();
   RegisterReconstructCallback<GeomBasisCurves>();
   RegisterReconstructCallback<GeomNurbsCurves>();
+  RegisterReconstructCallback<GeomPlane>();
+  RegisterReconstructCallback<GeomCylinder_1>();
+  RegisterReconstructCallback<GeomCapsule_1>();
+  RegisterReconstructCallback<GeomTetMesh>();
+  RegisterReconstructCallback<GeomNurbsPatch>();
+  RegisterReconstructCallback<GeomHermiteCurves>();
   RegisterReconstructCallback<GeomCamera>();
   RegisterReconstructCallback<GeomPointInstancer>();
 
@@ -2249,6 +2273,9 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<RectLight>();
   RegisterReconstructCallback<GeometryLight>();
   RegisterReconstructCallback<PortalLight>();
+  RegisterReconstructCallback<DomeLight_1>();
+  RegisterReconstructCallback<LightFilter>();
+  RegisterReconstructCallback<PluginLightFilter>();
 
   RegisterReconstructCallback<SkelRoot>();
   RegisterReconstructCallback<Skeleton>();

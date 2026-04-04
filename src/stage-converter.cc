@@ -951,6 +951,18 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractBasisCurvesProperties(prim, prim_path, fields, err);
   } else if (type_name == "NurbsCurves") {
     return ExtractNurbsCurvesProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Plane") {
+    return ExtractGeomPlaneProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Cylinder_1") {
+    return ExtractGeomCylinder1Properties(prim, prim_path, fields, err);
+  } else if (type_name == "Capsule_1") {
+    return ExtractGeomCapsule1Properties(prim, prim_path, fields, err);
+  } else if (type_name == "TetMesh") {
+    return ExtractGeomTetMeshProperties(prim, prim_path, fields, err);
+  } else if (type_name == "NurbsPatch") {
+    return ExtractGeomNurbsPatchProperties(prim, prim_path, fields, err);
+  } else if (type_name == "HermiteCurves") {
+    return ExtractGeomHermiteCurvesProperties(prim, prim_path, fields, err);
   } else if (type_name == "PointInstancer") {
     return ExtractPointInstancerProperties(prim, prim_path, fields, err);
   } else if (type_name == "GeomSubset") {
@@ -979,6 +991,12 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractGeometryLightProperties(prim, prim_path, fields, err);
   } else if (type_name == "PortalLight") {
     return ExtractPortalLightProperties(prim, prim_path, fields, err);
+  } else if (type_name == "DomeLight_1") {
+    return ExtractDomeLight1Properties(prim, prim_path, fields, err);
+  } else if (type_name == "LightFilter") {
+    return ExtractLightFilterProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PluginLightFilter") {
+    return ExtractPluginLightFilterProperties(prim, prim_path, fields, err);
   } else if (type_name == "Skeleton") {
     return ExtractSkeletonProperties(prim, prim_path, fields, err);
   } else if (type_name == "SkelAnimation") {

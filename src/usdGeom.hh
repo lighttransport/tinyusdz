@@ -57,6 +57,12 @@ constexpr auto kGeomCone = "Cone";
 constexpr auto kGeomSphere = "Sphere";
 constexpr auto kGeomCamera = "Camera";
 constexpr auto kPointInstancer = "PointInstancer";
+constexpr auto kGeomPlane = "Plane";
+constexpr auto kGeomCylinder_1 = "Cylinder_1";
+constexpr auto kGeomCapsule_1 = "Capsule_1";
+constexpr auto kGeomTetMesh = "TetMesh";
+constexpr auto kGeomNurbsPatch = "NurbsPatch";
+constexpr auto kGeomHermiteCurves = "HermiteCurves";
 
 constexpr auto kMaterialBinding = "material:binding";
 constexpr auto kMaterialBindingCollection = "material:binding:collection";
@@ -823,6 +829,77 @@ struct GeomSphere : public GPrim {
   TypedAttributeWithFallback<Animatable<double>> radius{2.0};
 };
 
+struct GeomPlane : public GPrim {
+  TypedAttributeWithFallback<Animatable<double>> width{2.0};
+  TypedAttributeWithFallback<Animatable<double>> length{2.0};
+  TypedAttributeWithFallback<Axis> axis{Axis::Z};  // uniform token axis
+};
+
+struct GeomCylinder_1 : public GPrim {
+  TypedAttributeWithFallback<Animatable<double>> height{2.0};
+  TypedAttributeWithFallback<Animatable<double>> radiusTop{1.0};
+  TypedAttributeWithFallback<Animatable<double>> radiusBottom{1.0};
+  TypedAttributeWithFallback<Axis> axis{Axis::Z};  // uniform token axis
+};
+
+struct GeomCapsule_1 : public GPrim {
+  TypedAttributeWithFallback<Animatable<double>> height{1.0};
+  TypedAttributeWithFallback<Animatable<double>> radiusTop{0.5};
+  TypedAttributeWithFallback<Animatable<double>> radiusBottom{0.5};
+  TypedAttributeWithFallback<Axis> axis{Axis::Z};  // uniform token axis
+};
+
+struct GeomTetMesh : public GPrim {
+  TypedAttribute<Animatable<std::vector<value::point3f>>> points;
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> velocities;
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> accelerations;
+  TypedAttribute<Animatable<std::vector<value::normal3f>>> normals;
+  TypedAttribute<Animatable<std::vector<value::int4>>> tetVertexIndices;
+  TypedAttribute<Animatable<std::vector<value::int3>>> surfaceFaceVertexIndices;
+};
+
+struct GeomNurbsPatch : public GPrim {
+  // PointBased attributes
+  TypedAttribute<Animatable<std::vector<value::point3f>>> points;
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> velocities;
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> accelerations;
+  TypedAttribute<Animatable<std::vector<value::normal3f>>> normals;
+
+  // NurbsPatch-specific
+  TypedAttribute<Animatable<int>> uVertexCount;
+  TypedAttribute<Animatable<int>> vVertexCount;
+  TypedAttribute<Animatable<int>> uOrder;
+  TypedAttribute<Animatable<int>> vOrder;
+  TypedAttribute<Animatable<std::vector<double>>> uKnots;
+  TypedAttribute<Animatable<std::vector<double>>> vKnots;
+  TypedAttributeWithFallback<value::token> uForm{value::token("open")};   // "open", "closed", "periodic"
+  TypedAttributeWithFallback<value::token> vForm{value::token("open")};   // "open", "closed", "periodic"
+  TypedAttribute<Animatable<value::double2>> uRange;
+  TypedAttribute<Animatable<value::double2>> vRange;
+  TypedAttribute<Animatable<std::vector<double>>> pointWeights;
+
+  // Trim curves
+  TypedAttribute<Animatable<std::vector<int>>> trimCurve_counts;         // trimCurve:counts
+  TypedAttribute<Animatable<std::vector<int>>> trimCurve_orders;         // trimCurve:orders
+  TypedAttribute<Animatable<std::vector<int>>> trimCurve_vertexCounts;   // trimCurve:vertexCounts
+  TypedAttribute<Animatable<std::vector<double>>> trimCurve_knots;       // trimCurve:knots
+  TypedAttribute<Animatable<std::vector<value::double2>>> trimCurve_ranges;   // trimCurve:ranges
+  TypedAttribute<Animatable<std::vector<value::double3>>> trimCurve_points;   // trimCurve:points
+};
+
+struct GeomHermiteCurves : public GPrim {
+  // PointBased / Curves attributes
+  TypedAttribute<Animatable<std::vector<value::point3f>>> points;
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> velocities;
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> accelerations;
+  TypedAttribute<Animatable<std::vector<value::normal3f>>> normals;
+  TypedAttribute<Animatable<std::vector<int>>> curveVertexCounts;
+  TypedAttribute<Animatable<std::vector<float>>> widths;
+
+  // HermiteCurves-specific
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> tangents;
+};
+
 //
 // Basis Curves(for hair/fur)
 //
@@ -1050,8 +1127,13 @@ DEFINE_TYPE_TRAIT(GeomCapsule, kGeomCapsule, TYPE_ID_GEOM_CAPSULE, 1);
 DEFINE_TYPE_TRAIT(GeomPoints, kGeomPoints, TYPE_ID_GEOM_POINTS, 1);
 DEFINE_TYPE_TRAIT(GeomSubset, kGeomSubset, TYPE_ID_GEOM_GEOMSUBSET, 1);
 DEFINE_TYPE_TRAIT(GeomCamera, kGeomCamera, TYPE_ID_GEOM_CAMERA, 1);
-DEFINE_TYPE_TRAIT(GeomPointInstancer, kPointInstancer, TYPE_ID_GEOM_POINT_INSTANCER,
-                  1);
+DEFINE_TYPE_TRAIT(GeomPointInstancer, kPointInstancer, TYPE_ID_GEOM_POINT_INSTANCER, 1);
+DEFINE_TYPE_TRAIT(GeomPlane, kGeomPlane, TYPE_ID_GEOM_PLANE, 1);
+DEFINE_TYPE_TRAIT(GeomCylinder_1, kGeomCylinder_1, TYPE_ID_GEOM_CYLINDER_1, 1);
+DEFINE_TYPE_TRAIT(GeomCapsule_1, kGeomCapsule_1, TYPE_ID_GEOM_CAPSULE_1, 1);
+DEFINE_TYPE_TRAIT(GeomTetMesh, kGeomTetMesh, TYPE_ID_GEOM_TET_MESH, 1);
+DEFINE_TYPE_TRAIT(GeomNurbsPatch, kGeomNurbsPatch, TYPE_ID_GEOM_NURBS_PATCH, 1);
+DEFINE_TYPE_TRAIT(GeomHermiteCurves, kGeomHermiteCurves, TYPE_ID_GEOM_HERMITE_CURVES, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

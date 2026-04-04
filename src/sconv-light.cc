@@ -274,6 +274,146 @@ bool CrateWriter::ExtractPortalLightProperties(
 }
 
 // ============================================================================
+// DomeLight_1 Property Extraction
+// ============================================================================
+
+bool CrateWriter::ExtractDomeLight1Properties(
+    const Prim& prim,
+    const Path& prim_path,
+    crate::FieldValuePairVector& fields,
+    std::string* err) {
+  const DomeLight_1* light = prim.data().as<DomeLight_1>();
+  if (!light) {
+    if (err) *err = "Failed to cast prim to DomeLight_1";
+    return false;
+  }
+
+  // Extract texture file path if present (special case: optional<Animatable>)
+  if (light->file.authored()) {
+    const auto& file_opt = light->file.get_value();
+    if (file_opt) {
+      const Animatable<value::AssetPath>& file_anim = *file_opt;
+      if (file_anim.has_default()) {
+        value::AssetPath file_val;
+        if (file_anim.get_default(&file_val)) {
+          crate::CrateValue crate_val;
+          crate_val.Set(file_val);
+          fields.push_back({"inputs:texture:file", crate_val});
+        }
+      }
+    }
+  }
+
+  if (light->intensity.authored())
+    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
+  if (light->color.authored())
+    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+
+  // Extract poleAxis (uniform token with fallback) - DomeLight_1 specific
+  if (light->poleAxis.authored()) {
+    const value::token& tok = light->poleAxis.get_value();
+    crate::CrateValue crate_val;
+    crate_val.Set(tok);
+    fields.push_back({"poleAxis", crate_val});
+  }
+
+  EXTRACT_COMMON_LIGHT(light)
+  EXTRACT_SHADOW_API(light)
+
+  return true;
+}
+
+// ============================================================================
+// LightFilter Property Extraction
+// ============================================================================
+
+bool CrateWriter::ExtractLightFilterProperties(
+    const Prim& prim,
+    const Path& prim_path,
+    crate::FieldValuePairVector& fields,
+    std::string* err) {
+  const LightFilter* filter = prim.data().as<LightFilter>();
+  if (!filter) {
+    if (err) *err = "Failed to cast prim to LightFilter";
+    return false;
+  }
+
+  // Extract visibility
+  if (filter->visibility.authored()) {
+    const auto& vis_animatable = filter->visibility.get_value();
+    if (vis_animatable.has_default()) {
+      Visibility vis_val;
+      if (vis_animatable.get_default(&vis_val)) {
+        if (vis_val != Visibility::Inherited) {
+          crate::CrateValue vis_crate_val;
+          value::token vis_tok(to_string(vis_val));
+          vis_crate_val.Set(vis_tok);
+          fields.push_back({"visibility", vis_crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract purpose
+  if (filter->purpose.authored()) {
+    Purpose purpose_val = filter->purpose.get_value();
+    if (purpose_val != Purpose::Default) {
+      crate::CrateValue purpose_crate_val;
+      value::token purpose_tok(to_string(purpose_val));
+      purpose_crate_val.Set(purpose_tok);
+      fields.push_back({"purpose", purpose_crate_val});
+    }
+  }
+
+  return true;
+}
+
+// ============================================================================
+// PluginLightFilter Property Extraction
+// ============================================================================
+
+bool CrateWriter::ExtractPluginLightFilterProperties(
+    const Prim& prim,
+    const Path& prim_path,
+    crate::FieldValuePairVector& fields,
+    std::string* err) {
+  const PluginLightFilter* filter = prim.data().as<PluginLightFilter>();
+  if (!filter) {
+    if (err) *err = "Failed to cast prim to PluginLightFilter";
+    return false;
+  }
+
+  // Extract visibility (inherited from LightFilter)
+  if (filter->visibility.authored()) {
+    const auto& vis_animatable = filter->visibility.get_value();
+    if (vis_animatable.has_default()) {
+      Visibility vis_val;
+      if (vis_animatable.get_default(&vis_val)) {
+        if (vis_val != Visibility::Inherited) {
+          crate::CrateValue vis_crate_val;
+          value::token vis_tok(to_string(vis_val));
+          vis_crate_val.Set(vis_tok);
+          fields.push_back({"visibility", vis_crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract purpose (inherited from LightFilter)
+  if (filter->purpose.authored()) {
+    Purpose purpose_val = filter->purpose.get_value();
+    if (purpose_val != Purpose::Default) {
+      crate::CrateValue purpose_crate_val;
+      value::token purpose_tok(to_string(purpose_val));
+      purpose_crate_val.Set(purpose_tok);
+      fields.push_back({"purpose", purpose_crate_val});
+    }
+  }
+
+  return true;
+}
+
+// ============================================================================
 // Light Filter Relationship Specs (called AFTER Light prim spec is added)
 // ============================================================================
 

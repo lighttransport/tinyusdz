@@ -31,6 +31,20 @@ std::string to_string(const DomeLight::TextureFormat &format) {
   return "[[InvalidTextureFormat]]";
 }
 
+std::string to_string(const DomeLight_1::TextureFormat &format) {
+  switch (format) {
+    case DomeLight_1::TextureFormat::Automatic:
+      return "automatic";
+    case DomeLight_1::TextureFormat::Latlong:
+      return "latlong";
+    case DomeLight_1::TextureFormat::MirroredBall:
+      return "mirroredBall";
+    case DomeLight_1::TextureFormat::Angular:
+      return "angular";
+  }
+  return "[[InvalidTextureFormat]]";
+}
+
 bool DomeLight_TextureFormat_from_string(const std::string &str, DomeLight::TextureFormat *format) {
   if (!format) {
     return false;

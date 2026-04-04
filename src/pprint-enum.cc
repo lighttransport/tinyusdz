@@ -129,6 +129,22 @@ std::string to_string(const APISchemas::APIName &name) {
       s = "PhysicsMeshCollisionAPI";
       break;
     }
+    case APISchemas::APIName::PhysicsMassAPI: {
+      s = "PhysicsMassAPI";
+      break;
+    }
+    case APISchemas::APIName::PhysicsFilteredPairsAPI: {
+      s = "PhysicsFilteredPairsAPI";
+      break;
+    }
+    case APISchemas::APIName::PhysicsArticulationRootAPI: {
+      s = "PhysicsArticulationRootAPI";
+      break;
+    }
+    case APISchemas::APIName::AssetPreviewsAPI: {
+      s = "AssetPreviewsAPI";
+      break;
+    }
     // MuJoCo (mjcPhysics)
     case APISchemas::APIName::MjcSceneAPI: {
       s = "MjcSceneAPI";
