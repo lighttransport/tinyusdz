@@ -18,6 +18,8 @@
 #include "usdSkel.hh"
 #include "mjcPhysics.hh"
 #include "usdPhysics.hh"
+#include "usdAR.hh"
+#include "usdMedia.hh"
 //
 #include "common-macros.inc"
 #include "pprint-meta.hh"
@@ -897,7 +899,17 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(PhysicsCollisionGroup)
   EXTRACT_NAME_AND_RETURN_PATH(MjcActuator)
   EXTRACT_NAME_AND_RETURN_PATH(MjcTendon)
-  EXTRACT_NAME_AND_RETURN_PATH(MjcKeyframe) { return nonstd::nullopt; }
+  EXTRACT_NAME_AND_RETURN_PATH(MjcKeyframe)
+  // AR/Interactive (Apple Preliminary_*)
+  EXTRACT_NAME_AND_RETURN_PATH(Preliminary_PhysicsGravitationalForce)
+  EXTRACT_NAME_AND_RETURN_PATH(Preliminary_InfiniteColliderPlane)
+  EXTRACT_NAME_AND_RETURN_PATH(Preliminary_ReferenceImage)
+  EXTRACT_NAME_AND_RETURN_PATH(Preliminary_Behavior)
+  EXTRACT_NAME_AND_RETURN_PATH(Preliminary_Trigger)
+  EXTRACT_NAME_AND_RETURN_PATH(Preliminary_Action)
+  EXTRACT_NAME_AND_RETURN_PATH(Preliminary_Text)
+  // usdMedia
+  EXTRACT_NAME_AND_RETURN_PATH(SpatialAudio) { return nonstd::nullopt; }
 
 #undef EXTRACT_NAME_AND_RETURN_PATH
 
@@ -969,7 +981,17 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   SET_ELEMENT_NAME(elementName, PhysicsCollisionGroup)
   SET_ELEMENT_NAME(elementName, MjcActuator)
   SET_ELEMENT_NAME(elementName, MjcTendon)
-  SET_ELEMENT_NAME(elementName, MjcKeyframe) { return false; }
+  SET_ELEMENT_NAME(elementName, MjcKeyframe)
+  // AR/Interactive (Apple Preliminary_*)
+  SET_ELEMENT_NAME(elementName, Preliminary_PhysicsGravitationalForce)
+  SET_ELEMENT_NAME(elementName, Preliminary_InfiniteColliderPlane)
+  SET_ELEMENT_NAME(elementName, Preliminary_ReferenceImage)
+  SET_ELEMENT_NAME(elementName, Preliminary_Behavior)
+  SET_ELEMENT_NAME(elementName, Preliminary_Trigger)
+  SET_ELEMENT_NAME(elementName, Preliminary_Action)
+  SET_ELEMENT_NAME(elementName, Preliminary_Text)
+  // usdMedia
+  SET_ELEMENT_NAME(elementName, SpatialAudio) { return false; }
 
 #undef SET_ELEMENT_NAME
 

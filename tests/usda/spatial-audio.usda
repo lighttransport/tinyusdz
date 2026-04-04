@@ -1,0 +1,25 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    upAxis = "Y"
+)
+
+def Xform "Root"
+{
+    def SpatialAudio "BackgroundMusic"
+    {
+        asset filePath = @music.m4a@
+        token auralMode = "spatial"
+        token playbackMode = "loopFromStart"
+        double mediaOffset = 0
+        double gain = 0.8
+    }
+
+    def SpatialAudio "ClickSound"
+    {
+        asset filePath = @click.wav@
+        token auralMode = "nonSpatial"
+        token playbackMode = "onceFromStart"
+        double gain = 1.0
+    }
+}

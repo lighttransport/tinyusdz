@@ -447,6 +447,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/stage-converter.cc
     ${PROJECT_SOURCE_DIR}/src/sconv-geom.cc
     ${PROJECT_SOURCE_DIR}/src/sconv-physics.cc
+    ${PROJECT_SOURCE_DIR}/src/sconv-ar.cc
+    ${PROJECT_SOURCE_DIR}/src/sconv-media.cc
     ${PROJECT_SOURCE_DIR}/src/sconv-shader.cc
     ${PROJECT_SOURCE_DIR}/src/sconv-light.cc
     ${PROJECT_SOURCE_DIR}/src/sconv-skel.cc
@@ -457,6 +459,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-physics.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-ar.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-media.cc
     ${PROJECT_SOURCE_DIR}/src/prim-composition.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
     ${PROJECT_SOURCE_DIR}/src/core/prim-enums.cc
@@ -499,6 +503,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/pprint-light.cc
     ${PROJECT_SOURCE_DIR}/src/pprint-skel.cc
     ${PROJECT_SOURCE_DIR}/src/pprint-physics.cc
+    ${PROJECT_SOURCE_DIR}/src/pprint-ar.cc
+    ${PROJECT_SOURCE_DIR}/src/pprint-media.cc
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc
     ${PROJECT_SOURCE_DIR}/src/timesamples-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/timesamples.cc
@@ -557,6 +563,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/materialx-to-json.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/physics-to-json.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/physics-to-json.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/ar-to-json.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/ar-to-json.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/ik-solver.h
         ${PROJECT_SOURCE_DIR}/src/tydra/ik-solver.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/ik-solver.cc

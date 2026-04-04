@@ -24,6 +24,8 @@
 #include "usdGeom.hh"
 #include "usdSkel.hh"
 #include "usdPhysics.hh"
+#include "usdAR.hh"
+#include "usdMedia.hh"
 #include "mjcPhysics.hh"
 #if defined(__wasi__)
 #else
@@ -132,6 +134,16 @@ RECONSTRUCT_PRIM_DECL(PhysicsCollisionGroup);
 RECONSTRUCT_PRIM_DECL(MjcActuator);
 RECONSTRUCT_PRIM_DECL(MjcTendon);
 RECONSTRUCT_PRIM_DECL(MjcKeyframe);
+// AR/Interactive (Apple Preliminary_*)
+RECONSTRUCT_PRIM_DECL(Preliminary_PhysicsGravitationalForce);
+RECONSTRUCT_PRIM_DECL(Preliminary_InfiniteColliderPlane);
+RECONSTRUCT_PRIM_DECL(Preliminary_ReferenceImage);
+RECONSTRUCT_PRIM_DECL(Preliminary_Behavior);
+RECONSTRUCT_PRIM_DECL(Preliminary_Trigger);
+RECONSTRUCT_PRIM_DECL(Preliminary_Action);
+RECONSTRUCT_PRIM_DECL(Preliminary_Text);
+// usdMedia
+RECONSTRUCT_PRIM_DECL(SpatialAudio);
 
 #undef RECONSTRUCT_PRIM_DECL
 
@@ -633,6 +645,16 @@ DEFINE_PRIM_TYPE(PhysicsCollisionGroup, kPhysicsCollisionGroup, value::TYPE_ID_P
 DEFINE_PRIM_TYPE(MjcActuator, kMjcActuator, value::TYPE_ID_MJC_ACTUATOR);
 DEFINE_PRIM_TYPE(MjcTendon, kMjcTendon, value::TYPE_ID_MJC_TENDON);
 DEFINE_PRIM_TYPE(MjcKeyframe, kMjcKeyframe, value::TYPE_ID_MJC_KEYFRAME);
+// AR/Interactive (Apple Preliminary_*)
+DEFINE_PRIM_TYPE(Preliminary_PhysicsGravitationalForce, kPreliminary_PhysicsGravitationalForce, value::TYPE_ID_PRELIMINARY_GRAVITATIONAL_FORCE);
+DEFINE_PRIM_TYPE(Preliminary_InfiniteColliderPlane, kPreliminary_InfiniteColliderPlane, value::TYPE_ID_PRELIMINARY_INFINITE_COLLIDER_PLANE);
+DEFINE_PRIM_TYPE(Preliminary_ReferenceImage, kPreliminary_ReferenceImage, value::TYPE_ID_PRELIMINARY_REFERENCE_IMAGE);
+DEFINE_PRIM_TYPE(Preliminary_Behavior, kPreliminary_Behavior, value::TYPE_ID_PRELIMINARY_BEHAVIOR);
+DEFINE_PRIM_TYPE(Preliminary_Trigger, kPreliminary_Trigger, value::TYPE_ID_PRELIMINARY_TRIGGER);
+DEFINE_PRIM_TYPE(Preliminary_Action, kPreliminary_Action, value::TYPE_ID_PRELIMINARY_ACTION);
+DEFINE_PRIM_TYPE(Preliminary_Text, kPreliminary_Text, value::TYPE_ID_PRELIMINARY_TEXT);
+// usdMedia
+DEFINE_PRIM_TYPE(SpatialAudio, kSpatialAudio, value::TYPE_ID_SPATIAL_AUDIO);
 DEFINE_PRIM_TYPE(Scope, "Scope", value::TYPE_ID_SCOPE);
 
 DEFINE_PRIM_TYPE(GPrim, "GPrim", value::TYPE_ID_GPRIM);
@@ -2244,6 +2266,17 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<MjcActuator>();
   RegisterReconstructCallback<MjcTendon>();
   RegisterReconstructCallback<MjcKeyframe>();
+
+  // AR/Interactive (Apple Preliminary_*)
+  RegisterReconstructCallback<Preliminary_PhysicsGravitationalForce>();
+  RegisterReconstructCallback<Preliminary_InfiniteColliderPlane>();
+  RegisterReconstructCallback<Preliminary_ReferenceImage>();
+  RegisterReconstructCallback<Preliminary_Behavior>();
+  RegisterReconstructCallback<Preliminary_Trigger>();
+  RegisterReconstructCallback<Preliminary_Action>();
+  RegisterReconstructCallback<Preliminary_Text>();
+  // usdMedia
+  RegisterReconstructCallback<SpatialAudio>();
 
   _parser.set_primspec_mode(as_primspec);
 

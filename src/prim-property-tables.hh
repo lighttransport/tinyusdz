@@ -567,3 +567,56 @@
 #define PHYSICS_COLLISION_GROUP_RELS(X) \
   X("physics:filteredGroups", filteredGroups)
 
+// ============================================================================
+// AR/Interactive Property Tables (Apple Preliminary_* schemas)
+// ============================================================================
+
+#define PRELIMINARY_GRAVITATIONAL_FORCE_TYPED_ATTRS(X) \
+  X("physics:gravitationalForce:acceleration", acceleration)
+
+#define PRELIMINARY_INFINITE_COLLIDER_PLANE_TYPED_ATTRS(X) \
+  X("position", position) \
+  X("normal", normal)
+
+#define PRELIMINARY_REFERENCE_IMAGE_TYPED_ATTRS(X) \
+  X("image", image) \
+  X("physicalWidth", physicalWidth)
+
+#define PRELIMINARY_BEHAVIOR_TYPED_ATTRS(X) \
+  X("exclusive", exclusive)
+
+#define PRELIMINARY_BEHAVIOR_RELS(X) \
+  X("triggers", triggers) \
+  X("actions", actions)
+
+#define PRELIMINARY_TRIGGER_TYPED_ATTRS(X) \
+  X("info:id", info_id)
+
+#define PRELIMINARY_ACTION_TYPED_ATTRS(X) \
+  X("info:id", info_id) \
+  X("multiplePerformOperation", multiplePerformOperation)
+
+#define PRELIMINARY_TEXT_TYPED_ATTRS(X) \
+  X("content", content) \
+  X("font", font) \
+  X("pointSize", pointSize) \
+  X("width", width) \
+  X("height", height) \
+  X("depth", depth) \
+  X("wrapMode", wrapMode) \
+  X("horizontalAlignment", horizontalAlignment) \
+  X("verticalAlignment", verticalAlignment)
+
+// ============================================================================
+// usdMedia Property Tables
+// ============================================================================
+
+#define SPATIAL_AUDIO_TYPED_ATTRS(X) \
+  X("filePath", filePath) \
+  X("auralMode", auralMode) \
+  X("playbackMode", playbackMode) \
+  X("startTime", startTime) \
+  X("endTime", endTime) \
+  X("mediaOffset", mediaOffset) \
+  X("gain", gain)
+
