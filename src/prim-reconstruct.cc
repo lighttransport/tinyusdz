@@ -1610,6 +1610,90 @@ bool ReconstructPrim<DomeLight>(
 #undef PRIM_PTR_
 }
 
+template <>
+bool ReconstructPrim<DomeLight_1>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    DomeLight_1 *light,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ DomeLight_1
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  RECONSTRUCT_LIGHT_PRIM_BODY(DomeLight_1, light, DOME_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_NO_SHAPING,
+                              /* no extent */,
+                              PARSE_TYPED_ATTRIBUTE(table, prop, "poleAxis", DomeLight_1, light->poleAxis))
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<LightFilter>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    LightFilter *filter,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  (void)references;
+
+  std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &filter->xformOps, err)) {
+    return false;
+  }
+
+  for (auto &prop : properties) {
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, LightFilter,
+                       filter->visibility, options.strict_allowedToken_check)
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, LightFilter,
+                       filter->purpose, options.strict_allowedToken_check)
+    ADD_PROPERTY(table, prop, LightFilter, filter->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim<PluginLightFilter>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    PluginLightFilter *filter,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  (void)references;
+
+  std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &filter->xformOps, err)) {
+    return false;
+  }
+
+  for (auto &prop : properties) {
+    PARSE_TYPED_ATTRIBUTE(table, prop, "light:shaderId", PluginLightFilter, filter->shaderId)
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, PluginLightFilter,
+                       filter->visibility, options.strict_allowedToken_check)
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, PluginLightFilter,
+                       filter->purpose, options.strict_allowedToken_check)
+    ADD_PROPERTY(table, prop, PluginLightFilter, filter->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
 // ============================================================================
 // Generic macro for simple geometry prim reconstruction
 // ============================================================================
@@ -1803,6 +1887,81 @@ bool ReconstructPrim<GeomCube>(
 #pragma clang diagnostic pop
 #endif
   RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomCube, cube, GEOM_CUBE_TYPED_ATTRS, /* no enums */)
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<GeomPlane>(
+    const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
+    GeomPlane *plane, std::string *warn, std::string *err,
+    const PrimReconstructOptions &options) {
+#define PRIM_CLASS_ GeomPlane
+#define PRIM_PTR_ plane
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomPlane, plane, GEOM_PLANE_TYPED_ATTRS,
+                                     GEOM_PLANE_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM))
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<GeomCylinder_1>(
+    const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
+    GeomCylinder_1 *cyl, std::string *warn, std::string *err,
+    const PrimReconstructOptions &options) {
+#define PRIM_CLASS_ GeomCylinder_1
+#define PRIM_PTR_ cyl
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomCylinder_1, cyl, GEOM_CYLINDER_1_TYPED_ATTRS,
+                                     GEOM_CYLINDER_1_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM))
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<GeomCapsule_1>(
+    const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
+    GeomCapsule_1 *cap, std::string *warn, std::string *err,
+    const PrimReconstructOptions &options) {
+#define PRIM_CLASS_ GeomCapsule_1
+#define PRIM_PTR_ cap
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomCapsule_1, cap, GEOM_CAPSULE_1_TYPED_ATTRS,
+                                     GEOM_CAPSULE_1_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM))
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<GeomTetMesh>(
+    const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
+    GeomTetMesh *tetmesh, std::string *warn, std::string *err,
+    const PrimReconstructOptions &options) {
+#define PRIM_CLASS_ GeomTetMesh
+#define PRIM_PTR_ tetmesh
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomTetMesh, tetmesh, GEOM_TET_MESH_TYPED_ATTRS, /* no enums */)
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<GeomNurbsPatch>(
+    const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
+    GeomNurbsPatch *patch, std::string *warn, std::string *err,
+    const PrimReconstructOptions &options) {
+#define PRIM_CLASS_ GeomNurbsPatch
+#define PRIM_PTR_ patch
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomNurbsPatch, patch, GEOM_NURBS_PATCH_TYPED_ATTRS, /* no enums */)
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
+bool ReconstructPrim<GeomHermiteCurves>(
+    const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
+    GeomHermiteCurves *curves, std::string *warn, std::string *err,
+    const PrimReconstructOptions &options) {
+#define PRIM_CLASS_ GeomHermiteCurves
+#define PRIM_PTR_ curves
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomHermiteCurves, curves, GEOM_HERMITE_CURVES_TYPED_ATTRS, /* no enums */)
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
 }
@@ -2045,6 +2204,7 @@ bool ReconstructPrim<GeomPointInstancer>(
 
 
 // Shader/Material/NodeGraph reconstruction moved to prim-reconstruct-shader.cc
+// Physics + MuJoCo reconstruction moved to prim-reconstruct-physics.cc
 
 
 ///
@@ -2087,11 +2247,15 @@ RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DistantLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(RectLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeometryLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PortalLight)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DomeLight_1)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(LightFilter)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PluginLightFilter)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SkelRoot)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Skeleton)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SkelAnimation)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(BlendShape)
 // Shader, Material, NodeGraph PrimSpec wrappers are in prim-reconstruct-shader.cc
+// Physics + MuJoCo PrimSpec wrappers are in prim-reconstruct-physics.cc
 
 
 } // namespace prim

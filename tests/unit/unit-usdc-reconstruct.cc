@@ -174,6 +174,55 @@ bool WriteLayerToUsdc(const Layer &layer, const std::string &path,
   return true;
 }
 
+// Write Layer to in-memory USDC buffer (avoids writing runtime files to
+// tests/usdc/ that can race with usdc-parser-unit-test).
+bool WriteLayerToUsdcMemory(const Layer &layer, std::vector<uint8_t> *out,
+                            std::string *err) {
+  auto stream = std::make_unique<tinyusdz::experimental::MemoryOutputStream>();
+  auto *mem_ptr = stream.get();
+  tinyusdz::experimental::CrateWriter writer(std::move(stream));
+  std::string local_err;
+  if (!writer.Open(&local_err)) {
+    if (err) (*err) = local_err;
+    return false;
+  }
+  if (!writer.ConvertLayerToSpecs(layer, &local_err)) {
+    if (err) (*err) = local_err;
+    return false;
+  }
+  if (!writer.Finalize(&local_err)) {
+    if (err) (*err) = local_err;
+    return false;
+  }
+  if (out) *out = mem_ptr->TakeBuffer();
+  writer.Close();
+  return true;
+}
+
+// Write Stage to in-memory USDC buffer.
+bool WriteStageToUsdcMemory(const Stage &stage, std::vector<uint8_t> *out,
+                            std::string *err) {
+  auto stream = std::make_unique<tinyusdz::experimental::MemoryOutputStream>();
+  auto *mem_ptr = stream.get();
+  tinyusdz::experimental::CrateWriter writer(std::move(stream));
+  std::string local_err;
+  if (!writer.Open(&local_err)) {
+    if (err) (*err) = local_err;
+    return false;
+  }
+  if (!writer.ConvertStageToSpecs(stage, &local_err)) {
+    if (err) (*err) = local_err;
+    return false;
+  }
+  if (!writer.Finalize(&local_err)) {
+    if (err) (*err) = local_err;
+    return false;
+  }
+  if (out) *out = mem_ptr->TakeBuffer();
+  writer.Close();
+  return true;
+}
+
 bool WriteStageToUsdc(const Stage &stage, const std::string &path,
                       std::string *err) {
   tinyusdz::experimental::CrateWriter writer(path);
@@ -200,15 +249,7 @@ bool WriteStageToUsdc(const Stage &stage, const std::string &path,
   return true;
 }
 
-bool EnsureReferencesUsdcFixture(std::string *out_path, std::string *err) {
-  std::string path = GetUsdcFixturePath("memory-budget-references-runtime.usdc");
-  if (out_path) {
-    (*out_path) = path;
-  }
-  if (io::FileExists(path)) {
-    return true;
-  }
-
+bool BuildReferencesUsdcBuffer(std::vector<uint8_t> *out, std::string *err) {
   constexpr size_t kRefCount = 256;
   constexpr size_t kSegmentSize = 256;  // Keep under maxTokenLength (64K)
 
@@ -238,20 +279,11 @@ bool EnsureReferencesUsdcFixture(std::string *out_path, std::string *err) {
     return false;
   }
 
-  return WriteLayerToUsdc(layer, path, err);
+  return WriteLayerToUsdcMemory(layer, out, err);
 }
 
-bool EnsureStageMetaSublayersUsdcFixture(std::string *out_path,
-                                         std::string *err) {
-  std::string path =
-      GetUsdcFixturePath("memory-budget-stage-meta-sublayers-runtime.usdc");
-  if (out_path) {
-    (*out_path) = path;
-  }
-  if (io::FileExists(path)) {
-    return true;
-  }
-
+bool BuildStageMetaSublayersUsdcBuffer(std::vector<uint8_t> *out,
+                                       std::string *err) {
   constexpr size_t kSubLayerCount = 256;
   constexpr size_t kSegmentSize = 4096;
 
@@ -291,20 +323,11 @@ bool EnsureStageMetaSublayersUsdcFixture(std::string *out_path,
   }
   stage.commit();
 
-  return WriteStageToUsdc(stage, path, err);
+  return WriteStageToUsdcMemory(stage, out, err);
 }
 
-bool EnsureStageMetaCustomDataUsdcFixture(std::string *out_path,
-                                          std::string *err) {
-  std::string path =
-      GetUsdcFixturePath("memory-budget-stage-meta-customdata-runtime.usdc");
-  if (out_path) {
-    (*out_path) = path;
-  }
-  if (io::FileExists(path)) {
-    return true;
-  }
-
+bool BuildStageMetaCustomDataUsdcBuffer(std::vector<uint8_t> *out,
+                                        std::string *err) {
   constexpr size_t kCustomDataSize = 32 * 1024;  // Keep under maxTokenLength (64K)
 
   Stage stage;
@@ -327,18 +350,10 @@ bool EnsureStageMetaCustomDataUsdcFixture(std::string *out_path,
   }
   stage.commit();
 
-  return WriteStageToUsdc(stage, path, err);
+  return WriteStageToUsdcMemory(stage, out, err);
 }
 
-bool EnsureCompositionUsdcFixture(std::string *out_path, std::string *err) {
-  std::string path = GetUsdcFixturePath("memory-budget-composition-runtime.usdc");
-  if (out_path) {
-    (*out_path) = path;
-  }
-  if (io::FileExists(path)) {
-    return true;
-  }
-
+bool BuildCompositionUsdcBuffer(std::vector<uint8_t> *out, std::string *err) {
   constexpr size_t kArcCount = 256;
   constexpr size_t kPathSegmentSize = 128;  // Keep under maxTokenLength (64K)
   constexpr size_t kApiCount = 128;
@@ -352,9 +367,9 @@ bool EnsureCompositionUsdcFixture(std::string *out_path, std::string *err) {
   std::vector<Path> inherits_paths;
   inherits_paths.reserve(kArcCount);
   for (size_t i = 0; i < kArcCount; ++i) {
-    std::string path =
+    std::string p =
         "/Inherit_" + std::to_string(i) + "_" + path_segment;
-    inherits_paths.emplace_back(Path(path, ""));
+    inherits_paths.emplace_back(Path(p, ""));
   }
   meta.inherits = std::vector<std::pair<ListEditQual, std::vector<Path>>>();
   meta.inherits->emplace_back(ListEditQual::Prepend,
@@ -363,9 +378,9 @@ bool EnsureCompositionUsdcFixture(std::string *out_path, std::string *err) {
   std::vector<Path> specializes_paths;
   specializes_paths.reserve(kArcCount);
   for (size_t i = 0; i < kArcCount; ++i) {
-    std::string path =
+    std::string p =
         "/Specialize_" + std::to_string(i) + "_" + path_segment;
-    specializes_paths.emplace_back(Path(path, ""));
+    specializes_paths.emplace_back(Path(p, ""));
   }
   meta.specializes = std::vector<std::pair<ListEditQual, std::vector<Path>>>();
   meta.specializes->emplace_back(ListEditQual::Prepend,
@@ -402,15 +417,10 @@ bool EnsureCompositionUsdcFixture(std::string *out_path, std::string *err) {
     return false;
   }
 
-  return WriteLayerToUsdc(layer, path, err);
+  return WriteLayerToUsdcMemory(layer, out, err);
 }
 
-bool EnsureVariantSpecUsdcFixture(std::string *out_path, std::string *err) {
-  std::string path = GetUsdcFixturePath("variant-layer-runtime.usdc");
-  if (out_path) {
-    (*out_path) = path;
-  }
-
+bool BuildVariantSpecUsdcBuffer(std::vector<uint8_t> *out, std::string *err) {
   Layer layer;
   PrimSpec prim(Specifier::Def, "VariantOwner");
   PrimMeta &meta = prim.metas();
@@ -435,18 +445,10 @@ bool EnsureVariantSpecUsdcFixture(std::string *out_path, std::string *err) {
     return false;
   }
 
-  return WriteLayerToUsdc(layer, path, err);
+  return WriteLayerToUsdcMemory(layer, out, err);
 }
 
-bool EnsureVariantSpecNestedUsdcFixture(std::string *out_path, std::string *err) {
-  std::string path = GetUsdcFixturePath("variant-layer-nested-runtime.usdc");
-  if (out_path) {
-    (*out_path) = path;
-  }
-  if (io::FileExists(path)) {
-    return true;
-  }
-
+bool BuildVariantSpecNestedUsdcBuffer(std::vector<uint8_t> *out, std::string *err) {
   Layer layer;
   PrimSpec prim(Specifier::Def, "VariantOwner");
   PrimMeta &meta = prim.metas();
@@ -480,18 +482,10 @@ bool EnsureVariantSpecNestedUsdcFixture(std::string *out_path, std::string *err)
     return false;
   }
 
-  return WriteLayerToUsdc(layer, path, err);
+  return WriteLayerToUsdcMemory(layer, out, err);
 }
 
-bool EnsureStageVariantUsdcFixture(std::string *out_path, std::string *err) {
-  std::string path = GetUsdcFixturePath("variant-stage-nested-runtime.usdc");
-  if (out_path) {
-    (*out_path) = path;
-  }
-  if (io::FileExists(path)) {
-    return true;
-  }
-
+bool BuildStageVariantUsdcBuffer(std::vector<uint8_t> *out, std::string *err) {
   Stage stage;
   Xform root_xform;
   root_xform.name = "VariantOwner";
@@ -547,7 +541,7 @@ bool EnsureStageVariantUsdcFixture(std::string *out_path, std::string *err) {
   }
   stage.commit();
 
-  return WriteStageToUsdc(stage, path, err);
+  return WriteStageToUsdcMemory(stage, out, err);
 }
 
 const Prim *FindPrimAtPath(const Stage &stage, const std::string &path_str) {
@@ -1030,18 +1024,19 @@ void usdc_memory_budget_customdata_success_test(void) {
 
 void usdc_memory_budget_references_limit_test(void) {
   std::string err;
-  std::string usdc_path;
-  if (!EnsureReferencesUsdcFixture(&usdc_path, &err)) {
+  std::vector<uint8_t> usdc_buf;
+  if (!BuildReferencesUsdcBuffer(&usdc_buf, &err)) {
     TEST_MSG("%s", err.c_str());
     TEST_CHECK(false);
     return;
   }
 
   Layer layer;
+  std::string warn;
   USDLoadOptions options;
   options.max_memory_limit_in_mb = 0;  // Tight budget to trigger failure
-  bool loaded = LoadLayerFromUsdcFixtureWithOptions(
-      "memory-budget-references-runtime.usdc", options, &layer, &err);
+  bool loaded = LoadLayerFromMemory(usdc_buf.data(), usdc_buf.size(),
+      "test.usdc", &layer, &warn, &err, options);
   TEST_CHECK(!loaded);
   if (loaded) {
     return;
@@ -1053,18 +1048,19 @@ void usdc_memory_budget_references_limit_test(void) {
 
 void usdc_memory_budget_references_success_test(void) {
   std::string err;
-  std::string usdc_path;
-  if (!EnsureReferencesUsdcFixture(&usdc_path, &err)) {
+  std::vector<uint8_t> usdc_buf;
+  if (!BuildReferencesUsdcBuffer(&usdc_buf, &err)) {
     TEST_MSG("%s", err.c_str());
     TEST_CHECK(false);
     return;
   }
 
   Layer layer;
+  std::string warn;
   USDLoadOptions options;
   options.max_memory_limit_in_mb = 32;
-  bool loaded = LoadLayerFromUsdcFixtureWithOptions(
-      "memory-budget-references-runtime.usdc", options, &layer, &err);
+  bool loaded = LoadLayerFromMemory(usdc_buf.data(), usdc_buf.size(),
+      "test.usdc", &layer, &warn, &err, options);
   TEST_CHECK(loaded);
   if (!loaded) {
     if (!err.empty()) {
@@ -1094,18 +1090,19 @@ void usdc_memory_budget_references_success_test(void) {
 
 void usdc_memory_budget_stage_meta_sublayers_limit_test(void) {
   std::string err;
-  std::string usdc_path;
-  if (!EnsureStageMetaSublayersUsdcFixture(&usdc_path, &err)) {
+  std::vector<uint8_t> usdc_buf;
+  if (!BuildStageMetaSublayersUsdcBuffer(&usdc_buf, &err)) {
     TEST_MSG("%s", err.c_str());
     TEST_CHECK(false);
     return;
   }
 
   Stage stage;
+  std::string warn;
   USDLoadOptions options;
   options.max_memory_limit_in_mb = 1;
-  bool loaded = LoadStageFromUsdcFixtureWithOptions(
-      "memory-budget-stage-meta-sublayers-runtime.usdc", options, &stage, &err);
+  bool loaded = LoadUSDCFromMemory(usdc_buf.data(), usdc_buf.size(),
+      "test.usdc", &stage, &warn, &err, options);
   TEST_CHECK(!loaded);
   if (loaded) {
     return;
@@ -1117,18 +1114,19 @@ void usdc_memory_budget_stage_meta_sublayers_limit_test(void) {
 
 void usdc_memory_budget_stage_meta_sublayers_success_test(void) {
   std::string err;
-  std::string usdc_path;
-  if (!EnsureStageMetaSublayersUsdcFixture(&usdc_path, &err)) {
+  std::vector<uint8_t> usdc_buf;
+  if (!BuildStageMetaSublayersUsdcBuffer(&usdc_buf, &err)) {
     TEST_MSG("%s", err.c_str());
     TEST_CHECK(false);
     return;
   }
 
   Stage stage;
+  std::string warn;
   USDLoadOptions options;
   options.max_memory_limit_in_mb = 64;
-  bool loaded = LoadStageFromUsdcFixtureWithOptions(
-      "memory-budget-stage-meta-sublayers-runtime.usdc", options, &stage, &err);
+  bool loaded = LoadUSDCFromMemory(usdc_buf.data(), usdc_buf.size(),
+      "test.usdc", &stage, &warn, &err, options);
   TEST_CHECK(loaded);
   if (!loaded) {
     if (!err.empty()) {
@@ -1145,18 +1143,19 @@ void usdc_memory_budget_stage_meta_sublayers_success_test(void) {
 
 void usdc_memory_budget_stage_meta_customdata_limit_test(void) {
   std::string err;
-  std::string usdc_path;
-  if (!EnsureStageMetaCustomDataUsdcFixture(&usdc_path, &err)) {
+  std::vector<uint8_t> usdc_buf;
+  if (!BuildStageMetaCustomDataUsdcBuffer(&usdc_buf, &err)) {
     TEST_MSG("%s", err.c_str());
     TEST_CHECK(false);
     return;
   }
 
   Stage stage;
+  std::string warn;
   USDLoadOptions options;
   options.max_memory_limit_in_mb = 0;  // Tight budget to trigger failure
-  bool loaded = LoadStageFromUsdcFixtureWithOptions(
-      "memory-budget-stage-meta-customdata-runtime.usdc", options, &stage, &err);
+  bool loaded = LoadUSDCFromMemory(usdc_buf.data(), usdc_buf.size(),
+      "test.usdc", &stage, &warn, &err, options);
   TEST_CHECK(!loaded);
   if (loaded) {
     return;
@@ -1168,18 +1167,19 @@ void usdc_memory_budget_stage_meta_customdata_limit_test(void) {
 
 void usdc_memory_budget_stage_meta_customdata_success_test(void) {
   std::string err;
-  std::string usdc_path;
-  if (!EnsureStageMetaCustomDataUsdcFixture(&usdc_path, &err)) {
+  std::vector<uint8_t> usdc_buf;
+  if (!BuildStageMetaCustomDataUsdcBuffer(&usdc_buf, &err)) {
     TEST_MSG("%s", err.c_str());
     TEST_CHECK(false);
     return;
   }
 
   Stage stage;
+  std::string warn;
   USDLoadOptions options;
   options.max_memory_limit_in_mb = 64;
-  bool loaded = LoadStageFromUsdcFixtureWithOptions(
-      "memory-budget-stage-meta-customdata-runtime.usdc", options, &stage, &err);
+  bool loaded = LoadUSDCFromMemory(usdc_buf.data(), usdc_buf.size(),
+      "test.usdc", &stage, &warn, &err, options);
   TEST_CHECK(loaded);
   if (!loaded) {
     if (!err.empty()) {
@@ -1194,19 +1194,20 @@ void usdc_memory_budget_stage_meta_customdata_success_test(void) {
 
 void usdc_memory_budget_composition_limit_test(void) {
   std::string err;
-  std::string usdc_path;
-  if (!EnsureCompositionUsdcFixture(&usdc_path, &err)) {
+  std::vector<uint8_t> usdc_buf;
+  if (!BuildCompositionUsdcBuffer(&usdc_buf, &err)) {
     TEST_MSG("%s", err.c_str());
     TEST_CHECK(false);
     return;
   }
 
   Layer layer;
+  std::string warn;
   USDLoadOptions options;
   options.max_memory_limit_in_mb = 0;  // Tight budget to trigger failure
   options.strict_apiSchema_check = false;
-  bool loaded = LoadLayerFromUsdcFixtureWithOptions(
-      "memory-budget-composition-runtime.usdc", options, &layer, &err);
+  bool loaded = LoadLayerFromMemory(usdc_buf.data(), usdc_buf.size(),
+      "test.usdc", &layer, &warn, &err, options);
   TEST_CHECK(!loaded);
   if (loaded) {
     return;
@@ -1218,19 +1219,20 @@ void usdc_memory_budget_composition_limit_test(void) {
 
 void usdc_memory_budget_composition_success_test(void) {
   std::string err;
-  std::string usdc_path;
-  if (!EnsureCompositionUsdcFixture(&usdc_path, &err)) {
+  std::vector<uint8_t> usdc_buf;
+  if (!BuildCompositionUsdcBuffer(&usdc_buf, &err)) {
     TEST_MSG("%s", err.c_str());
     TEST_CHECK(false);
     return;
   }
 
   Layer layer;
+  std::string warn;
   USDLoadOptions options;
   options.max_memory_limit_in_mb = 64;
   options.strict_apiSchema_check = false;
-  bool loaded = LoadLayerFromUsdcFixtureWithOptions(
-      "memory-budget-composition-runtime.usdc", options, &layer, &err);
+  bool loaded = LoadLayerFromMemory(usdc_buf.data(), usdc_buf.size(),
+      "test.usdc", &layer, &warn, &err, options);
   TEST_CHECK(loaded);
   if (!loaded) {
     if (!err.empty()) {
@@ -1254,15 +1256,17 @@ void usdc_memory_budget_composition_success_test(void) {
 
 void usdc_layer_variant_roundtrip_test(void) {
   std::string err;
-  std::string usdc_path;
-  if (!EnsureVariantSpecUsdcFixture(&usdc_path, &err)) {
+  std::vector<uint8_t> usdc_buf;
+  if (!BuildVariantSpecUsdcBuffer(&usdc_buf, &err)) {
     TEST_MSG("%s", err.c_str());
     TEST_CHECK(false);
     return;
   }
 
   Layer layer;
-  bool loaded = LoadLayerFromUsdcFixture("variant-layer-runtime.usdc", &layer, &err);
+  std::string warn;
+  bool loaded = LoadLayerFromMemory(usdc_buf.data(), usdc_buf.size(),
+      "test.usdc", &layer, &warn, &err);
   TEST_CHECK(loaded);
   if (!loaded) {
     if (!err.empty()) {
@@ -1318,15 +1322,17 @@ void usdc_layer_variant_roundtrip_test(void) {
 
 void usdc_layer_variant_nested_roundtrip_test(void) {
   std::string err;
-  std::string usdc_path;
-  if (!EnsureVariantSpecNestedUsdcFixture(&usdc_path, &err)) {
+  std::vector<uint8_t> usdc_buf;
+  if (!BuildVariantSpecNestedUsdcBuffer(&usdc_buf, &err)) {
     TEST_MSG("%s", err.c_str());
     TEST_CHECK(false);
     return;
   }
 
   Layer layer;
-  bool loaded = LoadLayerFromUsdcFixture("variant-layer-nested-runtime.usdc", &layer, &err);
+  std::string warn;
+  bool loaded = LoadLayerFromMemory(usdc_buf.data(), usdc_buf.size(),
+      "test.usdc", &layer, &warn, &err);
   TEST_CHECK(loaded);
   if (!loaded) {
     if (!err.empty()) {
@@ -1379,15 +1385,17 @@ void usdc_layer_variant_nested_roundtrip_test(void) {
 
 void usdc_stage_variant_roundtrip_test(void) {
   std::string err;
-  std::string usdc_path;
-  if (!EnsureStageVariantUsdcFixture(&usdc_path, &err)) {
+  std::vector<uint8_t> usdc_buf;
+  if (!BuildStageVariantUsdcBuffer(&usdc_buf, &err)) {
     TEST_MSG("%s", err.c_str());
     TEST_CHECK(false);
     return;
   }
 
   Stage stage;
-  bool loaded = LoadStageFromUsdcFixture("variant-stage-nested-runtime.usdc", &stage, &err);
+  std::string warn;
+  bool loaded = LoadUSDCFromMemory(usdc_buf.data(), usdc_buf.size(),
+      "test.usdc", &stage, &warn, &err);
   TEST_CHECK(loaded);
   if (!loaded) {
     if (!err.empty()) {
@@ -1626,7 +1634,7 @@ void usdc_layer_variant_selection_test(void) {
 // variant carries both a property and a child PrimSpec.
 void usdc_layer_nested_variant_props_roundtrip_test(void) {
   std::string err;
-  std::string path = GetUsdcFixturePath("variant-layer-nested-props-runtime.usdc");
+  std::vector<uint8_t> usdc_buf;
 
   // --- Build Layer with nested variants + properties ---
   {
@@ -1667,7 +1675,7 @@ void usdc_layer_nested_variant_props_roundtrip_test(void) {
       TEST_CHECK(false);
       return;
     }
-    if (!WriteLayerToUsdc(layer, path, &err)) {
+    if (!WriteLayerToUsdcMemory(layer, &usdc_buf, &err)) {
       TEST_MSG("Write failed: %s", err.c_str());
       TEST_CHECK(false);
       return;
@@ -1676,8 +1684,9 @@ void usdc_layer_nested_variant_props_roundtrip_test(void) {
 
   // --- Read back and verify ---
   Layer layer;
-  bool loaded = LoadLayerFromUsdcFixture(
-      "variant-layer-nested-props-runtime.usdc", &layer, &err);
+  std::string warn;
+  bool loaded = LoadLayerFromMemory(usdc_buf.data(), usdc_buf.size(),
+      "test.usdc", &layer, &warn, &err);
   TEST_CHECK(loaded);
   if (!loaded) {
     TEST_MSG("Load failed: %s", err.c_str());
@@ -1737,7 +1746,7 @@ void usdc_layer_nested_variant_props_roundtrip_test(void) {
 // Layer roundtrip: multiple variant sets on a single prim
 void usdc_layer_multiple_variant_sets_roundtrip_test(void) {
   std::string err;
-  std::string path = GetUsdcFixturePath("variant-layer-multi-sets-runtime.usdc");
+  std::vector<uint8_t> usdc_buf;
 
   {
     Layer layer;
@@ -1769,7 +1778,7 @@ void usdc_layer_multiple_variant_sets_roundtrip_test(void) {
       TEST_CHECK(false);
       return;
     }
-    if (!WriteLayerToUsdc(layer, path, &err)) {
+    if (!WriteLayerToUsdcMemory(layer, &usdc_buf, &err)) {
       TEST_MSG("Write failed: %s", err.c_str());
       TEST_CHECK(false);
       return;
@@ -1777,8 +1786,9 @@ void usdc_layer_multiple_variant_sets_roundtrip_test(void) {
   }
 
   Layer layer;
-  bool loaded = LoadLayerFromUsdcFixture(
-      "variant-layer-multi-sets-runtime.usdc", &layer, &err);
+  std::string warn;
+  bool loaded = LoadLayerFromMemory(usdc_buf.data(), usdc_buf.size(),
+      "test.usdc", &layer, &warn, &err);
   TEST_CHECK(loaded);
   if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
 
@@ -1822,7 +1832,7 @@ void usdc_layer_multiple_variant_sets_roundtrip_test(void) {
 // Layer roundtrip: 3-level nested variant sets
 void usdc_layer_3level_nested_roundtrip_test(void) {
   std::string err;
-  std::string path = GetUsdcFixturePath("variant-layer-3level-runtime.usdc");
+  std::vector<uint8_t> usdc_buf;
 
   {
     Layer layer;
@@ -1856,7 +1866,7 @@ void usdc_layer_3level_nested_roundtrip_test(void) {
       TEST_CHECK(false);
       return;
     }
-    if (!WriteLayerToUsdc(layer, path, &err)) {
+    if (!WriteLayerToUsdcMemory(layer, &usdc_buf, &err)) {
       TEST_MSG("Write failed: %s", err.c_str());
       TEST_CHECK(false);
       return;
@@ -1864,8 +1874,9 @@ void usdc_layer_3level_nested_roundtrip_test(void) {
   }
 
   Layer layer;
-  bool loaded = LoadLayerFromUsdcFixture(
-      "variant-layer-3level-runtime.usdc", &layer, &err);
+  std::string warn;
+  bool loaded = LoadLayerFromMemory(usdc_buf.data(), usdc_buf.size(),
+      "test.usdc", &layer, &warn, &err);
   TEST_CHECK(loaded);
   if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
 
@@ -1908,7 +1919,7 @@ void usdc_layer_3level_nested_roundtrip_test(void) {
 // Stage roundtrip: variant with properties (not just prim children)
 void usdc_stage_variant_props_roundtrip_test(void) {
   std::string err;
-  std::string path = GetUsdcFixturePath("variant-stage-props-runtime.usdc");
+  std::vector<uint8_t> usdc_buf;
 
   {
     Stage stage;
@@ -1941,7 +1952,7 @@ void usdc_stage_variant_props_roundtrip_test(void) {
       return;
     }
     stage.commit();
-    if (!WriteStageToUsdc(stage, path, &err)) {
+    if (!WriteStageToUsdcMemory(stage, &usdc_buf, &err)) {
       TEST_MSG("Write failed: %s", err.c_str());
       TEST_CHECK(false);
       return;
@@ -1949,8 +1960,9 @@ void usdc_stage_variant_props_roundtrip_test(void) {
   }
 
   Stage stage;
-  bool loaded = LoadStageFromUsdcFixture(
-      "variant-stage-props-runtime.usdc", &stage, &err);
+  std::string warn;
+  bool loaded = LoadUSDCFromMemory(usdc_buf.data(), usdc_buf.size(),
+      "test.usdc", &stage, &warn, &err);
   TEST_CHECK(loaded);
   if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
 

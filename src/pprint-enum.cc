@@ -112,6 +112,92 @@ std::string to_string(const APISchemas::APIName &name) {
       s = "Preliminary_PhysicsMaterialAPI";
       break;
     }
+    // UsdPhysics
+    case APISchemas::APIName::PhysicsRigidBodyAPI: {
+      s = "PhysicsRigidBodyAPI";
+      break;
+    }
+    case APISchemas::APIName::PhysicsCollisionAPI: {
+      s = "PhysicsCollisionAPI";
+      break;
+    }
+    case APISchemas::APIName::PhysicsMaterialAPI: {
+      s = "PhysicsMaterialAPI";
+      break;
+    }
+    case APISchemas::APIName::PhysicsMeshCollisionAPI: {
+      s = "PhysicsMeshCollisionAPI";
+      break;
+    }
+    case APISchemas::APIName::PhysicsMassAPI: {
+      s = "PhysicsMassAPI";
+      break;
+    }
+    case APISchemas::APIName::PhysicsFilteredPairsAPI: {
+      s = "PhysicsFilteredPairsAPI";
+      break;
+    }
+    case APISchemas::APIName::PhysicsArticulationRootAPI: {
+      s = "PhysicsArticulationRootAPI";
+      break;
+    }
+    case APISchemas::APIName::AssetPreviewsAPI: {
+      s = "AssetPreviewsAPI";
+      break;
+    }
+    // MuJoCo (mjcPhysics)
+    case APISchemas::APIName::MjcSceneAPI: {
+      s = "MjcSceneAPI";
+      break;
+    }
+    case APISchemas::APIName::MjcJointAPI: {
+      s = "MjcJointAPI";
+      break;
+    }
+    case APISchemas::APIName::MjcCollisionAPI: {
+      s = "MjcCollisionAPI";
+      break;
+    }
+    case APISchemas::APIName::MjcMeshCollisionAPI: {
+      s = "MjcMeshCollisionAPI";
+      break;
+    }
+    case APISchemas::APIName::MjcMaterialAPI: {
+      s = "MjcMaterialAPI";
+      break;
+    }
+    case APISchemas::APIName::MjcSiteAPI: {
+      s = "MjcSiteAPI";
+      break;
+    }
+    case APISchemas::APIName::MjcImageableAPI: {
+      s = "MjcImageableAPI";
+      break;
+    }
+    case APISchemas::APIName::MjcEqualityAPI: {
+      s = "MjcEqualityAPI";
+      break;
+    }
+    case APISchemas::APIName::MjcEqualityConnectAPI: {
+      s = "MjcEqualityConnectAPI";
+      break;
+    }
+    case APISchemas::APIName::MjcEqualityWeldAPI: {
+      s = "MjcEqualityWeldAPI";
+      break;
+    }
+    case APISchemas::APIName::MjcEqualityJointAPI: {
+      s = "MjcEqualityJointAPI";
+      break;
+    }
+    case APISchemas::APIName::PhysicsDriveAPI: {
+      s = "PhysicsDriveAPI";
+      break;
+    }
+    case APISchemas::APIName::PhysicsLimitAPI: {
+      s = "PhysicsLimitAPI";
+      break;
+    }
   }
 
   return s;

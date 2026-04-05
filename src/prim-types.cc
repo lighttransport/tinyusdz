@@ -16,6 +16,10 @@
 #include "usdLux.hh"
 #include "usdShade.hh"
 #include "usdSkel.hh"
+#include "mjcPhysics.hh"
+#include "usdPhysics.hh"
+#include "usdAR.hh"
+#include "usdMedia.hh"
 //
 #include "common-macros.inc"
 #include "pprint-meta.hh"
@@ -854,6 +858,12 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(GeomCamera)
   EXTRACT_NAME_AND_RETURN_PATH(GeomBasisCurves)
   EXTRACT_NAME_AND_RETURN_PATH(GeomNurbsCurves)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomPlane)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomCylinder_1)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomCapsule_1)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomTetMesh)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomNurbsPatch)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomHermiteCurves)
   EXTRACT_NAME_AND_RETURN_PATH(GeomPointInstancer)
   EXTRACT_NAME_AND_RETURN_PATH(DomeLight)
   EXTRACT_NAME_AND_RETURN_PATH(SphereLight)
@@ -863,6 +873,9 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(RectLight)
   EXTRACT_NAME_AND_RETURN_PATH(GeometryLight)
   EXTRACT_NAME_AND_RETURN_PATH(PortalLight)
+  EXTRACT_NAME_AND_RETURN_PATH(DomeLight_1)
+  EXTRACT_NAME_AND_RETURN_PATH(LightFilter)
+  EXTRACT_NAME_AND_RETURN_PATH(PluginLightFilter)
   EXTRACT_NAME_AND_RETURN_PATH(Material)
   EXTRACT_NAME_AND_RETURN_PATH(NodeGraph)
   EXTRACT_NAME_AND_RETURN_PATH(ShaderNode)
@@ -884,7 +897,29 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(SkelRoot)
   EXTRACT_NAME_AND_RETURN_PATH(Skeleton)
   EXTRACT_NAME_AND_RETURN_PATH(SkelAnimation)
-  EXTRACT_NAME_AND_RETURN_PATH(BlendShape) { return nonstd::nullopt; }
+  EXTRACT_NAME_AND_RETURN_PATH(BlendShape)
+  // UsdPhysics + mjcPhysics
+  EXTRACT_NAME_AND_RETURN_PATH(PhysicsJoint)
+  EXTRACT_NAME_AND_RETURN_PATH(PhysicsScene)
+  EXTRACT_NAME_AND_RETURN_PATH(PhysicsRevoluteJoint)
+  EXTRACT_NAME_AND_RETURN_PATH(PhysicsPrismaticJoint)
+  EXTRACT_NAME_AND_RETURN_PATH(PhysicsSphericalJoint)
+  EXTRACT_NAME_AND_RETURN_PATH(PhysicsFixedJoint)
+  EXTRACT_NAME_AND_RETURN_PATH(PhysicsDistanceJoint)
+  EXTRACT_NAME_AND_RETURN_PATH(PhysicsCollisionGroup)
+  EXTRACT_NAME_AND_RETURN_PATH(MjcActuator)
+  EXTRACT_NAME_AND_RETURN_PATH(MjcTendon)
+  EXTRACT_NAME_AND_RETURN_PATH(MjcKeyframe)
+  // AR/Interactive (Apple Preliminary_*)
+  EXTRACT_NAME_AND_RETURN_PATH(Preliminary_PhysicsGravitationalForce)
+  EXTRACT_NAME_AND_RETURN_PATH(Preliminary_InfiniteColliderPlane)
+  EXTRACT_NAME_AND_RETURN_PATH(Preliminary_ReferenceImage)
+  EXTRACT_NAME_AND_RETURN_PATH(Preliminary_Behavior)
+  EXTRACT_NAME_AND_RETURN_PATH(Preliminary_Trigger)
+  EXTRACT_NAME_AND_RETURN_PATH(Preliminary_Action)
+  EXTRACT_NAME_AND_RETURN_PATH(Preliminary_Text)
+  // usdMedia
+  EXTRACT_NAME_AND_RETURN_PATH(SpatialAudio) { return nonstd::nullopt; }
 
 #undef EXTRACT_NAME_AND_RETURN_PATH
 
@@ -915,6 +950,12 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   SET_ELEMENT_NAME(elementName, GeomCamera)
   SET_ELEMENT_NAME(elementName, GeomBasisCurves)
   SET_ELEMENT_NAME(elementName, GeomNurbsCurves)
+  SET_ELEMENT_NAME(elementName, GeomPlane)
+  SET_ELEMENT_NAME(elementName, GeomCylinder_1)
+  SET_ELEMENT_NAME(elementName, GeomCapsule_1)
+  SET_ELEMENT_NAME(elementName, GeomTetMesh)
+  SET_ELEMENT_NAME(elementName, GeomNurbsPatch)
+  SET_ELEMENT_NAME(elementName, GeomHermiteCurves)
   SET_ELEMENT_NAME(elementName, GeomPointInstancer)
   SET_ELEMENT_NAME(elementName, DomeLight)
   SET_ELEMENT_NAME(elementName, SphereLight)
@@ -924,6 +965,9 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   SET_ELEMENT_NAME(elementName, RectLight)
   SET_ELEMENT_NAME(elementName, GeometryLight)
   SET_ELEMENT_NAME(elementName, PortalLight)
+  SET_ELEMENT_NAME(elementName, DomeLight_1)
+  SET_ELEMENT_NAME(elementName, LightFilter)
+  SET_ELEMENT_NAME(elementName, PluginLightFilter)
   SET_ELEMENT_NAME(elementName, Material)
   SET_ELEMENT_NAME(elementName, NodeGraph)
   SET_ELEMENT_NAME(elementName, ShaderNode)
@@ -945,7 +989,29 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   SET_ELEMENT_NAME(elementName, SkelRoot)
   SET_ELEMENT_NAME(elementName, Skeleton)
   SET_ELEMENT_NAME(elementName, SkelAnimation)
-  SET_ELEMENT_NAME(elementName, BlendShape) { return false; }
+  SET_ELEMENT_NAME(elementName, BlendShape)
+  // UsdPhysics + mjcPhysics
+  SET_ELEMENT_NAME(elementName, PhysicsJoint)
+  SET_ELEMENT_NAME(elementName, PhysicsScene)
+  SET_ELEMENT_NAME(elementName, PhysicsRevoluteJoint)
+  SET_ELEMENT_NAME(elementName, PhysicsPrismaticJoint)
+  SET_ELEMENT_NAME(elementName, PhysicsSphericalJoint)
+  SET_ELEMENT_NAME(elementName, PhysicsFixedJoint)
+  SET_ELEMENT_NAME(elementName, PhysicsDistanceJoint)
+  SET_ELEMENT_NAME(elementName, PhysicsCollisionGroup)
+  SET_ELEMENT_NAME(elementName, MjcActuator)
+  SET_ELEMENT_NAME(elementName, MjcTendon)
+  SET_ELEMENT_NAME(elementName, MjcKeyframe)
+  // AR/Interactive (Apple Preliminary_*)
+  SET_ELEMENT_NAME(elementName, Preliminary_PhysicsGravitationalForce)
+  SET_ELEMENT_NAME(elementName, Preliminary_InfiniteColliderPlane)
+  SET_ELEMENT_NAME(elementName, Preliminary_ReferenceImage)
+  SET_ELEMENT_NAME(elementName, Preliminary_Behavior)
+  SET_ELEMENT_NAME(elementName, Preliminary_Trigger)
+  SET_ELEMENT_NAME(elementName, Preliminary_Action)
+  SET_ELEMENT_NAME(elementName, Preliminary_Text)
+  // usdMedia
+  SET_ELEMENT_NAME(elementName, SpatialAudio) { return false; }
 
 #undef SET_ELEMENT_NAME
 

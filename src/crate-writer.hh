@@ -434,6 +434,24 @@ private:
   /// Extract NurbsCurves-specific properties (order, knots, ranges, pointWeights, points, etc.)
   bool ExtractNurbsCurvesProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
+  /// Extract GeomPlane properties
+  bool ExtractGeomPlaneProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract GeomCylinder_1 properties
+  bool ExtractGeomCylinder1Properties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract GeomCapsule_1 properties
+  bool ExtractGeomCapsule1Properties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract GeomTetMesh properties
+  bool ExtractGeomTetMeshProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract GeomNurbsPatch properties
+  bool ExtractGeomNurbsPatchProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract GeomHermiteCurves properties
+  bool ExtractGeomHermiteCurvesProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
   /// Extract PointInstancer-specific properties (protoIndices, positions, orientations, scales, velocities, etc.)
   bool ExtractPointInstancerProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
@@ -467,6 +485,15 @@ private:
   /// Extract PortalLight properties (geometry relationship, color, intensity, exposure)
   bool ExtractPortalLightProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
+  /// Extract DomeLight_1 properties
+  bool ExtractDomeLight1Properties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract LightFilter properties
+  bool ExtractLightFilterProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract PluginLightFilter properties
+  bool ExtractPluginLightFilterProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
   /// Extract Skeleton properties (jointNames, joints, bindTransforms, restTransforms)
   bool ExtractSkeletonProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
@@ -475,6 +502,31 @@ private:
 
   /// Extract SkelRoot properties (visibility, purpose, extent)
   bool ExtractSkelRootProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract Physics prim properties
+  bool ExtractPhysicsJointProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPhysicsSceneProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPhysicsRevoluteJointProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPhysicsPrismaticJointProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPhysicsSphericalJointProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPhysicsFixedJointProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPhysicsDistanceJointProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPhysicsCollisionGroupProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractMjcActuatorProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractMjcTendonProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractMjcKeyframeProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract AR/Interactive prim properties (Apple Preliminary_*)
+  bool ExtractPreliminaryGravitationalForceProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPreliminaryInfiniteColliderPlaneProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPreliminaryReferenceImageProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPreliminaryBehaviorProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPreliminaryTriggerProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPreliminaryActionProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPreliminaryTextProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract usdMedia prim properties
+  bool ExtractSpatialAudioProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract PrimMeta fields (kind, active, hidden, customData, apiSchemas, references, payload, inherits, specializes, etc.)
   void ExtractPrimMeta(const PrimMeta& metas, crate::FieldValuePairVector& fields);

@@ -1,0 +1,39 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    upAxis = "Y"
+)
+
+def Xform "Root"
+{
+    def Preliminary_Trigger "TapTrigger"
+    {
+        uniform token info:id = "TapGesture"
+    }
+
+    def Preliminary_Action "HideAction"
+    {
+        uniform token info:id = "Hide"
+        uniform token multiplePerformOperation = "ignore"
+    }
+
+    def Preliminary_Behavior "TapBehavior"
+    {
+        rel triggers = </Root/TapTrigger>
+        rel actions = </Root/HideAction>
+        uniform bool exclusive = true
+    }
+
+    def Preliminary_Text "HelloText"
+    {
+        string content = "Hello AR World"
+        string[] font = ["Helvetica", "Arial"]
+        float pointSize = 72
+        float width = 10
+        float height = 5
+        float depth = 0.5
+        token wrapMode = "flowing"
+        token horizontalAlignment = "center"
+        token verticalAlignment = "middle"
+    }
+}
