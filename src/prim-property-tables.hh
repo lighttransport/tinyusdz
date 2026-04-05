@@ -178,6 +178,87 @@
   X("axis", Axis, AxisEnumHandler, axis)
 
 // ============================================================================
+// GeomPlane Properties
+// ============================================================================
+#define GEOM_PLANE_TYPED_ATTRS(X) \
+  X("width", width) \
+  X("length", length)
+
+#define GEOM_PLANE_UNIFORM_ENUMS(X) \
+  X("axis", Axis, AxisEnumHandler, axis)
+
+// ============================================================================
+// GeomCylinder_1 Properties
+// ============================================================================
+#define GEOM_CYLINDER_1_TYPED_ATTRS(X) \
+  X("height", height) \
+  X("radiusTop", radiusTop) \
+  X("radiusBottom", radiusBottom)
+
+#define GEOM_CYLINDER_1_UNIFORM_ENUMS(X) \
+  X("axis", Axis, AxisEnumHandler, axis)
+
+// ============================================================================
+// GeomCapsule_1 Properties
+// ============================================================================
+#define GEOM_CAPSULE_1_TYPED_ATTRS(X) \
+  X("height", height) \
+  X("radiusTop", radiusTop) \
+  X("radiusBottom", radiusBottom)
+
+#define GEOM_CAPSULE_1_UNIFORM_ENUMS(X) \
+  X("axis", Axis, AxisEnumHandler, axis)
+
+// ============================================================================
+// GeomTetMesh Properties
+// ============================================================================
+#define GEOM_TET_MESH_TYPED_ATTRS(X) \
+  X("points", points) \
+  X("velocities", velocities) \
+  X("accelerations", accelerations) \
+  X("normals", normals) \
+  X("tetVertexIndices", tetVertexIndices) \
+  X("surfaceFaceVertexIndices", surfaceFaceVertexIndices)
+
+// ============================================================================
+// GeomNurbsPatch Properties
+// ============================================================================
+#define GEOM_NURBS_PATCH_TYPED_ATTRS(X) \
+  X("points", points) \
+  X("velocities", velocities) \
+  X("accelerations", accelerations) \
+  X("normals", normals) \
+  X("uVertexCount", uVertexCount) \
+  X("vVertexCount", vVertexCount) \
+  X("uOrder", uOrder) \
+  X("vOrder", vOrder) \
+  X("uKnots", uKnots) \
+  X("vKnots", vKnots) \
+  X("uForm", uForm) \
+  X("vForm", vForm) \
+  X("uRange", uRange) \
+  X("vRange", vRange) \
+  X("pointWeights", pointWeights) \
+  X("trimCurve:counts", trimCurve_counts) \
+  X("trimCurve:orders", trimCurve_orders) \
+  X("trimCurve:vertexCounts", trimCurve_vertexCounts) \
+  X("trimCurve:knots", trimCurve_knots) \
+  X("trimCurve:ranges", trimCurve_ranges) \
+  X("trimCurve:points", trimCurve_points)
+
+// ============================================================================
+// GeomHermiteCurves Properties
+// ============================================================================
+#define GEOM_HERMITE_CURVES_TYPED_ATTRS(X) \
+  X("points", points) \
+  X("velocities", velocities) \
+  X("accelerations", accelerations) \
+  X("normals", normals) \
+  X("curveVertexCounts", curveVertexCounts) \
+  X("widths", widths) \
+  X("tangents", tangents)
+
+// ============================================================================
 // Skeleton Properties
 // ============================================================================
 #define SKELETON_TYPED_ATTRS(X) \
@@ -346,4 +427,277 @@
 // Expand extent attribute
 #define EXPAND_EXTENT(name, member) \
   PARSE_EXTENT_ATTRIBUTE(table, prop, name, PRIM_CLASS_, PRIM_PTR_->member)
+
+// ============================================================================
+// UsdPhysics Property Tables
+// ============================================================================
+
+#define PHYSICS_SCENE_TYPED_ATTRS(X) \
+  X("physics:gravityDirection", gravityDirection) \
+  X("physics:gravityMagnitude", gravityMagnitude)
+
+// PhysicsJointBase attributes shared by all joint types
+#define PHYSICS_JOINT_BASE_TYPED_ATTRS(X) \
+  X("physics:localPos0", localPos0) \
+  X("physics:localPos1", localPos1) \
+  X("physics:localRot0", localRot0) \
+  X("physics:localRot1", localRot1) \
+  X("physics:jointEnabled", jointEnabled) \
+  X("physics:collisionEnabled", collisionEnabled) \
+  X("physics:breakForce", breakForce) \
+  X("physics:breakTorque", breakTorque) \
+  X("physics:excludeFromArticulation", excludeFromArticulation)
+
+#define PHYSICS_JOINT_BASE_RELS(X) \
+  X("physics:body0", body0) \
+  X("physics:body1", body1)
+
+#define PHYSICS_REVOLUTE_JOINT_TYPED_ATTRS(X) \
+  X("physics:axis", axis) \
+  X("physics:lowerLimit", lowerLimit) \
+  X("physics:upperLimit", upperLimit)
+
+#define PHYSICS_PRISMATIC_JOINT_TYPED_ATTRS(X) \
+  X("physics:axis", axis) \
+  X("physics:lowerLimit", lowerLimit) \
+  X("physics:upperLimit", upperLimit)
+
+#define PHYSICS_SPHERICAL_JOINT_TYPED_ATTRS(X) \
+  X("physics:axis", axis) \
+  X("physics:coneAngle0Limit", coneAngle0Limit) \
+  X("physics:coneAngle1Limit", coneAngle1Limit)
+
+#define PHYSICS_DISTANCE_JOINT_TYPED_ATTRS(X) \
+  X("physics:minDistance", minDistance) \
+  X("physics:maxDistance", maxDistance)
+
+// ============================================================================
+// mjcPhysics Property Tables
+// ============================================================================
+
+// MjcSceneAPI option attributes (on PhysicsScene)
+#define MJC_SCENE_OPTION_TYPED_ATTRS(X) \
+  X("mjc:option:timestep", mjcScene->timestep) \
+  X("mjc:option:impratio", mjcScene->impratio) \
+  X("mjc:option:wind", mjcScene->wind) \
+  X("mjc:option:magnetic", mjcScene->magnetic) \
+  X("mjc:option:density", mjcScene->density) \
+  X("mjc:option:viscosity", mjcScene->viscosity) \
+  X("mjc:option:o_margin", mjcScene->o_margin) \
+  X("mjc:option:o_solref", mjcScene->o_solref) \
+  X("mjc:option:o_solimp", mjcScene->o_solimp) \
+  X("mjc:option:o_friction", mjcScene->o_friction) \
+  X("mjc:option:integrator", mjcScene->integrator) \
+  X("mjc:option:cone", mjcScene->cone) \
+  X("mjc:option:jacobian", mjcScene->jacobian) \
+  X("mjc:option:solver", mjcScene->solver) \
+  X("mjc:option:iterations", mjcScene->iterations) \
+  X("mjc:option:tolerance", mjcScene->tolerance) \
+  X("mjc:option:ls_iterations", mjcScene->ls_iterations) \
+  X("mjc:option:ls_tolerance", mjcScene->ls_tolerance) \
+  X("mjc:option:noslip_iterations", mjcScene->noslip_iterations) \
+  X("mjc:option:noslip_tolerance", mjcScene->noslip_tolerance) \
+  X("mjc:option:ccd_iterations", mjcScene->ccd_iterations) \
+  X("mjc:option:ccd_tolerance", mjcScene->ccd_tolerance) \
+  X("mjc:option:sdf_iterations", mjcScene->sdf_iterations) \
+  X("mjc:option:sdf_initpoints", mjcScene->sdf_initpoints) \
+  X("mjc:option:actuatorgroupdisable", mjcScene->actuatorgroupdisable)
+
+// MjcSceneAPI flag attributes
+#define MJC_SCENE_FLAG_TYPED_ATTRS(X) \
+  X("mjc:flag:constraint", mjcScene->flag_constraint) \
+  X("mjc:flag:equality", mjcScene->flag_equality) \
+  X("mjc:flag:frictionloss", mjcScene->flag_frictionloss) \
+  X("mjc:flag:limit", mjcScene->flag_limit) \
+  X("mjc:flag:contact", mjcScene->flag_contact) \
+  X("mjc:flag:spring", mjcScene->flag_spring) \
+  X("mjc:flag:damper", mjcScene->flag_damper) \
+  X("mjc:flag:gravity", mjcScene->flag_gravity) \
+  X("mjc:flag:clampctrl", mjcScene->flag_clampctrl) \
+  X("mjc:flag:warmstart", mjcScene->flag_warmstart) \
+  X("mjc:flag:filterparent", mjcScene->flag_filterparent) \
+  X("mjc:flag:actuation", mjcScene->flag_actuation) \
+  X("mjc:flag:refsafe", mjcScene->flag_refsafe) \
+  X("mjc:flag:sensor", mjcScene->flag_sensor) \
+  X("mjc:flag:midphase", mjcScene->flag_midphase) \
+  X("mjc:flag:nativeccd", mjcScene->flag_nativeccd) \
+  X("mjc:flag:eulerdamp", mjcScene->flag_eulerdamp) \
+  X("mjc:flag:autoreset", mjcScene->flag_autoreset) \
+  X("mjc:flag:island", mjcScene->flag_island) \
+  X("mjc:flag:override", mjcScene->flag_override) \
+  X("mjc:flag:energy", mjcScene->flag_energy) \
+  X("mjc:flag:fwdinv", mjcScene->flag_fwdinv) \
+  X("mjc:flag:invdiscrete", mjcScene->flag_invdiscrete) \
+  X("mjc:flag:multiccd", mjcScene->flag_multiccd)
+
+// MjcSceneAPI compiler attributes
+#define MJC_SCENE_COMPILER_TYPED_ATTRS(X) \
+  X("mjc:compiler:autoLimits", mjcScene->compiler_autoLimits) \
+  X("mjc:compiler:boundMass", mjcScene->compiler_boundMass) \
+  X("mjc:compiler:boundInertia", mjcScene->compiler_boundInertia) \
+  X("mjc:compiler:setTotalMass", mjcScene->compiler_setTotalMass) \
+  X("mjc:compiler:useThread", mjcScene->compiler_useThread) \
+  X("mjc:compiler:balanceInertia", mjcScene->compiler_balanceInertia) \
+  X("mjc:compiler:angle", mjcScene->compiler_angle) \
+  X("mjc:compiler:fitAABB", mjcScene->compiler_fitAABB) \
+  X("mjc:compiler:fuseStatic", mjcScene->compiler_fuseStatic) \
+  X("mjc:compiler:inertiaFromGeom", mjcScene->compiler_inertiaFromGeom) \
+  X("mjc:compiler:alignFree", mjcScene->compiler_alignFree) \
+  X("mjc:compiler:inertiaGroupRange:min", mjcScene->compiler_inertiaGroupRangeMin) \
+  X("mjc:compiler:inertiaGroupRange:max", mjcScene->compiler_inertiaGroupRangeMax) \
+  X("mjc:compiler:saveInertial", mjcScene->compiler_saveInertial)
+
+// MjcJointAPI attributes (on PhysicsJoint prims, accessed via mjcJoint->)
+#define MJC_JOINT_TYPED_ATTRS(X) \
+  X("mjc:group", mjcJoint->group) \
+  X("mjc:stiffness", mjcJoint->stiffness) \
+  X("mjc:damping", mjcJoint->damping) \
+  X("mjc:armature", mjcJoint->armature) \
+  X("mjc:frictionloss", mjcJoint->frictionloss) \
+  X("mjc:springdamper", mjcJoint->springdamper) \
+  X("mjc:springref", mjcJoint->springref) \
+  X("mjc:ref", mjcJoint->ref) \
+  X("mjc:margin", mjcJoint->margin) \
+  X("mjc:solreflimit", mjcJoint->solreflimit) \
+  X("mjc:solimplimit", mjcJoint->solimplimit) \
+  X("mjc:solreffriction", mjcJoint->solreffriction) \
+  X("mjc:solimpfriction", mjcJoint->solimpfriction) \
+  X("mjc:actuatorfrcrange:min", mjcJoint->actuatorfrcrange_min) \
+  X("mjc:actuatorfrcrange:max", mjcJoint->actuatorfrcrange_max) \
+  X("mjc:actuatorfrclimited", mjcJoint->actuatorfrclimited) \
+  X("mjc:actuatorgravcomp", mjcJoint->actuatorgravcomp)
+
+// MjcActuator attributes
+#define MJC_ACTUATOR_TYPED_ATTRS(X) \
+  X("mjc:group", group) \
+  X("mjc:ctrlLimited", ctrlLimited) \
+  X("mjc:forceLimited", forceLimited) \
+  X("mjc:actLimited", actLimited) \
+  X("mjc:ctrlRange:min", ctrlRange_min) \
+  X("mjc:ctrlRange:max", ctrlRange_max) \
+  X("mjc:forceRange:min", forceRange_min) \
+  X("mjc:forceRange:max", forceRange_max) \
+  X("mjc:actRange:min", actRange_min) \
+  X("mjc:actRange:max", actRange_max) \
+  X("mjc:lengthRange:min", lengthRange_min) \
+  X("mjc:lengthRange:max", lengthRange_max) \
+  X("mjc:gear", gear) \
+  X("mjc:crankLength", crankLength) \
+  X("mjc:jointInParent", jointInParent) \
+  X("mjc:actDim", actDim) \
+  X("mjc:dynType", dynType) \
+  X("mjc:gainType", gainType) \
+  X("mjc:biasType", biasType) \
+  X("mjc:dynPrm", dynPrm) \
+  X("mjc:gainPrm", gainPrm) \
+  X("mjc:biasPrm", biasPrm) \
+  X("mjc:actEarly", actEarly) \
+  X("mjc:inheritRange", inheritRange)
+
+#define MJC_ACTUATOR_RELS(X) \
+  X("mjc:target", target) \
+  X("mjc:refSite", refSite) \
+  X("mjc:sliderSite", sliderSite)
+
+// MjcTendon attributes
+#define MJC_TENDON_TYPED_ATTRS(X) \
+  X("mjc:type", type) \
+  X("mjc:path:indices", path_indices) \
+  X("mjc:sideSites:indices", sideSites_indices) \
+  X("mjc:path:segments", path_segments) \
+  X("mjc:path:divisors", path_divisors) \
+  X("mjc:path:coef", path_coef) \
+  X("mjc:group", group) \
+  X("mjc:limited", limited) \
+  X("mjc:actuatorfrclimited", actuatorfrclimited) \
+  X("mjc:range:min", range_min) \
+  X("mjc:range:max", range_max) \
+  X("mjc:actuatorfrcrange:min", actuatorfrcrange_min) \
+  X("mjc:actuatorfrcrange:max", actuatorfrcrange_max) \
+  X("mjc:solreflimit", solreflimit) \
+  X("mjc:solimplimit", solimplimit) \
+  X("mjc:solreffriction", solreffriction) \
+  X("mjc:solimpfriction", solimpfriction) \
+  X("mjc:margin", margin) \
+  X("mjc:frictionloss", frictionloss) \
+  X("mjc:springlength", springlength) \
+  X("mjc:stiffness", stiffness) \
+  X("mjc:damping", damping) \
+  X("mjc:armature", armature) \
+  X("mjc:width", width) \
+  X("mjc:rgba", rgba)
+
+#define MJC_TENDON_RELS(X) \
+  X("mjc:path", path) \
+  X("mjc:sideSites", sideSites)
+
+// MjcKeyframe attributes
+#define MJC_KEYFRAME_TYPED_ATTRS(X) \
+  X("mjc:qpos", qpos) \
+  X("mjc:qvel", qvel) \
+  X("mjc:act", act) \
+  X("mjc:ctrl", ctrl) \
+  X("mjc:mpos", mpos) \
+  X("mjc:mquat", mquat)
+
+// PhysicsCollisionGroup
+#define PHYSICS_COLLISION_GROUP_TYPED_ATTRS(X) \
+  X("physics:mergeGroup", mergeGroup) \
+  X("physics:invertFilteredGroups", invertFilteredGroups)
+
+#define PHYSICS_COLLISION_GROUP_RELS(X) \
+  X("physics:filteredGroups", filteredGroups)
+
+// ============================================================================
+// AR/Interactive Property Tables (Apple Preliminary_* schemas)
+// ============================================================================
+
+#define PRELIMINARY_GRAVITATIONAL_FORCE_TYPED_ATTRS(X) \
+  X("physics:gravitationalForce:acceleration", acceleration)
+
+#define PRELIMINARY_INFINITE_COLLIDER_PLANE_TYPED_ATTRS(X) \
+  X("position", position) \
+  X("normal", normal)
+
+#define PRELIMINARY_REFERENCE_IMAGE_TYPED_ATTRS(X) \
+  X("image", image) \
+  X("physicalWidth", physicalWidth)
+
+#define PRELIMINARY_BEHAVIOR_TYPED_ATTRS(X) \
+  X("exclusive", exclusive)
+
+#define PRELIMINARY_BEHAVIOR_RELS(X) \
+  X("triggers", triggers) \
+  X("actions", actions)
+
+#define PRELIMINARY_TRIGGER_TYPED_ATTRS(X) \
+  X("info:id", info_id)
+
+#define PRELIMINARY_ACTION_TYPED_ATTRS(X) \
+  X("info:id", info_id) \
+  X("multiplePerformOperation", multiplePerformOperation)
+
+#define PRELIMINARY_TEXT_TYPED_ATTRS(X) \
+  X("content", content) \
+  X("font", font) \
+  X("pointSize", pointSize) \
+  X("width", width) \
+  X("height", height) \
+  X("depth", depth) \
+  X("wrapMode", wrapMode) \
+  X("horizontalAlignment", horizontalAlignment) \
+  X("verticalAlignment", verticalAlignment)
+
+// ============================================================================
+// usdMedia Property Tables
+// ============================================================================
+
+#define SPATIAL_AUDIO_TYPED_ATTRS(X) \
+  X("filePath", filePath) \
+  X("auralMode", auralMode) \
+  X("playbackMode", playbackMode) \
+  X("startTime", startTime) \
+  X("endTime", endTime) \
+  X("mediaOffset", mediaOffset) \
+  X("gain", gain)
 

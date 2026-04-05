@@ -892,6 +892,12 @@ namespace value {
   __FUNC(GeomCone)              \
   __FUNC(GeomBasisCurves)       \
   __FUNC(GeomNurbsCurves)       \
+  __FUNC(GeomPlane)             \
+  __FUNC(GeomCylinder_1)        \
+  __FUNC(GeomCapsule_1)         \
+  __FUNC(GeomTetMesh)           \
+  __FUNC(GeomNurbsPatch)        \
+  __FUNC(GeomHermiteCurves)     \
   __FUNC(GeomCamera)            \
   __FUNC(GeomPointInstancer)        \
   __FUNC(SphereLight)           \
@@ -902,13 +908,35 @@ namespace value {
   __FUNC(RectLight)             \
   __FUNC(GeometryLight)         \
   __FUNC(PortalLight)           \
+  __FUNC(DomeLight_1)           \
+  __FUNC(LightFilter)           \
+  __FUNC(PluginLightFilter)     \
   __FUNC(SkelRoot)              \
   __FUNC(Skeleton)              \
   __FUNC(SkelAnimation)         \
   __FUNC(BlendShape)            \
   __FUNC(Material)              \
   __FUNC(Shader)                \
-  __FUNC(NodeGraph)
+  __FUNC(NodeGraph)             \
+  __FUNC(PhysicsJoint)           \
+  __FUNC(PhysicsScene)          \
+  __FUNC(PhysicsRevoluteJoint)  \
+  __FUNC(PhysicsPrismaticJoint) \
+  __FUNC(PhysicsSphericalJoint) \
+  __FUNC(PhysicsFixedJoint)     \
+  __FUNC(PhysicsDistanceJoint)  \
+  __FUNC(PhysicsCollisionGroup) \
+  __FUNC(MjcActuator)           \
+  __FUNC(MjcTendon)             \
+  __FUNC(MjcKeyframe)           \
+  __FUNC(Preliminary_PhysicsGravitationalForce) \
+  __FUNC(Preliminary_InfiniteColliderPlane) \
+  __FUNC(Preliminary_ReferenceImage) \
+  __FUNC(Preliminary_Behavior)  \
+  __FUNC(Preliminary_Trigger)   \
+  __FUNC(Preliminary_Action)    \
+  __FUNC(Preliminary_Text)      \
+  __FUNC(SpatialAudio)
 
 
 std::string pprint_value(const value::Value &v, const uint32_t indent,

@@ -13,6 +13,10 @@
 #endif
 
 #include "usdc-reader-impl.hh"
+#include "usdPhysics.hh"
+#include "usdAR.hh"
+#include "usdMedia.hh"
+#include "mjcPhysics.hh"
 
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDC_READER)
 
@@ -136,6 +140,12 @@ INSTANTIATE_RECONSTRUCT_PRIM(GeomSphere);
 INSTANTIATE_RECONSTRUCT_PRIM(GeomSubset);
 INSTANTIATE_RECONSTRUCT_PRIM(GeomBasisCurves);
 INSTANTIATE_RECONSTRUCT_PRIM(GeomNurbsCurves);
+INSTANTIATE_RECONSTRUCT_PRIM(GeomPlane);
+INSTANTIATE_RECONSTRUCT_PRIM(GeomCylinder_1);
+INSTANTIATE_RECONSTRUCT_PRIM(GeomCapsule_1);
+INSTANTIATE_RECONSTRUCT_PRIM(GeomTetMesh);
+INSTANTIATE_RECONSTRUCT_PRIM(GeomNurbsPatch);
+INSTANTIATE_RECONSTRUCT_PRIM(GeomHermiteCurves);
 INSTANTIATE_RECONSTRUCT_PRIM(GeomCamera);
 INSTANTIATE_RECONSTRUCT_PRIM(GeomPointInstancer);
 INSTANTIATE_RECONSTRUCT_PRIM(SphereLight);
@@ -145,6 +155,9 @@ INSTANTIATE_RECONSTRUCT_PRIM(DistantLight);
 INSTANTIATE_RECONSTRUCT_PRIM(CylinderLight);
 INSTANTIATE_RECONSTRUCT_PRIM(RectLight);
 INSTANTIATE_RECONSTRUCT_PRIM(GeometryLight);
+INSTANTIATE_RECONSTRUCT_PRIM(DomeLight_1);
+INSTANTIATE_RECONSTRUCT_PRIM(LightFilter);
+INSTANTIATE_RECONSTRUCT_PRIM(PluginLightFilter);
 INSTANTIATE_RECONSTRUCT_PRIM(SkelRoot);
 INSTANTIATE_RECONSTRUCT_PRIM(SkelAnimation);
 INSTANTIATE_RECONSTRUCT_PRIM(Skeleton);
@@ -152,6 +165,28 @@ INSTANTIATE_RECONSTRUCT_PRIM(BlendShape);
 INSTANTIATE_RECONSTRUCT_PRIM(Material);
 INSTANTIATE_RECONSTRUCT_PRIM(Shader);
 INSTANTIATE_RECONSTRUCT_PRIM(NodeGraph);
+// UsdPhysics + mjcPhysics
+INSTANTIATE_RECONSTRUCT_PRIM(PhysicsJoint);
+INSTANTIATE_RECONSTRUCT_PRIM(PhysicsScene);
+INSTANTIATE_RECONSTRUCT_PRIM(PhysicsRevoluteJoint);
+INSTANTIATE_RECONSTRUCT_PRIM(PhysicsPrismaticJoint);
+INSTANTIATE_RECONSTRUCT_PRIM(PhysicsSphericalJoint);
+INSTANTIATE_RECONSTRUCT_PRIM(PhysicsFixedJoint);
+INSTANTIATE_RECONSTRUCT_PRIM(PhysicsDistanceJoint);
+INSTANTIATE_RECONSTRUCT_PRIM(PhysicsCollisionGroup);
+INSTANTIATE_RECONSTRUCT_PRIM(MjcActuator);
+INSTANTIATE_RECONSTRUCT_PRIM(MjcTendon);
+INSTANTIATE_RECONSTRUCT_PRIM(MjcKeyframe);
+// AR/Interactive (Apple Preliminary_*)
+INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_PhysicsGravitationalForce);
+INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_InfiniteColliderPlane);
+INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_ReferenceImage);
+INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_Behavior);
+INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_Trigger);
+INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_Action);
+INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_Text);
+// usdMedia
+INSTANTIATE_RECONSTRUCT_PRIM(SpatialAudio);
 
 #undef INSTANTIATE_RECONSTRUCT_PRIM
 
@@ -462,6 +497,12 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(GeomCapsule, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomBasisCurves, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomNurbsCurves, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomPlane, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomCylinder_1, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomCapsule_1, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomTetMesh, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomNurbsPatch, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomHermiteCurves, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomPointInstancer, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomCamera, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomSubset, typeName, prim_name, spec)
@@ -472,12 +513,37 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(DistantLight, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(RectLight, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeometryLight, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(DomeLight_1, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(LightFilter, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(PluginLightFilter, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(SkelRoot, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Skeleton, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(SkelAnimation, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(BlendShape, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Shader, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(NodeGraph, typeName, prim_name, spec)
+  // UsdPhysics + mjcPhysics
+  RECONSTRUCT_PRIM(PhysicsJoint, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(PhysicsScene, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(PhysicsRevoluteJoint, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(PhysicsPrismaticJoint, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(PhysicsSphericalJoint, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(PhysicsFixedJoint, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(PhysicsDistanceJoint, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(PhysicsCollisionGroup, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(MjcActuator, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(MjcTendon, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(MjcKeyframe, typeName, prim_name, spec)
+  // AR/Interactive (Apple Preliminary_*)
+  RECONSTRUCT_PRIM(Preliminary_PhysicsGravitationalForce, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Preliminary_InfiniteColliderPlane, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Preliminary_ReferenceImage, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Preliminary_Behavior, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Preliminary_Trigger, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Preliminary_Action, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Preliminary_Text, typeName, prim_name, spec)
+  // usdMedia
+  RECONSTRUCT_PRIM(SpatialAudio, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Material, typeName, prim_name, spec) {
     PUSH_WARN("TODO or unsupported prim type: " << typeName);
     if (is_unsupported_prim) {

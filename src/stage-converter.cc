@@ -951,6 +951,18 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractBasisCurvesProperties(prim, prim_path, fields, err);
   } else if (type_name == "NurbsCurves") {
     return ExtractNurbsCurvesProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Plane") {
+    return ExtractGeomPlaneProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Cylinder_1") {
+    return ExtractGeomCylinder1Properties(prim, prim_path, fields, err);
+  } else if (type_name == "Capsule_1") {
+    return ExtractGeomCapsule1Properties(prim, prim_path, fields, err);
+  } else if (type_name == "TetMesh") {
+    return ExtractGeomTetMeshProperties(prim, prim_path, fields, err);
+  } else if (type_name == "NurbsPatch") {
+    return ExtractGeomNurbsPatchProperties(prim, prim_path, fields, err);
+  } else if (type_name == "HermiteCurves") {
+    return ExtractGeomHermiteCurvesProperties(prim, prim_path, fields, err);
   } else if (type_name == "PointInstancer") {
     return ExtractPointInstancerProperties(prim, prim_path, fields, err);
   } else if (type_name == "GeomSubset") {
@@ -979,12 +991,61 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractGeometryLightProperties(prim, prim_path, fields, err);
   } else if (type_name == "PortalLight") {
     return ExtractPortalLightProperties(prim, prim_path, fields, err);
+  } else if (type_name == "DomeLight_1") {
+    return ExtractDomeLight1Properties(prim, prim_path, fields, err);
+  } else if (type_name == "LightFilter") {
+    return ExtractLightFilterProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PluginLightFilter") {
+    return ExtractPluginLightFilterProperties(prim, prim_path, fields, err);
   } else if (type_name == "Skeleton") {
     return ExtractSkeletonProperties(prim, prim_path, fields, err);
   } else if (type_name == "SkelAnimation") {
     return ExtractSkelAnimationProperties(prim, prim_path, fields, err);
   } else if (type_name == "SkelRoot") {
     return ExtractSkelRootProperties(prim, prim_path, fields, err);
+  }
+
+  // UsdPhysics + mjcPhysics
+  else if (type_name == "PhysicsJoint") {
+    return ExtractPhysicsJointProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsScene") {
+    return ExtractPhysicsSceneProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsRevoluteJoint") {
+    return ExtractPhysicsRevoluteJointProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsPrismaticJoint") {
+    return ExtractPhysicsPrismaticJointProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsSphericalJoint") {
+    return ExtractPhysicsSphericalJointProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsFixedJoint") {
+    return ExtractPhysicsFixedJointProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsDistanceJoint") {
+    return ExtractPhysicsDistanceJointProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsCollisionGroup") {
+    return ExtractPhysicsCollisionGroupProperties(prim, prim_path, fields, err);
+  } else if (type_name == "MjcActuator") {
+    return ExtractMjcActuatorProperties(prim, prim_path, fields, err);
+  } else if (type_name == "MjcTendon") {
+    return ExtractMjcTendonProperties(prim, prim_path, fields, err);
+  } else if (type_name == "MjcKeyframe") {
+    return ExtractMjcKeyframeProperties(prim, prim_path, fields, err);
+  // AR/Interactive (Apple Preliminary_*)
+  } else if (type_name == "Preliminary_PhysicsGravitationalForce") {
+    return ExtractPreliminaryGravitationalForceProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Preliminary_InfiniteColliderPlane") {
+    return ExtractPreliminaryInfiniteColliderPlaneProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Preliminary_ReferenceImage") {
+    return ExtractPreliminaryReferenceImageProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Preliminary_Behavior") {
+    return ExtractPreliminaryBehaviorProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Preliminary_Trigger") {
+    return ExtractPreliminaryTriggerProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Preliminary_Action") {
+    return ExtractPreliminaryActionProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Preliminary_Text") {
+    return ExtractPreliminaryTextProperties(prim, prim_path, fields, err);
+  // usdMedia
+  } else if (type_name == "SpatialAudio") {
+    return ExtractSpatialAudioProperties(prim, prim_path, fields, err);
   }
 
   // For unknown types or types without specific handlers,

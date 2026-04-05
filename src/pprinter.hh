@@ -19,6 +19,10 @@
 #include "usdLux.hh"
 #include "usdShade.hh"
 #include "usdSkel.hh"
+#include "usdPhysics.hh"
+#include "usdAR.hh"
+#include "usdMedia.hh"
+#include "mjcPhysics.hh"
 #include "core/model-scope.hh"  // Model, Scope
 #include "core/layer-types.hh"  // LayerMetas
 #include "layer.hh"             // Layer
@@ -66,6 +70,18 @@ std::string to_string(const GeomSubset::FamilyType ty);
 std::string to_string(const GeomBasisCurves::Wrap &v);
 std::string to_string(const GeomBasisCurves::Type &v);
 std::string to_string(const GeomBasisCurves::Basis &v);
+std::string to_string(const GeomPlane &geom, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const GeomCylinder_1 &geom, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const GeomCapsule_1 &geom, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const GeomTetMesh &geom, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const GeomNurbsPatch &geom, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const GeomHermiteCurves &geom, const uint32_t indent = 0,
+                      bool closing_brace = true);
 std::string to_string(const GeomPointInstancer &instancer,
                       const uint32_t indent = 0, bool closing_brace = true);
 
@@ -86,6 +102,50 @@ std::string to_string(const SkelAnimation &anim, const uint32_t indent = 0,
 std::string to_string(const BlendShape &bs, const uint32_t indent = 0,
                       bool closing_brace = true);
 
+// Physics prim to_string (defined in pprint-physics.cc)
+std::string to_string(const PhysicsJoint &joint, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const PhysicsScene &scene, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const PhysicsRevoluteJoint &joint, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const PhysicsPrismaticJoint &joint, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const PhysicsSphericalJoint &joint, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const PhysicsFixedJoint &joint, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const PhysicsDistanceJoint &joint, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const PhysicsCollisionGroup &group, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const MjcActuator &actuator, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const MjcTendon &tendon, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const MjcKeyframe &keyframe, const uint32_t indent = 0,
+                      bool closing_brace = true);
+
+// AR/Interactive prim to_string (defined in pprint-ar.cc)
+std::string to_string(const Preliminary_PhysicsGravitationalForce &prim, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const Preliminary_InfiniteColliderPlane &prim, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const Preliminary_ReferenceImage &prim, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const Preliminary_Behavior &prim, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const Preliminary_Trigger &prim, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const Preliminary_Action &prim, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const Preliminary_Text &prim, const uint32_t indent = 0,
+                      bool closing_brace = true);
+
+// usdMedia prim to_string (defined in pprint-media.cc)
+std::string to_string(const SpatialAudio &prim, const uint32_t indent = 0,
+                      bool closing_brace = true);
+
 // Light prim to_string (defined in pprint-light.cc)
 std::string to_string(const SphereLight &light, const uint32_t indent = 0,
                       bool closing_brace = true);
@@ -102,6 +162,13 @@ std::string to_string(const RectLight &light, const uint32_t indent = 0,
 std::string to_string(const GeometryLight &light, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const PortalLight &light, const uint32_t indent = 0,
+                      bool closing_brace = true);
+
+std::string to_string(const DomeLight_1 &light, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const LightFilter &filter, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const PluginLightFilter &filter, const uint32_t indent = 0,
                       bool closing_brace = true);
 
 std::string to_string(const DomeLight::TextureFormat &texformat);

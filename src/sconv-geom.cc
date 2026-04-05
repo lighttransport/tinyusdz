@@ -1407,6 +1407,18 @@ bool CrateWriter::ExtractXformOpsFromXformable(
     xformable = static_cast<const Xformable*>(basis_curves);
   } else if (auto* nurbs_curves = prim.data().as<GeomNurbsCurves>()) {
     xformable = static_cast<const Xformable*>(nurbs_curves);
+  } else if (auto* plane = prim.data().as<GeomPlane>()) {
+    xformable = static_cast<const Xformable*>(plane);
+  } else if (auto* cylinder1 = prim.data().as<GeomCylinder_1>()) {
+    xformable = static_cast<const Xformable*>(cylinder1);
+  } else if (auto* capsule1 = prim.data().as<GeomCapsule_1>()) {
+    xformable = static_cast<const Xformable*>(capsule1);
+  } else if (auto* tetmesh = prim.data().as<GeomTetMesh>()) {
+    xformable = static_cast<const Xformable*>(tetmesh);
+  } else if (auto* nurbspatch = prim.data().as<GeomNurbsPatch>()) {
+    xformable = static_cast<const Xformable*>(nurbspatch);
+  } else if (auto* hermite = prim.data().as<GeomHermiteCurves>()) {
+    xformable = static_cast<const Xformable*>(hermite);
   } else if (auto* instancer = prim.data().as<GeomPointInstancer>()) {
     xformable = static_cast<const Xformable*>(instancer);
   } else if (auto* xform = prim.data().as<Xform>()) {
@@ -1738,6 +1750,18 @@ bool CrateWriter::AddMaterialBindingSpecs(
     mat_binding = static_cast<const MaterialBinding*>(geom_basis_curves);
   } else if ((geom_nurbs_curves = prim.data().as<GeomNurbsCurves>())) {
     mat_binding = static_cast<const MaterialBinding*>(geom_nurbs_curves);
+  } else if (auto* geom_plane = prim.data().as<GeomPlane>()) {
+    mat_binding = static_cast<const MaterialBinding*>(geom_plane);
+  } else if (auto* geom_cylinder1 = prim.data().as<GeomCylinder_1>()) {
+    mat_binding = static_cast<const MaterialBinding*>(geom_cylinder1);
+  } else if (auto* geom_capsule1 = prim.data().as<GeomCapsule_1>()) {
+    mat_binding = static_cast<const MaterialBinding*>(geom_capsule1);
+  } else if (auto* geom_tetmesh = prim.data().as<GeomTetMesh>()) {
+    mat_binding = static_cast<const MaterialBinding*>(geom_tetmesh);
+  } else if (auto* geom_nurbspatch = prim.data().as<GeomNurbsPatch>()) {
+    mat_binding = static_cast<const MaterialBinding*>(geom_nurbspatch);
+  } else if (auto* geom_hermite = prim.data().as<GeomHermiteCurves>()) {
+    mat_binding = static_cast<const MaterialBinding*>(geom_hermite);
   } else if ((geom_point_instancer = prim.data().as<GeomPointInstancer>())) {
     mat_binding = static_cast<const MaterialBinding*>(geom_point_instancer);
   } else if ((xform = prim.data().as<Xform>())) {
@@ -1845,6 +1869,726 @@ bool CrateWriter::AddPointInstancerPrototypesSpec(
   }
 
   return true;
+}
+
+// ============================================================================
+// GeomPlane Property Extraction
+// ============================================================================
+
+bool CrateWriter::ExtractGeomPlaneProperties(
+  const Prim& prim,
+  const Path& prim_path,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  const GeomPlane* plane = prim.data().as<GeomPlane>();
+  if (!plane) {
+    if (err) *err = "Failed to cast prim to GeomPlane";
+    return false;
+  }
+
+  if (plane->width.authored()) {
+    if (!ExtractAnimatableDefault(plane->width.get_value(), "width", fields, err)) return false;
+  }
+  if (plane->length.authored()) {
+    if (!ExtractAnimatableDefault(plane->length.get_value(), "length", fields, err)) return false;
+  }
+
+  // Extract axis (uniform token, non-animatable)
+  if (plane->axis.authored()) {
+    const Axis& axis_val = plane->axis.get_value();
+    std::string axis_str = to_string(axis_val);
+    crate::CrateValue axis_crate_val;
+    value::token axis_token(axis_str);
+    axis_crate_val.Set(axis_token);
+    fields.push_back({"axis", axis_crate_val});
+  }
+
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
+}
+
+// ============================================================================
+// GeomCylinder_1 Property Extraction
+// ============================================================================
+
+bool CrateWriter::ExtractGeomCylinder1Properties(
+  const Prim& prim,
+  const Path& prim_path,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  const GeomCylinder_1* cylinder = prim.data().as<GeomCylinder_1>();
+  if (!cylinder) {
+    if (err) *err = "Failed to cast prim to GeomCylinder_1";
+    return false;
+  }
+
+  if (cylinder->height.authored()) {
+    if (!ExtractAnimatableDefault(cylinder->height.get_value(), "height", fields, err)) return false;
+  }
+  if (cylinder->radiusTop.authored()) {
+    if (!ExtractAnimatableDefault(cylinder->radiusTop.get_value(), "radiusTop", fields, err)) return false;
+  }
+  if (cylinder->radiusBottom.authored()) {
+    if (!ExtractAnimatableDefault(cylinder->radiusBottom.get_value(), "radiusBottom", fields, err)) return false;
+  }
+
+  // Extract axis (uniform token, non-animatable)
+  if (cylinder->axis.authored()) {
+    const Axis& axis_val = cylinder->axis.get_value();
+    std::string axis_str = to_string(axis_val);
+    crate::CrateValue axis_crate_val;
+    value::token axis_token(axis_str);
+    axis_crate_val.Set(axis_token);
+    fields.push_back({"axis", axis_crate_val});
+  }
+
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
+}
+
+// ============================================================================
+// GeomCapsule_1 Property Extraction
+// ============================================================================
+
+bool CrateWriter::ExtractGeomCapsule1Properties(
+  const Prim& prim,
+  const Path& prim_path,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  const GeomCapsule_1* capsule = prim.data().as<GeomCapsule_1>();
+  if (!capsule) {
+    if (err) *err = "Failed to cast prim to GeomCapsule_1";
+    return false;
+  }
+
+  if (capsule->height.authored()) {
+    if (!ExtractAnimatableDefault(capsule->height.get_value(), "height", fields, err)) return false;
+  }
+  if (capsule->radiusTop.authored()) {
+    if (!ExtractAnimatableDefault(capsule->radiusTop.get_value(), "radiusTop", fields, err)) return false;
+  }
+  if (capsule->radiusBottom.authored()) {
+    if (!ExtractAnimatableDefault(capsule->radiusBottom.get_value(), "radiusBottom", fields, err)) return false;
+  }
+
+  // Extract axis (uniform token, non-animatable)
+  if (capsule->axis.authored()) {
+    const Axis& axis_val = capsule->axis.get_value();
+    std::string axis_str = to_string(axis_val);
+    crate::CrateValue axis_crate_val;
+    value::token axis_token(axis_str);
+    axis_crate_val.Set(axis_token);
+    fields.push_back({"axis", axis_crate_val});
+  }
+
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
+}
+
+// ============================================================================
+// GeomTetMesh Property Extraction
+// ============================================================================
+
+bool CrateWriter::ExtractGeomTetMeshProperties(
+  const Prim& prim,
+  const Path& prim_path,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  const GeomTetMesh* tetmesh = prim.data().as<GeomTetMesh>();
+  if (!tetmesh) {
+    if (err) *err = "Failed to cast prim to GeomTetMesh";
+    return false;
+  }
+
+  // Extract points (point3f[])
+  if (tetmesh->points.authored()) {
+    auto points_opt = tetmesh->points.get_value();
+    if (points_opt.has_value()) {
+      const Animatable<std::vector<value::point3f>>& points_anim = points_opt.value();
+      if (points_anim.has_default()) {
+        std::vector<value::point3f> points_val;
+        if (points_anim.get_default(&points_val)) {
+          value::Value points_value(points_val);
+          if (!AddArrayAttribute("points", points_value, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract velocities (vector3f[])
+  if (tetmesh->velocities.authored()) {
+    auto velocities_opt = tetmesh->velocities.get_value();
+    if (velocities_opt.has_value()) {
+      const Animatable<std::vector<value::vector3f>>& velocities_anim = velocities_opt.value();
+      if (velocities_anim.has_default()) {
+        std::vector<value::vector3f> velocities_val;
+        if (velocities_anim.get_default(&velocities_val)) {
+          value::Value velocities_value(velocities_val);
+          if (!AddArrayAttribute("velocities", velocities_value, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract accelerations (vector3f[])
+  if (tetmesh->accelerations.authored()) {
+    auto accelerations_opt = tetmesh->accelerations.get_value();
+    if (accelerations_opt.has_value()) {
+      const Animatable<std::vector<value::vector3f>>& accelerations_anim = accelerations_opt.value();
+      if (accelerations_anim.has_default()) {
+        std::vector<value::vector3f> accelerations_val;
+        if (accelerations_anim.get_default(&accelerations_val)) {
+          value::Value accelerations_value(accelerations_val);
+          if (!AddArrayAttribute("accelerations", accelerations_value, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract normals (normal3f[])
+  if (tetmesh->normals.authored()) {
+    auto normals_opt = tetmesh->normals.get_value();
+    if (normals_opt.has_value()) {
+      const Animatable<std::vector<value::normal3f>>& normals_anim = normals_opt.value();
+      if (normals_anim.has_default()) {
+        std::vector<value::normal3f> normals_val;
+        if (normals_anim.get_default(&normals_val)) {
+          value::Value normals_value(normals_val);
+          if (!AddArrayAttribute("normals", normals_value, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract tetVertexIndices (int4[])
+  if (tetmesh->tetVertexIndices.authored()) {
+    auto indices_opt = tetmesh->tetVertexIndices.get_value();
+    if (indices_opt.has_value()) {
+      const Animatable<std::vector<value::int4>>& indices_anim = indices_opt.value();
+      if (indices_anim.has_default()) {
+        std::vector<value::int4> indices_val;
+        if (indices_anim.get_default(&indices_val)) {
+          value::Value indices_value(indices_val);
+          if (!AddArrayAttribute("tetVertexIndices", indices_value, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract surfaceFaceVertexIndices (int3[])
+  if (tetmesh->surfaceFaceVertexIndices.authored()) {
+    auto indices_opt = tetmesh->surfaceFaceVertexIndices.get_value();
+    if (indices_opt.has_value()) {
+      const Animatable<std::vector<value::int3>>& indices_anim = indices_opt.value();
+      if (indices_anim.has_default()) {
+        std::vector<value::int3> indices_val;
+        if (indices_anim.get_default(&indices_val)) {
+          value::Value indices_value(indices_val);
+          if (!AddArrayAttribute("surfaceFaceVertexIndices", indices_value, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
+}
+
+// ============================================================================
+// GeomNurbsPatch Property Extraction
+// ============================================================================
+
+bool CrateWriter::ExtractGeomNurbsPatchProperties(
+  const Prim& prim,
+  const Path& prim_path,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  const GeomNurbsPatch* patch = prim.data().as<GeomNurbsPatch>();
+  if (!patch) {
+    if (err) *err = "Failed to cast prim to GeomNurbsPatch";
+    return false;
+  }
+
+  // Extract points (point3f[])
+  if (patch->points.authored()) {
+    auto points_opt = patch->points.get_value();
+    if (points_opt.has_value()) {
+      const Animatable<std::vector<value::point3f>>& points_anim = points_opt.value();
+      if (points_anim.has_default()) {
+        std::vector<value::point3f> points_val;
+        if (points_anim.get_default(&points_val)) {
+          value::Value points_value(points_val);
+          if (!AddArrayAttribute("points", points_value, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract velocities (vector3f[])
+  if (patch->velocities.authored()) {
+    auto velocities_opt = patch->velocities.get_value();
+    if (velocities_opt.has_value()) {
+      const Animatable<std::vector<value::vector3f>>& velocities_anim = velocities_opt.value();
+      if (velocities_anim.has_default()) {
+        std::vector<value::vector3f> velocities_val;
+        if (velocities_anim.get_default(&velocities_val)) {
+          value::Value velocities_value(velocities_val);
+          if (!AddArrayAttribute("velocities", velocities_value, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract accelerations (vector3f[])
+  if (patch->accelerations.authored()) {
+    auto accelerations_opt = patch->accelerations.get_value();
+    if (accelerations_opt.has_value()) {
+      const Animatable<std::vector<value::vector3f>>& accelerations_anim = accelerations_opt.value();
+      if (accelerations_anim.has_default()) {
+        std::vector<value::vector3f> accelerations_val;
+        if (accelerations_anim.get_default(&accelerations_val)) {
+          value::Value accelerations_value(accelerations_val);
+          if (!AddArrayAttribute("accelerations", accelerations_value, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract normals (normal3f[])
+  if (patch->normals.authored()) {
+    auto normals_opt = patch->normals.get_value();
+    if (normals_opt.has_value()) {
+      const Animatable<std::vector<value::normal3f>>& normals_anim = normals_opt.value();
+      if (normals_anim.has_default()) {
+        std::vector<value::normal3f> normals_val;
+        if (normals_anim.get_default(&normals_val)) {
+          value::Value normals_value(normals_val);
+          if (!AddArrayAttribute("normals", normals_value, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract uVertexCount (int)
+  if (patch->uVertexCount.authored()) {
+    auto opt = patch->uVertexCount.get_value();
+    if (opt.has_value()) {
+      const Animatable<int>& anim = opt.value();
+      if (anim.has_default()) {
+        int val;
+        if (anim.get_default(&val)) {
+          crate::CrateValue crate_val;
+          crate_val.Set(val);
+          fields.push_back({"uVertexCount", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract vVertexCount (int)
+  if (patch->vVertexCount.authored()) {
+    auto opt = patch->vVertexCount.get_value();
+    if (opt.has_value()) {
+      const Animatable<int>& anim = opt.value();
+      if (anim.has_default()) {
+        int val;
+        if (anim.get_default(&val)) {
+          crate::CrateValue crate_val;
+          crate_val.Set(val);
+          fields.push_back({"vVertexCount", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract uOrder (int)
+  if (patch->uOrder.authored()) {
+    auto opt = patch->uOrder.get_value();
+    if (opt.has_value()) {
+      const Animatable<int>& anim = opt.value();
+      if (anim.has_default()) {
+        int val;
+        if (anim.get_default(&val)) {
+          crate::CrateValue crate_val;
+          crate_val.Set(val);
+          fields.push_back({"uOrder", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract vOrder (int)
+  if (patch->vOrder.authored()) {
+    auto opt = patch->vOrder.get_value();
+    if (opt.has_value()) {
+      const Animatable<int>& anim = opt.value();
+      if (anim.has_default()) {
+        int val;
+        if (anim.get_default(&val)) {
+          crate::CrateValue crate_val;
+          crate_val.Set(val);
+          fields.push_back({"vOrder", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract uKnots (double[])
+  if (patch->uKnots.authored()) {
+    auto opt = patch->uKnots.get_value();
+    if (opt.has_value()) {
+      const Animatable<std::vector<double>>& anim = opt.value();
+      if (anim.has_default()) {
+        std::vector<double> val;
+        if (anim.get_default(&val)) {
+          value::Value v(val);
+          if (!AddArrayAttribute("uKnots", v, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract vKnots (double[])
+  if (patch->vKnots.authored()) {
+    auto opt = patch->vKnots.get_value();
+    if (opt.has_value()) {
+      const Animatable<std::vector<double>>& anim = opt.value();
+      if (anim.has_default()) {
+        std::vector<double> val;
+        if (anim.get_default(&val)) {
+          value::Value v(val);
+          if (!AddArrayAttribute("vKnots", v, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract uForm (uniform token with fallback)
+  if (patch->uForm.authored()) {
+    const value::token& tok = patch->uForm.get_value();
+    crate::CrateValue crate_val;
+    crate_val.Set(tok);
+    fields.push_back({"uForm", crate_val});
+  }
+
+  // Extract vForm (uniform token with fallback)
+  if (patch->vForm.authored()) {
+    const value::token& tok = patch->vForm.get_value();
+    crate::CrateValue crate_val;
+    crate_val.Set(tok);
+    fields.push_back({"vForm", crate_val});
+  }
+
+  // Extract uRange (double2)
+  if (patch->uRange.authored()) {
+    auto opt = patch->uRange.get_value();
+    if (opt.has_value()) {
+      const Animatable<value::double2>& anim = opt.value();
+      if (anim.has_default()) {
+        value::double2 val;
+        if (anim.get_default(&val)) {
+          crate::CrateValue crate_val;
+          crate_val.Set(val);
+          fields.push_back({"uRange", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract vRange (double2)
+  if (patch->vRange.authored()) {
+    auto opt = patch->vRange.get_value();
+    if (opt.has_value()) {
+      const Animatable<value::double2>& anim = opt.value();
+      if (anim.has_default()) {
+        value::double2 val;
+        if (anim.get_default(&val)) {
+          crate::CrateValue crate_val;
+          crate_val.Set(val);
+          fields.push_back({"vRange", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract pointWeights (double[])
+  if (patch->pointWeights.authored()) {
+    auto opt = patch->pointWeights.get_value();
+    if (opt.has_value()) {
+      const Animatable<std::vector<double>>& anim = opt.value();
+      if (anim.has_default()) {
+        std::vector<double> val;
+        if (anim.get_default(&val)) {
+          value::Value v(val);
+          if (!AddArrayAttribute("pointWeights", v, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract trim curve properties
+  if (patch->trimCurve_counts.authored()) {
+    auto opt = patch->trimCurve_counts.get_value();
+    if (opt.has_value()) {
+      const Animatable<std::vector<int>>& anim = opt.value();
+      if (anim.has_default()) {
+        std::vector<int> val;
+        if (anim.get_default(&val)) {
+          value::Value v(val);
+          if (!AddArrayAttribute("trimCurve:counts", v, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  if (patch->trimCurve_orders.authored()) {
+    auto opt = patch->trimCurve_orders.get_value();
+    if (opt.has_value()) {
+      const Animatable<std::vector<int>>& anim = opt.value();
+      if (anim.has_default()) {
+        std::vector<int> val;
+        if (anim.get_default(&val)) {
+          value::Value v(val);
+          if (!AddArrayAttribute("trimCurve:orders", v, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  if (patch->trimCurve_vertexCounts.authored()) {
+    auto opt = patch->trimCurve_vertexCounts.get_value();
+    if (opt.has_value()) {
+      const Animatable<std::vector<int>>& anim = opt.value();
+      if (anim.has_default()) {
+        std::vector<int> val;
+        if (anim.get_default(&val)) {
+          value::Value v(val);
+          if (!AddArrayAttribute("trimCurve:vertexCounts", v, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  if (patch->trimCurve_knots.authored()) {
+    auto opt = patch->trimCurve_knots.get_value();
+    if (opt.has_value()) {
+      const Animatable<std::vector<double>>& anim = opt.value();
+      if (anim.has_default()) {
+        std::vector<double> val;
+        if (anim.get_default(&val)) {
+          value::Value v(val);
+          if (!AddArrayAttribute("trimCurve:knots", v, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  if (patch->trimCurve_ranges.authored()) {
+    auto opt = patch->trimCurve_ranges.get_value();
+    if (opt.has_value()) {
+      const Animatable<std::vector<value::double2>>& anim = opt.value();
+      if (anim.has_default()) {
+        std::vector<value::double2> val;
+        if (anim.get_default(&val)) {
+          value::Value v(val);
+          if (!AddArrayAttribute("trimCurve:ranges", v, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  if (patch->trimCurve_points.authored()) {
+    auto opt = patch->trimCurve_points.get_value();
+    if (opt.has_value()) {
+      const Animatable<std::vector<value::double3>>& anim = opt.value();
+      if (anim.has_default()) {
+        std::vector<value::double3> val;
+        if (anim.get_default(&val)) {
+          value::Value v(val);
+          if (!AddArrayAttribute("trimCurve:points", v, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
+}
+
+// ============================================================================
+// GeomHermiteCurves Property Extraction
+// ============================================================================
+
+bool CrateWriter::ExtractGeomHermiteCurvesProperties(
+  const Prim& prim,
+  const Path& prim_path,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  const GeomHermiteCurves* hermite = prim.data().as<GeomHermiteCurves>();
+  if (!hermite) {
+    if (err) *err = "Failed to cast prim to GeomHermiteCurves";
+    return false;
+  }
+
+  // Extract points (point3f[])
+  if (hermite->points.authored()) {
+    auto points_opt = hermite->points.get_value();
+    if (points_opt.has_value()) {
+      const Animatable<std::vector<value::point3f>>& points_anim = points_opt.value();
+      if (points_anim.has_default()) {
+        std::vector<value::point3f> points_val;
+        if (points_anim.get_default(&points_val)) {
+          value::Value points_value(points_val);
+          if (!AddArrayAttribute("points", points_value, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract velocities (vector3f[])
+  if (hermite->velocities.authored()) {
+    auto velocities_opt = hermite->velocities.get_value();
+    if (velocities_opt.has_value()) {
+      const Animatable<std::vector<value::vector3f>>& velocities_anim = velocities_opt.value();
+      if (velocities_anim.has_default()) {
+        std::vector<value::vector3f> velocities_val;
+        if (velocities_anim.get_default(&velocities_val)) {
+          value::Value velocities_value(velocities_val);
+          if (!AddArrayAttribute("velocities", velocities_value, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract accelerations (vector3f[])
+  if (hermite->accelerations.authored()) {
+    auto accelerations_opt = hermite->accelerations.get_value();
+    if (accelerations_opt.has_value()) {
+      const Animatable<std::vector<value::vector3f>>& accelerations_anim = accelerations_opt.value();
+      if (accelerations_anim.has_default()) {
+        std::vector<value::vector3f> accelerations_val;
+        if (accelerations_anim.get_default(&accelerations_val)) {
+          value::Value accelerations_value(accelerations_val);
+          if (!AddArrayAttribute("accelerations", accelerations_value, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract normals (normal3f[])
+  if (hermite->normals.authored()) {
+    auto normals_opt = hermite->normals.get_value();
+    if (normals_opt.has_value()) {
+      const Animatable<std::vector<value::normal3f>>& normals_anim = normals_opt.value();
+      if (normals_anim.has_default()) {
+        std::vector<value::normal3f> normals_val;
+        if (normals_anim.get_default(&normals_val)) {
+          value::Value normals_value(normals_val);
+          if (!AddArrayAttribute("normals", normals_value, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract curveVertexCounts (int[])
+  if (hermite->curveVertexCounts.authored()) {
+    auto counts_opt = hermite->curveVertexCounts.get_value();
+    if (counts_opt.has_value()) {
+      const Animatable<std::vector<int>>& counts_anim = counts_opt.value();
+      if (counts_anim.has_default()) {
+        std::vector<int> counts_val;
+        if (counts_anim.get_default(&counts_val)) {
+          value::Value counts_value(counts_val);
+          if (!AddArrayAttribute("curveVertexCounts", counts_value, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract widths (float[])
+  if (hermite->widths.authored()) {
+    auto widths_opt = hermite->widths.get_value();
+    if (widths_opt.has_value()) {
+      const Animatable<std::vector<float>>& widths_anim = widths_opt.value();
+      if (widths_anim.has_default()) {
+        std::vector<float> widths_val;
+        if (widths_anim.get_default(&widths_val)) {
+          value::Value widths_value(widths_val);
+          if (!AddArrayAttribute("widths", widths_value, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract tangents (vector3f[]) - HermiteCurves-specific
+  if (hermite->tangents.authored()) {
+    auto tangents_opt = hermite->tangents.get_value();
+    if (tangents_opt.has_value()) {
+      const Animatable<std::vector<value::vector3f>>& tangents_anim = tangents_opt.value();
+      if (tangents_anim.has_default()) {
+        std::vector<value::vector3f> tangents_val;
+        if (tangents_anim.get_default(&tangents_val)) {
+          value::Value tangents_value(tangents_val);
+          if (!AddArrayAttribute("tangents", tangents_value, fields, err)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
 }
 
 } // namespace experimental

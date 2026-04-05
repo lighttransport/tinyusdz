@@ -55,6 +55,13 @@ set(TEST_SOURCES
 	unit-usdz-writer.cc
 	unit-usdc-writer.cc
 	unit-usd-validation.cc
+	# Physics + MuJoCo
+	unit-physics.cc
+	# IK solver
+	unit-ik.cc
+	# Rigid body simulation
+	unit-rb-collision.cc
+	unit-rb-dynamics.cc
     )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)

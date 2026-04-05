@@ -56,6 +56,13 @@
 #include "unit-usdz-writer.h"
 #include "unit-usdc-writer.h"
 #include "unit-usd-validation.h"
+// Physics + MuJoCo
+#include "unit-physics.h"
+// IK solver
+#include "unit-ik.h"
+// Rigid body simulation
+#include "unit-rb-collision.h"
+#include "unit-rb-dynamics.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -545,6 +552,39 @@ TEST_LIST = {
   { "usdc_writer_variant_props_and_children_roundtrip_test", usdc_writer_variant_props_and_children_roundtrip_test },
   { "usdc_writer_variant_3level_nested_test", usdc_writer_variant_3level_nested_test },
   { "usdc_writer_variant_nested_with_props_test", usdc_writer_variant_nested_with_props_test },
+  // Physics + MuJoCo
+  { "physics_scene_reconstruct_test", physics_scene_reconstruct_test },
+  { "physics_scene_mjc_scene_api_test", physics_scene_mjc_scene_api_test },
+  { "physics_revolute_joint_test", physics_revolute_joint_test },
+  { "physics_prismatic_joint_test", physics_prismatic_joint_test },
+  { "physics_fixed_joint_test", physics_fixed_joint_test },
+  { "physics_distance_joint_test", physics_distance_joint_test },
+  { "physics_spherical_joint_test", physics_spherical_joint_test },
+  { "physics_joint_mjc_api_test", physics_joint_mjc_api_test },
+  { "mjc_actuator_test", mjc_actuator_test },
+  { "mjc_tendon_test", mjc_tendon_test },
+  { "mjc_keyframe_test", mjc_keyframe_test },
+  { "physics_pprint_roundtrip_test", physics_pprint_roundtrip_test },
+  { "physics_to_json_test", physics_to_json_test },
+  { "physics_collision_group_test", physics_collision_group_test },
+  { "physics_drive_limit_api_test", physics_drive_limit_api_test },
+  // IK solver
+  { "ik_forward_kinematics_test", ik_forward_kinematics_test },
+  { "ik_ccd_solve_test", ik_ccd_solve_test },
+  { "ik_fabrik_solve_test", ik_fabrik_solve_test },
+  { "ik_joint_limits_test", ik_joint_limits_test },
+  { "ik_unreachable_target_test", ik_unreachable_target_test },
+  // Rigid body collision
+  { "rb_sphere_sphere_test", rb_sphere_sphere_test },
+  { "rb_sphere_plane_test", rb_sphere_plane_test },
+  { "rb_sphere_box_test", rb_sphere_box_test },
+  { "rb_capsule_sphere_test", rb_capsule_sphere_test },
+  { "rb_aabb_broadphase_test", rb_aabb_broadphase_test },
+  { "rb_gjk_box_box_test", rb_gjk_box_box_test },
+  // Rigid body dynamics
+  { "rb_falling_sphere_test", rb_falling_sphere_test },
+  { "rb_pendulum_hinge_test", rb_pendulum_hinge_test },
+  { "rb_stacking_sleep_test", rb_stacking_sleep_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif

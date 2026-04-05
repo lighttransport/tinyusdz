@@ -14,17 +14,22 @@ import subprocess
 import sys
 
 
+
+# Files expected to fail USDC roundtrip.
+XFAIL_FILES = set()
+
+
 def run_tests(app_path: str, basedir: str, verbose: bool = False) -> int:
     """Run USDC roundtrip tests on all .usda files in basedir."""
-    
+
     if not os.path.isfile(app_path):
         print(f"Error: App not found: {app_path}", file=sys.stderr)
         return 1
-    
+
     if not os.path.isdir(basedir):
         print(f"Error: Directory not found: {basedir}", file=sys.stderr)
         return 1
-    
+
     # Find all .usda files
     usda_files = sorted(glob.glob(os.path.join(basedir, "*.usda")))
     
@@ -35,43 +40,54 @@ def run_tests(app_path: str, basedir: str, verbose: bool = False) -> int:
     total = len(usda_files)
     passed = 0
     failed = 0
+    xfailed = 0
     failures = []
-    
+
     print(f"Running USDC roundtrip tests on {total} files...")
-    
+
     for filepath in usda_files:
         filename = os.path.basename(filepath)
-        
+        is_xfail = filename in XFAIL_FILES
+
         args = [app_path, filepath]
         if verbose:
             args.append("--verbose")
-        
+
         result = subprocess.run(args, capture_output=True, text=True)
-        
+
         if result.returncode == 0:
             passed += 1
             if verbose:
                 print(f"  PASS: {filename}")
         else:
-            failed += 1
-            failures.append((filename, result.stderr))
-            if verbose:
-                print(f"  FAIL: {filename}")
-                print(f"        {result.stderr.strip()}")
-    
+            if is_xfail:
+                xfailed += 1
+                if verbose:
+                    print(f"  XFAIL: {filename}")
+            else:
+                failed += 1
+                failures.append((filename, result.stderr))
+                if verbose:
+                    print(f"  FAIL: {filename}")
+                    print(f"        {result.stderr.strip()}")
+
     # Summary
     print()
-    print(f"Results: {passed}/{total} passed, {failed} failed")
-    
+    summary = f"Results: {passed}/{total} passed"
+    if xfailed:
+        summary += f", {xfailed} xfail"
+    if failed:
+        summary += f", {failed} failed"
+    print(summary)
+
     if failures:
         print("\nFailed files:")
         for filename, error in failures:
             print(f"  - {filename}")
             if error.strip():
-                # Show first line of error
                 first_line = error.strip().split('\n')[0]
                 print(f"    {first_line}")
-    
+
     return 0 if failed == 0 else 1
 
 
