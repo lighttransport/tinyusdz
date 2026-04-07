@@ -20,6 +20,51 @@
 
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDC_READER)
 
+// Explicit instantiation declarations for prim::ReconstructPrim specializations
+// defined in other translation units (prim-reconstruct.cc, prim-reconstruct-physics.cc, etc.).
+// Suppresses -Wundefined-func-template.
+#define EXTERN_RECONSTRUCT_PRIM(__ty) \
+  extern template bool ReconstructPrim<__ty>( \
+      const Specifier &, PropertyMap &, const ReferenceList &, \
+      __ty *, std::string *, std::string *, const PrimReconstructOptions &)
+
+namespace tinyusdz {
+namespace prim {
+
+EXTERN_RECONSTRUCT_PRIM(GeomPlane);
+EXTERN_RECONSTRUCT_PRIM(GeomCylinder_1);
+EXTERN_RECONSTRUCT_PRIM(GeomCapsule_1);
+EXTERN_RECONSTRUCT_PRIM(GeomTetMesh);
+EXTERN_RECONSTRUCT_PRIM(GeomNurbsPatch);
+EXTERN_RECONSTRUCT_PRIM(GeomHermiteCurves);
+EXTERN_RECONSTRUCT_PRIM(DomeLight_1);
+EXTERN_RECONSTRUCT_PRIM(LightFilter);
+EXTERN_RECONSTRUCT_PRIM(PluginLightFilter);
+EXTERN_RECONSTRUCT_PRIM(PhysicsJoint);
+EXTERN_RECONSTRUCT_PRIM(PhysicsScene);
+EXTERN_RECONSTRUCT_PRIM(PhysicsRevoluteJoint);
+EXTERN_RECONSTRUCT_PRIM(PhysicsPrismaticJoint);
+EXTERN_RECONSTRUCT_PRIM(PhysicsSphericalJoint);
+EXTERN_RECONSTRUCT_PRIM(PhysicsFixedJoint);
+EXTERN_RECONSTRUCT_PRIM(PhysicsDistanceJoint);
+EXTERN_RECONSTRUCT_PRIM(PhysicsCollisionGroup);
+EXTERN_RECONSTRUCT_PRIM(MjcActuator);
+EXTERN_RECONSTRUCT_PRIM(MjcTendon);
+EXTERN_RECONSTRUCT_PRIM(MjcKeyframe);
+EXTERN_RECONSTRUCT_PRIM(Preliminary_PhysicsGravitationalForce);
+EXTERN_RECONSTRUCT_PRIM(Preliminary_InfiniteColliderPlane);
+EXTERN_RECONSTRUCT_PRIM(Preliminary_ReferenceImage);
+EXTERN_RECONSTRUCT_PRIM(Preliminary_Behavior);
+EXTERN_RECONSTRUCT_PRIM(Preliminary_Trigger);
+EXTERN_RECONSTRUCT_PRIM(Preliminary_Action);
+EXTERN_RECONSTRUCT_PRIM(Preliminary_Text);
+EXTERN_RECONSTRUCT_PRIM(SpatialAudio);
+
+#undef EXTERN_RECONSTRUCT_PRIM
+
+} // namespace prim
+} // namespace tinyusdz
+
 namespace tinyusdz {
 namespace usdc {
 

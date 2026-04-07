@@ -31,7 +31,7 @@ typedef struct {
 static ContactConstraint s_contact_cache_fallback[TYDRA_MAX_CONTACT_CACHE];
 
 static ContactConstraint *get_contact_cache(TydraPhysWorld *world) {
-  if (world->contact_cache) return (ContactConstraint *)world->contact_cache;
+  if (world->contact_cache) return static_cast<ContactConstraint *>(world->contact_cache);
   return s_contact_cache_fallback;
 }
 
@@ -889,7 +889,7 @@ static void detect_islands(TydraPhysWorld *world) {
   /* Use island_body_buf temporarily for counting.
    * Layout: first num_bodies entries for counts, rest for body lists. */
   int32_t *counts = world->island_body_buf;
-  memset(counts, 0, sizeof(int32_t) * (size_t)num_bodies);
+  memset(counts, 0, sizeof(int32_t) * static_cast<size_t>(num_bodies));
 
   for (i = 0; i < num_bodies; i++) {
     if (world->bodies[i].body_type == TYDRA_PHYS_BODY_STATIC) continue;
@@ -975,7 +975,7 @@ static void update_sleep(TydraPhysWorld *world) {
     } else {
       b->sleep_timer = 0.0f;
       /* Wake body if it was sleeping */
-      b->flags &= ~TYDRA_PHYS_BODY_FLAG_SLEEPING;
+      b->flags &= ~static_cast<uint32_t>(TYDRA_PHYS_BODY_FLAG_SLEEPING);
     }
   }
 
@@ -1037,7 +1037,7 @@ TydraPhysResult tydra_phys_step(TydraPhysWorld *world) {
   }
 
   tydra_phys_broadphase_update(&world->broadphase,
-                                world->colliders, NULL,
+                                world->colliders, nullptr,
                                 world->num_colliders);
 
   /* 3. Narrowphase: generate contacts */
@@ -1116,7 +1116,7 @@ void tydra_phys_wake_body(TydraPhysWorld *world, int32_t body_index) {
   if (body_index < 0 || body_index >= world->num_bodies) return;
 
   TydraPhysBody *b = &world->bodies[body_index];
-  b->flags &= ~TYDRA_PHYS_BODY_FLAG_SLEEPING;
+  b->flags &= ~static_cast<uint32_t>(TYDRA_PHYS_BODY_FLAG_SLEEPING);
   b->sleep_timer = 0.0f;
 
   /* Wake all bodies in the same island */
@@ -1126,7 +1126,7 @@ void tydra_phys_wake_body(TydraPhysWorld *world, int32_t body_index) {
     island->sleeping = 0;
     for (i = 0; i < island->num_bodies; i++) {
       TydraPhysBody *ib = &world->bodies[island->body_indices[i]];
-      ib->flags &= ~TYDRA_PHYS_BODY_FLAG_SLEEPING;
+      ib->flags &= ~static_cast<uint32_t>(TYDRA_PHYS_BODY_FLAG_SLEEPING);
       ib->sleep_timer = 0.0f;
     }
   }
