@@ -32,6 +32,12 @@
 #include "tydra/mcp-tools.hh"
 #include "usd-to-json.hh"
 #include "json-to-usd.hh"
+#include "usda-writer.hh"
+#include "usdc-writer.hh"
+#include "image-writer.hh"
+#include "usdGeom.hh"
+#include "usdShade.hh"
+#include "stage.hh"
 #include "sha256.hh"
 #include "logger.hh"
 #include "image-loader.hh"
@@ -4149,6 +4155,13 @@ class TinyUSDZLoaderNative {
 
     // Reset parsing progress
     parsing_progress_.reset();
+
+    // Clear export state
+    export_stage_ = tinyusdz::Stage();
+    has_stage_ = false;
+    usdc_export_buf_.clear();
+    usdz_export_buf_.clear();
+    image_export_buf_.clear();
   }
 
   /// Get memory usage statistics
@@ -4583,6 +4596,304 @@ class TinyUSDZLoaderNative {
     return success;
   }
 
+  // =========================================================================
+  // USD Export Methods
+  // =========================================================================
+
+  /// Helper: convert current loaded layer to a Stage
+  bool getStageFromLayer(tinyusdz::Stage &stage) {
+    if (!loaded_) {
+      error_ = "No scene loaded";
+      return false;
+    }
+
+    if (has_stage_) {
+      stage = export_stage_;
+      return true;
+    }
+
+    if (!loaded_as_layer_) {
+      error_ = "Scene not loaded as layer";
+      return false;
+    }
+
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    tinyusdz::Layer layer_copy = curr;
+
+    if (!tinyusdz::LayerToStage(std::move(layer_copy), &stage, &warn_, &error_)) {
+      error_ = "Failed to convert Layer to Stage: " + error_;
+      return false;
+    }
+
+    return true;
+  }
+
+  /// Export loaded scene as USDA (ASCII) string
+  std::string exportAsUSDA() {
+    tinyusdz::Stage stage;
+    if (!getStageFromLayer(stage)) {
+      return std::string();
+    }
+
+    std::string output;
+    std::string warn, err;
+    if (!tinyusdz::usda::ExportToUSDAString(stage, &output, &warn, &err)) {
+      error_ = "USDA export failed: " + err;
+      warn_ = warn;
+      return std::string();
+    }
+
+    warn_ = warn;
+    return output;
+  }
+
+  /// Export loaded scene as USDC (binary Crate) — returns Uint8Array
+  emscripten::val exportAsUSDC() {
+    tinyusdz::Stage stage;
+    if (!getStageFromLayer(stage)) {
+      return emscripten::val::null();
+    }
+
+    std::vector<uint8_t> output;
+    std::string warn, err;
+    if (!tinyusdz::usdc::SaveAsUSDCToMemory(stage, &output, &warn, &err)) {
+      error_ = "USDC export failed: " + err;
+      warn_ = warn;
+      return emscripten::val::null();
+    }
+
+    warn_ = warn;
+
+    // Copy to JS Uint8Array
+    usdc_export_buf_ = std::move(output);
+    return emscripten::val(emscripten::typed_memory_view(
+        usdc_export_buf_.size(), usdc_export_buf_.data()));
+  }
+
+  /// Export loaded scene as USDZ (ZIP package with packed assets) — returns Uint8Array
+  /// Assets are collected from the em_resolver_ cache.
+  emscripten::val exportAsUSDZ() {
+    tinyusdz::Stage stage;
+    if (!getStageFromLayer(stage)) {
+      return emscripten::val::null();
+    }
+
+    // Collect assets from resolver cache
+    std::map<std::string, std::vector<uint8_t>> assets;
+    for (const auto &kv : em_resolver_.cache) {
+      const std::string &name = kv.first;
+      const std::string &binary = kv.second.binary;
+      // Only include image/audio assets (skip USD files)
+      std::string ext;
+      {
+        auto dot = name.rfind('.');
+        if (dot != std::string::npos) {
+          ext = name.substr(dot);
+          // lowercase
+          for (auto &c : ext) c = static_cast<char>(std::tolower(c));
+        }
+      }
+      if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+          ext == ".exr" || ext == ".avif" ||
+          ext == ".m4a" || ext == ".mp3" || ext == ".wav") {
+        assets[name] = std::vector<uint8_t>(binary.begin(), binary.end());
+      }
+    }
+
+    std::vector<uint8_t> output;
+    std::string warn, err;
+    if (!tinyusdz::SaveAsUSDZToMemory(stage, assets, &output, &warn, &err)) {
+      error_ = "USDZ export failed: " + err;
+      warn_ = warn;
+      return emscripten::val::null();
+    }
+
+    warn_ = warn;
+
+    // Copy to JS Uint8Array
+    usdz_export_buf_ = std::move(output);
+    return emscripten::val(emscripten::typed_memory_view(
+        usdz_export_buf_.size(), usdz_export_buf_.data()));
+  }
+
+  /// Create a sample scene with a textured quad (checkerboard).
+  /// The texture PNG must be set from JS via setAsset("textures/checkerboard.png", pngBytes)
+  /// BEFORE calling exportAsUSDZ.
+  bool createSampleScene() {
+    // Build stage
+    tinyusdz::Stage stage;
+    stage.metas().defaultPrim = tinyusdz::value::token("root");
+    stage.metas().upAxis = tinyusdz::Axis::Y;
+
+    // -- Xform root --
+    tinyusdz::Xform xform;
+    xform.name = "root";
+
+    // -- GeomMesh quad --
+    tinyusdz::GeomMesh mesh;
+    mesh.name = "quad";
+    {
+      std::vector<tinyusdz::value::point3f> pts;
+      pts.push_back({-0.5f, 0.0f, -0.5f});
+      pts.push_back({ 0.5f, 0.0f, -0.5f});
+      pts.push_back({ 0.5f, 0.0f,  0.5f});
+      pts.push_back({-0.5f, 0.0f,  0.5f});
+      mesh.points.set_value(std::move(pts));
+
+      std::vector<tinyusdz::value::normal3f> normals;
+      normals.push_back({0.0f, 1.0f, 0.0f});
+      normals.push_back({0.0f, 1.0f, 0.0f});
+      normals.push_back({0.0f, 1.0f, 0.0f});
+      normals.push_back({0.0f, 1.0f, 0.0f});
+      mesh.normals.set_value(std::move(normals));
+      mesh.normals.metas().set_interpolation_enum(tinyusdz::Interpolation::Vertex);
+
+      std::vector<int> counts = {3, 3};
+      mesh.faceVertexCounts.set_value(std::move(counts));
+
+      std::vector<int> indices = {0, 1, 2, 0, 2, 3};
+      mesh.faceVertexIndices.set_value(std::move(indices));
+
+      // UV primvar
+      tinyusdz::Attribute uvAttr;
+      std::vector<tinyusdz::value::texcoord2f> uvs;
+      uvs.push_back({0.0f, 0.0f});
+      uvs.push_back({1.0f, 0.0f});
+      uvs.push_back({1.0f, 1.0f});
+      uvs.push_back({0.0f, 1.0f});
+      uvAttr.set_value(std::move(uvs));
+      uvAttr.metas().set_interpolation_enum(tinyusdz::Interpolation::Vertex);
+      mesh.props.emplace("primvars:st", tinyusdz::Property(uvAttr, false));
+
+      // Material binding
+      tinyusdz::Relationship materialBinding;
+      materialBinding.set(tinyusdz::Path("/root/mat", ""));
+      mesh.materialBinding = materialBinding;
+    }
+
+    // -- Material --
+    tinyusdz::Material mat;
+    mat.name = "mat";
+    mat.surface.set(tinyusdz::Path("/root/mat/PBRShader", "outputs:surface"));
+
+    // -- UsdPreviewSurface shader --
+    tinyusdz::Shader pbrShader;
+    pbrShader.name = "PBRShader";
+    pbrShader.info_id = tinyusdz::kUsdPreviewSurface;
+    {
+      tinyusdz::UsdPreviewSurface surf;
+      surf.outputsSurface.set_authored(true);
+      surf.metallic.set_value(0.0f);
+      surf.roughness.set_value(0.5f);
+
+      // Connect diffuseColor to texture
+      surf.diffuseColor.set_connection(
+          tinyusdz::Path("/root/mat/diffuseTexture", "outputs:rgb"));
+      surf.diffuseColor.set_value_empty();
+
+      pbrShader.value = std::move(surf);
+    }
+
+    // -- UsdPrimvarReader_float2 shader --
+    tinyusdz::Shader stReaderShader;
+    stReaderShader.name = "stReader";
+    stReaderShader.info_id = tinyusdz::kUsdPrimvarReader_float2;
+    {
+      tinyusdz::UsdPrimvarReader_float2 reader;
+
+      tinyusdz::Animatable<std::string> varname;
+      varname.set_default(std::string("st"));
+      reader.varname.set_value(varname);
+
+      reader.result.set_authored(true);
+
+      stReaderShader.value = std::move(reader);
+    }
+
+    // -- UsdUVTexture shader --
+    tinyusdz::Shader texShader;
+    texShader.name = "diffuseTexture";
+    texShader.info_id = tinyusdz::kUsdUVTexture;
+    {
+      tinyusdz::UsdUVTexture tex;
+      tex.file = tinyusdz::value::AssetPath("textures/checkerboard.png");
+
+      // Connect st input to primvar reader
+      tex.st.set_connection(
+          tinyusdz::Path("/root/mat/stReader", "outputs:result"));
+      tex.st.set_value_empty();
+
+      tex.outputsRGB.set_authored(true);
+
+      texShader.value = std::move(tex);
+    }
+
+    // Assemble scene hierarchy
+    tinyusdz::Prim matPrim(mat);
+    {
+      std::string err;
+      matPrim.add_child(tinyusdz::Prim(pbrShader), true, &err);
+      matPrim.add_child(tinyusdz::Prim(stReaderShader), true, &err);
+      matPrim.add_child(tinyusdz::Prim(texShader), true, &err);
+    }
+
+    tinyusdz::Prim xformPrim(xform);
+    {
+      std::string err;
+      xformPrim.add_child(tinyusdz::Prim(mesh), true, &err);
+      xformPrim.add_child(std::move(matPrim), true, &err);
+    }
+
+    stage.add_root_prim(std::move(xformPrim));
+
+    // Store stage for export
+    export_stage_ = std::move(stage);
+    has_stage_ = true;
+    loaded_ = true;
+
+    return true;
+  }
+
+  /// Encode raw pixel data to image format using native writer (for EXR/TIFF/DNG only).
+  /// For PNG/JPEG, use browser Canvas API instead.
+  /// format: "exr", "tiff", "dng", "bmp", "png" (fallback)
+  emscripten::val encodeImageNative(const std::string &pixelData, int width, int height, int channels, const std::string &format) {
+    tinyusdz::Image img;
+    img.width = width;
+    img.height = height;
+    img.channels = channels;
+    img.bpp = 8;
+    img.format = tinyusdz::Image::PixelFormat::UInt;
+    img.data.assign(reinterpret_cast<const uint8_t*>(pixelData.data()),
+                    reinterpret_cast<const uint8_t*>(pixelData.data()) + pixelData.size());
+
+    tinyusdz::image::WriteOption opt;
+    if (format == "exr") {
+      opt.format = tinyusdz::image::WriteImageFormat::EXR;
+    } else if (format == "tiff") {
+      opt.format = tinyusdz::image::WriteImageFormat::TIFF;
+    } else if (format == "dng") {
+      opt.format = tinyusdz::image::WriteImageFormat::DNG;
+    } else if (format == "bmp") {
+      opt.format = tinyusdz::image::WriteImageFormat::BMP;
+    } else if (format == "png") {
+      opt.format = tinyusdz::image::WriteImageFormat::PNG;
+    } else {
+      error_ = "Unsupported image format: " + format;
+      return emscripten::val::null();
+    }
+
+    auto result = tinyusdz::image::WriteImageToMemory(img, opt);
+    if (!result) {
+      error_ = "Image encoding failed: " + result.error();
+      return emscripten::val::null();
+    }
+
+    image_export_buf_ = std::move(result.value());
+    return emscripten::val(emscripten::typed_memory_view(
+        image_export_buf_.size(), image_export_buf_.data()));
+  }
+
   //
   // Progress reporting methods for polling-based async progress
   //
@@ -4822,6 +5133,13 @@ class TinyUSDZLoaderNative {
   tinyusdz::tydra::RenderScene render_scene_;
   tinyusdz::USDZAsset usdz_asset_;
   EMAssetResolutionResolver em_resolver_;
+
+  // Export state
+  tinyusdz::Stage export_stage_;
+  bool has_stage_{false};
+  std::vector<uint8_t> usdc_export_buf_;
+  std::vector<uint8_t> usdz_export_buf_;
+  std::vector<uint8_t> image_export_buf_;
 
   // Cache for reordered mesh data (triangles sorted by material for optimal submesh grouping)
   struct ReorderedMeshCache {
@@ -5760,6 +6078,13 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("resetProgress", &TinyUSDZLoaderNative::resetProgress)
       .function("loadFromBinaryWithProgress", &TinyUSDZLoaderNative::loadFromBinaryWithProgress)
       .function("loadAsLayerFromBinaryWithProgress", &TinyUSDZLoaderNative::loadAsLayerFromBinaryWithProgress)
+
+      // USD Export
+      .function("exportAsUSDA", &TinyUSDZLoaderNative::exportAsUSDA)
+      .function("exportAsUSDC", &TinyUSDZLoaderNative::exportAsUSDC)
+      .function("exportAsUSDZ", &TinyUSDZLoaderNative::exportAsUSDZ)
+      .function("createSampleScene", &TinyUSDZLoaderNative::createSampleScene)
+      .function("encodeImageNative", &TinyUSDZLoaderNative::encodeImageNative)
 
       .function("ok", &TinyUSDZLoaderNative::ok)
       .function("error", &TinyUSDZLoaderNative::error)
