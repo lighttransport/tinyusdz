@@ -176,11 +176,6 @@ void tydra_phys_collider_aabb(const TydraPhysCollider *col,
       break;
     }
 
-    default: {
-      out->min = tp_v3(0, 0, 0);
-      out->max = tp_v3(0, 0, 0);
-      break;
-    }
   }
 }
 
@@ -197,7 +192,7 @@ int32_t tydra_phys_aabb_overlap(const TydraPhysAABB *a,
 /* ======================================================================== */
 
 void tydra_phys_broadphase_init(TydraPhysBroadphase *bp,
-                                int32_t max_colliders,
+                                int32_t /*max_colliders*/,
                                 TydraPhysAABB *aabb_buf,
                                 TydraPhysCollisionPair *pair_buf,
                                 int32_t max_pairs,
@@ -268,7 +263,7 @@ int32_t tydra_phys_broadphase_update(TydraPhysBroadphase *bp,
       mean = tp_v3_add(mean, center);
     }
     if (num_colliders > 0) {
-      mean = tp_v3_scale(mean, 1.0f / (float)num_colliders);
+      mean = tp_v3_scale(mean, 1.0f / static_cast<float>(num_colliders));
     }
 
     float var[3] = {0, 0, 0};
@@ -844,9 +839,6 @@ static TydraPhysVec3 gjk_support(const TydraPhysShape *shape,
       break;
     }
 
-    default:
-      local_pt = tp_v3(0, 0, 0);
-      break;
   }
 
   return tp_xform_point(*xform, local_pt);
@@ -1399,7 +1391,7 @@ static int32_t gjk_epa_contacts(const TydraPhysCollider *ca,
 /* ======================================================================== */
 
 /* Ordered shape type pair for dispatch (lower type first). */
-#define SHAPE_PAIR(a, b) (((int)(a) << 8) | (int)(b))
+#define SHAPE_PAIR(a, b) ((static_cast<int>(a) << 8) | static_cast<int>(b))
 
 int32_t tydra_phys_narrow_phase(const TydraPhysCollider *col_a,
                                 const TydraPhysTransform *xform_a,
