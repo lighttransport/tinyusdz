@@ -162,9 +162,8 @@ btnGenerate.addEventListener('click', async () => {
   usd = new native.TinyUSDZLoaderNative();
 
   // Pass texture to WASM asset cache
-  // setAsset expects a string (binary), convert Uint8Array
-  const binaryStr = String.fromCharCode.apply(null, pngBytes);
-  usd.setAsset('textures/checkerboard.png', binaryStr);
+  // Embind accepts Uint8Array for std::string without UTF-8 string mangling.
+  usd.setAsset('textures/checkerboard.png', pngBytes);
   log('Texture set in asset cache.');
 
   // Build sample scene in WASM
@@ -189,13 +188,12 @@ fileInput.addEventListener('change', async (e) => {
 
   log(`Loading file: ${file.name} (${(file.size / 1024).toFixed(1)} KB)...`);
 
-  const arrayBuf = await file.arrayBuffer();
-  const binaryStr = String.fromCharCode.apply(null, new Uint8Array(arrayBuf));
+  const fileData = new Uint8Array(await file.arrayBuffer());
 
   if (usd) usd.delete();
   usd = new native.TinyUSDZLoaderNative();
 
-  const ok = usd.loadAsLayerFromBinary(binaryStr, file.name);
+  const ok = usd.loadAsLayerFromBinary(fileData, file.name);
   if (!ok) {
     log('ERROR loading file: ' + usd.error());
     return;
