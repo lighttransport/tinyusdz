@@ -315,13 +315,13 @@ class TraceManager {
       const std::vector<TraceRecord>& records = kv.second;
       
       double total_ms = 0.0;
-      double min_ms = std::numeric_limits<double>::max();
+      double min_ms = (std::numeric_limits<double>::max)();
       double max_ms = 0.0;
       
       for (const auto& record : records) {
         total_ms += record.duration_ms;
-        min_ms = std::min(min_ms, record.duration_ms);
-        max_ms = std::max(max_ms, record.duration_ms);
+        min_ms = (std::min)(min_ms, record.duration_ms);
+        max_ms = (std::max)(max_ms, record.duration_ms);
       }
       
       double avg_ms = records.empty() ? 0.0 : total_ms / static_cast<double>(records.size());
@@ -349,13 +349,13 @@ class TraceManager {
       const std::vector<TraceRecord>& records = kv.second;
       
       double total_ms = 0.0;
-      double min_ms = std::numeric_limits<double>::max();
+      double min_ms = (std::numeric_limits<double>::max)();
       double max_ms = 0.0;
       
       for (const auto& record : records) {
         total_ms += record.duration_ms;
-        min_ms = std::min(min_ms, record.duration_ms);
-        max_ms = std::max(max_ms, record.duration_ms);
+        min_ms = (std::min)(min_ms, record.duration_ms);
+        max_ms = (std::max)(max_ms, record.duration_ms);
       }
       
       double avg_ms = records.empty() ? 0.0 : total_ms / static_cast<double>(records.size());
