@@ -14,6 +14,7 @@
     "dev:offscreengl": "vite --open /offscreengl.html",
     "dev:progress": "vite --open /progress-demo.html",
     "dev:progress-offscreen": "vite --open /progress-offscreenwebgl.html",
+    "dev:usd-export": "vite --open /usd-export.html",
     "build": "vite build",
     "preview": "vite preview",
     "__following_is_experiment_and_for_debug__": "",
@@ -36,7 +37,8 @@
     "generate:exr": "vite-node cli/generate-test-exr.js",
     "test:exr-decoder": "vite-node cli/test-exr-decoder.js",
     "test:progress": "node cli/test-progress-cli.js",
-    "test:usdskel": "vite-node tests/usdskel-animation-test.js"
+    "test:usdskel": "vite-node tests/usdskel-animation-test.js",
+    "usd-export": "vite-node cli/usd-export-cli.js"
   },
   "devDependencies": {
     "@types/bun": "latest",
