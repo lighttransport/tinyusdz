@@ -1118,7 +1118,7 @@ struct TypedTimeSamples {
 
     // Adaptive sort: use insertion sort for nearly-sorted data (common for animation)
     size_t inversions = 0;
-    const size_t scan = std::min(_samples.size() - 1, size_t(100));
+    const size_t scan = (std::min)(_samples.size() - 1, size_t(100));
     for (size_t i = 0; i < scan; ++i) {
       if (_samples[i].t > _samples[i + 1].t) ++inversions;
     }

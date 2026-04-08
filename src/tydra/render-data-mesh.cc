@@ -1630,7 +1630,7 @@ static bool ComputeTangentsAndBinormals(
 
   // Helper: safe normalize - returns zero vector if input is degenerate/NaN/Inf
   constexpr float kTangentLengthEps = 1.0e-7f;
-  auto safe_vnormalize = [&safe_vlength](
+  auto safe_vnormalize = [&safe_vlength, kTangentLengthEps](
                               const value::normal3f &v) -> value::normal3f {
     float len = safe_vlength(v);
     if (len < kTangentLengthEps) {
@@ -1642,7 +1642,7 @@ static bool ComputeTangentsAndBinormals(
 
   // Helper: generate a perpendicular tangent from a normal (fallback)
   auto generate_fallback_tangent =
-      [&safe_vlength](
+      [&safe_vlength, kTangentLengthEps](
           const value::normal3f &n) -> value::normal3f {
     // Choose a reference axis not parallel to n
     value::normal3f ref = (std::fabs(n[1]) < 0.9f)
