@@ -9,7 +9,6 @@
 // Math is provided by rb-math.h (included via ik-solver.h).
 // Aliases from old ik_ prefix to tp_ prefix for minimal diff.
 
-#define IK_PI       TP_PI
 #define IK_EPSILON  TP_EPSILON
 #define IK_UNLIMITED TP_UNLIMITED
 
@@ -22,7 +21,6 @@
 #define ik_v3_cross        tp_v3_cross
 #define ik_v3_length       tp_v3_length
 #define ik_v3_normalize    tp_v3_normalize
-#define ik_q               tp_q
 #define ik_q_identity      tp_q_identity
 #define ik_q_mul           tp_q_mul
 #define ik_q_conjugate     tp_q_conjugate
@@ -35,7 +33,6 @@
 #define ik_m4_get_translation tp_m4_get_translation
 #define ik_m4_set_translation tp_m4_set_translation
 #define ik_m4_to_quat      tp_m4_to_quat
-#define ik_q_to_m4         tp_q_to_m4
 #define ik_m4_inverse_rigid tp_m4_inverse_rigid
 #define ik_make_local_transform tp_make_local_transform
 #define ik_axis_vector     tp_axis_vector
@@ -128,7 +125,6 @@ void tydra_ik_clamp_joint(TydraIKJoint *joint) {
     }
 
     case TYDRA_IK_JOINT_FREE:
-    default:
       break;
   }
 }
@@ -418,9 +414,9 @@ TydraIKResult tydra_ik_solve(TydraIKChain *chain) {
       return solve_ccd(chain);
     case TYDRA_IK_ALGO_FABRIK:
       return solve_fabrik(chain);
-    default:
-      return TYDRA_IK_ERR_INTERNAL;
   }
+
+  return TYDRA_IK_ERR_INTERNAL;
 }
 
 TydraIKVec3 tydra_ik_effector_position(const TydraIKChain *chain) {

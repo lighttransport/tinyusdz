@@ -96,7 +96,6 @@ bool ReconstructPrim<PhysicsJoint>(
   (void)spec; (void)references;
   std::set<std::string> table;
   if (!ReconstructJointBaseProperties(table, properties, joint, warn, err, options)) return false;
-#define PRIM_CLASS_ PhysicsJoint
 #define PRIM_PTR_ joint
   for (auto &prop : properties) {
     PHYSICS_JOINT_BASE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -105,7 +104,6 @@ bool ReconstructPrim<PhysicsJoint>(
     ADD_PROPERTY(table, prop, PhysicsJoint, joint->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
   return true;
 }
@@ -125,6 +123,7 @@ bool ReconstructPrim<PhysicsScene>(
 
   (void)spec;
   (void)references;
+  (void)options;
 
   std::set<std::string> table;
 
@@ -132,7 +131,6 @@ bool ReconstructPrim<PhysicsScene>(
     scene->mjcScene = MjcSceneAPI();
   }
 
-#define PRIM_CLASS_ PhysicsScene
 #define PRIM_PTR_ scene
 
   for (auto &prop : properties) {
@@ -148,7 +146,6 @@ bool ReconstructPrim<PhysicsScene>(
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
 
   return true;
@@ -165,7 +162,6 @@ bool ReconstructPrim<PhysicsRevoluteJoint>(
   (void)spec; (void)references;
   std::set<std::string> table;
   if (!ReconstructJointBaseProperties(table, properties, joint, warn, err, options)) return false;
-#define PRIM_CLASS_ PhysicsRevoluteJoint
 #define PRIM_PTR_ joint
   for (auto &prop : properties) {
     PHYSICS_JOINT_BASE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -175,7 +171,6 @@ bool ReconstructPrim<PhysicsRevoluteJoint>(
     ADD_PROPERTY(table, prop, PhysicsRevoluteJoint, joint->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
   return true;
 }
@@ -191,7 +186,6 @@ bool ReconstructPrim<PhysicsPrismaticJoint>(
   (void)spec; (void)references;
   std::set<std::string> table;
   if (!ReconstructJointBaseProperties(table, properties, joint, warn, err, options)) return false;
-#define PRIM_CLASS_ PhysicsPrismaticJoint
 #define PRIM_PTR_ joint
   for (auto &prop : properties) {
     PHYSICS_JOINT_BASE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -201,7 +195,6 @@ bool ReconstructPrim<PhysicsPrismaticJoint>(
     ADD_PROPERTY(table, prop, PhysicsPrismaticJoint, joint->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
   return true;
 }
@@ -217,7 +210,6 @@ bool ReconstructPrim<PhysicsSphericalJoint>(
   (void)spec; (void)references;
   std::set<std::string> table;
   if (!ReconstructJointBaseProperties(table, properties, joint, warn, err, options)) return false;
-#define PRIM_CLASS_ PhysicsSphericalJoint
 #define PRIM_PTR_ joint
   for (auto &prop : properties) {
     PHYSICS_JOINT_BASE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -227,7 +219,6 @@ bool ReconstructPrim<PhysicsSphericalJoint>(
     ADD_PROPERTY(table, prop, PhysicsSphericalJoint, joint->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
   return true;
 }
@@ -243,7 +234,6 @@ bool ReconstructPrim<PhysicsFixedJoint>(
   (void)spec; (void)references;
   std::set<std::string> table;
   if (!ReconstructJointBaseProperties(table, properties, joint, warn, err, options)) return false;
-#define PRIM_CLASS_ PhysicsFixedJoint
 #define PRIM_PTR_ joint
   for (auto &prop : properties) {
     PHYSICS_JOINT_BASE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -252,7 +242,6 @@ bool ReconstructPrim<PhysicsFixedJoint>(
     ADD_PROPERTY(table, prop, PhysicsFixedJoint, joint->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
   return true;
 }
@@ -268,7 +257,6 @@ bool ReconstructPrim<PhysicsDistanceJoint>(
   (void)spec; (void)references;
   std::set<std::string> table;
   if (!ReconstructJointBaseProperties(table, properties, joint, warn, err, options)) return false;
-#define PRIM_CLASS_ PhysicsDistanceJoint
 #define PRIM_PTR_ joint
   for (auto &prop : properties) {
     PHYSICS_JOINT_BASE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -278,7 +266,6 @@ bool ReconstructPrim<PhysicsDistanceJoint>(
     ADD_PROPERTY(table, prop, PhysicsDistanceJoint, joint->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
   return true;
 }
@@ -291,9 +278,8 @@ bool ReconstructPrim<MjcActuator>(
     const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
     MjcActuator *actuator, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
-  (void)spec; (void)references;
+  (void)spec; (void)references; (void)options;
   std::set<std::string> table;
-#define PRIM_CLASS_ MjcActuator
 #define PRIM_PTR_ actuator
   for (auto &prop : properties) {
     MJC_ACTUATOR_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -301,7 +287,6 @@ bool ReconstructPrim<MjcActuator>(
     ADD_PROPERTY(table, prop, MjcActuator, actuator->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
   return true;
 }
@@ -314,9 +299,8 @@ bool ReconstructPrim<MjcTendon>(
     const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
     MjcTendon *tendon, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
-  (void)spec; (void)references;
+  (void)spec; (void)references; (void)options;
   std::set<std::string> table;
-#define PRIM_CLASS_ MjcTendon
 #define PRIM_PTR_ tendon
   for (auto &prop : properties) {
     MJC_TENDON_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -324,7 +308,6 @@ bool ReconstructPrim<MjcTendon>(
     ADD_PROPERTY(table, prop, MjcTendon, tendon->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
   return true;
 }
@@ -337,16 +320,14 @@ bool ReconstructPrim<MjcKeyframe>(
     const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
     MjcKeyframe *keyframe, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
-  (void)spec; (void)references;
+  (void)spec; (void)references; (void)options;
   std::set<std::string> table;
-#define PRIM_CLASS_ MjcKeyframe
 #define PRIM_PTR_ keyframe
   for (auto &prop : properties) {
     MJC_KEYFRAME_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     ADD_PROPERTY(table, prop, MjcKeyframe, keyframe->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
   return true;
 }
@@ -359,9 +340,8 @@ bool ReconstructPrim<PhysicsCollisionGroup>(
     const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
     PhysicsCollisionGroup *group, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
-  (void)spec; (void)references;
+  (void)spec; (void)references; (void)options;
   std::set<std::string> table;
-#define PRIM_CLASS_ PhysicsCollisionGroup
 #define PRIM_PTR_ group
   for (auto &prop : properties) {
     PHYSICS_COLLISION_GROUP_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -369,7 +349,6 @@ bool ReconstructPrim<PhysicsCollisionGroup>(
     ADD_PROPERTY(table, prop, PhysicsCollisionGroup, group->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
   return true;
 }

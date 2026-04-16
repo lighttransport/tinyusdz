@@ -259,15 +259,15 @@ bool ConvertPhysicsToJson(
   } data;
 
   TraversePrims(stage.root_prims(), "", [&](const Prim &prim, const std::string &path) {
-    if (auto *p = prim.as<PhysicsScene>()) data.scenes.emplace_back(path, p);
-    else if (auto *p = prim.as<PhysicsRevoluteJoint>()) data.revoluteJoints.emplace_back(path, p);
-    else if (auto *p = prim.as<PhysicsPrismaticJoint>()) data.prismaticJoints.emplace_back(path, p);
-    else if (auto *p = prim.as<PhysicsSphericalJoint>()) data.sphericalJoints.emplace_back(path, p);
-    else if (auto *p = prim.as<PhysicsFixedJoint>()) data.fixedJoints.emplace_back(path, p);
-    else if (auto *p = prim.as<PhysicsDistanceJoint>()) data.distanceJoints.emplace_back(path, p);
-    else if (auto *p = prim.as<MjcActuator>()) data.actuators.emplace_back(path, p);
-    else if (auto *p = prim.as<MjcTendon>()) data.tendons.emplace_back(path, p);
-    else if (auto *p = prim.as<MjcKeyframe>()) data.keyframes.emplace_back(path, p);
+    if (auto *scene = prim.as<PhysicsScene>()) data.scenes.emplace_back(path, scene);
+    else if (auto *revolute = prim.as<PhysicsRevoluteJoint>()) data.revoluteJoints.emplace_back(path, revolute);
+    else if (auto *prismatic = prim.as<PhysicsPrismaticJoint>()) data.prismaticJoints.emplace_back(path, prismatic);
+    else if (auto *spherical = prim.as<PhysicsSphericalJoint>()) data.sphericalJoints.emplace_back(path, spherical);
+    else if (auto *fixed = prim.as<PhysicsFixedJoint>()) data.fixedJoints.emplace_back(path, fixed);
+    else if (auto *distance = prim.as<PhysicsDistanceJoint>()) data.distanceJoints.emplace_back(path, distance);
+    else if (auto *actuator = prim.as<MjcActuator>()) data.actuators.emplace_back(path, actuator);
+    else if (auto *tendon = prim.as<MjcTendon>()) data.tendons.emplace_back(path, tendon);
+    else if (auto *keyframe = prim.as<MjcKeyframe>()) data.keyframes.emplace_back(path, keyframe);
   });
 
   std::ostringstream ss;

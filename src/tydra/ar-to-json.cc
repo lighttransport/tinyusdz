@@ -97,14 +97,14 @@ bool ConvertARToJson(
   } data;
 
   TraversePrims(stage.root_prims(), "", [&](const Prim &prim, const std::string &path) {
-    if (auto *p = prim.as<Preliminary_PhysicsGravitationalForce>()) data.gravForces.emplace_back(path, p);
-    else if (auto *p = prim.as<Preliminary_InfiniteColliderPlane>()) data.colliderPlanes.emplace_back(path, p);
-    else if (auto *p = prim.as<Preliminary_ReferenceImage>()) data.refImages.emplace_back(path, p);
-    else if (auto *p = prim.as<Preliminary_Behavior>()) data.behaviors.emplace_back(path, p);
-    else if (auto *p = prim.as<Preliminary_Trigger>()) data.triggers.emplace_back(path, p);
-    else if (auto *p = prim.as<Preliminary_Action>()) data.actions.emplace_back(path, p);
-    else if (auto *p = prim.as<Preliminary_Text>()) data.texts.emplace_back(path, p);
-    else if (auto *p = prim.as<SpatialAudio>()) data.audioNodes.emplace_back(path, p);
+    if (auto *grav = prim.as<Preliminary_PhysicsGravitationalForce>()) data.gravForces.emplace_back(path, grav);
+    else if (auto *plane = prim.as<Preliminary_InfiniteColliderPlane>()) data.colliderPlanes.emplace_back(path, plane);
+    else if (auto *ref_image = prim.as<Preliminary_ReferenceImage>()) data.refImages.emplace_back(path, ref_image);
+    else if (auto *behavior = prim.as<Preliminary_Behavior>()) data.behaviors.emplace_back(path, behavior);
+    else if (auto *trigger = prim.as<Preliminary_Trigger>()) data.triggers.emplace_back(path, trigger);
+    else if (auto *action = prim.as<Preliminary_Action>()) data.actions.emplace_back(path, action);
+    else if (auto *text = prim.as<Preliminary_Text>()) data.texts.emplace_back(path, text);
+    else if (auto *audio = prim.as<SpatialAudio>()) data.audioNodes.emplace_back(path, audio);
   });
 
   std::ostringstream ss;
