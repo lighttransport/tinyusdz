@@ -51,16 +51,14 @@ bool ReconstructPrim<SpatialAudio>(
     const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
     SpatialAudio *prim, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
-  (void)spec; (void)references;
+  (void)spec; (void)references; (void)options;
   std::set<std::string> table;
-#define PRIM_CLASS_ SpatialAudio
 #define PRIM_PTR_ prim
   for (auto &prop : properties) {
     SPATIAL_AUDIO_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     ADD_PROPERTY(table, prop, SpatialAudio, prim->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
   return true;
 }

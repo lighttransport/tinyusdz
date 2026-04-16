@@ -51,16 +51,14 @@ bool ReconstructPrim<Preliminary_PhysicsGravitationalForce>(
     const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
     Preliminary_PhysicsGravitationalForce *prim, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
-  (void)spec; (void)references;
+  (void)spec; (void)references; (void)options;
   std::set<std::string> table;
-#define PRIM_CLASS_ Preliminary_PhysicsGravitationalForce
 #define PRIM_PTR_ prim
   for (auto &prop : properties) {
     PRELIMINARY_GRAVITATIONAL_FORCE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     ADD_PROPERTY(table, prop, Preliminary_PhysicsGravitationalForce, prim->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
   return true;
 }
@@ -73,16 +71,14 @@ bool ReconstructPrim<Preliminary_InfiniteColliderPlane>(
     const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
     Preliminary_InfiniteColliderPlane *prim, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
-  (void)spec; (void)references;
+  (void)spec; (void)references; (void)options;
   std::set<std::string> table;
-#define PRIM_CLASS_ Preliminary_InfiniteColliderPlane
 #define PRIM_PTR_ prim
   for (auto &prop : properties) {
     PRELIMINARY_INFINITE_COLLIDER_PLANE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     ADD_PROPERTY(table, prop, Preliminary_InfiniteColliderPlane, prim->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
   return true;
 }
@@ -95,16 +91,14 @@ bool ReconstructPrim<Preliminary_ReferenceImage>(
     const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
     Preliminary_ReferenceImage *prim, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
-  (void)spec; (void)references;
+  (void)spec; (void)references; (void)options;
   std::set<std::string> table;
-#define PRIM_CLASS_ Preliminary_ReferenceImage
 #define PRIM_PTR_ prim
   for (auto &prop : properties) {
     PRELIMINARY_REFERENCE_IMAGE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     ADD_PROPERTY(table, prop, Preliminary_ReferenceImage, prim->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
   return true;
 }
@@ -117,9 +111,8 @@ bool ReconstructPrim<Preliminary_Behavior>(
     const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
     Preliminary_Behavior *prim, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
-  (void)spec; (void)references;
+  (void)spec; (void)references; (void)options;
   std::set<std::string> table;
-#define PRIM_CLASS_ Preliminary_Behavior
 #define PRIM_PTR_ prim
   for (auto &prop : properties) {
     PRELIMINARY_BEHAVIOR_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -127,7 +120,6 @@ bool ReconstructPrim<Preliminary_Behavior>(
     ADD_PROPERTY(table, prop, Preliminary_Behavior, prim->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
   return true;
 }
@@ -140,16 +132,14 @@ bool ReconstructPrim<Preliminary_Trigger>(
     const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
     Preliminary_Trigger *prim, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
-  (void)spec; (void)references;
+  (void)spec; (void)references; (void)options;
   std::set<std::string> table;
-#define PRIM_CLASS_ Preliminary_Trigger
 #define PRIM_PTR_ prim
   for (auto &prop : properties) {
     PRELIMINARY_TRIGGER_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     ADD_PROPERTY(table, prop, Preliminary_Trigger, prim->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
   return true;
 }
@@ -162,16 +152,14 @@ bool ReconstructPrim<Preliminary_Action>(
     const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
     Preliminary_Action *prim, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
-  (void)spec; (void)references;
+  (void)spec; (void)references; (void)options;
   std::set<std::string> table;
-#define PRIM_CLASS_ Preliminary_Action
 #define PRIM_PTR_ prim
   for (auto &prop : properties) {
     PRELIMINARY_ACTION_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     ADD_PROPERTY(table, prop, Preliminary_Action, prim->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
   return true;
 }
@@ -184,16 +172,14 @@ bool ReconstructPrim<Preliminary_Text>(
     const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
     Preliminary_Text *prim, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
-  (void)spec; (void)references;
+  (void)spec; (void)references; (void)options;
   std::set<std::string> table;
-#define PRIM_CLASS_ Preliminary_Text
 #define PRIM_PTR_ prim
   for (auto &prop : properties) {
     PRELIMINARY_TEXT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     ADD_PROPERTY(table, prop, Preliminary_Text, prim->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
   return true;
 }

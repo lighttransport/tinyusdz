@@ -1935,10 +1935,8 @@ bool ReconstructPrim<GeomTetMesh>(
     const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
     GeomTetMesh *tetmesh, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
-#define PRIM_CLASS_ GeomTetMesh
 #define PRIM_PTR_ tetmesh
   RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomTetMesh, tetmesh, GEOM_TET_MESH_TYPED_ATTRS, /* no enums */)
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
 }
 
@@ -1947,10 +1945,8 @@ bool ReconstructPrim<GeomNurbsPatch>(
     const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
     GeomNurbsPatch *patch, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
-#define PRIM_CLASS_ GeomNurbsPatch
 #define PRIM_PTR_ patch
   RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomNurbsPatch, patch, GEOM_NURBS_PATCH_TYPED_ATTRS, /* no enums */)
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
 }
 
@@ -1959,10 +1955,8 @@ bool ReconstructPrim<GeomHermiteCurves>(
     const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
     GeomHermiteCurves *curves, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
-#define PRIM_CLASS_ GeomHermiteCurves
 #define PRIM_PTR_ curves
   RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomHermiteCurves, curves, GEOM_HERMITE_CURVES_TYPED_ATTRS, /* no enums */)
-#undef PRIM_CLASS_
 #undef PRIM_PTR_
 }
 

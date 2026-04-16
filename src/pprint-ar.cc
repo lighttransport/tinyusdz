@@ -19,21 +19,25 @@ static std::string print_rel_prop(const RelationshipProperty &rp,
                             /* custom */ false, name, indent);
 }
 
-#define PRINT_PRIM_HEADER(prim, type_name) \
-  ss << pprint::Indent(indent) << to_string(prim.spec) << " " << type_name << " \"" \
-     << prim.name << "\"\n"; \
-  if (prim.meta.authored()) { \
-    ss << pprint::Indent(indent) << "(\n"; \
-    ss << print_prim_metas(prim.meta, indent + 1); \
-    ss << pprint::Indent(indent) << ")\n"; \
-  } \
-  ss << pprint::Indent(indent) << "{\n"
+#define PRINT_PRIM_HEADER(prim, type_name)                                       \
+  do {                                                                            \
+    ss << pprint::Indent(indent) << to_string(prim.spec) << " " << type_name     \
+       << " \"" << prim.name << "\"\n";                                           \
+    if (prim.meta.authored()) {                                                   \
+      ss << pprint::Indent(indent) << "(\n";                                      \
+      ss << print_prim_metas(prim.meta, indent + 1);                              \
+      ss << pprint::Indent(indent) << ")\n";                                      \
+    }                                                                             \
+    ss << pprint::Indent(indent) << "{\n";                                        \
+  } while (0)
 
-#define PRINT_PRIM_FOOTER(prim) \
-  ss << print_props(prim.props, indent + 1); \
-  if (closing_brace) { \
-    ss << pprint::Indent(indent) << "}\n"; \
-  }
+#define PRINT_PRIM_FOOTER(prim)                                                   \
+  do {                                                                            \
+    ss << print_props(prim.props, indent + 1);                                    \
+    if (closing_brace) {                                                          \
+      ss << pprint::Indent(indent) << "}\n";                                      \
+    }                                                                             \
+  } while (0)
 
 std::string to_string(const Preliminary_PhysicsGravitationalForce &prim,
                       const uint32_t indent, bool closing_brace) {
