@@ -92,7 +92,7 @@ namespace {
 
 // from llama.cpp ----
 // MIT license
-std::string GetErrorMessageWin32(DWORD error_code) {
+[[maybe_unused]] std::string GetErrorMessageWin32(DWORD error_code) {
   std::string ret;
   LPSTR lpMsgBuf = NULL;
   DWORD bufLen = FormatMessageA(
