@@ -342,7 +342,7 @@ const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type) {
     sz = 31;
   }
 
-  strncpy(buf, tyname, sz);
+  memcpy(buf, tyname, sz);
 
   if (is_array) {
     if (sz > 29) {
@@ -996,7 +996,7 @@ const char *c_tinyusd_prim_type_name(CTinyUSDPrimType prim_type) {
     // Just in case: this should not happen though.
     sz = 31;
   }
-  strncpy(buf, tyname, sz);
+  memcpy(buf, tyname, sz);
   buf[sz] = '\0';
 
   return buf;
