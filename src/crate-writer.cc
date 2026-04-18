@@ -40,7 +40,6 @@ namespace pathlib = ::crate;
 // - shadow: if-else chains reuse variable names intentionally
 // - sign-conversion: safe narrowing in serialization code
 // - old-style-cast: debug print formatting
-// - nrvo: return value optimization hints
 // - exceptions: comparator functions may throw in debug builds
 // - unused-parameter: some functions have consistent API signatures
 #if defined(__clang__)
@@ -48,7 +47,6 @@ namespace pathlib = ::crate;
 #pragma clang diagnostic ignored "-Wshadow"
 #pragma clang diagnostic ignored "-Wsign-conversion"
 #pragma clang diagnostic ignored "-Wold-style-cast"
-#pragma clang diagnostic ignored "-Wnrvo"
 #pragma clang diagnostic ignored "-Wshorten-64-to-32"
 #pragma clang diagnostic ignored "-Wexceptions"
 #pragma clang diagnostic ignored "-Wunused-parameter"
@@ -112,7 +110,7 @@ ListOpHeader BuildListOpHeader(const ListOp<T>& listop) {
   if (listop.HasOrderedItems()) header.bits |= ListOpHeader::HasOrderedItemsBit;
   if (listop.HasPrependedItems()) header.bits |= ListOpHeader::HasPrependedItemsBit;
   if (listop.HasAppendedItems()) header.bits |= ListOpHeader::HasAppendedItemsBit;
-  return ListOpHeader(header.bits);
+  return header;  // NRVO
 }
 
 } // anonymous namespace

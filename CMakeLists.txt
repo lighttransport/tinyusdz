@@ -1382,11 +1382,6 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   # corrent TinyYSDZ need to use bigobj format otherwise we'll get: fatal  error C1128: number of sections exceeded object file format limit: compile with /bigobj
   if(MSVC)
     target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /bigobj)
-  elseif(WIN32)
-    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-      # guess mingw-gcc
-      target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE "-Wa, -mbig-obj")
-    endif()
   endif()
 
   if (MSVC)
