@@ -145,7 +145,6 @@ bool describe_vertex_attribute(const VertexAttribute &va, VAView *out) {
     case F::Dmat2:   n_inner = 4;  comp = 8; fmt = "d"; break;
     case F::Dmat3:   n_inner = 9;  comp = 8; fmt = "d"; break;
     case F::Dmat4:   n_inner = 16; comp = 8; fmt = "d"; break;
-    default:         return false;
   }
   out->ptr = static_cast<const void *>(va.data.data());
   out->n_outer = static_cast<uint64_t>(va.vertex_count());
@@ -935,7 +934,6 @@ int c_tinyusd_animation_get_sampler(const CTinyUSDAnimationClip *a,
     case AnimationInterpolation::Step:        *out_interpolation = 0; break;
     case AnimationInterpolation::Linear:      *out_interpolation = 1; break;
     case AnimationInterpolation::CubicSpline: *out_interpolation = 2; break;
-    default:                                  *out_interpolation = 1; break;
   }
   return 1;
 }
