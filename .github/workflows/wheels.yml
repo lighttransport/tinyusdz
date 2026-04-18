@@ -4,18 +4,6 @@ on:
   push:
     tags:
       - "v*.*.*"
-    branches:
-      - release
-      - physics-2026
-  pull_request:
-    paths:
-      - "pyproject.toml"
-      - "setup.py"
-      - "MANIFEST.in"
-      - "src/python/**"
-      - "src/c-tinyusd*.{h,cc}"
-      - "python/**"
-      - ".github/workflows/wheels.yml"
   workflow_dispatch:
     inputs:
       sha:
