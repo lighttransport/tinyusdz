@@ -617,7 +617,10 @@ if(TINYUSDZ_WITH_PXR_COMPAT_API)
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/pxr-compat.cc)
 endif()
 
-set(TINYUSDZ_C_API_SOURCES ${PROJECT_SOURCE_DIR}/src/c-tinyusd.cc)
+set(TINYUSDZ_C_API_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/c-tinyusd.cc
+    ${PROJECT_SOURCE_DIR}/src/c-tinyusd-helpers.cc
+    ${PROJECT_SOURCE_DIR}/src/c-tinyusd-tydra.cc)
 
 set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/integerCoding.cpp
