@@ -3,7 +3,7 @@ name: Build wheels
 on:
   push:
     tags:
-      - "v*"
+      - "v*.*.*"
     branches:
       - release
       - physics-2026
@@ -17,6 +17,11 @@ on:
       - "python/**"
       - ".github/workflows/wheels.yml"
   workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit SHA to build (optional; defaults to branch tip)"
+        required: false
+        type: string
 
 jobs:
   build_wheels:
@@ -35,6 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.sha || github.ref }}
           submodules: recursive
           fetch-depth: 0   # setuptools_scm
 
@@ -63,6 +69,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.sha || github.ref }}
           submodules: recursive
           fetch-depth: 0
 
