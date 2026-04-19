@@ -62,6 +62,14 @@ def _cmake_configure_and_build() -> None:
 
     if platform.system() == "Windows":
         cmake_args.append("-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL")
+        # Force MSVC's cl.exe even when a mingw-gcc sits earlier on PATH
+        # (Strawberry Perl on the GitHub runner), otherwise Ninja picks
+        # gcc and the resulting .a archive can't be linked by MSVC when
+        # building the Python extension (LNK1143 on COMDAT).
+        cmake_args += [
+            "-DCMAKE_C_COMPILER=cl",
+            "-DCMAKE_CXX_COMPILER=cl",
+        ]
 
     env = os.environ.copy()
     # Respect MACOSX_DEPLOYMENT_TARGET from cibuildwheel if set.
