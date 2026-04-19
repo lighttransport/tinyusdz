@@ -251,6 +251,16 @@ bool CrateWriter::Open(std::string* err) {
   value_data_start_offset_ = Tell();
   value_data_end_offset_ = value_data_start_offset_;
 
+  // Reserve token index 0 with a sentinel that cannot be a valid path
+  // element. OpenUSD does the same (crateFile.cpp line 2594-2601, github
+  // issue #811). The compressed path format uses negative token indices
+  // for property path elements; -0 == 0 would otherwise make a property
+  // at index 0 indistinguishable from a prim element, so ";-)" must sit
+  // at index 0 before any caller has a chance to register a real token.
+  // Previously this was deferred to Finalize(), but by then AddSpec had
+  // already pushed field-name tokens into tokens_ at index 0.
+  GetOrCreateToken(";-)");
+
   return true;
 }
 
@@ -399,6 +409,28 @@ bool CrateWriter::Finalize(std::string* err) {
         return false;
       }
 
+      // USD metadata fields `primChildren` and `properties` store a list of
+      // child/property names. On the wire, pxrusd expects these as the
+      // dedicated `TokenVector` type (CrateDataTypeId 41), not as a
+      // `Token[]` array (CrateDataTypeId 11 with IsArray). The serialized
+      // bytes are identical — uint64 count followed by uint32 token
+      // indices — so we just retag the ValueRep after PackValue emitted
+      // it as Token[]. Without this, pxrusd loads the layer but silently
+      // drops every prim because its primChildren field fails type
+      // validation, and we ship USDC that downstream DCCs can't read.
+      const std::string& fname = field_pair.first;
+      if ((fname == "primChildren" || fname == "properties") &&
+          field_pair.second.as<std::vector<value::token>>() &&
+          field.value_rep.IsArray() &&
+          field.value_rep.GetType() ==
+              static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN)) {
+        uint64_t data = field.value_rep.GetData();
+        data &= ~crate::ValueRep::IsArrayBit_;
+        field.value_rep = crate::ValueRep(data);
+        field.value_rep.SetType(static_cast<int32_t>(
+            crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR));
+      }
+
       // Get or create field index
       crate::FieldIndex field_idx = GetOrCreateField(field);
       field_indices.push_back(field_idx);
@@ -477,6 +509,12 @@ bool CrateWriter::Finalize(std::string* err) {
   // ========================================================================
   // Pre-register path element tokens before writing TOKENS section.
   // WritePathsSection uses GetOrCreateToken during tree building.
+  // WritePathsSection rewrites the root path's element name ("/") to the
+  // empty string before tokenizing, so we must ensure "" is in the pool;
+  // otherwise the root row references a token that only gets appended
+  // after the TOKENS section has already been serialized — which pxrusd
+  // rejects with "Corrupt path element token index in crate file".
+  GetOrCreateToken("");
   for (const auto& path : paths_) {
     std::string elem = path.element_name();
     if (!elem.empty() && elem != "/") {

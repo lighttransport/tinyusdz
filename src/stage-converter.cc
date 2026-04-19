@@ -1110,14 +1110,19 @@ bool CrateWriter::ConvertValue(
   // Token and String types
   else if (type_name == "token") {
     if (auto v = val.get_value<value::token>()) {
-      crate::TokenIndex tok_idx = GetOrCreateToken(v->str());
-      out.Set(tok_idx.value);
+      // Store the typed token value; the crate packer pools it through
+      // the tokens section at serialization time. Storing the raw pool
+      // index (uint) here produced files that tinyusdz's reader surfaced
+      // as `var_type='uint' (unresolved)` and that pxrusd rejected with
+      // "Corrupt path element token index in crate file".
+      out.Set(*v);
       return true;
     }
   } else if (type_name == "string") {
     if (auto v = val.get_value<std::string>()) {
-      crate::StringIndex str_idx = GetOrCreateString(*v);
-      out.Set(str_idx.value);
+      // Same rationale as the token branch above: store the string value,
+      // not the strings-section index.
+      out.Set(*v);
       return true;
     }
   }
