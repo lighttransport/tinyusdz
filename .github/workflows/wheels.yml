@@ -75,16 +75,30 @@ jobs:
     needs: [build_wheels, build_sdist]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # Uses PyPI Trusted Publishing (OIDC). No API token is configured — the
+    # GitHub-issued OIDC token is exchanged for a short-lived upload token by
+    # PyPI. The pypi.org project must have a matching publisher registered:
+    #   owner:    lighttransport
+    #   repo:     tinyusdz
+    #   workflow: wheels.yml
+    #   env:      pypi
     environment:
       name: pypi
       url: https://pypi.org/p/tinyusdz
     permissions:
-      id-token: write   # OIDC trusted publishing
+      id-token: write   # mint OIDC token for PyPI
+      contents: read
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
-      - name: Publish to PyPI
+      - name: Publish to PyPI (trusted publisher)
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # No `password` / `user` — forces the action to use the OIDC
+          # trusted-publisher flow. Attestations emit PEP 740 provenance
+          # records for each uploaded file.
+          attestations: true
+          print-hash: true
