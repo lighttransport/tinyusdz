@@ -57,19 +57,18 @@ def _cmake_configure_and_build() -> None:
         "-DTINYUSDZ_WITH_TOOL_USDA_PARSER=OFF",
         "-DTINYUSDZ_WITH_TOOL_USDC_PARSER=OFF",
     ]
-    if shutil.which("ninja") is not None:
+    is_windows = platform.system() == "Windows"
+
+    # On Windows, prefer the native Visual Studio generator so CMake
+    # auto-locates MSVC without needing cl.exe on PATH. Using Ninja here
+    # would require running inside a vcvarsall shell, which the PyPA
+    # build frontend does not set up when it invokes cmake. Elsewhere
+    # (Linux / macOS) Ninja is strictly faster if it is available.
+    if not is_windows and shutil.which("ninja") is not None:
         cmake_args.extend(["-G", "Ninja"])
 
-    if platform.system() == "Windows":
+    if is_windows:
         cmake_args.append("-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL")
-        # Force MSVC's cl.exe even when a mingw-gcc sits earlier on PATH
-        # (Strawberry Perl on the GitHub runner), otherwise Ninja picks
-        # gcc and the resulting .a archive can't be linked by MSVC when
-        # building the Python extension (LNK1143 on COMDAT).
-        cmake_args += [
-            "-DCMAKE_C_COMPILER=cl",
-            "-DCMAKE_CXX_COMPILER=cl",
-        ]
 
     env = os.environ.copy()
     # Respect MACOSX_DEPLOYMENT_TARGET from cibuildwheel if set.
