@@ -1437,7 +1437,8 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   bool is_compressed = false;
   int64_t offset = WriteValueData(value, &is_compressed, err);
   if (offset < 0 || (err && !err->empty())) {
-    return crate::ValueRep();
+    rep = crate::ValueRep();
+    return rep;
   }
 
   // Create ValueRep with offset and proper type
