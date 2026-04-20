@@ -2357,6 +2357,18 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                       tex_abs_path.prim_part(), asset_eval_err));
     }
   } else {
+    // `asset:file` not authored (known Blender export bug). If the caller
+    // tolerates missing assets, downgrade this to a warning and return
+    // a default-constructed UVTexture so higher-level conversion can
+    // continue; otherwise behave as before.
+    if (env.material_config.allow_missing_asset) {
+      PushWarn(fmt::format(
+          "`asset:file` is not authored for UsdUVTexture at {}. "
+          "Returning empty texture (allow_missing_asset=true).",
+          tex_abs_path.prim_part()));
+      *tex_out = tex;
+      return true;
+    }
     PUSH_ERROR_AND_RETURN(fmt::format(
         "`asset:file` is not authored for UsdUVTexture at {}.",
         tex_abs_path.prim_part()));
