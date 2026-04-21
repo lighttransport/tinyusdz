@@ -248,14 +248,46 @@ std::string ChannelToString(int channel_value) {
   }
 }
 
-std::string SanitizeAssetPath(const std::string& path, bool allow_backslashes) {
-  std::string result = path;
-  
-  if (!allow_backslashes) {
-    // Convert backslashes to forward slashes on non-Windows systems
-    std::replace(result.begin(), result.end(), '\\', '/');
+std::string SanitizeAssetPath(const std::string& path) {
+  if (path.empty()) {
+    return {};
   }
-  
+
+  std::string normalized = path;
+  std::replace(normalized.begin(), normalized.end(), '\\', '/');
+
+  std::vector<std::string> parts;
+  parts.reserve(16);
+
+  size_t begin = 0;
+  while (begin <= normalized.size()) {
+    size_t end = normalized.find('/', begin);
+    std::string part = normalized.substr(begin, end - begin);
+
+    if (!part.empty() && part != ".") {
+      if (part == "..") {
+        if (parts.empty()) {
+          return {};
+        }
+        parts.pop_back();
+      } else {
+        parts.push_back(std::move(part));
+      }
+    }
+
+    if (end == std::string::npos) {
+      break;
+    }
+    begin = end + 1;
+  }
+
+  std::string result;
+  for (size_t i = 0; i < parts.size(); i++) {
+    if (i > 0) {
+      result.push_back('/');
+    }
+    result += parts[i];
+  }
   return result;
 }
 

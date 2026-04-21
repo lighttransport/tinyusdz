@@ -955,6 +955,8 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(stage.add_root_prim(Prim("Tex", tex_shader)));
 
     tydra::RenderSceneConverterEnv env(stage);
+    // Strict mode: unauthored `asset:file` should propagate an error.
+    env.material_config.allow_missing_asset = false;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 

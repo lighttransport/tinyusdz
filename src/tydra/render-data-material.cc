@@ -47,6 +47,7 @@
 #include "materialx-to-json.hh"
 #include "mmap-array-ref.hh"
 #include "materialx-to-json.hh"
+#include "security-policy.hh"
 
 //
 #include "common-macros.inc"
@@ -209,7 +210,16 @@ bool RawAssetRead(
   (void)userdata;
   (void)warn;
 
-  std::string resolvedPath = assetResolver.resolve(assetPath.GetAssetPath());
+  std::string sanitized_path =
+      utils::SanitizeAssetPath(assetPath.GetAssetPath());
+  if (sanitized_path.empty()) {
+    if (err) {
+      (*err) += fmt::format("Unsafe asset path: {}\n", assetPath.GetAssetPath());
+    }
+    return false;
+  }
+
+  std::string resolvedPath = assetResolver.resolve(sanitized_path);
 
   if (resolvedPath.empty()) {
     if (err) {
@@ -220,11 +230,19 @@ bool RawAssetRead(
   }
 
   Asset asset;
-  bool ret = assetResolver.open_asset(resolvedPath, assetPath.GetAssetPath(),
+  bool ret = assetResolver.open_asset(resolvedPath, sanitized_path,
                                       &asset, warn, err);
   if (!ret) {
     if (err) {
       (*err) += fmt::format("Failed to open asset: {}", resolvedPath);
+    }
+    return false;
+  }
+
+  if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+    if (err) {
+      (*err) += fmt::format("Resolved asset exceeds max bytes ({} > {}).",
+                            asset.size(), security_policy::kResolverMaxAssetReadBytes);
     }
     return false;
   }

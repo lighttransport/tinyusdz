@@ -19,6 +19,7 @@
 #include "io-util.hh"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
+#include "security-policy.hh"
 #include "core/prim.hh"
 #include "core/prim-spec.hh"
 #include "layer.hh"
@@ -215,6 +216,11 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   }
 
   std::string asset_path = assetPath.GetAssetPath();
+  if (!security_policy::ValidateAndNormalizeAssetPath(asset_path, &asset_path)) {
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Unsafe asset path in composition: `{}`",
+                    assetPath.GetAssetPath()));
+  }
   std::string ext = GetExtension(asset_path);
 
   if (asset_path.empty()) {
@@ -273,6 +279,12 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   if (!resolver.open_asset(resolved_path, asset_path, &asset, warn, err)) {
     PUSH_ERROR_AND_RETURN(
         fmt::format("Failed to open asset `{}`.", resolved_path));
+  }
+
+  if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Resolved asset exceeds max bytes ({} > {}).",
+                    asset.size(), security_policy::kResolverMaxAssetReadBytes));
   }
 
   DCOUT("Opened resolved assst: " << resolved_path

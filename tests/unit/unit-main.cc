@@ -485,6 +485,12 @@ TEST_LIST = {
   { "security_huge_array_test", security_huge_array_test },
   { "security_malformed_utf8_test", security_malformed_utf8_test },
   { "security_recursive_reference_test", security_recursive_reference_test },
+  { "security_json_oversized_base64_rejected_test", security_json_oversized_base64_rejected_test },
+  { "security_unsafe_asset_path_rejected_test", security_unsafe_asset_path_rejected_test },
+  { "security_json_array_count_mismatch_rejected_test", security_json_array_count_mismatch_rejected_test },
+  { "security_json_point3f_count_overflow_rejected_test", security_json_point3f_count_overflow_rejected_test },
+  { "security_resolver_oversized_custom_asset_rejected_test", security_resolver_oversized_custom_asset_rejected_test },
+  { "security_nested_zstd_depth_rejected_test", security_nested_zstd_depth_rejected_test },
   // USDZ writer and validation tests
   { "usdz_writer_basic_roundtrip_test", usdz_writer_basic_roundtrip_test },
   { "usdz_writer_with_assets_test", usdz_writer_with_assets_test },
