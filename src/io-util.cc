@@ -569,7 +569,7 @@ bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
       (*err) += "File is empty : " + filepath + "\n";
     }
     return false;
-  } else if (uint64_t(sz) >= uint64_t(std::numeric_limits<int64_t>::max())) {
+  } else if (uint64_t(sz) >= uint64_t((std::numeric_limits<int64_t>::max)())) {
     // Posixish environment.
     if (err) {
       (*err) += "Invalid File(Pipe or special device?) : " + filepath + "\n";
@@ -697,7 +697,7 @@ bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
       (*err) += "File is empty : " + filepath + "\n";
     }
     return false;
-  } else if (uint64_t(sz) >= uint64_t(std::numeric_limits<int64_t>::max())) {
+  } else if (uint64_t(sz) >= uint64_t((std::numeric_limits<int64_t>::max)())) {
     // Posixish environment.
     if (err) {
       (*err) += "Invalid File(Pipe or special device?) : " + filepath + "\n";

@@ -766,7 +766,7 @@ static bool TryReadMMapArray(
   const T *ptr = stage.mmap_source()->get_ptr<T>(*ref);
   if (!ptr) return false;
   if (ref->element_count >
-      (uint64_t(std::numeric_limits<size_t>::max()) / sizeof(T))) {
+      (uint64_t((std::numeric_limits<size_t>::max)()) / sizeof(T))) {
     return false;
   }
   out->resize(static_cast<size_t>(ref->element_count));
@@ -4015,7 +4015,7 @@ bool RenderSceneConverter::ConvertMesh(
 
         faceIndexOffset += ncount;
 
-        if (faceIndexOffset >= std::numeric_limits<uint32_t>::max()) {
+        if (faceIndexOffset >= (std::numeric_limits<uint32_t>::max)()) {
           PUSH_ERROR_AND_RETURN("Triangulated Mesh contains 4G or more faces.");
         }
       }

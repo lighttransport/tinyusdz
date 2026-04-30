@@ -15,9 +15,9 @@ namespace tydra {
 //
 
 void RTGeometry::compute_bounds() {
-  bounds.min[0] = std::numeric_limits<float>::max();
-  bounds.min[1] = std::numeric_limits<float>::max();
-  bounds.min[2] = std::numeric_limits<float>::max();
+  bounds.min[0] = (std::numeric_limits<float>::max)();
+  bounds.min[1] = (std::numeric_limits<float>::max)();
+  bounds.min[2] = (std::numeric_limits<float>::max)();
 
   bounds.max[0] = std::numeric_limits<float>::lowest();
   bounds.max[1] = std::numeric_limits<float>::lowest();

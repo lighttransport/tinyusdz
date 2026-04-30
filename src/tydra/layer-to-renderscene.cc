@@ -87,8 +87,8 @@ namespace detail {
 namespace {
 
 size_t SaturatingAdd(const size_t lhs, const size_t rhs) {
-  if (rhs > (std::numeric_limits<size_t>::max() - lhs)) {
-    return std::numeric_limits<size_t>::max();
+  if (rhs > ((std::numeric_limits<size_t>::max)() - lhs)) {
+    return (std::numeric_limits<size_t>::max)();
   }
   return lhs + rhs;
 }

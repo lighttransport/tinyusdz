@@ -1277,7 +1277,7 @@ bool CrateReader::ReadTokens() {
   // And further, extra 128 bytes for safety(LZ4_FAST_DEC_LOOP does 16 bytes stride memcpy)
 
   uint64_t bufSize = (std::max)(compressedSize, uncompressedSize);
-  if (bufSize > std::numeric_limits<uint64_t>::max() - 128) {
+  if (bufSize > (std::numeric_limits<uint64_t>::max)() - 128) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "bufSize overflow in addition.");
   }
   CHECK_MEMORY_USAGE(bufSize+128);
@@ -1464,7 +1464,7 @@ bool CrateReader::ReadFields() {
 
   if (sizeof(void *) == 4) {
     // 32bit
-    if (num_fields > std::numeric_limits<int32_t>::max() / sizeof(uint32_t)) {
+    if (num_fields > (std::numeric_limits<int32_t>::max)() / sizeof(uint32_t)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many fields in `FIELDS` section.");
     }
   }
@@ -1695,8 +1695,8 @@ bool CrateReader::BuildFieldSetBoundaryIndex() {
     }
 
 #if SIZE_MAX > UINT32_MAX
-    if ((start > static_cast<size_t>(std::numeric_limits<uint32_t>::max())) ||
-        (end > static_cast<size_t>(std::numeric_limits<uint32_t>::max()))) {
+    if ((start > static_cast<size_t>((std::numeric_limits<uint32_t>::max)())) ||
+        (end > static_cast<size_t>((std::numeric_limits<uint32_t>::max)()))) {
       PUSH_ERROR("Fieldset boundary index overflow.");
       return false;
     }
@@ -2255,12 +2255,12 @@ bool CrateReader::ReadTOC() {
 
     // Guard against signed integer overflow before casting to size_t.
     if (_toc.sections[i].size > 0 &&
-        _toc.sections[i].start > std::numeric_limits<int64_t>::max() - _toc.sections[i].size) {
+        _toc.sections[i].start > (std::numeric_limits<int64_t>::max)() - _toc.sections[i].size) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section start + size overflows int64."));
     }
     size_t end_offset = size_t(_toc.sections[i].start + _toc.sections[i].size);
     if (sizeof(void *) == 4) { // 32bit
-      if (end_offset > size_t(std::numeric_limits<int32_t>::max())) {
+      if (end_offset > size_t((std::numeric_limits<int32_t>::max)())) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section end offset exceeds 32bit max."));
       }
     }

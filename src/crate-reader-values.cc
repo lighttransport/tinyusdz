@@ -135,7 +135,7 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
     }
 
     // -8 to compensate sizeof(offset). Guard against int64 underflow.
-    if (offset < std::numeric_limits<int64_t>::min() + 8) {
+    if (offset < (std::numeric_limits<int64_t>::min)() + 8) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Dictionary value offset {} would underflow int64.", offset));
     }
     if (!_sr->seek_from_current(offset - 8)) {
@@ -2968,7 +2968,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       DCOUT("tell = " << _sr->tell());
 
       // -8 to compensate sizeof(offset). Guard against int64 underflow.
-      if (local_offset < std::numeric_limits<int64_t>::min() + 8) {
+      if (local_offset < (std::numeric_limits<int64_t>::min)() + 8) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("UNREGISTERED_VALUE offset {} would underflow int64.", local_offset));
       }
       if (!_sr->seek_from_current(local_offset - 8)) {

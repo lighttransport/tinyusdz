@@ -110,7 +110,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
   // 32bit env
   if (sizeof(void *) == 4) {
     if (options.max_memory_limit_in_mb > 4096) {  // exceeds 4GB
-      max_length = std::numeric_limits<uint32_t>::max();
+      max_length = (std::numeric_limits<uint32_t>::max)();
     } else {
       max_length =
           size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
@@ -1128,7 +1128,7 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
   // 32bit env
   if (sizeof(void *) == 4) {
     if (options.max_memory_limit_in_mb > 4096) {  // exceeds 4GB
-      max_length = std::numeric_limits<uint32_t>::max();
+      max_length = (std::numeric_limits<uint32_t>::max)();
     } else {
       max_length =
           size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);

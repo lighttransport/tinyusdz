@@ -192,7 +192,7 @@ public:
           maxItemsPerCell_(maxItemsPerCell),
           currentLevel_(level),
           maxLevel_(maxLevel) {
-        origin_[0] = origin_[1] = origin_[2] = std::numeric_limits<T>::max();
+        origin_[0] = origin_[1] = origin_[2] = (std::numeric_limits<T>::max)();
         bounds_[0] = bounds_[1] = bounds_[2] = std::numeric_limits<T>::lowest();
     }
     
@@ -354,7 +354,7 @@ public:
         vertices_.clear();
         grid_.clear();
         sortedEntries_.clear();
-        origin_[0] = origin_[1] = origin_[2] = std::numeric_limits<T>::max();
+        origin_[0] = origin_[1] = origin_[2] = (std::numeric_limits<T>::max)();
         bounds_[0] = bounds_[1] = bounds_[2] = std::numeric_limits<T>::lowest();
         needsRebuild_ = true;
     }

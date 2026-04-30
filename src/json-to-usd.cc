@@ -198,7 +198,7 @@ bool JSONToUSDContext::GetArrayFromAccessor(size_t accessorIndex, std::vector<T>
   
   // Calculate total byte size needed with overflow guards.
   size_t elementSize = sizeof(T);
-  if (accessor.count > (std::numeric_limits<size_t>::max() / elementSize)) {
+  if (accessor.count > ((std::numeric_limits<size_t>::max)() / elementSize)) {
     if (err) (*err) = "Accessor size overflow";
     return false;
   }
@@ -497,7 +497,7 @@ static bool ParsePoint3fArrayWithMetadata(const nlohmann::json& array_json, JSON
     return false;
   }
 
-  if (count > (std::numeric_limits<size_t>::max() / 3)) {
+  if (count > ((std::numeric_limits<size_t>::max)() / 3)) {
     if (err) (*err) = "point3f count overflow";
     return false;
   }

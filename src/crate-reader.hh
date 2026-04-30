@@ -70,7 +70,7 @@ struct CrateReaderConfig {
   size_t maxInts = 1024 * 1024 * 1024;            ///< Max generic int array size (1B)
 
   ///< Total memory budget for uncompressed data in bytes (default 2GB)
-  size_t maxMemoryBudget = std::numeric_limits<int32_t>::max();
+  size_t maxMemoryBudget = (std::numeric_limits<int32_t>::max)();
 
   /// Optional external memory budget manager shared with other components.
   /// If set, CrateReader uses this manager instead of an internal one.

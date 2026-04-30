@@ -236,10 +236,10 @@ bool parse_int(const tstring_view &sv, int32_t *ret) {
     result = result * 10 + (str[i] - '0');
     
     // Check for overflow
-    if (negative && result > static_cast<int64_t>(std::numeric_limits<int32_t>::max()) + 1) {
+    if (negative && result > static_cast<int64_t>((std::numeric_limits<int32_t>::max)()) + 1) {
       return false;
     }
-    if (!negative && result > std::numeric_limits<int32_t>::max()) {
+    if (!negative && result > (std::numeric_limits<int32_t>::max)()) {
       return false;
     }
   }
@@ -278,10 +278,10 @@ bool parse_int64(const tstring_view &sv, int64_t *ret) {
     result = result * 10ull + uint64_t(str[i] - '0');
     
     // Check for overflow
-    if (negative && result > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1) {
+    if (negative && result > static_cast<uint64_t>((std::numeric_limits<int64_t>::max)()) + 1) {
       return false;
     }
-    if (!negative && result > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+    if (!negative && result > static_cast<uint64_t>((std::numeric_limits<int64_t>::max)())) {
       return false;
     }
   }
@@ -315,7 +315,7 @@ bool parse_uint(const tstring_view &sv, uint32_t *ret) {
     result = result * 10 + uint64_t(str[i] - '0');
     
     // Check for overflow
-    if (result > std::numeric_limits<uint32_t>::max()) {
+    if (result > (std::numeric_limits<uint32_t>::max)()) {
       return false;
     }
   }
@@ -348,7 +348,7 @@ bool parse_uint64(const tstring_view &sv, uint64_t *ret) {
     }
     
     // Check for overflow before multiplication
-    if (result > (std::numeric_limits<uint64_t>::max() - uint64_t(str[i] - '0')) / 10) {
+    if (result > ((std::numeric_limits<uint64_t>::max)() - uint64_t(str[i] - '0')) / 10) {
       return false;
     }
     

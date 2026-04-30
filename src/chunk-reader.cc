@@ -527,14 +527,14 @@ ChunkReader::GetChunk(size_t chunk_id) {
     if (chunk_result) {
       // Another thread may have loaded and inserted this chunk while we
       // were doing I/O; prefer the cached copy to avoid a double-insert.
-      if (auto existing = FindInSlidingWindow(chunk_id)) {
-        chunk = existing;
-      } else if (auto existing = FindInRandomCache(chunk_id)) {
-        chunk = existing;
-      } else if (auto existing = FindInPreloadCache(chunk_id)) {
+      if (auto existing_sw = FindInSlidingWindow(chunk_id)) {
+        chunk = existing_sw;
+      } else if (auto existing_rc = FindInRandomCache(chunk_id)) {
+        chunk = existing_rc;
+      } else if (auto existing_pc = FindInPreloadCache(chunk_id)) {
         preload_cache_.erase(chunk_id);
-        current_preload_size_ -= existing->size;
-        chunk = existing;
+        current_preload_size_ -= existing_pc->size;
+        chunk = existing_pc;
         InsertIntoCache(chunk_id, chunk);
       } else {
         chunk = chunk_result.value();

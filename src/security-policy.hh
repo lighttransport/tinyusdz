@@ -42,7 +42,7 @@ inline bool EstimateBase64DecodedSize(const std::string &data,
   }
 
   size_t q = data.size() / 4;
-  if (q > (std::numeric_limits<size_t>::max() / 3)) {
+  if (q > ((std::numeric_limits<size_t>::max)() / 3)) {
     return false;
   }
   size_t raw = q * 3;

@@ -109,7 +109,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   DCOUT("TimeSample tell = " << _sr->tell());
 
   // -8 to compensate sizeof(offset). Guard against int64 underflow.
-  if (offset < std::numeric_limits<int64_t>::min() + 8) {
+  if (offset < (std::numeric_limits<int64_t>::min)() + 8) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "TimeSample times offset would underflow int64.");
   }
   if (!_sr->seek_from_current(offset - 8)) {
@@ -184,7 +184,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   DCOUT("TimeSample tell = " << _sr->tell());
 
   // -8 to compensate sizeof(offset). Guard against int64 underflow.
-  if (offset < std::numeric_limits<int64_t>::min() + 8) {
+  if (offset < (std::numeric_limits<int64_t>::min)() + 8) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "TimeSample values offset would underflow int64.");
   }
   if (!_sr->seek_from_current(offset - 8)) {
@@ -214,7 +214,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   // Check if num_values fits in size_t (for 32-bit builds)
   // On 64-bit systems uint64_t and size_t are the same size, so skip check
 #if SIZE_MAX < UINT64_MAX
-  if (num_values > std::numeric_limits<size_t>::max()) {
+  if (num_values > (std::numeric_limits<size_t>::max)()) {
     PUSH_ERROR_AND_RETURN_TAG(
         kTag, "Number of values exceeds maximum size_t limit.");
     return false;

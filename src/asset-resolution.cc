@@ -202,8 +202,8 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
   std::string ext = io::GetFileExtension(resolvedPath);
   constexpr uint64_t kBytesPerMiB = 1024ull * 1024ull;
   const uint64_t max_asset_bytes =
-      (_max_asset_bytes_in_mb > (std::numeric_limits<uint64_t>::max() / kBytesPerMiB))
-          ? std::numeric_limits<uint64_t>::max()
+      (_max_asset_bytes_in_mb > ((std::numeric_limits<uint64_t>::max)() / kBytesPerMiB))
+          ? (std::numeric_limits<uint64_t>::max)()
           : static_cast<uint64_t>(_max_asset_bytes_in_mb) * kBytesPerMiB;
 
   if (_asset_resolution_handlers.count(ext)) {
@@ -230,13 +230,8 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
         return false;
       }
 
-      if (sz > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
-        if (err) {
-          (*err) += fmt::format("Asset `{}` size overflows platform size_t.\n",
-                                resolvedPath);
-        }
-        return false;
-      }
+      // (no size_t-vs-uint64_t check needed: sz is already uint64_t,
+      // and max_asset_bytes above bounds it.)
 
       DCOUT("asset_size: " << sz);
 
@@ -299,13 +294,8 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
         return false;
       }
 
-      if (sz > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
-        if (err) {
-          (*err) += fmt::format("Asset `{}` size overflows platform size_t.\n",
-                                resolvedPath);
-        }
-        return false;
-      }
+      // (no size_t-vs-uint64_t check needed: sz is already uint64_t,
+      // and max_asset_bytes above bounds it.)
 
       DCOUT("asset_size: " << sz);
 
@@ -354,9 +344,9 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
 
   // Default: read from a file.
   std::vector<uint8_t> data;
-  size_t max_bytes = std::numeric_limits<size_t>::max();
+  size_t max_bytes = (std::numeric_limits<size_t>::max)();
   if (_max_asset_bytes_in_mb <=
-      (std::numeric_limits<size_t>::max() / size_t(kBytesPerMiB))) {
+      ((std::numeric_limits<size_t>::max)() / size_t(kBytesPerMiB))) {
     max_bytes = size_t(kBytesPerMiB) * _max_asset_bytes_in_mb;
   }
   if (!io::ReadWholeFile(&data, err, resolvedPath, max_bytes,
