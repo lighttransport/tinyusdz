@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // USD Physics and MuJoCo physics annotation unit tests.
 // Exercises the full pipeline: ASCII parser -> prim-reconstruct -> Stage,
 // plus pprint roundtrip and Tydra JSON export.

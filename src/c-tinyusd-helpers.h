@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: Apache 2.0
+﻿/* SPDX-License-Identifier: Apache 2.0
  *
  * Small C-callable helpers that fill gaps in c-tinyusd.h for the Python
  * extension. Everything here is pure C11; C++ interop lives in the .cc file.

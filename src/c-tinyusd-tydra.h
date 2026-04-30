@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: Apache 2.0
+﻿/* SPDX-License-Identifier: Apache 2.0
  *
  * C API wrapper around tinyusdz::tydra::RenderScene for language bindings.
  *

@@ -1,4 +1,4 @@
-// Simple test program for TypedArrayView methods in TimeSamples
+﻿// Simple test program for TypedArrayView methods in TimeSamples
 #include "src/timesamples.hh"
 #include "src/typed-array.hh"
 #include "src/value-types.hh"

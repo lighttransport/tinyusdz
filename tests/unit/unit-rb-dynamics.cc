@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+﻿// SPDX-License-Identifier: Apache-2.0
 // Rigid body dynamics unit tests.
 
 #ifdef _MSC_VER

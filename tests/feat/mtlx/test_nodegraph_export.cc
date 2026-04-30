@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Test for MaterialX NodeGraph export functionality
 
 #include <iostream>

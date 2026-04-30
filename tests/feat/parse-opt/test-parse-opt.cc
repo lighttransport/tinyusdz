@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Copyright 2025 - Present, Light Transport Entertainment, Inc.
 //
 // Test optimized array parsing performance with synthetic data

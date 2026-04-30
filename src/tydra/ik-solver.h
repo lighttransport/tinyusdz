@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: Apache-2.0 */
+﻿/* SPDX-License-Identifier: Apache-2.0 */
 /* Copyright 2026-Present Light Transport Entertainment Inc. */
 /*
  * ik-solver.h — Inverse Kinematics solver (C API)

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // USDC writer unit tests — usdGeom and usdSkel roundtrip coverage
 //
 // Each test: parse USDA from string → write USDC to memory → re-parse →
