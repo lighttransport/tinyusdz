@@ -529,6 +529,16 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
             kTag, "`displayGroup` must be type `string`, but got type `"
                       << fv.second.type_name() << "`");
       }
+    } else if (fv.first == "documentation" || fv.first == "doc") {
+      if (auto pv = fv.second.get_value<std::string>()) {
+        meta.set_doc(pv.value());
+      } else if (auto pv2 = fv.second.get_value<value::StringData>()) {
+        meta.set_doc(pv2.value());
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`documentation` must be type `string`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
     } else if (fv.first == "unauthoredValuesIndex") {
       if (auto pv = fv.second.get_value<int>()) {
         meta.set_unauthoredValuesIndex(pv.value());

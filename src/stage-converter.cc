@@ -17,6 +17,7 @@
 #include "pprinter.hh"  // For to_string(Specifier), to_string(Variability)
 #include "pprint-enum.hh"  // For to_string(APISchemas::APIName)
 #include "usdShade.hh"  // For Material and Shader
+#include "usdPhysics.hh"  // For PhysicsScene, PhysicsJoint, PhysicsCollisionGroup
 #include "common-macros.inc"
 
 // Disable specific clang warnings for this file
@@ -56,8 +57,15 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   GET_PRIM_PROPS(GeomCamera)
   GET_PRIM_PROPS(GeomBasisCurves)
   GET_PRIM_PROPS(GeomNurbsCurves)
+  GET_PRIM_PROPS(GeomHermiteCurves)
   GET_PRIM_PROPS(GeomPointInstancer)
+  GET_PRIM_PROPS(GeomPlane)
+  GET_PRIM_PROPS(GeomCylinder_1)
+  GET_PRIM_PROPS(GeomCapsule_1)
+  GET_PRIM_PROPS(GeomTetMesh)
+  GET_PRIM_PROPS(GeomNurbsPatch)
   GET_PRIM_PROPS(DomeLight)
+  GET_PRIM_PROPS(DomeLight_1)
   GET_PRIM_PROPS(SphereLight)
   GET_PRIM_PROPS(CylinderLight)
   GET_PRIM_PROPS(DiskLight)
@@ -68,6 +76,23 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   GET_PRIM_PROPS(NodeGraph)
   GET_PRIM_PROPS(GeometryLight)
   GET_PRIM_PROPS(PortalLight)
+  GET_PRIM_PROPS(SkelRoot)
+  GET_PRIM_PROPS(Skeleton)
+  GET_PRIM_PROPS(SkelAnimation)
+  GET_PRIM_PROPS(BlendShape)
+
+  // UsdPhysics
+  GET_PRIM_PROPS(PhysicsScene)
+  GET_PRIM_PROPS(PhysicsJoint)
+  GET_PRIM_PROPS(PhysicsRevoluteJoint)
+  GET_PRIM_PROPS(PhysicsPrismaticJoint)
+  GET_PRIM_PROPS(PhysicsSphericalJoint)
+  GET_PRIM_PROPS(PhysicsFixedJoint)
+  GET_PRIM_PROPS(PhysicsDistanceJoint)
+  GET_PRIM_PROPS(PhysicsCollisionGroup)
+  // UsdSkel — required so authored attributes in the props map (joints,
+  // jointNames, blendShapeWeights, etc.) survive the USDC writer when the
+  // typed-builtin fields are unauthored.
   GET_PRIM_PROPS(SkelRoot)
   GET_PRIM_PROPS(Skeleton)
   GET_PRIM_PROPS(SkelAnimation)
@@ -314,7 +339,9 @@ bool CrateWriter::ConvertSinglePrim(
     "specifier", "typeName", "primChildren", "properties",
     "variantSetNames", "variantSelection", "kind",
     "active", "hidden", "documentation", "comment", "customData",
-    "apiSchemas", "inherits", "specializes", "references", "payload",
+    "assetInfo", "instanceable", "clips",
+    "apiSchemas", "inherits", "inheritPaths", "specializes", "references", "payload",
+    "displayName", "displayGroup", "sceneName",
   };
 
   for (auto& fv : fields) {
@@ -585,6 +612,14 @@ bool CrateWriter::ConvertSinglePrim(
     // Don't fail on light filter relationship errors - just warn
   }
 
+  // PointInstancer prototypes relationship: emit as a separate relationship
+  // spec so `rel prototypes = [...]` survives USDC roundtrip.
+  if (prim.data().as<GeomPointInstancer>()) {
+    if (!AddPointInstancerPrototypesSpec(prim, prim_path, err)) {
+      DCOUT("WARNING: Failed to add prototypes relationship spec");
+    }
+  }
+
   // Process generic props map for custom properties, primvars, relationships, etc.
   // This covers ALL prim types and handles properties not extracted by type-specific handlers.
   // Skip properties already extracted by type-specific handlers to avoid duplicates.
@@ -600,9 +635,19 @@ bool CrateWriter::ConvertSinglePrim(
       if (extracted_names.count(kv.first)) {
         continue;  // Already handled by type-specific extractor
       }
-      // Skip xformOp properties (handled by ExtractXformOpsFromXformable)
+      // Skip xformOp properties when the typed xformable path already
+      // produced specs for them (avoids duplicates). When the typed path
+      // didn't extract anything (extracted_names has no xformOp entries),
+      // fall through so props-authored xformOps survive USDC round-trip.
       if (kv.first.find("xformOp:") == 0 || kv.first == "xformOpOrder") {
-        continue;
+        bool typed_emitted = false;
+        for (const auto &en : extracted_names) {
+          if (en.find("xformOp:") == 0 || en == "xformOpOrder") {
+            typed_emitted = true;
+            break;
+          }
+        }
+        if (typed_emitted) continue;
       }
 
       // For attribute properties, check if the value type is writable.
@@ -773,6 +818,19 @@ void CrateWriter::ExtractPrimMeta(
     fields.push_back({"documentation", v});
   }
 
+  if (metas.has_comment()) {
+    crate::CrateValue v;
+    v.Set(metas.get_comment().value);
+    fields.push_back({"comment", v});
+  }
+
+  if (metas.has_sceneName()) {
+    crate::CrateValue v;
+    value::token tok(metas.get_sceneName());
+    v.Set(tok);
+    fields.push_back({"sceneName", v});
+  }
+
   if (metas.variants) {
     crate::CrateValue v;
     v.Set(metas.variants.value());
@@ -833,6 +891,24 @@ void CrateWriter::ExtractPrimMeta(
     fields.push_back({"instanceable", v});
   }
 
+  // customData (Dictionary). Skipped historically due to dict serialization
+  // worries, but the dict path on the writer side is now exercised by
+  // attribute customData and works for primitive value types
+  // (string/int/bool/float/double/token). We emit here too so prim-level
+  // customData survives USDC round-trip.
+  if (metas.has_customData()) {
+    crate::CrateValue v;
+    v.Set(metas.get_customData());
+    fields.push_back({"customData", v});
+  }
+
+  // assetInfo (Dictionary).
+  if (metas.has_assetInfo()) {
+    crate::CrateValue v;
+    v.Set(metas.get_assetInfo());
+    fields.push_back({"assetInfo", v});
+  }
+
   // apiSchemas
   if (metas.has_apiSchemas()) {
     const auto schemas = metas.get_apiSchemas();
@@ -865,16 +941,99 @@ void CrateWriter::ExtractPrimMeta(
     }
   }
 
-  // NOTE: references, inherits, specializes, payload are disabled because
-  // their ListOp encoding causes "Failed to decode fieldset id" errors during
-  // roundtrip.  The crate writer's ListOp<Reference>/ListOp<Payload>/ListOp<Path>
-  // binary format doesn't match what the reader expects.
-  // TODO: Fix the ListOp binary encoding for composition arcs.
-  //
-  // if (metas.references.has_value()) { ... }
-  // if (metas.inherits.has_value()) { ... }
-  // if (metas.specializes.has_value()) { ... }
-  // if (metas.payload.has_value()) { ... }
+  // Composition arcs — references, inherits, specializes, payload.
+  // Build ListOp<T> objects with the parsed list-edit qualifiers and emit them
+  // as crate fields. Mirrors the working layer-path writer in sconv-layer.cc.
+
+  auto convert_path_listop = [](
+      const std::vector<std::pair<ListEditQual, std::vector<Path>>>& src) {
+    ListOp<Path> out;
+    for (const auto& op : src) {
+      switch (op.first) {
+        case ListEditQual::ResetToExplicit:
+          out.ClearAndMakeExplicit();
+          out.SetExplicitItems(op.second);
+          break;
+        case ListEditQual::Append:  out.SetAppendedItems(op.second); break;
+        case ListEditQual::Prepend: out.SetPrependedItems(op.second); break;
+        case ListEditQual::Add:     out.SetAddedItems(op.second); break;
+        case ListEditQual::Delete:  out.SetDeletedItems(op.second); break;
+        default:
+          out.ClearAndMakeExplicit();
+          out.SetExplicitItems(op.second);
+          break;
+      }
+    }
+    return out;
+  };
+
+  auto convert_ref_listop = [](
+      const std::vector<std::pair<ListEditQual, std::vector<Reference>>>& src) {
+    ListOp<Reference> out;
+    for (const auto& op : src) {
+      switch (op.first) {
+        case ListEditQual::ResetToExplicit:
+          out.ClearAndMakeExplicit();
+          out.SetExplicitItems(op.second);
+          break;
+        case ListEditQual::Append:  out.SetAppendedItems(op.second); break;
+        case ListEditQual::Prepend: out.SetPrependedItems(op.second); break;
+        case ListEditQual::Add:     out.SetAddedItems(op.second); break;
+        case ListEditQual::Delete:  out.SetDeletedItems(op.second); break;
+        default:
+          out.ClearAndMakeExplicit();
+          out.SetExplicitItems(op.second);
+          break;
+      }
+    }
+    return out;
+  };
+
+  auto convert_payload_listop = [](
+      const std::vector<std::pair<ListEditQual, std::vector<Payload>>>& src) {
+    ListOp<Payload> out;
+    for (const auto& op : src) {
+      switch (op.first) {
+        case ListEditQual::ResetToExplicit:
+          out.ClearAndMakeExplicit();
+          out.SetExplicitItems(op.second);
+          break;
+        case ListEditQual::Append:  out.SetAppendedItems(op.second); break;
+        case ListEditQual::Prepend: out.SetPrependedItems(op.second); break;
+        case ListEditQual::Add:     out.SetAddedItems(op.second); break;
+        case ListEditQual::Delete:  out.SetDeletedItems(op.second); break;
+        default:
+          out.ClearAndMakeExplicit();
+          out.SetExplicitItems(op.second);
+          break;
+      }
+    }
+    return out;
+  };
+
+  if (metas.references.has_value()) {
+    crate::CrateValue v;
+    v.Set(convert_ref_listop(metas.references.value()));
+    fields.push_back({"references", v});
+  }
+
+  if (metas.payload.has_value()) {
+    crate::CrateValue v;
+    v.Set(convert_payload_listop(metas.payload.value()));
+    fields.push_back({"payload", v});
+  }
+
+  if (metas.inherits.has_value()) {
+    crate::CrateValue v;
+    v.Set(convert_path_listop(metas.inherits.value()));
+    fields.push_back({"inheritPaths", v});
+  }
+
+  if (metas.specializes.has_value()) {
+    crate::CrateValue v;
+    v.Set(convert_path_listop(metas.specializes.value()));
+    fields.push_back({"specializes", v});
+  }
 }
 
 bool CrateWriter::ExtractPrimProperties(
@@ -883,12 +1042,65 @@ bool CrateWriter::ExtractPrimProperties(
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
-  // Get prim type name
+  // Get prim type name. prim_type_name() carries the parser-set or
+  // user-set string; for in-memory authored prims that field is empty,
+  // so fall back to the typed schema name from the underlying value.
+  // Without this fallback the writer skips both the `typeName` crate
+  // field and the type-specific property extraction, and the reader sees
+  // a generic prim with no schema and no attributes.
   std::string type_name = prim.prim_type_name();
+  if (type_name.empty()) {
+    type_name = prim.type_name();
+  }
 
   // Add specifier field (as Specifier enum, not as token)
   Specifier spec = prim.specifier();
-  // USD files don't allow Invalid specifier - default to Def if we get Invalid
+  // USDA loader sets the spec on the typed-prim wrapper inside `prim.data()`
+  // but historically did not propagate it to the outer Prim wrapper. Fall
+  // back to the typed prim's `.spec` so `class`/`over` survive USDC writing.
+  if (spec == Specifier::Invalid) {
+    const auto &v = prim.data();
+#define GET_SPEC(__TY) if (auto *t = v.as<__TY>()) { spec = t->spec; goto spec_resolved; }
+    GET_SPEC(Xform)
+    GET_SPEC(GeomMesh)
+    GET_SPEC(GeomSphere)
+    GET_SPEC(GeomCube)
+    GET_SPEC(GeomCylinder)
+    GET_SPEC(GeomCone)
+    GET_SPEC(GeomCapsule)
+    GET_SPEC(GeomCamera)
+    GET_SPEC(GeomPoints)
+    GET_SPEC(GeomSubset)
+    GET_SPEC(GeomBasisCurves)
+    GET_SPEC(GeomNurbsCurves)
+    GET_SPEC(GeomHermiteCurves)
+    GET_SPEC(GeomPlane)
+    GET_SPEC(GeomCylinder_1)
+    GET_SPEC(GeomCapsule_1)
+    GET_SPEC(GeomTetMesh)
+    GET_SPEC(GeomNurbsPatch)
+    GET_SPEC(GeomPointInstancer)
+    GET_SPEC(SphereLight)
+    GET_SPEC(RectLight)
+    GET_SPEC(DiskLight)
+    GET_SPEC(DistantLight)
+    GET_SPEC(CylinderLight)
+    GET_SPEC(DomeLight)
+    GET_SPEC(DomeLight_1)
+    GET_SPEC(GeometryLight)
+    GET_SPEC(PortalLight)
+    GET_SPEC(Scope)
+    GET_SPEC(Model)
+    GET_SPEC(Material)
+    GET_SPEC(Shader)
+    GET_SPEC(NodeGraph)
+    GET_SPEC(SkelRoot)
+    GET_SPEC(Skeleton)
+    GET_SPEC(SkelAnimation)
+    GET_SPEC(BlendShape)
+#undef GET_SPEC
+spec_resolved:;
+  }
   if (spec == Specifier::Invalid) {
     spec = Specifier::Def;
   }
@@ -1122,6 +1334,16 @@ bool CrateWriter::ConvertValue(
     if (auto v = val.get_value<std::string>()) {
       // Same rationale as the token branch above: store the string value,
       // not the strings-section index.
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "asset") {
+    if (auto v = val.get_value<value::AssetPath>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "asset[]") {
+    if (auto v = val.get_value<std::vector<value::AssetPath>>()) {
       out.Set(*v);
       return true;
     }
@@ -1694,6 +1916,35 @@ bool CrateWriter::ConvertAttributeToFields(
     custom_value.Set(true);  // The field name "custom" with value true indicates custom attribute
     attr_fields.push_back({"custom", custom_value});
     DCOUT("[ConvertAttributeToFields] Added custom flag for " << attr_name);
+  }
+
+  // Add displayName / displayGroup / documentation attribute metas
+  if (metas.has_displayName()) {
+    crate::CrateValue v;
+    v.Set(metas.get_displayName());
+    attr_fields.push_back({"displayName", v});
+  }
+  if (metas.has_displayGroup()) {
+    crate::CrateValue v;
+    v.Set(metas.get_displayGroup());
+    attr_fields.push_back({"displayGroup", v});
+  }
+  if (metas.has_doc()) {
+    crate::CrateValue v;
+    v.Set(metas.get_doc().value);
+    attr_fields.push_back({"documentation", v});
+  }
+
+  // Add attribute connection paths if any.
+  if (attr.has_connections()) {
+    ListOp<Path> connection_paths_listop;
+    connection_paths_listop.ClearAndMakeExplicit();
+    connection_paths_listop.SetExplicitItems(attr.connections());
+    crate::CrateValue conn_value;
+    conn_value.Set(connection_paths_listop);
+    attr_fields.push_back({"connectionPaths", conn_value});
+    DCOUT("[ConvertAttributeToFields] Added " << attr.connections().size()
+          << " connectionPaths for " << attr_name);
   }
 
   // Create the attribute spec

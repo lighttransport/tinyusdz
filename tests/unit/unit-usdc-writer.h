@@ -72,3 +72,103 @@ void usdc_writer_variant_multiple_sets_test(void);
 void usdc_writer_variant_props_and_children_roundtrip_test(void);
 void usdc_writer_variant_3level_nested_test(void);
 void usdc_writer_variant_nested_with_props_test(void);
+
+// Reproducers for known issues
+void usdc_writer_props_asset_roundtrip_test(void);
+void usdc_writer_timesamples_double3_test(void);
+void usdc_writer_timesamples_scalar_double_test(void);
+
+// Deeper coverage tests
+void usdc_writer_asset_array_test(void);
+void usdc_writer_timesamples_token_test(void);
+void usdc_writer_timesamples_string_test(void);
+void usdc_writer_timesamples_int_array_test(void);
+void usdc_writer_timesamples_float3_test(void);
+void usdc_writer_timesamples_single_sample_test(void);
+void usdc_writer_timesamples_with_default_test(void);
+void usdc_writer_asset_typed_uvtexture_test(void);
+
+// Edge-case coverage
+void usdc_writer_half_scalar_test(void);
+void usdc_writer_half_array_test(void);
+void usdc_writer_blocked_value_test(void);
+void usdc_writer_timesamples_matrix4d_test(void);
+void usdc_writer_timesamples_quatf_test(void);
+void usdc_writer_uniform_token_array_test(void);
+void usdc_writer_customdata_dict_test(void);
+void usdc_writer_empty_string_array_test(void);
+void usdc_writer_int64_scalar_test(void);
+void usdc_writer_color3f_array_test(void);
+void usdc_writer_relationship_targets_test(void);
+void usdc_writer_attribute_connection_test(void);
+void usdc_writer_displayname_test(void);
+void usdc_writer_doc_metadata_test(void);
+void usdc_writer_nested_prim_paths_test(void);
+
+// Hardening — additional shader connections, timesamples edges, big arrays
+void usdc_writer_uvtexture_st_connection_test(void);
+void usdc_writer_uvtexture_file_connection_test(void);
+void usdc_writer_preview_metallic_connection_test(void);
+void usdc_writer_preview_roughness_connection_test(void);
+void usdc_writer_timesamples_half_test(void);
+void usdc_writer_timesamples_color3f_test(void);
+void usdc_writer_timesamples_negative_time_test(void);
+void usdc_writer_timesamples_blocked_sample_test(void);
+void usdc_writer_large_int_array_test(void);
+void usdc_writer_large_float_array_test(void);
+void usdc_writer_variant_with_connection_test(void);
+void usdc_writer_assetinfo_dict_test(void);
+void usdc_writer_attr_displaygroup_test(void);
+void usdc_writer_kind_metadata_test(void);
+void usdc_writer_specifier_class_test(void);
+void usdc_writer_specifier_over_test(void);
+
+// Composition arcs + further hardening
+void usdc_writer_inherits_test(void);
+void usdc_writer_specializes_test(void);
+void usdc_writer_references_test(void);
+void usdc_writer_payload_test(void);
+void usdc_writer_stage_metadata_test(void);
+void usdc_writer_timesamples_half3_test(void);
+void usdc_writer_attr_customdata_test(void);
+void usdc_writer_attr_hidden_test(void);
+void usdc_writer_skeleton_joints_test(void);
+void usdc_writer_apischemas_multi_apply_test(void);
+void usdc_writer_active_metadata_test(void);
+void usdc_writer_hidden_metadata_test(void);
+void usdc_writer_instanceable_metadata_test(void);
+void usdc_writer_purpose_attribute_test(void);
+void usdc_writer_visibility_attribute_test(void);
+void usdc_writer_normal_array_test(void);
+void usdc_writer_uint_array_test(void);
+
+// More hardening
+void usdc_writer_pointinstancer_prototypes_rel_test(void);
+void usdc_writer_camera_full_roundtrip_test(void);
+void usdc_writer_skelanimation_translations_ts_test(void);
+void usdc_writer_scope_nested_test(void);
+void usdc_writer_inherits_strict_test(void);
+void usdc_writer_specializes_strict_test(void);
+void usdc_writer_payload_strict_test(void);
+
+// Reference path-content checks (probes the path-tree-resort bug)
+void usdc_writer_references_primpath_test(void);
+void usdc_writer_multiple_references_primpath_test(void);
+void usdc_writer_payload_primpath_test(void);
+
+// More writer tests
+void usdc_writer_comment_metadata_test(void);
+void usdc_writer_scenename_metadata_test(void);
+void usdc_writer_empty_stage_test(void);
+void usdc_writer_unknown_prim_type_test(void);
+void usdc_writer_point3d_array_test(void);
+void usdc_writer_dome_light_texture_test(void);
+void usdc_writer_disk_light_shaping_test(void);
+void usdc_writer_mesh_subdiv_creases_test(void);
+void usdc_writer_geomsubset_inline_test(void);
+void usdc_writer_blendshape_offsets_test(void);
+void usdc_writer_basis_curves_full_test(void);
+void usdc_writer_multi_shader_material_test(void);
+void usdc_writer_variant_with_timesamples_test(void);
+void usdc_writer_mesh_primvar_indices_test(void);
+void usdc_writer_geom_subdiv_full_test(void);

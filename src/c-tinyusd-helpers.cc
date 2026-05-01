@@ -18,6 +18,13 @@
 #include "usda-writer.hh"
 #include "usdc-writer.hh"
 #include "value-types.hh"
+#include "core/model-scope.hh"
+#include "usdGeom.hh"
+#include "usdPhysics.hh"
+#include "usdSkel.hh"
+#include "usdShade.hh"
+#include "pprint-enum.hh"
+#include "pprinter.hh"
 
 namespace {
 
@@ -351,17 +358,325 @@ int c_tinyusd_stage_load_from_memory(CTinyUSDStage *stage,
 
 /* ---- Prim ---- */
 
+/* For Python-authored prims, the attribute is stored in the typed prim's
+ * `props` map. tydra::GetProperty reads builtin attribute names from the
+ * typed schema field first (which is unauthored for our path) and never
+ * falls back to props for those names — so prefer props when present.
+ *
+ * Returns true if the lookup hit the props map and filled *out.
+ */
+static bool lookup_in_props(const Prim &prim, const std::string &name,
+                            Property *out) {
+  using namespace tinyusdz;
+  uint32_t tid = prim.data().type_id();
+#define LOOK(__TID, __TY)                                            \
+  case __TID: {                                                      \
+    const __TY *typed = prim.data().as<__TY>();                      \
+    if (!typed) return false;                                        \
+    auto it = typed->props.find(name);                               \
+    if (it == typed->props.end()) return false;                      \
+    *out = it->second;                                               \
+    return true;                                                     \
+  }
+  switch (tid) {
+    LOOK(value::TYPE_ID_GEOM_XFORM,    Xform)
+    LOOK(value::TYPE_ID_GEOM_MESH,     GeomMesh)
+    LOOK(value::TYPE_ID_GEOM_SPHERE,   GeomSphere)
+    LOOK(value::TYPE_ID_GEOM_CUBE,     GeomCube)
+    LOOK(value::TYPE_ID_GEOM_CYLINDER, GeomCylinder)
+    LOOK(value::TYPE_ID_GEOM_CONE,     GeomCone)
+    LOOK(value::TYPE_ID_GEOM_CAPSULE,  GeomCapsule)
+    LOOK(value::TYPE_ID_GEOM_CAMERA,   GeomCamera)
+    LOOK(value::TYPE_ID_GEOM_POINTS,   GeomPoints)
+    LOOK(value::TYPE_ID_GEOM_GEOMSUBSET,      GeomSubset)
+    LOOK(value::TYPE_ID_GEOM_BASIS_CURVES,    GeomBasisCurves)
+    LOOK(value::TYPE_ID_GEOM_NURBS_CURVES,    GeomNurbsCurves)
+    LOOK(value::TYPE_ID_GEOM_HERMITE_CURVES,  GeomHermiteCurves)
+    LOOK(value::TYPE_ID_GEOM_PLANE,           GeomPlane)
+    LOOK(value::TYPE_ID_GEOM_CYLINDER_1,      GeomCylinder_1)
+    LOOK(value::TYPE_ID_GEOM_CAPSULE_1,       GeomCapsule_1)
+    LOOK(value::TYPE_ID_GEOM_TET_MESH,        GeomTetMesh)
+    LOOK(value::TYPE_ID_GEOM_NURBS_PATCH,     GeomNurbsPatch)
+    LOOK(value::TYPE_ID_GEOM_POINT_INSTANCER, GeomPointInstancer)
+    LOOK(value::TYPE_ID_LUX_SPHERE,    SphereLight)
+    LOOK(value::TYPE_ID_LUX_RECT,      RectLight)
+    LOOK(value::TYPE_ID_LUX_DISK,      DiskLight)
+    LOOK(value::TYPE_ID_LUX_DISTANT,   DistantLight)
+    LOOK(value::TYPE_ID_LUX_CYLINDER,  CylinderLight)
+    LOOK(value::TYPE_ID_LUX_DOME,      DomeLight)
+    LOOK(value::TYPE_ID_LUX_DOME_1,    DomeLight_1)
+    LOOK(value::TYPE_ID_LUX_GEOMETRY,  GeometryLight)
+    LOOK(value::TYPE_ID_LUX_PORTAL,    PortalLight)
+    LOOK(value::TYPE_ID_SCOPE,         Scope)
+    LOOK(value::TYPE_ID_MODEL,         Model)
+    LOOK(value::TYPE_ID_PHYSICS_SCENE,            PhysicsScene)
+    LOOK(value::TYPE_ID_PHYSICS_JOINT,            PhysicsJoint)
+    LOOK(value::TYPE_ID_PHYSICS_REVOLUTE_JOINT,   PhysicsRevoluteJoint)
+    LOOK(value::TYPE_ID_PHYSICS_PRISMATIC_JOINT,  PhysicsPrismaticJoint)
+    LOOK(value::TYPE_ID_PHYSICS_SPHERICAL_JOINT,  PhysicsSphericalJoint)
+    LOOK(value::TYPE_ID_PHYSICS_FIXED_JOINT,      PhysicsFixedJoint)
+    LOOK(value::TYPE_ID_PHYSICS_DISTANCE_JOINT,   PhysicsDistanceJoint)
+    LOOK(value::TYPE_ID_PHYSICS_COLLISION_GROUP,  PhysicsCollisionGroup)
+    LOOK(value::TYPE_ID_MATERIAL,                 Material)
+    LOOK(value::TYPE_ID_SHADER,                   Shader)
+    LOOK(value::TYPE_ID_NODEGRAPH,                NodeGraph)
+    LOOK(value::TYPE_ID_SKEL_ROOT,                SkelRoot)
+    LOOK(value::TYPE_ID_SKELETON,                 Skeleton)
+    LOOK(value::TYPE_ID_SKELANIMATION,            SkelAnimation)
+    LOOK(value::TYPE_ID_BLENDSHAPE,               BlendShape)
+    default: return false;
+  }
+#undef LOOK
+}
+
+}  /* end extern "C" — templates need C++ linkage */
+
+/* For UsdPhysics prim types, tydra::GetProperty has no specialization,
+ * so reads of schema-builtin attributes (like physics:gravityDirection on
+ * PhysicsScene) return false. Fill in the gap by reading the typed
+ * builtin fields directly. Returns true if filled. */
+template <typename T>
+static bool fill_attr_from_typed(const T &input, const std::string &type_name,
+                                 const std::string &attr_name,
+                                 Property *out) {
+  if (!input.authored()) return false;
+  Attribute attr;
+  attr.set_name(attr_name);
+  attr.set_type_name(type_name);
+  if (auto pv = input.get_value()) {
+    tinyusdz::value::Value val(pv.value());
+    tinyusdz::primvar::PrimVar pvar;
+    pvar.set_value(val);
+    attr.set_var(std::move(pvar));
+  } else {
+    return false;
+  }
+  *out = Property(std::move(attr), /* custom */ false);
+  return true;
+}
+
+// TypedAttributeWithFallback variant: get_value() returns `const T&`, not
+// optional, and the value should only be exposed when actually authored.
+template <typename T>
+static bool fill_attr_from_typed_fb(
+    const tinyusdz::TypedAttributeWithFallback<T> &input,
+    const std::string &type_name, const std::string &attr_name,
+    Property *out) {
+  if (!input.authored()) return false;
+  Attribute attr;
+  attr.set_name(attr_name);
+  attr.set_type_name(type_name);
+  tinyusdz::value::Value val(input.get_value());
+  tinyusdz::primvar::PrimVar pvar;
+  pvar.set_value(val);
+  attr.set_var(std::move(pvar));
+  *out = Property(std::move(attr), /* custom */ false);
+  return true;
+}
+
+// Convert an enum-typed TypedAttributeWithFallback<E> to a token Property
+// using a stringifier (e.g. tinyusdz::to_string(E)).
+template <typename E, typename Stringify>
+static bool fill_attr_from_typed_enum_token(
+    const tinyusdz::TypedAttributeWithFallback<E> &input,
+    const std::string &attr_name, Stringify s, Property *out) {
+  if (!input.authored()) return false;
+  Attribute attr;
+  attr.set_name(attr_name);
+  attr.set_type_name("token");
+  tinyusdz::value::token tok(s(input.get_value()));
+  tinyusdz::value::Value val(tok);
+  tinyusdz::primvar::PrimVar pvar;
+  pvar.set_value(val);
+  attr.set_var(std::move(pvar));
+  *out = Property(std::move(attr), /* custom */ false);
+  return true;
+}
+
+static bool lookup_geom_typed(const Prim &prim, const std::string &name,
+                              Property *out) {
+  using namespace tinyusdz;
+  uint32_t tid = prim.data().type_id();
+  if (tid == value::TYPE_ID_GEOM_BASIS_CURVES) {
+    const auto *c = prim.data().as<GeomBasisCurves>();
+    if (!c) return false;
+    if (name == "type")
+      return fill_attr_from_typed_enum_token(
+          c->type, name,
+          [](const GeomBasisCurves::Type &v) { return tinyusdz::to_string(v); },
+          out);
+    if (name == "basis")
+      return fill_attr_from_typed_enum_token(
+          c->basis, name,
+          [](const GeomBasisCurves::Basis &v) { return tinyusdz::to_string(v); },
+          out);
+    if (name == "wrap")
+      return fill_attr_from_typed_enum_token(
+          c->wrap, name,
+          [](const GeomBasisCurves::Wrap &v) { return tinyusdz::to_string(v); },
+          out);
+  }
+  return false;
+}
+
+static bool lookup_shade_typed(const Prim &prim, const std::string &name,
+                               Property *out) {
+  using namespace tinyusdz;
+  uint32_t tid = prim.data().type_id();
+  if (tid == value::TYPE_ID_MATERIAL) {
+    const auto *m = prim.data().as<Material>();
+    if (!m || !m->materialXConfig.has_value()) return false;
+    const auto &cfg = m->materialXConfig.value();
+    if (name == "config:mtlx:version")
+      return fill_attr_from_typed_fb(cfg.mtlx_version, "string", name, out);
+    if (name == "config:mtlx:namespace")
+      return fill_attr_from_typed_fb(cfg.mtlx_namespace, "string", name, out);
+    if (name == "config:mtlx:colorspace")
+      return fill_attr_from_typed_fb(cfg.mtlx_colorspace, "string", name, out);
+    if (name == "config:mtlx:sourceUri")
+      return fill_attr_from_typed_fb(cfg.mtlx_sourceUri, "string", name, out);
+  }
+  return false;
+}
+
+static bool lookup_physics_typed(const Prim &prim, const std::string &name,
+                                 Property *out) {
+  using namespace tinyusdz;
+  uint32_t tid = prim.data().type_id();
+  if (tid == value::TYPE_ID_PHYSICS_SCENE) {
+    const auto *s = prim.data().as<PhysicsScene>();
+    if (!s) return false;
+    if (name == "physics:gravityDirection")
+      return fill_attr_from_typed(s->gravityDirection, "vector3f", name, out);
+    if (name == "physics:gravityMagnitude")
+      return fill_attr_from_typed(s->gravityMagnitude, "float", name, out);
+    return false;
+  }
+  // Joint base attributes apply to all PhysicsJoint* types.
+  const PhysicsJointBase *jb = nullptr;
+  switch (tid) {
+    case value::TYPE_ID_PHYSICS_JOINT:
+      jb = prim.data().as<PhysicsJoint>(); break;
+    case value::TYPE_ID_PHYSICS_REVOLUTE_JOINT:
+      jb = prim.data().as<PhysicsRevoluteJoint>(); break;
+    case value::TYPE_ID_PHYSICS_PRISMATIC_JOINT:
+      jb = prim.data().as<PhysicsPrismaticJoint>(); break;
+    case value::TYPE_ID_PHYSICS_SPHERICAL_JOINT:
+      jb = prim.data().as<PhysicsSphericalJoint>(); break;
+    case value::TYPE_ID_PHYSICS_FIXED_JOINT:
+      jb = prim.data().as<PhysicsFixedJoint>(); break;
+    case value::TYPE_ID_PHYSICS_DISTANCE_JOINT:
+      jb = prim.data().as<PhysicsDistanceJoint>(); break;
+    default: return false;
+  }
+  if (!jb) return false;
+  if (name == "physics:localPos0")
+    return fill_attr_from_typed(jb->localPos0, "point3f", name, out);
+  if (name == "physics:localPos1")
+    return fill_attr_from_typed(jb->localPos1, "point3f", name, out);
+  if (name == "physics:localRot0")
+    return fill_attr_from_typed(jb->localRot0, "quatf", name, out);
+  if (name == "physics:localRot1")
+    return fill_attr_from_typed(jb->localRot1, "quatf", name, out);
+  if (name == "physics:jointEnabled")
+    return fill_attr_from_typed(jb->jointEnabled, "bool", name, out);
+  if (name == "physics:collisionEnabled")
+    return fill_attr_from_typed(jb->collisionEnabled, "bool", name, out);
+  if (name == "physics:breakForce")
+    return fill_attr_from_typed(jb->breakForce, "float", name, out);
+  if (name == "physics:breakTorque")
+    return fill_attr_from_typed(jb->breakTorque, "float", name, out);
+  if (name == "physics:excludeFromArticulation")
+    return fill_attr_from_typed(jb->excludeFromArticulation, "bool", name, out);
+  // Joint-type-specific typed attributes.
+  if (tid == value::TYPE_ID_PHYSICS_REVOLUTE_JOINT) {
+    const auto *r = prim.data().as<PhysicsRevoluteJoint>();
+    if (!r) return false;
+    if (name == "physics:axis")
+      return fill_attr_from_typed(r->axis, "token", name, out);
+    if (name == "physics:lowerLimit")
+      return fill_attr_from_typed(r->lowerLimit, "float", name, out);
+    if (name == "physics:upperLimit")
+      return fill_attr_from_typed(r->upperLimit, "float", name, out);
+  } else if (tid == value::TYPE_ID_PHYSICS_PRISMATIC_JOINT) {
+    const auto *r = prim.data().as<PhysicsPrismaticJoint>();
+    if (!r) return false;
+    if (name == "physics:axis")
+      return fill_attr_from_typed(r->axis, "token", name, out);
+    if (name == "physics:lowerLimit")
+      return fill_attr_from_typed(r->lowerLimit, "float", name, out);
+    if (name == "physics:upperLimit")
+      return fill_attr_from_typed(r->upperLimit, "float", name, out);
+  } else if (tid == value::TYPE_ID_PHYSICS_SPHERICAL_JOINT) {
+    const auto *r = prim.data().as<PhysicsSphericalJoint>();
+    if (!r) return false;
+    if (name == "physics:axis")
+      return fill_attr_from_typed(r->axis, "token", name, out);
+    if (name == "physics:coneAngle0Limit")
+      return fill_attr_from_typed(r->coneAngle0Limit, "float", name, out);
+    if (name == "physics:coneAngle1Limit")
+      return fill_attr_from_typed(r->coneAngle1Limit, "float", name, out);
+  } else if (tid == value::TYPE_ID_PHYSICS_DISTANCE_JOINT) {
+    const auto *r = prim.data().as<PhysicsDistanceJoint>();
+    if (!r) return false;
+    if (name == "physics:minDistance")
+      return fill_attr_from_typed(r->minDistance, "float", name, out);
+    if (name == "physics:maxDistance")
+      return fill_attr_from_typed(r->maxDistance, "float", name, out);
+  }
+  return false;
+}
+
+extern "C" {  /* re-open for the rest of the C-callable helpers */
+
 CTinyUSDAttribute *
 c_tinyusd_prim_get_attribute(const CTinyUSDPrim *prim, const char *name) {
   if (!prim || !name) return nullptr;
   Property prop;
-  std::string err;
-  if (!tinyusdz::tydra::GetProperty(*P(prim), std::string(name), &prop, &err)) {
-    return nullptr;
+  bool got = false;
+
+  // 1) Prefer props map (covers Python-authored attributes).
+  if (lookup_in_props(*P(prim), std::string(name), &prop)) {
+    if (prop.is_attribute() && prop.get_attribute().has_value()) {
+      got = true;
+    }
+  }
+
+  // 2) Physics typed-builtin fallback (UsdPhysics has no tydra
+  //    GetPrimProperty specialization).
+  if (!got) {
+    if (lookup_physics_typed(*P(prim), std::string(name), &prop)) {
+      got = true;
+    }
+  }
+
+  // 2b) Material/MaterialXConfigAPI typed-builtin fallback.
+  if (!got) {
+    if (lookup_shade_typed(*P(prim), std::string(name), &prop)) {
+      got = true;
+    }
+  }
+
+  // 2c) UsdGeom typed-builtin fallback for enum-typed token attributes
+  //     (BasisCurves type/basis/wrap, ...) that tydra::GetProperty does
+  //     not handle for non-Mesh geoms.
+  if (!got) {
+    if (lookup_geom_typed(*P(prim), std::string(name), &prop)) {
+      got = true;
+    }
+  }
+
+  // 3) Fall back to tydra (covers schema-builtin attributes parsed from
+  //    files where the typed field is populated).
+  if (!got) {
+    std::string err;
+    if (!tinyusdz::tydra::GetProperty(*P(prim), std::string(name), &prop,
+                                      &err)) {
+      return nullptr;
+    }
   }
   if (!prop.is_attribute()) return nullptr;
   Attribute *attr = new Attribute(prop.get_attribute());
-  // Property-resident Attribute may have an empty name; copy the lookup key.
   if (attr->name().empty()) attr->set_name(std::string(name));
   return reinterpret_cast<CTinyUSDAttribute *>(attr);
 }
@@ -532,6 +847,1019 @@ int c_tinyusd_stage_list_prims_by_type(const CTinyUSDStage *stage,
   bool ok = tinyusdz::tydra::VisitPrims(*S(stage), VisitBridgeFn, &b, &e);
   if (!ok && err && !e.empty()) c_tinyusd_string_replace(err, e.c_str());
   return ok ? 1 : 0;
+}
+
+/* ---- Authoring helpers ---- */
+
+int c_tinyusd_prim_set_element_name(CTinyUSDPrim *prim, const char *name) {
+  if (!prim || !name) return 0;
+  Prim *p = reinterpret_cast<Prim *>(prim);
+  std::string s(name);
+  // Update both the element_path and the typed prim's `name` field, since
+  // the USDA/USDC writers read the name from the typed prim.
+  tinyusdz::SetPrimElementName(p->get_data(), s);
+  p->element_path() = Path(s, "");
+  return 1;
+}
+
+int c_tinyusd_stage_add_root_prim(CTinyUSDStage *stage, CTinyUSDPrim *prim,
+                                  c_tinyusd_string_t *err) {
+  if (!stage || !prim) {
+    if (err) c_tinyusd_string_replace(err, "stage or prim is null");
+    return 0;
+  }
+  Stage *s = Sm(stage);
+  Prim *p = reinterpret_cast<Prim *>(prim);
+  // Copy the prim into the stage's roots so the caller can still free its
+  // input pointer. add_root_prim takes an rvalue.
+  Prim copy(*p);
+  bool ok = s->add_root_prim(std::move(copy), /* rename */ true);
+  if (!ok) {
+    if (err) c_tinyusd_string_replace(err, "Stage::add_root_prim failed");
+    return 0;
+  }
+  return 1;
+}
+
+int c_tinyusd_attribute_set_name(CTinyUSDAttribute *attr, const char *name) {
+  if (!attr || !name) return 0;
+  Am(attr)->set_name(std::string(name));
+  return 1;
+}
+
+int c_tinyusd_attribute_set_type_name(CTinyUSDAttribute *attr,
+                                      const char *type_name) {
+  if (!attr || !type_name) return 0;
+  Am(attr)->set_type_name(std::string(type_name));
+  return 1;
+}
+
+int c_tinyusd_attribute_set_value(CTinyUSDAttribute *attr,
+                                  const CTinyUSDValue *value) {
+  if (!attr || !value) return 0;
+  Attribute *a = Am(attr);
+  const tinyusdz::value::Value *v = V(value);
+  tinyusdz::primvar::PrimVar pv;
+  pv.set_value(*v);
+  a->set_var(std::move(pv));
+  // If type_name not yet set, derive from the value.
+  if (a->type_name().empty()) {
+    a->set_type_name(v->type_name());
+  }
+  return 1;
+}
+
+int c_tinyusd_prim_add_attribute(CTinyUSDPrim *prim,
+                                 const CTinyUSDAttribute *attr,
+                                 c_tinyusd_string_t *err) {
+  if (!prim || !attr) {
+    if (err) c_tinyusd_string_replace(err, "prim or attr is null");
+    return 0;
+  }
+  Prim *p = reinterpret_cast<Prim *>(const_cast<CTinyUSDPrim *>(prim));
+  const Attribute *a = A(attr);
+  if (a->name().empty()) {
+    if (err) c_tinyusd_string_replace(err, "attribute name is empty");
+    return 0;
+  }
+
+  using namespace tinyusdz;
+  uint32_t tid = p->get_data().type_id();
+
+#define INSERT_INTO(__TID, __TY)                                       \
+  case __TID: {                                                        \
+    __TY *typed = p->get_data().as<__TY>();                            \
+    if (!typed) {                                                      \
+      if (err) c_tinyusd_string_replace(err,                           \
+        "internal: typed prim cast failed");                           \
+      return 0;                                                        \
+    }                                                                  \
+    typed->props[a->name()] = Property(*a, false);                     \
+    return 1;                                                          \
+  }
+
+  switch (tid) {
+    INSERT_INTO(value::TYPE_ID_GEOM_XFORM,    Xform)
+    INSERT_INTO(value::TYPE_ID_GEOM_MESH,     GeomMesh)
+    INSERT_INTO(value::TYPE_ID_GEOM_SPHERE,   GeomSphere)
+    INSERT_INTO(value::TYPE_ID_GEOM_CUBE,     GeomCube)
+    INSERT_INTO(value::TYPE_ID_GEOM_CYLINDER, GeomCylinder)
+    INSERT_INTO(value::TYPE_ID_GEOM_CONE,     GeomCone)
+    INSERT_INTO(value::TYPE_ID_GEOM_CAPSULE,  GeomCapsule)
+    INSERT_INTO(value::TYPE_ID_GEOM_CAMERA,   GeomCamera)
+    INSERT_INTO(value::TYPE_ID_GEOM_POINTS,   GeomPoints)
+    INSERT_INTO(value::TYPE_ID_GEOM_GEOMSUBSET,      GeomSubset)
+    INSERT_INTO(value::TYPE_ID_GEOM_BASIS_CURVES,    GeomBasisCurves)
+    INSERT_INTO(value::TYPE_ID_GEOM_NURBS_CURVES,    GeomNurbsCurves)
+    INSERT_INTO(value::TYPE_ID_GEOM_HERMITE_CURVES,  GeomHermiteCurves)
+    INSERT_INTO(value::TYPE_ID_GEOM_PLANE,           GeomPlane)
+    INSERT_INTO(value::TYPE_ID_GEOM_CYLINDER_1,      GeomCylinder_1)
+    INSERT_INTO(value::TYPE_ID_GEOM_CAPSULE_1,       GeomCapsule_1)
+    INSERT_INTO(value::TYPE_ID_GEOM_TET_MESH,        GeomTetMesh)
+    INSERT_INTO(value::TYPE_ID_GEOM_NURBS_PATCH,     GeomNurbsPatch)
+    INSERT_INTO(value::TYPE_ID_GEOM_POINT_INSTANCER, GeomPointInstancer)
+    INSERT_INTO(value::TYPE_ID_LUX_SPHERE,    SphereLight)
+    INSERT_INTO(value::TYPE_ID_LUX_RECT,      RectLight)
+    INSERT_INTO(value::TYPE_ID_LUX_DISK,      DiskLight)
+    INSERT_INTO(value::TYPE_ID_LUX_DISTANT,   DistantLight)
+    INSERT_INTO(value::TYPE_ID_LUX_CYLINDER,  CylinderLight)
+    INSERT_INTO(value::TYPE_ID_LUX_DOME,      DomeLight)
+    INSERT_INTO(value::TYPE_ID_LUX_DOME_1,    DomeLight_1)
+    INSERT_INTO(value::TYPE_ID_LUX_GEOMETRY,  GeometryLight)
+    INSERT_INTO(value::TYPE_ID_LUX_PORTAL,    PortalLight)
+    INSERT_INTO(value::TYPE_ID_SCOPE,         Scope)
+    INSERT_INTO(value::TYPE_ID_MODEL,         Model)
+    INSERT_INTO(value::TYPE_ID_PHYSICS_SCENE,            PhysicsScene)
+    INSERT_INTO(value::TYPE_ID_PHYSICS_JOINT,            PhysicsJoint)
+    INSERT_INTO(value::TYPE_ID_PHYSICS_REVOLUTE_JOINT,   PhysicsRevoluteJoint)
+    INSERT_INTO(value::TYPE_ID_PHYSICS_PRISMATIC_JOINT,  PhysicsPrismaticJoint)
+    INSERT_INTO(value::TYPE_ID_PHYSICS_SPHERICAL_JOINT,  PhysicsSphericalJoint)
+    INSERT_INTO(value::TYPE_ID_PHYSICS_FIXED_JOINT,      PhysicsFixedJoint)
+    INSERT_INTO(value::TYPE_ID_PHYSICS_DISTANCE_JOINT,   PhysicsDistanceJoint)
+    INSERT_INTO(value::TYPE_ID_PHYSICS_COLLISION_GROUP,  PhysicsCollisionGroup)
+    INSERT_INTO(value::TYPE_ID_MATERIAL,                 Material)
+    INSERT_INTO(value::TYPE_ID_SHADER,                   Shader)
+    INSERT_INTO(value::TYPE_ID_NODEGRAPH,                NodeGraph)
+    INSERT_INTO(value::TYPE_ID_SKEL_ROOT,                SkelRoot)
+    INSERT_INTO(value::TYPE_ID_SKELETON,                 Skeleton)
+    INSERT_INTO(value::TYPE_ID_SKELANIMATION,            SkelAnimation)
+    INSERT_INTO(value::TYPE_ID_BLENDSHAPE,               BlendShape)
+    default: {
+      if (err) {
+        std::string msg = "unsupported prim type for attribute authoring: " +
+                          p->type_name();
+        c_tinyusd_string_replace(err, msg.c_str());
+      }
+      return 0;
+    }
+  }
+
+#undef INSERT_INTO
+}
+
+/* ---- token[] / string[] value constructors ---- */
+
+CTinyUSDValue *c_tinyusd_value_new_array_token(uint64_t n,
+                                               const char *const *toks) {
+  std::vector<tinyusdz::value::token> v;
+  v.reserve(size_t(n));
+  for (uint64_t i = 0; i < n; ++i) {
+    v.emplace_back(toks && toks[i] ? toks[i] : "");
+  }
+  auto *vp = new tinyusdz::value::Value(std::move(v));
+  return reinterpret_cast<CTinyUSDValue *>(vp);
+}
+
+CTinyUSDValue *c_tinyusd_value_new_array_string(uint64_t n,
+                                                const char *const *strs) {
+  std::vector<std::string> v;
+  v.reserve(size_t(n));
+  for (uint64_t i = 0; i < n; ++i) {
+    v.emplace_back(strs && strs[i] ? strs[i] : "");
+  }
+  auto *vp = new tinyusdz::value::Value(std::move(v));
+  return reinterpret_cast<CTinyUSDValue *>(vp);
+}
+
+/* ---- API schemas ---- */
+
+int c_tinyusd_prim_apply_api_schema(CTinyUSDPrim *prim,
+                                    const char *schema_name,
+                                    const char *instance_name) {
+  if (!prim || !schema_name) return 0;
+  Prim *p = reinterpret_cast<Prim *>(prim);
+  auto &apis = p->metas().get_apiSchemas_mutable();
+  // Always use prepend list-edit qualifier (USD canonical).
+  apis.listOpQual = tinyusdz::ListEditQual::Prepend;
+  apis.unknownSchemas.emplace_back(
+      std::string(schema_name),
+      std::string(instance_name ? instance_name : ""));
+  return 1;
+}
+
+int c_tinyusd_prim_get_api_schemas(const CTinyUSDPrim *prim,
+                                   c_tinyusd_string_t *out) {
+  if (!prim || !out) return 0;
+  const Prim *p = P(prim);
+  if (!p->metas().has_apiSchemas()) return 0;
+  const auto &apis = p->metas().get_apiSchemas();
+  std::string joined;
+  for (const auto &kv : apis.names) {
+    if (!joined.empty()) joined += ",";
+    joined += tinyusdz::to_string(kv.first);
+    if (!kv.second.empty()) { joined += ":"; joined += kv.second; }
+  }
+  for (const auto &kv : apis.unknownSchemas) {
+    if (!joined.empty()) joined += ",";
+    joined += kv.first;
+    if (!kv.second.empty()) { joined += ":"; joined += kv.second; }
+  }
+  return c_tinyusd_string_replace(out, joined.c_str());
+}
+
+/* ---- Prim metadata ---- */
+
+int c_tinyusd_prim_meta_set_string(CTinyUSDPrim *prim, const char *meta_name,
+                                   const char *value) {
+  if (!prim || !meta_name || !value) return 0;
+  Prim *p = reinterpret_cast<Prim *>(prim);
+  std::string key(meta_name);
+  // Alias: USD canonical key is "documentation"; accept "doc" for ergonomics.
+  if (key == "doc") key = "documentation";
+  std::string val(value);
+  auto &m = p->metas();
+  if (key == "specifier") {
+    tinyusdz::Specifier sp;
+    if (val == "def") sp = tinyusdz::Specifier::Def;
+    else if (val == "over") sp = tinyusdz::Specifier::Over;
+    else if (val == "class") sp = tinyusdz::Specifier::Class;
+    else return 0;
+    p->specifier() = sp;
+    /* Also stamp the typed prim's `spec` field so the USDA pprint, which
+     * reads from `xform.spec` / `mesh.spec` / etc., honors it. */
+    using namespace tinyusdz;
+    uint32_t tid = p->get_data().type_id();
+#define SET_SPEC(__TID, __TY)                              \
+  case __TID: {                                            \
+    auto *typed = p->get_data().as<__TY>();                \
+    if (typed) typed->spec = sp;                           \
+    return 1;                                              \
+  }
+    switch (tid) {
+      SET_SPEC(value::TYPE_ID_GEOM_XFORM, Xform)
+      SET_SPEC(value::TYPE_ID_GEOM_MESH, GeomMesh)
+      SET_SPEC(value::TYPE_ID_GEOM_SPHERE, GeomSphere)
+      SET_SPEC(value::TYPE_ID_GEOM_CUBE, GeomCube)
+      SET_SPEC(value::TYPE_ID_GEOM_CYLINDER, GeomCylinder)
+      SET_SPEC(value::TYPE_ID_GEOM_CONE, GeomCone)
+      SET_SPEC(value::TYPE_ID_GEOM_CAPSULE, GeomCapsule)
+      SET_SPEC(value::TYPE_ID_GEOM_CAMERA, GeomCamera)
+      SET_SPEC(value::TYPE_ID_GEOM_POINTS, GeomPoints)
+      SET_SPEC(value::TYPE_ID_GEOM_GEOMSUBSET, GeomSubset)
+      SET_SPEC(value::TYPE_ID_GEOM_BASIS_CURVES, GeomBasisCurves)
+      SET_SPEC(value::TYPE_ID_GEOM_NURBS_CURVES, GeomNurbsCurves)
+      SET_SPEC(value::TYPE_ID_GEOM_HERMITE_CURVES, GeomHermiteCurves)
+      SET_SPEC(value::TYPE_ID_GEOM_PLANE, GeomPlane)
+      SET_SPEC(value::TYPE_ID_GEOM_CYLINDER_1, GeomCylinder_1)
+      SET_SPEC(value::TYPE_ID_GEOM_CAPSULE_1, GeomCapsule_1)
+      SET_SPEC(value::TYPE_ID_GEOM_TET_MESH, GeomTetMesh)
+      SET_SPEC(value::TYPE_ID_GEOM_NURBS_PATCH, GeomNurbsPatch)
+      SET_SPEC(value::TYPE_ID_GEOM_POINT_INSTANCER, GeomPointInstancer)
+      SET_SPEC(value::TYPE_ID_LUX_SPHERE, SphereLight)
+      SET_SPEC(value::TYPE_ID_LUX_RECT, RectLight)
+      SET_SPEC(value::TYPE_ID_LUX_DISK, DiskLight)
+      SET_SPEC(value::TYPE_ID_LUX_DISTANT, DistantLight)
+      SET_SPEC(value::TYPE_ID_LUX_CYLINDER, CylinderLight)
+      SET_SPEC(value::TYPE_ID_LUX_DOME, DomeLight)
+      SET_SPEC(value::TYPE_ID_LUX_DOME_1, DomeLight_1)
+      SET_SPEC(value::TYPE_ID_LUX_GEOMETRY, GeometryLight)
+      SET_SPEC(value::TYPE_ID_LUX_PORTAL, PortalLight)
+      SET_SPEC(value::TYPE_ID_SCOPE, Scope)
+      SET_SPEC(value::TYPE_ID_MODEL, Model)
+      SET_SPEC(value::TYPE_ID_MATERIAL, Material)
+      SET_SPEC(value::TYPE_ID_SHADER, Shader)
+      SET_SPEC(value::TYPE_ID_NODEGRAPH, NodeGraph)
+      SET_SPEC(value::TYPE_ID_SKEL_ROOT, SkelRoot)
+      SET_SPEC(value::TYPE_ID_SKELETON, Skeleton)
+      SET_SPEC(value::TYPE_ID_SKELANIMATION, SkelAnimation)
+      SET_SPEC(value::TYPE_ID_BLENDSHAPE, BlendShape)
+      SET_SPEC(value::TYPE_ID_PHYSICS_SCENE, PhysicsScene)
+      SET_SPEC(value::TYPE_ID_PHYSICS_JOINT, PhysicsJoint)
+      SET_SPEC(value::TYPE_ID_PHYSICS_REVOLUTE_JOINT, PhysicsRevoluteJoint)
+      SET_SPEC(value::TYPE_ID_PHYSICS_PRISMATIC_JOINT, PhysicsPrismaticJoint)
+      SET_SPEC(value::TYPE_ID_PHYSICS_SPHERICAL_JOINT, PhysicsSphericalJoint)
+      SET_SPEC(value::TYPE_ID_PHYSICS_FIXED_JOINT, PhysicsFixedJoint)
+      SET_SPEC(value::TYPE_ID_PHYSICS_DISTANCE_JOINT, PhysicsDistanceJoint)
+      SET_SPEC(value::TYPE_ID_PHYSICS_COLLISION_GROUP, PhysicsCollisionGroup)
+      default: return 1;
+    }
+#undef SET_SPEC
+  }
+  if (key == "kind" || key == "sceneName") {
+    // tokens
+    m.set(key, tinyusdz::value::token(val));
+  } else if (key == "documentation" || key == "comment") {
+    m.set(key, tinyusdz::value::StringData(val));
+  } else if (key == "displayName") {
+    m.set_displayName(val);
+  } else {
+    // generic string fallback
+    m.set(key, val);
+  }
+  return 1;
+}
+
+int c_tinyusd_prim_meta_set_bool(CTinyUSDPrim *prim, const char *meta_name,
+                                 int value) {
+  if (!prim || !meta_name) return 0;
+  Prim *p = reinterpret_cast<Prim *>(prim);
+  std::string key(meta_name);
+  bool b = value ? true : false;
+  auto &m = p->metas();
+  if (key == "active") m.set_active(b);
+  else if (key == "hidden") m.set_hidden(b);
+  else m.set(key, b);
+  return 1;
+}
+
+int c_tinyusd_prim_meta_get_bool(const CTinyUSDPrim *prim,
+                                 const char *meta_name, int *out) {
+  if (!prim || !meta_name || !out) return 0;
+  const Prim *p = P(prim);
+  const auto &m = p->metas();
+  std::string key(meta_name);
+  if (key == "active") {
+    if (!m.has_active()) return 0;
+    *out = m.get_active() ? 1 : 0;
+    return 1;
+  }
+  if (key == "hidden") {
+    if (!m.has_hidden()) return 0;
+    *out = m.get_hidden() ? 1 : 0;
+    return 1;
+  }
+  if (auto v = m.get<bool>(key)) {
+    *out = v.value() ? 1 : 0;
+    return 1;
+  }
+  return 0;
+}
+
+int c_tinyusd_prim_meta_get_string(const CTinyUSDPrim *prim,
+                                   const char *meta_name,
+                                   c_tinyusd_string_t *out) {
+  if (!prim || !meta_name || !out) return 0;
+  const Prim *p = P(prim);
+  const auto &m = p->metas();
+  std::string key(meta_name);
+  if (key == "specifier") {
+    /* Read from typed prim's `spec` first (canonical for pprint+writer);
+     * fall back to wrapper specifier. */
+    using namespace tinyusdz;
+    Specifier sp = p->specifier();
+    uint32_t tid = p->data().type_id();
+#define READ_SPEC(__TID, __TY) \
+  case __TID: if (auto *t = p->data().as<__TY>()) { sp = t->spec; } break;
+    switch (tid) {
+      READ_SPEC(value::TYPE_ID_GEOM_XFORM, Xform)
+      READ_SPEC(value::TYPE_ID_GEOM_MESH, GeomMesh)
+      READ_SPEC(value::TYPE_ID_GEOM_SPHERE, GeomSphere)
+      READ_SPEC(value::TYPE_ID_GEOM_CUBE, GeomCube)
+      READ_SPEC(value::TYPE_ID_GEOM_CYLINDER, GeomCylinder)
+      READ_SPEC(value::TYPE_ID_GEOM_CONE, GeomCone)
+      READ_SPEC(value::TYPE_ID_GEOM_CAPSULE, GeomCapsule)
+      READ_SPEC(value::TYPE_ID_GEOM_CAMERA, GeomCamera)
+      READ_SPEC(value::TYPE_ID_SCOPE, Scope)
+      READ_SPEC(value::TYPE_ID_MODEL, Model)
+      READ_SPEC(value::TYPE_ID_MATERIAL, Material)
+      READ_SPEC(value::TYPE_ID_SHADER, Shader)
+      default: break;
+    }
+#undef READ_SPEC
+    const char *s = "def";
+    switch (sp) {
+      case tinyusdz::Specifier::Def: s = "def"; break;
+      case tinyusdz::Specifier::Over: s = "over"; break;
+      case tinyusdz::Specifier::Class: s = "class"; break;
+      default: s = "def"; break;
+    }
+    return c_tinyusd_string_replace(out, s);
+  }
+  if (key == "doc") key = "documentation";  /* alias */
+  if (auto v = m.get<tinyusdz::value::token>(key)) {
+    return c_tinyusd_string_replace(out, v.value().str().c_str());
+  }
+  if (auto v = m.get<std::string>(key)) {
+    return c_tinyusd_string_replace(out, v.value().c_str());
+  }
+  if (auto v = m.get<tinyusdz::value::StringData>(key)) {
+    return c_tinyusd_string_replace(out, v.value().value.c_str());
+  }
+  return 0;
+}
+
+/* ---- Double-precision value constructors ---- */
+
+CTinyUSDValue *c_tinyusd_value_new_double(double v) {
+  auto *p = new tinyusdz::value::Value(v);
+  return reinterpret_cast<CTinyUSDValue *>(p);
+}
+CTinyUSDValue *c_tinyusd_value_new_double2(c_tinyusd_double2_t v) {
+  tinyusdz::value::double2 d{v.x, v.y};
+  auto *p = new tinyusdz::value::Value(d);
+  return reinterpret_cast<CTinyUSDValue *>(p);
+}
+CTinyUSDValue *c_tinyusd_value_new_double3(c_tinyusd_double3_t v) {
+  tinyusdz::value::double3 d{v.x, v.y, v.z};
+  auto *p = new tinyusdz::value::Value(d);
+  return reinterpret_cast<CTinyUSDValue *>(p);
+}
+CTinyUSDValue *c_tinyusd_value_new_double4(c_tinyusd_double4_t v) {
+  tinyusdz::value::double4 d{v.x, v.y, v.z, v.w};
+  auto *p = new tinyusdz::value::Value(d);
+  return reinterpret_cast<CTinyUSDValue *>(p);
+}
+CTinyUSDValue *c_tinyusd_value_new_array_double(uint64_t n, const double *v) {
+  if (!v && n) return nullptr;
+  std::vector<double> arr(v, v + n);
+  auto *p = new tinyusdz::value::Value(arr);
+  return reinterpret_cast<CTinyUSDValue *>(p);
+}
+CTinyUSDValue *c_tinyusd_value_new_array_double3(uint64_t n,
+                                                 const c_tinyusd_double3_t *v) {
+  if (!v && n) return nullptr;
+  std::vector<tinyusdz::value::double3> arr(n);
+  for (uint64_t i = 0; i < n; ++i) {
+    arr[i] = tinyusdz::value::double3{v[i].x, v[i].y, v[i].z};
+  }
+  auto *p = new tinyusdz::value::Value(arr);
+  return reinterpret_cast<CTinyUSDValue *>(p);
+}
+CTinyUSDValue *c_tinyusd_value_new_matrix4d(const double v[16]) {
+  if (!v) return nullptr;
+  tinyusdz::value::matrix4d m;
+  /* matrix4d stores as 4x4 of doubles */
+  std::memcpy(&m, v, sizeof(double) * 16);
+  auto *p = new tinyusdz::value::Value(m);
+  return reinterpret_cast<CTinyUSDValue *>(p);
+}
+
+CTinyUSDValue *c_tinyusd_value_new_asset(const char *asset_path) {
+  if (!asset_path) return nullptr;
+  tinyusdz::value::AssetPath ap{std::string(asset_path)};
+  auto *p = new tinyusdz::value::Value(ap);
+  return reinterpret_cast<CTinyUSDValue *>(p);
+}
+
+CTinyUSDValue *c_tinyusd_value_new_array_asset(uint64_t n,
+                                               const char *const *paths) {
+  if (n && !paths) return nullptr;
+  std::vector<tinyusdz::value::AssetPath> arr;
+  arr.reserve(n);
+  for (uint64_t i = 0; i < n; ++i) {
+    arr.emplace_back(paths[i] ? std::string(paths[i]) : std::string());
+  }
+  auto *p = new tinyusdz::value::Value(arr);
+  return reinterpret_cast<CTinyUSDValue *>(p);
+}
+
+/* ---- Attribute connections / metadata ---- */
+
+/* Helper: locate or insert a Property attribute in the prim's props map.
+ * Returns pointer to the Property entry, or nullptr if the prim type does
+ * not expose a writable props map. */
+static tinyusdz::Property *locate_or_insert_attr_prop(
+    Prim *p, const std::string &name) {
+  using namespace tinyusdz;
+  uint32_t tid = p->get_data().type_id();
+#define LOCATE(__TID, __TY)                                          \
+  case __TID: {                                                      \
+    auto *typed = p->get_data().as<__TY>();                          \
+    if (!typed) return nullptr;                                      \
+    return &typed->props[name];                                      \
+  }
+  switch (tid) {
+    LOCATE(value::TYPE_ID_GEOM_XFORM, Xform)
+    LOCATE(value::TYPE_ID_GEOM_MESH, GeomMesh)
+    LOCATE(value::TYPE_ID_GEOM_SPHERE, GeomSphere)
+    LOCATE(value::TYPE_ID_GEOM_CUBE, GeomCube)
+    LOCATE(value::TYPE_ID_GEOM_CYLINDER, GeomCylinder)
+    LOCATE(value::TYPE_ID_GEOM_CONE, GeomCone)
+    LOCATE(value::TYPE_ID_GEOM_CAPSULE, GeomCapsule)
+    LOCATE(value::TYPE_ID_GEOM_CAMERA, GeomCamera)
+    LOCATE(value::TYPE_ID_GEOM_POINTS, GeomPoints)
+    LOCATE(value::TYPE_ID_GEOM_GEOMSUBSET, GeomSubset)
+    LOCATE(value::TYPE_ID_GEOM_BASIS_CURVES, GeomBasisCurves)
+    LOCATE(value::TYPE_ID_GEOM_NURBS_CURVES, GeomNurbsCurves)
+    LOCATE(value::TYPE_ID_GEOM_HERMITE_CURVES, GeomHermiteCurves)
+    LOCATE(value::TYPE_ID_GEOM_PLANE, GeomPlane)
+    LOCATE(value::TYPE_ID_GEOM_CYLINDER_1, GeomCylinder_1)
+    LOCATE(value::TYPE_ID_GEOM_CAPSULE_1, GeomCapsule_1)
+    LOCATE(value::TYPE_ID_GEOM_TET_MESH, GeomTetMesh)
+    LOCATE(value::TYPE_ID_GEOM_NURBS_PATCH, GeomNurbsPatch)
+    LOCATE(value::TYPE_ID_GEOM_POINT_INSTANCER, GeomPointInstancer)
+    LOCATE(value::TYPE_ID_LUX_SPHERE, SphereLight)
+    LOCATE(value::TYPE_ID_LUX_RECT, RectLight)
+    LOCATE(value::TYPE_ID_LUX_DISK, DiskLight)
+    LOCATE(value::TYPE_ID_LUX_DISTANT, DistantLight)
+    LOCATE(value::TYPE_ID_LUX_CYLINDER, CylinderLight)
+    LOCATE(value::TYPE_ID_LUX_DOME, DomeLight)
+    LOCATE(value::TYPE_ID_LUX_DOME_1, DomeLight_1)
+    LOCATE(value::TYPE_ID_LUX_GEOMETRY, GeometryLight)
+    LOCATE(value::TYPE_ID_LUX_PORTAL, PortalLight)
+    LOCATE(value::TYPE_ID_SCOPE, Scope)
+    LOCATE(value::TYPE_ID_MODEL, Model)
+    LOCATE(value::TYPE_ID_MATERIAL, Material)
+    LOCATE(value::TYPE_ID_SHADER, Shader)
+    LOCATE(value::TYPE_ID_NODEGRAPH, NodeGraph)
+    LOCATE(value::TYPE_ID_SKEL_ROOT, SkelRoot)
+    LOCATE(value::TYPE_ID_SKELETON, Skeleton)
+    LOCATE(value::TYPE_ID_SKELANIMATION, SkelAnimation)
+    LOCATE(value::TYPE_ID_BLENDSHAPE, BlendShape)
+    LOCATE(value::TYPE_ID_PHYSICS_SCENE, PhysicsScene)
+    LOCATE(value::TYPE_ID_PHYSICS_JOINT, PhysicsJoint)
+    LOCATE(value::TYPE_ID_PHYSICS_REVOLUTE_JOINT, PhysicsRevoluteJoint)
+    LOCATE(value::TYPE_ID_PHYSICS_PRISMATIC_JOINT, PhysicsPrismaticJoint)
+    LOCATE(value::TYPE_ID_PHYSICS_SPHERICAL_JOINT, PhysicsSphericalJoint)
+    LOCATE(value::TYPE_ID_PHYSICS_FIXED_JOINT, PhysicsFixedJoint)
+    LOCATE(value::TYPE_ID_PHYSICS_DISTANCE_JOINT, PhysicsDistanceJoint)
+    LOCATE(value::TYPE_ID_PHYSICS_COLLISION_GROUP, PhysicsCollisionGroup)
+    default: return nullptr;
+  }
+#undef LOCATE
+}
+
+int c_tinyusd_prim_add_attribute_connection(CTinyUSDPrim *prim,
+                                            const char *name,
+                                            const char *type_name,
+                                            uint64_t n_targets,
+                                            const char *const *target_paths,
+                                            c_tinyusd_string_t *err) {
+  using namespace tinyusdz;
+  if (!prim || !name || n_targets == 0 || !target_paths) {
+    if (err) c_tinyusd_string_replace(err, "invalid args");
+    return 0;
+  }
+  Prim *p = reinterpret_cast<Prim *>(prim);
+  Attribute attr;
+  attr.set_name(std::string(name));
+  if (type_name && *type_name) attr.set_type_name(std::string(type_name));
+  std::vector<Path> paths;
+  paths.reserve(n_targets);
+  for (uint64_t i = 0; i < n_targets; ++i) {
+    paths.emplace_back(std::string(target_paths[i]), "");
+  }
+  if (paths.size() == 1) {
+    attr.set_connection(paths[0]);
+  } else {
+    attr.set_connections(paths);
+  }
+  Property *slot = locate_or_insert_attr_prop(p, std::string(name));
+  if (!slot) {
+    if (err) c_tinyusd_string_replace(err,
+        "Attribute connection unsupported for this prim type");
+    return 0;
+  }
+  *slot = Property(std::move(attr), /*custom*/ false);
+  return 1;
+}
+
+int c_tinyusd_prim_get_attribute_connections(const CTinyUSDPrim *prim,
+                                             const char *name,
+                                             c_tinyusd_string_t *out_csv) {
+  using namespace tinyusdz;
+  if (!prim || !name || !out_csv) return 0;
+  Property prop;
+  bool got = lookup_in_props(*P(prim), std::string(name), &prop);
+  if (!got) {
+    std::string err;
+    got = tinyusdz::tydra::GetProperty(*P(prim), std::string(name), &prop,
+                                       &err);
+  }
+  if (!got) return 0;
+  if (!prop.is_attribute()) return 0;
+  const Attribute &a = prop.get_attribute();
+  if (!a.has_connections()) return 0;
+  std::string s;
+  const auto &paths = a.connections();
+  for (size_t i = 0; i < paths.size(); ++i) {
+    if (i) s += ",";
+    s += paths[i].full_path_name();
+  }
+  return c_tinyusd_string_replace(out_csv, s.c_str());
+}
+
+int c_tinyusd_prim_attribute_meta_set_string(CTinyUSDPrim *prim,
+                                             const char *attr_name,
+                                             const char *meta_key,
+                                             const char *value) {
+  if (!prim || !attr_name || !meta_key || !value) return 0;
+  Prim *p = reinterpret_cast<Prim *>(prim);
+  Property *slot = locate_or_insert_attr_prop(p, std::string(attr_name));
+  if (!slot || !slot->is_attribute()) return 0;
+  Attribute &a = slot->attribute();
+  std::string k(meta_key);
+  std::string v(value);
+  if (k == "displayName") a.metas().set_displayName(v);
+  else if (k == "doc" || k == "documentation") a.metas().set_doc(v);
+  else if (k == "displayGroup") a.metas().set_displayGroup(v);
+  else if (k == "interpolation") a.metas().set_interpolation(v);
+  else if (k == "colorSpace") a.metas().set(k, tinyusdz::value::token(v));
+  else if (k == "variability") {
+    if (v == "uniform") a.variability() = tinyusdz::Variability::Uniform;
+    else if (v == "varying") a.variability() = tinyusdz::Variability::Varying;
+    else return 0;
+  }
+  else a.metas().set(k, v);
+  return 1;
+}
+
+int c_tinyusd_prim_attribute_meta_set_bool(CTinyUSDPrim *prim,
+                                           const char *attr_name,
+                                           const char *meta_key, int value) {
+  if (!prim || !attr_name || !meta_key) return 0;
+  Prim *p = reinterpret_cast<Prim *>(prim);
+  Property *slot = locate_or_insert_attr_prop(p, std::string(attr_name));
+  if (!slot || !slot->is_attribute()) return 0;
+  Attribute &a = slot->attribute();
+  std::string k(meta_key);
+  bool b = value ? true : false;
+  if (k == "hidden") a.metas().set_hidden(b);
+  else if (k == "custom") slot->set_custom(b);
+  else a.metas().set(k, b);
+  return 1;
+}
+
+int c_tinyusd_prim_attribute_meta_get_string(const CTinyUSDPrim *prim,
+                                             const char *attr_name,
+                                             const char *meta_key,
+                                             c_tinyusd_string_t *out) {
+  using namespace tinyusdz;
+  if (!prim || !attr_name || !meta_key || !out) return 0;
+  Property prop;
+  bool got = lookup_in_props(*P(prim), std::string(attr_name), &prop);
+  if (!got) {
+    std::string err;
+    got = tinyusdz::tydra::GetProperty(*P(prim), std::string(attr_name), &prop,
+                                       &err);
+  }
+  if (!got) return 0;
+  if (!prop.is_attribute()) return 0;
+  const auto &m = prop.get_attribute().metas();
+  std::string k(meta_key);
+  if ((k == "displayName") && m.has_displayName())
+    return c_tinyusd_string_replace(out, m.get_displayName().c_str());
+  if (k == "doc" || k == "documentation") {
+    /* Try canonical typed (StringData) first, then plain std::string
+     * (USDA parser falls back to a generic MetaVariable for any meta
+     * without a hand-coded case). */
+    if (m.has_doc()) {
+      const auto &sd = m.get_doc();
+      if (!sd.value.empty())
+        return c_tinyusd_string_replace(out, sd.value.c_str());
+    }
+    if (auto v = m.get<std::string>("documentation"))
+      return c_tinyusd_string_replace(out, v.value().c_str());
+    if (auto v = m.get<std::string>("doc"))
+      return c_tinyusd_string_replace(out, v.value().c_str());
+  }
+  if (k == "displayGroup" && m.has_displayGroup())
+    return c_tinyusd_string_replace(out, m.get_displayGroup().c_str());
+  if (k == "interpolation" && m.has_interpolation())
+    return c_tinyusd_string_replace(out, m.get_interpolation().str().c_str());
+  if (k == "variability") {
+    const Attribute &a = prop.get_attribute();
+    const char *vs = a.is_uniform() ? "uniform" : "varying";
+    return c_tinyusd_string_replace(out, vs);
+  }
+  if (auto v = m.get<std::string>(k))
+    return c_tinyusd_string_replace(out, v.value().c_str());
+  if (auto v = m.get<tinyusdz::value::token>(k))
+    return c_tinyusd_string_replace(out, v.value().str().c_str());
+  if (auto v = m.get<tinyusdz::value::StringData>(k))
+    return c_tinyusd_string_replace(out, v.value().value.c_str());
+  return 0;
+}
+
+/* ---- Stage metadata ---- */
+
+int c_tinyusd_stage_meta_set_string(CTinyUSDStage *stage, const char *key_,
+                                    const char *value) {
+  if (!stage || !key_ || !value) return 0;
+  std::string key(key_);
+  std::string val(value);
+  auto &m = Sm(stage)->metas();
+  if (key == "defaultPrim") {
+    m.defaultPrim = tinyusdz::value::token(val);
+    return 1;
+  } else if (key == "upAxis") {
+    tinyusdz::Axis ax = tinyusdz::Axis::Y;
+    if (val == "X") ax = tinyusdz::Axis::X;
+    else if (val == "Z") ax = tinyusdz::Axis::Z;
+    else if (val == "Y") ax = tinyusdz::Axis::Y;
+    else return 0;
+    m.upAxis = ax;
+    return 1;
+  } else if (key == "doc" || key == "documentation") {
+    m.doc = tinyusdz::value::StringData(val);
+    return 1;
+  } else if (key == "comment") {
+    m.comment = tinyusdz::value::StringData(val);
+    return 1;
+  }
+  return 0;
+}
+
+int c_tinyusd_stage_meta_get_string(const CTinyUSDStage *stage, const char *key_,
+                                    c_tinyusd_string_t *out) {
+  if (!stage || !key_ || !out) return 0;
+  std::string key(key_);
+  const auto &m = S(stage)->metas();
+  if (key == "defaultPrim") {
+    if (m.defaultPrim.str().empty()) return 0;
+    return c_tinyusd_string_replace(out, m.defaultPrim.str().c_str());
+  } else if (key == "upAxis") {
+    if (!m.upAxis.authored()) return 0;
+    const char *s = "Y";
+    switch (m.upAxis.get_value()) {
+      case tinyusdz::Axis::X: s = "X"; break;
+      case tinyusdz::Axis::Y: s = "Y"; break;
+      case tinyusdz::Axis::Z: s = "Z"; break;
+      default: return 0;
+    }
+    return c_tinyusd_string_replace(out, s);
+  } else if (key == "doc" || key == "documentation") {
+    if (m.doc.value.empty()) return 0;
+    return c_tinyusd_string_replace(out, m.doc.value.c_str());
+  } else if (key == "comment") {
+    if (m.comment.value.empty()) return 0;
+    return c_tinyusd_string_replace(out, m.comment.value.c_str());
+  }
+  return 0;
+}
+
+int c_tinyusd_stage_meta_set_double(CTinyUSDStage *stage, const char *key_,
+                                    double value) {
+  if (!stage || !key_) return 0;
+  std::string key(key_);
+  auto &m = Sm(stage)->metas();
+  if (key == "metersPerUnit") { m.metersPerUnit = value; return 1; }
+  if (key == "timeCodesPerSecond") { m.timeCodesPerSecond = value; return 1; }
+  if (key == "framesPerSecond") { m.framesPerSecond = value; return 1; }
+  if (key == "startTimeCode") { m.startTimeCode = value; return 1; }
+  if (key == "endTimeCode") { m.endTimeCode = value; return 1; }
+  return 0;
+}
+
+int c_tinyusd_stage_meta_get_double(const CTinyUSDStage *stage, const char *key_,
+                                    double *out) {
+  if (!stage || !key_ || !out) return 0;
+  std::string key(key_);
+  const auto &m = S(stage)->metas();
+#define RET_IF(KEY, FIELD)                          \
+  if (key == KEY) {                                 \
+    if (!m.FIELD.authored()) return 0;              \
+    *out = m.FIELD.get_value();                     \
+    return 1;                                       \
+  }
+  RET_IF("metersPerUnit", metersPerUnit)
+  RET_IF("timeCodesPerSecond", timeCodesPerSecond)
+  RET_IF("framesPerSecond", framesPerSecond)
+  RET_IF("startTimeCode", startTimeCode)
+  RET_IF("endTimeCode", endTimeCode)
+#undef RET_IF
+  return 0;
+}
+
+/* ---- Relationship author / read ---- */
+
+int c_tinyusd_prim_add_relationship(CTinyUSDPrim *prim, const char *name,
+                                    uint64_t n_targets,
+                                    const char *const *target_paths,
+                                    c_tinyusd_string_t *err) {
+  using namespace tinyusdz;
+  if (!prim || !name) {
+    if (err) c_tinyusd_string_replace(err, "null prim or name");
+    return 0;
+  }
+  Prim *p = reinterpret_cast<Prim *>(prim);
+  tinyusdz::Relationship rel;
+  if (n_targets == 0 || !target_paths) {
+    rel.set_novalue();
+  } else if (n_targets == 1) {
+    rel.set(tinyusdz::Path(std::string(target_paths[0]), ""));
+  } else {
+    std::vector<tinyusdz::Path> pv;
+    pv.reserve(n_targets);
+    for (uint64_t i = 0; i < n_targets; ++i) {
+      pv.emplace_back(std::string(target_paths[i]), "");
+    }
+    rel.set(std::move(pv));
+  }
+  Property prop(rel, /*custom*/ false);
+
+  std::string nm(name);
+  uint32_t tid = p->data().type_id();
+#define INSERT_REL(__TID, __TY)                              \
+  case __TID: {                                              \
+    auto *typed = p->get_data().as<__TY>();                  \
+    if (!typed) { if (err) c_tinyusd_string_replace(err, "null typed"); return 0; } \
+    typed->props[nm] = prop;                                 \
+    return 1;                                                \
+  }
+  switch (tid) {
+    INSERT_REL(value::TYPE_ID_GEOM_XFORM, Xform)
+    INSERT_REL(value::TYPE_ID_GEOM_MESH, GeomMesh)
+    INSERT_REL(value::TYPE_ID_GEOM_SPHERE, GeomSphere)
+    INSERT_REL(value::TYPE_ID_GEOM_CUBE, GeomCube)
+    INSERT_REL(value::TYPE_ID_GEOM_CYLINDER, GeomCylinder)
+    INSERT_REL(value::TYPE_ID_GEOM_CONE, GeomCone)
+    INSERT_REL(value::TYPE_ID_GEOM_CAPSULE, GeomCapsule)
+    INSERT_REL(value::TYPE_ID_GEOM_CAMERA, GeomCamera)
+    INSERT_REL(value::TYPE_ID_GEOM_POINTS, GeomPoints)
+    INSERT_REL(value::TYPE_ID_GEOM_GEOMSUBSET, GeomSubset)
+    INSERT_REL(value::TYPE_ID_GEOM_BASIS_CURVES, GeomBasisCurves)
+    INSERT_REL(value::TYPE_ID_GEOM_NURBS_CURVES, GeomNurbsCurves)
+    INSERT_REL(value::TYPE_ID_GEOM_HERMITE_CURVES, GeomHermiteCurves)
+    INSERT_REL(value::TYPE_ID_GEOM_PLANE, GeomPlane)
+    INSERT_REL(value::TYPE_ID_GEOM_CYLINDER_1, GeomCylinder_1)
+    INSERT_REL(value::TYPE_ID_GEOM_CAPSULE_1, GeomCapsule_1)
+    INSERT_REL(value::TYPE_ID_GEOM_TET_MESH, GeomTetMesh)
+    INSERT_REL(value::TYPE_ID_GEOM_NURBS_PATCH, GeomNurbsPatch)
+    INSERT_REL(value::TYPE_ID_GEOM_POINT_INSTANCER, GeomPointInstancer)
+    INSERT_REL(value::TYPE_ID_LUX_SPHERE, SphereLight)
+    INSERT_REL(value::TYPE_ID_LUX_RECT, RectLight)
+    INSERT_REL(value::TYPE_ID_LUX_DISK, DiskLight)
+    INSERT_REL(value::TYPE_ID_LUX_DISTANT, DistantLight)
+    INSERT_REL(value::TYPE_ID_LUX_CYLINDER, CylinderLight)
+    INSERT_REL(value::TYPE_ID_LUX_DOME, DomeLight)
+    INSERT_REL(value::TYPE_ID_LUX_DOME_1, DomeLight_1)
+    INSERT_REL(value::TYPE_ID_LUX_GEOMETRY, GeometryLight)
+    INSERT_REL(value::TYPE_ID_LUX_PORTAL, PortalLight)
+    INSERT_REL(value::TYPE_ID_SCOPE, Scope)
+    INSERT_REL(value::TYPE_ID_MODEL, Model)
+    INSERT_REL(value::TYPE_ID_MATERIAL, Material)
+    INSERT_REL(value::TYPE_ID_SHADER, Shader)
+    INSERT_REL(value::TYPE_ID_NODEGRAPH, NodeGraph)
+    INSERT_REL(value::TYPE_ID_SKEL_ROOT, SkelRoot)
+    INSERT_REL(value::TYPE_ID_SKELETON, Skeleton)
+    INSERT_REL(value::TYPE_ID_SKELANIMATION, SkelAnimation)
+    INSERT_REL(value::TYPE_ID_BLENDSHAPE, BlendShape)
+    INSERT_REL(value::TYPE_ID_PHYSICS_SCENE, PhysicsScene)
+    INSERT_REL(value::TYPE_ID_PHYSICS_JOINT, PhysicsJoint)
+    INSERT_REL(value::TYPE_ID_PHYSICS_REVOLUTE_JOINT, PhysicsRevoluteJoint)
+    INSERT_REL(value::TYPE_ID_PHYSICS_PRISMATIC_JOINT, PhysicsPrismaticJoint)
+    INSERT_REL(value::TYPE_ID_PHYSICS_SPHERICAL_JOINT, PhysicsSphericalJoint)
+    INSERT_REL(value::TYPE_ID_PHYSICS_FIXED_JOINT, PhysicsFixedJoint)
+    INSERT_REL(value::TYPE_ID_PHYSICS_DISTANCE_JOINT, PhysicsDistanceJoint)
+    INSERT_REL(value::TYPE_ID_PHYSICS_COLLISION_GROUP, PhysicsCollisionGroup)
+    default: {
+      if (err) c_tinyusd_string_replace(
+          err, "Relationship author not supported for this prim type");
+      return 0;
+    }
+  }
+#undef INSERT_REL
+}
+
+int c_tinyusd_prim_get_relationship_targets(const CTinyUSDPrim *prim,
+                                            const char *name,
+                                            c_tinyusd_string_t *out_csv) {
+  using namespace tinyusdz;
+  if (!prim || !name || !out_csv) return 0;
+  Property prop;
+  bool got = lookup_in_props(*P(prim), std::string(name), &prop);
+  if (!got) {
+    std::string err;
+    got = tinyusdz::tydra::GetProperty(*P(prim), std::string(name), &prop,
+                                       &err);
+  }
+  /* GPrim-derived prims store material:binding in a typed RelationshipProperty
+   * field outside the props map; surface that to callers. */
+  if (!got) {
+    const std::string nm(name);
+    auto try_gprim_binding = [&](const auto *g) -> bool {
+      if (!g) return false;
+      if (nm == "material:binding" && g->materialBinding.authored()) {
+        prop = Property(g->materialBinding.relationship(), false);
+        return true;
+      }
+      if (nm == "material:binding:preview" &&
+          g->materialBindingPreview.authored()) {
+        prop = Property(g->materialBindingPreview.relationship(), false);
+        return true;
+      }
+      if (nm == "material:binding:full" &&
+          g->materialBindingFull.authored()) {
+        prop = Property(g->materialBindingFull.relationship(), false);
+        return true;
+      }
+      return false;
+    };
+    const Prim &pp = *P(prim);
+    uint32_t tid = pp.data().type_id();
+    switch (tid) {
+      case value::TYPE_ID_GEOM_MESH:
+        got = try_gprim_binding(pp.data().as<GeomMesh>()); break;
+      case value::TYPE_ID_GEOM_SPHERE:
+        got = try_gprim_binding(pp.data().as<GeomSphere>()); break;
+      case value::TYPE_ID_GEOM_CUBE:
+        got = try_gprim_binding(pp.data().as<GeomCube>()); break;
+      case value::TYPE_ID_GEOM_CONE:
+        got = try_gprim_binding(pp.data().as<GeomCone>()); break;
+      case value::TYPE_ID_GEOM_CYLINDER:
+        got = try_gprim_binding(pp.data().as<GeomCylinder>()); break;
+      case value::TYPE_ID_GEOM_CAPSULE:
+        got = try_gprim_binding(pp.data().as<GeomCapsule>()); break;
+      case value::TYPE_ID_GEOM_POINTS:
+        got = try_gprim_binding(pp.data().as<GeomPoints>()); break;
+      case value::TYPE_ID_GEOM_BASIS_CURVES:
+        got = try_gprim_binding(pp.data().as<GeomBasisCurves>()); break;
+      case value::TYPE_ID_GEOM_NURBS_CURVES:
+        got = try_gprim_binding(pp.data().as<GeomNurbsCurves>()); break;
+      case value::TYPE_ID_GEOM_HERMITE_CURVES:
+        got = try_gprim_binding(pp.data().as<GeomHermiteCurves>()); break;
+      case value::TYPE_ID_GEOM_PLANE:
+        got = try_gprim_binding(pp.data().as<GeomPlane>()); break;
+      case value::TYPE_ID_GEOM_TET_MESH:
+        got = try_gprim_binding(pp.data().as<GeomTetMesh>()); break;
+      case value::TYPE_ID_GEOM_NURBS_PATCH:
+        got = try_gprim_binding(pp.data().as<GeomNurbsPatch>()); break;
+      default: break;
+    }
+  }
+  if (!got) return 0;
+  if (!prop.is_relationship()) return 0;
+  const auto &rel = prop.get_relationship();
+  std::string s;
+  if (rel.is_path()) {
+    s = rel.targetPath.full_path_name();
+  } else if (rel.is_pathvector()) {
+    for (size_t i = 0; i < rel.targetPathVector.size(); ++i) {
+      if (i) s += ",";
+      s += rel.targetPathVector[i].full_path_name();
+    }
+  } else {
+    return 0;
+  }
+  return c_tinyusd_string_replace(out_csv, s.c_str());
+}
+
+/* ---- TimeSamples authoring ---- */
+
+int c_tinyusd_prim_set_attribute_timesample(CTinyUSDPrim *prim,
+                                            const char *name, double time,
+                                            const CTinyUSDValue *value,
+                                            const char *type_name,
+                                            c_tinyusd_string_t *err) {
+  using namespace tinyusdz;
+  if (!prim || !name || !value) {
+    if (err) c_tinyusd_string_replace(err, "null arg");
+    return 0;
+  }
+  Prim *p = reinterpret_cast<Prim *>(prim);
+  Property *slot = locate_or_insert_attr_prop(p, std::string(name));
+  if (!slot) {
+    if (err) c_tinyusd_string_replace(err,
+        "TimeSamples not supported for this prim type");
+    return 0;
+  }
+  Attribute attr;
+  if (slot->is_attribute()) attr = slot->get_attribute();
+  if (attr.name().empty()) attr.set_name(std::string(name));
+
+  const value::Value *val = reinterpret_cast<const value::Value *>(value);
+  std::string ty = (type_name && *type_name) ? std::string(type_name)
+                                             : val->type_name();
+  if (attr.type_name().empty()) attr.set_type_name(ty);
+
+  std::string aerr;
+  if (!attr.get_var().ts_raw().add_sample(time, *val, &aerr)) {
+    if (err) c_tinyusd_string_replace(err, aerr.c_str());
+    return 0;
+  }
+  *slot = Property(std::move(attr), /*custom*/ false);
+  return 1;
+}
+
+uint64_t c_tinyusd_prim_get_attribute_timesample_count(
+    const CTinyUSDPrim *prim, const char *name) {
+  if (!prim || !name) return 0;
+  Property prop;
+  if (!lookup_in_props(*P(prim), std::string(name), &prop)) {
+    std::string err;
+    if (!tinyusdz::tydra::GetProperty(*P(prim), std::string(name), &prop, &err)) {
+      return 0;
+    }
+  }
+  if (!prop.is_attribute()) return 0;
+  const auto &pv = prop.get_attribute().get_var();
+  if (!pv.has_timesamples()) return 0;
+  return static_cast<uint64_t>(pv.ts_raw().size());
+}
+
+int c_tinyusd_prim_get_attribute_timesample(const CTinyUSDPrim *prim,
+                                            const char *name, uint64_t index,
+                                            double *out_time,
+                                            CTinyUSDValue **out_value) {
+  if (!prim || !name || !out_time || !out_value) return 0;
+  Property prop;
+  if (!lookup_in_props(*P(prim), std::string(name), &prop)) {
+    std::string err;
+    if (!tinyusdz::tydra::GetProperty(*P(prim), std::string(name), &prop, &err)) {
+      return 0;
+    }
+  }
+  if (!prop.is_attribute()) return 0;
+  const auto &pv = prop.get_attribute().get_var();
+  if (!pv.has_timesamples()) return 0;
+  const auto &ts = pv.ts_raw();
+  if (index >= ts.size()) return 0;
+  const auto &samples = ts.get_samples();
+  *out_time = samples[size_t(index)].t;
+  *out_value = reinterpret_cast<CTinyUSDValue *>(
+      new tinyusdz::value::Value(samples[size_t(index)].value));
+  return 1;
 }
 
 }  // extern "C"

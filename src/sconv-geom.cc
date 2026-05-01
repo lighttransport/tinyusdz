@@ -36,7 +36,12 @@ bool CrateWriter::ExtractXformProperties(
 
   // Extract xformOps from the Xformable base class
   // (Xform inherits from Xformable, so this will handle xformOps and xformOpOrder)
-  return ExtractXformOpsFromXformable(prim, prim_path, fields, err);
+  if (!ExtractXformOpsFromXformable(prim, prim_path, fields, err)) {
+    return false;
+  }
+
+  // Xform also inherits from GPrim — extract visibility/purpose/extent.
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
 }
 
 // ============================================================================
@@ -93,25 +98,10 @@ bool CrateWriter::ExtractMeshProperties(
       fields.push_back({"points.timeSamples", ts_crate_val});
 
     }
-  } else {
-    // Try extracting from props map as fallback
-    for (const auto& prop_pair : mesh->props) {
-      if (prop_pair.first == "points") {
-        const Property& prop = prop_pair.second;
-        if (prop.is_attribute()) {
-          const Attribute& attr = prop.get_attribute();
-          if (attr.is_value()) {
-            const primvar::PrimVar& pvar = attr.get_var();
-            const value::Value& val = pvar.value_raw();
-            crate::CrateValue crate_val;
-            if (ConvertValue(val, crate_val, err)) {
-              fields.push_back({"points", crate_val});
-            }
-          }
-        }
-      }
-    }
   }
+  /* If `points` lives only in the props map (typed field unauthored),
+   * leave it for the generic props-map iteration in stage-converter so
+   * AttrMeta (displayName, doc, interpolation, ...) is preserved. */
 
   // Extract normals
   if (mesh->normals.has_value()) {
@@ -749,15 +739,15 @@ bool CrateWriter::ExtractBasisCurvesProperties(
 
 
 
-  // Extract type enum (Cubic/Linear)
-  {
+  // Extract type enum (Cubic/Linear) only if authored on the typed field;
+  // otherwise let any props-map value flow through.
+  if (basis_curves->type.authored()) {
     const GeomBasisCurves::Type& type_val = basis_curves->type.get_value();
     std::string type_str = (type_val == GeomBasisCurves::Type::Cubic) ? "cubic" : "linear";
     AddEnumAttribute("type", type_str, fields);
   }
 
-  // Extract basis enum (Bezier/Bspline/CatmullRom)
-  {
+  if (basis_curves->basis.authored()) {
     const GeomBasisCurves::Basis& basis_val = basis_curves->basis.get_value();
     std::string basis_str;
     if (basis_val == GeomBasisCurves::Basis::Bezier) {
@@ -770,8 +760,7 @@ bool CrateWriter::ExtractBasisCurvesProperties(
     AddEnumAttribute("basis", basis_str, fields);
   }
 
-  // Extract wrap enum (Nonperiodic/Periodic/Pinned)
-  {
+  if (basis_curves->wrap.authored()) {
     const GeomBasisCurves::Wrap& wrap_val = basis_curves->wrap.get_value();
     std::string wrap_str;
     if (wrap_val == GeomBasisCurves::Wrap::Nonperiodic) {
@@ -1600,8 +1589,34 @@ bool CrateWriter::ExtractGPrimProperties(
   if (!ExtractXformOpsFromXformable(prim, prim_path, fields, err)) {
   }
 
-  // Try to get as GPrim to access common properties
+  // Try to get as GPrim to access common properties.
+  // value::Value::as<GPrim> requires the *exact* stored type to be GPrim, so
+  // typed subclasses (Xform, GeomMesh, etc.) won't match here. Probe each
+  // subclass and grab the GPrim base via a static_cast through the typed
+  // pointer.
   const GPrim* gprim = prim.data().as<GPrim>();
+  if (!gprim) {
+#define TRY_AS_GPRIM(__TY) if (auto *t = prim.data().as<__TY>()) { gprim = static_cast<const GPrim *>(t); }
+    TRY_AS_GPRIM(Xform)
+    else TRY_AS_GPRIM(GeomMesh)
+    else TRY_AS_GPRIM(GeomSphere)
+    else TRY_AS_GPRIM(GeomCube)
+    else TRY_AS_GPRIM(GeomCylinder)
+    else TRY_AS_GPRIM(GeomCone)
+    else TRY_AS_GPRIM(GeomCapsule)
+    else TRY_AS_GPRIM(GeomCamera)
+    else TRY_AS_GPRIM(GeomPoints)
+    else TRY_AS_GPRIM(GeomBasisCurves)
+    else TRY_AS_GPRIM(GeomNurbsCurves)
+    else TRY_AS_GPRIM(GeomHermiteCurves)
+    else TRY_AS_GPRIM(GeomPlane)
+    else TRY_AS_GPRIM(GeomCylinder_1)
+    else TRY_AS_GPRIM(GeomCapsule_1)
+    else TRY_AS_GPRIM(GeomTetMesh)
+    else TRY_AS_GPRIM(GeomNurbsPatch)
+    else TRY_AS_GPRIM(GeomPointInstancer)
+#undef TRY_AS_GPRIM
+  }
   if (!gprim) {
     // Not a GPrim, that's okay
     return true;

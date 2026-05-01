@@ -55,7 +55,7 @@
 
 #define GEOM_MESH_TIMESAMPLED_ENUMS(X) \
   X("interpolateBoundary", GeomMesh::InterpolateBoundary, InterpolateBoundaryHandler, interpolateBoundary) \
-  X("facevaryingLinearInterpolation", GeomMesh::FaceVaryingLinearInterpolation, FaceVaryingLinearInterpolationHandler, faceVaryingLinearInterpolation)
+  X("faceVaryingLinearInterpolation", GeomMesh::FaceVaryingLinearInterpolation, FaceVaryingLinearInterpolationHandler, faceVaryingLinearInterpolation)
 
 // ============================================================================
 // GeomCamera Properties

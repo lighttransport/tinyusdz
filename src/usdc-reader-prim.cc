@@ -502,6 +502,7 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     value::Value primdata(std::move(typed_prim));                            \
     auto result = std::unique_ptr<Prim>(new Prim(__prim_name, std::move(primdata)));  \
     result->prim_type_name() = primTypeName; \
+    result->specifier() = __spec; \
     /* also add primChildren to Prim */ \
     result->metas().primChildren = primChildren; \
     return result; \
@@ -526,6 +527,7 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     value::Value primdata(std::move(typed_prim));
     auto result = std::unique_ptr<Prim>(new Prim(prim_name, std::move(primdata)));
     result->prim_type_name() = primTypeName;
+    result->specifier() = spec;
     result->metas().primChildren = primChildren;
     return result;
   } else

@@ -1469,3 +1469,2046 @@ def Xform "Widget" (
     TEST_CHECK(!coarse_it->second.properties().empty());
   }
 }
+
+// =========================================================================
+// Reproducer tests for known USDC writer/reader issues
+// (asset round-trip via props map; per-sample TimeSamples values)
+// =========================================================================
+
+// Issue: when `asset` is authored as a custom property (props map) rather
+// than via a typed field like UsdUVTexture::file, the USDC writer emits the
+// attribute with type `asset` but the asset path content is lost — the
+// round-trip yields the crate version-marker bytes ("#;-)") in place of the
+// path. Reproduces the python test_asset_attribute_in_memory USDC fault.
+void usdc_writer_props_asset_roundtrip_test(void) {
+  const char *usda = R"(#usda 1.0
+def Material "mat" {
+  custom asset inputs:file = @./tex.png@
+}
+)";
+  RT_OK(usda);
+  const auto *mat = find_root<Material>(stage, "mat");
+  TEST_CHECK(mat != nullptr);
+  if (!mat) return;
+  auto it = mat->props.find("inputs:file");
+  TEST_CHECK(it != mat->props.end());
+  if (it == mat->props.end()) return;
+  TEST_CHECK(it->second.is_attribute());
+  const auto &a = it->second.get_attribute();
+  TEST_CHECK(a.type_name() == "asset");
+  // Read back the AssetPath value
+  auto pv = a.get_var().value_raw().get_value<value::AssetPath>();
+  TEST_CHECK(pv.has_value());
+  if (!pv) return;
+  std::string got = pv.value().GetAssetPath();
+  TEST_MSG("read asset_path = '%s'", got.c_str());
+  TEST_CHECK(got == "./tex.png");
+}
+
+// Issue: TimeSamples with a vector value (e.g. double3) round-trips times
+// correctly but reads garbage payloads on USDC. Reproduces the failure in
+// test_timesamples_in_memory through USDC.
+void usdc_writer_timesamples_double3_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  double3 xformOp:translate.timeSamples = {
+    0: (1.0, 2.0, 3.0),
+    24: (4.0, 5.0, 6.0)
+  }
+  uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  // xformOps should have one translate op with TimeSamples preserved.
+  TEST_CHECK(xf->xformOps.size() == 1);
+  if (xf->xformOps.empty()) return;
+  const auto &op = xf->xformOps[0];
+  TEST_CHECK(op.op_type == XformOp::OpType::Translate);
+  TEST_CHECK(op.is_timesamples());
+  if (!op.is_timesamples()) return;
+  // Extract the underlying TimeSamples and verify each sample value.
+  // Implementation detail: XformOp stores typed_timesamples<double3> for
+  // double3 ops; we sniff via the generic value::Value lookup.
+  TEST_CHECK(op.get_var().has_timesamples());
+  const auto &ts = op.get_var().ts_raw();
+  TEST_CHECK(ts.size() == 2);
+  if (ts.size() != 2) return;
+  const auto &samples = ts.get_samples();
+  TEST_CHECK(samples[0].t == 0.0);
+  TEST_CHECK(samples[1].t == 24.0);
+  // Now verify the actual payload — these are the bits that turn into
+  // garbage on the broken roundtrip.
+  auto v0 = samples[0].value.get_value<value::double3>();
+  auto v1 = samples[1].value.get_value<value::double3>();
+  TEST_CHECK(v0.has_value());
+  TEST_CHECK(v1.has_value());
+  if (!v0 || !v1) return;
+  TEST_MSG("sample0 = (%g, %g, %g)", (*v0)[0], (*v0)[1], (*v0)[2]);
+  TEST_MSG("sample1 = (%g, %g, %g)", (*v1)[0], (*v1)[1], (*v1)[2]);
+  TEST_CHECK((*v0)[0] == 1.0);
+  TEST_CHECK((*v0)[1] == 2.0);
+  TEST_CHECK((*v0)[2] == 3.0);
+  TEST_CHECK((*v1)[0] == 4.0);
+  TEST_CHECK((*v1)[1] == 5.0);
+  TEST_CHECK((*v1)[2] == 6.0);
+}
+
+// Scalar-double TimeSamples — narrow the scope to confirm whether the
+// payload corruption is double3-specific or affects all per-sample values.
+void usdc_writer_timesamples_scalar_double_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom double radius.timeSamples = {
+    0: 1.0,
+    10: 2.0,
+    20: 3.0
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it = xf->props.find("radius");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  const auto &attr = it->second.get_attribute();
+  const auto &pv = attr.get_var();
+  TEST_CHECK(pv.has_timesamples());
+  if (!pv.has_timesamples()) return;
+  const auto &ts = pv.ts_raw();
+  TEST_CHECK(ts.size() == 3);
+  if (ts.size() != 3) return;
+  const auto &samples = ts.get_samples();
+  TEST_CHECK(samples[0].t == 0.0);
+  TEST_CHECK(samples[1].t == 10.0);
+  TEST_CHECK(samples[2].t == 20.0);
+  auto v0 = samples[0].value.get_value<double>();
+  auto v1 = samples[1].value.get_value<double>();
+  auto v2 = samples[2].value.get_value<double>();
+  TEST_CHECK(v0.has_value() && v1.has_value() && v2.has_value());
+  if (!v0 || !v1 || !v2) return;
+  TEST_MSG("scalar samples = %g %g %g", *v0, *v1, *v2);
+  TEST_CHECK(*v0 == 1.0);
+  TEST_CHECK(*v1 == 2.0);
+  TEST_CHECK(*v2 == 3.0);
+}
+
+// Asset array round-trip: tests asset[] writer/reader correctness.
+void usdc_writer_asset_array_test(void) {
+  const char *usda = R"(#usda 1.0
+def Material "mat" {
+  custom asset[] inputs:files = [@./a.png@, @./b.png@, @./c.png@]
+}
+)";
+  RT_OK(usda);
+  const auto *mat = find_root<Material>(stage, "mat");
+  TEST_CHECK(mat != nullptr);
+  if (!mat) return;
+  auto it = mat->props.find("inputs:files");
+  TEST_CHECK(it != mat->props.end());
+  if (it == mat->props.end()) return;
+  const auto &a = it->second.get_attribute();
+  TEST_CHECK(a.type_name() == "asset[]");
+  auto pv = a.get_var().value_raw().get_value<std::vector<value::AssetPath>>();
+  TEST_CHECK(pv.has_value());
+  if (!pv) return;
+  TEST_CHECK(pv->size() == 3);
+  if (pv->size() != 3) return;
+  TEST_CHECK((*pv)[0].GetAssetPath() == "./a.png");
+  TEST_CHECK((*pv)[1].GetAssetPath() == "./b.png");
+  TEST_CHECK((*pv)[2].GetAssetPath() == "./c.png");
+}
+
+// TimeSamples with token values - exercise reference/index dispatch.
+void usdc_writer_timesamples_token_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom token state.timeSamples = {
+    0: "off",
+    10: "on",
+    20: "off"
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it = xf->props.find("state");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  const auto &pv = it->second.get_attribute().get_var();
+  TEST_CHECK(pv.has_timesamples());
+  if (!pv.has_timesamples()) return;
+  const auto &ts = pv.ts_raw();
+  TEST_CHECK(ts.size() == 3);
+  if (ts.size() != 3) return;
+  const auto &samples = ts.get_samples();
+  auto v0 = samples[0].value.get_value<value::token>();
+  auto v1 = samples[1].value.get_value<value::token>();
+  auto v2 = samples[2].value.get_value<value::token>();
+  TEST_CHECK(v0.has_value() && v1.has_value() && v2.has_value());
+  if (!v0 || !v1 || !v2) return;
+  TEST_CHECK(v0->str() == "off");
+  TEST_CHECK(v1->str() == "on");
+  TEST_CHECK(v2->str() == "off");
+}
+
+// TimeSamples with string values.
+void usdc_writer_timesamples_string_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom string label.timeSamples = {
+    0: "first",
+    10: "second"
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it = xf->props.find("label");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  const auto &pv = it->second.get_attribute().get_var();
+  TEST_CHECK(pv.has_timesamples());
+  if (!pv.has_timesamples()) return;
+  const auto &samples = pv.ts_raw().get_samples();
+  TEST_CHECK(samples.size() == 2);
+  if (samples.size() != 2) return;
+  auto v0 = samples[0].value.get_value<std::string>();
+  auto v1 = samples[1].value.get_value<std::string>();
+  TEST_CHECK(v0.has_value() && v1.has_value());
+  if (!v0 || !v1) return;
+  TEST_CHECK(*v0 == "first");
+  TEST_CHECK(*v1 == "second");
+}
+
+// TimeSamples with array values.
+void usdc_writer_timesamples_int_array_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom int[] indices.timeSamples = {
+    0: [1, 2, 3],
+    10: [4, 5, 6, 7]
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it = xf->props.find("indices");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  const auto &samples = it->second.get_attribute().get_var().ts_raw().get_samples();
+  TEST_CHECK(samples.size() == 2);
+  if (samples.size() != 2) return;
+  auto v0 = samples[0].value.get_value<std::vector<int32_t>>();
+  auto v1 = samples[1].value.get_value<std::vector<int32_t>>();
+  TEST_CHECK(v0.has_value() && v1.has_value());
+  if (!v0 || !v1) return;
+  TEST_CHECK(v0->size() == 3);
+  TEST_CHECK(v1->size() == 4);
+  if (v0->size() == 3 && v1->size() == 4) {
+    TEST_CHECK((*v0)[0] == 1 && (*v0)[1] == 2 && (*v0)[2] == 3);
+    TEST_CHECK((*v1)[0] == 4 && (*v1)[3] == 7);
+  }
+}
+
+// TimeSamples with float3 vector values.
+void usdc_writer_timesamples_float3_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom float3 hsv.timeSamples = {
+    0: (0.1, 0.2, 0.3),
+    10: (0.4, 0.5, 0.6)
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it = xf->props.find("hsv");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  const auto &samples = it->second.get_attribute().get_var().ts_raw().get_samples();
+  TEST_CHECK(samples.size() == 2);
+  if (samples.size() != 2) return;
+  auto v0 = samples[0].value.get_value<value::float3>();
+  auto v1 = samples[1].value.get_value<value::float3>();
+  TEST_CHECK(v0.has_value() && v1.has_value());
+  if (!v0 || !v1) return;
+  TEST_CHECK((*v0)[0] == 0.1f);
+  TEST_CHECK((*v1)[0] == 0.4f);
+}
+
+// TimeSamples with single sample.
+void usdc_writer_timesamples_single_sample_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom double v.timeSamples = { 5: 42.0 }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it = xf->props.find("v");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  const auto &samples = it->second.get_attribute().get_var().ts_raw().get_samples();
+  TEST_CHECK(samples.size() == 1);
+  if (samples.size() != 1) return;
+  TEST_CHECK(samples[0].t == 5.0);
+  auto v = samples[0].value.get_value<double>();
+  TEST_CHECK(v.has_value());
+  if (v) TEST_CHECK(*v == 42.0);
+}
+
+// TimeSamples mixed with default value (USD allows both for the same attribute).
+void usdc_writer_timesamples_with_default_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom double v = 100.0
+  custom double v.timeSamples = { 0: 1.0, 10: 2.0 }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it = xf->props.find("v");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  const auto &pv = it->second.get_attribute().get_var();
+  TEST_CHECK(pv.has_value());
+  TEST_CHECK(pv.has_timesamples());
+  // Default should be 100.0
+  auto def = pv.value_raw().get_value<double>();
+  TEST_CHECK(def.has_value());
+  if (def) TEST_CHECK(*def == 100.0);
+  // Times should be 0, 10 with values 1.0, 2.0
+  const auto &samples = pv.ts_raw().get_samples();
+  TEST_CHECK(samples.size() == 2);
+  if (samples.size() == 2) {
+    auto v0 = samples[0].value.get_value<double>();
+    auto v1 = samples[1].value.get_value<double>();
+    if (v0 && v1) {
+      TEST_CHECK(*v0 == 1.0);
+      TEST_CHECK(*v1 == 2.0);
+    }
+  }
+}
+
+// Roundtrip an asset value as part of a UsdUVTexture (typed path) — sanity-
+// check that the typed-asset code path also lands the right bytes after the
+// asset-inlined fix.
+void usdc_writer_asset_typed_uvtexture_test(void) {
+  const char *usda = R"(#usda 1.0
+def Shader "tex" {
+  uniform token info:id = "UsdUVTexture"
+  asset inputs:file = @./diffuse.png@
+}
+)";
+  RT_OK(usda);
+  const auto *shader = find_root<Shader>(stage, "tex");
+  TEST_CHECK(shader != nullptr);
+  if (!shader) return;
+  const auto *uv = shader->value.as<UsdUVTexture>();
+  TEST_CHECK(uv != nullptr);
+  if (!uv) return;
+  TEST_CHECK(uv->file.authored());
+  if (!uv->file.authored()) return;
+  auto av = uv->file.get_value();
+  TEST_CHECK(av.has_value());
+  if (!av) return;
+  value::AssetPath path_val;
+  TEST_CHECK(av.value().get_default(&path_val));
+  TEST_MSG("uvtexture asset path = '%s'", path_val.GetAssetPath().c_str());
+  TEST_CHECK(path_val.GetAssetPath() == "./diffuse.png");
+}
+
+// ============================================================================
+// Edge-case coverage — half precision, blocked values, dict customData,
+// matrix/quat timesamples, relationships/connections, displayName/doc
+// ============================================================================
+
+void usdc_writer_half_scalar_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom half h = 1.5
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it = xf->props.find("h");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  auto v = it->second.get_attribute().get_var().value_raw().get_value<value::half>();
+  TEST_CHECK(v.has_value());
+  if (!v) return;
+  // value::half stores raw uint16; 1.5 -> 0x3E00
+  TEST_CHECK(v->value == 0x3E00);
+}
+
+void usdc_writer_half_array_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom half[] hs = [1.0, 2.0, 0.5]
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it = xf->props.find("hs");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  auto v = it->second.get_attribute().get_var().value_raw().get_value<std::vector<value::half>>();
+  TEST_CHECK(v.has_value());
+  if (!v) return;
+  TEST_CHECK(v->size() == 3);
+  if (v->size() != 3) return;
+  TEST_CHECK((*v)[0].value == 0x3C00);   // 1.0
+  TEST_CHECK((*v)[1].value == 0x4000);   // 2.0
+  TEST_CHECK((*v)[2].value == 0x3800);   // 0.5
+}
+
+void usdc_writer_blocked_value_test(void) {
+  // ValueBlock — `= None` semantics. Round-trips as a blocked attribute.
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom int blocked = None
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it = xf->props.find("blocked");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  TEST_CHECK(it->second.get_attribute().get_var().is_blocked());
+}
+
+void usdc_writer_timesamples_matrix4d_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom matrix4d m.timeSamples = {
+    0: ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+    10: ((2,0,0,0),(0,2,0,0),(0,0,2,0),(5,6,7,1))
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it = xf->props.find("m");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  const auto &pv = it->second.get_attribute().get_var();
+  TEST_CHECK(pv.has_timesamples());
+  if (!pv.has_timesamples()) return;
+  const auto &samples = pv.ts_raw().get_samples();
+  TEST_CHECK(samples.size() == 2);
+  if (samples.size() != 2) return;
+  auto m1 = samples[1].value.get_value<value::matrix4d>();
+  TEST_CHECK(m1.has_value());
+  if (!m1) return;
+  // Row 3 col 0..2 = translation 5,6,7
+  TEST_CHECK(m1->m[3][0] == 5.0);
+  TEST_CHECK(m1->m[3][1] == 6.0);
+  TEST_CHECK(m1->m[3][2] == 7.0);
+}
+
+void usdc_writer_timesamples_quatf_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom quatf q.timeSamples = {
+    0: (1, 0, 0, 0),
+    10: (0.7071, 0.7071, 0, 0)
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it = xf->props.find("q");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  const auto &samples = it->second.get_attribute().get_var().ts_raw().get_samples();
+  TEST_CHECK(samples.size() == 2);
+  if (samples.size() != 2) return;
+  auto q0 = samples[0].value.get_value<value::quatf>();
+  TEST_CHECK(q0.has_value());
+  if (!q0) return;
+  TEST_CHECK(q0->real == 1.0f);
+}
+
+void usdc_writer_uniform_token_array_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom uniform token[] tags = ["a", "b", "c"]
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it = xf->props.find("tags");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  // Must round-trip as uniform variability
+  TEST_CHECK(it->second.get_attribute().variability() == Variability::Uniform);
+  auto v = it->second.get_attribute().get_var().value_raw().get_value<std::vector<value::token>>();
+  TEST_CHECK(v.has_value());
+  if (!v) return;
+  TEST_CHECK(v->size() == 3);
+  if (v->size() != 3) return;
+  TEST_CHECK((*v)[0].str() == "a");
+  TEST_CHECK((*v)[1].str() == "b");
+  TEST_CHECK((*v)[2].str() == "c");
+}
+
+void usdc_writer_customdata_dict_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+  customData = {
+    string author = "syoyo"
+    int version = 7
+    bool released = false
+  }
+) {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto &m = p->metas();
+  TEST_CHECK(m.has_customData());
+  if (!m.has_customData()) return;
+  auto cd = m.get_customData();
+  TEST_CHECK(cd.count("author") == 1);
+  TEST_CHECK(cd.count("version") == 1);
+  TEST_CHECK(cd.count("released") == 1);
+}
+
+void usdc_writer_empty_string_array_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom string[] tags = []
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  // Empty arrays may be skipped by the writer (known TRY_INLINE_EMPTY_ARRAY
+  // workaround in stage-converter.cc:653). Just verify no crash and prim is
+  // present.
+}
+
+void usdc_writer_int64_scalar_test(void) {
+  // int64 outside 48-bit inline range -> out-of-line write path
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom int64 big = 9223372036854775000
+  custom int64 small = 42
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it_big = xf->props.find("big");
+  TEST_CHECK(it_big != xf->props.end());
+  if (it_big != xf->props.end()) {
+    auto v = it_big->second.get_attribute().get_var().value_raw().get_value<int64_t>();
+    TEST_CHECK(v.has_value());
+    if (v) TEST_CHECK(*v == 9223372036854775000LL);
+  }
+  auto it_small = xf->props.find("small");
+  TEST_CHECK(it_small != xf->props.end());
+}
+
+void usdc_writer_color3f_array_test(void) {
+  const char *usda = R"(#usda 1.0
+def Mesh "m" {
+  color3f[] primvars:displayColor = [(1,0,0),(0,1,0),(0,0,1)] (
+    interpolation = "vertex"
+  )
+}
+)";
+  RT_OK(usda);
+  const auto *mesh = find_root<GeomMesh>(stage, "m");
+  TEST_CHECK(mesh != nullptr);
+  if (!mesh) return;
+  auto it = mesh->props.find("primvars:displayColor");
+  TEST_CHECK(it != mesh->props.end());
+  if (it == mesh->props.end()) return;
+  const auto &a = it->second.get_attribute();
+  TEST_CHECK(a.metas().has_interpolation());
+  auto v = a.get_var().value_raw().get_value<std::vector<value::color3f>>();
+  TEST_CHECK(v.has_value());
+  if (!v) return;
+  TEST_CHECK(v->size() == 3);
+}
+
+void usdc_writer_relationship_targets_test(void) {
+  const char *usda = R"(#usda 1.0
+def Mesh "m" {
+  rel material:binding = </mat>
+  custom rel myTargets = [</a>, </b>, </c>]
+}
+def Material "mat" {}
+def Xform "a" {}
+def Xform "b" {}
+def Xform "c" {}
+)";
+  RT_OK(usda);
+  const auto *mesh = find_root<GeomMesh>(stage, "m");
+  TEST_CHECK(mesh != nullptr);
+  if (!mesh) return;
+  auto it = mesh->props.find("myTargets");
+  TEST_CHECK(it != mesh->props.end());
+  if (it == mesh->props.end()) return;
+  TEST_CHECK(it->second.is_relationship());
+  if (!it->second.is_relationship()) return;
+  const auto &rel = it->second.get_relationship();
+  TEST_CHECK(rel.is_pathvector());
+  if (!rel.is_pathvector()) return;
+  TEST_CHECK(rel.targetPathVector.size() == 3);
+}
+
+void usdc_writer_attribute_connection_test(void) {
+  const char *usda = R"(#usda 1.0
+def Shader "src" {
+  uniform token info:id = "UsdPrimvarReader_float3"
+  float3 outputs:result
+}
+def Shader "dst" {
+  uniform token info:id = "UsdPreviewSurface"
+  color3f inputs:diffuseColor.connect = </src.outputs:result>
+}
+)";
+  RT_OK(usda);
+  const auto *dst = find_root<Shader>(stage, "dst");
+  TEST_CHECK(dst != nullptr);
+  if (!dst) return;
+  const auto *uvs = dst->value.as<UsdPreviewSurface>();
+  TEST_CHECK(uvs != nullptr);
+  if (!uvs) return;
+  TEST_CHECK(uvs->diffuseColor.has_connections());
+  if (!uvs->diffuseColor.has_connections()) return;
+  const auto &paths = uvs->diffuseColor.connections();
+  TEST_CHECK(paths.size() == 1);
+  if (paths.size() != 1) return;
+  TEST_CHECK(paths[0].full_path_name() == "/src.outputs:result");
+}
+
+void usdc_writer_displayname_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+  displayName = "Pretty X"
+) {
+  custom int v = 1 (
+    displayName = "Value"
+  )
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->metas().has_displayName());
+  if (p->metas().has_displayName()) {
+    TEST_CHECK(p->metas().get_displayName() == "Pretty X");
+  }
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("v");
+  if (it == xf->props.end()) return;
+  TEST_CHECK(it->second.get_attribute().metas().has_displayName());
+}
+
+void usdc_writer_doc_metadata_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+  doc = "this is a doc"
+) {
+  custom int v = 1 (
+    doc = "attr doc"
+  )
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->metas().has_doc());
+  if (p->metas().has_doc()) {
+    TEST_CHECK(p->metas().get_doc().value == "this is a doc");
+  }
+}
+
+void usdc_writer_nested_prim_paths_test(void) {
+  // Deep nesting — path-tree encoding stress
+  const char *usda = R"(#usda 1.0
+def Xform "a" {
+  def Xform "b" {
+    def Xform "c" {
+      def Mesh "leaf" {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+      }
+    }
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *a = find_root_prim(stage, "a");
+  TEST_CHECK(a != nullptr);
+  if (!a) return;
+  TEST_CHECK(a->children().size() == 1);
+  if (a->children().size() != 1) return;
+  const Prim &b = a->children()[0];
+  TEST_CHECK(b.element_name() == "b");
+  TEST_CHECK(b.children().size() == 1);
+  if (b.children().size() != 1) return;
+  const Prim &c = b.children()[0];
+  TEST_CHECK(c.element_name() == "c");
+  TEST_CHECK(c.children().size() == 1);
+  if (c.children().size() != 1) return;
+  const Prim &leaf = c.children()[0];
+  TEST_CHECK(leaf.element_name() == "leaf");
+  const auto *mesh = leaf.data().as<GeomMesh>();
+  TEST_CHECK(mesh != nullptr);
+  if (!mesh) return;
+  TEST_CHECK(mesh->points.authored());
+}
+
+// ============================================================================
+// Hardening tests — connections on UVTexture, timesamples edges, big arrays,
+// variant + connection, prim metadata, specifier round-trip
+// ============================================================================
+
+void usdc_writer_uvtexture_st_connection_test(void) {
+  const char *usda = R"(#usda 1.0
+def Shader "streader" {
+  uniform token info:id = "UsdPrimvarReader_float2"
+  string inputs:varname = "st"
+  float2 outputs:result
+}
+def Shader "tex" {
+  uniform token info:id = "UsdUVTexture"
+  asset inputs:file = @./diffuse.png@
+  float2 inputs:st.connect = </streader.outputs:result>
+  float3 outputs:rgb
+}
+)";
+  RT_OK(usda);
+  const auto *tex = find_root<Shader>(stage, "tex");
+  TEST_CHECK(tex != nullptr);
+  if (!tex) return;
+  const auto *uv = tex->value.as<UsdUVTexture>();
+  TEST_CHECK(uv != nullptr);
+  if (!uv) return;
+  TEST_CHECK(uv->st.has_connections());
+  if (!uv->st.has_connections()) return;
+  const auto &paths = uv->st.connections();
+  TEST_CHECK(paths.size() == 1);
+  if (paths.size() != 1) return;
+  TEST_CHECK(paths[0].full_path_name() == "/streader.outputs:result");
+}
+
+void usdc_writer_uvtexture_file_connection_test(void) {
+  // Asset path delivered via connection (e.g. drives the texture file from a
+  // dynamic input). Not common but spec-allowed.
+  const char *usda = R"(#usda 1.0
+def Shader "src" {
+  uniform token info:id = "UsdUVTexture"
+  asset outputs:file
+}
+def Shader "tex" {
+  uniform token info:id = "UsdUVTexture"
+  asset inputs:file.connect = </src.outputs:file>
+}
+)";
+  RT_OK(usda);
+  const auto *tex = find_root<Shader>(stage, "tex");
+  TEST_CHECK(tex != nullptr);
+  if (!tex) return;
+  const auto *uv = tex->value.as<UsdUVTexture>();
+  TEST_CHECK(uv != nullptr);
+  if (!uv) return;
+  TEST_CHECK(uv->file.has_connections());
+}
+
+void usdc_writer_preview_metallic_connection_test(void) {
+  const char *usda = R"(#usda 1.0
+def Shader "src" {
+  uniform token info:id = "UsdPrimvarReader_float"
+  float outputs:result
+}
+def Shader "dst" {
+  uniform token info:id = "UsdPreviewSurface"
+  float inputs:metallic.connect = </src.outputs:result>
+}
+)";
+  RT_OK(usda);
+  const auto *dst = find_root<Shader>(stage, "dst");
+  TEST_CHECK(dst != nullptr);
+  if (!dst) return;
+  const auto *uvs = dst->value.as<UsdPreviewSurface>();
+  TEST_CHECK(uvs != nullptr);
+  if (!uvs) return;
+  TEST_CHECK(uvs->metallic.has_connections());
+  if (!uvs->metallic.has_connections()) return;
+  TEST_CHECK(uvs->metallic.connections()[0].full_path_name() == "/src.outputs:result");
+}
+
+void usdc_writer_preview_roughness_connection_test(void) {
+  const char *usda = R"(#usda 1.0
+def Shader "src" {
+  uniform token info:id = "UsdPrimvarReader_float"
+  float outputs:result
+}
+def Shader "dst" {
+  uniform token info:id = "UsdPreviewSurface"
+  float inputs:roughness.connect = </src.outputs:result>
+}
+)";
+  RT_OK(usda);
+  const auto *dst = find_root<Shader>(stage, "dst");
+  TEST_CHECK(dst != nullptr);
+  if (!dst) return;
+  const auto *uvs = dst->value.as<UsdPreviewSurface>();
+  TEST_CHECK(uvs != nullptr);
+  if (!uvs) return;
+  TEST_CHECK(uvs->roughness.has_connections());
+}
+
+void usdc_writer_timesamples_half_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom half h.timeSamples = {
+    0: 1.0,
+    10: 2.0
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it = xf->props.find("h");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  const auto &pv = it->second.get_attribute().get_var();
+  TEST_CHECK(pv.has_timesamples());
+  if (!pv.has_timesamples()) return;
+  TEST_CHECK(pv.ts_raw().size() == 2);
+}
+
+void usdc_writer_timesamples_color3f_test(void) {
+  const char *usda = R"(#usda 1.0
+def SphereLight "l" {
+  color3f inputs:color.timeSamples = {
+    0: (1, 0, 0),
+    10: (0, 1, 0)
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "l");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *lt = p->data().as<SphereLight>();
+  TEST_CHECK(lt != nullptr);
+  if (!lt) return;
+  // SphereLight's color is a typed Animatable<color3f> field
+  TEST_CHECK(lt->color.authored());
+  TEST_CHECK(lt->color.get_value().is_timesamples());
+}
+
+void usdc_writer_timesamples_negative_time_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom float v.timeSamples = {
+    -10: -1.0,
+    0: 0.0,
+    10: 1.0
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it = xf->props.find("v");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  const auto &samples = it->second.get_attribute().get_var().ts_raw().get_samples();
+  TEST_CHECK(samples.size() == 3);
+  if (samples.size() != 3) return;
+  TEST_CHECK(samples[0].t == -10.0);
+  TEST_CHECK(samples[2].t == 10.0);
+}
+
+void usdc_writer_timesamples_blocked_sample_test(void) {
+  // ValueBlock as one of multiple time samples
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom float v.timeSamples = {
+    0: 1.0,
+    5: None,
+    10: 2.0
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("v");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  const auto &samples = it->second.get_attribute().get_var().ts_raw().get_samples();
+  TEST_CHECK(samples.size() == 3);
+  if (samples.size() != 3) return;
+  TEST_CHECK(samples[1].blocked);
+}
+
+void usdc_writer_large_int_array_test(void) {
+  // 1000-element int[] — exercises compressed-array writer
+  std::string usda = "#usda 1.0\ndef Xform \"x\" {\n  custom int[] big = [";
+  for (int i = 0; i < 1000; ++i) {
+    if (i) usda += ", ";
+    usda += std::to_string(i);
+  }
+  usda += "]\n}\n";
+  RT_OK(usda.c_str());
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("big");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  auto v = it->second.get_attribute().get_var().value_raw().get_value<std::vector<int32_t>>();
+  TEST_CHECK(v.has_value());
+  if (!v) return;
+  TEST_CHECK(v->size() == 1000);
+  if (v->size() != 1000) return;
+  TEST_CHECK((*v)[0] == 0);
+  TEST_CHECK((*v)[999] == 999);
+}
+
+void usdc_writer_large_float_array_test(void) {
+  std::string usda = "#usda 1.0\ndef Xform \"x\" {\n  custom float[] big = [";
+  for (int i = 0; i < 500; ++i) {
+    if (i) usda += ", ";
+    usda += std::to_string(i * 0.5);
+  }
+  usda += "]\n}\n";
+  RT_OK(usda.c_str());
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("big");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  auto v = it->second.get_attribute().get_var().value_raw().get_value<std::vector<float>>();
+  TEST_CHECK(v.has_value());
+  if (!v) return;
+  TEST_CHECK(v->size() == 500);
+  if (v->size() != 500) return;
+  TEST_CHECK((*v)[0] == 0.0f);
+  TEST_CHECK((*v)[499] == 249.5f);
+}
+
+void usdc_writer_variant_with_connection_test(void) {
+  const char *usda = R"(#usda 1.0
+def Shader "src" {
+  uniform token info:id = "UsdPrimvarReader_float3"
+  float3 outputs:result
+}
+def Shader "dst" (
+  variants = { string mode = "connected" }
+  prepend variantSets = "mode"
+) {
+  uniform token info:id = "UsdPreviewSurface"
+  variantSet "mode" = {
+    "connected" {
+      color3f inputs:diffuseColor.connect = </src.outputs:result>
+    }
+    "flat" {
+      color3f inputs:diffuseColor = (0.5, 0.5, 0.5)
+    }
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *dst = find_root_prim(stage, "dst");
+  TEST_CHECK(dst != nullptr);
+  // The variantSets metadata must be preserved.
+  TEST_CHECK(dst && dst->variantSets().size() >= 1);
+}
+
+void usdc_writer_assetinfo_dict_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+  assetInfo = {
+    string identifier = "asset://my/asset"
+    string version = "v1"
+  }
+) {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->metas().has_assetInfo());
+  if (!p->metas().has_assetInfo()) return;
+  auto info = p->metas().get_assetInfo();
+  TEST_CHECK(info.count("identifier") == 1);
+  TEST_CHECK(info.count("version") == 1);
+}
+
+void usdc_writer_attr_displaygroup_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom int v = 1 (
+    displayGroup = "Advanced"
+  )
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("v");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  TEST_CHECK(it->second.get_attribute().metas().has_displayGroup());
+}
+
+void usdc_writer_kind_metadata_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+  kind = "component"
+) {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->metas().has_kind());
+  if (p->metas().has_kind()) {
+    TEST_CHECK(p->metas().get_kind() == "component");
+  }
+}
+
+void usdc_writer_specifier_class_test(void) {
+  const char *usda = R"(#usda 1.0
+class Xform "C" {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "C");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->specifier() == Specifier::Class);
+}
+
+void usdc_writer_specifier_over_test(void) {
+  const char *usda = R"(#usda 1.0
+over "O" {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "O");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->specifier() == Specifier::Over);
+}
+
+// ============================================================================
+// Composition arcs + further hardening — references, inherits, specializes,
+// payload, stage metadata, half3 timesamples, prim/attr metas.
+// ============================================================================
+
+void usdc_writer_inherits_test(void) {
+  const char *usda = R"(#usda 1.0
+class Xform "_class_xf" {
+}
+def Xform "x" (
+  inherits = </_class_xf>
+) {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->metas().inherits.has_value() ||
+             p->metas().inheritPaths.has_value());
+}
+
+void usdc_writer_specializes_test(void) {
+  const char *usda = R"(#usda 1.0
+class Xform "_base" {
+}
+def Xform "x" (
+  specializes = </_base>
+) {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->metas().specializes.has_value());
+}
+
+void usdc_writer_references_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+  references = @./other.usda@</world>
+) {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->metas().references.has_value());
+}
+
+void usdc_writer_payload_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+  prepend payload = @./other.usda@</world>
+) {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->metas().payload.has_value());
+}
+
+void usdc_writer_stage_metadata_test(void) {
+  const char *usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+    metersPerUnit = 0.01
+    timeCodesPerSecond = 24
+    framesPerSecond = 30
+    startTimeCode = 0
+    endTimeCode = 100
+)
+def Xform "World" {
+}
+)";
+  RT_OK(usda);
+  const auto &m = stage.metas();
+  TEST_CHECK(m.defaultPrim.str() == "World");
+  TEST_CHECK(m.upAxis.get_value() == Axis::Y);
+  TEST_CHECK(m.metersPerUnit.get_value() == 0.01);
+  TEST_CHECK(m.timeCodesPerSecond.get_value() == 24.0);
+  TEST_CHECK(m.framesPerSecond.get_value() == 30.0);
+  TEST_CHECK(m.startTimeCode.get_value() == 0.0);
+  TEST_CHECK(m.endTimeCode.get_value() == 100.0);
+}
+
+void usdc_writer_timesamples_half3_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom half3 v.timeSamples = {
+    0: (1, 0, 0),
+    10: (0, 1, 0)
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("v");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  TEST_CHECK(it->second.get_attribute().get_var().has_timesamples());
+}
+
+void usdc_writer_attr_customdata_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom int v = 1 (
+    customData = { string foo = "bar" }
+  )
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  if (!p) { TEST_CHECK(false); return; }
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("v");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  TEST_CHECK(it->second.get_attribute().metas().has_customData());
+}
+
+void usdc_writer_attr_hidden_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom int v = 1 (
+    hidden = true
+  )
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  if (!p) { TEST_CHECK(false); return; }
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("v");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  TEST_CHECK(it->second.get_attribute().metas().has_hidden());
+}
+
+void usdc_writer_skeleton_joints_test(void) {
+  const char *usda = R"(#usda 1.0
+def Skeleton "sk" {
+  uniform token[] joints = ["root", "root/hip"]
+}
+)";
+  RT_OK(usda);
+  const auto *sk = find_root<Skeleton>(stage, "sk");
+  TEST_CHECK(sk != nullptr);
+  if (!sk) return;
+  TEST_CHECK(sk->joints.authored());
+  if (!sk->joints.authored()) return;
+  auto v = sk->joints.get_value();
+  TEST_CHECK(v.has_value());
+  if (!v) return;
+  TEST_CHECK(v.value().size() == 2);
+}
+
+void usdc_writer_apischemas_multi_apply_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+  prepend apiSchemas = ["MaterialBindingAPI", "CollectionAPI:foo"]
+) {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->metas().has_apiSchemas());
+}
+
+void usdc_writer_active_metadata_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+  active = false
+) {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  if (!p) { TEST_CHECK(false); return; }
+  TEST_CHECK(p->metas().has_active());
+  if (p->metas().has_active()) {
+    TEST_CHECK(!p->metas().get_active());
+  }
+}
+
+void usdc_writer_hidden_metadata_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+  hidden = true
+) {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  if (!p) { TEST_CHECK(false); return; }
+  TEST_CHECK(p->metas().has_hidden());
+  if (p->metas().has_hidden()) {
+    TEST_CHECK(p->metas().get_hidden());
+  }
+}
+
+void usdc_writer_instanceable_metadata_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+  instanceable = true
+) {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  if (!p) { TEST_CHECK(false); return; }
+  TEST_CHECK(p->metas().has_instanceable());
+  if (p->metas().has_instanceable()) {
+    TEST_CHECK(p->metas().get_instanceable());
+  }
+}
+
+void usdc_writer_purpose_attribute_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  uniform token purpose = "render"
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  // purpose is a typed Xformable / GPrim field
+  TEST_CHECK(xf->purpose.authored());
+}
+
+void usdc_writer_visibility_attribute_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  token visibility = "invisible"
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  TEST_CHECK(xf->visibility.authored());
+}
+
+void usdc_writer_normal_array_test(void) {
+  const char *usda = R"(#usda 1.0
+def Mesh "m" {
+  point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+  int[] faceVertexCounts = [3]
+  int[] faceVertexIndices = [0,1,2]
+  normal3f[] normals = [(0,0,1),(0,0,1),(0,0,1)] (
+    interpolation = "vertex"
+  )
+}
+)";
+  RT_OK(usda);
+  const auto *mesh = find_root<GeomMesh>(stage, "m");
+  TEST_CHECK(mesh != nullptr);
+  if (!mesh) return;
+  TEST_CHECK(mesh->normals.authored());
+  if (!mesh->normals.authored()) return;
+  auto val = mesh->normals.get_value();
+  TEST_CHECK(val.has_value());
+  if (!val) return;
+  std::vector<value::normal3f> ns;
+  TEST_CHECK(val.value().get_scalar(&ns));
+  TEST_CHECK(ns.size() == 3);
+}
+
+void usdc_writer_uint_array_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom uint[] vs = [10, 20, 30, 4294967295]
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("vs");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  auto v = it->second.get_attribute().get_var().value_raw().get_value<std::vector<uint32_t>>();
+  TEST_CHECK(v.has_value());
+  if (!v) return;
+  TEST_CHECK(v->size() == 4);
+  if (v->size() != 4) return;
+  TEST_CHECK((*v)[3] == 4294967295u);
+}
+
+// ============================================================================
+// More hardening — PointInstancer prototypes rel, full Camera, SkelAnim TS,
+// nested Scope, strict composition arc checks
+// ============================================================================
+
+void usdc_writer_pointinstancer_prototypes_rel_test(void) {
+  const char *usda = R"(#usda 1.0
+def PointInstancer "pi" {
+  rel prototypes = [</pi/Proto1>, </pi/Proto2>]
+  point3f[] positions = [(0,0,0),(1,0,0)]
+  int[] protoIndices = [0, 1]
+  def Xform "Proto1" {}
+  def Xform "Proto2" {}
+}
+)";
+  RT_OK(usda);
+  const auto *pi = find_root<GeomPointInstancer>(stage, "pi");
+  TEST_CHECK(pi != nullptr);
+  if (!pi) return;
+  TEST_CHECK(pi->prototypes.has_value());
+  if (!pi->prototypes.has_value()) return;
+  const auto &rel = pi->prototypes.value();
+  TEST_CHECK(rel.is_pathvector());
+  if (!rel.is_pathvector()) return;
+  TEST_CHECK(rel.targetPathVector.size() == 2);
+}
+
+void usdc_writer_camera_full_roundtrip_test(void) {
+  const char *usda = R"(#usda 1.0
+def Camera "cam" {
+  float focalLength = 50.0
+  float horizontalAperture = 24.0
+  float verticalAperture = 16.0
+  float2 clippingRange = (0.1, 1000)
+  uniform token projection = "orthographic"
+}
+)";
+  RT_OK(usda);
+  const auto *cam = find_root<GeomCamera>(stage, "cam");
+  TEST_CHECK(cam != nullptr);
+  if (!cam) return;
+  TEST_CHECK(cam->focalLength.authored());
+  TEST_CHECK(cam->horizontalAperture.authored());
+  TEST_CHECK(cam->verticalAperture.authored());
+  TEST_CHECK(cam->clippingRange.authored());
+  TEST_CHECK(cam->projection.authored());
+}
+
+void usdc_writer_skelanimation_translations_ts_test(void) {
+  const char *usda = R"(#usda 1.0
+def SkelAnimation "anim" {
+  uniform token[] joints = ["root", "hip"]
+  float3[] translations.timeSamples = {
+    0: [(0,0,0),(0,1,0)],
+    24: [(1,0,0),(0,2,0)]
+  }
+}
+)";
+  RT_OK(usda);
+  const auto *anim = find_root<SkelAnimation>(stage, "anim");
+  TEST_CHECK(anim != nullptr);
+  if (!anim) return;
+  // joints
+  TEST_CHECK(anim->joints.authored());
+  // translations as timeSamples — surfaces in props or typed.translations
+  auto it = anim->props.find("translations");
+  bool ok_in_props = (it != anim->props.end()) &&
+      it->second.is_attribute() &&
+      it->second.get_attribute().get_var().has_timesamples();
+  bool ok_in_typed = anim->translations.authored();
+  TEST_CHECK(ok_in_props || ok_in_typed);
+}
+
+void usdc_writer_scope_nested_test(void) {
+  const char *usda = R"(#usda 1.0
+def Scope "World" {
+  def Scope "Lights" {
+    def SphereLight "L" {}
+  }
+  def Xform "Geo" {
+    def Mesh "M" {
+      point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+      int[] faceVertexCounts = [3]
+      int[] faceVertexIndices = [0,1,2]
+    }
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *world = find_root_prim(stage, "World");
+  TEST_CHECK(world != nullptr);
+  if (!world) return;
+  TEST_CHECK(world->children().size() == 2);
+  if (world->children().size() != 2) return;
+  // Scope children may sort differently — locate Geo by name.
+  const Prim *geo = nullptr;
+  const Prim *lights = nullptr;
+  for (const auto &c : world->children()) {
+    if (c.element_name() == "Geo") geo = &c;
+    if (c.element_name() == "Lights") lights = &c;
+  }
+  TEST_CHECK(geo != nullptr);
+  TEST_CHECK(lights != nullptr);
+  if (!geo) return;
+  TEST_CHECK(geo->children().size() == 1);
+  if (geo->children().size() != 1) return;
+  TEST_CHECK(geo->children()[0].element_name() == "M");
+  TEST_CHECK(geo->children()[0].data().as<GeomMesh>() != nullptr);
+}
+
+void usdc_writer_inherits_strict_test(void) {
+  const char *usda = R"(#usda 1.0
+class Xform "_class_xf" {}
+def Xform "x" (
+  inherits = </_class_xf>
+) {}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  // inherits OR inheritPaths must hold the listop with the path.
+  bool found = false;
+  if (p->metas().inherits.has_value()) {
+    for (const auto &op : p->metas().inherits.value()) {
+      for (const auto &path : op.second) {
+        if (path.full_path_name() == "/_class_xf") found = true;
+      }
+    }
+  }
+  if (!found && p->metas().inheritPaths.has_value()) {
+    for (const auto &op : p->metas().inheritPaths.value()) {
+      for (const auto &path : op.second) {
+        if (path.full_path_name() == "/_class_xf") found = true;
+      }
+    }
+  }
+  TEST_CHECK(found);
+}
+
+void usdc_writer_specializes_strict_test(void) {
+  const char *usda = R"(#usda 1.0
+class Xform "_base" {}
+def Xform "x" (
+  specializes = </_base>
+) {}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  bool found = false;
+  if (p->metas().specializes.has_value()) {
+    for (const auto &op : p->metas().specializes.value()) {
+      for (const auto &path : op.second) {
+        if (path.full_path_name() == "/_base") found = true;
+      }
+    }
+  }
+  TEST_CHECK(found);
+}
+
+void usdc_writer_payload_strict_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+  prepend payload = @./other.usda@</world>
+) {}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->metas().payload.has_value());
+  if (!p->metas().payload.has_value()) return;
+  bool found_asset = false;
+  for (const auto &op : p->metas().payload.value()) {
+    for (const auto &pl : op.second) {
+      if (pl.asset_path.GetAssetPath() == "./other.usda") found_asset = true;
+    }
+  }
+  TEST_CHECK(found_asset);
+}
+
+// References / payload primPath survival checks. Regression for a path-tree
+// resort bug where Reference.primPath in the value-data section was indexed
+// by the writer's pre-sort PathIndex but the paths_ table got resorted
+// later, leaving the index pointing at the wrong path on read.
+void usdc_writer_references_primpath_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+  references = @./a.usda@</A>
+) {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->metas().references.has_value());
+  if (!p->metas().references.has_value()) return;
+  bool found = false;
+  for (const auto &op : p->metas().references.value()) {
+    for (const auto &r : op.second) {
+      if (r.asset_path.GetAssetPath() == "./a.usda" &&
+          r.prim_path.full_path_name() == "/A") {
+        found = true;
+      }
+    }
+  }
+  TEST_CHECK(found);
+}
+
+void usdc_writer_multiple_references_primpath_test(void) {
+  // Two separate prims, each with its own reference path. Stresses path
+  // ordering: /A and /B aren't in the prim hierarchy and are added as
+  // value-data path indices.
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+  references = @./a.usda@</A>
+) {
+}
+def Xform "y" (
+  references = @./b.usda@</B>
+) {
+}
+)";
+  RT_OK(usda);
+  auto check = [&](const char *prim_name, const char *expect_asset, const char *expect_path) {
+    const Prim *p = find_root_prim(stage, prim_name);
+    if (!p) return false;
+    if (!p->metas().references.has_value()) return false;
+    for (const auto &op : p->metas().references.value()) {
+      for (const auto &r : op.second) {
+        if (r.asset_path.GetAssetPath() == expect_asset &&
+            r.prim_path.full_path_name() == expect_path) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  TEST_CHECK(check("x", "./a.usda", "/A"));
+  TEST_CHECK(check("y", "./b.usda", "/B"));
+}
+
+void usdc_writer_payload_primpath_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+  prepend payload = @./other.usda@</world>
+) {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->metas().payload.has_value());
+  if (!p->metas().payload.has_value()) return;
+  bool found = false;
+  for (const auto &op : p->metas().payload.value()) {
+    for (const auto &pl : op.second) {
+      if (pl.asset_path.GetAssetPath() == "./other.usda" &&
+          pl.prim_path.full_path_name() == "/world") {
+        found = true;
+      }
+    }
+  }
+  TEST_CHECK(found);
+}
+
+// ============================================================================
+// More USDC writer tests — comment/sceneName, empty stage, unknown type,
+// double arrays, light setups, subdiv crease, GeomSubset, BlendShape,
+// BasisCurves, multi-shader material, variant + timesamples, mesh primvars
+// ============================================================================
+
+void usdc_writer_comment_metadata_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+  comment = "some helpful note"
+) {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->metas().has_comment());
+  if (p->metas().has_comment()) {
+    TEST_CHECK(p->metas().get_comment().value == "some helpful note");
+  }
+}
+
+void usdc_writer_scenename_metadata_test(void) {
+  // sceneName meta is not currently parseable by the USDA parser as a prim
+  // metadatum. Probe an alternate channel: a kind-style passthrough via
+  // customData. Survival check only.
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+  customData = {
+    string sceneName = "MyScene"
+  }
+) {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+}
+
+void usdc_writer_empty_stage_test(void) {
+  // Stage with no prims. USDC must still produce a valid file the reader
+  // can parse back. Cannot use RT_OK here because it asserts >0 root prims.
+  const char *usda = "#usda 1.0\n";
+  Stage stage;
+  std::string warn, err;
+  bool ok = roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  TEST_CHECK(stage.root_prims().size() == 0);
+}
+
+void usdc_writer_unknown_prim_type_test(void) {
+  const char *usda = R"(#usda 1.0
+def CustomThing "ct" {
+  custom int v = 1
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "ct");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->prim_type_name() == "CustomThing");
+}
+
+void usdc_writer_point3d_array_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom point3d[] pts = [(1.5, 2.5, 3.5), (4.5, 5.5, 6.5)]
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("pts");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  // Value type may be exposed as point3d[] or double3[] depending on parser.
+  const auto &val = it->second.get_attribute().get_var().value_raw();
+  bool found = val.get_value<std::vector<value::point3d>>().has_value() ||
+               val.get_value<std::vector<value::double3>>().has_value();
+  TEST_CHECK(found);
+}
+
+void usdc_writer_dome_light_texture_test(void) {
+  const char *usda = R"(#usda 1.0
+def DomeLight "dome" {
+  asset inputs:texture:file = @./env.hdr@
+  token inputs:texture:format = "latlong"
+  float inputs:intensity = 1.5
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "dome");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *dl = p->data().as<DomeLight>();
+  TEST_CHECK(dl != nullptr);
+  if (!dl) return;
+  TEST_CHECK(dl->intensity.authored());
+}
+
+void usdc_writer_disk_light_shaping_test(void) {
+  const char *usda = R"(#usda 1.0
+def DiskLight "d" {
+  float inputs:intensity = 1
+  color3f inputs:color = (1, 0.9, 0.7)
+  float inputs:radius = 0.5
+  float inputs:shaping:focus = 1
+  float inputs:shaping:cone:angle = 30
+  float inputs:shaping:cone:softness = 0.1
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "d");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *dl = p->data().as<DiskLight>();
+  TEST_CHECK(dl != nullptr);
+  if (!dl) return;
+  TEST_CHECK(dl->color.authored());
+  TEST_CHECK(dl->intensity.authored());
+}
+
+void usdc_writer_mesh_subdiv_creases_test(void) {
+  const char *usda = R"(#usda 1.0
+def Mesh "sub" {
+  uniform token subdivisionScheme = "catmullClark"
+  point3f[] points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]
+  int[] faceVertexCounts = [4]
+  int[] faceVertexIndices = [0,1,2,3]
+  int[] cornerIndices = [0]
+  float[] cornerSharpnesses = [10.0]
+  int[] creaseIndices = [0, 1]
+  int[] creaseLengths = [2]
+  float[] creaseSharpnesses = [5.0]
+}
+)";
+  RT_OK(usda);
+  const auto *mesh = find_root<GeomMesh>(stage, "sub");
+  TEST_CHECK(mesh != nullptr);
+  if (!mesh) return;
+  TEST_CHECK(mesh->cornerIndices.authored());
+  TEST_CHECK(mesh->cornerSharpnesses.authored());
+  TEST_CHECK(mesh->creaseIndices.authored());
+  TEST_CHECK(mesh->creaseLengths.authored());
+  TEST_CHECK(mesh->creaseSharpnesses.authored());
+}
+
+void usdc_writer_geomsubset_inline_test(void) {
+  const char *usda = R"(#usda 1.0
+def Mesh "m" {
+  point3f[] points = [(0,0,0),(1,0,0),(0,1,0),(1,1,0)]
+  int[] faceVertexCounts = [3, 3]
+  int[] faceVertexIndices = [0,1,2,1,3,2]
+  def GeomSubset "sub1" {
+    uniform token elementType = "face"
+    uniform token familyName = "materialBind"
+    int[] indices = [0]
+  }
+}
+)";
+  RT_OK(usda);
+  const auto *mesh = find_root<GeomMesh>(stage, "m");
+  TEST_CHECK(mesh != nullptr);
+  if (!mesh) return;
+  const Prim *m_prim = find_root_prim(stage, "m");
+  if (!m_prim) return;
+  TEST_CHECK(m_prim->children().size() == 1);
+  if (m_prim->children().size() != 1) return;
+  const auto *subset = m_prim->children()[0].data().as<GeomSubset>();
+  TEST_CHECK(subset != nullptr);
+  if (!subset) return;
+  TEST_CHECK(subset->indices.authored());
+}
+
+void usdc_writer_blendshape_offsets_test(void) {
+  const char *usda = R"(#usda 1.0
+def BlendShape "bs" {
+  uniform vector3f[] offsets = [(0.1, 0.0, 0.0), (0.0, 0.1, 0.0)]
+  uniform vector3f[] normalOffsets = [(0, 0, 0), (0, 0, 0)]
+  uniform int[] pointIndices = [0, 1]
+}
+)";
+  RT_OK(usda);
+  const auto *bs = find_root<BlendShape>(stage, "bs");
+  TEST_CHECK(bs != nullptr);
+  if (!bs) return;
+  TEST_CHECK(bs->offsets.authored());
+  TEST_CHECK(bs->normalOffsets.authored());
+  TEST_CHECK(bs->pointIndices.authored());
+}
+
+void usdc_writer_basis_curves_full_test(void) {
+  const char *usda = R"(#usda 1.0
+def BasisCurves "curves" {
+  point3f[] points = [(0,0,0),(1,0,0),(2,0,0),(3,0,0)]
+  int[] curveVertexCounts = [4]
+  uniform token type = "cubic"
+  uniform token basis = "bezier"
+  uniform token wrap = "nonperiodic"
+  float[] widths = [0.1, 0.1, 0.1, 0.1]
+}
+)";
+  RT_OK(usda);
+  const auto *bc = find_root<GeomBasisCurves>(stage, "curves");
+  TEST_CHECK(bc != nullptr);
+  if (!bc) return;
+  TEST_CHECK(bc->points.authored());
+  TEST_CHECK(bc->curveVertexCounts.authored());
+  TEST_CHECK(bc->type.authored());
+  TEST_CHECK(bc->basis.authored());
+  TEST_CHECK(bc->wrap.authored());
+}
+
+void usdc_writer_multi_shader_material_test(void) {
+  const char *usda = R"(#usda 1.0
+def Material "mat" {
+  token outputs:surface.connect = </mat/Surface.outputs:surface>
+  def Shader "Surface" {
+    uniform token info:id = "UsdPreviewSurface"
+    color3f inputs:diffuseColor.connect = </mat/Tex.outputs:rgb>
+    float inputs:roughness.connect = </mat/Rough.outputs:result>
+    token outputs:surface
+  }
+  def Shader "Tex" {
+    uniform token info:id = "UsdUVTexture"
+    asset inputs:file = @./d.png@
+    float3 outputs:rgb
+  }
+  def Shader "Rough" {
+    uniform token info:id = "UsdPrimvarReader_float"
+    string inputs:varname = "rough"
+    float outputs:result
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *mat_prim = find_root_prim(stage, "mat");
+  TEST_CHECK(mat_prim != nullptr);
+  if (!mat_prim) return;
+  TEST_CHECK(mat_prim->children().size() == 3);
+  // Surface child must have both connections preserved
+  const Prim *surface = nullptr;
+  for (const auto &c : mat_prim->children()) {
+    if (c.element_name() == "Surface") surface = &c;
+  }
+  TEST_CHECK(surface != nullptr);
+  if (!surface) return;
+  const auto *uvs = surface->data().as<Shader>();
+  TEST_CHECK(uvs != nullptr);
+  if (!uvs) return;
+  const auto *ps = uvs->value.as<UsdPreviewSurface>();
+  TEST_CHECK(ps != nullptr);
+  if (!ps) return;
+  TEST_CHECK(ps->diffuseColor.has_connections());
+  TEST_CHECK(ps->roughness.has_connections());
+}
+
+void usdc_writer_variant_with_timesamples_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+  variants = { string anim = "running" }
+  prepend variantSets = "anim"
+) {
+  variantSet "anim" = {
+    "running" {
+      custom double3 xformOp:translate.timeSamples = {
+        0: (0,0,0),
+        24: (10,0,0)
+      }
+      custom uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    "idle" {
+      custom double3 xformOp:translate = (0, 0, 0)
+    }
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->variantSets().size() >= 1);
+}
+
+void usdc_writer_mesh_primvar_indices_test(void) {
+  const char *usda = R"(#usda 1.0
+def Mesh "m" {
+  point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+  int[] faceVertexCounts = [3]
+  int[] faceVertexIndices = [0,1,2]
+  texCoord2f[] primvars:st = [(0,0),(1,0),(0,1)] (interpolation = "faceVarying")
+  int[] primvars:st:indices = [0, 1, 2]
+}
+)";
+  RT_OK(usda);
+  const auto *mesh = find_root<GeomMesh>(stage, "m");
+  TEST_CHECK(mesh != nullptr);
+  if (!mesh) return;
+  // st and st:indices both surface in props
+  TEST_CHECK(mesh->props.find("primvars:st") != mesh->props.end());
+  TEST_CHECK(mesh->props.find("primvars:st:indices") != mesh->props.end());
+}
+
+void usdc_writer_geom_subdiv_full_test(void) {
+  // Combined: subdivisionScheme uniform + creases + corners on a Mesh.
+  const char *usda = R"(#usda 1.0
+def Mesh "sub" {
+  uniform token subdivisionScheme = "catmullClark"
+  uniform token interpolateBoundary = "edgeAndCorner"
+  uniform token faceVaryingLinearInterpolation = "cornersOnly"
+  point3f[] points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]
+  int[] faceVertexCounts = [4]
+  int[] faceVertexIndices = [0,1,2,3]
+}
+)";
+  RT_OK(usda);
+  const auto *mesh = find_root<GeomMesh>(stage, "sub");
+  TEST_CHECK(mesh != nullptr);
+  if (!mesh) return;
+  TEST_CHECK(mesh->subdivisionScheme.authored());
+  TEST_CHECK(mesh->interpolateBoundary.authored());
+  TEST_CHECK(mesh->faceVaryingLinearInterpolation.authored());
+}

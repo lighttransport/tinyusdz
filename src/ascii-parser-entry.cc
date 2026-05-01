@@ -371,6 +371,8 @@ static void RegisterStageMetas(
   metas.clear();
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
   metas["documentation"] =
+      AsciiParser::VariableDef(value::kString, "documentation");
+  metas["documentation"] =
       AsciiParser::VariableDef(value::kString, "doc");  // alias to 'doc'
 
   metas["comment"] = AsciiParser::VariableDef(value::kString, "comment");
@@ -429,6 +431,8 @@ static void RegisterPrimMetas(
 
   metas["kind"] = AsciiParser::VariableDef(value::kToken, "kind");
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
+  metas["documentation"] =
+      AsciiParser::VariableDef(value::kString, "documentation");
 
   //
   // Composition arcs -----------------------
@@ -488,6 +492,8 @@ static void RegisterPropMetas(
   metas.clear();
 
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
+  metas["documentation"] =
+      AsciiParser::VariableDef(value::kString, "documentation");
   metas["active"] = AsciiParser::VariableDef(value::kBool, "active");
   metas["hidden"] = AsciiParser::VariableDef(value::kBool, "hidden");
   metas["customData"] =

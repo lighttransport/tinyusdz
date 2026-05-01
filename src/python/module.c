@@ -20,7 +20,15 @@
 #include <Python.h>
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+
+/* PyUnicode_AsUTF8 is part of the stable ABI from CPython 3.10+ but is
+ * gated behind Py_LIMITED_API in older Python.h. Forward-declare to avoid
+ * the "implicit declaration -> int" landmine. */
+#if !defined(PyUnicode_AsUTF8)
+PyAPI_FUNC(const char *) PyUnicode_AsUTF8(PyObject *unicode);
+#endif
 
 #include "../c-tinyusd.h"
 #include "../c-tinyusd-helpers.h"
@@ -94,6 +102,14 @@ Stage_dealloc(PyObject *self)
  * its owning Stage to keep it alive. */
 static PyObject *
 make_prim(const CTinyUSDPrim *prim, PyObject *owner);
+
+/* Coerce a Python object into a fresh CTinyUSDValue*. Returns NULL on
+ * unsupported value (and sets a Python exception). The returned value must
+ * be freed with c_tinyusd_value_free. `dtype` is an optional explicit USD
+ * type-name hint (e.g. "token", "float[]"); pass NULL for inference. */
+static CTinyUSDValue *
+py_to_value(PyObject *obj, const char *dtype, char *out_type_name,
+            size_t out_type_name_size);
 
 static PyObject *
 Stage_export_to_string(PyObject *self, PyObject *args)
@@ -245,6 +261,9 @@ Stage_visit_prims(PyObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 
+/* Stage_add_root_prim is defined later (after PrimObject is declared). */
+static PyObject *Stage_add_root_prim(PyObject *self, PyObject *args);
+
 static PyObject *
 Stage_repr(PyObject *self)
 {
@@ -252,6 +271,57 @@ Stage_repr(PyObject *self)
     uint64_t n = c_tinyusd_stage_num_root_prims(s->stage);
     return PyUnicode_FromFormat("<tinyusdz.Stage root_prims=%llu>",
                                 (unsigned long long)n);
+}
+
+static PyObject *
+Stage_set_metadata(PyObject *self, PyObject *args)
+{
+    const char *key = NULL;
+    PyObject *value = NULL;
+    if (!PyArg_ParseTuple(args, "sO", &key, &value)) return NULL;
+    StageObject *s = (StageObject *)self;
+    int ok = 0;
+    if (PyUnicode_Check(value)) {
+        const char *sv = PyUnicode_AsUTF8(value);
+        if (!sv) return NULL;
+        ok = c_tinyusd_stage_meta_set_string(s->stage, key, sv);
+    } else if (PyFloat_Check(value) || PyLong_Check(value)) {
+        double dv = PyFloat_AsDouble(value);
+        if (dv == -1.0 && PyErr_Occurred()) return NULL;
+        ok = c_tinyusd_stage_meta_set_double(s->stage, key, dv);
+    } else {
+        PyErr_SetString(PyExc_TypeError,
+                        "Stage metadata value must be str or number");
+        return NULL;
+    }
+    if (!ok) {
+        PyErr_Format(PyExc_ValueError,
+                     "Unsupported stage metadata key/type: %s", key);
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Stage_get_metadata(PyObject *self, PyObject *args)
+{
+    const char *key = NULL;
+    if (!PyArg_ParseTuple(args, "s", &key)) return NULL;
+    StageObject *s = (StageObject *)self;
+    /* Try string first */
+    c_tinyusd_string_t *out = c_tinyusd_string_new_empty();
+    if (c_tinyusd_stage_meta_get_string(s->stage, key, out)) {
+        const char *cstr = c_tinyusd_string_str(out);
+        PyObject *r = PyUnicode_FromString(cstr ? cstr : "");
+        c_tinyusd_string_free(out);
+        return r;
+    }
+    c_tinyusd_string_free(out);
+    double dv = 0.0;
+    if (c_tinyusd_stage_meta_get_double(s->stage, key, &dv)) {
+        return PyFloat_FromDouble(dv);
+    }
+    Py_RETURN_NONE;
 }
 
 static PyMethodDef Stage_methods[] = {
@@ -265,6 +335,14 @@ static PyMethodDef Stage_methods[] = {
      "List of root prims."},
     {"visit_prims", Stage_visit_prims, METH_VARARGS,
      "visit_prims(callback): DFS traversal. Callback signature (prim, path, depth)."},
+    {"add_root_prim", Stage_add_root_prim, METH_VARARGS,
+     "add_root_prim(prim): copy `prim` under this stage as a root prim."},
+    {"set_metadata", Stage_set_metadata, METH_VARARGS,
+     "set_metadata(key, value): set stage metadata (defaultPrim, upAxis, "
+     "metersPerUnit, timeCodesPerSecond, framesPerSecond, startTimeCode, "
+     "endTimeCode, doc, comment)."},
+    {"get_metadata", Stage_get_metadata, METH_VARARGS,
+     "get_metadata(key): return stage metadata value or None if unauthored."},
     {NULL, NULL, 0, NULL}
 };
 
@@ -292,13 +370,19 @@ static PyType_Spec Stage_spec = {
 typedef struct {
     PyObject_HEAD
     const CTinyUSDPrim *prim;
-    PyObject *owner;   /* keeps the backing Stage (or parent Prim) alive */
+    PyObject *owner;   /* keeps the backing Stage (or parent Prim) alive,
+                          or NULL when this Prim owns its C handle */
+    int owns_prim;     /* 1 = we own `prim` and must free in dealloc */
 } PrimObject;
 
 static void
 Prim_dealloc(PyObject *self)
 {
     PrimObject *p = (PrimObject *)self;
+    if (p->owns_prim && p->prim) {
+        c_tinyusd_prim_free((CTinyUSDPrim *)p->prim);
+    }
+    p->prim = NULL;
     Py_XDECREF(p->owner);
     PyTypeObject *tp = Py_TYPE(self);
     freefunc tp_free = (freefunc)PyType_GetSlot(tp, Py_tp_free);
@@ -314,9 +398,98 @@ make_prim(const CTinyUSDPrim *prim, PyObject *owner)
     PrimObject *obj = (PrimObject *)alloc(tp, 0);
     if (!obj) return NULL;
     obj->prim = prim;
+    obj->owns_prim = 0;
     Py_INCREF(owner);
     obj->owner = owner;
     return (PyObject *)obj;
+}
+
+/* Build a Prim wrapper that takes ownership of a fresh CTinyUSDPrim*. */
+static PyObject *
+make_prim_owning(CTinyUSDPrim *prim)
+{
+    PyTypeObject *tp = (PyTypeObject *)PrimType;
+    allocfunc alloc = (allocfunc)PyType_GetSlot(tp, Py_tp_alloc);
+    PrimObject *obj = (PrimObject *)alloc(tp, 0);
+    if (!obj) {
+        c_tinyusd_prim_free(prim);
+        return NULL;
+    }
+    obj->prim = prim;
+    obj->owns_prim = 1;
+    obj->owner = NULL;
+    return (PyObject *)obj;
+}
+
+/* Stage.add_root_prim implementation (forward-declared above). */
+static PyObject *
+Stage_add_root_prim(PyObject *self, PyObject *args)
+{
+    PyObject *prim_obj = NULL;
+    if (!PyArg_ParseTuple(args, "O", &prim_obj)) return NULL;
+    if (Py_TYPE(prim_obj) != (PyTypeObject *)PrimType) {
+        PyErr_SetString(PyExc_TypeError, "expected a tinyusdz.Prim");
+        return NULL;
+    }
+    StageObject *s = (StageObject *)self;
+    PrimObject *p = (PrimObject *)prim_obj;
+    if (!p->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    c_tinyusd_string_t *err = c_tinyusd_string_new_empty();
+    int ok = c_tinyusd_stage_add_root_prim(
+        s->stage, (CTinyUSDPrim *)p->prim, err);
+    if (!ok) {
+        const char *msg = c_tinyusd_string_str(err);
+        PyErr_SetString(UsdError, msg && *msg ? msg : "add_root_prim failed");
+        c_tinyusd_string_free(err);
+        return NULL;
+    }
+    c_tinyusd_string_free(err);
+    Py_RETURN_NONE;
+}
+
+/* Construct an owned Prim from Python: tinyusdz.Prim(type_name, name=None). */
+static int
+Prim_init(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    static char *kwlist[] = {"type_name", "name", NULL};
+    const char *type_name = NULL;
+    const char *name = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "s|s", kwlist,
+                                     &type_name, &name)) {
+        return -1;
+    }
+    PrimObject *p = (PrimObject *)self;
+    /* If this is being initialized via make_prim_owning, the prim is already
+       set. But Python-level Stage()/Prim() goes through tp_alloc + tp_init,
+       so prim is NULL here. */
+    if (p->prim) {
+        /* Already initialized (e.g. via make_prim_*); ignore re-init args. */
+        return 0;
+    }
+    c_tinyusd_string_t *err = c_tinyusd_string_new_empty();
+    CTinyUSDPrim *cp = c_tinyusd_prim_new(type_name, err);
+    if (!cp) {
+        const char *msg = c_tinyusd_string_str(err);
+        PyErr_Format(PyExc_ValueError, "Prim(%s) failed: %s",
+                     type_name, msg && *msg ? msg : "(no detail)");
+        c_tinyusd_string_free(err);
+        return -1;
+    }
+    c_tinyusd_string_free(err);
+    if (name) {
+        if (!c_tinyusd_prim_set_element_name(cp, name)) {
+            c_tinyusd_prim_free(cp);
+            PyErr_SetString(PyExc_ValueError, "set_element_name failed");
+            return -1;
+        }
+    }
+    p->prim = cp;
+    p->owns_prim = 1;
+    p->owner = NULL;
+    return 0;
 }
 
 static PyObject *
@@ -425,6 +598,512 @@ Prim_property_names(PyObject *self, PyObject *args)
 }
 
 static PyObject *
+Prim_add_child(PyObject *self, PyObject *args)
+{
+    PyObject *child_obj = NULL;
+    if (!PyArg_ParseTuple(args, "O", &child_obj)) return NULL;
+    if (Py_TYPE(child_obj) != (PyTypeObject *)PrimType) {
+        PyErr_SetString(PyExc_TypeError, "expected a tinyusdz.Prim");
+        return NULL;
+    }
+    PrimObject *parent = (PrimObject *)self;
+    PrimObject *child = (PrimObject *)child_obj;
+    if (!parent->prim || !child->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    /* C API: c_tinyusd_prim_append_child *copies* the child Prim. */
+    if (!c_tinyusd_prim_append_child((CTinyUSDPrim *)parent->prim,
+                                     (CTinyUSDPrim *)child->prim)) {
+        PyErr_SetString(UsdError, "append_child failed");
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Prim_set_element_name(PyObject *self, PyObject *args)
+{
+    const char *name = NULL;
+    if (!PyArg_ParseTuple(args, "s", &name)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    if (!c_tinyusd_prim_set_element_name((CTinyUSDPrim *)p->prim, name)) {
+        PyErr_SetString(UsdError, "set_element_name failed");
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Prim_set_attribute(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    static char *kwlist[] = {"name", "value", "dtype", NULL};
+    const char *name = NULL;
+    PyObject *py_value = NULL;
+    const char *dtype = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "sO|s", kwlist,
+                                     &name, &py_value, &dtype)) {
+        return NULL;
+    }
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    char type_name[64] = {0};
+    CTinyUSDValue *val = py_to_value(py_value, dtype, type_name, sizeof(type_name));
+    if (!val) return NULL;  /* exception already set */
+
+    CTinyUSDAttribute *attr = c_tinyusd_attribute_new();
+    if (!attr) {
+        c_tinyusd_value_free(val);
+        return PyErr_NoMemory();
+    }
+    c_tinyusd_attribute_set_name(attr, name);
+    if (type_name[0]) {
+        c_tinyusd_attribute_set_type_name(attr, type_name);
+    }
+    if (!c_tinyusd_attribute_set_value(attr, val)) {
+        c_tinyusd_attribute_free(attr);
+        c_tinyusd_value_free(val);
+        PyErr_SetString(UsdError, "attribute_set_value failed");
+        return NULL;
+    }
+
+    c_tinyusd_string_t *err = c_tinyusd_string_new_empty();
+    int ok = c_tinyusd_prim_add_attribute((CTinyUSDPrim *)p->prim, attr, err);
+    if (!ok) {
+        const char *msg = c_tinyusd_string_str(err);
+        PyErr_Format(UsdError, "set_attribute(%s) failed: %s", name,
+                     msg && *msg ? msg : "(no detail)");
+        c_tinyusd_string_free(err);
+        c_tinyusd_attribute_free(attr);
+        c_tinyusd_value_free(val);
+        return NULL;
+    }
+    c_tinyusd_string_free(err);
+    c_tinyusd_attribute_free(attr);
+    c_tinyusd_value_free(val);
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Prim_set_metadata(PyObject *self, PyObject *args)
+{
+    const char *meta_name = NULL;
+    PyObject *value = NULL;
+    if (!PyArg_ParseTuple(args, "sO", &meta_name, &value)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    int ok = 0;
+    if (PyBool_Check(value)) {
+        ok = c_tinyusd_prim_meta_set_bool(
+            (CTinyUSDPrim *)p->prim, meta_name,
+            value == Py_True ? 1 : 0);
+    } else if (PyUnicode_Check(value)) {
+        const char *s = PyUnicode_AsUTF8(value);
+        if (!s) return NULL;
+        ok = c_tinyusd_prim_meta_set_string(
+            (CTinyUSDPrim *)p->prim, meta_name, s);
+    } else {
+        PyErr_SetString(PyExc_TypeError,
+                        "prim metadata value must be str or bool");
+        return NULL;
+    }
+    if (!ok) {
+        PyErr_Format(PyExc_ValueError,
+                     "set_metadata failed (key=%s)", meta_name);
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Prim_apply_api_schema(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    static char *kwlist[] = {"schema_name", "instance_name", NULL};
+    const char *schema = NULL;
+    const char *instance = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "s|z", kwlist,
+                                     &schema, &instance)) {
+        return NULL;
+    }
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    if (!c_tinyusd_prim_apply_api_schema((CTinyUSDPrim *)p->prim,
+                                         schema, instance)) {
+        PyErr_SetString(UsdError, "apply_api_schema failed");
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Prim_api_schemas(PyObject *self, PyObject *args)
+{
+    (void)args;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) return PyList_New(0);
+    c_tinyusd_string_t *buf = c_tinyusd_string_new_empty();
+    if (!buf) return PyErr_NoMemory();
+    int got = c_tinyusd_prim_get_api_schemas(p->prim, buf);
+    if (!got) {
+        c_tinyusd_string_free(buf);
+        return PyList_New(0);
+    }
+    const char *s = c_tinyusd_string_str(buf);
+    PyObject *raw = PyUnicode_FromString(s ? s : "");
+    c_tinyusd_string_free(buf);
+    if (!raw) return NULL;
+    /* Split on comma in Python land. */
+    PyObject *sep = PyUnicode_FromString(",");
+    PyObject *parts = PyUnicode_Split(raw, sep, -1);
+    Py_DECREF(sep);
+    Py_DECREF(raw);
+    return parts;
+}
+
+static PyObject *
+Prim_get_metadata(PyObject *self, PyObject *args)
+{
+    const char *meta_name = NULL;
+    if (!PyArg_ParseTuple(args, "s", &meta_name)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) Py_RETURN_NONE;
+    /* Try string first */
+    c_tinyusd_string_t *buf = c_tinyusd_string_new_empty();
+    if (!buf) return PyErr_NoMemory();
+    int got = c_tinyusd_prim_meta_get_string(p->prim, meta_name, buf);
+    if (got) {
+        PyObject *r = PyUnicode_FromString(c_tinyusd_string_str(buf));
+        c_tinyusd_string_free(buf);
+        return r;
+    }
+    c_tinyusd_string_free(buf);
+    /* Try bool (active, hidden) */
+    int b = 0;
+    if (c_tinyusd_prim_meta_get_bool(p->prim, meta_name, &b)) {
+        if (b) Py_RETURN_TRUE; else Py_RETURN_FALSE;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Prim_add_relationship(PyObject *self, PyObject *args)
+{
+    const char *name = NULL;
+    PyObject *targets = NULL;
+    if (!PyArg_ParseTuple(args, "sO", &name, &targets)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    /* Accept str (single target) or sequence of str. */
+    PyObject *seq = NULL;
+    int single = PyUnicode_Check(targets);
+    Py_ssize_t n;
+    if (single) {
+        n = 1;
+    } else {
+        n = PySequence_Length(targets);
+        if (n < 0) return NULL;
+        seq = targets;
+    }
+    const char **paths = NULL;
+    PyObject **items = NULL;
+    if (n > 0) {
+        paths = (const char **)PyMem_Malloc(sizeof(char *) * (size_t)n);
+        if (!paths) return PyErr_NoMemory();
+        items = (PyObject **)PyMem_Malloc(sizeof(PyObject *) * (size_t)n);
+        if (!items) { PyMem_Free(paths); return PyErr_NoMemory(); }
+        for (Py_ssize_t i = 0; i < n; ++i) {
+            PyObject *it;
+            if (single) { Py_INCREF(targets); it = targets; }
+            else { it = PySequence_GetItem(seq, i); }
+            if (!it) {
+                for (Py_ssize_t k = 0; k < i; ++k) Py_DECREF(items[k]);
+                PyMem_Free(items); PyMem_Free(paths);
+                return NULL;
+            }
+            if (!PyUnicode_Check(it)) {
+                Py_DECREF(it);
+                for (Py_ssize_t k = 0; k < i; ++k) Py_DECREF(items[k]);
+                PyMem_Free(items); PyMem_Free(paths);
+                PyErr_SetString(PyExc_TypeError,
+                                "all targets must be str");
+                return NULL;
+            }
+            items[i] = it;
+            paths[i] = PyUnicode_AsUTF8(it);
+            if (!paths[i]) {
+                for (Py_ssize_t k = 0; k <= i; ++k) Py_DECREF(items[k]);
+                PyMem_Free(items); PyMem_Free(paths);
+                return NULL;
+            }
+        }
+    }
+    c_tinyusd_string_t *err = c_tinyusd_string_new_empty();
+    int ok = c_tinyusd_prim_add_relationship((CTinyUSDPrim *)p->prim, name,
+                                             (uint64_t)n, paths, err);
+    if (items) {
+        for (Py_ssize_t k = 0; k < n; ++k) Py_DECREF(items[k]);
+        PyMem_Free(items);
+    }
+    if (paths) PyMem_Free(paths);
+    if (!ok) {
+        const char *msg = c_tinyusd_string_str(err);
+        PyErr_SetString(UsdError, msg && *msg ? msg : "add_relationship failed");
+        c_tinyusd_string_free(err);
+        return NULL;
+    }
+    c_tinyusd_string_free(err);
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Prim_get_relationship_targets(PyObject *self, PyObject *args)
+{
+    const char *name = NULL;
+    if (!PyArg_ParseTuple(args, "s", &name)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) Py_RETURN_NONE;
+    c_tinyusd_string_t *buf = c_tinyusd_string_new_empty();
+    if (!buf) return PyErr_NoMemory();
+    int ok = c_tinyusd_prim_get_relationship_targets(p->prim, name, buf);
+    if (!ok) { c_tinyusd_string_free(buf); Py_RETURN_NONE; }
+    const char *cstr = c_tinyusd_string_str(buf);
+    PyObject *raw = PyUnicode_FromString(cstr ? cstr : "");
+    c_tinyusd_string_free(buf);
+    if (!raw) return NULL;
+    PyObject *sep = PyUnicode_FromString(",");
+    PyObject *parts = PyUnicode_Split(raw, sep, -1);
+    Py_DECREF(sep); Py_DECREF(raw);
+    return parts;
+}
+
+static PyObject *
+Prim_add_attribute_connection(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    static char *kwlist[] = {"name", "targets", "dtype", NULL};
+    const char *name = NULL;
+    PyObject *targets = NULL;
+    const char *dtype = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "sO|z", kwlist,
+                                     &name, &targets, &dtype)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    int single = PyUnicode_Check(targets);
+    Py_ssize_t n;
+    if (single) {
+        n = 1;
+    } else {
+        n = PySequence_Length(targets);
+        if (n < 0) return NULL;
+    }
+    if (n <= 0) {
+        PyErr_SetString(PyExc_ValueError, "at least one target is required");
+        return NULL;
+    }
+    const char **paths = (const char **)PyMem_Malloc(sizeof(char *) * (size_t)n);
+    if (!paths) return PyErr_NoMemory();
+    PyObject **items = (PyObject **)PyMem_Malloc(sizeof(PyObject *) * (size_t)n);
+    if (!items) { PyMem_Free(paths); return PyErr_NoMemory(); }
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject *it;
+        if (single) { Py_INCREF(targets); it = targets; }
+        else { it = PySequence_GetItem(targets, i); }
+        if (!it) {
+            for (Py_ssize_t k = 0; k < i; ++k) Py_DECREF(items[k]);
+            PyMem_Free(items); PyMem_Free(paths); return NULL;
+        }
+        if (!PyUnicode_Check(it)) {
+            Py_DECREF(it);
+            for (Py_ssize_t k = 0; k < i; ++k) Py_DECREF(items[k]);
+            PyMem_Free(items); PyMem_Free(paths);
+            PyErr_SetString(PyExc_TypeError, "all targets must be str");
+            return NULL;
+        }
+        items[i] = it;
+        paths[i] = PyUnicode_AsUTF8(it);
+        if (!paths[i]) {
+            for (Py_ssize_t k = 0; k <= i; ++k) Py_DECREF(items[k]);
+            PyMem_Free(items); PyMem_Free(paths); return NULL;
+        }
+    }
+    c_tinyusd_string_t *err = c_tinyusd_string_new_empty();
+    int ok = c_tinyusd_prim_add_attribute_connection(
+        (CTinyUSDPrim *)p->prim, name, dtype,
+        (uint64_t)n, paths, err);
+    for (Py_ssize_t k = 0; k < n; ++k) Py_DECREF(items[k]);
+    PyMem_Free(items); PyMem_Free(paths);
+    if (!ok) {
+        const char *msg = c_tinyusd_string_str(err);
+        PyErr_SetString(UsdError,
+                        msg && *msg ? msg : "add_attribute_connection failed");
+        c_tinyusd_string_free(err);
+        return NULL;
+    }
+    c_tinyusd_string_free(err);
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Prim_get_attribute_connections(PyObject *self, PyObject *args)
+{
+    const char *name = NULL;
+    if (!PyArg_ParseTuple(args, "s", &name)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) Py_RETURN_NONE;
+    c_tinyusd_string_t *buf = c_tinyusd_string_new_empty();
+    if (!buf) return PyErr_NoMemory();
+    int ok = c_tinyusd_prim_get_attribute_connections(p->prim, name, buf);
+    if (!ok) { c_tinyusd_string_free(buf); Py_RETURN_NONE; }
+    const char *cstr = c_tinyusd_string_str(buf);
+    PyObject *raw = PyUnicode_FromString(cstr ? cstr : "");
+    c_tinyusd_string_free(buf);
+    if (!raw) return NULL;
+    PyObject *sep = PyUnicode_FromString(",");
+    PyObject *parts = PyUnicode_Split(raw, sep, -1);
+    Py_DECREF(sep); Py_DECREF(raw);
+    return parts;
+}
+
+static PyObject *
+Prim_set_attribute_metadata(PyObject *self, PyObject *args)
+{
+    const char *attr_name = NULL;
+    const char *meta_key = NULL;
+    PyObject *value = NULL;
+    if (!PyArg_ParseTuple(args, "ssO", &attr_name, &meta_key, &value)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    int ok = 0;
+    if (PyBool_Check(value)) {
+        ok = c_tinyusd_prim_attribute_meta_set_bool(
+            (CTinyUSDPrim *)p->prim, attr_name, meta_key,
+            value == Py_True ? 1 : 0);
+    } else if (PyUnicode_Check(value)) {
+        const char *s = PyUnicode_AsUTF8(value);
+        if (!s) return NULL;
+        ok = c_tinyusd_prim_attribute_meta_set_string(
+            (CTinyUSDPrim *)p->prim, attr_name, meta_key, s);
+    } else {
+        PyErr_SetString(PyExc_TypeError,
+                        "attribute metadata value must be str or bool");
+        return NULL;
+    }
+    if (!ok) {
+        PyErr_Format(PyExc_ValueError,
+                     "set_attribute_metadata failed (attr=%s, key=%s)",
+                     attr_name, meta_key);
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Prim_get_attribute_metadata(PyObject *self, PyObject *args)
+{
+    const char *attr_name = NULL;
+    const char *meta_key = NULL;
+    if (!PyArg_ParseTuple(args, "ss", &attr_name, &meta_key)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) Py_RETURN_NONE;
+    c_tinyusd_string_t *buf = c_tinyusd_string_new_empty();
+    if (!buf) return PyErr_NoMemory();
+    int ok = c_tinyusd_prim_attribute_meta_get_string(
+        p->prim, attr_name, meta_key, buf);
+    if (!ok) { c_tinyusd_string_free(buf); Py_RETURN_NONE; }
+    PyObject *r = PyUnicode_FromString(c_tinyusd_string_str(buf));
+    c_tinyusd_string_free(buf);
+    return r;
+}
+
+static PyObject *
+Prim_set_attribute_at_time(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    static char *kwlist[] = {"name", "time", "value", "dtype", NULL};
+    const char *name = NULL;
+    double time = 0.0;
+    PyObject *py_value = NULL;
+    const char *dtype = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "sdO|z", kwlist,
+                                     &name, &time, &py_value, &dtype)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    char type_name[64] = {0};
+    CTinyUSDValue *val = py_to_value(py_value, dtype, type_name, sizeof(type_name));
+    if (!val) return NULL;
+    c_tinyusd_string_t *err = c_tinyusd_string_new_empty();
+    int ok = c_tinyusd_prim_set_attribute_timesample(
+        (CTinyUSDPrim *)p->prim, name, time, val,
+        dtype ? dtype : type_name, err);
+    c_tinyusd_value_free(val);
+    if (!ok) {
+        const char *msg = c_tinyusd_string_str(err);
+        PyErr_SetString(UsdError,
+                        msg && *msg ? msg : "set_attribute_at_time failed");
+        c_tinyusd_string_free(err);
+        return NULL;
+    }
+    c_tinyusd_string_free(err);
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Prim_get_attribute_timesamples(PyObject *self, PyObject *args)
+{
+    const char *name = NULL;
+    if (!PyArg_ParseTuple(args, "s", &name)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) Py_RETURN_NONE;
+    uint64_t count = c_tinyusd_prim_get_attribute_timesample_count(
+        p->prim, name);
+    PyObject *out = PyList_New((Py_ssize_t)count);
+    if (!out) return NULL;
+    for (uint64_t i = 0; i < count; ++i) {
+        double t = 0.0;
+        CTinyUSDValue *v = NULL;
+        if (!c_tinyusd_prim_get_attribute_timesample(p->prim, name, i, &t, &v)) {
+            Py_DECREF(out);
+            Py_RETURN_NONE;
+        }
+        /* Wrap the Value into a tinyusdz.Value Python object via existing
+         * helper. We don't have a public make_value() alias, so just emit
+         * (time, repr-string) pair from to_string for portability. */
+        c_tinyusd_string_t *s = c_tinyusd_string_new_empty();
+        c_tinyusd_value_to_string(v, s);
+        const char *cstr = c_tinyusd_string_str(s);
+        PyObject *tup = Py_BuildValue("(ds)", t, cstr ? cstr : "");
+        c_tinyusd_string_free(s);
+        c_tinyusd_value_free(v);
+        if (!tup) { Py_DECREF(out); return NULL; }
+        PyList_SetItem(out, (Py_ssize_t)i, tup);
+    }
+    return out;
+}
+
+static PyObject *
 Prim_repr(PyObject *self)
 {
     PrimObject *p = (PrimObject *)self;
@@ -441,6 +1120,54 @@ static PyMethodDef Prim_methods[] = {
      "get_attribute(name) -> Attribute or None."},
     {"property_names", Prim_property_names, METH_NOARGS,
      "List of property (attribute + relationship) names."},
+    {"add_child", Prim_add_child, METH_VARARGS,
+     "add_child(prim): copy `prim` as a child of this prim."},
+    {"set_element_name", Prim_set_element_name, METH_VARARGS,
+     "set_element_name(name): rename this prim's leaf path component."},
+    {"set_attribute", (PyCFunction)Prim_set_attribute,
+     METH_VARARGS | METH_KEYWORDS,
+     "set_attribute(name, value, dtype=None): author an attribute."},
+    {"set_metadata", Prim_set_metadata, METH_VARARGS,
+     "set_metadata(name, string_value): author a string-typed prim metadatum"
+     " (kind, doc, comment, displayName)."},
+    {"get_metadata", Prim_get_metadata, METH_VARARGS,
+     "get_metadata(name) -> str | None: read a string-typed prim metadatum."},
+    {"apply_api_schema", (PyCFunction)Prim_apply_api_schema,
+     METH_VARARGS | METH_KEYWORDS,
+     "apply_api_schema(schema_name, instance_name=None): append an applied"
+     " API schema (e.g. 'MaterialXConfigAPI', 'SkelBindingAPI')."},
+    {"api_schemas", Prim_api_schemas, METH_NOARGS,
+     "api_schemas() -> list[str]: applied API schemas, with multi-apply"
+     " instance names appended as 'Schema:instance'."},
+    {"add_relationship", Prim_add_relationship, METH_VARARGS,
+     "add_relationship(name, targets): author a Relationship property."
+     " `targets` is a path string or sequence of path strings."},
+    {"get_relationship_targets", Prim_get_relationship_targets, METH_VARARGS,
+     "get_relationship_targets(name) -> list[str] | None: read target paths"
+     " of a Relationship authored on this prim."},
+    {"add_attribute_connection", (PyCFunction)Prim_add_attribute_connection,
+     METH_VARARGS | METH_KEYWORDS,
+     "add_attribute_connection(name, targets, dtype=None): author an attribute"
+     " connection (the `.connect = </path>` form). `targets` may be a single"
+     " path str or a list of paths."},
+    {"get_attribute_connections", Prim_get_attribute_connections, METH_VARARGS,
+     "get_attribute_connections(name) -> list[str] | None: read connection"
+     " target paths for a connectable attribute."},
+    {"set_attribute_metadata", Prim_set_attribute_metadata, METH_VARARGS,
+     "set_attribute_metadata(attr_name, key, value): author an attribute"
+     " metadatum (displayName, doc, displayGroup, interpolation, colorSpace,"
+     " hidden, custom)."},
+    {"get_attribute_metadata", Prim_get_attribute_metadata, METH_VARARGS,
+     "get_attribute_metadata(attr_name, key) -> str | None: read an attribute"
+     " metadatum as a string."},
+    {"set_attribute_at_time", (PyCFunction)Prim_set_attribute_at_time,
+     METH_VARARGS | METH_KEYWORDS,
+     "set_attribute_at_time(name, time, value, dtype=None): author a single"
+     " (time, value) sample on a time-sampled attribute. Repeated calls"
+     " with different `time` build up the TimeSamples vector."},
+    {"get_attribute_timesamples", Prim_get_attribute_timesamples, METH_VARARGS,
+     "get_attribute_timesamples(name) -> list[(time, repr_str)]: read"
+     " authored time samples (each as a (time, value-as-string) tuple)."},
     {NULL, NULL, 0, NULL}
 };
 
@@ -456,6 +1183,7 @@ static PyGetSetDef Prim_getset[] = {
 
 static PyType_Slot Prim_slots[] = {
     {Py_tp_doc, "USD primitive."},
+    {Py_tp_init, Prim_init},
     {Py_tp_dealloc, Prim_dealloc},
     {Py_tp_methods, Prim_methods},
     {Py_tp_getset, Prim_getset},
@@ -467,7 +1195,7 @@ static PyType_Spec Prim_spec = {
     "tinyusdz._core.Prim",
     sizeof(PrimObject),
     0,
-    Py_TPFLAGS_DEFAULT,
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
     Prim_slots
 };
 
@@ -693,6 +1421,384 @@ make_value(const CTinyUSDValue *value, PyObject *owner)
     Py_INCREF(owner);
     obj->owner = owner;
     return (PyObject *)obj;
+}
+
+/* ------------------------------------------------------------------------
+ * Python -> CTinyUSDValue coercion.
+ *
+ * Coverage matches the C value-constructor surface in c-tinyusd.h:
+ *   - scalars: int, float, bool, str (-> string), token via dtype="token"
+ *   - tuple/list of int   length 2/3/4 -> int{2,3,4}
+ *   - tuple/list of float length 2/3/4 -> float{2,3,4}
+ *   - other lists of int/float -> int[]/float[] arrays
+ *
+ * `dtype` overrides inference for ambiguous cases (e.g. dtype="token").
+ *
+ * `out_type_name` is filled with a human-readable USD type name used to
+ * stamp the Attribute (e.g. "float", "int[]", "float3", "token"), which
+ * the writer needs for unambiguous serialization.
+ * -------------------------------------------------------------------- */
+
+static int
+py_seq_classify(PyObject *seq, Py_ssize_t *n_out, int *all_int, int *all_float)
+{
+    if (!(PyList_Check(seq) || PyTuple_Check(seq))) return 0;
+    Py_ssize_t n = PySequence_Size(seq);
+    if (n < 0) return 0;
+    *n_out = n;
+    *all_int = 1;
+    *all_float = 1;
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject *e = PySequence_GetItem(seq, i);
+        if (!e) return 0;
+        int is_bool = PyBool_Check(e);  /* bools are ints in Python */
+        int is_int = PyLong_Check(e) && !is_bool;
+        int is_flt = PyFloat_Check(e);
+        Py_DECREF(e);
+        if (!is_int) *all_int = 0;
+        if (!is_int && !is_flt) *all_float = 0;
+    }
+    return 1;
+}
+
+static CTinyUSDValue *
+py_to_value(PyObject *obj, const char *dtype, char *out_type_name,
+            size_t out_type_name_size)
+{
+    out_type_name[0] = '\0';
+
+    /* Explicit dtype="token[]" or "string[]" handles a list/tuple of
+     * strings. */
+    if (dtype && (!strcmp(dtype, "token[]") || !strcmp(dtype, "string[]"))) {
+        if (!(PyList_Check(obj) || PyTuple_Check(obj))) {
+            PyErr_SetString(PyExc_TypeError,
+                            "dtype expects a list/tuple of strings");
+            return NULL;
+        }
+        Py_ssize_t n = PySequence_Size(obj);
+        const char **carr = (const char **)PyMem_Malloc(
+            sizeof(const char *) * (size_t)(n > 0 ? n : 1));
+        if (!carr) return (PyObject *)PyErr_NoMemory();
+        /* Hold ref-keepers so utf8 buffers stay alive across the C call. */
+        PyObject *keepers = PyList_New(n);
+        if (!keepers) { PyMem_Free(carr); return NULL; }
+        for (Py_ssize_t i = 0; i < n; ++i) {
+            PyObject *e = PySequence_GetItem(obj, i);
+            if (!PyUnicode_Check(e)) {
+                Py_DECREF(e); Py_DECREF(keepers); PyMem_Free(carr);
+                PyErr_SetString(PyExc_TypeError,
+                                "token[]/string[] requires str elements");
+                return NULL;
+            }
+            const char *str = PyUnicode_AsUTF8(e);
+            carr[i] = str ? str : "";
+            PyList_SetItem(keepers, i, e);  /* steals e */
+        }
+        CTinyUSDValue *v;
+        if (!strcmp(dtype, "token[]")) {
+            v = c_tinyusd_value_new_array_token((uint64_t)n, carr);
+            snprintf(out_type_name, out_type_name_size, "token[]");
+        } else {
+            v = c_tinyusd_value_new_array_string((uint64_t)n, carr);
+            snprintf(out_type_name, out_type_name_size, "string[]");
+        }
+        PyMem_Free(carr);
+        Py_DECREF(keepers);
+        if (!v) PyErr_SetString(PyExc_RuntimeError,
+                                "value_new_array_(token|string) failed");
+        return v;
+    }
+
+    /* Explicit dtype="asset" handles a single path string. */
+    if (dtype && !strcmp(dtype, "asset")) {
+        if (!PyUnicode_Check(obj)) {
+            PyErr_SetString(PyExc_TypeError, "dtype='asset' requires a string");
+            return NULL;
+        }
+        const char *s = PyUnicode_AsUTF8(obj);
+        if (!s) return NULL;
+        CTinyUSDValue *v = c_tinyusd_value_new_asset(s);
+        snprintf(out_type_name, out_type_name_size, "asset");
+        if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_asset failed");
+        return v;
+    }
+
+    /* Explicit dtype="asset[]" handles a list/tuple of path strings. */
+    if (dtype && !strcmp(dtype, "asset[]")) {
+        if (!PyList_Check(obj) && !PyTuple_Check(obj)) {
+            PyErr_SetString(PyExc_TypeError,
+                            "dtype='asset[]' requires a list/tuple of str");
+            return NULL;
+        }
+        Py_ssize_t n = PySequence_Size(obj);
+        const char **paths = (const char **)PyMem_Malloc(
+            sizeof(char *) * (size_t)(n > 0 ? n : 1));
+        if (!paths) return PyErr_NoMemory();
+        PyObject **items = (PyObject **)PyMem_Malloc(
+            sizeof(PyObject *) * (size_t)(n > 0 ? n : 1));
+        if (!items) { PyMem_Free(paths); return PyErr_NoMemory(); }
+        for (Py_ssize_t i = 0; i < n; ++i) {
+            PyObject *e = PySequence_GetItem(obj, i);
+            if (!e || !PyUnicode_Check(e)) {
+                Py_XDECREF(e);
+                for (Py_ssize_t k = 0; k < i; ++k) Py_DECREF(items[k]);
+                PyMem_Free(items); PyMem_Free(paths);
+                PyErr_SetString(PyExc_TypeError,
+                                "all asset[] elements must be str");
+                return NULL;
+            }
+            items[i] = e;
+            paths[i] = PyUnicode_AsUTF8(e);
+            if (!paths[i]) {
+                for (Py_ssize_t k = 0; k <= i; ++k) Py_DECREF(items[k]);
+                PyMem_Free(items); PyMem_Free(paths);
+                return NULL;
+            }
+        }
+        CTinyUSDValue *v = c_tinyusd_value_new_array_asset((uint64_t)n, paths);
+        for (Py_ssize_t k = 0; k < n; ++k) Py_DECREF(items[k]);
+        PyMem_Free(items); PyMem_Free(paths);
+        snprintf(out_type_name, out_type_name_size, "asset[]");
+        if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_array_asset failed");
+        return v;
+    }
+
+    /* Explicit dtype="token" handles a single string. */
+    if (dtype && !strcmp(dtype, "token")) {
+        if (!PyUnicode_Check(obj)) {
+            PyErr_SetString(PyExc_TypeError, "dtype='token' requires a string");
+            return NULL;
+        }
+        const char *s = PyUnicode_AsUTF8(obj);
+        if (!s) return NULL;
+        c_tinyusd_token_t *tok = c_tinyusd_token_new(s);
+        if (!tok) return PyErr_NoMemory();
+        CTinyUSDValue *v = c_tinyusd_value_new_token(tok);
+        c_tinyusd_token_free(tok);
+        snprintf(out_type_name, out_type_name_size, "token");
+        if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_token failed");
+        return v;
+    }
+
+    /* bool BEFORE int — PyLong_Check is true for bool. */
+    if (PyBool_Check(obj)) {
+        /* No c_tinyusd_value_new_bool — fall through to int as 0/1. */
+        long b = PyObject_IsTrue(obj);
+        CTinyUSDValue *v = c_tinyusd_value_new_int((int)b);
+        snprintf(out_type_name, out_type_name_size, "int");
+        return v;
+    }
+    if (PyLong_Check(obj)) {
+        long long ll = PyLong_AsLongLong(obj);
+        if (PyErr_Occurred()) return NULL;
+        CTinyUSDValue *v = c_tinyusd_value_new_int((int)ll);
+        snprintf(out_type_name, out_type_name_size, "int");
+        return v;
+    }
+    if (PyFloat_Check(obj)) {
+        double d = PyFloat_AsDouble(obj);
+        if (PyErr_Occurred()) return NULL;
+        if (dtype && strcmp(dtype, "double") == 0) {
+            CTinyUSDValue *v = c_tinyusd_value_new_double(d);
+            snprintf(out_type_name, out_type_name_size, "double");
+            return v;
+        }
+        CTinyUSDValue *v = c_tinyusd_value_new_float((float)d);
+        snprintf(out_type_name, out_type_name_size, "float");
+        return v;
+    }
+    if (PyUnicode_Check(obj)) {
+        const char *s = PyUnicode_AsUTF8(obj);
+        if (!s) return NULL;
+        c_tinyusd_string_t *cs = c_tinyusd_string_new(s);
+        if (!cs) return PyErr_NoMemory();
+        CTinyUSDValue *v = c_tinyusd_value_new_string(cs);
+        c_tinyusd_string_free(cs);
+        snprintf(out_type_name, out_type_name_size, "string");
+        return v;
+    }
+
+    Py_ssize_t n = 0;
+    int all_int = 0, all_float = 0;
+    if (py_seq_classify(obj, &n, &all_int, &all_float)) {
+        /* Convention: tuple of length 2/3/4 -> packed vector; list -> array.
+         * dtype overrides this where supplied. */
+        int is_tuple = PyTuple_Check(obj);
+        if (is_tuple && (n == 2 || n == 3 || n == 4)) {
+            if (all_int) {
+                int xs[4] = {0,0,0,0};
+                for (Py_ssize_t i = 0; i < n; ++i) {
+                    PyObject *e = PySequence_GetItem(obj, i);
+                    xs[i] = (int)PyLong_AsLong(e);
+                    Py_DECREF(e);
+                    if (PyErr_Occurred()) return NULL;
+                }
+                CTinyUSDValue *v;
+                if (n == 2) {
+                    c_tinyusd_int2_t t = {xs[0], xs[1]};
+                    v = c_tinyusd_value_new_int2(t);
+                    snprintf(out_type_name, out_type_name_size, "int2");
+                } else if (n == 3) {
+                    c_tinyusd_int3_t t = {xs[0], xs[1], xs[2]};
+                    v = c_tinyusd_value_new_int3(t);
+                    snprintf(out_type_name, out_type_name_size, "int3");
+                } else {
+                    c_tinyusd_int4_t t = {xs[0], xs[1], xs[2], xs[3]};
+                    v = c_tinyusd_value_new_int4(t);
+                    snprintf(out_type_name, out_type_name_size, "int4");
+                }
+                return v;
+            }
+            if (all_float) {
+                /* Double-precision branch when dtype requests it. */
+                int want_double = dtype && (
+                    strcmp(dtype, "double2") == 0 ||
+                    strcmp(dtype, "double3") == 0 ||
+                    strcmp(dtype, "double4") == 0 ||
+                    strcmp(dtype, "point3d") == 0 ||
+                    strcmp(dtype, "vector3d") == 0 ||
+                    strcmp(dtype, "normal3d") == 0 ||
+                    strcmp(dtype, "color3d") == 0 ||
+                    strcmp(dtype, "color4d") == 0 ||
+                    strcmp(dtype, "texCoord2d") == 0 ||
+                    strcmp(dtype, "texCoord3d") == 0);
+                if (want_double) {
+                    double xs[4] = {0,0,0,0};
+                    for (Py_ssize_t i = 0; i < n; ++i) {
+                        PyObject *e = PySequence_GetItem(obj, i);
+                        xs[i] = PyFloat_AsDouble(e);
+                        Py_DECREF(e);
+                        if (PyErr_Occurred()) return NULL;
+                    }
+                    CTinyUSDValue *v;
+                    if (n == 2) {
+                        c_tinyusd_double2_t t = {xs[0], xs[1]};
+                        v = c_tinyusd_value_new_double2(t);
+                    } else if (n == 3) {
+                        c_tinyusd_double3_t t = {xs[0], xs[1], xs[2]};
+                        v = c_tinyusd_value_new_double3(t);
+                    } else {
+                        c_tinyusd_double4_t t = {xs[0], xs[1], xs[2], xs[3]};
+                        v = c_tinyusd_value_new_double4(t);
+                    }
+                    snprintf(out_type_name, out_type_name_size, "%s", dtype);
+                    return v;
+                }
+                float xs[4] = {0,0,0,0};
+                for (Py_ssize_t i = 0; i < n; ++i) {
+                    PyObject *e = PySequence_GetItem(obj, i);
+                    xs[i] = (float)PyFloat_AsDouble(e);
+                    Py_DECREF(e);
+                    if (PyErr_Occurred()) return NULL;
+                }
+                CTinyUSDValue *v;
+                if (n == 2) {
+                    c_tinyusd_float2_t t = {xs[0], xs[1]};
+                    v = c_tinyusd_value_new_float2(t);
+                    snprintf(out_type_name, out_type_name_size, "float2");
+                } else if (n == 3) {
+                    c_tinyusd_float3_t t = {xs[0], xs[1], xs[2]};
+                    v = c_tinyusd_value_new_float3(t);
+                    snprintf(out_type_name, out_type_name_size, "float3");
+                } else {
+                    c_tinyusd_float4_t t = {xs[0], xs[1], xs[2], xs[3]};
+                    v = c_tinyusd_value_new_float4(t);
+                    snprintf(out_type_name, out_type_name_size, "float4");
+                }
+                return v;
+            }
+        }
+        /* Other lengths: treat as 1D array of int or float. */
+        if (all_int && n >= 0) {
+            int *arr = (int *)PyMem_Malloc(sizeof(int) * (size_t)(n > 0 ? n : 1));
+            if (!arr) return PyErr_NoMemory();
+            for (Py_ssize_t i = 0; i < n; ++i) {
+                PyObject *e = PySequence_GetItem(obj, i);
+                arr[i] = (int)PyLong_AsLong(e);
+                Py_DECREF(e);
+                if (PyErr_Occurred()) { PyMem_Free(arr); return NULL; }
+            }
+            CTinyUSDValue *v = c_tinyusd_value_new_array_int((uint64_t)n, arr);
+            PyMem_Free(arr);
+            snprintf(out_type_name, out_type_name_size, "int[]");
+            return v;
+        }
+        if (all_float && n >= 0) {
+            float *arr = (float *)PyMem_Malloc(sizeof(float) * (size_t)(n > 0 ? n : 1));
+            if (!arr) return PyErr_NoMemory();
+            for (Py_ssize_t i = 0; i < n; ++i) {
+                PyObject *e = PySequence_GetItem(obj, i);
+                arr[i] = (float)PyFloat_AsDouble(e);
+                Py_DECREF(e);
+                if (PyErr_Occurred()) { PyMem_Free(arr); return NULL; }
+            }
+            CTinyUSDValue *v = c_tinyusd_value_new_array_float((uint64_t)n, arr);
+            PyMem_Free(arr);
+            snprintf(out_type_name, out_type_name_size, "float[]");
+            return v;
+        }
+        /* Sequence of sequences -> array of vectors (e.g. point3f[]). */
+        if (n > 0) {
+            PyObject *first = PySequence_GetItem(obj, 0);
+            int is_seq = PyList_Check(first) || PyTuple_Check(first);
+            Py_ssize_t inner_n = is_seq ? PySequence_Size(first) : 0;
+            Py_DECREF(first);
+            if (is_seq && (inner_n == 3 || inner_n == 2 || inner_n == 4)) {
+                /* Flatten into float array; assume float components. */
+                size_t total = (size_t)n * (size_t)inner_n;
+                float *flat = (float *)PyMem_Malloc(sizeof(float) * (total > 0 ? total : 1));
+                if (!flat) return PyErr_NoMemory();
+                for (Py_ssize_t i = 0; i < n; ++i) {
+                    PyObject *row = PySequence_GetItem(obj, i);
+                    if (!row || PySequence_Size(row) != inner_n) {
+                        Py_XDECREF(row);
+                        PyMem_Free(flat);
+                        PyErr_SetString(PyExc_ValueError,
+                                        "ragged sequence in attribute value");
+                        return NULL;
+                    }
+                    for (Py_ssize_t j = 0; j < inner_n; ++j) {
+                        PyObject *e = PySequence_GetItem(row, j);
+                        flat[i * inner_n + j] = (float)PyFloat_AsDouble(e);
+                        Py_DECREF(e);
+                        if (PyErr_Occurred()) {
+                            Py_DECREF(row);
+                            PyMem_Free(flat);
+                            return NULL;
+                        }
+                    }
+                    Py_DECREF(row);
+                }
+                CTinyUSDValue *v = NULL;
+                if (inner_n == 2) {
+                    v = c_tinyusd_value_new_array_float2(
+                        (uint64_t)n, (const c_tinyusd_float2_t *)flat);
+                    snprintf(out_type_name, out_type_name_size, "float2[]");
+                } else if (inner_n == 3) {
+                    v = c_tinyusd_value_new_array_float3(
+                        (uint64_t)n, (const c_tinyusd_float3_t *)flat);
+                    /* Default type name; caller may override via dtype. */
+                    snprintf(out_type_name, out_type_name_size,
+                             dtype ? dtype : "float3[]");
+                } else {
+                    v = c_tinyusd_value_new_array_float4(
+                        (uint64_t)n, (const c_tinyusd_float4_t *)flat);
+                    snprintf(out_type_name, out_type_name_size, "float4[]");
+                }
+                PyMem_Free(flat);
+                /* Allow caller to override the role-type name via dtype
+                 * (e.g. "point3f[]", "color3f[]", "normal3f[]"). */
+                if (dtype && inner_n == 3) {
+                    snprintf(out_type_name, out_type_name_size, "%s", dtype);
+                }
+                return v;
+            }
+        }
+    }
+
+    PyErr_SetString(PyExc_TypeError,
+                    "unsupported value type for tinyusdz.Prim.set_attribute");
+    return NULL;
 }
 
 /* ------------------------------------------------------------------------

@@ -447,57 +447,21 @@ bool CrateWriter::Finalize(std::string* err) {
   }
 
   // ========================================================================
-  // CRITICAL: Re-sort paths_ and update spec path_indexes
+  // Path-index remap after field packing
   // ========================================================================
-  // During field packing, connection target paths were added to paths_.
-  // These paths need to be in sorted order for correct tree encoding.
-  // After sorting, we must update all spec path_indexes to use the new indices.
-
-  {
-    // Convert paths_ to SimplePaths for sorting
-    std::vector<std::pair<pathlib::SimplePath, size_t>> paths_with_old_idx;
-    for (size_t i = 0; i < paths_.size(); ++i) {
-      paths_with_old_idx.emplace_back(
-        pathlib::SimplePath(paths_[i].prim_part(), paths_[i].prop_part()),
-        i
-      );
-    }
-
-    // Sort using USD path comparison
-    std::sort(paths_with_old_idx.begin(), paths_with_old_idx.end(),
-      [](const auto& a, const auto& b) {
-        return pathlib::ComparePaths(a.first, b.first) < 0;
-      });
-
-    // Build old -> new index mapping
-    std::vector<uint32_t> old_to_new(paths_.size());
-    for (size_t new_idx = 0; new_idx < paths_with_old_idx.size(); ++new_idx) {
-      size_t old_idx = paths_with_old_idx[new_idx].second;
-      old_to_new[old_idx] = static_cast<uint32_t>(new_idx);
-    }
-
-    // Rebuild paths_ in sorted order
-    std::vector<Path> sorted_paths;
-    sorted_paths.reserve(paths_.size());
-    for (const auto& pair : paths_with_old_idx) {
-      // Find original path by old index
-      sorted_paths.push_back(paths_[pair.second]);
-    }
-    paths_ = std::move(sorted_paths);
-
-    // Rebuild path_to_index_ with new indices
-    path_to_index_.clear();
-    for (size_t i = 0; i < paths_.size(); ++i) {
-      path_to_index_[paths_[i]] = crate::PathIndex(static_cast<uint32_t>(i));
-    }
-
-    // Update all spec path_indexes using the mapping
-    for (auto& spec_data : spec_data_) {
-      uint32_t old_idx = spec_data.spec.path_index.value;
-      spec_data.spec.path_index.value = old_to_new[old_idx];
-    }
-
-  }
+  // During field packing, ListOp<Reference> / ListOp<Payload> /
+  // ListOp<Path> / connection-target / pathvector value data wrote raw
+  // PathIndex bytes referencing positions in paths_ at the time of the
+  // write. Historically we re-sorted paths_ here for tree-encoding ordering
+  // and remapped only the spec path_indexes — that left those embedded
+  // value-data indices pointing at the wrong paths after the sort, so e.g.
+  // `references = @./a.usda@</A>` came back as `</x>` (whatever happened
+  // to land at the original index after re-sorting).
+  //
+  // Fix: skip the re-sort. WritePathsSection sorts paths internally for
+  // tree encoding and stores `encoded_path_indices[i] = preassigned`, so
+  // the on-disk tree still maps correctly to the original PathIndex values
+  // — and value-data path indices stay valid.
 
   // ========================================================================
   // Step 2: Write all structural sections
@@ -632,6 +596,26 @@ static bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue*
   CONVERT_CRATE_VALUE(std::vector<value::token>)
   CONVERT_CRATE_VALUE(std::vector<std::string>)
   CONVERT_CRATE_VALUE(std::vector<value::AssetPath>)
+  // Half-vec / matrix / quaternion scalars
+  CONVERT_CRATE_VALUE(value::half2)
+  CONVERT_CRATE_VALUE(value::half3)
+  CONVERT_CRATE_VALUE(value::half4)
+  CONVERT_CRATE_VALUE(value::matrix2d)
+  CONVERT_CRATE_VALUE(value::matrix3d)
+  CONVERT_CRATE_VALUE(value::matrix4d)
+  CONVERT_CRATE_VALUE(value::quath)
+  CONVERT_CRATE_VALUE(value::quatf)
+  CONVERT_CRATE_VALUE(value::quatd)
+  // Half-vec / matrix / quaternion arrays
+  CONVERT_CRATE_VALUE(std::vector<value::half2>)
+  CONVERT_CRATE_VALUE(std::vector<value::half3>)
+  CONVERT_CRATE_VALUE(std::vector<value::half4>)
+  CONVERT_CRATE_VALUE(std::vector<value::matrix2d>)
+  CONVERT_CRATE_VALUE(std::vector<value::matrix3d>)
+  CONVERT_CRATE_VALUE(std::vector<value::matrix4d>)
+  CONVERT_CRATE_VALUE(std::vector<value::quath>)
+  CONVERT_CRATE_VALUE(std::vector<value::quatf>)
+  CONVERT_CRATE_VALUE(std::vector<value::quatd>)
 
 #undef CONVERT_CRATE_VALUE
   // fall through to unmatched type handling
@@ -1884,6 +1868,24 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       }
     }
   }
+  // Asset array - reader expects StringIndex elements (uninlined/array path
+  // in crate-reader-values.cc). Note inlined scalar AssetPath uses a
+  // TokenIndex; arrays use StringIndex. See the asymmetric reader at
+  // CRATE_DATA_TYPE_ASSET_PATH.
+  else if (auto* asset_array = value.as<std::vector<value::AssetPath>>()) {
+    uint64_t count = asset_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write asset[] count";
+      return -1;
+    }
+    for (const auto& ap : *asset_array) {
+      crate::StringIndex idx = GetOrCreateString(ap.GetAssetPath());
+      if (!Write(idx.value)) {
+        if (err) *err = "Failed to write asset[] element index";
+        return -1;
+      }
+    }
+  }
   // Token array - special handling (tokens are stored as indices)
   else if (auto* token_array = value.as<std::vector<value::token>>()) {
     uint64_t count = token_array->size();
@@ -2762,6 +2764,16 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
     }
 
     // === Step 6: Write times array data (count + doubles) ===
+    // PackValue() seeks to value_data_end_offset_ to write each sample's
+    // out-of-line bytes, then seeks back. After the ValueRep loop, Tell()
+    // points just past the ValueRep[] block — but value_data_end_offset_
+    // has advanced past the actual sample-value bytes. Writing times at
+    // Tell() would clobber those bytes; jump to value_data_end_offset_
+    // first so the file layout is ValueRep[] | values data | times data.
+    if (!Seek(value_data_end_offset_)) {
+      if (err) *err = "Failed to seek past value bytes before writing times";
+      return -1;
+    }
     int64_t times_data_start = Tell();
 
     // Write count
@@ -2854,8 +2866,11 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
 
   // Try to get as AssetPath
   if (auto* asset_val = value.as<value::AssetPath>()) {
-    // AssetPath is stored as a string index
-    crate::StringIndex idx = GetOrCreateString(asset_val->GetAssetPath());
+    // Inlined AssetPath is stored as a TokenIndex per OpenUSD's crate
+    // format (matches CrateReader at crate-reader-values.cc which reads
+    // it via GetToken). Storing as StringIndex caused the reader to read
+    // a token at the wrong index and surface garbage like ";-)".
+    crate::TokenIndex idx = GetOrCreateToken(asset_val->GetAssetPath());
     rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH));
     rep->SetIsInlined();
     rep->SetPayload(static_cast<uint64_t>(idx.value));
