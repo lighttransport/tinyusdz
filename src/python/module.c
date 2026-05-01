@@ -1828,6 +1828,699 @@ py_to_value(PyObject *obj, const char *dtype, char *out_type_name,
         return v;
     }
 
+    /* Explicit dtype="int64[]" — list/tuple of int64 values. */
+    if (dtype && !strcmp(dtype, "int64[]")) {
+        if (!(PyList_Check(obj) || PyTuple_Check(obj))) {
+            PyErr_SetString(PyExc_TypeError,
+                            "dtype='int64[]' requires a list/tuple of int");
+            return NULL;
+        }
+        Py_ssize_t n = PySequence_Size(obj);
+        int64_t *arr = (int64_t *)PyMem_Malloc(sizeof(int64_t) * (size_t)(n > 0 ? n : 1));
+        if (!arr) {
+            PyErr_NoMemory();
+            return NULL;
+        }
+        for (Py_ssize_t i = 0; i < n; ++i) {
+            PyObject *e = PySequence_GetItem(obj, i);
+            if (!PyLong_Check(e)) {
+                Py_DECREF(e);
+                PyMem_Free(arr);
+                PyErr_SetString(PyExc_TypeError,
+                                "int64[] elements must be int");
+                return NULL;
+            }
+            arr[i] = PyLong_AsLongLong(e);
+            Py_DECREF(e);
+            if (PyErr_Occurred()) { PyMem_Free(arr); return NULL; }
+        }
+        CTinyUSDValue *v = c_tinyusd_value_new_array_int64((uint64_t)n, arr);
+        PyMem_Free(arr);
+        snprintf(out_type_name, out_type_name_size, "int64[]");
+        if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_array_int64 failed");
+        return v;
+    }
+
+    /* Explicit dtype="uint64[]" — list/tuple of uint64 values. */
+    if (dtype && !strcmp(dtype, "uint64[]")) {
+        if (!(PyList_Check(obj) || PyTuple_Check(obj))) {
+            PyErr_SetString(PyExc_TypeError,
+                            "dtype='uint64[]' requires a list/tuple of int");
+            return NULL;
+        }
+        Py_ssize_t n = PySequence_Size(obj);
+        uint64_t *arr = (uint64_t *)PyMem_Malloc(sizeof(uint64_t) * (size_t)(n > 0 ? n : 1));
+        if (!arr) {
+            PyErr_NoMemory();
+            return NULL;
+        }
+        for (Py_ssize_t i = 0; i < n; ++i) {
+            PyObject *e = PySequence_GetItem(obj, i);
+            if (!PyLong_Check(e)) {
+                Py_DECREF(e);
+                PyMem_Free(arr);
+                PyErr_SetString(PyExc_TypeError,
+                                "uint64[] elements must be int");
+                return NULL;
+            }
+            arr[i] = PyLong_AsUnsignedLongLong(e);
+            Py_DECREF(e);
+            if (PyErr_Occurred()) { PyMem_Free(arr); return NULL; }
+        }
+        CTinyUSDValue *v = c_tinyusd_value_new_array_uint64((uint64_t)n, arr);
+        PyMem_Free(arr);
+        snprintf(out_type_name, out_type_name_size, "uint64[]");
+        if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_array_uint64 failed");
+        return v;
+    }
+
+    /* Explicit dtype="bool[]" — list/tuple of bool values. */
+    if (dtype && !strcmp(dtype, "bool[]")) {
+        if (!(PyList_Check(obj) || PyTuple_Check(obj))) {
+            PyErr_SetString(PyExc_TypeError,
+                            "dtype='bool[]' requires a list/tuple of bool");
+            return NULL;
+        }
+        Py_ssize_t n = PySequence_Size(obj);
+        int *arr = (int *)PyMem_Malloc(sizeof(int) * (size_t)(n > 0 ? n : 1));
+        if (!arr) {
+            PyErr_NoMemory();
+            return NULL;
+        }
+        for (Py_ssize_t i = 0; i < n; ++i) {
+            PyObject *e = PySequence_GetItem(obj, i);
+            arr[i] = PyObject_IsTrue(e);
+            Py_DECREF(e);
+            if (arr[i] == -1) { PyMem_Free(arr); return NULL; }
+        }
+        CTinyUSDValue *v = c_tinyusd_value_new_array_bool((uint64_t)n, arr);
+        PyMem_Free(arr);
+        snprintf(out_type_name, out_type_name_size, "bool[]");
+        if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_array_bool failed");
+        return v;
+    }
+
+    /* Explicit dtype="half[]" — list/tuple of float values -> half array. */
+    if (dtype && !strcmp(dtype, "half[]")) {
+        if (!(PyList_Check(obj) || PyTuple_Check(obj))) {
+            PyErr_SetString(PyExc_TypeError,
+                            "dtype='half[]' requires a list/tuple of float");
+            return NULL;
+        }
+        Py_ssize_t n = PySequence_Size(obj);
+        c_tinyusd_half_t *arr = (c_tinyusd_half_t *)PyMem_Malloc(
+            sizeof(c_tinyusd_half_t) * (size_t)(n > 0 ? n : 1));
+        if (!arr) {
+            PyErr_NoMemory();
+            return NULL;
+        }
+        for (Py_ssize_t i = 0; i < n; ++i) {
+            PyObject *e = PySequence_GetItem(obj, i);
+            double d = PyFloat_AsDouble(e);
+            Py_DECREF(e);
+            if (PyErr_Occurred()) { PyMem_Free(arr); return NULL; }
+            arr[i] = c_tinyusd_float_to_half((float)d);
+        }
+        CTinyUSDValue *v = c_tinyusd_value_new_array_half((uint64_t)n, arr);
+        PyMem_Free(arr);
+        snprintf(out_type_name, out_type_name_size, "half[]");
+        if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_array_half failed");
+        return v;
+    }
+
+    /* Explicit dtype="double[]" — list/tuple of float values -> double array. */
+    if (dtype && !strcmp(dtype, "double[]")) {
+        if (!(PyList_Check(obj) || PyTuple_Check(obj))) {
+            PyErr_SetString(PyExc_TypeError,
+                            "dtype='double[]' requires a list/tuple of float");
+            return NULL;
+        }
+        Py_ssize_t n = PySequence_Size(obj);
+        double *arr = (double *)PyMem_Malloc(sizeof(double) * (size_t)(n > 0 ? n : 1));
+        if (!arr) {
+            PyErr_NoMemory();
+            return NULL;
+        }
+        for (Py_ssize_t i = 0; i < n; ++i) {
+            PyObject *e = PySequence_GetItem(obj, i);
+            arr[i] = PyFloat_AsDouble(e);
+            Py_DECREF(e);
+            if (PyErr_Occurred()) { PyMem_Free(arr); return NULL; }
+        }
+        CTinyUSDValue *v = c_tinyusd_value_new_array_double((uint64_t)n, arr);
+        PyMem_Free(arr);
+        snprintf(out_type_name, out_type_name_size, "double[]");
+        if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_array_double failed");
+        return v;
+    }
+
+    /* Explicit dtype="uint[]" — list/tuple of int values -> uint array. */
+    if (dtype && !strcmp(dtype, "uint[]")) {
+        if (!(PyList_Check(obj) || PyTuple_Check(obj))) {
+            PyErr_SetString(PyExc_TypeError,
+                            "dtype='uint[]' requires a list/tuple of int");
+            return NULL;
+        }
+        Py_ssize_t n = PySequence_Size(obj);
+        unsigned int *arr = (unsigned int *)PyMem_Malloc(sizeof(unsigned int) * (size_t)(n > 0 ? n : 1));
+        if (!arr) {
+            PyErr_NoMemory();
+            return NULL;
+        }
+        for (Py_ssize_t i = 0; i < n; ++i) {
+            PyObject *e = PySequence_GetItem(obj, i);
+            arr[i] = (unsigned int)PyLong_AsUnsignedLong(e);
+            Py_DECREF(e);
+            if (PyErr_Occurred()) { PyMem_Free(arr); return NULL; }
+        }
+        CTinyUSDValue *v = c_tinyusd_value_new_array_uint((uint64_t)n, arr);
+        PyMem_Free(arr);
+        snprintf(out_type_name, out_type_name_size, "uint[]");
+        if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_array_uint failed");
+        return v;
+    }
+
+    /* Explicit dtype="quatf[]" — list of 4-element [w,x,y,z] sequences. */
+    if (dtype && !strcmp(dtype, "quatf[]")) {
+        if (!(PyList_Check(obj) || PyTuple_Check(obj))) {
+            PyErr_SetString(PyExc_TypeError,
+                            "dtype='quatf[]' requires a list/tuple of 4-element sequences");
+            return NULL;
+        }
+        Py_ssize_t n = PySequence_Size(obj);
+        c_tinyusd_quatf_t *arr = (c_tinyusd_quatf_t *)PyMem_Malloc(
+            sizeof(c_tinyusd_quatf_t) * (size_t)(n > 0 ? n : 1));
+        if (!arr) {
+            PyErr_NoMemory();
+            return NULL;
+        }
+        for (Py_ssize_t i = 0; i < n; ++i) {
+            PyObject *elem = PySequence_GetItem(obj, i);
+            if (!(PyList_Check(elem) || PyTuple_Check(elem)) ||
+                PySequence_Size(elem) != 4) {
+                Py_DECREF(elem);
+                PyMem_Free(arr);
+                PyErr_SetString(PyExc_TypeError,
+                                "quatf[] elements must be 4-element sequences [w,x,y,z]");
+                return NULL;
+            }
+            double xs[4];
+            for (Py_ssize_t j = 0; j < 4; ++j) {
+                PyObject *e = PySequence_GetItem(elem, j);
+                xs[j] = PyFloat_AsDouble(e);
+                Py_DECREF(e);
+                if (PyErr_Occurred()) { Py_DECREF(elem); PyMem_Free(arr); return NULL; }
+            }
+            arr[i].real = (float)xs[0];
+            arr[i].imag[0] = (float)xs[1];
+            arr[i].imag[1] = (float)xs[2];
+            arr[i].imag[2] = (float)xs[3];
+            Py_DECREF(elem);
+        }
+        CTinyUSDValue *v = c_tinyusd_value_new_array_quatf((uint64_t)n, arr);
+        PyMem_Free(arr);
+        snprintf(out_type_name, out_type_name_size, "quatf[]");
+        if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_array_quatf failed");
+        return v;
+    }
+
+    /* Explicit dtype="quatd[]" — list of 4-element [w,x,y,z] sequences. */
+    if (dtype && !strcmp(dtype, "quatd[]")) {
+        if (!(PyList_Check(obj) || PyTuple_Check(obj))) {
+            PyErr_SetString(PyExc_TypeError,
+                            "dtype='quatd[]' requires a list/tuple of 4-element sequences");
+            return NULL;
+        }
+        Py_ssize_t n = PySequence_Size(obj);
+        c_tinyusd_quatd_t *arr = (c_tinyusd_quatd_t *)PyMem_Malloc(
+            sizeof(c_tinyusd_quatd_t) * (size_t)(n > 0 ? n : 1));
+        if (!arr) {
+            PyErr_NoMemory();
+            return NULL;
+        }
+        for (Py_ssize_t i = 0; i < n; ++i) {
+            PyObject *elem = PySequence_GetItem(obj, i);
+            if (!(PyList_Check(elem) || PyTuple_Check(elem)) ||
+                PySequence_Size(elem) != 4) {
+                Py_DECREF(elem);
+                PyMem_Free(arr);
+                PyErr_SetString(PyExc_TypeError,
+                                "quatd[] elements must be 4-element sequences [w,x,y,z]");
+                return NULL;
+            }
+            double xs[4];
+            for (Py_ssize_t j = 0; j < 4; ++j) {
+                PyObject *e = PySequence_GetItem(elem, j);
+                xs[j] = PyFloat_AsDouble(e);
+                Py_DECREF(e);
+                if (PyErr_Occurred()) { Py_DECREF(elem); PyMem_Free(arr); return NULL; }
+            }
+            arr[i].real = xs[0];
+            arr[i].imag[0] = xs[1];
+            arr[i].imag[1] = xs[2];
+            arr[i].imag[2] = xs[3];
+            Py_DECREF(elem);
+        }
+        CTinyUSDValue *v = c_tinyusd_value_new_array_quatd((uint64_t)n, arr);
+        PyMem_Free(arr);
+        snprintf(out_type_name, out_type_name_size, "quatd[]");
+        if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_array_quatd failed");
+        return v;
+    }
+
+    /* Explicit dtype="quath[]" — list of 4-element [w,x,y,z] sequences. */
+    if (dtype && !strcmp(dtype, "quath[]")) {
+        if (!(PyList_Check(obj) || PyTuple_Check(obj))) {
+            PyErr_SetString(PyExc_TypeError,
+                            "dtype='quath[]' requires a list/tuple of 4-element sequences");
+            return NULL;
+        }
+        Py_ssize_t n = PySequence_Size(obj);
+        c_tinyusd_quath_t *arr = (c_tinyusd_quath_t *)PyMem_Malloc(
+            sizeof(c_tinyusd_quath_t) * (size_t)(n > 0 ? n : 1));
+        if (!arr) {
+            PyErr_NoMemory();
+            return NULL;
+        }
+        for (Py_ssize_t i = 0; i < n; ++i) {
+            PyObject *elem = PySequence_GetItem(obj, i);
+            if (!(PyList_Check(elem) || PyTuple_Check(elem)) ||
+                PySequence_Size(elem) != 4) {
+                Py_DECREF(elem);
+                PyMem_Free(arr);
+                PyErr_SetString(PyExc_TypeError,
+                                "quath[] elements must be 4-element sequences [w,x,y,z]");
+                return NULL;
+            }
+            double xs[4];
+            for (Py_ssize_t j = 0; j < 4; ++j) {
+                PyObject *e = PySequence_GetItem(elem, j);
+                xs[j] = PyFloat_AsDouble(e);
+                Py_DECREF(e);
+                if (PyErr_Occurred()) { Py_DECREF(elem); PyMem_Free(arr); return NULL; }
+            }
+            arr[i].real = c_tinyusd_float_to_half((float)xs[0]);
+            arr[i].imag[0] = c_tinyusd_float_to_half((float)xs[1]);
+            arr[i].imag[1] = c_tinyusd_float_to_half((float)xs[2]);
+            arr[i].imag[2] = c_tinyusd_float_to_half((float)xs[3]);
+            Py_DECREF(elem);
+        }
+        CTinyUSDValue *v = c_tinyusd_value_new_array_quath((uint64_t)n, arr);
+        PyMem_Free(arr);
+        snprintf(out_type_name, out_type_name_size, "quath[]");
+        if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_array_quath failed");
+        return v;
+    }
+
+    /* Explicit dtype="frame4d" — 4x4 matrix */
+    if (dtype && !strcmp(dtype, "frame4d")) {
+        if (!(PyList_Check(obj) || PyTuple_Check(obj))) {
+            PyErr_SetString(PyExc_TypeError,
+                          "dtype='frame4d' requires a nested sequence (4x4)");
+            return NULL;
+        }
+        Py_ssize_t n_rows = PySequence_Size(obj);
+        /* Accept either 4 rows x 4 cols (nested) or flat 16-element list */
+        if (n_rows == 4) {
+            /* Nested 4x4 matrix */
+            double m[16] = {0};
+            for (Py_ssize_t i = 0; i < 4; ++i) {
+                PyObject *row = PySequence_GetItem(obj, i);
+                if (!row || !(PyList_Check(row) || PyTuple_Check(row)) ||
+                    PySequence_Size(row) != 4) {
+                    Py_XDECREF(row);
+                    PyErr_SetString(PyExc_ValueError,
+                                  "dtype='frame4d' row must have 4 cols");
+                    return NULL;
+                }
+                for (Py_ssize_t j = 0; j < 4; ++j) {
+                    PyObject *e = PySequence_GetItem(row, j);
+                    m[i * 4 + j] = PyFloat_AsDouble(e);
+                    Py_DECREF(e);
+                    if (PyErr_Occurred()) { Py_DECREF(row); return NULL; }
+                }
+                Py_DECREF(row);
+            }
+            c_tinyusd_matrix4d_t mat;
+            memcpy(&mat, m, sizeof(double) * 16);
+            CTinyUSDValue *v = c_tinyusd_value_new_frame4d(mat);
+            snprintf(out_type_name, out_type_name_size, "frame4d");
+            return v;
+        } else if (n_rows == 16) {
+            /* Flat 16-element list */
+            double m[16] = {0};
+            for (Py_ssize_t i = 0; i < 16; ++i) {
+                PyObject *e = PySequence_GetItem(obj, i);
+                m[i] = PyFloat_AsDouble(e);
+                Py_DECREF(e);
+                if (PyErr_Occurred()) return NULL;
+            }
+            c_tinyusd_matrix4d_t mat;
+            memcpy(&mat, m, sizeof(double) * 16);
+            CTinyUSDValue *v = c_tinyusd_value_new_frame4d(mat);
+            snprintf(out_type_name, out_type_name_size, "frame4d");
+            return v;
+        } else {
+            PyErr_Format(PyExc_ValueError,
+                       "dtype='frame4d' expects 4 rows or 16 elements, got %zd",
+                       n_rows);
+            return NULL;
+        }
+    }
+
+    /* Explicit dtype="frame4d[]" — array of 4x4 matrices */
+    if (dtype && !strcmp(dtype, "frame4d[]")) {
+        if (!(PyList_Check(obj) || PyTuple_Check(obj))) {
+            PyErr_SetString(PyExc_TypeError,
+                          "dtype='frame4d[]' requires a list/tuple of matrices");
+            return NULL;
+        }
+        Py_ssize_t n = PySequence_Size(obj);
+        if (n == 0) {
+            /* Empty array */
+            CTinyUSDValue *v = c_tinyusd_value_new_array_frame4d(0, NULL);
+            snprintf(out_type_name, out_type_name_size, "frame4d[]");
+            return v;
+        }
+        c_tinyusd_matrix4d_t *matrices =
+            (c_tinyusd_matrix4d_t *)PyMem_Malloc(sizeof(c_tinyusd_matrix4d_t) * (size_t)n);
+        if (!matrices) {
+            PyErr_NoMemory();
+            return NULL;
+        }
+        
+        for (Py_ssize_t k = 0; k < n; ++k) {
+            PyObject *item = PySequence_GetItem(obj, k);
+            if (!item || !(PyList_Check(item) || PyTuple_Check(item))) {
+                Py_XDECREF(item);
+                PyMem_Free(matrices);
+                PyErr_SetString(PyExc_TypeError,
+                              "frame4d[] elements must be sequences (4x4 matrices)");
+                return NULL;
+            }
+            Py_ssize_t item_len = PySequence_Size(item);
+            double m[16] = {0};
+            int is_valid = 0;
+            
+            if (item_len == 4) {
+                /* Nested 4x4 */
+                is_valid = 1;
+                for (Py_ssize_t i = 0; i < 4 && is_valid; ++i) {
+                    PyObject *row = PySequence_GetItem(item, i);
+                    if (!row || !(PyList_Check(row) || PyTuple_Check(row)) ||
+                        PySequence_Size(row) != 4) {
+                        Py_XDECREF(row);
+                        is_valid = 0;
+                        break;
+                    }
+                    for (Py_ssize_t j = 0; j < 4; ++j) {
+                        PyObject *e = PySequence_GetItem(row, j);
+                        m[i * 4 + j] = PyFloat_AsDouble(e);
+                        Py_DECREF(e);
+                        if (PyErr_Occurred()) { Py_DECREF(row); is_valid = 0; break; }
+                    }
+                    Py_DECREF(row);
+                }
+            } else if (item_len == 16) {
+                /* Flat 16-element */
+                is_valid = 1;
+                for (Py_ssize_t i = 0; i < 16; ++i) {
+                    PyObject *e = PySequence_GetItem(item, i);
+                    m[i] = PyFloat_AsDouble(e);
+                    Py_DECREF(e);
+                    if (PyErr_Occurred()) { is_valid = 0; break; }
+                }
+            }
+            
+            if (!is_valid) {
+                Py_DECREF(item);
+                PyMem_Free(matrices);
+                PyErr_SetString(PyExc_ValueError,
+                              "frame4d[] element must be 4x4 matrix or 16-element list");
+                return NULL;
+            }
+            memcpy(&matrices[k], m, sizeof(double) * 16);
+            Py_DECREF(item);
+        }
+        
+        CTinyUSDValue *v = c_tinyusd_value_new_array_frame4d((uint64_t)n, matrices);
+        PyMem_Free(matrices);
+        snprintf(out_type_name, out_type_name_size, "frame4d[]");
+        if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_array_frame4d failed");
+        return v;
+    }
+
+    /* Explicit texCoord types — must be handled before generic tuple handling */
+    if (dtype && !strcmp(dtype, "texCoord2f")) {
+        Py_ssize_t n = 0;
+        int all_int = 0, all_float = 0;
+        if (py_seq_classify(obj, &n, &all_int, &all_float) && n == 2 && all_float) {
+            float xs[2] = {0.0f, 0.0f};
+            for (Py_ssize_t i = 0; i < 2; ++i) {
+                PyObject *e = PySequence_GetItem(obj, i);
+                xs[i] = (float)PyFloat_AsDouble(e);
+                Py_DECREF(e);
+                if (PyErr_Occurred()) return NULL;
+            }
+            c_tinyusd_texcoord2f_t t = {xs[0], xs[1]};
+            CTinyUSDValue *v = c_tinyusd_value_new_texcoord2f(t);
+            snprintf(out_type_name, out_type_name_size, "texCoord2f");
+            return v;
+        } else {
+            PyErr_SetString(PyExc_TypeError, "texCoord2f must be a 2-tuple of floats");
+            return NULL;
+        }
+    }
+
+    if (dtype && !strcmp(dtype, "texCoord2d")) {
+        Py_ssize_t n = 0;
+        int all_int = 0, all_float = 0;
+        if (py_seq_classify(obj, &n, &all_int, &all_float) && n == 2 && all_float) {
+            double xs[2] = {0.0, 0.0};
+            for (Py_ssize_t i = 0; i < 2; ++i) {
+                PyObject *e = PySequence_GetItem(obj, i);
+                xs[i] = PyFloat_AsDouble(e);
+                Py_DECREF(e);
+                if (PyErr_Occurred()) return NULL;
+            }
+            c_tinyusd_texcoord2d_t t = {xs[0], xs[1]};
+            CTinyUSDValue *v = c_tinyusd_value_new_texcoord2d(t);
+            snprintf(out_type_name, out_type_name_size, "texCoord2d");
+            return v;
+        } else {
+            PyErr_SetString(PyExc_TypeError, "texCoord2d must be a 2-tuple of floats");
+            return NULL;
+        }
+    }
+
+    if (dtype && !strcmp(dtype, "texCoord3f")) {
+        Py_ssize_t n = 0;
+        int all_int = 0, all_float = 0;
+        if (py_seq_classify(obj, &n, &all_int, &all_float) && n == 3 && all_float) {
+            float xs[3] = {0.0f, 0.0f, 0.0f};
+            for (Py_ssize_t i = 0; i < 3; ++i) {
+                PyObject *e = PySequence_GetItem(obj, i);
+                xs[i] = (float)PyFloat_AsDouble(e);
+                Py_DECREF(e);
+                if (PyErr_Occurred()) return NULL;
+            }
+            c_tinyusd_float3_t t = {xs[0], xs[1], xs[2]};
+            CTinyUSDValue *v = c_tinyusd_value_new_texcoord3f(t);
+            snprintf(out_type_name, out_type_name_size, "texCoord3f");
+            return v;
+        } else {
+            PyErr_SetString(PyExc_TypeError, "texCoord3f must be a 3-tuple of floats");
+            return NULL;
+        }
+    }
+
+    if (dtype && !strcmp(dtype, "texCoord3d")) {
+        Py_ssize_t n = 0;
+        int all_int = 0, all_float = 0;
+        if (py_seq_classify(obj, &n, &all_int, &all_float) && n == 3 && all_float) {
+            double xs[3] = {0.0, 0.0, 0.0};
+            for (Py_ssize_t i = 0; i < 3; ++i) {
+                PyObject *e = PySequence_GetItem(obj, i);
+                xs[i] = PyFloat_AsDouble(e);
+                Py_DECREF(e);
+                if (PyErr_Occurred()) return NULL;
+            }
+            c_tinyusd_double3_t t = {xs[0], xs[1], xs[2]};
+            CTinyUSDValue *v = c_tinyusd_value_new_texcoord3d(t);
+            snprintf(out_type_name, out_type_name_size, "texCoord3d");
+            return v;
+        } else {
+            PyErr_SetString(PyExc_TypeError, "texCoord3d must be a 3-tuple of floats");
+            return NULL;
+        }
+    }
+
+    /* Explicit dtype="texCoord2f[]" — list/tuple of 2-tuples (texCoord 2-element float) */
+    if (dtype && !strcmp(dtype, "texCoord2f[]")) {
+        if (!(PyList_Check(obj) || PyTuple_Check(obj))) {
+            PyErr_SetString(PyExc_TypeError,
+                            "dtype='texCoord2f[]' requires a list/tuple of 2-tuples");
+            return NULL;
+        }
+        Py_ssize_t n = PySequence_Size(obj);
+        c_tinyusd_texcoord2f_t *arr = (c_tinyusd_texcoord2f_t *)PyMem_Malloc(sizeof(c_tinyusd_texcoord2f_t) * (size_t)(n > 0 ? n : 1));
+        if (!arr) {
+            PyErr_NoMemory();
+            return NULL;
+        }
+        for (Py_ssize_t i = 0; i < n; ++i) {
+            PyObject *e = PySequence_GetItem(obj, i);
+            Py_ssize_t elem_n = 0;
+            int elem_all_int = 0, elem_all_float = 0;
+            if (!py_seq_classify(e, &elem_n, &elem_all_int, &elem_all_float) || elem_n != 2 || !elem_all_float) {
+                Py_DECREF(e);
+                PyMem_Free(arr);
+                PyErr_SetString(PyExc_TypeError,
+                                "texCoord2f[] elements must be 2-tuples of floats");
+                return NULL;
+            }
+            PyObject *x_obj = PySequence_GetItem(e, 0);
+            PyObject *y_obj = PySequence_GetItem(e, 1);
+            arr[i].x = (float)PyFloat_AsDouble(x_obj);
+            arr[i].y = (float)PyFloat_AsDouble(y_obj);
+            Py_DECREF(x_obj);
+            Py_DECREF(y_obj);
+            Py_DECREF(e);
+            if (PyErr_Occurred()) { PyMem_Free(arr); return NULL; }
+        }
+        CTinyUSDValue *v = c_tinyusd_value_new_array_texcoord2f((uint64_t)n, arr);
+        PyMem_Free(arr);
+        snprintf(out_type_name, out_type_name_size, "texCoord2f[]");
+        if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_array_texcoord2f failed");
+        return v;
+    }
+
+    /* Explicit dtype="texCoord2d[]" — list/tuple of 2-tuples (texCoord 2-element double) */
+    if (dtype && !strcmp(dtype, "texCoord2d[]")) {
+        if (!(PyList_Check(obj) || PyTuple_Check(obj))) {
+            PyErr_SetString(PyExc_TypeError,
+                            "dtype='texCoord2d[]' requires a list/tuple of 2-tuples");
+            return NULL;
+        }
+        Py_ssize_t n = PySequence_Size(obj);
+        c_tinyusd_texcoord2d_t *arr = (c_tinyusd_texcoord2d_t *)PyMem_Malloc(sizeof(c_tinyusd_texcoord2d_t) * (size_t)(n > 0 ? n : 1));
+        if (!arr) {
+            PyErr_NoMemory();
+            return NULL;
+        }
+        for (Py_ssize_t i = 0; i < n; ++i) {
+            PyObject *e = PySequence_GetItem(obj, i);
+            Py_ssize_t elem_n = 0;
+            int elem_all_int = 0, elem_all_float = 0;
+            if (!py_seq_classify(e, &elem_n, &elem_all_int, &elem_all_float) || elem_n != 2 || !elem_all_float) {
+                Py_DECREF(e);
+                PyMem_Free(arr);
+                PyErr_SetString(PyExc_TypeError,
+                                "texCoord2d[] elements must be 2-tuples of floats");
+                return NULL;
+            }
+            PyObject *x_obj = PySequence_GetItem(e, 0);
+            PyObject *y_obj = PySequence_GetItem(e, 1);
+            arr[i].x = PyFloat_AsDouble(x_obj);
+            arr[i].y = PyFloat_AsDouble(y_obj);
+            Py_DECREF(x_obj);
+            Py_DECREF(y_obj);
+            Py_DECREF(e);
+            if (PyErr_Occurred()) { PyMem_Free(arr); return NULL; }
+        }
+        CTinyUSDValue *v = c_tinyusd_value_new_array_texcoord2d((uint64_t)n, arr);
+        PyMem_Free(arr);
+        snprintf(out_type_name, out_type_name_size, "texCoord2d[]");
+        if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_array_texcoord2d failed");
+        return v;
+    }
+
+    /* Explicit dtype="texCoord3f[]" — list/tuple of 3-tuples (texCoord 3-element float) */
+    if (dtype && !strcmp(dtype, "texCoord3f[]")) {
+        if (!(PyList_Check(obj) || PyTuple_Check(obj))) {
+            PyErr_SetString(PyExc_TypeError,
+                            "dtype='texCoord3f[]' requires a list/tuple of 3-tuples");
+            return NULL;
+        }
+        Py_ssize_t n = PySequence_Size(obj);
+        c_tinyusd_float3_t *arr = (c_tinyusd_float3_t *)PyMem_Malloc(sizeof(c_tinyusd_float3_t) * (size_t)(n > 0 ? n : 1));
+        if (!arr) {
+            PyErr_NoMemory();
+            return NULL;
+        }
+        for (Py_ssize_t i = 0; i < n; ++i) {
+            PyObject *e = PySequence_GetItem(obj, i);
+            Py_ssize_t elem_n = 0;
+            int elem_all_int = 0, elem_all_float = 0;
+            if (!py_seq_classify(e, &elem_n, &elem_all_int, &elem_all_float) || elem_n != 3 || !elem_all_float) {
+                Py_DECREF(e);
+                PyMem_Free(arr);
+                PyErr_SetString(PyExc_TypeError,
+                                "texCoord3f[] elements must be 3-tuples of floats");
+                return NULL;
+            }
+            PyObject *x_obj = PySequence_GetItem(e, 0);
+            PyObject *y_obj = PySequence_GetItem(e, 1);
+            PyObject *z_obj = PySequence_GetItem(e, 2);
+            arr[i].x = (float)PyFloat_AsDouble(x_obj);
+            arr[i].y = (float)PyFloat_AsDouble(y_obj);
+            arr[i].z = (float)PyFloat_AsDouble(z_obj);
+            Py_DECREF(x_obj);
+            Py_DECREF(y_obj);
+            Py_DECREF(z_obj);
+            Py_DECREF(e);
+            if (PyErr_Occurred()) { PyMem_Free(arr); return NULL; }
+        }
+        CTinyUSDValue *v = c_tinyusd_value_new_array_texcoord3f((uint64_t)n, arr);
+        PyMem_Free(arr);
+        snprintf(out_type_name, out_type_name_size, "texCoord3f[]");
+        if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_array_texcoord3f failed");
+        return v;
+    }
+
+    /* Explicit dtype="texCoord3d[]" — list/tuple of 3-tuples (texCoord 3-element double) */
+    if (dtype && !strcmp(dtype, "texCoord3d[]")) {
+        if (!(PyList_Check(obj) || PyTuple_Check(obj))) {
+            PyErr_SetString(PyExc_TypeError,
+                            "dtype='texCoord3d[]' requires a list/tuple of 3-tuples");
+            return NULL;
+        }
+        Py_ssize_t n = PySequence_Size(obj);
+        c_tinyusd_double3_t *arr = (c_tinyusd_double3_t *)PyMem_Malloc(sizeof(c_tinyusd_double3_t) * (size_t)(n > 0 ? n : 1));
+        if (!arr) {
+            PyErr_NoMemory();
+            return NULL;
+        }
+        for (Py_ssize_t i = 0; i < n; ++i) {
+            PyObject *e = PySequence_GetItem(obj, i);
+            Py_ssize_t elem_n = 0;
+            int elem_all_int = 0, elem_all_float = 0;
+            if (!py_seq_classify(e, &elem_n, &elem_all_int, &elem_all_float) || elem_n != 3 || !elem_all_float) {
+                Py_DECREF(e);
+                PyMem_Free(arr);
+                PyErr_SetString(PyExc_TypeError,
+                                "texCoord3d[] elements must be 3-tuples of floats");
+                return NULL;
+            }
+            PyObject *x_obj = PySequence_GetItem(e, 0);
+            PyObject *y_obj = PySequence_GetItem(e, 1);
+            PyObject *z_obj = PySequence_GetItem(e, 2);
+            arr[i].x = PyFloat_AsDouble(x_obj);
+            arr[i].y = PyFloat_AsDouble(y_obj);
+            arr[i].z = PyFloat_AsDouble(z_obj);
+            Py_DECREF(x_obj);
+            Py_DECREF(y_obj);
+            Py_DECREF(z_obj);
+            Py_DECREF(e);
+            if (PyErr_Occurred()) { PyMem_Free(arr); return NULL; }
+        }
+        CTinyUSDValue *v = c_tinyusd_value_new_array_texcoord3d((uint64_t)n, arr);
+        PyMem_Free(arr);
+        snprintf(out_type_name, out_type_name_size, "texCoord3d[]");
+        if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_array_texcoord3d failed");
+        return v;
+    }
+
     Py_ssize_t n = 0;
     int all_int = 0, all_float = 0;
     if (py_seq_classify(obj, &n, &all_int, &all_float)) {
@@ -1952,7 +2645,10 @@ py_to_value(PyObject *obj, const char *dtype, char *out_type_name,
         /* Other lengths: treat as 1D array of int or float. */
         if (all_int && n >= 0) {
             int *arr = (int *)PyMem_Malloc(sizeof(int) * (size_t)(n > 0 ? n : 1));
-            if (!arr) return PyErr_NoMemory();
+            if (!arr) {
+                PyErr_NoMemory();
+                return NULL;
+            }
             for (Py_ssize_t i = 0; i < n; ++i) {
                 PyObject *e = PySequence_GetItem(obj, i);
                 arr[i] = (int)PyLong_AsLong(e);
@@ -1966,7 +2662,10 @@ py_to_value(PyObject *obj, const char *dtype, char *out_type_name,
         }
         if (all_float && n >= 0) {
             float *arr = (float *)PyMem_Malloc(sizeof(float) * (size_t)(n > 0 ? n : 1));
-            if (!arr) return PyErr_NoMemory();
+            if (!arr) {
+                PyErr_NoMemory();
+                return NULL;
+            }
             for (Py_ssize_t i = 0; i < n; ++i) {
                 PyObject *e = PySequence_GetItem(obj, i);
                 arr[i] = (float)PyFloat_AsDouble(e);
@@ -1988,7 +2687,10 @@ py_to_value(PyObject *obj, const char *dtype, char *out_type_name,
                 /* Flatten into float array; assume float components. */
                 size_t total = (size_t)n * (size_t)inner_n;
                 float *flat = (float *)PyMem_Malloc(sizeof(float) * (total > 0 ? total : 1));
-                if (!flat) return PyErr_NoMemory();
+                if (!flat) {
+                    PyErr_NoMemory();
+                    return NULL;
+                }
                 for (Py_ssize_t i = 0; i < n; ++i) {
                     PyObject *row = PySequence_GetItem(obj, i);
                     if (!row || PySequence_Size(row) != inner_n) {
