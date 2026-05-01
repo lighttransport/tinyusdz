@@ -961,6 +961,12 @@ class AsciiParser {
   ///
   bool ParseAssetIdentifier(value::AssetPath *out, bool *triple_deliminated);
 
+  /// Parse optional `(offset = N; scale = M)` LayerOffset clause that may
+  /// appear after a Reference or Payload's asset+prim_path. Returns true
+  /// when no clause is present (no-op) and when a clause was parsed
+  /// successfully; returns false on syntax error.
+  bool ParseOptionalLayerOffset(LayerOffset *out);
+
   class PrimIterator;
   using const_iterator = PrimIterator;
   const_iterator begin() const;

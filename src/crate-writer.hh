@@ -581,6 +581,15 @@ private:
   bool AddArrayAttribute(const std::string& attr_name, const value::Value& val,
                          crate::FieldValuePairVector& fields, std::string* err);
 
+  /// Like AddArrayAttribute but emits a separate property spec carrying the
+  /// supplied AttrMetas (interpolation, customData, displayName, etc.), so
+  /// metadata authored on a typed attribute survives USDC roundtrip.
+  bool AddArrayAttributeWithMetas(const std::string& attr_name,
+                                  const value::Value& val,
+                                  const AttrMeta& metas,
+                                  const Path& prim_path,
+                                  std::string* err);
+
   /// Convert an enum string to a token and append to fields.
   void AddEnumAttribute(const std::string& attr_name, const std::string& enum_val,
                         crate::FieldValuePairVector& fields);

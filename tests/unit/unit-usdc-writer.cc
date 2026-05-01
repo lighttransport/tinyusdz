@@ -3512,3 +3512,275 @@ def Mesh "sub" {
   TEST_CHECK(mesh->interpolateBoundary.authored());
   TEST_CHECK(mesh->faceVaryingLinearInterpolation.authored());
 }
+
+void usdc_writer_shader_generic_inputs_test(void) {
+  // Generic Shader (unknown info:id) must keep its inputs:* through USDC.
+  // Regression: Shader::props is empty for generic shaders — actual props
+  // live inside Shader::value (a ShaderNode). The writer used to ignore
+  // them entirely.
+  const char *usda = R"(#usda 1.0
+def Shader "s" {
+    uniform token info:id = "MyCustomShader"
+    string inputs:label = "hello"
+    int inputs:count = 42
+    float inputs:bias = 0.5
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "s");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *sh = p->data().as<Shader>();
+  TEST_CHECK(sh != nullptr);
+  if (!sh) return;
+  // Inputs are stored in the inner ShaderNode's props map.
+  const auto *node = sh->value.as<ShaderNode>();
+  TEST_CHECK(node != nullptr);
+  if (!node) return;
+  TEST_CHECK(node->props.count("inputs:label") == 1);
+  TEST_CHECK(node->props.count("inputs:count") == 1);
+  TEST_CHECK(node->props.count("inputs:bias") == 1);
+}
+
+void usdc_writer_clips_metadata_test(void) {
+  // `clips` dictionary metadatum must roundtrip — exercises the dict
+  // value packer for double2[] arrays and asset/asset[] entries.
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+    clips = {
+        dictionary default = {
+            asset[] assetPaths = [@./a.usdc@, @./b.usdc@]
+            double2[] active = [(0, 0), (10, 1)]
+            double2[] times = [(0, 0), (10, 10)]
+            asset manifestAssetPath = @./manifest.usdc@
+        }
+    }
+) {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->metas().has_clips());
+}
+
+void usdc_writer_attr_doc_alias_test(void) {
+  // `doc =` is a USDA shorthand for `documentation`. Both must map to
+  // MetadataBase::kDoc so the writer's has_doc()/get_doc() emit a
+  // populated `documentation` field on USDC.
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+    custom int n = 5 (
+        doc = "the count"
+    )
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it = xf->props.find("n");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  const auto &m = it->second.get_attribute().metas();
+  TEST_CHECK(m.has_doc());
+  if (m.has_doc()) {
+    TEST_CHECK(m.get_doc().value == "the count");
+  }
+}
+
+void usdc_writer_attr_documentation_test(void) {
+  // Round-tripping `documentation = "..."` must preserve the string,
+  // not collapse to empty (regression: parser used the generic
+  // dictionary path which stored a raw string but get_doc() expected
+  // value::StringData and returned empty).
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+    custom int n = 5 (
+        documentation = "long-form doc"
+    )
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it = xf->props.find("n");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  const auto &m = it->second.get_attribute().metas();
+  TEST_CHECK(m.has_doc());
+  if (m.has_doc()) {
+    TEST_CHECK(m.get_doc().value == "long-form doc");
+  }
+}
+
+void usdc_writer_layer_offset_parser_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+    references = @./a.usda@</A> (offset = 5; scale = 0.5)
+) {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto &refs = p->metas().references;
+  TEST_CHECK(refs.has_value());
+  if (!refs.has_value()) return;
+  TEST_CHECK(!refs.value().empty());
+  if (refs.value().empty()) return;
+  const auto &ref = refs.value()[0].second[0];
+  TEST_CHECK(ref.layerOffset._offset == 5.0);
+  TEST_CHECK(ref.layerOffset._scale == 0.5);
+}
+
+void usdc_writer_basiscurves_widths_interpolation_test(void) {
+  const char *usda = R"(#usda 1.0
+def BasisCurves "c" {
+  int[] curveVertexCounts = [4]
+  point3f[] points = [(0,0,0),(1,0,0),(2,0,0),(3,0,0)]
+  float[] widths = [0.1, 0.2, 0.3, 0.4] (interpolation = "vertex")
+  uniform token type = "linear"
+  uniform token wrap = "nonperiodic"
+}
+)";
+  RT_OK(usda);
+  const auto *bc = find_root<GeomBasisCurves>(stage, "c");
+  TEST_CHECK(bc != nullptr);
+  if (!bc) return;
+  TEST_CHECK(bc->widths.authored());
+  if (bc->widths.authored()) {
+    TEST_CHECK(bc->widths.metas().has_interpolation());
+    if (bc->widths.metas().has_interpolation()) {
+      TEST_CHECK(bc->widths.metas().get_interpolation().str() == "vertex");
+    }
+  }
+}
+
+void usdc_writer_int64_large_test(void) {
+  // -9876543210 fits in 48 bits; verify the writer's inline path and the
+  // reader's 48-bit sign-extension preserve the full value (regression:
+  // reader was truncating to 32 bits, returning -1286608618).
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom int64 v = -9876543210
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("v");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<int64_t>();
+  TEST_CHECK(pv.has_value());
+  if (pv.has_value()) TEST_CHECK(pv.value() == int64_t(-9876543210LL));
+}
+
+void usdc_writer_uint64_large_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom uint64 v = 12345678901234
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("v");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<uint64_t>();
+  TEST_CHECK(pv.has_value());
+  if (pv.has_value()) TEST_CHECK(pv.value() == uint64_t(12345678901234ULL));
+}
+
+void usdc_writer_quatf_roundtrip_test(void) {
+  // USDA spelling: (real, imag[0..2]) = (w, x, y, z). Wire format matches.
+  // Regression: reader read 16 bytes raw into struct {imag[3], real},
+  // shuffling components to (x, y, z, w).
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom quatf q = (0.1, 0.2, 0.3, 0.4)
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("q");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<value::quatf>();
+  TEST_CHECK(pv.has_value());
+  if (pv.has_value()) {
+    const auto &q = pv.value();
+    TEST_CHECK(std::abs(q.real - 0.1f) < 1e-5f);
+    TEST_CHECK(std::abs(q.imag[0] - 0.2f) < 1e-5f);
+    TEST_CHECK(std::abs(q.imag[1] - 0.3f) < 1e-5f);
+    TEST_CHECK(std::abs(q.imag[2] - 0.4f) < 1e-5f);
+  }
+}
+
+void usdc_writer_quatd_roundtrip_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom quatd q = (0.5, 0.6, 0.7, 0.8)
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("q");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<value::quatd>();
+  TEST_CHECK(pv.has_value());
+  if (pv.has_value()) {
+    const auto &q = pv.value();
+    TEST_CHECK(std::abs(q.real - 0.5) < 1e-9);
+    TEST_CHECK(std::abs(q.imag[0] - 0.6) < 1e-9);
+    TEST_CHECK(std::abs(q.imag[1] - 0.7) < 1e-9);
+    TEST_CHECK(std::abs(q.imag[2] - 0.8) < 1e-9);
+  }
+}
+
+void usdc_writer_quath_roundtrip_test(void) {
+  // Regression: ConvertValue had no quath case, so the entire attribute
+  // was dropped on USDC roundtrip.
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom quath q = (1.0, 0.5, 0.25, 0.125)
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("q");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<value::quath>();
+  TEST_CHECK(pv.has_value());
+}

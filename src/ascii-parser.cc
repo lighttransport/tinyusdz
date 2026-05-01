@@ -2902,6 +2902,77 @@ bool AsciiParser::ParseAssetIdentifier(value::AssetPath *out,
   return valid;
 }
 
+bool AsciiParser::ParseOptionalLayerOffset(LayerOffset *out) {
+  // Look ahead: an optional `(...)` clause may follow. If the next
+  // non-whitespace char is not '(', return without consuming anything.
+  if (!SkipWhitespace()) {
+    return true;  // EOF is fine; caller decides.
+  }
+  char c;
+  if (!LookChar1(&c)) {
+    return true;
+  }
+  if (c != '(') {
+    return true;
+  }
+  // Consume '('.
+  if (!Char1(&c)) return false;
+
+  // Parse `key = value` separated by ';' or ','. Accept any subset of
+  // {offset, scale}. Trailing separator allowed.
+  for (;;) {
+    if (!SkipWhitespaceAndNewline()) return false;
+    if (!LookChar1(&c)) return false;
+    if (c == ')') {
+      // consume and done
+      Char1(&c);
+      return true;
+    }
+
+    std::string key;
+    if (!ReadIdentifier(&key)) {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii,
+          "Expected `offset` or `scale` in LayerOffset clause.");
+    }
+    if (key != "offset" && key != "scale") {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii,
+          fmt::format("Unknown LayerOffset key `{}`. Expected `offset` or `scale`.",
+                      key));
+    }
+
+    if (!SkipWhitespaceAndNewline()) return false;
+    if (!Expect('=')) return false;
+    if (!SkipWhitespaceAndNewline()) return false;
+
+    double v = 0.0;
+    if (!ReadBasicType(&v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii,
+          fmt::format("Failed to parse value for LayerOffset `{}`.", key));
+    }
+    if (key == "offset") {
+      out->_offset = v;
+    } else {
+      out->_scale = v;
+    }
+
+    // Separator: optional ';' or ','. The closing ')' is handled at top.
+    // SkipWhitespaceAndNewline treats ';' as whitespace by default, so opt
+    // out — we need the ';' to remain for our explicit consumption below.
+    if (!SkipWhitespaceAndNewline(/*allow_semicolon=*/false)) return false;
+    if (!LookChar1(&c)) return false;
+    if (c == ';' || c == ',') {
+      Char1(&c);
+      continue;
+    }
+    if (c == ')') {
+      Char1(&c);
+      return true;
+    }
+    PUSH_ERROR_AND_RETURN_TAG(kAscii,
+        "Expected `;`, `,`, or `)` in LayerOffset clause.");
+  }
+}
+
 bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
   /*
     Asset reference = AsssetIdentifier + optially followd by prim path
@@ -2968,7 +3039,12 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
     }
   }
 
-  // TODO: LayerOffset and CustomData
+  // Optional `(offset = N; scale = M)` LayerOffset suffix.
+  if (!ParseOptionalLayerOffset(&out->layerOffset)) {
+    return false;
+  }
+
+  // TODO: CustomData
 
   return true;
 }
@@ -3029,7 +3105,9 @@ bool AsciiParser::ParsePayload(Payload *out, bool *triple_deliminated) {
     }
   }
 
-  // TODO: LayerOffset
+  if (!ParseOptionalLayerOffset(&out->layerOffset)) {
+    return false;
+  }
 
   return true;
 }

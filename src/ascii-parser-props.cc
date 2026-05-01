@@ -687,6 +687,16 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         }
         DCOUT("displayName: " << str);
         out_meta->set_displayName(str);
+      } else if (varname == "doc" || varname == "documentation") {
+        // `doc` is the USDA shorthand for `documentation`. Both must end up
+        // under MetadataBase::kDoc so the writer's `has_doc()` check finds
+        // them and emits a non-empty `documentation` field on USDC.
+        std::string str;
+        if (!ReadStringLiteral(&str)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `documentation`(string type)");
+        }
+        DCOUT("documentation: " << str);
+        out_meta->set_doc(str);
       } else if (varname == "displayGroup") {
         std::string str;
         if (!ReadStringLiteral(&str)) {

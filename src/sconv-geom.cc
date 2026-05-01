@@ -807,7 +807,9 @@ bool CrateWriter::ExtractBasisCurvesProperties(
     }
   }
 
-  // Extract widths (float[]) - TypedAttribute returns optional
+  // Extract widths (float[]) - TypedAttribute returns optional.
+  // Route through ConvertAttributeToFields so authored interpolation and
+  // other AttrMetas survive USDC roundtrip.
   if (basis_curves->widths.authored()) {
     auto widths_opt = basis_curves->widths.get_value();
     if (widths_opt.has_value()) {
@@ -816,7 +818,9 @@ bool CrateWriter::ExtractBasisCurvesProperties(
         std::vector<float> widths_val;
         if (widths_anim.get_default(&widths_val)) {
           value::Value widths_value(widths_val);
-          if (!AddArrayAttribute("widths", widths_value, fields, err)) {
+          if (!AddArrayAttributeWithMetas("widths", widths_value,
+                                          basis_curves->widths.metas(),
+                                          prim_path, err)) {
             return false;
           }
         }

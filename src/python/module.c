@@ -324,6 +324,42 @@ Stage_get_metadata(PyObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 
+static PyObject *
+Stage_set_default_prim(PyObject *self, PyObject *args)
+{
+    const char *name = NULL;
+    if (!PyArg_ParseTuple(args, "s", &name)) return NULL;
+    StageObject *s = (StageObject *)self;
+    if (!s->stage) {
+        PyErr_SetString(UsdError, "Stage has no underlying handle");
+        return NULL;
+    }
+    if (!c_tinyusd_stage_set_default_prim(s->stage, name)) {
+        PyErr_SetString(UsdError, "set_default_prim failed");
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Stage_get_default_prim(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    StageObject *s = (StageObject *)self;
+    if (!s->stage) {
+        PyErr_SetString(UsdError, "Stage has no underlying handle");
+        return NULL;
+    }
+    c_tinyusd_string_t *out = c_tinyusd_string_new_empty();
+    if (!c_tinyusd_stage_get_default_prim(s->stage, out)) {
+        c_tinyusd_string_free(out);
+        PyErr_SetString(UsdError, "get_default_prim failed");
+        return NULL;
+    }
+    PyObject *r = PyUnicode_FromString(c_tinyusd_string_str(out));
+    c_tinyusd_string_free(out);
+    return r;
+}
+
 static PyMethodDef Stage_methods[] = {
     {"export_to_string", Stage_export_to_string, METH_NOARGS,
      "Serialize stage to USDA string."},
@@ -343,6 +379,10 @@ static PyMethodDef Stage_methods[] = {
      "endTimeCode, doc, comment)."},
     {"get_metadata", Stage_get_metadata, METH_VARARGS,
      "get_metadata(key): return stage metadata value or None if unauthored."},
+    {"set_default_prim", Stage_set_default_prim, METH_VARARGS,
+     "set_default_prim(name): convenience for set_metadata('defaultPrim', name)."},
+    {"get_default_prim", Stage_get_default_prim, METH_NOARGS,
+     "get_default_prim(): return defaultPrim name, or '' if unauthored."},
     {NULL, NULL, 0, NULL}
 };
 
@@ -1509,6 +1549,177 @@ py_to_value(PyObject *obj, const char *dtype, char *out_type_name,
         return v;
     }
 
+    /* Explicit dtype="quat{h,f,d}" — 4-tuple/list (w, x, y, z). */
+    if (dtype && (!strcmp(dtype, "quath") ||
+                  !strcmp(dtype, "quatf") ||
+                  !strcmp(dtype, "quatd"))) {
+        if (!(PyList_Check(obj) || PyTuple_Check(obj)) ||
+            PySequence_Size(obj) != 4) {
+            PyErr_Format(PyExc_TypeError,
+                         "dtype='%s' requires a 4-element (w, x, y, z) sequence",
+                         dtype);
+            return NULL;
+        }
+        double xs[4];
+        for (Py_ssize_t i = 0; i < 4; ++i) {
+            PyObject *e = PySequence_GetItem(obj, i);
+            xs[i] = PyFloat_AsDouble(e);
+            Py_DECREF(e);
+            if (PyErr_Occurred()) return NULL;
+        }
+        /* (w, x, y, z) -> imag = (x, y, z), real = w. */
+        CTinyUSDValue *v = NULL;
+        if (!strcmp(dtype, "quatd")) {
+            c_tinyusd_quatd_t q;
+            q.imag[0] = xs[1]; q.imag[1] = xs[2]; q.imag[2] = xs[3];
+            q.real = xs[0];
+            v = c_tinyusd_value_new_quatd(q);
+        } else if (!strcmp(dtype, "quatf")) {
+            c_tinyusd_quatf_t q;
+            q.imag[0] = (float)xs[1]; q.imag[1] = (float)xs[2]; q.imag[2] = (float)xs[3];
+            q.real = (float)xs[0];
+            v = c_tinyusd_value_new_quatf(q);
+        } else {
+            c_tinyusd_quath_t q;
+            q.imag[0] = c_tinyusd_float_to_half((float)xs[1]);
+            q.imag[1] = c_tinyusd_float_to_half((float)xs[2]);
+            q.imag[2] = c_tinyusd_float_to_half((float)xs[3]);
+            q.real    = c_tinyusd_float_to_half((float)xs[0]);
+            v = c_tinyusd_value_new_quath(q);
+        }
+        snprintf(out_type_name, out_type_name_size, "%s", dtype);
+        return v;
+    }
+
+    /* Explicit dtype="half|half2|half3|half4" — float input(s) -> half. */
+    if (dtype && !strncmp(dtype, "half", 4) &&
+        (dtype[4] == '\0' || (dtype[4] >= '2' && dtype[4] <= '4' && dtype[5] == '\0'))) {
+        int dim = dtype[4] ? (dtype[4] - '0') : 1;
+        if (dim == 1) {
+            if (!PyFloat_Check(obj) && !PyLong_Check(obj)) {
+                PyErr_SetString(PyExc_TypeError,
+                                "dtype='half' requires a float/int");
+                return NULL;
+            }
+            double d = PyFloat_AsDouble(obj);
+            if (PyErr_Occurred()) return NULL;
+            CTinyUSDValue *v = c_tinyusd_value_new_half(
+                c_tinyusd_float_to_half((float)d));
+            snprintf(out_type_name, out_type_name_size, "half");
+            return v;
+        }
+        if (!(PyList_Check(obj) || PyTuple_Check(obj)) ||
+            PySequence_Size(obj) != dim) {
+            PyErr_Format(PyExc_TypeError,
+                         "dtype='%s' requires a %d-element sequence",
+                         dtype, dim);
+            return NULL;
+        }
+        c_tinyusd_half_t h[4];
+        for (Py_ssize_t i = 0; i < dim; ++i) {
+            PyObject *e = PySequence_GetItem(obj, i);
+            float fv = (float)PyFloat_AsDouble(e);
+            Py_DECREF(e);
+            if (PyErr_Occurred()) return NULL;
+            h[i] = c_tinyusd_float_to_half(fv);
+        }
+        CTinyUSDValue *v = NULL;
+        if (dim == 2) {
+            c_tinyusd_half2_t hh = {h[0], h[1]};
+            v = c_tinyusd_value_new_half2(hh);
+        } else if (dim == 3) {
+            c_tinyusd_half3_t hh = {h[0], h[1], h[2]};
+            v = c_tinyusd_value_new_half3(hh);
+        } else {
+            c_tinyusd_half4_t hh = {h[0], h[1], h[2], h[3]};
+            v = c_tinyusd_value_new_half4(hh);
+        }
+        snprintf(out_type_name, out_type_name_size, "%s", dtype);
+        return v;
+    }
+
+    /* Explicit dtype="uint|uint64|int64" — single integer. */
+    if (dtype && (!strcmp(dtype, "uint") ||
+                  !strcmp(dtype, "uint64") ||
+                  !strcmp(dtype, "int64"))) {
+        if (!PyLong_Check(obj)) {
+            PyErr_Format(PyExc_TypeError, "dtype='%s' requires an int", dtype);
+            return NULL;
+        }
+        CTinyUSDValue *v;
+        if (!strcmp(dtype, "uint")) {
+            unsigned long ul = PyLong_AsUnsignedLong(obj);
+            if (PyErr_Occurred()) return NULL;
+            v = c_tinyusd_value_new_uint((uint32_t)ul);
+        } else if (!strcmp(dtype, "uint64")) {
+            unsigned long long ull = PyLong_AsUnsignedLongLong(obj);
+            if (PyErr_Occurred()) return NULL;
+            v = c_tinyusd_value_new_uint64((uint64_t)ull);
+        } else {
+            long long ll = PyLong_AsLongLong(obj);
+            if (PyErr_Occurred()) return NULL;
+            v = c_tinyusd_value_new_int64((int64_t)ll);
+        }
+        snprintf(out_type_name, out_type_name_size, "%s", dtype);
+        return v;
+    }
+
+    /* Explicit dtype="matrix2d|matrix3d|matrix4d" — nested tuples/lists.
+     * Accept any tuple or list of N rows × N cols of floats. */
+    if (dtype && (!strcmp(dtype, "matrix2d") ||
+                  !strcmp(dtype, "matrix3d") ||
+                  !strcmp(dtype, "matrix4d"))) {
+        int dim = dtype[6] - '0';  /* 2/3/4 */
+        if (!(PyList_Check(obj) || PyTuple_Check(obj))) {
+            PyErr_Format(PyExc_TypeError,
+                         "dtype='%s' requires a nested sequence (%dx%d)",
+                         dtype, dim, dim);
+            return NULL;
+        }
+        Py_ssize_t n_rows = PySequence_Size(obj);
+        if (n_rows != dim) {
+            PyErr_Format(PyExc_ValueError,
+                         "dtype='%s' expects %d rows, got %zd",
+                         dtype, dim, n_rows);
+            return NULL;
+        }
+        double m[16] = {0};
+        for (Py_ssize_t i = 0; i < dim; ++i) {
+            PyObject *row = PySequence_GetItem(obj, i);
+            if (!row || !(PyList_Check(row) || PyTuple_Check(row)) ||
+                PySequence_Size(row) != dim) {
+                Py_XDECREF(row);
+                PyErr_Format(PyExc_ValueError,
+                             "dtype='%s' row %zd must have %d cols",
+                             dtype, i, dim);
+                return NULL;
+            }
+            for (Py_ssize_t j = 0; j < dim; ++j) {
+                PyObject *e = PySequence_GetItem(row, j);
+                m[i * dim + j] = PyFloat_AsDouble(e);
+                Py_DECREF(e);
+                if (PyErr_Occurred()) { Py_DECREF(row); return NULL; }
+            }
+            Py_DECREF(row);
+        }
+        CTinyUSDValue *v = NULL;
+        if (dim == 2) {
+            c_tinyusd_matrix2d_t mat;
+            memcpy(&mat, m, sizeof(double) * 4);
+            v = c_tinyusd_value_new_matrix2d_t(mat);
+        } else if (dim == 3) {
+            c_tinyusd_matrix3d_t mat;
+            memcpy(&mat, m, sizeof(double) * 9);
+            v = c_tinyusd_value_new_matrix3d_t(mat);
+        } else {
+            c_tinyusd_matrix4d_t mat;
+            memcpy(&mat, m, sizeof(double) * 16);
+            v = c_tinyusd_value_new_matrix4d_t(mat);
+        }
+        snprintf(out_type_name, out_type_name_size, "%s", dtype);
+        return v;
+    }
+
     /* Explicit dtype="asset" handles a single path string. */
     if (dtype && !strcmp(dtype, "asset")) {
         if (!PyUnicode_Check(obj)) {
@@ -1582,10 +1793,9 @@ py_to_value(PyObject *obj, const char *dtype, char *out_type_name,
 
     /* bool BEFORE int — PyLong_Check is true for bool. */
     if (PyBool_Check(obj)) {
-        /* No c_tinyusd_value_new_bool — fall through to int as 0/1. */
         long b = PyObject_IsTrue(obj);
-        CTinyUSDValue *v = c_tinyusd_value_new_int((int)b);
-        snprintf(out_type_name, out_type_name_size, "int");
+        CTinyUSDValue *v = c_tinyusd_value_new_bool((int)b);
+        snprintf(out_type_name, out_type_name_size, "bool");
         return v;
     }
     if (PyLong_Check(obj)) {
@@ -1670,16 +1880,26 @@ py_to_value(PyObject *obj, const char *dtype, char *out_type_name,
                         Py_DECREF(e);
                         if (PyErr_Occurred()) return NULL;
                     }
-                    CTinyUSDValue *v;
-                    if (n == 2) {
-                        c_tinyusd_double2_t t = {xs[0], xs[1]};
-                        v = c_tinyusd_value_new_double2(t);
-                    } else if (n == 3) {
+                    CTinyUSDValue *v = NULL;
+                    /* Typed double3 alias dispatch. */
+                    if (n == 3) {
                         c_tinyusd_double3_t t = {xs[0], xs[1], xs[2]};
-                        v = c_tinyusd_value_new_double3(t);
-                    } else {
-                        c_tinyusd_double4_t t = {xs[0], xs[1], xs[2], xs[3]};
-                        v = c_tinyusd_value_new_double4(t);
+                        if (!strcmp(dtype, "color3d"))  v = c_tinyusd_value_new_color3d(t);
+                        else if (!strcmp(dtype, "point3d"))  v = c_tinyusd_value_new_point3d(t);
+                        else if (!strcmp(dtype, "normal3d")) v = c_tinyusd_value_new_normal3d(t);
+                        else if (!strcmp(dtype, "vector3d")) v = c_tinyusd_value_new_vector3d(t);
+                    }
+                    if (!v) {
+                        if (n == 2) {
+                            c_tinyusd_double2_t t = {xs[0], xs[1]};
+                            v = c_tinyusd_value_new_double2(t);
+                        } else if (n == 3) {
+                            c_tinyusd_double3_t t = {xs[0], xs[1], xs[2]};
+                            v = c_tinyusd_value_new_double3(t);
+                        } else {
+                            c_tinyusd_double4_t t = {xs[0], xs[1], xs[2], xs[3]};
+                            v = c_tinyusd_value_new_double4(t);
+                        }
                     }
                     snprintf(out_type_name, out_type_name_size, "%s", dtype);
                     return v;
@@ -1692,6 +1912,27 @@ py_to_value(PyObject *obj, const char *dtype, char *out_type_name,
                     if (PyErr_Occurred()) return NULL;
                 }
                 CTinyUSDValue *v;
+                /* Typed float3 aliases: dtype dispatch. */
+                if (n == 3 && dtype) {
+                    c_tinyusd_float3_t t = {xs[0], xs[1], xs[2]};
+                    if (!strcmp(dtype, "color3f")) {
+                        v = c_tinyusd_value_new_color3f(t);
+                        snprintf(out_type_name, out_type_name_size, "color3f");
+                        return v;
+                    } else if (!strcmp(dtype, "point3f")) {
+                        v = c_tinyusd_value_new_point3f(t);
+                        snprintf(out_type_name, out_type_name_size, "point3f");
+                        return v;
+                    } else if (!strcmp(dtype, "normal3f")) {
+                        v = c_tinyusd_value_new_normal3f(t);
+                        snprintf(out_type_name, out_type_name_size, "normal3f");
+                        return v;
+                    } else if (!strcmp(dtype, "vector3f")) {
+                        v = c_tinyusd_value_new_vector3f(t);
+                        snprintf(out_type_name, out_type_name_size, "vector3f");
+                        return v;
+                    }
+                }
                 if (n == 2) {
                     c_tinyusd_float2_t t = {xs[0], xs[1]};
                     v = c_tinyusd_value_new_float2(t);

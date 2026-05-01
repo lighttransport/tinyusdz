@@ -1284,6 +1284,209 @@ CTinyUSDValue *c_tinyusd_value_new_matrix4d(const double v[16]) {
   return reinterpret_cast<CTinyUSDValue *>(p);
 }
 
+CTinyUSDValue *c_tinyusd_value_new_matrix2d_t(c_tinyusd_matrix2d_t v) {
+  tinyusdz::value::matrix2d m;
+  std::memcpy(&m, &v, sizeof(double) * 4);
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(m));
+}
+CTinyUSDValue *c_tinyusd_value_new_matrix3d_t(c_tinyusd_matrix3d_t v) {
+  tinyusdz::value::matrix3d m;
+  std::memcpy(&m, &v, sizeof(double) * 9);
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(m));
+}
+CTinyUSDValue *c_tinyusd_value_new_matrix4d_t(c_tinyusd_matrix4d_t v) {
+  tinyusdz::value::matrix4d m;
+  std::memcpy(&m, &v, sizeof(double) * 16);
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(m));
+}
+
+CTinyUSDValue *c_tinyusd_value_new_array_double2(
+    uint64_t n, const c_tinyusd_double2_t *v) {
+  if (!v && n) return nullptr;
+  std::vector<tinyusdz::value::double2> arr(n);
+  for (uint64_t i = 0; i < n; ++i) arr[i] = {v[i].x, v[i].y};
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(arr));
+}
+CTinyUSDValue *c_tinyusd_value_new_array_double4(
+    uint64_t n, const c_tinyusd_double4_t *v) {
+  if (!v && n) return nullptr;
+  std::vector<tinyusdz::value::double4> arr(n);
+  for (uint64_t i = 0; i < n; ++i)
+    arr[i] = {v[i].x, v[i].y, v[i].z, v[i].w};
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(arr));
+}
+CTinyUSDValue *c_tinyusd_value_new_array_matrix2d(
+    uint64_t n, const c_tinyusd_matrix2d_t *v) {
+  if (!v && n) return nullptr;
+  std::vector<tinyusdz::value::matrix2d> arr(n);
+  if (n) std::memcpy(arr.data(), v, sizeof(double) * 4 * n);
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(arr));
+}
+CTinyUSDValue *c_tinyusd_value_new_array_matrix3d(
+    uint64_t n, const c_tinyusd_matrix3d_t *v) {
+  if (!v && n) return nullptr;
+  std::vector<tinyusdz::value::matrix3d> arr(n);
+  if (n) std::memcpy(arr.data(), v, sizeof(double) * 9 * n);
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(arr));
+}
+CTinyUSDValue *c_tinyusd_value_new_array_matrix4d(
+    uint64_t n, const c_tinyusd_matrix4d_t *v) {
+  if (!v && n) return nullptr;
+  std::vector<tinyusdz::value::matrix4d> arr(n);
+  if (n) std::memcpy(arr.data(), v, sizeof(double) * 16 * n);
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(arr));
+}
+
+/* ---- bool ---- */
+CTinyUSDValue *c_tinyusd_value_new_bool(int v) {
+  bool b = (v != 0);
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(b));
+}
+CTinyUSDValue *c_tinyusd_value_new_array_bool(uint64_t n, const int *v) {
+  if (!v && n) return nullptr;
+  std::vector<bool> arr;
+  arr.reserve(n);
+  for (uint64_t i = 0; i < n; ++i) arr.push_back(v[i] != 0);
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(arr));
+}
+
+/* ---- Typed float3/double3 alias scalars + arrays ----
+ * Identical memory layout to float3/double3 but author as the typed
+ * alias so the writer emits color3f/point3f/normal3f/vector3f (and
+ * their double counterparts).
+ */
+#define TYPED_VEC_NEW(__name, __cppty, __cty)                                  \
+  CTinyUSDValue *c_tinyusd_value_new_##__name(__cty v) {                       \
+    static_assert(sizeof(tinyusdz::value::__cppty) == sizeof(__cty), "");      \
+    tinyusdz::value::__cppty x;                                                \
+    std::memcpy(&x, &v, sizeof(__cty));                                        \
+    return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(x));   \
+  }                                                                            \
+  CTinyUSDValue *c_tinyusd_value_new_array_##__name(                           \
+      uint64_t n, const __cty *vals) {                                         \
+    if (!vals && n) return nullptr;                                            \
+    static_assert(sizeof(tinyusdz::value::__cppty) == sizeof(__cty), "");      \
+    std::vector<tinyusdz::value::__cppty> arr(n);                              \
+    if (n) std::memcpy(arr.data(), vals, sizeof(__cty) * size_t(n));           \
+    return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(arr)); \
+  }
+
+TYPED_VEC_NEW(color3f,  color3f,  c_tinyusd_color3f_t)
+TYPED_VEC_NEW(point3f,  point3f,  c_tinyusd_point3f_t)
+TYPED_VEC_NEW(normal3f, normal3f, c_tinyusd_normal3f_t)
+TYPED_VEC_NEW(vector3f, vector3f, c_tinyusd_float3_t)
+TYPED_VEC_NEW(color3d,  color3d,  c_tinyusd_color3d_t)
+TYPED_VEC_NEW(point3d,  point3d,  c_tinyusd_point3d_t)
+TYPED_VEC_NEW(normal3d, normal3d, c_tinyusd_normal3d_t)
+TYPED_VEC_NEW(vector3d, vector3d, c_tinyusd_double3_t)
+
+#undef TYPED_VEC_NEW
+
+c_tinyusd_half_t c_tinyusd_float_to_half(float f) {
+  return tinyusdz::value::float_to_half_full(f).value;
+}
+
+/* ---- Half precision scalars ----
+ * c_tinyusd_half_t is a uint16_t bit pattern. value::half wraps it.
+ */
+CTinyUSDValue *c_tinyusd_value_new_half(c_tinyusd_half_t v) {
+  tinyusdz::value::half h{v};
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(h));
+}
+#define HALF_VEC_NEW(__name, __cppty, __cty)                                 \
+  CTinyUSDValue *c_tinyusd_value_new_##__name(__cty v) {                     \
+    static_assert(sizeof(tinyusdz::value::__cppty) == sizeof(__cty), "");    \
+    tinyusdz::value::__cppty x;                                              \
+    std::memcpy(&x, &v, sizeof(__cty));                                      \
+    return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(x)); \
+  }                                                                          \
+  CTinyUSDValue *c_tinyusd_value_new_array_##__name(                         \
+      uint64_t n, const __cty *vals) {                                       \
+    if (!vals && n) return nullptr;                                          \
+    static_assert(sizeof(tinyusdz::value::__cppty) == sizeof(__cty), "");    \
+    std::vector<tinyusdz::value::__cppty> arr(n);                            \
+    if (n) std::memcpy(arr.data(), vals, sizeof(__cty) * size_t(n));         \
+    return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(arr)); \
+  }
+
+HALF_VEC_NEW(half2, half2, c_tinyusd_half2_t)
+HALF_VEC_NEW(half3, half3, c_tinyusd_half3_t)
+HALF_VEC_NEW(half4, half4, c_tinyusd_half4_t)
+#undef HALF_VEC_NEW
+
+CTinyUSDValue *c_tinyusd_value_new_array_half(uint64_t n,
+                                              const c_tinyusd_half_t *v) {
+  if (!v && n) return nullptr;
+  std::vector<tinyusdz::value::half> arr(n);
+  for (uint64_t i = 0; i < n; ++i) arr[i] = tinyusdz::value::half{v[i]};
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(arr));
+}
+
+/* ---- Wide integers ---- */
+CTinyUSDValue *c_tinyusd_value_new_uint(uint32_t v) {
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(v));
+}
+CTinyUSDValue *c_tinyusd_value_new_uint64(uint64_t v) {
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(v));
+}
+CTinyUSDValue *c_tinyusd_value_new_int64(int64_t v) {
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(v));
+}
+CTinyUSDValue *c_tinyusd_value_new_array_uint(uint64_t n, const uint32_t *v) {
+  if (!v && n) return nullptr;
+  std::vector<uint32_t> arr(v, v + n);
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(arr));
+}
+CTinyUSDValue *c_tinyusd_value_new_array_uint64(uint64_t n, const uint64_t *v) {
+  if (!v && n) return nullptr;
+  std::vector<uint64_t> arr(v, v + n);
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(arr));
+}
+CTinyUSDValue *c_tinyusd_value_new_array_int64(uint64_t n, const int64_t *v) {
+  if (!v && n) return nullptr;
+  std::vector<int64_t> arr(v, v + n);
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(arr));
+}
+
+/* ---- Quaternions ----
+ * Memory layout is {imag[3], real} for both C and C++ structs, so memcpy
+ * is safe.
+ */
+#define QUAT_NEW(__name, __cppty, __cty)                                     \
+  CTinyUSDValue *c_tinyusd_value_new_##__name(__cty v) {                     \
+    static_assert(sizeof(tinyusdz::value::__cppty) == sizeof(__cty), "");    \
+    tinyusdz::value::__cppty x;                                              \
+    std::memcpy(&x, &v, sizeof(__cty));                                      \
+    return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(x)); \
+  }                                                                          \
+  CTinyUSDValue *c_tinyusd_value_new_array_##__name(                         \
+      uint64_t n, const __cty *vals) {                                       \
+    if (!vals && n) return nullptr;                                          \
+    static_assert(sizeof(tinyusdz::value::__cppty) == sizeof(__cty), "");    \
+    std::vector<tinyusdz::value::__cppty> arr(n);                            \
+    if (n) std::memcpy(arr.data(), vals, sizeof(__cty) * size_t(n));         \
+    return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(arr)); \
+  }
+QUAT_NEW(quath, quath, c_tinyusd_quath_t)
+QUAT_NEW(quatf, quatf, c_tinyusd_quatf_t)
+QUAT_NEW(quatd, quatd, c_tinyusd_quatd_t)
+#undef QUAT_NEW
+
+/* ---- Stage default-prim convenience ---- */
+int c_tinyusd_stage_set_default_prim(CTinyUSDStage *stage, const char *name) {
+  if (!stage || !name) return 0;
+  auto *s = reinterpret_cast<tinyusdz::Stage *>(stage);
+  s->metas().defaultPrim = tinyusdz::value::token(name);
+  return 1;
+}
+int c_tinyusd_stage_get_default_prim(const CTinyUSDStage *stage,
+                                     c_tinyusd_string_t *out_name) {
+  if (!stage || !out_name) return 0;
+  const auto *s = reinterpret_cast<const tinyusdz::Stage *>(stage);
+  return c_tinyusd_string_replace(out_name,
+                                  s->metas().defaultPrim.str().c_str());
+}
+
 CTinyUSDValue *c_tinyusd_value_new_asset(const char *asset_path) {
   if (!asset_path) return nullptr;
   tinyusdz::value::AssetPath ap{std::string(asset_path)};

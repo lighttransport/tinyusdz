@@ -292,6 +292,146 @@ c_tinyusd_value_new_array_double3(uint64_t n, const c_tinyusd_double3_t *v);
 C_TINYUSD_EXPORT CTinyUSDValue *
 c_tinyusd_value_new_matrix4d(const double v[16]);
 
+/* matrix2d / matrix3d row-major scalars. */
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_matrix2d_t(c_tinyusd_matrix2d_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_matrix3d_t(c_tinyusd_matrix3d_t v);
+/* matrix4d via the typedef'd struct (alternative form to the [16] one above). */
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_matrix4d_t(c_tinyusd_matrix4d_t v);
+
+/* Array forms for matrices and double-vectors. */
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_double2(uint64_t n, const c_tinyusd_double2_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_double4(uint64_t n, const c_tinyusd_double4_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_matrix2d(uint64_t n, const c_tinyusd_matrix2d_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_matrix3d(uint64_t n, const c_tinyusd_matrix3d_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_matrix4d(uint64_t n, const c_tinyusd_matrix4d_t *v);
+
+/* ---- bool ----
+ * USD has a `bool` value type distinct from `int` (mass enabled flags etc.).
+ * c-tinyusd.h doesn't expose it; provide it here.
+ */
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_bool(int v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_bool(uint64_t n, const int *v);
+
+/* ---- Typed float3/double3 alias scalars ----
+ * color3f / point3f / normal3f / vector3f (and their double counterparts)
+ * share the float3/double3 memory layout but author as distinct types so
+ * the USDC writer emits the spec-correct attribute role.
+ */
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_color3f(c_tinyusd_color3f_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_point3f(c_tinyusd_point3f_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_normal3f(c_tinyusd_normal3f_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_vector3f(c_tinyusd_float3_t v);
+
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_color3d(c_tinyusd_color3d_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_point3d(c_tinyusd_point3d_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_normal3d(c_tinyusd_normal3d_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_vector3d(c_tinyusd_double3_t v);
+
+/* Array forms for typed-vec aliases. */
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_color3f(uint64_t n, const c_tinyusd_color3f_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_point3f(uint64_t n, const c_tinyusd_point3f_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_normal3f(uint64_t n, const c_tinyusd_normal3f_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_vector3f(uint64_t n, const c_tinyusd_float3_t *v);
+
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_color3d(uint64_t n, const c_tinyusd_color3d_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_point3d(uint64_t n, const c_tinyusd_point3d_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_normal3d(uint64_t n, const c_tinyusd_normal3d_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_vector3d(uint64_t n, const c_tinyusd_double3_t *v);
+
+/* Convenience: convert IEEE-754 binary32 to binary16 (half) bit pattern. */
+C_TINYUSD_EXPORT c_tinyusd_half_t
+c_tinyusd_float_to_half(float f);
+
+/* ---- Half precision ----
+ * Half values use the IEEE-754 binary16 bit pattern packed into uint16_t.
+ * The caller is responsible for the float->half conversion (matches the
+ * existing c_tinyusd_half_t convention).
+ */
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_half(c_tinyusd_half_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_half2(c_tinyusd_half2_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_half3(c_tinyusd_half3_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_half4(c_tinyusd_half4_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_half(uint64_t n, const c_tinyusd_half_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_half2(uint64_t n, const c_tinyusd_half2_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_half3(uint64_t n, const c_tinyusd_half3_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_half4(uint64_t n, const c_tinyusd_half4_t *v);
+
+/* ---- Wide integer scalars ---- */
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_uint(uint32_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_uint64(uint64_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_int64(int64_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_uint(uint64_t n, const uint32_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_uint64(uint64_t n, const uint64_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_int64(uint64_t n, const int64_t *v);
+
+/* ---- Quaternions ----
+ * Memory layout is {imag[3], real} (matches both tinyusdz value::quat*
+ * and c_tinyusd_quat*_t). USDA spelling is `(w, x, y, z)` so the caller
+ * is responsible for filling .imag and .real correctly.
+ */
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_quath(c_tinyusd_quath_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_quatf(c_tinyusd_quatf_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_quatd(c_tinyusd_quatd_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_quath(uint64_t n, const c_tinyusd_quath_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_quatf(uint64_t n, const c_tinyusd_quatf_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_quatd(uint64_t n, const c_tinyusd_quatd_t *v);
+
+/* ---- Stage convenience ----
+ * Set/get the stage's `defaultPrim` metadatum. The name is the prim's
+ * element name (no leading slash). Returns 1 on success.
+ */
+C_TINYUSD_EXPORT int
+c_tinyusd_stage_set_default_prim(CTinyUSDStage *stage, const char *name);
+C_TINYUSD_EXPORT int
+c_tinyusd_stage_get_default_prim(const CTinyUSDStage *stage,
+                                 c_tinyusd_string_t *out_name);
+
 /* ---- Asset value constructor ----
  *
  * Construct a Value holding an `asset` (e.g. `asset inputs:file = @./tex.png@`).

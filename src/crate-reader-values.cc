@@ -319,29 +319,24 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64: {
-      // stored as int
-      int _ival;
-      memcpy(&_ival, &d, sizeof(int));
-
-      DCOUT("value.int = " << _ival);
-
-      int64_t ival = static_cast<int64_t>(_ival);
-
+      // Inline payload is 48 bits. Sign-extend from bit 47 to int64_t.
+      uint64_t payload48 = rep.GetPayload() & ((1ull << 48) - 1);
+      int64_t ival;
+      if (payload48 & (1ull << 47)) {
+        // Negative: extend the upper 16 bits with 1s.
+        ival = static_cast<int64_t>(payload48 | (~((1ull << 48) - 1)));
+      } else {
+        ival = static_cast<int64_t>(payload48);
+      }
+      DCOUT("value.int64 = " << ival);
       value->Set(ival);
-
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64: {
-      // stored as uint32
-      uint32_t _ival;
-      memcpy(&_ival, &d, sizeof(uint32_t));
-
-      DCOUT("value.int = " << _ival);
-
-      uint64_t ival = static_cast<uint64_t>(_ival);
-
+      // Inline payload is 48 bits, zero-extended.
+      uint64_t ival = rep.GetPayload() & ((1ull << 48) - 1);
+      DCOUT("value.uint64 = " << ival);
       value->Set(ival);
-
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF: {
@@ -1697,12 +1692,20 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(sizeof(value::quatd));
 
-        value::quatd v;
-        if (!_sr->read(sizeof(value::quatd), sizeof(value::quatd),
-                       reinterpret_cast<uint8_t *>(&v))) {
+        // Wire format: (real, imag[0], imag[1], imag[2]) — distinct from
+        // tinyusdz value::quatd's in-memory {imag[3], real} layout.
+        // Read components individually and reassemble.
+        double comps[4];
+        if (!_sr->read(sizeof(comps), sizeof(comps),
+                       reinterpret_cast<uint8_t *>(comps))) {
           _err += "Failed to read Quatd value\n";
           return false;
         }
+        value::quatd v;
+        v.real = comps[0];
+        v.imag[0] = comps[1];
+        v.imag[1] = comps[2];
+        v.imag[2] = comps[3];
 
         DCOUT("Quatd = " << v);
         value->Set(v);
@@ -1765,12 +1768,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(sizeof(value::quatf));
 
-        value::quatf v;
-        if (!_sr->read(sizeof(value::quatf), sizeof(value::quatf),
-                       reinterpret_cast<uint8_t *>(&v))) {
+        // Wire format: (real, imag[0], imag[1], imag[2]). See QUATD note.
+        float comps[4];
+        if (!_sr->read(sizeof(comps), sizeof(comps),
+                       reinterpret_cast<uint8_t *>(comps))) {
           _err += "Failed to read Quatf value\n";
           return false;
         }
+        value::quatf v;
+        v.real = comps[0];
+        v.imag[0] = comps[1];
+        v.imag[1] = comps[2];
+        v.imag[2] = comps[3];
 
         DCOUT("Quatf = " << v);
         value->Set(v);
@@ -1834,12 +1843,19 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(sizeof(value::quath));
 
-        value::quath v;
-        if (!_sr->read(sizeof(value::quath), sizeof(value::quath),
-                       reinterpret_cast<uint8_t *>(&v))) {
+        // Wire format: (real, imag[0], imag[1], imag[2]) — half stored
+        // as raw uint16 bit pattern.
+        uint16_t comps[4];
+        if (!_sr->read(sizeof(comps), sizeof(comps),
+                       reinterpret_cast<uint8_t *>(comps))) {
           _err += "Failed to read Quath value\n";
           return false;
         }
+        value::quath v;
+        v.real.value = comps[0];
+        v.imag[0].value = comps[1];
+        v.imag[1].value = comps[2];
+        v.imag[2].value = comps[3];
 
         DCOUT("Quath = " << v);
         value->Set(v);

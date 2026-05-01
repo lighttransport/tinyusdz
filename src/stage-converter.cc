@@ -72,7 +72,18 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   GET_PRIM_PROPS(DistantLight)
   GET_PRIM_PROPS(RectLight)
   GET_PRIM_PROPS(Material)
-  GET_PRIM_PROPS(Shader)
+  // Shader stores generic/unknown shader inputs inside Shader::value
+  // (a ShaderNode) rather than Shader::props. Prefer the inner map when
+  // the outer one is empty so generic shaders keep their inputs/outputs
+  // through USDC roundtrip.
+  if (auto *sh = v.as<Shader>()) {
+    if (sh->props.empty()) {
+      if (auto *node = sh->value.as<ShaderNode>()) {
+        return &node->props;
+      }
+    }
+    return &sh->props;
+  }
   GET_PRIM_PROPS(NodeGraph)
   GET_PRIM_PROPS(GeometryLight)
   GET_PRIM_PROPS(PortalLight)
@@ -115,6 +126,21 @@ bool CrateWriter::AddArrayAttribute(
   crate::CrateValue crate_val;
   return ConvertValue(val, crate_val, err) &&
          (fields.push_back({attr_name, crate_val}), true);
+}
+
+bool CrateWriter::AddArrayAttributeWithMetas(
+    const std::string& attr_name, const value::Value& val,
+    const AttrMeta& metas, const Path& prim_path, std::string* err) {
+  // Build a transient Attribute carrying both the value and the typed
+  // attribute's authored metadata, then emit a proper property spec.
+  Attribute attr;
+  attr.set_type_name(val.type_name());
+  primvar::PrimVar pv;
+  pv.set_value(val);
+  attr.set_var(std::move(pv));
+  attr.metas() = metas;
+  return ConvertAttributeToFields(attr_name, attr, prim_path,
+                                  /*is_custom=*/false, err);
 }
 
 void CrateWriter::AddEnumAttribute(
@@ -909,6 +935,13 @@ void CrateWriter::ExtractPrimMeta(
     fields.push_back({"assetInfo", v});
   }
 
+  // clips (Dictionary). Value-clip declarations for animation streaming.
+  if (metas.has_clips()) {
+    crate::CrateValue v;
+    v.Set(metas.get_clips());
+    fields.push_back({"clips", v});
+  }
+
   // apiSchemas
   if (metas.has_apiSchemas()) {
     const auto schemas = metas.get_apiSchemas();
@@ -1495,7 +1528,12 @@ bool CrateWriter::ConvertValue(
   }
 
   // Quaternion types
-  else if (type_name == "quatf") {
+  else if (type_name == "quath") {
+    if (auto v = val.get_value<value::quath>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "quatf") {
     if (auto v = val.get_value<value::quatf>()) {
       out.Set(*v);
       return true;

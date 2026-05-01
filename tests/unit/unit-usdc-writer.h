@@ -172,3 +172,16 @@ void usdc_writer_multi_shader_material_test(void);
 void usdc_writer_variant_with_timesamples_test(void);
 void usdc_writer_mesh_primvar_indices_test(void);
 void usdc_writer_geom_subdiv_full_test(void);
+
+// Recently fixed regressions
+void usdc_writer_shader_generic_inputs_test(void);
+void usdc_writer_clips_metadata_test(void);
+void usdc_writer_attr_doc_alias_test(void);
+void usdc_writer_attr_documentation_test(void);
+void usdc_writer_layer_offset_parser_test(void);
+void usdc_writer_basiscurves_widths_interpolation_test(void);
+void usdc_writer_int64_large_test(void);
+void usdc_writer_uint64_large_test(void);
+void usdc_writer_quatf_roundtrip_test(void);
+void usdc_writer_quatd_roundtrip_test(void);
+void usdc_writer_quath_roundtrip_test(void);

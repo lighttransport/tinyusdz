@@ -33,7 +33,29 @@ class Prim:
     def add_child(self, prim: "Prim") -> None: ...
     def set_element_name(self, name: str) -> None: ...
     def set_attribute(self, name: str, value: object,
-                      dtype: Optional[str] = None) -> None: ...
+                      dtype: Optional[str] = None) -> None:
+        """Author an attribute on this prim.
+
+        Default dtype is inferred from the Python value:
+          int / bool                   -> int / bool
+          float                        -> float
+          str                          -> string
+          list[int]                    -> int[]
+          list[float]                  -> float[]
+          tuple[int]   length 2/3/4    -> int2/int3/int4
+          tuple[float] length 2/3/4    -> float2/float3/float4
+
+        Explicit dtype overrides:
+          "double"                     -> double
+          "double2"/"double3"/"double4"-> double-precision packed vector
+          "color3f"/"point3f"/"normal3f"/"vector3f" — typed float3 alias
+          "color3d"/"point3d"/"normal3d"/"vector3d" — typed double3 alias
+          "matrix2d"/"matrix3d"/"matrix4d" -- nested NxN tuple/list of floats
+          "token"/"token[]"            -> single/array of tokens
+          "asset"/"asset[]"            -> asset path / array of asset paths
+          "string[]"                   -> array of strings
+        """
+        ...
     def set_metadata(self, name: str, value: str | bool) -> None: ...
     def get_metadata(self, name: str) -> Optional[str | bool]: ...
     def apply_api_schema(self, schema_name: str,
