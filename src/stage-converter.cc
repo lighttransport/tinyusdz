@@ -1699,6 +1699,11 @@ bool CrateWriter::ConvertValue(
       out.Set(*v);
       return true;
     }
+  } else if (type_name == "uint64[]") {
+    if (auto v = val.get_value<std::vector<uint64_t>>()) {
+      out.Set(*v);
+      return true;
+    }
   } else if (type_name == "quath[]") {
     if (auto v = val.get_value<std::vector<value::quath>>()) {
       out.Set(*v);

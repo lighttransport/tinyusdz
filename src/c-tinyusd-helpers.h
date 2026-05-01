@@ -422,6 +422,35 @@ c_tinyusd_value_new_array_quatf(uint64_t n, const c_tinyusd_quatf_t *v);
 C_TINYUSD_EXPORT CTinyUSDValue *
 c_tinyusd_value_new_array_quatd(uint64_t n, const c_tinyusd_quatd_t *v);
 
+/* ---- TexCoord role types (float2/double2 aliases) ----
+ * texCoord2f/2d are 2-element role types; texCoord3f/3d are 3-element.
+ * Memory layout is identical to float2/double2 and float3/double3.
+ */
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_texcoord2f(c_tinyusd_texcoord2f_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_texcoord2d(c_tinyusd_texcoord2d_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_texcoord3f(c_tinyusd_float3_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_texcoord3d(c_tinyusd_double3_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_texcoord2f(uint64_t n, const c_tinyusd_texcoord2f_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_texcoord2d(uint64_t n, const c_tinyusd_texcoord2d_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_texcoord3f(uint64_t n, const c_tinyusd_float3_t *v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_texcoord3d(uint64_t n, const c_tinyusd_double3_t *v);
+
+/* ---- frame4d (semantic alias for matrix4d) ----
+ * frame4d has identical layout to matrix4d; authored as frame4d in USDA/USDC.
+ */
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_frame4d(c_tinyusd_matrix4d_t v);
+C_TINYUSD_EXPORT CTinyUSDValue *
+c_tinyusd_value_new_array_frame4d(uint64_t n, const c_tinyusd_matrix4d_t *v);
+
 /* ---- Stage convenience ----
  * Set/get the stage's `defaultPrim` metadatum. The name is the prim's
  * element name (no leading slash). Returns 1 on success.

@@ -1472,6 +1472,62 @@ QUAT_NEW(quatf, quatf, c_tinyusd_quatf_t)
 QUAT_NEW(quatd, quatd, c_tinyusd_quatd_t)
 #undef QUAT_NEW
 
+/* ---- TexCoord role types (float2/double2/float3/double3 aliases) ----
+ * These use the same TYPED_VEC_NEW macro pattern as color3f, etc.
+ */
+#define TEXCOORD_NEW(__name, __cppty, __cty)                                   \
+  CTinyUSDValue *c_tinyusd_value_new_##__name(__cty v) {                       \
+    static_assert(sizeof(tinyusdz::value::__cppty) == sizeof(__cty), "");      \
+    tinyusdz::value::__cppty x;                                                \
+    std::memcpy(&x, &v, sizeof(__cty));                                        \
+    return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(x));   \
+  }                                                                            \
+  CTinyUSDValue *c_tinyusd_value_new_array_##__name(                           \
+      uint64_t n, const __cty *vals) {                                         \
+    if (!vals && n) return nullptr;                                            \
+    static_assert(sizeof(tinyusdz::value::__cppty) == sizeof(__cty), "");      \
+    std::vector<tinyusdz::value::__cppty> arr(n);                              \
+    if (n) std::memcpy(arr.data(), vals, sizeof(__cty) * size_t(n));           \
+    return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(arr)); \
+  }
+
+TEXCOORD_NEW(texcoord2f, float2, c_tinyusd_float2_t)
+TEXCOORD_NEW(texcoord2d, double2, c_tinyusd_double2_t)
+TEXCOORD_NEW(texcoord3f, float3, c_tinyusd_float3_t)
+TEXCOORD_NEW(texcoord3d, double3, c_tinyusd_double3_t)
+#undef TEXCOORD_NEW
+
+/* ---- frame4d (semantic alias for matrix4d) ----
+ * frame4d has identical memory layout to matrix4d (double m[4][4], stored
+ * as double m[16] in the C API). We construct frame4d properly and copy data.
+ */
+CTinyUSDValue *c_tinyusd_value_new_frame4d(c_tinyusd_matrix4d_t v) {
+  // Create a frame4d and copy matrix data into its m member
+  tinyusdz::value::frame4d f;
+  for (int i = 0; i < 4; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      f.m[i][j] = v.m[i * 4 + j];
+    }
+  }
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(f));
+}
+
+CTinyUSDValue *c_tinyusd_value_new_array_frame4d(uint64_t n, const c_tinyusd_matrix4d_t *v) {
+  if (!v && n) return nullptr;
+  std::vector<tinyusdz::value::frame4d> arr;
+  arr.reserve(n);
+  for (uint64_t i = 0; i < n; ++i) {
+    tinyusdz::value::frame4d f;
+    for (int row = 0; row < 4; ++row) {
+      for (int col = 0; col < 4; ++col) {
+        f.m[row][col] = v[i].m[row * 4 + col];
+      }
+    }
+    arr.emplace_back(f);
+  }
+  return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(arr));
+}
+
 /* ---- Stage default-prim convenience ---- */
 int c_tinyusd_stage_set_default_prim(CTinyUSDStage *stage, const char *name) {
   if (!stage || !name) return 0;
