@@ -679,16 +679,9 @@ bool CrateWriter::ConvertSinglePrim(
       // For attribute properties, check if the value type is writable.
       // ConvertAttributeToFields calls AddSpec which can't be undone if
       // Finalize later fails on unsupported types.
-      if (kv.second.is_attribute()) {
-        // Skip empty array values — TRY_INLINE_EMPTY_ARRAY encoding has a bug
-        // where the reader can't decode the fieldset (missing SetIsInlined flag).
-        const Attribute& attr = kv.second.get_attribute();
-        const primvar::PrimVar& pvar = attr.get_var();
-        if (pvar.has_value() && pvar.value_raw().is_array() &&
-            pvar.value_raw().array_size() == 0) {
-          continue;
-        }
-      }
+      // Note: empty array attributes encoded via the TRY_INLINE_EMPTY_ARRAY
+      // path (IsArray + payload=0). Reader handles this via per-type
+      // checks at e.g. crate-reader-values.cc:983.
 
       std::string prop_err;
       if (!ConvertPropertyToFields(kv.first, kv.second, prim_path, dummy_fields, &prop_err)) {
