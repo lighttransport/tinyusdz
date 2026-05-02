@@ -419,8 +419,3 @@ python/tinyusdz/_core.abi3.so
 .codex
 .claude/
 
-# Binary art assets (use git-lfs or external storage)
-data/blender-physics.blend
-
-# Internal asset / rig docs (keep local only)
-doc/blender-vehicle-rig.md
