@@ -365,6 +365,59 @@ Stage_get_default_prim(PyObject *self, PyObject *Py_UNUSED(ignored))
     return r;
 }
 
+static PyObject *
+Stage_set_string_meta(PyObject *self, PyObject *args, const char *key)
+{
+    const char *value = NULL;
+    if (!PyArg_ParseTuple(args, "s", &value)) return NULL;
+    StageObject *s = (StageObject *)self;
+    if (!s->stage) {
+        PyErr_SetString(UsdError, "Stage has no underlying handle");
+        return NULL;
+    }
+    if (!c_tinyusd_stage_meta_set_string(s->stage, key, value)) {
+        PyErr_Format(PyExc_ValueError,
+                     "set_%s failed (invalid value '%s')", key, value);
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Stage_set_double_meta(PyObject *self, PyObject *args, const char *key)
+{
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value)) return NULL;
+    StageObject *s = (StageObject *)self;
+    if (!s->stage) {
+        PyErr_SetString(UsdError, "Stage has no underlying handle");
+        return NULL;
+    }
+    if (!c_tinyusd_stage_meta_set_double(s->stage, key, value)) {
+        PyErr_Format(UsdError, "set_%s failed", key);
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *Stage_set_up_axis(PyObject *self, PyObject *args)
+{ return Stage_set_string_meta(self, args, "upAxis"); }
+
+static PyObject *Stage_set_meters_per_unit(PyObject *self, PyObject *args)
+{ return Stage_set_double_meta(self, args, "metersPerUnit"); }
+
+static PyObject *Stage_set_time_codes_per_second(PyObject *self, PyObject *args)
+{ return Stage_set_double_meta(self, args, "timeCodesPerSecond"); }
+
+static PyObject *Stage_set_frames_per_second(PyObject *self, PyObject *args)
+{ return Stage_set_double_meta(self, args, "framesPerSecond"); }
+
+static PyObject *Stage_set_start_time_code(PyObject *self, PyObject *args)
+{ return Stage_set_double_meta(self, args, "startTimeCode"); }
+
+static PyObject *Stage_set_end_time_code(PyObject *self, PyObject *args)
+{ return Stage_set_double_meta(self, args, "endTimeCode"); }
+
 static PyMethodDef Stage_methods[] = {
     {"export_to_string", Stage_export_to_string, METH_NOARGS,
      "Serialize stage to USDA string."},
@@ -388,6 +441,20 @@ static PyMethodDef Stage_methods[] = {
      "set_default_prim(name): convenience for set_metadata('defaultPrim', name)."},
     {"get_default_prim", Stage_get_default_prim, METH_NOARGS,
      "get_default_prim(): return defaultPrim name, or '' if unauthored."},
+    {"set_up_axis", Stage_set_up_axis, METH_VARARGS,
+     "set_up_axis('X' | 'Y' | 'Z'): convenience for"
+     " set_metadata('upAxis', ...)."},
+    {"set_meters_per_unit", Stage_set_meters_per_unit, METH_VARARGS,
+     "set_meters_per_unit(value): set the metersPerUnit stage metadatum."},
+    {"set_time_codes_per_second", Stage_set_time_codes_per_second,
+     METH_VARARGS,
+     "set_time_codes_per_second(value): set timeCodesPerSecond."},
+    {"set_frames_per_second", Stage_set_frames_per_second, METH_VARARGS,
+     "set_frames_per_second(value): set framesPerSecond."},
+    {"set_start_time_code", Stage_set_start_time_code, METH_VARARGS,
+     "set_start_time_code(value): set startTimeCode."},
+    {"set_end_time_code", Stage_set_end_time_code, METH_VARARGS,
+     "set_end_time_code(value): set endTimeCode."},
     {NULL, NULL, 0, NULL}
 };
 
