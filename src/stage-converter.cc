@@ -1525,6 +1525,17 @@ bool CrateWriter::ConvertValue(
       out.Set(*v);
       return true;
     }
+  } else if (type_name == "frame4d") {
+    if (auto v = val.get_value<value::frame4d>(false)) {
+      value::matrix4d mat;
+      for (size_t row = 0; row < 4; ++row) {
+        for (size_t col = 0; col < 4; ++col) {
+          mat.m[row][col] = (*v).m[row][col];
+        }
+      }
+      out.Set(std::move(mat));
+      return true;
+    }
   }
 
   // Quaternion types
@@ -1777,6 +1788,22 @@ bool CrateWriter::ConvertValue(
   } else if (type_name == "matrix3d[]") {
     if (auto v = val.get_value<std::vector<value::matrix3d>>()) {
       out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "frame4d[]") {
+    if (auto v = val.get_value<std::vector<value::frame4d>>(false)) {
+      std::vector<value::matrix4d> mats;
+      mats.reserve(v->size());
+      for (const auto &frame : *v) {
+        value::matrix4d mat;
+        for (size_t row = 0; row < 4; ++row) {
+          for (size_t col = 0; col < 4; ++col) {
+            mat.m[row][col] = frame.m[row][col];
+          }
+        }
+        mats.emplace_back(std::move(mat));
+      }
+      out.Set(std::move(mats));
       return true;
     }
   }

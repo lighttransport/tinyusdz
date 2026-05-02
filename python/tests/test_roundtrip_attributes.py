@@ -16,6 +16,12 @@ import tinyusdz
 FORMATS = ["usda", "usdc", "usdz"]
 
 
+def _timesample_text(sample_value) -> str:
+    if hasattr(sample_value, "to_string"):
+        return sample_value.to_string()
+    return str(sample_value)
+
+
 def _build_one_attr_stage(value, dtype=None) -> tinyusdz.Stage:
     s = tinyusdz.Stage()
     p = tinyusdz.Prim("Xform", name="X")
@@ -197,7 +203,7 @@ def test_timesamples_in_memory():
     assert len(samples) == 2
     assert samples[0][0] == 0.0
     assert samples[1][0] == 24.0
-    assert "10" in samples[1][1]
+    assert "10" in _timesample_text(samples[1][1])
 
 
 @pytest.mark.parametrize("fmt", FORMATS)
@@ -223,7 +229,8 @@ def test_timesamples_roundtrip(tmp_path: pathlib.Path, fmt):
     assert samples[0][0] == 0.0
     assert samples[1][0] == 24.0
     # Sample value payloads — the bug we just fixed corrupted these on USDC.
-    s0, s1 = samples[0][1], samples[1][1]
+    s0 = _timesample_text(samples[0][1])
+    s1 = _timesample_text(samples[1][1])
     assert "1" in s0 and "2" in s0 and "3" in s0
     assert "4" in s1 and "5" in s1 and "6" in s1
 

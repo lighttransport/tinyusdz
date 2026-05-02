@@ -2070,7 +2070,11 @@ int c_tinyusd_prim_set_attribute_timesample(CTinyUSDPrim *prim,
   const value::Value *val = reinterpret_cast<const value::Value *>(value);
   std::string ty = (type_name && *type_name) ? std::string(type_name)
                                              : val->type_name();
-  if (attr.type_name().empty()) attr.set_type_name(ty);
+  if (type_name && *type_name) {
+    attr.set_type_name(ty);
+  } else if (attr.type_name().empty()) {
+    attr.set_type_name(ty);
+  }
 
   std::string aerr;
   if (!attr.get_var().ts_raw().add_sample(time, *val, &aerr)) {

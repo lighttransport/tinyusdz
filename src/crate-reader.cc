@@ -1038,6 +1038,9 @@ template bool CrateReader::ReadArray<value::matrix2d>(std::vector<value::matrix2
 template bool CrateReader::ReadArray<value::matrix3d>(std::vector<value::matrix3d>*);
 template bool CrateReader::ReadArray<value::matrix4d>(std::vector<value::matrix4d>*);
 // Vector type instantiations needed by crate-reader-timesamples.cc
+template bool CrateReader::ReadArray<value::int2>(std::vector<value::int2>*);
+template bool CrateReader::ReadArray<value::int3>(std::vector<value::int3>*);
+template bool CrateReader::ReadArray<value::int4>(std::vector<value::int4>*);
 template bool CrateReader::ReadArray<value::half2>(std::vector<value::half2>*);
 template bool CrateReader::ReadArray<value::half3>(std::vector<value::half3>*);
 template bool CrateReader::ReadArray<value::half4>(std::vector<value::half4>*);

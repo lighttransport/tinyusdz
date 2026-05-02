@@ -20,6 +20,7 @@
 #include <Python.h>
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -110,6 +111,10 @@ make_prim(const CTinyUSDPrim *prim, PyObject *owner);
 static CTinyUSDValue *
 py_to_value(PyObject *obj, const char *dtype, char *out_type_name,
             size_t out_type_name_size);
+static PyObject *
+make_value_owning(CTinyUSDValue *value);
+static char *
+dup_normalized_asset_path(const char *s);
 
 static PyObject *
 Stage_export_to_string(PyObject *self, PyObject *args)
@@ -1114,32 +1119,86 @@ static PyObject *
 Prim_get_attribute_timesamples(PyObject *self, PyObject *args)
 {
     const char *name = NULL;
+    const char *attr_type_name = NULL;
+    CTinyUSDAttribute *attr = NULL;
+    c_tinyusd_string_t *type_name_buf = NULL;
     if (!PyArg_ParseTuple(args, "s", &name)) return NULL;
     PrimObject *p = (PrimObject *)self;
     if (!p->prim) Py_RETURN_NONE;
+    attr = c_tinyusd_prim_get_attribute(p->prim, name);
+    if (attr) {
+        type_name_buf = c_tinyusd_string_new_empty();
+        if (!type_name_buf) {
+            c_tinyusd_attribute_free(attr);
+            return PyErr_NoMemory();
+        }
+        if (c_tinyusd_attribute_get_type_name(attr, type_name_buf)) {
+            attr_type_name = c_tinyusd_string_str(type_name_buf);
+        }
+    }
     uint64_t count = c_tinyusd_prim_get_attribute_timesample_count(
         p->prim, name);
     PyObject *out = PyList_New((Py_ssize_t)count);
-    if (!out) return NULL;
+    if (!out) {
+        if (type_name_buf) c_tinyusd_string_free(type_name_buf);
+        if (attr) c_tinyusd_attribute_free(attr);
+        return NULL;
+    }
     for (uint64_t i = 0; i < count; ++i) {
         double t = 0.0;
         CTinyUSDValue *v = NULL;
         if (!c_tinyusd_prim_get_attribute_timesample(p->prim, name, i, &t, &v)) {
+            if (type_name_buf) c_tinyusd_string_free(type_name_buf);
+            if (attr) c_tinyusd_attribute_free(attr);
             Py_DECREF(out);
             Py_RETURN_NONE;
         }
-        /* Wrap the Value into a tinyusdz.Value Python object via existing
-         * helper. We don't have a public make_value() alias, so just emit
-         * (time, repr-string) pair from to_string for portability. */
-        c_tinyusd_string_t *s = c_tinyusd_string_new_empty();
-        c_tinyusd_value_to_string(v, s);
-        const char *cstr = c_tinyusd_string_str(s);
-        PyObject *tup = Py_BuildValue("(ds)", t, cstr ? cstr : "");
-        c_tinyusd_string_free(s);
-        c_tinyusd_value_free(v);
-        if (!tup) { Py_DECREF(out); return NULL; }
+        PyObject *tup;
+        PyObject *py_val = NULL;
+
+        if (attr_type_name &&
+            (!strcmp(attr_type_name, "half") || !strcmp(attr_type_name, "uint64"))) {
+            c_tinyusd_string_t *sample_buf = c_tinyusd_string_new_empty();
+            if (!sample_buf) {
+                c_tinyusd_value_free(v);
+                if (type_name_buf) c_tinyusd_string_free(type_name_buf);
+                if (attr) c_tinyusd_attribute_free(attr);
+                Py_DECREF(out);
+                return PyErr_NoMemory();
+            }
+            if (c_tinyusd_value_to_string(v, sample_buf)) {
+                const char *s = c_tinyusd_string_str(sample_buf);
+                if (!strcmp(attr_type_name, "half")) {
+                    py_val = PyFloat_FromDouble(s ? strtod(s, NULL) : 0.0);
+                } else {
+                    py_val = PyLong_FromUnsignedLongLong(
+                        s ? strtoull(s, NULL, 10) : 0ULL);
+                }
+            }
+            c_tinyusd_string_free(sample_buf);
+            c_tinyusd_value_free(v);
+        } else {
+            py_val = make_value_owning(v);
+        }
+
+        if (!py_val) {
+            if (type_name_buf) c_tinyusd_string_free(type_name_buf);
+            if (attr) c_tinyusd_attribute_free(attr);
+            Py_DECREF(out);
+            return NULL;
+        }
+        tup = Py_BuildValue("(dO)", t, py_val);
+        Py_DECREF(py_val);
+        if (!tup) {
+            if (type_name_buf) c_tinyusd_string_free(type_name_buf);
+            if (attr) c_tinyusd_attribute_free(attr);
+            Py_DECREF(out);
+            return NULL;
+        }
         PyList_SetItem(out, (Py_ssize_t)i, tup);
     }
+    if (type_name_buf) c_tinyusd_string_free(type_name_buf);
+    if (attr) c_tinyusd_attribute_free(attr);
     return out;
 }
 
@@ -1206,8 +1265,8 @@ static PyMethodDef Prim_methods[] = {
      " (time, value) sample on a time-sampled attribute. Repeated calls"
      " with different `time` build up the TimeSamples vector."},
     {"get_attribute_timesamples", Prim_get_attribute_timesamples, METH_VARARGS,
-     "get_attribute_timesamples(name) -> list[(time, repr_str)]: read"
-     " authored time samples (each as a (time, value-as-string) tuple)."},
+     "get_attribute_timesamples(name) -> list[(time, Value)]: read"
+     " authored time samples."},
     {NULL, NULL, 0, NULL}
 };
 
@@ -1248,15 +1307,23 @@ typedef struct {
     PyObject_HEAD
     const CTinyUSDValue *value;
     PyObject *owner;
+    int owns_value;
 } ValueObject;
 
 static PyObject *
 make_value(const CTinyUSDValue *value, PyObject *owner);
+static PyObject *
+make_value_owning(CTinyUSDValue *value);
+static char *
+dup_normalized_asset_path(const char *s);
 
 static void
 Value_dealloc(PyObject *self)
 {
     ValueObject *v = (ValueObject *)self;
+    if (v->owns_value && v->value) {
+        c_tinyusd_value_free((CTinyUSDValue *)v->value);
+    }
     Py_XDECREF(v->owner);
     PyTypeObject *tp = Py_TYPE(self);
     freefunc tp_free = (freefunc)PyType_GetSlot(tp, Py_tp_free);
@@ -1319,6 +1386,31 @@ Value_as_scalar(PyObject *self, PyObject *args)
     if (c_tinyusd_value_as_double(v->value, &d)) {
         return PyFloat_FromDouble(d);
     }
+
+    {
+        CTinyUSDValueType t = c_tinyusd_value_type(v->value);
+        const char *n = c_tinyusd_value_type_name(t);
+        c_tinyusd_string_t *buf = c_tinyusd_string_new_empty();
+        if (!buf) return PyErr_NoMemory();
+
+        if (c_tinyusd_value_to_string(v->value, buf)) {
+            const char *s = c_tinyusd_string_str(buf);
+            if (n && s) {
+                if (!strcmp(n, "uint64")) {
+                    unsigned long long u = strtoull(s, NULL, 10);
+                    c_tinyusd_string_free(buf);
+                    return PyLong_FromUnsignedLongLong(u);
+                }
+                if (!strcmp(n, "half")) {
+                    double hd = strtod(s, NULL);
+                    c_tinyusd_string_free(buf);
+                    return PyFloat_FromDouble(hd);
+                }
+            }
+        }
+        c_tinyusd_string_free(buf);
+    }
+
     c_tinyusd_string_t *buf = c_tinyusd_string_new_empty();
     if (!buf) return PyErr_NoMemory();
     if (c_tinyusd_value_get_string(v->value, buf)) {
@@ -1458,9 +1550,54 @@ make_value(const CTinyUSDValue *value, PyObject *owner)
     ValueObject *obj = (ValueObject *)alloc(tp, 0);
     if (!obj) return NULL;
     obj->value = value;
+    obj->owns_value = 0;
     Py_INCREF(owner);
     obj->owner = owner;
     return (PyObject *)obj;
+}
+
+static PyObject *
+make_value_owning(CTinyUSDValue *value)
+{
+    PyTypeObject *tp = (PyTypeObject *)ValueType;
+    allocfunc alloc = (allocfunc)PyType_GetSlot(tp, Py_tp_alloc);
+    ValueObject *obj = (ValueObject *)alloc(tp, 0);
+    if (!obj) {
+        c_tinyusd_value_free(value);
+        return NULL;
+    }
+    obj->value = value;
+    obj->owns_value = 1;
+    obj->owner = NULL;
+    return (PyObject *)obj;
+}
+
+static char *
+dup_normalized_asset_path(const char *s)
+{
+    size_t len;
+    size_t start = 0;
+    size_t end = 0;
+    char *out;
+
+    if (!s) return NULL;
+
+    len = strlen(s);
+    if (len >= 6 &&
+        s[0] == '@' && s[1] == '@' && s[2] == '@' &&
+        s[len - 3] == '@' && s[len - 2] == '@' && s[len - 1] == '@') {
+        start = 3;
+        end = 3;
+    } else if (len >= 2 && s[0] == '@' && s[len - 1] == '@') {
+        start = 1;
+        end = 1;
+    }
+
+    out = (char *)PyMem_Malloc(len - start - end + 1);
+    if (!out) return NULL;
+    memcpy(out, s + start, len - start - end);
+    out[len - start - end] = '\0';
+    return out;
 }
 
 /* ------------------------------------------------------------------------
@@ -1722,13 +1859,20 @@ py_to_value(PyObject *obj, const char *dtype, char *out_type_name,
 
     /* Explicit dtype="asset" handles a single path string. */
     if (dtype && !strcmp(dtype, "asset")) {
+        char *norm = NULL;
         if (!PyUnicode_Check(obj)) {
             PyErr_SetString(PyExc_TypeError, "dtype='asset' requires a string");
             return NULL;
         }
         const char *s = PyUnicode_AsUTF8(obj);
         if (!s) return NULL;
-        CTinyUSDValue *v = c_tinyusd_value_new_asset(s);
+        norm = dup_normalized_asset_path(s);
+        if (!norm) {
+            PyErr_NoMemory();
+            return NULL;
+        }
+        CTinyUSDValue *v = c_tinyusd_value_new_asset(norm);
+        PyMem_Free(norm);
         snprintf(out_type_name, out_type_name_size, "asset");
         if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_asset failed");
         return v;
@@ -1736,6 +1880,7 @@ py_to_value(PyObject *obj, const char *dtype, char *out_type_name,
 
     /* Explicit dtype="asset[]" handles a list/tuple of path strings. */
     if (dtype && !strcmp(dtype, "asset[]")) {
+        char **norm_paths = NULL;
         if (!PyList_Check(obj) && !PyTuple_Check(obj)) {
             PyErr_SetString(PyExc_TypeError,
                             "dtype='asset[]' requires a list/tuple of str");
@@ -1748,12 +1893,19 @@ py_to_value(PyObject *obj, const char *dtype, char *out_type_name,
         PyObject **items = (PyObject **)PyMem_Malloc(
             sizeof(PyObject *) * (size_t)(n > 0 ? n : 1));
         if (!items) { PyMem_Free(paths); return PyErr_NoMemory(); }
+        norm_paths = (char **)PyMem_Malloc(sizeof(char *) * (size_t)(n > 0 ? n : 1));
+        if (!norm_paths) {
+            PyMem_Free(items);
+            PyMem_Free(paths);
+            return PyErr_NoMemory();
+        }
         for (Py_ssize_t i = 0; i < n; ++i) {
             PyObject *e = PySequence_GetItem(obj, i);
             if (!e || !PyUnicode_Check(e)) {
                 Py_XDECREF(e);
                 for (Py_ssize_t k = 0; k < i; ++k) Py_DECREF(items[k]);
-                PyMem_Free(items); PyMem_Free(paths);
+                for (Py_ssize_t k = 0; k < i; ++k) PyMem_Free(norm_paths[k]);
+                PyMem_Free(norm_paths); PyMem_Free(items); PyMem_Free(paths);
                 PyErr_SetString(PyExc_TypeError,
                                 "all asset[] elements must be str");
                 return NULL;
@@ -1762,13 +1914,24 @@ py_to_value(PyObject *obj, const char *dtype, char *out_type_name,
             paths[i] = PyUnicode_AsUTF8(e);
             if (!paths[i]) {
                 for (Py_ssize_t k = 0; k <= i; ++k) Py_DECREF(items[k]);
-                PyMem_Free(items); PyMem_Free(paths);
+                for (Py_ssize_t k = 0; k < i; ++k) PyMem_Free(norm_paths[k]);
+                PyMem_Free(norm_paths); PyMem_Free(items); PyMem_Free(paths);
                 return NULL;
             }
+            norm_paths[i] = dup_normalized_asset_path(paths[i]);
+            if (!norm_paths[i]) {
+                for (Py_ssize_t k = 0; k <= i; ++k) Py_DECREF(items[k]);
+                for (Py_ssize_t k = 0; k < i; ++k) PyMem_Free(norm_paths[k]);
+                PyMem_Free(norm_paths); PyMem_Free(items); PyMem_Free(paths);
+                PyErr_NoMemory();
+                return NULL;
+            }
+            paths[i] = norm_paths[i];
         }
         CTinyUSDValue *v = c_tinyusd_value_new_array_asset((uint64_t)n, paths);
         for (Py_ssize_t k = 0; k < n; ++k) Py_DECREF(items[k]);
-        PyMem_Free(items); PyMem_Free(paths);
+        for (Py_ssize_t k = 0; k < n; ++k) PyMem_Free(norm_paths[k]);
+        PyMem_Free(norm_paths); PyMem_Free(items); PyMem_Free(paths);
         snprintf(out_type_name, out_type_name_size, "asset[]");
         if (!v) PyErr_SetString(PyExc_RuntimeError, "value_new_array_asset failed");
         return v;
