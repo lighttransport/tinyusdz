@@ -274,8 +274,59 @@ Stage_repr(PyObject *self)
 {
     StageObject *s = (StageObject *)self;
     uint64_t n = c_tinyusd_stage_num_root_prims(s->stage);
-    return PyUnicode_FromFormat("<tinyusdz.Stage root_prims=%llu>",
-                                (unsigned long long)n);
+
+    c_tinyusd_string_t *buf = c_tinyusd_string_new_empty();
+    int has_dp = 0, has_ax = 0, has_mpu = 0;
+    char dp[128] = {0};
+    const char *ax_str = NULL;
+    double mpu = 0.0;
+    if (buf) {
+        if (c_tinyusd_stage_meta_get_string(s->stage, "defaultPrim", buf)) {
+            const char *cs = c_tinyusd_string_str(buf);
+            if (cs && *cs) {
+                strncpy(dp, cs, sizeof(dp) - 1);
+                has_dp = 1;
+            }
+        }
+        c_tinyusd_string_replace(buf, "");
+        if (c_tinyusd_stage_meta_get_string(s->stage, "upAxis", buf)) {
+            const char *cs = c_tinyusd_string_str(buf);
+            if (cs && *cs) {
+                ax_str = (cs[0] == 'X') ? "X" : (cs[0] == 'Z') ? "Z" : "Y";
+                has_ax = 1;
+            }
+        }
+        c_tinyusd_string_free(buf);
+    }
+    has_mpu = c_tinyusd_stage_meta_get_double(s->stage, "metersPerUnit", &mpu);
+
+    PyObject *parts = PyList_New(0);
+    if (!parts) return NULL;
+    PyObject *piece;
+    piece = PyUnicode_FromFormat("root_prims=%llu", (unsigned long long)n);
+    if (piece) { PyList_Append(parts, piece); Py_DECREF(piece); }
+    if (has_dp) {
+        piece = PyUnicode_FromFormat("defaultPrim=%s", dp);
+        if (piece) { PyList_Append(parts, piece); Py_DECREF(piece); }
+    }
+    if (has_ax) {
+        piece = PyUnicode_FromFormat("upAxis=%s", ax_str);
+        if (piece) { PyList_Append(parts, piece); Py_DECREF(piece); }
+    }
+    if (has_mpu) {
+        char mpu_buf[64];
+        snprintf(mpu_buf, sizeof(mpu_buf), "metersPerUnit=%g", mpu);
+        piece = PyUnicode_FromString(mpu_buf);
+        if (piece) { PyList_Append(parts, piece); Py_DECREF(piece); }
+    }
+    PyObject *sep = PyUnicode_FromString(" ");
+    PyObject *joined = PyUnicode_Join(sep, parts);
+    Py_DECREF(sep);
+    Py_DECREF(parts);
+    if (!joined) return NULL;
+    PyObject *out = PyUnicode_FromFormat("<tinyusdz.Stage %U>", joined);
+    Py_DECREF(joined);
+    return out;
 }
 
 static PyObject *
@@ -1275,8 +1326,12 @@ Prim_repr(PyObject *self)
     PrimObject *p = (PrimObject *)self;
     const char *t = c_tinyusd_prim_type(p->prim);
     const char *n = c_tinyusd_prim_element_name(p->prim);
-    return PyUnicode_FromFormat("<tinyusdz.Prim type=%s name=%s>",
-                                t ? t : "?", n ? n : "?");
+    uint64_t nch = p->prim ? c_tinyusd_prim_num_children(p->prim) : 0;
+    /* property count via tydra GetPropertyNames is heavyweight; use the
+     * lightweight num_props if available. */
+    return PyUnicode_FromFormat(
+        "<tinyusdz.Prim type=%s name=%s children=%llu>",
+        t ? t : "?", n ? n : "?", (unsigned long long)nch);
 }
 
 static int
