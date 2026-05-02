@@ -9,42 +9,119 @@ TinyUSDZ is a secure, portable, dependency-free C++17 library for parsing and wr
 ## Repository Layout
 
 ```
-src/                    Core library sources
-  ascii-parser.{hh,cc}    Hand-written USDA parser
-  crate-reader.{hh,cc}    USDC binary (Crate) reader
-  crate-writer.{hh,cc}    USDC binary writer (experimental)
-  usda-reader.{hh,cc}     High-level USDA reading
-  usdc-reader.{hh,cc}     High-level USDC reading
-  usda-writer.{hh,cc}     USDA writer (production)
-  usdc-writer.{hh,cc}     USDC writer (experimental)
-  pprinter.{hh,cc}        Pretty-printer (Stage/Prim -> USDA text)
-  tinyusdz.{hh,cc}        Main API (LoadUSDFromFile, etc.)
-  stage.{hh,cc}            USD Stage (scene graph)
-  prim-types.{hh,cc}       Primitive type definitions
-  value-types.{hh,cc}      Value type system
-  composition.{hh,cc}      Composition arcs (references, payloads)
-  usdGeom.{hh,cc}          Geometry prims (Mesh, Sphere, etc.)
-  usdShade.{hh,cc}         Materials and shaders
-  usdSkel.{hh,cc}          Skeletal animation
-  tydra/                   Tydra framework (USD -> render-ready data)
-    render-data.{hh,cc}      Convert Stage to OpenGL/Vulkan scene
-    scene-access.{hh,cc}     Scene traversal and query APIs
-    texture-util.{hh,cc}     Texture loading / colorspace
-tests/
-  unit/                  Acutest-based unit tests (unit-*.cc)
-  usda/                  USDA test fixture files
-  usdc/                  USDC test fixture files
-  parse_usd/             Python-driven parse test runner
-  tydra_to_renderscene/  Tydra conversion tests
-  compare-usda.js        Roundtrip comparison (tusdcat vs usdcat)
-  run-usdcat-compare.sh  Batch roundtrip test runner
-examples/                Standalone example apps (separate builds)
-  tusdcat/                 USD cat/dump tool
-models/                  Test USD files for development
-doc/                     Documentation
-scripts/                 Build/bootstrap scripts for various platforms
-web/                     WebAssembly/JavaScript bindings and demos
-sandbox/                 Experimental tooling and prototypes
+src/                       Core library sources (~250 .cc/.hh files)
+  ascii-parser*.{hh,cc}      Hand-written USDA parser (split across
+                             entry / props / basetype / timesamples /
+                             timesamples-array translation units)
+  crate-reader*.{hh,cc}      USDC binary (Crate) reader (split across
+                             arrays, paths, timesamples, values)
+  crate-writer.{hh,cc}       USDC binary writer (experimental but
+                             increasingly fidelity-locked)
+  crate-format.{hh,cc}       Crate binary layout, ValueRep, indices
+  crate-dump.{hh,cc}         Low-level crate inspection (`tusdcat
+                             --dump-crate-fields`)
+  crate-path-utils/          Path encoding helpers shared by reader/
+                             writer
+  usda-reader.{hh,cc}        High-level USDA reading
+  usdc-reader*.{hh,cc}       High-level USDC reading (also -prim,
+                             -property)
+  usda-writer.{hh,cc}        USDA writer (production)
+  usdc-writer.{hh,cc}        USDC writer entry (delegates to
+                             crate-writer)
+  pprinter*.{hh,cc}          Pretty-printer (Stage/Prim -> USDA text);
+                             pprint-meta / pprint-shader / pprint-enum
+                             / pprint-detail
+  stage-converter.cc         Stage <-> CrateData (LayerSpec) bridge
+                             used by writer
+  composition*.{hh,cc}       Composition arcs (references, payloads,
+                             inherits, specializes, variants),
+                             reconstruction, graph
+  prim-reconstruct*          Per-schema field reconstruction tables
+  ascii-parser-entry.cc      Registers prim/attr meta names
+  tinyusdz.{hh,cc}           Main API (LoadUSDFromFile, etc.)
+  stage.{hh,cc}              USD Stage (scene graph)
+  prim-types.{hh,cc}         Primitive type definitions
+  value-types.{hh,cc}        Value type system + DEFINE_TYPE_TRAIT
+  attribute-eval*.cc         Animatable<T> attribute evaluation
+                             (split across many TUs to keep
+                             template-instantiation costs sane)
+  usdGeom.{hh,cc}            Geometry prims (Mesh, Sphere, etc.)
+  usdShade.{hh,cc}           Materials and shaders
+  usdSkel.{hh,cc}            Skeletal animation
+  usdLux.{hh,cc}             Lights
+  usdPhysics.{hh,cc}         UsdPhysics (rigid bodies, joints,
+                             colliders) — physics-2026 branch focus
+  usdMtlx.{hh,cc}            MaterialX nodegraphs
+  usdAR.{hh,cc}              UsdAR (anchor / image / face)
+  usdFbx, usdMedia, usdObj   Adjacent format/asset schemas
+  c-tinyusd.{h}              C API surface (stable, MIT-friendly)
+  c-tinyusd-helpers.{h,cc}   C API impl + helpers (composition arc
+                             authoring, variant content, attribute
+                             setters, etc.)
+  c-tinyusd-tydra.{h,cc}     C API for Tydra scene access
+  python/module.c            CPython abi3 extension entry (tinyusdz
+                             Python module — Stage / Prim / Attribute
+                             / Value / RenderScene types). Backed by
+                             the C API in c-tinyusd-helpers.
+  core/                      Schema-agnostic primitives split out for
+                             tighter dependency graphs:
+    attribute.hh, attr-metas.hh, prim-metas.hh, metadata-base.hh,
+    composition-types.hh, list-op.hh, variant-types.hh, prim.hh,
+    prim-spec.hh, layer-types.hh, animatable.hh, instance-key.{hh,cc},
+    extent.hh, collection-api.hh, …
+  tydra/                     Tydra framework (USD -> render-ready)
+    render-data.{hh,cc}        Convert Stage to OpenGL/Vulkan scene
+    scene-access.{hh,cc}       Scene traversal and query APIs (also
+                               provides the introspection used by the
+                               C / Python APIs — GetProperty,
+                               GetPropertyNames, …)
+    texture-util.{hh,cc}       Texture loading / colorspace
+    attribute-eval-*           Tydra-side animatable evaluation
+    variant-{converter,support}.cc  Variant authoring/dispatch helpers
+  external/, nonstd/         Vendored deps (header-only): nonstd::
+                             optional, expected, string_view, fmt,
+                             stb_image, base122, miniz, …
+  attic/, blender/, next/    Experimental / under-construction code
+                             not built into the main library
+
+python/                    CPython abi3 wheel (built from
+                           src/python/module.c via setuptools +
+                           CMake). Layout:
+  pyproject.toml             Build config (declared at repo root)
+  tinyusdz/                  Installed package (`import tinyusdz`)
+    __init__.py              Public re-exports
+    _core.pyi                Type stubs (kept in sync with module.c)
+  tests/                     pytest suite (~40 files, ~780 tests)
+  tutorial*.py               Hand-run examples
+  README.md                  User-facing Python docs
+
+tests/                     C++ tests + roundtrip + Python harness
+  unit/                      Acutest-based unit tests (unit-*.cc, 580+
+                             tests)
+  usda/                      USDA test fixture files
+  usdc/                      USDC test fixture files
+  parse_usd/                 Python-driven parse test runner
+  tydra_to_renderscene/      Tydra conversion tests
+  feat/                      Feature-specific test miniprograms
+  fuzzer/                    libFuzzer corpora + harness sources
+  compare-usda.js            Roundtrip comparison (tusdcat vs usdcat)
+  run-usdcat-compare.sh      Batch roundtrip test runner
+
+examples/                  Standalone example apps (separate builds):
+                           tusdcat, api_tutorial, asset_resolution,
+                           c_api_example, mcp_server, openglviewer,
+                           optixviewer, file_format, js-script,
+                           progressive_composition, etc.
+models/                    Test USD files for development
+doc/                       Documentation (testing-cpp.md,
+                           how-to-implement-feature.md, c-py-tasks.md,
+                           crate-impl.md, etc.)
+aousd/                     AOUSD spec text + crate-impl docs (NOT the
+                           PDFs themselves — those are gitignored)
+scripts/                   Build/bootstrap scripts for various
+                           platforms
+web/                       WebAssembly/JavaScript bindings and demos
+sandbox/                   Experimental tooling and prototypes
 ```
 
 ## Build Commands
@@ -66,6 +143,16 @@ make
 ```
 
 Build folder: `build/` (native), `web/build/` (WASM).
+
+```bash
+# Python extension (CPython abi3 wheel)
+pip install -e . --no-build-isolation
+# editable install builds into build_py_ext/ (gitignored).
+# Re-run after touching src/python/module.c, c-tinyusd-helpers.{h,cc},
+# or any header transitively included by them.
+
+cd python && python3 -m pytest tests/ -q
+```
 
 ### Key CMake Options
 
@@ -152,3 +239,109 @@ See **[doc/how-to-implement-feature.md](doc/how-to-implement-feature.md)** for t
 ## Commit Style
 
 Concise imperative subjects (e.g. "Fix double-quoting in USDC metadata"). Body optional for context. Reference issues with `#123`. Default branch for PRs: `release`.
+
+## Git Push Policy (mandatory pre-push checklist)
+
+Pushing rewrites shared state. Before **any** `git push` (regular, force, or `--force-with-lease`), an agent must complete every step below. Skipping a step is a defect — pre-push hygiene is one of the few places in this repo where "ask first" beats "act first" by default, because once a 100 MB binary or a leaked credential lands on `origin` it is forever in the public Git history.
+
+### 1. Audit the commits about to leave the machine
+
+Always inspect the exact range you are pushing — `git log --oneline @{upstream}..HEAD` for a regular push, or `git log --oneline <remote-tip>..HEAD` for a force/lease push — and run the four checks below against **every** commit in that range, not just `HEAD`. Any single offending commit blocks the push; resolve via `git rebase -i` (drop / edit) or `git filter-repo` (path removal) before continuing.
+
+#### Check 1 — Credentials & sensitive data
+
+Never push a commit that contains, or has ever contained at any point in its history within the push range:
+
+- API keys, bearer tokens, OAuth client secrets, AWS / GCP / Azure access keys, SSH private keys, PGP private keys, `.netrc`, `.env`, `.npmrc` with `_authToken`.
+- Email/password pairs, JWTs, Slack/Discord/GitHub webhook URLs.
+- Internal hostnames, VPN configs, customer asset paths that aren't already public.
+- Personal user paths (`/home/<someone>/…`, `C:\Users\<someone>\…`) baked into source comments — embarrassing rather than dangerous, but still gets stripped.
+
+How to check (run from the repo root, against the exact push range):
+
+```bash
+RANGE="$(git rev-parse --abbrev-ref --symbolic-full-name @{upstream})..HEAD"
+git diff "$RANGE" -- ':!**/*.md' ':!**/*.txt' \
+  | grep -nIE 'AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|AIza[0-9A-Za-z_\-]{35}|(?i)(api[_-]?key|secret|token|password|passwd|bearer|private[_-]?key)\s*[:=]' \
+  || echo "No credential-shaped strings found in $RANGE"
+```
+
+This is a heuristic, not a guarantee. If a commit touches anything that *talks* to an external service (CI, package upload, asset server) eyeball the diff manually too.
+
+#### Check 2 — No build artifacts
+
+Build outputs do not belong in Git. They explode the pack size, cause merge conflicts on every rebuild, and routinely contain absolute paths from the developer's machine. If you find any of these in the push range, drop the file (and ignore the path going forward).
+
+The common culprits in this repo:
+
+- `build/`, `build_py/`, `build_py_ext/`, `build_test/`, `web/build/`, `web/build_64*/` — CMake / ninja output trees.
+- `*.a`, `*.o`, `*.obj`, `*.so`, `*.dylib`, `*.dll`, `*.lib`, `*.pdb` — compiled object files / libraries.
+- `python/tinyusdz/_core.abi3.so` — the editable-install Python extension binary; regenerated by `pip install -e .`.
+- `*.ninja_deps`, `*.ninja_log`, `build.ninja`, `CMakeCache.txt`, `CMakeFiles/`, `CTestTestfile.cmake`, `compile_commands.json` — CMake/ninja state.
+- `__pycache__/`, `*.pyc`, `node_modules/`, `dist/`, `*.egg-info/`.
+
+Run from the repo root:
+
+```bash
+git diff --name-only "$RANGE" \
+  | grep -E '^(build|build_py|build_py_ext|build_test|web/build)/|/CMakeFiles/|\.(a|o|obj|so|dylib|dll|lib|pdb|pyc|ninja_deps|ninja_log)$|/CMakeCache\.txt$|/CTestTestfile\.cmake$|/build\.ninja$|/_core\.abi3\.so$' \
+  && { echo "ABORT: build artifacts staged for push"; exit 1; } \
+  || echo "No obvious build artifacts in $RANGE"
+```
+
+`.gitignore` already covers all of the above; if a file shows up here it usually means it was either `git add`-ed with `-f`, or a previous mistake was rebased forward. Drop it; do not push it.
+
+#### Check 3 — No unintended binary / asset data
+
+USD asset files, Blender scenes, captured payloads, large images, and other binary art belong in external storage (Git LFS, Lighttransport's S3 bucket, the artist drop folder), not in the main repo history. Specifically reject:
+
+- `*.blend`, `*.fbx`, `*.glb`, `*.gltf` larger than a few KB (small spec fixtures are OK), `*.abc`, `*.usdz` (zip), arbitrary `*.mb` / `*.ma`.
+- `*.usd`, `*.usda`, `*.usdc` outside `tests/usda/`, `tests/usdc/`, `tests/feat/`, `models/`, `python/tests/` — these directories hold curated, deliberately-small fixtures; any ad-hoc capture goes elsewhere.
+- `*.png`, `*.jpg`, `*.jpeg`, `*.exr`, `*.hdr`, `*.tif` over ~256 KB — texture captures are gitignored by default; small icons / spec test images are fine.
+- Captured `.pdf` design docs (the AOUSD PDFs are explicitly gitignored under `aousd/*.pdf`; do not check them back in).
+- `.codex`, `.claude/` and other AI tool scratch dirs.
+- Anything you can't trivially regenerate from source.
+
+Run from the repo root:
+
+```bash
+git diff --stat "$RANGE" \
+  | awk '$3 ~ /^[0-9]+$/ && $3+0 > 256 { print }' \
+  | head
+# Inspect anything large; binaries show as "Bin <n> -> <m> bytes".
+
+git diff --name-only "$RANGE" \
+  | grep -iE '\.(blend|fbx|glb|gltf|abc|mb|ma|exr|hdr|tif|tiff|pdf)$|^data/.*\.usd[acz]?$|/captures?/' \
+  && { echo "ABORT: unexpected binary/asset paths in $RANGE"; exit 1; } \
+  || echo "No flagged binary/asset paths in $RANGE"
+```
+
+If a binary really must ship with the repo, the answer is git-lfs or an external asset bucket — never a plain `git add`. When in doubt, ask the user.
+
+#### Check 4 — User permission (always, no exceptions)
+
+After the three audits above pass, **stop and ask the user before pushing** — even if the user previously said "push when done", "go ahead and push", or has approved many pushes today. Authorization is single-shot and scoped to the immediate request. The default mode is "audit, summarize, ask, then push", in that exact order.
+
+When asking, summarize what is about to be pushed:
+
+- the branch name and remote (`origin/physics-2026`, etc.),
+- whether it is a fast-forward or a force-push (force-pushes also need to spell out which previously-public commit hashes are being orphaned),
+- the count of commits and a one-line per-commit summary,
+- the audit results from checks 1–3 (e.g. "No credential-shaped strings, no build artifacts, no flagged binaries"),
+- any pre-push test results worth surfacing (last unit / pytest run).
+
+Do **not** assume "auto mode" or any prior `--yes`-style flag covers a push. Force-pushes especially need explicit, fresh confirmation; prefer `--force-with-lease` over `--force` when the user agrees to a force push, because lease refuses if the remote moved since the last fetch (avoiding the classic "I just clobbered a teammate's commit" failure).
+
+### 2. After the push
+
+- If the push was a force-push, immediately note the previous remote tip in the conversation so a teammate can recover their work (`git reflog show origin/<branch>` on their side, or `git fetch origin <old-sha>:refs/heads/recovered-<branch>`).
+- Open / update the PR if one exists; the project's default PR base is `release`.
+- Do not delete branches the user did not explicitly ask to delete.
+
+### 3. If a check fails
+
+- For a credential leak — **stop**, surface the leak to the user, and treat the credential as compromised even if the commit is still local. Rotate first, scrub history second; never push to "clean it up later."
+- For a stray binary / artifact — drop it from history with `git filter-repo --invert-paths --path <p>` (or `git rebase -i` if it's a single recent commit), update `.gitignore`, then re-run the full checklist.
+- For unintended assets — confirm with the user whether the asset belongs in Git LFS, an external bucket, or should simply be removed.
+
+The Pre-push checklist is non-negotiable. A single 100 MB binary in `origin` permanently bloats every future clone of this repo; a single leaked key in `origin` is a security incident regardless of how fast it gets rotated.
