@@ -1692,9 +1692,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(sizeof(value::quatd));
 
-        // pxr wire layout is (imag.x, imag.y, imag.z, real) — matching
-        // pxr GfQuatd's `{_imaginary, _real}` member order. tinyusdz's
-        // value::quatd is also {imag, real}, so memcpy is exact.
+        // Crate wire layout is [x, y, z, w] = (imag, real); see
+        // value-types.hh:957. (USDA uses the opposite [w, x, y, z]
+        // order — that's a *display* convention, not a wire one.)
+        // tinyusdz's value::quatd struct matches the Crate layout, so
+        // memcpy reads the bytes directly.
         value::quatd v;
         if (!_sr->read(sizeof(v), sizeof(v),
                        reinterpret_cast<uint8_t *>(&v))) {
@@ -1763,7 +1765,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(sizeof(value::quatf));
 
-        // pxr wire layout is (imag.x, imag.y, imag.z, real). See QUATD note.
+        // Crate wire layout is [x, y, z, w] = (imag, real). See
+        // QUATD note above and value-types.hh:957.
         value::quatf v;
         if (!_sr->read(sizeof(v), sizeof(v),
                        reinterpret_cast<uint8_t *>(&v))) {
@@ -1833,8 +1836,9 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(sizeof(value::quath));
 
-        // pxr wire layout is (imag.x, imag.y, imag.z, real) — half stored
-        // as raw uint16 bit pattern. See QUATD note.
+        // Crate wire layout is [x, y, z, w] = (imag, real); half
+        // components stored as raw uint16 bit patterns. See QUATD note
+        // above and value-types.hh:957.
         value::quath v;
         if (!_sr->read(sizeof(v), sizeof(v),
                        reinterpret_cast<uint8_t *>(&v))) {

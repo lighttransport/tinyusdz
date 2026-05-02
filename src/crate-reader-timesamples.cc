@@ -619,9 +619,10 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
     if (!_sr->seek_set(rep.GetPayload())) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to scalar quatf value.");
     }
-    // pxr wire layout is (imag.x, imag.y, imag.z, real) — matching pxr
-    // GfQuatf's `{_imaginary, _real}` member order. tinyusdz's quatf is
-    // also `{imag, real}` so memcpy is exact.
+    // Crate wire layout is [x, y, z, w] = (imag, real); see
+    // value-types.hh:957. tinyusdz's value::quatf struct matches the
+    // Crate layout, so memcpy reads the bytes directly. (Note: USDA
+    // uses the opposite [w, x, y, z] order at the textual layer.)
     value::quatf val;
     if (!_sr->read(sizeof(val), sizeof(val),
                    reinterpret_cast<uint8_t *>(&val))) {

@@ -1630,10 +1630,11 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       return -1; \
     } \
   }
-  // D. Quaternions. pxr wire layout is (imag.x, imag.y, imag.z, real)
-  // — matching pxr `GfQuat<T>`'s `{_imaginary, _real}` member order.
-  // tinyusdz's `value::quat{f,d}` struct is already `{imag, real}`,
-  // so emit imag first, then real.
+  // D. Quaternions. Crate wire layout is [x, y, z, w] = (imag.x,
+  // imag.y, imag.z, real). See value-types.hh:957 — note that USDA
+  // (ASCII) uses the opposite [w, x, y, z] order at the textual layer.
+  // tinyusdz's `value::quat{f,d}` struct matches the Crate layout
+  // (`{imag, real}`), so emit imag first, then real.
 #define WRITE_QUAT_SCALAR(Type, TypeName) \
   else if (auto* v = value.as<Type>()) { \
     if (!Write(v->imag[0]) || !Write(v->imag[1]) || \
@@ -1785,9 +1786,9 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       } \
     } \
   }
-  // pxr wire layout per element is (imag.x, imag.y, imag.z, real). Our
-  // `value::quat{f,d}` is `{imag, real}` so we could memcpy, but
-  // emit per-component for symmetry with the scalar path.
+  // Same [x, y, z, w] = (imag, real) Crate layout as the scalar path
+  // above (see value-types.hh:957). Could memcpy since our struct
+  // matches; per-component for symmetry.
 #define WRITE_QUAT_ARRAY(ElemType, TypeName) \
   else if (auto* arr = value.as<std::vector<ElemType>>()) { \
     uint64_t count = arr->size(); \
