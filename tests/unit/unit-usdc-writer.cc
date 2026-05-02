@@ -3784,3 +3784,258 @@ def Xform "x" {
   auto pv = it->second.get_attribute().get_var().value_raw().get_value<value::quath>();
   TEST_CHECK(pv.has_value());
 }
+
+// ===== Phase B coverage additions =====
+
+void usdc_writer_int2_array_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom int2[] v = [(1, 2), (3, 4), (5, 6)]
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("v");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<value::int2>>();
+  TEST_CHECK(pv.has_value());
+  if (pv.has_value()) TEST_CHECK(pv.value().size() == 3);
+}
+
+void usdc_writer_int3_array_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom int3[] v = [(1, 2, 3), (4, 5, 6)]
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("v");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<value::int3>>();
+  TEST_CHECK(pv.has_value());
+  if (pv.has_value()) TEST_CHECK(pv.value().size() == 2);
+}
+
+void usdc_writer_int4_array_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom int4[] v = [(1, 2, 3, 4), (5, 6, 7, 8)]
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("v");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<value::int4>>();
+  TEST_CHECK(pv.has_value());
+  if (pv.has_value()) TEST_CHECK(pv.value().size() == 2);
+}
+
+void usdc_writer_timesamples_int2_test(void) {
+  // Regression: timesamples reader had no INT2/3/4 unpack hook before
+  // the WIP commit, so the entire attribute disappeared on USDC roundtrip.
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  int2 v.timeSamples = {
+    0: (1, 2),
+    24: (5, 6),
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("v");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  TEST_CHECK(it->second.get_attribute().get_var().has_timesamples());
+}
+
+void usdc_writer_timesamples_int3_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  int3 v.timeSamples = {
+    0: (1, 2, 3),
+    24: (4, 5, 6),
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("v");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  TEST_CHECK(it->second.get_attribute().get_var().has_timesamples());
+}
+
+void usdc_writer_timesamples_int4_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  int4 v.timeSamples = {
+    0: (1, 2, 3, 4),
+    24: (5, 6, 7, 8),
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("v");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  TEST_CHECK(it->second.get_attribute().get_var().has_timesamples());
+}
+
+void usdc_writer_frame4d_test(void) {
+  // Regression: frame4d ConvertValue case was missing — value silently
+  // dropped on USDC roundtrip even though Python could author it.
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom frame4d m = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("m");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  TEST_CHECK(it->second.get_attribute().type_name() == "frame4d");
+}
+
+void usdc_writer_frame4d_array_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom frame4d[] m = [ ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ) ]
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("m");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  TEST_CHECK(it->second.get_attribute().type_name() == "frame4d[]");
+}
+
+void usdc_writer_attr_metadata_passthrough_test(void) {
+  // displayName, displayGroup, customData, interpolation, documentation
+  // must all survive USDC roundtrip on a single attribute.
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom int n = 5 (
+    displayName = "Count"
+    displayGroup = "Stats"
+    documentation = "the count"
+    customData = {
+      string note = "x"
+    }
+  )
+  custom float[] vals = [0.1, 0.2, 0.3] (
+    interpolation = "vertex"
+  )
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto itn = xf->props.find("n");
+  TEST_CHECK(itn != xf->props.end());
+  if (itn != xf->props.end()) {
+    const auto &m = itn->second.get_attribute().metas();
+    TEST_CHECK(m.has_displayName());
+    TEST_CHECK(m.has_displayGroup());
+    TEST_CHECK(m.has_doc());
+    TEST_CHECK(m.has_customData());
+  }
+  auto itv = xf->props.find("vals");
+  TEST_CHECK(itv != xf->props.end());
+  if (itv != xf->props.end()) {
+    const auto &m = itv->second.get_attribute().metas();
+    TEST_CHECK(m.has_interpolation());
+    if (m.has_interpolation()) {
+      TEST_CHECK(m.get_interpolation().str() == "vertex");
+    }
+  }
+}
+
+void usdc_writer_uint64_array_test(void) {
+  // Regression fence for a09a0a4a: uint64[] ConvertValue handler.
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom uint64[] v = [12345678901234, 1, 99]
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("v");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<uint64_t>>();
+  TEST_CHECK(pv.has_value());
+  if (pv.has_value()) {
+    TEST_CHECK(pv.value().size() == 3);
+    TEST_CHECK(pv.value()[0] == 12345678901234ULL);
+  }
+}
+
+void usdc_writer_layer_offset_payload_test(void) {
+  // Mirror of usdc_writer_layer_offset_parser_test but for `payload`.
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+    payload = @./b.usda@</B> (offset = 10; scale = 2)
+) {
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto &payload = p->metas().payload;
+  TEST_CHECK(payload.has_value());
+  if (!payload.has_value()) return;
+  TEST_CHECK(!payload.value().empty());
+  if (payload.value().empty()) return;
+  const auto &pl = payload.value()[0].second[0];
+  TEST_CHECK(pl.layerOffset._offset == 10.0);
+  TEST_CHECK(pl.layerOffset._scale == 2.0);
+}

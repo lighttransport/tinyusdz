@@ -1198,11 +1198,10 @@ bool CrateReader::UnpackTimeSampleValue_##FUNC_SUFFIX(                         \
       PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
                                 "Invalid inlined ValueRep in TimeSamples.");    \
     }                                                                          \
-    uint32_t data =                                                            \
-        (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));           \
-    SMALL_TYPE _val;                                                           \
-    memcpy(&_val, &data, sizeof(SMALL_TYPE));                                  \
-    CPP_TYPE val = static_cast<CPP_TYPE>(_val);                                \
+    /* Inline payload is 48 bits. Use the full payload, not just lower 32. */  \
+    uint64_t payload48 = rep.GetPayload() & ((1ull << 48) - 1);                \
+    CPP_TYPE val = INT64_INLINE_DECODE_##FUNC_SUFFIX(payload48);               \
+    (void)sizeof(SMALL_TYPE);                                                  \
     if (!add_sample_to_timesamples<CPP_TYPE>(&dst, t, val, &_err,              \
                                               expected_total_samples)) {        \
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples."); \
@@ -1241,6 +1240,21 @@ bool CrateReader::UnpackTimeSampleValue_##FUNC_SUFFIX(                         \
   }                                                                            \
   return true;                                                                 \
 }
+
+/* Decode 48-bit inline payload into the target int type.
+ * INT64: sign-extend bit 47 to int64_t. UINT64: zero-extend.
+ */
+static inline int64_t int64_inline_decode_INT64(uint64_t p) {
+  if (p & (1ull << 47)) {
+    return static_cast<int64_t>(p | (~((1ull << 48) - 1)));
+  }
+  return static_cast<int64_t>(p);
+}
+static inline uint64_t int64_inline_decode_UINT64(uint64_t p) {
+  return p;  /* already masked to 48 bits */
+}
+#define INT64_INLINE_DECODE_INT64(p)  int64_inline_decode_INT64(p)
+#define INT64_INLINE_DECODE_UINT64(p) int64_inline_decode_UINT64(p)
 
 DEFINE_UNPACK_INT64_TIMESAMPLES(INT64, int64_t, CRATE_DATA_TYPE_INT64, int)
 DEFINE_UNPACK_INT64_TIMESAMPLES(UINT64, uint64_t, CRATE_DATA_TYPE_UINT64, uint32_t)

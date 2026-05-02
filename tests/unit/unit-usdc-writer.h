@@ -185,3 +185,16 @@ void usdc_writer_uint64_large_test(void);
 void usdc_writer_quatf_roundtrip_test(void);
 void usdc_writer_quatd_roundtrip_test(void);
 void usdc_writer_quath_roundtrip_test(void);
+
+// Phase B coverage additions
+void usdc_writer_int2_array_test(void);
+void usdc_writer_int3_array_test(void);
+void usdc_writer_int4_array_test(void);
+void usdc_writer_timesamples_int2_test(void);
+void usdc_writer_timesamples_int3_test(void);
+void usdc_writer_timesamples_int4_test(void);
+void usdc_writer_frame4d_test(void);
+void usdc_writer_frame4d_array_test(void);
+void usdc_writer_attr_metadata_passthrough_test(void);
+void usdc_writer_uint64_array_test(void);
+void usdc_writer_layer_offset_payload_test(void);
