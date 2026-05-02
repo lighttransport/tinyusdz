@@ -2339,16 +2339,46 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       if (!Write(GetOrCreateString(kv.first).value)) { if (err) *err = "Failed to write Reference customData key"; return -1; }
 
       crate::ValueRep value_rep;
+      bool packed = false;
       if (auto v = kv.second.get_value<int32_t>()) {
         crate::CrateValue cv; cv.Set(*v);
-        value_rep = PackValue(cv, err);
+        value_rep = PackValue(cv, err); packed = true;
       }
-      TRY_PACK_METAVAR(float)
-      TRY_PACK_METAVAR(double)
-      TRY_PACK_METAVAR(bool)
-      TRY_PACK_METAVAR(std::string)
-      else { if (err) *err = "Unsupported Reference customData value type"; return -1; }
+      else if (auto v = kv.second.get_value<float>()) {
+        crate::CrateValue cv; cv.Set(*v);
+        value_rep = PackValue(cv, err); packed = true;
+      }
+      else if (auto v = kv.second.get_value<double>()) {
+        crate::CrateValue cv; cv.Set(*v);
+        value_rep = PackValue(cv, err); packed = true;
+      }
+      else if (auto v = kv.second.get_value<bool>()) {
+        crate::CrateValue cv; cv.Set(*v);
+        value_rep = PackValue(cv, err); packed = true;
+      }
+      else if (auto v = kv.second.get_value<std::string>()) {
+        crate::CrateValue cv; cv.Set(*v);
+        value_rep = PackValue(cv, err); packed = true;
+      }
+      else if (auto sd = kv.second.get_value<value::StringData>()) {
+        crate::CrateValue cv; cv.Set(sd->value);
+        value_rep = PackValue(cv, err); packed = true;
+      }
+      else if (auto v = kv.second.get_value<int64_t>()) {
+        crate::CrateValue cv; cv.Set(*v);
+        value_rep = PackValue(cv, err); packed = true;
+      }
+      if (!packed) {
+        if (err) *err = "Unsupported Reference customData value type: "
+                        + kv.second.type_name();
+        return -1;
+      }
 
+      // The crate Dict format places an int64 offset between the key
+      // and the ValueRep. Reader does `seek_from_current(offset - 8)`,
+      // so writing offset=8 places the ValueRep immediately after.
+      const int64_t offset = 8;
+      if (!Write(offset)) { if (err) *err = "Failed to write Reference customData offset"; return -1; }
       if (!Write(value_rep.GetData())) { if (err) *err = "Failed to write Reference customData value"; return -1; }
     }
 #undef TRY_PACK_METAVAR
@@ -2423,7 +2453,23 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
           TRY_PACK_METAVAR(double)
           TRY_PACK_METAVAR(bool)
           TRY_PACK_METAVAR(std::string)
-          if (!value_written) return false;
+          else if (auto sd = kv.second.get_value<value::StringData>()) {
+            crate::CrateValue cv; cv.Set(sd->value);
+            value_rep = PackValue(cv, err); value_written = true;
+          }
+          else if (auto v = kv.second.get_value<int64_t>()) {
+            crate::CrateValue cv; cv.Set(*v);
+            value_rep = PackValue(cv, err); value_written = true;
+          }
+          if (!value_written) {
+            if (err) *err = "Unsupported Reference customData value type: "
+                            + kv.second.type_name();
+            return false;
+          }
+          // See note in single-Reference path: offset=8 inlines the
+          // ValueRep right after the offset word.
+          const int64_t offset = 8;
+          if (!Write(offset)) return false;
           if (!Write(value_rep.GetData())) return false;
         }
 #undef TRY_PACK_METAVAR

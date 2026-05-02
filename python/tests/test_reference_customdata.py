@@ -1,12 +1,11 @@
-"""Reference customData parsing + USDA round-trip.
+"""Reference customData parsing + USDA + USDC round-trip.
 
-Phase C.7: ascii-parser ParseReference now consumes
+Phase C.7 / deferred-cleanup: ascii-parser ParseReference consumes
 `customData = { ... }` inside the same `(...)` clause as offset/scale.
-
-USDC writer support for Reference customData is incomplete (writes
-fail with "Failed to write ReferenceListOp prepended items" — a
-separate bug); these tests cover USDA only.
+The crate writer + reader also handle Reference customData (int32,
+int64, float, double, bool, string, StringData).
 """
+import pytest
 import tinyusdz
 
 
@@ -71,6 +70,20 @@ def Xform "X" (
 {
 }
 ''')
-    import pytest
     with pytest.raises(tinyusdz.UsdParseError):
         tinyusdz.load(str(p))
+
+
+@pytest.mark.parametrize("fmt", ["usda", "usdc"])
+def test_reference_customdata_usdc_roundtrip(tmp_path, fmt):
+    src = tmp_path / "src.usda"
+    src.write_text(_USDA_REFERENCE_CD)
+    s = tinyusdz.load(str(src))
+    out = tmp_path / f"out.{fmt}"
+    s.save(str(out))
+    s2 = tinyusdz.load(str(out))
+    txt = s2.export_to_string()
+    assert "string note = \"hello\"" in txt
+    assert "int version = 3" in txt
+    assert "offset = 5" in txt
+    assert "scale = 2" in txt
