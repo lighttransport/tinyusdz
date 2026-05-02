@@ -2003,6 +2003,29 @@ bool CrateWriter::ConvertAttributeToFields(
     v.Set(metas.get_allowedTokens());
     attr_fields.push_back({"allowedTokens", v});
   }
+  if (metas.has_colorSpace()) {
+    crate::CrateValue v;
+    v.Set(metas.get_colorSpace());
+    attr_fields.push_back({"colorSpace", v});
+  }
+  if (metas.has_elementSize()) {
+    // pxr crate stores elementSize as int (signed); AttrMetas exposes
+    // it as uint32_t. Cast on the way out so the reader's int-typed
+    // unpack succeeds.
+    crate::CrateValue v;
+    v.Set(static_cast<int32_t>(metas.get_elementSize()));
+    attr_fields.push_back({"elementSize", v});
+  }
+  if (metas.has_weight()) {
+    crate::CrateValue v;
+    v.Set(metas.get_weight());
+    attr_fields.push_back({"weight", v});
+  }
+  if (metas.has_comment()) {
+    crate::CrateValue v;
+    v.Set(metas.get_comment().value);
+    attr_fields.push_back({"comment", v});
+  }
 
   // Add attribute connection paths if any.
   if (attr.has_connections()) {

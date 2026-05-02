@@ -98,6 +98,17 @@ bool CrateWriter::ExtractMeshProperties(
       fields.push_back({"points.timeSamples", ts_crate_val});
 
     }
+    // Preserve interpolation metadata on `points` (mirrors the
+    // `normals.interpolation` emit below). The stage-converter's
+    // prop_entries router only recognizes `.interpolation` and
+    // `.timeSamples` suffixes today, so other AttrMeta keys
+    // (elementSize, customData, ...) on schema-typed `points` are
+    // not yet round-tripped through USDC.
+    if (mesh->points.metas().has_interpolation()) {
+      crate::CrateValue v;
+      v.Set(mesh->points.metas().get_interpolation());
+      fields.push_back({"points.interpolation", v});
+    }
   }
   /* If `points` lives only in the props map (typed field unauthored),
    * leave it for the generic props-map iteration in stage-converter so
