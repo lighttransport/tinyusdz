@@ -743,6 +743,37 @@ c_tinyusd_prim_variant_add_attribute(CTinyUSDPrim *prim,
                                      const CTinyUSDAttribute *attr,
                                      c_tinyusd_string_t *err);
 
+/* Iteration helpers for already-authored variant content.
+ *
+ * `out_names` is a caller-allocated array of `c_tinyusd_string_t *`
+ * of length `cap`; on success the function fills the first
+ * min(N, cap) entries via c_tinyusd_string_replace and writes the
+ * total count N to `*out_count`. Pass NULL/0 to query the count.
+ *
+ * Source of truth is `Prim::variantSets()` (the in-memory map), not
+ * the `variantSets = [...]` listop in metas.
+ */
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_get_variant_set_names(const CTinyUSDPrim *prim,
+                                     c_tinyusd_string_t **out_names,
+                                     uint64_t cap,
+                                     uint64_t *out_count);
+
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_get_variant_names(const CTinyUSDPrim *prim,
+                                 const char *variant_set_name,
+                                 c_tinyusd_string_t **out_names,
+                                 uint64_t cap,
+                                 uint64_t *out_count);
+
+/* Read the variant selection for `variant_set_name`. Returns 1 if the
+ * selection is authored (and writes it to `out`); returns 0 otherwise.
+ */
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_get_variant_selection(const CTinyUSDPrim *prim,
+                                     const char *variant_set_name,
+                                     c_tinyusd_string_t *out);
+
 /* ---- Tydra: scene-access helpers ---- */
 
 typedef int (*CTinyUSDVisitFunction)(const CTinyUSDPrim *prim,

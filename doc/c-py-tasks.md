@@ -1,171 +1,134 @@
 # C API & Python binding — remaining tasks
 
-Snapshot as of `9032b730` (2026-05-02). Focused on outstanding work for
-the C API (`src/c-tinyusd*.h`, `src/c-tinyusd-helpers.h`) and the Python
-binding built on top of it (`src/python/module.c`, `python/tinyusdz/`).
+Snapshot as of `2026-05-02` (post `1f4a7edb` "USDC writer: fix
+sceneName typing and bool[]/uint*/int*/half[] customData").
 
-## High value
+Focused on outstanding work for the C API
+(`src/c-tinyusd*.h`, `src/c-tinyusd-helpers.h`) and the Python binding
+built on top of it (`src/python/module.c`, `python/tinyusdz/`).
 
-### Composition arc authoring (Python — needs C API)
+## Recently shipped
 
-The C API has no constructors for `Reference`, `Payload`, `Inherits`,
-`Specializes`, or `SubLayer` entries. Python therefore can only set
-arcs by going through the USDA parser. The reader/writer round-trip is
-solid, but a programmatic Python API is missing.
+The list below summarises items moved from "outstanding" to "done"
+since the previous (`9032b730`) snapshot. Each entry names the commit
+that landed it and the test file (or test name) that fences it.
 
-Plan:
-- C API: `c_tinyusd_reference_new(asset_path, prim_path, offset, scale,
-  custom_data)`, `c_tinyusd_payload_new(...)`, `c_tinyusd_prim_meta_set_references(prim,
-  list_op_qualifier, refs[])`, similarly `payload`, `inheritPaths`,
-  `specializes`. Use the existing `Reference` / `Payload` structs in
-  `src/core/composition-types.hh` plus `ListEditQual`.
-- Python: `Prim.add_reference(asset, prim_path=None, offset=0, scale=1,
-  qualifier="prepend")`, `Prim.add_payload(...)`, `Prim.add_inherit(path)`,
-  `Prim.add_specialize(path)`. Mirror with `clear_*` helpers.
-- pyi: extend with the new methods and an `Arc` literal type for the
-  qualifier string.
+### High-value additions
 
-### Variant set / variant selection authoring
+| Task | Commit | Tests |
+|---|---|---|
+| Composition arc authoring (Reference / Payload / Inherits / Specializes; per-qualifier listop) | `9ff86fb2` | `python/tests/test_composition_arcs.py` |
+| Variant set + selection authoring (metadata level) | `7328b82f` | `python/tests/test_variant_authoring.py` |
+| Variant content authoring (Prim subtrees + attributes inside variants) | `60200f7c` | `python/tests/test_variant_content_authoring.py` |
+| Variant iteration helpers — `variant_sets()` / `variant_names()` / `variant_selection()` | (this commit) | `python/tests/test_variant_iteration.py` |
+| `Prim.set_attribute_at_time` dtype propagation audit (color3f / point3f / matrix4d / quatf / texCoord2f / matrix4d) | `2c8b9e02` | `python/tests/test_timesample_dtype_propagation.py` |
+| Stage typed-metadata setters: `set_up_axis`, `set_meters_per_unit`, `set_time_codes_per_second`, `set_frames_per_second`, `set_start_time_code`, `set_end_time_code` | `d7250cdf` | `python/tests/test_stage_metadata_typed_setters.py` |
 
-Today's authoring path can't create variant sets at all. Reader/writer
-round-trip is correct, so the gap is purely on the authoring side.
+### Medium-value additions
 
-Plan:
-- C API: `c_tinyusd_prim_add_variant_set(prim, name)` returning a
-  `CTinyUSDVariantSet` handle. Then
-  `c_tinyusd_variant_set_add_variant(vs, variant_name) -> CTinyUSDVariant*`
-  which exposes a `props` map you can author into via the existing
-  attribute API. Plus `c_tinyusd_prim_set_variant_selection(prim,
-  set_name, variant_name)` and `c_tinyusd_prim_prepend_variant_set_name(prim,
-  set_name)` for the `prepend variantSets = "..."` field.
-- Python: `prim.add_variant_set(name) -> VariantSet`,
-  `vs.add_variant(name) -> VariantPrim` (acts like Prim with
-  set_attribute/add_child), `prim.set_variant_selection(set, value)`,
-  `prim.set_variant_set_order([...])`.
+| Task | Commit | Tests |
+|---|---|---|
+| `texCoord2f/2d/3f/3d` scalar + array constructors and dispatch | `9f8c5475` | `python/tests/test_texcoord_authoring.py` |
+| `frame4d` scalar/array writer + Python dispatch | `ad3a910d`, `0673f385` | `python/tests/test_authoring_extended_types.py` |
+| `int64[]` / `uint64[]` / `bool[]` / `half[]` dtype dispatch | `a09a0a4a`, `ef1022f6` | `python/tests/test_array_dtype_dispatch.py` |
+| `numpy.float16` / `float32` / `float64` ndarray accepted by `set_attribute(..., dtype="half[]")` (buffer-protocol fast path) | (this commit) | `python/tests/test_numpy_half_buffer.py` |
+| `tydra::GetPropertyNames` / `lookup_in_props` fall through to `Shader::value` (`ShaderNode::props`) when `Shader::props` is empty | `5a9e7055` | `python/tests/test_generic_shader_props.py` |
+| `Attribute.value.to_string()` for asset paths emits `@…@` (was `@@@@…@@@@`) | (in earlier WIP, fenced by) | `python/tests/test_asset_path_normalization.py` |
 
-### Time-sampled value-type fidelity
+### Parser / spec gaps closed
 
-`Prim.set_attribute_at_time` already exists but wraps the same
-`py_to_value` dispatch. Some dtype hints don't propagate at sample
-authoring time (notably `color3f`/`point3f` aliases, `matrix4d`,
-`quat*`). Reader-side round-trip works for these via USDA but not via
-the Python time-samples path.
+| Task | Commit | Tests |
+|---|---|---|
+| `allowedTokens = [...]` attribute meta (USDA parser registers it as `token[]`; AttrMetas stores it; USDA round-trip works) | `6412505d` | `python/tests/test_allowed_tokens.py` |
+| `customData = {…}` clause on `Reference` (USDA parser + USDC writer/reader; rejects on Payload) | `e1b56880`, `31516d6a`, `a1971db3` | `python/tests/test_reference_customdata.py` |
+| `sceneName` (USDZ scene-library extension) typed as `string` end-to-end (was `token` in writer + Python C-API, causing silent drop and reload errors) | `1f4a7edb`, follow-up | `python/tests/test_scene_name_metadata.py`, `tests/usda/sceneLibrary-001.usda` (now passes `usdc-roundtrip-test`) |
+| `customData` value packer covers `bool[]`, `uint32[]`, `int64[]`, `uint64[]`, `half[]` (was rejecting any prim authoring `bool[] zUp = [1]`) | `1f4a7edb` | `python/tests/test_customdata_array_types.py`, `tests/usda/customData-prim-003.usda` |
 
-Plan:
-- Audit `Prim_set_attribute_at_time` (`src/python/module.c:1040`) and
-  ensure it threads the `dtype`/`type_name` through
-  `c_tinyusd_prim_set_attribute_timesample` so the typed-vec/matrix
-  path is honored.
-- Add tests parameterised over `(dtype, time)` round-tripping through
-  USDC.
+### Polish
 
-## Medium value
+| Task | Commit | Tests |
+|---|---|---|
+| `Stage.__repr__` surfaces `defaultPrim` / `upAxis` / `metersPerUnit` when authored; `Prim.__repr__` includes `children=N` | `cb23b1e6` | `python/tests/test_repr_polish.py` |
 
-### USD value types still missing a C API constructor
+## Still outstanding
 
-- `texCoord2f`, `texCoord2d`, `texCoord3f`, `texCoord3d` (scalar +
-  array). Same pattern as `color3f`/`point3f` aliases — three-line
-  macro entries in `c-tinyusd-helpers.cc`.
-- `frame4d`. Already has a C typedef
-  (`c_tinyusd_frame4d_t = c_tinyusd_matrix4d_t`); needs the
-  `value_new_frame4d` / `value_new_array_frame4d` wrappers and
-  `ConvertValue` cases on the writer side.
-- `int64[]`, `uint64[]` already constructed but the dtype dispatch
-  in `py_to_value` does not yet route them; today only the scalar
-  forms are reachable from Python. Wire the `int64[]`/`uint64[]`/`half[]`
-  branches in `py_to_value` for `list`-of-int / `list`-of-float with the
-  matching `dtype=`.
-- `bool[]` constructor exists but no `dtype="bool[]"` path in
-  `py_to_value` — currently a Python `[True, False]` becomes `int[]`.
+### Medium value
 
-### Half-precision array via numpy buffer
+#### Half-array auto-detect from numpy without `dtype` hint
 
-`set_attribute("widths", np.array([...], dtype=np.float16))` should
-work without a `dtype="half[]"` hint. Today only `float32` arrays are
-recognised in the buffer-protocol fast path.
+`p.set_attribute("widths", np.array([...], dtype=np.float16))` — i.e.
+no `dtype="half[]"` — still raises
+"unsupported value type for tinyusdz.Prim.set_attribute". Today only
+the explicit-`dtype="half[]"` path threads through the buffer
+protocol.
 
 Plan:
-- Extend the `PyObject_GetBuffer` zero-copy branch in `py_to_value` to
-  inspect `format == 'e'` (half) and dispatch
-  `c_tinyusd_value_new_array_half`.
+- Add an early ndarray check in the no-dtype branch of `py_to_value`:
+  if `PyObject_CheckBuffer(obj)` and `view.format == "e"`, route to
+  the same code that the explicit-half[] path uses.
+- Decide policy for `'f'` / `'d'` (float32 / float64): probably
+  `float[]` and `double[]` respectively rather than `half[]`. Today
+  the Python list path picks `float[]` for python-floats; an ndarray
+  with native float32 should match that.
 
-### `Attribute.value` repr for asset paths
+#### `kind` on relationships
 
-`Value.to_string()` returns `@@@@./img.png@@@@` with quadrupled `@`
-delimiters. The underlying C++ `to_string` for `AssetPath` is double-`@`,
-and the Python wrapper appears to be wrapping again.
+USD spec says prim-only, but pxr accepts `kind = "..."` on a
+relationship. Decide policy; if accepting, add to
+`_supported_prop_metas` and route to `set_kind` on the relationship's
+metas.
 
-Plan:
-- Trace `Value_to_string` in `src/python/module.c`; if it adds `@…@`
-  unconditionally, drop that for asset values whose `to_string()`
-  already includes them.
+#### USDC writer: out-of-line packing in nested Dict-format positions
 
-### `property_names()` for generic Shader
+The Reference customData fix (`a1971db3`) currently rejects values
+whose ValueRep does not inline (doubles, int64 above 2^47, large
+arrays) — `PackValue` writes them out-of-line via `WriteValueData`,
+which corrupts the surrounding stream. To accept arbitrary
+customData values we'd need to either:
+- buffer the customData entries and emit value data in the dedicated
+  value-data section after the prim spec, threading offsets back
+  through, or
+- add a "scratch" buffered-write mode to `WriteValueData` that returns
+  the bytes instead of writing them.
 
-Symmetric to the writer-side fix in `391d90a8`: `tydra::GetPropertyNames`
-returns `[]` for a `Shader` whose inputs live in `Shader::value`
-(`ShaderNode`) instead of `Shader::props`.
+#### USDC writer: AttrMetas listop arrays in fields (e.g. `allowedTokens`)
 
-Plan:
-- In `tydra::GetPropertyNames` (`src/tydra/scene-access.cc`), when the
-  prim is a `Shader` and `props` is empty, fall through to the inner
-  `ShaderNode::props`.
+`6412505d` covers USDA parser + emit, but the USDC field-writer drops
+generic AttrMetas entries that aren't in its hand-written switch. So
+`allowedTokens` round-trips through USDA but not USDC — the value is
+silently lost on save.
 
-### Stage metadata convenience setters
+Plan: extend `stage-converter.cc::ExtractAttrMeta` to recognise the
+`allowedTokens` key (vector<token>) and emit a matching crate field.
 
-`set_metadata("upAxis", "Y")` works but is stringly-typed. Add typed
-shortcuts mirroring `set_default_prim`:
+### Low value / nice to have
 
-- `Stage.set_up_axis("Y" | "Z")`
-- `Stage.set_meters_per_unit(1.0)`
-- `Stage.set_time_codes_per_second(24.0)`
-- `Stage.set_start_time_code(0.0)` / `set_end_time_code(...)`
+#### `python/AUTHORING.md` (or expanded `python/README.md`)
 
-C API: thin wrappers around `s->metas().upAxis = value::token(...)`,
-`s->metas().metersPerUnit = ...`, etc.
+Document the dtype-hint table, the buffer-protocol shape (which dtypes
+auto-detect, which require explicit `dtype=`), and the composition
+arc / variant authoring APIs landed in this branch.
 
-## Low value / nice to have
+The `_core.pyi` stub is canonical for signatures; the missing piece is
+prose around when each form is the right call. Especially:
+- list-of-tuples vs numpy-2D vs flat-list for vec arrays
+- authoring vs reading (zero-copy buffer on reads)
+- variant authoring lifecycle (define_variant -> add_child / set_attribute)
 
-### Parser / spec gaps
+#### Half-array reader buffer protocol
 
-- `allowedTokens = [...]` on attribute meta — parser rejects. Common
-  in shader/schema definitions. `src/ascii-parser-props.cc` first-class
-  case + `AttrMetas::set_allowedTokens` accessor (already exists in
-  `core/attr-metas.hh`).
-- `kind` on relationships — USD spec says prim-only, but pxr accepts
-  it. Decide policy; if accepting, add to `_supported_prop_metas` and
-  route to `set_kind` on the relationship's metas.
-- `customData` on Reference/Payload — TODO comment still in
-  `src/ascii-parser.cc:ParseReference`. `Reference::customData` already
-  exists in the struct; add a parsed `customData = {...}` clause to
-  `ParseReference` similar to the new `ParseOptionalLayerOffset`.
-
-### Python repr / docstring polish
-
-- `Stage.__repr__` should include `defaultPrim`, `upAxis`,
-  `metersPerUnit` if authored.
-- `Prim.__repr__` should hint at attribute count and child count.
-- Update `python/README.md` (or create `python/AUTHORING.md`) with the
-  full dtype hint table from `_core.pyi`.
-
-### Variant authoring discoverability
-
-Once variant authoring lands, expose iteration too: `prim.variant_sets()
--> List[VariantSet]`, `vs.variant_names() -> List[str]`, so end users
-can introspect imported stages without parsing USDA themselves.
-
-### Half-array reader buffer protocol
-
-`Value.__buffer__` already supports float32 via `'f'` format; extend to
-`'e'` (binary16) so numpy can zero-copy half arrays.
+Already works (`Value.__buffer__` returns half-precision arrays as
+numpy `float16`). Listed here because the previous snapshot flagged
+it; closing it out as resolved.
 
 ## Out of scope (or larger projects)
 
-These are noted to keep the discussion focused but should be tackled as
-their own design exercises rather than rolled into this list.
+These are noted to keep the discussion focused but should be tackled
+as their own design exercises rather than rolled into this list.
 
 - USDZ packaging integrity for external textures (writer side).
 - MaterialX validation completeness.
-- Full pxr-USD `defaultPrim`/`startTimeCode` validation semantics.
-- Layer-offset support on `subLayers` as opposed to references/payloads
-  (the parser currently consumes the syntax for refs/payloads only).
+- Full pxr-USD `defaultPrim` / `startTimeCode` validation semantics.
+- Layer-offset support on `subLayers` as opposed to references /
+  payloads (the parser currently consumes the syntax for refs /
+  payloads only).

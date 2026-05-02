@@ -1795,6 +1795,62 @@ int c_tinyusd_prim_variant_add_attribute(CTinyUSDPrim *prim,
   return 1;
 }
 
+int c_tinyusd_prim_get_variant_set_names(const CTinyUSDPrim *prim,
+                                         c_tinyusd_string_t **out_names,
+                                         uint64_t cap,
+                                         uint64_t *out_count) {
+  if (!prim) return 0;
+  const auto *p = reinterpret_cast<const tinyusdz::Prim *>(prim);
+  const auto &vsets = p->variantSets();
+  if (out_count) *out_count = static_cast<uint64_t>(vsets.size());
+  uint64_t i = 0;
+  for (const auto &kv : vsets) {
+    if (out_names && i < cap) {
+      c_tinyusd_string_replace(out_names[i], kv.first.c_str());
+    }
+    ++i;
+  }
+  return 1;
+}
+
+int c_tinyusd_prim_get_variant_names(const CTinyUSDPrim *prim,
+                                     const char *variant_set_name,
+                                     c_tinyusd_string_t **out_names,
+                                     uint64_t cap,
+                                     uint64_t *out_count) {
+  if (!prim || !variant_set_name) return 0;
+  const auto *p = reinterpret_cast<const tinyusdz::Prim *>(prim);
+  const auto &vsets = p->variantSets();
+  auto it = vsets.find(std::string(variant_set_name));
+  if (it == vsets.end()) {
+    if (out_count) *out_count = 0;
+    return 1;  // not an error; just empty.
+  }
+  const auto &vmap = it->second.variantSet;
+  if (out_count) *out_count = static_cast<uint64_t>(vmap.size());
+  uint64_t i = 0;
+  for (const auto &kv : vmap) {
+    if (out_names && i < cap) {
+      c_tinyusd_string_replace(out_names[i], kv.first.c_str());
+    }
+    ++i;
+  }
+  return 1;
+}
+
+int c_tinyusd_prim_get_variant_selection(const CTinyUSDPrim *prim,
+                                         const char *variant_set_name,
+                                         c_tinyusd_string_t *out) {
+  if (!prim || !variant_set_name || !out) return 0;
+  const auto *p = reinterpret_cast<const tinyusdz::Prim *>(prim);
+  if (!p->metas().variants.has_value()) return 0;
+  const auto &vmap = p->metas().variants.value();
+  auto it = vmap.find(std::string(variant_set_name));
+  if (it == vmap.end()) return 0;
+  c_tinyusd_string_replace(out, it->second.c_str());
+  return 1;
+}
+
 /* ---- Stage default-prim convenience ---- */
 int c_tinyusd_stage_set_default_prim(CTinyUSDStage *stage, const char *name) {
   if (!stage || !name) return 0;

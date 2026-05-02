@@ -1598,6 +1598,96 @@ Prim_variant_add_child(PyObject *self, PyObject *args)
 }
 
 static PyObject *
+Prim_variant_sets(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) return PyList_New(0);
+    uint64_t n = 0;
+    if (!c_tinyusd_prim_get_variant_set_names(p->prim, NULL, 0, &n)) {
+        return PyList_New(0);
+    }
+    if (n == 0) return PyList_New(0);
+    c_tinyusd_string_t **bufs = (c_tinyusd_string_t **)PyMem_Malloc(
+        sizeof(c_tinyusd_string_t *) * (size_t)n);
+    if (!bufs) return PyErr_NoMemory();
+    for (uint64_t i = 0; i < n; ++i) bufs[i] = c_tinyusd_string_new_empty();
+    if (!c_tinyusd_prim_get_variant_set_names(p->prim, bufs, n, NULL)) {
+        for (uint64_t i = 0; i < n; ++i) c_tinyusd_string_free(bufs[i]);
+        PyMem_Free(bufs);
+        PyErr_SetString(UsdError, "variant_sets() failed");
+        return NULL;
+    }
+    PyObject *out = PyList_New((Py_ssize_t)n);
+    if (!out) {
+        for (uint64_t i = 0; i < n; ++i) c_tinyusd_string_free(bufs[i]);
+        PyMem_Free(bufs);
+        return NULL;
+    }
+    for (uint64_t i = 0; i < n; ++i) {
+        PyList_SetItem(out, (Py_ssize_t)i,
+                       PyUnicode_FromString(c_tinyusd_string_str(bufs[i])));
+        c_tinyusd_string_free(bufs[i]);
+    }
+    PyMem_Free(bufs);
+    return out;
+}
+
+static PyObject *
+Prim_variant_names(PyObject *self, PyObject *args)
+{
+    const char *vset = NULL;
+    if (!PyArg_ParseTuple(args, "s", &vset)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) return PyList_New(0);
+    uint64_t n = 0;
+    if (!c_tinyusd_prim_get_variant_names(p->prim, vset, NULL, 0, &n)) {
+        return PyList_New(0);
+    }
+    if (n == 0) return PyList_New(0);
+    c_tinyusd_string_t **bufs = (c_tinyusd_string_t **)PyMem_Malloc(
+        sizeof(c_tinyusd_string_t *) * (size_t)n);
+    if (!bufs) return PyErr_NoMemory();
+    for (uint64_t i = 0; i < n; ++i) bufs[i] = c_tinyusd_string_new_empty();
+    if (!c_tinyusd_prim_get_variant_names(p->prim, vset, bufs, n, NULL)) {
+        for (uint64_t i = 0; i < n; ++i) c_tinyusd_string_free(bufs[i]);
+        PyMem_Free(bufs);
+        PyErr_SetString(UsdError, "variant_names() failed");
+        return NULL;
+    }
+    PyObject *out = PyList_New((Py_ssize_t)n);
+    if (!out) {
+        for (uint64_t i = 0; i < n; ++i) c_tinyusd_string_free(bufs[i]);
+        PyMem_Free(bufs);
+        return NULL;
+    }
+    for (uint64_t i = 0; i < n; ++i) {
+        PyList_SetItem(out, (Py_ssize_t)i,
+                       PyUnicode_FromString(c_tinyusd_string_str(bufs[i])));
+        c_tinyusd_string_free(bufs[i]);
+    }
+    PyMem_Free(bufs);
+    return out;
+}
+
+static PyObject *
+Prim_variant_selection(PyObject *self, PyObject *args)
+{
+    const char *vset = NULL;
+    if (!PyArg_ParseTuple(args, "s", &vset)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) Py_RETURN_NONE;
+    c_tinyusd_string_t *buf = c_tinyusd_string_new_empty();
+    if (!buf) return PyErr_NoMemory();
+    if (!c_tinyusd_prim_get_variant_selection(p->prim, vset, buf)) {
+        c_tinyusd_string_free(buf);
+        Py_RETURN_NONE;
+    }
+    PyObject *r = PyUnicode_FromString(c_tinyusd_string_str(buf));
+    c_tinyusd_string_free(buf);
+    return r;
+}
+
+static PyObject *
 Prim_variant_set_attribute(PyObject *self, PyObject *args, PyObject *kwds)
 {
     static char *kwlist[] = {"variant_set_name", "variant_name",
@@ -1753,6 +1843,15 @@ static PyMethodDef Prim_methods[] = {
      "variant_set_attribute(variant_set_name, variant_name, attr_name,"
      " value, dtype=None): author an attribute inside the named"
      " variant."},
+    {"variant_sets", Prim_variant_sets, METH_NOARGS,
+     "variant_sets() -> list[str]: names of variantSets authored on"
+     " this prim's Prim::variantSets() map."},
+    {"variant_names", Prim_variant_names, METH_VARARGS,
+     "variant_names(variant_set_name) -> list[str]: variant names"
+     " inside the named variantSet, or [] if absent."},
+    {"variant_selection", Prim_variant_selection, METH_VARARGS,
+     "variant_selection(variant_set_name) -> str | None: the selected"
+     " variant for `variant_set_name`, or None if unauthored."},
     {NULL, NULL, 0, NULL}
 };
 
@@ -2569,11 +2668,62 @@ py_to_value(PyObject *obj, const char *dtype, char *out_type_name,
         return v;
     }
 
-    /* Explicit dtype="half[]" — list/tuple of float values -> half array. */
+    /* Explicit dtype="half[]" — list/tuple of float values OR a 1-D
+     * numpy array of dtype float16 / float32 / float64 -> half array. */
     if (dtype && !strcmp(dtype, "half[]")) {
+        /* Numpy / buffer-protocol fast path: zero-copy float16,
+         * widening copy from float32 / float64. */
+        if (PyObject_CheckBuffer(obj)) {
+            Py_buffer view;
+            if (PyObject_GetBuffer(obj, &view,
+                                   PyBUF_FORMAT | PyBUF_C_CONTIGUOUS) == 0) {
+                const char *fmt = view.format ? view.format : "B";
+                Py_ssize_t elem = view.itemsize;
+                Py_ssize_t n = elem ? view.len / elem : 0;
+                c_tinyusd_half_t *arr = (c_tinyusd_half_t *)PyMem_Malloc(
+                    sizeof(c_tinyusd_half_t) * (size_t)(n > 0 ? n : 1));
+                if (!arr) {
+                    PyBuffer_Release(&view);
+                    PyErr_NoMemory();
+                    return NULL;
+                }
+                int ok = 1;
+                if (!strcmp(fmt, "e")) {
+                    /* float16 -> store raw bits.
+                     * c_tinyusd_half_t is a typedef for uint16_t. */
+                    memcpy(arr, view.buf, sizeof(uint16_t) * (size_t)n);
+                } else if (!strcmp(fmt, "f")) {
+                    const float *src = (const float *)view.buf;
+                    for (Py_ssize_t i = 0; i < n; ++i)
+                        arr[i] = c_tinyusd_float_to_half(src[i]);
+                } else if (!strcmp(fmt, "d")) {
+                    const double *src = (const double *)view.buf;
+                    for (Py_ssize_t i = 0; i < n; ++i)
+                        arr[i] = c_tinyusd_float_to_half((float)src[i]);
+                } else {
+                    ok = 0;
+                }
+                PyBuffer_Release(&view);
+                if (!ok) {
+                    PyMem_Free(arr);
+                    /* Fall through to list/tuple path below. */
+                } else {
+                    CTinyUSDValue *v = c_tinyusd_value_new_array_half(
+                        (uint64_t)n, arr);
+                    PyMem_Free(arr);
+                    snprintf(out_type_name, out_type_name_size, "half[]");
+                    if (!v) PyErr_SetString(PyExc_RuntimeError,
+                                            "value_new_array_half failed");
+                    return v;
+                }
+            } else {
+                PyErr_Clear();
+            }
+        }
         if (!(PyList_Check(obj) || PyTuple_Check(obj))) {
             PyErr_SetString(PyExc_TypeError,
-                            "dtype='half[]' requires a list/tuple of float");
+                            "dtype='half[]' requires a list/tuple of float"
+                            " or a 1-D numpy array of float16/32/64");
             return NULL;
         }
         Py_ssize_t n = PySequence_Size(obj);
