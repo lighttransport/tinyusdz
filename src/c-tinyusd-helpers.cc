@@ -418,7 +418,24 @@ static bool lookup_in_props(const Prim &prim, const std::string &name,
     LOOK(value::TYPE_ID_PHYSICS_DISTANCE_JOINT,   PhysicsDistanceJoint)
     LOOK(value::TYPE_ID_PHYSICS_COLLISION_GROUP,  PhysicsCollisionGroup)
     LOOK(value::TYPE_ID_MATERIAL,                 Material)
-    LOOK(value::TYPE_ID_SHADER,                   Shader)
+    case value::TYPE_ID_SHADER: {
+      const Shader *typed = prim.data().as<Shader>();
+      if (!typed) return false;
+      auto it = typed->props.find(name);
+      if (it != typed->props.end()) {
+        *out = it->second;
+        return true;
+      }
+      // Generic Shader: ShaderNode value carries the props.
+      if (const auto pnode = typed->value.as<ShaderNode>()) {
+        auto it2 = pnode->props.find(name);
+        if (it2 != pnode->props.end()) {
+          *out = it2->second;
+          return true;
+        }
+      }
+      return false;
+    }
     LOOK(value::TYPE_ID_NODEGRAPH,                NodeGraph)
     LOOK(value::TYPE_ID_SKEL_ROOT,                SkelRoot)
     LOOK(value::TYPE_ID_SKELETON,                 Skeleton)

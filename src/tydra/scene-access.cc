@@ -2386,6 +2386,14 @@ bool GetPrimPropertyNamesImpl(const Shader &shader,
 
   AppendPropertyNamesFromCustomProps(shader.props, prop_names, attr_prop,
                                      rel_prop);
+
+  // Generic Shader: parsed shaders with unknown info_id are stored as
+  // ShaderNode in `shader.value`; their properties live there, not in
+  // `shader.props`.
+  if (const auto pnode = shader.value.as<ShaderNode>()) {
+    AppendPropertyNamesFromCustomProps(pnode->props, prop_names, attr_prop,
+                                       rel_prop);
+  }
   return true;
 }
 
