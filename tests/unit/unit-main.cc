@@ -642,6 +642,8 @@ TEST_LIST = {
   { "usdc_writer_attr_metadata_passthrough_test", usdc_writer_attr_metadata_passthrough_test },
   { "usdc_writer_uint64_array_test", usdc_writer_uint64_array_test },
   { "usdc_writer_layer_offset_payload_test", usdc_writer_layer_offset_payload_test },
+  { "usdc_writer_scene_name_test", usdc_writer_scene_name_test },
+  { "usdc_writer_customdata_array_types_test", usdc_writer_customdata_array_types_test },
   // Path utility and tree encoding tests
   { "path_lessthan_basic_test", path_lessthan_basic_test },
   { "path_lessthan_variant_test", path_lessthan_variant_test },

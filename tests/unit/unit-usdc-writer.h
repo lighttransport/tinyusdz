@@ -198,3 +198,5 @@ void usdc_writer_frame4d_array_test(void);
 void usdc_writer_attr_metadata_passthrough_test(void);
 void usdc_writer_uint64_array_test(void);
 void usdc_writer_layer_offset_payload_test(void);
+void usdc_writer_scene_name_test(void);
+void usdc_writer_customdata_array_types_test(void);

@@ -1152,9 +1152,13 @@ int c_tinyusd_prim_meta_set_string(CTinyUSDPrim *prim, const char *meta_name,
     }
 #undef SET_SPEC
   }
-  if (key == "kind" || key == "sceneName") {
-    // tokens
+  if (key == "kind") {
     m.set(key, tinyusdz::value::token(val));
+  } else if (key == "sceneName") {
+    // pxrUSD's USDZ scene-library extension stores sceneName as
+    // `string`. PrimMetas::get_sceneName() looks up via get<std::string>,
+    // so storing it as a token here would silently lose the value.
+    m.set_sceneName(val);
   } else if (key == "documentation" || key == "comment") {
     m.set(key, tinyusdz::value::StringData(val));
   } else if (key == "displayName") {

@@ -4039,3 +4039,97 @@ def Xform "x" (
   TEST_CHECK(pl.layerOffset._offset == 10.0);
   TEST_CHECK(pl.layerOffset._scale == 2.0);
 }
+
+void usdc_writer_scene_name_test(void) {
+  // Regression fence: pxr/USDZ scene-library extension.
+  // Two prior bugs:
+  //  - writer wrote `sceneName` as `token`, but reader (and pxrUSD)
+  //    require `string` -> reload failed with type mismatch.
+  //  - the C-API meta setter likewise stored as `token`, so
+  //    PrimMetas::get_sceneName() (which looks up via std::string)
+  //    silently returned "" even before serialization.
+  // Reference: tests/usda/sceneLibrary-001.usda (round-trips equivalent
+  // to pxr usdcat output via tests/compare-usda.js).
+  const char *usda = R"(#usda 1.0
+def Xform "Root" (
+    kind = "sceneLibrary"
+)
+{
+    def Xform "PrimaryScene" (
+        sceneName = "Primary Scene"
+    )
+    {
+    }
+    over Xform "SecondaryScene" (
+        sceneName = "Secondary Scene"
+    )
+    {
+    }
+}
+)";
+  RT_OK(usda);
+  const Prim *root = find_root_prim(stage, "Root");
+  TEST_CHECK(root != nullptr);
+  if (!root) return;
+  TEST_CHECK(root->metas().get_kind() == "sceneLibrary");
+
+  // PrimaryScene
+  const Prim *primary = nullptr;
+  for (const auto &child : root->children()) {
+    if (child.element_name() == "PrimaryScene") { primary = &child; break; }
+  }
+  TEST_CHECK(primary != nullptr);
+  if (primary) {
+    TEST_CHECK(primary->metas().has_sceneName());
+    TEST_CHECK(primary->metas().get_sceneName() == "Primary Scene");
+  }
+
+  // SecondaryScene
+  const Prim *secondary = nullptr;
+  for (const auto &child : root->children()) {
+    if (child.element_name() == "SecondaryScene") { secondary = &child; break; }
+  }
+  TEST_CHECK(secondary != nullptr);
+  if (secondary) {
+    TEST_CHECK(secondary->metas().has_sceneName());
+    TEST_CHECK(secondary->metas().get_sceneName() == "Secondary Scene");
+  }
+}
+
+void usdc_writer_customdata_array_types_test(void) {
+  // Regression fence: prim-level `customData` with array-typed values.
+  // The CustomDataType packer was missing std::vector<bool>,
+  // std::vector<uint64_t>, std::vector<int64_t>, std::vector<half>,
+  // std::vector<uint32_t> -> save failed with
+  // "Unsupported CustomDataType value type: bool[]".
+  // Reference: tests/usda/customData-prim-003.usda (equivalent to pxr).
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+    customData = {
+        bool[] flags = [1, 0, 1]
+        int2[] i2val = [(1, 2)]
+        int3[] i3val = [(1, 2, 3)]
+        int4[] i4val = [(1, 2, 3, 4)]
+        int64[] big = [-9999999999, 9999999999]
+        uint64[] ubig = [12345678901234, 99]
+        half[] hh = [0.5, 1.5]
+    }
+)
+{
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  TEST_CHECK(p->metas().has_customData());
+  const auto &cd = p->metas().get_customData();
+  // All seven keys must survive the USDC round-trip.
+  TEST_CHECK(cd.count("flags") == 1);
+  TEST_CHECK(cd.count("i2val") == 1);
+  TEST_CHECK(cd.count("i3val") == 1);
+  TEST_CHECK(cd.count("i4val") == 1);
+  TEST_CHECK(cd.count("big") == 1);
+  TEST_CHECK(cd.count("ubig") == 1);
+  TEST_CHECK(cd.count("hh") == 1);
+}
