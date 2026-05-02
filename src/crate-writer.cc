@@ -2373,6 +2373,21 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
                         + kv.second.type_name();
         return -1;
       }
+      // PackValue may have written the value out-of-line into the value
+      // data section if it doesn't fit in the 48-bit ValueRep payload
+      // (e.g. doubles, int64 > 2^47, large arrays). Mid-stream Reference
+      // serialization can't account for those out-of-line writes — the
+      // resulting offsets corrupt the stream — so reject non-inlined
+      // values upfront with a clear error rather than producing a
+      // half-corrupt USDC.
+      if (!value_rep.IsInlined()) {
+        if (err) *err = "Reference customData value `" + kv.first +
+                        "` (type " + kv.second.type_name() + ") is too "
+                        "large to inline; only inline-able scalars (int, "
+                        "int64<2^47, uint64<2^48, float, bool, string, "
+                        "token, asset) are supported.";
+        return -1;
+      }
 
       // The crate Dict format places an int64 offset between the key
       // and the ValueRep. Reader does `seek_from_current(offset - 8)`,
@@ -2466,8 +2481,15 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
                             + kv.second.type_name();
             return false;
           }
-          // See note in single-Reference path: offset=8 inlines the
-          // ValueRep right after the offset word.
+          // Same constraint as the single-Reference path: only
+          // inline-able scalars survive mid-stream serialization.
+          if (!value_rep.IsInlined()) {
+            if (err) *err = "Reference customData value `" + kv.first +
+                            "` (type " + kv.second.type_name() + ") is "
+                            "too large to inline; only inline-able "
+                            "scalars are supported.";
+            return false;
+          }
           const int64_t offset = 8;
           if (!Write(offset)) return false;
           if (!Write(value_rep.GetData())) return false;

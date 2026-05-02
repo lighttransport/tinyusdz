@@ -87,3 +87,24 @@ def test_reference_customdata_usdc_roundtrip(tmp_path, fmt):
     assert "int version = 3" in txt
     assert "offset = 5" in txt
     assert "scale = 2" in txt
+
+
+def test_reference_customdata_double_rejected_in_usdc(tmp_path):
+    """USDC writer cannot inline doubles; the writer must error rather
+    than silently corrupt the stream."""
+    src = tmp_path / "src.usda"
+    src.write_text('''#usda 1.0
+def Xform "X" (
+    prepend references = @./foo.usda@</A> (
+        customData = {
+            double d = 2.71828
+        }
+    )
+)
+{
+}
+''')
+    s = tinyusdz.load(str(src))
+    out = tmp_path / "out.usdc"
+    with pytest.raises(tinyusdz.UsdIoError):
+        s.save(str(out))
