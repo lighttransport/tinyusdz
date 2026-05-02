@@ -961,11 +961,12 @@ class AsciiParser {
   ///
   bool ParseAssetIdentifier(value::AssetPath *out, bool *triple_deliminated);
 
-  /// Parse optional `(offset = N; scale = M)` LayerOffset clause that may
-  /// appear after a Reference or Payload's asset+prim_path. Returns true
-  /// when no clause is present (no-op) and when a clause was parsed
-  /// successfully; returns false on syntax error.
-  bool ParseOptionalLayerOffset(LayerOffset *out);
+  /// Parse optional `(offset = N; scale = M; customData = {...})` clause
+  /// that may appear after a Reference or Payload's asset+prim_path.
+  /// Pass `out_customData = nullptr` to reject the `customData` key
+  /// (Payload has no customData field).
+  bool ParseOptionalLayerOffset(LayerOffset *out,
+                                Dictionary *out_customData = nullptr);
 
   class PrimIterator;
   using const_iterator = PrimIterator;

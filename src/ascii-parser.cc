@@ -2902,7 +2902,8 @@ bool AsciiParser::ParseAssetIdentifier(value::AssetPath *out,
   return valid;
 }
 
-bool AsciiParser::ParseOptionalLayerOffset(LayerOffset *out) {
+bool AsciiParser::ParseOptionalLayerOffset(LayerOffset *out,
+                                           Dictionary *out_customData) {
   // Look ahead: an optional `(...)` clause may follow. If the next
   // non-whitespace char is not '(', return without consuming anything.
   if (!SkipWhitespace()) {
@@ -2919,7 +2920,7 @@ bool AsciiParser::ParseOptionalLayerOffset(LayerOffset *out) {
   if (!Char1(&c)) return false;
 
   // Parse `key = value` separated by ';' or ','. Accept any subset of
-  // {offset, scale}. Trailing separator allowed.
+  // {offset, scale, customData}. Trailing separator allowed.
   for (;;) {
     if (!SkipWhitespaceAndNewline()) return false;
     if (!LookChar1(&c)) return false;
@@ -2932,44 +2933,56 @@ bool AsciiParser::ParseOptionalLayerOffset(LayerOffset *out) {
     std::string key;
     if (!ReadIdentifier(&key)) {
       PUSH_ERROR_AND_RETURN_TAG(kAscii,
-          "Expected `offset` or `scale` in LayerOffset clause.");
+          "Expected `offset`, `scale`, or `customData` clause.");
     }
-    if (key != "offset" && key != "scale") {
+    const bool is_offset = (key == "offset");
+    const bool is_scale = (key == "scale");
+    const bool is_customData = (key == "customData");
+    if (!is_offset && !is_scale && !is_customData) {
       PUSH_ERROR_AND_RETURN_TAG(kAscii,
-          fmt::format("Unknown LayerOffset key `{}`. Expected `offset` or `scale`.",
-                      key));
+          fmt::format("Unknown clause key `{}`. Expected `offset`, `scale`,"
+                      " or `customData`.", key));
+    }
+    if (is_customData && !out_customData) {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii,
+          "`customData` is not allowed on Payload (Reference only).");
     }
 
     if (!SkipWhitespaceAndNewline()) return false;
     if (!Expect('=')) return false;
     if (!SkipWhitespaceAndNewline()) return false;
 
-    double v = 0.0;
-    if (!ReadBasicType(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kAscii,
-          fmt::format("Failed to parse value for LayerOffset `{}`.", key));
-    }
-    if (key == "offset") {
-      out->_offset = v;
+    if (is_customData) {
+      Dictionary dict;
+      if (!ParseDict(&dict)) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii,
+            "Failed to parse `customData` dictionary.");
+      }
+      *out_customData = std::move(dict);
     } else {
-      out->_scale = v;
+      double v = 0.0;
+      if (!ReadBasicType(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii,
+            fmt::format("Failed to parse value for `{}`.", key));
+      }
+      if (is_offset) {
+        out->_offset = v;
+      } else {
+        out->_scale = v;
+      }
     }
 
-    // Separator: optional ';' or ','. The closing ')' is handled at top.
-    // SkipWhitespaceAndNewline treats ';' as whitespace by default, so opt
-    // out — we need the ';' to remain for our explicit consumption below.
+    // Separator: optional ';' or ',' OR a newline (newlines are
+    // implicit separators in pxr's multi-line form). The closing ')'
+    // is handled at top of the loop.
     if (!SkipWhitespaceAndNewline(/*allow_semicolon=*/false)) return false;
     if (!LookChar1(&c)) return false;
     if (c == ';' || c == ',') {
       Char1(&c);
       continue;
     }
-    if (c == ')') {
-      Char1(&c);
-      return true;
-    }
-    PUSH_ERROR_AND_RETURN_TAG(kAscii,
-        "Expected `;`, `,`, or `)` in LayerOffset clause.");
+    // Either a closing `)` or the next clause's identifier — both fine.
+    continue;
   }
 }
 
@@ -3039,12 +3052,10 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
     }
   }
 
-  // Optional `(offset = N; scale = M)` LayerOffset suffix.
-  if (!ParseOptionalLayerOffset(&out->layerOffset)) {
+  // Optional `(offset = N; scale = M; customData = {...})` suffix.
+  if (!ParseOptionalLayerOffset(&out->layerOffset, &out->customData)) {
     return false;
   }
-
-  // TODO: CustomData
 
   return true;
 }
