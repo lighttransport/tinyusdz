@@ -56,6 +56,30 @@ c_tinyusd_stage_save_to_file(const CTinyUSDStage *stage, const char *filename,
                              c_tinyusd_string_t *warn,
                              c_tinyusd_string_t *err);
 
+/* Save stage as USDZ with additional packed assets.
+ *
+ * Each (asset_names[i], asset_data[i], asset_sizes[i]) triple becomes
+ * an entry in the USDZ archive next to the root layer. The first
+ * archive entry is always the root layer (root.usdc) regardless of
+ * the additional assets; the additional assets follow in the order
+ * supplied. The archive is uncompressed (Store-only) and 64-byte
+ * aligned per the AOUSD USDZ spec.
+ *
+ * Pass num_assets=0 (and NULL pointers) to behave like
+ * c_tinyusd_stage_save_to_file with format=USDZ.
+ *
+ * Returns 1 on success.
+ */
+C_TINYUSD_EXPORT int
+c_tinyusd_stage_save_as_usdz_with_assets(
+    const CTinyUSDStage *stage, const char *filename,
+    const char *const *asset_names,
+    const uint8_t *const *asset_data,
+    const uint64_t *asset_sizes,
+    uint64_t num_assets,
+    c_tinyusd_string_t *warn,
+    c_tinyusd_string_t *err);
+
 /* Parse USDA/USDC/USDZ bytes from memory into the supplied Stage. Unlike the
  * existing c_tinyusd_load_*_from_memory entry points (which lack a Stage *
  * output and are effectively useless), these thread the stage through

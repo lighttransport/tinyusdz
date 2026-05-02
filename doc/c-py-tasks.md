@@ -49,6 +49,7 @@ that landed it and the test file (or test name) that fences it.
 | Task | Commit | Tests |
 |---|---|---|
 | `Stage.__repr__` surfaces `defaultPrim` / `upAxis` / `metersPerUnit` when authored; `Prim.__repr__` includes `children=N` | `cb23b1e6` | `python/tests/test_repr_polish.py` |
+| USDZ packing with extra assets via `Stage.save(path, assets={archive_name: bytes})`; `tinyusdz.rewrite_asset_paths(stage, mapping)` helper to retarget asset paths before packing. Output is uncompressed Store-only ZIP, 64-byte aligned, root layer first. | (this commit) | `python/tests/test_usdz_packing.py` |
 
 ## Still outstanding
 

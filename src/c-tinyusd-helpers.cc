@@ -279,7 +279,7 @@ int c_tinyusd_stage_save_to_file(const CTinyUSDStage *stage,
       ok = tinyusdz::usdc::SaveAsUSDCToFile(filename, *s, &w, &e);
       break;
     case C_TINYUSD_FORMAT_USDZ: {
-      std::map<std::string, std::vector<uint8_t>> assets;
+      const std::map<std::string, std::vector<uint8_t>> assets;
       ok = tinyusdz::SaveAsUSDZToFile(filename, *s, assets, &w, &e);
       break;
     }
@@ -288,6 +288,45 @@ int c_tinyusd_stage_save_to_file(const CTinyUSDStage *stage,
       break;
   }
 
+  if (warn && !w.empty()) c_tinyusd_string_replace(warn, w.c_str());
+  if (err && !e.empty()) c_tinyusd_string_replace(err, e.c_str());
+  return ok ? 1 : 0;
+}
+
+int c_tinyusd_stage_save_as_usdz_with_assets(
+    const CTinyUSDStage *stage, const char *filename,
+    const char *const *asset_names,
+    const uint8_t *const *asset_data,
+    const uint64_t *asset_sizes,
+    uint64_t num_assets,
+    c_tinyusd_string_t *warn,
+    c_tinyusd_string_t *err) {
+  if (!stage || !filename) {
+    if (err) c_tinyusd_string_replace(err, "stage or filename is null");
+    return 0;
+  }
+  const tinyusdz::Stage *s =
+      reinterpret_cast<const tinyusdz::Stage *>(stage);
+
+  std::map<std::string, std::vector<uint8_t>> assets;
+  for (uint64_t i = 0; i < num_assets; ++i) {
+    if (!asset_names || !asset_names[i] || !asset_data || !asset_data[i] ||
+        !asset_sizes) {
+      if (err) c_tinyusd_string_replace(
+          err, "asset_names / asset_data / asset_sizes contain a null entry");
+      return 0;
+    }
+    const char *name = asset_names[i];
+    if (!*name) {
+      if (err) c_tinyusd_string_replace(err, "asset name must be non-empty");
+      return 0;
+    }
+    std::vector<uint8_t> buf(asset_data[i], asset_data[i] + asset_sizes[i]);
+    assets[std::string(name)] = std::move(buf);
+  }
+
+  std::string w, e;
+  bool ok = tinyusdz::SaveAsUSDZToFile(filename, *s, assets, &w, &e);
   if (warn && !w.empty()) c_tinyusd_string_replace(warn, w.c_str());
   if (err && !e.empty()) c_tinyusd_string_replace(err, e.c_str());
   return ok ? 1 : 0;

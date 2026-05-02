@@ -137,10 +137,12 @@ Stage_export_to_string(PyObject *self, PyObject *args)
 static PyObject *
 Stage_save(PyObject *self, PyObject *args, PyObject *kwds)
 {
-    static char *kwlist[] = {"path", "format", NULL};
+    static char *kwlist[] = {"path", "format", "assets", NULL};
     const char *path = NULL;
     const char *format = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "s|s", kwlist, &path, &format)) {
+    PyObject *assets = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "s|sO", kwlist,
+                                     &path, &format, &assets)) {
         return NULL;
     }
 
@@ -157,7 +159,108 @@ Stage_save(PyObject *self, PyObject *args, PyObject *kwds)
         }
     }
 
+    /* Resolve effective format from extension when AUTO. assets=
+     * is only meaningful for USDZ. */
+    CTinyUSDFormat effective = fmt;
+    if (effective == C_TINYUSD_FORMAT_AUTO) {
+        const char *dot = strrchr(path, '.');
+        if (dot) {
+            if (!strcasecmp(dot, ".usda")) effective = C_TINYUSD_FORMAT_USDA;
+            else if (!strcasecmp(dot, ".usdc")) effective = C_TINYUSD_FORMAT_USDC;
+            else if (!strcasecmp(dot, ".usdz")) effective = C_TINYUSD_FORMAT_USDZ;
+        }
+    }
+
     StageObject *s = (StageObject *)self;
+
+    if (assets && assets != Py_None) {
+        if (effective != C_TINYUSD_FORMAT_USDZ) {
+            PyErr_SetString(PyExc_ValueError,
+                "assets= is only supported for USDZ saves (format='usdz' or"
+                " a .usdz extension)");
+            return NULL;
+        }
+        if (!PyDict_Check(assets)) {
+            PyErr_SetString(PyExc_TypeError,
+                "assets= must be a dict mapping archive name (str) to "
+                "bytes / bytearray / memoryview");
+            return NULL;
+        }
+        Py_ssize_t n = PyDict_Size(assets);
+        char **names = NULL;
+        const uint8_t **datas = NULL;
+        uint64_t *sizes = NULL;
+        Py_buffer *views = NULL;
+        if (n > 0) {
+            names = (char **)PyMem_Malloc(sizeof(char *) * (size_t)n);
+            datas = (const uint8_t **)PyMem_Malloc(sizeof(uint8_t *) * (size_t)n);
+            sizes = (uint64_t *)PyMem_Malloc(sizeof(uint64_t) * (size_t)n);
+            views = (Py_buffer *)PyMem_Malloc(sizeof(Py_buffer) * (size_t)n);
+            if (!names || !datas || !sizes || !views) {
+                PyMem_Free(names); PyMem_Free(datas);
+                PyMem_Free(sizes); PyMem_Free(views);
+                return PyErr_NoMemory();
+            }
+            for (Py_ssize_t i = 0; i < n; ++i) {
+                names[i] = NULL;
+                memset(&views[i], 0, sizeof(Py_buffer));
+            }
+        }
+
+        Py_ssize_t pos = 0, idx = 0;
+        PyObject *key, *val;
+        while (PyDict_Next(assets, &pos, &key, &val)) {
+            if (!PyUnicode_Check(key)) {
+                PyErr_SetString(PyExc_TypeError,
+                                "assets= keys must be str (archive name)");
+                goto cleanup_assets_fail;
+            }
+            const char *kstr = PyUnicode_AsUTF8(key);
+            if (!kstr || !*kstr) {
+                PyErr_SetString(PyExc_ValueError,
+                                "assets= archive name must be non-empty");
+                goto cleanup_assets_fail;
+            }
+            names[idx] = (char *)kstr;
+            if (PyObject_GetBuffer(val, &views[idx],
+                                   PyBUF_SIMPLE | PyBUF_C_CONTIGUOUS) != 0) {
+                PyErr_Format(PyExc_TypeError,
+                    "assets[%R] must be bytes/bytearray/memoryview", key);
+                goto cleanup_assets_fail;
+            }
+            datas[idx] = (const uint8_t *)views[idx].buf;
+            sizes[idx] = (uint64_t)views[idx].len;
+            ++idx;
+        }
+
+        c_tinyusd_string_t *warn = c_tinyusd_string_new_empty();
+        c_tinyusd_string_t *err = c_tinyusd_string_new_empty();
+        int ok = c_tinyusd_stage_save_as_usdz_with_assets(
+            s->stage, path, (const char *const *)names,
+            (const uint8_t *const *)datas, sizes, (uint64_t)n, warn, err);
+        const char *msg = c_tinyusd_string_str(err);
+        PyObject *exc_msg = (msg && *msg)
+            ? PyUnicode_FromString(msg)
+            : PyUnicode_FromString("stage save (USDZ with assets) failed");
+        for (Py_ssize_t i = 0; i < n; ++i) PyBuffer_Release(&views[i]);
+        PyMem_Free(names); PyMem_Free(datas);
+        PyMem_Free(sizes); PyMem_Free(views);
+        c_tinyusd_string_free(warn);
+        c_tinyusd_string_free(err);
+        if (!ok) {
+            PyErr_SetObject(UsdIoError, exc_msg);
+            Py_XDECREF(exc_msg);
+            return NULL;
+        }
+        Py_XDECREF(exc_msg);
+        Py_RETURN_NONE;
+    cleanup_assets_fail:
+        for (Py_ssize_t i = 0; i < idx; ++i) PyBuffer_Release(&views[i]);
+        PyMem_Free(names); PyMem_Free(datas);
+        PyMem_Free(sizes); PyMem_Free(views);
+        return NULL;
+    }
+
     c_tinyusd_string_t *warn = c_tinyusd_string_new_empty();
     c_tinyusd_string_t *err = c_tinyusd_string_new_empty();
     int ok = c_tinyusd_stage_save_to_file(s->stage, path, fmt, warn, err);
