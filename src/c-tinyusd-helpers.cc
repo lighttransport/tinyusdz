@@ -1722,6 +1722,75 @@ int c_tinyusd_prim_clear_variant_selection(CTinyUSDPrim *prim,
   return 1;
 }
 
+/* ---- Variant content authoring ---- */
+
+namespace {
+
+tinyusdz::Variant *get_or_create_variant(tinyusdz::Prim *p,
+                                         const std::string &vs_name,
+                                         const std::string &v_name) {
+  auto &vsets = p->variantSets();
+  auto it = vsets.find(vs_name);
+  if (it == vsets.end()) {
+    tinyusdz::VariantSet vs;
+    vs.name = vs_name;
+    auto inserted = vsets.emplace(vs_name, std::move(vs));
+    it = inserted.first;
+  }
+  auto &vmap = it->second.variantSet;
+  auto vit = vmap.find(v_name);
+  if (vit == vmap.end()) {
+    auto inserted = vmap.emplace(v_name, tinyusdz::Variant{});
+    vit = inserted.first;
+  }
+  return &vit->second;
+}
+
+}  // namespace
+
+int c_tinyusd_prim_define_variant(CTinyUSDPrim *prim,
+                                  const char *variant_set_name,
+                                  const char *variant_name) {
+  if (!prim || !variant_set_name || !variant_name) return 0;
+  auto *p = reinterpret_cast<tinyusdz::Prim *>(prim);
+  return get_or_create_variant(p, variant_set_name, variant_name) ? 1 : 0;
+}
+
+int c_tinyusd_prim_variant_add_child(CTinyUSDPrim *prim,
+                                     const char *variant_set_name,
+                                     const char *variant_name,
+                                     const CTinyUSDPrim *child) {
+  if (!prim || !variant_set_name || !variant_name || !child) return 0;
+  auto *p = reinterpret_cast<tinyusdz::Prim *>(prim);
+  const auto *c = reinterpret_cast<const tinyusdz::Prim *>(child);
+  if (p == c) return 0;
+  auto *v = get_or_create_variant(p, variant_set_name, variant_name);
+  if (!v) return 0;
+  v->primChildren().push_back(*c);
+  return 1;
+}
+
+int c_tinyusd_prim_variant_add_attribute(CTinyUSDPrim *prim,
+                                         const char *variant_set_name,
+                                         const char *variant_name,
+                                         const CTinyUSDAttribute *attr,
+                                         c_tinyusd_string_t *err) {
+  if (!prim || !variant_set_name || !variant_name || !attr) {
+    if (err) c_tinyusd_string_replace(err, "null arg");
+    return 0;
+  }
+  auto *p = reinterpret_cast<tinyusdz::Prim *>(prim);
+  const auto *a = reinterpret_cast<const tinyusdz::Attribute *>(attr);
+  if (a->name().empty()) {
+    if (err) c_tinyusd_string_replace(err, "attribute name is empty");
+    return 0;
+  }
+  auto *v = get_or_create_variant(p, variant_set_name, variant_name);
+  if (!v) return 0;
+  v->properties()[a->name()] = tinyusdz::Property(*a, /* custom */ false);
+  return 1;
+}
+
 /* ---- Stage default-prim convenience ---- */
 int c_tinyusd_stage_set_default_prim(CTinyUSDStage *stage, const char *name) {
   if (!stage || !name) return 0;

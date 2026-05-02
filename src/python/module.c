@@ -1550,6 +1550,107 @@ Prim_clear_variant_selection(PyObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 
+static PyObject *
+Prim_define_variant(PyObject *self, PyObject *args)
+{
+    const char *vset = NULL;
+    const char *vname = NULL;
+    if (!PyArg_ParseTuple(args, "ss", &vset, &vname)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    if (!c_tinyusd_prim_define_variant(p->prim, vset, vname)) {
+        PyErr_SetString(UsdError, "define_variant failed");
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Prim_variant_add_child(PyObject *self, PyObject *args)
+{
+    const char *vset = NULL;
+    const char *vname = NULL;
+    PyObject *child_obj = NULL;
+    if (!PyArg_ParseTuple(args, "ssO", &vset, &vname, &child_obj))
+        return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    if (Py_TYPE(child_obj) != (PyTypeObject *)PrimType) {
+        PyErr_SetString(PyExc_TypeError, "child must be a tinyusdz.Prim");
+        return NULL;
+    }
+    PrimObject *child = (PrimObject *)child_obj;
+    if (!child->prim) {
+        PyErr_SetString(UsdError, "child Prim has no underlying handle");
+        return NULL;
+    }
+    if (!c_tinyusd_prim_variant_add_child(p->prim, vset, vname, child->prim)) {
+        PyErr_SetString(UsdError, "variant_add_child failed");
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Prim_variant_set_attribute(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    static char *kwlist[] = {"variant_set_name", "variant_name",
+                             "attr_name", "value", "dtype", NULL};
+    const char *vset = NULL;
+    const char *vname = NULL;
+    const char *attr_name = NULL;
+    PyObject *py_value = NULL;
+    const char *dtype = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "sssO|s", kwlist,
+                                     &vset, &vname, &attr_name, &py_value,
+                                     &dtype)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    char type_name[64] = {0};
+    CTinyUSDValue *val = py_to_value(py_value, dtype, type_name,
+                                     sizeof(type_name));
+    if (!val) return NULL;
+    CTinyUSDAttribute *attr = c_tinyusd_attribute_new();
+    if (!attr) {
+        c_tinyusd_value_free(val);
+        return PyErr_NoMemory();
+    }
+    c_tinyusd_attribute_set_name(attr, attr_name);
+    if (type_name[0]) {
+        c_tinyusd_attribute_set_type_name(attr, type_name);
+    }
+    if (!c_tinyusd_attribute_set_value(attr, val)) {
+        c_tinyusd_attribute_free(attr);
+        c_tinyusd_value_free(val);
+        PyErr_SetString(UsdError, "attribute_set_value failed");
+        return NULL;
+    }
+    c_tinyusd_string_t *err = c_tinyusd_string_new_empty();
+    int ok = c_tinyusd_prim_variant_add_attribute(p->prim, vset, vname,
+                                                  attr, err);
+    c_tinyusd_attribute_free(attr);
+    c_tinyusd_value_free(val);
+    if (!ok) {
+        const char *msg = c_tinyusd_string_str(err);
+        PyErr_Format(UsdError,
+                     "variant_set_attribute(%s) failed: %s", attr_name,
+                     msg && *msg ? msg : "(no detail)");
+        c_tinyusd_string_free(err);
+        return NULL;
+    }
+    c_tinyusd_string_free(err);
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef Prim_methods[] = {
     {"children", Prim_children, METH_NOARGS, "List of child Prims."},
     {"to_string", Prim_to_string, METH_NOARGS, "USDA text of this prim subtree."},
@@ -1640,6 +1741,18 @@ static PyMethodDef Prim_methods[] = {
     {"clear_variant_selection", Prim_clear_variant_selection, METH_VARARGS,
      "clear_variant_selection(variant_set_name=None): drop a single"
      " entry, or all entries if name is None/empty."},
+    {"define_variant", Prim_define_variant, METH_VARARGS,
+     "define_variant(variant_set_name, variant_name): create an empty"
+     " variant entry; populate via variant_add_child /"
+     " variant_set_attribute."},
+    {"variant_add_child", Prim_variant_add_child, METH_VARARGS,
+     "variant_add_child(variant_set_name, variant_name, child_prim):"
+     " copy `child_prim` as a primChild of the named variant."},
+    {"variant_set_attribute", (PyCFunction)Prim_variant_set_attribute,
+     METH_VARARGS | METH_KEYWORDS,
+     "variant_set_attribute(variant_set_name, variant_name, attr_name,"
+     " value, dtype=None): author an attribute inside the named"
+     " variant."},
     {NULL, NULL, 0, NULL}
 };
 

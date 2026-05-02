@@ -707,6 +707,42 @@ C_TINYUSD_EXPORT int
 c_tinyusd_prim_clear_variant_selection(CTinyUSDPrim *prim,
                                        const char *variant_set_name);
 
+/* ---- Variant content authoring ---- */
+
+/* Create (or get) a variant identified by (variant_set_name,
+ * variant_name) on `prim`. The Variant is empty until populated by the
+ * helpers below. Returns 1 on success.
+ *
+ * NOTE: This populates the Prim::variantSets() storage; for full
+ * USDA round-trip you should also call
+ * c_tinyusd_prim_add_variant_set_name (declares the variantSet) and
+ * optionally c_tinyusd_prim_set_variant_selection.
+ */
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_define_variant(CTinyUSDPrim *prim,
+                              const char *variant_set_name,
+                              const char *variant_name);
+
+/* Append a Prim subtree (copied) as a child of the named variant.
+ * `child` must be non-null and not the same Prim. The variant is
+ * created if it does not yet exist.
+ */
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_variant_add_child(CTinyUSDPrim *prim,
+                                 const char *variant_set_name,
+                                 const char *variant_name,
+                                 const CTinyUSDPrim *child);
+
+/* Author an attribute on the named variant's `properties` map.
+ * The Attribute is copied. The variant is created if needed.
+ */
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_variant_add_attribute(CTinyUSDPrim *prim,
+                                     const char *variant_set_name,
+                                     const char *variant_name,
+                                     const CTinyUSDAttribute *attr,
+                                     c_tinyusd_string_t *err);
+
 /* ---- Tydra: scene-access helpers ---- */
 
 typedef int (*CTinyUSDVisitFunction)(const CTinyUSDPrim *prim,

@@ -112,6 +112,16 @@ class Prim:
     def clear_variant_selection(
         self, variant_set_name: Optional[str] = None,
     ) -> None: ...
+    def define_variant(
+        self, variant_set_name: str, variant_name: str,
+    ) -> None: ...
+    def variant_add_child(
+        self, variant_set_name: str, variant_name: str, child: "Prim",
+    ) -> None: ...
+    def variant_set_attribute(
+        self, variant_set_name: str, variant_name: str,
+        attr_name: str, value: object, dtype: Optional[str] = None,
+    ) -> None: ...
     def __repr__(self) -> str: ...
 
 class Stage:
