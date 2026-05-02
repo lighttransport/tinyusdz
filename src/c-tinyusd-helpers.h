@@ -678,6 +678,35 @@ c_tinyusd_prim_clear_inherits(CTinyUSDPrim *prim);
 C_TINYUSD_EXPORT int
 c_tinyusd_prim_clear_specializes(CTinyUSDPrim *prim);
 
+/* ---- Variant authoring (metadata-level) ---- */
+
+/* Append `name` to the prim's `variantSets = [...]` listop under
+ * `qualifier`. Returns 1 on success.
+ */
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_add_variant_set_name(CTinyUSDPrim *prim,
+                                    CTinyUSDListEditQual qualifier,
+                                    const char *name);
+
+/* Drop all authored variantSets list entries (set optional<> to nullopt). */
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_clear_variant_set_names(CTinyUSDPrim *prim);
+
+/* Set/replace the variant selection for `variant_set_name`. Equivalent
+ * to `variants = { string variant_set_name = "variant_name" }`.
+ */
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_set_variant_selection(CTinyUSDPrim *prim,
+                                     const char *variant_set_name,
+                                     const char *variant_name);
+
+/* Remove the selection for `variant_set_name`. Pass NULL or empty
+ * string to clear ALL variant selections on this prim.
+ */
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_clear_variant_selection(CTinyUSDPrim *prim,
+                                       const char *variant_set_name);
+
 /* ---- Tydra: scene-access helpers ---- */
 
 typedef int (*CTinyUSDVisitFunction)(const CTinyUSDPrim *prim,

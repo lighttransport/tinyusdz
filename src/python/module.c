@@ -1356,6 +1356,78 @@ PRIM_CLEAR_ARC(Prim_clear_specializes, c_tinyusd_prim_clear_specializes,
 
 #undef PRIM_CLEAR_ARC
 
+static PyObject *
+Prim_add_variant_set_name(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    static char *kwlist[] = {"name", "qualifier", NULL};
+    const char *name = NULL;
+    const char *qstr = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "s|s", kwlist,
+                                     &name, &qstr)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    CTinyUSDListEditQual q;
+    if (!parse_listedit_qual(qstr, &q)) return NULL;
+    if (!c_tinyusd_prim_add_variant_set_name(p->prim, q, name)) {
+        PyErr_SetString(UsdError, "add_variant_set_name failed");
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Prim_clear_variant_set_names(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    if (!c_tinyusd_prim_clear_variant_set_names(p->prim)) {
+        PyErr_SetString(UsdError, "clear_variant_set_names failed");
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Prim_set_variant_selection(PyObject *self, PyObject *args)
+{
+    const char *vset = NULL;
+    const char *vname = NULL;
+    if (!PyArg_ParseTuple(args, "ss", &vset, &vname)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    if (!c_tinyusd_prim_set_variant_selection(p->prim, vset, vname)) {
+        PyErr_SetString(UsdError, "set_variant_selection failed");
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Prim_clear_variant_selection(PyObject *self, PyObject *args)
+{
+    const char *vset = NULL;
+    if (!PyArg_ParseTuple(args, "|z", &vset)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    if (!c_tinyusd_prim_clear_variant_selection(p->prim, vset)) {
+        PyErr_SetString(UsdError, "clear_variant_selection failed");
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef Prim_methods[] = {
     {"children", Prim_children, METH_NOARGS, "List of child Prims."},
     {"to_string", Prim_to_string, METH_NOARGS, "USDA text of this prim subtree."},
@@ -1434,6 +1506,18 @@ static PyMethodDef Prim_methods[] = {
      "clear_inherits(): drop all authored inherits."},
     {"clear_specializes", Prim_clear_specializes, METH_NOARGS,
      "clear_specializes(): drop all authored specializes."},
+    {"add_variant_set_name", (PyCFunction)Prim_add_variant_set_name,
+     METH_VARARGS | METH_KEYWORDS,
+     "add_variant_set_name(name, qualifier='prepend'): declare a"
+     " variantSet name (`variantSets = [...]` listop)."},
+    {"clear_variant_set_names", Prim_clear_variant_set_names, METH_NOARGS,
+     "clear_variant_set_names(): drop the authored variantSets list."},
+    {"set_variant_selection", Prim_set_variant_selection, METH_VARARGS,
+     "set_variant_selection(variant_set_name, variant_name): set/replace"
+     " a single entry in the prim's `variants = {...}` map."},
+    {"clear_variant_selection", Prim_clear_variant_selection, METH_VARARGS,
+     "clear_variant_selection(variant_set_name=None): drop a single"
+     " entry, or all entries if name is None/empty."},
     {NULL, NULL, 0, NULL}
 };
 

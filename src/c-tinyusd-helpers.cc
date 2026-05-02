@@ -1657,6 +1657,54 @@ int c_tinyusd_prim_clear_specializes(CTinyUSDPrim *prim) {
   return 1;
 }
 
+/* ---- Variant authoring (metadata-level) ---- */
+
+int c_tinyusd_prim_add_variant_set_name(CTinyUSDPrim *prim,
+                                        CTinyUSDListEditQual qualifier,
+                                        const char *name) {
+  if (!prim || !name) return 0;
+  auto *p = reinterpret_cast<tinyusdz::Prim *>(prim);
+  append_listop(p->metas().variantSets, to_listedit_qual(qualifier),
+                std::string(name));
+  return 1;
+}
+
+int c_tinyusd_prim_clear_variant_set_names(CTinyUSDPrim *prim) {
+  if (!prim) return 0;
+  reinterpret_cast<tinyusdz::Prim *>(prim)->metas().variantSets.reset();
+  return 1;
+}
+
+int c_tinyusd_prim_set_variant_selection(CTinyUSDPrim *prim,
+                                         const char *variant_set_name,
+                                         const char *variant_name) {
+  if (!prim || !variant_set_name || !variant_name) return 0;
+  auto *p = reinterpret_cast<tinyusdz::Prim *>(prim);
+  if (!p->metas().variants.has_value()) {
+    p->metas().variants = tinyusdz::VariantSelectionMap{};
+  }
+  (*p->metas().variants)[std::string(variant_set_name)] =
+      std::string(variant_name);
+  return 1;
+}
+
+int c_tinyusd_prim_clear_variant_selection(CTinyUSDPrim *prim,
+                                           const char *variant_set_name) {
+  if (!prim) return 0;
+  auto *p = reinterpret_cast<tinyusdz::Prim *>(prim);
+  if (!variant_set_name || !*variant_set_name) {
+    p->metas().variants.reset();
+    return 1;
+  }
+  if (p->metas().variants.has_value()) {
+    p->metas().variants->erase(std::string(variant_set_name));
+    if (p->metas().variants->empty()) {
+      p->metas().variants.reset();
+    }
+  }
+  return 1;
+}
+
 /* ---- Stage default-prim convenience ---- */
 int c_tinyusd_stage_set_default_prim(CTinyUSDStage *stage, const char *name) {
   if (!stage || !name) return 0;
