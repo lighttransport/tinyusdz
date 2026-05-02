@@ -4133,3 +4133,227 @@ def Xform "x" (
   TEST_CHECK(cd.count("ubig") == 1);
   TEST_CHECK(cd.count("hh") == 1);
 }
+
+// =========================================================================
+// Quaternion wire-format coverage (fences pxr-compat fix)
+//
+// The Crate wire layout is [x, y, z, w] = (imag, real); see
+// value-types.hh:957. tinyusdz used to emit (real, imag) per element on
+// arrays while the reader memcpy'd raw bytes into the {imag, real}
+// struct, silently shifting components by one position per element.
+// =========================================================================
+
+void usdc_writer_quatf_array_roundtrip_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom quatf[] q = [(1, 0, 0, 0), (0.5, 0.5, 0.5, 0.5), (0.707, 0.707, 0, 0)]
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("q");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<value::quatf>>();
+  TEST_CHECK(pv.has_value());
+  if (!pv.has_value()) return;
+  const auto &arr = pv.value();
+  TEST_CHECK(arr.size() == 3);
+  if (arr.size() != 3) return;
+  // Element 0: identity (real=1)
+  TEST_CHECK(std::abs(arr[0].real - 1.0f) < 1e-5f);
+  TEST_CHECK(std::abs(arr[0].imag[0]) < 1e-5f);
+  TEST_CHECK(std::abs(arr[0].imag[1]) < 1e-5f);
+  TEST_CHECK(std::abs(arr[0].imag[2]) < 1e-5f);
+  // Element 1: all 0.5
+  TEST_CHECK(std::abs(arr[1].real - 0.5f) < 1e-5f);
+  TEST_CHECK(std::abs(arr[1].imag[0] - 0.5f) < 1e-5f);
+  // Element 2: real=0.707, imag.x=0.707
+  TEST_CHECK(std::abs(arr[2].real - 0.707f) < 1e-3f);
+  TEST_CHECK(std::abs(arr[2].imag[0] - 0.707f) < 1e-3f);
+  TEST_CHECK(std::abs(arr[2].imag[1]) < 1e-5f);
+}
+
+void usdc_writer_quatd_array_roundtrip_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom quatd[] q = [(0.1, 0.2, 0.3, 0.4), (0.5, 0.6, 0.7, 0.8)]
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("q");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<value::quatd>>();
+  TEST_CHECK(pv.has_value());
+  if (!pv.has_value()) return;
+  const auto &arr = pv.value();
+  TEST_CHECK(arr.size() == 2);
+  if (arr.size() != 2) return;
+  TEST_CHECK(std::abs(arr[0].real - 0.1) < 1e-9);
+  TEST_CHECK(std::abs(arr[0].imag[0] - 0.2) < 1e-9);
+  TEST_CHECK(std::abs(arr[0].imag[1] - 0.3) < 1e-9);
+  TEST_CHECK(std::abs(arr[0].imag[2] - 0.4) < 1e-9);
+  TEST_CHECK(std::abs(arr[1].real - 0.5) < 1e-9);
+  TEST_CHECK(std::abs(arr[1].imag[0] - 0.6) < 1e-9);
+}
+
+void usdc_writer_quath_array_roundtrip_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom quath[] q = [(1, 0, 0, 0), (0.5, 0.25, 0.125, 0.0625)]
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("q");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  auto pv = it->second.get_attribute().get_var().value_raw().get_value<std::vector<value::quath>>();
+  TEST_CHECK(pv.has_value());
+  if (!pv.has_value()) return;
+  TEST_CHECK(pv.value().size() == 2);
+}
+
+void usdc_writer_quat_wire_byteorder_test(void) {
+  // Raw byte-level fence: the Crate wire layout per element MUST be
+  // (imag.x, imag.y, imag.z, real). Author distinct components so any
+  // shuffle is detectable.
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom quatf q = (1.0, 0.25, 0.5, 0.75)
+}
+)";
+  Stage tmp;
+  std::string warn, err;
+  bool parsed = LoadUSDAFromMemory(
+      reinterpret_cast<const uint8_t *>(usda), std::strlen(usda),
+      "test.usda", &tmp, &warn, &err);
+  TEST_CHECK(parsed);
+  if (!parsed) return;
+  std::vector<uint8_t> buf;
+  bool wrote = usdc::SaveAsUSDCToMemory(tmp, &buf, &warn, &err);
+  TEST_CHECK(wrote);
+  if (!wrote) return;
+  // Search for the 16-byte payload of (imag.x, imag.y, imag.z, real).
+  // USDA spelling (1.0, 0.25, 0.5, 0.75) = (real=1.0, imag=(0.25,0.5,0.75)).
+  // Wire bytes should be 0.25, 0.5, 0.75, 1.0 little-endian floats.
+  unsigned char needle[16];
+  float wire[4] = { 0.25f, 0.5f, 0.75f, 1.0f };
+  std::memcpy(needle, wire, sizeof(needle));
+  bool found = false;
+  if (buf.size() >= sizeof(needle)) {
+    for (size_t i = 0; i + sizeof(needle) <= buf.size(); ++i) {
+      if (std::memcmp(buf.data() + i, needle, sizeof(needle)) == 0) {
+        found = true;
+        break;
+      }
+    }
+  }
+  TEST_CHECK(found);
+  TEST_MSG("Crate quatf must be (imag, real) per value-types.hh:957");
+}
+
+// =========================================================================
+// Reference customData out-of-line packing — non-inlinable values
+// (doubles, int64 above 2^47) must round-trip via the reserve-pack-seek
+// pattern; previously the writer rejected them.
+// =========================================================================
+
+void usdc_writer_reference_customdata_double_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+    prepend references = @./foo.usda@</A> (
+        customData = {
+            double d = 2.71828182845904
+        }
+    )
+)
+{
+}
+)";
+  RT_OK(usda);
+}
+
+void usdc_writer_reference_customdata_large_int64_test(void) {
+  // 2^50 is well above the 2^47 inline-payload limit.
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+    prepend references = @./foo.usda@</A> (
+        customData = {
+            int64 big = 1125899906842624
+        }
+    )
+)
+{
+}
+)";
+  RT_OK(usda);
+}
+
+void usdc_writer_reference_customdata_mixed_test(void) {
+  // Mix of inline-able (int, string) and out-of-line (double, large
+  // int64) entries to exercise the order of out-of-line writes vs.
+  // the dict frame back-fill.
+  const char *usda = R"(#usda 1.0
+def Xform "x" (
+    prepend references = @./foo.usda@</A> (
+        customData = {
+            int v = 42
+            double d = 3.14159265358979
+            string note = "hi"
+            int64 big = 1125899906842624
+        }
+    )
+)
+{
+}
+)";
+  RT_OK(usda);
+}
+
+// =========================================================================
+// allowedTokens — USDA parser, USDC writer field emit, and USDC reader
+// handler all wired (full USDA→USDC→USDA round-trip).
+// =========================================================================
+
+void usdc_writer_allowed_tokens_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom token sides = "left" (
+    allowedTokens = ["left", "right", "both"]
+  )
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("sides");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  const auto &meta = it->second.get_attribute().metas();
+  TEST_CHECK(meta.has_allowedTokens());
+  if (!meta.has_allowedTokens()) return;
+  auto toks = meta.get_allowedTokens();
+  TEST_CHECK(toks.size() == 3);
+  if (toks.size() != 3) return;
+  TEST_CHECK(toks[0].str() == "left");
+  TEST_CHECK(toks[1].str() == "right");
+  TEST_CHECK(toks[2].str() == "both");
+}

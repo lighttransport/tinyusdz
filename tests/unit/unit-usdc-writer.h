@@ -200,3 +200,17 @@ void usdc_writer_uint64_array_test(void);
 void usdc_writer_layer_offset_payload_test(void);
 void usdc_writer_scene_name_test(void);
 void usdc_writer_customdata_array_types_test(void);
+
+// Quaternion wire-format coverage (pxr-compat regression fence)
+void usdc_writer_quatf_array_roundtrip_test(void);
+void usdc_writer_quatd_array_roundtrip_test(void);
+void usdc_writer_quath_array_roundtrip_test(void);
+void usdc_writer_quat_wire_byteorder_test(void);
+
+// Reference customData out-of-line packing
+void usdc_writer_reference_customdata_double_test(void);
+void usdc_writer_reference_customdata_large_int64_test(void);
+void usdc_writer_reference_customdata_mixed_test(void);
+
+// Attribute meta `allowedTokens` USDC roundtrip
+void usdc_writer_allowed_tokens_test(void);
