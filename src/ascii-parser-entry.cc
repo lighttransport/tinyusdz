@@ -533,6 +533,11 @@ static void RegisterPropMetas(
   // Builtin from pxrUSD 24.xx?
   metas["displayGroup"] =
       AsciiParser::VariableDef(value::kString, "displayGroup");
+
+  // pxrUSD attribute metadatum: enumerated set of valid token values.
+  // Stored as `token[]` in AttrMetas via set_allowedTokens.
+  metas["allowedTokens"] = AsciiParser::VariableDef(
+      "token", "allowedTokens", /* allow_array_type */ true);
 }
 
 // Shared implementation lives in value-types.hh:
