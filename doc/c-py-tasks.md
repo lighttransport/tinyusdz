@@ -35,6 +35,7 @@ that landed it and the test file (or test name) that fences it.
 | No-dtype auto-detect: 1-D `numpy.float16` / `float32` / `float64` ndarray routes to `half[]` / `float[]` / `double[]` without an explicit `dtype=` hint | (this commit) | `python/tests/test_numpy_no_dtype_autodetect.py` |
 | `kind` on Relationship/Attribute (USDA-only): pxr-style tolerance — parser accepts and pretty-printer round-trips via generic AttrMetas storage | (this commit) | `python/tests/test_kind_on_relationship.py` |
 | Reference customData: USDC writer now emits arbitrary value types (doubles, int64 > 2^47, mixed) by reserving the dict frame, packing values (which may write out-of-line value data), and back-filling the frame — no more inline-only restriction | (this commit) | `python/tests/test_reference_customdata.py` (3 new cases) |
+| `python/AUTHORING.md` — prose around when each `set_attribute` form is the right call (dtype-hint table, vec-array shapes, time samples, composition arcs, variants, stage metadata, USDZ packing) | (this commit) | _docs only_ |
 | `tydra::GetPropertyNames` / `lookup_in_props` fall through to `Shader::value` (`ShaderNode::props`) when `Shader::props` is empty | `5a9e7055` | `python/tests/test_generic_shader_props.py` |
 | `Attribute.value.to_string()` for asset paths emits `@…@` (was `@@@@…@@@@`) | (in earlier WIP, fenced by) | `python/tests/test_asset_path_normalization.py` |
 
@@ -59,18 +60,6 @@ that landed it and the test file (or test name) that fences it.
 ### Medium value
 
 ### Low value / nice to have
-
-#### `python/AUTHORING.md` (or expanded `python/README.md`)
-
-Document the dtype-hint table, the buffer-protocol shape (which dtypes
-auto-detect, which require explicit `dtype=`), and the composition
-arc / variant authoring APIs landed in this branch.
-
-The `_core.pyi` stub is canonical for signatures; the missing piece is
-prose around when each form is the right call. Especially:
-- list-of-tuples vs numpy-2D vs flat-list for vec arrays
-- authoring vs reading (zero-copy buffer on reads)
-- variant authoring lifecycle (define_variant -> add_child / set_attribute)
 
 #### Half-array reader buffer protocol
 
