@@ -32,6 +32,7 @@ that landed it and the test file (or test name) that fences it.
 | `frame4d` scalar/array writer + Python dispatch | `ad3a910d`, `0673f385` | `python/tests/test_authoring_extended_types.py` |
 | `int64[]` / `uint64[]` / `bool[]` / `half[]` dtype dispatch | `a09a0a4a`, `ef1022f6` | `python/tests/test_array_dtype_dispatch.py` |
 | `numpy.float16` / `float32` / `float64` ndarray accepted by `set_attribute(..., dtype="half[]")` (buffer-protocol fast path) | (this commit) | `python/tests/test_numpy_half_buffer.py` |
+| No-dtype auto-detect: 1-D `numpy.float16` / `float32` / `float64` ndarray routes to `half[]` / `float[]` / `double[]` without an explicit `dtype=` hint | (this commit) | `python/tests/test_numpy_no_dtype_autodetect.py` |
 | `tydra::GetPropertyNames` / `lookup_in_props` fall through to `Shader::value` (`ShaderNode::props`) when `Shader::props` is empty | `5a9e7055` | `python/tests/test_generic_shader_props.py` |
 | `Attribute.value.to_string()` for asset paths emits `@…@` (was `@@@@…@@@@`) | (in earlier WIP, fenced by) | `python/tests/test_asset_path_normalization.py` |
 
@@ -39,7 +40,7 @@ that landed it and the test file (or test name) that fences it.
 
 | Task | Commit | Tests |
 |---|---|---|
-| `allowedTokens = [...]` attribute meta (USDA parser registers it as `token[]`; AttrMetas stores it; USDA round-trip works) | `6412505d` | `python/tests/test_allowed_tokens.py` |
+| `allowedTokens = [...]` attribute meta — USDA parser, USDC writer field-emit, and USDC reader handler all wired (full USDA→USDC→USDA round-trip) | `6412505d`, (this commit) | `python/tests/test_allowed_tokens.py` |
 | `customData = {…}` clause on `Reference` (USDA parser + USDC writer/reader; rejects on Payload) | `e1b56880`, `31516d6a`, `a1971db3` | `python/tests/test_reference_customdata.py` |
 | `sceneName` (USDZ scene-library extension) typed as `string` end-to-end (was `token` in writer + Python C-API, causing silent drop and reload errors) | `1f4a7edb`, follow-up | `python/tests/test_scene_name_metadata.py`, `tests/usda/sceneLibrary-001.usda` (now passes `usdc-roundtrip-test`) |
 | `customData` value packer covers `bool[]`, `uint32[]`, `int64[]`, `uint64[]`, `half[]` (was rejecting any prim authoring `bool[] zUp = [1]`) | `1f4a7edb` | `python/tests/test_customdata_array_types.py`, `tests/usda/customData-prim-003.usda` |
@@ -54,23 +55,6 @@ that landed it and the test file (or test name) that fences it.
 ## Still outstanding
 
 ### Medium value
-
-#### Half-array auto-detect from numpy without `dtype` hint
-
-`p.set_attribute("widths", np.array([...], dtype=np.float16))` — i.e.
-no `dtype="half[]"` — still raises
-"unsupported value type for tinyusdz.Prim.set_attribute". Today only
-the explicit-`dtype="half[]"` path threads through the buffer
-protocol.
-
-Plan:
-- Add an early ndarray check in the no-dtype branch of `py_to_value`:
-  if `PyObject_CheckBuffer(obj)` and `view.format == "e"`, route to
-  the same code that the explicit-half[] path uses.
-- Decide policy for `'f'` / `'d'` (float32 / float64): probably
-  `float[]` and `double[]` respectively rather than `half[]`. Today
-  the Python list path picks `float[]` for python-floats; an ndarray
-  with native float32 should match that.
 
 #### `kind` on relationships
 
@@ -91,16 +75,6 @@ customData values we'd need to either:
   through, or
 - add a "scratch" buffered-write mode to `WriteValueData` that returns
   the bytes instead of writing them.
-
-#### USDC writer: AttrMetas listop arrays in fields (e.g. `allowedTokens`)
-
-`6412505d` covers USDA parser + emit, but the USDC field-writer drops
-generic AttrMetas entries that aren't in its hand-written switch. So
-`allowedTokens` round-trips through USDA but not USDC — the value is
-silently lost on save.
-
-Plan: extend `stage-converter.cc::ExtractAttrMeta` to recognise the
-`allowedTokens` key (vector<token>) and emit a matching crate field.
 
 ### Low value / nice to have
 

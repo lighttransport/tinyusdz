@@ -2005,6 +2005,11 @@ bool CrateWriter::ConvertAttributeToFields(
     v.Set(metas.get_doc().value);
     attr_fields.push_back({"documentation", v});
   }
+  if (metas.has_allowedTokens()) {
+    crate::CrateValue v;
+    v.Set(metas.get_allowedTokens());
+    attr_fields.push_back({"allowedTokens", v});
+  }
 
   // Add attribute connection paths if any.
   if (attr.has_connections()) {

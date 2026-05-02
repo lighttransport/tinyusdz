@@ -539,6 +539,14 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
             kTag, "`documentation` must be type `string`, but got type `"
                       << fv.second.type_name() << "`");
       }
+    } else if (fv.first == "allowedTokens") {
+      if (auto pv = fv.second.get_value<std::vector<value::token>>()) {
+        meta.set_allowedTokens(pv.value());
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`allowedTokens` must be type `token[]`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
     } else if (fv.first == "unauthoredValuesIndex") {
       if (auto pv = fv.second.get_value<int>()) {
         meta.set_unauthoredValuesIndex(pv.value());

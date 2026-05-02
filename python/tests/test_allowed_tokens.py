@@ -1,10 +1,4 @@
-"""`allowedTokens = [...]` attribute meta — USDA parsing + round-trip.
-
-Phase C.7 deferred: AttrMetas now exposes set/get/has_allowedTokens.
-Parser registers `allowedTokens` as token[] meta. USDA round-trip
-verified; USDC writer support for attribute-level allowedTokens is
-not yet wired (the value is dropped by the crate emit path).
-"""
+"""`allowedTokens = [...]` attribute meta — USDA parsing + USDC round-trip."""
 import pytest
 import tinyusdz
 
@@ -24,6 +18,20 @@ def test_parse_and_emit_allowedtokens(tmp_path):
     p.write_text(_USDA)
     s = tinyusdz.load(str(p))
     txt = s.export_to_string()
+    assert "allowedTokens" in txt
+    assert "\"left\"" in txt
+    assert "\"right\"" in txt
+    assert "\"both\"" in txt
+
+
+def test_allowedtokens_survives_usdc_roundtrip(tmp_path):
+    src = tmp_path / "a.usda"
+    src.write_text(_USDA)
+    s = tinyusdz.load(str(src))
+    out = tmp_path / "a.usdc"
+    s.save(str(out))
+    s2 = tinyusdz.load(str(out))
+    txt = s2.export_to_string()
     assert "allowedTokens" in txt
     assert "\"left\"" in txt
     assert "\"right\"" in txt

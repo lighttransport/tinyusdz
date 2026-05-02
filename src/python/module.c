@@ -3641,6 +3641,76 @@ py_to_value(PyObject *obj, const char *dtype, char *out_type_name,
         }
     }
 
+    /* No-dtype buffer-protocol fast path: 1-D numpy ndarray of
+     * float16 / float32 / float64 -> half[] / float[] / double[].
+     * Only triggers when the explicit dtype branches above did not
+     * match and py_seq_classify rejected obj (i.e. it is not a
+     * list/tuple). */
+    if (!dtype && PyObject_CheckBuffer(obj)) {
+        Py_buffer view;
+        if (PyObject_GetBuffer(obj, &view,
+                               PyBUF_FORMAT | PyBUF_C_CONTIGUOUS) == 0) {
+            const char *fmt = view.format ? view.format : "B";
+            int ndim = view.ndim;
+            Py_ssize_t elem = view.itemsize;
+            Py_ssize_t n = elem ? view.len / elem : 0;
+            if (ndim == 1 && !strcmp(fmt, "e")) {
+                c_tinyusd_half_t *arr = (c_tinyusd_half_t *)PyMem_Malloc(
+                    sizeof(c_tinyusd_half_t) * (size_t)(n > 0 ? n : 1));
+                if (!arr) {
+                    PyBuffer_Release(&view);
+                    return (CTinyUSDValue *)PyErr_NoMemory();
+                }
+                memcpy(arr, view.buf, sizeof(uint16_t) * (size_t)n);
+                PyBuffer_Release(&view);
+                CTinyUSDValue *v = c_tinyusd_value_new_array_half(
+                    (uint64_t)n, arr);
+                PyMem_Free(arr);
+                snprintf(out_type_name, out_type_name_size, "half[]");
+                if (!v) PyErr_SetString(PyExc_RuntimeError,
+                                        "value_new_array_half failed");
+                return v;
+            }
+            if (ndim == 1 && !strcmp(fmt, "f")) {
+                float *arr = (float *)PyMem_Malloc(
+                    sizeof(float) * (size_t)(n > 0 ? n : 1));
+                if (!arr) {
+                    PyBuffer_Release(&view);
+                    return (CTinyUSDValue *)PyErr_NoMemory();
+                }
+                memcpy(arr, view.buf, sizeof(float) * (size_t)n);
+                PyBuffer_Release(&view);
+                CTinyUSDValue *v = c_tinyusd_value_new_array_float(
+                    (uint64_t)n, arr);
+                PyMem_Free(arr);
+                snprintf(out_type_name, out_type_name_size, "float[]");
+                if (!v) PyErr_SetString(PyExc_RuntimeError,
+                                        "value_new_array_float failed");
+                return v;
+            }
+            if (ndim == 1 && !strcmp(fmt, "d")) {
+                double *arr = (double *)PyMem_Malloc(
+                    sizeof(double) * (size_t)(n > 0 ? n : 1));
+                if (!arr) {
+                    PyBuffer_Release(&view);
+                    return (CTinyUSDValue *)PyErr_NoMemory();
+                }
+                memcpy(arr, view.buf, sizeof(double) * (size_t)n);
+                PyBuffer_Release(&view);
+                CTinyUSDValue *v = c_tinyusd_value_new_array_double(
+                    (uint64_t)n, arr);
+                PyMem_Free(arr);
+                snprintf(out_type_name, out_type_name_size, "double[]");
+                if (!v) PyErr_SetString(PyExc_RuntimeError,
+                                        "value_new_array_double failed");
+                return v;
+            }
+            PyBuffer_Release(&view);
+        } else {
+            PyErr_Clear();
+        }
+    }
+
     PyErr_SetString(PyExc_TypeError,
                     "unsupported value type for tinyusdz.Prim.set_attribute");
     return NULL;
