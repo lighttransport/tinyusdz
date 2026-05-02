@@ -1212,6 +1212,150 @@ Prim_repr(PyObject *self)
                                 t ? t : "?", n ? n : "?");
 }
 
+static int
+parse_listedit_qual(const char *s, CTinyUSDListEditQual *out)
+{
+    if (!s || !*s || !strcmp(s, "prepend")) {
+        *out = C_TINYUSD_LISTEDITQUAL_PREPEND;
+        return 1;
+    }
+    if (!strcmp(s, "append")) {
+        *out = C_TINYUSD_LISTEDITQUAL_APPEND;
+        return 1;
+    }
+    if (!strcmp(s, "add")) {
+        *out = C_TINYUSD_LISTEDITQUAL_ADD;
+        return 1;
+    }
+    if (!strcmp(s, "delete")) {
+        *out = C_TINYUSD_LISTEDITQUAL_DELETE;
+        return 1;
+    }
+    if (!strcmp(s, "explicit") || !strcmp(s, "reset")) {
+        *out = C_TINYUSD_LISTEDITQUAL_RESETTOEXPLICIT;
+        return 1;
+    }
+    if (!strcmp(s, "order")) {
+        *out = C_TINYUSD_LISTEDITQUAL_ORDER;
+        return 1;
+    }
+    PyErr_Format(PyExc_ValueError,
+                 "unknown qualifier '%s' (expected one of:"
+                 " prepend, append, add, delete, explicit, order)", s);
+    return 0;
+}
+
+static PyObject *
+Prim_add_arc_asset(PyObject *self, PyObject *args, PyObject *kwds, int is_payload)
+{
+    static char *kwlist[] = {"asset_path", "prim_path", "offset", "scale",
+                             "qualifier", NULL};
+    const char *asset_path = NULL;
+    const char *prim_path = NULL;
+    double offset = 0.0;
+    double scale = 1.0;
+    const char *qstr = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "s|zdds", kwlist,
+                                     &asset_path, &prim_path, &offset, &scale,
+                                     &qstr)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    CTinyUSDListEditQual q;
+    if (!parse_listedit_qual(qstr, &q)) return NULL;
+    int ok = is_payload
+        ? c_tinyusd_prim_add_payload(p->prim, q, asset_path, prim_path,
+                                     offset, scale)
+        : c_tinyusd_prim_add_reference(p->prim, q, asset_path, prim_path,
+                                       offset, scale);
+    if (!ok) {
+        PyErr_SetString(UsdError,
+                        is_payload ? "add_payload failed"
+                                   : "add_reference failed");
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Prim_add_reference(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    return Prim_add_arc_asset(self, args, kwds, 0);
+}
+
+static PyObject *
+Prim_add_payload(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    return Prim_add_arc_asset(self, args, kwds, 1);
+}
+
+static PyObject *
+Prim_add_arc_path(PyObject *self, PyObject *args, PyObject *kwds, int is_specialize)
+{
+    static char *kwlist[] = {"prim_path", "qualifier", NULL};
+    const char *prim_path = NULL;
+    const char *qstr = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "s|s", kwlist,
+                                     &prim_path, &qstr)) return NULL;
+    PrimObject *p = (PrimObject *)self;
+    if (!p->prim) {
+        PyErr_SetString(UsdError, "Prim has no underlying handle");
+        return NULL;
+    }
+    CTinyUSDListEditQual q;
+    if (!parse_listedit_qual(qstr, &q)) return NULL;
+    int ok = is_specialize
+        ? c_tinyusd_prim_add_specialize(p->prim, q, prim_path)
+        : c_tinyusd_prim_add_inherit(p->prim, q, prim_path);
+    if (!ok) {
+        PyErr_SetString(UsdError,
+                        is_specialize ? "add_specialize failed"
+                                      : "add_inherit failed");
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+Prim_add_inherit(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    return Prim_add_arc_path(self, args, kwds, 0);
+}
+
+static PyObject *
+Prim_add_specialize(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    return Prim_add_arc_path(self, args, kwds, 1);
+}
+
+#define PRIM_CLEAR_ARC(NAME, FN, LABEL)                                  \
+    static PyObject *NAME(PyObject *self, PyObject *Py_UNUSED(ignored))  \
+    {                                                                    \
+        PrimObject *p = (PrimObject *)self;                              \
+        if (!p->prim) {                                                  \
+            PyErr_SetString(UsdError, "Prim has no underlying handle"); \
+            return NULL;                                                 \
+        }                                                                \
+        if (!FN(p->prim)) {                                              \
+            PyErr_SetString(UsdError, LABEL " failed");                  \
+            return NULL;                                                 \
+        }                                                                \
+        Py_RETURN_NONE;                                                  \
+    }
+
+PRIM_CLEAR_ARC(Prim_clear_references, c_tinyusd_prim_clear_references,
+               "clear_references")
+PRIM_CLEAR_ARC(Prim_clear_payload, c_tinyusd_prim_clear_payload,
+               "clear_payload")
+PRIM_CLEAR_ARC(Prim_clear_inherits, c_tinyusd_prim_clear_inherits,
+               "clear_inherits")
+PRIM_CLEAR_ARC(Prim_clear_specializes, c_tinyusd_prim_clear_specializes,
+               "clear_specializes")
+
+#undef PRIM_CLEAR_ARC
+
 static PyMethodDef Prim_methods[] = {
     {"children", Prim_children, METH_NOARGS, "List of child Prims."},
     {"to_string", Prim_to_string, METH_NOARGS, "USDA text of this prim subtree."},
@@ -1267,6 +1411,29 @@ static PyMethodDef Prim_methods[] = {
     {"get_attribute_timesamples", Prim_get_attribute_timesamples, METH_VARARGS,
      "get_attribute_timesamples(name) -> list[(time, Value)]: read"
      " authored time samples."},
+    {"add_reference", (PyCFunction)Prim_add_reference,
+     METH_VARARGS | METH_KEYWORDS,
+     "add_reference(asset_path, prim_path=None, offset=0.0, scale=1.0,"
+     " qualifier='prepend'): author a Reference arc on this prim. Pass"
+     " an empty string for asset_path for an internal reference."},
+    {"add_payload", (PyCFunction)Prim_add_payload,
+     METH_VARARGS | METH_KEYWORDS,
+     "add_payload(asset_path, prim_path=None, offset=0.0, scale=1.0,"
+     " qualifier='prepend'): author a Payload arc on this prim."},
+    {"add_inherit", (PyCFunction)Prim_add_inherit,
+     METH_VARARGS | METH_KEYWORDS,
+     "add_inherit(prim_path, qualifier='prepend'): author an inherits arc."},
+    {"add_specialize", (PyCFunction)Prim_add_specialize,
+     METH_VARARGS | METH_KEYWORDS,
+     "add_specialize(prim_path, qualifier='prepend'): author a specializes arc."},
+    {"clear_references", Prim_clear_references, METH_NOARGS,
+     "clear_references(): drop all authored references."},
+    {"clear_payload", Prim_clear_payload, METH_NOARGS,
+     "clear_payload(): drop all authored payloads."},
+    {"clear_inherits", Prim_clear_inherits, METH_NOARGS,
+     "clear_inherits(): drop all authored inherits."},
+    {"clear_specializes", Prim_clear_specializes, METH_NOARGS,
+     "clear_specializes(): drop all authored specializes."},
     {NULL, NULL, 0, NULL}
 };
 

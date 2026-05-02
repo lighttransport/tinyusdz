@@ -605,6 +605,79 @@ c_tinyusd_prim_get_relationship_targets(const CTinyUSDPrim *prim,
                                         const char *name,
                                         c_tinyusd_string_t *out_csv);
 
+/* ---- Composition arc authoring ----
+ *
+ * USD has four prim-level arcs that compose layers and prims:
+ * `references`, `payload`, `inherits`, `specializes`. Each arc list
+ * can be qualified by a list-edit operation ("prepend", "append",
+ * "add", "delete", "explicit", "order"). The C API exposes a single
+ * "add" entry point per arc that appends to the prim's existing
+ * list; pass NULL for `prim_path` (or empty string) when no specific
+ * prim should be targeted within the referenced layer.
+ *
+ * Qualifier values match `tinyusdz::ListEditQual`:
+ *   0 = ResetToExplicit (no qualifier — replaces any existing list)
+ *   1 = Append
+ *   2 = Add
+ *   3 = Delete
+ *   4 = Prepend
+ *   5 = Order
+ */
+typedef enum {
+  C_TINYUSD_LISTEDITQUAL_RESETTOEXPLICIT = 0,
+  C_TINYUSD_LISTEDITQUAL_APPEND = 1,
+  C_TINYUSD_LISTEDITQUAL_ADD = 2,
+  C_TINYUSD_LISTEDITQUAL_DELETE = 3,
+  C_TINYUSD_LISTEDITQUAL_PREPEND = 4,
+  C_TINYUSD_LISTEDITQUAL_ORDER = 5
+} CTinyUSDListEditQual;
+
+/* Append a Reference to the prim's `references` list under the given
+ * qualifier. `asset_path` may be empty/NULL for an internal reference;
+ * `prim_path` may be empty/NULL to target the layer's defaultPrim.
+ * `offset` and `scale` populate the LayerOffset (USD defaults: 0, 1).
+ */
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_add_reference(CTinyUSDPrim *prim,
+                             CTinyUSDListEditQual qualifier,
+                             const char *asset_path,
+                             const char *prim_path,
+                             double offset,
+                             double scale);
+
+/* Append a Payload to the prim's `payload` list. Same parameter
+ * semantics as `c_tinyusd_prim_add_reference`.
+ */
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_add_payload(CTinyUSDPrim *prim,
+                           CTinyUSDListEditQual qualifier,
+                           const char *asset_path,
+                           const char *prim_path,
+                           double offset,
+                           double scale);
+
+/* Append a single Path entry to the prim's `inherits` list. */
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_add_inherit(CTinyUSDPrim *prim,
+                           CTinyUSDListEditQual qualifier,
+                           const char *prim_path);
+
+/* Append a single Path entry to the prim's `specializes` list. */
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_add_specialize(CTinyUSDPrim *prim,
+                              CTinyUSDListEditQual qualifier,
+                              const char *prim_path);
+
+/* Clear the prim's arc list (sets the optional<> back to nullopt). */
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_clear_references(CTinyUSDPrim *prim);
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_clear_payload(CTinyUSDPrim *prim);
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_clear_inherits(CTinyUSDPrim *prim);
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_clear_specializes(CTinyUSDPrim *prim);
+
 /* ---- Tydra: scene-access helpers ---- */
 
 typedef int (*CTinyUSDVisitFunction)(const CTinyUSDPrim *prim,

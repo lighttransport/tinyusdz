@@ -1528,6 +1528,135 @@ CTinyUSDValue *c_tinyusd_value_new_array_frame4d(uint64_t n, const c_tinyusd_mat
   return reinterpret_cast<CTinyUSDValue *>(new tinyusdz::value::Value(arr));
 }
 
+}  /* end extern "C" — templates need C++ linkage */
+
+/* ---- Composition arc authoring ---- */
+
+namespace {
+inline tinyusdz::ListEditQual to_listedit_qual(CTinyUSDListEditQual q) {
+  switch (q) {
+    case C_TINYUSD_LISTEDITQUAL_RESETTOEXPLICIT: return tinyusdz::ListEditQual::ResetToExplicit;
+    case C_TINYUSD_LISTEDITQUAL_APPEND:          return tinyusdz::ListEditQual::Append;
+    case C_TINYUSD_LISTEDITQUAL_ADD:             return tinyusdz::ListEditQual::Add;
+    case C_TINYUSD_LISTEDITQUAL_DELETE:          return tinyusdz::ListEditQual::Delete;
+    case C_TINYUSD_LISTEDITQUAL_PREPEND:         return tinyusdz::ListEditQual::Prepend;
+    case C_TINYUSD_LISTEDITQUAL_ORDER:           return tinyusdz::ListEditQual::Order;
+  }
+  return tinyusdz::ListEditQual::ResetToExplicit;
+}
+
+template <typename Item>
+void append_listop(
+    nonstd::optional<std::vector<std::pair<tinyusdz::ListEditQual,
+                                           std::vector<Item>>>> &slot,
+    tinyusdz::ListEditQual q,
+    Item item) {
+  if (!slot.has_value()) {
+    slot = std::vector<std::pair<tinyusdz::ListEditQual, std::vector<Item>>>{};
+  }
+  // Find an existing entry with the same qualifier; append in place.
+  for (auto &entry : slot.value()) {
+    if (entry.first == q) {
+      entry.second.emplace_back(std::move(item));
+      return;
+    }
+  }
+  std::vector<Item> v;
+  v.emplace_back(std::move(item));
+  slot.value().emplace_back(q, std::move(v));
+}
+
+inline tinyusdz::Path make_optional_path(const char *prim_path) {
+  if (!prim_path || !*prim_path) return tinyusdz::Path();
+  return tinyusdz::Path(std::string(prim_path), "");
+}
+}  // namespace
+
+extern "C" {
+
+int c_tinyusd_prim_add_reference(CTinyUSDPrim *prim,
+                                 CTinyUSDListEditQual qualifier,
+                                 const char *asset_path,
+                                 const char *prim_path,
+                                 double offset,
+                                 double scale) {
+  if (!prim) return 0;
+  auto *p = reinterpret_cast<tinyusdz::Prim *>(prim);
+  tinyusdz::Reference ref;
+  if (asset_path && *asset_path) {
+    ref.asset_path = tinyusdz::value::AssetPath(std::string(asset_path));
+  }
+  ref.prim_path = make_optional_path(prim_path);
+  ref.layerOffset._offset = offset;
+  ref.layerOffset._scale = scale;
+  append_listop(p->metas().references, to_listedit_qual(qualifier),
+                std::move(ref));
+  return 1;
+}
+
+int c_tinyusd_prim_add_payload(CTinyUSDPrim *prim,
+                               CTinyUSDListEditQual qualifier,
+                               const char *asset_path,
+                               const char *prim_path,
+                               double offset,
+                               double scale) {
+  if (!prim) return 0;
+  auto *p = reinterpret_cast<tinyusdz::Prim *>(prim);
+  tinyusdz::Payload pl;
+  if (asset_path && *asset_path) {
+    pl.asset_path = tinyusdz::value::AssetPath(std::string(asset_path));
+  }
+  pl.prim_path = make_optional_path(prim_path);
+  pl.layerOffset._offset = offset;
+  pl.layerOffset._scale = scale;
+  append_listop(p->metas().payload, to_listedit_qual(qualifier),
+                std::move(pl));
+  return 1;
+}
+
+int c_tinyusd_prim_add_inherit(CTinyUSDPrim *prim,
+                               CTinyUSDListEditQual qualifier,
+                               const char *prim_path) {
+  if (!prim || !prim_path) return 0;
+  auto *p = reinterpret_cast<tinyusdz::Prim *>(prim);
+  tinyusdz::Path path(std::string(prim_path), "");
+  append_listop(p->metas().inherits, to_listedit_qual(qualifier),
+                std::move(path));
+  return 1;
+}
+
+int c_tinyusd_prim_add_specialize(CTinyUSDPrim *prim,
+                                  CTinyUSDListEditQual qualifier,
+                                  const char *prim_path) {
+  if (!prim || !prim_path) return 0;
+  auto *p = reinterpret_cast<tinyusdz::Prim *>(prim);
+  tinyusdz::Path path(std::string(prim_path), "");
+  append_listop(p->metas().specializes, to_listedit_qual(qualifier),
+                std::move(path));
+  return 1;
+}
+
+int c_tinyusd_prim_clear_references(CTinyUSDPrim *prim) {
+  if (!prim) return 0;
+  reinterpret_cast<tinyusdz::Prim *>(prim)->metas().references.reset();
+  return 1;
+}
+int c_tinyusd_prim_clear_payload(CTinyUSDPrim *prim) {
+  if (!prim) return 0;
+  reinterpret_cast<tinyusdz::Prim *>(prim)->metas().payload.reset();
+  return 1;
+}
+int c_tinyusd_prim_clear_inherits(CTinyUSDPrim *prim) {
+  if (!prim) return 0;
+  reinterpret_cast<tinyusdz::Prim *>(prim)->metas().inherits.reset();
+  return 1;
+}
+int c_tinyusd_prim_clear_specializes(CTinyUSDPrim *prim) {
+  if (!prim) return 0;
+  reinterpret_cast<tinyusdz::Prim *>(prim)->metas().specializes.reset();
+  return 1;
+}
+
 /* ---- Stage default-prim convenience ---- */
 int c_tinyusd_stage_set_default_prim(CTinyUSDStage *stage, const char *name) {
   if (!stage || !name) return 0;
