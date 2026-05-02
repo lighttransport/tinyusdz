@@ -538,6 +538,12 @@ static void RegisterPropMetas(
   // Stored as `token[]` in AttrMetas via set_allowedTokens.
   metas["allowedTokens"] = AsciiParser::VariableDef(
       "token", "allowedTokens", /* allow_array_type */ true);
+
+  // `kind` on a Property (Relationship/Attribute). USD spec restricts
+  // `kind` to prims, but pxr's parser accepts it on properties too —
+  // we mirror that tolerance and store via the generic data() dict so
+  // USDA round-trip preserves it.
+  metas["kind"] = AsciiParser::VariableDef(value::kToken, "kind");
 }
 
 // Shared implementation lives in value-types.hh:

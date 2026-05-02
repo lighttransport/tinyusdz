@@ -89,15 +89,17 @@ def test_reference_customdata_usdc_roundtrip(tmp_path, fmt):
     assert "scale = 2" in txt
 
 
-def test_reference_customdata_double_rejected_in_usdc(tmp_path):
-    """USDC writer cannot inline doubles; the writer must error rather
-    than silently corrupt the stream."""
+def test_reference_customdata_double_usdc_roundtrip(tmp_path):
+    """Doubles can't fit in the inline ValueRep; previously the writer
+    rejected them. The reserve-pack-seek refactor lets the writer emit
+    the value out-of-line and the reader recovers it intact."""
     src = tmp_path / "src.usda"
     src.write_text('''#usda 1.0
 def Xform "X" (
     prepend references = @./foo.usda@</A> (
         customData = {
             double d = 2.71828
+            string note = "hi"
         }
     )
 )
@@ -106,5 +108,61 @@ def Xform "X" (
 ''')
     s = tinyusdz.load(str(src))
     out = tmp_path / "out.usdc"
-    with pytest.raises(tinyusdz.UsdIoError):
-        s.save(str(out))
+    s.save(str(out))
+    s2 = tinyusdz.load(str(out))
+    txt = s2.export_to_string()
+    assert "double d = 2.71828" in txt
+    assert "string note = \"hi\"" in txt
+
+
+def test_reference_customdata_large_int64_usdc_roundtrip(tmp_path):
+    """int64 values above 2^47 can't inline in the ValueRep payload.
+    They should round-trip via the out-of-line path."""
+    big = 2 ** 50  # well above 2^47
+    src = tmp_path / "src.usda"
+    src.write_text(f'''#usda 1.0
+def Xform "X" (
+    prepend references = @./foo.usda@</A> (
+        customData = {{
+            int64 big = {big}
+        }}
+    )
+)
+{{
+}}
+''')
+    s = tinyusdz.load(str(src))
+    out = tmp_path / "out.usdc"
+    s.save(str(out))
+    s2 = tinyusdz.load(str(out))
+    txt = s2.export_to_string()
+    assert f"int64 big = {big}" in txt
+
+
+def test_reference_customdata_mixed_inline_and_outofline(tmp_path):
+    """Several entries where some inline and some don't, to exercise
+    the ordering of the out-of-line writes vs. the dict frame."""
+    src = tmp_path / "src.usda"
+    src.write_text('''#usda 1.0
+def Xform "X" (
+    prepend references = @./foo.usda@</A> (
+        customData = {
+            int v = 42
+            double d = 3.14159
+            string note = "hi"
+            int64 big = 1125899906842624
+        }
+    )
+)
+{
+}
+''')
+    s = tinyusdz.load(str(src))
+    out = tmp_path / "out.usdc"
+    s.save(str(out))
+    s2 = tinyusdz.load(str(out))
+    txt = s2.export_to_string()
+    assert "int v = 42" in txt
+    assert "double d = 3.14159" in txt
+    assert "string note = \"hi\"" in txt
+    assert "int64 big = 1125899906842624" in txt

@@ -2326,82 +2326,102 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       return -1;
     }
 
-    // Write customData dictionary
-    // Dictionary format: uint64_t count + (StringIndex key, ValueRep value) pairs
-    uint64_t dict_count = ref_val->customData.size();
-    if (!Write(dict_count)) {
-      if (err) *err = "Failed to write Reference customData count";
-      return -1;
-    }
+    // Write customData dictionary using the same reserve-pack-seek
+    // pattern as top-level Dictionary serialization (see line ~1929).
+    // PackValue may write out-of-line value data (doubles, int64 above
+    // 2^47, large arrays) — we reserve dict frame first, then pack
+    // (allowing nested writes to land after the frame), then come back
+    // to fill in the (StringIndex key, int64 offset, ValueRep) tuples.
+    {
+      uint64_t dict_count = ref_val->customData.size();
+      int64_t dict_struct_size = 8 + (int64_t)(dict_count * 20);
+      int64_t dict_struct_start = Tell();
 
-    // MetaVariable get_value dispatch for customData entries
-#define TRY_PACK_METAVAR(Type) \
-      else if (auto typed = kv.second.get_value<Type>()) { \
-        crate::CrateValue cv; cv.Set(*typed); \
-        value_rep = PackValue(cv, err); }
+      // Reserve.
+      {
+        std::vector<char> zeros(static_cast<size_t>(dict_struct_size), 0);
+        if (!WriteBytes(zeros.data(), zeros.size())) {
+          if (err) *err = "Failed to reserve Reference customData space";
+          return -1;
+        }
+      }
+      value_data_end_offset_ = Tell();
 
-    for (const auto& kv : ref_val->customData) {
-      if (!Write(GetOrCreateString(kv.first).value)) { if (err) *err = "Failed to write Reference customData key"; return -1; }
+      // Pack.
+      std::vector<crate::ValueRep> value_reps;
+      value_reps.reserve(dict_count);
+      for (const auto& kv : ref_val->customData) {
+        crate::ValueRep value_rep;
+        bool packed = false;
+        if (auto v = kv.second.get_value<int32_t>()) {
+          crate::CrateValue cv; cv.Set(*v);
+          value_rep = PackValue(cv, err); packed = true;
+        }
+        else if (auto v = kv.second.get_value<float>()) {
+          crate::CrateValue cv; cv.Set(*v);
+          value_rep = PackValue(cv, err); packed = true;
+        }
+        else if (auto v = kv.second.get_value<double>()) {
+          crate::CrateValue cv; cv.Set(*v);
+          value_rep = PackValue(cv, err); packed = true;
+        }
+        else if (auto v = kv.second.get_value<bool>()) {
+          crate::CrateValue cv; cv.Set(*v);
+          value_rep = PackValue(cv, err); packed = true;
+        }
+        else if (auto v = kv.second.get_value<std::string>()) {
+          crate::CrateValue cv; cv.Set(*v);
+          value_rep = PackValue(cv, err); packed = true;
+        }
+        else if (auto sd = kv.second.get_value<value::StringData>()) {
+          crate::CrateValue cv; cv.Set(sd->value);
+          value_rep = PackValue(cv, err); packed = true;
+        }
+        else if (auto v = kv.second.get_value<int64_t>()) {
+          crate::CrateValue cv; cv.Set(*v);
+          value_rep = PackValue(cv, err); packed = true;
+        }
+        if (!packed) {
+          if (err) *err = "Unsupported Reference customData value type: "
+                          + kv.second.type_name();
+          return -1;
+        }
+        value_reps.push_back(value_rep);
+      }
 
-      crate::ValueRep value_rep;
-      bool packed = false;
-      if (auto v = kv.second.get_value<int32_t>()) {
-        crate::CrateValue cv; cv.Set(*v);
-        value_rep = PackValue(cv, err); packed = true;
-      }
-      else if (auto v = kv.second.get_value<float>()) {
-        crate::CrateValue cv; cv.Set(*v);
-        value_rep = PackValue(cv, err); packed = true;
-      }
-      else if (auto v = kv.second.get_value<double>()) {
-        crate::CrateValue cv; cv.Set(*v);
-        value_rep = PackValue(cv, err); packed = true;
-      }
-      else if (auto v = kv.second.get_value<bool>()) {
-        crate::CrateValue cv; cv.Set(*v);
-        value_rep = PackValue(cv, err); packed = true;
-      }
-      else if (auto v = kv.second.get_value<std::string>()) {
-        crate::CrateValue cv; cv.Set(*v);
-        value_rep = PackValue(cv, err); packed = true;
-      }
-      else if (auto sd = kv.second.get_value<value::StringData>()) {
-        crate::CrateValue cv; cv.Set(sd->value);
-        value_rep = PackValue(cv, err); packed = true;
-      }
-      else if (auto v = kv.second.get_value<int64_t>()) {
-        crate::CrateValue cv; cv.Set(*v);
-        value_rep = PackValue(cv, err); packed = true;
-      }
-      if (!packed) {
-        if (err) *err = "Unsupported Reference customData value type: "
-                        + kv.second.type_name();
+      // Fill in dict frame.
+      if (!Seek(dict_struct_start)) {
+        if (err) *err = "Failed to seek to Reference customData start";
         return -1;
       }
-      // PackValue may have written the value out-of-line into the value
-      // data section if it doesn't fit in the 48-bit ValueRep payload
-      // (e.g. doubles, int64 > 2^47, large arrays). Mid-stream Reference
-      // serialization can't account for those out-of-line writes — the
-      // resulting offsets corrupt the stream — so reject non-inlined
-      // values upfront with a clear error rather than producing a
-      // half-corrupt USDC.
-      if (!value_rep.IsInlined()) {
-        if (err) *err = "Reference customData value `" + kv.first +
-                        "` (type " + kv.second.type_name() + ") is too "
-                        "large to inline; only inline-able scalars (int, "
-                        "int64<2^47, uint64<2^48, float, bool, string, "
-                        "token, asset) are supported.";
+      if (!Write(dict_count)) {
+        if (err) *err = "Failed to write Reference customData count";
         return -1;
       }
+      size_t idx = 0;
+      for (const auto& kv : ref_val->customData) {
+        if (!Write(GetOrCreateString(kv.first).value)) {
+          if (err) *err = "Failed to write Reference customData key";
+          return -1;
+        }
+        const int64_t offset = 8;
+        if (!Write(offset)) {
+          if (err) *err = "Failed to write Reference customData offset";
+          return -1;
+        }
+        if (!Write(value_reps[idx].GetData())) {
+          if (err) *err = "Failed to write Reference customData value";
+          return -1;
+        }
+        ++idx;
+      }
 
-      // The crate Dict format places an int64 offset between the key
-      // and the ValueRep. Reader does `seek_from_current(offset - 8)`,
-      // so writing offset=8 places the ValueRep immediately after.
-      const int64_t offset = 8;
-      if (!Write(offset)) { if (err) *err = "Failed to write Reference customData offset"; return -1; }
-      if (!Write(value_rep.GetData())) { if (err) *err = "Failed to write Reference customData value"; return -1; }
+      // Resume at end of out-of-line value data.
+      if (!Seek(value_data_end_offset_)) {
+        if (err) *err = "Failed to seek past Reference customData value data";
+        return -1;
+      }
     }
-#undef TRY_PACK_METAVAR
   }
   // Payload serialization
   else if (auto* payload_val = value.as<Payload>()) {
@@ -2450,56 +2470,74 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
         if (!Write(ref.layerOffset._offset)) return false;
         if (!Write(ref.layerOffset._scale)) return false;
 
-        // Write customData dictionary
-        // Dictionary format: uint64_t count + (StringIndex key, ValueRep value) pairs
-        uint64_t dict_count = ref.customData.size();
-        if (!Write(dict_count)) return false;
+        // Write customData dictionary using reserve-pack-seek pattern
+        // (same as single-Reference + top-level Dictionary): tolerates
+        // out-of-line PackValue writes for doubles, large int64,
+        // arrays, etc.
+        {
+          uint64_t dict_count = ref.customData.size();
+          int64_t dict_struct_size = 8 + (int64_t)(dict_count * 20);
+          int64_t dict_struct_start = Tell();
 
-        // MetaVariable get_value dispatch for customData entries
-#define TRY_PACK_METAVAR(Type) \
-          else if (auto typed = kv.second.get_value<Type>()) { \
-            crate::CrateValue cv; cv.Set(*typed); \
-            value_rep = PackValue(cv, err); value_written = true; }
+          {
+            std::vector<char> zeros(static_cast<size_t>(dict_struct_size), 0);
+            if (!WriteBytes(zeros.data(), zeros.size())) return false;
+          }
+          value_data_end_offset_ = Tell();
 
-        for (const auto& kv : ref.customData) {
-          if (!Write(GetOrCreateString(kv.first).value)) return false;
-          crate::ValueRep value_rep;
-          bool value_written = false;
-          if (auto v = kv.second.get_value<int32_t>()) {
-            crate::CrateValue cv; cv.Set(*v);
-            value_rep = PackValue(cv, err); value_written = true;
+          std::vector<crate::ValueRep> value_reps;
+          value_reps.reserve(dict_count);
+          for (const auto& kv : ref.customData) {
+            crate::ValueRep value_rep;
+            bool value_written = false;
+            if (auto v = kv.second.get_value<int32_t>()) {
+              crate::CrateValue cv; cv.Set(*v);
+              value_rep = PackValue(cv, err); value_written = true;
+            }
+            else if (auto v = kv.second.get_value<float>()) {
+              crate::CrateValue cv; cv.Set(*v);
+              value_rep = PackValue(cv, err); value_written = true;
+            }
+            else if (auto v = kv.second.get_value<double>()) {
+              crate::CrateValue cv; cv.Set(*v);
+              value_rep = PackValue(cv, err); value_written = true;
+            }
+            else if (auto v = kv.second.get_value<bool>()) {
+              crate::CrateValue cv; cv.Set(*v);
+              value_rep = PackValue(cv, err); value_written = true;
+            }
+            else if (auto v = kv.second.get_value<std::string>()) {
+              crate::CrateValue cv; cv.Set(*v);
+              value_rep = PackValue(cv, err); value_written = true;
+            }
+            else if (auto sd = kv.second.get_value<value::StringData>()) {
+              crate::CrateValue cv; cv.Set(sd->value);
+              value_rep = PackValue(cv, err); value_written = true;
+            }
+            else if (auto v = kv.second.get_value<int64_t>()) {
+              crate::CrateValue cv; cv.Set(*v);
+              value_rep = PackValue(cv, err); value_written = true;
+            }
+            if (!value_written) {
+              if (err) *err = "Unsupported Reference customData value type: "
+                              + kv.second.type_name();
+              return false;
+            }
+            value_reps.push_back(value_rep);
           }
-          TRY_PACK_METAVAR(float)
-          TRY_PACK_METAVAR(double)
-          TRY_PACK_METAVAR(bool)
-          TRY_PACK_METAVAR(std::string)
-          else if (auto sd = kv.second.get_value<value::StringData>()) {
-            crate::CrateValue cv; cv.Set(sd->value);
-            value_rep = PackValue(cv, err); value_written = true;
+
+          if (!Seek(dict_struct_start)) return false;
+          if (!Write(dict_count)) return false;
+          size_t idx = 0;
+          for (const auto& kv : ref.customData) {
+            if (!Write(GetOrCreateString(kv.first).value)) return false;
+            const int64_t offset = 8;
+            if (!Write(offset)) return false;
+            if (!Write(value_reps[idx].GetData())) return false;
+            ++idx;
           }
-          else if (auto v = kv.second.get_value<int64_t>()) {
-            crate::CrateValue cv; cv.Set(*v);
-            value_rep = PackValue(cv, err); value_written = true;
-          }
-          if (!value_written) {
-            if (err) *err = "Unsupported Reference customData value type: "
-                            + kv.second.type_name();
-            return false;
-          }
-          // Same constraint as the single-Reference path: only
-          // inline-able scalars survive mid-stream serialization.
-          if (!value_rep.IsInlined()) {
-            if (err) *err = "Reference customData value `" + kv.first +
-                            "` (type " + kv.second.type_name() + ") is "
-                            "too large to inline; only inline-able "
-                            "scalars are supported.";
-            return false;
-          }
-          const int64_t offset = 8;
-          if (!Write(offset)) return false;
-          if (!Write(value_rep.GetData())) return false;
+          if (!Seek(value_data_end_offset_)) return false;
         }
-#undef TRY_PACK_METAVAR
       }
       return true;
     };

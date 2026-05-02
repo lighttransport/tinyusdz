@@ -33,6 +33,8 @@ that landed it and the test file (or test name) that fences it.
 | `int64[]` / `uint64[]` / `bool[]` / `half[]` dtype dispatch | `a09a0a4a`, `ef1022f6` | `python/tests/test_array_dtype_dispatch.py` |
 | `numpy.float16` / `float32` / `float64` ndarray accepted by `set_attribute(..., dtype="half[]")` (buffer-protocol fast path) | (this commit) | `python/tests/test_numpy_half_buffer.py` |
 | No-dtype auto-detect: 1-D `numpy.float16` / `float32` / `float64` ndarray routes to `half[]` / `float[]` / `double[]` without an explicit `dtype=` hint | (this commit) | `python/tests/test_numpy_no_dtype_autodetect.py` |
+| `kind` on Relationship/Attribute (USDA-only): pxr-style tolerance — parser accepts and pretty-printer round-trips via generic AttrMetas storage | (this commit) | `python/tests/test_kind_on_relationship.py` |
+| Reference customData: USDC writer now emits arbitrary value types (doubles, int64 > 2^47, mixed) by reserving the dict frame, packing values (which may write out-of-line value data), and back-filling the frame — no more inline-only restriction | (this commit) | `python/tests/test_reference_customdata.py` (3 new cases) |
 | `tydra::GetPropertyNames` / `lookup_in_props` fall through to `Shader::value` (`ShaderNode::props`) when `Shader::props` is empty | `5a9e7055` | `python/tests/test_generic_shader_props.py` |
 | `Attribute.value.to_string()` for asset paths emits `@…@` (was `@@@@…@@@@`) | (in earlier WIP, fenced by) | `python/tests/test_asset_path_normalization.py` |
 
@@ -55,26 +57,6 @@ that landed it and the test file (or test name) that fences it.
 ## Still outstanding
 
 ### Medium value
-
-#### `kind` on relationships
-
-USD spec says prim-only, but pxr accepts `kind = "..."` on a
-relationship. Decide policy; if accepting, add to
-`_supported_prop_metas` and route to `set_kind` on the relationship's
-metas.
-
-#### USDC writer: out-of-line packing in nested Dict-format positions
-
-The Reference customData fix (`a1971db3`) currently rejects values
-whose ValueRep does not inline (doubles, int64 above 2^47, large
-arrays) — `PackValue` writes them out-of-line via `WriteValueData`,
-which corrupts the surrounding stream. To accept arbitrary
-customData values we'd need to either:
-- buffer the customData entries and emit value data in the dedicated
-  value-data section after the prim spec, threading offsets back
-  through, or
-- add a "scratch" buffered-write mode to `WriteValueData` that returns
-  the bytes instead of writing them.
 
 ### Low value / nice to have
 
