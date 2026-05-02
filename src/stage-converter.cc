@@ -851,9 +851,10 @@ void CrateWriter::ExtractPrimMeta(
   }
 
   if (metas.has_sceneName()) {
+    // pxrUSD stores `sceneName` (USDZ scene-library extension) as a
+    // `string`, not a `token`. The reader rejects token-typed values.
     crate::CrateValue v;
-    value::token tok(metas.get_sceneName());
-    v.Set(tok);
+    v.Set(std::string(metas.get_sceneName()));
     fields.push_back({"sceneName", v});
   }
 
