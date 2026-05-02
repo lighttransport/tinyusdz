@@ -1864,8 +1864,16 @@ bool CrateWriter::ConvertPropertyToFields(
     // Pass the custom flag to be added to the attribute spec
     return ConvertAttributeToFields(prop_name, prop.get_attribute(), parent_path, prop.has_custom(), err);
   } else if (prop.is_relationship()) {
-    // Convert relationship - creates separate spec, doesn't add to fields
-    return ConvertRelationshipToFields(prop_name, prop.get_relationship(), parent_path, err);
+    // Convert relationship - creates separate spec, doesn't add to fields.
+    // The list-edit qualifier sits on the outer Property, not on the
+    // Relationship itself; copy it across so the writer encodes the
+    // ListOp<Path> with the matching prepended/appended/... flag.
+    Relationship rel_copy = prop.get_relationship();
+    if (rel_copy.get_listedit_qual() == ListEditQual::ResetToExplicit &&
+        prop.get_listedit_qual() != ListEditQual::ResetToExplicit) {
+      rel_copy.set_listedit_qual(prop.get_listedit_qual());
+    }
+    return ConvertRelationshipToFields(prop_name, rel_copy, parent_path, err);
   } else if (prop.is_attribute_connection()) {
     // Convert connection - creates separate spec, doesn't add to fields
     return ConvertConnectionToFields(prop_name, prop.get_attribute(), parent_path, err);
@@ -2068,64 +2076,58 @@ bool CrateWriter::ConvertRelationshipToFields(
   DCOUT("[ConvertRelationshipToFields] Creating separate spec for relationship: "
             << rel_path.full_path_name());
 
-  // 1. Check relationship type and add targetPaths
+  // 1. Check relationship type and add targetPaths.
+  //
+  // pxr Crate stores the list-edit qualifier on the ListOp itself
+  // (via SetPrependedItems / SetAppendedItems / SetDeletedItems /
+  // SetOrderedItems), not as a separate sibling field. Match that
+  // pattern so pxr usdcat (and our own reader) can recover the
+  // qualifier on round-trip.
+  auto apply_listed_qual = [&](ListOp<Path>& listop,
+                                const std::vector<Path>& targets) {
+    switch (rel.get_listedit_qual()) {
+      case ListEditQual::Append:
+        listop.SetAppendedItems(targets);
+        break;
+      case ListEditQual::Prepend:
+        listop.SetPrependedItems(targets);
+        break;
+      case ListEditQual::Add:
+        listop.SetAddedItems(targets);
+        break;
+      case ListEditQual::Delete:
+        listop.SetDeletedItems(targets);
+        break;
+      case ListEditQual::Order:
+        listop.SetOrderedItems(targets);
+        break;
+      case ListEditQual::ResetToExplicit:
+      default:
+        listop.SetExplicitItems(targets);
+        break;
+    }
+  };
+
   if (rel.is_blocked()) {
     // Add ValueBlock for the relationship
     crate::CrateValue blocked_value;
     blocked_value.Set(value::ValueBlock());
     rel_fields.push_back({"targetPaths", blocked_value});
   } else if (rel.is_path()) {
-    // Single target path - wrap in ListOp<Path> (required by USDC format)
-    // For a single path relationship, set it as explicit with one item
     crate::CrateValue path_value;
     ListOp<Path> listop;
-    std::vector<Path> targets;
-    targets.push_back(rel.targetPath);
-    listop.SetExplicitItems(targets);
+    std::vector<Path> targets{rel.targetPath};
+    apply_listed_qual(listop, targets);
     path_value.Set(listop);
     rel_fields.push_back({"targetPaths", path_value});
   } else if (rel.is_pathvector()) {
-    // Multiple target paths - wrap in ListOp<Path> (required by USDC format)
-    // For a pathvector relationship, set items as explicit list
     crate::CrateValue paths_value;
     ListOp<Path> listop;
-    std::vector<Path> targets = rel.targetPathVector;
-    listop.SetExplicitItems(targets);
+    apply_listed_qual(listop, rel.targetPathVector);
     paths_value.Set(listop);
     rel_fields.push_back({"targetPaths", paths_value});
   }
   // DefineOnly relationships don't add targetPaths field
-
-  // 2. Add list edit qualifier if not default
-  if (rel.get_listedit_qual() != ListEditQual::ResetToExplicit) {
-    crate::CrateValue qual_value;
-    // Convert ListEditQual to token
-    std::string qual_str;
-    switch (rel.get_listedit_qual()) {
-      case ListEditQual::Append:
-        qual_str = "append";
-        break;
-      case ListEditQual::Prepend:
-        qual_str = "prepend";
-        break;
-      case ListEditQual::Add:
-        qual_str = "add";
-        break;
-      case ListEditQual::Delete:
-        qual_str = "delete";
-        break;
-      case ListEditQual::Order:
-        qual_str = "order";
-        break;
-      case ListEditQual::ResetToExplicit:
-      default:
-        qual_str = "explicit";
-        break;
-    }
-    crate::TokenIndex qual_tok = GetOrCreateToken(qual_str);
-    qual_value.Set(qual_tok.value);
-    rel_fields.push_back({"listOpQual", qual_value});
-  }
 
   // 3. Relationships have implicit uniform variability
   // Add it explicitly in the Crate format

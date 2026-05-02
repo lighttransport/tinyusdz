@@ -2100,6 +2100,9 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
         value_rep = PackValue(cv, err); value_packed = true;
       }
       TRY_PACK_AS(uint32_t)
+      TRY_PACK_AS(int64_t)
+      TRY_PACK_AS(uint64_t)
+      TRY_PACK_AS(value::half)
       TRY_PACK_AS(float)
       TRY_PACK_AS(double)
       TRY_PACK_AS(bool)
