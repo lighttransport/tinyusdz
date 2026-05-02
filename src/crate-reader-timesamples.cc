@@ -619,19 +619,14 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
     if (!_sr->seek_set(rep.GetPayload())) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to scalar quatf value.");
     }
-    // pxrUSD wire format is (real, imag.x, imag.y, imag.z) — explicit
-    // field assignment needed because tinyusdz's quatf in-memory layout is
-    // {imag, real}, not {real, imag}.
-    float comps[4];
-    if (!_sr->read(sizeof(comps), sizeof(comps),
-                   reinterpret_cast<uint8_t *>(comps))) {
+    // pxr wire layout is (imag.x, imag.y, imag.z, real) — matching pxr
+    // GfQuatf's `{_imaginary, _real}` member order. tinyusdz's quatf is
+    // also `{imag, real}` so memcpy is exact.
+    value::quatf val;
+    if (!_sr->read(sizeof(val), sizeof(val),
+                   reinterpret_cast<uint8_t *>(&val))) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read scalar quatf value.");
     }
-    value::quatf val;
-    val.real = comps[0];
-    val.imag[0] = comps[1];
-    val.imag[1] = comps[2];
-    val.imag[2] = comps[3];
     DCOUT("quatf = [" << val[0] << ", " << val[1] << ", " << val[2] << ", " << val[3] << "]");
     if (!add_sample_to_timesamples<value::quatf>(&dst, t, val, &_err,
                                                  expected_total_samples)) {

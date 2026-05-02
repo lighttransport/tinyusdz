@@ -1692,20 +1692,15 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(sizeof(value::quatd));
 
-        // Wire format: (real, imag[0], imag[1], imag[2]) — distinct from
-        // tinyusdz value::quatd's in-memory {imag[3], real} layout.
-        // Read components individually and reassemble.
-        double comps[4];
-        if (!_sr->read(sizeof(comps), sizeof(comps),
-                       reinterpret_cast<uint8_t *>(comps))) {
+        // pxr wire layout is (imag.x, imag.y, imag.z, real) — matching
+        // pxr GfQuatd's `{_imaginary, _real}` member order. tinyusdz's
+        // value::quatd is also {imag, real}, so memcpy is exact.
+        value::quatd v;
+        if (!_sr->read(sizeof(v), sizeof(v),
+                       reinterpret_cast<uint8_t *>(&v))) {
           _err += "Failed to read Quatd value\n";
           return false;
         }
-        value::quatd v;
-        v.real = comps[0];
-        v.imag[0] = comps[1];
-        v.imag[1] = comps[2];
-        v.imag[2] = comps[3];
 
         DCOUT("Quatd = " << v);
         value->Set(v);
@@ -1768,18 +1763,13 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(sizeof(value::quatf));
 
-        // Wire format: (real, imag[0], imag[1], imag[2]). See QUATD note.
-        float comps[4];
-        if (!_sr->read(sizeof(comps), sizeof(comps),
-                       reinterpret_cast<uint8_t *>(comps))) {
+        // pxr wire layout is (imag.x, imag.y, imag.z, real). See QUATD note.
+        value::quatf v;
+        if (!_sr->read(sizeof(v), sizeof(v),
+                       reinterpret_cast<uint8_t *>(&v))) {
           _err += "Failed to read Quatf value\n";
           return false;
         }
-        value::quatf v;
-        v.real = comps[0];
-        v.imag[0] = comps[1];
-        v.imag[1] = comps[2];
-        v.imag[2] = comps[3];
 
         DCOUT("Quatf = " << v);
         value->Set(v);
@@ -1843,19 +1833,14 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(sizeof(value::quath));
 
-        // Wire format: (real, imag[0], imag[1], imag[2]) — half stored
-        // as raw uint16 bit pattern.
-        uint16_t comps[4];
-        if (!_sr->read(sizeof(comps), sizeof(comps),
-                       reinterpret_cast<uint8_t *>(comps))) {
+        // pxr wire layout is (imag.x, imag.y, imag.z, real) — half stored
+        // as raw uint16 bit pattern. See QUATD note.
+        value::quath v;
+        if (!_sr->read(sizeof(v), sizeof(v),
+                       reinterpret_cast<uint8_t *>(&v))) {
           _err += "Failed to read Quath value\n";
           return false;
         }
-        value::quath v;
-        v.real.value = comps[0];
-        v.imag[0].value = comps[1];
-        v.imag[1].value = comps[2];
-        v.imag[2].value = comps[3];
 
         DCOUT("Quath = " << v);
         value->Set(v);

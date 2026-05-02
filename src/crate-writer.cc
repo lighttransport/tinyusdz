@@ -1630,11 +1630,14 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       return -1; \
     } \
   }
-  // D. Quaternions (real then imag[0..2], USD Crate format order)
+  // D. Quaternions. pxr wire layout is (imag.x, imag.y, imag.z, real)
+  // — matching pxr `GfQuat<T>`'s `{_imaginary, _real}` member order.
+  // tinyusdz's `value::quat{f,d}` struct is already `{imag, real}`,
+  // so emit imag first, then real.
 #define WRITE_QUAT_SCALAR(Type, TypeName) \
   else if (auto* v = value.as<Type>()) { \
-    if (!Write(v->real) || !Write(v->imag[0]) || \
-        !Write(v->imag[1]) || !Write(v->imag[2])) { \
+    if (!Write(v->imag[0]) || !Write(v->imag[1]) || \
+        !Write(v->imag[2]) || !Write(v->real)) { \
       if (err) *err = "Failed to write " TypeName " components"; \
       return -1; \
     } \
@@ -1642,8 +1645,8 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
   // E. Half-precision quaternion (needs .value on each component)
 #define WRITE_QUATH_SCALAR(Type, TypeName) \
   else if (auto* v = value.as<Type>()) { \
-    if (!Write(v->real.value) || !Write(v->imag[0].value) || \
-        !Write(v->imag[1].value) || !Write(v->imag[2].value)) { \
+    if (!Write(v->imag[0].value) || !Write(v->imag[1].value) || \
+        !Write(v->imag[2].value) || !Write(v->real.value)) { \
       if (err) *err = "Failed to write " TypeName " components"; \
       return -1; \
     } \
@@ -1782,12 +1785,15 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       } \
     } \
   }
+  // pxr wire layout per element is (imag.x, imag.y, imag.z, real). Our
+  // `value::quat{f,d}` is `{imag, real}` so we could memcpy, but
+  // emit per-component for symmetry with the scalar path.
 #define WRITE_QUAT_ARRAY(ElemType, TypeName) \
   else if (auto* arr = value.as<std::vector<ElemType>>()) { \
     uint64_t count = arr->size(); \
     if (!Write(count)) { if (err) *err = "Failed to write " TypeName " array count"; return -1; } \
     for (const auto& q : *arr) { \
-      bool qok = Write(q.real) && Write(q.imag[0]) && Write(q.imag[1]) && Write(q.imag[2]); \
+      bool qok = Write(q.imag[0]) && Write(q.imag[1]) && Write(q.imag[2]) && Write(q.real); \
       if (!qok) { if (err) *err = "Failed to write " TypeName " array element"; return -1; } \
     } \
   }
@@ -1796,7 +1802,7 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
     uint64_t count = arr->size(); \
     if (!Write(count)) { if (err) *err = "Failed to write " TypeName " array count"; return -1; } \
     for (const auto& q : *arr) { \
-      bool qok = Write(q.real.value) && Write(q.imag[0].value) && Write(q.imag[1].value) && Write(q.imag[2].value); \
+      bool qok = Write(q.imag[0].value) && Write(q.imag[1].value) && Write(q.imag[2].value) && Write(q.real.value); \
       if (!qok) { if (err) *err = "Failed to write " TypeName " array element"; return -1; } \
     } \
   }
