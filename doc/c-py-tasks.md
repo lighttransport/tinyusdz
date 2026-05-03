@@ -164,27 +164,33 @@ files, all green; no C++/binding source changes besides the
 - End-to-end: full Python-authored scene (Mesh+Camera+Light under
   World Xform) saved as USDC, reloaded, render scene extracted
 
-### Known gaps surfaced by the coverage push
+### Known gaps closed
 
-These are documented as USDA-only fences (USDA→USDA preserves the
-content, USDC drops it). Each is a candidate for a follow-up
-writer-side fix:
+(Followups since the 2026-05-04 coverage push.)
 
-- Namespaced relationships on schema-typed prims drop through USDC
-  (`collection:plants:includes`, `skel:skeleton`, etc.) — only
-  USDA→USDA preserves them.
+| Gap | Fix | Tests |
+|---|---|---|
+| `matrix2d` USDC inflated to `matrix4d` | reader read sizeof(matrix2d) bytes into a `value::matrix4d`; switched to `value::matrix2d` | `test_matrix_roundtrip.py::test_matrix2d_usdc_round_trip` |
+| `skel:skeleton` / `skel:blendShapeTargets` dropped on Mesh through USDC | `sconv-geom.cc::ExtractMeshProperties` had stub `if (mesh->skeleton) {}`; now calls `ConvertRelationshipToFields` | `test_skel_topology.py::test_skel_root_with_skeleton_rel_usdc` |
+| `collection:<inst>:{includes,excludes}` dropped on GPrim through USDC | `stage-converter.cc` writer iterates `Collection::instances()` (GPrim mixin) and re-emits as relationships before the props-map fallback. Added `GetPrimCollection()` helper. | `test_collection_api.py::test_collection_api_applied_with_instance_name_usdc` |
+| `Prim.variant_selection()` had no zero-arg form | Made `vset` arg optional; with no args returns `dict[str, str]` of all `{variant_set: selection}` pairs by enumerating the metas `variants` map. New C API `c_tinyusd_prim_get_variant_selection_keys`. | `test_variant_selection_dict.py` |
+| `Prim.children()` segfault on orphan prims | `Py_INCREF(owner)` → `Py_XINCREF(owner)` (NULL owner = orphan) | `test_prim_children_api.py` |
+
+### Still outstanding gaps
+
+Smaller / lower priority follow-ups:
+
 - Schema-typed AttrMeta extraction is asymmetric: `Mesh.normals.
   interpolation` is extracted but other AttrMeta keys
   (elementSize/customData) on schema-typed `points` are not. Same
   pattern for Cylinder/Cone/Capsule.axis, Camera.focalLength.
-  timeSamples, CollectionAPI:foo:expansionRule/includeRoot, several
-  UsdUVTexture inputs (fallback/scale/bias).
-- `matrix2d` USDC roundtrip inflates to `matrix4d` (writer-side).
-- `active = false` prim metadata may drop on USDC.
+  timeSamples, several UsdUVTexture inputs (fallback/scale/bias).
+- `CollectionAPI:foo:expansionRule` / `includeRoot` (typed attrs,
+  not relations) still drop on USDC — `expansionRule` is a uniform
+  token, `includeRoot` a bool — they need attribute-spec emit
+  paths in addition to the rel re-emit just added.
 - Multi-target attribute `.connect` arrays not supported by parser
   (single target only).
-- `Prim.variant_selection` requires the variant-set name argument;
-  there is no zero-arg "all selections" form.
 
 ## Still outstanding
 

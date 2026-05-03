@@ -1776,9 +1776,50 @@ static PyObject *
 Prim_variant_selection(PyObject *self, PyObject *args)
 {
     const char *vset = NULL;
-    if (!PyArg_ParseTuple(args, "s", &vset)) return NULL;
+    /* Accept either zero args (return dict of all selections) or one
+     * arg (return the selection for that variant set as a string). */
+    if (!PyArg_ParseTuple(args, "|s", &vset)) return NULL;
     PrimObject *p = (PrimObject *)self;
     if (!p->prim) Py_RETURN_NONE;
+
+    if (vset == NULL) {
+        /* No-arg form — gather all (variant_set, selection) pairs.
+         * Iterates the metas `variants = {...}` selection map directly,
+         * so this works whether or not a matching variantSetNames
+         * listop entry was authored. */
+        PyObject *out = PyDict_New();
+        if (!out) return NULL;
+        uint64_t n = 0;
+        if (!c_tinyusd_prim_get_variant_selection_keys(p->prim, NULL, 0, &n) || n == 0) {
+            return out;
+        }
+        c_tinyusd_string_t **bufs = (c_tinyusd_string_t **)PyMem_Malloc(
+            sizeof(c_tinyusd_string_t *) * (size_t)n);
+        if (!bufs) { Py_DECREF(out); return PyErr_NoMemory(); }
+        for (uint64_t i = 0; i < n; ++i) bufs[i] = c_tinyusd_string_new_empty();
+        if (!c_tinyusd_prim_get_variant_selection_keys(p->prim, bufs, n, NULL)) {
+            for (uint64_t i = 0; i < n; ++i) c_tinyusd_string_free(bufs[i]);
+            PyMem_Free(bufs);
+            return out;
+        }
+        for (uint64_t i = 0; i < n; ++i) {
+            const char *vs_name = c_tinyusd_string_str(bufs[i]);
+            c_tinyusd_string_t *sbuf = c_tinyusd_string_new_empty();
+            if (vs_name && sbuf &&
+                c_tinyusd_prim_get_variant_selection(p->prim, vs_name, sbuf)) {
+                PyObject *val = PyUnicode_FromString(c_tinyusd_string_str(sbuf));
+                if (val) {
+                    PyDict_SetItemString(out, vs_name, val);
+                    Py_DECREF(val);
+                }
+            }
+            c_tinyusd_string_free(sbuf);
+            c_tinyusd_string_free(bufs[i]);
+        }
+        PyMem_Free(bufs);
+        return out;
+    }
+
     c_tinyusd_string_t *buf = c_tinyusd_string_new_empty();
     if (!buf) return PyErr_NoMemory();
     if (!c_tinyusd_prim_get_variant_selection(p->prim, vset, buf)) {

@@ -1765,6 +1765,29 @@ int c_tinyusd_prim_clear_variant_selection(CTinyUSDPrim *prim,
   return 1;
 }
 
+/* Enumerate the keys of the prim's variants={...} selection map. */
+int c_tinyusd_prim_get_variant_selection_keys(const CTinyUSDPrim *prim,
+                                              c_tinyusd_string_t **out_names,
+                                              uint64_t cap,
+                                              uint64_t *out_count) {
+  if (!prim) return 0;
+  const auto *p = reinterpret_cast<const tinyusdz::Prim *>(prim);
+  if (!p->metas().variants.has_value()) {
+    if (out_count) *out_count = 0;
+    return 1;
+  }
+  const auto &vmap = *p->metas().variants;
+  if (out_count) *out_count = static_cast<uint64_t>(vmap.size());
+  uint64_t i = 0;
+  for (const auto &kv : vmap) {
+    if (out_names && i < cap) {
+      c_tinyusd_string_replace(out_names[i], kv.first.c_str());
+    }
+    ++i;
+  }
+  return 1;
+}
+
 /* ---- Variant content authoring ---- */
 
 namespace {

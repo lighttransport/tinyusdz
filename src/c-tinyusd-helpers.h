@@ -783,6 +783,18 @@ c_tinyusd_prim_get_variant_set_names(const CTinyUSDPrim *prim,
                                      uint64_t cap,
                                      uint64_t *out_count);
 
+/* Enumerate the keys of the prim's `variants = {...}` selection map.
+ * Distinct from `c_tinyusd_prim_get_variant_set_names` (which reads
+ * the variantSetNames listOp) — selections live in the metas
+ * `variants` map and can be authored without a matching variantSet
+ * declaration. Two-call pattern: first call with NULL+0 to get the
+ * count, then allocate cap strings and call again. */
+C_TINYUSD_EXPORT int
+c_tinyusd_prim_get_variant_selection_keys(const CTinyUSDPrim *prim,
+                                          c_tinyusd_string_t **out_names,
+                                          uint64_t cap,
+                                          uint64_t *out_count);
+
 C_TINYUSD_EXPORT int
 c_tinyusd_prim_get_variant_names(const CTinyUSDPrim *prim,
                                  const char *variant_set_name,
