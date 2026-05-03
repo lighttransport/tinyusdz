@@ -175,20 +175,24 @@ files, all green; no C++/binding source changes besides the
 | `collection:<inst>:{includes,excludes}` dropped on GPrim through USDC | `stage-converter.cc` writer iterates `Collection::instances()` (GPrim mixin) and re-emits as relationships before the props-map fallback. Added `GetPrimCollection()` helper. | `test_collection_api.py::test_collection_api_applied_with_instance_name_usdc` |
 | `Prim.variant_selection()` had no zero-arg form | Made `vset` arg optional; with no args returns `dict[str, str]` of all `{variant_set: selection}` pairs by enumerating the metas `variants` map. New C API `c_tinyusd_prim_get_variant_selection_keys`. | `test_variant_selection_dict.py` |
 | `Prim.children()` segfault on orphan prims | `Py_INCREF(owner)` → `Py_XINCREF(owner)` (NULL owner = orphan) | `test_prim_children_api.py` |
+| `Camera.focalLength.timeSamples` (and other animated camera scalars) dropped on USDC | `sconv-geom.cc::add_float_attr/add_double_attr` now emit `<name>.timeSamples` from the Animatable<T> | `test_camera_attributes.py::test_camera_animated_focal_length_usdc` |
+| `Mesh.normals.timeSamples` dropped on USDC | `sconv-geom.cc::ExtractMeshProperties` mirrors the `points.timeSamples` block for `normals` | `test_timesamples_array_comprehensive.py::test_normal3f_array_timesamples` |
+| `Cylinder.axis` (uniform token) dropped on USDC | `sconv-geom.cc::ExtractCylinderProperties` was missing the axis emit Cone/Capsule had | `test_primitive_shapes.py::test_cylinder_radius_height_axis` |
 
 ### Still outstanding gaps
 
 Smaller / lower priority follow-ups:
 
-- Schema-typed AttrMeta extraction is asymmetric: `Mesh.normals.
-  interpolation` is extracted but other AttrMeta keys
-  (elementSize/customData) on schema-typed `points` are not. Same
-  pattern for Cylinder/Cone/Capsule.axis, Camera.focalLength.
-  timeSamples, several UsdUVTexture inputs (fallback/scale/bias).
-- `CollectionAPI:foo:expansionRule` / `includeRoot` (typed attrs,
-  not relations) still drop on USDC — `expansionRule` is a uniform
-  token, `includeRoot` a bool — they need attribute-spec emit
-  paths in addition to the rel re-emit just added.
+- Schema-typed AttrMeta extraction is still asymmetric for less
+  common AttrMeta keys: `elementSize` and `customData` on
+  schema-typed attrs like Mesh.points / Mesh.normals are not
+  routed through. Same pattern for several UsdUVTexture inputs
+  (fallback/scale/bias).
+- `CollectionAPI:foo:expansionRule` (uniform token) and
+  `includeRoot` (bool) typed attrs still drop on USDC —
+  `Collection::instances()` storage is now re-emitted for `includes`
+  and `excludes` rels but not yet for typed attrs (would need
+  attribute-spec construction from `TypedAttributeWithFallback`).
 - Multi-target attribute `.connect` arrays not supported by parser
   (single target only).
 
