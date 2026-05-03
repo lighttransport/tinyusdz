@@ -73,11 +73,11 @@ def Camera "panning"
     assert "xformOp:translate" in txt
 
 
-def test_camera_animated_focal_length_usda_only(tmp_path):
-    """USDA round-trip preserves Camera time-sampled focalLength;
-    USDC currently drops it (Camera-schema timesamples gap)."""
-    src = tmp_path / "x.usda"
-    src.write_text('''#usda 1.0
+def test_camera_animated_focal_length_usdc(tmp_path):
+    """USDC round-trip preserves Camera time-sampled focalLength
+    after the writer-side fix in sconv-geom.cc::ExtractCameraProperties
+    (the float/double helper lambdas now also emit timesamples)."""
+    txt = _rt(tmp_path, '''#usda 1.0
 def Camera "anim"
 {
     float focalLength.timeSamples = {
@@ -87,10 +87,6 @@ def Camera "anim"
     }
 }
 ''')
-    s = tinyusdz.load(str(src))
-    out = tmp_path / "x.usda"
-    s.save(str(out))
-    txt = tinyusdz.load(str(out)).export_to_string()
     assert "focalLength.timeSamples" in txt
     assert "0: 35" in txt
     assert "48: 85" in txt

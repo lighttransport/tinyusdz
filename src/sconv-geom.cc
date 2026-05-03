@@ -127,6 +127,21 @@ bool CrateWriter::ExtractMeshProperties(
         }
       }
     }
+    // Time samples (mirrors the points.timeSamples emit above).
+    if (normals_animatable && normals_animatable->has_timesamples()) {
+      const auto& typed_ts = normals_animatable->get_timesamples();
+      value::TimeSamples ts;
+      for (size_t i = 0; i < typed_ts.size(); i++) {
+        double time = typed_ts.get_samples()[i].t;
+        std::vector<value::normal3f> sample_value =
+            typed_ts.get_samples()[i].value;
+        value::Value v(sample_value);
+        ts.add_sample(time, v);
+      }
+      crate::CrateValue ts_crate_val;
+      ts_crate_val.Set(ts);
+      fields.push_back({"normals.timeSamples", ts_crate_val});
+    }
     // Preserve interpolation metadata (e.g. "faceVarying")
     if (mesh->normals.metas().has_interpolation()) {
       crate::CrateValue interp_val;
@@ -434,6 +449,17 @@ bool CrateWriter::ExtractCylinderProperties(
     if (!ExtractAnimatableDefault(cylinder->height.get_value(), "height", fields, err)) return false;
   }
 
+  // Extract axis (mirrors Cone/Capsule). Was missing — caused the
+  // axis token to drop on USDC roundtrip.
+  if (cylinder->axis.authored()) {
+    const Axis& axis_val = cylinder->axis.get_value();
+    std::string axis_str = to_string(axis_val);
+    crate::CrateValue axis_crate_val;
+    value::token axis_token(axis_str);
+    axis_crate_val.Set(axis_token);
+    fields.push_back({"axis", axis_crate_val});
+  }
+
   return ExtractGPrimProperties(prim, prim_path, fields, err);
 }
 
@@ -640,6 +666,20 @@ bool CrateWriter::ExtractCameraProperties(
       crate_val.Set(scalar_val);
       fields.push_back({name, crate_val});
     }
+    // Time-sampled scalar (e.g. animated focalLength)
+    if (anim.has_timesamples()) {
+      const auto& typed_ts = anim.get_timesamples();
+      value::TimeSamples ts;
+      for (size_t i = 0; i < typed_ts.size(); i++) {
+        double time = typed_ts.get_samples()[i].t;
+        float sample_value = typed_ts.get_samples()[i].value;
+        value::Value v(sample_value);
+        ts.add_sample(time, v);
+      }
+      crate::CrateValue ts_crate_val;
+      ts_crate_val.Set(ts);
+      fields.push_back({name + ".timeSamples", ts_crate_val});
+    }
     return true;
   };
 
@@ -653,6 +693,19 @@ bool CrateWriter::ExtractCameraProperties(
       crate::CrateValue crate_val;
       crate_val.Set(scalar_val);
       fields.push_back({name, crate_val});
+    }
+    if (anim.has_timesamples()) {
+      const auto& typed_ts = anim.get_timesamples();
+      value::TimeSamples ts;
+      for (size_t i = 0; i < typed_ts.size(); i++) {
+        double time = typed_ts.get_samples()[i].t;
+        double sample_value = typed_ts.get_samples()[i].value;
+        value::Value v(sample_value);
+        ts.add_sample(time, v);
+      }
+      crate::CrateValue ts_crate_val;
+      ts_crate_val.Set(ts);
+      fields.push_back({name + ".timeSamples", ts_crate_val});
     }
     return true;
   };

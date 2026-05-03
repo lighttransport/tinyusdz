@@ -36,20 +36,21 @@ def Cube "box"
     assert "size = 1.5" in txt
 
 
-def test_cylinder_radius_height(tmp_path):
-    """Note: schema-typed `axis` field is currently dropped on USDC
-    roundtrip (writer doesn't extract it for Cylinder/Cone/Capsule).
-    Fence radius and height which do round-trip."""
+def test_cylinder_radius_height_axis(tmp_path):
+    """Cylinder.axis now extracted by sconv-geom.cc (was the missing
+    sibling to Cone/Capsule)."""
     txt = _rt(tmp_path, '''#usda 1.0
 def Cylinder "tube"
 {
     double radius = 0.5
     double height = 2.0
+    uniform token axis = "Z"
 }
 ''')
     assert "Cylinder" in txt
     assert "radius = 0.5" in txt
     assert "height = 2" in txt
+    assert '"Z"' in txt
 
 
 def test_cone_radius_height(tmp_path):
