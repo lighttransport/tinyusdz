@@ -665,7 +665,7 @@ make_prim(const CTinyUSDPrim *prim, PyObject *owner)
     if (!obj) return NULL;
     obj->prim = prim;
     obj->owns_prim = 0;
-    Py_INCREF(owner);
+    Py_XINCREF(owner);
     obj->owner = owner;
     return (PyObject *)obj;
 }
