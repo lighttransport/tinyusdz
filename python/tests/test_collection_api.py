@@ -11,12 +11,10 @@ def _rt(tmp_path, usda):
     return tinyusdz.load(str(out)).export_to_string()
 
 
-def test_collection_api_applied_with_instance_name_usda_only(tmp_path):
-    """USDA->USDA preserves the API schema name + collection:* rel.
-    USDC currently drops the namespaced collection rel + tokens
-    (separate gap)."""
-    src = tmp_path / "x.usda"
-    src.write_text('''#usda 1.0
+def test_collection_api_applied_with_instance_name_usdc(tmp_path):
+    """USDC round-trip preserves apiSchemas + collection:* rel after
+    the writer-side fix that re-emits Collection storage as relations."""
+    txt = _rt(tmp_path, '''#usda 1.0
 def Xform "World" (
     apiSchemas = ["CollectionAPI:plants"]
 )
@@ -26,10 +24,6 @@ def Xform "World" (
     def Xform "Bush" {}
 }
 ''')
-    s = tinyusdz.load(str(src))
-    out = tmp_path / "x.usda"
-    s.save(str(out))
-    txt = tinyusdz.load(str(out)).export_to_string()
     assert "CollectionAPI:plants" in txt
     assert "collection:plants:includes" in txt
     assert "</World/Tree>" in txt

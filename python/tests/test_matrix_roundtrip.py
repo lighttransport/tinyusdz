@@ -56,19 +56,15 @@ def Xform "X" {
     assert "(0, 0, 3)" in txt
 
 
-def test_matrix2d_usda_only(tmp_path):
-    """matrix2d USDA->USDA round-trip works; USDC roundtrip currently
-    inflates to matrix4d (writer-side bug, separate from this test)."""
-    src = tmp_path / "x.usda"
-    src.write_text('''#usda 1.0
+def test_matrix2d_usdc_round_trip(tmp_path):
+    """matrix2d round-trips through USDC. Earlier this inflated to
+    matrix4d at the binary layer because the reader read sizeof(2d)
+    bytes into a value::matrix4d; reader fixed in crate-reader-values.cc."""
+    txt = _rt(tmp_path, '''#usda 1.0
 def Xform "X" {
     custom matrix2d m = ((1.5, 0), (0, 2.5))
 }
 ''')
-    s = tinyusdz.load(str(src))
-    out = tmp_path / "x.usda"
-    s.save(str(out))
-    txt = tinyusdz.load(str(out)).export_to_string()
     assert "matrix2d" in txt
     assert "(1.5, 0)" in txt
     assert "(0, 2.5)" in txt

@@ -322,14 +322,24 @@ bool CrateWriter::ExtractMeshProperties(
     }
   }
 
-  // Extract skeleton relationship
+  // Extract skeleton relationship (skel:skeleton). The reader stores
+  // this on `mesh->skeleton` via GEOM_MESH_RELATIONS; without an explicit
+  // re-emit, the relationship is dropped on USDC round-trip.
   if (mesh->skeleton) {
-    // Relationships are handled separately
+    if (!ConvertRelationshipToFields("skel:skeleton",
+                                     mesh->skeleton.value(), prim_path,
+                                     err)) {
+      return false;
+    }
   }
 
-  // Extract blend shape targets relationship
+  // Extract blend shape targets relationship (skel:blendShapeTargets)
   if (mesh->blendShapeTargets) {
-    // Relationships are handled separately
+    if (!ConvertRelationshipToFields("skel:blendShapeTargets",
+                                     mesh->blendShapeTargets.value(),
+                                     prim_path, err)) {
+      return false;
+    }
   }
 
   // Extract common GPrim properties

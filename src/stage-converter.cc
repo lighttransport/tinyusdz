@@ -114,6 +114,43 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   return nullptr;
 }
 
+// Returns the Collection mixin pointer for prims that inherit from
+// Collection (GPrim and GeomSubset families). Used by the writer to
+// re-emit `collection:<instance>:{includes,excludes,includeRoot,
+// expansionRule}` properties from the typed Collection storage on
+// USDC output. The reconstruct path consumes these from the props
+// map into Collection::instances(); without this re-emit, USDC
+// round-trip drops them entirely.
+const Collection *GetPrimCollection(const value::Value &v) {
+#define GET_PRIM_COLLECTION(__ty)              \
+  if (auto *p = v.as<__ty>()) {                \
+    return static_cast<const Collection *>(p); \
+  }
+
+  GET_PRIM_COLLECTION(Xform)
+  GET_PRIM_COLLECTION(GPrim)
+  GET_PRIM_COLLECTION(GeomMesh)
+  GET_PRIM_COLLECTION(GeomPoints)
+  GET_PRIM_COLLECTION(GeomCube)
+  GET_PRIM_COLLECTION(GeomCapsule)
+  GET_PRIM_COLLECTION(GeomCylinder)
+  GET_PRIM_COLLECTION(GeomSphere)
+  GET_PRIM_COLLECTION(GeomCone)
+  GET_PRIM_COLLECTION(GeomSubset)
+  GET_PRIM_COLLECTION(GeomBasisCurves)
+  GET_PRIM_COLLECTION(GeomNurbsCurves)
+  GET_PRIM_COLLECTION(GeomHermiteCurves)
+  GET_PRIM_COLLECTION(GeomPointInstancer)
+  GET_PRIM_COLLECTION(GeomPlane)
+  GET_PRIM_COLLECTION(GeomCylinder_1)
+  GET_PRIM_COLLECTION(GeomCapsule_1)
+  GET_PRIM_COLLECTION(GeomTetMesh)
+  GET_PRIM_COLLECTION(GeomNurbsPatch)
+
+#undef GET_PRIM_COLLECTION
+  return nullptr;
+}
+
 }  // namespace
 
 // ============================================================================
@@ -649,6 +686,43 @@ bool CrateWriter::ConvertSinglePrim(
   // Process generic props map for custom properties, primvars, relationships, etc.
   // This covers ALL prim types and handles properties not extracted by type-specific handlers.
   // Skip properties already extracted by type-specific handlers to avoid duplicates.
+  // Re-emit Collection (`collection:<inst>:{includes,excludes,
+  // includeRoot,expansionRule}`) from the typed Collection storage.
+  // The reconstruct path consumed these from the props map and stored
+  // them on `Collection::instances()`; without this re-emit, USDC
+  // round-trip would drop them.
+  if (const Collection *coll_storage = GetPrimCollection(prim.data())) {
+    const auto &instances = coll_storage->instances();
+    for (size_t i = 0; i < instances.size(); ++i) {
+      const std::string &inst_name = instances.keys()[i];
+      CollectionInstance inst;
+      if (!instances.at(i, &inst)) {
+        continue;
+      }
+      const std::string prefix = "collection:" + inst_name;
+
+      if (inst.includes.authored()) {
+        std::string ce;
+        if (!ConvertRelationshipToFields(prefix + ":includes",
+                                         inst.includes.relationship(),
+                                         prim_path, &ce)) {
+          DCOUT("WARNING: Collection includes emit failed: " << ce);
+        }
+      }
+      if (inst.excludes.authored()) {
+        std::string ce;
+        if (!ConvertRelationshipToFields(prefix + ":excludes",
+                                         inst.excludes.relationship(),
+                                         prim_path, &ce)) {
+          DCOUT("WARNING: Collection excludes emit failed: " << ce);
+        }
+      }
+      // Note: expansionRule (uniform token) and includeRoot (bool) are
+      // typed attrs — emitting those requires routing through the
+      // attribute spec path. Left as a known follow-up gap.
+    }
+  }
+
   if (props_map) {
     // Build set of names already extracted by type-specific handlers
     std::unordered_set<std::string> extracted_names;

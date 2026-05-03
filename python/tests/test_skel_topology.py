@@ -53,11 +53,10 @@ def SkelAnimation "Anim" {
     assert "scales" in txt
 
 
-def test_skel_root_with_skeleton_rel_usda_only(tmp_path):
-    """USDA->USDA preserves skel:skeleton rel; USDC drops the
-    namespaced rel (same gap as collection:* rels)."""
-    src = tmp_path / "x.usda"
-    src.write_text('''#usda 1.0
+def test_skel_root_with_skeleton_rel_usdc(tmp_path):
+    """USDC round-trip preserves skel:skeleton rel after the writer-side
+    fix in sconv-geom.cc::ExtractMeshProperties (was a stub)."""
+    txt = _rt(tmp_path, '''#usda 1.0
 def SkelRoot "Char" {
     def Skeleton "Skel" {
         uniform token[] joints = ["root"]
@@ -69,10 +68,6 @@ def SkelRoot "Char" {
     }
 }
 ''')
-    s = tinyusdz.load(str(src))
-    out = tmp_path / "x.usda"
-    s.save(str(out))
-    txt = tinyusdz.load(str(out)).export_to_string()
     assert "SkelRoot" in txt
     assert "skel:skeleton" in txt
     assert "</Char/Skel>" in txt

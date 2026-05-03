@@ -1482,7 +1482,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(sizeof(value::matrix2d));
 
-        value::matrix4d v;
+        value::matrix2d v;
         if (!_sr->read(sizeof(value::matrix2d), sizeof(value::matrix2d),
                        reinterpret_cast<uint8_t *>(v.m))) {
           _err += "Failed to read value of `matrix2d` type\n";
