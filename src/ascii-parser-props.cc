@@ -1282,22 +1282,49 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
     // atribute connection
     DCOUT("isConnection");
 
-    Path path;
+    // The target is either a single path `</...>`, an array of paths
+    // `[</a>, </b>]`, or `None` (value_blocked).
+    std::vector<Path> targets;
     if (!value_blocked) {
-      // Target Must be Path
-      if (!ReadBasicType(&path)) {
-        PUSH_ERROR_AND_RETURN("Path expected for .connect target.");
+      char c;
+      if (!LookChar1(&c)) {
+        return false;
+      }
+      if (c == '[') {
+        std::vector<Path> values;
+        if (!ParseBasicTypeArray(&values)) {
+          PUSH_ERROR_AND_RETURN(
+              "Failed to parse path array for .connect target.");
+        }
+        Path base_abs_path(GetCurrentPrimPath(), "");
+        for (auto &v : values) {
+          Path resolved;
+          std::string rerr;
+          if (!pathutil::ResolveRelativePath(base_abs_path, v, &resolved,
+                                             &rerr)) {
+            PUSH_ERROR_AND_RETURN(
+                fmt::format("Invalid relative Path: {}. error = {}",
+                            v.full_path_name(), rerr));
+          }
+          targets.push_back(resolved);
+        }
+      } else {
+        Path path;
+        if (!ReadBasicType(&path)) {
+          PUSH_ERROR_AND_RETURN("Path expected for .connect target.");
+        }
+        Path base_abs_path(GetCurrentPrimPath(), "");
+        Path abs_path;
+        std::string err;
+        if (!pathutil::ResolveRelativePath(base_abs_path, path, &abs_path,
+                                           &err)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}. error = {}",
+                                            path.full_path_name(), err));
+        }
+        targets.push_back(abs_path);
       }
     }
-
-    // Resolve relative path.
-    Path base_abs_path(GetCurrentPrimPath(), "");
-    Path abs_path;
-    std::string err;
-    if (!pathutil::ResolveRelativePath(base_abs_path, path, &abs_path, &err)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}. error = {}",
-                                        path.full_path_name(), err));
-    }
+    Path abs_path = targets.empty() ? Path() : targets.front();
 
     // Check if attribute metadatum is not authored.
     if (!SkipCommentAndWhitespaceAndNewline()) {
@@ -1323,7 +1350,11 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
         PUSH_ERROR_AND_RETURN(fmt::format("Variability mismatch. Attribute `{}` already has variability `{}`, but timeSampled value has variability `{}`.", attr_name, to_string(props->at(attr_name).attribute().variability()), to_string(variability)));
       }
 
-      props->at(attr_name).attribute().set_connection(abs_path);
+      if (targets.size() > 1) {
+        props->at(attr_name).attribute().set_connections(targets);
+      } else {
+        props->at(attr_name).attribute().set_connection(abs_path);
+      }
 
       // Set PropType to Attrib(since previously created Property may have EmptyAttrib).
       props->at(attr_name).set_property_type(Property::Type::Attrib);
@@ -1331,7 +1362,11 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
 
       Attribute attr;
       attr.set_type_name(type_name);
-      attr.set_connection(abs_path);
+      if (targets.size() > 1) {
+        attr.set_connections(targets);
+      } else {
+        attr.set_connection(abs_path);
+      }
       attr.variability() = variability;
 
       //Property p(abs_path, /* value typename */ type_name, custom_qual);

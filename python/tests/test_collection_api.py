@@ -68,11 +68,11 @@ def test_python_apply_multiple_collection_instances(tmp_path):
     assert "CollectionAPI:cameras" in schemas
 
 
-def test_collection_includeRoot_usda_only(tmp_path):
-    """USDA->USDA round-trip preserves `includeRoot`. USDC currently
-    drops the typed schema attribute (separate gap)."""
-    src = tmp_path / "x.usda"
-    src.write_text('''#usda 1.0
+def test_collection_includeRoot_usdc(tmp_path):
+    """USDC round-trip preserves `includeRoot` after the writer-side
+    fix that re-emits Collection typed attrs from
+    `Collection::instances()` storage."""
+    txt = _rt(tmp_path, '''#usda 1.0
 def Xform "World" (
     apiSchemas = ["CollectionAPI:everything"]
 )
@@ -81,9 +81,21 @@ def Xform "World" (
     rel collection:everything:includes = [</World>]
 }
 ''')
-    s = tinyusdz.load(str(src))
-    out = tmp_path / "x.usda"
-    s.save(str(out))
-    txt = tinyusdz.load(str(out)).export_to_string()
     assert "CollectionAPI:everything" in txt
     assert "includeRoot" in txt
+
+
+def test_collection_expansionRule_usdc(tmp_path):
+    """USDC round-trip preserves expansionRule typed attr."""
+    txt = _rt(tmp_path, '''#usda 1.0
+def Xform "World" (
+    apiSchemas = ["CollectionAPI:plants"]
+)
+{
+    uniform token collection:plants:expansionRule = "explicitOnly"
+    rel collection:plants:includes = [</World/Tree>]
+    def Xform "Tree" {}
+}
+''')
+    assert "expansionRule" in txt
+    assert '"explicitOnly"' in txt

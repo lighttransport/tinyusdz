@@ -98,16 +98,38 @@ bool CrateWriter::ExtractMeshProperties(
       fields.push_back({"points.timeSamples", ts_crate_val});
 
     }
-    // Preserve interpolation metadata on `points` (mirrors the
-    // `normals.interpolation` emit below). The stage-converter's
-    // prop_entries router only recognizes `.interpolation` and
-    // `.timeSamples` suffixes today, so other AttrMeta keys
-    // (elementSize, customData, ...) on schema-typed `points` are
-    // not yet round-tripped through USDC.
-    if (mesh->points.metas().has_interpolation()) {
-      crate::CrateValue v;
-      v.Set(mesh->points.metas().get_interpolation());
+    // Preserve AttrMeta on `points`. The stage-converter's prop_entries
+    // router recognizes ".interpolation"/".timeSamples" and any key in
+    // kAttrMetaSuffixes (elementSize, customData, displayName, ...).
+    const auto& pmetas = mesh->points.metas();
+    if (pmetas.has_interpolation()) {
+      crate::CrateValue v; v.Set(pmetas.get_interpolation());
       fields.push_back({"points.interpolation", v});
+    }
+    if (pmetas.has_elementSize()) {
+      crate::CrateValue v;
+      v.Set(static_cast<int32_t>(pmetas.get_elementSize()));
+      fields.push_back({"points.elementSize", v});
+    }
+    if (pmetas.has_customData()) {
+      crate::CrateValue v; v.Set(pmetas.get_customData());
+      fields.push_back({"points.customData", v});
+    }
+    if (pmetas.has_displayName()) {
+      crate::CrateValue v; v.Set(pmetas.get_displayName());
+      fields.push_back({"points.displayName", v});
+    }
+    if (pmetas.has_displayGroup()) {
+      crate::CrateValue v; v.Set(pmetas.get_displayGroup());
+      fields.push_back({"points.displayGroup", v});
+    }
+    if (pmetas.has_doc()) {
+      crate::CrateValue v; v.Set(pmetas.get_doc().value);
+      fields.push_back({"points.documentation", v});
+    }
+    if (pmetas.has_hidden()) {
+      crate::CrateValue v; v.Set(pmetas.get_hidden());
+      fields.push_back({"points.hidden", v});
     }
   }
   /* If `points` lives only in the props map (typed field unauthored),
@@ -142,11 +164,36 @@ bool CrateWriter::ExtractMeshProperties(
       ts_crate_val.Set(ts);
       fields.push_back({"normals.timeSamples", ts_crate_val});
     }
-    // Preserve interpolation metadata (e.g. "faceVarying")
-    if (mesh->normals.metas().has_interpolation()) {
-      crate::CrateValue interp_val;
-      interp_val.Set(mesh->normals.metas().get_interpolation());
-      fields.push_back({"normals.interpolation", interp_val});
+    // Preserve AttrMeta on `normals` (mirrors `points` AttrMeta emit).
+    const auto& nmetas = mesh->normals.metas();
+    if (nmetas.has_interpolation()) {
+      crate::CrateValue v; v.Set(nmetas.get_interpolation());
+      fields.push_back({"normals.interpolation", v});
+    }
+    if (nmetas.has_elementSize()) {
+      crate::CrateValue v;
+      v.Set(static_cast<int32_t>(nmetas.get_elementSize()));
+      fields.push_back({"normals.elementSize", v});
+    }
+    if (nmetas.has_customData()) {
+      crate::CrateValue v; v.Set(nmetas.get_customData());
+      fields.push_back({"normals.customData", v});
+    }
+    if (nmetas.has_displayName()) {
+      crate::CrateValue v; v.Set(nmetas.get_displayName());
+      fields.push_back({"normals.displayName", v});
+    }
+    if (nmetas.has_displayGroup()) {
+      crate::CrateValue v; v.Set(nmetas.get_displayGroup());
+      fields.push_back({"normals.displayGroup", v});
+    }
+    if (nmetas.has_doc()) {
+      crate::CrateValue v; v.Set(nmetas.get_doc().value);
+      fields.push_back({"normals.documentation", v});
+    }
+    if (nmetas.has_hidden()) {
+      crate::CrateValue v; v.Set(nmetas.get_hidden());
+      fields.push_back({"normals.hidden", v});
     }
   }
 

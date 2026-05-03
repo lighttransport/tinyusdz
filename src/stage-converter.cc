@@ -383,7 +383,11 @@ bool CrateWriter::ConvertSinglePrim(
   // Split fields: prim-level fields (specifier, typeName) stay on the prim
   // spec; property fields become separate Attribute specs.
   crate::FieldValuePairVector prim_fields;
-  // Collect property fields: name -> {default_value, timeSamples_value}
+  // Collect property fields: name -> {default_value, timeSamples_value, ...}
+  // `extra_metas` covers AttrMeta keys beyond .interpolation: elementSize,
+  // customData, displayName, displayGroup, documentation, hidden,
+  // colorSpace, comment, weight, allowedTokens. Pairs are emitted into
+  // the attribute spec as-is.
   struct PropEntry {
     std::string name;
     crate::CrateValue default_val;
@@ -394,8 +398,18 @@ bool CrateWriter::ConvertSinglePrim(
     bool has_variability{false};
     crate::CrateValue interpolation_val;
     bool has_interpolation{false};
+    std::vector<std::pair<std::string, crate::CrateValue>> extra_metas;
   };
   std::vector<PropEntry> prop_entries;
+
+  // AttrMeta suffixes other than `.interpolation` that schema-typed
+  // extractors may emit as `<base>.<key>`. The router stuffs the
+  // matching value into the prop's attribute spec under field name `key`.
+  static const std::set<std::string> kAttrMetaSuffixes = {
+    "elementSize", "customData", "displayName", "displayGroup",
+    "documentation", "doc", "hidden", "colorSpace", "comment", "weight",
+    "allowedTokens",
+  };
 
   // Set of field names that belong on the prim spec, not as separate attributes
   static const std::set<std::string> kPrimFields = {
@@ -413,10 +427,11 @@ bool CrateWriter::ConvertSinglePrim(
       continue;
     }
 
-    // Check for ".timeSamples" suffix
+    // Check for ".timeSamples" / ".interpolation" / other AttrMeta suffixes
     std::string base_name = fv.first;
     bool is_ts = false;
     bool is_interp = false;
+    std::string meta_key;  // non-empty when fv.first is `<base>.<meta_key>`
     const std::string ts_suffix = ".timeSamples";
     const std::string interp_suffix = ".interpolation";
     if (base_name.size() > ts_suffix.size() &&
@@ -429,6 +444,18 @@ bool CrateWriter::ConvertSinglePrim(
                                  interp_suffix.size(), interp_suffix) == 0) {
       base_name = base_name.substr(0, base_name.size() - interp_suffix.size());
       is_interp = true;
+    } else {
+      // Generic `<base>.<meta_key>` suffix (elementSize, customData, ...).
+      // Only consume when the suffix matches a known AttrMeta key, to
+      // avoid swallowing unrelated dot-bearing names.
+      auto dot = base_name.rfind('.');
+      if (dot != std::string::npos && dot + 1 < base_name.size()) {
+        std::string suffix = base_name.substr(dot + 1);
+        if (kAttrMetaSuffixes.count(suffix)) {
+          meta_key = std::move(suffix);
+          base_name = base_name.substr(0, dot);
+        }
+      }
     }
 
     // Check for "variability" field
@@ -458,6 +485,11 @@ bool CrateWriter::ConvertSinglePrim(
     } else if (is_interp) {
       entry->interpolation_val = std::move(fv.second);
       entry->has_interpolation = true;
+    } else if (!meta_key.empty()) {
+      // documentation alias: `doc` -> `documentation` for the spec
+      std::string spec_key = (meta_key == "doc") ? "documentation" : meta_key;
+      entry->extra_metas.emplace_back(std::move(spec_key),
+                                      std::move(fv.second));
     } else {
       entry->default_val = std::move(fv.second);
       entry->has_default = true;
@@ -538,6 +570,10 @@ bool CrateWriter::ConvertSinglePrim(
 
     if (pe.has_interpolation) {
       attr_fields.push_back({"interpolation", std::move(pe.interpolation_val)});
+    }
+
+    for (auto& mk : pe.extra_metas) {
+      attr_fields.push_back({mk.first, std::move(mk.second)});
     }
 
     if (!attr_fields.empty()) {
@@ -717,9 +753,42 @@ bool CrateWriter::ConvertSinglePrim(
           DCOUT("WARNING: Collection excludes emit failed: " << ce);
         }
       }
-      // Note: expansionRule (uniform token) and includeRoot (bool) are
-      // typed attrs — emitting those requires routing through the
-      // attribute spec path. Left as a known follow-up gap.
+      if (inst.expansionRule.authored()) {
+        // expansionRule is a uniform token attribute. Map the
+        // ExpansionRule enum back to its token spelling.
+        const char *tok = nullptr;
+        switch (inst.expansionRule.get_value()) {
+          case CollectionInstance::ExpansionRule::ExplicitOnly:
+            tok = kExplicitOnly; break;
+          case CollectionInstance::ExpansionRule::ExpandPrims:
+            tok = kExpandPrims; break;
+          case CollectionInstance::ExpansionRule::ExpandPrimsAndProperties:
+            tok = kExpandPrimsAndProperties; break;
+        }
+        if (tok) {
+          Attribute a = Attribute::Uniform(value::token(tok));
+          a.set_type_name("token");
+          std::string ce;
+          if (!ConvertAttributeToFields(prefix + ":expansionRule", a,
+                                        prim_path, /*is_custom=*/false,
+                                        &ce)) {
+            DCOUT("WARNING: Collection expansionRule emit failed: " << ce);
+          }
+        }
+      }
+      if (inst.includeRoot.authored()) {
+        bool b = false;
+        if (inst.includeRoot.get_value().get_scalar(&b)) {
+          Attribute a = Attribute::Uniform(b);
+          a.set_type_name("bool");
+          std::string ce;
+          if (!ConvertAttributeToFields(prefix + ":includeRoot", a,
+                                        prim_path, /*is_custom=*/false,
+                                        &ce)) {
+            DCOUT("WARNING: Collection includeRoot emit failed: " << ce);
+          }
+        }
+      }
     }
   }
 

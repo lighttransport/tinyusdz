@@ -178,23 +178,22 @@ files, all green; no C++/binding source changes besides the
 | `Camera.focalLength.timeSamples` (and other animated camera scalars) dropped on USDC | `sconv-geom.cc::add_float_attr/add_double_attr` now emit `<name>.timeSamples` from the Animatable<T> | `test_camera_attributes.py::test_camera_animated_focal_length_usdc` |
 | `Mesh.normals.timeSamples` dropped on USDC | `sconv-geom.cc::ExtractMeshProperties` mirrors the `points.timeSamples` block for `normals` | `test_timesamples_array_comprehensive.py::test_normal3f_array_timesamples` |
 | `Cylinder.axis` (uniform token) dropped on USDC | `sconv-geom.cc::ExtractCylinderProperties` was missing the axis emit Cone/Capsule had | `test_primitive_shapes.py::test_cylinder_radius_height_axis` |
+| Schema-typed AttrMeta routing asymmetry (elementSize, customData, displayName, displayGroup, documentation, hidden on Mesh.points/normals) | Generic `<base>.<meta_key>` suffix router in `stage-converter.cc` (kAttrMetaSuffixes); `sconv-geom.cc` emits the keys for points/normals AttrMeta | covered by `test_attribute_metadata_extras.py` plus inline checks |
+| `CollectionAPI:<inst>:expansionRule` / `includeRoot` typed attrs dropped on USDC | `stage-converter.cc` Collection re-emit pass now constructs `Attribute::Uniform(token)` / `Attribute::Uniform(bool)` and calls `ConvertAttributeToFields` | `test_collection_api.py::test_collection_includeRoot_usdc`, `::test_collection_expansionRule_usdc` |
+| Multi-target attribute `.connect = [</a>, </b>, ...]` rejected by parser | `ascii-parser-props.cc` connection branch now handles `[`-led path arrays and routes them to `Attribute::set_connections(vec)` | `test_multi_target_connect.py` (4 cases) |
 
 ### Still outstanding gaps
 
-Smaller / lower priority follow-ups:
+Few remaining follow-ups, all low-impact:
 
-- Schema-typed AttrMeta extraction is still asymmetric for less
-  common AttrMeta keys: `elementSize` and `customData` on
-  schema-typed attrs like Mesh.points / Mesh.normals are not
-  routed through. Same pattern for several UsdUVTexture inputs
-  (fallback/scale/bias).
-- `CollectionAPI:foo:expansionRule` (uniform token) and
-  `includeRoot` (bool) typed attrs still drop on USDC —
-  `Collection::instances()` storage is now re-emitted for `includes`
-  and `excludes` rels but not yet for typed attrs (would need
-  attribute-spec construction from `TypedAttributeWithFallback`).
-- Multi-target attribute `.connect` arrays not supported by parser
-  (single target only).
+- USDA `.connect` array round-trip: parser accepts arrays (just
+  fixed) — verify `Attribute::set_connections` storage survives
+  USDC writer when `connections().size() > 1` (existing single-
+  target writer path may need an array branch in
+  `ConvertConnectionToFields`).
+- Less common UsdUVTexture inputs `fallback`/`scale`/`bias` still
+  drop on USDC: typed `float4` shader inputs that probably need
+  schema-aware routing in `sconv-shader.cc`.
 
 ## Still outstanding
 
