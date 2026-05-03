@@ -360,6 +360,12 @@ bool ReconstructShader<UsdUVTexture>(
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "inputs:wrapT",
                        UsdUVTexture::Wrap, WrapHandler, UsdUVTexture,
                        texture->wrapT, options.strict_allowedToken_check)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdUVTexture,
+                          texture->fallback)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:scale", UsdUVTexture,
+                          texture->scale)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:bias", UsdUVTexture,
+                          texture->bias)
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:r", UsdUVTexture,
                                   texture->outputsR)
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:g", UsdUVTexture,

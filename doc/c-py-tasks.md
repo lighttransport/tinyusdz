@@ -180,20 +180,14 @@ files, all green; no C++/binding source changes besides the
 | `Cylinder.axis` (uniform token) dropped on USDC | `sconv-geom.cc::ExtractCylinderProperties` was missing the axis emit Cone/Capsule had | `test_primitive_shapes.py::test_cylinder_radius_height_axis` |
 | Schema-typed AttrMeta routing asymmetry (elementSize, customData, displayName, displayGroup, documentation, hidden on Mesh.points/normals) | Generic `<base>.<meta_key>` suffix router in `stage-converter.cc` (kAttrMetaSuffixes); `sconv-geom.cc` emits the keys for points/normals AttrMeta | covered by `test_attribute_metadata_extras.py` plus inline checks |
 | `CollectionAPI:<inst>:expansionRule` / `includeRoot` typed attrs dropped on USDC | `stage-converter.cc` Collection re-emit pass now constructs `Attribute::Uniform(token)` / `Attribute::Uniform(bool)` and calls `ConvertAttributeToFields` | `test_collection_api.py::test_collection_includeRoot_usdc`, `::test_collection_expansionRule_usdc` |
-| Multi-target attribute `.connect = [</a>, </b>, ...]` rejected by parser | `ascii-parser-props.cc` connection branch now handles `[`-led path arrays and routes them to `Attribute::set_connections(vec)` | `test_multi_target_connect.py` (4 cases) |
+| Multi-target attribute `.connect = [</a>, </b>, ...]` rejected by parser | `ascii-parser-props.cc` connection branch now handles `[`-led path arrays and routes them to `Attribute::set_connections(vec)`. Writer side (`ConvertConnectionToFields`) already had the multi-target branch. | `test_multi_target_connect.py` (4 cases incl. USDC round-trip) |
+| UsdUVTexture inputs `fallback`/`scale`/`bias` dropped on USDC | reconstruct path didn't have `PARSE_TYPED_ATTRIBUTE` calls for these typed `color4f`/`float4` inputs — they fell into `texture->props` instead of the typed `texture->fallback/scale/bias` fields the writer reads. Added the three missing `PARSE_TYPED_ATTRIBUTE` lines to `prim-reconstruct-shader.cc`. | `test_uv_textures_extra.py::test_uvtexture_fallback_and_scale_usdc`, `::test_uvtexture_bias_usdc` |
 
 ### Still outstanding gaps
 
-Few remaining follow-ups, all low-impact:
-
-- USDA `.connect` array round-trip: parser accepts arrays (just
-  fixed) — verify `Attribute::set_connections` storage survives
-  USDC writer when `connections().size() > 1` (existing single-
-  target writer path may need an array branch in
-  `ConvertConnectionToFields`).
-- Less common UsdUVTexture inputs `fallback`/`scale`/`bias` still
-  drop on USDC: typed `float4` shader inputs that probably need
-  schema-aware routing in `sconv-shader.cc`.
+No major gaps remain. Everything from the original "Still
+outstanding" list has been closed. Future work that may surface
+during further coverage expansion would go here.
 
 ## Still outstanding
 

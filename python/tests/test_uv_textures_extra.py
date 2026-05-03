@@ -41,10 +41,11 @@ def Material "M" {
     assert '"sRGB"' in txt
 
 
-def test_uvtexture_fallback_and_scale_usda_only(tmp_path):
-    """fallback/scale shader inputs — USDA fence (USDC drops them)."""
-    src = tmp_path / "x.usda"
-    src.write_text('''#usda 1.0
+def test_uvtexture_fallback_and_scale_usdc(tmp_path):
+    """USDC round-trip preserves fallback/scale after the
+    prim-reconstruct-shader.cc PARSE_TYPED_ATTRIBUTE additions
+    that route them into UsdUVTexture::fallback/::scale."""
+    txt = _rt(tmp_path, '''#usda 1.0
 def Material "M" {
     def Shader "Tex" {
         uniform token info:id = "UsdUVTexture"
@@ -55,17 +56,12 @@ def Material "M" {
     }
 }
 ''')
-    s = tinyusdz.load(str(src))
-    out = tmp_path / "x.usda"
-    s.save(str(out))
-    txt = tinyusdz.load(str(out)).export_to_string()
     assert "fallback" in txt
     assert "scale" in txt
 
 
-def test_uvtexture_bias_usda_only(tmp_path):
-    src = tmp_path / "x.usda"
-    src.write_text('''#usda 1.0
+def test_uvtexture_bias_usdc(tmp_path):
+    txt = _rt(tmp_path, '''#usda 1.0
 def Material "M" {
     def Shader "Tex" {
         uniform token info:id = "UsdUVTexture"
@@ -75,8 +71,4 @@ def Material "M" {
     }
 }
 ''')
-    s = tinyusdz.load(str(src))
-    out = tmp_path / "x.usda"
-    s.save(str(out))
-    txt = tinyusdz.load(str(out)).export_to_string()
     assert "bias" in txt
