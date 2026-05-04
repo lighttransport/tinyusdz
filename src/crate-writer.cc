@@ -33,6 +33,8 @@
 // Direct LZ4 API for OpenUSD compatibility
 #include "lz4/lz4.h"
 
+#include "safe-arithmetic.hh"
+
 // Namespace alias to avoid collision between tinyusdz::crate and ::crate (path library)
 namespace pathlib = ::crate;
 
@@ -888,7 +890,11 @@ bool CrateWriter::WriteFieldsSection(std::string* err) {
 
   // Compress value reps using TfFastCompression (our CompressData)
   const char* reps_data = reinterpret_cast<const char*>(value_reps.data());
-  size_t reps_data_size = value_reps.size() * sizeof(uint64_t);
+  size_t reps_data_size;
+  if (!safe::mul(value_reps.size(), sizeof(uint64_t), &reps_data_size)) {
+    if (err) *err = "Integer overflow: value_reps.size() * sizeof(uint64_t)";
+    return false;
+  }
 
   std::vector<char> compressed_reps;
   if (!CompressData(reps_data, reps_data_size, &compressed_reps, err)) {
@@ -1760,7 +1766,12 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
   else if (auto* float_array = value.as<std::vector<float>>()) {
     uint64_t count = float_array->size();
     if (!Write(count)) { if (err) *err = "Failed to write float array count"; return -1; }
-    if (!WriteBytes(float_array->data(), float_array->size() * sizeof(float))) {
+    size_t byte_count;
+    if (!safe::mul(float_array->size(), sizeof(float), &byte_count)) {
+      if (err) *err = "Integer overflow: float_array->size() * sizeof(float)";
+      return -1;
+    }
+    if (!WriteBytes(float_array->data(), byte_count)) {
       if (err) *err = "Failed to write float array data";
       return -1;
     }
@@ -1770,7 +1781,12 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
   else if (auto* double_array = value.as<std::vector<double>>()) {
     uint64_t count = double_array->size();
     if (!Write(count)) { if (err) *err = "Failed to write double array count"; return -1; }
-    if (!WriteBytes(double_array->data(), double_array->size() * sizeof(double))) {
+    size_t byte_count;
+    if (!safe::mul(double_array->size(), sizeof(double), &byte_count)) {
+      if (err) *err = "Integer overflow: double_array->size() * sizeof(double)";
+      return -1;
+    }
+    if (!WriteBytes(double_array->data(), byte_count)) {
       if (err) *err = "Failed to write double array data";
       return -1;
     }
@@ -2668,7 +2684,12 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
 
     // Update value_data_end_offset_ NOW, before writing ValueReps
     // This ensures PackValue() writes out-of-line data AFTER our inline structure
-    value_data_end_offset_ = Tell() + (num_samples * 8);  // Reserve space for ValueReps
+    size_t num_samples_size;
+    if (!safe::mul(num_samples, size_t(8), &num_samples_size)) {
+      if (err) *err = "Integer overflow: num_samples * 8";
+      return -1;
+    }
+    value_data_end_offset_ = Tell() + num_samples_size;  // Reserve space for ValueReps
 
     // Get samples - this works for both binary and generic value-backed types
     const auto& samples = timesamples_val->get_samples();
@@ -2719,14 +2740,22 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
         else if (auto* arr = crate_value.as<std::vector<Type>>()) { \
           is_dedup_candidate = true; \
           dedup_element_size = ElemSize; dedup_is_float = true; \
-          size_t bsz = arr->size() * sizeof(Type); \
+          size_t bsz; \
+          if (!safe::mul(arr->size(), sizeof(Type), &bsz)) { \
+            if (err) *err = "Integer overflow in DEDUP_FLOAT_ARRAY"; \
+            return -1; \
+          } \
           value_bytes.resize(bsz); \
           std::memcpy(value_bytes.data(), arr->data(), bsz); }
 
 #define DEDUP_BINARY_ARRAY(Type) \
         else if (auto* arr = crate_value.as<std::vector<Type>>()) { \
           is_dedup_candidate = true; \
-          size_t bsz = arr->size() * sizeof(Type); \
+          size_t bsz; \
+          if (!safe::mul(arr->size(), sizeof(Type), &bsz)) { \
+            if (err) *err = "Integer overflow in DEDUP_BINARY_ARRAY"; \
+            return -1; \
+          } \
           value_bytes.resize(bsz); \
           std::memcpy(value_bytes.data(), arr->data(), bsz); }
 
@@ -2746,7 +2775,11 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
         if (auto* arr = crate_value.as<std::vector<float>>()) {
           is_dedup_candidate = true;
           dedup_element_size = sizeof(float); dedup_is_float = true;
-          size_t bsz = arr->size() * sizeof(float);
+          size_t bsz;
+          if (!safe::mul(arr->size(), sizeof(float), &bsz)) {
+            if (err) *err = "Integer overflow in float array dedup";
+            return -1;
+          }
           value_bytes.resize(bsz);
           std::memcpy(value_bytes.data(), arr->data(), bsz);
         }

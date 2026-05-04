@@ -45,6 +45,7 @@
 #include "shape-to-mesh.hh"
 #include "materialx-to-json.hh"
 #include "mmap-array-ref.hh"
+#include "safe-arithmetic.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -144,7 +145,11 @@ nonstd::expected<std::vector<uint8_t>, std::string> UniformToVertex(
   const uint32_t num_vertices =
       *std::max_element(faceVertexIndices.cbegin(), faceVertexIndices.cend()) + 1;
 
-  dst.resize(num_vertices * stride_bytes);
+  size_t resize_size;
+  if (!safe::mul(num_vertices, stride_bytes, &resize_size)) {
+    return nonstd::make_unexpected("Integer overflow: num_vertices * stride_bytes");
+  }
+  dst.resize(resize_size);
 
   size_t fvIndexOffset{0};
 
@@ -244,7 +249,11 @@ nonstd::expected<std::vector<uint8_t>, std::string> VertexToFaceVarying(
   // Pre-allocate output buffer to exact size needed
   const size_t total_face_vertices = faceVertexIndices.size();
   std::vector<uint8_t> dst;
-  dst.resize(total_face_vertices * stride_bytes);
+  size_t dst_size;
+  if (!safe::mul(total_face_vertices, stride_bytes, &dst_size)) {
+    return nonstd::make_unexpected("Integer overflow: total_face_vertices * stride_bytes");
+  }
+  dst.resize(dst_size);
 
   const uint8_t* src_data = src.data();
   uint8_t* dst_ptr = dst.data();
@@ -316,7 +325,11 @@ static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
                     stride_bytes));
   }
 
-  dst.resize(stride_bytes * num_vertices);
+  size_t dst_size;
+  if (!safe::mul(stride_bytes, num_vertices, &dst_size)) {
+    return nonstd::make_unexpected("Integer overflow: stride_bytes * num_vertices");
+  }
+  dst.resize(dst_size);
 
   size_t faceVertexIndexOffset = 0;
   for (size_t i = 0; i < faceVertexCounts.size(); i++) {
@@ -881,7 +894,11 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   DCOUT("texcoord " << name << " : " << uvs);
 
   vattr.format = VertexAttributeFormat::Vec2;
-  vattr.data.resize(uvs.size() * sizeof(value::texcoord2f));
+  size_t resize_size;
+  if (!safe::n_to_size<value::texcoord2f>(uvs.size(), &resize_size)) {
+    return nonstd::make_unexpected("Integer overflow: uvs.size() * sizeof(value::texcoord2f)");
+  }
+  vattr.data.resize(resize_size);
   memcpy(vattr.data.data(), uvs.data(), vattr.data.size());
   vattr.indices.clear();  // just in case.
 
@@ -1006,8 +1023,16 @@ bool ArrayValueToVertexAttribute(
     }
     }
 
-    dst.data.resize(value_counts * baseTySize);
-    memcpy(dst.data.data(), pv->data(), value_counts * baseTySize);
+    size_t resize_size;
+    if (!safe::mul(value_counts, baseTySize, &resize_size)) {
+      PUSH_ERROR_AND_RETURN("Integer overflow: value_counts * baseTySize");
+    }
+    dst.data.resize(resize_size);
+    size_t memcpy_size;
+    if (!safe::mul(value_counts, baseTySize, &memcpy_size)) {
+      PUSH_ERROR_AND_RETURN("Integer overflow in memcpy: value_counts * baseTySize");
+    }
+    memcpy(dst.data.data(), pv->data(), memcpy_size);
 
     dst.elementSize = elementSize;
     dst.stride = 0;
@@ -3173,9 +3198,16 @@ static bool TryQuantizedNormalDedup(
   VertexAttribute attr;
   attr.format = VertexAttributeFormat::Vec3;
   attr.variability = VertexVariability::Vertex;
-  attr.data.resize(numVerts * sizeof(value::float3));
-  std::memcpy(attr.data.data(), vertNormal.data(),
-              numVerts * sizeof(value::float3));
+  size_t resize_size;
+  if (!safe::n_to_size<value::float3>(numVerts, &resize_size)) {
+    return false;  // Error handling - return false
+  }
+  attr.data.resize(resize_size);
+  size_t memcpy_size;
+  if (!safe::mul(numVerts, sizeof(value::float3), &memcpy_size)) {
+    return false;
+  }
+  std::memcpy(attr.data.data(), vertNormal.data(), memcpy_size);
   attr.stride = 0;
   attr.elementSize = 1;
   attr.name = normals.name;
@@ -3211,8 +3243,16 @@ static bool QuantizeMeshNormals(
 
     VertexAttribute attr;
     attr.format = VertexAttributeFormat::Char3;
-    attr.data.resize(packed.size() * 3);
-    std::memcpy(attr.data.data(), packed.data(), packed.size() * 3);
+    size_t resize_size;
+    if (!safe::mul(packed.size(), size_t(3), &resize_size)) {
+      return false;
+    }
+    attr.data.resize(resize_size);
+    size_t memcpy_size;
+    if (!safe::mul(packed.size(), size_t(3), &memcpy_size)) {
+      return false;
+    }
+    std::memcpy(attr.data.data(), packed.data(), memcpy_size);
 
     mesh.normals = std::move(attr);
   } else if (format == MeshConverterConfig::NormalStorageFormat::PackedSNorm16) {
@@ -3221,9 +3261,16 @@ static bool QuantizeMeshNormals(
 
     VertexAttribute attr;
     attr.format = VertexAttributeFormat::Short3;
-    attr.data.resize(packed.size() * sizeof(PackedNormalSNorm16x3));
-    std::memcpy(attr.data.data(), packed.data(),
-                packed.size() * sizeof(PackedNormalSNorm16x3));
+    size_t resize_size;
+    if (!safe::n_to_size<PackedNormalSNorm16x3>(packed.size(), &resize_size)) {
+      return false;
+    }
+    attr.data.resize(resize_size);
+    size_t memcpy_size;
+    if (!safe::n_to_size<PackedNormalSNorm16x3>(packed.size(), &memcpy_size)) {
+      return false;
+    }
+    std::memcpy(attr.data.data(), packed.data(), memcpy_size);
 
     mesh.normals = std::move(attr);
   } else {
@@ -3233,9 +3280,16 @@ static bool QuantizeMeshNormals(
 
     VertexAttribute attr;
     attr.format = VertexAttributeFormat::Uint;
-    attr.data.resize(packed.size() * sizeof(uint32_t));
-    std::memcpy(attr.data.data(), packed.data(),
-                packed.size() * sizeof(uint32_t));
+    size_t resize_size;
+    if (!safe::n_to_size<uint32_t>(packed.size(), &resize_size)) {
+      return false;
+    }
+    attr.data.resize(resize_size);
+    size_t memcpy_size;
+    if (!safe::n_to_size<uint32_t>(packed.size(), &memcpy_size)) {
+      return false;
+    }
+    std::memcpy(attr.data.data(), packed.data(), memcpy_size);
 
     mesh.normals = std::move(attr);
   }
