@@ -93,12 +93,14 @@ def Xform "X" {
 def test_unicode_string_content(tmp_path):
     """Non-ASCII content inside a string literal should round-trip."""
     src = tmp_path / "x.usda"
+    # Force utf-8 — Path.write_text defaults to the locale encoding, which
+    # is cp1252 on Windows runners and cannot encode the emoji/CJK below.
     src.write_text('''#usda 1.0
 def Xform "X" {
     custom string greeting = "こんにちは"
     custom string emoji = "🎉"
 }
-''')
+''', encoding="utf-8")
     s = tinyusdz.load(str(src))
     txt = s.export_to_string()
     assert "こんにちは" in txt
