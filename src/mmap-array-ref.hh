@@ -7,7 +7,8 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
-#include <unordered_map>
+
+#include "tiny-hashmap.hh"
 
 namespace tinyusdz {
 
@@ -60,7 +61,7 @@ class MMapArrayTable {
     return key;
   }
 
-  std::unordered_map<std::string, MMapArrayRef> _entries;
+  tinyusdz::HashMap<std::string, MMapArrayRef> _entries;
 };
 
 /// Wraps raw mmap pointer for safe typed access.
