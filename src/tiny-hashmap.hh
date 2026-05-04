@@ -24,6 +24,7 @@
 #include <cassert>
 #include <cstring>
 #include <functional>
+#include <initializer_list>
 #include <utility>
 #include <vector>
 #include <type_traits>
@@ -258,6 +259,14 @@ class HashMap {
       : _size(0), _mask(0), _max_load(0.5f), _buckets(), _hash(), _eq() {
     if (initial_bucket_count > 0) {
       rehash_to(initial_bucket_count);
+    }
+  }
+
+  HashMap(std::initializer_list<value_type> init)
+      : _size(0), _mask(0), _max_load(0.5f), _buckets(), _hash(), _eq() {
+    reserve(init.size());
+    for (const auto &kv : init) {
+      emplace(kv.first, kv.second);
     }
   }
 

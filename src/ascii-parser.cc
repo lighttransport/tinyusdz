@@ -34,6 +34,7 @@
 
 #include "ascii-parser.hh"
 #include "parser-timing.hh"
+#include "tiny-hashmap.hh"
 #include "path-util.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
@@ -615,7 +616,7 @@ std::string AsciiParser::GetErrorWithHints(bool show_hints) {
   }
 
   // Process errors in reverse order (oldest first) with aggressive deduplication
-  std::map<std::string, int> error_counts;  // Group similar errors by message
+  tinyusdz::HashMap<std::string, int> error_counts;  // Group similar errors by message
   for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
     const ErrorDiagnostic& diag = *it;
     error_counts[diag.err]++;
@@ -677,7 +678,7 @@ std::string AsciiParser::GetWarningWithHints(bool show_hints) {
   }
 
   // Process warnings in reverse order (oldest first) with aggressive deduplication
-  std::map<std::string, int> warning_counts;  // Group similar warnings by message
+  tinyusdz::HashMap<std::string, int> warning_counts;  // Group similar warnings by message
   for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
     const ErrorDiagnostic& diag = *it;
     warning_counts[diag.err]++;
