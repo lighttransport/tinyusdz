@@ -68,10 +68,15 @@ inline bool add(A a, B b, size_t* out) {
 ///
 template <typename T>
 inline bool n_to_size(uint64_t n, size_t* out) {
-  // First check if n fits in size_t
+  // On 32-bit platforms `n` may not fit in size_t. On 64-bit they are
+  // the same width, so the runtime check would be tautological — clang's
+  // -Wtautological-type-limit-compare flags it. `if constexpr` does not
+  // discard the body at template-definition time, so use the preprocessor.
+#if SIZE_MAX < UINT64_MAX
   if (n > std::numeric_limits<size_t>::max()) {
     return false;
   }
+#endif
   size_t count = static_cast<size_t>(n);
   return mul(count, sizeof(T), out);
 }

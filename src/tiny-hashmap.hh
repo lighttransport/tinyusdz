@@ -116,7 +116,10 @@ class HashMap {
   // Core insertion using robin-hood displacement. Returns the bucket index
   // where the (eventual) entry with `key` resides, plus whether a fresh
   // insertion happened.
-  std::pair<size_type, bool> insert_into_table(Key &&k, Value &&v) {
+  // Pass by value so callers may pass either lvalues, rvalues, or
+  // function-style cast prvalues like `Key(k)` — MSVC has trouble binding
+  // those to `Key&&` parameters, so by-value sidesteps the issue.
+  std::pair<size_type, bool> insert_into_table(Key k, Value v) {
     size_type idx = ideal_index(k);
     uint32_t dist = 1;
     Key cur_key = std::move(k);
