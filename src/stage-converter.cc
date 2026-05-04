@@ -2168,8 +2168,11 @@ bool CrateWriter::ConvertAttributeToFields(
     attr_fields.push_back({"elementSize", v});
   }
   if (metas.has_weight()) {
+    // pxr crate stores BlendShape inbetween `weight` as float; our
+    // AttrMetas keeps it as double. Cast to float on write so the
+    // reader's float-typed unpack matches the pxr canonical.
     crate::CrateValue v;
-    v.Set(metas.get_weight());
+    v.Set(static_cast<float>(metas.get_weight()));
     attr_fields.push_back({"weight", v});
   }
   if (metas.has_comment()) {
