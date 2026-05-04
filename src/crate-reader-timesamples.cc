@@ -27,6 +27,7 @@
 
 #include "crate-format.hh"
 #include "crate-pprint.hh"
+#include "tiny-hashmap.hh"
 #include "integerCoding.h"
 #include "lz4-compression.hh"
 #include "memory-budget.hh"
@@ -1481,7 +1482,7 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
   // Dedup map: ValueRep raw data -> first sample index in TimeSamples.
   // USDC files often deduplicate time sample values (multiple frames pointing
   // to the same file offset). Caching avoids redundant reads/decompression.
-  std::unordered_map<uint64_t, size_t> dedup_map;
+  tinyusdz::HashMap<uint64_t, size_t> dedup_map;
   dedup_map.reserve(vreps.size());
 
   for (size_t i = 0; i < vreps.size(); i++) {
