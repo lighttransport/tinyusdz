@@ -16,6 +16,7 @@
 #include "core/schema-registry.hh"
 #include "namespace-mapping.hh"
 #include "str-util.hh"
+#include "tiny-hashmap.hh"
 #include "io-util.hh"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
@@ -673,7 +674,7 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
   }
 
   // AOUSD Core Spec 9.5: Build expression variables map for asset path substitution
-  std::map<std::string, std::string> expr_vars;
+  tinyusdz::HashMap<std::string, std::string> expr_vars;
   if (in_layer.metas().expressionVariables) {
     for (const auto &var : in_layer.metas().expressionVariables.value()) {
       if (auto sv = var.second.get_value<std::string>()) {
