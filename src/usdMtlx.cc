@@ -1656,8 +1656,8 @@ static const std::pair<const char*, NodeDispatchEntry> kNodeDispatchPairs[] = {
   {"constant",    {nullptr, nullptr, "MaterialXConstant"}},
 };
 
-static const std::unordered_map<std::string, NodeDispatchEntry> &GetNodeDispatchTable() {
-  static const std::unordered_map<std::string, NodeDispatchEntry> table(
+static const tinyusdz::HashMap<std::string, NodeDispatchEntry> &GetNodeDispatchTable() {
+  static const tinyusdz::HashMap<std::string, NodeDispatchEntry> table(
       std::begin(kNodeDispatchPairs), std::end(kNodeDispatchPairs));
   return table;
 }

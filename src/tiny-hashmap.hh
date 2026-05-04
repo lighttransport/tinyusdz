@@ -270,6 +270,14 @@ class HashMap {
     }
   }
 
+  template <typename InputIt>
+  HashMap(InputIt first, InputIt last)
+      : _size(0), _mask(0), _max_load(0.5f), _buckets(), _hash(), _eq() {
+    for (; first != last; ++first) {
+      emplace(first->first, first->second);
+    }
+  }
+
   HashMap(const HashMap &) = default;
   HashMap(HashMap &&) noexcept = default;
   HashMap &operator=(const HashMap &) = default;

@@ -25,6 +25,7 @@
 
 #include "common-utils.hh"
 #include "common-types.hh"
+#include "../tiny-hashmap.hh"
 #include "image-loader.hh"
 #include "image-util.hh"
 #include "image-types.hh"
@@ -386,7 +387,7 @@ bool TryConvertFacevaryingToVertexInt(
   }
 
   // vidx, value
-  std::unordered_map<uint32_t, T> vdata;
+  tinyusdz::HashMap<uint32_t, T> vdata;
   vdata.reserve(faceVertexIndices.size());
 
   uint32_t max_vidx = 0;
@@ -435,7 +436,7 @@ bool TryConvertFacevaryingToVertexFloat(
   }
 
   // vidx, value
-  std::unordered_map<uint32_t, T> vdata;
+  tinyusdz::HashMap<uint32_t, T> vdata;
   vdata.reserve(faceVertexIndices.size());
 
   uint32_t max_vidx = 0;
@@ -483,7 +484,7 @@ bool TryConvertFacevaryingToVertexMat(
   }
 
   // vidx, value
-  std::unordered_map<uint32_t, T> vdata;
+  tinyusdz::HashMap<uint32_t, T> vdata;
   vdata.reserve(faceVertexIndices.size());
 
   uint32_t max_vidx = 0;
@@ -2216,7 +2217,7 @@ template <class VertexInput, class VertexOutput, class PackedVert,
 void BuildIndices(const VertexInput &input, VertexOutput &output,
                   std::vector<uint32_t> &out_indices, std::vector<uint32_t> &out_point_indices)
 {
-  std::unordered_map<PackedVert, uint32_t, PackedVertHasher, PackedVertEqual>
+  tinyusdz::HashMap<PackedVert, uint32_t, PackedVertHasher, PackedVertEqual>
       vertexToIndexMap;
 
   auto GetSimilarVertex = [&](const PackedVert &v, uint32_t &out_idx) -> bool {
@@ -2562,7 +2563,7 @@ static bool ReorderVertexVaryingAttributes(
     // Then splat point attributes accordingly.
 
     // org pointIdx -> List of pointIdx in reordered points.
-    std::unordered_map<uint32_t, std::vector<uint32_t>> pointIdxRemap;
+    tinyusdz::HashMap<uint32_t, std::vector<uint32_t>> pointIdxRemap;
     pointIdxRemap.reserve(num_verts);
 
     for (size_t v = 0; v < num_verts; v++) {
@@ -3568,7 +3569,7 @@ bool RenderSceneConverter::ConvertMesh(
   //
 
   // key:slotId, value:texcoord data
-  std::unordered_map<uint32_t, VertexAttribute> uvAttrs;
+  tinyusdz::HashMap<uint32_t, VertexAttribute> uvAttrs;
 
   // We need Material info to get corresponding primvar name.
   if (rmaterial_map.empty()) {
