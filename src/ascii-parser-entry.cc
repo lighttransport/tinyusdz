@@ -367,7 +367,7 @@ static constexpr size_t g_usd_keywords_count =
 
 
 static void RegisterStageMetas(
-    std::unordered_map<std::string, AsciiParser::VariableDef> &metas) {
+    tinyusdz::HashMap<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
   metas["documentation"] =
@@ -426,7 +426,7 @@ static void RegisterStageMetas(
 }
 
 static void RegisterPrimMetas(
-    std::unordered_map<std::string, AsciiParser::VariableDef> &metas) {
+    tinyusdz::HashMap<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
 
   metas["kind"] = AsciiParser::VariableDef(value::kToken, "kind");
@@ -488,7 +488,7 @@ static void RegisterPrimMetas(
 }
 
 static void RegisterPropMetas(
-    std::unordered_map<std::string, AsciiParser::VariableDef> &metas) {
+    tinyusdz::HashMap<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
 
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");

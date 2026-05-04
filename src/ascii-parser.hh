@@ -166,10 +166,10 @@ class AsciiParser {
   };
 
   struct CursorStore {
-    std::unordered_map<std::string, StoredCursor> layer_metas;
-    std::unordered_map<std::string, StoredCursor> prims;
-    std::unordered_map<std::string, StoredCursor> prim_attrs;
-    std::unordered_map<std::string, StoredCursor> properties;
+    tinyusdz::HashMap<std::string, StoredCursor> layer_metas;
+    tinyusdz::HashMap<std::string, StoredCursor> prims;
+    tinyusdz::HashMap<std::string, StoredCursor> prim_attrs;
+    tinyusdz::HashMap<std::string, StoredCursor> properties;
 
     static std::string MakePropertyKey(const std::string &prim_path,
                                        const std::string &property_name) {
@@ -1212,13 +1212,13 @@ class AsciiParser {
   std::unordered_set<std::string> _supported_api_schemas;
 
   // Supported metadataum for Stage
-  std::unordered_map<std::string, VariableDef> _supported_stage_metas;
+  tinyusdz::HashMap<std::string, VariableDef> _supported_stage_metas;
 
   // Supported metadataum for Prim.
-  std::unordered_map<std::string, VariableDef> _supported_prim_metas;
+  tinyusdz::HashMap<std::string, VariableDef> _supported_prim_metas;
 
   // Supported metadataum for Property(Attribute and Relation).
-  std::unordered_map<std::string, VariableDef> _supported_prop_metas;
+  tinyusdz::HashMap<std::string, VariableDef> _supported_prop_metas;
 
   std::stack<ErrorDiagnostic> err_stack;
   std::stack<ErrorDiagnostic> warn_stack;
@@ -1250,8 +1250,8 @@ class AsciiParser {
   PrimIdxAssignFunctin _prim_idx_assign_fun;
   StageMetaProcessFunction _stage_meta_process_fun;
   // PrimMetaProcessFunction _prim_meta_process_fun;
-  std::unordered_map<std::string, PrimConstructFunction> _prim_construct_fun_map;
-  std::unordered_map<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
+  tinyusdz::HashMap<std::string, PrimConstructFunction> _prim_construct_fun_map;
+  tinyusdz::HashMap<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
 
   bool _primspec_mode{false};
 
