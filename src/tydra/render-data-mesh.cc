@@ -3835,9 +3835,16 @@ bool RenderSceneConverter::ConvertMesh(
       }
     }
 
-    dst.normals.get_data().resize(normals.size() * sizeof(value::normal3f));
-    memcpy(dst.normals.get_data().data(), normals.data(),
-           normals.size() * sizeof(value::normal3f));
+    size_t resize_size;
+    if (!safe::n_to_size<value::normal3f>(normals.size(), &resize_size)) {
+      return nonstd::make_unexpected("Integer overflow: normals.size() * sizeof(value::normal3f)");
+    }
+    dst.normals.get_data().resize(resize_size);
+    size_t memcpy_size;
+    if (!safe::n_to_size<value::normal3f>(normals.size(), &memcpy_size)) {
+      return nonstd::make_unexpected("Integer overflow in memcpy");
+    }
+    memcpy(dst.normals.get_data().data(), normals.data(), memcpy_size);
     dst.normals.elementSize = 1;
     dst.normals.stride = sizeof(value::normal3f);
     dst.normals.format = VertexAttributeFormat::Vec3;
