@@ -38,6 +38,7 @@
 #include "tinyusdz.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
+#include "safe-arithmetic.hh"
 #include "usdLux.hh"
 #include "usdMtlx.hh"
 #include "value-pprint.hh"
@@ -2592,14 +2593,26 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         // Helper: store f32 buffer into imageBuffer
         auto store_f32_buf = [&](const std::vector<float> &buf) {
           imageBuffer.componentType = tydra::ComponentType::Float;
-          imageBuffer.data.resize(buf.size() * sizeof(float));
-          memcpy(imageBuffer.data.data(), buf.data(), sizeof(float) * buf.size());
+          size_t resize_size;
+          if (!safe::mul(buf.size(), sizeof(float), &resize_size)) {
+            return;  // Overflow - skip
+          }
+          imageBuffer.data.resize(resize_size);
+          size_t memcpy_size;
+          if (!safe::mul(buf.size(), sizeof(float), &memcpy_size)) {
+            return;  // Overflow - skip
+          }
+          memcpy(imageBuffer.data.data(), buf.data(), memcpy_size);
         };
 
         // Helper: extract f32 buffer from assetImageBuffer
         auto asset_data_to_f32_buf = [&](std::vector<float> &buf) {
           buf.resize(assetImageBuffer.data.size() / sizeof(float));
-          memcpy(buf.data(), assetImageBuffer.data.data(), buf.size() * sizeof(float));
+          size_t memcpy_size;
+          if (!safe::mul(buf.size(), sizeof(float), &memcpy_size)) {
+            return;  // Overflow - skip
+          }
+          memcpy(buf.data(), assetImageBuffer.data.data(), memcpy_size);
         };
 
         if (assetImageBuffer.componentType == tydra::ComponentType::UInt8) {
@@ -2809,9 +2822,16 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             }
             imageBuffer.componentType = tydra::ComponentType::Float;
 
-            imageBuffer.data.resize(buf.size() * sizeof(float));
-            memcpy(imageBuffer.data.data(), buf.data(),
-                   sizeof(float) * buf.size());
+            size_t resize_size;
+            if (!safe::mul(buf.size(), sizeof(float), &resize_size)) {
+              PUSH_ERROR_AND_RETURN("Integer overflow: buf.size() * sizeof(float)");
+            }
+            imageBuffer.data.resize(resize_size);
+            size_t memcpy_size;
+            if (!safe::mul(buf.size(), sizeof(float), &memcpy_size)) {
+              PUSH_ERROR_AND_RETURN("Integer overflow in memcpy");
+            }
+            memcpy(imageBuffer.data.data(), buf.data(), memcpy_size);
           }
 
           texImage.colorSpace = texImage.usdColorSpace;

@@ -28,6 +28,7 @@
 #include "image-loader.hh"
 #include "image-util.hh"
 #include "image-types.hh"
+#include "safe-arithmetic.hh"
 #include "linear-algebra.hh"
 #include "math-util.inc"
 #include "core/prim.hh"
@@ -296,8 +297,14 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         }
         if (time > anim_out->duration) anim_out->duration = time;
         for (size_t j = 0; j < nJoints; j++) {
-          transTimesBuf[j * nTransTimes + frameIdx] = time;
-          memcpy(&transValsBuf[(j * nTransTimes + frameIdx) * 3], frameData[j].data(), 3 * sizeof(float));
+          size_t idx;
+          if (!safe::mul(j, nTransTimes, &idx)) { return false; }
+          if (!safe::add(idx, frameIdx, &idx)) { return false; }
+          transTimesBuf[idx] = time;
+
+          size_t dest_idx;
+          if (!safe::mul(idx, 3, &dest_idx)) { return false; }
+          memcpy(&transValsBuf[dest_idx], frameData[j].data(), 3 * sizeof(float));
         }
         return true;
       };
@@ -336,8 +343,14 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         }
         if (time > anim_out->duration) anim_out->duration = time;
         for (size_t j = 0; j < nJoints; j++) {
-          rotTimesBuf[j * nRotTimes + frameIdx] = time;
-          memcpy(&rotValsBuf[(j * nRotTimes + frameIdx) * 4], &frameData[j], 4 * sizeof(float));
+          size_t idx;
+          if (!safe::mul(j, nRotTimes, &idx)) { return false; }
+          if (!safe::add(idx, frameIdx, &idx)) { return false; }
+          rotTimesBuf[idx] = time;
+
+          size_t dest_idx;
+          if (!safe::mul(idx, 4, &dest_idx)) { return false; }
+          memcpy(&rotValsBuf[dest_idx], &frameData[j], 4 * sizeof(float));
         }
         return true;
       };
