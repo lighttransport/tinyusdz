@@ -788,20 +788,20 @@ private:
   std::vector<std::string> validation_warnings_;  // Collected validation warnings
 
   // Deduplication tables
-  std::unordered_map<std::string, crate::TokenIndex> token_to_index_;
+  tinyusdz::HashMap<std::string, crate::TokenIndex> token_to_index_;
   std::vector<std::string> tokens_;  // Index -> token string
   std::map<int32_t, uint32_t> path_tree_token_remap_;  // Maps path tree token index -> our token index
 
-  std::unordered_map<std::string, crate::StringIndex> string_to_index_;
+  tinyusdz::HashMap<std::string, crate::StringIndex> string_to_index_;
   std::vector<std::string> strings_;  // Index -> string
 
-  std::unordered_map<Path, crate::PathIndex, crate::PathHasher, crate::PathKeyEqual> path_to_index_;
+  tinyusdz::HashMap<Path, crate::PathIndex, crate::PathHasher, crate::PathKeyEqual> path_to_index_;
   std::vector<Path> paths_;  // Index -> path
 
-  std::unordered_map<crate::Field, crate::FieldIndex, crate::FieldHasher, crate::FieldKeyEqual> field_to_index_;
+  tinyusdz::HashMap<crate::Field, crate::FieldIndex, crate::FieldHasher, crate::FieldKeyEqual> field_to_index_;
   std::vector<crate::Field> fields_;  // Index -> field
 
-  std::unordered_map<std::vector<crate::FieldIndex>, crate::FieldSetIndex, crate::FieldSetHasher> fieldset_to_index_;
+  tinyusdz::HashMap<std::vector<crate::FieldIndex>, crate::FieldSetIndex, crate::FieldSetHasher> fieldset_to_index_;
   std::vector<std::vector<crate::FieldIndex>> fieldsets_;  // Index -> fieldset
 
   // Spec data (accumulated before writing)
