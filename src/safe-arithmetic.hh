@@ -13,63 +13,67 @@
 namespace tinyusdz {
 namespace safe {
 
-// Checked multiplication for size_t (or any unsigned integral type)
-// Returns false if overflow would occur
-template <typename T>
-inline typename std::enable_if<std::is_unsigned<T>::value, bool>::type
-checked_mul(T a, T b, T* result) {
-  if (b != 0 && a > std::numeric_limits<T>::max() / b) {
+///
+/// Safe multiplication: a * b -> result (as size_t)
+/// Works with any integer types that can be converted to size_t.
+/// Returns true and sets *out on success, false on overflow.
+///
+template <typename A, typename B>
+inline bool mul(A a, B b, size_t* out) {
+  static_assert(std::is_integral<A>::value && std::is_integral<B>::value,
+                "mul requires integral types");
+  size_t sa = static_cast<size_t>(a);
+  size_t sb = static_cast<size_t>(b);
+  if ((sb != 0) && (sa > std::numeric_limits<size_t>::max() / sb)) {
     return false;  // overflow would occur
   }
-  *result = a * b;
+  *out = sa * sb;
   return true;
 }
 
-// Checked multiplication for size_t with three operands
-template <typename T>
-inline typename std::enable_if<std::is_unsigned<T>::value, bool>::type
-checked_mul3(T a, T b, T c, T* result) {
-  T tmp;
-  if (!checked_mul(a, b, &tmp)) return false;
-  return checked_mul(tmp, c, result);
+///
+/// Safe multiplication with three operands: a * b * c -> result (as size_t)
+/// Returns true and sets *out on success, false on overflow.
+///
+template <typename A, typename B, typename C>
+inline bool mul3(A a, B b, C c, size_t* out) {
+  static_assert(std::is_integral<A>::value && std::is_integral<B>::value && std::is_integral<C>::value,
+                "mul3 requires integral types");
+  size_t tmp;
+  if (!mul(a, b, &tmp)) return false;
+  return mul(tmp, c, out);
 }
 
-// Convenience wrapper: compute size with overflow check
-// Returns true on success, false on overflow
-inline bool safe_size(size_t count, size_t element_size, size_t* out) {
-  return checked_mul(count, element_size, out);
-}
-
-// Convenience wrapper for three-way size calculation
-inline bool safe_size3(size_t a, size_t b, size_t c, size_t* out) {
-  return checked_mul3(a, b, c, out);
-}
-
-// Checked addition
-template <typename T>
-inline typename std::enable_if<std::is_unsigned<T>::value, bool>::type
-checked_add(T a, T b, T* result) {
-  if (a > std::numeric_limits<T>::max() - b) {
+///
+/// Safe addition: a + b -> result (as size_t)
+/// Returns true and sets *out on success, false on overflow.
+///
+template <typename A, typename B>
+inline bool add(A a, B b, size_t* out) {
+  static_assert(std::is_integral<A>::value && std::is_integral<B>::value,
+                "add requires integral types");
+  size_t sa = static_cast<size_t>(a);
+  size_t sb = static_cast<size_t>(b);
+  if (sa > std::numeric_limits<size_t>::max() - sb) {
     return false;  // overflow would occur
   }
-  *result = a + b;
+  *out = sa + sb;
   return true;
 }
 
-// Special handling for uint64_t to size_t conversion with multiplication
-// Used in crate reader where n is uint64_t but we need size_t bytes
-inline bool safe_uint64_to_size_t_mul(uint64_t n, size_t element_size, size_t* out) {
+///
+/// Safe uint64_t n -> size_t with sizeof(T) multiplication
+/// For patterns like: size_t byte_count = sizeof(T) * arr.size();
+/// Returns true and sets *out on success, false on overflow.
+///
+template <typename T>
+inline bool n_to_size(uint64_t n, size_t* out) {
   // First check if n fits in size_t
   if (n > std::numeric_limits<size_t>::max()) {
     return false;
   }
   size_t count = static_cast<size_t>(n);
-  return checked_mul(count, element_size, out);
-}
-
-// Check if uint64_t value exceeds size_t max
-inline bool uint64_fits_size_t(uint64_t v) {
-  return v <= std::numeric_limits<size_t>::max();
+  return mul(count, sizeof(T), out);
 }
 
 }  // namespace safe

@@ -39,6 +39,7 @@
 #include "value-types.hh"
 #include "tiny-format.hh"
 #include "str-util.hh"
+#include "safe-arithmetic.hh"
 
 //
 #ifdef __clang__
@@ -74,6 +75,15 @@ namespace crate {
 
 
 #define VERSION_LESS_THAN_0_8_0(__version) ((_version[0] == 0) && (_version[1] < 7))
+
+///
+/// Safe size computation: uint64_t n * sizeof(T) -> size_t
+/// Returns true on success, false on overflow.
+///
+template <typename T>
+bool SafeSizeForN(uint64_t n, size_t* out) {
+  return safe::n_to_size<T>(n, out);
+}
 
 //
 // --
@@ -236,7 +246,10 @@ bool CrateReader::ReadIndices(std::vector<crate::Index> *indices) {
 
   DCOUT("ReadIndices: n = " << n);
 
-  size_t datalen = size_t(n) * sizeof(crate::Index);
+  size_t datalen;
+  if (!SafeSizeForN<crate::Index>(n, &datalen)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in ReadIndices: n * sizeof(crate::Index)");
+  }
 
   if (datalen > _sr->size()) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Indices data exceeds USDC size.");
@@ -929,7 +942,11 @@ bool CrateReader::ReadArray(std::vector<Reference> *d) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
   }
 
-  CHECK_MEMORY_USAGE(sizeof(Reference) * n);
+  size_t Reference_size;
+  if (!SafeSizeForN<Reference>(n, &Reference_size)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in CHECK_MEMORY_USAGE");
+  }
+  CHECK_MEMORY_USAGE(Reference_size);
 
   for (size_t i = 0; i < n; i++) {
     Reference p;
@@ -972,7 +989,11 @@ bool CrateReader::ReadArray(std::vector<Payload> *d) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
   }
 
-  CHECK_MEMORY_USAGE(sizeof(Payload) * n);
+  size_t Payload_size;
+  if (!SafeSizeForN<Payload>(n, &Payload_size)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in CHECK_MEMORY_USAGE");
+  }
+  CHECK_MEMORY_USAGE(Payload_size);
 
   for (size_t i = 0; i < n; i++) {
     Payload p;
