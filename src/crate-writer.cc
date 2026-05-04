@@ -160,20 +160,28 @@ size_t CrateWriter::NanAwareHash::hash_buffer(const void *data,
     size_t count = byte_count / sizeof(float);
     for (size_t i = 0; i < count; ++i) {
       float v;
-      std::memcpy(&v, canon.data() + i * sizeof(float), sizeof(float));
+      size_t offset;
+      if (!safe::mul(i, sizeof(float), &offset)) {
+        return 0;  // Error - return 0 hash
+      }
+      std::memcpy(&v, canon.data() + offset, sizeof(float));
       if (v == 0.0f) {
         uint32_t zero = 0;
-        std::memcpy(canon.data() + i * sizeof(float), &zero, sizeof(float));
+        std::memcpy(canon.data() + offset, &zero, sizeof(float));
       }
     }
   } else { // sizeof(double)
     size_t count = byte_count / sizeof(double);
     for (size_t i = 0; i < count; ++i) {
       double v;
-      std::memcpy(&v, canon.data() + i * sizeof(double), sizeof(double));
+      size_t offset;
+      if (!safe::mul(i, sizeof(double), &offset)) {
+        return 0;  // Error - return 0 hash
+      }
+      std::memcpy(&v, canon.data() + offset, sizeof(double));
       if (v == 0.0) {
         uint64_t zero = 0;
-        std::memcpy(canon.data() + i * sizeof(double), &zero, sizeof(double));
+        std::memcpy(canon.data() + offset, &zero, sizeof(double));
       }
     }
   }
@@ -195,8 +203,12 @@ bool CrateWriter::NanAwareHash::buffers_equal(const void *a, const void *b,
     size_t count = byte_count / sizeof(float);
     for (size_t i = 0; i < count; ++i) {
       float va, vb;
-      std::memcpy(&va, pa + i * sizeof(float), sizeof(float));
-      std::memcpy(&vb, pb + i * sizeof(float), sizeof(float));
+      size_t offset;
+      if (!safe::mul(i, sizeof(float), &offset)) {
+        return false;  // Overflow - buffers aren't equal
+      }
+      std::memcpy(&va, pa + offset, sizeof(float));
+      std::memcpy(&vb, pb + offset, sizeof(float));
       uint32_t ba = 0, bb = 0;
       if (va != 0.0f) { std::memcpy(&ba, &va, sizeof(float)); }
       if (vb != 0.0f) { std::memcpy(&bb, &vb, sizeof(float)); }
@@ -207,8 +219,12 @@ bool CrateWriter::NanAwareHash::buffers_equal(const void *a, const void *b,
     size_t count = byte_count / sizeof(double);
     for (size_t i = 0; i < count; ++i) {
       double va, vb;
-      std::memcpy(&va, pa + i * sizeof(double), sizeof(double));
-      std::memcpy(&vb, pb + i * sizeof(double), sizeof(double));
+      size_t offset;
+      if (!safe::mul(i, sizeof(double), &offset)) {
+        return false;  // Overflow - buffers aren't equal
+      }
+      std::memcpy(&va, pa + offset, sizeof(double));
+      std::memcpy(&vb, pb + offset, sizeof(double));
       uint64_t ba = 0, bb = 0;
       if (va != 0.0) { std::memcpy(&ba, &va, sizeof(double)); }
       if (vb != 0.0) { std::memcpy(&bb, &vb, sizeof(double)); }
