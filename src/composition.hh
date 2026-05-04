@@ -30,9 +30,9 @@
 #pragma once
 
 #include <functional>
-#include <unordered_map>
 
 #include "asset-resolution.hh"
+#include "tiny-hashmap.hh"
 #include "core/prim-spec.hh"  // PrimSpec, FileFormatHandler (transitively: property, composition-types, prim-enums, prim-metas, variant-types)
 #include "layer.hh"           // Layer class
 
@@ -67,7 +67,7 @@ struct SublayersCompositionOptions {
   bool error_when_unsupported_fileformat{false};
 
   // File formats
-  std::unordered_map<std::string, FileFormatHandler> fileformats;
+  tinyusdz::HashMap<std::string, FileFormatHandler> fileformats;
   
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management
@@ -85,7 +85,7 @@ struct ReferencesCompositionOptions {
   bool error_when_unsupported_fileformat{false};
 
   // File formats
-  std::unordered_map<std::string, FileFormatHandler> fileformats;
+  tinyusdz::HashMap<std::string, FileFormatHandler> fileformats;
   
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management
@@ -103,7 +103,7 @@ struct PayloadCompositionOptions {
   bool error_when_unsupported_fileformat{false};
 
   // File formats
-  std::unordered_map<std::string, FileFormatHandler> fileformats;
+  tinyusdz::HashMap<std::string, FileFormatHandler> fileformats;
 
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management
