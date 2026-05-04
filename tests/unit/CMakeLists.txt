@@ -24,6 +24,7 @@ set(TEST_SOURCES
 	unit-crate-writer.cc
 	unit-stage.cc
 	unit-tiny-container.cc
+	unit-tiny-hashmap.cc
 	unit-usda-roundtrip.cc
 	unit-half-roundtrip.cc
 	unit-prim-reconstruct.cc

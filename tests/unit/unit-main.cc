@@ -25,6 +25,7 @@
 #include "unit-crate-writer.h"
 #include "unit-stage.h"
 #include "unit-tiny-container.h"
+#include "unit-tiny-hashmap.h"
 #include "unit-usda-roundtrip.h"
 #include "unit-usdc-reconstruct.h"
 #include "unit-half-roundtrip.h"
@@ -259,6 +260,17 @@ TEST_LIST = {
   { "stack_vector_move_test", stack_vector_move_test },
   { "stack_vector_iterator_test", stack_vector_iterator_test },
   { "stack_vector_complex_type_test", stack_vector_complex_type_test },
+  { "tiny_hashmap_basic_insert_find_test", tiny_hashmap_basic_insert_find_test },
+  { "tiny_hashmap_operator_subscript_test", tiny_hashmap_operator_subscript_test },
+  { "tiny_hashmap_erase_test", tiny_hashmap_erase_test },
+  { "tiny_hashmap_rehash_growth_test", tiny_hashmap_rehash_growth_test },
+  { "tiny_hashmap_collision_stress_test", tiny_hashmap_collision_stress_test },
+  { "tiny_hashmap_move_only_value_test", tiny_hashmap_move_only_value_test },
+  { "tiny_hashmap_iteration_coverage_test", tiny_hashmap_iteration_coverage_test },
+  { "tiny_hashmap_copy_move_test", tiny_hashmap_copy_move_test },
+  { "tiny_hashmap_clear_reuse_test", tiny_hashmap_clear_reuse_test },
+  { "tiny_hashmap_load_factor_test", tiny_hashmap_load_factor_test },
+  { "tiny_hashmap_int_keys_test", tiny_hashmap_int_keys_test },
   { "usda_roundtrip_basic_test", usda_roundtrip_basic_test },
   { "usda_roundtrip_xform_test", usda_roundtrip_xform_test },
   { "usda_roundtrip_mesh_test", usda_roundtrip_mesh_test },
