@@ -551,7 +551,7 @@ static bool TryConvertFacevaryingToVertex(
     memcpy(vsrc.data(), src.get_data().data(), src.get_data().size());    \
     std::vector<__ty> vdst;                                               \
     bool ret = TryConvertFacevaryingToVertexInt<__ty>(vsrc, &vdst,        \
-                                                      faceVertexIndices); \
+                                                       faceVertexIndices); \
     if (!ret) {                                                           \
       return false;                                                       \
     }                                                                     \
@@ -559,8 +559,16 @@ static bool TryConvertFacevaryingToVertex(
     dst->elementSize = 1;                                                 \
     dst->format = src.format;                                             \
     dst->variability = VertexVariability::Vertex;                         \
-    dst->data.resize(vdst.size() * src.format_size());                    \
-    memcpy(dst->data.data(), vdst.data(), dst->data.size());              \
+    size_t resize_size;                                                    \
+    if (!safe::mul(vdst.size(), src.format_size(), &resize_size)) {       \
+      return false;                                                       \
+    }                                                                     \
+    dst->data.resize(resize_size);                                         \
+    size_t memcpy_size;                                                    \
+    if (!safe::mul(vdst.size(), src.format_size(), &memcpy_size)) {       \
+      return false;                                                       \
+    }                                                                     \
+    memcpy(dst->data.data(), vdst.data(), memcpy_size);                    \
     return true;                                                          \
   } else
 
@@ -579,8 +587,16 @@ static bool TryConvertFacevaryingToVertex(
     dst->elementSize = 1;                                              \
     dst->format = src.format;                                          \
     dst->variability = VertexVariability::Vertex;                      \
-    dst->data.resize(vdst.size() * src.format_size());                 \
-    memcpy(dst->data.data(), vdst.data(), dst->data.size());           \
+    size_t resize_size;                                                    \
+    if (!safe::mul(vdst.size(), src.format_size(), &resize_size)) {       \
+      return false;                                                       \
+    }                                                                     \
+    dst->data.resize(resize_size);                                         \
+    size_t memcpy_size;                                                    \
+    if (!safe::mul(vdst.size(), src.format_size(), &memcpy_size)) {       \
+      return false;                                                       \
+    }                                                                     \
+    memcpy(dst->data.data(), vdst.data(), memcpy_size);                    \
     return true;                                                       \
   } else
 
@@ -591,7 +607,7 @@ static bool TryConvertFacevaryingToVertex(
     memcpy(vsrc.data(), src.get_data().data(), src.get_data().size());    \
     std::vector<__ty> vdst;                                               \
     bool ret = TryConvertFacevaryingToVertexMat<__ty>(vsrc, &vdst,        \
-                                                      faceVertexIndices); \
+                                                       faceVertexIndices); \
     if (!ret) {                                                           \
       return false;                                                       \
     }                                                                     \
@@ -599,8 +615,16 @@ static bool TryConvertFacevaryingToVertex(
     dst->elementSize = 1;                                                 \
     dst->format = src.format;                                             \
     dst->variability = VertexVariability::Vertex;                         \
-    dst->data.resize(vdst.size() * src.format_size());                    \
-    memcpy(dst->data.data(), vdst.data(), dst->data.size());              \
+    size_t resize_size;                                                    \
+    if (!safe::mul(vdst.size(), src.format_size(), &resize_size)) {       \
+      return false;                                                       \
+    }                                                                     \
+    dst->data.resize(resize_size);                                         \
+    size_t memcpy_size;                                                    \
+    if (!safe::mul(vdst.size(), src.format_size(), &memcpy_size)) {       \
+      return false;                                                       \
+    }                                                                     \
+    memcpy(dst->data.data(), vdst.data(), memcpy_size);                    \
     return true;                                                          \
   } else
 
@@ -3837,12 +3861,12 @@ bool RenderSceneConverter::ConvertMesh(
 
     size_t resize_size;
     if (!safe::n_to_size<value::normal3f>(normals.size(), &resize_size)) {
-      return nonstd::make_unexpected("Integer overflow: normals.size() * sizeof(value::normal3f)");
+      return false;
     }
     dst.normals.get_data().resize(resize_size);
     size_t memcpy_size;
     if (!safe::n_to_size<value::normal3f>(normals.size(), &memcpy_size)) {
-      return nonstd::make_unexpected("Integer overflow in memcpy");
+      return false;
     }
     memcpy(dst.normals.get_data().data(), normals.data(), memcpy_size);
     dst.normals.elementSize = 1;
@@ -4908,17 +4932,39 @@ bool RenderSceneConverter::ConvertMesh(
     // Store tangents/binormals into dst with facevarying variability.
     if (used_mikktspace) {
       // MikkTSpace output is already facevarying
-      dst.tangents.data.resize(tangents.size() * sizeof(vec3));
-      memcpy(dst.tangents.data.data(), tangents.data(),
-             tangents.size() * sizeof(vec3));
+      size_t tan_size;
+      if (!safe::n_to_size<vec3>(tangents.size(), &tan_size)) {
+        return false;
+      }
+      dst.tangents.data.resize(tan_size);
+      size_t tan_memcpy_size;
+      if (!safe::n_to_size<vec3>(tangents.size(), &tan_memcpy_size)) {
+        return false;
+      }
+      memcpy(dst.tangents.data.data(), tangents.data(), tan_memcpy_size);
 
-      dst.binormals.data.resize(binormals.size() * sizeof(vec3));
-      memcpy(dst.binormals.data.data(), binormals.data(),
-             binormals.size() * sizeof(vec3));
+      size_t bin_size;
+      if (!safe::n_to_size<vec3>(binormals.size(), &bin_size)) {
+        return false;
+      }
+      dst.binormals.data.resize(bin_size);
+      size_t bin_memcpy_size;
+      if (!safe::n_to_size<vec3>(binormals.size(), &bin_memcpy_size)) {
+        return false;
+      }
+      memcpy(dst.binormals.data.data(), binormals.data(), bin_memcpy_size);
     } else {
       // Lengyel output needs index expansion
-      dst.tangents.data.resize(vertex_indices.size() * sizeof(vec3));
-      dst.binormals.data.resize(vertex_indices.size() * sizeof(vec3));
+      size_t vi_tan_size;
+      if (!safe::n_to_size<vec3>(vertex_indices.size(), &vi_tan_size)) {
+        return false;
+      }
+      dst.tangents.data.resize(vi_tan_size);
+      size_t vi_bin_size;
+      if (!safe::n_to_size<vec3>(vertex_indices.size(), &vi_bin_size)) {
+        return false;
+      }
+      dst.binormals.data.resize(vi_bin_size);
       vec3 *dst_tangents = reinterpret_cast<vec3 *>(dst.tangents.data.data());
       vec3 *dst_binormals = reinterpret_cast<vec3 *>(dst.binormals.data.data());
       for (size_t i = 0; i < vertex_indices.size(); i++) {
@@ -5292,17 +5338,39 @@ bool RenderSceneConverter::ComputeDeferredTangents(
 
   // Store results
   if (used_mikktspace) {
-    mesh->tangents.data.resize(tangents.size() * sizeof(vec3));
-    memcpy(mesh->tangents.data.data(), tangents.data(),
-           tangents.size() * sizeof(vec3));
+    size_t tan_size;
+    if (!safe::n_to_size<vec3>(tangents.size(), &tan_size)) {
+      return false;
+    }
+    mesh->tangents.data.resize(tan_size);
+    size_t tan_memcpy_size;
+    if (!safe::n_to_size<vec3>(tangents.size(), &tan_memcpy_size)) {
+      return false;
+    }
+    memcpy(mesh->tangents.data.data(), tangents.data(), tan_memcpy_size);
 
-    mesh->binormals.data.resize(binormals.size() * sizeof(vec3));
-    memcpy(mesh->binormals.data.data(), binormals.data(),
-           binormals.size() * sizeof(vec3));
+    size_t bin_size;
+    if (!safe::n_to_size<vec3>(binormals.size(), &bin_size)) {
+      return false;
+    }
+    mesh->binormals.data.resize(bin_size);
+    size_t bin_memcpy_size;
+    if (!safe::n_to_size<vec3>(binormals.size(), &bin_memcpy_size)) {
+      return false;
+    }
+    memcpy(mesh->binormals.data.data(), binormals.data(), bin_memcpy_size);
   } else {
     // Lengyel output needs index expansion
-    mesh->tangents.data.resize(vertex_indices.size() * sizeof(vec3));
-    mesh->binormals.data.resize(vertex_indices.size() * sizeof(vec3));
+    size_t vi_tan_size;
+    if (!safe::n_to_size<vec3>(vertex_indices.size(), &vi_tan_size)) {
+      return false;
+    }
+    mesh->tangents.data.resize(vi_tan_size);
+    size_t vi_bin_size;
+    if (!safe::n_to_size<vec3>(vertex_indices.size(), &vi_bin_size)) {
+      return false;
+    }
+    mesh->binormals.data.resize(vi_bin_size);
     vec3 *dst_tangents = reinterpret_cast<vec3 *>(mesh->tangents.data.data());
     vec3 *dst_binormals = reinterpret_cast<vec3 *>(mesh->binormals.data.data());
     for (size_t i = 0; i < vertex_indices.size(); i++) {
