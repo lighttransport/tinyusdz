@@ -475,7 +475,7 @@ bool CrateWriter::ConvertSinglePrim(
       }
     }
     if (!entry) {
-      prop_entries.push_back({base_name, {}, false, {}, false, {}, false, {}, false});
+      prop_entries.push_back({base_name, {}, false, {}, false, {}, false, {}, false, {}});
       entry = &prop_entries.back();
     }
 

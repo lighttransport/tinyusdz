@@ -24,12 +24,20 @@
 #include <stdio.h>
 #include <string.h>
 
-/* PyUnicode_AsUTF8 is part of the stable ABI from CPython 3.10+ but is
- * gated behind Py_LIMITED_API in older Python.h. Forward-declare to avoid
- * the "implicit declaration -> int" landmine. */
-#if !defined(PyUnicode_AsUTF8)
-PyAPI_FUNC(const char *) PyUnicode_AsUTF8(PyObject *unicode);
+/* On Windows, MSVC's <string.h> spells the case-insensitive compare as
+ * `_stricmp`. Linux/macOS expose `strcasecmp` via <strings.h>. */
+#ifdef _WIN32
+#  define strcasecmp _stricmp
+#else
+#  include <strings.h>
 #endif
+
+/* PyUnicode_AsUTF8 was added to the stable ABI in CPython 3.10, but on
+ * Windows the abi3 import library `python3.lib` does not actually export
+ * it until CPython 3.13. Use PyUnicode_AsUTF8AndSize(s, NULL), which has
+ * been in `python3.lib` since 3.10 — same return semantics, no size
+ * needed for our string-comparison call sites. */
+#define PyUnicode_AsUTF8(u) PyUnicode_AsUTF8AndSize((u), NULL)
 
 #include "../c-tinyusd.h"
 #include "../c-tinyusd-helpers.h"

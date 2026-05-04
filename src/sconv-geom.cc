@@ -1721,25 +1721,28 @@ bool CrateWriter::ExtractGPrimProperties(
   // pointer.
   const GPrim* gprim = prim.data().as<GPrim>();
   if (!gprim) {
-#define TRY_AS_GPRIM(__TY) if (auto *t = prim.data().as<__TY>()) { gprim = static_cast<const GPrim *>(t); }
+    // Each probe is wrapped in its own block so the local pointer goes out
+    // of scope before the next macro expansion — avoids -Wshadow on
+    // chained `if (auto *t = …) else if (auto *t = …)`.
+#define TRY_AS_GPRIM(__TY) if (!gprim) { if (auto *p = prim.data().as<__TY>()) gprim = static_cast<const GPrim *>(p); }
     TRY_AS_GPRIM(Xform)
-    else TRY_AS_GPRIM(GeomMesh)
-    else TRY_AS_GPRIM(GeomSphere)
-    else TRY_AS_GPRIM(GeomCube)
-    else TRY_AS_GPRIM(GeomCylinder)
-    else TRY_AS_GPRIM(GeomCone)
-    else TRY_AS_GPRIM(GeomCapsule)
-    else TRY_AS_GPRIM(GeomCamera)
-    else TRY_AS_GPRIM(GeomPoints)
-    else TRY_AS_GPRIM(GeomBasisCurves)
-    else TRY_AS_GPRIM(GeomNurbsCurves)
-    else TRY_AS_GPRIM(GeomHermiteCurves)
-    else TRY_AS_GPRIM(GeomPlane)
-    else TRY_AS_GPRIM(GeomCylinder_1)
-    else TRY_AS_GPRIM(GeomCapsule_1)
-    else TRY_AS_GPRIM(GeomTetMesh)
-    else TRY_AS_GPRIM(GeomNurbsPatch)
-    else TRY_AS_GPRIM(GeomPointInstancer)
+    TRY_AS_GPRIM(GeomMesh)
+    TRY_AS_GPRIM(GeomSphere)
+    TRY_AS_GPRIM(GeomCube)
+    TRY_AS_GPRIM(GeomCylinder)
+    TRY_AS_GPRIM(GeomCone)
+    TRY_AS_GPRIM(GeomCapsule)
+    TRY_AS_GPRIM(GeomCamera)
+    TRY_AS_GPRIM(GeomPoints)
+    TRY_AS_GPRIM(GeomBasisCurves)
+    TRY_AS_GPRIM(GeomNurbsCurves)
+    TRY_AS_GPRIM(GeomHermiteCurves)
+    TRY_AS_GPRIM(GeomPlane)
+    TRY_AS_GPRIM(GeomCylinder_1)
+    TRY_AS_GPRIM(GeomCapsule_1)
+    TRY_AS_GPRIM(GeomTetMesh)
+    TRY_AS_GPRIM(GeomNurbsPatch)
+    TRY_AS_GPRIM(GeomPointInstancer)
 #undef TRY_AS_GPRIM
   }
   if (!gprim) {
