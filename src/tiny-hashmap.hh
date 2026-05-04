@@ -344,6 +344,15 @@ class HashMap {
     return {iterator(this, r.first), r.second};
   }
 
+  // C++17 insert_or_assign: overwrite the existing value on duplicate key.
+  template <typename K2, typename V2>
+  std::pair<iterator, bool> insert_or_assign(K2 &&k, V2 &&v) {
+    grow_if_needed();
+    auto r = insert_into_table(Key(std::forward<K2>(k)), Value());
+    _buckets[r.first].kv.second = Value(std::forward<V2>(v));
+    return {iterator(this, r.first), r.second};
+  }
+
   Value &operator[](const Key &k) {
     grow_if_needed();
     auto r = insert_into_table(Key(k), Value());

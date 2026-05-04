@@ -14,3 +14,4 @@ void tiny_hashmap_copy_move_test(void);
 void tiny_hashmap_clear_reuse_test(void);
 void tiny_hashmap_load_factor_test(void);
 void tiny_hashmap_int_keys_test(void);
+void tiny_hashmap_insert_or_assign_test(void);

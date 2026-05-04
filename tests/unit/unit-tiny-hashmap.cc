@@ -246,6 +246,22 @@ void tiny_hashmap_load_factor_test(void) {
   }
 }
 
+void tiny_hashmap_insert_or_assign_test(void) {
+  HashMap<std::string, int> m;
+  auto r1 = m.insert_or_assign("a", 1);
+  TEST_CHECK(r1.second == true);
+  TEST_CHECK(m["a"] == 1);
+
+  auto r2 = m.insert_or_assign("a", 42);
+  TEST_CHECK(r2.second == false);
+  TEST_CHECK(m["a"] == 42);
+  TEST_CHECK(m.size() == 1);
+
+  m.insert_or_assign("b", 7);
+  TEST_CHECK(m.size() == 2);
+  TEST_CHECK(m.at("b") == 7);
+}
+
 void tiny_hashmap_int_keys_test(void) {
   HashMap<int, int> m;
   std::unordered_map<int, int> ref;

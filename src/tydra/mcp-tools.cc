@@ -73,7 +73,7 @@ inline bool decode_data(const std::string &data, std::string *binary,
 
 static std::string FindUUID(
     const std::string &name,
-    const std::unordered_map<std::string, USDLayer> &layers) {
+    const tinyusdz::HashMap<std::string, USDLayer> &layers) {
   for (const auto &it : layers) {
     if (it.second.name == name) {
       return it.first;

@@ -271,6 +271,7 @@ TEST_LIST = {
   { "tiny_hashmap_clear_reuse_test", tiny_hashmap_clear_reuse_test },
   { "tiny_hashmap_load_factor_test", tiny_hashmap_load_factor_test },
   { "tiny_hashmap_int_keys_test", tiny_hashmap_int_keys_test },
+  { "tiny_hashmap_insert_or_assign_test", tiny_hashmap_insert_or_assign_test },
   { "usda_roundtrip_basic_test", usda_roundtrip_basic_test },
   { "usda_roundtrip_xform_test", usda_roundtrip_xform_test },
   { "usda_roundtrip_mesh_test", usda_roundtrip_mesh_test },
