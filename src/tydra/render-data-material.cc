@@ -26,6 +26,7 @@
 #include "common-utils.hh"
 #include "common-types.hh"
 #include "enum-handlers.hh"
+#include "../tiny-hashmap.hh"
 #include "image-loader.hh"
 #include "image-util.hh"
 #include "image-types.hh"
@@ -1479,11 +1480,11 @@ struct MtlxConnectionResolveCacheEntry {
 
 struct ConnectionResolveCache {
   const Stage *stage{nullptr};
-  std::unordered_map<std::string, UVConnectionResolveCacheEntry,
-                     FNV1StringHash>
+  tinyusdz::HashMap<std::string, UVConnectionResolveCacheEntry,
+                    FNV1StringHash>
       uv_texture_by_connection;
-  std::unordered_map<std::string, MtlxConnectionResolveCacheEntry,
-                     FNV1StringHash>
+  tinyusdz::HashMap<std::string, MtlxConnectionResolveCacheEntry,
+                    FNV1StringHash>
       mtlx_texture_by_connection;
 };
 
@@ -1501,11 +1502,11 @@ void ResetConnectionResolveCache(const Stage &stage) {
   ConnectionResolveCache &cache = GetConnectionResolveCache(stage);
   // Swap with empty maps to release bucket memory (clear() keeps capacity)
   {
-    std::unordered_map<std::string, UVConnectionResolveCacheEntry, FNV1StringHash> tmp;
+    tinyusdz::HashMap<std::string, UVConnectionResolveCacheEntry, FNV1StringHash> tmp;
     cache.uv_texture_by_connection.swap(tmp);
   }
   {
-    std::unordered_map<std::string, MtlxConnectionResolveCacheEntry, FNV1StringHash> tmp;
+    tinyusdz::HashMap<std::string, MtlxConnectionResolveCacheEntry, FNV1StringHash> tmp;
     cache.mtlx_texture_by_connection.swap(tmp);
   }
 }
