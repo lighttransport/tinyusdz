@@ -27,8 +27,8 @@ const state = {
   assetFiles: new Map(),
   objectUrls: new Map(),
   meshCache: new Map(),
+  nativeMeshBuffers: new Map(),
   tinyLoader: null,
-  nativeModule: null,
   nativeExporter: null,
   joints: {},
   jointValues: {},
@@ -188,6 +188,7 @@ function clearRobot() {
   state.exportPayload = null;
   state.sourceRestLinkMatrices.clear();
   state.usdLinkBindings = [];
+  state.nativeMeshBuffers.clear();
   state.joints = {};
   state.jointValues = {};
   state.collisionMeshes = [];
@@ -290,6 +291,7 @@ function extension(path) {
 
 async function ensureTinyLoader() {
   if (!state.tinyLoader) {
+    setStatus('Loading TinyUSDZ WASM...');
     state.tinyLoader = await createConfiguredTinyUSDZLoader();
     TinyUSDZLoaderUtils.setTinyUSDZ(state.tinyLoader.native_);
   }
@@ -1053,6 +1055,51 @@ function collectMeshPayloads(root, baseMatrix, fallbackName) {
   return payloads;
 }
 
+function nativeMeshBufferForMesh(mesh, meshRef) {
+  if (state.nativeMeshBuffers.has(meshRef)) return meshRef;
+  const geom = mesh.geometry;
+  const pos = geom?.getAttribute('position');
+  if (!pos || pos.count < 3) return null;
+  const normal = geom.getAttribute('normal');
+  const uv = geom.getAttribute('uv');
+  const index = geom.getIndex();
+  let indices = null;
+  if (index) {
+    indices = index.array instanceof Int32Array
+      ? index.array
+      : new Int32Array(index.array);
+  } else {
+    indices = new Int32Array(pos.count);
+    for (let i = 0; i < indices.length; i++) indices[i] = i;
+  }
+  state.nativeMeshBuffers.set(meshRef, {
+    positions: pos.array instanceof Float32Array ? pos.array : new Float32Array(pos.array),
+    normals: normal ? (normal.array instanceof Float32Array ? normal.array : new Float32Array(normal.array)) : new Float32Array(),
+    uvs: uv ? (uv.array instanceof Float32Array ? uv.array : new Float32Array(uv.array)) : new Float32Array(),
+    indices
+  });
+  return meshRef;
+}
+
+function collectNativeMeshRefPayloads(root, baseMatrix, fallbackName, meshRefPrefix) {
+  const payloads = [];
+  root.updateMatrixWorld(true);
+  let index = 0;
+  root.traverse((obj) => {
+    if (!obj.isMesh) return;
+    const meshRef = sanitizeUSDIdentifier(`${meshRefPrefix}_${obj.name || index}`, 'mesh');
+    if (!nativeMeshBufferForMesh(obj, meshRef)) return;
+    const matrix = new THREE.Matrix4().copy(baseMatrix).multiply(obj.matrixWorld);
+    payloads.push({
+      name: payloads.length ? `${fallbackName}_${payloads.length}` : fallbackName,
+      matrix: matrixToUSDArray(matrix),
+      meshRef
+    });
+    index++;
+  });
+  return payloads;
+}
+
 function primitiveObjectFromGeometry(geometry, name) {
   const mesh = new THREE.Mesh(
     geometry,
@@ -1184,7 +1231,7 @@ async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName, baseMatrix
     const meshMatrix = new THREE.Matrix4()
       .copy(originMatrix)
       .multiply(new THREE.Matrix4().makeScale(scale[0] || 1, scale[1] || 1, scale[2] || 1));
-    return collectMeshPayloads(object, meshMatrix, fallbackName);
+    return collectNativeMeshRefPayloads(object, meshMatrix, fallbackName, meshAsset.path || attrs.mesh || fallbackName);
   }
 
   const object = await loadMujocoGeomObject(geomNode, meshAssets, fallbackName);
@@ -1878,13 +1925,9 @@ function urdfToXML(robot) {
 }
 
 async function ensureNativeExporter() {
-  if (!state.nativeModule) {
-    setStatus('Loading TinyUSDZ WASM...');
-    const mod = await import('./src/tinyusdz/tinyusdz.js');
-    state.nativeModule = await mod.default();
-  }
+  const loader = await ensureTinyLoader();
   if (!state.nativeExporter) {
-    state.nativeExporter = new state.nativeModule.TinyUSDZLoaderNative();
+    state.nativeExporter = new loader.native_.TinyUSDZLoaderNative();
   }
   return state.nativeExporter;
 }
@@ -1914,9 +1957,122 @@ function bytesFromNativeView(view) {
   return new Uint8Array(view);
 }
 
+function matrixFromUSDArray(values) {
+  const matrix = new THREE.Matrix4();
+  if (Array.isArray(values) && values.length === 16) {
+    matrix.fromArray(values);
+  }
+  return matrix;
+}
+
+function geometryFromPayloadItem(item, geometryCache) {
+  const meshRef = item?.meshRef;
+  if (meshRef && geometryCache.has(meshRef)) return geometryCache.get(meshRef);
+
+  const buffer = meshRef ? state.nativeMeshBuffers.get(meshRef) : item?.geometry;
+  const positions = buffer?.positions;
+  if (!positions || positions.length < 9) return null;
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(
+    positions instanceof Float32Array ? positions : new Float32Array(positions),
+    3
+  ));
+  if (buffer.normals?.length === positions.length) {
+    geometry.setAttribute('normal', new THREE.BufferAttribute(
+      buffer.normals instanceof Float32Array ? buffer.normals : new Float32Array(buffer.normals),
+      3
+    ));
+  } else {
+    geometry.computeVertexNormals();
+  }
+  if (buffer.uvs?.length === (positions.length / 3) * 2) {
+    geometry.setAttribute('uv', new THREE.BufferAttribute(
+      buffer.uvs instanceof Float32Array ? buffer.uvs : new Float32Array(buffer.uvs),
+      2
+    ));
+  }
+  if (buffer.indices?.length) {
+    geometry.setIndex(new THREE.BufferAttribute(
+      buffer.indices instanceof Uint32Array ? buffer.indices : new Uint32Array(buffer.indices),
+      1
+    ));
+  }
+  geometry.computeBoundingSphere();
+  if (meshRef) geometryCache.set(meshRef, geometry);
+  return geometry;
+}
+
+function buildConvertedUSDPreviewFromPayload(payload) {
+  const root = new THREE.Group();
+  root.name = usdBaseName();
+  const linksScope = new THREE.Group();
+  linksScope.name = 'Links';
+  root.add(linksScope);
+
+  const geometryCache = new Map();
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x9aa5ad,
+    roughness: 0.62,
+    metalness: 0.0
+  });
+
+  const sourceRestByLink = state.sourceRestLinkMatrices;
+  for (const link of payload.links || []) {
+    const linkName = link.name || 'link';
+    const linkGroup = new THREE.Group();
+    linkGroup.name = sanitizeUSDIdentifier(linkName, 'link');
+    linkGroup.userData['primMeta.absPath'] = `/World/Links/${linkGroup.name}`;
+
+    const sourceRest = sourceRestByLink.get(linkName);
+    const inverseSourceRest = sourceRest ? sourceRest.clone().invert() : null;
+    if (sourceRest) applyMatrixToObject(linkGroup, sourceRest);
+
+    for (const visual of link.visuals || []) {
+      const geometry = geometryFromPayloadItem(visual, geometryCache);
+      if (!geometry) continue;
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = sanitizeUSDIdentifier(visual.name || 'visual', 'visual');
+      let matrix = matrixFromUSDArray(visual.matrix);
+      if (state.inputFormat === 'mjcf' && inverseSourceRest) {
+        matrix = new THREE.Matrix4().copy(inverseSourceRest).multiply(matrix);
+      }
+      applyMatrixToObject(mesh, matrix);
+      linkGroup.add(mesh);
+    }
+
+    linksScope.add(linkGroup);
+  }
+
+  return root;
+}
+
+function registerNativeMeshBuffers(native, payload) {
+  const used = new Set();
+  const register = (item, collision) => {
+    if (!item?.meshRef || used.has(item.meshRef)) return;
+    const buffer = state.nativeMeshBuffers.get(item.meshRef);
+    if (!buffer) throw new Error(`Missing native mesh buffer for ${item.meshRef}`);
+    const fn = collision ? native.setCollisionMesh : native.setVisualMesh;
+    if (typeof fn !== 'function') {
+      throw new Error('TinyUSDZ WASM does not expose setVisualMesh/setCollisionMesh.');
+    }
+    const ok = fn.call(native, item.meshRef, buffer.positions, buffer.normals, buffer.uvs, buffer.indices);
+    if (!ok) throw new Error(native.error() || `Failed to register mesh buffer ${item.meshRef}`);
+    used.add(item.meshRef);
+  };
+
+  native.clearURDFMeshBuffers?.();
+  for (const link of payload.links || []) {
+    for (const visual of link.visuals || []) register(visual, false);
+    for (const collision of link.collisions || []) register(collision, true);
+  }
+}
+
 async function createUSDBytesFromSource(format) {
   const native = await ensureNativeExporter();
   const payload = buildCurrentExportPayload();
+  registerNativeMeshBuffers(native, payload);
   setStatus(`Creating USD Physics + MuJoCo stage for ${payload.name}...`);
   const ok = native.createURDFPhysicsScene(JSON.stringify(payload));
   if (!ok) throw new Error(native.error());
@@ -1927,7 +2083,8 @@ async function createUSDBytesFromSource(format) {
     return {
       bytes: new TextEncoder().encode(text),
       blob: new Blob([text], { type: 'text/plain' }),
-      filename: `${usdBaseName()}.usda`
+      filename: `${usdBaseName()}.usda`,
+      payload
     };
   }
   if (format === 'usdc') {
@@ -1936,7 +2093,8 @@ async function createUSDBytesFromSource(format) {
     return {
       bytes,
       blob: new Blob([bytes], { type: 'application/octet-stream' }),
-      filename: `${usdBaseName()}.usdc`
+      filename: `${usdBaseName()}.usdc`,
+      payload
     };
   }
   const bytes = bytesFromNativeView(native.exportAsUSDZ());
@@ -1944,7 +2102,8 @@ async function createUSDBytesFromSource(format) {
   return {
     bytes,
     blob: new Blob([bytes], { type: 'model/vnd.usdz+zip' }),
-    filename: `${usdBaseName()}.usdz`
+    filename: `${usdBaseName()}.usdz`,
+    payload
   };
 }
 
@@ -1997,7 +2156,7 @@ function exportSourceXML() {
 async function convertSourceToUSD(format = 'usdc') {
   const result = await createUSDBytesFromSource(format);
   clearUSD();
-  const object = await loadUSDObjectFromBytes(result.bytes, result.filename);
+  const object = buildConvertedUSDPreviewFromPayload(result.payload);
   state.usdObject = object;
   state.usdName = result.filename;
   state.latestUSDBytes = result.bytes;

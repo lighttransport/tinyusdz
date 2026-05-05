@@ -5,13 +5,23 @@
 /// @brief Build USD Physics + MuJoCo stages from URDF-derived JSON.
 #pragma once
 
+#include <cstdint>
+#include <map>
 #include <string>
+#include <vector>
 
 namespace tinyusdz {
 
 class Stage;
 
 namespace tydra {
+
+struct URDFMeshBuffer {
+  std::vector<float> positions;
+  std::vector<float> normals;
+  std::vector<float> uvs;
+  std::vector<int32_t> indices;
+};
 
 /// Build a USD stage from a compact URDF export payload.
 ///
@@ -29,6 +39,13 @@ namespace tydra {
 /// properties where TinyUSDZ has schema support.
 bool ConvertURDFJsonToUSDStage(
     const std::string &robot_json,
+    Stage *stage,
+    std::string *warn = nullptr,
+    std::string *err = nullptr);
+
+bool ConvertURDFJsonToUSDStage(
+    const std::string &robot_json,
+    const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
     Stage *stage,
     std::string *warn = nullptr,
     std::string *err = nullptr);

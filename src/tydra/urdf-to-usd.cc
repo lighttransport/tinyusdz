@@ -311,20 +311,41 @@ void AssignJointBase(JointT &joint, const nlohmann::json &joint_json,
 }
 
 bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
+                     const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
                      const std::string &fallback_name, bool collision,
                      std::string *warn, std::string *err) {
-  const nlohmann::json geom =
-      (mesh_json.contains("geometry") && mesh_json["geometry"].is_object())
-          ? mesh_json["geometry"]
-          : mesh_json;
-  std::vector<float> positions = JsonFloatArray(geom, "positions");
+  const nlohmann::json *geom = &mesh_json;
+  if (mesh_json.contains("geometry") && mesh_json["geometry"].is_object()) {
+    geom = &mesh_json["geometry"];
+  }
+  std::vector<float> positions;
+  std::vector<float> normals;
+  std::vector<float> uvs;
+  std::vector<int32_t> indices;
+  const std::string mesh_ref = JsonString(mesh_json, "meshRef");
+  if (!mesh_ref.empty()) {
+    if (!mesh_buffers || !mesh_buffers->count(mesh_ref)) {
+      AppendWarn(warn, "Skipping mesh `" + fallback_name +
+                           "`: meshRef `" + mesh_ref + "` was not registered.\n");
+      return true;
+    }
+    const URDFMeshBuffer &buffer = mesh_buffers->at(mesh_ref);
+    positions = buffer.positions;
+    normals = buffer.normals;
+    uvs = buffer.uvs;
+    indices = buffer.indices;
+  } else {
+    positions = JsonFloatArray(*geom, "positions");
+    normals = JsonFloatArray(*geom, "normals");
+    uvs = JsonFloatArray(*geom, "uvs");
+    indices = JsonIntArray(*geom, "indices");
+  }
   if (positions.size() < 9 || (positions.size() % 3) != 0) {
     AppendWarn(warn, "Skipping mesh `" + fallback_name +
                          "`: positions must contain at least 3 points.\n");
     return true;
   }
 
-  std::vector<int32_t> indices = JsonIntArray(geom, "indices");
   if (indices.empty()) {
     indices.resize(positions.size() / 3);
     for (size_t i = 0; i < indices.size(); i++) {
@@ -355,7 +376,6 @@ bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
   mesh.faceVertexCounts.set_value(std::move(counts));
   mesh.faceVertexIndices.set_value(std::move(indices));
 
-  std::vector<float> normals = JsonFloatArray(geom, "normals");
   if (normals.size() == positions.size()) {
     std::vector<value::normal3f> ns;
     ns.reserve(normals.size() / 3);
@@ -366,7 +386,6 @@ bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
     mesh.normals.metas().set_interpolation_enum(Interpolation::Vertex);
   }
 
-  std::vector<float> uvs = JsonFloatArray(geom, "uvs");
   if (uvs.size() == (positions.size() / 3) * 2) {
     Attribute uv_attr;
     std::vector<value::texcoord2f> st;
@@ -500,8 +519,11 @@ bool AddNativeCollisionShapeFromJson(Prim &link_prim,
 
 }  // namespace
 
-bool ConvertURDFJsonToUSDStage(const std::string &robot_json, Stage *out_stage,
-                               std::string *warn, std::string *err) {
+bool ConvertURDFJsonToUSDStage(
+    const std::string &robot_json,
+    const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
+    Stage *out_stage,
+    std::string *warn, std::string *err) {
   if (!out_stage) {
     SetErr(err, "Output Stage pointer is null");
     return false;
@@ -519,13 +541,14 @@ bool ConvertURDFJsonToUSDStage(const std::string &robot_json, Stage *out_stage,
     return false;
   }
 
-  const nlohmann::json links_json =
+  const nlohmann::json empty_array = nlohmann::json::array();
+  const nlohmann::json &links_json =
       (root.contains("links") && root["links"].is_array()) ? root["links"]
-                                                            : nlohmann::json::array();
-  const nlohmann::json joints_json =
+                                                            : empty_array;
+  const nlohmann::json &joints_json =
       (root.contains("joints") && root["joints"].is_array())
           ? root["joints"]
-          : nlohmann::json::array();
+          : empty_array;
   if (links_json.empty()) {
     SetErr(err, "URDF export JSON has no links");
     return false;
@@ -609,8 +632,9 @@ bool ConvertURDFJsonToUSDStage(const std::string &robot_json, Stage *out_stage,
     if (link_json.contains("visuals") && link_json["visuals"].is_array()) {
       size_t i = 0;
       for (const auto &visual : link_json["visuals"]) {
-        if (!AddMeshFromJson(link_prim, visual, "visual_" + std::to_string(i++),
-                             false, warn, err)) {
+        if (!AddMeshFromJson(link_prim, visual, mesh_buffers,
+                             "visual_" + std::to_string(i++), false, warn,
+                             err)) {
           return false;
         }
       }
@@ -627,7 +651,8 @@ bool ConvertURDFJsonToUSDStage(const std::string &robot_json, Stage *out_stage,
           }
           continue;
         }
-        if (!AddMeshFromJson(link_prim, collision, fallback, true, warn, err)) {
+        if (!AddMeshFromJson(link_prim, collision, mesh_buffers, fallback, true,
+                             warn, err)) {
           return false;
         }
       }
@@ -761,6 +786,11 @@ bool ConvertURDFJsonToUSDStage(const std::string &robot_json, Stage *out_stage,
 
   *out_stage = std::move(stage);
   return true;
+}
+
+bool ConvertURDFJsonToUSDStage(const std::string &robot_json, Stage *out_stage,
+                               std::string *warn, std::string *err) {
+  return ConvertURDFJsonToUSDStage(robot_json, nullptr, out_stage, warn, err);
 }
 
 }  // namespace tydra
