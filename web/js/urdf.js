@@ -49,9 +49,10 @@ const state = {
     ghostSourceInUSD: false,
     ghostOpacity: 0.28,
     showLinkLines: false,
-    showJointSpheres: false,
+    showJointArrows: false,
     showLinkNames: false,
-    showJointNames: false
+    showJointNames: false,
+    jointsCollapsed: false
   }
 };
 
@@ -96,30 +97,50 @@ const robotGroup = sourceView.root;
 const usdGroup = usdView.root;
 
 const collisionMaterial = new THREE.MeshStandardMaterial({
-  color: 0xff8a3d,
-  roughness: 0.75,
+  color: 0xffd23f,
+  emissive: 0x332300,
+  roughness: 0.58,
   metalness: 0.0,
   transparent: true,
-  opacity: 0.28,
-  wireframe: true,
-  depthWrite: false
+  opacity: 0.42,
+  depthWrite: false,
+  polygonOffset: true,
+  polygonOffsetFactor: -1,
+  polygonOffsetUnits: -1
 });
 
 const sourceLinkLineMaterial = new THREE.LineBasicMaterial({ color: 0x4fc3ff, transparent: true, opacity: 0.9 });
 const usdLinkLineMaterial = new THREE.LineBasicMaterial({ color: 0xffb24d, transparent: true, opacity: 0.9 });
-const sourceJointMaterial = new THREE.MeshBasicMaterial({ color: 0x32d6ff, depthTest: false });
-const usdJointMaterial = new THREE.MeshBasicMaterial({ color: 0xffb13b, depthTest: false });
-const jointSphereGeometry = new THREE.SphereGeometry(0.014, 12, 8);
+const sourceJointMaterial = new THREE.MeshStandardMaterial({
+  color: 0x26aee6,
+  emissive: 0x062536,
+  roughness: 0.54,
+  metalness: 0.02,
+  depthTest: false
+});
+const usdJointMaterial = new THREE.MeshStandardMaterial({
+  color: 0xffb13b,
+  emissive: 0x3a1f02,
+  roughness: 0.54,
+  metalness: 0.02,
+  depthTest: false
+});
+const jointArrowShaftGeometry = new THREE.CylinderGeometry(0.012, 0.012, 0.078, 24, 1);
+const jointArrowHeadGeometry = new THREE.ConeGeometry(0.027, 0.04, 24, 1);
 const sourceLabelColor = '#8be9ff';
 const usdLabelColor = '#ffd08a';
 
 const statusEl = document.getElementById('status');
+const panelEl = document.getElementById('panel');
+const jointHeaderEl = document.getElementById('jointHeader');
+const jointFoldIconEl = document.getElementById('jointFoldIcon');
 const jointControlsEl = document.getElementById('jointControls');
 const sourceLabelEl = document.getElementById('sourceLabel');
 const usdLabelEl = document.getElementById('usdLabel');
 const sourceExportButton = document.getElementById('exportSource');
 const convertToUSDButton = document.getElementById('convertToUSD');
 const convertToSourceButton = document.getElementById('convertToSource');
+const fitViewButton = document.getElementById('fitView');
 const exportButtons = [
   document.getElementById('exportUSDA'),
   document.getElementById('exportUSDC'),
@@ -136,6 +157,7 @@ function updateButtonStates() {
   sourceExportButton.disabled = !hasSource;
   convertToUSDButton.disabled = !hasSource;
   convertToSourceButton.disabled = !hasUSD;
+  fitViewButton.disabled = !(hasSource || hasUSD);
   for (const button of exportButtons) button.disabled = !(hasSource || hasUSD);
 }
 
@@ -334,6 +356,7 @@ async function loadUSDFile(file) {
   updateButtonStates();
   rebuildGhosts();
   updateLabels();
+  applyVisibility();
   if (state.settings.autocenter) fitCamera(currentFitObjects());
   setStatus(`Loaded USD ${file.name}`);
 }
@@ -497,6 +520,17 @@ function syncGhosts() {
   syncObjectTransforms(state.robot, state.sourceGhost);
 }
 
+function isCollisionObject(object) {
+  const marker = [
+    object.name,
+    object.userData?.nodeCategory,
+    object.userData?.['primMeta.absPath']
+  ].filter(Boolean).join(' ').toLowerCase();
+  return Boolean(object.userData?.urdfCollision)
+    || marker.includes('collision')
+    || marker.includes('collider');
+}
+
 function sanitizeUSDIdentifier(name, fallback = 'link') {
   let out = String(name || '').replace(/[^A-Za-z0-9_]/g, '_');
   if (!out) out = fallback;
@@ -586,7 +620,8 @@ function objectWorldCenter(object) {
 function makeLinkDebugEntry(object) {
   return {
     origin: worldPositionOf(object),
-    center: objectWorldCenter(object)
+    center: objectWorldCenter(object),
+    object
   };
 }
 
@@ -628,9 +663,30 @@ function jointPosition(joint, linkEntries) {
   return null;
 }
 
+function axisVector(axis) {
+  if (axis?.isVector3) return axis.clone();
+  if (Array.isArray(axis)) return new THREE.Vector3(axis[0] || 0, axis[1] || 0, axis[2] || 0);
+  if (axis && typeof axis === 'object') return new THREE.Vector3(axis.x || 0, axis.y || 0, axis.z || 0);
+  return new THREE.Vector3(1, 0, 0);
+}
+
+function jointWorldDirection(joint, linkEntries) {
+  const direction = axisVector(joint?.axis);
+  if (direction.lengthSq() < 1.0e-12) direction.set(1, 0, 0);
+  direction.normalize();
+
+  const frame = joint?.pivot || (joint?.isObject3D ? joint : linkEntries.get(joint?.child)?.object);
+  if (frame?.isObject3D) {
+    const worldQuat = new THREE.Quaternion();
+    frame.getWorldQuaternion(worldQuat);
+    direction.applyQuaternion(worldQuat).normalize();
+  }
+  return direction;
+}
+
 function debugVisualizationEnabled() {
   return state.settings.showLinkLines
-    || state.settings.showJointSpheres
+    || state.settings.showJointArrows
     || state.settings.showLinkNames
     || state.settings.showJointNames;
 }
@@ -715,7 +771,25 @@ function makeLinkSegments(linkEntries, joints) {
   return segments;
 }
 
-function buildSkeletonDebug(root, linkEntries, joints, lineMaterial, sphereMaterial, labelColor) {
+function makeJointArrow(position, direction, material) {
+  const arrow = new THREE.Group();
+  arrow.position.copy(position);
+  arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.clone().normalize());
+  arrow.renderOrder = 10;
+
+  const shaft = new THREE.Mesh(jointArrowShaftGeometry.clone(), material.clone());
+  shaft.position.y = 0.039;
+  shaft.renderOrder = 10;
+  arrow.add(shaft);
+
+  const head = new THREE.Mesh(jointArrowHeadGeometry.clone(), material.clone());
+  head.position.y = 0.098;
+  head.renderOrder = 10;
+  arrow.add(head);
+  return arrow;
+}
+
+function buildSkeletonDebug(root, linkEntries, joints, lineMaterial, jointMaterial, labelColor) {
   clearDebugRoot(root);
   if (!debugVisualizationEnabled()) return;
 
@@ -740,14 +814,13 @@ function buildSkeletonDebug(root, linkEntries, joints, lineMaterial, sphereMater
     }
   }
 
-  if (state.settings.showJointSpheres) {
+  if (state.settings.showJointArrows) {
     for (const joint of joints) {
+      const type = joint.jointType || joint.type || 'fixed';
+      if (type === 'fixed') continue;
       const pos = jointPosition(joint, linkEntries);
       if (!pos) continue;
-      const sphere = new THREE.Mesh(jointSphereGeometry.clone(), sphereMaterial.clone());
-      sphere.position.copy(pos);
-      sphere.renderOrder = 10;
-      root.add(sphere);
+      root.add(makeJointArrow(pos, jointWorldDirection(joint, linkEntries), jointMaterial));
     }
   }
 
@@ -1019,6 +1092,53 @@ function collectMujocoAssets(root) {
   return meshes;
 }
 
+function collectMujocoDefaults(root) {
+  const defaults = {
+    geom: new Map(),
+    joint: new Map()
+  };
+
+  function mergeAttrs(base, attrs) {
+    return { ...(base || {}), ...(attrs || {}) };
+  }
+
+  function visitDefault(defaultNode, inherited = { geom: {}, joint: {} }) {
+    const className = defaultNode.getAttribute('class') || '';
+    const next = {
+      geom: mergeAttrs(inherited.geom, attrsFromElement(firstChildElement(defaultNode, 'geom'))),
+      joint: mergeAttrs(inherited.joint, attrsFromElement(firstChildElement(defaultNode, 'joint')))
+    };
+
+    if (className) {
+      defaults.geom.set(className, next.geom);
+      defaults.joint.set(className, next.joint);
+    } else {
+      defaults.geom.set('', next.geom);
+      defaults.joint.set('', next.joint);
+    }
+
+    for (const child of childElements(defaultNode, 'default')) {
+      visitDefault(child, next);
+    }
+  }
+
+  for (const defaultNode of childElements(root, 'default')) {
+    visitDefault(defaultNode);
+  }
+  return defaults;
+}
+
+function resolveMujocoAttrs(node, defaults, kind, inheritedClass = '') {
+  const attrs = attrsFromElement(node);
+  const className = attrs.class || inheritedClass || '';
+  return {
+    ...(defaults?.[kind]?.get('') || {}),
+    ...(className ? defaults?.[kind]?.get(className) || {} : {}),
+    ...attrs,
+    class: className || attrs.class
+  };
+}
+
 function makeGeometryPayload(mesh, matrix, name) {
   const geom = mesh.geometry;
   const pos = geom?.getAttribute('position');
@@ -1145,8 +1265,8 @@ function parseMujocoInertial(bodyNode) {
   return inertial;
 }
 
-function shapePayloadForMujocoGeom(geomNode, originMatrix, fallbackName) {
-  const attrs = attrsFromElement(geomNode);
+function shapePayloadForMujocoGeom(geomAttrs, originMatrix, fallbackName) {
+  const attrs = geomAttrs || {};
   const geomType = attrs.type || (attrs.mesh ? 'mesh' : 'sphere');
   if (geomType === 'mesh') return null;
 
@@ -1195,8 +1315,8 @@ function shapePayloadForMujocoGeom(geomNode, originMatrix, fallbackName) {
   return null;
 }
 
-async function loadMujocoGeomObject(geomNode, meshAssets, fallbackName) {
-  const attrs = attrsFromElement(geomNode);
+async function loadMujocoGeomObject(geomAttrs, meshAssets, fallbackName) {
+  const attrs = geomAttrs || {};
   const geomType = attrs.type || (attrs.mesh ? 'mesh' : 'sphere');
   if (geomType === 'mesh') {
     const meshAsset = meshAssets.get(attrs.mesh);
@@ -1229,8 +1349,8 @@ async function loadMujocoGeomObject(geomNode, meshAssets, fallbackName) {
   return makeMissingMesh(fallbackName);
 }
 
-async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName, baseMatrix = new THREE.Matrix4()) {
-  const attrs = attrsFromElement(geomNode);
+async function mujocoGeomPayloads(geomAttrs, meshAssets, fallbackName, baseMatrix = new THREE.Matrix4()) {
+  const attrs = geomAttrs || {};
   const geomType = attrs.type || (attrs.mesh ? 'mesh' : 'sphere');
   const originMatrix = new THREE.Matrix4().copy(baseMatrix).multiply(matrixFromPoseAttrs(attrs));
   if (geomType === 'mesh') {
@@ -1251,15 +1371,16 @@ async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName, baseMatrix
   return collectMeshPayloads(object, new THREE.Matrix4().copy(originMatrix).multiply(yToZ), fallbackName);
 }
 
-function classifyMujocoGeom(geomNode) {
-  const attrs = attrsFromElement(geomNode);
-  return attrs.class === 'visual' ||
-    attrs.group === '2' ||
-    (attrs.contype === '0' && attrs.conaffinity === '0');
+function classifyMujocoGeom(geomAttrs) {
+  const attrs = geomAttrs || {};
+  const className = String(attrs.class || '').toLowerCase();
+  if (className.includes('collision') || attrs.group === '3') return false;
+  if (className.includes('visual') || attrs.group === '2') return true;
+  return attrs.contype === '0' && attrs.conaffinity === '0';
 }
 
-function applyMujocoObjectDisplayTransform(object, geomNode, meshAssets) {
-  const attrs = attrsFromElement(geomNode);
+function applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets) {
+  const attrs = geomAttrs || {};
   const geomType = attrs.type || (attrs.mesh ? 'mesh' : 'sphere');
   const matrix = matrixFromPoseAttrs(attrs);
   if (geomType === 'mesh') {
@@ -1281,6 +1402,7 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   }
 
   const meshAssets = collectMujocoAssets(root);
+  const defaults = collectMujocoDefaults(root);
   const group = new THREE.Group();
   group.name = root.getAttribute('model') || filename.replace(/\.[^.]+$/, '') || 'mujoco_scene';
   group.links = {};
@@ -1301,8 +1423,15 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   let visualCount = 0;
   let collisionCount = 0;
 
-  async function visitBody(bodyNode, parentObject, parentName = '', parentWorldMatrix = new THREE.Matrix4()) {
+  async function visitBody(
+    bodyNode,
+    parentObject,
+    parentName = '',
+    parentWorldMatrix = new THREE.Matrix4(),
+    inheritedChildClass = ''
+  ) {
     const bodyAttrs = attrsFromElement(bodyNode);
+    const childClass = bodyAttrs.childclass || inheritedChildClass;
     const bodyLocalMatrix = matrixFromPoseAttrs(bodyAttrs);
     const bodyWorldMatrix = new THREE.Matrix4().copy(parentWorldMatrix).multiply(bodyLocalMatrix);
     const linkName = bodyAttrs.name || `body_${links.length}`;
@@ -1325,7 +1454,7 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
 
     if (parentName) {
       const jointNode = firstChildElement(bodyNode, 'joint');
-      const jointAttrs = attrsFromElement(jointNode);
+      const jointAttrs = jointNode ? resolveMujocoAttrs(jointNode, defaults, 'joint', childClass) : {};
       const axis = parseNumbers(jointAttrs.axis, [0, 0, 1]);
       const range = parseNumbers(jointAttrs.range, []);
       const jointName = jointAttrs.name || `${parentName}_to_${linkName}${jointNode ? '' : '_fixed'}`;
@@ -1358,22 +1487,22 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
 
     let geomIndex = 0;
     for (const geomNode of childElements(bodyNode, 'geom')) {
-      const geomAttrs = attrsFromElement(geomNode);
+      const geomAttrs = resolveMujocoAttrs(geomNode, defaults, 'geom', childClass);
       const geomName = geomAttrs.name || geomAttrs.mesh || `${linkName}_geom_${geomIndex}`;
-      const isVisual = classifyMujocoGeom(geomNode);
+      const isVisual = classifyMujocoGeom(geomAttrs);
       let payloads = null;
       if (!isVisual) {
         payloads = shapePayloadForMujocoGeom(
-          geomNode,
+          geomAttrs,
           new THREE.Matrix4().copy(bodyWorldMatrix).multiply(matrixFromPoseAttrs(geomAttrs)),
           geomName
         );
       }
-      if (!payloads) payloads = await mujocoGeomPayloads(geomNode, meshAssets, geomName, bodyWorldMatrix);
+      if (!payloads) payloads = await mujocoGeomPayloads(geomAttrs, meshAssets, geomName, bodyWorldMatrix);
 
-      const object = await loadMujocoGeomObject(geomNode, meshAssets, geomName);
+      const object = await loadMujocoGeomObject(geomAttrs, meshAssets, geomName);
       object.name = geomName;
-      applyMujocoObjectDisplayTransform(object, geomNode, meshAssets);
+      applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets);
       linkObject.add(object);
       object.traverse((obj) => {
         if (!obj.isMesh) return;
@@ -1403,7 +1532,7 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     links.push(linkPayload);
 
     for (const childBody of childElements(bodyNode, 'body')) {
-      await visitBody(childBody, linkObject, linkName, bodyWorldMatrix);
+      await visitBody(childBody, linkObject, linkName, bodyWorldMatrix, childClass);
     }
   }
 
@@ -1466,10 +1595,22 @@ function classifyRobotMeshes(robot) {
 function applyVisibility() {
   for (const mesh of state.visualMeshes) mesh.visible = state.settings.showVisuals;
   for (const mesh of state.collisionMeshes) mesh.visible = state.settings.showCollisions;
+  applyRenderableVisibility(state.usdObject);
+  applyRenderableVisibility(state.usdGhost);
+  applyRenderableVisibility(state.sourceGhost);
 }
 
 function currentFitObjects() {
   return [state.robot, state.usdObject].filter(Boolean);
+}
+
+function applyRenderableVisibility(root) {
+  root?.traverse((obj) => {
+    if (!obj.isMesh) return;
+    obj.visible = isCollisionObject(obj)
+      ? state.settings.showCollisions
+      : state.settings.showVisuals;
+  });
 }
 
 function fitCamera(rootOrObjects) {
@@ -1485,8 +1626,12 @@ function fitCamera(rootOrObjects) {
     camera.near = Math.max(radius / 1000, 0.001);
     camera.far = radius * 100;
     camera.updateProjectionMatrix();
-      controls.update();
+    controls.update();
   }
+}
+
+function fitCurrentView() {
+  fitCamera(currentFitObjects());
 }
 
 function applySceneOrientation() {
@@ -1514,7 +1659,7 @@ function buildGUI() {
   gui.add(state.settings, 'animationSpeed', 0.1, 4.0, 0.1).name('Animation speed');
   gui.add(state.settings, 'autocenter').name('Autocenter');
   gui.add(state.settings, 'showLinkLines').name('Link lines').onChange(updateSkeletonDebugVisualizations);
-  gui.add(state.settings, 'showJointSpheres').name('Joint spheres').onChange(updateSkeletonDebugVisualizations);
+  gui.add(state.settings, 'showJointArrows').name('Joint arrows').onChange(updateSkeletonDebugVisualizations);
   gui.add(state.settings, 'showLinkNames').name('Link names').onChange(updateSkeletonDebugVisualizations);
   gui.add(state.settings, 'showJointNames').name('Joint names').onChange(updateSkeletonDebugVisualizations);
   gui.add(state.settings, 'ghostUSDInSource').name('USD ghost on left').onChange(rebuildGhosts);
@@ -1607,6 +1752,17 @@ function updateLabels() {
   const sourceFormat = state.inputFormat ? state.inputFormat.toUpperCase() : 'URDF/MJCF';
   sourceLabelEl.textContent = `${sourceFormat}: ${sourceName}`;
   usdLabelEl.textContent = state.usdName ? `USD: ${state.usdName}` : 'USD';
+}
+
+function updateJointPanelFold() {
+  panelEl.classList.toggle('joints-collapsed', state.settings.jointsCollapsed);
+  jointHeaderEl.setAttribute('aria-expanded', String(!state.settings.jointsCollapsed));
+  jointFoldIconEl.textContent = state.settings.jointsCollapsed ? '▸' : '▾';
+}
+
+function toggleJointPanelFold() {
+  state.settings.jointsCollapsed = !state.settings.jointsCollapsed;
+  updateJointPanelFold();
 }
 
 async function loadRobotFile(file) {
@@ -1975,6 +2131,29 @@ function convertedUSDPreviewMaterial() {
   });
 }
 
+function shapeGeometryFromPayload(shape = {}) {
+  if (shape.type === 'box') return new THREE.BoxGeometry(2, 2, 2);
+  if (shape.type === 'sphere') return new THREE.SphereGeometry(shape.radius || 0.5, 24, 12);
+  if (shape.type === 'cylinder') {
+    const geometry = new THREE.CylinderGeometry(shape.radius || 0.5, shape.radius || 0.5, shape.height || 1, 24, 1);
+    geometry.rotateX(Math.PI / 2);
+    return geometry;
+  }
+  if (shape.type === 'capsule') {
+    const radius = shape.radius || 0.5;
+    const height = Math.max(shape.height || 1, 0.001);
+    const geometry = typeof THREE.CapsuleGeometry === 'function'
+      ? new THREE.CapsuleGeometry(radius, height, 12, 24)
+      : new THREE.CylinderGeometry(radius, radius, height, 24, 1);
+    geometry.rotateX(Math.PI / 2);
+    return geometry;
+  }
+  if (shape.type === 'plane') {
+    return new THREE.PlaneGeometry(shape.width || 1, shape.length || 1);
+  }
+  return null;
+}
+
 function matrixFromUSDArray(values) {
   const matrix = new THREE.Matrix4();
   if (Array.isArray(values) && values.length === 16) {
@@ -1986,6 +2165,17 @@ function matrixFromUSDArray(values) {
 function geometryFromPayloadItem(item, geometryCache) {
   const meshRef = item?.meshRef;
   if (meshRef && geometryCache.has(meshRef)) return geometryCache.get(meshRef);
+
+  if (item?.shape) {
+    const key = `shape:${JSON.stringify(item.shape)}`;
+    if (geometryCache.has(key)) return geometryCache.get(key);
+    const geometry = shapeGeometryFromPayload(item.shape);
+    if (geometry) {
+      geometry.computeBoundingSphere();
+      geometryCache.set(key, geometry);
+    }
+    return geometry;
+  }
 
   const buffer = meshRef ? state.nativeMeshBuffers.get(meshRef) : item?.geometry;
   const positions = buffer?.positions;
@@ -2009,6 +2199,23 @@ function geometryFromPayloadItem(item, geometryCache) {
   return geometry;
 }
 
+function addPayloadMeshesToLink(linkGroup, items, geometryCache, material, isCollision, inverseSourceRest) {
+  for (const item of items || []) {
+    const geometry = geometryFromPayloadItem(item, geometryCache);
+    if (!geometry) continue;
+    const mesh = new THREE.Mesh(geometry, material.clone());
+    mesh.name = sanitizeUSDIdentifier(item.name || (isCollision ? 'collision' : 'visual'), isCollision ? 'collision' : 'visual');
+    mesh.userData.urdfCollision = isCollision;
+    let matrix = matrixFromUSDArray(item.matrix);
+    if (state.inputFormat === 'mjcf' && inverseSourceRest) {
+      matrix = new THREE.Matrix4().copy(inverseSourceRest).multiply(matrix);
+    }
+    applyMatrixToObject(mesh, matrix);
+    if (isCollision) mesh.renderOrder = 8;
+    linkGroup.add(mesh);
+  }
+}
+
 function buildConvertedUSDPreviewFromPayload(payload) {
   const root = new THREE.Group();
   root.name = usdBaseName();
@@ -2017,7 +2224,7 @@ function buildConvertedUSDPreviewFromPayload(payload) {
   root.add(linksScope);
 
   const geometryCache = new Map();
-  const material = convertedUSDPreviewMaterial();
+  const visualMaterial = convertedUSDPreviewMaterial();
 
   const sourceRestByLink = state.sourceRestLinkMatrices;
   for (const link of payload.links || []) {
@@ -2030,18 +2237,8 @@ function buildConvertedUSDPreviewFromPayload(payload) {
     const inverseSourceRest = sourceRest ? sourceRest.clone().invert() : null;
     if (sourceRest) applyMatrixToObject(linkGroup, sourceRest);
 
-    for (const visual of link.visuals || []) {
-      const geometry = geometryFromPayloadItem(visual, geometryCache);
-      if (!geometry) continue;
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.name = sanitizeUSDIdentifier(visual.name || 'visual', 'visual');
-      let matrix = matrixFromUSDArray(visual.matrix);
-      if (state.inputFormat === 'mjcf' && inverseSourceRest) {
-        matrix = new THREE.Matrix4().copy(inverseSourceRest).multiply(matrix);
-      }
-      applyMatrixToObject(mesh, matrix);
-      linkGroup.add(mesh);
-    }
+    addPayloadMeshesToLink(linkGroup, link.visuals, geometryCache, visualMaterial, false, inverseSourceRest);
+    addPayloadMeshesToLink(linkGroup, link.collisions, geometryCache, collisionMaterial, true, inverseSourceRest);
 
     linksScope.add(linkGroup);
   }
@@ -2152,6 +2349,7 @@ async function convertSourceToUSD(format = 'usdc') {
   updateButtonStates();
   rebuildGhosts();
   updateLabels();
+  applyVisibility();
   if (state.settings.autocenter) fitCamera(currentFitObjects());
   setStatus(`Converted ${state.inputFormat.toUpperCase()} to ${format.toUpperCase()} for comparison.`);
 }
@@ -2233,6 +2431,16 @@ convertToSourceButton.addEventListener('click', () => {
 document.getElementById('exportUSDA').addEventListener('click', () => exportRobot('usda'));
 document.getElementById('exportUSDC').addEventListener('click', () => exportRobot('usdc'));
 document.getElementById('exportUSDZ').addEventListener('click', () => exportRobot('usdz'));
+fitViewButton.addEventListener('click', fitCurrentView);
+jointHeaderEl.addEventListener('click', toggleJointPanelFold);
+
+window.addEventListener('keydown', (event) => {
+  if (event.key.toLowerCase() !== 'f' || event.altKey || event.ctrlKey || event.metaKey) return;
+  const tagName = event.target?.tagName?.toLowerCase();
+  if (tagName === 'input' || tagName === 'textarea' || tagName === 'select' || event.target?.isContentEditable) return;
+  event.preventDefault();
+  fitCurrentView();
+});
 
 window.addEventListener('resize', () => {
   camera.aspect = Math.max(window.innerWidth * 0.5, 1) / Math.max(window.innerHeight, 1);
@@ -2288,4 +2496,5 @@ function animate() {
 buildGUI();
 updateButtonStates();
 updateLabels();
+updateJointPanelFold();
 animate();
