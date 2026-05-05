@@ -15,6 +15,8 @@ const state = {
   usdObject: null,
   sourceGhost: null,
   usdGhost: null,
+  usdLinkBindings: [],
+  sourceRestLinkMatrices: new Map(),
   inputText: '',
   inputName: '',
   inputFormat: '',
@@ -30,6 +32,7 @@ const state = {
   nativeExporter: null,
   joints: {},
   jointValues: {},
+  jointControls: new Map(),
   collisionMeshes: [],
   visualMeshes: [],
   settings: {
@@ -44,7 +47,11 @@ const state = {
     packageRoot: '',
     ghostUSDInSource: false,
     ghostSourceInUSD: false,
-    ghostOpacity: 0.28
+    ghostOpacity: 0.28,
+    showLinkLines: false,
+    showJointSpheres: false,
+    showLinkNames: false,
+    showJointNames: false
   }
 };
 
@@ -55,20 +62,21 @@ function createViewScene() {
   scene.background = new THREE.Color(0x202124);
   const root = new THREE.Group();
   const ghostRoot = new THREE.Group();
+  const debugRoot = new THREE.Group();
   scene.add(root);
   scene.add(ghostRoot);
+  scene.add(debugRoot);
   scene.add(new THREE.HemisphereLight(0xddeeff, 0x303030, 1.6));
   const dirLight = new THREE.DirectionalLight(0xffffff, 2.4);
   dirLight.position.set(4, 6, 3);
   dirLight.castShadow = true;
   scene.add(dirLight);
   scene.add(new THREE.GridHelper(20, 40, 0x586069, 0x33383d));
-  return { scene, root, ghostRoot };
+  return { scene, root, ghostRoot, debugRoot };
 }
 
 const sourceView = createViewScene();
 const usdView = createViewScene();
-const scene = sourceView.scene;
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.01, 2000);
 camera.position.set(4, 3, 6);
@@ -97,6 +105,14 @@ const collisionMaterial = new THREE.MeshStandardMaterial({
   depthWrite: false
 });
 
+const sourceLinkLineMaterial = new THREE.LineBasicMaterial({ color: 0x4fc3ff, transparent: true, opacity: 0.9 });
+const usdLinkLineMaterial = new THREE.LineBasicMaterial({ color: 0xffb24d, transparent: true, opacity: 0.9 });
+const sourceJointMaterial = new THREE.MeshBasicMaterial({ color: 0x32d6ff, depthTest: false });
+const usdJointMaterial = new THREE.MeshBasicMaterial({ color: 0xffb13b, depthTest: false });
+const jointSphereGeometry = new THREE.SphereGeometry(0.014, 12, 8);
+const sourceLabelColor = '#8be9ff';
+const usdLabelColor = '#ffd08a';
+
 const statusEl = document.getElementById('status');
 const jointControlsEl = document.getElementById('jointControls');
 const sourceLabelEl = document.getElementById('sourceLabel');
@@ -114,17 +130,6 @@ function setStatus(text) {
   statusEl.textContent = text;
 }
 
-function setExportEnabled(enabled) {
-  sourceExportButton.disabled = !enabled;
-  convertToUSDButton.disabled = !enabled;
-  for (const button of exportButtons) button.disabled = !(enabled || state.usdObject || state.latestUSDBytes);
-}
-
-function setUSDEnabled(enabled) {
-  convertToSourceButton.disabled = !enabled;
-  for (const button of exportButtons) button.disabled = !(enabled || state.robot);
-}
-
 function updateButtonStates() {
   const hasSource = Boolean(state.robot);
   const hasUSD = Boolean(state.usdObject || state.latestUSDBytes);
@@ -139,7 +144,10 @@ function disposeObject(root) {
     if (obj.geometry) obj.geometry.dispose();
     if (obj.material && obj.material !== collisionMaterial) {
       const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-      for (const mat of mats) mat.dispose?.();
+      for (const mat of mats) {
+        if (mat.map?.userData?.debugLabelTexture) mat.map.dispose();
+        mat.dispose?.();
+      }
     }
   });
 }
@@ -157,6 +165,18 @@ function clearGhosts() {
   state.sourceGhost = null;
 }
 
+function clearDebugRoot(root) {
+  while (root.children.length) {
+    const child = root.children.pop();
+    disposeObject(child);
+  }
+}
+
+function clearDebugVisualizations() {
+  clearDebugRoot(sourceView.debugRoot);
+  clearDebugRoot(usdView.debugRoot);
+}
+
 function clearRobot() {
   if (state.robot) {
     clearObjectFromGroup(robotGroup, state.robot);
@@ -166,6 +186,8 @@ function clearRobot() {
   state.inputName = '';
   state.inputFormat = '';
   state.exportPayload = null;
+  state.sourceRestLinkMatrices.clear();
+  state.usdLinkBindings = [];
   state.joints = {};
   state.jointValues = {};
   state.collisionMeshes = [];
@@ -173,6 +195,7 @@ function clearRobot() {
   jointControlsEl.innerHTML = '';
   updateButtonStates();
   clearGhosts();
+  clearDebugVisualizations();
   updateLabels();
 }
 
@@ -182,8 +205,10 @@ function clearUSD() {
   state.usdName = '';
   state.latestUSDBytes = null;
   state.latestUSDFormat = '';
+  state.usdLinkBindings = [];
   updateButtonStates();
   clearGhosts();
+  clearDebugVisualizations();
   updateLabels();
 }
 
@@ -385,7 +410,17 @@ async function loadMeshObject(path) {
 }
 
 function cloneRenderableObject(source) {
-  const clone = source.clone(true);
+  const savedUserData = [];
+  source.traverse((obj) => {
+    savedUserData.push([obj, obj.userData]);
+    obj.userData = {};
+  });
+  let clone = null;
+  try {
+    clone = source.clone(true);
+  } finally {
+    for (const [obj, userData] of savedUserData) obj.userData = userData;
+  }
   clone.traverse((obj) => {
     if (!obj.isMesh) return;
     if (obj.geometry) obj.geometry = obj.geometry.clone();
@@ -458,6 +493,278 @@ function rebuildGhosts() {
 function syncGhosts() {
   syncObjectTransforms(state.usdObject, state.usdGhost);
   syncObjectTransforms(state.robot, state.sourceGhost);
+}
+
+function sanitizeUSDIdentifier(name, fallback = 'link') {
+  let out = String(name || '').replace(/[^A-Za-z0-9_]/g, '_');
+  if (!out) out = fallback;
+  if (!/^[A-Za-z_]/.test(out)) out = `_${out}`;
+  return out;
+}
+
+function findObjectByName(root, name) {
+  let found = null;
+  root?.traverse((obj) => {
+    if (!found && obj.name === name) found = obj;
+  });
+  return found;
+}
+
+function sourceLinkObject(linkName) {
+  return state.robot?.links?.[linkName] || null;
+}
+
+function captureSourceRestLinkMatrices() {
+  state.sourceRestLinkMatrices.clear();
+  if (!state.robot?.links) return;
+  state.robot.updateWorldMatrix(true, true);
+  for (const [name, link] of Object.entries(state.robot.links)) {
+    link.updateWorldMatrix(true, false);
+    state.sourceRestLinkMatrices.set(name, link.matrixWorld.clone());
+  }
+}
+
+function bindConvertedUSDLinksToSource() {
+  state.usdLinkBindings = [];
+  if (!state.robot?.links || !state.usdObject || !state.exportPayload?.links) return;
+
+  state.robot.updateWorldMatrix(true, true);
+  state.usdObject.updateWorldMatrix(true, true);
+  for (const link of state.exportPayload.links) {
+    const linkName = link.name;
+    const sourceLink = sourceLinkObject(linkName);
+    const usdLink = findObjectByName(state.usdObject, sanitizeUSDIdentifier(linkName, 'link'));
+    if (!sourceLink || !usdLink) continue;
+    const sourceRestWorld = state.sourceRestLinkMatrices.get(linkName) || sourceLink.matrixWorld.clone();
+    state.usdLinkBindings.push({
+      linkName,
+      sourceLink,
+      usdLink,
+      sourceRestWorld: sourceRestWorld.clone(),
+      inverseSourceRestWorld: sourceRestWorld.clone().invert(),
+      usdRestWorld: usdLink.matrixWorld.clone()
+    });
+  }
+}
+
+function syncConvertedUSDToSourcePose() {
+  if (!state.usdLinkBindings.length) return;
+  state.robot?.updateWorldMatrix(true, true);
+  state.usdObject?.updateWorldMatrix(true, true);
+  for (const binding of state.usdLinkBindings) {
+    binding.sourceLink.updateWorldMatrix(true, false);
+    const delta = new THREE.Matrix4()
+      .copy(binding.sourceLink.matrixWorld)
+      .multiply(binding.inverseSourceRestWorld);
+    const desiredWorld = new THREE.Matrix4().copy(delta).multiply(binding.usdRestWorld);
+    const parentInverse = new THREE.Matrix4();
+    if (binding.usdLink.parent) {
+      binding.usdLink.parent.updateWorldMatrix(true, false);
+      parentInverse.copy(binding.usdLink.parent.matrixWorld).invert();
+    } else {
+      parentInverse.identity();
+    }
+    const local = parentInverse.multiply(desiredWorld);
+    local.decompose(binding.usdLink.position, binding.usdLink.quaternion, binding.usdLink.scale);
+    binding.usdLink.updateWorldMatrix(false, true);
+  }
+}
+
+function worldPositionOf(object) {
+  object.updateWorldMatrix(true, false);
+  return new THREE.Vector3().setFromMatrixPosition(object.matrixWorld);
+}
+
+function objectWorldCenter(object) {
+  const box = new THREE.Box3().setFromObject(object);
+  if (!box.isEmpty()) return box.getCenter(new THREE.Vector3());
+  return worldPositionOf(object);
+}
+
+function makeLinkDebugEntry(object) {
+  return {
+    origin: worldPositionOf(object),
+    center: objectWorldCenter(object)
+  };
+}
+
+function sourceLinkDebugEntries() {
+  const entries = new Map();
+  if (!state.robot?.links) return entries;
+  state.robot.updateWorldMatrix(true, true);
+  for (const [name, link] of Object.entries(state.robot.links)) {
+    entries.set(name, makeLinkDebugEntry(link));
+  }
+  return entries;
+}
+
+function usdLinkDebugEntries() {
+  if (state.usdLinkBindings.length) {
+    const entries = new Map();
+    state.usdObject?.updateWorldMatrix(true, true);
+    for (const binding of state.usdLinkBindings) {
+      entries.set(binding.linkName, makeLinkDebugEntry(binding.usdLink));
+    }
+    return entries;
+  }
+
+  const entries = new Map();
+  const linksScope = findObjectByName(state.usdObject, 'Links');
+  if (linksScope) {
+    linksScope.updateWorldMatrix(true, true);
+    for (const child of linksScope.children) {
+      entries.set(child.name, makeLinkDebugEntry(child));
+    }
+  }
+  return entries;
+}
+
+function jointPosition(joint, linkEntries) {
+  if (joint?.pivot) return worldPositionOf(joint.pivot);
+  if (joint?.isObject3D) return worldPositionOf(joint);
+  if (joint?.child && linkEntries.has(joint.child)) return linkEntries.get(joint.child).origin.clone();
+  return null;
+}
+
+function debugVisualizationEnabled() {
+  return state.settings.showLinkLines
+    || state.settings.showJointSpheres
+    || state.settings.showLinkNames
+    || state.settings.showJointNames;
+}
+
+function makeTextSprite(text, color) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const fontSize = 36;
+  const paddingX = 14;
+  const paddingY = 8;
+  ctx.font = `600 ${fontSize}px system-ui, sans-serif`;
+  const metrics = ctx.measureText(text);
+  canvas.width = Math.ceil(metrics.width + paddingX * 2);
+  canvas.height = fontSize + paddingY * 2;
+
+  ctx.font = `600 ${fontSize}px system-ui, sans-serif`;
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(12, 16, 22, 0.72)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+  ctx.strokeRect(0.5, 0.5, canvas.width - 1, canvas.height - 1);
+  ctx.fillStyle = color;
+  ctx.fillText(text, paddingX, canvas.height * 0.5);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.userData.debugLabelTexture = true;
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false
+  });
+  const sprite = new THREE.Sprite(material);
+  const height = 0.018;
+  sprite.scale.set(height * (canvas.width / canvas.height), height, 1);
+  sprite.renderOrder = 20;
+  return sprite;
+}
+
+function addLabel(root, text, position, color, offsetY = 0.035) {
+  if (!text || !position) return;
+  const label = makeTextSprite(text, color);
+  label.position.copy(position);
+  label.position.y += offsetY;
+  root.add(label);
+}
+
+function jointsByParentLink(joints) {
+  const byParent = new Map();
+  for (const joint of joints) {
+    if (!joint.parent) continue;
+    if (!byParent.has(joint.parent)) byParent.set(joint.parent, []);
+    byParent.get(joint.parent).push(joint);
+  }
+  return byParent;
+}
+
+function makeLinkSegments(linkEntries, joints) {
+  const segments = [];
+  const byParent = jointsByParentLink(joints);
+  for (const joint of joints) {
+    if (!joint.child) continue;
+    const start = jointPosition(joint, linkEntries);
+    if (!start) continue;
+    const nextJoints = byParent.get(joint.child) || [];
+    if (nextJoints.length) {
+      for (const nextJoint of nextJoints) {
+        const end = jointPosition(nextJoint, linkEntries);
+        if (end && start.distanceToSquared(end) > 1.0e-10) {
+          segments.push({ linkName: joint.child, start, end });
+        }
+      }
+      continue;
+    }
+
+    const entry = linkEntries.get(joint.child);
+    const end = entry?.center || entry?.origin;
+    if (end && start.distanceToSquared(end) > 1.0e-10) {
+      segments.push({ linkName: joint.child, start, end });
+    }
+  }
+  return segments;
+}
+
+function buildSkeletonDebug(root, linkEntries, joints, lineMaterial, sphereMaterial, labelColor) {
+  clearDebugRoot(root);
+  if (!debugVisualizationEnabled()) return;
+
+  const segments = makeLinkSegments(linkEntries, joints);
+
+  if (state.settings.showLinkLines) {
+    const points = [];
+    for (const segment of segments) {
+      points.push(segment.start.x, segment.start.y, segment.start.z, segment.end.x, segment.end.y, segment.end.z);
+    }
+    if (points.length) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
+      root.add(new THREE.LineSegments(geometry, lineMaterial.clone()));
+    }
+  }
+
+  if (state.settings.showLinkNames) {
+    for (const segment of segments) {
+      const midpoint = new THREE.Vector3().addVectors(segment.start, segment.end).multiplyScalar(0.5);
+      addLabel(root, segment.linkName, midpoint, labelColor);
+    }
+  }
+
+  if (state.settings.showJointSpheres) {
+    for (const joint of joints) {
+      const pos = jointPosition(joint, linkEntries);
+      if (!pos) continue;
+      const sphere = new THREE.Mesh(jointSphereGeometry.clone(), sphereMaterial.clone());
+      sphere.position.copy(pos);
+      sphere.renderOrder = 10;
+      root.add(sphere);
+    }
+  }
+
+  if (state.settings.showJointNames) {
+    for (const joint of joints) {
+      const pos = jointPosition(joint, linkEntries);
+      addLabel(root, joint.name || joint.jointName || 'joint', pos, labelColor, 0.055);
+    }
+  }
+}
+
+function updateSkeletonDebugVisualizations() {
+  if (!debugVisualizationEnabled()) {
+    clearDebugVisualizations();
+    return;
+  }
+  const joints = Object.values(state.joints || {});
+  buildSkeletonDebug(sourceView.debugRoot, sourceLinkDebugEntries(), joints, sourceLinkLineMaterial, sourceJointMaterial, sourceLabelColor);
+  buildSkeletonDebug(usdView.debugRoot, usdLinkDebugEntries(), joints, usdLinkLineMaterial, usdJointMaterial, usdLabelColor);
 }
 
 async function parseURDFWithMeshes(urdfText, filename) {
@@ -865,10 +1172,10 @@ async function loadMujocoGeomObject(geomNode, meshAssets, fallbackName) {
   return makeMissingMesh(fallbackName);
 }
 
-async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName) {
+async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName, baseMatrix = new THREE.Matrix4()) {
   const attrs = attrsFromElement(geomNode);
   const geomType = attrs.type || (attrs.mesh ? 'mesh' : 'sphere');
-  const originMatrix = matrixFromPoseAttrs(attrs);
+  const originMatrix = new THREE.Matrix4().copy(baseMatrix).multiply(matrixFromPoseAttrs(attrs));
   if (geomType === 'mesh') {
     const meshAsset = meshAssets.get(attrs.mesh);
     if (!meshAsset) return [];
@@ -937,8 +1244,10 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   let visualCount = 0;
   let collisionCount = 0;
 
-  async function visitBody(bodyNode, parentObject, parentName = '') {
+  async function visitBody(bodyNode, parentObject, parentName = '', parentWorldMatrix = new THREE.Matrix4()) {
     const bodyAttrs = attrsFromElement(bodyNode);
+    const bodyLocalMatrix = matrixFromPoseAttrs(bodyAttrs);
+    const bodyWorldMatrix = new THREE.Matrix4().copy(parentWorldMatrix).multiply(bodyLocalMatrix);
     const linkName = bodyAttrs.name || `body_${links.length}`;
     const linkPayload = {
       name: linkName,
@@ -949,7 +1258,7 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
 
     const pivot = new THREE.Group();
     pivot.name = `${linkName}_joint`;
-    applyMatrixToObject(pivot, matrixFromPoseAttrs(bodyAttrs));
+    applyMatrixToObject(pivot, bodyLocalMatrix);
     parentObject.add(pivot);
 
     const linkObject = new THREE.Group();
@@ -997,9 +1306,13 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       const isVisual = classifyMujocoGeom(geomNode);
       let payloads = null;
       if (!isVisual) {
-        payloads = shapePayloadForMujocoGeom(geomNode, matrixFromPoseAttrs(geomAttrs), geomName);
+        payloads = shapePayloadForMujocoGeom(
+          geomNode,
+          new THREE.Matrix4().copy(bodyWorldMatrix).multiply(matrixFromPoseAttrs(geomAttrs)),
+          geomName
+        );
       }
-      if (!payloads) payloads = await mujocoGeomPayloads(geomNode, meshAssets, geomName);
+      if (!payloads) payloads = await mujocoGeomPayloads(geomNode, meshAssets, geomName, bodyWorldMatrix);
 
       const object = await loadMujocoGeomObject(geomNode, meshAssets, geomName);
       object.name = geomName;
@@ -1033,7 +1346,7 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     links.push(linkPayload);
 
     for (const childBody of childElements(bodyNode, 'body')) {
-      await visitBody(childBody, linkObject, linkName);
+      await visitBody(childBody, linkObject, linkName, bodyWorldMatrix);
     }
   }
 
@@ -1143,6 +1456,10 @@ function buildGUI() {
   gui.add(state.settings, 'animateJoints').name('Animate joints');
   gui.add(state.settings, 'animationSpeed', 0.1, 4.0, 0.1).name('Animation speed');
   gui.add(state.settings, 'autocenter').name('Autocenter');
+  gui.add(state.settings, 'showLinkLines').name('Link lines').onChange(updateSkeletonDebugVisualizations);
+  gui.add(state.settings, 'showJointSpheres').name('Joint spheres').onChange(updateSkeletonDebugVisualizations);
+  gui.add(state.settings, 'showLinkNames').name('Link names').onChange(updateSkeletonDebugVisualizations);
+  gui.add(state.settings, 'showJointNames').name('Joint names').onChange(updateSkeletonDebugVisualizations);
   gui.add(state.settings, 'ghostUSDInSource').name('USD ghost on left').onChange(rebuildGhosts);
   gui.add(state.settings, 'ghostSourceInUSD').name('Source ghost on right').onChange(rebuildGhosts);
   gui.add(state.settings, 'ghostOpacity', 0.05, 0.75, 0.01).name('Ghost opacity').onChange(() => {
@@ -1155,11 +1472,17 @@ function setJointValue(jointName, value) {
   const joint = state.joints[jointName];
   if (!joint) return;
   state.jointValues[jointName] = value;
+  const controls = state.jointControls.get(jointName);
+  if (controls) {
+    controls.number.value = value.toFixed(3);
+    controls.range.value = String(value);
+  }
   if (state.robot?.setJointValue) {
     state.robot.setJointValue(jointName, value);
   } else if (joint.setJointValue) {
     joint.setJointValue(value);
   }
+  syncConvertedUSDToSourcePose();
   syncGhosts();
 }
 
@@ -1179,6 +1502,7 @@ function jointLimits(joint) {
 
 function rebuildJointControls() {
   jointControlsEl.innerHTML = '';
+  state.jointControls.clear();
   if (!state.robot) return;
   state.joints = state.robot.joints || {};
   const jointEntries = Object.entries(state.joints);
@@ -1209,6 +1533,7 @@ function rebuildJointControls() {
     };
     number.addEventListener('input', onInput);
     range.addEventListener('input', onInput);
+    state.jointControls.set(name, { number, range });
     jointControlsEl.appendChild(row);
   }
 }
@@ -1252,6 +1577,7 @@ async function loadRobotFile(file) {
     }
     : parseURDFMetadata(state.inputText);
   updateRobotInfo(metadata);
+  captureSourceRestLinkMatrices();
   updateButtonStates();
   rebuildGhosts();
   updateLabels();
@@ -1678,6 +2004,8 @@ async function convertSourceToUSD(format = 'usdc') {
   state.latestUSDFormat = format;
   usdGroup.add(object);
   applySceneOrientation();
+  bindConvertedUSDLinksToSource();
+  syncConvertedUSDToSourcePose();
   updateButtonStates();
   rebuildGhosts();
   updateLabels();
@@ -1808,7 +2136,9 @@ function animate() {
     }
   }
   controls.update();
+  syncConvertedUSDToSourcePose();
   syncGhosts();
+  updateSkeletonDebugVisualizations();
   renderSplitView();
 }
 
