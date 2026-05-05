@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TinyUSDZ URDF/MJCF Physics Export</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+      color: #f3f4f6;
+      background: #171717;
+    }
+    canvas { display: block; }
+    #topbar {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      background: rgba(20, 20, 22, 0.88);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      backdrop-filter: blur(10px);
+    }
+    #title {
+      font-size: 14px;
+      font-weight: 700;
+      margin-right: 8px;
+      white-space: nowrap;
+    }
+    .btn, label.btn {
+      height: 32px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 0 10px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 6px;
+      background: #2f6f73;
+      color: #fff;
+      font-size: 12px;
+      line-height: 1;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn.secondary { background: #3d4654; }
+    .btn.export { background: #74613a; }
+    .btn.convert { background: #4f6f45; }
+    .btn:disabled { opacity: 0.45; cursor: default; }
+    input[type="file"] { display: none; }
+    #status {
+      margin-left: auto;
+      min-width: 220px;
+      max-width: 38vw;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+      color: #cbd5e1;
+      text-align: right;
+    }
+    #panel {
+      position: absolute;
+      top: 76px;
+      left: 12px;
+      width: 320px;
+      max-height: calc(100vh - 92px);
+      overflow: auto;
+      padding: 10px;
+      background: rgba(20, 20, 22, 0.86);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      backdrop-filter: blur(10px);
+    }
+    #viewLabels {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      pointer-events: none;
+    }
+    .view-label {
+      justify-self: center;
+      padding: 5px 9px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 6px;
+      background: rgba(20, 20, 22, 0.74);
+      color: #cbd5e1;
+      font-size: 12px;
+    }
+    #divider {
+      position: absolute;
+      top: 64px;
+      bottom: 0;
+      left: 50%;
+      width: 1px;
+      background: rgba(255, 255, 255, 0.16);
+      pointer-events: none;
+    }
+    #panel h2 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      color: #93c5fd;
+    }
+    #robotInfo {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 4px 10px;
+      margin-bottom: 10px;
+      font-size: 12px;
+      color: #d1d5db;
+    }
+    #robotInfo span:nth-child(odd) { color: #9ca3af; }
+    #jointControls {
+      display: grid;
+      gap: 8px;
+    }
+    .joint-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 64px;
+      gap: 6px;
+      align-items: center;
+      min-height: 44px;
+      padding: 7px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 6px;
+    }
+    .joint-name {
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #f9fafb;
+    }
+    .joint-type {
+      font-size: 10px;
+      color: #9ca3af;
+    }
+    .joint-row input[type="range"] {
+      grid-column: 1 / -1;
+      width: 100%;
+    }
+    .joint-row input[type="number"] {
+      width: 64px;
+      padding: 4px;
+      color: #f3f4f6;
+      background: #111827;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 4px;
+      font-size: 11px;
+    }
+    @media (max-width: 760px) {
+      #topbar { flex-wrap: wrap; }
+      #status { flex-basis: 100%; max-width: none; text-align: left; }
+      #panel {
+        top: auto;
+        bottom: 42px;
+        width: calc(100vw - 24px);
+        max-height: 42vh;
+      }
+      #viewLabels { bottom: 8px; gap: 6px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="topbar">
+    <div id="title">TinyUSDZ URDF/MJCF</div>
+    <label class="btn">Import URDF/MJCF<input id="urdfInput" type="file" accept=".urdf,.xml"></label>
+    <label class="btn secondary">Assets<input id="assetInput" type="file" multiple webkitdirectory></label>
+    <button id="exportSource" class="btn export" disabled>Export XML</button>
+    <label class="btn">Import USD<input id="usdInput" type="file" accept=".usd,.usda,.usdc,.usdz"></label>
+    <button id="convertToUSD" class="btn convert" disabled>URDF/MJCF -> USD</button>
+    <button id="convertToSource" class="btn convert" disabled>USD -> URDF</button>
+    <button id="exportUSDA" class="btn export" disabled>USDA</button>
+    <button id="exportUSDC" class="btn export" disabled>USDC</button>
+    <button id="exportUSDZ" class="btn export" disabled>USDZ</button>
+    <div id="status">Load a URDF/MJCF, import USD, or index assets.</div>
+  </div>
+  <div id="divider"></div>
+  <div id="panel">
+    <h2>Robot</h2>
+    <div id="robotInfo">
+      <span>Name</span><span id="robotName">-</span>
+      <span>Links</span><span id="linkCount">0</span>
+      <span>Joints</span><span id="jointCount">0</span>
+      <span>Meshes</span><span id="meshCount">0</span>
+    </div>
+    <h2>Joints</h2>
+    <div id="jointControls"></div>
+  </div>
+  <div id="viewLabels">
+    <div class="view-label" id="sourceLabel">URDF/MJCF</div>
+    <div class="view-label" id="usdLabel">USD</div>
+  </div>
+  <script type="module" src="./urdf.js"></script>
+</body>
+</html>

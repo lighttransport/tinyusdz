@@ -563,6 +563,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/materialx-to-json.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/physics-to-json.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/physics-to-json.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/urdf-to-usd.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/urdf-to-usd.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/ar-to-json.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/ar-to-json.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/ik-solver.h
@@ -1721,6 +1723,7 @@ if(TINYUSDZ_BUILD_EXAMPLES)
     add_subdirectory(examples/variant-lister)
     add_subdirectory(examples/variant-analyzer)
     add_subdirectory(examples/usddiff)
+    add_subdirectory(examples/urdf-to-usd)
 
     if (TINYUSDZ_WITH_MCP_SERVER)
       add_subdirectory(examples/mcp_server)
