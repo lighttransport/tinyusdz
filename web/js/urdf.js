@@ -1055,6 +1055,18 @@ function collectMeshPayloads(root, baseMatrix, fallbackName) {
   return payloads;
 }
 
+function asFloat32Array(values) {
+  return values instanceof Float32Array ? values : new Float32Array(values || []);
+}
+
+function asInt32Array(values) {
+  return values instanceof Int32Array ? values : new Int32Array(values || []);
+}
+
+function asUint32Array(values) {
+  return values instanceof Uint32Array ? values : new Uint32Array(values || []);
+}
+
 function nativeMeshBufferForMesh(mesh, meshRef) {
   if (state.nativeMeshBuffers.has(meshRef)) return meshRef;
   const geom = mesh.geometry;
@@ -1065,17 +1077,15 @@ function nativeMeshBufferForMesh(mesh, meshRef) {
   const index = geom.getIndex();
   let indices = null;
   if (index) {
-    indices = index.array instanceof Int32Array
-      ? index.array
-      : new Int32Array(index.array);
+    indices = asInt32Array(index.array);
   } else {
     indices = new Int32Array(pos.count);
     for (let i = 0; i < indices.length; i++) indices[i] = i;
   }
   state.nativeMeshBuffers.set(meshRef, {
-    positions: pos.array instanceof Float32Array ? pos.array : new Float32Array(pos.array),
-    normals: normal ? (normal.array instanceof Float32Array ? normal.array : new Float32Array(normal.array)) : new Float32Array(),
-    uvs: uv ? (uv.array instanceof Float32Array ? uv.array : new Float32Array(uv.array)) : new Float32Array(),
+    positions: asFloat32Array(pos.array),
+    normals: normal ? asFloat32Array(normal.array) : new Float32Array(),
+    uvs: uv ? asFloat32Array(uv.array) : new Float32Array(),
     indices
   });
   return meshRef;
@@ -1957,6 +1967,14 @@ function bytesFromNativeView(view) {
   return new Uint8Array(view);
 }
 
+function convertedUSDPreviewMaterial() {
+  return new THREE.MeshStandardMaterial({
+    color: 0x9aa5ad,
+    roughness: 0.62,
+    metalness: 0.0
+  });
+}
+
 function matrixFromUSDArray(values) {
   const matrix = new THREE.Matrix4();
   if (Array.isArray(values) && values.length === 16) {
@@ -1974,29 +1992,17 @@ function geometryFromPayloadItem(item, geometryCache) {
   if (!positions || positions.length < 9) return null;
 
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(
-    positions instanceof Float32Array ? positions : new Float32Array(positions),
-    3
-  ));
+  geometry.setAttribute('position', new THREE.BufferAttribute(asFloat32Array(positions), 3));
   if (buffer.normals?.length === positions.length) {
-    geometry.setAttribute('normal', new THREE.BufferAttribute(
-      buffer.normals instanceof Float32Array ? buffer.normals : new Float32Array(buffer.normals),
-      3
-    ));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(asFloat32Array(buffer.normals), 3));
   } else {
     geometry.computeVertexNormals();
   }
   if (buffer.uvs?.length === (positions.length / 3) * 2) {
-    geometry.setAttribute('uv', new THREE.BufferAttribute(
-      buffer.uvs instanceof Float32Array ? buffer.uvs : new Float32Array(buffer.uvs),
-      2
-    ));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(asFloat32Array(buffer.uvs), 2));
   }
   if (buffer.indices?.length) {
-    geometry.setIndex(new THREE.BufferAttribute(
-      buffer.indices instanceof Uint32Array ? buffer.indices : new Uint32Array(buffer.indices),
-      1
-    ));
+    geometry.setIndex(new THREE.BufferAttribute(asUint32Array(buffer.indices), 1));
   }
   geometry.computeBoundingSphere();
   if (meshRef) geometryCache.set(meshRef, geometry);
@@ -2011,11 +2017,7 @@ function buildConvertedUSDPreviewFromPayload(payload) {
   root.add(linksScope);
 
   const geometryCache = new Map();
-  const material = new THREE.MeshStandardMaterial({
-    color: 0x9aa5ad,
-    roughness: 0.62,
-    metalness: 0.0
-  });
+  const material = convertedUSDPreviewMaterial();
 
   const sourceRestByLink = state.sourceRestLinkMatrices;
   for (const link of payload.links || []) {
@@ -2047,18 +2049,22 @@ function buildConvertedUSDPreviewFromPayload(payload) {
   return root;
 }
 
+function registerNativeMeshBuffer(native, item, collision) {
+  const buffer = state.nativeMeshBuffers.get(item.meshRef);
+  if (!buffer) throw new Error(`Missing native mesh buffer for ${item.meshRef}`);
+  const fn = collision ? native.setCollisionMesh : native.setVisualMesh;
+  if (typeof fn !== 'function') {
+    throw new Error('TinyUSDZ WASM does not expose setVisualMesh/setCollisionMesh.');
+  }
+  const ok = fn.call(native, item.meshRef, buffer.positions, buffer.normals, buffer.uvs, buffer.indices);
+  if (!ok) throw new Error(native.error() || `Failed to register mesh buffer ${item.meshRef}`);
+}
+
 function registerNativeMeshBuffers(native, payload) {
   const used = new Set();
   const register = (item, collision) => {
     if (!item?.meshRef || used.has(item.meshRef)) return;
-    const buffer = state.nativeMeshBuffers.get(item.meshRef);
-    if (!buffer) throw new Error(`Missing native mesh buffer for ${item.meshRef}`);
-    const fn = collision ? native.setCollisionMesh : native.setVisualMesh;
-    if (typeof fn !== 'function') {
-      throw new Error('TinyUSDZ WASM does not expose setVisualMesh/setCollisionMesh.');
-    }
-    const ok = fn.call(native, item.meshRef, buffer.positions, buffer.normals, buffer.uvs, buffer.indices);
-    if (!ok) throw new Error(native.error() || `Failed to register mesh buffer ${item.meshRef}`);
+    registerNativeMeshBuffer(native, item, collision);
     used.add(item.meshRef);
   };
 
@@ -2069,14 +2075,7 @@ function registerNativeMeshBuffers(native, payload) {
   }
 }
 
-async function createUSDBytesFromSource(format) {
-  const native = await ensureNativeExporter();
-  const payload = buildCurrentExportPayload();
-  registerNativeMeshBuffers(native, payload);
-  setStatus(`Creating USD Physics + MuJoCo stage for ${payload.name}...`);
-  const ok = native.createURDFPhysicsScene(JSON.stringify(payload));
-  if (!ok) throw new Error(native.error());
-
+function exportNativeStage(native, format, payload = null) {
   if (format === 'usda') {
     const text = native.exportAsUSDA();
     if (!text) throw new Error(native.error());
@@ -2107,38 +2106,23 @@ async function createUSDBytesFromSource(format) {
   };
 }
 
+async function createUSDBytesFromSource(format) {
+  const native = await ensureNativeExporter();
+  const payload = buildCurrentExportPayload();
+  registerNativeMeshBuffers(native, payload);
+  setStatus(`Creating USD Physics + MuJoCo stage for ${payload.name}...`);
+  const ok = native.createURDFPhysicsScene(JSON.stringify(payload));
+  if (!ok) throw new Error(native.error());
+  return exportNativeStage(native, format, payload);
+}
+
 async function createUSDBytesFromImportedUSD(format) {
   const native = await ensureNativeExporter();
   if (!state.latestUSDBytes) throw new Error('No imported or converted USD is loaded.');
   if (!native.loadFromBinary(state.latestUSDBytes, state.usdName || `scene.${state.latestUSDFormat || 'usd'}`)) {
     throw new Error(native.error() || 'Failed to load current USD for export.');
   }
-
-  if (format === 'usda') {
-    const text = native.exportAsUSDA();
-    if (!text) throw new Error(native.error());
-    return {
-      bytes: new TextEncoder().encode(text),
-      blob: new Blob([text], { type: 'text/plain' }),
-      filename: `${usdBaseName()}.usda`
-    };
-  }
-  if (format === 'usdc') {
-    const bytes = bytesFromNativeView(native.exportAsUSDC());
-    if (!bytes) throw new Error(native.error());
-    return {
-      bytes,
-      blob: new Blob([bytes], { type: 'application/octet-stream' }),
-      filename: `${usdBaseName()}.usdc`
-    };
-  }
-  const bytes = bytesFromNativeView(native.exportAsUSDZ());
-  if (!bytes) throw new Error(native.error());
-  return {
-    bytes,
-    blob: new Blob([bytes], { type: 'model/vnd.usdz+zip' }),
-    filename: `${usdBaseName()}.usdz`
-  };
+  return exportNativeStage(native, format);
 }
 
 async function createUSDBytes(format) {

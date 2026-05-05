@@ -318,36 +318,53 @@ bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
   if (mesh_json.contains("geometry") && mesh_json["geometry"].is_object()) {
     geom = &mesh_json["geometry"];
   }
-  std::vector<float> positions;
-  std::vector<float> normals;
-  std::vector<float> uvs;
-  std::vector<int32_t> indices;
+  std::vector<float> json_positions;
+  std::vector<float> json_normals;
+  std::vector<float> json_uvs;
+  std::vector<int32_t> json_indices;
+  const std::vector<float> *positions = nullptr;
+  const std::vector<float> *normals = nullptr;
+  const std::vector<float> *uvs = nullptr;
+  const std::vector<int32_t> *source_indices = nullptr;
   const std::string mesh_ref = JsonString(mesh_json, "meshRef");
   if (!mesh_ref.empty()) {
-    if (!mesh_buffers || !mesh_buffers->count(mesh_ref)) {
+    if (!mesh_buffers) {
       AppendWarn(warn, "Skipping mesh `" + fallback_name +
                            "`: meshRef `" + mesh_ref + "` was not registered.\n");
       return true;
     }
-    const URDFMeshBuffer &buffer = mesh_buffers->at(mesh_ref);
-    positions = buffer.positions;
-    normals = buffer.normals;
-    uvs = buffer.uvs;
-    indices = buffer.indices;
+    auto buffer_it = mesh_buffers->find(mesh_ref);
+    if (buffer_it == mesh_buffers->end()) {
+      AppendWarn(warn, "Skipping mesh `" + fallback_name +
+                           "`: meshRef `" + mesh_ref + "` was not registered.\n");
+      return true;
+    }
+    const URDFMeshBuffer &buffer = buffer_it->second;
+    positions = &buffer.positions;
+    normals = &buffer.normals;
+    uvs = &buffer.uvs;
+    source_indices = &buffer.indices;
   } else {
-    positions = JsonFloatArray(*geom, "positions");
-    normals = JsonFloatArray(*geom, "normals");
-    uvs = JsonFloatArray(*geom, "uvs");
-    indices = JsonIntArray(*geom, "indices");
+    json_positions = JsonFloatArray(*geom, "positions");
+    json_normals = JsonFloatArray(*geom, "normals");
+    json_uvs = JsonFloatArray(*geom, "uvs");
+    json_indices = JsonIntArray(*geom, "indices");
+    positions = &json_positions;
+    normals = &json_normals;
+    uvs = &json_uvs;
+    source_indices = &json_indices;
   }
-  if (positions.size() < 9 || (positions.size() % 3) != 0) {
+  if (!positions || positions->size() < 9 || (positions->size() % 3) != 0) {
     AppendWarn(warn, "Skipping mesh `" + fallback_name +
                          "`: positions must contain at least 3 points.\n");
     return true;
   }
 
-  if (indices.empty()) {
-    indices.resize(positions.size() / 3);
+  std::vector<int32_t> indices;
+  if (source_indices && !source_indices->empty()) {
+    indices = *source_indices;
+  } else {
+    indices.resize(positions->size() / 3);
     for (size_t i = 0; i < indices.size(); i++) {
       indices[i] = static_cast<int32_t>(i);
     }
@@ -366,9 +383,10 @@ bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
       GeomMesh::SubdivisionScheme::SubdivisionSchemeNone);
 
   std::vector<value::point3f> points;
-  points.reserve(positions.size() / 3);
-  for (size_t i = 0; i + 2 < positions.size(); i += 3) {
-    points.push_back({positions[i + 0], positions[i + 1], positions[i + 2]});
+  points.reserve(positions->size() / 3);
+  for (size_t i = 0; i + 2 < positions->size(); i += 3) {
+    points.push_back(
+        {(*positions)[i + 0], (*positions)[i + 1], (*positions)[i + 2]});
   }
   mesh.points.set_value(std::move(points));
 
@@ -376,22 +394,22 @@ bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
   mesh.faceVertexCounts.set_value(std::move(counts));
   mesh.faceVertexIndices.set_value(std::move(indices));
 
-  if (normals.size() == positions.size()) {
+  if (normals && normals->size() == positions->size()) {
     std::vector<value::normal3f> ns;
-    ns.reserve(normals.size() / 3);
-    for (size_t i = 0; i + 2 < normals.size(); i += 3) {
-      ns.push_back({normals[i + 0], normals[i + 1], normals[i + 2]});
+    ns.reserve(normals->size() / 3);
+    for (size_t i = 0; i + 2 < normals->size(); i += 3) {
+      ns.push_back({(*normals)[i + 0], (*normals)[i + 1], (*normals)[i + 2]});
     }
     mesh.normals.set_value(std::move(ns));
     mesh.normals.metas().set_interpolation_enum(Interpolation::Vertex);
   }
 
-  if (uvs.size() == (positions.size() / 3) * 2) {
+  if (uvs && uvs->size() == (positions->size() / 3) * 2) {
     Attribute uv_attr;
     std::vector<value::texcoord2f> st;
-    st.reserve(uvs.size() / 2);
-    for (size_t i = 0; i + 1 < uvs.size(); i += 2) {
-      st.push_back({uvs[i + 0], uvs[i + 1]});
+    st.reserve(uvs->size() / 2);
+    for (size_t i = 0; i + 1 < uvs->size(); i += 2) {
+      st.push_back({(*uvs)[i + 0], (*uvs)[i + 1]});
     }
     uv_attr.set_value(std::move(st));
     uv_attr.metas().set_interpolation_enum(Interpolation::Vertex);
