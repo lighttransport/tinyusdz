@@ -2962,6 +2962,14 @@ async function convertUSDToSource() {
   const sourceModel = usdPhysicsToSourceModel(JSON.parse(jsonText));
   clearRobot();
   const robot = buildGeneratedSourceFromUSD(sourceModel);
+  state.exportPayload = {
+    ...sourceModel,
+    links: sourceModel.links.map((link) => ({
+      ...link,
+      visuals: link.visuals || [],
+      collisions: link.collisions || []
+    }))
+  };
   state.inputText = mjcfFromSourceModel(sourceModel);
   state.inputName = `${usdBaseName()}_from_usd.xml`;
   state.inputFormat = 'mjcf';
@@ -2976,6 +2984,8 @@ async function convertUSDToSource() {
     joints: sourceModel.joints
   });
   captureSourceRestLinkMatrices();
+  bindConvertedUSDLinksToSource();
+  syncConvertedUSDToSourcePose();
   updateButtonStates();
   rebuildGhosts();
   updateLabels();
