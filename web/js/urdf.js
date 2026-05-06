@@ -13,6 +13,8 @@ import {
 const state = {
   robot: null,
   usdObject: null,
+  usdRestObject: null,
+  usdArticulation: null,
   sourceGhost: null,
   usdGhost: null,
   usdLinkBindings: [],
@@ -48,6 +50,7 @@ const state = {
     ghostUSDInSource: false,
     ghostSourceInUSD: false,
     ghostOpacity: 0.28,
+    showAxisHelper: true,
     showLinkLines: false,
     showJointArrows: false,
     showLinkNames: false,
@@ -64,16 +67,21 @@ function createViewScene() {
   const root = new THREE.Group();
   const ghostRoot = new THREE.Group();
   const debugRoot = new THREE.Group();
+  const axisHelper = new THREE.AxesHelper(0.35);
+  axisHelper.name = 'WorldAxesHelper';
+  axisHelper.renderOrder = 30;
+  axisHelper.visible = state.settings.showAxisHelper;
   scene.add(root);
   scene.add(ghostRoot);
   scene.add(debugRoot);
+  scene.add(axisHelper);
   scene.add(new THREE.HemisphereLight(0xddeeff, 0x303030, 1.6));
   const dirLight = new THREE.DirectionalLight(0xffffff, 2.4);
   dirLight.position.set(4, 6, 3);
   dirLight.castShadow = true;
   scene.add(dirLight);
   scene.add(new THREE.GridHelper(20, 40, 0x586069, 0x33383d));
-  return { scene, root, ghostRoot, debugRoot };
+  return { scene, root, ghostRoot, debugRoot, axisHelper };
 }
 
 const sourceView = createViewScene();
@@ -224,7 +232,12 @@ function clearRobot() {
 
 function clearUSD() {
   clearObjectFromGroup(usdGroup, state.usdObject);
+  if (state.usdRestObject && state.usdRestObject !== state.usdObject) {
+    disposeObject(state.usdRestObject);
+  }
   state.usdObject = null;
+  state.usdRestObject = null;
+  state.usdArticulation = null;
   state.usdName = '';
   state.latestUSDBytes = null;
   state.latestUSDFormat = '';
@@ -338,9 +351,20 @@ async function loadUSDObjectFromBytes(bytes, filename) {
   );
   const rootNode = sceneData.getDefaultRootNode();
   const defaultMaterial = TinyUSDZLoaderUtils.createDefaultMaterial();
-  const object = TinyUSDZLoaderUtils.buildThreeNode(rootNode, defaultMaterial, sceneData, { overrideMaterial: false });
+  const object = await TinyUSDZLoaderUtils.buildThreeNode(rootNode, defaultMaterial, sceneData, { overrideMaterial: false });
   object.name = filename.replace(/\.[^.]+$/, '') || 'usd_scene';
   return object;
+}
+
+async function extractUSDPhysicsJSONFromBytes(bytes, filename) {
+  const native = await ensureNativeExporter();
+  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  if (!native.loadFromBinary(data, filename || 'scene.usd')) {
+    throw new Error(native.error() || 'Failed to load USD for physics extraction.');
+  }
+  const jsonText = native.extractPhysicsSceneJSON();
+  if (!jsonText) throw new Error(native.error() || 'USD Physics extraction failed.');
+  return JSON.parse(jsonText);
 }
 
 async function loadUSDFile(file) {
@@ -348,11 +372,37 @@ async function loadUSDFile(file) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const object = await loadUSDObjectFromBytes(bytes, file.name);
   state.usdObject = object;
+  state.usdRestObject = object;
   state.usdName = file.name;
   state.latestUSDBytes = bytes;
   state.latestUSDFormat = extension(file.name).slice(1) || 'usd';
   usdGroup.add(object);
   applySceneOrientation();
+  try {
+    const extracted = await extractUSDPhysicsJSONFromBytes(bytes, file.name);
+    annotateUSDRenderableClasses(object, extracted);
+    const model = usdPhysicsToSourceModel(extracted);
+    if (model.links.length && model.joints.length) {
+      const articulated = buildArticulatedRobotFromUSD(model, object, {
+        name: object.name,
+        resetMeshLists: false,
+        inferMissingJointFrames: true
+      });
+      usdGroup.remove(object);
+      state.usdObject = articulated;
+      state.usdArticulation = articulated;
+      usdGroup.add(articulated);
+      rebuildJointControls();
+      updateRobotInfo({
+        name: model.name,
+        links: new Map(model.links.map((link) => [link.name, link])),
+        joints: model.joints,
+        meshes: (extracted.prims || []).filter((prim) => prim.geometry).length
+      });
+    }
+  } catch (err) {
+    console.warn('USD Physics extraction skipped:', err);
+  }
   updateButtonStates();
   rebuildGhosts();
   updateLabels();
@@ -531,6 +581,43 @@ function isCollisionObject(object) {
     || marker.includes('collider');
 }
 
+function pathInSetOrUnder(path, paths) {
+  if (!path || !paths) return false;
+  if (paths.has(path)) return true;
+  for (const candidate of paths) {
+    if (path.startsWith(`${candidate}/`)) return true;
+  }
+  return false;
+}
+
+function usdGeometryClassification(extracted) {
+  const visualPaths = new Set();
+  const collisionPaths = new Set();
+  for (const prim of extracted?.prims || []) {
+    if (!prim.geometry) continue;
+    const group = Number(prim.properties?.['mjc:group']);
+    if (hasApi(prim, 'PhysicsCollisionAPI') || group === 3) {
+      collisionPaths.add(prim.path);
+    } else {
+      visualPaths.add(prim.path);
+    }
+  }
+  return { visualPaths, collisionPaths };
+}
+
+function annotateUSDRenderableClasses(root, extracted) {
+  const { visualPaths, collisionPaths } = usdGeometryClassification(extracted);
+  root?.traverse((obj) => {
+    if (!obj.isMesh) return;
+    const path = usdPathForObject(obj);
+    if (pathInSetOrUnder(path, collisionPaths)) {
+      obj.userData.urdfCollision = true;
+    } else if (pathInSetOrUnder(path, visualPaths)) {
+      obj.userData.urdfCollision = false;
+    }
+  });
+}
+
 function sanitizeUSDIdentifier(name, fallback = 'link') {
   let out = String(name || '').replace(/[^A-Za-z0-9_]/g, '_');
   if (!out) out = fallback;
@@ -651,6 +738,11 @@ function usdLinkDebugEntries() {
     linksScope.updateWorldMatrix(true, true);
     for (const child of linksScope.children) {
       entries.set(child.name, makeLinkDebugEntry(child));
+    }
+  } else if (state.usdArticulation?.links) {
+    state.usdArticulation.updateWorldMatrix(true, true);
+    for (const [name, link] of Object.entries(state.usdArticulation.links)) {
+      entries.set(name, makeLinkDebugEntry(link));
     }
   }
   return entries;
@@ -983,6 +1075,8 @@ function parseURDFMetadata(text) {
     const child = jointEl.querySelector(':scope > child')?.getAttribute('link') || '';
     const axis = parseNumbers(jointEl.querySelector(':scope > axis')?.getAttribute('xyz'), [1, 0, 0]);
     const origin = parseNumbers(jointEl.querySelector(':scope > origin')?.getAttribute('xyz'), [0, 0, 0]);
+    const rpy = parseNumbers(jointEl.querySelector(':scope > origin')?.getAttribute('rpy'), [0, 0, 0]);
+    const originQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(rpy[0] || 0, rpy[1] || 0, rpy[2] || 0, 'XYZ'));
     const limitEl = jointEl.querySelector(':scope > limit');
     const dynamicsEl = jointEl.querySelector(':scope > dynamics');
     joints.push({
@@ -993,7 +1087,11 @@ function parseURDFMetadata(text) {
       axis,
       axisToken: axisToToken(axis),
       origin,
-      originMatrix: originToUSDMatrix(origin, parseNumbers(jointEl.querySelector(':scope > origin')?.getAttribute('rpy'), [0, 0, 0])),
+      originMatrix: originToUSDMatrix(origin, rpy),
+      localPos0: origin,
+      localPos1: [0, 0, 0],
+      localRot0: quaternionToUSDArray(originQuat),
+      localRot1: [1, 0, 0, 0],
       limit: limitEl ? {
         lower: Number(limitEl.getAttribute('lower')),
         upper: Number(limitEl.getAttribute('upper')),
@@ -1068,6 +1166,24 @@ function matrixFromPoseAttrs(attrs = {}) {
   }
 
   return new THREE.Matrix4().compose(translation, quat, new THREE.Vector3(1, 1, 1));
+}
+
+function decomposeMatrix(matrix) {
+  const position = new THREE.Vector3();
+  const quaternion = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  matrix.decompose(position, quaternion, scale);
+  return { position, quaternion, scale };
+}
+
+function quaternionToUSDArray(quaternion) {
+  return [quaternion.w, quaternion.x, quaternion.y, quaternion.z];
+}
+
+function transformPointArray(matrix, values = [0, 0, 0]) {
+  const point = vectorFromArray(values);
+  point.applyMatrix4(matrix);
+  return point.toArray();
 }
 
 function applyMatrixToObject(object, matrix) {
@@ -1364,7 +1480,7 @@ async function mujocoGeomPayloads(geomAttrs, meshAssets, fallbackName, baseMatri
     return collectNativeMeshRefPayloads(object, meshMatrix, fallbackName, meshAsset.path || attrs.mesh || fallbackName);
   }
 
-  const object = await loadMujocoGeomObject(geomNode, meshAssets, fallbackName);
+  const object = await loadMujocoGeomObject(attrs, meshAssets, fallbackName);
   const yToZ = geomType === 'cylinder' || geomType === 'capsule'
     ? new THREE.Matrix4().makeRotationX(Math.PI / 2)
     : new THREE.Matrix4();
@@ -1411,7 +1527,11 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     const joint = group.joints[jointName];
     if (!joint?.pivot) return;
     if (joint.jointType === 'prismatic') {
-      joint.pivot.position.copy(joint.origin).add(new THREE.Vector3(...joint.axis).multiplyScalar(value));
+      const offset = new THREE.Vector3(...joint.axis)
+        .normalize()
+        .applyQuaternion(joint.originQuat)
+        .multiplyScalar(value);
+      joint.pivot.position.copy(joint.origin).add(offset);
     } else {
       joint.pivot.quaternion.copy(joint.originQuat)
         .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(...joint.axis).normalize(), value));
@@ -1459,7 +1579,12 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       const range = parseNumbers(jointAttrs.range, []);
       const jointName = jointAttrs.name || `${parentName}_to_${linkName}${jointNode ? '' : '_fixed'}`;
       const type = jointNode ? mujocoJointType(jointAttrs.type || 'hinge') : 'fixed';
-      const origin = parseNumbers(bodyAttrs.pos, [0, 0, 0]);
+      const bodyPose = decomposeMatrix(bodyLocalMatrix);
+      const jointPos = parseNumbers(jointAttrs.pos, [0, 0, 0]);
+      const localPos0 = transformPointArray(bodyLocalMatrix, jointPos);
+      const localPos1 = jointPos;
+      const localRot0 = quaternionToUSDArray(bodyPose.quaternion);
+      const localRot1 = [1, 0, 0, 0];
       const jointInfo = {
         name: jointName,
         type,
@@ -1467,8 +1592,12 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
         child: linkName,
         axis,
         axisToken: axisToToken(axis),
-        origin,
+        origin: localPos0,
         originMatrix: matrixToUSDArray(matrixFromPoseAttrs(bodyAttrs)),
+        localPos0,
+        localPos1,
+        localRot0,
+        localRot1,
         limit: range.length >= 2 ? { lower: range[0], upper: range[1] } : {},
         dynamics: {
           damping: numberAttr(jointAttrs, 'damping'),
@@ -1645,6 +1774,11 @@ function applySceneOrientation() {
   }
 }
 
+function applyAxisHelperVisibility() {
+  sourceView.axisHelper.visible = state.settings.showAxisHelper;
+  usdView.axisHelper.visible = state.settings.showAxisHelper;
+}
+
 function buildGUI() {
   const gui = new GUI({ title: 'Robot Controls' });
   gui.add(state.settings, 'upAxis', ['Z', 'Y']).name('Export upAxis').onChange(() => {
@@ -1658,6 +1792,7 @@ function buildGUI() {
   gui.add(state.settings, 'animateJoints').name('Animate joints');
   gui.add(state.settings, 'animationSpeed', 0.1, 4.0, 0.1).name('Animation speed');
   gui.add(state.settings, 'autocenter').name('Autocenter');
+  gui.add(state.settings, 'showAxisHelper').name('Axis helper').onChange(applyAxisHelperVisibility);
   gui.add(state.settings, 'showLinkLines').name('Link lines').onChange(updateSkeletonDebugVisualizations);
   gui.add(state.settings, 'showJointArrows').name('Joint arrows').onChange(updateSkeletonDebugVisualizations);
   gui.add(state.settings, 'showLinkNames').name('Link names').onChange(updateSkeletonDebugVisualizations);
@@ -1684,6 +1819,9 @@ function setJointValue(jointName, value) {
   } else if (joint.setJointValue) {
     joint.setJointValue(value);
   }
+  if (state.usdArticulation?.setJointValue && state.usdArticulation !== state.robot) {
+    state.usdArticulation.setJointValue(jointName, value);
+  }
   syncConvertedUSDToSourcePose();
   syncGhosts();
 }
@@ -1705,8 +1843,9 @@ function jointLimits(joint) {
 function rebuildJointControls() {
   jointControlsEl.innerHTML = '';
   state.jointControls.clear();
-  if (!state.robot) return;
-  state.joints = state.robot.joints || {};
+  const jointSource = state.robot || state.usdArticulation;
+  if (!jointSource) return;
+  state.joints = jointSource.joints || {};
   const jointEntries = Object.entries(state.joints);
   for (const [name, joint] of jointEntries) {
     const type = joint.jointType || joint.type || 'fixed';
@@ -1742,9 +1881,9 @@ function rebuildJointControls() {
 
 function updateRobotInfo(metadata) {
   document.getElementById('robotName').textContent = metadata.name || state.robot?.name || '-';
-  document.getElementById('linkCount').textContent = String(Object.keys(state.robot?.links || {}).length);
-  document.getElementById('jointCount').textContent = String(Object.keys(state.robot?.joints || {}).length);
-  document.getElementById('meshCount').textContent = String(state.visualMeshes.length + state.collisionMeshes.length);
+  document.getElementById('linkCount').textContent = String(metadata.links?.size || Object.keys(state.robot?.links || state.usdArticulation?.links || {}).length);
+  document.getElementById('jointCount').textContent = String(metadata.joints?.length || Object.keys(state.robot?.joints || state.usdArticulation?.joints || {}).length);
+  document.getElementById('meshCount').textContent = String(metadata.meshes ?? (state.visualMeshes.length + state.collisionMeshes.length));
 }
 
 function updateLabels() {
@@ -2019,6 +2158,75 @@ function usdPhysicsToUrdf(extracted) {
   };
 }
 
+function usdPhysicsToSourceModel(extracted) {
+  const prims = extracted.prims || [];
+  const linkPrims = prims.filter((prim) => hasApi(prim, 'PhysicsRigidBodyAPI'));
+  const links = linkPrims.map((prim) => ({
+    name: prim.name || basenameFromPath(prim.path),
+    path: prim.path,
+    inertial: {
+      mass: Number(prim.properties?.['physics:mass'] || 0),
+      centerOfMass: prim.properties?.['physics:centerOfMass'] || [0, 0, 0],
+      diagonalInertia: prim.properties?.['physics:diagonalInertia'] || [0, 0, 0]
+    }
+  }));
+  const linksByPath = new Map(links.map((link) => [link.path, link]));
+
+  const joints = prims
+    .filter((prim) => /^Physics(?:Revolute|Prismatic|Fixed|Joint)/.test(prim.type))
+    .map((prim) => {
+      const type = prim.type === 'PhysicsRevoluteJoint'
+        ? 'revolute'
+        : prim.type === 'PhysicsPrismaticJoint'
+          ? 'prismatic'
+          : 'fixed';
+      const parentPath = firstRelTarget(prim, 'physics:body0');
+      const childPath = firstRelTarget(prim, 'physics:body1');
+      const axisToken = prim.properties?.['physics:axis'] || 'X';
+      const lower = prim.properties?.['physics:lowerLimit'];
+      const upper = prim.properties?.['physics:upperLimit'];
+      return {
+        name: prim.name || basenameFromPath(prim.path),
+        type,
+        parent: linksByPath.get(parentPath)?.name || basenameFromPath(parentPath),
+        child: linksByPath.get(childPath)?.name || basenameFromPath(childPath),
+        parentPath,
+        childPath,
+        axis: axisToken === 'Y' ? [0, 1, 0] : axisToken === 'Z' ? [0, 0, 1] : [1, 0, 0],
+        axisToken,
+        origin: prim.properties?.['physics:localPos0'] || [0, 0, 0],
+        localPos0: prim.properties?.['physics:localPos0'],
+        localPos1: prim.properties?.['physics:localPos1'],
+        localRot0: prim.properties?.['physics:localRot0'],
+        localRot1: prim.properties?.['physics:localRot1'],
+        limit: lower !== undefined || upper !== undefined
+          ? {
+            lower: type === 'revolute' ? Number(lower || 0) * DEG_TO_RAD : Number(lower || 0),
+            upper: type === 'revolute' ? Number(upper || 0) * DEG_TO_RAD : Number(upper || 0)
+          }
+          : {},
+        dynamics: {
+          damping: prim.properties?.['mjc:damping'],
+          friction: prim.properties?.['mjc:frictionloss']
+        }
+      };
+    });
+
+  const collisionPaths = new Set(
+    prims
+      .filter((prim) => prim.geometry && (hasApi(prim, 'PhysicsCollisionAPI') || Number(prim.properties?.['mjc:group']) === 3))
+      .map((prim) => prim.path)
+  );
+
+  return {
+    name: extracted.name || basenameFromPath(state.usdName) || 'ConvertedFromUSDPhysics',
+    upAxis: extracted.upAxis || 'Y',
+    links,
+    joints,
+    collisionPaths
+  };
+}
+
 function fmtNumber(value) {
   if (!Number.isFinite(value)) return '0';
   return Number(value).toPrecision(9).replace(/\.?0+$/u, '');
@@ -2027,6 +2235,23 @@ function fmtNumber(value) {
 function vec(value, fallback = [0, 0, 0]) {
   const a = Array.isArray(value) ? value : fallback;
   return [a[0] || 0, a[1] || 0, a[2] || 0].map(fmtNumber).join(' ');
+}
+
+function quatAttr(quaternion) {
+  if (!quaternion) return '';
+  const q = quaternion.clone().normalize();
+  if (Math.abs(q.x) < 1e-9 && Math.abs(q.y) < 1e-9 && Math.abs(q.z) < 1e-9 && Math.abs(q.w - 1) < 1e-9) return '';
+  return ` quat="${fmtNumber(q.w)} ${fmtNumber(q.x)} ${fmtNumber(q.y)} ${fmtNumber(q.z)}"`;
+}
+
+function mjcfBodyPoseFromJoint(joint) {
+  const bodyMatrix = jointFrameMatrix(joint, 0).multiply(jointFrameMatrix(joint, 1).invert());
+  return decomposeMatrix(bodyMatrix);
+}
+
+function mjcfJointPosAttr(joint) {
+  const pos = joint.localPos1 || [0, 0, 0];
+  return vectorFromArray(pos).lengthSq() > 1e-18 ? ` pos="${vec(pos)}"` : '';
 }
 
 function escapeXML(value) {
@@ -2088,6 +2313,374 @@ function urdfToXML(robot) {
   }
   lines.push('</robot>');
   return `${lines.join('\n')}\n`;
+}
+
+function mjcfFromSourceModel(model) {
+  const childJoints = new Map();
+  const childLinks = new Set();
+  for (const joint of model.joints || []) {
+    childLinks.add(joint.child);
+    if (!childJoints.has(joint.parent)) childJoints.set(joint.parent, []);
+    childJoints.get(joint.parent).push(joint);
+  }
+
+  const linksByName = new Map((model.links || []).map((link) => [link.name, link]));
+  const roots = (model.links || []).filter((link) => !childLinks.has(link.name));
+  const axis = (value) => vec(value, [1, 0, 0]);
+
+  const lines = [
+    `<mujoco model="${escapeXML(model.name || 'ConvertedFromUSD')}">`,
+    '  <worldbody>'
+  ];
+
+  function writeBody(link, indent) {
+    const pad = ' '.repeat(indent);
+    lines.push(`${pad}<body name="${escapeXML(link.name)}">`);
+    for (const joint of childJoints.get(link.name) || []) {
+      const child = linksByName.get(joint.child);
+      if (!child) continue;
+      const jointType = joint.type === 'prismatic' ? 'slide' : joint.type === 'fixed' ? 'fixed' : 'hinge';
+      const range = joint.limit && Number.isFinite(joint.limit.lower) && Number.isFinite(joint.limit.upper)
+        ? ` range="${fmtNumber(joint.limit.lower)} ${fmtNumber(joint.limit.upper)}"`
+        : '';
+      const bodyPose = mjcfBodyPoseFromJoint(joint);
+      lines.push(`${pad}  <body name="${escapeXML(child.name)}" pos="${vec(bodyPose.position.toArray())}"${quatAttr(bodyPose.quaternion)}>`);
+      if (jointType !== 'fixed') {
+        lines.push(`${pad}    <joint name="${escapeXML(joint.name)}" type="${jointType}" axis="${axis(joint.axis)}"${mjcfJointPosAttr(joint)}${range}/>`);
+      }
+      lines.push(`${pad}    <!-- Mesh geometry is displayed from the loaded USD scene in the web demo. -->`);
+      for (const grandChild of childJoints.get(child.name) || []) {
+        const grandLink = linksByName.get(grandChild.child);
+        if (grandLink) writeBodyFromJoint(child, grandChild, grandLink, indent + 4);
+      }
+      lines.push(`${pad}  </body>`);
+    }
+    lines.push(`${pad}</body>`);
+  }
+
+  function writeBodyFromJoint(parent, joint, link, indent) {
+    const pad = ' '.repeat(indent);
+    const jointType = joint.type === 'prismatic' ? 'slide' : joint.type === 'fixed' ? 'fixed' : 'hinge';
+    const range = joint.limit && Number.isFinite(joint.limit.lower) && Number.isFinite(joint.limit.upper)
+      ? ` range="${fmtNumber(joint.limit.lower)} ${fmtNumber(joint.limit.upper)}"`
+      : '';
+    const bodyPose = mjcfBodyPoseFromJoint(joint);
+    lines.push(`${pad}<body name="${escapeXML(link.name)}" pos="${vec(bodyPose.position.toArray())}"${quatAttr(bodyPose.quaternion)}>`);
+    if (jointType !== 'fixed') {
+      lines.push(`${pad}  <joint name="${escapeXML(joint.name)}" type="${jointType}" axis="${axis(joint.axis)}"${mjcfJointPosAttr(joint)}${range}/>`);
+    }
+    lines.push(`${pad}  <!-- Mesh geometry is displayed from the loaded USD scene in the web demo. -->`);
+    for (const childJoint of childJoints.get(link.name) || []) {
+      const childLink = linksByName.get(childJoint.child);
+      if (childLink) writeBodyFromJoint(link, childJoint, childLink, indent + 2);
+    }
+    lines.push(`${pad}</body>`);
+  }
+
+  for (const root of roots) {
+    writeBody(root, 4);
+  }
+  lines.push('  </worldbody>');
+  lines.push('</mujoco>');
+  return `${lines.join('\n')}\n`;
+}
+
+function findObjectsByUSDPath(root) {
+  const byPath = new Map();
+  root?.traverse((obj) => {
+    const path = usdPathForObject(obj);
+    if (path && !byPath.has(path)) byPath.set(path, obj);
+  });
+  return byPath;
+}
+
+function usdPathForObject(obj) {
+  let cursor = obj;
+  while (cursor) {
+    const path = cursor.userData?.['primMeta.absPath'];
+    if (path) {
+      if (cursor === obj) return path;
+      const name = sanitizeUSDIdentifier(obj.name || 'mesh', 'mesh');
+      return `${path}/${name}`;
+    }
+    cursor = cursor.parent;
+  }
+  return '';
+}
+
+function bestOwnerLinkPath(path, linkPaths) {
+  let best = '';
+  for (const linkPath of linkPaths) {
+    if (path === linkPath || path.startsWith(`${linkPath}/`)) {
+      if (linkPath.length > best.length) best = linkPath;
+    }
+  }
+  return best;
+}
+
+function cloneMeshForSource(mesh, ownerLink, linkName, isCollision) {
+  const clone = new THREE.Mesh();
+  clone.name = mesh.name;
+  clone.renderOrder = mesh.renderOrder;
+  if (mesh.geometry) clone.geometry = mesh.geometry.clone();
+  if (Array.isArray(mesh.material)) {
+    clone.material = mesh.material.map((mat) => mat.clone?.() || mat);
+  } else if (mesh.material) {
+    clone.material = mesh.material.clone?.() || mesh.material;
+  }
+  clone.userData = {
+    ...mesh.userData,
+    urdfOwnerLink: ownerLink,
+    urdfOwnerLinkName: linkName,
+    urdfCollision: isCollision
+  };
+  if (isCollision) {
+    clone.userData.originalMaterial = clone.material;
+    clone.material = collisionMaterial.clone();
+  }
+  return clone;
+}
+
+function matrixInSceneRoot(object, sceneRoot) {
+  object.updateWorldMatrix(true, false);
+  const parent = sceneRoot?.parent;
+  if (!parent) return object.matrixWorld.clone();
+  parent.updateWorldMatrix(true, false);
+  return parent.matrixWorld.clone().invert().multiply(object.matrixWorld);
+}
+
+function matrixInUSDScene(object) {
+  return matrixInSceneRoot(object, state.usdObject);
+}
+
+function vectorFromArray(values, fallback = [0, 0, 0]) {
+  const v = Array.isArray(values) ? values : fallback;
+  return new THREE.Vector3(v[0] || 0, v[1] || 0, v[2] || 0);
+}
+
+function quaternionFromUSDValue(value) {
+  if (Array.isArray(value)) {
+    if (value.length >= 4) return new THREE.Quaternion(value[1] || 0, value[2] || 0, value[3] || 0, value[0] ?? 1).normalize();
+    if (value.length === 3) return new THREE.Quaternion(value[0] || 0, value[1] || 0, value[2] || 0, 1).normalize();
+  }
+  if (value && typeof value === 'object') {
+    return new THREE.Quaternion(value.x || 0, value.y || 0, value.z || 0, value.w ?? value.real ?? 1).normalize();
+  }
+  return new THREE.Quaternion();
+}
+
+function jointFrameMatrix(joint, side) {
+  const suffix = side === 1 ? '1' : '0';
+  const posFallback = side === 1 ? [0, 0, 0] : joint?.origin;
+  return new THREE.Matrix4().compose(
+    vectorFromArray(joint?.[`localPos${suffix}`], posFallback),
+    quaternionFromUSDValue(joint?.[`localRot${suffix}`]),
+    new THREE.Vector3(1, 1, 1)
+  );
+}
+
+function buildRestWorldByLinkPath(model, usdObjectsByPath, parentJointByChild, childJointsByParent, sceneRoot) {
+  const restWorldByLinkPath = new Map();
+  const rootLinks = (model.links || []).filter((link) => !parentJointByChild.has(link.path));
+  const visit = (linkPath, restWorld) => {
+    restWorldByLinkPath.set(linkPath, restWorld.clone());
+    for (const joint of childJointsByParent.get(linkPath) || []) {
+      const parentJointFrame = jointFrameMatrix(joint, 0);
+      const childJointFrameInverse = jointFrameMatrix(joint, 1).invert();
+      const childRest = restWorld.clone().multiply(parentJointFrame).multiply(childJointFrameInverse);
+      visit(joint.childPath, childRest);
+    }
+  };
+
+  for (const link of rootLinks) {
+    const object = usdObjectsByPath.get(link.path);
+    const rootRest = object ? matrixInSceneRoot(object, sceneRoot) : new THREE.Matrix4();
+    visit(link.path, rootRest);
+  }
+
+  for (const link of model.links || []) {
+    if (!restWorldByLinkPath.has(link.path)) {
+      const object = usdObjectsByPath.get(link.path);
+      restWorldByLinkPath.set(link.path, object ? matrixInSceneRoot(object, sceneRoot) : new THREE.Matrix4());
+    }
+  }
+
+  return restWorldByLinkPath;
+}
+
+function meshRestWorldByLinkPath(sourceObject, linkPaths, collisionPaths) {
+  const restByLinkPath = new Map();
+  sourceObject?.updateWorldMatrix(true, true);
+  sourceObject?.traverse((obj) => {
+    if (!obj.isMesh) return;
+    const path = usdPathForObject(obj);
+    if (pathInSetOrUnder(path, collisionPaths)) return;
+    const linkPath = bestOwnerLinkPath(path, linkPaths);
+    if (!linkPath || restByLinkPath.has(linkPath)) return;
+    restByLinkPath.set(linkPath, matrixInSceneRoot(obj, sourceObject));
+  });
+  return restByLinkPath;
+}
+
+function jointHasAuthoredRotations(joint) {
+  return Array.isArray(joint?.localRot0) && Array.isArray(joint?.localRot1);
+}
+
+function modelNeedsJointFrameInference(model) {
+  return (model.joints || []).some((joint) => !jointHasAuthoredRotations(joint));
+}
+
+function inferMissingJointFrames(model, restWorldByLinkPath) {
+  for (const joint of model.joints || []) {
+    if (jointHasAuthoredRotations(joint)) continue;
+    const parentRest = restWorldByLinkPath.get(joint.parentPath);
+    const childRest = restWorldByLinkPath.get(joint.childPath);
+    if (!parentRest || !childRest) continue;
+    const relative = parentRest.clone().invert().multiply(childRest);
+    if (!Array.isArray(joint.localPos0)) {
+      const { position } = decomposeMatrix(relative);
+      joint.origin = position.toArray();
+      joint.localPos0 = position.toArray();
+    }
+    if (!Array.isArray(joint.localPos1)) joint.localPos1 = [0, 0, 0];
+
+    const local0Translation = new THREE.Matrix4().makeTranslation(...joint.localPos0);
+    const local1Translation = new THREE.Matrix4().makeTranslation(...joint.localPos1);
+    const rotationOnly = local0Translation.clone().invert().multiply(relative).multiply(local1Translation);
+    const { quaternion } = decomposeMatrix(rotationOnly);
+    joint.localRot0 = quaternionToUSDArray(quaternion);
+    joint.localRot1 = [1, 0, 0, 0];
+  }
+}
+
+function buildArticulatedRobotFromUSD(model, sourceObject, options = {}) {
+  if (!sourceObject) throw new Error('No USD view is loaded.');
+  const group = new THREE.Group();
+  group.name = options.name || `${model.name || usdBaseName()}_mjcf`;
+  group.links = {};
+  group.joints = {};
+
+  const usdObjectsByPath = findObjectsByUSDPath(sourceObject);
+  const linkPaths = new Set((model.links || []).map((link) => link.path));
+  const linksByPath = new Map((model.links || []).map((link) => [link.path, link]));
+  const parentJointByChild = new Map((model.joints || []).map((joint) => [joint.childPath, joint]));
+  const childJointsByParent = new Map();
+  for (const joint of model.joints || []) {
+    if (!childJointsByParent.has(joint.parentPath)) childJointsByParent.set(joint.parentPath, []);
+    childJointsByParent.get(joint.parentPath).push(joint);
+  }
+
+  sourceObject.updateWorldMatrix(true, true);
+  const restWorldByLinkPath = buildRestWorldByLinkPath(
+    model,
+    usdObjectsByPath,
+    parentJointByChild,
+    childJointsByParent,
+    sourceObject
+  );
+  if (options.inferMissingJointFrames && modelNeedsJointFrameInference(model)) {
+    const meshRestFrames = meshRestWorldByLinkPath(sourceObject, linkPaths, model.collisionPaths);
+    for (const [path, matrix] of meshRestFrames) {
+      restWorldByLinkPath.set(path, matrix.clone());
+    }
+    inferMissingJointFrames(model, restWorldByLinkPath);
+  }
+
+  const nodeByLinkPath = new Map();
+  for (const link of model.links || []) {
+    const pivot = new THREE.Group();
+    pivot.name = `${link.name}_joint`;
+    const linkObject = new THREE.Group();
+    linkObject.name = link.name;
+    linkObject.userData['primMeta.absPath'] = link.path;
+    pivot.add(linkObject);
+    group.links[link.name] = linkObject;
+    nodeByLinkPath.set(link.path, { link, pivot, linkObject });
+  }
+
+  const rootLinks = (model.links || []).filter((link) => !parentJointByChild.has(link.path));
+  const attachLink = (linkPath, parentObject = group) => {
+    const node = nodeByLinkPath.get(linkPath);
+    if (!node) return;
+    const { link, pivot, linkObject } = node;
+    const joint = parentJointByChild.get(linkPath);
+    if (joint) {
+      applyMatrixToObject(pivot, jointFrameMatrix(joint, 0));
+      applyMatrixToObject(linkObject, jointFrameMatrix(joint, 1).invert());
+    } else {
+      const rootRest = restWorldByLinkPath.get(linkPath) || new THREE.Matrix4();
+      applyMatrixToObject(pivot, rootRest);
+      linkObject.position.set(0, 0, 0);
+      linkObject.quaternion.identity();
+      linkObject.scale.set(1, 1, 1);
+    }
+    parentObject.add(pivot);
+
+    if (joint) {
+      group.joints[joint.name] = {
+        ...joint,
+        jointType: joint.type,
+        pivot,
+        origin: pivot.position.clone(),
+        originQuat: pivot.quaternion.clone()
+      };
+    }
+
+    for (const childJoint of childJointsByParent.get(linkPath) || []) {
+      attachLink(childJoint.childPath, linkObject);
+    }
+  };
+  for (const link of rootLinks) attachLink(link.path, group);
+
+  const linkInverseWorld = new Map();
+  for (const [path, restWorld] of restWorldByLinkPath) {
+    linkInverseWorld.set(path, restWorld.clone().invert());
+  }
+
+  if (options.resetMeshLists) {
+    state.visualMeshes = [];
+    state.collisionMeshes = [];
+  }
+  sourceObject.traverse((obj) => {
+    if (!obj.isMesh) return;
+    const path = usdPathForObject(obj);
+    const linkPath = bestOwnerLinkPath(path, linkPaths);
+    if (!linkPath) return;
+    const node = nodeByLinkPath.get(linkPath);
+    const link = linksByPath.get(linkPath);
+    if (!node || !link) return;
+    const isCollision = pathInSetOrUnder(path, model.collisionPaths) || isCollisionObject(obj);
+    const clone = cloneMeshForSource(obj, node.linkObject, link.name, isCollision);
+    const local = linkInverseWorld.get(linkPath).clone().multiply(matrixInSceneRoot(obj, sourceObject));
+    applyMatrixToObject(clone, local);
+    node.linkObject.add(clone);
+    if (options.resetMeshLists) {
+      if (isCollision) state.collisionMeshes.push(clone);
+      else state.visualMeshes.push(clone);
+    }
+  });
+
+  group.setJointValue = (jointName, value) => {
+    const joint = group.joints[jointName];
+    if (!joint?.pivot) return;
+    if (joint.jointType === 'prismatic') {
+      const offset = axisVector(joint.axis).normalize().applyQuaternion(joint.originQuat).multiplyScalar(value);
+      joint.pivot.position.copy(joint.origin).add(offset);
+    } else if (joint.jointType !== 'fixed') {
+      joint.pivot.quaternion.copy(joint.originQuat)
+        .multiply(new THREE.Quaternion().setFromAxisAngle(axisVector(joint.axis).normalize(), value));
+    }
+  };
+
+  return group;
+}
+
+function buildGeneratedSourceFromUSD(model) {
+  return buildArticulatedRobotFromUSD(model, state.usdRestObject || state.usdObject, {
+    name: `${model.name || usdBaseName()}_mjcf`,
+    resetMeshLists: true,
+    inferMissingJointFrames: true
+  });
 }
 
 async function ensureNativeExporter() {
@@ -2205,6 +2798,8 @@ function addPayloadMeshesToLink(linkGroup, items, geometryCache, material, isCol
     if (!geometry) continue;
     const mesh = new THREE.Mesh(geometry, material.clone());
     mesh.name = sanitizeUSDIdentifier(item.name || (isCollision ? 'collision' : 'visual'), isCollision ? 'collision' : 'visual');
+    const linkPath = linkGroup.userData?.['primMeta.absPath'] || `/World/Links/${linkGroup.name}`;
+    mesh.userData['primMeta.absPath'] = `${linkPath}/${mesh.name}`;
     mesh.userData.urdfCollision = isCollision;
     let matrix = matrixFromUSDArray(item.matrix);
     if (state.inputFormat === 'mjcf' && inverseSourceRest) {
@@ -2337,8 +2932,10 @@ function exportSourceXML() {
 async function convertSourceToUSD(format = 'usdc') {
   const result = await createUSDBytesFromSource(format);
   clearUSD();
+  const restObject = await loadUSDObjectFromBytes(result.bytes, result.filename);
   const object = buildConvertedUSDPreviewFromPayload(result.payload);
   state.usdObject = object;
+  state.usdRestObject = restObject;
   state.usdName = result.filename;
   state.latestUSDBytes = result.bytes;
   state.latestUSDFormat = format;
@@ -2362,11 +2959,28 @@ async function convertUSDToSource() {
   }
   const jsonText = native.extractPhysicsSceneJSON();
   if (!jsonText) throw new Error(native.error() || 'USD Physics extraction failed.');
-  const urdf = usdPhysicsToUrdf(JSON.parse(jsonText));
-  const urdfXML = urdfToXML(urdf);
-  const file = new File([urdfXML], `${usdBaseName()}_from_usd.urdf`, { type: 'application/xml' });
-  await loadRobotFile(file);
-  setStatus(`Converted USD to URDF: ${urdf.links.length} links, ${urdf.joints.length} joints.`);
+  const sourceModel = usdPhysicsToSourceModel(JSON.parse(jsonText));
+  clearRobot();
+  const robot = buildGeneratedSourceFromUSD(sourceModel);
+  state.inputText = mjcfFromSourceModel(sourceModel);
+  state.inputName = `${usdBaseName()}_from_usd.xml`;
+  state.inputFormat = 'mjcf';
+  state.robot = robot;
+  robotGroup.add(robot);
+  applySceneOrientation();
+  applyVisibility();
+  rebuildJointControls();
+  updateRobotInfo({
+    name: sourceModel.name,
+    links: new Map(sourceModel.links.map((link) => [link.name, link])),
+    joints: sourceModel.joints
+  });
+  captureSourceRestLinkMatrices();
+  updateButtonStates();
+  rebuildGhosts();
+  updateLabels();
+  if (state.settings.autocenter) fitCamera(currentFitObjects());
+  setStatus(`Converted USD to generated MJCF view: ${sourceModel.links.length} links, ${sourceModel.joints.length} joints.`);
 }
 
 async function exportRobot(format) {
@@ -2424,7 +3038,7 @@ convertToUSDButton.addEventListener('click', () => {
 convertToSourceButton.addEventListener('click', () => {
   convertUSDToSource().catch((err) => {
     console.error(err);
-    setStatus(`Convert to URDF failed: ${err.message}`);
+    setStatus(`Convert to MJCF failed: ${err.message}`);
   });
 });
 
@@ -2474,7 +3088,7 @@ function renderSplitView() {
 function animate() {
   requestAnimationFrame(animate);
   const elapsed = clock.getElapsedTime();
-  if (state.robot && state.settings.animateJoints) {
+  if ((state.robot || state.usdArticulation) && state.settings.animateJoints) {
     for (const [name, joint] of Object.entries(state.joints)) {
       const type = joint.jointType || joint.type || 'fixed';
       if (type === 'fixed') continue;

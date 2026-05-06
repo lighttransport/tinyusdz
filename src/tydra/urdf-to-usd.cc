@@ -127,6 +127,21 @@ std::vector<float> JsonFloatArray(const nlohmann::json &j, const char *key) {
   return out;
 }
 
+int32_t JsonInt(const nlohmann::json &j, const char *key,
+                int32_t fallback) {
+  if (!j.is_object() || !j.contains(key)) {
+    return fallback;
+  }
+  const auto &item = j.at(key);
+  if (item.is_number_integer()) {
+    return item.get<int32_t>();
+  }
+  if (item.is_number()) {
+    return static_cast<int32_t>(item.get<double>());
+  }
+  return fallback;
+}
+
 std::vector<int32_t> JsonIntArray(const nlohmann::json &j, const char *key) {
   std::vector<int32_t> out;
   if (!j.is_object() || !j.contains(key) || !j.at(key).is_array()) {
@@ -211,7 +226,7 @@ void AddCollisionAPIs(GeomT &geom, bool mesh_collision,
             value::token(JsonString(src, "approximation", "none")), true);
     AddAttr(geom.props, "mjc:inertia", value::token("legacy"), true);
   }
-  AddAttr(geom.props, "mjc:group", int32_t(0), true);
+  AddAttr(geom.props, "mjc:group", JsonInt(src, "group", 3), true);
   AddAttr(geom.props, "mjc:condim", int32_t(3), true);
   AddAttr(geom.props, "mjc:solmix", 1.0, true);
   AddAttr(geom.props, "mjc:margin", 0.0, true);
@@ -282,14 +297,38 @@ value::point3f LocalPos0FromJoint(const nlohmann::json &joint_json) {
   return value::point3f{0.0f, 0.0f, 0.0f};
 }
 
+value::point3f Point3FromJoint(const nlohmann::json &joint_json,
+                               const char *key,
+                               const value::point3f &fallback) {
+  const std::vector<float> values = JsonFloatArray(joint_json, key);
+  if (values.size() >= 3) {
+    return value::point3f{values[0], values[1], values[2]};
+  }
+  return fallback;
+}
+
+value::quatf QuatFromJoint(const nlohmann::json &joint_json, const char *key) {
+  const std::vector<float> q = JsonFloatArray(joint_json, key);
+  if (q.size() >= 4) {
+    // JSON uses USD text order: real, imaginary x, y, z.
+    return value::quatf{{q[1], q[2], q[3]}, q[0]};
+  }
+  return value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f};
+}
+
 template <typename JointT>
 void AssignJointBase(JointT &joint, const nlohmann::json &joint_json,
                      const std::string &parent_name,
                      const std::string &child_name) {
   joint.body0.set(Path("/World/Links/" + parent_name, ""));
   joint.body1.set(Path("/World/Links/" + child_name, ""));
-  joint.localPos0.set_value(LocalPos0FromJoint(joint_json));
-  joint.localPos1.set_value(value::point3f{0.0f, 0.0f, 0.0f});
+  const value::point3f local_pos0 = Point3FromJoint(
+      joint_json, "localPos0", LocalPos0FromJoint(joint_json));
+  joint.localPos0.set_value(local_pos0);
+  joint.localPos1.set_value(Point3FromJoint(
+      joint_json, "localPos1", value::point3f{0.0f, 0.0f, 0.0f}));
+  joint.localRot0.set_value(QuatFromJoint(joint_json, "localRot0"));
+  joint.localRot1.set_value(QuatFromJoint(joint_json, "localRot1"));
   joint.jointEnabled.set_value(true);
   joint.collisionEnabled.set_value(false);
 
@@ -425,7 +464,7 @@ bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
     AddCollisionAPIs(mesh, true, mesh_json);
   } else {
     AddAPISchemas(mesh.metas(), {{APISchemas::APIName::MjcImageableAPI, ""}});
-    AddAttr(mesh.props, "mjc:group", int32_t(0), true);
+    AddAttr(mesh.props, "mjc:group", JsonInt(mesh_json, "group", 2), true);
   }
 
   std::string add_err;

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="data:,">
-  <title>TinyUSDZ URDF/MJCF Physics Export</title>
+  <title>TinyUSDZ Robot Physics Converter</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -199,13 +199,13 @@
 </head>
 <body>
   <div id="topbar">
-    <div id="title">TinyUSDZ URDF/MJCF</div>
+    <div id="title">TinyUSDZ Robot Physics</div>
     <label class="btn">Import URDF/MJCF<input id="urdfInput" type="file" accept=".urdf,.xml"></label>
     <label class="btn secondary">Assets<input id="assetInput" type="file" multiple webkitdirectory></label>
     <button id="exportSource" class="btn export" disabled>Export XML</button>
     <label class="btn">Import USD<input id="usdInput" type="file" accept=".usd,.usda,.usdc,.usdz"></label>
     <button id="convertToUSD" class="btn convert" disabled>URDF/MJCF -> USD</button>
-    <button id="convertToSource" class="btn convert" disabled>USD -> URDF</button>
+    <button id="convertToSource" class="btn convert" disabled>USD -> MJCF</button>
     <button id="exportUSDA" class="btn export" disabled>USDA</button>
     <button id="exportUSDC" class="btn export" disabled>USDC</button>
     <button id="exportUSDZ" class="btn export" disabled>USDZ</button>
