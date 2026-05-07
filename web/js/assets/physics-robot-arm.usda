@@ -1,0 +1,120 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Z"
+    metersPerUnit = 1
+)
+
+def Xform "World"
+{
+    def PhysicsScene "PhysicsScene" (
+        prepend apiSchemas = ["MjcSceneAPI"]
+    )
+    {
+        vector3f physics:gravityDirection = (0, 0, -1)
+        float physics:gravityMagnitude = 9.80665
+        uniform double mjc:option:timestep = 0.005
+        uniform token mjc:option:integrator = "implicit"
+        uniform int mjc:option:iterations = 80
+    }
+
+    def Xform "Base" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+    )
+    {
+        bool physics:rigidBodyEnabled = 0
+        float physics:mass = 8
+
+        def Cube "BaseBlock" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            double size = 1
+            matrix4d xformOp:transform = ((0.62, 0, 0, 0), (0, 0.62, 0, 0), (0, 0, 0.28, 0), (0, 0, 0.14, 1))
+            uniform token[] xformOpOrder = ["xformOp:transform"]
+        }
+    }
+
+    def Xform "Shoulder" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+    )
+    {
+        bool physics:rigidBodyEnabled = 1
+        bool physics:startsAsleep = 0
+        float physics:mass = 2.2
+        point3f physics:centerOfMass = (0.45, 0, 0)
+        float3 physics:diagonalInertia = (0.05, 0.18, 0.18)
+        matrix4d xformOp:transform = ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0.52, 1))
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+
+        def Cube "UpperArm" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            double size = 1
+            matrix4d xformOp:transform = ((0.9, 0, 0, 0), (0, 0.16, 0, 0), (0, 0, 0.16, 0), (0.45, 0, 0, 1))
+            uniform token[] xformOpOrder = ["xformOp:transform"]
+        }
+    }
+
+    def Xform "Elbow" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+    )
+    {
+        bool physics:rigidBodyEnabled = 1
+        bool physics:startsAsleep = 0
+        float physics:mass = 1.4
+        point3f physics:centerOfMass = (0.35, 0, 0)
+        float3 physics:diagonalInertia = (0.03, 0.09, 0.09)
+        matrix4d xformOp:transform = ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0.9, 0, 0.52, 1))
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+
+        def Cube "Forearm" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            double size = 1
+            matrix4d xformOp:transform = ((0.7, 0, 0, 0), (0, 0.12, 0, 0), (0, 0, 0.12, 0), (0.35, 0, 0, 1))
+            uniform token[] xformOpOrder = ["xformOp:transform"]
+        }
+
+        def Cube "Gripper" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            double size = 1
+            matrix4d xformOp:transform = ((0.13, 0, 0, 0), (0, 0.28, 0, 0), (0, 0, 0.1, 0), (0.77, 0, 0, 1))
+            uniform token[] xformOpOrder = ["xformOp:transform"]
+        }
+    }
+
+    def PhysicsRevoluteJoint "ShoulderJoint" (
+        prepend apiSchemas = ["MjcJointAPI"]
+    )
+    {
+        rel physics:body0 = </World/Base>
+        rel physics:body1 = </World/Shoulder>
+        point3f physics:localPos0 = (0, 0, 0.52)
+        point3f physics:localPos1 = (0, 0, 0)
+        token physics:axis = "Y"
+        float physics:lowerLimit = -130
+        float physics:upperLimit = 130
+        uniform double mjc:damping = 5.0
+        uniform double mjc:armature = 0.03
+    }
+
+    def PhysicsRevoluteJoint "ElbowJoint" (
+        prepend apiSchemas = ["MjcJointAPI"]
+    )
+    {
+        rel physics:body0 = </World/Shoulder>
+        rel physics:body1 = </World/Elbow>
+        point3f physics:localPos0 = (0.9, 0, 0)
+        point3f physics:localPos1 = (0, 0, 0)
+        token physics:axis = "Y"
+        float physics:lowerLimit = -135
+        float physics:upperLimit = 135
+        uniform double mjc:damping = 3.0
+        uniform double mjc:armature = 0.02
+    }
+}

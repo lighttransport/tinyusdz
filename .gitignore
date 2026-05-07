@@ -387,7 +387,8 @@ web/build
 web/build_64
 
 # js assets
-web/js/assets/
+web/js/assets/*
+!web/js/assets/physics-robot-arm.usda
 
 # fuzzer
 tests/fuzzer/corpus/

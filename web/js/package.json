@@ -40,6 +40,7 @@
     "test:progress": "node cli/test-progress-cli.js",
     "test:usdskel": "vite-node tests/usdskel-animation-test.js",
     "usd-export": "vite-node cli/usd-export-cli.js",
+    "phys-sim": "node cli/phys-sim.js",
     "urdf-to-usd": "node cli/urdf-to-usd.js",
     "usd-urdf-roundtrip": "node cli/usd-urdf-roundtrip.js"
   },
