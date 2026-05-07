@@ -7,7 +7,7 @@ export default defineConfig({
     fs: {
       allow: [
         path.resolve(__dirname),
-        '/home/syoyo/work/mujoco/wasm/dist',
+        '/path/to/mujoco/wasm/dist',
       ],
     },
     headers: {
