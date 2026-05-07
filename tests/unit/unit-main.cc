@@ -702,6 +702,9 @@ TEST_LIST = {
   { "physics_pprint_roundtrip_test", physics_pprint_roundtrip_test },
   { "physics_to_json_test", physics_to_json_test },
   { "physics_collision_group_test", physics_collision_group_test },
+  { "physics_collision_group_colliders_test", physics_collision_group_colliders_test },
+  { "physics_filtered_pairs_api_test", physics_filtered_pairs_api_test },
+  { "physics_collision_group_invert_test", physics_collision_group_invert_test },
   { "physics_drive_limit_api_test", physics_drive_limit_api_test },
   // IK solver
   { "ik_forward_kinematics_test", ik_forward_kinematics_test },

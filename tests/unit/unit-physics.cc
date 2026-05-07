@@ -743,6 +743,151 @@ def PhysicsCollisionGroup "GroupB"
 }
 
 // ---------------------------------------------------------------------------
+// 14b. PhysicsCollisionGroup: collection:colliders:includes accessor.
+// Exercises GetPhysicsCollidersCollection() — the auto-applied
+// CollectionAPI:colliders membership rel.
+// ---------------------------------------------------------------------------
+void physics_collision_group_colliders_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsCollisionGroup "Rig" (
+    prepend apiSchemas = ["CollectionAPI:colliders"]
+)
+{
+    rel physics:filteredGroups = </Rig>
+    rel collection:colliders:includes = [</Body1>, </Body2>, </Body3>]
+}
+
+def Cube "Body1" {}
+def Cube "Body2" {}
+def Cube "Body3" {}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = parse_usda(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("parse failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+
+  auto result = stage.GetPrimAtPath(Path("/Rig", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const Prim *prim = *result;
+  TEST_CHECK(prim->is<PhysicsCollisionGroup>());
+
+  std::vector<Path> includes;
+  std::vector<Path> excludes;
+  bool got = GetPhysicsCollidersCollection(*prim, &includes, &excludes);
+  TEST_CHECK(got);
+  TEST_CHECK(includes.size() == 3);
+  TEST_CHECK(excludes.empty());
+  if (includes.size() == 3) {
+    TEST_CHECK(includes[0].full_path_name() == "/Body1");
+    TEST_CHECK(includes[1].full_path_name() == "/Body2");
+    TEST_CHECK(includes[2].full_path_name() == "/Body3");
+  }
+
+  // Self-filter rel must round-trip.
+  const auto *grp = prim->as<PhysicsCollisionGroup>();
+  TEST_CHECK(grp->filteredGroups.authored());
+}
+
+// ---------------------------------------------------------------------------
+// 14c. PhysicsFilteredPairsAPI typed accessor on a Cube.
+// Exercises GetPhysicsFilteredPairsAPI() and
+// PhysicsFilteredPairsAPI::get_filtered_pair_paths().
+// ---------------------------------------------------------------------------
+void physics_filtered_pairs_api_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def Cube "BodyA" (
+    prepend apiSchemas = ["PhysicsFilteredPairsAPI"]
+)
+{
+    rel physics:filteredPairs = [</BodyB>, </BodyC>]
+}
+
+def Cube "BodyB" {}
+def Cube "BodyC" {}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = parse_usda(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("parse failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+
+  auto result = stage.GetPrimAtPath(Path("/BodyA", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const Prim *prim = *result;
+
+  PhysicsFilteredPairsAPI api;
+  bool got = GetPhysicsFilteredPairsAPI(*prim, &api);
+  TEST_CHECK(got);
+  TEST_CHECK(api.filteredPairs.authored());
+
+  std::vector<Path> targets = api.get_filtered_pair_paths();
+  TEST_CHECK(targets.size() == 2);
+  if (targets.size() == 2) {
+    TEST_CHECK(targets[0].full_path_name() == "/BodyB");
+    TEST_CHECK(targets[1].full_path_name() == "/BodyC");
+  }
+
+  // Negative case: a prim *without* the API schema must yield false.
+  auto bres = stage.GetPrimAtPath(Path("/BodyB", ""));
+  TEST_CHECK(bool(bres));
+  if (bres) {
+    PhysicsFilteredPairsAPI api2;
+    TEST_CHECK(!GetPhysicsFilteredPairsAPI(**bres, &api2));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 14d. PhysicsCollisionGroup: invertFilteredGroups + multi-target rel.
+// ---------------------------------------------------------------------------
+void physics_collision_group_invert_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsCollisionGroup "G1"
+{
+    bool physics:invertFilteredGroups = 1
+    rel physics:filteredGroups = </G2>
+}
+
+def PhysicsCollisionGroup "G2"
+{
+}
+
+def PhysicsCollisionGroup "G3"
+{
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = parse_usda(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("parse failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+
+  auto r = stage.GetPrimAtPath(Path("/G1", ""));
+  TEST_CHECK(bool(r));
+  if (!r) return;
+  const auto *g1 = (*r)->as<PhysicsCollisionGroup>();
+  TEST_CHECK(g1 != nullptr);
+  if (!g1) return;
+  TEST_CHECK(g1->invertFilteredGroups.get_value() == true);
+  TEST_CHECK(g1->filteredGroups.authored());
+
+  // G2's invertFilteredGroups defaults to false.
+  auto r2 = stage.GetPrimAtPath(Path("/G2", ""));
+  if (r2) {
+    const auto *g2 = (*r2)->as<PhysicsCollisionGroup>();
+    if (g2) {
+      TEST_CHECK(g2->invertFilteredGroups.get_value() == false);
+      TEST_CHECK(!g2->filteredGroups.authored());
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 15. DriveAPI + LimitAPI on joint
 // ---------------------------------------------------------------------------
 void physics_drive_limit_api_test(void) {

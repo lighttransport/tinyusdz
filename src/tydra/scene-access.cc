@@ -13,6 +13,7 @@
 #include "tydra/prim-apply.hh"
 #include "usdGeom.hh"
 #include "usdLux.hh"
+#include "usdPhysics.hh"
 #include "usdShade.hh"
 #include "usdSkel.hh"
 #include "value-pprint.hh"
@@ -4384,4 +4385,107 @@ bool ExpandConstantInfluencesToVarying(
 }
 
 }  // namespace tydra
+
+// ---------------------------------------------------------------
+// Typed accessors for collision-filtering schemas. Declared in
+// usdPhysics.hh; implemented here because they delegate to
+// tydra::GetProperty for prim-type-agnostic property lookup.
+// ---------------------------------------------------------------
+namespace {
+
+bool PrimHasAPISchema(const Prim &prim, APISchemas::APIName api_name) {
+  const PrimMeta &meta = prim.metas();
+  if (!meta.has_apiSchemas()) return false;
+  const APISchemas &schemas = meta.get_apiSchemas();
+  for (const auto &entry : schemas.names) {
+    if (entry.first == api_name) return true;
+  }
+  return false;
+}
+
+// Direct access to a prim's generic Property map. tydra::GetProperty
+// only dispatches a fixed set of typed prims; for collision-filter
+// schemas we need to reach into PhysicsCollisionGroup, Cube, Xform,
+// and friends. Returns nullptr for unsupported prim types.
+const std::map<std::string, Property> *PrimPropsMap(const Prim &prim) {
+#define X(T)                                              \
+  if (prim.is<T>()) return &prim.as<T>()->props;
+  X(Model)
+  X(Xform)
+  X(Scope)
+  X(GeomMesh)
+  X(GeomCube)
+  X(GeomSphere)
+  X(GeomCylinder)
+  X(GeomCapsule)
+  X(GeomCone)
+  X(PhysicsScene)
+  X(PhysicsCollisionGroup)
+  X(PhysicsRevoluteJoint)
+  X(PhysicsPrismaticJoint)
+  X(PhysicsFixedJoint)
+  X(PhysicsSphericalJoint)
+  X(PhysicsDistanceJoint)
+  X(PhysicsJoint)
+#undef X
+  return nullptr;
+}
+
+bool ResolveRelTargets(const Prim &prim, const std::string &rel_name,
+                       std::vector<Path> *out) {
+  const auto *props = PrimPropsMap(prim);
+  if (!props) return false;
+  auto it = props->find(rel_name);
+  if (it == props->end()) return false;
+  const Property &prop = it->second;
+  if (!prop.is_relationship()) return false;
+  const Relationship &rel = prop.get_relationship();
+  if (rel.is_path()) {
+    out->push_back(rel.targetPath);
+  } else if (rel.is_pathvector()) {
+    *out = rel.targetPathVector;
+  }
+  return true;
+}
+
+}  // namespace
+
+bool GetPhysicsFilteredPairsAPI(const Prim &prim,
+                                PhysicsFilteredPairsAPI *out) {
+  if (!out) return false;
+  if (!PrimHasAPISchema(prim, APISchemas::APIName::PhysicsFilteredPairsAPI)) {
+    return false;
+  }
+  const auto *props = PrimPropsMap(prim);
+  if (!props) return false;
+  auto it = props->find("physics:filteredPairs");
+  if (it == props->end()) return false;
+  const Property &prop = it->second;
+  if (!prop.is_relationship()) return false;
+  out->filteredPairs = RelationshipProperty(prop.get_relationship());
+  return true;
+}
+
+bool GetPhysicsCollidersCollection(const Prim &prim,
+                                   std::vector<Path> *includes,
+                                   std::vector<Path> *excludes) {
+  if (!prim.is<PhysicsCollisionGroup>()) {
+    return false;
+  }
+  bool any = false;
+  if (includes) {
+    includes->clear();
+    if (ResolveRelTargets(prim, "collection:colliders:includes", includes)) {
+      any = true;
+    }
+  }
+  if (excludes) {
+    excludes->clear();
+    if (ResolveRelTargets(prim, "collection:colliders:excludes", excludes)) {
+      any = true;
+    }
+  }
+  return any;
+}
+
 }  // namespace tinyusdz

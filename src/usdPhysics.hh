@@ -90,6 +90,14 @@ struct PhysicsMassAPI {
 
 struct PhysicsFilteredPairsAPI {
   RelationshipProperty filteredPairs;  // physics:filteredPairs
+
+  ///
+  /// @brief Resolve the listed target paths.
+  ///
+  /// Empty vector if the rel has no value or has been blocked. Order
+  /// follows the underlying rel's pathVector.
+  ///
+  std::vector<Path> get_filtered_pair_paths() const;
 };
 
 // PhysicsArticulationRootAPI — marker schema, no properties
@@ -408,6 +416,43 @@ struct PhysicsCollisionGroup {
   std::vector<value::token> _primChildren;
   std::vector<value::token> _properties;
 };
+
+// ---------------------------------------------------------------
+// Typed accessors for collision-filtering schemas.
+//
+// These resolve API-schema applications + relationship targets on
+// arbitrary Prims, so a downstream physics importer (e.g. lightgeom,
+// MuJoCo, Genesis) can do strict-conformant lookups without
+// hand-walking generic Property maps.
+// ---------------------------------------------------------------
+class Prim;
+
+///
+/// @brief Populate a PhysicsFilteredPairsAPI struct from a Prim.
+///
+/// Returns true iff the prim lists PhysicsFilteredPairsAPI in its
+/// apiSchemas metadata AND the `physics:filteredPairs` relationship
+/// is present (even if empty / blocked). The struct's
+/// `filteredPairs` member is filled in either case so the caller can
+/// distinguish "no rel authored" (return value false) from "rel
+/// authored but resolved to no targets".
+///
+bool GetPhysicsFilteredPairsAPI(const Prim &prim,
+                                PhysicsFilteredPairsAPI *out);
+
+///
+/// @brief Resolve membership of the auto-applied CollectionAPI:colliders
+///        on a PhysicsCollisionGroup prim.
+///
+/// Returns the include / exclude target lists from
+/// `collection:colliders:includes` and `collection:colliders:excludes`.
+/// Either out-pointer may be null. Returns true iff the prim is a
+/// PhysicsCollisionGroup and at least one of the relationships is
+/// authored.
+///
+bool GetPhysicsCollidersCollection(const Prim &prim,
+                                   std::vector<Path> *includes,
+                                   std::vector<Path> *excludes);
 
 namespace value {
 
