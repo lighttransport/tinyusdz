@@ -2067,9 +2067,14 @@ function matrixScale(matrix) {
 }
 
 function geometryToUrdf(geometry = {}, matrix) {
-  if (geometry.type === 'box') {
+  if (geometry.type === 'box' || geometry.type === 'cube') {
     const scale = matrixScale(matrix);
-    const base = Array.isArray(geometry.size) ? geometry.size : [2, 2, 2];
+    // GeomCube emits a scalar size (USD schema); legacy form emits a vec3.
+    const base = Array.isArray(geometry.size)
+      ? geometry.size
+      : (typeof geometry.size === 'number'
+          ? [geometry.size, geometry.size, geometry.size]
+          : [2, 2, 2]);
     return { type: 'box', size: base.map((v, i) => Number(v || 1) * scale[i]) };
   }
   if (geometry.type === 'sphere') return { type: 'sphere', radius: Number(geometry.radius || 0) };
@@ -2263,7 +2268,15 @@ function escapeXML(value) {
 }
 
 function geometryXML(geometry = {}) {
-  if (geometry.type === 'box') return `<box size="${vec(geometry.size, [1, 1, 1])}"/>`;
+  if (geometry.type === 'box' || geometry.type === 'cube') {
+    // GeomCube emits a scalar size (USD schema); legacy form emits a vec3.
+    const size = Array.isArray(geometry.size)
+      ? geometry.size
+      : (typeof geometry.size === 'number'
+          ? [geometry.size, geometry.size, geometry.size]
+          : [1, 1, 1]);
+    return `<box size="${vec(size, [1, 1, 1])}"/>`;
+  }
   if (geometry.type === 'sphere') return `<sphere radius="${fmtNumber(geometry.radius || 0)}"/>`;
   if (geometry.type === 'cylinder') {
     return `<cylinder radius="${fmtNumber(geometry.radius || 0)}" length="${fmtNumber(geometry.length || 0)}"/>`;
