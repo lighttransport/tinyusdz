@@ -1423,12 +1423,17 @@ void AddGeometryJson(json &prim_json, json &props,
                      const tinyusdz::GeomCube &cube) {
   AddXformableJson(prim_json, cube);
   json geom;
-  geom["type"] = "box";
+  // Use the schema-canonical "cube" name (matches the USD type "Cube"
+  // and the lowercase-prim-name convention used by every other geom
+  // emitter above). USD's GeomCube size is a single scalar (full edge
+  // length, default 2.0); preserve that shape rather than fanning out
+  // to a vec3 of identical values.
+  geom["type"] = "cube";
   double size = 2.0;
   if (cube.size.authored()) {
     cube.size.get_value().get(tinyusdz::value::TimeCode::Default(), &size);
   }
-  geom["size"] = json::array({size, size, size});
+  geom["size"] = size;
   prim_json["geometry"] = std::move(geom);
   AddPropertyMap(props, prim_json["relationships"], cube.props);
 }
