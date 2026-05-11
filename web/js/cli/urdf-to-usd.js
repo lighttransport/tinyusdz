@@ -356,9 +356,17 @@ function parseURDFMetadata(urdfText) {
         effort: numberAttr(limitEl.attrs, 'effort'),
         velocity: numberAttr(limitEl.attrs, 'velocity')
       } : {},
+      // URDF 1.0 <dynamics> spec only defines damping + friction, but
+      // we accept the common MuJoCo extensions stiffness and armature
+      // when authored (no-op for compliant URDFs). The downstream
+      // C++ converter (urdf-to-usd.cc) emits these via the PhysX
+      // mirror schema (physxJoint:armature, physxLimit:angular:stiffness)
+      // alongside the canonical mjc:* fallbacks.
       dynamics: dynamicsEl ? {
         damping: numberAttr(dynamicsEl.attrs, 'damping'),
-        friction: numberAttr(dynamicsEl.attrs, 'friction')
+        friction: numberAttr(dynamicsEl.attrs, 'friction'),
+        stiffness: numberAttr(dynamicsEl.attrs, 'stiffness'),
+        armature: numberAttr(dynamicsEl.attrs, 'armature')
       } : {}
     });
   }

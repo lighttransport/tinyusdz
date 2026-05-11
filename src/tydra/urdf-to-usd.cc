@@ -332,17 +332,63 @@ void AssignJointBase(JointT &joint, const nlohmann::json &joint_json,
   joint.jointEnabled.set_value(true);
   joint.collisionEnabled.set_value(false);
 
+  // Dispatch the per-axis (angular vs linear) PhysX limit namespace
+  // based on the joint subtype the JSON declares. revolute -> angular,
+  // prismatic -> linear; any other type still gets the canonical mjc:*
+  // attributes but skips the physxLimit:* mirror because PhysX has no
+  // direct analog. Matches the SchemaResolverPhysx mapping in
+  // ref/newton/newton/_src/usd/schemas.py.
+  const std::string joint_subtype = JsonString(joint_json, "type");
+  const bool is_revolute = (joint_subtype == "revolute");
+  const bool is_prismatic = (joint_subtype == "prismatic");
+  const char *limit_ns = is_prismatic ? "physxLimit:linear:"
+                                       : "physxLimit:angular:";
+
   MjcJointAPI mjc;
   if (joint_json.contains("dynamics") && joint_json["dynamics"].is_object()) {
+    const auto &dyn = joint_json["dynamics"];
     double damping = 0.0;
-    if (JsonNumber(joint_json["dynamics"], "damping", &damping)) {
+    if (JsonNumber(dyn, "damping", &damping)) {
       mjc.damping.set_value(damping);
       AddAttr(joint.props, "mjc:damping", damping);
+      if (is_revolute || is_prismatic) {
+        AddAttr(joint.props, std::string(limit_ns) + "damping", damping);
+      }
     }
     double friction = 0.0;
-    if (JsonNumber(joint_json["dynamics"], "friction", &friction)) {
+    if (JsonNumber(dyn, "friction", &friction)) {
       mjc.frictionloss.set_value(friction);
       AddAttr(joint.props, "mjc:frictionloss", friction);
+      AddAttr(joint.props, "physxJoint:jointFriction", friction);
+    }
+    double stiffness = 0.0;
+    if (JsonNumber(dyn, "stiffness", &stiffness)) {
+      // mjcJoint's stiffness lives on the MjcJointAPI extension —
+      // expose both forms so MuJoCo + PhysX consumers see it.
+      AddAttr(joint.props, "mjc:stiffness", stiffness);
+      if (is_revolute || is_prismatic) {
+        AddAttr(joint.props, std::string(limit_ns) + "stiffness", stiffness);
+      }
+    }
+    double armature = 0.0;
+    if (JsonNumber(dyn, "armature", &armature)) {
+      AddAttr(joint.props, "mjc:armature", armature);
+      AddAttr(joint.props, "physxJoint:armature", armature);
+    }
+  }
+  // Initial joint configuration. MJCF and URDF both surface this via
+  // <joint range>/<joint pos> respectively; we promote it into the
+  // Newton state:*:physics:position schema, which Genesis/Isaac/Newton
+  // all read for joint qpos initialization. Revolute joints carry the
+  // value in *degrees* per the PhysX/Newton convention; prismatic in
+  // *meters*.
+  double init_q = 0.0;
+  if (JsonNumber(joint_json, "initPosition", &init_q) && init_q != 0.0) {
+    if (is_revolute) {
+      AddAttr(joint.props, "state:angular:physics:position",
+              init_q * 180.0 / 3.14159265358979323846);
+    } else if (is_prismatic) {
+      AddAttr(joint.props, "state:linear:physics:position", init_q);
     }
   }
   joint.mjcJoint = mjc;

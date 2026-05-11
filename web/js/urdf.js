@@ -2148,10 +2148,7 @@ function usdPhysicsToUrdf(extracted) {
             upper: type === 'revolute' ? Number(upper || 0) * DEG_TO_RAD : Number(upper || 0)
           }
           : null,
-        dynamics: {
-          damping: prim.properties?.['mjc:damping'],
-          friction: prim.properties?.['mjc:frictionloss']
-        }
+        dynamics: jointDynamicsFromUsdPrim(prim, type)
       };
     });
 
@@ -2160,6 +2157,31 @@ function usdPhysicsToUrdf(extracted) {
     upAxis: extracted.upAxis || 'Y',
     links,
     joints
+  };
+}
+
+// Collect joint dynamics from a USD prim, accepting either the
+// legacy MJC namespace (mjc:*) or the PhysX/Newton equivalents
+// (physxJoint:*, physxLimit:*) — the first authored source wins.
+// Mirrors ref/newton/newton/_src/usd/schemas.py SchemaResolverPhysx +
+// ref/genesis/genesis/options/morphs.py revolute_joint_*_attr_candidates.
+function jointDynamicsFromUsdPrim(prim, jointType) {
+  const props = prim.properties || {};
+  const limitNs = jointType === 'prismatic'
+    ? 'physxLimit:linear:' : 'physxLimit:angular:';
+  function pickNumber(...keys) {
+    for (const k of keys) {
+      const v = props[k];
+      if (typeof v === 'number' && Number.isFinite(v)) return v;
+    }
+    return undefined;
+  }
+  return {
+    damping: pickNumber('mjc:damping', limitNs + 'damping'),
+    friction: pickNumber('mjc:frictionloss',
+                          'physxJoint:jointFriction'),
+    stiffness: pickNumber('mjc:stiffness', limitNs + 'stiffness'),
+    armature: pickNumber('mjc:armature', 'physxJoint:armature')
   };
 }
 
@@ -2210,10 +2232,7 @@ function usdPhysicsToSourceModel(extracted) {
             upper: type === 'revolute' ? Number(upper || 0) * DEG_TO_RAD : Number(upper || 0)
           }
           : {},
-        dynamics: {
-          damping: prim.properties?.['mjc:damping'],
-          friction: prim.properties?.['mjc:frictionloss']
-        }
+        dynamics: jointDynamicsFromUsdPrim(prim, type)
       };
     });
 

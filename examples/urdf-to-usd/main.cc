@@ -739,7 +739,27 @@ void AddJointJson(const pugi::xml_node &body_node,
     if (HasAttr(joint_node, "frictionloss")) {
       dynamics["friction"] = ParseDoubleAttr(joint_node, "frictionloss", 0.0);
     }
+    // MJCF <joint stiffness=> and <joint armature=> — propagate so the
+    // USD-side converter can author physxLimit:*:stiffness and
+    // physxJoint:armature alongside the canonical mjc:* fallbacks.
+    if (HasAttr(joint_node, "stiffness")) {
+      dynamics["stiffness"] = ParseDoubleAttr(joint_node, "stiffness", 0.0);
+    }
+    if (HasAttr(joint_node, "armature")) {
+      dynamics["armature"] = ParseDoubleAttr(joint_node, "armature", 0.0);
+    }
     joint["dynamics"] = dynamics;
+    // MJCF <joint ref="..."> is the rest-angle (degrees for hinge,
+    // meters for slide). We forward it as a generic `initPosition`
+    // (radians for hinge, since URDF uses radians internally) so the
+    // C++ converter can emit state:{angular,linear}:physics:position.
+    if (HasAttr(joint_node, "ref")) {
+      double ref = ParseDoubleAttr(joint_node, "ref", 0.0);
+      if (mj_type == "hinge") {
+        ref *= M_PI / 180.0;  // MJCF degrees → radians for our pipeline
+      }
+      joint["initPosition"] = ref;
+    }
   }
 
   joints->push_back(joint);
