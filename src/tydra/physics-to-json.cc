@@ -307,27 +307,79 @@ bool ConvertPhysicsToJson(
       ss << "\n";
       bool first = true;
 
+      // Pull a numeric (float/double) value from a generic Property map by
+      // key. Used to surface PhysX (`physxJoint:* / physxLimit:*`) and
+      // Newton (`state:*:physics:*`) attrs that aren't consumed into any
+      // typed schema struct. Returns true on success.
+      auto getNum = [](const std::map<std::string, tinyusdz::Property> &props,
+                       const std::string &key, double *out) -> bool {
+        auto it = props.find(key);
+        if (it == props.end()) return false;
+        if (!it->second.is_attribute()) return false;
+        const auto &attr = it->second.get_attribute();
+        if (auto v = attr.get_value<float>())  { *out = static_cast<double>(*v); return true; }
+        if (auto v = attr.get_value<double>()) { *out = *v; return true; }
+        return false;
+      };
+
       auto emitJoint = [&](const std::string &path, const std::string &type,
-                           const PhysicsJointBase &base) {
+                           const PhysicsJointBase &base,
+                           const std::map<std::string, tinyusdz::Property> &props) {
         if (!first) ss << ",\n";
         first = false;
         ss << Indent(2, sp) << "{\n";
         EmitKV(ss, 3, sp, "path", JsonStr(path));
         EmitKV(ss, 3, sp, "type", JsonStr(type));
-        // body0/body1 relationships
         auto b0 = RelTargetStr(base.body0);
         auto b1 = RelTargetStr(base.body1);
         if (!b0.empty()) EmitKV(ss, 3, sp, "body0", JsonStr(b0));
         if (!b1.empty()) EmitKV(ss, 3, sp, "body1", JsonStr(b1));
         bool has_mjc = base.mjcJoint.has_value() && options.include_mjc;
-        // jointEnabled, collisionEnabled, breakForce, breakTorque
         {
           auto je = base.jointEnabled.get_value();
           if (je.has_value()) EmitKV(ss, 3, sp, "jointEnabled", JsonBool(je.value()));
           auto be = base.breakForce.get_value();
           if (be.has_value()) EmitKV(ss, 3, sp, "breakForce", JsonNum(be.value()));
           auto bt = base.breakTorque.get_value();
-          if (bt.has_value()) EmitKV(ss, 3, sp, "breakTorque", JsonNum(bt.value()), has_mjc);
+          if (bt.has_value()) EmitKV(ss, 3, sp, "breakTorque", JsonNum(bt.value()));
+        }
+        // PhysX / Newton mirror block. Authored under physxJoint:* /
+        // physxLimit:{angular,linear}:* / state:{angular,linear}:physics:*.
+        // Emit a structured `physx` object when any key is present so JSON
+        // consumers can iterate it without re-deriving the namespace
+        // priority chain. See doc/usd.md "Cross-engine attribute mirror".
+        const bool emit_revolute = (type == "PhysicsRevoluteJoint");
+        const std::string limitNs = emit_revolute ? "physxLimit:angular" : "physxLimit:linear";
+        const std::string stateNs = emit_revolute ? "state:angular:physics" : "state:linear:physics";
+        double v = 0.0;
+        std::vector<std::pair<std::string, double>> physx_block;
+        std::vector<std::pair<std::string, double>> state_block;
+        if (getNum(props, "physxJoint:armature", &v)) physx_block.push_back({"armature", v});
+        if (getNum(props, "physxJoint:jointFriction", &v)) physx_block.push_back({"jointFriction", v});
+        if (getNum(props, "physxJoint:maxJointVelocity", &v)) physx_block.push_back({"maxJointVelocity", v});
+        if (getNum(props, limitNs + ":damping", &v)) physx_block.push_back({"damping", v});
+        if (getNum(props, limitNs + ":stiffness", &v)) physx_block.push_back({"stiffness", v});
+        if (getNum(props, stateNs + ":position", &v)) state_block.push_back({"position", v});
+        if (getNum(props, stateNs + ":velocity", &v)) state_block.push_back({"velocity", v});
+        const bool has_physx = !physx_block.empty();
+        const bool has_state = !state_block.empty();
+        if (has_physx) {
+          ss << Indent(3, sp) << "\"physx\": {\n";
+          for (size_t i = 0; i < physx_block.size(); ++i) {
+            EmitKV(ss, 4, sp, physx_block[i].first, JsonNum(physx_block[i].second),
+                   i + 1 < physx_block.size());
+          }
+          ss << Indent(3, sp) << "}";
+          ss << ((has_state || has_mjc) ? ",\n" : "\n");
+        }
+        if (has_state) {
+          ss << Indent(3, sp) << "\"state\": {\n";
+          for (size_t i = 0; i < state_block.size(); ++i) {
+            EmitKV(ss, 4, sp, state_block[i].first, JsonNum(state_block[i].second),
+                   i + 1 < state_block.size());
+          }
+          ss << Indent(3, sp) << "}";
+          ss << (has_mjc ? ",\n" : "\n");
         }
         if (has_mjc) {
           EmitMjcJointAPI(ss, base.mjcJoint.value(), 3, sp);
@@ -336,11 +388,11 @@ bool ConvertPhysicsToJson(
         ss << Indent(2, sp) << "}";
       };
 
-      for (const auto &[p, j] : data.revoluteJoints) emitJoint(p, "PhysicsRevoluteJoint", *j);
-      for (const auto &[p, j] : data.prismaticJoints) emitJoint(p, "PhysicsPrismaticJoint", *j);
-      for (const auto &[p, j] : data.sphericalJoints) emitJoint(p, "PhysicsSphericalJoint", *j);
-      for (const auto &[p, j] : data.fixedJoints) emitJoint(p, "PhysicsFixedJoint", *j);
-      for (const auto &[p, j] : data.distanceJoints) emitJoint(p, "PhysicsDistanceJoint", *j);
+      for (const auto &[p, j] : data.revoluteJoints) emitJoint(p, "PhysicsRevoluteJoint", *j, j->props);
+      for (const auto &[p, j] : data.prismaticJoints) emitJoint(p, "PhysicsPrismaticJoint", *j, j->props);
+      for (const auto &[p, j] : data.sphericalJoints) emitJoint(p, "PhysicsSphericalJoint", *j, j->props);
+      for (const auto &[p, j] : data.fixedJoints) emitJoint(p, "PhysicsFixedJoint", *j, j->props);
+      for (const auto &[p, j] : data.distanceJoints) emitJoint(p, "PhysicsDistanceJoint", *j, j->props);
 
       ss << "\n" << Indent(1, sp);
     }

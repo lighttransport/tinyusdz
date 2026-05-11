@@ -1384,6 +1384,13 @@ void AddJointBaseJson(json &props, json &rels,
   AddTypedAttr(props, "physics:breakTorque", joint.breakTorque);
   AddTypedAttr(props, "physics:excludeFromArticulation",
                joint.excludeFromArticulation);
+  // mjc:* attributes are consumed by the reconstruct path into the typed
+  // MjcJointAPI struct (see prim-reconstruct-physics.cc); they no longer
+  // appear in joint.props, so re-emit them here from the struct.
+  // physxJoint:* / physxLimit:* / state:* are *not* consumed into any
+  // typed struct — they remain in joint.props and arrive through the
+  // AddPropertyMap(props, rels, joint->props) call below in each
+  // PhysicsRevoluteJoint / PhysicsPrismaticJoint case.
   if (joint.mjcJoint) {
     AddFallbackAttr(props, "mjc:group", joint.mjcJoint.value().group);
     AddFallbackAttr(props, "mjc:stiffness", joint.mjcJoint.value().stiffness);
@@ -1393,6 +1400,15 @@ void AddJointBaseJson(json &props, json &rels,
                     joint.mjcJoint.value().frictionloss);
     AddTypedAttr(props, "mjc:springdamper",
                  joint.mjcJoint.value().springdamper);
+    AddFallbackAttr(props, "mjc:springref", joint.mjcJoint.value().springref);
+    AddFallbackAttr(props, "mjc:ref", joint.mjcJoint.value().ref);
+    AddFallbackAttr(props, "mjc:margin", joint.mjcJoint.value().margin);
+    AddFallbackAttr(props, "mjc:actuatorfrcrange:min",
+                    joint.mjcJoint.value().actuatorfrcrange_min);
+    AddFallbackAttr(props, "mjc:actuatorfrcrange:max",
+                    joint.mjcJoint.value().actuatorfrcrange_max);
+    AddFallbackAttr(props, "mjc:actuatorgravcomp",
+                    joint.mjcJoint.value().actuatorgravcomp);
   }
 }
 

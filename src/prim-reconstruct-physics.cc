@@ -72,7 +72,15 @@ static bool ReconstructJointBaseProperties(
   (void)err;
   (void)options;
 
-  // Check for mjc: properties to auto-create MjcJointAPI
+  // Check for mjc: properties to auto-create MjcJointAPI. Without this,
+  // mjc:* attributes would fall through to the per-type ADD_PROPERTY tail
+  // and stay in `joint->props` as untyped properties — readable but not
+  // typed-accessible. PhysX (`physxJoint:* / physxLimit:*`) and Newton
+  // (`state:* `) namespaces are intentionally left as untyped properties
+  // on `joint->props`: there is no in-memory typed schema for them, so
+  // the ADD_PROPERTY tail in each ReconstructPrim<Joint> specialization
+  // is exactly the right preservation point. The writer side handles
+  // round-trip via the generic props-map iteration in stage-converter.cc.
   if (!joint->mjcJoint.has_value() && HasPropertyPrefix(properties, "mjc:")) {
     joint->mjcJoint = MjcJointAPI();
   }

@@ -94,6 +94,33 @@ bool CrateWriter::ExtractPhysicsSceneProperties(
   EXTRACT_TYPED((j).breakForce, "physics:breakForce"); \
   EXTRACT_TYPED((j).breakTorque, "physics:breakTorque"); \
   EXTRACT_TYPED((j).excludeFromArticulation, "physics:excludeFromArticulation"); \
+  /* MjcJointAPI mirror: the reconstruct path consumes mjc:* into a typed   \
+   * MjcJointAPI struct and removes them from `props`, so the generic       \
+   * props-map iteration in stage-converter.cc never sees them. Re-emit     \
+   * here so USDC round-trip preserves the values for downstream consumers  \
+   * (MuJoCo / Genesis / Newton / PhysX schema mirror). Only emit when the  \
+   * API schema is actually attached.                                       \
+   */ \
+  if ((j).mjcJoint.has_value()) { \
+    const auto &_m = (j).mjcJoint.value(); \
+    EXTRACT_FALLBACK(_m.group, "mjc:group"); \
+    EXTRACT_FALLBACK(_m.stiffness, "mjc:stiffness"); \
+    EXTRACT_FALLBACK(_m.damping, "mjc:damping"); \
+    EXTRACT_FALLBACK(_m.armature, "mjc:armature"); \
+    EXTRACT_FALLBACK(_m.frictionloss, "mjc:frictionloss"); \
+    EXTRACT_TYPED(_m.springdamper, "mjc:springdamper"); \
+    EXTRACT_FALLBACK(_m.springref, "mjc:springref"); \
+    EXTRACT_FALLBACK(_m.ref, "mjc:ref"); \
+    EXTRACT_FALLBACK(_m.margin, "mjc:margin"); \
+    EXTRACT_TYPED(_m.solreflimit, "mjc:solreflimit"); \
+    EXTRACT_TYPED(_m.solimplimit, "mjc:solimplimit"); \
+    EXTRACT_TYPED(_m.solreffriction, "mjc:solreffriction"); \
+    EXTRACT_TYPED(_m.solimpfriction, "mjc:solimpfriction"); \
+    EXTRACT_FALLBACK(_m.actuatorfrcrange_min, "mjc:actuatorfrcrange:min"); \
+    EXTRACT_FALLBACK(_m.actuatorfrcrange_max, "mjc:actuatorfrcrange:max"); \
+    EXTRACT_TOKEN_FALLBACK(_m.actuatorfrclimited, "mjc:actuatorfrclimited"); \
+    EXTRACT_FALLBACK(_m.actuatorgravcomp, "mjc:actuatorgravcomp"); \
+  } \
 } while(0)
 
 bool CrateWriter::ExtractPhysicsJointProperties(

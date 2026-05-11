@@ -12,12 +12,17 @@
 
 #include "unit-physics.h"
 #include "tinyusdz.hh"
+#include "usdc-writer.hh"
 #include "core/prim.hh"
 #include "usdPhysics.hh"
 #include "mjcPhysics.hh"
 #include "tydra/physics-to-json.hh"
 
+#include <cmath>
 #include <cstring>
+#include <map>
+#include <string>
+#include <vector>
 
 using namespace tinyusdz;
 
@@ -31,6 +36,41 @@ static bool parse_usda(const char *usda, Stage *stage, std::string *warn,
   return LoadUSDAFromMemory(
       reinterpret_cast<const uint8_t *>(usda), std::strlen(usda), "test.usda",
       stage, warn, err);
+}
+
+// Author -> USDC bytes -> reload. Exercises sconv-physics.cc + the crate
+// writer's generic property-bag pass for physx*:* / state:* attributes.
+static bool usdc_roundtrip(const char *usda, Stage *out, std::string *warn,
+                           std::string *err) {
+  Stage tmp;
+  if (!parse_usda(usda, &tmp, warn, err)) return false;
+  std::vector<uint8_t> bytes;
+  if (!usdc::SaveAsUSDCToMemory(tmp, &bytes, warn, err)) return false;
+  return LoadUSDCFromMemory(bytes.data(), bytes.size(), "test.usdc",
+                            out, warn, err);
+}
+
+// Tolerant float comparison — values authored as `custom float` in USDA
+// land in tests as `static_cast<double>(float)`, which is NOT equal to
+// the same numeric literal typed in C++ as double (0.01f promoted is
+// not 0.01). Anything ≥ 1e-6 wins.
+static bool approx_eq(double a, double b) {
+  const double tol = 1e-5 * (1.0 + std::abs(b));
+  return std::abs(a - b) <= tol;
+}
+
+// Pull a numeric value out of a generic property bag (post-parse). Returns
+// false if the key is absent or not a float / double attribute. Matches
+// the priority-lookup pattern downstream consumers use.
+static bool get_prop_num(const std::map<std::string, Property> &props,
+                         const std::string &key, double *out) {
+  auto it = props.find(key);
+  if (it == props.end()) return false;
+  if (!it->second.is_attribute()) return false;
+  const auto &attr = it->second.get_attribute();
+  if (auto v = attr.get_value<float>())  { *out = static_cast<double>(*v); return true; }
+  if (auto v = attr.get_value<double>()) { *out = *v; return true; }
+  return false;
 }
 
 }  // anonymous namespace
@@ -392,6 +432,320 @@ def PhysicsRevoluteJoint "MjcHinge" (
   TEST_CHECK(mjc.frictionloss.get_value() == 0.5);
   TEST_CHECK(mjc.ref.get_value() == 0.5);
   TEST_CHECK(mjc.group.get_value() == 2);
+}
+
+// ---------------------------------------------------------------------------
+// 7b. PhysicsRevoluteJoint with all four mirror namespaces
+//     (physics:* > physxJoint:* / physxLimit:* > state:* > mjc:*)
+// ---------------------------------------------------------------------------
+void physics_joint_physx_state_mirror_test(void) {
+  // This authors the same physical quantity under all four cross-engine
+  // namespaces, then verifies each one survives parse and reaches the
+  // expected destination:
+  //   - mjc:* keys land on the typed MjcJointAPI struct (joint.mjcJoint).
+  //   - physxJoint:* / physxLimit:* / state:* keys are NOT consumed into
+  //     a typed struct; they remain on joint.props for the reader to walk.
+  // The reader-side priority (canonical > PhysX > Newton > MJC) is the
+  // responsibility of each downstream consumer (web/sim/src/usd-physics.js,
+  // src/usd_mjcf_reader.cc, etc.); here we only assert preservation.
+  const char *usda = R"(#usda 1.0
+
+def PhysicsRevoluteJoint "MirrorHinge" (
+    prepend apiSchemas = ["MjcJointAPI"]
+)
+{
+    rel physics:body0 = </World/A>
+    rel physics:body1 = </World/B>
+    token physics:axis = "Y"
+
+    uniform double mjc:stiffness = 2.5
+    uniform double mjc:damping = 0.75
+    uniform double mjc:armature = 0.01
+    uniform double mjc:frictionloss = 0.05
+
+    custom float physxJoint:armature = 0.01
+    custom float physxJoint:jointFriction = 0.05
+    custom float physxJoint:maxJointVelocity = 12.5
+    custom float physxLimit:angular:damping = 0.75
+    custom float physxLimit:angular:stiffness = 2.5
+
+    custom float state:angular:physics:position = 15.0
+    custom float state:angular:physics:velocity = -2.0
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = parse_usda(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("parse failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+
+  auto result = stage.GetPrimAtPath(Path("/MirrorHinge", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const auto *joint = (*result)->as<PhysicsRevoluteJoint>();
+  TEST_CHECK(joint != nullptr);
+  if (!joint) return;
+
+  // mjc:* — typed MjcJointAPI struct.
+  TEST_CHECK(joint->mjcJoint.has_value());
+  if (joint->mjcJoint.has_value()) {
+    const auto &m = joint->mjcJoint.value();
+    TEST_CHECK(m.stiffness.get_value() == 2.5);
+    TEST_CHECK(m.damping.get_value() == 0.75);
+    TEST_CHECK(m.armature.get_value() == 0.01);
+    TEST_CHECK(m.frictionloss.get_value() == 0.05);
+  }
+
+  // physxJoint:* / physxLimit:* / state:* — generic props map.
+  TEST_CHECK(joint->props.count("physxJoint:armature") > 0);
+  TEST_CHECK(joint->props.count("physxJoint:jointFriction") > 0);
+  TEST_CHECK(joint->props.count("physxJoint:maxJointVelocity") > 0);
+  TEST_CHECK(joint->props.count("physxLimit:angular:damping") > 0);
+  TEST_CHECK(joint->props.count("physxLimit:angular:stiffness") > 0);
+  TEST_CHECK(joint->props.count("state:angular:physics:position") > 0);
+  TEST_CHECK(joint->props.count("state:angular:physics:velocity") > 0);
+}
+
+// ---------------------------------------------------------------------------
+// 7c. PhysicsRevoluteJoint with all four namespaces — USDC round-trip.
+//     Verifies sconv-physics.cc re-emits MjcJointAPI from the typed struct
+//     (the reconstruct path consumes mjc:* into mjcJoint and removes them
+//     from props), and the generic stage-converter.cc props-map pass
+//     preserves physxJoint:* / physxLimit:* / state:* untouched.
+// ---------------------------------------------------------------------------
+void physics_joint_physx_state_usdc_roundtrip_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsRevoluteJoint "MirrorHinge" (
+    prepend apiSchemas = ["MjcJointAPI"]
+)
+{
+    rel physics:body0 = </World/A>
+    rel physics:body1 = </World/B>
+    token physics:axis = "Y"
+    float physics:lowerLimit = -90.0
+    float physics:upperLimit = 90.0
+
+    uniform double mjc:stiffness = 2.5
+    uniform double mjc:damping = 0.75
+    uniform double mjc:armature = 0.01
+    uniform double mjc:frictionloss = 0.05
+
+    custom float physxJoint:armature = 0.01
+    custom float physxJoint:jointFriction = 0.05
+    custom float physxJoint:maxJointVelocity = 12.5
+    custom float physxLimit:angular:damping = 0.75
+    custom float physxLimit:angular:stiffness = 2.5
+
+    custom float state:angular:physics:position = 15.0
+    custom float state:angular:physics:velocity = -2.0
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto result = stage.GetPrimAtPath(Path("/MirrorHinge", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const auto *joint = (*result)->as<PhysicsRevoluteJoint>();
+  TEST_CHECK(joint != nullptr);
+  if (!joint) return;
+
+  // Canonical UsdPhysics — typed limits.
+  auto lo = joint->lowerLimit.get_value();
+  auto hi = joint->upperLimit.get_value();
+  TEST_CHECK(lo.has_value() && lo.value() == -90.0f);
+  TEST_CHECK(hi.has_value() && hi.value() ==  90.0f);
+
+  // MJC — round-trips through the typed MjcJointAPI struct.
+  TEST_CHECK(joint->mjcJoint.has_value());
+  if (joint->mjcJoint.has_value()) {
+    const auto &m = joint->mjcJoint.value();
+    TEST_CHECK(m.stiffness.get_value() == 2.5);
+    TEST_CHECK(m.damping.get_value() == 0.75);
+    TEST_CHECK(m.armature.get_value() == 0.01);
+    TEST_CHECK(m.frictionloss.get_value() == 0.05);
+  }
+
+  // PhysX + state — round-trip via the generic props map. Check values
+  // not just presence so a botched value-encoding in the crate writer
+  // would surface immediately.
+  double v = 0.0;
+  TEST_CHECK(get_prop_num(joint->props, "physxJoint:armature", &v));
+  TEST_CHECK(approx_eq(v, 0.01));
+  TEST_CHECK(get_prop_num(joint->props, "physxJoint:jointFriction", &v));
+  TEST_CHECK(approx_eq(v, 0.05));
+  TEST_CHECK(get_prop_num(joint->props, "physxJoint:maxJointVelocity", &v));
+  TEST_CHECK(approx_eq(v, 12.5));
+  TEST_CHECK(get_prop_num(joint->props, "physxLimit:angular:damping", &v));
+  TEST_CHECK(approx_eq(v, 0.75));
+  TEST_CHECK(get_prop_num(joint->props, "physxLimit:angular:stiffness", &v));
+  TEST_CHECK(approx_eq(v, 2.5));
+  TEST_CHECK(get_prop_num(joint->props, "state:angular:physics:position", &v));
+  TEST_CHECK(approx_eq(v, 15.0));
+  TEST_CHECK(get_prop_num(joint->props, "state:angular:physics:velocity", &v));
+  TEST_CHECK(approx_eq(v, -2.0));
+}
+
+// ---------------------------------------------------------------------------
+// 7d. PhysicsPrismaticJoint with state:linear:physics:* only.
+//     Mirrors the physics-state-init.usda test scene — exercises the
+//     prismatic path (only the revolute axis is covered by 7b/7c).
+// ---------------------------------------------------------------------------
+void physics_prismatic_state_init_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsPrismaticJoint "Slider"
+{
+    rel physics:body0 = </World/Cart>
+    rel physics:body1 = </World/Pole>
+    token physics:axis = "Z"
+
+    custom float state:linear:physics:position = 0.05
+    custom float state:linear:physics:velocity = -0.5
+    custom float physxLimit:linear:damping = 1.2
+    custom float physxLimit:linear:stiffness = 30.0
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = parse_usda(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("parse failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto result = stage.GetPrimAtPath(Path("/Slider", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const auto *joint = (*result)->as<PhysicsPrismaticJoint>();
+  TEST_CHECK(joint != nullptr);
+  if (!joint) return;
+
+  // Prismatic state — meters / m-per-sec per the USD PhysX convention
+  // (no degrees conversion, unlike revolute).
+  double v = 0.0;
+  TEST_CHECK(get_prop_num(joint->props, "state:linear:physics:position", &v));
+  TEST_CHECK(approx_eq(v, 0.05));
+  TEST_CHECK(get_prop_num(joint->props, "state:linear:physics:velocity", &v));
+  TEST_CHECK(approx_eq(v, -0.5));
+  TEST_CHECK(get_prop_num(joint->props, "physxLimit:linear:damping", &v));
+  TEST_CHECK(approx_eq(v, 1.2));
+  TEST_CHECK(get_prop_num(joint->props, "physxLimit:linear:stiffness", &v));
+  TEST_CHECK(approx_eq(v, 30.0));
+
+  // No MjcJointAPI in this scene — the reconstruct path should NOT have
+  // synthesized one from the physx*:* / state:* prefixes.
+  TEST_CHECK(!joint->mjcJoint.has_value());
+}
+
+// ---------------------------------------------------------------------------
+// 7e. Tydra physics-to-JSON includes the physx / state sub-blocks for
+//     revolute joints (per the cross-engine mirror section in doc/usd.md).
+// ---------------------------------------------------------------------------
+void physics_joint_physx_state_to_json_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsRevoluteJoint "Hinge"
+{
+    rel physics:body0 = </A>
+    rel physics:body1 = </B>
+    token physics:axis = "Z"
+
+    custom float physxJoint:armature = 0.01
+    custom float physxJoint:jointFriction = 0.05
+    custom float physxLimit:angular:damping = 0.75
+    custom float physxLimit:angular:stiffness = 2.5
+    custom float state:angular:physics:position = 15.0
+    custom float state:angular:physics:velocity = -2.0
+}
+
+def PhysicsPrismaticJoint "Slider"
+{
+    rel physics:body0 = </C>
+    rel physics:body1 = </D>
+    token physics:axis = "X"
+
+    custom float physxLimit:linear:damping = 1.2
+    custom float state:linear:physics:position = 0.05
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = parse_usda(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("parse failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  std::string json;
+  std::string json_err;
+  tydra::PhysicsJsonExportOptions opts;
+  opts.include_mjc = true;
+  bool json_ok = tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
+  if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
+  TEST_CHECK(json_ok);
+  TEST_CHECK(!json.empty());
+  if (json.empty()) return;
+
+  // Revolute joint surfaces a `physx` and `state` sub-block.
+  TEST_CHECK(json.find("\"physx\"")           != std::string::npos);
+  TEST_CHECK(json.find("\"state\"")           != std::string::npos);
+  TEST_CHECK(json.find("\"armature\"")        != std::string::npos);
+  TEST_CHECK(json.find("\"jointFriction\"")   != std::string::npos);
+  TEST_CHECK(json.find("\"damping\"")         != std::string::npos);
+  TEST_CHECK(json.find("\"stiffness\"")       != std::string::npos);
+  TEST_CHECK(json.find("\"position\"")        != std::string::npos);
+  TEST_CHECK(json.find("\"velocity\"")        != std::string::npos);
+  // Numeric round-trip — at least one of the values from above lands.
+  TEST_CHECK(json.find("0.01")   != std::string::npos);
+  TEST_CHECK(json.find("15")     != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// 7f. MjcJointAPI round-trips through USDC. The reconstruct path consumes
+//     mjc:* into MjcJointAPI and *removes* the keys from props, so without
+//     the sconv-physics.cc re-emission, USDC -> USDA -> USDC would silently
+//     drop joint damping / stiffness / armature / frictionloss.
+// ---------------------------------------------------------------------------
+void physics_joint_mjc_usdc_roundtrip_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsRevoluteJoint "MjcOnlyHinge" (
+    prepend apiSchemas = ["MjcJointAPI"]
+)
+{
+    rel physics:body0 = </A>
+    rel physics:body1 = </B>
+    token physics:axis = "X"
+    uniform double mjc:stiffness = 100.0
+    uniform double mjc:damping = 10.0
+    uniform double mjc:armature = 0.01
+    uniform double mjc:frictionloss = 0.5
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto result = stage.GetPrimAtPath(Path("/MjcOnlyHinge", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const auto *joint = (*result)->as<PhysicsRevoluteJoint>();
+  TEST_CHECK(joint != nullptr);
+  if (!joint) return;
+  TEST_CHECK(joint->mjcJoint.has_value());
+  if (!joint->mjcJoint.has_value()) return;
+  const auto &m = joint->mjcJoint.value();
+  TEST_CHECK(m.stiffness.get_value()    == 100.0);
+  TEST_CHECK(m.damping.get_value()      == 10.0);
+  TEST_CHECK(m.armature.get_value()     == 0.01);
+  TEST_CHECK(m.frictionloss.get_value() == 0.5);
 }
 
 // ---------------------------------------------------------------------------
