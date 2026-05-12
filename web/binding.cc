@@ -1339,6 +1339,36 @@ void AddPropertyMap(json &props, json &rels,
   }
 }
 
+// Emit `purpose` and `visibility` token attrs for any GPrim-derived
+// geometry prim (Mesh, Cube, Sphere, Cylinder, Capsule, Plane, …).
+// Only writes the keys when non-default (Purpose::Default /
+// Visibility::Inherited are the USD-spec defaults; omit them so the
+// JSON output stays compact). Called from AppendPhysicsPrimJson so
+// downstream consumers (e.g. web/sim's `usd-physics.js`) can filter
+// `purpose == "guide"` collision meshes from default renders without
+// duplicating the schema walk. See doc/usd.md "Mesh + collider
+// convention" in github.com/lighttransport/lightgeom for the motivating
+// use case.
+template <typename GPrimT>
+void AddPurposeVisibilityJson(json &prim_json, const GPrimT &gprim) {
+  if (gprim.purpose.authored()) {
+    tinyusdz::Purpose p_val = gprim.purpose.get_value();
+    if (p_val != tinyusdz::Purpose::Default) {
+      prim_json["purpose"] = tinyusdz::to_string(p_val);
+    }
+  }
+  if (gprim.visibility.authored()) {
+    const auto &v_anim = gprim.visibility.get_value();
+    if (v_anim.has_default()) {
+      tinyusdz::Visibility v_val;
+      if (v_anim.get_default(&v_val)
+          && v_val != tinyusdz::Visibility::Inherited) {
+        prim_json["visibility"] = tinyusdz::to_string(v_val);
+      }
+    }
+  }
+}
+
 void AddAPISchemasJson(json &prim_json, const tinyusdz::Prim &prim) {
   json schemas = json::array();
   const tinyusdz::APISchemas api = prim.metas().get_apiSchemas();
@@ -1524,16 +1554,22 @@ void AppendPhysicsPrimJson(const tinyusdz::Prim &prim, const std::string &path,
     AddPropertyMap(props, rels, xform->props);
   } else if (const auto *mesh = prim.as<tinyusdz::GeomMesh>()) {
     AddGeometryJson(item, props, *mesh);
+    AddPurposeVisibilityJson(item, *mesh);
   } else if (const auto *cube = prim.as<tinyusdz::GeomCube>()) {
     AddGeometryJson(item, props, *cube);
+    AddPurposeVisibilityJson(item, *cube);
   } else if (const auto *sphere = prim.as<tinyusdz::GeomSphere>()) {
     AddGeometryJson(item, props, *sphere);
+    AddPurposeVisibilityJson(item, *sphere);
   } else if (const auto *cylinder = prim.as<tinyusdz::GeomCylinder>()) {
     AddGeometryJson(item, props, *cylinder);
+    AddPurposeVisibilityJson(item, *cylinder);
   } else if (const auto *capsule = prim.as<tinyusdz::GeomCapsule>()) {
     AddGeometryJson(item, props, *capsule);
+    AddPurposeVisibilityJson(item, *capsule);
   } else if (const auto *plane = prim.as<tinyusdz::GeomPlane>()) {
     AddGeometryJson(item, props, *plane);
+    AddPurposeVisibilityJson(item, *plane);
   } else if (const auto *scene = prim.as<tinyusdz::PhysicsScene>()) {
     AddSceneJson(props, *scene);
     AddPropertyMap(props, rels, scene->props);
