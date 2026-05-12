@@ -711,6 +711,7 @@ TEST_LIST = {
   { "physics_filtered_pairs_api_test", physics_filtered_pairs_api_test },
   { "physics_collision_group_invert_test", physics_collision_group_invert_test },
   { "physics_drive_limit_api_test", physics_drive_limit_api_test },
+  { "physics_mesh_collider_convention_test", physics_mesh_collider_convention_test },
   // IK solver
   { "ik_forward_kinematics_test", ik_forward_kinematics_test },
   { "ik_ccd_solve_test", ik_ccd_solve_test },

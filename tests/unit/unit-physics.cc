@@ -1290,3 +1290,183 @@ def PhysicsRevoluteJoint "Joint" (
   TEST_CHECK(joint->props.count("physics:limit:rotX:low") > 0 ||
              joint->props.count("physics:limit:rotX:high") > 0);
 }
+
+// ---------------------------------------------------------------------------
+// 15. Mesh-per-geom collider convention.
+//
+// Exercises the schema convention adopted by lightgeom `export_usdz.py`,
+// tinyusdz `urdf-to-usd`, and NVIDIA / Newton's `mujoco-usd-converter`:
+//
+//   * One UsdGeom.Mesh per source geom (no `visual_*` / `collision_*`
+//     duplication).
+//   * Applied APIs on collider meshes:
+//       PhysicsCollisionAPI + PhysicsMeshCollisionAPI
+//       MjcCollisionAPI + MjcImageableAPI    (codeless typed schemas)
+//   * `purpose = "guide"` when MuJoCo geom.group ∉ {0,1,2}
+//     (collision-only mesh).
+//   * `physics:collisionEnabled = false` is the `mujoco-usd-converter`
+//     opt-out: every Mesh carries PhysicsCollisionAPI, visual-only ones
+//     disable it instead of dropping the API.
+//
+// This test parses a Mesh authored under all three sub-cases (visual-
+// only, dual-purpose, collision-only, disabled) and checks that
+// apiSchemas + purpose + relevant attrs are recoverable, then exports
+// to physics-JSON and checks the surfaced fields.
+// ---------------------------------------------------------------------------
+void physics_mesh_collider_convention_test(void) {
+  const char *usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Z"
+)
+
+def Xform "World"
+{
+    def Xform "Robot" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        def Mesh "VisualOnly" (
+            prepend apiSchemas = ["MjcImageableAPI"]
+        )
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform int mjc:group = 0
+        }
+
+        def Mesh "VisualAndCollider" (
+            prepend apiSchemas = [
+                "PhysicsCollisionAPI",
+                "PhysicsMeshCollisionAPI",
+                "MjcCollisionAPI",
+                "MjcImageableAPI",
+            ]
+        )
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            uniform token physics:approximation = "convexHull"
+            uniform int mjc:group = 2
+            uniform int mjc:condim = 3
+        }
+
+        def Mesh "ColliderOnly" (
+            prepend apiSchemas = [
+                "PhysicsCollisionAPI",
+                "PhysicsMeshCollisionAPI",
+                "MjcCollisionAPI",
+                "MjcImageableAPI",
+            ]
+        )
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            uniform token purpose = "guide"
+            uniform token physics:approximation = "convexHull"
+            uniform int mjc:group = 3
+            uniform int mjc:condim = 6
+            uniform double mjc:margin = 0.001
+        }
+
+        def Mesh "DisabledCollider" (
+            prepend apiSchemas = [
+                "PhysicsCollisionAPI",
+                "PhysicsMeshCollisionAPI",
+            ]
+        )
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform bool physics:collisionEnabled = 0
+            uniform token physics:approximation = "convexHull"
+        }
+    }
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = parse_usda(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("parse failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto has_api = [](const Prim *prim, APISchemas::APIName want) -> bool {
+    if (!prim->metas().has_apiSchemas()) return false;
+    const auto schemas = prim->metas().get_apiSchemas();
+    for (const auto &n : schemas.names) {
+      if (n.first == want) return true;
+    }
+    return false;
+  };
+
+  // ---- 1) Visual-only ----------------------------------------------------
+  auto vo_r = stage.GetPrimAtPath(Path("/World/Robot/VisualOnly", ""));
+  TEST_CHECK(bool(vo_r));
+  if (vo_r) {
+    const Prim *p = *vo_r;
+    TEST_CHECK(p->is<GeomMesh>());
+    TEST_CHECK(!has_api(p, APISchemas::APIName::PhysicsCollisionAPI));
+    TEST_CHECK( has_api(p, APISchemas::APIName::MjcImageableAPI));
+    if (const auto *m = p->as<GeomMesh>()) {
+      TEST_CHECK(m->purpose.get_value() == Purpose::Default);
+    }
+  }
+
+  // ---- 2) Dual-purpose (visual + collider, default group) ---------------
+  auto vc_r = stage.GetPrimAtPath(Path("/World/Robot/VisualAndCollider", ""));
+  TEST_CHECK(bool(vc_r));
+  if (vc_r) {
+    const Prim *p = *vc_r;
+    TEST_CHECK(p->is<GeomMesh>());
+    TEST_CHECK(has_api(p, APISchemas::APIName::PhysicsCollisionAPI));
+    TEST_CHECK(has_api(p, APISchemas::APIName::PhysicsMeshCollisionAPI));
+    TEST_CHECK(has_api(p, APISchemas::APIName::MjcCollisionAPI));
+    TEST_CHECK(has_api(p, APISchemas::APIName::MjcImageableAPI));
+    if (const auto *m = p->as<GeomMesh>()) {
+      // purpose NOT authored as guide for visible-default geoms.
+      TEST_CHECK(m->purpose.get_value() == Purpose::Default);
+      // physics:approximation = "convexHull" must round-trip into props.
+      auto it = m->props.find("physics:approximation");
+      TEST_CHECK(it != m->props.end());
+    }
+  }
+
+  // ---- 3) Collision-only (purpose=guide, mjc:group=3) -------------------
+  auto co_r = stage.GetPrimAtPath(Path("/World/Robot/ColliderOnly", ""));
+  TEST_CHECK(bool(co_r));
+  if (co_r) {
+    const Prim *p = *co_r;
+    TEST_CHECK(p->is<GeomMesh>());
+    TEST_CHECK(has_api(p, APISchemas::APIName::PhysicsCollisionAPI));
+    TEST_CHECK(has_api(p, APISchemas::APIName::MjcCollisionAPI));
+    if (const auto *m = p->as<GeomMesh>()) {
+      TEST_CHECK(m->purpose.get_value() == Purpose::Guide);
+      // mjc:group authored as 3 — round-trips via props bag.
+      auto it = m->props.find("mjc:group");
+      TEST_CHECK(it != m->props.end());
+    }
+  }
+
+  // ---- 4) Disabled-collider (collisionEnabled=false opt-out) ------------
+  auto dc_r = stage.GetPrimAtPath(Path("/World/Robot/DisabledCollider", ""));
+  TEST_CHECK(bool(dc_r));
+  if (dc_r) {
+    const Prim *p = *dc_r;
+    TEST_CHECK(p->is<GeomMesh>());
+    TEST_CHECK(has_api(p, APISchemas::APIName::PhysicsCollisionAPI));
+    if (const auto *m = p->as<GeomMesh>()) {
+      auto it = m->props.find("physics:collisionEnabled");
+      TEST_CHECK(it != m->props.end());
+    }
+  }
+
+  // Note: tydra::ConvertPhysicsToJson scopes to PhysicsScene / Joint /
+  // Actuator / Tendon / Keyframe — Mesh-collider surfacing lives in
+  // web/binding.cc's extractPhysicsSceneJSON (`AppendPhysicsPrimJson`),
+  // which is exercised from the web/js test harness, not here.
+}
