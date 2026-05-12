@@ -312,7 +312,11 @@ bool ReconstructPrim<MjcTendon>(
 #define PRIM_PTR_ tendon
   for (auto &prop : properties) {
     MJC_TENDON_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    MJC_TENDON_RELS(EXPAND_SINGLE_REL)
+    // MJC_TENDON_RELS (mjc:path / mjc:sideSites) are multi-target rels:
+    // a `<fixed>` tendon (e.g. Panda's finger linkage) lists 2+ joint
+    // paths, and a `<spatial>` tendon lists N path/site segments.
+    // Use the path-vector parser; single targets still parse cleanly.
+    MJC_TENDON_RELS(EXPAND_MULTI_REL)
     ADD_PROPERTY(table, prop, MjcTendon, tendon->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
