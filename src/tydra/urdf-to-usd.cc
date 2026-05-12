@@ -211,9 +211,14 @@ void AddTransformOp(Xformable &xformable, const value::matrix4d &matrix) {
 template <typename GeomT>
 void AddCollisionAPIs(GeomT &geom, bool mesh_collision,
                       const nlohmann::json &src) {
+  // Schemas applied to every collider geom: UsdPhysics core, plus the
+  // codeless MjcPhysics mirror (read by `prim-reconstruct-physics.cc`
+  // and consumed by the lightgeom + mujoco-usd-converter pipelines).
+  // `MjcImageableAPI` carries `mjc:group` for round-trip into MuJoCo.
   std::vector<std::pair<APISchemas::APIName, std::string>> apis{
       {APISchemas::APIName::PhysicsCollisionAPI, ""},
       {APISchemas::APIName::MjcCollisionAPI, ""},
+      {APISchemas::APIName::MjcImageableAPI, ""},
   };
   if (mesh_collision) {
     apis.push_back({APISchemas::APIName::PhysicsMeshCollisionAPI, ""});
@@ -222,14 +227,28 @@ void AddCollisionAPIs(GeomT &geom, bool mesh_collision,
   AddAPISchemas(geom.metas(), apis);
   AddAttr(geom.props, "physics:collisionEnabled", true);
   if (mesh_collision) {
+    // Default approximation is `convexHull` — matches NVIDIA / Newton's
+    // mujoco-usd-converter (`_impl/geom.py:321`) and the convention
+    // documented in lightgeom's `doc/usd.md`. The previous default
+    // `none` left readers with arbitrary triangle-soup collision,
+    // which neither MuJoCo nor PhysX/Newton handle natively without
+    // an explicit decomposition pass.
     AddAttr(geom.props, "physics:approximation",
-            value::token(JsonString(src, "approximation", "none")), true);
+            value::token(JsonString(src, "approximation", "convexHull")), true);
     AddAttr(geom.props, "mjc:inertia", value::token("legacy"), true);
   }
   AddAttr(geom.props, "mjc:group", JsonInt(src, "group", 3), true);
   AddAttr(geom.props, "mjc:condim", int32_t(3), true);
   AddAttr(geom.props, "mjc:solmix", 1.0, true);
   AddAttr(geom.props, "mjc:margin", 0.0, true);
+
+  // `purpose=guide` hides the collider from default Hydra renders but
+  // keeps it discoverable to schema-aware consumers (lightgeom's
+  // web/sim viewer, usdview's purpose toggle, etc.). Mirrors
+  // mujoco-usd-converter/_impl/utils.py:20 which applies this when
+  // MuJoCo's `geom.group ∉ {0,1,2}`; URDF <collision> elements are
+  // conceptually equivalent to that group and get the same treatment.
+  geom.purpose.set_value(Purpose::Guide);
 }
 
 template <typename GeomT>

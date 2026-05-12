@@ -913,7 +913,14 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
         linkPayload.visuals.push(...payloads);
         visualCount += payloads.length;
       } else {
-        for (const payload of payloads) payload.approximation = 'none';
+        // Default approximation `convexHull` matches the convention in
+        // `src/tydra/urdf-to-usd.cc::AddCollisionAPIs` and mirrors
+        // NVIDIA / Newton's mujoco-usd-converter (see lightgeom
+        // `doc/usd.md` "Mesh + collider convention"). Override per-geom
+        // with `approximation: "none"` for triangle-soup MJCF colliders.
+        for (const payload of payloads) {
+          payload.approximation = payload.approximation || 'convexHull';
+        }
         linkPayload.collisions.push(...payloads);
         collisionCount += payloads.length;
       }
@@ -1037,7 +1044,13 @@ async function buildExportPayload(urdfText, opts, urdfDir) {
           opts
         );
       }
-      for (const payload of payloads) payload.approximation = 'none';
+      // URDF <collision> elements default to convex-hull approximation —
+      // matches the writer convention in `src/tydra/urdf-to-usd.cc` and
+      // mujoco-usd-converter. Override per-geom by authoring
+      // `approximation` in the JSON payload.
+      for (const payload of payloads) {
+        payload.approximation = payload.approximation || 'convexHull';
+      }
       linkPayload.collisions.push(...payloads);
       collisionCount += payloads.length;
       collisionIndex++;
@@ -1115,7 +1128,15 @@ function verifyUSDA(native, stats) {
     'MjcSceneAPI'
   ];
   if (stats.links > 0) required.push('PhysicsRigidBodyAPI');
-  if (stats.collisions > 0) required.push('PhysicsCollisionAPI');
+  if (stats.collisions > 0) {
+    required.push('PhysicsCollisionAPI');
+    required.push('MjcCollisionAPI');
+    // The convention in `src/tydra/urdf-to-usd.cc::AddCollisionAPIs`
+    // also stamps `MjcImageableAPI` + `purpose = "guide"` on every
+    // collider so default Hydra renders skip them.
+    required.push('MjcImageableAPI');
+    required.push('uniform token purpose = "guide"');
+  }
   if (stats.joints > 0) required.push('MjcJointAPI');
   const missing = required.filter((token) => !usda.includes(token));
   if (missing.length) {

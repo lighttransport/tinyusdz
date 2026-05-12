@@ -596,7 +596,16 @@ function usdGeometryClassification(extracted) {
   for (const prim of extracted?.prims || []) {
     if (!prim.geometry) continue;
     const group = Number(prim.properties?.['mjc:group']);
-    if (hasApi(prim, 'PhysicsCollisionAPI') || group === 3) {
+    // Three independent collider signals, in priority order:
+    //   1. `UsdPhysicsCollisionAPI` applied (canonical UsdPhysics)
+    //   2. `mjc:group == 3` (menagerie convention for collision-only)
+    //   3. `purpose == "guide"` (surfaced by the patched
+    //      `AppendPhysicsPrimJson` in `web/binding.cc`; used by the
+    //      mujoco-usd-converter to hide colliders from default renders)
+    // Any of these flips the prim into the collision bucket.
+    if (hasApi(prim, 'PhysicsCollisionAPI')
+        || group === 3
+        || prim.purpose === 'guide') {
       collisionPaths.add(prim.path);
     } else {
       visualPaths.add(prim.path);
@@ -1651,7 +1660,13 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
         linkPayload.visuals.push(...payloads);
         visualCount += payloads.length;
       } else {
-        for (const payload of payloads) payload.approximation = 'none';
+        // Default approximation `convexHull` matches the writer in
+        // `src/tydra/urdf-to-usd.cc::AddCollisionAPIs` and the
+        // mujoco-usd-converter convention. Per-geom overrides via
+        // payload.approximation are preserved.
+        for (const payload of payloads) {
+          payload.approximation = payload.approximation || 'convexHull';
+        }
         linkPayload.collisions.push(...payloads);
         collisionCount += payloads.length;
       }
@@ -1998,7 +2013,9 @@ function buildExportPayload() {
     const payload = geometryPayload(mesh, ownerLink);
     if (!payload) continue;
     if (mesh.userData.urdfCollision) {
-      payload.approximation = 'none';
+      // Match the URDF→USD writer convention (convexHull) so re-export
+      // round-trips don't silently regress to triangle-soup collisions.
+      payload.approximation = payload.approximation || 'convexHull';
       linkPayload.collisions.push(payload);
     } else {
       linkPayload.visuals.push(payload);
@@ -2236,9 +2253,14 @@ function usdPhysicsToSourceModel(extracted) {
       };
     });
 
+  // Three independent collider signals; see `usdGeometryClassification`
+  // above for rationale and ordering.
   const collisionPaths = new Set(
     prims
-      .filter((prim) => prim.geometry && (hasApi(prim, 'PhysicsCollisionAPI') || Number(prim.properties?.['mjc:group']) === 3))
+      .filter((prim) => prim.geometry
+          && (hasApi(prim, 'PhysicsCollisionAPI')
+              || Number(prim.properties?.['mjc:group']) === 3
+              || prim.purpose === 'guide'))
       .map((prim) => prim.path)
   );
 

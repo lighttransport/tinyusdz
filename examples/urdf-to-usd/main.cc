@@ -795,7 +795,12 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
       stats->visuals++;
     } else {
       nlohmann::json col = MeshPayloadToJson(payload);
-      col["approximation"] = "none";
+      // Default approximation `convexHull` matches
+      // `src/tydra/urdf-to-usd.cc::AddCollisionAPIs` and the
+      // mujoco-usd-converter convention (one Mesh per geom +
+      // `UsdPhysicsMeshCollisionAPI` with hull approximation). Authors
+      // who need triangle-soup contact can override per-geom in JSON.
+      col["approximation"] = "convexHull";
       link["collisions"].push_back(std::move(col));
       stats->collisions++;
     }
