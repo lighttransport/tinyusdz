@@ -489,6 +489,248 @@ bool parse_half_array(const tstring_view &sv, std::vector<tinyusdz::value::half>
     });
 }
 
+namespace {
+
+constexpr size_t kMaxStringArrayElements = 1024ull * 1024ull * 128ull;
+constexpr size_t kMaxStringLiteralLen = 64ull * 1024ull * 1024ull;
+
+struct ParsedStringLiteral {
+  std::string value;
+  bool is_triple_quoted{false};
+  bool single_quote{false};
+};
+
+static inline int hex_digit(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+static void assign_unescaped_control_range(const char *start, const char *end,
+                                           std::string *out) {
+  out->clear();
+  out->reserve(size_t(end - start));
+
+  for (const char *p = start; p < end; p++) {
+    if (*p != '\\') {
+      out->push_back(*p);
+      continue;
+    }
+
+    if (p + 1 >= end) {
+      continue;
+    }
+
+    const char esc = *(p + 1);
+    if (esc == 'a') {
+      out->push_back('\a');
+      p++;
+    } else if (esc == 'b') {
+      out->push_back('\b');
+      p++;
+    } else if (esc == 't') {
+      out->push_back('\t');
+      p++;
+    } else if (esc == 'v') {
+      out->push_back('\v');
+      p++;
+    } else if (esc == 'f') {
+      out->push_back('\f');
+      p++;
+    } else if (esc == 'n') {
+      out->push_back('\n');
+      p++;
+    } else if (esc == 'r') {
+      out->push_back('\r');
+      p++;
+    } else if (esc == '\\') {
+      out->push_back('\\');
+      p++;
+    } else if (esc == 'x') {
+      if (p + 3 < end) {
+        const int d1 = hex_digit(*(p + 2));
+        const int d2 = hex_digit(*(p + 3));
+        if (d1 >= 0 && d2 >= 0) {
+          out->push_back(static_cast<char>((d1 << 4) | d2));
+          p += 3;
+        } else {
+          out->push_back('\\');
+        }
+      } else {
+        out->push_back('\\');
+      }
+    } else {
+      // Match unescapeControlSequence: unknown escapes drop the backslash.
+    }
+  }
+}
+
+static bool has_backslash(const char *start, const char *end) {
+  for (const char *p = start; p < end; p++) {
+    if (*p == '\\') return true;
+  }
+  return false;
+}
+
+static void assign_string_range(const char *start, const char *end,
+                                bool unescape, std::string *out) {
+  if (unescape && has_backslash(start, end)) {
+    assign_unescaped_control_range(start, end, out);
+  } else {
+    out->assign(start, size_t(end - start));
+  }
+}
+
+static bool parse_quoted_string_literal(const char **p, const char *end,
+                                        bool unescape_regular,
+                                        ParsedStringLiteral *out) {
+  if (!p || !out) return false;
+  if (*p >= end) return false;
+
+  const char quote = **p;
+  if (quote != '"' && quote != '\'') return false;
+  const bool single_quote = (quote == '\'');
+  (*p)++;
+
+  const bool is_triple =
+      ((*p + 1) < end && (*p)[0] == quote && (*p)[1] == quote);
+  if (is_triple) {
+    *p += 2;
+    const char *content_start = *p;
+
+    while (*p < end) {
+      if (size_t(*p - content_start) > kMaxStringLiteralLen) return false;
+
+      if (**p == '\\') {
+        if ((*p + 3) < end && (*p)[1] == quote && (*p)[2] == quote &&
+            (*p)[3] == quote) {
+          *p += 4;
+          continue;
+        }
+        (*p)++;
+        continue;
+      }
+
+      if ((*p + 2) < end && (*p)[0] == quote && (*p)[1] == quote &&
+          (*p)[2] == quote) {
+        const char *content_end = *p;
+        assign_string_range(content_start, content_end, true, &out->value);
+        out->is_triple_quoted = true;
+        out->single_quote = single_quote;
+        *p += 3;
+        return true;
+      }
+
+      (*p)++;
+    }
+    return false;
+  }
+
+  const char *content_start = *p;
+  while (*p < end) {
+    if (size_t(*p - content_start) > kMaxStringLiteralLen) return false;
+
+    const char c = **p;
+    if (c == '\n' || c == '\r') return false;
+
+    if (unescape_regular && c == '\\' && (*p + 1) < end &&
+        ((*p)[1] == '\'' || (*p)[1] == '"')) {
+      *p += 2;
+      continue;
+    }
+
+    if (c == quote) {
+      const char *content_end = *p;
+      assign_string_range(content_start, content_end, unescape_regular,
+                          &out->value);
+      out->is_triple_quoted = false;
+      out->single_quote = false;
+      (*p)++;
+      return true;
+    }
+
+    (*p)++;
+  }
+
+  return false;
+}
+
+template<typename PushFn>
+static bool parse_quoted_array_impl(const tstring_view &sv,
+                                    bool unescape_regular,
+                                    PushFn push_value) {
+  if (sv.size() == 0) return false;
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+
+  p = skip_whitespace(p, end);
+  if (p >= end || *p != '[') return false;
+  p++;
+
+  p = skip_whitespace(p, end);
+  if (p < end && *p == ']') return true;
+
+  size_t count = 0;
+  while (p < end) {
+    p = skip_whitespace(p, end);
+    if (p >= end) return false;
+    if (*p == ']') return true;
+
+    ParsedStringLiteral parsed;
+    if (!parse_quoted_string_literal(&p, end, unescape_regular, &parsed)) {
+      return false;
+    }
+
+    if (count >= kMaxStringArrayElements) return false;
+    push_value(std::move(parsed));
+    count++;
+
+    p = skip_whitespace(p, end);
+    if (p < end && *p == ',') {
+      p++;
+      p = skip_whitespace(p, end);
+      if (p < end && *p == ']') return true;
+      continue;
+    }
+    if (p < end && *p == ']') return true;
+    return false;
+  }
+
+  return false;
+}
+
+}  // namespace
+
+bool parse_token_array(const tstring_view &sv, std::vector<tinyusdz::value::token> *result) {
+  if (!result) return false;
+  result->clear();
+  return parse_quoted_array_impl(sv, false, [&](ParsedStringLiteral parsed) {
+    result->emplace_back(parsed.value);
+  });
+}
+
+bool parse_string_array(const tstring_view &sv, std::vector<tinyusdz::value::StringData> *result) {
+  if (!result) return false;
+  result->clear();
+  return parse_quoted_array_impl(sv, true, [&](ParsedStringLiteral parsed) {
+    tinyusdz::value::StringData sdata;
+    sdata.value = std::move(parsed.value);
+    sdata.is_triple_quoted = parsed.is_triple_quoted;
+    sdata.single_quote = parsed.single_quote;
+    result->push_back(std::move(sdata));
+  });
+}
+
+bool parse_std_string_array(const tstring_view &sv, std::vector<std::string> *result) {
+  if (!result) return false;
+  result->clear();
+  return parse_quoted_array_impl(sv, true, [&](ParsedStringLiteral parsed) {
+    result->push_back(std::move(parsed.value));
+  });
+}
+
 // Tuple array parser: [(v0, v1, ...), (v0, v1, ...), ...]
 // VecT must support operator[] for element access.
 template<typename VecT, size_t N, typename ParseFn>

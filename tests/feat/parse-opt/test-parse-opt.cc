@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2025 - Present, Light Transport Entertainment, Inc.
 //
-// Synthetic USDA numeric parser benchmark.
+// Synthetic USDA parser benchmark.
 
 #include <chrono>
 #include <algorithm>
@@ -226,6 +226,44 @@ std::string MakeMatrix4dArray(size_t count) {
   return MakeMatrixArray(count, 4, true);
 }
 
+void AppendTokenLiteral(std::string *out, size_t i) {
+  out->push_back('"');
+  out->append("token_");
+  out->append(std::to_string(i % 997));
+  out->push_back('_');
+  out->append(std::to_string((i * 17) % 65521));
+  if ((i % 101) == 0) {
+    out->append("_bracket]hash#");
+  }
+  out->push_back('"');
+}
+
+void AppendStringLiteral(std::string *out, size_t i) {
+  out->push_back('"');
+  out->append("string ");
+  out->append(std::to_string(i % 997));
+  if ((i % 97) == 0) {
+    out->append(" quoted \\\"value\\\"");
+  } else if ((i % 89) == 0) {
+    out->append(" line\\nvalue");
+  } else if ((i % 83) == 0) {
+    out->append(" bracket] hash#value");
+  }
+  out->push_back('"');
+}
+
+std::string MakeTokenArray(size_t count) {
+  return MakeScalarArray(count, [](std::string *out, size_t i) {
+    AppendTokenLiteral(out, i);
+  });
+}
+
+std::string MakeStringArray(size_t count) {
+  return MakeScalarArray(count, [](std::string *out, size_t i) {
+    AppendStringLiteral(out, i);
+  });
+}
+
 std::string MakeIntArray(size_t count) {
   return MakeScalarArray(count, [](std::string *out, size_t i) {
     out->append(std::to_string(IntValue(i)));
@@ -358,15 +396,19 @@ bool RunArrayCase(const std::string &name, const std::string &data,
   });
 }
 
-std::string MakeNumericUsda(size_t count, size_t matrix_count) {
+std::string MakeSyntheticUsda(size_t count, size_t matrix_count) {
   std::string out;
-  out.reserve(count * 900 + matrix_count * 1200);
+  out.reserve(count * 1000 + matrix_count * 1200);
   out.append("#usda 1.0\n\n");
   out.append("def Scope \"NumericBench\" {\n");
   out.append("  custom int[] intValues = ");
   out.append(MakeIntArray(count));
   out.append("\n  custom uint[] uintValues = ");
   out.append(MakeUIntArray(count));
+  out.append("\n  custom token[] tokenValues = ");
+  out.append(MakeTokenArray(count));
+  out.append("\n  custom string[] stringValues = ");
+  out.append(MakeStringArray(count));
   out.append("\n  custom int64[] int64Values = ");
   out.append(MakeInt64Array(count));
   out.append("\n  custom uint64[] uint64Values = ");
@@ -412,6 +454,12 @@ bool RunDirectArrayBenchmarks(const BenchmarkConfig &config) {
                               config.scalar_count, config.iterations);
   ok &= RunArrayCase<uint32_t>("uint[]", MakeUIntArray(config.scalar_count),
                                config.scalar_count, config.iterations);
+  ok &= RunArrayCase<tinyusdz::value::token>(
+      "token[]", MakeTokenArray(config.scalar_count), config.scalar_count,
+      config.iterations);
+  ok &= RunArrayCase<tinyusdz::value::StringData>(
+      "string[]", MakeStringArray(config.scalar_count), config.scalar_count,
+      config.iterations);
   ok &= RunArrayCase<int64_t>("int64[]", MakeInt64Array(config.scalar_count),
                               config.scalar_count, config.iterations);
   ok &= RunArrayCase<uint64_t>("uint64[]", MakeUInt64Array(config.scalar_count),
@@ -464,9 +512,9 @@ bool RunDirectArrayBenchmarks(const BenchmarkConfig &config) {
 
 bool RunUsdaBenchmark(const BenchmarkConfig &config) {
   std::cout << "\n=== Synthetic USDA Parsing ===\n";
-  const std::string usda = MakeNumericUsda(config.usda_count,
-                                           (std::max)(size_t(1), config.usda_count / 16));
-  std::cout << "  attributes=19 elements_per_numeric_attr=" << config.usda_count
+  const std::string usda = MakeSyntheticUsda(
+      config.usda_count, (std::max)(size_t(1), config.usda_count / 16));
+  std::cout << "  attributes=21 elements_per_array_attr=" << config.usda_count
             << " bytes=" << usda.size() << "\n";
 
   return Benchmark("LoadUSDA", usda.size(), config.iterations, [&]() {
@@ -491,7 +539,7 @@ int main(int argc, char **argv) {
   const BenchmarkConfig config = ConfigFor(opts.profile);
 
   std::cout << "========================================\n";
-  std::cout << "TinyUSDZ Synthetic Numeric USDA Benchmark\n";
+  std::cout << "TinyUSDZ Synthetic USDA Parser Benchmark\n";
   std::cout << "Profile: "
             << ((opts.profile == BenchmarkProfile::Quick) ? "quick" : "full")
             << "\n";

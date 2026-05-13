@@ -854,6 +854,9 @@ class AsciiParser {
   bool ParseDoubleArrayOptimized(std::vector<double> *result);
   bool ParseIntArrayOptimized(std::vector<int32_t> *result);
   bool ParseHalfArrayOptimized(std::vector<value::half> *result);
+  bool ParseTokenArrayOptimized(std::vector<value::token> *result);
+  bool ParseStringDataArrayOptimized(std::vector<value::StringData> *result);
+  bool ParseStdStringArrayOptimized(std::vector<std::string> *result);
 
   ///
   /// Optimized compound-type array parsing using tiny-string

@@ -1,6 +1,6 @@
 # Parse Optimization Benchmark
 
-`bench-parse-opt` generates deterministic synthetic USDA numeric payloads and
+`bench-parse-opt` generates deterministic synthetic USDA payloads and
 measures parser throughput for the ASCII parser hot paths.
 
 It has two workloads:
@@ -16,6 +16,7 @@ performance work.
 The benchmark currently covers:
 
 - Integer arrays: `int[]`, `uint[]`, `int64[]`, `uint64[]`
+- Text arrays: `token[]`, `string[]`
 - Floating scalar arrays: `half[]`, `float[]`, `double[]`
 - Floating tuple arrays: `half3[]`, `float3[]`, `double3[]`
 - Quaternion arrays: `quath[]`, `quatf[]`, `quatd[]`

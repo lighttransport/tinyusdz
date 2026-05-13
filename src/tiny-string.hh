@@ -354,6 +354,9 @@ bool parse_int_array(const tstring_view &sv, std::vector<int32_t> *result);
 bool parse_half_array(const tstring_view &sv, std::vector<tinyusdz::value::half> *result);
 bool parse_float_array(const tstring_view &sv, std::vector<float> *result);
 bool parse_double_array(const tstring_view &sv, std::vector<double> *result);
+bool parse_token_array(const tstring_view &sv, std::vector<tinyusdz::value::token> *result);
+bool parse_string_array(const tstring_view &sv, std::vector<tinyusdz::value::StringData> *result);
+bool parse_std_string_array(const tstring_view &sv, std::vector<std::string> *result);
 
 // Compound-type array parsers
 bool parse_half2_array(const tstring_view &sv, std::vector<tinyusdz::value::half2> *result);

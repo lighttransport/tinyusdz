@@ -190,6 +190,109 @@ nonstd::expected<double, std::string> ParseDouble(const std::string &s) {
   return result;
 }
 
+bool SkipQuotedStringForArrayEnd(const char **p, const char *end) {
+  if (!p || *p >= end) {
+    return false;
+  }
+
+  const char quote = **p;
+  if (quote != '"' && quote != '\'') {
+    return false;
+  }
+  (*p)++;
+
+  const bool triple =
+      ((*p + 1) < end && (*p)[0] == quote && (*p)[1] == quote);
+  if (triple) {
+    *p += 2;
+    while (*p < end) {
+      if (**p == '\\') {
+        if ((*p + 3) < end && (*p)[1] == quote && (*p)[2] == quote &&
+            (*p)[3] == quote) {
+          *p += 4;
+          continue;
+        }
+        (*p)++;
+        continue;
+      }
+
+      if ((*p + 2) < end && (*p)[0] == quote && (*p)[1] == quote &&
+          (*p)[2] == quote) {
+        *p += 3;
+        return true;
+      }
+      (*p)++;
+    }
+    return false;
+  }
+
+  while (*p < end) {
+    if (**p == '\\' && (*p + 1) < end &&
+        ((*p)[1] == '\'' || (*p)[1] == '"')) {
+      *p += 2;
+      continue;
+    }
+
+    if (**p == quote) {
+      (*p)++;
+      return true;
+    }
+
+    (*p)++;
+  }
+
+  return false;
+}
+
+bool FindArrayLiteralEnd(const uint8_t *bytes, size_t size, uint64_t start_loc,
+                         uint64_t *end_loc) {
+  if (!bytes || !end_loc || start_loc >= size) {
+    return false;
+  }
+
+  const char *begin = reinterpret_cast<const char *>(bytes);
+  const char *p = begin + start_loc;
+  const char *end = begin + size;
+
+  if (*p != '[') {
+    return false;
+  }
+  p++;
+
+  int bracket_depth = 1;
+  while (p < end && bracket_depth > 0) {
+    const char c = *p;
+
+    if (c == '#') {
+      while (p < end && *p != '\n' && *p != '\r') {
+        p++;
+      }
+      continue;
+    }
+
+    if (c == '"' || c == '\'') {
+      if (!SkipQuotedStringForArrayEnd(&p, end)) {
+        return false;
+      }
+      continue;
+    }
+
+    p++;
+    if (c == '[') {
+      bracket_depth++;
+    } else if (c == ']') {
+      bracket_depth--;
+    }
+  }
+
+  if (bracket_depth != 0) {
+    return false;
+  }
+
+  *end_loc = uint64_t(p - begin);
+  return true;
+}
+
 }  // namespace
 
 //
@@ -3925,6 +4028,77 @@ bool AsciiParser::ParseIntArrayOptimized(std::vector<int32_t> *result) {
   return true;
 }
 
+bool AsciiParser::ParseTokenArrayOptimized(std::vector<value::token> *result) {
+  if (!result) {
+    return false;
+  }
+
+  uint64_t start_loc = CurrLoc();
+  uint64_t end_loc = start_loc;
+  if (!FindArrayLiteralEnd(_sr->data(), _sr->size(), start_loc, &end_loc)) {
+    PushError("Unexpected end of input while parsing token array");
+    return false;
+  }
+
+  const char *array_start = reinterpret_cast<const char *>(_sr->data() + start_loc);
+  size_t array_len = static_cast<size_t>(end_loc - start_loc);
+  tstring_view sv(array_start, array_len);
+  if (!str::parse_token_array(sv, result)) {
+    PushError("Failed to parse token array with tiny-string");
+    return false;
+  }
+
+  return SeekTo(end_loc);
+}
+
+bool AsciiParser::ParseStringDataArrayOptimized(
+    std::vector<value::StringData> *result) {
+  if (!result) {
+    return false;
+  }
+
+  uint64_t start_loc = CurrLoc();
+  uint64_t end_loc = start_loc;
+  if (!FindArrayLiteralEnd(_sr->data(), _sr->size(), start_loc, &end_loc)) {
+    PushError("Unexpected end of input while parsing string array");
+    return false;
+  }
+
+  const char *array_start = reinterpret_cast<const char *>(_sr->data() + start_loc);
+  size_t array_len = static_cast<size_t>(end_loc - start_loc);
+  tstring_view sv(array_start, array_len);
+  if (!str::parse_string_array(sv, result)) {
+    PushError("Failed to parse string array with tiny-string");
+    return false;
+  }
+
+  return SeekTo(end_loc);
+}
+
+bool AsciiParser::ParseStdStringArrayOptimized(
+    std::vector<std::string> *result) {
+  if (!result) {
+    return false;
+  }
+
+  uint64_t start_loc = CurrLoc();
+  uint64_t end_loc = start_loc;
+  if (!FindArrayLiteralEnd(_sr->data(), _sr->size(), start_loc, &end_loc)) {
+    PushError("Unexpected end of input while parsing std::string array");
+    return false;
+  }
+
+  const char *array_start = reinterpret_cast<const char *>(_sr->data() + start_loc);
+  size_t array_len = static_cast<size_t>(end_loc - start_loc);
+  tstring_view sv(array_start, array_len);
+  if (!str::parse_std_string_array(sv, result)) {
+    PushError("Failed to parse std::string array with tiny-string");
+    return false;
+  }
+
+  return SeekTo(end_loc);
+}
+
 //
 // Optimized compound-type array parsing methods
 // These use zero-copy tstring_view into the input buffer + str::parse_*_array()
@@ -4027,6 +4201,21 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<double> *result) {
 template <>
 bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result) {
   return ParseIntArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::token> *result) {
+  return ParseTokenArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::StringData> *result) {
+  return ParseStringDataArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<std::string> *result) {
+  return ParseStdStringArrayOptimized(result);
 }
 
 template <>
@@ -4171,9 +4360,12 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::ushort3> *resu
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::ushort4> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<int64_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<uint64_t> *result);
-// Note: int32_t, half, float, double, half2/3/4, float2/3/4,
-// point3f, normal3f, double2/3/4, and quat* arrays now use optimized implementations
+// Note: int32_t, token, string/StringData, half, float, double, half2/3/4,
+// float2/3/4, point3f, normal3f, double2/3/4, and quat* arrays now use optimized implementations
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::token> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::StringData> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<std::string> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half2> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half3> *result);
@@ -4218,9 +4410,9 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::frame4d> *resu
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quath> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatf> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatd> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::token> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::StringData> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<std::string> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::token> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::StringData> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<std::string> *result);
 //template bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result);
 //template bool AsciiParser::ParseBasicTypeArray(std::vector<Path> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::AssetPath> *result);
