@@ -1105,7 +1105,12 @@ class AsciiParser {
   bool LookChar1(char *c);
   bool LookCharN(size_t n, std::vector<char> *nc);
 
-  bool Char1(char *c);
+  // Inlined: previously an out-of-line one-liner that perf showed as ~15%
+  // self-time on USDA-heavy parses. Inlining lets the compiler also inline
+  // StreamReader::read1 (already header-inline) and hoist the _sr pointer
+  // load out of hot scan loops in LexFloat / SkipWhitespaceAndNewline / etc.
+  bool Char1(char *c) { return _sr->read1(c); }
+
   bool CharN(size_t n, std::vector<char> *nc);
   bool CharN(size_t n, char *dst); // assume dest has n >= bytes
 

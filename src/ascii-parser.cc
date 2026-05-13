@@ -2472,7 +2472,7 @@ bool AsciiParser::LookCharN(size_t n, std::vector<char> *nc) {
   return ok;
 }
 
-bool AsciiParser::Char1(char *c) { return _sr->read1(c); }
+// AsciiParser::Char1 is defined inline in ascii-parser.hh.
 
 bool AsciiParser::CharN(size_t n, std::vector<char> *nc) {
   std::vector<char> buf(n);
