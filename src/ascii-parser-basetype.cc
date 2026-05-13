@@ -846,7 +846,12 @@ bool AsciiParser::ReadBasicType(nonstd::optional<bool> *value) {
 }
 
 bool AsciiParser::ReadBasicType(int *value) {
-  std::stringstream ss;
+  // Stack buffer; sized to fit any int64/uint64 literal (22 digits + sign + slack).
+  // Replaces std::stringstream which cost ~10% of total parse time on
+  // USDA-heavy assets via std::basic_ios::init / locale init per call.
+  constexpr size_t kBufCap = 32;
+  char buf[kBufCap];
+  size_t n = 0;
 
   // Maximum digits for int32_t is 10 (2147483647)
   // Add small buffer for safety but prevent huge strings
@@ -894,7 +899,7 @@ bool AsciiParser::ReadBasicType(int *value) {
       return false;
     }
 
-    ss << sc;
+    buf[n++] = sc;
   }
 
   size_t digit_count = has_sign ? 0 : 1;  // Count digits excluding sign
@@ -911,37 +916,37 @@ bool AsciiParser::ReadBasicType(int *value) {
                   std::to_string(kMaxDigits) + ").\n");
         return false;
       }
-      ss << c;
+      buf[n++] = c;
     } else {
       _sr->seek_from_current(-1);
       break;
     }
   }
 
-  if (has_sign && (ss.str().size() == 1)) {
+  if (has_sign && (n == 1)) {
     // sign only
     PushError("Integer value expected but got sign character only.\n");
     return false;
   }
 
-  if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
+  if ((n > 1) && (buf[0] == '0')) {
     PushError("Zero padded integer value is not allowed.\n");
     return false;
   }
 
-  // std::cout << "ReadInt token: " << ss.str() << "\n";
+  std::string str(buf, n);
 
   int int_value;
-  int err = parseInt(ss.str(), &int_value);
+  int err = parseInt(str, &int_value);
   if (err != 0) {
     if (err == -1) {
-      PushError("Invalid integer input: `" + ss.str() + "`\n");
+      PushError("Invalid integer input: `" + str + "`\n");
       return false;
     } else if (err == -2) {
-      PushError("Integer overflows: `" + ss.str() + "`\n");
+      PushError("Integer overflows: `" + str + "`\n");
       return false;
     } else if (err == -3) {
-      PushError("Integer underflows: `" + ss.str() + "`\n");
+      PushError("Integer underflows: `" + str + "`\n");
       return false;
     } else {
       PushError("Unknown parseInt error.\n");
@@ -1413,7 +1418,10 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::ushort4> *value) {
 }
 
 bool AsciiParser::ReadBasicType(uint32_t *value) {
-  std::stringstream ss;
+  // See ReadBasicType(int*) for rationale.
+  constexpr size_t kBufCap = 32;
+  char buf[kBufCap];
+  size_t n = 0;
 
   // Maximum digits for uint32_t is 10 (4294967295)
   // Add small buffer for safety but prevent huge strings
@@ -1444,7 +1452,7 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
       return false;
     }
 
-    ss << sc;
+    buf[n++] = sc;
   }
 
   if (negative) {
@@ -1466,14 +1474,14 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
                   std::to_string(kMaxDigits) + ").\n");
         return false;
       }
-      ss << c;
+      buf[n++] = c;
     } else {
       _sr->seek_from_current(-1);
       break;
     }
   }
 
-  std::string str = ss.str();
+  std::string str(buf, n);
 
   if (has_sign && (str.size() == 1)) {
     // sign only
@@ -1485,8 +1493,6 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
     PushError("Zero padded integer value is not allowed.\n");
     return false;
   }
-
-  // std::cout << "ReadInt token: " << ss.str() << "\n";
 
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
@@ -1534,7 +1540,10 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
 }
 
 bool AsciiParser::ReadBasicType(int64_t *value) {
-  std::stringstream ss;
+  // See ReadBasicType(int*) for rationale.
+  constexpr size_t kBufCap = 32;
+  char buf[kBufCap];
+  size_t n = 0;
 
   // Maximum digits for int64_t is 19 (9223372036854775807)
   // Add small buffer for safety but prevent huge strings
@@ -1562,7 +1571,7 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
       return false;
     }
 
-    ss << sc;
+    buf[n++] = sc;
   }
 
   // Allow negative values for signed int64 type
@@ -1581,14 +1590,14 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
                   std::to_string(kMaxDigits) + ").\n");
         return false;
       }
-      ss << c;
+      buf[n++] = c;
     } else {
       _sr->seek_from_current(-1);
       break;
     }
   }
 
-  std::string str = ss.str();
+  std::string str(buf, n);
 
   if (has_sign && (str.size() == 1)) {
     // sign only
@@ -1601,12 +1610,10 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
     return false;
   }
 
-  // std::cout << "ReadInt token: " << ss.str() << "\n";
-
   // TODO(syoyo): Use ryu parse.
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
-    (*value) = std::stoll(ss.str());  // Use stoll for signed int64
+    (*value) = std::stoll(str);  // Use stoll for signed int64
   } catch (const std::invalid_argument &e) {
     (void)e;
     PushError("Not an 64bit signed integer literal.\n");
@@ -1647,7 +1654,10 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
 }
 
 bool AsciiParser::ReadBasicType(uint64_t *value) {
-  std::stringstream ss;
+  // See ReadBasicType(int*) for rationale.
+  constexpr size_t kBufCap = 32;
+  char buf[kBufCap];
+  size_t n = 0;
 
   // Maximum digits for uint64_t is 20 (18446744073709551615)
   // Add small buffer for safety but prevent huge strings
@@ -1678,7 +1688,7 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
       return false;
     }
 
-    ss << sc;
+    buf[n++] = sc;
   }
 
   if (negative) {
@@ -1700,14 +1710,14 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
                   std::to_string(kMaxDigits) + ").\n");
         return false;
       }
-      ss << c;
+      buf[n++] = c;
     } else {
       _sr->seek_from_current(-1);
       break;
     }
   }
 
-  std::string str = ss.str();
+  std::string str(buf, n);
 
   if (has_sign && (str.size() == 1)) {
     // sign only
@@ -1719,8 +1729,6 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
     PushError("Zero padded integer value is not allowed.\n");
     return false;
   }
-
-  // std::cout << "ReadInt token: " << ss.str() << "\n";
 
   // TODO(syoyo): Use ryu parse.
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
