@@ -3964,6 +3964,13 @@ DEFINE_COMPOUND_ARRAY_OPTIMIZED(Normal3f, normal3f, parse_normal3f_array, "norma
 DEFINE_COMPOUND_ARRAY_OPTIMIZED(Double2, double2, parse_double2_array, "double2")
 DEFINE_COMPOUND_ARRAY_OPTIMIZED(Double3, double3, parse_double3_array, "double3")
 DEFINE_COMPOUND_ARRAY_OPTIMIZED(Double4, double4, parse_double4_array, "double4")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Half, half, parse_half_array, "half")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Half2, half2, parse_half2_array, "half2")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Half3, half3, parse_half3_array, "half3")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Half4, half4, parse_half4_array, "half4")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Quath, quath, parse_quath_array, "quath")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Quatf, quatf, parse_quatf_array, "quatf")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Quatd, quatd, parse_quatd_array, "quatd")
 
 #undef DEFINE_COMPOUND_ARRAY_OPTIMIZED
 
@@ -4023,6 +4030,26 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result) {
 }
 
 template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::half> *result) {
+  return ParseHalfArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::half2> *result) {
+  return ParseHalf2ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::half3> *result) {
+  return ParseHalf3ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::half4> *result) {
+  return ParseHalf4ArrayOptimized(result);
+}
+
+template <>
 bool AsciiParser::ParseBasicTypeArray(std::vector<value::float2> *result) {
   return ParseFloat2ArrayOptimized(result);
 }
@@ -4060,6 +4087,21 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<value::double3> *result) {
 template <>
 bool AsciiParser::ParseBasicTypeArray(std::vector<value::double4> *result) {
   return ParseDouble4ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::quath> *result) {
+  return ParseQuathArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatf> *result) {
+  return ParseQuatfArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatd> *result) {
+  return ParseQuatdArrayOptimized(result);
 }
 
 template <>
@@ -4129,12 +4171,13 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::ushort3> *resu
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::ushort4> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<int64_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<uint64_t> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half2> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half3> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half4> *result);
-// Note: int32_t, float, double, float2/3/4, point3f, normal3f, double2/3/4 arrays now use optimized implementations
+// Note: int32_t, half, float, double, half2/3/4, float2/3/4,
+// point3f, normal3f, double2/3/4, and quat* arrays now use optimized implementations
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half2> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half3> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half4> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<float> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float2> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float3> *result);
@@ -4172,9 +4215,9 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4d> *resu
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3d> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::frame4d> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quath> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatf> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatd> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quath> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatf> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatd> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::token> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::StringData> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<std::string> *result);

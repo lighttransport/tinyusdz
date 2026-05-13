@@ -399,6 +399,16 @@ static inline bool parse_single(const char **p, const char *end, T *value) {
   return true;
 }
 
+static inline bool parse_single_half(const char **p, const char *end,
+                                     tinyusdz::value::half *value) {
+  float f;
+  if (!parse_single<float>(p, end, &f)) {
+    return false;
+  }
+  *value = tinyusdz::value::float_to_half_full(f);
+  return true;
+}
+
 // Scalar array parser: [val, val, ...]
 // Works for float, double (via fast_float) and int (via parse_int).
 template<typename T, typename ParseFn>
@@ -468,6 +478,17 @@ bool parse_int_array(const tstring_view &sv, std::vector<int32_t> *result) {
     });
 }
 
+bool parse_half_array(const tstring_view &sv, std::vector<tinyusdz::value::half> *result) {
+  return parse_scalar_array_impl<tinyusdz::value::half>(sv, result,
+    [](const char *start, const char *end, tinyusdz::value::half *val) -> bool {
+      float f;
+      auto r = fast_float::from_chars(start, end, f);
+      if (r.ec != std::errc{}) return false;
+      *val = tinyusdz::value::float_to_half_full(f);
+      return true;
+    });
+}
+
 // Tuple array parser: [(v0, v1, ...), (v0, v1, ...), ...]
 // VecT must support operator[] for element access.
 template<typename VecT, size_t N, typename ParseFn>
@@ -518,6 +539,65 @@ static bool parse_tuple_array_impl(const tstring_view &sv, std::vector<VecT> *re
   return true;
 }
 
+template<typename QuatT, typename ScalarT, typename ParseFn, typename AssignFn>
+static bool parse_quat_array_impl(const tstring_view &sv, std::vector<QuatT> *result,
+                                  ParseFn parse_fn, AssignFn assign_fn) {
+  if (!result) return false;
+  result->clear();
+  if (sv.size() == 0) return false;
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+
+  p = skip_whitespace(p, end);
+  if (p >= end || *p != '[') return false;
+  p++;
+
+  p = skip_whitespace(p, end);
+  if (p < end && *p == ']') return true;
+
+  while (p < end) {
+    p = skip_whitespace(p, end);
+    if (p >= end) break;
+    if (*p == ']') break;
+
+    if (*p != '(') return false;
+    p++;
+
+    ScalarT values[4]{};
+    for (size_t i = 0; i < 4; i++) {
+      p = skip_whitespace(p, end);
+      if (!parse_fn(&p, end, &values[i])) return false;
+      p = skip_whitespace(p, end);
+      if (i < 3) {
+        if (p >= end || *p != ',') return false;
+        p++;
+      }
+    }
+
+    p = skip_whitespace(p, end);
+    if (p >= end || *p != ')') return false;
+    p++;
+
+    QuatT quat{};
+    assign_fn(values, &quat);
+    result->push_back(quat);
+
+    p = skip_whitespace(p, end);
+    if (p < end && *p == ',') p++;
+  }
+  return true;
+}
+
+bool parse_half2_array(const tstring_view &sv, std::vector<tinyusdz::value::half2> *result) {
+  return parse_tuple_array_impl<tinyusdz::value::half2, 2>(sv, result, parse_single_half);
+}
+bool parse_half3_array(const tstring_view &sv, std::vector<tinyusdz::value::half3> *result) {
+  return parse_tuple_array_impl<tinyusdz::value::half3, 3>(sv, result, parse_single_half);
+}
+bool parse_half4_array(const tstring_view &sv, std::vector<tinyusdz::value::half4> *result) {
+  return parse_tuple_array_impl<tinyusdz::value::half4, 4>(sv, result, parse_single_half);
+}
 bool parse_float2_array(const tstring_view &sv, std::vector<tinyusdz::value::float2> *result) {
   return parse_tuple_array_impl<tinyusdz::value::float2, 2>(sv, result, parse_single<float>);
 }
@@ -541,6 +621,36 @@ bool parse_double3_array(const tstring_view &sv, std::vector<tinyusdz::value::do
 }
 bool parse_double4_array(const tstring_view &sv, std::vector<tinyusdz::value::double4> *result) {
   return parse_tuple_array_impl<tinyusdz::value::double4, 4>(sv, result, parse_single<double>);
+}
+bool parse_quath_array(const tstring_view &sv, std::vector<tinyusdz::value::quath> *result) {
+  return parse_quat_array_impl<tinyusdz::value::quath, float>(
+    sv, result, parse_single<float>,
+    [](const float values[4], tinyusdz::value::quath *quat) {
+      quat->real = tinyusdz::value::float_to_half_full(values[0]);
+      quat->imag[0] = tinyusdz::value::float_to_half_full(values[1]);
+      quat->imag[1] = tinyusdz::value::float_to_half_full(values[2]);
+      quat->imag[2] = tinyusdz::value::float_to_half_full(values[3]);
+    });
+}
+bool parse_quatf_array(const tstring_view &sv, std::vector<tinyusdz::value::quatf> *result) {
+  return parse_quat_array_impl<tinyusdz::value::quatf, float>(
+    sv, result, parse_single<float>,
+    [](const float values[4], tinyusdz::value::quatf *quat) {
+      quat->real = values[0];
+      quat->imag[0] = values[1];
+      quat->imag[1] = values[2];
+      quat->imag[2] = values[3];
+    });
+}
+bool parse_quatd_array(const tstring_view &sv, std::vector<tinyusdz::value::quatd> *result) {
+  return parse_quat_array_impl<tinyusdz::value::quatd, double>(
+    sv, result, parse_single<double>,
+    [](const double values[4], tinyusdz::value::quatd *quat) {
+      quat->real = values[0];
+      quat->imag[0] = values[1];
+      quat->imag[1] = values[2];
+      quat->imag[2] = values[3];
+    });
 }
 
 // Matrix array parser: [((r00, r01, ...), (r10, r11, ...), ...), ...]
