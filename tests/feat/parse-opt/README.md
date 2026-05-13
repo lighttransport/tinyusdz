@@ -19,7 +19,8 @@ The benchmark currently covers:
 - Floating scalar arrays: `half[]`, `float[]`, `double[]`
 - Floating tuple arrays: `half3[]`, `float3[]`, `double3[]`
 - Quaternion arrays: `quath[]`, `quatf[]`, `quatd[]`
-- Matrix arrays: `matrix4d[]`
+- Matrix arrays: `matrix2f[]`, `matrix3f[]`, `matrix4f[]`,
+  `matrix2d[]`, `matrix3d[]`, `matrix4d[]`
 - A synthetic USDA file containing all of the numeric attributes above
 
 Each direct parser case validates the parsed element count so parser failures

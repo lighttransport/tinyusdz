@@ -168,24 +168,28 @@ std::string MakeTupleArray(size_t count, size_t arity, AppendValue append_value)
   return out;
 }
 
-std::string MakeMatrix4dArray(size_t count) {
+std::string MakeMatrixArray(size_t count, size_t dimension, bool double_precision) {
   std::string out;
-  out.reserve(count * 280 + 2);
+  const size_t values_per_matrix = dimension * dimension;
+  out.reserve(count * (values_per_matrix * 18 + dimension * 4) + 2);
   out.push_back('[');
   for (size_t i = 0; i < count; i++) {
     out.append("( ");
-    for (size_t row = 0; row < 4; row++) {
+    for (size_t row = 0; row < dimension; row++) {
       out.push_back('(');
-      for (size_t col = 0; col < 4; col++) {
-        const size_t idx = i * 16 + row * 4 + col;
-        const double value = (row == col) ? 1.0 : DoubleValue(idx);
-        AppendDoubleLiteral(&out, value, 17);
-        if (col + 1 < 4) {
+      for (size_t col = 0; col < dimension; col++) {
+        const size_t idx = i * values_per_matrix + row * dimension + col;
+        const double value =
+            (row == col) ? 1.0
+                         : (double_precision ? DoubleValue(idx)
+                                             : FloatValue(idx) * 0.001);
+        AppendDoubleLiteral(&out, value, double_precision ? 17 : 9);
+        if (col + 1 < dimension) {
           out.append(", ");
         }
       }
       out.push_back(')');
-      if (row + 1 < 4) {
+      if (row + 1 < dimension) {
         out.append(", ");
       }
     }
@@ -196,6 +200,30 @@ std::string MakeMatrix4dArray(size_t count) {
   }
   out.push_back(']');
   return out;
+}
+
+std::string MakeMatrix2fArray(size_t count) {
+  return MakeMatrixArray(count, 2, false);
+}
+
+std::string MakeMatrix3fArray(size_t count) {
+  return MakeMatrixArray(count, 3, false);
+}
+
+std::string MakeMatrix4fArray(size_t count) {
+  return MakeMatrixArray(count, 4, false);
+}
+
+std::string MakeMatrix2dArray(size_t count) {
+  return MakeMatrixArray(count, 2, true);
+}
+
+std::string MakeMatrix3dArray(size_t count) {
+  return MakeMatrixArray(count, 3, true);
+}
+
+std::string MakeMatrix4dArray(size_t count) {
+  return MakeMatrixArray(count, 4, true);
 }
 
 std::string MakeIntArray(size_t count) {
@@ -332,7 +360,7 @@ bool RunArrayCase(const std::string &name, const std::string &data,
 
 std::string MakeNumericUsda(size_t count, size_t matrix_count) {
   std::string out;
-  out.reserve(count * 900 + matrix_count * 300);
+  out.reserve(count * 900 + matrix_count * 1200);
   out.append("#usda 1.0\n\n");
   out.append("def Scope \"NumericBench\" {\n");
   out.append("  custom int[] intValues = ");
@@ -361,7 +389,17 @@ std::string MakeNumericUsda(size_t count, size_t matrix_count) {
   out.append(MakeQuatFloatArray(count));
   out.append("\n  custom quatd[] quatdValues = ");
   out.append(MakeQuatDoubleArray(count));
-  out.append("\n  custom matrix4d[] matrixValues = ");
+  out.append("\n  custom matrix2f[] matrix2fValues = ");
+  out.append(MakeMatrix2fArray(matrix_count));
+  out.append("\n  custom matrix3f[] matrix3fValues = ");
+  out.append(MakeMatrix3fArray(matrix_count));
+  out.append("\n  custom matrix4f[] matrix4fValues = ");
+  out.append(MakeMatrix4fArray(matrix_count));
+  out.append("\n  custom matrix2d[] matrix2dValues = ");
+  out.append(MakeMatrix2dArray(matrix_count));
+  out.append("\n  custom matrix3d[] matrix3dValues = ");
+  out.append(MakeMatrix3dArray(matrix_count));
+  out.append("\n  custom matrix4d[] matrix4dValues = ");
   out.append(MakeMatrix4dArray(matrix_count));
   out.append("\n}\n");
   return out;
@@ -403,6 +441,21 @@ bool RunDirectArrayBenchmarks(const BenchmarkConfig &config) {
   ok &= RunArrayCase<tinyusdz::value::quatd>(
       "quatd[]", MakeQuatDoubleArray(config.quat_count), config.quat_count,
       config.iterations);
+  ok &= RunArrayCase<tinyusdz::value::matrix2f>(
+      "matrix2f[]", MakeMatrix2fArray(config.matrix_count),
+      config.matrix_count, config.iterations);
+  ok &= RunArrayCase<tinyusdz::value::matrix3f>(
+      "matrix3f[]", MakeMatrix3fArray(config.matrix_count),
+      config.matrix_count, config.iterations);
+  ok &= RunArrayCase<tinyusdz::value::matrix4f>(
+      "matrix4f[]", MakeMatrix4fArray(config.matrix_count),
+      config.matrix_count, config.iterations);
+  ok &= RunArrayCase<tinyusdz::value::matrix2d>(
+      "matrix2d[]", MakeMatrix2dArray(config.matrix_count),
+      config.matrix_count, config.iterations);
+  ok &= RunArrayCase<tinyusdz::value::matrix3d>(
+      "matrix3d[]", MakeMatrix3dArray(config.matrix_count),
+      config.matrix_count, config.iterations);
   ok &= RunArrayCase<tinyusdz::value::matrix4d>(
       "matrix4d[]", MakeMatrix4dArray(config.matrix_count),
       config.matrix_count, config.iterations);
@@ -413,7 +466,7 @@ bool RunUsdaBenchmark(const BenchmarkConfig &config) {
   std::cout << "\n=== Synthetic USDA Parsing ===\n";
   const std::string usda = MakeNumericUsda(config.usda_count,
                                            (std::max)(size_t(1), config.usda_count / 16));
-  std::cout << "  attributes=14 elements_per_numeric_attr=" << config.usda_count
+  std::cout << "  attributes=19 elements_per_numeric_attr=" << config.usda_count
             << " bytes=" << usda.size() << "\n";
 
   return Benchmark("LoadUSDA", usda.size(), config.iterations, [&]() {
