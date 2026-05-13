@@ -3907,6 +3907,7 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
   //
   // surface shader
   // First try outputs:surface (standard USD), then outputs:mtlx:surface (MaterialX)
+  bool has_surface_connection = false;
   {
     if (material.surface.authored()) {
       auto paths = material.surface.get_connections();
@@ -3919,12 +3920,19 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                         mat_abs_path.full_path_name()));
       }
       surfacePath = paths[0];
-    } else {
+      has_surface_connection = true;
+    } else if (env.material_config.strict_material_check) {
       PUSH_ERROR_AND_RETURN(fmt::format(
           "{}'s outputs:surface isn't authored.",
           mat_abs_path.full_path_name()));
+    } else {
+      PUSH_WARN(fmt::format(
+          "{}'s outputs:surface isn't authored; producing an unshaded material. "
+          "(set material_config.strict_material_check=true to make this an error.)",
+          mat_abs_path.full_path_name()));
     }
-
+  }
+  if (has_surface_connection) {
     const Prim *shaderPrim{nullptr};
     if (!env.stage.find_prim_at_path(
             Path(surfacePath.prim_part(), /* prop part */ ""), shaderPrim,
