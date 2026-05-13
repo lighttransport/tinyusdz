@@ -74,13 +74,14 @@ elseif (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
   endif()
 
 else()
-  # Release mode (default)
+  # Release mode (experimental "speed over size"). Use -O2: emcc/clang -O3
+  # blows up compile time on tinyusdz with marginal extra speedup at runtime.
   if (TINYUSDZ_WASM64)
-    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
-    set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
+    set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
+    set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
   else()
-    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG ${TINYUSDZ_SIMD_FLAGS}")
-    set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG ${TINYUSDZ_SIMD_FLAGS}")
+    set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG ${TINYUSDZ_SIMD_FLAGS}")
+    set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG ${TINYUSDZ_SIMD_FLAGS}")
   endif()
 endif()
 
@@ -189,7 +190,24 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
      -sNO_DISABLE_EXCEPTION_CATCHING \
      --source-map-base http://localhost:5173/ ")
   endif()
+elseif (CMAKE_BUILD_TYPE STREQUAL "Release")
+  # Experimental "speed over size" build. Larger .wasm (no -Oz), no runtime
+  # assertions. Useful for CPU-bound USD parse benchmarking — `-Oz` here was
+  # the dominant cost vs a native build (Crate decode + LZ4 decompress).
+  # Link-time -O2 (not -O3): emcc/wasm-ld at -O3 takes >5× as long with only
+  # a marginal extra speedup over -O2 for this codebase.
+  set(TINYUSDZ_EMCC_LINK_FLAGS "-O2 -sENVIRONMENT='web,worker,node' \
+   -sMALLOC=emmalloc \
+   -sSTACK_SIZE=512000 \
+   -sALLOW_MEMORY_GROWTH=1 \
+   -sFILESYSTEM=0 \
+   -sSAFE_HEAP=0 \
+   -sWASM_BIGINT=1 \
+   -sMODULARIZE=1 -sEXPORT_ES6 \
+   -sINVOKE_RUN=0 --bind ")
 else()
+  # MinSizeRel (default) — `-Oz` link-time size optimization on top of the
+  # compile-time -Oz. Smaller .wasm at the cost of runtime speed.
   set(TINYUSDZ_EMCC_LINK_FLAGS "-Oz -sENVIRONMENT='web,worker,node' \
    -sMALLOC=emmalloc \
    -sSTACK_SIZE=512000 \
@@ -200,8 +218,17 @@ else()
    -sMODULARIZE=1 -sEXPORT_ES6 \
    -sINVOKE_RUN=0 --bind ")
 endif()
-  
-if (TINYUSDZ_WASM64)
+
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
+  # Keep assertions=1 so the emscripten JS glue's stackCheckInit (which
+  # references the exported `_emscripten_stack_init`) stays consistent —
+  # `-sASSERTIONS=0` strips that export but the glue still calls it.
+  if (TINYUSDZ_WASM64)
+    string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sASSERTIONS=2 -sMEMORY64 -sMAXIMUM_MEMORY=8GB")
+  else()
+    string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sASSERTIONS=1 ")
+  endif()
+elseif (TINYUSDZ_WASM64)
   # assertion=1 cause runtime error(Cannot mix BigInt and ... in assert()), so use 2
   string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sASSERTIONS=2 -sMEMORY64 -sMAXIMUM_MEMORY=8GB")
 else()
