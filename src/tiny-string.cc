@@ -391,12 +391,12 @@ static inline const char* skip_whitespace(const char *p, const char *end) {
 template<typename T>
 static inline bool parse_single(const char **p, const char *end, T *value) {
   const char *start = *p;
-  while (*p < end && (**p != ',' && **p != ')' && **p != ']' &&
-         **p != ' ' && **p != '\t' && **p != '\n' && **p != '\r' && **p != '#')) {
-    (*p)++;
+  auto result = fast_float::from_chars(start, end, *value);
+  if (result.ec != std::errc{} || result.ptr == start) {
+    return false;
   }
-  auto result = fast_float::from_chars(start, *p, *value);
-  return result.ec == std::errc{};
+  *p = result.ptr;
+  return true;
 }
 
 // Scalar array parser: [val, val, ...]
