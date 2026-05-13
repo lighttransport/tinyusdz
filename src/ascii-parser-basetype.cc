@@ -3885,13 +3885,14 @@ bool AsciiParser::ParseIntArrayOptimized(std::vector<int32_t> *result) {
     return false;
   }
 
+  uint64_t start_loc = CurrLoc();
+
   // Find the end of the array by matching brackets
   if (!Expect('[')) {
     return false;
   }
-  
+
   int bracket_depth = 1;
-  std::string array_str = "[";
 
   while (bracket_depth > 0) {
     char c;
@@ -3900,12 +3901,9 @@ bool AsciiParser::ParseIntArrayOptimized(std::vector<int32_t> *result) {
       return false;
     }
 
-    array_str += c;
-
     if (c == '#') {
       // Skip comment to end of line
       while (Char1(&c)) {
-        array_str += c;
         if (c == '\n') break;
       }
     } else if (c == '[') {
@@ -3914,9 +3912,11 @@ bool AsciiParser::ParseIntArrayOptimized(std::vector<int32_t> *result) {
       bracket_depth--;
     }
   }
-  
-  // Use tiny-string optimized parsing
-  tstring_view sv(array_str.c_str());
+
+  uint64_t end_loc = CurrLoc();
+  const char *array_start = reinterpret_cast<const char *>(_sr->data() + start_loc);
+  size_t array_len = static_cast<size_t>(end_loc - start_loc);
+  tstring_view sv(array_start, array_len);
   if (!str::parse_int_array(sv, result)) {
     PushError("Failed to parse int array with tiny-string");
     return false;
@@ -4018,6 +4018,11 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<double> *result) {
 }
 
 template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result) {
+  return ParseIntArrayOptimized(result);
+}
+
+template <>
 bool AsciiParser::ParseBasicTypeArray(std::vector<value::float2> *result) {
   return ParseFloat2ArrayOptimized(result);
 }
@@ -4095,7 +4100,6 @@ template bool AsciiParser::SepBy1BasicType<float>(const char sep,
                                                   std::vector<float> *result);
 
 template bool AsciiParser::ParseBasicTypeArray(std::vector<bool> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int4> *result);
@@ -4129,7 +4133,8 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half> *result)
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half4> *result);
-// Note: float, double, float2/3/4, point3f, normal3f, double2/3/4 arrays now use optimized implementations
+// Note: int32_t, float, double, float2/3/4, point3f, normal3f, double2/3/4 arrays now use optimized implementations
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<float> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float2> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float3> *result);
