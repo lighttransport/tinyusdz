@@ -1,438 +1,460 @@
-﻿// SPDX-License-Identifier: Apache 2.0
+// SPDX-License-Identifier: Apache 2.0
 // Copyright 2025 - Present, Light Transport Entertainment, Inc.
 //
-// Test optimized array parsing performance with synthetic data
+// Synthetic USDA numeric parser benchmark.
 
-#include <iostream>
-#include <sstream>
 #include <chrono>
-#include <random>
+#include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <iomanip>
+#include <iostream>
 #include <string>
 #include <vector>
 
-#include "tinyusdz.hh"
 #include "ascii-parser.hh"
 #include "stream-reader.hh"
+#include "tinyusdz.hh"
 #include "value-types.hh"
 
-using namespace tinyusdz;
+namespace {
 
 enum class BenchmarkProfile {
   Full,
   Quick,
 };
 
-// Generate random float arrays
-std::string generate_float_array(size_t count) {
-  std::stringstream ss;
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_real_distribution<float> dis(-10000.0f, 10000.0f);
+struct BenchmarkConfig {
+  size_t scalar_count;
+  size_t tuple_count;
+  size_t quat_count;
+  size_t matrix_count;
+  size_t usda_count;
+  int iterations;
+};
 
-  ss << "[";
-  for (size_t i = 0; i < count; i++) {
-    ss << dis(gen);
-    if (i < count - 1) ss << ", ";
-  }
-  ss << "]";
+struct Options {
+  BenchmarkProfile profile{BenchmarkProfile::Full};
+  bool direct_only{false};
+  bool usda_only{false};
+};
 
-  return ss.str();
-}
-
-// Generate float2 arrays: [(x, y), ...]
-std::string generate_float2_array(size_t count) {
-  std::stringstream ss;
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_real_distribution<float> dis(-10000.0f, 10000.0f);
-
-  ss << "[";
-  for (size_t i = 0; i < count; i++) {
-    ss << "(" << dis(gen) << ", " << dis(gen) << ")";
-    if (i < count - 1) ss << ", ";
-  }
-  ss << "]";
-
-  return ss.str();
-}
-
-// Generate float3 arrays: [(x, y, z), ...]
-std::string generate_float3_array(size_t count) {
-  std::stringstream ss;
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_real_distribution<float> dis(-10000.0f, 10000.0f);
-
-  ss << "[";
-  for (size_t i = 0; i < count; i++) {
-    ss << "(" << dis(gen) << ", " << dis(gen) << ", " << dis(gen) << ")";
-    if (i < count - 1) ss << ", ";
-  }
-  ss << "]";
-
-  return ss.str();
-}
-
-// Generate float4 arrays: [(x, y, z, w), ...]
-std::string generate_float4_array(size_t count) {
-  std::stringstream ss;
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_real_distribution<float> dis(-10000.0f, 10000.0f);
-
-  ss << "[";
-  for (size_t i = 0; i < count; i++) {
-    ss << "(" << dis(gen) << ", " << dis(gen) << ", " << dis(gen) << ", " << dis(gen) << ")";
-    if (i < count - 1) ss << ", ";
-  }
-  ss << "]";
-
-  return ss.str();
-}
-
-// Generate double arrays
-std::string generate_double_array(size_t count) {
-  std::stringstream ss;
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_real_distribution<double> dis(-10000.0, 10000.0);
-
-  ss << "[";
-  for (size_t i = 0; i < count; i++) {
-    ss << std::setprecision(15) << dis(gen);
-    if (i < count - 1) ss << ", ";
-  }
-  ss << "]";
-
-  return ss.str();
-}
-
-// Generate matrix4d arrays: [( e0, e1, ..., e15 ), ...]
-std::string generate_matrix4d_array(size_t count) {
-  std::stringstream ss;
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_real_distribution<double> dis(-10000.0, 10000.0);
-
-  ss << "[";
-  for (size_t i = 0; i < count; i++) {
-    ss << "(";
-    for (int j = 0; j < 16; j++) {
-      ss << std::setprecision(15) << dis(gen);
-      if (j < 15) ss << ", ";
-    }
-    ss << ")";
-    if (i < count - 1) ss << ", ";
-  }
-  ss << "]";
-
-  return ss.str();
-}
-
-// Generate timeSamples with float arrays
-std::string generate_timesample_float_arrays(size_t num_samples, size_t array_size) {
-  std::stringstream ss;
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_real_distribution<float> dis(-10000.0f, 10000.0f);
-
-  ss << "{\n";
-  for (size_t t = 0; t < num_samples; t++) {
-    double time = static_cast<double>(t);
-    ss << "  " << time << ": [";
-    for (size_t i = 0; i < array_size; i++) {
-      ss << dis(gen);
-      if (i < array_size - 1) ss << ", ";
-    }
-    ss << "]";
-    if (t < num_samples - 1) ss << ",";
-    ss << "\n";
-  }
-  ss << "}";
-
-  return ss.str();
-}
-
-// Generate timeSamples with float3 arrays
-std::string generate_timesample_float3_arrays(size_t num_samples, size_t array_size) {
-  std::stringstream ss;
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_real_distribution<float> dis(-10000.0f, 10000.0f);
-
-  ss << "{\n";
-  for (size_t t = 0; t < num_samples; t++) {
-    double time = static_cast<double>(t);
-    ss << "  " << time << ": [";
-    for (size_t i = 0; i < array_size; i++) {
-      ss << "(" << dis(gen) << ", " << dis(gen) << ", " << dis(gen) << ")";
-      if (i < array_size - 1) ss << ", ";
-    }
-    ss << "]";
-    if (t < num_samples - 1) ss << ",";
-    ss << "\n";
-  }
-  ss << "}";
-
-  return ss.str();
-}
-
-// Benchmark helper
-template<typename Func>
-double benchmark(const std::string& name, Func func, int iterations = 1) {
-  auto start = std::chrono::high_resolution_clock::now();
-
-  for (int i = 0; i < iterations; i++) {
-    func();
+BenchmarkConfig ConfigFor(BenchmarkProfile profile) {
+  if (profile == BenchmarkProfile::Quick) {
+    return BenchmarkConfig{/*scalar_count=*/2048,
+                           /*tuple_count=*/1024,
+                           /*quat_count=*/512,
+                           /*matrix_count=*/64,
+                           /*usda_count=*/256,
+                           /*iterations=*/1};
   }
 
-  auto end = std::chrono::high_resolution_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-
-  double avg_ms = static_cast<double>(duration.count()) / iterations;
-  std::cout << "  " << name << ": " << avg_ms << " ms";
-  if (iterations > 1) {
-    std::cout << " (avg of " << iterations << " runs)";
-  }
-  std::cout << std::endl;
-
-  return avg_ms;
+  return BenchmarkConfig{/*scalar_count=*/500000,
+                         /*tuple_count=*/100000,
+                         /*quat_count=*/100000,
+                         /*matrix_count=*/10000,
+                         /*usda_count=*/10000,
+                         /*iterations=*/3};
 }
 
-// Test parsing float arrays
-void test_float_array_parsing(BenchmarkProfile profile) {
-  std::cout << "\n=== Float Array Parsing ===" << std::endl;
-
-  const std::vector<size_t> sizes =
-      (profile == BenchmarkProfile::Quick)
-          ? std::vector<size_t>{10000, 100000, 500000}
-          : std::vector<size_t>{10000, 100000, 1000000, 5000000, 10000000};
-
-  for (size_t size : sizes) {
-    std::cout << "\nArray size: " << size << " elements" << std::endl;
-
-    std::string data = generate_float_array(size);
-    std::cout << "  Generated data size: " << data.size() << " bytes" << std::endl;
-
-    benchmark("Parse time", [&]() {
-      StreamReader sr(reinterpret_cast<const uint8_t*>(data.data()), data.size(), false);
-      ascii::AsciiParser parser(&sr);
-      std::vector<float> result;
-      parser.ParseBasicTypeArray(&result);
-    });
-  }
+void PrintUsage(const char *argv0) {
+  std::cout << "Usage: " << argv0
+            << " [--quick] [--direct-only] [--usda-only]\n";
 }
 
-// Test parsing float3 arrays
-void test_float3_array_parsing(BenchmarkProfile profile) {
-  std::cout << "\n=== Float3 Array Parsing ===" << std::endl;
-
-  const std::vector<size_t> sizes =
-      (profile == BenchmarkProfile::Quick)
-          ? std::vector<size_t>{10000, 50000, 100000}
-          : std::vector<size_t>{10000, 100000, 500000, 1000000};
-
-  for (size_t size : sizes) {
-    std::cout << "\nArray size: " << size << " float3 vectors" << std::endl;
-
-    std::string data = generate_float3_array(size);
-    std::cout << "  Generated data size: " << data.size() << " bytes" << std::endl;
-
-    benchmark("Parse time", [&]() {
-      StreamReader sr(reinterpret_cast<const uint8_t*>(data.data()), data.size(), false);
-      ascii::AsciiParser parser(&sr);
-      std::vector<value::float3> result;
-      parser.ParseBasicTypeArray(&result);
-    });
-  }
-}
-
-// Test parsing double arrays
-void test_double_array_parsing(BenchmarkProfile profile) {
-  std::cout << "\n=== Double Array Parsing ===" << std::endl;
-
-  const std::vector<size_t> sizes =
-      (profile == BenchmarkProfile::Quick)
-          ? std::vector<size_t>{10000, 50000, 100000}
-          : std::vector<size_t>{10000, 100000, 1000000, 5000000};
-
-  for (size_t size : sizes) {
-    std::cout << "\nArray size: " << size << " elements" << std::endl;
-
-    std::string data = generate_double_array(size);
-    std::cout << "  Generated data size: " << data.size() << " bytes" << std::endl;
-
-    benchmark("Parse time", [&]() {
-      StreamReader sr(reinterpret_cast<const uint8_t*>(data.data()), data.size(), false);
-      ascii::AsciiParser parser(&sr);
-      std::vector<double> result;
-      parser.ParseBasicTypeArray(&result);
-    });
-  }
-}
-
-// Test parsing matrix4d arrays
-void test_matrix4d_array_parsing(BenchmarkProfile profile) {
-  std::cout << "\n=== Matrix4d Array Parsing ===" << std::endl;
-
-  const std::vector<size_t> sizes =
-      (profile == BenchmarkProfile::Quick)
-          ? std::vector<size_t>{1000, 5000, 10000}
-          : std::vector<size_t>{1000, 10000, 50000, 100000};
-
-  for (size_t size : sizes) {
-    std::cout << "\nArray size: " << size << " matrix4d matrices" << std::endl;
-
-    std::string data = generate_matrix4d_array(size);
-    std::cout << "  Generated data size: " << data.size() << " bytes" << std::endl;
-
-    benchmark("Parse time", [&]() {
-      StreamReader sr(reinterpret_cast<const uint8_t*>(data.data()), data.size(), false);
-      ascii::AsciiParser parser(&sr);
-      std::vector<value::matrix4d> result;
-      parser.ParseBasicTypeArray(&result);
-    });
-  }
-}
-
-// Test parsing timeSamples with float arrays
-void test_timesample_float_arrays(BenchmarkProfile profile) {
-  std::cout << "\n=== TimeSamples with Float Arrays ===" << std::endl;
-
-  struct TestCase {
-    size_t num_samples;
-    size_t array_size;
-  };
-
-  const std::vector<TestCase> cases =
-      (profile == BenchmarkProfile::Quick)
-          ? std::vector<TestCase>{{25, 5000}, {50, 5000}, {25, 20000}}
-          : std::vector<TestCase>{{100, 10000},
-                                  {500, 10000},
-                                  {100, 100000},
-                                  {500, 100000}};
-
-  for (const auto& tc : cases) {
-    std::cout << "\nTimeSamples: " << tc.num_samples << " frames × "
-              << tc.array_size << " floats/frame" << std::endl;
-
-    std::string data = generate_timesample_float_arrays(tc.num_samples, tc.array_size);
-    std::cout << "  Generated data size: " << data.size() << " bytes" << std::endl;
-
-    benchmark("Parse time", [&]() {
-      StreamReader sr(reinterpret_cast<const uint8_t*>(data.data()), data.size(), false);
-      ascii::AsciiParser parser(&sr);
-      value::TimeSamples ts;
-      parser.ParseTimeSamples("float[]", &ts);
-    });
-  }
-}
-
-// Test parsing timeSamples with float3 arrays (e.g., points)
-void test_timesample_float3_arrays(BenchmarkProfile profile) {
-  std::cout << "\n=== TimeSamples with Float3 Arrays (e.g., points) ===" << std::endl;
-
-  struct TestCase {
-    size_t num_samples;
-    size_t array_size;
-  };
-
-  const std::vector<TestCase> cases =
-      (profile == BenchmarkProfile::Quick)
-          ? std::vector<TestCase>{{25, 5000}, {50, 5000}, {25, 10000}}
-          : std::vector<TestCase>{{100, 10000},
-                                  {500, 10000},
-                                  {100, 50000},
-                                  {500, 50000}};
-
-  for (const auto& tc : cases) {
-    std::cout << "\nTimeSamples: " << tc.num_samples << " frames × "
-              << tc.array_size << " points/frame" << std::endl;
-
-    std::string data = generate_timesample_float3_arrays(tc.num_samples, tc.array_size);
-    std::cout << "  Generated data size: " << data.size() << " bytes" << std::endl;
-
-    benchmark("Parse time", [&]() {
-      StreamReader sr(reinterpret_cast<const uint8_t*>(data.data()), data.size(), false);
-      ascii::AsciiParser parser(&sr);
-      value::TimeSamples ts;
-      parser.ParseTimeSamples("float3[]", &ts);
-    });
-  }
-}
-
-// Test complete USDA snippet with arrays
-void test_complete_usda_snippet(BenchmarkProfile profile) {
-  std::cout << "\n=== Complete USDA Snippet Parsing ===" << std::endl;
-
-  const size_t points_count =
-      (profile == BenchmarkProfile::Quick) ? 25000 : 100000;
-  const size_t face_vertex_counts_count =
-      (profile == BenchmarkProfile::Quick) ? 7500 : 30000;
-  const size_t face_vertex_indices_count =
-      (profile == BenchmarkProfile::Quick) ? 22500 : 90000;
-
-  std::stringstream ss;
-  ss << "#usda 1.0\n";
-  ss << "(\n";
-  ss << "  defaultPrim = \"TestMesh\"\n";
-  ss << ")\n\n";
-  ss << "def Mesh \"TestMesh\" {\n";
-  ss << "  float3[] points = " << generate_float3_array(points_count) << "\n";
-  ss << "  int[] faceVertexCounts = "
-     << generate_float_array(face_vertex_counts_count) << "\n";
-  ss << "  int[] faceVertexIndices = "
-     << generate_float_array(face_vertex_indices_count) << "\n";
-  ss << "}\n";
-
-  std::string data = ss.str();
-  std::cout << "USDA data size: " << data.size() << " bytes" << std::endl;
-
-  benchmark("Full USDA parse", [&]() {
-    Stage stage;
-    std::string warn, err;
-    bool ret = LoadUSDFromMemory(reinterpret_cast<const uint8_t*>(data.data()),
-                                   data.size(), "test.usda", &stage, &warn, &err);
-    if (!ret) {
-      std::cerr << "Parse error: " << err << std::endl;
-    }
-  });
-}
-
-BenchmarkProfile ParseProfile(int argc, char** argv) {
+Options ParseOptions(int argc, char **argv) {
+  Options opts;
   for (int i = 1; i < argc; i++) {
     const std::string arg(argv[i]);
     if (arg == "--quick") {
-      return BenchmarkProfile::Quick;
+      opts.profile = BenchmarkProfile::Quick;
+    } else if (arg == "--direct-only") {
+      opts.direct_only = true;
+    } else if (arg == "--usda-only") {
+      opts.usda_only = true;
+    } else if (arg == "--help" || arg == "-h") {
+      PrintUsage(argv[0]);
+      std::exit(0);
+    } else {
+      std::cerr << "Unknown argument: " << arg << "\n";
+      PrintUsage(argv[0]);
+      std::exit(1);
     }
   }
 
-  return BenchmarkProfile::Full;
+  if (opts.direct_only && opts.usda_only) {
+    std::cerr << "--direct-only and --usda-only are mutually exclusive.\n";
+    std::exit(1);
+  }
+
+  return opts;
 }
 
-int main(int argc, char** argv) {
-  const BenchmarkProfile profile = ParseProfile(argc, argv);
+void AppendDoubleLiteral(std::string *out, double value, int precision) {
+  char buf[64];
+  const int n = std::snprintf(buf, sizeof(buf), "%.*g", precision, value);
+  if (n > 0) {
+    out->append(buf, static_cast<size_t>(n));
+  }
+}
 
-  std::cout << "========================================" << std::endl;
-  std::cout << "TinyUSDZ Array Parsing Benchmark" << std::endl;
+double FloatValue(size_t i) {
+  const int base = static_cast<int>(i % 20001) - 10000;
+  return double(base) * 0.125 + double(i % 7) * 0.001;
+}
+
+double DoubleValue(size_t i) {
+  const int base = static_cast<int>(i % 20001) - 10000;
+  return double(base) * 0.0009765625 + double((i * 17) % 101) * 1.0e-9;
+}
+
+double HalfValue(size_t i) {
+  const int base = static_cast<int>(i % 1025) - 512;
+  return double(base) * 0.125;
+}
+
+int32_t IntValue(size_t i) {
+  return static_cast<int32_t>(static_cast<int64_t>((i * 37) % 200000) -
+                              100000);
+}
+
+uint32_t UIntValue(size_t i) {
+  return static_cast<uint32_t>((i * 65537u) % 4000000000u);
+}
+
+int64_t Int64Value(size_t i) {
+  return static_cast<int64_t>(i) * 2147483647ll - 900000000000ll;
+}
+
+uint64_t UInt64Value(size_t i) {
+  return 100000000000ull + static_cast<uint64_t>(i) * 2654435761ull;
+}
+
+template <typename AppendValue>
+std::string MakeScalarArray(size_t count, AppendValue append_value) {
+  std::string out;
+  out.reserve(count * 16 + 2);
+  out.push_back('[');
+  for (size_t i = 0; i < count; i++) {
+    append_value(&out, i);
+    if (i + 1 < count) {
+      out.append(", ");
+    }
+  }
+  out.push_back(']');
+  return out;
+}
+
+template <typename AppendValue>
+std::string MakeTupleArray(size_t count, size_t arity, AppendValue append_value) {
+  std::string out;
+  out.reserve(count * arity * 16 + count * 4 + 2);
+  out.push_back('[');
+  for (size_t i = 0; i < count; i++) {
+    out.push_back('(');
+    for (size_t j = 0; j < arity; j++) {
+      append_value(&out, i, j);
+      if (j + 1 < arity) {
+        out.append(", ");
+      }
+    }
+    out.push_back(')');
+    if (i + 1 < count) {
+      out.append(", ");
+    }
+  }
+  out.push_back(']');
+  return out;
+}
+
+std::string MakeMatrix4dArray(size_t count) {
+  std::string out;
+  out.reserve(count * 280 + 2);
+  out.push_back('[');
+  for (size_t i = 0; i < count; i++) {
+    out.append("( ");
+    for (size_t row = 0; row < 4; row++) {
+      out.push_back('(');
+      for (size_t col = 0; col < 4; col++) {
+        const size_t idx = i * 16 + row * 4 + col;
+        const double value = (row == col) ? 1.0 : DoubleValue(idx);
+        AppendDoubleLiteral(&out, value, 17);
+        if (col + 1 < 4) {
+          out.append(", ");
+        }
+      }
+      out.push_back(')');
+      if (row + 1 < 4) {
+        out.append(", ");
+      }
+    }
+    out.append(" )");
+    if (i + 1 < count) {
+      out.append(", ");
+    }
+  }
+  out.push_back(']');
+  return out;
+}
+
+std::string MakeIntArray(size_t count) {
+  return MakeScalarArray(count, [](std::string *out, size_t i) {
+    out->append(std::to_string(IntValue(i)));
+  });
+}
+
+std::string MakeUIntArray(size_t count) {
+  return MakeScalarArray(count, [](std::string *out, size_t i) {
+    out->append(std::to_string(UIntValue(i)));
+  });
+}
+
+std::string MakeInt64Array(size_t count) {
+  return MakeScalarArray(count, [](std::string *out, size_t i) {
+    out->append(std::to_string(Int64Value(i)));
+  });
+}
+
+std::string MakeUInt64Array(size_t count) {
+  return MakeScalarArray(count, [](std::string *out, size_t i) {
+    out->append(std::to_string(UInt64Value(i)));
+  });
+}
+
+std::string MakeHalfArray(size_t count) {
+  return MakeScalarArray(count, [](std::string *out, size_t i) {
+    AppendDoubleLiteral(out, HalfValue(i), 9);
+  });
+}
+
+std::string MakeFloatArray(size_t count) {
+  return MakeScalarArray(count, [](std::string *out, size_t i) {
+    AppendDoubleLiteral(out, FloatValue(i), 9);
+  });
+}
+
+std::string MakeDoubleArray(size_t count) {
+  return MakeScalarArray(count, [](std::string *out, size_t i) {
+    AppendDoubleLiteral(out, DoubleValue(i), 17);
+  });
+}
+
+std::string MakeHalf3Array(size_t count) {
+  return MakeTupleArray(count, 3, [](std::string *out, size_t i, size_t j) {
+    AppendDoubleLiteral(out, HalfValue(i * 3 + j), 9);
+  });
+}
+
+std::string MakeFloat3Array(size_t count) {
+  return MakeTupleArray(count, 3, [](std::string *out, size_t i, size_t j) {
+    AppendDoubleLiteral(out, FloatValue(i * 3 + j), 9);
+  });
+}
+
+std::string MakeDouble3Array(size_t count) {
+  return MakeTupleArray(count, 3, [](std::string *out, size_t i, size_t j) {
+    AppendDoubleLiteral(out, DoubleValue(i * 3 + j), 17);
+  });
+}
+
+std::string MakeQuatHalfArray(size_t count) {
+  return MakeTupleArray(count, 4, [](std::string *out, size_t i, size_t j) {
+    const double value = (j == 0) ? 1.0 : HalfValue(i * 3 + j);
+    AppendDoubleLiteral(out, value, 9);
+  });
+}
+
+std::string MakeQuatFloatArray(size_t count) {
+  return MakeTupleArray(count, 4, [](std::string *out, size_t i, size_t j) {
+    const double value = (j == 0) ? 1.0 : FloatValue(i * 3 + j) * 0.001;
+    AppendDoubleLiteral(out, value, 9);
+  });
+}
+
+std::string MakeQuatDoubleArray(size_t count) {
+  return MakeTupleArray(count, 4, [](std::string *out, size_t i, size_t j) {
+    const double value = (j == 0) ? 1.0 : DoubleValue(i * 3 + j);
+    AppendDoubleLiteral(out, value, 17);
+  });
+}
+
+template <typename Func>
+bool Benchmark(const std::string &name, size_t bytes, int iterations, Func func) {
+  const auto start = std::chrono::high_resolution_clock::now();
+  for (int i = 0; i < iterations; i++) {
+    if (!func()) {
+      std::cerr << "Benchmark failed: " << name << "\n";
+      return false;
+    }
+  }
+  const auto end = std::chrono::high_resolution_clock::now();
+  const double us =
+      double(std::chrono::duration_cast<std::chrono::microseconds>(end - start)
+                 .count());
+  const double avg_ms = us / 1000.0 / double(iterations);
+  const double mib = double(bytes) / (1024.0 * 1024.0);
+  const double mib_per_s = (avg_ms > 0.0) ? (mib / (avg_ms / 1000.0)) : 0.0;
+
+  std::cout << "  " << std::left << std::setw(14) << name << std::right
+            << " bytes=" << std::setw(10) << bytes
+            << " avg_ms=" << std::setw(9) << std::fixed << std::setprecision(3)
+            << avg_ms << " MiB/s=" << std::setw(9) << std::setprecision(1)
+            << mib_per_s;
+  if (iterations > 1) {
+    std::cout << " runs=" << iterations;
+  }
+  std::cout << "\n";
+  return true;
+}
+
+template <typename T>
+bool RunArrayCase(const std::string &name, const std::string &data,
+                  size_t expected_count, int iterations) {
+  return Benchmark(name, data.size(), iterations, [&]() {
+    tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(data.data()),
+                              data.size(), false);
+    tinyusdz::ascii::AsciiParser parser(&sr);
+    std::vector<T> result;
+    if (!parser.ParseBasicTypeArray(&result)) {
+      std::cerr << "Parse error for " << name << ": " << parser.GetError()
+                << "\n";
+      return false;
+    }
+    if (result.size() != expected_count) {
+      std::cerr << "Unexpected element count for " << name << ": got "
+                << result.size() << ", expected " << expected_count << "\n";
+      return false;
+    }
+    return true;
+  });
+}
+
+std::string MakeNumericUsda(size_t count, size_t matrix_count) {
+  std::string out;
+  out.reserve(count * 900 + matrix_count * 300);
+  out.append("#usda 1.0\n\n");
+  out.append("def Scope \"NumericBench\" {\n");
+  out.append("  custom int[] intValues = ");
+  out.append(MakeIntArray(count));
+  out.append("\n  custom uint[] uintValues = ");
+  out.append(MakeUIntArray(count));
+  out.append("\n  custom int64[] int64Values = ");
+  out.append(MakeInt64Array(count));
+  out.append("\n  custom uint64[] uint64Values = ");
+  out.append(MakeUInt64Array(count));
+  out.append("\n  custom half[] halfValues = ");
+  out.append(MakeHalfArray(count));
+  out.append("\n  custom half3[] half3Values = ");
+  out.append(MakeHalf3Array(count));
+  out.append("\n  custom float[] floatValues = ");
+  out.append(MakeFloatArray(count));
+  out.append("\n  custom float3[] float3Values = ");
+  out.append(MakeFloat3Array(count));
+  out.append("\n  custom double[] doubleValues = ");
+  out.append(MakeDoubleArray(count));
+  out.append("\n  custom double3[] double3Values = ");
+  out.append(MakeDouble3Array(count));
+  out.append("\n  custom quath[] quathValues = ");
+  out.append(MakeQuatHalfArray(count));
+  out.append("\n  custom quatf[] quatfValues = ");
+  out.append(MakeQuatFloatArray(count));
+  out.append("\n  custom quatd[] quatdValues = ");
+  out.append(MakeQuatDoubleArray(count));
+  out.append("\n  custom matrix4d[] matrixValues = ");
+  out.append(MakeMatrix4dArray(matrix_count));
+  out.append("\n}\n");
+  return out;
+}
+
+bool RunDirectArrayBenchmarks(const BenchmarkConfig &config) {
+  std::cout << "\n=== Direct Array Literal Parsing ===\n";
+  bool ok = true;
+  ok &= RunArrayCase<int32_t>("int[]", MakeIntArray(config.scalar_count),
+                              config.scalar_count, config.iterations);
+  ok &= RunArrayCase<uint32_t>("uint[]", MakeUIntArray(config.scalar_count),
+                               config.scalar_count, config.iterations);
+  ok &= RunArrayCase<int64_t>("int64[]", MakeInt64Array(config.scalar_count),
+                              config.scalar_count, config.iterations);
+  ok &= RunArrayCase<uint64_t>("uint64[]", MakeUInt64Array(config.scalar_count),
+                               config.scalar_count, config.iterations);
+  ok &= RunArrayCase<tinyusdz::value::half>(
+      "half[]", MakeHalfArray(config.scalar_count), config.scalar_count,
+      config.iterations);
+  ok &= RunArrayCase<float>("float[]", MakeFloatArray(config.scalar_count),
+                            config.scalar_count, config.iterations);
+  ok &= RunArrayCase<double>("double[]", MakeDoubleArray(config.scalar_count),
+                             config.scalar_count, config.iterations);
+  ok &= RunArrayCase<tinyusdz::value::half3>(
+      "half3[]", MakeHalf3Array(config.tuple_count), config.tuple_count,
+      config.iterations);
+  ok &= RunArrayCase<tinyusdz::value::float3>(
+      "float3[]", MakeFloat3Array(config.tuple_count), config.tuple_count,
+      config.iterations);
+  ok &= RunArrayCase<tinyusdz::value::double3>(
+      "double3[]", MakeDouble3Array(config.tuple_count), config.tuple_count,
+      config.iterations);
+  ok &= RunArrayCase<tinyusdz::value::quath>(
+      "quath[]", MakeQuatHalfArray(config.quat_count), config.quat_count,
+      config.iterations);
+  ok &= RunArrayCase<tinyusdz::value::quatf>(
+      "quatf[]", MakeQuatFloatArray(config.quat_count), config.quat_count,
+      config.iterations);
+  ok &= RunArrayCase<tinyusdz::value::quatd>(
+      "quatd[]", MakeQuatDoubleArray(config.quat_count), config.quat_count,
+      config.iterations);
+  ok &= RunArrayCase<tinyusdz::value::matrix4d>(
+      "matrix4d[]", MakeMatrix4dArray(config.matrix_count),
+      config.matrix_count, config.iterations);
+  return ok;
+}
+
+bool RunUsdaBenchmark(const BenchmarkConfig &config) {
+  std::cout << "\n=== Synthetic USDA Parsing ===\n";
+  const std::string usda = MakeNumericUsda(config.usda_count,
+                                           (std::max)(size_t(1), config.usda_count / 16));
+  std::cout << "  attributes=14 elements_per_numeric_attr=" << config.usda_count
+            << " bytes=" << usda.size() << "\n";
+
+  return Benchmark("LoadUSDA", usda.size(), config.iterations, [&]() {
+    tinyusdz::Stage stage;
+    std::string warn;
+    std::string err;
+    const bool ret = tinyusdz::LoadUSDFromMemory(
+        reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+        "synthetic-numeric.usda", &stage, &warn, &err);
+    if (!ret) {
+      std::cerr << "LoadUSDFromMemory failed: " << err << "\n";
+      return false;
+    }
+    return true;
+  });
+}
+
+}  // namespace
+
+int main(int argc, char **argv) {
+  const Options opts = ParseOptions(argc, argv);
+  const BenchmarkConfig config = ConfigFor(opts.profile);
+
+  std::cout << "========================================\n";
+  std::cout << "TinyUSDZ Synthetic Numeric USDA Benchmark\n";
   std::cout << "Profile: "
-            << ((profile == BenchmarkProfile::Quick) ? "quick" : "full")
-            << std::endl;
-  std::cout << "========================================" << std::endl;
+            << ((opts.profile == BenchmarkProfile::Quick) ? "quick" : "full")
+            << "\n";
+  std::cout << "========================================\n";
 
-  // Run all benchmarks
-  test_float_array_parsing(profile);
-  test_float3_array_parsing(profile);
-  test_double_array_parsing(profile);
-  test_matrix4d_array_parsing(profile);
-  test_timesample_float_arrays(profile);
-  test_timesample_float3_arrays(profile);
-  test_complete_usda_snippet(profile);
+  bool ok = true;
+  if (!opts.usda_only) {
+    ok &= RunDirectArrayBenchmarks(config);
+  }
+  if (!opts.direct_only) {
+    ok &= RunUsdaBenchmark(config);
+  }
 
-  std::cout << "\n========================================" << std::endl;
-  std::cout << "Benchmark Complete" << std::endl;
-  std::cout << "========================================" << std::endl;
+  std::cout << "\n========================================\n";
+  std::cout << (ok ? "Benchmark Complete" : "Benchmark Failed") << "\n";
+  std::cout << "========================================\n";
 
-  return 0;
+  return ok ? 0 : 1;
 }
