@@ -853,6 +853,9 @@ class AsciiParser {
   bool ParseFloatArrayOptimized(std::vector<float> *result);
   bool ParseDoubleArrayOptimized(std::vector<double> *result);
   bool ParseIntArrayOptimized(std::vector<int32_t> *result);
+  bool ParseUIntArrayOptimized(std::vector<uint32_t> *result);
+  bool ParseInt64ArrayOptimized(std::vector<int64_t> *result);
+  bool ParseUInt64ArrayOptimized(std::vector<uint64_t> *result);
   bool ParseHalfArrayOptimized(std::vector<value::half> *result);
   bool ParseTokenArrayOptimized(std::vector<value::token> *result);
   bool ParseStringDataArrayOptimized(std::vector<value::StringData> *result);

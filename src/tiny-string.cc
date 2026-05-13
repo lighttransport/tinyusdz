@@ -478,6 +478,30 @@ bool parse_int_array(const tstring_view &sv, std::vector<int32_t> *result) {
     });
 }
 
+bool parse_uint_array(const tstring_view &sv, std::vector<uint32_t> *result) {
+  return parse_scalar_array_impl<uint32_t>(sv, result,
+    [](const char *start, const char *end, uint32_t *val) -> bool {
+      tstring_view num_view(start, size_t(end - start));
+      return parse_uint(num_view, val);
+    });
+}
+
+bool parse_int64_array(const tstring_view &sv, std::vector<int64_t> *result) {
+  return parse_scalar_array_impl<int64_t>(sv, result,
+    [](const char *start, const char *end, int64_t *val) -> bool {
+      tstring_view num_view(start, size_t(end - start));
+      return parse_int64(num_view, val);
+    });
+}
+
+bool parse_uint64_array(const tstring_view &sv, std::vector<uint64_t> *result) {
+  return parse_scalar_array_impl<uint64_t>(sv, result,
+    [](const char *start, const char *end, uint64_t *val) -> bool {
+      tstring_view num_view(start, size_t(end - start));
+      return parse_uint64(num_view, val);
+    });
+}
+
 bool parse_half_array(const tstring_view &sv, std::vector<tinyusdz::value::half> *result) {
   return parse_scalar_array_impl<tinyusdz::value::half>(sv, result,
     [](const char *start, const char *end, tinyusdz::value::half *val) -> bool {
@@ -498,6 +522,13 @@ struct ParsedStringLiteral {
   std::string value;
   bool is_triple_quoted{false};
   bool single_quote{false};
+};
+
+struct ParsedTokenLiteral {
+  const char *start{nullptr};
+  const char *end{nullptr};
+  std::string unescaped;
+  bool use_unescaped{false};
 };
 
 static inline int hex_digit(char c) {
@@ -656,6 +687,74 @@ static bool parse_quoted_string_literal(const char **p, const char *end,
   return false;
 }
 
+static bool parse_token_literal(const char **p, const char *end,
+                                ParsedTokenLiteral *out) {
+  if (!p || !out) return false;
+  if (*p >= end) return false;
+
+  const char quote = **p;
+  if (quote != '"' && quote != '\'') return false;
+  (*p)++;
+
+  const bool is_triple =
+      ((*p + 1) < end && (*p)[0] == quote && (*p)[1] == quote);
+  if (is_triple) {
+    *p += 2;
+    const char *content_start = *p;
+
+    while (*p < end) {
+      if (size_t(*p - content_start) > kMaxStringLiteralLen) return false;
+
+      if (**p == '\\') {
+        if ((*p + 3) < end && (*p)[1] == quote && (*p)[2] == quote &&
+            (*p)[3] == quote) {
+          *p += 4;
+          continue;
+        }
+        (*p)++;
+        continue;
+      }
+
+      if ((*p + 2) < end && (*p)[0] == quote && (*p)[1] == quote &&
+          (*p)[2] == quote) {
+        const char *content_end = *p;
+        if (has_backslash(content_start, content_end)) {
+          assign_unescaped_control_range(content_start, content_end,
+                                         &out->unescaped);
+          out->use_unescaped = true;
+        } else {
+          out->start = content_start;
+          out->end = content_end;
+        }
+        *p += 3;
+        return true;
+      }
+
+      (*p)++;
+    }
+    return false;
+  }
+
+  const char *content_start = *p;
+  while (*p < end) {
+    if (size_t(*p - content_start) > kMaxStringLiteralLen) return false;
+
+    const char c = **p;
+    if (c == '\n' || c == '\r') return false;
+
+    if (c == quote) {
+      out->start = content_start;
+      out->end = *p;
+      (*p)++;
+      return true;
+    }
+
+    (*p)++;
+  }
+
+  return false;
+}
+
 template<typename PushFn>
 static bool parse_quoted_array_impl(const tstring_view &sv,
                                     bool unescape_regular,
@@ -706,9 +805,49 @@ static bool parse_quoted_array_impl(const tstring_view &sv,
 bool parse_token_array(const tstring_view &sv, std::vector<tinyusdz::value::token> *result) {
   if (!result) return false;
   result->clear();
-  return parse_quoted_array_impl(sv, false, [&](ParsedStringLiteral parsed) {
-    result->emplace_back(parsed.value);
-  });
+  if (sv.size() == 0) return false;
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+
+  p = skip_whitespace(p, end);
+  if (p >= end || *p != '[') return false;
+  p++;
+
+  p = skip_whitespace(p, end);
+  if (p < end && *p == ']') return true;
+
+  size_t count = 0;
+  while (p < end) {
+    p = skip_whitespace(p, end);
+    if (p >= end) return false;
+    if (*p == ']') return true;
+
+    ParsedTokenLiteral parsed;
+    if (!parse_token_literal(&p, end, &parsed)) {
+      return false;
+    }
+
+    if (count >= kMaxStringArrayElements) return false;
+    if (parsed.use_unescaped) {
+      result->emplace_back(std::move(parsed.unescaped));
+    } else {
+      result->emplace_back(parsed.start, size_t(parsed.end - parsed.start));
+    }
+    count++;
+
+    p = skip_whitespace(p, end);
+    if (p < end && *p == ',') {
+      p++;
+      p = skip_whitespace(p, end);
+      if (p < end && *p == ']') return true;
+      continue;
+    }
+    if (p < end && *p == ']') return true;
+    return false;
+  }
+
+  return false;
 }
 
 bool parse_string_array(const tstring_view &sv, std::vector<tinyusdz::value::StringData> *result) {

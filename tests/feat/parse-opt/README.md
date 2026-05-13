@@ -60,6 +60,18 @@ Only synthetic USDA:
 ./build/bench-parse-opt --usda-only
 ```
 
+Only direct `token[]` and `string[]` literals:
+
+```bash
+./build/bench-parse-opt --text-only
+```
+
+Allocation profiling for the optimized direct parser paths:
+
+```bash
+heaptrack -o /tmp/tinyusdz-parse-direct.heaptrack ./build/bench-parse-opt --direct-only
+```
+
 The `ctest` target uses the quick profile:
 
 ```bash

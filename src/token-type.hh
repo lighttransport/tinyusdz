@@ -25,6 +25,7 @@
 //
 
 #include <string>
+#include <utility>
 
 #include "nonstd/optional.hpp"
 
@@ -88,11 +89,20 @@ class Token {
     str_ = sid::string_id(str.c_str(), TokenStorage::GetInstance());
   }
 
+  explicit Token(std::string &&str) {
+    str_ = sid::string_id(str.c_str(), TokenStorage::GetInstance());
+  }
+
   Token(Token &&str) = default;
   
 
   explicit Token(const char *str) {
     str_ = sid::string_id(str, TokenStorage::GetInstance());
+  }
+
+  Token(const char *str, size_t len) {
+    std::string tmp(str, len);
+    str_ = sid::string_id(tmp.c_str(), TokenStorage::GetInstance());
   }
 
   const std::string str() const {
@@ -151,7 +161,11 @@ class Token {
 
   explicit Token(const std::string &str) { str_ = str; }
 
+  explicit Token(std::string &&str) : str_(std::move(str)) {}
+
   explicit Token(const char *str) { str_ = str; }
+
+  Token(const char *str, size_t len) : str_(str, len) {}
 
   const std::string &str() const { return str_; }
 

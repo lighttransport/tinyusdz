@@ -351,6 +351,9 @@ bool parse_float(const tstring_view &sv, float *ret);
 bool parse_double(const tstring_view &sv, double *ret);
 
 bool parse_int_array(const tstring_view &sv, std::vector<int32_t> *result);
+bool parse_uint_array(const tstring_view &sv, std::vector<uint32_t> *result);
+bool parse_int64_array(const tstring_view &sv, std::vector<int64_t> *result);
+bool parse_uint64_array(const tstring_view &sv, std::vector<uint64_t> *result);
 bool parse_half_array(const tstring_view &sv, std::vector<tinyusdz::value::half> *result);
 bool parse_float_array(const tstring_view &sv, std::vector<float> *result);
 bool parse_double_array(const tstring_view &sv, std::vector<double> *result);

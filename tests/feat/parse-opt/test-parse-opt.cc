@@ -38,6 +38,7 @@ struct Options {
   BenchmarkProfile profile{BenchmarkProfile::Full};
   bool direct_only{false};
   bool usda_only{false};
+  bool text_only{false};
 };
 
 BenchmarkConfig ConfigFor(BenchmarkProfile profile) {
@@ -60,7 +61,7 @@ BenchmarkConfig ConfigFor(BenchmarkProfile profile) {
 
 void PrintUsage(const char *argv0) {
   std::cout << "Usage: " << argv0
-            << " [--quick] [--direct-only] [--usda-only]\n";
+            << " [--quick] [--direct-only] [--usda-only] [--text-only]\n";
 }
 
 Options ParseOptions(int argc, char **argv) {
@@ -73,6 +74,8 @@ Options ParseOptions(int argc, char **argv) {
       opts.direct_only = true;
     } else if (arg == "--usda-only") {
       opts.usda_only = true;
+    } else if (arg == "--text-only") {
+      opts.text_only = true;
     } else if (arg == "--help" || arg == "-h") {
       PrintUsage(argv[0]);
       std::exit(0);
@@ -87,6 +90,10 @@ Options ParseOptions(int argc, char **argv) {
     std::cerr << "--direct-only and --usda-only are mutually exclusive.\n";
     std::exit(1);
   }
+  if (opts.text_only && opts.usda_only) {
+    std::cerr << "--text-only and --usda-only are mutually exclusive.\n";
+    std::exit(1);
+  }
 
   return opts;
 }
@@ -94,6 +101,24 @@ Options ParseOptions(int argc, char **argv) {
 void AppendDoubleLiteral(std::string *out, double value, int precision) {
   char buf[64];
   const int n = std::snprintf(buf, sizeof(buf), "%.*g", precision, value);
+  if (n > 0) {
+    out->append(buf, static_cast<size_t>(n));
+  }
+}
+
+void AppendIntLiteral(std::string *out, int64_t value) {
+  char buf[32];
+  const int n = std::snprintf(buf, sizeof(buf), "%lld",
+                              static_cast<long long>(value));
+  if (n > 0) {
+    out->append(buf, static_cast<size_t>(n));
+  }
+}
+
+void AppendUIntLiteral(std::string *out, uint64_t value) {
+  char buf[32];
+  const int n = std::snprintf(buf, sizeof(buf), "%llu",
+                              static_cast<unsigned long long>(value));
   if (n > 0) {
     out->append(buf, static_cast<size_t>(n));
   }
@@ -229,9 +254,9 @@ std::string MakeMatrix4dArray(size_t count) {
 void AppendTokenLiteral(std::string *out, size_t i) {
   out->push_back('"');
   out->append("token_");
-  out->append(std::to_string(i % 997));
+  AppendUIntLiteral(out, static_cast<uint64_t>(i % 997));
   out->push_back('_');
-  out->append(std::to_string((i * 17) % 65521));
+  AppendUIntLiteral(out, static_cast<uint64_t>((i * 17) % 65521));
   if ((i % 101) == 0) {
     out->append("_bracket]hash#");
   }
@@ -241,7 +266,7 @@ void AppendTokenLiteral(std::string *out, size_t i) {
 void AppendStringLiteral(std::string *out, size_t i) {
   out->push_back('"');
   out->append("string ");
-  out->append(std::to_string(i % 997));
+  AppendUIntLiteral(out, static_cast<uint64_t>(i % 997));
   if ((i % 97) == 0) {
     out->append(" quoted \\\"value\\\"");
   } else if ((i % 89) == 0) {
@@ -266,25 +291,25 @@ std::string MakeStringArray(size_t count) {
 
 std::string MakeIntArray(size_t count) {
   return MakeScalarArray(count, [](std::string *out, size_t i) {
-    out->append(std::to_string(IntValue(i)));
+    AppendIntLiteral(out, IntValue(i));
   });
 }
 
 std::string MakeUIntArray(size_t count) {
   return MakeScalarArray(count, [](std::string *out, size_t i) {
-    out->append(std::to_string(UIntValue(i)));
+    AppendUIntLiteral(out, UIntValue(i));
   });
 }
 
 std::string MakeInt64Array(size_t count) {
   return MakeScalarArray(count, [](std::string *out, size_t i) {
-    out->append(std::to_string(Int64Value(i)));
+    AppendIntLiteral(out, Int64Value(i));
   });
 }
 
 std::string MakeUInt64Array(size_t count) {
   return MakeScalarArray(count, [](std::string *out, size_t i) {
-    out->append(std::to_string(UInt64Value(i)));
+    AppendUIntLiteral(out, UInt64Value(i));
   });
 }
 
@@ -510,6 +535,18 @@ bool RunDirectArrayBenchmarks(const BenchmarkConfig &config) {
   return ok;
 }
 
+bool RunTextArrayBenchmarks(const BenchmarkConfig &config) {
+  std::cout << "\n=== Direct Text Array Literal Parsing ===\n";
+  bool ok = true;
+  ok &= RunArrayCase<tinyusdz::value::token>(
+      "token[]", MakeTokenArray(config.scalar_count), config.scalar_count,
+      config.iterations);
+  ok &= RunArrayCase<tinyusdz::value::StringData>(
+      "string[]", MakeStringArray(config.scalar_count), config.scalar_count,
+      config.iterations);
+  return ok;
+}
+
 bool RunUsdaBenchmark(const BenchmarkConfig &config) {
   std::cout << "\n=== Synthetic USDA Parsing ===\n";
   const std::string usda = MakeSyntheticUsda(
@@ -546,10 +583,12 @@ int main(int argc, char **argv) {
   std::cout << "========================================\n";
 
   bool ok = true;
-  if (!opts.usda_only) {
+  if (opts.text_only) {
+    ok &= RunTextArrayBenchmarks(config);
+  } else if (!opts.usda_only) {
     ok &= RunDirectArrayBenchmarks(config);
   }
-  if (!opts.direct_only) {
+  if (!opts.text_only && !opts.direct_only) {
     ok &= RunUsdaBenchmark(config);
   }
 

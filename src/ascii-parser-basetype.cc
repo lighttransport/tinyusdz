@@ -4028,6 +4028,75 @@ bool AsciiParser::ParseIntArrayOptimized(std::vector<int32_t> *result) {
   return true;
 }
 
+bool AsciiParser::ParseUIntArrayOptimized(std::vector<uint32_t> *result) {
+  if (!result) {
+    return false;
+  }
+
+  uint64_t start_loc = CurrLoc();
+  uint64_t end_loc = start_loc;
+  if (!FindArrayLiteralEnd(_sr->data(), _sr->size(), start_loc, &end_loc)) {
+    PushError("Unexpected end of input while parsing uint array");
+    return false;
+  }
+
+  const char *array_start = reinterpret_cast<const char *>(_sr->data() + start_loc);
+  size_t array_len = static_cast<size_t>(end_loc - start_loc);
+  tstring_view sv(array_start, array_len);
+  if (!str::parse_uint_array(sv, result)) {
+    PushError("Failed to parse uint array with tiny-string");
+    return false;
+  }
+
+  return SeekTo(end_loc);
+}
+
+bool AsciiParser::ParseInt64ArrayOptimized(std::vector<int64_t> *result) {
+  if (!result) {
+    return false;
+  }
+
+  uint64_t start_loc = CurrLoc();
+  uint64_t end_loc = start_loc;
+  if (!FindArrayLiteralEnd(_sr->data(), _sr->size(), start_loc, &end_loc)) {
+    PushError("Unexpected end of input while parsing int64 array");
+    return false;
+  }
+
+  const char *array_start = reinterpret_cast<const char *>(_sr->data() + start_loc);
+  size_t array_len = static_cast<size_t>(end_loc - start_loc);
+  tstring_view sv(array_start, array_len);
+  if (!str::parse_int64_array(sv, result)) {
+    PushError("Failed to parse int64 array with tiny-string");
+    return false;
+  }
+
+  return SeekTo(end_loc);
+}
+
+bool AsciiParser::ParseUInt64ArrayOptimized(std::vector<uint64_t> *result) {
+  if (!result) {
+    return false;
+  }
+
+  uint64_t start_loc = CurrLoc();
+  uint64_t end_loc = start_loc;
+  if (!FindArrayLiteralEnd(_sr->data(), _sr->size(), start_loc, &end_loc)) {
+    PushError("Unexpected end of input while parsing uint64 array");
+    return false;
+  }
+
+  const char *array_start = reinterpret_cast<const char *>(_sr->data() + start_loc);
+  size_t array_len = static_cast<size_t>(end_loc - start_loc);
+  tstring_view sv(array_start, array_len);
+  if (!str::parse_uint64_array(sv, result)) {
+    PushError("Failed to parse uint64 array with tiny-string");
+    return false;
+  }
+
+  return SeekTo(end_loc);
+}
+
 bool AsciiParser::ParseTokenArrayOptimized(std::vector<value::token> *result) {
   if (!result) {
     return false;
@@ -4204,6 +4273,21 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result) {
 }
 
 template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<uint32_t> *result) {
+  return ParseUIntArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<int64_t> *result) {
+  return ParseInt64ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<uint64_t> *result) {
+  return ParseUInt64ArrayOptimized(result);
+}
+
+template <>
 bool AsciiParser::ParseBasicTypeArray(std::vector<value::token> *result) {
   return ParseTokenArrayOptimized(result);
 }
@@ -4334,7 +4418,6 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<bool> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int4> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<uint32_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint4> *result);
@@ -4358,11 +4441,13 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<uint16_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::ushort2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::ushort3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::ushort4> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<int64_t> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<uint64_t> *result);
-// Note: int32_t, token, string/StringData, half, float, double, half2/3/4,
+// Note: int32_t, uint32_t, int64_t, uint64_t, token, string/StringData,
+// half, float, double, half2/3/4,
 // float2/3/4, point3f, normal3f, double2/3/4, and quat* arrays now use optimized implementations
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<uint32_t> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<int64_t> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<uint64_t> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::token> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::StringData> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<std::string> *result);
