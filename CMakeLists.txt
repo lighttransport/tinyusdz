@@ -19,6 +19,19 @@ if (CMAKE_VERSION VERSION_LESS 3.21)
   endif()
 endif ()
 
+# Default to Release when configured as the top-level project and no build
+# type was given. Without this, single-config generators (Make/Ninja) leave
+# CMAKE_BUILD_TYPE empty, which on GCC/Clang means -O0 and silently produces
+# binaries that are 2-3x slower than expected (observed: tusdcat parsing
+# went from 3.8s -> 1.3s after switching from the empty default to Release).
+if (PROJECT_IS_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  message(STATUS "TinyUSDZ: CMAKE_BUILD_TYPE not set; defaulting to Release.")
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING
+      "Build type (Debug|Release|RelWithDebInfo|MinSizeRel)" FORCE)
+  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+      "Debug" "Release" "RelWithDebInfo" "MinSizeRel")
+endif ()
+
 
 if (EMSCRIPTEN)
   set(TINYUSDZ_DEFAULT_NO_WERROR ON)
