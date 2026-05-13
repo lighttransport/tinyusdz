@@ -958,26 +958,40 @@ bool ReconstructPrim<Shader>(
       if ((attr.type_name() == value::kToken)) {
         if (auto pv = attr.get_value<value::token>()) {
           shader_type = pv.value().str();
-        } else {
+        } else if (options.strict_shader_check) {
           PUSH_ERROR_AND_RETURN("Internal errror. `info:id` has invalid type.");
+        } else {
+          // Declared without a value (e.g. `uniform token info:id` with
+          // no `= "..."`). Common with Omniverse MDL shaders where the
+          // real identity comes from `info:implementationSource` +
+          // `info:mdl:sourceAsset`. Treat as a generic ShaderNode.
+          PUSH_WARN("`info:id` declared without a value on Shader; "
+                    "treating as generic ShaderNode. (set "
+                    "PrimReconstructOptions::strict_shader_check=true "
+                    "to make this an error.)");
+          is_generic_shader = true;
         }
       } else {
         PUSH_ERROR_AND_RETURN("`info:id` attribute must be `token` type.");
       }
 
-      // For some corrupted? USDZ file does not have `uniform` variability.
-      if (attr.variability() != Variability::Uniform) {
-        PUSH_WARN("`info:id` attribute must have `uniform` variability.");
+      if (!is_generic_shader) {
+        // For some corrupted? USDZ file does not have `uniform` variability.
+        if (attr.variability() != Variability::Uniform) {
+          PUSH_WARN("`info:id` attribute must have `uniform` variability.");
+        }
       }
     } else {
       PUSH_ERROR_AND_RETURN("Invalid type or value for `info:id` property in `Shader`.");
     }
 
-    DCOUT("info:id = " << shader_type);
+    if (!is_generic_shader) {
+      DCOUT("info:id = " << shader_type);
 
-    // Validate MaterialX info:id if validation is enabled
-    if (!mtlx_validation::ValidateInfoId(shader_type, options, warn, err)) {
-      PUSH_ERROR_AND_RETURN("Invalid MaterialX info:id: " << shader_type);
+      // Validate MaterialX info:id if validation is enabled
+      if (!mtlx_validation::ValidateInfoId(shader_type, options, warn, err)) {
+        PUSH_ERROR_AND_RETURN("Invalid MaterialX info:id: " << shader_type);
+      }
     }
   }
 
