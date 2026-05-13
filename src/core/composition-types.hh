@@ -113,7 +113,7 @@ struct APISchemas {
     PhysicsLimitAPI,
   };
 
-  ListEditQual listOpQual{ListEditQual::ResetToExplicit};  // must be 'prepend'
+  ListEditQual listOpQual{ListEditQual::ResetToExplicit};  // first non-delete qualifier seen on the prim
 
   // std::get<1>: instance name. For Multi-apply API Schema e.g.
   // `material:MainMaterial` for `CollectionAPI:material:MainMaterial`
@@ -122,6 +122,13 @@ struct APISchemas {
   // Unknown/unsupported API schemas - stored as raw strings to preserve them
   // Each entry is (schema_name, instance_name) where instance_name may be empty
   std::vector<std::pair<std::string, std::string>> unknownSchemas;
+
+  // Schemas marked for deletion via `delete apiSchemas = [...]` list-op.
+  // The single-layer reader already subtracts these from `names`/
+  // `unknownSchemas`; they are tracked separately so future multi-layer
+  // composition can still see what was deleted by a strong layer.
+  std::vector<std::pair<APIName, std::string>> deletedNames;
+  std::vector<std::pair<std::string, std::string>> deletedUnknownSchemas;
 };
 
 // SdfLayerOffset

@@ -1508,41 +1508,70 @@ class USDAReader::Impl {
         }
       } else if (meta.first == "apiSchemas") {
         DCOUT("apiSchemas. type = " << var.type_name());
-        if (var.type_name() == "token[]") {
-          APISchemas apiSchemas;
-          if ((listEditQual != ListEditQual::Prepend) && (listEditQual != ListEditQual::ResetToExplicit)) {
-            PUSH_ERROR_AND_RETURN("(PrimMeta) " << "ListEdit op for `apiSchemas` must be empty or `prepend` in TinyUSDZ, but got `" << to_string(listEditQual) << "`");
-          }
-          apiSchemas.listOpQual = listEditQual;
-
-          if (auto pv = var.get_value<std::vector<value::token>>()) {
-
-            for (const auto &item : pv.value()) {
-              // TODO: Multi-apply schema(instance name)
-              auto ret = ApiSchemaHandler(item.str());
-              if (ret) {
-                apiSchemas.names.push_back({ret.value(), /* instanceName */""});
-              } else if (_config.allow_unknown_apiSchema) {
-                // Store unknown schema instead of just warning
-                std::string instanceName = "";  // TODO: parse instance name if present
-                apiSchemas.unknownSchemas.push_back({item.str(), instanceName});
-                PUSH_WARN("(PrimMeta) Preserving unknown API schema: " << item.str());
-              } else {
-                PUSH_ERROR_AND_RETURN("Unknown or invalid apiSchema: " + ret.error());
-              }
-            }
-          } else {
-            PUSH_ERROR_AND_RETURN_TAG(kTag, "(Internal error?) `apiSchemas` metadataum is not type "
-            "`token[]`. got type `"
-            << var.type_name() << "`");
-          }
-
-          out->set_apiSchemas(std::move(apiSchemas));
-        } else {
+        if (var.type_name() != "token[]") {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "(Internal error?) `apiSchemas` metadataum is not type "
           "`token[]`. got type `"
           << var.type_name() << "`");
         }
+        const bool isDelete = (listEditQual == ListEditQual::Delete);
+        const bool isAdditive = (listEditQual == ListEditQual::Prepend)
+                             || (listEditQual == ListEditQual::Append)
+                             || (listEditQual == ListEditQual::Add)
+                             || (listEditQual == ListEditQual::ResetToExplicit);
+        if (!isDelete && !isAdditive) {
+          PUSH_ERROR_AND_RETURN("(PrimMeta) " << "ListEdit op for `apiSchemas` must be `prepend`, `append`, `add`, `delete`, or unqualified, but got `" << to_string(listEditQual) << "`");
+        }
+
+        // Merge with any APISchemas already accumulated on this prim — a
+        // single prim may carry both `prepend apiSchemas = [...]` and
+        // `delete apiSchemas = [...]` (Omniverse / Newton-asset pattern).
+        APISchemas apiSchemas;
+        if (out->has_apiSchemas()) {
+          apiSchemas = out->get_apiSchemas();
+        }
+        // First non-delete qualifier wins for round-trip purposes.
+        if (isAdditive && apiSchemas.names.empty() && apiSchemas.unknownSchemas.empty()
+            && apiSchemas.listOpQual == ListEditQual::ResetToExplicit) {
+          apiSchemas.listOpQual = listEditQual;
+        }
+
+        auto pv = var.get_value<std::vector<value::token>>();
+        if (!pv) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "(Internal error?) `apiSchemas` metadataum is not type "
+          "`token[]`. got type `"
+          << var.type_name() << "`");
+        }
+        for (const auto &item : pv.value()) {
+          // TODO: Multi-apply schema(instance name)
+          const std::string instanceName = "";
+          auto ret = ApiSchemaHandler(item.str());
+          if (ret) {
+            const auto entry = std::make_pair(ret.value(), instanceName);
+            if (isDelete) {
+              apiSchemas.deletedNames.push_back(entry);
+              apiSchemas.names.erase(
+                  std::remove(apiSchemas.names.begin(), apiSchemas.names.end(), entry),
+                  apiSchemas.names.end());
+            } else {
+              apiSchemas.names.push_back(entry);
+            }
+          } else if (_config.allow_unknown_apiSchema) {
+            const auto entry = std::make_pair(item.str(), instanceName);
+            if (isDelete) {
+              apiSchemas.deletedUnknownSchemas.push_back(entry);
+              apiSchemas.unknownSchemas.erase(
+                  std::remove(apiSchemas.unknownSchemas.begin(), apiSchemas.unknownSchemas.end(), entry),
+                  apiSchemas.unknownSchemas.end());
+            } else {
+              apiSchemas.unknownSchemas.push_back(entry);
+              PUSH_WARN("(PrimMeta) Preserving unknown API schema: " << item.str());
+            }
+          } else {
+            PUSH_ERROR_AND_RETURN("Unknown or invalid apiSchema: " + ret.error());
+          }
+        }
+
+        out->set_apiSchemas(std::move(apiSchemas));
       } else if (meta.first == "references") {
         // Initialize vector if not present
         if (!out->references) {
