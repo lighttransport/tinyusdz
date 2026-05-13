@@ -365,7 +365,8 @@ CMakeUserPresets.json
 # TinyUSDZ/Crate-Writer specific
 *.usdc
 *.usda
-# But keep spec conformance test fixtures
+# But keep test fixtures
+!tests/usda/*.usda
 !tests/usda/spec/*.usda
 CMakeFiles/
 Makefile
