@@ -358,6 +358,8 @@ bool parse_double_array(const tstring_view &sv, std::vector<double> *result);
 bool parse_float2_array(const tstring_view &sv, std::vector<tinyusdz::value::float2> *result);
 bool parse_float3_array(const tstring_view &sv, std::vector<tinyusdz::value::float3> *result);
 bool parse_float4_array(const tstring_view &sv, std::vector<tinyusdz::value::float4> *result);
+bool parse_point3f_array(const tstring_view &sv, std::vector<tinyusdz::value::point3f> *result);
+bool parse_normal3f_array(const tstring_view &sv, std::vector<tinyusdz::value::normal3f> *result);
 bool parse_double2_array(const tstring_view &sv, std::vector<tinyusdz::value::double2> *result);
 bool parse_double3_array(const tstring_view &sv, std::vector<tinyusdz::value::double3> *result);
 bool parse_double4_array(const tstring_view &sv, std::vector<tinyusdz::value::double4> *result);

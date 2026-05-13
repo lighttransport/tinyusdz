@@ -2582,25 +2582,36 @@ bool AsciiParser::ParseBasicTypeTuple(std::array<T, N> *result) {
     return false;
   }
 
-  std::vector<T> values;
-  if (!SepBy1BasicType<T>(',', &values)) {
+  for (size_t i = 0; i < N; i++) {
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    T value;
+    if (!ReadBasicType(&value)) {
+      PushError("Failed to parse tuple element " + std::to_string(i) + ".\n");
+      return false;
+    }
+
+    (*result)[i] = value;
+
+    if ((i + 1) < N) {
+      if (!SkipWhitespaceAndNewline()) {
+        return false;
+      }
+
+      if (!Expect(',')) {
+        return false;
+      }
+    }
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
     return false;
   }
 
   if (!Expect(')')) {
     return false;
-  }
-
-  if (values.size() != N) {
-    std::string msg = "The number of tuple elements must be " +
-                      std::to_string(N) + ", but got " +
-                      std::to_string(values.size()) + "\n";
-    PushError(msg);
-    return false;
-  }
-
-  for (size_t i = 0; i < N; i++) {
-    (*result)[i] = values[i];
   }
 
   return true;
@@ -2614,28 +2625,9 @@ bool AsciiParser::ParseBasicTypeTuple(
     return true;
   }
 
-  if (!Expect('(')) {
-    return false;
-  }
-
-  std::vector<T> values;
-  if (!SepBy1BasicType<T>(',', &values)) {
-    return false;
-  }
-
-  if (!Expect(')')) {
-    return false;
-  }
-
-  if (values.size() != N) {
-    PUSH_ERROR_AND_RETURN("The number of tuple elements must be " +
-                          std::to_string(N) + ", but got " +
-                          std::to_string(values.size()));
-  }
-
   std::array<T, N> ret;
-  for (size_t i = 0; i < N; i++) {
-    ret[i] = values[i];
+  if (!ParseBasicTypeTuple<T, N>(&ret)) {
+    return false;
   }
 
   (*result) = ret;
@@ -3967,6 +3959,8 @@ bool AsciiParser::Parse##MethodName##ArrayOptimized(std::vector<value::TypeName>
 DEFINE_COMPOUND_ARRAY_OPTIMIZED(Float2, float2, parse_float2_array, "float2")
 DEFINE_COMPOUND_ARRAY_OPTIMIZED(Float3, float3, parse_float3_array, "float3")
 DEFINE_COMPOUND_ARRAY_OPTIMIZED(Float4, float4, parse_float4_array, "float4")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Point3f, point3f, parse_point3f_array, "point3f")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Normal3f, normal3f, parse_normal3f_array, "normal3f")
 DEFINE_COMPOUND_ARRAY_OPTIMIZED(Double2, double2, parse_double2_array, "double2")
 DEFINE_COMPOUND_ARRAY_OPTIMIZED(Double3, double3, parse_double3_array, "double3")
 DEFINE_COMPOUND_ARRAY_OPTIMIZED(Double4, double4, parse_double4_array, "double4")
@@ -4039,6 +4033,16 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<value::float4> *result) {
 }
 
 template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::point3f> *result) {
+  return ParsePoint3fArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::normal3f> *result) {
+  return ParseNormal3fArrayOptimized(result);
+}
+
+template <>
 bool AsciiParser::ParseBasicTypeArray(std::vector<value::double2> *result) {
   return ParseDouble2ArrayOptimized(result);
 }
@@ -4087,6 +4091,8 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result) {
 // Explicit template instanciations
 //
 
+template bool AsciiParser::SepBy1BasicType<float>(const char sep,
+                                                  std::vector<float> *result);
 
 template bool AsciiParser::ParseBasicTypeArray(std::vector<bool> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result);
@@ -4123,11 +4129,13 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half> *result)
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half4> *result);
-// Note: float, double, float2/3/4, double2/3/4 arrays now use optimized implementations
+// Note: float, double, float2/3/4, point3f, normal3f, double2/3/4 arrays now use optimized implementations
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<float> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float2> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float3> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float4> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::point3f> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::normal3f> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<double> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double2> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double3> *result);
@@ -4139,10 +4147,8 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord3h> *r
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord3f> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord3d> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::point3h> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::point3f> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::point3d> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::normal3h> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::normal3f> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::normal3d> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::vector3h> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::vector3f> *result);

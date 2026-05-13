@@ -860,6 +860,8 @@ class AsciiParser {
   bool ParseFloat2ArrayOptimized(std::vector<value::float2> *result);
   bool ParseFloat3ArrayOptimized(std::vector<value::float3> *result);
   bool ParseFloat4ArrayOptimized(std::vector<value::float4> *result);
+  bool ParsePoint3fArrayOptimized(std::vector<value::point3f> *result);
+  bool ParseNormal3fArrayOptimized(std::vector<value::normal3f> *result);
   bool ParseDouble2ArrayOptimized(std::vector<value::double2> *result);
   bool ParseDouble3ArrayOptimized(std::vector<value::double3> *result);
   bool ParseDouble4ArrayOptimized(std::vector<value::double4> *result);
