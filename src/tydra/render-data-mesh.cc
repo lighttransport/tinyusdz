@@ -435,31 +435,27 @@ bool TryConvertFacevaryingToVertexFloat(
     return false;
   }
 
-  // vidx, value
-  tinyusdz::HashMap<uint32_t, T> vdata;
-  vdata.reserve(faceVertexIndices.size());
+  // Direct-indexed seen + value arrays. Vertex indices are dense small ints,
+  // so a HashMap<uint32_t, T> here was ~⅔ of conversion time on USDC inputs.
+  // Grow dst lazily as vidx values come in to avoid a separate max-vidx pass.
+  dst->clear();
+  std::vector<uint8_t> seen;
 
-  uint32_t max_vidx = 0;
   for (size_t i = 0; i < faceVertexIndices.size(); i++) {
     uint32_t vidx = faceVertexIndices[i];
-    max_vidx = (std::max)(vidx, max_vidx);
-
-    auto it = vdata.find(vidx);
-    if (it != vdata.end()) {
-      if (!math::is_close(it->second, src[i], eps)) {
+    if (vidx >= dst->size()) {
+      dst->resize(size_t(vidx) + 1, T{});
+      seen.resize(size_t(vidx) + 1, uint8_t(0));
+    }
+    if (seen[vidx]) {
+      if (!math::is_close((*dst)[vidx], src[i], eps)) {
         DCOUT("diff at faceVertexIndices[" << i << "]");
         return false;
       }
     } else {
-      vdata.emplace(vidx, src[i]);
+      (*dst)[vidx] = src[i];
+      seen[vidx] = 1;
     }
-  }
-
-  dst->resize(max_vidx + 1);
-  memset(dst->data(), 0, (max_vidx + 1) * sizeof(T));
-
-  for (const auto &v : vdata) {
-    (*dst)[v.first] = v.second;
   }
 
   return true;
@@ -483,29 +479,24 @@ bool TryConvertFacevaryingToVertexMat(
     return false;
   }
 
-  // vidx, value
-  tinyusdz::HashMap<uint32_t, T> vdata;
-  vdata.reserve(faceVertexIndices.size());
+  // Direct-indexed; see TryConvertFacevaryingToVertexFloat for rationale.
+  dst->clear();
+  std::vector<uint8_t> seen;
 
-  uint32_t max_vidx = 0;
   for (size_t i = 0; i < faceVertexIndices.size(); i++) {
     uint32_t vidx = faceVertexIndices[i];
-    max_vidx = (std::max)(vidx, max_vidx);
-
-    auto it = vdata.find(vidx);
-    if (it != vdata.end()) {
-      if (!is_close(it->second, src[i])) {
+    if (vidx >= dst->size()) {
+      dst->resize(size_t(vidx) + 1, T::identity());
+      seen.resize(size_t(vidx) + 1, uint8_t(0));
+    }
+    if (seen[vidx]) {
+      if (!is_close((*dst)[vidx], src[i])) {
         return false;
       }
     } else {
-      vdata.emplace(vidx, src[i]);
+      (*dst)[vidx] = src[i];
+      seen[vidx] = 1;
     }
-  }
-
-  dst->assign(max_vidx + 1, T::identity());
-
-  for (const auto &v : vdata) {
-    (*dst)[v.first] = v.second;
   }
 
   return true;

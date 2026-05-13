@@ -7,7 +7,12 @@
 
 #include "unit-usdc-reconstruct.h"
 #include "tinyusdz.hh"
-#include "prim-types.hh"
+#include "core/composition-types.hh"
+#include "core/model-scope.hh"
+#include "core/path.hh"
+#include "core/prim.hh"
+#include "core/prim-enums.hh"
+#include "core/prim-spec.hh"
 #include "layer.hh"
 #include "io-util.hh"
 #include "crate-writer.hh"

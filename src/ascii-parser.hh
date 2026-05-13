@@ -853,16 +853,31 @@ class AsciiParser {
   bool ParseFloatArrayOptimized(std::vector<float> *result);
   bool ParseDoubleArrayOptimized(std::vector<double> *result);
   bool ParseIntArrayOptimized(std::vector<int32_t> *result);
+  bool ParseUIntArrayOptimized(std::vector<uint32_t> *result);
+  bool ParseInt64ArrayOptimized(std::vector<int64_t> *result);
+  bool ParseUInt64ArrayOptimized(std::vector<uint64_t> *result);
+  bool ParseHalfArrayOptimized(std::vector<value::half> *result);
+  bool ParseTokenArrayOptimized(std::vector<value::token> *result);
+  bool ParseStringDataArrayOptimized(std::vector<value::StringData> *result);
+  bool ParseStdStringArrayOptimized(std::vector<std::string> *result);
 
   ///
   /// Optimized compound-type array parsing using tiny-string
   ///
+  bool ParseHalf2ArrayOptimized(std::vector<value::half2> *result);
+  bool ParseHalf3ArrayOptimized(std::vector<value::half3> *result);
+  bool ParseHalf4ArrayOptimized(std::vector<value::half4> *result);
   bool ParseFloat2ArrayOptimized(std::vector<value::float2> *result);
   bool ParseFloat3ArrayOptimized(std::vector<value::float3> *result);
   bool ParseFloat4ArrayOptimized(std::vector<value::float4> *result);
+  bool ParsePoint3fArrayOptimized(std::vector<value::point3f> *result);
+  bool ParseNormal3fArrayOptimized(std::vector<value::normal3f> *result);
   bool ParseDouble2ArrayOptimized(std::vector<value::double2> *result);
   bool ParseDouble3ArrayOptimized(std::vector<value::double3> *result);
   bool ParseDouble4ArrayOptimized(std::vector<value::double4> *result);
+  bool ParseQuathArrayOptimized(std::vector<value::quath> *result);
+  bool ParseQuatfArrayOptimized(std::vector<value::quatf> *result);
+  bool ParseQuatdArrayOptimized(std::vector<value::quatd> *result);
   bool ParseMatrix2fArrayOptimized(std::vector<value::matrix2f> *result);
   bool ParseMatrix3fArrayOptimized(std::vector<value::matrix3f> *result);
   bool ParseMatrix4fArrayOptimized(std::vector<value::matrix4f> *result);
@@ -1105,7 +1120,12 @@ class AsciiParser {
   bool LookChar1(char *c);
   bool LookCharN(size_t n, std::vector<char> *nc);
 
-  bool Char1(char *c);
+  // Inlined: previously an out-of-line one-liner that perf showed as ~15%
+  // self-time on USDA-heavy parses. Inlining lets the compiler also inline
+  // StreamReader::read1 (already header-inline) and hoist the _sr pointer
+  // load out of hot scan loops in LexFloat / SkipWhitespaceAndNewline / etc.
+  bool Char1(char *c) { return _sr->read1(c); }
+
   bool CharN(size_t n, std::vector<char> *nc);
   bool CharN(size_t n, char *dst); // assume dest has n >= bytes
 

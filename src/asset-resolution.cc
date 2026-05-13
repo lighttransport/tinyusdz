@@ -201,8 +201,10 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
 
   std::string ext = io::GetFileExtension(resolvedPath);
   constexpr uint64_t kBytesPerMiB = 1024ull * 1024ull;
+  constexpr uint64_t kMaxAssetBytesInMiB =
+      (std::numeric_limits<uint64_t>::max)() / kBytesPerMiB;
   const uint64_t max_asset_bytes =
-      (_max_asset_bytes_in_mb > ((std::numeric_limits<uint64_t>::max)() / kBytesPerMiB))
+      (static_cast<uint64_t>(_max_asset_bytes_in_mb) > kMaxAssetBytesInMiB)
           ? (std::numeric_limits<uint64_t>::max)()
           : static_cast<uint64_t>(_max_asset_bytes_in_mb) * kBytesPerMiB;
 

@@ -2472,7 +2472,7 @@ bool AsciiParser::LookCharN(size_t n, std::vector<char> *nc) {
   return ok;
 }
 
-bool AsciiParser::Char1(char *c) { return _sr->read1(c); }
+// AsciiParser::Char1 is defined inline in ascii-parser.hh.
 
 bool AsciiParser::CharN(size_t n, std::vector<char> *nc) {
   std::vector<char> buf(n);
@@ -3309,7 +3309,28 @@ bool AsciiParser::LexFloat(std::string *result) {
   //     ;
   // EXPONENT : ('e'|'E') ('+'|'-')? ('0'..'9')+ ;
 
-  std::stringstream ss;
+  // Stack buffer. A valid IEEE-754 double in scientific form is ≤24 chars
+  // (e.g. "-1.7976931348623157e+308"); 64 is a safe upper bound. The
+  // previous version reserved a std::string with 32 bytes which exceeded
+  // libstdc++'s SSO threshold (15) and forced one heap allocation per call,
+  // visible at ~5% of total runtime on USDA-heavy assets.
+  constexpr size_t kBufCap = 64;
+  char buf[kBufCap];
+  size_t n = 0;
+  // Match the previous "build into *result then clear on failure" contract:
+  // a caller that reads *result after a failure return sees an empty string,
+  // not stale data from a previous call.
+  result->clear();
+
+#define LEX_APPEND(c)                                            \
+  do {                                                           \
+    if (n >= kBufCap) {                                          \
+      PUSH_ERROR_AND_RETURN("Float literal exceeds " +           \
+                            std::to_string(kBufCap) +            \
+                            " characters.");                     \
+    }                                                            \
+    buf[n++] = (c);                                              \
+  } while (0)
 
   bool has_sign{false};
   bool leading_decimal_dots{false};
@@ -3322,7 +3343,7 @@ bool AsciiParser::LexFloat(std::string *result) {
 
     // sign, '.' or [0-9]
     if ((sc == '+') || (sc == '-')) {
-      ss << sc;
+      LEX_APPEND(sc);
       has_sign = true;
 
       char c;
@@ -3334,7 +3355,7 @@ bool AsciiParser::LexFloat(std::string *result) {
         // ok. something like `+.7`, `-.53`
         leading_decimal_dots = true;
         _curr_cursor.col++;
-        ss << c;
+        LEX_APPEND(c);
 
       } else {
         // unwind and continue
@@ -3343,7 +3364,7 @@ bool AsciiParser::LexFloat(std::string *result) {
 
     } else if ((sc >= '0') && (sc <= '9')) {
       // ok
-      ss << sc;
+      LEX_APPEND(sc);
     } else if (sc == '.') {
       // ok but rescan again in 2.
       leading_decimal_dots = true;
@@ -3361,17 +3382,14 @@ bool AsciiParser::LexFloat(std::string *result) {
   // 1. Read the integer part
   char curr;
   if (!leading_decimal_dots) {
-    // std::cout << "1 read int part: ss = " << ss.str() << "\n";
-
     while (!Eof()) {
       if (!Char1(&curr)) {
         return false;
       }
 
-      // std::cout << "1 curr = " << curr << "\n";
       if ((curr >= '0') && (curr <= '9')) {
         // continue
-        ss << curr;
+        LEX_APPEND(curr);
       } else {
         _sr->seek_from_current(-1);
         break;
@@ -3380,7 +3398,7 @@ bool AsciiParser::LexFloat(std::string *result) {
   }
 
   if (Eof()) {
-    (*result) = ss.str();
+    result->assign(buf, n);
     return true;
   }
 
@@ -3388,12 +3406,9 @@ bool AsciiParser::LexFloat(std::string *result) {
     return false;
   }
 
-  // std::cout << "before 2: ss = " << ss.str() << ", curr = " << curr <<
-  // "\n";
-
   // 2. Read the decimal part
   if (curr == '.') {
-    ss << curr;
+    LEX_APPEND(curr);
 
     while (!Eof()) {
       if (!Char1(&curr)) {
@@ -3401,7 +3416,7 @@ bool AsciiParser::LexFloat(std::string *result) {
       }
 
       if ((curr >= '0') && (curr <= '9')) {
-        ss << curr;
+        LEX_APPEND(curr);
       } else {
         break;
       }
@@ -3411,20 +3426,20 @@ bool AsciiParser::LexFloat(std::string *result) {
     // go to 3.
   } else {
     // end
-    (*result) = ss.str();
     _sr->seek_from_current(-1);
+    result->assign(buf, n);
     return true;
   }
 
   if (Eof()) {
-    (*result) = ss.str();
+    result->assign(buf, n);
     return true;
   }
 
   // 3. Read the exponent part
   bool has_exp_sign{false};
   if ((curr == 'e') || (curr == 'E')) {
-    ss << curr;
+    LEX_APPEND(curr);
 
     if (!Char1(&curr)) {
       return false;
@@ -3432,12 +3447,12 @@ bool AsciiParser::LexFloat(std::string *result) {
 
     if ((curr == '+') || (curr == '-')) {
       // exp sign
-      ss << curr;
+      LEX_APPEND(curr);
       has_exp_sign = true;
 
     } else if ((curr >= '0') && (curr <= '9')) {
       // ok
-      ss << curr;
+      LEX_APPEND(curr);
     } else {
       // Empty E is not allowed.
       PUSH_ERROR_AND_RETURN("Empty `E' is not allowed.");
@@ -3450,7 +3465,7 @@ bool AsciiParser::LexFloat(std::string *result) {
 
       if ((curr >= '0') && (curr <= '9')) {
         // ok
-        ss << curr;
+        LEX_APPEND(curr);
 
       } else if ((curr == '+') || (curr == '-')) {
         if (has_exp_sign) {
@@ -3458,7 +3473,7 @@ bool AsciiParser::LexFloat(std::string *result) {
           PUSH_ERROR_AND_RETURN("No multiple exponential sign characters.");
         }
 
-        ss << curr;
+        LEX_APPEND(curr);
         has_exp_sign = true;
       } else {
         // end
@@ -3470,8 +3485,10 @@ bool AsciiParser::LexFloat(std::string *result) {
     _sr->seek_from_current(-1);
   }
 
-  (*result) = ss.str();
+  result->assign(buf, n);
   return true;
+
+#undef LEX_APPEND
 }
 
 nonstd::optional<AsciiParser::VariableDef> AsciiParser::GetStageMetaDefinition(
