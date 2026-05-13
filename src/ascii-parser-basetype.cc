@@ -2927,36 +2927,44 @@ template <typename T>
 bool AsciiParser::MaybeNonFinite(T *out) {
   auto loc = CurrLoc();
 
-  // "-inf", "inf" or "nan"
-  std::array<char, 4> buf;
-  if (!CharN(3, &buf[0])) {
-    return false;
-  }
-  SeekTo(loc);
+  // Check that what follows the candidate token is not an identifier-
+  // continuation character (so we don't consume the `inf` prefix of an
+  // identifier like `info`).
+  auto trailing_is_word_char = [](char c) -> bool {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+        || (c >= '0' && c <= '9') || c == '_';
+  };
 
-  if ((buf[0] == 'i') && (buf[1] == 'n') && (buf[2] == 'f')) {
-    (*out) = std::numeric_limits<T>::infinity();
-    return true;
-  }
-
-  if ((buf[0] == 'n') && (buf[1] == 'a') && (buf[2] == 'n')) {
-    (*out) = std::numeric_limits<T>::quiet_NaN();
-    return true;
-  }
-
-  bool ok = CharN(4, &buf[0]);
-  SeekTo(loc);
-
-  if (ok) {
-    if ((buf[0] == '-') && (buf[1] == 'i') && (buf[2] == 'n') &&
-        (buf[3] == 'f')) {
-      (*out) = -std::numeric_limits<T>::infinity();
-      return true;
+  // Try matching "inf"/"nan" (3 chars) or "-inf" (4 chars). Advance
+  // past the candidate, then peek the next char; if it's an identifier
+  // continuation we reject (so `info` / `infrared` doesn't false-match
+  // as `inf`).
+  auto try_match = [&](const char *expected, size_t n,
+                       T result_value) -> bool {
+    std::array<char, 4> buf{};
+    if (!CharN(n, &buf[0])) {
+      SeekTo(loc);
+      return false;
     }
+    for (size_t i = 0; i < n; i++) {
+      if (buf[i] != expected[i]) {
+        SeekTo(loc);
+        return false;
+      }
+    }
+    char next;
+    if (LookChar1(&next) && trailing_is_word_char(next)) {
+      SeekTo(loc);
+      return false;
+    }
+    (*out) = result_value;
+    return true;
+  };
 
-    // NOTE: support "-nan"?
-    // FYI pxrusd does not support -nan
-  }
+  if (try_match("inf", 3, std::numeric_limits<T>::infinity())) return true;
+  if (try_match("nan", 3, std::numeric_limits<T>::quiet_NaN())) return true;
+  if (try_match("-inf", 4, -std::numeric_limits<T>::infinity())) return true;
+  // NOTE: pxrUSD does not support `-nan`; skip it.
 
   return false;
 }
