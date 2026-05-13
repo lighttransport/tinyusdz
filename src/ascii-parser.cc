@@ -1413,12 +1413,36 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
   std::string buf;
   buf.reserve(64);
 
+  // Detect a triple-quoted multi-line string ("""..."""  or '''...''').
+  // Without this, an opening `"""` is misread as an empty string `""`
+  // followed by stray content, and the surrounding metadata parser
+  // fails. Triple-quoted strings appear in MDL shader inputs authored
+  // by Omniverse Kit (e.g. `doc = """multi-line text"""`).
+  {
+    auto peek_loc = CurrLoc();
+    std::array<char, 3> peek;
+    if (CharN(3, &peek[0])) {
+      SeekTo(peek_loc);
+      const bool triple_double = peek[0] == '"' && peek[1] == '"' && peek[2] == '"';
+      const bool triple_single = peek[0] == '\'' && peek[1] == '\'' && peek[2] == '\'';
+      if (triple_double || triple_single) {
+        value::StringData sd;
+        if (MaybeTripleQuotedString(&sd)) {
+          (*literal) = sd.value;
+          return true;
+        }
+        // Fall through if MaybeTripleQuotedString rejected the input
+        // (e.g. opening triple-quote but no closing triple within
+        // length budget). The single-quote path below will then emit
+        // a more specific error.
+      }
+    }
+  }
+
   char c0;
   if (!Char1(&c0)) {
     return false;
   }
-
-  // TODO: Allow triple-quotated string?
 
   bool single_quote{false};
 
@@ -3148,6 +3172,19 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
   }
 
   uint32_t tyid = value::GetTypeId(vartype);
+
+  // `metaName = None` is USD's ValueBlock — an explicitly empty value.
+  // Common for array-typed metas (e.g. `apiSchemas = None` to clear
+  // an inherited list). The downstream meta-reconstruction code
+  // handles the ValueBlock case per-meta (see usda-reader.cc:
+  // ReconstructPrimMeta for `apiSchemas`, `variantSets`, etc.).
+  if (array_qual) {
+    if (MaybeNone()) {
+      var.set_value(value::ValueBlock());
+      (*outvar) = var;
+      return true;
+    }
+  }
 
 #define PARSE_BASE_TYPE(__ty)                                     \
   case value::TypeTraits<__ty>::type_id(): {                      \

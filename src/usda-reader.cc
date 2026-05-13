@@ -1508,6 +1508,17 @@ class USDAReader::Impl {
         }
       } else if (meta.first == "apiSchemas") {
         DCOUT("apiSchemas. type = " << var.type_name());
+        // `apiSchemas = None` -> explicit empty list (clears any
+        // previously authored prepend/append/etc. on this prim).
+        if (var.is_blocked()) {
+          if (listEditQual != ListEditQual::ResetToExplicit) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("`apiSchemas = None` must be unqualified (explicit), but has qualifier `{}`", to_string(listEditQual)));
+          }
+          APISchemas empty;
+          empty.listOpQual = ListEditQual::ResetToExplicit;
+          out->set_apiSchemas(std::move(empty));
+          continue;
+        }
         if (var.type_name() != "token[]") {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "(Internal error?) `apiSchemas` metadataum is not type "
           "`token[]`. got type `"
