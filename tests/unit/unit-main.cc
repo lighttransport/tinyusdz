@@ -690,6 +690,8 @@ TEST_LIST = {
   // Physics + MuJoCo
   { "physics_scene_reconstruct_test", physics_scene_reconstruct_test },
   { "physics_scene_mjc_scene_api_test", physics_scene_mjc_scene_api_test },
+  { "physics_scene_newton_api_test", physics_scene_newton_api_test },
+  { "physics_scene_newton_xpbd_api_test", physics_scene_newton_xpbd_api_test },
   { "physics_revolute_joint_test", physics_revolute_joint_test },
   { "physics_prismatic_joint_test", physics_prismatic_joint_test },
   { "physics_fixed_joint_test", physics_fixed_joint_test },
@@ -701,7 +703,10 @@ TEST_LIST = {
   { "physics_prismatic_state_init_test", physics_prismatic_state_init_test },
   { "physics_joint_physx_state_to_json_test", physics_joint_physx_state_to_json_test },
   { "physics_joint_mjc_usdc_roundtrip_test", physics_joint_mjc_usdc_roundtrip_test },
+  { "physics_joint_newton_mimic_api_test", physics_joint_newton_mimic_api_test },
   { "mjc_actuator_test", mjc_actuator_test },
+  { "newton_actuator_test", newton_actuator_test },
+  { "newton_actuator_extended_api_test", newton_actuator_extended_api_test },
   { "mjc_tendon_test", mjc_tendon_test },
   { "mjc_keyframe_test", mjc_keyframe_test },
   { "physics_pprint_roundtrip_test", physics_pprint_roundtrip_test },
@@ -712,6 +717,8 @@ TEST_LIST = {
   { "physics_collision_group_invert_test", physics_collision_group_invert_test },
   { "physics_drive_limit_api_test", physics_drive_limit_api_test },
   { "physics_mesh_collider_convention_test", physics_mesh_collider_convention_test },
+  { "physics_newton_collision_material_api_test", physics_newton_collision_material_api_test },
+  { "urdf_json_newton_api_export_test", urdf_json_newton_api_export_test },
   // IK solver
   { "ik_forward_kinematics_test", ik_forward_kinematics_test },
   { "ik_ccd_solve_test", ik_ccd_solve_test },

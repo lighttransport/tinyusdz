@@ -1,22 +1,26 @@
-# USD Physics and MuJoCo mjcPhysics Schema Reference
+# USD Physics, MuJoCo mjcPhysics, and Newton Schema Reference
 
-This document describes the USD Physics schema and MuJoCo's **mjcPhysics** custom schema
-extension as implemented in TinyUSDZ.
+This document describes the USD Physics schema, MuJoCo's **mjcPhysics** custom
+schema extension, and Newton's USD physics schema as implemented in TinyUSDZ.
 
 ## Overview
 
-TinyUSDZ supports two physics schema families:
+TinyUSDZ supports three physics schema families:
 
 - **UsdPhysics** (standard) — rigid bodies, collisions, joints, materials, scenes
 - **mjcPhysics** (MuJoCo extension) — simulation options, solver params, actuators,
   tendons, keyframes
+- **Newton physics** (Newton extension) — solver settings, collision/material
+  parameters, mimic joints, and `NewtonActuator`
 
-The mjcPhysics schema extends standard `UsdPhysics` (RigidBodyAPI, CollisionAPI, etc.) with
-MuJoCo-specific attributes. Both the standard and custom APIs are applied together on prims.
+The custom schemas extend standard `UsdPhysics` (RigidBodyAPI, CollisionAPI,
+etc.) with engine-specific attributes. Standard and custom APIs are usually
+applied together on the same prims.
 
 ### Source Reference
 
 - MuJoCo mjcPhysics schema: `schema.usda` from MuJoCo's `src/experimental/usd/mjcPhysics/`
+- Newton schema: `/mnt/nvme02/work/newton-usd-schemas/newton_usd_schemas/generatedSchema.usda`
 - USD Physics schema: OpenUSD `pxr/usd/usdPhysics/`
 
 ### PhysicsScene Attributes
@@ -27,6 +31,103 @@ Per the official USD Physics schema (`pxr.UsdPhysics.Scene`):
 |---|---|---|---|
 | `physics:gravityDirection` | `vector3f` | `TypedAttribute<value::vector3f>` | Gravity direction unit vector |
 | `physics:gravityMagnitude` | `float` | `TypedAttribute<float>` | Gravity magnitude (m/s^2) |
+
+---
+
+## Newton Physics Implementation
+
+TinyUSDZ recognizes the Newton API schemas listed in
+`newton_usd_schemas/generatedSchema.usda`:
+
+- Scene APIs: `NewtonSceneAPI`, `NewtonXpbdSceneAPI`, `NewtonKaminoSceneAPI`
+- Rigid/collision/material APIs: `NewtonArticulationRootAPI`,
+  `NewtonCollisionAPI`, `NewtonMeshCollisionAPI`, `NewtonMaterialAPI`
+- Joint API: `NewtonMimicAPI`
+- Actuator APIs: `NewtonActuatorDelayAPI`, `NewtonPDControlAPI`,
+  `NewtonPIDControlAPI`, `NewtonNeuralControlAPI`,
+  `NewtonMaxEffortClampingAPI`, `NewtonDCMotorClampingAPI`,
+  `NewtonPositionBasedClampingAPI`, plus their base marker APIs
+
+### Typed vs. Generic Storage
+
+TinyUSDZ has typed C++ storage for the Newton data that maps cleanly onto the
+existing physics prim model:
+
+| Schema | TinyUSDZ representation |
+|---|---|
+| `NewtonSceneAPI` | `PhysicsScene::newtonScene` |
+| `NewtonXpbdSceneAPI` | `PhysicsScene::newtonXpbdScene` |
+| `NewtonKaminoSceneAPI` | `PhysicsScene::newtonKaminoScene` |
+| `NewtonMimicAPI` | `PhysicsJointBase::newtonMimic` |
+| `NewtonActuator` | Concrete `NewtonActuator` prim |
+
+Newton collision, mesh-collision, material, and articulation-root APIs are
+recognized in `apiSchemas`; their `newton:*` attributes are preserved in each
+host prim's generic `props` map. This avoids a broad applied-API storage
+redesign while still round-tripping authored Newton assets.
+
+### Round-Trip Behavior
+
+USDA and USDC parsing preserve Newton `apiSchemas` as known schemas, not as
+unknown-schema fallbacks. The reconstruct path consumes typed Newton scene,
+mimic, and actuator properties into their C++ structs; `sconv-physics.cc`
+re-emits those fields during USDC writing so they do not disappear when the
+generic property map is empty.
+
+### Newton USDA Examples
+
+```usda
+def PhysicsScene "PhysicsScene" (
+    prepend apiSchemas = ["NewtonSceneAPI"]
+)
+{
+    vector3f physics:gravityDirection = (0, 0, -1)
+    float physics:gravityMagnitude = 9.81
+    uniform int newton:maxSolverIterations = 100
+    uniform int newton:timeStepsPerSecond = 500
+    bool newton:gravityEnabled = true
+}
+```
+
+```usda
+def Mesh "Collider" (
+    prepend apiSchemas = [
+        "PhysicsCollisionAPI",
+        "PhysicsMeshCollisionAPI",
+        "NewtonCollisionAPI",
+        "NewtonMeshCollisionAPI"
+    ]
+)
+{
+    uniform token physics:approximation = "convexHull"
+    float newton:contactMargin = 0.005
+    float newton:contactGap = 0
+    uniform int newton:maxHullVertices = -1
+}
+```
+
+```usda
+def PhysicsRevoluteJoint "Follower" (
+    prepend apiSchemas = ["NewtonMimicAPI"]
+)
+{
+    rel newton:mimicJoint = </Leader>
+    float newton:mimicCoef0 = 0
+    float newton:mimicCoef1 = -1
+}
+```
+
+```usda
+def NewtonActuator "FingerDrive" (
+    prepend apiSchemas = ["NewtonPDControlAPI", "NewtonMaxEffortClampingAPI"]
+)
+{
+    rel newton:targets = </World/Joint1>
+    float newton:kp = 120
+    float newton:kd = 4
+    float newton:maxEffort = 30
+}
+```
 
 ---
 

@@ -67,10 +67,11 @@ struct Stats {
   size_t joints{0};
   size_t visuals{0};
   size_t collisions{0};
+  size_t actuators{0};
 };
 
 void PrintHelp() {
-  std::cout << R"(Native URDF/MJCF -> USD Physics + MuJoCo exporter
+  std::cout << R"(Native URDF/MJCF -> USD Physics + MuJoCo + Newton exporter
 
 Usage:
   urdf-to-usd <scene.xml> --input-format mjcf --format usdc -o /tmp/robot.usdc
@@ -561,6 +562,25 @@ nlohmann::json MeshPayloadToJson(const MeshPayload &payload) {
         {"indices", payload.mesh.indices}}}};
 }
 
+void AddGeomPhysicsAttrs(const pugi::xml_node &geom_node,
+                         nlohmann::json *geom_json) {
+  if (!geom_json) return;
+  if (HasAttr(geom_node, "group")) {
+    (*geom_json)["group"] = static_cast<int32_t>(
+        ParseDoubleAttr(geom_node, "group", 3.0));
+  }
+  if (HasAttr(geom_node, "condim")) {
+    (*geom_json)["condim"] = static_cast<int32_t>(
+        ParseDoubleAttr(geom_node, "condim", 3.0));
+  }
+  if (HasAttr(geom_node, "margin")) {
+    (*geom_json)["mjc"]["margin"] = ParseDoubleAttr(geom_node, "margin", 0.0);
+  }
+  if (HasAttr(geom_node, "solmix")) {
+    (*geom_json)["mjc"]["solmix"] = ParseDoubleAttr(geom_node, "solmix", 1.0);
+  }
+}
+
 std::map<std::string, MeshAsset> CollectMujocoAssets(
     const pugi::xml_node &root, const fs::path &base_dir) {
   std::map<std::string, MeshAsset> assets;
@@ -765,6 +785,58 @@ void AddJointJson(const pugi::xml_node &body_node,
   joints->push_back(joint);
 }
 
+void AddMujocoActuatorsJson(const pugi::xml_node &root,
+                            nlohmann::json *actuators, Stats *stats) {
+  if (!actuators) return;
+  const auto actuator_root = Child(root, "actuator");
+  if (!actuator_root) return;
+
+  for (const auto &act_node : actuator_root.children()) {
+    const std::string joint = Attr(act_node, "joint");
+    if (joint.empty()) {
+      continue;
+    }
+    const std::string type = act_node.name();
+    nlohmann::json act = nlohmann::json::object();
+    act["name"] = Attr(act_node, "name", type + "_" + joint);
+    act["joint"] = joint;
+    act["control"] = "pd";
+
+    if (HasAttr(act_node, "kp")) {
+      act["kp"] = ParseDoubleAttr(act_node, "kp", 0.0);
+    } else {
+      const auto gain = ParseDoubles(Attr(act_node, "gainprm"));
+      if (!gain.empty()) {
+        act["kp"] = gain[0];
+      }
+    }
+    if (HasAttr(act_node, "kv")) {
+      act["kd"] = ParseDoubleAttr(act_node, "kv", 0.0);
+    } else {
+      const auto bias = ParseDoubles(Attr(act_node, "biasprm"));
+      if (bias.size() >= 3) {
+        act["kd"] = std::abs(bias[2]);
+      }
+    }
+    const auto force_range = ParseDoubles(Attr(act_node, "forcerange"));
+    if (force_range.size() >= 2) {
+      act["maxEffort"] = std::max(std::abs(force_range[0]),
+                                  std::abs(force_range[1]));
+    }
+    const auto ctrl_range = ParseDoubles(Attr(act_node, "ctrlrange"));
+    if (type == "motor" && ctrl_range.size() >= 2) {
+      act["constEffort"] = std::max(std::abs(ctrl_range[0]),
+                                    std::abs(ctrl_range[1]));
+    }
+    if (HasAttr(act_node, "delay")) {
+      act["delaySteps"] = static_cast<int32_t>(
+          ParseDoubleAttr(act_node, "delay", 1.0));
+    }
+    actuators->push_back(std::move(act));
+    if (stats) stats->actuators++;
+  }
+}
+
 bool VisitMujocoBody(const pugi::xml_node &body_node,
                      const std::string &parent_name,
                      const std::map<std::string, MeshAsset> &assets,
@@ -791,10 +863,13 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
       return false;
     }
     if (visual) {
-      link["visuals"].push_back(MeshPayloadToJson(payload));
+      nlohmann::json visual_json = MeshPayloadToJson(payload);
+      AddGeomPhysicsAttrs(geom_node, &visual_json);
+      link["visuals"].push_back(std::move(visual_json));
       stats->visuals++;
     } else {
       nlohmann::json col = MeshPayloadToJson(payload);
+      AddGeomPhysicsAttrs(geom_node, &col);
       // Default approximation `convexHull` matches
       // `src/tydra/urdf-to-usd.cc::AddCollisionAPIs` and the
       // mujoco-usd-converter convention (one Mesh per geom +
@@ -852,11 +927,13 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
 
   nlohmann::json links = nlohmann::json::array();
   nlohmann::json joints = nlohmann::json::array();
+  nlohmann::json actuators = nlohmann::json::array();
   for (const auto &body : Children(worldbody, "body")) {
     if (!VisitMujocoBody(body, "", assets, opts, &links, &joints, stats, err)) {
       return false;
     }
   }
+  AddMujocoActuatorsJson(root, &actuators, stats);
 
   (*payload) = {
       {"name", Attr(root, "model", input_filename.stem().string())},
@@ -864,7 +941,8 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
       {"gravity", opts.up_axis == "Z" ? nlohmann::json::array({0, 0, -1})
                                        : nlohmann::json::array({0, -1, 0})},
       {"links", std::move(links)},
-      {"joints", std::move(joints)}};
+      {"joints", std::move(joints)},
+      {"actuators", std::move(actuators)}};
   const auto option = Child(root, "option");
   if (option && HasAttr(option, "timestep")) {
     (*payload)["timestep"] = ParseDoubleAttr(option, "timestep", 0.0);
@@ -965,6 +1043,6 @@ int main(int argc, char **argv) {
   std::cout << "Converted " << payload.value("name", std::string("scene")) << ": "
             << stats.links << " links, " << stats.joints << " joints, "
             << stats.visuals << " visual meshes, " << stats.collisions
-            << " collisions.\n";
+            << " collisions, " << stats.actuators << " Newton actuators.\n";
   return EXIT_SUCCESS;
 }

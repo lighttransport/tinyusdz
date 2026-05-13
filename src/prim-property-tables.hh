@@ -640,6 +640,65 @@
   X("mjc:mpos", mpos) \
   X("mjc:mquat", mquat)
 
+// ============================================================================
+// Newton Physics Property Tables
+// ============================================================================
+
+#define NEWTON_SCENE_TYPED_ATTRS(X) \
+  X("newton:maxSolverIterations", newtonScene->maxSolverIterations) \
+  X("newton:timeStepsPerSecond", newtonScene->timeStepsPerSecond) \
+  X("newton:gravityEnabled", newtonScene->gravityEnabled)
+
+#define NEWTON_XPBD_SCENE_TYPED_ATTRS(X) \
+  X("newton:xpbd:softBodyRelaxation", newtonXpbdScene->softBodyRelaxation) \
+  X("newton:xpbd:softContactRelaxation", newtonXpbdScene->softContactRelaxation) \
+  X("newton:xpbd:jointLinearRelaxation", newtonXpbdScene->jointLinearRelaxation) \
+  X("newton:xpbd:jointAngularRelaxation", newtonXpbdScene->jointAngularRelaxation) \
+  X("newton:xpbd:jointLinearCompliance", newtonXpbdScene->jointLinearCompliance) \
+  X("newton:xpbd:jointAngularCompliance", newtonXpbdScene->jointAngularCompliance) \
+  X("newton:xpbd:rigidContactRelaxation", newtonXpbdScene->rigidContactRelaxation) \
+  X("newton:xpbd:rigidContactConWeighting", newtonXpbdScene->rigidContactConWeighting) \
+  X("newton:xpbd:angularDamping", newtonXpbdScene->angularDamping) \
+  X("newton:xpbd:restitutionEnabled", newtonXpbdScene->restitutionEnabled)
+
+#define NEWTON_KAMINO_SCENE_TYPED_ATTRS(X) \
+  X("newton:kamino:padmm:primalTolerance", newtonKaminoScene->padmmPrimalTolerance) \
+  X("newton:kamino:padmm:dualTolerance", newtonKaminoScene->padmmDualTolerance) \
+  X("newton:kamino:padmm:complementarityTolerance", newtonKaminoScene->padmmComplementarityTolerance) \
+  X("newton:kamino:padmm:warmstarting", newtonKaminoScene->padmmWarmstarting) \
+  X("newton:kamino:padmm:useAcceleration", newtonKaminoScene->padmmUseAcceleration) \
+  X("newton:kamino:constraints:usePreconditioning", newtonKaminoScene->constraintsUsePreconditioning) \
+  X("newton:kamino:constraints:alpha", newtonKaminoScene->constraintsAlpha) \
+  X("newton:kamino:constraints:beta", newtonKaminoScene->constraintsBeta) \
+  X("newton:kamino:constraints:gamma", newtonKaminoScene->constraintsGamma) \
+  X("newton:kamino:jointCorrection", newtonKaminoScene->jointCorrection)
+
+#define NEWTON_MIMIC_TYPED_ATTRS(X) \
+  X("newton:mimicEnabled", newtonMimic->mimicEnabled) \
+  X("newton:mimicCoef0", newtonMimic->mimicCoef0) \
+  X("newton:mimicCoef1", newtonMimic->mimicCoef1)
+
+#define NEWTON_MIMIC_RELS(X) \
+  X("newton:mimicJoint", newtonMimic->mimicJoint)
+
+#define NEWTON_ACTUATOR_TYPED_ATTRS(X) \
+  X("newton:delaySteps", delaySteps) \
+  X("newton:constEffort", constEffort) \
+  X("newton:kp", kp) \
+  X("newton:kd", kd) \
+  X("newton:ki", ki) \
+  X("newton:integralMax", integralMax) \
+  X("newton:modelPath", modelPath) \
+  X("newton:maxEffort", maxEffort) \
+  X("newton:maxMotorEffort", maxMotorEffort) \
+  X("newton:saturationEffort", saturationEffort) \
+  X("newton:velocityLimit", velocityLimit) \
+  X("newton:lookupPositions", lookupPositions) \
+  X("newton:lookupEfforts", lookupEfforts)
+
+#define NEWTON_ACTUATOR_RELS(X) \
+  X("newton:targets", targets)
+
 // PhysicsCollisionGroup
 #define PHYSICS_COLLISION_GROUP_TYPED_ATTRS(X) \
   X("physics:mergeGroup", mergeGroup) \
@@ -700,4 +759,3 @@
   X("endTime", endTime) \
   X("mediaOffset", mediaOffset) \
   X("gain", gain)
-

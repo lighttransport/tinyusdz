@@ -119,6 +119,55 @@ static std::string print_mjc_joint_api(const MjcJointAPI &api, uint32_t indent) 
   return ss.str();
 }
 
+static std::string print_newton_scene_api(const NewtonSceneAPI &api, uint32_t indent) {
+  std::stringstream ss;
+  ss << print_typed_attr(api.maxSolverIterations, "newton:maxSolverIterations", indent);
+  ss << print_typed_attr(api.timeStepsPerSecond, "newton:timeStepsPerSecond", indent);
+  ss << print_typed_attr(api.gravityEnabled, "newton:gravityEnabled", indent);
+  return ss.str();
+}
+
+static std::string print_newton_xpbd_scene_api(const NewtonXpbdSceneAPI &api,
+                                               uint32_t indent) {
+  std::stringstream ss;
+  ss << print_typed_attr(api.softBodyRelaxation, "newton:xpbd:softBodyRelaxation", indent);
+  ss << print_typed_attr(api.softContactRelaxation, "newton:xpbd:softContactRelaxation", indent);
+  ss << print_typed_attr(api.jointLinearRelaxation, "newton:xpbd:jointLinearRelaxation", indent);
+  ss << print_typed_attr(api.jointAngularRelaxation, "newton:xpbd:jointAngularRelaxation", indent);
+  ss << print_typed_attr(api.jointLinearCompliance, "newton:xpbd:jointLinearCompliance", indent);
+  ss << print_typed_attr(api.jointAngularCompliance, "newton:xpbd:jointAngularCompliance", indent);
+  ss << print_typed_attr(api.rigidContactRelaxation, "newton:xpbd:rigidContactRelaxation", indent);
+  ss << print_typed_attr(api.rigidContactConWeighting, "newton:xpbd:rigidContactConWeighting", indent);
+  ss << print_typed_attr(api.angularDamping, "newton:xpbd:angularDamping", indent);
+  ss << print_typed_attr(api.restitutionEnabled, "newton:xpbd:restitutionEnabled", indent);
+  return ss.str();
+}
+
+static std::string print_newton_kamino_scene_api(const NewtonKaminoSceneAPI &api,
+                                                 uint32_t indent) {
+  std::stringstream ss;
+  ss << print_typed_attr(api.padmmPrimalTolerance, "newton:kamino:padmm:primalTolerance", indent);
+  ss << print_typed_attr(api.padmmDualTolerance, "newton:kamino:padmm:dualTolerance", indent);
+  ss << print_typed_attr(api.padmmComplementarityTolerance, "newton:kamino:padmm:complementarityTolerance", indent);
+  ss << print_typed_attr(api.padmmWarmstarting, "newton:kamino:padmm:warmstarting", indent);
+  ss << print_typed_attr(api.padmmUseAcceleration, "newton:kamino:padmm:useAcceleration", indent);
+  ss << print_typed_attr(api.constraintsUsePreconditioning, "newton:kamino:constraints:usePreconditioning", indent);
+  ss << print_typed_attr(api.constraintsAlpha, "newton:kamino:constraints:alpha", indent);
+  ss << print_typed_attr(api.constraintsBeta, "newton:kamino:constraints:beta", indent);
+  ss << print_typed_attr(api.constraintsGamma, "newton:kamino:constraints:gamma", indent);
+  ss << print_typed_attr(api.jointCorrection, "newton:kamino:jointCorrection", indent);
+  return ss.str();
+}
+
+static std::string print_newton_mimic_api(const NewtonMimicAPI &api, uint32_t indent) {
+  std::stringstream ss;
+  ss << print_typed_attr(api.mimicEnabled, "newton:mimicEnabled", indent);
+  ss << print_rel_prop(api.mimicJoint, "newton:mimicJoint", indent);
+  ss << print_typed_attr(api.mimicCoef0, "newton:mimicCoef0", indent);
+  ss << print_typed_attr(api.mimicCoef1, "newton:mimicCoef1", indent);
+  return ss.str();
+}
+
 // Helper: print PhysicsJointBase attributes
 template <typename JointT>
 static std::string print_joint_base(const JointT &joint, uint32_t indent) {
@@ -138,6 +187,9 @@ static std::string print_joint_base(const JointT &joint, uint32_t indent) {
 
   if (joint.mjcJoint.has_value()) {
     ss << print_mjc_joint_api(joint.mjcJoint.value(), indent);
+  }
+  if (joint.newtonMimic.has_value()) {
+    ss << print_newton_mimic_api(joint.newtonMimic.value(), indent);
   }
 
   return ss.str();
@@ -175,6 +227,15 @@ std::string to_string(const PhysicsScene &scene, const uint32_t indent,
 
   if (scene.mjcScene.has_value()) {
     ss << print_mjc_scene_api(scene.mjcScene.value(), indent + 1);
+  }
+  if (scene.newtonScene.has_value()) {
+    ss << print_newton_scene_api(scene.newtonScene.value(), indent + 1);
+  }
+  if (scene.newtonXpbdScene.has_value()) {
+    ss << print_newton_xpbd_scene_api(scene.newtonXpbdScene.value(), indent + 1);
+  }
+  if (scene.newtonKaminoScene.has_value()) {
+    ss << print_newton_kamino_scene_api(scene.newtonKaminoScene.value(), indent + 1);
   }
 
   PRINT_PRIM_FOOTER(scene);
@@ -314,6 +375,31 @@ std::string to_string(const MjcActuator &actuator, const uint32_t indent,
   ss << print_typed_attr(actuator.biasPrm, "mjc:biasPrm", indent + 1);
   ss << print_typed_attr(actuator.actEarly, "mjc:actEarly", indent + 1);
   ss << print_typed_attr(actuator.inheritRange, "mjc:inheritRange", indent + 1);
+
+  PRINT_PRIM_FOOTER(actuator);
+  return ss.str();
+}
+
+std::string to_string(const NewtonActuator &actuator, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+
+  PRINT_PRIM_HEADER(actuator, "NewtonActuator");
+
+  ss << print_rel_prop(actuator.targets, "newton:targets", indent + 1);
+  ss << print_typed_attr(actuator.delaySteps, "newton:delaySteps", indent + 1);
+  ss << print_typed_attr(actuator.constEffort, "newton:constEffort", indent + 1);
+  ss << print_typed_attr(actuator.kp, "newton:kp", indent + 1);
+  ss << print_typed_attr(actuator.kd, "newton:kd", indent + 1);
+  ss << print_typed_attr(actuator.ki, "newton:ki", indent + 1);
+  ss << print_typed_attr(actuator.integralMax, "newton:integralMax", indent + 1);
+  ss << print_typed_attr(actuator.modelPath, "newton:modelPath", indent + 1);
+  ss << print_typed_attr(actuator.maxEffort, "newton:maxEffort", indent + 1);
+  ss << print_typed_attr(actuator.maxMotorEffort, "newton:maxMotorEffort", indent + 1);
+  ss << print_typed_attr(actuator.saturationEffort, "newton:saturationEffort", indent + 1);
+  ss << print_typed_attr(actuator.velocityLimit, "newton:velocityLimit", indent + 1);
+  ss << print_typed_attr(actuator.lookupPositions, "newton:lookupPositions", indent + 1);
+  ss << print_typed_attr(actuator.lookupEfforts, "newton:lookupEfforts", indent + 1);
 
   PRINT_PRIM_FOOTER(actuator);
   return ss.str();

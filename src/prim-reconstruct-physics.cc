@@ -16,6 +16,7 @@
 
 #include "usdPhysics.hh"
 #include "mjcPhysics.hh"
+#include "newtonPhysics.hh"
 
 #include "common-macros.inc"
 #include "value-types.hh"
@@ -72,17 +73,14 @@ static bool ReconstructJointBaseProperties(
   (void)err;
   (void)options;
 
-  // Check for mjc: properties to auto-create MjcJointAPI. Without this,
-  // mjc:* attributes would fall through to the per-type ADD_PROPERTY tail
-  // and stay in `joint->props` as untyped properties — readable but not
-  // typed-accessible. PhysX (`physxJoint:* / physxLimit:*`) and Newton
-  // (`state:* `) namespaces are intentionally left as untyped properties
-  // on `joint->props`: there is no in-memory typed schema for them, so
-  // the ADD_PROPERTY tail in each ReconstructPrim<Joint> specialization
-  // is exactly the right preservation point. The writer side handles
-  // round-trip via the generic props-map iteration in stage-converter.cc.
+  // Check for extension properties to auto-create typed API structs. Other
+  // vendor namespaces (physxJoint:* / physxLimit:* / state:*) intentionally
+  // remain as untyped properties and round-trip through the generic props map.
   if (!joint->mjcJoint.has_value() && HasPropertyPrefix(properties, "mjc:")) {
     joint->mjcJoint = MjcJointAPI();
+  }
+  if (!joint->newtonMimic.has_value() && HasPropertyPrefix(properties, "newton:")) {
+    joint->newtonMimic = NewtonMimicAPI();
   }
 
   for (auto &prop : properties) {
@@ -109,6 +107,10 @@ bool ReconstructPrim<PhysicsJoint>(
     PHYSICS_JOINT_BASE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     PHYSICS_JOINT_BASE_RELS(EXPAND_SINGLE_REL)
     if (joint->mjcJoint.has_value()) { MJC_JOINT_TYPED_ATTRS(EXPAND_TYPED_ATTR) }
+    if (joint->newtonMimic.has_value()) {
+      NEWTON_MIMIC_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+      NEWTON_MIMIC_RELS(EXPAND_SINGLE_REL)
+    }
     ADD_PROPERTY(table, prop, PhysicsJoint, joint->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -138,6 +140,20 @@ bool ReconstructPrim<PhysicsScene>(
   if (!scene->mjcScene.has_value() && HasPropertyPrefix(properties, "mjc:")) {
     scene->mjcScene = MjcSceneAPI();
   }
+  if (!scene->newtonScene.has_value() && (
+      HasPropertyPrefix(properties, "newton:maxSolverIterations") ||
+      HasPropertyPrefix(properties, "newton:timeStepsPerSecond") ||
+      HasPropertyPrefix(properties, "newton:gravityEnabled"))) {
+    scene->newtonScene = NewtonSceneAPI();
+  }
+  if (!scene->newtonXpbdScene.has_value() &&
+      HasPropertyPrefix(properties, "newton:xpbd:")) {
+    scene->newtonXpbdScene = NewtonXpbdSceneAPI();
+  }
+  if (!scene->newtonKaminoScene.has_value() &&
+      HasPropertyPrefix(properties, "newton:kamino:")) {
+    scene->newtonKaminoScene = NewtonKaminoSceneAPI();
+  }
 
 #define PRIM_PTR_ scene
 
@@ -148,6 +164,15 @@ bool ReconstructPrim<PhysicsScene>(
       MJC_SCENE_OPTION_TYPED_ATTRS(EXPAND_TYPED_ATTR)
       MJC_SCENE_FLAG_TYPED_ATTRS(EXPAND_TYPED_ATTR)
       MJC_SCENE_COMPILER_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    }
+    if (scene->newtonScene.has_value()) {
+      NEWTON_SCENE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    }
+    if (scene->newtonXpbdScene.has_value()) {
+      NEWTON_XPBD_SCENE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    }
+    if (scene->newtonKaminoScene.has_value()) {
+      NEWTON_KAMINO_SCENE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     }
 
     ADD_PROPERTY(table, prop, PhysicsScene, scene->props)
@@ -176,6 +201,10 @@ bool ReconstructPrim<PhysicsRevoluteJoint>(
     PHYSICS_REVOLUTE_JOINT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     PHYSICS_JOINT_BASE_RELS(EXPAND_SINGLE_REL)
     if (joint->mjcJoint.has_value()) { MJC_JOINT_TYPED_ATTRS(EXPAND_TYPED_ATTR) }
+    if (joint->newtonMimic.has_value()) {
+      NEWTON_MIMIC_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+      NEWTON_MIMIC_RELS(EXPAND_SINGLE_REL)
+    }
     ADD_PROPERTY(table, prop, PhysicsRevoluteJoint, joint->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -200,6 +229,10 @@ bool ReconstructPrim<PhysicsPrismaticJoint>(
     PHYSICS_PRISMATIC_JOINT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     PHYSICS_JOINT_BASE_RELS(EXPAND_SINGLE_REL)
     if (joint->mjcJoint.has_value()) { MJC_JOINT_TYPED_ATTRS(EXPAND_TYPED_ATTR) }
+    if (joint->newtonMimic.has_value()) {
+      NEWTON_MIMIC_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+      NEWTON_MIMIC_RELS(EXPAND_SINGLE_REL)
+    }
     ADD_PROPERTY(table, prop, PhysicsPrismaticJoint, joint->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -224,6 +257,10 @@ bool ReconstructPrim<PhysicsSphericalJoint>(
     PHYSICS_SPHERICAL_JOINT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     PHYSICS_JOINT_BASE_RELS(EXPAND_SINGLE_REL)
     if (joint->mjcJoint.has_value()) { MJC_JOINT_TYPED_ATTRS(EXPAND_TYPED_ATTR) }
+    if (joint->newtonMimic.has_value()) {
+      NEWTON_MIMIC_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+      NEWTON_MIMIC_RELS(EXPAND_SINGLE_REL)
+    }
     ADD_PROPERTY(table, prop, PhysicsSphericalJoint, joint->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -247,6 +284,10 @@ bool ReconstructPrim<PhysicsFixedJoint>(
     PHYSICS_JOINT_BASE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     PHYSICS_JOINT_BASE_RELS(EXPAND_SINGLE_REL)
     if (joint->mjcJoint.has_value()) { MJC_JOINT_TYPED_ATTRS(EXPAND_TYPED_ATTR) }
+    if (joint->newtonMimic.has_value()) {
+      NEWTON_MIMIC_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+      NEWTON_MIMIC_RELS(EXPAND_SINGLE_REL)
+    }
     ADD_PROPERTY(table, prop, PhysicsFixedJoint, joint->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -271,6 +312,10 @@ bool ReconstructPrim<PhysicsDistanceJoint>(
     PHYSICS_DISTANCE_JOINT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     PHYSICS_JOINT_BASE_RELS(EXPAND_SINGLE_REL)
     if (joint->mjcJoint.has_value()) { MJC_JOINT_TYPED_ATTRS(EXPAND_TYPED_ATTR) }
+    if (joint->newtonMimic.has_value()) {
+      NEWTON_MIMIC_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+      NEWTON_MIMIC_RELS(EXPAND_SINGLE_REL)
+    }
     ADD_PROPERTY(table, prop, PhysicsDistanceJoint, joint->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -293,6 +338,27 @@ bool ReconstructPrim<MjcActuator>(
     MJC_ACTUATOR_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     MJC_ACTUATOR_RELS(EXPAND_SINGLE_REL)
     ADD_PROPERTY(table, prop, MjcActuator, actuator->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+#undef PRIM_PTR_
+  return true;
+}
+
+// ============================================================================
+// NewtonActuator
+// ============================================================================
+template <>
+bool ReconstructPrim<NewtonActuator>(
+    const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
+    NewtonActuator *actuator, std::string *warn, std::string *err,
+    const PrimReconstructOptions &options) {
+  (void)spec; (void)references; (void)options;
+  std::set<std::string> table;
+#define PRIM_PTR_ actuator
+  for (auto &prop : properties) {
+    NEWTON_ACTUATOR_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    NEWTON_ACTUATOR_RELS(EXPAND_MULTI_REL)
+    ADD_PROPERTY(table, prop, NewtonActuator, actuator->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 #undef PRIM_PTR_
@@ -391,6 +457,7 @@ RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PhysicsFixedJoint)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PhysicsDistanceJoint)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PhysicsCollisionGroup)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(MjcActuator)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(NewtonActuator)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(MjcTendon)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(MjcKeyframe)
 

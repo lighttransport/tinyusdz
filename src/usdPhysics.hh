@@ -33,8 +33,10 @@
 #include "core/property.hh"
 #include "core/variant-types.hh"
 
-// MuJoCo API schemas are used by value in optional<> fields, so full definition needed
+// Physics extension API schemas are used by value in optional<> fields, so
+// full definitions are needed here.
 #include "mjcPhysics.hh"
+#include "newtonPhysics.hh"
 
 namespace tinyusdz {
 
@@ -152,6 +154,11 @@ struct PhysicsScene {
   // MuJoCo scene API (optional)
   nonstd::optional<MjcSceneAPI> mjcScene;
 
+  // Newton scene APIs (optional)
+  nonstd::optional<NewtonSceneAPI> newtonScene;
+  nonstd::optional<NewtonXpbdSceneAPI> newtonXpbdScene;
+  nonstd::optional<NewtonKaminoSceneAPI> newtonKaminoScene;
+
   std::pair<ListEditQual, std::vector<Reference>> references;
   std::pair<ListEditQual, std::vector<Payload>> payload;
   std::map<std::string, VariantSet> variantSet;
@@ -191,6 +198,9 @@ struct PhysicsJointBase {
 
   // MuJoCo joint API (optional)
   nonstd::optional<MjcJointAPI> mjcJoint;
+
+  // Newton mimic joint API (optional)
+  nonstd::optional<NewtonMimicAPI> newtonMimic;
 };
 
 // PhysicsJoint — generic D6 joint (all DOFs free by default)

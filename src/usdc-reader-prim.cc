@@ -49,6 +49,7 @@ EXTERN_RECONSTRUCT_PRIM(PhysicsFixedJoint);
 EXTERN_RECONSTRUCT_PRIM(PhysicsDistanceJoint);
 EXTERN_RECONSTRUCT_PRIM(PhysicsCollisionGroup);
 EXTERN_RECONSTRUCT_PRIM(MjcActuator);
+EXTERN_RECONSTRUCT_PRIM(NewtonActuator);
 EXTERN_RECONSTRUCT_PRIM(MjcTendon);
 EXTERN_RECONSTRUCT_PRIM(MjcKeyframe);
 EXTERN_RECONSTRUCT_PRIM(Preliminary_PhysicsGravitationalForce);
@@ -220,6 +221,7 @@ INSTANTIATE_RECONSTRUCT_PRIM(PhysicsFixedJoint);
 INSTANTIATE_RECONSTRUCT_PRIM(PhysicsDistanceJoint);
 INSTANTIATE_RECONSTRUCT_PRIM(PhysicsCollisionGroup);
 INSTANTIATE_RECONSTRUCT_PRIM(MjcActuator);
+INSTANTIATE_RECONSTRUCT_PRIM(NewtonActuator);
 INSTANTIATE_RECONSTRUCT_PRIM(MjcTendon);
 INSTANTIATE_RECONSTRUCT_PRIM(MjcKeyframe);
 // AR/Interactive (Apple Preliminary_*)
@@ -579,6 +581,7 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(PhysicsDistanceJoint, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(PhysicsCollisionGroup, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(MjcActuator, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(NewtonActuator, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(MjcTendon, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(MjcKeyframe, typeName, prim_name, spec)
   // AR/Interactive (Apple Preliminary_*)

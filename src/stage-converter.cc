@@ -101,6 +101,10 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   GET_PRIM_PROPS(PhysicsFixedJoint)
   GET_PRIM_PROPS(PhysicsDistanceJoint)
   GET_PRIM_PROPS(PhysicsCollisionGroup)
+  GET_PRIM_PROPS(MjcActuator)
+  GET_PRIM_PROPS(NewtonActuator)
+  GET_PRIM_PROPS(MjcTendon)
+  GET_PRIM_PROPS(MjcKeyframe)
   // UsdSkel — required so authored attributes in the props map (joints,
   // jointNames, blendShapeWeights, etc.) survive the USDC writer when the
   // typed-builtin fields are unauthored.
@@ -1268,6 +1272,18 @@ bool CrateWriter::ExtractPrimProperties(
     GET_SPEC(Skeleton)
     GET_SPEC(SkelAnimation)
     GET_SPEC(BlendShape)
+    GET_SPEC(PhysicsScene)
+    GET_SPEC(PhysicsJoint)
+    GET_SPEC(PhysicsRevoluteJoint)
+    GET_SPEC(PhysicsPrismaticJoint)
+    GET_SPEC(PhysicsSphericalJoint)
+    GET_SPEC(PhysicsFixedJoint)
+    GET_SPEC(PhysicsDistanceJoint)
+    GET_SPEC(PhysicsCollisionGroup)
+    GET_SPEC(MjcActuator)
+    GET_SPEC(NewtonActuator)
+    GET_SPEC(MjcTendon)
+    GET_SPEC(MjcKeyframe)
 #undef GET_SPEC
 spec_resolved:;
   }
@@ -1406,6 +1422,8 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractPhysicsCollisionGroupProperties(prim, prim_path, fields, err);
   } else if (type_name == "MjcActuator") {
     return ExtractMjcActuatorProperties(prim, prim_path, fields, err);
+  } else if (type_name == "NewtonActuator") {
+    return ExtractNewtonActuatorProperties(prim, prim_path, fields, err);
   } else if (type_name == "MjcTendon") {
     return ExtractMjcTendonProperties(prim, prim_path, fields, err);
   } else if (type_name == "MjcKeyframe") {

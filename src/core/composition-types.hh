@@ -81,6 +81,25 @@ struct APISchemas {
     MjcEqualityWeldAPI,
     MjcEqualityJointAPI,
 
+    // Newton physics API schemas
+    NewtonSceneAPI,
+    NewtonXpbdSceneAPI,
+    NewtonKaminoSceneAPI,
+    NewtonArticulationRootAPI,
+    NewtonCollisionAPI,
+    NewtonMeshCollisionAPI,
+    NewtonMaterialAPI,
+    NewtonMimicAPI,
+    NewtonActuatorDelayAPI,
+    NewtonActuatorControlBaseAPI,
+    NewtonPDControlAPI,
+    NewtonPIDControlAPI,
+    NewtonNeuralControlAPI,
+    NewtonActuatorClampingBaseAPI,
+    NewtonMaxEffortClampingAPI,
+    NewtonDCMotorClampingAPI,
+    NewtonPositionBasedClampingAPI,
+
     // Additional UsdPhysics API schemas
     PhysicsMassAPI,
     PhysicsFilteredPairsAPI,

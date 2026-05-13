@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// URDF -> USD Physics + MuJoCo export tester for TinyUSDZ WASM.
+// URDF/MJCF -> USD Physics + MuJoCo + Newton export tester for TinyUSDZ WASM.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -72,7 +72,7 @@ f 1/1/1 2/2/1 3/3/1
 
 function printHelp() {
   console.log(`
-URDF -> USD Physics + MuJoCo CLI tester
+URDF/MJCF -> USD Physics + MuJoCo + Newton CLI tester
 
 Usage:
   node cli/urdf-to-usd.js <robot.urdf> [options]
@@ -261,6 +261,10 @@ function parseNumbers(text, fallback = []) {
   return values.length ? values : fallback;
 }
 
+function elementText(el) {
+  return (el?.body || '').replace(/<[^>]*>/g, ' ').trim();
+}
+
 function matrixToUSDArray(matrix) {
   const e = matrix.elements;
   return [
@@ -311,6 +315,7 @@ function parseURDFMetadata(urdfText) {
   const robotEl = firstElement(urdfText, 'robot');
   const links = new Map();
   const joints = [];
+  const actuators = [];
 
   for (const linkEl of findElements(urdfText, 'link')) {
     const name = linkEl.attrs.name || `link_${links.size}`;
@@ -341,7 +346,7 @@ function parseURDFMetadata(urdfText) {
     const origin = parseNumbers(originEl?.attrs.xyz, [0, 0, 0]);
     const limitEl = firstElement(jointEl.body, 'limit');
     const dynamicsEl = firstElement(jointEl.body, 'dynamics');
-    joints.push({
+    const joint = {
       name: jointEl.attrs.name || `joint_${joints.length}`,
       type: jointEl.attrs.type || 'fixed',
       parent,
@@ -368,13 +373,41 @@ function parseURDFMetadata(urdfText) {
         stiffness: numberAttr(dynamicsEl.attrs, 'stiffness'),
         armature: numberAttr(dynamicsEl.attrs, 'armature')
       } : {}
-    });
+    };
+    const mimicEl = firstElement(jointEl.body, 'mimic');
+    if (mimicEl?.attrs?.joint) {
+      joint.mimic = {
+        joint: mimicEl.attrs.joint,
+        multiplier: numberAttr(mimicEl.attrs, 'multiplier', 1),
+        offset: numberAttr(mimicEl.attrs, 'offset', 0)
+      };
+    }
+    joints.push(joint);
+  }
+
+  const jointsByName = new Map(joints.map((joint) => [joint.name, joint]));
+  for (const transmissionEl of findElements(urdfText, 'transmission')) {
+    const jointName = firstElement(transmissionEl.body, 'joint')?.attrs.name || '';
+    if (!jointName) continue;
+    const actuatorEl = firstElement(transmissionEl.body, 'actuator');
+    const reduction = Number(elementText(firstElement(actuatorEl?.body || '', 'mechanicalReduction')));
+    const joint = jointsByName.get(jointName);
+    const act = {
+      name: actuatorEl?.attrs.name || `${jointName}_actuator`,
+      joint: jointName,
+      control: 'pd'
+    };
+    const effort = joint?.limit?.effort;
+    if (Number.isFinite(effort) && effort > 0) act.maxEffort = effort;
+    if (Number.isFinite(reduction) && reduction !== 0) act.constEffort = Math.abs(reduction);
+    actuators.push(act);
   }
 
   return {
     name: robotEl?.attrs.name || '',
     links,
-    joints
+    joints,
+    actuators
   };
 }
 
@@ -787,6 +820,63 @@ function shapePayloadForMujocoGeom(geomNode, originMatrix, fallbackName) {
   return null;
 }
 
+function addMujocoPhysicsAttrs(payload, geomNode) {
+  if (!payload || !geomNode?.attrs) return payload;
+  const group = numberAttr(geomNode.attrs, 'group');
+  if (Number.isFinite(group)) payload.group = group;
+  const condim = numberAttr(geomNode.attrs, 'condim');
+  if (Number.isFinite(condim)) payload.condim = condim;
+  const margin = numberAttr(geomNode.attrs, 'margin');
+  const solmix = numberAttr(geomNode.attrs, 'solmix');
+  if (Number.isFinite(margin) || Number.isFinite(solmix)) {
+    payload.mjc = payload.mjc || {};
+    if (Number.isFinite(margin)) payload.mjc.margin = margin;
+    if (Number.isFinite(solmix)) payload.mjc.solmix = solmix;
+  }
+  return payload;
+}
+
+function buildMujocoActuators(root) {
+  const actuators = [];
+  for (const actuatorRoot of childElements(root, 'actuator')) {
+    for (const actNode of childElements(actuatorRoot)) {
+      const joint = actNode.attrs.joint || '';
+      if (!joint) continue;
+      const act = {
+        name: actNode.attrs.name || `${actNode.name}_${joint}`,
+        joint,
+        control: 'pd'
+      };
+      const kp = numberAttr(actNode.attrs, 'kp');
+      if (Number.isFinite(kp)) {
+        act.kp = kp;
+      } else {
+        const gain = parseNumbers(actNode.attrs.gainprm, []);
+        if (gain.length) act.kp = gain[0];
+      }
+      const kd = numberAttr(actNode.attrs, 'kv');
+      if (Number.isFinite(kd)) {
+        act.kd = kd;
+      } else {
+        const bias = parseNumbers(actNode.attrs.biasprm, []);
+        if (bias.length >= 3) act.kd = Math.abs(bias[2]);
+      }
+      const forceRange = parseNumbers(actNode.attrs.forcerange, []);
+      if (forceRange.length >= 2) {
+        act.maxEffort = Math.max(Math.abs(forceRange[0]), Math.abs(forceRange[1]));
+      }
+      const ctrlRange = parseNumbers(actNode.attrs.ctrlrange, []);
+      if (actNode.name === 'motor' && ctrlRange.length >= 2) {
+        act.constEffort = Math.max(Math.abs(ctrlRange[0]), Math.abs(ctrlRange[1]));
+      }
+      const delay = numberAttr(actNode.attrs, 'delay');
+      if (Number.isFinite(delay)) act.delaySteps = Math.max(1, Math.round(delay));
+      actuators.push(act);
+    }
+  }
+  return actuators;
+}
+
 async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName, opts) {
   const geomType = geomNode.attrs.type || (geomNode.attrs.mesh ? 'mesh' : 'sphere');
   const originMatrix = matrixFromPoseAttrs(geomNode.attrs);
@@ -880,6 +970,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
 
   const links = [];
   const joints = [];
+  const actuators = buildMujocoActuators(root);
   let visualCount = 0;
   let collisionCount = 0;
 
@@ -910,7 +1001,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
         payloads = await mujocoGeomPayloads(geomNode, meshAssets, geomName, opts);
       }
       if (isVisual) {
-        linkPayload.visuals.push(...payloads);
+        linkPayload.visuals.push(...payloads.map((payload) => addMujocoPhysicsAttrs(payload, geomNode)));
         visualCount += payloads.length;
       } else {
         // Default approximation `convexHull` matches the convention in
@@ -920,6 +1011,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
         // with `approximation: "none"` for triangle-soup MJCF colliders.
         for (const payload of payloads) {
           payload.approximation = payload.approximation || 'convexHull';
+          addMujocoPhysicsAttrs(payload, geomNode);
         }
         linkPayload.collisions.push(...payloads);
         collisionCount += payloads.length;
@@ -981,13 +1073,15 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
       gravity: opts.upAxis === 'Z' ? [0, 0, -1] : [0, -1, 0],
       timestep: numberAttr(firstChild(root, 'option')?.attrs, 'timestep'),
       links,
-      joints
+      joints,
+      actuators
     },
     stats: {
       links: links.length,
       joints: joints.length,
       visuals: visualCount,
-      collisions: collisionCount
+      collisions: collisionCount,
+      actuators: actuators.length
     }
   };
 }
@@ -1065,13 +1159,15 @@ async function buildExportPayload(urdfText, opts, urdfDir) {
       upAxis: opts.upAxis,
       gravity: opts.upAxis === 'Z' ? [0, 0, -1] : [0, -1, 0],
       links,
-      joints: metadata.joints
+      joints: metadata.joints,
+      actuators: metadata.actuators
     },
     stats: {
       links: links.length,
       joints: metadata.joints.length,
       visuals: visualCount,
-      collisions: collisionCount
+      collisions: collisionCount,
+      actuators: metadata.actuators.length
     }
   };
 }
@@ -1125,12 +1221,17 @@ function verifyUSDA(native, stats) {
   if (!usda) throw new Error(native.error() || 'USDA verification export failed');
   const required = [
     'PhysicsScene',
-    'MjcSceneAPI'
+    'MjcSceneAPI',
+    'NewtonSceneAPI'
   ];
-  if (stats.links > 0) required.push('PhysicsRigidBodyAPI');
+  if (stats.links > 0) {
+    required.push('PhysicsRigidBodyAPI');
+    required.push('NewtonArticulationRootAPI');
+  }
   if (stats.collisions > 0) {
     required.push('PhysicsCollisionAPI');
     required.push('MjcCollisionAPI');
+    required.push('NewtonCollisionAPI');
     // The convention in `src/tydra/urdf-to-usd.cc::AddCollisionAPIs`
     // also stamps `MjcImageableAPI` + `purpose = "guide"` on every
     // collider so default Hydra renders skip them.
@@ -1138,6 +1239,7 @@ function verifyUSDA(native, stats) {
     required.push('uniform token purpose = "guide"');
   }
   if (stats.joints > 0) required.push('MjcJointAPI');
+  if ((stats.actuators || 0) > 0) required.push('NewtonActuator');
   const missing = required.filter((token) => !usda.includes(token));
   if (missing.length) {
     throw new Error(`Verification failed. Missing USDA tokens: ${missing.join(', ')}`);
@@ -1180,7 +1282,7 @@ async function main() {
   }
   native.delete();
 
-  console.log(`Verified ${payload.name}: ${stats.links} links, ${stats.joints} joints, ${stats.visuals} visual meshes, ${stats.collisions} collisions.`);
+  console.log(`Verified ${payload.name}: ${stats.links} links, ${stats.joints} joints, ${stats.visuals} visual meshes, ${stats.collisions} collisions, ${stats.actuators || 0} Newton actuators.`);
   if (opts.verbose) {
     console.log(`Formats: ${formats.join(', ')}`);
     if (opts.dumpJson) console.log(`Payload JSON: ${opts.dumpJson}`);

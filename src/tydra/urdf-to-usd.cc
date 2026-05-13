@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <set>
 #include <string>
@@ -93,12 +94,36 @@ bool JsonNumber(const nlohmann::json &j, const char *key, float *out) {
   return true;
 }
 
+bool JsonBool(const nlohmann::json &j, const char *key, bool *out) {
+  if (!out || !j.is_object() || !j.contains(key)) {
+    return false;
+  }
+  const auto &item = j.at(key);
+  if (item.is_boolean()) {
+    *out = item.get<bool>();
+    return true;
+  }
+  if (item.is_number_integer()) {
+    *out = item.get<int32_t>() != 0;
+    return true;
+  }
+  return false;
+}
+
 std::string JsonString(const nlohmann::json &j, const char *key,
                        const std::string &fallback = std::string()) {
   if (!j.is_object() || !j.contains(key) || !j.at(key).is_string()) {
     return fallback;
   }
   return j.at(key).get<std::string>();
+}
+
+const nlohmann::json *JsonObjectOrNull(const nlohmann::json &j,
+                                       const char *key) {
+  if (!j.is_object() || !j.contains(key) || !j.at(key).is_object()) {
+    return nullptr;
+  }
+  return &j.at(key);
 }
 
 std::vector<double> JsonDoubleArray(const nlohmann::json &j, const char *key) {
@@ -190,6 +215,24 @@ void AddAPISchemas(
   meta.set_apiSchemas(api);
 }
 
+void AppendAPISchema(PrimMeta &meta, APISchemas::APIName name,
+                     const std::string &instance_name = std::string()) {
+  APISchemas api;
+  if (meta.has_apiSchemas()) {
+    api = meta.get_apiSchemas();
+  } else {
+    api.listOpQual = ListEditQual::Prepend;
+  }
+  for (const auto &schema : api.names) {
+    if (schema.first == name && schema.second == instance_name) {
+      meta.set_apiSchemas(api);
+      return;
+    }
+  }
+  api.names.push_back({name, instance_name});
+  meta.set_apiSchemas(api);
+}
+
 template <typename T>
 void AddAttr(std::map<std::string, Property> &props, const std::string &name,
              const T &value, bool uniform = false) {
@@ -199,6 +242,32 @@ void AddAttr(std::map<std::string, Property> &props, const std::string &name,
     attr.variability() = Variability::Uniform;
   }
   props[name] = Property(std::move(attr), false);
+}
+
+double JsonNumberFromObjectOrParent(const nlohmann::json &src,
+                                    const char *object_key,
+                                    const char *key,
+                                    double fallback) {
+  double value = fallback;
+  if (const nlohmann::json *obj = JsonObjectOrNull(src, object_key)) {
+    if (JsonNumber(*obj, key, &value)) {
+      return value;
+    }
+  }
+  JsonNumber(src, key, &value);
+  return value;
+}
+
+int32_t JsonIntFromObjectOrParent(const nlohmann::json &src,
+                                  const char *object_key,
+                                  const char *key,
+                                  int32_t fallback) {
+  if (const nlohmann::json *obj = JsonObjectOrNull(src, object_key)) {
+    if (obj->contains(key)) {
+      return JsonInt(*obj, key, fallback);
+    }
+  }
+  return JsonInt(src, key, fallback);
 }
 
 void AddTransformOp(Xformable &xformable, const value::matrix4d &matrix) {
@@ -219,10 +288,12 @@ void AddCollisionAPIs(GeomT &geom, bool mesh_collision,
       {APISchemas::APIName::PhysicsCollisionAPI, ""},
       {APISchemas::APIName::MjcCollisionAPI, ""},
       {APISchemas::APIName::MjcImageableAPI, ""},
+      {APISchemas::APIName::NewtonCollisionAPI, ""},
   };
   if (mesh_collision) {
     apis.push_back({APISchemas::APIName::PhysicsMeshCollisionAPI, ""});
     apis.push_back({APISchemas::APIName::MjcMeshCollisionAPI, ""});
+    apis.push_back({APISchemas::APIName::NewtonMeshCollisionAPI, ""});
   }
   AddAPISchemas(geom.metas(), apis);
   AddAttr(geom.props, "physics:collisionEnabled", true);
@@ -238,9 +309,23 @@ void AddCollisionAPIs(GeomT &geom, bool mesh_collision,
     AddAttr(geom.props, "mjc:inertia", value::token("legacy"), true);
   }
   AddAttr(geom.props, "mjc:group", JsonInt(src, "group", 3), true);
-  AddAttr(geom.props, "mjc:condim", int32_t(3), true);
-  AddAttr(geom.props, "mjc:solmix", 1.0, true);
-  AddAttr(geom.props, "mjc:margin", 0.0, true);
+  AddAttr(geom.props, "mjc:condim", JsonInt(src, "condim", 3), true);
+  AddAttr(geom.props, "mjc:solmix",
+          JsonNumberFromObjectOrParent(src, "mjc", "solmix", 1.0), true);
+  const double margin =
+      JsonNumberFromObjectOrParent(src, "mjc", "margin", 0.0);
+  AddAttr(geom.props, "mjc:margin", margin, true);
+  AddAttr(geom.props, "newton:contactMargin",
+          static_cast<float>(JsonNumberFromObjectOrParent(
+              src, "newton", "contactMargin", margin)));
+  AddAttr(geom.props, "newton:contactGap",
+          static_cast<float>(JsonNumberFromObjectOrParent(
+              src, "newton", "contactGap", 0.0)));
+  if (mesh_collision) {
+    AddAttr(geom.props, "newton:maxHullVertices",
+            JsonIntFromObjectOrParent(src, "newton", "maxHullVertices", 64),
+            true);
+  }
 
   // `purpose=guide` hides the collider from default Hydra renders but
   // keeps it discoverable to schema-aware consumers (lightgeom's
@@ -338,7 +423,8 @@ value::quatf QuatFromJoint(const nlohmann::json &joint_json, const char *key) {
 template <typename JointT>
 void AssignJointBase(JointT &joint, const nlohmann::json &joint_json,
                      const std::string &parent_name,
-                     const std::string &child_name) {
+                     const std::string &child_name,
+                     const std::map<std::string, std::string> &joint_name_to_usd) {
   joint.body0.set(Path("/World/Links/" + parent_name, ""));
   joint.body1.set(Path("/World/Links/" + child_name, ""));
   const value::point3f local_pos0 = Point3FromJoint(
@@ -411,7 +497,158 @@ void AssignJointBase(JointT &joint, const nlohmann::json &joint_json,
     }
   }
   joint.mjcJoint = mjc;
-  AddAPISchemas(joint.metas(), {{APISchemas::APIName::MjcJointAPI, ""}});
+  std::vector<std::pair<APISchemas::APIName, std::string>> schemas{
+      {APISchemas::APIName::MjcJointAPI, ""}};
+  if (const nlohmann::json *mimic =
+          JsonObjectOrNull(joint_json, "mimic")) {
+    const std::string mimic_joint = JsonString(*mimic, "joint");
+    auto mimic_it = joint_name_to_usd.find(mimic_joint);
+    if (mimic_it != joint_name_to_usd.end()) {
+      NewtonMimicAPI newton_mimic;
+      bool enabled = true;
+      JsonBool(*mimic, "enabled", &enabled);
+      newton_mimic.mimicEnabled.set_value(enabled);
+      newton_mimic.mimicJoint.set(Path("/World/Joints/" + mimic_it->second, ""));
+      float offset = 0.0f;
+      float multiplier = 1.0f;
+      JsonNumber(*mimic, "offset", &offset);
+      JsonNumber(*mimic, "multiplier", &multiplier);
+      newton_mimic.mimicCoef0.set_value(offset);
+      newton_mimic.mimicCoef1.set_value(multiplier);
+      joint.newtonMimic = newton_mimic;
+      schemas.push_back({APISchemas::APIName::NewtonMimicAPI, ""});
+    }
+  }
+  AddAPISchemas(joint.metas(), schemas);
+}
+
+void AddNewtonSceneOptions(const nlohmann::json &root, PhysicsScene &scene) {
+  NewtonSceneAPI newton_scene;
+
+  double timestep = 0.002;
+  JsonNumber(root, "timestep", &timestep);
+  int32_t steps_per_second =
+      (timestep > 0.0) ? static_cast<int32_t>(std::lround(1.0 / timestep))
+                       : 500;
+  bool gravity_enabled = true;
+  int32_t max_solver_iterations = -1;
+  if (const nlohmann::json *newton = JsonObjectOrNull(root, "newton")) {
+    steps_per_second =
+        JsonInt(*newton, "timeStepsPerSecond", steps_per_second);
+    max_solver_iterations =
+        JsonInt(*newton, "maxSolverIterations", max_solver_iterations);
+    JsonBool(*newton, "gravityEnabled", &gravity_enabled);
+  }
+  newton_scene.timeStepsPerSecond.set_value(steps_per_second);
+  newton_scene.maxSolverIterations.set_value(max_solver_iterations);
+  newton_scene.gravityEnabled.set_value(gravity_enabled);
+  scene.newtonScene = newton_scene;
+}
+
+std::vector<std::pair<APISchemas::APIName, std::string>>
+NewtonActuatorSchemas(const nlohmann::json &act_json) {
+  std::vector<std::pair<APISchemas::APIName, std::string>> schemas;
+  const std::string control = JsonString(act_json, "control", "pd");
+  if (control == "pid" || act_json.contains("ki") ||
+      act_json.contains("integralMax")) {
+    schemas.push_back({APISchemas::APIName::NewtonPIDControlAPI, ""});
+  } else {
+    schemas.push_back({APISchemas::APIName::NewtonPDControlAPI, ""});
+  }
+  if (act_json.contains("delaySteps")) {
+    schemas.push_back({APISchemas::APIName::NewtonActuatorDelayAPI, ""});
+  }
+  if (act_json.contains("maxEffort")) {
+    schemas.push_back({APISchemas::APIName::NewtonMaxEffortClampingAPI, ""});
+  }
+  if (act_json.contains("maxMotorEffort") ||
+      act_json.contains("saturationEffort") ||
+      act_json.contains("velocityLimit")) {
+    schemas.push_back({APISchemas::APIName::NewtonDCMotorClampingAPI, ""});
+  }
+  if (act_json.contains("lookupPositions") || act_json.contains("lookupEfforts")) {
+    schemas.push_back({APISchemas::APIName::NewtonPositionBasedClampingAPI, ""});
+  }
+  return schemas;
+}
+
+bool AddNewtonActuatorFromJson(
+    Prim &actuators_prim, const nlohmann::json &act_json,
+    const std::map<std::string, std::string> &joint_name_to_usd,
+    size_t index, std::string *warn, std::string *err) {
+  NewtonActuator act;
+  act.name = SanitizeUSDIdentifier(
+      JsonString(act_json, "name", "actuator_" + std::to_string(index)),
+      "actuator");
+  AddAPISchemas(act.metas(), NewtonActuatorSchemas(act_json));
+
+  std::vector<Path> targets;
+  const std::string joint_name = JsonString(act_json, "joint");
+  if (!joint_name.empty()) {
+    auto it = joint_name_to_usd.find(joint_name);
+    if (it != joint_name_to_usd.end()) {
+      targets.emplace_back("/World/Joints/" + it->second, "");
+    }
+  }
+  if (act_json.contains("targets") && act_json["targets"].is_array()) {
+    for (const auto &target : act_json["targets"]) {
+      if (!target.is_string()) {
+        continue;
+      }
+      const std::string name_or_path = target.get<std::string>();
+      if (!name_or_path.empty() && name_or_path[0] == '/') {
+        targets.emplace_back(name_or_path, "");
+      } else {
+        auto it = joint_name_to_usd.find(name_or_path);
+        if (it != joint_name_to_usd.end()) {
+          targets.emplace_back("/World/Joints/" + it->second, "");
+        }
+      }
+    }
+  }
+  if (targets.empty()) {
+    AppendWarn(warn, "Skipping Newton actuator `" + act.name +
+                         "`: no target joint was exported.\n");
+    return true;
+  }
+  act.targets.set(std::move(targets));
+
+  if (act_json.contains("delaySteps")) {
+    act.delaySteps.set_value(JsonInt(act_json, "delaySteps", 1));
+  }
+  float v = 0.0f;
+  if (JsonNumber(act_json, "constEffort", &v)) act.constEffort.set_value(v);
+  if (JsonNumber(act_json, "kp", &v)) act.kp.set_value(v);
+  if (JsonNumber(act_json, "kd", &v)) act.kd.set_value(v);
+  if (JsonNumber(act_json, "ki", &v)) act.ki.set_value(v);
+  if (JsonNumber(act_json, "integralMax", &v)) act.integralMax.set_value(v);
+  if (JsonNumber(act_json, "maxEffort", &v)) act.maxEffort.set_value(v);
+  if (JsonNumber(act_json, "maxMotorEffort", &v)) {
+    act.maxMotorEffort.set_value(v);
+  }
+  if (JsonNumber(act_json, "saturationEffort", &v)) {
+    act.saturationEffort.set_value(v);
+  }
+  if (JsonNumber(act_json, "velocityLimit", &v)) {
+    act.velocityLimit.set_value(v);
+  }
+  std::vector<float> lookup_positions =
+      JsonFloatArray(act_json, "lookupPositions");
+  if (!lookup_positions.empty()) {
+    act.lookupPositions.set_value(std::move(lookup_positions));
+  }
+  std::vector<float> lookup_efforts = JsonFloatArray(act_json, "lookupEfforts");
+  if (!lookup_efforts.empty()) {
+    act.lookupEfforts.set_value(std::move(lookup_efforts));
+  }
+
+  std::string add_err;
+  if (!actuators_prim.add_child(Prim(act), true, &add_err)) {
+    SetErr(err, "Failed to add Newton actuator `" + act.name +
+                    "`: " + add_err);
+    return false;
+  }
+  return true;
 }
 
 bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
@@ -671,6 +908,10 @@ bool ConvertURDFJsonToUSDStage(
       (root.contains("joints") && root["joints"].is_array())
           ? root["joints"]
           : empty_array;
+  const nlohmann::json &actuators_json =
+      (root.contains("actuators") && root["actuators"].is_array())
+          ? root["actuators"]
+          : empty_array;
   if (links_json.empty()) {
     SetErr(err, "URDF export JSON has no links");
     return false;
@@ -702,7 +943,11 @@ bool ConvertURDFJsonToUSDStage(
       mjc_scene.timestep.set_value(timestep);
     }
     scene.mjcScene = mjc_scene;
-    AddAPISchemas(scene.metas(), {{APISchemas::APIName::MjcSceneAPI, ""}});
+    AddNewtonSceneOptions(root, scene);
+    AddAPISchemas(scene.metas(), {
+                                     {APISchemas::APIName::MjcSceneAPI, ""},
+                                     {APISchemas::APIName::NewtonSceneAPI, ""},
+                                 });
   }
 
   Xform links_scope;
@@ -713,6 +958,17 @@ bool ConvertURDFJsonToUSDStage(
   std::map<std::string, std::string> link_name_to_usd;
   std::set<std::string> used_link_names;
   std::vector<Prim> link_prims;
+  std::set<std::string> child_links;
+  for (const auto &joint_json : joints_json) {
+    const std::string child = JsonString(joint_json, "child");
+    if (!child.empty()) {
+      child_links.insert(child);
+    }
+  }
+  bool self_collision_enabled = true;
+  if (const nlohmann::json *newton = JsonObjectOrNull(root, "newton")) {
+    JsonBool(*newton, "selfCollisionEnabled", &self_collision_enabled);
+  }
 
   for (size_t link_index = 0; link_index < links_json.size(); link_index++) {
     const nlohmann::json &link_json = links_json[link_index];
@@ -731,6 +987,14 @@ bool ConvertURDFJsonToUSDStage(
                                      });
     AddAttr(link_xform.props, "physics:rigidBodyEnabled", true);
     AddAttr(link_xform.props, "physics:startsAsleep", false);
+    if (!child_links.count(link_name)) {
+      AppendAPISchema(link_xform.metas(),
+                      APISchemas::APIName::PhysicsArticulationRootAPI);
+      AppendAPISchema(link_xform.metas(),
+                      APISchemas::APIName::NewtonArticulationRootAPI);
+      AddAttr(link_xform.props, "newton:selfCollisionEnabled",
+              self_collision_enabled);
+    }
 
     if (link_json.contains("inertial") && link_json["inertial"].is_object()) {
       const nlohmann::json &inertial = link_json["inertial"];
@@ -785,6 +1049,17 @@ bool ConvertURDFJsonToUSDStage(
 
   Prim joints_prim(joints_scope);
   std::set<std::string> used_joint_names;
+  std::vector<std::string> joint_usd_names(joints_json.size());
+  std::map<std::string, std::string> joint_name_to_usd;
+  for (size_t joint_index = 0; joint_index < joints_json.size(); joint_index++) {
+    const nlohmann::json &joint_json = joints_json[joint_index];
+    const std::string source_name =
+        JsonString(joint_json, "name", "joint_" + std::to_string(joint_index));
+    const std::string joint_name =
+        UniqueUSDIdentifier(source_name, used_joint_names, "joint");
+    joint_usd_names[joint_index] = joint_name;
+    joint_name_to_usd[source_name] = joint_name;
+  }
   for (size_t joint_index = 0; joint_index < joints_json.size(); joint_index++) {
     const nlohmann::json &joint_json = joints_json[joint_index];
     const std::string type = JsonString(joint_json, "type", "fixed");
@@ -796,9 +1071,7 @@ bool ConvertURDFJsonToUSDStage(
       continue;
     }
 
-    const std::string joint_name = UniqueUSDIdentifier(
-        JsonString(joint_json, "name", "joint_" + std::to_string(joint_index)),
-        used_joint_names, "joint");
+    const std::string joint_name = joint_usd_names[joint_index];
     const std::string parent_usd = link_name_to_usd[parent];
     const std::string child_usd = link_name_to_usd[child];
     const std::string axis = AxisToken(joint_json);
@@ -808,7 +1081,8 @@ bool ConvertURDFJsonToUSDStage(
     if (type == "revolute" || type == "continuous") {
       PhysicsRevoluteJoint joint;
       joint.name = joint_name;
-      AssignJointBase(joint, joint_json, parent_usd, child_usd);
+      AssignJointBase(joint, joint_json, parent_usd, child_usd,
+                      joint_name_to_usd);
       joint.axis.set_value(value::token(axis));
 
       if (type == "revolute" && joint_json.contains("limit") &&
@@ -839,7 +1113,8 @@ bool ConvertURDFJsonToUSDStage(
     } else if (type == "prismatic") {
       PhysicsPrismaticJoint joint;
       joint.name = joint_name;
-      AssignJointBase(joint, joint_json, parent_usd, child_usd);
+      AssignJointBase(joint, joint_json, parent_usd, child_usd,
+                      joint_name_to_usd);
       joint.axis.set_value(value::token(axis));
 
       if (joint_json.contains("limit") && joint_json["limit"].is_object()) {
@@ -872,7 +1147,8 @@ bool ConvertURDFJsonToUSDStage(
       }
       PhysicsFixedJoint joint;
       joint.name = joint_name;
-      AssignJointBase(joint, joint_json, parent_usd, child_usd);
+      AssignJointBase(joint, joint_json, parent_usd, child_usd,
+                      joint_name_to_usd);
       if (!joints_prim.add_child(Prim(joint), true, &add_err)) {
         SetErr(err,
                "Failed to add fixed joint `" + joint_name + "`: " + add_err);
@@ -891,12 +1167,31 @@ bool ConvertURDFJsonToUSDStage(
   }
 
   Prim world_prim(world);
+  Prim actuators_prim;
+  bool has_actuators = false;
+  if (!actuators_json.empty()) {
+    Xform actuators_scope;
+    actuators_scope.name = "Actuators";
+    actuators_prim = Prim(actuators_scope);
+    for (size_t i = 0; i < actuators_json.size(); i++) {
+      if (!AddNewtonActuatorFromJson(actuators_prim, actuators_json[i],
+                                     joint_name_to_usd, i, warn, err)) {
+        return false;
+      }
+    }
+    has_actuators = !actuators_prim.children().empty();
+  }
   {
     std::string add_err;
     if (!world_prim.add_child(Prim(scene), true, &add_err) ||
         !world_prim.add_child(std::move(links_prim), true, &add_err) ||
         !world_prim.add_child(std::move(joints_prim), true, &add_err)) {
       SetErr(err, "Failed to assemble URDF USD stage: " + add_err);
+      return false;
+    }
+    if (has_actuators &&
+        !world_prim.add_child(std::move(actuators_prim), true, &add_err)) {
+      SetErr(err, "Failed to add Newton actuator scope: " + add_err);
       return false;
     }
   }

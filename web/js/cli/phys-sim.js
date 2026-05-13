@@ -33,6 +33,7 @@ Options:
   --trajectory-stride <n>
                          Record every n simulation steps (default: 1)
   --dump-physics-json    Print TinyUSDZ extracted physics JSON
+  --require-newton       Require extracted Newton API schemas
   --json                 Print machine-readable result JSON
   -h, --help             Show this help
 `);
@@ -48,6 +49,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     trajectoryPath: null,
     trajectoryStride: 1,
     dumpPhysicsJson: false,
+    requireNewton: false,
     json: false,
   };
 
@@ -76,6 +78,8 @@ function parseArgs(argv = process.argv.slice(2)) {
       opts.trajectoryStride = positiveInteger(requireValue(argv, ++i, arg), arg);
     } else if (arg === '--dump-physics-json') {
       opts.dumpPhysicsJson = true;
+    } else if (arg === '--require-newton') {
+      opts.requireNewton = true;
     } else if (arg === '--json') {
       opts.json = true;
     } else {
@@ -241,13 +245,22 @@ function pickerPosition(q) {
   ];
 }
 
-function validatePhysicsJSON(physics) {
+function hasApi(prim, apiName) {
+  return (prim.apiSchemas || []).some((api) => api === apiName || api.startsWith(`${apiName}:`));
+}
+
+function validatePhysicsJSON(physics, opts = {}) {
   const prims = Array.isArray(physics.prims) ? physics.prims : [];
   const joints = prims.filter((prim) => prim.type === 'PhysicsRevoluteJoint');
   const scene = prims.find((prim) => prim.type === 'PhysicsScene');
   if (!scene) throw new Error('USDA did not extract a PhysicsScene');
   if (joints.length < 2) throw new Error(`Expected at least 2 PhysicsRevoluteJoint prims, got ${joints.length}`);
-  return { prims, joints, scene };
+  const newtonApis = prims.flatMap((prim) => prim.apiSchemas || [])
+    .filter((api) => api.startsWith('Newton'));
+  if (opts.requireNewton && !hasApi(scene, 'NewtonSceneAPI')) {
+    throw new Error('USDA did not extract NewtonSceneAPI');
+  }
+  return { prims, joints, scene, newtonApis };
 }
 
 function trajectorySample(step, time, data, target, motorTorque) {
@@ -271,7 +284,7 @@ function trajectorySample(step, time, data, target, motorTorque) {
 
 async function runSimulation(opts) {
   const loaded = await loadTinyUSDZPhysics(opts.usdaPath);
-  const extracted = validatePhysicsJSON(loaded.physics);
+  const extracted = validatePhysicsJSON(loaded.physics, opts);
   const mj = await loadMuJoCoPhysics();
   const model = buildModel(mj);
   const data = new mj.PhysicsData(model);
@@ -333,6 +346,7 @@ async function runSimulation(opts) {
       usdaPath: opts.usdaPath,
       primCount: extracted.prims.length,
       jointCount: extracted.joints.length,
+      newtonApiCount: extracted.newtonApis.length,
       model: {
         nbody: model.nbody(),
         njnt: model.njnt(),
@@ -404,6 +418,9 @@ function printResult(result, opts) {
   }
 
   console.log(`Loaded ${path.relative(process.cwd(), result.usdaPath)}: ${result.primCount} prims, ${result.jointCount} revolute joints`);
+  if (result.newtonApiCount) {
+    console.log(`Newton APIs: ${result.newtonApiCount}`);
+  }
   console.log(`MuJoCo model: ${result.model.nbody} bodies, ${result.model.njnt} joints, ${result.model.nq} qpos, dt=${result.model.timestep}`);
   console.log(`Mode: ${result.mode}, simulated ${result.seconds.toFixed(3)}s (${result.steps} steps)`);
   console.log(`Target: shoulder=${result.targetDeg[0].toFixed(2)} deg, elbow=${result.targetDeg[1].toFixed(2)} deg`);

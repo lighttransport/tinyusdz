@@ -587,6 +587,23 @@ static void RegisterPrimTypes(std::unordered_set<std::string> &d) {
 static void RegisterAPISchemas(std::unordered_set<std::string> &d) {
   d.insert("MaterialBindingAPI");
   d.insert("SkelBindingAPI");
+  d.insert("NewtonSceneAPI");
+  d.insert("NewtonXpbdSceneAPI");
+  d.insert("NewtonKaminoSceneAPI");
+  d.insert("NewtonArticulationRootAPI");
+  d.insert("NewtonCollisionAPI");
+  d.insert("NewtonMeshCollisionAPI");
+  d.insert("NewtonMaterialAPI");
+  d.insert("NewtonMimicAPI");
+  d.insert("NewtonActuatorDelayAPI");
+  d.insert("NewtonActuatorControlBaseAPI");
+  d.insert("NewtonPDControlAPI");
+  d.insert("NewtonPIDControlAPI");
+  d.insert("NewtonNeuralControlAPI");
+  d.insert("NewtonActuatorClampingBaseAPI");
+  d.insert("NewtonMaxEffortClampingAPI");
+  d.insert("NewtonDCMotorClampingAPI");
+  d.insert("NewtonPositionBasedClampingAPI");
 
   // d.insert("PhysicsCollisionAPI");
   // d.insert("PhysicsRigidBodyAPI");

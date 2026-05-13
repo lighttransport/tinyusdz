@@ -35,8 +35,8 @@ struct URDFMeshBuffer {
 /// - joints[] contain URDF joint metadata, axes, limits, dynamics, and link
 ///   names.
 ///
-/// The generated stage authors both standard UsdPhysics and MuJoCo API schema
-/// properties where TinyUSDZ has schema support.
+/// The generated stage authors standard UsdPhysics, MuJoCo, and Newton API
+/// schema properties where TinyUSDZ has schema support.
 bool ConvertURDFJsonToUSDStage(
     const std::string &robot_json,
     Stage *stage,

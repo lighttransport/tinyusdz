@@ -121,6 +121,8 @@ std::string to_string(const PhysicsCollisionGroup &group, const uint32_t indent 
                       bool closing_brace = true);
 std::string to_string(const MjcActuator &actuator, const uint32_t indent = 0,
                       bool closing_brace = true);
+std::string to_string(const NewtonActuator &actuator, const uint32_t indent = 0,
+                      bool closing_brace = true);
 std::string to_string(const MjcTendon &tendon, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const MjcKeyframe &keyframe, const uint32_t indent = 0,

@@ -927,6 +927,7 @@ namespace value {
   __FUNC(PhysicsDistanceJoint)  \
   __FUNC(PhysicsCollisionGroup) \
   __FUNC(MjcActuator)           \
+  __FUNC(NewtonActuator)        \
   __FUNC(MjcTendon)             \
   __FUNC(MjcKeyframe)           \
   __FUNC(Preliminary_PhysicsGravitationalForce) \

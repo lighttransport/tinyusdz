@@ -17,6 +17,7 @@
 #include "usdPhysics.hh"
 #include "mjcPhysics.hh"
 #include "tydra/physics-to-json.hh"
+#include "tydra/urdf-to-usd.hh"
 
 #include <cmath>
 #include <cstring>
@@ -70,6 +71,15 @@ static bool get_prop_num(const std::map<std::string, Property> &props,
   const auto &attr = it->second.get_attribute();
   if (auto v = attr.get_value<float>())  { *out = static_cast<double>(*v); return true; }
   if (auto v = attr.get_value<double>()) { *out = *v; return true; }
+  return false;
+}
+
+static bool has_api(const Prim *prim, APISchemas::APIName want) {
+  if (!prim || !prim->metas().has_apiSchemas()) return false;
+  const auto schemas = prim->metas().get_apiSchemas();
+  for (const auto &n : schemas.names) {
+    if (n.first == want) return true;
+  }
   return false;
 }
 
@@ -182,6 +192,111 @@ def PhysicsScene "SimScene" (
   TEST_CHECK(mjc.flag_override.get_value() == false);
   TEST_CHECK(mjc.compiler_autoLimits.get_value() == true);
   TEST_CHECK(mjc.compiler_angle.get_value().str() == "radian");
+}
+
+// ---------------------------------------------------------------------------
+// 2b. PhysicsScene with NewtonSceneAPI / NewtonKaminoSceneAPI
+// ---------------------------------------------------------------------------
+void physics_scene_newton_api_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsScene "SimScene" (
+    prepend apiSchemas = ["NewtonSceneAPI", "NewtonKaminoSceneAPI"]
+)
+{
+    vector3f physics:gravityDirection = (0, 0, -1)
+    float physics:gravityMagnitude = 9.81
+    uniform int newton:maxSolverIterations = 64
+    uniform int newton:timeStepsPerSecond = 500
+    bool newton:gravityEnabled = false
+    uniform float newton:kamino:constraints:alpha = 0.25
+    uniform token newton:kamino:jointCorrection = "none"
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto result = stage.GetPrimAtPath(Path("/SimScene", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+
+  const Prim *prim = *result;
+  TEST_CHECK(has_api(prim, APISchemas::APIName::NewtonSceneAPI));
+  TEST_CHECK(has_api(prim, APISchemas::APIName::NewtonKaminoSceneAPI));
+
+  const auto *scene = prim->as<PhysicsScene>();
+  TEST_CHECK(scene != nullptr);
+  if (!scene) return;
+  TEST_CHECK(scene->newtonScene.has_value());
+  TEST_CHECK(scene->newtonKaminoScene.has_value());
+  if (scene->newtonScene.has_value()) {
+    const auto &n = scene->newtonScene.value();
+    TEST_CHECK(n.maxSolverIterations.get_value() == 64);
+    TEST_CHECK(n.timeStepsPerSecond.get_value() == 500);
+    TEST_CHECK(n.gravityEnabled.get_value() == false);
+  }
+  if (scene->newtonKaminoScene.has_value()) {
+    const auto &n = scene->newtonKaminoScene.value();
+    TEST_CHECK(approx_eq(n.constraintsAlpha.get_value(), 0.25));
+    TEST_CHECK(n.jointCorrection.get_value().str() == "none");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 2c. PhysicsScene with NewtonXpbdSceneAPI
+// ---------------------------------------------------------------------------
+void physics_scene_newton_xpbd_api_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsScene "SimScene" (
+    prepend apiSchemas = ["NewtonSceneAPI", "NewtonXpbdSceneAPI"]
+)
+{
+    vector3f physics:gravityDirection = (0, 0, -1)
+    float physics:gravityMagnitude = 9.81
+    uniform int newton:maxSolverIterations = 32
+    uniform int newton:timeStepsPerSecond = 240
+    uniform float newton:xpbd:softBodyRelaxation = 0.7
+    uniform float newton:xpbd:jointLinearCompliance = 0.001
+    uniform float newton:xpbd:jointAngularRelaxation = 0.35
+    uniform bool newton:xpbd:restitutionEnabled = true
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto result = stage.GetPrimAtPath(Path("/SimScene", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+
+  const Prim *prim = *result;
+  TEST_CHECK(has_api(prim, APISchemas::APIName::NewtonSceneAPI));
+  TEST_CHECK(has_api(prim, APISchemas::APIName::NewtonXpbdSceneAPI));
+
+  const auto *scene = prim->as<PhysicsScene>();
+  TEST_CHECK(scene != nullptr);
+  if (!scene) return;
+  TEST_CHECK(scene->newtonScene.has_value());
+  TEST_CHECK(scene->newtonXpbdScene.has_value());
+  if (scene->newtonScene.has_value()) {
+    TEST_CHECK(scene->newtonScene.value().maxSolverIterations.get_value() == 32);
+    TEST_CHECK(scene->newtonScene.value().timeStepsPerSecond.get_value() == 240);
+  }
+  if (scene->newtonXpbdScene.has_value()) {
+    const auto &xpbd = scene->newtonXpbdScene.value();
+    TEST_CHECK(approx_eq(xpbd.softBodyRelaxation.get_value(), 0.7));
+    TEST_CHECK(approx_eq(xpbd.jointLinearCompliance.get_value(), 0.001));
+    TEST_CHECK(approx_eq(xpbd.jointAngularRelaxation.get_value(), 0.35));
+    TEST_CHECK(xpbd.restitutionEnabled.get_value() == true);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -749,6 +864,56 @@ def PhysicsRevoluteJoint "MjcOnlyHinge" (
 }
 
 // ---------------------------------------------------------------------------
+// 7g. NewtonMimicAPI on a physics joint
+// ---------------------------------------------------------------------------
+void physics_joint_newton_mimic_api_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsRevoluteJoint "Follower" (
+    prepend apiSchemas = ["NewtonMimicAPI"]
+)
+{
+    rel physics:body0 = </A>
+    rel physics:body1 = </B>
+    token physics:axis = "X"
+    bool newton:mimicEnabled = true
+    rel newton:mimicJoint = </Leader>
+    float newton:mimicCoef0 = 0.25
+    float newton:mimicCoef1 = -1
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto result = stage.GetPrimAtPath(Path("/Follower", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const Prim *prim = *result;
+  TEST_CHECK(has_api(prim, APISchemas::APIName::NewtonMimicAPI));
+
+  const auto *joint = prim->as<PhysicsRevoluteJoint>();
+  TEST_CHECK(joint != nullptr);
+  if (!joint) return;
+  TEST_CHECK(joint->newtonMimic.has_value());
+  if (!joint->newtonMimic.has_value()) return;
+
+  const auto &n = joint->newtonMimic.value();
+  TEST_CHECK(n.mimicEnabled.get_value() == true);
+  TEST_CHECK(approx_eq(n.mimicCoef0.get_value(), 0.25));
+  TEST_CHECK(approx_eq(n.mimicCoef1.get_value(), -1.0));
+  TEST_CHECK(n.mimicJoint.authored());
+  auto paths = n.mimicJoint.get_targetPaths();
+  TEST_CHECK(paths.size() == 1);
+  if (paths.size() == 1) {
+    TEST_CHECK(paths[0].prim_part() == "/Leader");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 8. MjcActuator
 // ---------------------------------------------------------------------------
 void mjc_actuator_test(void) {
@@ -801,6 +966,125 @@ def MjcActuator "MotorActuator"
   TEST_CHECK(paths.size() == 1);
   if (paths.size() == 1) {
     TEST_CHECK(paths[0].prim_part() == "/World/Joint1");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 8b. NewtonActuator
+// ---------------------------------------------------------------------------
+void newton_actuator_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def NewtonActuator "FingerDrive" (
+    prepend apiSchemas = ["NewtonPDControlAPI", "NewtonMaxEffortClampingAPI"]
+)
+{
+    rel newton:targets = [</World/Joint1>, </World/Joint2>]
+    float newton:kp = 120
+    float newton:kd = 4
+    float newton:constEffort = 0.5
+    float newton:maxEffort = 30
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto result = stage.GetPrimAtPath(Path("/FingerDrive", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+
+  const Prim *prim = *result;
+  TEST_CHECK(prim->is<NewtonActuator>());
+  TEST_CHECK(has_api(prim, APISchemas::APIName::NewtonPDControlAPI));
+  TEST_CHECK(has_api(prim, APISchemas::APIName::NewtonMaxEffortClampingAPI));
+
+  const auto *act = prim->as<NewtonActuator>();
+  TEST_CHECK(act != nullptr);
+  if (!act) return;
+  TEST_CHECK(approx_eq(act->kp.get_value(), 120.0));
+  TEST_CHECK(approx_eq(act->kd.get_value(), 4.0));
+  TEST_CHECK(approx_eq(act->constEffort.get_value(), 0.5));
+  TEST_CHECK(approx_eq(act->maxEffort.get_value(), 30.0));
+  TEST_CHECK(act->targets.authored());
+  auto paths = act->targets.get_targetPaths();
+  TEST_CHECK(paths.size() == 2);
+  if (paths.size() == 2) {
+    TEST_CHECK(paths[0].prim_part() == "/World/Joint1");
+    TEST_CHECK(paths[1].prim_part() == "/World/Joint2");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 8c. NewtonActuator extended control/clamping APIs
+// ---------------------------------------------------------------------------
+void newton_actuator_extended_api_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def NewtonActuator "FingerDrive" (
+    prepend apiSchemas = [
+        "NewtonActuatorDelayAPI",
+        "NewtonPIDControlAPI",
+        "NewtonDCMotorClampingAPI",
+        "NewtonPositionBasedClampingAPI"
+    ]
+)
+{
+    rel newton:targets = [</World/Joint1>]
+    uniform int newton:delaySteps = 3
+    float newton:kp = 120
+    float newton:kd = 4
+    float newton:ki = 0.75
+    float newton:integralMax = 2
+    float newton:maxMotorEffort = 30
+    float newton:saturationEffort = 25
+    float newton:velocityLimit = 12
+    float[] newton:lookupPositions = [-1, 0, 1]
+    float[] newton:lookupEfforts = [8, 10, 8]
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto result = stage.GetPrimAtPath(Path("/FingerDrive", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+
+  const Prim *prim = *result;
+  TEST_CHECK(prim->is<NewtonActuator>());
+  TEST_CHECK(has_api(prim, APISchemas::APIName::NewtonActuatorDelayAPI));
+  TEST_CHECK(has_api(prim, APISchemas::APIName::NewtonPIDControlAPI));
+  TEST_CHECK(has_api(prim, APISchemas::APIName::NewtonDCMotorClampingAPI));
+  TEST_CHECK(has_api(prim, APISchemas::APIName::NewtonPositionBasedClampingAPI));
+
+  const auto *act = prim->as<NewtonActuator>();
+  TEST_CHECK(act != nullptr);
+  if (!act) return;
+  TEST_CHECK(act->delaySteps.get_value() == 3);
+  TEST_CHECK(approx_eq(act->ki.get_value(), 0.75));
+  TEST_CHECK(approx_eq(act->integralMax.get_value(), 2.0));
+  TEST_CHECK(approx_eq(act->maxMotorEffort.get_value(), 30.0));
+  TEST_CHECK(approx_eq(act->saturationEffort.get_value(), 25.0));
+  TEST_CHECK(approx_eq(act->velocityLimit.get_value(), 12.0));
+  auto positions = act->lookupPositions.get_value();
+  auto efforts = act->lookupEfforts.get_value();
+  TEST_CHECK(positions.has_value());
+  TEST_CHECK(efforts.has_value());
+  if (positions.has_value()) {
+    TEST_CHECK(positions.value().size() == 3);
+    TEST_CHECK(approx_eq(positions.value()[0], -1.0));
+    TEST_CHECK(approx_eq(positions.value()[2], 1.0));
+  }
+  if (efforts.has_value()) {
+    TEST_CHECK(efforts.value().size() == 3);
+    TEST_CHECK(approx_eq(efforts.value()[1], 10.0));
   }
 }
 
@@ -1469,4 +1753,263 @@ def Xform "World"
   // Actuator / Tendon / Keyframe — Mesh-collider surfacing lives in
   // web/binding.cc's extractPhysicsSceneJSON (`AppendPhysicsPrimJson`),
   // which is exercised from the web/js test harness, not here.
+}
+
+// ---------------------------------------------------------------------------
+// 24. Newton collision/material APIs are known and generic attrs preserve.
+// ---------------------------------------------------------------------------
+void physics_newton_collision_material_api_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def "World"
+{
+    def Material "Rubber" (
+        prepend apiSchemas = ["PhysicsMaterialAPI", "NewtonMaterialAPI"]
+    )
+    {
+        float physics:dynamicFriction = 0.9
+        float newton:rollingFriction = 0.002
+        float newton:torsionalFriction = 0.01
+    }
+
+    def Mesh "Collider" (
+        prepend apiSchemas = [
+            "PhysicsCollisionAPI",
+            "PhysicsMeshCollisionAPI",
+            "NewtonCollisionAPI",
+            "NewtonMeshCollisionAPI"
+        ]
+    )
+    {
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        uniform token physics:approximation = "convexHull"
+        float newton:contactMargin = 0.005
+        float newton:contactGap = 0
+        uniform int newton:maxHullVertices = 64
+    }
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto mat_r = stage.GetPrimAtPath(Path("/World/Rubber", ""));
+  TEST_CHECK(bool(mat_r));
+  if (mat_r) {
+    const Prim *p = *mat_r;
+    TEST_CHECK(has_api(p, APISchemas::APIName::PhysicsMaterialAPI));
+    TEST_CHECK(has_api(p, APISchemas::APIName::NewtonMaterialAPI));
+    if (const auto *m = p->as<Material>()) {
+      double v = 0.0;
+      TEST_CHECK(get_prop_num(m->props, "newton:rollingFriction", &v));
+      TEST_CHECK(approx_eq(v, 0.002));
+      TEST_CHECK(get_prop_num(m->props, "newton:torsionalFriction", &v));
+      TEST_CHECK(approx_eq(v, 0.01));
+    }
+  }
+
+  auto mesh_r = stage.GetPrimAtPath(Path("/World/Collider", ""));
+  TEST_CHECK(bool(mesh_r));
+  if (mesh_r) {
+    const Prim *p = *mesh_r;
+    TEST_CHECK(has_api(p, APISchemas::APIName::PhysicsCollisionAPI));
+    TEST_CHECK(has_api(p, APISchemas::APIName::PhysicsMeshCollisionAPI));
+    TEST_CHECK(has_api(p, APISchemas::APIName::NewtonCollisionAPI));
+    TEST_CHECK(has_api(p, APISchemas::APIName::NewtonMeshCollisionAPI));
+    if (const auto *m = p->as<GeomMesh>()) {
+      double v = 0.0;
+      TEST_CHECK(get_prop_num(m->props, "newton:contactMargin", &v));
+      TEST_CHECK(approx_eq(v, 0.005));
+      TEST_CHECK(get_prop_num(m->props, "newton:contactGap", &v));
+      TEST_CHECK(approx_eq(v, 0.0));
+      auto it = m->props.find("newton:maxHullVertices");
+      TEST_CHECK(it != m->props.end());
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 25. URDF JSON conversion authors Newton APIs for scene/colliders/actuators.
+// ---------------------------------------------------------------------------
+void urdf_json_newton_api_export_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "NewtonJsonBot",
+  "upAxis": "Z",
+  "gravity": [0, 0, -1],
+  "timestep": 0.01,
+  "newton": {
+    "maxSolverIterations": 48,
+    "gravityEnabled": true,
+    "selfCollisionEnabled": false
+  },
+  "links": [
+    {
+      "name": "base",
+      "inertial": {
+        "mass": 1.0,
+        "centerOfMass": [0, 0, 0],
+        "diagonalInertia": [1, 1, 1]
+      },
+      "collisions": [
+        {
+          "name": "base_col",
+          "matrix": [1, 0, 0, 0,
+                     0, 1, 0, 0,
+                     0, 0, 1, 0,
+                     0, 0, 0, 1],
+          "shape": { "type": "box" },
+          "newton": {
+            "contactMargin": 0.01,
+            "contactGap": 0.002
+          }
+        }
+      ]
+    },
+    {
+      "name": "finger",
+      "inertial": {
+        "mass": 0.25,
+        "centerOfMass": [0, 0, 0],
+        "diagonalInertia": [0.1, 0.1, 0.1]
+      }
+    }
+  ],
+  "joints": [
+    {
+      "name": "hinge",
+      "type": "revolute",
+      "parent": "base",
+      "child": "finger",
+      "axis": [0, 0, 1],
+      "axisToken": "Z",
+      "originMatrix": [1, 0, 0, 0,
+                       0, 1, 0, 0,
+                       0, 0, 1, 0,
+                       0, 0, 0, 1],
+      "limit": { "lower": -1.0, "upper": 1.0 },
+      "dynamics": { "damping": 0.1, "friction": 0.02 },
+      "mimic": { "joint": "hinge", "multiplier": 1.0, "offset": 0.0 }
+    }
+  ],
+  "actuators": [
+    {
+      "name": "hinge_drive",
+      "joint": "hinge",
+      "control": "pd",
+      "kp": 80.0,
+      "kd": 3.0,
+      "maxEffort": 12.0,
+      "delaySteps": 2
+    }
+  ]
+})JSON";
+
+  Stage tmp;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(
+      robot_json, &tmp, &warn, &err);
+  if (!ok) { TEST_MSG("ConvertURDFJsonToUSDStage failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  std::vector<uint8_t> bytes;
+  ok = usdc::SaveAsUSDCToMemory(tmp, &bytes, &warn, &err);
+  if (!ok) { TEST_MSG("SaveAsUSDCToMemory failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  Stage stage;
+  ok = LoadUSDCFromMemory(bytes.data(), bytes.size(), "newton-json.usdc",
+                          &stage, &warn, &err);
+  if (!ok) { TEST_MSG("LoadUSDCFromMemory failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto scene_r = stage.GetPrimAtPath(Path("/World/PhysicsScene", ""));
+  TEST_CHECK(bool(scene_r));
+  if (scene_r) {
+    const Prim *p = *scene_r;
+    TEST_CHECK(has_api(p, APISchemas::APIName::NewtonSceneAPI));
+    const auto *scene = p->as<PhysicsScene>();
+    TEST_CHECK(scene != nullptr);
+    if (scene && scene->newtonScene.has_value()) {
+      TEST_CHECK(scene->newtonScene.value().maxSolverIterations.get_value() == 48);
+      TEST_CHECK(scene->newtonScene.value().timeStepsPerSecond.get_value() == 100);
+    }
+  }
+
+  auto base_r = stage.GetPrimAtPath(Path("/World/Links/base", ""));
+  TEST_CHECK(bool(base_r));
+  if (base_r) {
+    const Prim *p = *base_r;
+    TEST_CHECK(has_api(p, APISchemas::APIName::PhysicsArticulationRootAPI));
+    TEST_CHECK(has_api(p, APISchemas::APIName::NewtonArticulationRootAPI));
+    TEST_CHECK(p->as<Xform>() != nullptr);
+    if (const auto *x = p->as<Xform>()) {
+      TEST_CHECK(x->props.find("newton:selfCollisionEnabled") != x->props.end());
+    }
+  }
+
+  auto col_r = stage.GetPrimAtPath(Path("/World/Links/base/base_col", ""));
+  TEST_CHECK(bool(col_r));
+  if (col_r) {
+    const Prim *p = *col_r;
+    TEST_CHECK(has_api(p, APISchemas::APIName::PhysicsCollisionAPI));
+    TEST_CHECK(has_api(p, APISchemas::APIName::NewtonCollisionAPI));
+    if (const auto *cube = p->as<GeomCube>()) {
+      double v = 0.0;
+      TEST_CHECK(get_prop_num(cube->props, "newton:contactMargin", &v));
+      TEST_CHECK(approx_eq(v, 0.01));
+      TEST_CHECK(get_prop_num(cube->props, "newton:contactGap", &v));
+      TEST_CHECK(approx_eq(v, 0.002));
+    }
+  }
+
+  auto joint_r = stage.GetPrimAtPath(Path("/World/Joints/hinge", ""));
+  TEST_CHECK(bool(joint_r));
+  if (joint_r) {
+    const Prim *p = *joint_r;
+    TEST_CHECK(has_api(p, APISchemas::APIName::MjcJointAPI));
+    TEST_CHECK(has_api(p, APISchemas::APIName::NewtonMimicAPI));
+    const auto *joint = p->as<PhysicsRevoluteJoint>();
+    TEST_CHECK(joint != nullptr);
+    if (joint) {
+      TEST_CHECK(joint->newtonMimic.has_value());
+      if (joint->newtonMimic.has_value()) {
+        auto targets = joint->newtonMimic.value().mimicJoint.get_targetPaths();
+        TEST_CHECK(targets.size() == 1);
+        if (targets.size() == 1) {
+          TEST_CHECK(targets[0].prim_part() == "/World/Joints/hinge");
+        }
+      }
+    }
+  }
+
+  auto act_r = stage.GetPrimAtPath(Path("/World/Actuators/hinge_drive", ""));
+  TEST_CHECK(bool(act_r));
+  if (act_r) {
+    const Prim *p = *act_r;
+    TEST_CHECK(p->is<NewtonActuator>());
+    TEST_CHECK(has_api(p, APISchemas::APIName::NewtonPDControlAPI));
+    TEST_CHECK(has_api(p, APISchemas::APIName::NewtonMaxEffortClampingAPI));
+    TEST_CHECK(has_api(p, APISchemas::APIName::NewtonActuatorDelayAPI));
+    const auto *act = p->as<NewtonActuator>();
+    TEST_CHECK(act != nullptr);
+    if (act) {
+      TEST_CHECK(approx_eq(act->kp.get_value(), 80.0));
+      TEST_CHECK(approx_eq(act->kd.get_value(), 3.0));
+      TEST_CHECK(approx_eq(act->maxEffort.get_value(), 12.0));
+      TEST_CHECK(act->delaySteps.get_value() == 2);
+      auto targets = act->targets.get_targetPaths();
+      TEST_CHECK(targets.size() == 1);
+      if (targets.size() == 1) {
+        TEST_CHECK(targets[0].prim_part() == "/World/Joints/hinge");
+      }
+    }
+  }
 }

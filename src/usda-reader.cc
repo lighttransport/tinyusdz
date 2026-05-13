@@ -142,6 +142,7 @@ RECONSTRUCT_PRIM_DECL(PhysicsFixedJoint);
 RECONSTRUCT_PRIM_DECL(PhysicsDistanceJoint);
 RECONSTRUCT_PRIM_DECL(PhysicsCollisionGroup);
 RECONSTRUCT_PRIM_DECL(MjcActuator);
+RECONSTRUCT_PRIM_DECL(NewtonActuator);
 RECONSTRUCT_PRIM_DECL(MjcTendon);
 RECONSTRUCT_PRIM_DECL(MjcKeyframe);
 // AR/Interactive (Apple Preliminary_*)
@@ -663,6 +664,7 @@ DEFINE_PRIM_TYPE(PhysicsFixedJoint, kPhysicsFixedJoint, value::TYPE_ID_PHYSICS_F
 DEFINE_PRIM_TYPE(PhysicsDistanceJoint, kPhysicsDistanceJoint, value::TYPE_ID_PHYSICS_DISTANCE_JOINT);
 DEFINE_PRIM_TYPE(PhysicsCollisionGroup, kPhysicsCollisionGroup, value::TYPE_ID_PHYSICS_COLLISION_GROUP);
 DEFINE_PRIM_TYPE(MjcActuator, kMjcActuator, value::TYPE_ID_MJC_ACTUATOR);
+DEFINE_PRIM_TYPE(NewtonActuator, kNewtonActuator, value::TYPE_ID_NEWTON_ACTUATOR);
 DEFINE_PRIM_TYPE(MjcTendon, kMjcTendon, value::TYPE_ID_MJC_TENDON);
 DEFINE_PRIM_TYPE(MjcKeyframe, kMjcKeyframe, value::TYPE_ID_MJC_KEYFRAME);
 // AR/Interactive (Apple Preliminary_*)
@@ -2294,6 +2296,7 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<PhysicsDistanceJoint>();
   RegisterReconstructCallback<PhysicsCollisionGroup>();
   RegisterReconstructCallback<MjcActuator>();
+  RegisterReconstructCallback<NewtonActuator>();
   RegisterReconstructCallback<MjcTendon>();
   RegisterReconstructCallback<MjcKeyframe>();
 

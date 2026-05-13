@@ -551,6 +551,7 @@ enum TypeId {
   TYPE_ID_MJC_TENDON,
   TYPE_ID_MJC_KEYFRAME,
   TYPE_ID_PHYSICS_COLLISION_GROUP,
+  TYPE_ID_NEWTON_ACTUATOR,
   TYPE_ID_PHYSICS_END,
 
   // Types for AR/Interactive schemas (Apple Preliminary_*)

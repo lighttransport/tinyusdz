@@ -303,6 +303,13 @@ function usdPhysicsToUrdf(extracted) {
         solmix: prim.properties?.['mjc:solmix'],
         margin: prim.properties?.['mjc:margin']
       };
+      if (hasApi(prim, 'NewtonCollisionAPI')) {
+        item.newton = {
+          contactMargin: prim.properties?.['newton:contactMargin'],
+          contactGap: prim.properties?.['newton:contactGap'],
+          maxHullVertices: prim.properties?.['newton:maxHullVertices']
+        };
+      }
       link.collisions.push(item);
     } else {
       item.mujoco = { group: prim.properties?.['mjc:group'] };
@@ -325,7 +332,7 @@ function usdPhysicsToUrdf(extracted) {
       const axisToken = prim.properties?.['physics:axis'] || 'X';
       const lower = prim.properties?.['physics:lowerLimit'];
       const upper = prim.properties?.['physics:upperLimit'];
-      return {
+      const item = {
         name: prim.name || basenameFromPath(prim.path),
         type,
         parent,
@@ -350,6 +357,15 @@ function usdPhysicsToUrdf(extracted) {
           group: prim.properties?.['mjc:group']
         }
       };
+      if (hasApi(prim, 'NewtonMimicAPI')) {
+        item.newton = {
+          mimicEnabled: prim.properties?.['newton:mimicEnabled'],
+          mimicJoint: firstRelTarget(prim, 'newton:mimicJoint'),
+          mimicCoef0: prim.properties?.['newton:mimicCoef0'],
+          mimicCoef1: prim.properties?.['newton:mimicCoef1']
+        };
+      }
+      return item;
     });
 
   return {
@@ -469,6 +485,7 @@ function assertRoundtrip(extracted, urdf, expected = null) {
   const hinge = urdf.joints.find((joint) => joint.name === 'hinge') || urdf.joints[0];
 
   if (expected) {
+    if (!hasSchema('NewtonSceneAPI')) throw new Error('Missing extracted API schema: NewtonSceneAPI');
     if (!hinge) throw new Error('Expected sample hinge joint was not converted');
     if (hinge.type !== 'revolute') throw new Error(`Expected revolute joint, got ${hinge.type}`);
     if (Math.abs((hinge.limit?.lower || 0) - -1.25) > 1.0e-3) {
@@ -500,6 +517,8 @@ function assertRoundtrip(extracted, urdf, expected = null) {
                        && collision.geometry.type !== 'cube')) {
       throw new Error(`Expected base box/cube collision, got ${collision?.geometry.type}`);
     }
+    if (!hasSchema('NewtonCollisionAPI')) throw new Error('Missing extracted API schema: NewtonCollisionAPI');
+    if (!collision.newton) throw new Error('Missing Newton collision metadata');
   }
 }
 

@@ -1440,6 +1440,16 @@ void AddJointBaseJson(json &props, json &rels,
     AddFallbackAttr(props, "mjc:actuatorgravcomp",
                     joint.mjcJoint.value().actuatorgravcomp);
   }
+  if (joint.newtonMimic) {
+    AddFallbackAttr(props, "newton:mimicEnabled",
+                    joint.newtonMimic.value().mimicEnabled);
+    rels["newton:mimicJoint"] =
+        RelationshipTargetsJson(joint.newtonMimic.value().mimicJoint);
+    AddFallbackAttr(props, "newton:mimicCoef0",
+                    joint.newtonMimic.value().mimicCoef0);
+    AddFallbackAttr(props, "newton:mimicCoef1",
+                    joint.newtonMimic.value().mimicCoef1);
+  }
 }
 
 void AddSceneJson(json &props, const tinyusdz::PhysicsScene &scene) {
@@ -1451,6 +1461,58 @@ void AddSceneJson(json &props, const tinyusdz::PhysicsScene &scene) {
                     scene.mjcScene.value().iterations);
     AddFallbackAttr(props, "mjc:integrator",
                     scene.mjcScene.value().integrator);
+  }
+  if (scene.newtonScene) {
+    AddFallbackAttr(props, "newton:maxSolverIterations",
+                    scene.newtonScene.value().maxSolverIterations);
+    AddFallbackAttr(props, "newton:timeStepsPerSecond",
+                    scene.newtonScene.value().timeStepsPerSecond);
+    AddFallbackAttr(props, "newton:gravityEnabled",
+                    scene.newtonScene.value().gravityEnabled);
+  }
+  if (scene.newtonXpbdScene) {
+    AddFallbackAttr(props, "newton:xpbd:softBodyRelaxation",
+                    scene.newtonXpbdScene.value().softBodyRelaxation);
+    AddFallbackAttr(props, "newton:xpbd:softContactRelaxation",
+                    scene.newtonXpbdScene.value().softContactRelaxation);
+    AddFallbackAttr(props, "newton:xpbd:jointLinearRelaxation",
+                    scene.newtonXpbdScene.value().jointLinearRelaxation);
+    AddFallbackAttr(props, "newton:xpbd:jointAngularRelaxation",
+                    scene.newtonXpbdScene.value().jointAngularRelaxation);
+    AddFallbackAttr(props, "newton:xpbd:jointLinearCompliance",
+                    scene.newtonXpbdScene.value().jointLinearCompliance);
+    AddFallbackAttr(props, "newton:xpbd:jointAngularCompliance",
+                    scene.newtonXpbdScene.value().jointAngularCompliance);
+    AddFallbackAttr(props, "newton:xpbd:rigidContactRelaxation",
+                    scene.newtonXpbdScene.value().rigidContactRelaxation);
+    AddFallbackAttr(props, "newton:xpbd:rigidContactConWeighting",
+                    scene.newtonXpbdScene.value().rigidContactConWeighting);
+    AddFallbackAttr(props, "newton:xpbd:angularDamping",
+                    scene.newtonXpbdScene.value().angularDamping);
+    AddFallbackAttr(props, "newton:xpbd:restitutionEnabled",
+                    scene.newtonXpbdScene.value().restitutionEnabled);
+  }
+  if (scene.newtonKaminoScene) {
+    AddFallbackAttr(props, "newton:kamino:padmm:primalTolerance",
+                    scene.newtonKaminoScene.value().padmmPrimalTolerance);
+    AddFallbackAttr(props, "newton:kamino:padmm:dualTolerance",
+                    scene.newtonKaminoScene.value().padmmDualTolerance);
+    AddFallbackAttr(props, "newton:kamino:padmm:complementarityTolerance",
+                    scene.newtonKaminoScene.value().padmmComplementarityTolerance);
+    AddFallbackAttr(props, "newton:kamino:padmm:warmstarting",
+                    scene.newtonKaminoScene.value().padmmWarmstarting);
+    AddFallbackAttr(props, "newton:kamino:padmm:useAcceleration",
+                    scene.newtonKaminoScene.value().padmmUseAcceleration);
+    AddFallbackAttr(props, "newton:kamino:constraints:usePreconditioning",
+                    scene.newtonKaminoScene.value().constraintsUsePreconditioning);
+    AddFallbackAttr(props, "newton:kamino:constraints:alpha",
+                    scene.newtonKaminoScene.value().constraintsAlpha);
+    AddFallbackAttr(props, "newton:kamino:constraints:beta",
+                    scene.newtonKaminoScene.value().constraintsBeta);
+    AddFallbackAttr(props, "newton:kamino:constraints:gamma",
+                    scene.newtonKaminoScene.value().constraintsGamma);
+    AddFallbackAttr(props, "newton:kamino:jointCorrection",
+                    scene.newtonKaminoScene.value().jointCorrection);
   }
 }
 
@@ -1591,6 +1653,21 @@ void AppendPhysicsPrimJson(const tinyusdz::Prim &prim, const std::string &path,
   } else if (const auto *joint = prim.as<tinyusdz::PhysicsJoint>()) {
     AddJointBaseJson(props, rels, *joint);
     AddPropertyMap(props, rels, joint->props);
+  } else if (const auto *act = prim.as<tinyusdz::NewtonActuator>()) {
+    rels["newton:targets"] = RelationshipTargetsJson(act->targets);
+    AddFallbackAttr(props, "newton:delaySteps", act->delaySteps);
+    AddFallbackAttr(props, "newton:constEffort", act->constEffort);
+    AddFallbackAttr(props, "newton:kp", act->kp);
+    AddFallbackAttr(props, "newton:kd", act->kd);
+    AddFallbackAttr(props, "newton:ki", act->ki);
+    AddFallbackAttr(props, "newton:integralMax", act->integralMax);
+    AddFallbackAttr(props, "newton:maxEffort", act->maxEffort);
+    AddFallbackAttr(props, "newton:maxMotorEffort", act->maxMotorEffort);
+    AddFallbackAttr(props, "newton:saturationEffort", act->saturationEffort);
+    AddFallbackAttr(props, "newton:velocityLimit", act->velocityLimit);
+    AddTypedAttr(props, "newton:lookupPositions", act->lookupPositions);
+    AddTypedAttr(props, "newton:lookupEfforts", act->lookupEfforts);
+    AddPropertyMap(props, rels, act->props);
   }
 
   prims.push_back(std::move(item));

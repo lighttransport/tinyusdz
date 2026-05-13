@@ -275,7 +275,7 @@ ExpansionRule(const std::string &tok) {
 nonstd::expected<APISchemas::APIName, std::string>
 APISchemaName(const std::string &tok) {
   using E = APISchemas::APIName;
-  constexpr std::array<std::pair<E, const char *>, 43> enums = {{
+  constexpr std::array<std::pair<E, const char *>, 60> enums = {{
       {E::SkelBindingAPI, "SkelBindingAPI"},
       {E::CollectionAPI, "CollectionAPI"},
       {E::MaterialBindingAPI, "MaterialBindingAPI"},
@@ -315,6 +315,24 @@ APISchemaName(const std::string &tok) {
       {E::MjcEqualityConnectAPI, "MjcEqualityConnectAPI"},
       {E::MjcEqualityWeldAPI, "MjcEqualityWeldAPI"},
       {E::MjcEqualityJointAPI, "MjcEqualityJointAPI"},
+      // Newton physics
+      {E::NewtonSceneAPI, "NewtonSceneAPI"},
+      {E::NewtonXpbdSceneAPI, "NewtonXpbdSceneAPI"},
+      {E::NewtonKaminoSceneAPI, "NewtonKaminoSceneAPI"},
+      {E::NewtonArticulationRootAPI, "NewtonArticulationRootAPI"},
+      {E::NewtonCollisionAPI, "NewtonCollisionAPI"},
+      {E::NewtonMeshCollisionAPI, "NewtonMeshCollisionAPI"},
+      {E::NewtonMaterialAPI, "NewtonMaterialAPI"},
+      {E::NewtonMimicAPI, "NewtonMimicAPI"},
+      {E::NewtonActuatorDelayAPI, "NewtonActuatorDelayAPI"},
+      {E::NewtonActuatorControlBaseAPI, "NewtonActuatorControlBaseAPI"},
+      {E::NewtonPDControlAPI, "NewtonPDControlAPI"},
+      {E::NewtonPIDControlAPI, "NewtonPIDControlAPI"},
+      {E::NewtonNeuralControlAPI, "NewtonNeuralControlAPI"},
+      {E::NewtonActuatorClampingBaseAPI, "NewtonActuatorClampingBaseAPI"},
+      {E::NewtonMaxEffortClampingAPI, "NewtonMaxEffortClampingAPI"},
+      {E::NewtonDCMotorClampingAPI, "NewtonDCMotorClampingAPI"},
+      {E::NewtonPositionBasedClampingAPI, "NewtonPositionBasedClampingAPI"},
       // Additional UsdPhysics
       {E::PhysicsMassAPI, "PhysicsMassAPI"},
       {E::PhysicsFilteredPairsAPI, "PhysicsFilteredPairsAPI"},

@@ -768,6 +768,18 @@ const PrimMeta *GetPrimMeta(const value::Value &v) {
   GET_PRIM_META(Skeleton)
   GET_PRIM_META(SkelAnimation)
   GET_PRIM_META(BlendShape)
+  GET_PRIM_META(PhysicsScene)
+  GET_PRIM_META(PhysicsJoint)
+  GET_PRIM_META(PhysicsRevoluteJoint)
+  GET_PRIM_META(PhysicsPrismaticJoint)
+  GET_PRIM_META(PhysicsSphericalJoint)
+  GET_PRIM_META(PhysicsFixedJoint)
+  GET_PRIM_META(PhysicsDistanceJoint)
+  GET_PRIM_META(PhysicsCollisionGroup)
+  GET_PRIM_META(MjcActuator)
+  GET_PRIM_META(NewtonActuator)
+  GET_PRIM_META(MjcTendon)
+  GET_PRIM_META(MjcKeyframe)
 
 #undef GET_PRIM_META
 
@@ -815,6 +827,18 @@ PrimMeta *GetPrimMeta(value::Value &v) {
   GET_PRIM_META(Skeleton)
   GET_PRIM_META(SkelAnimation)
   GET_PRIM_META(BlendShape)
+  GET_PRIM_META(PhysicsScene)
+  GET_PRIM_META(PhysicsJoint)
+  GET_PRIM_META(PhysicsRevoluteJoint)
+  GET_PRIM_META(PhysicsPrismaticJoint)
+  GET_PRIM_META(PhysicsSphericalJoint)
+  GET_PRIM_META(PhysicsFixedJoint)
+  GET_PRIM_META(PhysicsDistanceJoint)
+  GET_PRIM_META(PhysicsCollisionGroup)
+  GET_PRIM_META(MjcActuator)
+  GET_PRIM_META(NewtonActuator)
+  GET_PRIM_META(MjcTendon)
+  GET_PRIM_META(MjcKeyframe)
 
 #undef GET_PRIM_META
 
@@ -908,6 +932,7 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(PhysicsDistanceJoint)
   EXTRACT_NAME_AND_RETURN_PATH(PhysicsCollisionGroup)
   EXTRACT_NAME_AND_RETURN_PATH(MjcActuator)
+  EXTRACT_NAME_AND_RETURN_PATH(NewtonActuator)
   EXTRACT_NAME_AND_RETURN_PATH(MjcTendon)
   EXTRACT_NAME_AND_RETURN_PATH(MjcKeyframe)
   // AR/Interactive (Apple Preliminary_*)
@@ -1000,6 +1025,7 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   SET_ELEMENT_NAME(elementName, PhysicsDistanceJoint)
   SET_ELEMENT_NAME(elementName, PhysicsCollisionGroup)
   SET_ELEMENT_NAME(elementName, MjcActuator)
+  SET_ELEMENT_NAME(elementName, NewtonActuator)
   SET_ELEMENT_NAME(elementName, MjcTendon)
   SET_ELEMENT_NAME(elementName, MjcKeyframe)
   // AR/Interactive (Apple Preliminary_*)

@@ -190,6 +190,75 @@ std::string to_string(const APISchemas::APIName &name) {
       s = "MjcEqualityJointAPI";
       break;
     }
+    // Newton physics
+    case APISchemas::APIName::NewtonSceneAPI: {
+      s = "NewtonSceneAPI";
+      break;
+    }
+    case APISchemas::APIName::NewtonXpbdSceneAPI: {
+      s = "NewtonXpbdSceneAPI";
+      break;
+    }
+    case APISchemas::APIName::NewtonKaminoSceneAPI: {
+      s = "NewtonKaminoSceneAPI";
+      break;
+    }
+    case APISchemas::APIName::NewtonArticulationRootAPI: {
+      s = "NewtonArticulationRootAPI";
+      break;
+    }
+    case APISchemas::APIName::NewtonCollisionAPI: {
+      s = "NewtonCollisionAPI";
+      break;
+    }
+    case APISchemas::APIName::NewtonMeshCollisionAPI: {
+      s = "NewtonMeshCollisionAPI";
+      break;
+    }
+    case APISchemas::APIName::NewtonMaterialAPI: {
+      s = "NewtonMaterialAPI";
+      break;
+    }
+    case APISchemas::APIName::NewtonMimicAPI: {
+      s = "NewtonMimicAPI";
+      break;
+    }
+    case APISchemas::APIName::NewtonActuatorDelayAPI: {
+      s = "NewtonActuatorDelayAPI";
+      break;
+    }
+    case APISchemas::APIName::NewtonActuatorControlBaseAPI: {
+      s = "NewtonActuatorControlBaseAPI";
+      break;
+    }
+    case APISchemas::APIName::NewtonPDControlAPI: {
+      s = "NewtonPDControlAPI";
+      break;
+    }
+    case APISchemas::APIName::NewtonPIDControlAPI: {
+      s = "NewtonPIDControlAPI";
+      break;
+    }
+    case APISchemas::APIName::NewtonNeuralControlAPI: {
+      s = "NewtonNeuralControlAPI";
+      break;
+    }
+    case APISchemas::APIName::NewtonActuatorClampingBaseAPI: {
+      s = "NewtonActuatorClampingBaseAPI";
+      break;
+    }
+    case APISchemas::APIName::NewtonMaxEffortClampingAPI: {
+      s = "NewtonMaxEffortClampingAPI";
+      break;
+    }
+    case APISchemas::APIName::NewtonDCMotorClampingAPI: {
+      s = "NewtonDCMotorClampingAPI";
+      break;
+    }
+    case APISchemas::APIName::NewtonPositionBasedClampingAPI: {
+      s = "NewtonPositionBasedClampingAPI";
+      break;
+    }
     case APISchemas::APIName::PhysicsDriveAPI: {
       s = "PhysicsDriveAPI";
       break;

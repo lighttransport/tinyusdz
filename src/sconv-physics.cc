@@ -7,6 +7,7 @@
 #include "sconv-detail.hh"
 #include "usdPhysics.hh"
 #include "mjcPhysics.hh"
+#include "newtonPhysics.hh"
 
 namespace tinyusdz {
 namespace experimental {
@@ -74,6 +75,38 @@ bool CrateWriter::ExtractPhysicsSceneProperties(
   }
   EXTRACT_TYPED(scene->gravityDirection, "physics:gravityDirection");
   EXTRACT_TYPED(scene->gravityMagnitude, "physics:gravityMagnitude");
+  if (scene->newtonScene.has_value()) {
+    const auto &_n = scene->newtonScene.value();
+    EXTRACT_FALLBACK(_n.maxSolverIterations, "newton:maxSolverIterations");
+    EXTRACT_FALLBACK(_n.timeStepsPerSecond, "newton:timeStepsPerSecond");
+    EXTRACT_FALLBACK(_n.gravityEnabled, "newton:gravityEnabled");
+  }
+  if (scene->newtonXpbdScene.has_value()) {
+    const auto &_n = scene->newtonXpbdScene.value();
+    EXTRACT_FALLBACK(_n.softBodyRelaxation, "newton:xpbd:softBodyRelaxation");
+    EXTRACT_FALLBACK(_n.softContactRelaxation, "newton:xpbd:softContactRelaxation");
+    EXTRACT_FALLBACK(_n.jointLinearRelaxation, "newton:xpbd:jointLinearRelaxation");
+    EXTRACT_FALLBACK(_n.jointAngularRelaxation, "newton:xpbd:jointAngularRelaxation");
+    EXTRACT_FALLBACK(_n.jointLinearCompliance, "newton:xpbd:jointLinearCompliance");
+    EXTRACT_FALLBACK(_n.jointAngularCompliance, "newton:xpbd:jointAngularCompliance");
+    EXTRACT_FALLBACK(_n.rigidContactRelaxation, "newton:xpbd:rigidContactRelaxation");
+    EXTRACT_FALLBACK(_n.rigidContactConWeighting, "newton:xpbd:rigidContactConWeighting");
+    EXTRACT_FALLBACK(_n.angularDamping, "newton:xpbd:angularDamping");
+    EXTRACT_FALLBACK(_n.restitutionEnabled, "newton:xpbd:restitutionEnabled");
+  }
+  if (scene->newtonKaminoScene.has_value()) {
+    const auto &_n = scene->newtonKaminoScene.value();
+    EXTRACT_FALLBACK(_n.padmmPrimalTolerance, "newton:kamino:padmm:primalTolerance");
+    EXTRACT_FALLBACK(_n.padmmDualTolerance, "newton:kamino:padmm:dualTolerance");
+    EXTRACT_FALLBACK(_n.padmmComplementarityTolerance, "newton:kamino:padmm:complementarityTolerance");
+    EXTRACT_TOKEN_FALLBACK(_n.padmmWarmstarting, "newton:kamino:padmm:warmstarting");
+    EXTRACT_FALLBACK(_n.padmmUseAcceleration, "newton:kamino:padmm:useAcceleration");
+    EXTRACT_FALLBACK(_n.constraintsUsePreconditioning, "newton:kamino:constraints:usePreconditioning");
+    EXTRACT_FALLBACK(_n.constraintsAlpha, "newton:kamino:constraints:alpha");
+    EXTRACT_FALLBACK(_n.constraintsBeta, "newton:kamino:constraints:beta");
+    EXTRACT_FALLBACK(_n.constraintsGamma, "newton:kamino:constraints:gamma");
+    EXTRACT_TOKEN_FALLBACK(_n.jointCorrection, "newton:kamino:jointCorrection");
+  }
   (void)prim_path;
   return true;
 }
@@ -120,6 +153,13 @@ bool CrateWriter::ExtractPhysicsSceneProperties(
     EXTRACT_FALLBACK(_m.actuatorfrcrange_max, "mjc:actuatorfrcrange:max"); \
     EXTRACT_TOKEN_FALLBACK(_m.actuatorfrclimited, "mjc:actuatorfrclimited"); \
     EXTRACT_FALLBACK(_m.actuatorgravcomp, "mjc:actuatorgravcomp"); \
+  } \
+  if ((j).newtonMimic.has_value()) { \
+    const auto &_n = (j).newtonMimic.value(); \
+    EXTRACT_FALLBACK(_n.mimicEnabled, "newton:mimicEnabled"); \
+    EXTRACT_REL(_n.mimicJoint, "newton:mimicJoint"); \
+    EXTRACT_FALLBACK(_n.mimicCoef0, "newton:mimicCoef0"); \
+    EXTRACT_FALLBACK(_n.mimicCoef1, "newton:mimicCoef1"); \
   } \
 } while(0)
 
@@ -220,6 +260,29 @@ bool CrateWriter::ExtractMjcActuatorProperties(
   return true;
 }
 
+bool CrateWriter::ExtractNewtonActuatorProperties(
+    const Prim &prim, const Path &prim_path,
+    crate::FieldValuePairVector &fields, std::string *err) {
+  const NewtonActuator *a = prim.data().as<NewtonActuator>();
+  if (!a) { if (err) *err = "Failed to cast to NewtonActuator"; return false; }
+  EXTRACT_REL(a->targets, "newton:targets");
+  EXTRACT_FALLBACK(a->delaySteps, "newton:delaySteps");
+  EXTRACT_FALLBACK(a->constEffort, "newton:constEffort");
+  EXTRACT_FALLBACK(a->kp, "newton:kp");
+  EXTRACT_FALLBACK(a->kd, "newton:kd");
+  EXTRACT_FALLBACK(a->ki, "newton:ki");
+  EXTRACT_FALLBACK(a->integralMax, "newton:integralMax");
+  EXTRACT_TYPED(a->modelPath, "newton:modelPath");
+  EXTRACT_FALLBACK(a->maxEffort, "newton:maxEffort");
+  EXTRACT_FALLBACK(a->maxMotorEffort, "newton:maxMotorEffort");
+  EXTRACT_FALLBACK(a->saturationEffort, "newton:saturationEffort");
+  EXTRACT_FALLBACK(a->velocityLimit, "newton:velocityLimit");
+  EXTRACT_TYPED(a->lookupPositions, "newton:lookupPositions");
+  EXTRACT_TYPED(a->lookupEfforts, "newton:lookupEfforts");
+  (void)prim_path;
+  return true;
+}
+
 bool CrateWriter::ExtractMjcTendonProperties(
     const Prim &prim, const Path &prim_path,
     crate::FieldValuePairVector &fields, std::string *err) {
@@ -251,6 +314,8 @@ bool CrateWriter::ExtractMjcKeyframeProperties(
 #undef EXTRACT_TYPED
 #undef EXTRACT_FALLBACK
 #undef EXTRACT_REL
+#undef EXTRACT_TOKEN
+#undef EXTRACT_TOKEN_FALLBACK
 #undef EXTRACT_JOINT_BASE
 
 }  // namespace experimental
