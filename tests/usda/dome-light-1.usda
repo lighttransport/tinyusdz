@@ -1,0 +1,19 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    upAxis = "Y"
+)
+
+def Xform "Root"
+{
+    def DomeLight_1 "Sky"
+    {
+        asset inputs:texture:file = @sky.hdr@
+        uniform token poleAxis = "Y"
+        float guideRadius = 100000
+    }
+
+    def LightFilter "MyFilter"
+    {
+    }
+}

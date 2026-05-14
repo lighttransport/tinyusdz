@@ -8,10 +8,10 @@
 
 #include <sstream>
 #include <cstdint>
-#include <unordered_map>
 
 #include "common-macros.inc"
 #include "tiny-format.hh"
+#include "tiny-hashmap.hh"
 #include "core/prim.hh"
 #include "path-util.hh"
 
@@ -226,13 +226,13 @@ bool BuildSkelTopology(
   }
 
   // path name <-> index map
-  std::unordered_map<std::string, int, FNV1StringHash> pathMap;
+  tinyusdz::HashMap<std::string, int, FNV1StringHash> pathMap;
   pathMap.reserve(paths.size());
   for (size_t i = 0; i < paths.size(); i++) {
-    pathMap[paths[i].prim_part()] = int(i); 
+    pathMap[paths[i].prim_part()] = int(i);
   }
 
-  auto GetParentIndex = [](const std::unordered_map<std::string, int, FNV1StringHash> &_pathMap,
+  auto GetParentIndex = [](const tinyusdz::HashMap<std::string, int, FNV1StringHash> &_pathMap,
                            const Path &path) -> int {
     if (path.is_root_path()) {
       return -1;

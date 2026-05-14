@@ -15,6 +15,8 @@
 
 #include "subdiv.hh"
 
+#include "safe-arithmetic.hh"
+
 #include "common-macros.inc"
 
 #ifdef __clang__
@@ -188,7 +190,11 @@ bool subdivide(int subd_level, const ControlQuadMesh &in_mesh,
     // Print vertex positions
     int firstOfLastVerts = refiner->GetNumVerticesTotal() - nverts;
 
-    out_mesh->vertices.resize(size_t(nverts) * 3);
+    size_t resize_size;
+    if (!safe::mul(size_t(nverts), size_t(3), &resize_size)) {
+      return false;
+    }
+    out_mesh->vertices.resize(resize_size);
 
     for (size_t vert = 0; vert < size_t(nverts); ++vert) {
       float const *pos = verts[size_t(firstOfLastVerts) + vert].GetPosition();

@@ -199,6 +199,34 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
     return AddSpec(input_path, SpecType::Attribute, input_fields, err);
   };
 
+  // Helper: emit a typed-shader-input spec for an attribute that holds a
+  // connection (no concrete value). Without this, typed UsdPreviewSurface
+  // inputs that are wired to upstream shader outputs (e.g.
+  // `inputs:diffuseColor.connect = </tex.outputs:rgb>`) drop their connection
+  // during USDC writing because the regular add_input_spec path requires a
+  // scalar value. Emits typeName + connectionPaths (matching what
+  // ConvertAttributeToFields does for generic attribute connections).
+  auto add_input_connection_spec = [&](const std::string& input_name,
+                                        const std::string& type_name,
+                                        const std::vector<Path>& conn_paths) -> bool {
+    Path input_path = prim_path.AppendProperty(input_name);
+    crate::FieldValuePairVector input_fields;
+
+    crate::CrateValue type_value;
+    value::token type_tok(type_name);
+    type_value.Set(type_tok);
+    input_fields.push_back({"typeName", type_value});
+
+    ListOp<Path> conn_listop;
+    conn_listop.ClearAndMakeExplicit();
+    conn_listop.SetExplicitItems(conn_paths);
+    crate::CrateValue conn_value;
+    conn_value.Set(conn_listop);
+    input_fields.push_back({"connectionPaths", conn_value});
+
+    return AddSpec(input_path, SpecType::Attribute, input_fields, err);
+  };
+
   // Helper to convert OpacityMode enum to token string
   auto opacity_mode_to_string = [](UsdPreviewSurface::OpacityMode mode) -> std::string {
     switch (mode) {
@@ -303,28 +331,40 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
 
   // inputs:diffuseColor (color3f)
   if (preview_surface->diffuseColor.authored()) {
-    value::color3f color;
-    if (preview_surface->diffuseColor.get_value().get_scalar(&color)) {
-      // Convert color3f to float3 for CrateValue (they're binary compatible)
-      value::float3 color_as_float3 = {color.r, color.g, color.b};
-      crate::CrateValue diffuse_value;
-      diffuse_value.Set(color_as_float3);
-      if (!add_input_spec_with_timesamples_color3f("inputs:diffuseColor", "color3f", diffuse_value, &preview_surface->diffuseColor.get_value())) {
+    if (preview_surface->diffuseColor.has_connections()) {
+      if (!add_input_connection_spec("inputs:diffuseColor", "color3f",
+                                      preview_surface->diffuseColor.connections())) {
         return false;
+      }
+    } else {
+      value::color3f color;
+      if (preview_surface->diffuseColor.get_value().get_scalar(&color)) {
+        value::float3 color_as_float3 = {color.r, color.g, color.b};
+        crate::CrateValue diffuse_value;
+        diffuse_value.Set(color_as_float3);
+        if (!add_input_spec_with_timesamples_color3f("inputs:diffuseColor", "color3f", diffuse_value, &preview_surface->diffuseColor.get_value())) {
+          return false;
+        }
       }
     }
   }
 
   // inputs:emissiveColor (color3f)
   if (preview_surface->emissiveColor.authored()) {
-    value::color3f color;
-    if (preview_surface->emissiveColor.get_value().get_scalar(&color)) {
-      // Convert color3f to float3 for CrateValue
-      value::float3 color_as_float3 = {color.r, color.g, color.b};
-      crate::CrateValue emissive_value;
-      emissive_value.Set(color_as_float3);
-      if (!add_input_spec_with_timesamples_color3f("inputs:emissiveColor", "color3f", emissive_value, &preview_surface->emissiveColor.get_value())) {
+    if (preview_surface->emissiveColor.has_connections()) {
+      if (!add_input_connection_spec("inputs:emissiveColor", "color3f",
+                                      preview_surface->emissiveColor.connections())) {
         return false;
+      }
+    } else {
+      value::color3f color;
+      if (preview_surface->emissiveColor.get_value().get_scalar(&color)) {
+        value::float3 color_as_float3 = {color.r, color.g, color.b};
+        crate::CrateValue emissive_value;
+        emissive_value.Set(color_as_float3);
+        if (!add_input_spec_with_timesamples_color3f("inputs:emissiveColor", "color3f", emissive_value, &preview_surface->emissiveColor.get_value())) {
+          return false;
+        }
       }
     }
   }
@@ -345,77 +385,45 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
 
   // inputs:specularColor (color3f) - for specular workflow
   if (preview_surface->specularColor.authored()) {
-    value::color3f color;
-    if (preview_surface->specularColor.get_value().get_scalar(&color)) {
-      // Convert color3f to float3 for CrateValue
-      value::float3 color_as_float3 = {color.r, color.g, color.b};
-      crate::CrateValue spec_color_value;
-      spec_color_value.Set(color_as_float3);
-      if (!add_input_spec_with_timesamples_color3f("inputs:specularColor", "color3f", spec_color_value, &preview_surface->specularColor.get_value())) {
-        return false;
+    if (preview_surface->specularColor.has_connections()) {
+      if (!add_input_connection_spec("inputs:specularColor", "color3f",
+                                      preview_surface->specularColor.connections())) return false;
+    } else {
+      value::color3f color;
+      if (preview_surface->specularColor.get_value().get_scalar(&color)) {
+        value::float3 color_as_float3 = {color.r, color.g, color.b};
+        crate::CrateValue spec_color_value;
+        spec_color_value.Set(color_as_float3);
+        if (!add_input_spec_with_timesamples_color3f("inputs:specularColor", "color3f", spec_color_value, &preview_surface->specularColor.get_value())) {
+          return false;
+        }
       }
     }
   }
 
-  // inputs:metallic (float) - for metalness workflow
-  if (preview_surface->metallic.authored()) {
-    crate::CrateValue metallic_value;
-    float metallic = 0.0f;
-    if (preview_surface->metallic.get_value().get_scalar(&metallic)) {
-      metallic_value.Set(metallic);
-      if (!add_input_spec_with_timesamples("inputs:metallic", "float", metallic_value, &preview_surface->metallic.get_value())) {
-        return false;
-      }
-    }
+  // Helper: connection-or-scalar dispatch for float inputs.
+#define EMIT_FLOAT_INPUT(NAME, MEMBER)                                         \
+  if (preview_surface->MEMBER.authored()) {                                    \
+    if (preview_surface->MEMBER.has_connections()) {                           \
+      if (!add_input_connection_spec(NAME, "float",                            \
+                                      preview_surface->MEMBER.connections())) \
+        return false;                                                          \
+    } else {                                                                   \
+      crate::CrateValue v;                                                     \
+      float scalar = 0.0f;                                                     \
+      if (preview_surface->MEMBER.get_value().get_scalar(&scalar)) {           \
+        v.Set(scalar);                                                         \
+        if (!add_input_spec_with_timesamples(NAME, "float", v,                 \
+                &preview_surface->MEMBER.get_value())) return false;           \
+      }                                                                        \
+    }                                                                          \
   }
 
-  // inputs:roughness (float)
-  if (preview_surface->roughness.authored()) {
-    crate::CrateValue roughness_value;
-    float roughness = 0.0f;
-    if (preview_surface->roughness.get_value().get_scalar(&roughness)) {
-      roughness_value.Set(roughness);
-      if (!add_input_spec_with_timesamples("inputs:roughness", "float", roughness_value, &preview_surface->roughness.get_value())) {
-        return false;
-      }
-    }
-  }
-
-  // inputs:clearcoat (float)
-  if (preview_surface->clearcoat.authored()) {
-    crate::CrateValue clearcoat_value;
-    float clearcoat = 0.0f;
-    if (preview_surface->clearcoat.get_value().get_scalar(&clearcoat)) {
-      clearcoat_value.Set(clearcoat);
-      if (!add_input_spec_with_timesamples("inputs:clearcoat", "float", clearcoat_value, &preview_surface->clearcoat.get_value())) {
-        return false;
-      }
-    }
-  }
-
-  // inputs:clearcoatRoughness (float)
-  if (preview_surface->clearcoatRoughness.authored()) {
-    crate::CrateValue clearcoat_rough_value;
-    float clearcoat_rough = 0.0f;
-    if (preview_surface->clearcoatRoughness.get_value().get_scalar(&clearcoat_rough)) {
-      clearcoat_rough_value.Set(clearcoat_rough);
-      if (!add_input_spec_with_timesamples("inputs:clearcoatRoughness", "float", clearcoat_rough_value, &preview_surface->clearcoatRoughness.get_value())) {
-        return false;
-      }
-    }
-  }
-
-  // inputs:opacity (float)
-  if (preview_surface->opacity.authored()) {
-    crate::CrateValue opacity_value;
-    float opacity = 0.0f;
-    if (preview_surface->opacity.get_value().get_scalar(&opacity)) {
-      opacity_value.Set(opacity);
-      if (!add_input_spec_with_timesamples("inputs:opacity", "float", opacity_value, &preview_surface->opacity.get_value())) {
-        return false;
-      }
-    }
-  }
+  EMIT_FLOAT_INPUT("inputs:metallic",          metallic)
+  EMIT_FLOAT_INPUT("inputs:roughness",         roughness)
+  EMIT_FLOAT_INPUT("inputs:clearcoat",         clearcoat)
+  EMIT_FLOAT_INPUT("inputs:clearcoatRoughness", clearcoatRoughness)
+  EMIT_FLOAT_INPUT("inputs:opacity",           opacity)
 
   // inputs:opacityMode (token) - Controls transparency behavior (transparent or presence)
   if (preview_surface->opacityMode.authored()) {
@@ -432,66 +440,26 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
     }
   }
 
-  // inputs:opacityThreshold (float)
-  if (preview_surface->opacityThreshold.authored()) {
-    crate::CrateValue opacity_thresh_value;
-    float opacity_thresh = 0.0f;
-    if (preview_surface->opacityThreshold.get_value().get_scalar(&opacity_thresh)) {
-      opacity_thresh_value.Set(opacity_thresh);
-      if (!add_input_spec_with_timesamples("inputs:opacityThreshold", "float", opacity_thresh_value, &preview_surface->opacityThreshold.get_value())) {
-        return false;
-      }
-    }
-  }
-
-  // inputs:ior (float)
-  if (preview_surface->ior.authored()) {
-    crate::CrateValue ior_value;
-    float ior = 0.0f;
-    if (preview_surface->ior.get_value().get_scalar(&ior)) {
-      ior_value.Set(ior);
-      if (!add_input_spec_with_timesamples("inputs:ior", "float", ior_value, &preview_surface->ior.get_value())) {
-        return false;
-      }
-    }
-  }
+  EMIT_FLOAT_INPUT("inputs:opacityThreshold", opacityThreshold)
+  EMIT_FLOAT_INPUT("inputs:ior",              ior)
+  EMIT_FLOAT_INPUT("inputs:displacement",     displacement)
+  EMIT_FLOAT_INPUT("inputs:occlusion",        occlusion)
+#undef EMIT_FLOAT_INPUT
 
   // inputs:normal (normal3f)
   if (preview_surface->normal.authored()) {
-    crate::CrateValue normal_value;
-    if (!preview_surface->normal.get_value().is_timesamples()) {
+    if (preview_surface->normal.has_connections()) {
+      if (!add_input_connection_spec("inputs:normal", "normal3f",
+                                      preview_surface->normal.connections())) return false;
+    } else if (!preview_surface->normal.get_value().is_timesamples()) {
+      crate::CrateValue normal_value;
       value::normal3f normal;
       if (preview_surface->normal.get_value().get_scalar(&normal)) {
-        // Convert normal3f to float3 for CrateValue (they're binary compatible)
         value::float3 normal_as_float3 = {normal.x, normal.y, normal.z};
         normal_value.Set(normal_as_float3);
         if (!add_input_spec("inputs:normal", "normal3f", normal_value)) {
           return false;
         }
-      }
-    }
-  }
-
-  // inputs:displacement (float)
-  if (preview_surface->displacement.authored()) {
-    crate::CrateValue displacement_value;
-    float displacement = 0.0f;
-    if (preview_surface->displacement.get_value().get_scalar(&displacement)) {
-      displacement_value.Set(displacement);
-      if (!add_input_spec_with_timesamples("inputs:displacement", "float", displacement_value, &preview_surface->displacement.get_value())) {
-        return false;
-      }
-    }
-  }
-
-  // inputs:occlusion (float)
-  if (preview_surface->occlusion.authored()) {
-    crate::CrateValue occlusion_value;
-    float occlusion = 0.0f;
-    if (preview_surface->occlusion.get_value().get_scalar(&occlusion)) {
-      occlusion_value.Set(occlusion);
-      if (!add_input_spec_with_timesamples("inputs:occlusion", "float", occlusion_value, &preview_surface->occlusion.get_value())) {
-        return false;
       }
     }
   }
@@ -523,6 +491,27 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
     // default field (the value)
     input_fields.push_back({"default", value});
 
+    return AddSpec(input_path, SpecType::Attribute, input_fields, err);
+  };
+
+  // Helper: emit a connection-only attribute spec (typeName + connectionPaths).
+  // Mirrors AddUsdPreviewSurfaceInputSpecs::add_input_connection_spec — see
+  // that function for rationale.
+  auto add_input_connection_spec = [&](const std::string& input_name,
+                                        const std::string& type_name,
+                                        const std::vector<Path>& conn_paths) -> bool {
+    Path input_path = prim_path.AppendProperty(input_name);
+    crate::FieldValuePairVector input_fields;
+    crate::CrateValue type_value;
+    value::token type_tok(type_name);
+    type_value.Set(type_tok);
+    input_fields.push_back({"typeName", type_value});
+    ListOp<Path> conn_listop;
+    conn_listop.ClearAndMakeExplicit();
+    conn_listop.SetExplicitItems(conn_paths);
+    crate::CrateValue conn_value;
+    conn_value.Set(conn_listop);
+    input_fields.push_back({"connectionPaths", conn_value});
     return AddSpec(input_path, SpecType::Attribute, input_fields, err);
   };
 
@@ -596,7 +585,10 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
   // Extract and add texture inputs
 
   // inputs:file (asset) - texture file path
-  if (uv_texture->file.authored()) {
+  if (uv_texture->file.authored() && uv_texture->file.has_connections()) {
+    if (!add_input_connection_spec("inputs:file", "asset",
+                                    uv_texture->file.connections())) return false;
+  } else if (uv_texture->file.authored()) {
     crate::CrateValue file_value;
     auto file_opt = uv_texture->file.get_value();
     if (file_opt.has_value()) {
@@ -615,14 +607,18 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
 
   // inputs:st (texcoord2f) - texture coordinates
   if (uv_texture->st.authored()) {
-    crate::CrateValue st_value;
-    value::texcoord2f st = {0.0f, 0.0f};
-    if (uv_texture->st.get_value().get_scalar(&st)) {
-      // Convert texcoord2f to float2 for CrateValue
-      value::float2 st_as_float2 = {st.s, st.t};
-      st_value.Set(st_as_float2);
-      if (!add_input_spec_with_timesamples_float2("inputs:st", st_value, &uv_texture->st.get_value())) {
-        return false;
+    if (uv_texture->st.has_connections()) {
+      if (!add_input_connection_spec("inputs:st", "float2",
+                                      uv_texture->st.connections())) return false;
+    } else {
+      crate::CrateValue st_value;
+      value::texcoord2f st = {0.0f, 0.0f};
+      if (uv_texture->st.get_value().get_scalar(&st)) {
+        value::float2 st_as_float2 = {st.s, st.t};
+        st_value.Set(st_as_float2);
+        if (!add_input_spec_with_timesamples_float2("inputs:st", st_value, &uv_texture->st.get_value())) {
+          return false;
+        }
       }
     }
   }

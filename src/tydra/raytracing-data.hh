@@ -79,9 +79,9 @@ using mat4 = value::matrix4f;
 /// Axis-Aligned Bounding Box
 ///
 struct AABB {
-  vec3 min{std::numeric_limits<float>::max(),
-           std::numeric_limits<float>::max(),
-           std::numeric_limits<float>::max()};
+  vec3 min{(std::numeric_limits<float>::max)(),
+           (std::numeric_limits<float>::max)(),
+           (std::numeric_limits<float>::max)()};
   vec3 max{std::numeric_limits<float>::lowest(),
            std::numeric_limits<float>::lowest(),
            std::numeric_limits<float>::lowest()};

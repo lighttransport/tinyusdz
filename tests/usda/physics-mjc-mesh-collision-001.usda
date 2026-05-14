@@ -1,0 +1,115 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Z"
+)
+
+# Mesh-as-collider convention used by lightgeom `export_usdz.py` and
+# tinyusdz `urdf-to-usd`, mirroring NVIDIA / Newton's
+# `mujoco-usd-converter`:
+#
+#   * One UsdGeom.Mesh per source geom (no `visual_*` / `collision_*`
+#     duplication; "is this a collider?" is signalled by applied APIs).
+#   * Applied API stack on collider meshes:
+#         PhysicsCollisionAPI
+#         PhysicsMeshCollisionAPI       (physics:approximation = "convexHull")
+#         MjcCollisionAPI               (codeless; mjc:group / condim / solref…)
+#         MjcImageableAPI               (codeless; mjc:group for round-trip)
+#   * `purpose = "guide"` iff MuJoCo `geom.group ∉ {0,1,2}` — i.e. the
+#     mesh is collision-only and should not render under default purposes.
+#   * Visual-only Meshes carry no PhysicsCollisionAPI and no purpose
+#     authoring; `mjc:group` may still be authored via MjcImageableAPI
+#     for round-trip into MuJoCo.
+#
+# This fixture exercises all three cases (visual-only, dual-purpose,
+# collision-only) plus an authored `physics:collisionEnabled = false`
+# branch (the `mujoco-usd-converter` pattern, where every Mesh is
+# stamped with PhysicsCollisionAPI and opt-out is encoded as
+# `collisionEnabled = false`).
+
+def Xform "World"
+{
+    def Xform "Robot" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        # 1) Visual-only mesh — no PhysicsCollisionAPI, no purpose=guide.
+        #    `mjc:group = 0` round-trips into MuJoCo geom.group.
+        def Mesh "VisualOnly" (
+            prepend apiSchemas = ["MjcImageableAPI"]
+        )
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            color3f[] primvars:displayColor = [(0.7, 0.7, 0.9)]
+            uniform int mjc:group = 0
+        }
+
+        # 2) Dual-purpose mesh — visible AND collider (the "default"
+        #    case for groups 0/1/2). PhysicsCollisionAPI is applied but
+        #    `purpose` is NOT authored as guide.
+        def Mesh "VisualAndCollider" (
+            prepend apiSchemas = [
+                "PhysicsCollisionAPI",
+                "PhysicsMeshCollisionAPI",
+                "MjcCollisionAPI",
+                "MjcImageableAPI",
+            ]
+        )
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            uniform token physics:approximation = "convexHull"
+            uniform int mjc:group = 2
+            uniform int mjc:condim = 3
+            uniform int mjc:priority = 0
+            uniform double mjc:solmix = 1.0
+            uniform double[] mjc:solref = [0.02, 1.0]
+            uniform double[] mjc:solimp = [0.9, 0.95, 0.001, 0.5, 2.0]
+            uniform double mjc:margin = 0.0
+            uniform double mjc:gap = 0.0
+        }
+
+        # 3) Collision-only mesh — purpose=guide (don't render by
+        #    default), mjc:group = 3.
+        def Mesh "ColliderOnly" (
+            prepend apiSchemas = [
+                "PhysicsCollisionAPI",
+                "PhysicsMeshCollisionAPI",
+                "MjcCollisionAPI",
+                "MjcImageableAPI",
+            ]
+        )
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            uniform token purpose = "guide"
+            uniform token physics:approximation = "convexHull"
+            uniform int mjc:group = 3
+            uniform int mjc:condim = 6
+            uniform double mjc:margin = 0.001
+        }
+
+        # 4) Collision-disabled mesh — the `mujoco-usd-converter` pattern
+        #    where every Mesh has PhysicsCollisionAPI applied, and
+        #    visual-only meshes opt out by authoring
+        #    `physics:collisionEnabled = false`. Web/sim consumers should
+        #    treat this as visual-only (no overlay) despite the stamp.
+        def Mesh "DisabledCollider" (
+            prepend apiSchemas = [
+                "PhysicsCollisionAPI",
+                "PhysicsMeshCollisionAPI",
+            ]
+        )
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform bool physics:collisionEnabled = 0
+            uniform token physics:approximation = "convexHull"
+        }
+    }
+}

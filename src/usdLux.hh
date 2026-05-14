@@ -53,6 +53,7 @@ constexpr auto kPortalLight = "PortalLight";
 constexpr auto kPluginLight = "PluginLight";
 constexpr auto kLightFilter = "LightFilter";
 constexpr auto kPluginLightFilter = "PluginLightFilter";
+constexpr auto kDomeLight_1 = "DomeLight_1";
 
 // Relationship property names
 constexpr auto kGeometry = "geometry";
@@ -264,7 +265,27 @@ struct DomeLight : public NonboundableLight {
   // Relationships
   RelationshipProperty portals; // rel portals - portal lights for dome light
   RelationshipProperty proxyPrim; // rel proxyPrim - proxy geometry for light shape
-  
+
+};
+
+// DomeLight_1: adds poleAxis for flexible orientation
+struct DomeLight_1 : public NonboundableLight {
+
+  enum class TextureFormat {
+    Automatic,
+    Latlong,
+    MirroredBall,
+    Angular
+  };
+
+  TypedAttributeWithFallback<Animatable<float>> guideRadius{1.0e5f};
+  TypedAttribute<Animatable<value::AssetPath>> file;
+  TypedAttributeWithFallback<Animatable<TextureFormat>> textureFormat{TextureFormat::Automatic};
+  // "scene", "Y", "Z"
+  TypedAttributeWithFallback<value::token> poleAxis{value::token("scene")};
+
+  RelationshipProperty portals;
+  RelationshipProperty proxyPrim;
 };
 
 // TODO: Deprecate
@@ -332,6 +353,7 @@ inline bool IsLightPrim(const Prim &prim) {
 
 // Convert DomeLight::TextureFormat to string
 std::string to_string(const DomeLight::TextureFormat &format);
+std::string to_string(const DomeLight_1::TextureFormat &format);
 
 // Parse string to DomeLight::TextureFormat
 bool DomeLight_TextureFormat_from_string(const std::string &str, DomeLight::TextureFormat *format);
@@ -392,6 +414,9 @@ DEFINE_TYPE_TRAIT(RectLight, kRectLight, TYPE_ID_LUX_RECT, 1);
 DEFINE_TYPE_TRAIT(GeometryLight, kGeometryLight, TYPE_ID_LUX_GEOMETRY, 1);
 DEFINE_TYPE_TRAIT(PortalLight, kPortalLight, TYPE_ID_LUX_PORTAL, 1);
 DEFINE_TYPE_TRAIT(PluginLight, kPluginLight, TYPE_ID_LUX_PLUGIN, 1);
+DEFINE_TYPE_TRAIT(DomeLight_1, kDomeLight_1, TYPE_ID_LUX_DOME_1, 1);
+DEFINE_TYPE_TRAIT(LightFilter, kLightFilter, TYPE_ID_LUX_LIGHT_FILTER, 1);
+DEFINE_TYPE_TRAIT(PluginLightFilter, kPluginLightFilter, TYPE_ID_LUX_PLUGIN_LIGHT_FILTER, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

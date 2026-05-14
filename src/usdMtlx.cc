@@ -1,10 +1,11 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Copyright 2023 - Present, Light Transport Entertainment, Inc.
 
 #include <sstream>
 
 #include "usdMtlx.hh"
 #include "usdShade.hh"
+#include "safe-arithmetic.hh"
 
 // Use built-in MaterialX parser instead of pugixml
 #include "mtlx-usd-adapter.hh"
@@ -439,11 +440,19 @@ bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
     }
     if (typeName.compare("color3array") == 0) {
       std::vector<value::color3f> arr(values.size() / 3);
-      memcpy(arr.data(), values.data(), sizeof(float) * values.size());
+      size_t byte_count;
+      if (!safe::mul(values.size(), sizeof(float), &byte_count)) {
+        return false;
+      }
+      memcpy(arr.data(), values.data(), byte_count);
       (*value) = arr;
     } else {
       std::vector<value::float3> arr(values.size() / 3);
-      memcpy(arr.data(), values.data(), sizeof(float) * values.size());
+      size_t byte_count2;
+      if (!safe::mul(values.size(), sizeof(float), &byte_count2)) {
+        return false;
+      }
+      memcpy(arr.data(), values.data(), byte_count2);
       (*value) = arr;
     }
   } else if (typeName.compare("color4array") == 0 ||
@@ -458,11 +467,19 @@ bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
     }
     if (typeName.compare("color4array") == 0) {
       std::vector<value::color4f> arr(values.size() / 4);
-      memcpy(arr.data(), values.data(), sizeof(float) * values.size());
+      size_t byte_count;
+      if (!safe::mul(values.size(), sizeof(float), &byte_count)) {
+        return false;
+      }
+      memcpy(arr.data(), values.data(), byte_count);
       (*value) = arr;
     } else {
       std::vector<value::float4> arr(values.size() / 4);
-      memcpy(arr.data(), values.data(), sizeof(float) * values.size());
+      size_t byte_count2;
+      if (!safe::mul(values.size(), sizeof(float), &byte_count2)) {
+        return false;
+      }
+      memcpy(arr.data(), values.data(), byte_count2);
       (*value) = arr;
     }
   } else if (typeName.compare("vector2array") == 0) {
@@ -1639,8 +1656,8 @@ static const std::pair<const char*, NodeDispatchEntry> kNodeDispatchPairs[] = {
   {"constant",    {nullptr, nullptr, "MaterialXConstant"}},
 };
 
-static const std::unordered_map<std::string, NodeDispatchEntry> &GetNodeDispatchTable() {
-  static const std::unordered_map<std::string, NodeDispatchEntry> table(
+static const tinyusdz::HashMap<std::string, NodeDispatchEntry> &GetNodeDispatchTable() {
+  static const tinyusdz::HashMap<std::string, NodeDispatchEntry> table(
       std::begin(kNodeDispatchPairs), std::end(kNodeDispatchPairs));
   return table;
 }

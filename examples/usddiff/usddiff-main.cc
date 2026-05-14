@@ -113,8 +113,8 @@ int main(int argc, char **argv) {
   }
 
   // Perform diff
-  std::unordered_map<std::string, tinyusdz::tydra::PrimSpecDiff> psDiffs;
-  std::unordered_map<std::string, tinyusdz::tydra::PropDiff> propDiffs;
+  tinyusdz::HashMap<std::string, tinyusdz::tydra::PrimSpecDiff> psDiffs;
+  tinyusdz::HashMap<std::string, tinyusdz::tydra::PropDiff> propDiffs;
   tinyusdz::tydra::Diff(layer1, layer2, psDiffs, propDiffs);
 
   bool has_diffs = !psDiffs.empty() || !propDiffs.empty();

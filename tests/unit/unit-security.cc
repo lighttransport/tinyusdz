@@ -5,13 +5,58 @@
 #define TEST_NO_MAIN
 #include "acutest.h"
 
+#include "asset-resolution.hh"
 #include "unit-security.h"
+#include "json-to-usd.hh"
+#include "security-policy.hh"
 #include "tinyusdz.hh"
+#include "tydra/render-data-internal.hh"
+#include "zstd-compression.hh"
 
 #include <string>
+#include <cstring>
 #include <vector>
 
 using namespace tinyusdz;
+
+namespace {
+
+int SecurityTestResolveAsset(const char *asset_name,
+                             const std::vector<std::string> & /*search_paths*/,
+                             std::string *resolved_asset_name,
+                             std::string * /*err*/, void * /*userdata*/) {
+  if (!asset_name || !resolved_asset_name) {
+    return -1;
+  }
+  *resolved_asset_name = asset_name;
+  return 0;
+}
+
+int SecurityTestLargeSizeAsset(const char * /*resolved_asset_name*/,
+                               uint64_t *nbytes, std::string * /*err*/,
+                               void * /*userdata*/) {
+  if (!nbytes) {
+    return -1;
+  }
+  *nbytes = 2ull * 1024ull * 1024ull;  // 2 MiB
+  return 0;
+}
+
+int SecurityTestReadAsset(const char * /*resolved_asset_name*/,
+                          uint64_t req_nbytes, uint8_t *out_buf,
+                          uint64_t *nbytes, std::string * /*err*/,
+                          void * /*userdata*/) {
+  if (!out_buf || !nbytes) {
+    return -1;
+  }
+  if (req_nbytes > 0) {
+    memset(out_buf, 0, static_cast<size_t>(req_nbytes));
+  }
+  *nbytes = req_nbytes;
+  return 0;
+}
+
+}  // namespace
 
 void security_empty_input_test(void) {
   Stage stage;
@@ -287,4 +332,143 @@ void security_recursive_reference_test(void) {
   (void)ok;
   TEST_CHECK(true);
   TEST_MSG("Self-referencing USDA should not cause infinite loop");
+}
+
+void security_json_oversized_base64_rejected_test(void) {
+  Layer layer;
+  std::string warn, err;
+
+  // Keep base64 input small but claim an oversized decoded byteLength.
+  // This should be rejected by the centralized JSON size policy.
+  const std::string json =
+      R"({
+        "buffers": [
+          {
+            "byteLength": 1000000000,
+            "uri": "data:application/octet-stream;base64,AAAA"
+          }
+        ]
+      })";
+
+  bool ok = JSONToLayer(json, &layer, &warn, &err);
+  TEST_CHECK(!ok);
+  TEST_CHECK(err.find("exceeds limit") != std::string::npos);
+}
+
+void security_unsafe_asset_path_rejected_test(void) {
+  AssetResolutionResolver resolver;
+  AssetInfo asset_info;
+  Asset asset;
+  std::string resolved;
+  std::string warn, err;
+
+  value::AssetPath unsafe_path("../textures/albedo.png");
+  bool ok = tydra::RawAssetRead(unsafe_path, asset_info, resolver, &asset,
+                                resolved, nullptr, &warn, &err);
+  TEST_CHECK(!ok);
+  TEST_CHECK(err.find("Unsafe asset path") != std::string::npos);
+}
+
+void security_json_array_count_mismatch_rejected_test(void) {
+  GeomMesh mesh;
+  std::string warn, err;
+
+  // count says 2 ints, payload only contains 1 int (4 bytes).
+  const std::string json =
+      R"({
+        "name": "m",
+        "faceVertexCounts": {
+          "count": 2,
+          "type": "int[]",
+          "data": "AAAAAA=="
+        }
+      })";
+
+  bool ok = JSONToGeomMesh(json, &mesh, &warn, &err);
+  TEST_CHECK(!ok);
+  TEST_CHECK(err.find("count mismatch") != std::string::npos);
+}
+
+void security_json_point3f_count_overflow_rejected_test(void) {
+  GeomMesh mesh;
+  std::string warn, err;
+
+  // count * 3 would overflow size_t in point3f path.
+  const std::string json =
+      R"({
+        "name": "m",
+        "points": {
+          "count": 18446744073709551615,
+          "type": "point3f[]",
+          "data": "AAAAAAAAAAAAAAAA"
+        }
+      })";
+
+  bool ok = JSONToGeomMesh(json, &mesh, &warn, &err);
+  TEST_CHECK(!ok);
+  TEST_CHECK(err.find("overflow") != std::string::npos);
+}
+
+void security_resolver_oversized_custom_asset_rejected_test(void) {
+  AssetResolutionResolver resolver;
+  resolver.set_max_asset_bytes_in_mb(1);  // 1 MiB limit
+
+  AssetResolutionHandler handler;
+  handler.resolve_fun = SecurityTestResolveAsset;
+  handler.size_fun = SecurityTestLargeSizeAsset;
+  handler.read_fun = SecurityTestReadAsset;
+  resolver.register_asset_resolution_handler("foo", handler);
+
+  Asset asset;
+  std::string warn, err;
+  bool ok = resolver.open_asset("virtual.foo", "virtual.foo", &asset, &warn, &err);
+  TEST_CHECK(!ok);
+  TEST_CHECK(err.find("exceeds max bytes") != std::string::npos);
+}
+
+void security_nested_zstd_depth_rejected_test(void) {
+#ifdef TINYUSDZ_WITH_ZSTD_COMPRESSION
+  // Minimal valid USDA blob.
+  const std::string usda =
+      "#usda 1.0\n"
+      "def Xform \"Root\" {}\n";
+
+  std::string compress_err;
+
+  std::vector<uint8_t> inner_compressed;
+  bool ok_inner = ZstdCompression::Compress(
+      reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+      &inner_compressed,
+      ZstdCompression::kDefaultCompressionLevel,
+      &compress_err);
+  TEST_CHECK(ok_inner);
+
+  std::vector<uint8_t> middle_compressed;
+  bool ok_middle = ZstdCompression::Compress(
+      inner_compressed.data(), inner_compressed.size(),
+      &middle_compressed,
+      ZstdCompression::kDefaultCompressionLevel,
+      &compress_err);
+  TEST_CHECK(ok_middle);
+
+  std::vector<uint8_t> outer_compressed;
+  bool ok_outer = ZstdCompression::Compress(
+      middle_compressed.data(), middle_compressed.size(),
+      &outer_compressed,
+      ZstdCompression::kDefaultCompressionLevel,
+      &compress_err);
+  TEST_CHECK(ok_outer);
+
+  Stage stage;
+  std::string warn, err;
+  USDLoadOptions options;
+  bool load_ok = LoadUSDFromMemory(outer_compressed.data(),
+                                   outer_compressed.size(), "", &stage,
+                                   &warn, &err, options);
+  TEST_CHECK(!load_ok);
+  TEST_CHECK(err.find("Nested zstd compression depth") != std::string::npos);
+#else
+  // Zstd support compiled out; the guard cannot trigger. Report skip.
+  TEST_CHECK(true);
+#endif
 }

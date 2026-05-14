@@ -191,15 +191,28 @@ bool GetDirectlyBoundMaterial(
     }
 
     if (!GetSinglePath(mat_rel, materialPath)) {
-      std::string binding_name = kMaterialBinding;
-      if (!purpose.empty()) {
-        binding_name += ":" + purpose;
-      }
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be single targetPath", binding_name));
+      // A `rel material:binding` with no target paths (declaration-only,
+      // e.g. `rel material:binding ( bindMaterialAs = "weakerThanDescendants" )`)
+      // or `rel material:binding = None` is a valid USD pattern — it
+      // means "no material bound at this prim; inherit from parent".
+      // Return false so the caller's parent-walk handles it. (The
+      // previous code raised an error with a misleading "must be
+      // single targetPath" message; GetSinglePath actually picks
+      // the first target on multi-target paths, so the original
+      // wording never matched the failure mode.)
+      return false;
     }
 
     const Prim *p{nullptr};
-    if (stage.find_prim_at_path(*materialPath, p, err)) {
+    // Swallow find_prim_at_path's error: a `material:binding` target
+    // that doesn't resolve in the stage is a valid USD pattern (the
+    // material was authored in a stronger layer that was later
+    // dropped, or the asset references it in another sublayer). The
+    // caller's parent-walk handles the "no binding here" case
+    // gracefully — propagating the "Cannot find path" error sabotages
+    // an otherwise loadable asset.
+    std::string lookup_err;
+    if (stage.find_prim_at_path(*materialPath, p, &lookup_err)) {
       if (p->is<Material>()) {
         (*material) = p->as<Material>();
         return true;

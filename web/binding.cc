@@ -14,7 +14,11 @@
 #include <random>
 #include <sstream>
 #include <iomanip>
+#include <map>
 #include <set>
+#include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <unordered_set>
 
 //#include "external/fast_float/include/fast_float/bigint.h"
@@ -30,8 +34,18 @@
 #include "tydra/mcp-context.hh"
 #include "tydra/mcp-resources.hh"
 #include "tydra/mcp-tools.hh"
+#include "tydra/urdf-to-usd.hh"
 #include "usd-to-json.hh"
 #include "json-to-usd.hh"
+#include "usda-writer.hh"
+#include "usdc-writer.hh"
+#include "image-writer.hh"
+#include "usdGeom.hh"
+#include "usdPhysics.hh"
+#include "mjcPhysics.hh"
+#include "usdShade.hh"
+#include "pprint-enum.hh"
+#include "stage.hh"
 #include "sha256.hh"
 #include "logger.hh"
 #include "image-loader.hh"
@@ -327,6 +341,25 @@ bool uint8arrayToBuffer(const emscripten::val& u8, tinyusdz::TypedArray<uint8_t>
   heapView.call<void>("set", view);
 
   return true;
+}
+
+template <typename T>
+void copyTypedArray(const emscripten::val &data, std::vector<T> &buffer,
+                    const char *array_ctor) {
+  if (data.isUndefined() || data.isNull()) {
+    buffer.clear();
+    return;
+  }
+  const size_t length = data["length"].as<size_t>();
+  buffer.resize(length);
+  if (length == 0) {
+    return;
+  }
+  emscripten::val view = emscripten::val::global(array_ctor).new_(
+      data["buffer"], data["byteOffset"], length);
+  emscripten::val heapView =
+      emscripten::val(emscripten::typed_memory_view(length, buffer.data()));
+  heapView.call<void>("set", view);
 }
 
 
@@ -1095,6 +1128,557 @@ bool SetupEMAssetResolution(
   return true;
 }
 
+namespace {
+
+using json = nlohmann::json;
+
+std::string AxisName(const tinyusdz::Axis axis) {
+  switch (axis) {
+    case tinyusdz::Axis::X:
+      return "X";
+    case tinyusdz::Axis::Y:
+      return "Y";
+    case tinyusdz::Axis::Z:
+    default:
+      return "Z";
+  }
+}
+
+json Vec3Json(const tinyusdz::value::point3f &v) {
+  return json::array({v[0], v[1], v[2]});
+}
+
+json Vec3Json(const tinyusdz::value::float3 &v) {
+  return json::array({v[0], v[1], v[2]});
+}
+
+json Vec3Json(const tinyusdz::value::vector3f &v) {
+  return json::array({v[0], v[1], v[2]});
+}
+
+json QuatJson(const tinyusdz::value::quatf &v) {
+  return json::array({v.real, v.imag[0], v.imag[1], v.imag[2]});
+}
+
+json Matrix4Json(const tinyusdz::value::matrix4d &m) {
+  json a = json::array();
+  for (size_t r = 0; r < 4; r++) {
+    for (size_t c = 0; c < 4; c++) {
+      a.push_back(m.m[r][c]);
+    }
+  }
+  return a;
+}
+
+std::string PathName(const tinyusdz::Path &path) {
+  return path.full_path_name();
+}
+
+json RelationshipTargetsJson(const tinyusdz::RelationshipProperty &rel) {
+  json targets = json::array();
+  for (const auto &path : rel.get_targetPaths()) {
+    targets.push_back(PathName(path));
+  }
+  return targets;
+}
+
+template <typename T>
+bool AddTypedAttr(json &props, const std::string &name,
+                  const tinyusdz::TypedAttribute<T> &attr) {
+  auto v = attr.get_value();
+  if (!v) {
+    return false;
+  }
+  props[name] = v.value();
+  return true;
+}
+
+bool AddTypedAttr(json &props, const std::string &name,
+                  const tinyusdz::TypedAttribute<tinyusdz::value::token> &attr) {
+  auto v = attr.get_value();
+  if (!v) {
+    return false;
+  }
+  props[name] = v.value().str();
+  return true;
+}
+
+bool AddTypedAttr(json &props, const std::string &name,
+                  const tinyusdz::TypedAttribute<tinyusdz::value::point3f> &attr) {
+  auto v = attr.get_value();
+  if (!v) {
+    return false;
+  }
+  props[name] = Vec3Json(v.value());
+  return true;
+}
+
+bool AddTypedAttr(json &props, const std::string &name,
+                  const tinyusdz::TypedAttribute<tinyusdz::value::float3> &attr) {
+  auto v = attr.get_value();
+  if (!v) {
+    return false;
+  }
+  props[name] = Vec3Json(v.value());
+  return true;
+}
+
+bool AddTypedAttr(json &props, const std::string &name,
+                  const tinyusdz::TypedAttribute<tinyusdz::value::vector3f> &attr) {
+  auto v = attr.get_value();
+  if (!v) {
+    return false;
+  }
+  props[name] = Vec3Json(v.value());
+  return true;
+}
+
+bool AddTypedAttr(json &props, const std::string &name,
+                  const tinyusdz::TypedAttribute<tinyusdz::value::quatf> &attr) {
+  auto v = attr.get_value();
+  if (!v) {
+    return false;
+  }
+  props[name] = QuatJson(v.value());
+  return true;
+}
+
+template <typename T>
+bool AddFallbackAttr(json &props, const std::string &name,
+                     const tinyusdz::TypedAttributeWithFallback<T> &attr) {
+  if (!attr.authored()) {
+    return false;
+  }
+  props[name] = attr.get_value();
+  return true;
+}
+
+bool AddFallbackAttr(json &props, const std::string &name,
+                     const tinyusdz::TypedAttributeWithFallback<tinyusdz::value::token> &attr) {
+  if (!attr.authored()) {
+    return false;
+  }
+  props[name] = attr.get_value().str();
+  return true;
+}
+
+template <typename T>
+bool AddAnimatableFallbackAttr(
+    json &props, const std::string &name,
+    const tinyusdz::TypedAttributeWithFallback<tinyusdz::Animatable<T>> &attr) {
+  if (!attr.authored()) {
+    return false;
+  }
+  T value{};
+  if (!attr.get_value().get(tinyusdz::value::TimeCode::Default(), &value)) {
+    return false;
+  }
+  props[name] = value;
+  return true;
+}
+
+json AttributeValueJson(const tinyusdz::Attribute &attr) {
+  if (attr.has_connections()) {
+    json paths = json::array();
+    for (const auto &path : attr.connections()) {
+      paths.push_back(PathName(path));
+    }
+    return {{"connections", paths}};
+  }
+  if (!attr.has_value()) {
+    return nullptr;
+  }
+
+  if (auto v = attr.get_value<bool>()) return v.value();
+  if (auto v = attr.get_value<int>()) return v.value();
+  if (auto v = attr.get_value<int32_t>()) return v.value();
+  if (auto v = attr.get_value<uint32_t>()) return v.value();
+  if (auto v = attr.get_value<float>()) return v.value();
+  if (auto v = attr.get_value<double>()) return v.value();
+  if (auto v = attr.get_value<std::string>()) return v.value();
+  if (auto v = attr.get_value<tinyusdz::value::StringData>()) return v.value().value;
+  if (auto v = attr.get_value<tinyusdz::value::token>()) return v.value().str();
+  if (auto v = attr.get_value<tinyusdz::value::AssetPath>()) return v.value().GetAssetPath();
+  if (auto v = attr.get_value<tinyusdz::value::point3f>()) return Vec3Json(v.value());
+  if (auto v = attr.get_value<tinyusdz::value::float3>()) return Vec3Json(v.value());
+  if (auto v = attr.get_value<tinyusdz::value::vector3f>()) return Vec3Json(v.value());
+  if (auto v = attr.get_value<tinyusdz::value::quatf>()) return QuatJson(v.value());
+  if (auto v = attr.get_value<std::vector<int32_t>>()) return v.value();
+  if (auto v = attr.get_value<std::vector<float>>()) return v.value();
+  if (auto v = attr.get_value<std::vector<double>>()) return v.value();
+  if (auto v = attr.get_value<std::vector<tinyusdz::value::token>>()) {
+    json arr = json::array();
+    for (const auto &tok : v.value()) {
+      arr.push_back(tok.str());
+    }
+    return arr;
+  }
+  if (auto v = attr.get_value<std::vector<tinyusdz::value::point3f>>()) {
+    json arr = json::array();
+    for (const auto &p : v.value()) {
+      arr.push_back(Vec3Json(p));
+    }
+    return arr;
+  }
+
+  return {{"unsupportedType", attr.type_name()}};
+}
+
+void AddPropertyMap(json &props, json &rels,
+                    const std::map<std::string, tinyusdz::Property> &map) {
+  for (const auto &kv : map) {
+    if (const tinyusdz::Attribute *attr = kv.second.get_attribute_or_null()) {
+      props[kv.first] = AttributeValueJson(*attr);
+    } else if (kv.second.is_relationship()) {
+      json targets = json::array();
+      for (const auto &path : kv.second.get_relationTargets()) {
+        targets.push_back(PathName(path));
+      }
+      rels[kv.first] = targets;
+    }
+  }
+}
+
+// Emit `purpose` and `visibility` token attrs for any GPrim-derived
+// geometry prim (Mesh, Cube, Sphere, Cylinder, Capsule, Plane, …).
+// Only writes the keys when non-default (Purpose::Default /
+// Visibility::Inherited are the USD-spec defaults; omit them so the
+// JSON output stays compact). Called from AppendPhysicsPrimJson so
+// downstream consumers (e.g. web/sim's `usd-physics.js`) can filter
+// `purpose == "guide"` collision meshes from default renders without
+// duplicating the schema walk. See doc/usd.md "Mesh + collider
+// convention" in github.com/lighttransport/lightgeom for the motivating
+// use case.
+template <typename GPrimT>
+void AddPurposeVisibilityJson(json &prim_json, const GPrimT &gprim) {
+  if (gprim.purpose.authored()) {
+    tinyusdz::Purpose p_val = gprim.purpose.get_value();
+    if (p_val != tinyusdz::Purpose::Default) {
+      prim_json["purpose"] = tinyusdz::to_string(p_val);
+    }
+  }
+  if (gprim.visibility.authored()) {
+    const auto &v_anim = gprim.visibility.get_value();
+    if (v_anim.has_default()) {
+      tinyusdz::Visibility v_val;
+      if (v_anim.get_default(&v_val)
+          && v_val != tinyusdz::Visibility::Inherited) {
+        prim_json["visibility"] = tinyusdz::to_string(v_val);
+      }
+    }
+  }
+}
+
+void AddAPISchemasJson(json &prim_json, const tinyusdz::Prim &prim) {
+  json schemas = json::array();
+  const tinyusdz::APISchemas api = prim.metas().get_apiSchemas();
+  for (const auto &schema : api.names) {
+    std::string name = tinyusdz::to_string(schema.first);
+    if (!schema.second.empty()) {
+      name += ":" + schema.second;
+    }
+    schemas.push_back(name);
+  }
+  for (const auto &schema : api.unknownSchemas) {
+    std::string name = schema.first;
+    if (!schema.second.empty()) {
+      name += ":" + schema.second;
+    }
+    schemas.push_back(name);
+  }
+  prim_json["apiSchemas"] = std::move(schemas);
+}
+
+void AddXformableJson(json &prim_json, const tinyusdz::Xformable &xformable) {
+  bool reset = false;
+  auto m = xformable.GetLocalMatrix(
+      tinyusdz::value::TimeCode::Default(),
+      tinyusdz::value::TimeSampleInterpolationType::Linear, &reset);
+  if (m) {
+    prim_json["matrix"] = Matrix4Json(m.value());
+    prim_json["resetXformStack"] = reset;
+  }
+}
+
+void AddJointBaseJson(json &props, json &rels,
+                      const tinyusdz::PhysicsJointBase &joint) {
+  rels["physics:body0"] = RelationshipTargetsJson(joint.body0);
+  rels["physics:body1"] = RelationshipTargetsJson(joint.body1);
+  AddTypedAttr(props, "physics:localPos0", joint.localPos0);
+  AddTypedAttr(props, "physics:localPos1", joint.localPos1);
+  AddTypedAttr(props, "physics:localRot0", joint.localRot0);
+  AddTypedAttr(props, "physics:localRot1", joint.localRot1);
+  AddTypedAttr(props, "physics:jointEnabled", joint.jointEnabled);
+  AddTypedAttr(props, "physics:collisionEnabled", joint.collisionEnabled);
+  AddTypedAttr(props, "physics:breakForce", joint.breakForce);
+  AddTypedAttr(props, "physics:breakTorque", joint.breakTorque);
+  AddTypedAttr(props, "physics:excludeFromArticulation",
+               joint.excludeFromArticulation);
+  // mjc:* attributes are consumed by the reconstruct path into the typed
+  // MjcJointAPI struct (see prim-reconstruct-physics.cc); they no longer
+  // appear in joint.props, so re-emit them here from the struct.
+  // physxJoint:* / physxLimit:* / state:* are *not* consumed into any
+  // typed struct — they remain in joint.props and arrive through the
+  // AddPropertyMap(props, rels, joint->props) call below in each
+  // PhysicsRevoluteJoint / PhysicsPrismaticJoint case.
+  if (joint.mjcJoint) {
+    AddFallbackAttr(props, "mjc:group", joint.mjcJoint.value().group);
+    AddFallbackAttr(props, "mjc:stiffness", joint.mjcJoint.value().stiffness);
+    AddFallbackAttr(props, "mjc:damping", joint.mjcJoint.value().damping);
+    AddFallbackAttr(props, "mjc:armature", joint.mjcJoint.value().armature);
+    AddFallbackAttr(props, "mjc:frictionloss",
+                    joint.mjcJoint.value().frictionloss);
+    AddTypedAttr(props, "mjc:springdamper",
+                 joint.mjcJoint.value().springdamper);
+    AddFallbackAttr(props, "mjc:springref", joint.mjcJoint.value().springref);
+    AddFallbackAttr(props, "mjc:ref", joint.mjcJoint.value().ref);
+    AddFallbackAttr(props, "mjc:margin", joint.mjcJoint.value().margin);
+    AddFallbackAttr(props, "mjc:actuatorfrcrange:min",
+                    joint.mjcJoint.value().actuatorfrcrange_min);
+    AddFallbackAttr(props, "mjc:actuatorfrcrange:max",
+                    joint.mjcJoint.value().actuatorfrcrange_max);
+    AddFallbackAttr(props, "mjc:actuatorgravcomp",
+                    joint.mjcJoint.value().actuatorgravcomp);
+  }
+  if (joint.newtonMimic) {
+    AddFallbackAttr(props, "newton:mimicEnabled",
+                    joint.newtonMimic.value().mimicEnabled);
+    rels["newton:mimicJoint"] =
+        RelationshipTargetsJson(joint.newtonMimic.value().mimicJoint);
+    AddFallbackAttr(props, "newton:mimicCoef0",
+                    joint.newtonMimic.value().mimicCoef0);
+    AddFallbackAttr(props, "newton:mimicCoef1",
+                    joint.newtonMimic.value().mimicCoef1);
+  }
+}
+
+void AddSceneJson(json &props, const tinyusdz::PhysicsScene &scene) {
+  AddTypedAttr(props, "physics:gravityDirection", scene.gravityDirection);
+  AddTypedAttr(props, "physics:gravityMagnitude", scene.gravityMagnitude);
+  if (scene.mjcScene) {
+    AddFallbackAttr(props, "mjc:timestep", scene.mjcScene.value().timestep);
+    AddFallbackAttr(props, "mjc:iterations",
+                    scene.mjcScene.value().iterations);
+    AddFallbackAttr(props, "mjc:integrator",
+                    scene.mjcScene.value().integrator);
+  }
+  if (scene.newtonScene) {
+    AddFallbackAttr(props, "newton:maxSolverIterations",
+                    scene.newtonScene.value().maxSolverIterations);
+    AddFallbackAttr(props, "newton:timeStepsPerSecond",
+                    scene.newtonScene.value().timeStepsPerSecond);
+    AddFallbackAttr(props, "newton:gravityEnabled",
+                    scene.newtonScene.value().gravityEnabled);
+  }
+  if (scene.newtonXpbdScene) {
+    AddFallbackAttr(props, "newton:xpbd:softBodyRelaxation",
+                    scene.newtonXpbdScene.value().softBodyRelaxation);
+    AddFallbackAttr(props, "newton:xpbd:softContactRelaxation",
+                    scene.newtonXpbdScene.value().softContactRelaxation);
+    AddFallbackAttr(props, "newton:xpbd:jointLinearRelaxation",
+                    scene.newtonXpbdScene.value().jointLinearRelaxation);
+    AddFallbackAttr(props, "newton:xpbd:jointAngularRelaxation",
+                    scene.newtonXpbdScene.value().jointAngularRelaxation);
+    AddFallbackAttr(props, "newton:xpbd:jointLinearCompliance",
+                    scene.newtonXpbdScene.value().jointLinearCompliance);
+    AddFallbackAttr(props, "newton:xpbd:jointAngularCompliance",
+                    scene.newtonXpbdScene.value().jointAngularCompliance);
+    AddFallbackAttr(props, "newton:xpbd:rigidContactRelaxation",
+                    scene.newtonXpbdScene.value().rigidContactRelaxation);
+    AddFallbackAttr(props, "newton:xpbd:rigidContactConWeighting",
+                    scene.newtonXpbdScene.value().rigidContactConWeighting);
+    AddFallbackAttr(props, "newton:xpbd:angularDamping",
+                    scene.newtonXpbdScene.value().angularDamping);
+    AddFallbackAttr(props, "newton:xpbd:restitutionEnabled",
+                    scene.newtonXpbdScene.value().restitutionEnabled);
+  }
+  if (scene.newtonKaminoScene) {
+    AddFallbackAttr(props, "newton:kamino:padmm:primalTolerance",
+                    scene.newtonKaminoScene.value().padmmPrimalTolerance);
+    AddFallbackAttr(props, "newton:kamino:padmm:dualTolerance",
+                    scene.newtonKaminoScene.value().padmmDualTolerance);
+    AddFallbackAttr(props, "newton:kamino:padmm:complementarityTolerance",
+                    scene.newtonKaminoScene.value().padmmComplementarityTolerance);
+    AddFallbackAttr(props, "newton:kamino:padmm:warmstarting",
+                    scene.newtonKaminoScene.value().padmmWarmstarting);
+    AddFallbackAttr(props, "newton:kamino:padmm:useAcceleration",
+                    scene.newtonKaminoScene.value().padmmUseAcceleration);
+    AddFallbackAttr(props, "newton:kamino:constraints:usePreconditioning",
+                    scene.newtonKaminoScene.value().constraintsUsePreconditioning);
+    AddFallbackAttr(props, "newton:kamino:constraints:alpha",
+                    scene.newtonKaminoScene.value().constraintsAlpha);
+    AddFallbackAttr(props, "newton:kamino:constraints:beta",
+                    scene.newtonKaminoScene.value().constraintsBeta);
+    AddFallbackAttr(props, "newton:kamino:constraints:gamma",
+                    scene.newtonKaminoScene.value().constraintsGamma);
+    AddFallbackAttr(props, "newton:kamino:jointCorrection",
+                    scene.newtonKaminoScene.value().jointCorrection);
+  }
+}
+
+void AddGeometryJson(json &prim_json, json &props,
+                     const tinyusdz::GeomMesh &mesh) {
+  AddXformableJson(prim_json, mesh);
+  json geom;
+  geom["type"] = "mesh";
+  geom["pointCount"] = mesh.get_points().size();
+  geom["faceCount"] = mesh.get_faceVertexCounts().size();
+  prim_json["geometry"] = std::move(geom);
+  AddPropertyMap(props, prim_json["relationships"], mesh.props);
+}
+
+void AddGeometryJson(json &prim_json, json &props,
+                     const tinyusdz::GeomCube &cube) {
+  AddXformableJson(prim_json, cube);
+  json geom;
+  // Use the schema-canonical "cube" name (matches the USD type "Cube"
+  // and the lowercase-prim-name convention used by every other geom
+  // emitter above). USD's GeomCube size is a single scalar (full edge
+  // length, default 2.0); preserve that shape rather than fanning out
+  // to a vec3 of identical values.
+  geom["type"] = "cube";
+  double size = 2.0;
+  if (cube.size.authored()) {
+    cube.size.get_value().get(tinyusdz::value::TimeCode::Default(), &size);
+  }
+  geom["size"] = size;
+  prim_json["geometry"] = std::move(geom);
+  AddPropertyMap(props, prim_json["relationships"], cube.props);
+}
+
+void AddGeometryJson(json &prim_json, json &props,
+                     const tinyusdz::GeomSphere &sphere) {
+  AddXformableJson(prim_json, sphere);
+  json geom;
+  geom["type"] = "sphere";
+  AddAnimatableFallbackAttr(geom, "radius", sphere.radius);
+  prim_json["geometry"] = std::move(geom);
+  AddPropertyMap(props, prim_json["relationships"], sphere.props);
+}
+
+void AddGeometryJson(json &prim_json, json &props,
+                     const tinyusdz::GeomCylinder &cylinder) {
+  AddXformableJson(prim_json, cylinder);
+  json geom;
+  geom["type"] = "cylinder";
+  AddAnimatableFallbackAttr(geom, "radius", cylinder.radius);
+  AddAnimatableFallbackAttr(geom, "length", cylinder.height);
+  if (cylinder.axis.authored()) {
+    geom["axis"] = AxisName(cylinder.axis.get_value());
+  }
+  prim_json["geometry"] = std::move(geom);
+  AddPropertyMap(props, prim_json["relationships"], cylinder.props);
+}
+
+void AddGeometryJson(json &prim_json, json &props,
+                     const tinyusdz::GeomCapsule &capsule) {
+  AddXformableJson(prim_json, capsule);
+  json geom;
+  geom["type"] = "capsule";
+  AddAnimatableFallbackAttr(geom, "radius", capsule.radius);
+  AddAnimatableFallbackAttr(geom, "length", capsule.height);
+  if (capsule.axis.authored()) {
+    geom["axis"] = AxisName(capsule.axis.get_value());
+  }
+  prim_json["geometry"] = std::move(geom);
+  AddPropertyMap(props, prim_json["relationships"], capsule.props);
+}
+
+void AddGeometryJson(json &prim_json, json &props,
+                     const tinyusdz::GeomPlane &plane) {
+  AddXformableJson(prim_json, plane);
+  json geom;
+  geom["type"] = "plane";
+  AddAnimatableFallbackAttr(geom, "width", plane.width);
+  AddAnimatableFallbackAttr(geom, "length", plane.length);
+  if (plane.axis.authored()) {
+    geom["axis"] = AxisName(plane.axis.get_value());
+  }
+  prim_json["geometry"] = std::move(geom);
+  AddPropertyMap(props, prim_json["relationships"], plane.props);
+}
+
+void AppendPhysicsPrimJson(const tinyusdz::Prim &prim, const std::string &path,
+                           json &prims) {
+  json item;
+  item["path"] = path;
+  item["name"] = prim.element_name();
+  item["type"] = prim.type_name();
+  item["properties"] = json::object();
+  item["relationships"] = json::object();
+  AddAPISchemasJson(item, prim);
+
+  json &props = item["properties"];
+  json &rels = item["relationships"];
+
+  if (const auto *xform = prim.as<tinyusdz::Xform>()) {
+    AddXformableJson(item, *xform);
+    AddPropertyMap(props, rels, xform->props);
+  } else if (const auto *mesh = prim.as<tinyusdz::GeomMesh>()) {
+    AddGeometryJson(item, props, *mesh);
+    AddPurposeVisibilityJson(item, *mesh);
+  } else if (const auto *cube = prim.as<tinyusdz::GeomCube>()) {
+    AddGeometryJson(item, props, *cube);
+    AddPurposeVisibilityJson(item, *cube);
+  } else if (const auto *sphere = prim.as<tinyusdz::GeomSphere>()) {
+    AddGeometryJson(item, props, *sphere);
+    AddPurposeVisibilityJson(item, *sphere);
+  } else if (const auto *cylinder = prim.as<tinyusdz::GeomCylinder>()) {
+    AddGeometryJson(item, props, *cylinder);
+    AddPurposeVisibilityJson(item, *cylinder);
+  } else if (const auto *capsule = prim.as<tinyusdz::GeomCapsule>()) {
+    AddGeometryJson(item, props, *capsule);
+    AddPurposeVisibilityJson(item, *capsule);
+  } else if (const auto *plane = prim.as<tinyusdz::GeomPlane>()) {
+    AddGeometryJson(item, props, *plane);
+    AddPurposeVisibilityJson(item, *plane);
+  } else if (const auto *scene = prim.as<tinyusdz::PhysicsScene>()) {
+    AddSceneJson(props, *scene);
+    AddPropertyMap(props, rels, scene->props);
+  } else if (const auto *joint = prim.as<tinyusdz::PhysicsRevoluteJoint>()) {
+    AddJointBaseJson(props, rels, *joint);
+    AddTypedAttr(props, "physics:axis", joint->axis);
+    AddTypedAttr(props, "physics:lowerLimit", joint->lowerLimit);
+    AddTypedAttr(props, "physics:upperLimit", joint->upperLimit);
+    AddPropertyMap(props, rels, joint->props);
+  } else if (const auto *joint = prim.as<tinyusdz::PhysicsPrismaticJoint>()) {
+    AddJointBaseJson(props, rels, *joint);
+    AddTypedAttr(props, "physics:axis", joint->axis);
+    AddTypedAttr(props, "physics:lowerLimit", joint->lowerLimit);
+    AddTypedAttr(props, "physics:upperLimit", joint->upperLimit);
+    AddPropertyMap(props, rels, joint->props);
+  } else if (const auto *joint = prim.as<tinyusdz::PhysicsFixedJoint>()) {
+    AddJointBaseJson(props, rels, *joint);
+    AddPropertyMap(props, rels, joint->props);
+  } else if (const auto *joint = prim.as<tinyusdz::PhysicsJoint>()) {
+    AddJointBaseJson(props, rels, *joint);
+    AddPropertyMap(props, rels, joint->props);
+  } else if (const auto *act = prim.as<tinyusdz::NewtonActuator>()) {
+    rels["newton:targets"] = RelationshipTargetsJson(act->targets);
+    AddFallbackAttr(props, "newton:delaySteps", act->delaySteps);
+    AddFallbackAttr(props, "newton:constEffort", act->constEffort);
+    AddFallbackAttr(props, "newton:kp", act->kp);
+    AddFallbackAttr(props, "newton:kd", act->kd);
+    AddFallbackAttr(props, "newton:ki", act->ki);
+    AddFallbackAttr(props, "newton:integralMax", act->integralMax);
+    AddFallbackAttr(props, "newton:maxEffort", act->maxEffort);
+    AddFallbackAttr(props, "newton:maxMotorEffort", act->maxMotorEffort);
+    AddFallbackAttr(props, "newton:saturationEffort", act->saturationEffort);
+    AddFallbackAttr(props, "newton:velocityLimit", act->velocityLimit);
+    AddTypedAttr(props, "newton:lookupPositions", act->lookupPositions);
+    AddTypedAttr(props, "newton:lookupEfforts", act->lookupEfforts);
+    AddPropertyMap(props, rels, act->props);
+  }
+
+  prims.push_back(std::move(item));
+
+  for (const auto &child : prim.children()) {
+    AppendPhysicsPrimJson(child, path + "/" + child.element_name(), prims);
+  }
+}
+
+}  // namespace
+
 ///
 /// Simple C++ wrapper class for Emscripten
 ///
@@ -1295,6 +1879,8 @@ class TinyUSDZLoaderNative {
 
     loaded_as_layer_ = false;
     filename_ = filename;
+    export_stage_ = stage;
+    has_stage_ = true;
 
     //std::cout << "[tusd:loadFromBinary] loaded << " filename << "\n";
 #if 0
@@ -4149,6 +4735,13 @@ class TinyUSDZLoaderNative {
 
     // Reset parsing progress
     parsing_progress_.reset();
+
+    // Clear export state
+    export_stage_ = tinyusdz::Stage();
+    has_stage_ = false;
+    usdc_export_buf_.clear();
+    usdz_export_buf_.clear();
+    image_export_buf_.clear();
   }
 
   /// Get memory usage statistics
@@ -4583,6 +5176,406 @@ class TinyUSDZLoaderNative {
     return success;
   }
 
+  // =========================================================================
+  // USD Export Methods
+  // =========================================================================
+
+  /// Helper: convert current loaded layer to a Stage
+  bool getStageFromLayer(tinyusdz::Stage &stage) {
+    if (!loaded_) {
+      error_ = "No scene loaded";
+      return false;
+    }
+
+    if (has_stage_) {
+      stage = export_stage_;
+      return true;
+    }
+
+    if (!loaded_as_layer_) {
+      error_ = "Scene not loaded as layer";
+      return false;
+    }
+
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    tinyusdz::Layer layer_copy = curr;
+
+    if (!tinyusdz::LayerToStage(std::move(layer_copy), &stage, &warn_, &error_)) {
+      error_ = "Failed to convert Layer to Stage: " + error_;
+      return false;
+    }
+
+    return true;
+  }
+
+  /// Extract a compact JSON view of UsdPhysics/MuJoCo prims and geometry.
+  /// This is intentionally shaped for JS-side URDF conversion and testing.
+  std::string extractPhysicsSceneJSON() {
+    tinyusdz::Stage stage;
+    if (!getStageFromLayer(stage)) {
+      return std::string();
+    }
+
+    json root;
+    root["upAxis"] = AxisName(stage.metas().upAxis.get_value());
+    root["prims"] = json::array();
+
+    for (const auto &prim : stage.root_prims()) {
+      AppendPhysicsPrimJson(prim, "/" + prim.element_name(), root["prims"]);
+    }
+
+    return root.dump();
+  }
+
+  /// Export loaded scene as USDA (ASCII) string
+  std::string exportAsUSDA() {
+    tinyusdz::Stage stage;
+    if (!getStageFromLayer(stage)) {
+      return std::string();
+    }
+
+    std::string output;
+    std::string warn, err;
+    if (!tinyusdz::usda::ExportToUSDAString(stage, &output, &warn, &err)) {
+      error_ = "USDA export failed: " + err;
+      warn_ = warn;
+      return std::string();
+    }
+
+    warn_ = warn;
+    return output;
+  }
+
+  /// Export loaded scene as USDC (binary Crate) — returns Uint8Array
+  emscripten::val exportAsUSDC() {
+    tinyusdz::Stage stage;
+    if (!getStageFromLayer(stage)) {
+      return emscripten::val::null();
+    }
+
+    std::vector<uint8_t> output;
+    std::string warn, err;
+    if (!tinyusdz::usdc::SaveAsUSDCToMemory(stage, &output, &warn, &err)) {
+      error_ = "USDC export failed: " + err;
+      warn_ = warn;
+      return emscripten::val::null();
+    }
+
+    warn_ = warn;
+
+    // Copy to JS Uint8Array
+    usdc_export_buf_ = std::move(output);
+    return emscripten::val(emscripten::typed_memory_view(
+        usdc_export_buf_.size(), usdc_export_buf_.data()));
+  }
+
+  /// Export loaded scene as USDZ (ZIP package with packed assets) — returns Uint8Array
+  /// Assets are collected from the em_resolver_ cache.
+  emscripten::val exportAsUSDZ() {
+    tinyusdz::Stage stage;
+    if (!getStageFromLayer(stage)) {
+      return emscripten::val::null();
+    }
+
+    // Collect assets from resolver cache
+    std::map<std::string, std::vector<uint8_t>> assets;
+    for (const auto &kv : em_resolver_.cache) {
+      const std::string &name = kv.first;
+      const std::string &binary = kv.second.binary;
+      // Only include image/audio assets (skip USD files)
+      std::string ext;
+      {
+        auto dot = name.rfind('.');
+        if (dot != std::string::npos) {
+          ext = name.substr(dot);
+          // lowercase
+          for (auto &c : ext) c = static_cast<char>(std::tolower(c));
+        }
+      }
+      if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+          ext == ".exr" || ext == ".avif" ||
+          ext == ".m4a" || ext == ".mp3" || ext == ".wav") {
+        assets[name] = std::vector<uint8_t>(binary.begin(), binary.end());
+      }
+    }
+
+    std::vector<uint8_t> output;
+    std::string warn, err;
+    if (!tinyusdz::SaveAsUSDZToMemory(stage, assets, &output, &warn, &err)) {
+      error_ = "USDZ export failed: " + err;
+      warn_ = warn;
+      return emscripten::val::null();
+    }
+
+    warn_ = warn;
+
+    // Copy to JS Uint8Array
+    usdz_export_buf_ = std::move(output);
+    return emscripten::val(emscripten::typed_memory_view(
+        usdz_export_buf_.size(), usdz_export_buf_.data()));
+  }
+
+  /// Create a sample scene with a textured quad (checkerboard).
+  /// The texture PNG must be set from JS via setAsset("textures/checkerboard.png", pngBytes)
+  /// BEFORE calling exportAsUSDZ.
+  bool createSampleScene() {
+    // Build stage
+    tinyusdz::Stage stage;
+    stage.metas().defaultPrim = tinyusdz::value::token("root");
+    stage.metas().upAxis = tinyusdz::Axis::Y;
+
+    // -- Xform root --
+    tinyusdz::Xform xform;
+    xform.name = "root";
+
+    // -- GeomMesh quad --
+    tinyusdz::GeomMesh mesh;
+    mesh.name = "quad";
+    {
+      std::vector<tinyusdz::value::point3f> pts;
+      pts.push_back({-0.5f, 0.0f, -0.5f});
+      pts.push_back({ 0.5f, 0.0f, -0.5f});
+      pts.push_back({ 0.5f, 0.0f,  0.5f});
+      pts.push_back({-0.5f, 0.0f,  0.5f});
+      mesh.points.set_value(std::move(pts));
+
+      std::vector<tinyusdz::value::normal3f> normals;
+      normals.push_back({0.0f, 1.0f, 0.0f});
+      normals.push_back({0.0f, 1.0f, 0.0f});
+      normals.push_back({0.0f, 1.0f, 0.0f});
+      normals.push_back({0.0f, 1.0f, 0.0f});
+      mesh.normals.set_value(std::move(normals));
+      mesh.normals.metas().set_interpolation_enum(tinyusdz::Interpolation::Vertex);
+
+      std::vector<int> counts = {3, 3};
+      mesh.faceVertexCounts.set_value(std::move(counts));
+
+      std::vector<int> indices = {0, 1, 2, 0, 2, 3};
+      mesh.faceVertexIndices.set_value(std::move(indices));
+
+      // UV primvar
+      tinyusdz::Attribute uvAttr;
+      std::vector<tinyusdz::value::texcoord2f> uvs;
+      uvs.push_back({0.0f, 0.0f});
+      uvs.push_back({1.0f, 0.0f});
+      uvs.push_back({1.0f, 1.0f});
+      uvs.push_back({0.0f, 1.0f});
+      uvAttr.set_value(std::move(uvs));
+      uvAttr.metas().set_interpolation_enum(tinyusdz::Interpolation::Vertex);
+      mesh.props.emplace("primvars:st", tinyusdz::Property(uvAttr, false));
+
+      // Material binding
+      tinyusdz::Relationship materialBinding;
+      materialBinding.set(tinyusdz::Path("/root/mat", ""));
+      mesh.materialBinding = materialBinding;
+    }
+
+    // -- Material --
+    tinyusdz::Material mat;
+    mat.name = "mat";
+    mat.surface.set(tinyusdz::Path("/root/mat/PBRShader", "outputs:surface"));
+
+    // -- UsdPreviewSurface shader --
+    tinyusdz::Shader pbrShader;
+    pbrShader.name = "PBRShader";
+    pbrShader.info_id = tinyusdz::kUsdPreviewSurface;
+    {
+      tinyusdz::UsdPreviewSurface surf;
+      surf.outputsSurface.set_authored(true);
+      surf.metallic.set_value(0.0f);
+      surf.roughness.set_value(0.5f);
+
+      // Connect diffuseColor to texture
+      surf.diffuseColor.set_connection(
+          tinyusdz::Path("/root/mat/diffuseTexture", "outputs:rgb"));
+      surf.diffuseColor.set_value_empty();
+
+      pbrShader.value = std::move(surf);
+    }
+
+    // -- UsdPrimvarReader_float2 shader --
+    tinyusdz::Shader stReaderShader;
+    stReaderShader.name = "stReader";
+    stReaderShader.info_id = tinyusdz::kUsdPrimvarReader_float2;
+    {
+      tinyusdz::UsdPrimvarReader_float2 reader;
+
+      tinyusdz::Animatable<std::string> varname;
+      varname.set_default(std::string("st"));
+      reader.varname.set_value(varname);
+
+      reader.result.set_authored(true);
+
+      stReaderShader.value = std::move(reader);
+    }
+
+    // -- UsdUVTexture shader --
+    tinyusdz::Shader texShader;
+    texShader.name = "diffuseTexture";
+    texShader.info_id = tinyusdz::kUsdUVTexture;
+    {
+      tinyusdz::UsdUVTexture tex;
+      tex.file = tinyusdz::value::AssetPath("textures/checkerboard.png");
+
+      // Connect st input to primvar reader
+      tex.st.set_connection(
+          tinyusdz::Path("/root/mat/stReader", "outputs:result"));
+      tex.st.set_value_empty();
+
+      tex.outputsRGB.set_authored(true);
+
+      texShader.value = std::move(tex);
+    }
+
+    // Assemble scene hierarchy
+    tinyusdz::Prim matPrim(mat);
+    {
+      std::string err;
+      matPrim.add_child(tinyusdz::Prim(pbrShader), true, &err);
+      matPrim.add_child(tinyusdz::Prim(stReaderShader), true, &err);
+      matPrim.add_child(tinyusdz::Prim(texShader), true, &err);
+    }
+
+    tinyusdz::Prim xformPrim(xform);
+    {
+      std::string err;
+      xformPrim.add_child(tinyusdz::Prim(mesh), true, &err);
+      xformPrim.add_child(std::move(matPrim), true, &err);
+    }
+
+    stage.add_root_prim(std::move(xformPrim));
+
+    // Store stage for export
+    export_stage_ = std::move(stage);
+    has_stage_ = true;
+    loaded_ = true;
+
+    return true;
+  }
+
+  void clearURDFMeshBuffers() {
+    urdf_mesh_buffers_.clear();
+  }
+
+  bool setVisualMesh(const std::string &name, const emscripten::val &positions,
+                     const emscripten::val &normals,
+                     const emscripten::val &uvs,
+                     const emscripten::val &indices) {
+    return setURDFMeshBuffer(name, positions, normals, uvs, indices);
+  }
+
+  bool setCollisionMesh(const std::string &name, const emscripten::val &positions,
+                        const emscripten::val &normals,
+                        const emscripten::val &uvs,
+                        const emscripten::val &indices) {
+    return setURDFMeshBuffer(name, positions, normals, uvs, indices);
+  }
+
+  /// Build an exportable USD Physics + MuJoCo stage from a compact JSON
+  /// description generated by web/js/urdf.js. Geometry is expected to be
+  /// already baked to triangle meshes in link-local space.
+  bool createURDFPhysicsScene(const std::string &robot_json) {
+    tinyusdz::Stage stage;
+    std::string warn;
+    std::string err;
+    if (!tinyusdz::tydra::ConvertURDFJsonToUSDStage(
+            robot_json, &urdf_mesh_buffers_, &stage, &warn, &err)) {
+      warn_ = std::move(warn);
+      error_ = std::move(err);
+      return false;
+    }
+
+    export_stage_ = std::move(stage);
+    warn_ = std::move(warn);
+    error_.clear();
+    has_stage_ = true;
+    loaded_ = true;
+    loaded_as_layer_ = false;
+    return true;
+  }
+
+  bool setURDFMeshBuffer(const std::string &name,
+                         const emscripten::val &positions,
+                         const emscripten::val &normals,
+                         const emscripten::val &uvs,
+                         const emscripten::val &indices) {
+    if (name.empty()) {
+      error_ = "setVisualMesh/setCollisionMesh requires a non-empty mesh name";
+      return false;
+    }
+
+    tinyusdz::tydra::URDFMeshBuffer buffer;
+    detail::copyTypedArray<float>(positions, buffer.positions, "Float32Array");
+    detail::copyTypedArray<float>(normals, buffer.normals, "Float32Array");
+    detail::copyTypedArray<float>(uvs, buffer.uvs, "Float32Array");
+    detail::copyTypedArray<int32_t>(indices, buffer.indices, "Int32Array");
+
+    if (buffer.positions.size() < 9 || (buffer.positions.size() % 3) != 0) {
+      error_ = "setVisualMesh/setCollisionMesh `" + name +
+               "` requires positions as Float32Array triples";
+      return false;
+    }
+    if (!buffer.normals.empty() && buffer.normals.size() != buffer.positions.size()) {
+      error_ = "setVisualMesh/setCollisionMesh `" + name +
+               "` normals length must match positions length";
+      return false;
+    }
+    if (!buffer.uvs.empty() && buffer.uvs.size() != (buffer.positions.size() / 3) * 2) {
+      error_ = "setVisualMesh/setCollisionMesh `" + name +
+               "` uvs length must be vertex count * 2";
+      return false;
+    }
+    if (!buffer.indices.empty() && (buffer.indices.size() % 3) != 0) {
+      error_ = "setVisualMesh/setCollisionMesh `" + name +
+               "` indices must be triangle indices";
+      return false;
+    }
+
+    urdf_mesh_buffers_[name] = std::move(buffer);
+    error_.clear();
+    return true;
+  }
+
+  /// Encode raw pixel data to image format using native writer (for EXR/TIFF/DNG only).
+  /// For PNG/JPEG, use browser Canvas API instead.
+  /// format: "exr", "tiff", "dng", "bmp", "png" (fallback)
+  emscripten::val encodeImageNative(const std::string &pixelData, int width, int height, int channels, const std::string &format) {
+    tinyusdz::Image img;
+    img.width = width;
+    img.height = height;
+    img.channels = channels;
+    img.bpp = 8;
+    img.format = tinyusdz::Image::PixelFormat::UInt;
+    img.data.assign(reinterpret_cast<const uint8_t*>(pixelData.data()),
+                    reinterpret_cast<const uint8_t*>(pixelData.data()) + pixelData.size());
+
+    tinyusdz::image::WriteOption opt;
+    if (format == "exr") {
+      opt.format = tinyusdz::image::WriteImageFormat::EXR;
+    } else if (format == "tiff") {
+      opt.format = tinyusdz::image::WriteImageFormat::TIFF;
+    } else if (format == "dng") {
+      opt.format = tinyusdz::image::WriteImageFormat::DNG;
+    } else if (format == "bmp") {
+      opt.format = tinyusdz::image::WriteImageFormat::BMP;
+    } else if (format == "png") {
+      opt.format = tinyusdz::image::WriteImageFormat::PNG;
+    } else {
+      error_ = "Unsupported image format: " + format;
+      return emscripten::val::null();
+    }
+
+    auto result = tinyusdz::image::WriteImageToMemory(img, opt);
+    if (!result) {
+      error_ = "Image encoding failed: " + result.error();
+      return emscripten::val::null();
+    }
+
+    image_export_buf_ = std::move(result.value());
+    return emscripten::val(emscripten::typed_memory_view(
+        image_export_buf_.size(), image_export_buf_.data()));
+  }
+
   //
   // Progress reporting methods for polling-based async progress
   //
@@ -4822,6 +5815,14 @@ class TinyUSDZLoaderNative {
   tinyusdz::tydra::RenderScene render_scene_;
   tinyusdz::USDZAsset usdz_asset_;
   EMAssetResolutionResolver em_resolver_;
+
+  // Export state
+  tinyusdz::Stage export_stage_;
+  bool has_stage_{false};
+  std::vector<uint8_t> usdc_export_buf_;
+  std::vector<uint8_t> usdz_export_buf_;
+  std::vector<uint8_t> image_export_buf_;
+  std::map<std::string, tinyusdz::tydra::URDFMeshBuffer> urdf_mesh_buffers_;
 
   // Cache for reordered mesh data (triangles sorted by material for optimal submesh grouping)
   struct ReorderedMeshCache {
@@ -5761,6 +6762,18 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("loadFromBinaryWithProgress", &TinyUSDZLoaderNative::loadFromBinaryWithProgress)
       .function("loadAsLayerFromBinaryWithProgress", &TinyUSDZLoaderNative::loadAsLayerFromBinaryWithProgress)
 
+      // USD Export
+      .function("exportAsUSDA", &TinyUSDZLoaderNative::exportAsUSDA)
+      .function("exportAsUSDC", &TinyUSDZLoaderNative::exportAsUSDC)
+      .function("exportAsUSDZ", &TinyUSDZLoaderNative::exportAsUSDZ)
+      .function("extractPhysicsSceneJSON", &TinyUSDZLoaderNative::extractPhysicsSceneJSON)
+      .function("createSampleScene", &TinyUSDZLoaderNative::createSampleScene)
+      .function("clearURDFMeshBuffers", &TinyUSDZLoaderNative::clearURDFMeshBuffers)
+      .function("setVisualMesh", &TinyUSDZLoaderNative::setVisualMesh)
+      .function("setCollisionMesh", &TinyUSDZLoaderNative::setCollisionMesh)
+      .function("createURDFPhysicsScene", &TinyUSDZLoaderNative::createURDFPhysicsScene)
+      .function("encodeImageNative", &TinyUSDZLoaderNative::encodeImageNative)
+
       .function("ok", &TinyUSDZLoaderNative::ok)
       .function("error", &TinyUSDZLoaderNative::error)
       .function("warn", &TinyUSDZLoaderNative::warn);
@@ -5822,4 +6835,3 @@ EMSCRIPTEN_BINDINGS(image_module) {
   function("convertFloat32ToFloat16Array", &convertFloat32ToFloat16Array);
   function("convertFloat16ToFloat32Array", &convertFloat16ToFloat32Array);
 }
-

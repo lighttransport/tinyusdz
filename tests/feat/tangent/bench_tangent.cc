@@ -1,4 +1,4 @@
-// Tangent computation benchmark.
+﻿// Tangent computation benchmark.
 //
 // Compares three methods:
 //   1. Reference MikkTSpace (original C implementation via wrapper)

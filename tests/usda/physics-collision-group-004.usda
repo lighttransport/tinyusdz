@@ -1,0 +1,34 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Z"
+)
+
+# Overlapping membership: prim /World/A is in both groups.
+# Both groups self-filter (don't intra-collide), but A's contype
+# carries the union of both class bits, and pair-wise A is admitted
+# against everyone its groups admit.
+def Xform "World"
+{
+    def PhysicsCollisionGroup "G1"
+    (
+        prepend apiSchemas = ["CollectionAPI:colliders"]
+    )
+    {
+        rel physics:filteredGroups = </World/G1>
+        rel collection:colliders:includes = [</World/A>, </World/B>]
+    }
+
+    def PhysicsCollisionGroup "G2"
+    (
+        prepend apiSchemas = ["CollectionAPI:colliders"]
+    )
+    {
+        rel physics:filteredGroups = </World/G2>
+        rel collection:colliders:includes = [</World/A>, </World/C>]
+    }
+
+    def Cube "A" {}
+    def Cube "B" {}
+    def Cube "C" {}
+}

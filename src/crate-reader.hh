@@ -70,7 +70,7 @@ struct CrateReaderConfig {
   size_t maxInts = 1024 * 1024 * 1024;            ///< Max generic int array size (1B)
 
   ///< Total memory budget for uncompressed data in bytes (default 2GB)
-  size_t maxMemoryBudget = std::numeric_limits<int32_t>::max();
+  size_t maxMemoryBudget = (std::numeric_limits<int32_t>::max)();
 
   /// Optional external memory budget manager shared with other components.
   /// If set, CrateReader uses this manager instead of an internal one.
@@ -442,6 +442,9 @@ class CrateReader {
   bool UnpackTimeSampleValue_HALF2(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_HALF3(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_HALF4(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_INT2(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_INT3(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_INT4(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_FLOAT2(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_FLOAT3(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_FLOAT4(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Copyright 2022-2022 Syoyo Fujita.
 // Copyright 2023-Present Light Transport Entertainment Inc.
 //
@@ -37,6 +37,7 @@
 #include "value-types.hh"
 #include "tiny-format.hh"
 #include "str-util.hh"
+#include "safe-arithmetic.hh"
 
 //
 #ifdef __clang__
@@ -135,7 +136,7 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
     }
 
     // -8 to compensate sizeof(offset). Guard against int64 underflow.
-    if (offset < std::numeric_limits<int64_t>::min() + 8) {
+    if (offset < (std::numeric_limits<int64_t>::min)() + 8) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Dictionary value offset {} would underflow int64.", offset));
     }
     if (!_sr->seek_from_current(offset - 8)) {
@@ -319,29 +320,24 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64: {
-      // stored as int
-      int _ival;
-      memcpy(&_ival, &d, sizeof(int));
-
-      DCOUT("value.int = " << _ival);
-
-      int64_t ival = static_cast<int64_t>(_ival);
-
+      // Inline payload is 48 bits. Sign-extend from bit 47 to int64_t.
+      uint64_t payload48 = rep.GetPayload() & ((1ull << 48) - 1);
+      int64_t ival;
+      if (payload48 & (1ull << 47)) {
+        // Negative: extend the upper 16 bits with 1s.
+        ival = static_cast<int64_t>(payload48 | (~((1ull << 48) - 1)));
+      } else {
+        ival = static_cast<int64_t>(payload48);
+      }
+      DCOUT("value.int64 = " << ival);
       value->Set(ival);
-
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64: {
-      // stored as uint32
-      uint32_t _ival;
-      memcpy(&_ival, &d, sizeof(uint32_t));
-
-      DCOUT("value.int = " << _ival);
-
-      uint64_t ival = static_cast<uint64_t>(_ival);
-
+      // Inline payload is 48 bits, zero-extended.
+      uint64_t ival = rep.GetPayload() & ((1ull << 48) - 1);
+      DCOUT("value.uint64 = " << ival);
       value->Set(ival);
-
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF: {
@@ -1002,7 +998,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of bool array too large. TinyUSDZ limites it up to {}", _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(uint8_t));
+        size_t uint8_t_size;
+        if (!safe::n_to_size<uint8_t>(n, &uint8_t_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(uint8_t)");
+        }
+        CHECK_MEMORY_USAGE(uint8_t_size);
 
         std::vector<uint8_t> data(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(uint8_t),
@@ -1062,7 +1062,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of AssetPaths too large. TinyUSDZ limites it up to {}", _config.maxAssetPathElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
+        size_t crate_Index_size;
+        if (!safe::n_to_size<crate::Index>(n, &crate_Index_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(crate::Index)");
+        }
+        CHECK_MEMORY_USAGE(crate_Index_size);
 
         std::vector<crate::Index> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(crate::Index),
@@ -1131,7 +1135,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Token array too large. TinyUSDZ limits it up to {}", _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
+        size_t crate_Index_size;
+        if (!safe::n_to_size<crate::Index>(n, &crate_Index_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(crate::Index)");
+        }
+        CHECK_MEMORY_USAGE(crate_Index_size);
 
         std::vector<crate::Index> v;
         v.resize(static_cast<size_t>(n));
@@ -1173,7 +1181,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("String array too large. TinyUSDZ limites it up to {}", _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
+        size_t crate_Index_size;
+        if (!safe::n_to_size<crate::Index>(n, &crate_Index_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(crate::Index)");
+        }
+        CHECK_MEMORY_USAGE(crate_Index_size);
 
         std::vector<crate::Index> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(crate::Index),
@@ -1469,7 +1481,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(value::matrix2d));
+        size_t value_matrix2d_size;
+        if (!safe::n_to_size<value::matrix2d>(n, &value_matrix2d_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::matrix2d)");
+        }
+        CHECK_MEMORY_USAGE(value_matrix2d_size);
 
 
         v.resize(static_cast<size_t>(n));
@@ -1487,7 +1503,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(sizeof(value::matrix2d));
 
-        value::matrix4d v;
+        value::matrix2d v;
         if (!_sr->read(sizeof(value::matrix2d), sizeof(value::matrix2d),
                        reinterpret_cast<uint8_t *>(v.m))) {
           _err += "Failed to read value of `matrix2d` type\n";
@@ -1540,7 +1556,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(value::matrix3d));
+        size_t value_matrix3d_size;
+        if (!safe::n_to_size<value::matrix3d>(n, &value_matrix3d_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::matrix3d)");
+        }
+        CHECK_MEMORY_USAGE(value_matrix3d_size);
 
         v.resize(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::matrix3d),
@@ -1611,7 +1631,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(value::matrix4d));
+        size_t value_matrix4d_size;
+        if (!safe::n_to_size<value::matrix4d>(n, &value_matrix4d_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::matrix4d)");
+        }
+        CHECK_MEMORY_USAGE(value_matrix4d_size);
 
         v.resize(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::matrix4d),
@@ -1678,7 +1702,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(value::quatd));
+        size_t value_quatd_size;
+        if (!safe::n_to_size<value::quatd>(n, &value_quatd_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::quatd)");
+        }
+        CHECK_MEMORY_USAGE(value_quatd_size);
 
         v.resize(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::quatd),
@@ -1697,8 +1725,13 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(sizeof(value::quatd));
 
+        // Crate wire layout is [x, y, z, w] = (imag, real); see
+        // value-types.hh:957. (USDA uses the opposite [w, x, y, z]
+        // order — that's a *display* convention, not a wire one.)
+        // tinyusdz's value::quatd struct matches the Crate layout, so
+        // memcpy reads the bytes directly.
         value::quatd v;
-        if (!_sr->read(sizeof(value::quatd), sizeof(value::quatd),
+        if (!_sr->read(sizeof(v), sizeof(v),
                        reinterpret_cast<uint8_t *>(&v))) {
           _err += "Failed to read Quatd value\n";
           return false;
@@ -1746,7 +1779,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(value::quatf));
+        size_t value_quatf_size;
+        if (!safe::n_to_size<value::quatf>(n, &value_quatf_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::quatf)");
+        }
+        CHECK_MEMORY_USAGE(value_quatf_size);
 
         v.resize(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::quatf),
@@ -1765,8 +1802,10 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(sizeof(value::quatf));
 
+        // Crate wire layout is [x, y, z, w] = (imag, real). See
+        // QUATD note above and value-types.hh:957.
         value::quatf v;
-        if (!_sr->read(sizeof(value::quatf), sizeof(value::quatf),
+        if (!_sr->read(sizeof(v), sizeof(v),
                        reinterpret_cast<uint8_t *>(&v))) {
           _err += "Failed to read Quatf value\n";
           return false;
@@ -1815,7 +1854,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(value::quath));
+        size_t value_quath_size;
+        if (!safe::n_to_size<value::quath>(n, &value_quath_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::quath)");
+        }
+        CHECK_MEMORY_USAGE(value_quath_size);
 
         v.resize(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::quath),
@@ -1834,8 +1877,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(sizeof(value::quath));
 
+        // Crate wire layout is [x, y, z, w] = (imag, real); half
+        // components stored as raw uint16 bit patterns. See QUATD note
+        // above and value-types.hh:957.
         value::quath v;
-        if (!_sr->read(sizeof(value::quath), sizeof(value::quath),
+        if (!_sr->read(sizeof(v), sizeof(v),
                        reinterpret_cast<uint8_t *>(&v))) {
           _err += "Failed to read Quath value\n";
           return false;
@@ -1887,7 +1933,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(value::double2));
+        size_t value_double2_size;
+        if (!safe::n_to_size<value::double2>(n, &value_double2_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::double2)");
+        }
+        CHECK_MEMORY_USAGE(value_double2_size);
 
         std::vector<value::double2> v;
         // Always use std::vector - no mmap view mode
@@ -1959,7 +2009,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return true;
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(value::float2));
+        size_t value_float2_size;
+        if (!safe::n_to_size<value::float2>(n, &value_float2_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::float2)");
+        }
+        CHECK_MEMORY_USAGE(value_float2_size);
 
         std::vector<value::float2> v;
         // Always use std::vector - no mmap view mode
@@ -2026,7 +2080,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(value::half2));
+        size_t value_half2_size;
+        if (!safe::n_to_size<value::half2>(n, &value_half2_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::half2)");
+        }
+        CHECK_MEMORY_USAGE(value_half2_size);
 
         std::vector<value::half2> v;
         // Always use std::vector - no mmap view mode
@@ -2091,7 +2149,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(value::int2));
+        size_t value_int2_size;
+        if (!safe::n_to_size<value::int2>(n, &value_int2_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::int2)");
+        }
+        CHECK_MEMORY_USAGE(value_int2_size);
 
         v.resize(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::int2),
@@ -2154,7 +2216,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(value::double3));
+        size_t value_double3_size;
+        if (!safe::n_to_size<value::double3>(n, &value_double3_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::double3)");
+        }
+        CHECK_MEMORY_USAGE(value_double3_size);
 
         std::vector<value::double3> v;
         // Always use std::vector - no mmap view mode
@@ -2219,7 +2285,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(value::float3));
+        size_t value_float3_size;
+        if (!safe::n_to_size<value::float3>(n, &value_float3_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::float3)");
+        }
+        CHECK_MEMORY_USAGE(value_float3_size);
 
         {
           // Regular allocation for compressed data or when mmap is disabled
@@ -2288,7 +2358,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(value::half3));
+        size_t value_half3_size;
+        if (!safe::n_to_size<value::half3>(n, &value_half3_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::half3)");
+        }
+        CHECK_MEMORY_USAGE(value_half3_size);
 
         std::vector<value::half3> v;
         {
@@ -2354,7 +2428,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(value::int3));
+        size_t value_int3_size;
+        if (!safe::n_to_size<value::int3>(n, &value_int3_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::int3)");
+        }
+        CHECK_MEMORY_USAGE(value_int3_size);
 
         std::vector<value::int3> v;
         {
@@ -2421,7 +2499,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(value::double4));
+        size_t value_double4_size;
+        if (!safe::n_to_size<value::double4>(n, &value_double4_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::double4)");
+        }
+        CHECK_MEMORY_USAGE(value_double4_size);
 
         std::vector<value::double4> v;
         {
@@ -2487,7 +2569,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(value::float4));
+        size_t value_float4_size;
+        if (!safe::n_to_size<value::float4>(n, &value_float4_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::float4)");
+        }
+        CHECK_MEMORY_USAGE(value_float4_size);
 
         std::vector<value::float4> v;
         {
@@ -2553,7 +2639,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(value::half4));
+        size_t value_half4_size;
+        if (!safe::n_to_size<value::half4>(n, &value_half4_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::half4)");
+        }
+        CHECK_MEMORY_USAGE(value_half4_size);
 
         std::vector<value::half4> v;
         // Always use std::vector - no mmap view mode
@@ -2617,7 +2707,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
-        CHECK_MEMORY_USAGE(n * sizeof(value::int4));
+        size_t value_int4_size;
+        if (!safe::n_to_size<value::int4>(n, &value_int4_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::int4)");
+        }
+        CHECK_MEMORY_USAGE(value_int4_size);
 
         v.resize(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::int4),
@@ -2732,7 +2826,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
       }
 
-      CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
+      size_t crate_Index_size;
+      if (!safe::n_to_size<crate::Index>(n, &crate_Index_size)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(crate::Index)");
+      }
+      CHECK_MEMORY_USAGE(crate_Index_size);
 
       std::vector<crate::Index> indices(static_cast<size_t>(n));
       if (n > 0) {
@@ -2968,7 +3066,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       DCOUT("tell = " << _sr->tell());
 
       // -8 to compensate sizeof(offset). Guard against int64 underflow.
-      if (local_offset < std::numeric_limits<int64_t>::min() + 8) {
+      if (local_offset < (std::numeric_limits<int64_t>::min)() + 8) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("UNREGISTERED_VALUE offset {} would underflow int64.", local_offset));
       }
       if (!_sr->seek_from_current(local_offset - 8)) {

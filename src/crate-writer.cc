@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Copyright 2025, Light Transport Entertainment Inc.
 //
 // Experimental USDC (Crate) File Writer Implementation
@@ -33,6 +33,8 @@
 // Direct LZ4 API for OpenUSD compatibility
 #include "lz4/lz4.h"
 
+#include "safe-arithmetic.hh"
+
 // Namespace alias to avoid collision between tinyusdz::crate and ::crate (path library)
 namespace pathlib = ::crate;
 
@@ -40,7 +42,6 @@ namespace pathlib = ::crate;
 // - shadow: if-else chains reuse variable names intentionally
 // - sign-conversion: safe narrowing in serialization code
 // - old-style-cast: debug print formatting
-// - nrvo: return value optimization hints
 // - exceptions: comparator functions may throw in debug builds
 // - unused-parameter: some functions have consistent API signatures
 #if defined(__clang__)
@@ -48,7 +49,6 @@ namespace pathlib = ::crate;
 #pragma clang diagnostic ignored "-Wshadow"
 #pragma clang diagnostic ignored "-Wsign-conversion"
 #pragma clang diagnostic ignored "-Wold-style-cast"
-#pragma clang diagnostic ignored "-Wnrvo"
 #pragma clang diagnostic ignored "-Wshorten-64-to-32"
 #pragma clang diagnostic ignored "-Wexceptions"
 #pragma clang diagnostic ignored "-Wunused-parameter"
@@ -112,7 +112,7 @@ ListOpHeader BuildListOpHeader(const ListOp<T>& listop) {
   if (listop.HasOrderedItems()) header.bits |= ListOpHeader::HasOrderedItemsBit;
   if (listop.HasPrependedItems()) header.bits |= ListOpHeader::HasPrependedItemsBit;
   if (listop.HasAppendedItems()) header.bits |= ListOpHeader::HasAppendedItemsBit;
-  return ListOpHeader(header.bits);
+  return header;  // NRVO
 }
 
 } // anonymous namespace
@@ -160,20 +160,28 @@ size_t CrateWriter::NanAwareHash::hash_buffer(const void *data,
     size_t count = byte_count / sizeof(float);
     for (size_t i = 0; i < count; ++i) {
       float v;
-      std::memcpy(&v, canon.data() + i * sizeof(float), sizeof(float));
+      size_t offset;
+      if (!safe::mul(i, sizeof(float), &offset)) {
+        return 0;  // Error - return 0 hash
+      }
+      std::memcpy(&v, canon.data() + offset, sizeof(float));
       if (v == 0.0f) {
         uint32_t zero = 0;
-        std::memcpy(canon.data() + i * sizeof(float), &zero, sizeof(float));
+        std::memcpy(canon.data() + offset, &zero, sizeof(float));
       }
     }
   } else { // sizeof(double)
     size_t count = byte_count / sizeof(double);
     for (size_t i = 0; i < count; ++i) {
       double v;
-      std::memcpy(&v, canon.data() + i * sizeof(double), sizeof(double));
+      size_t offset;
+      if (!safe::mul(i, sizeof(double), &offset)) {
+        return 0;  // Error - return 0 hash
+      }
+      std::memcpy(&v, canon.data() + offset, sizeof(double));
       if (v == 0.0) {
         uint64_t zero = 0;
-        std::memcpy(canon.data() + i * sizeof(double), &zero, sizeof(double));
+        std::memcpy(canon.data() + offset, &zero, sizeof(double));
       }
     }
   }
@@ -195,8 +203,12 @@ bool CrateWriter::NanAwareHash::buffers_equal(const void *a, const void *b,
     size_t count = byte_count / sizeof(float);
     for (size_t i = 0; i < count; ++i) {
       float va, vb;
-      std::memcpy(&va, pa + i * sizeof(float), sizeof(float));
-      std::memcpy(&vb, pb + i * sizeof(float), sizeof(float));
+      size_t offset;
+      if (!safe::mul(i, sizeof(float), &offset)) {
+        return false;  // Overflow - buffers aren't equal
+      }
+      std::memcpy(&va, pa + offset, sizeof(float));
+      std::memcpy(&vb, pb + offset, sizeof(float));
       uint32_t ba = 0, bb = 0;
       if (va != 0.0f) { std::memcpy(&ba, &va, sizeof(float)); }
       if (vb != 0.0f) { std::memcpy(&bb, &vb, sizeof(float)); }
@@ -207,8 +219,12 @@ bool CrateWriter::NanAwareHash::buffers_equal(const void *a, const void *b,
     size_t count = byte_count / sizeof(double);
     for (size_t i = 0; i < count; ++i) {
       double va, vb;
-      std::memcpy(&va, pa + i * sizeof(double), sizeof(double));
-      std::memcpy(&vb, pb + i * sizeof(double), sizeof(double));
+      size_t offset;
+      if (!safe::mul(i, sizeof(double), &offset)) {
+        return false;  // Overflow - buffers aren't equal
+      }
+      std::memcpy(&va, pa + offset, sizeof(double));
+      std::memcpy(&vb, pb + offset, sizeof(double));
       uint64_t ba = 0, bb = 0;
       if (va != 0.0) { std::memcpy(&ba, &va, sizeof(double)); }
       if (vb != 0.0) { std::memcpy(&bb, &vb, sizeof(double)); }
@@ -252,6 +268,16 @@ bool CrateWriter::Open(std::string* err) {
 
   value_data_start_offset_ = Tell();
   value_data_end_offset_ = value_data_start_offset_;
+
+  // Reserve token index 0 with a sentinel that cannot be a valid path
+  // element. OpenUSD does the same (crateFile.cpp line 2594-2601, github
+  // issue #811). The compressed path format uses negative token indices
+  // for property path elements; -0 == 0 would otherwise make a property
+  // at index 0 indistinguishable from a prim element, so ";-)" must sit
+  // at index 0 before any caller has a chance to register a real token.
+  // Previously this was deferred to Finalize(), but by then AddSpec had
+  // already pushed field-name tokens into tokens_ at index 0.
+  GetOrCreateToken(";-)");
 
   return true;
 }
@@ -401,6 +427,28 @@ bool CrateWriter::Finalize(std::string* err) {
         return false;
       }
 
+      // USD metadata fields `primChildren` and `properties` store a list of
+      // child/property names. On the wire, pxrusd expects these as the
+      // dedicated `TokenVector` type (CrateDataTypeId 41), not as a
+      // `Token[]` array (CrateDataTypeId 11 with IsArray). The serialized
+      // bytes are identical — uint64 count followed by uint32 token
+      // indices — so we just retag the ValueRep after PackValue emitted
+      // it as Token[]. Without this, pxrusd loads the layer but silently
+      // drops every prim because its primChildren field fails type
+      // validation, and we ship USDC that downstream DCCs can't read.
+      const std::string& fname = field_pair.first;
+      if ((fname == "primChildren" || fname == "properties") &&
+          field_pair.second.as<std::vector<value::token>>() &&
+          field.value_rep.IsArray() &&
+          field.value_rep.GetType() ==
+              static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN)) {
+        uint64_t data = field.value_rep.GetData();
+        data &= ~crate::ValueRep::IsArrayBit_;
+        field.value_rep = crate::ValueRep(data);
+        field.value_rep.SetType(static_cast<int32_t>(
+            crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR));
+      }
+
       // Get or create field index
       crate::FieldIndex field_idx = GetOrCreateField(field);
       field_indices.push_back(field_idx);
@@ -417,57 +465,21 @@ bool CrateWriter::Finalize(std::string* err) {
   }
 
   // ========================================================================
-  // CRITICAL: Re-sort paths_ and update spec path_indexes
+  // Path-index remap after field packing
   // ========================================================================
-  // During field packing, connection target paths were added to paths_.
-  // These paths need to be in sorted order for correct tree encoding.
-  // After sorting, we must update all spec path_indexes to use the new indices.
-
-  {
-    // Convert paths_ to SimplePaths for sorting
-    std::vector<std::pair<pathlib::SimplePath, size_t>> paths_with_old_idx;
-    for (size_t i = 0; i < paths_.size(); ++i) {
-      paths_with_old_idx.emplace_back(
-        pathlib::SimplePath(paths_[i].prim_part(), paths_[i].prop_part()),
-        i
-      );
-    }
-
-    // Sort using USD path comparison
-    std::sort(paths_with_old_idx.begin(), paths_with_old_idx.end(),
-      [](const auto& a, const auto& b) {
-        return pathlib::ComparePaths(a.first, b.first) < 0;
-      });
-
-    // Build old -> new index mapping
-    std::vector<uint32_t> old_to_new(paths_.size());
-    for (size_t new_idx = 0; new_idx < paths_with_old_idx.size(); ++new_idx) {
-      size_t old_idx = paths_with_old_idx[new_idx].second;
-      old_to_new[old_idx] = static_cast<uint32_t>(new_idx);
-    }
-
-    // Rebuild paths_ in sorted order
-    std::vector<Path> sorted_paths;
-    sorted_paths.reserve(paths_.size());
-    for (const auto& pair : paths_with_old_idx) {
-      // Find original path by old index
-      sorted_paths.push_back(paths_[pair.second]);
-    }
-    paths_ = std::move(sorted_paths);
-
-    // Rebuild path_to_index_ with new indices
-    path_to_index_.clear();
-    for (size_t i = 0; i < paths_.size(); ++i) {
-      path_to_index_[paths_[i]] = crate::PathIndex(static_cast<uint32_t>(i));
-    }
-
-    // Update all spec path_indexes using the mapping
-    for (auto& spec_data : spec_data_) {
-      uint32_t old_idx = spec_data.spec.path_index.value;
-      spec_data.spec.path_index.value = old_to_new[old_idx];
-    }
-
-  }
+  // During field packing, ListOp<Reference> / ListOp<Payload> /
+  // ListOp<Path> / connection-target / pathvector value data wrote raw
+  // PathIndex bytes referencing positions in paths_ at the time of the
+  // write. Historically we re-sorted paths_ here for tree-encoding ordering
+  // and remapped only the spec path_indexes — that left those embedded
+  // value-data indices pointing at the wrong paths after the sort, so e.g.
+  // `references = @./a.usda@</A>` came back as `</x>` (whatever happened
+  // to land at the original index after re-sorting).
+  //
+  // Fix: skip the re-sort. WritePathsSection sorts paths internally for
+  // tree encoding and stores `encoded_path_indices[i] = preassigned`, so
+  // the on-disk tree still maps correctly to the original PathIndex values
+  // — and value-data path indices stay valid.
 
   // ========================================================================
   // Step 2: Write all structural sections
@@ -479,6 +491,12 @@ bool CrateWriter::Finalize(std::string* err) {
   // ========================================================================
   // Pre-register path element tokens before writing TOKENS section.
   // WritePathsSection uses GetOrCreateToken during tree building.
+  // WritePathsSection rewrites the root path's element name ("/") to the
+  // empty string before tokenizing, so we must ensure "" is in the pool;
+  // otherwise the root row references a token that only gets appended
+  // after the TOKENS section has already been serialized — which pxrusd
+  // rejects with "Corrupt path element token index in crate file".
+  GetOrCreateToken("");
   for (const auto& path : paths_) {
     std::string elem = path.element_name();
     if (!elem.empty() && elem != "/") {
@@ -596,6 +614,26 @@ static bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue*
   CONVERT_CRATE_VALUE(std::vector<value::token>)
   CONVERT_CRATE_VALUE(std::vector<std::string>)
   CONVERT_CRATE_VALUE(std::vector<value::AssetPath>)
+  // Half-vec / matrix / quaternion scalars
+  CONVERT_CRATE_VALUE(value::half2)
+  CONVERT_CRATE_VALUE(value::half3)
+  CONVERT_CRATE_VALUE(value::half4)
+  CONVERT_CRATE_VALUE(value::matrix2d)
+  CONVERT_CRATE_VALUE(value::matrix3d)
+  CONVERT_CRATE_VALUE(value::matrix4d)
+  CONVERT_CRATE_VALUE(value::quath)
+  CONVERT_CRATE_VALUE(value::quatf)
+  CONVERT_CRATE_VALUE(value::quatd)
+  // Half-vec / matrix / quaternion arrays
+  CONVERT_CRATE_VALUE(std::vector<value::half2>)
+  CONVERT_CRATE_VALUE(std::vector<value::half3>)
+  CONVERT_CRATE_VALUE(std::vector<value::half4>)
+  CONVERT_CRATE_VALUE(std::vector<value::matrix2d>)
+  CONVERT_CRATE_VALUE(std::vector<value::matrix3d>)
+  CONVERT_CRATE_VALUE(std::vector<value::matrix4d>)
+  CONVERT_CRATE_VALUE(std::vector<value::quath>)
+  CONVERT_CRATE_VALUE(std::vector<value::quatf>)
+  CONVERT_CRATE_VALUE(std::vector<value::quatd>)
 
 #undef CONVERT_CRATE_VALUE
   // fall through to unmatched type handling
@@ -868,7 +906,11 @@ bool CrateWriter::WriteFieldsSection(std::string* err) {
 
   // Compress value reps using TfFastCompression (our CompressData)
   const char* reps_data = reinterpret_cast<const char*>(value_reps.data());
-  size_t reps_data_size = value_reps.size() * sizeof(uint64_t);
+  size_t reps_data_size;
+  if (!safe::mul(value_reps.size(), sizeof(uint64_t), &reps_data_size)) {
+    if (err) *err = "Integer overflow: value_reps.size() * sizeof(uint64_t)";
+    return false;
+  }
 
   std::vector<char> compressed_reps;
   if (!CompressData(reps_data, reps_data_size, &compressed_reps, err)) {
@@ -1401,7 +1443,8 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   bool is_compressed = false;
   int64_t offset = WriteValueData(value, &is_compressed, err);
   if (offset < 0 || (err && !err->empty())) {
-    return crate::ValueRep();
+    rep = crate::ValueRep();
+    return rep;
   }
 
   // Create ValueRep with offset and proper type
@@ -1609,11 +1652,15 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       return -1; \
     } \
   }
-  // D. Quaternions (real then imag[0..2], USD Crate format order)
+  // D. Quaternions. Crate wire layout is [x, y, z, w] = (imag.x,
+  // imag.y, imag.z, real). See value-types.hh:957 — note that USDA
+  // (ASCII) uses the opposite [w, x, y, z] order at the textual layer.
+  // tinyusdz's `value::quat{f,d}` struct matches the Crate layout
+  // (`{imag, real}`), so emit imag first, then real.
 #define WRITE_QUAT_SCALAR(Type, TypeName) \
   else if (auto* v = value.as<Type>()) { \
-    if (!Write(v->real) || !Write(v->imag[0]) || \
-        !Write(v->imag[1]) || !Write(v->imag[2])) { \
+    if (!Write(v->imag[0]) || !Write(v->imag[1]) || \
+        !Write(v->imag[2]) || !Write(v->real)) { \
       if (err) *err = "Failed to write " TypeName " components"; \
       return -1; \
     } \
@@ -1621,8 +1668,8 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
   // E. Half-precision quaternion (needs .value on each component)
 #define WRITE_QUATH_SCALAR(Type, TypeName) \
   else if (auto* v = value.as<Type>()) { \
-    if (!Write(v->real.value) || !Write(v->imag[0].value) || \
-        !Write(v->imag[1].value) || !Write(v->imag[2].value)) { \
+    if (!Write(v->imag[0].value) || !Write(v->imag[1].value) || \
+        !Write(v->imag[2].value) || !Write(v->real.value)) { \
       if (err) *err = "Failed to write " TypeName " components"; \
       return -1; \
     } \
@@ -1735,7 +1782,12 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
   else if (auto* float_array = value.as<std::vector<float>>()) {
     uint64_t count = float_array->size();
     if (!Write(count)) { if (err) *err = "Failed to write float array count"; return -1; }
-    if (!WriteBytes(float_array->data(), float_array->size() * sizeof(float))) {
+    size_t byte_count;
+    if (!safe::mul(float_array->size(), sizeof(float), &byte_count)) {
+      if (err) *err = "Integer overflow: float_array->size() * sizeof(float)";
+      return -1;
+    }
+    if (!WriteBytes(float_array->data(), byte_count)) {
       if (err) *err = "Failed to write float array data";
       return -1;
     }
@@ -1745,7 +1797,12 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
   else if (auto* double_array = value.as<std::vector<double>>()) {
     uint64_t count = double_array->size();
     if (!Write(count)) { if (err) *err = "Failed to write double array count"; return -1; }
-    if (!WriteBytes(double_array->data(), double_array->size() * sizeof(double))) {
+    size_t byte_count;
+    if (!safe::mul(double_array->size(), sizeof(double), &byte_count)) {
+      if (err) *err = "Integer overflow: double_array->size() * sizeof(double)";
+      return -1;
+    }
+    if (!WriteBytes(double_array->data(), byte_count)) {
       if (err) *err = "Failed to write double array data";
       return -1;
     }
@@ -1761,12 +1818,15 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       } \
     } \
   }
+  // Same [x, y, z, w] = (imag, real) Crate layout as the scalar path
+  // above (see value-types.hh:957). Could memcpy since our struct
+  // matches; per-component for symmetry.
 #define WRITE_QUAT_ARRAY(ElemType, TypeName) \
   else if (auto* arr = value.as<std::vector<ElemType>>()) { \
     uint64_t count = arr->size(); \
     if (!Write(count)) { if (err) *err = "Failed to write " TypeName " array count"; return -1; } \
     for (const auto& q : *arr) { \
-      bool qok = Write(q.real) && Write(q.imag[0]) && Write(q.imag[1]) && Write(q.imag[2]); \
+      bool qok = Write(q.imag[0]) && Write(q.imag[1]) && Write(q.imag[2]) && Write(q.real); \
       if (!qok) { if (err) *err = "Failed to write " TypeName " array element"; return -1; } \
     } \
   }
@@ -1775,7 +1835,7 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
     uint64_t count = arr->size(); \
     if (!Write(count)) { if (err) *err = "Failed to write " TypeName " array count"; return -1; } \
     for (const auto& q : *arr) { \
-      bool qok = Write(q.real.value) && Write(q.imag[0].value) && Write(q.imag[1].value) && Write(q.imag[2].value); \
+      bool qok = Write(q.imag[0].value) && Write(q.imag[1].value) && Write(q.imag[2].value) && Write(q.real.value); \
       if (!qok) { if (err) *err = "Failed to write " TypeName " array element"; return -1; } \
     } \
   }
@@ -1843,6 +1903,24 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       crate::StringIndex idx = GetOrCreateString(str);
       if (!Write(idx.value)) {
         if (err) *err = "Failed to write string array element index";
+        return -1;
+      }
+    }
+  }
+  // Asset array - reader expects StringIndex elements (uninlined/array path
+  // in crate-reader-values.cc). Note inlined scalar AssetPath uses a
+  // TokenIndex; arrays use StringIndex. See the asymmetric reader at
+  // CRATE_DATA_TYPE_ASSET_PATH.
+  else if (auto* asset_array = value.as<std::vector<value::AssetPath>>()) {
+    uint64_t count = asset_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write asset[] count";
+      return -1;
+    }
+    for (const auto& ap : *asset_array) {
+      crate::StringIndex idx = GetOrCreateString(ap.GetAssetPath());
+      if (!Write(idx.value)) {
+        if (err) *err = "Failed to write asset[] element index";
         return -1;
       }
     }
@@ -2054,6 +2132,9 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
         value_rep = PackValue(cv, err); value_packed = true;
       }
       TRY_PACK_AS(uint32_t)
+      TRY_PACK_AS(int64_t)
+      TRY_PACK_AS(uint64_t)
+      TRY_PACK_AS(value::half)
       TRY_PACK_AS(float)
       TRY_PACK_AS(double)
       TRY_PACK_AS(bool)
@@ -2105,6 +2186,34 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       TRY_PACK_AS(std::vector<float>)
       TRY_PACK_AS(std::vector<double>)
       TRY_PACK_AS(std::vector<int32_t>)
+      TRY_PACK_AS(std::vector<bool>)
+      TRY_PACK_AS(std::vector<uint32_t>)
+      TRY_PACK_AS(std::vector<int64_t>)
+      TRY_PACK_AS(std::vector<uint64_t>)
+      TRY_PACK_AS(std::vector<value::half>)
+      // Vec scalars (used by clips dict: double2 active/times entries, etc.)
+      TRY_PACK_AS(value::float2)
+      TRY_PACK_AS(value::float3)
+      TRY_PACK_AS(value::float4)
+      TRY_PACK_AS(value::double2)
+      TRY_PACK_AS(value::double3)
+      TRY_PACK_AS(value::double4)
+      TRY_PACK_AS(value::int2)
+      TRY_PACK_AS(value::int3)
+      TRY_PACK_AS(value::int4)
+      // Vec arrays
+      TRY_PACK_AS(std::vector<value::float2>)
+      TRY_PACK_AS(std::vector<value::float3>)
+      TRY_PACK_AS(std::vector<value::float4>)
+      TRY_PACK_AS(std::vector<value::double2>)
+      TRY_PACK_AS(std::vector<value::double3>)
+      TRY_PACK_AS(std::vector<value::double4>)
+      TRY_PACK_AS(std::vector<value::int2>)
+      TRY_PACK_AS(std::vector<value::int3>)
+      TRY_PACK_AS(std::vector<value::int4>)
+      // Asset paths (clips: assetPaths, manifestAssetPath)
+      TRY_PACK_AS(value::AssetPath)
+      TRY_PACK_AS(std::vector<value::AssetPath>)
       else {
         if (err) *err = "Unsupported CustomDataType value type: " + std::string(raw_value.type_name()) + " (type_id=" + std::to_string(raw_value.type_id()) + ")";
         return -1;
@@ -2259,37 +2368,102 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       return -1;
     }
 
-    // Write customData dictionary
-    // Dictionary format: uint64_t count + (StringIndex key, ValueRep value) pairs
-    uint64_t dict_count = ref_val->customData.size();
-    if (!Write(dict_count)) {
-      if (err) *err = "Failed to write Reference customData count";
-      return -1;
-    }
+    // Write customData dictionary using the same reserve-pack-seek
+    // pattern as top-level Dictionary serialization (see line ~1929).
+    // PackValue may write out-of-line value data (doubles, int64 above
+    // 2^47, large arrays) — we reserve dict frame first, then pack
+    // (allowing nested writes to land after the frame), then come back
+    // to fill in the (StringIndex key, int64 offset, ValueRep) tuples.
+    {
+      uint64_t dict_count = ref_val->customData.size();
+      int64_t dict_struct_size = 8 + (int64_t)(dict_count * 20);
+      int64_t dict_struct_start = Tell();
 
-    // MetaVariable get_value dispatch for customData entries
-#define TRY_PACK_METAVAR(Type) \
-      else if (auto typed = kv.second.get_value<Type>()) { \
-        crate::CrateValue cv; cv.Set(*typed); \
-        value_rep = PackValue(cv, err); }
-
-    for (const auto& kv : ref_val->customData) {
-      if (!Write(GetOrCreateString(kv.first).value)) { if (err) *err = "Failed to write Reference customData key"; return -1; }
-
-      crate::ValueRep value_rep;
-      if (auto v = kv.second.get_value<int32_t>()) {
-        crate::CrateValue cv; cv.Set(*v);
-        value_rep = PackValue(cv, err);
+      // Reserve.
+      {
+        std::vector<char> zeros(static_cast<size_t>(dict_struct_size), 0);
+        if (!WriteBytes(zeros.data(), zeros.size())) {
+          if (err) *err = "Failed to reserve Reference customData space";
+          return -1;
+        }
       }
-      TRY_PACK_METAVAR(float)
-      TRY_PACK_METAVAR(double)
-      TRY_PACK_METAVAR(bool)
-      TRY_PACK_METAVAR(std::string)
-      else { if (err) *err = "Unsupported Reference customData value type"; return -1; }
+      value_data_end_offset_ = Tell();
 
-      if (!Write(value_rep.GetData())) { if (err) *err = "Failed to write Reference customData value"; return -1; }
+      // Pack.
+      std::vector<crate::ValueRep> value_reps;
+      value_reps.reserve(dict_count);
+      for (const auto& kv : ref_val->customData) {
+        crate::ValueRep value_rep;
+        bool packed = false;
+        if (auto v = kv.second.get_value<int32_t>()) {
+          crate::CrateValue cv; cv.Set(*v);
+          value_rep = PackValue(cv, err); packed = true;
+        }
+        else if (auto v = kv.second.get_value<float>()) {
+          crate::CrateValue cv; cv.Set(*v);
+          value_rep = PackValue(cv, err); packed = true;
+        }
+        else if (auto v = kv.second.get_value<double>()) {
+          crate::CrateValue cv; cv.Set(*v);
+          value_rep = PackValue(cv, err); packed = true;
+        }
+        else if (auto v = kv.second.get_value<bool>()) {
+          crate::CrateValue cv; cv.Set(*v);
+          value_rep = PackValue(cv, err); packed = true;
+        }
+        else if (auto v = kv.second.get_value<std::string>()) {
+          crate::CrateValue cv; cv.Set(*v);
+          value_rep = PackValue(cv, err); packed = true;
+        }
+        else if (auto sd = kv.second.get_value<value::StringData>()) {
+          crate::CrateValue cv; cv.Set(sd->value);
+          value_rep = PackValue(cv, err); packed = true;
+        }
+        else if (auto v = kv.second.get_value<int64_t>()) {
+          crate::CrateValue cv; cv.Set(*v);
+          value_rep = PackValue(cv, err); packed = true;
+        }
+        if (!packed) {
+          if (err) *err = "Unsupported Reference customData value type: "
+                          + kv.second.type_name();
+          return -1;
+        }
+        value_reps.push_back(value_rep);
+      }
+
+      // Fill in dict frame.
+      if (!Seek(dict_struct_start)) {
+        if (err) *err = "Failed to seek to Reference customData start";
+        return -1;
+      }
+      if (!Write(dict_count)) {
+        if (err) *err = "Failed to write Reference customData count";
+        return -1;
+      }
+      size_t idx = 0;
+      for (const auto& kv : ref_val->customData) {
+        if (!Write(GetOrCreateString(kv.first).value)) {
+          if (err) *err = "Failed to write Reference customData key";
+          return -1;
+        }
+        const int64_t offset = 8;
+        if (!Write(offset)) {
+          if (err) *err = "Failed to write Reference customData offset";
+          return -1;
+        }
+        if (!Write(value_reps[idx].GetData())) {
+          if (err) *err = "Failed to write Reference customData value";
+          return -1;
+        }
+        ++idx;
+      }
+
+      // Resume at end of out-of-line value data.
+      if (!Seek(value_data_end_offset_)) {
+        if (err) *err = "Failed to seek past Reference customData value data";
+        return -1;
+      }
     }
-#undef TRY_PACK_METAVAR
   }
   // Payload serialization
   else if (auto* payload_val = value.as<Payload>()) {
@@ -2338,33 +2512,74 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
         if (!Write(ref.layerOffset._offset)) return false;
         if (!Write(ref.layerOffset._scale)) return false;
 
-        // Write customData dictionary
-        // Dictionary format: uint64_t count + (StringIndex key, ValueRep value) pairs
-        uint64_t dict_count = ref.customData.size();
-        if (!Write(dict_count)) return false;
+        // Write customData dictionary using reserve-pack-seek pattern
+        // (same as single-Reference + top-level Dictionary): tolerates
+        // out-of-line PackValue writes for doubles, large int64,
+        // arrays, etc.
+        {
+          uint64_t dict_count = ref.customData.size();
+          int64_t dict_struct_size = 8 + (int64_t)(dict_count * 20);
+          int64_t dict_struct_start = Tell();
 
-        // MetaVariable get_value dispatch for customData entries
-#define TRY_PACK_METAVAR(Type) \
-          else if (auto typed = kv.second.get_value<Type>()) { \
-            crate::CrateValue cv; cv.Set(*typed); \
-            value_rep = PackValue(cv, err); value_written = true; }
-
-        for (const auto& kv : ref.customData) {
-          if (!Write(GetOrCreateString(kv.first).value)) return false;
-          crate::ValueRep value_rep;
-          bool value_written = false;
-          if (auto v = kv.second.get_value<int32_t>()) {
-            crate::CrateValue cv; cv.Set(*v);
-            value_rep = PackValue(cv, err); value_written = true;
+          {
+            std::vector<char> zeros(static_cast<size_t>(dict_struct_size), 0);
+            if (!WriteBytes(zeros.data(), zeros.size())) return false;
           }
-          TRY_PACK_METAVAR(float)
-          TRY_PACK_METAVAR(double)
-          TRY_PACK_METAVAR(bool)
-          TRY_PACK_METAVAR(std::string)
-          if (!value_written) return false;
-          if (!Write(value_rep.GetData())) return false;
+          value_data_end_offset_ = Tell();
+
+          std::vector<crate::ValueRep> value_reps;
+          value_reps.reserve(dict_count);
+          for (const auto& kv : ref.customData) {
+            crate::ValueRep value_rep;
+            bool value_written = false;
+            if (auto v = kv.second.get_value<int32_t>()) {
+              crate::CrateValue cv; cv.Set(*v);
+              value_rep = PackValue(cv, err); value_written = true;
+            }
+            else if (auto v = kv.second.get_value<float>()) {
+              crate::CrateValue cv; cv.Set(*v);
+              value_rep = PackValue(cv, err); value_written = true;
+            }
+            else if (auto v = kv.second.get_value<double>()) {
+              crate::CrateValue cv; cv.Set(*v);
+              value_rep = PackValue(cv, err); value_written = true;
+            }
+            else if (auto v = kv.second.get_value<bool>()) {
+              crate::CrateValue cv; cv.Set(*v);
+              value_rep = PackValue(cv, err); value_written = true;
+            }
+            else if (auto v = kv.second.get_value<std::string>()) {
+              crate::CrateValue cv; cv.Set(*v);
+              value_rep = PackValue(cv, err); value_written = true;
+            }
+            else if (auto sd = kv.second.get_value<value::StringData>()) {
+              crate::CrateValue cv; cv.Set(sd->value);
+              value_rep = PackValue(cv, err); value_written = true;
+            }
+            else if (auto v = kv.second.get_value<int64_t>()) {
+              crate::CrateValue cv; cv.Set(*v);
+              value_rep = PackValue(cv, err); value_written = true;
+            }
+            if (!value_written) {
+              if (err) *err = "Unsupported Reference customData value type: "
+                              + kv.second.type_name();
+              return false;
+            }
+            value_reps.push_back(value_rep);
+          }
+
+          if (!Seek(dict_struct_start)) return false;
+          if (!Write(dict_count)) return false;
+          size_t idx = 0;
+          for (const auto& kv : ref.customData) {
+            if (!Write(GetOrCreateString(kv.first).value)) return false;
+            const int64_t offset = 8;
+            if (!Write(offset)) return false;
+            if (!Write(value_reps[idx].GetData())) return false;
+            ++idx;
+          }
+          if (!Seek(value_data_end_offset_)) return false;
         }
-#undef TRY_PACK_METAVAR
       }
       return true;
     };
@@ -2485,7 +2700,12 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
 
     // Update value_data_end_offset_ NOW, before writing ValueReps
     // This ensures PackValue() writes out-of-line data AFTER our inline structure
-    value_data_end_offset_ = Tell() + (num_samples * 8);  // Reserve space for ValueReps
+    size_t num_samples_size;
+    if (!safe::mul(num_samples, size_t(8), &num_samples_size)) {
+      if (err) *err = "Integer overflow: num_samples * 8";
+      return -1;
+    }
+    value_data_end_offset_ = Tell() + num_samples_size;  // Reserve space for ValueReps
 
     // Get samples - this works for both binary and generic value-backed types
     const auto& samples = timesamples_val->get_samples();
@@ -2536,14 +2756,22 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
         else if (auto* arr = crate_value.as<std::vector<Type>>()) { \
           is_dedup_candidate = true; \
           dedup_element_size = ElemSize; dedup_is_float = true; \
-          size_t bsz = arr->size() * sizeof(Type); \
+          size_t bsz; \
+          if (!safe::mul(arr->size(), sizeof(Type), &bsz)) { \
+            if (err) *err = "Integer overflow in DEDUP_FLOAT_ARRAY"; \
+            return -1; \
+          } \
           value_bytes.resize(bsz); \
           std::memcpy(value_bytes.data(), arr->data(), bsz); }
 
 #define DEDUP_BINARY_ARRAY(Type) \
         else if (auto* arr = crate_value.as<std::vector<Type>>()) { \
           is_dedup_candidate = true; \
-          size_t bsz = arr->size() * sizeof(Type); \
+          size_t bsz; \
+          if (!safe::mul(arr->size(), sizeof(Type), &bsz)) { \
+            if (err) *err = "Integer overflow in DEDUP_BINARY_ARRAY"; \
+            return -1; \
+          } \
           value_bytes.resize(bsz); \
           std::memcpy(value_bytes.data(), arr->data(), bsz); }
 
@@ -2563,7 +2791,11 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
         if (auto* arr = crate_value.as<std::vector<float>>()) {
           is_dedup_candidate = true;
           dedup_element_size = sizeof(float); dedup_is_float = true;
-          size_t bsz = arr->size() * sizeof(float);
+          size_t bsz;
+          if (!safe::mul(arr->size(), sizeof(float), &bsz)) {
+            if (err) *err = "Integer overflow in float array dedup";
+            return -1;
+          }
           value_bytes.resize(bsz);
           std::memcpy(value_bytes.data(), arr->data(), bsz);
         }
@@ -2725,6 +2957,16 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
     }
 
     // === Step 6: Write times array data (count + doubles) ===
+    // PackValue() seeks to value_data_end_offset_ to write each sample's
+    // out-of-line bytes, then seeks back. After the ValueRep loop, Tell()
+    // points just past the ValueRep[] block — but value_data_end_offset_
+    // has advanced past the actual sample-value bytes. Writing times at
+    // Tell() would clobber those bytes; jump to value_data_end_offset_
+    // first so the file layout is ValueRep[] | values data | times data.
+    if (!Seek(value_data_end_offset_)) {
+      if (err) *err = "Failed to seek past value bytes before writing times";
+      return -1;
+    }
     int64_t times_data_start = Tell();
 
     // Write count
@@ -2817,8 +3059,11 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
 
   // Try to get as AssetPath
   if (auto* asset_val = value.as<value::AssetPath>()) {
-    // AssetPath is stored as a string index
-    crate::StringIndex idx = GetOrCreateString(asset_val->GetAssetPath());
+    // Inlined AssetPath is stored as a TokenIndex per OpenUSD's crate
+    // format (matches CrateReader at crate-reader-values.cc which reads
+    // it via GetToken). Storing as StringIndex caused the reader to read
+    // a token at the wrong index and surface garbage like ";-)".
+    crate::TokenIndex idx = GetOrCreateToken(asset_val->GetAssetPath());
     rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH));
     rep->SetIsInlined();
     rep->SetPayload(static_cast<uint64_t>(idx.value));
@@ -2975,8 +3220,9 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     bool can_inline = true;
     int8_t ivec[3];
     for (int i = 0; i < 3; ++i) {
+      float roundtripped = static_cast<float>(static_cast<int8_t>(f[i]));
       if (f[i] < -128.0f || f[i] > 127.0f ||
-          static_cast<float>(static_cast<int8_t>(f[i])) != f[i]) {
+          std::memcmp(&roundtripped, &f[i], sizeof(float)) != 0) {
         can_inline = false;
         break;
       }

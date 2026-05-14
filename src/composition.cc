@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Copyright 2023 - Present, Light Transport Entertainment, Inc.
 
 #include "composition.hh"
@@ -16,9 +16,11 @@
 #include "core/schema-registry.hh"
 #include "namespace-mapping.hh"
 #include "str-util.hh"
+#include "tiny-hashmap.hh"
 #include "io-util.hh"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
+#include "security-policy.hh"
 #include "core/prim.hh"
 #include "core/prim-spec.hh"
 #include "layer.hh"
@@ -202,7 +204,7 @@ bool PropagateAssetResolverState(PrimSpec &ps,
 bool LoadAsset(AssetResolutionResolver &resolver,
                const std::string &current_working_path,
                const std::vector<std::string> &search_paths,
-               const std::unordered_map<std::string, FileFormatHandler> &fileformats,
+               const tinyusdz::HashMap<std::string, FileFormatHandler> &fileformats,
                const value::AssetPath &assetPath, const Path &primPath,
                Layer *dst_layer, const PrimSpec **dst_primspec_root,
                const bool error_when_no_prims_found,
@@ -215,6 +217,11 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   }
 
   std::string asset_path = assetPath.GetAssetPath();
+  if (!security_policy::ValidateAndNormalizeAssetPath(asset_path, &asset_path)) {
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Unsafe asset path in composition: `{}`",
+                    assetPath.GetAssetPath()));
+  }
   std::string ext = GetExtension(asset_path);
 
   if (asset_path.empty()) {
@@ -273,6 +280,12 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   if (!resolver.open_asset(resolved_path, asset_path, &asset, warn, err)) {
     PUSH_ERROR_AND_RETURN(
         fmt::format("Failed to open asset `{}`.", resolved_path));
+  }
+
+  if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Resolved asset exceeds max bytes ({} > {}).",
+                    asset.size(), security_policy::kResolverMaxAssetReadBytes));
   }
 
   DCOUT("Opened resolved assst: " << resolved_path
@@ -661,7 +674,7 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
   }
 
   // AOUSD Core Spec 9.5: Build expression variables map for asset path substitution
-  std::map<std::string, std::string> expr_vars;
+  tinyusdz::HashMap<std::string, std::string> expr_vars;
   if (in_layer.metas().expressionVariables) {
     for (const auto &var : in_layer.metas().expressionVariables.value()) {
       if (auto sv = var.second.get_value<std::string>()) {

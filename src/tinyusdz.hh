@@ -296,7 +296,7 @@ struct USDZAsset
   size_t size{0}; // in bytes.
   
   bool is_mmaped() const {
-    return !data.empty();
+    return (addr != nullptr) && (size > 0);
   }
 };
 

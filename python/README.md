@@ -1,109 +1,35 @@
-# Python binding of TinyUSDZ
+# tinyusdz
 
-Currently in testing stage. Does not work well.
+Python bindings for [tinyusdz](https://github.com/lighttransport/tinyusdz) —
+a tiny, dependency-free USD/USDA/USDC/USDZ loader.
 
-Core part is deletegated to native module(ctinyusd.so)
+- Single abi3 wheel per platform: works on CPython 3.10, 3.11, 3.12, 3.13+.
+- No NumPy dependency; zero-copy via the Python buffer protocol.
+- No Pixar USD install required.
 
-W.I.P.
+## Install
 
-## Requirements
-
-* Python 3.7 or later
-  * Python 3.10+ recommended
-  * For developping and testing, Python 3.8 or later is required.
-
-### Recommended python modules
-
-* numpy
-  * For efficient Attribute data handling.
-  * `from_numpy` and `to_numpy` method available when `numpy` is installed..
-* pandas
-  * To support TimeSamples data efficiently(e.g. read/write to CSV, Excel)
-* typeguard
-  * To do type check at runtime.
-
-## Structure
-
-* `ctinyusdz`: Native C++ module of tinyusdz
-  * Python binding on top of C binding of TinyUSDZ.
-* `tinyusdz`: Python module. Wraps some functions of `ctinyusdz`
-
-TinyUSDZ's Python binding approach is like numpy: Frontend is written in Python for better Python integration(type hints for lsp(Intellisense), debuggers, exceptions, ...), and calls native C modules as necessary.
-
-## Supported platform
-
-* [x] Linux
-  * [x] x86-64
-  * [x] aarch64
-* [x] Windows
-  * [x] 64bit AMD64
-  * [x] 32bit x86
-  * [ ] ARM64(not intensively tested, but should work)
-* [x] macOS
-  * [x] arm64
-  * [x] Intel
-
-## Features
-
-* T.B.W.
-
-### Optional
-
-* [ ] pxrUSD compatible Python API?(`pxr_compat` folder)
-
-## Install through PyPI
-
-```
-$ python -m pip install tinyusdz
+```sh
+pip install tinyusdz
 ```
 
-## For developers. Build from source
+## Quick start
 
-Back to tinyusdz's root directory, then
+```python
+import tinyusdz
 
+stage = tinyusdz.load("scene.usdz")
+for prim in tinyusdz.traverse(stage):
+    print(prim.type_name, prim.name)
+
+mesh = stage.get_prim_at_path("/World/Mesh")
+points = mesh.get_attribute("points").value
+# Zero-copy NumPy view (optional — NumPy is not required)
+import numpy as np
+arr = np.asarray(points)
+print(arr.shape, arr.dtype)
 ```
-# Use `build` module(install it with `python -m pip install build`) 
-$ python -m build .
-```
-
-If you are working on TinyUSDZ Python module, Using `setup.py` recommended. 
-
-```
-# install dependencies
-$ python -m pip install setuptools scikit-build cmake ninja
-```
-
-```
-$ python setup.py build
-# Then copy `./_skbuild/<arch>-<version>/cmake-install/tinyusdz/ctinyusdz.*.so/dll to `<tinyusdz>/python` folder.
-```
-
-### Re-generate ctinyusdz.py
-
-When TinyUSDZ C API has been updated, need to re-genrerate `<tinyusdz>/python/tinyusdz/ctinyusd.py` 
-using ctypesgen https://github.com/ctypesgen/ctypesgen .
-
-```
-# if you do not install ctypesgen
-$ python -m pip install ctypesgen
-
-
-$ cd <tinyusdz>/python
-$ sh gen-ctypes.sh 
-```
-
-### Asan support
-
-If you built ctinyusdz with ASAN enabled, use `LD_PRELOAD` to load asan modules.
-
-```
-LD_PRELOAD=/path/to/clang+llvm-14.0.0-x86_64-linux-gnu-ubuntu-18.04/lib/clang/14.0.0/lib/x86_64-unknown-linux-gnu/libclang_rt.asan.so  python tutorial.py
-```
-
-Please see https://tobywf.com/2021/02/python-ext-asan/ for more infos.
 
 ## License
 
-Apache 2.0 license.
-
-EoL.
+Apache 2.0

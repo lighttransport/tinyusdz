@@ -340,7 +340,7 @@ void ChunkReader::Prefetch(size_t offset, size_t size) {
   size_t end_offset = std::min(offset + size, total_size_);
   size_t end_chunk = GetChunkId(end_offset);
 
-  std::lock_guard<std::mutex> lock(cache_mutex_);
+  std::unique_lock<std::mutex> lock(cache_mutex_);
 
   // Prefetch chunks into preload cache
   for (size_t chunk_id = start_chunk; chunk_id <= end_chunk; ++chunk_id) {
@@ -350,11 +350,13 @@ void ChunkReader::Prefetch(size_t offset, size_t size) {
     }
 
     // Load chunk for preload cache
-    cache_mutex_.unlock();
+    lock.unlock();
     auto chunk_result = LoadChunk(chunk_id);
-    cache_mutex_.lock();
+    lock.lock();
 
-    if (chunk_result) {
+    // Another thread may have populated the cache while the mutex was
+    // released; skip inserting so we don't duplicate an entry.
+    if (chunk_result && !IsChunkCached(chunk_id)) {
       InsertIntoPreloadCache(chunk_id, chunk_result.value());
     }
   }
@@ -475,7 +477,7 @@ ChunkReader::LoadChunk(size_t chunk_id) {
 
 nonstd::expected<std::shared_ptr<ChunkReader::Chunk>, std::string>
 ChunkReader::GetChunk(size_t chunk_id) {
-  std::lock_guard<std::mutex> lock(cache_mutex_);
+  std::unique_lock<std::mutex> lock(cache_mutex_);
 
   // Detect access pattern
   DetectAccessPattern(chunk_id);
@@ -518,21 +520,26 @@ ChunkReader::GetChunk(size_t chunk_id) {
 
     // Need to load the chunk
     // First, release the lock to avoid blocking during I/O
-    cache_mutex_.unlock();
+    lock.unlock();
     auto chunk_result = LoadChunk(chunk_id);
-    cache_mutex_.lock();
+    lock.lock();
 
     if (chunk_result) {
-      chunk = chunk_result.value();
-
-      //if (!chunk_result) {
-      //  return chunk_result;
-      //}
-
-      //chunk = chunk_result.value();
-
-      // Insert into appropriate cache
-      InsertIntoCache(chunk_id, chunk);
+      // Another thread may have loaded and inserted this chunk while we
+      // were doing I/O; prefer the cached copy to avoid a double-insert.
+      if (auto existing_sw = FindInSlidingWindow(chunk_id)) {
+        chunk = existing_sw;
+      } else if (auto existing_rc = FindInRandomCache(chunk_id)) {
+        chunk = existing_rc;
+      } else if (auto existing_pc = FindInPreloadCache(chunk_id)) {
+        preload_cache_.erase(chunk_id);
+        current_preload_size_ -= existing_pc->size;
+        chunk = existing_pc;
+        InsertIntoCache(chunk_id, chunk);
+      } else {
+        chunk = chunk_result.value();
+        InsertIntoCache(chunk_id, chunk);
+      }
     }
   }
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
@@ -25,6 +25,7 @@
 
 #include "common-utils.hh"
 #include "common-types.hh"
+#include "../tiny-hashmap.hh"
 #include "image-loader.hh"
 #include "image-util.hh"
 #include "image-types.hh"
@@ -48,6 +49,7 @@
 #if defined(TINYUSDZ_WITH_OPENSUBDIV) || defined(TINYUSDZ_WITH_TINYSUBDIV)
 #include "subdiv.hh"
 #endif
+#include "safe-arithmetic.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -258,7 +260,11 @@ nonstd::expected<std::vector<uint8_t>, std::string> UniformToVertex(
   const uint32_t num_vertices =
       *std::max_element(faceVertexIndices.cbegin(), faceVertexIndices.cend()) + 1;
 
-  dst.resize(num_vertices * stride_bytes);
+  size_t resize_size;
+  if (!safe::mul(num_vertices, stride_bytes, &resize_size)) {
+    return nonstd::make_unexpected("Integer overflow: num_vertices * stride_bytes");
+  }
+  dst.resize(resize_size);
 
   size_t fvIndexOffset{0};
 
@@ -358,7 +364,11 @@ nonstd::expected<std::vector<uint8_t>, std::string> VertexToFaceVarying(
   // Pre-allocate output buffer to exact size needed
   const size_t total_face_vertices = faceVertexIndices.size();
   std::vector<uint8_t> dst;
-  dst.resize(total_face_vertices * stride_bytes);
+  size_t dst_size;
+  if (!safe::mul(total_face_vertices, stride_bytes, &dst_size)) {
+    return nonstd::make_unexpected("Integer overflow: total_face_vertices * stride_bytes");
+  }
+  dst.resize(dst_size);
 
   const uint8_t* src_data = src.data();
   uint8_t* dst_ptr = dst.data();
@@ -430,7 +440,11 @@ static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
                     stride_bytes));
   }
 
-  dst.resize(stride_bytes * num_vertices);
+  size_t dst_size;
+  if (!safe::mul(stride_bytes, num_vertices, &dst_size)) {
+    return nonstd::make_unexpected("Integer overflow: stride_bytes * num_vertices");
+  }
+  dst.resize(dst_size);
 
   size_t faceVertexIndexOffset = 0;
   for (size_t i = 0; i < faceVertexCounts.size(); i++) {
@@ -487,7 +501,7 @@ bool TryConvertFacevaryingToVertexInt(
   }
 
   // vidx, value
-  std::unordered_map<uint32_t, T> vdata;
+  tinyusdz::HashMap<uint32_t, T> vdata;
   vdata.reserve(faceVertexIndices.size());
 
   uint32_t max_vidx = 0;
@@ -535,31 +549,27 @@ bool TryConvertFacevaryingToVertexFloat(
     return false;
   }
 
-  // vidx, value
-  std::unordered_map<uint32_t, T> vdata;
-  vdata.reserve(faceVertexIndices.size());
+  // Direct-indexed seen + value arrays. Vertex indices are dense small ints,
+  // so a HashMap<uint32_t, T> here was ~⅔ of conversion time on USDC inputs.
+  // Grow dst lazily as vidx values come in to avoid a separate max-vidx pass.
+  dst->clear();
+  std::vector<uint8_t> seen;
 
-  uint32_t max_vidx = 0;
   for (size_t i = 0; i < faceVertexIndices.size(); i++) {
     uint32_t vidx = faceVertexIndices[i];
-    max_vidx = (std::max)(vidx, max_vidx);
-
-    auto it = vdata.find(vidx);
-    if (it != vdata.end()) {
-      if (!math::is_close(it->second, src[i], eps)) {
+    if (vidx >= dst->size()) {
+      dst->resize(size_t(vidx) + 1, T{});
+      seen.resize(size_t(vidx) + 1, uint8_t(0));
+    }
+    if (seen[vidx]) {
+      if (!math::is_close((*dst)[vidx], src[i], eps)) {
         DCOUT("diff at faceVertexIndices[" << i << "]");
         return false;
       }
     } else {
-      vdata.emplace(vidx, src[i]);
+      (*dst)[vidx] = src[i];
+      seen[vidx] = 1;
     }
-  }
-
-  dst->resize(max_vidx + 1);
-  memset(dst->data(), 0, (max_vidx + 1) * sizeof(T));
-
-  for (const auto &v : vdata) {
-    (*dst)[v.first] = v.second;
   }
 
   return true;
@@ -583,29 +593,24 @@ bool TryConvertFacevaryingToVertexMat(
     return false;
   }
 
-  // vidx, value
-  std::unordered_map<uint32_t, T> vdata;
-  vdata.reserve(faceVertexIndices.size());
+  // Direct-indexed; see TryConvertFacevaryingToVertexFloat for rationale.
+  dst->clear();
+  std::vector<uint8_t> seen;
 
-  uint32_t max_vidx = 0;
   for (size_t i = 0; i < faceVertexIndices.size(); i++) {
     uint32_t vidx = faceVertexIndices[i];
-    max_vidx = (std::max)(vidx, max_vidx);
-
-    auto it = vdata.find(vidx);
-    if (it != vdata.end()) {
-      if (!is_close(it->second, src[i])) {
+    if (vidx >= dst->size()) {
+      dst->resize(size_t(vidx) + 1, T::identity());
+      seen.resize(size_t(vidx) + 1, uint8_t(0));
+    }
+    if (seen[vidx]) {
+      if (!is_close((*dst)[vidx], src[i])) {
         return false;
       }
     } else {
-      vdata.emplace(vidx, src[i]);
+      (*dst)[vidx] = src[i];
+      seen[vidx] = 1;
     }
-  }
-
-  dst->assign(max_vidx + 1, T::identity());
-
-  for (const auto &v : vdata) {
-    (*dst)[v.first] = v.second;
   }
 
   return true;
@@ -652,7 +657,7 @@ static bool TryConvertFacevaryingToVertex(
     memcpy(vsrc.data(), src.get_data().data(), src.get_data().size());    \
     std::vector<__ty> vdst;                                               \
     bool ret = TryConvertFacevaryingToVertexInt<__ty>(vsrc, &vdst,        \
-                                                      faceVertexIndices); \
+                                                       faceVertexIndices); \
     if (!ret) {                                                           \
       return false;                                                       \
     }                                                                     \
@@ -660,8 +665,16 @@ static bool TryConvertFacevaryingToVertex(
     dst->elementSize = 1;                                                 \
     dst->format = src.format;                                             \
     dst->variability = VertexVariability::Vertex;                         \
-    dst->data.resize(vdst.size() * src.format_size());                    \
-    memcpy(dst->data.data(), vdst.data(), dst->data.size());              \
+    size_t resize_size;                                                    \
+    if (!safe::mul(vdst.size(), src.format_size(), &resize_size)) {       \
+      return false;                                                       \
+    }                                                                     \
+    dst->data.resize(resize_size);                                         \
+    size_t memcpy_size;                                                    \
+    if (!safe::mul(vdst.size(), src.format_size(), &memcpy_size)) {       \
+      return false;                                                       \
+    }                                                                     \
+    memcpy(dst->data.data(), vdst.data(), memcpy_size);                    \
     return true;                                                          \
   } else
 
@@ -680,8 +693,16 @@ static bool TryConvertFacevaryingToVertex(
     dst->elementSize = 1;                                              \
     dst->format = src.format;                                          \
     dst->variability = VertexVariability::Vertex;                      \
-    dst->data.resize(vdst.size() * src.format_size());                 \
-    memcpy(dst->data.data(), vdst.data(), dst->data.size());           \
+    size_t resize_size;                                                    \
+    if (!safe::mul(vdst.size(), src.format_size(), &resize_size)) {       \
+      return false;                                                       \
+    }                                                                     \
+    dst->data.resize(resize_size);                                         \
+    size_t memcpy_size;                                                    \
+    if (!safe::mul(vdst.size(), src.format_size(), &memcpy_size)) {       \
+      return false;                                                       \
+    }                                                                     \
+    memcpy(dst->data.data(), vdst.data(), memcpy_size);                    \
     return true;                                                       \
   } else
 
@@ -692,7 +713,7 @@ static bool TryConvertFacevaryingToVertex(
     memcpy(vsrc.data(), src.get_data().data(), src.get_data().size());    \
     std::vector<__ty> vdst;                                               \
     bool ret = TryConvertFacevaryingToVertexMat<__ty>(vsrc, &vdst,        \
-                                                      faceVertexIndices); \
+                                                       faceVertexIndices); \
     if (!ret) {                                                           \
       return false;                                                       \
     }                                                                     \
@@ -700,8 +721,16 @@ static bool TryConvertFacevaryingToVertex(
     dst->elementSize = 1;                                                 \
     dst->format = src.format;                                             \
     dst->variability = VertexVariability::Vertex;                         \
-    dst->data.resize(vdst.size() * src.format_size());                    \
-    memcpy(dst->data.data(), vdst.data(), dst->data.size());              \
+    size_t resize_size;                                                    \
+    if (!safe::mul(vdst.size(), src.format_size(), &resize_size)) {       \
+      return false;                                                       \
+    }                                                                     \
+    dst->data.resize(resize_size);                                         \
+    size_t memcpy_size;                                                    \
+    if (!safe::mul(vdst.size(), src.format_size(), &memcpy_size)) {       \
+      return false;                                                       \
+    }                                                                     \
+    memcpy(dst->data.data(), vdst.data(), memcpy_size);                    \
     return true;                                                          \
   } else
 
@@ -880,7 +909,7 @@ static bool TryReadMMapArray(
   const T *ptr = stage.mmap_source()->get_ptr<T>(*ref);
   if (!ptr) return false;
   if (ref->element_count >
-      (uint64_t(std::numeric_limits<size_t>::max()) / sizeof(T))) {
+      (uint64_t((std::numeric_limits<size_t>::max)()) / sizeof(T))) {
     return false;
   }
   out->resize(static_cast<size_t>(ref->element_count));
@@ -995,7 +1024,11 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   DCOUT("texcoord " << name << " : " << uvs);
 
   vattr.format = VertexAttributeFormat::Vec2;
-  vattr.data.resize(uvs.size() * sizeof(value::texcoord2f));
+  size_t resize_size;
+  if (!safe::n_to_size<value::texcoord2f>(uvs.size(), &resize_size)) {
+    return nonstd::make_unexpected("Integer overflow: uvs.size() * sizeof(value::texcoord2f)");
+  }
+  vattr.data.resize(resize_size);
   memcpy(vattr.data.data(), uvs.data(), vattr.data.size());
   vattr.indices.clear();  // just in case.
 
@@ -1120,8 +1153,16 @@ bool ArrayValueToVertexAttribute(
     }
     }
 
-    dst.data.resize(value_counts * baseTySize);
-    memcpy(dst.data.data(), pv->data(), value_counts * baseTySize);
+    size_t resize_size;
+    if (!safe::mul(value_counts, baseTySize, &resize_size)) {
+      PUSH_ERROR_AND_RETURN("Integer overflow: value_counts * baseTySize");
+    }
+    dst.data.resize(resize_size);
+    size_t memcpy_size;
+    if (!safe::mul(value_counts, baseTySize, &memcpy_size)) {
+      PUSH_ERROR_AND_RETURN("Integer overflow in memcpy: value_counts * baseTySize");
+    }
+    memcpy(dst.data.data(), pv->data(), memcpy_size);
 
     dst.elementSize = elementSize;
     dst.stride = 0;
@@ -1743,9 +1784,11 @@ static bool ComputeTangentsAndBinormals(
   };
 
   // Helper: safe normalize - returns zero vector if input is degenerate/NaN/Inf
+  // kTangentLengthEps is a constexpr local referenced inside the lambdas
+  // below; MSVC requires it to be in the capture list, so use [&] rather
+  // than naming individual captures.
   constexpr float kTangentLengthEps = 1.0e-7f;
-  auto safe_vnormalize = [&safe_vlength](
-                              const value::normal3f &v) -> value::normal3f {
+  auto safe_vnormalize = [&](const value::normal3f &v) -> value::normal3f {
     float len = safe_vlength(v);
     if (len < kTangentLengthEps) {
       return {0.0f, 0.0f, 0.0f};
@@ -1756,8 +1799,7 @@ static bool ComputeTangentsAndBinormals(
 
   // Helper: generate a perpendicular tangent from a normal (fallback)
   auto generate_fallback_tangent =
-      [&safe_vlength](
-          const value::normal3f &n) -> value::normal3f {
+      [&](const value::normal3f &n) -> value::normal3f {
     // Choose a reference axis not parallel to n
     value::normal3f ref = (std::fabs(n[1]) < 0.9f)
                               ? value::normal3f{0.0f, 1.0f, 0.0f}
@@ -2280,7 +2322,7 @@ template <class VertexInput, class VertexOutput, class PackedVert,
 void BuildIndices(const VertexInput &input, VertexOutput &output,
                   std::vector<uint32_t> &out_indices, std::vector<uint32_t> &out_point_indices)
 {
-  std::unordered_map<PackedVert, uint32_t, PackedVertHasher, PackedVertEqual>
+  tinyusdz::HashMap<PackedVert, uint32_t, PackedVertHasher, PackedVertEqual>
       vertexToIndexMap;
 
   auto GetSimilarVertex = [&](const PackedVert &v, uint32_t &out_idx) -> bool {
@@ -2626,7 +2668,7 @@ static bool ReorderVertexVaryingAttributes(
     // Then splat point attributes accordingly.
 
     // org pointIdx -> List of pointIdx in reordered points.
-    std::unordered_map<uint32_t, std::vector<uint32_t>> pointIdxRemap;
+    tinyusdz::HashMap<uint32_t, std::vector<uint32_t>> pointIdxRemap;
     pointIdxRemap.reserve(num_verts);
 
     for (size_t v = 0; v < num_verts; v++) {
@@ -3286,9 +3328,16 @@ static bool TryQuantizedNormalDedup(
   VertexAttribute attr;
   attr.format = VertexAttributeFormat::Vec3;
   attr.variability = VertexVariability::Vertex;
-  attr.data.resize(numVerts * sizeof(value::float3));
-  std::memcpy(attr.data.data(), vertNormal.data(),
-              numVerts * sizeof(value::float3));
+  size_t resize_size;
+  if (!safe::n_to_size<value::float3>(numVerts, &resize_size)) {
+    return false;  // Error handling - return false
+  }
+  attr.data.resize(resize_size);
+  size_t memcpy_size;
+  if (!safe::mul(numVerts, sizeof(value::float3), &memcpy_size)) {
+    return false;
+  }
+  std::memcpy(attr.data.data(), vertNormal.data(), memcpy_size);
   attr.stride = 0;
   attr.elementSize = 1;
   attr.name = normals.name;
@@ -3324,8 +3373,16 @@ static bool QuantizeMeshNormals(
 
     VertexAttribute attr;
     attr.format = VertexAttributeFormat::Char3;
-    attr.data.resize(packed.size() * 3);
-    std::memcpy(attr.data.data(), packed.data(), packed.size() * 3);
+    size_t resize_size;
+    if (!safe::mul(packed.size(), size_t(3), &resize_size)) {
+      return false;
+    }
+    attr.data.resize(resize_size);
+    size_t memcpy_size;
+    if (!safe::mul(packed.size(), size_t(3), &memcpy_size)) {
+      return false;
+    }
+    std::memcpy(attr.data.data(), packed.data(), memcpy_size);
 
     mesh.normals = std::move(attr);
   } else if (format == MeshConverterConfig::NormalStorageFormat::PackedSNorm16) {
@@ -3334,9 +3391,16 @@ static bool QuantizeMeshNormals(
 
     VertexAttribute attr;
     attr.format = VertexAttributeFormat::Short3;
-    attr.data.resize(packed.size() * sizeof(PackedNormalSNorm16x3));
-    std::memcpy(attr.data.data(), packed.data(),
-                packed.size() * sizeof(PackedNormalSNorm16x3));
+    size_t resize_size;
+    if (!safe::n_to_size<PackedNormalSNorm16x3>(packed.size(), &resize_size)) {
+      return false;
+    }
+    attr.data.resize(resize_size);
+    size_t memcpy_size;
+    if (!safe::n_to_size<PackedNormalSNorm16x3>(packed.size(), &memcpy_size)) {
+      return false;
+    }
+    std::memcpy(attr.data.data(), packed.data(), memcpy_size);
 
     mesh.normals = std::move(attr);
   } else {
@@ -3346,9 +3410,16 @@ static bool QuantizeMeshNormals(
 
     VertexAttribute attr;
     attr.format = VertexAttributeFormat::Uint;
-    attr.data.resize(packed.size() * sizeof(uint32_t));
-    std::memcpy(attr.data.data(), packed.data(),
-                packed.size() * sizeof(uint32_t));
+    size_t resize_size;
+    if (!safe::n_to_size<uint32_t>(packed.size(), &resize_size)) {
+      return false;
+    }
+    attr.data.resize(resize_size);
+    size_t memcpy_size;
+    if (!safe::n_to_size<uint32_t>(packed.size(), &memcpy_size)) {
+      return false;
+    }
+    std::memcpy(attr.data.data(), packed.data(), memcpy_size);
 
     mesh.normals = std::move(attr);
   }
@@ -3708,7 +3779,7 @@ bool RenderSceneConverter::ConvertMesh(
   //
 
   // key:slotId, value:texcoord data
-  std::unordered_map<uint32_t, VertexAttribute> uvAttrs;
+  tinyusdz::HashMap<uint32_t, VertexAttribute> uvAttrs;
 
   // We need Material info to get corresponding primvar name.
   if (rmaterial_map.empty()) {
@@ -4007,9 +4078,16 @@ bool RenderSceneConverter::ConvertMesh(
       }
     }
 
-    dst.normals.get_data().resize(normals.size() * sizeof(value::normal3f));
-    memcpy(dst.normals.get_data().data(), normals.data(),
-           normals.size() * sizeof(value::normal3f));
+    size_t resize_size;
+    if (!safe::n_to_size<value::normal3f>(normals.size(), &resize_size)) {
+      return false;
+    }
+    dst.normals.get_data().resize(resize_size);
+    size_t memcpy_size;
+    if (!safe::n_to_size<value::normal3f>(normals.size(), &memcpy_size)) {
+      return false;
+    }
+    memcpy(dst.normals.get_data().data(), normals.data(), memcpy_size);
     dst.normals.elementSize = 1;
     dst.normals.stride = sizeof(value::normal3f);
     dst.normals.format = VertexAttributeFormat::Vec3;
@@ -4241,7 +4319,7 @@ bool RenderSceneConverter::ConvertMesh(
 
         faceIndexOffset += ncount;
 
-        if (faceIndexOffset >= std::numeric_limits<uint32_t>::max()) {
+        if (faceIndexOffset >= (std::numeric_limits<uint32_t>::max)()) {
           PUSH_ERROR_AND_RETURN("Triangulated Mesh contains 4G or more faces.");
         }
       }
@@ -5073,17 +5151,39 @@ bool RenderSceneConverter::ConvertMesh(
     // Store tangents/binormals into dst with facevarying variability.
     if (used_mikktspace) {
       // MikkTSpace output is already facevarying
-      dst.tangents.data.resize(tangents.size() * sizeof(vec3));
-      memcpy(dst.tangents.data.data(), tangents.data(),
-             tangents.size() * sizeof(vec3));
+      size_t tan_size;
+      if (!safe::n_to_size<vec3>(tangents.size(), &tan_size)) {
+        return false;
+      }
+      dst.tangents.data.resize(tan_size);
+      size_t tan_memcpy_size;
+      if (!safe::n_to_size<vec3>(tangents.size(), &tan_memcpy_size)) {
+        return false;
+      }
+      memcpy(dst.tangents.data.data(), tangents.data(), tan_memcpy_size);
 
-      dst.binormals.data.resize(binormals.size() * sizeof(vec3));
-      memcpy(dst.binormals.data.data(), binormals.data(),
-             binormals.size() * sizeof(vec3));
+      size_t bin_size;
+      if (!safe::n_to_size<vec3>(binormals.size(), &bin_size)) {
+        return false;
+      }
+      dst.binormals.data.resize(bin_size);
+      size_t bin_memcpy_size;
+      if (!safe::n_to_size<vec3>(binormals.size(), &bin_memcpy_size)) {
+        return false;
+      }
+      memcpy(dst.binormals.data.data(), binormals.data(), bin_memcpy_size);
     } else {
       // Lengyel output needs index expansion
-      dst.tangents.data.resize(vertex_indices.size() * sizeof(vec3));
-      dst.binormals.data.resize(vertex_indices.size() * sizeof(vec3));
+      size_t vi_tan_size;
+      if (!safe::n_to_size<vec3>(vertex_indices.size(), &vi_tan_size)) {
+        return false;
+      }
+      dst.tangents.data.resize(vi_tan_size);
+      size_t vi_bin_size;
+      if (!safe::n_to_size<vec3>(vertex_indices.size(), &vi_bin_size)) {
+        return false;
+      }
+      dst.binormals.data.resize(vi_bin_size);
       vec3 *dst_tangents = reinterpret_cast<vec3 *>(dst.tangents.data.data());
       vec3 *dst_binormals = reinterpret_cast<vec3 *>(dst.binormals.data.data());
       for (size_t i = 0; i < vertex_indices.size(); i++) {
@@ -5457,17 +5557,39 @@ bool RenderSceneConverter::ComputeDeferredTangents(
 
   // Store results
   if (used_mikktspace) {
-    mesh->tangents.data.resize(tangents.size() * sizeof(vec3));
-    memcpy(mesh->tangents.data.data(), tangents.data(),
-           tangents.size() * sizeof(vec3));
+    size_t tan_size;
+    if (!safe::n_to_size<vec3>(tangents.size(), &tan_size)) {
+      return false;
+    }
+    mesh->tangents.data.resize(tan_size);
+    size_t tan_memcpy_size;
+    if (!safe::n_to_size<vec3>(tangents.size(), &tan_memcpy_size)) {
+      return false;
+    }
+    memcpy(mesh->tangents.data.data(), tangents.data(), tan_memcpy_size);
 
-    mesh->binormals.data.resize(binormals.size() * sizeof(vec3));
-    memcpy(mesh->binormals.data.data(), binormals.data(),
-           binormals.size() * sizeof(vec3));
+    size_t bin_size;
+    if (!safe::n_to_size<vec3>(binormals.size(), &bin_size)) {
+      return false;
+    }
+    mesh->binormals.data.resize(bin_size);
+    size_t bin_memcpy_size;
+    if (!safe::n_to_size<vec3>(binormals.size(), &bin_memcpy_size)) {
+      return false;
+    }
+    memcpy(mesh->binormals.data.data(), binormals.data(), bin_memcpy_size);
   } else {
     // Lengyel output needs index expansion
-    mesh->tangents.data.resize(vertex_indices.size() * sizeof(vec3));
-    mesh->binormals.data.resize(vertex_indices.size() * sizeof(vec3));
+    size_t vi_tan_size;
+    if (!safe::n_to_size<vec3>(vertex_indices.size(), &vi_tan_size)) {
+      return false;
+    }
+    mesh->tangents.data.resize(vi_tan_size);
+    size_t vi_bin_size;
+    if (!safe::n_to_size<vec3>(vertex_indices.size(), &vi_bin_size)) {
+      return false;
+    }
+    mesh->binormals.data.resize(vi_bin_size);
     vec3 *dst_tangents = reinterpret_cast<vec3 *>(mesh->tangents.data.data());
     vec3 *dst_binormals = reinterpret_cast<vec3 *>(mesh->binormals.data.data());
     for (size_t i = 0; i < vertex_indices.size(); i++) {

@@ -2115,6 +2115,21 @@ function compareSingleFile(inputFile, options) {
     content2: null
   };
 
+  // Filename-based XFAIL for .usdc fixtures that can't carry an inline
+  // marker. Keyed on basename so it's path-independent. Mirrors the
+  // `# XFAIL:` comment used by .usda fixtures.
+  const usdcXfails = {
+    'utf8-assetpath-001.usdc':
+      'pixar-usdcat-parse — pxr <= 23.08 rejects UTF-8 in asset paths ' +
+      '(fixed in 24.x per OpenUSD#2560)',
+  };
+  const base = require('path').basename(inputFile);
+  if (usdcXfails[base]) {
+    result.status = 'xfail';
+    result.error = usdcXfails[base];
+    return result;
+  }
+
   // Check for XFAIL marker in first 5 lines
   try {
     const head = fs.readFileSync(inputFile, 'utf-8').split('\n').slice(0, 5);

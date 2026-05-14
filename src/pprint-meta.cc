@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Copyright 2021 - 2022, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
@@ -78,10 +78,28 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Reference &v) {
   if (v.prim_path.is_valid()) {
     ofs << v.prim_path;
   }
-  ofs << v.layerOffset;
+  // When customData is present, fold layerOffset + customData into one
+  // parens block. Otherwise let LayerOffset emit its own (possibly
+  // empty) clause.
   if (!v.customData.empty()) {
+    const bool has_offset =
+        std::fabs(v.layerOffset._offset) >=
+        std::numeric_limits<double>::epsilon();
+    const bool has_scale =
+        std::fabs(v.layerOffset._scale - 1.0) >=
+        std::numeric_limits<double>::epsilon();
+    ofs << " (\n";
+    if (has_offset) {
+      ofs << "    offset = " << tinyusdz::dtos(v.layerOffset._offset) << "\n";
+    }
+    if (has_scale) {
+      ofs << "    scale = " << tinyusdz::dtos(v.layerOffset._scale) << "\n";
+    }
     ofs << tinyusdz::print_customData(v.customData, "customData",
-                                      /* indent */ 0);
+                                      /* indent */ 1);
+    ofs << ")";
+  } else {
+    ofs << v.layerOffset;
   }
 
   return ofs;

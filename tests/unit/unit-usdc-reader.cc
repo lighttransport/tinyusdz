@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // USDC reader unit tests: USDA -> USDC -> Stage roundtrip via
 // SaveAsUSDCToMemory + LoadUSDCFromMemory.
 

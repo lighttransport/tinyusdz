@@ -15,7 +15,7 @@ namespace tinyusdz {
 
 class MemoryBudgetManager {
  public:
-  explicit MemoryBudgetManager(uint64_t max_budget = std::numeric_limits<uint32_t>::max())
+  explicit MemoryBudgetManager(uint64_t max_budget = (std::numeric_limits<uint32_t>::max)())
       : max_budget_(max_budget), current_usage_(0), peak_usage_(0) {}
 
   bool CheckAndReserve(uint64_t requested_bytes) {

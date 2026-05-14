@@ -1,0 +1,48 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Z"
+)
+
+# Minimum scene: a prismatic joint authored with ONLY Newton's
+# state:linear:physics:* schema (no physics:* limits, no mjc:*, no physx).
+# The reader fallback chain should still surface the initial state when
+# no higher-priority namespace is present. Used to assert that a USD
+# authored by Genesis / Isaac without a MuJoCo or PhysX mirror is still
+# consumable by the lightgeom path.
+
+def Xform "World"
+{
+    def Xform "Cart"
+    {
+        def Cube "Geom"
+        {
+            double size = 0.2
+        }
+    }
+
+    def Xform "Pole"
+    {
+        double3 xformOp:translate = (0, 0, 0.5)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        def Cube "Geom"
+        {
+            double size = 0.05
+        }
+    }
+
+    def PhysicsPrismaticJoint "Slider"
+    {
+        rel physics:body0 = </World/Cart>
+        rel physics:body1 = </World/Pole>
+        uniform point3f physics:localPos0 = (0, 0, 0.1)
+        uniform point3f physics:localPos1 = (0, 0, -0.025)
+        token physics:axis = "Z"
+
+        # Prismatic state — meters and meters-per-second per the USD
+        # PhysX convention (no degree conversion for linear DoFs).
+        custom float state:linear:physics:position = 0.05
+        custom float state:linear:physics:velocity = -0.5
+    }
+}

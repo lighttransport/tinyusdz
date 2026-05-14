@@ -107,8 +107,8 @@ static int ComparePathElements(
     int l = lhs_idx;
     int r = rhs_idx;
     while (l >= 0 && r >= 0) {
-      if (lhs_elements[l].name != rhs_elements[r].name ||
-          lhs_elements[l].is_property != rhs_elements[r].is_property) {
+      if (lhs_elements[static_cast<size_t>(l)].name != rhs_elements[static_cast<size_t>(r)].name ||
+          lhs_elements[static_cast<size_t>(l)].is_property != rhs_elements[static_cast<size_t>(r)].is_property) {
         same_prefix = false;
         break;
       }
@@ -146,8 +146,8 @@ static int ComparePathElements(
     bool parents_match = true;
     if (lhs_idx > 0 && rhs_idx > 0) {
       for (int i = 0; i < lhs_idx && i < rhs_idx; i++) {
-        if (lhs_elements[i].name != rhs_elements[i].name ||
-            lhs_elements[i].is_property != rhs_elements[i].is_property) {
+        if (lhs_elements[static_cast<size_t>(i)].name != rhs_elements[static_cast<size_t>(i)].name ||
+            lhs_elements[static_cast<size_t>(i)].is_property != rhs_elements[static_cast<size_t>(i)].is_property) {
           parents_match = false;
           break;
         }
@@ -165,7 +165,7 @@ static int ComparePathElements(
   // Compare elements at divergence point
   if (lhs_idx >= 0 && rhs_idx >= 0 &&
       lhs_idx < lhs_count && rhs_idx < rhs_count) {
-    return CompareElements(lhs_elements[lhs_idx], rhs_elements[rhs_idx]);
+    return CompareElements(lhs_elements[static_cast<size_t>(lhs_idx)], rhs_elements[static_cast<size_t>(rhs_idx)]);
   }
 
   // Fallback

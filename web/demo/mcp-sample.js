@@ -1209,6 +1209,7 @@ async function loadScenes() {
   // it is recommended to call init() before loadAsync()
   // (wait loading/compiling wasm module in the early stage))
   await loader.init();
+  TinyUSDZLoaderUtils.setTinyUSDZ(loader.native_);
 
   ui_state['usdLoader'] = loader; // Store loader in ui_state
 
@@ -1244,7 +1245,7 @@ async function loadScenes() {
 
     const usdRootNode = usd_scene.getDefaultRootNode();
 
-    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+    const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 
     if (usd_scene.getURI().includes('UsdCookie')) {
       // Add exra scaling
@@ -1355,7 +1356,7 @@ async function reloadScenes(loader, renderer, asset_names) {
 
     const usdRootNode = usd_scene.getDefaultRootNode();
 
-    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+    const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 
     // Apply transform information from MCP
     console.log('Applying transform to', asset_name, ':', transform);

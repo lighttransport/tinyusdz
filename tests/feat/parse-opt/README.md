@@ -1,28 +1,31 @@
 # Parse Optimization Benchmark
 
-This benchmark tests the performance of optimized array parsing in TinyUSDZ's ASCII parser.
+`bench-parse-opt` generates deterministic synthetic USDA payloads and
+measures parser throughput for the ASCII parser hot paths.
 
-It supports two execution profiles:
+It has two workloads:
 
-- Full profile: default when you run `bench-parse-opt` directly
-- Quick profile: reduced workload used by `ctest` via `bench-parse-opt --quick`
+- Direct array literal parsing through `AsciiParser::ParseBasicTypeArray`
+- Full in-memory USDA parsing through `LoadUSDFromMemory`
 
-## Features
+The quick profile is registered in `ctest`. The full profile is for manual
+performance work.
 
-The benchmark generates synthetic test data and measures parsing performance for:
+## Covered Types
 
-### Array Types
-- **float[]** - Simple float arrays
-- **float3[]** - Vector arrays with 3 components
-- **double[]** - Double precision arrays
-- **matrix4d[]** - 4x4 matrix arrays
+The benchmark currently covers:
 
-### TimeSamples
-- **float[] timeSamples** - Animated float arrays
-- **float3[] timeSamples** - Animated point arrays
+- Integer arrays: `int[]`, `uint[]`, `int64[]`, `uint64[]`
+- Text arrays: `token[]`, `string[]`
+- Floating scalar arrays: `half[]`, `float[]`, `double[]`
+- Floating tuple arrays: `half3[]`, `float3[]`, `double3[]`
+- Quaternion arrays: `quath[]`, `quatf[]`, `quatd[]`
+- Matrix arrays: `matrix2f[]`, `matrix3f[]`, `matrix4f[]`,
+  `matrix2d[]`, `matrix3d[]`, `matrix4d[]`
+- A synthetic USDA file containing all of the numeric attributes above
 
-### Complete USDA Files
-- Full USDA file parsing with realistic mesh data
+Each direct parser case validates the parsed element count so parser failures
+are visible in both manual runs and `ctest`.
 
 ## Building
 
@@ -32,6 +35,8 @@ cmake --build build -j16 --target bench-parse-opt
 ```
 
 ## Running
+
+Full profile:
 
 ```bash
 ./build/bench-parse-opt
@@ -43,53 +48,43 @@ Quick profile:
 ./build/bench-parse-opt --quick
 ```
 
-The `ctest` target is wired to the quick profile:
+Only direct array literals:
 
 ```bash
-cd build
-ctest -R bench-parse-opt --output-on-failure
+./build/bench-parse-opt --direct-only
 ```
 
-## Optimizations Tested
+Only synthetic USDA:
 
-The benchmark exercises the following optimizations:
-
-1. **Zero-copy array scanning** - Direct pointer access to input buffer instead of character-by-character string building
-2. **fast_float parsing** - Using the fast_float library for optimal float/double parsing
-3. **Pointer-based lexing** - Avoiding temporary std::string allocations during lexing
-
-## Profiles
-
-The full profile keeps the larger synthetic cases for manual performance work.
-
-The quick profile scales down the largest arrays and time-sample cases so it can remain inside the regular `ctest` suite without dominating total suite time.
-
-## Expected Performance
-
-On a Ryzen 3900X with -O2 optimization:
-- **float[] parsing**: ~2-5 ms per 100K elements
-- **float3[] parsing**: ~5-10 ms per 100K vectors
-- **matrix4d[] parsing**: ~10-20 ms per 10K matrices
-- **TimeSamples**: Proportional to total data size
-
-## Output Format
-
-```
-=== Float Array Parsing ===
-
-Array size: 100000 elements
-  Generated data size: 1234567 bytes
-  Parse time: 4.5 ms
+```bash
+./build/bench-parse-opt --usda-only
 ```
 
-The benchmark reports:
-- Array size (element count)
-- Generated data size (bytes)
-- Parse time in milliseconds
+Only direct `token[]` and `string[]` literals:
 
-## Notes
+```bash
+./build/bench-parse-opt --text-only
+```
 
-- The benchmark uses synthetic random data generated at runtime
-- Timings exclude data generation time, only measuring parse performance
-- Results may vary based on CPU, memory, and compiler optimization level
-- The quick profile is intended for test-suite smoke coverage, not stable performance tracking
+Allocation profiling for the optimized direct parser paths:
+
+```bash
+heaptrack -o /tmp/tinyusdz-parse-direct.heaptrack ./build/bench-parse-opt --direct-only
+```
+
+The `ctest` target uses the quick profile:
+
+```bash
+ctest --test-dir build -R bench-parse-opt --output-on-failure
+```
+
+## Output
+
+Each benchmark reports input size, average parse time, and throughput:
+
+```text
+=== Direct Array Literal Parsing ===
+  float[]        bytes=   2345678 avg_ms=    5.123 MiB/s=    436.7 runs=3
+```
+
+Generation time is intentionally excluded from the timed region.

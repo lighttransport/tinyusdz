@@ -167,7 +167,7 @@ static void default_free(void* userdata, void* ptr, size_t size);
 static void* default_alloc(void* userdata, size_t size, size_t alignment) {
     (void)userdata;
     (void)alignment;
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) || defined(__MINGW32__)
     return _aligned_malloc(size, alignment < 16 ? 16 : alignment);
 #elif defined(__APPLE__) || defined(__ANDROID__)
     void* ptr = NULL;
@@ -201,7 +201,7 @@ static void* default_realloc(void* userdata, void* ptr, size_t old_size,
 static void default_free(void* userdata, void* ptr, size_t size) {
     (void)userdata;
     (void)size;
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) || defined(__MINGW32__)
     _aligned_free(ptr);
 #else
     free(ptr);

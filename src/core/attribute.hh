@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "nonstd/optional.hpp"
@@ -179,9 +180,9 @@ class Attribute {
   template <typename T>
   void set_value(T &&v) {
     if (_type_name.empty()) {
-      _type_name = value::TypeTraits<T>::type_name();
+      _type_name = value::TypeTraits<typename std::remove_reference<T>::type>::type_name();
     }
-    _var.set_value(std::move(v));
+    _var.set_value(std::forward<T>(v));
   }
 
   void set_var(primvar::PrimVar &v) {

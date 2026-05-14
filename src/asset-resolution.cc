@@ -2,6 +2,7 @@
 // Copyright 2022 - Present, Light Transport Entertainment, Inc.
 #include <cassert>
 #include <iostream>
+#include <limits>
 
 #include "asset-resolution.hh"
 #include "common-macros.inc"
@@ -9,6 +10,7 @@
 #include "value-pprint.hh"
 #include "str-util.hh"
 #include "logger.hh"
+#include "tiny-format.hh"
 
 namespace tinyusdz {
 
@@ -198,6 +200,13 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
   (void)warn;
 
   std::string ext = io::GetFileExtension(resolvedPath);
+  constexpr uint64_t kBytesPerMiB = 1024ull * 1024ull;
+  constexpr uint64_t kMaxAssetBytesInMiB =
+      (std::numeric_limits<uint64_t>::max)() / kBytesPerMiB;
+  const uint64_t max_asset_bytes =
+      (static_cast<uint64_t>(_max_asset_bytes_in_mb) > kMaxAssetBytesInMiB)
+          ? (std::numeric_limits<uint64_t>::max)()
+          : static_cast<uint64_t>(_max_asset_bytes_in_mb) * kBytesPerMiB;
 
   if (_asset_resolution_handlers.count(ext)) {
     if (_asset_resolution_handlers.at(ext).size_fun && _asset_resolution_handlers.at(ext).read_fun) {
@@ -215,6 +224,17 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
         return false;
       }
 
+      if (sz > max_asset_bytes) {
+        if (err) {
+          (*err) += fmt::format("Asset `{}` exceeds max bytes ({} > {}).\n",
+                                resolvedPath, sz, max_asset_bytes);
+        }
+        return false;
+      }
+
+      // (no size_t-vs-uint64_t check needed: sz is already uint64_t,
+      // and max_asset_bytes above bounds it.)
+
       DCOUT("asset_size: " << sz);
 
       tinyusdz::Asset asset;
@@ -227,6 +247,13 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
       if (ret != 0) {
         if (err) {
           (*err) += "Read asset through handler failed.\n";
+        }
+        return false;
+      }
+
+      if (read_size > sz) {
+        if (err) {
+          (*err) += "Read asset reported larger size than requested.\n";
         }
         return false;
       }
@@ -261,6 +288,17 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
         return false;
       }
 
+      if (sz > max_asset_bytes) {
+        if (err) {
+          (*err) += fmt::format("Asset `{}` exceeds max bytes ({} > {}).\n",
+                                resolvedPath, sz, max_asset_bytes);
+        }
+        return false;
+      }
+
+      // (no size_t-vs-uint64_t check needed: sz is already uint64_t,
+      // and max_asset_bytes above bounds it.)
+
       DCOUT("asset_size: " << sz);
 
       tinyusdz::Asset asset;
@@ -273,6 +311,13 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
       if (ret != 0) {
         if (err) {
           (*err) += "Read asset through handler failed.\n";
+        }
+        return false;
+      }
+
+      if (read_size > sz) {
+        if (err) {
+          (*err) += "Read asset reported larger size than requested.\n";
         }
         return false;
       }
@@ -301,7 +346,11 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
 
   // Default: read from a file.
   std::vector<uint8_t> data;
-  size_t max_bytes = 1024 * 1024 * _max_asset_bytes_in_mb;
+  size_t max_bytes = (std::numeric_limits<size_t>::max)();
+  if (_max_asset_bytes_in_mb <=
+      ((std::numeric_limits<size_t>::max)() / size_t(kBytesPerMiB))) {
+    max_bytes = size_t(kBytesPerMiB) * _max_asset_bytes_in_mb;
+  }
   if (!io::ReadWholeFile(&data, err, resolvedPath, max_bytes,
                            /* userdata */ nullptr)) {
 
