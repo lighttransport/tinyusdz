@@ -173,10 +173,14 @@ function expandFilePatterns(patterns, baseDir = '.') {
 
   for (const pattern of patterns) {
     if (isGlobPattern(pattern)) {
-      const matched = expandGlob(pattern, baseDir);
+      let matched = expandGlob(pattern, baseDir);
       if (matched.length === 0) {
         console.warn(`Warning: No files matched pattern "${pattern}"`);
       }
+      // Skip test-generated runtime artifacts (see .gitignore). They are
+      // emitted by runtime tests, not roundtrip fixtures. Still allowed when
+      // passed explicitly (non-glob) for targeted debugging.
+      matched = matched.filter(f => !/-runtime\.usdc$/.test(f));
       files.push(...matched);
     } else {
       files.push(pattern);
