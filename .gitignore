@@ -370,6 +370,9 @@ CMakeUserPresets.json
 # But keep test fixtures
 !tests/usda/*.usda
 !tests/usda/spec/*.usda
+# Test-generated runtime artifacts (roundtrip/runtime tests)
+tests/usdc/memory-budget-*-runtime.usdc
+tests/usdc/variant-*-runtime.usdc
 CMakeFiles/
 Makefile
 cmake_install.cmake
