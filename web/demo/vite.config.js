@@ -29,6 +29,7 @@ export default defineConfig({
         rollupOptions: {
           input: {
             main: path.resolve(__dirname, 'index.html'),
+            viewer: path.resolve(__dirname, 'viewer.html'),
             demos: path.resolve(__dirname, 'demos.html'),
             basic_usd_composite: path.resolve(__dirname, 'basic-usd-composite.html'),
             usda_load: path.resolve(__dirname, 'usda-load.html'),

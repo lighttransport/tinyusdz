@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { HDRCubeTextureLoader } from 'three/addons/loaders/HDRCubeTextureLoader.js';
 
-import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.module.js';
+import { GUI } from 'lil-gui';
 
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js'
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js'
