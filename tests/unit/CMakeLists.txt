@@ -76,6 +76,13 @@ add_executable(${TEST_TARGET_NAME}
 
 add_sanitizers(${TEST_TARGET_NAME})
 
+# Bump MSVC default 1 MB stack to 8 MB so deep-nesting parser security
+# tests (security_deeply_nested_test, ~500 levels) don't blow the stack.
+# Match other platforms which default to a larger stack.
+if(WIN32 AND MSVC)
+  target_link_options(${TEST_TARGET_NAME} PRIVATE /STACK:8388608)
+endif()
+
 if (WIN32)
   add_test(NAME ${TEST_TARGET_NAME} COMMAND "${TEST_TARGET_NAME}.exe"
            WORKING_DIRECTORY $<TARGET_FILE_DIR:${TEST_TARGET_NAME}>  )
