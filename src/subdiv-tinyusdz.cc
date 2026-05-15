@@ -81,7 +81,6 @@ static void TriangulateMesh(const HalfEdgeMesh &mesh, SubdividedMesh *out) {
 
   // Triangulate faces
   uint32_t idx_offset = 0;
-  uint32_t triangle_count = 0;
 
   for (uint32_t face_idx = 0; face_idx < mesh.GetNumFaces(); ++face_idx) {
     uint32_t count = mesh.face_vertex_counts[face_idx];
@@ -102,7 +101,6 @@ static void TriangulateMesh(const HalfEdgeMesh &mesh, SubdividedMesh *out) {
       out->triangulated_indices.push_back(mesh.face_vertex_indices[idx_offset + 2]);
       out->face_ids.push_back(face_idx);
       out->face_triangle_ids.push_back(0);
-      triangle_count++;
     } else {
       // Fan triangulation for quads and n-gons
       for (uint32_t i = 1; i + 1 < count; ++i) {
@@ -111,7 +109,6 @@ static void TriangulateMesh(const HalfEdgeMesh &mesh, SubdividedMesh *out) {
         out->triangulated_indices.push_back(mesh.face_vertex_indices[idx_offset + i + 1]);
         out->face_ids.push_back(face_idx);
         out->face_triangle_ids.push_back(static_cast<uint8_t>(i - 1));
-        triangle_count++;
       }
     }
 
