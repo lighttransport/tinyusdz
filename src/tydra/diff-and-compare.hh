@@ -3,10 +3,9 @@
 //
 #pragma once
 
-#include <unordered_map>
-
 #include "core/prim-spec.hh"
 #include "core/layer-types.hh"
+#include "../tiny-hashmap.hh"
 
 namespace tinyusdz {
 namespace tydra {
@@ -28,10 +27,10 @@ struct PrimSpecDiff
 void Diff(const Layer &lhs, const Layer &rhs,
 
   /* key = primspec path */
-  std::unordered_map<std::string, PrimSpecDiff> &psDiffs,
+  tinyusdz::HashMap<std::string, PrimSpecDiff> &psDiffs,
 
   /* key = primspec path */
-  std::unordered_map<std::string, PropDiff> &propDiffs);
+  tinyusdz::HashMap<std::string, PropDiff> &propDiffs);
 
 ///
 /// Generate text-based diff output similar to 'diff' command

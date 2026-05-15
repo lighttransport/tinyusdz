@@ -8,10 +8,11 @@
 #pragma once
 
 #include <cstdint>
-#include <map>
 #include <memory>
 #include <string>
 #include <vector>
+
+#include "../tiny-hashmap.hh"
 
 namespace tinyusdz {
 namespace tydra {
@@ -123,9 +124,9 @@ class VariantApplier {
   bool enable_caching_{false};
 
   // Cache for variant content lookups: {prim_path + variant_option -> mesh_id}
-  std::map<std::string, int32_t> variant_mesh_cache_;
+  tinyusdz::HashMap<std::string, int32_t> variant_mesh_cache_;
   // Cache for variant materials: {prim_path + variant_option -> material_id}
-  std::map<std::string, int32_t> variant_material_cache_;
+  tinyusdz::HashMap<std::string, int32_t> variant_material_cache_;
 };
 
 }  // namespace tydra

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Copyright 2024 - Present, Light Transport Entertainment Inc.
 // Matrix and frame arithmetic operators — moved from value-eval-util.hh to reduce header bloat
 

@@ -58,7 +58,8 @@ jobs:
         run: |
           bun install
           bun run build
-
+          cp ../../doc/static/* dist/
+          
       - name: Setup Pages
         uses: actions/configure-pages@v5
 

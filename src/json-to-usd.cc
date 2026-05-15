@@ -12,10 +12,13 @@
 #endif
 
 #include "layer.hh"
+#include "security-policy.hh"
 #include "str-util.hh"
 #include "common-macros.inc"
 #include "usdGeom.hh"
 #include "usd-to-json.hh"
+
+#include <limits>
 
 namespace tinyusdz {
 
@@ -61,6 +64,23 @@ bool JSONToUSDContext::ParseBuffers(const nlohmann::json& j, std::string* err) {
     if (uri.find("data:application/octet-stream;base64,") == 0) {
       // Embedded base64 data
       std::string base64_data = uri.substr(37);  // Skip "data:application/octet-stream;base64,"
+      if (base64_data.size() > security_policy::kJSONMaxBase64InputChars) {
+        if (err) (*err) = "Embedded base64 buffer is too large";
+        return false;
+      }
+      if (byteLength > security_policy::kJSONMaxDecodedBytes) {
+        if (err) (*err) = "Embedded buffer byteLength exceeds limit";
+        return false;
+      }
+      size_t estimated_decoded_size = 0;
+      if (!security_policy::EstimateBase64DecodedSize(base64_data, &estimated_decoded_size)) {
+        if (err) (*err) = "Invalid base64 buffer encoding";
+        return false;
+      }
+      if (estimated_decoded_size != byteLength) {
+        if (err) (*err) = "Buffer size mismatch";
+        return false;
+      }
       std::string decoded = base64_decode(base64_data);
       
       if (decoded.size() != byteLength) {
@@ -176,18 +196,31 @@ bool JSONToUSDContext::GetArrayFromAccessor(size_t accessorIndex, std::vector<T>
   
   const auto& buffer = buffers[bufferView.buffer];
   
-  // Calculate total byte size needed
+  // Calculate total byte size needed with overflow guards.
   size_t elementSize = sizeof(T);
+  if (accessor.count > ((std::numeric_limits<size_t>::max)() / elementSize)) {
+    if (err) (*err) = "Accessor size overflow";
+    return false;
+  }
   size_t totalBytes = accessor.count * elementSize;
-  
-  if (bufferView.byteOffset + accessor.byteOffset + totalBytes > buffer.size()) {
+
+  if (bufferView.byteOffset > buffer.size()) {
+    if (err) (*err) = "BufferView byteOffset out of bounds";
+    return false;
+  }
+  if (accessor.byteOffset > (buffer.size() - bufferView.byteOffset)) {
+    if (err) (*err) = "Accessor byteOffset out of bounds";
+    return false;
+  }
+  size_t data_offset = bufferView.byteOffset + accessor.byteOffset;
+  if (totalBytes > (buffer.size() - data_offset)) {
     if (err) (*err) = "Buffer access out of bounds";
     return false;
   }
   
   // Extract data
   result->resize(accessor.count);
-  const uint8_t* srcData = buffer.data() + bufferView.byteOffset + accessor.byteOffset;
+  const uint8_t* srcData = buffer.data() + data_offset;
   std::memcpy(result->data(), srcData, totalBytes);
   
   return true;
@@ -207,6 +240,18 @@ bool DeserializeArrayFromBase64(const std::string& base64_data, std::vector<T>* 
     return true;
   }
   
+  if (base64_data.size() > security_policy::kJSONMaxBase64InputChars) {
+    return false;
+  }
+
+  size_t estimated_decoded_size = 0;
+  if (!security_policy::EstimateBase64DecodedSize(base64_data, &estimated_decoded_size)) {
+    return false;
+  }
+  if (estimated_decoded_size > security_policy::kJSONMaxDecodedBytes) {
+    return false;
+  }
+
   std::string decoded = base64_decode(base64_data);
   if (decoded.empty()) {
     return false;
@@ -377,11 +422,15 @@ static bool ParseAndDeserializeArray(const nlohmann::json& array_json, JSONToUSD
   
   if (accessor_index == SIZE_MAX) {
     // Base64 mode
-    return DeserializeArrayFromBase64(base64_data, result);
+    if (!DeserializeArrayFromBase64(base64_data, result)) {
+      return false;
+    }
   } else {
     // Accessor mode
     if (context) {
-      return context->GetArrayFromAccessor(accessor_index, result, err);
+      if (!context->GetArrayFromAccessor(accessor_index, result, err)) {
+        return false;
+      }
     } else {
       if (err) {
         (*err) = "Context required for accessor mode";
@@ -389,6 +438,15 @@ static bool ParseAndDeserializeArray(const nlohmann::json& array_json, JSONToUSD
       return false;
     }
   }
+
+  if (result->size() != count) {
+    if (err) {
+      (*err) = "Array count mismatch";
+    }
+    return false;
+  }
+
+  return true;
 }
 
 // Metadata-aware array parsing function
@@ -436,6 +494,11 @@ static bool ParsePoint3fArrayWithMetadata(const nlohmann::json& array_json, JSON
   
   if (type != "point3f[]") {
     if (err) (*err) = "Expected point3f[] type, got: " + type;
+    return false;
+  }
+
+  if (count > ((std::numeric_limits<size_t>::max)() / 3)) {
+    if (err) (*err) = "point3f count overflow";
     return false;
   }
   

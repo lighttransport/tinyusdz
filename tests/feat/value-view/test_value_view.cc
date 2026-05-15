@@ -1,4 +1,4 @@
-// Test for compact 16-byte ValueView implementation
+﻿// Test for compact 16-byte ValueView implementation
 #include "src/value-types.hh"
 #include "src/typed-array.hh"
 #include <iostream>

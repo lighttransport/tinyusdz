@@ -1,9 +1,6 @@
 import { defineConfig } from 'vite'
 import path from 'path'
 import { compression } from 'vite-plugin-compression2'
-import { viteStaticCopy } from 'vite-plugin-static-copy'
-
-const isDev = process.env.NODE_ENV !== 'production'
 
 // Local dev setup:
 //   ln -sfn ../../js/src/tinyusdz node_modules/tinyusdz
@@ -32,6 +29,7 @@ export default defineConfig({
         rollupOptions: {
           input: {
             main: path.resolve(__dirname, 'index.html'),
+            viewer: path.resolve(__dirname, 'viewer.html'),
             demos: path.resolve(__dirname, 'demos.html'),
             basic_usd_composite: path.resolve(__dirname, 'basic-usd-composite.html'),
             usda_load: path.resolve(__dirname, 'usda-load.html'),
@@ -43,16 +41,9 @@ export default defineConfig({
     optimizeDeps: {
         exclude: ['tinyusdz'],
     },
-    // Use only 'gzip' for a while('zstd' is avaiable for node > 22.15.0)
-    // Skip .wasm.zst static copy in dev (not needed; WASM served from node_modules/tinyusdz/)
+    // Use only gzip here. The local TinyUSDZ source tree contains raw WASM outputs,
+    // and Vite will emit those assets from new URL(..., import.meta.url) references.
     plugins: [
       compression({algorithms: ['gzip']}),
-      ...(!isDev ? [viteStaticCopy({
-        targets: [
-          { src: 'node_modules/tinyusdz/tinyusdz.wasm.zst',
-            dest: 'assets/'
-          },
-        ],
-      })] : []),
     ],
 });

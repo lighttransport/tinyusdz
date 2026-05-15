@@ -717,4 +717,161 @@ std::string to_string(const GeomPointInstancer &instancer, const uint32_t indent
   return ss.str();
 }
 
+std::string to_string(const GeomPlane &geom, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+
+  ss << print_prim_header(geom, "Plane", indent);
+
+  // members
+  ss << print_typed_attr(geom.width, "width", indent + 1);
+  ss << print_typed_attr(geom.length, "length", indent + 1);
+  ss << print_axis_attr(geom, indent + 1);
+
+  ss << print_gprim_predefined(geom, indent + 1);
+  ss << print_props(geom.props, indent + 1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const GeomCylinder_1 &geom, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+
+  ss << print_prim_header(geom, "Cylinder_1", indent);
+
+  // members
+  ss << print_typed_attr(geom.height, "height", indent + 1);
+  ss << print_typed_attr(geom.radiusTop, "radiusTop", indent + 1);
+  ss << print_typed_attr(geom.radiusBottom, "radiusBottom", indent + 1);
+  ss << print_axis_attr(geom, indent + 1);
+
+  ss << print_gprim_predefined(geom, indent + 1);
+  ss << print_props(geom.props, indent + 1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const GeomCapsule_1 &geom, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+
+  ss << print_prim_header(geom, "Capsule_1", indent);
+
+  // members
+  ss << print_typed_attr(geom.height, "height", indent + 1);
+  ss << print_typed_attr(geom.radiusTop, "radiusTop", indent + 1);
+  ss << print_typed_attr(geom.radiusBottom, "radiusBottom", indent + 1);
+  ss << print_axis_attr(geom, indent + 1);
+
+  ss << print_gprim_predefined(geom, indent + 1);
+  ss << print_props(geom.props, indent + 1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const GeomTetMesh &geom, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+
+  ss << print_prim_header(geom, "TetMesh", indent);
+
+  // members
+  ss << print_typed_attr(geom.points, "points", indent + 1);
+  ss << print_typed_attr(geom.velocities, "velocities", indent + 1);
+  ss << print_typed_attr(geom.accelerations, "accelerations", indent + 1);
+  ss << print_typed_attr(geom.normals, "normals", indent + 1);
+  ss << print_typed_attr(geom.tetVertexIndices, "tetVertexIndices", indent + 1);
+  ss << print_typed_attr(geom.surfaceFaceVertexIndices, "surfaceFaceVertexIndices", indent + 1);
+
+  ss << print_gprim_predefined(geom, indent + 1);
+  ss << print_props(geom.props, indent + 1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const GeomNurbsPatch &geom, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+
+  ss << print_prim_header(geom, "NurbsPatch", indent);
+
+  // PointBased attributes
+  ss << print_typed_attr(geom.points, "points", indent + 1);
+  ss << print_typed_attr(geom.velocities, "velocities", indent + 1);
+  ss << print_typed_attr(geom.accelerations, "accelerations", indent + 1);
+  ss << print_typed_attr(geom.normals, "normals", indent + 1);
+
+  // NurbsPatch-specific
+  ss << print_typed_attr(geom.uVertexCount, "uVertexCount", indent + 1);
+  ss << print_typed_attr(geom.vVertexCount, "vVertexCount", indent + 1);
+  ss << print_typed_attr(geom.uOrder, "uOrder", indent + 1);
+  ss << print_typed_attr(geom.vOrder, "vOrder", indent + 1);
+  ss << print_typed_attr(geom.uKnots, "uKnots", indent + 1);
+  ss << print_typed_attr(geom.vKnots, "vKnots", indent + 1);
+  ss << print_typed_token_attr(geom.uForm, "uForm", indent + 1);
+  ss << print_typed_token_attr(geom.vForm, "vForm", indent + 1);
+  ss << print_typed_attr(geom.uRange, "uRange", indent + 1);
+  ss << print_typed_attr(geom.vRange, "vRange", indent + 1);
+  ss << print_typed_attr(geom.pointWeights, "pointWeights", indent + 1);
+
+  // Trim curves
+  ss << print_typed_attr(geom.trimCurve_counts, "trimCurve:counts", indent + 1);
+  ss << print_typed_attr(geom.trimCurve_orders, "trimCurve:orders", indent + 1);
+  ss << print_typed_attr(geom.trimCurve_vertexCounts, "trimCurve:vertexCounts", indent + 1);
+  ss << print_typed_attr(geom.trimCurve_knots, "trimCurve:knots", indent + 1);
+  ss << print_typed_attr(geom.trimCurve_ranges, "trimCurve:ranges", indent + 1);
+  ss << print_typed_attr(geom.trimCurve_points, "trimCurve:points", indent + 1);
+
+  ss << print_gprim_predefined(geom, indent + 1);
+  ss << print_props(geom.props, indent + 1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const GeomHermiteCurves &geom, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+
+  ss << print_prim_header(geom, "HermiteCurves", indent);
+
+  // members
+  ss << print_typed_attr(geom.points, "points", indent + 1);
+  ss << print_typed_attr(geom.velocities, "velocities", indent + 1);
+  ss << print_typed_attr(geom.accelerations, "accelerations", indent + 1);
+  ss << print_typed_attr(geom.normals, "normals", indent + 1);
+  ss << print_typed_attr(geom.curveVertexCounts, "curveVertexCounts", indent + 1);
+  ss << print_typed_attr(geom.widths, "widths", indent + 1);
+  ss << print_typed_attr(geom.tangents, "tangents", indent + 1);
+
+  ss << print_gprim_predefined(geom, indent + 1);
+  ss << print_props(geom.props, indent + 1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
 }  // namespace tinyusdz

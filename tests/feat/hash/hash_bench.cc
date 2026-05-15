@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Hash function benchmark & collision test for USDC TimeSamples dedup.
 //
 // Compares FNV-1a (current) vs XXH3_64bits (candidate) on workloads

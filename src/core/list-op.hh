@@ -91,7 +91,10 @@ struct ListOpHeader {
 
   explicit ListOpHeader(uint8_t b) : bits(b) {}
 
-  explicit ListOpHeader(ListOpHeader const &op) : bits(0) {
+  // Implicit copy so NRVO can apply at return sites without requiring
+  // explicit reconstruction. Body preserved for parity with previous
+  // per-flag rebuild path.
+  ListOpHeader(ListOpHeader const &op) : bits(0) {
     bits |= op.IsExplicit() ? IsExplicitBit : 0;
     bits |= op.HasExplicitItems() ? HasExplicitItemsBit : 0;
     bits |= op.HasAddedItems() ? HasAddedItemsBit : 0;

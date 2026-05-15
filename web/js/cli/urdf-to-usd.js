@@ -1,0 +1,1298 @@
+#!/usr/bin/env node
+// URDF/MJCF -> USD Physics + MuJoCo + Newton export tester for TinyUSDZ WASM.
+
+import fs from 'node:fs';
+import path from 'node:path';
+import process from 'node:process';
+import * as THREE from 'three';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
+import { TinyUSDZLoaderUtils } from '../src/tinyusdz/TinyUSDZLoaderUtils.js';
+import TinyUSDZFactory from '../src/tinyusdz/tinyusdz.js';
+
+const SUPPORTED_FORMATS = new Set(['usda', 'usdc', 'usdz', 'all']);
+const USD_MESH_EXTENSIONS = new Set(['.usd', '.usda', '.usdc', '.usdz']);
+
+const SAMPLE_URDF = `<?xml version="1.0"?>
+<robot name="TinyUSDZSampleRobot">
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0 0 0"/>
+      <mass value="1"/>
+      <inertia ixx="1" iyy="1" izz="1"/>
+    </inertial>
+    <visual name="visual_mesh">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="sample.obj" scale="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="collision_box">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="1 1 0.3"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="arm_link">
+    <inertial>
+      <origin xyz="0 0 0"/>
+      <mass value="0.25"/>
+      <inertia ixx="0.1" iyy="0.1" izz="0.1"/>
+    </inertial>
+    <visual name="arm_box">
+      <origin xyz="0.4 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.8 0.18 0.18"/>
+      </geometry>
+    </visual>
+  </link>
+  <joint name="hinge" type="revolute">
+    <parent link="base_link"/>
+    <child link="arm_link"/>
+    <origin xyz="0 0 0.2" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-1.57" upper="1.57" effort="2" velocity="4"/>
+    <dynamics damping="0.1" friction="0.02"/>
+  </joint>
+</robot>
+`;
+
+const SAMPLE_OBJ = `o sample_triangle
+v 0 0 0
+v 0.7 0 0
+v 0 0.7 0
+vn 0 0 1
+vt 0 0
+vt 1 0
+vt 0 1
+f 1/1/1 2/2/1 3/3/1
+`;
+
+function printHelp() {
+  console.log(`
+URDF/MJCF -> USD Physics + MuJoCo + Newton CLI tester
+
+Usage:
+  node cli/urdf-to-usd.js <robot.urdf> [options]
+  node cli/urdf-to-usd.js <scene.xml> --input-format mjcf [options]
+  node cli/urdf-to-usd.js --sample --format all -o /tmp/robot
+
+Options:
+  --format <fmt>       Export format: usda, usdc, usdz, all (default: usda)
+  --input-format <fmt> Input format: auto, urdf, mjcf (default: auto)
+  -o, --output <path>  Output file path, or base path when --format all
+  --asset-dir <dir>    Add a directory used to resolve mesh assets
+  --package-root <dir> Resolve package:// URIs under this directory
+  --up-axis <axis>     Export up axis: Z or Y (default: Z)
+  --allow-missing      Skip missing/unsupported meshes instead of failing
+  --tessellate-collision-shapes
+                       Tessellate primitive collision shapes to mesh.
+                       Default: use USD native shape prims for primitive collisions.
+  --dump-json <path>   Write the generated createURDFPhysicsScene JSON payload
+  --no-verify          Do not verify expected USD/MuJoCo schema text
+  --sample             Use an embedded URDF + OBJ smoke-test robot
+  -v, --verbose        Print mesh and export details
+  -h, --help           Show this help
+`);
+}
+
+function parseArgs(argv = process.argv.slice(2)) {
+  const opts = {
+    inputFile: null,
+    inputFormat: 'auto',
+    format: 'usda',
+    outputFile: null,
+    assetDirs: [],
+    packageRoot: null,
+    upAxis: 'Z',
+    allowMissing: false,
+    tessellateCollisionShapes: false,
+    dumpJson: null,
+    verify: true,
+    sample: false,
+    verbose: false
+  };
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '-h' || arg === '--help') {
+      printHelp();
+      process.exit(0);
+    } else if (arg === '--format') {
+      opts.format = requireValue(argv, ++i, arg).toLowerCase();
+      if (!SUPPORTED_FORMATS.has(opts.format)) {
+        throw new Error('--format must be one of: usda, usdc, usdz, all');
+      }
+    } else if (arg === '--input-format') {
+      opts.inputFormat = requireValue(argv, ++i, arg).toLowerCase();
+      if (!['auto', 'urdf', 'mjcf'].includes(opts.inputFormat)) {
+        throw new Error('--input-format must be one of: auto, urdf, mjcf');
+      }
+    } else if (arg === '-o' || arg === '--output') {
+      opts.outputFile = requireValue(argv, ++i, arg);
+    } else if (arg === '--asset-dir') {
+      opts.assetDirs.push(requireValue(argv, ++i, arg));
+    } else if (arg === '--package-root') {
+      opts.packageRoot = requireValue(argv, ++i, arg);
+    } else if (arg === '--up-axis') {
+      opts.upAxis = requireValue(argv, ++i, arg).toUpperCase();
+      if (opts.upAxis !== 'Z' && opts.upAxis !== 'Y') {
+        throw new Error('--up-axis must be Z or Y');
+      }
+    } else if (arg === '--allow-missing') {
+      opts.allowMissing = true;
+    } else if (arg === '--tessellate-collision-shapes') {
+      opts.tessellateCollisionShapes = true;
+    } else if (arg === '--dump-json') {
+      opts.dumpJson = requireValue(argv, ++i, arg);
+    } else if (arg === '--no-verify') {
+      opts.verify = false;
+    } else if (arg === '--sample') {
+      opts.sample = true;
+    } else if (arg === '-v' || arg === '--verbose') {
+      opts.verbose = true;
+    } else if (arg.startsWith('-')) {
+      throw new Error(`Unknown option: ${arg}`);
+    } else if (!opts.inputFile) {
+      opts.inputFile = arg;
+    } else {
+      throw new Error(`Unexpected argument: ${arg}`);
+    }
+  }
+
+  if (!opts.inputFile && !opts.sample) {
+    throw new Error('Input URDF is required, or use --sample.');
+  }
+
+  return opts;
+}
+
+function requireValue(argv, index, optionName) {
+  const value = argv[index];
+  if (!value || value.startsWith('-')) {
+    throw new Error(`${optionName} requires a value`);
+  }
+  return value;
+}
+
+function parseAttributes(text = '') {
+  const attrs = {};
+  const re = /([A-Za-z_:][-A-Za-z0-9_:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+  let match = null;
+  while ((match = re.exec(text))) {
+    attrs[match[1]] = decodeXML(match[2] ?? match[3] ?? '');
+  }
+  return attrs;
+}
+
+function decodeXML(text) {
+  return text
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+function findElements(xml, tagName) {
+  const elements = [];
+  const re = new RegExp(`<${tagName}\\b([^>]*?)(?:/\\s*>|>([\\s\\S]*?)</${tagName}\\s*>)`, 'gi');
+  let match = null;
+  while ((match = re.exec(xml))) {
+    elements.push({
+      attrs: parseAttributes(match[1] || ''),
+      body: match[2] || ''
+    });
+  }
+  return elements;
+}
+
+function firstElement(xml, tagName) {
+  return findElements(xml, tagName)[0] || null;
+}
+
+function parseXMLTree(xml) {
+  const root = { name: '#document', attrs: {}, children: [], parent: null };
+  const stack = [root];
+  const tokenRe = /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>|<![^>]*>|<\/\s*([A-Za-z_:][-A-Za-z0-9_:.]*)\s*>|<\s*([A-Za-z_:][-A-Za-z0-9_:.]*)([^>]*?)(\/?)>/g;
+  let match = null;
+  while ((match = tokenRe.exec(xml))) {
+    if (!match[0].startsWith('<') || match[0].startsWith('<!--') || match[0].startsWith('<?') || match[0].startsWith('<!')) {
+      continue;
+    }
+    if (match[1]) {
+      const closing = match[1];
+      while (stack.length > 1 && stack[stack.length - 1].name !== closing) {
+        stack.pop();
+      }
+      if (stack.length > 1) stack.pop();
+      continue;
+    }
+    const node = {
+      name: match[2],
+      attrs: parseAttributes(match[3] || ''),
+      children: [],
+      parent: stack[stack.length - 1]
+    };
+    stack[stack.length - 1].children.push(node);
+    if (!match[4]) stack.push(node);
+  }
+  return root.children[0] || root;
+}
+
+function childElements(node, name = null) {
+  return (node?.children || []).filter((child) => !name || child.name === name);
+}
+
+function firstChild(node, name) {
+  return childElements(node, name)[0] || null;
+}
+
+function numberAttr(attrs, name, fallback = undefined) {
+  const value = Number(attrs?.[name]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function parseNumbers(text, fallback = []) {
+  if (!text) return fallback;
+  const values = text.trim().split(/\s+/).map(Number).filter(Number.isFinite);
+  return values.length ? values : fallback;
+}
+
+function elementText(el) {
+  return (el?.body || '').replace(/<[^>]*>/g, ' ').trim();
+}
+
+function matrixToUSDArray(matrix) {
+  const e = matrix.elements;
+  return [
+    e[0], e[1], e[2], e[3],
+    e[4], e[5], e[6], e[7],
+    e[8], e[9], e[10], e[11],
+    e[12], e[13], e[14], e[15]
+  ];
+}
+
+function matrixFromPoseAttrs(attrs = {}) {
+  const pos = parseNumbers(attrs.pos, [0, 0, 0]);
+  const matrix = new THREE.Matrix4();
+  const translation = new THREE.Vector3(pos[0] || 0, pos[1] || 0, pos[2] || 0);
+  const scale = new THREE.Vector3(1, 1, 1);
+  let quat = new THREE.Quaternion();
+
+  if (attrs.quat) {
+    const q = parseNumbers(attrs.quat, [1, 0, 0, 0]);
+    quat = new THREE.Quaternion(q[1] || 0, q[2] || 0, q[3] || 0, q[0] ?? 1).normalize();
+  } else if (attrs.euler) {
+    const e = parseNumbers(attrs.euler, [0, 0, 0]);
+    quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(e[0] || 0, e[1] || 0, e[2] || 0, 'XYZ'));
+  }
+
+  return matrix.compose(translation, quat, scale);
+}
+
+function originToMatrix(originAttrs = {}) {
+  const xyz = parseNumbers(originAttrs.xyz, [0, 0, 0]);
+  const rpy = parseNumbers(originAttrs.rpy, [0, 0, 0]);
+  return new THREE.Matrix4().compose(
+    new THREE.Vector3(xyz[0] || 0, xyz[1] || 0, xyz[2] || 0),
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(rpy[0] || 0, rpy[1] || 0, rpy[2] || 0, 'XYZ')),
+    new THREE.Vector3(1, 1, 1)
+  );
+}
+
+function axisToToken(axis) {
+  const abs = axis.map((v) => Math.abs(v));
+  const max = Math.max(abs[0] || 0, abs[1] || 0, abs[2] || 0);
+  if (max === abs[1]) return 'Y';
+  if (max === abs[2]) return 'Z';
+  return 'X';
+}
+
+function parseURDFMetadata(urdfText) {
+  const robotEl = firstElement(urdfText, 'robot');
+  const links = new Map();
+  const joints = [];
+  const actuators = [];
+
+  for (const linkEl of findElements(urdfText, 'link')) {
+    const name = linkEl.attrs.name || `link_${links.size}`;
+    const inertialEl = firstElement(linkEl.body, 'inertial');
+    const inertial = {};
+    if (inertialEl) {
+      const massEl = firstElement(inertialEl.body, 'mass');
+      const originEl = firstElement(inertialEl.body, 'origin');
+      const inertiaEl = firstElement(inertialEl.body, 'inertia');
+      if (massEl) inertial.mass = numberAttr(massEl.attrs, 'value', 0);
+      if (originEl) inertial.centerOfMass = parseNumbers(originEl.attrs.xyz, [0, 0, 0]);
+      if (inertiaEl) {
+        inertial.diagonalInertia = [
+          numberAttr(inertiaEl.attrs, 'ixx', 0),
+          numberAttr(inertiaEl.attrs, 'iyy', 0),
+          numberAttr(inertiaEl.attrs, 'izz', 0)
+        ];
+      }
+    }
+    links.set(name, { name, inertial, body: linkEl.body });
+  }
+
+  for (const jointEl of findElements(urdfText, 'joint')) {
+    const parent = firstElement(jointEl.body, 'parent')?.attrs.link || '';
+    const child = firstElement(jointEl.body, 'child')?.attrs.link || '';
+    const axis = parseNumbers(firstElement(jointEl.body, 'axis')?.attrs.xyz, [1, 0, 0]);
+    const originEl = firstElement(jointEl.body, 'origin');
+    const origin = parseNumbers(originEl?.attrs.xyz, [0, 0, 0]);
+    const limitEl = firstElement(jointEl.body, 'limit');
+    const dynamicsEl = firstElement(jointEl.body, 'dynamics');
+    const joint = {
+      name: jointEl.attrs.name || `joint_${joints.length}`,
+      type: jointEl.attrs.type || 'fixed',
+      parent,
+      child,
+      axis,
+      axisToken: axisToToken(axis),
+      origin,
+      originMatrix: matrixToUSDArray(originToMatrix(originEl?.attrs)),
+      limit: limitEl ? {
+        lower: numberAttr(limitEl.attrs, 'lower'),
+        upper: numberAttr(limitEl.attrs, 'upper'),
+        effort: numberAttr(limitEl.attrs, 'effort'),
+        velocity: numberAttr(limitEl.attrs, 'velocity')
+      } : {},
+      // URDF 1.0 <dynamics> spec only defines damping + friction, but
+      // we accept the common MuJoCo extensions stiffness and armature
+      // when authored (no-op for compliant URDFs). The downstream
+      // C++ converter (urdf-to-usd.cc) emits these via the PhysX
+      // mirror schema (physxJoint:armature, physxLimit:angular:stiffness)
+      // alongside the canonical mjc:* fallbacks.
+      dynamics: dynamicsEl ? {
+        damping: numberAttr(dynamicsEl.attrs, 'damping'),
+        friction: numberAttr(dynamicsEl.attrs, 'friction'),
+        stiffness: numberAttr(dynamicsEl.attrs, 'stiffness'),
+        armature: numberAttr(dynamicsEl.attrs, 'armature')
+      } : {}
+    };
+    const mimicEl = firstElement(jointEl.body, 'mimic');
+    if (mimicEl?.attrs?.joint) {
+      joint.mimic = {
+        joint: mimicEl.attrs.joint,
+        multiplier: numberAttr(mimicEl.attrs, 'multiplier', 1),
+        offset: numberAttr(mimicEl.attrs, 'offset', 0)
+      };
+    }
+    joints.push(joint);
+  }
+
+  const jointsByName = new Map(joints.map((joint) => [joint.name, joint]));
+  for (const transmissionEl of findElements(urdfText, 'transmission')) {
+    const jointName = firstElement(transmissionEl.body, 'joint')?.attrs.name || '';
+    if (!jointName) continue;
+    const actuatorEl = firstElement(transmissionEl.body, 'actuator');
+    const reduction = Number(elementText(firstElement(actuatorEl?.body || '', 'mechanicalReduction')));
+    const joint = jointsByName.get(jointName);
+    const act = {
+      name: actuatorEl?.attrs.name || `${jointName}_actuator`,
+      joint: jointName,
+      control: 'pd'
+    };
+    const effort = joint?.limit?.effort;
+    if (Number.isFinite(effort) && effort > 0) act.maxEffort = effort;
+    if (Number.isFinite(reduction) && reduction !== 0) act.constEffort = Math.abs(reduction);
+    actuators.push(act);
+  }
+
+  return {
+    name: robotEl?.attrs.name || '',
+    links,
+    joints,
+    actuators
+  };
+}
+
+class MeshResolver {
+  constructor(opts, urdfDir) {
+    this.opts = opts;
+    this.urdfDir = urdfDir;
+    this.virtualFiles = new Map();
+    if (opts.sample) {
+      this.virtualFiles.set('sample.obj', SAMPLE_OBJ);
+    }
+  }
+
+  resolve(meshPath) {
+    const normalized = normalizePath(meshPath || '');
+    if (!normalized) return null;
+    if (this.virtualFiles.has(normalized)) {
+      return { path: normalized, virtualText: this.virtualFiles.get(normalized) };
+    }
+
+    const withoutPackage = normalized.replace(/^package:\/\//, '');
+    const candidates = [];
+    if (path.isAbsolute(normalized)) candidates.push(normalized);
+    candidates.push(path.resolve(this.urdfDir, normalized));
+    candidates.push(path.resolve(this.urdfDir, withoutPackage));
+    candidates.push(path.resolve(this.urdfDir, withoutPackage.split('/').slice(1).join('/')));
+    for (const assetDir of this.opts.assetDirs) {
+      candidates.push(path.resolve(assetDir, normalized));
+      candidates.push(path.resolve(assetDir, withoutPackage));
+      candidates.push(path.resolve(assetDir, withoutPackage.split('/').slice(1).join('/')));
+      candidates.push(path.resolve(assetDir, path.basename(withoutPackage)));
+    }
+    if (this.opts.packageRoot) {
+      candidates.push(path.resolve(this.opts.packageRoot, withoutPackage));
+      candidates.push(path.resolve(this.opts.packageRoot, withoutPackage.split('/').slice(1).join('/')));
+    }
+
+    for (const candidate of candidates.filter(Boolean)) {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        return { path: candidate };
+      }
+    }
+    return null;
+  }
+}
+
+function normalizePath(value) {
+  return value.replace(/\\/g, '/').replace(/^\.?\//, '');
+}
+
+function extension(filename) {
+  return path.extname((filename || '').split('?')[0].split('#')[0]).toLowerCase();
+}
+
+function makeGeometryPayload(mesh, matrix, name) {
+  const geom = mesh.geometry;
+  const pos = geom?.getAttribute('position');
+  if (!pos || pos.count < 3) return null;
+  const normal = geom.getAttribute('normal');
+  const uv = geom.getAttribute('uv');
+  const index = geom.getIndex();
+  return {
+    name,
+    matrix: matrixToUSDArray(matrix),
+    geometry: {
+      positions: Array.from(pos.array),
+      normals: normal ? Array.from(normal.array) : [],
+      uvs: uv ? Array.from(uv.array) : [],
+      indices: index ? Array.from(index.array) : []
+    }
+  };
+}
+
+function collectMeshPayloads(root, baseMatrix, fallbackName) {
+  const payloads = [];
+  root.updateMatrixWorld(true);
+  let index = 0;
+  root.traverse((obj) => {
+    if (!obj.isMesh) return;
+    const matrix = new THREE.Matrix4().copy(baseMatrix).multiply(obj.matrixWorld);
+    const payload = makeGeometryPayload(obj, matrix, obj.name || `${fallbackName}_${index}`);
+    if (payload) {
+      payload.name = payloads.length ? `${payload.name}_${payloads.length}` : payload.name;
+      payloads.push(payload);
+    }
+    index++;
+  });
+  return payloads;
+}
+
+function primitiveObjectFromGeometry(geometry, name) {
+  const mesh = new THREE.Mesh(geometry);
+  mesh.name = name;
+  const group = new THREE.Group();
+  group.add(mesh);
+  return group;
+}
+
+async function loadOBJObject(resolvedAsset) {
+  const text = resolvedAsset.virtualText ?? fs.readFileSync(resolvedAsset.path, 'utf8');
+  return new OBJLoader().parse(text);
+}
+
+async function loadSTLObject(resolvedAsset) {
+  const data = fs.readFileSync(resolvedAsset.path);
+  const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+  return primitiveObjectFromGeometry(new STLLoader().parse(arrayBuffer), path.basename(resolvedAsset.path, path.extname(resolvedAsset.path)));
+}
+
+let usdMeshLoader = null;
+
+async function ensureUSDMeshLoader() {
+  if (!usdMeshLoader) {
+    usdMeshLoader = new TinyUSDZLoader();
+    await usdMeshLoader.init({ useZstdCompressedWasm: false, useMemory64: false });
+    TinyUSDZLoaderUtils.setTinyUSDZ(usdMeshLoader.native_);
+  }
+  return usdMeshLoader;
+}
+
+async function loadUSDObject(resolvedAsset) {
+  const loader = await ensureUSDMeshLoader();
+  const data = fs.readFileSync(resolvedAsset.path);
+  const sceneData = await parseUSDSceneFromArrayBuffer(
+    loader,
+    data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+    path.basename(resolvedAsset.path)
+  );
+  const rootNode = sceneData.getDefaultRootNode();
+  const defaultMaterial = TinyUSDZLoaderUtils.createDefaultMaterial();
+  return TinyUSDZLoaderUtils.buildThreeNode(rootNode, defaultMaterial, sceneData, {
+    overrideMaterial: false
+  });
+}
+
+async function parseUSDSceneFromArrayBuffer(loader, arrayBuffer, filename) {
+  return new Promise((resolve, reject) => {
+    loader.parse(new Uint8Array(arrayBuffer), filename, resolve, reject);
+  });
+}
+
+async function meshPayloadsForGeometry(geometryEl, originMatrix, resolver, fallbackName, opts) {
+  const meshEl = firstElement(geometryEl.body, 'mesh');
+  if (meshEl) {
+    const filename = meshEl.attrs.filename || meshEl.attrs.url || '';
+    const resolved = resolver.resolve(filename);
+    if (!resolved) {
+      if (opts.allowMissing) {
+        console.warn(`Skipping missing mesh: ${filename}`);
+        return [];
+      }
+      throw new Error(`Mesh asset not found: ${filename}`);
+    }
+
+    const scale = parseNumbers(meshEl.attrs.scale, [1, 1, 1]);
+    const meshMatrix = new THREE.Matrix4()
+      .copy(originMatrix)
+      .multiply(new THREE.Matrix4().makeScale(scale[0] || 1, scale[1] || 1, scale[2] || 1));
+    const ext = extension(resolved.path || filename);
+    let object = null;
+    if (ext === '.obj') {
+      object = await loadOBJObject(resolved);
+    } else if (ext === '.stl') {
+      object = await loadSTLObject(resolved);
+    } else if (USD_MESH_EXTENSIONS.has(ext)) {
+      object = await loadUSDObject(resolved);
+    } else if (opts.allowMissing) {
+      console.warn(`Skipping unsupported mesh extension ${ext || '(none)'}: ${filename}`);
+      return [];
+    } else {
+      throw new Error(`Unsupported mesh extension ${ext || '(none)'}: ${filename}`);
+    }
+    return collectMeshPayloads(object, meshMatrix, fallbackName);
+  }
+
+  const boxEl = firstElement(geometryEl.body, 'box');
+  if (boxEl) {
+    const size = parseNumbers(boxEl.attrs.size, [1, 1, 1]);
+    return collectMeshPayloads(
+      primitiveObjectFromGeometry(new THREE.BoxGeometry(size[0] || 1, size[1] || 1, size[2] || 1), fallbackName),
+      originMatrix,
+      fallbackName
+    );
+  }
+
+  const sphereEl = firstElement(geometryEl.body, 'sphere');
+  if (sphereEl) {
+    const radius = numberAttr(sphereEl.attrs, 'radius', 0.5);
+    return collectMeshPayloads(
+      primitiveObjectFromGeometry(new THREE.SphereGeometry(radius, 24, 12), fallbackName),
+      originMatrix,
+      fallbackName
+    );
+  }
+
+  const cylinderEl = firstElement(geometryEl.body, 'cylinder');
+  if (cylinderEl) {
+    const radius = numberAttr(cylinderEl.attrs, 'radius', 0.5);
+    const length = numberAttr(cylinderEl.attrs, 'length', 1);
+    const yToZ = new THREE.Matrix4().makeRotationX(Math.PI / 2);
+    return collectMeshPayloads(
+      primitiveObjectFromGeometry(new THREE.CylinderGeometry(radius, radius, length, 24, 1), fallbackName),
+      new THREE.Matrix4().copy(originMatrix).multiply(yToZ),
+      fallbackName
+    );
+  }
+
+  if (opts.allowMissing) {
+    console.warn(`Skipping unsupported geometry block: ${fallbackName}`);
+    return [];
+  }
+  throw new Error(`Unsupported geometry block: ${fallbackName}`);
+}
+
+function shapePayloadForUrdfGeometry(geometryEl, originMatrix, fallbackName) {
+  const boxEl = firstElement(geometryEl.body, 'box');
+  if (boxEl) {
+    const size = parseNumbers(boxEl.attrs.size, [1, 1, 1]);
+    const half = [(size[0] || 1) * 0.5, (size[1] || 1) * 0.5, (size[2] || 1) * 0.5];
+    const matrix = new THREE.Matrix4()
+      .copy(originMatrix)
+      .multiply(new THREE.Matrix4().makeScale(half[0], half[1], half[2]));
+    return [{
+      name: fallbackName,
+      matrix: matrixToUSDArray(matrix),
+      shape: { type: 'box' }
+    }];
+  }
+
+  const sphereEl = firstElement(geometryEl.body, 'sphere');
+  if (sphereEl) {
+    return [{
+      name: fallbackName,
+      matrix: matrixToUSDArray(originMatrix),
+      shape: {
+        type: 'sphere',
+        radius: numberAttr(sphereEl.attrs, 'radius', 0.5)
+      }
+    }];
+  }
+
+  const cylinderEl = firstElement(geometryEl.body, 'cylinder');
+  if (cylinderEl) {
+    return [{
+      name: fallbackName,
+      matrix: matrixToUSDArray(originMatrix),
+      shape: {
+        type: 'cylinder',
+        radius: numberAttr(cylinderEl.attrs, 'radius', 0.5),
+        height: numberAttr(cylinderEl.attrs, 'length', 1),
+        axis: 'Z'
+      }
+    }];
+  }
+
+  return null;
+}
+
+function expandMujocoIncludes(xml, baseDir, seen = new Set()) {
+  return xml.replace(/<include\b([^>]*?)\/\s*>/gi, (_tag, attrText) => {
+    const attrs = parseAttributes(attrText || '');
+    if (!attrs.file) return '';
+    const includePath = path.resolve(baseDir, attrs.file);
+    if (seen.has(includePath)) {
+      throw new Error(`Recursive MJCF include: ${includePath}`);
+    }
+    seen.add(includePath);
+    const childXML = stripMujocoDocumentRoot(fs.readFileSync(includePath, 'utf8'));
+    seen.delete(includePath);
+    return expandMujocoIncludes(childXML, path.dirname(includePath), seen);
+  });
+}
+
+function stripMujocoDocumentRoot(xml) {
+  const withoutDecl = xml.replace(/<\?xml[\s\S]*?\?>/i, '');
+  const open = withoutDecl.search(/<mujoco\b[^>]*>/i);
+  const close = withoutDecl.lastIndexOf('</mujoco>');
+  if (open < 0 || close < 0) return withoutDecl;
+  const openEnd = withoutDecl.indexOf('>', open);
+  return withoutDecl.slice(openEnd + 1, close);
+}
+
+function collectMujocoAssets(root, baseDir) {
+  const compiler = firstChild(root, 'compiler');
+  const meshDir = compiler?.attrs.meshdir || '';
+  const meshBaseDir = path.resolve(baseDir, meshDir);
+  const meshes = new Map();
+  for (const asset of childElements(root, 'asset')) {
+    for (const mesh of childElements(asset, 'mesh')) {
+      const file = mesh.attrs.file || '';
+      if (!file) continue;
+      const name = mesh.attrs.name || path.basename(file, path.extname(file));
+      meshes.set(name, {
+        path: path.resolve(meshBaseDir, file),
+        scale: parseNumbers(mesh.attrs.scale, [1, 1, 1])
+      });
+    }
+  }
+  return meshes;
+}
+
+function mujocoJointType(type) {
+  if (type === 'hinge') return 'revolute';
+  if (type === 'slide') return 'prismatic';
+  if (type === 'free') return 'floating';
+  return 'fixed';
+}
+
+function parseMujocoInertial(bodyNode) {
+  const inertialNode = firstChild(bodyNode, 'inertial');
+  if (!inertialNode) return {};
+  const full = parseNumbers(inertialNode.attrs.fullinertia, []);
+  const inertial = {
+    mass: numberAttr(inertialNode.attrs, 'mass', 0),
+    centerOfMass: parseNumbers(inertialNode.attrs.pos, [0, 0, 0])
+  };
+  if (full.length >= 3) {
+    inertial.diagonalInertia = [full[0], full[1], full[2]];
+  } else {
+    inertial.diagonalInertia = [
+      numberAttr(inertialNode.attrs, 'diaginertia', undefined),
+      undefined,
+      undefined
+    ].filter(Number.isFinite);
+  }
+  return inertial;
+}
+
+function shapePayloadForMujocoGeom(geomNode, originMatrix, fallbackName) {
+  const geomType = geomNode.attrs.type || (geomNode.attrs.mesh ? 'mesh' : 'sphere');
+  if (geomType === 'mesh') return null;
+
+  const size = parseNumbers(geomNode.attrs.size, []);
+  if (geomType === 'box') {
+    const half = [size[0] || 1, size[1] || 1, size[2] || 1];
+    const matrix = new THREE.Matrix4()
+      .copy(originMatrix)
+      .multiply(new THREE.Matrix4().makeScale(half[0], half[1], half[2]));
+    return [{
+      name: fallbackName,
+      matrix: matrixToUSDArray(matrix),
+      shape: { type: 'box' }
+    }];
+  }
+
+  if (geomType === 'sphere') {
+    return [{
+      name: fallbackName,
+      matrix: matrixToUSDArray(originMatrix),
+      shape: {
+        type: 'sphere',
+        radius: size[0] || 0.5
+      }
+    }];
+  }
+
+  if (geomType === 'ellipsoid') {
+    const radii = [size[0] || 0.5, size[1] || 0.5, size[2] || 0.5];
+    const matrix = new THREE.Matrix4()
+      .copy(originMatrix)
+      .multiply(new THREE.Matrix4().makeScale(radii[0], radii[1], radii[2]));
+    return [{
+      name: fallbackName,
+      matrix: matrixToUSDArray(matrix),
+      shape: {
+        type: 'sphere',
+        radius: 1
+      }
+    }];
+  }
+
+  if (geomType === 'cylinder' || geomType === 'capsule') {
+    const fromto = parseNumbers(geomNode.attrs.fromto, []);
+    const matrix = new THREE.Matrix4().copy(originMatrix);
+    let height = size[1] ? size[1] * 2 : 1;
+    if (fromto.length >= 6) {
+      const dx = fromto[3] - fromto[0];
+      const dy = fromto[4] - fromto[1];
+      const dz = fromto[5] - fromto[2];
+      height = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      matrix.elements[12] = 0.5 * (fromto[0] + fromto[3]);
+      matrix.elements[13] = 0.5 * (fromto[1] + fromto[4]);
+      matrix.elements[14] = 0.5 * (fromto[2] + fromto[5]);
+    }
+    return [{
+      name: fallbackName,
+      matrix: matrixToUSDArray(matrix),
+      shape: {
+        type: geomType,
+        radius: size[0] || 0.5,
+        height,
+        axis: 'Z'
+      }
+    }];
+  }
+
+  if (geomType === 'plane') {
+    return [{
+      name: fallbackName,
+      matrix: matrixToUSDArray(originMatrix),
+      shape: {
+        type: 'plane',
+        width: (size[0] && size[0] > 0 ? size[0] : 1) * 2,
+        length: (size[1] && size[1] > 0 ? size[1] : 1) * 2,
+        axis: 'Z'
+      }
+    }];
+  }
+
+  return null;
+}
+
+function addMujocoPhysicsAttrs(payload, geomNode) {
+  if (!payload || !geomNode?.attrs) return payload;
+  const group = numberAttr(geomNode.attrs, 'group');
+  if (Number.isFinite(group)) payload.group = group;
+  const condim = numberAttr(geomNode.attrs, 'condim');
+  if (Number.isFinite(condim)) payload.condim = condim;
+  const margin = numberAttr(geomNode.attrs, 'margin');
+  const solmix = numberAttr(geomNode.attrs, 'solmix');
+  if (Number.isFinite(margin) || Number.isFinite(solmix)) {
+    payload.mjc = payload.mjc || {};
+    if (Number.isFinite(margin)) payload.mjc.margin = margin;
+    if (Number.isFinite(solmix)) payload.mjc.solmix = solmix;
+  }
+  return payload;
+}
+
+function buildMujocoActuators(root) {
+  const actuators = [];
+  for (const actuatorRoot of childElements(root, 'actuator')) {
+    for (const actNode of childElements(actuatorRoot)) {
+      const joint = actNode.attrs.joint || '';
+      if (!joint) continue;
+      const act = {
+        name: actNode.attrs.name || `${actNode.name}_${joint}`,
+        joint,
+        control: 'pd'
+      };
+      const kp = numberAttr(actNode.attrs, 'kp');
+      if (Number.isFinite(kp)) {
+        act.kp = kp;
+      } else {
+        const gain = parseNumbers(actNode.attrs.gainprm, []);
+        if (gain.length) act.kp = gain[0];
+      }
+      const kd = numberAttr(actNode.attrs, 'kv');
+      if (Number.isFinite(kd)) {
+        act.kd = kd;
+      } else {
+        const bias = parseNumbers(actNode.attrs.biasprm, []);
+        if (bias.length >= 3) act.kd = Math.abs(bias[2]);
+      }
+      const forceRange = parseNumbers(actNode.attrs.forcerange, []);
+      if (forceRange.length >= 2) {
+        act.maxEffort = Math.max(Math.abs(forceRange[0]), Math.abs(forceRange[1]));
+      }
+      const ctrlRange = parseNumbers(actNode.attrs.ctrlrange, []);
+      if (actNode.name === 'motor' && ctrlRange.length >= 2) {
+        act.constEffort = Math.max(Math.abs(ctrlRange[0]), Math.abs(ctrlRange[1]));
+      }
+      const delay = numberAttr(actNode.attrs, 'delay');
+      if (Number.isFinite(delay)) act.delaySteps = Math.max(1, Math.round(delay));
+      actuators.push(act);
+    }
+  }
+  return actuators;
+}
+
+async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName, opts) {
+  const geomType = geomNode.attrs.type || (geomNode.attrs.mesh ? 'mesh' : 'sphere');
+  const originMatrix = matrixFromPoseAttrs(geomNode.attrs);
+  if (geomType === 'mesh') {
+    const meshName = geomNode.attrs.mesh;
+    const meshAsset = meshAssets.get(meshName);
+    if (!meshAsset) {
+      if (opts.allowMissing) {
+        console.warn(`Skipping missing MJCF mesh asset: ${meshName}`);
+        return [];
+      }
+      throw new Error(`MJCF mesh asset not found: ${meshName}`);
+    }
+    const ext = extension(meshAsset.path);
+    let object = null;
+    if (ext === '.stl') {
+      object = await loadSTLObject(meshAsset);
+    } else if (ext === '.obj') {
+      object = await loadOBJObject(meshAsset);
+    } else if (USD_MESH_EXTENSIONS.has(ext)) {
+      object = await loadUSDObject(meshAsset);
+    } else if (opts.allowMissing) {
+      console.warn(`Skipping unsupported MJCF mesh extension ${ext || '(none)'}: ${meshAsset.path}`);
+      return [];
+    } else {
+      throw new Error(`Unsupported MJCF mesh extension ${ext || '(none)'}: ${meshAsset.path}`);
+    }
+    const scale = parseNumbers(geomNode.attrs.scale, meshAsset.scale || [1, 1, 1]);
+    const meshMatrix = new THREE.Matrix4()
+      .copy(originMatrix)
+      .multiply(new THREE.Matrix4().makeScale(scale[0] || 1, scale[1] || 1, scale[2] || 1));
+    return collectMeshPayloads(object, meshMatrix, fallbackName);
+  }
+
+  const size = parseNumbers(geomNode.attrs.size, []);
+  if (geomType === 'box') {
+    return collectMeshPayloads(
+      primitiveObjectFromGeometry(new THREE.BoxGeometry((size[0] || 1) * 2, (size[1] || 1) * 2, (size[2] || 1) * 2), fallbackName),
+      originMatrix,
+      fallbackName
+    );
+  }
+  if (geomType === 'sphere') {
+    return collectMeshPayloads(
+      primitiveObjectFromGeometry(new THREE.SphereGeometry(size[0] || 0.5, 24, 12), fallbackName),
+      originMatrix,
+      fallbackName
+    );
+  }
+  if (geomType === 'ellipsoid') {
+    const radii = [size[0] || 0.5, size[1] || 0.5, size[2] || 0.5];
+    const matrix = new THREE.Matrix4()
+      .copy(originMatrix)
+      .multiply(new THREE.Matrix4().makeScale(radii[0], radii[1], radii[2]));
+    return collectMeshPayloads(
+      primitiveObjectFromGeometry(new THREE.SphereGeometry(1, 24, 12), fallbackName),
+      matrix,
+      fallbackName
+    );
+  }
+  if (geomType === 'cylinder' || geomType === 'capsule') {
+    const radius = size[0] || 0.5;
+    const length = size[1] ? size[1] * 2 : 1;
+    const yToZ = new THREE.Matrix4().makeRotationX(Math.PI / 2);
+    return collectMeshPayloads(
+      primitiveObjectFromGeometry(new THREE.CylinderGeometry(radius, radius, length, 24, 1), fallbackName),
+      new THREE.Matrix4().copy(originMatrix).multiply(yToZ),
+      fallbackName
+    );
+  }
+
+  if (opts.allowMissing) {
+    console.warn(`Skipping unsupported MJCF geom type: ${geomType}`);
+    return [];
+  }
+  throw new Error(`Unsupported MJCF geom type: ${geomType}`);
+}
+
+async function buildMujocoPayload(xmlText, opts, baseDir) {
+  const expanded = expandMujocoIncludes(xmlText, baseDir);
+  const root = parseXMLTree(expanded);
+  if (root.name !== 'mujoco') {
+    throw new Error('Expected <mujoco> root for MJCF input.');
+  }
+
+  const meshAssets = collectMujocoAssets(root, baseDir);
+  const worldbody = firstChild(root, 'worldbody');
+  if (!worldbody) {
+    throw new Error('MJCF input has no <worldbody>.');
+  }
+
+  const links = [];
+  const joints = [];
+  const actuators = buildMujocoActuators(root);
+  let visualCount = 0;
+  let collisionCount = 0;
+
+  async function visitBody(bodyNode, parentName = '') {
+    const linkName = bodyNode.attrs.name || `body_${links.length}`;
+    const linkPayload = {
+      name: linkName,
+      inertial: parseMujocoInertial(bodyNode),
+      visuals: [],
+      collisions: []
+    };
+
+    let geomIndex = 0;
+    for (const geomNode of childElements(bodyNode, 'geom')) {
+      const geomName = geomNode.attrs.name || geomNode.attrs.mesh || `${linkName}_geom_${geomIndex}`;
+      const isVisual = geomNode.attrs.class === 'visual' ||
+        geomNode.attrs.group === '2' ||
+        (geomNode.attrs.contype === '0' && geomNode.attrs.conaffinity === '0');
+      let payloads = null;
+      if (!isVisual && !opts.tessellateCollisionShapes) {
+        payloads = shapePayloadForMujocoGeom(
+          geomNode,
+          matrixFromPoseAttrs(geomNode.attrs),
+          geomName
+        );
+      }
+      if (!payloads) {
+        payloads = await mujocoGeomPayloads(geomNode, meshAssets, geomName, opts);
+      }
+      if (isVisual) {
+        linkPayload.visuals.push(...payloads.map((payload) => addMujocoPhysicsAttrs(payload, geomNode)));
+        visualCount += payloads.length;
+      } else {
+        // Default approximation `convexHull` matches the convention in
+        // `src/tydra/urdf-to-usd.cc::AddCollisionAPIs` and mirrors
+        // NVIDIA / Newton's mujoco-usd-converter (see lightgeom
+        // `doc/usd.md` "Mesh + collider convention"). Override per-geom
+        // with `approximation: "none"` for triangle-soup MJCF colliders.
+        for (const payload of payloads) {
+          payload.approximation = payload.approximation || 'convexHull';
+          addMujocoPhysicsAttrs(payload, geomNode);
+        }
+        linkPayload.collisions.push(...payloads);
+        collisionCount += payloads.length;
+      }
+      geomIndex++;
+    }
+
+    links.push(linkPayload);
+
+    if (parentName) {
+      const jointNode = firstChild(bodyNode, 'joint');
+      if (jointNode) {
+        const axis = parseNumbers(jointNode.attrs.axis, [0, 0, 1]);
+        const range = parseNumbers(jointNode.attrs.range, []);
+        joints.push({
+          name: jointNode.attrs.name || `${parentName}_to_${linkName}`,
+          type: mujocoJointType(jointNode.attrs.type || 'hinge'),
+          parent: parentName,
+          child: linkName,
+          axis,
+          axisToken: axisToToken(axis),
+          origin: parseNumbers(bodyNode.attrs.pos, [0, 0, 0]),
+          originMatrix: matrixToUSDArray(matrixFromPoseAttrs(bodyNode.attrs)),
+          limit: range.length >= 2 ? { lower: range[0], upper: range[1] } : {},
+          dynamics: {
+            damping: numberAttr(jointNode.attrs, 'damping'),
+            friction: numberAttr(jointNode.attrs, 'frictionloss')
+          }
+        });
+      } else {
+        joints.push({
+          name: `${parentName}_to_${linkName}_fixed`,
+          type: 'fixed',
+          parent: parentName,
+          child: linkName,
+          axis: [1, 0, 0],
+          axisToken: 'X',
+          origin: parseNumbers(bodyNode.attrs.pos, [0, 0, 0]),
+          originMatrix: matrixToUSDArray(matrixFromPoseAttrs(bodyNode.attrs)),
+          limit: {},
+          dynamics: {}
+        });
+      }
+    }
+
+    for (const childBody of childElements(bodyNode, 'body')) {
+      await visitBody(childBody, linkName);
+    }
+  }
+
+  for (const bodyNode of childElements(worldbody, 'body')) {
+    await visitBody(bodyNode);
+  }
+
+  return {
+    payload: {
+      name: root.attrs.model || path.basename(opts.inputFile || 'mujoco_scene', path.extname(opts.inputFile || 'mujoco_scene')),
+      upAxis: opts.upAxis,
+      gravity: opts.upAxis === 'Z' ? [0, 0, -1] : [0, -1, 0],
+      timestep: numberAttr(firstChild(root, 'option')?.attrs, 'timestep'),
+      links,
+      joints,
+      actuators
+    },
+    stats: {
+      links: links.length,
+      joints: joints.length,
+      visuals: visualCount,
+      collisions: collisionCount,
+      actuators: actuators.length
+    }
+  };
+}
+
+async function buildExportPayload(urdfText, opts, urdfDir) {
+  const metadata = parseURDFMetadata(urdfText);
+  const resolver = new MeshResolver(opts, urdfDir);
+  const links = [];
+  let visualCount = 0;
+  let collisionCount = 0;
+
+  for (const linkInfo of metadata.links.values()) {
+    const linkPayload = {
+      name: linkInfo.name,
+      inertial: linkInfo.inertial || {},
+      visuals: [],
+      collisions: []
+    };
+
+    let visualIndex = 0;
+    for (const visualEl of findElements(linkInfo.body, 'visual')) {
+      const geometryEl = firstElement(visualEl.body, 'geometry');
+      if (!geometryEl) continue;
+      const origin = originToMatrix(firstElement(visualEl.body, 'origin')?.attrs);
+      const payloads = await meshPayloadsForGeometry(
+        geometryEl,
+        origin,
+        resolver,
+        visualEl.attrs.name || `${linkInfo.name}_visual_${visualIndex}`,
+        opts
+      );
+      linkPayload.visuals.push(...payloads);
+      visualCount += payloads.length;
+      visualIndex++;
+    }
+
+    let collisionIndex = 0;
+    for (const collisionEl of findElements(linkInfo.body, 'collision')) {
+      const geometryEl = firstElement(collisionEl.body, 'geometry');
+      if (!geometryEl) continue;
+      const origin = originToMatrix(firstElement(collisionEl.body, 'origin')?.attrs);
+      const fallbackName =
+        collisionEl.attrs.name || `${linkInfo.name}_collision_${collisionIndex}`;
+      let payloads = null;
+      if (!opts.tessellateCollisionShapes) {
+        payloads = shapePayloadForUrdfGeometry(geometryEl, origin, fallbackName);
+      }
+      if (!payloads) {
+        payloads = await meshPayloadsForGeometry(
+          geometryEl,
+          origin,
+          resolver,
+          fallbackName,
+          opts
+        );
+      }
+      // URDF <collision> elements default to convex-hull approximation —
+      // matches the writer convention in `src/tydra/urdf-to-usd.cc` and
+      // mujoco-usd-converter. Override per-geom by authoring
+      // `approximation` in the JSON payload.
+      for (const payload of payloads) {
+        payload.approximation = payload.approximation || 'convexHull';
+      }
+      linkPayload.collisions.push(...payloads);
+      collisionCount += payloads.length;
+      collisionIndex++;
+    }
+
+    links.push(linkPayload);
+  }
+
+  return {
+    payload: {
+      name: metadata.name || path.basename(opts.inputFile || 'sample', path.extname(opts.inputFile || 'sample')),
+      upAxis: opts.upAxis,
+      gravity: opts.upAxis === 'Z' ? [0, 0, -1] : [0, -1, 0],
+      links,
+      joints: metadata.joints,
+      actuators: metadata.actuators
+    },
+    stats: {
+      links: links.length,
+      joints: metadata.joints.length,
+      visuals: visualCount,
+      collisions: collisionCount,
+      actuators: metadata.actuators.length
+    }
+  };
+}
+
+async function buildPayload(inputText, opts, inputDir) {
+  const isMJCF = opts.inputFormat === 'mjcf' ||
+    (opts.inputFormat === 'auto' && /<mujoco\b/i.test(inputText));
+  if (isMJCF) {
+    return buildMujocoPayload(inputText, opts, inputDir);
+  }
+  return buildExportPayload(inputText, opts, inputDir);
+}
+
+function resolveOutputPath(inputFile, format, outputFile) {
+  if (outputFile) {
+    if (format === 'all') {
+      const ext = path.extname(outputFile);
+      return ext ? outputFile.slice(0, -ext.length) : outputFile;
+    }
+    return path.extname(outputFile) ? outputFile : `${outputFile}.${format}`;
+  }
+  const base = inputFile
+    ? inputFile.replace(/\.(urdf|xml)$/i, '')
+    : path.resolve(process.cwd(), 'sample-urdf');
+  return format === 'all' ? base : `${base}.${format}`;
+}
+
+function writeExport(native, format, outPath) {
+  if (format === 'usda') {
+    const text = native.exportAsUSDA();
+    if (!text) throw new Error(native.error() || 'USDA export failed');
+    fs.writeFileSync(outPath, text, 'utf8');
+    return text.length;
+  }
+  if (format === 'usdc') {
+    const data = native.exportAsUSDC();
+    if (!data) throw new Error(native.error() || 'USDC export failed');
+    const bytes = new Uint8Array(data);
+    fs.writeFileSync(outPath, bytes);
+    return bytes.length;
+  }
+  const data = native.exportAsUSDZ();
+  if (!data) throw new Error(native.error() || 'USDZ export failed');
+  const bytes = new Uint8Array(data);
+  fs.writeFileSync(outPath, bytes);
+  return bytes.length;
+}
+
+function verifyUSDA(native, stats) {
+  const usda = native.exportAsUSDA();
+  if (!usda) throw new Error(native.error() || 'USDA verification export failed');
+  const required = [
+    'PhysicsScene',
+    'MjcSceneAPI',
+    'NewtonSceneAPI'
+  ];
+  if (stats.links > 0) {
+    required.push('PhysicsRigidBodyAPI');
+    required.push('NewtonArticulationRootAPI');
+  }
+  if (stats.collisions > 0) {
+    required.push('PhysicsCollisionAPI');
+    required.push('MjcCollisionAPI');
+    required.push('NewtonCollisionAPI');
+    // The convention in `src/tydra/urdf-to-usd.cc::AddCollisionAPIs`
+    // also stamps `MjcImageableAPI` + `purpose = "guide"` on every
+    // collider so default Hydra renders skip them.
+    required.push('MjcImageableAPI');
+    required.push('uniform token purpose = "guide"');
+  }
+  if (stats.joints > 0) required.push('MjcJointAPI');
+  if ((stats.actuators || 0) > 0) required.push('NewtonActuator');
+  const missing = required.filter((token) => !usda.includes(token));
+  if (missing.length) {
+    throw new Error(`Verification failed. Missing USDA tokens: ${missing.join(', ')}`);
+  }
+}
+
+async function main() {
+  const opts = parseArgs();
+  const inputPath = opts.sample ? null : path.resolve(opts.inputFile);
+  const urdfDir = inputPath ? path.dirname(inputPath) : process.cwd();
+  const urdfText = opts.sample ? SAMPLE_URDF : fs.readFileSync(inputPath, 'utf8');
+
+  if (inputPath && !opts.assetDirs.length) {
+    opts.assetDirs.push(urdfDir);
+  }
+
+  const { payload, stats } = await buildPayload(urdfText, opts, urdfDir);
+  if (opts.dumpJson) {
+    fs.mkdirSync(path.dirname(path.resolve(opts.dumpJson)), { recursive: true });
+    fs.writeFileSync(opts.dumpJson, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  }
+
+  const tinyusdz = await TinyUSDZFactory();
+  const native = new tinyusdz.TinyUSDZLoaderNative();
+  const created = native.createURDFPhysicsScene(JSON.stringify(payload));
+  if (!created) {
+    throw new Error(native.error() || 'createURDFPhysicsScene failed');
+  }
+  const warn = native.warn?.();
+  if (warn) console.warn(warn.trim());
+  if (opts.verify) verifyUSDA(native, stats);
+
+  const formats = opts.format === 'all' ? ['usda', 'usdc', 'usdz'] : [opts.format];
+  const basePath = resolveOutputPath(inputPath, opts.format, opts.outputFile);
+  for (const format of formats) {
+    const outPath = opts.format === 'all' ? `${basePath}.${format}` : basePath;
+    fs.mkdirSync(path.dirname(path.resolve(outPath)), { recursive: true });
+    const bytes = writeExport(native, format, outPath);
+    console.log(`Wrote ${outPath} (${bytes} ${format === 'usda' ? 'chars' : 'bytes'})`);
+  }
+  native.delete();
+
+  console.log(`Verified ${payload.name}: ${stats.links} links, ${stats.joints} joints, ${stats.visuals} visual meshes, ${stats.collisions} collisions, ${stats.actuators || 0} Newton actuators.`);
+  if (opts.verbose) {
+    console.log(`Formats: ${formats.join(', ')}`);
+    if (opts.dumpJson) console.log(`Payload JSON: ${opts.dumpJson}`);
+  }
+}
+
+main().catch((err) => {
+  console.error(`urdf-to-usd: ${err.message}`);
+  if (process.argv.includes('--verbose') || process.argv.includes('-v')) {
+    console.error(err.stack);
+  }
+  process.exit(1);
+});

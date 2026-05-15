@@ -1,0 +1,20 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Z"
+)
+
+def Xform "World"
+{
+    def PhysicsCollisionGroup "GroupA"
+    {
+        token physics:mergeGroup = "default"
+        bool physics:invertFilteredGroups = 0
+        rel physics:filteredGroups = </World/GroupB>
+    }
+
+    def PhysicsCollisionGroup "GroupB"
+    {
+        token physics:mergeGroup = "default"
+    }
+}

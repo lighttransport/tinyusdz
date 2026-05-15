@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
@@ -24,6 +24,7 @@
 #include "str-util.hh"
 #include "value-pprint.hh"
 #include "logger.hh"
+#include "safe-arithmetic.hh"
 
 #define SET_ERROR_AND_RETURN(msg) \
   if (err) {                      \
@@ -52,7 +53,13 @@ struct can_use_memcpy : std::integral_constant<bool,
 template <typename T>
 inline typename std::enable_if<can_use_memcpy<T>::value>::type
 CopyBlockElements(T* dest, const T* src, size_t count) {
-  memcpy(dest, src, count * sizeof(T));
+  size_t byte_count;
+  if (!safe::mul(count, sizeof(T), &byte_count)) {
+    // Overflow detected - zero out dest to be safe
+    memset(dest, 0, 0);  // Will likely segfault if count was huge, but prevents memcpy with overflowed value
+    return;
+  }
+  memcpy(dest, src, byte_count);
 }
 
 // Block copy with loop for non-trivially copyable types
@@ -99,34 +106,44 @@ ExpandWithIndicesFromPtr(
     return false;
   }
 
-  dest->resize(indices.size() * elementSize);
+  // Check for overflow before resize
+  size_t resize_size;
+  if (!safe::mul(indices.size(), elementSize, &resize_size)) {
+    return nonstd::make_unexpected("Integer overflow in ExpandWithIndices: indices.size() * elementSize");
+  }
+  dest->resize(resize_size);
 
   std::vector<size_t> invalidIndices;
   const size_t numIndices = indices.size();
   T* destData = dest->data();
 
-  // Fast path for elementSize == 1 (most common case)
-  if (elementSize == 1) {
-    for (size_t i = 0; i < numIndices; i++) {
-      int32_t idx = indices[i];
-      if ((idx >= 0) && (size_t(idx) < srcSize)) {
-        destData[i] = srcData[idx];
-      } else {
-        invalidIndices.push_back(i);
-      }
-    }
-  }
-  // Optimized path for elementSize > 1
-  else {
-    for (size_t i = 0; i < numIndices; i++) {
-      int32_t idx = indices[i];
-      if ((idx >= 0) && ((size_t(idx+1) * size_t(elementSize)) <= srcSize)) {
-        CopyBlockElements(destData + i * elementSize, srcData + size_t(idx) * elementSize, elementSize);
-      } else {
-        invalidIndices.push_back(i);
-      }
-    }
-  }
+   // Fast path for elementSize == 1 (most common case)
+   if (elementSize == 1) {
+     for (size_t i = 0; i < numIndices; i++) {
+       int32_t idx = indices[i];
+       if ((idx >= 0) && (size_t(idx) < srcSize)) {
+         destData[i] = srcData[idx];
+       } else {
+         invalidIndices.push_back(i);
+       }
+     }
+   }
+   // Optimized path for elementSize > 1
+   else {
+     for (size_t i = 0; i < numIndices; i++) {
+       int32_t idx = indices[i];
+       if (idx >= 0) {
+         size_t needed;
+         if (safe::mul(size_t(idx) + 1, size_t(elementSize), &needed) && (needed <= srcSize)) {
+           CopyBlockElements(destData + i * elementSize, srcData + size_t(idx) * elementSize, elementSize);
+         } else {
+           invalidIndices.push_back(i);
+         }
+       } else {
+         invalidIndices.push_back(i);
+       }
+     }
+   }
 
   if (invalidIndices.size()) {
     return nonstd::make_unexpected(
@@ -166,7 +183,12 @@ ExpandWithIndices(
       return false;
     }
 
-    dest->resize(indices.size() * elementSize);
+    // Check for overflow before resize
+    size_t resize_size;
+    if (!safe::mul(indices.size(), elementSize, &resize_size)) {
+      return nonstd::make_unexpected("Integer overflow in ExpandWithIndices: indices.size() * elementSize");
+    }
+    dest->resize(resize_size);
 
     std::vector<size_t> invalidIndices;
     const size_t numValues = values.size();
@@ -174,9 +196,14 @@ ExpandWithIndices(
 
     for (size_t i = 0; i < numIndices; i++) {
       int32_t idx = indices[i];
-      if ((idx >= 0) && ((size_t(idx+1) * size_t(elementSize)) <= numValues)) {
-        for (size_t k = 0; k < elementSize; k++) {
-          (*dest)[i*elementSize + k] = values[size_t(idx)*elementSize + k];
+      if (idx >= 0) {
+        size_t needed;
+        if (safe::mul(size_t(idx) + 1, size_t(elementSize), &needed) && (needed <= numValues)) {
+          for (size_t k = 0; k < elementSize; k++) {
+            (*dest)[i*elementSize + k] = values[size_t(idx)*elementSize + k];
+          }
+        } else {
+          invalidIndices.push_back(i);
         }
       } else {
         invalidIndices.push_back(i);

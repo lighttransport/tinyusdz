@@ -3,11 +3,11 @@
 #include <array>
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <unordered_set>
 
 #include "core/prim.hh"
 #include "../layer.hh"
+#include "../tiny-hashmap.hh"
 
 namespace tinyusdz {
 
@@ -69,15 +69,15 @@ struct Context
 
   // loaded USD assets
   // key = UUID
-  std::unordered_map<std::string, USDLayer> layers;
+  tinyusdz::HashMap<std::string, USDLayer> layers;
 
   // key = name
-  std::unordered_map<std::string, MCPAsset> assets;
+  tinyusdz::HashMap<std::string, MCPAsset> assets;
 
   std::vector<AssetSelection> selected_assets;
 
   // key = name
-  std::unordered_map<std::string, Screenshot> screenshots;
+  tinyusdz::HashMap<std::string, Screenshot> screenshots;
 };
 
 } // namespace mcp

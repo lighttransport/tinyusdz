@@ -10,9 +10,9 @@
 #pragma once
 
 #include <string>
-#include <unordered_map>
 
 #include "prim-enums.hh"  // Variability
+#include "../tiny-hashmap.hh"
 
 namespace tinyusdz {
 
@@ -136,7 +136,7 @@ class SchemaRegistry {
                       {Variability::Uniform, "token", "default"});
   }
 
-  std::unordered_map<std::string, SchemaPropertyInfo> _registry;
+  tinyusdz::HashMap<std::string, SchemaPropertyInfo> _registry;
 };
 
 }  // namespace tinyusdz

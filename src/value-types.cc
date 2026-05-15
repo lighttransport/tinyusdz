@@ -1042,7 +1042,8 @@ size_t Value::array_size() const {
   __FUNC(matrix2d) \
   __FUNC(matrix3d) \
   __FUNC(matrix4d) \
-  __FUNC(frame4d)
+  __FUNC(frame4d) \
+  __FUNC(AssetPath)
 
 #define ARRAY_SIZE_GET(__ty) case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
     if (auto pv = v_.cast<std::vector<__ty>>()) { \

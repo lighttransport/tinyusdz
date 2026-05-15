@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { HDRCubeTextureLoader } from 'three/addons/loaders/HDRCubeTextureLoader.js';
 
-import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.module.js';
+import { GUI } from 'lil-gui';
 
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js'
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js'
@@ -43,7 +43,8 @@ async function loadScenes() {
 
   // it is recommended to call init() before loadAsync()
   // (wait loading/compiling wasm module in the early stage))
-  await loader.init({useZstdCompressedWasm: true});
+  await loader.init({useZstdCompressedWasm: false});
+  TinyUSDZLoaderUtils.setTinyUSDZ(loader.native_);
 
   const texcat_filename = "./assets/texture-cat-plane.usda";
 
@@ -66,7 +67,7 @@ async function loadScenes() {
 
     const usdRootNode = usd_scene.getDefaultRootNode();
 
-    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options); 
+    const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 
     if (usd_scene.getURI().includes('UsdCookie')) {
       // Add exra scaling

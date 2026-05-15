@@ -1,0 +1,24 @@
+#usda 1.0
+(
+    defaultPrim = "s"
+    upAxis = "Y"
+)
+
+# Regression test: multi-line `"""..."""` string in attribute metadata
+# block (issue #274). Stage-meta multi-line is covered by
+# stage-meta-multiline-string.usda; this exercises the attribute-meta
+# `(...)` block path that previously failed because `ReadStringLiteral`
+# did not handle triple-quoted strings.
+
+def Shader "s"
+{
+    color3f inputs:diffuse_color_constant = (0.5, 0.5, 0.5) (
+        displayName = "Albedo Color"
+        doc = """This is the albedo base color
+
+multi-line continues here.
+"""
+        hidden = false
+        renderType = "color"
+    )
+}

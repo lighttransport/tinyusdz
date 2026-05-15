@@ -1,4 +1,4 @@
-// Test for grouped/flattened parameter export functionality
+﻿// Test for grouped/flattened parameter export functionality
 
 #include <iostream>
 #include <string>

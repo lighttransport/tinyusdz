@@ -17,6 +17,7 @@
 #include "common-utils.hh"
 #include "image-loader.hh"
 #include "pprinter.hh"
+#include "security-policy.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
 #include "usdLux.hh"
@@ -335,13 +336,26 @@ bool RenderSceneConverter::ConvertDomeLight(
 
           // Try to store the raw asset for later decoding (e.g., in JS layer)
           Asset asset;
-          std::string resolvedPath = env.asset_resolver.resolve(assetPath.GetAssetPath());
+          std::string sanitized_path =
+              utils::SanitizeAssetPath(assetPath.GetAssetPath());
+          if (sanitized_path.empty()) {
+            PushWarn(fmt::format("Unsafe envmap asset path: `{}`",
+                                 assetPath.GetAssetPath()));
+            continue;
+          }
+          std::string resolvedPath = env.asset_resolver.resolve(sanitized_path);
           std::string readWarn, readErr;
 
           bool asset_opened = env.asset_resolver.open_asset(
-              resolvedPath, assetPath.GetAssetPath(), &asset, &readWarn, &readErr);
+              resolvedPath, sanitized_path, &asset, &readWarn, &readErr);
 
           if (asset_opened) {
+            if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+              PushWarn(fmt::format(
+                  "Envmap asset exceeds max bytes ({} > {}).",
+                  asset.size(), security_policy::kResolverMaxAssetReadBytes));
+              continue;
+            }
             TextureImage fallbackTexImage;
             BufferData fallbackImageBuffer;
             fallbackImageBuffer.componentType = ComponentType::UInt8;
@@ -369,13 +383,26 @@ bool RenderSceneConverter::ConvertDomeLight(
       } else if (!env.scene_config.load_texture_assets) {
         // Store asset path only without decoding
         Asset asset;
-        std::string resolvedPath = env.asset_resolver.resolve(assetPath.GetAssetPath());
+        std::string sanitized_path =
+            utils::SanitizeAssetPath(assetPath.GetAssetPath());
+        if (sanitized_path.empty()) {
+          PushWarn(fmt::format("Unsafe envmap asset path: `{}`",
+                               assetPath.GetAssetPath()));
+          continue;
+        }
+        std::string resolvedPath = env.asset_resolver.resolve(sanitized_path);
         std::string readWarn, readErr;
 
         bool asset_opened = env.asset_resolver.open_asset(
-            resolvedPath, assetPath.GetAssetPath(), &asset, &readWarn, &readErr);
+            resolvedPath, sanitized_path, &asset, &readWarn, &readErr);
 
         if (asset_opened) {
+          if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+            PushWarn(fmt::format(
+                "Envmap asset exceeds max bytes ({} > {}).",
+                asset.size(), security_policy::kResolverMaxAssetReadBytes));
+            continue;
+          }
           TextureImage texImage;
           BufferData imageBuffer;
           imageBuffer.componentType = ComponentType::UInt8;

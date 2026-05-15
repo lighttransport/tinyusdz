@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>TinyUSDZ Physics + MuJoCo WASM</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+      color: #eef2f7;
+      background: #15181c;
+    }
+    canvas { display: block; }
+    #toolbar {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      background: rgba(20, 23, 28, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      backdrop-filter: blur(10px);
+    }
+    #title {
+      font-size: 14px;
+      font-weight: 700;
+      white-space: nowrap;
+      margin-right: 4px;
+    }
+    button, select {
+      height: 32px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 6px;
+      background: #2f685f;
+      color: #fff;
+      font-size: 12px;
+      padding: 0 10px;
+      cursor: pointer;
+    }
+    button.secondary { background: #3e4652; }
+    button:disabled { opacity: 0.45; cursor: default; }
+    select { background: #25303a; }
+    #status {
+      margin-left: auto;
+      max-width: 44vw;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+      color: #c9d2dd;
+      text-align: right;
+    }
+    #panel {
+      position: absolute;
+      top: 76px;
+      left: 12px;
+      width: 336px;
+      max-height: calc(100vh - 92px);
+      overflow: auto;
+      padding: 10px;
+      background: rgba(20, 23, 28, 0.88);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      backdrop-filter: blur(10px);
+    }
+    .section-title {
+      margin: 0 0 8px;
+      color: #8ec7ff;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 64px;
+      gap: 7px;
+      align-items: center;
+      min-height: 42px;
+      padding: 7px;
+      margin-bottom: 8px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 6px;
+    }
+    .row label {
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .row input[type="range"] {
+      grid-column: 1 / -1;
+      width: 100%;
+    }
+    .row input[type="number"] {
+      width: 64px;
+      padding: 4px;
+      color: #eef2f7;
+      background: #11161c;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 4px;
+      font-size: 11px;
+    }
+    #stats {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 5px 10px;
+      margin: 10px 0;
+      font-size: 12px;
+    }
+    #stats span:nth-child(odd) { color: #aab6c4; }
+    details {
+      margin-top: 10px;
+      font-size: 12px;
+    }
+    summary {
+      cursor: pointer;
+      color: #8ec7ff;
+      font-weight: 700;
+    }
+    pre {
+      max-height: 260px;
+      overflow: auto;
+      margin: 8px 0 0;
+      padding: 8px;
+      background: #0e1318;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 6px;
+      color: #dce5ee;
+      font-size: 11px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    #legend {
+      position: absolute;
+      right: 12px;
+      bottom: 12px;
+      display: flex;
+      gap: 8px;
+      padding: 7px 9px;
+      background: rgba(20, 23, 28, 0.78);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      font-size: 12px;
+      color: #c9d2dd;
+    }
+    .swatch {
+      width: 10px;
+      height: 10px;
+      display: inline-block;
+      margin-right: 5px;
+      border-radius: 2px;
+      vertical-align: -1px;
+    }
+    @media (max-width: 760px) {
+      #toolbar { flex-wrap: wrap; }
+      #status { flex-basis: 100%; max-width: none; text-align: left; }
+      #panel {
+        top: auto;
+        bottom: 48px;
+        width: calc(100vw - 24px);
+        max-height: 45vh;
+      }
+      #legend { left: 12px; right: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <div id="title">TinyUSDZ Physics + MuJoCo</div>
+    <button id="playPause">Pause</button>
+    <button id="reset" class="secondary">Reset</button>
+    <button id="fit" class="secondary">Fit</button>
+    <select id="driveMode" title="Drive mode">
+      <option value="servo">Servo</option>
+      <option value="passive">Passive</option>
+    </select>
+    <div id="status">Initializing...</div>
+  </div>
+
+  <div id="panel">
+    <div class="section-title">Joints</div>
+    <div class="row">
+      <label for="shoulderTarget">shoulder</label>
+      <input id="shoulderNumber" type="number" min="-130" max="130" step="1" value="34">
+      <input id="shoulderTarget" type="range" min="-130" max="130" step="1" value="34">
+    </div>
+    <div class="row">
+      <label for="elbowTarget">elbow</label>
+      <input id="elbowNumber" type="number" min="-135" max="135" step="1" value="-52">
+      <input id="elbowTarget" type="range" min="-135" max="135" step="1" value="-52">
+    </div>
+    <div class="row">
+      <label for="speed">speed</label>
+      <input id="speedNumber" type="number" min="0.1" max="3" step="0.1" value="1">
+      <input id="speed" type="range" min="0.1" max="3" step="0.1" value="1">
+    </div>
+    <div id="stats">
+      <span>Time</span><span id="simTime">0.000 s</span>
+      <span>Model</span><span id="modelStats">-</span>
+      <span>USD</span><span id="usdStats">-</span>
+    </div>
+    <details>
+      <summary>USD Physics JSON</summary>
+      <pre id="physicsJson">{}</pre>
+    </details>
+    <details>
+      <summary>USDA Asset</summary>
+      <pre id="usdaPreview"></pre>
+    </details>
+  </div>
+
+  <div id="legend">
+    <span><span class="swatch" style="background:#38bdf8"></span>simulation</span>
+    <span><span class="swatch" style="background:#f59e0b"></span>USD rest</span>
+  </div>
+  <script type="module" src="./phys-sim.js"></script>
+</body>
+</html>

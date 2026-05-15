@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
@@ -26,6 +26,7 @@
 #include "common-utils.hh"
 #include "common-types.hh"
 #include "enum-handlers.hh"
+#include "../tiny-hashmap.hh"
 #include "image-loader.hh"
 #include "image-util.hh"
 #include "image-types.hh"
@@ -38,6 +39,7 @@
 #include "tinyusdz.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
+#include "safe-arithmetic.hh"
 #include "usdLux.hh"
 #include "usdMtlx.hh"
 #include "value-pprint.hh"
@@ -47,6 +49,7 @@
 #include "materialx-to-json.hh"
 #include "mmap-array-ref.hh"
 #include "materialx-to-json.hh"
+#include "security-policy.hh"
 
 //
 #include "common-macros.inc"
@@ -209,7 +212,16 @@ bool RawAssetRead(
   (void)userdata;
   (void)warn;
 
-  std::string resolvedPath = assetResolver.resolve(assetPath.GetAssetPath());
+  std::string sanitized_path =
+      utils::SanitizeAssetPath(assetPath.GetAssetPath());
+  if (sanitized_path.empty()) {
+    if (err) {
+      (*err) += fmt::format("Unsafe asset path: {}\n", assetPath.GetAssetPath());
+    }
+    return false;
+  }
+
+  std::string resolvedPath = assetResolver.resolve(sanitized_path);
 
   if (resolvedPath.empty()) {
     if (err) {
@@ -220,11 +232,19 @@ bool RawAssetRead(
   }
 
   Asset asset;
-  bool ret = assetResolver.open_asset(resolvedPath, assetPath.GetAssetPath(),
+  bool ret = assetResolver.open_asset(resolvedPath, sanitized_path,
                                       &asset, warn, err);
   if (!ret) {
     if (err) {
       (*err) += fmt::format("Failed to open asset: {}", resolvedPath);
+    }
+    return false;
+  }
+
+  if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+    if (err) {
+      (*err) += fmt::format("Resolved asset exceeds max bytes ({} > {}).",
+                            asset.size(), security_policy::kResolverMaxAssetReadBytes);
     }
     return false;
   }
@@ -1460,11 +1480,11 @@ struct MtlxConnectionResolveCacheEntry {
 
 struct ConnectionResolveCache {
   const Stage *stage{nullptr};
-  std::unordered_map<std::string, UVConnectionResolveCacheEntry,
-                     FNV1StringHash>
+  tinyusdz::HashMap<std::string, UVConnectionResolveCacheEntry,
+                    FNV1StringHash>
       uv_texture_by_connection;
-  std::unordered_map<std::string, MtlxConnectionResolveCacheEntry,
-                     FNV1StringHash>
+  tinyusdz::HashMap<std::string, MtlxConnectionResolveCacheEntry,
+                    FNV1StringHash>
       mtlx_texture_by_connection;
 };
 
@@ -1482,11 +1502,11 @@ void ResetConnectionResolveCache(const Stage &stage) {
   ConnectionResolveCache &cache = GetConnectionResolveCache(stage);
   // Swap with empty maps to release bucket memory (clear() keeps capacity)
   {
-    std::unordered_map<std::string, UVConnectionResolveCacheEntry, FNV1StringHash> tmp;
+    tinyusdz::HashMap<std::string, UVConnectionResolveCacheEntry, FNV1StringHash> tmp;
     cache.uv_texture_by_connection.swap(tmp);
   }
   {
-    std::unordered_map<std::string, MtlxConnectionResolveCacheEntry, FNV1StringHash> tmp;
+    tinyusdz::HashMap<std::string, MtlxConnectionResolveCacheEntry, FNV1StringHash> tmp;
     cache.mtlx_texture_by_connection.swap(tmp);
   }
 }
@@ -2357,6 +2377,18 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                       tex_abs_path.prim_part(), asset_eval_err));
     }
   } else {
+    // `asset:file` not authored (known Blender export bug). If the caller
+    // tolerates missing assets, downgrade this to a warning and return
+    // a default-constructed UVTexture so higher-level conversion can
+    // continue; otherwise behave as before.
+    if (env.material_config.allow_missing_asset) {
+      PushWarn(fmt::format(
+          "`asset:file` is not authored for UsdUVTexture at {}. "
+          "Returning empty texture (allow_missing_asset=true).",
+          tex_abs_path.prim_part()));
+      *tex_out = tex;
+      return true;
+    }
     PUSH_ERROR_AND_RETURN(fmt::format(
         "`asset:file` is not authored for UsdUVTexture at {}.",
         tex_abs_path.prim_part()));
@@ -2562,14 +2594,26 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         // Helper: store f32 buffer into imageBuffer
         auto store_f32_buf = [&](const std::vector<float> &buf) {
           imageBuffer.componentType = tydra::ComponentType::Float;
-          imageBuffer.data.resize(buf.size() * sizeof(float));
-          memcpy(imageBuffer.data.data(), buf.data(), sizeof(float) * buf.size());
+          size_t resize_size;
+          if (!safe::mul(buf.size(), sizeof(float), &resize_size)) {
+            return;  // Overflow - skip
+          }
+          imageBuffer.data.resize(resize_size);
+          size_t memcpy_size;
+          if (!safe::mul(buf.size(), sizeof(float), &memcpy_size)) {
+            return;  // Overflow - skip
+          }
+          memcpy(imageBuffer.data.data(), buf.data(), memcpy_size);
         };
 
         // Helper: extract f32 buffer from assetImageBuffer
         auto asset_data_to_f32_buf = [&](std::vector<float> &buf) {
           buf.resize(assetImageBuffer.data.size() / sizeof(float));
-          memcpy(buf.data(), assetImageBuffer.data.data(), buf.size() * sizeof(float));
+          size_t memcpy_size;
+          if (!safe::mul(buf.size(), sizeof(float), &memcpy_size)) {
+            return;  // Overflow - skip
+          }
+          memcpy(buf.data(), assetImageBuffer.data.data(), memcpy_size);
         };
 
         if (assetImageBuffer.componentType == tydra::ComponentType::UInt8) {
@@ -2779,9 +2823,16 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             }
             imageBuffer.componentType = tydra::ComponentType::Float;
 
-            imageBuffer.data.resize(buf.size() * sizeof(float));
-            memcpy(imageBuffer.data.data(), buf.data(),
-                   sizeof(float) * buf.size());
+            size_t resize_size;
+            if (!safe::mul(buf.size(), sizeof(float), &resize_size)) {
+              PUSH_ERROR_AND_RETURN("Integer overflow: buf.size() * sizeof(float)");
+            }
+            imageBuffer.data.resize(resize_size);
+            size_t memcpy_size;
+            if (!safe::mul(buf.size(), sizeof(float), &memcpy_size)) {
+              PUSH_ERROR_AND_RETURN("Integer overflow in memcpy");
+            }
+            memcpy(imageBuffer.data.data(), buf.data(), memcpy_size);
           }
 
           texImage.colorSpace = texImage.usdColorSpace;
@@ -3856,6 +3907,7 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
   //
   // surface shader
   // First try outputs:surface (standard USD), then outputs:mtlx:surface (MaterialX)
+  bool has_surface_connection = false;
   {
     if (material.surface.authored()) {
       auto paths = material.surface.get_connections();
@@ -3868,12 +3920,19 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                         mat_abs_path.full_path_name()));
       }
       surfacePath = paths[0];
-    } else {
+      has_surface_connection = true;
+    } else if (env.material_config.strict_material_check) {
       PUSH_ERROR_AND_RETURN(fmt::format(
           "{}'s outputs:surface isn't authored.",
           mat_abs_path.full_path_name()));
+    } else {
+      PUSH_WARN(fmt::format(
+          "{}'s outputs:surface isn't authored; producing an unshaded material. "
+          "(set material_config.strict_material_check=true to make this an error.)",
+          mat_abs_path.full_path_name()));
     }
-
+  }
+  if (has_surface_connection) {
     const Prim *shaderPrim{nullptr};
     if (!env.stage.find_prim_at_path(
             Path(surfacePath.prim_part(), /* prop part */ ""), shaderPrim,

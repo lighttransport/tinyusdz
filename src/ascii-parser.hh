@@ -166,10 +166,10 @@ class AsciiParser {
   };
 
   struct CursorStore {
-    std::unordered_map<std::string, StoredCursor> layer_metas;
-    std::unordered_map<std::string, StoredCursor> prims;
-    std::unordered_map<std::string, StoredCursor> prim_attrs;
-    std::unordered_map<std::string, StoredCursor> properties;
+    tinyusdz::HashMap<std::string, StoredCursor> layer_metas;
+    tinyusdz::HashMap<std::string, StoredCursor> prims;
+    tinyusdz::HashMap<std::string, StoredCursor> prim_attrs;
+    tinyusdz::HashMap<std::string, StoredCursor> properties;
 
     static std::string MakePropertyKey(const std::string &prim_path,
                                        const std::string &property_name) {
@@ -853,16 +853,31 @@ class AsciiParser {
   bool ParseFloatArrayOptimized(std::vector<float> *result);
   bool ParseDoubleArrayOptimized(std::vector<double> *result);
   bool ParseIntArrayOptimized(std::vector<int32_t> *result);
+  bool ParseUIntArrayOptimized(std::vector<uint32_t> *result);
+  bool ParseInt64ArrayOptimized(std::vector<int64_t> *result);
+  bool ParseUInt64ArrayOptimized(std::vector<uint64_t> *result);
+  bool ParseHalfArrayOptimized(std::vector<value::half> *result);
+  bool ParseTokenArrayOptimized(std::vector<value::token> *result);
+  bool ParseStringDataArrayOptimized(std::vector<value::StringData> *result);
+  bool ParseStdStringArrayOptimized(std::vector<std::string> *result);
 
   ///
   /// Optimized compound-type array parsing using tiny-string
   ///
+  bool ParseHalf2ArrayOptimized(std::vector<value::half2> *result);
+  bool ParseHalf3ArrayOptimized(std::vector<value::half3> *result);
+  bool ParseHalf4ArrayOptimized(std::vector<value::half4> *result);
   bool ParseFloat2ArrayOptimized(std::vector<value::float2> *result);
   bool ParseFloat3ArrayOptimized(std::vector<value::float3> *result);
   bool ParseFloat4ArrayOptimized(std::vector<value::float4> *result);
+  bool ParsePoint3fArrayOptimized(std::vector<value::point3f> *result);
+  bool ParseNormal3fArrayOptimized(std::vector<value::normal3f> *result);
   bool ParseDouble2ArrayOptimized(std::vector<value::double2> *result);
   bool ParseDouble3ArrayOptimized(std::vector<value::double3> *result);
   bool ParseDouble4ArrayOptimized(std::vector<value::double4> *result);
+  bool ParseQuathArrayOptimized(std::vector<value::quath> *result);
+  bool ParseQuatfArrayOptimized(std::vector<value::quatf> *result);
+  bool ParseQuatdArrayOptimized(std::vector<value::quatd> *result);
   bool ParseMatrix2fArrayOptimized(std::vector<value::matrix2f> *result);
   bool ParseMatrix3fArrayOptimized(std::vector<value::matrix3f> *result);
   bool ParseMatrix4fArrayOptimized(std::vector<value::matrix4f> *result);
@@ -960,6 +975,13 @@ class AsciiParser {
   /// Parse assset path identifier.
   ///
   bool ParseAssetIdentifier(value::AssetPath *out, bool *triple_deliminated);
+
+  /// Parse optional `(offset = N; scale = M; customData = {...})` clause
+  /// that may appear after a Reference or Payload's asset+prim_path.
+  /// Pass `out_customData = nullptr` to reject the `customData` key
+  /// (Payload has no customData field).
+  bool ParseOptionalLayerOffset(LayerOffset *out,
+                                Dictionary *out_customData = nullptr);
 
   class PrimIterator;
   using const_iterator = PrimIterator;
@@ -1098,7 +1120,12 @@ class AsciiParser {
   bool LookChar1(char *c);
   bool LookCharN(size_t n, std::vector<char> *nc);
 
-  bool Char1(char *c);
+  // Inlined: previously an out-of-line one-liner that perf showed as ~15%
+  // self-time on USDA-heavy parses. Inlining lets the compiler also inline
+  // StreamReader::read1 (already header-inline) and hoist the _sr pointer
+  // load out of hot scan loops in LexFloat / SkipWhitespaceAndNewline / etc.
+  bool Char1(char *c) { return _sr->read1(c); }
+
   bool CharN(size_t n, std::vector<char> *nc);
   bool CharN(size_t n, char *dst); // assume dest has n >= bytes
 
@@ -1205,13 +1232,13 @@ class AsciiParser {
   std::unordered_set<std::string> _supported_api_schemas;
 
   // Supported metadataum for Stage
-  std::unordered_map<std::string, VariableDef> _supported_stage_metas;
+  tinyusdz::HashMap<std::string, VariableDef> _supported_stage_metas;
 
   // Supported metadataum for Prim.
-  std::unordered_map<std::string, VariableDef> _supported_prim_metas;
+  tinyusdz::HashMap<std::string, VariableDef> _supported_prim_metas;
 
   // Supported metadataum for Property(Attribute and Relation).
-  std::unordered_map<std::string, VariableDef> _supported_prop_metas;
+  tinyusdz::HashMap<std::string, VariableDef> _supported_prop_metas;
 
   std::stack<ErrorDiagnostic> err_stack;
   std::stack<ErrorDiagnostic> warn_stack;
@@ -1243,8 +1270,8 @@ class AsciiParser {
   PrimIdxAssignFunctin _prim_idx_assign_fun;
   StageMetaProcessFunction _stage_meta_process_fun;
   // PrimMetaProcessFunction _prim_meta_process_fun;
-  std::unordered_map<std::string, PrimConstructFunction> _prim_construct_fun_map;
-  std::unordered_map<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
+  tinyusdz::HashMap<std::string, PrimConstructFunction> _prim_construct_fun_map;
+  tinyusdz::HashMap<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
 
   bool _primspec_mode{false};
 

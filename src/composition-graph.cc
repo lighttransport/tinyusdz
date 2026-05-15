@@ -16,6 +16,8 @@
 #include "hash-util.hh"
 #include "layer.hh"
 #include "namespace-mapping.hh"
+#include "security-policy.hh"
+#include "str-util.hh"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
 
@@ -24,6 +26,8 @@
 
 namespace tinyusdz {
 namespace composition_graph {
+
+using security_policy::ValidateAndNormalizeAssetPath;
 
 // ---------------------------------------------------------------------------
 // ArcType utilities
@@ -577,6 +581,17 @@ bool PrimIndexBuilder::EvalReferences(uint16_t node_idx, std::string *err) {
         continue;
       }
 
+      if (!ValidateAndNormalizeAssetPath(asset_path_str, &asset_path_str)) {
+        if (_graph->_options.error_when_asset_not_found) {
+          if (err) {
+            *err = fmt::format("Unsafe asset path in reference: {}",
+                               ref.asset_path.GetAssetPath());
+          }
+          return false;
+        }
+        continue;
+      }
+
       // External reference -- cycle detection
       std::string cycle_key = asset_path_str + ":" + ref.prim_path.prim_part();
       if (WouldCreateCycle(asset_path_str, ref.prim_path.prim_part())) {
@@ -612,10 +627,15 @@ bool PrimIndexBuilder::EvalReferences(uint16_t node_idx, std::string *err) {
           Asset asset;
           if (_graph->_resolver->open_asset(resolved_path, asset_path_str,
                                             &asset, &load_warn, &load_err)) {
-            if (LoadLayerFromMemory(
-                    asset.data(), asset.size(), asset_path_str, &ref_layer,
-                    &load_warn, &load_err)) {
-              loaded = true;
+            if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+              load_err = fmt::format("Resolved asset exceeds max bytes ({} > {}).",
+                                     asset.size(), security_policy::kResolverMaxAssetReadBytes);
+            } else {
+              if (LoadLayerFromMemory(
+                      asset.data(), asset.size(), asset_path_str, &ref_layer,
+                      &load_warn, &load_err)) {
+                loaded = true;
+              }
             }
           }
         }
@@ -798,6 +818,17 @@ bool PrimIndexBuilder::EvalPayloads(uint16_t node_idx, std::string *err) {
           }
         }
       } else {
+        if (!ValidateAndNormalizeAssetPath(asset_path_str, &asset_path_str)) {
+          if (_graph->_options.error_when_asset_not_found) {
+            if (err) {
+              *err = fmt::format("Unsafe asset path in payload: {}",
+                                 pl.asset_path.GetAssetPath());
+            }
+            return false;
+          }
+          continue;
+        }
+
         // External payload -- similar to references
         if (WouldCreateCycle(asset_path_str, pl.prim_path.prim_part())) {
           DCOUT("Payload cycle detected: " << asset_path_str);
@@ -824,9 +855,12 @@ bool PrimIndexBuilder::EvalPayloads(uint16_t node_idx, std::string *err) {
             Asset asset;
             if (_graph->_resolver->open_asset(resolved_path, asset_path_str,
                                               &asset, &load_warn, &load_err)) {
-              if (LoadLayerFromMemory(asset.data(), asset.size(),
-                                      asset_path_str, &pl_layer,
-                                      &load_warn, &load_err)) {
+              if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+                load_err = fmt::format("Resolved asset exceeds max bytes ({} > {}).",
+                                       asset.size(), security_policy::kResolverMaxAssetReadBytes);
+              } else if (LoadLayerFromMemory(asset.data(), asset.size(),
+                                             asset_path_str, &pl_layer,
+                                             &load_warn, &load_err)) {
                 loaded = true;
               }
             }
@@ -1523,6 +1557,9 @@ nonstd::expected<bool, std::string> CompositionGraph::LoadPayload(
   if (asset_path_str.empty()) {
     return nonstd::make_unexpected("Empty asset path in deferred payload");
   }
+  if (!ValidateAndNormalizeAssetPath(asset_path_str, &asset_path_str)) {
+    return nonstd::make_unexpected("Unsafe asset path in deferred payload");
+  }
 
   std::string old_cwp = resolver.current_working_path();
   if (!info->current_working_path.empty()) {
@@ -1543,6 +1580,13 @@ nonstd::expected<bool, std::string> CompositionGraph::LoadPayload(
                            &load_warn, &load_err)) {
     if (!old_cwp.empty()) resolver.set_current_working_path(old_cwp);
     return nonstd::make_unexpected("Failed to open payload asset: " + load_err);
+  }
+
+  if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+    if (!old_cwp.empty()) resolver.set_current_working_path(old_cwp);
+    return nonstd::make_unexpected(
+        fmt::format("Resolved asset exceeds max bytes ({} > {}).",
+                    asset.size(), security_policy::kResolverMaxAssetReadBytes));
   }
 
   if (!LoadLayerFromMemory(asset.data(), asset.size(), asset_path_str,

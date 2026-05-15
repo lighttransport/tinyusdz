@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { HDRCubeTextureLoader } from 'three/addons/loaders/HDRCubeTextureLoader.js';
 
-import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.module.js';
+import { GUI } from 'lil-gui';
 
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js'
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js'
@@ -44,7 +44,8 @@ async function loadScenes() {
 
   // it is recommended to call init() before loadAsync()
   // (wait loading/compiling wasm module in the early stage))
-  await loader.init({useZstdCompressedWasm: true});
+  await loader.init({useZstdCompressedWasm: false});
+  TinyUSDZLoaderUtils.setTinyUSDZ(loader.native_);
 
   const usd_filename = "./assets/usd-composite-sample.usda"; // Read two suzanne model as sublayer.
   //const usd_filename = "./assets/references-001.usda"; // Read Suzanne.usda as reference.
@@ -97,7 +98,7 @@ async function loadScenes() {
   for (let i = 0; i < usd_layer.numRootNodes(); i++) {
     const usdRootNode = usd_layer.getRootNode(i);
 
-    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_layer, options);
+    const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_layer, options);
 
     // HACK
     threeNode.position.x += 2 * i + xoffset;

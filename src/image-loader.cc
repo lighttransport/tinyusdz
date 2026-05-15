@@ -10,6 +10,8 @@
 // - [ ] Support LoD tile, multi-channel for TIFF image
 //
 
+#include "safe-arithmetic.hh"
+
 #if defined(TINYUSDZ_WITH_EXR)
 #include "external/tinyexr.h"
 #endif
@@ -206,8 +208,16 @@ bool DecodeImageSTB(const uint8_t *bytes, const size_t size,
   image->channels = req_comp;
   image->bpp = bits;
   image->format = Image::PixelFormat::UInt;
-  image->data.resize(size_t(w) * size_t(h) * size_t(req_comp) * size_t(bits / 8));
-  std::copy(data, data + w * h * req_comp * (bits / 8), image->data.begin());
+  size_t count;
+  if (!safe::mul3(w, h, req_comp, &count)) {
+    return false;
+  }
+  size_t total_size;
+  if (!safe::mul(count, size_t(bits / 8), &total_size)) {
+    return false;
+  }
+  image->data.resize(total_size);
+  std::copy(data, data + total_size, image->data.begin());
   stbi_image_free(data);
 
   return true;
@@ -347,8 +357,16 @@ bool DecodeImageEXR(const uint8_t *bytes, const size_t size,
   image->channels = 4;  // RGBA
   image->bpp = 32;      // fp32
   image->format = Image::PixelFormat::Float;
-  image->data.resize(size_t(width) * size_t(height) * 4 * sizeof(float));
-  memcpy(image->data.data(), rgba, sizeof(float) * size_t(width) * size_t(height) * 4);
+  size_t count;
+  if (!safe::mul3(width, height, size_t(4), &count)) {
+    return false;
+  }
+  size_t total_size;
+  if (!safe::mul(count, sizeof(float), &total_size)) {
+    return false;
+  }
+  image->data.resize(total_size);
+  memcpy(image->data.data(), rgba, total_size);
 
   free(rgba);
 

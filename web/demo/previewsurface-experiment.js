@@ -3,10 +3,9 @@ import { HDRCubeTextureLoader } from 'three/addons/loaders/HDRCubeTextureLoader.
 
 import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.module.js';
 
-import { TinyUSDZLoader } from './TinyUSDZLoader.js'
-import { TinyUSDZLoaderUtils } from './TinyUSDZLoaderUtils.js'
-import { TinyUSDZComposer } from './TinyUSDZComposer.js'
-import { createTypeReferenceDirectiveResolutionCache } from 'typescript';
+import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js'
+import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js'
+import { TinyUSDZComposer } from 'tinyusdz/TinyUSDZComposer.js'
 
 const manager = new THREE.LoadingManager();
 
@@ -142,6 +141,8 @@ gui.add(params, 'shader_normal').name('NormalMaterial').onChange((value) => {
 async function loadScenes() {
 
   const loader = new TinyUSDZLoader();
+  await loader.init();
+  TinyUSDZLoaderUtils.setTinyUSDZ(loader.native_);
 
   const suzanne_filename = "./suzanne.usdc";
   const texcat_filename = "./texture-cat-plane.usdz";
@@ -171,7 +172,7 @@ async function loadScenes() {
     const usdRootNode = usd_scene.getDefaultRootNode();
     //console.log("scene:", usdRootNode);
 
-    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options); 
+    const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 
     // HACK
     if (usd_scene.getURI().includes('UsdCookie')) {

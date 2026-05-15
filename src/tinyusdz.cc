@@ -27,6 +27,7 @@
 #include "io-util.hh"
 #include "lz4-compression.hh"
 #include "zstd-compression.hh"
+#include "security-policy.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "tiny-format.hh"
@@ -42,6 +43,10 @@
 #include "common-macros.inc"
 
 namespace tinyusdz {
+
+namespace {
+constexpr uint32_t kMaxZstdNestingDepth = 2;
+}
 
 // Global flag to control DCOUT output. Defaults to false to suppress flood of output.
 // Set to true via TINYUSDZ_ENABLE_DCOUT environment variable.
@@ -83,6 +88,10 @@ static std::string FormatMagicHeader(const uint8_t *addr, const size_t length, s
   return result;
 }
 
+static bool IsSafeUSDZAssetPath(const std::string &path) {
+  return security_policy::IsSafeRelativeAssetPath(path);
+}
+
 bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
                         const std::string &filename, Stage *stage,
                         std::string *warn, std::string *err,
@@ -101,7 +110,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
   // 32bit env
   if (sizeof(void *) == 4) {
     if (options.max_memory_limit_in_mb > 4096) {  // exceeds 4GB
-      max_length = std::numeric_limits<uint32_t>::max();
+      max_length = (std::numeric_limits<uint32_t>::max)();
     } else {
       max_length =
           size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
@@ -747,6 +756,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
       if (err) {
         (*err) += "File not found or failed to read : \"" + filepath + "\"\n";
       }
+      return false;
     }
 
     return LoadUSDAFromMemory(data.data(), data.size(), filepath, stage, warn,
@@ -808,14 +818,22 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
   }
 }
 
-bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
-                       const std::string &base_dir, Stage *stage,
-                       std::string *warn, std::string *err,
-                       const USDLoadOptions &options) {
+static bool LoadUSDFromMemoryImpl(const uint8_t *addr, const size_t length,
+                                  const std::string &base_dir, Stage *stage,
+                                  std::string *warn, std::string *err,
+                                  const USDLoadOptions &options,
+                                  uint32_t zstd_depth) {
   // Check for zstd-compressed data first (file-level compression)
   if (IsZstdCompressed(addr, length)) {
     DCOUT("Detected as zstd-compressed USD.");
 #ifdef TINYUSDZ_WITH_ZSTD_COMPRESSION
+    if (zstd_depth >= kMaxZstdNestingDepth) {
+      if (err) {
+        (*err) += "Nested zstd compression depth exceeded limit.\n";
+      }
+      return false;
+    }
+
     // Get decompressed size for memory budget check
     std::string zstd_err;
     size_t decompressed_size = ZstdCompression::GetDecompressedSize(addr, length, &zstd_err);
@@ -845,9 +863,9 @@ bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
       return false;
     }
 
-    // Recursively call LoadUSDFromMemory with decompressed data
-    return LoadUSDFromMemory(decompressed_data.data(), decompressed_data.size(),
-                            base_dir, stage, warn, err, options);
+    // Recursively call with bounded nested zstd depth.
+    return LoadUSDFromMemoryImpl(decompressed_data.data(), decompressed_data.size(),
+                                 base_dir, stage, warn, err, options, zstd_depth + 1);
 #else
     if (err) {
       (*err) += "zstd-compressed USD file detected, but zstd compression support is not enabled. "
@@ -881,6 +899,13 @@ bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
   }
 }
 
+bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
+                       const std::string &base_dir, Stage *stage,
+                       std::string *warn, std::string *err,
+                       const USDLoadOptions &options) {
+  return LoadUSDFromMemoryImpl(addr, length, base_dir, stage, warn, err, options, 0);
+}
+
 bool ReadUSDZAssetInfoFromMemory(const uint8_t *addr, const size_t length, const bool asset_on_memory, USDZAsset *asset,
   std::string *warn, std::string *err) {
 
@@ -906,8 +931,16 @@ bool ReadUSDZAssetInfoFromMemory(const uint8_t *addr, const size_t length, const
       }
       return false;
     }
+    if (!IsSafeUSDZAssetPath(assetInfos[i].filename)) {
+      if (err) {
+        (*err) += "Unsafe asset path in USDZ header: `" + assetInfos[i].filename + "`\n";
+      }
+      return false;
+    }
+
     // Assume same filename does not exist.
-    asset->asset_map[assetInfos[i].filename] = std::make_pair(assetInfos[i].byte_begin, assetInfos[i].byte_end);
+    asset->asset_map[assetInfos[i].filename] =
+        std::make_pair(assetInfos[i].byte_begin, assetInfos[i].byte_end);
   }
 
   if (asset_on_memory) {
@@ -1095,7 +1128,7 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
   // 32bit env
   if (sizeof(void *) == 4) {
     if (options.max_memory_limit_in_mb > 4096) {  // exceeds 4GB
-      max_length = std::numeric_limits<uint32_t>::max();
+      max_length = (std::numeric_limits<uint32_t>::max)();
     } else {
       max_length =
           size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
@@ -1560,6 +1593,13 @@ int USDZResolveAsset(const char *asset_name, const std::vector<std::string> &sea
     asset_path = tinyusdz::removePrefix(asset_path, "./");
   }
 
+  if (!IsSafeUSDZAssetPath(asset_path)) {
+    if (err) {
+      (*err) += "Unsafe asset path: `" + asset_path + "`\n";
+    }
+    return -2;
+  }
+
   // Not used
   (void)search_paths;
 
@@ -1676,14 +1716,29 @@ int USDZReadAsset(const char *resolved_asset_name, uint64_t req_bytes, uint8_t *
     return -2;
   }
 
-  if (byte_range.first + sz > passet->data.size()) {
+  const uint8_t *src = nullptr;
+  size_t src_size = 0;
+  if (!passet->data.empty()) {
+    src = passet->data.data();
+    src_size = passet->data.size();
+  } else if (passet->addr && passet->size > 0) {
+    src = passet->addr;
+    src_size = passet->size;
+  } else {
+    if (err) {
+      (*err) += "USDZAsset has no backing data.\n";
+    }
+    return -2;
+  }
+
+  if (byte_range.first + sz > src_size) {
     if (err) {
       (*err) += "Invalid USDZAsset size: " + std::string(resolved_asset_name) + "\n";
     }
     return -2;
   }
 
-  memcpy(out_buf, passet->data.data() + byte_range.first, sz);
+  memcpy(out_buf, src + byte_range.first, sz);
   (*nbytes) = sz;
 
   return 0;

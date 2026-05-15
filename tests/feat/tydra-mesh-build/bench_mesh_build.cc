@@ -1,4 +1,4 @@
-// Benchmark for position-bucketed vertex deduplication.
+﻿// Benchmark for position-bucketed vertex deduplication.
 //
 // Generates synthetic triangle-grid meshes with facevarying attributes and
 // measures the dedup algorithm used by BuildVertexIndicesImpl and

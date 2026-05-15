@@ -1,0 +1,35 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Z"
+)
+
+# Single self-filtered group with two members via
+# collection:colliders:includes — the MRAP rig pattern.
+def Xform "World"
+{
+    def PhysicsCollisionGroup "Rig"
+    (
+        prepend apiSchemas = ["CollectionAPI:colliders"]
+    )
+    {
+        rel physics:filteredGroups = </World/Rig>
+        rel collection:colliders:includes = [</World/A>, </World/B>]
+    }
+
+    def Cube "A"
+    (
+        prepend apiSchemas = ["PhysicsCollisionAPI"]
+    )
+    {
+        double size = 1
+    }
+
+    def Cube "B"
+    (
+        prepend apiSchemas = ["PhysicsCollisionAPI"]
+    )
+    {
+        double size = 1
+    }
+}

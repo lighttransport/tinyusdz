@@ -3,11 +3,8 @@
 #pragma once
 
 #include <cstdint>
-#include <algorithm>
-//#include <iostream>
-//#include <cassert>
 #include <limits>
-#include <vector>
+#include <unordered_set>
 
 namespace tinyusdz {
 
@@ -33,11 +30,10 @@ public:
     T handle = 0;
 
     if (!freeList_.empty()) {
-      // Reuse last element.
-      handle = freeList_.back();
-      freeList_.pop_back();
-      // Delay sort until required
-      dirty_ = true;
+      // Reuse an arbitrary released handle.
+      auto it = freeList_.begin();
+      handle = *it;
+      freeList_.erase(it);
       (*dst) = handle;
       return true;
     }
@@ -63,9 +59,7 @@ public:
       }
     } else {
       if (handle >= static_cast<T>(1)) {
-        freeList_.push_back(handle);
-        // Delay sort until required
-        dirty_ = true;
+        freeList_.insert(handle);
       } else {
         // invalid handle
         return false;
@@ -76,17 +70,12 @@ public:
   }
 
   bool Has(const T handle) const {
-    if (dirty_) {
-      std::sort(freeList_.begin(), freeList_.end());
-      dirty_ = false;
-    }
-
     if (handle < 1) {
       return false;
     }
 
-    // Do binary search.
-    if (std::binary_search(freeList_.begin(), freeList_.end(), handle)) {
+    // O(1) lookup: handle is a released slot.
+    if (freeList_.count(handle) > 0) {
       return false;
     }
 
@@ -102,11 +91,8 @@ public:
   }
 
 private:
-  // TODO: Use unorderd_set or unorderd_map for efficiency?
-  // worst case complexity is still c.size() though.
-  mutable std::vector<T> freeList_; // will be sorted in `Has` call.
+  std::unordered_set<T> freeList_;
   T counter_{};
-  mutable bool dirty_{true};
 };
 
 } // namespace tinyusdz

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "value-types.hh"
 #include "linear-algebra.hh"

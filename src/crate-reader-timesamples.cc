@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Copyright 2022-2022 Syoyo Fujita.
 // Copyright 2023-Present Light Transport Entertainment Inc.
 //
@@ -27,6 +27,7 @@
 
 #include "crate-format.hh"
 #include "crate-pprint.hh"
+#include "tiny-hashmap.hh"
 #include "integerCoding.h"
 #include "lz4-compression.hh"
 #include "memory-budget.hh"
@@ -109,7 +110,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   DCOUT("TimeSample tell = " << _sr->tell());
 
   // -8 to compensate sizeof(offset). Guard against int64 underflow.
-  if (offset < std::numeric_limits<int64_t>::min() + 8) {
+  if (offset < (std::numeric_limits<int64_t>::min)() + 8) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "TimeSample times offset would underflow int64.");
   }
   if (!_sr->seek_from_current(offset - 8)) {
@@ -184,7 +185,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   DCOUT("TimeSample tell = " << _sr->tell());
 
   // -8 to compensate sizeof(offset). Guard against int64 underflow.
-  if (offset < std::numeric_limits<int64_t>::min() + 8) {
+  if (offset < (std::numeric_limits<int64_t>::min)() + 8) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "TimeSample values offset would underflow int64.");
   }
   if (!_sr->seek_from_current(offset - 8)) {
@@ -214,7 +215,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   // Check if num_values fits in size_t (for 32-bit builds)
   // On 64-bit systems uint64_t and size_t are the same size, so skip check
 #if SIZE_MAX < UINT64_MAX
-  if (num_values > std::numeric_limits<size_t>::max()) {
+  if (num_values > (std::numeric_limits<size_t>::max)()) {
     PUSH_ERROR_AND_RETURN_TAG(
         kTag, "Number of values exceeds maximum size_t limit.");
     return false;
@@ -616,10 +617,17 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
                                 "Compressed quatf not supported for TimeSamples.");
     }
 
+    if (!_sr->seek_set(rep.GetPayload())) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to scalar quatf value.");
+    }
+    // Crate wire layout is [x, y, z, w] = (imag, real); see
+    // value-types.hh:957. tinyusdz's value::quatf struct matches the
+    // Crate layout, so memcpy reads the bytes directly. (Note: USDA
+    // uses the opposite [w, x, y, z] order at the textual layer.)
     value::quatf val;
-    if (!ReadTimeSampleScalarValue(&val, sizeof(float) * 4,
-                                   "Failed to read quatf value")) {
-      return false;
+    if (!_sr->read(sizeof(val), sizeof(val),
+                   reinterpret_cast<uint8_t *>(&val))) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read scalar quatf value.");
     }
     DCOUT("quatf = [" << val[0] << ", " << val[1] << ", " << val[2] << ", " << val[3] << "]");
     if (!add_sample_to_timesamples<value::quatf>(&dst, t, val, &_err,
@@ -981,7 +989,11 @@ bool CrateReader::UnpackTimeSampleValue_##FUNC_SUFFIX(                         \
 #define INLINE_TO_FLOAT(x) static_cast<float>(x)
 #define INLINE_TO_DOUBLE(x) static_cast<double>(x)
 #define INLINE_TO_HALF(x) value::float_to_half_full(static_cast<float>(x))
+#define INLINE_TO_INT(x) static_cast<int>(x)
 
+DEFINE_UNPACK_VECTOR_TIMESAMPLES(INT2, value::int2, CRATE_DATA_TYPE_VEC2I, INLINE_TO_INT, 2)
+DEFINE_UNPACK_VECTOR_TIMESAMPLES(INT3, value::int3, CRATE_DATA_TYPE_VEC3I, INLINE_TO_INT, 3)
+DEFINE_UNPACK_VECTOR_TIMESAMPLES(INT4, value::int4, CRATE_DATA_TYPE_VEC4I, INLINE_TO_INT, 4)
 DEFINE_UNPACK_VECTOR_TIMESAMPLES(HALF2, value::half2, CRATE_DATA_TYPE_VEC2H, INLINE_TO_HALF, 2)
 DEFINE_UNPACK_VECTOR_TIMESAMPLES(HALF3, value::half3, CRATE_DATA_TYPE_VEC3H, INLINE_TO_HALF, 3)
 DEFINE_UNPACK_VECTOR_TIMESAMPLES(HALF4, value::half4, CRATE_DATA_TYPE_VEC4H, INLINE_TO_HALF, 4)
@@ -1121,8 +1133,23 @@ bool CrateReader::UnpackTimeSampleValue_##FUNC_SUFFIX(                         \
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample.");               \
     }                                                                          \
   } else {                                                                     \
-    PUSH_ERROR_AND_RETURN_TAG(kTag,                                            \
-        "Non-array value for " #FUNC_SUFFIX " is invalid.");                   \
+    /* Scalar (non-inlined, non-array) matrix in TimeSamples. */               \
+    /* Layout: NDIAG*NDIAG doubles starting at rep.GetPayload(). */            \
+    if (!_sr->seek_set(rep.GetPayload())) {                                    \
+      PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
+          "Failed to seek to scalar " #FUNC_SUFFIX " in TimeSamples.");        \
+    }                                                                          \
+    CPP_TYPE val;                                                              \
+    if (!_sr->read(sizeof(double) * NDIAG * NDIAG,                             \
+                   sizeof(double) * NDIAG * NDIAG,                             \
+                   reinterpret_cast<uint8_t *>(&val))) {                       \
+      PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
+          "Failed to read scalar " #FUNC_SUFFIX " value in TimeSamples.");     \
+    }                                                                          \
+    if (!add_sample_to_timesamples<CPP_TYPE>(&dst, t, val, &_err,              \
+                                              expected_total_samples)) {       \
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample.");                \
+    }                                                                          \
   }                                                                            \
   return true;                                                                 \
 }
@@ -1168,11 +1195,10 @@ bool CrateReader::UnpackTimeSampleValue_##FUNC_SUFFIX(                         \
       PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
                                 "Invalid inlined ValueRep in TimeSamples.");    \
     }                                                                          \
-    uint32_t data =                                                            \
-        (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));           \
-    SMALL_TYPE _val;                                                           \
-    memcpy(&_val, &data, sizeof(SMALL_TYPE));                                  \
-    CPP_TYPE val = static_cast<CPP_TYPE>(_val);                                \
+    /* Inline payload is 48 bits. Use the full payload, not just lower 32. */  \
+    uint64_t payload48 = rep.GetPayload() & ((1ull << 48) - 1);                \
+    CPP_TYPE val = INT64_INLINE_DECODE_##FUNC_SUFFIX(payload48);               \
+    (void)sizeof(SMALL_TYPE);                                                  \
     if (!add_sample_to_timesamples<CPP_TYPE>(&dst, t, val, &_err,              \
                                               expected_total_samples)) {        \
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples."); \
@@ -1211,6 +1237,21 @@ bool CrateReader::UnpackTimeSampleValue_##FUNC_SUFFIX(                         \
   }                                                                            \
   return true;                                                                 \
 }
+
+/* Decode 48-bit inline payload into the target int type.
+ * INT64: sign-extend bit 47 to int64_t. UINT64: zero-extend.
+ */
+static inline int64_t int64_inline_decode_INT64(uint64_t p) {
+  if (p & (1ull << 47)) {
+    return static_cast<int64_t>(p | (~((1ull << 48) - 1)));
+  }
+  return static_cast<int64_t>(p);
+}
+static inline uint64_t int64_inline_decode_UINT64(uint64_t p) {
+  return p;  /* already masked to 48 bits */
+}
+#define INT64_INLINE_DECODE_INT64(p)  int64_inline_decode_INT64(p)
+#define INT64_INLINE_DECODE_UINT64(p) int64_inline_decode_UINT64(p)
 
 DEFINE_UNPACK_INT64_TIMESAMPLES(INT64, int64_t, CRATE_DATA_TYPE_INT64, int)
 DEFINE_UNPACK_INT64_TIMESAMPLES(UINT64, uint64_t, CRATE_DATA_TYPE_UINT64, uint32_t)
@@ -1420,6 +1461,9 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
     UNPACK_CASE(CRATE_DATA_TYPE_VEC2D, DOUBLE2)
     UNPACK_CASE(CRATE_DATA_TYPE_VEC3D, DOUBLE3)
     UNPACK_CASE(CRATE_DATA_TYPE_VEC4D, DOUBLE4)
+    UNPACK_CASE(CRATE_DATA_TYPE_VEC2I, INT2)
+    UNPACK_CASE(CRATE_DATA_TYPE_VEC3I, INT3)
+    UNPACK_CASE(CRATE_DATA_TYPE_VEC4I, INT4)
     UNPACK_CASE(CRATE_DATA_TYPE_QUATF, QUATF)
     UNPACK_CASE(CRATE_DATA_TYPE_QUATH, QUATH)
     UNPACK_CASE(CRATE_DATA_TYPE_QUATD, QUATD)
@@ -1438,7 +1482,7 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
   // Dedup map: ValueRep raw data -> first sample index in TimeSamples.
   // USDC files often deduplicate time sample values (multiple frames pointing
   // to the same file offset). Caching avoids redundant reads/decompression.
-  std::unordered_map<uint64_t, size_t> dedup_map;
+  tinyusdz::HashMap<uint64_t, size_t> dedup_map;
   dedup_map.reserve(vreps.size());
 
   for (size_t i = 0; i < vreps.size(); i++) {

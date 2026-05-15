@@ -1,0 +1,72 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def Cube "BodyA"
+    {
+        double size = 1.0
+    }
+
+    def Cube "BodyB"
+    {
+        double size = 1.0
+        double3 xformOp:translate = (2, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Cube "BodyC"
+    {
+        double size = 0.5
+        double3 xformOp:translate = (4, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Sphere "Ball"
+    {
+        double radius = 0.3
+        double3 xformOp:translate = (0, 2, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def PhysicsPrismaticJoint "Slider"
+    {
+        rel physics:body0 = </World/BodyA>
+        rel physics:body1 = </World/BodyB>
+        uniform point3f physics:localPos0 = (0.5, 0, 0)
+        uniform point3f physics:localPos1 = (-0.5, 0, 0)
+        token physics:axis = "X"
+        float physics:lowerLimit = -1
+        float physics:upperLimit = 1
+    }
+
+    def PhysicsFixedJoint "Weld"
+    {
+        rel physics:body0 = </World/BodyB>
+        rel physics:body1 = </World/BodyC>
+        uniform point3f physics:localPos0 = (0.5, 0, 0)
+        uniform point3f physics:localPos1 = (-0.25, 0, 0)
+    }
+
+    def PhysicsSphericalJoint "BallJoint"
+    {
+        rel physics:body0 = </World/BodyA>
+        rel physics:body1 = </World/Ball>
+        uniform point3f physics:localPos0 = (0, 0.5, 0)
+        uniform point3f physics:localPos1 = (0, -0.3, 0)
+        token physics:axis = "Y"
+        float physics:coneAngle0Limit = 45
+        float physics:coneAngle1Limit = 45
+    }
+
+    def PhysicsDistanceJoint "Spring"
+    {
+        rel physics:body0 = </World/BodyA>
+        rel physics:body1 = </World/Ball>
+        float physics:minDistance = 0.5
+        float physics:maxDistance = 3.0
+    }
+}

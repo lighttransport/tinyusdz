@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Copyright 2025, Light Transport Entertainment Inc.
 //
 // Stage to Crate Conversion Implementation
@@ -17,6 +17,7 @@
 #include "pprinter.hh"  // For to_string(Specifier), to_string(Variability)
 #include "pprint-enum.hh"  // For to_string(APISchemas::APIName)
 #include "usdShade.hh"  // For Material and Shader
+#include "usdPhysics.hh"  // For PhysicsScene, PhysicsJoint, PhysicsCollisionGroup
 #include "common-macros.inc"
 
 // Disable specific clang warnings for this file
@@ -56,15 +57,33 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   GET_PRIM_PROPS(GeomCamera)
   GET_PRIM_PROPS(GeomBasisCurves)
   GET_PRIM_PROPS(GeomNurbsCurves)
+  GET_PRIM_PROPS(GeomHermiteCurves)
   GET_PRIM_PROPS(GeomPointInstancer)
+  GET_PRIM_PROPS(GeomPlane)
+  GET_PRIM_PROPS(GeomCylinder_1)
+  GET_PRIM_PROPS(GeomCapsule_1)
+  GET_PRIM_PROPS(GeomTetMesh)
+  GET_PRIM_PROPS(GeomNurbsPatch)
   GET_PRIM_PROPS(DomeLight)
+  GET_PRIM_PROPS(DomeLight_1)
   GET_PRIM_PROPS(SphereLight)
   GET_PRIM_PROPS(CylinderLight)
   GET_PRIM_PROPS(DiskLight)
   GET_PRIM_PROPS(DistantLight)
   GET_PRIM_PROPS(RectLight)
   GET_PRIM_PROPS(Material)
-  GET_PRIM_PROPS(Shader)
+  // Shader stores generic/unknown shader inputs inside Shader::value
+  // (a ShaderNode) rather than Shader::props. Prefer the inner map when
+  // the outer one is empty so generic shaders keep their inputs/outputs
+  // through USDC roundtrip.
+  if (auto *sh = v.as<Shader>()) {
+    if (sh->props.empty()) {
+      if (auto *node = sh->value.as<ShaderNode>()) {
+        return &node->props;
+      }
+    }
+    return &sh->props;
+  }
   GET_PRIM_PROPS(NodeGraph)
   GET_PRIM_PROPS(GeometryLight)
   GET_PRIM_PROPS(PortalLight)
@@ -73,8 +92,66 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   GET_PRIM_PROPS(SkelAnimation)
   GET_PRIM_PROPS(BlendShape)
 
+  // UsdPhysics
+  GET_PRIM_PROPS(PhysicsScene)
+  GET_PRIM_PROPS(PhysicsJoint)
+  GET_PRIM_PROPS(PhysicsRevoluteJoint)
+  GET_PRIM_PROPS(PhysicsPrismaticJoint)
+  GET_PRIM_PROPS(PhysicsSphericalJoint)
+  GET_PRIM_PROPS(PhysicsFixedJoint)
+  GET_PRIM_PROPS(PhysicsDistanceJoint)
+  GET_PRIM_PROPS(PhysicsCollisionGroup)
+  GET_PRIM_PROPS(MjcActuator)
+  GET_PRIM_PROPS(NewtonActuator)
+  GET_PRIM_PROPS(MjcTendon)
+  GET_PRIM_PROPS(MjcKeyframe)
+  // UsdSkel — required so authored attributes in the props map (joints,
+  // jointNames, blendShapeWeights, etc.) survive the USDC writer when the
+  // typed-builtin fields are unauthored.
+  GET_PRIM_PROPS(SkelRoot)
+  GET_PRIM_PROPS(Skeleton)
+  GET_PRIM_PROPS(SkelAnimation)
+  GET_PRIM_PROPS(BlendShape)
+
 #undef GET_PRIM_PROPS
 
+  return nullptr;
+}
+
+// Returns the Collection mixin pointer for prims that inherit from
+// Collection (GPrim and GeomSubset families). Used by the writer to
+// re-emit `collection:<instance>:{includes,excludes,includeRoot,
+// expansionRule}` properties from the typed Collection storage on
+// USDC output. The reconstruct path consumes these from the props
+// map into Collection::instances(); without this re-emit, USDC
+// round-trip drops them entirely.
+const Collection *GetPrimCollection(const value::Value &v) {
+#define GET_PRIM_COLLECTION(__ty)              \
+  if (auto *p = v.as<__ty>()) {                \
+    return static_cast<const Collection *>(p); \
+  }
+
+  GET_PRIM_COLLECTION(Xform)
+  GET_PRIM_COLLECTION(GPrim)
+  GET_PRIM_COLLECTION(GeomMesh)
+  GET_PRIM_COLLECTION(GeomPoints)
+  GET_PRIM_COLLECTION(GeomCube)
+  GET_PRIM_COLLECTION(GeomCapsule)
+  GET_PRIM_COLLECTION(GeomCylinder)
+  GET_PRIM_COLLECTION(GeomSphere)
+  GET_PRIM_COLLECTION(GeomCone)
+  GET_PRIM_COLLECTION(GeomSubset)
+  GET_PRIM_COLLECTION(GeomBasisCurves)
+  GET_PRIM_COLLECTION(GeomNurbsCurves)
+  GET_PRIM_COLLECTION(GeomHermiteCurves)
+  GET_PRIM_COLLECTION(GeomPointInstancer)
+  GET_PRIM_COLLECTION(GeomPlane)
+  GET_PRIM_COLLECTION(GeomCylinder_1)
+  GET_PRIM_COLLECTION(GeomCapsule_1)
+  GET_PRIM_COLLECTION(GeomTetMesh)
+  GET_PRIM_COLLECTION(GeomNurbsPatch)
+
+#undef GET_PRIM_COLLECTION
   return nullptr;
 }
 
@@ -90,6 +167,21 @@ bool CrateWriter::AddArrayAttribute(
   crate::CrateValue crate_val;
   return ConvertValue(val, crate_val, err) &&
          (fields.push_back({attr_name, crate_val}), true);
+}
+
+bool CrateWriter::AddArrayAttributeWithMetas(
+    const std::string& attr_name, const value::Value& val,
+    const AttrMeta& metas, const Path& prim_path, std::string* err) {
+  // Build a transient Attribute carrying both the value and the typed
+  // attribute's authored metadata, then emit a proper property spec.
+  Attribute attr;
+  attr.set_type_name(val.type_name());
+  primvar::PrimVar pv;
+  pv.set_value(val);
+  attr.set_var(std::move(pv));
+  attr.metas() = metas;
+  return ConvertAttributeToFields(attr_name, attr, prim_path,
+                                  /*is_custom=*/false, err);
 }
 
 void CrateWriter::AddEnumAttribute(
@@ -295,7 +387,11 @@ bool CrateWriter::ConvertSinglePrim(
   // Split fields: prim-level fields (specifier, typeName) stay on the prim
   // spec; property fields become separate Attribute specs.
   crate::FieldValuePairVector prim_fields;
-  // Collect property fields: name -> {default_value, timeSamples_value}
+  // Collect property fields: name -> {default_value, timeSamples_value, ...}
+  // `extra_metas` covers AttrMeta keys beyond .interpolation: elementSize,
+  // customData, displayName, displayGroup, documentation, hidden,
+  // colorSpace, comment, weight, allowedTokens. Pairs are emitted into
+  // the attribute spec as-is.
   struct PropEntry {
     std::string name;
     crate::CrateValue default_val;
@@ -306,15 +402,27 @@ bool CrateWriter::ConvertSinglePrim(
     bool has_variability{false};
     crate::CrateValue interpolation_val;
     bool has_interpolation{false};
+    std::vector<std::pair<std::string, crate::CrateValue>> extra_metas;
   };
   std::vector<PropEntry> prop_entries;
+
+  // AttrMeta suffixes other than `.interpolation` that schema-typed
+  // extractors may emit as `<base>.<key>`. The router stuffs the
+  // matching value into the prop's attribute spec under field name `key`.
+  static const std::set<std::string> kAttrMetaSuffixes = {
+    "elementSize", "customData", "displayName", "displayGroup",
+    "documentation", "doc", "hidden", "colorSpace", "comment", "weight",
+    "allowedTokens",
+  };
 
   // Set of field names that belong on the prim spec, not as separate attributes
   static const std::set<std::string> kPrimFields = {
     "specifier", "typeName", "primChildren", "properties",
     "variantSetNames", "variantSelection", "kind",
     "active", "hidden", "documentation", "comment", "customData",
-    "apiSchemas", "inherits", "specializes", "references", "payload",
+    "assetInfo", "instanceable", "clips",
+    "apiSchemas", "inherits", "inheritPaths", "specializes", "references", "payload",
+    "displayName", "displayGroup", "sceneName",
   };
 
   for (auto& fv : fields) {
@@ -323,10 +431,11 @@ bool CrateWriter::ConvertSinglePrim(
       continue;
     }
 
-    // Check for ".timeSamples" suffix
+    // Check for ".timeSamples" / ".interpolation" / other AttrMeta suffixes
     std::string base_name = fv.first;
     bool is_ts = false;
     bool is_interp = false;
+    std::string meta_key;  // non-empty when fv.first is `<base>.<meta_key>`
     const std::string ts_suffix = ".timeSamples";
     const std::string interp_suffix = ".interpolation";
     if (base_name.size() > ts_suffix.size() &&
@@ -339,6 +448,18 @@ bool CrateWriter::ConvertSinglePrim(
                                  interp_suffix.size(), interp_suffix) == 0) {
       base_name = base_name.substr(0, base_name.size() - interp_suffix.size());
       is_interp = true;
+    } else {
+      // Generic `<base>.<meta_key>` suffix (elementSize, customData, ...).
+      // Only consume when the suffix matches a known AttrMeta key, to
+      // avoid swallowing unrelated dot-bearing names.
+      auto dot = base_name.rfind('.');
+      if (dot != std::string::npos && dot + 1 < base_name.size()) {
+        std::string suffix = base_name.substr(dot + 1);
+        if (kAttrMetaSuffixes.count(suffix)) {
+          meta_key = std::move(suffix);
+          base_name = base_name.substr(0, dot);
+        }
+      }
     }
 
     // Check for "variability" field
@@ -358,7 +479,7 @@ bool CrateWriter::ConvertSinglePrim(
       }
     }
     if (!entry) {
-      prop_entries.push_back({base_name, {}, false, {}, false, {}, false, {}, false});
+      prop_entries.push_back({base_name, {}, false, {}, false, {}, false, {}, false, {}});
       entry = &prop_entries.back();
     }
 
@@ -368,6 +489,11 @@ bool CrateWriter::ConvertSinglePrim(
     } else if (is_interp) {
       entry->interpolation_val = std::move(fv.second);
       entry->has_interpolation = true;
+    } else if (!meta_key.empty()) {
+      // documentation alias: `doc` -> `documentation` for the spec
+      std::string spec_key = (meta_key == "doc") ? "documentation" : meta_key;
+      entry->extra_metas.emplace_back(std::move(spec_key),
+                                      std::move(fv.second));
     } else {
       entry->default_val = std::move(fv.second);
       entry->has_default = true;
@@ -448,6 +574,10 @@ bool CrateWriter::ConvertSinglePrim(
 
     if (pe.has_interpolation) {
       attr_fields.push_back({"interpolation", std::move(pe.interpolation_val)});
+    }
+
+    for (auto& mk : pe.extra_metas) {
+      attr_fields.push_back({mk.first, std::move(mk.second)});
     }
 
     if (!attr_fields.empty()) {
@@ -537,12 +667,12 @@ bool CrateWriter::ConvertSinglePrim(
             ConvertAttributeToFields("outputs:result", a, prim_path, false, err);
           }
         };
-        if (auto *p = shader->value.as<UsdPrimvarReader_float2>()) add_pr_terminal(p);
-        else if (auto *p = shader->value.as<UsdPrimvarReader_float>()) add_pr_terminal(p);
-        else if (auto *p = shader->value.as<UsdPrimvarReader_float3>()) add_pr_terminal(p);
-        else if (auto *p = shader->value.as<UsdPrimvarReader_float4>()) add_pr_terminal(p);
-        else if (auto *p = shader->value.as<UsdPrimvarReader_int>()) add_pr_terminal(p);
-        else if (auto *p = shader->value.as<UsdPrimvarReader_string>()) add_pr_terminal(p);
+        if (auto *p0 = shader->value.as<UsdPrimvarReader_float2>()) add_pr_terminal(p0);
+        else if (auto *p1 = shader->value.as<UsdPrimvarReader_float>()) add_pr_terminal(p1);
+        else if (auto *p2 = shader->value.as<UsdPrimvarReader_float3>()) add_pr_terminal(p2);
+        else if (auto *p3 = shader->value.as<UsdPrimvarReader_float4>()) add_pr_terminal(p3);
+        else if (auto *p4 = shader->value.as<UsdPrimvarReader_int>()) add_pr_terminal(p4);
+        else if (auto *p5 = shader->value.as<UsdPrimvarReader_string>()) add_pr_terminal(p5);
       }
     }
   }
@@ -558,14 +688,14 @@ bool CrateWriter::ConvertSinglePrim(
   {
     const GPrim* gprim = nullptr;
     // Try all GPrim-derived types
-    if (auto* p = prim.data().as<GeomMesh>()) gprim = p;
-    else if (auto* p = prim.data().as<GeomCube>()) gprim = p;
-    else if (auto* p = prim.data().as<GeomSphere>()) gprim = p;
-    else if (auto* p = prim.data().as<GeomCone>()) gprim = p;
-    else if (auto* p = prim.data().as<GeomCylinder>()) gprim = p;
-    else if (auto* p = prim.data().as<GeomCapsule>()) gprim = p;
-    else if (auto* p = prim.data().as<GeomPoints>()) gprim = p;
-    else if (auto* p = prim.data().as<GeomBasisCurves>()) gprim = p;
+    if (auto* g0 = prim.data().as<GeomMesh>()) gprim = g0;
+    else if (auto* g1 = prim.data().as<GeomCube>()) gprim = g1;
+    else if (auto* g2 = prim.data().as<GeomSphere>()) gprim = g2;
+    else if (auto* g3 = prim.data().as<GeomCone>()) gprim = g3;
+    else if (auto* g4 = prim.data().as<GeomCylinder>()) gprim = g4;
+    else if (auto* g5 = prim.data().as<GeomCapsule>()) gprim = g5;
+    else if (auto* g6 = prim.data().as<GeomPoints>()) gprim = g6;
+    else if (auto* g7 = prim.data().as<GeomBasisCurves>()) gprim = g7;
 
     if (gprim && gprim->doubleSided.authored()) {
       Attribute ds_attr;
@@ -585,9 +715,87 @@ bool CrateWriter::ConvertSinglePrim(
     // Don't fail on light filter relationship errors - just warn
   }
 
+  // PointInstancer prototypes relationship: emit as a separate relationship
+  // spec so `rel prototypes = [...]` survives USDC roundtrip.
+  if (prim.data().as<GeomPointInstancer>()) {
+    if (!AddPointInstancerPrototypesSpec(prim, prim_path, err)) {
+      DCOUT("WARNING: Failed to add prototypes relationship spec");
+    }
+  }
+
   // Process generic props map for custom properties, primvars, relationships, etc.
   // This covers ALL prim types and handles properties not extracted by type-specific handlers.
   // Skip properties already extracted by type-specific handlers to avoid duplicates.
+  // Re-emit Collection (`collection:<inst>:{includes,excludes,
+  // includeRoot,expansionRule}`) from the typed Collection storage.
+  // The reconstruct path consumed these from the props map and stored
+  // them on `Collection::instances()`; without this re-emit, USDC
+  // round-trip would drop them.
+  if (const Collection *coll_storage = GetPrimCollection(prim.data())) {
+    const auto &instances = coll_storage->instances();
+    for (size_t i = 0; i < instances.size(); ++i) {
+      const std::string &inst_name = instances.keys()[i];
+      CollectionInstance inst;
+      if (!instances.at(i, &inst)) {
+        continue;
+      }
+      const std::string prefix = "collection:" + inst_name;
+
+      if (inst.includes.authored()) {
+        std::string ce;
+        if (!ConvertRelationshipToFields(prefix + ":includes",
+                                         inst.includes.relationship(),
+                                         prim_path, &ce)) {
+          DCOUT("WARNING: Collection includes emit failed: " << ce);
+        }
+      }
+      if (inst.excludes.authored()) {
+        std::string ce;
+        if (!ConvertRelationshipToFields(prefix + ":excludes",
+                                         inst.excludes.relationship(),
+                                         prim_path, &ce)) {
+          DCOUT("WARNING: Collection excludes emit failed: " << ce);
+        }
+      }
+      if (inst.expansionRule.authored()) {
+        // expansionRule is a uniform token attribute. Map the
+        // ExpansionRule enum back to its token spelling.
+        const char *tok = nullptr;
+        switch (inst.expansionRule.get_value()) {
+          case CollectionInstance::ExpansionRule::ExplicitOnly:
+            tok = kExplicitOnly; break;
+          case CollectionInstance::ExpansionRule::ExpandPrims:
+            tok = kExpandPrims; break;
+          case CollectionInstance::ExpansionRule::ExpandPrimsAndProperties:
+            tok = kExpandPrimsAndProperties; break;
+        }
+        if (tok) {
+          Attribute a = Attribute::Uniform(value::token(tok));
+          a.set_type_name("token");
+          std::string ce;
+          if (!ConvertAttributeToFields(prefix + ":expansionRule", a,
+                                        prim_path, /*is_custom=*/false,
+                                        &ce)) {
+            DCOUT("WARNING: Collection expansionRule emit failed: " << ce);
+          }
+        }
+      }
+      if (inst.includeRoot.authored()) {
+        bool b = false;
+        if (inst.includeRoot.get_value().get_scalar(&b)) {
+          Attribute a = Attribute::Uniform(b);
+          a.set_type_name("bool");
+          std::string ce;
+          if (!ConvertAttributeToFields(prefix + ":includeRoot", a,
+                                        prim_path, /*is_custom=*/false,
+                                        &ce)) {
+            DCOUT("WARNING: Collection includeRoot emit failed: " << ce);
+          }
+        }
+      }
+    }
+  }
+
   if (props_map) {
     // Build set of names already extracted by type-specific handlers
     std::unordered_set<std::string> extracted_names;
@@ -600,24 +808,27 @@ bool CrateWriter::ConvertSinglePrim(
       if (extracted_names.count(kv.first)) {
         continue;  // Already handled by type-specific extractor
       }
-      // Skip xformOp properties (handled by ExtractXformOpsFromXformable)
+      // Skip xformOp properties when the typed xformable path already
+      // produced specs for them (avoids duplicates). When the typed path
+      // didn't extract anything (extracted_names has no xformOp entries),
+      // fall through so props-authored xformOps survive USDC round-trip.
       if (kv.first.find("xformOp:") == 0 || kv.first == "xformOpOrder") {
-        continue;
+        bool typed_emitted = false;
+        for (const auto &en : extracted_names) {
+          if (en.find("xformOp:") == 0 || en == "xformOpOrder") {
+            typed_emitted = true;
+            break;
+          }
+        }
+        if (typed_emitted) continue;
       }
 
       // For attribute properties, check if the value type is writable.
       // ConvertAttributeToFields calls AddSpec which can't be undone if
       // Finalize later fails on unsupported types.
-      if (kv.second.is_attribute()) {
-        // Skip empty array values — TRY_INLINE_EMPTY_ARRAY encoding has a bug
-        // where the reader can't decode the fieldset (missing SetIsInlined flag).
-        const Attribute& attr = kv.second.get_attribute();
-        const primvar::PrimVar& pvar = attr.get_var();
-        if (pvar.has_value() && pvar.value_raw().is_array() &&
-            pvar.value_raw().array_size() == 0) {
-          continue;
-        }
-      }
+      // Note: empty array attributes encoded via the TRY_INLINE_EMPTY_ARRAY
+      // path (IsArray + payload=0). Reader handles this via per-type
+      // checks at e.g. crate-reader-values.cc:983.
 
       std::string prop_err;
       if (!ConvertPropertyToFields(kv.first, kv.second, prim_path, dummy_fields, &prop_err)) {
@@ -773,6 +984,20 @@ void CrateWriter::ExtractPrimMeta(
     fields.push_back({"documentation", v});
   }
 
+  if (metas.has_comment()) {
+    crate::CrateValue v;
+    v.Set(metas.get_comment().value);
+    fields.push_back({"comment", v});
+  }
+
+  if (metas.has_sceneName()) {
+    // pxrUSD stores `sceneName` (USDZ scene-library extension) as a
+    // `string`, not a `token`. The reader rejects token-typed values.
+    crate::CrateValue v;
+    v.Set(std::string(metas.get_sceneName()));
+    fields.push_back({"sceneName", v});
+  }
+
   if (metas.variants) {
     crate::CrateValue v;
     v.Set(metas.variants.value());
@@ -833,6 +1058,31 @@ void CrateWriter::ExtractPrimMeta(
     fields.push_back({"instanceable", v});
   }
 
+  // customData (Dictionary). Skipped historically due to dict serialization
+  // worries, but the dict path on the writer side is now exercised by
+  // attribute customData and works for primitive value types
+  // (string/int/bool/float/double/token). We emit here too so prim-level
+  // customData survives USDC round-trip.
+  if (metas.has_customData()) {
+    crate::CrateValue v;
+    v.Set(metas.get_customData());
+    fields.push_back({"customData", v});
+  }
+
+  // assetInfo (Dictionary).
+  if (metas.has_assetInfo()) {
+    crate::CrateValue v;
+    v.Set(metas.get_assetInfo());
+    fields.push_back({"assetInfo", v});
+  }
+
+  // clips (Dictionary). Value-clip declarations for animation streaming.
+  if (metas.has_clips()) {
+    crate::CrateValue v;
+    v.Set(metas.get_clips());
+    fields.push_back({"clips", v});
+  }
+
   // apiSchemas
   if (metas.has_apiSchemas()) {
     const auto schemas = metas.get_apiSchemas();
@@ -865,16 +1115,99 @@ void CrateWriter::ExtractPrimMeta(
     }
   }
 
-  // NOTE: references, inherits, specializes, payload are disabled because
-  // their ListOp encoding causes "Failed to decode fieldset id" errors during
-  // roundtrip.  The crate writer's ListOp<Reference>/ListOp<Payload>/ListOp<Path>
-  // binary format doesn't match what the reader expects.
-  // TODO: Fix the ListOp binary encoding for composition arcs.
-  //
-  // if (metas.references.has_value()) { ... }
-  // if (metas.inherits.has_value()) { ... }
-  // if (metas.specializes.has_value()) { ... }
-  // if (metas.payload.has_value()) { ... }
+  // Composition arcs — references, inherits, specializes, payload.
+  // Build ListOp<T> objects with the parsed list-edit qualifiers and emit them
+  // as crate fields. Mirrors the working layer-path writer in sconv-layer.cc.
+
+  auto convert_path_listop = [](
+      const std::vector<std::pair<ListEditQual, std::vector<Path>>>& src) {
+    ListOp<Path> out;
+    for (const auto& op : src) {
+      switch (op.first) {
+        case ListEditQual::ResetToExplicit:
+          out.ClearAndMakeExplicit();
+          out.SetExplicitItems(op.second);
+          break;
+        case ListEditQual::Append:  out.SetAppendedItems(op.second); break;
+        case ListEditQual::Prepend: out.SetPrependedItems(op.second); break;
+        case ListEditQual::Add:     out.SetAddedItems(op.second); break;
+        case ListEditQual::Delete:  out.SetDeletedItems(op.second); break;
+        default:
+          out.ClearAndMakeExplicit();
+          out.SetExplicitItems(op.second);
+          break;
+      }
+    }
+    return out;
+  };
+
+  auto convert_ref_listop = [](
+      const std::vector<std::pair<ListEditQual, std::vector<Reference>>>& src) {
+    ListOp<Reference> out;
+    for (const auto& op : src) {
+      switch (op.first) {
+        case ListEditQual::ResetToExplicit:
+          out.ClearAndMakeExplicit();
+          out.SetExplicitItems(op.second);
+          break;
+        case ListEditQual::Append:  out.SetAppendedItems(op.second); break;
+        case ListEditQual::Prepend: out.SetPrependedItems(op.second); break;
+        case ListEditQual::Add:     out.SetAddedItems(op.second); break;
+        case ListEditQual::Delete:  out.SetDeletedItems(op.second); break;
+        default:
+          out.ClearAndMakeExplicit();
+          out.SetExplicitItems(op.second);
+          break;
+      }
+    }
+    return out;
+  };
+
+  auto convert_payload_listop = [](
+      const std::vector<std::pair<ListEditQual, std::vector<Payload>>>& src) {
+    ListOp<Payload> out;
+    for (const auto& op : src) {
+      switch (op.first) {
+        case ListEditQual::ResetToExplicit:
+          out.ClearAndMakeExplicit();
+          out.SetExplicitItems(op.second);
+          break;
+        case ListEditQual::Append:  out.SetAppendedItems(op.second); break;
+        case ListEditQual::Prepend: out.SetPrependedItems(op.second); break;
+        case ListEditQual::Add:     out.SetAddedItems(op.second); break;
+        case ListEditQual::Delete:  out.SetDeletedItems(op.second); break;
+        default:
+          out.ClearAndMakeExplicit();
+          out.SetExplicitItems(op.second);
+          break;
+      }
+    }
+    return out;
+  };
+
+  if (metas.references.has_value()) {
+    crate::CrateValue v;
+    v.Set(convert_ref_listop(metas.references.value()));
+    fields.push_back({"references", v});
+  }
+
+  if (metas.payload.has_value()) {
+    crate::CrateValue v;
+    v.Set(convert_payload_listop(metas.payload.value()));
+    fields.push_back({"payload", v});
+  }
+
+  if (metas.inherits.has_value()) {
+    crate::CrateValue v;
+    v.Set(convert_path_listop(metas.inherits.value()));
+    fields.push_back({"inheritPaths", v});
+  }
+
+  if (metas.specializes.has_value()) {
+    crate::CrateValue v;
+    v.Set(convert_path_listop(metas.specializes.value()));
+    fields.push_back({"specializes", v});
+  }
 }
 
 bool CrateWriter::ExtractPrimProperties(
@@ -883,12 +1216,77 @@ bool CrateWriter::ExtractPrimProperties(
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
-  // Get prim type name
+  // Get prim type name. prim_type_name() carries the parser-set or
+  // user-set string; for in-memory authored prims that field is empty,
+  // so fall back to the typed schema name from the underlying value.
+  // Without this fallback the writer skips both the `typeName` crate
+  // field and the type-specific property extraction, and the reader sees
+  // a generic prim with no schema and no attributes.
   std::string type_name = prim.prim_type_name();
+  if (type_name.empty()) {
+    type_name = prim.type_name();
+  }
 
   // Add specifier field (as Specifier enum, not as token)
   Specifier spec = prim.specifier();
-  // USD files don't allow Invalid specifier - default to Def if we get Invalid
+  // USDA loader sets the spec on the typed-prim wrapper inside `prim.data()`
+  // but historically did not propagate it to the outer Prim wrapper. Fall
+  // back to the typed prim's `.spec` so `class`/`over` survive USDC writing.
+  if (spec == Specifier::Invalid) {
+    const auto &v = prim.data();
+#define GET_SPEC(__TY) if (auto *t = v.as<__TY>()) { spec = t->spec; goto spec_resolved; }
+    GET_SPEC(Xform)
+    GET_SPEC(GeomMesh)
+    GET_SPEC(GeomSphere)
+    GET_SPEC(GeomCube)
+    GET_SPEC(GeomCylinder)
+    GET_SPEC(GeomCone)
+    GET_SPEC(GeomCapsule)
+    GET_SPEC(GeomCamera)
+    GET_SPEC(GeomPoints)
+    GET_SPEC(GeomSubset)
+    GET_SPEC(GeomBasisCurves)
+    GET_SPEC(GeomNurbsCurves)
+    GET_SPEC(GeomHermiteCurves)
+    GET_SPEC(GeomPlane)
+    GET_SPEC(GeomCylinder_1)
+    GET_SPEC(GeomCapsule_1)
+    GET_SPEC(GeomTetMesh)
+    GET_SPEC(GeomNurbsPatch)
+    GET_SPEC(GeomPointInstancer)
+    GET_SPEC(SphereLight)
+    GET_SPEC(RectLight)
+    GET_SPEC(DiskLight)
+    GET_SPEC(DistantLight)
+    GET_SPEC(CylinderLight)
+    GET_SPEC(DomeLight)
+    GET_SPEC(DomeLight_1)
+    GET_SPEC(GeometryLight)
+    GET_SPEC(PortalLight)
+    GET_SPEC(Scope)
+    GET_SPEC(Model)
+    GET_SPEC(Material)
+    GET_SPEC(Shader)
+    GET_SPEC(NodeGraph)
+    GET_SPEC(SkelRoot)
+    GET_SPEC(Skeleton)
+    GET_SPEC(SkelAnimation)
+    GET_SPEC(BlendShape)
+    GET_SPEC(PhysicsScene)
+    GET_SPEC(PhysicsJoint)
+    GET_SPEC(PhysicsRevoluteJoint)
+    GET_SPEC(PhysicsPrismaticJoint)
+    GET_SPEC(PhysicsSphericalJoint)
+    GET_SPEC(PhysicsFixedJoint)
+    GET_SPEC(PhysicsDistanceJoint)
+    GET_SPEC(PhysicsCollisionGroup)
+    GET_SPEC(MjcActuator)
+    GET_SPEC(NewtonActuator)
+    GET_SPEC(MjcTendon)
+    GET_SPEC(MjcKeyframe)
+#undef GET_SPEC
+spec_resolved:;
+  }
   if (spec == Specifier::Invalid) {
     spec = Specifier::Def;
   }
@@ -951,6 +1349,18 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractBasisCurvesProperties(prim, prim_path, fields, err);
   } else if (type_name == "NurbsCurves") {
     return ExtractNurbsCurvesProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Plane") {
+    return ExtractGeomPlaneProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Cylinder_1") {
+    return ExtractGeomCylinder1Properties(prim, prim_path, fields, err);
+  } else if (type_name == "Capsule_1") {
+    return ExtractGeomCapsule1Properties(prim, prim_path, fields, err);
+  } else if (type_name == "TetMesh") {
+    return ExtractGeomTetMeshProperties(prim, prim_path, fields, err);
+  } else if (type_name == "NurbsPatch") {
+    return ExtractGeomNurbsPatchProperties(prim, prim_path, fields, err);
+  } else if (type_name == "HermiteCurves") {
+    return ExtractGeomHermiteCurvesProperties(prim, prim_path, fields, err);
   } else if (type_name == "PointInstancer") {
     return ExtractPointInstancerProperties(prim, prim_path, fields, err);
   } else if (type_name == "GeomSubset") {
@@ -979,12 +1389,63 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractGeometryLightProperties(prim, prim_path, fields, err);
   } else if (type_name == "PortalLight") {
     return ExtractPortalLightProperties(prim, prim_path, fields, err);
+  } else if (type_name == "DomeLight_1") {
+    return ExtractDomeLight1Properties(prim, prim_path, fields, err);
+  } else if (type_name == "LightFilter") {
+    return ExtractLightFilterProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PluginLightFilter") {
+    return ExtractPluginLightFilterProperties(prim, prim_path, fields, err);
   } else if (type_name == "Skeleton") {
     return ExtractSkeletonProperties(prim, prim_path, fields, err);
   } else if (type_name == "SkelAnimation") {
     return ExtractSkelAnimationProperties(prim, prim_path, fields, err);
   } else if (type_name == "SkelRoot") {
     return ExtractSkelRootProperties(prim, prim_path, fields, err);
+  }
+
+  // UsdPhysics + mjcPhysics
+  else if (type_name == "PhysicsJoint") {
+    return ExtractPhysicsJointProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsScene") {
+    return ExtractPhysicsSceneProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsRevoluteJoint") {
+    return ExtractPhysicsRevoluteJointProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsPrismaticJoint") {
+    return ExtractPhysicsPrismaticJointProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsSphericalJoint") {
+    return ExtractPhysicsSphericalJointProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsFixedJoint") {
+    return ExtractPhysicsFixedJointProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsDistanceJoint") {
+    return ExtractPhysicsDistanceJointProperties(prim, prim_path, fields, err);
+  } else if (type_name == "PhysicsCollisionGroup") {
+    return ExtractPhysicsCollisionGroupProperties(prim, prim_path, fields, err);
+  } else if (type_name == "MjcActuator") {
+    return ExtractMjcActuatorProperties(prim, prim_path, fields, err);
+  } else if (type_name == "NewtonActuator") {
+    return ExtractNewtonActuatorProperties(prim, prim_path, fields, err);
+  } else if (type_name == "MjcTendon") {
+    return ExtractMjcTendonProperties(prim, prim_path, fields, err);
+  } else if (type_name == "MjcKeyframe") {
+    return ExtractMjcKeyframeProperties(prim, prim_path, fields, err);
+  // AR/Interactive (Apple Preliminary_*)
+  } else if (type_name == "Preliminary_PhysicsGravitationalForce") {
+    return ExtractPreliminaryGravitationalForceProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Preliminary_InfiniteColliderPlane") {
+    return ExtractPreliminaryInfiniteColliderPlaneProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Preliminary_ReferenceImage") {
+    return ExtractPreliminaryReferenceImageProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Preliminary_Behavior") {
+    return ExtractPreliminaryBehaviorProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Preliminary_Trigger") {
+    return ExtractPreliminaryTriggerProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Preliminary_Action") {
+    return ExtractPreliminaryActionProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Preliminary_Text") {
+    return ExtractPreliminaryTextProperties(prim, prim_path, fields, err);
+  // usdMedia
+  } else if (type_name == "SpatialAudio") {
+    return ExtractSpatialAudioProperties(prim, prim_path, fields, err);
   }
 
   // For unknown types or types without specific handlers,
@@ -1049,14 +1510,29 @@ bool CrateWriter::ConvertValue(
   // Token and String types
   else if (type_name == "token") {
     if (auto v = val.get_value<value::token>()) {
-      crate::TokenIndex tok_idx = GetOrCreateToken(v->str());
-      out.Set(tok_idx.value);
+      // Store the typed token value; the crate packer pools it through
+      // the tokens section at serialization time. Storing the raw pool
+      // index (uint) here produced files that tinyusdz's reader surfaced
+      // as `var_type='uint' (unresolved)` and that pxrusd rejected with
+      // "Corrupt path element token index in crate file".
+      out.Set(*v);
       return true;
     }
   } else if (type_name == "string") {
     if (auto v = val.get_value<std::string>()) {
-      crate::StringIndex str_idx = GetOrCreateString(*v);
-      out.Set(str_idx.value);
+      // Same rationale as the token branch above: store the string value,
+      // not the strings-section index.
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "asset") {
+    if (auto v = val.get_value<value::AssetPath>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "asset[]") {
+    if (auto v = val.get_value<std::vector<value::AssetPath>>()) {
+      out.Set(*v);
       return true;
     }
   }
@@ -1204,10 +1680,26 @@ bool CrateWriter::ConvertValue(
       out.Set(*v);
       return true;
     }
+  } else if (type_name == "frame4d") {
+    if (auto v = val.get_value<value::frame4d>(false)) {
+      value::matrix4d mat;
+      for (size_t row = 0; row < 4; ++row) {
+        for (size_t col = 0; col < 4; ++col) {
+          mat.m[row][col] = (*v).m[row][col];
+        }
+      }
+      out.Set(std::move(mat));
+      return true;
+    }
   }
 
   // Quaternion types
-  else if (type_name == "quatf") {
+  else if (type_name == "quath") {
+    if (auto v = val.get_value<value::quath>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "quatf") {
     if (auto v = val.get_value<value::quatf>()) {
       out.Set(*v);
       return true;
@@ -1373,6 +1865,11 @@ bool CrateWriter::ConvertValue(
       out.Set(*v);
       return true;
     }
+  } else if (type_name == "uint64[]") {
+    if (auto v = val.get_value<std::vector<uint64_t>>()) {
+      out.Set(*v);
+      return true;
+    }
   } else if (type_name == "quath[]") {
     if (auto v = val.get_value<std::vector<value::quath>>()) {
       out.Set(*v);
@@ -1448,6 +1945,22 @@ bool CrateWriter::ConvertValue(
       out.Set(*v);
       return true;
     }
+  } else if (type_name == "frame4d[]") {
+    if (auto v = val.get_value<std::vector<value::frame4d>>(false)) {
+      std::vector<value::matrix4d> mats;
+      mats.reserve(v->size());
+      for (const auto &frame : *v) {
+        value::matrix4d mat;
+        for (size_t row = 0; row < 4; ++row) {
+          for (size_t col = 0; col < 4; ++col) {
+            mat.m[row][col] = frame.m[row][col];
+          }
+        }
+        mats.emplace_back(std::move(mat));
+      }
+      out.Set(std::move(mats));
+      return true;
+    }
   }
   // Half-vector arrays
   else if (type_name == "half2[]") {
@@ -1512,8 +2025,16 @@ bool CrateWriter::ConvertPropertyToFields(
     // Pass the custom flag to be added to the attribute spec
     return ConvertAttributeToFields(prop_name, prop.get_attribute(), parent_path, prop.has_custom(), err);
   } else if (prop.is_relationship()) {
-    // Convert relationship - creates separate spec, doesn't add to fields
-    return ConvertRelationshipToFields(prop_name, prop.get_relationship(), parent_path, err);
+    // Convert relationship - creates separate spec, doesn't add to fields.
+    // The list-edit qualifier sits on the outer Property, not on the
+    // Relationship itself; copy it across so the writer encodes the
+    // ListOp<Path> with the matching prepended/appended/... flag.
+    Relationship rel_copy = prop.get_relationship();
+    if (rel_copy.get_listedit_qual() == ListEditQual::ResetToExplicit &&
+        prop.get_listedit_qual() != ListEditQual::ResetToExplicit) {
+      rel_copy.set_listedit_qual(prop.get_listedit_qual());
+    }
+    return ConvertRelationshipToFields(prop_name, rel_copy, parent_path, err);
   } else if (prop.is_attribute_connection()) {
     // Convert connection - creates separate spec, doesn't add to fields
     return ConvertConnectionToFields(prop_name, prop.get_attribute(), parent_path, err);
@@ -1630,6 +2151,66 @@ bool CrateWriter::ConvertAttributeToFields(
     DCOUT("[ConvertAttributeToFields] Added custom flag for " << attr_name);
   }
 
+  // Add displayName / displayGroup / documentation attribute metas
+  if (metas.has_displayName()) {
+    crate::CrateValue v;
+    v.Set(metas.get_displayName());
+    attr_fields.push_back({"displayName", v});
+  }
+  if (metas.has_displayGroup()) {
+    crate::CrateValue v;
+    v.Set(metas.get_displayGroup());
+    attr_fields.push_back({"displayGroup", v});
+  }
+  if (metas.has_doc()) {
+    crate::CrateValue v;
+    v.Set(metas.get_doc().value);
+    attr_fields.push_back({"documentation", v});
+  }
+  if (metas.has_allowedTokens()) {
+    crate::CrateValue v;
+    v.Set(metas.get_allowedTokens());
+    attr_fields.push_back({"allowedTokens", v});
+  }
+  if (metas.has_colorSpace()) {
+    crate::CrateValue v;
+    v.Set(metas.get_colorSpace());
+    attr_fields.push_back({"colorSpace", v});
+  }
+  if (metas.has_elementSize()) {
+    // pxr crate stores elementSize as int (signed); AttrMetas exposes
+    // it as uint32_t. Cast on the way out so the reader's int-typed
+    // unpack succeeds.
+    crate::CrateValue v;
+    v.Set(static_cast<int32_t>(metas.get_elementSize()));
+    attr_fields.push_back({"elementSize", v});
+  }
+  if (metas.has_weight()) {
+    // pxr crate stores BlendShape inbetween `weight` as float; our
+    // AttrMetas keeps it as double. Cast to float on write so the
+    // reader's float-typed unpack matches the pxr canonical.
+    crate::CrateValue v;
+    v.Set(static_cast<float>(metas.get_weight()));
+    attr_fields.push_back({"weight", v});
+  }
+  if (metas.has_comment()) {
+    crate::CrateValue v;
+    v.Set(metas.get_comment().value);
+    attr_fields.push_back({"comment", v});
+  }
+
+  // Add attribute connection paths if any.
+  if (attr.has_connections()) {
+    ListOp<Path> connection_paths_listop;
+    connection_paths_listop.ClearAndMakeExplicit();
+    connection_paths_listop.SetExplicitItems(attr.connections());
+    crate::CrateValue conn_value;
+    conn_value.Set(connection_paths_listop);
+    attr_fields.push_back({"connectionPaths", conn_value});
+    DCOUT("[ConvertAttributeToFields] Added " << attr.connections().size()
+          << " connectionPaths for " << attr_name);
+  }
+
   // Create the attribute spec
   if (!AddSpec(attr_path, SpecType::Attribute, attr_fields, err)) {
     if (err) *err = "Failed to add attribute spec: " + attr_path.full_path_name() + ": " + *err;
@@ -1659,64 +2240,58 @@ bool CrateWriter::ConvertRelationshipToFields(
   DCOUT("[ConvertRelationshipToFields] Creating separate spec for relationship: "
             << rel_path.full_path_name());
 
-  // 1. Check relationship type and add targetPaths
+  // 1. Check relationship type and add targetPaths.
+  //
+  // pxr Crate stores the list-edit qualifier on the ListOp itself
+  // (via SetPrependedItems / SetAppendedItems / SetDeletedItems /
+  // SetOrderedItems), not as a separate sibling field. Match that
+  // pattern so pxr usdcat (and our own reader) can recover the
+  // qualifier on round-trip.
+  auto apply_listed_qual = [&](ListOp<Path>& listop,
+                                const std::vector<Path>& targets) {
+    switch (rel.get_listedit_qual()) {
+      case ListEditQual::Append:
+        listop.SetAppendedItems(targets);
+        break;
+      case ListEditQual::Prepend:
+        listop.SetPrependedItems(targets);
+        break;
+      case ListEditQual::Add:
+        listop.SetAddedItems(targets);
+        break;
+      case ListEditQual::Delete:
+        listop.SetDeletedItems(targets);
+        break;
+      case ListEditQual::Order:
+        listop.SetOrderedItems(targets);
+        break;
+      case ListEditQual::ResetToExplicit:
+      default:
+        listop.SetExplicitItems(targets);
+        break;
+    }
+  };
+
   if (rel.is_blocked()) {
     // Add ValueBlock for the relationship
     crate::CrateValue blocked_value;
     blocked_value.Set(value::ValueBlock());
     rel_fields.push_back({"targetPaths", blocked_value});
   } else if (rel.is_path()) {
-    // Single target path - wrap in ListOp<Path> (required by USDC format)
-    // For a single path relationship, set it as explicit with one item
     crate::CrateValue path_value;
     ListOp<Path> listop;
-    std::vector<Path> targets;
-    targets.push_back(rel.targetPath);
-    listop.SetExplicitItems(targets);
+    std::vector<Path> targets{rel.targetPath};
+    apply_listed_qual(listop, targets);
     path_value.Set(listop);
     rel_fields.push_back({"targetPaths", path_value});
   } else if (rel.is_pathvector()) {
-    // Multiple target paths - wrap in ListOp<Path> (required by USDC format)
-    // For a pathvector relationship, set items as explicit list
     crate::CrateValue paths_value;
     ListOp<Path> listop;
-    std::vector<Path> targets = rel.targetPathVector;
-    listop.SetExplicitItems(targets);
+    apply_listed_qual(listop, rel.targetPathVector);
     paths_value.Set(listop);
     rel_fields.push_back({"targetPaths", paths_value});
   }
   // DefineOnly relationships don't add targetPaths field
-
-  // 2. Add list edit qualifier if not default
-  if (rel.get_listedit_qual() != ListEditQual::ResetToExplicit) {
-    crate::CrateValue qual_value;
-    // Convert ListEditQual to token
-    std::string qual_str;
-    switch (rel.get_listedit_qual()) {
-      case ListEditQual::Append:
-        qual_str = "append";
-        break;
-      case ListEditQual::Prepend:
-        qual_str = "prepend";
-        break;
-      case ListEditQual::Add:
-        qual_str = "add";
-        break;
-      case ListEditQual::Delete:
-        qual_str = "delete";
-        break;
-      case ListEditQual::Order:
-        qual_str = "order";
-        break;
-      case ListEditQual::ResetToExplicit:
-      default:
-        qual_str = "explicit";
-        break;
-    }
-    crate::TokenIndex qual_tok = GetOrCreateToken(qual_str);
-    qual_value.Set(qual_tok.value);
-    rel_fields.push_back({"listOpQual", qual_value});
-  }
 
   // 3. Relationships have implicit uniform variability
   // Add it explicitly in the Crate format

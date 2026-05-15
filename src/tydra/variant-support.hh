@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 #include "nonstd/optional.hpp"
+#include "../tiny-hashmap.hh"
 
 namespace tinyusdz {
 namespace tydra {
@@ -270,7 +271,7 @@ class DefaultVariantManager : public VariantManager {
  private:
   std::vector<VariantGroup> _variant_groups;
   std::vector<VariantSelection> _current_selections;
-  std::map<std::string, int32_t> _variant_group_map;  // prim_path -> index
+  tinyusdz::HashMap<std::string, int32_t> _variant_group_map;  // prim_path -> index
 };
 
 ///

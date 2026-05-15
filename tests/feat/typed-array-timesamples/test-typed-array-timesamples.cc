@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Copyright 2025 - Present, Light Transport Entertainment Inc.
 //
 // Test TypedArray-based TimeSamples with deduplication

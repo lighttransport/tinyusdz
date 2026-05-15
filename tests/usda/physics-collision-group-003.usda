@@ -1,0 +1,40 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Z"
+)
+
+# invertFilteredGroups: G1 collides ONLY with G2; G3 is therefore
+# filtered against G1 even though G3 itself authors no filter.
+def Xform "World"
+{
+    def PhysicsCollisionGroup "G1"
+    (
+        prepend apiSchemas = ["CollectionAPI:colliders"]
+    )
+    {
+        bool physics:invertFilteredGroups = 1
+        rel physics:filteredGroups = </World/G2>
+        rel collection:colliders:includes = </World/A>
+    }
+
+    def PhysicsCollisionGroup "G2"
+    (
+        prepend apiSchemas = ["CollectionAPI:colliders"]
+    )
+    {
+        rel collection:colliders:includes = </World/B>
+    }
+
+    def PhysicsCollisionGroup "G3"
+    (
+        prepend apiSchemas = ["CollectionAPI:colliders"]
+    )
+    {
+        rel collection:colliders:includes = </World/C>
+    }
+
+    def Cube "A" {}
+    def Cube "B" {}
+    def Cube "C" {}
+}

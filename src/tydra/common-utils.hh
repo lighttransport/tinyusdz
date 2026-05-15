@@ -106,8 +106,10 @@ void ExtractAnimatableData(const Animatable<T>& src,
 /// Convert UVTexture channel enum to string
 std::string ChannelToString(int channel_value);
 
-/// Validate and sanitize asset paths (handle backslashes etc.)
-std::string SanitizeAssetPath(const std::string& path, bool allow_backslashes = true);
+/// Normalizes `path` to forward slashes and collapses `.` / `..` segments
+/// against preceding components. Returns an empty string if the path
+/// attempts to escape the root (more `..` than prior segments).
+std::string SanitizeAssetPath(const std::string& path);
 
 }  // namespace utils
 }  // namespace tydra  

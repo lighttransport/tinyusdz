@@ -1,0 +1,71 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Z"
+)
+
+def Xform "World"
+{
+    def PhysicsScene "SimScene" (
+        prepend apiSchemas = ["MjcSceneAPI"]
+    )
+    {
+        vector3f physics:gravityDirection = (0, 0, -1)
+        float physics:gravityMagnitude = 9.81
+        uniform double mjc:option:timestep = 0.002
+        uniform token mjc:option:integrator = "implicit"
+        uniform bool mjc:flag:gravity = 1
+    }
+
+    def Xform "Arm"
+    {
+        def Xform "Shoulder"
+        {
+        }
+
+        def Xform "Elbow"
+        {
+            double3 xformOp:translate = (0, 0, -0.3)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+
+    def PhysicsRevoluteJoint "ShoulderJoint" (
+        prepend apiSchemas = ["MjcJointAPI"]
+    )
+    {
+        rel physics:body0 = </World/Arm/Shoulder>
+        rel physics:body1 = </World/Arm/Elbow>
+        uniform point3f physics:localPos0 = (0, 0, -0.15)
+        uniform point3f physics:localPos1 = (0, 0, 0.15)
+        token physics:axis = "Y"
+        float physics:lowerLimit = -150
+        float physics:upperLimit = 150
+        uniform double mjc:damping = 0.5
+        uniform double mjc:armature = 0.01
+    }
+
+    def MjcActuator "ShoulderMotor"
+    {
+        rel mjc:target = </World/ShoulderJoint>
+        uniform token mjc:dynType = "none"
+        uniform token mjc:gainType = "fixed"
+        uniform token mjc:biasType = "none"
+        uniform double mjc:gainPrm0 = 100.0
+        uniform double mjc:forceRange0 = -50
+        uniform double mjc:forceRange1 = 50
+        uniform int mjc:group = 0
+    }
+
+    def MjcActuator "ShoulderVelocity"
+    {
+        rel mjc:target = </World/ShoulderJoint>
+        uniform token mjc:dynType = "none"
+        uniform token mjc:gainType = "fixed"
+        uniform token mjc:biasType = "affine"
+        uniform double mjc:gainPrm0 = 10.0
+        uniform double mjc:biasPrm0 = 0
+        uniform double mjc:biasPrm1 = -10.0
+        uniform double mjc:biasPrm2 = 0
+    }
+}

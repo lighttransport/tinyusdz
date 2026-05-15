@@ -1,7 +1,7 @@
 {
   "name": "tinyusdz",
   "private": false,
-  "version": "0.9.0",
+  "version": "0.9.9",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,10 +10,13 @@
     "dev:clips": "vite --open /anim-clips.html",
     "dev:mtlx": "vite --open /materialx.html",
     "dev:lux": "vite --open /usdlux.html",
+    "dev:subdiv": "vite --open /subdiv.html",
     "dev:nodegraph": "vite --open /openpbr-nodegraph-demo.html",
     "dev:offscreengl": "vite --open /offscreengl.html",
     "dev:progress": "vite --open /progress-demo.html",
     "dev:progress-offscreen": "vite --open /progress-offscreenwebgl.html",
+    "dev:usd-export": "vite --open /usd-export.html",
+    "dev:urdf": "vite --open /urdf.html",
     "build": "vite build",
     "preview": "vite preview",
     "__following_is_experiment_and_for_debug__": "",
@@ -36,7 +39,11 @@
     "generate:exr": "vite-node cli/generate-test-exr.js",
     "test:exr-decoder": "vite-node cli/test-exr-decoder.js",
     "test:progress": "node cli/test-progress-cli.js",
-    "test:usdskel": "vite-node tests/usdskel-animation-test.js"
+    "test:usdskel": "vite-node tests/usdskel-animation-test.js",
+    "usd-export": "vite-node cli/usd-export-cli.js",
+    "phys-sim": "node cli/phys-sim.js",
+    "urdf-to-usd": "node cli/urdf-to-usd.js",
+    "usd-urdf-roundtrip": "node cli/usd-urdf-roundtrip.js"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -53,6 +60,7 @@
     "puppeteer": "^24.25.0",
     "socket.io": "^4.8.3",
     "three": ">=0.177.0",
+    "urdf-loader": "^0.12.6",
     "vite-node": "^3.2.4",
     "yaml": "^2.6.1"
   },

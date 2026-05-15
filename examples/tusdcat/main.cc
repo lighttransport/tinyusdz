@@ -1,4 +1,4 @@
-#include <algorithm>
+﻿#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cstdlib>

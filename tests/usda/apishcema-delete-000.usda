@@ -1,0 +1,28 @@
+#usda 1.0
+(
+    defaultPrim = "world"
+    upAxis = "Y"
+)
+
+# Regression test: `delete apiSchemas` list-op (issue #271).
+# A child prim subtracts a previously-prepended schema from the
+# resolved set. Pattern emitted by Omniverse Kit on newton-assets.
+
+def Xform "world"
+{
+    def Xform "child" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsArticulationRootAPI"]
+        delete apiSchemas = ["PhysicsArticulationRootAPI"]
+    )
+    {
+    }
+
+    # delete before prepend on the same prim — both metadata entries
+    # are merged, delete subtracts from the active set.
+    def Xform "joint" (
+        delete apiSchemas = ["PhysicsDriveAPI:angular"]
+        prepend apiSchemas = ["PhysxJointAPI", "PhysicsDriveAPI:X"]
+    )
+    {
+    }
+}
