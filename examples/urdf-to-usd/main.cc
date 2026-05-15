@@ -776,7 +776,11 @@ void AddJointJson(const pugi::xml_node &body_node,
     if (HasAttr(joint_node, "ref")) {
       double ref = ParseDoubleAttr(joint_node, "ref", 0.0);
       if (mj_type == "hinge") {
-        ref *= M_PI / 180.0;  // MJCF degrees → radians for our pipeline
+        // MJCF degrees → radians for our pipeline.
+        // Use a literal (π/180) instead of M_PI: M_PI is a non-standard
+        // GNU extension and is not defined by MSVC's <cmath> unless
+        // _USE_MATH_DEFINES is set before include.
+        ref *= 0.017453292519943295;
       }
       joint["initPosition"] = ref;
     }

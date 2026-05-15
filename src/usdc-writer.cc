@@ -59,12 +59,17 @@ namespace usdc {
 
 namespace {
 
-// Check if filename ends with ".zst" extension (case-insensitive)
+// Check if filename ends with ".zst" extension (case-insensitive).
+// Only used in SaveAsUSDCToFile's non-Android branch; on Android the
+// function returns early via #ifdef __ANDROID__, leaving this helper
+// unused (-Wunused-function under -Werror).
+#ifndef __ANDROID__
 bool HasZstdExtension(const std::string &filename) {
   if (filename.size() < 4) return false;
   std::string ext = filename.substr(filename.size() - 4);
   return (ext == ".zst" || ext == ".ZST");
 }
+#endif
 
 constexpr size_t kSectionNameMaxLength = 15;
 
