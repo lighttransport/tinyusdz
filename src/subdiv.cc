@@ -212,16 +212,22 @@ bool subdivide(int subd_level, const ControlQuadMesh &in_mesh,
     out_mesh->face_triangle_ids.clear();
     out_mesh->material_ids.clear();
 
+    // Loop subdivision produces triangles after refinement; Catmark and
+    // Bilinear produce quads.
+    const bool produces_triangles =
+        (scheme == subdiv::SubdivisionScheme::Loop);
+    const int expected_face_size = produces_triangles ? 3 : 4;
+
     for (int face = 0; face < nfaces; ++face) {
       Far::ConstIndexArray fverts = refLastLevel.GetFaceVertices(face);
-      // Far::ConstIndexArray fuvs   = refLastLevel.GetFaceFVarValues(face,
-      // channelUV);
 
-      // all refined Catmark faces should be quads
-      // assert(fverts.size()==4 && fuvs.size()==4);
-      if (fverts.size() != 4) {
+      if (fverts.size() != expected_face_size) {
         if (err) {
-          (*err) += "All refined Catmark faces should be quads.\n";
+          if (produces_triangles) {
+            (*err) += "Refined Loop face is not a triangle.\n";
+          } else {
+            (*err) += "All refined Catmark faces should be quads.\n";
+          }
         }
         return false;
       }
@@ -234,7 +240,7 @@ bool subdivide(int subd_level, const ControlQuadMesh &in_mesh,
         ofs << "f";
       }
       for (int vert = 0; vert < fverts.size(); ++vert) {
-        out_mesh->face_indices.push_back(uint8_t(fverts[vert]));
+        out_mesh->face_indices.push_back(uint32_t(fverts[vert]));
 
         if (dump) {
           // OBJ uses 1-based arrays...
@@ -246,25 +252,33 @@ bool subdivide(int subd_level, const ControlQuadMesh &in_mesh,
         ofs << "\n";
       }
 
-      // triangulated face
-      out_mesh->triangulated_indices.push_back(uint8_t(fverts[0]));
-      out_mesh->triangulated_indices.push_back(uint8_t(fverts[1]));
-      out_mesh->triangulated_indices.push_back(uint8_t(fverts[2]));
+      if (produces_triangles) {
+        // Loop: each refined face is already a triangle.
+        out_mesh->triangulated_indices.push_back(uint32_t(fverts[0]));
+        out_mesh->triangulated_indices.push_back(uint32_t(fverts[1]));
+        out_mesh->triangulated_indices.push_back(uint32_t(fverts[2]));
+        out_mesh->face_ids.push_back(uint32_t(face));
+        out_mesh->face_triangle_ids.push_back(0);
+        out_mesh->material_ids.push_back(-1);
+      } else {
+        // Catmark / Bilinear: quad split into two triangles via fan.
+        out_mesh->triangulated_indices.push_back(uint32_t(fverts[0]));
+        out_mesh->triangulated_indices.push_back(uint32_t(fverts[1]));
+        out_mesh->triangulated_indices.push_back(uint32_t(fverts[2]));
 
-      out_mesh->triangulated_indices.push_back(uint8_t(fverts[2]));
-      out_mesh->triangulated_indices.push_back(uint8_t(fverts[3]));
-      out_mesh->triangulated_indices.push_back(uint8_t(fverts[0]));
+        out_mesh->triangulated_indices.push_back(uint32_t(fverts[2]));
+        out_mesh->triangulated_indices.push_back(uint32_t(fverts[3]));
+        out_mesh->triangulated_indices.push_back(uint32_t(fverts[0]));
 
-      // some face attribs.
-      out_mesh->face_ids.push_back(uint32_t(face));
-      out_mesh->face_ids.push_back(uint32_t(face));
+        out_mesh->face_ids.push_back(uint32_t(face));
+        out_mesh->face_ids.push_back(uint32_t(face));
 
-      out_mesh->face_triangle_ids.push_back(0);
-      out_mesh->face_triangle_ids.push_back(1);
+        out_mesh->face_triangle_ids.push_back(0);
+        out_mesh->face_triangle_ids.push_back(1);
 
-      // -1 = no material
-      out_mesh->material_ids.push_back(-1);
-      out_mesh->material_ids.push_back(-1);
+        out_mesh->material_ids.push_back(-1);
+        out_mesh->material_ids.push_back(-1);
+      }
     }
   }
 
