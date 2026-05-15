@@ -93,6 +93,12 @@ jobs:
       run: |
           sudo apt update
           sudo apt-get install -y gcc-multilib g++-multilib
+          # clang's libclang_rt.asan-i386 runtime, needed because
+          # bootstrap-cmake-linux-32bit.sh enables SANITIZE_ADDRESS=1.
+          # The runner image does not ship it preinstalled.
+          CLANG_VER=$(clang -dumpversion | cut -d. -f1)
+          sudo apt-get install -y "libclang-rt-${CLANG_VER}-dev:i386" || \
+            sudo apt-get install -y libclang-rt-dev:i386
     - name: configure
       run: ./scripts/bootstrap-cmake-linux-32bit.sh
     - name: make
@@ -181,6 +187,13 @@ jobs:
       run: |
         lscpu
         cat /proc/cpuinfo
+        # clang's libclang_rt.asan-aarch64 runtime, needed because
+        # bootstrap-cmake-linux-asan.sh enables SANITIZE_ADDRESS=1.
+        # The ubuntu-24.04-arm runner image does not ship it.
+        sudo apt-get update
+        CLANG_VER=$(clang -dumpversion | cut -d. -f1)
+        sudo apt-get install -y "libclang-rt-${CLANG_VER}-dev" || \
+          sudo apt-get install -y libclang-rt-dev
     - name: configure
       run: CXX=clang++ CC=clang ./scripts/bootstrap-cmake-linux-asan.sh
     - name: make

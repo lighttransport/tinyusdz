@@ -14,5 +14,6 @@ mkdir ${builddir}
 cd ${builddir} && cmake \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
   -DTINYUSDZ_WITH_OPENSUBDIV=On \
+  -DTINYUSDZ_WITH_TINYSUBDIV=Off \
   ..
 

@@ -4043,7 +4043,7 @@ bool AsciiParser::ParseUIntArrayOptimized(std::vector<uint32_t> *result) {
 
   uint64_t start_loc = CurrLoc();
   uint64_t end_loc = start_loc;
-  if (!FindArrayLiteralEnd(_sr->data(), _sr->size(), start_loc, &end_loc)) {
+  if (!FindArrayLiteralEnd(_sr->data(), static_cast<size_t>(_sr->size()), start_loc, &end_loc)) {
     PushError("Unexpected end of input while parsing uint array");
     return false;
   }
@@ -4066,7 +4066,7 @@ bool AsciiParser::ParseInt64ArrayOptimized(std::vector<int64_t> *result) {
 
   uint64_t start_loc = CurrLoc();
   uint64_t end_loc = start_loc;
-  if (!FindArrayLiteralEnd(_sr->data(), _sr->size(), start_loc, &end_loc)) {
+  if (!FindArrayLiteralEnd(_sr->data(), static_cast<size_t>(_sr->size()), start_loc, &end_loc)) {
     PushError("Unexpected end of input while parsing int64 array");
     return false;
   }
@@ -4089,7 +4089,7 @@ bool AsciiParser::ParseUInt64ArrayOptimized(std::vector<uint64_t> *result) {
 
   uint64_t start_loc = CurrLoc();
   uint64_t end_loc = start_loc;
-  if (!FindArrayLiteralEnd(_sr->data(), _sr->size(), start_loc, &end_loc)) {
+  if (!FindArrayLiteralEnd(_sr->data(), static_cast<size_t>(_sr->size()), start_loc, &end_loc)) {
     PushError("Unexpected end of input while parsing uint64 array");
     return false;
   }
@@ -4112,7 +4112,7 @@ bool AsciiParser::ParseTokenArrayOptimized(std::vector<value::token> *result) {
 
   uint64_t start_loc = CurrLoc();
   uint64_t end_loc = start_loc;
-  if (!FindArrayLiteralEnd(_sr->data(), _sr->size(), start_loc, &end_loc)) {
+  if (!FindArrayLiteralEnd(_sr->data(), static_cast<size_t>(_sr->size()), start_loc, &end_loc)) {
     PushError("Unexpected end of input while parsing token array");
     return false;
   }
@@ -4136,7 +4136,7 @@ bool AsciiParser::ParseStringDataArrayOptimized(
 
   uint64_t start_loc = CurrLoc();
   uint64_t end_loc = start_loc;
-  if (!FindArrayLiteralEnd(_sr->data(), _sr->size(), start_loc, &end_loc)) {
+  if (!FindArrayLiteralEnd(_sr->data(), static_cast<size_t>(_sr->size()), start_loc, &end_loc)) {
     PushError("Unexpected end of input while parsing string array");
     return false;
   }
@@ -4160,7 +4160,7 @@ bool AsciiParser::ParseStdStringArrayOptimized(
 
   uint64_t start_loc = CurrLoc();
   uint64_t end_loc = start_loc;
-  if (!FindArrayLiteralEnd(_sr->data(), _sr->size(), start_loc, &end_loc)) {
+  if (!FindArrayLiteralEnd(_sr->data(), static_cast<size_t>(_sr->size()), start_loc, &end_loc)) {
     PushError("Unexpected end of input while parsing std::string array");
     return false;
   }
