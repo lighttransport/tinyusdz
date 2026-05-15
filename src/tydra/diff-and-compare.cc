@@ -121,7 +121,7 @@ static bool ComparePrimSpecs(const PrimSpec &lhs, const PrimSpec &rhs) {
 }
 
 static void ComputePropDiff(const std::string &path, const PrimSpec &lhs, const PrimSpec &rhs, 
-                           std::unordered_map<std::string, PropDiff> &propDiffs) {
+                           tinyusdz::HashMap<std::string, PropDiff> &propDiffs) {
   const auto &lhs_props = lhs.props();
   const auto &rhs_props = rhs.props();
   
@@ -159,8 +159,8 @@ static void ComputePropDiff(const std::string &path, const PrimSpec &lhs, const 
 static bool ComputeDiffImpl(
   uint32_t depth,
   const std::string &path, const PrimSpec &lhs, const PrimSpec &rhs,
-  std::unordered_map<std::string, PrimSpecDiff> &psDiffs,
-  std::unordered_map<std::string, PropDiff> &propDiffs) {
+  tinyusdz::HashMap<std::string, PrimSpecDiff> &psDiffs,
+  tinyusdz::HashMap<std::string, PropDiff> &propDiffs) {
 
   if (size_t(depth) > kMaxDefaultTraversalLimit) {
     return false;
@@ -181,8 +181,8 @@ static bool ComputeDiffImpl(
   const auto &rhs_children = rhs.children();
   
   // Build maps for easier lookup
-  std::unordered_map<std::string, const PrimSpec *, FNV1StringHash> lhs_child_map;
-  std::unordered_map<std::string, const PrimSpec *, FNV1StringHash> rhs_child_map;
+  tinyusdz::HashMap<std::string, const PrimSpec *, FNV1StringHash> lhs_child_map;
+  tinyusdz::HashMap<std::string, const PrimSpec *, FNV1StringHash> rhs_child_map;
   lhs_child_map.reserve(lhs_children.size());
   rhs_child_map.reserve(rhs_children.size());
   
@@ -249,8 +249,8 @@ static std::string EscapeJSON(const std::string &str) {
 } // namespace detail
 
 void Diff(const Layer &lhs, const Layer &rhs,
-  std::unordered_map<std::string, PrimSpecDiff> &psDiffs,
-  std::unordered_map<std::string, PropDiff> &propDiffs) {
+  tinyusdz::HashMap<std::string, PrimSpecDiff> &psDiffs,
+  tinyusdz::HashMap<std::string, PropDiff> &propDiffs) {
 
   const auto &lhs_primspecs = lhs.primspecs();
   const auto &rhs_primspecs = rhs.primspecs();
@@ -291,8 +291,8 @@ void Diff(const Layer &lhs, const Layer &rhs,
 std::string DiffToText(const Layer &lhs, const Layer &rhs,
                        const std::string &lhs_name,
                        const std::string &rhs_name) {
-  std::unordered_map<std::string, PrimSpecDiff> psDiffs;
-  std::unordered_map<std::string, PropDiff> propDiffs;
+  tinyusdz::HashMap<std::string, PrimSpecDiff> psDiffs;
+  tinyusdz::HashMap<std::string, PropDiff> propDiffs;
   
   Diff(lhs, rhs, psDiffs, propDiffs);
   
@@ -374,8 +374,8 @@ std::string DiffToText(const Layer &lhs, const Layer &rhs,
 std::string DiffToJSON(const Layer &lhs, const Layer &rhs,
                        const std::string &lhs_name,
                        const std::string &rhs_name) {
-  std::unordered_map<std::string, PrimSpecDiff> psDiffs;
-  std::unordered_map<std::string, PropDiff> propDiffs;
+  tinyusdz::HashMap<std::string, PrimSpecDiff> psDiffs;
+  tinyusdz::HashMap<std::string, PropDiff> propDiffs;
   
   Diff(lhs, rhs, psDiffs, propDiffs);
   

@@ -434,6 +434,24 @@ private:
   /// Extract NurbsCurves-specific properties (order, knots, ranges, pointWeights, points, etc.)
   bool ExtractNurbsCurvesProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
+  /// Extract GeomPlane properties
+  bool ExtractGeomPlaneProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract GeomCylinder_1 properties
+  bool ExtractGeomCylinder1Properties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract GeomCapsule_1 properties
+  bool ExtractGeomCapsule1Properties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract GeomTetMesh properties
+  bool ExtractGeomTetMeshProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract GeomNurbsPatch properties
+  bool ExtractGeomNurbsPatchProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract GeomHermiteCurves properties
+  bool ExtractGeomHermiteCurvesProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
   /// Extract PointInstancer-specific properties (protoIndices, positions, orientations, scales, velocities, etc.)
   bool ExtractPointInstancerProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
@@ -467,6 +485,15 @@ private:
   /// Extract PortalLight properties (geometry relationship, color, intensity, exposure)
   bool ExtractPortalLightProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
+  /// Extract DomeLight_1 properties
+  bool ExtractDomeLight1Properties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract LightFilter properties
+  bool ExtractLightFilterProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract PluginLightFilter properties
+  bool ExtractPluginLightFilterProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
   /// Extract Skeleton properties (jointNames, joints, bindTransforms, restTransforms)
   bool ExtractSkeletonProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
@@ -475,6 +502,32 @@ private:
 
   /// Extract SkelRoot properties (visibility, purpose, extent)
   bool ExtractSkelRootProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract Physics prim properties
+  bool ExtractPhysicsJointProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPhysicsSceneProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPhysicsRevoluteJointProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPhysicsPrismaticJointProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPhysicsSphericalJointProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPhysicsFixedJointProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPhysicsDistanceJointProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPhysicsCollisionGroupProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractMjcActuatorProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractNewtonActuatorProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractMjcTendonProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractMjcKeyframeProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract AR/Interactive prim properties (Apple Preliminary_*)
+  bool ExtractPreliminaryGravitationalForceProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPreliminaryInfiniteColliderPlaneProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPreliminaryReferenceImageProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPreliminaryBehaviorProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPreliminaryTriggerProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPreliminaryActionProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPreliminaryTextProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract usdMedia prim properties
+  bool ExtractSpatialAudioProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract PrimMeta fields (kind, active, hidden, customData, apiSchemas, references, payload, inherits, specializes, etc.)
   void ExtractPrimMeta(const PrimMeta& metas, crate::FieldValuePairVector& fields);
@@ -528,6 +581,15 @@ private:
   /// Convert a value::Value to CrateValue and append to fields.
   bool AddArrayAttribute(const std::string& attr_name, const value::Value& val,
                          crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Like AddArrayAttribute but emits a separate property spec carrying the
+  /// supplied AttrMetas (interpolation, customData, displayName, etc.), so
+  /// metadata authored on a typed attribute survives USDC roundtrip.
+  bool AddArrayAttributeWithMetas(const std::string& attr_name,
+                                  const value::Value& val,
+                                  const AttrMeta& metas,
+                                  const Path& prim_path,
+                                  std::string* err);
 
   /// Convert an enum string to a token and append to fields.
   void AddEnumAttribute(const std::string& attr_name, const std::string& enum_val,
@@ -727,20 +789,20 @@ private:
   std::vector<std::string> validation_warnings_;  // Collected validation warnings
 
   // Deduplication tables
-  std::unordered_map<std::string, crate::TokenIndex> token_to_index_;
+  tinyusdz::HashMap<std::string, crate::TokenIndex> token_to_index_;
   std::vector<std::string> tokens_;  // Index -> token string
   std::map<int32_t, uint32_t> path_tree_token_remap_;  // Maps path tree token index -> our token index
 
-  std::unordered_map<std::string, crate::StringIndex> string_to_index_;
+  tinyusdz::HashMap<std::string, crate::StringIndex> string_to_index_;
   std::vector<std::string> strings_;  // Index -> string
 
-  std::unordered_map<Path, crate::PathIndex, crate::PathHasher, crate::PathKeyEqual> path_to_index_;
+  tinyusdz::HashMap<Path, crate::PathIndex, crate::PathHasher, crate::PathKeyEqual> path_to_index_;
   std::vector<Path> paths_;  // Index -> path
 
-  std::unordered_map<crate::Field, crate::FieldIndex, crate::FieldHasher, crate::FieldKeyEqual> field_to_index_;
+  tinyusdz::HashMap<crate::Field, crate::FieldIndex, crate::FieldHasher, crate::FieldKeyEqual> field_to_index_;
   std::vector<crate::Field> fields_;  // Index -> field
 
-  std::unordered_map<std::vector<crate::FieldIndex>, crate::FieldSetIndex, crate::FieldSetHasher> fieldset_to_index_;
+  tinyusdz::HashMap<std::vector<crate::FieldIndex>, crate::FieldSetIndex, crate::FieldSetHasher> fieldset_to_index_;
   std::vector<std::vector<crate::FieldIndex>> fieldsets_;  // Index -> fieldset
 
   // Spec data (accumulated before writing)

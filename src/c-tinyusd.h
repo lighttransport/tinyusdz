@@ -594,6 +594,8 @@ C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_float3(
 C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_float4(
     c_tinyusd_float4_t val);
 /*   TODO: List up other types... */
+/* (bool / double / matrix / typed-vec aliases declared in
+ * c-tinyusd-helpers.h.) */
 
 /* Check if the content of Value is the type of `value_type` */
 C_TINYUSD_EXPORT int c_tinyusd_value_is_type(const CTinyUSDValue *value, CTinyUSDValueType value_type);

@@ -1,11 +1,13 @@
 #include "mcp-tools.hh"
 
+#include <limits>
 #include <string>
 
 #include "mcp-context.hh"
 #include "mcp-server.hh"
 #include "pprinter.hh"
 #include "layer.hh"
+#include "security-policy.hh"
 #include "str-util.hh"
 #include "tinyusdz.hh"
 #include "uuid-gen.hh"
@@ -27,17 +29,51 @@ namespace mcp {
 
 namespace {
 
+inline bool decode_data(const std::string &data, std::string *binary,
+                        std::string *err) {
+  if (!binary) {
+    if (err) {
+      (*err) = "Internal error: null output buffer for decode_data.";
+    }
+    return false;
+  }
 
-inline std::string decode_data(const std::string &data) {
-  // TODO: save memory
-  std::string binary = base64_decode(data);
+  if (data.size() > security_policy::kMCPMaxBase64InputBytes) {
+    if (err) {
+      (*err) = "Input base64 payload is too large.";
+    }
+    return false;
+  }
 
-  return binary;
+  size_t decoded_size = 0;
+  if (!security_policy::EstimateBase64DecodedSize(data, &decoded_size)) {
+    if (err) {
+      (*err) = "Invalid base64 data.";
+    }
+    return false;
+  }
+
+  if (decoded_size > security_policy::kMCPMaxBase64DecodedBytes) {
+    if (err) {
+      (*err) = "Decoded payload exceeds size limit.";
+    }
+    return false;
+  }
+
+  (*binary) = base64_decode(data);
+  if ((*binary).size() != decoded_size) {
+    if (err) {
+      (*err) = "Invalid base64 data.";
+    }
+    return false;
+  }
+
+  return true;
 }
 
 static std::string FindUUID(
     const std::string &name,
-    const std::unordered_map<std::string, USDLayer> &layers) {
+    const tinyusdz::HashMap<std::string, USDLayer> &layers) {
   for (const auto &it : layers) {
     if (it.second.name == name) {
       return it.first;
@@ -107,7 +143,7 @@ bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args,
 
   std::string uri = args["uri"];
   std::string name = args["name"];
-  std::string description = args["description"];
+  std::string description = args.value("description", std::string{});
 
   Layer layer;
   std::string warn;
@@ -134,7 +170,7 @@ bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args,
   usd_layer.layer = std::move(layer);
   usd_layer.description = description;
 
-  ctx.layers.emplace(uuid, std::move(usd_layer));
+  ctx.layers.insert_or_assign(uuid, std::move(usd_layer));
 
   DCOUT("loaded USD as Layer");
 
@@ -165,9 +201,12 @@ bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args,
 
   std::string name = args["name"];
   const std::string &data = args["data"];
-  std::string description = args["description"];
+  std::string description = args.value("description", std::string{});
 
-  std::string binary = decode_data(data);
+  std::string binary;
+  if (!decode_data(data, &binary, &err)) {
+    return false;
+  }
 
   Layer layer;
   std::string warn;
@@ -196,7 +235,7 @@ bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args,
   usd_layer.description = description;
   usd_layer.layer = std::move(layer);
 
-  ctx.layers.emplace(uuid, std::move(usd_layer));
+  ctx.layers.insert_or_assign(uuid, std::move(usd_layer));
 
   DCOUT("loaded USD as Layer");
 
@@ -296,7 +335,12 @@ bool StoreAsset(Context &ctx, const nlohmann::json &args,
 
   std::string name = args["name"];
   const std::string &data = args["data"];
-  std::string description = args["description"];
+  std::string description = args.value("description", std::string{});
+
+  if (data.size() > security_policy::kMCPMaxBase64InputBytes) {
+    err = "`data` payload exceeds size limit.";
+    return false;
+  }
 
   std::string uuid = generateUUID();
 
@@ -312,8 +356,12 @@ bool StoreAsset(Context &ctx, const nlohmann::json &args,
 
     // Check for required preview fields
     if (preview.contains("data") && preview.contains("mimeType")) {
-      std::cout << "has_preview\n";
-      asset.preview.data = preview["data"];
+      std::string preview_data = preview["data"];
+      if (preview_data.size() > security_policy::kMCPMaxBase64InputBytes) {
+        err = "`preview.data` payload exceeds size limit.";
+        return false;
+      }
+      asset.preview.data = std::move(preview_data);
       asset.preview.mimeType = preview["mimeType"];
 
       // Optional preview name
@@ -342,7 +390,7 @@ bool StoreAsset(Context &ctx, const nlohmann::json &args,
     asset.bmax[2] = args["bmax"][2];
   }
 
-  ctx.assets.emplace(name, std::move(asset));
+  ctx.assets.insert_or_assign(name, std::move(asset));
 
   nlohmann::json content;
   content["type"] = "text";
@@ -358,8 +406,8 @@ bool ListPrimSpecs(Context &ctx, const nlohmann::json &args,
                    nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
 
-  std::string uuid = args["uuid"];
-  std::string name = args["uuid"];
+  std::string uuid = args.value("uuid", std::string{});
+  std::string name = args.value("name", std::string{});
 
   if (uuid.empty() && name.empty()) {
     err = "Either `name` or `uuid` arg required\n";
@@ -428,6 +476,10 @@ bool SaveScreenshot(Context &ctx, const nlohmann::json &args,
 
   std::string name = args["name"];
   std::string data = args["data"];
+  if (data.size() > security_policy::kMCPMaxBase64InputBytes) {
+    err = "`data` payload exceeds size limit.";
+    return false;
+  }
   std::string mimeType = args["mimeType"];
 
   Screenshot screenshot;
@@ -675,7 +727,7 @@ bool GetAllAssetDescriptions(Context &ctx, const nlohmann::json &args,
 bool ToUSDA(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
             std::string &err) {
   DCOUT("args " << args);
-  if (!args.contains("uri")) {
+  if (!args.contains("name")) {
     DCOUT("name param not found");
     err = "`name` param not found.";
     return false;

@@ -39,6 +39,7 @@
 #include "value-types.hh"
 #include "tiny-format.hh"
 #include "str-util.hh"
+#include "safe-arithmetic.hh"
 
 //
 #ifdef __clang__
@@ -74,6 +75,15 @@ namespace crate {
 
 
 #define VERSION_LESS_THAN_0_8_0(__version) ((_version[0] == 0) && (_version[1] < 7))
+
+///
+/// Safe size computation: uint64_t n * sizeof(T) -> size_t
+/// Returns true on success, false on overflow.
+///
+template <typename T>
+bool SafeSizeForN(uint64_t n, size_t* out) {
+  return safe::n_to_size<T>(n, out);
+}
 
 //
 // --
@@ -236,7 +246,10 @@ bool CrateReader::ReadIndices(std::vector<crate::Index> *indices) {
 
   DCOUT("ReadIndices: n = " << n);
 
-  size_t datalen = size_t(n) * sizeof(crate::Index);
+  size_t datalen;
+  if (!SafeSizeForN<crate::Index>(n, &datalen)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in ReadIndices: n * sizeof(crate::Index)");
+  }
 
   if (datalen > _sr->size()) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Indices data exceeds USDC size.");
@@ -929,7 +942,11 @@ bool CrateReader::ReadArray(std::vector<Reference> *d) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
   }
 
-  CHECK_MEMORY_USAGE(sizeof(Reference) * n);
+  size_t Reference_size;
+  if (!SafeSizeForN<Reference>(n, &Reference_size)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in CHECK_MEMORY_USAGE");
+  }
+  CHECK_MEMORY_USAGE(Reference_size);
 
   for (size_t i = 0; i < n; i++) {
     Reference p;
@@ -972,7 +989,11 @@ bool CrateReader::ReadArray(std::vector<Payload> *d) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
   }
 
-  CHECK_MEMORY_USAGE(sizeof(Payload) * n);
+  size_t Payload_size;
+  if (!SafeSizeForN<Payload>(n, &Payload_size)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in CHECK_MEMORY_USAGE");
+  }
+  CHECK_MEMORY_USAGE(Payload_size);
 
   for (size_t i = 0; i < n; i++) {
     Payload p;
@@ -1038,6 +1059,9 @@ template bool CrateReader::ReadArray<value::matrix2d>(std::vector<value::matrix2
 template bool CrateReader::ReadArray<value::matrix3d>(std::vector<value::matrix3d>*);
 template bool CrateReader::ReadArray<value::matrix4d>(std::vector<value::matrix4d>*);
 // Vector type instantiations needed by crate-reader-timesamples.cc
+template bool CrateReader::ReadArray<value::int2>(std::vector<value::int2>*);
+template bool CrateReader::ReadArray<value::int3>(std::vector<value::int3>*);
+template bool CrateReader::ReadArray<value::int4>(std::vector<value::int4>*);
 template bool CrateReader::ReadArray<value::half2>(std::vector<value::half2>*);
 template bool CrateReader::ReadArray<value::half3>(std::vector<value::half3>*);
 template bool CrateReader::ReadArray<value::half4>(std::vector<value::half4>*);
@@ -1277,7 +1301,7 @@ bool CrateReader::ReadTokens() {
   // And further, extra 128 bytes for safety(LZ4_FAST_DEC_LOOP does 16 bytes stride memcpy)
 
   uint64_t bufSize = (std::max)(compressedSize, uncompressedSize);
-  if (bufSize > std::numeric_limits<uint64_t>::max() - 128) {
+  if (bufSize > (std::numeric_limits<uint64_t>::max)() - 128) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "bufSize overflow in addition.");
   }
   CHECK_MEMORY_USAGE(bufSize+128);
@@ -1464,7 +1488,7 @@ bool CrateReader::ReadFields() {
 
   if (sizeof(void *) == 4) {
     // 32bit
-    if (num_fields > std::numeric_limits<int32_t>::max() / sizeof(uint32_t)) {
+    if (num_fields > (std::numeric_limits<int32_t>::max)() / sizeof(uint32_t)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many fields in `FIELDS` section.");
     }
   }
@@ -1694,11 +1718,13 @@ bool CrateReader::BuildFieldSetBoundaryIndex() {
       return false;
     }
 
-    if ((start > static_cast<size_t>(std::numeric_limits<uint32_t>::max())) ||
-        (end > static_cast<size_t>(std::numeric_limits<uint32_t>::max()))) {
+#if SIZE_MAX > UINT32_MAX
+    if ((start > static_cast<size_t>((std::numeric_limits<uint32_t>::max)())) ||
+        (end > static_cast<size_t>((std::numeric_limits<uint32_t>::max)()))) {
       PUSH_ERROR("Fieldset boundary index overflow.");
       return false;
     }
+#endif
 
     const uint32_t start_u32 = static_cast<uint32_t>(start);
     const uint32_t end_u32 = static_cast<uint32_t>(end);
@@ -2253,12 +2279,12 @@ bool CrateReader::ReadTOC() {
 
     // Guard against signed integer overflow before casting to size_t.
     if (_toc.sections[i].size > 0 &&
-        _toc.sections[i].start > std::numeric_limits<int64_t>::max() - _toc.sections[i].size) {
+        _toc.sections[i].start > (std::numeric_limits<int64_t>::max)() - _toc.sections[i].size) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section start + size overflows int64."));
     }
     size_t end_offset = size_t(_toc.sections[i].start + _toc.sections[i].size);
     if (sizeof(void *) == 4) { // 32bit
-      if (end_offset > size_t(std::numeric_limits<int32_t>::max())) {
+      if (end_offset > size_t((std::numeric_limits<int32_t>::max)())) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section end offset exceeds 32bit max."));
       }
     }

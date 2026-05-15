@@ -1,0 +1,35 @@
+#usda 1.0
+(
+    defaultPrim = "world"
+    upAxis = "Y"
+)
+
+# Regression test: `material:binding` relationship with no target paths
+# and `material:binding` pointing at a path not in the stage. Both are
+# valid USD patterns (declaration-only with metadata, or material
+# authored in a layer composed away) and must not abort render-scene
+# conversion — the caller's parent-walk should treat them as "no
+# binding here, inherit from parent".
+
+def Xform "world"
+{
+    def Mesh "decl_only"
+    {
+        # Declaration-only material:binding (metadata, no target).
+        rel material:binding (
+            bindMaterialAs = "weakerThanDescendants"
+        )
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }
+
+    def Mesh "dangling_target"
+    {
+        # Points at a Material that doesn't exist in this stage.
+        rel material:binding = </world/Looks/NotPresent>
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }
+}

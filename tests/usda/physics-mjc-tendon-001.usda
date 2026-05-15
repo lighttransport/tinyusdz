@@ -1,0 +1,58 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Z"
+)
+
+def Xform "World"
+{
+    def Xform "Link0"
+    {
+    }
+
+    def Xform "Link1"
+    {
+        double3 xformOp:translate = (0, 0, -0.5)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Xform "Link2"
+    {
+        double3 xformOp:translate = (0, 0, -1.0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def PhysicsRevoluteJoint "Joint0" (
+        prepend apiSchemas = ["MjcJointAPI"]
+    )
+    {
+        rel physics:body0 = </World/Link0>
+        rel physics:body1 = </World/Link1>
+        uniform point3f physics:localPos0 = (0, 0, -0.25)
+        uniform point3f physics:localPos1 = (0, 0, 0.25)
+        token physics:axis = "Y"
+        uniform double mjc:damping = 0.5
+    }
+
+    def PhysicsRevoluteJoint "Joint1" (
+        prepend apiSchemas = ["MjcJointAPI"]
+    )
+    {
+        rel physics:body0 = </World/Link1>
+        rel physics:body1 = </World/Link2>
+        uniform point3f physics:localPos0 = (0, 0, -0.25)
+        uniform point3f physics:localPos1 = (0, 0, 0.25)
+        token physics:axis = "Y"
+        uniform double mjc:damping = 0.5
+    }
+
+    def MjcTendon "CoupledTendon"
+    {
+        uniform token mjc:type = "fixed"
+        uniform double mjc:stiffness = 10.0
+        uniform double mjc:damping = 1.0
+        uniform token mjc:limited = "auto"
+        uniform double mjc:range0 = -0.5
+        uniform double mjc:range1 = 0.5
+    }
+}

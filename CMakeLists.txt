@@ -19,6 +19,19 @@ if (CMAKE_VERSION VERSION_LESS 3.21)
   endif()
 endif ()
 
+# Default to Release when configured as the top-level project and no build
+# type was given. Without this, single-config generators (Make/Ninja) leave
+# CMAKE_BUILD_TYPE empty, which on GCC/Clang means -O0 and silently produces
+# binaries that are 2-3x slower than expected (observed: tusdcat parsing
+# went from 3.8s -> 1.3s after switching from the empty default to Release).
+if (PROJECT_IS_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  message(STATUS "TinyUSDZ: CMAKE_BUILD_TYPE not set; defaulting to Release.")
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING
+      "Build type (Debug|Release|RelWithDebInfo|MinSizeRel)" FORCE)
+  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+      "Debug" "Release" "RelWithDebInfo" "MinSizeRel")
+endif ()
+
 
 if (EMSCRIPTEN)
   set(TINYUSDZ_DEFAULT_NO_WERROR ON)
@@ -142,15 +155,32 @@ option(TINYUSDZ_WITH_USD_TO_GLTF "Build with USD to glTF example" ON)
 option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
 option(TINYUSDZ_WITH_USDFBX "Build with usdFbx support(import FBX .fbx)"
-       OFF)
+        OFF)
 option(TINYUSDZ_WITH_USDVOX
        "Build with usdVox support(import MagicaVoxel .vox)" ON)
+
+set(TINYUSDZ_DEFAULT_WITH_OPENSUBDIV OFF)
+set(TINYUSDZ_DEFAULT_WITH_TINYSUBDIV ON)
+
 option(
   TINYUSDZ_WITH_OPENSUBDIV
   "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)"
-  OFF)
+  ${TINYUSDZ_DEFAULT_WITH_OPENSUBDIV})
 # Use embedded version of OpenSubdiv code by default
 set(osd_DIR ${PROJECT_SOURCE_DIR}/src/osd)
+
+option(
+  TINYUSDZ_WITH_TINYSUBDIV
+  "Build with TinyUSDZ's own dependency-free subdivision surface library (Catmull-Clark, Loop, Bilinear)"
+  ${TINYUSDZ_DEFAULT_WITH_TINYSUBDIV})
+
+# Mutual exclusivity check
+if(TINYUSDZ_WITH_OPENSUBDIV AND TINYUSDZ_WITH_TINYSUBDIV)
+  message(FATAL_ERROR
+          "Cannot enable both TINYUSDZ_WITH_OPENSUBDIV and "
+          "TINYUSDZ_WITH_TINYSUBDIV. TinySubdiv is the default backend; "
+          "disable one subdivision backend before configuring.")
+endif()
 
 option(TINYUSDZ_WITH_AUDIO "Build with Audio support(MP3 and WAV)" ON)
 option(TINYUSDZ_WITH_ALAC_AUDIO "Build with ALAC(as M4A) Audio support" OFF)
@@ -446,6 +476,9 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/crate-writer.cc
     ${PROJECT_SOURCE_DIR}/src/stage-converter.cc
     ${PROJECT_SOURCE_DIR}/src/sconv-geom.cc
+    ${PROJECT_SOURCE_DIR}/src/sconv-physics.cc
+    ${PROJECT_SOURCE_DIR}/src/sconv-ar.cc
+    ${PROJECT_SOURCE_DIR}/src/sconv-media.cc
     ${PROJECT_SOURCE_DIR}/src/sconv-shader.cc
     ${PROJECT_SOURCE_DIR}/src/sconv-light.cc
     ${PROJECT_SOURCE_DIR}/src/sconv-skel.cc
@@ -455,6 +488,9 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/path-util.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-physics.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-ar.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-media.cc
     ${PROJECT_SOURCE_DIR}/src/prim-composition.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
     ${PROJECT_SOURCE_DIR}/src/core/prim-enums.cc
@@ -486,6 +522,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/mtlx-dom.cc
     ${PROJECT_SOURCE_DIR}/src/mtlx-simple-parser.cc
     ${PROJECT_SOURCE_DIR}/src/usdMtlx.cc
+    ${PROJECT_SOURCE_DIR}/src/usdPhysics.cc
+    ${PROJECT_SOURCE_DIR}/src/mjcPhysics.cc
     ${PROJECT_SOURCE_DIR}/src/usdObj.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/pprint-enum.cc
@@ -494,6 +532,9 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/pprint-shader.cc
     ${PROJECT_SOURCE_DIR}/src/pprint-light.cc
     ${PROJECT_SOURCE_DIR}/src/pprint-skel.cc
+    ${PROJECT_SOURCE_DIR}/src/pprint-physics.cc
+    ${PROJECT_SOURCE_DIR}/src/pprint-ar.cc
+    ${PROJECT_SOURCE_DIR}/src/pprint-media.cc
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc
     ${PROJECT_SOURCE_DIR}/src/timesamples-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/timesamples.cc
@@ -550,6 +591,21 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/material-serializer.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/materialx-to-json.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/materialx-to-json.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/physics-to-json.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/physics-to-json.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/urdf-to-usd.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/urdf-to-usd.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/ar-to-json.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/ar-to-json.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/ik-solver.h
+        ${PROJECT_SOURCE_DIR}/src/tydra/ik-solver.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/ik-solver.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/rb-math.h
+        ${PROJECT_SOURCE_DIR}/src/tydra/rb-collision.h
+        ${PROJECT_SOURCE_DIR}/src/tydra/rb-collision.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/rb-dynamics.h
+        ${PROJECT_SOURCE_DIR}/src/tydra/rb-dynamics.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/rb-dynamics.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/bone-util.cc
@@ -558,6 +614,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/layer-to-renderscene.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/common-utils.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/common-utils.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/variant-support.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/variant-support.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/variant-converter.hh
@@ -593,7 +651,10 @@ if(TINYUSDZ_WITH_PXR_COMPAT_API)
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/pxr-compat.cc)
 endif()
 
-set(TINYUSDZ_C_API_SOURCES ${PROJECT_SOURCE_DIR}/src/c-tinyusd.cc)
+set(TINYUSDZ_C_API_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/c-tinyusd.cc
+    ${PROJECT_SOURCE_DIR}/src/c-tinyusd-helpers.cc
+    ${PROJECT_SOURCE_DIR}/src/c-tinyusd-tydra.cc)
 
 set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/integerCoding.cpp
@@ -900,6 +961,19 @@ if(TINYUSDZ_WITH_OPENSUBDIV)
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/subdiv.cc)
 
 endif(TINYUSDZ_WITH_OPENSUBDIV)
+
+if(TINYUSDZ_WITH_TINYSUBDIV)
+  message(STATUS "Using TinyUSDZ's own subdivision surface library")
+
+  # Add our subdivision library sources
+  list(APPEND TINYUSDZ_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/subdivision.cc
+    ${PROJECT_SOURCE_DIR}/src/subdiv-tinyusdz.cc
+  )
+
+  # primvar-interpolation.hh is header-only, no .cc needed
+
+endif(TINYUSDZ_WITH_TINYSUBDIV)
 
 if(TINYUSDZ_WITH_GEOGRAM)
   # Geogram basic core files (header-only minimal set)
@@ -1355,11 +1429,6 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   # corrent TinyYSDZ need to use bigobj format otherwise we'll get: fatal  error C1128: number of sections exceeded object file format limit: compile with /bigobj
   if(MSVC)
     target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /bigobj)
-  elseif(WIN32)
-    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-      # guess mingw-gcc
-      target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE "-Wa, -mbig-obj")
-    endif()
   endif()
 
   if (MSVC)
@@ -1520,6 +1589,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_OPENSUBDIV")
   endif(TINYUSDZ_WITH_OPENSUBDIV)
+
+  if(TINYUSDZ_WITH_TINYSUBDIV)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_TINYSUBDIV")
+  endif(TINYUSDZ_WITH_TINYSUBDIV)
 
   if(TINYUSDZ_WITH_TYDRA)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
@@ -1697,6 +1771,7 @@ if(TINYUSDZ_BUILD_EXAMPLES)
     add_subdirectory(examples/variant-lister)
     add_subdirectory(examples/variant-analyzer)
     add_subdirectory(examples/usddiff)
+    add_subdirectory(examples/urdf-to-usd)
 
     if (TINYUSDZ_WITH_MCP_SERVER)
       add_subdirectory(examples/mcp_server)
@@ -1750,6 +1825,11 @@ if(TINYUSDZ_BUILD_BENCHMARKS)
     target_compile_definitions(${TINYUSDZ_BENCHMARK_TARGET}
                                PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
   endif(TINYUSDZ_WITH_OPENSUBDIV)
+
+  if(TINYUSDZ_WITH_TINYSUBDIV)
+    target_compile_definitions(${TINYUSDZ_BENCHMARK_TARGET}
+                               PRIVATE "TINYUSDZ_USE_TINYSUBDIV")
+  endif(TINYUSDZ_WITH_TINYSUBDIV)
 
 endif(TINYUSDZ_BUILD_BENCHMARKS)
 
@@ -1884,6 +1964,11 @@ if(TINYUSDZ_BUILD_TESTS)
       COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usdc/unit-runner.py --app
               "$<TARGET_FILE:test_tinyusdz>" --basedir "${PROJECT_SOURCE_DIR}/tests/usdc"
       )
+    # usdc-parser-unit-test globs all *.usdc in tests/usdc/, including
+    # *-runtime.usdc files that are generated by unit-test-tinyusdz.
+    # Must run after unit tests to avoid reading partially-written files.
+    set_tests_properties(usdc-parser-unit-test PROPERTIES
+      DEPENDS unit-test-tinyusdz)
   endif()
 
   #

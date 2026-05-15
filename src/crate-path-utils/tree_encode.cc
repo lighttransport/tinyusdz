@@ -72,7 +72,7 @@ void TokenTable::Clear() {
 // Tree Building
 // ============================================================================
 
-std::unique_ptr<PathTreeNode> BuildPathTree(
+static std::unique_ptr<PathTreeNode> BuildPathTree(
   const std::vector<SimplePath>& sorted_paths,
   TokenTable& token_table
 ) {
@@ -246,8 +246,8 @@ std::unique_ptr<PathTreeNode> BuildPathTree(
 // Tree Walking and Encoding
 // ============================================================================
 
-int32_t CalculateJump(
-  const PathTreeNode* node,
+static int32_t CalculateJump(
+  const PathTreeNode* /* node */,
   bool has_child,
   bool has_sibling,
   size_t sibling_offset
@@ -269,7 +269,7 @@ int32_t CalculateJump(
   return static_cast<int32_t>(sibling_offset);
 }
 
-void WalkTreeDepthFirst(
+static void WalkTreeDepthFirst(
   PathTreeNode* node,
   std::vector<PathIndex>& path_indexes,
   std::vector<TokenIndex>& element_token_indexes,
@@ -461,7 +461,7 @@ std::vector<SimplePath> DecodePaths(const CompressedPathTree& compressed) {
         decode_recursive(idx + 1, current_prim);
       }
       // Sibling is at offset (same parent)
-      decode_recursive(idx + jump, current_prim);
+      decode_recursive(idx + static_cast<size_t>(jump), current_prim);
     }
   };
 

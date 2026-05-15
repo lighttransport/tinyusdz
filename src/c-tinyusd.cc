@@ -6,6 +6,8 @@
 #include "tinyusdz.hh"
 #include "tydra/scene-access.hh"
 #include "usdLux.hh"
+#include "usdPhysics.hh"
+#include "usdSkel.hh"
 #include "prim-pprint.hh"
 #include "value-pprint.hh"
 #include "common-macros.inc"
@@ -342,7 +344,7 @@ const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type) {
     sz = 31;
   }
 
-  strncpy(buf, tyname, sz);
+  memcpy(buf, tyname, sz);
 
   if (is_array) {
     if (sz > 29) {
@@ -996,7 +998,7 @@ const char *c_tinyusd_prim_type_name(CTinyUSDPrimType prim_type) {
     // Just in case: this should not happen though.
     sz = 31;
   }
-  strncpy(buf, tyname, sz);
+  memcpy(buf, tyname, sz);
   buf[sz] = '\0';
 
   return buf;
@@ -1044,7 +1046,6 @@ const char *c_tinyusd_prim_element_name(
 }
 
 int c_tinyusd_prim_append_child(CTinyUSDPrim *prim, CTinyUSDPrim *child_prim) {
-  std::cout << "C: Append child: " << prim << "," << child_prim << "\n";
   DCOUT("DCOUT: Append child: " << prim << ", " << child_prim);
 
   if (!prim) {
@@ -1098,7 +1099,16 @@ const char *c_tinyusd_prim_type(const CTinyUSDPrim *prim) {
 
   const tinyusdz::Prim *pprim = reinterpret_cast<const tinyusdz::Prim *>(prim);
 
-  return pprim->prim_type_name().c_str();
+  // prim_type_name() is the user/parser-set string; for prims constructed
+  // programmatically through c_tinyusd_prim_new() it is empty. Fall back
+  // to the typed schema type-name from the underlying value::Value.
+  const std::string &n = pprim->prim_type_name();
+  if (!n.empty()) return n.c_str();
+  // type_name() returns by value; cache via a thread-local to keep the
+  // returned char* stable until the next call on this thread.
+  thread_local std::string tls_type;
+  tls_type = pprim->type_name();
+  return tls_type.c_str();
 }
 
 
@@ -1711,7 +1721,87 @@ CTinyUSDPrim *c_tinyusd_prim_new(const char *_prim_type, c_tinyusd_string_t *err
 
   Prim *p{nullptr};
 
-  if (non_builtin_prim_type) {
+  // Handle additional geom types by string before the enum check, since
+  // CTinyUSDPrimType doesn't enumerate Sphere/Cube/Cylinder/Cone/Capsule.
+  if (prim_type_name == tinyusdz::kGeomSphere) {
+    p = new Prim(GeomSphere{});
+  } else if (prim_type_name == tinyusdz::kGeomCube) {
+    p = new Prim(GeomCube{});
+  } else if (prim_type_name == tinyusdz::kGeomCylinder) {
+    p = new Prim(GeomCylinder{});
+  } else if (prim_type_name == tinyusdz::kGeomCone) {
+    p = new Prim(GeomCone{});
+  } else if (prim_type_name == tinyusdz::kGeomCapsule) {
+    p = new Prim(GeomCapsule{});
+  } else if (prim_type_name == tinyusdz::kGeomPoints) {
+    p = new Prim(GeomPoints{});
+  } else if (prim_type_name == tinyusdz::kGeomCamera) {
+    p = new Prim(GeomCamera{});
+  } else if (prim_type_name == tinyusdz::kGeomSubset) {
+    p = new Prim(GeomSubset{});
+  } else if (prim_type_name == tinyusdz::kGeomBasisCurves) {
+    p = new Prim(GeomBasisCurves{});
+  } else if (prim_type_name == tinyusdz::kGeomNurbsCurves) {
+    p = new Prim(GeomNurbsCurves{});
+  } else if (prim_type_name == tinyusdz::kGeomHermiteCurves) {
+    p = new Prim(GeomHermiteCurves{});
+  } else if (prim_type_name == tinyusdz::kGeomPlane) {
+    p = new Prim(GeomPlane{});
+  } else if (prim_type_name == tinyusdz::kGeomCylinder_1) {
+    p = new Prim(GeomCylinder_1{});
+  } else if (prim_type_name == tinyusdz::kGeomCapsule_1) {
+    p = new Prim(GeomCapsule_1{});
+  } else if (prim_type_name == tinyusdz::kGeomTetMesh) {
+    p = new Prim(GeomTetMesh{});
+  } else if (prim_type_name == tinyusdz::kGeomNurbsPatch) {
+    p = new Prim(GeomNurbsPatch{});
+  } else if (prim_type_name == tinyusdz::kPointInstancer) {
+    p = new Prim(GeomPointInstancer{});
+  } else if (prim_type_name == tinyusdz::kSphereLight) {
+    p = new Prim(SphereLight{});
+  } else if (prim_type_name == tinyusdz::kRectLight) {
+    p = new Prim(RectLight{});
+  } else if (prim_type_name == tinyusdz::kDiskLight) {
+    p = new Prim(DiskLight{});
+  } else if (prim_type_name == tinyusdz::kDistantLight) {
+    p = new Prim(DistantLight{});
+  } else if (prim_type_name == tinyusdz::kCylinderLight) {
+    p = new Prim(CylinderLight{});
+  } else if (prim_type_name == tinyusdz::kDomeLight) {
+    p = new Prim(DomeLight{});
+  } else if (prim_type_name == tinyusdz::kDomeLight_1) {
+    p = new Prim(DomeLight_1{});
+  } else if (prim_type_name == tinyusdz::kGeometryLight) {
+    p = new Prim(GeometryLight{});
+  } else if (prim_type_name == tinyusdz::kPortalLight) {
+    p = new Prim(PortalLight{});
+  } else if (prim_type_name == tinyusdz::kPhysicsScene) {
+    p = new Prim(PhysicsScene{});
+  } else if (prim_type_name == tinyusdz::kPhysicsJoint) {
+    p = new Prim(PhysicsJoint{});
+  } else if (prim_type_name == tinyusdz::kPhysicsRevoluteJoint) {
+    p = new Prim(PhysicsRevoluteJoint{});
+  } else if (prim_type_name == tinyusdz::kPhysicsPrismaticJoint) {
+    p = new Prim(PhysicsPrismaticJoint{});
+  } else if (prim_type_name == tinyusdz::kPhysicsSphericalJoint) {
+    p = new Prim(PhysicsSphericalJoint{});
+  } else if (prim_type_name == tinyusdz::kPhysicsFixedJoint) {
+    p = new Prim(PhysicsFixedJoint{});
+  } else if (prim_type_name == tinyusdz::kPhysicsDistanceJoint) {
+    p = new Prim(PhysicsDistanceJoint{});
+  } else if (prim_type_name == tinyusdz::kPhysicsCollisionGroup) {
+    p = new Prim(PhysicsCollisionGroup{});
+  } else if (prim_type_name == tinyusdz::kNodeGraph) {
+    p = new Prim(NodeGraph{});
+  } else if (prim_type_name == tinyusdz::kSkelRoot) {
+    p = new Prim(SkelRoot{});
+  } else if (prim_type_name == tinyusdz::kSkeleton) {
+    p = new Prim(Skeleton{});
+  } else if (prim_type_name == tinyusdz::kSkelAnimation) {
+    p = new Prim(SkelAnimation{});
+  } else if (prim_type_name == tinyusdz::kBlendShape) {
+    p = new Prim(BlendShape{});
+  } else if (non_builtin_prim_type) {
     Model model;
     model.prim_type_name = std::string(_prim_type);
     p = new Prim(model);
@@ -1729,6 +1819,7 @@ CTinyUSDPrim *c_tinyusd_prim_new(const char *_prim_type, c_tinyusd_string_t *err
     NEW_PRIM(C_TINYUSD_PRIM_GEOMSUBSET, GeomSubset)
     NEW_PRIM(C_TINYUSD_PRIM_MATERIAL, Material)
     NEW_PRIM(C_TINYUSD_PRIM_SHADER, Shader)
+    NEW_PRIM(C_TINYUSD_PRIM_CAMERA, GeomCamera)
     // TODO: More types.
     {
       if (err) {
@@ -1938,7 +2029,7 @@ CTinyUSDValue *c_tinyusd_value_new_array_##__tyname(uint64_t n, const __cty *val
   static_assert(sizeof(__cppty) == sizeof(__cty), ""); \
   std::vector<__cppty> cppvalarray; \
   cppvalarray.resize(size_t(n)); \
-  memcpy(cppvalarray.data(), &vals, sizeof(__cppty) * size_t(n)); \
+  if (n > 0 && vals) memcpy(cppvalarray.data(), vals, sizeof(__cppty) * size_t(n)); \
   tinyusdz::value::Value *vp = new tinyusdz::value::Value(std::move(cppvalarray)); \
   return reinterpret_cast<CTinyUSDValue *>(vp); \
 }

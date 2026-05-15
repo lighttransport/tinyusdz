@@ -367,9 +367,11 @@ static constexpr size_t g_usd_keywords_count =
 
 
 static void RegisterStageMetas(
-    std::unordered_map<std::string, AsciiParser::VariableDef> &metas) {
+    tinyusdz::HashMap<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
+  metas["documentation"] =
+      AsciiParser::VariableDef(value::kString, "documentation");
   metas["documentation"] =
       AsciiParser::VariableDef(value::kString, "doc");  // alias to 'doc'
 
@@ -424,11 +426,13 @@ static void RegisterStageMetas(
 }
 
 static void RegisterPrimMetas(
-    std::unordered_map<std::string, AsciiParser::VariableDef> &metas) {
+    tinyusdz::HashMap<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
 
   metas["kind"] = AsciiParser::VariableDef(value::kToken, "kind");
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
+  metas["documentation"] =
+      AsciiParser::VariableDef(value::kString, "documentation");
 
   //
   // Composition arcs -----------------------
@@ -484,10 +488,12 @@ static void RegisterPrimMetas(
 }
 
 static void RegisterPropMetas(
-    std::unordered_map<std::string, AsciiParser::VariableDef> &metas) {
+    tinyusdz::HashMap<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
 
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
+  metas["documentation"] =
+      AsciiParser::VariableDef(value::kString, "documentation");
   metas["active"] = AsciiParser::VariableDef(value::kBool, "active");
   metas["hidden"] = AsciiParser::VariableDef(value::kBool, "hidden");
   metas["customData"] =
@@ -527,6 +533,17 @@ static void RegisterPropMetas(
   // Builtin from pxrUSD 24.xx?
   metas["displayGroup"] =
       AsciiParser::VariableDef(value::kString, "displayGroup");
+
+  // pxrUSD attribute metadatum: enumerated set of valid token values.
+  // Stored as `token[]` in AttrMetas via set_allowedTokens.
+  metas["allowedTokens"] = AsciiParser::VariableDef(
+      "token", "allowedTokens", /* allow_array_type */ true);
+
+  // `kind` on a Property (Relationship/Attribute). USD spec restricts
+  // `kind` to prims, but pxr's parser accepts it on properties too —
+  // we mirror that tolerance and store via the generic data() dict so
+  // USDA round-trip preserves it.
+  metas["kind"] = AsciiParser::VariableDef(value::kToken, "kind");
 }
 
 // Shared implementation lives in value-types.hh:
@@ -570,6 +587,23 @@ static void RegisterPrimTypes(std::unordered_set<std::string> &d) {
 static void RegisterAPISchemas(std::unordered_set<std::string> &d) {
   d.insert("MaterialBindingAPI");
   d.insert("SkelBindingAPI");
+  d.insert("NewtonSceneAPI");
+  d.insert("NewtonXpbdSceneAPI");
+  d.insert("NewtonKaminoSceneAPI");
+  d.insert("NewtonArticulationRootAPI");
+  d.insert("NewtonCollisionAPI");
+  d.insert("NewtonMeshCollisionAPI");
+  d.insert("NewtonMaterialAPI");
+  d.insert("NewtonMimicAPI");
+  d.insert("NewtonActuatorDelayAPI");
+  d.insert("NewtonActuatorControlBaseAPI");
+  d.insert("NewtonPDControlAPI");
+  d.insert("NewtonPIDControlAPI");
+  d.insert("NewtonNeuralControlAPI");
+  d.insert("NewtonActuatorClampingBaseAPI");
+  d.insert("NewtonMaxEffortClampingAPI");
+  d.insert("NewtonDCMotorClampingAPI");
+  d.insert("NewtonPositionBasedClampingAPI");
 
   // d.insert("PhysicsCollisionAPI");
   // d.insert("PhysicsRigidBodyAPI");

@@ -34,6 +34,7 @@
 
 #include "ascii-parser.hh"
 #include "parser-timing.hh"
+#include "tiny-hashmap.hh"
 #include "path-util.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
@@ -615,7 +616,7 @@ std::string AsciiParser::GetErrorWithHints(bool show_hints) {
   }
 
   // Process errors in reverse order (oldest first) with aggressive deduplication
-  std::map<std::string, int> error_counts;  // Group similar errors by message
+  tinyusdz::HashMap<std::string, int> error_counts;  // Group similar errors by message
   for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
     const ErrorDiagnostic& diag = *it;
     error_counts[diag.err]++;
@@ -677,7 +678,7 @@ std::string AsciiParser::GetWarningWithHints(bool show_hints) {
   }
 
   // Process warnings in reverse order (oldest first) with aggressive deduplication
-  std::map<std::string, int> warning_counts;  // Group similar warnings by message
+  tinyusdz::HashMap<std::string, int> warning_counts;  // Group similar warnings by message
   for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
     const ErrorDiagnostic& diag = *it;
     warning_counts[diag.err]++;
@@ -1412,12 +1413,36 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
   std::string buf;
   buf.reserve(64);
 
+  // Detect a triple-quoted multi-line string ("""..."""  or '''...''').
+  // Without this, an opening `"""` is misread as an empty string `""`
+  // followed by stray content, and the surrounding metadata parser
+  // fails. Triple-quoted strings appear in MDL shader inputs authored
+  // by Omniverse Kit (e.g. `doc = """multi-line text"""`).
+  {
+    auto peek_loc = CurrLoc();
+    std::array<char, 3> peek;
+    if (CharN(3, &peek[0])) {
+      SeekTo(peek_loc);
+      const bool triple_double = peek[0] == '"' && peek[1] == '"' && peek[2] == '"';
+      const bool triple_single = peek[0] == '\'' && peek[1] == '\'' && peek[2] == '\'';
+      if (triple_double || triple_single) {
+        value::StringData sd;
+        if (MaybeTripleQuotedString(&sd)) {
+          (*literal) = sd.value;
+          return true;
+        }
+        // Fall through if MaybeTripleQuotedString rejected the input
+        // (e.g. opening triple-quote but no closing triple within
+        // length budget). The single-quote path below will then emit
+        // a more specific error.
+      }
+    }
+  }
+
   char c0;
   if (!Char1(&c0)) {
     return false;
   }
-
-  // TODO: Allow triple-quotated string?
 
   bool single_quote{false};
 
@@ -2471,7 +2496,7 @@ bool AsciiParser::LookCharN(size_t n, std::vector<char> *nc) {
   return ok;
 }
 
-bool AsciiParser::Char1(char *c) { return _sr->read1(c); }
+// AsciiParser::Char1 is defined inline in ascii-parser.hh.
 
 bool AsciiParser::CharN(size_t n, std::vector<char> *nc) {
   std::vector<char> buf(n);
@@ -2902,6 +2927,90 @@ bool AsciiParser::ParseAssetIdentifier(value::AssetPath *out,
   return valid;
 }
 
+bool AsciiParser::ParseOptionalLayerOffset(LayerOffset *out,
+                                           Dictionary *out_customData) {
+  // Look ahead: an optional `(...)` clause may follow. If the next
+  // non-whitespace char is not '(', return without consuming anything.
+  if (!SkipWhitespace()) {
+    return true;  // EOF is fine; caller decides.
+  }
+  char c;
+  if (!LookChar1(&c)) {
+    return true;
+  }
+  if (c != '(') {
+    return true;
+  }
+  // Consume '('.
+  if (!Char1(&c)) return false;
+
+  // Parse `key = value` separated by ';' or ','. Accept any subset of
+  // {offset, scale, customData}. Trailing separator allowed.
+  for (;;) {
+    if (!SkipWhitespaceAndNewline()) return false;
+    if (!LookChar1(&c)) return false;
+    if (c == ')') {
+      // consume and done
+      Char1(&c);
+      return true;
+    }
+
+    std::string key;
+    if (!ReadIdentifier(&key)) {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii,
+          "Expected `offset`, `scale`, or `customData` clause.");
+    }
+    const bool is_offset = (key == "offset");
+    const bool is_scale = (key == "scale");
+    const bool is_customData = (key == "customData");
+    if (!is_offset && !is_scale && !is_customData) {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii,
+          fmt::format("Unknown clause key `{}`. Expected `offset`, `scale`,"
+                      " or `customData`.", key));
+    }
+    if (is_customData && !out_customData) {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii,
+          "`customData` is not allowed on Payload (Reference only).");
+    }
+
+    if (!SkipWhitespaceAndNewline()) return false;
+    if (!Expect('=')) return false;
+    if (!SkipWhitespaceAndNewline()) return false;
+
+    if (is_customData) {
+      Dictionary dict;
+      if (!ParseDict(&dict)) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii,
+            "Failed to parse `customData` dictionary.");
+      }
+      *out_customData = std::move(dict);
+    } else {
+      double v = 0.0;
+      if (!ReadBasicType(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii,
+            fmt::format("Failed to parse value for `{}`.", key));
+      }
+      if (is_offset) {
+        out->_offset = v;
+      } else {
+        out->_scale = v;
+      }
+    }
+
+    // Separator: optional ';' or ',' OR a newline (newlines are
+    // implicit separators in pxr's multi-line form). The closing ')'
+    // is handled at top of the loop.
+    if (!SkipWhitespaceAndNewline(/*allow_semicolon=*/false)) return false;
+    if (!LookChar1(&c)) return false;
+    if (c == ';' || c == ',') {
+      Char1(&c);
+      continue;
+    }
+    // Either a closing `)` or the next clause's identifier — both fine.
+    continue;
+  }
+}
+
 bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
   /*
     Asset reference = AsssetIdentifier + optially followd by prim path
@@ -2968,7 +3077,10 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
     }
   }
 
-  // TODO: LayerOffset and CustomData
+  // Optional `(offset = N; scale = M; customData = {...})` suffix.
+  if (!ParseOptionalLayerOffset(&out->layerOffset, &out->customData)) {
+    return false;
+  }
 
   return true;
 }
@@ -3029,7 +3141,9 @@ bool AsciiParser::ParsePayload(Payload *out, bool *triple_deliminated) {
     }
   }
 
-  // TODO: LayerOffset
+  if (!ParseOptionalLayerOffset(&out->layerOffset)) {
+    return false;
+  }
 
   return true;
 }
@@ -3058,6 +3172,19 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
   }
 
   uint32_t tyid = value::GetTypeId(vartype);
+
+  // `metaName = None` is USD's ValueBlock — an explicitly empty value.
+  // Common for array-typed metas (e.g. `apiSchemas = None` to clear
+  // an inherited list). The downstream meta-reconstruction code
+  // handles the ValueBlock case per-meta (see usda-reader.cc:
+  // ReconstructPrimMeta for `apiSchemas`, `variantSets`, etc.).
+  if (array_qual) {
+    if (MaybeNone()) {
+      var.set_value(value::ValueBlock());
+      (*outvar) = var;
+      return true;
+    }
+  }
 
 #define PARSE_BASE_TYPE(__ty)                                     \
   case value::TypeTraits<__ty>::type_id(): {                      \
@@ -3219,7 +3346,28 @@ bool AsciiParser::LexFloat(std::string *result) {
   //     ;
   // EXPONENT : ('e'|'E') ('+'|'-')? ('0'..'9')+ ;
 
-  std::stringstream ss;
+  // Stack buffer. A valid IEEE-754 double in scientific form is ≤24 chars
+  // (e.g. "-1.7976931348623157e+308"); 64 is a safe upper bound. The
+  // previous version reserved a std::string with 32 bytes which exceeded
+  // libstdc++'s SSO threshold (15) and forced one heap allocation per call,
+  // visible at ~5% of total runtime on USDA-heavy assets.
+  constexpr size_t kBufCap = 64;
+  char buf[kBufCap];
+  size_t n = 0;
+  // Match the previous "build into *result then clear on failure" contract:
+  // a caller that reads *result after a failure return sees an empty string,
+  // not stale data from a previous call.
+  result->clear();
+
+#define LEX_APPEND(c)                                            \
+  do {                                                           \
+    if (n >= kBufCap) {                                          \
+      PUSH_ERROR_AND_RETURN("Float literal exceeds " +           \
+                            std::to_string(kBufCap) +            \
+                            " characters.");                     \
+    }                                                            \
+    buf[n++] = (c);                                              \
+  } while (0)
 
   bool has_sign{false};
   bool leading_decimal_dots{false};
@@ -3232,7 +3380,7 @@ bool AsciiParser::LexFloat(std::string *result) {
 
     // sign, '.' or [0-9]
     if ((sc == '+') || (sc == '-')) {
-      ss << sc;
+      LEX_APPEND(sc);
       has_sign = true;
 
       char c;
@@ -3244,7 +3392,7 @@ bool AsciiParser::LexFloat(std::string *result) {
         // ok. something like `+.7`, `-.53`
         leading_decimal_dots = true;
         _curr_cursor.col++;
-        ss << c;
+        LEX_APPEND(c);
 
       } else {
         // unwind and continue
@@ -3253,7 +3401,7 @@ bool AsciiParser::LexFloat(std::string *result) {
 
     } else if ((sc >= '0') && (sc <= '9')) {
       // ok
-      ss << sc;
+      LEX_APPEND(sc);
     } else if (sc == '.') {
       // ok but rescan again in 2.
       leading_decimal_dots = true;
@@ -3271,17 +3419,14 @@ bool AsciiParser::LexFloat(std::string *result) {
   // 1. Read the integer part
   char curr;
   if (!leading_decimal_dots) {
-    // std::cout << "1 read int part: ss = " << ss.str() << "\n";
-
     while (!Eof()) {
       if (!Char1(&curr)) {
         return false;
       }
 
-      // std::cout << "1 curr = " << curr << "\n";
       if ((curr >= '0') && (curr <= '9')) {
         // continue
-        ss << curr;
+        LEX_APPEND(curr);
       } else {
         _sr->seek_from_current(-1);
         break;
@@ -3290,7 +3435,7 @@ bool AsciiParser::LexFloat(std::string *result) {
   }
 
   if (Eof()) {
-    (*result) = ss.str();
+    result->assign(buf, n);
     return true;
   }
 
@@ -3298,12 +3443,9 @@ bool AsciiParser::LexFloat(std::string *result) {
     return false;
   }
 
-  // std::cout << "before 2: ss = " << ss.str() << ", curr = " << curr <<
-  // "\n";
-
   // 2. Read the decimal part
   if (curr == '.') {
-    ss << curr;
+    LEX_APPEND(curr);
 
     while (!Eof()) {
       if (!Char1(&curr)) {
@@ -3311,7 +3453,7 @@ bool AsciiParser::LexFloat(std::string *result) {
       }
 
       if ((curr >= '0') && (curr <= '9')) {
-        ss << curr;
+        LEX_APPEND(curr);
       } else {
         break;
       }
@@ -3321,20 +3463,20 @@ bool AsciiParser::LexFloat(std::string *result) {
     // go to 3.
   } else {
     // end
-    (*result) = ss.str();
     _sr->seek_from_current(-1);
+    result->assign(buf, n);
     return true;
   }
 
   if (Eof()) {
-    (*result) = ss.str();
+    result->assign(buf, n);
     return true;
   }
 
   // 3. Read the exponent part
   bool has_exp_sign{false};
   if ((curr == 'e') || (curr == 'E')) {
-    ss << curr;
+    LEX_APPEND(curr);
 
     if (!Char1(&curr)) {
       return false;
@@ -3342,12 +3484,12 @@ bool AsciiParser::LexFloat(std::string *result) {
 
     if ((curr == '+') || (curr == '-')) {
       // exp sign
-      ss << curr;
+      LEX_APPEND(curr);
       has_exp_sign = true;
 
     } else if ((curr >= '0') && (curr <= '9')) {
       // ok
-      ss << curr;
+      LEX_APPEND(curr);
     } else {
       // Empty E is not allowed.
       PUSH_ERROR_AND_RETURN("Empty `E' is not allowed.");
@@ -3360,7 +3502,7 @@ bool AsciiParser::LexFloat(std::string *result) {
 
       if ((curr >= '0') && (curr <= '9')) {
         // ok
-        ss << curr;
+        LEX_APPEND(curr);
 
       } else if ((curr == '+') || (curr == '-')) {
         if (has_exp_sign) {
@@ -3368,7 +3510,7 @@ bool AsciiParser::LexFloat(std::string *result) {
           PUSH_ERROR_AND_RETURN("No multiple exponential sign characters.");
         }
 
-        ss << curr;
+        LEX_APPEND(curr);
         has_exp_sign = true;
       } else {
         // end
@@ -3380,8 +3522,10 @@ bool AsciiParser::LexFloat(std::string *result) {
     _sr->seek_from_current(-1);
   }
 
-  (*result) = ss.str();
+  result->assign(buf, n);
   return true;
+
+#undef LEX_APPEND
 }
 
 nonstd::optional<AsciiParser::VariableDef> AsciiParser::GetStageMetaDefinition(

@@ -1,0 +1,36 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    upAxis = "Y"
+)
+
+def Xform "Root"
+{
+    def PhysicsJoint "D6Joint"
+    {
+        rel physics:body0 = </Root/Box0>
+        rel physics:body1 = </Root/Box1>
+        point3f physics:localPos0 = (1, 0, 0)
+        quatf physics:localRot0 = (1, 0, 0, 0)
+        point3f physics:localPos1 = (-1, 0, 0)
+        quatf physics:localRot1 = (1, 0, 0, 0)
+        bool physics:jointEnabled = 1
+        bool physics:collisionEnabled = 0
+        float physics:breakForce = 1000
+        float physics:breakTorque = 500
+    }
+
+    def Cube "Box0" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+    )
+    {
+        double size = 1
+    }
+
+    def Cube "Box1" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        double size = 1
+    }
+}

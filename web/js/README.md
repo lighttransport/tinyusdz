@@ -216,6 +216,7 @@ The following demo pages are available:
 | **Animation Clips** | `anim-clips.html` | Per-object animation clip mixing |
 | **Skinning Demo** | `skin-anim.html` | Skeletal animation and skinning demo |
 | **UsdLux Demo** | `usdlux.html` | USD Lighting demo |
+| **Subdivision Demo** | `subdiv.html` | Interactive Catmull-Clark, Loop, and Bilinear subdivision demo |
 | **OffscreenGL** | `offscreengl.html` | WebWorker + OffscreenCanvas rendering |
 | **Progress Demo** | `progress-demo.html` | Loading progress visualization |
 | **Progress OffscreenGL** | `progress-offscreenwebgl.html` | OffscreenCanvas with progress + OOM recovery |
@@ -234,6 +235,7 @@ npm run dev:anim               # animation.html
 npm run dev:skel               # skin-anim.html
 npm run dev:clips              # anim-clips.html
 npm run dev:lux                # usdlux.html
+npm run dev:subdiv             # subdiv.html
 npm run dev:nodegraph          # openpbr-nodegraph-demo.html
 npm run dev:offscreengl        # offscreengl.html
 npm run dev:progress           # progress-demo.html
@@ -253,5 +255,4 @@ npm run dev:webgl2       # materialx-webgl2.html
 NPM packaing is not handled in this folder.
 
 Please see `../npm`
-
 

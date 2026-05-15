@@ -20,10 +20,12 @@ set(TEST_SOURCES
 	unit-materialx.cc
 	unit-task-queue.cc
 	unit-tydra.cc
+	unit-tydra-subdivision.cc
 	# unit-dedup.cc  # Temporarily disabled - needs API updates
 	unit-crate-writer.cc
 	unit-stage.cc
 	unit-tiny-container.cc
+	unit-tiny-hashmap.cc
 	unit-usda-roundtrip.cc
 	unit-half-roundtrip.cc
 	unit-prim-reconstruct.cc
@@ -55,6 +57,13 @@ set(TEST_SOURCES
 	unit-usdz-writer.cc
 	unit-usdc-writer.cc
 	unit-usd-validation.cc
+	# Physics + MuJoCo
+	unit-physics.cc
+	# IK solver
+	unit-ik.cc
+	# Rigid body simulation
+	unit-rb-collision.cc
+	unit-rb-dynamics.cc
     )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)

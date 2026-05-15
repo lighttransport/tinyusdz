@@ -7,6 +7,7 @@
 
 #include "unit-fp-parse-print.h"
 #include "str-util.hh"
+#include "math-util.inc"
 #include <cmath>
 #include <limits>
 #include <cstring>
@@ -17,6 +18,11 @@
 #include <algorithm>
 
 using namespace tinyusdz;
+
+// Math constants using tinyusdz definitions where available
+static constexpr double kPi    = math::constants<double>::pi();
+static constexpr double kE     = 2.71828182845904523536028747135266250;
+static constexpr double kSqrt2 = 1.41421356237309504880168872420969808;
 
 // Helper: bitwise equality check for doubles (handles -0.0 vs 0.0)
 static bool bitwise_equal_double(double a, double b) {
@@ -618,7 +624,7 @@ void fp_roundtrip_precision_test(void) {
     std::vector<double> problematic_doubles = {
       0.1, 0.2, 0.3, 0.6, 0.7,  // binary fractions
       1.0/3.0, 2.0/3.0,  // repeating fractions
-      M_PI, M_E, M_SQRT2,  // mathematical constants
+      kPi, kE, kSqrt2,  // mathematical constants
       1.7976931348623157e308,  // near max
       2.2250738585072014e-308,  // near min normal
       5e-324,  // near denorm min
@@ -635,7 +641,7 @@ void fp_roundtrip_precision_test(void) {
     std::vector<float> problematic_floats = {
       0.1f, 0.2f, 0.3f, 0.6f, 0.7f,
       1.0f/3.0f, 2.0f/3.0f,
-      static_cast<float>(M_PI), static_cast<float>(M_E),
+      static_cast<float>(kPi), static_cast<float>(kE),
       3.4028235e38f,  // near max
       1.1754944e-38f,  // near min normal
       1.4e-45f,  // near denorm min
@@ -784,7 +790,7 @@ void fp_shortest_representation_test(void) {
       1.23456789012345678,
       9.99999999999999,
       1.0000000000000002,  // 1.0 + epsilon
-      M_PI, M_E,
+      kPi, kE,
     };
 
     for (double v : test_doubles) {
@@ -917,7 +923,7 @@ void fp_shortest_representation_test(void) {
     std::vector<double> base_values = {
       1.0, 10.0, 100.0, 0.1, 0.01,
       1e10, 1e-10, 1e100, 1e-100,
-      M_PI, M_E,
+      kPi, kE,
     };
 
     for (double base : base_values) {
@@ -1059,7 +1065,7 @@ void fp_shortest_representation_test(void) {
       123.456f, 789.012f,
       1e5f, 1e-5f,
       1.234567f,
-      static_cast<float>(M_PI),
+      static_cast<float>(kPi),
     };
 
     for (float v : test_floats) {

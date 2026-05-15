@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
 // Tangent quantization for WebGL2 and GPU-friendly compact storage.

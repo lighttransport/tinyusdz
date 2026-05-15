@@ -157,4 +157,43 @@ std::string to_string(const PortalLight &light, const uint32_t indent,
   return ss.str();
 }
 
+std::string to_string(const DomeLight_1 &light, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+  ss << print_prim_header(light, "DomeLight_1", indent);
+  ss << print_light_common_attrs(light, indent + 1);
+  ss << print_typed_attr(light.guideRadius, "guideRadius", indent + 1);
+  ss << print_typed_attr(light.file, "inputs:texture:file", indent + 1);
+  ss << print_typed_token_attr(light.textureFormat, "inputs:texture:format", indent + 1);
+  ss << print_typed_attr(light.poleAxis, "poleAxis", indent + 1);
+  ss << print_light_footer(light, indent, closing_brace);
+  return ss.str();
+}
+
+std::string to_string(const LightFilter &filter, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+  ss << print_prim_header(filter, "LightFilter", indent);
+  ss << print_typed_token_attr(filter.visibility, "visibility", indent + 1);
+  ss << print_typed_token_attr(filter.purpose, "purpose", indent + 1);
+  ss << print_props(filter.props, indent + 1);
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+  return ss.str();
+}
+
+std::string to_string(const PluginLightFilter &filter, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+  ss << print_prim_header(filter, "PluginLightFilter", indent);
+  ss << print_typed_token_attr(filter.visibility, "visibility", indent + 1);
+  ss << print_typed_token_attr(filter.purpose, "purpose", indent + 1);
+  ss << print_props(filter.props, indent + 1);
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+  return ss.str();
+}
+
 }  // namespace tinyusdz

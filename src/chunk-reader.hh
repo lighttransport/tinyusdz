@@ -10,10 +10,10 @@
 #include <memory>
 #include <mutex>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include "nonstd/expected.hpp"
+#include "tiny-hashmap.hh"
 
 namespace tinyusdz {
 
@@ -566,13 +566,13 @@ private:
   std::unique_ptr<RingBuffer> sliding_window_;
   
   // Random access cache
-  std::unordered_map<size_t, CacheEntry> random_cache_;
+  tinyusdz::HashMap<size_t, CacheEntry> random_cache_;
   std::unique_ptr<TwoQCache> two_q_cache_;
   std::unique_ptr<TinyLFUSketch> tiny_lfu_sketch_;
   std::list<size_t> random_cache_lru_;  ///< For SLRU algorithm
   
   // Preload cache
-  std::unordered_map<size_t, std::shared_ptr<Chunk>> preload_cache_;
+  tinyusdz::HashMap<size_t, std::shared_ptr<Chunk>> preload_cache_;
   std::list<size_t> preload_lru_;
   
   // Current cache sizes

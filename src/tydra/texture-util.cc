@@ -1,4 +1,5 @@
 #include "texture-util.hh"
+#include "safe-arithmetic.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -93,9 +94,13 @@ bool BuildOcclusionRoughnessMetallicTexture(
 				layout = STBIR_RGBA;
 			}
 
-			occlusionBuf.resize(maxImageWidth * maxImageHeight * occlusionImageChannels);
+			size_t resize_size;
+			if (!safe::mul3(maxImageWidth, maxImageHeight, occlusionImageChannels, &resize_size)) {
+				return false;
+			}
+			occlusionBuf.resize(resize_size);
 
-			stbir_resize_uint8_linear(occlusionImageData.data(), int(occlusionImageWidth), int(occlusionImageHeight), 0, occlusionBuf.data(), int(maxImageWidth), int(maxImageHeight), 0, layout); 
+			stbir_resize_uint8_linear(occlusionImageData.data(), int(occlusionImageWidth), int(occlusionImageHeight), 0, occlusionBuf.data(), int(maxImageWidth), int(maxImageHeight), 0, layout);
 		}
 	} else {
 		occlusionBuf = occlusionImageData;
@@ -114,9 +119,13 @@ bool BuildOcclusionRoughnessMetallicTexture(
 				layout = STBIR_RGBA;
 			}
 
-			metallicBuf.resize(maxImageWidth * maxImageHeight * metallicImageChannels);
+			size_t resize_size;
+			if (!safe::mul3(maxImageWidth, maxImageHeight, metallicImageChannels, &resize_size)) {
+				return false;
+			}
+			metallicBuf.resize(resize_size);
 
-			stbir_resize_uint8_linear(metallicImageData.data(), int(metallicImageWidth), int(metallicImageHeight), 0, metallicBuf.data(), int(maxImageWidth), int(maxImageHeight), 0, layout); 
+			stbir_resize_uint8_linear(metallicImageData.data(), int(metallicImageWidth), int(metallicImageHeight), 0, metallicBuf.data(), int(maxImageWidth), int(maxImageHeight), 0, layout);
 		} else {
 			metallicBuf = metallicImageData;
 		}
@@ -135,9 +144,13 @@ bool BuildOcclusionRoughnessMetallicTexture(
 				layout = STBIR_RGBA;
 			}
 
-			roughnessBuf.resize(maxImageWidth * maxImageHeight * roughnessImageChannels);
+			size_t resize_size;
+			if (!safe::mul3(maxImageWidth, maxImageHeight, roughnessImageChannels, &resize_size)) {
+				return false;
+			}
+			roughnessBuf.resize(resize_size);
 
-			stbir_resize_uint8_linear(roughnessImageData.data(), int(roughnessImageWidth), int(roughnessImageHeight), 0, roughnessBuf.data(), int(maxImageWidth), int(maxImageHeight), 0, layout); 
+			stbir_resize_uint8_linear(roughnessImageData.data(), int(roughnessImageWidth), int(roughnessImageHeight), 0, roughnessBuf.data(), int(maxImageWidth), int(maxImageHeight), 0, layout);
 		} else {
 			roughnessBuf = roughnessImageData;
 		}
@@ -147,9 +160,17 @@ bool BuildOcclusionRoughnessMetallicTexture(
 	uint8_t metallicValue = uint8_t((std::max)((std::min)(255, int(metallicFactor * 255.0f)), 0));
 	uint8_t roughnessValue = uint8_t((std::max)((std::min)(255, int(roughnessFactor * 255.0f)), 0));
 
-	dst.resize(maxImageWidth * maxImageHeight * 3);
+	size_t resize_size;
+	if (!safe::mul3(maxImageWidth, maxImageHeight, size_t(3), &resize_size)) {
+		return false;
+	}
+	dst.resize(resize_size);
 
-	for (size_t i = 0; i < maxImageWidth * maxImageHeight; i++) {
+	size_t loop_bound;
+	if (!safe::mul(maxImageWidth, maxImageHeight, &loop_bound)) {
+		return false;
+	}
+	for (size_t i = 0; i < loop_bound; i++) {
 		// Use the first component of texel when input is a texture.
 		uint8_t r = occlusionBuf.size() ? occlusionBuf[i * occlusionImageChannels + occlusionChannel] : occlusionValue;
 		uint8_t g = roughnessBuf.size() ? roughnessBuf[i * roughnessImageChannels + roughnessChannel] : roughnessValue;

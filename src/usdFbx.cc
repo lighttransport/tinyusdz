@@ -4,6 +4,7 @@
 
 #include "tinyusdz.hh"
 #include "io-util.hh"
+#include "security-policy.hh"
 #include "usdFbx.hh"
 
 //#include "math-util.inc"
@@ -36,7 +37,8 @@ bool ReadFbxFromFile(const std::string &filepath, tinyusdz::GPrim *prim, std::st
 #else
 
   std::vector<uint8_t> buf;
-  if (!io::ReadWholeFile(&buf, err, filepath, /* filesize max */ 0,
+  if (!io::ReadWholeFile(&buf, err, filepath,
+                         security_policy::kResolverMaxAssetReadBytes,
                          /* user_ptr */ nullptr)) {
     return false;
   }

@@ -142,7 +142,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
         DCOUT("elementTokenIndex = " << _tokenIndex);
         bool isPrimPropertyPath = _tokenIndex < 0;
         // Guard against INT32_MIN: -INT32_MIN is UB (signed overflow).
-        if (isPrimPropertyPath && _tokenIndex == std::numeric_limits<int32_t>::min()) {
+        if (isPrimPropertyPath && _tokenIndex == (std::numeric_limits<int32_t>::min)()) {
           PUSH_ERROR("Invalid tokenIndex (INT32_MIN) in BuildDecompressedPathsImpl.");
           return false;
         }
@@ -365,7 +365,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
       DCOUT("elementTokenIndex = " << _tokenIndex);
       bool isPrimPropertyPath = _tokenIndex < 0;
       // Guard against INT32_MIN: -INT32_MIN is UB (signed overflow).
-      if (isPrimPropertyPath && _tokenIndex == std::numeric_limits<int32_t>::min()) {
+      if (isPrimPropertyPath && _tokenIndex == (std::numeric_limits<int32_t>::min)()) {
         PUSH_ERROR("Invalid tokenIndex (INT32_MIN) in BuildDecompressedPathsImpl.");
         return false;
       }

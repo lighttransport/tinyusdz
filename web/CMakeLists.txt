@@ -21,6 +21,14 @@ endif()
 
 project(${BUILD_TARGET} CXX C)
 
+if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  message(STATUS "TinyUSDZ WASM: CMAKE_BUILD_TYPE not set; defaulting to MinSizeRel.")
+  set(CMAKE_BUILD_TYPE "MinSizeRel" CACHE STRING
+      "Build type (Debug|Release|RelWithDebInfo|MinSizeRel)" FORCE)
+  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+      "Debug" "Release" "RelWithDebInfo" "MinSizeRel")
+endif()
+
 # Make C++20 default to use C++20 coroutine.
 # Emscripten 4.0 or above supports(C++20)
 set(CMAKE_CXX_STANDARD 20)
@@ -38,6 +46,16 @@ if (TINYUSDZ_WASM_SIMD)
     message(STATUS "TinyUSDZ WASM: Relaxed SIMD enabled (-mrelaxed-simd)")
     set(TINYUSDZ_SIMD_FLAGS "${TINYUSDZ_SIMD_FLAGS} -mrelaxed-simd")
   endif()
+endif()
+
+set(TINYUSDZ_WASM_COMMON_COMPILE_OPTIONS "")
+if (TINYUSDZ_SIMD_FLAGS)
+  separate_arguments(TINYUSDZ_SIMD_OPTIONS NATIVE_COMMAND "${TINYUSDZ_SIMD_FLAGS}")
+  list(APPEND TINYUSDZ_WASM_COMMON_COMPILE_OPTIONS ${TINYUSDZ_SIMD_OPTIONS})
+endif()
+
+if (TINYUSDZ_WASM64)
+  list(APPEND TINYUSDZ_WASM_COMMON_COMPILE_OPTIONS "-sMEMORY64=1")
 endif()
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -62,25 +80,18 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     endif()
   endif()
 
-elseif (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
-
-  # Use Oz to reduce size further than Os
-  if (TINYUSDZ_WASM64)
-    set(CMAKE_CXX_FLAGS_MINSIZEREL "-O3 -Oz -DNDEBUG -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
-    set(CMAKE_C_FLAGS_MINSIZEREL "-O3 -Oz -DNDEBUG -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
-  else()
-    set(CMAKE_CXX_FLAGS_MINSIZEREL "-O3 -Oz -DNDEBUG ${TINYUSDZ_SIMD_FLAGS}")
-    set(CMAKE_C_FLAGS_MINSIZEREL "-O3 -Oz -DNDEBUG ${TINYUSDZ_SIMD_FLAGS}")
-  endif()
-
 else()
-  # Release mode (default)
-  if (TINYUSDZ_WASM64)
-    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
-    set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
-  else()
-    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG ${TINYUSDZ_SIMD_FLAGS}")
-    set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG ${TINYUSDZ_SIMD_FLAGS}")
+
+  add_compile_options(${TINYUSDZ_WASM_COMMON_COMPILE_OPTIONS})
+
+  if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+    # Keep CMake's default MinSizeRel flags off the command line. CMake uses
+    # -Os for MinSizeRel, which would otherwise mix with the explicit -Oz.
+    set(CMAKE_CXX_FLAGS_MINSIZEREL "")
+    set(CMAKE_C_FLAGS_MINSIZEREL "")
+
+    add_compile_options("-Oz")
+    add_compile_definitions(NDEBUG)
   endif()
 endif()
 
@@ -109,7 +120,6 @@ add_sanitizers(${BUILD_TARGET})
 
 target_compile_options(${BUILD_TARGET} PRIVATE ${EXT_COMPILE_OPTIONS})
 if (TINYUSDZ_WASM64)
-  set_target_properties(${BUILD_TARGET} PROPERTIES COMPILE_FLAGS "-sMEMORY64=1")
   target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WASM_MEMORY64=1)
 endif()
 
@@ -190,7 +200,13 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
      --source-map-base http://localhost:5173/ ")
   endif()
 else()
-  set(TINYUSDZ_EMCC_LINK_FLAGS "-Oz -sENVIRONMENT='web,worker,node' \
+  if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+    set(TINYUSDZ_EMCC_LINK_OPT_FLAGS "-Oz ")
+  else()
+    set(TINYUSDZ_EMCC_LINK_OPT_FLAGS "")
+  endif()
+
+  set(TINYUSDZ_EMCC_LINK_FLAGS "${TINYUSDZ_EMCC_LINK_OPT_FLAGS}-sENVIRONMENT='web,worker,node' \
    -sMALLOC=emmalloc \
    -sSTACK_SIZE=512000 \
    -sALLOW_MEMORY_GROWTH=1 \
@@ -200,7 +216,11 @@ else()
    -sMODULARIZE=1 -sEXPORT_ES6 \
    -sINVOKE_RUN=0 --bind ")
 endif()
-  
+
+if (TINYUSDZ_SIMD_FLAGS)
+  string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " ${TINYUSDZ_SIMD_FLAGS}")
+endif()
+
 if (TINYUSDZ_WASM64)
   # assertion=1 cause runtime error(Cannot mix BigInt and ... in assert()), so use 2
   string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sASSERTIONS=2 -sMEMORY64 -sMAXIMUM_MEMORY=8GB")

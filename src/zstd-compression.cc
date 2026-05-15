@@ -45,7 +45,7 @@ size_t ZstdCompression::GetDecompressedSize(const uint8_t *compressed,
   }
 
   // Check for size overflow
-  if (frameContentSize > std::numeric_limits<size_t>::max()) {
+  if (frameContentSize > (std::numeric_limits<size_t>::max)()) {
     if (err) *err = "Decompressed size exceeds size_t range";
     return 0;
   }

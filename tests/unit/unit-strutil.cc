@@ -269,9 +269,9 @@ void dtoa_test(void) {
 
   {
     // Test small number
-    double small = 0.000001234567890123456;
+    double small_val = 0.000001234567890123456;
     char buf[384];
-    char *end = dtoa(small, buf);
+    char *end = dtoa(small_val, buf);
     *end = '\0';
     std::string result(buf);
 
