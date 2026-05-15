@@ -956,9 +956,12 @@ if(TINYUSDZ_WITH_OPENSUBDIV)
   endfunction()
 
   add_osd_lib()
-  #list(APPEND TINYUSDZ_EXT_LIBRARIES $<TARGET_OBJECTS:osd_cpu>)
 
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/subdiv.cc)
+  # Archive the OpenSubdiv object files directly into tinyusdz_static
+  # so downstream targets (tusdcat, examples, tests) don't need a
+  # separate osd_cpu dependency.
+  list(APPEND TINYUSDZ_EXT_SOURCES $<TARGET_OBJECTS:osd_cpu>)
 
 endif(TINYUSDZ_WITH_OPENSUBDIV)
 
