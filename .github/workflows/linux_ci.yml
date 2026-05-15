@@ -92,13 +92,12 @@ jobs:
     - name: setup
       run: |
           sudo apt update
+          # gcc-multilib gives us 32-bit libstdc++ and 32-bit libasan
+          # (gcc's ASan runtime). We compile with gcc — Ubuntu does not
+          # ship a multiarch i386 build of libclang-rt-XX-dev, so clang's
+          # -fsanitize=address has no aarch64/i386 runtime to link against
+          # on this runner.
           sudo apt-get install -y gcc-multilib g++-multilib
-          # clang's libclang_rt.asan-i386 runtime, needed because
-          # bootstrap-cmake-linux-32bit.sh enables SANITIZE_ADDRESS=1.
-          # The runner image does not ship it preinstalled.
-          CLANG_VER=$(clang -dumpversion | cut -d. -f1)
-          sudo apt-get install -y "libclang-rt-${CLANG_VER}-dev:i386" || \
-            sudo apt-get install -y libclang-rt-dev:i386
     - name: configure
       run: ./scripts/bootstrap-cmake-linux-32bit.sh
     - name: make
@@ -187,15 +186,12 @@ jobs:
       run: |
         lscpu
         cat /proc/cpuinfo
-        # clang's libclang_rt.asan-aarch64 runtime, needed because
-        # bootstrap-cmake-linux-asan.sh enables SANITIZE_ADDRESS=1.
-        # The ubuntu-24.04-arm runner image does not ship it.
-        sudo apt-get update
-        CLANG_VER=$(clang -dumpversion | cut -d. -f1)
-        sudo apt-get install -y "libclang-rt-${CLANG_VER}-dev" || \
-          sudo apt-get install -y libclang-rt-dev
+    # Use gcc + libasan8 (preinstalled on Ubuntu 24.04). The previous
+    # clang setup hit "undefined reference to __asan_report_load8"
+    # because clang's resource-dir path does not match where Ubuntu's
+    # libclang-rt-XX-dev installs the aarch64 runtime on this runner.
     - name: configure
-      run: CXX=clang++ CC=clang ./scripts/bootstrap-cmake-linux-asan.sh
+      run: CXX=g++ CC=gcc ./scripts/bootstrap-cmake-linux-asan.sh
     - name: make
       run: cd build_asan && make -j4
 

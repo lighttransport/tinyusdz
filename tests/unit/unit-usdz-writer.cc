@@ -12,6 +12,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <map>
 #include <string>
 #include <vector>
@@ -279,8 +280,16 @@ void usdz_writer_file_roundtrip_test(void) {
 
   std::string warn, err;
 
-  // Write to file
-  std::string tmp_path = "/tmp/tinyusdz_test_roundtrip.usdz";
+  // Write to file. Use std::filesystem::temp_directory_path() so this
+  // works on Windows (where /tmp does not exist) as well as POSIX.
+  std::error_code tmp_ec;
+  std::filesystem::path tmp_dir =
+      std::filesystem::temp_directory_path(tmp_ec);
+  if (tmp_ec) {
+    tmp_dir = std::filesystem::current_path();
+  }
+  std::string tmp_path =
+      (tmp_dir / "tinyusdz_test_roundtrip.usdz").string();
   bool ret = tinyusdz::SaveAsUSDZToFile(tmp_path, stage, assets, &warn, &err);
   TEST_CHECK(ret);
   if (!ret) {
