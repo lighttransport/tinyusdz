@@ -16,9 +16,13 @@ using namespace tinyusdz;
 using namespace tinyusdz::value;
 
 void value_view_size_test(void) {
-  static_assert(sizeof(ValueView) == 16, "ValueView must be exactly 16 bytes");
-  TEST_CHECK(sizeof(ValueView) == 16);
-  TEST_MSG("sizeof(ValueView) = %zu, expected 16", sizeof(ValueView));
+  // ValueView layout: void* ptr_ + uint32_t type_id_ + uint8_t flags_
+  // + padding. The header declares 12 bytes on 32-bit, 16 on 64-bit.
+  constexpr size_t kExpectedSize = sizeof(void*) == 8 ? 16 : 12;
+  static_assert(sizeof(ValueView) == kExpectedSize,
+                "ValueView size mismatch: 16 bytes on 64-bit / 12 on 32-bit");
+  TEST_CHECK(sizeof(ValueView) == kExpectedSize);
+  TEST_MSG("sizeof(ValueView) = %zu, expected %zu", sizeof(ValueView), kExpectedSize);
 }
 
 void value_view_construct_test(void) {
