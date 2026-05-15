@@ -92,12 +92,14 @@ jobs:
     - name: setup
       run: |
           sudo apt update
-          # gcc-multilib gives us 32-bit libstdc++ and 32-bit libasan
-          # (gcc's ASan runtime). We compile with gcc — Ubuntu does not
+          # gcc-multilib gives us 32-bit libstdc++ and toolchain bits, but
+          # NOT the 32-bit ASan runtime — lib32asan8 must be installed
+          # explicitly. Without it, -m32 -fsanitize=address compiles
+          # cleanly but the link fails with undefined references to
+          # __asan_report_* . We compile with gcc here — Ubuntu does not
           # ship a multiarch i386 build of libclang-rt-XX-dev, so clang's
-          # -fsanitize=address has no aarch64/i386 runtime to link against
-          # on this runner.
-          sudo apt-get install -y gcc-multilib g++-multilib
+          # -fsanitize=address has no i386 runtime to link against.
+          sudo apt-get install -y gcc-multilib g++-multilib lib32asan8
     - name: configure
       run: ./scripts/bootstrap-cmake-linux-32bit.sh
     - name: make
