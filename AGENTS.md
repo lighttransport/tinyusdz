@@ -115,7 +115,8 @@ examples/                  Standalone example apps (separate builds):
 models/                    Test USD files for development
 doc/                       Documentation (testing-cpp.md,
                            how-to-implement-feature.md, c-py-tasks.md,
-                           crate-impl.md, etc.)
+                           crate-impl.md, ci.md — release/publish
+                           procedure, etc.)
 aousd/                     AOUSD spec text + crate-impl docs (NOT the
                            PDFs themselves — those are gitignored)
 scripts/                   Build/bootstrap scripts for various
@@ -239,6 +240,10 @@ See **[doc/how-to-implement-feature.md](doc/how-to-implement-feature.md)** for t
 ## Commit Style
 
 Concise imperative subjects (e.g. "Fix double-quoting in USDC metadata"). Body optional for context. Reference issues with `#123`. Default branch for PRs: `release`.
+
+## Release / Versioning
+
+Cutting a release (version bump, git tag, PyPI wheel publish, npm package publish) is documented in **[doc/ci.md](doc/ci.md)**. Read it before bumping any version or pushing a `v*.*.*` tag — the tag push triggers an automated PyPI publish via `.github/workflows/wheels.yml` (OIDC trusted publishing), and the npm publish is a manual `workflow_dispatch` on `.github/workflows/wasmPublish.yml`. The version sources that need hand-editing are `src/tinyusdz.hh` (C++ constants) and `web/{npm,js}/package.json` (npm packages); the Python wheel version is derived from the git tag by `setuptools_scm` and must NOT be edited by hand.
 
 ## Git Push Policy (mandatory pre-push checklist)
 
