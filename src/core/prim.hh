@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Copyright 2021 - Present, Syoyo Fujita.
 //
 // core/prim.hh - Prim class for the Stage scene graph

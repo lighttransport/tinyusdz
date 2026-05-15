@@ -4,6 +4,12 @@ import path from 'path';
 // https://vitejs.dev/config/
 export default defineConfig({
   server: {
+    fs: {
+      allow: [
+        path.resolve(__dirname),
+        '/path/to/mujoco/wasm/dist',
+      ],
+    },
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
@@ -21,4 +27,3 @@ export default defineConfig({
     exclude: ['tinyusdz'],
   },
 });
-

@@ -1,0 +1,69 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Z"
+)
+
+# Revolute joint authored under all four physics namespaces:
+#   physics:*   canonical UsdPhysics
+#   physxJoint:* / physxLimit:*   PhysX-extension schemas
+#   state:angular:physics:*   Newton initial-state schema
+#   mjc:*   legacy MuJoCo-native (consumed into MjcJointAPI by reconstruct)
+#
+# Reader fallback priority is physics:* > physxJoint:* / physxLimit:* >
+# state:* > mjc:*. All four should survive USDA <-> USDC round-trip; mjc:*
+# is re-emitted from the typed MjcJointAPI by sconv-physics.cc, the other
+# three round-trip via the generic props-map iteration in stage-converter.cc.
+
+def Xform "World"
+{
+    def Xform "Link0"
+    {
+        def Cube "Geom"
+        {
+            double size = 0.1
+        }
+    }
+
+    def Xform "Link1"
+    {
+        double3 xformOp:translate = (0, 0, -0.5)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        def Cube "Geom"
+        {
+            double size = 0.1
+        }
+    }
+
+    def PhysicsRevoluteJoint "Joint0" (
+        prepend apiSchemas = ["MjcJointAPI"]
+    )
+    {
+        rel physics:body0 = </World/Link0>
+        rel physics:body1 = </World/Link1>
+        uniform point3f physics:localPos0 = (0, 0, -0.25)
+        uniform point3f physics:localPos1 = (0, 0, 0.25)
+        token physics:axis = "Y"
+        float physics:lowerLimit = -180
+        float physics:upperLimit = 180
+
+        # MjcJointAPI (canonical typed attrs — go through MjcJointAPI struct).
+        uniform int mjc:group = 0
+        uniform double mjc:stiffness = 2.5
+        uniform double mjc:damping = 0.75
+        uniform double mjc:armature = 0.01
+        uniform double mjc:frictionloss = 0.05
+
+        # PhysX-extension schemas (custom, untyped — round-trip via props map).
+        custom float physxJoint:armature = 0.01
+        custom float physxJoint:jointFriction = 0.05
+        custom float physxJoint:maxJointVelocity = 12.5
+        custom float physxLimit:angular:damping = 0.75
+        custom float physxLimit:angular:stiffness = 2.5
+
+        # Newton initial-state (degrees + deg-per-sec for revolute joints).
+        custom float state:angular:physics:position = 15.0
+        custom float state:angular:physics:velocity = -2.0
+    }
+}

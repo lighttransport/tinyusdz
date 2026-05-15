@@ -8,7 +8,15 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPARE_SCRIPT="$SCRIPT_DIR/compare-usda.js"
 TUSDCAT_PATH="${TUSDCAT_PATH:-./build/tusdcat}"
-USDCAT_PATH="${USDCAT_PATH:-~/local/USD/dist/bin/usdcat}"
+# Default to a sibling OpenUSD checkout (../OpenUSD relative to repo root);
+# fall back to the older ~/local/USD build if that is not present.
+if [ -z "$USDCAT_PATH" ]; then
+  if [ -x "$SCRIPT_DIR/../../OpenUSD/dist/bin/usdcat" ]; then
+    USDCAT_PATH="$SCRIPT_DIR/../../OpenUSD/dist/bin/usdcat"
+  else
+    USDCAT_PATH="$HOME/local/USD/dist/bin/usdcat"
+  fi
+fi
 TIMEOUT_MS="${TIMEOUT_MS:-60000}"
 SHOW_DETAILED_DIFF="${SHOW_DETAILED_DIFF:-true}"
 SHOW_FAILURE_SUMMARY="${SHOW_FAILURE_SUMMARY:-true}"

@@ -17,6 +17,8 @@
 #include "tinyusdz.hh"
 #include "io-util.hh"
 #include "linear-algebra.hh"
+#include "security-policy.hh"
+#include "safe-arithmetic.hh"
 #include "usdObj.hh"
 
 //#include "math-util.inc"
@@ -51,7 +53,8 @@ bool ReadObjFromFile(const std::string &filepath, tinyusdz::GPrim *prim, std::st
 #else
 
   std::vector<uint8_t> buf;
-  if (!io::ReadWholeFile(&buf, err, filepath, /* filesize max */ 0,
+  if (!io::ReadWholeFile(&buf, err, filepath,
+                         security_policy::kResolverMaxAssetReadBytes,
                          /* user_ptr */ nullptr)) {
     return false;
   }
@@ -108,7 +111,14 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
   // std::vector<float> -> std::vector<value::float3>
   std::vector<value::float3> pts(attrs.vertices.size() / 3);
-  memcpy(pts.data(), attrs.vertices.data(), sizeof(float) * 3 * pts.size());
+  size_t byte_count;
+  if (!safe::mul(attrs.vertices.size() / 3, size_t(3), &byte_count)) {
+    return false;
+  }
+  if (!safe::mul(byte_count, sizeof(float), &byte_count)) {
+    return false;
+  }
+  memcpy(pts.data(), attrs.vertices.data(), byte_count);
   primvar::PrimVar ptsVar;
   ptsVar.set_value(pts);
   pointsAttr.set_var(std::move(ptsVar)); 

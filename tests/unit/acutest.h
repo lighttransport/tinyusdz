@@ -1686,6 +1686,10 @@ acutest_AmIBeingDebugged(void)
 }
 #endif
 
+#ifdef __cplusplus
+    }  /* extern "C" */
+#endif
+
 int
 main(int argc, char** argv)
 {
@@ -1848,7 +1852,7 @@ main(int argc, char** argv)
     #pragma warning(pop)
 #endif
 
-#ifdef __cplusplus
+#if defined(__cplusplus) && defined(TEST_NO_MAIN)
     }  /* extern "C" */
 #endif
 

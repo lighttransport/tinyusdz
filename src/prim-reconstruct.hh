@@ -21,6 +21,14 @@ struct PrimReconstructOptions
 {
   bool strict_allowedToken_check{false};
 
+  // When true, a Shader prim that declares `info:id` without a value
+  // is an error. When false (default), it is demoted to a warning and
+  // the Shader is reconstructed as a generic ShaderNode — matching the
+  // pattern that Omniverse Kit emits for MDL shaders (where `info:id`
+  // is a placeholder and the real shader identity comes from
+  // `info:implementationSource` + `info:mdl:sourceAsset`).
+  bool strict_shader_check{false};
+
   // MaterialX validation options
   bool validate_mtlx_connection_types{false};
   bool validate_mtlx_info_id{false};

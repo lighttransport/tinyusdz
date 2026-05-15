@@ -1,0 +1,19 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    upAxis = "Y"
+)
+
+def Xform "Root"
+{
+    def Preliminary_PhysicsGravitationalForce "Gravity"
+    {
+        uniform vector3d physics:gravitationalForce:acceleration = (0, -9.81, 0)
+    }
+
+    def Preliminary_InfiniteColliderPlane "Ground"
+    {
+        point3d position = (0, 0, 0)
+        vector3d normal = (0, 1, 0)
+    }
+}

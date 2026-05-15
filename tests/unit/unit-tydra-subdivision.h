@@ -1,0 +1,21 @@
+#pragma once
+
+void tydra_subdivision_catmullclark_test(void);
+void tydra_subdivision_loop_test(void);
+void tydra_subdivision_bilinear_test(void);
+void tydra_subdivision_remaps_material_subset_faces_test(void);
+void tydra_subdivision_multiple_material_subsets_disjoint_test(void);
+void tydra_subdivision_level2_subset_remap_test(void);
+void tydra_subdivision_loop_subset_remap_test(void);
+void tydra_subdivision_bilinear_mixed_topology_subset_test(void);
+void tydra_subdivision_level_zero_keeps_base_mesh_test(void);
+void tydra_subdivision_scheme_none_ignores_requested_level_test(void);
+void tydra_subdivision_subset_with_multiple_source_faces_test(void);
+void tydra_subdivision_incomplete_partition_warns_but_converts_test(void);
+void tydra_subdivision_recomputes_authored_normals_with_warning_test(void);
+void tydra_subdivision_rejects_facevarying_uv_test(void);
+void tydra_subdivision_rejects_display_color_test(void);
+void tydra_subdivision_rejects_display_opacity_test(void);
+void tydra_subdivision_rejects_tangents_test(void);
+void tydra_subdivision_rejects_binormals_test(void);
+void tydra_subdivision_rejects_skinning_test(void);

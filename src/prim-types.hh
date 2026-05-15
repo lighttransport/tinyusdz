@@ -20,7 +20,11 @@
 ///
 #pragma once
 
+#ifdef _MSC_VER
+#pragma message("prim-types.hh is deprecated. Include specific core/ headers instead (see comment above).")
+#else
 #warning "prim-types.hh is deprecated. Include specific core/ headers instead (see comment above)."
+#endif
 
 // Preserve backward compatibility for any external consumers
 #include "core/prim.hh"

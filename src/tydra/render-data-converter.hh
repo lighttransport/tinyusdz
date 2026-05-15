@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 
@@ -61,6 +61,10 @@ bool DefaultTextureImageLoaderFunction(const value::AssetPath &assetPath,
 
 struct MeshConverterConfig {
   bool triangulate{true};
+
+  // Subdivision surface tessellation level. When > 0, meshes with authored
+  // subdivisionScheme are tessellated before downstream Tydra mesh conversion.
+  int32_t subdivision_level{0};
 
   // Triangulation method for polygons with 5+ vertices
   enum class TriangulationMethod {
@@ -314,6 +318,13 @@ struct MaterialConverterConfig {
 
   // Allow asset(e.g. texture file/shader file) which does not exit?
   bool allow_missing_asset{true};
+
+  // When true, conversion fails fast on material authoring gaps
+  // (e.g. `outputs:surface` not authored). When false (default), the
+  // gaps are demoted to warnings and conversion proceeds with an
+  // unshaded material. Set to true if a downstream renderer requires a
+  // complete shading network and the asset is expected to provide one.
+  bool strict_material_check{false};
 
 };
 

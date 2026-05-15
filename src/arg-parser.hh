@@ -6,7 +6,8 @@
 #pragma once
 #include <string>
 #include <vector>
-#include <map>
+
+#include "tiny-hashmap.hh"
 
 namespace tinyusdz {
 namespace argparser {
@@ -45,7 +46,7 @@ public:
     void print_help() const;
 
 private:
-    std::map<std::string, Option> options_;
+    tinyusdz::HashMap<std::string, Option> options_;
     std::vector<std::string> positional_args_;
 };
 

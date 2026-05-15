@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<title>TinyUSDZ Three.js Subdivision Surface Demo</title>
+		<style>
+			body {
+				margin: 0;
+				overflow: hidden;
+				font-family: Arial, sans-serif;
+			}
+			canvas {
+				display: block;
+			}
+			#info {
+				position: absolute;
+				top: 10px;
+				left: 10px;
+				color: white;
+				background: rgba(0, 0, 0, 0.7);
+				padding: 15px;
+				border-radius: 5px;
+				font-size: 14px;
+				max-width: 450px;
+				z-index: 100;
+			}
+			#info h3 {
+				margin-top: 0;
+				margin-bottom: 10px;
+				color: #6bb6ff;
+			}
+			#info p {
+				margin: 5px 0;
+				font-size: 12px;
+				line-height: 1.5;
+			}
+			#info ul {
+				margin: 5px 0;
+				padding-left: 20px;
+				font-size: 12px;
+			}
+			#info li {
+				margin: 3px 0;
+			}
+			.highlight {
+				color: #95e06c;
+				font-weight: bold;
+			}
+			.section {
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+			}
+			.stats {
+				font-family: 'Courier New', monospace;
+				font-size: 11px;
+				color: #ffd700;
+				margin: 5px 0;
+			}
+			.scheme-label {
+				display: inline-block;
+				padding: 2px 6px;
+				margin: 2px;
+				background: rgba(107, 182, 255, 0.3);
+				border-radius: 3px;
+				font-size: 11px;
+				font-weight: bold;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="info">
+			<h3>TinyUSDZ Subdivision Surface Demo</h3>
+			<p>
+				Interactive demo showing <span class="highlight">Catmull-Clark</span>,
+				<span class="highlight">Loop</span>, and <span class="highlight">Bilinear</span>
+				subdivision algorithms.
+			</p>
+
+			<div class="section">
+				<strong>Controls:</strong>
+				<ul>
+					<li><strong>Mouse</strong>: Orbit camera</li>
+					<li><strong>Right Panel</strong>: Adjust subdivision levels (0-5)</li>
+					<li><strong>Toggle Wireframe</strong>: See mesh topology</li>
+					<li><strong>Select Scheme</strong>: Switch between algorithms</li>
+				</ul>
+			</div>
+
+			<div class="section">
+				<strong>Subdivision Schemes:</strong>
+				<div style="margin-top: 5px;">
+					<div class="scheme-label">Catmull-Clark</div> Smooth quads (C² continuous)
+				</div>
+				<div style="margin-top: 3px;">
+					<div class="scheme-label">Loop</div> Smooth triangles (C¹ continuous)
+				</div>
+				<div style="margin-top: 3px;">
+					<div class="scheme-label">Bilinear</div> Linear interpolation only
+				</div>
+			</div>
+
+			<div class="section">
+				<strong>Mesh Statistics:</strong>
+				<div id="stats" class="stats">
+					<div>Vertices: <span id="vertCount">-</span></div>
+					<div>Faces: <span id="faceCount">-</span></div>
+					<div>Triangles: <span id="triCount">-</span></div>
+					<div>Subdivision Level: <span id="levelDisplay">-</span></div>
+				</div>
+			</div>
+
+			<div class="section" style="font-size: 11px; color: #aaa;">
+				<p>
+					This demo uses dependency-free subdivision implementation compatible with USD format.
+					All subdivision happens in JavaScript using the same algorithms as the C++ backend.
+				</p>
+			</div>
+		</div>
+
+		<script type="module" src="./subdiv.js"></script>
+	</body>
+</html>

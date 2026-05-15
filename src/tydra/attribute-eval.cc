@@ -12,6 +12,9 @@
 #include "value-clip-utils.hh"
 #include "value-pprint.hh"
 
+#include <memory>
+#include <mutex>
+
 namespace tinyusdz {
 namespace tydra {
 
@@ -131,33 +134,49 @@ bool ToTerminalAttributeValue(
 // Loads the active clip asset, finds the target prim, and queries the attribute.
 //
 // Simple clip asset cache to avoid reloading the same file repeatedly.
-static std::map<std::string, Layer> &GetClipCache() {
-  static std::map<std::string, Layer> s_clip_cache;
+static constexpr size_t kMaxClipCacheEntries = 64;
+
+static std::map<std::string, std::shared_ptr<Layer>> &GetClipCache() {
+  static std::map<std::string, std::shared_ptr<Layer>> s_clip_cache;
   return s_clip_cache;
 }
 
+static std::mutex &GetClipCacheMutex() {
+  static std::mutex s_clip_cache_mu;
+  return s_clip_cache_mu;
+}
+
 // Helper: load a clip layer from file with caching.
-static Layer *LoadClipLayer(const std::string &clipAssetPath) {
-  auto &cache = GetClipCache();
-  auto cache_it = cache.find(clipAssetPath);
-  if (cache_it != cache.end()) {
-    return &cache_it->second;
+static std::shared_ptr<Layer> LoadClipLayer(const std::string &clipAssetPath) {
+  {
+    std::lock_guard<std::mutex> lock(GetClipCacheMutex());
+    auto &cache = GetClipCache();
+    auto cache_it = cache.find(clipAssetPath);
+    if (cache_it != cache.end()) {
+      return cache_it->second;
+    }
   }
 
   Layer loaded_layer;
   std::string warn, load_err;
   if (LoadLayerFromFile(clipAssetPath, &loaded_layer, &warn, &load_err)) {
-    cache[clipAssetPath] = std::move(loaded_layer);
-    return &cache[clipAssetPath];
+    auto loaded = std::make_shared<Layer>(std::move(loaded_layer));
+    std::lock_guard<std::mutex> lock(GetClipCacheMutex());
+    auto &cache = GetClipCache();
+    if (cache.size() >= kMaxClipCacheEntries) {
+      cache.erase(cache.begin());
+    }
+    cache[clipAssetPath] = loaded;
+    return loaded;
   }
 
   DCOUT("Failed to load clip asset: " << clipAssetPath << " : " << load_err);
-  return nullptr;
+  return {};
 }
 
 // Helper: query an attribute from a clip layer at a given time.
 static bool QueryClipAttribute(
-    Layer *clip_layer, const std::string &primPath,
+    const Layer *clip_layer, const std::string &primPath,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, double clipTime,
     value::TimeSampleInterpolationType tinterp) {
@@ -208,7 +227,7 @@ bool EvaluateAttributeFromClips(
   // AOUSD Core Spec 12.3.4.2: Manifest-based attribute discovery.
   // If a manifest is provided, verify the attribute exists before loading clips.
   if (!clipMeta.manifestAssetPath.empty()) {
-    Layer *manifest = LoadClipLayer(clipMeta.manifestAssetPath);
+    std::shared_ptr<Layer> manifest = LoadClipLayer(clipMeta.manifestAssetPath);
     if (manifest) {
       const PrimSpec *manifest_ps = nullptr;
       std::string find_err;
@@ -236,10 +255,10 @@ bool EvaluateAttributeFromClips(
   DCOUT("Clip query: asset=" << clipAssetPath << " clipTime=" << clipTime);
 
   // Load the clip asset (with caching)
-  Layer *clip_layer = LoadClipLayer(clipAssetPath);
+  std::shared_ptr<Layer> clip_layer = LoadClipLayer(clipAssetPath);
 
   if (clip_layer) {
-    if (QueryClipAttribute(clip_layer, clipMeta.primPath, attr_name,
+    if (QueryClipAttribute(clip_layer.get(), clipMeta.primPath, attr_name,
                             value, err, clipTime, tinterp)) {
       return true;
     }
@@ -257,7 +276,7 @@ bool EvaluateAttributeFromClips(
     for (int i = activeIdx - 1; i >= 0; i--) {
       int assetIdx = clipMeta.active[static_cast<size_t>(i)].second;
       if (assetIdx >= 0 && assetIdx < static_cast<int>(clipMeta.assetPaths.size())) {
-        Layer *prev = LoadClipLayer(clipMeta.assetPaths[static_cast<size_t>(assetIdx)]);
+        std::shared_ptr<Layer> prev = LoadClipLayer(clipMeta.assetPaths[static_cast<size_t>(assetIdx)]);
         if (prev) { prevIdx = i; break; }
       }
     }
@@ -266,7 +285,7 @@ bool EvaluateAttributeFromClips(
     for (size_t i = static_cast<size_t>(activeIdx) + 1; i < clipMeta.active.size(); i++) {
       int assetIdx = clipMeta.active[i].second;
       if (assetIdx >= 0 && assetIdx < static_cast<int>(clipMeta.assetPaths.size())) {
-        Layer *next = LoadClipLayer(clipMeta.assetPaths[static_cast<size_t>(assetIdx)]);
+        std::shared_ptr<Layer> next = LoadClipLayer(clipMeta.assetPaths[static_cast<size_t>(assetIdx)]);
         if (next) { nextIdx = static_cast<int>(i); break; }
       }
     }
@@ -276,10 +295,10 @@ bool EvaluateAttributeFromClips(
     // which is complex; for now return the nearest available value)
     if (prevIdx >= 0) {
       int assetIdx = clipMeta.active[static_cast<size_t>(prevIdx)].second;
-      Layer *prev = LoadClipLayer(clipMeta.assetPaths[static_cast<size_t>(assetIdx)]);
+      std::shared_ptr<Layer> prev = LoadClipLayer(clipMeta.assetPaths[static_cast<size_t>(assetIdx)]);
       double prevClipTime = RemapStageTimeToClipTime(clipMeta.times,
           clipMeta.active[static_cast<size_t>(prevIdx)].first);
-      if (prev && QueryClipAttribute(prev, clipMeta.primPath, attr_name,
+      if (prev && QueryClipAttribute(prev.get(), clipMeta.primPath, attr_name,
                                       value, err, prevClipTime, tinterp)) {
         return true;
       }
@@ -287,10 +306,10 @@ bool EvaluateAttributeFromClips(
 
     if (nextIdx >= 0) {
       int assetIdx = clipMeta.active[static_cast<size_t>(nextIdx)].second;
-      Layer *next = LoadClipLayer(clipMeta.assetPaths[static_cast<size_t>(assetIdx)]);
+      std::shared_ptr<Layer> next = LoadClipLayer(clipMeta.assetPaths[static_cast<size_t>(assetIdx)]);
       double nextClipTime = RemapStageTimeToClipTime(clipMeta.times,
           clipMeta.active[static_cast<size_t>(nextIdx)].first);
-      if (next && QueryClipAttribute(next, clipMeta.primPath, attr_name,
+      if (next && QueryClipAttribute(next.get(), clipMeta.primPath, attr_name,
                                       value, err, nextClipTime, tinterp)) {
         return true;
       }

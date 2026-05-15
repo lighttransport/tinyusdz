@@ -4,11 +4,11 @@
 
 #include <algorithm>
 #include <limits>
-#include <unordered_map>
 #include <cstring>
 #include <vector>
 
 #include "../core/prim.hh"
+#include "../tiny-hashmap.hh"
 #include "../layer.hh"
 #include "../usdGeom.hh"
 #include "../value-types.hh"
@@ -87,8 +87,8 @@ namespace detail {
 namespace {
 
 size_t SaturatingAdd(const size_t lhs, const size_t rhs) {
-  if (rhs > (std::numeric_limits<size_t>::max() - lhs)) {
-    return std::numeric_limits<size_t>::max();
+  if (rhs > ((std::numeric_limits<size_t>::max)() - lhs)) {
+    return (std::numeric_limits<size_t>::max)();
   }
   return lhs + rhs;
 }
@@ -128,8 +128,8 @@ void ApplyMemoryUsageDelta(
 }  // namespace detail
 
 struct LayerToRenderSceneConverter::Impl {
-  std::unordered_map<std::string, int> material_path_to_id;
-  std::unordered_map<std::string, int> mesh_path_to_id;
+  tinyusdz::HashMap<std::string, int> material_path_to_id;
+  tinyusdz::HashMap<std::string, int> mesh_path_to_id;
   
   void ClearCaches() {
     material_path_to_id.clear();

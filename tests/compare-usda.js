@@ -173,10 +173,14 @@ function expandFilePatterns(patterns, baseDir = '.') {
 
   for (const pattern of patterns) {
     if (isGlobPattern(pattern)) {
-      const matched = expandGlob(pattern, baseDir);
+      let matched = expandGlob(pattern, baseDir);
       if (matched.length === 0) {
         console.warn(`Warning: No files matched pattern "${pattern}"`);
       }
+      // Skip test-generated runtime artifacts (see .gitignore). They are
+      // emitted by runtime tests, not roundtrip fixtures. Still allowed when
+      // passed explicitly (non-glob) for targeted debugging.
+      matched = matched.filter(f => !/-runtime\.usdc$/.test(f));
       files.push(...matched);
     } else {
       files.push(pattern);
@@ -2114,6 +2118,21 @@ function compareSingleFile(inputFile, options) {
     content1: null,
     content2: null
   };
+
+  // Filename-based XFAIL for .usdc fixtures that can't carry an inline
+  // marker. Keyed on basename so it's path-independent. Mirrors the
+  // `# XFAIL:` comment used by .usda fixtures.
+  const usdcXfails = {
+    'utf8-assetpath-001.usdc':
+      'pixar-usdcat-parse — pxr <= 23.08 rejects UTF-8 in asset paths ' +
+      '(fixed in 24.x per OpenUSD#2560)',
+  };
+  const base = require('path').basename(inputFile);
+  if (usdcXfails[base]) {
+    result.status = 'xfail';
+    result.error = usdcXfails[base];
+    return result;
+  }
 
   // Check for XFAIL marker in first 5 lines
   try {

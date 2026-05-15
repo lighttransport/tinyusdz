@@ -499,9 +499,10 @@ bool GlobMatchPath(const std::string &pattern, const std::string &path);
 /// @param[in] variables Map of variable names to values
 /// @return String with all ${VAR} references substituted
 ///
+template <typename Map>
 inline std::string SubstituteExpressionVariables(
     const std::string &input,
-    const std::map<std::string, std::string> &variables) {
+    const Map &variables) {
   if (input.find("${") == std::string::npos) {
     return input;  // fast path: no variables to substitute
   }

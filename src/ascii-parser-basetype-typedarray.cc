@@ -6,8 +6,5 @@
 // Split from ascii-parser-basetype.cc for parallel compilation
 //
 
-// Define this to skip std::vector instantiations when including the main file
-#define TINYUSDZ_BASETYPE_TYPEDARRAY_INST_ONLY
-
 // Include the main implementation file to get all template definitions
 #include "ascii-parser-basetype.cc"

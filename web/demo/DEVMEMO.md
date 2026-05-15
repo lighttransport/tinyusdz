@@ -10,6 +10,7 @@ For local development, `node_modules/tinyusdz` is replaced with a symlink pointi
    ```
    node_modules/tinyusdz -> ../../js/src/tinyusdz
    ```
+   The `setup:local` script first removes the installed `node_modules/tinyusdz` directory, then recreates it as a symlink.
 
 2. **`preserveSymlinks: true`** in `vite.config.js` tells Vite to keep the `node_modules/tinyusdz/` path instead of following the symlink to the real path. This means bare imports like `three` and `fzstd` in `TinyUSDZLoader.js` resolve from the demo's `node_modules/`, not from the real file location.
 

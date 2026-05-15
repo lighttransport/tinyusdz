@@ -911,7 +911,10 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
     TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
 
+    // outputs:surface unauthored is demoted to a warning by default;
+    // opt into strict mode so this test exercises the error path.
     tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
@@ -955,6 +958,8 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(stage.add_root_prim(Prim("Tex", tex_shader)));
 
     tydra::RenderSceneConverterEnv env(stage);
+    // Strict mode: unauthored `asset:file` should propagate an error.
+    env.material_config.allow_missing_asset = false;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 

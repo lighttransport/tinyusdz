@@ -1,40 +1,89 @@
-#
-# It seeems pyproject(python-build) is still not mature to build native modules.
-# So we don't use pyton-buold at the moment.
-# This file is just provided for future possible use of `python-build`.
-#
 [build-system]
 requires = [
-    # NOTE: setuptools_scm>=8 is not supported in py3.6 cibuildwheel env.
-    # so use older setuptools_scm for a while
-    #"setuptools>=64",
-    #"setuptools_scm>=8",
-    "setuptools>=45",
-    "setuptools_scm[toml]>=6.2",
-    "wheel", "scikit-build", "cmake>=3.16", "ninja"]
+    "setuptools>=68",
+    "setuptools_scm>=8",
+    "wheel",
+]
 build-backend = "setuptools.build_meta"
-
-[tool.black]
-line-length = 140
 
 [project]
 name = "tinyusdz"
-
-#version = "0.8.0rc5"
-# Use setuptools_scm
 dynamic = ["version"]
+description = "Tiny, dependency-free USD/USDA/USDC/USDZ loader + Tydra scene access, with NumPy-friendly zero-copy arrays (CPython abi3 wheel)."
+readme = "python/README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [
+    { name = "Syoyo Fujita", email = "syoyo@lighttransport.com" },
+    { name = "Light Transport Entertainment, Inc.", email = "syoyo@lighttransport.com" },
+]
+keywords = ["usd", "usda", "usdc", "usdz", "pixar", "3d", "scene"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+]
 
-description = "Python binding of TinyUSDZ"
-license = {file = "LICENSE"}
-authors = [{ name = "Syoyo Fujita", email = "syoyofujtia@gmail.com"},
-           { name = "Light Transport Entertainment, Inc.", email = "syoyo@lighttransport.com"}
-          ]
-readme = {file = "README.md", content-type = "text/markdown"}
+[project.urls]
+Homepage = "https://github.com/lighttransport/tinyusdz"
+Repository = "https://github.com/lighttransport/tinyusdz"
+Issues = "https://github.com/lighttransport/tinyusdz/issues"
+
+[project.optional-dependencies]
+test = ["pytest>=7", "numpy>=1.24"]
+
+[tool.setuptools]
+package-dir = {"" = "python"}
+packages = ["tinyusdz"]
+
+[tool.setuptools.package-data]
+tinyusdz = ["py.typed", "*.pyi"]
 
 [tool.setuptools_scm]
-# setuptools_scm>=8
-#version_file = "python/tinyusdz/_version.py"
+version_file = "python/tinyusdz/_version.py"
 
-# setuptools_scm<8
-write_to = "python/tinyusdz/_version.py"
+# --------------------------------------------------------------------------
+# cibuildwheel configuration
+# --------------------------------------------------------------------------
+[tool.cibuildwheel]
+# One abi3 wheel per platform covers all supported CPython versions.
+# Build only on cp311 (lowest floor); resulting wheel is abi3, usable on
+# cp311/cp312/cp313/cp314+.
+build = "cp311-*"
+# No PyPy; tinyusdz is CPython-only.
+skip = [
+    "pp*",
+    "*-musllinux_i686",
+    "*-win32",
+    "*-manylinux_i686",
+]
+build-frontend = "build"
+archs = ["auto64"]
+test-requires = ["pytest", "numpy"]
+test-command = "pytest {project}/python/tests -q"
 
+# Run the test on every supported Python minor version to prove abi3 compat.
+test-extras = "test"
+
+[tool.cibuildwheel.linux]
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
+archs = ["x86_64", "aarch64"]
+before-build = "yum install -y ninja-build || apt-get install -y ninja-build || true"
+
+[tool.cibuildwheel.macos]
+archs = ["x86_64", "arm64"]
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }
+
+[tool.cibuildwheel.windows]
+archs = ["AMD64", "ARM64"]

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
 // Internal-only header: typed attribute printing templates and helpers.

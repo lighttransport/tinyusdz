@@ -15,6 +15,8 @@
 
 #include "subdiv.hh"
 
+#include "safe-arithmetic.hh"
+
 #include "common-macros.inc"
 
 #ifdef __clang__
@@ -71,9 +73,9 @@ struct FVarVertexColor {
   float r, g, b, a;
 };
 
-bool subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *out_mesh,
-               std::string *err,
-               bool dump) {
+bool subdivide(int subd_level, const ControlQuadMesh &in_mesh,
+               SubdividedMesh *out_mesh, std::string *err,
+               subdiv::SubdivisionScheme scheme, bool dump) {
   if (subd_level < 0) {
     subd_level = 0;
   }
@@ -92,6 +94,17 @@ bool subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *o
   typedef Far::TopologyDescriptor Descriptor;
 
   Sdc::SchemeType type = OpenSubdiv::Sdc::SCHEME_CATMARK;
+  switch (scheme) {
+    case subdiv::SubdivisionScheme::CatmullClark:
+      type = OpenSubdiv::Sdc::SCHEME_CATMARK;
+      break;
+    case subdiv::SubdivisionScheme::Loop:
+      type = OpenSubdiv::Sdc::SCHEME_LOOP;
+      break;
+    case subdiv::SubdivisionScheme::Bilinear:
+      type = OpenSubdiv::Sdc::SCHEME_BILINEAR;
+      break;
+  }
 
   Sdc::Options options;
   options.SetVtxBoundaryInterpolation(Sdc::Options::VTX_BOUNDARY_EDGE_ONLY);
@@ -177,7 +190,11 @@ bool subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *o
     // Print vertex positions
     int firstOfLastVerts = refiner->GetNumVerticesTotal() - nverts;
 
-    out_mesh->vertices.resize(size_t(nverts) * 3);
+    size_t resize_size;
+    if (!safe::mul(size_t(nverts), size_t(3), &resize_size)) {
+      return false;
+    }
+    out_mesh->vertices.resize(resize_size);
 
     for (size_t vert = 0; vert < size_t(nverts); ++vert) {
       float const *pos = verts[size_t(firstOfLastVerts) + vert].GetPosition();

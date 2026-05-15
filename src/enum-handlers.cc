@@ -275,7 +275,7 @@ ExpansionRule(const std::string &tok) {
 nonstd::expected<APISchemas::APIName, std::string>
 APISchemaName(const std::string &tok) {
   using E = APISchemas::APIName;
-  constexpr std::array<std::pair<E, const char *>, 22> enums = {{
+  constexpr std::array<std::pair<E, const char *>, 60> enums = {{
       {E::SkelBindingAPI, "SkelBindingAPI"},
       {E::CollectionAPI, "CollectionAPI"},
       {E::MaterialBindingAPI, "MaterialBindingAPI"},
@@ -298,6 +298,50 @@ APISchemaName(const std::string &tok) {
       {E::NodeDefAPI, "NodeDefAPI"},
       {E::CoordSysAPI, "CoordSysAPI"},
       {E::ConnectableAPI, "ConnectableAPI"},
+      // UsdPhysics
+      {E::PhysicsRigidBodyAPI, "PhysicsRigidBodyAPI"},
+      {E::PhysicsCollisionAPI, "PhysicsCollisionAPI"},
+      {E::PhysicsMaterialAPI, "PhysicsMaterialAPI"},
+      {E::PhysicsMeshCollisionAPI, "PhysicsMeshCollisionAPI"},
+      // MuJoCo (mjcPhysics)
+      {E::MjcSceneAPI, "MjcSceneAPI"},
+      {E::MjcJointAPI, "MjcJointAPI"},
+      {E::MjcCollisionAPI, "MjcCollisionAPI"},
+      {E::MjcMeshCollisionAPI, "MjcMeshCollisionAPI"},
+      {E::MjcMaterialAPI, "MjcMaterialAPI"},
+      {E::MjcSiteAPI, "MjcSiteAPI"},
+      {E::MjcImageableAPI, "MjcImageableAPI"},
+      {E::MjcEqualityAPI, "MjcEqualityAPI"},
+      {E::MjcEqualityConnectAPI, "MjcEqualityConnectAPI"},
+      {E::MjcEqualityWeldAPI, "MjcEqualityWeldAPI"},
+      {E::MjcEqualityJointAPI, "MjcEqualityJointAPI"},
+      // Newton physics
+      {E::NewtonSceneAPI, "NewtonSceneAPI"},
+      {E::NewtonXpbdSceneAPI, "NewtonXpbdSceneAPI"},
+      {E::NewtonKaminoSceneAPI, "NewtonKaminoSceneAPI"},
+      {E::NewtonArticulationRootAPI, "NewtonArticulationRootAPI"},
+      {E::NewtonCollisionAPI, "NewtonCollisionAPI"},
+      {E::NewtonMeshCollisionAPI, "NewtonMeshCollisionAPI"},
+      {E::NewtonMaterialAPI, "NewtonMaterialAPI"},
+      {E::NewtonMimicAPI, "NewtonMimicAPI"},
+      {E::NewtonActuatorDelayAPI, "NewtonActuatorDelayAPI"},
+      {E::NewtonActuatorControlBaseAPI, "NewtonActuatorControlBaseAPI"},
+      {E::NewtonPDControlAPI, "NewtonPDControlAPI"},
+      {E::NewtonPIDControlAPI, "NewtonPIDControlAPI"},
+      {E::NewtonNeuralControlAPI, "NewtonNeuralControlAPI"},
+      {E::NewtonActuatorClampingBaseAPI, "NewtonActuatorClampingBaseAPI"},
+      {E::NewtonMaxEffortClampingAPI, "NewtonMaxEffortClampingAPI"},
+      {E::NewtonDCMotorClampingAPI, "NewtonDCMotorClampingAPI"},
+      {E::NewtonPositionBasedClampingAPI, "NewtonPositionBasedClampingAPI"},
+      // Additional UsdPhysics
+      {E::PhysicsMassAPI, "PhysicsMassAPI"},
+      {E::PhysicsFilteredPairsAPI, "PhysicsFilteredPairsAPI"},
+      {E::PhysicsArticulationRootAPI, "PhysicsArticulationRootAPI"},
+      // UsdMedia
+      {E::AssetPreviewsAPI, "AssetPreviewsAPI"},
+      // Multi-apply
+      {E::PhysicsDriveAPI, "PhysicsDriveAPI"},
+      {E::PhysicsLimitAPI, "PhysicsLimitAPI"},
   }};
   return LookupEnum("apiSchemas", tok, enums);
 }

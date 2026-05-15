@@ -1,0 +1,21 @@
+#usda 1.0
+(
+    defaultPrim = "j"
+    upAxis = "Y"
+)
+
+# Regression test: `inf` / `-inf` / `nan` as a *scalar* attribute value
+# (issue #272). The array form is covered by fp-inf-nan.usda; this
+# exercises the scalar `ReadBasicType(float|double)` path that was
+# previously broken — `MaybeNonFinite` detected the token but didn't
+# advance the cursor past it, so the caller failed downstream with a
+# misleading "newline expected" error.
+
+def "j"
+{
+    float physics:lowerLimit = -inf
+    float physics:upperLimit = inf
+    float drive:angular:physics:maxForce = inf
+    double scalar_nan = nan
+    float scalar_neg_inf = -inf
+}

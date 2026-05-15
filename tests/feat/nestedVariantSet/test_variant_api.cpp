@@ -1,4 +1,4 @@
-// Simple test for Tydra variant API
+﻿// Simple test for Tydra variant API
 #include <iostream>
 #include <string>
 #include <vector>

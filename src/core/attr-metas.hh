@@ -95,6 +95,24 @@ struct AttrMetas : public MetadataBase {
   }
 
   //
+  // allowedTokens (token[])
+  //
+  static constexpr const char* kAllowedTokens = "allowedTokens";
+
+  bool has_allowedTokens() const { return has(kAllowedTokens); }
+
+  std::vector<value::token> get_allowedTokens() const {
+    auto v = get<std::vector<value::token>>(kAllowedTokens);
+    return v.has_value() ? v.value() : std::vector<value::token>();
+  }
+
+  void set_allowedTokens(const std::vector<value::token>& value) {
+    set(kAllowedTokens, value);
+  }
+
+  void remove_allowedTokens() { remove(kAllowedTokens); }
+
+  //
   // String-only metadata (legacy support)
   // TODO: Migrate to use comment field instead
   //

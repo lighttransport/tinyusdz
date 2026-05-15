@@ -383,11 +383,11 @@ class Stage {
 
   // Cached prim path.
   // key : prim_part string (e.g. "/path/bora")
-  mutable std::unordered_map<std::string, const Prim *> _prim_path_cache;
+  mutable tinyusdz::HashMap<std::string, const Prim *> _prim_path_cache;
 
   // Cached prim_id -> Prim lookup
   // key : prim_id
-  mutable std::unordered_map<uint64_t, const Prim *> _prim_id_cache;
+  mutable tinyusdz::HashMap<uint64_t, const Prim *> _prim_id_cache;
 
   mutable bool _dirty{true}; // True when Stage content changes(addition, deletion, composition/flatten, etc.)
 

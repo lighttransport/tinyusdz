@@ -21,8 +21,10 @@
 
 #include <functional>
 #include <map>
+#include <mutex>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 // [ ] Roots(from Protocol revision 2025-06-18)
 // [ ] Use mcp-session-id in resources and tools.
@@ -101,13 +103,19 @@ std::string get_header_value(const struct mg_request_info *ri, const char *name)
     return {};
 }
 
+bool MethodRequiresSession(const std::string &method) {
+  return (method != "initialize") &&
+         (method != "ping") &&
+         (method != "notifications/initialized");
+}
+
 
 } // namespace
 
 class MCPServer::Impl {
  public:
   // Constructor and destructor
-  Impl() = default;
+  explicit Impl(const MCPServerOptions &options) : options_(options) {}
   ~Impl() {
     if (ctx_) {
       mg_stop(ctx_);
@@ -134,6 +142,7 @@ class MCPServer::Impl {
   }
 
   void addSessionID(const std::string &s) {
+    std::lock_guard<std::mutex> lock(mu_);
     sessions_.insert(s);
   }
 
@@ -153,9 +162,10 @@ class MCPServer::Impl {
   // Create JSON-RPC error response
   JsonRpcResponse create_error_response(int code, const std::string& message, const nlohmann::json& id = nullptr);
 
+  MCPServerOptions options_;
   Context mcp_ctx_;
   UUIDGenerator uuid_gen_;
-
+  std::mutex mu_;
 
   std::unordered_set<std::string> sessions_;
 };
@@ -176,15 +186,35 @@ int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
   
   // Handle POST requests for JSON-RPC
   if (strcmp(request_info->request_method, "POST") == 0) {
+    if ((request_info->content_length > 0) &&
+        (size_t(request_info->content_length) > server->options_.max_request_body_bytes)) {
+      mg_printf(conn,
+                "HTTP/1.1 413 Payload Too Large\r\n"
+                "Content-Length: 0\r\n"
+                "\r\n");
+      return 413;
+    }
+
     // Read request body
     std::string body;
     char buffer[1024];
     int bytes_read;
     
     while ((bytes_read = mg_read(conn, buffer, sizeof(buffer))) > 0) {
+      if (body.size() + size_t(bytes_read) > server->options_.max_request_body_bytes) {
+        mg_printf(conn,
+                  "HTTP/1.1 413 Payload Too Large\r\n"
+                  "Content-Length: 0\r\n"
+                  "\r\n");
+        return 413;
+      }
       body.append(buffer, size_t(bytes_read));
     }
-    DCOUT("body " << body);
+    if (server->options_.log_request_body) {
+      DCOUT("body " << body);
+    } else {
+      DCOUT("body size " << body.size() << " bytes");
+    }
     
     // Parse and process JSON-RPC request
     JsonRpcRequest rpc_request = server->parse_request(body);
@@ -239,7 +269,7 @@ int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
               "HTTP/1.1 200 OK\r\n"
               "Access-Control-Allow-Origin: *\r\n"
               "Access-Control-Allow-Methods: POST, OPTIONS\r\n"
-              "Access-Control-Allow-Headers: Content-Type\r\n"
+              "Access-Control-Allow-Headers: Content-Type, mcp-session-id\r\n"
               "\r\n");
     return 200;
   }
@@ -258,28 +288,45 @@ JsonRpcRequest MCPServer::Impl::parse_request(const std::string& json_str) {
     return request;
   }
   
-  json_obj = nlohmann::json::parse(json_str);
-  
-  if (json_obj.contains("jsonrpc")) {
-    request.jsonrpc = json_obj["jsonrpc"];
-  }
-  if (json_obj.contains("method")) {
-    request.method = json_obj["method"];
-  }
-  if (json_obj.contains("params")) {
-    request.params = json_obj["params"];
-  }
-  if (json_obj.contains("id")) {
-    request.id = json_obj["id"];
+  try {
+    json_obj = nlohmann::json::parse(json_str);
+
+    if (json_obj.contains("jsonrpc") && json_obj["jsonrpc"].is_string()) {
+      request.jsonrpc = json_obj["jsonrpc"].get<std::string>();
+    } else {
+      request.jsonrpc = "";
+    }
+    if (json_obj.contains("method") && json_obj["method"].is_string()) {
+      request.method = json_obj["method"].get<std::string>();
+    } else {
+      request.method = "";
+    }
+    if (json_obj.contains("params")) {
+      request.params = json_obj["params"];
+    }
+    if (json_obj.contains("id")) {
+      request.id = json_obj["id"];
+    }
+  } catch (...) {
+    request.method.clear();
+    request.jsonrpc.clear();
   }
   
   return request;
 }
 
 JsonRpcResponse MCPServer::Impl::process_request(const JsonRpcRequest& request, const std::string &sess_id) {
+  std::lock_guard<std::mutex> lock(mu_);
+
   // Validate JSON-RPC version
   if (request.jsonrpc != "2.0") {
     return create_error_response(INVALID_REQUEST, "Invalid JSON-RPC version", request.id);
+  }
+
+  if (options_.require_session && MethodRequiresSession(request.method)) {
+    if (sess_id.empty() || (sessions_.find(sess_id) == sessions_.end())) {
+      return create_error_response(INVALID_REQUEST, "Missing or invalid mcp-session-id", request.id);
+    }
   }
   
   // Check if method exists
@@ -333,7 +380,7 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
   });
 
   // Register MCP initialize method
-  register_method("initialize", [](const nlohmann::json& params, const std::string sess_id, std::string &err) -> nlohmann::json {
+  register_method("initialize", [](const nlohmann::json& params, const std::string &sess_id, std::string &err) -> nlohmann::json {
     (void)sess_id;
     (void)err;
     // Extract client info if provided
@@ -493,16 +540,33 @@ bool MCPServer::Impl::run() {
   return true;
 }
 
-MCPServer::MCPServer() : impl_(new tydra::mcp::MCPServer::Impl()) {}
-bool MCPServer::init(int port, const std::string &host) {
+MCPServer::MCPServer() : impl_(nullptr) {}
+MCPServer::~MCPServer() {
+  delete impl_;
+  impl_ = nullptr;
+}
+bool MCPServer::init(int port, const std::string &host, const MCPServerOptions &options) {
+  if (!impl_) {
+    impl_ = new tydra::mcp::MCPServer::Impl(options);
+  }
   return impl_->init(port, host);
 }
 
+bool MCPServer::init(int port, const std::string &host) {
+  return init(port, host, MCPServerOptions{});
+}
+
 bool MCPServer::run() {
+  if (!impl_) {
+    return false;
+  }
   return impl_->run();
 }
 
 bool MCPServer::stop() {
+  if (!impl_) {
+    return false;
+  }
   return impl_->stop();
 }
 
@@ -518,6 +582,14 @@ namespace tydra {
 namespace mcp {
 
 MCPServer::MCPServer() {}
+MCPServer::~MCPServer() {}
+
+bool MCPServer::init(int port, const std::string &host, const MCPServerOptions &options) {
+  (void)port;
+  (void)host;
+  (void)options;
+  return false;
+}
 
 bool MCPServer::init(int port, const std::string &host) {
   (void)port;
@@ -539,4 +611,3 @@ bool MCPServer::stop() {
 } // namespace tinyusdz
 
 #endif
-

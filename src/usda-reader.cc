@@ -23,6 +23,10 @@
 #include "core/model-scope.hh"  // Model, Scope
 #include "usdGeom.hh"
 #include "usdSkel.hh"
+#include "usdPhysics.hh"
+#include "usdAR.hh"
+#include "usdMedia.hh"
+#include "mjcPhysics.hh"
 #if defined(__wasi__)
 #else
 #include <mutex>
@@ -103,6 +107,9 @@ RECONSTRUCT_PRIM_DECL(DistantLight);
 RECONSTRUCT_PRIM_DECL(RectLight);
 RECONSTRUCT_PRIM_DECL(GeometryLight);
 RECONSTRUCT_PRIM_DECL(PortalLight);
+RECONSTRUCT_PRIM_DECL(DomeLight_1);
+RECONSTRUCT_PRIM_DECL(LightFilter);
+RECONSTRUCT_PRIM_DECL(PluginLightFilter);
 RECONSTRUCT_PRIM_DECL(GPrim);
 RECONSTRUCT_PRIM_DECL(GeomMesh);
 RECONSTRUCT_PRIM_DECL(GeomSubset);
@@ -114,11 +121,40 @@ RECONSTRUCT_PRIM_DECL(GeomCylinder);
 RECONSTRUCT_PRIM_DECL(GeomCapsule);
 RECONSTRUCT_PRIM_DECL(GeomBasisCurves);
 RECONSTRUCT_PRIM_DECL(GeomNurbsCurves);
+RECONSTRUCT_PRIM_DECL(GeomPlane);
+RECONSTRUCT_PRIM_DECL(GeomCylinder_1);
+RECONSTRUCT_PRIM_DECL(GeomCapsule_1);
+RECONSTRUCT_PRIM_DECL(GeomTetMesh);
+RECONSTRUCT_PRIM_DECL(GeomNurbsPatch);
+RECONSTRUCT_PRIM_DECL(GeomHermiteCurves);
 RECONSTRUCT_PRIM_DECL(GeomCamera);
 RECONSTRUCT_PRIM_DECL(GeomPointInstancer);
 RECONSTRUCT_PRIM_DECL(Material);
 RECONSTRUCT_PRIM_DECL(Shader);
 RECONSTRUCT_PRIM_DECL(NodeGraph);
+// UsdPhysics + mjcPhysics
+RECONSTRUCT_PRIM_DECL(PhysicsJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsScene);
+RECONSTRUCT_PRIM_DECL(PhysicsRevoluteJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsPrismaticJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsSphericalJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsFixedJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsDistanceJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsCollisionGroup);
+RECONSTRUCT_PRIM_DECL(MjcActuator);
+RECONSTRUCT_PRIM_DECL(NewtonActuator);
+RECONSTRUCT_PRIM_DECL(MjcTendon);
+RECONSTRUCT_PRIM_DECL(MjcKeyframe);
+// AR/Interactive (Apple Preliminary_*)
+RECONSTRUCT_PRIM_DECL(Preliminary_PhysicsGravitationalForce);
+RECONSTRUCT_PRIM_DECL(Preliminary_InfiniteColliderPlane);
+RECONSTRUCT_PRIM_DECL(Preliminary_ReferenceImage);
+RECONSTRUCT_PRIM_DECL(Preliminary_Behavior);
+RECONSTRUCT_PRIM_DECL(Preliminary_Trigger);
+RECONSTRUCT_PRIM_DECL(Preliminary_Action);
+RECONSTRUCT_PRIM_DECL(Preliminary_Text);
+// usdMedia
+RECONSTRUCT_PRIM_DECL(SpatialAudio);
 
 #undef RECONSTRUCT_PRIM_DECL
 
@@ -591,6 +627,12 @@ DEFINE_PRIM_TYPE(GeomBasisCurves, kGeomBasisCurves,
                  value::TYPE_ID_GEOM_BASIS_CURVES);
 DEFINE_PRIM_TYPE(GeomNurbsCurves, kGeomNurbsCurves,
                  value::TYPE_ID_GEOM_NURBS_CURVES);
+DEFINE_PRIM_TYPE(GeomPlane, kGeomPlane, value::TYPE_ID_GEOM_PLANE);
+DEFINE_PRIM_TYPE(GeomCylinder_1, kGeomCylinder_1, value::TYPE_ID_GEOM_CYLINDER_1);
+DEFINE_PRIM_TYPE(GeomCapsule_1, kGeomCapsule_1, value::TYPE_ID_GEOM_CAPSULE_1);
+DEFINE_PRIM_TYPE(GeomTetMesh, kGeomTetMesh, value::TYPE_ID_GEOM_TET_MESH);
+DEFINE_PRIM_TYPE(GeomNurbsPatch, kGeomNurbsPatch, value::TYPE_ID_GEOM_NURBS_PATCH);
+DEFINE_PRIM_TYPE(GeomHermiteCurves, kGeomHermiteCurves, value::TYPE_ID_GEOM_HERMITE_CURVES);
 DEFINE_PRIM_TYPE(GeomSubset, kGeomSubset, value::TYPE_ID_GEOM_GEOMSUBSET);
 DEFINE_PRIM_TYPE(SphereLight, kSphereLight, value::TYPE_ID_LUX_SPHERE);
 DEFINE_PRIM_TYPE(DomeLight, kDomeLight, value::TYPE_ID_LUX_DOME);
@@ -600,6 +642,9 @@ DEFINE_PRIM_TYPE(CylinderLight, kCylinderLight, value::TYPE_ID_LUX_CYLINDER);
 DEFINE_PRIM_TYPE(RectLight, kRectLight, value::TYPE_ID_LUX_RECT);
 DEFINE_PRIM_TYPE(GeometryLight, kGeometryLight, value::TYPE_ID_LUX_GEOMETRY);
 DEFINE_PRIM_TYPE(PortalLight, kPortalLight, value::TYPE_ID_LUX_PORTAL);
+DEFINE_PRIM_TYPE(DomeLight_1, kDomeLight_1, value::TYPE_ID_LUX_DOME_1);
+DEFINE_PRIM_TYPE(LightFilter, kLightFilter, value::TYPE_ID_LUX_LIGHT_FILTER);
+DEFINE_PRIM_TYPE(PluginLightFilter, kPluginLightFilter, value::TYPE_ID_LUX_PLUGIN_LIGHT_FILTER);
 DEFINE_PRIM_TYPE(Material, kMaterial, value::TYPE_ID_MATERIAL);
 DEFINE_PRIM_TYPE(Shader, kShader, value::TYPE_ID_SHADER);
 DEFINE_PRIM_TYPE(NodeGraph, kNodeGraph, value::TYPE_ID_NODEGRAPH);
@@ -609,6 +654,29 @@ DEFINE_PRIM_TYPE(SkelAnimation, kSkelAnimation, value::TYPE_ID_SKELANIMATION);
 DEFINE_PRIM_TYPE(BlendShape, kBlendShape, value::TYPE_ID_BLENDSHAPE);
 DEFINE_PRIM_TYPE(GeomCamera, kGeomCamera, value::TYPE_ID_GEOM_CAMERA);
 DEFINE_PRIM_TYPE(GeomPointInstancer, kPointInstancer, value::TYPE_ID_GEOM_POINT_INSTANCER);
+// UsdPhysics + mjcPhysics
+DEFINE_PRIM_TYPE(PhysicsJoint, kPhysicsJoint, value::TYPE_ID_PHYSICS_JOINT);
+DEFINE_PRIM_TYPE(PhysicsScene, kPhysicsScene, value::TYPE_ID_PHYSICS_SCENE);
+DEFINE_PRIM_TYPE(PhysicsRevoluteJoint, kPhysicsRevoluteJoint, value::TYPE_ID_PHYSICS_REVOLUTE_JOINT);
+DEFINE_PRIM_TYPE(PhysicsPrismaticJoint, kPhysicsPrismaticJoint, value::TYPE_ID_PHYSICS_PRISMATIC_JOINT);
+DEFINE_PRIM_TYPE(PhysicsSphericalJoint, kPhysicsSphericalJoint, value::TYPE_ID_PHYSICS_SPHERICAL_JOINT);
+DEFINE_PRIM_TYPE(PhysicsFixedJoint, kPhysicsFixedJoint, value::TYPE_ID_PHYSICS_FIXED_JOINT);
+DEFINE_PRIM_TYPE(PhysicsDistanceJoint, kPhysicsDistanceJoint, value::TYPE_ID_PHYSICS_DISTANCE_JOINT);
+DEFINE_PRIM_TYPE(PhysicsCollisionGroup, kPhysicsCollisionGroup, value::TYPE_ID_PHYSICS_COLLISION_GROUP);
+DEFINE_PRIM_TYPE(MjcActuator, kMjcActuator, value::TYPE_ID_MJC_ACTUATOR);
+DEFINE_PRIM_TYPE(NewtonActuator, kNewtonActuator, value::TYPE_ID_NEWTON_ACTUATOR);
+DEFINE_PRIM_TYPE(MjcTendon, kMjcTendon, value::TYPE_ID_MJC_TENDON);
+DEFINE_PRIM_TYPE(MjcKeyframe, kMjcKeyframe, value::TYPE_ID_MJC_KEYFRAME);
+// AR/Interactive (Apple Preliminary_*)
+DEFINE_PRIM_TYPE(Preliminary_PhysicsGravitationalForce, kPreliminary_PhysicsGravitationalForce, value::TYPE_ID_PRELIMINARY_GRAVITATIONAL_FORCE);
+DEFINE_PRIM_TYPE(Preliminary_InfiniteColliderPlane, kPreliminary_InfiniteColliderPlane, value::TYPE_ID_PRELIMINARY_INFINITE_COLLIDER_PLANE);
+DEFINE_PRIM_TYPE(Preliminary_ReferenceImage, kPreliminary_ReferenceImage, value::TYPE_ID_PRELIMINARY_REFERENCE_IMAGE);
+DEFINE_PRIM_TYPE(Preliminary_Behavior, kPreliminary_Behavior, value::TYPE_ID_PRELIMINARY_BEHAVIOR);
+DEFINE_PRIM_TYPE(Preliminary_Trigger, kPreliminary_Trigger, value::TYPE_ID_PRELIMINARY_TRIGGER);
+DEFINE_PRIM_TYPE(Preliminary_Action, kPreliminary_Action, value::TYPE_ID_PRELIMINARY_ACTION);
+DEFINE_PRIM_TYPE(Preliminary_Text, kPreliminary_Text, value::TYPE_ID_PRELIMINARY_TEXT);
+// usdMedia
+DEFINE_PRIM_TYPE(SpatialAudio, kSpatialAudio, value::TYPE_ID_SPATIAL_AUDIO);
 DEFINE_PRIM_TYPE(Scope, "Scope", value::TYPE_ID_SCOPE);
 
 DEFINE_PRIM_TYPE(GPrim, "GPrim", value::TYPE_ID_GPRIM);
@@ -1440,41 +1508,81 @@ class USDAReader::Impl {
         }
       } else if (meta.first == "apiSchemas") {
         DCOUT("apiSchemas. type = " << var.type_name());
-        if (var.type_name() == "token[]") {
-          APISchemas apiSchemas;
-          if ((listEditQual != ListEditQual::Prepend) && (listEditQual != ListEditQual::ResetToExplicit)) {
-            PUSH_ERROR_AND_RETURN("(PrimMeta) " << "ListEdit op for `apiSchemas` must be empty or `prepend` in TinyUSDZ, but got `" << to_string(listEditQual) << "`");
+        // `apiSchemas = None` -> explicit empty list (clears any
+        // previously authored prepend/append/etc. on this prim).
+        if (var.is_blocked()) {
+          if (listEditQual != ListEditQual::ResetToExplicit) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("`apiSchemas = None` must be unqualified (explicit), but has qualifier `{}`", to_string(listEditQual)));
           }
-          apiSchemas.listOpQual = listEditQual;
-
-          if (auto pv = var.get_value<std::vector<value::token>>()) {
-
-            for (const auto &item : pv.value()) {
-              // TODO: Multi-apply schema(instance name)
-              auto ret = ApiSchemaHandler(item.str());
-              if (ret) {
-                apiSchemas.names.push_back({ret.value(), /* instanceName */""});
-              } else if (_config.allow_unknown_apiSchema) {
-                // Store unknown schema instead of just warning
-                std::string instanceName = "";  // TODO: parse instance name if present
-                apiSchemas.unknownSchemas.push_back({item.str(), instanceName});
-                PUSH_WARN("(PrimMeta) Preserving unknown API schema: " << item.str());
-              } else {
-                PUSH_ERROR_AND_RETURN("Unknown or invalid apiSchema: " + ret.error());
-              }
-            }
-          } else {
-            PUSH_ERROR_AND_RETURN_TAG(kTag, "(Internal error?) `apiSchemas` metadataum is not type "
-            "`token[]`. got type `"
-            << var.type_name() << "`");
-          }
-
-          out->set_apiSchemas(std::move(apiSchemas));
-        } else {
+          APISchemas empty;
+          empty.listOpQual = ListEditQual::ResetToExplicit;
+          out->set_apiSchemas(std::move(empty));
+          continue;
+        }
+        if (var.type_name() != "token[]") {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "(Internal error?) `apiSchemas` metadataum is not type "
           "`token[]`. got type `"
           << var.type_name() << "`");
         }
+        const bool isDelete = (listEditQual == ListEditQual::Delete);
+        const bool isAdditive = (listEditQual == ListEditQual::Prepend)
+                             || (listEditQual == ListEditQual::Append)
+                             || (listEditQual == ListEditQual::Add)
+                             || (listEditQual == ListEditQual::ResetToExplicit);
+        if (!isDelete && !isAdditive) {
+          PUSH_ERROR_AND_RETURN("(PrimMeta) " << "ListEdit op for `apiSchemas` must be `prepend`, `append`, `add`, `delete`, or unqualified, but got `" << to_string(listEditQual) << "`");
+        }
+
+        // Merge with any APISchemas already accumulated on this prim — a
+        // single prim may carry both `prepend apiSchemas = [...]` and
+        // `delete apiSchemas = [...]` (Omniverse / Newton-asset pattern).
+        APISchemas apiSchemas;
+        if (out->has_apiSchemas()) {
+          apiSchemas = out->get_apiSchemas();
+        }
+        // First non-delete qualifier wins for round-trip purposes.
+        if (isAdditive && apiSchemas.names.empty() && apiSchemas.unknownSchemas.empty()
+            && apiSchemas.listOpQual == ListEditQual::ResetToExplicit) {
+          apiSchemas.listOpQual = listEditQual;
+        }
+
+        auto pv = var.get_value<std::vector<value::token>>();
+        if (!pv) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "(Internal error?) `apiSchemas` metadataum is not type "
+          "`token[]`. got type `"
+          << var.type_name() << "`");
+        }
+        for (const auto &item : pv.value()) {
+          // TODO: Multi-apply schema(instance name)
+          const std::string instanceName = "";
+          auto ret = ApiSchemaHandler(item.str());
+          if (ret) {
+            const auto entry = std::make_pair(ret.value(), instanceName);
+            if (isDelete) {
+              apiSchemas.deletedNames.push_back(entry);
+              apiSchemas.names.erase(
+                  std::remove(apiSchemas.names.begin(), apiSchemas.names.end(), entry),
+                  apiSchemas.names.end());
+            } else {
+              apiSchemas.names.push_back(entry);
+            }
+          } else if (_config.allow_unknown_apiSchema) {
+            const auto entry = std::make_pair(item.str(), instanceName);
+            if (isDelete) {
+              apiSchemas.deletedUnknownSchemas.push_back(entry);
+              apiSchemas.unknownSchemas.erase(
+                  std::remove(apiSchemas.unknownSchemas.begin(), apiSchemas.unknownSchemas.end(), entry),
+                  apiSchemas.unknownSchemas.end());
+            } else {
+              apiSchemas.unknownSchemas.push_back(entry);
+              PUSH_WARN("(PrimMeta) Preserving unknown API schema: " << item.str());
+            }
+          } else {
+            PUSH_ERROR_AND_RETURN("Unknown or invalid apiSchema: " + ret.error());
+          }
+        }
+
+        out->set_apiSchemas(std::move(apiSchemas));
       } else if (meta.first == "references") {
         // Initialize vector if not present
         if (!out->references) {
@@ -2186,6 +2294,12 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<GeomSubset>();
   RegisterReconstructCallback<GeomBasisCurves>();
   RegisterReconstructCallback<GeomNurbsCurves>();
+  RegisterReconstructCallback<GeomPlane>();
+  RegisterReconstructCallback<GeomCylinder_1>();
+  RegisterReconstructCallback<GeomCapsule_1>();
+  RegisterReconstructCallback<GeomTetMesh>();
+  RegisterReconstructCallback<GeomNurbsPatch>();
+  RegisterReconstructCallback<GeomHermiteCurves>();
   RegisterReconstructCallback<GeomCamera>();
   RegisterReconstructCallback<GeomPointInstancer>();
 
@@ -2203,11 +2317,39 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<RectLight>();
   RegisterReconstructCallback<GeometryLight>();
   RegisterReconstructCallback<PortalLight>();
+  RegisterReconstructCallback<DomeLight_1>();
+  RegisterReconstructCallback<LightFilter>();
+  RegisterReconstructCallback<PluginLightFilter>();
 
   RegisterReconstructCallback<SkelRoot>();
   RegisterReconstructCallback<Skeleton>();
   RegisterReconstructCallback<SkelAnimation>();
   RegisterReconstructCallback<BlendShape>();
+
+  // UsdPhysics + mjcPhysics
+  RegisterReconstructCallback<PhysicsJoint>();
+  RegisterReconstructCallback<PhysicsScene>();
+  RegisterReconstructCallback<PhysicsRevoluteJoint>();
+  RegisterReconstructCallback<PhysicsPrismaticJoint>();
+  RegisterReconstructCallback<PhysicsSphericalJoint>();
+  RegisterReconstructCallback<PhysicsFixedJoint>();
+  RegisterReconstructCallback<PhysicsDistanceJoint>();
+  RegisterReconstructCallback<PhysicsCollisionGroup>();
+  RegisterReconstructCallback<MjcActuator>();
+  RegisterReconstructCallback<NewtonActuator>();
+  RegisterReconstructCallback<MjcTendon>();
+  RegisterReconstructCallback<MjcKeyframe>();
+
+  // AR/Interactive (Apple Preliminary_*)
+  RegisterReconstructCallback<Preliminary_PhysicsGravitationalForce>();
+  RegisterReconstructCallback<Preliminary_InfiniteColliderPlane>();
+  RegisterReconstructCallback<Preliminary_ReferenceImage>();
+  RegisterReconstructCallback<Preliminary_Behavior>();
+  RegisterReconstructCallback<Preliminary_Trigger>();
+  RegisterReconstructCallback<Preliminary_Action>();
+  RegisterReconstructCallback<Preliminary_Text>();
+  // usdMedia
+  RegisterReconstructCallback<SpatialAudio>();
 
   _parser.set_primspec_mode(as_primspec);
 

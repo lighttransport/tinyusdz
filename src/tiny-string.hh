@@ -351,16 +351,31 @@ bool parse_float(const tstring_view &sv, float *ret);
 bool parse_double(const tstring_view &sv, double *ret);
 
 bool parse_int_array(const tstring_view &sv, std::vector<int32_t> *result);
+bool parse_uint_array(const tstring_view &sv, std::vector<uint32_t> *result);
+bool parse_int64_array(const tstring_view &sv, std::vector<int64_t> *result);
+bool parse_uint64_array(const tstring_view &sv, std::vector<uint64_t> *result);
+bool parse_half_array(const tstring_view &sv, std::vector<tinyusdz::value::half> *result);
 bool parse_float_array(const tstring_view &sv, std::vector<float> *result);
 bool parse_double_array(const tstring_view &sv, std::vector<double> *result);
+bool parse_token_array(const tstring_view &sv, std::vector<tinyusdz::value::token> *result);
+bool parse_string_array(const tstring_view &sv, std::vector<tinyusdz::value::StringData> *result);
+bool parse_std_string_array(const tstring_view &sv, std::vector<std::string> *result);
 
 // Compound-type array parsers
+bool parse_half2_array(const tstring_view &sv, std::vector<tinyusdz::value::half2> *result);
+bool parse_half3_array(const tstring_view &sv, std::vector<tinyusdz::value::half3> *result);
+bool parse_half4_array(const tstring_view &sv, std::vector<tinyusdz::value::half4> *result);
 bool parse_float2_array(const tstring_view &sv, std::vector<tinyusdz::value::float2> *result);
 bool parse_float3_array(const tstring_view &sv, std::vector<tinyusdz::value::float3> *result);
 bool parse_float4_array(const tstring_view &sv, std::vector<tinyusdz::value::float4> *result);
+bool parse_point3f_array(const tstring_view &sv, std::vector<tinyusdz::value::point3f> *result);
+bool parse_normal3f_array(const tstring_view &sv, std::vector<tinyusdz::value::normal3f> *result);
 bool parse_double2_array(const tstring_view &sv, std::vector<tinyusdz::value::double2> *result);
 bool parse_double3_array(const tstring_view &sv, std::vector<tinyusdz::value::double3> *result);
 bool parse_double4_array(const tstring_view &sv, std::vector<tinyusdz::value::double4> *result);
+bool parse_quath_array(const tstring_view &sv, std::vector<tinyusdz::value::quath> *result);
+bool parse_quatf_array(const tstring_view &sv, std::vector<tinyusdz::value::quatf> *result);
+bool parse_quatd_array(const tstring_view &sv, std::vector<tinyusdz::value::quatd> *result);
 bool parse_matrix2f_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix2f> *result);
 bool parse_matrix3f_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix3f> *result);
 bool parse_matrix4f_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix4f> *result);

@@ -6,6 +6,7 @@
 // structure)
 //
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -221,6 +222,7 @@ static void print_help(const char* prog_name) {
   std::cout << "  --lowmem              Free GeomMesh data after conversion (reduces peak memory)\n";
   std::cout << "  --snorm8              Use SNorm8x3 normals (3 bytes) and SNorm8x4 tangents (4 bytes)\n";
   std::cout << "  --fast-index-build    Force BuildVertexIndicesFastImpl (reproduces WASM code path)\n";
+  std::cout << "  --profile             Print [timing] for load and RenderScene conversion phases\n";
 }
 
 int main(int argc, char **argv) {
@@ -251,6 +253,7 @@ int main(int argc, char **argv) {
   bool lowmem = false;
   bool snorm8 = false;
   bool force_fast_index = false;
+  bool profile = false;
   auto tangent_method = tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel;
   std::string output_format = "yaml";  // "yaml" (human-readable), "json" (machine-readable)
 
@@ -322,6 +325,8 @@ int main(int argc, char **argv) {
       snorm8 = true;
     } else if (strcmp(argv[i], "--fast-index-build") == 0) {
       force_fast_index = true;
+    } else if (strcmp(argv[i], "--profile") == 0) {
+      profile = true;
     } else {
       filepath = argv[i];
     }
@@ -352,6 +357,7 @@ int main(int argc, char **argv) {
     config_info.push_back({"mmap_zero_copy", "true"});
   }
 
+  auto _t_load_begin = std::chrono::steady_clock::now();
   if (tinyusdz::io::IsMMapSupported()) {
     config_info.push_back({"loading_method", "mmap"});
     if (!tinyusdz::io::MMapFile(filepath, &mmap_handle, /* writable */false, &err)) {
@@ -371,6 +377,11 @@ int main(int argc, char **argv) {
       std::cerr << "WARN: --mmap-lowmem requested but mmap is not supported on this platform.\n";
     }
     ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err);
+  }
+  auto _t_load_end = std::chrono::steady_clock::now();
+  if (profile) {
+    double _load_ms = std::chrono::duration<double, std::milli>(_t_load_end - _t_load_begin).count();
+    std::cerr << "[timing] USD load: " << _load_ms << " ms\n";
   }
 
   if (!warn.empty()) {
@@ -539,7 +550,13 @@ int main(int argc, char **argv) {
     config_info.push_back({"timecode", "default"});
   }
   env.timecode = timecode;
+  auto _t_conv_begin = std::chrono::steady_clock::now();
   ret = converter.ConvertToRenderScene(env, &render_scene);
+  auto _t_conv_end = std::chrono::steady_clock::now();
+  if (profile) {
+    double _conv_ms = std::chrono::duration<double, std::milli>(_t_conv_end - _t_conv_begin).count();
+    std::cerr << "[timing] RenderScene conversion: " << _conv_ms << " ms\n";
+  }
   if (!ret) {
     std::cerr << "Failed to convert USD Stage to RenderScene: \n"
               << converter.GetError() << "\n";

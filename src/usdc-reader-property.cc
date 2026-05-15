@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2.0
+﻿// SPDX-License-Identifier: Apache 2.0
 // Copyright 2020 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
@@ -527,6 +527,24 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`displayGroup` must be type `string`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "documentation" || fv.first == "doc") {
+      if (auto pv = fv.second.get_value<std::string>()) {
+        meta.set_doc(pv.value());
+      } else if (auto pv2 = fv.second.get_value<value::StringData>()) {
+        meta.set_doc(pv2.value());
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`documentation` must be type `string`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "allowedTokens") {
+      if (auto pv = fv.second.get_value<std::vector<value::token>>()) {
+        meta.set_allowedTokens(pv.value());
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`allowedTokens` must be type `token[]`, but got type `"
                       << fv.second.type_name() << "`");
       }
     } else if (fv.first == "unauthoredValuesIndex") {

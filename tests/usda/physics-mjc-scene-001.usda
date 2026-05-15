@@ -1,0 +1,47 @@
+#usda 1.0
+(
+    defaultPrim = "SimScene"
+    upAxis = "Z"
+)
+
+def PhysicsScene "SimScene" (
+    prepend apiSchemas = ["MjcSceneAPI"]
+)
+{
+    vector3f physics:gravityDirection = (0, 0, -9.81)
+    float physics:gravityMagnitude = 9.81
+
+    uniform double mjc:option:timestep = 0.002
+    uniform token mjc:option:integrator = "implicit"
+    uniform int mjc:option:iterations = 100
+    uniform double mjc:option:tolerance = 1e-08
+    uniform token mjc:option:solver = "Newton"
+    uniform token mjc:option:cone = "elliptic"
+    uniform double mjc:option:impratio = 1
+    uniform double mjc:option:o_margin = 0
+    uniform double mjc:option:density = 0
+    uniform double mjc:option:viscosity = 0
+
+    uniform bool mjc:flag:gravity = 1
+    uniform bool mjc:flag:contact = 1
+    uniform bool mjc:flag:equality = 1
+    uniform bool mjc:flag:constraint = 1
+    uniform bool mjc:flag:limit = 1
+    uniform bool mjc:flag:warmstart = 1
+    uniform bool mjc:flag:filterparent = 1
+    uniform bool mjc:flag:actuation = 1
+    uniform bool mjc:flag:refsafe = 1
+    uniform bool mjc:flag:sensor = 1
+    uniform bool mjc:flag:energy = 0
+    uniform bool mjc:flag:fwdinv = 0
+    uniform bool mjc:flag:island = 0
+
+    uniform bool mjc:compiler:autoLimits = 1
+    uniform double mjc:compiler:boundMass = 0
+    uniform double mjc:compiler:boundInertia = 0
+    uniform double mjc:compiler:setTotalMass = -1
+    uniform token mjc:compiler:angle = "radian"
+    uniform bool mjc:compiler:balanceInertia = 0
+    uniform bool mjc:compiler:fitAABB = 0
+    uniform token mjc:compiler:inertiaFromGeom = "auto"
+}

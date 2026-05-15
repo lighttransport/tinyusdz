@@ -2,6 +2,7 @@
 // Copyright 2025 Light Transport Entertainment Inc.
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <vector>
