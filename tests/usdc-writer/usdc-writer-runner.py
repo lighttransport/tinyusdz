@@ -110,9 +110,14 @@ def run_tests(tusdcat: str, tusddiff: str, basedir: str,
                 print(f"        {err_line}")
             continue
 
-        # Check for VALUE_PPRINT placeholder in roundtripped USDA
+        # Check for VALUE_PPRINT placeholder in roundtripped USDA.
+        # Force UTF-8: the default text mode on Windows is cp1252, which
+        # blows up on non-ASCII bytes that legitimately appear in USDA
+        # output (token vectors, asset paths, etc.). errors="replace"
+        # avoids hard failure on corrupted output — we only care about
+        # finding the literal "VALUE_PPRINT" substring.
         try:
-            with open(usda_rt_path) as f:
+            with open(usda_rt_path, encoding="utf-8", errors="replace") as f:
                 rt_content = f.read()
             if "VALUE_PPRINT" in rt_content:
                 failed += 1

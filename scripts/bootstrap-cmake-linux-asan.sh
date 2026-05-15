@@ -8,7 +8,14 @@ mkdir ${builddir}
 # with lld linker
 #  -DCMAKE_TOOLCHAIN_FILE=cmake/lld-linux.toolchain.cmake 
 
-cd ${builddir} && CXX=clang++ CC=clang cmake \
+# Honor CXX/CC from the environment (CI passes CXX=g++ CC=gcc — clang's
+# Ubuntu compiler-rt layout doesn't match where libclang-rt-XX-dev
+# installs its aarch64 runtime, so -fsanitize=address fails to link).
+# Falls back to clang if nothing was set.
+: "${CXX:=clang++}"
+: "${CC:=clang}"
+
+cd ${builddir} && CXX="${CXX}" CC="${CC}" cmake \
   -DSANITIZE_ADDRESS=1 \
   -DTINYUSDZ_NO_WERROR=On \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
