@@ -77,13 +77,24 @@ jobs:
         run: |
           Write-Host "=== Testing TinyUSDZ <-> OpenUSD interoperability on Windows x64 ==="
 
+          # The v25.11-lte usdcat.exe on this Windows runner exits
+          # non-zero even on successful reads (same quirk hit by the
+          # Verify step's `usdcat --help`). We gate the step on tusdcat
+          # exit codes (those we control) and reset $LASTEXITCODE after
+          # each usdcat call to keep pwsh from propagating the noise.
+
           # Test 1: Read files with both tools
           $testFiles = @("models/suzanne.usdc", "models/cube.usda")
           foreach ($usdFile in $testFiles) {
             if (Test-Path $usdFile) {
               Write-Host "Testing $usdFile"
               .\build\Release\tusdcat.exe $usdFile > $null
-              usdcat $usdFile > $null
+              if ($LASTEXITCODE -ne 0) {
+                Write-Host "FAIL: tusdcat exit $LASTEXITCODE on $usdFile"
+                exit 1
+              }
+              & usdcat $usdFile > $null
+              $global:LASTEXITCODE = 0
               Write-Host "✓ Both tools read $usdFile"
             }
           }
@@ -91,11 +102,17 @@ jobs:
           # Test 2: Convert with TinyUSDZ, verify with OpenUSD
           if (Test-Path "models/suzanne.usdc") {
             .\build\Release\tusdcat.exe models/suzanne.usdc > tinyusdz_output.usda
-            usdcat tinyusdz_output.usda > $null
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "FAIL: tusdcat exit $LASTEXITCODE on conversion"
+              exit 1
+            }
+            & usdcat tinyusdz_output.usda > $null
+            $global:LASTEXITCODE = 0
             Write-Host "✓ OpenUSD read TinyUSDZ-generated USDA"
           }
 
           Write-Host "All Windows x64 tests passed!"
+          exit 0
 
   # Windows(32bit) + Visual Studio 2019 build
   build-windows-msvc-win32:
