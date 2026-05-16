@@ -5,8 +5,15 @@ set(CMAKE_C_COMPILER_TARGET i386-linux-gnu)
 # Assume debian/ubuntu
 #set(CMAKE_FIND_ROOT_PATH /usr/lib/i386-linux-gnu/)
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -m32")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -m32")
+# -m32 alone leaves gcc using x87 80-bit FP by default. That breaks
+# strict float equality (e.g. `1.38f == 1.38f` after a parse-and-store
+# round trip): intermediate values get held at 80-bit precision then
+# rounded inconsistently against a 32-bit-stored float, producing
+# false-negative comparisons. -msse2 -mfpmath=sse forces SSE2 single/
+# double FP everywhere, which matches every other platform's behavior.
+# All modern x86 hosts support SSE2 (mandatory since i686 baseline ~2003).
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -m32 -msse2 -mfpmath=sse")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -m32 -msse2 -mfpmath=sse")
 
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
