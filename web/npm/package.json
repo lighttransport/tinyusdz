@@ -21,13 +21,13 @@
     "README.md"
   ],
   "scripts": {
-    "build": "./00-build-package.sh",
-    "build:package": "./00-build-package.sh",
-    "build:wasm": "./05-build-wasm.sh",
-    "build:stage": "node ./scripts/06-stage-package.mjs",
-    "build:clean": "./00-build-package.sh",
-    "validate": "node ./scripts/07-validate-package.mjs",
-    "pack:dry-run": "node ./scripts/07-validate-package.mjs --pack-only",
+    "build": "./build-package.sh",
+    "build:package": "./build-package.sh",
+    "build:wasm": "./build-wasm.sh",
+    "build:stage": "node ./scripts/stage-package.mjs",
+    "build:clean": "./build-package.sh",
+    "validate": "node ./scripts/validate-package.mjs",
+    "pack:dry-run": "node ./scripts/validate-package.mjs --pack-only",
     "test:validate": "npm run validate",
     "test:usda": "node --test ./scripts/test-usda-loading.mjs",
     "test": "npm run test:validate && npm run test:usda"
