@@ -6,6 +6,8 @@ set(SOURCES
 
 add_executable(${EXAMPLE_TARGET} ${SOURCES})
 
+add_sanitizers(${EXAMPLE_TARGET})
+
 target_include_directories(${EXAMPLE_TARGET} PRIVATE
   ${PROJECT_SOURCE_DIR}/src
   ${PROJECT_SOURCE_DIR}/src/external
