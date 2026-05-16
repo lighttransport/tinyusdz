@@ -315,6 +315,20 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/sanitizers)
 find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
 
+# When ASan is enabled, propagate the runtime link flag to ALL
+# executables. add_sanitizers() (from FindSanitizers.cmake) sets
+# LINK_FLAGS as a private target property; any exe target that links
+# the asan-instrumented tinyusdz_static.a but forgets to call
+# add_sanitizers() ends up with undefined references to
+# __asan_report_load*, __asan_memcpy, etc. Setting CMAKE_EXE_LINKER_FLAGS
+# globally avoids that footgun across examples/, tests/feat/,
+# tests/pprint/, ... — every binary in the build tree gets the runtime
+# automatically.
+if(SANITIZE_ADDRESS)
+  set(CMAKE_EXE_LINKER_FLAGS
+      "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+endif()
+
 # [cifuzz]
 option(TINYUSDZ_TEST_CIFUZZ "Run cifuzz test" OFF)
 
@@ -1980,29 +1994,34 @@ if(TINYUSDZ_BUILD_TESTS)
   if(TINYUSDZ_WITH_MODULE_USDA_READER)
     # MaterialX tests
     add_executable(feat-mtlx-parse tests/feat/mtlx/test_mtlx_parse.cc)
+    add_sanitizers(feat-mtlx-parse)
     target_link_libraries(feat-mtlx-parse PRIVATE ${TINYUSDZ_TARGET_STATIC})
     target_include_directories(feat-mtlx-parse PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-mtlx-parse COMMAND feat-mtlx-parse
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     add_executable(feat-mtlx-import tests/feat/mtlx/test_mtlx_import.cc)
+    add_sanitizers(feat-mtlx-import)
     target_link_libraries(feat-mtlx-import PRIVATE ${TINYUSDZ_TARGET_STATIC})
     target_include_directories(feat-mtlx-import PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-mtlx-import COMMAND feat-mtlx-import)
 
     add_executable(feat-mtlx-export tests/feat/mtlx/test_mtlx_export.cc)
+    add_sanitizers(feat-mtlx-export)
     target_link_libraries(feat-mtlx-export PRIVATE ${TINYUSDZ_TARGET_STATIC})
     target_include_directories(feat-mtlx-export PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-mtlx-export COMMAND feat-mtlx-export)
 
     # Variant tests
     add_executable(feat-variant-converter tests/feat/nestedVariantSet/test_variant_converter.cpp)
+    add_sanitizers(feat-variant-converter)
     target_link_libraries(feat-variant-converter PRIVATE ${TINYUSDZ_TARGET_STATIC})
     target_include_directories(feat-variant-converter PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-variant-converter COMMAND feat-variant-converter
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     add_executable(feat-variant-applier tests/feat/nestedVariantSet/test_variant_applier.cpp)
+    add_sanitizers(feat-variant-applier)
     target_link_libraries(feat-variant-applier PRIVATE ${TINYUSDZ_TARGET_STATIC})
     target_include_directories(feat-variant-applier PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-variant-applier COMMAND feat-variant-applier
@@ -2011,6 +2030,7 @@ if(TINYUSDZ_BUILD_TESTS)
 
   if(TINYUSDZ_WITH_JSON)
     add_executable(feat-mtlx-grouped-params tests/feat/mtlx/test_grouped_params.cc)
+    add_sanitizers(feat-mtlx-grouped-params)
     target_link_libraries(feat-mtlx-grouped-params PRIVATE ${TINYUSDZ_TARGET_STATIC})
     target_include_directories(feat-mtlx-grouped-params PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-mtlx-grouped-params COMMAND feat-mtlx-grouped-params)
@@ -2021,6 +2041,7 @@ if(TINYUSDZ_BUILD_TESTS)
   #
   if(TINYUSDZ_WITH_MODULE_USDA_READER)
     add_executable(bench-parse-opt tests/feat/parse-opt/test-parse-opt.cc)
+    add_sanitizers(bench-parse-opt)
     target_link_libraries(bench-parse-opt PRIVATE ${TINYUSDZ_TARGET_STATIC})
     target_include_directories(bench-parse-opt PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME bench-parse-opt COMMAND bench-parse-opt --quick)
