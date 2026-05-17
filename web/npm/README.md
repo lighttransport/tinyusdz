@@ -4,7 +4,7 @@ JS/WASM distribution of TinyUSDZ.
 
 ## Demos
 
-[GitHub Pages demos](https://lighttransport.github.io/tinyusdz/demos.html)
+[GitHub Pages demos](https://lighttransport.github.io/tinyusdz/demos/)
 
 ## Install
 

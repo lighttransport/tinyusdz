@@ -7,6 +7,7 @@
 build/
 build-tinysubdiv/
 web/demo/dist/
+web/site/dist/
 web/cmake-build/
 web/cmake-build64/
 web/npm/dist/

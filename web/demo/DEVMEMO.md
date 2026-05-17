@@ -1,66 +1,45 @@
-# Development Memo: Local TinyUSDZ Module Integration with Vite
+# Development Memo: TinyUSDZ npm package with Vite
 
 ## Overview
 
-For local development, `node_modules/tinyusdz` is replaced with a symlink pointing to the local source at `../js/src/tinyusdz/`. Combined with `preserveSymlinks: true` in `vite.config.js`, this lets Vite serve files from the local source while resolving bare imports (`three`, `fzstd`) from the demo's `node_modules`.
+The demos resolve TinyUSDZ from the npm package in `node_modules/tinyusdz`.
+They should not symlink to the repository's `web/js` tree.
 
-## How It Works
+Current package target:
 
-1. **Symlink** replaces the npm-installed package with local source:
-   ```
-   node_modules/tinyusdz -> ../../js/src/tinyusdz
-   ```
-   The `setup:local` script first removes the installed `node_modules/tinyusdz` directory, then recreates it as a symlink.
-
-2. **`preserveSymlinks: true`** in `vite.config.js` tells Vite to keep the `node_modules/tinyusdz/` path instead of following the symlink to the real path. This means bare imports like `three` and `fzstd` in `TinyUSDZLoader.js` resolve from the demo's `node_modules/`, not from the real file location.
-
-3. **`resolve.alias`** maps `tinyusdz` → `node_modules/tinyusdz` so that `from 'tinyusdz/TinyUSDZLoader.js'` resolves correctly (the symlinked dir has no `package.json` with exports).
-
-4. **WASM loading** works because `tinyusdz.js` uses `new URL('tinyusdz.wasm', import.meta.url)`, and the `.wasm` file is co-located with the `.js` file in the symlinked directory.
+```bash
+tinyusdz@0.9.9-rc1
+```
 
 ## Setup
 
 ```bash
 cd web/demo
-npm install          # install all deps (puts npm tinyusdz in node_modules)
-npm run setup:local  # replace with symlink to local source
-npm run dev          # start Vite dev server
+npm install
+npm run dev
 ```
 
-Or manually:
-```bash
-ln -sfn ../../js/src/tinyusdz node_modules/tinyusdz
+The GitHub Pages workflow uses `bun install` followed by `bash web/site/build-pages.sh`.
+That build path also resolves `tinyusdz` from `node_modules`.
+
+## Vite Resolution
+
+`vite.config.js` aliases `tinyusdz` to `node_modules/tinyusdz` so imports like:
+
+```js
+import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 ```
 
-**Note:** `npm install` will overwrite the symlink with the npm package. Run `npm run setup:local` again after any `npm install`.
+always come from the installed package. Vite emits the WASM files referenced by
+the package's `tinyusdz.js` / `tinyusdz_64.js` modules into the static bundle.
 
-## Development Workflow
-
-1. **Build WASM** (if needed):
-   ```bash
-   cd web && ./bootstrap-linux.sh && cd build && make
-   ```
-   Outputs `tinyusdz.js` and `tinyusdz.wasm` to `web/js/src/tinyusdz/`.
-
-2. **Run demo dev server:**
-   ```bash
-   cd web/demo && npm run dev
-   ```
-
-3. **Edit JS helpers** in `web/js/src/tinyusdz/` — Vite detects changes and reloads.
-
-4. **Rebuild WASM** after C++ changes — `cd web/build && make`, then refresh browser.
-
-## Switching Back to npm Package
+## Updating TinyUSDZ
 
 ```bash
 cd web/demo
-npm install   # restores npm tinyusdz package
+npm install tinyusdz@<version> --save-exact
+npm run build
 ```
 
-## WASM64 (Optional)
-
-`tinyusdz_64.js` is the 64-bit WASM build. If it's not present, `TinyUSDZLoader.js` will warn and fall back to the 32-bit module automatically.
-
----
-*Last updated: 2026-03-31*
+Do not run a local symlink setup unless the demos are intentionally being moved
+back to in-repo package development.

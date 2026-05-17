@@ -5,7 +5,7 @@
 [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-❤️-pink?logo=github)](https://github.com/sponsors/lighttransport)
 
 <p align="center">
- <a href="https://lighttransport.github.io/tinyusdz/demos.html", target="_blank"> 
+ <a href="https://lighttransport.github.io/tinyusdz/demos/", target="_blank">
    <img src="screenshots/demos.jpg" width="800px">
  </a>
 </p>
