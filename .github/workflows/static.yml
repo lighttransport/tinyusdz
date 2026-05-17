@@ -33,41 +33,21 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-      - name: Setup Emscripten SDK
-        run: |
-          git clone https://github.com/emscripten-core/emsdk.git
-          cd emsdk
-          # from https://github.com/Twinklebear/webgpu-cpp-usdz/blob/main/.github/workflows/deploy-page.yml
-          ./emsdk install 4.0.9
-          ./emsdk activate 4.0.9
-      - name: Configure
-        run: |
-          source ./emsdk/emsdk_env.sh
-          cd web
-          mkdir cmake-build
-          cd cmake-build
-          emcmake cmake .. -DCMAKE_BUILD_TYPE=MinSizeRel
-      - name: Build WASM build of tinyusdz
-        working-directory: ${{ github.workspace }}/web/cmake-build
-        run: |
-          source ../../emsdk/emsdk_env.sh
-          make
 
-      - name: otherasserts
+      - name: Build Pages site
         working-directory: ${{ github.workspace }}/web/demo
         run: |
           bun install
-          bun run build
-          cp ../../doc/static/* dist/
-          
+          cd ../..
+          bash web/site/build-pages.sh
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Upload web/demo/dist folder
-          path: ${{ github.workspace }}/web/demo/dist
+          path: ${{ github.workspace }}/web/site/dist
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

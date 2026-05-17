@@ -4,7 +4,6 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "setup:local": "rm -rf node_modules/tinyusdz && ln -s ../../js/src/tinyusdz node_modules/tinyusdz",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
@@ -23,7 +22,7 @@
     "lil-gui": "^0.19.2",
     "stats.js": "^0.17.0",
     "three": ">=0.179.0",
-    "tinyusdz": "0.9.9",
+    "tinyusdz": "0.9.9-rc1",
     "vite-plugin-compression2": "^2.2.0",
     "vite-plugin-static-copy": "^3.1.0"
   },
