@@ -4,9 +4,10 @@ name: macOS
 
 on:
   push:
-    branches: [ dev ]
+    branches: [ release ]
+    tags: [ 'v*.*.*' ]
   pull_request:
-    branches: [ dev ]
+    branches: [ release ]
 
 jobs:
 
