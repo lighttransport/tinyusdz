@@ -12,9 +12,9 @@ Version-bump, tagging, and publish procedure for TinyUSDZ.
 
 There is no `CHANGELOG.md` / release-notes file in the repo. GitHub Release notes are written on the GitHub UI when cutting the release.
 
-## 1. Pre-release: bump versions on the release branch
+## 1. Pre-release: bump versions
 
-Work on the `release` branch (PRs target `release`, see `AGENTS.md`).
+Work on the `release` branch for stable releases (PRs target `release`, see `AGENTS.md`). For pre-release / RC tags, bump and tag on `dev` instead — `release` is reserved for shipped stable versions.
 
 ### 1a. C++ version constants
 
@@ -51,12 +51,12 @@ version_file = "python/tinyusdz/_version.py"
 ### 1d. Commit
 
 ```bash
-git checkout release
+git checkout release            # or: git checkout dev   (for RC tags)
 git pull
 # edit src/tinyusdz.hh, web/npm/package.json, web/js/package.json
 git add src/tinyusdz.hh web/npm/package.json web/js/package.json
 git commit -m "Bump version to x.y.z"
-git push origin release
+git push origin release         # or: git push origin dev
 ```
 
 ## 2. Sanity checks before tagging
@@ -106,11 +106,14 @@ If the publish step fails after wheels build successfully, wheels are kept as wo
 
 ### Pre-release / RC tags
 
-PyPI accepts PEP 440 pre-releases (`vX.Y.ZrcN`, `vX.Y.Z.devN`, etc.). The tag pattern `v*.*.*` matches `v0.9.2rc1` as well as `v0.9.2`. To make a real RC:
+PyPI accepts PEP 440 pre-releases (`vX.Y.ZrcN`, `vX.Y.Z-rcN`, `vX.Y.Z.devN`, etc.). The tag pattern `v*.*.*` matches them all. `setuptools_scm` normalizes the hyphenated form (`v0.9.9-rc1`) to the PEP 440 canonical form (`0.9.9rc1`) on the wheel. To make a real RC:
 
-1. Set `version_rev = "rc.1"` in `src/tinyusdz.hh` (cosmetic; C++ side only).
-2. Push tag `v0.9.2rc1`.
-3. Install with `pip install --pre tinyusdz`.
+1. Set `version_rev = "rc1"` in `src/tinyusdz.hh` (cosmetic; C++ side only).
+2. Set `"version": "0.9.9-rc1"` in `web/npm/package.json` and `web/js/package.json` (npm/semver uses the hyphenated pre-release form; do not strip the hyphen).
+3. Push tag `v0.9.9-rc1` — by convention RC tags are cut from `dev`, not `release`. Stable tags (`vX.Y.Z` with no suffix) still come from `release`.
+4. Install with `pip install --pre tinyusdz`.
+
+Confirmed shipped example: `v0.9.9-rc1` → PyPI `tinyusdz==0.9.9rc1`, npm `tinyusdz@0.9.9-rc1` under `dist-tags.preview`.
 
 ## 4. NPM publish — manual workflow dispatch
 
@@ -118,10 +121,20 @@ The npm publish workflow (`.github/workflows/wasmPublish.yml`) is **not** trigge
 
 GitHub UI: Actions → "Build and publish wasm" → Run workflow.
 
+Or via CLI:
+
+```bash
+gh workflow run wasmPublish.yml --ref dev \
+  -f release_version=0.9.9-rc1 \
+  -f npm_tag=preview
+```
+
+**`--ref dev` matters.** `gh workflow run` resolves the workflow definition (and its accepted inputs) from the ref you pass. If the default branch (`release`) has an older copy of `wasmPublish.yml` that lacks an input you're setting, you get `HTTP 422: Unexpected inputs provided: [...]`. Use the ref where the workflow file has the inputs you need — for RCs cut from `dev`, that's `--ref dev`.
+
 Inputs:
 
-- `release_version` — semver, e.g. `0.9.9` (rewrites the staged `package.json`; should match what you committed in 1b).
-- `npm_tag` — npm dist-tag, e.g. `latest` for a real release, `preview` / `next` / `rc` for pre-releases. **Default is `preview`** — change it to `latest` for stable releases.
+- `release_version` — semver, e.g. `0.9.9` or `0.9.9-rc1` (rewrites the staged `package.json`; should match what you committed in 1b).
+- `npm_tag` — npm dist-tag, e.g. `latest` for a real release, `preview` / `next` / `rc` for pre-releases. **Default is `preview`** — change it to `latest` for stable releases. Verify after publish: `npm view tinyusdz dist-tags`.
 
 The job:
 
@@ -133,12 +146,21 @@ The job:
 
 Publishing requires npm provenance (OIDC, `id-token: write`) — the npmjs `tinyusdz` package must trust this workflow. No npm token in repo secrets.
 
+The npm staging scripts live in `web/npm/`:
+
+- `build-package.sh` — top-level: ensures Node/emsdk, runs `build-wasm.sh`, then stages + validates.
+- `build-wasm.sh` — emcmake/ninja build of WASM32 + WASM64 in MinSizeRel.
+- `scripts/stage-package.mjs` — copies wasm/js into `web/npm/dist`, rewrites manifest version.
+- `scripts/validate-package.mjs` — `npm pack --dry-run` + structural check on `dist/`.
+
+These are the actual filenames — no numeric prefixes. The `package.json` `scripts` field points at these names directly.
+
 To publish locally instead (not recommended; loses provenance attestation):
 
 ```bash
 cd web/npm
 npm ci
-./00-build-package.sh           # builds wasm + stages dist
+./build-package.sh              # builds wasm + stages dist
 npm run build:stage -- --release-version=X.Y.Z
 npm run validate
 cd dist && npm publish --access public --tag latest
@@ -149,10 +171,14 @@ cd dist && npm publish --access public --tag latest
 After the PyPI run is green:
 
 ```bash
+# Stable release (tag was cut from release branch)
 gh release create vX.Y.Z --title "vX.Y.Z" --notes "…release notes…" --target release
+
+# Pre-release / RC (tag was cut from dev branch) — note --prerelease and --target dev
+gh release create vX.Y.Z-rcN --title "vX.Y.Z-rcN" --notes "…" --target dev --prerelease
 ```
 
-Or via the GitHub UI on the tag page. The release-notes body is hand-written (no auto-generated CHANGELOG in the repo).
+Or via the GitHub UI on the tag page. The release-notes body is hand-written (no auto-generated CHANGELOG in the repo). `--target` only matters if the tag does not yet exist on the remote — if you already pushed the tag in step 3, `gh release create` uses the commit the tag points to and `--target` is redundant.
 
 ## 6. Post-release
 
