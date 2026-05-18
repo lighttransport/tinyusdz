@@ -3,13 +3,14 @@ Build driver for the tinyusdz PyPI wheel.
 
 Flow:
   1. Invoke CMake on the top-level tinyusdz project with the C API enabled,
-     Python / Tydra / examples / tests disabled, Position-Independent-Code on.
+     Tydra enabled, CMake's Python target / examples / tests disabled, and
+     Position-Independent-Code on.
   2. Build only the `tinyusdz_static` and `c-tinyusd_static` targets.
   3. Compile `src/python/module.c` as a CPython stable-ABI (abi3) extension,
      linking against the two static archives.
 
-The resulting wheel is tagged `cp310-abi3-<platform>` and is compatible with
-CPython >= 3.10.
+The resulting wheel is tagged `cp311-abi3-<platform>` and is compatible with
+CPython >= 3.11.
 """
 from __future__ import annotations
 

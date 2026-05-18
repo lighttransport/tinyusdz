@@ -1,0 +1,81 @@
+# Third-Party Notices
+
+This file summarizes third-party code and data redistributed in this repository.
+The authoritative license text is the license file or source header referenced
+in each entry.
+
+## Core And Runtime Dependencies
+
+| Component | License | Location |
+| --- | --- | --- |
+| nonstd optional-lite, expected-lite, span-lite, string-view-lite | Boost Software License 1.0 | `src/nonstd/*.hpp` |
+| LZ4 | BSD 2-Clause | `src/lz4/LICENSE` |
+| miniz | MIT | `src/external/LICENSE.miniz` |
+| Zstandard | BSD-style or GPLv2 | `src/external/zstd.h`, `src/external/zstd.c` |
+| yyjson | MIT | `src/external/yyjson.LICENSE` |
+| pugixml | MIT | `src/external/pugixml.LICENSE` |
+| nlohmann/json | MIT | `src/external/jsonhpp/LICENSE.MIT` |
+| fast_float | Apache 2.0, Boost Software License 1.0, or MIT | `src/external/fast_float/` |
+| Dragonbox | Boost Software License 1.0 or Apache 2.0 with LLVM exception | `src/external/dragonbox/` |
+| Mapbox earcut.hpp | ISC | `src/external/mapbox/earcut/LICENSE` |
+| Mapbox eternal | ISC | `src/external/mapbox/eternal/LICENSE.md` |
+| simple_match | Boost Software License 1.0 | `src/external/simple_match/LICENSE_1_0.txt` |
+| string_id | zlib | `src/external/string_id/LICENSE` |
+| ghc/filesystem | MIT | `src/external/filesystem/LICENSE` |
+| p-ranav/glob | MIT | `src/external/glob/LICENSE` |
+| nanoflann | BSD 2-Clause | `src/external/nanoflann.COPYING` |
+| linalg.h | Unlicense | `src/external/linalg.UNLICENSE` |
+| jeaiii_to_text | MIT | `src/external/jeaiii_to_text.LICENSE` |
+| xxHash | BSD 2-Clause | `src/external/xxhash.LICENSE` |
+| tinycolorio | MIT | `src/external/tinycolorio.LICENSE` |
+| stb_image, stb_image_resize, stb_image_write, stb_truetype | Public domain or MIT | `src/external/stb_*.h` |
+| TinyEXR and included OpenEXR code | BSD-style | `src/external/tinyexr.h` |
+| TinyDNG | MIT | `src/external/tiny_dng_loader.h`, `src/external/tiny_dng_writer.h` |
+| tinyobjloader | MIT | `src/external/tiny_obj_loader.h` |
+| tinygltf | MIT | `src/external/tiny_gltf.h` |
+| pystring | BSD 3-Clause | `src/external/pystring.LICENSE` |
+| fpng | Unlicense | `src/external/fpng.h`, `src/external/fpng.cpp` |
+| Wuffs unsupported snapshot | Apache 2.0 | `src/external/wuffs-unsupported-snapshot.c` |
+| MikkTSpace | zlib-like | `src/external/mikktspace/` |
+| sRGB transform by Project Nayuki | MIT | `src/image-util.cc` |
+| OpenSubdiv | Modified Apache 2.0 | `src/osd/LICENSE.txt` |
+| MaterialX data | Apache 2.0 | `data/materialx/LICENSE` |
+
+## Optional Feature Dependencies
+
+| Component | License | Location |
+| --- | --- | --- |
+| meshoptimizer | MIT | `src/external/meshoptimizer/LICENSE.md` |
+| OpenFBX | MIT | `src/external/OpenFBX/LICENSE` |
+| ALAC | Apache 2.0 | `src/external/alac/LICENSE` |
+| dr_wav, dr_mp3 | Public domain or MIT-0 | `src/external/dr_wav.h`, `src/external/dr_mp3.h` |
+| ogt_vox | MIT | `src/external/LICENSE.ogt_vox.md` |
+| WebAssembly Micro Runtime (WAMR) | Apache 2.0 | `src/external/wamr/LICENSE` |
+| QuickJS-ng | MIT | `src/external/quickjs-ng/LICENSE` |
+| civetweb | MIT | `src/external/civetweb/LICENSE.md` |
+| Remotery | Apache 2.0 | `src/external/Remotery/Remotery.LICENSE` |
+| libsais | Apache 2.0 | `src/external/libsais/libsais.LICENSE` |
+| nanozlib | Apache 2.0 | `src/external/nanozlib.h` |
+| nanobind | BSD 3-Clause | `src/external/nanobind/LICENSE` |
+| pybind11 | BSD 3-Clause | `src/external/pybind11/LICENSE` |
+
+## Examples, Tools, And Development Assets
+
+| Component | License | Location |
+| --- | --- | --- |
+| SDL2-related viewer dependencies | zlib/MIT-style, see bundled notices | `examples/sdlviewer/README.md` |
+| GLFW | zlib/libpng | `examples/common/glfw-3.3.6/LICENSE.md` |
+| Dear ImGui | MIT | `examples/common/imgui/LICENSE.txt` |
+| imnodes | MIT | `examples/common/imnodes/LICENSE.md` |
+| nativefiledialog-extended | zlib | `examples/common/nativefiledialog-extended/LICENSE` |
+| virtualGizmo3D | BSD 2-Clause | `examples/common/virtualGizmo3D/license.txt` |
+| miniaudio | Public domain or MIT-0 | `examples/common/miniaudio.LICENSE` |
+| cuew | Apache 2.0 | `examples/common/cuew/LICENSE` |
+| bvh | MIT | `examples/common/bvh/LICENSE.txt` |
+| Metal-cpp | Apache 2.0 | `examples/common/metalcpp/LICENSE.txt` |
+| Roboto Mono embedded assets | Apache 2.0 | `examples/common/LICENSE.roboto_mono_embed.md` |
+| Vulkan sample camera code by Sascha Willems | MIT | `examples/common/viewport_camera.hh` |
+| Silicon Graphics trackball code | SGI permissive notice | `examples/common/trackball.h`, `examples/common/trackball.cc` |
+| par_shapes | MIT | `examples/common/par_shapes.h` |
+| criterion benchmark helper | MIT | `benchmarks/criterion.LICENSE` |
+| acutest | MIT | `tests/unit/LICENSE.acutest` |
