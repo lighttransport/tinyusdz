@@ -5,12 +5,17 @@
 
 #include "mcp-context.hh"
 #include "mcp-server.hh"
+#include "mcp-tools-scene.hh"
+#include "mcp-tools-query.hh"
+#include "mcp-tools-composition.hh"
+#include "mcp-js-bridge.hh"
 #include "pprinter.hh"
 #include "layer.hh"
 #include "security-policy.hh"
 #include "str-util.hh"
 #include "tinyusdz.hh"
 #include "uuid-gen.hh"
+#include "value-to-json.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -29,48 +34,44 @@ namespace mcp {
 
 namespace {
 
+// ---------------------------------------------------------------------------
+// Base64 decode helper (kept from original)
+// ---------------------------------------------------------------------------
 inline bool decode_data(const std::string &data, std::string *binary,
                         std::string *err) {
   if (!binary) {
-    if (err) {
-      (*err) = "Internal error: null output buffer for decode_data.";
-    }
+    if (err) (*err) = "Internal error: null output buffer for decode_data.";
     return false;
   }
 
   if (data.size() > security_policy::kMCPMaxBase64InputBytes) {
-    if (err) {
-      (*err) = "Input base64 payload is too large.";
-    }
+    if (err) (*err) = "Input base64 payload is too large.";
     return false;
   }
 
   size_t decoded_size = 0;
   if (!security_policy::EstimateBase64DecodedSize(data, &decoded_size)) {
-    if (err) {
-      (*err) = "Invalid base64 data.";
-    }
+    if (err) (*err) = "Invalid base64 data.";
     return false;
   }
 
   if (decoded_size > security_policy::kMCPMaxBase64DecodedBytes) {
-    if (err) {
-      (*err) = "Decoded payload exceeds size limit.";
-    }
+    if (err) (*err) = "Decoded payload exceeds size limit.";
     return false;
   }
 
   (*binary) = base64_decode(data);
   if ((*binary).size() != decoded_size) {
-    if (err) {
-      (*err) = "Invalid base64 data.";
-    }
+    if (err) (*err) = "Invalid base64 data.";
     return false;
   }
 
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// UUID lookup helper
+// ---------------------------------------------------------------------------
 static std::string FindUUID(
     const std::string &name,
     const tinyusdz::HashMap<std::string, USDLayer> &layers) {
@@ -79,31 +80,52 @@ static std::string FindUUID(
       return it.first;
     }
   }
-
   return {};
 }
 
+// ---------------------------------------------------------------------------
+// Forward declarations for existing tool implementations
+// (kept from the original file structure)
+// ---------------------------------------------------------------------------
 bool GetVersion(nlohmann::json &result);
 bool GetUSDDescription(Context &ctx, const nlohmann::json &args,
                        nlohmann::json &result, std::string &err);
 bool GetAllUSDDescriptions(Context &ctx, const nlohmann::json &args,
-                           nlohmann::json &result, std::string &err);
+                            nlohmann::json &result, std::string &err);
 #if !defined(__EMSCRIPTEN__)
 bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args,
-                          nlohmann::json &result, std::string &err);
+                           nlohmann::json &result, std::string &err);
 #endif
 bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args,
-                          nlohmann::json &result, std::string &err);
+                           nlohmann::json &result, std::string &err);
 bool StoreAsset(Context &ctx, const nlohmann::json &args,
                 nlohmann::json &result, std::string &err);
 bool ReadAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
                std::string &err);
 bool ReadAssetPreview(Context &ctx, const nlohmann::json &args,
-                      nlohmann::json &result, std::string &err);
-bool GetAssetDescription(Context &ctx, const nlohmann::json &args,
-                         nlohmann::json &result, std::string &err);
+                       nlohmann::json &result, std::string &err);
 bool GetAllAssetDescriptions(Context &ctx, const nlohmann::json &args,
-                             nlohmann::json &result, std::string &err);
+                              nlohmann::json &result, std::string &err);
+bool GetAssetDescription(Context &ctx, const nlohmann::json &args,
+                          nlohmann::json &result, std::string &err);
+bool ListPrimSpecs(Context &ctx, const nlohmann::json &args,
+                    nlohmann::json &result, std::string &err);
+bool ToUSDA(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
+            std::string &err);
+bool SaveScreenshot(Context &ctx, const nlohmann::json &args,
+                    nlohmann::json &result, std::string &err);
+bool ListScreenshots(Context &ctx, const nlohmann::json &args,
+                     nlohmann::json &result, std::string &err);
+bool ReadScreenshot(Context &ctx, const nlohmann::json &args,
+                    nlohmann::json &result, std::string &err);
+bool SelectAssets(Context &ctx, const nlohmann::json &args,
+                  nlohmann::json &result, std::string &err);
+bool GetSelectedAssets(Context &ctx, const nlohmann::json &args,
+                        nlohmann::json &result, std::string &err);
+
+// ===========================================================================
+// Legacy tool implementations (preserved from original MCP server)
+// ===========================================================================
 
 bool GetVersion(nlohmann::json &result) {
   std::string ver_str = std::to_string(tinyusdz::version_major) + "." +
@@ -222,7 +244,6 @@ bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args,
     result["warnings"] = warn;
   }
 
-  // Replace content if `name` already exists.
   std::string uuid = FindUUID(name, ctx.layers);
 
   if (uuid.empty()) {
@@ -242,76 +263,6 @@ bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args,
   nlohmann::json content;
   content["type"] = "text";
   content["text"] = uuid;
-
-  result["content"] = nlohmann::json::array();
-  result["content"].push_back(content);
-
-  return true;
-}
-
-bool ReadAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
-               std::string &err) {
-  DCOUT("args " << args);
-  if (!args.contains("name")) {
-    DCOUT("name param not found");
-    err = "`name` param not found.";
-    return false;
-  }
-
-  std::string name = args["name"];
-  int instance_id = -1;
-  if (args.contains("instance_id")) {
-    instance_id = args["instance_id"];
-  }
-
-  AssetSelection asset_selection;
-  bool found_selection = false;
-
-  // simple linear search
-  for (const auto &selection : ctx.selected_assets) {
-    if (selection.asset_name == name && (instance_id == -1 || selection.instance_id == instance_id)) {
-
-      asset_selection = selection;
-      found_selection = true;
-
-      DCOUT("Found matching asset selection: " << selection.asset_name);
-      break;
-    }
-  } 
-
-  if (!found_selection) {
-    err = "Asset selection not found for name: " + name;
-    return false;
-  }
-
-  if (!ctx.assets.count(asset_selection.asset_name)) {
-    err = "Asset not found: " + name;
-    return false;
-  }
-
-  const MCPAsset &asset = ctx.assets.at(asset_selection.asset_name);
-
-  // Create JSON response with asset data and transform information
-  nlohmann::json asset_data;
-  asset_data["name"] = asset.name;
-  asset_data["data"] = asset.data;
-  asset_data["description"] = asset.description;
-  asset_data["uuid"] = asset.uuid;
-  
-  // Add instance and transform parameters
-  asset_data["instance_id"] = asset_selection.instance_id;
-  asset_data["position"] = nlohmann::json::array({asset_selection.position[0], asset_selection.position[1], asset_selection.position[2]});
-  asset_data["scale"] = nlohmann::json::array({asset_selection.scale[0], asset_selection.scale[1], asset_selection.scale[2]});
-  asset_data["rotation"] = nlohmann::json::array({asset_selection.rotation[0], asset_selection.rotation[1], asset_selection.rotation[2]});
-
-  // Add geometry and bounding box parameters
-  asset_data["pivot_position"] = nlohmann::json::array({asset.pivot_position[0], asset.pivot_position[1], asset.pivot_position[2]});
-  asset_data["bmin"] = nlohmann::json::array({asset.bmin[0], asset.bmin[1], asset.bmin[2]});
-  asset_data["bmax"] = nlohmann::json::array({asset.bmax[0], asset.bmax[1], asset.bmax[2]});
-
-  nlohmann::json content;
-  content["type"] = "text";
-  content["text"] = asset_data.dump();
 
   result["content"] = nlohmann::json::array();
   result["content"].push_back(content);
@@ -350,11 +301,8 @@ bool StoreAsset(Context &ctx, const nlohmann::json &args,
   asset.description = description;
   asset.uuid = uuid;
 
-  // Handle preview image if provided
   if (args.contains("preview") && args["preview"].is_object()) {
     const auto &preview = args["preview"];
-
-    // Check for required preview fields
     if (preview.contains("data") && preview.contains("mimeType")) {
       std::string preview_data = preview["data"];
       if (preview_data.size() > security_policy::kMCPMaxBase64InputBytes) {
@@ -363,27 +311,22 @@ bool StoreAsset(Context &ctx, const nlohmann::json &args,
       }
       asset.preview.data = std::move(preview_data);
       asset.preview.mimeType = preview["mimeType"];
-
-      // Optional preview name
       if (preview.contains("name")) {
         asset.preview.name = preview["name"];
       }
     }
   }
 
-  // Handle geometry and bounding box parameters if provided
   if (args.contains("pivot_position") && args["pivot_position"].is_array() && args["pivot_position"].size() == 3) {
     asset.pivot_position[0] = args["pivot_position"][0];
     asset.pivot_position[1] = args["pivot_position"][1];
     asset.pivot_position[2] = args["pivot_position"][2];
   }
-
   if (args.contains("bmin") && args["bmin"].is_array() && args["bmin"].size() == 3) {
     asset.bmin[0] = args["bmin"][0];
     asset.bmin[1] = args["bmin"][1];
     asset.bmin[2] = args["bmin"][2];
   }
-
   if (args.contains("bmax") && args["bmax"].is_array() && args["bmax"].size() == 3) {
     asset.bmax[0] = args["bmax"][0];
     asset.bmax[1] = args["bmax"][1];
@@ -398,6 +341,216 @@ bool StoreAsset(Context &ctx, const nlohmann::json &args,
 
   result["content"] = nlohmann::json::array();
   result["content"].push_back(content);
+
+  return true;
+}
+
+bool ReadAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
+               std::string &err) {
+  DCOUT("args " << args);
+  if (!args.contains("name")) {
+    DCOUT("name param not found");
+    err = "`name` param not found.";
+    return false;
+  }
+
+  std::string name = args["name"];
+  int instance_id = -1;
+  if (args.contains("instance_id")) {
+    instance_id = args["instance_id"];
+  }
+
+  AssetSelection asset_selection;
+  bool found_selection = false;
+
+  for (const auto &selection : ctx.selected_assets) {
+    if (selection.asset_name == name &&
+        (instance_id == -1 || selection.instance_id == instance_id)) {
+      asset_selection = selection;
+      found_selection = true;
+      break;
+    }
+  }
+
+  if (!found_selection) {
+    err = "Asset selection not found for name: " + name;
+    return false;
+  }
+
+  if (!ctx.assets.count(asset_selection.asset_name)) {
+    err = "Asset not found: " + name;
+    return false;
+  }
+
+  const MCPAsset &asset = ctx.assets.at(asset_selection.asset_name);
+
+  nlohmann::json asset_data;
+  asset_data["name"] = asset.name;
+  asset_data["data"] = asset.data;
+  asset_data["description"] = asset.description;
+  asset_data["uuid"] = asset.uuid;
+
+  asset_data["instance_id"] = asset_selection.instance_id;
+  asset_data["position"] = nlohmann::json::array(
+      {asset_selection.position[0], asset_selection.position[1],
+       asset_selection.position[2]});
+  asset_data["scale"] = nlohmann::json::array(
+      {asset_selection.scale[0], asset_selection.scale[1],
+       asset_selection.scale[2]});
+  asset_data["rotation"] = nlohmann::json::array(
+      {asset_selection.rotation[0], asset_selection.rotation[1],
+       asset_selection.rotation[2]});
+
+  asset_data["pivot_position"] = nlohmann::json::array(
+      {asset.pivot_position[0], asset.pivot_position[1],
+       asset.pivot_position[2]});
+  asset_data["bmin"] = nlohmann::json::array(
+      {asset.bmin[0], asset.bmin[1], asset.bmin[2]});
+  asset_data["bmax"] = nlohmann::json::array(
+      {asset.bmax[0], asset.bmax[1], asset.bmax[2]});
+
+  nlohmann::json content;
+  content["type"] = "text";
+  content["text"] = asset_data.dump();
+
+  result["content"] = nlohmann::json::array();
+  result["content"].push_back(content);
+
+  return true;
+}
+
+bool ReadAssetPreview(Context &ctx, const nlohmann::json &args,
+                      nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+  if (!args.contains("name")) {
+    DCOUT("name param not found");
+    err = "`name` param not found.";
+    return false;
+  }
+
+  std::string name = args["name"];
+
+  if (!ctx.assets.count(name)) {
+    err = "Asset not found: " + name;
+    return false;
+  }
+
+  const auto &asset = ctx.assets.at(name);
+
+  if (asset.preview.data.empty()) {
+    err = "Asset '" + name + "' has no preview image\n";
+    return false;
+  }
+
+  result["content"] = nlohmann::json::array();
+
+  nlohmann::json content;
+  content["type"] = "image";
+  content["data"] = asset.preview.data;
+  content["mimeType"] = asset.preview.mimeType;
+
+  result["content"].push_back(content);
+
+  return true;
+}
+
+bool GetAssetDescription(Context &ctx, const nlohmann::json &args,
+                         nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+  if (!args.contains("name")) {
+    DCOUT("name param not found");
+    err = "`name` param not found.";
+    return false;
+  }
+
+  std::string name = args.at("name");
+  bool include_preview = false;
+  if (args.contains("include_preview")) {
+    include_preview = args["include_preview"];
+  }
+
+  if (!ctx.assets.count(name)) {
+    err = "Asset not found: " + name;
+    return false;
+  }
+
+  const auto &asset = ctx.assets.at(name);
+
+  nlohmann::json asset_info;
+  asset_info["name"] = name;
+  asset_info["asset_name"] = asset.name;
+  asset_info["description"] = asset.description;
+  asset_info["uuid"] = asset.uuid;
+
+  asset_info["pivot_position"] = nlohmann::json::array(
+      {asset.pivot_position[0], asset.pivot_position[1],
+       asset.pivot_position[2]});
+  asset_info["bmin"] = nlohmann::json::array(
+      {asset.bmin[0], asset.bmin[1], asset.bmin[2]});
+  asset_info["bmax"] = nlohmann::json::array(
+      {asset.bmax[0], asset.bmax[1], asset.bmax[2]});
+
+  if (include_preview && !asset.preview.data.empty()) {
+    asset_info["preview"] = nlohmann::json::object();
+    asset_info["preview"]["data"] = asset.preview.data;
+    asset_info["preview"]["mimeType"] = asset.preview.mimeType;
+    if (!asset.preview.name.empty()) {
+      asset_info["preview"]["name"] = asset.preview.name;
+    }
+  }
+
+  nlohmann::json content;
+  content["type"] = "text";
+  content["text"] = asset_info.dump();
+
+  result["content"] = nlohmann::json::array();
+  result["content"].push_back(content);
+
+  return true;
+}
+
+bool GetAllAssetDescriptions(Context &ctx, const nlohmann::json &args,
+                             nlohmann::json &result, std::string &err) {
+  (void)args;
+  (void)err;
+
+  bool include_preview = false;
+  if (args.contains("include_preview")) {
+    include_preview = args["include_preview"];
+  }
+
+  result["content"] = nlohmann::json::array();
+
+  for (const auto &it : ctx.assets) {
+    nlohmann::json asset_info;
+    asset_info["name"] = it.first;
+    asset_info["asset_name"] = it.second.name;
+    asset_info["description"] = it.second.description;
+    asset_info["uuid"] = it.second.uuid;
+
+    asset_info["pivot_position"] = nlohmann::json::array(
+        {it.second.pivot_position[0], it.second.pivot_position[1],
+         it.second.pivot_position[2]});
+    asset_info["bmin"] = nlohmann::json::array(
+        {it.second.bmin[0], it.second.bmin[1], it.second.bmin[2]});
+    asset_info["bmax"] = nlohmann::json::array(
+        {it.second.bmax[0], it.second.bmax[1], it.second.bmax[2]});
+
+    if (include_preview && !it.second.preview.data.empty()) {
+      asset_info["preview"] = nlohmann::json::object();
+      asset_info["preview"]["data"] = it.second.preview.data;
+      asset_info["preview"]["mimeType"] = it.second.preview.mimeType;
+      if (!it.second.preview.name.empty()) {
+        asset_info["preview"]["name"] = it.second.preview.name;
+      }
+    }
+
+    nlohmann::json content;
+    content["type"] = "text";
+    content["text"] = asset_info.dump();
+
+    result["content"].push_back(content);
+  }
 
   return true;
 }
@@ -438,6 +591,38 @@ bool ListPrimSpecs(Context &ctx, const nlohmann::json &args,
   return true;
 }
 
+bool ToUSDA(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
+            std::string &err) {
+  DCOUT("args " << args);
+  if (!args.contains("name")) {
+    DCOUT("name param not found");
+    err = "`name` param not found.";
+    return false;
+  }
+
+  std::string name = args.at("name");
+
+  std::string uuid = FindUUID(name, ctx.layers);
+
+  if (!ctx.layers.count(uuid)) {
+    err = "Internal error. No corresponding Layer found\n";
+    return false;
+  }
+
+  nlohmann::json content;
+  content["type"] = "text";
+  content["mimeType"] = "text/plain";
+
+  const Layer &layer = ctx.layers.at(uuid).layer;
+  std::string str = to_string(layer);
+  content["text"] = str;
+
+  result["content"] = nlohmann::json::array();
+  result["content"].push_back(content);
+
+  return true;
+}
+
 bool ListScreenshots(Context &ctx, const nlohmann::json &args,
                      nlohmann::json &result, std::string &err) {
   (void)args;
@@ -448,7 +633,7 @@ bool ListScreenshots(Context &ctx, const nlohmann::json &args,
   for (const auto &it : ctx.screenshots) {
     nlohmann::json content;
     content["type"] = "text";
-    content["text"] = it.first;  // name
+    content["text"] = it.first;
     result["content"].push_back(content);
   }
 
@@ -483,7 +668,7 @@ bool SaveScreenshot(Context &ctx, const nlohmann::json &args,
   std::string mimeType = args["mimeType"];
 
   Screenshot screenshot;
-  screenshot.uuid = UUIDGenerator::generateUUID();
+  screenshot.uuid = generateUUID();
   screenshot.data = data;
   screenshot.mimeType = mimeType;
 
@@ -494,42 +679,6 @@ bool SaveScreenshot(Context &ctx, const nlohmann::json &args,
   nlohmann::json content;
   content["type"] = "text";
   content["text"] = screenshot.uuid;
-  result["content"].push_back(content);
-
-  return true;
-}
-
-bool ReadAssetPreview(Context &ctx, const nlohmann::json &args,
-                      nlohmann::json &result, std::string &err) {
-  DCOUT("args " << args);
-  if (!args.contains("name")) {
-    DCOUT("name param not found");
-    err = "`name` param not found.";
-    return false;
-  }
-
-  std::string name = args["name"];
-
-  // Assets are stored by name
-  if (!ctx.assets.count(name)) {
-    err = "Asset not found: " + name;
-    return false;
-  }
-
-  const auto &asset = ctx.assets.at(name);
-
-  if (asset.preview.data.empty()) {
-    err = "Asset '" + name + "' has no preview image\n";
-    return false;
-  }
-
-  result["content"] = nlohmann::json::array();
-
-  nlohmann::json content;
-  content["type"] = "image";
-  content["data"] = asset.preview.data;
-  content["mimeType"] = asset.preview.mimeType;
-
   result["content"].push_back(content);
 
   return true;
@@ -558,10 +707,9 @@ bool ReadScreenshot(Context &ctx, const nlohmann::json &args,
 
   nlohmann::json content;
   content["type"] = "image";
-  content["data"] = screenshot.data;  // base64-encoded-data
+  content["data"] = screenshot.data;
   content["mimeType"] = screenshot.mimeType;
 
-  // optional
   content["annotations"] = nlohmann::json::object();
   content["annotations"]["audience"] = nlohmann::json::array();
   content["annotations"]["audience"].push_back("user");
@@ -586,7 +734,6 @@ bool GetUSDDescription(Context &ctx, const nlohmann::json &args,
   std::string uuid = FindUUID(name, ctx.layers);
 
   if (!ctx.layers.count(uuid)) {
-    // This should not happen though.
     err = "Internal error. No corresponding Layer found\n";
     return false;
   }
@@ -619,147 +766,8 @@ bool GetAllUSDDescriptions(Context &ctx, const nlohmann::json &args,
   return true;
 }
 
-bool GetAssetDescription(Context &ctx, const nlohmann::json &args,
-                         nlohmann::json &result, std::string &err) {
-  DCOUT("args " << args);
-  if (!args.contains("name")) {
-    DCOUT("name param not found");
-    err = "`name` param not found.";
-    return false;
-  }
-
-  std::string name = args.at("name");
-
-  bool include_preview = false;
-  if (args.contains("include_preview")) {
-    include_preview = args["include_preview"];
-  }
-
-  // Assets are stored by name, not UUID
-  if (!ctx.assets.count(name)) {
-    err = "Asset not found: " + name;
-    return false;
-  }
-
-  const auto &asset = ctx.assets.at(name);
-
-  // Create structured JSON for the asset
-  nlohmann::json asset_info;
-  asset_info["name"] = name;
-  asset_info["asset_name"] = asset.name;
-  asset_info["description"] = asset.description;
-  asset_info["uuid"] = asset.uuid;
-  
-  // Add geometry and bounding box parameters
-  asset_info["pivot_position"] = nlohmann::json::array({asset.pivot_position[0], asset.pivot_position[1], asset.pivot_position[2]});
-  asset_info["bmin"] = nlohmann::json::array({asset.bmin[0], asset.bmin[1], asset.bmin[2]});
-  asset_info["bmax"] = nlohmann::json::array({asset.bmax[0], asset.bmax[1], asset.bmax[2]});
-
-  // Add preview data if available and requested
-  if (include_preview && !asset.preview.data.empty()) {
-    asset_info["preview"] = nlohmann::json::object();
-    asset_info["preview"]["data"] = asset.preview.data;
-    asset_info["preview"]["mimeType"] = asset.preview.mimeType;
-    if (!asset.preview.name.empty()) {
-      asset_info["preview"]["name"] = asset.preview.name;
-    }
-  }
-
-  // Return as JSON string
-  nlohmann::json content;
-  content["type"] = "text";
-  content["text"] = asset_info.dump();
-
-  result["content"] = nlohmann::json::array();
-  result["content"].push_back(content);
-
-  return true;
-}
-
-bool GetAllAssetDescriptions(Context &ctx, const nlohmann::json &args,
-                             nlohmann::json &result, std::string &err) {
-  (void)args;
-  (void)err;
-
-  bool include_preview = false;
-  if (args.contains("include_preview")) {
-    include_preview = args["include_preview"];
-  }
-
-  result["content"] = nlohmann::json::array();
-
-  for (const auto &it : ctx.assets) {
-    // Create structured JSON for each asset
-    nlohmann::json asset_info;
-    asset_info["name"] = it.first;
-    asset_info["asset_name"] = it.second.name;
-    asset_info["description"] = it.second.description;
-    asset_info["uuid"] = it.second.uuid;
-    
-    // Add geometry and bounding box parameters
-    asset_info["pivot_position"] = nlohmann::json::array({it.second.pivot_position[0], it.second.pivot_position[1], it.second.pivot_position[2]});
-    asset_info["bmin"] = nlohmann::json::array({it.second.bmin[0], it.second.bmin[1], it.second.bmin[2]});
-    asset_info["bmax"] = nlohmann::json::array({it.second.bmax[0], it.second.bmax[1], it.second.bmax[2]});
-
-    if (include_preview) {
-      // Add preview data if available
-      if (!it.second.preview.data.empty()) {
-        asset_info["preview"] = nlohmann::json::object();
-        asset_info["preview"]["data"] = it.second.preview.data;
-        asset_info["preview"]["mimeType"] = it.second.preview.mimeType;
-        if (!it.second.preview.name.empty()) {
-          asset_info["preview"]["name"] = it.second.preview.name;
-        }
-      }
-    }
-
-    // Return as JSON string
-    nlohmann::json content;
-    content["type"] = "text";
-    content["text"] = asset_info.dump();
-
-    result["content"].push_back(content);
-  }
-
-  return true;
-}
-
-bool ToUSDA(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
-            std::string &err) {
-  DCOUT("args " << args);
-  if (!args.contains("name")) {
-    DCOUT("name param not found");
-    err = "`name` param not found.";
-    return false;
-  }
-
-  std::string name = args.at("name");
-
-  std::string uuid = FindUUID(name, ctx.layers);
-
-  if (!ctx.layers.count(uuid)) {
-    // This should not happen though.
-    err = "Internal error. No corresponding Layer found\n";
-    return false;
-  }
-
-  nlohmann::json content;
-  content["type"] = "text";
-  content["mimeType"] = "text/plain";
-
-  const Layer &layer = ctx.layers.at(uuid).layer;
-  std::string str = to_string(layer);  // to USDA
-  content["text"] = str;
-
-  result["content"] = nlohmann::json::array();
-  result["content"].push_back(content);
-
-  return true;
-}
-
 bool SelectAssets(Context &ctx, const nlohmann::json &args,
                   nlohmann::json &result, std::string &err) {
-  //std::cout << "select_assets"  << args << "\n";
   if (!args.contains("assets")) {
     DCOUT("assets param not found");
     err = "`assets` param not found.";
@@ -774,98 +782,90 @@ bool SelectAssets(Context &ctx, const nlohmann::json &args,
   const auto &assets = args["assets"];
 
   ctx.selected_assets.clear();
-  
+
   for (const auto &asset_obj : assets) {
     if (!asset_obj.is_object()) {
       err = "Each asset must be an object.";
       return false;
     }
-    
+
     if (!asset_obj.contains("name")) {
       err = "Asset object must contain 'name' field.";
       return false;
     }
-    
+
     std::string name = asset_obj["name"];
-    
+
     if (!ctx.assets.count(name)) {
-      err = "Asset not found" + name;
+      err = "Asset not found: " + name;
       return false;
     }
-    
-    // Default instance and transform parameters
+
     int instance_id = 0;
     std::array<float, 3> position = {0.0f, 0.0f, 0.0f};
     std::array<float, 3> scale = {1.0f, 1.0f, 1.0f};
     std::array<float, 3> rotation = {0.0f, 0.0f, 0.0f};
-    
-    // Default geometry and bounding box parameters
     std::array<float, 3> pivot_position = {0.0f, 0.0f, 0.0f};
     std::array<float, 3> bmin = {-1.0f, -1.0f, -1.0f};
     std::array<float, 3> bmax = {1.0f, 1.0f, 1.0f};
-    
-    // Parse instance_id
-    if (asset_obj.contains("instance_id") && asset_obj["instance_id"].is_number_integer()) {
+
+    if (asset_obj.contains("instance_id") &&
+        asset_obj["instance_id"].is_number_integer()) {
       instance_id = asset_obj["instance_id"];
     }
-    
-    // Parse individual transform parameters for this asset
-    if (asset_obj.contains("position") && asset_obj["position"].is_array() && asset_obj["position"].size() == 3) {
+
+    if (asset_obj.contains("position") &&
+        asset_obj["position"].is_array() &&
+        asset_obj["position"].size() == 3) {
       position[0] = asset_obj["position"][0];
       position[1] = asset_obj["position"][1];
       position[2] = asset_obj["position"][2];
     }
-    
-    if (asset_obj.contains("scale") && asset_obj["scale"].is_array() && asset_obj["scale"].size() == 3) {
+
+    if (asset_obj.contains("scale") && asset_obj["scale"].is_array() &&
+        asset_obj["scale"].size() == 3) {
       scale[0] = asset_obj["scale"][0];
       scale[1] = asset_obj["scale"][1];
       scale[2] = asset_obj["scale"][2];
     }
-    
-    if (asset_obj.contains("rotation") && asset_obj["rotation"].is_array() && asset_obj["rotation"].size() == 3) {
+
+    if (asset_obj.contains("rotation") &&
+        asset_obj["rotation"].is_array() &&
+        asset_obj["rotation"].size() == 3) {
       rotation[0] = asset_obj["rotation"][0];
       rotation[1] = asset_obj["rotation"][1];
       rotation[2] = asset_obj["rotation"][2];
     }
-    
-    // Parse geometry and bounding box parameters
-    if (asset_obj.contains("pivot_position") && asset_obj["pivot_position"].is_array() && asset_obj["pivot_position"].size() == 3) {
+
+    if (asset_obj.contains("pivot_position") &&
+        asset_obj["pivot_position"].is_array() &&
+        asset_obj["pivot_position"].size() == 3) {
       pivot_position[0] = asset_obj["pivot_position"][0];
       pivot_position[1] = asset_obj["pivot_position"][1];
       pivot_position[2] = asset_obj["pivot_position"][2];
     }
-    
-    if (asset_obj.contains("bmin") && asset_obj["bmin"].is_array() && asset_obj["bmin"].size() == 3) {
+
+    if (asset_obj.contains("bmin") && asset_obj["bmin"].is_array() &&
+        asset_obj["bmin"].size() == 3) {
       bmin[0] = asset_obj["bmin"][0];
       bmin[1] = asset_obj["bmin"][1];
       bmin[2] = asset_obj["bmin"][2];
     }
-    
-    if (asset_obj.contains("bmax") && asset_obj["bmax"].is_array() && asset_obj["bmax"].size() == 3) {
+
+    if (asset_obj.contains("bmax") && asset_obj["bmax"].is_array() &&
+        asset_obj["bmax"].size() == 3) {
       bmax[0] = asset_obj["bmax"][0];
       bmax[1] = asset_obj["bmax"][1];
       bmax[2] = asset_obj["bmax"][2];
     }
-    
-    // Update the asset with its individual transform parameters
+
     AssetSelection selection;
     selection.asset_name = name;
     selection.instance_id = instance_id;
     selection.position = position;
     selection.scale = scale;
     selection.rotation = rotation;
-    //selection.pivot_position = pivot_position;
-    //selection.bmin = bmin;
-    //selection.bmax = bmax;
     ctx.selected_assets.push_back(selection);
-    
-    std::cout << "Selected asset '" << name << "' (instance_id: " << instance_id << ") with transform - Position: [" 
-          << position[0] << ", " << position[1] << ", " << position[2] << "], "
-          << "Scale: [" << scale[0] << ", " << scale[1] << ", " << scale[2] << "], "
-          << "Rotation: [" << rotation[0] << ", " << rotation[1] << ", " << rotation[2] << "], "
-          << "Pivot: [" << pivot_position[0] << ", " << pivot_position[1] << ", " << pivot_position[2] << "], "
-          << "BMin: [" << bmin[0] << ", " << bmin[1] << ", " << bmin[2] << "], "
-          << "BMax: [" << bmax[0] << ", " << bmax[1] << ", " << bmax[2] << "]";
   }
 
   result["content"] = nlohmann::json::array();
@@ -881,11 +881,10 @@ bool GetSelectedAssets(Context &ctx, const nlohmann::json &args,
 
   result["content"] = nlohmann::json::array();
   for (const auto &selection : ctx.selected_assets) {
-    // Create JSON object with name and instance_id
     nlohmann::json asset_info;
     asset_info["name"] = selection.asset_name;
     asset_info["instance_id"] = selection.instance_id;
-    
+
     nlohmann::json content;
     content["type"] = "text";
     content["text"] = asset_info.dump();
@@ -895,460 +894,641 @@ bool GetSelectedAssets(Context &ctx, const nlohmann::json &args,
   return true;
 }
 
-}  // namespace
+} // namespace
 
+// ===========================================================================
+// GetToolsList
+// ===========================================================================
 bool GetToolsList(Context &ctx, nlohmann::json &result) {
   (void)ctx;
-
   result["tools"] = nlohmann::json::array();
 
-  {
+  // Helper to add a tool definition
+  auto add_tool = [&](const std::string &name, const std::string &desc,
+                       nlohmann::json schema) {
     nlohmann::json j;
-    j["name"] = "get_version";
-    j["description"] = "Get TinyUSDZ MCP server version";
+    j["name"] = name;
+    j["description"] = desc;
+    j["inputSchema"] = schema;
+    result["tools"].push_back(j);
+  };
 
+  auto str_prop = [](const std::string &desc) -> nlohmann::json {
+    return {{"type", "string"}, {"description", desc}};
+  };
+  auto num_prop = [](const std::string &desc) -> nlohmann::json {
+    return {{"type", "number"}, {"description", desc}};
+  };
+  auto bool_prop = [](const std::string &desc) -> nlohmann::json {
+    return {{"type", "boolean"}, {"description", desc}};
+  };
+  auto int_prop = [](const std::string &desc) -> nlohmann::json {
+    return {{"type", "integer"}, {"description", desc}};
+  };
+
+  // =========================================================================
+  // Utility
+  // =========================================================================
+  {
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    // schena["required"] = nlohmann::json::array();
+    add_tool("get_version", "Get TinyUSDZ MCP server version", schema);
+  }
 
-    j["inputSchema"] = schema;
-
-    result["tools"].push_back(j);
+  // =========================================================================
+  // Stage tools
+  // =========================================================================
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["upAxis"] = str_prop("Up axis (X, Y, or Z)");
+    schema["properties"]["defaultPrim"] = str_prop("Default prim name");
+    schema["properties"]["metersPerUnit"] = num_prop("Meters per unit");
+    add_tool("stage_new", "Create a new empty USD stage", schema);
   }
 
   {
-    nlohmann::json j;
-    j["name"] = "get_all_usd_descriptions";
-    j["description"] = "Get description of all loaded USD Layers";
-
     nlohmann::json schema;
     schema["type"] = "object";
-    schema["properties"] = nlohmann::json::object();
-    // schena["required"] = nlohmann::json::array();
-
-    j["inputSchema"] = schema;
-
-    result["tools"].push_back(j);
+    schema["properties"]["uri"] = str_prop("USD file path to load");
+    schema["properties"]["options"] = {{"type", "object"},
+                                        {"description", "Load options"}};
+    schema["required"] = nlohmann::json::array({"uri"});
+    add_tool("stage_load", "Load a USD file into the session stage", schema);
   }
 
   {
-    nlohmann::json j;
-    j["name"] = "get_usd_description";
-    j["description"] = "Get description of loaded USD Layer";
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["data"] = str_prop("Base64 encoded USD data");
+    schema["properties"]["format"] = str_prop("Format hint: auto, usda, usdc");
+    schema["required"] = nlohmann::json::array({"data"});
+    add_tool("stage_load_data", "Load USD from base64 data", schema);
+  }
 
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["format"] =
+        str_prop("Export format: usda (default), usdc, usdz");
+    add_tool("stage_to_string",
+             "Export the current stage to a USDA/USDC string", schema);
+  }
+
+  {
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    schema["properties"]["name"] = {
-        {"type", "string"}};  // TODO: accept multiple names
+    add_tool("stage_info", "Get stage metadata (upAxis, prims, etc.)", schema);
+  }
 
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["uri"] = str_prop("Output file path");
+    schema["properties"]["format"] = str_prop("Export format: usda, usdc, usdz");
+    schema["required"] = nlohmann::json::array({"uri"});
+    add_tool("stage_export", "Export stage to a file", schema);
+  }
+
+  // =========================================================================
+  // Scene graph tools
+  // =========================================================================
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path (default: /)");
+    schema["properties"]["max_depth"] =
+        int_prop("Max recursion depth (-1 = unlimited)");
+    schema["properties"]["include_attributes"] =
+        bool_prop("Include attribute definitions");
+    add_tool("prim_list",
+             "List prims at or under a path in the scene graph", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path (e.g. /World/mesh0)");
+    schema["properties"]["include_attributes"] =
+        bool_prop("Include attribute details");
+    schema["properties"]["include_metadata"] =
+        bool_prop("Include prim metadata");
+    schema["required"] = nlohmann::json::array({"path"});
+    add_tool("prim_get", "Get full details of a prim", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Path for the new prim");
+    schema["properties"]["type_name"] = str_prop("USD prim type (e.g. Xform, Mesh)");
+    schema["properties"]["specifier"] =
+        str_prop("Specifier: def (default), over, or class");
+    schema["required"] = nlohmann::json::array({"path", "type_name"});
+    add_tool("prim_create", "Create a new prim in the stage", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Path of prim to remove");
+    schema["required"] = nlohmann::json::array({"path"});
+    add_tool("prim_remove", "Remove a prim from the stage", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Path of prim to rename");
+    schema["properties"]["new_name"] = str_prop("New element name");
+    schema["required"] = nlohmann::json::array({"path", "new_name"});
+    add_tool("prim_rename", "Rename a prim", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path");
+    schema["required"] = nlohmann::json::array({"path"});
+    add_tool("prim_get_metadata", "Get prim metadata (kind, active, etc.)",
+             schema);
+  }
+
+  // =========================================================================
+  // Attribute tools
+  // =========================================================================
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path");
+    schema["required"] = nlohmann::json::array({"path"});
+    add_tool("attr_list", "List attributes on a prim", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path");
+    schema["properties"]["attr_name"] = str_prop("Attribute name");
+    schema["properties"]["time"] = num_prop("Optional time code for sampled attributes");
+    schema["required"] = nlohmann::json::array({"path", "attr_name"});
+    add_tool("attr_get", "Get an attribute value (with optional time code)",
+             schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path");
+    schema["properties"]["attr_name"] = str_prop("Attribute name");
+    schema["properties"]["value"] = {
+        {"type", "object"},
+        {"description",
+         "Value as {type: string, value: any} (see structured JSON format)"}};
+    schema["required"] = nlohmann::json::array({"path", "attr_name", "value"});
+    add_tool("attr_set", "Set an attribute value", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path");
+    schema["properties"]["attr_name"] = str_prop("Attribute name to block");
+    schema["required"] = nlohmann::json::array({"path", "attr_name"});
+    add_tool("attr_block", "Block (set to None) an attribute", schema);
+  }
+
+  // =========================================================================
+  // Composition tools
+  // =========================================================================
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path");
+    schema["properties"]["asset_path"] = str_prop("Referenced USD file path");
+    schema["properties"]["prim_path"] =
+        str_prop("Prim path within the referenced file");
+    schema["properties"]["offset"] = num_prop("Layer offset");
+    schema["properties"]["scale"] = num_prop("Layer time scale");
+    schema["required"] =
+        nlohmann::json::array({"path", "asset_path"});
+    add_tool("reference_add", "Add a reference arc to a prim", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path");
+    schema["required"] = nlohmann::json::array({"path"});
+    add_tool("reference_list", "List references on a prim", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path");
+    schema["required"] = nlohmann::json::array({"path"});
+    add_tool("reference_clear", "Clear all references on a prim", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path");
+    schema["properties"]["asset_path"] = str_prop("Payload USD file path");
+    schema["required"] =
+        nlohmann::json::array({"path", "asset_path"});
+    add_tool("payload_add", "Add a payload arc to a prim", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path");
+    schema["properties"]["prim_path"] = str_prop("Prim path to inherit from");
+    schema["required"] = nlohmann::json::array({"path", "prim_path"});
+    add_tool("inherit_add", "Add an inherit arc to a prim", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path");
+    schema["properties"]["prim_path"] = str_prop("Prim path to specialize from");
+    schema["required"] = nlohmann::json::array({"path", "prim_path"});
+    add_tool("specialize_add", "Add a specialize arc to a prim", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path");
+    schema["required"] = nlohmann::json::array({"path"});
+    add_tool("variant_list_sets",
+             "List variant sets and their selections on a prim", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path");
+    schema["properties"]["variant_set"] = str_prop("Variant set name");
+    schema["required"] =
+        nlohmann::json::array({"path", "variant_set"});
+    add_tool("variant_get_selection",
+             "Get the current variant selection for a variant set", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path");
+    schema["properties"]["variant_set"] = str_prop("Variant set name");
+    schema["properties"]["variant"] = str_prop("Variant name to select");
+    schema["required"] =
+        nlohmann::json::array({"path", "variant_set", "variant"});
+    add_tool("variant_set_selection",
+             "Set the variant selection for a variant set", schema);
+  }
+
+  // =========================================================================
+  // Query tools
+  // =========================================================================
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["type_name"] = str_prop("USD prim type to search for");
+    schema["required"] = nlohmann::json::array({"type_name"});
+    add_tool("query_prims_by_type",
+             "Find all prims of a given type in the stage", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    add_tool("schema_list_types",
+             "List all registered USD prim type names", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["type_name"] = str_prop("USD prim type name");
+    schema["required"] = nlohmann::json::array({"type_name"});
+    add_tool("schema_get_type",
+             "Get the schema definition for a prim type", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["query"] = str_prop("Search query string");
+    schema["properties"]["scope"] =
+        str_prop("Search scope: names, all (default)");
+    schema["required"] = nlohmann::json::array({"query"});
+    add_tool("search", "Search prim names across the stage", schema);
+  }
+
+  // =========================================================================
+  // Scripting
+  // =========================================================================
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["script"] =
+        str_prop("JavaScript code to execute (uses tinyusdz.* API)");
+    schema["required"] = nlohmann::json::array({"script"});
+    add_tool("run_script",
+             "Execute JavaScript code against the session stage. "
+             "Use tinyusdz.stage, tinyusdz.prim, tinyusdz.query etc.",
+             schema);
+  }
+
+  // =========================================================================
+  // Existing: USD Layer tools (kept from original)
+  // =========================================================================
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    add_tool("get_all_usd_descriptions",
+             "Get description of all loaded USD Layers", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["name"] = str_prop("Layer name");
     schema["required"] = nlohmann::json::array({"name"});
-
-    j["inputSchema"] = schema;
-
-    result["tools"].push_back(j);
+    add_tool("get_usd_description",
+             "Get description of a loaded USD Layer", schema);
   }
 
+#if !defined(__EMSCRIPTEN__)
   {
-    nlohmann::json j;
-    j["name"] = "get_all_asset_descriptions";
-    j["description"] =
-        "Get description of all Assets(The response is JSON string). Optionally include preview image data by setting `include_preview` argument.";
-
     nlohmann::json schema;
     schema["type"] = "object";
-    schema["properties"] = nlohmann::json::object();
-    schema["properties"]["include_preview"] = {
-        {"type", "boolean"}}; 
-    // schena["required"] = nlohmann::json::array();
-
-    j["inputSchema"] = schema;
-
-    result["tools"].push_back(j);
-  }
-
-  {
-    nlohmann::json j;
-    j["name"] = "get_asset_description";
-    j["description"] = "Get description of Asset(The response is JSON string). Optionally include preview image data by setting `include_preview` argument.";
-
-    nlohmann::json schema;
-    schema["type"] = "object";
-    schema["properties"] = nlohmann::json::object();
-    schema["properties"]["name"] = {
-        {"type", "string"}};  // TODO: accept multiple names
-    schema["properties"]["include_preview"] = {
-        {"type", "boolean"}};  // include preview image in the response?
-
-    schema["required"] = nlohmann::json::array({"name"});
-
-    j["inputSchema"] = schema;
-
-    result["tools"].push_back(j);
-  }
-
-  {
-    nlohmann::json j;
-    j["name"] = "load_usd_layer_from_file";
-    j["description"] =
-        "Load USD as Layer from a file(only works in C++ native binary)";
-
-    nlohmann::json schema;
-    schema["type"] = "object";
-    schema["properties"] = nlohmann::json::object();
-    schema["properties"]["uri"] = {{"type", "string"}};
-    schema["properties"]["name"] = {{"type", "string"}};
-    schema["properties"]["description"] = {{"type", "string"}};  // optional
-
+    schema["properties"]["uri"] = str_prop("USD file path");
+    schema["properties"]["name"] = str_prop("Layer name");
     schema["required"] = nlohmann::json::array({"uri", "name"});
-
-    j["inputSchema"] = schema;
-
-    result["tools"].push_back(j);
+    add_tool("load_usd_layer_from_file",
+             "Load USD as Layer from file (C++ native only)", schema);
   }
+#endif
 
   {
-    nlohmann::json j;
-    j["name"] = "load_usd_layer_from_data";
-    j["description"] = "Load USD as Layer from base64 encoded data string";
-
     nlohmann::json schema;
     schema["type"] = "object";
-    schema["properties"] = nlohmann::json::object();
-    schema["properties"]["data"] = {{"type", "string"}};
-    schema["properties"]["name"] = {{"type", "string"}};
-    schema["properties"]["description"] = {{"type", "string"}};  // optional
-
+    schema["properties"]["data"] = str_prop("Base64 encoded USD data");
+    schema["properties"]["name"] = str_prop("Layer name");
     schema["required"] = nlohmann::json::array({"data", "name"});
-
-    j["inputSchema"] = schema;
-
-    result["tools"].push_back(j);
+    add_tool("load_usd_layer_from_data",
+             "Load USD as Layer from base64 data", schema);
   }
 
   {
-    nlohmann::json j;
-    j["name"] = "load_usd_layer_from_asset";
-    j["description"] = "Load USD as Layer from Asset";
-
     nlohmann::json schema;
     schema["type"] = "object";
-    schema["properties"] = nlohmann::json::object();
-    schema["properties"]["name"] = {{"type", "string"}};
-
+    schema["properties"]["name"] = str_prop("Asset name to load as layer");
     schema["required"] = nlohmann::json::array({"name"});
-
-    j["inputSchema"] = schema;
-
-    result["tools"].push_back(j);
+    add_tool("load_usd_layer_from_asset",
+             "Load USD as Layer from a stored asset", schema);
   }
 
   {
-    nlohmann::json j;
-    j["name"] = "read_asset";
-    j["description"] = "Read asset as JSON string containing data, instance_id, transform parameters (position, scale, rotation), and metadata";
-
     nlohmann::json schema;
     schema["type"] = "object";
-    schema["properties"] = nlohmann::json::object();
-    schema["properties"]["name"] = {{"type", "string"}};
-    schema["properties"]["instance_id"] = {{"type", "integer"}, {"description", "Optional instance ID to match against the asset's instance_id"}};
-
+    schema["properties"]["name"] = str_prop("Layer name");
     schema["required"] = nlohmann::json::array({"name"});
-
-    j["inputSchema"] = schema;
-
-    result["tools"].push_back(j);
+    add_tool("to_usda", "Convert a loaded USD Layer to USDA text", schema);
   }
 
   {
-    nlohmann::json j;
-    j["name"] = "store_asset";
-    j["description"] =
-        "Store asset(e.g. USD, texture) with optional preview image and geometry parameters (pivot_position, bmin, bmax). `data` is "
-        "base64 encoded string.";
-
     nlohmann::json schema;
     schema["type"] = "object";
-    schema["properties"] = nlohmann::json::object();
-    schema["properties"]["data"] = {{"type", "string"}};
-    schema["properties"]["name"] = {{"type", "string"}};
-    schema["properties"]["description"] = {{"type", "string"}};  // optional
+    schema["properties"]["uuid"] = str_prop("Layer UUID");
+    schema["properties"]["name"] = str_prop("Layer name");
+    add_tool("list_primspecs",
+             "List root PrimSpecs in a loaded USD Layer", schema);
+  }
 
-    // Add preview object schema
-    nlohmann::json previewSchema;
-    previewSchema["type"] = "object";
-    previewSchema["properties"] = nlohmann::json::object();
-    previewSchema["properties"]["data"] = {
-        {"type", "string"}, {"description", "Base64 encoded preview image"}};
-    previewSchema["properties"]["mimeType"] = {
-        {"type", "string"},
-        {"description", "MIME type (e.g. 'image/png', 'image/jpeg')"}};
-    previewSchema["properties"]["name"] = {
-        {"type", "string"},
-        {"description", "Optional name for the preview image"}};
-    previewSchema["required"] = nlohmann::json::array({"data", "mimeType"});
-
-    schema["properties"]["preview"] = previewSchema;  // optional
-
-    // Add geometry and bounding box parameters
-    schema["properties"]["pivot_position"] = {{"type", "array"},
-                                              {"items", {"type", "number"}},
-                                              {"minItems", 3},
-                                              {"maxItems", 3},
-                                              {"description", "Pivot position as [x, y, z] for rotation and scaling"}};
-    schema["properties"]["bmin"] = {{"type", "array"},
-                                    {"items", {"type", "number"}},
-                                    {"minItems", 3},
-                                    {"maxItems", 3},
-                                    {"description", "Bounding box minimum as [x, y, z]"}};
-    schema["properties"]["bmax"] = {{"type", "array"},
-                                    {"items", {"type", "number"}},
-                                    {"minItems", 3},
-                                    {"maxItems", 3},
-                                    {"description", "Bounding box maximum as [x, y, z]"}};
-
+  // =========================================================================
+  // Existing: Asset management tools (kept from original)
+  // =========================================================================
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["data"] = str_prop("Base64 encoded asset data");
+    schema["properties"]["name"] = str_prop("Asset name");
+    schema["properties"]["description"] = str_prop("Optional description");
     schema["required"] = nlohmann::json::array({"data", "name"});
-
-    j["inputSchema"] = schema;
-
-    result["tools"].push_back(j);
+    add_tool("store_asset",
+             "Store an asset (USD, texture) with optional preview", schema);
   }
 
   {
-    nlohmann::json j;
-    j["name"] = "list_primspecs";
-    j["description"] = "List root PrimSpecs in loaded USD Layer(uuid or name)";
-
     nlohmann::json schema;
     schema["type"] = "object";
-    schema["properties"] = nlohmann::json::object();
-    schema["properties"]["uuid"] = {{"type", "string"}};
-    schema["properties"]["name"] = {{"type", "string"}};
-
-    // schema["required"] = nlohmann::json::array({"uuid"});
-
-    j["inputSchema"] = schema;
-
-    result["tools"].push_back(j);
-  }
-
-  {
-    nlohmann::json j;
-    j["name"] = "to_usda";
-    j["description"] = "Convert USD Layer to USDA text";
-
-    nlohmann::json schema;
-    schema["type"] = "object";
-    schema["properties"] = nlohmann::json::object();
-    schema["properties"]["name"] = {{"type", "string"}};
-
+    schema["properties"]["name"] = str_prop("Asset name");
     schema["required"] = nlohmann::json::array({"name"});
-
-    j["inputSchema"] = schema;
-
-    result["tools"].push_back(j);
+    add_tool("read_asset",
+             "Read asset data, transform, and metadata", schema);
   }
 
   {
-    nlohmann::json j;
-    j["name"] = "save_screenshot";
-    j["description"] =
-        "Save screenshot image(`data` is a base64 encoded string of image "
-        "data)";
-
     nlohmann::json schema;
     schema["type"] = "object";
-    schema["properties"] = nlohmann::json::object();
-    schema["properties"]["data"] = {{"type", "string"}};
-    schema["properties"]["name"] = {{"type", "string"}};
-    schema["properties"]["mimeType"] = {{"type", "string"}};
-
-    schema["required"] = nlohmann::json::array({"data", "name", "mimeType"});
-
-    j["inputSchema"] = schema;
-
-    result["tools"].push_back(j);
-  }
-
-  {
-    nlohmann::json j;
-    j["name"] = "list_screenshots";
-    j["description"] = "List screenshot image names";
-
-    nlohmann::json schema;
-    schema["type"] = "object";
-    schema["properties"] = nlohmann::json::object();
-
-    j["inputSchema"] = schema;
-
-    result["tools"].push_back(j);
-  }
-
-  {
-    nlohmann::json j;
-    j["name"] = "read_screenshot";
-    j["description"] = "Read screenshot image";
-
-    nlohmann::json schema;
-    schema["type"] = "object";
-    schema["properties"] = nlohmann::json::object();
-    schema["properties"]["name"] = {{"type", "string"}};
-
+    schema["properties"]["name"] = str_prop("Asset name");
     schema["required"] = nlohmann::json::array({"name"});
-
-    j["inputSchema"] = schema;
-
-    result["tools"].push_back(j);
+    add_tool("read_asset_preview",
+             "Read preview image from an asset", schema);
   }
 
   {
-    nlohmann::json j;
-    j["name"] = "select_assets";
-    j["description"] = "Select assets with individual transform parameters. Specify array of asset objects with name and optional transform parameters.";
-
     nlohmann::json schema;
     schema["type"] = "object";
-    schema["properties"] = nlohmann::json::object();
-    
-    // Array of asset objects
-    nlohmann::json assetSchema;
-    assetSchema["type"] = "object";
-    assetSchema["properties"] = nlohmann::json::object();
-    assetSchema["properties"]["name"] = {{"type", "string"}, {"description", "Asset name"}};
-    assetSchema["properties"]["instance_id"] = {{"type", "integer"}, {"description", "Instance ID for the asset"}};
-    assetSchema["properties"]["position"] = {{"type", "array"},
-                                             {"items", {"type", "number"}},
-                                             {"minItems", 3},
-                                             {"maxItems", 3},
-                                             {"description", "Position as [x, y, z]"}};
-    assetSchema["properties"]["scale"] = {{"type", "array"},
-                                          {"items", {"type", "number"}},
-                                          {"minItems", 3},
-                                          {"maxItems", 3},
-                                          {"description", "Scale as [x, y, z]"}};
-    assetSchema["properties"]["rotation"] = {{"type", "array"},
-                                             {"items", {"type", "number"}},
-                                             {"minItems", 3},
-                                             {"maxItems", 3},
-                                             {"description", "Rotation as [x, y, z] in degrees"}};
-    assetSchema["properties"]["pivot_position"] = {{"type", "array"},
-                                                   {"items", {"type", "number"}},
-                                                   {"minItems", 3},
-                                                   {"maxItems", 3},
-                                                   {"description", "Pivot position as [x, y, z] for rotation and scaling"}};
-    assetSchema["properties"]["bmin"] = {{"type", "array"},
-                                         {"items", {"type", "number"}},
-                                         {"minItems", 3},
-                                         {"maxItems", 3},
-                                         {"description", "Bounding box minimum as [x, y, z]"}};
-    assetSchema["properties"]["bmax"] = {{"type", "array"},
-                                         {"items", {"type", "number"}},
-                                         {"minItems", 3},
-                                         {"maxItems", 3},
-                                         {"description", "Bounding box maximum as [x, y, z]"}};
-    assetSchema["required"] = nlohmann::json::array({"name"});
+    schema["properties"]["include_preview"] =
+        bool_prop("Include preview image data");
+    add_tool("get_all_asset_descriptions",
+             "Get descriptions of all assets", schema);
+  }
 
-    schema["properties"]["assets"] = {{"type", "array"}, {"items", assetSchema}};
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["name"] = str_prop("Asset name");
+    schema["properties"]["include_preview"] =
+        bool_prop("Include preview image data");
+    schema["required"] = nlohmann::json::array({"name"});
+    add_tool("get_asset_description",
+             "Get description of a specific asset", schema);
+  }
+
+  // =========================================================================
+  // Existing: Scene arrangement tools (kept from original)
+  // =========================================================================
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["assets"] = {
+        {"type", "array"},
+        {"description",
+         "Array of asset objects with name and optional transforms"}};
     schema["required"] = nlohmann::json::array({"assets"});
-
-    j["inputSchema"] = schema;
-
-    result["tools"].push_back(j);
+    add_tool("select_assets",
+             "Select and arrange assets with transforms", schema);
   }
 
   {
-    nlohmann::json j;
-    j["name"] = "get_selected_assets";
-    j["description"] = "Get selected assets as JSON strings containing name and instance_id";
-
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
+    add_tool("get_selected_assets",
+             "Get currently selected assets", schema);
+  }
 
-    j["inputSchema"] = schema;
-
-    result["tools"].push_back(j);
+  // =========================================================================
+  // Existing: Screenshot tools (kept from original)
+  // =========================================================================
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["data"] = str_prop("Base64 encoded image data");
+    schema["properties"]["name"] = str_prop("Screenshot name");
+    schema["properties"]["mimeType"] = str_prop("MIME type (image/png, image/jpeg)");
+    schema["required"] = nlohmann::json::array({"data", "name", "mimeType"});
+    add_tool("save_screenshot", "Save a screenshot image", schema);
   }
 
   {
-    nlohmann::json j;
-    j["name"] = "read_asset_preview";
-    j["description"] = "Read preview image from an asset";
-
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    schema["properties"]["name"] = {{"type", "string"},
-                                    {"description", "Asset name"}};
+    add_tool("list_screenshots", "List screenshot names", schema);
+  }
 
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["name"] = str_prop("Screenshot name");
     schema["required"] = nlohmann::json::array({"name"});
-
-    j["inputSchema"] = schema;
-
-    result["tools"].push_back(j);
+    add_tool("read_screenshot", "Read a screenshot image", schema);
   }
-
-  std::cout << result << "\n";
 
   return true;
 }
 
+// ===========================================================================
+// CallTool
+// ===========================================================================
 bool CallTool(Context &ctx, const std::string &tool_name,
               const nlohmann::json &args, nlohmann::json &result,
               std::string &err) {
   (void)args;
 
+  // ---- Utility ----
   if (tool_name == "get_version") {
     return GetVersion(result);
-  } else if (tool_name == "get_all_usd_descriptions") {
+  }
+
+  // ---- Stage tools ----
+  if (tool_name == "stage_new") return StageNew(ctx, args, result, err);
+  if (tool_name == "stage_load") return StageLoad(ctx, args, result, err);
+  if (tool_name == "stage_load_data") return StageLoadData(ctx, args, result, err);
+  if (tool_name == "stage_export") return StageExport(ctx, args, result, err);
+  if (tool_name == "stage_to_string") return StageToString(ctx, args, result, err);
+  if (tool_name == "stage_info") return StageInfo(ctx, args, result, err);
+
+  // ---- Scene graph ----
+  if (tool_name == "prim_list") return PrimList(ctx, args, result, err);
+  if (tool_name == "prim_get") return PrimGet(ctx, args, result, err);
+  if (tool_name == "prim_create") return PrimCreate(ctx, args, result, err);
+  if (tool_name == "prim_remove") return PrimRemove(ctx, args, result, err);
+  if (tool_name == "prim_rename") return PrimRename(ctx, args, result, err);
+  if (tool_name == "prim_get_metadata") return PrimGetMetadata(ctx, args, result, err);
+
+  // ---- Attributes ----
+  if (tool_name == "attr_list") return AttrList(ctx, args, result, err);
+  if (tool_name == "attr_get") return AttrGet(ctx, args, result, err);
+  if (tool_name == "attr_set") return AttrSet(ctx, args, result, err);
+  if (tool_name == "attr_block") return AttrBlock(ctx, args, result, err);
+  if (tool_name == "attr_connections") return AttrConnections(ctx, args, result, err);
+
+  // ---- Composition ----
+  if (tool_name == "reference_add") return ReferenceAdd(ctx, args, result, err);
+  if (tool_name == "reference_list") return ReferenceList(ctx, args, result, err);
+  if (tool_name == "reference_clear") return ReferenceClear(ctx, args, result, err);
+  if (tool_name == "payload_add") return PayloadAdd(ctx, args, result, err);
+  if (tool_name == "payload_list") return PayloadList(ctx, args, result, err);
+  if (tool_name == "inherit_add") return InheritAdd(ctx, args, result, err);
+  if (tool_name == "specialize_add") return SpecializeAdd(ctx, args, result, err);
+  if (tool_name == "variant_list_sets") return VariantListSets(ctx, args, result, err);
+  if (tool_name == "variant_get_selection") return VariantGetSelection(ctx, args, result, err);
+  if (tool_name == "variant_set_selection") return VariantSetSelection(ctx, args, result, err);
+  if (tool_name == "variant_define") return VariantDefine(ctx, args, result, err);
+
+  // ---- Query ----
+  if (tool_name == "query_prims_by_type") return QueryPrimsByType(ctx, args, result, err);
+  if (tool_name == "schema_list_types") return SchemaListTypes(ctx, args, result, err);
+  if (tool_name == "schema_get_type") return SchemaGetType(ctx, args, result, err);
+  if (tool_name == "search") return Search(ctx, args, result, err);
+
+  // ---- Scripting ----
+  if (tool_name == "run_script") return RunScript(ctx, args, result, err);
+
+  // ---- Legacy USD Layer tools ----
+  if (tool_name == "get_all_usd_descriptions") {
     return GetAllUSDDescriptions(ctx, args, result, err);
-  } else if (tool_name == "get_usd_description") {
+  }
+  if (tool_name == "get_usd_description") {
     return GetUSDDescription(ctx, args, result, err);
+  }
 #if !defined(__EMSCRIPTEN__)
-  } else if (tool_name == "load_usd_layer_from_file") {
-    DCOUT("load_usd_layer_from_file");
+  if (tool_name == "load_usd_layer_from_file") {
     return LoadUSDLayerFromFile(ctx, args, result, err);
+  }
 #endif
-  } else if (tool_name == "to_usda") {
-    DCOUT("to_usda");
+  if (tool_name == "to_usda") {
     return ToUSDA(ctx, args, result, err);
-  } else if (tool_name == "load_usd_layer_from_data") {
-    DCOUT("load_usd_layer_data");
+  }
+  if (tool_name == "load_usd_layer_from_data") {
     return LoadUSDLayerFromData(ctx, args, result, err);
-  } else if (tool_name == "list_primspecs") {
-    DCOUT("list_primspecs");
+  }
+  if (tool_name == "list_primspecs") {
     return ListPrimSpecs(ctx, args, result, err);
-  } else if (tool_name == "list_screenshots") {
-    return ListScreenshots(ctx, args, result, err);
-  } else if (tool_name == "save_screenshot") {
-    return SaveScreenshot(ctx, args, result, err);
-  } else if (tool_name == "read_screenshot") {
-    return ReadScreenshot(ctx, args, result, err);
-  } else if (tool_name == "read_asset") {
-    DCOUT("read_asset");
-    return ReadAsset(ctx, args, result, err);
-  } else if (tool_name == "read_asset_preview") {
-    DCOUT("read_asset_preview");
-    return ReadAssetPreview(ctx, args, result, err);
-  } else if (tool_name == "store_asset") {
-    DCOUT("store_asset");
-    return StoreAsset(ctx, args, result, err);
-  } else if (tool_name == "get_all_asset_descriptions") {
+  }
+  if (tool_name == "load_usd_layer_from_asset") {
+    // Not implemented yet
+    err = "Not implemented";
+    return false;
+  }
+
+  // ---- Legacy viewer tools ----
+  if (tool_name == "list_screenshots") return ListScreenshots(ctx, args, result, err);
+  if (tool_name == "save_screenshot") return SaveScreenshot(ctx, args, result, err);
+  if (tool_name == "read_screenshot") return ReadScreenshot(ctx, args, result, err);
+  if (tool_name == "read_asset") return ReadAsset(ctx, args, result, err);
+  if (tool_name == "read_asset_preview") return ReadAssetPreview(ctx, args, result, err);
+  if (tool_name == "store_asset") return StoreAsset(ctx, args, result, err);
+  if (tool_name == "get_all_asset_descriptions") {
     return GetAllAssetDescriptions(ctx, args, result, err);
-  } else if (tool_name == "get_asset_description") {
+  }
+  if (tool_name == "get_asset_description") {
     return GetAssetDescription(ctx, args, result, err);
-  } else if (tool_name == "select_assets") {
-    return SelectAssets(ctx, args, result, err);
-  } else if (tool_name == "get_selected_assets") {
+  }
+  if (tool_name == "select_assets") return SelectAssets(ctx, args, result, err);
+  if (tool_name == "get_selected_assets") {
     return GetSelectedAssets(ctx, args, result, err);
   }
 
-  // tool not found.
+  // Tool not found
   return false;
 }
 
-}  // namespace mcp
-}  // namespace tydra
-}  // namespace tinyusdz
+} // namespace mcp
+} // namespace tydra
+} // namespace tinyusdz
