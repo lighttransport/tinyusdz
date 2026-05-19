@@ -7,11 +7,16 @@
 
 #include "core/prim.hh"
 #include "../layer.hh"
+#include "../stage.hh"
 #include "../tiny-hashmap.hh"
 
 namespace tinyusdz {
 
 namespace tydra {
+
+// Forward declare JS engine state (defined in js-script.hh)
+struct JSEngineState;
+
 namespace mcp {
 
 struct Image
@@ -66,11 +71,15 @@ struct Screenshot
 
 struct Context
 {
+  // ---- Composed Stage (for scene graph queries) ----
+  std::unique_ptr<Stage> stage;
+  bool stage_loaded{false};
 
-  // loaded USD assets
+  // ---- Uncomposed Layers (for editing) ----
   // key = UUID
   tinyusdz::HashMap<std::string, USDLayer> layers;
 
+  // ---- Viewer workflow assets ----
   // key = name
   tinyusdz::HashMap<std::string, MCPAsset> assets;
 
@@ -78,6 +87,12 @@ struct Context
 
   // key = name
   tinyusdz::HashMap<std::string, Screenshot> screenshots;
+
+  // ---- QuickJS engine (persistent per session) ----
+  std::unique_ptr<JSEngineState> js_engine;
+
+  // ---- Utility ----
+  std::string session_id;
 };
 
 } // namespace mcp
