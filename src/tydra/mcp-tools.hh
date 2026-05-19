@@ -20,14 +20,13 @@ namespace tinyusdz {
 namespace tydra {
 namespace mcp {
 
-// for 'tools/list'
-bool GetToolsList(
-  Context &ctx,
-  nlohmann::json &result);
+/// Build the full tools/list response.
+bool GetToolsList(Context &ctx, nlohmann::json &result);
 
-
-// TODO: Batch call tools
-bool CallTool(Context &ctx, const std::string &tool_name, const nlohmann::json &args, nlohmann::json &result, std::string &err);
+/// Dispatch tool calls to the appropriate handler.
+bool CallTool(Context &ctx, const std::string &tool_name,
+              const nlohmann::json &args, nlohmann::json &result,
+              std::string &err);
 
 } // namespace mcp
 } // namespace tydra

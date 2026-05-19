@@ -3,6 +3,7 @@
 #include "mcp-resources.hh"
 #include "mcp-context.hh"
 #include "uuid-gen.hh"
+#include "js-script.hh"
 
 #if defined(TINYUSDZ_WITH_MCP_SERVER)
 
@@ -288,28 +289,23 @@ JsonRpcRequest MCPServer::Impl::parse_request(const std::string& json_str) {
     return request;
   }
   
-  try {
-    json_obj = nlohmann::json::parse(json_str);
+  json_obj = nlohmann::json::parse(json_str);
 
-    if (json_obj.contains("jsonrpc") && json_obj["jsonrpc"].is_string()) {
-      request.jsonrpc = json_obj["jsonrpc"].get<std::string>();
-    } else {
-      request.jsonrpc = "";
-    }
-    if (json_obj.contains("method") && json_obj["method"].is_string()) {
-      request.method = json_obj["method"].get<std::string>();
-    } else {
-      request.method = "";
-    }
-    if (json_obj.contains("params")) {
-      request.params = json_obj["params"];
-    }
-    if (json_obj.contains("id")) {
-      request.id = json_obj["id"];
-    }
-  } catch (...) {
-    request.method.clear();
-    request.jsonrpc.clear();
+  if (json_obj.contains("jsonrpc") && json_obj["jsonrpc"].is_string()) {
+    request.jsonrpc = json_obj["jsonrpc"].get<std::string>();
+  } else {
+    request.jsonrpc = "";
+  }
+  if (json_obj.contains("method") && json_obj["method"].is_string()) {
+    request.method = json_obj["method"].get<std::string>();
+  } else {
+    request.method = "";
+  }
+  if (json_obj.contains("params")) {
+    request.params = json_obj["params"];
+  }
+  if (json_obj.contains("id")) {
+    request.id = json_obj["id"];
   }
   
   return request;

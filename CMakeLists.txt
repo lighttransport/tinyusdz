@@ -639,14 +639,26 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-scene.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-scene.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-query.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-query.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-composition.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-composition.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-context.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-js-bridge.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-js-bridge.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/diff-and-compare.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/diff-and-compare.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/js-script.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/js-script.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/js-script-persistent.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/threejs-exporter.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/threejs-exporter.cc
         )
@@ -1891,6 +1903,11 @@ if(TINYUSDZ_BUILD_TESTS)
   # unit tester
   #
   add_subdirectory(${PROJECT_SOURCE_DIR}/tests/unit)
+
+  #
+  # MCP tests (requires MCP server enabled)
+  #
+  add_subdirectory(${PROJECT_SOURCE_DIR}/tests/mcp)
 
   #
   # Compression tester
