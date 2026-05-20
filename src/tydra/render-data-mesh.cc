@@ -130,6 +130,15 @@ static bool RemapSubdivisionMaterialSubsets(
     return false;
   }
 
+  // pow4(level) overflows uint64_t at level >= 32. Reject extreme levels.
+  if (subdivision_level < 0 || subdivision_level > 30) {
+    if (err) {
+      (*err) += "subdivision_level out of range [0, 30]: " +
+                std::to_string(subdivision_level) + "\n";
+    }
+    return false;
+  }
+
   auto pow4 = [](int32_t level) -> uint64_t {
     uint64_t value = 1;
     for (int32_t i = 0; i < level; ++i) {
@@ -520,7 +529,13 @@ bool TryConvertFacevaryingToVertexInt(
   }
 
   dst->resize(max_vidx + 1);
-  memset(dst->data(), 0, (max_vidx + 1) * sizeof(T));
+  {
+    size_t byte_count;
+    if (!safe::mul(size_t(max_vidx + 1), sizeof(T), &byte_count)) {
+      return false;  // integer overflow
+    }
+    memset(dst->data(), 0, byte_count);
+  }
 
   for (const auto &v : vdata) {
     (*dst)[v.first] = v.second;

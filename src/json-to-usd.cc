@@ -18,6 +18,19 @@
 #include "usdGeom.hh"
 #include "usd-to-json.hh"
 
+namespace {
+
+// nlohmann/json parse callback: limits nesting depth to prevent stack
+// exhaustion from deeply nested JSON arrays/objects.
+constexpr int kJSONMaxParseDepth = 256;
+
+bool json_depth_callback(int depth, nlohmann::detail::parse_event_t /*event*/,
+                         nlohmann::json & /*parsed*/) {
+  return depth <= kJSONMaxParseDepth;
+}
+
+}  // namespace
+
 #include <limits>
 
 namespace tinyusdz {
@@ -724,7 +737,7 @@ static bool JSONToPrimSpecImpl(const nlohmann::json &j, PrimSpec *ps, std::strin
 }
 
 bool JSONToPrimSpec(const std::string &j_str, PrimSpec *ps, std::string *warn, std::string *err) {
-  nlohmann::json j = nlohmann::json::parse(j_str, /* callback */nullptr, /* allow_exceptions */false);
+  nlohmann::json j = nlohmann::json::parse(j_str, json_depth_callback, /* allow_exceptions */false);
   if (j.is_discarded()) {
     if (err) {
       (*err) = "Failed to parse string as JSON\n";

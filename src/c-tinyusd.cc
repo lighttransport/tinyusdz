@@ -315,11 +315,11 @@ const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type) {
       break;
     }
     case C_TINYUSD_VALUE_MATRIX3D: {
-      tyname = "matrix2d";
+      tyname = "matrix3d";
       break;
     }
     case C_TINYUSD_VALUE_MATRIX4D: {
-      tyname = "matrix2d";
+      tyname = "matrix4d";
       break;
     }
     case C_TINYUSD_VALUE_FRAME4D: {
@@ -1535,6 +1535,13 @@ int c_tinyusd_load_usd_from_file(const char *filename, CTinyUSDStage *stage,
     return 0;
   }
 
+  if (!filename) {
+    if (err) {
+      c_tinyusd_string_replace(err, "`filename` argument is null.\n");
+    }
+    return 0;
+  }
+
   std::string _warn;
   std::string _err;
 
@@ -1565,6 +1572,13 @@ int c_tinyusd_load_usda_from_file(const char *filename, CTinyUSDStage *stage,
   if (!stage) {
     if (err) {
       c_tinyusd_string_replace(err, "`stage` argument is null.\n");
+    }
+    return 0;
+  }
+
+  if (!filename) {
+    if (err) {
+      c_tinyusd_string_replace(err, "`filename` argument is null.\n");
     }
     return 0;
   }
@@ -1633,6 +1647,13 @@ int c_tinyusd_load_usdz_from_file(const char *filename, CTinyUSDStage *stage,
   if (!stage) {
     if (err) {
       c_tinyusd_string_replace(err, "`stage` argument is null.\n");
+    }
+    return 0;
+  }
+
+  if (!filename) {
+    if (err) {
+      c_tinyusd_string_replace(err, "`filename` argument is null.\n");
     }
     return 0;
   }

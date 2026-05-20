@@ -297,7 +297,14 @@ bool DecodeImageHDR(const uint8_t *bytes, const size_t size,
   image->format = Image::PixelFormat::Float;
 
   // Copy float data to image buffer
-  size_t dataSize = size_t(w) * size_t(h) * 4 * sizeof(float);
+  size_t dataSize;
+  if (!safe::mul3(size_t(w), size_t(h), size_t(4 * sizeof(float)), &dataSize)) {
+    stbi_image_free(data);
+    if (err) {
+      (*err) += "Integer overflow computing HDR image data size for: " + uri + "\n";
+    }
+    return false;
+  }
   image->data.resize(dataSize);
   std::memcpy(image->data.data(), data, dataSize);
 

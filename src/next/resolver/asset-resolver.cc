@@ -32,8 +32,10 @@ bool FileExistsImpl(const std::string& path) {
   std::ifstream f(path);
   return f.good();
 #else
+  // Use lstat (not stat) to avoid following symlinks. Note: a TOCTOU
+  // window still exists between this check and any subsequent open().
   struct stat st;
-  return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+  return lstat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
 #endif
 }
 

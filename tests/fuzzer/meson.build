@@ -207,3 +207,10 @@ executable('fuzz_usd_writer',
   include_directories : incdirs,
   cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
+
+executable('fuzz_stb_image',
+  'stb_image_fuzzmain.cc',
+  install: true,
+  include_directories : incdirs,
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  link_args : '-fsanitize=address,fuzzer' )

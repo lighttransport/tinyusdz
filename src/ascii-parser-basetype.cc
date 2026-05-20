@@ -2098,6 +2098,13 @@ bool AsciiParser::SepBy1BasicType(const char sep,
   }
 
   while (!Eof()) {
+    constexpr size_t kMaxArrayElements = 1024ull * 1024ull * 128ull;
+    if (result->size() >= kMaxArrayElements) {
+      PushError(fmt::format("Array element count exceeds limit ({}).\n",
+                            kMaxArrayElements));
+      return false;
+    }
+
     // sep
     if (!SkipWhitespaceAndNewline()) {
       return false;
