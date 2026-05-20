@@ -404,6 +404,9 @@ std::string ExpandFilePath(const std::string &_filepath, void *) {
   // Assume input `filepath` is encoded in UTF-8
   std::wstring wfilepath = UTF8ToWchar(filepath);
   DWORD wlen = ExpandEnvironmentStringsW(wfilepath.c_str(), nullptr, 0);
+  if (wlen == 0) {
+    return filepath;
+  }
   wchar_t *wstr = new wchar_t[wlen];
   ExpandEnvironmentStringsW(wfilepath.c_str(), wstr, wlen);
 

@@ -10,9 +10,14 @@
 
 #include "unit-ik.h"
 #include "tydra/ik-solver.h"
+#include "tydra/ik-solver.hh"
+#include "tydra/scene-access.hh"
 
 #include <cmath>
 #include <cstring>
+
+using namespace tinyusdz;
+using namespace tinyusdz::tydra;
 
 // -----------------------------------------------------------------------
 // Helpers: build a simple 3-joint chain (shoulder-elbow-hand) along +Y
@@ -206,4 +211,30 @@ void ik_unreachable_target_test(void) {
   float reach = sqrtf(eff.x*eff.x + eff.y*eff.y + eff.z*eff.z);
   TEST_MSG("Unreachable: effector=(%f,%f,%f), reach=%f", eff.x, eff.y, eff.z, reach);
   TEST_CHECK(reach > 3.0f);  // should extend near full length
+}
+
+void ik_excessive_chain_rejected_test(void) {
+  // Build a deep linear chain (parent[i] = i-1, root=0) that exceeds kMaxIKJoints.
+  // Verifies the memory-defense cap added for security hardening.
+  constexpr int deep_size = 1500;
+  std::vector<int> parent_indices(deep_size);
+  std::vector<value::matrix4d> rest_xforms(deep_size, value::matrix4d::identity());
+  parent_indices[0] = -1;  // root
+  for (int i = 1; i < deep_size; i++) {
+    parent_indices[static_cast<size_t>(i)] = i - 1;
+  }
+
+  SkelHierarchy skel;
+  skel.parent_joint_indices = parent_indices;
+  skel.rest_transforms = rest_xforms;
+  skel.bind_transforms = rest_xforms;
+
+  TydraIKChain chain;
+  memset(&chain, 0, sizeof(chain));
+  std::string err;
+  bool ok = BuildIKChain(skel, deep_size - 1, 0, {}, &chain, &err);
+  TEST_CHECK(!ok);
+  TEST_CHECK(err.find("exceeds max joint count") != std::string::npos);
+
+  FreeIKChain(&chain);
 }

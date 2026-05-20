@@ -190,3 +190,20 @@ executable('fuzz_alac_decoding',
   include_directories : incdirs,
   cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
+
+executable('fuzz_mtlx_xml_parser',
+  'mtlx_xml_parser_fuzzmain.cc',
+  '../../src/mtlx-xml-parser.cc',
+  '../../src/mtlx-xml-tokenizer.cc',
+  install: true,
+  include_directories : incdirs,
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  link_args : '-fsanitize=address,fuzzer' )
+
+executable('fuzz_usd_writer',
+  'usd_writer_fuzzmain.cc',
+  tinyusdz_sources,
+  install: true,
+  include_directories : incdirs,
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  link_args : '-fsanitize=address,fuzzer' )

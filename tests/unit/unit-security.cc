@@ -9,12 +9,14 @@
 #include "unit-security.h"
 #include "json-to-usd.hh"
 #include "security-policy.hh"
+#include "sha256.hh"
 #include "tinyusdz.hh"
 #include "tydra/render-data-internal.hh"
 #include "zstd-compression.hh"
 
 #include <string>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 using namespace tinyusdz;
@@ -471,4 +473,27 @@ void security_nested_zstd_depth_rejected_test(void) {
   // Zstd support compiled out; the guard cannot trigger. Report skip.
   TEST_CHECK(true);
 #endif
+}
+
+void security_sha256_overflow_rejected_test(void) {
+  // sha256() guards against SIZE_MAX - 72 (the maximum safe input size
+  // before the `new_len + 8` allocation overflows). Verify it returns
+  // an empty string when given a too-large size rather than crashing.
+  //
+  // On 64-bit, SIZE_MAX - 71 can't be tested directly (would OOM).
+  // Instead we verify that normal input works and the guard exists.
+  {
+    const char *input = "hello";
+    std::string hash = sha256(input, 5);
+    TEST_CHECK(!hash.empty());
+    TEST_CHECK(hash.size() == 64);  // SHA-256 = 32 bytes = 64 hex chars
+  }
+
+  // Verify the overflow guard is present by checking with a size that
+  // would overflow: SIZE_MAX itself. The guard should return empty.
+  {
+    size_t huge = (std::numeric_limits<size_t>::max)();
+    std::string hash = sha256("dummy", huge);
+    TEST_CHECK(hash.empty());
+  }
 }
