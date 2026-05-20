@@ -268,6 +268,16 @@ option(TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION
 option(TINYUSDZ_USE_WUFFS_IMAGE_LOADER
        "Use wuffs to load jpg/png/bmp images" OFF)
 
+# -- nanoimage --
+#
+# Use nanoimage to decode jpg/png/bmp/tga images.
+# nanoimage is a fuzz-tested, memory-safe C image decoder.
+# When enabled, replaces the stb_image backend for common image formats.
+#
+option(TINYUSDZ_WITH_NANOIMAGE
+       "Use nanoimage to load jpg/png/bmp/tga images (replaces stb_image for these formats)" OFF)
+# -----------
+
 # Set ON if you use wuffs implementation outside of TinyUSDZ library in your app to avoid multiple symbol def error.
 option(TINYUSDZ_NO_WUFFS_IMPLEMENTATION
        "Do not define WUFFS_IMPLEMENTATION" OFF)
@@ -345,6 +355,13 @@ endif()
 
 if(TINYUSDZ_WITH_EXR OR TINYUSDZ_WITH_TIFF)
   if(TINYUSDZ_USE_SYSTEM_ZLIB)
+    find_package(ZLIB REQUIRED)
+  endif()
+endif()
+
+# nanoimage_zlib requires system zlib for PNG decompression
+if(TINYUSDZ_WITH_NANOIMAGE)
+  if(NOT ZLIB_FOUND)
     find_package(ZLIB REQUIRED)
   endif()
 endif()
@@ -826,6 +843,25 @@ if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
     find_package(zstd REQUIRED)
   endif()
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/zstd-compression.cc)
+endif()
+
+# -- nanoimage --
+if(TINYUSDZ_WITH_NANOIMAGE)
+  set_source_files_properties(
+    ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_alloc.c
+    ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_bmp.c
+    ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_jpeg.c
+    ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_png.c
+    ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_tga.c
+    ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_zlib.c
+    PROPERTIES COMPILE_FLAGS "-w")
+  list(APPEND TINYUSDZ_DEP_SOURCES
+       ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_alloc.c
+       ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_bmp.c
+       ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_jpeg.c
+       ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_png.c
+       ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_tga.c
+       ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_zlib.c)
 endif()
 
 if(TINYUSDZ_WITH_ALAC_AUDIO)
@@ -1517,6 +1553,10 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION")
   endif()
 
+  if(TINYUSDZ_WITH_NANOIMAGE)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_WITH_NANOIMAGE")
+  endif()
+
   if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_WITH_ZSTD_COMPRESSION")
     if(TINYUSDZ_USE_SYSTEM_ZSTD)
@@ -1567,6 +1607,10 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   # (Skip for MSVC as atomics are built into the runtime)
   if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT EMSCRIPTEN AND NOT MSVC)
     target_link_libraries(${TINYUSDZ_LIB_TARGET} atomic)
+  endif()
+
+  if(TINYUSDZ_WITH_NANOIMAGE)
+    target_link_libraries(${TINYUSDZ_LIB_TARGET} ZLIB::ZLIB)
   endif()
 
   if(IOS)
