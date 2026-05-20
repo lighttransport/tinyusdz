@@ -920,12 +920,29 @@ bool ConvertURDFJsonToUSDStage(
   Stage stage;
   stage.metas().defaultPrim = value::token("World");
   const std::string up_axis = JsonString(root, "upAxis", "Y");
-  stage.metas().upAxis =
-      (up_axis == "Z" || up_axis == "z") ? Axis::Z : Axis::Y;
+  const bool y_up = !(up_axis == "Z" || up_axis == "z");
+  stage.metas().upAxis = y_up ? Axis::Y : Axis::Z;
 
   Xform world;
   world.name = "World";
   world.metas().set_kind(Kind::Assembly);
+
+  // URDF/MJCF source data is authored Z-up (and all current frontends emit
+  // Z-up world transforms). When the target stage is Y-up, reconcile the two
+  // with a single corrective root rotation Rx(-90deg) (+Z -> +Y) on `World`.
+  //
+  // Per doc/usd-physics-upAxis.md this is the only correct way to convert the
+  // up axis: a single root rotation propagates through the transform hierarchy
+  // to every descendant body/collider world transform, while local-frame data
+  // (physics:axis, joint localPos0/1 + localRot0/1, collision shape axis) and
+  // the world-space `physics:gravityDirection` attribute correctly ride along
+  // unchanged. Per-property/per-axis-token conversion would double-rotate.
+  if (y_up) {
+    XformOp rot_x;
+    rot_x.op_type = XformOp::OpType::RotateX;
+    rot_x.set_value(-90.0);  // degrees; row-vector RotateX(-90) maps +Z -> +Y
+    world.xformOps.push_back(rot_x);
+  }
 
   PhysicsScene scene;
   scene.name = "PhysicsScene";

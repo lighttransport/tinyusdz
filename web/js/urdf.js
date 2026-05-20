@@ -1779,11 +1779,20 @@ function fitCurrentView() {
 }
 
 function applySceneOrientation() {
-  for (const root of [sourceView.root, sourceView.ghostRoot, usdView.root, usdView.ghostRoot]) {
+  // The source robot is built directly from URDF/MJCF, which are always Z-up,
+  // so it always needs the -90deg X display rotation to stand upright in
+  // three.js (Y-up).
+  for (const root of [sourceView.root, sourceView.ghostRoot]) {
     root.rotation.set(0, 0, 0);
+    root.rotation.x = -Math.PI / 2;
   }
-  if (state.settings.upAxis === 'Z') {
-    for (const root of [sourceView.root, sourceView.ghostRoot, usdView.root, usdView.ghostRoot]) {
+  // The converted USD carries its own up axis. For a Y-up export the converter
+  // already authors a corrective xformOp:rotateX(-90) on /World (applied by the
+  // loader), so the USD view is genuinely Y-up and needs no extra rotation. For
+  // a Z-up export it needs the same -90deg X display rotation as the source.
+  for (const root of [usdView.root, usdView.ghostRoot]) {
+    root.rotation.set(0, 0, 0);
+    if (state.settings.upAxis === 'Z') {
       root.rotation.x = -Math.PI / 2;
     }
   }
