@@ -12,6 +12,16 @@
 
 #include "safe-arithmetic.hh"
 
+#if defined(TINYUSDZ_WITH_NANOIMAGE)
+extern "C" {
+#include "external/nanoimage/nanoimage.h"
+#include "external/nanoimage/nanoimage_jpeg.h"
+#include "external/nanoimage/nanoimage_png.h"
+#include "external/nanoimage/nanoimage_bmp.h"
+#include "external/nanoimage/nanoimage_tga.h"
+}
+#endif
+
 #if defined(TINYUSDZ_WITH_EXR)
 #include "external/tinyexr.h"
 #endif
@@ -323,6 +333,97 @@ bool GetImageInfoHDR(const uint8_t *bytes, const size_t size,
 #endif
 #endif
 
+#if defined(TINYUSDZ_WITH_NANOIMAGE)
+
+// Decode image (jpg, png, bmp, tga) using nanoimage.
+// nanoimage is a fuzz-tested, memory-safe C image decoder.
+bool DecodeImageNanoimage(const uint8_t *bytes, const size_t size,
+                          const std::string &uri, Image *image,
+                          std::string *warn, std::string *err) {
+  (void)warn;
+
+  char errbuf[256];
+  errbuf[0] = 0;
+
+  // JPEG: FF D8 FF
+  // PNG:  89 50 4E 47
+  // BMP:  42 4D
+  // TGA:  no reliable magic; try last
+  //
+  // Try decoders in order of likelihood. Each reports its own error on mismatch.
+  ni_image ni_img;
+  memset(&ni_img, 0, sizeof(ni_img));
+  int ok = 0;
+
+  if (size >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) {
+    ok = ni_load_jpeg_from_memory(bytes, size, &ni_img, errbuf, sizeof(errbuf));
+  } else if (size >= 4 && bytes[0] == 0x89 && bytes[1] == 0x50 &&
+             bytes[2] == 0x4E && bytes[3] == 0x47) {
+    ok = ni_load_png_from_memory(bytes, size, &ni_img, errbuf, sizeof(errbuf));
+  } else if (size >= 2 && bytes[0] == 0x42 && bytes[1] == 0x4D) {
+    ok = ni_load_bmp_from_memory(bytes, size, &ni_img, errbuf, sizeof(errbuf));
+  } else {
+    // Fallback: try TGA first (no magic), then jpeg/png/bmp as last resort
+    ok = ni_load_tga_from_memory(bytes, size, &ni_img, errbuf, sizeof(errbuf));
+    if (!ok) {
+      ok = ni_load_png_from_memory(bytes, size, &ni_img, errbuf, sizeof(errbuf));
+    }
+    if (!ok) {
+      ok = ni_load_jpeg_from_memory(bytes, size, &ni_img, errbuf, sizeof(errbuf));
+    }
+    if (!ok) {
+      ok = ni_load_bmp_from_memory(bytes, size, &ni_img, errbuf, sizeof(errbuf));
+    }
+  }
+
+  if (!ok) {
+    if (err) {
+      (*err) += "nanoimage cannot decode image data for: " + uri;
+      if (errbuf[0]) {
+        (*err) += " (" + std::string(errbuf) + ")";
+      }
+      (*err) += "\n";
+    }
+    return false;
+  }
+
+  if (ni_img.width < 1 || ni_img.height < 1) {
+    ni_image_free(&ni_img);
+    if (err) {
+      (*err) += "Invalid image dimensions for: " + uri + "\n";
+    }
+    return false;
+  }
+
+  image->width = int(ni_img.width);
+  image->height = int(ni_img.height);
+  image->channels = int(ni_img.channels);
+  image->bpp = int(ni_img.bit_depth);
+  image->format = Image::PixelFormat::UInt;
+  image->data.resize(ni_img.data_size);
+  std::memcpy(image->data.data(), ni_img.data, ni_img.data_size);
+  ni_image_free(&ni_img);
+
+  return true;
+}
+
+bool GetImageInfoNanoimage(const uint8_t *bytes, const size_t size,
+                           const std::string &uri, uint32_t *width,
+                           uint32_t *height, uint32_t *channels,
+                           std::string *warn, std::string *err) {
+  // Reuse the decode path for info extraction — nanoimage has no info-only API.
+  Image img;
+  if (!DecodeImageNanoimage(bytes, size, uri, &img, warn, err)) {
+    return false;
+  }
+  if (width) *width = uint32_t(img.width);
+  if (height) *height = uint32_t(img.height);
+  if (channels) *channels = uint32_t(img.channels);
+  return true;
+}
+
+#endif
+
 #if defined(TINYUSDZ_WITH_EXR)
 
 bool DecodeImageEXR(const uint8_t *bytes, const size_t size,
@@ -486,6 +587,19 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
   }
 #endif
 
+#if defined(TINYUSDZ_WITH_NANOIMAGE)
+  // Try nanoimage for common formats (jpg, png, bmp, tga).
+  // Fuzz-tested, memory-safe C decoder. Falls through to STB/WUFFS on failure.
+  {
+    bool ok = DecodeImageNanoimage(addr, sz, uri, &ret.image, &ret.warning, &err);
+    if (ok) {
+      return std::move(ret);
+    }
+    // Clear error from nanoimage attempt; STB/WUFFS will provide the final error.
+    err.clear();
+  }
+#endif
+
   // HDR (Radiance RGBE) detection - must be before generic STB fallback
   // to ensure we decode as float instead of uint8
 #if !defined(TINYUSDZ_NO_BUILTIN_IMAGE_LOADER) && !defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
@@ -536,6 +650,17 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
 
       return nonstd::make_unexpected("TODO: TIFF/DNG format");
 
+  }
+#endif
+
+#if defined(TINYUSDZ_WITH_NANOIMAGE)
+  {
+    bool ok = GetImageInfoNanoimage(addr, sz, uri, &ret.width, &ret.height,
+                                    &ret.channels, &ret.warning, &err);
+    if (ok) {
+      return std::move(ret);
+    }
+    err.clear();
   }
 #endif
 
