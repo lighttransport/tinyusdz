@@ -273,6 +273,7 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable
     if (err) {
       (*err) += "File size is zero.";
     }
+    fclose(fp);
     return false;
   }
 
@@ -286,6 +287,7 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable
     if (err) {
       (*err) += "mmap failed.";
     }
+    fclose(fp);
     return false;
   }
 
@@ -294,6 +296,7 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable
   handle->writable = writable;
   handle->filename = filepath;
   close(fd);
+  fclose(fp);
 
   return true;
 #endif  // !WIN32

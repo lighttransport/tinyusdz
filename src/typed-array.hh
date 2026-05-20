@@ -19,6 +19,7 @@
 
 #include "nonstd/span.hpp"
 #include "nonstd/expected.hpp"
+#include "safe-arithmetic.hh"
 #include "logger.hh"
 
 namespace tinyusdz {
@@ -1142,8 +1143,12 @@ class ChunkedTypedArray {
       _chunk_size_bytes = chunk_size_bytes;
       _use_fixed_chunk_size = true;
     } else {
-      // Auto-determine chunk size
-      size_type total_bytes = count * sizeof(T);
+      // Auto-determine chunk size based on total allocation
+      size_type total_bytes;
+      if (!safe::mul(count, sizeof(T), &total_bytes)) {
+        // Overflow — fall back to a safe chunk size
+        total_bytes = sizeof(T) * 1024;
+      }
       _chunk_size_bytes = calculate_chunk_size(total_bytes);
       _use_fixed_chunk_size = false;
     }

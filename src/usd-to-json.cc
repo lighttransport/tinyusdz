@@ -78,16 +78,25 @@ size_t USDToJSONContext::AddArrayData(const void* data, size_t elementSize, size
 
 namespace {
 
+#include "safe-arithmetic.hh"
+#include <limits>
+
 // Helper functions for array serialization to base64
 template<typename T>
 std::string SerializeArrayToBase64(const std::vector<T>& array) {
   if (array.empty()) {
     return "";
   }
-  
+
   const unsigned char* bytes = reinterpret_cast<const unsigned char*>(array.data());
-  size_t byte_size = array.size() * sizeof(T);
-  
+  size_t byte_size;
+  if (!safe::mul(array.size(), sizeof(T), &byte_size)) {
+    return "";
+  }
+  if (byte_size > static_cast<size_t>(std::numeric_limits<unsigned int>::max())) {
+    return "";
+  }
+
   return base64_encode(bytes, static_cast<unsigned int>(byte_size));
 }
 

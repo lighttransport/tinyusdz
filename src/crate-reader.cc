@@ -1657,8 +1657,7 @@ bool CrateReader::ReadFieldSets() {
                            << ", comp_buffer.size = " << comp_buffer.size());
 
   if (fsets_size > comp_buffer.size()) {
-    // Maybe corrupted?
-    fsets_size = comp_buffer.size();
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "fsets_size exceeds comp_buffer size (corrupted USDC).");
   }
 
   if (fsets_size > _sr->size()) {
@@ -1962,8 +1961,10 @@ bool CrateReader::ReadSpecs() {
     }
 
     if (path_indexes_size > comp_buffer.size()) {
-      // Maybe corrupted?
-      path_indexes_size = comp_buffer.size();
+      PUSH_ERROR("path_indexes_size exceeds comp_buffer size (corrupted USDC). "
+                 "path_indexes_size: " + std::to_string(path_indexes_size) +
+                 ", buffer size: " + std::to_string(comp_buffer.size()));
+      return false;
     }
 
     if (path_indexes_size !=
@@ -1996,10 +1997,9 @@ bool CrateReader::ReadSpecs() {
     }
 
     if (fset_indexes_size > comp_buffer.size()) {
-      // Maybe corrupted?
-      fset_indexes_size = comp_buffer.size();
+      PUSH_ERROR("fset_indexes_size exceeds comp_buffer size (corrupted USDC).");
+      return false;
     }
-
     if (fset_indexes_size !=
         _sr->read(size_t(fset_indexes_size), size_t(fset_indexes_size),
                   reinterpret_cast<uint8_t *>(comp_buffer.data()))) {
@@ -2030,10 +2030,9 @@ bool CrateReader::ReadSpecs() {
     }
 
     if (spectype_size > comp_buffer.size()) {
-      // Maybe corrupted?
-      spectype_size = comp_buffer.size();
+      PUSH_ERROR("spectype_size exceeds comp_buffer size (corrupted USDC).");
+      return false;
     }
-
     if (spectype_size !=
         _sr->read(size_t(spectype_size), size_t(spectype_size),
                   reinterpret_cast<uint8_t *>(comp_buffer.data()))) {
