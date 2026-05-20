@@ -359,13 +359,6 @@ if(TINYUSDZ_WITH_EXR OR TINYUSDZ_WITH_TIFF)
   endif()
 endif()
 
-# nanoimage_zlib requires system zlib for PNG decompression
-if(TINYUSDZ_WITH_NANOIMAGE)
-  if(NOT ZLIB_FOUND)
-    find_package(ZLIB REQUIRED)
-  endif()
-endif()
-
 
 # Currently TinyUSDZ does not claim CXX version when TinyUSDZ is added as add_subdirectory()
 # of toplevel(root) project.
@@ -853,8 +846,12 @@ if(TINYUSDZ_WITH_NANOIMAGE)
     ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_jpeg.c
     ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_png.c
     ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_tga.c
-    ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_zlib.c
     PROPERTIES COMPILE_FLAGS "-w")
+  # nanoimage_zlib uses miniz (bundled) instead of system zlib
+  set_source_files_properties(
+    ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_zlib.c
+    PROPERTIES COMPILE_FLAGS "-w" COMPILE_DEFINITIONS "NI_USE_MINIZ"
+               INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
   list(APPEND TINYUSDZ_DEP_SOURCES
        ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_alloc.c
        ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_bmp.c
@@ -862,6 +859,14 @@ if(TINYUSDZ_WITH_NANOIMAGE)
        ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_png.c
        ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_tga.c
        ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_zlib.c)
+  # Ensure miniz.c is compiled (may already be added by EXR/TIFF, but guard for
+  # when nanoimage is the only inflate consumer)
+  if(NOT TINYUSDZ_WITH_EXR AND NOT TINYUSDZ_WITH_TIFF)
+    list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/miniz.c)
+    set_source_files_properties(
+      ${PROJECT_SOURCE_DIR}/src/external/miniz.c
+      PROPERTIES COMPILE_DEFINITIONS "_LARGEFILE64_SOURCE=1")
+  endif()
 endif()
 
 if(TINYUSDZ_WITH_ALAC_AUDIO)
@@ -1607,10 +1612,6 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   # (Skip for MSVC as atomics are built into the runtime)
   if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT EMSCRIPTEN AND NOT MSVC)
     target_link_libraries(${TINYUSDZ_LIB_TARGET} atomic)
-  endif()
-
-  if(TINYUSDZ_WITH_NANOIMAGE)
-    target_link_libraries(${TINYUSDZ_LIB_TARGET} ZLIB::ZLIB)
   endif()
 
   if(IOS)
