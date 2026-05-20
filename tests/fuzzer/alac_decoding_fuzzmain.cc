@@ -7,8 +7,14 @@ static int parse_m4a_alac(const uint8_t* data, size_t size) {
     return -1;
   }
 
-  // TODO
+  // TODO: Wire up the actual ALAC decoder (src/external/alac/codec/ALACDecoder.cpp).
+  // The ALAC sources are linked into this fuzzer executable (see meson.build:
+  // fuzz_alac_decoding), but the harness currently only validates input size.
+  // To complete: parse the MP4/M4A container, extract the ALAC magic cookie,
+  // init ALACDecoder, then feed compressed frames through Decode().
+  // For now, return 0 so the fuzzer exercises the size cap but not decode logic.
 
+  (void)data;
   return 0;
 }
 

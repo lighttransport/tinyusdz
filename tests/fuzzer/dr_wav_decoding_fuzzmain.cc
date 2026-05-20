@@ -15,8 +15,8 @@ static int parse_wav(const uint8_t* data, size_t size) {
   float* psampledata = drwav_open_memory_and_read_pcm_frames_f32(
     data, size, &channels, &sampleRate, &totalFrameCount, /* alloc callbacks */nullptr);
 
-  if (!data) {
-    // err
+  if (!psampledata) {
+    // drwav decode failed
     return 0;
   }
 

@@ -139,3 +139,69 @@ void typed_array_view_blocked_sample_test(void) {
     TEST_CHECK(view[0] == 1.0);
   }
 }
+
+void typed_array_subspan_checked_test(void) {
+  TypedArray<float> arr;
+  arr.resize(10);
+  for (size_t i = 0; i < 10; i++) arr[i] = float(i);
+
+  // Valid subspan
+  {
+    auto result = arr.subspan_checked(2, 3);
+    TEST_CHECK(result.has_value());
+    auto span = result.value();
+    TEST_CHECK(span.size() == 3);
+    TEST_CHECK(span[0] == 2.0f);
+    TEST_CHECK(span[1] == 3.0f);
+    TEST_CHECK(span[2] == 4.0f);
+  }
+
+  // Valid subspan to end (default count)
+  {
+    auto result = arr.subspan_checked(8);
+    TEST_CHECK(result.has_value());
+    auto span = result.value();
+    TEST_CHECK(span.size() == 2);
+    TEST_CHECK(span[0] == 8.0f);
+    TEST_CHECK(span[1] == 9.0f);
+  }
+
+  // Out-of-bounds offset (beyond size)
+  {
+    auto result = arr.subspan_checked(11, 1);
+    TEST_CHECK(!result.has_value());
+    TEST_CHECK(result.error().find("offset out of range") != std::string::npos);
+  }
+
+  // Count exceeds bounds
+  {
+    auto result = arr.subspan_checked(8, 5);
+    TEST_CHECK(!result.has_value());
+    TEST_CHECK(result.error().find("count exceeds array bounds") != std::string::npos);
+  }
+
+  // Valid empty subspan
+  {
+    auto result = arr.subspan_checked(5, 0);
+    TEST_CHECK(result.has_value());
+    auto span = result.value();
+    TEST_CHECK(span.size() == 0);
+  }
+
+  // const overload
+  {
+    const TypedArray<float> &carr = arr;
+    auto result = carr.subspan_checked(0, 5);
+    TEST_CHECK(result.has_value());
+    auto span = result.value();
+    TEST_CHECK(span.size() == 5);
+    TEST_CHECK(span[0] == 0.0f);
+  }
+
+  // const out-of-bounds
+  {
+    const TypedArray<float> &carr = arr;
+    auto result = carr.subspan_checked(10, 1);
+    TEST_CHECK(!result.has_value());
+  }
+}

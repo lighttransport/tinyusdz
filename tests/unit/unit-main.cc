@@ -380,6 +380,7 @@ TEST_LIST = {
   { "typed_array_view_vector_storage_test", typed_array_view_vector_storage_test },
   { "typed_array_view_at_time_test", typed_array_view_at_time_test },
   { "typed_array_view_blocked_sample_test", typed_array_view_blocked_sample_test },
+  { "typed_array_subspan_checked_test", typed_array_subspan_checked_test },
   // Phase 0A: TypedArray TimeSamples tests
   { "typed_array_dedup_int_test", typed_array_dedup_int_test },
   { "typed_array_dedup_float_double_test", typed_array_dedup_float_double_test },
@@ -524,6 +525,7 @@ TEST_LIST = {
   { "security_json_point3f_count_overflow_rejected_test", security_json_point3f_count_overflow_rejected_test },
   { "security_resolver_oversized_custom_asset_rejected_test", security_resolver_oversized_custom_asset_rejected_test },
   { "security_nested_zstd_depth_rejected_test", security_nested_zstd_depth_rejected_test },
+  { "security_sha256_overflow_rejected_test", security_sha256_overflow_rejected_test },
   // USDZ writer and validation tests
   { "usdz_writer_basic_roundtrip_test", usdz_writer_basic_roundtrip_test },
   { "usdz_writer_with_assets_test", usdz_writer_with_assets_test },
@@ -745,6 +747,7 @@ TEST_LIST = {
   { "ik_fabrik_solve_test", ik_fabrik_solve_test },
   { "ik_joint_limits_test", ik_joint_limits_test },
   { "ik_unreachable_target_test", ik_unreachable_target_test },
+  { "ik_excessive_chain_rejected_test", ik_excessive_chain_rejected_test },
   // Rigid body collision
   { "rb_sphere_sphere_test", rb_sphere_sphere_test },
   { "rb_sphere_plane_test", rb_sphere_plane_test },
@@ -756,6 +759,7 @@ TEST_LIST = {
   { "rb_falling_sphere_test", rb_falling_sphere_test },
   { "rb_pendulum_hinge_test", rb_pendulum_hinge_test },
   { "rb_stacking_sleep_test", rb_stacking_sleep_test },
+  { "rb_phys_world_memory_limit_test", rb_phys_world_memory_limit_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif

@@ -481,6 +481,13 @@ bool BuildIKChain(
     return false;
   }
 
+  constexpr int kMaxIKJoints = 1024;
+  if (n > kMaxIKJoints) {
+    if (err) *err = "IK chain exceeds max joint count (" +
+                    std::to_string(kMaxIKJoints) + ")";
+    return false;
+  }
+
   // Allocate joints
   TydraIKJoint *joints = new TydraIKJoint[static_cast<size_t>(n)];
   std::memset(joints, 0, sizeof(TydraIKJoint) * static_cast<size_t>(n));
