@@ -5,7 +5,12 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+
+#ifdef NI_USE_MINIZ
+#include "miniz.h"
+#else
 #include <zlib.h>
+#endif
 
 static void ni_set_error(char *err, size_t cap, const char *fmt, ...) {
   va_list args;
