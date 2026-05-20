@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <cstdint>
 
@@ -111,6 +112,12 @@ std::string sha256(const char *binary, size_t size) {
         0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
         0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
     };
+
+    // Guard against overflow in allocation: new_len can be up to size + 64,
+    // and we need new_len + 8 bytes. SIZE_MAX is a realistic limit on 32-bit.
+    if (size > (std::numeric_limits<size_t>::max)() - 72) {
+        return "";
+    }
 
     const uint8_t *data = reinterpret_cast<const uint8_t *>(binary);
     size_t bit_len = size * 8;

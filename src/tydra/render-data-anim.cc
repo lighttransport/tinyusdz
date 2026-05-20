@@ -225,17 +225,44 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     // Allocate flat bulk buffers for scatter writes (avoids per-sampler resize zero-fill).
     // Layout: [joint0_frame0, joint0_frame1, ..., joint1_frame0, ...] (joint-major)
     // Scatter writes in frame-major order; final copy to per-sampler vectors is joint-major memcpy.
-    size_t transBufTimesSize = nTransTimes ? nJoints * nTransTimes : 0;
-    size_t transBufValsSize  = nTransTimes ? nJoints * nTransTimes * 3 : 0;
-    size_t rotBufTimesSize   = nRotTimes   ? nJoints * nRotTimes : 0;
-    size_t rotBufValsSize    = nRotTimes   ? nJoints * nRotTimes * 4 : 0;
-    size_t scaleBufTimesSize = nScaleTimes ? nJoints * nScaleTimes : 0;
-    size_t scaleBufValsSize  = nScaleTimes ? nJoints * nScaleTimes * 3 : 0;
+    size_t transBufTimesSize = 0, transBufValsSize = 0;
+    size_t rotBufTimesSize = 0, rotBufValsSize = 0;
+    size_t scaleBufTimesSize = 0, scaleBufValsSize = 0;
 
-    // Single allocation for all bulk data
-    size_t totalFloats = transBufTimesSize + transBufValsSize
-                       + rotBufTimesSize + rotBufValsSize
-                       + scaleBufTimesSize + scaleBufValsSize;
+    if (nTransTimes) {
+      if (!safe::mul(nJoints, nTransTimes, &transBufTimesSize)) {
+        PUSH_ERROR_AND_RETURN("Integer overflow: nJoints * nTransTimes");
+      }
+      if (!safe::mul3(nJoints, nTransTimes, size_t(3), &transBufValsSize)) {
+        PUSH_ERROR_AND_RETURN("Integer overflow: nJoints * nTransTimes * 3");
+      }
+    }
+    if (nRotTimes) {
+      if (!safe::mul(nJoints, nRotTimes, &rotBufTimesSize)) {
+        PUSH_ERROR_AND_RETURN("Integer overflow: nJoints * nRotTimes");
+      }
+      if (!safe::mul3(nJoints, nRotTimes, size_t(4), &rotBufValsSize)) {
+        PUSH_ERROR_AND_RETURN("Integer overflow: nJoints * nRotTimes * 4");
+      }
+    }
+    if (nScaleTimes) {
+      if (!safe::mul(nJoints, nScaleTimes, &scaleBufTimesSize)) {
+        PUSH_ERROR_AND_RETURN("Integer overflow: nJoints * nScaleTimes");
+      }
+      if (!safe::mul3(nJoints, nScaleTimes, size_t(3), &scaleBufValsSize)) {
+        PUSH_ERROR_AND_RETURN("Integer overflow: nJoints * nScaleTimes * 3");
+      }
+    }
+
+    // Single allocation for all bulk data — compute total with overflow checks
+    size_t totalFloats = 0;
+    if (!safe::add(transBufTimesSize, transBufValsSize, &totalFloats) ||
+        !safe::add(totalFloats, rotBufTimesSize, &totalFloats) ||
+        !safe::add(totalFloats, rotBufValsSize, &totalFloats) ||
+        !safe::add(totalFloats, scaleBufTimesSize, &totalFloats) ||
+        !safe::add(totalFloats, scaleBufValsSize, &totalFloats)) {
+      PUSH_ERROR_AND_RETURN("Integer overflow in totalFloats computation");
+    }
     std::unique_ptr<float[]> bulkBuf(new float[totalFloats]);
     float *ptr = bulkBuf.get();
 

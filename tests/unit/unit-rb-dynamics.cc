@@ -10,6 +10,8 @@
 
 #include "unit-rb-dynamics.h"
 #include "tydra/rb-dynamics.h"
+#include "tydra/rb-dynamics.hh"
+#include "tinyusdz.hh"
 
 #include <cmath>
 #include <cstring>
@@ -261,4 +263,37 @@ void rb_stacking_sleep_test(void) {
     if (z < -1.0f) above_ground = 0;
   }
   TEST_CHECK(above_ground);
+}
+
+void rb_phys_world_memory_limit_test(void) {
+  using namespace tinyusdz;
+  using namespace tinyusdz::tydra;
+
+  Stage stage;
+  TydraPhysWorld world;
+  std::string err;
+
+  // Request tiny allocation limit with huge caps — must reject.
+  {
+    PhysWorldBuildOptions opts;
+    opts.max_memory_limit_mb = 1;  // 1 MiB
+    // Push max_contacts far beyond what 1 MiB allows.
+    // sizeof(ContactConstraint) is ~128 bytes + sizeof(TydraPhysContact) ~64 bytes
+    // = ~192 bytes/contact. 4096 * 192 ≈ 786 KiB already. Bump to 32768.
+    opts.max_contacts = 32768;
+    opts.max_colliders = 16384;
+    opts.max_pairs = 65536;
+    bool ok = BuildPhysWorld(stage, &world, &err, opts);
+    TEST_CHECK(!ok);
+    TEST_CHECK(err.find("exceeds max_memory_limit_mb") != std::string::npos);
+  }
+
+  // Zero limit means unlimited — should succeed (empty stage = trivial world).
+  {
+    PhysWorldBuildOptions opts;
+    opts.max_memory_limit_mb = 0;
+    bool ok = BuildPhysWorld(stage, &world, &err, opts);
+    TEST_CHECK(ok);
+    if (ok) FreePhysWorld(&world);
+  }
 }

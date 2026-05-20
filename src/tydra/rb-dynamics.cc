@@ -8,9 +8,12 @@
  */
 
 #include "rb-dynamics.h"
+#include "safe-arithmetic.hh"
 #include <string.h>
 #include <float.h>
 #include <math.h>
+
+#include <cstdint>
 
 /* ======================================================================== */
 /* Contact constraint cache (file-local)                                    */
@@ -1305,6 +1308,46 @@ bool BuildPhysWorld(
   if (!out_world) {
     if (err) *err = "out_world is null";
     return false;
+  }
+
+  /* Validate allocation sizes against memory budget and overflow */
+  {
+    size_t total_bytes = 0;
+    size_t part_bytes;
+
+#define RB_MUL_CHECK(n, sizet) \
+    do { \
+      if (!safe::mul(size_t(n), sizet, &part_bytes)) { \
+        if (err) *err = "Integer overflow computing physics buffer allocation size"; \
+        return false; \
+      } \
+      if (!safe::add(total_bytes, part_bytes, &total_bytes)) { \
+        if (err) *err = "Integer overflow in physics buffer total allocation size"; \
+        return false; \
+      } \
+    } while (0)
+
+    RB_MUL_CHECK(options.max_bodies, sizeof(TydraPhysBody));
+    RB_MUL_CHECK(options.max_colliders, sizeof(TydraPhysCollider));
+    RB_MUL_CHECK(options.max_joints, sizeof(TydraPhysJoint));
+    RB_MUL_CHECK(options.max_contacts, sizeof(TydraPhysContact));
+    RB_MUL_CHECK(options.max_colliders, sizeof(TydraPhysAABB));
+    RB_MUL_CHECK(options.max_pairs, sizeof(TydraPhysCollisionPair));
+    RB_MUL_CHECK(options.max_colliders, sizeof(int32_t));
+    RB_MUL_CHECK(options.max_islands, sizeof(TydraPhysIsland));
+    RB_MUL_CHECK(options.max_bodies, sizeof(int32_t));
+    RB_MUL_CHECK(options.max_bodies * 2, sizeof(int32_t));
+    RB_MUL_CHECK(options.max_contacts, sizeof(ContactConstraint));
+
+#undef RB_MUL_CHECK
+
+    if (options.max_memory_limit_mb > 0) {
+      const size_t limit_bytes = options.max_memory_limit_mb * size_t(1024 * 1024);
+      if (total_bytes > limit_bytes) {
+        if (err) *err = "Physics world buffer allocation exceeds max_memory_limit_mb";
+        return false;
+      }
+    }
   }
 
   /* Allocate all buffers */

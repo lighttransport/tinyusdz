@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "nonstd/span.hpp"
+#include "nonstd/expected.hpp"
 #include "logger.hh"
 
 namespace tinyusdz {
@@ -219,6 +220,34 @@ class TypedArray {
           "TypedArray::subspan: count exceeds array bounds");
     }
 #endif
+    return nonstd::span<const T>(data() + offset, actual_count);
+  }
+
+  // Span views with bounds checking always enabled (no exceptions needed).
+  // Returns an error string on out-of-bounds access; safe in all build configs.
+  nonstd::expected<nonstd::span<T>, std::string> subspan_checked(
+      size_type offset, size_type count = static_cast<size_type>(-1)) {
+    if (offset > size()) {
+      return nonstd::make_unexpected("TypedArray::subspan_checked: offset out of range");
+    }
+    size_type actual_count =
+        (count == static_cast<size_type>(-1)) ? (size() - offset) : count;
+    if (offset + actual_count > size()) {
+      return nonstd::make_unexpected("TypedArray::subspan_checked: count exceeds array bounds");
+    }
+    return nonstd::span<T>(data() + offset, actual_count);
+  }
+
+  nonstd::expected<nonstd::span<const T>, std::string> subspan_checked(
+      size_type offset, size_type count = static_cast<size_type>(-1)) const {
+    if (offset > size()) {
+      return nonstd::make_unexpected("TypedArray::subspan_checked: offset out of range");
+    }
+    size_type actual_count =
+        (count == static_cast<size_type>(-1)) ? (size() - offset) : count;
+    if (offset + actual_count > size()) {
+      return nonstd::make_unexpected("TypedArray::subspan_checked: count exceeds array bounds");
+    }
     return nonstd::span<const T>(data() + offset, actual_count);
   }
 

@@ -27,6 +27,7 @@ struct PhysWorldBuildOptions {
   int32_t max_contacts = 4096;
   int32_t max_pairs = 8192;
   int32_t max_islands = 256;
+  size_t max_memory_limit_mb = 0;  // 0 = no limit; max bytes for all physics buffers
 };
 
 /// Build a TydraPhysWorld from a USD Stage.
