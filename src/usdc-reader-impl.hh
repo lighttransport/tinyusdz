@@ -141,6 +141,12 @@ class USDCReader::Impl {
     crate_reader = nullptr;
   }
 
+  // Prevent copy/move — raw owning pointer in crate_reader.
+  Impl(const Impl &) = delete;
+  Impl &operator=(const Impl &) = delete;
+  Impl(Impl &&) = delete;
+  Impl &operator=(Impl &&) = delete;
+
   void set_reader_config(const USDCReaderConfig &config) {
     _config = config;
 

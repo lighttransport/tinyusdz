@@ -37,17 +37,14 @@ bool IsUSDA(const std::string &filename, size_t max_filesize = 0);
 
 class USDAReader {
  public:
-  struct ParseState {
-    int64_t loc{-1};  // byte location in StreamReder
-  };
-
-  USDAReader() = delete;
-  USDAReader(tinyusdz::StreamReader *sr);
-
-  USDAReader(const USDAReader &rhs) = delete;
-  USDAReader(USDAReader &&rhs) = delete;
-
+  USDAReader(StreamReader *sr);
   ~USDAReader();
+
+  // Prevent copy/move — raw owning pointer (_impl).
+  USDAReader(const USDAReader &) = delete;
+  USDAReader &operator=(const USDAReader &) = delete;
+  USDAReader(USDAReader &&) = delete;
+  USDAReader &operator=(USDAReader &&) = delete;
 
 
   ///

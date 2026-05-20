@@ -86,9 +86,7 @@ bool CrateReader::ReadCompressedInts(Int *out,
   }
 
   if (compSize > compBufferSize) {
-    // Truncate
-    // TODO: return error?
-    compSize = compBufferSize;
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "compSize exceeds compBufferSize (corrupted USDC).");
   }
 
   if (compSize > _sr->size()) {
