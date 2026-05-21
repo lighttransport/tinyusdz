@@ -158,6 +158,7 @@ tinyusdz_sources = files(
   'src/ascii-parser-props.cc',
   'src/ascii-parser-entry.cc',
   'src/ascii-parser-basetype.cc',
+  'src/ascii-parser-basetype-inst.cc',
   'src/ascii-parser-timesamples.cc',
   'src/ascii-parser-timesamples-array.cc',
   'src/audio-loader.cc',
