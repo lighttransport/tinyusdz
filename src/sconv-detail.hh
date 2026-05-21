@@ -7,6 +7,7 @@
 #pragma once
 
 #include "crate-writer.hh"
+#include "timesamples.hh"  // value::TimeSamples (value-types.hh no longer pulls timesamples.hh transitively)
 #include "common-macros.inc"
 #include "pprinter.hh"  // For to_string(Specifier), to_string(GeomMesh enums), etc.
 

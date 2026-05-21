@@ -81,6 +81,10 @@ endif ()
 
 # options
 option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
+# NOTE: Measured to NOT help (and slightly hurt codegen) on this codebase: the
+# compile cost is dominated by template *instantiation* and -O3 codegen, not by
+# header parsing, which is all a PCH can cache. Kept as an opt-in knob; default OFF.
+option(TINYUSDZ_USE_PCH "Use a precompiled header (does not help this codebase; opt-in)." OFF)
 option(TINYUSDZ_BUILD_SHARED_LIBS "Build as dll?" ${BUILD_SHARED_LIBS})
 option(TINYUSDZ_ENABLE_THREAD "Build with C++11 std::thread support?(threading support is not implemented yet)" OFF)
 option(TINYUSDZ_MSAN "Build with MSAN support(for developer only)" OFF)
@@ -393,19 +397,28 @@ if(TINYUSDZ_USE_CCACHE)
     if(CCACHE_EXE)
 
       message(STATUS "Use ccache : " ${CCACHE_EXE})
+
+      # ccache + precompiled headers: ccache will refuse to cache PCH-using TUs
+      # unless told to relax the PCH/time-macro hash checks. Wrap the launcher
+      # with `env CCACHE_SLOPPINESS=...` (Unix; MSVC path does not use ccache).
+      set(CCACHE_LAUNCHER "${CCACHE_EXE}")
+      if(TINYUSDZ_USE_PCH AND CMAKE_HOST_UNIX)
+        set(CCACHE_LAUNCHER env CCACHE_SLOPPINESS=pch_defines,time_macros "${CCACHE_EXE}")
+      endif()
+
       # CMAKE_C_COMPILER_LAUNCHER = available from cmake 3.4+)
       if(CMAKE_C_COMPILER_LAUNCHER)
         set(CMAKE_C_COMPILER_LAUNCHER "${CMAKE_C_COMPILER_LAUNCHER}"
-                                      "${CCACHE_EXE}")
+                                      ${CCACHE_LAUNCHER})
       else()
-        set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_EXE}")
+        set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_LAUNCHER})
       endif()
 
       if(CMAKE_CXX_COMPILER_LAUNCHER)
         set(CMAKE_CXX_COMPILER_LAUNCHER "${CMAKE_CXX_COMPILER_LAUNCHER}"
-                                        "${CCACHE_EXE}")
+                                        ${CCACHE_LAUNCHER})
       else()
-        set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_EXE}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_LAUNCHER})
       endif()
 
     endif(CCACHE_EXE)
@@ -473,7 +486,6 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-props.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-entry.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-basetype.cc
-    ${PROJECT_SOURCE_DIR}/src/ascii-parser-basetype-typedarray.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-timesamples.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-timesamples-array.cc
     ${PROJECT_SOURCE_DIR}/src/audio-loader.cc
@@ -594,6 +606,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-all.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-inst-scalar.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-inst-array.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/command-and-history.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/obj-export.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/usd-export.cc
@@ -1494,6 +1508,14 @@ endif()
 # -- common target props
 #
 foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
+
+  # Precompiled header to amortize parsing of large, stable headers across the
+  # many C++ TUs. Guarded with COMPILE_LANGUAGE:CXX because the library also
+  # contains C sources (zstd.c, lz4.c, yyjson.c, ...) which cannot use a C++ PCH.
+  if(TINYUSDZ_USE_PCH)
+    target_precompile_headers(${TINYUSDZ_LIB_TARGET} PRIVATE
+      "$<$<COMPILE_LANGUAGE:CXX>:${PROJECT_SOURCE_DIR}/src/tinyusdz-pch.hh>")
+  endif()
 
   # Although TinyUSDZ should compile well without /bigobj flag,
   # corrent TinyYSDZ need to use bigobj format otherwise we'll get: fatal  error C1128: number of sections exceeded object file format limit: compile with /bigobj

@@ -2894,21 +2894,18 @@ inline void RegisterPrimAttrTypes(SetType &d, bool include_variant_set = false) 
   }
 }
 
-}  // namespace value
-
-}  // namespace tinyusdz
-
-#include "timesamples.hh"
-
-namespace tinyusdz {
-namespace value {
-
-// token[] and TimeSamples traits - placed here because TimeSamples is defined
-// in timesamples.hh which is included above.
+// token[] trait. std::vector<token> needs an explicit specialization to
+// override the generic TypeTraits<std::vector<T>>.
+//
+// NOTE: The TimeSamples TypeTrait used to live here behind `#include
+// "timesamples.hh"`. It now lives at the end of timesamples.hh instead, so that
+// value-types.hh does NOT have to pull in the (heavy) timesamples.hh. This
+// breaks a costly include cycle: timesamples.hh already includes value-types.hh,
+// so every value-types.hh consumer was transitively parsing all of
+// timesamples.hh (and the TypedTimeSamples<> machinery).
 #include "define-type-trait.inc"
 
 DEFINE_TYPE_TRAIT(std::vector<token>, "token[]", TYPE_ID_TOKEN_VECTOR, 1);
-DEFINE_TYPE_TRAIT(TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

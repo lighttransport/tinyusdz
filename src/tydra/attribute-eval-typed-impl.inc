@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022-Present Light Transport Entertainment, Inc.
 //
-// std::string specializations of the typed attribute evaluators.
-// The generic template bodies live in attribute-eval-typed-impl.inc and are
-// instantiated by attribute-eval-typed-inst-{scalar,array}.cc.
+// Generic typed-attribute evaluation template bodies.
 //
-#include "attribute-eval-internal.hh"
-
-namespace tinyusdz {
-namespace tydra {
+// Included (inside namespace tinyusdz::tydra) by the per-type-group
+// instantiation TUs: attribute-eval-typed-inst-{scalar,array}.cc.
+// The std::string specializations live in attribute-eval-typed-all.cc.
 
 #ifndef ATTRIBUTE_EVAL_PUSHERROR
 #define ATTRIBUTE_EVAL_PUSHERROR
@@ -18,11 +15,11 @@ namespace tydra {
   }
 #endif
 
-template<>
+template<typename T>
 bool EvaluateTypedAttribute(
-    const tinyusdz::Stage &stage, const TypedAttribute<std::string> &tattr,
+    const tinyusdz::Stage &stage, const TypedAttribute<T> &tattr,
     const std::string &attr_name,
-    std::string *value_out,
+    T *value_out,
     std::string *err) {
 
   if (!value_out) {
@@ -42,7 +39,7 @@ bool EvaluateTypedAttribute(
   } else if (tattr.is_connection()) {
 
     Attribute attr = detail::ToAttributeConnection<
-        TypedAttribute<std::string>, Variability::Uniform>(tattr);
+        TypedAttribute<T>, Variability::Uniform>(tattr);
 
     return detail::FollowConnection(
         stage, attr, attr_name, value_out, err,
@@ -60,10 +57,11 @@ bool EvaluateTypedAttribute(
   return false;
 }
 
-template<> bool EvaluateTypedAnimatableAttribute<std::string>(
-    const tinyusdz::Stage &stage, const TypedAttribute<Animatable<std::string>> &tattr,
+template<typename T>
+bool EvaluateTypedAnimatableAttribute(
+    const tinyusdz::Stage &stage, const TypedAttribute<Animatable<T>> &tattr,
     const std::string &attr_name,
-    std::string *value_out,
+    T *value_out,
     std::string *err,
     const double t,
     const value::TimeSampleInterpolationType tinterp) {
@@ -72,27 +70,18 @@ template<> bool EvaluateTypedAnimatableAttribute<std::string>(
     PUSH_ERROR_AND_RETURN("`value_out` param is nullptr.");
   }
 
+  // Eval order:
+  // - ValueBlocked?
+  // - has value?(default value or timesampled value)
+  // - has connection?
+
   if (tattr.is_blocked()) {
     if (err) {
       (*err) += "Attribute is Blocked.\n";
     }
     return false;
-  } else if (tattr.is_value_empty()) {
-    if (err) {
-      (*err) += "Attribute value is empty.\n";
-    }
-    return false;
-  } else if (tattr.is_connection()) {
-
-    Attribute attr = detail::ToAttributeConnection<
-        TypedAttribute<Animatable<std::string>>, Variability::Varying,
-        /* copyMeta */ true>(tattr, value::TypeTraits<std::string>::type_name());
-
-    return detail::FollowConnection(
-        stage, attr, attr_name, value_out, err, t, tinterp);
-
-  } else {
-    Animatable<std::string> value;
+  } else if (tattr.has_value()) {
+    Animatable<T> value;
     if (tattr.get_value(&value)) {
       if (value.get(t, value_out, tinterp)) {
         return true;
@@ -103,7 +92,21 @@ template<> bool EvaluateTypedAnimatableAttribute<std::string>(
         return false;
       }
     }
+  } else if (tattr.has_connections()) {
 
+    Attribute attr = detail::ToAttributeConnection<
+        TypedAttribute<Animatable<T>>, Variability::Varying,
+        /* copyMeta */ true>(tattr, value::TypeTraits<T>::type_name());
+
+    return detail::FollowConnection(
+        stage, attr, attr_name, value_out, err, t, tinterp);
+
+  } else if (tattr.is_value_empty()) {
+    if (err) {
+      (*err) += "Attribute value is empty.\n";
+    }
+    return false;
+  } else {
     if (err) {
       (*err) += fmt::format("[Internal error] Invalid TypedAttribute? : {} \n", attr_name);
     }
@@ -111,11 +114,11 @@ template<> bool EvaluateTypedAnimatableAttribute<std::string>(
   return false;
 }
 
-template<>
+template<typename T>
 bool EvaluateTypedAttribute(
-    const tinyusdz::Stage &stage, const TypedAttributeWithFallback<std::string> &tattr,
+    const tinyusdz::Stage &stage, const TypedAttributeWithFallback<T> &tattr,
     const std::string &attr_name,
-    std::string *value_out,
+    T *value_out,
     std::string *err) {
 
   if (!value_out) {
@@ -127,10 +130,13 @@ bool EvaluateTypedAttribute(
       (*err) += "Attribute is Blocked.\n";
     }
     return false;
-  } else if (tattr.is_connection()) {
+  } else if (tattr.has_value()) {
+    (*value_out) = tattr.get_value();
+    return true;
+  } else if (tattr.has_connections()) {
 
     Attribute attr = detail::ToAttributeConnection<
-        TypedAttributeWithFallback<std::string>, Variability::Uniform>(tattr);
+        TypedAttributeWithFallback<T>, Variability::Uniform>(tattr);
 
     return detail::FollowConnection(
         stage, attr, attr_name, value_out, err,
@@ -141,17 +147,18 @@ bool EvaluateTypedAttribute(
       (*err) += "Attribute value is empty.\n";
     }
     return false;
-  } else {
-    (*value_out) = tattr.get_value();
-    return true;
   }
+
+  PUSH_ERROR_AND_RETURN(fmt::format("Internal error. Attribute {} has invalid form of TypedAttributeWithFallback<{}>.",
+     attr_name, value::TypeTraits<T>::type_name()));
+
 }
 
-template<>
+template<typename T>
 bool EvaluateTypedAnimatableAttribute(
-    const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<std::string>> &tattr,
+    const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<T>> &tattr,
     const std::string &attr_name,
-    std::string *value_out,
+    T *value_out,
     std::string *err,
     const double t,
     const value::TimeSampleInterpolationType tinterp) {
@@ -166,8 +173,8 @@ bool EvaluateTypedAnimatableAttribute(
     }
     return false;
   } else if (tattr.has_value()) {
-    const Animatable<std::string> &value = tattr.get_value();
-    std::string v;
+    const Animatable<T> &value = tattr.get_value();
+    T v;
     if (value.get(t, &v, tinterp)) {
       *value_out = v;
       return true;
@@ -177,12 +184,11 @@ bool EvaluateTypedAnimatableAttribute(
       }
       return false;
     }
-
   } else if (tattr.has_connections()) {
 
     Attribute attr = detail::ToAttributeConnection<
-        TypedAttributeWithFallback<Animatable<std::string>>,
-        Variability::Varying>(tattr, value::TypeTraits<std::string>::type_name());
+        TypedAttributeWithFallback<Animatable<T>>, Variability::Varying>(
+            tattr, value::TypeTraits<T>::type_name());
 
     return detail::FollowConnection(
         stage, attr, attr_name, value_out, err,
@@ -200,6 +206,3 @@ bool EvaluateTypedAnimatableAttribute(
   }
   return false;
 }
-
-}  // namespace tydra
-}  // namespace tinyusdz
