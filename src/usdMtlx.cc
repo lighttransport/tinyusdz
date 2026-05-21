@@ -26,6 +26,7 @@
 #include "common-macros.inc"
 #include "io-util.hh"
 #include "pprint-enum.hh"
+#include "security-policy.hh"
 #include "str-util.hh"  // For dragonbox-based dtos()
 #include "tiny-format.hh"
 #include "value-pprint.hh"
@@ -1878,17 +1879,31 @@ static bool ProcessIncludes(const std::string &base_dir, std::string &xml_str,
       PUSH_ERROR_AND_RETURN("<include> filename is empty");
     }
 
-    // Resolve include path relative to base directory
-    std::string include_path;
-    if (include_filename[0] == '/' || include_filename[0] == '\\') {
-      include_path = include_filename; // Absolute path
-    } else {
-      include_path = base_dir;
-      if (!include_path.empty() && include_path.back() != '/' && include_path.back() != '\\') {
-        include_path += '/';
-      }
-      include_path += include_filename;
+    // Resolve include path relative to base directory.
+    //
+    // SECURITY: `include_filename` is attacker-controlled (it comes verbatim
+    // from the <include filename="..."> attribute of an untrusted MaterialX
+    // document). Validate it as a contained relative path before touching the
+    // filesystem to prevent path traversal / arbitrary file read. This rejects
+    // absolute paths ("/etc/passwd"), Windows drive letters ("C:\\..."), and
+    // any ".." segment, and normalizes the remainder. Only paths contained
+    // under `base_dir` are allowed, mirroring the validation that
+    // composition.cc / composition-graph.cc apply to sublayers/references.
+    std::string normalized_include;
+    if (!security_policy::ValidateAndNormalizeAssetPath(include_filename,
+                                                        &normalized_include)) {
+      PUSH_ERROR_AND_RETURN(
+          "<include> filename is not a safe relative path; absolute paths and "
+          "'..' traversal are not allowed: " +
+          include_filename);
     }
+
+    std::string include_path = base_dir;
+    if (!include_path.empty() && include_path.back() != '/' &&
+        include_path.back() != '\\') {
+      include_path += '/';
+    }
+    include_path += normalized_include;
 
     // Read the included file
     size_t inc_max_bytes = 1024 * 1024 * 16;
