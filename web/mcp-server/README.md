@@ -52,8 +52,29 @@ Then, edit `claude_desktop_config.json` (Through `Settings` -> `Developer` -> `E
 
 It will be required to add `"-y"` to args if you didn't install `mcp-remote` yet.
 
-NOTE: No authorization(API key) supported at the moment.
 NOTE: It is recommended to terminate Claude for Desktop process from Task Manager(Windows) or Force quit app(macOS), then restart to reflect changes of `claude_desktop_config.json`
+
+## Security
+
+The HTTP MCP server requires a bearer token and binds to loopback by default:
+
+* **Bind address** — defaults to `127.0.0.1` (not reachable from the LAN). Set
+  `MCP_HOST=0.0.0.0` only if you intentionally want to expose it.
+* **Authentication** — every `/mcp` request must send
+  `Authorization: Bearer <token>`. Set the token with `MCP_AUTH_TOKEN`. If unset,
+  an ephemeral token is generated and printed to the console on startup.
+* **CORS** — cross-origin browser access is denied by default. Opt specific
+  origins in with `MCP_ALLOWED_ORIGINS` (comma-separated).
+* **DNS-rebinding protection** — only requests whose `Host` header is in
+  `MCP_ALLOWED_HOSTS` are accepted (defaults to the loopback host/port).
+
+```bash
+MCP_AUTH_TOKEN=$(openssl rand -hex 32) bun server-http.js
+# client must then send:  Authorization: Bearer $MCP_AUTH_TOKEN
+```
+
+NOTE: tools operate on a process-global context shared across sessions; run one
+trusted client per server process until per-session isolation lands.
 
 ## TODO
 
