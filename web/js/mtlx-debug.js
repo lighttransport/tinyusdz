@@ -5534,6 +5534,18 @@ function loadMeshes() {
 }
 
 // Update scene metadata panel
+// Escape a string for safe interpolation into HTML. Scene metadata
+// (author/comment/copyright/defaultPrim) comes from untrusted USD files and
+// must never reach innerHTML unescaped.
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function updateSceneMetadataPanel() {
     const panel = document.getElementById('scene-metadata');
     const content = document.getElementById('metadata-content');
@@ -5576,24 +5588,24 @@ function updateSceneMetadataPanel() {
 
     // Default prim
     if (currentSceneMetadata.defaultPrim) {
-        html += `<div><strong>Default Prim:</strong> ${currentSceneMetadata.defaultPrim}</div>`;
+        html += `<div><strong>Default Prim:</strong> ${escapeHtml(currentSceneMetadata.defaultPrim)}</div>`;
     }
 
     // Author
     if (currentSceneMetadata.author) {
-        html += `<div><strong>Author:</strong> ${currentSceneMetadata.author}</div>`;
+        html += `<div><strong>Author:</strong> ${escapeHtml(currentSceneMetadata.author)}</div>`;
     }
 
     // Comment (can be multiline)
     if (currentSceneMetadata.comment) {
         const commentLines = currentSceneMetadata.comment.split('\n');
         if (commentLines.length === 1) {
-            html += `<div><strong>Comment:</strong> ${currentSceneMetadata.comment}</div>`;
+            html += `<div><strong>Comment:</strong> ${escapeHtml(currentSceneMetadata.comment)}</div>`;
         } else {
             html += `<div><strong>Comment:</strong></div>`;
             html += `<div style="padding-left: 10px; font-style: italic; color: #bbb;">`;
             commentLines.forEach(line => {
-                html += `${line}<br>`;
+                html += `${escapeHtml(line)}<br>`;
             });
             html += `</div>`;
         }
@@ -5601,7 +5613,7 @@ function updateSceneMetadataPanel() {
 
     // Copyright
     if (currentSceneMetadata.copyright) {
-        html += `<div><strong>Copyright:</strong> ${currentSceneMetadata.copyright}</div>`;
+        html += `<div><strong>Copyright:</strong> ${escapeHtml(currentSceneMetadata.copyright)}</div>`;
     }
 
     content.innerHTML = html;

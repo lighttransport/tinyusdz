@@ -4087,6 +4087,17 @@ function buildLightListUI() {
     }
 }
 
+// Escape a string for safe interpolation into HTML. Light names come from
+// untrusted USD files and must never reach innerHTML unescaped.
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function createLightRow(light, source, index) {
     const row = document.createElement('div');
     row.className = 'light-item';
@@ -4100,8 +4111,8 @@ function createLightRow(light, source, index) {
         <input type="checkbox" ${isOn ? 'checked' : ''}
                onchange="toggleLight('${source}', ${index}, this.checked)" title="Toggle light">
         <span class="light-swatch" style="background: ${colorCSS}"></span>
-        <span class="light-label">${name}</span>
-        <span class="light-type">${typeLabel}</span>
+        <span class="light-label">${escapeHtml(name)}</span>
+        <span class="light-type">${escapeHtml(typeLabel)}</span>
     `;
     return row;
 }

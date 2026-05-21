@@ -1,3 +1,15 @@
+// Escape a string for safe interpolation into HTML (text or quoted-attribute
+// context). Bone/joint names come from untrusted USD files and must never
+// reach innerHTML unescaped.
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /**
  * Build HTML for a bone hierarchy tree.
  *
@@ -37,9 +49,9 @@ export function buildJointHierarchyHTML(bones, options = {}) {
 
     html += `<div style="color: ${color}; cursor: pointer; padding: 2px; border-radius: 3px;"
               class="${itemClassName}"
-              data-bone-name="${bone.name}"
+              data-bone-name="${escapeHtml(bone.name)}"
               onmouseover="this.style.backgroundColor='${hoverBackground}'"
-              onmouseout="this.style.backgroundColor='transparent'">${indent}${bullet}${bone.name}</div>`;
+              onmouseout="this.style.backgroundColor='transparent'">${indent}${bullet}${escapeHtml(bone.name)}</div>`;
 
     bone.children.forEach((child) => {
       if (child.isBone) {
