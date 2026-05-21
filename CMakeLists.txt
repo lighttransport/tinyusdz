@@ -620,6 +620,7 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-mesh.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-mesh-tangent.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material-mtlx.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-anim.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-internal.hh

@@ -273,6 +273,7 @@ if opt_tydra
     'src/tydra/render-data-mesh.cc',
     'src/tydra/render-data-mesh-tangent.cc',
     'src/tydra/render-data-material.cc',
+    'src/tydra/render-data-material-mtlx.cc',
     'src/tydra/render-data-anim.cc',
     'src/tydra/render-data-pprint.cc',
     'src/tydra/raytracing-data.cc',
