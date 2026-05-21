@@ -15,6 +15,9 @@ const state = {
   usdObject: null,
   usdRestObject: null,
   usdArticulation: null,
+  // True when the USD view is a conversion of the current source robot (vs an
+  // imported USD). Lets the "Export upAxis" toggle auto-reconvert.
+  usdIsConverted: false,
   sourceGhost: null,
   usdGhost: null,
   usdLinkBindings: [],
@@ -238,6 +241,7 @@ function clearUSD() {
   state.usdObject = null;
   state.usdRestObject = null;
   state.usdArticulation = null;
+  state.usdIsConverted = false;
   state.usdName = '';
   state.latestUSDBytes = null;
   state.latestUSDFormat = '';
@@ -1811,6 +1815,15 @@ function applyAxisHelperVisibility() {
 function buildGUI() {
   const gui = new GUI({ title: 'Robot Controls' });
   gui.add(state.settings, 'upAxis', ['Z', 'Y']).name('Export upAxis').onChange(() => {
+    // If a converted USD is on screen, re-export with the new up axis so the
+    // USD view stays in sync (convertSourceToUSD re-applies orientation + fit).
+    if (state.robot && state.usdIsConverted) {
+      convertSourceToUSD(state.latestUSDFormat || 'usdc').catch((err) => {
+        console.error(err);
+        setStatus(`Convert to USD failed: ${err.message}`);
+      });
+      return;
+    }
     applySceneOrientation();
     if ((state.robot || state.usdObject) && state.settings.autocenter) fitCamera(currentFitObjects());
   });
@@ -3046,6 +3059,7 @@ async function convertSourceToUSD(format = 'usdc') {
   } catch (err) {
     console.warn('USD Physics articulation skipped:', err);
   }
+  state.usdIsConverted = true;
   updateButtonStates();
   rebuildGhosts();
   updateLabels();
