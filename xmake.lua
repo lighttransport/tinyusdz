@@ -299,6 +299,8 @@ target("tinyusdz_static")
             "src/tydra/scene-analysis.cc",
             "src/tydra/attribute-eval.cc",
             "src/tydra/attribute-eval-typed-all.cc",
+            "src/tydra/attribute-eval-typed-inst-scalar.cc",
+            "src/tydra/attribute-eval-typed-inst-array.cc",
             "src/tydra/command-and-history.cc",
             "src/tydra/obj-export.cc",
             "src/tydra/usd-export.cc",
