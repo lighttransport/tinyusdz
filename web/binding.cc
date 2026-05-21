@@ -32,6 +32,10 @@
 #include "tydra/material-serializer.hh"
 
 #include "tydra/mcp-context.hh"
+// mcp-context.hh's Context holds a unique_ptr<JSEngineState> (forward-declared
+// there); js-script.hh provides the complete type so Context's destructor can
+// be instantiated here (matches mcp-server.cc / mcp-js-bridge.cc).
+#include "tydra/js-script.hh"
 #include "tydra/mcp-resources.hh"
 #include "tydra/mcp-tools.hh"
 #include "tydra/urdf-to-usd.hh"
