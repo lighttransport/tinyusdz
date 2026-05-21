@@ -600,6 +600,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-listprims-inst.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-listshaders-inst.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-analysis.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-analysis.hh
