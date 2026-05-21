@@ -486,6 +486,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-props.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-entry.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-basetype.cc
+    ${PROJECT_SOURCE_DIR}/src/ascii-parser-basetype-inst.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-timesamples.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-timesamples-array.cc
     ${PROJECT_SOURCE_DIR}/src/audio-loader.cc
