@@ -268,6 +268,7 @@ if opt_tydra
     'src/tydra/shader-network.cc',
     'src/tydra/render-data.cc',
     'src/tydra/render-data-mesh.cc',
+    'src/tydra/render-data-mesh-tangent.cc',
     'src/tydra/render-data-material.cc',
     'src/tydra/render-data-anim.cc',
     'src/tydra/render-data-pprint.cc',
