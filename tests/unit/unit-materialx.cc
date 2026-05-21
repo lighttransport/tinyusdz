@@ -12,19 +12,47 @@
 
 #include <cstdlib>
 #include <cstdio>
+#include <fstream>
 #include <iostream>
 #include <sstream>
+
+#if defined(_WIN32)
+#include <direct.h>
+#define TUSDZ_TEST_MKDIR(p) _mkdir(p)
+#else
+#include <sys/stat.h>
+#define TUSDZ_TEST_MKDIR(p) mkdir((p), 0755)
+#endif
 
 #include "unit-materialx.h"
 #include "prim-reconstruct.hh"
 #include "usda-reader.hh"
 #include "usdShade.hh"
 #include "usdMtlx.hh"
+#include "asset-resolution.hh"
 #include "value-types.hh"
 #include "tinyusdz.hh"
 #include "math-util.inc"
 
 using namespace tinyusdz;
+
+namespace {
+
+// Helpers for the <include> path-traversal regression test.
+bool MtlxTestWriteFile(const std::string &path, const std::string &content) {
+  std::ofstream ofs(path, std::ios::binary);
+  if (!ofs) {
+    return false;
+  }
+  ofs.write(content.data(), static_cast<std::streamsize>(content.size()));
+  return ofs.good();
+}
+
+bool MtlxTestContains(const std::string &haystack, const std::string &needle) {
+  return haystack.find(needle) != std::string::npos;
+}
+
+}  // namespace
 
 // Test MaterialXConfigAPI structure extension
 void materialx_config_api_struct_test(void) {
@@ -461,6 +489,109 @@ void materialx_shader_fallback_values_test(void) {
   }
 }
 
+// Security regression test: MaterialX <include filename="..."/> must not be
+// usable for path traversal / arbitrary file read.
+//
+// ProcessIncludes() in src/usdMtlx.cc resolves the attacker-controlled
+// `filename` attribute against the document's base directory. Previously the
+// value was used verbatim, so an absolute path ("/etc/passwd") or a "../"
+// traversal escaped the base directory. The fix routes the include filename
+// through security_policy::ValidateAndNormalizeAssetPath(), which rejects
+// absolute paths, Windows drive letters, and any ".." segment.
+//
+// This test confirms (1) "../" traversal is rejected, (2) an absolute path is
+// rejected, and (3) a contained relative include still loads.
+void materialx_include_path_traversal_test(void) {
+  // Message fragment emitted by the path-validation guard in ProcessIncludes().
+  const std::string kRejectMsg = "safe relative path";
+  const std::string kTmpRoot = "unit_mtlx_traversal_tmp";
+  const std::string kBaseDir = "unit_mtlx_traversal_tmp/base";
+
+  // Fixture setup (cwd is the build dir per CTest WORKING_DIRECTORY).
+  TUSDZ_TEST_MKDIR(kTmpRoot.c_str());
+  TUSDZ_TEST_MKDIR(kBaseDir.c_str());  // EEXIST from a prior run is harmless.
+
+  // A "secret" file living OUTSIDE the base dir (in the parent) — the target an
+  // attacker would try to reach via "../".
+  TEST_CHECK(MtlxTestWriteFile(kTmpRoot + "/secret_outside.txt",
+                               "TOP-SECRET-MARKER\n"));
+
+  const char *kIncludeFragment = R"(<?xml version="1.0"?>
+<materialx version="1.38">
+  <surfacematerial name="TestMaterial" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="TestMaterial_shader" />
+  </surfacematerial>
+  <open_pbr_surface name="TestMaterial_shader" type="surfaceshader">
+    <input name="base_color" type="color3" value="0.8, 0.2, 0.2" />
+    <input name="base_weight" type="float" value="1.0" />
+  </open_pbr_surface>
+</materialx>
+)";
+
+  TEST_CHECK(MtlxTestWriteFile(kBaseDir + "/main_traversal.mtlx",
+                               R"(<?xml version="1.0"?>
+<materialx version="1.38">
+  <include filename="../secret_outside.txt"/>
+</materialx>
+)"));
+  TEST_CHECK(MtlxTestWriteFile(kBaseDir + "/main_absolute.mtlx",
+                               R"(<?xml version="1.0"?>
+<materialx version="1.38">
+  <include filename="/etc/passwd"/>
+</materialx>
+)"));
+  TEST_CHECK(MtlxTestWriteFile(kBaseDir + "/inc_ok.mtlx", kIncludeFragment));
+  TEST_CHECK(MtlxTestWriteFile(kBaseDir + "/main_ok.mtlx",
+                               R"(<?xml version="1.0"?>
+<materialx version="1.38">
+  <include filename="inc_ok.mtlx"/>
+</materialx>
+)"));
+
+  AssetResolutionResolver resolver;
+  resolver.set_search_paths({kBaseDir});
+
+  // (1) "../" traversal must be rejected by the path validator.
+  {
+    MtlxModel mtlx;
+    std::string warn, err;
+    bool ret = ReadMaterialXFromFile(resolver, "main_traversal.mtlx", &mtlx,
+                                     &warn, &err);
+    TEST_CHECK(ret == false);
+    TEST_CHECK(MtlxTestContains(err, kRejectMsg));
+    TEST_MSG("err: %s", err.c_str());
+  }
+
+  // (2) Absolute-path include must be rejected by the path validator.
+  {
+    MtlxModel mtlx;
+    std::string warn, err;
+    bool ret = ReadMaterialXFromFile(resolver, "main_absolute.mtlx", &mtlx,
+                                     &warn, &err);
+    TEST_CHECK(ret == false);
+    TEST_CHECK(MtlxTestContains(err, kRejectMsg));
+    TEST_MSG("err: %s", err.c_str());
+  }
+
+  // (3) A contained relative include must NOT be rejected and should load.
+  {
+    MtlxModel mtlx;
+    std::string warn, err;
+    bool ret =
+        ReadMaterialXFromFile(resolver, "main_ok.mtlx", &mtlx, &warn, &err);
+    TEST_CHECK(!MtlxTestContains(err, kRejectMsg));
+    TEST_CHECK(ret == true);
+    TEST_MSG("err: %s", err.c_str());
+  }
+
+  // Best-effort cleanup of fixture files.
+  std::remove((kBaseDir + "/main_traversal.mtlx").c_str());
+  std::remove((kBaseDir + "/main_absolute.mtlx").c_str());
+  std::remove((kBaseDir + "/main_ok.mtlx").c_str());
+  std::remove((kBaseDir + "/inc_ok.mtlx").c_str());
+  std::remove((kTmpRoot + "/secret_outside.txt").c_str());
+}
+
 // Main test runner
 void materialx_tests(void) {
   materialx_config_api_struct_test();
@@ -470,6 +601,7 @@ void materialx_tests(void) {
   nodegraph_support_test();
   materialx_shader_constants_test();
   materialx_shader_fallback_values_test();
+  materialx_include_path_traversal_test();
 }
 
 #ifdef _MSC_VER

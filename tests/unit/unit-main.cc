@@ -127,6 +127,7 @@ TEST_LIST = {
   { "nodegraph_support_test", nodegraph_support_test },
   { "materialx_shader_constants_test", materialx_shader_constants_test },
   { "materialx_shader_fallback_values_test", materialx_shader_fallback_values_test },
+  { "materialx_include_path_traversal_test", materialx_include_path_traversal_test },
   { "tydra_subdivision_catmullclark_test", tydra_subdivision_catmullclark_test },
   { "tydra_subdivision_loop_test", tydra_subdivision_loop_test },
   { "tydra_subdivision_bilinear_test", tydra_subdivision_bilinear_test },
