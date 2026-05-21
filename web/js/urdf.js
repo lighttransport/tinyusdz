@@ -1872,8 +1872,8 @@ function rebuildJointControls() {
     row.className = 'joint-row';
     row.innerHTML = `
       <div>
-        <div class="joint-name" title="${name}">${name}</div>
-        <div class="joint-type">${type}</div>
+        <div class="joint-name" title="${escapeXML(name)}">${escapeXML(name)}</div>
+        <div class="joint-type">${escapeXML(type)}</div>
       </div>
       <input type="number" min="${min}" max="${max}" step="${step}" value="${value.toFixed(3)}">
       <input type="range" min="${min}" max="${max}" step="${step}" value="${value}">
