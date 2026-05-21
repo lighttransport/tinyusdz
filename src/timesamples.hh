@@ -1538,4 +1538,22 @@ extern template bool TypedTimeSamples<std::vector<std::array<unsigned int, 2>>>:
 extern template bool TypedTimeSamples<std::vector<std::array<unsigned int, 3>>>::get<std::vector<std::array<unsigned int, 3>>>(std::vector<std::array<unsigned int, 3>>*, double, value::TimeSampleInterpolationType) const;
 extern template bool TypedTimeSamples<std::vector<std::array<unsigned int, 4>>>::get<std::vector<std::array<unsigned int, 4>>>(std::vector<std::array<unsigned int, 4>>*, double, value::TimeSampleInterpolationType) const;
 
+namespace value {
+
+// TypeTrait for the `TimeSamples` value type.
+//
+// Defined here (rather than in value-types.hh) because it requires the complete
+// `TimeSamples` type, which is defined above in this header. Keeping it here lets
+// value-types.hh avoid including timesamples.hh entirely. Any TU that stores a
+// `TimeSamples` inside a `value::Value` (and hence needs TypeTraits<TimeSamples>)
+// already includes this header.
+#include "define-type-trait.inc"
+
+DEFINE_TYPE_TRAIT(TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
+
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
+
+}  // namespace value
+
 } // namespace tinyusdz
