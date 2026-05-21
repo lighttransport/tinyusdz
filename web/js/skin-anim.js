@@ -2038,6 +2038,17 @@ meshFolder.open();
 /**
  * Update mesh list in GUI when model is loaded
  */
+// Escape a string for safe interpolation into HTML. Mesh names come from
+// untrusted USD files and must never reach innerHTML unescaped.
+function escapeHtml(value) {
+	return String(value)
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;');
+}
+
 function updateMeshListGUI() {
 	if (!meshListContainer) return;
 
@@ -2061,7 +2072,7 @@ function updateMeshListGUI() {
 			       style="cursor: pointer; margin-right: 6px; font-size: 14px; user-select: none; opacity: ${isVisible ? '1' : '0.35'};"
 			       title="${isVisible ? 'Hide mesh' : 'Show mesh'}">${isVisible ? '\u{1F441}' : '\u{1F6AB}'}</span>` +
 			`<span class="gui-mesh-name" data-mesh-index="${index}"
-			       style="color: ${isVisible ? '#6bbfff' : '#666'}; cursor: pointer; flex: 1;">${name}${isSkinned} (${vertCount}v)</span></div>`;
+			       style="color: ${isVisible ? '#6bbfff' : '#666'}; cursor: pointer; flex: 1;">${escapeHtml(name)}${isSkinned} (${vertCount}v)</span></div>`;
 	});
 
 	meshListContainer.innerHTML = html;
