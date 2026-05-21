@@ -257,6 +257,8 @@ if opt_tydra
     'src/tydra/facial.cc',
     'src/tydra/prim-apply.cc',
     'src/tydra/scene-access.cc',
+    'src/tydra/scene-access-listprims-inst.cc',
+    'src/tydra/scene-access-listshaders-inst.cc',
     'src/tydra/scene-analysis.cc',
     'src/tydra/attribute-eval.cc',
     'src/tydra/attribute-eval-typed-all.cc',
