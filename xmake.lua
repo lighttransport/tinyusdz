@@ -135,6 +135,7 @@ target("tinyusdz_static")
         "src/crate-dump.cc",
         "src/path-util.cc",
         "src/prim-reconstruct.cc",
+        "src/prim-reconstruct-geom.cc",
         "src/prim-reconstruct-shader.cc",
         "src/prim-composition.cc",
         "src/prim-types.cc",
