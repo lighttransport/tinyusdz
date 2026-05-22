@@ -38,26 +38,6 @@ namespace {
     (*err) += msg;     \
   }
 
-// Typed TimeSamples to typeless TimeSamples
-template <typename T>
-value::TimeSamples ToTypelessTimeSamples(const TypedTimeSamples<T> &ts) {
-  value::TimeSamples dst;
-
-  const std::vector<typename TypedTimeSamples<T>::Sample> &samples =
-      ts.get_samples();
-
-  for (size_t i = 0; i < samples.size(); i++) {
-    if (samples[i].blocked) {
-      // For untyped TimeSamples, blocked samples need a dummy value
-      dst.add_blocked_sample(samples[i].t, value::Value());
-    } else {
-      dst.add_sample(samples[i].t, samples[i].value);
-    }
-  }
-
-  return dst;
-}
-
 // Enum TimeSamples to typeless TimeSamples
 template <typename T>
 value::TimeSamples EnumTimeSamplesToTypelessTimeSamples(
@@ -415,8 +395,12 @@ bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, st
       }
 
       if (aval.value().has_timesamples()) {
-        value::TimeSamples ts = ToTypelessTimeSamples(aval.value().get_timesamples());
-        pvar.set_timesamples(std::move(ts));
+        // Value types store a type-erased value::TimeSamples directly; copy it
+        // (no typed round-trip).
+        if (const value::TimeSamples *tsp =
+                aval.value().get_timesamples_ptr()) {
+          pvar.set_timesamples(*tsp);
+        }
       }
 
       if (aval.value().has_value() || aval.value().has_timesamples()) {
@@ -496,8 +480,9 @@ bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
     DCOUT("has_value " << v.has_value());
 
     if (v.has_timesamples()) {
-      value::TimeSamples ts = ToTypelessTimeSamples(v.get_timesamples());
-      pvar.set_timesamples(std::move(ts));
+      if (const value::TimeSamples *tsp = v.get_timesamples_ptr()) {
+        pvar.set_timesamples(*tsp);
+      }
     }
 
     if (v.has_value()) {
