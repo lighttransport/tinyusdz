@@ -32,17 +32,21 @@ namespace tydra {
 ///   Dict:     {"type": "dictionary", "value": {k: v, ...}}
 ///   Blocked:  {"type": "None"}
 ///   TimeSamples: {"type": "timesamples", "value": {t: {type, value}, ...}}
-nlohmann::json ValueToJSON(const value::Value &val);
+/// `depth` is the internal recursion depth (callers pass 0); it guards against
+/// stack overflow on pathologically/maliciously deeply nested values.
+nlohmann::json ValueToJSON(const value::Value &val, uint32_t depth = 0);
 
 /// Convert JSON back to value::Value.
 nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
-                                           std::string *err = nullptr);
+                                           std::string *err = nullptr,
+                                           uint32_t depth = 0);
 
 /// Convert to plain JSON (no type wrapper) for convenience.
 nlohmann::json ValueToPlainJSON(const value::Value &val);
 
 /// Get a JSON Schema description for a USD type name.
-nlohmann::json ValueTypeToJSONSchema(const std::string &type_name);
+nlohmann::json ValueTypeToJSONSchema(const std::string &type_name,
+                                     uint32_t depth = 0);
 
 /// Convert PrimMeta to JSON
 nlohmann::json PrimMetaToJSON(const PrimMeta &meta);
