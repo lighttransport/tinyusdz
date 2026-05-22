@@ -2665,18 +2665,31 @@ bool ApplyVariantSelector(const Layer &layer, const std::string &variant_name,
 // Remove prims (and their descendants) that have `active = false`.
 // This is a post-composition pass — active is a composed metadatum.
 static void RemoveInactivePrimsRec(std::vector<PrimSpec> &children) {
-  // Erase inactive children first.
-  children.erase(
-      std::remove_if(children.begin(), children.end(),
-                     [](const PrimSpec &ps) {
-                       return ps.metas().has_active() &&
-                              !ps.metas().get_active();
-                     }),
-      children.end());
+  // Iterative DFS over the PrimSpec tree (explicit heap worklist) so deeply
+  // nested prim hierarchies cannot overflow the call stack. At each level we
+  // erase inactive children, then enqueue the surviving children's child lists.
+  // Pointers into a (already-erased, no-longer-mutated) vector stay valid because
+  // the tree ownership is stable for the duration of the walk.
+  std::vector<std::vector<PrimSpec> *> stack;
+  stack.push_back(&children);
 
-  // Recurse into remaining children.
-  for (auto &child : children) {
-    RemoveInactivePrimsRec(child.children());
+  while (!stack.empty()) {
+    std::vector<PrimSpec> *level = stack.back();
+    stack.pop_back();
+
+    // Erase inactive children at this level first.
+    level->erase(
+        std::remove_if(level->begin(), level->end(),
+                       [](const PrimSpec &ps) {
+                         return ps.metas().has_active() &&
+                                !ps.metas().get_active();
+                       }),
+        level->end());
+
+    // Enqueue the surviving children's child lists.
+    for (auto &child : *level) {
+      stack.push_back(&child.children());
+    }
   }
 }
 
