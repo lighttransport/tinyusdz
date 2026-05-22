@@ -1237,4 +1237,97 @@ void timesamples_test(void) {
     TEST_CHECK(pvar.get_interpolated_value(1.0 + epsilon, value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result, 20.0f, 1e-3f));  // Should be very close to last sample
   }
+
+  // ----------------------------------------------------------------------
+  // [Phase 1.5] Parity guard: TimeSamples::eval_scalar<T>() (the new
+  // binary-direct evaluator) must match the existing TimeSamples::get<T>()
+  // (value::Value path) across {default, held, lerp} x {blocked variants}.
+  // This gates the Phase 3 deletion of TypedTimeSamples<T>.
+  // ----------------------------------------------------------------------
+  {
+    using Interp = value::TimeSampleInterpolationType;
+    const Interp Held = Interp::Held;
+    const Interp Linear = Interp::Linear;
+
+    auto check = [](const value::TimeSamples &ts, double t, Interp interp,
+                    auto tag) {
+      using T = decltype(tag);
+      T a{};
+      T b{};
+      const bool ra = ts.template get<T>(&a, t, interp);
+      const bool rb = ts.template eval_scalar<T>(&b, t, interp);
+      TEST_CHECK(ra == rb);
+      if (ra && rb) {
+        TEST_CHECK(a == b);
+      }
+    };
+
+    const double T_DEFAULT = value::TimeCode::Default();
+    const double times[] = {-1.0, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 100.0, T_DEFAULT};
+
+    // float (lerp scalar), two samples
+    {
+      value::TimeSamples ts;
+      ts.add_sample<float>(0.0, 1.0f);
+      ts.add_sample<float>(2.0, 5.0f);
+      for (double t : times) { check(ts, t, Held, float{}); check(ts, t, Linear, float{}); }
+    }
+    // double, single sample
+    {
+      value::TimeSamples ts;
+      ts.add_sample<double>(5.0, 42.0);
+      for (double t : times) { check(ts, t, Held, double{}); check(ts, t, Linear, double{}); }
+    }
+    // float3 (lerp vector)
+    {
+      value::TimeSamples ts;
+      ts.add_sample<value::float3>(0.0, value::float3{0.f, 0.f, 0.f});
+      ts.add_sample<value::float3>(2.0, value::float3{2.f, 4.f, 6.f});
+      for (double t : times) { check(ts, t, Held, value::float3{}); check(ts, t, Linear, value::float3{}); }
+    }
+    // color3f (role type — shares float3 layout via shared switch arm)
+    {
+      value::TimeSamples ts;
+      ts.add_sample<value::color3f>(0.0, value::color3f{0.f, 0.f, 0.f});
+      ts.add_sample<value::color3f>(1.0, value::color3f{1.f, 0.5f, 0.25f});
+      for (double t : times) { check(ts, t, Held, value::color3f{}); check(ts, t, Linear, value::color3f{}); }
+    }
+    // int32 (non-lerp scalar): Linear must behave as Held
+    {
+      value::TimeSamples ts;
+      ts.add_sample<int32_t>(0.0, 3);
+      ts.add_sample<int32_t>(2.0, 9);
+      for (double t : times) { check(ts, t, Held, int32_t{}); check(ts, t, Linear, int32_t{}); }
+    }
+    // blocked middle (double)
+    {
+      value::TimeSamples ts;
+      ts.add_sample<double>(0.0, 10.0);
+      ts.add_blocked_sample<double>(1.0);
+      ts.add_sample<double>(2.0, 20.0);
+      for (double t : times) { check(ts, t, Held, double{}); check(ts, t, Linear, double{}); }
+    }
+    // blocked endpoints (float)
+    {
+      value::TimeSamples ts;
+      ts.add_blocked_sample<float>(0.0);
+      ts.add_sample<float>(1.0, 7.0f);
+      ts.add_blocked_sample<float>(2.0);
+      for (double t : times) { check(ts, t, Held, float{}); check(ts, t, Linear, float{}); }
+    }
+    // dedup: duplicate_sample shares the same _data offset (zero-copy)
+    {
+      value::TimeSamples ts;
+      ts.add_sample<value::float3>(0.0, value::float3{1.f, 2.f, 3.f});
+      ts.duplicate_sample(0, 5.0);
+      for (double t : times) { check(ts, t, Held, value::float3{}); check(ts, t, Linear, value::float3{}); }
+    }
+    // generic (non-binary) storage: token
+    {
+      value::TimeSamples ts;
+      ts.add_sample<value::token>(0.0, value::token("a"));
+      ts.add_sample<value::token>(2.0, value::token("b"));
+      for (double t : times) { check(ts, t, Held, value::token{}); check(ts, t, Linear, value::token{}); }
+    }
+  }
 }
