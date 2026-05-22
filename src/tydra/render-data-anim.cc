@@ -199,17 +199,17 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     // Count frames for each property (first pass - no data copy)
     size_t nTransTimes = 0, nRotTimes = 0, nScaleTimes = 0;
     if (translations.has_timesamples()) {
-      nTransTimes = translations.get_timesamples().size();
+      nTransTimes = translations.get_timesamples_ptr()->size();
     } else if (translations.has_value()) {
       nTransTimes = 1;
     }
     if (rotations.has_timesamples()) {
-      nRotTimes = rotations.get_timesamples().size();
+      nRotTimes = rotations.get_timesamples_ptr()->size();
     } else if (rotations.has_value()) {
       nRotTimes = 1;
     }
     if (scales.has_timesamples()) {
-      nScaleTimes = scales.get_timesamples().size();
+      nScaleTimes = scales.get_timesamples_ptr()->size();
     } else if (scales.has_value()) {
       nScaleTimes = 1;
     }
@@ -337,17 +337,19 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
       };
 
       if (translations.has_timesamples()) {
-        const auto &ts = translations.get_timesamples();
         size_t frameIdx = 0;
-        FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
-          if (sample_blocked) {
-            continue;
+        if (const value::TimeSamples *_tsp = translations.get_timesamples_ptr()) {
+          for (const auto &_s : _tsp->get_samples()) {
+            if (_s.blocked) continue;
+            const std::vector<value::float3> *_pv =
+                _s.value.as<std::vector<value::float3>>();
+            if (!_pv) continue;
+            if (!scatterTransFrame(frameIdx, float(_s.t), *_pv)) {
+              PUSH_ERROR_AND_RETURN(_err);
+            }
+            frameIdx++;
           }
-          if (!scatterTransFrame(frameIdx, float(sample_t), sample_value)) {
-            PUSH_ERROR_AND_RETURN(_err);
-          }
-          frameIdx++;
-        FOREACH_TIMESAMPLES_END()
+        }
       } else {
         std::vector<value::float3> default_value;
         if (!translations.get_scalar(&default_value)) {
@@ -383,17 +385,19 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
       };
 
       if (rotations.has_timesamples()) {
-        const auto &ts = rotations.get_timesamples();
         size_t frameIdx = 0;
-        FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
-          if (sample_blocked) {
-            continue;
+        if (const value::TimeSamples *_tsp = rotations.get_timesamples_ptr()) {
+          for (const auto &_s : _tsp->get_samples()) {
+            if (_s.blocked) continue;
+            const std::vector<value::quatf> *_pv =
+                _s.value.as<std::vector<value::quatf>>();
+            if (!_pv) continue;
+            if (!scatterRotFrame(frameIdx, float(_s.t), *_pv)) {
+              PUSH_ERROR_AND_RETURN(_err);
+            }
+            frameIdx++;
           }
-          if (!scatterRotFrame(frameIdx, float(sample_t), sample_value)) {
-            PUSH_ERROR_AND_RETURN(_err);
-          }
-          frameIdx++;
-        FOREACH_TIMESAMPLES_END()
+        }
       } else {
         std::vector<value::quatf> default_value;
         if (!rotations.get_scalar(&default_value)) {
@@ -426,17 +430,19 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
       };
 
       if (scales.has_timesamples()) {
-        const auto &ts = scales.get_timesamples();
         size_t frameIdx = 0;
-        FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
-          if (sample_blocked) {
-            continue;
+        if (const value::TimeSamples *_tsp = scales.get_timesamples_ptr()) {
+          for (const auto &_s : _tsp->get_samples()) {
+            if (_s.blocked) continue;
+            const std::vector<value::half3> *_pv =
+                _s.value.as<std::vector<value::half3>>();
+            if (!_pv) continue;
+            if (!scatterScaleFrame(frameIdx, float(_s.t), *_pv)) {
+              PUSH_ERROR_AND_RETURN(_err);
+            }
+            frameIdx++;
           }
-          if (!scatterScaleFrame(frameIdx, float(sample_t), sample_value)) {
-            PUSH_ERROR_AND_RETURN(_err);
-          }
-          frameIdx++;
-        FOREACH_TIMESAMPLES_END()
+        }
       } else {
         std::vector<value::half3> default_value;
         if (!scales.get_scalar(&default_value)) {
