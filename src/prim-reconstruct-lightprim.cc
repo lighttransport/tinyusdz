@@ -2,42 +2,95 @@
 // Copyright 2021 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
-// Reconstruct Light Prims - split from prim-reconstruct.cc for parallel compilation
+// Reconstruct concrete Prim from PropertyMap or PrimSpec.
 //
-#include "prim-reconstruct-internal.hh"
+// TODO:
+//   - [ ] Refactor code
+//
+#include "prim-reconstruct.hh"
+
+#include "core/prim.hh"
+#include "core/prim-spec.hh"
+#include "core/model-scope.hh"  // Model, Scope
+#include "str-util.hh"
+#include "io-util.hh"
+#include "tiny-format.hh"
+#include "enum-handlers.hh"
+#include "prim-property-tables.hh"
+
+#include "usdGeom.hh"
+#include "usdSkel.hh"
 #include "usdLux.hh"
-#include "usdShade.hh"  // For UsdUVTexture (used by RectLight)
+#include "usdShade.hh"
+#include "usdMtlx.hh"
+
+#include "common-macros.inc"
+#include "value-types.hh"
 
 // For PUSH_ERROR_AND_RETURN
-#define PushError(s) if (err) { (*err) = s + (*err); }
-#define PushWarn(s) if (warn) { (*warn) = s + (*err); }
+#define PushError(s) \
+  if (err) { \
+    (*err) = (s) + (err->empty() ? std::string() : std::string("\n")) + (*err); \
+  }
+#define PushWarn(s) \
+  if (warn) { \
+    (*warn) = (s) + (warn->empty() ? std::string() : std::string("\n")) + (*warn); \
+  }
 
+// __VA_ARGS__ does not allow empty, thus # of args must be 2+
 #define PUSH_WARN_F(s, ...) PUSH_WARN(fmt::format(s, __VA_ARGS__))
-#define PUSH_ERROR_AND_RETURN_F(s, ...) PUSH_ERROR_AND_RETURN(fmt::format(s, __VA_ARGS__))
+
+//
+// NOTE:
+//
+// There are mainly 5 variant of Primtive property(relationship/attribute)
+//
+// - TypedAttribute<T> : Uniform only. `uniform T` or `uniform T var.connect`
+// - TypedAttribute<Animatable<T>> : Varying. `T var`, `T var = val`, `T var.connect` or `T value.timeSamples`
+// - optional<T> : For output attribute(Just author it. e.g. `float outputs:rgb`)
+// - Relationship : Typeless relation(e.g. `rel material:binding`)
+// - TypedConnection : Typed relation(e.g. `token outputs:result = </material/diffuse.rgb>`)
 
 namespace tinyusdz {
 namespace prim {
 
-// Include implementation helpers
-#include "prim-reconstruct-impl.inc"
+//constexpr auto kTag = "[PrimReconstruct]";
 
-// ============================================================================
-// Generic macro for light prim reconstruction
-// ============================================================================
-// Consolidates the common pattern for all light types:
-// SphereLight, RectLight, DiskLight, CylinderLight, DistantLight, GeometryLight, DomeLight
-//
-// IMPORTANT: Caller must define PRIM_CLASS_ and PRIM_PTR_ macros before calling
-//            this macro, and undef them afterward. These are required by
-//            EXPAND_TYPED_ATTR macros.
-//
-// Parameters:
-//   LightClass: The light class (e.g., SphereLight, RectLight)
-//   light_ptr: Pointer to the light instance
-//   TYPED_ATTRS: Property table macro (e.g., SPHERE_LIGHT_TYPED_ATTRS)
-//   COMMON_ATTRS: Light common attrs macro (LIGHT_COMMON_ATTRS_WITH_SHAPING or LIGHT_COMMON_ATTRS_NO_SHAPING)
-//   EXTENT_HANDLING: Either PARSE_EXTENT_ATTRIBUTE(...) or /* no extent */
-//   SPECIAL_HANDLING: Special attribute handling for exceptions like RectLight's texture:file or /* no special handling */
+constexpr auto kProxyPrim = "proxyPrim";
+constexpr auto kVisibility = "visibility";
+constexpr auto kExtent = "extent";
+constexpr auto kPurpose = "purpose";
+constexpr auto kMaterialBinding = "material:binding";
+constexpr auto kMaterialBindingCollection = "material:binding:collection";
+constexpr auto kMaterialBindingPreview = "material:binding:preview";
+constexpr auto kSkelSkeleton = "skel:skeleton";
+constexpr auto kSkelAnimationSource = "skel:animationSource";
+constexpr auto kSkelBlendShapes = "skel:blendShapes";
+constexpr auto kSkelBlendShapeTargets = "skel:blendShapeTargets";
+// kInputsVarname moved to prim-reconstruct-shader.cc
+
+// MaterialX Validation Helpers moved to prim-reconstruct-shader.cc
+
+
+///
+/// TinyUSDZ reconstruct some frequently used shaders(e.g. UsdPreviewSurface)
+/// here, not in Tydra
+///
+template <typename T>
+bool ReconstructShader(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    T *out,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options);
+
+
+#include "prim-reconstruct-common.inc"
+
+#include "prim-reconstruct-geom-detail.inc"
+
 #define RECONSTRUCT_LIGHT_PRIM_BODY(LightClass, light_ptr, TYPED_ATTRS, COMMON_ATTRS, EXTENT_HANDLING, SPECIAL_HANDLING) \
   (void)references; \
   \
@@ -214,6 +267,31 @@ bool ReconstructPrim<GeometryLight>(
 }
 
 template <>
+bool ReconstructPrim<PortalLight>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    PortalLight *light,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ PortalLight
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  RECONSTRUCT_LIGHT_PRIM_BODY(PortalLight, light, GEOMETRY_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_NO_SHAPING,
+                              /* no extent */,
+                              /* no special handling */)
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
 bool ReconstructPrim<DomeLight>(
     const Specifier &spec,
     PropertyMap &properties,
@@ -239,26 +317,89 @@ bool ReconstructPrim<DomeLight>(
 #undef PRIM_PTR_
 }
 
-// PrimSpec versions
-#define RECONSTRUCT_PRIM_PRIMSPEC_IMPL(__prim_ty) \
-template <> \
-bool ReconstructPrim<__prim_ty>( \
-    PrimSpec &primspec, \
-    __prim_ty *prim, \
-    std::string *warn, \
-    std::string *err, \
-    const PrimReconstructOptions &options) { \
-  ReferenceList references; \
-  return ReconstructPrim<__prim_ty>(primspec.specifier(), primspec.props(), references, prim, warn, err, options); \
+template <>
+bool ReconstructPrim<DomeLight_1>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    DomeLight_1 *light,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ DomeLight_1
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  RECONSTRUCT_LIGHT_PRIM_BODY(DomeLight_1, light, DOME_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_NO_SHAPING,
+                              /* no extent */,
+                              PARSE_TYPED_ATTRIBUTE(table, prop, "poleAxis", DomeLight_1, light->poleAxis))
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 }
 
-RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SphereLight)
-RECONSTRUCT_PRIM_PRIMSPEC_IMPL(RectLight)
-RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DiskLight)
-RECONSTRUCT_PRIM_PRIMSPEC_IMPL(CylinderLight)
-RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DistantLight)
-RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeometryLight)
-RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DomeLight)
+template <>
+bool ReconstructPrim<LightFilter>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    LightFilter *filter,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  (void)references;
+
+  std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &filter->xformOps, err)) {
+    return false;
+  }
+
+  for (auto &prop : properties) {
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, LightFilter,
+                       filter->visibility, options.strict_allowedToken_check)
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, LightFilter,
+                       filter->purpose, options.strict_allowedToken_check)
+    ADD_PROPERTY(table, prop, LightFilter, filter->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim<PluginLightFilter>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    PluginLightFilter *filter,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  (void)references;
+
+  std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &filter->xformOps, err)) {
+    return false;
+  }
+
+  for (auto &prop : properties) {
+    PARSE_TYPED_ATTRIBUTE(table, prop, "light:shaderId", PluginLightFilter, filter->shaderId)
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, PluginLightFilter,
+                       filter->visibility, options.strict_allowedToken_check)
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, PluginLightFilter,
+                       filter->purpose, options.strict_allowedToken_check)
+    ADD_PROPERTY(table, prop, PluginLightFilter, filter->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
 
 }  // namespace prim
 }  // namespace tinyusdz

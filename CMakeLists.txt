@@ -526,6 +526,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom2.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-lightprim.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-physics.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-ar.cc
