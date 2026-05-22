@@ -820,19 +820,10 @@ std::string Stage::dump_prim_tree() const {
 
 namespace {
 
-// Helper: estimate deep memory for TypedTimeSamples<std::vector<E>>
-// Counts heap data inside each sample's vector
-template <typename E>
-static size_t EstimateTypedTimeSamplesVectorMemory(const TypedTimeSamples<std::vector<E>> &ts) {
-  size_t total = 0;
-  if (!ts.empty()) {
-    const auto &samples = ts.get_samples();
-    total += samples.capacity() * sizeof(typename TypedTimeSamples<std::vector<E>>::Sample);
-    for (const auto &sample : samples) {
-      total += sample.value.capacity() * sizeof(E);
-    }
-  }
-  return total;
+// Helper: estimate deep (allocated) memory of an Animatable's type-erased
+// timesamples store.
+static size_t EstimateTimeSamplesMemory(const value::TimeSamples *ts) {
+  return ts ? ts->estimate_memory_usage() : 0;
 }
 
 // Helper: estimate deep memory of TypedAttribute<Animatable<std::vector<E>>>
@@ -846,7 +837,7 @@ static size_t EstimateTypedAttributeVectorMemory(const TypedAttribute<Animatable
   size_t total = 0;
   const Animatable<std::vector<E>> &anim = *opt_val;
   if (anim.has_timesamples()) {
-    total += EstimateTypedTimeSamplesVectorMemory(anim.get_timesamples());
+    total += EstimateTimeSamplesMemory(anim.get_timesamples_ptr());
   } else if (anim.has_default()) {
     // Use const reference to avoid copying large arrays
     const std::vector<E> &val = anim.get_scalar_ref();
@@ -1113,18 +1104,9 @@ static size_t EstimatePrimPropsActualMemory(const Prim &prim) {
   return 0;
 }
 
-// Deep memory for typed attributes using size() instead of capacity()
-template <typename E>
-static size_t EstimateTypedTimeSamplesVectorActualMemory(const TypedTimeSamples<std::vector<E>> &ts) {
-  size_t total = 0;
-  if (!ts.empty()) {
-    const auto &samples = ts.get_samples();
-    total += samples.size() * sizeof(typename TypedTimeSamples<std::vector<E>>::Sample);
-    for (const auto &sample : samples) {
-      total += sample.value.size() * sizeof(E);
-    }
-  }
-  return total;
+// Deep (size-based) memory of an Animatable's type-erased timesamples store.
+static size_t EstimateTimeSamplesActualMemory(const value::TimeSamples *ts) {
+  return ts ? ts->estimate_actual_usage() : 0;
 }
 
 template <typename E>
@@ -1136,7 +1118,7 @@ static size_t EstimateTypedAttributeVectorActualMemory(const TypedAttribute<Anim
   size_t total = 0;
   const Animatable<std::vector<E>> &anim = *opt_val;
   if (anim.has_timesamples()) {
-    total += EstimateTypedTimeSamplesVectorActualMemory(anim.get_timesamples());
+    total += EstimateTimeSamplesActualMemory(anim.get_timesamples_ptr());
   } else if (anim.has_default()) {
     const std::vector<E> &val = anim.get_scalar_ref();
     total += val.size() * sizeof(E);
