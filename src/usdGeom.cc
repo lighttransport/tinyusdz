@@ -334,13 +334,9 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
       } else {
 
         if (indexAttr.has_timesamples()) {
-          const auto &ts = indexAttr.get_var().ts_raw();
-          TypedTimeSamples<std::vector<int32_t>> tss;
-          if (!tss.from_timesamples(ts)) {
-            SET_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
-          }
-
-          primvar.set_timesampled_indices(tss);
+          // Indices timesamples are stored type-erased; the int[] element type
+          // is validated lazily on read (resolve_indices_at).
+          primvar.set_timesampled_indices(indexAttr.get_var().ts_raw());
         }
 
         if (indexAttr.has_value()) {
@@ -483,13 +479,8 @@ void GeomPrimvar::set_indices(const std::vector<int32_t> &indices, const double 
   if (value::TimeCode(t).is_default()) {
     _indices = indices;
   } else {
-    TypedTimeSamples<std::vector<int32_t>>::Sample *psample{nullptr};
-    if (_ts_indices.get_sample_at(t, &psample)) {
-      // overwrite content
-      psample->value = indices;
-    } else {
-      _ts_indices.add_sample(t, indices);
-    }
+    // add_sample overwrites an existing sample at the same time.
+    _ts_indices.add_sample(t, value::Value(indices));
   }
 }
 
