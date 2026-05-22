@@ -114,10 +114,15 @@ bool ConvertTokenAttributeToStringAttribute(
           toks.get_scalar(&tok);
           strs.set(tok.str());
         } else if (toks.is_timesamples()) {
-          auto tok_ts = toks.get_timesamples();
-
-          for (auto &item : tok_ts.get_samples()) {
-            strs.add_sample(item.t, item.value.str());
+          if (const value::TimeSamples *tsp = toks.get_timesamples_ptr()) {
+            for (const auto &item : tsp->get_samples()) {
+              if (item.blocked) {
+                strs.add_blocked_sample(item.t);
+              } else if (const value::token *tk =
+                             item.value.as<value::token>()) {
+                strs.add_sample(item.t, tk->str());
+              }
+            }
           }
         } else if (toks.is_blocked()) {
           return false;

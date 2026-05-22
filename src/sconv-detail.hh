@@ -48,15 +48,12 @@ bool CrateWriter::ExtractAnimatableDefault(
     }
   }
   if (anim.has_timesamples()) {
-    const auto& typed_ts = anim.get_timesamples();
-    value::TimeSamples ts;
-    for (size_t i = 0; i < typed_ts.size(); i++) {
-      value::Value v(typed_ts.get_samples()[i].value);
-      ts.add_sample(typed_ts.get_samples()[i].t, v);
+    // Value-type Animatable stores a type-erased value::TimeSamples directly.
+    if (const value::TimeSamples *tsp = anim.get_timesamples_ptr()) {
+      crate::CrateValue ts_crate_val;
+      ts_crate_val.Set(*tsp);
+      fields.push_back({std::string(name) + ".timeSamples", ts_crate_val});
     }
-    crate::CrateValue ts_crate_val;
-    ts_crate_val.Set(ts);
-    fields.push_back({std::string(name) + ".timeSamples", ts_crate_val});
   }
   return true;
 }

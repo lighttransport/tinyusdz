@@ -77,20 +77,10 @@ bool CrateWriter::ExtractMeshProperties(
 
     // Handle time samples for animated points
     if (points_animatable && points_animatable->has_timesamples()) {
-      const auto& typed_ts = points_animatable->get_timesamples();
-
-      // Convert TypedTimeSamples<std::vector<value::point3f>> to value::TimeSamples
+      // Value-type Animatable stores a type-erased value::TimeSamples directly.
       value::TimeSamples ts;
-      for (size_t i = 0; i < typed_ts.size(); i++) {
-        std::vector<value::point3f> sample_value;
-        double time;
-
-        // Get time from the typed timesamples
-        time = typed_ts.get_samples()[i].t;
-        sample_value = typed_ts.get_samples()[i].value;
-
-        value::Value v(sample_value);
-        ts.add_sample(time, v);
+      if (const value::TimeSamples *_tsp = points_animatable->get_timesamples_ptr()) {
+        ts = *_tsp;
       }
 
       crate::CrateValue ts_crate_val;
@@ -151,14 +141,9 @@ bool CrateWriter::ExtractMeshProperties(
     }
     // Time samples (mirrors the points.timeSamples emit above).
     if (normals_animatable && normals_animatable->has_timesamples()) {
-      const auto& typed_ts = normals_animatable->get_timesamples();
       value::TimeSamples ts;
-      for (size_t i = 0; i < typed_ts.size(); i++) {
-        double time = typed_ts.get_samples()[i].t;
-        std::vector<value::normal3f> sample_value =
-            typed_ts.get_samples()[i].value;
-        value::Value v(sample_value);
-        ts.add_sample(time, v);
+      if (const value::TimeSamples *_tsp = normals_animatable->get_timesamples_ptr()) {
+        ts = *_tsp;
       }
       crate::CrateValue ts_crate_val;
       ts_crate_val.Set(ts);
@@ -715,13 +700,9 @@ bool CrateWriter::ExtractCameraProperties(
     }
     // Time-sampled scalar (e.g. animated focalLength)
     if (anim.has_timesamples()) {
-      const auto& typed_ts = anim.get_timesamples();
       value::TimeSamples ts;
-      for (size_t i = 0; i < typed_ts.size(); i++) {
-        double time = typed_ts.get_samples()[i].t;
-        float sample_value = typed_ts.get_samples()[i].value;
-        value::Value v(sample_value);
-        ts.add_sample(time, v);
+      if (const value::TimeSamples *_tsp = anim.get_timesamples_ptr()) {
+        ts = *_tsp;
       }
       crate::CrateValue ts_crate_val;
       ts_crate_val.Set(ts);
@@ -742,13 +723,9 @@ bool CrateWriter::ExtractCameraProperties(
       fields.push_back({name, crate_val});
     }
     if (anim.has_timesamples()) {
-      const auto& typed_ts = anim.get_timesamples();
       value::TimeSamples ts;
-      for (size_t i = 0; i < typed_ts.size(); i++) {
-        double time = typed_ts.get_samples()[i].t;
-        double sample_value = typed_ts.get_samples()[i].value;
-        value::Value v(sample_value);
-        ts.add_sample(time, v);
+      if (const value::TimeSamples *_tsp = anim.get_timesamples_ptr()) {
+        ts = *_tsp;
       }
       crate::CrateValue ts_crate_val;
       ts_crate_val.Set(ts);
