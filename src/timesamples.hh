@@ -778,6 +778,29 @@ struct TimeSamples {
     }
   }
 
+  // [Transition hook — Phase 1] Evaluate a scalar sample via the binary-direct
+  // path (TimeSamples::get_scalar). Semantically identical to get<T>() but reads
+  // straight from the binary _data buffer (no value::Value reconstruction) for
+  // POD types. Acceptance mirrors value::Value::as<T>() exactly (exact type_id,
+  // or role-compatible underlying type for scalars). In Phase 3 this becomes the
+  // body of get<T>().
+  template <typename T>
+  bool eval_scalar(T *dst, double t = value::TimeCode::Default(),
+                   value::TimeSampleInterpolationType interp =
+                       value::TimeSampleInterpolationType::Linear) const {
+    if (!dst) return false;
+    const uint32_t tid = _type_id;
+    bool accept = (value::TypeTraits<T>::type_id() == tid);
+    if (!accept && !value::TypeTraits<T>::is_array() &&
+        !(tid & value::TYPE_ID_1D_ARRAY_BIT)) {
+      // Role-compatible scalar (e.g. color3f <-> float3): same underlying layout.
+      accept = (value::TypeTraits<T>::underlying_type_id() ==
+                value::GetUnderlyingTypeId(tid));
+    }
+    if (!accept) return false;
+    return get_scalar(static_cast<void *>(dst), t, interp);
+  }
+
   size_t estimate_memory_usage() const;  // Defined in timesamples.cc
 
   /// Estimate actual (size-based) memory usage, as opposed to
@@ -1028,6 +1051,18 @@ struct TimeSamples {
   }
 
  private:
+  // [Phase 1] Binary-direct scalar evaluator. `get_scalar` is a non-template
+  // switch on `_type_id` that delegates to the per-type `get_scalar_impl<T>`;
+  // both are defined (and `get_scalar_impl<T>` explicitly instantiated) only in
+  // timesamples.cc, so the heavy per-type code is not re-instantiated in every
+  // includer. `dst` points to a T whose layout is compatible with `_type_id`
+  // (enforced by eval_scalar / the public get<T> wrapper).
+  bool get_scalar(void *dst, double t,
+                  value::TimeSampleInterpolationType interp) const;
+  template <typename T>
+  bool get_scalar_impl(void *dst, double t,
+                       value::TimeSampleInterpolationType interp) const;
+
   // Generic path storage (for non-binary Value types: string, token, dict, etc.)
   mutable std::vector<Sample> _samples;
 
