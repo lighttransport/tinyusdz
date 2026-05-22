@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "external/jsonhpp/nlohmann/json.hpp"
+#include "common-macros.inc"  // kMaxDefaultTraversalLimit (recursion depth guard)
 
 namespace tinyusdz {
 namespace tydra {
@@ -267,7 +268,10 @@ bool TryGetTypedArrayValue(const value::Value &val, nlohmann::json &out) {
 // ===========================================================================
 // Public: ValueToJSON
 // ===========================================================================
-nlohmann::json ValueToJSON(const value::Value &val) {
+nlohmann::json ValueToJSON(const value::Value &val, uint32_t depth) {
+  if (depth > kMaxDefaultTraversalLimit) {
+    return {{"type", "error"}, {"error", "max recursion depth exceeded"}};
+  }
   if (val.is_empty()) {
     return {{"type", "null"}};
   }
@@ -476,7 +480,7 @@ nlohmann::json ValueToJSON(const value::Value &val) {
       if (v) {
         nlohmann::json dict_obj = nlohmann::json::object();
         for (const auto &[k, v2] : v.value()) {
-          dict_obj[k] = ValueToJSON(v2);
+          dict_obj[k] = ValueToJSON(v2, depth + 1);
         }
         return {{"type", type_name}, {"value", dict_obj}};
       }
@@ -559,7 +563,11 @@ nlohmann::json ValueToPlainJSON(const value::Value &val) {
 // Public: JSONToValue
 // ===========================================================================
 nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
-                                            std::string *err) {
+                                            std::string *err, uint32_t depth) {
+  if (depth > kMaxDefaultTraversalLimit) {
+    if (err) *err = "JSONToValue: max recursion depth exceeded";
+    return nonstd::nullopt;
+  }
   if (!j.is_object() || !j.contains("type")) {
     if (err) *err = "JSON value must be object with 'type' field";
     return nonstd::nullopt;
@@ -1094,7 +1102,7 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
     }
     value::dict d;
     for (auto it = val_json.begin(); it != val_json.end(); ++it) {
-      auto sub = JSONToValue(it.value(), err);
+      auto sub = JSONToValue(it.value(), err, depth + 1);
       if (sub) {
         d.emplace(it.key(), sub->get_raw());
       }
@@ -1153,7 +1161,11 @@ nlohmann::json PrimMetaToJSON(const PrimMeta &meta) {
 // ===========================================================================
 // ValueTypeToJSONSchema
 // ===========================================================================
-nlohmann::json ValueTypeToJSONSchema(const std::string &type_name) {
+nlohmann::json ValueTypeToJSONSchema(const std::string &type_name,
+                                     uint32_t depth) {
+  if (depth > kMaxDefaultTraversalLimit) {
+    return {{"type", "error"}, {"error", "max recursion depth exceeded"}};
+  }
   bool is_array = false;
   std::string base = type_name;
   if (type_name.size() >= 3 &&
@@ -1168,7 +1180,7 @@ nlohmann::json ValueTypeToJSONSchema(const std::string &type_name) {
   if (is_array) {
     nlohmann::json items;
     items["type"] = "object";
-    auto sub = ValueTypeToJSONSchema(base);
+    auto sub = ValueTypeToJSONSchema(base, depth + 1);
     if (sub.contains("properties")) {
       items["properties"] = sub["properties"];
     }

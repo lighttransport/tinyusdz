@@ -139,8 +139,9 @@ public:
   const std::string& GetWarning() const { return _warn; }
 
 private:
-  /// Convert node hierarchy
-  json ConvertNode(const Node& node, const RenderScene& scene);
+  /// Convert node hierarchy. `depth` is the internal recursion depth (callers
+  /// pass 0); it guards against stack overflow on deeply nested node trees.
+  json ConvertNode(const Node& node, const RenderScene& scene, uint32_t depth = 0);
 
   /// Convert mesh with optimizations
   json ConvertMesh(const RenderMesh& mesh, bool optimize);
