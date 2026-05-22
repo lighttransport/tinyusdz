@@ -111,16 +111,14 @@ class GeomPrimvar {
     _has_value = true;
   }
 
-  GeomPrimvar(const Attribute &attr, const TypedTimeSamples<std::vector<int32_t>> &indices) : _attr(attr)
+  GeomPrimvar(const Attribute &attr, const value::TimeSamples &indices) : _attr(attr)
   {
-    //TUSDZ_LOG_I("GeomPrimvar constructor called with Attribute and const TypedTimeSamples indices");
     _ts_indices = indices;
     _has_value = true;
   }
 
-  GeomPrimvar(const Attribute &attr, TypedTimeSamples<std::vector<int32_t>> &&indices) : _attr(attr)
+  GeomPrimvar(const Attribute &attr, value::TimeSamples &&indices) : _attr(attr)
   {
-    //TUSDZ_LOG_I("GeomPrimvar constructor called with Attribute and move TypedTimeSamples indices");
     _ts_indices = std::move(indices);
     _has_value = true;
   }
@@ -198,7 +196,7 @@ class GeomPrimvar {
     return _indices;
   }
 
-  const TypedTimeSamples<std::vector<int32_t>> &get_timesampled_indices() const {
+  const value::TimeSamples &get_timesampled_indices() const {
     return _ts_indices;
   }
 
@@ -294,7 +292,7 @@ class GeomPrimvar {
     _indices = std::move(indices);
   }
 
-  void set_timesampled_indices(const TypedTimeSamples<std::vector<int32_t>> &indices) {
+  void set_timesampled_indices(const value::TimeSamples &indices) {
     _ts_indices = indices;
   }
 
@@ -314,7 +312,7 @@ class GeomPrimvar {
   bool _has_value{false};
   Attribute _attr;
   std::vector<int32_t> _indices;  // 'default' indices
-  TypedTimeSamples<std::vector<int32_t>> _ts_indices;
+  value::TimeSamples _ts_indices;
 
   // Store Attribute meta separately.
   nonstd::optional<int32_t> _unauthoredValuesIndex; // for sparse primvars in some DCC. default = -1.

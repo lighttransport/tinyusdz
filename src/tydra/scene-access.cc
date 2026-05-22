@@ -3075,15 +3075,8 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
         }
 
         if (terminal_indexAttr.has_timesamples()) {
-          const auto &ts = terminal_indexAttr.get_var().ts_raw();
-          TypedTimeSamples<std::vector<int32_t>> tss;
-          if (!tss.from_timesamples(ts)) {
-            PUSH_ERROR_AND_RETURN(fmt::format(
-                "Index Attribute seems not an timesamples with int[] type: {}",
-                index_name));
-          }
-        
-          primvar.set_timesampled_indices(tss);
+          primvar.set_timesampled_indices(
+              terminal_indexAttr.get_var().ts_raw());
         }
 
         if (terminal_indexAttr.has_value()) {
@@ -3124,13 +3117,7 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
         }
 
         if (indexAttr.has_timesamples()) {
-          const auto &ts = indexAttr.get_var().ts_raw();
-          TypedTimeSamples<std::vector<int32_t>> tss;
-          if (!tss.from_timesamples(ts)) {
-            PUSH_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
-          }
-        
-          primvar.set_timesampled_indices(tss);
+          primvar.set_timesampled_indices(indexAttr.get_var().ts_raw());
         }
 
       }
