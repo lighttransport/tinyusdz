@@ -8,6 +8,7 @@
 // to have full definitions of types
 #include "timesamples.hh"
 #include "value-eval-util.hh"  // For lerp functions
+#include "core/extent.hh"  // value::TypeTraits<Extent> (extent timesamples)
 #include "usdShade.hh"  // For UsdUVTexture::SourceColorSpace
 #include <algorithm>
 #include <cstring>
@@ -280,6 +281,16 @@ bool TimeSamples::reconstruct_binary_sample(size_t idx, Sample* sample) const {
       RECONSTRUCT_SCALAR(value::matrix3d)
       RECONSTRUCT_SCALAR(value::matrix4f)
       RECONSTRUCT_SCALAR(value::matrix4d)
+      // half role types
+      RECONSTRUCT_SCALAR(value::vector3h)
+      RECONSTRUCT_SCALAR(value::normal3h)
+      RECONSTRUCT_SCALAR(value::point3h)
+      RECONSTRUCT_SCALAR(value::color3h)
+      RECONSTRUCT_SCALAR(value::color4h)
+      RECONSTRUCT_SCALAR(value::texcoord2h)
+      RECONSTRUCT_SCALAR(value::texcoord3h)
+      RECONSTRUCT_SCALAR(value::timecode)
+      RECONSTRUCT_SCALAR(Extent)
       default:
         break;
     }
@@ -655,6 +666,16 @@ bool TimeSamples::get_scalar(void *dst, double t,
     TS_GET_SCALAR_CASE(value::token)
     TS_GET_SCALAR_CASE(std::string)
     TS_GET_SCALAR_CASE(value::AssetPath)
+    // half role types + timecode + Extent (float3[2])
+    TS_GET_SCALAR_CASE(value::vector3h)
+    TS_GET_SCALAR_CASE(value::normal3h)
+    TS_GET_SCALAR_CASE(value::point3h)
+    TS_GET_SCALAR_CASE(value::color3h)
+    TS_GET_SCALAR_CASE(value::color4h)
+    TS_GET_SCALAR_CASE(value::texcoord2h)
+    TS_GET_SCALAR_CASE(value::texcoord3h)
+    TS_GET_SCALAR_CASE(value::timecode)
+    TS_GET_SCALAR_CASE(Extent)
     default:
       return false;
   }
