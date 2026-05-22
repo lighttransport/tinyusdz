@@ -9,7 +9,7 @@
 
 namespace {
 
-bool ReconstructMaterialBindingProperties(
+[[maybe_unused]] bool ReconstructMaterialBindingProperties(
   std::set<std::string> &table, /* inout */
   std::map<std::string, Property> &properties,
   MaterialBinding *mb, /* inout */
@@ -109,7 +109,7 @@ bool ReconstructMaterialBindingProperties(
   return true;
 }
 
-bool ReconstructCollectionProperties(
+[[maybe_unused]] bool ReconstructCollectionProperties(
   std::set<std::string> &table, /* inout */
   std::map<std::string, Property> &properties,
   Collection *coll, /* inout */
@@ -193,7 +193,7 @@ bool ReconstructCollectionProperties(
   return true;
 }
 // xformOps and built-in props
-bool ReconstructGPrimProperties(
+[[maybe_unused]] bool ReconstructGPrimProperties(
   const Specifier &spec,
   std::set<std::string> &table, /* inout */
   std::map<std::string, Property> &properties,
