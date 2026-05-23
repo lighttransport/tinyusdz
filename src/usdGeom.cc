@@ -9,7 +9,6 @@
 #include <sstream>
 #include <type_traits>
 
-#include "pprinter.hh"
 #include "value-types.hh"
 #include "core/prim.hh"
 #include "str-util.hh"

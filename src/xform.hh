@@ -10,6 +10,8 @@
 #include <cstring>
 
 #include "value-types.hh"
+#include "core/xform-op.hh"  // XformOp (Xformable::xformOps); self-contained so
+                             // includers need not pre-include it (e.g. via pprinter.hh)
 
 namespace tinyusdz {
 
