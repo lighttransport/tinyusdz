@@ -93,91 +93,48 @@ bool ReconstructShader(
 
 
 template <>
-bool ReconstructPrim<GeomMesh>(
+bool ReconstructPrim<GeomSubset>(
     const Specifier &spec,
     PropertyMap &properties,
     const ReferenceList &references,
-    GeomMesh *mesh,
+    GeomSubset *subset,
     std::string *warn,
     std::string *err,
     const PrimReconstructOptions &options) {
 
+  (void)spec;
   (void)references;
 
-  DCOUT("GeomMesh");
+  DCOUT("GeomSubset");
 
-  // Use centralized enum handlers (aliased for macro expansion)
-  auto SubdivisionSchemeHandler = enum_handler::SubdivisionScheme;
-  auto InterpolateBoundaryHandler = enum_handler::InterpolateBoundary;
-  auto FaceVaryingLinearInterpolationHandler = enum_handler::FaceVaryingLinearInterpolation;
-  auto FamilyTypeHandler = enum_handler::FamilyType;
+  // Use centralized enum handler
+  auto ElementTypeHandler = enum_handler::ElementType;
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, mesh, warn, err, options.strict_allowedToken_check)) {
+
+  if (!prim::ReconstructMaterialBindingProperties(table, properties, subset, err)) {
     return false;
   }
 
-  // Define context for property table expansion macros
-  // (suppress unused-macros warning since these are used inside X-macro expansion)
+  if (!prim::ReconstructCollectionProperties(
+    table, properties, subset, warn, err, options.strict_allowedToken_check)) {
+    return false;
+  }
+
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-macros"
 #endif
-#define PRIM_CLASS_ GeomMesh
-#define PRIM_PTR_ mesh
+#define PRIM_CLASS_ GeomSubset
+#define PRIM_PTR_ subset
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
 
-  for (auto &prop : properties) {
-    DCOUT("GeomMesh prop: " << prop.first);
-
-    // Relations (using property table)
-    GEOM_MESH_RELATIONS(EXPAND_SINGLE_REL, EXPAND_MULTI_REL)
-
-    // Typed attributes (using property table)
-    GEOM_MESH_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-
-    // Skel-related typed attributes
-    GEOM_MESH_SKEL_ATTRS(EXPAND_TYPED_ATTR)
-
-    // Enum properties (using property table)
-    GEOM_MESH_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
-    GEOM_MESH_TIMESAMPLED_ENUMS(EXPAND_TIMESAMPLED_ENUM)
-
-    // Special handling: subsetFamily for GeomSubset (cannot be table-driven)
-    if (startsWith(prop.first, "subsetFamily")) {
-      // uniform subsetFamily::<FAMILYNAME>:familyType = ...
-      std::vector<std::string> names = split(prop.first, ":");
-
-      if ((names.size() == 3) &&
-          (names[0] == "subsetFamily") &&
-          (names[2] == "familyType")) {
-
-        if (table.count(prop.first)) {
-          // Already processed
-        } else if ((prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) &&
-                   prop.second.is_attribute() &&
-                   !prop.second.is_empty()) {
-          // Parse the token enum value
-          const Attribute &attr = prop.second.get_attribute();
-          TypedAttributeWithFallback<GeomSubset::FamilyType> familyType{GeomSubset::FamilyType::Unrestricted};
-          std::function<nonstd::expected<GeomSubset::FamilyType, std::string>(const std::string &)> fun = FamilyTypeHandler;
-
-          if (!ParseUniformEnumProperty(prop.first, options.strict_allowedToken_check, fun, attr, &familyType, warn, err, options)) {
-            return false;
-          }
-
-          // NOTE: Ignore metadata of familyType.
-          // TODO: Validate familyName
-          mesh->subsetFamilyTypeMap[value::token(names[1])] = familyType.get_value();
-          table.insert(prop.first);
-        }
-      }
-    }
-
-    // generic property handling
-    ADD_PROPERTY(table, prop, GeomMesh, mesh->props)
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
+    GEOM_SUBSET_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    GEOM_SUBSET_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
+    ADD_PROPERTY(table, prop, GeomSubset, subset->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -187,25 +144,23 @@ bool ReconstructPrim<GeomMesh>(
   return true;
 }
 
-
 template <>
-bool ReconstructPrim<GeomCamera>(
+bool ReconstructPrim<GeomPointInstancer>(
     const Specifier &spec,
     PropertyMap &properties,
     const ReferenceList &references,
-    GeomCamera *camera,
+    GeomPointInstancer *instancer,
     std::string *warn,
     std::string *err,
     const PrimReconstructOptions &options) {
-  (void)references;
-  (void)warn;
 
-  // Use centralized enum handlers
-  auto ProjectionHandler = enum_handler::CameraProjection;
-  auto StereoRoleHandler = enum_handler::CameraStereoRole;
+  (void)warn;
+  (void)references;
+
+  DCOUT("Reconstruct GeomPointInstancer.");
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, camera, warn, err, options.strict_allowedToken_check)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, instancer, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
@@ -213,17 +168,16 @@ bool ReconstructPrim<GeomCamera>(
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-macros"
 #endif
-#define PRIM_CLASS_ GeomCamera
-#define PRIM_PTR_ camera
+#define PRIM_CLASS_ GeomPointInstancer
+#define PRIM_PTR_ instancer
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
 
   for (auto &prop : properties) {  // Non-const to allow move from property metadata
-    GEOM_CAMERA_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    GEOM_CAMERA_TIMESAMPLED_ENUMS(EXPAND_TIMESAMPLED_ENUM)
-    GEOM_CAMERA_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
-    ADD_PROPERTY(table, prop, GeomCamera, camera->props)
+    GEOM_POINT_INSTANCER_RELATIONS(EXPAND_SINGLE_REL, EXPAND_MULTI_REL)
+    GEOM_POINT_INSTANCER_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    ADD_PROPERTY(table, prop, GeomPointInstancer, instancer->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
@@ -232,6 +186,8 @@ bool ReconstructPrim<GeomCamera>(
 
   return true;
 }
+
+
 
 }  // namespace prim
 }  // namespace tinyusdz

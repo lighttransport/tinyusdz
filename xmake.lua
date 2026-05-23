@@ -145,6 +145,7 @@ target("tinyusdz_static")
         "src/prim-reconstruct.cc",
         "src/prim-reconstruct-geom.cc",
         "src/prim-reconstruct-geom2.cc",
+        "src/prim-reconstruct-geom3.cc",
         "src/prim-reconstruct-lightprim.cc",
         "src/prim-reconstruct-shader.cc",
         "src/prim-reconstruct-shader2.cc",
