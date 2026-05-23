@@ -539,6 +539,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader2.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader3.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader4.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-physics.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-physics2.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-physics3.cc
