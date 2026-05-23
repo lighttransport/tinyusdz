@@ -62,10 +62,11 @@ inline void print_attr_metas_block(std::stringstream &ss,
 // TimeSamples printing templates
 // ============================================================================
 
-// Typed timesamples (TypedTimeSamples<T>) — used for enum-valued attributes,
-// which keep the typed store. sample.value is the typed T.
+// Enum-valued timesamples: stored as int64 in a type-erased value::TimeSamples;
+// cast each sample back to the concrete enum T and stream it (T's operator<<
+// renders the token name).
 template <typename T>
-inline std::string print_typed_timesamples(const TypedTimeSamples<T> &v,
+inline std::string print_enum_timesamples(const value::TimeSamples &v,
                                            const uint32_t indent = 0) {
   std::stringstream ss;
 
@@ -77,8 +78,8 @@ inline std::string print_typed_timesamples(const TypedTimeSamples<T> &v,
     ss << pprint::Indent(indent + 1) << samples[i].t << ": ";
     if (samples[i].blocked) {
       ss << "None";
-    } else {
-      ss << samples[i].value;
+    } else if (const int64_t *iv = samples[i].value.template as<int64_t>()) {
+      ss << static_cast<T>(*iv);
     }
     ss << ",\n";
   }
@@ -115,10 +116,10 @@ inline std::string print_value_typed_timesamples(const value::TimeSamples &v,
   return ss.str();
 }
 
-// Token/enum timesamples kept as TypedTimeSamples<T> — enum-valued attributes
-// that serialize as tokens (Purpose, Visibility, ...) keep the typed store.
+// Enum-valued attributes that serialize as quoted tokens (Purpose, Visibility,
+// ...). Stored as int64; cast back to the concrete enum T and quote its token.
 template <typename T>
-inline std::string print_typed_token_timesamples(const TypedTimeSamples<T> &v,
+inline std::string print_enum_token_timesamples(const value::TimeSamples &v,
                                                  const uint32_t indent = 0) {
   std::stringstream ss;
 
@@ -130,8 +131,8 @@ inline std::string print_typed_token_timesamples(const TypedTimeSamples<T> &v,
     ss << pprint::Indent(indent + 1) << samples[i].t << ": ";
     if (samples[i].blocked) {
       ss << "None";
-    } else {
-      ss << quote(to_string(samples[i].value));
+    } else if (const int64_t *iv = samples[i].value.template as<int64_t>()) {
+      ss << quote(to_string(static_cast<T>(*iv)));
     }
     ss << ",\n";
   }
@@ -227,8 +228,10 @@ inline std::string print_animatable_timesamples(const Animatable<T> &v,
         ss << print_value_typed_timesamples<T>(*tsp, indent);
       }
     } else {
-      // enum / non-registered type: still kept as TypedTimeSamples<T>.
-      ss << print_typed_timesamples(v.get_timesamples(), indent);
+      // enum: stored as int64 in the type-erased store; cast back to T to render.
+      if (const value::TimeSamples *tsp = v.get_timesamples_ptr()) {
+        ss << print_enum_timesamples<T>(*tsp, indent);
+      }
     }
   }
 
@@ -680,8 +683,10 @@ inline std::string print_typed_token_attr(
         // value::token: read from the type-erased store.
         ss << print_value_token_timesamples(*v.get_timesamples_ptr(), indent);
       } else {
-        // enum serialized as token: kept as TypedTimeSamples<T>.
-        ss << print_typed_token_timesamples(v.get_timesamples(), indent);
+        // enum serialized as token: stored as int64; cast back to T to render.
+        if (const value::TimeSamples *tsp = v.get_timesamples_ptr()) {
+          ss << print_enum_token_timesamples<T>(*tsp, indent);
+        }
       }
       ss << "\n";
     }
