@@ -222,41 +222,6 @@ struct PrimVar {
     _ts = std::move(v);
   }
 
-  /// Set TypedTimeSamples for frequently used types (int, float, double, etc.)
-  /// Converts to generic TimeSamples internally but allows move semantics
-  template <typename T>
-  void set_typed_timesamples(TypedTimeSamples<T> &&typed_ts) {
-    // Convert TypedTimeSamples to TimeSamples
-    value::TimeSamples ts;
-    
-    for (const auto& sample : typed_ts.get_samples()) {
-      if (sample.blocked) {
-        ts.add_blocked_sample(sample.t);
-      } else {
-        ts.add_sample(sample.t, value::Value(sample.value));
-      }
-    }
-
-    _ts = std::move(ts);
-  }
-
-  /// Set TypedTimeSamples for frequently used types (const ref version)
-  template <typename T>
-  void set_typed_timesamples(const TypedTimeSamples<T> &typed_ts) {
-    // Convert TypedTimeSamples to TimeSamples
-    value::TimeSamples ts;
-
-    for (const auto& sample : typed_ts.get_samples()) {
-      if (sample.blocked) {
-        ts.add_blocked_sample(sample.t);
-      } else {
-        ts.add_sample(sample.t, value::Value(sample.value));
-      }
-    }
-
-    _ts = ts;
-  }
-
   void clear_timesamples() {
     _ts.clear();
   }
