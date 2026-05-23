@@ -1746,23 +1746,19 @@ bool CrateWriter::ExtractGPrimProperties(
 
     // Handle animated visibility (TimeSamples)
     if (vis_animatable.has_timesamples()) {
-      const auto& typed_ts = vis_animatable.get_timesamples();
+      const value::TimeSamples *vis_ts = vis_animatable.get_timesamples_ptr();
 
-      // Convert TypedTimeSamples<Visibility> to value::TimeSamples
+      // Enum timesamples are stored as int64; cast back to Visibility and emit
+      // token timeSamples for the crate writer.
       value::TimeSamples ts;
-      for (size_t i = 0; i < typed_ts.size(); i++) {
-        Visibility sample_vis;
-        double time;
-
-        // Get time and value from the typed timesamples
-        time = typed_ts.get_samples()[i].t;
-        sample_vis = typed_ts.get_samples()[i].value;
-
-        // Convert Visibility enum to token string
-        std::string vis_str = to_string(sample_vis);
-        value::token vis_token(vis_str);
-        value::Value v(vis_token);
-        ts.add_sample(time, v);
+      const auto &samples = vis_ts->get_samples();
+      for (size_t i = 0; i < samples.size(); i++) {
+        if (samples[i].blocked) {
+          ts.add_blocked_sample(samples[i].t, value::Value());
+        } else if (const int64_t *iv = samples[i].value.as<int64_t>()) {
+          value::token vis_token(to_string(static_cast<Visibility>(*iv)));
+          ts.add_sample(samples[i].t, value::Value(vis_token));
+        }
       }
 
       crate::CrateValue ts_crate_val;

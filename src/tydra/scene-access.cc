@@ -38,22 +38,25 @@ namespace {
     (*err) += msg;     \
   }
 
-// Enum TimeSamples to typeless TimeSamples
+// Enum TimeSamples to typeless (token) TimeSamples.
+// Enum-valued Animatables store their samples as int64 in a type-erased
+// value::TimeSamples; cast each back to the concrete enum T and render its token.
 template <typename T>
 value::TimeSamples EnumTimeSamplesToTypelessTimeSamples(
-    const TypedTimeSamples<T> &ts) {
+    const value::TimeSamples &ts) {
+  static_assert(std::is_enum<T>::value,
+                "EnumTimeSamplesToTypelessTimeSamples is for enum types only.");
   value::TimeSamples dst;
 
-  const std::vector<typename TypedTimeSamples<T>::Sample> &samples =
-      ts.get_samples();
+  const std::vector<value::TimeSamples::Sample> &samples = ts.get_samples();
 
   for (size_t i = 0; i < samples.size(); i++) {
     if (samples[i].blocked) {
       // For untyped TimeSamples, blocked samples need a dummy value
       dst.add_blocked_sample(samples[i].t, value::Value());
-    } else {
+    } else if (const int64_t *iv = samples[i].value.as<int64_t>()) {
       // to token
-      value::token tok(to_string(samples[i].value));
+      value::token tok(to_string(static_cast<T>(*iv)));
       dst.add_sample(samples[i].t, tok);
     }
   }
@@ -535,7 +538,7 @@ bool ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
 
     if (v.has_timesamples()) {
       value::TimeSamples ts =
-          EnumTimeSamplesToTypelessTimeSamples(v.get_timesamples());
+          EnumTimeSamplesToTypelessTimeSamples<T>(*v.get_timesamples_ptr());
       pvar.set_timesamples(std::move(ts));
     }
 
