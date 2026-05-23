@@ -12,6 +12,8 @@
 
 #include "unit-physics.h"
 #include "tinyusdz.hh"
+#include "usdGeom.hh"   // Geom* (no longer re-exported by tinyusdz.hh)
+#include "usdShade.hh"  // Material
 #include "usdc-writer.hh"
 #include "core/prim.hh"
 #include "usdPhysics.hh"

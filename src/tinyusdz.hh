@@ -36,11 +36,12 @@
 #include "core/prim.hh"       // Prim (transitively: value-types, path, prim-enums, prim-metas)
 #include "core/prim-spec.hh"  // PrimSpec, Layer, FileFormatHandler
 #include "texture-types.hh"
-#include "usdGeom.hh"
-#include "usdLux.hh"
-#include "usdShade.hh"
-#include "usdSkel.hh"
-//#include "usdVox.hh"
+// NOTE: the concrete schema headers (usdGeom/usdLux/usdShade/usdSkel) are NOT
+// included here — tinyusdz.hh's own API uses only Stage/Prim/Layer, so pulling the
+// (template-heavy) schema definitions into every consumer of this umbrella header
+// is unnecessary. Code that uses concrete schema types (GeomMesh, Material,
+// SphereLight, SkelRoot, ...) must include the relevant "usd{Geom,Lux,Shade,Skel}.hh"
+// directly.
 #include "stage.hh"
 #include "asset-resolution.hh"
 

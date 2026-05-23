@@ -5,6 +5,7 @@
 
 #include "usdMtlx.hh"
 #include "usdShade.hh"
+#include "usdLux.hh"  // SphereLight/RectLight (no longer re-exported by tinyusdz.hh)
 #include "safe-arithmetic.hh"
 
 // Use built-in MaterialX parser instead of pugixml
