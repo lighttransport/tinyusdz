@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - Present, Light Transport Entertainment Inc.
 //
-// GeomPrimvar flatten_with_indices/get_value explicit instantiations for the
-// ROLE type group. Split from usdGeom.cc; shares bodies via usdGeom-primvar-impl.inc.
+// GeomPrimvar flatten_with_indices/get_value explicit instantiations (ROLE_A group).
+// Split from usdGeom.cc; shares bodies via usdGeom-primvar-impl.inc.
 
 #include <cstring>
 #include <sstream>
@@ -35,8 +35,8 @@ namespace tinyusdz {
   template bool GeomPrimvar::get_value(std::vector<__ty> *dest, std::string *err) const; \
   template bool GeomPrimvar::get_value(double, std::vector<__ty> *dest, value::TimeSampleInterpolationType, std::string *err) const;
 
-APPLY_GEOMPRIVAR_TYPE_ROLE(INSTANCIATE_FLATTEN_WITH_INDICES)
-APPLY_GEOMPRIVAR_TYPE_ROLE(INSTANCIATE_GET_VALUE)
+APPLY_GEOMPRIVAR_TYPE_ROLE_A(INSTANCIATE_FLATTEN_WITH_INDICES)
+APPLY_GEOMPRIVAR_TYPE_ROLE_A(INSTANCIATE_GET_VALUE)
 
 #undef INSTANCIATE_FLATTEN_WITH_INDICES
 #undef INSTANCIATE_GET_VALUE
