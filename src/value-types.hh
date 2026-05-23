@@ -2656,50 +2656,16 @@ struct LerpTraits<std::vector<ty>> { \
   } \
 };
 
-DEFINE_LERP_TRAIT(value::half)
-DEFINE_LERP_TRAIT(value::half2)
-DEFINE_LERP_TRAIT(value::half3)
-DEFINE_LERP_TRAIT(value::half4)
-DEFINE_LERP_TRAIT(float)
-DEFINE_LERP_TRAIT(value::float2)
-DEFINE_LERP_TRAIT(value::float3)
-DEFINE_LERP_TRAIT(value::float4)
-DEFINE_LERP_TRAIT(double)
-DEFINE_LERP_TRAIT(value::double2)
-DEFINE_LERP_TRAIT(value::double3)
-DEFINE_LERP_TRAIT(value::double4)
-DEFINE_LERP_TRAIT(value::quath)
-DEFINE_LERP_TRAIT(value::quatf)
-DEFINE_LERP_TRAIT(value::quatd)
-DEFINE_LERP_TRAIT(value::matrix2f)
-DEFINE_LERP_TRAIT(value::matrix3f)
-DEFINE_LERP_TRAIT(value::matrix4f)
-DEFINE_LERP_TRAIT(value::matrix2d)
-DEFINE_LERP_TRAIT(value::matrix3d)
-DEFINE_LERP_TRAIT(value::matrix4d)
-DEFINE_LERP_TRAIT(value::timecode)
-DEFINE_LERP_TRAIT(value::normal3h)
-DEFINE_LERP_TRAIT(value::normal3f)
-DEFINE_LERP_TRAIT(value::normal3d)
-DEFINE_LERP_TRAIT(value::vector3h)
-DEFINE_LERP_TRAIT(value::vector3f)
-DEFINE_LERP_TRAIT(value::vector3d)
-DEFINE_LERP_TRAIT(value::point3h)
-DEFINE_LERP_TRAIT(value::point3f)
-DEFINE_LERP_TRAIT(value::point3d)
-DEFINE_LERP_TRAIT(value::color3h)
-DEFINE_LERP_TRAIT(value::color3f)
-DEFINE_LERP_TRAIT(value::color3d)
-DEFINE_LERP_TRAIT(value::color4h)
-DEFINE_LERP_TRAIT(value::color4f)
-DEFINE_LERP_TRAIT(value::color4d)
-DEFINE_LERP_TRAIT(value::texcoord2h)
-DEFINE_LERP_TRAIT(value::texcoord2f)
-DEFINE_LERP_TRAIT(value::texcoord2d)
-DEFINE_LERP_TRAIT(value::texcoord3h)
-DEFINE_LERP_TRAIT(value::texcoord3f)
-DEFINE_LERP_TRAIT(value::texcoord3d)
-DEFINE_LERP_TRAIT(value::frame4d)
+// Single lerpable-type list (APPLY_FUNC_TO_LERP_VALUE_TYPES). Defining the
+// macros here makes the list visible to both LerpTraits below and, via this
+// header, to value-types.cc (GetLerpSupportedTypeIds + Lerp dispatch). The .inc
+// is pure, identical #defines, so re-inclusion by other headers is harmless.
+#include "value-type-macros.inc"
+
+// Generated from the single lerpable-type list so the compile-time predicate
+// (LerpTraits), the runtime predicate (GetLerpSupportedTypeIds) and Lerp()'s
+// dispatch all cover the same types (no drift).
+APPLY_FUNC_TO_LERP_VALUE_TYPES(DEFINE_LERP_TRAIT)
 
 #undef DEFINE_LERP_TRAIT
 
