@@ -16,8 +16,6 @@
 #include "pprinter.hh"
 #include "core/prim.hh"
 #include "str-util.hh"
-#include "usdGeom.hh"
-#include "usdLux.hh"
 #include "value-types.hh"
 
 #include "common-macros.inc"
@@ -84,70 +82,21 @@ namespace value {
   __FUNC(frame4d)              \
   __FUNC(timecode)
 
-#define CASE_GPRIM_LIST(__FUNC) \
-  __FUNC(Model)                 \
-  __FUNC(Scope)                 \
-  __FUNC(Xform)                 \
-  __FUNC(GeomMesh)              \
-  __FUNC(GeomSphere)            \
-  __FUNC(GeomSubset)            \
-  __FUNC(GeomPoints)            \
-  __FUNC(GeomCube)              \
-  __FUNC(GeomCylinder)          \
-  __FUNC(GeomCapsule)           \
-  __FUNC(GeomCone)              \
-  __FUNC(GeomBasisCurves)       \
-  __FUNC(GeomNurbsCurves)       \
-  __FUNC(GeomPlane)             \
-  __FUNC(GeomCylinder_1)        \
-  __FUNC(GeomCapsule_1)         \
-  __FUNC(GeomTetMesh)           \
-  __FUNC(GeomNurbsPatch)        \
-  __FUNC(GeomHermiteCurves)     \
-  __FUNC(GeomCamera)            \
-  __FUNC(GeomPointInstancer)        \
-  __FUNC(SphereLight)           \
-  __FUNC(DomeLight)             \
-  __FUNC(DiskLight)             \
-  __FUNC(DistantLight)          \
-  __FUNC(CylinderLight)         \
-  __FUNC(RectLight)             \
-  __FUNC(GeometryLight)         \
-  __FUNC(PortalLight)           \
-  __FUNC(DomeLight_1)           \
-  __FUNC(LightFilter)           \
-  __FUNC(PluginLightFilter)     \
-  __FUNC(SkelRoot)              \
-  __FUNC(Skeleton)              \
-  __FUNC(SkelAnimation)         \
-  __FUNC(BlendShape)            \
-  __FUNC(Material)              \
-  __FUNC(Shader)                \
-  __FUNC(NodeGraph)             \
-  __FUNC(PhysicsJoint)           \
-  __FUNC(PhysicsScene)          \
-  __FUNC(PhysicsRevoluteJoint)  \
-  __FUNC(PhysicsPrismaticJoint) \
-  __FUNC(PhysicsSphericalJoint) \
-  __FUNC(PhysicsFixedJoint)     \
-  __FUNC(PhysicsDistanceJoint)  \
-  __FUNC(PhysicsCollisionGroup) \
-  __FUNC(MjcActuator)           \
-  __FUNC(NewtonActuator)        \
-  __FUNC(MjcTendon)             \
-  __FUNC(MjcKeyframe)           \
-  __FUNC(Preliminary_PhysicsGravitationalForce) \
-  __FUNC(Preliminary_InfiniteColliderPlane) \
-  __FUNC(Preliminary_ReferenceImage) \
-  __FUNC(Preliminary_Behavior)  \
-  __FUNC(Preliminary_Trigger)   \
-  __FUNC(Preliminary_Action)    \
-  __FUNC(Preliminary_Text)      \
-  __FUNC(SpatialAudio)
 
 
 std::string pprint_value(const value::Value &v, const uint32_t indent,
                          bool closing_brace) {
+  // Schema prim types (Model/Xform/GeomMesh/.../SpatialAudio) are rendered
+  // out-of-line by pprint_prim_value() in value-pprint-prim.cc — same
+  // [MODEL_BEGIN, MODEL_END) detection Prim uses — so this TU need not
+  // instantiate v.as<PrimType>()/to_string() for ~60 schema types.
+  {
+    const uint32_t prim_tid = v.type_id();
+    if (prim_tid >= static_cast<uint32_t>(value::TypeId::TYPE_ID_MODEL_BEGIN) &&
+        prim_tid < static_cast<uint32_t>(value::TypeId::TYPE_ID_MODEL_END)) {
+      return pprint_prim_value(v, indent, closing_brace);
+    }
+  }
 #define BASETYPE_CASE_EXPR(__ty)                           \
   case TypeTraits<__ty>::type_id(): {                      \
     auto p = v.as<__ty>();                                 \
@@ -159,16 +108,6 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
     break;                                                 \
   }
 
-#define PRIMTYPE_CASE_EXPR(__ty)                           \
-  case TypeTraits<__ty>::type_id(): {                      \
-    auto p = v.as<__ty>();                                 \
-    if (p) {                                               \
-      os << to_string(*p, indent, closing_brace);          \
-    } else {                                               \
-      os << "[InternalError: Prim type TypeId mismatch.]"; \
-    }                                                      \
-    break;                                                 \
-  }
 
 #define ARRAY1DTYPE_CASE_EXPR(__ty)                      \
   case TypeTraits<std::vector<__ty>>::type_id(): {       \
@@ -236,8 +175,6 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       // 2D array
       // CASE_EXPR_LIST(ARRAY2DTYPE_CASE_EXPR)
 
-      // GPrim
-      CASE_GPRIM_LIST(PRIMTYPE_CASE_EXPR)
 
     // dict and customData
     case TypeTraits<CustomDataType>::type_id(): {
@@ -357,7 +294,6 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
   }
 
 #undef BASETYPE_CASE_EXPR
-#undef PRIMTYPE_CASE_EXPR
 #undef ARRAY1DTYPE_CASE_EXPR
 #undef ARRAY2DTYPE_CASE_EXPR
 
@@ -365,7 +301,6 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
 }
 
 #undef CASE_EXPR_LIST
-#undef CASE_GPRIM_LIST
 
 
 }  // namespace value
