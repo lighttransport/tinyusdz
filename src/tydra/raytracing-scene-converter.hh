@@ -10,6 +10,8 @@
 
 #include "raytracing-data.hh"
 #include "tinyusdz.hh"
+#include "usdGeom.hh"   // GeomMesh (no longer re-exported by tinyusdz.hh)
+#include "usdShade.hh"  // Material
 #include "value-types.hh"
 
 namespace tinyusdz {

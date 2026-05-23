@@ -1,5 +1,6 @@
 // TODO: merge into api-tutorial example.
 #include "usda-writer.hh"
+#include "usdGeom.hh"  // Xform/GeomMesh (no longer re-exported by tinyusdz.hh)
 
 #include <iostream>
 
