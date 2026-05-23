@@ -16,7 +16,6 @@
 #include "value-types.hh"
 #include "value-pprint.hh"
 #include "pprint-meta.hh"
-#include "logger.hh"
 #include "timesamples.hh"
 #include "stream-writer.hh"
 #include "typed-array.hh"

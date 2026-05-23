@@ -18,7 +18,6 @@
 #include "math-util.inc"
 #include "str-util.hh"
 #include "value-pprint.hh"
-#include "logger.hh"
 #include "safe-arithmetic.hh"
 
 namespace tinyusdz {
