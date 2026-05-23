@@ -263,6 +263,14 @@ namespace value {
 std::string pprint_value(const tinyusdz::value::Value &v,
                          const uint32_t indent = 0, bool closing_brace = true);
 
+// Renders a value::Value holding a schema *prim* type (Model/Xform/GeomMesh/
+// Material/.../SpatialAudio) via to_string(). Defined in value-pprint-prim.cc
+// (which carries the schema headers); pprint_value() forwards here for type_ids
+// in [TYPE_ID_MODEL_BEGIN, TYPE_ID_MODEL_END). Split out so value-pprint-dispatch.cc
+// (the base-type/array renderer) compiles without the per-prim-type instantiation.
+std::string pprint_prim_value(const tinyusdz::value::Value &v,
+                              const uint32_t indent = 0, bool closing_brace = true);
+
 // Print first N and last N items.
 // 0 = print all items.
 // Callee must ensure access to `vals` does not trigger out-of-bounds error.
