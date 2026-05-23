@@ -603,6 +603,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc
     ${PROJECT_SOURCE_DIR}/src/timesamples-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/timesamples.cc
+    ${PROJECT_SOURCE_DIR}/src/timesamples-eval.cc
     ${PROJECT_SOURCE_DIR}/src/stage.cc
     ${PROJECT_SOURCE_DIR}/src/stage.hh
     ${PROJECT_SOURCE_DIR}/src/uuid-gen.cc
