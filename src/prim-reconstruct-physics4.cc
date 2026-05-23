@@ -48,16 +48,12 @@ namespace prim {
 #ifdef __GNUC__
 #pragma GCC diagnostic pop
 #endif
-
 #include "prim-reconstruct-physics-detail.inc"
 
-// ============================================================================
-// PhysicsJoint (generic D6 joint)
-// ============================================================================
 template <>
-bool ReconstructPrim<PhysicsJoint>(
+bool ReconstructPrim<PhysicsFixedJoint>(
     const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
-    PhysicsJoint *joint, std::string *warn, std::string *err,
+    PhysicsFixedJoint *joint, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec; (void)references;
   std::set<std::string> table;
@@ -71,7 +67,7 @@ bool ReconstructPrim<PhysicsJoint>(
       NEWTON_MIMIC_TYPED_ATTRS(EXPAND_TYPED_ATTR)
       NEWTON_MIMIC_RELS(EXPAND_SINGLE_REL)
     }
-    ADD_PROPERTY(table, prop, PhysicsJoint, joint->props)
+    ADD_PROPERTY(table, prop, PhysicsFixedJoint, joint->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 #undef PRIM_PTR_
@@ -79,78 +75,32 @@ bool ReconstructPrim<PhysicsJoint>(
 }
 
 // ============================================================================
-// PhysicsScene
+// PhysicsDistanceJoint
 // ============================================================================
 template <>
-bool ReconstructPrim<PhysicsScene>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    PhysicsScene *scene,
-    std::string *warn,
-    std::string *err,
+bool ReconstructPrim<PhysicsDistanceJoint>(
+    const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
+    PhysicsDistanceJoint *joint, std::string *warn, std::string *err,
     const PrimReconstructOptions &options) {
-
-  (void)spec;
-  (void)references;
-  (void)options;
-
+  (void)spec; (void)references;
   std::set<std::string> table;
-
-  if (!scene->mjcScene.has_value() && HasPropertyPrefix(properties, "mjc:")) {
-    scene->mjcScene = MjcSceneAPI();
-  }
-  if (!scene->newtonScene.has_value() && (
-      HasPropertyPrefix(properties, "newton:maxSolverIterations") ||
-      HasPropertyPrefix(properties, "newton:timeStepsPerSecond") ||
-      HasPropertyPrefix(properties, "newton:gravityEnabled"))) {
-    scene->newtonScene = NewtonSceneAPI();
-  }
-  if (!scene->newtonXpbdScene.has_value() &&
-      HasPropertyPrefix(properties, "newton:xpbd:")) {
-    scene->newtonXpbdScene = NewtonXpbdSceneAPI();
-  }
-  if (!scene->newtonKaminoScene.has_value() &&
-      HasPropertyPrefix(properties, "newton:kamino:")) {
-    scene->newtonKaminoScene = NewtonKaminoSceneAPI();
-  }
-
-#define PRIM_PTR_ scene
-
+  if (!ReconstructJointBaseProperties(table, properties, joint, warn, err, options)) return false;
+#define PRIM_PTR_ joint
   for (auto &prop : properties) {
-    PHYSICS_SCENE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-
-    if (scene->mjcScene.has_value()) {
-      MJC_SCENE_OPTION_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-      MJC_SCENE_FLAG_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-      MJC_SCENE_COMPILER_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    PHYSICS_JOINT_BASE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    PHYSICS_DISTANCE_JOINT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    PHYSICS_JOINT_BASE_RELS(EXPAND_SINGLE_REL)
+    if (joint->mjcJoint.has_value()) { MJC_JOINT_TYPED_ATTRS(EXPAND_TYPED_ATTR) }
+    if (joint->newtonMimic.has_value()) {
+      NEWTON_MIMIC_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+      NEWTON_MIMIC_RELS(EXPAND_SINGLE_REL)
     }
-    if (scene->newtonScene.has_value()) {
-      NEWTON_SCENE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    }
-    if (scene->newtonXpbdScene.has_value()) {
-      NEWTON_XPBD_SCENE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    }
-    if (scene->newtonKaminoScene.has_value()) {
-      NEWTON_KAMINO_SCENE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    }
-
-    ADD_PROPERTY(table, prop, PhysicsScene, scene->props)
+    ADD_PROPERTY(table, prop, PhysicsDistanceJoint, joint->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-
 #undef PRIM_PTR_
-
   return true;
 }
-
-// ============================================================================
-// PhysicsRevoluteJoint
-// ============================================================================
-
-// ============================================================================
-// PrimSpec wrappers
-// ============================================================================
 
 #define RECONSTRUCT_PRIM_PRIMSPEC_IMPL(__prim_ty) \
 template <> \
@@ -166,7 +116,8 @@ bool ReconstructPrim<__prim_ty>( \
   return ReconstructPrim<__prim_ty>(primspec.specifier(), primspec.props(), references, prim, warn, err, options); \
 }
 
-RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PhysicsScene)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PhysicsFixedJoint)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PhysicsDistanceJoint)
 
 }  // namespace prim
 }  // namespace tinyusdz
