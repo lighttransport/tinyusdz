@@ -520,6 +520,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/crate-format.cc
     ${PROJECT_SOURCE_DIR}/src/crate-writer.cc
     ${PROJECT_SOURCE_DIR}/src/crate-writer-values.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-writer-inline.cc
     ${PROJECT_SOURCE_DIR}/src/stage-converter.cc
     ${PROJECT_SOURCE_DIR}/src/sconv-geom.cc
     ${PROJECT_SOURCE_DIR}/src/sconv-physics.cc
