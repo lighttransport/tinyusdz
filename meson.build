@@ -149,6 +149,10 @@ endif
 # ============================================================================
 
 tinyusdz_sources = files(
+  # Crate path utilities (path sorting / tree encoding for the USDC writer).
+  # Formerly the sandbox/path-sort-and-encode-crate subproject; now part of the lib.
+  'src/crate-path-utils/path_sort.cc',
+  'src/crate-path-utils/tree_encode.cc',
   'src/arg-parser.cc',
   'src/asset-resolution.cc',
   'src/tinyusdz.cc',
@@ -648,10 +652,10 @@ if opt_system_zlib
 endif
 
 # ============================================================================
-# crate-encoding subproject
+# (crate path utilities are now compiled directly into the main library from
+#  src/crate-path-utils/; the former sandbox/path-sort-and-encode-crate subproject
+#  is deprecated.)
 # ============================================================================
-
-subdir('sandbox/path-sort-and-encode-crate')
 
 # ============================================================================
 # Main static library
@@ -668,7 +672,7 @@ endif
 tinyusdz_static = static_library('tinyusdz_static',
   tinyusdz_sources + tinyusdz_dep_sources,
   include_directories: all_inc,
-  dependencies: [crate_encoding_dep] + ext_deps,
+  dependencies: ext_deps,
   cpp_args: tinyusdz_defines,
   c_args: tinyusdz_defines,
   link_with: extra_link_libs,
@@ -685,7 +689,7 @@ if opt_shared_lib
   tinyusdz_shared = shared_library('tinyusdz',
     tinyusdz_sources + tinyusdz_dep_sources,
     include_directories: all_inc,
-    dependencies: [crate_encoding_dep] + ext_deps,
+    dependencies: ext_deps,
     cpp_args: shared_defines,
     c_args: shared_defines,
     link_with: extra_link_libs,

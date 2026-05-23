@@ -3,7 +3,6 @@
 CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -I../../../ -I../../../src
 LDFLAGS = ../../../build/libtinyusdz_static.a \
-	  ../../../build/path-sort-and-encode-crate/libcrate-encoding.a \
 	  -ldl
 
 # Source files
