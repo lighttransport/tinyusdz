@@ -22,14 +22,14 @@
 #include "nonstd/optional.hpp"
 #include "typed-array.hh"
 #include "value-types.hh"
-#include "value-eval-util.hh"  // lerp() for header-inline TypedTimeSamples::get
 #include "buffer-util.hh"
+// NOTE: value-eval-util.hh (the lerp<T>/slerp template math) is intentionally
+// NOT included here — interpolation now lives in the non-template cores in
+// timesamples.cc, which includes it directly. Pulling it through this header
+// (widely included via animatable.hh / primvar.hh) was a leftover from the
+// deleted header-inline TypedTimeSamples::get.
 
 namespace tinyusdz {
-
-// Forward declaration of lerp for TypedTimeSamples
-template<typename T>
-T lerp(const T& a, const T& b, double t);
 
 namespace value {
 
