@@ -20,51 +20,7 @@
 
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDC_READER)
 
-// Explicit instantiation declarations for prim::ReconstructPrim specializations
-// defined in other translation units (prim-reconstruct.cc, prim-reconstruct-physics.cc, etc.).
-// Suppresses -Wundefined-func-template.
-#define EXTERN_RECONSTRUCT_PRIM(__ty) \
-  extern template bool ReconstructPrim<__ty>( \
-      const Specifier &, PropertyMap &, const ReferenceList &, \
-      __ty *, std::string *, std::string *, const PrimReconstructOptions &)
-
-namespace tinyusdz {
-namespace prim {
-
-EXTERN_RECONSTRUCT_PRIM(GeomPlane);
-EXTERN_RECONSTRUCT_PRIM(GeomCylinder_1);
-EXTERN_RECONSTRUCT_PRIM(GeomCapsule_1);
-EXTERN_RECONSTRUCT_PRIM(GeomTetMesh);
-EXTERN_RECONSTRUCT_PRIM(GeomNurbsPatch);
-EXTERN_RECONSTRUCT_PRIM(GeomHermiteCurves);
-EXTERN_RECONSTRUCT_PRIM(DomeLight_1);
-EXTERN_RECONSTRUCT_PRIM(LightFilter);
-EXTERN_RECONSTRUCT_PRIM(PluginLightFilter);
-EXTERN_RECONSTRUCT_PRIM(PhysicsJoint);
-EXTERN_RECONSTRUCT_PRIM(PhysicsScene);
-EXTERN_RECONSTRUCT_PRIM(PhysicsRevoluteJoint);
-EXTERN_RECONSTRUCT_PRIM(PhysicsPrismaticJoint);
-EXTERN_RECONSTRUCT_PRIM(PhysicsSphericalJoint);
-EXTERN_RECONSTRUCT_PRIM(PhysicsFixedJoint);
-EXTERN_RECONSTRUCT_PRIM(PhysicsDistanceJoint);
-EXTERN_RECONSTRUCT_PRIM(PhysicsCollisionGroup);
-EXTERN_RECONSTRUCT_PRIM(MjcActuator);
-EXTERN_RECONSTRUCT_PRIM(NewtonActuator);
-EXTERN_RECONSTRUCT_PRIM(MjcTendon);
-EXTERN_RECONSTRUCT_PRIM(MjcKeyframe);
-EXTERN_RECONSTRUCT_PRIM(Preliminary_PhysicsGravitationalForce);
-EXTERN_RECONSTRUCT_PRIM(Preliminary_InfiniteColliderPlane);
-EXTERN_RECONSTRUCT_PRIM(Preliminary_ReferenceImage);
-EXTERN_RECONSTRUCT_PRIM(Preliminary_Behavior);
-EXTERN_RECONSTRUCT_PRIM(Preliminary_Trigger);
-EXTERN_RECONSTRUCT_PRIM(Preliminary_Action);
-EXTERN_RECONSTRUCT_PRIM(Preliminary_Text);
-EXTERN_RECONSTRUCT_PRIM(SpatialAudio);
-
-#undef EXTERN_RECONSTRUCT_PRIM
-
-} // namespace prim
-} // namespace tinyusdz
+#include "usdc-reader-prim-detail.inc"
 
 namespace tinyusdz {
 namespace usdc {
@@ -145,97 +101,7 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
   return std::move(schemas);
 }
 
-template <typename T>
-bool USDCReader::Impl::ReconstructPrim(const Specifier &spec, const crate::CrateReader::Node &node,
-                                       const PathIndexToSpecIndexMap &psmap,
-                                       T *prim) {
-  // Prim's properties are stored in its children nodes.
-  prim::PropertyMap properties;
-  if (!BuildPropertyMap(node.GetChildren(), psmap, &properties)) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to build PropertyMap.");
-  }
 
-  prim::ReferenceList refs;  // dummy
-
-  prim::PrimReconstructOptions reconstruct_options;
-  reconstruct_options.strict_allowedToken_check = _config.strict_allowedToken_check;
-
-  if (!prim::ReconstructPrim<T>(spec, properties, refs, prim, &_warn, &_err, reconstruct_options)) {
-    return false;
-  }
-
-  return true;
-}
-
-// Explicit template instantiations for ReconstructPrim
-#define INSTANTIATE_RECONSTRUCT_PRIM(__ty) \
-  template bool USDCReader::Impl::ReconstructPrim<__ty>( \
-      const Specifier &, const crate::CrateReader::Node &, \
-      const PathIndexToSpecIndexMap &, __ty *)
-
-INSTANTIATE_RECONSTRUCT_PRIM(Xform);
-INSTANTIATE_RECONSTRUCT_PRIM(Model);
-INSTANTIATE_RECONSTRUCT_PRIM(Scope);
-INSTANTIATE_RECONSTRUCT_PRIM(GeomPoints);
-INSTANTIATE_RECONSTRUCT_PRIM(GeomMesh);
-INSTANTIATE_RECONSTRUCT_PRIM(GeomCapsule);
-INSTANTIATE_RECONSTRUCT_PRIM(GeomCube);
-INSTANTIATE_RECONSTRUCT_PRIM(GeomCone);
-INSTANTIATE_RECONSTRUCT_PRIM(GeomCylinder);
-INSTANTIATE_RECONSTRUCT_PRIM(GeomSphere);
-INSTANTIATE_RECONSTRUCT_PRIM(GeomSubset);
-INSTANTIATE_RECONSTRUCT_PRIM(GeomBasisCurves);
-INSTANTIATE_RECONSTRUCT_PRIM(GeomNurbsCurves);
-INSTANTIATE_RECONSTRUCT_PRIM(GeomPlane);
-INSTANTIATE_RECONSTRUCT_PRIM(GeomCylinder_1);
-INSTANTIATE_RECONSTRUCT_PRIM(GeomCapsule_1);
-INSTANTIATE_RECONSTRUCT_PRIM(GeomTetMesh);
-INSTANTIATE_RECONSTRUCT_PRIM(GeomNurbsPatch);
-INSTANTIATE_RECONSTRUCT_PRIM(GeomHermiteCurves);
-INSTANTIATE_RECONSTRUCT_PRIM(GeomCamera);
-INSTANTIATE_RECONSTRUCT_PRIM(GeomPointInstancer);
-INSTANTIATE_RECONSTRUCT_PRIM(SphereLight);
-INSTANTIATE_RECONSTRUCT_PRIM(DomeLight);
-INSTANTIATE_RECONSTRUCT_PRIM(DiskLight);
-INSTANTIATE_RECONSTRUCT_PRIM(DistantLight);
-INSTANTIATE_RECONSTRUCT_PRIM(CylinderLight);
-INSTANTIATE_RECONSTRUCT_PRIM(RectLight);
-INSTANTIATE_RECONSTRUCT_PRIM(GeometryLight);
-INSTANTIATE_RECONSTRUCT_PRIM(DomeLight_1);
-INSTANTIATE_RECONSTRUCT_PRIM(LightFilter);
-INSTANTIATE_RECONSTRUCT_PRIM(PluginLightFilter);
-INSTANTIATE_RECONSTRUCT_PRIM(SkelRoot);
-INSTANTIATE_RECONSTRUCT_PRIM(SkelAnimation);
-INSTANTIATE_RECONSTRUCT_PRIM(Skeleton);
-INSTANTIATE_RECONSTRUCT_PRIM(BlendShape);
-INSTANTIATE_RECONSTRUCT_PRIM(Material);
-INSTANTIATE_RECONSTRUCT_PRIM(Shader);
-INSTANTIATE_RECONSTRUCT_PRIM(NodeGraph);
-// UsdPhysics + mjcPhysics
-INSTANTIATE_RECONSTRUCT_PRIM(PhysicsJoint);
-INSTANTIATE_RECONSTRUCT_PRIM(PhysicsScene);
-INSTANTIATE_RECONSTRUCT_PRIM(PhysicsRevoluteJoint);
-INSTANTIATE_RECONSTRUCT_PRIM(PhysicsPrismaticJoint);
-INSTANTIATE_RECONSTRUCT_PRIM(PhysicsSphericalJoint);
-INSTANTIATE_RECONSTRUCT_PRIM(PhysicsFixedJoint);
-INSTANTIATE_RECONSTRUCT_PRIM(PhysicsDistanceJoint);
-INSTANTIATE_RECONSTRUCT_PRIM(PhysicsCollisionGroup);
-INSTANTIATE_RECONSTRUCT_PRIM(MjcActuator);
-INSTANTIATE_RECONSTRUCT_PRIM(NewtonActuator);
-INSTANTIATE_RECONSTRUCT_PRIM(MjcTendon);
-INSTANTIATE_RECONSTRUCT_PRIM(MjcKeyframe);
-// AR/Interactive (Apple Preliminary_*)
-INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_PhysicsGravitationalForce);
-INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_InfiniteColliderPlane);
-INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_ReferenceImage);
-INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_Behavior);
-INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_Trigger);
-INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_Action);
-INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_Text);
-// usdMedia
-INSTANTIATE_RECONSTRUCT_PRIM(SpatialAudio);
-
-#undef INSTANTIATE_RECONSTRUCT_PRIM
 
 bool USDCReader::Impl::ReconstrcutStageMeta(
     const crate::FieldValuePairVector &fvs, StageMetas *metas) {
@@ -489,25 +355,13 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   }
 
 
+// Per-type body lives in ReconstructTypedPrim<T> (usdc-reader-prim-detail.inc), instantiated
+// in the usdc-reader-prim-reconstruct-*.cc siblings, so the per-type value::Value<T>
+// construction is not all codegen'd in this dispatch TU.
 #define RECONSTRUCT_PRIM(__primty, __node_ty, __prim_name, __spec) \
   if (__node_ty == value::TypeTraits<__primty>::type_name()) {     \
-    __primty typed_prim;                                           \
-    if (!ReconstructPrim(__spec, node, psmap, &typed_prim)) {         \
-      PUSH_ERROR("Failed to reconstruct Prim " << __node_ty << " elementName: " << __prim_name);      \
-      return nullptr;                                              \
-    }                                                              \
-    typed_prim.meta = meta;                                        \
-    typed_prim.name = __prim_name;                                 \
-    typed_prim.spec = __spec;                                      \
-    typed_prim.propertyNames() = properties; \
-    typed_prim.primChildrenNames() = primChildren; \
-    value::Value primdata(std::move(typed_prim));                            \
-    auto result = std::unique_ptr<Prim>(new Prim(__prim_name, std::move(primdata)));  \
-    result->prim_type_name() = primTypeName; \
-    result->specifier() = __spec; \
-    /* also add primChildren to Prim */ \
-    result->metas().primChildren = primChildren; \
-    return result; \
+    return ReconstructTypedPrim<__primty>(node, __spec, psmap, __prim_name, \
+                                          primTypeName, meta, properties, primChildren); \
   } else
 
   if (typeName == "Model" || typeName == "__AnyType__") {

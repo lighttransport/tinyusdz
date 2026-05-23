@@ -201,6 +201,20 @@ class USDCReader::Impl {
   bool ReconstructPrim(const Specifier &spec, const crate::CrateReader::Node &node,
                        const PathIndexToSpecIndexMap &psmap, T *prim);
 
+  // Per-type body of ReconstructPrimFromTypeName's dispatch: reconstruct a T,
+  // type-erase it into a value::Value, and wrap in a Prim. Split out as a member
+  // template (defined in usdc-reader-prim-detail.inc, instantiated in the
+  // usdc-reader-prim-reconstruct-*.cc siblings) so the per-type value::Value<T>
+  // construction is not all codegen'd in usdc-reader-prim.cc. Returns nullptr on
+  // failure.
+  template <typename T>
+  std::unique_ptr<Prim> ReconstructTypedPrim(
+      const crate::CrateReader::Node &node, const Specifier spec,
+      const PathIndexToSpecIndexMap &psmap, const std::string &prim_name,
+      const std::string &primTypeName, const PrimMeta &meta,
+      const std::vector<value::token> &properties,
+      const std::vector<value::token> &primChildren);
+
   ///
   /// Reconstrcut Prim node.
   /// Returns the pointer of reconstructed Prim to `primOut`
