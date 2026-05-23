@@ -298,6 +298,89 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) con
   return flatten_with_indices(value::TimeCode::Default(), dest, value::TimeSampleInterpolationType::Linear, err);
 }
 
+// Non-template value extraction. The heavy logic lives here once; the templated
+// GeomPrimvar::get_value<T> overloads are thin forwarders that call these and
+// cast the result with value::Value::as<T>(). (flatten_with_indices keeps its own
+// templated fast path.)
+bool GeomPrimvar::get_value(value::Value *dest, std::string *err) const {
+  if (!dest) {
+    if (err) { (*err) += "Output value is nullptr."; }
+    return false;
+  }
+
+  if (_attr.is_blocked()) {
+    if (err) { (*err) += "Attribute is blocked."; }
+    return false;
+  }
+
+  if (_attr.has_value()) {
+    if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
+      if (err) {
+        (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
+                              _attr.type_name());
+      }
+      return false;
+    }
+    (*dest) = _attr.get_var().value_raw();
+    return true;
+  }
+
+  if (_attr.has_timesamples()) {
+    const value::TimeSamples &ts = _attr.get_var().ts_raw();
+    if (ts.empty()) {
+      if (err) { (*err) += "No TimeSample value in Attribute."; }
+      return false;
+    }
+    // First sample (matches the previous templated get_value behavior).
+    (*dest) = ts.get_samples().at(0).value;
+    return true;
+  }
+
+  return false;
+}
+
+bool GeomPrimvar::get_value(double timecode, value::Value *dest,
+                            value::TimeSampleInterpolationType interp,
+                            std::string *err) const {
+  if (!dest) {
+    if (err) { (*err) += "Output value is nullptr."; }
+    return false;
+  }
+
+  if (_attr.is_blocked()) {
+    if (err) { (*err) += "Attribute is blocked."; }
+    return false;
+  }
+
+  if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
+    if (err) {
+      (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
+                            _attr.type_name());
+    }
+    return false;
+  }
+
+  // Mirror Attribute::get(t, dst, interp): default time uses the default value,
+  // otherwise interpolate timesamples, otherwise fall back to the default value.
+  const primvar::PrimVar &pv = _attr.get_var();
+  if (value::TimeCode(timecode).is_default() && _attr.has_value()) {
+    (*dest) = pv.value_raw();
+    return true;
+  }
+  if (_attr.has_timesamples()) {
+    return pv.get_interpolated_value(timecode, interp, dest);
+  }
+  if (_attr.has_value()) {
+    (*dest) = pv.value_raw();
+    return true;
+  }
+
+  if (err) {
+    (*err) += fmt::format("Get Attribute value at time {} failed.", timecode);
+  }
+  return false;
+}
+
 
 std::vector<GeomPrimvar> GPrim::get_primvars() const {
   std::vector<GeomPrimvar> gpvars;

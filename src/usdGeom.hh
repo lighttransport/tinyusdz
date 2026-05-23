@@ -247,6 +247,9 @@ class GeomPrimvar {
   template <typename T>
   bool get_value(T *dst, std::string *err = nullptr) const;
 
+  // Non-template value extraction (the templated get_value<T> overloads forward
+  // here and cast with value::Value::as<T>()). The timecode overload is declared
+  // further below.
   bool get_value(value::Value *dst, std::string *err = nullptr) const;
 
 
