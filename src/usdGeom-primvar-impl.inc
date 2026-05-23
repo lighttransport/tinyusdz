@@ -275,6 +275,8 @@ bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) c
   return flatten_with_indices(value::TimeCode::Default(), dest, value::TimeSampleInterpolationType::Linear, err);
 }
 
+// Thin forwarders over the non-template get_value(value::Value*) cores
+// (usdGeom.cc): the value/timesamples extraction is emitted once, not per T.
 template <typename T>
 bool GeomPrimvar::get_value(T *dest, std::string *err) const {
   static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<value::token>::type_id(), "`token` type is not supported as a GeomPrimvar");
@@ -287,53 +289,18 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) const {
     return false;
   }
 
-  if (_attr.is_blocked()) {
-    if (err) {
-      (*err) += "Attribute is blocked.";
-    }
+  value::Value v;
+  if (!get_value(&v, err)) {
     return false;
   }
-
-  if (_attr.has_value()) {
-    if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
-      if (err) {
-        (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
-                              _attr.type_name());
-      }
-      return false;
-    }
-
-    if (auto pv = _attr.get_value<T>()) {
-
-      // copy
-      (*dest) = pv.value();
-      return true;
-
-    } else {
-      if (err) {
-        (*err) += fmt::format("Attribute value type mismatch. Requested type `{}` but Attribute has type `{}`", value::TypeTraits<T>::type_id(), _attr.type_name());
-      }
-      return false;
-    }
+  if (const T *pv = v.as<T>()) {
+    (*dest) = *pv;
+    return true;
   }
-
-  if (_attr.has_timesamples()) {
-    // Return the first sample.
-    const auto &ts = _attr.get_var().ts_raw();
-    if (ts.empty()) {
-      if (err) {
-        (*err) += "No TimeSample value in Attribute..";
-      }
-      return false;
-    }
-
-    // Note: value::TimeSamples (untyped) doesn't have SoA layout support
-    if (auto pv =ts.get_samples().at(0).value.as<T>()) {
-      (*dest) = (*pv);
-      return true;
-    }
+  if (err) {
+    (*err) += fmt::format("Attribute value type mismatch. Requested type `{}` but Attribute has type `{}`",
+                          value::TypeTraits<T>::type_name(), _attr.type_name());
   }
-
   return false;
 }
 
@@ -349,34 +316,19 @@ bool GeomPrimvar::get_value(double timecode, T *dest, value::TimeSampleInterpola
     return false;
   }
 
-  if (_attr.is_blocked()) {
-    if (err) {
-      (*err) += "Attribute is blocked.";
-    }
+  value::Value v;
+  if (!get_value(timecode, &v, interp, err)) {
     return false;
   }
-
-  if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
-    if (err) {
-      (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
-                            _attr.type_name());
-    }
-    return false;
+  if (const T *pv = v.as<T>()) {
+    (*dest) = *pv;
+    return true;
   }
-
-  T value{};
-
-  if (!_attr.get_value(timecode, &value, interp)) {
-    if (err) {
-      (*err) += fmt::format("Get Attribute value at time {} failed. Maybe type mismatch?. Requested type `{}` but Attribute has type `{}`", timecode, value::TypeTraits<T>::type_id(), _attr.type_name());
-    }
-    return false;
+  if (err) {
+    (*err) += fmt::format("Get Attribute value at time {} failed. Maybe type mismatch?. Requested type `{}` but Attribute has type `{}`",
+                          timecode, value::TypeTraits<T>::type_name(), _attr.type_name());
   }
-
-  // copy
-  (*dest) = value;
-  return true;
-
+  return false;
 }
 
 #pragma GCC diagnostic pop
