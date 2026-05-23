@@ -125,6 +125,28 @@ std::string format_wrapped_array(const std::vector<std::string> &elements,
   return result;
 }
 
+// Non-template 1D-array emitter: takes already-stringified elements so the
+// templated array operator<< (std::vector<T>/TypedArray<T>/ChunkedTypedArray<T>)
+// stay thin (just the type-dependent stringify loop) instead of each re-emitting
+// the wrap-vs-inline join logic. `wrappable` selects column-wrapping (numeric/
+// geometric element types) vs a plain "[a, b, c]" join.
+void print_1d_array(std::ostream &os, const std::vector<std::string> &elems,
+                    bool wrappable) {
+  if (wrappable) {
+    uint32_t col_limit = GetColumnLimit();
+    if (col_limit > 0 && elems.size() > 1) {
+      os << format_wrapped_array(elems, GetPrefixColumns(), col_limit);
+      return;
+    }
+  }
+  os << "[";
+  for (size_t i = 0; i < elems.size(); i++) {
+    if (i > 0) os << ", ";
+    os << elems[i];
+  }
+  os << "]";
+}
+
 }  // namespace pprint
 }  // namespace tinyusdz
 
