@@ -20,7 +20,11 @@
 #include "nonstd/span.hpp"
 #include "nonstd/expected.hpp"
 #include "safe-arithmetic.hh"
-#include "logger.hh"
+// NOTE: logger.hh is intentionally NOT included here. typed-array.hh uses no
+// logging, but it sits under value-types.hh, so pulling logger.hh (the heavy
+// TraceManager class + <unordered_map>/<mutex>/<chrono>) dragged a ~70ms parse
+// into every value-system TU (~130 of them). DCOUT comes from common-macros.inc;
+// direct TraceManager users include logger.hh themselves.
 
 namespace tinyusdz {
 

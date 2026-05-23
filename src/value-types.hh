@@ -2010,7 +2010,7 @@ class Value {
   static bool check_vector_size(const std::vector<T>& vec) {
     constexpr size_t MAX_REASONABLE_SIZE = 100000000; // 100M
     if (vec.size() > MAX_REASONABLE_SIZE) {
-      TUSDZ_LOG_E("ERROR: Vector size " << vec.size() << " exceeds reasonable limit (" << MAX_REASONABLE_SIZE << "). Data is likely corrupted!");
+      DCOUT("ERROR: Vector size " << vec.size() << " exceeds reasonable limit (" << MAX_REASONABLE_SIZE << "). Data is likely corrupted!");
       return false;
     }
     return true;
