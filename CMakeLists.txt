@@ -585,6 +585,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/mtlx-dom.cc
     ${PROJECT_SOURCE_DIR}/src/mtlx-simple-parser.cc
     ${PROJECT_SOURCE_DIR}/src/usdMtlx.cc
+    ${PROJECT_SOURCE_DIR}/src/usdMtlx-write.cc
     ${PROJECT_SOURCE_DIR}/src/usdPhysics.cc
     ${PROJECT_SOURCE_DIR}/src/mjcPhysics.cc
     ${PROJECT_SOURCE_DIR}/src/usdObj.cc

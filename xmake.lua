@@ -187,6 +187,7 @@ target("tinyusdz_static")
         "src/mtlx-dom.cc",
         "src/mtlx-simple-parser.cc",
         "src/usdMtlx.cc",
+        "src/usdMtlx-write.cc",
         "src/usdObj.cc",
         "src/pprint-enum.cc",
         "src/pprint-meta.cc",
