@@ -205,6 +205,7 @@ tinyusdz_sources = files(
   'src/prim-reconstruct-shader.cc',
   'src/prim-reconstruct-shader2.cc',
   'src/prim-reconstruct-shader3.cc',
+  'src/prim-reconstruct-shader4.cc',
   'src/prim-composition.cc',
   'src/prim-types.cc',
   'src/core/prim-enums.cc',
