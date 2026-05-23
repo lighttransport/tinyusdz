@@ -9,7 +9,6 @@
 #include "timesamples.hh"
 #include "value-eval-util.hh"  // For lerp functions
 #include "core/extent.hh"  // value::TypeTraits<Extent> (extent timesamples)
-#include "usdShade.hh"  // For UsdUVTexture::SourceColorSpace
 #include <algorithm>
 #include <cstring>
 
@@ -547,64 +546,15 @@ bool TimeSamples::get_scalar_impl(void *dst_, double t,
     }
   }
 
-  // ---- Generic value::Value fallback — mirrors get<T>() on get_samples().
-  const std::vector<Sample> &samples = get_samples();
-  if (samples.empty()) return false;
-
-  if (value::TimeCode(t).is_default()) {
-    for (const auto &s : samples) {
-      if (!s.blocked) {
-        if (const T *pv = s.value.template as<T>()) { *dst = *pv; return true; }
-        return false;
-      }
-    }
-    return false;
-  }
-
-  if (samples.size() == 1) {
-    if (samples[0].blocked) return false;
-    if (const T *pv = samples[0].value.template as<T>()) { *dst = *pv; return true; }
-    return false;
-  }
-
-  if constexpr (value::LerpTraits<T>::supported()) {
-    if (interp == value::TimeSampleInterpolationType::Linear) {
-      auto it = std::lower_bound(samples.begin(), samples.end(), t,
-          [](const Sample &a, double tv) { return a.t < tv; });
-      const auto it_m1 = (it == samples.begin()) ? samples.begin() : (it - 1);
-      const size_t idx0 = static_cast<size_t>(std::max<int64_t>(0,
-          std::min<int64_t>(int64_t(samples.size()) - 1,
-                            int64_t(std::distance(samples.begin(), it_m1)))));
-      const size_t idx1 = static_cast<size_t>(std::max<int64_t>(0,
-          std::min<int64_t>(int64_t(samples.size()) - 1, int64_t(idx0) + 1)));
-      if (samples[idx0].blocked && samples[idx1].blocked) return false;
-      if (samples[idx0].blocked) {
-        if (const T *pv = samples[idx1].value.template as<T>()) { *dst = *pv; return true; }
-        return false;
-      }
-      if (samples[idx1].blocked) {
-        if (const T *pv = samples[idx0].value.template as<T>()) { *dst = *pv; return true; }
-        return false;
-      }
-      const double tl = samples[idx0].t;
-      const double tu = samples[idx1].t;
-      double dt = (t - tl);
-      if (std::fabs(tu - tl) < std::numeric_limits<double>::epsilon()) dt = 0.0;
-      else dt /= (tu - tl);
-      dt = std::max(0.0, std::min(1.0, dt));
-      value::Value p;
-      if (!Lerp(samples[idx0].value, samples[idx1].value, dt, &p)) return false;
-      if (const T *pv = p.template as<T>()) { *dst = *pv; return true; }
-      return false;
-    }
-  }
-
-  // Held
-  auto it = std::upper_bound(samples.begin(), samples.end(), t,
-      [](double tv, const Sample &a) { return tv < a.t; });
-  const auto it_held = (it == samples.begin()) ? samples.begin() : (it - 1);
-  if (it_held->blocked) return false;
-  if (const T *pv = it_held->value.template as<T>()) { *dst = *pv; return true; }
+  // ---- Generic value::Value fallback. Delegate to the once-compiled non-template
+  // get_value_at() — its interpolation semantics (default-time -> first non-blocked;
+  // single-sample; Linear via lower_bound idx0/idx1 with blocked-endpoint fallback;
+  // Held via upper_bound) mirror this path exactly — then extract once via as<T>()
+  // (role-compat aware). Keeps each of the ~60 get_scalar_impl<T> instantiations tiny
+  // instead of re-emitting the full interpolation logic per type.
+  value::Value v;
+  if (!get_value_at(&v, t, interp)) return false;
+  if (const T *pv = v.template as<T>()) { *dst = *pv; return true; }
   return false;
 }
 
