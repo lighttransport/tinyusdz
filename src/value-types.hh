@@ -1851,7 +1851,12 @@ inline T* any_value_cast(any_value* av) noexcept {
   return nullptr;
 }
 
-// Force cast (no type check) — equivalent to linb::cast
+// Internal force-cast (no type-id check) — equivalent to linb::cast. Confined to
+// `detail` so it cannot be reached without intent: it is only sound when the
+// requested T is layout-compatible with the stored type (e.g. role <-> underlying,
+// which the DEFINE_ROLE_TYPE_TRAIT static_asserts now guarantee). Every caller
+// must first gate it with an underlying_type_id() equality check (see Value::as<T>).
+namespace detail {
 template <typename T>
 inline const T* any_value_raw_cast(const any_value* av) noexcept {
   return av->cast<T>();
@@ -1861,6 +1866,7 @@ template <typename T>
 inline T* any_value_raw_cast(any_value* av) noexcept {
   return av->cast<T>();
 }
+}  // namespace detail
 
 ///
 /// Generic Value class using any_value
@@ -1916,11 +1922,11 @@ class Value {
     } else if (!strict_cast) {
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          return any_value_raw_cast<const T>(&v_);
+          return detail::any_value_raw_cast<const T>(&v_);
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-          return any_value_raw_cast<const T>(&v_);
+          return detail::any_value_raw_cast<const T>(&v_);
         }
       }
     }
@@ -1938,11 +1944,11 @@ class Value {
     } else if (!strict_cast) {
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          return any_value_raw_cast<T>(&v_);
+          return detail::any_value_raw_cast<T>(&v_);
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-          return any_value_raw_cast<T>(&v_);
+          return detail::any_value_raw_cast<T>(&v_);
         }
       }
     }
@@ -2055,7 +2061,7 @@ class Value {
 
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          const T* pv = any_value_raw_cast<const T>(&v_);
+          const T* pv = detail::any_value_raw_cast<const T>(&v_);
           if (pv) {
             if (!check_vector_size(*pv)) {
               return nonstd::nullopt;
@@ -2065,7 +2071,7 @@ class Value {
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-          return *any_value_raw_cast<const T>(&v_);
+          return *detail::any_value_raw_cast<const T>(&v_);
         }
       }
     }
@@ -2085,7 +2091,7 @@ class Value {
 
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          T* pv = any_value_raw_cast<T>(&v_);
+          T* pv = detail::any_value_raw_cast<T>(&v_);
           if (pv) {
             if (!check_vector_size(*pv)) {
               return nonstd::nullopt;
@@ -2095,7 +2101,7 @@ class Value {
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-          return std::move(*any_value_raw_cast<T>(&v_));
+          return std::move(*detail::any_value_raw_cast<T>(&v_));
         }
       }
     }

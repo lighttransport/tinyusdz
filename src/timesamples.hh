@@ -58,7 +58,7 @@ struct TimeSamples {
   };
 
   // Sentinel value for blocked samples in _data_offsets
-  static constexpr uint32_t BLOCKED_OFFSET = UINT32_MAX;
+  static constexpr size_t BLOCKED_OFFSET = SIZE_MAX;
 
   bool empty() const {
     // Check unified storage first, then legacy storage
@@ -239,7 +239,7 @@ struct TimeSamples {
       return false;
     }
 
-    uint32_t byte_offset = _data_offsets[idx];
+    size_t byte_offset = _data_offsets[idx];
     if (byte_offset == BLOCKED_OFFSET) {
       ref->blocked = true;
       return true;
@@ -300,7 +300,6 @@ struct TimeSamples {
   void update() const;
 
   bool has_sample_at(const double t) const;
-  bool get_sample_at(const double t, Sample **s);
 
   nonstd::optional<double> get_time(size_t idx) const {
     // Check unified storage first
@@ -830,7 +829,7 @@ struct TimeSamples {
     _blocked.push_back(0);
 
     // Append array data to flat buffer
-    uint32_t byte_offset = static_cast<uint32_t>(_data.size());
+    size_t byte_offset = _data.size();
     size_t data_size = sizeof(T) * count;
     _data.resize(_data.size() + data_size);
     std::memcpy(_data.data() + byte_offset, values, data_size);
@@ -874,7 +873,7 @@ struct TimeSamples {
     _times.push_back(t);
     _blocked.push_back(0);
 
-    uint32_t byte_offset = static_cast<uint32_t>(_data.size());
+    size_t byte_offset = _data.size();
     _data.resize(_data.size() + sizeof(T));
     std::memcpy(_data.data() + byte_offset, &value, sizeof(T));
     _data_offsets.push_back(byte_offset);
@@ -1035,7 +1034,7 @@ struct TimeSamples {
     return _data;
   }
 
-  const std::vector<uint32_t>& get_data_offsets() const {
+  const std::vector<size_t>& get_data_offsets() const {
     if (_dirty) { update(); }
     return _data_offsets;
   }
@@ -1071,7 +1070,7 @@ struct TimeSamples {
   mutable std::vector<double> _times;
   mutable Buffer<16> _blocked;                      // Blocked flags (one byte per sample)
   mutable std::vector<uint8_t> _data;               // Flat byte buffer for ALL binary values
-  mutable std::vector<uint32_t> _data_offsets;      // Per-sample byte offset into _data
+  mutable std::vector<size_t> _data_offsets;        // Per-sample byte offset into _data (size_t: no 4GB limit)
   mutable std::vector<uint32_t> _array_counts;      // Per-sample element count (arrays only)
 
   // Metadata
@@ -1235,30 +1234,6 @@ struct TypedTimeSamples {
       return std::fabs((it - 1)->t - t) < eps;
     }
     return false;
-  }
-
-  bool get_sample_at(const double t, Sample **dst) {
-    if (!dst) {
-      return false;
-    }
-
-    if (_dirty) {
-      update();
-    }
-
-    const double eps = std::numeric_limits<double>::epsilon();
-    auto it = std::lower_bound(
-        _samples.begin(), _samples.end(), t - eps,
-        [](const Sample &sample, double v) { return sample.t < v; });
-    if ((it == _samples.end()) || (std::fabs(it->t - t) >= eps)) {
-      if ((it == _samples.begin()) || (std::fabs((it - 1)->t - t) >= eps)) {
-        return false;
-      }
-      it = it - 1;
-    }
-
-    (*dst) = &(*it);
-    return true;
   }
 
   const std::vector<Sample> &get_samples() const {

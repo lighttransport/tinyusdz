@@ -43,7 +43,7 @@ inline void insertion_sort_samples(std::vector<value::TimeSamples::Sample>& samp
 inline void sort_flat_storage(
     std::vector<double>& times,
     Buffer<16>& blocked,
-    std::vector<uint32_t>& data_offsets,
+    std::vector<size_t>& data_offsets,
     std::vector<uint32_t>* array_counts) {
 
   const size_t n = times.size();
@@ -58,7 +58,7 @@ inline void sort_flat_storage(
   std::vector<double> sorted_times(n);
   Buffer<16> sorted_blocked;
   sorted_blocked.resize(n);
-  std::vector<uint32_t> sorted_offsets(data_offsets.size());
+  std::vector<size_t> sorted_offsets(data_offsets.size());
   std::vector<uint32_t> sorted_counts;
   if (array_counts && array_counts->size() == n) {
     sorted_counts.resize(n);
@@ -149,7 +149,7 @@ bool TimeSamples::reconstruct_binary_sample(size_t idx, Sample* sample) const {
       return true;
     }
 
-    const uint32_t byte_offset = _data_offsets[idx];
+    const size_t byte_offset = _data_offsets[idx];
     if (byte_offset == BLOCKED_OFFSET) {
       sample->blocked = true;
       return true;
@@ -392,7 +392,7 @@ size_t TimeSamples::estimate_memory_usage() const {
     total += _times.capacity() * sizeof(double);
     total += _blocked.capacity();
     total += _data.capacity();
-    total += _data_offsets.capacity() * sizeof(uint32_t);
+    total += _data_offsets.capacity() * sizeof(size_t);
     total += _array_counts.capacity() * sizeof(uint32_t);
 
     total += _samples.capacity() * sizeof(Sample);
@@ -409,7 +409,7 @@ size_t TimeSamples::estimate_actual_usage() const {
     total += _times.size() * sizeof(double);
     total += _blocked.size();  // vector<bool> counts elements, matches estimate pattern
     total += _data.size();
-    total += _data_offsets.size() * sizeof(uint32_t);
+    total += _data_offsets.size() * sizeof(size_t);
     total += _array_counts.size() * sizeof(uint32_t);
 
     total += _samples.size() * sizeof(Sample);
@@ -488,7 +488,7 @@ bool TimeSamples::get_scalar_impl(void *dst_, double t,
       };
       auto read_at = [&](size_t i, T *out) -> bool {
         if (i >= _data_offsets.size()) return false;
-        const uint32_t off = _data_offsets[i];
+        const size_t off = _data_offsets[i];
         if (off == BLOCKED_OFFSET) return false;
         if (static_cast<size_t>(off) + sizeof(T) > _data.size()) return false;
         std::memcpy(out, _data.data() + off, sizeof(T));

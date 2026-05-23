@@ -1581,24 +1581,6 @@ bool TimeSamples::has_sample_at(const double t) const {
   return (it != samples.end());
 }
 
-bool TimeSamples::get_sample_at(const double t, Sample **dst) {
-  if (!dst) {
-    return false;
-  }
-
-  auto &sample_vec = samples();
-
-  const auto it = std::find_if(sample_vec.begin(), sample_vec.end(), [&t](const Sample &sample) {
-    return math::is_close(t, sample.t);
-  });
-
-  if (it != sample_vec.end()) {
-    (*dst) = const_cast<Sample*>(&(*it));
-    return true;  // Found the sample!
-  }
-  return false;
-}
-
 // Floating-point aware equality operators for matrix types
 // Use epsilon-based comparison suitable for deduplication
 bool operator==(const matrix2f &a, const matrix2f &b) {
