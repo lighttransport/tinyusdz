@@ -63,8 +63,8 @@ tinyusdz_sources=[
   '../../src/mtlx-xml-parser.cc',
   '../../src/mtlx-xml-tokenizer.cc',
   '../../src/usd-dump.cc',
-  '../../sandbox/path-sort-and-encode-crate/src/path_sort.cc',
-  '../../sandbox/path-sort-and-encode-crate/src/tree_encode.cc',
+  '../../src/crate-path-utils/path_sort.cc',
+  '../../src/crate-path-utils/tree_encode.cc',
   '../../src/tydra/render-data.cc',
   '../../src/tydra/render-data-pprint.cc',
   '../../src/tydra/prim-apply.cc',
@@ -89,7 +89,6 @@ tinyusdz_sources=[
   ]
 
 incdirs = include_directories(['../../src',
-  '../../sandbox/path-sort-and-encode-crate/include',
   ])
 
 # TINYUSDZ_FUZZER_BUILD = suppress some debug message
