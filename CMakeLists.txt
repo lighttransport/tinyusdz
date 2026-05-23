@@ -564,6 +564,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/value-types.cc
     ${PROJECT_SOURCE_DIR}/src/value-types-typename.cc
     ${PROJECT_SOURCE_DIR}/src/value-types-cast.cc
+    ${PROJECT_SOURCE_DIR}/src/value-types-matrix.cc
     ${PROJECT_SOURCE_DIR}/src/color-space.cc
     ${PROJECT_SOURCE_DIR}/src/color-space.hh
     ${PROJECT_SOURCE_DIR}/src/usd-validation.cc
