@@ -10,7 +10,6 @@
 
 // src
 #include "common-macros.inc"
-#include "pprinter.hh"
 #include "prim-pprint.hh"
 #include "core/prim.hh"
 #include "primvar.hh"
