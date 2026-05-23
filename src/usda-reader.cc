@@ -787,6 +787,12 @@ class USDAReader::Impl {
       const prim::ReferenceList &references,
       T *out);
 
+  // Hoisted out of ReconstructPrim<T>: the T-independent PrimReconstructOptions
+  // setup (incl. 4 diagnostic lambdas) so it is instantiated once instead of
+  // once per prim type.
+  void buildReconstructOptions(const Path &full_path,
+                               prim::PrimReconstructOptions &options);
+
   bool ProcessVariantSetContent(const uint32_t depth, const std::map<std::string, ascii::AsciiParser::VariantSetContent> &in_variants, std::map<std::string, std::map<std::string, VariantNode>> &dst) {
     if (depth > 512) {
       PUSH_ERROR_AND_RETURN("VariantSet nesting too deep (> 512).");
@@ -2200,15 +2206,8 @@ bool USDAReader::Impl::ReconstructPrim(
 
 
 // Generic Prim handler. T = Xform, GeomMesh, ...
-template <typename T>
-bool USDAReader::Impl::ReconstructPrim(
-    const Path &full_path,
-    const Specifier &spec,
-    prim::PropertyMap &properties,
-    const prim::ReferenceList &references,
-    T *prim) {
-
-  prim::PrimReconstructOptions options;
+void USDAReader::Impl::buildReconstructOptions(
+    const Path &full_path, prim::PrimReconstructOptions &options) {
   const int source_column_width = _config.error_detail ? (1024 * 1024) : 40;
   options.strict_allowedToken_check = _config.strict_allowedToken_check;
   // MaterialX validation options
@@ -2218,22 +2217,38 @@ bool USDAReader::Impl::ReconstructPrim(
   options.validate_mtlx_duplicate_names = _config.validate_mtlx_duplicate_names || _config.strict_mtlx_check;
   options.validate_mtlx_index_bounds = _config.validate_mtlx_index_bounds || _config.strict_mtlx_check;
   options.strict_mtlx_check = _config.strict_mtlx_check;
+  // NOTE: full_path / source_column_width captured by value: these lambdas are
+  // stored in `options` and invoked later (during prim::ReconstructPrim), after
+  // this function returns, so by-reference capture would dangle. _parser is an
+  // Impl member that outlives the call, so capture via `this`.
   options.format_property_source_diagnostic =
-      [&](const std::string &property_name) {
+      [this, full_path, source_column_width](const std::string &property_name) {
         return _parser.FormatPrimAttrSourceDiagnostic(
             full_path.full_path_name(), property_name, source_column_width);
       };
   options.format_property_path =
-      [&](const std::string &property_name) {
+      [full_path](const std::string &property_name) {
         return full_path.full_path_name() + "." + property_name;
       };
-  options.format_prim_source_diagnostic = [&]() {
+  options.format_prim_source_diagnostic = [this, full_path, source_column_width]() {
     return _parser.FormatPrimSourceDiagnostic(full_path.full_path_name(),
                                              source_column_width);
   };
-  options.format_prim_path = [&]() {
+  options.format_prim_path = [full_path]() {
     return full_path.full_path_name();
   };
+}
+
+template <typename T>
+bool USDAReader::Impl::ReconstructPrim(
+    const Path &full_path,
+    const Specifier &spec,
+    prim::PropertyMap &properties,
+    const prim::ReferenceList &references,
+    T *prim) {
+
+  prim::PrimReconstructOptions options;
+  buildReconstructOptions(full_path, options);
   DCOUT("strict_allowedToken_check " << options.strict_allowedToken_check);
 
   std::string err;
