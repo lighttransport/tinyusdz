@@ -188,50 +188,5 @@ bool ReconstructPrim<GeomMesh>(
 }
 
 
-template <>
-bool ReconstructPrim<GeomCamera>(
-    const Specifier &spec,
-    PropertyMap &properties,
-    const ReferenceList &references,
-    GeomCamera *camera,
-    std::string *warn,
-    std::string *err,
-    const PrimReconstructOptions &options) {
-  (void)references;
-  (void)warn;
-
-  // Use centralized enum handlers
-  auto ProjectionHandler = enum_handler::CameraProjection;
-  auto StereoRoleHandler = enum_handler::CameraStereoRole;
-
-  std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, camera, warn, err, options.strict_allowedToken_check)) {
-    return false;
-  }
-
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunused-macros"
-#endif
-#define PRIM_CLASS_ GeomCamera
-#define PRIM_PTR_ camera
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif
-
-  for (auto &prop : properties) {  // Non-const to allow move from property metadata
-    GEOM_CAMERA_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    GEOM_CAMERA_TIMESAMPLED_ENUMS(EXPAND_TIMESAMPLED_ENUM)
-    GEOM_CAMERA_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
-    ADD_PROPERTY(table, prop, GeomCamera, camera->props)
-    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
-  }
-
-#undef PRIM_CLASS_
-#undef PRIM_PTR_
-
-  return true;
-}
-
 }  // namespace prim
 }  // namespace tinyusdz
