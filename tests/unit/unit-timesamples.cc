@@ -1237,23 +1237,86 @@ void timesamples_test(void) {
   }
 
   // ----------------------------------------------------------------------
-  // [Phase 1.5] Parity guard: TimeSamples::eval_scalar<T>() (the new
-  // binary-direct evaluator) must match the existing TimeSamples::get<T>()
-  // (value::Value path) across {default, held, lerp} x {blocked variants}.
-  // This gates the Phase 3 deletion of TypedTimeSamples<T>.
+  // [Phase 1] Parity guard: the production TimeSamples::get<T>() (now the
+  // binary-direct evaluator for scalar T) must match a naive value::Value-path
+  // reference across {default, held, lerp} x {blocked variants}. The reference
+  // is the generic get_samples()/Lerp path that get<T>() used to inline; this
+  // guards that the consolidated non-template core stayed behavior-compatible.
+  // (Note: the scenarios below deliberately avoid matrix/timecode types, whose
+  // Value-path Lerp arm is missing — the binary core interpolates them, so the
+  // two paths intentionally diverge there until Phase 2 unifies Lerp.)
   // ----------------------------------------------------------------------
   {
     using Interp = value::TimeSampleInterpolationType;
     const Interp Held = Interp::Held;
     const Interp Linear = Interp::Linear;
 
-    auto check = [](const value::TimeSamples &ts, double t, Interp interp,
-                    auto tag) {
+    // Independent reference: interpolate via the generic get_samples()/Lerp path.
+    auto reference_get = [&](const value::TimeSamples &ts, double t, Interp interp,
+                             auto tag, bool *ok) {
+      using T = decltype(tag);
+      using Sample = value::TimeSamples::Sample;
+      T out{};
+      *ok = false;
+      const auto &samples = ts.get_samples();
+      if (samples.empty()) return out;
+      if (value::TimeCode(t).is_default()) {
+        for (const auto &s : samples) {
+          if (!s.blocked) {
+            if (const T *pv = s.value.template as<T>()) { out = *pv; *ok = true; }
+            return out;
+          }
+        }
+        return out;
+      }
+      if (samples.size() == 1) {
+        if (samples[0].blocked) return out;
+        if (const T *pv = samples[0].value.template as<T>()) { out = *pv; *ok = true; }
+        return out;
+      }
+      if (interp == Linear && value::IsLerpSupportedType(ts.type_id())) {
+        auto it = std::lower_bound(samples.begin(), samples.end(), t,
+            [](const Sample &a, double tv) { return a.t < tv; });
+        const auto itm1 = (it == samples.begin()) ? samples.begin() : (it - 1);
+        const size_t i0 = size_t(std::max<int64_t>(0, std::min<int64_t>(
+            int64_t(samples.size()) - 1,
+            int64_t(std::distance(samples.begin(), itm1)))));
+        const size_t i1 = size_t(std::max<int64_t>(0, std::min<int64_t>(
+            int64_t(samples.size()) - 1, int64_t(i0) + 1)));
+        if (samples[i0].blocked && samples[i1].blocked) return out;
+        if (samples[i0].blocked) {
+          if (const T *pv = samples[i1].value.template as<T>()) { out = *pv; *ok = true; }
+          return out;
+        }
+        if (samples[i1].blocked) {
+          if (const T *pv = samples[i0].value.template as<T>()) { out = *pv; *ok = true; }
+          return out;
+        }
+        const double tl = samples[i0].t, tu = samples[i1].t;
+        double dt = (std::fabs(tu - tl) < std::numeric_limits<double>::epsilon())
+                        ? 0.0 : (t - tl) / (tu - tl);
+        dt = std::max(0.0, std::min(1.0, dt));
+        value::Value p;
+        if (value::Lerp(samples[i0].value, samples[i1].value, dt, &p)) {
+          if (const T *pv = p.template as<T>()) { out = *pv; *ok = true; }
+        }
+        return out;
+      }
+      auto it = std::upper_bound(samples.begin(), samples.end(), t,
+          [](double tv, const Sample &a) { return tv < a.t; });
+      const auto ith = (it == samples.begin()) ? samples.begin() : (it - 1);
+      if (ith->blocked) return out;
+      if (const T *pv = ith->value.template as<T>()) { out = *pv; *ok = true; }
+      return out;
+    };
+
+    auto check = [&](const value::TimeSamples &ts, double t, Interp interp,
+                     auto tag) {
       using T = decltype(tag);
       T a{};
-      T b{};
       const bool ra = ts.template get<T>(&a, t, interp);
-      const bool rb = ts.template eval_scalar<T>(&b, t, interp);
+      bool rb = false;
+      const T b = reference_get(ts, t, interp, tag, &rb);
       TEST_CHECK(ra == rb);
       if (ra && rb) {
         TEST_CHECK(a == b);
