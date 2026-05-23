@@ -47,22 +47,10 @@ option("system_zlib",          {default = false, description = "Use system zlib 
 option("system_zstd",          {default = false, description = "Use system zstd instead of bundled version"})
 
 -- ============================================================================
--- crate-encoding library
+-- (crate path utilities — path sorting / tree encoding for the USDC writer — are
+--  now compiled directly into the main library from src/crate-path-utils/; the
+--  former sandbox/path-sort-and-encode-crate "crate-encoding" target is deprecated.)
 -- ============================================================================
-
-target("crate-encoding")
-    set_kind("static")
-    set_languages("c++17")
-    add_files(
-        "sandbox/path-sort-and-encode-crate/src/path_sort.cc",
-        "sandbox/path-sort-and-encode-crate/src/tree_encode.cc"
-    )
-    add_includedirs("sandbox/path-sort-and-encode-crate/include", {public = true})
-    set_policy("build.across_targets_in_parallel", true)
-    if not is_plat("windows") then
-        add_cxxflags("-fPIC")
-    end
-target_end()
 
 -- ============================================================================
 -- Main library
@@ -74,9 +62,6 @@ target("tinyusdz_static")
 
     -- Include directories
     add_includedirs("src", {public = true})
-
-    -- Dependency on crate-encoding
-    add_deps("crate-encoding")
 
     -- PIC
     if not is_plat("windows") then
@@ -94,6 +79,10 @@ target("tinyusdz_static")
     -- ========================================================================
 
     add_files(
+        -- Crate path utilities (path sorting / tree encoding for the USDC writer;
+        -- formerly the sandbox/path-sort-and-encode-crate target).
+        "src/crate-path-utils/path_sort.cc",
+        "src/crate-path-utils/tree_encode.cc",
         "src/arg-parser.cc",
         "src/asset-resolution.cc",
         "src/tinyusdz.cc",
@@ -606,7 +595,6 @@ if has_config("shared_lib") then
         -- Clone all settings from static target (xmake doesn't support target cloning,
         -- so for shared lib, users should use CMake or Meson which handle this better)
         -- This is a simplified version; for full shared lib support use CMake.
-        add_deps("crate-encoding")
         add_includedirs("src", {public = true})
         if is_plat("linux") then
             add_syslinks("dl")
