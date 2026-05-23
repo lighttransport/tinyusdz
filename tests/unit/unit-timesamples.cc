@@ -371,13 +371,12 @@ void timesamples_test(void) {
     if (v3) TEST_CHECK(math::is_close(*v3, 50.0f));
 
     TEST_CHECK(ts.has_sample_at(4.0));
-    value::TimeSamples::Sample* sample = nullptr;
-    TEST_CHECK(ts.get_sample_at(4.0, &sample));
-    TEST_CHECK(sample != nullptr);
-    if (sample) {
-      const float* sample_value = sample->value.as<float>();
-      TEST_CHECK(sample_value != nullptr);
-      if (sample_value) TEST_CHECK(math::is_close(*sample_value, 40.0f));
+    {
+      // value at the exact sample time t=4.0
+      float sample_value = 0.0f;
+      TEST_CHECK(ts.get<float>(&sample_value, 4.0,
+                               value::TimeSampleInterpolationType::Held));
+      TEST_CHECK(math::is_close(sample_value, 40.0f));
     }
 
     auto value_opt = ts.get_value(2);
@@ -881,17 +880,16 @@ void timesamples_test(void) {
     TEST_CHECK(ts.has_sample_at(1.5) == false);
     TEST_CHECK(ts.has_sample_at(4.0) == false);
 
-    value::TimeSamples::Sample* sample = nullptr;
-    TEST_CHECK(ts.get_sample_at(2.0, &sample) == true);
-    TEST_CHECK(sample != nullptr);
-    if (sample) {
-      TEST_CHECK(math::is_close(sample->t, 2.0));
-      const float* v = sample->value.as<float>();
-      TEST_CHECK(v != nullptr);
-      if (v) TEST_CHECK(math::is_close(*v, 20.0f));
+    {
+      TEST_CHECK(ts.has_sample_at(2.0));
+      float v = 0.0f;
+      TEST_CHECK(ts.get<float>(&v, 2.0,
+                               value::TimeSampleInterpolationType::Held));
+      TEST_CHECK(math::is_close(v, 20.0f));
     }
 
-    TEST_CHECK(ts.get_sample_at(4.0, &sample) == false);
+    // No sample exactly at t=4.0.
+    TEST_CHECK(ts.has_sample_at(4.0) == false);
   }
 
   // Test get_time API
