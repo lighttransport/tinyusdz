@@ -552,6 +552,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-media.cc
     ${PROJECT_SOURCE_DIR}/src/prim-composition.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-types-schema.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-types-schema.cc
     ${PROJECT_SOURCE_DIR}/src/core/prim-enums.cc
     ${PROJECT_SOURCE_DIR}/src/enum-handlers.cc
     ${PROJECT_SOURCE_DIR}/src/layer.cc
