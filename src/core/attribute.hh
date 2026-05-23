@@ -251,24 +251,6 @@ class Attribute {
     _var.set_timesample(t, v);
   }
 
-  /// Set TypedTimeSamples for frequently used types with move semantics
-  template <typename T>
-  void set_typed_timesamples(TypedTimeSamples<T> &&typed_ts) {
-    if (_type_name.empty()) {
-      _type_name = value::TypeTraits<T>::type_name();
-    }
-    _var.set_typed_timesamples(std::move(typed_ts));
-  }
-
-  /// Set TypedTimeSamples for frequently used types (const ref)
-  template <typename T>
-  void set_typed_timesamples(const TypedTimeSamples<T> &typed_ts) {
-    if (_type_name.empty()) {
-      _type_name = value::TypeTraits<T>::type_name();
-    }
-    _var.set_typed_timesamples(typed_ts);
-  }
-
   template <typename T>
   bool get(const double t, T *dst,
            value::TimeSampleInterpolationType tinterp =
