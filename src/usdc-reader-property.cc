@@ -13,6 +13,7 @@
 #endif
 
 #include "usdc-reader-impl.hh"
+#include "ascii-parser.hh"  // AsciiParser (no longer pulled transitively via usdc-reader-impl.hh)
 
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDC_READER)
 

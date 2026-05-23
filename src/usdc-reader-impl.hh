@@ -40,7 +40,10 @@
 #include "tiny-format.hh"
 #include "value-pprint.hh"
 #include "usdShade.hh"
-#include "ascii-parser.hh"
+// NOTE: ascii-parser.hh (the heavy AsciiParser class, ~78ms ParseClass) is NOT
+// included here — the USDC (binary crate) reader impl does not use it. Pulling it
+// dragged that parse into all 8 usdc-reader TUs; only usdc-reader-property.cc
+// actually uses AsciiParser and includes it directly.
 #include "parser-timing.hh"
 #include "enum-handlers.hh"
 
