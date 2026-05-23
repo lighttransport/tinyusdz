@@ -492,6 +492,10 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/audio-loader.cc
     ${PROJECT_SOURCE_DIR}/src/base122.cc
     ${PROJECT_SOURCE_DIR}/src/usda-reader.cc
+    ${PROJECT_SOURCE_DIR}/src/usda-reader-reconstruct-1.cc
+    ${PROJECT_SOURCE_DIR}/src/usda-reader-reconstruct-2.cc
+    ${PROJECT_SOURCE_DIR}/src/usda-reader-reconstruct-3.cc
+    ${PROJECT_SOURCE_DIR}/src/usda-reader-reconstruct-4.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-reader.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-reader-property.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-reader-prim.cc
