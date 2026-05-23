@@ -682,6 +682,74 @@ bool TimeSamples::get_scalar(void *dst, double t,
 #undef TS_GET_SCALAR_CASE
 }
 
+// Generic value-path evaluator: produce the interpolated value::Value at time t.
+// Non-template (dispatches on _type_id via Lerp/IsLerpSupportedType), so the heavy
+// interpolation code is emitted once here rather than per element type in every
+// includer. Used by the public get<T>() for array (and any non-binary) types;
+// scalars take the binary-direct get_scalar() path. Mirrors the get_samples()+Lerp
+// fallback of get_scalar_impl<T>() exactly: default-time -> first non-blocked
+// sample; single sample; Linear via lower_bound idx0/idx1 with blocked-endpoint
+// fallback; otherwise Held via upper_bound.
+bool TimeSamples::get_value_at(value::Value *out, double t,
+                               value::TimeSampleInterpolationType interp) const {
+  if (!out) return false;
+  if (_dirty) {
+    update();
+  }
+
+  const std::vector<Sample> &samples = get_samples();
+  if (samples.empty()) return false;
+
+  if (value::TimeCode(t).is_default()) {
+    for (const auto &s : samples) {
+      if (!s.blocked) {
+        *out = s.value;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  if (samples.size() == 1) {
+    if (samples[0].blocked) return false;
+    *out = samples[0].value;
+    return true;
+  }
+
+  if (interp == value::TimeSampleInterpolationType::Linear &&
+      value::IsLerpSupportedType(_type_id)) {
+    auto it = std::lower_bound(samples.begin(), samples.end(), t,
+        [](const Sample &a, double tv) { return a.t < tv; });
+    const auto it_m1 = (it == samples.begin()) ? samples.begin() : (it - 1);
+    const size_t idx0 = static_cast<size_t>(std::max<int64_t>(0,
+        std::min<int64_t>(int64_t(samples.size()) - 1,
+                          int64_t(std::distance(samples.begin(), it_m1)))));
+    const size_t idx1 = static_cast<size_t>(std::max<int64_t>(0,
+        std::min<int64_t>(int64_t(samples.size()) - 1, int64_t(idx0) + 1)));
+    if (samples[idx0].blocked && samples[idx1].blocked) return false;
+    if (samples[idx0].blocked) { *out = samples[idx1].value; return true; }
+    if (samples[idx1].blocked) { *out = samples[idx0].value; return true; }
+    const double tl = samples[idx0].t;
+    const double tu = samples[idx1].t;
+    double dt = (t - tl);
+    if (std::fabs(tu - tl) < std::numeric_limits<double>::epsilon()) {
+      dt = 0.0;
+    } else {
+      dt /= (tu - tl);
+    }
+    dt = std::max(0.0, std::min(1.0, dt));
+    return Lerp(samples[idx0].value, samples[idx1].value, dt, out);
+  }
+
+  // Held
+  auto it = std::upper_bound(samples.begin(), samples.end(), t,
+      [](double tv, const Sample &a) { return tv < a.t; });
+  const auto it_held = (it == samples.begin()) ? samples.begin() : (it - 1);
+  if (it_held->blocked) return false;
+  *out = it_held->value;
+  return true;
+}
+
 } // namespace value
 
 

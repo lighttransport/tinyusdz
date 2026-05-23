@@ -580,225 +580,60 @@ struct TimeSamples {
 
   std::vector<Sample> &samples();  // Defined in timesamples.cc
 
-  // Get value at specified time.
-  // For non-interpolatable types (includes enums and unknown types)
-  //
-  // Return `Held` value even when TimeSampleInterpolationType is
-  // Linear. Returns false when specified time is out-of-range.
-  template<typename T, std::enable_if_t<!value::LerpTraits<T>::supported(), std::nullptr_t> = nullptr>
+  // Get value at time `t`, cast to T. Single entry point for the type-erased
+  // timesamples: accepts an exact type_id match or a role-compatible underlying
+  // layout (scalar or array), mirroring value::Value::as<T>(). Scalar T uses the
+  // binary-direct evaluator get_scalar(); array (and other non-binary) T use the
+  // generic value evaluator get_value_at() plus a layout-compatible cast. Held vs
+  // Linear and blocked-sample handling live entirely in those non-template cores
+  // (timesamples.cc), so this stays a thin per-T forwarder rather than ~190 lines
+  // of interpolation re-instantiated in every includer.
+  template <typename T>
   bool get(T *dst, double t = value::TimeCode::Default(),
            value::TimeSampleInterpolationType interp =
                value::TimeSampleInterpolationType::Linear) const {
-
-    (void)interp;
-
-    if (!dst) {
+    if (!dst || empty()) {
       return false;
     }
 
-    if (empty()) {
+    // Acceptance: exact type_id, or role-compatible underlying layout
+    // (scalar e.g. color3f<->float3, or array e.g. normal3f[]<->float3[]).
+    constexpr uint32_t want = value::TypeTraits<T>::type_id();
+    const uint32_t tid = _type_id;
+    bool accept = (want == tid);
+    if (!accept) {
+      constexpr bool want_array = (want & value::TYPE_ID_1D_ARRAY_BIT) != 0;
+      const bool have_array = (tid & value::TYPE_ID_1D_ARRAY_BIT) != 0;
+      if (want_array && have_array) {
+        accept = ((value::TypeTraits<T>::underlying_type_id() &
+                   ~value::TYPE_ID_1D_ARRAY_BIT) ==
+                  (value::GetUnderlyingTypeId(tid) &
+                   ~value::TYPE_ID_1D_ARRAY_BIT));
+      } else if (!want_array && !have_array) {
+        accept = (value::TypeTraits<T>::underlying_type_id() ==
+                  value::GetUnderlyingTypeId(tid));
+      }
+    }
+    if (!accept) {
       return false;
     }
 
-    const auto &samples = get_samples();
-    if (samples.empty()) {
-      return false;
-    }
-
-    if (value::TimeCode(t).is_default()) {
-        // Return the first non-blocked sample.
-        for (const auto &s : samples) {
-          if (!s.blocked) {
-            if (const auto pv = s.value.as<T>()) {
-              (*dst) = *pv;
-              return true;
-            }
-            return false;
-          }
-        }
-        return false;
-      } else {
-
-        if (samples.size() == 1) {
-          if (samples[0].blocked) return false;
-          if (const auto pv = samples[0].value.as<T>()) {
-            (*dst) = *pv;
-            return true;
-          }
-          return false;
-        }
-
-        auto it = std::upper_bound(
-          samples.begin(), samples.end(), t,
-          [](double tval, const Sample &a) { return tval < a.t; });
-
-        const auto it_held = (it == samples.begin()) ? samples.begin() : (it - 1);
-
-        if (it_held->blocked) {
-          return false;
-        }
-
-        const value::Value &v = it_held->value;
-
-        if (const T *pv = v.as<T>()) {
-          (*dst) = *pv;
-          return true;
-        }
+    if constexpr ((want & value::TYPE_ID_1D_ARRAY_BIT) != 0) {
+      // Array / non-binary path: interpolate to a value::Value, then cast out.
+      value::Value tmp;
+      if (!get_value_at(&tmp, t, interp)) {
         return false;
       }
-  }
-
-  // Get value at specified time.
-  // Return linearly interpolated value when TimeSampleInterpolationType is
-  // Linear. Returns false when samples is empty or some internal error.
-  template<typename T, std::enable_if_t<value::LerpTraits<T>::supported(), std::nullptr_t> = nullptr>
-  bool get(T *dst, double t = value::TimeCode::Default(),
-           TimeSampleInterpolationType interp =
-               TimeSampleInterpolationType::Linear) const {
-    if (!dst) {
-      return false;
-    }
-
-    if (empty()) {
-      return false;
-    }
-
-    const auto &samples = get_samples();
-    if (samples.empty()) {
-      return false;
-    }
-
-    if (value::TimeCode(t).is_default()) {
-      // Return the first non-blocked sample.
-      for (const auto &s : samples) {
-        if (!s.blocked) {
-          if (const auto pv = s.value.as<T>()) {
-            (*dst) = *pv;
-            return true;
-          }
-          return false;
-        }
+      if (const T *pv = tmp.as<T>()) {
+        (*dst) = *pv;
+        return true;
       }
       return false;
     } else {
-
-      if (samples.size() == 1) {
-        if (samples[0].blocked) return false;
-        if (const auto pv = samples[0].value.as<T>()) {
-          (*dst) = *pv;
-          return true;
-        }
-        return false;
-      }
-
-      if (interp == TimeSampleInterpolationType::Linear) {
-        auto it = std::lower_bound(
-            samples.begin(), samples.end(), t,
-            [](const Sample &a, double tval) { return a.t < tval; });
-
-        // MS STL does not allow seek vector iterator before begin
-        // Issue #110
-        const auto it_minus_1 = (it == samples.begin()) ? samples.begin() : (it - 1);
-
-        size_t idx0 = size_t(std::max(
-            int64_t(0),
-            std::min(int64_t(samples.size() - 1),
-                     int64_t(std::distance(samples.begin(), it_minus_1)))));
-        size_t idx1 =
-            size_t(std::max(int64_t(0), std::min(int64_t(samples.size() - 1),
-                                                 int64_t(idx0) + 1)));
-
-        // If either endpoint is blocked, fall back to the non-blocked one.
-        if (samples[idx0].blocked && samples[idx1].blocked) {
-          return false;
-        }
-        if (samples[idx0].blocked) {
-          if (const auto pv = samples[idx1].value.as<T>()) {
-            (*dst) = *pv;
-            return true;
-          }
-          return false;
-        }
-        if (samples[idx1].blocked) {
-          if (const auto pv = samples[idx0].value.as<T>()) {
-            (*dst) = *pv;
-            return true;
-          }
-          return false;
-        }
-
-        double tl = samples[idx0].t;
-        double tu = samples[idx1].t;
-
-        double dt = (t - tl);
-        if (std::fabs(tu - tl) < std::numeric_limits<double>::epsilon()) {
-          // slope is zero.
-          dt = 0.0;
-        } else {
-          dt /= (tu - tl);
-        }
-
-        // Just in case.
-        dt = std::max(0.0, std::min(1.0, dt));
-
-        const value::Value &p0 = samples[idx0].value;
-        const value::Value &p1 = samples[idx1].value;
-
-        value::Value p;
-        if (!Lerp(p0, p1, dt, &p)) {
-          return false;
-        }
-
-        if (const auto pv = p.as<T>()) {
-          (*dst) = *pv;
-          return true;
-        }
-        return false;
-      } else {
-        // Held interpolation
-        auto it = std::upper_bound(
-          samples.begin(), samples.end(), t,
-          [](double tval, const Sample &a) { return tval < a.t; });
-
-        const auto it_held = (it == samples.begin()) ? samples.begin() : (it - 1);
-
-        if (it_held->blocked) {
-          return false;
-        }
-
-        const value::Value &v = it_held->value;
-
-        if (const T *pv = v.as<T>()) {
-          (*dst) = *pv;
-          return true;
-        }
-
-        return false;
-      }
+      // Scalar path: binary-direct evaluator writes straight into dst
+      // (dst is layout-compatible with the stored type by the check above).
+      return get_scalar(static_cast<void *>(dst), t, interp);
     }
-  }
-
-  // [Transition hook — Phase 1] Evaluate a scalar sample via the binary-direct
-  // path (TimeSamples::get_scalar). Semantically identical to get<T>() but reads
-  // straight from the binary _data buffer (no value::Value reconstruction) for
-  // POD types. Acceptance mirrors value::Value::as<T>() exactly (exact type_id,
-  // or role-compatible underlying type for scalars). In Phase 3 this becomes the
-  // body of get<T>().
-  template <typename T>
-  bool eval_scalar(T *dst, double t = value::TimeCode::Default(),
-                   value::TimeSampleInterpolationType interp =
-                       value::TimeSampleInterpolationType::Linear) const {
-    if (!dst) return false;
-    const uint32_t tid = _type_id;
-    bool accept = (value::TypeTraits<T>::type_id() == tid);
-    if (!accept && !value::TypeTraits<T>::is_array() &&
-        !(tid & value::TYPE_ID_1D_ARRAY_BIT)) {
-      // Role-compatible scalar (e.g. color3f <-> float3): same underlying layout.
-      accept = (value::TypeTraits<T>::underlying_type_id() ==
-                value::GetUnderlyingTypeId(tid));
-    }
-    if (!accept) return false;
-    return get_scalar(static_cast<void *>(dst), t, interp);
   }
 
   size_t estimate_memory_usage() const;  // Defined in timesamples.cc
@@ -1062,6 +897,13 @@ struct TimeSamples {
   template <typename T>
   bool get_scalar_impl(void *dst, double t,
                        value::TimeSampleInterpolationType interp) const;
+
+  // [Phase 1] Generic value-path evaluator: produces the interpolated
+  // value::Value at time t (non-template; dispatches on _type_id via Lerp).
+  // The public get<T>() uses this for array (and other non-binary) types, then
+  // casts the result to T. Defined in timesamples.cc.
+  bool get_value_at(value::Value *out, double t,
+                    value::TimeSampleInterpolationType interp) const;
 
   // Generic path storage (for non-binary Value types: string, token, dict, etc.)
   mutable std::vector<Sample> _samples;
