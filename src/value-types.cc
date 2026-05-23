@@ -53,24 +53,10 @@ static const std::unordered_set<uint32_t> &GetLerpSupportedTypeIds() {
       ids.insert(tid | value::TYPE_ID_1D_ARRAY_BIT);
       ids.insert(uid | value::TYPE_ID_1D_ARRAY_BIT);
     };
-    add(TypeTraits<value::half>::type_id(), TypeTraits<value::half>::underlying_type_id());
-    add(TypeTraits<value::half2>::type_id(), TypeTraits<value::half2>::underlying_type_id());
-    add(TypeTraits<value::half3>::type_id(), TypeTraits<value::half3>::underlying_type_id());
-    add(TypeTraits<value::half4>::type_id(), TypeTraits<value::half4>::underlying_type_id());
-    add(TypeTraits<float>::type_id(), TypeTraits<float>::underlying_type_id());
-    add(TypeTraits<value::float2>::type_id(), TypeTraits<value::float2>::underlying_type_id());
-    add(TypeTraits<value::float3>::type_id(), TypeTraits<value::float3>::underlying_type_id());
-    add(TypeTraits<value::float4>::type_id(), TypeTraits<value::float4>::underlying_type_id());
-    add(TypeTraits<double>::type_id(), TypeTraits<double>::underlying_type_id());
-    add(TypeTraits<value::double2>::type_id(), TypeTraits<value::double2>::underlying_type_id());
-    add(TypeTraits<value::double3>::type_id(), TypeTraits<value::double3>::underlying_type_id());
-    add(TypeTraits<value::double4>::type_id(), TypeTraits<value::double4>::underlying_type_id());
-    add(TypeTraits<value::quath>::type_id(), TypeTraits<value::quath>::underlying_type_id());
-    add(TypeTraits<value::quatf>::type_id(), TypeTraits<value::quatf>::underlying_type_id());
-    add(TypeTraits<value::quatd>::type_id(), TypeTraits<value::quatd>::underlying_type_id());
-    add(TypeTraits<value::matrix2d>::type_id(), TypeTraits<value::matrix2d>::underlying_type_id());
-    add(TypeTraits<value::matrix3d>::type_id(), TypeTraits<value::matrix3d>::underlying_type_id());
-    add(TypeTraits<value::matrix4d>::type_id(), TypeTraits<value::matrix4d>::underlying_type_id());
+#define ADD_LERP_ID(__ty) \
+    add(TypeTraits<__ty>::type_id(), TypeTraits<__ty>::underlying_type_id());
+    APPLY_FUNC_TO_LERP_VALUE_TYPES(ADD_LERP_ID)
+#undef ADD_LERP_ID
     return ids;
   }();
   return s;
@@ -148,42 +134,10 @@ bool Lerp(const value::Value &a, const value::Value &b, double dt, value::Value 
     } \
   } else
 
-  DO_LERP(value::half)
-  DO_LERP(value::half2)
-  DO_LERP(value::half3)
-  DO_LERP(value::half4)
-  DO_LERP(float)
-  DO_LERP(value::float2)
-  DO_LERP(value::float3)
-  DO_LERP(value::float4)
-  DO_LERP(double)
-  DO_LERP(value::double2)
-  DO_LERP(value::double3)
-  DO_LERP(value::double4)
-  DO_LERP(value::quath)
-  DO_LERP(value::quatf)
-  DO_LERP(value::quatd)
-  DO_LERP(value::color3h)
-  DO_LERP(value::color3f)
-  DO_LERP(value::color3d)
-  DO_LERP(value::color4h)
-  DO_LERP(value::color4f)
-  DO_LERP(value::color4d)
-  DO_LERP(value::point3h)
-  DO_LERP(value::point3f)
-  DO_LERP(value::point3d)
-  DO_LERP(value::normal3h)
-  DO_LERP(value::normal3f)
-  DO_LERP(value::normal3d)
-  DO_LERP(value::vector3h)
-  DO_LERP(value::vector3f)
-  DO_LERP(value::vector3d)
-  DO_LERP(value::texcoord2h)
-  DO_LERP(value::texcoord2f)
-  DO_LERP(value::texcoord2d)
-  DO_LERP(value::texcoord3h)
-  DO_LERP(value::texcoord3f)
-  DO_LERP(value::texcoord3d)
+  // Generated from the single lerpable-type list (shared with LerpTraits and
+  // GetLerpSupportedTypeIds) so all three agree — fixes the prior drift where
+  // matrices were "lerp-supported" but had no Lerp() arm.
+  APPLY_FUNC_TO_LERP_VALUE_TYPES(DO_LERP)
   {
     DCOUT("TODO: type " << GetTypeName(tyid));
   }

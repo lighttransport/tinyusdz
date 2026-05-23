@@ -199,6 +199,19 @@ void timesamples_test(void) {
     TEST_CHECK(!value::IsLerpSupportedType(value::TypeTraits<std::vector<int>>::type_id()));
     TEST_CHECK(!value::IsLerpSupportedType(value::TypeTraits<std::string>::type_id()));
     TEST_CHECK(!value::IsLerpSupportedType(value::TypeTraits<std::vector<std::string>>::type_id()));
+
+    // Matrices are interpolatable and now have a consistent Lerp() arm. Previously
+    // IsLerpSupportedType() reported true but Lerp() had no matrix case and returned
+    // false (so array matrix timesamples failed to interpolate). Guard the fix.
+    TEST_CHECK(value::IsLerpSupportedType(value::TypeTraits<value::matrix4d>::type_id()));
+    TEST_CHECK(value::IsLerpSupportedType(value::TypeTraits<std::vector<value::matrix4d>>::type_id()));
+    {
+      value::matrix4d ma{};
+      value::matrix4d mb{};
+      value::Value a(ma), b(mb), out;
+      TEST_CHECK(value::Lerp(a, b, 0.5, &out));
+      TEST_CHECK(out.as<value::matrix4d>() != nullptr);
+    }
   }
 
   // Test TimeSamples sorting
