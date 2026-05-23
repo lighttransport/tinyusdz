@@ -223,3 +223,53 @@
   __FUNC(std::vector<value::matrix3d>)                         \
   __FUNC(std::vector<value::matrix4d>)                         \
   __FUNC(std::vector<value::frame4d>)
+
+// Apply __FUNC to the scalar value types that support linear interpolation
+// (lerp). Single source of truth shared by LerpTraits<T> (compile-time predicate),
+// GetLerpSupportedTypeIds() (runtime predicate), and Lerp()'s per-type dispatch,
+// so the three cannot drift apart. Each entry must have a usable lerp<T>().
+// (bool / int / token / string / asset are intentionally absent — Held only.)
+#define APPLY_FUNC_TO_LERP_VALUE_TYPES(__FUNC) \
+  __FUNC(value::half) \
+  __FUNC(value::half2) \
+  __FUNC(value::half3) \
+  __FUNC(value::half4) \
+  __FUNC(float) \
+  __FUNC(value::float2) \
+  __FUNC(value::float3) \
+  __FUNC(value::float4) \
+  __FUNC(double) \
+  __FUNC(value::double2) \
+  __FUNC(value::double3) \
+  __FUNC(value::double4) \
+  __FUNC(value::quath) \
+  __FUNC(value::quatf) \
+  __FUNC(value::quatd) \
+  __FUNC(value::matrix2f) \
+  __FUNC(value::matrix3f) \
+  __FUNC(value::matrix4f) \
+  __FUNC(value::matrix2d) \
+  __FUNC(value::matrix3d) \
+  __FUNC(value::matrix4d) \
+  __FUNC(value::timecode) \
+  __FUNC(value::normal3h) \
+  __FUNC(value::normal3f) \
+  __FUNC(value::normal3d) \
+  __FUNC(value::vector3h) \
+  __FUNC(value::vector3f) \
+  __FUNC(value::vector3d) \
+  __FUNC(value::point3h) \
+  __FUNC(value::point3f) \
+  __FUNC(value::point3d) \
+  __FUNC(value::color3h) \
+  __FUNC(value::color3f) \
+  __FUNC(value::color3d) \
+  __FUNC(value::color4h) \
+  __FUNC(value::color4f) \
+  __FUNC(value::color4d) \
+  __FUNC(value::texcoord2h) \
+  __FUNC(value::texcoord2f) \
+  __FUNC(value::texcoord2d) \
+  __FUNC(value::texcoord3h) \
+  __FUNC(value::texcoord3f) \
+  __FUNC(value::texcoord3d)
