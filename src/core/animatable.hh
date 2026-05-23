@@ -198,42 +198,6 @@ struct Animatable {
     }
   }
 
-  // --- Compat setters (TypedTimeSamples<T>) — removed in Phase 3 once value-type
-  //     callers migrate to set_timesamples(value::TimeSamples). For value types
-  //     they convert the typed samples into the type-erased store; for enum types
-  //     they store the typed samples directly.
-  void set(const TypedTimeSamples<T> &tts) {
-    if constexpr (kTyped) {
-      _ts = tts;
-    } else {
-      std::unique_ptr<value::TimeSamples> ts(new value::TimeSamples());
-      for (const auto &sample : tts.get_samples()) {
-        if (sample.blocked) {
-          ts->template add_blocked_sample<T>(sample.t);
-        } else {
-          ts->add_sample(sample.t, value::Value(sample.value));
-        }
-      }
-      _ts = std::move(ts);
-    }
-  }
-
-  void set(TypedTimeSamples<T> &&tts) {
-    if constexpr (kTyped) {
-      _ts = std::move(tts);
-    } else {
-      set(static_cast<const TypedTimeSamples<T> &>(tts));
-    }
-  }
-
-  void set_timesamples(const TypedTimeSamples<T> &tts) {
-    return set(tts);
-  }
-
-  void set_timesamples(TypedTimeSamples<T> &&tts) {
-    return set(std::move(tts));
-  }
-
   void clear_scalar() {
     _has_value = false;
   }
