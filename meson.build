@@ -198,6 +198,8 @@ tinyusdz_sources = files(
   'src/crate-dump.cc',
   'src/path-util.cc',
   'src/prim-reconstruct.cc',
+  'src/prim-reconstruct2.cc',
+  'src/prim-reconstruct3.cc',
   'src/prim-reconstruct-geom.cc',
   'src/prim-reconstruct-geom2.cc',
   'src/prim-reconstruct-geom3.cc',

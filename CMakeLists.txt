@@ -532,6 +532,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/crate-dump.cc
     ${PROJECT_SOURCE_DIR}/src/path-util.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct2.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct3.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom2.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom3.cc
