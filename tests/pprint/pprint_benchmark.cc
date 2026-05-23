@@ -17,6 +17,7 @@
 #include "stream-writer.hh"
 #include "timesamples-pprint.hh"
 #include "tinyusdz.hh"
+#include "usdGeom.hh"  // Geom* (no longer re-exported by tinyusdz.hh)
 #include "value-types.hh"
 
 using namespace tinyusdz;
