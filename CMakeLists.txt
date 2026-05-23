@@ -553,6 +553,9 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/linear-algebra.cc
     ${PROJECT_SOURCE_DIR}/src/value-eval-util.cc
     ${PROJECT_SOURCE_DIR}/src/usdGeom.cc
+    ${PROJECT_SOURCE_DIR}/src/usdGeom-primvar-inst-scalar.cc
+    ${PROJECT_SOURCE_DIR}/src/usdGeom-primvar-inst-vec.cc
+    ${PROJECT_SOURCE_DIR}/src/usdGeom-primvar-inst-role.cc
     ${PROJECT_SOURCE_DIR}/src/usdSkel.cc
     ${PROJECT_SOURCE_DIR}/src/usdShade.cc
     ${PROJECT_SOURCE_DIR}/src/usdLux.cc

@@ -1146,7 +1146,7 @@ DEFINE_TYPE_TRAIT(GeomHermiteCurves, kGeomHermiteCurves, TYPE_ID_GEOM_HERMITE_CU
 
 // NOTE: `bool` type seems not supported on pxrUSD
 // NOTE: `string` type need special treatment when `idFrom` Relationship exists( https://github.com/syoyo/tinyusdz/issues/113 )
-#define APPLY_GEOMPRIVAR_TYPE(__FUNC) \
+#define APPLY_GEOMPRIVAR_TYPE_SCALAR(__FUNC) \
   __FUNC(bool)                        \
   __FUNC(std::string)                 \
   __FUNC(value::half)                 \
@@ -1160,7 +1160,9 @@ DEFINE_TYPE_TRAIT(GeomHermiteCurves, kGeomHermiteCurves, TYPE_ID_GEOM_HERMITE_CU
   __FUNC(uint32_t)                    \
   __FUNC(value::uint2)                \
   __FUNC(value::uint3)                \
-  __FUNC(value::uint4)                \
+  __FUNC(value::uint4)
+
+#define APPLY_GEOMPRIVAR_TYPE_VEC(__FUNC)  \
   __FUNC(float)                       \
   __FUNC(value::float2)               \
   __FUNC(value::float3)               \
@@ -1174,7 +1176,9 @@ DEFINE_TYPE_TRAIT(GeomHermiteCurves, kGeomHermiteCurves, TYPE_ID_GEOM_HERMITE_CU
   __FUNC(value::matrix4d)             \
   __FUNC(value::quath)                \
   __FUNC(value::quatf)                \
-  __FUNC(value::quatd)                \
+  __FUNC(value::quatd)
+
+#define APPLY_GEOMPRIVAR_TYPE_ROLE(__FUNC) \
   __FUNC(value::normal3h)             \
   __FUNC(value::normal3f)             \
   __FUNC(value::normal3d)             \
@@ -1194,6 +1198,14 @@ DEFINE_TYPE_TRAIT(GeomHermiteCurves, kGeomHermiteCurves, TYPE_ID_GEOM_HERMITE_CU
   __FUNC(value::texcoord3h)           \
   __FUNC(value::texcoord3f)           \
   __FUNC(value::texcoord3d)
+
+// Full type list = the three groups concatenated (used by IsSupportedGeomPrimvarType
+// and EXTERN_TEMPLATE_GET_VALUE). The per-group macros let usdGeom-primvar-inst-*.cc
+// each instantiate one group.
+#define APPLY_GEOMPRIVAR_TYPE(__FUNC) \
+  APPLY_GEOMPRIVAR_TYPE_SCALAR(__FUNC) \
+  APPLY_GEOMPRIVAR_TYPE_VEC(__FUNC)    \
+  APPLY_GEOMPRIVAR_TYPE_ROLE(__FUNC)
 
 #define EXTERN_TEMPLATE_GET_VALUE(__ty) \
   extern template bool GeomPrimvar::get_value(__ty *dest, std::string *err) const; \
