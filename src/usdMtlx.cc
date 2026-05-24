@@ -13,16 +13,6 @@
 
 #if defined(TINYUSDZ_USE_USDMTLX)
 
-// ============================================================================
-// Configuration flags for MaterialX support
-// ============================================================================
-// Currently only Blender-style OpenPBR + NodeGraph import is actively used.
-// Other shader types (UsdPreviewSurface, StandardSurface) export paths are
-// disabled until needed. Enable these flags to re-enable those code paths.
-// ============================================================================
-#define TINYUSDZ_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT 1
-#define TINYUSDZ_MTLX_ENABLE_STANDARDSURFACE_EXPORT 1
-
 #include "ascii-parser.hh"  // To parse color3f value
 #include "common-macros.inc"
 #include "io-util.hh"

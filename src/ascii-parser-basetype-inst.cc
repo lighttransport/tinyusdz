@@ -97,7 +97,7 @@
 namespace tinyusdz {
 namespace ascii {
 
-constexpr auto kAscii = "[ASCII]";
+[[maybe_unused]] constexpr auto kAscii = "[ASCII]";
 
 #include "ascii-parser-basetype-impl.inc"
 

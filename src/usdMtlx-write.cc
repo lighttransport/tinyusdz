@@ -36,20 +36,12 @@
 // No need for local dtos() or float_to_xml_string() - dtos() already
 // produces the shortest round-trip-correct representation without trailing zeros
 
-#define PushWarn(msg) \
-  do {                \
-    if (warn) {       \
-      (*warn) += msg; \
-    }                 \
-  } while (0);
-
 #define PushError(msg) \
   do {                 \
     if (err) {         \
       (*err) += msg;   \
     }                  \
   } while (0);
-
 
 // MaterialX WRITE path (USD -> .mtlx XML), split from usdMtlx.cc to divide back-end
 // codegen. Read and write paths share no statics. See usdMtlx.cc for the read path.

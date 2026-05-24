@@ -56,17 +56,17 @@ namespace prim {
 
 //constexpr auto kTag = "[PrimReconstruct]";
 
-constexpr auto kProxyPrim = "proxyPrim";
-constexpr auto kVisibility = "visibility";
-constexpr auto kExtent = "extent";
-constexpr auto kPurpose = "purpose";
-constexpr auto kMaterialBinding = "material:binding";
-constexpr auto kMaterialBindingCollection = "material:binding:collection";
-constexpr auto kMaterialBindingPreview = "material:binding:preview";
-constexpr auto kSkelSkeleton = "skel:skeleton";
-constexpr auto kSkelAnimationSource = "skel:animationSource";
-constexpr auto kSkelBlendShapes = "skel:blendShapes";
-constexpr auto kSkelBlendShapeTargets = "skel:blendShapeTargets";
+[[maybe_unused]] constexpr auto kProxyPrim = "proxyPrim";
+[[maybe_unused]] constexpr auto kVisibility = "visibility";
+[[maybe_unused]] constexpr auto kExtent = "extent";
+[[maybe_unused]] constexpr auto kPurpose = "purpose";
+[[maybe_unused]] constexpr auto kMaterialBinding = "material:binding";
+[[maybe_unused]] constexpr auto kMaterialBindingCollection = "material:binding:collection";
+[[maybe_unused]] constexpr auto kMaterialBindingPreview = "material:binding:preview";
+[[maybe_unused]] constexpr auto kSkelSkeleton = "skel:skeleton";
+[[maybe_unused]] constexpr auto kSkelAnimationSource = "skel:animationSource";
+[[maybe_unused]] constexpr auto kSkelBlendShapes = "skel:blendShapes";
+[[maybe_unused]] constexpr auto kSkelBlendShapeTargets = "skel:blendShapeTargets";
 // kInputsVarname moved to prim-reconstruct-shader.cc
 
 // MaterialX Validation Helpers moved to prim-reconstruct-shader.cc
@@ -859,6 +859,45 @@ bool ReconstructPrim<__prim_ty>( \
  \
   return ReconstructPrim<__prim_ty>(primspec.specifier(), primspec.props(), references, prim, warn, err, options); \
 }
+
+#define RECONSTRUCT_PRIM_PROPERTYMAP_DECL(__prim_ty) \
+template <> \
+bool ReconstructPrim<__prim_ty>( \
+    const Specifier &spec, \
+    PropertyMap &properties, \
+    const ReferenceList &references, \
+    __prim_ty *prim, \
+    std::string *warn, \
+    std::string *err, \
+    const PrimReconstructOptions &options);
+
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(GeomMesh)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(GeomPoints)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(GeomCylinder)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(GeomCube)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(GeomCone)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(GeomSphere)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(GeomCapsule)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(GeomBasisCurves)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(GeomCamera)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(GeomSubset)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(GeomPointInstancer)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(SphereLight)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(DomeLight)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(CylinderLight)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(DiskLight)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(DistantLight)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(RectLight)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(GeometryLight)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(PortalLight)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(DomeLight_1)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(LightFilter)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(PluginLightFilter)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(SkelRoot)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(Skeleton)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(SkelAnimation)
+RECONSTRUCT_PRIM_PROPERTYMAP_DECL(BlendShape)
+#undef RECONSTRUCT_PRIM_PROPERTYMAP_DECL
 
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Xform)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Model)
