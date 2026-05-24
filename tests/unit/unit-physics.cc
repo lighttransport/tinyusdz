@@ -61,14 +61,15 @@ static bool approx_eq(double a, double b) {
 }
 
 // Pull a numeric value out of a generic property bag (post-parse). Returns
-// false if the key is absent or not a float / double attribute. Matches
-// the priority-lookup pattern downstream consumers use.
+// false if the key is absent or not a numeric attribute. Matches the
+// priority-lookup pattern downstream consumers use.
 static bool get_prop_num(const std::map<std::string, Property> &props,
                          const std::string &key, double *out) {
   auto it = props.find(key);
   if (it == props.end()) return false;
   if (!it->second.is_attribute()) return false;
   const auto &attr = it->second.get_attribute();
+  if (auto v = attr.get_value<int>())    { *out = static_cast<double>(*v); return true; }
   if (auto v = attr.get_value<float>())  { *out = static_cast<double>(*v); return true; }
   if (auto v = attr.get_value<double>()) { *out = *v; return true; }
   return false;
@@ -2009,6 +2010,142 @@ void urdf_json_newton_api_export_test(void) {
       TEST_CHECK(targets.size() == 1);
       if (targets.size() == 1) {
         TEST_CHECK(targets[0].prim_part() == "/World/Joints/hinge");
+      }
+    }
+  }
+}
+
+void urdf_json_mjcf_contact_export_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "MjcfContactBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "gravity": [0, 0, -1],
+  "links": [
+    {
+      "name": "base",
+      "collisions": [
+        {
+          "name": "floor",
+          "matrix": [1, 0, 0, 0,
+                     0, 1, 0, 0,
+                     0, 0, 1, 0,
+                     0, 0, 0, 1],
+          "shape": { "type": "plane", "width": 24, "length": 68, "axis": "Z" },
+          "mjc": {
+            "geomSize": [12, 34, 0.25],
+            "geomContype": 4,
+            "geomConaffinity": 8,
+            "geomFriction": [0.9, 0.02, 0.003],
+            "priority": 7,
+            "solref": [0.04, 1],
+            "solimp": [0.8, 0.9, 0.02, 0.7, 3],
+            "solmix": 0.33,
+            "margin": 0.04,
+            "gap": 0.02
+          },
+          "condim": 6
+        },
+        {
+          "name": "plain_col",
+          "matrix": [1, 0, 0, 0,
+                     0, 1, 0, 0,
+                     0, 0, 1, 0,
+                     0, 0, 0, 1],
+          "shape": { "type": "box" }
+        }
+      ]
+    },
+    { "name": "finger" }
+  ],
+  "filteredPairs": [
+    { "body1": "base", "body2": "finger" }
+  ]
+})JSON";
+
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(
+      robot_json, &stage, &warn, &err);
+  if (!ok) {
+    TEST_MSG("ConvertURDFJsonToUSDStage failed: %s", err.c_str());
+  }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto floor_r = stage.GetPrimAtPath(Path("/World/Links/base/floor", ""));
+  TEST_CHECK(bool(floor_r));
+  if (floor_r) {
+    const Prim *p = *floor_r;
+    TEST_CHECK(has_api(p, APISchemas::APIName::PhysicsCollisionAPI));
+    TEST_CHECK(has_api(p, APISchemas::APIName::MjcCollisionAPI));
+    const auto *plane = p->as<GeomPlane>();
+    TEST_CHECK(plane != nullptr);
+    if (plane) {
+      double v = 0.0;
+      TEST_CHECK(get_prop_num(plane->props, "mjc:geomContype", &v));
+      TEST_CHECK(approx_eq(v, 4.0));
+      TEST_CHECK(get_prop_num(plane->props, "mjc:geomConaffinity", &v));
+      TEST_CHECK(approx_eq(v, 8.0));
+      TEST_CHECK(get_prop_num(plane->props, "mjc:priority", &v));
+      TEST_CHECK(approx_eq(v, 7.0));
+      TEST_CHECK(get_prop_num(plane->props, "mjc:condim", &v));
+      TEST_CHECK(approx_eq(v, 6.0));
+      TEST_CHECK(get_prop_num(plane->props, "mjc:solmix", &v));
+      TEST_CHECK(approx_eq(v, 0.33));
+      TEST_CHECK(get_prop_num(plane->props, "mjc:margin", &v));
+      TEST_CHECK(approx_eq(v, 0.04));
+      TEST_CHECK(get_prop_num(plane->props, "mjc:gap", &v));
+      TEST_CHECK(approx_eq(v, 0.02));
+      TEST_CHECK(get_prop_num(plane->props, "newton:contactMargin", &v));
+      TEST_CHECK(approx_eq(v, 0.04));
+      TEST_CHECK(get_prop_num(plane->props, "newton:contactGap", &v));
+      TEST_CHECK(approx_eq(v, 0.02));
+
+      auto check_vec = [&](const char *key, size_t n) {
+        auto it = plane->props.find(key);
+        TEST_CHECK(it != plane->props.end());
+        if (it == plane->props.end() || !it->second.is_attribute()) return;
+        auto vals = it->second.get_attribute().get_value<std::vector<double>>();
+        TEST_CHECK(vals.has_value());
+        if (vals.has_value()) {
+          TEST_CHECK(vals.value().size() == n);
+        }
+      };
+      check_vec("mjc:geomSize", 3);
+      check_vec("mjc:geomFriction", 3);
+      check_vec("mjc:solref", 2);
+      check_vec("mjc:solimp", 5);
+    }
+  }
+
+  auto plain_r = stage.GetPrimAtPath(Path("/World/Links/base/plain_col", ""));
+  TEST_CHECK(bool(plain_r));
+  if (plain_r) {
+    const auto *cube = (*plain_r)->as<GeomCube>();
+    TEST_CHECK(cube != nullptr);
+    if (cube) {
+      TEST_CHECK(cube->props.find("mjc:group") == cube->props.end());
+      TEST_CHECK(cube->props.find("mjc:condim") == cube->props.end());
+    }
+  }
+
+  auto base_r = stage.GetPrimAtPath(Path("/World/Links/base", ""));
+  TEST_CHECK(bool(base_r));
+  if (base_r) {
+    const Prim *p = *base_r;
+    TEST_CHECK(has_api(p, APISchemas::APIName::PhysicsFilteredPairsAPI));
+    const Xform *xform = p->data().as<Xform>();
+    TEST_CHECK(xform != nullptr);
+    auto it = xform ? xform->props.find("physics:filteredPairs") :
+                      std::map<std::string, Property>::const_iterator{};
+    TEST_CHECK(xform && it != xform->props.end());
+    if (xform && it != xform->props.end()) {
+      TEST_CHECK(it->second.is_relationship());
+      auto targets = it->second.get_relationship().targetPathVector;
+      TEST_CHECK(targets.size() == 1);
+      if (targets.size() == 1) {
+        TEST_CHECK(targets[0].prim_part() == "/World/Links/finger");
       }
     }
   }

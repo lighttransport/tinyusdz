@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -31,6 +32,15 @@
 namespace fs = std::filesystem;
 
 namespace {
+
+constexpr double kMjcfDefaultGroup = 0.0;
+constexpr double kMjcfDefaultCondim = 3.0;
+constexpr double kMjcfDefaultContype = 1.0;
+constexpr double kMjcfDefaultConaffinity = 1.0;
+constexpr double kMjcfDefaultPriority = 0.0;
+constexpr double kMjcfDefaultMargin = 0.0;
+constexpr double kMjcfDefaultGap = 0.0;
+constexpr double kMjcfDefaultSolmix = 1.0;
 
 struct Options {
   std::string input_filename;
@@ -68,6 +78,18 @@ struct Stats {
   size_t visuals{0};
   size_t collisions{0};
   size_t actuators{0};
+};
+
+using AttrMap = std::map<std::string, std::string>;
+
+struct MujocoDefaults {
+  std::map<std::string, AttrMap> geom;
+  std::map<std::string, AttrMap> joint;
+};
+
+struct BodyCollisionInfo {
+  std::string name;
+  std::vector<std::pair<int32_t, int32_t>> filters;
 };
 
 void PrintHelp() {
@@ -217,14 +239,49 @@ double ParseDoubleAttr(const pugi::xml_node &node,
   return (end && end != s.c_str()) ? v : fallback;
 }
 
+double ParseDoubleAttr(const AttrMap &attrs,
+                       const std::string &name, double fallback) {
+  const auto it = attrs.find(name);
+  if (it == attrs.end()) return fallback;
+  char *end = nullptr;
+  const double v = std::strtod(it->second.c_str(), &end);
+  return (end && end != it->second.c_str()) ? v : fallback;
+}
+
 bool HasAttr(const pugi::xml_node &node, const std::string &name) {
   return node && node.attribute(name.c_str());
+}
+
+bool HasAttr(const AttrMap &attrs, const std::string &name) {
+  return attrs.find(name) != attrs.end();
 }
 
 std::string Attr(const pugi::xml_node &node, const std::string &name,
                  const std::string &fallback = std::string()) {
   if (!node) return fallback;
   return node.attribute(name.c_str()).as_string(fallback.c_str());
+}
+
+std::string Attr(const AttrMap &attrs, const std::string &name,
+                 const std::string &fallback = std::string()) {
+  const auto it = attrs.find(name);
+  return it == attrs.end() ? fallback : it->second;
+}
+
+AttrMap Attributes(const pugi::xml_node &node) {
+  AttrMap out;
+  if (!node) return out;
+  for (const pugi::xml_attribute &attr : node.attributes()) {
+    out[attr.name()] = attr.value();
+  }
+  return out;
+}
+
+AttrMap MergeAttrs(AttrMap base, const AttrMap &overrides) {
+  for (const auto &kv : overrides) {
+    base[kv.first] = kv.second;
+  }
+  return base;
 }
 
 std::vector<pugi::xml_node> Children(
@@ -241,6 +298,55 @@ pugi::xml_node Child(const pugi::xml_node &node,
                                  const std::string &name) {
   if (!node) return pugi::xml_node();
   return node.child(name.c_str());
+}
+
+MujocoDefaults CollectMujocoDefaults(const pugi::xml_node &root) {
+  MujocoDefaults defaults;
+
+  std::function<void(pugi::xml_node, AttrMap, AttrMap)> visit =
+      [&](pugi::xml_node default_node, AttrMap inherited_geom,
+          AttrMap inherited_joint) {
+        const AttrMap geom =
+            MergeAttrs(std::move(inherited_geom),
+                       Attributes(Child(default_node, "geom")));
+        const AttrMap joint =
+            MergeAttrs(std::move(inherited_joint),
+                       Attributes(Child(default_node, "joint")));
+        const std::string klass = Attr(default_node, "class");
+        defaults.geom[klass] = geom;
+        defaults.joint[klass] = joint;
+        for (pugi::xml_node child : default_node.children("default")) {
+          visit(child, geom, joint);
+        }
+      };
+
+  for (pugi::xml_node default_node : root.children("default")) {
+    visit(default_node, AttrMap{}, AttrMap{});
+  }
+  return defaults;
+}
+
+AttrMap ResolveMujocoAttrs(const pugi::xml_node &node,
+                           const std::map<std::string, AttrMap> &defaults,
+                           const std::string &inherited_class) {
+  const AttrMap authored = Attributes(node);
+  const std::string klass = Attr(authored, "class", inherited_class);
+  AttrMap out;
+  auto root_it = defaults.find("");
+  if (root_it != defaults.end()) {
+    out = root_it->second;
+  }
+  if (!klass.empty()) {
+    auto class_it = defaults.find(klass);
+    if (class_it != defaults.end()) {
+      out = MergeAttrs(std::move(out), class_it->second);
+    }
+  }
+  out = MergeAttrs(std::move(out), authored);
+  if (!klass.empty()) {
+    out["class"] = klass;
+  }
+  return out;
 }
 
 std::string StripMujocoRoot(const std::string &xml) {
@@ -314,12 +420,11 @@ bool ExpandIncludes(const std::string &xml, const fs::path &base_dir,
   return true;
 }
 
-std::vector<double> PoseMatrix(const pugi::xml_node &node) {
+std::vector<double> PoseMatrixFromAttrs(const AttrMap &attrs) {
   const std::array<double, 3> pos =
-      ParseDouble3(node ? Attr(node, "pos") : "", {{0.0, 0.0, 0.0}});
+      ParseDouble3(Attr(attrs, "pos"), {{0.0, 0.0, 0.0}});
   std::array<double, 4> q{{1.0, 0.0, 0.0, 0.0}};  // MuJoCo wxyz.
-  const std::vector<double> qvals =
-      ParseDoubles(node ? Attr(node, "quat") : "");
+  const std::vector<double> qvals = ParseDoubles(Attr(attrs, "quat"));
   if (qvals.size() >= 4) {
     q = {{qvals[0], qvals[1], qvals[2], qvals[3]}};
   }
@@ -347,6 +452,10 @@ std::vector<double> PoseMatrix(const pugi::xml_node &node) {
       xy - wz,         1.0 - (xx + zz), yz + wx,         0.0,
       xz + wy,         yz - wx,         1.0 - (xx + yy), 0.0,
       pos[0],          pos[1],          pos[2],          1.0};
+}
+
+std::vector<double> PoseMatrix(const pugi::xml_node &node) {
+  return PoseMatrixFromAttrs(Attributes(node));
 }
 
 std::vector<double> MultiplyMatrix(const std::vector<double> &a,
@@ -562,22 +671,55 @@ nlohmann::json MeshPayloadToJson(const MeshPayload &payload) {
         {"indices", payload.mesh.indices}}}};
 }
 
-void AddGeomPhysicsAttrs(const pugi::xml_node &geom_node,
-                         nlohmann::json *geom_json) {
+void AddGeomPhysicsAttrs(const AttrMap &geom_attrs, nlohmann::json *geom_json) {
   if (!geom_json) return;
-  if (HasAttr(geom_node, "group")) {
+  if (HasAttr(geom_attrs, "group")) {
     (*geom_json)["group"] = static_cast<int32_t>(
-        ParseDoubleAttr(geom_node, "group", 3.0));
+        ParseDoubleAttr(geom_attrs, "group", kMjcfDefaultGroup));
   }
-  if (HasAttr(geom_node, "condim")) {
+  if (HasAttr(geom_attrs, "condim")) {
     (*geom_json)["condim"] = static_cast<int32_t>(
-        ParseDoubleAttr(geom_node, "condim", 3.0));
+        ParseDoubleAttr(geom_attrs, "condim", kMjcfDefaultCondim));
   }
-  if (HasAttr(geom_node, "margin")) {
-    (*geom_json)["mjc"]["margin"] = ParseDoubleAttr(geom_node, "margin", 0.0);
+  if (HasAttr(geom_attrs, "contype")) {
+    (*geom_json)["mjc"]["geomContype"] = static_cast<int32_t>(
+        ParseDoubleAttr(geom_attrs, "contype", kMjcfDefaultContype));
   }
-  if (HasAttr(geom_node, "solmix")) {
-    (*geom_json)["mjc"]["solmix"] = ParseDoubleAttr(geom_node, "solmix", 1.0);
+  if (HasAttr(geom_attrs, "conaffinity")) {
+    (*geom_json)["mjc"]["geomConaffinity"] = static_cast<int32_t>(
+        ParseDoubleAttr(geom_attrs, "conaffinity", kMjcfDefaultConaffinity));
+  }
+  if (HasAttr(geom_attrs, "priority")) {
+    (*geom_json)["mjc"]["priority"] = static_cast<int32_t>(
+        ParseDoubleAttr(geom_attrs, "priority", kMjcfDefaultPriority));
+  }
+  const auto friction = ParseDoubles(Attr(geom_attrs, "friction"));
+  if (!friction.empty()) {
+    (*geom_json)["mjc"]["geomFriction"] = friction;
+  }
+  const auto solref = ParseDoubles(Attr(geom_attrs, "solref"));
+  if (!solref.empty()) {
+    (*geom_json)["mjc"]["solref"] = solref;
+  }
+  const auto solimp = ParseDoubles(Attr(geom_attrs, "solimp"));
+  if (!solimp.empty()) {
+    (*geom_json)["mjc"]["solimp"] = solimp;
+  }
+  const auto size = ParseDoubles(Attr(geom_attrs, "size"));
+  if (!size.empty()) {
+    (*geom_json)["mjc"]["geomSize"] = size;
+  }
+  if (HasAttr(geom_attrs, "margin")) {
+    (*geom_json)["mjc"]["margin"] =
+        ParseDoubleAttr(geom_attrs, "margin", kMjcfDefaultMargin);
+  }
+  if (HasAttr(geom_attrs, "gap")) {
+    (*geom_json)["mjc"]["gap"] =
+        ParseDoubleAttr(geom_attrs, "gap", kMjcfDefaultGap);
+  }
+  if (HasAttr(geom_attrs, "solmix")) {
+    (*geom_json)["mjc"]["solmix"] =
+        ParseDoubleAttr(geom_attrs, "solmix", kMjcfDefaultSolmix);
   }
 }
 
@@ -604,25 +746,25 @@ std::map<std::string, MeshAsset> CollectMujocoAssets(
   return assets;
 }
 
-bool BuildGeomPayload(const pugi::xml_node &geom_node,
+bool BuildGeomPayload(const AttrMap &geom_attrs,
                       const std::map<std::string, MeshAsset> &assets,
                       const Options &opts, MeshPayload *payload,
                       bool *is_visual, std::string *err) {
   const std::string type =
-      HasAttr(geom_node, "type") ? Attr(geom_node, "type") :
-      HasAttr(geom_node, "mesh") ? "mesh" : "sphere";
-  payload->name = Attr(geom_node, "name");
-  if (payload->name.empty()) payload->name = Attr(geom_node, "mesh", "geom");
-  payload->matrix = PoseMatrix(geom_node);
+      HasAttr(geom_attrs, "type") ? Attr(geom_attrs, "type") :
+      HasAttr(geom_attrs, "mesh") ? "mesh" : "sphere";
+  payload->name = Attr(geom_attrs, "name");
+  if (payload->name.empty()) payload->name = Attr(geom_attrs, "mesh", "geom");
+  payload->matrix = PoseMatrixFromAttrs(geom_attrs);
 
-  const std::string klass = Attr(geom_node, "class");
+  const std::string klass = Attr(geom_attrs, "class");
   (*is_visual) = (klass == "visual") ||
-                 (Attr(geom_node, "group") == "2") ||
-                 (Attr(geom_node, "contype") == "0" &&
-                  Attr(geom_node, "conaffinity") == "0");
+                 (Attr(geom_attrs, "group") == "2") ||
+                 (Attr(geom_attrs, "contype") == "0" &&
+                  Attr(geom_attrs, "conaffinity") == "0");
 
   if (type == "mesh") {
-    const std::string mesh_name = Attr(geom_node, "mesh");
+    const std::string mesh_name = Attr(geom_attrs, "mesh");
     const auto it = assets.find(mesh_name);
     if (it == assets.end()) {
       if (err) *err = "Missing MJCF mesh asset: " + mesh_name;
@@ -631,10 +773,10 @@ bool BuildGeomPayload(const pugi::xml_node &geom_node,
     if (!LoadMeshFile(it->second.path, &payload->mesh, err)) return false;
 
     const std::array<double, 3> scale =
-        ParseDouble3(Attr(geom_node, "scale"), it->second.scale);
+        ParseDouble3(Attr(geom_attrs, "scale"), it->second.scale);
     payload->matrix = MultiplyMatrix(payload->matrix, ScaleMatrix(scale));
   } else if (type == "box") {
-    const auto half = ParseDouble3(Attr(geom_node, "size"),
+    const auto half = ParseDouble3(Attr(geom_attrs, "size"),
                                    {{0.05, 0.05, 0.05}});
     if (!(*is_visual) && !opts.tessellate_collision_shapes) {
       payload->shape = {{"type", "box"}};
@@ -643,7 +785,7 @@ bool BuildGeomPayload(const pugi::xml_node &geom_node,
       payload->mesh = MakeBoxMesh(half);
     }
   } else if (type == "sphere") {
-    const auto size = ParseDoubles(Attr(geom_node, "size"));
+    const auto size = ParseDoubles(Attr(geom_attrs, "size"));
     const double radius = size.empty() ? 0.05 : size[0];
     if (!(*is_visual) && !opts.tessellate_collision_shapes) {
       payload->shape = {{"type", "sphere"}, {"radius", radius}};
@@ -651,7 +793,7 @@ bool BuildGeomPayload(const pugi::xml_node &geom_node,
       payload->mesh = MakeSphereMesh(radius);
     }
   } else if (type == "ellipsoid") {
-    const auto radii = ParseDouble3(Attr(geom_node, "size"),
+    const auto radii = ParseDouble3(Attr(geom_attrs, "size"),
                                     {{0.05, 0.05, 0.05}});
     if (!(*is_visual) && !opts.tessellate_collision_shapes) {
       payload->shape = {{"type", "sphere"}, {"radius", 1.0}};
@@ -661,10 +803,10 @@ bool BuildGeomPayload(const pugi::xml_node &geom_node,
       payload->matrix = MultiplyMatrix(payload->matrix, ScaleMatrix(radii));
     }
   } else if (type == "cylinder" || type == "capsule") {
-    const auto size = ParseDoubles(Attr(geom_node, "size"));
+    const auto size = ParseDoubles(Attr(geom_attrs, "size"));
     const double radius = size.empty() ? 0.05 : size[0];
     double half_length = size.size() >= 2 ? size[1] : radius;
-    const auto fromto = ParseDoubles(Attr(geom_node, "fromto"));
+    const auto fromto = ParseDoubles(Attr(geom_attrs, "fromto"));
     if (fromto.size() >= 6) {
       const double dx = fromto[3] - fromto[0];
       const double dy = fromto[4] - fromto[1];
@@ -683,7 +825,7 @@ bool BuildGeomPayload(const pugi::xml_node &geom_node,
       payload->mesh = MakeCylinderMesh(radius, half_length);
     }
   } else if (type == "plane") {
-    const auto size = ParseDoubles(Attr(geom_node, "size"));
+    const auto size = ParseDoubles(Attr(geom_attrs, "size"));
     const double sx = size.size() >= 1 && size[0] > 0.0 ? size[0] : 1.0;
     const double sy = size.size() >= 2 && size[1] > 0.0 ? size[1] : 1.0;
     const double sz = size.size() >= 3 && size[2] > 0.0 ? size[2] : 0.001;
@@ -727,54 +869,55 @@ nlohmann::json InertialToJson(const pugi::xml_node &body_node) {
   return inertial;
 }
 
-void AddJointJson(const pugi::xml_node &body_node,
+void AddJointJson(const AttrMap &body_attrs,
+                  const pugi::xml_node &joint_node,
+                  const AttrMap &joint_attrs,
                   const std::string &parent_name, const std::string &child_name,
                   nlohmann::json *joints) {
-  const auto joint_node = Child(body_node, "joint");
   nlohmann::json joint = nlohmann::json::object();
-  joint["name"] = joint_node ? Attr(joint_node, "name", parent_name + "_to_" + child_name)
+  joint["name"] = joint_node ? Attr(joint_attrs, "name", parent_name + "_to_" + child_name)
                              : parent_name + "_to_" + child_name + "_fixed";
-  const std::string mj_type = joint_node ? Attr(joint_node, "type", "hinge") : "fixed";
+  const std::string mj_type = joint_node ? Attr(joint_attrs, "type", "hinge") : "fixed";
   joint["type"] = (mj_type == "hinge") ? "revolute" :
                   (mj_type == "slide") ? "prismatic" : "fixed";
   joint["parent"] = parent_name;
   joint["child"] = child_name;
-  const auto axis = ParseDouble3(joint_node ? Attr(joint_node, "axis") : "",
+  const auto axis = ParseDouble3(joint_node ? Attr(joint_attrs, "axis") : "",
                                  {{0.0, 0.0, 1.0}});
   joint["axis"] = {axis[0], axis[1], axis[2]};
   joint["axisToken"] = AxisToken(axis);
-  const auto origin = ParseDouble3(Attr(body_node, "pos"), {{0.0, 0.0, 0.0}});
+  const auto origin = ParseDouble3(Attr(body_attrs, "pos"), {{0.0, 0.0, 0.0}});
   joint["origin"] = {origin[0], origin[1], origin[2]};
-  joint["originMatrix"] = PoseMatrix(body_node);
+  joint["originMatrix"] = PoseMatrixFromAttrs(body_attrs);
 
   if (joint_node) {
-    const std::vector<double> range = ParseDoubles(Attr(joint_node, "range"));
+    const std::vector<double> range = ParseDoubles(Attr(joint_attrs, "range"));
     if (range.size() >= 2) {
       joint["limit"] = {{"lower", range[0]}, {"upper", range[1]}};
     }
     nlohmann::json dynamics = nlohmann::json::object();
-    if (HasAttr(joint_node, "damping")) {
-      dynamics["damping"] = ParseDoubleAttr(joint_node, "damping", 0.0);
+    if (HasAttr(joint_attrs, "damping")) {
+      dynamics["damping"] = ParseDoubleAttr(joint_attrs, "damping", 0.0);
     }
-    if (HasAttr(joint_node, "frictionloss")) {
-      dynamics["friction"] = ParseDoubleAttr(joint_node, "frictionloss", 0.0);
+    if (HasAttr(joint_attrs, "frictionloss")) {
+      dynamics["friction"] = ParseDoubleAttr(joint_attrs, "frictionloss", 0.0);
     }
     // MJCF <joint stiffness=> and <joint armature=> — propagate so the
     // USD-side converter can author physxLimit:*:stiffness and
     // physxJoint:armature alongside the canonical mjc:* fallbacks.
-    if (HasAttr(joint_node, "stiffness")) {
-      dynamics["stiffness"] = ParseDoubleAttr(joint_node, "stiffness", 0.0);
+    if (HasAttr(joint_attrs, "stiffness")) {
+      dynamics["stiffness"] = ParseDoubleAttr(joint_attrs, "stiffness", 0.0);
     }
-    if (HasAttr(joint_node, "armature")) {
-      dynamics["armature"] = ParseDoubleAttr(joint_node, "armature", 0.0);
+    if (HasAttr(joint_attrs, "armature")) {
+      dynamics["armature"] = ParseDoubleAttr(joint_attrs, "armature", 0.0);
     }
     joint["dynamics"] = dynamics;
     // MJCF <joint ref="..."> is the rest-angle (degrees for hinge,
     // meters for slide). We forward it as a generic `initPosition`
     // (radians for hinge, since URDF uses radians internally) so the
     // C++ converter can emit state:{angular,linear}:physics:position.
-    if (HasAttr(joint_node, "ref")) {
-      double ref = ParseDoubleAttr(joint_node, "ref", 0.0);
+    if (HasAttr(joint_attrs, "ref")) {
+      double ref = ParseDoubleAttr(joint_attrs, "ref", 0.0);
       if (mj_type == "hinge") {
         // MJCF degrees → radians for our pipeline.
         // Use a literal (π/180) instead of M_PI: M_PI is a non-standard
@@ -844,21 +987,30 @@ void AddMujocoActuatorsJson(const pugi::xml_node &root,
 bool VisitMujocoBody(const pugi::xml_node &body_node,
                      const std::string &parent_name,
                      const std::map<std::string, MeshAsset> &assets,
-                     const Options &opts, nlohmann::json *links,
-                     nlohmann::json *joints, Stats *stats,
+                     const MujocoDefaults &defaults, const Options &opts,
+                     const std::string &inherited_childclass,
+                     nlohmann::json *links, nlohmann::json *joints,
+                     std::vector<BodyCollisionInfo> *body_filters, Stats *stats,
                      std::string *err) {
+  const AttrMap body_attrs = Attributes(body_node);
+  const std::string childclass =
+      Attr(body_attrs, "childclass", inherited_childclass);
   const std::string body_name =
-      Attr(body_node, "name", "body_" + std::to_string(stats->links));
+      Attr(body_attrs, "name", "body_" + std::to_string(stats->links));
   nlohmann::json link = {
       {"name", body_name},
       {"inertial", InertialToJson(body_node)},
       {"visuals", nlohmann::json::array()},
       {"collisions", nlohmann::json::array()}};
+  BodyCollisionInfo body_filter;
+  body_filter.name = body_name;
 
   for (const auto &geom_node : Children(body_node, "geom")) {
+    const AttrMap geom_attrs =
+        ResolveMujocoAttrs(geom_node, defaults.geom, childclass);
     MeshPayload payload;
     bool visual = true;
-    if (!BuildGeomPayload(geom_node, assets, opts, &payload, &visual, err)) {
+    if (!BuildGeomPayload(geom_attrs, assets, opts, &payload, &visual, err)) {
       if (opts.allow_missing) {
         std::cerr << "WARN: " << (err ? *err : "mesh skipped") << "\n";
         if (err) err->clear();
@@ -868,12 +1020,20 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
     }
     if (visual) {
       nlohmann::json visual_json = MeshPayloadToJson(payload);
-      AddGeomPhysicsAttrs(geom_node, &visual_json);
+      AddGeomPhysicsAttrs(geom_attrs, &visual_json);
       link["visuals"].push_back(std::move(visual_json));
       stats->visuals++;
     } else {
       nlohmann::json col = MeshPayloadToJson(payload);
-      AddGeomPhysicsAttrs(geom_node, &col);
+      AddGeomPhysicsAttrs(geom_attrs, &col);
+      const int32_t contype = static_cast<int32_t>(
+          ParseDoubleAttr(geom_attrs, "contype", kMjcfDefaultContype));
+      const int32_t conaffinity = static_cast<int32_t>(
+          ParseDoubleAttr(geom_attrs, "conaffinity",
+                          kMjcfDefaultConaffinity));
+      if (contype != 0 || conaffinity != 0) {
+        body_filter.filters.push_back({contype, conaffinity});
+      }
       // Default approximation `convexHull` matches
       // `src/tydra/urdf-to-usd.cc::AddCollisionAPIs` and the
       // mujoco-usd-converter convention (one Mesh per geom +
@@ -886,19 +1046,71 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
   }
 
   links->push_back(std::move(link));
+  if (body_filters) {
+    body_filters->push_back(std::move(body_filter));
+  }
   stats->links++;
   if (!parent_name.empty()) {
-    AddJointJson(body_node, parent_name, body_name, joints);
+    const pugi::xml_node joint_node = Child(body_node, "joint");
+    const AttrMap joint_attrs = joint_node
+        ? ResolveMujocoAttrs(joint_node, defaults.joint, childclass)
+        : AttrMap{};
+    AddJointJson(body_attrs, joint_node, joint_attrs, parent_name, body_name,
+                 joints);
     stats->joints++;
   }
 
   for (const auto &child_body : Children(body_node, "body")) {
-    if (!VisitMujocoBody(child_body, body_name, assets, opts, links, joints,
-                         stats, err)) {
+    if (!VisitMujocoBody(child_body, body_name, assets, defaults, opts,
+                         childclass, links, joints, body_filters, stats,
+                         err)) {
       return false;
     }
   }
   return true;
+}
+
+std::vector<std::pair<std::string, std::string>> BuildFilteredPairs(
+    const std::vector<BodyCollisionInfo> &body_filters,
+    const pugi::xml_node &root) {
+  std::set<std::pair<std::string, std::string>> pairs;
+  auto ordered_pair = [](std::string a, std::string b) {
+    if (b < a) std::swap(a, b);
+    return std::make_pair(std::move(a), std::move(b));
+  };
+  auto collides = [](const BodyCollisionInfo &a,
+                    const BodyCollisionInfo &b) -> bool {
+    for (const auto &fa : a.filters) {
+      for (const auto &fb : b.filters) {
+        if (((fa.first & fb.second) | (fb.first & fa.second)) != 0) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  for (size_t i = 0; i < body_filters.size(); i++) {
+    if (body_filters[i].filters.empty()) continue;
+    for (size_t j = i + 1; j < body_filters.size(); j++) {
+      if (body_filters[j].filters.empty()) continue;
+      if (!collides(body_filters[i], body_filters[j])) {
+        pairs.insert(ordered_pair(body_filters[i].name, body_filters[j].name));
+      }
+    }
+  }
+
+  for (const pugi::xml_node contact_root : Children(root, "contact")) {
+    for (const pugi::xml_node exclude : Children(contact_root, "exclude")) {
+      const std::string body1 = Attr(exclude, "body1");
+      const std::string body2 = Attr(exclude, "body2");
+      if (!body1.empty() && !body2.empty() && body1 != body2) {
+        pairs.insert(ordered_pair(body1, body2));
+      }
+    }
+  }
+
+  return {pairs.begin(), pairs.end()};
 }
 
 bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
@@ -923,6 +1135,7 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   }
 
   const auto assets = CollectMujocoAssets(root, input_filename.parent_path());
+  const auto defaults = CollectMujocoDefaults(root);
   const auto worldbody = Child(root, "worldbody");
   if (!worldbody) {
     if (err) *err = "MJCF has no <worldbody>.";
@@ -932,8 +1145,10 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   nlohmann::json links = nlohmann::json::array();
   nlohmann::json joints = nlohmann::json::array();
   nlohmann::json actuators = nlohmann::json::array();
+  std::vector<BodyCollisionInfo> body_filters;
   for (const auto &body : Children(worldbody, "body")) {
-    if (!VisitMujocoBody(body, "", assets, opts, &links, &joints, stats, err)) {
+    if (!VisitMujocoBody(body, "", assets, defaults, opts, "", &links,
+                         &joints, &body_filters, stats, err)) {
       return false;
     }
   }
@@ -942,11 +1157,20 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   (*payload) = {
       {"name", Attr(root, "model", input_filename.stem().string())},
       {"upAxis", opts.up_axis},
+      {"sourceFormat", "mjcf"},
       {"gravity", opts.up_axis == "Z" ? nlohmann::json::array({0, 0, -1})
                                        : nlohmann::json::array({0, -1, 0})},
       {"links", std::move(links)},
       {"joints", std::move(joints)},
       {"actuators", std::move(actuators)}};
+  const auto filtered_pairs = BuildFilteredPairs(body_filters, root);
+  if (!filtered_pairs.empty()) {
+    (*payload)["filteredPairs"] = nlohmann::json::array();
+    for (const auto &pair : filtered_pairs) {
+      (*payload)["filteredPairs"].push_back(
+          {{"body1", pair.first}, {"body2", pair.second}});
+    }
+  }
   const auto option = Child(root, "option");
   if (option && HasAttr(option, "timestep")) {
     (*payload)["timestep"] = ParseDoubleAttr(option, "timestep", 0.0);
