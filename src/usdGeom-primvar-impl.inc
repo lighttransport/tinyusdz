@@ -12,6 +12,10 @@
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-template"
+#endif
 
 namespace {
 // --- GeomPrimvar index-expansion helpers (internal linkage per TU) ---
@@ -332,3 +336,6 @@ bool GeomPrimvar::get_value(double timecode, T *dest, value::TimeSampleInterpola
 }
 
 #pragma GCC diagnostic pop
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif

@@ -1242,6 +1242,8 @@ bool CompositionGraph::BuildPrimIndex(const std::string &prim_path,
                                       const PrimSpec &primspec,
                                       uint16_t root_layer_stack_idx,
                                       std::string *warn, std::string *err) {
+  (void)warn;
+
   // Iterative pre-order DFS (explicit heap worklist) so deeply nested prim
   // hierarchies cannot overflow the call stack. Order is preserved exactly
   // (children pushed in reverse -> visited left-to-right), which matters because

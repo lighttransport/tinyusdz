@@ -7,13 +7,10 @@
 // instantiation TUs: attribute-eval-typed-inst-{scalar,array}.cc.
 // The std::string specializations live in attribute-eval-typed-all.cc.
 
-#ifndef ATTRIBUTE_EVAL_PUSHERROR
-#define ATTRIBUTE_EVAL_PUSHERROR
 #define PushError(msg) \
   if (err) {           \
     (*err) +=  msg;     \
   }
-#endif
 
 template<typename T>
 bool EvaluateTypedAttribute(

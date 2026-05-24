@@ -10,13 +10,10 @@
 namespace tinyusdz {
 namespace tydra {
 
-#ifndef ATTRIBUTE_EVAL_PUSHERROR
-#define ATTRIBUTE_EVAL_PUSHERROR
 #define PushError(msg) \
   if (err) {           \
     (*err) +=  msg;     \
   }
-#endif
 
 template<>
 bool EvaluateTypedAttribute(

@@ -37,8 +37,8 @@
 namespace tinyusdz {
 namespace prim {
 
-constexpr auto kInputsVarname = "inputs:varname";
-constexpr auto kPurpose = "purpose";
+[[maybe_unused]] constexpr auto kInputsVarname = "inputs:varname";
+[[maybe_unused]] constexpr auto kPurpose = "purpose";
 
 // MaterialX Validation Helpers
 // ==========================================================================
@@ -554,4 +554,3 @@ RECONSTRUCT_PRIM_PRIMSPEC_IMPL(NodeGraph)
 
 } // namespace prim
 } // namespace tinyusdz
-

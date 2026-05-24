@@ -927,44 +927,6 @@ bool USDAReader::Impl::ReconstructStage() {
   return true;
 }
 
-template <>
-bool USDAReader::Impl::ReconstructPrim(
-    const Path &full_path,
-    const Specifier &spec,
-    prim::PropertyMap &properties,
-    const prim::ReferenceList &references,
-    Xform *xform) {
-
-  prim::PrimReconstructOptions options;
-  const int source_column_width = _config.error_detail ? (1024 * 1024) : 40;
-  options.format_property_source_diagnostic =
-      [&](const std::string &property_name) {
-        return _parser.FormatPrimAttrSourceDiagnostic(
-            full_path.full_path_name(), property_name, source_column_width);
-      };
-  options.format_property_path =
-      [&](const std::string &property_name) {
-        return full_path.full_path_name() + "." + property_name;
-      };
-  options.format_prim_source_diagnostic = [&]() {
-    return _parser.FormatPrimSourceDiagnostic(full_path.full_path_name(),
-                                             source_column_width);
-  };
-  options.format_prim_path = [&]() {
-    return full_path.full_path_name();
-  };
-
-  std::string err;
-  if (!prim::ReconstructPrim(spec, properties, references, xform, &_warn, &err,
-                             options)) {
-    PUSH_ERROR_AND_RETURN(
-        AppendPrimPath("Failed to reconstruct `Xform` prim:\n" + err,
-                       full_path.full_path_name()));
-  }
-  return true;
-}
-
-
 // Generic Prim handler. T = Xform, GeomMesh, ...
 void USDAReader::Impl::buildReconstructOptions(
     const Path &full_path, prim::PrimReconstructOptions &options) {
