@@ -13,6 +13,8 @@ import TinyUSDZFactory from '../src/tinyusdz/tinyusdz.js';
 
 const SUPPORTED_FORMATS = new Set(['usda', 'usdc', 'usdz', 'all']);
 const USD_MESH_EXTENSIONS = new Set(['.usd', '.usda', '.usdc', '.usdz']);
+const MJCF_DEFAULT_CONTYPE = 1;
+const MJCF_DEFAULT_CONAFFINITY = 1;
 
 const SAMPLE_URDF = `<?xml version="1.0"?>
 <robot name="TinyUSDZSampleRobot">
@@ -248,6 +250,43 @@ function childElements(node, name = null) {
 
 function firstChild(node, name) {
   return childElements(node, name)[0] || null;
+}
+
+function mergeAttrs(base = {}, attrs = {}) {
+  return { ...base, ...attrs };
+}
+
+function collectMujocoDefaults(root) {
+  const defaults = { geom: new Map(), joint: new Map() };
+
+  function visitDefault(defaultNode, inherited = { geom: {}, joint: {} }) {
+    const className = defaultNode.attrs.class || '';
+    const next = {
+      geom: mergeAttrs(inherited.geom, firstChild(defaultNode, 'geom')?.attrs),
+      joint: mergeAttrs(inherited.joint, firstChild(defaultNode, 'joint')?.attrs)
+    };
+    defaults.geom.set(className, next.geom);
+    defaults.joint.set(className, next.joint);
+    for (const child of childElements(defaultNode, 'default')) {
+      visitDefault(child, next);
+    }
+  }
+
+  for (const defaultNode of childElements(root, 'default')) {
+    visitDefault(defaultNode);
+  }
+  return defaults;
+}
+
+function resolveMujocoAttrs(node, defaults, kind, inheritedClass = '') {
+  const attrs = node?.attrs || {};
+  const className = attrs.class || inheritedClass || '';
+  return {
+    ...(defaults?.[kind]?.get('') || {}),
+    ...(className ? defaults?.[kind]?.get(className) || {} : {}),
+    ...attrs,
+    class: className || attrs.class
+  };
 }
 
 function numberAttr(attrs, name, fallback = undefined) {
@@ -821,17 +860,37 @@ function shapePayloadForMujocoGeom(geomNode, originMatrix, fallbackName) {
 }
 
 function addMujocoPhysicsAttrs(payload, geomNode) {
-  if (!payload || !geomNode?.attrs) return payload;
-  const group = numberAttr(geomNode.attrs, 'group');
+  const attrs = geomNode?.attrs || geomNode || {};
+  if (!payload) return payload;
+  const group = numberAttr(attrs, 'group');
   if (Number.isFinite(group)) payload.group = group;
-  const condim = numberAttr(geomNode.attrs, 'condim');
+  const condim = numberAttr(attrs, 'condim');
   if (Number.isFinite(condim)) payload.condim = condim;
-  const margin = numberAttr(geomNode.attrs, 'margin');
-  const solmix = numberAttr(geomNode.attrs, 'solmix');
-  if (Number.isFinite(margin) || Number.isFinite(solmix)) {
+  const contype = numberAttr(attrs, 'contype');
+  const conaffinity = numberAttr(attrs, 'conaffinity');
+  const priority = numberAttr(attrs, 'priority');
+  const margin = numberAttr(attrs, 'margin');
+  const gap = numberAttr(attrs, 'gap');
+  const solmix = numberAttr(attrs, 'solmix');
+  const friction = parseNumbers(attrs.friction, []);
+  const solref = parseNumbers(attrs.solref, []);
+  const solimp = parseNumbers(attrs.solimp, []);
+  const size = parseNumbers(attrs.size, []);
+  if (Number.isFinite(contype) || Number.isFinite(conaffinity) ||
+      Number.isFinite(priority) || Number.isFinite(margin) ||
+      Number.isFinite(gap) || Number.isFinite(solmix) ||
+      friction.length || solref.length || solimp.length || size.length) {
     payload.mjc = payload.mjc || {};
+    if (Number.isFinite(contype)) payload.mjc.geomContype = contype;
+    if (Number.isFinite(conaffinity)) payload.mjc.geomConaffinity = conaffinity;
+    if (Number.isFinite(priority)) payload.mjc.priority = priority;
     if (Number.isFinite(margin)) payload.mjc.margin = margin;
+    if (Number.isFinite(gap)) payload.mjc.gap = gap;
     if (Number.isFinite(solmix)) payload.mjc.solmix = solmix;
+    if (friction.length) payload.mjc.geomFriction = friction;
+    if (solref.length) payload.mjc.solref = solref;
+    if (solimp.length) payload.mjc.solimp = solimp;
+    if (size.length) payload.mjc.geomSize = size;
   }
   return payload;
 }
@@ -875,6 +934,41 @@ function buildMujocoActuators(root) {
     }
   }
   return actuators;
+}
+
+function buildFilteredPairs(bodyFilters, root) {
+  const pairKey = (a, b) => (String(a) < String(b) ? `${a}\u0000${b}` : `${b}\u0000${a}`);
+  const pairs = new Map();
+  const addPair = (a, b) => {
+    if (!a || !b || a === b) return;
+    const key = pairKey(a, b);
+    if (!pairs.has(key)) pairs.set(key, String(a) < String(b) ? [a, b] : [b, a]);
+  };
+  const collides = (a, b) => {
+    for (const fa of a.filters) {
+      for (const fb of b.filters) {
+        if (((fa.contype & fb.conaffinity) | (fb.contype & fa.conaffinity)) !== 0) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  for (let i = 0; i < bodyFilters.length; i++) {
+    if (!bodyFilters[i].filters.length) continue;
+    for (let j = i + 1; j < bodyFilters.length; j++) {
+      if (!bodyFilters[j].filters.length) continue;
+      if (!collides(bodyFilters[i], bodyFilters[j])) {
+        addPair(bodyFilters[i].name, bodyFilters[j].name);
+      }
+    }
+  }
+  for (const contactRoot of childElements(root, 'contact')) {
+    for (const exclude of childElements(contactRoot, 'exclude')) {
+      addPair(exclude.attrs.body1, exclude.attrs.body2);
+    }
+  }
+  return [...pairs.values()].map(([body1, body2]) => ({ body1, body2 }));
 }
 
 async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName, opts) {
@@ -963,6 +1057,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   }
 
   const meshAssets = collectMujocoAssets(root, baseDir);
+  const defaults = collectMujocoDefaults(root);
   const worldbody = firstChild(root, 'worldbody');
   if (!worldbody) {
     throw new Error('MJCF input has no <worldbody>.');
@@ -971,37 +1066,43 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   const links = [];
   const joints = [];
   const actuators = buildMujocoActuators(root);
+  const bodyFilters = [];
   let visualCount = 0;
   let collisionCount = 0;
 
-  async function visitBody(bodyNode, parentName = '') {
-    const linkName = bodyNode.attrs.name || `body_${links.length}`;
+  async function visitBody(bodyNode, parentName = '', inheritedChildClass = '') {
+    const bodyAttrs = bodyNode.attrs || {};
+    const childClass = bodyAttrs.childclass || inheritedChildClass || '';
+    const linkName = bodyAttrs.name || `body_${links.length}`;
     const linkPayload = {
       name: linkName,
       inertial: parseMujocoInertial(bodyNode),
       visuals: [],
       collisions: []
     };
+    const bodyFilter = { name: linkName, filters: [] };
 
     let geomIndex = 0;
     for (const geomNode of childElements(bodyNode, 'geom')) {
-      const geomName = geomNode.attrs.name || geomNode.attrs.mesh || `${linkName}_geom_${geomIndex}`;
-      const isVisual = geomNode.attrs.class === 'visual' ||
-        geomNode.attrs.group === '2' ||
-        (geomNode.attrs.contype === '0' && geomNode.attrs.conaffinity === '0');
+      const geomAttrs = resolveMujocoAttrs(geomNode, defaults, 'geom', childClass);
+      const geomView = { ...geomNode, attrs: geomAttrs };
+      const geomName = geomAttrs.name || geomAttrs.mesh || `${linkName}_geom_${geomIndex}`;
+      const isVisual = geomAttrs.class === 'visual' ||
+        geomAttrs.group === '2' ||
+        (geomAttrs.contype === '0' && geomAttrs.conaffinity === '0');
       let payloads = null;
       if (!isVisual && !opts.tessellateCollisionShapes) {
         payloads = shapePayloadForMujocoGeom(
-          geomNode,
-          matrixFromPoseAttrs(geomNode.attrs),
+          geomView,
+          matrixFromPoseAttrs(geomAttrs),
           geomName
         );
       }
       if (!payloads) {
-        payloads = await mujocoGeomPayloads(geomNode, meshAssets, geomName, opts);
+        payloads = await mujocoGeomPayloads(geomView, meshAssets, geomName, opts);
       }
       if (isVisual) {
-        linkPayload.visuals.push(...payloads.map((payload) => addMujocoPhysicsAttrs(payload, geomNode)));
+        linkPayload.visuals.push(...payloads.map((payload) => addMujocoPhysicsAttrs(payload, geomAttrs)));
         visualCount += payloads.length;
       } else {
         // Default approximation `convexHull` matches the convention in
@@ -1011,7 +1112,16 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
         // with `approximation: "none"` for triangle-soup MJCF colliders.
         for (const payload of payloads) {
           payload.approximation = payload.approximation || 'convexHull';
-          addMujocoPhysicsAttrs(payload, geomNode);
+          addMujocoPhysicsAttrs(payload, geomAttrs);
+        }
+        const contype = numberAttr(geomAttrs, 'contype', MJCF_DEFAULT_CONTYPE);
+        const conaffinity = numberAttr(
+          geomAttrs,
+          'conaffinity',
+          MJCF_DEFAULT_CONAFFINITY
+        );
+        if (contype !== 0 || conaffinity !== 0) {
+          bodyFilter.filters.push({ contype: contype | 0, conaffinity: conaffinity | 0 });
         }
         linkPayload.collisions.push(...payloads);
         collisionCount += payloads.length;
@@ -1020,25 +1130,29 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
     }
 
     links.push(linkPayload);
+    bodyFilters.push(bodyFilter);
 
     if (parentName) {
       const jointNode = firstChild(bodyNode, 'joint');
       if (jointNode) {
-        const axis = parseNumbers(jointNode.attrs.axis, [0, 0, 1]);
-        const range = parseNumbers(jointNode.attrs.range, []);
+        const jointAttrs = resolveMujocoAttrs(jointNode, defaults, 'joint', childClass);
+        const axis = parseNumbers(jointAttrs.axis, [0, 0, 1]);
+        const range = parseNumbers(jointAttrs.range, []);
         joints.push({
-          name: jointNode.attrs.name || `${parentName}_to_${linkName}`,
-          type: mujocoJointType(jointNode.attrs.type || 'hinge'),
+          name: jointAttrs.name || `${parentName}_to_${linkName}`,
+          type: mujocoJointType(jointAttrs.type || 'hinge'),
           parent: parentName,
           child: linkName,
           axis,
           axisToken: axisToToken(axis),
-          origin: parseNumbers(bodyNode.attrs.pos, [0, 0, 0]),
-          originMatrix: matrixToUSDArray(matrixFromPoseAttrs(bodyNode.attrs)),
+          origin: parseNumbers(bodyAttrs.pos, [0, 0, 0]),
+          originMatrix: matrixToUSDArray(matrixFromPoseAttrs(bodyAttrs)),
           limit: range.length >= 2 ? { lower: range[0], upper: range[1] } : {},
           dynamics: {
-            damping: numberAttr(jointNode.attrs, 'damping'),
-            friction: numberAttr(jointNode.attrs, 'frictionloss')
+            damping: numberAttr(jointAttrs, 'damping'),
+            friction: numberAttr(jointAttrs, 'frictionloss'),
+            stiffness: numberAttr(jointAttrs, 'stiffness'),
+            armature: numberAttr(jointAttrs, 'armature')
           }
         });
       } else {
@@ -1049,8 +1163,8 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
           child: linkName,
           axis: [1, 0, 0],
           axisToken: 'X',
-          origin: parseNumbers(bodyNode.attrs.pos, [0, 0, 0]),
-          originMatrix: matrixToUSDArray(matrixFromPoseAttrs(bodyNode.attrs)),
+          origin: parseNumbers(bodyAttrs.pos, [0, 0, 0]),
+          originMatrix: matrixToUSDArray(matrixFromPoseAttrs(bodyAttrs)),
           limit: {},
           dynamics: {}
         });
@@ -1058,23 +1172,26 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
     }
 
     for (const childBody of childElements(bodyNode, 'body')) {
-      await visitBody(childBody, linkName);
+      await visitBody(childBody, linkName, childClass);
     }
   }
 
   for (const bodyNode of childElements(worldbody, 'body')) {
     await visitBody(bodyNode);
   }
+  const filteredPairs = buildFilteredPairs(bodyFilters, root);
 
   return {
     payload: {
       name: root.attrs.model || path.basename(opts.inputFile || 'mujoco_scene', path.extname(opts.inputFile || 'mujoco_scene')),
       upAxis: opts.upAxis,
+      sourceFormat: 'mjcf',
       gravity: opts.upAxis === 'Z' ? [0, 0, -1] : [0, -1, 0],
       timestep: numberAttr(firstChild(root, 'option')?.attrs, 'timestep'),
       links,
       joints,
-      actuators
+      actuators,
+      filteredPairs
     },
     stats: {
       links: links.length,
