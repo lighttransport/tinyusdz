@@ -1096,6 +1096,15 @@ if(TINYUSDZ_WITH_TINYSUBDIV)
 
   # primvar-interpolation.hh is header-only, no .cc needed
 
+elseif(TINYUSDZ_WITH_OPENSUBDIV)
+  # Standalone TinySubdiv library for unit tests / comparison tools when
+  # the main library is built with the OpenSubdiv backend instead.
+  # No symbol conflict because tinyusdz_static omits subdivision.cc.
+  add_library(tinyusdz_subdiv STATIC
+    ${PROJECT_SOURCE_DIR}/sandbox/subdiv/subdivision.cc)
+  target_include_directories(tinyusdz_subdiv PUBLIC
+    ${PROJECT_SOURCE_DIR}/sandbox/subdiv)
+  add_sanitizers(tinyusdz_subdiv)
 endif(TINYUSDZ_WITH_TINYSUBDIV)
 
 if(TINYUSDZ_WITH_GEOGRAM)
@@ -2169,6 +2178,21 @@ if(TINYUSDZ_BUILD_TESTS)
     target_include_directories(bench-parse-opt PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME bench-parse-opt COMMAND bench-parse-opt --quick)
     set_tests_properties(bench-parse-opt PROPERTIES LABELS "benchmark")
+  endif()
+
+  #
+  # Subdivision comparison (TinySubdiv vs OpenSubdiv)
+  #
+  if(TINYUSDZ_WITH_OPENSUBDIV)
+    add_executable(feat-subdiv-compare
+      tests/feat/subdiv-compare/subdiv-compare.cc)
+    add_sanitizers(feat-subdiv-compare)
+    target_link_libraries(feat-subdiv-compare PRIVATE
+      tinyusdz_subdiv ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-subdiv-compare PRIVATE
+      ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-subdiv-compare COMMAND feat-subdiv-compare
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
   endif()
 
 endif(TINYUSDZ_BUILD_TESTS)

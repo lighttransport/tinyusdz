@@ -22,6 +22,7 @@
 #include "unit-task-queue.h"
 #include "unit-tydra.h"
 #include "unit-tydra-subdivision.h"
+#include "unit-subdiv-tinyusdz.h"
 //#include "unit-dedup.h"  // Temporarily disabled - needs API updates
 #include "unit-crate-writer.h"
 #include "unit-stage.h"
@@ -147,6 +148,29 @@ TEST_LIST = {
   { "tydra_subdivision_rejects_tangents_test", tydra_subdivision_rejects_tangents_test },
   { "tydra_subdivision_rejects_binormals_test", tydra_subdivision_rejects_binormals_test },
   { "tydra_subdivision_rejects_skinning_test", tydra_subdivision_rejects_skinning_test },
+  // TinySubdiv direct API unit tests
+  { "subdiv_validate_halfedge_test", subdiv_validate_halfedge_test },
+  { "subdiv_convert_to_halfedge_test", subdiv_convert_to_halfedge_test },
+  { "subdiv_convert_from_halfedge_test", subdiv_convert_from_halfedge_test },
+  { "subdiv_invalid_mesh_rejected_test", subdiv_invalid_mesh_rejected_test },
+  { "subdiv_cc_quad_test", subdiv_cc_quad_test },
+  { "subdiv_cc_quad_l2_test", subdiv_cc_quad_l2_test },
+  { "subdiv_cc_cube_test", subdiv_cc_cube_test },
+  { "subdiv_cc_cube_l2_test", subdiv_cc_cube_l2_test },
+  { "subdiv_cc_boundary_test", subdiv_cc_boundary_test },
+  { "subdiv_cc_facepoint_position_test", subdiv_cc_facepoint_position_test },
+  { "subdiv_loop_triangle_test", subdiv_loop_triangle_test },
+  { "subdiv_loop_triangle_l2_test", subdiv_loop_triangle_l2_test },
+  { "subdiv_loop_tetrahedron_test", subdiv_loop_tetrahedron_test },
+  { "subdiv_loop_rejects_quads_test", subdiv_loop_rejects_quads_test },
+  { "subdiv_loop_edge_vertex_position_test", subdiv_loop_edge_vertex_position_test },
+  { "subdiv_bilinear_quad_test", subdiv_bilinear_quad_test },
+  { "subdiv_bilinear_quad_l2_test", subdiv_bilinear_quad_l2_test },
+  { "subdiv_bilinear_triangle_test", subdiv_bilinear_triangle_test },
+  { "subdiv_bilinear_mixed_test", subdiv_bilinear_mixed_test },
+  { "subdiv_level0_no_change_test", subdiv_level0_no_change_test },
+  { "subdiv_max_level_clamped_test", subdiv_max_level_clamped_test },
+  { "subdiv_boundary_interpolation_modes_test", subdiv_boundary_interpolation_modes_test },
   { "task_queue_basic_test", task_queue_basic_test },
   { "task_queue_func_test", task_queue_func_test },
   { "task_queue_full_test", task_queue_full_test },

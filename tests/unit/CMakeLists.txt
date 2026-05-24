@@ -21,6 +21,7 @@ set(TEST_SOURCES
 	unit-task-queue.cc
 	unit-tydra.cc
 	unit-tydra-subdivision.cc
+	unit-subdiv-tinyusdz.cc
 	# unit-dedup.cc  # Temporarily disabled - needs API updates
 	unit-crate-writer.cc
 	unit-stage.cc
@@ -105,7 +106,11 @@ else ()
 endif ()
 
 target_link_libraries(${TEST_TARGET_NAME} PRIVATE tinyusdz_static ${CMAKE_DL_LIBS})
+if(TARGET tinyusdz_subdiv)
+  target_link_libraries(${TEST_TARGET_NAME} PRIVATE tinyusdz_subdiv)
+endif()
 target_include_directories(${TEST_TARGET_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_include_directories(${TEST_TARGET_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/sandbox/subdiv)
 
 # Add crate-writer library and includes for dedup tests
 if(TARGET crate-writer)
