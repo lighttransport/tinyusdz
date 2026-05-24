@@ -9,7 +9,7 @@ export const DEMOS = [
     materialModeLabel: 'OpenPBR node graph',
     enableMaterialGraph: true,
     useUsdLux: true,
-    image: './assets/materialx-usd.jpg',
+    image: './assets/previews/materialx-node.jpg',
     href: './materialx-node.html'
   },
   {
@@ -21,7 +21,7 @@ export const DEMOS = [
     materialBackend: 'meshphysical',
     materialModeLabel: 'MeshPhysicalMaterial',
     useUsdLux: true,
-    image: './assets/materialx-usd.jpg',
+    image: './assets/previews/materialx-physical.jpg',
     href: './materialx-physical.html'
   },
   {
@@ -32,18 +32,18 @@ export const DEMOS = [
     preferredMaterialType: 'auto',
     useUsdLux: true,
     useDefaultLights: false,
-    image: null,
+    image: './assets/previews/usdlux.jpg',
     href: './usdlux.html'
   },
   {
     id: 'skinning',
     title: 'Skinning',
-    subtitle: 'Builds skeletons and binds skinned USD meshes with helpers visible.',
-    defaultAsset: './assets/skintest-animated.usda',
+    subtitle: 'Builds skeletons and binds CesiumMan USDZ skinned meshes with helpers visible.',
+    defaultAsset: 'https://raw.githubusercontent.com/usd-wg/assets/refs/heads/main/test_assets/USDZ/CesiumMan/CesiumMan.usdz',
     preferredMaterialType: 'auto',
     enableSkinning: true,
     showSkeleton: true,
-    image: null,
+    image: './assets/previews/skinning.jpg',
     href: './skinning.html'
   },
   {
@@ -55,7 +55,7 @@ export const DEMOS = [
     enableSkinning: true,
     showSkeleton: true,
     enableAnimation: true,
-    image: null,
+    image: './assets/previews/xform-skinning-animation.jpg',
     href: './xform-skinning-animation.html'
   },
   {
@@ -64,7 +64,7 @@ export const DEMOS = [
     subtitle: 'Loads a physics-authored robot arm scene for inspection and rendering.',
     defaultAsset: './assets/physics-robot-arm.usda',
     preferredMaterialType: 'auto',
-    image: null,
+    image: './assets/previews/physics.jpg',
     href: './physics.html'
   },
   {
@@ -73,7 +73,7 @@ export const DEMOS = [
     subtitle: 'Loads a textured cat plane and resolves referenced texture assets.',
     defaultAsset: './assets/texture-cat-plane.usda',
     preferredMaterialType: 'usdpreviewsurface',
-    image: './assets/usda-load.jpg',
+    image: './assets/previews/asset-resolver.jpg',
     href: './asset-resolver.html'
   },
   {
@@ -83,7 +83,7 @@ export const DEMOS = [
     defaultAsset: './assets/usd-composite-sample.usda',
     preferredMaterialType: 'auto',
     useComposition: true,
-    image: './assets/basic-usd-composition.jpg',
+    image: './assets/previews/composition.jpg',
     href: './composition.html'
   },
   {
@@ -94,7 +94,7 @@ export const DEMOS = [
     preferredMaterialType: 'auto',
     useLayerExport: true,
     enableExport: true,
-    image: './assets/usdz-load.jpg',
+    image: './assets/previews/export.jpg',
     href: './export.html'
   }
 ];

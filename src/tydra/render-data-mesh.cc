@@ -2754,10 +2754,10 @@ bool RenderSceneConverter::ConvertMesh(
   bool subdivision_applied{false};
   std::vector<uint32_t> src_face_vertex_counts;
   src_face_vertex_counts = dst.usdFaceVertexCounts;
+#if defined(TINYUSDZ_WITH_OPENSUBDIV) || defined(TINYUSDZ_WITH_TINYSUBDIV)
   GeomMesh::SubdivisionScheme subdivision_scheme =
       GeomMesh::SubdivisionScheme::SubdivisionSchemeNone;
 
-#if defined(TINYUSDZ_WITH_OPENSUBDIV) || defined(TINYUSDZ_WITH_TINYSUBDIV)
   if (env.mesh_config.subdivision_level > 0) {
     GeomMesh::SubdivisionScheme scheme = mesh.subdivisionScheme.get_value();
     if (scheme != GeomMesh::SubdivisionScheme::SubdivisionSchemeNone) {
