@@ -56,17 +56,17 @@ namespace prim {
 
 //constexpr auto kTag = "[PrimReconstruct]";
 
-constexpr auto kProxyPrim = "proxyPrim";
-constexpr auto kVisibility = "visibility";
-constexpr auto kExtent = "extent";
-constexpr auto kPurpose = "purpose";
-constexpr auto kMaterialBinding = "material:binding";
-constexpr auto kMaterialBindingCollection = "material:binding:collection";
-constexpr auto kMaterialBindingPreview = "material:binding:preview";
-constexpr auto kSkelSkeleton = "skel:skeleton";
-constexpr auto kSkelAnimationSource = "skel:animationSource";
-constexpr auto kSkelBlendShapes = "skel:blendShapes";
-constexpr auto kSkelBlendShapeTargets = "skel:blendShapeTargets";
+[[maybe_unused]] constexpr auto kProxyPrim = "proxyPrim";
+[[maybe_unused]] constexpr auto kVisibility = "visibility";
+[[maybe_unused]] constexpr auto kExtent = "extent";
+[[maybe_unused]] constexpr auto kPurpose = "purpose";
+[[maybe_unused]] constexpr auto kMaterialBinding = "material:binding";
+[[maybe_unused]] constexpr auto kMaterialBindingCollection = "material:binding:collection";
+[[maybe_unused]] constexpr auto kMaterialBindingPreview = "material:binding:preview";
+[[maybe_unused]] constexpr auto kSkelSkeleton = "skel:skeleton";
+[[maybe_unused]] constexpr auto kSkelAnimationSource = "skel:animationSource";
+[[maybe_unused]] constexpr auto kSkelBlendShapes = "skel:blendShapes";
+[[maybe_unused]] constexpr auto kSkelBlendShapeTargets = "skel:blendShapeTargets";
 // kInputsVarname moved to prim-reconstruct-shader.cc
 
 // MaterialX Validation Helpers moved to prim-reconstruct-shader.cc

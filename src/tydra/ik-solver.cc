@@ -496,7 +496,7 @@ bool BuildIKChain(
 
   for (int i = 0; i < n; i++) {
     int skel_id = chain_indices[static_cast<size_t>(i)];
-    TydraIKJoint *j = &joints[i];
+    TydraIKJoint *j = &joints[static_cast<size_t>(i)];
 
     j->joint_id = skel_id;
     j->parent_id = (i > 0) ? (i - 1) : -1;
