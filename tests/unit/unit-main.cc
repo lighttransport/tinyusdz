@@ -741,6 +741,7 @@ TEST_LIST = {
   { "physics_mesh_collider_convention_test", physics_mesh_collider_convention_test },
   { "physics_newton_collision_material_api_test", physics_newton_collision_material_api_test },
   { "urdf_json_newton_api_export_test", urdf_json_newton_api_export_test },
+  { "urdf_json_mjcf_contact_export_test", urdf_json_mjcf_contact_export_test },
   // IK solver
   { "ik_forward_kinematics_test", ik_forward_kinematics_test },
   { "ik_ccd_solve_test", ik_ccd_solve_test },

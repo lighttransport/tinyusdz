@@ -37,11 +37,11 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def default_menagerie_root() -> Path:
+def default_menagerie_root() -> Path | None:
     env = os.environ.get("MUJOCO_MENAGERIE")
     if env:
         return Path(env)
-    return Path("/mnt/nvme02/work/mujoco_menagerie")
+    return None
 
 
 def parse_args() -> argparse.Namespace:
@@ -55,7 +55,7 @@ def parse_args() -> argparse.Namespace:
         dest="menagerie_root",
         type=Path,
         default=default_menagerie_root(),
-        help="MuJoCo Menagerie checkout root / test file directory. Default: $MUJOCO_MENAGERIE or /mnt/nvme02/work/mujoco_menagerie",
+        help="MuJoCo Menagerie checkout root / test file directory. Default: $MUJOCO_MENAGERIE",
     )
     parser.add_argument(
         "--glob-pattern",
@@ -366,6 +366,9 @@ def print_result(result: dict[str, Any]) -> None:
 
 def main() -> int:
     args = parse_args()
+    if args.menagerie_root is None:
+        print("Set --menagerie-root or MUJOCO_MENAGERIE.", file=sys.stderr)
+        return 2
     args.menagerie_root = args.menagerie_root.resolve()
     args.native_cli = args.native_cli.resolve()
     args.js_cli = args.js_cli.resolve()
