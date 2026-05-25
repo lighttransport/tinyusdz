@@ -486,6 +486,11 @@ bool ValidateUTF8String(const std::string &s) {
   size_t pos = 0;
   std::string discard;
   while (pos < s.size()) {
+    const uint8_t c0 = static_cast<uint8_t>(s[pos]);
+    if (c0 <= 0x7f) {
+      pos++;
+      continue;
+    }
     const size_t before = pos;
     if (!ReadUTF8(s.data(), s.size(), &pos, &discard)) return false;
     if (pos <= before) return false;
