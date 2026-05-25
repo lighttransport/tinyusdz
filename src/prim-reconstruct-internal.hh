@@ -14,7 +14,6 @@
 #include "tiny-format.hh"
 #include "enum-handlers.hh"
 #include "prim-property-tables.hh"
-#include "common-macros.inc"
 #include "value-types.hh"
 
 namespace tinyusdz {

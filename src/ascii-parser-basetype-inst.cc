@@ -35,7 +35,7 @@
 #include "str-util.hh"
 #include "path-util.hh"
 #include "tiny-format.hh"
-#include "typed-array.hh"
+#include "typed-array-core.hh"
 
 //
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)

@@ -7,7 +7,7 @@
 /// @brief TypedArray implementation file
 ///
 
-#include "typed-array.hh"
+#include "typed-array-core.hh"
 
 // Implementation file for TypedArray - since it's header-only template class,
 // most functionality is implemented in the header file.

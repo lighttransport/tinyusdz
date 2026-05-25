@@ -19,7 +19,7 @@
 #include "core/list-op.hh"           // ListOp
 #include "value-types.hh"
 #include "timesamples.hh"  // value::TimeSamples / TypeTraits<TimeSamples> (value-types.hh no longer pulls timesamples.hh transitively)
-#include "typed-array.hh"
+#include "typed-array-core.hh"
 #include "mmap-array-ref.hh"
 
 #if defined(__clang__)
@@ -491,4 +491,3 @@ namespace value {
 } // namespace value
 
 } // namespace tinyusdz
-

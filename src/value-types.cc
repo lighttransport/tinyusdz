@@ -12,6 +12,17 @@
 namespace tinyusdz {
 namespace value {
 
+bool IsReasonableValueVectorSize(size_t size) {
+  constexpr size_t kMaxReasonableSize = 100000000;  // 100M
+  if (size > kMaxReasonableSize) {
+    DCOUT("ERROR: Vector size " << size << " exceeds reasonable limit ("
+                                << kMaxReasonableSize
+                                << "). Data is likely corrupted!");
+    return false;
+  }
+  return true;
+}
+
 // Static member definition for ValueView
 // This is a placeholder value used for type checking - the warnings are acceptable here
 #ifdef __clang__
