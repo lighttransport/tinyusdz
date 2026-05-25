@@ -119,6 +119,40 @@ nlohmann::json ToNlohmannJSON(const json &value) {
 }
 #endif
 
+nonstd::expected<std::string, std::string> SerializeJSONValue(
+    const json &value, const char *label, int indent) {
+#if defined(TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT)
+  (void)label;
+  return ToNlohmannJSON(value).dump(indent);
+#else
+  std::string out;
+  minijson::SerializeOptions serialize_options;
+  serialize_options.indent = indent;
+  minijson::Error serialize_err;
+  if (!minijson::Serialize(value, &out, &serialize_err, serialize_options)) {
+    return nonstd::make_unexpected("Failed to serialize " +
+                                   std::string(label) + ": " +
+                                   serialize_err.message);
+  }
+  return out;
+#endif
+}
+
+bool SerializeJSONValue(const json &value, std::string *out, std::string *err,
+                        const char *label, int indent) {
+  auto result = SerializeJSONValue(value, label, indent);
+  if (!result) {
+    if (err) {
+      *err = result.error();
+    }
+    return false;
+  }
+  if (out) {
+    *out = *result;
+  }
+  return true;
+}
+
 // Helper functions for array serialization to base64
 template<typename T>
 std::string SerializeArrayToBase64(const std::vector<T>& array) {
@@ -1410,16 +1444,7 @@ nonstd::expected<std::string, std::string> ToJSON(
 
   (void)jcurves;
 
-  std::string str;
-  minijson::SerializeOptions serialize_options;
-  serialize_options.indent = 2;
-  minijson::Error serialize_err;
-  if (!minijson::Serialize(j, &str, &serialize_err, serialize_options)) {
-    return nonstd::make_unexpected("Failed to serialize Stage JSON: " +
-                                   serialize_err.message);
-  }
-
-  return str;
+  return SerializeJSONValue(j, "Stage JSON", 2);
 }
 
 bool to_json_string(const tinyusdz::Layer &layer, std::string *json_str, std::string *warn, std::string *err) {
@@ -1433,15 +1458,7 @@ bool to_json_string(const tinyusdz::Layer &layer, std::string *json_str, std::st
   USDToJSONContext context;  // Default context (base64 mode)
   json j = ToJSONValue(layer, context);
 
-  minijson::Error serialize_err;
-  if (!minijson::Serialize(j, json_str, &serialize_err)) {
-    if (err) {
-      (*err) = "Failed to serialize Layer JSON: " + serialize_err.message;
-    }
-    return false;
-  }
-
-  return true;
+  return SerializeJSONValue(j, json_str, err, "Layer JSON", -1);
 
 }
 
@@ -1462,15 +1479,7 @@ bool to_json_string(const tinyusdz::Layer &layer, const USDToJSONOptions& option
   USDToJSONContext context(options);
   json j = ToJSONValue(layer, context);
 
-  minijson::Error serialize_err;
-  if (!minijson::Serialize(j, json_str, &serialize_err)) {
-    if (err) {
-      (*err) = "Failed to serialize Layer JSON: " + serialize_err.message;
-    }
-    return false;
-  }
-
-  return true;
+  return SerializeJSONValue(j, json_str, err, "Layer JSON", -1);
 
 }
 
@@ -1792,15 +1801,7 @@ nonstd::expected<std::string, std::string> ToJSON(const tinyusdz::Stage &stage, 
     return nonstd::make_unexpected("Failed to convert Stage to JSON");
   }
   
-  std::string json_str;
-  minijson::SerializeOptions serialize_options;
-  serialize_options.indent = 2;
-  minijson::Error serialize_err;
-  if (!minijson::Serialize(j, &json_str, &serialize_err, serialize_options)) {
-    return nonstd::make_unexpected("Failed to serialize Stage JSON: " +
-                                   serialize_err.message);
-  }
-  return json_str;
+  return SerializeJSONValue(j, "Stage JSON", 2);
 }
 
 #if defined(TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT)
@@ -1919,14 +1920,11 @@ bool USDZAssetsToJSON(const tinyusdz::USDZAsset& usdz_asset, std::string* assets
     assets_obj[filename] = asset_info;
   }
   
-  minijson::SerializeOptions serialize_options;
-  serialize_options.indent = 2;
-  minijson::Error serialize_err;
-  if (!minijson::Serialize(assets_obj, assets_json, &serialize_err,
-                           serialize_options)) {
+  std::string serialize_err;
+  if (!SerializeJSONValue(assets_obj, assets_json, &serialize_err,
+                          "assets JSON", 2)) {
     if (err) {
-      (*err) += "Failed to serialize assets JSON: " + serialize_err.message +
-                "\n";
+      (*err) += serialize_err + "\n";
     }
     return false;
   }

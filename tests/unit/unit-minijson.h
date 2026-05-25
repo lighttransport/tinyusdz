@@ -7,3 +7,4 @@ void minijson_reject_duplicate_key_test(void);
 void minijson_reject_invalid_number_test(void);
 void minijson_reject_depth_limit_test(void);
 void minijson_reject_nonfinite_serialize_test(void);
+void minijson_serialize_escapes_control_chars_test(void);
