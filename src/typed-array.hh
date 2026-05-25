@@ -9,17 +9,18 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 #include <type_traits>
 #include <vector>
 
-#include "nonstd/span.hpp"
 #include "nonstd/expected.hpp"
-#include "safe-arithmetic.hh"
+#include "nonstd/span.hpp"
 // NOTE: logger.hh is intentionally NOT included here. typed-array.hh uses no
 // logging, but it sits under value-types.hh, so pulling logger.hh (the heavy
 // TraceManager class + <unordered_map>/<mutex>/<chrono>) dragged a ~70ms parse
@@ -27,6 +28,28 @@
 // direct TraceManager users include logger.hh themselves.
 
 namespace tinyusdz {
+
+namespace detail {
+
+inline bool checked_mul_size(std::size_t a, std::size_t b,
+                             std::size_t* out) noexcept {
+  if ((b != 0) && (a > (std::numeric_limits<std::size_t>::max)() / b)) {
+    return false;
+  }
+  *out = a * b;
+  return true;
+}
+
+template <typename T>
+inline std::size_t byte_size_for_chunk_hint(std::size_t count) noexcept {
+  std::size_t total_bytes;
+  if (checked_mul_size(count, sizeof(T), &total_bytes)) {
+    return total_bytes;
+  }
+  return sizeof(T) * 1024;
+}
+
+}  // namespace detail
 
 template <typename T>
 class TypedArray {
@@ -1121,7 +1144,7 @@ class ChunkedTypedArray {
       _use_fixed_chunk_size = true;
     } else {
       // Auto-determine chunk size based on total allocation
-      size_type total_bytes = count * sizeof(T);
+      size_type total_bytes = detail::byte_size_for_chunk_hint<T>(count);
       _chunk_size_bytes = calculate_chunk_size(total_bytes);
       _use_fixed_chunk_size = false;
     }
@@ -1148,11 +1171,7 @@ class ChunkedTypedArray {
       _use_fixed_chunk_size = true;
     } else {
       // Auto-determine chunk size based on total allocation
-      size_type total_bytes;
-      if (!safe::mul(count, sizeof(T), &total_bytes)) {
-        // Overflow — fall back to a safe chunk size
-        total_bytes = sizeof(T) * 1024;
-      }
+      size_type total_bytes = detail::byte_size_for_chunk_hint<T>(count);
       _chunk_size_bytes = calculate_chunk_size(total_bytes);
       _use_fixed_chunk_size = false;
     }
@@ -1204,7 +1223,7 @@ class ChunkedTypedArray {
       _use_fixed_chunk_size = true;
     } else {
       // Auto-determine chunk size based on total allocation
-      size_type total_bytes = count * sizeof(T);
+      size_type total_bytes = detail::byte_size_for_chunk_hint<T>(count);
       _chunk_size_bytes = calculate_chunk_size(total_bytes);
       _use_fixed_chunk_size = false;
     }
@@ -1230,7 +1249,7 @@ class ChunkedTypedArray {
       _use_fixed_chunk_size = true;
     } else {
       // Auto-determine chunk size based on total allocation
-      size_type total_bytes = init.size() * sizeof(T);
+      size_type total_bytes = detail::byte_size_for_chunk_hint<T>(init.size());
       _chunk_size_bytes = calculate_chunk_size(total_bytes);
       _use_fixed_chunk_size = false;
     }
@@ -1575,7 +1594,7 @@ class ChunkedTypedArray {
       // Growing - may need to recalculate chunk size for tiered allocation
       if (!_use_fixed_chunk_size && _chunks.empty()) {
         // First allocation or after clear() - recalculate chunk size
-        size_type total_bytes = count * sizeof(T);
+        size_type total_bytes = detail::byte_size_for_chunk_hint<T>(count);
         _chunk_size_bytes = calculate_chunk_size(total_bytes);
         _elements_per_chunk = _chunk_size_bytes / sizeof(T);
         if (_elements_per_chunk == 0) {

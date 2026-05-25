@@ -3,10 +3,13 @@
 #include "usd-to-json.hh"
 
 #include <algorithm>
+#include <climits>
+#include <limits>
 #include "layer.hh"
 #include "minijson.hh"
 #include "tinyusdz.hh"
 #include "io-util.hh"
+#include "safe-arithmetic.hh"
 
 #if defined(TINYUSDZ_WITH_JSON)
 
@@ -77,10 +80,6 @@ size_t USDToJSONContext::AddArrayData(const void* data, size_t elementSize, size
 }
 
 namespace {
-
-#include "safe-arithmetic.hh"
-#include <climits>
-#include <limits>
 
 #if defined(TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT)
 nlohmann::json ToNlohmannJSON(const json &value) {
