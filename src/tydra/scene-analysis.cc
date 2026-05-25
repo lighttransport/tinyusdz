@@ -8,6 +8,8 @@
 #include "scene-analysis.hh"
 #include "../layer.hh"
 
+#include "../common-macros.inc"
+
 namespace tinyusdz {
 namespace tydra {
 

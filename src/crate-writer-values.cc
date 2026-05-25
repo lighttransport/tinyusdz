@@ -18,6 +18,7 @@
 #include <set>
 #include <sstream>
 
+#include "common-macros.inc"
 #include "safe-arithmetic.hh"
 
 #if defined(__clang__)

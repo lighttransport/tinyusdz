@@ -32,7 +32,6 @@
 
 #include "value-types.hh"
 #include "timesamples.hh"
-#include "common-macros.inc"
 
 namespace tinyusdz {
 namespace primvar {

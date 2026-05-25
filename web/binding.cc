@@ -24,7 +24,7 @@
 //#include "external/fast_float/include/fast_float/bigint.h"
 #include "tinyusdz.hh"
 #include "pprinter.hh"
-#include "typed-array.hh"
+#include "typed-array-core.hh"
 #include "value-types.hh"
 #include "tydra/render-data.hh"
 #include "tydra/tangent-quantize.hh"

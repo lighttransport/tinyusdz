@@ -64,7 +64,7 @@
 
 #include "asset-resolution.hh"
 #include "nonstd/expected.hpp"
-#include "typed-array.hh"
+#include "chunked-typed-array.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "usdSkel.hh"

@@ -12,6 +12,7 @@
 
 #include "value-eval-util.hh"
 #include "common-macros.inc"
+#include "value-type-macros.inc"
 
 namespace tinyusdz {
 namespace value {

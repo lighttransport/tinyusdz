@@ -58,11 +58,16 @@
 #endif
 
 #include "token-type.hh"
-#include "typed-array.hh"
-#include "common-macros.inc"
+#include "typed-array-core.hh"
 
-// forward decl of any_value (defined below after TypeTraits)
-namespace tinyusdz { namespace value { class any_value; } }
+// forward decls defined below or in lower-level typed-array headers.
+namespace tinyusdz {
+template <typename T>
+class ChunkedTypedArray;
+namespace value {
+class any_value;
+}
+}  // namespace tinyusdz
 
 namespace tinyusdz {
 
@@ -1563,6 +1568,8 @@ bool IsRoleType(const std::string &tyname);
 /// @return true if a type is role-type.
 bool IsRoleType(const uint32_t tyid);
 
+bool IsReasonableValueVectorSize(size_t size);
+
 }  // namespace value
 }  // namespace tinyusdz
 
@@ -2008,12 +2015,7 @@ class Value {
   // Helper to check vector size bounds
   template <typename T>
   static bool check_vector_size(const std::vector<T>& vec) {
-    constexpr size_t MAX_REASONABLE_SIZE = 100000000; // 100M
-    if (vec.size() > MAX_REASONABLE_SIZE) {
-      DCOUT("ERROR: Vector size " << vec.size() << " exceeds reasonable limit (" << MAX_REASONABLE_SIZE << "). Data is likely corrupted!");
-      return false;
-    }
-    return true;
+    return IsReasonableValueVectorSize(vec.size());
   }
 
   template <typename T>
@@ -2641,33 +2643,6 @@ struct LerpTraits
     return false;
   }
 };
-
-#define DEFINE_LERP_TRAIT(ty) \
-template <> \
-struct LerpTraits<ty> { \
-  static constexpr bool supported() { \
-    return true; \
-  } \
-};  \
-template <> \
-struct LerpTraits<std::vector<ty>> { \
-  static constexpr bool supported() { \
-    return true; \
-  } \
-};
-
-// Single lerpable-type list (APPLY_FUNC_TO_LERP_VALUE_TYPES). Defining the
-// macros here makes the list visible to both LerpTraits below and, via this
-// header, to value-types.cc (GetLerpSupportedTypeIds + Lerp dispatch). The .inc
-// is pure, identical #defines, so re-inclusion by other headers is harmless.
-#include "value-type-macros.inc"
-
-// Generated from the single lerpable-type list so the compile-time predicate
-// (LerpTraits), the runtime predicate (GetLerpSupportedTypeIds) and Lerp()'s
-// dispatch all cover the same types (no drift).
-APPLY_FUNC_TO_LERP_VALUE_TYPES(DEFINE_LERP_TRAIT)
-
-#undef DEFINE_LERP_TRAIT
 
 ///
 /// @param[in] dt interpolator [0.0, 1.0)

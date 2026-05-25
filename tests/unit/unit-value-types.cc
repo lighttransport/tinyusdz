@@ -6,6 +6,7 @@
 #include "acutest.h"
 
 #include "unit-value-types.h"
+#include "chunked-typed-array.hh"
 #include "value-types.hh"
 #include "math-util.inc"
 
