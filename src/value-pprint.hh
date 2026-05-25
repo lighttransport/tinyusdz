@@ -9,7 +9,7 @@
 #include <sstream>
 
 #include "value-types.hh"
-#include "typed-array.hh"
+#include "chunked-typed-array.hh"
 #include "pprint-enum.hh"  // pprint::GetColumnLimit, format_wrapped_array, is_wrappable_element_v
 
 // forward decl

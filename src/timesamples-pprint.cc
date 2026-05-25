@@ -18,7 +18,7 @@
 #include "pprint-meta.hh"
 #include "timesamples.hh"
 #include "stream-writer.hh"
-#include "typed-array.hh"
+#include "typed-array-core.hh"
 
 namespace tinyusdz {
 

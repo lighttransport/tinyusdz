@@ -21,6 +21,19 @@
 namespace tinyusdz {
 namespace value {
 
+#define DEFINE_LERP_TRAIT(ty)       \
+  template <>                       \
+  struct LerpTraits<ty> {           \
+    static constexpr bool supported() { return true; } \
+  };                                \
+  template <>                       \
+  struct LerpTraits<std::vector<ty>> { \
+    static constexpr bool supported() { return true; } \
+  };
+#include "value-type-macros.inc"
+APPLY_FUNC_TO_LERP_VALUE_TYPES(DEFINE_LERP_TRAIT)
+#undef DEFINE_LERP_TRAIT
+
 // ============================================================================
 // [Phase 1] Binary-direct scalar evaluator (declared in timesamples.hh).
 // Mirrors get<T>() semantics exactly (default-time -> first non-blocked sample;

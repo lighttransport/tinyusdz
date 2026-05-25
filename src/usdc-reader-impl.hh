@@ -14,6 +14,7 @@
 
 #include "usdc-reader.hh"
 
+#include "common-macros.inc"
 #include "core/prim.hh"        // Prim class
 #include "core/prim-spec.hh"   // PrimSpec, Property (transitively: composition-types, prim-enums, prim-metas, variant-types)
 #include "core/model-scope.hh" // Model, Scope
@@ -60,7 +61,6 @@
 #endif
 
 //
-#include "common-macros.inc"
 
 namespace tinyusdz {
 

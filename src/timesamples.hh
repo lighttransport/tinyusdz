@@ -20,7 +20,7 @@
 #include <type_traits>
 
 #include "nonstd/optional.hpp"
-#include "typed-array.hh"
+#include "typed-array-core.hh"
 #include "value-types.hh"
 #include "buffer-util.hh"
 // NOTE: value-eval-util.hh (the lerp<T>/slerp template math) is intentionally
