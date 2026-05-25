@@ -1,17 +1,7 @@
 #include "json-to-usd.hh"
 
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#endif
-
-#include "external/jsonhpp/nlohmann/json.hpp"
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
-
 #include "layer.hh"
+#include "minijson.hh"
 #include "security-policy.hh"
 #include "str-util.hh"
 #include "common-macros.inc"
@@ -20,20 +10,15 @@
 
 namespace {
 
-// nlohmann/json parse callback: limits nesting depth to prevent stack
-// exhaustion from deeply nested JSON arrays/objects.
 constexpr int kJSONMaxParseDepth = 256;
-
-bool json_depth_callback(int depth, nlohmann::detail::parse_event_t /*event*/,
-                         nlohmann::json & /*parsed*/) {
-  return depth <= kJSONMaxParseDepth;
-}
 
 }  // namespace
 
 #include <limits>
 
 namespace tinyusdz {
+
+using json = minijson::Value;
 
 ///
 /// JSON to USD conversion context (stores buffers, views, and accessors for deserialization)
@@ -44,9 +29,9 @@ struct JSONToUSDContext {
   std::vector<JSONAccessor> accessors;        // Accessor information
   
   // Parse buffer data from JSON
-  bool ParseBuffers(const nlohmann::json& j, std::string* err = nullptr);
-  bool ParseBufferViews(const nlohmann::json& j, std::string* err = nullptr);
-  bool ParseAccessors(const nlohmann::json& j, std::string* err = nullptr);
+  bool ParseBuffers(const json& j, std::string* err = nullptr);
+  bool ParseBufferViews(const json& j, std::string* err = nullptr);
+  bool ParseAccessors(const json& j, std::string* err = nullptr);
   
   // Get array data from accessor
   template<typename T>
@@ -54,7 +39,7 @@ struct JSONToUSDContext {
 };
 
 // Implementation of buffer parsing methods
-bool JSONToUSDContext::ParseBuffers(const nlohmann::json& j, std::string* err) {
+bool JSONToUSDContext::ParseBuffers(const json& j, std::string* err) {
   if (!j.is_array()) {
     if (err) (*err) = "Buffers must be an array";
     return false;
@@ -115,7 +100,7 @@ bool JSONToUSDContext::ParseBuffers(const nlohmann::json& j, std::string* err) {
   return true;
 }
 
-bool JSONToUSDContext::ParseBufferViews(const nlohmann::json& j, std::string* err) {
+bool JSONToUSDContext::ParseBufferViews(const json& j, std::string* err) {
   if (!j.is_array()) {
     if (err) (*err) = "BufferViews must be an array";
     return false;
@@ -147,7 +132,7 @@ bool JSONToUSDContext::ParseBufferViews(const nlohmann::json& j, std::string* er
   return true;
 }
 
-bool JSONToUSDContext::ParseAccessors(const nlohmann::json& j, std::string* err) {
+bool JSONToUSDContext::ParseAccessors(const json& j, std::string* err) {
   if (!j.is_array()) {
     if (err) (*err) = "Accessors must be an array";
     return false;
@@ -291,7 +276,7 @@ static bool DeserializeFloatArrayFromBase64(const std::string& base64_data, std:
 
 
 // Attribute metadata deserialization
-static bool DeserializeAttributeMetadata(const nlohmann::json& metadata_json, AttrMetas* metas, std::string* err = nullptr) {
+static bool DeserializeAttributeMetadata(const json& metadata_json, AttrMetas* metas, std::string* err = nullptr) {
   (void)err;
   if (!metas || !metadata_json.is_object()) {
     return false;
@@ -342,7 +327,7 @@ static bool DeserializeAttributeMetadata(const nlohmann::json& metadata_json, At
 }
 
 // Helper function to parse array data from JSON (supports both base64 and accessor modes)
-static bool ParseArrayFromJSON(const nlohmann::json& j, JSONToUSDContext* context, std::string* base64_data, 
+static bool ParseArrayFromJSON(const json& j, JSONToUSDContext* context, std::string* base64_data,
                         size_t* accessor_index, size_t* count, std::string* type, std::string* err) {
   if (!j.is_object()) {
     if (err) {
@@ -417,7 +402,7 @@ static bool ParseArrayFromJSON(const nlohmann::json& j, JSONToUSDContext* contex
 
 // Template helper for parsing and deserializing arrays
 template<typename T>
-static bool ParseAndDeserializeArray(const nlohmann::json& array_json, JSONToUSDContext* context, 
+static bool ParseAndDeserializeArray(const json& array_json, JSONToUSDContext* context,
                               const std::string& expected_type, std::vector<T>* result, std::string* err) {
   std::string base64_data, type;
   size_t accessor_index, count;
@@ -464,8 +449,8 @@ static bool ParseAndDeserializeArray(const nlohmann::json& array_json, JSONToUSD
 
 // Metadata-aware array parsing function
 template<typename T>
-bool ParseAndDeserializeArrayWithMetadata(const nlohmann::json& array_json, JSONToUSDContext* context, 
-                                         const std::string& expected_type, std::vector<T>* result, 
+bool ParseAndDeserializeArrayWithMetadata(const json& array_json, JSONToUSDContext* context,
+                                         const std::string& expected_type, std::vector<T>* result,
                                          AttrMetas* metas, std::string* err) {
   if (!array_json.is_object()) {
     if (err) (*err) = "Array data must be an object";
@@ -491,7 +476,7 @@ bool ParseAndDeserializeArrayWithMetadata(const nlohmann::json& array_json, JSON
 }
 
 // Specialized metadata-aware parsing for point3f arrays
-static bool ParsePoint3fArrayWithMetadata(const nlohmann::json& array_json, JSONToUSDContext* context, 
+static bool ParsePoint3fArrayWithMetadata(const json& array_json, JSONToUSDContext* context,
                                   std::vector<value::point3f>* result, AttrMetas* metas, std::string* err) {
   if (!array_json.is_object()) {
     if (err) (*err) = "Points array must be an object";
@@ -551,7 +536,7 @@ static bool ParsePoint3fArrayWithMetadata(const nlohmann::json& array_json, JSON
 }
 
 // Specialized metadata-aware parsing for normal3f arrays
-static bool ParseNormal3fArrayWithMetadata(const nlohmann::json& array_json, JSONToUSDContext* context, 
+static bool ParseNormal3fArrayWithMetadata(const json& array_json, JSONToUSDContext* context,
                                    std::vector<value::normal3f>* result, AttrMetas* metas, std::string* err) {
   if (!array_json.is_object()) {
     if (err) (*err) = "Normals array must be an object";
@@ -587,7 +572,7 @@ static bool ParseNormal3fArrayWithMetadata(const nlohmann::json& array_json, JSO
 }
 
 // JSON to GeomMesh conversion (with context support)
-static bool JSONToGeomMesh(const nlohmann::json& j, GeomMesh* mesh, JSONToUSDContext* context, std::string* warn, std::string* err) {
+static bool JSONToGeomMesh(const json& j, GeomMesh* mesh, JSONToUSDContext* context, std::string* warn, std::string* err) {
   (void)warn;
 
   if (!mesh) {
@@ -709,19 +694,19 @@ static bool JSONToGeomMesh(const nlohmann::json& j, GeomMesh* mesh, JSONToUSDCon
 } // namespace detail
 
 
-static bool JSONToPrimSpecImpl(const nlohmann::json &j, PrimSpec *ps, std::string *warn, std::string *err) {
+static bool JSONToPrimSpecImpl(const json &j, PrimSpec *ps, std::string *warn, std::string *err) {
   (void)err;
   (void)warn;
   (void)ps;
 
   if (j.contains("metadata")) {
-    nlohmann::json meta = j["metadata"];
+    json meta = j["metadata"];
 
     if (meta.contains("references")) {
-      nlohmann::json ref = meta["references"];
+      json ref = meta["references"];
 
       if (ref.contains("qual")) {
-        std::string qual = ref["qual"];
+        std::string qual = ref["qual"].get<std::string>();
         if (qual == "append") {
         } else if (qual == "prepend") {
         } else if (qual == "prepend") {
@@ -737,10 +722,13 @@ static bool JSONToPrimSpecImpl(const nlohmann::json &j, PrimSpec *ps, std::strin
 }
 
 bool JSONToPrimSpec(const std::string &j_str, PrimSpec *ps, std::string *warn, std::string *err) {
-  nlohmann::json j = nlohmann::json::parse(j_str, json_depth_callback, /* allow_exceptions */false);
-  if (j.is_discarded()) {
+  json j;
+  minijson::Error parse_err;
+  minijson::ParseOptions options;
+  options.max_depth = kJSONMaxParseDepth;
+  if (!minijson::Parse(j_str, &j, &parse_err, options)) {
     if (err) {
-      (*err) = "Failed to parse string as JSON\n";
+      (*err) = "Failed to parse string as JSON: " + parse_err.message + "\n";
     }
     return false;
   }
@@ -756,10 +744,13 @@ bool JSONToLayer(const std::string &j_str, Layer *dst_layer, std::string *warn, 
     return false;
   }
 
-  nlohmann::json j = nlohmann::json::parse(j_str, /* callback */nullptr, /* allow_exceptions */false);
-  if (j.is_discarded()) {
+  json j;
+  minijson::Error parse_err;
+  minijson::ParseOptions options;
+  options.max_depth = kJSONMaxParseDepth;
+  if (!minijson::Parse(j_str, &j, &parse_err, options)) {
     if (err) {
-      (*err) = "Failed to parse string as JSON";
+      (*err) = "Failed to parse string as JSON: " + parse_err.message;
     }
     return false;
   }
@@ -795,7 +786,7 @@ bool JSONToLayer(const std::string &j_str, Layer *dst_layer, std::string *warn, 
 
   // Parse layer metadata
   if (j.contains("metas")) {
-    nlohmann::json metas = j["metas"];
+    json metas = j["metas"];
     
     if (metas.contains("upAxis") && metas["upAxis"].is_string()) {
       std::string s = metas["upAxis"].get<std::string>();
@@ -889,9 +880,10 @@ bool JSONToLayer(const std::string &j_str, Layer *dst_layer, std::string *warn, 
   
   // Parse primSpecs
   if (j.contains("primSpecs") && j["primSpecs"].is_object()) {
-    for (auto it = j["primSpecs"].begin(); it != j["primSpecs"].end(); ++it) {
-      const std::string& prim_name = it.key();
-      const nlohmann::json& prim_obj = it.value();
+    const auto *prim_specs = j["primSpecs"].object_items();
+    for (const auto &member : *prim_specs) {
+      const std::string& prim_name = member.key;
+      const json& prim_obj = member.value();
       
       if (prim_obj.is_object()) {
         // For now, create basic PrimSpecs
@@ -931,10 +923,13 @@ bool JSONToGeomMesh(const std::string &j_str, GeomMesh *mesh, std::string *warn,
     return false;
   }
 
-  nlohmann::json j = nlohmann::json::parse(j_str, /* callback */nullptr, /* allow_exceptions */false);
-  if (j.is_discarded()) {
+  json j;
+  minijson::Error parse_err;
+  minijson::ParseOptions options;
+  options.max_depth = kJSONMaxParseDepth;
+  if (!minijson::Parse(j_str, &j, &parse_err, options)) {
     if (err) {
-      (*err) = "Failed to parse string as JSON";
+      (*err) = "Failed to parse string as JSON: " + parse_err.message;
     }
     return false;
   }

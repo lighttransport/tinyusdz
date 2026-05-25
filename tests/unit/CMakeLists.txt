@@ -17,6 +17,7 @@ set(TEST_SOURCES
 	unit-ioutil.cc
 	unit-timesamples.cc
 	unit-fp-parse-print.cc
+	unit-minijson.cc
 	unit-materialx.cc
 	unit-task-queue.cc
 	unit-tydra.cc

@@ -9,25 +9,24 @@
 
 #if defined(TINYUSDZ_WITH_JSON)
 
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#endif
-
-// nlohmann json
-#include "external/jsonhpp/nlohmann/json.hpp"
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
-
 #include "common-macros.inc"
 #include "pprint-enum.hh"
 #include "str-util.hh"
 
-using namespace nlohmann;
+#if defined(TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT)
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+#include "external/jsonhpp/nlohmann/json.hpp"
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+#endif
 
 namespace tinyusdz {
+
+using json = minijson::Value;
 
 // Implementation of USDToJSONContext::AddArrayData
 size_t USDToJSONContext::AddArrayData(const void* data, size_t elementSize, size_t elementCount, 
@@ -79,7 +78,46 @@ size_t USDToJSONContext::AddArrayData(const void* data, size_t elementSize, size
 namespace {
 
 #include "safe-arithmetic.hh"
+#include <climits>
 #include <limits>
+
+#if defined(TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT)
+nlohmann::json ToNlohmannJSON(const json &value) {
+  switch (value.type()) {
+    case minijson::Type::Null:
+      return nullptr;
+    case minijson::Type::Boolean:
+      return value.get<bool>();
+    case minijson::Type::SignedInteger:
+      return value.get<int64_t>();
+    case minijson::Type::UnsignedInteger:
+      return value.get<uint64_t>();
+    case minijson::Type::Number:
+      return value.get<double>();
+    case minijson::Type::String:
+      return value.get<std::string>();
+    case minijson::Type::Array: {
+      nlohmann::json arr = nlohmann::json::array();
+      if (const auto *items = value.array_items()) {
+        for (const auto &item : *items) {
+          arr.push_back(ToNlohmannJSON(item));
+        }
+      }
+      return arr;
+    }
+    case minijson::Type::Object: {
+      nlohmann::json obj = nlohmann::json::object();
+      if (const auto *items = value.object_items()) {
+        for (const auto &item : *items) {
+          obj[item.key] = ToNlohmannJSON(item.value());
+        }
+      }
+      return obj;
+    }
+  }
+  return nullptr;
+}
+#endif
 
 // Helper functions for array serialization to base64
 template<typename T>
@@ -93,9 +131,11 @@ std::string SerializeArrayToBase64(const std::vector<T>& array) {
   if (!safe::mul(array.size(), sizeof(T), &byte_size)) {
     return "";
   }
+#if SIZE_MAX > UINT_MAX
   if (byte_size > static_cast<size_t>(std::numeric_limits<unsigned int>::max())) {
     return "";
   }
+#endif
 
   return base64_encode(bytes, static_cast<unsigned int>(byte_size));
 }
@@ -935,9 +975,7 @@ json ToJSON(tinyusdz::Xform& xform) {
   j["typeName"] = "Xform";
 
   if (xform.xformOps.size()) {
-    json jxformOpOrder;
-
-    std::vector<std::string> ops;
+    json ops = json::array();
     for (const auto &xformOp : xform.xformOps) {
       ops.push_back(xformOp.suffix);
     }
@@ -1133,10 +1171,10 @@ json SerializeContextToJSON(const USDToJSONContext& context) {
 // GeomMesh ToJSON functions (moved outside anonymous namespace for proper linking)
 static json ToJSON(tinyusdz::GeomMesh& mesh) {
   USDToJSONContext context;  // Use default context
-  return ToJSON(mesh, &context);
+  return ToJSONValue(mesh, &context);
 }
 
-json ToJSON(tinyusdz::GeomMesh& mesh, USDToJSONContext* context) {
+json ToJSONValue(tinyusdz::GeomMesh& mesh, USDToJSONContext* context) {
   json j;
 
   j["name"] = mesh.name;
@@ -1191,12 +1229,12 @@ json ToJSON(tinyusdz::GeomMesh& mesh, USDToJSONContext* context) {
   return j;
 }
 
-json ToJSON(const tinyusdz::Layer& layer) {
+json ToJSONValue(const tinyusdz::Layer& layer) {
   USDToJSONContext context;  // Default context (base64 mode)
-  return ToJSON(layer, context);
+  return ToJSONValue(layer, context);
 }
 
-json ToJSON(const tinyusdz::Layer& layer, USDToJSONContext& context) {
+json ToJSONValue(const tinyusdz::Layer& layer, USDToJSONContext& context) {
   json j;
 
   // Layer name
@@ -1372,7 +1410,14 @@ nonstd::expected<std::string, std::string> ToJSON(
 
   (void)jcurves;
 
-  std::string str = j.dump(/* indent*/ 2);
+  std::string str;
+  minijson::SerializeOptions serialize_options;
+  serialize_options.indent = 2;
+  minijson::Error serialize_err;
+  if (!minijson::Serialize(j, &str, &serialize_err, serialize_options)) {
+    return nonstd::make_unexpected("Failed to serialize Stage JSON: " +
+                                   serialize_err.message);
+  }
 
   return str;
 }
@@ -1386,9 +1431,15 @@ bool to_json_string(const tinyusdz::Layer &layer, std::string *json_str, std::st
   (void)err;
 
   USDToJSONContext context;  // Default context (base64 mode)
-  json j = ToJSON(layer, context);
+  json j = ToJSONValue(layer, context);
 
-  (*json_str) = j.dump();
+  minijson::Error serialize_err;
+  if (!minijson::Serialize(j, json_str, &serialize_err)) {
+    if (err) {
+      (*err) = "Failed to serialize Layer JSON: " + serialize_err.message;
+    }
+    return false;
+  }
 
   return true;
 
@@ -1402,10 +1453,24 @@ bool to_json_string(const tinyusdz::Layer &layer, std::string *json_str, std::st
 
 bool to_json_string(const tinyusdz::Layer &layer, const USDToJSONOptions& options, std::string *json_str, std::string *warn, std::string *err) {
 
-  // TODO: options
-  (void)options;
-  
-  return to_json_string(layer, json_str, warn, err);
+  if (!json_str) {
+    return false;
+  }
+
+  (void)warn;
+
+  USDToJSONContext context(options);
+  json j = ToJSONValue(layer, context);
+
+  minijson::Error serialize_err;
+  if (!minijson::Serialize(j, json_str, &serialize_err)) {
+    if (err) {
+      (*err) = "Failed to serialize Layer JSON: " + serialize_err.message;
+    }
+    return false;
+  }
+
+  return true;
 
 }
 
@@ -1413,7 +1478,7 @@ bool to_json_string(const tinyusdz::Layer &layer, const USDToJSONOptions& option
 // Property, Attribute, and Relationship to JSON conversion
 // ================================================================
 
-json ToJSON(const tinyusdz::Attribute& attribute, USDToJSONContext* /* context */) {
+json ToJSONValue(const tinyusdz::Attribute& attribute, USDToJSONContext* /* context */) {
   json j;
   
   // Basic attribute information
@@ -1519,7 +1584,7 @@ json ToJSON(const tinyusdz::Attribute& attribute, USDToJSONContext* /* context *
   return j;
 }
 
-json ToJSON(const tinyusdz::Relationship& relationship) {
+json ToJSONValue(const tinyusdz::Relationship& relationship) {
   json j;
   
   j["type"] = "relationship";
@@ -1585,7 +1650,7 @@ json ToJSON(const tinyusdz::Relationship& relationship) {
   return j;
 }
 
-json ToJSON(const tinyusdz::Property& property, USDToJSONContext* context) {
+json ToJSONValue(const tinyusdz::Property& property, USDToJSONContext* context) {
   json j;
   
   // Property type
@@ -1597,22 +1662,22 @@ json ToJSON(const tinyusdz::Property& property, USDToJSONContext* context) {
       
     case Property::Type::Attrib:
       j["propertyType"] = "attribute";
-      j["attribute"] = ToJSON(property.get_attribute(), context);
+      j["attribute"] = ToJSONValue(property.get_attribute(), context);
       break;
       
     case Property::Type::Relation:
       j["propertyType"] = "relationship";
-      j["relationship"] = ToJSON(property.get_relationship());
+      j["relationship"] = ToJSONValue(property.get_relationship());
       break;
       
     case Property::Type::NoTargetsRelation:
       j["propertyType"] = "noTargetsRelationship";
-      j["relationship"] = ToJSON(property.get_relationship());
+      j["relationship"] = ToJSONValue(property.get_relationship());
       break;
       
     case Property::Type::Connection:
       j["propertyType"] = "connection";
-      j["attribute"] = ToJSON(property.get_attribute(), context);
+      j["attribute"] = ToJSONValue(property.get_attribute(), context);
       j["valueTypeName"] = property.value_type_name();
       break;
   }
@@ -1671,14 +1736,14 @@ json ToJSON(const tinyusdz::Property& property, USDToJSONContext* context) {
   return j;
 }
 
-json PropertiesToJSON(const std::map<std::string, tinyusdz::Property>& properties, USDToJSONContext* context) {
+json PropertiesToJSONValue(const std::map<std::string, tinyusdz::Property>& properties, USDToJSONContext* context) {
   json j = json::object();
   
   for (const auto& prop_pair : properties) {
     const std::string& prop_name = prop_pair.first;
     const Property& property = prop_pair.second;
     
-    j[prop_name] = ToJSON(property, context);
+    j[prop_name] = ToJSONValue(property, context);
   }
   
   return j;
@@ -1689,7 +1754,7 @@ json PropertiesToJSON(const std::map<std::string, tinyusdz::Property>& propertie
 // ================================================================
 
 // Helper function to convert Stage to JSON object (for internal use)
-json ToJSON(const tinyusdz::Stage& stage, USDToJSONContext* context) {
+json ToJSONValue(const tinyusdz::Stage& stage, USDToJSONContext* context) {
   (void)context; // Currently unused
   
   // Reuse existing implementation pattern but return json object instead of string
@@ -1721,15 +1786,60 @@ json ToJSON(const tinyusdz::Stage& stage, USDToJSONContext* context) {
 // Overload with options
 nonstd::expected<std::string, std::string> ToJSON(const tinyusdz::Stage &stage, const USDToJSONOptions& options) {
   USDToJSONContext context(options);
-  json j = ToJSON(stage, &context);
+  json j = ToJSONValue(stage, &context);
   
   if (j.empty()) {
     return nonstd::make_unexpected("Failed to convert Stage to JSON");
   }
   
-  std::string json_str = j.dump(2); // Pretty print with 2-space indent
+  std::string json_str;
+  minijson::SerializeOptions serialize_options;
+  serialize_options.indent = 2;
+  minijson::Error serialize_err;
+  if (!minijson::Serialize(j, &json_str, &serialize_err, serialize_options)) {
+    return nonstd::make_unexpected("Failed to serialize Stage JSON: " +
+                                   serialize_err.message);
+  }
   return json_str;
 }
+
+#if defined(TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT)
+nlohmann::json ToJSON(const tinyusdz::Stage &stage, USDToJSONContext* context) {
+  return ToNlohmannJSON(ToJSONValue(stage, context));
+}
+
+nlohmann::json ToJSON(const tinyusdz::Layer &layer) {
+  return ToNlohmannJSON(ToJSONValue(layer));
+}
+
+nlohmann::json ToJSON(const tinyusdz::Layer &layer, USDToJSONContext& context) {
+  return ToNlohmannJSON(ToJSONValue(layer, context));
+}
+
+nlohmann::json ToJSON(tinyusdz::GeomMesh& mesh, USDToJSONContext* context) {
+  return ToNlohmannJSON(ToJSONValue(mesh, context));
+}
+
+nlohmann::json ToJSON(const tinyusdz::Attribute& attribute,
+                      USDToJSONContext* context) {
+  return ToNlohmannJSON(ToJSONValue(attribute, context));
+}
+
+nlohmann::json ToJSON(const tinyusdz::Relationship& relationship) {
+  return ToNlohmannJSON(ToJSONValue(relationship));
+}
+
+nlohmann::json ToJSON(const tinyusdz::Property& property,
+                      USDToJSONContext* context) {
+  return ToNlohmannJSON(ToJSONValue(property, context));
+}
+
+nlohmann::json PropertiesToJSON(
+    const std::map<std::string, tinyusdz::Property>& properties,
+    USDToJSONContext* context) {
+  return ToNlohmannJSON(PropertiesToJSONValue(properties, context));
+}
+#endif
 
 // ================================================================
 // USDZ to JSON conversion implementation
@@ -1809,7 +1919,17 @@ bool USDZAssetsToJSON(const tinyusdz::USDZAsset& usdz_asset, std::string* assets
     assets_obj[filename] = asset_info;
   }
   
-  (*assets_json) = assets_obj.dump(2);
+  minijson::SerializeOptions serialize_options;
+  serialize_options.indent = 2;
+  minijson::Error serialize_err;
+  if (!minijson::Serialize(assets_obj, assets_json, &serialize_err,
+                           serialize_options)) {
+    if (err) {
+      (*err) += "Failed to serialize assets JSON: " + serialize_err.message +
+                "\n";
+    }
+    return false;
+  }
   return true;
 }
 

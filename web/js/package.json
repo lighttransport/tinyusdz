@@ -1,7 +1,7 @@
 {
   "name": "tinyusdz",
   "private": false,
-  "version": "0.9.9-rc2",
+  "version": "0.9.9-rc3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -28,6 +28,7 @@
     "test:streaming": "vite-node cli/load-test-node.js",
     "dump-materialx": "vite-node cli/dump-materialx-cli.js",
     "dump-mtlx-node": "vite-node cli/dump-mtlx-node.js",
+    "test:materialx-json-regression": "vite-node tests/materialx-json-regression.js",
     "optimize-mtlx-node": "vite-node cli/optimize-mtlx-node.js",
     "dump-lights": "vite-node cli/dump-usdlux-cli.js",
     "test:usdlux": "node cli/test-usdlux-parsing.js",

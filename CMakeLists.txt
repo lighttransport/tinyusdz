@@ -155,6 +155,8 @@ option(TINYUSDZ_CXX_EXCEPTIONS
 
 option(TINYUSDZ_WITH_USDMTLX "Build with MaterialX support" ON)
 option(TINYUSDZ_WITH_JSON "Build with JSON support" ON)
+option(TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT
+       "Build deprecated nlohmann::json object overloads for JSON APIs" ON)
 option(TINYUSDZ_WITH_USD_TO_GLTF "Build with USD to glTF example" ON)
 option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
@@ -770,6 +772,7 @@ endif()
 
 if(TINYUSDZ_WITH_JSON)
   list(APPEND TINYUSDZ_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/minijson.cc
     ${PROJECT_SOURCE_DIR}/src/json-to-usd.cc
     ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc
     ${PROJECT_SOURCE_DIR}/src/json-writer.cc
@@ -1301,12 +1304,41 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-switch-default")
   endif()
 
+  # clang21's -Weverything includes -Wnrvo, which is noisy for expected/error
+  # return paths and does not indicate a correctness issue.
+  if (${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 20)
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-nrvo")
+  endif()
+
   if(TINYUSDZ_COMPILE_TIME_TRACE)
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -ftime-trace ")
   endif()
 
   set_source_files_properties(${TINYUSDZ_SOURCES}
                               PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
+
+  # nlohmann/json is vendored third-party code. Clang 21's -Weverything emits
+  # diagnostics from its header during template instantiation, so suppress only
+  # those third-party warning classes on translation units that include it.
+  set(TINYUSDZ_NLOHMANN_JSON_WARNING_FLAGS
+      " -Wno-covered-switch-default -Wno-weak-vtables")
+  set(TINYUSDZ_NLOHMANN_JSON_SOURCES
+      ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-js-bridge.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-composition.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-query.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-scene.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/urdf-to-usd.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/js-script-persistent.cc)
+  foreach(TINYUSDZ_NLOHMANN_JSON_SOURCE ${TINYUSDZ_NLOHMANN_JSON_SOURCES})
+    set_property(SOURCE ${TINYUSDZ_NLOHMANN_JSON_SOURCE}
+                 APPEND_STRING PROPERTY COMPILE_FLAGS
+                 ${TINYUSDZ_NLOHMANN_JSON_WARNING_FLAGS})
+  endforeach()
 
   if (TINYUSDZ_WITH_C_API)
     set_source_files_properties(${TINYUSDZ_C_API_SOURCES}
@@ -1646,6 +1678,10 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     #target_include_directories(
     #  ${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_WITH_JSON")
+    if(TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT)
+      target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                                 PUBLIC "TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT")
+    endif()
   endif()
 
   if(TINYUSDZ_WITH_USDMTLX)
