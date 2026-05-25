@@ -28,7 +28,9 @@ void minijson_parse_basic_test(void) {
   TEST_CHECK(ok);
   TEST_CHECK(v.is_object());
   TEST_CHECK(v["name"].get<std::string>() == "mesh");
-  TEST_CHECK(v["count"].get<size_t>() == 3);
+  size_t count = 0;
+  TEST_CHECK(v["count"].as_size_t(&count));
+  TEST_CHECK(count == 3);
   TEST_CHECK(v["ok"].get<bool>());
   TEST_CHECK(v["items"].is_array());
   TEST_CHECK(v["items"].size() == 3);
