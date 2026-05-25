@@ -113,3 +113,13 @@ void minijson_reject_nonfinite_serialize_test(void) {
   TEST_CHECK(!ok);
   TEST_CHECK(err.message.find("non-finite") != std::string::npos);
 }
+
+void minijson_serialize_escapes_control_chars_test(void) {
+  Value v("multi\nline\tdocument");
+
+  std::string out;
+  Error err;
+  bool ok = Serialize(v, &out, &err);
+  TEST_CHECK(ok);
+  TEST_CHECK(out == "\"multi\\nline\\tdocument\"");
+}

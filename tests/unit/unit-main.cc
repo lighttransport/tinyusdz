@@ -128,6 +128,7 @@ TEST_LIST = {
   { "minijson_reject_invalid_number_test", minijson_reject_invalid_number_test },
   { "minijson_reject_depth_limit_test", minijson_reject_depth_limit_test },
   { "minijson_reject_nonfinite_serialize_test", minijson_reject_nonfinite_serialize_test },
+  { "minijson_serialize_escapes_control_chars_test", minijson_serialize_escapes_control_chars_test },
   { "parse_array_test", parse_array_test },
   { "materialx_config_api_struct_test", materialx_config_api_struct_test },
   { "materialx_config_api_parsing_test", materialx_config_api_parsing_test },
