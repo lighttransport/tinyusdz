@@ -2,10 +2,13 @@
 // Experimental USD to JSON converter
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <map>
 #include <string>
+#include <vector>
 
 #include "nonstd/expected.hpp"
-#include "minijson.hh"
 
 #if defined(TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT)
 #ifdef __clang__
@@ -24,6 +27,10 @@
 #include "usdGeom.hh"  // GeomMesh/Xform etc. (no longer re-exported by tinyusdz.hh)
 
 namespace tinyusdz {
+
+namespace minijson {
+class Value;
+}
 
 ///
 /// Array serialization mode
