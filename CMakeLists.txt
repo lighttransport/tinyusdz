@@ -1304,12 +1304,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-switch-default")
   endif()
 
-  # clang21's -Weverything includes -Wnrvo, which is noisy for expected/error
-  # return paths and does not indicate a correctness issue.
-  if (${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 20)
-    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-nrvo")
-  endif()
-
   if(TINYUSDZ_COMPILE_TIME_TRACE)
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -ftime-trace ")
   endif()
