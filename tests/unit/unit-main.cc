@@ -17,6 +17,7 @@
 #include "unit-strutil.h"
 #include "unit-timesamples.h"
 #include "unit-fp-parse-print.h"
+#include "unit-minijson.h"
 #include "unit-pprint.h"
 #include "unit-materialx.h"
 #include "unit-task-queue.h"
@@ -120,6 +121,13 @@ TEST_LIST = {
   { "fp_roundtrip_buffer_test", fp_roundtrip_buffer_test },
   { "fp_shortest_representation_test", fp_shortest_representation_test },
   { "fp_format_range_test", fp_format_range_test },
+  { "minijson_parse_basic_test", minijson_parse_basic_test },
+  { "minijson_unicode_escape_test", minijson_unicode_escape_test },
+  { "minijson_reject_invalid_utf8_test", minijson_reject_invalid_utf8_test },
+  { "minijson_reject_duplicate_key_test", minijson_reject_duplicate_key_test },
+  { "minijson_reject_invalid_number_test", minijson_reject_invalid_number_test },
+  { "minijson_reject_depth_limit_test", minijson_reject_depth_limit_test },
+  { "minijson_reject_nonfinite_serialize_test", minijson_reject_nonfinite_serialize_test },
   { "parse_array_test", parse_array_test },
   { "materialx_config_api_struct_test", materialx_config_api_struct_test },
   { "materialx_config_api_parsing_test", materialx_config_api_parsing_test },
