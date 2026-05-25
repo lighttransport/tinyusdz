@@ -29,6 +29,7 @@ void AppendCompound(nlohmann::json &arr, const std::array<int32_t, N> &v) {
 }
 
 template <size_t N>
+[[maybe_unused]]
 void AppendCompound(nlohmann::json &arr, const std::array<uint32_t, N> &v) {
   for (size_t i = 0; i < N; i++) {
     arr.push_back(static_cast<int64_t>(v[i]));
@@ -36,6 +37,7 @@ void AppendCompound(nlohmann::json &arr, const std::array<uint32_t, N> &v) {
 }
 
 template <size_t N>
+[[maybe_unused]]
 void AppendCompound(nlohmann::json &arr, const std::array<int64_t, N> &v) {
   for (size_t i = 0; i < N; i++) {
     arr.push_back(v[i]);
@@ -43,6 +45,7 @@ void AppendCompound(nlohmann::json &arr, const std::array<int64_t, N> &v) {
 }
 
 template <size_t N>
+[[maybe_unused]]
 void AppendCompound(nlohmann::json &arr, const std::array<uint64_t, N> &v) {
   for (size_t i = 0; i < N; i++) {
     arr.push_back(static_cast<double>(v[i]));
@@ -228,6 +231,7 @@ bool TryGetCompound(const value::Value &val, nlohmann::json &out) {
 }
 
 template <typename T>
+[[maybe_unused]]
 bool TryGetCompoundAsElements(const value::Value &val, nlohmann::json &out) {
   auto v = val.get_value<T>(false);
   if (!v) return false;
@@ -250,6 +254,7 @@ bool TryGetArrayValue(const value::Value &val, nlohmann::json &out) {
 
 // Typed arrays (TypedArray<T>)
 template <typename ElemType>
+[[maybe_unused]]
 bool TryGetTypedArrayValue(const value::Value &val, nlohmann::json &out) {
   auto v = val.get_value<TypedArray<ElemType>>(false);
   if (!v) return false;
@@ -750,11 +755,13 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
         for (const auto &mat : val_json) {
           if (mat.is_array() && mat.size() >= 2) {
             value::matrix2d m;
-            for (int i = 0; i < 2; i++)
-              for (int j = 0; j < 2; j++)
-                m.m[i][j] = mat[i].is_array() && mat[i].size() > static_cast<size_t>(j)
-                                ? mat[i][j].get<double>()
-                                : 0.0;
+            for (size_t row = 0; row < 2; row++) {
+              for (size_t col = 0; col < 2; col++) {
+                m.m[row][col] = mat[row].is_array() && mat[row].size() > col
+                                    ? mat[row][col].get<double>()
+                                    : 0.0;
+              }
+            }
             vec.push_back(m);
           }
         }
@@ -766,11 +773,13 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
         for (const auto &mat : val_json) {
           if (mat.is_array() && mat.size() >= 3) {
             value::matrix3d m;
-            for (int i = 0; i < 3; i++)
-              for (int j = 0; j < 3; j++)
-                m.m[i][j] = mat[i].is_array() && mat[i].size() > static_cast<size_t>(j)
-                                ? mat[i][j].get<double>()
-                                : 0.0;
+            for (size_t row = 0; row < 3; row++) {
+              for (size_t col = 0; col < 3; col++) {
+                m.m[row][col] = mat[row].is_array() && mat[row].size() > col
+                                    ? mat[row][col].get<double>()
+                                    : 0.0;
+              }
+            }
             vec.push_back(m);
           }
         }
@@ -787,12 +796,14 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
             for (const auto &mat : val_json) {
               if (mat.is_array() && mat.size() >= 2) {
                 value::matrix2f m;
-          for (int i = 0; i < 2; i++)
-            for (int j = 0; j < 2; j++)
-              m.m[i][j] =
-                  mat[i].is_array() && mat[i].size() > static_cast<size_t>(j)
-                      ? static_cast<float>(mat[i][j].get<double>())
-                      : 0.0f;
+                for (size_t row = 0; row < 2; row++) {
+                  for (size_t col = 0; col < 2; col++) {
+                    m.m[row][col] =
+                        mat[row].is_array() && mat[row].size() > col
+                            ? static_cast<float>(mat[row][col].get<double>())
+                            : 0.0f;
+                  }
+                }
                 vec.push_back(m);
               }
             }
@@ -804,11 +815,14 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
             for (const auto &mat : val_json) {
               if (mat.is_array() && mat.size() >= 3) {
                 value::matrix3f m;
-                for (int i = 0; i < 3; i++)
-                  for (int j = 0; j < 3; j++)
-                    m.m[i][j] = mat[i].is_array() && mat[i].size() > static_cast<size_t>(j)
-                                    ? static_cast<float>(mat[i][j].get<double>())
-                                    : 0.0f;
+                for (size_t row = 0; row < 3; row++) {
+                  for (size_t col = 0; col < 3; col++) {
+                    m.m[row][col] =
+                        mat[row].is_array() && mat[row].size() > col
+                            ? static_cast<float>(mat[row][col].get<double>())
+                            : 0.0f;
+                  }
+                }
                 vec.push_back(m);
               }
             }
@@ -820,11 +834,14 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
             for (const auto &mat : val_json) {
               if (mat.is_array() && mat.size() >= 4) {
                 value::matrix4f m;
-                for (int i = 0; i < 4; i++)
-                  for (int j = 0; j < 4; j++)
-                    m.m[i][j] = mat[i].is_array() && mat[i].size() > static_cast<size_t>(j)
-                                    ? static_cast<float>(mat[i][j].get<double>())
-                                    : 0.0f;
+                for (size_t row = 0; row < 4; row++) {
+                  for (size_t col = 0; col < 4; col++) {
+                    m.m[row][col] =
+                        mat[row].is_array() && mat[row].size() > col
+                            ? static_cast<float>(mat[row][col].get<double>())
+                            : 0.0f;
+                  }
+                }
                 vec.push_back(m);
               }
             }
@@ -837,12 +854,14 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
           for (const auto &mat : val_json) {
             if (mat.is_array() && mat.size() >= 4) {
               value::matrix4d m;
-              for (int i = 0; i < 4; i++)
-                for (int j = 0; j < 4; j++)
-                  m.m[i][j] =
-                      mat[i].is_array() && mat[i].size() > static_cast<size_t>(j)
-                          ? mat[i][j].get<double>()
+              for (size_t row = 0; row < 4; row++) {
+                for (size_t col = 0; col < 4; col++) {
+                  m.m[row][col] =
+                      mat[row].is_array() && mat[row].size() > col
+                          ? mat[row][col].get<double>()
                           : 0.0;
+                }
+              }
               vec.push_back(m);
             }
           }
@@ -1017,22 +1036,22 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
   } else if (base_type == "quath") {
     if (val_json.size() < 4) return nonstd::nullopt;
     return make_scalar(value::quath{
-        value::float_to_half_full(static_cast<float>(val_json[0].get<double>())),
-        value::float_to_half_full(static_cast<float>(val_json[1].get<double>())),
-        value::float_to_half_full(static_cast<float>(val_json[2].get<double>())),
+        {value::float_to_half_full(static_cast<float>(val_json[0].get<double>())),
+         value::float_to_half_full(static_cast<float>(val_json[1].get<double>())),
+         value::float_to_half_full(static_cast<float>(val_json[2].get<double>()))},
         value::float_to_half_full(static_cast<float>(val_json[3].get<double>()))});
   } else if (base_type == "quatf") {
     if (val_json.size() < 4) return nonstd::nullopt;
     return make_scalar(value::quatf{
-        static_cast<float>(val_json[0].get<double>()),
-        static_cast<float>(val_json[1].get<double>()),
-        static_cast<float>(val_json[2].get<double>()),
+        {static_cast<float>(val_json[0].get<double>()),
+         static_cast<float>(val_json[1].get<double>()),
+         static_cast<float>(val_json[2].get<double>())},
         static_cast<float>(val_json[3].get<double>())});
   } else if (base_type == "quatd") {
     if (val_json.size() < 4) return nonstd::nullopt;
-    return make_scalar(value::quatd{val_json[0].get<double>(),
-                                    val_json[1].get<double>(),
-                                    val_json[2].get<double>(),
+    return make_scalar(value::quatd{{val_json[0].get<double>(),
+                                     val_json[1].get<double>(),
+                                     val_json[2].get<double>()},
                                     val_json[3].get<double>()});
   }
 
@@ -1041,18 +1060,18 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
     if (val_json.size() < 2) return nonstd::nullopt;
     if (base_type == "matrix2f") {
       value::matrix2f m;
-      for (int i = 0; i < 2; i++)
-        for (int j = 0; j < 2; j++)
-          m.m[i][j] = val_json[i].is_array() && val_json[i].size() > static_cast<size_t>(j)
-                          ? static_cast<float>(val_json[i][j].get<double>())
+      for (size_t row = 0; row < 2; row++)
+        for (size_t col = 0; col < 2; col++)
+          m.m[row][col] = val_json[row].is_array() && val_json[row].size() > col
+                          ? static_cast<float>(val_json[row][col].get<double>())
                           : 0.0f;
       return make_scalar(m);
     } else {
       value::matrix2d m;
-      for (int i = 0; i < 2; i++)
-        for (int j = 0; j < 2; j++)
-          m.m[i][j] = val_json[i].is_array() && val_json[i].size() > static_cast<size_t>(j)
-                          ? val_json[i][j].get<double>()
+      for (size_t row = 0; row < 2; row++)
+        for (size_t col = 0; col < 2; col++)
+          m.m[row][col] = val_json[row].is_array() && val_json[row].size() > col
+                          ? val_json[row][col].get<double>()
                           : 0.0;
       return make_scalar(m);
     }
@@ -1060,18 +1079,18 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
     if (val_json.size() < 3) return nonstd::nullopt;
     if (base_type == "matrix3f") {
       value::matrix3f m;
-      for (int i = 0; i < 3; i++)
-        for (size_t j = 0; j < 3; j++)
-          m.m[i][j] = val_json[i].is_array() && val_json[i].size() > static_cast<size_t>(j)
-                          ? static_cast<float>(val_json[i][j].get<double>())
+      for (size_t row = 0; row < 3; row++)
+        for (size_t col = 0; col < 3; col++)
+          m.m[row][col] = val_json[row].is_array() && val_json[row].size() > col
+                          ? static_cast<float>(val_json[row][col].get<double>())
                           : 0.0f;
       return make_scalar(m);
     } else {
       value::matrix3d m;
-      for (int i = 0; i < 3; i++)
-        for (size_t j = 0; j < 3; j++)
-          m.m[i][j] = val_json[i].is_array() && val_json[i].size() > static_cast<size_t>(j)
-                          ? val_json[i][j].get<double>()
+      for (size_t row = 0; row < 3; row++)
+        for (size_t col = 0; col < 3; col++)
+          m.m[row][col] = val_json[row].is_array() && val_json[row].size() > col
+                          ? val_json[row][col].get<double>()
                           : 0.0;
       return make_scalar(m);
     }
@@ -1080,18 +1099,18 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
     if (val_json.size() < 4) return nonstd::nullopt;
     if (base_type == "matrix4f") {
       value::matrix4f m;
-      for (int i = 0; i < 4; i++)
-        for (size_t j = 0; j < 4; j++)
-          m.m[i][j] = val_json[i].is_array() && val_json[i].size() > static_cast<size_t>(j)
-                          ? static_cast<float>(val_json[i][j].get<double>())
+      for (size_t row = 0; row < 4; row++)
+        for (size_t col = 0; col < 4; col++)
+          m.m[row][col] = val_json[row].is_array() && val_json[row].size() > col
+                          ? static_cast<float>(val_json[row][col].get<double>())
                           : 0.0f;
       return make_scalar(m);
     } else {
       value::matrix4d m;
-      for (int i = 0; i < 4; i++)
-        for (size_t j = 0; j < 4; j++)
-          m.m[i][j] = val_json[i].is_array() && val_json[i].size() > static_cast<size_t>(j)
-                          ? val_json[i][j].get<double>()
+      for (size_t row = 0; row < 4; row++)
+        for (size_t col = 0; col < 4; col++)
+          m.m[row][col] = val_json[row].is_array() && val_json[row].size() > col
+                          ? val_json[row][col].get<double>()
                           : 0.0;
       return make_scalar(m);
     }

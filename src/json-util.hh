@@ -1,18 +1,9 @@
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#endif
-
-#include "external/jsonhpp/nlohmann/json.hpp"
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
-
 #pragma once
+
+#include "minijson.hh"
 
 namespace tinyusdz {
 
-using json = nlohmann::json;
+using json = minijson::Value;
 
 } // namespace tinyusdz

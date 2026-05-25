@@ -5132,7 +5132,8 @@ class TinyUSDZLoaderNative {
 
     const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
     
-    nlohmann::json json_obj = tinyusdz::ToJSON(curr);
+    tinyusdz::USDToJSONContext context;
+    tinyusdz::minijson::Value json_obj = tinyusdz::ToJSONValue(curr, context);
     return json_obj.dump(2); // Pretty print with 2 spaces
   }
 
