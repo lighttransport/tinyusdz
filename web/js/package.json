@@ -1,7 +1,7 @@
 {
   "name": "tinyusdz",
   "private": false,
-  "version": "0.9.9-rc3",
+  "version": "0.9.9-rc4",
   "type": "module",
   "scripts": {
     "dev": "vite",
