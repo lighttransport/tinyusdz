@@ -20,6 +20,24 @@ namespace tinyusdz {
 
 using json = minijson::Value;
 
+static bool GetSizeT(const json &value, size_t *out, const char *name,
+                     std::string *err) {
+  if (!out) {
+    if (err) {
+      (*err) = std::string(name ? name : "value") + " output pointer is null";
+    }
+    return false;
+  }
+  if (value.as_size_t(out)) {
+    return true;
+  }
+
+  if (err) {
+    (*err) = std::string(name ? name : "value") + " must be a non-negative integer";
+  }
+  return false;
+}
+
 ///
 /// JSON to USD conversion context (stores buffers, views, and accessors for deserialization)
 ///
@@ -54,7 +72,10 @@ bool JSONToUSDContext::ParseBuffers(const json& j, std::string* err) {
       return false;
     }
     
-    size_t byteLength = buffer_obj["byteLength"].get<size_t>();
+    size_t byteLength = 0;
+    if (!GetSizeT(buffer_obj["byteLength"], &byteLength, "buffer.byteLength", err)) {
+      return false;
+    }
     std::string uri = buffer_obj["uri"].get<std::string>();
     
     std::vector<uint8_t> buffer_data;
@@ -117,13 +138,17 @@ bool JSONToUSDContext::ParseBufferViews(const json& j, std::string* err) {
     }
     
     JSONBufferView bufferView;
-    bufferView.buffer = bufferView_obj["buffer"].get<size_t>();
-    bufferView.byteOffset = bufferView_obj["byteOffset"].get<size_t>();  
-    bufferView.byteLength = bufferView_obj["byteLength"].get<size_t>();
+    if (!GetSizeT(bufferView_obj["buffer"], &bufferView.buffer, "bufferView.buffer", err) ||
+        !GetSizeT(bufferView_obj["byteOffset"], &bufferView.byteOffset, "bufferView.byteOffset", err) ||
+        !GetSizeT(bufferView_obj["byteLength"], &bufferView.byteLength, "bufferView.byteLength", err)) {
+      return false;
+    }
     bufferView.byteStride = 0;
     
     if (bufferView_obj.contains("byteStride")) {
-      bufferView.byteStride = bufferView_obj["byteStride"].get<size_t>();
+      if (!GetSizeT(bufferView_obj["byteStride"], &bufferView.byteStride, "bufferView.byteStride", err)) {
+        return false;
+      }
     }
     
     bufferViews.push_back(bufferView);
@@ -150,14 +175,20 @@ bool JSONToUSDContext::ParseAccessors(const json& j, std::string* err) {
     }
     
     JSONAccessor accessor;
-    accessor.bufferView = accessor_obj["bufferView"].get<size_t>();
+    if (!GetSizeT(accessor_obj["bufferView"], &accessor.bufferView, "accessor.bufferView", err)) {
+      return false;
+    }
     accessor.byteOffset = 0;
     accessor.componentType = accessor_obj["componentType"].get<std::string>();
-    accessor.count = accessor_obj["count"].get<size_t>();
+    if (!GetSizeT(accessor_obj["count"], &accessor.count, "accessor.count", err)) {
+      return false;
+    }
     accessor.type = accessor_obj["type"].get<std::string>();
     
     if (accessor_obj.contains("byteOffset")) {
-      accessor.byteOffset = accessor_obj["byteOffset"].get<size_t>();
+      if (!GetSizeT(accessor_obj["byteOffset"], &accessor.byteOffset, "accessor.byteOffset", err)) {
+        return false;
+      }
     }
     
     accessors.push_back(accessor);
@@ -357,7 +388,9 @@ static bool ParseArrayFromJSON(const json& j, JSONToUSDContext* context, std::st
     return false;
   }
   
-  *count = j["count"].get<size_t>();
+  if (!GetSizeT(j["count"], count, "count", err)) {
+    return false;
+  }
   *type = j["type"].get<std::string>();
   
   // Check for base64 mode
@@ -389,7 +422,9 @@ static bool ParseArrayFromJSON(const json& j, JSONToUSDContext* context, std::st
       return false;
     }
     
-    *accessor_index = j["accessor"].get<size_t>();
+    if (!GetSizeT(j["accessor"], accessor_index, "accessor", err)) {
+      return false;
+    }
     base64_data->clear();  // No base64 data in accessor mode
     return true;
   }
