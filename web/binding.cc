@@ -38,6 +38,7 @@
 #include "tydra/mcp-resources.hh"
 #include "tydra/mcp-tools.hh"
 #include "tydra/urdf-to-usd.hh"
+#include "minijson.hh"
 #include "usd-to-json.hh"
 #include "json-to-usd.hh"
 #include "usda-writer.hh"

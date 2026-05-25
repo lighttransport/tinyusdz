@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include "layer.hh"
+#include "minijson.hh"
 #include "tinyusdz.hh"
 #include "io-util.hh"
 

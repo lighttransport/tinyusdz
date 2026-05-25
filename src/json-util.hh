@@ -1,8 +1,10 @@
 #pragma once
 
-#include "minijson.hh"
-
 namespace tinyusdz {
+
+namespace minijson {
+class Value;
+}
 
 using json = minijson::Value;
 

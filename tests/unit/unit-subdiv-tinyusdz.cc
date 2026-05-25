@@ -128,11 +128,11 @@ void subdiv_validate_halfedge_test(void) {
   TEST_CHECK(!oob.IsValid());
 
   // Face with 2 vertices fails
-  HalfEdgeMesh small;
-  small.points              = {0,0,0, 1,0,0};
-  small.face_vertex_counts  = {2};
-  small.face_vertex_indices = {0, 1};
-  TEST_CHECK(!small.IsValid());
+  HalfEdgeMesh small_face_mesh;
+  small_face_mesh.points              = {0,0,0, 1,0,0};
+  small_face_mesh.face_vertex_counts  = {2};
+  small_face_mesh.face_vertex_indices = {0, 1};
+  TEST_CHECK(!small_face_mesh.IsValid());
 
   // Count / index size mismatch
   HalfEdgeMesh mismatch = MakeQuad();
