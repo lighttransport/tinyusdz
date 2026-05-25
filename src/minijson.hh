@@ -73,7 +73,7 @@ class Value {
   Value(int v);
   Value(int64_t v);
   Value(unsigned int v);
-#if defined(__EMSCRIPTEN__)
+#if defined(__EMSCRIPTEN__) || defined(__APPLE__) || defined(_WIN32)
   Value(unsigned long v);
 #endif
   Value(uint64_t v);
@@ -142,7 +142,7 @@ class Value {
   Value &operator=(int v);
   Value &operator=(int64_t v);
   Value &operator=(unsigned int v);
-#if defined(__EMSCRIPTEN__)
+#if defined(__EMSCRIPTEN__) || defined(__APPLE__) || defined(_WIN32)
   Value &operator=(unsigned long v);
 #endif
   Value &operator=(uint64_t v);
@@ -212,7 +212,7 @@ inline unsigned int Value::get<unsigned int>() const {
   return static_cast<unsigned int>(ret);
 }
 
-#if defined(__EMSCRIPTEN__)
+#if defined(__EMSCRIPTEN__) || defined(__APPLE__) || defined(_WIN32)
 template <>
 inline unsigned long Value::get<unsigned long>() const {
   uint64_t ret = 0;

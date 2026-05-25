@@ -24,7 +24,7 @@ inline bool mul(A a, B b, size_t* out) {
                 "mul requires integral types");
   size_t sa = static_cast<size_t>(a);
   size_t sb = static_cast<size_t>(b);
-  if ((sb != 0) && (sa > std::numeric_limits<size_t>::max() / sb)) {
+  if ((sb != 0) && (sa > (std::numeric_limits<size_t>::max)() / sb)) {
     return false;  // overflow would occur
   }
   *out = sa * sb;
@@ -54,7 +54,7 @@ inline bool add(A a, B b, size_t* out) {
                 "add requires integral types");
   size_t sa = static_cast<size_t>(a);
   size_t sb = static_cast<size_t>(b);
-  if (sa > std::numeric_limits<size_t>::max() - sb) {
+  if (sa > (std::numeric_limits<size_t>::max)() - sb) {
     return false;  // overflow would occur
   }
   *out = sa + sb;
@@ -73,7 +73,7 @@ inline bool n_to_size(uint64_t n, size_t* out) {
   // -Wtautological-type-limit-compare flags it. `if constexpr` does not
   // discard the body at template-definition time, so use the preprocessor.
 #if SIZE_MAX < UINT64_MAX
-  if (n > std::numeric_limits<size_t>::max()) {
+  if (n > (std::numeric_limits<size_t>::max)()) {
     return false;
   }
 #endif

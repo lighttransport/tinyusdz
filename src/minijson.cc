@@ -687,7 +687,7 @@ Value::Value(bool v) { *this = v; }
 Value::Value(int v) { *this = static_cast<int64_t>(v); }
 Value::Value(int64_t v) { *this = v; }
 Value::Value(unsigned int v) { *this = static_cast<uint64_t>(v); }
-#if defined(__EMSCRIPTEN__)
+#if defined(__EMSCRIPTEN__) || defined(__APPLE__) || defined(_WIN32)
 Value::Value(unsigned long v) { *this = static_cast<uint64_t>(v); }
 #endif
 Value::Value(uint64_t v) { *this = v; }
@@ -917,7 +917,7 @@ Value &Value::operator=(unsigned int v) {
   return (*this = static_cast<uint64_t>(v));
 }
 
-#if defined(__EMSCRIPTEN__)
+#if defined(__EMSCRIPTEN__) || defined(__APPLE__) || defined(_WIN32)
 Value &Value::operator=(unsigned long v) {
   return (*this = static_cast<uint64_t>(v));
 }

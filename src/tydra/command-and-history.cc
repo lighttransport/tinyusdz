@@ -3,6 +3,7 @@
 #include "command-and-history.hh"
 
 #include "json-util.hh"
+#include "minijson.hh"
 
 
 namespace tinyusdz {
