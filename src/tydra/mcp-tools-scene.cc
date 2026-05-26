@@ -241,6 +241,9 @@ void PrimToJSON(const Prim &prim, nlohmann::json &j, int max_depth,
 // ---------------------------------------------------------------------------
 nonstd::optional<value::Value> ReadPrimAttribute(const Prim &prim,
                                                   const std::string &attr_name) {
+  (void)prim;
+  (void)attr_name;
+
   // Generic approach: get the prim's data and try to read the attribute
   // through the stage's generic attribute API. For now, we only handle
   // primvars: prefixed attributes and well-known displayColor/displayOpacity.
@@ -255,6 +258,7 @@ nonstd::optional<value::Value> ReadPrimAttribute(const Prim &prim,
 bool StageNew(Context &ctx, const nlohmann::json &args,
               nlohmann::json &result, std::string &err) {
   (void)args;
+  (void)err;
 
   ctx.stage = std::unique_ptr<Stage>(new Stage(Stage::CreateInMemory()));
   ctx.stage_loaded = true;
@@ -705,6 +709,8 @@ bool PrimRemove(Context &ctx, const nlohmann::json &args,
 // ===========================================================================
 bool PrimRename(Context &ctx, const nlohmann::json &args,
                 nlohmann::json &result, std::string &err) {
+  (void)result;
+
   if (!ctx.stage || !ctx.stage_loaded) {
     err = "No stage loaded";
     return false;
@@ -720,6 +726,7 @@ bool PrimRename(Context &ctx, const nlohmann::json &args,
 
   std::string path_str = args["path"].get<std::string>();
   std::string new_name = args["new_name"].get<std::string>();
+  (void)new_name;
 
   tinyusdz::Path path(path_str, "");
   if (!path.is_valid()) {
@@ -899,6 +906,8 @@ bool AttrGet(Context &ctx, const nlohmann::json &args,
 // ===========================================================================
 bool AttrSet(Context &ctx, const nlohmann::json &args,
              nlohmann::json &result, std::string &err) {
+  (void)result;
+
   if (!ctx.stage || !ctx.stage_loaded) {
     err = "No stage loaded";
     return false;
@@ -919,6 +928,7 @@ bool AttrSet(Context &ctx, const nlohmann::json &args,
   std::string path_str = args["path"].get<std::string>();
   std::string attr_name = args["attr_name"].get<std::string>();
   nlohmann::json value_json = args["value"];
+  (void)attr_name;
 
   // Convert JSON value to value::Value
   auto val = JSONToValue(value_json, &err);
@@ -947,6 +957,8 @@ bool AttrSet(Context &ctx, const nlohmann::json &args,
 // ===========================================================================
 bool AttrBlock(Context &ctx, const nlohmann::json &args,
                nlohmann::json &result, std::string &err) {
+  (void)result;
+
   if (!ctx.stage || !ctx.stage_loaded) {
     err = "No stage loaded";
     return false;
@@ -969,6 +981,8 @@ bool AttrBlock(Context &ctx, const nlohmann::json &args,
 // ===========================================================================
 bool AttrConnections(Context &ctx, const nlohmann::json &args,
                      nlohmann::json &result, std::string &err) {
+  (void)result;
+
   if (!ctx.stage || !ctx.stage_loaded) {
     err = "No stage loaded";
     return false;
@@ -984,6 +998,8 @@ bool AttrConnections(Context &ctx, const nlohmann::json &args,
 
   std::string path_str = args["path"].get<std::string>();
   std::string attr_name = args["attr_name"].get<std::string>();
+  (void)path_str;
+  (void)attr_name;
 
   // Connections are authored at the Layer level
   err = "Attribute connections via MCP tools not yet implemented. Use run_script with JS API.";

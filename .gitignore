@@ -6,6 +6,7 @@
 # App-specific
 build/
 build-tinysubdiv/
+build-*/
 web/demo/dist/
 web/site/dist/
 web/cmake-build/

@@ -47,22 +47,10 @@ option("system_zlib",          {default = false, description = "Use system zlib 
 option("system_zstd",          {default = false, description = "Use system zstd instead of bundled version"})
 
 -- ============================================================================
--- crate-encoding library
+-- (crate path utilities — path sorting / tree encoding for the USDC writer — are
+--  now compiled directly into the main library from src/crate-path-utils/; the
+--  former sandbox/path-sort-and-encode-crate "crate-encoding" target is deprecated.)
 -- ============================================================================
-
-target("crate-encoding")
-    set_kind("static")
-    set_languages("c++17")
-    add_files(
-        "sandbox/path-sort-and-encode-crate/src/path_sort.cc",
-        "sandbox/path-sort-and-encode-crate/src/tree_encode.cc"
-    )
-    add_includedirs("sandbox/path-sort-and-encode-crate/include", {public = true})
-    set_policy("build.across_targets_in_parallel", true)
-    if not is_plat("windows") then
-        add_cxxflags("-fPIC")
-    end
-target_end()
 
 -- ============================================================================
 -- Main library
@@ -74,9 +62,6 @@ target("tinyusdz_static")
 
     -- Include directories
     add_includedirs("src", {public = true})
-
-    -- Dependency on crate-encoding
-    add_deps("crate-encoding")
 
     -- PIC
     if not is_plat("windows") then
@@ -94,6 +79,10 @@ target("tinyusdz_static")
     -- ========================================================================
 
     add_files(
+        -- Crate path utilities (path sorting / tree encoding for the USDC writer;
+        -- formerly the sandbox/path-sort-and-encode-crate target).
+        "src/crate-path-utils/path_sort.cc",
+        "src/crate-path-utils/tree_encode.cc",
         "src/arg-parser.cc",
         "src/asset-resolution.cc",
         "src/tinyusdz.cc",
@@ -103,14 +92,24 @@ target("tinyusdz_static")
         "src/ascii-parser-props.cc",
         "src/ascii-parser-entry.cc",
         "src/ascii-parser-basetype.cc",
+        "src/ascii-parser-basetype-inst.cc",
         "src/ascii-parser-timesamples.cc",
         "src/ascii-parser-timesamples-array.cc",
         "src/audio-loader.cc",
         "src/base122.cc",
         "src/usda-reader.cc",
+        "src/usda-reader-reconstruct-1.cc",
+        "src/usda-reader-reconstruct-2.cc",
+        "src/usda-reader-reconstruct-3.cc",
+        "src/usda-reader-reconstruct-4.cc",
         "src/usdc-reader.cc",
         "src/usdc-reader-property.cc",
         "src/usdc-reader-prim.cc",
+        "src/usdc-reader-prim-parse.cc",
+        "src/usdc-reader-prim-reconstruct-1.cc",
+        "src/usdc-reader-prim-reconstruct-2.cc",
+        "src/usdc-reader-prim-reconstruct-3.cc",
+        "src/usdc-reader-prim-reconstruct-4.cc",
         "src/usdc-reader-reconstruct.cc",
         "src/usda-writer.cc",
         "src/usdc-writer.cc",
@@ -124,6 +123,8 @@ target("tinyusdz_static")
         "src/crate-reader-timesamples.cc",
         "src/crate-format.cc",
         "src/crate-writer.cc",
+        "src/crate-writer-values.cc",
+        "src/crate-writer-inline.cc",
         "src/stage-converter.cc",
         "src/sconv-geom.cc",
         "src/sconv-shader.cc",
@@ -134,9 +135,19 @@ target("tinyusdz_static")
         "src/crate-dump.cc",
         "src/path-util.cc",
         "src/prim-reconstruct.cc",
+        "src/prim-reconstruct2.cc",
+        "src/prim-reconstruct3.cc",
+        "src/prim-reconstruct-geom.cc",
+        "src/prim-reconstruct-geom2.cc",
+        "src/prim-reconstruct-geom3.cc",
+        "src/prim-reconstruct-lightprim.cc",
         "src/prim-reconstruct-shader.cc",
+        "src/prim-reconstruct-shader2.cc",
+        "src/prim-reconstruct-shader3.cc",
+        "src/prim-reconstruct-shader4.cc",
         "src/prim-composition.cc",
         "src/prim-types.cc",
+        "src/prim-types-schema.cc",
         "src/core/prim-enums.cc",
         "src/enum-handlers.cc",
         "src/layer.cc",
@@ -144,7 +155,13 @@ target("tinyusdz_static")
         "src/str-util.cc",
         "src/usd-dump.cc",
         "src/value-pprint.cc",
+        "src/value-pprint-dispatch.cc",
+        "src/value-pprint-prim.cc",
         "src/value-types.cc",
+        "src/value-types-typename.cc",
+        "src/value-types-cast.cc",
+        "src/value-types-matrix.cc",
+        "src/value-types-lerp.cc",
         "src/color-space.cc",
         "src/tiny-format.cc",
         "src/tiny-string.cc",
@@ -155,6 +172,13 @@ target("tinyusdz_static")
         "src/linear-algebra.cc",
         "src/value-eval-util.cc",
         "src/usdGeom.cc",
+        "src/usdGeom-accessors.cc",
+        "src/usdGeom-primvar-inst-scalar-a.cc",
+        "src/usdGeom-primvar-inst-scalar-b.cc",
+        "src/usdGeom-primvar-inst-vec-a.cc",
+        "src/usdGeom-primvar-inst-vec-b.cc",
+        "src/usdGeom-primvar-inst-role-a.cc",
+        "src/usdGeom-primvar-inst-role-b.cc",
         "src/usdSkel.cc",
         "src/usdShade.cc",
         "src/usdLux.cc",
@@ -163,6 +187,7 @@ target("tinyusdz_static")
         "src/mtlx-dom.cc",
         "src/mtlx-simple-parser.cc",
         "src/usdMtlx.cc",
+        "src/usdMtlx-write.cc",
         "src/usdObj.cc",
         "src/pprint-enum.cc",
         "src/pprint-meta.cc",
@@ -173,6 +198,7 @@ target("tinyusdz_static")
         "src/pprinter.cc",
         "src/timesamples-pprint.cc",
         "src/timesamples.cc",
+        "src/timesamples-eval.cc",
         "src/stage.cc",
         "src/uuid-gen.cc",
         "src/parser-timing.cc",
@@ -296,16 +322,22 @@ target("tinyusdz_static")
             "src/tydra/facial.cc",
             "src/tydra/prim-apply.cc",
             "src/tydra/scene-access.cc",
+            "src/tydra/scene-access-listprims-inst.cc",
+            "src/tydra/scene-access-listshaders-inst.cc",
             "src/tydra/scene-analysis.cc",
             "src/tydra/attribute-eval.cc",
             "src/tydra/attribute-eval-typed-all.cc",
+            "src/tydra/attribute-eval-typed-inst-scalar.cc",
+            "src/tydra/attribute-eval-typed-inst-array.cc",
             "src/tydra/command-and-history.cc",
             "src/tydra/obj-export.cc",
             "src/tydra/usd-export.cc",
             "src/tydra/shader-network.cc",
             "src/tydra/render-data.cc",
             "src/tydra/render-data-mesh.cc",
+            "src/tydra/render-data-mesh-tangent.cc",
             "src/tydra/render-data-material.cc",
+            "src/tydra/render-data-material-mtlx.cc",
             "src/tydra/render-data-anim.cc",
             "src/tydra/render-data-pprint.cc",
             "src/tydra/raytracing-data.cc",
@@ -563,7 +595,6 @@ if has_config("shared_lib") then
         -- Clone all settings from static target (xmake doesn't support target cloning,
         -- so for shared lib, users should use CMake or Meson which handle this better)
         -- This is a simplified version; for full shared lib support use CMake.
-        add_deps("crate-encoding")
         add_includedirs("src", {public = true})
         if is_plat("linux") then
             add_syslinks("dl")

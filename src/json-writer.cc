@@ -6,18 +6,6 @@
 // NOTE: dtos() from str-util.hh uses dragonbox algorithm for
 // shortest float-to-string conversion
 
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#endif
-
-// nlohmann json
-#include "external/jsonhpp/nlohmann/json.hpp"
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
-
 #include "common-macros.inc"
 
 namespace tinyusdz {

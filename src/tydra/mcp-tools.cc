@@ -16,6 +16,7 @@
 #include "tinyusdz.hh"
 #include "uuid-gen.hh"
 #include "value-to-json.hh"
+#include "common-macros.inc"
 
 #ifdef __clang__
 #pragma clang diagnostic push

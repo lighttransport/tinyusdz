@@ -44,20 +44,31 @@ bool VariantConverter::ConvertVariants(const Stage &stage, RenderScene *scene,
 
 bool VariantConverter::TraverseForVariants(const Prim &prim, RenderScene *scene,
                                            std::string *err) {
-  // Check if this Prim has variantSets
-  const auto &variant_sets = prim.variantSets();
-  if (!variant_sets.empty()) {
-    int32_t group_idx = ExtractVariantGroup(prim, scene, err);
-    if (group_idx >= 0) {
-      // Extract variant selections if they exist
-      ExtractVariantSelections(prim, group_idx, scene, err);
-    }
-  }
+  // Iterative pre-order DFS (explicit heap worklist) so deeply nested prim
+  // hierarchies cannot overflow the call stack. Children are pushed in reverse
+  // so they are visited left-to-right, matching the original recursive order
+  // (variant group indices are assigned in traversal order).
+  std::vector<const Prim *> stack;
+  stack.push_back(&prim);
 
-  // Recursively traverse children
-  for (const auto &child : prim.children()) {
-    if (!TraverseForVariants(child, scene, err)) {
-      // Continue with other children
+  while (!stack.empty()) {
+    const Prim *p = stack.back();
+    stack.pop_back();
+
+    // Check if this Prim has variantSets
+    const auto &variant_sets = p->variantSets();
+    if (!variant_sets.empty()) {
+      int32_t group_idx = ExtractVariantGroup(*p, scene, err);
+      if (group_idx >= 0) {
+        // Extract variant selections if they exist
+        ExtractVariantSelections(*p, group_idx, scene, err);
+      }
+    }
+
+    // Push children in reverse for left-to-right pre-order traversal.
+    const auto &children = p->children();
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+      stack.push_back(&(*it));
     }
   }
 

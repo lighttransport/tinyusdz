@@ -269,6 +269,17 @@
 				}
 			};
 
+			// Escape a string for safe interpolation into HTML. Animation clip
+			// names come from untrusted USD files and must never reach innerHTML raw.
+			function escapeHtml(value) {
+				return String(value)
+					.replace(/&/g, '&amp;')
+					.replace(/</g, '&lt;')
+					.replace(/>/g, '&gt;')
+					.replace(/"/g, '&quot;')
+					.replace(/'/g, '&#39;');
+			}
+
 			// Function to update animation list display
 			window.updateAnimationList = function(animations, animationInfos) {
 				const animInfo = document.getElementById('animation-info');
@@ -292,7 +303,7 @@
 						}
 
 						const trackCount = anim.tracks ? anim.tracks.length : 0;
-						item.innerHTML = `<strong>${index}:</strong> ${anim.name || 'Unnamed'} - ${anim.duration.toFixed(2)}s, ${trackCount} tracks${jointInfo}`;
+						item.innerHTML = `<strong>${index}:</strong> ${escapeHtml(anim.name || 'Unnamed')} - ${anim.duration.toFixed(2)}s, ${trackCount} tracks${jointInfo}`;
 						animList.appendChild(item);
 					});
 				} else {

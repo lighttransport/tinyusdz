@@ -9,6 +9,7 @@
 # from the typed-attribute None case in none-001.usda (where None
 # blocks a `primvars:myint` value), here None clears the apiSchemas
 # array-typed prim metadatum.
+# XDIFF: Pixar usdcat preserves explicit apiSchemas = None metadata that tusdcat omits.
 
 def Mesh "m" (
     apiSchemas = None

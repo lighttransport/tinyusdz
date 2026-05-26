@@ -18,7 +18,8 @@
 #include "core/meta-variable.hh"     // MetaVariable, CustomDataType, VariantSelectionMap
 #include "core/list-op.hh"           // ListOp
 #include "value-types.hh"
-#include "typed-array.hh"
+#include "timesamples.hh"  // value::TimeSamples / TypeTraits<TimeSamples> (value-types.hh no longer pulls timesamples.hh transitively)
+#include "typed-array-core.hh"
 #include "mmap-array-ref.hh"
 
 #if defined(__clang__)
@@ -399,98 +400,22 @@ class CrateValue {
   //std::string GetTypeName() const;
   //uint32_t GetTypeId() const;
 
-#define SET_TYPE_SCALAR(__ty) void Set(const __ty& v) { value_ = v; } void Set(__ty&& v) { value::Value src(std::move(v)); value_ = std::move(src); }
-//#define MOVE_SET_TYPE_SCALAR(__ty) void MoveSet(__ty&& v) { TUSDZ_LOG_I("move set"); value::Value src(std::move(v)); value_ = std::move(src); }
-
-#define SET_TYPE_1D(__ty) void Set(const std::vector<__ty> &v) { value_ = v; }
-
-// TODO: Use TypedArray
-#define MOVE_SET_TYPE_1D(__ty) void Set(std::vector<__ty> &&v) { value::Value src(std::move(v)); value_ = std::move(src); }
-
-#define SET_TYPE_LIST(__FUNC) \
-  __FUNC(int64_t) \
-  __FUNC(uint64_t) \
-  __FUNC(value::half) \
-  __FUNC(value::half2) \
-  __FUNC(value::half3) \
-  __FUNC(value::half4) \
-  __FUNC(int) \
-  __FUNC(value::int2) \
-  __FUNC(value::int3) \
-  __FUNC(value::int4) \
-  __FUNC(uint32_t) \
-  __FUNC(value::uint2) \
-  __FUNC(value::uint3) \
-  __FUNC(value::uint4) \
-  __FUNC(float) \
-  __FUNC(value::float2) \
-  __FUNC(value::float3) \
-  __FUNC(value::float4) \
-  __FUNC(double) \
-  __FUNC(value::double2) \
-  __FUNC(value::double3) \
-  __FUNC(value::double4) \
-  __FUNC(value::quath) \
-  __FUNC(value::quatf) \
-  __FUNC(value::quatd) \
-  __FUNC(value::matrix2d) \
-  __FUNC(value::matrix3d) \
-  __FUNC(value::matrix4d) \
-  __FUNC(value::AssetPath) \
-  __FUNC(value::token) \
-  __FUNC(std::string)
-
-
-  // Note: Use bool and std::vector<bool> as-is in C++ layer, but its serialized as 8bit in Crate binary.
-  SET_TYPE_SCALAR(bool)
-  SET_TYPE_1D(bool)
-
-  SET_TYPE_SCALAR(Specifier)
-  SET_TYPE_SCALAR(Permission)
-  SET_TYPE_SCALAR(Variability)
-  SET_TYPE_SCALAR(value::dict)
-
-  SET_TYPE_SCALAR(value::ValueBlock)
-
-  SET_TYPE_SCALAR(ListOp<value::token>)
-  SET_TYPE_SCALAR(ListOp<std::string>)
-  SET_TYPE_SCALAR(ListOp<Path>)
-  SET_TYPE_SCALAR(ListOp<Reference>)
-  SET_TYPE_SCALAR(ListOp<int32_t>)
-  SET_TYPE_SCALAR(ListOp<uint32_t>)
-  SET_TYPE_SCALAR(ListOp<int64_t>)
-  SET_TYPE_SCALAR(ListOp<uint64_t>)
-  SET_TYPE_SCALAR(ListOp<Payload>)
-
-  SET_TYPE_SCALAR(std::vector<Path>)
-  // vector<double> is defined in SET_TYPE_LIST(SET_TYPE_1D)
-  //SET_TYPE_SCALAR(std::vector<double>)
-  SET_TYPE_SCALAR(std::vector<LayerOffset>)
-  SET_TYPE_SCALAR(Payload)
-  SET_TYPE_SCALAR(VariantSelectionMap)
-
-  SET_TYPE_SCALAR(value::TimeSamples)
-  SET_TYPE_SCALAR(CustomDataType) // for (type-restricted) dist
-
-  SET_TYPE_LIST(SET_TYPE_SCALAR)
-  //SET_TYPE_LIST(MOVE_SET_TYPE_SCALAR)
-
-
-  SET_TYPE_LIST(SET_TYPE_1D)
-  SET_TYPE_LIST(MOVE_SET_TYPE_1D)
-
-  // TypedArray Set methods for efficient array handling with mmap support
-#define SET_TYPE_TYPED_ARRAY(__ty) void Set(const TypedArray<__ty> &v) { value_ = v; }
-#define MOVE_SET_TYPE_TYPED_ARRAY(__ty) void Set(TypedArray<__ty> &&v) { value::Value src(std::move(v)); value_ = std::move(src); }
-
-  SET_TYPE_LIST(SET_TYPE_TYPED_ARRAY)
-  SET_TYPE_LIST(MOVE_SET_TYPE_TYPED_ARRAY)
-
-#define SET_TYPE_CHUNKED_TYPED_ARRAY(__ty) void Set(const ChunkedTypedArray<__ty> &v) { value_ = v; }
-#define MOVE_SET_TYPE_CHUNKED_TYPED_ARRAY(__ty) void Set(ChunkedTypedArray<__ty> &&v) { value::Value src(std::move(v)); value_ = std::move(src); }
-  
-  SET_TYPE_LIST(SET_TYPE_CHUNKED_TYPED_ARRAY)
-  SET_TYPE_LIST(MOVE_SET_TYPE_CHUNKED_TYPED_ARRAY)
+  // Store a value. value_ (a value::Value) accepts any registered USD value type
+  // through its converting constructor — scalars, 1D arrays (std::vector<T>),
+  // TypedArray/ChunkedTypedArray, ListOp<>, TimeSamples, dict, Payload,
+  // VariantSelectionMap, the Specifier/Permission/Variability enums, ... — so this
+  // single constrained forwarding template replaces the ~260 type-specific Set()
+  // overloads this class used to generate via macros. Those overloads were a large
+  // per-TU parse cost (CrateValue is parsed in every crate translation unit).
+  // Serialization still dispatches on value_.type_id(), so the set of
+  // crate-writable types is unchanged; an unsupported T fails at value::Value
+  // construction exactly as before it failed to find an overload.
+  template <typename T,
+            typename = typename std::enable_if<
+                !std::is_same<typename std::decay<T>::type, CrateValue>::value>::type>
+  void Set(T &&v) {
+    value_ = std::forward<T>(v);
+  }
 
 
   // Type-safe way to get concrete value.
@@ -566,4 +491,3 @@ namespace value {
 } // namespace value
 
 } // namespace tinyusdz
-

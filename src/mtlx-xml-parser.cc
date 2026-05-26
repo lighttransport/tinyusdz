@@ -458,9 +458,19 @@ bool MaterialXParser::ValidateVersion(const std::string& version) {
          supported_versions.end();
 }
 
-bool MaterialXParser::ValidateNode(XMLNodePtr node) {
-  if (!node) return false;
-  
+bool MaterialXParser::ValidateNode(XMLNodePtr root_node) {
+  // Iterative pre-order DFS (heap worklist) so deeply nested MaterialX node
+  // trees cannot overflow the call stack. Children are pushed in reverse so
+  // they are visited left-to-right, preserving warning-accumulation order.
+  std::vector<XMLNodePtr> stack;
+  stack.push_back(root_node);
+
+  while (!stack.empty()) {
+    XMLNodePtr node = stack.back();
+    stack.pop_back();
+
+    if (!node) return false;
+
   const std::string& name = node->GetName();
   
   // Validate known MaterialX elements
@@ -487,13 +497,13 @@ bool MaterialXParser::ValidateNode(XMLNodePtr node) {
     warning_ += "Unknown type: " + type + " in <" + name + ">\n";
   }
   
-  // Validate children recursively
-  for (const auto& child : node->GetChildren()) {
-    if (!ValidateNode(child)) {
-      return false;
-    }
+  // Enqueue children in reverse for left-to-right pre-order traversal.
+  const auto& children = node->GetChildren();
+  for (auto it = children.rbegin(); it != children.rend(); ++it) {
+    stack.push_back(*it);
   }
-  
+  }  // while
+
   return true;
 }
 

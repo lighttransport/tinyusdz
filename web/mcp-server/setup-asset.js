@@ -32,13 +32,29 @@ console.log(descriptions);
 
 let client = null;
 const baseUrl = new URL(url);
+
+// The HTTP MCP server requires a bearer token (see server-http.js). Read it
+// from MCP_AUTH_TOKEN and attach it as an Authorization header to every
+// request the transport makes.
+const authToken = process.env.MCP_AUTH_TOKEN;
+if (!authToken) {
+  console.warn(
+    "MCP_AUTH_TOKEN is not set; the server requires a bearer token and will " +
+    "reject requests with 401. Set MCP_AUTH_TOKEN to the server's token."
+  );
+}
+const requestInit = authToken
+  ? { headers: { Authorization: `Bearer ${authToken}` } }
+  : undefined;
+
 try {
   client = new Client({
     name: 'streamable-http-client',
     version: '1.0.0'
   });
   const transport = new StreamableHTTPClientTransport(
-    new URL(baseUrl)
+    new URL(baseUrl),
+    { requestInit }
   );
   await client.connect(transport);
   console.log("Connected using Streamable HTTP transport");
@@ -50,7 +66,10 @@ try {
     name: 'sse-client',
     version: '1.0.0'
   });
-  const sseTransport = new SSEClientTransport(baseUrl);
+  const sseTransport = new SSEClientTransport(baseUrl, {
+    requestInit,
+    eventSourceInit: requestInit ? { fetch: (u, init) => fetch(u, { ...init, headers: { ...init?.headers, ...requestInit.headers } }) } : undefined,
+  });
   await client.connect(sseTransport);
   console.log("Connected using SSE transport");
 }

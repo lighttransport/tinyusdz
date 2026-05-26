@@ -62,8 +62,11 @@ inline void print_attr_metas_block(std::stringstream &ss,
 // TimeSamples printing templates
 // ============================================================================
 
+// Enum-valued timesamples: stored as int64 in a type-erased value::TimeSamples;
+// cast each sample back to the concrete enum T and stream it (T's operator<<
+// renders the token name).
 template <typename T>
-inline std::string print_typed_timesamples(const TypedTimeSamples<T> &v,
+inline std::string print_enum_timesamples(const value::TimeSamples &v,
                                            const uint32_t indent = 0) {
   std::stringstream ss;
 
@@ -75,8 +78,8 @@ inline std::string print_typed_timesamples(const TypedTimeSamples<T> &v,
     ss << pprint::Indent(indent + 1) << samples[i].t << ": ";
     if (samples[i].blocked) {
       ss << "None";
-    } else {
-      ss << samples[i].value;
+    } else if (const int64_t *iv = samples[i].value.template as<int64_t>()) {
+      ss << static_cast<T>(*iv);
     }
     ss << ",\n";
   }
@@ -86,8 +89,37 @@ inline std::string print_typed_timesamples(const TypedTimeSamples<T> &v,
   return ss.str();
 }
 
+// Value-type timesamples from a type-erased value::TimeSamples store. Each
+// sample.value is a value::Value; extract the typed T and stream it so the
+// output is byte-identical to the typed printer above.
 template <typename T>
-inline std::string print_typed_token_timesamples(const TypedTimeSamples<T> &v,
+inline std::string print_value_typed_timesamples(const value::TimeSamples &v,
+                                                  const uint32_t indent = 0) {
+  std::stringstream ss;
+
+  ss << "{\n";
+
+  const auto &samples = v.get_samples();
+
+  for (size_t i = 0; i < samples.size(); i++) {
+    ss << pprint::Indent(indent + 1) << samples[i].t << ": ";
+    if (samples[i].blocked) {
+      ss << "None";
+    } else if (const T *pv = samples[i].value.as<T>()) {
+      ss << *pv;
+    }
+    ss << ",\n";
+  }
+
+  ss << pprint::Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
+// Enum-valued attributes that serialize as quoted tokens (Purpose, Visibility,
+// ...). Stored as int64; cast back to the concrete enum T and quote its token.
+template <typename T>
+inline std::string print_enum_token_timesamples(const value::TimeSamples &v,
                                                  const uint32_t indent = 0) {
   std::stringstream ss;
 
@@ -99,8 +131,8 @@ inline std::string print_typed_token_timesamples(const TypedTimeSamples<T> &v,
     ss << pprint::Indent(indent + 1) << samples[i].t << ": ";
     if (samples[i].blocked) {
       ss << "None";
-    } else {
-      ss << quote(to_string(samples[i].value));
+    } else if (const int64_t *iv = samples[i].value.template as<int64_t>()) {
+      ss << quote(to_string(static_cast<T>(*iv)));
     }
     ss << ",\n";
   }
@@ -110,8 +142,10 @@ inline std::string print_typed_token_timesamples(const TypedTimeSamples<T> &v,
   return ss.str();
 }
 
-inline std::string print_str_timesamples(
-    const TypedTimeSamples<std::string> &v, const uint32_t indent = 0) {
+// Token timesamples from a type-erased value::TimeSamples store (value::token,
+// which is a registered value type).
+inline std::string print_value_token_timesamples(const value::TimeSamples &v,
+                                                  const uint32_t indent = 0) {
   std::stringstream ss;
 
   ss << "{\n";
@@ -122,8 +156,31 @@ inline std::string print_str_timesamples(
     ss << pprint::Indent(indent + 1) << samples[i].t << ": ";
     if (samples[i].blocked) {
       ss << "None";
-    } else {
-      ss << buildEscapedAndQuotedStringForUSDA(samples[i].value);
+    } else if (const value::token *tk = samples[i].value.as<value::token>()) {
+      ss << quote(to_string(*tk));
+    }
+    ss << ",\n";
+  }
+
+  ss << pprint::Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
+inline std::string print_str_timesamples(
+    const value::TimeSamples &v, const uint32_t indent = 0) {
+  std::stringstream ss;
+
+  ss << "{\n";
+
+  const auto &samples = v.get_samples();
+
+  for (size_t i = 0; i < samples.size(); i++) {
+    ss << pprint::Indent(indent + 1) << samples[i].t << ": ";
+    if (samples[i].blocked) {
+      ss << "None";
+    } else if (const std::string *sp = samples[i].value.as<std::string>()) {
+      ss << buildEscapedAndQuotedStringForUSDA(*sp);
     }
     ss << ",\n";
   }
@@ -165,7 +222,17 @@ inline std::string print_animatable_timesamples(const Animatable<T> &v,
   std::stringstream ss;
 
   if (v.has_timesamples()) {
-    ss << print_typed_timesamples(v.get_timesamples(), indent);
+    if constexpr (animatable_detail::has_value_type_traits<T>::value) {
+      // value type: print directly from the type-erased store.
+      if (const value::TimeSamples *tsp = v.get_timesamples_ptr()) {
+        ss << print_value_typed_timesamples<T>(*tsp, indent);
+      }
+    } else {
+      // enum: stored as int64 in the type-erased store; cast back to T to render.
+      if (const value::TimeSamples *tsp = v.get_timesamples_ptr()) {
+        ss << print_enum_timesamples<T>(*tsp, indent);
+      }
+    }
   }
 
   return ss.str();
@@ -240,7 +307,7 @@ inline std::string print_typed_attr(
       ss << pprint::Indent(indent);
       ss << value::TypeTraits<T>::type_name() << " " << name;
       ss << ".timeSamples = "
-         << print_typed_timesamples(pv.value().get_timesamples(), indent);
+         << print_value_typed_timesamples<T>(*pv.value().get_timesamples_ptr(), indent);
       ss << "\n";
     }
 
@@ -309,7 +376,7 @@ inline std::string print_str_attr(
       ss << value::TypeTraits<std::string>::type_name() << " " << name;
 
       ss << ".timeSamples = "
-         << print_str_timesamples(pv.value().get_timesamples(), indent);
+         << print_str_timesamples(*pv.value().get_timesamples_ptr(), indent);
 
       ss << "\n";
     }
@@ -612,7 +679,15 @@ inline std::string print_typed_token_attr(
       ss << pprint::Indent(indent);
       ss << "token " << name << ".timeSamples = ";
 
-      ss << print_typed_token_timesamples(v.get_timesamples(), indent);
+      if constexpr (animatable_detail::has_value_type_traits<T>::value) {
+        // value::token: read from the type-erased store.
+        ss << print_value_token_timesamples(*v.get_timesamples_ptr(), indent);
+      } else {
+        // enum serialized as token: stored as int64; cast back to T to render.
+        if (const value::TimeSamples *tsp = v.get_timesamples_ptr()) {
+          ss << print_enum_token_timesamples<T>(*tsp, indent);
+        }
+      }
       ss << "\n";
     }
 

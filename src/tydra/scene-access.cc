@@ -38,42 +38,25 @@ namespace {
     (*err) += msg;     \
   }
 
-// Typed TimeSamples to typeless TimeSamples
-template <typename T>
-value::TimeSamples ToTypelessTimeSamples(const TypedTimeSamples<T> &ts) {
-  value::TimeSamples dst;
-
-  const std::vector<typename TypedTimeSamples<T>::Sample> &samples =
-      ts.get_samples();
-
-  for (size_t i = 0; i < samples.size(); i++) {
-    if (samples[i].blocked) {
-      // For untyped TimeSamples, blocked samples need a dummy value
-      dst.add_blocked_sample(samples[i].t, value::Value());
-    } else {
-      dst.add_sample(samples[i].t, samples[i].value);
-    }
-  }
-
-  return dst;
-}
-
-// Enum TimeSamples to typeless TimeSamples
+// Enum TimeSamples to typeless (token) TimeSamples.
+// Enum-valued Animatables store their samples as int64 in a type-erased
+// value::TimeSamples; cast each back to the concrete enum T and render its token.
 template <typename T>
 value::TimeSamples EnumTimeSamplesToTypelessTimeSamples(
-    const TypedTimeSamples<T> &ts) {
+    const value::TimeSamples &ts) {
+  static_assert(std::is_enum<T>::value,
+                "EnumTimeSamplesToTypelessTimeSamples is for enum types only.");
   value::TimeSamples dst;
 
-  const std::vector<typename TypedTimeSamples<T>::Sample> &samples =
-      ts.get_samples();
+  const std::vector<value::TimeSamples::Sample> &samples = ts.get_samples();
 
   for (size_t i = 0; i < samples.size(); i++) {
     if (samples[i].blocked) {
       // For untyped TimeSamples, blocked samples need a dummy value
       dst.add_blocked_sample(samples[i].t, value::Value());
-    } else {
+    } else if (const int64_t *iv = samples[i].value.as<int64_t>()) {
       // to token
-      value::token tok(to_string(samples[i].value));
+      value::token tok(to_string(static_cast<T>(*iv)));
       dst.add_sample(samples[i].t, tok);
     }
   }
@@ -83,144 +66,9 @@ value::TimeSamples EnumTimeSamplesToTypelessTimeSamples(
 
 // Optimized iterative traversal using explicit stack
 // Avoids recursion and reuses path buffer to minimize string allocations
-template <typename T>
-bool TraverseIterative(const tinyusdz::Prim &root_prim, PathPrimMap<T> &itemmap,
-                       size_t max_iter = kMaxDefaultTraversalLimit) {
-  // Stack stores: (prim pointer, child index, path length before this prim)
-  StackVector<std::tuple<const tinyusdz::Prim *, size_t, size_t>, 4> stack;
-  stack.reserve(64);
-
-  // Shared path buffer - reuse to avoid allocations
-  std::string path_buffer;
-  path_buffer.reserve(256);
-
-  // Process root prim
-  path_buffer = "/" + root_prim.local_path().full_path_name();
-
-  if (root_prim.is<T>()) {
-    if (const T *pv = root_prim.as<T>()) {
-      DCOUT("Path : <" << path_buffer << "> is " << tinyusdz::value::TypeTraits<T>::type_name());
-      itemmap[path_buffer] = pv;
-    }
-  }
-
-  if (!root_prim.children().empty()) {
-    stack.emplace_back(&root_prim, 0, 0);  // path_len=0 since "/" is implicit
-  }
-
-  size_t iter = 0;
-  while (!stack.empty()) {
-    if (iter++ >= max_iter) break;
-    auto &top = stack.back();
-    const tinyusdz::Prim *parent = std::get<0>(top);
-    size_t &child_idx = std::get<1>(top);
-    const size_t parent_path_len = std::get<2>(top);
-
-    if (child_idx >= parent->children().size()) {
-      // All children processed, backtrack
-      // Restore path to parent's length
-      path_buffer.resize(parent_path_len);
-      stack.pop_back();
-      continue;
-    }
-
-    const tinyusdz::Prim &child = parent->children()[child_idx];
-    ++child_idx;
-
-    // Build path for this child
-    size_t current_path_len = path_buffer.size();
-    path_buffer += "/";
-    path_buffer += child.local_path().full_path_name();
-
-    // Check and add to map if type matches
-    if (child.is<T>()) {
-      if (const T *pv = child.as<T>()) {
-        DCOUT("Path : <" << path_buffer << "> is " << tinyusdz::value::TypeTraits<T>::type_name());
-        itemmap[path_buffer] = pv;
-      }
-    }
-
-    // Push child to stack if it has children
-    if (!child.children().empty()) {
-      stack.emplace_back(&child, 0, current_path_len);
-    } else {
-      // No children, restore path immediately
-      path_buffer.resize(current_path_len);
-    }
-  }
-
-  return true;
-}
 
 // Optimized iterative shader traversal using explicit stack
 // Avoids recursion and reuses path buffer to minimize string allocations
-template <typename ShaderTy>
-bool TraverseShaderIterative(const tinyusdz::Prim &root_prim,
-                             PathShaderMap<ShaderTy> &itemmap,
-                             size_t max_iter = kMaxDefaultTraversalLimit) {
-  // Stack stores: (prim pointer, child index, path length before this prim)
-  StackVector<std::tuple<const tinyusdz::Prim *, size_t, size_t>, 4> stack;
-  stack.reserve(64);
-
-  // Shared path buffer - reuse to avoid allocations
-  std::string path_buffer;
-  path_buffer.reserve(256);
-
-  // Process root prim
-  path_buffer = "/" + root_prim.local_path().full_path_name();
-
-  // Check if root is a Shader of the wanted type
-  if (const Shader *ps = root_prim.as<Shader>()) {
-    if (const ShaderTy *s = ps->value.as<ShaderTy>()) {
-      itemmap[path_buffer] = std::make_pair(ps, s);
-    }
-  }
-
-  if (!root_prim.children().empty()) {
-    stack.emplace_back(&root_prim, 0, 0);
-  }
-
-  size_t iter = 0;
-  while (!stack.empty()) {
-    if (iter++ >= max_iter) break;
-    auto &top = stack.back();
-    const tinyusdz::Prim *parent = std::get<0>(top);
-    size_t &child_idx = std::get<1>(top);
-    const size_t parent_path_len = std::get<2>(top);
-
-    if (child_idx >= parent->children().size()) {
-      // All children processed, backtrack
-      path_buffer.resize(parent_path_len);
-      stack.pop_back();
-      continue;
-    }
-
-    const tinyusdz::Prim &child = parent->children()[child_idx];
-    ++child_idx;
-
-    // Build path for this child
-    size_t current_path_len = path_buffer.size();
-    path_buffer += "/";
-    path_buffer += child.local_path().full_path_name();
-
-    // Check if this is a Shader of the wanted type
-    if (const Shader *ps = child.as<Shader>()) {
-      if (const ShaderTy *s = ps->value.as<ShaderTy>()) {
-        itemmap[path_buffer] = std::make_pair(ps, s);
-      }
-    }
-
-    // Push child to stack if it has children
-    if (!child.children().empty()) {
-      stack.emplace_back(&child, 0, current_path_len);
-    } else {
-      // No children, restore path immediately
-      path_buffer.resize(current_path_len);
-    }
-  }
-
-  return true;
-}
 
 bool ListSceneNamesRec(const tinyusdz::Prim &root, uint32_t depth,
                        std::vector<std::pair<bool, std::string>> *sceneNames) {
@@ -245,55 +93,9 @@ bool ListSceneNamesRec(const tinyusdz::Prim &root, uint32_t depth,
 
 }  // namespace
 
-template <typename T>
-bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<T> &m /* output */) {
-  // Should report error at compilation stege.
-  static_assert(
-      (value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id()) &&
-          (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id()),
-      "Not a Prim type.");
 
-  // Check at runtime. Just in case...
-  if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id()) &&
-      (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id())) {
-    // Ok
-  } else {
-    return false;
-  }
 
-  for (const auto &root_prim : stage.root_prims()) {
-    TraverseIterative(root_prim, m);
-  }
-
-  return true;
-}
-
-template <typename T>
-bool ListShaders(const tinyusdz::Stage &stage,
-                 PathShaderMap<T> &m /* output */) {
-  // Concrete Shader type(e.g. UsdPreviewSurface) is classified as Imaging
-  // Should report error at compilation stege.
-  static_assert((value::TypeId::TYPE_ID_IMAGING_BEGIN <=
-                 value::TypeTraits<T>::type_id()) &&
-                    (value::TypeId::TYPE_ID_IMAGING_END >
-                     value::TypeTraits<T>::type_id()),
-                "Not a Shader type.");
-
-  // Check at runtime. Just in case...
-  if ((value::TypeId::TYPE_ID_IMAGING_BEGIN <=
-       value::TypeTraits<T>::type_id()) &&
-      (value::TypeId::TYPE_ID_IMAGING_END > value::TypeTraits<T>::type_id())) {
-    // Ok
-  } else {
-    return false;
-  }
-
-  for (const auto &root_prim : stage.root_prims()) {
-    TraverseShaderIterative(root_prim, m);
-  }
-
-  return true;
-}
+#include "tydra/scene-access-traverse-impl.inc"
 
 const Prim *GetParentPrim(const tinyusdz::Stage &stage,
                           const tinyusdz::Path &path, std::string *err) {
@@ -343,32 +145,7 @@ const Prim *GetParentPrim(const tinyusdz::Stage &stage,
 //
 // Template Instanciations
 //
-#define LISTPRIMS_INSTANCIATE(__ty) \
-  template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<__ty> &m);
 
-APPLY_FUNC_TO_PRIM_TYPES(LISTPRIMS_INSTANCIATE)
-
-#undef LISTPRIMS_INSTANCIATE
-
-template bool ListShaders(const tinyusdz::Stage &stage,
-                          PathShaderMap<UsdPreviewSurface> &m);
-template bool ListShaders(const tinyusdz::Stage &stage,
-                          PathShaderMap<UsdUVTexture> &m);
-
-template bool ListShaders(const tinyusdz::Stage &stage,
-                          PathShaderMap<UsdPrimvarReader_string> &m);
-template bool ListShaders(const tinyusdz::Stage &stage,
-                          PathShaderMap<UsdPrimvarReader_int> &m);
-template bool ListShaders(const tinyusdz::Stage &stage,
-                          PathShaderMap<UsdPrimvarReader_float> &m);
-template bool ListShaders(const tinyusdz::Stage &stage,
-                          PathShaderMap<UsdPrimvarReader_float2> &m);
-template bool ListShaders(const tinyusdz::Stage &stage,
-                          PathShaderMap<UsdPrimvarReader_float3> &m);
-template bool ListShaders(const tinyusdz::Stage &stage,
-                          PathShaderMap<UsdPrimvarReader_float4> &m);
-template bool ListShaders(const tinyusdz::Stage &stage,
-                          PathShaderMap<UsdPrimvarReader_matrix> &m);
 
 namespace {
 
@@ -621,8 +398,12 @@ bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, st
       }
 
       if (aval.value().has_timesamples()) {
-        value::TimeSamples ts = ToTypelessTimeSamples(aval.value().get_timesamples());
-        pvar.set_timesamples(std::move(ts));
+        // Value types store a type-erased value::TimeSamples directly; copy it
+        // (no typed round-trip).
+        if (const value::TimeSamples *tsp =
+                aval.value().get_timesamples_ptr()) {
+          pvar.set_timesamples(*tsp);
+        }
       }
 
       if (aval.value().has_value() || aval.value().has_timesamples()) {
@@ -702,8 +483,9 @@ bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
     DCOUT("has_value " << v.has_value());
 
     if (v.has_timesamples()) {
-      value::TimeSamples ts = ToTypelessTimeSamples(v.get_timesamples());
-      pvar.set_timesamples(std::move(ts));
+      if (const value::TimeSamples *tsp = v.get_timesamples_ptr()) {
+        pvar.set_timesamples(*tsp);
+      }
     }
 
     if (v.has_value()) {
@@ -756,7 +538,7 @@ bool ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
 
     if (v.has_timesamples()) {
       value::TimeSamples ts =
-          EnumTimeSamplesToTypelessTimeSamples(v.get_timesamples());
+          EnumTimeSamplesToTypelessTimeSamples<T>(*v.get_timesamples_ptr());
       pvar.set_timesamples(std::move(ts));
     }
 
@@ -3296,15 +3078,8 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
         }
 
         if (terminal_indexAttr.has_timesamples()) {
-          const auto &ts = terminal_indexAttr.get_var().ts_raw();
-          TypedTimeSamples<std::vector<int32_t>> tss;
-          if (!tss.from_timesamples(ts)) {
-            PUSH_ERROR_AND_RETURN(fmt::format(
-                "Index Attribute seems not an timesamples with int[] type: {}",
-                index_name));
-          }
-        
-          primvar.set_timesampled_indices(tss);
+          primvar.set_timesampled_indices(
+              terminal_indexAttr.get_var().ts_raw());
         }
 
         if (terminal_indexAttr.has_value()) {
@@ -3345,13 +3120,7 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
         }
 
         if (indexAttr.has_timesamples()) {
-          const auto &ts = indexAttr.get_var().ts_raw();
-          TypedTimeSamples<std::vector<int32_t>> tss;
-          if (!tss.from_timesamples(ts)) {
-            PUSH_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
-          }
-        
-          primvar.set_timesampled_indices(tss);
+          primvar.set_timesampled_indices(indexAttr.get_var().ts_raw());
         }
 
       }
