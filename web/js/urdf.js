@@ -55,7 +55,8 @@ const state = {
     showJointArrows: false,
     showLinkNames: false,
     showJointNames: false,
-    jointsCollapsed: false
+    jointsCollapsed: false,
+    applyHomePose: false
   }
 };
 
@@ -1161,19 +1162,65 @@ function attrsFromElement(el) {
   return attrs;
 }
 
+// MuJoCo <compiler> context for angle units + euler sequence. Set per-parse in
+// parseMJCFWithMeshes; defaults match MuJoCo (degrees, "xyz").
+let mjcfPoseCtx = { toRad: Math.PI / 180, eulerseq: 'xyz' };
+
+function eulerQuatFromSeq(angles, seq, toRad) {
+  const axisFor = (c) => (c === 'x' ? new THREE.Vector3(1, 0, 0)
+    : c === 'y' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1));
+  const q = new THREE.Quaternion();
+  for (let i = 0; i < seq.length && i < angles.length; i++) {
+    const c = seq[i];
+    const lower = c.toLowerCase();
+    const qi = new THREE.Quaternion().setFromAxisAngle(axisFor(lower), (angles[i] || 0) * toRad);
+    if (c === lower) q.multiply(qi);   // lowercase = intrinsic (moving axes)
+    else q.premultiply(qi);            // uppercase = extrinsic (fixed axes)
+  }
+  return q;
+}
+
+// Resolve any MuJoCo orientation specifier (quat/axisangle/euler/xyaxes/zaxis).
+function orientationQuat(attrs, ctx) {
+  const toRad = ctx.toRad;
+  if (attrs.quat) {
+    const q = parseNumbers(attrs.quat, [1, 0, 0, 0]);
+    return new THREE.Quaternion(q[1] || 0, q[2] || 0, q[3] || 0, q[0] ?? 1).normalize();
+  }
+  if (attrs.axisangle) {
+    const a = parseNumbers(attrs.axisangle, [0, 0, 1, 0]);
+    const axis = new THREE.Vector3(a[0] || 0, a[1] || 0, a[2] || 0);
+    if (axis.lengthSq() < 1e-12) axis.set(0, 0, 1);
+    return new THREE.Quaternion().setFromAxisAngle(axis.normalize(), (a[3] || 0) * toRad);
+  }
+  if (attrs.euler) {
+    return eulerQuatFromSeq(parseNumbers(attrs.euler, [0, 0, 0]), ctx.eulerseq, toRad);
+  }
+  if (attrs.xyaxes) {
+    const v = parseNumbers(attrs.xyaxes, [1, 0, 0, 0, 1, 0]);
+    const x = new THREE.Vector3(v[0], v[1], v[2]);
+    if (x.lengthSq() < 1e-12) x.set(1, 0, 0);
+    x.normalize();
+    const y = new THREE.Vector3(v[3], v[4], v[5]);
+    y.sub(x.clone().multiplyScalar(x.dot(y)));   // Gram-Schmidt against x
+    if (y.lengthSq() < 1e-12) y.crossVectors(new THREE.Vector3(0, 0, 1), x);
+    y.normalize();
+    const z = new THREE.Vector3().crossVectors(x, y);
+    return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+  }
+  if (attrs.zaxis) {
+    const v = parseNumbers(attrs.zaxis, [0, 0, 1]);
+    const z = new THREE.Vector3(v[0] || 0, v[1] || 0, v[2] || 0);
+    if (z.lengthSq() < 1e-12) z.set(0, 0, 1);
+    return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), z.normalize());
+  }
+  return new THREE.Quaternion();
+}
+
 function matrixFromPoseAttrs(attrs = {}) {
   const pos = parseNumbers(attrs.pos, [0, 0, 0]);
   const translation = new THREE.Vector3(pos[0] || 0, pos[1] || 0, pos[2] || 0);
-  let quat = new THREE.Quaternion();
-
-  if (attrs.quat) {
-    const q = parseNumbers(attrs.quat, [1, 0, 0, 0]);
-    quat = new THREE.Quaternion(q[1] || 0, q[2] || 0, q[3] || 0, q[0] ?? 1).normalize();
-  } else if (attrs.euler) {
-    const e = parseNumbers(attrs.euler, [0, 0, 0]);
-    quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(e[0] || 0, e[1] || 0, e[2] || 0, 'XYZ'));
-  }
-
+  const quat = orientationQuat(attrs, mjcfPoseCtx);
   return new THREE.Matrix4().compose(translation, quat, new THREE.Vector3(1, 1, 1));
 }
 
@@ -1526,6 +1573,14 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     throw new Error(`Expected MJCF <mujoco> root, got <${root.localName || 'unknown'}>.`);
   }
 
+  // Honor <compiler angle="..." eulerseq="..."> for all orientation specifiers.
+  const compilerEl = firstChildElement(root, 'compiler');
+  const angleAttr = (compilerEl?.getAttribute('angle') || 'degree').toLowerCase();
+  mjcfPoseCtx = {
+    toRad: angleAttr === 'radian' ? 1 : Math.PI / 180,
+    eulerseq: compilerEl?.getAttribute('eulerseq') || 'xyz'
+  };
+
   const meshAssets = collectMujocoAssets(root);
   const defaults = collectMujocoDefaults(root);
   const group = new THREE.Group();
@@ -1535,15 +1590,19 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   group.setJointValue = (jointName, value) => {
     const joint = group.joints[jointName];
     if (!joint?.pivot) return;
+    // MuJoCo joint coordinate is qpos; the geometric displacement relative to
+    // the XML rest configuration is (qpos - ref). At qpos == ref the body is in
+    // its authored pose (zero displacement).
+    const disp = value - (joint.refRad || 0);
     if (joint.jointType === 'prismatic') {
       const offset = new THREE.Vector3(...joint.axis)
         .normalize()
         .applyQuaternion(joint.originQuat)
-        .multiplyScalar(value);
+        .multiplyScalar(disp);
       joint.pivot.position.copy(joint.origin).add(offset);
     } else {
       joint.pivot.quaternion.copy(joint.originQuat)
-        .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(...joint.axis).normalize(), value));
+        .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(...joint.axis).normalize(), disp));
     }
   };
 
@@ -1587,7 +1646,16 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       const axis = parseNumbers(jointAttrs.axis, [0, 0, 1]);
       const range = parseNumbers(jointAttrs.range, []);
       const jointName = jointAttrs.name || `${parentName}_to_${linkName}${jointNode ? '' : '_fixed'}`;
+      const rawType = jointNode ? (jointAttrs.type || 'hinge') : 'fixed';
       const type = jointNode ? mujocoJointType(jointAttrs.type || 'hinge') : 'fixed';
+      // Per-joint DOF count and reference offset for keyframe (qpos) mapping.
+      // ball=4 (quat), free=7, hinge/slide=1, fixed/weld=0. `ref` is the qpos at
+      // which the joint matches its XML configuration; rotation = qpos - ref.
+      const dofCount = rawType === 'ball' ? 4 : rawType === 'free' ? 7 : rawType === 'fixed' ? 0 : 1;
+      const refVal = numberAttr(jointAttrs, 'ref');
+      const refRad = Number.isFinite(refVal)
+        ? (rawType === 'slide' ? refVal : refVal * mjcfPoseCtx.toRad)
+        : 0;
       const bodyPose = decomposeMatrix(bodyLocalMatrix);
       const jointPos = parseNumbers(jointAttrs.pos, [0, 0, 0]);
       const localPos0 = transformPointArray(bodyLocalMatrix, jointPos);
@@ -1597,6 +1665,9 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       const jointInfo = {
         name: jointName,
         type,
+        rawType,
+        dofCount,
+        refRad,
         parent: parentName,
         child: linkName,
         axis,
@@ -1608,6 +1679,13 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
         localRot0,
         localRot1,
         limit: range.length >= 2 ? { lower: range[0], upper: range[1] } : {},
+        // Slider range in joint-coordinate units (radians for hinge). MuJoCo
+        // `range` is in the model's angle unit, so convert degrees -> radians.
+        uiLimit: range.length >= 2
+          ? (rawType === 'slide'
+              ? { lower: range[0], upper: range[1] }
+              : { lower: range[0] * mjcfPoseCtx.toRad, upper: range[1] * mjcfPoseCtx.toRad })
+          : null,
         dynamics: {
           damping: numberAttr(jointAttrs, 'damping'),
           friction: numberAttr(jointAttrs, 'frictionloss')
@@ -1686,6 +1764,26 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     }
   }
 
+  // Parse the model's "home" keyframe (qpos) so the robot can be posed in its
+  // natural configuration instead of the MuJoCo zero-pose. qpos layout: a
+  // floating base contributes 7 leading values (pos3 + quat4), then one value
+  // per single-DOF joint in body-tree (DFS) order — matching how `joints` is
+  // built above. qpos angles are radians regardless of <compiler angle>.
+  const keyEl = root.querySelector('keyframe key');
+  if (keyEl?.getAttribute('qpos')) {
+    const hasFree = !!root.querySelector('worldbody freejoint, worldbody joint[type="free"]');
+    group.homeKeyframe = {
+      qpos: parseNumbers(keyEl.getAttribute('qpos'), []),
+      baseDofs: hasFree ? 7 : 0,
+      // Joints in body-tree (DFS) order = MuJoCo qpos order. Each descriptor
+      // carries its DOF count so multi-DOF joints (ball=4) advance the cursor
+      // correctly and don't shift every subsequent joint's value.
+      jointOrder: joints.map((j) => ({
+        name: j.name, rawType: j.rawType, dofCount: j.dofCount, refRad: j.refRad
+      }))
+    };
+  }
+
   state.exportPayload = {
     name: group.name,
     upAxis: state.settings.upAxis,
@@ -1696,6 +1794,60 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   };
   group.userData.stats = { links: links.length, joints: joints.length, visuals: visualCount, collisions: collisionCount };
   return group;
+}
+
+// Pose a parsed MJCF robot to the MuJoCo default qpos0 = ref (XML rest pose).
+// Slider value shows ref; geometric displacement (qpos - ref) is zero.
+function poseToRest(robot) {
+  if (!robot?.joints) return;
+  for (const [name, joint] of Object.entries(robot.joints)) {
+    const ref = joint.refRad || 0;
+    state.jointValues[name] = ref;
+    if (joint.rawType === 'ball') {
+      if (joint.pivot && joint.originQuat) joint.pivot.quaternion.copy(joint.originQuat);
+    } else if (typeof robot.setJointValue === 'function') {
+      robot.setJointValue(name, ref);   // displacement = ref - ref = 0
+    }
+  }
+}
+
+// Pose to the model's "home" keyframe. qpos angles are radians; setJointValue
+// applies the (qpos - ref) displacement, so the slider value shown is the raw
+// qpos coordinate (matching the MuJoCo viewer). DOF-count aware: ball=4 (quat),
+// free=7, hinge/slide=1, so multi-DOF joints don't shift later joints' values.
+function poseFromKeyframe(robot) {
+  const kf = robot?.homeKeyframe;
+  if (!kf) { poseToRest(robot); return; }
+  const qpos = kf.qpos;
+  let cursor = kf.baseDofs;   // skip the floating-base DOFs (pos3 + quat4)
+  for (const j of kf.jointOrder) {
+    const dof = j.dofCount;
+    if (dof === 0) continue;                 // fixed/welded body: no qpos
+    if (cursor + dof > qpos.length) break;
+    if (j.rawType === 'ball') {
+      const jc = robot.joints[j.name];
+      if (jc?.pivot) {
+        const bq = new THREE.Quaternion(qpos[cursor + 1], qpos[cursor + 2], qpos[cursor + 3], qpos[cursor]).normalize();
+        jc.pivot.quaternion.copy(jc.originQuat).multiply(bq);
+      }
+    } else if (j.rawType !== 'free' && typeof robot.setJointValue === 'function') {
+      const qv = qpos[cursor];               // joint coordinate (qpos)
+      state.jointValues[j.name] = qv;
+      robot.setJointValue(j.name, qv);        // displacement = qv - ref
+    }
+    cursor += dof;
+  }
+}
+
+// Apply the active pose preset (home keyframe vs. qpos0=ref) and resync views.
+function applyPosePreset() {
+  const robot = state.robot;
+  if (!robot?.joints) return;
+  if (state.settings.applyHomePose && robot.homeKeyframe) poseFromKeyframe(robot);
+  else poseToRest(robot);
+  rebuildJointControls();
+  syncConvertedUSDToSourcePose();
+  syncGhosts();
 }
 
 function classifyRobotMeshes(robot) {
@@ -1804,6 +1956,10 @@ function buildGUI() {
   gui.add(state.settings, 'showCollisions').name('Collision meshes').onChange(applyVisibility);
   gui.add(state.settings, 'ignoreJointLimits').name('Ignore limits').onChange(rebuildJointControls);
   gui.add(state.settings, 'hideFixedJoints').name('Hide fixed joints').onChange(rebuildJointControls);
+  gui.add(state.settings, 'applyHomePose').name('Home pose').onChange(() => {
+    applyPosePreset();
+    if (state.robot && state.settings.autocenter) fitCamera(currentFitObjects());
+  });
   gui.add(state.settings, 'animateJoints').name('Animate joints');
   gui.add(state.settings, 'animationSpeed', 0.1, 4.0, 0.1).name('Animation speed');
   gui.add(state.settings, 'autocenter').name('Autocenter');
@@ -1843,7 +1999,7 @@ function setJointValue(jointName, value) {
 
 function jointLimits(joint) {
   const type = joint.jointType || joint.type || 'fixed';
-  const limit = joint.limit || {};
+  const limit = joint.uiLimit || joint.limit || {};
   if (type === 'continuous') return [-Math.PI, Math.PI, 0.01];
   if (type === 'prismatic') {
     return state.settings.ignoreJointLimits
@@ -1945,6 +2101,10 @@ async function loadRobotFile(file) {
     : parseURDFMetadata(state.inputText);
   updateRobotInfo(metadata);
   captureSourceRestLinkMatrices();
+  // Apply the active pose preset: MuJoCo default qpos0 = ref (the viewer's load
+  // state), or the home keyframe when the "Home pose" toggle is on. Rest capture
+  // above stays at the XML rest, keeping the USD binding reference clean.
+  if (state.inputFormat === 'mjcf') applyPosePreset();
   updateButtonStates();
   rebuildGhosts();
   updateLabels();
@@ -2741,6 +2901,10 @@ async function ensureNativeExporter() {
   const loader = await ensureTinyLoader();
   if (!state.nativeExporter) {
     state.nativeExporter = new loader.native_.TinyUSDZLoaderNative();
+    // Raise the USDC writer's conservative WASM size caps so mesh-dense scenes
+    // (e.g. robot_soccer_kit ~104MB, apptronik_apollo ~111MB) can export past
+    // the 100MB default.
+    state.nativeExporter.setUSDCExportLimitMB?.(2048, 4096);
   }
   return state.nativeExporter;
 }
