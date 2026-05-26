@@ -4,11 +4,10 @@
 
 ///
 /// @file timesamples.hh
-/// @brief TimeSamples and TypedTimeSamples data structures for USD time-varying values
+/// @brief value::TimeSamples data structure for USD time-varying values
 ///
-/// Contains data structures for handling time-sampled values in USD,
-/// including both type-erased (TimeSamples) and strongly-typed (TypedTimeSamples)
-/// variants with support for interpolation and value blocking.
+/// Type-erased container for time-sampled USD values, with support for
+/// interpolation (Held / Linear) and value blocking (USD "None").
 ///
 ///
 #pragma once
@@ -21,15 +20,16 @@
 #include <type_traits>
 
 #include "nonstd/optional.hpp"
-#include "typed-array.hh"
+#include "typed-array-core.hh"
 #include "value-types.hh"
 #include "buffer-util.hh"
+// NOTE: value-eval-util.hh (the lerp<T>/slerp template math) is intentionally
+// NOT included here — interpolation now lives in the non-template cores in
+// timesamples.cc, which includes it directly. Pulling it through this header
+// (widely included via animatable.hh / primvar.hh) was a leftover from the
+// deleted header-inline TypedTimeSamples::get.
 
 namespace tinyusdz {
-
-// Forward declaration of lerp for TypedTimeSamples
-template<typename T>
-T lerp(const T& a, const T& b, double t);
 
 namespace value {
 
@@ -57,7 +57,7 @@ struct TimeSamples {
   };
 
   // Sentinel value for blocked samples in _data_offsets
-  static constexpr uint32_t BLOCKED_OFFSET = UINT32_MAX;
+  static constexpr size_t BLOCKED_OFFSET = SIZE_MAX;
 
   bool empty() const {
     // Check unified storage first, then legacy storage
@@ -238,7 +238,7 @@ struct TimeSamples {
       return false;
     }
 
-    uint32_t byte_offset = _data_offsets[idx];
+    size_t byte_offset = _data_offsets[idx];
     if (byte_offset == BLOCKED_OFFSET) {
       ref->blocked = true;
       return true;
@@ -299,7 +299,6 @@ struct TimeSamples {
   void update() const;
 
   bool has_sample_at(const double t) const;
-  bool get_sample_at(const double t, Sample **s);
 
   nonstd::optional<double> get_time(size_t idx) const {
     // Check unified storage first
@@ -580,201 +579,59 @@ struct TimeSamples {
 
   std::vector<Sample> &samples();  // Defined in timesamples.cc
 
-  // Get value at specified time.
-  // For non-interpolatable types (includes enums and unknown types)
-  //
-  // Return `Held` value even when TimeSampleInterpolationType is
-  // Linear. Returns false when specified time is out-of-range.
-  template<typename T, std::enable_if_t<!value::LerpTraits<T>::supported(), std::nullptr_t> = nullptr>
+  // Get value at time `t`, cast to T. Single entry point for the type-erased
+  // timesamples: accepts an exact type_id match or a role-compatible underlying
+  // layout (scalar or array), mirroring value::Value::as<T>(). Scalar T uses the
+  // binary-direct evaluator get_scalar(); array (and other non-binary) T use the
+  // generic value evaluator get_value_at() plus a layout-compatible cast. Held vs
+  // Linear and blocked-sample handling live entirely in those non-template cores
+  // (timesamples.cc), so this stays a thin per-T forwarder rather than ~190 lines
+  // of interpolation re-instantiated in every includer.
+  template <typename T>
   bool get(T *dst, double t = value::TimeCode::Default(),
            value::TimeSampleInterpolationType interp =
                value::TimeSampleInterpolationType::Linear) const {
-
-    (void)interp;
-
-    if (!dst) {
+    if (!dst || empty()) {
       return false;
     }
 
-    if (empty()) {
+    // Acceptance: exact type_id, or role-compatible underlying layout
+    // (scalar e.g. color3f<->float3, or array e.g. normal3f[]<->float3[]).
+    constexpr uint32_t want = value::TypeTraits<T>::type_id();
+    const uint32_t tid = _type_id;
+    bool accept = (want == tid);
+    if (!accept) {
+      constexpr bool want_array = (want & value::TYPE_ID_1D_ARRAY_BIT) != 0;
+      const bool have_array = (tid & value::TYPE_ID_1D_ARRAY_BIT) != 0;
+      if (want_array && have_array) {
+        accept = ((value::TypeTraits<T>::underlying_type_id() &
+                   ~value::TYPE_ID_1D_ARRAY_BIT) ==
+                  (value::GetUnderlyingTypeId(tid) &
+                   ~value::TYPE_ID_1D_ARRAY_BIT));
+      } else if (!want_array && !have_array) {
+        accept = (value::TypeTraits<T>::underlying_type_id() ==
+                  value::GetUnderlyingTypeId(tid));
+      }
+    }
+    if (!accept) {
       return false;
     }
 
-    const auto &samples = get_samples();
-    if (samples.empty()) {
-      return false;
-    }
-
-    if (value::TimeCode(t).is_default()) {
-        // Return the first non-blocked sample.
-        for (const auto &s : samples) {
-          if (!s.blocked) {
-            if (const auto pv = s.value.as<T>()) {
-              (*dst) = *pv;
-              return true;
-            }
-            return false;
-          }
-        }
-        return false;
-      } else {
-
-        if (samples.size() == 1) {
-          if (samples[0].blocked) return false;
-          if (const auto pv = samples[0].value.as<T>()) {
-            (*dst) = *pv;
-            return true;
-          }
-          return false;
-        }
-
-        auto it = std::upper_bound(
-          samples.begin(), samples.end(), t,
-          [](double tval, const Sample &a) { return tval < a.t; });
-
-        const auto it_held = (it == samples.begin()) ? samples.begin() : (it - 1);
-
-        if (it_held->blocked) {
-          return false;
-        }
-
-        const value::Value &v = it_held->value;
-
-        if (const T *pv = v.as<T>()) {
-          (*dst) = *pv;
-          return true;
-        }
+    if constexpr ((want & value::TYPE_ID_1D_ARRAY_BIT) != 0) {
+      // Array / non-binary path: interpolate to a value::Value, then cast out.
+      value::Value tmp;
+      if (!get_value_at(&tmp, t, interp)) {
         return false;
       }
-  }
-
-  // Get value at specified time.
-  // Return linearly interpolated value when TimeSampleInterpolationType is
-  // Linear. Returns false when samples is empty or some internal error.
-  template<typename T, std::enable_if_t<value::LerpTraits<T>::supported(), std::nullptr_t> = nullptr>
-  bool get(T *dst, double t = value::TimeCode::Default(),
-           TimeSampleInterpolationType interp =
-               TimeSampleInterpolationType::Linear) const {
-    if (!dst) {
-      return false;
-    }
-
-    if (empty()) {
-      return false;
-    }
-
-    const auto &samples = get_samples();
-    if (samples.empty()) {
-      return false;
-    }
-
-    if (value::TimeCode(t).is_default()) {
-      // Return the first non-blocked sample.
-      for (const auto &s : samples) {
-        if (!s.blocked) {
-          if (const auto pv = s.value.as<T>()) {
-            (*dst) = *pv;
-            return true;
-          }
-          return false;
-        }
+      if (const T *pv = tmp.as<T>()) {
+        (*dst) = *pv;
+        return true;
       }
       return false;
     } else {
-
-      if (samples.size() == 1) {
-        if (samples[0].blocked) return false;
-        if (const auto pv = samples[0].value.as<T>()) {
-          (*dst) = *pv;
-          return true;
-        }
-        return false;
-      }
-
-      if (interp == TimeSampleInterpolationType::Linear) {
-        auto it = std::lower_bound(
-            samples.begin(), samples.end(), t,
-            [](const Sample &a, double tval) { return a.t < tval; });
-
-        // MS STL does not allow seek vector iterator before begin
-        // Issue #110
-        const auto it_minus_1 = (it == samples.begin()) ? samples.begin() : (it - 1);
-
-        size_t idx0 = size_t(std::max(
-            int64_t(0),
-            std::min(int64_t(samples.size() - 1),
-                     int64_t(std::distance(samples.begin(), it_minus_1)))));
-        size_t idx1 =
-            size_t(std::max(int64_t(0), std::min(int64_t(samples.size() - 1),
-                                                 int64_t(idx0) + 1)));
-
-        // If either endpoint is blocked, fall back to the non-blocked one.
-        if (samples[idx0].blocked && samples[idx1].blocked) {
-          return false;
-        }
-        if (samples[idx0].blocked) {
-          if (const auto pv = samples[idx1].value.as<T>()) {
-            (*dst) = *pv;
-            return true;
-          }
-          return false;
-        }
-        if (samples[idx1].blocked) {
-          if (const auto pv = samples[idx0].value.as<T>()) {
-            (*dst) = *pv;
-            return true;
-          }
-          return false;
-        }
-
-        double tl = samples[idx0].t;
-        double tu = samples[idx1].t;
-
-        double dt = (t - tl);
-        if (std::fabs(tu - tl) < std::numeric_limits<double>::epsilon()) {
-          // slope is zero.
-          dt = 0.0;
-        } else {
-          dt /= (tu - tl);
-        }
-
-        // Just in case.
-        dt = std::max(0.0, std::min(1.0, dt));
-
-        const value::Value &p0 = samples[idx0].value;
-        const value::Value &p1 = samples[idx1].value;
-
-        value::Value p;
-        if (!Lerp(p0, p1, dt, &p)) {
-          return false;
-        }
-
-        if (const auto pv = p.as<T>()) {
-          (*dst) = *pv;
-          return true;
-        }
-        return false;
-      } else {
-        // Held interpolation
-        auto it = std::upper_bound(
-          samples.begin(), samples.end(), t,
-          [](double tval, const Sample &a) { return tval < a.t; });
-
-        const auto it_held = (it == samples.begin()) ? samples.begin() : (it - 1);
-
-        if (it_held->blocked) {
-          return false;
-        }
-
-        const value::Value &v = it_held->value;
-
-        if (const T *pv = v.as<T>()) {
-          (*dst) = *pv;
-          return true;
-        }
-
-        return false;
-      }
+      // Scalar path: binary-direct evaluator writes straight into dst
+      // (dst is layout-compatible with the stored type by the check above).
+      return get_scalar(static_cast<void *>(dst), t, interp);
     }
   }
 
@@ -806,7 +663,7 @@ struct TimeSamples {
     _blocked.push_back(0);
 
     // Append array data to flat buffer
-    uint32_t byte_offset = static_cast<uint32_t>(_data.size());
+    size_t byte_offset = _data.size();
     size_t data_size = sizeof(T) * count;
     _data.resize(_data.size() + data_size);
     std::memcpy(_data.data() + byte_offset, values, data_size);
@@ -850,7 +707,7 @@ struct TimeSamples {
     _times.push_back(t);
     _blocked.push_back(0);
 
-    uint32_t byte_offset = static_cast<uint32_t>(_data.size());
+    size_t byte_offset = _data.size();
     _data.resize(_data.size() + sizeof(T));
     std::memcpy(_data.data() + byte_offset, &value, sizeof(T));
     _data_offsets.push_back(byte_offset);
@@ -1011,7 +868,7 @@ struct TimeSamples {
     return _data;
   }
 
-  const std::vector<uint32_t>& get_data_offsets() const {
+  const std::vector<size_t>& get_data_offsets() const {
     if (_dirty) { update(); }
     return _data_offsets;
   }
@@ -1028,6 +885,25 @@ struct TimeSamples {
   }
 
  private:
+  // [Phase 1] Binary-direct scalar evaluator. `get_scalar` is a non-template
+  // switch on `_type_id` that delegates to the per-type `get_scalar_impl<T>`;
+  // both are defined (and `get_scalar_impl<T>` explicitly instantiated) only in
+  // timesamples.cc, so the heavy per-type code is not re-instantiated in every
+  // includer. `dst` points to a T whose layout is compatible with `_type_id`
+  // (enforced by eval_scalar / the public get<T> wrapper).
+  bool get_scalar(void *dst, double t,
+                  value::TimeSampleInterpolationType interp) const;
+  template <typename T>
+  bool get_scalar_impl(void *dst, double t,
+                       value::TimeSampleInterpolationType interp) const;
+
+  // [Phase 1] Generic value-path evaluator: produces the interpolated
+  // value::Value at time t (non-template; dispatches on _type_id via Lerp).
+  // The public get<T>() uses this for array (and other non-binary) types, then
+  // casts the result to T. Defined in timesamples.cc.
+  bool get_value_at(value::Value *out, double t,
+                    value::TimeSampleInterpolationType interp) const;
+
   // Generic path storage (for non-binary Value types: string, token, dict, etc.)
   mutable std::vector<Sample> _samples;
 
@@ -1035,7 +911,7 @@ struct TimeSamples {
   mutable std::vector<double> _times;
   mutable Buffer<16> _blocked;                      // Blocked flags (one byte per sample)
   mutable std::vector<uint8_t> _data;               // Flat byte buffer for ALL binary values
-  mutable std::vector<uint32_t> _data_offsets;      // Per-sample byte offset into _data
+  mutable std::vector<size_t> _data_offsets;        // Per-sample byte offset into _data (size_t: no 4GB limit)
   mutable std::vector<uint32_t> _array_counts;      // Per-sample element count (arrays only)
 
   // Metadata
@@ -1094,448 +970,23 @@ struct TimeSamples {
 
 } // namespace value
 
-///
-/// Strongly-typed time samples container
-///
-template <typename T>
-struct TypedTimeSamples {
- public:
-  struct Sample {
-    double t;
-    T value;
-    bool blocked{false};
-  };
 
-  bool empty() const { return _samples.empty(); }
+namespace value {
 
-  void update() const {
-    if (_samples.size() < 2 ||
-        std::is_sorted(_samples.begin(), _samples.end(),
-                       [](const Sample &a, const Sample &b) { return a.t < b.t; })) {
-      _dirty = false;
-      return;
-    }
-
-    // Adaptive sort: use insertion sort for nearly-sorted data (common for animation)
-    size_t inversions = 0;
-    const size_t scan = (std::min)(_samples.size() - 1, size_t(100));
-    for (size_t i = 0; i < scan; ++i) {
-      if (_samples[i].t > _samples[i + 1].t) ++inversions;
-    }
-
-    if (inversions * 20 < _samples.size()) {
-      // Insertion sort — O(n) for nearly-sorted data
-      for (size_t i = 1; i < _samples.size(); ++i) {
-        if (_samples[i].t >= _samples[i - 1].t) continue;
-        Sample key = std::move(_samples[i]);
-        size_t j = i;
-        while (j > 0 && _samples[j - 1].t > key.t) {
-          _samples[j] = std::move(_samples[j - 1]);
-          --j;
-        }
-        _samples[j] = std::move(key);
-      }
-    } else {
-      std::sort(_samples.begin(), _samples.end(),
-                [](const Sample &a, const Sample &b) { return a.t < b.t; });
-    }
-
-    _dirty = false;
-  }
-
-  // Get value at specified time.
-  // For non-interpolatable types(includes enums and unknown types)
-  //
-  // Return `Held` value even when TimeSampleInterpolationType is
-  // Linear. Returns nullopt when specified time is out-of-range.
-  template<typename V = T, std::enable_if_t<!value::LerpTraits<V>::supported(), std::nullptr_t> = nullptr>
-  bool get(T *dst, double t = value::TimeCode::Default(),
-           value::TimeSampleInterpolationType interp =
-               value::TimeSampleInterpolationType::Linear) const;
-
-  // Get value at specified time.
-  // Return linearly interpolated value when TimeSampleInterpolationType is
-  // Linear. Returns nullopt when specified time is out-of-range.
-  template<typename V = T, std::enable_if_t<value::LerpTraits<V>::supported(), std::nullptr_t> = nullptr>
-  bool get(T *dst, double t = value::TimeCode::Default(),
-           value::TimeSampleInterpolationType interp =
-               value::TimeSampleInterpolationType::Linear) const;
-
-  void add_sample(const Sample &s) {
-    _samples.push_back(s);
-    _dirty = true;
-  }
-
-  void add_sample(const double t, const T &v) {
-    Sample s;
-    s.t = t;
-    s.value = v;
-    _samples.emplace_back(s);
-    _dirty = true;
-  }
-
-  void add_blocked_sample(const double t) {
-    Sample s;
-    s.t = t;
-    s.blocked = true;
-    _samples.emplace_back(s);
-    _dirty = true;
-  }
-
-  bool has_sample_at(const double t) const {
-    if (_dirty) {
-      update();
-    }
-
-    const double eps = std::numeric_limits<double>::epsilon();
-    auto it = std::lower_bound(
-        _samples.begin(), _samples.end(), t - eps,
-        [](const Sample &s, double v) { return s.t < v; });
-
-    if ((it != _samples.end()) && (std::fabs(it->t - t) < eps)) {
-      return true;
-    }
-    if (it != _samples.begin()) {
-      return std::fabs((it - 1)->t - t) < eps;
-    }
-    return false;
-  }
-
-  bool get_sample_at(const double t, Sample **dst) {
-    if (!dst) {
-      return false;
-    }
-
-    if (_dirty) {
-      update();
-    }
-
-    const double eps = std::numeric_limits<double>::epsilon();
-    auto it = std::lower_bound(
-        _samples.begin(), _samples.end(), t - eps,
-        [](const Sample &sample, double v) { return sample.t < v; });
-    if ((it == _samples.end()) || (std::fabs(it->t - t) >= eps)) {
-      if ((it == _samples.begin()) || (std::fabs((it - 1)->t - t) >= eps)) {
-        return false;
-      }
-      it = it - 1;
-    }
-
-    (*dst) = &(*it);
-    return true;
-  }
-
-  const std::vector<Sample> &get_samples() const {
-    if (_dirty) {
-      update();
-    }
-
-    return _samples;
-  }
-
-  std::vector<Sample> &samples() {
-    if (_dirty) {
-      update();
-    }
-
-    return _samples;
-  }
-
-  // From typeless timesamples.
-  bool from_timesamples(const value::TimeSamples &ts) {
-    std::vector<Sample> buf;
-    for (size_t i = 0; i < ts.size(); i++) {
-      if (ts.get_samples()[i].value.type_id() != value::TypeTraits<T>::type_id()) {
-        return false;
-      }
-      Sample s;
-      s.t = ts.get_samples()[i].t;
-      s.blocked = ts.get_samples()[i].blocked;
-      if (const auto pv = ts.get_samples()[i].value.as<T>()) {
-        s.value = (*pv);
-      } else {
-        return false;
-      }
-
-      buf.push_back(s);
-    }
-
-    _samples = std::move(buf);
-    _dirty = true;
-
-    return true;
-  }
-
-  size_t size() const {
-    if (_dirty) {
-      update();
-    }
-    return _samples.size();
-  }
-
- private:
-  // Need to be sorted when looking up the value.
-  mutable std::vector<Sample> _samples;
-  mutable bool _dirty{false};
-};
-
+// TypeTrait for the `TimeSamples` value type.
 //
-// Extern template declarations to reduce compile time
-// These are instantiated in timesamples.cc
-//
+// Defined here (rather than in value-types.hh) because it requires the complete
+// `TimeSamples` type, which is defined above in this header. Keeping it here lets
+// value-types.hh avoid including timesamples.hh entirely. Any TU that stores a
+// `TimeSamples` inside a `value::Value` (and hence needs TypeTraits<TimeSamples>)
+// already includes this header.
+#include "define-type-trait.inc"
 
-// Integer types (binary-serializable, non-lerp'able)
-extern template struct TypedTimeSamples<bool>;
-extern template struct TypedTimeSamples<int32_t>;
-extern template struct TypedTimeSamples<uint32_t>;
-extern template struct TypedTimeSamples<int64_t>;
-extern template struct TypedTimeSamples<uint64_t>;
+DEFINE_TYPE_TRAIT(TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
-// Floating point scalar types (binary-serializable, lerp'able)
-extern template struct TypedTimeSamples<value::half>;
-extern template struct TypedTimeSamples<float>;
-extern template struct TypedTimeSamples<double>;
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
 
-// Vector types (binary-serializable, lerp'able)
-extern template struct TypedTimeSamples<value::half2>;
-extern template struct TypedTimeSamples<value::half3>;
-extern template struct TypedTimeSamples<value::half4>;
-extern template struct TypedTimeSamples<value::float2>;
-extern template struct TypedTimeSamples<value::float3>;
-extern template struct TypedTimeSamples<value::float4>;
-extern template struct TypedTimeSamples<value::double2>;
-extern template struct TypedTimeSamples<value::double3>;
-extern template struct TypedTimeSamples<value::double4>;
-
-// Integer vector types (binary-serializable, non-lerp'able)
-extern template struct TypedTimeSamples<value::int2>;
-extern template struct TypedTimeSamples<value::int3>;
-extern template struct TypedTimeSamples<value::int4>;
-
-// Quaternion types (binary-serializable, lerp'able)
-extern template struct TypedTimeSamples<value::quath>;
-extern template struct TypedTimeSamples<value::quatf>;
-extern template struct TypedTimeSamples<value::quatd>;
-
-// Matrix types (lerp'able)
-extern template struct TypedTimeSamples<value::matrix2f>;
-extern template struct TypedTimeSamples<value::matrix3f>;
-extern template struct TypedTimeSamples<value::matrix4f>;
-extern template struct TypedTimeSamples<value::matrix2d>;
-extern template struct TypedTimeSamples<value::matrix3d>;
-extern template struct TypedTimeSamples<value::matrix4d>;
-
-// Role types (binary-serializable, lerp'able)
-extern template struct TypedTimeSamples<value::normal3h>;
-extern template struct TypedTimeSamples<value::normal3f>;
-extern template struct TypedTimeSamples<value::normal3d>;
-extern template struct TypedTimeSamples<value::vector3h>;
-extern template struct TypedTimeSamples<value::vector3f>;
-extern template struct TypedTimeSamples<value::vector3d>;
-extern template struct TypedTimeSamples<value::point3h>;
-extern template struct TypedTimeSamples<value::point3f>;
-extern template struct TypedTimeSamples<value::point3d>;
-extern template struct TypedTimeSamples<value::color3h>;
-extern template struct TypedTimeSamples<value::color3f>;
-extern template struct TypedTimeSamples<value::color3d>;
-extern template struct TypedTimeSamples<value::color4h>;
-extern template struct TypedTimeSamples<value::color4f>;
-extern template struct TypedTimeSamples<value::color4d>;
-extern template struct TypedTimeSamples<value::texcoord2h>;
-extern template struct TypedTimeSamples<value::texcoord2f>;
-extern template struct TypedTimeSamples<value::texcoord2d>;
-extern template struct TypedTimeSamples<value::texcoord3h>;
-extern template struct TypedTimeSamples<value::texcoord3f>;
-extern template struct TypedTimeSamples<value::texcoord3d>;
-
-// Other types
-extern template struct TypedTimeSamples<value::timecode>;
-extern template struct TypedTimeSamples<value::frame4d>;
-extern template struct TypedTimeSamples<std::string>;
-extern template struct TypedTimeSamples<value::token>;
-extern template struct TypedTimeSamples<value::dict>;
-extern template struct TypedTimeSamples<value::AssetPath>;
-
-// Common array types
-extern template struct TypedTimeSamples<std::vector<bool>>;
-extern template struct TypedTimeSamples<std::vector<int32_t>>;
-extern template struct TypedTimeSamples<std::vector<uint32_t>>;
-extern template struct TypedTimeSamples<std::vector<int64_t>>;
-extern template struct TypedTimeSamples<std::vector<uint64_t>>;
-extern template struct TypedTimeSamples<std::vector<value::half>>;
-extern template struct TypedTimeSamples<std::vector<float>>;
-extern template struct TypedTimeSamples<std::vector<double>>;
-extern template struct TypedTimeSamples<std::vector<value::float2>>;
-extern template struct TypedTimeSamples<std::vector<value::float3>>;
-extern template struct TypedTimeSamples<std::vector<value::float4>>;
-extern template struct TypedTimeSamples<std::vector<value::double2>>;
-extern template struct TypedTimeSamples<std::vector<value::double3>>;
-extern template struct TypedTimeSamples<std::vector<value::double4>>;
-extern template struct TypedTimeSamples<std::vector<value::int2>>;
-extern template struct TypedTimeSamples<std::vector<value::int3>>;
-extern template struct TypedTimeSamples<std::vector<value::int4>>;
-extern template struct TypedTimeSamples<std::vector<value::quath>>;
-extern template struct TypedTimeSamples<std::vector<value::quatf>>;
-extern template struct TypedTimeSamples<std::vector<value::quatd>>;
-extern template struct TypedTimeSamples<std::vector<value::matrix2f>>;
-extern template struct TypedTimeSamples<std::vector<value::matrix3f>>;
-extern template struct TypedTimeSamples<std::vector<value::matrix4f>>;
-extern template struct TypedTimeSamples<std::vector<value::matrix2d>>;
-extern template struct TypedTimeSamples<std::vector<value::matrix3d>>;
-extern template struct TypedTimeSamples<std::vector<value::matrix4d>>;
-extern template struct TypedTimeSamples<std::vector<std::string>>;
-extern template struct TypedTimeSamples<std::vector<value::token>>;
-extern template struct TypedTimeSamples<std::vector<value::AssetPath>>;
-extern template struct TypedTimeSamples<std::vector<value::frame4d>>;
-// Special types used by tydra
-extern template struct TypedTimeSamples<std::vector<value::StringData>>;
-// Additional vector array types
-extern template struct TypedTimeSamples<std::vector<std::array<unsigned int, 2>>>;
-extern template struct TypedTimeSamples<std::vector<std::array<unsigned int, 3>>>;
-extern template struct TypedTimeSamples<std::vector<std::array<unsigned int, 4>>>;
-
-//
-// Extern template declarations for TypedTimeSamples::get()
-//
-
-// For non-interpolatable integer types
-extern template bool TypedTimeSamples<bool>::get<bool>(bool*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<int32_t>::get<int32_t>(int32_t*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<uint32_t>::get<uint32_t>(uint32_t*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<int64_t>::get<int64_t>(int64_t*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<uint64_t>::get<uint64_t>(uint64_t*, double, value::TimeSampleInterpolationType) const;
-
-// For interpolatable floating-point types
-extern template bool TypedTimeSamples<value::half>::get<value::half>(value::half*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<float>::get<float>(float*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<double>::get<double>(double*, double, value::TimeSampleInterpolationType) const;
-
-// For interpolatable vector types - using std::array forms
-extern template bool TypedTimeSamples<std::array<value::half, 2>>::get<std::array<value::half, 2>>(std::array<value::half, 2>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::array<value::half, 3>>::get<std::array<value::half, 3>>(std::array<value::half, 3>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::array<value::half, 4>>::get<std::array<value::half, 4>>(std::array<value::half, 4>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::array<float, 2>>::get<std::array<float, 2>>(std::array<float, 2>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::array<float, 3>>::get<std::array<float, 3>>(std::array<float, 3>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::array<float, 4>>::get<std::array<float, 4>>(std::array<float, 4>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::array<double, 2>>::get<std::array<double, 2>>(std::array<double, 2>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::array<double, 3>>::get<std::array<double, 3>>(std::array<double, 3>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::array<double, 4>>::get<std::array<double, 4>>(std::array<double, 4>*, double, value::TimeSampleInterpolationType) const;
-
-// For non-interpolatable integer vector types
-extern template bool TypedTimeSamples<std::array<int, 2>>::get<std::array<int, 2>>(std::array<int, 2>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::array<int, 3>>::get<std::array<int, 3>>(std::array<int, 3>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::array<int, 4>>::get<std::array<int, 4>>(std::array<int, 4>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::array<uint32_t, 2>>::get<std::array<uint32_t, 2>>(std::array<uint32_t, 2>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::array<uint32_t, 3>>::get<std::array<uint32_t, 3>>(std::array<uint32_t, 3>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::array<uint32_t, 4>>::get<std::array<uint32_t, 4>>(std::array<uint32_t, 4>*, double, value::TimeSampleInterpolationType) const;
-
-// For interpolatable quaternion types
-extern template bool TypedTimeSamples<value::quath>::get<value::quath>(value::quath*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::quatf>::get<value::quatf>(value::quatf*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::quatd>::get<value::quatd>(value::quatd*, double, value::TimeSampleInterpolationType) const;
-
-// For interpolatable matrix types
-extern template bool TypedTimeSamples<value::matrix2f>::get<value::matrix2f>(value::matrix2f*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::matrix3f>::get<value::matrix3f>(value::matrix3f*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::matrix4f>::get<value::matrix4f>(value::matrix4f*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::matrix2d>::get<value::matrix2d>(value::matrix2d*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::matrix3d>::get<value::matrix3d>(value::matrix3d*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::matrix4d>::get<value::matrix4d>(value::matrix4d*, double, value::TimeSampleInterpolationType) const;
-
-// For interpolatable role types
-extern template bool TypedTimeSamples<value::normal3h>::get<value::normal3h>(value::normal3h*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::normal3f>::get<value::normal3f>(value::normal3f*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::normal3d>::get<value::normal3d>(value::normal3d*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::vector3h>::get<value::vector3h>(value::vector3h*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::vector3f>::get<value::vector3f>(value::vector3f*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::vector3d>::get<value::vector3d>(value::vector3d*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::point3h>::get<value::point3h>(value::point3h*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::point3f>::get<value::point3f>(value::point3f*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::point3d>::get<value::point3d>(value::point3d*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::color3h>::get<value::color3h>(value::color3h*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::color3f>::get<value::color3f>(value::color3f*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::color3d>::get<value::color3d>(value::color3d*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::color4h>::get<value::color4h>(value::color4h*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::color4f>::get<value::color4f>(value::color4f*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::color4d>::get<value::color4d>(value::color4d*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::texcoord2h>::get<value::texcoord2h>(value::texcoord2h*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::texcoord2f>::get<value::texcoord2f>(value::texcoord2f*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::texcoord2d>::get<value::texcoord2d>(value::texcoord2d*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::texcoord3h>::get<value::texcoord3h>(value::texcoord3h*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::texcoord3f>::get<value::texcoord3f>(value::texcoord3f*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::texcoord3d>::get<value::texcoord3d>(value::texcoord3d*, double, value::TimeSampleInterpolationType) const;
-
-// For non-interpolatable other types
-extern template bool TypedTimeSamples<value::timecode>::get<value::timecode>(value::timecode*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::frame4d>::get<value::frame4d>(value::frame4d*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::string>::get<std::string>(std::string*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::token>::get<value::token>(value::token*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::dict>::get<value::dict>(value::dict*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<value::AssetPath>::get<value::AssetPath>(value::AssetPath*, double, value::TimeSampleInterpolationType) const;
-
-// For vector container types (non-interpolatable)
-extern template bool TypedTimeSamples<std::vector<bool>>::get<std::vector<bool>>(std::vector<bool>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<int>>::get<std::vector<int>>(std::vector<int>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<int32_t>>::get<std::vector<int32_t>>(std::vector<int32_t>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<uint32_t>>::get<std::vector<uint32_t>>(std::vector<uint32_t>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<int64_t>>::get<std::vector<int64_t>>(std::vector<int64_t>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<uint64_t>>::get<std::vector<uint64_t>>(std::vector<uint64_t>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::half>>::get<std::vector<value::half>>(std::vector<value::half>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<float>>::get<std::vector<float>>(std::vector<float>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<double>>::get<std::vector<double>>(std::vector<double>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::half2>>::get<std::vector<value::half2>>(std::vector<value::half2>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::half3>>::get<std::vector<value::half3>>(std::vector<value::half3>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::half4>>::get<std::vector<value::half4>>(std::vector<value::half4>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::float2>>::get<std::vector<value::float2>>(std::vector<value::float2>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::float3>>::get<std::vector<value::float3>>(std::vector<value::float3>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::float4>>::get<std::vector<value::float4>>(std::vector<value::float4>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::double2>>::get<std::vector<value::double2>>(std::vector<value::double2>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::double3>>::get<std::vector<value::double3>>(std::vector<value::double3>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::double4>>::get<std::vector<value::double4>>(std::vector<value::double4>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::int2>>::get<std::vector<value::int2>>(std::vector<value::int2>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::int3>>::get<std::vector<value::int3>>(std::vector<value::int3>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::int4>>::get<std::vector<value::int4>>(std::vector<value::int4>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::quath>>::get<std::vector<value::quath>>(std::vector<value::quath>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::quatf>>::get<std::vector<value::quatf>>(std::vector<value::quatf>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::quatd>>::get<std::vector<value::quatd>>(std::vector<value::quatd>*, double, value::TimeSampleInterpolationType) const;
-// Role types vectors (needed by usdGeom.cc and usdSkel.cc)
-extern template bool TypedTimeSamples<std::vector<value::point3h>>::get<std::vector<value::point3h>>(std::vector<value::point3h>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::point3f>>::get<std::vector<value::point3f>>(std::vector<value::point3f>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::point3d>>::get<std::vector<value::point3d>>(std::vector<value::point3d>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::normal3h>>::get<std::vector<value::normal3h>>(std::vector<value::normal3h>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::normal3f>>::get<std::vector<value::normal3f>>(std::vector<value::normal3f>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::normal3d>>::get<std::vector<value::normal3d>>(std::vector<value::normal3d>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::vector3h>>::get<std::vector<value::vector3h>>(std::vector<value::vector3h>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::vector3f>>::get<std::vector<value::vector3f>>(std::vector<value::vector3f>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::vector3d>>::get<std::vector<value::vector3d>>(std::vector<value::vector3d>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::color3h>>::get<std::vector<value::color3h>>(std::vector<value::color3h>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::color3f>>::get<std::vector<value::color3f>>(std::vector<value::color3f>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::color3d>>::get<std::vector<value::color3d>>(std::vector<value::color3d>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::color4h>>::get<std::vector<value::color4h>>(std::vector<value::color4h>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::color4f>>::get<std::vector<value::color4f>>(std::vector<value::color4f>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::color4d>>::get<std::vector<value::color4d>>(std::vector<value::color4d>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::texcoord2h>>::get<std::vector<value::texcoord2h>>(std::vector<value::texcoord2h>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::texcoord2f>>::get<std::vector<value::texcoord2f>>(std::vector<value::texcoord2f>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::texcoord2d>>::get<std::vector<value::texcoord2d>>(std::vector<value::texcoord2d>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::texcoord3h>>::get<std::vector<value::texcoord3h>>(std::vector<value::texcoord3h>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::texcoord3f>>::get<std::vector<value::texcoord3f>>(std::vector<value::texcoord3f>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::texcoord3d>>::get<std::vector<value::texcoord3d>>(std::vector<value::texcoord3d>*, double, value::TimeSampleInterpolationType) const;
-// Matrix types vectors
-extern template bool TypedTimeSamples<std::vector<value::matrix2f>>::get<std::vector<value::matrix2f>>(std::vector<value::matrix2f>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::matrix3f>>::get<std::vector<value::matrix3f>>(std::vector<value::matrix3f>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::matrix4f>>::get<std::vector<value::matrix4f>>(std::vector<value::matrix4f>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::matrix2d>>::get<std::vector<value::matrix2d>>(std::vector<value::matrix2d>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::matrix3d>>::get<std::vector<value::matrix3d>>(std::vector<value::matrix3d>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::matrix4d>>::get<std::vector<value::matrix4d>>(std::vector<value::matrix4d>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<std::string>>::get<std::vector<std::string>>(std::vector<std::string>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::token>>::get<std::vector<value::token>>(std::vector<value::token>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::AssetPath>>::get<std::vector<value::AssetPath>>(std::vector<value::AssetPath>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<value::frame4d>>::get<std::vector<value::frame4d>>(std::vector<value::frame4d>*, double, value::TimeSampleInterpolationType) const;
-// Special types - these are instantiated in timesamples.cc
-extern template bool TypedTimeSamples<std::vector<value::StringData>>::get<std::vector<value::StringData>>(std::vector<value::StringData>*, double, value::TimeSampleInterpolationType) const;
-// Additional vector array types
-extern template bool TypedTimeSamples<std::vector<std::array<unsigned int, 2>>>::get<std::vector<std::array<unsigned int, 2>>>(std::vector<std::array<unsigned int, 2>>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<std::array<unsigned int, 3>>>::get<std::vector<std::array<unsigned int, 3>>>(std::vector<std::array<unsigned int, 3>>*, double, value::TimeSampleInterpolationType) const;
-extern template bool TypedTimeSamples<std::vector<std::array<unsigned int, 4>>>::get<std::vector<std::array<unsigned int, 4>>>(std::vector<std::array<unsigned int, 4>>*, double, value::TimeSampleInterpolationType) const;
+}  // namespace value
 
 } // namespace tinyusdz

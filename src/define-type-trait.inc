@@ -37,4 +37,11 @@
     }                                                                        \
     static bool is_role_type() { return true; }      \
     static bool is_array() { return type_id() & value::TYPE_ID_1D_ARRAY_BIT; }      \
+    /* A role type must be layout-identical to its underlying type: this is what  \
+       makes the shared TimeSamples switch arms and any_value_raw_cast's role     \
+       path memory-safe (see Value::as<T>). Enforced for every role type. */      \
+    static_assert(sizeof(__dty) == sizeof(__uty),                                 \
+                  #__dty " must have the same size as its underlying " #__uty);   \
+    static_assert(alignof(__dty) == alignof(__uty),                               \
+                  #__dty " must have the same alignment as underlying " #__uty);  \
   }

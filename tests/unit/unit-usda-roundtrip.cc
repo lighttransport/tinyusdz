@@ -410,30 +410,37 @@ def Mesh "AnimatedMesh"
       return;
     }
 
-    const auto &ts = points_attr.value().get_timesamples();
-    TEST_CHECK(ts.size() == 3);
+    const value::TimeSamples *ts = points_attr.value().get_timesamples_ptr();
+    TEST_CHECK(ts != nullptr);
+    if (!ts) {
+      return;
+    }
+    TEST_CHECK(ts->size() == 3);
 
-    const auto &samples = ts.get_samples();
+    const auto &samples = ts->get_samples();
     TEST_CHECK(samples.size() == 3);
     if (samples.size() == 3) {
       TEST_CHECK(math::is_close(samples[0].t, 1.0));
       TEST_CHECK(math::is_close(samples[1].t, 2.0));
       TEST_CHECK(math::is_close(samples[2].t, 3.0));
-      TEST_CHECK(samples[0].value.size() == 3);
-      TEST_CHECK(samples[1].value.size() == 3);
-      TEST_CHECK(samples[2].value.size() == 3);
-      if (samples[1].value.size() == 3) {
-        TEST_CHECK(math::is_close(samples[1].value[1].x, 2.0f));
-        TEST_CHECK(math::is_close(samples[1].value[1].y, 0.0f));
-        TEST_CHECK(math::is_close(samples[1].value[1].z, 0.0f));
-        TEST_CHECK(math::is_close(samples[1].value[2].x, 0.0f));
-        TEST_CHECK(math::is_close(samples[1].value[2].y, 2.0f));
-        TEST_CHECK(math::is_close(samples[1].value[2].z, 0.0f));
+      const auto *v0 = samples[0].value.as<std::vector<value::point3f>>();
+      const auto *v1 = samples[1].value.as<std::vector<value::point3f>>();
+      const auto *v2 = samples[2].value.as<std::vector<value::point3f>>();
+      TEST_CHECK(v0 && v0->size() == 3);
+      TEST_CHECK(v1 && v1->size() == 3);
+      TEST_CHECK(v2 && v2->size() == 3);
+      if (v1 && v1->size() == 3) {
+        TEST_CHECK(math::is_close((*v1)[1].x, 2.0f));
+        TEST_CHECK(math::is_close((*v1)[1].y, 0.0f));
+        TEST_CHECK(math::is_close((*v1)[1].z, 0.0f));
+        TEST_CHECK(math::is_close((*v1)[2].x, 0.0f));
+        TEST_CHECK(math::is_close((*v1)[2].y, 2.0f));
+        TEST_CHECK(math::is_close((*v1)[2].z, 0.0f));
       }
     }
 
     std::vector<value::point3f> held_points;
-    TEST_CHECK(ts.get(&held_points, 2.0, value::TimeSampleInterpolationType::Held));
+    TEST_CHECK(ts->get(&held_points, 2.0, value::TimeSampleInterpolationType::Held));
     TEST_CHECK(held_points.size() == 3);
     if (held_points.size() == 3) {
       TEST_CHECK(math::is_close(held_points[1].x, 2.0f));

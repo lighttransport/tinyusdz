@@ -1,23 +1,36 @@
 // SPDX-License-Identifier: Apache 2.0
 // Experimental USD to JSON converter
+#pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <map>
 #include <string>
+#include <vector>
 
+#include "nonstd/expected.hpp"
+
+#if defined(TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT)
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#include "nonstd/expected.hpp"
 #include "external/jsonhpp/nlohmann/json_fwd.hpp"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
+#endif
 
 #include "tinyusdz.hh"
+#include "usdGeom.hh"  // GeomMesh/Xform etc. (no longer re-exported by tinyusdz.hh)
 
 namespace tinyusdz {
+
+namespace minijson {
+class Value;
+}
 
 ///
 /// Array serialization mode
@@ -106,19 +119,19 @@ nonstd::expected<std::string, std::string> ToJSON(const tinyusdz::Stage &stage);
 nonstd::expected<std::string, std::string> ToJSON(const tinyusdz::Stage &stage, const USDToJSONOptions& options);
 
 ///
-/// Convert USD Stage to JSON (nlohmann::json object)
+/// Convert USD Stage to JSON value.
 ///
-nlohmann::json ToJSON(const tinyusdz::Stage &stage, USDToJSONContext* context);
+minijson::Value ToJSONValue(const tinyusdz::Stage &stage, USDToJSONContext* context);
 
 ///
-/// Convert USD Layer to JSON (nlohmann::json object)
+/// Convert USD Layer to JSON value.
 ///
-nlohmann::json ToJSON(const tinyusdz::Layer &layer);
+minijson::Value ToJSONValue(const tinyusdz::Layer &layer);
 
 ///
-/// Convert USD Layer to JSON with context (nlohmann::json object)
+/// Convert USD Layer to JSON value with context.
 ///
-nlohmann::json ToJSON(const tinyusdz::Layer &layer, USDToJSONContext& context);
+minijson::Value ToJSONValue(const tinyusdz::Layer &layer, USDToJSONContext& context);
 
 ///
 /// Convert USD Layer to JSON
@@ -131,29 +144,48 @@ bool to_json_string(const tinyusdz::Layer &layer, std::string *json_str, std::st
 bool to_json_string(const tinyusdz::Layer &layer, const USDToJSONOptions& options, std::string *json_str, std::string *warn, std::string *err);
 
 ///
-/// Convert GeomMesh to JSON with context
+/// Convert GeomMesh to JSON value with context
 ///
+minijson::Value ToJSONValue(tinyusdz::GeomMesh& mesh, USDToJSONContext* context);
+
+///
+/// Convert Attribute to JSON value
+///
+minijson::Value ToJSONValue(const tinyusdz::Attribute& attribute, USDToJSONContext* context = nullptr);
+
+///
+/// Convert Relationship to JSON value
+///
+minijson::Value ToJSONValue(const tinyusdz::Relationship& relationship);
+
+///
+/// Convert Property to JSON value
+///
+minijson::Value ToJSONValue(const tinyusdz::Property& property, USDToJSONContext* context = nullptr);
+
+///
+/// Convert Properties map to JSON value
+///
+minijson::Value PropertiesToJSONValue(const std::map<std::string, tinyusdz::Property>& properties, USDToJSONContext* context = nullptr);
+
+#if defined(TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT)
+/// Deprecated: use ToJSONValue or string-producing ToJSON instead.
+nlohmann::json ToJSON(const tinyusdz::Stage &stage, USDToJSONContext* context);
+/// Deprecated: use ToJSONValue or to_json_string instead.
+nlohmann::json ToJSON(const tinyusdz::Layer &layer);
+/// Deprecated: use ToJSONValue or to_json_string instead.
+nlohmann::json ToJSON(const tinyusdz::Layer &layer, USDToJSONContext& context);
+/// Deprecated: use ToJSONValue instead.
 nlohmann::json ToJSON(tinyusdz::GeomMesh& mesh, USDToJSONContext* context);
-
-///
-/// Convert Attribute to JSON
-///
+/// Deprecated: use ToJSONValue instead.
 nlohmann::json ToJSON(const tinyusdz::Attribute& attribute, USDToJSONContext* context = nullptr);
-
-///
-/// Convert Relationship to JSON
-///
+/// Deprecated: use ToJSONValue instead.
 nlohmann::json ToJSON(const tinyusdz::Relationship& relationship);
-
-///
-/// Convert Property to JSON
-///
+/// Deprecated: use ToJSONValue instead.
 nlohmann::json ToJSON(const tinyusdz::Property& property, USDToJSONContext* context = nullptr);
-
-///
-/// Convert Properties map to JSON
-///
+/// Deprecated: use PropertiesToJSONValue instead.
 nlohmann::json PropertiesToJSON(const std::map<std::string, tinyusdz::Property>& properties, USDToJSONContext* context = nullptr);
+#endif
 
 ///
 /// USDZ to JSON conversion result structure

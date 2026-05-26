@@ -18,7 +18,6 @@
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "value-pprint.hh"
-#include "logger.hh"
 
 //
 #include "common-macros.inc"

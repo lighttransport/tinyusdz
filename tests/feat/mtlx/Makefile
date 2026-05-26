@@ -49,10 +49,13 @@ SOURCE_NODEGRAPH = test_nodegraph_export.cc
 TARGET_PARSE = test_mtlx_parse
 SOURCE_PARSE = test_mtlx_parse.cc
 
-TARGETS = $(TARGET_EXPORT) $(TARGET_IMPORT) $(TARGET_EXPORT_NEW) $(TARGET_NODEGRAPH) $(TARGET_PARSE)
+TARGET_TRAVERSAL = test_mtlx_include_traversal
+SOURCE_TRAVERSAL = test_mtlx_include_traversal.cc
+
+TARGETS = $(TARGET_EXPORT) $(TARGET_IMPORT) $(TARGET_EXPORT_NEW) $(TARGET_NODEGRAPH) $(TARGET_PARSE) $(TARGET_TRAVERSAL)
 
 # Build rules
-.PHONY: all clean run run-import run-export check-library
+.PHONY: all clean run run-import run-export run-traversal check-library
 
 all: check-library $(TARGETS)
 
@@ -76,6 +79,10 @@ $(TARGET_PARSE): $(SOURCE_PARSE)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTINYUSDZ_USE_USDMTLX -o $@ $< $(LDFLAGS) $(LIBS)
 	@echo "Built $(TARGET_PARSE)"
 
+$(TARGET_TRAVERSAL): $(SOURCE_TRAVERSAL)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTINYUSDZ_USE_USDMTLX -o $@ $< $(LDFLAGS) $(LIBS)
+	@echo "Built $(TARGET_TRAVERSAL)"
+
 run-export: $(TARGET_EXPORT)
 	@echo "Running MaterialX export test..."
 	@./$(TARGET_EXPORT)
@@ -96,7 +103,11 @@ run-parse: $(TARGET_PARSE)
 	@echo "Running MaterialX parse tests..."
 	@./$(TARGET_PARSE)
 
-run: run-export run-import run-export-new run-nodegraph run-parse
+run-traversal: $(TARGET_TRAVERSAL)
+	@echo "Running MaterialX include path-traversal regression test..."
+	@./$(TARGET_TRAVERSAL)
+
+run: run-export run-import run-export-new run-nodegraph run-parse run-traversal
 
 check-library:
 	@if [ ! -f "$(BUILD_DIR)/libtinyusdz_static.a" ]; then \
@@ -108,6 +119,7 @@ check-library:
 
 clean:
 	rm -f $(TARGETS) *.o *.mtlx
+	rm -rf mtlx_traversal_tmp
 
 help:
 	@echo "MaterialX Export Test Makefile"

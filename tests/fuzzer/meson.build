@@ -63,8 +63,8 @@ tinyusdz_sources=[
   '../../src/mtlx-xml-parser.cc',
   '../../src/mtlx-xml-tokenizer.cc',
   '../../src/usd-dump.cc',
-  '../../sandbox/path-sort-and-encode-crate/src/path_sort.cc',
-  '../../sandbox/path-sort-and-encode-crate/src/tree_encode.cc',
+  '../../src/crate-path-utils/path_sort.cc',
+  '../../src/crate-path-utils/tree_encode.cc',
   '../../src/tydra/render-data.cc',
   '../../src/tydra/render-data-pprint.cc',
   '../../src/tydra/prim-apply.cc',
@@ -89,7 +89,6 @@ tinyusdz_sources=[
   ]
 
 incdirs = include_directories(['../../src',
-  '../../sandbox/path-sort-and-encode-crate/include',
   ])
 
 # TINYUSDZ_FUZZER_BUILD = suppress some debug message
@@ -206,4 +205,20 @@ executable('fuzz_usd_writer',
   install: true,
   include_directories : incdirs,
   cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  link_args : '-fsanitize=address,fuzzer' )
+
+executable('fuzz_stb_image',
+  'stb_image_fuzzmain.cc',
+  install: true,
+  include_directories : incdirs,
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  link_args : '-fsanitize=address,fuzzer' )
+
+executable('fuzz_subdiv_tinyusdz',
+  'subdiv_tinyusdz_fuzzmain.cc',
+  '../../src/subdivision.cc',
+  install: true,
+  include_directories : incdirs,
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1',
+              '-DTINYUSDZ_WITH_TINYSUBDIV'],
   link_args : '-fsanitize=address,fuzzer' )

@@ -150,16 +150,23 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     std::vector<std::vector<value::half3>> scale_samples;
 
     if (translations.has_timesamples()) {
-      const TypedTimeSamples<std::vector<value::float3>> &ts_txs = translations.get_timesamples();
-      FOREACH_TIMESAMPLES_BEGIN(ts_txs, sample_t, sample_value, sample_blocked)
-        if (sample_value.size() != joints.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: translations[{}].size {} != joints.size {} at time {}",
-            translation_times.size(), sample_value.size(), joints.size(), sample_t));
+      if (const value::TimeSamples *_tsp = translations.get_timesamples_ptr()) {
+        for (const auto &_s : _tsp->get_samples()) {
+          if (_s.blocked) continue;
+          const std::vector<value::float3> *_pv =
+              _s.value.as<std::vector<value::float3>>();
+          if (!_pv) continue;
+          const double sample_t = _s.t;
+          const std::vector<value::float3> &sample_value = *_pv;
+          if (sample_value.size() != joints.size()) {
+            PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: translations[{}].size {} != joints.size {} at time {}",
+              translation_times.size(), sample_value.size(), joints.size(), sample_t));
+          }
+          translation_times.push_back(sample_t);
+          translation_samples.push_back(sample_value);
+          if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
         }
-        translation_times.push_back(sample_t);
-        translation_samples.push_back(sample_value);
-        if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
-      FOREACH_TIMESAMPLES_END()
+      }
     } else if (translations.has_value()) {
       // Handle static (non-time-sampled) values as a single keyframe at time 0.0
       std::vector<value::float3> default_value;
@@ -175,16 +182,23 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     }
 
     if (rotations.has_timesamples()) {
-      const TypedTimeSamples<std::vector<value::quatf>> &ts_rots = rotations.get_timesamples();
-      FOREACH_TIMESAMPLES_BEGIN(ts_rots, sample_t, sample_value, sample_blocked)
-        if (sample_value.size() != joints.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: rotations[{}].size {} != joints.size {} at time {}",
-            rotation_times.size(), sample_value.size(), joints.size(), sample_t));
+      if (const value::TimeSamples *_tsp = rotations.get_timesamples_ptr()) {
+        for (const auto &_s : _tsp->get_samples()) {
+          if (_s.blocked) continue;
+          const std::vector<value::quatf> *_pv =
+              _s.value.as<std::vector<value::quatf>>();
+          if (!_pv) continue;
+          const double sample_t = _s.t;
+          const std::vector<value::quatf> &sample_value = *_pv;
+          if (sample_value.size() != joints.size()) {
+            PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: rotations[{}].size {} != joints.size {} at time {}",
+              rotation_times.size(), sample_value.size(), joints.size(), sample_t));
+          }
+          rotation_times.push_back(sample_t);
+          rotation_samples.push_back(sample_value);
+          if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
         }
-        rotation_times.push_back(sample_t);
-        rotation_samples.push_back(sample_value);
-        if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
-      FOREACH_TIMESAMPLES_END()
+      }
     } else if (rotations.has_value()) {
       // Handle static (non-time-sampled) values as a single keyframe at time 0.0
       std::vector<value::quatf> default_value;
@@ -200,16 +214,23 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     }
 
     if (scales.has_timesamples()) {
-      const TypedTimeSamples<std::vector<value::half3>> &ts_scales = scales.get_timesamples();
-      FOREACH_TIMESAMPLES_BEGIN(ts_scales, sample_t, sample_value, sample_blocked)
-        if (sample_value.size() != joints.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: scales[{}].size {} != joints.size {} at time {}",
-            scale_times.size(), sample_value.size(), joints.size(), sample_t));
+      if (const value::TimeSamples *_tsp = scales.get_timesamples_ptr()) {
+        for (const auto &_s : _tsp->get_samples()) {
+          if (_s.blocked) continue;
+          const std::vector<value::half3> *_pv =
+              _s.value.as<std::vector<value::half3>>();
+          if (!_pv) continue;
+          const double sample_t = _s.t;
+          const std::vector<value::half3> &sample_value = *_pv;
+          if (sample_value.size() != joints.size()) {
+            PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: scales[{}].size {} != joints.size {} at time {}",
+              scale_times.size(), sample_value.size(), joints.size(), sample_t));
+          }
+          scale_times.push_back(sample_t);
+          scale_samples.push_back(sample_value);
+          if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
         }
-        scale_times.push_back(sample_t);
-        scale_samples.push_back(sample_value);
-        if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
-      FOREACH_TIMESAMPLES_END()
+      }
     } else if (scales.has_value()) {
       // Handle static (non-time-sampled) values as a single keyframe at time 0.0
       std::vector<value::half3> default_value;
@@ -321,20 +342,25 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     }
 
     if (weights.has_timesamples()) {
-      const TypedTimeSamples<std::vector<float>> &ts_weights = weights.get_timesamples();
-
       std::vector<double> weight_times;
       std::vector<std::vector<float>> weight_samples;
 
-      FOREACH_TIMESAMPLES_BEGIN(ts_weights, sample_t, sample_value, sample_blocked)
-        if (sample_value.size() != blendShapes.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("blendShapeWeights size mismatch at time {}: {} != {}",
-            sample_t, sample_value.size(), blendShapes.size()));
+      if (const value::TimeSamples *_tsp = weights.get_timesamples_ptr()) {
+        for (const auto &_s : _tsp->get_samples()) {
+          if (_s.blocked) continue;
+          const std::vector<float> *_pv = _s.value.as<std::vector<float>>();
+          if (!_pv) continue;
+          const double sample_t = _s.t;
+          const std::vector<float> &sample_value = *_pv;
+          if (sample_value.size() != blendShapes.size()) {
+            PUSH_ERROR_AND_RETURN(fmt::format("blendShapeWeights size mismatch at time {}: {} != {}",
+              sample_t, sample_value.size(), blendShapes.size()));
+          }
+          weight_times.push_back(sample_t);
+          weight_samples.push_back(sample_value);
+          if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
         }
-        weight_times.push_back(sample_t);
-        weight_samples.push_back(sample_value);
-        if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
-      FOREACH_TIMESAMPLES_END()
+      }
 
       // Create one sampler with all weights (glTF morph targets style)
       if (!weight_times.empty()) {

@@ -111,16 +111,14 @@ class GeomPrimvar {
     _has_value = true;
   }
 
-  GeomPrimvar(const Attribute &attr, const TypedTimeSamples<std::vector<int32_t>> &indices) : _attr(attr)
+  GeomPrimvar(const Attribute &attr, const value::TimeSamples &indices) : _attr(attr)
   {
-    //TUSDZ_LOG_I("GeomPrimvar constructor called with Attribute and const TypedTimeSamples indices");
     _ts_indices = indices;
     _has_value = true;
   }
 
-  GeomPrimvar(const Attribute &attr, TypedTimeSamples<std::vector<int32_t>> &&indices) : _attr(attr)
+  GeomPrimvar(const Attribute &attr, value::TimeSamples &&indices) : _attr(attr)
   {
-    //TUSDZ_LOG_I("GeomPrimvar constructor called with Attribute and move TypedTimeSamples indices");
     _ts_indices = std::move(indices);
     _has_value = true;
   }
@@ -198,7 +196,7 @@ class GeomPrimvar {
     return _indices;
   }
 
-  const TypedTimeSamples<std::vector<int32_t>> &get_timesampled_indices() const {
+  const value::TimeSamples &get_timesampled_indices() const {
     return _ts_indices;
   }
 
@@ -249,6 +247,9 @@ class GeomPrimvar {
   template <typename T>
   bool get_value(T *dst, std::string *err = nullptr) const;
 
+  // Non-template value extraction (the templated get_value<T> overloads forward
+  // here and cast with value::Value::as<T>()). The timecode overload is declared
+  // further below.
   bool get_value(value::Value *dst, std::string *err = nullptr) const;
 
 
@@ -294,7 +295,7 @@ class GeomPrimvar {
     _indices = std::move(indices);
   }
 
-  void set_timesampled_indices(const TypedTimeSamples<std::vector<int32_t>> &indices) {
+  void set_timesampled_indices(const value::TimeSamples &indices) {
     _ts_indices = indices;
   }
 
@@ -314,7 +315,7 @@ class GeomPrimvar {
   bool _has_value{false};
   Attribute _attr;
   std::vector<int32_t> _indices;  // 'default' indices
-  TypedTimeSamples<std::vector<int32_t>> _ts_indices;
+  value::TimeSamples _ts_indices;
 
   // Store Attribute meta separately.
   nonstd::optional<int32_t> _unauthoredValuesIndex; // for sparse primvars in some DCC. default = -1.
@@ -1148,54 +1149,42 @@ DEFINE_TYPE_TRAIT(GeomHermiteCurves, kGeomHermiteCurves, TYPE_ID_GEOM_HERMITE_CU
 
 // NOTE: `bool` type seems not supported on pxrUSD
 // NOTE: `string` type need special treatment when `idFrom` Relationship exists( https://github.com/syoyo/tinyusdz/issues/113 )
+#define APPLY_GEOMPRIVAR_TYPE_SCALAR_A(__FUNC) \
+  __FUNC(bool) __FUNC(std::string) __FUNC(value::half) __FUNC(value::half2) \
+  __FUNC(value::half3) __FUNC(value::half4) __FUNC(int)
+#define APPLY_GEOMPRIVAR_TYPE_SCALAR_B(__FUNC) \
+  __FUNC(value::int2) __FUNC(value::int3) __FUNC(value::int4) __FUNC(uint32_t) \
+  __FUNC(value::uint2) __FUNC(value::uint3) __FUNC(value::uint4)
+#define APPLY_GEOMPRIVAR_TYPE_SCALAR(__FUNC) \
+  APPLY_GEOMPRIVAR_TYPE_SCALAR_A(__FUNC) APPLY_GEOMPRIVAR_TYPE_SCALAR_B(__FUNC)
+
+#define APPLY_GEOMPRIVAR_TYPE_VEC_A(__FUNC) \
+  __FUNC(float) __FUNC(value::float2) __FUNC(value::float3) __FUNC(value::float4) \
+  __FUNC(double) __FUNC(value::double2) __FUNC(value::double3)
+#define APPLY_GEOMPRIVAR_TYPE_VEC_B(__FUNC) \
+  __FUNC(value::double4) __FUNC(value::matrix2d) __FUNC(value::matrix3d) \
+  __FUNC(value::matrix4d) __FUNC(value::quath) __FUNC(value::quatf) __FUNC(value::quatd)
+#define APPLY_GEOMPRIVAR_TYPE_VEC(__FUNC) \
+  APPLY_GEOMPRIVAR_TYPE_VEC_A(__FUNC) APPLY_GEOMPRIVAR_TYPE_VEC_B(__FUNC)
+
+#define APPLY_GEOMPRIVAR_TYPE_ROLE_A(__FUNC) \
+  __FUNC(value::normal3h) __FUNC(value::normal3f) __FUNC(value::normal3d) \
+  __FUNC(value::vector3h) __FUNC(value::vector3f) __FUNC(value::vector3d) \
+  __FUNC(value::point3h) __FUNC(value::point3f) __FUNC(value::point3d) __FUNC(value::color3f)
+#define APPLY_GEOMPRIVAR_TYPE_ROLE_B(__FUNC) \
+  __FUNC(value::color3d) __FUNC(value::color4f) __FUNC(value::color4d) \
+  __FUNC(value::texcoord2h) __FUNC(value::texcoord2f) __FUNC(value::texcoord2d) \
+  __FUNC(value::texcoord3h) __FUNC(value::texcoord3f) __FUNC(value::texcoord3d)
+#define APPLY_GEOMPRIVAR_TYPE_ROLE(__FUNC) \
+  APPLY_GEOMPRIVAR_TYPE_ROLE_A(__FUNC) APPLY_GEOMPRIVAR_TYPE_ROLE_B(__FUNC)
+
+// Full type list = the three groups concatenated (used by IsSupportedGeomPrimvarType
+// and EXTERN_TEMPLATE_GET_VALUE). The six *_A/*_B leaf macros let each
+// usdGeom-primvar-inst-*.cc instantiate ~8 types.
 #define APPLY_GEOMPRIVAR_TYPE(__FUNC) \
-  __FUNC(bool)                        \
-  __FUNC(std::string)                 \
-  __FUNC(value::half)                 \
-  __FUNC(value::half2)                \
-  __FUNC(value::half3)                \
-  __FUNC(value::half4)                \
-  __FUNC(int)                         \
-  __FUNC(value::int2)                 \
-  __FUNC(value::int3)                 \
-  __FUNC(value::int4)                 \
-  __FUNC(uint32_t)                    \
-  __FUNC(value::uint2)                \
-  __FUNC(value::uint3)                \
-  __FUNC(value::uint4)                \
-  __FUNC(float)                       \
-  __FUNC(value::float2)               \
-  __FUNC(value::float3)               \
-  __FUNC(value::float4)               \
-  __FUNC(double)                      \
-  __FUNC(value::double2)              \
-  __FUNC(value::double3)              \
-  __FUNC(value::double4)              \
-  __FUNC(value::matrix2d)             \
-  __FUNC(value::matrix3d)             \
-  __FUNC(value::matrix4d)             \
-  __FUNC(value::quath)                \
-  __FUNC(value::quatf)                \
-  __FUNC(value::quatd)                \
-  __FUNC(value::normal3h)             \
-  __FUNC(value::normal3f)             \
-  __FUNC(value::normal3d)             \
-  __FUNC(value::vector3h)             \
-  __FUNC(value::vector3f)             \
-  __FUNC(value::vector3d)             \
-  __FUNC(value::point3h)              \
-  __FUNC(value::point3f)              \
-  __FUNC(value::point3d)              \
-  __FUNC(value::color3f)              \
-  __FUNC(value::color3d)              \
-  __FUNC(value::color4f)              \
-  __FUNC(value::color4d)              \
-  __FUNC(value::texcoord2h)           \
-  __FUNC(value::texcoord2f)           \
-  __FUNC(value::texcoord2d)           \
-  __FUNC(value::texcoord3h)           \
-  __FUNC(value::texcoord3f)           \
-  __FUNC(value::texcoord3d)
+  APPLY_GEOMPRIVAR_TYPE_SCALAR(__FUNC) \
+  APPLY_GEOMPRIVAR_TYPE_VEC(__FUNC)    \
+  APPLY_GEOMPRIVAR_TYPE_ROLE(__FUNC)
 
 #define EXTERN_TEMPLATE_GET_VALUE(__ty) \
   extern template bool GeomPrimvar::get_value(__ty *dest, std::string *err) const; \

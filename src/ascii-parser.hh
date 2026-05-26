@@ -19,7 +19,7 @@
 #include "stream-reader.hh"
 #include "string-similarity.hh"
 #include "tinyusdz.hh"
-#include "typed-array.hh"
+#include "typed-array-core.hh"
 
 // Configuration flag for enabling fix suggestions in parse errors
 // When enabled, parser will suggest similar keywords/identifiers for unrecognized tokens

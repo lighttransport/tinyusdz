@@ -24,7 +24,7 @@
 //#include "external/fast_float/include/fast_float/bigint.h"
 #include "tinyusdz.hh"
 #include "pprinter.hh"
-#include "typed-array.hh"
+#include "typed-array-core.hh"
 #include "value-types.hh"
 #include "tydra/render-data.hh"
 #include "tydra/tangent-quantize.hh"
@@ -39,6 +39,7 @@
 #include "tydra/mcp-resources.hh"
 #include "tydra/mcp-tools.hh"
 #include "tydra/urdf-to-usd.hh"
+#include "minijson.hh"
 #include "usd-to-json.hh"
 #include "json-to-usd.hh"
 #include "usda-writer.hh"
@@ -5013,8 +5014,8 @@ class TinyUSDZLoaderNative {
       return "{ \"error\": \"invalid session_id\"}";
     }
 
-    //Context &ctx = mcp_ctx_.at(mcp_session_id_);
-    tinyusdz::tydra::mcp::Context &ctx = mcp_global_ctx_;
+    // Per-session context (see note in mcpToolsCall). Guarded above.
+    tinyusdz::tydra::mcp::Context &ctx = mcp_ctx_.at(mcp_session_id_);
 
     nlohmann::json result;
     if (!tinyusdz::tydra::mcp::GetToolsList(ctx, result)) {
@@ -5041,8 +5042,10 @@ class TinyUSDZLoaderNative {
 
     nlohmann::json j_args = nlohmann::json::parse(args);
 
-    //Context &ctx = mcp_ctx_.at(mcp_session_id_);
-    auto &ctx = mcp_global_ctx_;
+    // Per-session context: isolated so one session cannot read/overwrite
+    // another session's assets/layers/screenshots. Guarded by the
+    // mcp_ctx_.count(mcp_session_id_) check above, so .at() never throws.
+    auto &ctx = mcp_ctx_.at(mcp_session_id_);
 
     nlohmann::json result;
 
@@ -5076,8 +5079,10 @@ class TinyUSDZLoaderNative {
       return "{ \"error\": \"invalid session_id\"}";
     }
 
-    //Context &ctx = mcp_ctx_.at(mcp_session_id_);
-    auto &ctx = mcp_global_ctx_;
+    // Per-session context: isolated so one session cannot read/overwrite
+    // another session's assets/layers/screenshots. Guarded by the
+    // mcp_ctx_.count(mcp_session_id_) check above, so .at() never throws.
+    auto &ctx = mcp_ctx_.at(mcp_session_id_);
 
     nlohmann::json result;
 
@@ -5101,8 +5106,10 @@ class TinyUSDZLoaderNative {
       return "{ \"error\": \"invalid session_id\"}";
     }
 
-    //Context &ctx = mcp_ctx_.at(mcp_session_id_);
-    auto &ctx = mcp_global_ctx_;
+    // Per-session context: isolated so one session cannot read/overwrite
+    // another session's assets/layers/screenshots. Guarded by the
+    // mcp_ctx_.count(mcp_session_id_) check above, so .at() never throws.
+    auto &ctx = mcp_ctx_.at(mcp_session_id_);
 
     nlohmann::json content;
 
@@ -5127,7 +5134,8 @@ class TinyUSDZLoaderNative {
 
     const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
     
-    nlohmann::json json_obj = tinyusdz::ToJSON(curr);
+    tinyusdz::USDToJSONContext context;
+    tinyusdz::minijson::Value json_obj = tinyusdz::ToJSONValue(curr, context);
     return json_obj.dump(2); // Pretty print with 2 spaces
   }
 
@@ -5847,11 +5855,10 @@ class TinyUSDZLoaderNative {
   mutable std::unordered_map<int, std::vector<float>> tangents4_cache_;
   mutable std::unordered_map<int, std::vector<float>> normals3_cache_;
 
-  // key = session_id
+  // Per-session MCP contexts. key = session_id. Each session gets its own
+  // isolated Context so tools cannot read/overwrite another session's state.
   std::unordered_map<std::string, tinyusdz::tydra::mcp::Context> mcp_ctx_;
   std::string mcp_session_id_;
-
-  tinyusdz::tydra::mcp::Context mcp_global_ctx_;
 
   // Progress tracking for polling-based progress reporting
   ParsingProgress parsing_progress_;

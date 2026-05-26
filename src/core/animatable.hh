@@ -5,36 +5,83 @@
 //
 #pragma once
 
+#include <memory>
+#include <type_traits>
+
 #include "timesamples.hh"
 
 namespace tinyusdz {
 
+namespace animatable_detail {
+// True iff value::TypeTraits<T> is a complete specialization (i.e. T is a
+// registered value type that value::TimeSamples stores directly). False for
+// enums, which Animatable stores as their underlying int64 instead. Consumers
+// (pprint / writer) branch on this to decide whether to render T directly or
+// cast int64 -> enum.
+template <typename T, typename = void>
+struct has_value_type_traits : std::false_type {};
+template <typename T>
+struct has_value_type_traits<
+    T, std::void_t<decltype(value::TypeTraits<T>::type_id())>>
+    : std::true_type {};
+}  // namespace animatable_detail
+
 //
 // Scalar(default) and/or TimeSamples
 //
+// TimeSamples are stored uniformly in a single heap-allocated, type-erased
+// value::TimeSamples owned via unique_ptr (RAII; nullptr for the common
+// scalar-only case -> 8 bytes instead of an always-present container):
+//  - value types (have a value::TypeTraits registration): stored as themselves.
+//  - enum types (no registration): stored as their underlying int64 (a registered
+//    value type); the enum<->int64 cast happens at this boundary (to_store/
+//    from_store). Rendering enum timesamples back to their token names stays at
+//    the write/pprint layer, which knows the concrete enum type.
+//
+// This removes the second, per-type TypedTimeSamples<T> timesamples
+// implementation and the kTyped dual storage path.
+//
 template <typename T>
 struct Animatable {
+ private:
+  static constexpr bool kIsEnum = std::is_enum<T>::value;
+  static_assert(animatable_detail::has_value_type_traits<T>::value || kIsEnum,
+                "Animatable<T>: T must be a registered value type or an enum.");
+
+  // Type actually stored in the type-erased value::TimeSamples: T for value
+  // types, int64 for enums (which are not registered value types).
+  using StoreT = typename std::conditional<kIsEnum, int64_t, T>::type;
+
+  static StoreT to_store(const T &v) {
+    if constexpr (kIsEnum) {
+      return static_cast<int64_t>(v);
+    } else {
+      return v;
+    }
+  }
+  static T from_store(const StoreT &s) {
+    if constexpr (kIsEnum) {
+      return static_cast<T>(s);
+    } else {
+      return s;
+    }
+  }
+
  public:
   bool is_blocked() const { return _blocked; }
 
   bool is_timesamples() const {
-    if (is_blocked()) {
+    if (is_blocked() || _has_value) {
       return false;
     }
-
-    if (_has_value) {
-      return false;
-    }
-
-    return !_ts.empty();
+    return _ts && !_ts->empty();
   }
 
   bool is_scalar() const {
     if (is_blocked()) {
       return false;
     }
-
-    return _ts.empty();
+    return !_ts || _ts->empty();
   }
 
   ///
@@ -59,7 +106,17 @@ struct Animatable {
     }
 
     if (has_timesamples()) {
-      return _ts.get(v, t, tinerp);
+      if constexpr (kIsEnum) {
+        // Enums are stored as int64 and are non-interpolatable (Held).
+        StoreT s{};
+        if (_ts->get(&s, t, tinerp)) {
+          (*v) = from_store(s);
+          return true;
+        }
+        return false;
+      } else {
+        return _ts->get(v, t, tinerp);
+      }
     }
 
     if (has_default()) {
@@ -95,10 +152,16 @@ struct Animatable {
   // TimeSamples
   // void set(double t, const T &v);
 
-  void add_sample(const double t, const T &v) { _ts.add_sample(t, v); }
+  void add_sample(const double t, const T &v) {
+    if (!_ts) _ts.reset(new value::TimeSamples());
+    _ts->add_sample(t, to_store(v));
+  }
 
   // Add None(ValueBlock) sample to timesamples
-  void add_blocked_sample(const double t) { _ts.add_blocked_sample(t); }
+  void add_blocked_sample(const double t) {
+    if (!_ts) _ts.reset(new value::TimeSamples());
+    _ts->template add_blocked_sample<StoreT>(t);
+  }
 
   // Scalar
   void set(const T &v) {
@@ -122,20 +185,15 @@ struct Animatable {
     set(std::move(v));
   }
 
-  void set(const TypedTimeSamples<T> &ts) {
-    _ts = ts;
+  // --- TimeSamples setters (type-erased value::TimeSamples) ---
+  // Used by value-type callers. Enum-valued attributes populate timesamples via
+  // add_sample() (the reconstruct path), so they do not use these.
+  void set_timesamples(value::TimeSamples &&ts) {
+    _ts.reset(new value::TimeSamples(std::move(ts)));
   }
 
-  void set(TypedTimeSamples<T> &&ts) {
-    _ts = std::move(ts);
-  }
-
-  void set_timesamples(const TypedTimeSamples<T> &ts) {
-    return set(ts);
-  }
-
-  void set_timesamples(TypedTimeSamples<T> &&ts) {
-    return set(std::move(ts));
+  void set_timesamples(const value::TimeSamples &ts) {
+    _ts.reset(new value::TimeSamples(ts));
   }
 
   void clear_scalar() {
@@ -143,7 +201,7 @@ struct Animatable {
   }
 
   void clear_timesamples() {
-    _ts.samples().clear();
+    _ts.reset();
   }
 
   bool has_value() const {
@@ -155,22 +213,47 @@ struct Animatable {
   }
 
   bool has_timesamples() const {
-    return _ts.size();
+    return _ts && (_ts->size() > 0);
   }
 
-  const TypedTimeSamples<T> &get_timesamples() const { return _ts; }
+  // Direct access to the type-erased timesamples store. For enum-valued T the
+  // samples hold the enum's underlying int64; render them by casting int64 -> T
+  // (see EnumTimeSamplesToTypelessTimeSamples and the pprint enum path).
+  const value::TimeSamples *get_timesamples_ptr() const { return _ts.get(); }
+  value::TimeSamples *get_timesamples_ptr() { return _ts.get(); }
 
   /// Get const reference to the scalar/default value (no copy).
   /// Only valid when has_default() is true.
   const T &get_scalar_ref() const { return _value; }
 
-  Animatable() {}
+  Animatable() = default;
 
   Animatable(const T &v) {
     set(v);
   }
 
-  // TODO: Init with timesamples
+  // Deep copy (the unique_ptr store makes the implicit copy ops deleted).
+  Animatable(const Animatable &other)
+      : _value(other._value),
+        _has_value(other._has_value),
+        _blocked(other._blocked) {
+    if (other._ts) {
+      _ts.reset(new value::TimeSamples(*other._ts));
+    }
+  }
+
+  Animatable &operator=(const Animatable &other) {
+    if (this != &other) {
+      _value = other._value;
+      _has_value = other._has_value;
+      _blocked = other._blocked;
+      _ts.reset(other._ts ? new value::TimeSamples(*other._ts) : nullptr);
+    }
+    return *this;
+  }
+
+  Animatable(Animatable &&) noexcept = default;
+  Animatable &operator=(Animatable &&) noexcept = default;
 
  private:
   // scalar
@@ -178,8 +261,8 @@ struct Animatable {
   bool _has_value{false};
   bool _blocked{false};
 
-  // timesamples
-  TypedTimeSamples<T> _ts;
+  // timesamples (type-erased; enums stored as int64)
+  std::unique_ptr<value::TimeSamples> _ts;
 };
 
 }  // namespace tinyusdz

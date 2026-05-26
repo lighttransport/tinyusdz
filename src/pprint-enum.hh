@@ -54,6 +54,12 @@ class ScopedPrefixColumns {
 std::string format_wrapped_array(const std::vector<std::string> &elements,
                                  uint32_t prefix_cols, uint32_t column_limit);
 
+// Non-template 1D-array emitter (defined in value-pprint.cc). Takes
+// pre-stringified elements; `wrappable` selects column wrapping vs plain
+// "[a, b, c]" join. Lets the templated array operator<< stay thin.
+void print_1d_array(std::ostream &os, const std::vector<std::string> &elems,
+                    bool wrappable);
+
 // Compile-time trait: true for value types whose arrays should be
 // column-wrapped (i.e. numeric / geometric types, not strings/tokens).
 template <typename T>

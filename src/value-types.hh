@@ -58,11 +58,16 @@
 #endif
 
 #include "token-type.hh"
-#include "typed-array.hh"
-#include "common-macros.inc"
+#include "typed-array-core.hh"
 
-// forward decl of any_value (defined below after TypeTraits)
-namespace tinyusdz { namespace value { class any_value; } }
+// forward decls defined below or in lower-level typed-array headers.
+namespace tinyusdz {
+template <typename T>
+class ChunkedTypedArray;
+namespace value {
+class any_value;
+}
+}  // namespace tinyusdz
 
 namespace tinyusdz {
 
@@ -1563,6 +1568,8 @@ bool IsRoleType(const std::string &tyname);
 /// @return true if a type is role-type.
 bool IsRoleType(const uint32_t tyid);
 
+bool IsReasonableValueVectorSize(size_t size);
+
 }  // namespace value
 }  // namespace tinyusdz
 
@@ -1574,44 +1581,27 @@ namespace value {
 ///
 /// Replaces linb::any with a design tailored for TinyUSDZ:
 /// - 48-byte SBO buffer (avoids heap for string, vector control blocks, most binary-serializable values)
-/// - Direct type_id/underlying_type_id members (no vtable indirection for type queries)
-/// - 3-op dispatch (destroy, copy, move) instead of 9-entry vtable
+/// - A single shared per-type descriptor pointer (TypeDesc*): destroy/copy/move
+///   ops plus type-id/underlying-id/name/sizeof/is_inline. The descriptor is one
+///   static instance per stored type (vague linkage), so each any_value holds only
+///   { 48-byte buffer + one pointer } = 56 bytes (was ~96 with 7 inline members),
+///   and copy/move just propagate the pointer instead of seven fields.
 ///
 class any_value {
  public:
   any_value() noexcept = default;
   ~any_value() { destroy(); }
 
-  any_value(const any_value& other)
-      : ops_(other.ops_),
-        type_name_fn_(other.type_name_fn_),
-        underlying_type_name_fn_(other.underlying_type_name_fn_),
-        type_id_(other.type_id_),
-        underlying_type_id_(other.underlying_type_id_),
-        is_inline_(other.is_inline_),
-        sizeof_stored_type_(other.sizeof_stored_type_) {
-    if (ops_) {
-      ops_->copy(&storage_, &other.storage_);
+  any_value(const any_value& other) : desc_(other.desc_) {
+    if (desc_) {
+      desc_->ops.copy(&storage_, &other.storage_);
     }
   }
 
-  any_value(any_value&& other) noexcept
-      : ops_(other.ops_),
-        type_name_fn_(other.type_name_fn_),
-        underlying_type_name_fn_(other.underlying_type_name_fn_),
-        type_id_(other.type_id_),
-        underlying_type_id_(other.underlying_type_id_),
-        is_inline_(other.is_inline_),
-        sizeof_stored_type_(other.sizeof_stored_type_) {
-    if (ops_) {
-      ops_->move(&storage_, &other.storage_);
-      other.ops_ = nullptr;
-      other.type_name_fn_ = nullptr;
-      other.underlying_type_name_fn_ = nullptr;
-      other.type_id_ = 0;
-      other.underlying_type_id_ = 0;
-      other.is_inline_ = true;
-      other.sizeof_stored_type_ = 0;
+  any_value(any_value&& other) noexcept : desc_(other.desc_) {
+    if (desc_) {
+      desc_->ops.move(&storage_, &other.storage_);
+      other.desc_ = nullptr;
     }
   }
 
@@ -1626,22 +1616,10 @@ class any_value {
   any_value& operator=(any_value&& other) noexcept {
     if (this != &other) {
       destroy();
-      ops_ = other.ops_;
-      type_name_fn_ = other.type_name_fn_;
-      underlying_type_name_fn_ = other.underlying_type_name_fn_;
-      type_id_ = other.type_id_;
-      underlying_type_id_ = other.underlying_type_id_;
-      is_inline_ = other.is_inline_;
-      sizeof_stored_type_ = other.sizeof_stored_type_;
-      if (ops_) {
-        ops_->move(&storage_, &other.storage_);
-        other.ops_ = nullptr;
-        other.type_name_fn_ = nullptr;
-        other.underlying_type_name_fn_ = nullptr;
-        other.type_id_ = 0;
-        other.underlying_type_id_ = 0;
-        other.is_inline_ = true;
-        other.sizeof_stored_type_ = 0;
+      desc_ = other.desc_;
+      if (desc_) {
+        desc_->ops.move(&storage_, &other.storage_);
+        other.desc_ = nullptr;
       }
     }
     return *this;
@@ -1666,29 +1644,25 @@ class any_value {
   }
 
   // Type queries
-  uint32_t type_id() const noexcept { return type_id_; }
-  uint32_t underlying_type_id() const noexcept { return underlying_type_id_; }
-  bool empty() const noexcept { return ops_ == nullptr; }
+  uint32_t type_id() const noexcept { return desc_ ? desc_->type_id : 0; }
+  uint32_t underlying_type_id() const noexcept {
+    return desc_ ? desc_->underlying_type_id : 0;
+  }
+  bool empty() const noexcept { return desc_ == nullptr; }
 
   const std::string type_name() const noexcept {
-    if (!type_name_fn_) return TypeTraits<void>::type_name();
-    return type_name_fn_();
+    if (!desc_) return TypeTraits<void>::type_name();
+    return desc_->type_name_fn();
   }
 
   const std::string underlying_type_name() const noexcept {
-    if (!underlying_type_name_fn_) return TypeTraits<void>::underlying_type_name();
-    return underlying_type_name_fn_();
+    if (!desc_) return TypeTraits<void>::underlying_type_name();
+    return desc_->underlying_type_name_fn();
   }
 
   void clear() noexcept {
     destroy();
-    ops_ = nullptr;
-    type_name_fn_ = nullptr;
-    underlying_type_name_fn_ = nullptr;
-    type_id_ = 0;
-    underlying_type_id_ = 0;
-    is_inline_ = true;
-    sizeof_stored_type_ = 0;
+    desc_ = nullptr;
   }
 
   void swap(any_value& other) noexcept {
@@ -1700,39 +1674,51 @@ class any_value {
 
   /// Reinterpret as a different type without copying (for role type casting).
   /// Caller must ensure NewType has identical memory layout to the current type.
+  /// The descriptor swap is sound because layout-compatible types (role <->
+  /// underlying, guaranteed by DEFINE_ROLE_TYPE_TRAIT's size/align static_asserts)
+  /// have byte-identical destroy/copy/move ops and identical is_inline.
   template <typename NewType>
   void unsafe_reinterpret_as() noexcept {
     if (!empty()) {
-      type_id_ = TypeTraits<NewType>::type_id();
-      underlying_type_id_ = TypeTraits<NewType>::underlying_type_id();
-      type_name_fn_ = &TypeTraits<NewType>::type_name;
-      underlying_type_name_fn_ = &TypeTraits<NewType>::underlying_type_name;
-      // ops_ stays the same — layout-compatible types have identical destroy/copy/move
+      desc_ = desc_for<NewType>();
     }
   }
 
   /// Raw pointer to stored value (no type check). Const version.
   template <typename T>
   const T* cast() const noexcept {
-    return is_inline_ ? reinterpret_cast<const T*>(&storage_)
-                      : *reinterpret_cast<T* const*>(&storage_);
+    return (desc_ && desc_->is_inline) ? reinterpret_cast<const T*>(&storage_)
+                                       : *reinterpret_cast<T* const*>(&storage_);
   }
 
   /// Raw pointer to stored value (no type check). Mutable version.
   template <typename T>
   T* cast() noexcept {
-    return is_inline_ ? reinterpret_cast<T*>(&storage_)
-                      : *reinterpret_cast<T**>(&storage_);
+    return (desc_ && desc_->is_inline) ? reinterpret_cast<T*>(&storage_)
+                                       : *reinterpret_cast<T**>(&storage_);
   }
 
  private:
   static constexpr size_t kBufferSize = 48;
   static constexpr size_t kBufferAlign = 8;
 
-  struct Ops {
-    void (*destroy)(void* storage) noexcept;
-    void (*copy)(void* dst, const void* src);
-    void (*move)(void* dst, void* src) noexcept;
+  using name_fn_t = std::string (*)();
+
+  // Per-type descriptor: a single shared static instance per stored type (vague
+  // linkage), pointed to by every any_value of that type. Holds the type-erased
+  // ops plus the metadata that used to be duplicated in every instance.
+  struct TypeDesc {
+    struct {
+      void (*destroy)(void* storage) noexcept;
+      void (*copy)(void* dst, const void* src);
+      void (*move)(void* dst, void* src) noexcept;
+    } ops;
+    name_fn_t type_name_fn;
+    name_fn_t underlying_type_name_fn;
+    uint32_t type_id;
+    uint32_t underlying_type_id;
+    uint32_t sizeof_stored;  // sizeof(T) of the stored type
+    bool is_inline;
   };
 
   // Inline storage ops (T fits in buffer)
@@ -1772,14 +1758,23 @@ class any_value {
            std::is_nothrow_move_constructible<T>::value;
   }
 
+  // The single shared descriptor for stored type T.
   template <typename T>
-  static const Ops* ops_for_type() {
+  static const TypeDesc* desc_for() {
     using DecayT = typename std::decay<T>::type;
     using OpsType = typename std::conditional<fits_inline<DecayT>(),
                                                InlineOps<DecayT>,
                                                HeapOps<DecayT>>::type;
-    static const Ops ops = {OpsType::destroy, OpsType::copy, OpsType::move};
-    return &ops;
+    static const TypeDesc desc = {
+        {OpsType::destroy, OpsType::copy, OpsType::move},
+        &TypeTraits<DecayT>::type_name,
+        &TypeTraits<DecayT>::underlying_type_name,
+        TypeTraits<DecayT>::type_id(),
+        TypeTraits<DecayT>::underlying_type_id(),
+        static_cast<uint32_t>(sizeof(DecayT)),
+        fits_inline<DecayT>(),
+    };
+    return &desc;
   }
 
   template <typename ValueType, typename T>
@@ -1799,37 +1794,23 @@ class any_value {
     using T = typename std::decay<ValueType>::type;
     static_assert(std::is_copy_constructible<T>::value,
                   "T shall satisfy the CopyConstructible requirements.");
-    ops_ = ops_for_type<T>();
-    type_name_fn_ = &TypeTraits<T>::type_name;
-    underlying_type_name_fn_ = &TypeTraits<T>::underlying_type_name;
-    type_id_ = TypeTraits<T>::type_id();
-    underlying_type_id_ = TypeTraits<T>::underlying_type_id();
-    is_inline_ = fits_inline<T>();
-    sizeof_stored_type_ = sizeof(T);
+    desc_ = desc_for<T>();
     do_construct<ValueType, T>(std::forward<ValueType>(val));
   }
 
   void destroy() noexcept {
-    if (ops_) {
-      ops_->destroy(&storage_);
+    if (desc_) {
+      desc_->ops.destroy(&storage_);
     }
   }
 
-  using name_fn_t = std::string (*)();
-
   typename std::aligned_storage<kBufferSize, kBufferAlign>::type storage_{};
-  const Ops* ops_ = nullptr;
-  name_fn_t type_name_fn_ = nullptr;
-  name_fn_t underlying_type_name_fn_ = nullptr;
-  uint32_t type_id_ = 0;
-  uint32_t underlying_type_id_ = 0;
-  bool is_inline_ = true;
-  size_t sizeof_stored_type_ = 0;  // sizeof(T) of the stored type, set at construct time
+  const TypeDesc* desc_ = nullptr;
 
  public:
   /// Return sizeof(T) of the stored type.
   /// This is the shallow size of the concrete object, not including heap allocations.
-  size_t sizeof_stored() const { return sizeof_stored_type_; }
+  size_t sizeof_stored() const { return desc_ ? desc_->sizeof_stored : 0; }
 };
 
 // Type-checked cast (returns nullptr on type mismatch)
@@ -1851,7 +1832,12 @@ inline T* any_value_cast(any_value* av) noexcept {
   return nullptr;
 }
 
-// Force cast (no type check) — equivalent to linb::cast
+// Internal force-cast (no type-id check) — equivalent to linb::cast. Confined to
+// `detail` so it cannot be reached without intent: it is only sound when the
+// requested T is layout-compatible with the stored type (e.g. role <-> underlying,
+// which the DEFINE_ROLE_TYPE_TRAIT static_asserts now guarantee). Every caller
+// must first gate it with an underlying_type_id() equality check (see Value::as<T>).
+namespace detail {
 template <typename T>
 inline const T* any_value_raw_cast(const any_value* av) noexcept {
   return av->cast<T>();
@@ -1861,6 +1847,7 @@ template <typename T>
 inline T* any_value_raw_cast(any_value* av) noexcept {
   return av->cast<T>();
 }
+}  // namespace detail
 
 ///
 /// Generic Value class using any_value
@@ -1916,11 +1903,11 @@ class Value {
     } else if (!strict_cast) {
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          return any_value_raw_cast<const T>(&v_);
+          return detail::any_value_raw_cast<const T>(&v_);
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-          return any_value_raw_cast<const T>(&v_);
+          return detail::any_value_raw_cast<const T>(&v_);
         }
       }
     }
@@ -1938,11 +1925,11 @@ class Value {
     } else if (!strict_cast) {
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          return any_value_raw_cast<T>(&v_);
+          return detail::any_value_raw_cast<T>(&v_);
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-          return any_value_raw_cast<T>(&v_);
+          return detail::any_value_raw_cast<T>(&v_);
         }
       }
     }
@@ -2028,12 +2015,7 @@ class Value {
   // Helper to check vector size bounds
   template <typename T>
   static bool check_vector_size(const std::vector<T>& vec) {
-    constexpr size_t MAX_REASONABLE_SIZE = 100000000; // 100M
-    if (vec.size() > MAX_REASONABLE_SIZE) {
-      TUSDZ_LOG_E("ERROR: Vector size " << vec.size() << " exceeds reasonable limit (" << MAX_REASONABLE_SIZE << "). Data is likely corrupted!");
-      return false;
-    }
-    return true;
+    return IsReasonableValueVectorSize(vec.size());
   }
 
   template <typename T>
@@ -2055,7 +2037,7 @@ class Value {
 
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          const T* pv = any_value_raw_cast<const T>(&v_);
+          const T* pv = detail::any_value_raw_cast<const T>(&v_);
           if (pv) {
             if (!check_vector_size(*pv)) {
               return nonstd::nullopt;
@@ -2065,7 +2047,7 @@ class Value {
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-          return *any_value_raw_cast<const T>(&v_);
+          return *detail::any_value_raw_cast<const T>(&v_);
         }
       }
     }
@@ -2085,7 +2067,7 @@ class Value {
 
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          T* pv = any_value_raw_cast<T>(&v_);
+          T* pv = detail::any_value_raw_cast<T>(&v_);
           if (pv) {
             if (!check_vector_size(*pv)) {
               return nonstd::nullopt;
@@ -2095,7 +2077,7 @@ class Value {
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-          return std::move(*any_value_raw_cast<T>(&v_));
+          return std::move(*detail::any_value_raw_cast<T>(&v_));
         }
       }
     }
@@ -2662,67 +2644,6 @@ struct LerpTraits
   }
 };
 
-#define DEFINE_LERP_TRAIT(ty) \
-template <> \
-struct LerpTraits<ty> { \
-  static constexpr bool supported() { \
-    return true; \
-  } \
-};  \
-template <> \
-struct LerpTraits<std::vector<ty>> { \
-  static constexpr bool supported() { \
-    return true; \
-  } \
-};
-
-DEFINE_LERP_TRAIT(value::half)
-DEFINE_LERP_TRAIT(value::half2)
-DEFINE_LERP_TRAIT(value::half3)
-DEFINE_LERP_TRAIT(value::half4)
-DEFINE_LERP_TRAIT(float)
-DEFINE_LERP_TRAIT(value::float2)
-DEFINE_LERP_TRAIT(value::float3)
-DEFINE_LERP_TRAIT(value::float4)
-DEFINE_LERP_TRAIT(double)
-DEFINE_LERP_TRAIT(value::double2)
-DEFINE_LERP_TRAIT(value::double3)
-DEFINE_LERP_TRAIT(value::double4)
-DEFINE_LERP_TRAIT(value::quath)
-DEFINE_LERP_TRAIT(value::quatf)
-DEFINE_LERP_TRAIT(value::quatd)
-DEFINE_LERP_TRAIT(value::matrix2f)
-DEFINE_LERP_TRAIT(value::matrix3f)
-DEFINE_LERP_TRAIT(value::matrix4f)
-DEFINE_LERP_TRAIT(value::matrix2d)
-DEFINE_LERP_TRAIT(value::matrix3d)
-DEFINE_LERP_TRAIT(value::matrix4d)
-DEFINE_LERP_TRAIT(value::timecode)
-DEFINE_LERP_TRAIT(value::normal3h)
-DEFINE_LERP_TRAIT(value::normal3f)
-DEFINE_LERP_TRAIT(value::normal3d)
-DEFINE_LERP_TRAIT(value::vector3h)
-DEFINE_LERP_TRAIT(value::vector3f)
-DEFINE_LERP_TRAIT(value::vector3d)
-DEFINE_LERP_TRAIT(value::point3h)
-DEFINE_LERP_TRAIT(value::point3f)
-DEFINE_LERP_TRAIT(value::point3d)
-DEFINE_LERP_TRAIT(value::color3h)
-DEFINE_LERP_TRAIT(value::color3f)
-DEFINE_LERP_TRAIT(value::color3d)
-DEFINE_LERP_TRAIT(value::color4h)
-DEFINE_LERP_TRAIT(value::color4f)
-DEFINE_LERP_TRAIT(value::color4d)
-DEFINE_LERP_TRAIT(value::texcoord2h)
-DEFINE_LERP_TRAIT(value::texcoord2f)
-DEFINE_LERP_TRAIT(value::texcoord2d)
-DEFINE_LERP_TRAIT(value::texcoord3h)
-DEFINE_LERP_TRAIT(value::texcoord3f)
-DEFINE_LERP_TRAIT(value::texcoord3d)
-DEFINE_LERP_TRAIT(value::frame4d)
-
-#undef DEFINE_LERP_TRAIT
-
 ///
 /// @param[in] dt interpolator [0.0, 1.0)
 ///
@@ -2894,21 +2815,18 @@ inline void RegisterPrimAttrTypes(SetType &d, bool include_variant_set = false) 
   }
 }
 
-}  // namespace value
-
-}  // namespace tinyusdz
-
-#include "timesamples.hh"
-
-namespace tinyusdz {
-namespace value {
-
-// token[] and TimeSamples traits - placed here because TimeSamples is defined
-// in timesamples.hh which is included above.
+// token[] trait. std::vector<token> needs an explicit specialization to
+// override the generic TypeTraits<std::vector<T>>.
+//
+// NOTE: The TimeSamples TypeTrait used to live here behind `#include
+// "timesamples.hh"`. It now lives at the end of timesamples.hh instead, so that
+// value-types.hh does NOT have to pull in the (heavy) timesamples.hh. This
+// breaks a costly include cycle: timesamples.hh already includes value-types.hh,
+// so every value-types.hh consumer was transitively parsing all of
+// timesamples.hh (and the TypedTimeSamples<> machinery).
 #include "define-type-trait.inc"
 
 DEFINE_TYPE_TRAIT(std::vector<token>, "token[]", TYPE_ID_TOKEN_VECTOR, 1);
-DEFINE_TYPE_TRAIT(TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

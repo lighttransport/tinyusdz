@@ -17,7 +17,7 @@
 #include "memory-budget.hh"
 #include "core/prim-spec.hh"  // PrimSpec (transitively: property, composition-types, prim-enums, prim-metas, variant-types)
 #include "stream-reader.hh"
-#include "typed-array.hh"
+#include "typed-array-core.hh"
 
 namespace tinyusdz {
 namespace crate {
@@ -559,7 +559,10 @@ class CrateReader {
   template <typename T>
   bool ReadTimeSampleScalarValue(T *value, size_t nbytes,
                                  const char *read_error) {
-    MEMORY_BUDGET_CHECK((*memory_manager_), nbytes, "[Crate]");
+    if (!memory_manager_->Reserve(nbytes)) {
+      PushError("[Crate]: Reached maximum memory budget");
+      return false;
+    }
     if (!_sr->read(nbytes, nbytes, reinterpret_cast<uint8_t *>(value))) {
       PushError(std::string(__func__) + "(): " + read_error);
       return false;

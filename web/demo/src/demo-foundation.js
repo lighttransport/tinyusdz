@@ -478,6 +478,7 @@ class DemoApp {
         });
         convertedMaterial.name = material.name || convertedMaterial.name;
         convertedMaterial.side = material.side;
+        this.copyTextureMaps(material, convertedMaterial);
         if ('envMap' in convertedMaterial) convertedMaterial.envMap = this.scene.environment || this.envMap;
         if ('envMapIntensity' in convertedMaterial) convertedMaterial.envMapIntensity = this.params.envIntensity;
         convertedMaterial.userData = {
@@ -492,6 +493,41 @@ class DemoApp {
     });
 
     this.nodeGraphStats = { converted, inspected };
+  }
+
+  copyTextureMaps(sourceMaterial, targetMaterial) {
+    const textureMapNames = [
+      'map',
+      'normalMap',
+      'roughnessMap',
+      'metalnessMap',
+      'emissiveMap',
+      'alphaMap',
+      'aoMap',
+      'bumpMap',
+      'displacementMap',
+      'clearcoatMap',
+      'clearcoatNormalMap',
+      'clearcoatRoughnessMap',
+      'sheenColorMap',
+      'sheenRoughnessMap',
+      'specularColorMap',
+      'iridescenceMap',
+      'iridescenceThicknessMap',
+      'transmissionMap',
+      'thicknessMap'
+    ];
+
+    for (const mapName of textureMapNames) {
+      if (!targetMaterial[mapName] && sourceMaterial[mapName]) {
+        targetMaterial[mapName] = sourceMaterial[mapName];
+      }
+    }
+
+    if (sourceMaterial.normalScale && !targetMaterial.normalScale) {
+      targetMaterial.normalScale = sourceMaterial.normalScale.clone?.() || sourceMaterial.normalScale;
+    }
+    targetMaterial.needsUpdate = true;
   }
 
   async applySkinningAndAnimation(usd, threeNode) {

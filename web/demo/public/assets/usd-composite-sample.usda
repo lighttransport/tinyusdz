@@ -1,3 +1,22 @@
 #usda 1.0
 
-( subLayers = [ @assets/suzanne-pbr.usda@, @assets/suzanne.usdc@ ] )
+(
+    metersPerUnit = 1
+    upAxis = "Z"
+    subLayers = [
+        @assets/suzanne-pbr.usda@,
+        @assets/suzanne.usdc@
+    ]
+)
+
+over Xform "root_pbr"
+{
+    double3 xformOp:translate = (-1.75, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+over Xform "Suzanne"
+{
+    double3 xformOp:translate = (1.75, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}

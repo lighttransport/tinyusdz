@@ -17,11 +17,13 @@
 #include "unit-strutil.h"
 #include "unit-timesamples.h"
 #include "unit-fp-parse-print.h"
+#include "unit-minijson.h"
 #include "unit-pprint.h"
 #include "unit-materialx.h"
 #include "unit-task-queue.h"
 #include "unit-tydra.h"
 #include "unit-tydra-subdivision.h"
+#include "unit-subdiv-tinyusdz.h"
 //#include "unit-dedup.h"  // Temporarily disabled - needs API updates
 #include "unit-crate-writer.h"
 #include "unit-stage.h"
@@ -119,6 +121,14 @@ TEST_LIST = {
   { "fp_roundtrip_buffer_test", fp_roundtrip_buffer_test },
   { "fp_shortest_representation_test", fp_shortest_representation_test },
   { "fp_format_range_test", fp_format_range_test },
+  { "minijson_parse_basic_test", minijson_parse_basic_test },
+  { "minijson_unicode_escape_test", minijson_unicode_escape_test },
+  { "minijson_reject_invalid_utf8_test", minijson_reject_invalid_utf8_test },
+  { "minijson_reject_duplicate_key_test", minijson_reject_duplicate_key_test },
+  { "minijson_reject_invalid_number_test", minijson_reject_invalid_number_test },
+  { "minijson_reject_depth_limit_test", minijson_reject_depth_limit_test },
+  { "minijson_reject_nonfinite_serialize_test", minijson_reject_nonfinite_serialize_test },
+  { "minijson_serialize_escapes_control_chars_test", minijson_serialize_escapes_control_chars_test },
   { "parse_array_test", parse_array_test },
   { "materialx_config_api_struct_test", materialx_config_api_struct_test },
   { "materialx_config_api_parsing_test", materialx_config_api_parsing_test },
@@ -127,6 +137,7 @@ TEST_LIST = {
   { "nodegraph_support_test", nodegraph_support_test },
   { "materialx_shader_constants_test", materialx_shader_constants_test },
   { "materialx_shader_fallback_values_test", materialx_shader_fallback_values_test },
+  { "materialx_include_path_traversal_test", materialx_include_path_traversal_test },
   { "tydra_subdivision_catmullclark_test", tydra_subdivision_catmullclark_test },
   { "tydra_subdivision_loop_test", tydra_subdivision_loop_test },
   { "tydra_subdivision_bilinear_test", tydra_subdivision_bilinear_test },
@@ -146,6 +157,29 @@ TEST_LIST = {
   { "tydra_subdivision_rejects_tangents_test", tydra_subdivision_rejects_tangents_test },
   { "tydra_subdivision_rejects_binormals_test", tydra_subdivision_rejects_binormals_test },
   { "tydra_subdivision_rejects_skinning_test", tydra_subdivision_rejects_skinning_test },
+  // TinySubdiv direct API unit tests
+  { "subdiv_validate_halfedge_test", subdiv_validate_halfedge_test },
+  { "subdiv_convert_to_halfedge_test", subdiv_convert_to_halfedge_test },
+  { "subdiv_convert_from_halfedge_test", subdiv_convert_from_halfedge_test },
+  { "subdiv_invalid_mesh_rejected_test", subdiv_invalid_mesh_rejected_test },
+  { "subdiv_cc_quad_test", subdiv_cc_quad_test },
+  { "subdiv_cc_quad_l2_test", subdiv_cc_quad_l2_test },
+  { "subdiv_cc_cube_test", subdiv_cc_cube_test },
+  { "subdiv_cc_cube_l2_test", subdiv_cc_cube_l2_test },
+  { "subdiv_cc_boundary_test", subdiv_cc_boundary_test },
+  { "subdiv_cc_facepoint_position_test", subdiv_cc_facepoint_position_test },
+  { "subdiv_loop_triangle_test", subdiv_loop_triangle_test },
+  { "subdiv_loop_triangle_l2_test", subdiv_loop_triangle_l2_test },
+  { "subdiv_loop_tetrahedron_test", subdiv_loop_tetrahedron_test },
+  { "subdiv_loop_rejects_quads_test", subdiv_loop_rejects_quads_test },
+  { "subdiv_loop_edge_vertex_position_test", subdiv_loop_edge_vertex_position_test },
+  { "subdiv_bilinear_quad_test", subdiv_bilinear_quad_test },
+  { "subdiv_bilinear_quad_l2_test", subdiv_bilinear_quad_l2_test },
+  { "subdiv_bilinear_triangle_test", subdiv_bilinear_triangle_test },
+  { "subdiv_bilinear_mixed_test", subdiv_bilinear_mixed_test },
+  { "subdiv_level0_no_change_test", subdiv_level0_no_change_test },
+  { "subdiv_max_level_clamped_test", subdiv_max_level_clamped_test },
+  { "subdiv_boundary_interpolation_modes_test", subdiv_boundary_interpolation_modes_test },
   { "task_queue_basic_test", task_queue_basic_test },
   { "task_queue_func_test", task_queue_func_test },
   { "task_queue_full_test", task_queue_full_test },

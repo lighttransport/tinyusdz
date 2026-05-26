@@ -14,6 +14,7 @@
 #include <math.h>
 
 #include <cstdint>
+#include <memory>
 
 /* ======================================================================== */
 /* Contact constraint cache (file-local)                                    */
@@ -1342,7 +1343,11 @@ bool BuildPhysWorld(
 #undef RB_MUL_CHECK
 
     if (options.max_memory_limit_mb > 0) {
-      const size_t limit_bytes = options.max_memory_limit_mb * size_t(1024 * 1024);
+      size_t limit_bytes;
+      if (!safe::mul(options.max_memory_limit_mb, size_t(1024 * 1024), &limit_bytes)) {
+        if (err) *err = "Integer overflow computing max_memory_limit_mb";
+        return false;
+      }
       if (total_bytes > limit_bytes) {
         if (err) *err = "Physics world buffer allocation exceeds max_memory_limit_mb";
         return false;
@@ -1350,44 +1355,57 @@ bool BuildPhysWorld(
     }
   }
 
-  /* Allocate all buffers */
-  TydraPhysBody *body_buf = new TydraPhysBody[
-      static_cast<size_t>(options.max_bodies)];
-  TydraPhysCollider *col_buf = new TydraPhysCollider[
-      static_cast<size_t>(options.max_colliders)];
-  TydraPhysJoint *joint_buf = new TydraPhysJoint[
-      static_cast<size_t>(options.max_joints)];
-  TydraPhysContact *contact_buf = new TydraPhysContact[
-      static_cast<size_t>(options.max_contacts)];
-  TydraPhysAABB *aabb_buf = new TydraPhysAABB[
-      static_cast<size_t>(options.max_colliders)];
-  TydraPhysCollisionPair *pair_buf = new TydraPhysCollisionPair[
-      static_cast<size_t>(options.max_pairs)];
-  int32_t *sort_buf = new int32_t[
-      static_cast<size_t>(options.max_colliders)];
-  TydraPhysIsland *island_buf = new TydraPhysIsland[
-      static_cast<size_t>(options.max_islands)];
-  int32_t *union_buf = new int32_t[
-      static_cast<size_t>(options.max_bodies)];
+  /* Allocate all buffers — wrapped in unique_ptr for RAII cleanup */
+  std::unique_ptr<TydraPhysBody[]> body_buf(new TydraPhysBody[
+      static_cast<size_t>(options.max_bodies)]);
+  std::unique_ptr<TydraPhysCollider[]> col_buf(new TydraPhysCollider[
+      static_cast<size_t>(options.max_colliders)]);
+  std::unique_ptr<TydraPhysJoint[]> joint_buf(new TydraPhysJoint[
+      static_cast<size_t>(options.max_joints)]);
+  std::unique_ptr<TydraPhysContact[]> contact_buf(new TydraPhysContact[
+      static_cast<size_t>(options.max_contacts)]);
+  std::unique_ptr<TydraPhysAABB[]> aabb_buf(new TydraPhysAABB[
+      static_cast<size_t>(options.max_colliders)]);
+  std::unique_ptr<TydraPhysCollisionPair[]> pair_buf(new TydraPhysCollisionPair[
+      static_cast<size_t>(options.max_pairs)]);
+  std::unique_ptr<int32_t[]> sort_buf(new int32_t[
+      static_cast<size_t>(options.max_colliders)]);
+  std::unique_ptr<TydraPhysIsland[]> island_buf(new TydraPhysIsland[
+      static_cast<size_t>(options.max_islands)]);
+  std::unique_ptr<int32_t[]> union_buf(new int32_t[
+      static_cast<size_t>(options.max_bodies)]);
   /* island_body_buf needs space for counts (max_bodies) + body lists (max_bodies) */
-  int32_t *island_body_buf = new int32_t[
-      static_cast<size_t>(options.max_bodies * 2)];
+  std::unique_ptr<int32_t[]> island_body_buf(new int32_t[
+      static_cast<size_t>(options.max_bodies * 2)]);
 
   tydra_phys_world_init(out_world,
-                         body_buf, options.max_bodies,
-                         col_buf, options.max_colliders,
-                         joint_buf, options.max_joints,
-                         contact_buf, options.max_contacts,
-                         aabb_buf,
-                         pair_buf, options.max_pairs,
-                         sort_buf,
-                         island_buf, options.max_islands,
-                         union_buf,
-                         island_body_buf);
+                         body_buf.get(), options.max_bodies,
+                         col_buf.get(), options.max_colliders,
+                         joint_buf.get(), options.max_joints,
+                         contact_buf.get(), options.max_contacts,
+                         aabb_buf.get(),
+                         pair_buf.get(), options.max_pairs,
+                         sort_buf.get(),
+                         island_buf.get(), options.max_islands,
+                         union_buf.get(),
+                         island_body_buf.get());
 
   /* Per-world contact constraint cache (thread-safe, unlike static fallback) */
-  out_world->contact_cache = new ContactConstraint[
-      static_cast<size_t>(options.max_contacts)];
+  std::unique_ptr<ContactConstraint[]> contact_cache(new ContactConstraint[
+      static_cast<size_t>(options.max_contacts)]);
+
+  /* Transfer ownership to out_world — FreePhysWorld will delete[] them */
+  body_buf.release();
+  col_buf.release();
+  joint_buf.release();
+  contact_buf.release();
+  aabb_buf.release();
+  pair_buf.release();
+  sort_buf.release();
+  island_buf.release();
+  union_buf.release();
+  island_body_buf.release();
+  out_world->contact_cache = contact_cache.release();
 
   /* Maps for resolving prim paths to body indices */
   std::unordered_map<std::string, int32_t> path_to_body;

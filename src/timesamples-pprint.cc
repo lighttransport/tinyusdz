@@ -16,10 +16,9 @@
 #include "value-types.hh"
 #include "value-pprint.hh"
 #include "pprint-meta.hh"
-#include "logger.hh"
 #include "timesamples.hh"
 #include "stream-writer.hh"
-#include "typed-array.hh"
+#include "typed-array-core.hh"
 
 namespace tinyusdz {
 
@@ -604,7 +603,7 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
             if (is_blocked || offset_is_blocked) {
                 writer.write("None");
             } else if (i < data_offsets.size()) {
-                uint32_t byte_offset = data_offsets[i];
+                size_t byte_offset = data_offsets[i];
                 const uint8_t* value_ptr = data.data() + byte_offset;
 
                 if (is_array_type) {

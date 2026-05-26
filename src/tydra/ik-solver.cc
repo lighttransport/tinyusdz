@@ -6,6 +6,8 @@
 
 #include "ik-solver.h"
 
+#include <memory>
+
 // Math is provided by rb-math.h (included via ik-solver.h).
 // Aliases from old ik_ prefix to tp_ prefix for minimal diff.
 
@@ -488,13 +490,13 @@ bool BuildIKChain(
     return false;
   }
 
-  // Allocate joints
-  TydraIKJoint *joints = new TydraIKJoint[static_cast<size_t>(n)];
-  std::memset(joints, 0, sizeof(TydraIKJoint) * static_cast<size_t>(n));
+  // Allocate joints — wrapped in unique_ptr for RAII cleanup on any early return.
+  std::unique_ptr<TydraIKJoint[]> joints(new TydraIKJoint[static_cast<size_t>(n)]);
+  std::memset(joints.get(), 0, sizeof(TydraIKJoint) * static_cast<size_t>(n));
 
   for (int i = 0; i < n; i++) {
     int skel_id = chain_indices[static_cast<size_t>(i)];
-    TydraIKJoint *j = &joints[i];
+    TydraIKJoint *j = &joints[static_cast<size_t>(i)];
 
     j->joint_id = skel_id;
     j->parent_id = (i > 0) ? (i - 1) : -1;
@@ -532,7 +534,7 @@ bool BuildIKChain(
     }
   }
 
-  out_chain->joints = joints;
+  out_chain->joints = joints.release();
   out_chain->num_joints = n;
   tydra_ik_settings_default(&out_chain->settings);
   out_chain->iterations_used = 0;

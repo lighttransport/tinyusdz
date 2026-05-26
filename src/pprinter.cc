@@ -345,6 +345,14 @@ std::string print_prim(const Prim &prim, const uint32_t indent) {
 }
 
 std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
+  // Children are walked iteratively below, but variant nesting recurses through
+  // print_variantSetSpecStmt() -> print_primspec(); `indent` strictly increases
+  // per level, so this entry guard bounds that mutual recursion (stack-overflow
+  // protection on pathologically deep variant trees).
+  if (indent > kMaxDefaultTraversalLimit) {
+    return {};
+  }
+
   std::stringstream ss;
 
   // Two-phase iterative DFS

@@ -3,6 +3,7 @@
 #include "command-and-history.hh"
 
 #include "json-util.hh"
+#include "minijson.hh"
 
 
 namespace tinyusdz {
@@ -47,10 +48,10 @@ bool HistoryQueue::redo() {
 
 std::string HistoryQueue::to_json_string(bool dump_layer) const {
   json j;
-  j["history"] = nlohmann::json::array();
+  j["history"] = json::array();
 
   for (const auto &hist : history_queues) {
-    nlohmann::json hist_json;
+    json hist_json;
     hist_json["cmd"] = static_cast<int>(hist.cmd);
     hist_json["op"] = static_cast<int>(hist.op);
     hist_json["arg"] = hist.arg;

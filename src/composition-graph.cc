@@ -1242,45 +1242,63 @@ bool CompositionGraph::BuildPrimIndex(const std::string &prim_path,
                                       const PrimSpec &primspec,
                                       uint16_t root_layer_stack_idx,
                                       std::string *warn, std::string *err) {
-  Path path(prim_path, "");
-  PrimIndexBuilder builder(this, path, primspec, root_layer_stack_idx);
+  (void)warn;
 
-  auto result = builder.Build();
-  if (!result) {
-    if (err) *err = result.error();
-    return false;
-  }
+  // Iterative pre-order DFS (explicit heap worklist) so deeply nested prim
+  // hierarchies cannot overflow the call stack. Order is preserved exactly
+  // (children pushed in reverse -> visited left-to-right), which matters because
+  // instance-prototype selection is "first matching index wins". A child's
+  // failure aborts the whole walk, matching the original recursion.
+  struct Item {
+    std::string path;
+    const PrimSpec *ps;
+  };
+  std::vector<Item> stack;
+  stack.push_back({prim_path, &primspec});
 
-  auto index = std::make_shared<PrimIndex>(std::move(*result));
+  while (!stack.empty()) {
+    Item item = std::move(stack.back());
+    stack.pop_back();
 
-  // Instance detection
-  if (_options.detect_instances && index->IsInstanceable()) {
-    InstanceKey key =
-        ComputeInstanceKey(*index, _layer_stacks, _path_table);
-    if (key.is_valid()) {
-      auto it = _instance_key_to_prototype.find(key);
-      if (it != _instance_key_to_prototype.end()) {
-        // Share existing prototype
-        _instance_to_prototype[prim_path] =
-            static_cast<int>(it->second);
-      } else {
-        // Register as new prototype
-        size_t proto_idx = _prototypes.size();
-        _prototypes.push_back(index);
-        _instance_key_to_prototype[key] = proto_idx;
-        _instance_to_prototype[prim_path] =
-            static_cast<int>(proto_idx);
+    Path path(item.path, "");
+    PrimIndexBuilder builder(this, path, *item.ps, root_layer_stack_idx);
+
+    auto result = builder.Build();
+    if (!result) {
+      if (err) *err = result.error();
+      return false;
+    }
+
+    auto index = std::make_shared<PrimIndex>(std::move(*result));
+
+    // Instance detection
+    if (_options.detect_instances && index->IsInstanceable()) {
+      InstanceKey key =
+          ComputeInstanceKey(*index, _layer_stacks, _path_table);
+      if (key.is_valid()) {
+        auto it = _instance_key_to_prototype.find(key);
+        if (it != _instance_key_to_prototype.end()) {
+          // Share existing prototype
+          _instance_to_prototype[item.path] =
+              static_cast<int>(it->second);
+        } else {
+          // Register as new prototype
+          size_t proto_idx = _prototypes.size();
+          _prototypes.push_back(index);
+          _instance_key_to_prototype[key] = proto_idx;
+          _instance_to_prototype[item.path] =
+              static_cast<int>(proto_idx);
+        }
       }
     }
-  }
 
-  _prim_indices[prim_path] = std::move(index);
+    _prim_indices[item.path] = std::move(index);
 
-  // Recursively build indices for children
-  for (const auto &child : primspec.children()) {
-    std::string child_path = prim_path + "/" + child.name();
-    if (!BuildPrimIndex(child_path, child, root_layer_stack_idx, warn, err)) {
-      return false;
+    // Enqueue children in reverse for left-to-right pre-order traversal.
+    // Pointers into the (read-only) PrimSpec tree stay valid for the walk.
+    const auto &children = item.ps->children();
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+      stack.push_back({item.path + "/" + it->name(), &(*it)});
     }
   }
 

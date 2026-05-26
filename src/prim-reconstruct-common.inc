@@ -844,7 +844,7 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
   return enum_handler::Visibility(tok);
 }
 
-static nonstd::expected<Purpose, std::string> PurposeEnumHandler(const std::string &tok) {
+[[maybe_unused]] static nonstd::expected<Purpose, std::string> PurposeEnumHandler(const std::string &tok) {
   return enum_handler::Purpose(tok);
 }
 
