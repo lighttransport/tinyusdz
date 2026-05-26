@@ -104,18 +104,20 @@ class InPlaceDataExtractor {
   }
   
   template<typename U>
-  static bool ExtractAnimatable(Animatable<U>* source, U* dest_default, 
-                                TypedTimeSamples<U>* dest_samples, bool free_source) {
+  static bool ExtractAnimatable(Animatable<U>* source, U* dest_default,
+                                value::TimeSamples* dest_samples, bool free_source) {
     if (!source) return false;
-    
+
     if (source->has_value() && dest_default) {
       source->get_scalar(dest_default);
     }
-    
+
     if (source->has_timesamples() && dest_samples) {
-      *dest_samples = std::move(const_cast<TypedTimeSamples<U>&>(source->get_timesamples()));
+      if (const value::TimeSamples *tsp = source->get_timesamples_ptr()) {
+        *dest_samples = *tsp;
+      }
     }
-    
+
     if (free_source) {
       source->clear_scalar();
       source->clear_timesamples();

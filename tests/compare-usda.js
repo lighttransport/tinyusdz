@@ -2115,6 +2115,7 @@ function compareSingleFile(inputFile, options) {
     status: 'unknown',
     differences: [],
     error: null,
+    expectedDifference: null,
     content1: null,
     content2: null
   };
@@ -2134,18 +2135,26 @@ function compareSingleFile(inputFile, options) {
     return result;
   }
 
-  // Check for XFAIL marker in first 5 lines
+  // Check for XFAIL/XDIFF marker near the top of USDA fixtures. XFAIL skips
+  // comparison because one tool is expected not to parse the file. XDIFF still
+  // compares both outputs, but classifies non-empty diffs as expected.
+  let xdiffTag = null;
   try {
-    const head = fs.readFileSync(inputFile, 'utf-8').split('\n').slice(0, 5);
+    const head = fs.readFileSync(inputFile, 'utf-8').split('\n').slice(0, 32);
     for (const line of head) {
-      if (line.startsWith('# XFAIL:')) {
-        const tag = line.slice('# XFAIL:'.length).trim();
+      const trimmed = line.trim();
+      if (trimmed.startsWith('# XFAIL:')) {
+        const tag = trimmed.slice('# XFAIL:'.length).trim();
         result.status = 'xfail';
         result.error = tag;
         return result;
       }
+      if (trimmed.startsWith('# XDIFF:')) {
+        xdiffTag = trimmed.slice('# XDIFF:'.length).trim();
+      }
     }
   } catch (e) { /* ignore read errors, will fail later */ }
+  result.expectedDifference = xdiffTag;
 
   try {
     let content1, content2;
@@ -2246,7 +2255,9 @@ function compareSingleFile(inputFile, options) {
     }
 
     result.differences = differences;
-    result.status = differences.length === 0 ? 'equivalent' : 'different';
+    result.status = differences.length === 0
+      ? 'equivalent'
+      : (xdiffTag ? 'xdiff' : 'different');
 
   } catch (error) {
     result.status = 'error';
@@ -2465,6 +2476,7 @@ function main() {
       let different = 0;
       let errors = 0;
       let xfails = 0;
+      let xdiffs = 0;
 
       for (let i = 0; i < expandedFiles.length; i++) {
         const inputFile = expandedFiles[i];
@@ -2484,6 +2496,24 @@ function main() {
           xfails++;
           if (!options.quiet && !options.json) {
             console.log(`  XFAIL: ${result.error}\n`);
+          }
+        } else if (result.status === 'xdiff') {
+          xdiffs++;
+          if (!options.quiet && !options.json) {
+            console.log(`  XDIFF: ${result.differences.length} expected difference(s)`);
+            if (result.expectedDifference) {
+              console.log(`  Reason: ${result.expectedDifference}`);
+            }
+            if (options.detailedDiff && result.content1 && result.content2) {
+              for (const diff of result.differences) {
+                console.log(formatDetailedDiff(diff, result.content1, result.content2));
+              }
+            } else if (options.verbose && !options.summary) {
+              for (const diff of result.differences) {
+                console.log(`    - ${diff.message}`);
+              }
+            }
+            console.log('');
           }
         } else if (result.status === 'equivalent') {
           equivalent++;
@@ -2525,6 +2555,7 @@ function main() {
           different,
           errors,
           xfails,
+          xdiffs,
           results: options.summary ? undefined : results
         }, null, 2));
       } else if (!options.quiet) {
@@ -2534,6 +2565,9 @@ function main() {
         console.log(`  ✗ Different:  ${different}`);
         if (xfails > 0) {
           console.log(`  XFAIL:        ${xfails}`);
+        }
+        if (xdiffs > 0) {
+          console.log(`  XDIFF:        ${xdiffs}`);
         }
         if (errors > 0) {
           console.log(`  ⚠ Errors:     ${errors}`);

@@ -10,7 +10,6 @@
 namespace tinyusdz {
 // Forward declarations
 template<typename T> struct Animatable;
-template<typename T> struct TypedTimeSamples;
 }  // namespace tinyusdz
 
 namespace tinyusdz {
@@ -91,13 +90,6 @@ void MoveAndClearVector(std::vector<T>& src, std::vector<T>& dst) {
   src.clear();
   src.shrink_to_fit();
 }
-
-/// Extract data from Animatable and optionally clear source  
-template<typename T>
-void ExtractAnimatableData(const Animatable<T>& src, 
-                          T* default_val, 
-                          TypedTimeSamples<T>* ts,
-                          bool clear_source = false);
 
 //
 // String and conversion utilities

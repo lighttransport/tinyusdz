@@ -10,4 +10,5 @@ void mtlx_standard_surface_reconstruction_test(void);
 void nodegraph_support_test(void);
 void materialx_shader_constants_test(void);
 void materialx_shader_fallback_values_test(void);
+void materialx_include_path_traversal_test(void);
 void materialx_tests(void);

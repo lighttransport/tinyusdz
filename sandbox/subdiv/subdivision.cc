@@ -188,7 +188,7 @@ SubdivResult CatmullClarkSubdivider::BuildTopology(
   // Compute valence and mark boundaries
   for (uint32_t v = 0; v < num_verts; ++v) {
     vertex_info[v].valence = static_cast<uint32_t>(vertex_info[v].adjacent_vertices.size());
-    vertex_info[v].is_boundary = mesh.vertex_on_boundary[v];
+    vertex_info[v].is_boundary = v < mesh.vertex_on_boundary.size() && mesh.vertex_on_boundary[v];
   }
 
   return SubdivResult(true);
@@ -536,7 +536,7 @@ SubdivResult LoopSubdivider::BuildTopology(
   // Compute valence and mark boundaries
   for (uint32_t v = 0; v < num_verts; ++v) {
     vertex_info[v].valence = static_cast<uint32_t>(vertex_info[v].adjacent_vertices.size());
-    vertex_info[v].is_boundary = mesh.vertex_on_boundary[v];
+    vertex_info[v].is_boundary = v < mesh.vertex_on_boundary.size() && mesh.vertex_on_boundary[v];
   }
 
   return SubdivResult(true);

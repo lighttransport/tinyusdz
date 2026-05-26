@@ -15,6 +15,7 @@
 #include <string>
 
 #include "tinyusdz.hh"
+#include "usdGeom.hh"  // GPrim (no longer re-exported by tinyusdz.hh)
 #include "io-util.hh"
 #include "linear-algebra.hh"
 #include "security-policy.hh"

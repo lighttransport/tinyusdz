@@ -1,0 +1,456 @@
+[
+  {
+    "name": "Material_001",
+    "abs_path": "/root/_materials/Material_001",
+    "display_name": "",
+    "hasUsdPreviewSurface": true,
+    "hasOpenPBR": true,
+    "surfaceShader": {
+      "type": "PreviewSurfaceShader",
+      "useSpecularWorkflow": false,
+      "diffuseColor": [
+        0.8,
+        0.8,
+        0.8
+      ],
+      "emissiveColor": [
+        0,
+        0,
+        0
+      ],
+      "specularColor": [
+        0,
+        0,
+        0
+      ],
+      "metallic": 0,
+      "roughness": 0.4,
+      "clearcoat": 0,
+      "clearcoatRoughness": 0.01,
+      "opacity": 1,
+      "opacityThreshold": 0,
+      "ior": 1.5,
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "displacement": 0,
+      "occlusion": 0
+    },
+    "openPBR": {
+      "type": "OpenPBRSurfaceShader",
+      "base": {
+        "base_weight": {
+          "name": "base_weight",
+          "type": "value",
+          "value": 1
+        },
+        "base_color": {
+          "name": "base_color",
+          "type": "value",
+          "value": [
+            0.167411,
+            0.243348,
+            0.800291
+          ]
+        },
+        "base_roughness": {
+          "name": "base_roughness",
+          "type": "value",
+          "value": 0
+        },
+        "base_metalness": {
+          "name": "base_metalness",
+          "type": "value",
+          "value": 0.458621
+        },
+        "base_diffuse_roughness": {
+          "name": "base_diffuse_roughness",
+          "type": "value",
+          "value": 0
+        }
+      },
+      "specular": {
+        "specular_weight": {
+          "name": "specular_weight",
+          "type": "value",
+          "value": 1
+        },
+        "specular_color": {
+          "name": "specular_color",
+          "type": "value",
+          "value": [
+            1,
+            1,
+            1
+          ]
+        },
+        "specular_roughness": {
+          "name": "specular_roughness",
+          "type": "value",
+          "value": 0.5
+        },
+        "specular_ior": {
+          "name": "specular_ior",
+          "type": "value",
+          "value": 1.5
+        },
+        "specular_anisotropy": {
+          "name": "specular_anisotropy",
+          "type": "value",
+          "value": 0
+        },
+        "specular_rotation": {
+          "name": "specular_rotation",
+          "type": "value",
+          "value": 0
+        }
+      },
+      "transmission": {
+        "transmission_weight": {
+          "name": "transmission_weight",
+          "type": "value",
+          "value": 0
+        },
+        "transmission_color": {
+          "name": "transmission_color",
+          "type": "value",
+          "value": [
+            0.167411,
+            0.243348,
+            0.800291
+          ]
+        },
+        "transmission_depth": {
+          "name": "transmission_depth",
+          "type": "value",
+          "value": 0
+        },
+        "transmission_scatter": {
+          "name": "transmission_scatter",
+          "type": "value",
+          "value": [
+            0,
+            0,
+            0
+          ]
+        },
+        "transmission_scatter_anisotropy": {
+          "name": "transmission_scatter_anisotropy",
+          "type": "value",
+          "value": 0
+        },
+        "transmission_dispersion": {
+          "name": "transmission_dispersion",
+          "type": "value",
+          "value": 0
+        }
+      },
+      "subsurface": {
+        "subsurface_weight": {
+          "name": "subsurface_weight",
+          "type": "value",
+          "value": 0
+        },
+        "subsurface_color": {
+          "name": "subsurface_color",
+          "type": "value",
+          "value": [
+            0.167411,
+            0.243348,
+            0.800291
+          ]
+        },
+        "subsurface_scale": {
+          "name": "subsurface_scale",
+          "type": "value",
+          "value": 1
+        },
+        "subsurface_anisotropy": {
+          "name": "subsurface_anisotropy",
+          "type": "value",
+          "value": 0
+        }
+      },
+      "sheen": {
+        "sheen_weight": {
+          "name": "sheen_weight",
+          "type": "value",
+          "value": 0
+        },
+        "sheen_color": {
+          "name": "sheen_color",
+          "type": "value",
+          "value": [
+            1,
+            1,
+            1
+          ]
+        },
+        "sheen_roughness": {
+          "name": "sheen_roughness",
+          "type": "value",
+          "value": 0.3
+        }
+      },
+      "fuzz": {
+        "fuzz_weight": {
+          "name": "fuzz_weight",
+          "type": "value",
+          "value": 0
+        },
+        "fuzz_color": {
+          "name": "fuzz_color",
+          "type": "value",
+          "value": [
+            1,
+            1,
+            1
+          ]
+        },
+        "fuzz_roughness": {
+          "name": "fuzz_roughness",
+          "type": "value",
+          "value": 0.5
+        }
+      },
+      "thin_film": {
+        "thin_film_weight": {
+          "name": "thin_film_weight",
+          "type": "value",
+          "value": 0
+        },
+        "thin_film_thickness": {
+          "name": "thin_film_thickness",
+          "type": "value",
+          "value": 0
+        },
+        "thin_film_ior": {
+          "name": "thin_film_ior",
+          "type": "value",
+          "value": 1.33
+        }
+      },
+      "coat": {
+        "coat_weight": {
+          "name": "coat_weight",
+          "type": "value",
+          "value": 0
+        },
+        "coat_color": {
+          "name": "coat_color",
+          "type": "value",
+          "value": [
+            1,
+            1,
+            1
+          ]
+        },
+        "coat_roughness": {
+          "name": "coat_roughness",
+          "type": "value",
+          "value": 0.03
+        },
+        "coat_anisotropy": {
+          "name": "coat_anisotropy",
+          "type": "value",
+          "value": 0
+        },
+        "coat_rotation": {
+          "name": "coat_rotation",
+          "type": "value",
+          "value": 0
+        },
+        "coat_ior": {
+          "name": "coat_ior",
+          "type": "value",
+          "value": 1.5
+        },
+        "coat_affect_color": {
+          "name": "coat_affect_color",
+          "type": "value",
+          "value": 0
+        },
+        "coat_affect_roughness": {
+          "name": "coat_affect_roughness",
+          "type": "value",
+          "value": 0
+        }
+      },
+      "emission": {
+        "emission_luminance": {
+          "name": "emission_luminance",
+          "type": "value",
+          "value": 0
+        },
+        "emission_color": {
+          "name": "emission_color",
+          "type": "value",
+          "value": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "geometry": {
+        "opacity": {
+          "name": "opacity",
+          "type": "value",
+          "value": 1
+        },
+        "geometry_opacity": {
+          "name": "geometry_opacity",
+          "type": "value",
+          "value": 1
+        },
+        "normal": {
+          "name": "normal",
+          "type": "value",
+          "value": [
+            0,
+            0,
+            1
+          ]
+        },
+        "tangent": {
+          "name": "tangent",
+          "type": "value",
+          "value": [
+            1,
+            0,
+            0
+          ]
+        },
+        "tangent_rotation": 0,
+        "normal_map_scale": 1,
+        "coat_normal": {
+          "name": "coat_normal",
+          "type": "value",
+          "value": [
+            0,
+            0,
+            1
+          ]
+        },
+        "coat_tangent": {
+          "name": "coat_tangent",
+          "type": "value",
+          "value": [
+            1,
+            0,
+            0
+          ]
+        },
+        "coat_tangent_rotation": 0,
+        "coat_normal_map_scale": 1
+      },
+      "nodeGraph": {
+        "version": "1.39",
+        "nodegraph": {
+          "name": "NodeGraphs",
+          "nodes": [
+            {
+              "name": "node",
+              "category": "normal_vector3",
+              "type": "ND_normal_vector3",
+              "inputs": [
+                {
+                  "name": "space",
+                  "type": "string",
+                  "value": "world"
+                }
+              ]
+            },
+            {
+              "name": "node_001",
+              "category": "normalize_vector3",
+              "type": "ND_normalize_vector3",
+              "inputs": [
+                {
+                  "name": "in",
+                  "nodename": "node",
+                  "output": "out"
+                }
+              ]
+            },
+            {
+              "name": "node_002",
+              "category": "tangent_vector3",
+              "type": "ND_tangent_vector3",
+              "inputs": [
+                {
+                  "name": "space",
+                  "type": "string",
+                  "value": "world"
+                }
+              ]
+            },
+            {
+              "name": "node_003",
+              "category": "normalize_vector3",
+              "type": "ND_normalize_vector3",
+              "inputs": [
+                {
+                  "name": "in",
+                  "nodename": "node_002",
+                  "output": "out"
+                }
+              ]
+            },
+            {
+              "name": "node_004",
+              "category": "rotate3d_vector3",
+              "type": "ND_rotate3d_vector3",
+              "inputs": [
+                {
+                  "name": "amount",
+                  "type": "float",
+                  "value": -90
+                },
+                {
+                  "name": "axis",
+                  "nodename": "node_001",
+                  "output": "out"
+                },
+                {
+                  "name": "in",
+                  "nodename": "node_003",
+                  "output": "out"
+                }
+              ]
+            },
+            {
+              "name": "node_005",
+              "category": "normalize_vector3",
+              "type": "ND_normalize_vector3",
+              "inputs": [
+                {
+                  "name": "in",
+                  "nodename": "node_004",
+                  "output": "out"
+                }
+              ]
+            }
+          ],
+          "outputs": [
+            {
+              "name": "node_003_out",
+              "type": "float3",
+              "nodename": "node_003",
+              "output": "out"
+            }
+          ]
+        },
+        "connections": [
+          {
+            "input": "geometry_tangent",
+            "nodegraph": "NodeGraphs",
+            "output": "node_003_out"
+          }
+        ]
+      }
+    }
+  }
+]

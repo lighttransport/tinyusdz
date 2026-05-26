@@ -13,6 +13,7 @@
 #include <iomanip>
 #include <cmath>
 #include "str-util.hh"  // For dragonbox-based dtos()
+#include "common-macros.inc"  // kMaxDefaultTraversalLimit (recursion depth guard)
 
 namespace tinyusdz {
 namespace tydra {
@@ -939,7 +940,11 @@ bool ThreeJSSceneExporter::ExportScene(const RenderScene& scene,
   return true;
 }
 
-json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scene) {
+json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scene, uint32_t depth) {
+  if (depth > kMaxDefaultTraversalLimit) {
+    // Bail on pathologically deep node trees rather than overflow the stack.
+    return json::object();
+  }
   json obj = json::object();
 
   obj["name"] = node.prim_name;
@@ -1006,7 +1011,7 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
   json children = json::array();
   for (size_t i = 0; i < node.children.size(); ++i) {
     const Node& child_node = node.children[i];
-    children.push_back(ConvertNode(child_node, scene));
+    children.push_back(ConvertNode(child_node, scene, depth + 1));
   }
   if (!children.empty()) {
     obj["children"] = children;

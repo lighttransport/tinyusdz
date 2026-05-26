@@ -77,20 +77,10 @@ bool CrateWriter::ExtractMeshProperties(
 
     // Handle time samples for animated points
     if (points_animatable && points_animatable->has_timesamples()) {
-      const auto& typed_ts = points_animatable->get_timesamples();
-
-      // Convert TypedTimeSamples<std::vector<value::point3f>> to value::TimeSamples
+      // Value-type Animatable stores a type-erased value::TimeSamples directly.
       value::TimeSamples ts;
-      for (size_t i = 0; i < typed_ts.size(); i++) {
-        std::vector<value::point3f> sample_value;
-        double time;
-
-        // Get time from the typed timesamples
-        time = typed_ts.get_samples()[i].t;
-        sample_value = typed_ts.get_samples()[i].value;
-
-        value::Value v(sample_value);
-        ts.add_sample(time, v);
+      if (const value::TimeSamples *_tsp = points_animatable->get_timesamples_ptr()) {
+        ts = *_tsp;
       }
 
       crate::CrateValue ts_crate_val;
@@ -151,14 +141,9 @@ bool CrateWriter::ExtractMeshProperties(
     }
     // Time samples (mirrors the points.timeSamples emit above).
     if (normals_animatable && normals_animatable->has_timesamples()) {
-      const auto& typed_ts = normals_animatable->get_timesamples();
       value::TimeSamples ts;
-      for (size_t i = 0; i < typed_ts.size(); i++) {
-        double time = typed_ts.get_samples()[i].t;
-        std::vector<value::normal3f> sample_value =
-            typed_ts.get_samples()[i].value;
-        value::Value v(sample_value);
-        ts.add_sample(time, v);
+      if (const value::TimeSamples *_tsp = normals_animatable->get_timesamples_ptr()) {
+        ts = *_tsp;
       }
       crate::CrateValue ts_crate_val;
       ts_crate_val.Set(ts);
@@ -715,13 +700,9 @@ bool CrateWriter::ExtractCameraProperties(
     }
     // Time-sampled scalar (e.g. animated focalLength)
     if (anim.has_timesamples()) {
-      const auto& typed_ts = anim.get_timesamples();
       value::TimeSamples ts;
-      for (size_t i = 0; i < typed_ts.size(); i++) {
-        double time = typed_ts.get_samples()[i].t;
-        float sample_value = typed_ts.get_samples()[i].value;
-        value::Value v(sample_value);
-        ts.add_sample(time, v);
+      if (const value::TimeSamples *_tsp = anim.get_timesamples_ptr()) {
+        ts = *_tsp;
       }
       crate::CrateValue ts_crate_val;
       ts_crate_val.Set(ts);
@@ -742,13 +723,9 @@ bool CrateWriter::ExtractCameraProperties(
       fields.push_back({name, crate_val});
     }
     if (anim.has_timesamples()) {
-      const auto& typed_ts = anim.get_timesamples();
       value::TimeSamples ts;
-      for (size_t i = 0; i < typed_ts.size(); i++) {
-        double time = typed_ts.get_samples()[i].t;
-        double sample_value = typed_ts.get_samples()[i].value;
-        value::Value v(sample_value);
-        ts.add_sample(time, v);
+      if (const value::TimeSamples *_tsp = anim.get_timesamples_ptr()) {
+        ts = *_tsp;
       }
       crate::CrateValue ts_crate_val;
       ts_crate_val.Set(ts);
@@ -1769,23 +1746,19 @@ bool CrateWriter::ExtractGPrimProperties(
 
     // Handle animated visibility (TimeSamples)
     if (vis_animatable.has_timesamples()) {
-      const auto& typed_ts = vis_animatable.get_timesamples();
+      const value::TimeSamples *vis_ts = vis_animatable.get_timesamples_ptr();
 
-      // Convert TypedTimeSamples<Visibility> to value::TimeSamples
+      // Enum timesamples are stored as int64; cast back to Visibility and emit
+      // token timeSamples for the crate writer.
       value::TimeSamples ts;
-      for (size_t i = 0; i < typed_ts.size(); i++) {
-        Visibility sample_vis;
-        double time;
-
-        // Get time and value from the typed timesamples
-        time = typed_ts.get_samples()[i].t;
-        sample_vis = typed_ts.get_samples()[i].value;
-
-        // Convert Visibility enum to token string
-        std::string vis_str = to_string(sample_vis);
-        value::token vis_token(vis_str);
-        value::Value v(vis_token);
-        ts.add_sample(time, v);
+      const auto &samples = vis_ts->get_samples();
+      for (size_t i = 0; i < samples.size(); i++) {
+        if (samples[i].blocked) {
+          ts.add_blocked_sample(samples[i].t, value::Value());
+        } else if (const int64_t *iv = samples[i].value.as<int64_t>()) {
+          value::token vis_token(to_string(static_cast<Visibility>(*iv)));
+          ts.add_sample(samples[i].t, value::Value(vis_token));
+        }
       }
 
       crate::CrateValue ts_crate_val;

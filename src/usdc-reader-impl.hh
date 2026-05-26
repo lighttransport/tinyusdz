@@ -14,6 +14,7 @@
 
 #include "usdc-reader.hh"
 
+#include "common-macros.inc"
 #include "core/prim.hh"        // Prim class
 #include "core/prim-spec.hh"   // PrimSpec, Property (transitively: composition-types, prim-enums, prim-metas, variant-types)
 #include "core/model-scope.hh" // Model, Scope
@@ -40,7 +41,10 @@
 #include "tiny-format.hh"
 #include "value-pprint.hh"
 #include "usdShade.hh"
-#include "ascii-parser.hh"
+// NOTE: ascii-parser.hh (the heavy AsciiParser class, ~78ms ParseClass) is NOT
+// included here — the USDC (binary crate) reader impl does not use it. Pulling it
+// dragged that parse into all 8 usdc-reader TUs; only usdc-reader-property.cc
+// actually uses AsciiParser and includes it directly.
 #include "parser-timing.hh"
 #include "enum-handlers.hh"
 
@@ -57,7 +61,6 @@
 #endif
 
 //
-#include "common-macros.inc"
 
 namespace tinyusdz {
 
@@ -141,6 +144,12 @@ class USDCReader::Impl {
     crate_reader = nullptr;
   }
 
+  // Prevent copy/move — raw owning pointer in crate_reader.
+  Impl(const Impl &) = delete;
+  Impl &operator=(const Impl &) = delete;
+  Impl(Impl &&) = delete;
+  Impl &operator=(Impl &&) = delete;
+
   void set_reader_config(const USDCReaderConfig &config) {
     _config = config;
 
@@ -194,6 +203,20 @@ class USDCReader::Impl {
   template <typename T>
   bool ReconstructPrim(const Specifier &spec, const crate::CrateReader::Node &node,
                        const PathIndexToSpecIndexMap &psmap, T *prim);
+
+  // Per-type body of ReconstructPrimFromTypeName's dispatch: reconstruct a T,
+  // type-erase it into a value::Value, and wrap in a Prim. Split out as a member
+  // template (defined in usdc-reader-prim-detail.inc, instantiated in the
+  // usdc-reader-prim-reconstruct-*.cc siblings) so the per-type value::Value<T>
+  // construction is not all codegen'd in usdc-reader-prim.cc. Returns nullptr on
+  // failure.
+  template <typename T>
+  std::unique_ptr<Prim> ReconstructTypedPrim(
+      const crate::CrateReader::Node &node, const Specifier spec,
+      const PathIndexToSpecIndexMap &psmap, const std::string &prim_name,
+      const std::string &primTypeName, const PrimMeta &meta,
+      const std::vector<value::token> &properties,
+      const std::vector<value::token> &primChildren);
 
   ///
   /// Reconstrcut Prim node.

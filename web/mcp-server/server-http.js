@@ -1,6 +1,6 @@
 import express from "express";
 import * as bodyParser from "body-parser";
-//import { randomUUID } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { v4 as uuidv4 } from "uuid";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpError, ErrorCode, ListResourceTemplatesRequestSchema, ReadResourceRequestSchema, ListToolsRequestSchema, CallToolRequestSchema, ListResourcesRequestSchema, ListPromptsRequestSchema, GetPromptRequestSchema, CompleteRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -14,21 +14,80 @@ import cors from 'cors';
 
 const portno = 8085;
 
+// --- Security configuration -------------------------------------------------
+// Bind to loopback by default so the server is NOT reachable from the LAN.
+// Override with MCP_HOST=0.0.0.0 only if you intentionally expose it.
+const host = process.env.MCP_HOST || "127.0.0.1";
+
+// Require a bearer token on every /mcp request. If MCP_AUTH_TOKEN is not set,
+// generate an ephemeral one for this run and print it so the operator can use
+// it. The server is never reachable without presenting this token, which is
+// what prevents unauthenticated LAN/cross-origin callers from invoking tools.
+const AUTH_TOKEN = process.env.MCP_AUTH_TOKEN || randomBytes(32).toString("hex");
+if (!process.env.MCP_AUTH_TOKEN) {
+  console.warn("[mcp] MCP_AUTH_TOKEN not set; generated an ephemeral token for this run:");
+  console.warn("[mcp]   " + AUTH_TOKEN);
+  console.warn("[mcp] Clients must send header:  Authorization: Bearer <token>");
+}
+
+// CORS: deny cross-origin browser access by default (origin:false sends no
+// Access-Control-Allow-Origin, so a malicious site cannot read responses).
+// Set MCP_ALLOWED_ORIGINS to a comma-separated allow-list to opt specific
+// browser origins in. Non-browser clients (curl/node) are unaffected by CORS.
+const allowedOrigins = (process.env.MCP_ALLOWED_ORIGINS || "")
+  .split(",").map((s) => s.trim()).filter(Boolean);
+
+// DNS-rebinding protection: only accept requests whose Host header is in this
+// allow-list. Defaults to the loopback host/port the server binds to.
+const allowedHosts = (process.env.MCP_ALLOWED_HOSTS ||
+  `127.0.0.1:${portno},localhost:${portno},127.0.0.1,localhost`)
+  .split(",").map((s) => s.trim()).filter(Boolean);
+
+// Constant-time string comparison to avoid leaking the token via timing.
+function timingSafeEqualStr(a, b) {
+  const ab = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  if (ab.length !== bb.length) {
+    return false;
+  }
+  return timingSafeEqual(ab, bb);
+}
+
+// Express middleware: reject any /mcp request without a valid bearer token.
+function requireAuth(req, res, next) {
+  const header = req.headers["authorization"] || "";
+  const match = /^Bearer\s+(.+)$/i.exec(header);
+  if (!match || !timingSafeEqualStr(match[1], AUTH_TOKEN)) {
+    res.status(401).json({
+      jsonrpc: "2.0",
+      error: { code: -32001, message: "Unauthorized: missing or invalid bearer token" },
+      id: null,
+    });
+    return;
+  }
+  next();
+}
+
 const app = express();
 //app.use(express.json());
 
 // Increase limit for larger requests(e.g. DataURI representation of USD file)
 // Assume express 14.6.0+(bodyParser is now included in express.js)
-app.use(express.json({limit: '50mb'})); // Increase limit for larger requests  
-app.use(express.urlencoded({ extended: true, limit: '50mb' })); // Increase limit for larger requests    
+app.use(express.json({limit: '50mb'})); // Increase limit for larger requests
+app.use(express.urlencoded({ extended: true, limit: '50mb' })); // Increase limit for larger requests
 
-// CORS configuration requied for browser-based MCP clients
+// CORS configuration required for browser-based MCP clients. Cross-origin is
+// denied by default; opt in specific origins via MCP_ALLOWED_ORIGINS.
 app.use(cors({
-  origin: '*', // Configure appropriately for production, for example:
-  // origin: ['https://your-remote-domain.com', 'https://your-other-remote-domain.com'],
+  origin: allowedOrigins.length > 0 ? allowedOrigins : false,
   exposedHeaders: ['Mcp-Session-Id'],
-  allowedHeaders: ['Content-Type', 'mcp-session-id', 'mcp-protocol-version'],
+  allowedHeaders: ['Content-Type', 'mcp-session-id', 'mcp-protocol-version', 'authorization'],
 }));
+
+// Authenticate every /mcp request. The cors() middleware above handles the
+// preflight OPTIONS request and short-circuits it before this runs, so genuine
+// preflights are not blocked by the missing Authorization header.
+app.use('/mcp', requireAuth);
 
 // Map to store transports by session ID
 const transports = {};
@@ -40,9 +99,9 @@ initTinyUSDZNative().then(function (TinyUSDZ) {
   const tusd = new TinyUSDZ.TinyUSDZLoaderNative();
   // Handle POST requests for client-to-server communication
   app.post('/mcp', async (req, res) => {
-    console.log("-- post --");
-    console.log(req.headers);
-    console.log(req.body);
+    // NOTE: do not log req.headers — the Authorization header carries the
+    // bearer token, which must not be written to logs.
+    console.log("-- post /mcp --");
     // Check for existing session ID
     const sessionId = req.headers['mcp-session-id'] || undefined;
     let transport = null;
@@ -54,6 +113,10 @@ initTinyUSDZNative().then(function (TinyUSDZ) {
       // New initialization request
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => uuidv4(),
+        // Reject requests whose Host header is not in the allow-list, defeating
+        // DNS-rebinding attacks against this (typically loopback) server.
+        enableDnsRebindingProtection: true,
+        allowedHosts: allowedHosts,
         onsessioninitialized: (sessionId) => {
 
           // Store the transport by session ID
@@ -61,10 +124,6 @@ initTinyUSDZNative().then(function (TinyUSDZ) {
 
           tusd.mcpCreateContext(sessionId);
         },
-        // DNS rebinding protection is disabled by default for backwards compatibility. If you are running this server
-        // locally, make sure to set:
-        // enableDnsRebindingProtection: true,
-        // allowedHosts: ['127.0.0.1'],
       });
 
       // Clean up transport when closed
@@ -222,8 +281,8 @@ initTinyUSDZNative().then(function (TinyUSDZ) {
   // Handle DELETE requests for session termination
   app.delete('/mcp', handleSessionRequest);
 
-  console.log("localhost:" + portno.toString())
-  app.listen(portno);
+  console.log(`MCP server listening on http://${host}:${portno}/mcp`);
+  app.listen(portno, host);
 
 }).catch((error) => {
   console.error("Failed to initialize TinyUSDZLoader:", error);

@@ -206,7 +206,7 @@ SubdivResult CatmullClarkSubdivider::SubdivideOnce(
   std::vector<VertexInfo> vertex_info;
   SubdivResult topo_result = BuildTopology(input, vertex_info);
   if (!topo_result.success) {
-    return topo_result;
+    return SubdivResult(false, topo_result.error);
   }
 
   uint32_t num_input_verts = input.GetNumVertices();
@@ -458,7 +458,7 @@ SubdivResult CatmullClarkSubdivider::Subdivide(
   for (int level = 0; level < levels; ++level) {
     SubdivResult result = SubdivideOnce(current, next);
     if (!result.success) {
-      return result;
+      return SubdivResult(false, result.error);
     }
 
     // Security check: ensure we're not creating too many vertices
@@ -552,14 +552,14 @@ SubdivResult LoopSubdivider::SubdivideOnce(
 
   SubdivResult tri_check = ValidateTriangleMesh(input);
   if (!tri_check.success) {
-    return tri_check;
+    return SubdivResult(false, tri_check.error);
   }
 
   // Build topology
   std::vector<VertexInfo> vertex_info;
   SubdivResult topo_result = BuildTopology(input, vertex_info);
   if (!topo_result.success) {
-    return topo_result;
+    return SubdivResult(false, topo_result.error);
   }
 
   uint32_t num_input_verts = input.GetNumVertices();
@@ -790,7 +790,7 @@ SubdivResult LoopSubdivider::Subdivide(
   for (int level = 0; level < levels; ++level) {
     SubdivResult result = SubdivideOnce(current, next);
     if (!result.success) {
-      return result;
+      return SubdivResult(false, result.error);
     }
 
     // Security check
@@ -983,7 +983,7 @@ SubdivResult BilinearSubdivider::Subdivide(
   for (int level = 0; level < levels; ++level) {
     SubdivResult result = SubdivideOnce(current, next);
     if (!result.success) {
-      return result;
+      return SubdivResult(false, result.error);
     }
 
     // Security check

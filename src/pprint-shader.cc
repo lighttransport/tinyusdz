@@ -499,39 +499,39 @@ std::string to_string(const Shader &shader, const uint32_t indent,
        << shader.info_id << "\"\n";
   }
 
-  if (auto pvr = shader.value.get_value<UsdPrimvarReader_float>()) {
-    ss << print_shader_params(pvr.value(), indent + 1);
-  } else if (auto pvr2 = shader.value.get_value<UsdPrimvarReader_float2>()) {
-    ss << print_shader_params(pvr2.value(), indent + 1);
-  } else if (auto pvr3 = shader.value.get_value<UsdPrimvarReader_float3>()) {
-    ss << print_shader_params(pvr3.value(), indent + 1);
-  } else if (auto pvr4 = shader.value.get_value<UsdPrimvarReader_float4>()) {
-    ss << print_shader_params(pvr4.value(), indent + 1);
-  } else if (auto pvrs = shader.value.get_value<UsdPrimvarReader_string>()) {
-    ss << print_shader_params(pvrs.value(), indent + 1);
-  } else if (auto pvrn = shader.value.get_value<UsdPrimvarReader_normal>()) {
-    ss << print_shader_params(pvrn.value(), indent + 1);
-  } else if (auto pvrv = shader.value.get_value<UsdPrimvarReader_vector>()) {
-    ss << print_shader_params(pvrv.value(), indent + 1);
-  } else if (auto pvrp = shader.value.get_value<UsdPrimvarReader_point>()) {
-    ss << print_shader_params(pvrp.value(), indent + 1);
-  } else if (auto pvrm = shader.value.get_value<UsdPrimvarReader_matrix>()) {
-    ss << print_shader_params(pvrm.value(), indent + 1);
-  } else if (auto pvtex = shader.value.get_value<UsdUVTexture>()) {
-    ss << print_shader_params(pvtex.value(), indent + 1);
-  } else if (auto pvtx2d = shader.value.get_value<UsdTransform2d>()) {
-    ss << print_shader_params(pvtx2d.value(), indent + 1);
-  } else if (auto pvs = shader.value.get_value<UsdPreviewSurface>()) {
-    ss << print_shader_params(pvs.value(), indent + 1);
-  } else if (auto mtlx_opbr = shader.value.get_value<MtlxOpenPBRSurface>()) {
+  if (auto pvr = shader.value.as<UsdPrimvarReader_float>()) {
+    ss << print_shader_params(*pvr, indent + 1);
+  } else if (auto pvr2 = shader.value.as<UsdPrimvarReader_float2>()) {
+    ss << print_shader_params(*pvr2, indent + 1);
+  } else if (auto pvr3 = shader.value.as<UsdPrimvarReader_float3>()) {
+    ss << print_shader_params(*pvr3, indent + 1);
+  } else if (auto pvr4 = shader.value.as<UsdPrimvarReader_float4>()) {
+    ss << print_shader_params(*pvr4, indent + 1);
+  } else if (auto pvrs = shader.value.as<UsdPrimvarReader_string>()) {
+    ss << print_shader_params(*pvrs, indent + 1);
+  } else if (auto pvrn = shader.value.as<UsdPrimvarReader_normal>()) {
+    ss << print_shader_params(*pvrn, indent + 1);
+  } else if (auto pvrv = shader.value.as<UsdPrimvarReader_vector>()) {
+    ss << print_shader_params(*pvrv, indent + 1);
+  } else if (auto pvrp = shader.value.as<UsdPrimvarReader_point>()) {
+    ss << print_shader_params(*pvrp, indent + 1);
+  } else if (auto pvrm = shader.value.as<UsdPrimvarReader_matrix>()) {
+    ss << print_shader_params(*pvrm, indent + 1);
+  } else if (auto pvtex = shader.value.as<UsdUVTexture>()) {
+    ss << print_shader_params(*pvtex, indent + 1);
+  } else if (auto pvtx2d = shader.value.as<UsdTransform2d>()) {
+    ss << print_shader_params(*pvtx2d, indent + 1);
+  } else if (auto pvs = shader.value.as<UsdPreviewSurface>()) {
+    ss << print_shader_params(*pvs, indent + 1);
+  } else if (auto mtlx_opbr = shader.value.as<MtlxOpenPBRSurface>()) {
     // Blender v4.5 MaterialX OpenPBR Surface
-    ss << print_shader_params(mtlx_opbr.value(), indent + 1);
-  } else if (auto opbr = shader.value.get_value<OpenPBRSurface>()) {
+    ss << print_shader_params(*mtlx_opbr, indent + 1);
+  } else if (auto opbr = shader.value.as<OpenPBRSurface>()) {
     // Native OpenPBR Surface shader
-    ss << print_shader_params(opbr.value(), indent + 1);
-  } else if (auto pvsn = shader.value.get_value<ShaderNode>()) {
+    ss << print_shader_params(*opbr, indent + 1);
+  } else if (auto pvsn = shader.value.as<ShaderNode>()) {
     // Generic ShaderNode
-    ss << print_common_shader_params(pvsn.value(), indent + 1);
+    ss << print_common_shader_params(*pvsn, indent + 1);
   } else {
     ss << pprint::Indent(indent + 1)
        << "[???] Invalid ShaderNode in Shader Prim\n";

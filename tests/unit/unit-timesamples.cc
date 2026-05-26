@@ -199,6 +199,19 @@ void timesamples_test(void) {
     TEST_CHECK(!value::IsLerpSupportedType(value::TypeTraits<std::vector<int>>::type_id()));
     TEST_CHECK(!value::IsLerpSupportedType(value::TypeTraits<std::string>::type_id()));
     TEST_CHECK(!value::IsLerpSupportedType(value::TypeTraits<std::vector<std::string>>::type_id()));
+
+    // Matrices are interpolatable and now have a consistent Lerp() arm. Previously
+    // IsLerpSupportedType() reported true but Lerp() had no matrix case and returned
+    // false (so array matrix timesamples failed to interpolate). Guard the fix.
+    TEST_CHECK(value::IsLerpSupportedType(value::TypeTraits<value::matrix4d>::type_id()));
+    TEST_CHECK(value::IsLerpSupportedType(value::TypeTraits<std::vector<value::matrix4d>>::type_id()));
+    {
+      value::matrix4d ma{};
+      value::matrix4d mb{};
+      value::Value a(ma), b(mb), out;
+      TEST_CHECK(value::Lerp(a, b, 0.5, &out));
+      TEST_CHECK(out.as<value::matrix4d>() != nullptr);
+    }
   }
 
   // Test TimeSamples sorting
@@ -371,13 +384,12 @@ void timesamples_test(void) {
     if (v3) TEST_CHECK(math::is_close(*v3, 50.0f));
 
     TEST_CHECK(ts.has_sample_at(4.0));
-    value::TimeSamples::Sample* sample = nullptr;
-    TEST_CHECK(ts.get_sample_at(4.0, &sample));
-    TEST_CHECK(sample != nullptr);
-    if (sample) {
-      const float* sample_value = sample->value.as<float>();
-      TEST_CHECK(sample_value != nullptr);
-      if (sample_value) TEST_CHECK(math::is_close(*sample_value, 40.0f));
+    {
+      // value at the exact sample time t=4.0
+      float sample_value = 0.0f;
+      TEST_CHECK(ts.get<float>(&sample_value, 4.0,
+                               value::TimeSampleInterpolationType::Held));
+      TEST_CHECK(math::is_close(sample_value, 40.0f));
     }
 
     auto value_opt = ts.get_value(2);
@@ -751,95 +763,6 @@ void timesamples_test(void) {
     TEST_CHECK(math::is_close(samples[2].t, 5.0));
   }
 
-  // Direct TypedTimeSamples held lookup should return the previous sample and hold after the end.
-  {
-    TypedTimeSamples<float> ts;
-    ts.add_sample(10.0, 3.0f);
-    ts.add_sample(0.0, 1.0f);
-
-    float out = 0.0f;
-    TEST_CHECK(ts.get(&out, 5.0, value::TimeSampleInterpolationType::Held));
-    TEST_CHECK(math::is_close(out, 1.0f));
-
-    TEST_CHECK(ts.get(&out, 50.0, value::TimeSampleInterpolationType::Held));
-    TEST_CHECK(math::is_close(out, 3.0f));
-  }
-
-  // TypedTimeSamples blocked sample handling (non-interpolatable type)
-  {
-    TypedTimeSamples<int32_t> ts;
-    ts.add_sample(0.0, 10);
-    ts.add_blocked_sample(5.0);
-    ts.add_sample(10.0, 30);
-
-    int32_t out = 0;
-
-    // Default time should return first non-blocked sample.
-    TEST_CHECK(ts.get(&out, value::TimeCode::Default()));
-    TEST_CHECK(out == 10);
-
-    // At blocked time, held lookup should return false.
-    TEST_CHECK(ts.get(&out, 5.0, value::TimeSampleInterpolationType::Held) == false);
-
-    // Before blocked time, held lookup should return the value before it.
-    TEST_CHECK(ts.get(&out, 3.0, value::TimeSampleInterpolationType::Held));
-    TEST_CHECK(out == 10);
-
-    // After blocked time, held lookup should return false (blocked is nearest preceding).
-    TEST_CHECK(ts.get(&out, 7.0, value::TimeSampleInterpolationType::Held) == false);
-
-    // At time after last sample, should hold last value.
-    TEST_CHECK(ts.get(&out, 15.0, value::TimeSampleInterpolationType::Held));
-    TEST_CHECK(out == 30);
-  }
-
-  // TypedTimeSamples blocked sample handling (interpolatable type - float)
-  {
-    TypedTimeSamples<float> ts;
-    ts.add_sample(0.0, 1.0f);
-    ts.add_blocked_sample(5.0);
-    ts.add_sample(10.0, 3.0f);
-
-    float out = 0.0f;
-
-    // Default time should return first non-blocked sample.
-    TEST_CHECK(ts.get(&out, value::TimeCode::Default()));
-    TEST_CHECK(math::is_close(out, 1.0f));
-
-    // Held interpolation at blocked time should return false.
-    TEST_CHECK(ts.get(&out, 5.0, value::TimeSampleInterpolationType::Held) == false);
-
-    // Linear interpolation: when one endpoint is blocked, fall back to the
-    // non-blocked endpoint.
-    out = 0.0f;
-    TEST_CHECK(ts.get(&out, 7.0, value::TimeSampleInterpolationType::Linear));
-
-    // After blocked sample and before next real sample - blocked endpoint
-    // means we get the non-blocked side.
-    TEST_CHECK(ts.get(&out, 15.0, value::TimeSampleInterpolationType::Held));
-    TEST_CHECK(math::is_close(out, 3.0f));
-  }
-
-  // TypedTimeSamples: all blocked samples should return false for default time.
-  {
-    TypedTimeSamples<float> ts;
-    ts.add_blocked_sample(0.0);
-    ts.add_blocked_sample(5.0);
-
-    float out = 0.0f;
-    TEST_CHECK(ts.get(&out, value::TimeCode::Default()) == false);
-    TEST_CHECK(ts.get(&out, 3.0, value::TimeSampleInterpolationType::Held) == false);
-  }
-
-  // TypedTimeSamples: single blocked sample should return false.
-  {
-    TypedTimeSamples<float> ts;
-    ts.add_blocked_sample(1.0);
-
-    float out = 0.0f;
-    TEST_CHECK(ts.get(&out, 1.0, value::TimeSampleInterpolationType::Held) == false);
-    TEST_CHECK(ts.get(&out, value::TimeCode::Default()) == false);
-  }
 
   // Test empty TimeSamples
   {
@@ -881,17 +804,16 @@ void timesamples_test(void) {
     TEST_CHECK(ts.has_sample_at(1.5) == false);
     TEST_CHECK(ts.has_sample_at(4.0) == false);
 
-    value::TimeSamples::Sample* sample = nullptr;
-    TEST_CHECK(ts.get_sample_at(2.0, &sample) == true);
-    TEST_CHECK(sample != nullptr);
-    if (sample) {
-      TEST_CHECK(math::is_close(sample->t, 2.0));
-      const float* v = sample->value.as<float>();
-      TEST_CHECK(v != nullptr);
-      if (v) TEST_CHECK(math::is_close(*v, 20.0f));
+    {
+      TEST_CHECK(ts.has_sample_at(2.0));
+      float v = 0.0f;
+      TEST_CHECK(ts.get<float>(&v, 2.0,
+                               value::TimeSampleInterpolationType::Held));
+      TEST_CHECK(math::is_close(v, 20.0f));
     }
 
-    TEST_CHECK(ts.get_sample_at(4.0, &sample) == false);
+    // No sample exactly at t=4.0.
+    TEST_CHECK(ts.has_sample_at(4.0) == false);
   }
 
   // Test get_time API
@@ -1236,5 +1158,161 @@ void timesamples_test(void) {
 
     TEST_CHECK(pvar.get_interpolated_value(1.0 + epsilon, value::TimeSampleInterpolationType::Linear, &result));
     TEST_CHECK(math::is_close(result, 20.0f, 1e-3f));  // Should be very close to last sample
+  }
+
+  // ----------------------------------------------------------------------
+  // [Phase 1] Parity guard: the production TimeSamples::get<T>() (now the
+  // binary-direct evaluator for scalar T) must match a naive value::Value-path
+  // reference across {default, held, lerp} x {blocked variants}. The reference
+  // is the generic get_samples()/Lerp path that get<T>() used to inline; this
+  // guards that the consolidated non-template core stayed behavior-compatible.
+  // (Note: the scenarios below deliberately avoid matrix/timecode types, whose
+  // Value-path Lerp arm is missing — the binary core interpolates them, so the
+  // two paths intentionally diverge there until Phase 2 unifies Lerp.)
+  // ----------------------------------------------------------------------
+  {
+    using Interp = value::TimeSampleInterpolationType;
+    const Interp Held = Interp::Held;
+    const Interp Linear = Interp::Linear;
+
+    // Independent reference: interpolate via the generic get_samples()/Lerp path.
+    auto reference_get = [&](const value::TimeSamples &ts, double t, Interp interp,
+                             auto tag, bool *ok) {
+      using T = decltype(tag);
+      using Sample = value::TimeSamples::Sample;
+      T out{};
+      *ok = false;
+      const auto &samples = ts.get_samples();
+      if (samples.empty()) return out;
+      if (value::TimeCode(t).is_default()) {
+        for (const auto &s : samples) {
+          if (!s.blocked) {
+            if (const T *pv = s.value.template as<T>()) { out = *pv; *ok = true; }
+            return out;
+          }
+        }
+        return out;
+      }
+      if (samples.size() == 1) {
+        if (samples[0].blocked) return out;
+        if (const T *pv = samples[0].value.template as<T>()) { out = *pv; *ok = true; }
+        return out;
+      }
+      if (interp == Linear && value::IsLerpSupportedType(ts.type_id())) {
+        auto it = std::lower_bound(samples.begin(), samples.end(), t,
+            [](const Sample &a, double tv) { return a.t < tv; });
+        const auto itm1 = (it == samples.begin()) ? samples.begin() : (it - 1);
+        const size_t i0 = size_t(std::max<int64_t>(0, std::min<int64_t>(
+            int64_t(samples.size()) - 1,
+            int64_t(std::distance(samples.begin(), itm1)))));
+        const size_t i1 = size_t(std::max<int64_t>(0, std::min<int64_t>(
+            int64_t(samples.size()) - 1, int64_t(i0) + 1)));
+        if (samples[i0].blocked && samples[i1].blocked) return out;
+        if (samples[i0].blocked) {
+          if (const T *pv = samples[i1].value.template as<T>()) { out = *pv; *ok = true; }
+          return out;
+        }
+        if (samples[i1].blocked) {
+          if (const T *pv = samples[i0].value.template as<T>()) { out = *pv; *ok = true; }
+          return out;
+        }
+        const double tl = samples[i0].t, tu = samples[i1].t;
+        double dt = (std::fabs(tu - tl) < std::numeric_limits<double>::epsilon())
+                        ? 0.0 : (t - tl) / (tu - tl);
+        dt = std::max(0.0, std::min(1.0, dt));
+        value::Value p;
+        if (value::Lerp(samples[i0].value, samples[i1].value, dt, &p)) {
+          if (const T *pv = p.template as<T>()) { out = *pv; *ok = true; }
+        }
+        return out;
+      }
+      auto it = std::upper_bound(samples.begin(), samples.end(), t,
+          [](double tv, const Sample &a) { return tv < a.t; });
+      const auto ith = (it == samples.begin()) ? samples.begin() : (it - 1);
+      if (ith->blocked) return out;
+      if (const T *pv = ith->value.template as<T>()) { out = *pv; *ok = true; }
+      return out;
+    };
+
+    auto check = [&](const value::TimeSamples &ts, double t, Interp interp,
+                     auto tag) {
+      using T = decltype(tag);
+      T a{};
+      const bool ra = ts.template get<T>(&a, t, interp);
+      bool rb = false;
+      const T b = reference_get(ts, t, interp, tag, &rb);
+      TEST_CHECK(ra == rb);
+      if (ra && rb) {
+        TEST_CHECK(a == b);
+      }
+    };
+
+    const double T_DEFAULT = value::TimeCode::Default();
+    const double times[] = {-1.0, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 100.0, T_DEFAULT};
+
+    // float (lerp scalar), two samples
+    {
+      value::TimeSamples ts;
+      ts.add_sample<float>(0.0, 1.0f);
+      ts.add_sample<float>(2.0, 5.0f);
+      for (double t : times) { check(ts, t, Held, float{}); check(ts, t, Linear, float{}); }
+    }
+    // double, single sample
+    {
+      value::TimeSamples ts;
+      ts.add_sample<double>(5.0, 42.0);
+      for (double t : times) { check(ts, t, Held, double{}); check(ts, t, Linear, double{}); }
+    }
+    // float3 (lerp vector)
+    {
+      value::TimeSamples ts;
+      ts.add_sample<value::float3>(0.0, value::float3{0.f, 0.f, 0.f});
+      ts.add_sample<value::float3>(2.0, value::float3{2.f, 4.f, 6.f});
+      for (double t : times) { check(ts, t, Held, value::float3{}); check(ts, t, Linear, value::float3{}); }
+    }
+    // color3f (role type — shares float3 layout via shared switch arm)
+    {
+      value::TimeSamples ts;
+      ts.add_sample<value::color3f>(0.0, value::color3f{0.f, 0.f, 0.f});
+      ts.add_sample<value::color3f>(1.0, value::color3f{1.f, 0.5f, 0.25f});
+      for (double t : times) { check(ts, t, Held, value::color3f{}); check(ts, t, Linear, value::color3f{}); }
+    }
+    // int32 (non-lerp scalar): Linear must behave as Held
+    {
+      value::TimeSamples ts;
+      ts.add_sample<int32_t>(0.0, 3);
+      ts.add_sample<int32_t>(2.0, 9);
+      for (double t : times) { check(ts, t, Held, int32_t{}); check(ts, t, Linear, int32_t{}); }
+    }
+    // blocked middle (double)
+    {
+      value::TimeSamples ts;
+      ts.add_sample<double>(0.0, 10.0);
+      ts.add_blocked_sample<double>(1.0);
+      ts.add_sample<double>(2.0, 20.0);
+      for (double t : times) { check(ts, t, Held, double{}); check(ts, t, Linear, double{}); }
+    }
+    // blocked endpoints (float)
+    {
+      value::TimeSamples ts;
+      ts.add_blocked_sample<float>(0.0);
+      ts.add_sample<float>(1.0, 7.0f);
+      ts.add_blocked_sample<float>(2.0);
+      for (double t : times) { check(ts, t, Held, float{}); check(ts, t, Linear, float{}); }
+    }
+    // dedup: duplicate_sample shares the same _data offset (zero-copy)
+    {
+      value::TimeSamples ts;
+      ts.add_sample<value::float3>(0.0, value::float3{1.f, 2.f, 3.f});
+      ts.duplicate_sample(0, 5.0);
+      for (double t : times) { check(ts, t, Held, value::float3{}); check(ts, t, Linear, value::float3{}); }
+    }
+    // generic (non-binary) storage: token
+    {
+      value::TimeSamples ts;
+      ts.add_sample<value::token>(0.0, value::token("a"));
+      ts.add_sample<value::token>(2.0, value::token("b"));
+      for (double t : times) { check(ts, t, Held, value::token{}); check(ts, t, Linear, value::token{}); }
+    }
   }
 }

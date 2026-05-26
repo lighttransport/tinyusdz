@@ -1092,6 +1092,12 @@ std::string print_customData(const CustomDataType &customData,
 
 std::string print_meta(const MetaVariable &meta, const uint32_t indent, bool emit_type_name,
                        const std::string &varname) {
+  // Guard against deeply nested metadata (dict-in-dict) recursion; `indent`
+  // grows per nesting level, so this bounds call-stack depth.
+  if (indent > kMaxDefaultTraversalLimit) {
+    return {};
+  }
+
   std::stringstream ss;
 
   // ss << "TODO: isObject " << meta.is_object() << ", isValue " <<

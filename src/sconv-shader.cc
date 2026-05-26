@@ -250,19 +250,10 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
 
     // If there are timesamples, create a separate timeSamples spec
     if (animatable && animatable->has_timesamples()) {
-      const auto& typed_ts = animatable->get_timesamples();
-
-      // Convert TypedTimeSamples<float> to value::TimeSamples
+      // Value-type Animatable stores a type-erased value::TimeSamples directly.
       value::TimeSamples ts;
-      for (size_t i = 0; i < typed_ts.size(); i++) {
-        double time;
-        float sample_value;
-
-        time = typed_ts.get_samples()[i].t;
-        sample_value = typed_ts.get_samples()[i].value;
-
-        value::Value v(sample_value);
-        ts.add_sample(time, v);
+      if (const value::TimeSamples *_tsp = animatable->get_timesamples_ptr()) {
+        ts = *_tsp;
       }
 
       // Create timeSamples spec
@@ -294,21 +285,16 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
 
     // If there are timesamples, create a separate timeSamples spec
     if (animatable && animatable->has_timesamples()) {
-      const auto& typed_ts = animatable->get_timesamples();
-
-      // Convert TypedTimeSamples<color3f> to value::TimeSamples with float3 values
+      // color3f store -> float3 crate values (crate stores the underlying type).
       value::TimeSamples ts;
-      for (size_t i = 0; i < typed_ts.size(); i++) {
-        double time;
-        value::color3f sample_color;
-
-        time = typed_ts.get_samples()[i].t;
-        sample_color = typed_ts.get_samples()[i].value;
-
-        // Convert color3f to float3 for crate format
-        value::float3 color_as_float3 = {sample_color.r, sample_color.g, sample_color.b};
-        value::Value v(color_as_float3);
-        ts.add_sample(time, v);
+      if (const value::TimeSamples *_tsp = animatable->get_timesamples_ptr()) {
+        for (const auto &_s : _tsp->get_samples()) {
+          if (_s.blocked) { ts.add_blocked_sample(_s.t, value::Value()); continue; }
+          if (const value::color3f *cv = _s.value.as<value::color3f>()) {
+            value::float3 color_as_float3 = {cv->r, cv->g, cv->b};
+            ts.add_sample(_s.t, value::Value(color_as_float3));
+          }
+        }
       }
 
       // Create timeSamples spec
@@ -549,21 +535,16 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
 
     // If there are timesamples, create a separate timeSamples spec
     if (animatable && animatable->has_timesamples()) {
-      const auto& typed_ts = animatable->get_timesamples();
-
-      // Convert TypedTimeSamples<texcoord2f> to value::TimeSamples
+      // texcoord2f store -> float2 crate values (crate stores the underlying type).
       value::TimeSamples ts;
-      for (size_t i = 0; i < typed_ts.size(); i++) {
-        double time;
-        value::texcoord2f sample_value;
-
-        time = typed_ts.get_samples()[i].t;
-        sample_value = typed_ts.get_samples()[i].value;
-
-        // Convert texcoord2f to float2 for TimeSamples
-        value::float2 sample_as_float2 = {sample_value.s, sample_value.t};
-        value::Value v(sample_as_float2);
-        ts.add_sample(time, v);
+      if (const value::TimeSamples *_tsp = animatable->get_timesamples_ptr()) {
+        for (const auto &_s : _tsp->get_samples()) {
+          if (_s.blocked) { ts.add_blocked_sample(_s.t, value::Value()); continue; }
+          if (const value::texcoord2f *tv = _s.value.as<value::texcoord2f>()) {
+            value::float2 sample_as_float2 = {tv->s, tv->t};
+            ts.add_sample(_s.t, value::Value(sample_as_float2));
+          }
+        }
       }
 
       // Create timeSamples spec
@@ -826,19 +807,10 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
 
     // If there are timesamples, create a separate timeSamples spec
     if (animatable && animatable->has_timesamples()) {
-      const auto& typed_ts = animatable->get_timesamples();
-
-      // Convert TypedTimeSamples<float2> to value::TimeSamples
+      // Value-type Animatable stores a type-erased value::TimeSamples directly.
       value::TimeSamples ts;
-      for (size_t i = 0; i < typed_ts.size(); i++) {
-        double time;
-        value::float2 sample_value;
-
-        time = typed_ts.get_samples()[i].t;
-        sample_value = typed_ts.get_samples()[i].value;
-
-        value::Value v(sample_value);
-        ts.add_sample(time, v);
+      if (const value::TimeSamples *_tsp = animatable->get_timesamples_ptr()) {
+        ts = *_tsp;
       }
 
       // Create timeSamples spec
@@ -869,19 +841,10 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
 
     // If there are timesamples, create a separate timeSamples spec
     if (animatable && animatable->has_timesamples()) {
-      const auto& typed_ts = animatable->get_timesamples();
-
-      // Convert TypedTimeSamples<float> to value::TimeSamples
+      // Value-type Animatable stores a type-erased value::TimeSamples directly.
       value::TimeSamples ts;
-      for (size_t i = 0; i < typed_ts.size(); i++) {
-        double time;
-        float sample_value;
-
-        time = typed_ts.get_samples()[i].t;
-        sample_value = typed_ts.get_samples()[i].value;
-
-        value::Value v(sample_value);
-        ts.add_sample(time, v);
+      if (const value::TimeSamples *_tsp = animatable->get_timesamples_ptr()) {
+        ts = *_tsp;
       }
 
       // Create timeSamples spec

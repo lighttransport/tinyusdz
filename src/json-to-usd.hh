@@ -4,6 +4,7 @@
 #include <string>
 
 #include "tinyusdz.hh"
+#include "usdGeom.hh"  // GeomMesh etc. (no longer re-exported by tinyusdz.hh)
 
 namespace tinyusdz {
 

@@ -1,7 +1,7 @@
 {
   "name": "tinyusdz",
   "private": true,
-  "version": "0.9.9-rc1",
+  "version": "0.9.9-rc6",
   "description": "TinyUSDZ WebAssembly and JavaScript loaders for USD and USDZ assets",
   "type": "module",
   "main": "./index.js",

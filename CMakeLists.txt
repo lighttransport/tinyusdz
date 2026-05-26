@@ -81,6 +81,10 @@ endif ()
 
 # options
 option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
+# NOTE: Measured to NOT help (and slightly hurt codegen) on this codebase: the
+# compile cost is dominated by template *instantiation* and -O3 codegen, not by
+# header parsing, which is all a PCH can cache. Kept as an opt-in knob; default OFF.
+option(TINYUSDZ_USE_PCH "Use a precompiled header (does not help this codebase; opt-in)." OFF)
 option(TINYUSDZ_BUILD_SHARED_LIBS "Build as dll?" ${BUILD_SHARED_LIBS})
 option(TINYUSDZ_ENABLE_THREAD "Build with C++11 std::thread support?(threading support is not implemented yet)" OFF)
 option(TINYUSDZ_MSAN "Build with MSAN support(for developer only)" OFF)
@@ -151,6 +155,8 @@ option(TINYUSDZ_CXX_EXCEPTIONS
 
 option(TINYUSDZ_WITH_USDMTLX "Build with MaterialX support" ON)
 option(TINYUSDZ_WITH_JSON "Build with JSON support" ON)
+option(TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT
+       "Build deprecated nlohmann::json object overloads for JSON APIs" ON)
 option(TINYUSDZ_WITH_USD_TO_GLTF "Build with USD to glTF example" ON)
 option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
@@ -393,19 +399,28 @@ if(TINYUSDZ_USE_CCACHE)
     if(CCACHE_EXE)
 
       message(STATUS "Use ccache : " ${CCACHE_EXE})
+
+      # ccache + precompiled headers: ccache will refuse to cache PCH-using TUs
+      # unless told to relax the PCH/time-macro hash checks. Wrap the launcher
+      # with `env CCACHE_SLOPPINESS=...` (Unix; MSVC path does not use ccache).
+      set(CCACHE_LAUNCHER "${CCACHE_EXE}")
+      if(TINYUSDZ_USE_PCH AND CMAKE_HOST_UNIX)
+        set(CCACHE_LAUNCHER env CCACHE_SLOPPINESS=pch_defines,time_macros "${CCACHE_EXE}")
+      endif()
+
       # CMAKE_C_COMPILER_LAUNCHER = available from cmake 3.4+)
       if(CMAKE_C_COMPILER_LAUNCHER)
         set(CMAKE_C_COMPILER_LAUNCHER "${CMAKE_C_COMPILER_LAUNCHER}"
-                                      "${CCACHE_EXE}")
+                                      ${CCACHE_LAUNCHER})
       else()
-        set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_EXE}")
+        set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_LAUNCHER})
       endif()
 
       if(CMAKE_CXX_COMPILER_LAUNCHER)
         set(CMAKE_CXX_COMPILER_LAUNCHER "${CMAKE_CXX_COMPILER_LAUNCHER}"
-                                        "${CCACHE_EXE}")
+                                        ${CCACHE_LAUNCHER})
       else()
-        set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_EXE}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_LAUNCHER})
       endif()
 
     endif(CCACHE_EXE)
@@ -473,15 +488,24 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-props.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-entry.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-basetype.cc
-    ${PROJECT_SOURCE_DIR}/src/ascii-parser-basetype-typedarray.cc
+    ${PROJECT_SOURCE_DIR}/src/ascii-parser-basetype-inst.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-timesamples.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-timesamples-array.cc
     ${PROJECT_SOURCE_DIR}/src/audio-loader.cc
     ${PROJECT_SOURCE_DIR}/src/base122.cc
     ${PROJECT_SOURCE_DIR}/src/usda-reader.cc
+    ${PROJECT_SOURCE_DIR}/src/usda-reader-reconstruct-1.cc
+    ${PROJECT_SOURCE_DIR}/src/usda-reader-reconstruct-2.cc
+    ${PROJECT_SOURCE_DIR}/src/usda-reader-reconstruct-3.cc
+    ${PROJECT_SOURCE_DIR}/src/usda-reader-reconstruct-4.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-reader.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-reader-property.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-reader-prim.cc
+    ${PROJECT_SOURCE_DIR}/src/usdc-reader-prim-parse.cc
+    ${PROJECT_SOURCE_DIR}/src/usdc-reader-prim-reconstruct-1.cc
+    ${PROJECT_SOURCE_DIR}/src/usdc-reader-prim-reconstruct-2.cc
+    ${PROJECT_SOURCE_DIR}/src/usdc-reader-prim-reconstruct-3.cc
+    ${PROJECT_SOURCE_DIR}/src/usdc-reader-prim-reconstruct-4.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-reader-reconstruct.cc
     ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-writer.cc
@@ -498,6 +522,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/crate-reader-timesamples.cc
     ${PROJECT_SOURCE_DIR}/src/crate-format.cc
     ${PROJECT_SOURCE_DIR}/src/crate-writer.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-writer-values.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-writer-inline.cc
     ${PROJECT_SOURCE_DIR}/src/stage-converter.cc
     ${PROJECT_SOURCE_DIR}/src/sconv-geom.cc
     ${PROJECT_SOURCE_DIR}/src/sconv-physics.cc
@@ -511,12 +537,25 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/crate-dump.cc
     ${PROJECT_SOURCE_DIR}/src/path-util.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct2.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct3.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom2.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom3.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-lightprim.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader2.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader3.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader4.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-physics.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-physics2.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-physics3.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-physics4.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-ar.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-media.cc
     ${PROJECT_SOURCE_DIR}/src/prim-composition.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-types-schema.cc
     ${PROJECT_SOURCE_DIR}/src/core/prim-enums.cc
     ${PROJECT_SOURCE_DIR}/src/enum-handlers.cc
     ${PROJECT_SOURCE_DIR}/src/layer.cc
@@ -524,7 +563,13 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/str-util.cc
     ${PROJECT_SOURCE_DIR}/src/usd-dump.cc
     ${PROJECT_SOURCE_DIR}/src/value-pprint.cc
+    ${PROJECT_SOURCE_DIR}/src/value-pprint-dispatch.cc
+    ${PROJECT_SOURCE_DIR}/src/value-pprint-prim.cc
     ${PROJECT_SOURCE_DIR}/src/value-types.cc
+    ${PROJECT_SOURCE_DIR}/src/value-types-typename.cc
+    ${PROJECT_SOURCE_DIR}/src/value-types-cast.cc
+    ${PROJECT_SOURCE_DIR}/src/value-types-matrix.cc
+    ${PROJECT_SOURCE_DIR}/src/value-types-lerp.cc
     ${PROJECT_SOURCE_DIR}/src/color-space.cc
     ${PROJECT_SOURCE_DIR}/src/color-space.hh
     ${PROJECT_SOURCE_DIR}/src/usd-validation.cc
@@ -537,6 +582,13 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/linear-algebra.cc
     ${PROJECT_SOURCE_DIR}/src/value-eval-util.cc
     ${PROJECT_SOURCE_DIR}/src/usdGeom.cc
+    ${PROJECT_SOURCE_DIR}/src/usdGeom-accessors.cc
+    ${PROJECT_SOURCE_DIR}/src/usdGeom-primvar-inst-scalar-a.cc
+    ${PROJECT_SOURCE_DIR}/src/usdGeom-primvar-inst-scalar-b.cc
+    ${PROJECT_SOURCE_DIR}/src/usdGeom-primvar-inst-vec-a.cc
+    ${PROJECT_SOURCE_DIR}/src/usdGeom-primvar-inst-vec-b.cc
+    ${PROJECT_SOURCE_DIR}/src/usdGeom-primvar-inst-role-a.cc
+    ${PROJECT_SOURCE_DIR}/src/usdGeom-primvar-inst-role-b.cc
     ${PROJECT_SOURCE_DIR}/src/usdSkel.cc
     ${PROJECT_SOURCE_DIR}/src/usdShade.cc
     ${PROJECT_SOURCE_DIR}/src/usdLux.cc
@@ -546,6 +598,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/mtlx-dom.cc
     ${PROJECT_SOURCE_DIR}/src/mtlx-simple-parser.cc
     ${PROJECT_SOURCE_DIR}/src/usdMtlx.cc
+    ${PROJECT_SOURCE_DIR}/src/usdMtlx-write.cc
     ${PROJECT_SOURCE_DIR}/src/usdPhysics.cc
     ${PROJECT_SOURCE_DIR}/src/mjcPhysics.cc
     ${PROJECT_SOURCE_DIR}/src/usdObj.cc
@@ -562,11 +615,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc
     ${PROJECT_SOURCE_DIR}/src/timesamples-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/timesamples.cc
-    ${PROJECT_SOURCE_DIR}/src/timesamples-inst-scalar.cc
-    ${PROJECT_SOURCE_DIR}/src/timesamples-inst-scalar-role.cc
-    ${PROJECT_SOURCE_DIR}/src/timesamples-inst-array.cc
-    ${PROJECT_SOURCE_DIR}/src/timesamples-inst-array-role.cc
-    ${PROJECT_SOURCE_DIR}/src/timesamples-inst-array-basic.cc
+    ${PROJECT_SOURCE_DIR}/src/timesamples-eval.cc
     ${PROJECT_SOURCE_DIR}/src/stage.cc
     ${PROJECT_SOURCE_DIR}/src/stage.hh
     ${PROJECT_SOURCE_DIR}/src/uuid-gen.cc
@@ -588,12 +637,16 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-listprims-inst.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access-listshaders-inst.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-analysis.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-analysis.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-all.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-inst-scalar.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-inst-array.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/command-and-history.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/obj-export.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/usd-export.cc
@@ -601,7 +654,9 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-mesh.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-mesh-tangent.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material-mtlx.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-anim.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-internal.hh
@@ -717,6 +772,7 @@ endif()
 
 if(TINYUSDZ_WITH_JSON)
   list(APPEND TINYUSDZ_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/minijson.cc
     ${PROJECT_SOURCE_DIR}/src/json-to-usd.cc
     ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc
     ${PROJECT_SOURCE_DIR}/src/json-writer.cc
@@ -1043,6 +1099,15 @@ if(TINYUSDZ_WITH_TINYSUBDIV)
 
   # primvar-interpolation.hh is header-only, no .cc needed
 
+elseif(TINYUSDZ_WITH_OPENSUBDIV)
+  # Standalone TinySubdiv library for unit tests / comparison tools when
+  # the main library is built with the OpenSubdiv backend instead.
+  # No symbol conflict because tinyusdz_static omits subdivision.cc.
+  add_library(tinyusdz_subdiv STATIC
+    ${PROJECT_SOURCE_DIR}/sandbox/subdiv/subdivision.cc)
+  target_include_directories(tinyusdz_subdiv PUBLIC
+    ${PROJECT_SOURCE_DIR}/sandbox/subdiv)
+  add_sanitizers(tinyusdz_subdiv)
 endif(TINYUSDZ_WITH_TINYSUBDIV)
 
 if(TINYUSDZ_WITH_GEOGRAM)
@@ -1245,6 +1310,29 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 
   set_source_files_properties(${TINYUSDZ_SOURCES}
                               PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
+
+  # nlohmann/json is vendored third-party code. Clang 21's -Weverything emits
+  # diagnostics from its header during template instantiation, so suppress only
+  # those third-party warning classes on translation units that include it.
+  set(TINYUSDZ_NLOHMANN_JSON_WARNING_FLAGS
+      " -Wno-covered-switch-default -Wno-weak-vtables")
+  set(TINYUSDZ_NLOHMANN_JSON_SOURCES
+      ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-js-bridge.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-composition.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-query.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-scene.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/urdf-to-usd.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/js-script-persistent.cc)
+  foreach(TINYUSDZ_NLOHMANN_JSON_SOURCE ${TINYUSDZ_NLOHMANN_JSON_SOURCES})
+    set_property(SOURCE ${TINYUSDZ_NLOHMANN_JSON_SOURCE}
+                 APPEND_STRING PROPERTY COMPILE_FLAGS
+                 ${TINYUSDZ_NLOHMANN_JSON_WARNING_FLAGS})
+  endforeach()
 
   if (TINYUSDZ_WITH_C_API)
     set_source_files_properties(${TINYUSDZ_C_API_SOURCES}
@@ -1495,6 +1583,14 @@ endif()
 #
 foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
 
+  # Precompiled header to amortize parsing of large, stable headers across the
+  # many C++ TUs. Guarded with COMPILE_LANGUAGE:CXX because the library also
+  # contains C sources (zstd.c, lz4.c, yyjson.c, ...) which cannot use a C++ PCH.
+  if(TINYUSDZ_USE_PCH)
+    target_precompile_headers(${TINYUSDZ_LIB_TARGET} PRIVATE
+      "$<$<COMPILE_LANGUAGE:CXX>:${PROJECT_SOURCE_DIR}/src/tinyusdz-pch.hh>")
+  endif()
+
   # Although TinyUSDZ should compile well without /bigobj flag,
   # corrent TinyYSDZ need to use bigobj format otherwise we'll get: fatal  error C1128: number of sections exceeded object file format limit: compile with /bigobj
   if(MSVC)
@@ -1576,6 +1672,10 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     #target_include_directories(
     #  ${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_WITH_JSON")
+    if(TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT)
+      target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                                 PUBLIC "TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT")
+    endif()
   endif()
 
   if(TINYUSDZ_WITH_USDMTLX)
@@ -2108,6 +2208,21 @@ if(TINYUSDZ_BUILD_TESTS)
     target_include_directories(bench-parse-opt PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME bench-parse-opt COMMAND bench-parse-opt --quick)
     set_tests_properties(bench-parse-opt PROPERTIES LABELS "benchmark")
+  endif()
+
+  #
+  # Subdivision comparison (TinySubdiv vs OpenSubdiv)
+  #
+  if(TINYUSDZ_WITH_OPENSUBDIV)
+    add_executable(feat-subdiv-compare
+      tests/feat/subdiv-compare/subdiv-compare.cc)
+    add_sanitizers(feat-subdiv-compare)
+    target_link_libraries(feat-subdiv-compare PRIVATE
+      tinyusdz_subdiv ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-subdiv-compare PRIVATE
+      ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-subdiv-compare COMMAND feat-subdiv-compare
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
   endif()
 
 endif(TINYUSDZ_BUILD_TESTS)
