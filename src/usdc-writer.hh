@@ -38,11 +38,17 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
 /// @param[out] output Binary data
 /// @param[out] warn Warning message
 /// @param[out] err Error message
+/// @param[in] max_file_size_bytes Override the writer's max output size limit
+///            (0 = keep built-in default; WASM defaults are intentionally small).
+/// @param[in] max_memory_bytes Override the writer's max memory estimate limit
+///            (0 = keep built-in default).
 ///
 /// @return true upon success.
 ///
 bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
-                        std::string *warn, std::string *err);
+                        std::string *warn, std::string *err,
+                        int64_t max_file_size_bytes = 0,
+                        int64_t max_memory_bytes = 0);
 
 }  // namespace usdc
 }  // namespace tinyusdz
