@@ -5258,6 +5258,16 @@ class TinyUSDZLoaderNative {
   }
 
   /// Export loaded scene as USDC (binary Crate) — returns Uint8Array
+  /// Override the USDC writer resource limits for subsequent exportAsUSDC()
+  /// calls. Megabytes; pass 0 to keep the (conservative) built-in WASM default.
+  /// Use to allow large exports for mesh-dense scenes / roundtrip testing.
+  void setUSDCExportLimitMB(int file_size_mb, int memory_mb) {
+    usdc_max_file_size_bytes_ =
+        file_size_mb > 0 ? static_cast<int64_t>(file_size_mb) * 1024 * 1024 : 0;
+    usdc_max_memory_bytes_ =
+        memory_mb > 0 ? static_cast<int64_t>(memory_mb) * 1024 * 1024 : 0;
+  }
+
   emscripten::val exportAsUSDC() {
     tinyusdz::Stage stage;
     if (!getStageFromLayer(stage)) {
@@ -5266,7 +5276,9 @@ class TinyUSDZLoaderNative {
 
     std::vector<uint8_t> output;
     std::string warn, err;
-    if (!tinyusdz::usdc::SaveAsUSDCToMemory(stage, &output, &warn, &err)) {
+    if (!tinyusdz::usdc::SaveAsUSDCToMemory(stage, &output, &warn, &err,
+                                            usdc_max_file_size_bytes_,
+                                            usdc_max_memory_bytes_)) {
       error_ = "USDC export failed: " + err;
       warn_ = warn;
       return emscripten::val::null();
@@ -5833,6 +5845,11 @@ class TinyUSDZLoaderNative {
   std::vector<uint8_t> usdc_export_buf_;
   std::vector<uint8_t> usdz_export_buf_;
   std::vector<uint8_t> image_export_buf_;
+  // Optional USDC writer resource-limit overrides (bytes; 0 = built-in default).
+  // Settable from JS via setUSDCExportLimitMB() to allow large exports
+  // (e.g. mesh-dense robots) past the conservative WASM defaults.
+  int64_t usdc_max_file_size_bytes_{0};
+  int64_t usdc_max_memory_bytes_{0};
   std::map<std::string, tinyusdz::tydra::URDFMeshBuffer> urdf_mesh_buffers_;
 
   // Cache for reordered mesh data (triangles sorted by material for optimal submesh grouping)
@@ -6775,6 +6792,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       // USD Export
       .function("exportAsUSDA", &TinyUSDZLoaderNative::exportAsUSDA)
       .function("exportAsUSDC", &TinyUSDZLoaderNative::exportAsUSDC)
+      .function("setUSDCExportLimitMB", &TinyUSDZLoaderNative::setUSDCExportLimitMB)
       .function("exportAsUSDZ", &TinyUSDZLoaderNative::exportAsUSDZ)
       .function("extractPhysicsSceneJSON", &TinyUSDZLoaderNative::extractPhysicsSceneJSON)
       .function("createSampleScene", &TinyUSDZLoaderNative::createSampleScene)
