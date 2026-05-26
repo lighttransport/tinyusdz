@@ -90,6 +90,9 @@ Options:
   --tessellate-collision-shapes
                        Tessellate primitive collision shapes to mesh.
                        Default: use USD native shape prims for primitive collisions.
+  --max-usdc-mb <N>    Raise the USDC writer's max output size to N MB
+                       (default WASM cap is 100MB). Use for mesh-dense scenes.
+  --max-mem-mb <N>     Raise the USDC writer's max memory estimate to N MB.
   --dump-json <path>   Write the generated createURDFPhysicsScene JSON payload
   --no-verify          Do not verify expected USD/MuJoCo schema text
   --sample             Use an embedded URDF + OBJ smoke-test robot
@@ -110,6 +113,8 @@ function parseArgs(argv = process.argv.slice(2)) {
     allowMissing: false,
     tessellateCollisionShapes: false,
     dumpJson: null,
+    maxUsdcMb: 0,
+    maxMemMb: 0,
     verify: true,
     sample: false,
     verbose: false
@@ -145,6 +150,10 @@ function parseArgs(argv = process.argv.slice(2)) {
       opts.allowMissing = true;
     } else if (arg === '--tessellate-collision-shapes') {
       opts.tessellateCollisionShapes = true;
+    } else if (arg === '--max-usdc-mb') {
+      opts.maxUsdcMb = Number(requireValue(argv, ++i, arg)) || 0;
+    } else if (arg === '--max-mem-mb') {
+      opts.maxMemMb = Number(requireValue(argv, ++i, arg)) || 0;
     } else if (arg === '--dump-json') {
       opts.dumpJson = requireValue(argv, ++i, arg);
     } else if (arg === '--no-verify') {
@@ -275,22 +284,66 @@ function matrixToUSDArray(matrix) {
   ];
 }
 
-function matrixFromPoseAttrs(attrs = {}) {
-  const pos = parseNumbers(attrs.pos, [0, 0, 0]);
-  const matrix = new THREE.Matrix4();
-  const translation = new THREE.Vector3(pos[0] || 0, pos[1] || 0, pos[2] || 0);
-  const scale = new THREE.Vector3(1, 1, 1);
-  let quat = new THREE.Quaternion();
+// MuJoCo <compiler> context for angle units + euler sequence. Set per-parse in
+// buildMujocoPayload; defaults match MuJoCo (degrees, "xyz").
+let mjcfPoseCtx = { toRad: Math.PI / 180, eulerseq: 'xyz' };
 
+function eulerQuatFromSeq(angles, seq, toRad) {
+  const axisFor = (c) => (c === 'x' ? new THREE.Vector3(1, 0, 0)
+    : c === 'y' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1));
+  const q = new THREE.Quaternion();
+  for (let i = 0; i < seq.length && i < angles.length; i++) {
+    const c = seq[i];
+    const lower = c.toLowerCase();
+    const qi = new THREE.Quaternion().setFromAxisAngle(axisFor(lower), (angles[i] || 0) * toRad);
+    if (c === lower) q.multiply(qi);   // lowercase = intrinsic (moving axes)
+    else q.premultiply(qi);            // uppercase = extrinsic (fixed axes)
+  }
+  return q;
+}
+
+// Resolve any MuJoCo orientation specifier (quat/axisangle/euler/xyaxes/zaxis).
+function orientationQuat(attrs, ctx) {
+  const toRad = ctx.toRad;
   if (attrs.quat) {
     const q = parseNumbers(attrs.quat, [1, 0, 0, 0]);
-    quat = new THREE.Quaternion(q[1] || 0, q[2] || 0, q[3] || 0, q[0] ?? 1).normalize();
-  } else if (attrs.euler) {
-    const e = parseNumbers(attrs.euler, [0, 0, 0]);
-    quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(e[0] || 0, e[1] || 0, e[2] || 0, 'XYZ'));
+    return new THREE.Quaternion(q[1] || 0, q[2] || 0, q[3] || 0, q[0] ?? 1).normalize();
   }
+  if (attrs.axisangle) {
+    const a = parseNumbers(attrs.axisangle, [0, 0, 1, 0]);
+    const axis = new THREE.Vector3(a[0] || 0, a[1] || 0, a[2] || 0);
+    if (axis.lengthSq() < 1e-12) axis.set(0, 0, 1);
+    return new THREE.Quaternion().setFromAxisAngle(axis.normalize(), (a[3] || 0) * toRad);
+  }
+  if (attrs.euler) {
+    return eulerQuatFromSeq(parseNumbers(attrs.euler, [0, 0, 0]), ctx.eulerseq, toRad);
+  }
+  if (attrs.xyaxes) {
+    const v = parseNumbers(attrs.xyaxes, [1, 0, 0, 0, 1, 0]);
+    const x = new THREE.Vector3(v[0], v[1], v[2]);
+    if (x.lengthSq() < 1e-12) x.set(1, 0, 0);
+    x.normalize();
+    const y = new THREE.Vector3(v[3], v[4], v[5]);
+    y.sub(x.clone().multiplyScalar(x.dot(y)));   // Gram-Schmidt against x
+    if (y.lengthSq() < 1e-12) y.crossVectors(new THREE.Vector3(0, 0, 1), x);
+    y.normalize();
+    const z = new THREE.Vector3().crossVectors(x, y);
+    return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+  }
+  if (attrs.zaxis) {
+    const v = parseNumbers(attrs.zaxis, [0, 0, 1]);
+    const z = new THREE.Vector3(v[0] || 0, v[1] || 0, v[2] || 0);
+    if (z.lengthSq() < 1e-12) z.set(0, 0, 1);
+    return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), z.normalize());
+  }
+  return new THREE.Quaternion();
+}
 
-  return matrix.compose(translation, quat, scale);
+function matrixFromPoseAttrs(attrs = {}) {
+  const pos = parseNumbers(attrs.pos, [0, 0, 0]);
+  const translation = new THREE.Vector3(pos[0] || 0, pos[1] || 0, pos[2] || 0);
+  const quat = orientationQuat(attrs, mjcfPoseCtx);
+  return new THREE.Matrix4().compose(translation, quat, new THREE.Vector3(1, 1, 1));
 }
 
 function originToMatrix(originAttrs = {}) {
@@ -462,6 +515,22 @@ function extension(filename) {
   return path.extname((filename || '').split('?')[0].split('#')[0]).toLowerCase();
 }
 
+function asFloat32Array(values) {
+  return values instanceof Float32Array ? values : new Float32Array(values || []);
+}
+
+function asInt32Array(values) {
+  return values instanceof Int32Array ? values : new Int32Array(values || []);
+}
+
+// Mesh geometry is marshalled to the WASM binding as binary typed arrays via
+// setVisualMesh/setCollisionMesh (referenced by `meshRef` in the JSON payload),
+// not inlined as JSON number arrays. This keeps the payload string tiny and
+// avoids V8's max-string-length ceiling on mesh-dense models. Populated by
+// makeGeometryPayload, registered in main() before createURDFPhysicsScene.
+const meshBuffers = new Map(); // meshRef -> { positions, normals, uvs, indices }
+let meshRefCounter = 0;
+
 function makeGeometryPayload(mesh, matrix, name) {
   const geom = mesh.geometry;
   const pos = geom?.getAttribute('position');
@@ -469,15 +538,17 @@ function makeGeometryPayload(mesh, matrix, name) {
   const normal = geom.getAttribute('normal');
   const uv = geom.getAttribute('uv');
   const index = geom.getIndex();
+  const meshRef = `mesh_${meshRefCounter++}`;
+  meshBuffers.set(meshRef, {
+    positions: asFloat32Array(pos.array),
+    normals: normal ? asFloat32Array(normal.array) : new Float32Array(),
+    uvs: uv ? asFloat32Array(uv.array) : new Float32Array(),
+    indices: index ? asInt32Array(index.array) : new Int32Array()
+  });
   return {
     name,
     matrix: matrixToUSDArray(matrix),
-    geometry: {
-      positions: Array.from(pos.array),
-      normals: normal ? Array.from(normal.array) : [],
-      uvs: uv ? Array.from(uv.array) : [],
-      indices: index ? Array.from(index.array) : []
-    }
+    meshRef
   };
 }
 
@@ -690,7 +761,28 @@ function stripMujocoDocumentRoot(xml) {
   return withoutDecl.slice(openEnd + 1, close);
 }
 
-function collectMujocoAssets(root, baseDir) {
+// Resolve a MJCF mesh file, tolerating models that omit <compiler meshdir>
+// but keep assets under an "assets/" subdir (e.g. skydio_x2, google_robot).
+// Falls back to --asset-dir entries; returns the primary candidate (which may
+// not exist) when nothing resolves so the caller can honor --allow-missing.
+function resolveMujocoMeshFile(file, meshBaseDir, baseDir, opts) {
+  const candidates = [
+    path.resolve(meshBaseDir, file),
+    path.resolve(baseDir, file),
+    path.resolve(baseDir, 'assets', file),
+    path.resolve(baseDir, path.basename(file))
+  ];
+  for (const dir of (opts?.assetDirs || [])) {
+    candidates.push(path.resolve(dir, file));
+    candidates.push(path.resolve(dir, path.basename(file)));
+  }
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+  }
+  return candidates[0];
+}
+
+function collectMujocoAssets(root, baseDir, opts) {
   const compiler = firstChild(root, 'compiler');
   const meshDir = compiler?.attrs.meshdir || '';
   const meshBaseDir = path.resolve(baseDir, meshDir);
@@ -701,7 +793,7 @@ function collectMujocoAssets(root, baseDir) {
       if (!file) continue;
       const name = mesh.attrs.name || path.basename(file, path.extname(file));
       meshes.set(name, {
-        path: path.resolve(meshBaseDir, file),
+        path: resolveMujocoMeshFile(file, meshBaseDir, baseDir, opts),
         scale: parseNumbers(mesh.attrs.scale, [1, 1, 1])
       });
     }
@@ -890,6 +982,13 @@ async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName, opts) {
       }
       throw new Error(`MJCF mesh asset not found: ${meshName}`);
     }
+    if (!fs.existsSync(meshAsset.path)) {
+      if (opts.allowMissing) {
+        console.warn(`Skipping MJCF mesh file not found on disk: ${meshAsset.path}`);
+        return [];
+      }
+      throw new Error(`MJCF mesh file not found: ${meshAsset.path}`);
+    }
     const ext = extension(meshAsset.path);
     let object = null;
     if (ext === '.stl') {
@@ -955,6 +1054,47 @@ async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName, opts) {
   throw new Error(`Unsupported MJCF geom type: ${geomType}`);
 }
 
+// Resolve MuJoCo <default> class inheritance into per-class attribute tables for
+// geoms and joints. Nested <default class="..."> inherit their parent default's
+// merged attrs; the unnamed top-level <default> is the root baseline. This lets
+// us recover attributes (group/contype/type/...) that real menagerie models set
+// via classes/childclass rather than per-element, e.g. visual geoms tagged only
+// through `childclass="robot"` + `<default class="robot"><geom group="2"/>`.
+function parseMujocoDefaults(root) {
+  const geom = new Map();
+  const joint = new Map();
+  let rootGeom = {};
+  let rootJoint = {};
+  function walk(defNode, inheritedGeom, inheritedJoint) {
+    const gEl = firstChild(defNode, 'geom');
+    const myGeom = { ...inheritedGeom, ...(gEl ? gEl.attrs : {}) };
+    const jEl = firstChild(defNode, 'joint');
+    const myJoint = { ...inheritedJoint, ...(jEl ? jEl.attrs : {}) };
+    const cls = defNode.attrs.class;
+    if (cls) {
+      geom.set(cls, myGeom);
+      joint.set(cls, myJoint);
+    } else {
+      rootGeom = myGeom;
+      rootJoint = myJoint;
+    }
+    for (const child of childElements(defNode, 'default')) {
+      walk(child, myGeom, myJoint);
+    }
+  }
+  for (const defNode of childElements(root, 'default')) {
+    walk(defNode, {}, {});
+  }
+  return { geom, joint, rootGeom, rootJoint };
+}
+
+// Effective attrs = class/childclass defaults merged under the element's own attrs.
+function resolveElementAttrs(node, classTable, rootAttrs, childclass) {
+  const cls = node.attrs.class || childclass;
+  const base = cls && classTable.has(cls) ? classTable.get(cls) : rootAttrs;
+  return { ...base, ...node.attrs };
+}
+
 async function buildMujocoPayload(xmlText, opts, baseDir) {
   const expanded = expandMujocoIncludes(xmlText, baseDir);
   const root = parseXMLTree(expanded);
@@ -962,7 +1102,16 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
     throw new Error('Expected <mujoco> root for MJCF input.');
   }
 
-  const meshAssets = collectMujocoAssets(root, baseDir);
+  // Honor <compiler angle="..." eulerseq="..."> for all orientation specifiers.
+  const compilerEl = firstChild(root, 'compiler');
+  const angleAttr = (compilerEl?.attrs?.angle || 'degree').toLowerCase();
+  mjcfPoseCtx = {
+    toRad: angleAttr === 'radian' ? 1 : Math.PI / 180,
+    eulerseq: compilerEl?.attrs?.eulerseq || 'xyz'
+  };
+
+  const defaults = parseMujocoDefaults(root);
+  const meshAssets = collectMujocoAssets(root, baseDir, opts);
   const worldbody = firstChild(root, 'worldbody');
   if (!worldbody) {
     throw new Error('MJCF input has no <worldbody>.');
@@ -974,8 +1123,11 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   let visualCount = 0;
   let collisionCount = 0;
 
-  async function visitBody(bodyNode, parentName = '') {
+  async function visitBody(bodyNode, parentName = '', inheritedChildclass = '') {
     const linkName = bodyNode.attrs.name || `body_${links.length}`;
+    // childclass propagates to this body's own geoms/joints and descendants
+    // until overridden by a nearer childclass or an explicit element class.
+    const childclass = bodyNode.attrs.childclass || inheritedChildclass;
     const linkPayload = {
       name: linkName,
       inertial: parseMujocoInertial(bodyNode),
@@ -984,11 +1136,15 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
     };
 
     let geomIndex = 0;
-    for (const geomNode of childElements(bodyNode, 'geom')) {
-      const geomName = geomNode.attrs.name || geomNode.attrs.mesh || `${linkName}_geom_${geomIndex}`;
-      const isVisual = geomNode.attrs.class === 'visual' ||
-        geomNode.attrs.group === '2' ||
-        (geomNode.attrs.contype === '0' && geomNode.attrs.conaffinity === '0');
+    for (const rawGeomNode of childElements(bodyNode, 'geom')) {
+      // Resolve <default>/childclass inheritance so class-tagged attributes
+      // (type/group/contype/...) are visible to classification and tessellation.
+      const effAttrs = resolveElementAttrs(rawGeomNode, defaults.geom, defaults.rootGeom, childclass);
+      const geomNode = { name: rawGeomNode.name, attrs: effAttrs, children: rawGeomNode.children || [] };
+      const geomName = effAttrs.name || effAttrs.mesh || `${linkName}_geom_${geomIndex}`;
+      const isVisual = effAttrs.class === 'visual' ||
+        effAttrs.group === '2' ||
+        (effAttrs.contype === '0' && effAttrs.conaffinity === '0');
       let payloads = null;
       if (!isVisual && !opts.tessellateCollisionShapes) {
         payloads = shapePayloadForMujocoGeom(
@@ -1024,11 +1180,12 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
     if (parentName) {
       const jointNode = firstChild(bodyNode, 'joint');
       if (jointNode) {
-        const axis = parseNumbers(jointNode.attrs.axis, [0, 0, 1]);
-        const range = parseNumbers(jointNode.attrs.range, []);
+        const jAttrs = resolveElementAttrs(jointNode, defaults.joint, defaults.rootJoint, childclass);
+        const axis = parseNumbers(jAttrs.axis, [0, 0, 1]);
+        const range = parseNumbers(jAttrs.range, []);
         joints.push({
-          name: jointNode.attrs.name || `${parentName}_to_${linkName}`,
-          type: mujocoJointType(jointNode.attrs.type || 'hinge'),
+          name: jAttrs.name || `${parentName}_to_${linkName}`,
+          type: mujocoJointType(jAttrs.type || 'hinge'),
           parent: parentName,
           child: linkName,
           axis,
@@ -1037,8 +1194,8 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
           originMatrix: matrixToUSDArray(matrixFromPoseAttrs(bodyNode.attrs)),
           limit: range.length >= 2 ? { lower: range[0], upper: range[1] } : {},
           dynamics: {
-            damping: numberAttr(jointNode.attrs, 'damping'),
-            friction: numberAttr(jointNode.attrs, 'frictionloss')
+            damping: numberAttr(jAttrs, 'damping'),
+            friction: numberAttr(jAttrs, 'frictionloss')
           }
         });
       } else {
@@ -1058,7 +1215,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
     }
 
     for (const childBody of childElements(bodyNode, 'body')) {
-      await visitBody(childBody, linkName);
+      await visitBody(childBody, linkName, childclass);
     }
   }
 
@@ -1264,12 +1421,42 @@ async function main() {
 
   const tinyusdz = await TinyUSDZFactory();
   const native = new tinyusdz.TinyUSDZLoaderNative();
-  const created = native.createURDFPhysicsScene(JSON.stringify(payload));
+  let payloadJSON;
+  try {
+    payloadJSON = JSON.stringify(payload);
+  } catch (err) {
+    if (err instanceof RangeError) {
+      throw new Error(
+        `Payload too large to marshal: tessellated mesh geometry exceeds V8's max string length ` +
+        `(~512M chars). Re-run on a lighter model, or reduce mesh density ` +
+        `(${stats.visuals} visual meshes, ${stats.collisions} collisions).`
+      );
+    }
+    throw err;
+  }
+
+  // Register tessellated mesh geometry as binary typed arrays (referenced by
+  // meshRef in the payload) before authoring the scene.
+  if (native.clearURDFMeshBuffers) native.clearURDFMeshBuffers();
+  for (const [ref, buf] of meshBuffers) {
+    if (!native.setVisualMesh(ref, buf.positions, buf.normals, buf.uvs, buf.indices)) {
+      throw new Error(native.error() || `Failed to register mesh buffer "${ref}"`);
+    }
+  }
+
+  const created = native.createURDFPhysicsScene(payloadJSON);
   if (!created) {
     throw new Error(native.error() || 'createURDFPhysicsScene failed');
   }
   const warn = native.warn?.();
   if (warn) console.warn(warn.trim());
+
+  // Raise the USDC writer's conservative WASM size caps when requested, so
+  // mesh-dense scenes can export past the 100MB default.
+  if ((opts.maxUsdcMb > 0 || opts.maxMemMb > 0) && native.setUSDCExportLimitMB) {
+    native.setUSDCExportLimitMB(opts.maxUsdcMb, opts.maxMemMb);
+  }
+
   if (opts.verify) verifyUSDA(native, stats);
 
   const formats = opts.format === 'all' ? ['usda', 'usdc', 'usdz'] : [opts.format];
