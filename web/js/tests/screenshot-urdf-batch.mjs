@@ -176,6 +176,7 @@ async function shootRobot(browser, baseUrl, mjcf, opts) {
   page.setDefaultTimeout(opts.timeout);
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e.message || e)));
+  page.on('error', (e) => errors.push(`PAGE CRASH: ${e.message || e}`));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 
   try {
@@ -262,8 +263,13 @@ async function main() {
     // --hw: real GPU rendering (needs a GPU-backed DISPLAY, e.g. run with
     // `DISPLAY=:1` and NOT under xvfb). Otherwise software WebGL via SwiftShader
     // (works headless/under xvfb, no GPU needed, but slow for large scenes).
+    // Headful Chrome (needed for real GPU via the X display) throttles rAF and
+    // timers on unfocused/occluded windows, which stalls the demo's async
+    // convert chain — disable that so --hw is deterministic.
     const commonArgs = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
-      '--ignore-gpu-blocklist', `--window-size=${opts.width},${opts.height}`];
+      '--ignore-gpu-blocklist', `--window-size=${opts.width},${opts.height}`,
+      '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding',
+      '--disable-background-timer-throttling', '--disable-gpu-vsync', '--disable-frame-rate-limit'];
     const args = opts.hw
       ? [...commonArgs, '--enable-gpu-rasterization', '--enable-zero-copy']
       : [...commonArgs, '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
