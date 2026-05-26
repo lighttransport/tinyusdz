@@ -32,6 +32,13 @@ static bool GetSizeT(const json &value, size_t *out, const char *name,
     return true;
   }
 
+  if (value.is_number_unsigned()) {
+    if (err) {
+      (*err) = std::string(name ? name : "value") + " overflows size_t";
+    }
+    return false;
+  }
+
   if (err) {
     (*err) = std::string(name ? name : "value") + " must be a non-negative integer";
   }
