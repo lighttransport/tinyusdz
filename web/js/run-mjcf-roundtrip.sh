@@ -18,26 +18,29 @@
 #   web/js/run-mjcf-roundtrip.sh --all            # sweep every menagerie robot
 #   web/js/run-mjcf-roundtrip.sh path/to/a.xml b.xml ...
 #   web/js/run-mjcf-roundtrip.sh --closure        # also re-parse emitted MJCF
+#   web/js/run-mjcf-roundtrip.sh --menagerie <dir> [options]
 #
 # Env:
-#   MENAGERIE_DIR  (default: /mnt/nvme02/work/mujoco_menagerie)
+#   MUJOCO_MENAGERIE (fallback for MENAGERIE_DIR) or MENAGERIE_DIR (fallback: ../.. /mujoco_menagerie)
 #   OUT_DIR        (default: /tmp/mjcf-roundtrip)
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MENAGERIE_DIR="${MENAGERIE_DIR:-/mnt/nvme02/work/mujoco_menagerie}"
-OUT_DIR="${OUT_DIR:-/tmp/mjcf-roundtrip}"
+DEFAULT_MENAGERIE_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)/mujoco_menagerie"
+DEFAULT_OUT_DIR="/tmp/mjcf-roundtrip"
+MENAGERIE_DIR="${MENAGERIE_DIR:-${MUJOCO_MENAGERIE:-$DEFAULT_MENAGERIE_DIR}}"
+OUT_DIR="${OUT_DIR:-$DEFAULT_OUT_DIR}"
 FWD="$SCRIPT_DIR/cli/urdf-to-usd.js"
 REV="$SCRIPT_DIR/cli/usd-to-mjcf.js"
 # Raise the USDC writer's conservative WASM size caps so mesh-dense robots
 # (e.g. apptronik_apollo, ~111MB USDC) export instead of hitting the 100MB cap.
-MAX_USDC_MB="${MAX_USDC_MB:-2048}"
-MAX_MEM_MB="${MAX_MEM_MB:-4096}"
 
 CLOSURE=0
 SWEEP=0
 EXPLICIT=()
+MAX_USDC_MB="${MAX_USDC_MB:-2048}"
+MAX_MEM_MB="${MAX_MEM_MB:-4096}"
 
 # Curated representative set (relative to MENAGERIE_DIR): arms, quadrupeds,
 # humanoids, grippers/hands, and a drone.
@@ -59,13 +62,24 @@ DEFAULT_ROBOTS=(
   google_robot/robot.xml
 )
 
-for arg in "$@"; do
-  case "$arg" in
-    --all) SWEEP=1 ;;
-    --closure) CLOSURE=1 ;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
-    -*) echo "Unknown option: $arg" >&2; exit 2 ;;
-    *) EXPLICIT+=("$arg") ;;
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --all) SWEEP=1; shift ;;
+    --closure) CLOSURE=1; shift ;;
+    --menagerie-dir|--menagerie)
+      MENAGERIE_DIR="$2"; shift 2 ;;
+    --max-usdc-mb)
+      MAX_USDC_MB="$2"; shift 2 ;;
+    --max-mem-mb)
+      MAX_MEM_MB="$2"; shift 2 ;;
+    --out-dir|--out)
+      OUT_DIR="$2"; shift 2 ;;
+    -h|--help)
+      sed -n '2,40p' "$0"; exit 0 ;;
+    -*)
+      echo "Unknown option: $1" >&2; exit 2 ;;
+    *)
+      EXPLICIT+=("$1"); shift ;;
   esac
 done
 

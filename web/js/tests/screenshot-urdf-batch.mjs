@@ -18,7 +18,7 @@
 //
 // Options:
 //   --out <dir>        Screenshot output dir (default: tests/screenshots)
-//   --menagerie <dir>  Dataset root (default: /mnt/nvme02/work/mujoco_menagerie)
+//   --menagerie <dir>  Dataset root (default: MENAGERIE_DIR or MUJOCO_MENAGERIE or ../.. /mujoco_menagerie)
 //   --all              Screenshot the primary MJCF of every robot directory
 //   --port <n>         vite dev-server port (default: 5188)
 //   --width/--height   Viewport size (default: 1600x900)
@@ -41,6 +41,7 @@ import puppeteer from 'puppeteer';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WEB_JS_DIR = path.resolve(SCRIPT_DIR, '..');
+const DEFAULT_MENAGERIE_ROOT = path.resolve(SCRIPT_DIR, '../..', 'mujoco_menagerie');
 
 // Mesh/texture assets plus .xml so MJCF <include> files (some models split the
 // robot across dozens of included XMLs, e.g. ms_human_700) are resolvable.
@@ -67,7 +68,7 @@ const DEFAULT_ROBOTS = [
 function parseArgs(argv = process.argv.slice(2)) {
   const opts = {
     out: path.join(SCRIPT_DIR, 'screenshots'),
-    menagerie: '/mnt/nvme02/work/mujoco_menagerie',
+    menagerie: path.resolve(process.env.MENAGERIE_DIR || process.env.MUJOCO_MENAGERIE || DEFAULT_MENAGERIE_ROOT),
     all: false,
     port: 5188,
     width: 1920,
