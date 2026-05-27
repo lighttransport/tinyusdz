@@ -873,16 +873,19 @@ function shapePayloadForMujocoGeom(geomNode, originMatrix, fallbackName) {
 
   if (geomType === 'cylinder' || geomType === 'capsule') {
     const fromto = parseNumbers(geomNode.attrs.fromto, []);
-    const matrix = new THREE.Matrix4().copy(originMatrix);
+    let matrix = new THREE.Matrix4().copy(originMatrix);
     let height = size[1] ? size[1] * 2 : 1;
     if (fromto.length >= 6) {
-      const dx = fromto[3] - fromto[0];
-      const dy = fromto[4] - fromto[1];
-      const dz = fromto[5] - fromto[2];
-      height = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      matrix.elements[12] = 0.5 * (fromto[0] + fromto[3]);
-      matrix.elements[13] = 0.5 * (fromto[1] + fromto[4]);
-      matrix.elements[14] = 0.5 * (fromto[2] + fromto[5]);
+      // fromto spans p1->p2 (pos/quat ignored): center at the midpoint and
+      // orient the cylinder's Z axis along the segment.
+      const p1 = new THREE.Vector3(fromto[0], fromto[1], fromto[2]);
+      const p2 = new THREE.Vector3(fromto[3], fromto[4], fromto[5]);
+      const dir = p2.clone().sub(p1);
+      height = dir.length() || 1;
+      const center = p1.clone().add(p2).multiplyScalar(0.5);
+      const quatZ = new THREE.Quaternion().setFromUnitVectors(
+        new THREE.Vector3(0, 0, 1), dir.clone().normalize());
+      matrix = new THREE.Matrix4().compose(center, quatZ, new THREE.Vector3(1, 1, 1));
     }
     return [{
       name: fallbackName,
