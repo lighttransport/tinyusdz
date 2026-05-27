@@ -303,33 +303,51 @@ async function main() {
 
   try {
     await waitForServer(`${baseUrl}/urdf.html`, 30000);
-    // --hw: real GPU (NVIDIA) WebGL. Chrome's true headless (--headless=new)
-    // can't do hardware WebGL on Linux (it falls back to SwiftShader), so run
-    // `headless:false` under a virtual framebuffer instead — i.e. launch the
-    // sweep with `xvfb-run -a node ...` (NOT a real DISPLAY). xvfb gives Chrome
-    // an off-screen X11 connection (ANGLE's Vulkan backend needs one) with no
-    // visible window, so it won't steal focus, while ANGLE+Vulkan still uses
-    // the NVIDIA GPU. See https://zenn.dev/syoyo/articles/4f084b2288428f .
-    // Otherwise (no --hw): software WebGL via SwiftShader (true headless, slow).
+    // Two render paths:
+    //  * --hw: real GPU (NVIDIA) WebGL. Chrome's true headless (--headless=new)
+    //    can't do hardware WebGL on Linux (it falls back to SwiftShader), so run
+    //    `headless:false` under a virtual framebuffer — launch with
+    //    `xvfb-run -a node ...` (NOT a real DISPLAY). xvfb gives Chrome an
+    //    off-screen X11 connection (ANGLE's Vulkan backend needs one) with no
+    //    visible window, so it won't steal focus, while ANGLE+Vulkan uses the
+    //    NVIDIA GPU. See https://zenn.dev/syoyo/articles/4f084b2288428f .
+    //  * fallback / default: true-headless Chrome + software WebGL (SwiftShader).
+    //    Needs neither xvfb nor a GPU, so it works anywhere (CI, headless boxes)
+    //    -- just slow for huge scenes. We auto-fall-back to this if --hw was
+    //    asked for but there's no display or no NVIDIA Vulkan stack.
     // Headful/xvfb Chrome throttles rAF/timers on unfocused/occluded windows,
     // which stalls the demo's async convert chain — disable that for determinism.
+    const NV_ICD = '/usr/share/vulkan/icd.d/nvidia_icd.json';
+    const NV_EGL = '/usr/share/glvnd/egl_vendor.d/10_nvidia.json';
+    let useHw = opts.hw;
+    if (opts.hw) {
+      const reasons = [];
+      if (!process.env.DISPLAY) reasons.push('no DISPLAY (run under `xvfb-run -a`)');
+      if (!fs.existsSync(NV_ICD) && !fs.existsSync(NV_EGL)) reasons.push('no NVIDIA Vulkan/EGL driver');
+      if (reasons.length) {
+        useHw = false;
+        console.warn(`  (note) --hw unavailable: ${reasons.join('; ')}; falling back to headless software WebGL (SwiftShader).`);
+      }
+    }
     const commonArgs = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
       '--ignore-gpu-blocklist', '--disable-gpu-blocklist', `--window-size=${opts.width},${opts.height}`,
       '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding',
       '--disable-background-timer-throttling', '--disable-gpu-vsync', '--disable-frame-rate-limit'];
-    const args = opts.hw
+    const args = useHw
       ? [...commonArgs, '--use-gl=angle', '--use-angle=vulkan', '--enable-features=Vulkan',
          '--enable-gpu-rasterization', '--enable-zero-copy']
       : [...commonArgs, '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
     // Force the NVIDIA GPU under PRIME/glvnd so ANGLE/Vulkan doesn't fall back
     // to Mesa llvmpipe (software) when running through xvfb.
-    const hwEnv = opts.hw ? {
+    const hwEnv = useHw ? {
       __NV_PRIME_RENDER_OFFLOAD: '1',
       __GLX_VENDOR_LIBRARY_NAME: 'nvidia',
       __EGL_VENDOR_LIBRARY_FILENAMES: '/usr/share/glvnd/egl_vendor.d/10_nvidia.json'
     } : {};
+    // GPU path needs an X display (xvfb) -> headless:false; software + --headful
+    // also use headless:false; otherwise true headless (no display/GPU needed).
     browser = await puppeteer.launch({
-      headless: (opts.hw || opts.headful) ? false : true,
+      headless: (useHw || opts.headful) ? false : true,
       args,
       env: { ...process.env, ...hwEnv }
     });

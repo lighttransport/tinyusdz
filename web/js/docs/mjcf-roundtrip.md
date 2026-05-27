@@ -64,6 +64,22 @@ and EGL vendor file (`/usr/share/glvnd/egl_vendor.d/10_nvidia.json`). Verified: 
 See <https://zenn.dev/syoyo/articles/4f084b2288428f> for why HW WebGL on headless Linux
 needs a framebuffer + Vulkan rather than `--headless=new`.
 
+### Headless software fallback (no xvfb, no GPU)
+
+For CI / headless boxes without `xvfb-run` or an NVIDIA GPU, run **true-headless**
+Chrome with software WebGL — it needs neither a display nor a GPU:
+
+```bash
+node tests/screenshot-urdf-batch.mjs --all     # true headless, SwiftShader
+npm run screenshot:urdf:sw                      # same, via package script
+```
+
+`--hw` also **auto-falls-back** to this path: if it's requested but there's no
+`DISPLAY` or no NVIDIA Vulkan/EGL driver, the script prints a `(note) --hw
+unavailable …` warning and renders with headless SwiftShader instead of failing.
+So `npm run screenshot:urdf` (which passes `--hw`) still works on a GPU-less host —
+it just won't be GPU-accelerated.
+
 Models that split the robot across many `<include>` files (e.g. `ms_human_700`, 44
 includes) and very large exports (`apptronik_apollo` ~111 MB) are handled: the runner
 uploads `.xml` includes, and the demo raises the WASM USDC writer cap
