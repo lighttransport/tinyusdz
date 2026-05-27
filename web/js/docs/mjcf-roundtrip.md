@@ -39,14 +39,30 @@ pose), `--hw` (real GPU rendering), `--timeout` (default 180s). Output files are
 `<robot_dir>__<model>.png` (and `*.FAIL.png` for failures).
 
 By default Chrome renders with **software WebGL** (`--use-angle=swiftshader`) so no GPU
-is needed and it runs headless under `xvfb-run`. Software rendering is very slow for
-large scenes, though — `robot_soccer_kit` (65 links / **363 meshes** / ~104 MB USDC)
-times out under SwiftShader but completes quickly with `--hw`. For `--hw`, run on a
-GPU-backed display and **not** under xvfb, e.g.:
+is needed. Software rendering is very slow for large scenes, though —
+`robot_soccer_kit` (65 links / **363 meshes** / ~104 MB USDC) times out under
+SwiftShader but completes in seconds with `--hw`.
+
+`--hw` renders on the real GPU via ANGLE's **Vulkan** backend (verified unmasked
+renderer: `ANGLE (NVIDIA, Vulkan 1.4 … GeForce RTX 3070)`). Chrome's *true* headless
+mode (`--headless=new`) can't do hardware WebGL on Linux — it silently falls back to
+SwiftShader — so `--hw` launches `headless:false` and **still runs under `xvfb-run`**.
+The off-screen virtual framebuffer means it needs **no real `DISPLAY` and never steals
+window focus**, while ANGLE+Vulkan drives the discrete GPU. The script sets the
+`--use-gl=angle --use-angle=vulkan --enable-features=Vulkan` flags and the NVIDIA
+glvnd/PRIME env vars (`__NV_PRIME_RENDER_OFFLOAD`, `__GLX_VENDOR_LIBRARY_NAME`,
+`__EGL_VENDOR_LIBRARY_FILENAMES`) automatically — just run it under xvfb like the
+software path:
 
 ```bash
-DISPLAY=:1 node tests/screenshot-urdf-batch.mjs --all --hw
+xvfb-run -a node tests/screenshot-urdf-batch.mjs --all --hw
 ```
+
+Prereqs: an NVIDIA driver with the Vulkan ICD (`/usr/share/vulkan/icd.d/nvidia_icd.json`)
+and EGL vendor file (`/usr/share/glvnd/egl_vendor.d/10_nvidia.json`). Verified: the full
+`--all --hw` sweep renders 64/64 menagerie models on an RTX 3070 with no visible window.
+See <https://zenn.dev/syoyo/articles/4f084b2288428f> for why HW WebGL on headless Linux
+needs a framebuffer + Vulkan rather than `--headless=new`.
 
 Models that split the robot across many `<include>` files (e.g. `ms_human_700`, 44
 includes) and very large exports (`apptronik_apollo` ~111 MB) are handled: the runner
