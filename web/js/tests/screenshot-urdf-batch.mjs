@@ -70,8 +70,8 @@ function parseArgs(argv = process.argv.slice(2)) {
     menagerie: '/mnt/nvme02/work/mujoco_menagerie',
     all: false,
     port: 5188,
-    width: 1600,
-    height: 900,
+    width: 1920,
+    height: 1080,
     headful: false,
     hw: false,
     homePose: false,
@@ -234,6 +234,15 @@ async function shootRobot(browser, baseUrl, mjcf, opts) {
     await page.click('#convertToUSD');
     await waitForStatus(page, 'Converted', opts.timeout);
 
+    // Fold/hide the overlay UI so it doesn't occlude the views, then refit.
+    await page.evaluate(() => {
+      for (const sel of ['#panel', '.lil-gui', '#topbar']) {
+        const el = document.querySelector(sel);
+        if (el) el.style.display = 'none';
+      }
+      if (typeof window.__fitView === 'function') window.__fitView();
+    });
+
     // Let a couple of animation frames settle, then capture.
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     await new Promise((r) => setTimeout(r, 400));
@@ -315,7 +324,8 @@ async function main() {
       const res = await shootRobot(browser, baseUrl, mjcf, opts);
       if (res.ok) {
         pass++;
-        console.log(`\r  OK    ${label}  [links=${res.stats.links} joints=${res.stats.joints} meshes=${res.stats.meshes}] -> ${path.basename(res.outPath)}`);
+        const vis = res.render ? ` vis(src/usd)=${res.render.sourceVisibleMeshes}/${res.render.usdVisibleMeshes}` : '';
+        console.log(`\r  OK    ${label}  [links=${res.stats.links} joints=${res.stats.joints} meshes=${res.stats.meshes}${vis}] -> ${path.basename(res.outPath)}`);
       } else {
         failures.push(`${label}: ${res.error}`);
         console.log(`\r  FAIL  ${label}: ${res.error}`);
