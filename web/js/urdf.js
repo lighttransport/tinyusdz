@@ -631,13 +631,13 @@ function usdGeometryClassification(extracted) {
     const group = Number(prim.properties?.['mjc:group']);
     // Three independent collider signals, in priority order:
     //   1. `UsdPhysicsCollisionAPI` applied (canonical UsdPhysics)
-    //   2. `mjc:group == 3` (menagerie convention for collision-only)
+    //   2. `mjc:group >= 3` (menagerie convention: groups 3-5 are collision)
     //   3. `purpose == "guide"` (surfaced by the patched
     //      `AppendPhysicsPrimJson` in `web/binding.cc`; used by the
     //      mujoco-usd-converter to hide colliders from default renders)
     // Any of these flips the prim into the collision bucket.
     if (hasApi(prim, 'PhysicsCollisionAPI')
-        || group === 3
+        || (Number.isFinite(group) && group >= 3)
         || prim.purpose === 'guide') {
       collisionPaths.add(prim.path);
     } else {
@@ -1280,7 +1280,8 @@ function applyMatrixToObject(object, matrix) {
 
 function collectMujocoAssets(root) {
   const compiler = firstChildElement(root, 'compiler');
-  const meshDir = compiler?.getAttribute('meshdir') || '';
+  // <compiler meshdir> wins; assetdir is the shared meshdir/texturedir default.
+  const meshDir = compiler?.getAttribute('meshdir') || compiler?.getAttribute('assetdir') || '';
   const meshes = new Map();
   for (const asset of childElements(root, 'asset')) {
     for (const mesh of childElements(asset, 'mesh')) {
@@ -1448,6 +1449,61 @@ function primitiveObjectFromGeometry(geometry, name) {
   return group;
 }
 
+// Merge every sub-mesh of `object` (e.g. an OBJ split into many `o`/`g`
+// objects, as in ms_human_700's Rib1L.obj) into a single mesh. A MuJoCo
+// <mesh> is one mesh regardless of how the source file is grouped, matching
+// the native loader / JS CLI and MuJoCo semantics; keeps the demo's source
+// view and exported USD mesh counts consistent with the CLI.
+function flattenToSingleMesh(object, name) {
+  object.updateMatrixWorld(true);
+  const positions = [];
+  const normals = [];
+  const uvs = [];
+  const indices = [];
+  let base = 0;
+  let hasNormals = true;
+  let hasUVs = true;
+  const v = new THREE.Vector3();
+  const nrm = new THREE.Vector3();
+  let meshCount = 0;
+  object.traverse((obj) => {
+    if (!obj.isMesh || !obj.geometry) return;
+    meshCount++;
+    const g = obj.geometry;
+    const pos = g.getAttribute('position');
+    if (!pos) return;
+    const nAttr = g.getAttribute('normal');
+    const uvAttr = g.getAttribute('uv');
+    const idx = g.getIndex();
+    const m = obj.matrixWorld;
+    const normalMat = new THREE.Matrix3().getNormalMatrix(m);
+    for (let i = 0; i < pos.count; i++) {
+      v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(m);
+      positions.push(v.x, v.y, v.z);
+      if (nAttr) {
+        nrm.set(nAttr.getX(i), nAttr.getY(i), nAttr.getZ(i)).applyMatrix3(normalMat).normalize();
+        normals.push(nrm.x, nrm.y, nrm.z);
+      } else {
+        hasNormals = false;
+      }
+      if (uvAttr) uvs.push(uvAttr.getX(i), uvAttr.getY(i)); else hasUVs = false;
+    }
+    if (idx) {
+      for (let i = 0; i < idx.count; i++) indices.push(base + idx.getX(i));
+    } else {
+      for (let i = 0; i < pos.count; i++) indices.push(base + i);
+    }
+    base += pos.count;
+  });
+  if (meshCount <= 1) return object;  // nothing to merge
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  if (hasNormals && normals.length) geom.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  if (hasUVs && uvs.length) geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geom.setIndex(indices);
+  return primitiveObjectFromGeometry(geom, name);
+}
+
 function mujocoJointType(type) {
   if (type === 'hinge') return 'revolute';
   if (type === 'slide') return 'prismatic';
@@ -1566,7 +1622,9 @@ async function loadMujocoGeomObject(geomAttrs, meshAssets, fallbackName) {
   if (geomType === 'mesh') {
     const meshAsset = meshAssets.get(attrs.mesh);
     if (!meshAsset) return makeMissingMesh(attrs.mesh || fallbackName);
-    return loadMeshObject(meshAsset.path);
+    // A MuJoCo <mesh> is a single mesh: merge multi-object source files so the
+    // source view's mesh count matches the exported USD and the CLI.
+    return flattenToSingleMesh(await loadMeshObject(meshAsset.path), attrs.mesh || fallbackName);
   }
 
   const size = parseNumbers(attrs.size, []);
@@ -1602,7 +1660,8 @@ async function mujocoGeomPayloads(geomAttrs, meshAssets, fallbackName, baseMatri
   if (geomType === 'mesh') {
     const meshAsset = meshAssets.get(attrs.mesh);
     if (!meshAsset) return [];
-    const object = await loadMeshObject(meshAsset.path);
+    // Merge multi-object source meshes into one (MuJoCo <mesh> == one mesh).
+    const object = flattenToSingleMesh(await loadMeshObject(meshAsset.path), attrs.mesh || fallbackName);
     const scale = parseNumbers(attrs.scale, meshAsset.scale || [1, 1, 1]);
     const meshMatrix = new THREE.Matrix4()
       .copy(originMatrix)
@@ -2529,7 +2588,7 @@ function usdPhysicsToSourceModel(extracted) {
     prims
       .filter((prim) => prim.geometry
           && (hasApi(prim, 'PhysicsCollisionAPI')
-              || Number(prim.properties?.['mjc:group']) === 3
+              || Number(prim.properties?.['mjc:group']) >= 3
               || prim.purpose === 'guide'))
       .map((prim) => prim.path)
   );
