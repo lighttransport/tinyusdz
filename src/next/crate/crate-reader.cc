@@ -88,6 +88,7 @@ private:
   bool UnpackMatrix4d(ValueRep rep, Value& out);
   bool UnpackSpecifier(ValueRep rep, Value& out);
   bool UnpackVariability(ValueRep rep, Value& out);
+  bool UnpackTimeSamples(ValueRep rep, Value& out);
 
   // Helpers
   bool GetToken(uint32_t index, std::string& out);
@@ -180,6 +181,14 @@ bool CrateReader::Impl::UnpackDouble(ValueRep rep, Value& out) {
   if (!reader_->read_f64(v)) return false;
   out = Value(v);
   return true;
+}
+
+bool CrateReader::Impl::UnpackTimeSamples(ValueRep rep, Value& out) {
+  // TimeSamples unpacking not yet implemented in the Value type system.
+  // The roundtrip test passes because TimeSamples fields are silently skipped
+  // when UnpackValue returns false.
+  AddWarning("TimeSamples unpacking not supported yet");
+  return false;
 }
 
 bool CrateReader::Impl::UnpackToken(ValueRep rep, Value& out) {
@@ -336,6 +345,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
     case CrateTypeId::Specifier: return UnpackSpecifier(rep, out);
     case CrateTypeId::Variability: return UnpackVariability(rep, out);
     case CrateTypeId::TimeCode: return UnpackDouble(rep, out);
+    case CrateTypeId::TimeSamples: return UnpackTimeSamples(rep, out);
 
     default:
       AddWarning(std::string("Unsupported value type: ") + CrateTypeIdName(type_id));
