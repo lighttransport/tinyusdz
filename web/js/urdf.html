@@ -115,6 +115,16 @@
       font-size: 13px;
       color: #93c5fd;
     }
+    #panelHeader {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      user-select: none;
+    }
+    #panelFoldIcon { transition: transform 0.15s; }
+    #panel.collapsed #panelBody { display: none; }
+    #panel.collapsed #panelFoldIcon { transform: rotate(-90deg); }
     #robotInfo {
       display: grid;
       grid-template-columns: auto 1fr;
@@ -214,17 +224,19 @@
   </div>
   <div id="divider"></div>
   <div id="panel">
-    <h2>Robot</h2>
-    <div id="robotInfo">
-      <span>Name</span><span id="robotName">-</span>
-      <span>Links</span><span id="linkCount">0</span>
-      <span>Joints</span><span id="jointCount">0</span>
-      <span>Meshes</span><span id="meshCount">0</span>
+    <h2 id="panelHeader" role="button" tabindex="0">Robot<span id="panelFoldIcon">▾</span></h2>
+    <div id="panelBody">
+      <div id="robotInfo">
+        <span>Name</span><span id="robotName">-</span>
+        <span>Links</span><span id="linkCount">0</span>
+        <span>Joints</span><span id="jointCount">0</span>
+        <span>Meshes</span><span id="meshCount">0</span>
+      </div>
+      <button id="jointHeader" type="button" aria-expanded="true">
+        <span>Joints</span><span id="jointFoldIcon">▾</span>
+      </button>
+      <div id="jointControls"></div>
     </div>
-    <button id="jointHeader" type="button" aria-expanded="true">
-      <span>Joints</span><span id="jointFoldIcon">▾</span>
-    </button>
-    <div id="jointControls"></div>
   </div>
   <div id="viewLabels">
     <div class="view-label" id="sourceLabel">URDF/MJCF</div>
