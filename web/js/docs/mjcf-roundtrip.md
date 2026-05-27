@@ -90,7 +90,8 @@ cd web/js
 ./run-mjcf-roundtrip.sh --closure
 ```
 
-Environment overrides: `MENAGERIE_DIR` (default `/mnt/nvme02/work/mujoco_menagerie`),
+Environment overrides: `MUJOCO_MENAGERIE` or `MENAGERIE_DIR` (default `./mujoco_menagerie`
+under repo root),
 `OUT_DIR` (default `/tmp/mjcf-roundtrip`), `MAX_USDC_MB` (default 2048), `MAX_MEM_MB`
 (default 4096) — the last two raise the WASM USDC writer caps for large models. Each
 row prints `forward→return` counts:
