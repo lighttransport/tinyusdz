@@ -155,6 +155,32 @@ const exportButtons = [
   document.getElementById('exportUSDC'),
   document.getElementById('exportUSDZ')
 ];
+const DEFAULT_USDC_EXPORT_LIMIT_MB = 2048;
+const DEFAULT_MEM_EXPORT_LIMIT_MB = 4096;
+
+function parsePositiveInt(value) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+function resolveUSDCExportCapsFromRuntime() {
+  const search = (typeof window !== 'undefined' && window.location?.search) ? window.location.search : '';
+  const params = new URLSearchParams(search || '');
+
+  const queryUsdc = parsePositiveInt(params.get('maxUsdcMb'));
+  const queryMem = parsePositiveInt(params.get('maxMemMb'));
+  const globalUsdc = parsePositiveInt(
+    typeof window !== 'undefined' ? window.__TINYUSDZ_MAX_USDC_MB : undefined
+  );
+  const globalMem = parsePositiveInt(
+    typeof window !== 'undefined' ? window.__TINYUSDZ_MAX_MEM_MB : undefined
+  );
+
+  return {
+    maxUsdcMb: queryUsdc || globalUsdc || DEFAULT_USDC_EXPORT_LIMIT_MB,
+    maxMemMb: queryMem || globalMem || DEFAULT_MEM_EXPORT_LIMIT_MB,
+  };
+}
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -1604,7 +1630,7 @@ function classifyMujocoGeom(geomAttrs) {
   // No group => MuJoCo default group 0 (visible); use the class name only as a
   // hint to keep ungrouped collision-class geoms hidden.
   const className = String(attrs.class || '').toLowerCase();
-  if (className.includes('collision')) return false;
+  if (className.includes('collision') || className.includes('collider')) return false;
   return true;
 }
 
@@ -1748,9 +1774,14 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
         localPos1,
         localRot0,
         localRot1,
-        limit: range.length >= 2 ? { lower: range[0], upper: range[1] } : {},
-        // Slider range in joint-coordinate units (radians for hinge). MuJoCo
-        // `range` is in the model's angle unit, so convert degrees -> radians.
+        // Range in joint-coordinate units (radians for hinge). MuJoCo `range` is
+        // in the model's angle unit, so convert degrees -> radians; slide is
+        // meters. The USD converter expects revolute limits in radians.
+        limit: range.length >= 2
+          ? (rawType === 'slide'
+              ? { lower: range[0], upper: range[1] }
+              : { lower: range[0] * mjcfPoseCtx.toRad, upper: range[1] * mjcfPoseCtx.toRad })
+          : {},
         uiLimit: range.length >= 2
           ? (rawType === 'slide'
               ? { lower: range[0], upper: range[1] }
@@ -2980,10 +3011,11 @@ async function ensureNativeExporter() {
   const loader = await ensureTinyLoader();
   if (!state.nativeExporter) {
     state.nativeExporter = new loader.native_.TinyUSDZLoaderNative();
+    const { maxUsdcMb, maxMemMb } = resolveUSDCExportCapsFromRuntime();
     // Raise the USDC writer's conservative WASM size caps so mesh-dense scenes
     // (e.g. robot_soccer_kit ~104MB, apptronik_apollo ~111MB) can export past
     // the 100MB default.
-    state.nativeExporter.setUSDCExportLimitMB?.(2048, 4096);
+    state.nativeExporter.setUSDCExportLimitMB?.(maxUsdcMb, maxMemMb);
   }
   return state.nativeExporter;
 }
