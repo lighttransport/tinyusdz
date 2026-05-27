@@ -577,6 +577,57 @@ function primitiveObjectFromGeometry(geometry, name) {
   return group;
 }
 
+// Merge every sub-mesh of `object` (e.g. an OBJ split into many `o`/`g`
+// objects, as in ms_human_700's Rib1L.obj) into a single mesh. A MuJoCo
+// <mesh> is one mesh regardless of how the source file is grouped, matching
+// the native loader which merges all `v`/`f` records.
+function flattenToSingleMesh(object, name) {
+  object.updateMatrixWorld(true);
+  const positions = [];
+  const normals = [];
+  const uvs = [];
+  const indices = [];
+  let base = 0;
+  let hasNormals = true;
+  let hasUVs = true;
+  const v = new THREE.Vector3();
+  const nrm = new THREE.Vector3();
+  object.traverse((obj) => {
+    if (!obj.isMesh || !obj.geometry) return;
+    const g = obj.geometry;
+    const pos = g.getAttribute('position');
+    if (!pos) return;
+    const nAttr = g.getAttribute('normal');
+    const uvAttr = g.getAttribute('uv');
+    const idx = g.getIndex();
+    const m = obj.matrixWorld;
+    const normalMat = new THREE.Matrix3().getNormalMatrix(m);
+    for (let i = 0; i < pos.count; i++) {
+      v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(m);
+      positions.push(v.x, v.y, v.z);
+      if (nAttr) {
+        nrm.set(nAttr.getX(i), nAttr.getY(i), nAttr.getZ(i)).applyMatrix3(normalMat).normalize();
+        normals.push(nrm.x, nrm.y, nrm.z);
+      } else {
+        hasNormals = false;
+      }
+      if (uvAttr) uvs.push(uvAttr.getX(i), uvAttr.getY(i)); else hasUVs = false;
+    }
+    if (idx) {
+      for (let i = 0; i < idx.count; i++) indices.push(base + idx.getX(i));
+    } else {
+      for (let i = 0; i < pos.count; i++) indices.push(base + i);
+    }
+    base += pos.count;
+  });
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  if (hasNormals && normals.length) geom.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  if (hasUVs && uvs.length) geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geom.setIndex(indices);
+  return primitiveObjectFromGeometry(geom, name);
+}
+
 async function loadOBJObject(resolvedAsset) {
   const text = resolvedAsset.virtualText ?? fs.readFileSync(resolvedAsset.path, 'utf8');
   return new OBJLoader().parse(text);
@@ -761,11 +812,44 @@ function stripMujocoDocumentRoot(xml) {
   return withoutDecl.slice(openEnd + 1, close);
 }
 
+// Basename -> path index of mesh files under baseDir. Last-resort fallback for
+// scenes whose <mesh file> paths are relative to an included file's directory
+// (e.g. ms_human_700: assets/asset/*.xml referencing "../geometry/*.stl").
+// Names appearing in more than one place are dropped to avoid ambiguity.
+function buildMeshIndex(baseDir) {
+  const index = new Map();
+  const ambiguous = new Set();
+  const walk = (dir) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase();
+        if (ext !== '.stl' && ext !== '.obj' && ext !== '.msh') continue;
+        const key = entry.name.toLowerCase();
+        if (index.has(key)) ambiguous.add(key);
+        else index.set(key, full);
+      }
+    }
+  };
+  walk(baseDir);
+  for (const key of ambiguous) index.delete(key);
+  return index;
+}
+
 // Resolve a MJCF mesh file, tolerating models that omit <compiler meshdir>
 // but keep assets under an "assets/" subdir (e.g. skydio_x2, google_robot).
-// Falls back to --asset-dir entries; returns the primary candidate (which may
-// not exist) when nothing resolves so the caller can honor --allow-missing.
-function resolveMujocoMeshFile(file, meshBaseDir, baseDir, opts) {
+// Falls back to --asset-dir entries and a recursive basename index; returns the
+// primary candidate (which may not exist) when nothing resolves so the caller
+// can honor --allow-missing.
+function resolveMujocoMeshFile(file, meshBaseDir, baseDir, opts, meshIndex) {
   const candidates = [
     path.resolve(meshBaseDir, file),
     path.resolve(baseDir, file),
@@ -779,13 +863,17 @@ function resolveMujocoMeshFile(file, meshBaseDir, baseDir, opts) {
   for (const candidate of candidates) {
     if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
   }
+  const indexed = meshIndex?.get(path.basename(file).toLowerCase());
+  if (indexed) return indexed;
   return candidates[0];
 }
 
 function collectMujocoAssets(root, baseDir, opts) {
   const compiler = firstChild(root, 'compiler');
-  const meshDir = compiler?.attrs.meshdir || '';
+  // <compiler meshdir> wins; assetdir is the shared meshdir/texturedir default.
+  const meshDir = compiler?.attrs.meshdir || compiler?.attrs.assetdir || '';
   const meshBaseDir = path.resolve(baseDir, meshDir);
+  const meshIndex = buildMeshIndex(baseDir);
   const meshes = new Map();
   for (const asset of childElements(root, 'asset')) {
     for (const mesh of childElements(asset, 'mesh')) {
@@ -793,7 +881,7 @@ function collectMujocoAssets(root, baseDir, opts) {
       if (!file) continue;
       const name = mesh.attrs.name || path.basename(file, path.extname(file));
       meshes.set(name, {
-        path: resolveMujocoMeshFile(file, meshBaseDir, baseDir, opts),
+        path: resolveMujocoMeshFile(file, meshBaseDir, baseDir, opts, meshIndex),
         scale: parseNumbers(mesh.attrs.scale, [1, 1, 1]),
         refpos: parseNumbers(mesh.attrs.refpos, [0, 0, 0]),
         refquat: parseNumbers(mesh.attrs.refquat, [1, 0, 0, 0])
@@ -1019,7 +1107,10 @@ async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName, opts) {
       .multiply(new THREE.Matrix4().makeRotationFromQuaternion(refQuat))
       .multiply(new THREE.Matrix4().makeTranslation(-(rp[0] || 0), -(rp[1] || 0), -(rp[2] || 0)))
       .multiply(new THREE.Matrix4().makeScale(scale[0] || 1, scale[1] || 1, scale[2] || 1));
-    return collectMeshPayloads(object, meshMatrix, fallbackName);
+    // A MuJoCo <mesh> is a single mesh: merge any multi-object source file
+    // (e.g. ms_human_700 Rib1L.obj's 12 `o` groups) into one, matching the
+    // native loader and MuJoCo semantics.
+    return collectMeshPayloads(flattenToSingleMesh(object, fallbackName), meshMatrix, fallbackName);
   }
 
   const size = parseNumbers(geomNode.attrs.size, []);
