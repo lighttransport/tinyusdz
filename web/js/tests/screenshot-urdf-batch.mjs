@@ -10,9 +10,10 @@
 // The demo uses bare ES module specifiers + a WASM module, so it is served by a
 // throwaway vite dev server that this script spawns and tears down.
 //
-// Run under xvfb so Chrome has a display for WebGL:
-//   xvfb-run -a node tests/screenshot-urdf-batch.mjs            # curated set
-//   xvfb-run -a node tests/screenshot-urdf-batch.mjs --all      # every robot
+// Always run under xvfb so Chrome has an (off-screen) display for WebGL and
+// never steals window focus — this works for BOTH software and --hw GPU modes:
+//   xvfb-run -a node tests/screenshot-urdf-batch.mjs            # curated, SwiftShader
+//   xvfb-run -a node tests/screenshot-urdf-batch.mjs --all --hw # every robot, NVIDIA GPU
 //   xvfb-run -a node tests/screenshot-urdf-batch.mjs a.xml b.xml
 //   xvfb-run -a node tests/screenshot-urdf-batch.mjs --out /tmp/shots
 //
@@ -22,9 +23,11 @@
 //   --all              Screenshot the primary MJCF of every robot directory
 //   --port <n>         vite dev-server port (default: 5188)
 //   --width/--height   Viewport size (default: 1600x900)
-//   --headful          Launch a visible browser (needs a real/xvfb display)
-//   --hw               Use real GPU rendering (run with DISPLAY=<gpu display>,
-//                      NOT under xvfb). Software SwiftShader is the default and
+//   --headful          Launch a visible browser (needs a real display)
+//   --hw               Real GPU (NVIDIA) WebGL via ANGLE+Vulkan. Run under
+//                      `xvfb-run -a` (off-screen, no focus stealing); does NOT
+//                      need a real DISPLAY. Chrome's true headless can't do HW
+//                      WebGL on Linux. Software SwiftShader is the default and
 //                      is very slow for large scenes (e.g. robot_soccer_kit:
 //                      363 meshes) — use --hw when a GPU is available.
 //   --home-pose        Capture the model's home keyframe pose
@@ -300,22 +303,35 @@ async function main() {
 
   try {
     await waitForServer(`${baseUrl}/urdf.html`, 30000);
-    // --hw: real GPU rendering (needs a GPU-backed DISPLAY, e.g. run with
-    // `DISPLAY=:1` and NOT under xvfb). Otherwise software WebGL via SwiftShader
-    // (works headless/under xvfb, no GPU needed, but slow for large scenes).
-    // Headful Chrome (needed for real GPU via the X display) throttles rAF and
-    // timers on unfocused/occluded windows, which stalls the demo's async
-    // convert chain — disable that so --hw is deterministic.
+    // --hw: real GPU (NVIDIA) WebGL. Chrome's true headless (--headless=new)
+    // can't do hardware WebGL on Linux (it falls back to SwiftShader), so run
+    // `headless:false` under a virtual framebuffer instead — i.e. launch the
+    // sweep with `xvfb-run -a node ...` (NOT a real DISPLAY). xvfb gives Chrome
+    // an off-screen X11 connection (ANGLE's Vulkan backend needs one) with no
+    // visible window, so it won't steal focus, while ANGLE+Vulkan still uses
+    // the NVIDIA GPU. See https://zenn.dev/syoyo/articles/4f084b2288428f .
+    // Otherwise (no --hw): software WebGL via SwiftShader (true headless, slow).
+    // Headful/xvfb Chrome throttles rAF/timers on unfocused/occluded windows,
+    // which stalls the demo's async convert chain — disable that for determinism.
     const commonArgs = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
-      '--ignore-gpu-blocklist', `--window-size=${opts.width},${opts.height}`,
+      '--ignore-gpu-blocklist', '--disable-gpu-blocklist', `--window-size=${opts.width},${opts.height}`,
       '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding',
       '--disable-background-timer-throttling', '--disable-gpu-vsync', '--disable-frame-rate-limit'];
     const args = opts.hw
-      ? [...commonArgs, '--enable-gpu-rasterization', '--enable-zero-copy']
+      ? [...commonArgs, '--use-gl=angle', '--use-angle=vulkan', '--enable-features=Vulkan',
+         '--enable-gpu-rasterization', '--enable-zero-copy']
       : [...commonArgs, '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
+    // Force the NVIDIA GPU under PRIME/glvnd so ANGLE/Vulkan doesn't fall back
+    // to Mesa llvmpipe (software) when running through xvfb.
+    const hwEnv = opts.hw ? {
+      __NV_PRIME_RENDER_OFFLOAD: '1',
+      __GLX_VENDOR_LIBRARY_NAME: 'nvidia',
+      __EGL_VENDOR_LIBRARY_FILENAMES: '/usr/share/glvnd/egl_vendor.d/10_nvidia.json'
+    } : {};
     browser = await puppeteer.launch({
       headless: (opts.hw || opts.headful) ? false : true,
-      args
+      args,
+      env: { ...process.env, ...hwEnv }
     });
 
     for (const mjcf of models) {
