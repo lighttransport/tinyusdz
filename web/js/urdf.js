@@ -1548,13 +1548,13 @@ function classifyMujocoGeom(geomAttrs) {
   const className = String(attrs.class || '').toLowerCase();
   if (className.includes('collision')) return false;
   if (className.includes('visual')) return true;
-  // MuJoCo geom groups 3-5 are not in the default-visible set (0-2): treat them
-  // as collision/auxiliary so e.g. shadow_dexee's group-5 CollisionGeom capsules
-  // (contype=0/conaffinity=0) don't masquerade as the visual hand shell.
+  // MuJoCo renders the default-visible groups 0-2; groups 3-5 are hidden/
+  // auxiliary (collision) — e.g. shadow_dexee's group-5 CollisionGeom capsules.
+  // A geom with no group defaults to group 0 (visible), e.g. flexiv_rizon4's
+  // single dual-purpose mesh per link.
   const g = Number(attrs.group);
   if (Number.isFinite(g) && g >= 3) return false;
-  if (g === 2) return true;
-  return attrs.contype === '0' && attrs.conaffinity === '0';
+  return true;
 }
 
 function applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets) {

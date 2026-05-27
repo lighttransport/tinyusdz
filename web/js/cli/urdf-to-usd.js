@@ -1147,11 +1147,13 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
       // wins, then group, then the non-colliding contype/conaffinity fallback.
       const geomClass = effAttrs.class || '';
       const geomGroup = Number(effAttrs.group);
+      // MuJoCo renders geoms in the default-visible groups 0-2; groups 3-5 are
+      // hidden/auxiliary (collision). A geom with no group defaults to group 0
+      // (visible) — e.g. flexiv_rizon4's single dual-purpose mesh per link.
       const isVisual = geomClass.includes('collision') ? false
         : geomClass.includes('visual') ? true
         : (Number.isFinite(geomGroup) && geomGroup >= 3) ? false
-        : geomGroup === 2 ? true
-        : (effAttrs.contype === '0' && effAttrs.conaffinity === '0');
+        : true;
       let payloads = null;
       if (!isVisual && !opts.tessellateCollisionShapes) {
         payloads = shapePayloadForMujocoGeom(
