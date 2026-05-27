@@ -667,12 +667,16 @@ bool CrateReader::Impl::ReadFields() {
 
   // Try pxrUSD format (n_chunks LZ4 + delta-coded) first, fall back to legacy
   std::vector<uint32_t> token_indices_vec(static_cast<size_t>(num_fields));
-  DecompressResult dr = DecompressCompressedU32(indices_data.data(), indices_data.size(),
+  // Include u64 compressed_size prefix (DecompressCompressedU32 expects it)
+  std::vector<uint8_t> indices_with_prefix(8 + indices_data.size());
+  std::memcpy(indices_with_prefix.data(), &indices_size, 8);
+  std::memcpy(indices_with_prefix.data() + 8, indices_data.data(), indices_data.size());
+  DecompressResult dr = DecompressCompressedU32(indices_with_prefix.data(), indices_with_prefix.size(),
                                                  token_indices_vec.data(),
                                                  static_cast<size_t>(num_fields));
   if (!dr.success) {
     // Fall back to legacy format
-    dr = DecompressIntegers(indices_data.data(), indices_data.size(),
+    dr = DecompressIntegers(indices_with_prefix.data() + 8, indices_with_prefix.size() - 8,
                             static_cast<size_t>(num_fields), false);
     if (!dr.success) {
       AddError("Failed to decompress field indices: " + dr.error);
@@ -845,6 +849,7 @@ bool CrateReader::Impl::ReadSpecs() {
       specs_[i].fieldset_index.value = fieldset_vals[i];
       specs_[i].spec_type = static_cast<SpecType>(type_vals[i]);
     }
+    return true;
   }
 
   // Fallback: try legacy single-array format
@@ -1036,9 +1041,49 @@ bool CrateReader::Impl::BuildStage() {
   Layer layer;
   LayerBuilder builder(layer);
 
-  // Process specs to build prims directly into the layer
+  // First, process the PseudoRoot spec to extract layer metadata
   for (const auto& spec : specs_) {
-    if (spec.spec_type != SpecType::Prim && spec.spec_type != SpecType::PseudoRoot) {
+    if (spec.spec_type != SpecType::PseudoRoot) continue;
+    if (spec.path_index.value >= paths_.size()) continue;
+
+    std::vector<std::pair<std::string, Value>> fields;
+    if (!ResolveFieldset(spec.fieldset_index.value, fields)) {
+      AddWarning("Failed to resolve pseudo-root fieldset");
+    }
+
+    for (auto& field : fields) {
+      if (field.first == "defaultPrim") {
+        if (const std::string* s = field.second.as_token())
+          layer.meta().defaultPrim = *s;
+      } else if (field.first == "upAxis") {
+        if (const std::string* s = field.second.as_token())
+          layer.meta().upAxis = *s;
+      } else if (field.first == "metersPerUnit") {
+        const double* d = field.second.as_double();
+        if (d) layer.meta().metersPerUnit = *d;
+      } else if (field.first == "timeCodesPerSecond") {
+        const double* d = field.second.as_double();
+        if (d) layer.meta().timeCodesPerSecond = *d;
+      } else if (field.first == "startTimeCode") {
+        const double* d = field.second.as_double();
+        if (d) layer.meta().startTimeCode = *d;
+      } else if (field.first == "endTimeCode") {
+        const double* d = field.second.as_double();
+        if (d) layer.meta().endTimeCode = *d;
+      } else if (field.first == "doc") {
+        if (const std::string* s = field.second.as_string())
+          layer.meta().doc = *s;
+      } else if (field.first == "comment") {
+        if (const std::string* s = field.second.as_string())
+          layer.meta().comment = *s;
+      }
+    }
+    break; // Only process first PseudoRoot
+  }
+
+  // Process prim specs to build prims
+  for (const auto& spec : specs_) {
+    if (spec.spec_type != SpecType::Prim) {
       continue;
     }
 
@@ -1054,8 +1099,8 @@ bool CrateReader::Impl::BuildStage() {
       }
     }
 
-    if (prim_name.empty() || prim_name == "/") {
-      continue;  // Skip pseudo-root
+    if (prim_name.empty()) {
+      continue;
     }
 
     // Get fields for this spec
@@ -1125,7 +1170,7 @@ bool CrateReader::Impl::ResolveFieldset(uint32_t fieldset_index,
   size_t start = fieldset_index;
   while (start < fieldset_indices_.size()) {
     uint32_t field_idx = fieldset_indices_[start];
-    if (field_idx == 0xFFFFFFFF || field_idx == 0) break;
+    if (field_idx == 0xFFFFFFFF) break;
 
     if (field_idx < fields_.size()) {
       const CrateField& field = fields_[field_idx];
