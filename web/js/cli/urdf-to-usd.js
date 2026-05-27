@@ -794,7 +794,9 @@ function collectMujocoAssets(root, baseDir, opts) {
       const name = mesh.attrs.name || path.basename(file, path.extname(file));
       meshes.set(name, {
         path: resolveMujocoMeshFile(file, meshBaseDir, baseDir, opts),
-        scale: parseNumbers(mesh.attrs.scale, [1, 1, 1])
+        scale: parseNumbers(mesh.attrs.scale, [1, 1, 1]),
+        refpos: parseNumbers(mesh.attrs.refpos, [0, 0, 0]),
+        refquat: parseNumbers(mesh.attrs.refquat, [1, 0, 0, 0])
       });
     }
   }
@@ -1007,8 +1009,15 @@ async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName, opts) {
       throw new Error(`Unsupported MJCF mesh extension ${ext || '(none)'}: ${meshAsset.path}`);
     }
     const scale = parseNumbers(geomNode.attrs.scale, meshAsset.scale || [1, 1, 1]);
+    // MuJoCo mesh refpos/refquat: translate vertices by -refpos and rotate by
+    // the conjugate of refquat before placement (e.g. shadow_dexee fingers).
+    const rq = meshAsset.refquat || [1, 0, 0, 0];
+    const rp = meshAsset.refpos || [0, 0, 0];
+    const refQuat = new THREE.Quaternion(rq[1] || 0, rq[2] || 0, rq[3] || 0, rq[0] ?? 1).normalize().conjugate();
     const meshMatrix = new THREE.Matrix4()
       .copy(originMatrix)
+      .multiply(new THREE.Matrix4().makeRotationFromQuaternion(refQuat))
+      .multiply(new THREE.Matrix4().makeTranslation(-(rp[0] || 0), -(rp[1] || 0), -(rp[2] || 0)))
       .multiply(new THREE.Matrix4().makeScale(scale[0] || 1, scale[1] || 1, scale[2] || 1));
     return collectMeshPayloads(object, meshMatrix, fallbackName);
   }
