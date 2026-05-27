@@ -128,6 +128,14 @@ nonstd::expected<std::string, std::string> SerializeJSONValue(
   std::string out;
   minijson::SerializeOptions serialize_options;
   serialize_options.indent = indent;
+  // Emit object keys in sorted (canonical) order so the output is stable
+  // regardless of prim-child / property insertion order. The nlohmann compat
+  // path above is implicitly sorted (nlohmann::json is backed by std::map), so
+  // sorting here keeps both JSON backends byte-identical. This also makes
+  // USDA->USDC->reparse JSON comparisons order-independent: the crate writer
+  // re-tree-encodes prim paths, so a re-parsed stage can list children in a
+  // different order than the source USDA without any semantic change.
+  serialize_options.sort_keys = true;
   minijson::Error serialize_err;
   if (!minijson::Serialize(value, &out, &serialize_err, serialize_options)) {
     return nonstd::make_unexpected("Failed to serialize " +
