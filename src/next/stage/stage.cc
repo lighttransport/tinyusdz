@@ -4,6 +4,7 @@
 // TinyUSDZ Next - Stage Implementation
 
 #include "stage.hh"
+#include "../composition/composition.hh"
 #include <algorithm>
 
 namespace tinyusdz {
@@ -340,20 +341,18 @@ std::vector<UsdPrim> Stage::GetPrimsOfType(const std::string& typeName) const {
 }
 
 Layer Stage::Flatten() const {
-  Layer flattened;
+  if (!root_layer_) return {};
 
-  if (!root_layer_) return flattened;
+  // Use the Compositor to resolve sublayers, references, payloads, etc.
+  Compositor compositor;
+  CompositionOptions opts;
+  opts.load_payloads = true;
+  compositor.SetOptions(opts);
 
-  // For now, just copy the root layer
-  // TODO: Apply composition from sublayers
+  auto result = compositor.Compose(*root_layer_);
+  if (!result) return {};
 
-  flattened.reserve(root_layer_->prim_count());
-
-  // Deep copy all prims (need to implement PrimSpec copy or recreate)
-  // For now, we just return an empty layer
-  // Full implementation would iterate and rebuild
-
-  return flattened;
+  return std::move(*result);
 }
 
 double Stage::GetStartTimeCode() const {
