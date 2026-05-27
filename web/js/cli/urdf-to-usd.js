@@ -1142,9 +1142,16 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
       const effAttrs = resolveElementAttrs(rawGeomNode, defaults.geom, defaults.rootGeom, childclass);
       const geomNode = { name: rawGeomNode.name, attrs: effAttrs, children: rawGeomNode.children || [] };
       const geomName = effAttrs.name || effAttrs.mesh || `${linkName}_geom_${geomIndex}`;
-      const isVisual = effAttrs.class === 'visual' ||
-        effAttrs.group === '2' ||
-        (effAttrs.contype === '0' && effAttrs.conaffinity === '0');
+      // MuJoCo geom groups 3-5 are not default-visible: treat them as collision
+      // (e.g. shadow_dexee's group-5 CollisionGeom capsules). class (substring)
+      // wins, then group, then the non-colliding contype/conaffinity fallback.
+      const geomClass = effAttrs.class || '';
+      const geomGroup = Number(effAttrs.group);
+      const isVisual = geomClass.includes('collision') ? false
+        : geomClass.includes('visual') ? true
+        : (Number.isFinite(geomGroup) && geomGroup >= 3) ? false
+        : geomGroup === 2 ? true
+        : (effAttrs.contype === '0' && effAttrs.conaffinity === '0');
       let payloads = null;
       if (!isVisual && !opts.tessellateCollisionShapes) {
         payloads = shapePayloadForMujocoGeom(
