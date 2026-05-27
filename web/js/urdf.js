@@ -1257,7 +1257,9 @@ function collectMujocoAssets(root) {
       const name = mesh.getAttribute('name') || file.split('/').pop().replace(/\.[^.]+$/, '');
       meshes.set(name, {
         path: joinPath(meshDir, file),
-        scale: parseNumbers(mesh.getAttribute('scale'), [1, 1, 1])
+        scale: parseNumbers(mesh.getAttribute('scale'), [1, 1, 1]),
+        refpos: parseNumbers(mesh.getAttribute('refpos'), [0, 0, 0]),
+        refquat: parseNumbers(mesh.getAttribute('refquat'), [1, 0, 0, 0])
       });
     }
   }
@@ -1458,6 +1460,17 @@ function mujocoFromto(attrs) {
   };
 }
 
+// MuJoCo mesh refpos/refquat define the mesh's reference frame: vertices are
+// translated by -refpos and rotated by the conjugate of refquat before the geom
+// places them. Returns the corresponding local matrix (identity by default).
+function mujocoMeshRefMatrix(meshAsset) {
+  const rq = meshAsset?.refquat || [1, 0, 0, 0];
+  const rp = meshAsset?.refpos || [0, 0, 0];
+  const q = new THREE.Quaternion(rq[1] || 0, rq[2] || 0, rq[3] || 0, rq[0] ?? 1).normalize().conjugate();
+  return new THREE.Matrix4().makeRotationFromQuaternion(q)
+    .multiply(new THREE.Matrix4().makeTranslation(-(rp[0] || 0), -(rp[1] || 0), -(rp[2] || 0)));
+}
+
 function shapePayloadForMujocoGeom(geomAttrs, originMatrix, fallbackName) {
   const attrs = geomAttrs || {};
   const geomType = attrs.type || (attrs.mesh ? 'mesh' : 'sphere');
@@ -1561,6 +1574,7 @@ async function mujocoGeomPayloads(geomAttrs, meshAssets, fallbackName, baseMatri
     const scale = parseNumbers(attrs.scale, meshAsset.scale || [1, 1, 1]);
     const meshMatrix = new THREE.Matrix4()
       .copy(originMatrix)
+      .multiply(mujocoMeshRefMatrix(meshAsset))
       .multiply(new THREE.Matrix4().makeScale(scale[0] || 1, scale[1] || 1, scale[2] || 1));
     return collectNativeMeshRefPayloads(object, meshMatrix, fallbackName, meshAsset.path || attrs.mesh || fallbackName);
   }
@@ -1602,7 +1616,11 @@ function applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets) {
   if (geomType === 'mesh') {
     const meshAsset = meshAssets.get(attrs.mesh);
     const scale = parseNumbers(attrs.scale, meshAsset?.scale || [1, 1, 1]);
-    matrix.multiply(new THREE.Matrix4().makeScale(scale[0] || 1, scale[1] || 1, scale[2] || 1));
+    // Apply the mesh reference frame (refpos/refquat) before scale, so e.g.
+    // shadow_dexee's finger meshes are oriented correctly.
+    matrix
+      .multiply(mujocoMeshRefMatrix(meshAsset))
+      .multiply(new THREE.Matrix4().makeScale(scale[0] || 1, scale[1] || 1, scale[2] || 1));
   } else if (geomType === 'cylinder' || geomType === 'capsule') {
     matrix.multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
   }
