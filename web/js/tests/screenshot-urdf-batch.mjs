@@ -28,6 +28,7 @@
 //                      is very slow for large scenes (e.g. robot_soccer_kit:
 //                      363 meshes) — use --hw when a GPU is available.
 //   --home-pose        Capture the model's home keyframe pose
+//   --allow-blank      Don't fail when a view renders no visible meshes
 //   --timeout <ms>     Per-step timeout (default: 180000)
 //   -h, --help
 
@@ -74,6 +75,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     headful: false,
     hw: false,
     homePose: false,
+    allowBlank: false,
     timeout: 180000,
     explicit: []
   };
@@ -89,6 +91,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     else if (a === '--headful') opts.headful = true;
     else if (a === '--hw') opts.hw = true;
     else if (a === '--home-pose') opts.homePose = true;
+    else if (a === '--allow-blank') opts.allowBlank = true;
     else if (a === '--timeout') opts.timeout = Number(argv[++i]);
     else if (a.startsWith('-')) throw new Error(`Unknown option: ${a}`);
     else opts.explicit.push(a);
@@ -227,9 +230,21 @@ async function shootRobot(browser, baseUrl, mjcf, opts) {
       status: document.getElementById('status')?.textContent
     }));
 
+    // Non-empty-render check: a model can convert + screenshot "successfully"
+    // yet render blank (e.g. all geoms hidden/misclassified). Fail loudly when
+    // a robot is loaded but a view draws no visible meshes.
+    const render = await page.evaluate(() => (window.__viewerStats ? window.__viewerStats() : null));
     const outPath = path.join(opts.out, `${sub}__${name}.png`);
     await page.screenshot({ path: outPath });
-    return { ok: true, outPath, stats };
+    if (!opts.allowBlank && render && render.links > 0 &&
+        (render.sourceVisibleMeshes === 0 || render.usdVisibleMeshes === 0)) {
+      return {
+        ok: false,
+        error: `blank render (visible meshes: source=${render.sourceVisibleMeshes}, usd=${render.usdVisibleMeshes})`,
+        status: stats.status, errors, failPath: outPath
+      };
+    }
+    return { ok: true, outPath, stats, render };
   } catch (err) {
     // Capture a failure screenshot for debugging.
     const failPath = path.join(opts.out, `${sub}__${name}.FAIL.png`);

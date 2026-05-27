@@ -3282,6 +3282,23 @@ document.getElementById('exportUSDZ').addEventListener('click', () => exportRobo
 fitViewButton.addEventListener('click', fitCurrentView);
 jointHeaderEl.addEventListener('click', toggleJointPanelFold);
 
+// Diagnostics hook for headless drivers: count effectively-visible meshes per
+// view so a "blank render" (model loaded but nothing actually drawn) can be
+// detected instead of silently passing.
+window.__viewerStats = () => {
+  const effVisible = (o) => { for (let c = o; c; c = c.parent) { if (!c.visible) return false; } return true; };
+  const countVisible = (root) => {
+    let n = 0;
+    root.traverse((o) => { if (o.isMesh && effVisible(o)) n++; });
+    return n;
+  };
+  return {
+    links: Object.keys(state.robot?.links || state.usdArticulation?.links || {}).length,
+    sourceVisibleMeshes: countVisible(robotGroup),
+    usdVisibleMeshes: countVisible(usdGroup)
+  };
+};
+
 window.addEventListener('keydown', (event) => {
   if (event.key.toLowerCase() !== 'f' || event.altKey || event.ctrlKey || event.metaKey) return;
   const tagName = event.target?.tagName?.toLowerCase();
