@@ -17,20 +17,17 @@ import time
 from typing import Any
 
 
-KNOWN_XFAIL: dict[tuple[str, str], str] = {
-    ("native", "google_robot"): "Missing asset in local Menagerie checkout: link_base_v.obj",
-    ("js", "google_robot"): "Missing asset in local Menagerie checkout: link_base_v.obj",
-    ("native", "hello_robot_stretch"): "Missing asset in local Menagerie checkout: base_link_0.obj",
-    ("js", "hello_robot_stretch"): "Missing asset in local Menagerie checkout: base_link_0.obj",
-    ("native", "hello_robot_stretch_3"): "Missing asset in local Menagerie checkout: base_link_0.obj",
-    ("js", "hello_robot_stretch_3"): "Missing asset in local Menagerie checkout: base_link_0.obj",
-    ("native", "ms_human_700"): "Missing asset in local Menagerie checkout: ../geometry/r_pelvis.stl",
-    ("js", "ms_human_700"): "Missing asset in local Menagerie checkout: ../geometry/r_pelvis.stl",
-    ("native", "skydio_x2"): "Missing asset in local Menagerie checkout: X2_lowpoly.obj",
-    ("js", "skydio_x2"): "Missing asset in local Menagerie checkout: X2_lowpoly.obj",
-    ("js", "apptronik_apollo"): "JS payload construction exceeds V8 string limits",
-    ("js", "robot_soccer_kit"): "WASM export reaches the 2GB memory ceiling",
-}
+# Previously-failing cases are now handled and pass on both runners:
+#   - google_robot / hello_robot_stretch[_3] / skydio_x2: <compiler assetdir>
+#     plus an assets/ + recursive-basename fallback now resolve the meshes.
+#   - ms_human_700: same basename fallback finds assets referenced relative to
+#     an included file's dir (../geometry/*); the JS OBJ loader now merges
+#     multi-object files into one mesh (matching native + MuJoCo semantics).
+#   - apptronik_apollo: the binary meshRef payload + the JS CLI's raised USDC
+#     cap (--max-usdc-mb) export its ~110MB output.
+#   - robot_soccer_kit: exports within the cap via the binary meshRef path.
+# Add entries back here as (runner, scene_id) -> reason if a scene regresses.
+KNOWN_XFAIL: dict[tuple[str, str], str] = {}
 
 
 def repo_root() -> Path:
@@ -113,6 +110,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--allow-missing", action="store_true")
     parser.add_argument("--tessellate-collision-shapes", action="store_true")
+    parser.add_argument(
+        "--max-usdc-mb",
+        type=int,
+        default=2048,
+        help="USDC max output size (MB) passed to the JS CLI. Default: 2048",
+    )
+    parser.add_argument(
+        "--max-mem-mb",
+        type=int,
+        default=4096,
+        help="USDC max memory estimate (MB) passed to the JS CLI. Default: 4096",
+    )
     parser.add_argument(
         "--js-verify",
         action="store_true",
@@ -206,6 +215,10 @@ def command_for(args: argparse.Namespace, runner: str, scene: Path, out: Path) -
     js_cmd = [args.node, str(args.js_cli), *base]
     if not args.js_verify:
         js_cmd.append("--no-verify")
+    # The native writer defaults to a 1GB USDC cap; the JS/WASM CLI defaults to
+    # a 100MB browser-safety cap. Raise it here so mesh-dense scenes (e.g.
+    # apptronik_apollo at ~110MB) export under node, matching native.
+    js_cmd += ["--max-usdc-mb", str(args.max_usdc_mb), "--max-mem-mb", str(args.max_mem_mb)]
     return js_cmd
 
 

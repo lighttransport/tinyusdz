@@ -855,12 +855,56 @@ void AddGeomPhysicsAttrs(const pugi::xml_node &geom_node, const AttrMap &cls,
   }
 }
 
+// Basename -> path index of mesh files under `root_dir`. Used as a last-resort
+// fallback when a <mesh file="..."> path does not resolve against meshdir --
+// e.g. MuJoCo scenes whose assets are referenced relative to an included
+// file's directory (the include flattening here drops that provenance).
+// Names that occur in more than one location are dropped to avoid ambiguity.
+std::map<std::string, fs::path> BuildMeshIndex(const fs::path &root_dir) {
+  std::map<std::string, fs::path> index;
+  std::set<std::string> ambiguous;
+  std::error_code ec;
+  for (fs::recursive_directory_iterator it(root_dir, ec), end;
+       !ec && it != end; it.increment(ec)) {
+    if (!it->is_regular_file(ec)) continue;
+    const std::string ext = ToLower(it->path().extension().string());
+    if (ext != ".stl" && ext != ".obj" && ext != ".msh") continue;
+    const std::string key = ToLower(it->path().filename().string());
+    if (index.count(key)) {
+      ambiguous.insert(key);
+    } else {
+      index[key] = it->path();
+    }
+  }
+  for (const auto &a : ambiguous) index.erase(a);
+  return index;
+}
+
+fs::path ResolveMeshPath(const fs::path &base_dir, const fs::path &mesh_dir,
+                         const std::string &file,
+                         const std::map<std::string, fs::path> &index) {
+  std::error_code ec;
+  const std::array<fs::path, 3> candidates{{mesh_dir / file,
+                                            base_dir / "assets" / file,
+                                            base_dir / file}};
+  for (const auto &c : candidates) {
+    if (fs::exists(c, ec)) return c;
+  }
+  const auto it = index.find(ToLower(fs::path(file).filename().string()));
+  if (it != index.end()) return it->second;
+  return mesh_dir / file;  // primary candidate; errors later with a clear msg
+}
+
 std::map<std::string, MeshAsset> CollectMujocoAssets(
     const pugi::xml_node &root, const fs::path &base_dir) {
   std::map<std::string, MeshAsset> assets;
   const auto compiler = Child(root, "compiler");
-  const fs::path mesh_dir =
-      compiler ? base_dir / Attr(compiler, "meshdir") : base_dir;
+  // MuJoCo <compiler meshdir> takes precedence; assetdir is the shared
+  // default for meshdir/texturedir when meshdir is absent.
+  std::string dir_attr = compiler ? Attr(compiler, "meshdir") : std::string();
+  if (dir_attr.empty() && compiler) dir_attr = Attr(compiler, "assetdir");
+  const fs::path mesh_dir = dir_attr.empty() ? base_dir : base_dir / dir_attr;
+  const std::map<std::string, fs::path> index = BuildMeshIndex(base_dir);
 
   for (const auto &asset_node : Children(root, "asset")) {
     for (const auto &mesh_node : Children(asset_node, "mesh")) {
@@ -869,7 +913,7 @@ std::map<std::string, MeshAsset> CollectMujocoAssets(
       std::string name = Attr(mesh_node, "name");
       if (name.empty()) name = fs::path(file).stem().string();
       MeshAsset asset;
-      asset.path = mesh_dir / file;
+      asset.path = ResolveMeshPath(base_dir, mesh_dir, file, index);
       asset.scale =
           ParseDouble3(Attr(mesh_node, "scale"), {{1.0, 1.0, 1.0}});
       if (HasAttr(mesh_node, "refpos")) {
