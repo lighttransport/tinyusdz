@@ -91,6 +91,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     else if (a === '--headful') opts.headful = true;
     else if (a === '--hw') opts.hw = true;
     else if (a === '--home-pose') opts.homePose = true;
+    else if (a === '--collisions') opts.collisions = true;
     else if (a === '--allow-blank') opts.allowBlank = true;
     else if (a === '--timeout') opts.timeout = Number(argv[++i]);
     else if (a.startsWith('-')) throw new Error(`Unknown option: ${a}`);
@@ -213,6 +214,20 @@ async function shootRobot(browser, baseUrl, mjcf, opts) {
         if (cb && !cb.checked) cb.click();
       });
       await new Promise((r) => setTimeout(r, 300));
+    }
+
+    // Optionally show collision geoms (and hide visuals) to inspect collision geometry.
+    if (opts.collisions) {
+      await page.evaluate(() => {
+        const ctrls = [...document.querySelectorAll('.lil-gui .controller')];
+        const set = (label, want) => {
+          const cb = ctrls.find((el) => el.querySelector('.name')?.textContent === label)?.querySelector('input[type="checkbox"]');
+          if (cb && cb.checked !== want) cb.click();
+        };
+        set('Collision meshes', true);
+        set('Visual meshes', false);
+      });
+      await new Promise((r) => setTimeout(r, 200));
     }
 
     // 3) Convert to USD -> renders the converted view in the split comparison.

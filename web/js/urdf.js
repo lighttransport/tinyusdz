@@ -1437,6 +1437,27 @@ function parseMujocoInertial(bodyNode) {
   return inertial;
 }
 
+// MuJoCo capsule/cylinder fromto="x1 y1 z1 x2 y2 z2": the geom spans p1->p2 with
+// radius=size[0]; pos/quat are ignored when fromto is present. Returns the local
+// center, segment length, and the rotation aligning the +Y axis (three.js
+// cylinder axis) to the segment direction.
+function mujocoFromto(attrs) {
+  const ft = parseNumbers(attrs?.fromto, []);
+  if (ft.length < 6) return null;
+  const p1 = new THREE.Vector3(ft[0], ft[1], ft[2]);
+  const p2 = new THREE.Vector3(ft[3], ft[4], ft[5]);
+  const dir = p2.clone().sub(p1);
+  const length = dir.length() || 1e-6;
+  const ndir = dir.clone().normalize();
+  return {
+    center: p1.clone().add(p2).multiplyScalar(0.5),
+    length,
+    dir: ndir,
+    quatY: new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), ndir),
+    quatZ: new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), ndir)
+  };
+}
+
 function shapePayloadForMujocoGeom(geomAttrs, originMatrix, fallbackName) {
   const attrs = geomAttrs || {};
   const geomType = attrs.type || (attrs.mesh ? 'mesh' : 'sphere');
@@ -1459,13 +1480,20 @@ function shapePayloadForMujocoGeom(geomAttrs, originMatrix, fallbackName) {
   }
 
   if (geomType === 'cylinder' || geomType === 'capsule') {
+    // fromto: bake the segment midpoint + Z->direction into the matrix and use
+    // the segment length as height (pos/quat ignored when fromto is present).
+    const ft = mujocoFromto(attrs);
+    const matrix = ft
+      ? new THREE.Matrix4().copy(originMatrix)
+          .multiply(new THREE.Matrix4().compose(ft.center, ft.quatZ, new THREE.Vector3(1, 1, 1)))
+      : originMatrix;
     return [{
       name: fallbackName,
-      matrix: matrixToUSDArray(originMatrix),
+      matrix: matrixToUSDArray(matrix),
       shape: {
         type: geomType,
         radius: size[0] || 0.5,
-        height: size[1] ? size[1] * 2 : 1,
+        height: ft ? ft.length : (size[1] ? size[1] * 2 : 1),
         axis: 'Z'
       }
     }];
@@ -1508,7 +1536,8 @@ async function loadMujocoGeomObject(geomAttrs, meshAssets, fallbackName) {
   }
   if (geomType === 'cylinder' || geomType === 'capsule') {
     const radius = size[0] || 0.5;
-    const length = size[1] ? size[1] * 2 : 1;
+    const ft = mujocoFromto(attrs);
+    const length = ft ? ft.length : (size[1] ? size[1] * 2 : 1);
     return primitiveObjectFromGeometry(new THREE.CylinderGeometry(radius, radius, length, 24, 1), fallbackName);
   }
   if (geomType === 'plane') {
@@ -1560,6 +1589,15 @@ function classifyMujocoGeom(geomAttrs) {
 function applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets) {
   const attrs = geomAttrs || {};
   const geomType = attrs.type || (attrs.mesh ? 'mesh' : 'sphere');
+  // fromto fully specifies a capsule/cylinder's placement (pos/quat ignored):
+  // center it on the segment midpoint and align the cylinder's +Y axis to it.
+  if (geomType === 'cylinder' || geomType === 'capsule') {
+    const ft = mujocoFromto(attrs);
+    if (ft) {
+      applyMatrixToObject(object, new THREE.Matrix4().compose(ft.center, ft.quatY, new THREE.Vector3(1, 1, 1)));
+      return;
+    }
+  }
   const matrix = matrixFromPoseAttrs(attrs);
   if (geomType === 'mesh') {
     const meshAsset = meshAssets.get(attrs.mesh);
