@@ -572,14 +572,20 @@ function syncGhosts() {
 }
 
 function isCollisionObject(object) {
+  // Prefer the explicit classification flag when present (set by the MJCF/URDF
+  // parser and the converted-USD preview). The name/path heuristic is only a
+  // fallback for imported USD without the flag — otherwise geoms legitimately
+  // named "*_collision" but tagged group=0 (visual), e.g. iit_softfoot, would be
+  // wrongly hidden.
+  if (typeof object.userData?.urdfCollision === 'boolean') {
+    return object.userData.urdfCollision;
+  }
   const marker = [
     object.name,
     object.userData?.nodeCategory,
     object.userData?.['primMeta.absPath']
   ].filter(Boolean).join(' ').toLowerCase();
-  return Boolean(object.userData?.urdfCollision)
-    || marker.includes('collision')
-    || marker.includes('collider');
+  return marker.includes('collision') || marker.includes('collider');
 }
 
 function pathInSetOrUnder(path, paths) {
@@ -1588,15 +1594,17 @@ async function mujocoGeomPayloads(geomAttrs, meshAssets, fallbackName, baseMatri
 
 function classifyMujocoGeom(geomAttrs) {
   const attrs = geomAttrs || {};
+  // MuJoCo visibility is by geom group: 0-2 are the default-visible set, 3-5 are
+  // hidden/auxiliary (collision). The resolved group (explicit on the geom, else
+  // from its class) is authoritative and wins over the class NAME — e.g.
+  // iit_softfoot tags class="collision" meshes with group="0" to show them, and
+  // shadow_dexee's group-5 CollisionGeom capsules must stay hidden.
+  const g = Number(attrs.group);
+  if (Number.isFinite(g)) return g < 3;
+  // No group => MuJoCo default group 0 (visible); use the class name only as a
+  // hint to keep ungrouped collision-class geoms hidden.
   const className = String(attrs.class || '').toLowerCase();
   if (className.includes('collision')) return false;
-  if (className.includes('visual')) return true;
-  // MuJoCo renders the default-visible groups 0-2; groups 3-5 are hidden/
-  // auxiliary (collision) — e.g. shadow_dexee's group-5 CollisionGeom capsules.
-  // A geom with no group defaults to group 0 (visible), e.g. flexiv_rizon4's
-  // single dual-purpose mesh per link.
-  const g = Number(attrs.group);
-  if (Number.isFinite(g) && g >= 3) return false;
   return true;
 }
 
@@ -1974,18 +1982,27 @@ function applyRenderableVisibility(root) {
 function fitCamera(rootOrObjects) {
   const objects = Array.isArray(rootOrObjects) ? rootOrObjects : [rootOrObjects].filter(Boolean);
   const box = new THREE.Box3();
-  for (const object of objects) box.expandByObject(object);
-  if (!box.isEmpty()) {
-    const size = box.getSize(new THREE.Vector3());
-    const center = box.getCenter(new THREE.Vector3());
-    const radius = Math.max(size.length() * 0.5, 0.5);
-    controls.target.copy(center);
-    camera.position.copy(center).add(new THREE.Vector3(radius * 1.1, radius * 0.75, radius * 1.35));
-    camera.near = Math.max(radius / 1000, 0.001);
-    camera.far = radius * 100;
-    camera.updateProjectionMatrix();
-    controls.update();
+  for (const object of objects) {
+    if (object) { object.updateWorldMatrix(true, true); box.expandByObject(object); }
   }
+  if (box.isEmpty()) return;
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const radius = Math.max(size.length() * 0.5, 1e-3);
+  // Distance so the bounding sphere fits BOTH the vertical and horizontal
+  // frustum of a single split view (each view is ~half the window width, so the
+  // horizontal FOV is the tighter constraint), plus a safety margin.
+  const fovV = (camera.fov * Math.PI) / 180;
+  const aspect = camera.aspect || 1;
+  const fovH = 2 * Math.atan(Math.tan(fovV / 2) * aspect);
+  const dist = (radius / Math.sin(Math.max(Math.min(fovV, fovH) / 2, 1e-3))) * 1.15;
+  const dir = new THREE.Vector3(1.1, 0.75, 1.35).normalize();
+  controls.target.copy(center);
+  camera.position.copy(center).add(dir.multiplyScalar(dist));
+  camera.near = Math.max(dist / 1000, 1e-4);
+  camera.far = dist * 100;
+  camera.updateProjectionMatrix();
+  controls.update();
 }
 
 function fitCurrentView() {
@@ -3338,9 +3355,18 @@ document.getElementById('exportUSDZ').addEventListener('click', () => exportRobo
 fitViewButton.addEventListener('click', fitCurrentView);
 jointHeaderEl.addEventListener('click', toggleJointPanelFold);
 
+// Collapse/expand the whole Robot/Joints panel (foldable header).
+const panelHeaderEl = document.getElementById('panelHeader');
+const togglePanelFold = () => panelEl.classList.toggle('collapsed');
+panelHeaderEl?.addEventListener('click', togglePanelFold);
+panelHeaderEl?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); togglePanelFold(); }
+});
+
 // Diagnostics hook for headless drivers: count effectively-visible meshes per
 // view so a "blank render" (model loaded but nothing actually drawn) can be
 // detected instead of silently passing.
+window.__fitView = () => fitCamera(currentFitObjects());
 window.__viewerStats = () => {
   const effVisible = (o) => { for (let c = o; c; c = c.parent) { if (!c.visible) return false; } return true; };
   const countVisible = (root) => {

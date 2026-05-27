@@ -1154,17 +1154,15 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
       const effAttrs = resolveElementAttrs(rawGeomNode, defaults.geom, defaults.rootGeom, childclass);
       const geomNode = { name: rawGeomNode.name, attrs: effAttrs, children: rawGeomNode.children || [] };
       const geomName = effAttrs.name || effAttrs.mesh || `${linkName}_geom_${geomIndex}`;
-      // MuJoCo geom groups 3-5 are not default-visible: treat them as collision
-      // (e.g. shadow_dexee's group-5 CollisionGeom capsules). class (substring)
-      // wins, then group, then the non-colliding contype/conaffinity fallback.
-      const geomClass = effAttrs.class || '';
+      // MuJoCo visibility is by geom group: 0-2 visible, 3-5 hidden/collision.
+      // The resolved group (explicit on the geom, else from its class) is
+      // authoritative and wins over the class NAME — e.g. iit_softfoot tags some
+      // class="collision" meshes with group="0" to make them visible. No group =>
+      // default group 0 (visible); class name is only a fallback hint.
+      const geomClass = (effAttrs.class || '').toLowerCase();
       const geomGroup = Number(effAttrs.group);
-      // MuJoCo renders geoms in the default-visible groups 0-2; groups 3-5 are
-      // hidden/auxiliary (collision). A geom with no group defaults to group 0
-      // (visible) — e.g. flexiv_rizon4's single dual-purpose mesh per link.
-      const isVisual = geomClass.includes('collision') ? false
-        : geomClass.includes('visual') ? true
-        : (Number.isFinite(geomGroup) && geomGroup >= 3) ? false
+      const isVisual = Number.isFinite(geomGroup) ? geomGroup < 3
+        : geomClass.includes('collision') ? false
         : true;
       let payloads = null;
       if (!isVisual && !opts.tessellateCollisionShapes) {
