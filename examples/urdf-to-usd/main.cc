@@ -47,6 +47,10 @@ struct Options {
 struct MeshAsset {
   fs::path path;
   std::array<double, 3> scale{{1.0, 1.0, 1.0}};
+  std::array<double, 3> refpos{{0.0, 0.0, 0.0}};   // <mesh refpos="...">
+  std::array<double, 4> refquat{{1.0, 0.0, 0.0, 0.0}};  // <mesh refquat="..."> wxyz
+  bool has_refpos = false;
+  bool has_refquat = false;
 };
 
 struct MeshData {
@@ -68,6 +72,23 @@ struct Stats {
   size_t visuals{0};
   size_t collisions{0};
   size_t actuators{0};
+};
+
+// Resolved attribute map (attr name -> value) for MuJoCo <default> classes.
+using AttrMap = std::map<std::string, std::string>;
+
+struct Defaults {
+  std::map<std::string, AttrMap> geom;   // class name -> merged geom attrs
+  std::map<std::string, AttrMap> joint;  // class name -> merged joint attrs
+  AttrMap root_geom;                      // unnamed (top-level) default
+  AttrMap root_joint;
+};
+
+struct Context {
+  // <compiler angle="...">: degrees by default; radians otherwise.
+  double angle_to_rad = 0.017453292519943295;  // pi/180
+  std::string eulerseq = "xyz";                 // <compiler eulerseq="...">
+  Defaults defaults;
 };
 
 void PrintHelp() {
@@ -314,16 +335,147 @@ bool ExpandIncludes(const std::string &xml, const fs::path &base_dir,
   return true;
 }
 
-std::vector<double> PoseMatrix(const pugi::xml_node &node) {
-  const std::array<double, 3> pos =
-      ParseDouble3(node ? Attr(node, "pos") : "", {{0.0, 0.0, 0.0}});
-  std::array<double, 4> q{{1.0, 0.0, 0.0, 0.0}};  // MuJoCo wxyz.
-  const std::vector<double> qvals =
-      ParseDoubles(node ? Attr(node, "quat") : "");
-  if (qvals.size() >= 4) {
-    q = {{qvals[0], qvals[1], qvals[2], qvals[3]}};
+// Quaternions are stored MuJoCo-style: {w, x, y, z}.
+using Quat = std::array<double, 4>;
+
+Quat QuatNormalize(const Quat &q) {
+  const double n = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+  if (n < 1.0e-12) return {{1.0, 0.0, 0.0, 0.0}};
+  return {{q[0] / n, q[1] / n, q[2] / n, q[3] / n}};
+}
+
+// Hamilton product a * b ({w,x,y,z}).
+Quat QuatMul(const Quat &a, const Quat &b) {
+  return {{a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+           a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+           a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+           a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0]}};
+}
+
+Quat QuatFromAxisAngle(const std::array<double, 3> &axis, double angle) {
+  const double len = std::sqrt(axis[0] * axis[0] + axis[1] * axis[1] +
+                               axis[2] * axis[2]);
+  if (len < 1.0e-12) return {{1.0, 0.0, 0.0, 0.0}};
+  const double s = std::sin(angle * 0.5) / len;
+  return {{std::cos(angle * 0.5), axis[0] * s, axis[1] * s, axis[2] * s}};
+}
+
+// Rotation that maps unit vector `from` onto unit vector `to`.
+Quat QuatFromTwoVecs(const std::array<double, 3> &from,
+                     const std::array<double, 3> &to) {
+  auto norm = [](std::array<double, 3> v) -> std::array<double, 3> {
+    const double n = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    if (n < 1.0e-12) return {{0.0, 0.0, 1.0}};
+    return {{v[0] / n, v[1] / n, v[2] / n}};
+  };
+  const std::array<double, 3> a = norm(from);
+  const std::array<double, 3> b = norm(to);
+  const double dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  if (dot > 0.999999) return {{1.0, 0.0, 0.0, 0.0}};
+  if (dot < -0.999999) {
+    // Antiparallel: rotate pi about any axis orthogonal to `a`.
+    const std::array<double, 3> ortho =
+        std::abs(a[0]) < 0.9 ? std::array<double, 3>{{1.0, 0.0, 0.0}}
+                             : std::array<double, 3>{{0.0, 1.0, 0.0}};
+    const std::array<double, 3> axis{{a[1] * ortho[2] - a[2] * ortho[1],
+                                      a[2] * ortho[0] - a[0] * ortho[2],
+                                      a[0] * ortho[1] - a[1] * ortho[0]}};
+    return QuatFromAxisAngle(axis, 3.14159265358979323846);
+  }
+  const std::array<double, 3> axis{{a[1] * b[2] - a[2] * b[1],
+                                    a[2] * b[0] - a[0] * b[2],
+                                    a[0] * b[1] - a[1] * b[0]}};
+  return QuatNormalize({{1.0 + dot, axis[0], axis[1], axis[2]}});
+}
+
+// Quaternion from a rotation matrix given as its three column basis vectors.
+Quat QuatFromBasis(const std::array<double, 3> &cx,
+                   const std::array<double, 3> &cy,
+                   const std::array<double, 3> &cz) {
+  const double m00 = cx[0], m10 = cx[1], m20 = cx[2];
+  const double m01 = cy[0], m11 = cy[1], m21 = cy[2];
+  const double m02 = cz[0], m12 = cz[1], m22 = cz[2];
+  const double trace = m00 + m11 + m22;
+  Quat q{{1.0, 0.0, 0.0, 0.0}};
+  if (trace > 0.0) {
+    const double s = 0.5 / std::sqrt(trace + 1.0);
+    q = {{0.25 / s, (m21 - m12) * s, (m02 - m20) * s, (m10 - m01) * s}};
+  } else if (m00 > m11 && m00 > m22) {
+    const double s = 2.0 * std::sqrt(1.0 + m00 - m11 - m22);
+    q = {{(m21 - m12) / s, 0.25 * s, (m01 + m10) / s, (m02 + m20) / s}};
+  } else if (m11 > m22) {
+    const double s = 2.0 * std::sqrt(1.0 + m11 - m00 - m22);
+    q = {{(m02 - m20) / s, (m01 + m10) / s, 0.25 * s, (m12 + m21) / s}};
+  } else {
+    const double s = 2.0 * std::sqrt(1.0 + m22 - m00 - m11);
+    q = {{(m10 - m01) / s, (m02 + m20) / s, (m12 + m21) / s, 0.25 * s}};
+  }
+  return QuatNormalize(q);
+}
+
+// Resolve a MuJoCo orientation specifier (quat / axisangle / euler / xyaxes /
+// zaxis) into a {w,x,y,z} quaternion, honoring <compiler angle/eulerseq>.
+Quat OrientationQuat(const std::string &quat_str,
+                     const std::string &axisangle_str,
+                     const std::string &euler_str,
+                     const std::string &xyaxes_str,
+                     const std::string &zaxis_str, const Context &ctx) {
+  const std::vector<double> q = ParseDoubles(quat_str);
+  if (q.size() >= 4) return QuatNormalize({{q[0], q[1], q[2], q[3]}});
+
+  const std::vector<double> aa = ParseDoubles(axisangle_str);
+  if (aa.size() >= 4) {
+    return QuatFromAxisAngle({{aa[0], aa[1], aa[2]}}, aa[3] * ctx.angle_to_rad);
   }
 
+  const std::vector<double> xy = ParseDoubles(xyaxes_str);
+  if (xy.size() >= 6) {
+    auto norm = [](std::array<double, 3> v) -> std::array<double, 3> {
+      const double n = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+      if (n < 1.0e-12) return {{1.0, 0.0, 0.0}};
+      return {{v[0] / n, v[1] / n, v[2] / n}};
+    };
+    const std::array<double, 3> x = norm({{xy[0], xy[1], xy[2]}});
+    std::array<double, 3> y{{xy[3], xy[4], xy[5]}};
+    const double d = x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+    y = norm({{y[0] - d * x[0], y[1] - d * x[1], y[2] - d * x[2]}});
+    const std::array<double, 3> z{{x[1] * y[2] - x[2] * y[1],
+                                   x[2] * y[0] - x[0] * y[2],
+                                   x[0] * y[1] - x[1] * y[0]}};
+    return QuatFromBasis(x, y, z);
+  }
+
+  const std::vector<double> za = ParseDoubles(zaxis_str);
+  if (za.size() >= 3) {
+    return QuatFromTwoVecs({{0.0, 0.0, 1.0}}, {{za[0], za[1], za[2]}});
+  }
+
+  const std::vector<double> e = ParseDoubles(euler_str);
+  if (e.size() >= 3) {
+    Quat out{{1.0, 0.0, 0.0, 0.0}};
+    for (size_t i = 0; i < 3 && i < ctx.eulerseq.size(); i++) {
+      const char c = ctx.eulerseq[i];
+      const char lower =
+          static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+      std::array<double, 3> axis{{0.0, 0.0, 0.0}};
+      if (lower == 'x') axis = {{1.0, 0.0, 0.0}};
+      else if (lower == 'y') axis = {{0.0, 1.0, 0.0}};
+      else if (lower == 'z') axis = {{0.0, 0.0, 1.0}};
+      else continue;
+      const Quat qi = QuatFromAxisAngle(axis, e[i] * ctx.angle_to_rad);
+      // Lowercase = intrinsic (post-multiply); uppercase = extrinsic (pre).
+      out = std::islower(static_cast<unsigned char>(c)) ? QuatMul(out, qi)
+                                                        : QuatMul(qi, out);
+    }
+    return QuatNormalize(out);
+  }
+
+  return {{1.0, 0.0, 0.0, 0.0}};
+}
+
+// Three.js Matrix4.elements (column-major) flat array from pos + quat.
+std::vector<double> MatrixFromPosQuat(const std::array<double, 3> &pos,
+                                      const Quat &q) {
   const double w = q[0];
   const double x = q[1];
   const double y = q[2];
@@ -340,13 +492,25 @@ std::vector<double> PoseMatrix(const pugi::xml_node &node) {
   const double wx = w * x2;
   const double wy = w * y2;
   const double wz = w * z2;
-
-  // Match the JS tester's Three.js Matrix4.elements -> USD flat array.
   return {
       1.0 - (yy + zz), xy + wz,         xz - wy,         0.0,
       xy - wz,         1.0 - (xx + zz), yz + wx,         0.0,
       xz + wy,         yz - wx,         1.0 - (xx + yy), 0.0,
       pos[0],          pos[1],          pos[2],          1.0};
+}
+
+// Pose matrix for a body/geom node, reading any MuJoCo orientation specifier
+// directly off the node (orientation is authored on the element, not in
+// <default> classes).
+std::vector<double> PoseMatrix(const pugi::xml_node &node, const Context &ctx) {
+  const std::array<double, 3> pos =
+      ParseDouble3(node ? Attr(node, "pos") : "", {{0.0, 0.0, 0.0}});
+  const Quat q =
+      node ? OrientationQuat(Attr(node, "quat"), Attr(node, "axisangle"),
+                             Attr(node, "euler"), Attr(node, "xyaxes"),
+                             Attr(node, "zaxis"), ctx)
+           : Quat{{1.0, 0.0, 0.0, 0.0}};
+  return MatrixFromPosQuat(pos, q);
 }
 
 std::vector<double> MultiplyMatrix(const std::vector<double> &a,
@@ -365,6 +529,29 @@ std::vector<double> MultiplyMatrix(const std::vector<double> &a,
 std::vector<double> ScaleMatrix(const std::array<double, 3> &scale) {
   return {scale[0], 0.0,      0.0,      0.0, 0.0, scale[1], 0.0,      0.0,
           0.0,      0.0,      scale[2], 0.0, 0.0, 0.0,      0.0,      1.0};
+}
+
+std::vector<double> TranslationMatrix(const std::array<double, 3> &t) {
+  return {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+          0.0, 0.0, 1.0, 0.0, t[0], t[1], t[2], 1.0};
+}
+
+// Mesh frame transform from MJCF <mesh refpos/refquat>: vertices are first
+// translated by -refpos, then rotated by conjugate(refquat). Returned as
+// R(conj(refquat)) * T(-refpos) so it can left-compose with the geom matrix.
+std::vector<double> MeshRefMatrix(const MeshAsset &asset) {
+  std::vector<double> m = {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                           0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0};
+  if (asset.has_refquat) {
+    const Quat conj{{asset.refquat[0], -asset.refquat[1], -asset.refquat[2],
+                     -asset.refquat[3]}};
+    m = MatrixFromPosQuat({{0.0, 0.0, 0.0}}, QuatNormalize(conj));
+  }
+  if (asset.has_refpos) {
+    m = MultiplyMatrix(m, TranslationMatrix({{-asset.refpos[0], -asset.refpos[1],
+                                              -asset.refpos[2]}}));
+  }
+  return m;
 }
 
 void AppendTri(MeshData *mesh, const std::array<float, 3> &a,
@@ -562,22 +749,109 @@ nlohmann::json MeshPayloadToJson(const MeshPayload &payload) {
         {"indices", payload.mesh.indices}}}};
 }
 
-void AddGeomPhysicsAttrs(const pugi::xml_node &geom_node,
+// --- MJCF <default> class resolution ---------------------------------------
+//
+// MuJoCo geoms/joints inherit attributes from a <default> class tree. The
+// applicable class is the element's own `class`, else the enclosing body's
+// `childclass`, else the unnamed/"main" default. Classes inherit from their
+// parent <default>. We resolve an element's effective value as: own attribute
+// wins, otherwise the resolved class default, otherwise a fallback.
+
+std::string Eff(const pugi::xml_node &node, const AttrMap &cls,
+                const std::string &name, const std::string &fallback = "") {
+  if (node && node.attribute(name.c_str())) {
+    return node.attribute(name.c_str()).as_string();
+  }
+  const auto it = cls.find(name);
+  return it != cls.end() ? it->second : fallback;
+}
+
+bool HasEff(const pugi::xml_node &node, const AttrMap &cls,
+            const std::string &name) {
+  return (node && node.attribute(name.c_str())) || cls.count(name) > 0;
+}
+
+double EffDouble(const pugi::xml_node &node, const AttrMap &cls,
+                 const std::string &name, double fallback) {
+  if (!HasEff(node, cls, name)) return fallback;
+  const std::string s = Eff(node, cls, name);
+  char *end = nullptr;
+  const double v = std::strtod(s.c_str(), &end);
+  return (end && end != s.c_str()) ? v : fallback;
+}
+
+void WalkDefault(const pugi::xml_node &node, const AttrMap &parent_geom,
+                 const AttrMap &parent_joint, Defaults *d) {
+  AttrMap g = parent_geom;
+  AttrMap j = parent_joint;
+  if (const auto gn = Child(node, "geom")) {
+    for (const auto &a : gn.attributes()) g[a.name()] = a.value();
+  }
+  if (const auto jn = Child(node, "joint")) {
+    for (const auto &a : jn.attributes()) j[a.name()] = a.value();
+  }
+  const std::string cls = Attr(node, "class");
+  if (cls.empty() || cls == "main") {
+    d->root_geom = g;
+    d->root_joint = j;
+  }
+  if (!cls.empty()) {
+    d->geom[cls] = g;
+    d->joint[cls] = j;
+  }
+  for (const auto &child : Children(node, "default")) {
+    WalkDefault(child, g, j, d);
+  }
+}
+
+Defaults ParseDefaults(const pugi::xml_node &root) {
+  Defaults d;
+  for (const auto &def : Children(root, "default")) {
+    WalkDefault(def, AttrMap{}, AttrMap{}, &d);
+  }
+  return d;
+}
+
+const AttrMap &ResolveGeomClass(const pugi::xml_node &geom_node,
+                                const Defaults &defaults,
+                                const std::string &childclass) {
+  std::string cls = Attr(geom_node, "class");
+  if (cls.empty()) cls = childclass;
+  if (!cls.empty()) {
+    const auto it = defaults.geom.find(cls);
+    if (it != defaults.geom.end()) return it->second;
+  }
+  return defaults.root_geom;
+}
+
+const AttrMap &ResolveJointClass(const pugi::xml_node &joint_node,
+                                 const Defaults &defaults,
+                                 const std::string &childclass) {
+  std::string cls = joint_node ? Attr(joint_node, "class") : std::string();
+  if (cls.empty()) cls = childclass;
+  if (!cls.empty()) {
+    const auto it = defaults.joint.find(cls);
+    if (it != defaults.joint.end()) return it->second;
+  }
+  return defaults.root_joint;
+}
+
+void AddGeomPhysicsAttrs(const pugi::xml_node &geom_node, const AttrMap &cls,
                          nlohmann::json *geom_json) {
   if (!geom_json) return;
-  if (HasAttr(geom_node, "group")) {
-    (*geom_json)["group"] = static_cast<int32_t>(
-        ParseDoubleAttr(geom_node, "group", 3.0));
+  if (HasEff(geom_node, cls, "group")) {
+    (*geom_json)["group"] =
+        static_cast<int32_t>(EffDouble(geom_node, cls, "group", 3.0));
   }
-  if (HasAttr(geom_node, "condim")) {
-    (*geom_json)["condim"] = static_cast<int32_t>(
-        ParseDoubleAttr(geom_node, "condim", 3.0));
+  if (HasEff(geom_node, cls, "condim")) {
+    (*geom_json)["condim"] =
+        static_cast<int32_t>(EffDouble(geom_node, cls, "condim", 3.0));
   }
-  if (HasAttr(geom_node, "margin")) {
-    (*geom_json)["mjc"]["margin"] = ParseDoubleAttr(geom_node, "margin", 0.0);
+  if (HasEff(geom_node, cls, "margin")) {
+    (*geom_json)["mjc"]["margin"] = EffDouble(geom_node, cls, "margin", 0.0);
   }
-  if (HasAttr(geom_node, "solmix")) {
-    (*geom_json)["mjc"]["solmix"] = ParseDoubleAttr(geom_node, "solmix", 1.0);
+  if (HasEff(geom_node, cls, "solmix")) {
+    (*geom_json)["mjc"]["solmix"] = EffDouble(geom_node, cls, "solmix", 1.0);
   }
 }
 
@@ -598,31 +872,55 @@ std::map<std::string, MeshAsset> CollectMujocoAssets(
       asset.path = mesh_dir / file;
       asset.scale =
           ParseDouble3(Attr(mesh_node, "scale"), {{1.0, 1.0, 1.0}});
+      if (HasAttr(mesh_node, "refpos")) {
+        asset.refpos = ParseDouble3(Attr(mesh_node, "refpos"), {{0, 0, 0}});
+        asset.has_refpos = true;
+      }
+      const std::vector<double> rq = ParseDoubles(Attr(mesh_node, "refquat"));
+      if (rq.size() >= 4) {
+        asset.refquat = {{rq[0], rq[1], rq[2], rq[3]}};
+        asset.has_refquat = true;
+      }
       assets[name] = asset;
     }
   }
   return assets;
 }
 
-bool BuildGeomPayload(const pugi::xml_node &geom_node,
+bool BuildGeomPayload(const pugi::xml_node &geom_node, const AttrMap &cls,
+                      const std::string &cls_name,
                       const std::map<std::string, MeshAsset> &assets,
-                      const Options &opts, MeshPayload *payload,
-                      bool *is_visual, std::string *err) {
+                      const Options &opts, const Context &ctx,
+                      MeshPayload *payload, bool *is_visual, std::string *err) {
   const std::string type =
-      HasAttr(geom_node, "type") ? Attr(geom_node, "type") :
-      HasAttr(geom_node, "mesh") ? "mesh" : "sphere";
+      HasEff(geom_node, cls, "type") ? Eff(geom_node, cls, "type") :
+      HasEff(geom_node, cls, "mesh") ? "mesh" : "sphere";
   payload->name = Attr(geom_node, "name");
-  if (payload->name.empty()) payload->name = Attr(geom_node, "mesh", "geom");
-  payload->matrix = PoseMatrix(geom_node);
+  if (payload->name.empty()) payload->name = Eff(geom_node, cls, "mesh", "geom");
+  payload->matrix = PoseMatrix(geom_node, ctx);
 
-  const std::string klass = Attr(geom_node, "class");
-  (*is_visual) = (klass == "visual") ||
-                 (Attr(geom_node, "group") == "2") ||
-                 (Attr(geom_node, "contype") == "0" &&
-                  Attr(geom_node, "conaffinity") == "0");
+  // Classification mirrors the JS converter: a resolved geom group (own or
+  // inherited from <default>) wins -- groups 0-2 are visible, 3-5 are
+  // collision. With no group anywhere, fall back to the class name and then
+  // MuJoCo's contype/conaffinity==0 (visual-only) convention.
+  if (HasEff(geom_node, cls, "group")) {
+    (*is_visual) =
+        static_cast<int>(EffDouble(geom_node, cls, "group", 3.0)) < 3;
+  } else {
+    const std::string lname = ToLower(cls_name);
+    if (lname.find("collision") != std::string::npos ||
+        lname.find("collider") != std::string::npos) {
+      (*is_visual) = false;
+    } else if (Eff(geom_node, cls, "contype") == "0" &&
+               Eff(geom_node, cls, "conaffinity") == "0") {
+      (*is_visual) = true;
+    } else {
+      (*is_visual) = true;  // default group 0 is visible
+    }
+  }
 
   if (type == "mesh") {
-    const std::string mesh_name = Attr(geom_node, "mesh");
+    const std::string mesh_name = Eff(geom_node, cls, "mesh");
     const auto it = assets.find(mesh_name);
     if (it == assets.end()) {
       if (err) *err = "Missing MJCF mesh asset: " + mesh_name;
@@ -631,10 +929,12 @@ bool BuildGeomPayload(const pugi::xml_node &geom_node,
     if (!LoadMeshFile(it->second.path, &payload->mesh, err)) return false;
 
     const std::array<double, 3> scale =
-        ParseDouble3(Attr(geom_node, "scale"), it->second.scale);
+        ParseDouble3(Eff(geom_node, cls, "scale"), it->second.scale);
+    // G * refframe(refpos/refquat) * scale, matching the JS mesh handling.
+    payload->matrix = MultiplyMatrix(payload->matrix, MeshRefMatrix(it->second));
     payload->matrix = MultiplyMatrix(payload->matrix, ScaleMatrix(scale));
   } else if (type == "box") {
-    const auto half = ParseDouble3(Attr(geom_node, "size"),
+    const auto half = ParseDouble3(Eff(geom_node, cls, "size"),
                                    {{0.05, 0.05, 0.05}});
     if (!(*is_visual) && !opts.tessellate_collision_shapes) {
       payload->shape = {{"type", "box"}};
@@ -643,7 +943,7 @@ bool BuildGeomPayload(const pugi::xml_node &geom_node,
       payload->mesh = MakeBoxMesh(half);
     }
   } else if (type == "sphere") {
-    const auto size = ParseDoubles(Attr(geom_node, "size"));
+    const auto size = ParseDoubles(Eff(geom_node, cls, "size"));
     const double radius = size.empty() ? 0.05 : size[0];
     if (!(*is_visual) && !opts.tessellate_collision_shapes) {
       payload->shape = {{"type", "sphere"}, {"radius", radius}};
@@ -651,7 +951,7 @@ bool BuildGeomPayload(const pugi::xml_node &geom_node,
       payload->mesh = MakeSphereMesh(radius);
     }
   } else if (type == "ellipsoid") {
-    const auto radii = ParseDouble3(Attr(geom_node, "size"),
+    const auto radii = ParseDouble3(Eff(geom_node, cls, "size"),
                                     {{0.05, 0.05, 0.05}});
     if (!(*is_visual) && !opts.tessellate_collision_shapes) {
       payload->shape = {{"type", "sphere"}, {"radius", 1.0}};
@@ -661,18 +961,22 @@ bool BuildGeomPayload(const pugi::xml_node &geom_node,
       payload->matrix = MultiplyMatrix(payload->matrix, ScaleMatrix(radii));
     }
   } else if (type == "cylinder" || type == "capsule") {
-    const auto size = ParseDoubles(Attr(geom_node, "size"));
+    const auto size = ParseDoubles(Eff(geom_node, cls, "size"));
     const double radius = size.empty() ? 0.05 : size[0];
     double half_length = size.size() >= 2 ? size[1] : radius;
-    const auto fromto = ParseDoubles(Attr(geom_node, "fromto"));
+    const auto fromto = ParseDoubles(Eff(geom_node, cls, "fromto"));
     if (fromto.size() >= 6) {
-      const double dx = fromto[3] - fromto[0];
-      const double dy = fromto[4] - fromto[1];
-      const double dz = fromto[5] - fromto[2];
-      half_length = 0.5 * std::sqrt(dx * dx + dy * dy + dz * dz);
-      payload->matrix[12] = 0.5 * (fromto[0] + fromto[3]);
-      payload->matrix[13] = 0.5 * (fromto[1] + fromto[4]);
-      payload->matrix[14] = 0.5 * (fromto[2] + fromto[5]);
+      const std::array<double, 3> dir{{fromto[3] - fromto[0],
+                                       fromto[4] - fromto[1],
+                                       fromto[5] - fromto[2]}};
+      half_length =
+          0.5 * std::sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+      // fromto fully specifies the geom frame: midpoint + Z aligned to dir.
+      const std::array<double, 3> center{{0.5 * (fromto[0] + fromto[3]),
+                                          0.5 * (fromto[1] + fromto[4]),
+                                          0.5 * (fromto[2] + fromto[5])}};
+      payload->matrix = MatrixFromPosQuat(
+          center, QuatFromTwoVecs({{0.0, 0.0, 1.0}}, dir));
     }
     if (!(*is_visual) && !opts.tessellate_collision_shapes) {
       payload->shape = {{"type", type},
@@ -683,7 +987,7 @@ bool BuildGeomPayload(const pugi::xml_node &geom_node,
       payload->mesh = MakeCylinderMesh(radius, half_length);
     }
   } else if (type == "plane") {
-    const auto size = ParseDoubles(Attr(geom_node, "size"));
+    const auto size = ParseDoubles(Eff(geom_node, cls, "size"));
     const double sx = size.size() >= 1 && size[0] > 0.0 ? size[0] : 1.0;
     const double sy = size.size() >= 2 && size[1] > 0.0 ? size[1] : 1.0;
     const double sz = size.size() >= 3 && size[2] > 0.0 ? size[2] : 0.001;
@@ -727,61 +1031,56 @@ nlohmann::json InertialToJson(const pugi::xml_node &body_node) {
   return inertial;
 }
 
-void AddJointJson(const pugi::xml_node &body_node,
-                  const std::string &parent_name, const std::string &child_name,
-                  nlohmann::json *joints) {
+void AddJointJson(const pugi::xml_node &body_node, const AttrMap &jcls,
+                  const Context &ctx, const std::string &parent_name,
+                  const std::string &child_name, nlohmann::json *joints) {
   const auto joint_node = Child(body_node, "joint");
   nlohmann::json joint = nlohmann::json::object();
   joint["name"] = joint_node ? Attr(joint_node, "name", parent_name + "_to_" + child_name)
                              : parent_name + "_to_" + child_name + "_fixed";
-  const std::string mj_type = joint_node ? Attr(joint_node, "type", "hinge") : "fixed";
+  const std::string mj_type =
+      joint_node ? Eff(joint_node, jcls, "type", "hinge") : "fixed";
   joint["type"] = (mj_type == "hinge") ? "revolute" :
                   (mj_type == "slide") ? "prismatic" : "fixed";
   joint["parent"] = parent_name;
   joint["child"] = child_name;
-  const auto axis = ParseDouble3(joint_node ? Attr(joint_node, "axis") : "",
+  const auto axis = ParseDouble3(joint_node ? Eff(joint_node, jcls, "axis") : "",
                                  {{0.0, 0.0, 1.0}});
   joint["axis"] = {axis[0], axis[1], axis[2]};
   joint["axisToken"] = AxisToken(axis);
   const auto origin = ParseDouble3(Attr(body_node, "pos"), {{0.0, 0.0, 0.0}});
   joint["origin"] = {origin[0], origin[1], origin[2]};
-  joint["originMatrix"] = PoseMatrix(body_node);
+  joint["originMatrix"] = PoseMatrix(body_node, ctx);
 
   if (joint_node) {
-    const std::vector<double> range = ParseDoubles(Attr(joint_node, "range"));
+    const std::vector<double> range = ParseDoubles(Eff(joint_node, jcls, "range"));
     if (range.size() >= 2) {
       joint["limit"] = {{"lower", range[0]}, {"upper", range[1]}};
     }
     nlohmann::json dynamics = nlohmann::json::object();
-    if (HasAttr(joint_node, "damping")) {
-      dynamics["damping"] = ParseDoubleAttr(joint_node, "damping", 0.0);
+    if (HasEff(joint_node, jcls, "damping")) {
+      dynamics["damping"] = EffDouble(joint_node, jcls, "damping", 0.0);
     }
-    if (HasAttr(joint_node, "frictionloss")) {
-      dynamics["friction"] = ParseDoubleAttr(joint_node, "frictionloss", 0.0);
+    if (HasEff(joint_node, jcls, "frictionloss")) {
+      dynamics["friction"] = EffDouble(joint_node, jcls, "frictionloss", 0.0);
     }
     // MJCF <joint stiffness=> and <joint armature=> — propagate so the
     // USD-side converter can author physxLimit:*:stiffness and
     // physxJoint:armature alongside the canonical mjc:* fallbacks.
-    if (HasAttr(joint_node, "stiffness")) {
-      dynamics["stiffness"] = ParseDoubleAttr(joint_node, "stiffness", 0.0);
+    if (HasEff(joint_node, jcls, "stiffness")) {
+      dynamics["stiffness"] = EffDouble(joint_node, jcls, "stiffness", 0.0);
     }
-    if (HasAttr(joint_node, "armature")) {
-      dynamics["armature"] = ParseDoubleAttr(joint_node, "armature", 0.0);
+    if (HasEff(joint_node, jcls, "armature")) {
+      dynamics["armature"] = EffDouble(joint_node, jcls, "armature", 0.0);
     }
     joint["dynamics"] = dynamics;
-    // MJCF <joint ref="..."> is the rest-angle (degrees for hinge,
-    // meters for slide). We forward it as a generic `initPosition`
-    // (radians for hinge, since URDF uses radians internally) so the
-    // C++ converter can emit state:{angular,linear}:physics:position.
-    if (HasAttr(joint_node, "ref")) {
-      double ref = ParseDoubleAttr(joint_node, "ref", 0.0);
-      if (mj_type == "hinge") {
-        // MJCF degrees → radians for our pipeline.
-        // Use a literal (π/180) instead of M_PI: M_PI is a non-standard
-        // GNU extension and is not defined by MSVC's <cmath> unless
-        // _USE_MATH_DEFINES is set before include.
-        ref *= 0.017453292519943295;
-      }
+    // MJCF <joint ref="..."> is the rest-angle (degrees for hinge under the
+    // default <compiler angle="degree">, meters for slide). Forward it as a
+    // generic `initPosition` (radians for hinge) so the C++ converter can
+    // emit state:{angular,linear}:physics:position.
+    if (HasEff(joint_node, jcls, "ref")) {
+      double ref = EffDouble(joint_node, jcls, "ref", 0.0);
+      if (mj_type == "hinge") ref *= ctx.angle_to_rad;
       joint["initPosition"] = ref;
     }
   }
@@ -843,10 +1142,16 @@ void AddMujocoActuatorsJson(const pugi::xml_node &root,
 
 bool VisitMujocoBody(const pugi::xml_node &body_node,
                      const std::string &parent_name,
+                     const std::string &childclass,
                      const std::map<std::string, MeshAsset> &assets,
-                     const Options &opts, nlohmann::json *links,
-                     nlohmann::json *joints, Stats *stats,
-                     std::string *err) {
+                     const Options &opts, const Context &ctx,
+                     nlohmann::json *links, nlohmann::json *joints,
+                     Stats *stats, std::string *err) {
+  // A body's own `childclass` becomes the default class for its descendant
+  // geoms/joints/bodies, unless overridden deeper.
+  const std::string cc = HasAttr(body_node, "childclass")
+                             ? Attr(body_node, "childclass")
+                             : childclass;
   const std::string body_name =
       Attr(body_node, "name", "body_" + std::to_string(stats->links));
   nlohmann::json link = {
@@ -856,9 +1161,13 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
       {"collisions", nlohmann::json::array()}};
 
   for (const auto &geom_node : Children(body_node, "geom")) {
+    const AttrMap &cls = ResolveGeomClass(geom_node, ctx.defaults, cc);
+    std::string cls_name = Attr(geom_node, "class");
+    if (cls_name.empty()) cls_name = cc;
     MeshPayload payload;
     bool visual = true;
-    if (!BuildGeomPayload(geom_node, assets, opts, &payload, &visual, err)) {
+    if (!BuildGeomPayload(geom_node, cls, cls_name, assets, opts, ctx, &payload,
+                          &visual, err)) {
       if (opts.allow_missing) {
         std::cerr << "WARN: " << (err ? *err : "mesh skipped") << "\n";
         if (err) err->clear();
@@ -868,12 +1177,12 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
     }
     if (visual) {
       nlohmann::json visual_json = MeshPayloadToJson(payload);
-      AddGeomPhysicsAttrs(geom_node, &visual_json);
+      AddGeomPhysicsAttrs(geom_node, cls, &visual_json);
       link["visuals"].push_back(std::move(visual_json));
       stats->visuals++;
     } else {
       nlohmann::json col = MeshPayloadToJson(payload);
-      AddGeomPhysicsAttrs(geom_node, &col);
+      AddGeomPhysicsAttrs(geom_node, cls, &col);
       // Default approximation `convexHull` matches
       // `src/tydra/urdf-to-usd.cc::AddCollisionAPIs` and the
       // mujoco-usd-converter convention (one Mesh per geom +
@@ -888,13 +1197,15 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
   links->push_back(std::move(link));
   stats->links++;
   if (!parent_name.empty()) {
-    AddJointJson(body_node, parent_name, body_name, joints);
+    const auto joint_node = Child(body_node, "joint");
+    const AttrMap &jcls = ResolveJointClass(joint_node, ctx.defaults, cc);
+    AddJointJson(body_node, jcls, ctx, parent_name, body_name, joints);
     stats->joints++;
   }
 
   for (const auto &child_body : Children(body_node, "body")) {
-    if (!VisitMujocoBody(child_body, body_name, assets, opts, links, joints,
-                         stats, err)) {
+    if (!VisitMujocoBody(child_body, body_name, cc, assets, opts, ctx, links,
+                         joints, stats, err)) {
       return false;
     }
   }
@@ -929,11 +1240,24 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
     return false;
   }
 
+  // <compiler angle/eulerseq> + <default> tree drive orientation units and
+  // class inheritance for the whole scene.
+  Context ctx;
+  if (const auto compiler = Child(root, "compiler")) {
+    if (ToLower(Attr(compiler, "angle", "degree")) == "radian") {
+      ctx.angle_to_rad = 1.0;
+    }
+    const std::string eseq = Attr(compiler, "eulerseq");
+    if (!eseq.empty()) ctx.eulerseq = eseq;
+  }
+  ctx.defaults = ParseDefaults(root);
+
   nlohmann::json links = nlohmann::json::array();
   nlohmann::json joints = nlohmann::json::array();
   nlohmann::json actuators = nlohmann::json::array();
   for (const auto &body : Children(worldbody, "body")) {
-    if (!VisitMujocoBody(body, "", assets, opts, &links, &joints, stats, err)) {
+    if (!VisitMujocoBody(body, "", "", assets, opts, ctx, &links, &joints,
+                         stats, err)) {
       return false;
     }
   }
