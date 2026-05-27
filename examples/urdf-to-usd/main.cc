@@ -513,17 +513,28 @@ std::vector<double> PoseMatrix(const pugi::xml_node &node, const Context &ctx) {
   return MatrixFromPosQuat(pos, q);
 }
 
+// Column-major (Three.js Matrix4.elements) product a * b: index = col*4 + row.
+// As a transform this applies `b` first, then `a` (a*(b*v)) -- so the rightmost
+// argument is the innermost/local transform, matching Three.js Matrix4.multiply.
 std::vector<double> MultiplyMatrix(const std::vector<double> &a,
                                    const std::vector<double> &b) {
   std::vector<double> out(16, 0.0);
-  for (size_t r = 0; r < 4; r++) {
-    for (size_t c = 0; c < 4; c++) {
+  for (size_t c = 0; c < 4; c++) {
+    for (size_t r = 0; r < 4; r++) {
+      double s = 0.0;
       for (size_t k = 0; k < 4; k++) {
-        out[r * 4 + c] += a[r * 4 + k] * b[k * 4 + c];
+        s += a[k * 4 + r] * b[c * 4 + k];
       }
+      out[c * 4 + r] = s;
     }
   }
   return out;
+}
+
+// 4x4 identity in the column-major flat layout used throughout.
+std::vector<double> IdentityMatrix() {
+  return {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+          0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0};
 }
 
 std::vector<double> ScaleMatrix(const std::array<double, 3> &scale) {
@@ -935,13 +946,26 @@ bool BuildGeomPayload(const pugi::xml_node &geom_node, const AttrMap &cls,
                       const std::string &cls_name,
                       const std::map<std::string, MeshAsset> &assets,
                       const Options &opts, const Context &ctx,
+                      const std::vector<double> &body_world,
                       MeshPayload *payload, bool *is_visual, std::string *err) {
   const std::string type =
       HasEff(geom_node, cls, "type") ? Eff(geom_node, cls, "type") :
       HasEff(geom_node, cls, "mesh") ? "mesh" : "sphere";
   payload->name = Attr(geom_node, "name");
   if (payload->name.empty()) payload->name = Eff(geom_node, cls, "mesh", "geom");
-  payload->matrix = PoseMatrix(geom_node, ctx);
+  // Bake the accumulated body-chain world transform into the geom matrix: the
+  // USD converter places every link Xform at identity, so each geom must carry
+  // its full world placement (body_world * geom-local pose). The geom pose may
+  // be inherited from a <default> class (e.g. allegro fingertip geoms get
+  // pos="0 0 0.0267" from class="fingertip_visual"), so resolve via Eff.
+  const std::array<double, 3> geom_pos =
+      ParseDouble3(Eff(geom_node, cls, "pos"), {{0.0, 0.0, 0.0}});
+  const Quat geom_quat = OrientationQuat(
+      Eff(geom_node, cls, "quat"), Eff(geom_node, cls, "axisangle"),
+      Eff(geom_node, cls, "euler"), Eff(geom_node, cls, "xyaxes"),
+      Eff(geom_node, cls, "zaxis"), ctx);
+  payload->matrix =
+      MultiplyMatrix(body_world, MatrixFromPosQuat(geom_pos, geom_quat));
 
   // Classification mirrors the JS converter: a resolved geom group (own or
   // inherited from <default>) wins -- groups 0-2 are visible, 3-5 are
@@ -1015,12 +1039,14 @@ bool BuildGeomPayload(const pugi::xml_node &geom_node, const AttrMap &cls,
                                        fromto[5] - fromto[2]}};
       half_length =
           0.5 * std::sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
-      // fromto fully specifies the geom frame: midpoint + Z aligned to dir.
+      // fromto fully specifies the geom frame (midpoint + Z aligned to dir),
+      // overriding the geom's own pos/quat; still placed in body world space.
       const std::array<double, 3> center{{0.5 * (fromto[0] + fromto[3]),
                                           0.5 * (fromto[1] + fromto[4]),
                                           0.5 * (fromto[2] + fromto[5])}};
-      payload->matrix = MatrixFromPosQuat(
-          center, QuatFromTwoVecs({{0.0, 0.0, 1.0}}, dir));
+      payload->matrix = MultiplyMatrix(
+          body_world,
+          MatrixFromPosQuat(center, QuatFromTwoVecs({{0.0, 0.0, 1.0}}, dir)));
     }
     if (!(*is_visual) && !opts.tessellate_collision_shapes) {
       payload->shape = {{"type", type},
@@ -1067,10 +1093,18 @@ nlohmann::json InertialToJson(const pugi::xml_node &body_node) {
   const auto com =
       ParseDouble3(Attr(inertial_node, "pos"), {{0.0, 0.0, 0.0}});
   inertial["centerOfMass"] = {com[0], com[1], com[2]};
+  // MJCF inertia: <inertial fullinertia="Ixx Iyy Izz Ixy Ixz Iyz"> (first 3 are
+  // the diagonal) or the more common <inertial diaginertia="Ixx Iyy Izz">.
   const std::vector<double> full =
       ParseDoubles(Attr(inertial_node, "fullinertia"));
   if (full.size() >= 3) {
     inertial["diagonalInertia"] = {full[0], full[1], full[2]};
+  } else {
+    const std::vector<double> diag =
+        ParseDoubles(Attr(inertial_node, "diaginertia"));
+    if (diag.size() >= 3) {
+      inertial["diagonalInertia"] = {diag[0], diag[1], diag[2]};
+    }
   }
   return inertial;
 }
@@ -1099,7 +1133,11 @@ void AddJointJson(const pugi::xml_node &body_node, const AttrMap &jcls,
   if (joint_node) {
     const std::vector<double> range = ParseDoubles(Eff(joint_node, jcls, "range"));
     if (range.size() >= 2) {
-      joint["limit"] = {{"lower", range[0]}, {"upper", range[1]}};
+      // The USD converter expects revolute limits in radians (it re-converts to
+      // degrees). MJCF hinge ranges are in the compiler's angle unit (degrees by
+      // default), so convert them; slide ranges are meters and pass through.
+      const double scale = (mj_type == "hinge") ? ctx.angle_to_rad : 1.0;
+      joint["limit"] = {{"lower", range[0] * scale}, {"upper", range[1] * scale}};
     }
     nlohmann::json dynamics = nlohmann::json::object();
     if (HasEff(joint_node, jcls, "damping")) {
@@ -1187,6 +1225,7 @@ void AddMujocoActuatorsJson(const pugi::xml_node &root,
 bool VisitMujocoBody(const pugi::xml_node &body_node,
                      const std::string &parent_name,
                      const std::string &childclass,
+                     const std::vector<double> &parent_world,
                      const std::map<std::string, MeshAsset> &assets,
                      const Options &opts, const Context &ctx,
                      nlohmann::json *links, nlohmann::json *joints,
@@ -1196,6 +1235,10 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
   const std::string cc = HasAttr(body_node, "childclass")
                              ? Attr(body_node, "childclass")
                              : childclass;
+  // Accumulate the body-chain world transform: this body's frame relative to
+  // its parent, composed onto the parent's world frame.
+  const std::vector<double> body_world =
+      MultiplyMatrix(parent_world, PoseMatrix(body_node, ctx));
   const std::string body_name =
       Attr(body_node, "name", "body_" + std::to_string(stats->links));
   nlohmann::json link = {
@@ -1210,8 +1253,8 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
     if (cls_name.empty()) cls_name = cc;
     MeshPayload payload;
     bool visual = true;
-    if (!BuildGeomPayload(geom_node, cls, cls_name, assets, opts, ctx, &payload,
-                          &visual, err)) {
+    if (!BuildGeomPayload(geom_node, cls, cls_name, assets, opts, ctx,
+                          body_world, &payload, &visual, err)) {
       if (opts.allow_missing) {
         std::cerr << "WARN: " << (err ? *err : "mesh skipped") << "\n";
         if (err) err->clear();
@@ -1248,8 +1291,8 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
   }
 
   for (const auto &child_body : Children(body_node, "body")) {
-    if (!VisitMujocoBody(child_body, body_name, cc, assets, opts, ctx, links,
-                         joints, stats, err)) {
+    if (!VisitMujocoBody(child_body, body_name, cc, body_world, assets, opts,
+                         ctx, links, joints, stats, err)) {
       return false;
     }
   }
@@ -1300,8 +1343,8 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   nlohmann::json joints = nlohmann::json::array();
   nlohmann::json actuators = nlohmann::json::array();
   for (const auto &body : Children(worldbody, "body")) {
-    if (!VisitMujocoBody(body, "", "", assets, opts, ctx, &links, &joints,
-                         stats, err)) {
+    if (!VisitMujocoBody(body, "", "", IdentityMatrix(), assets, opts, ctx,
+                         &links, &joints, stats, err)) {
       return false;
     }
   }

@@ -918,7 +918,7 @@ function parseMujocoInertial(bodyNode) {
   return inertial;
 }
 
-function shapePayloadForMujocoGeom(geomNode, originMatrix, fallbackName) {
+function shapePayloadForMujocoGeom(geomNode, originMatrix, fallbackName, bodyWorld = new THREE.Matrix4()) {
   const geomType = geomNode.attrs.type || (geomNode.attrs.mesh ? 'mesh' : 'sphere');
   if (geomType === 'mesh') return null;
 
@@ -975,7 +975,9 @@ function shapePayloadForMujocoGeom(geomNode, originMatrix, fallbackName) {
       const center = p1.clone().add(p2).multiplyScalar(0.5);
       const quatZ = new THREE.Quaternion().setFromUnitVectors(
         new THREE.Vector3(0, 0, 1), dir.clone().normalize());
-      matrix = new THREE.Matrix4().compose(center, quatZ, new THREE.Vector3(1, 1, 1));
+      // fromto replaces the geom's pose but is still placed in body world space.
+      matrix = new THREE.Matrix4().copy(bodyWorld).multiply(
+        new THREE.Matrix4().compose(center, quatZ, new THREE.Vector3(1, 1, 1)));
     }
     return [{
       name: fallbackName,
@@ -1062,9 +1064,12 @@ function buildMujocoActuators(root) {
   return actuators;
 }
 
-async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName, opts) {
+async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName, opts, bodyWorld = new THREE.Matrix4()) {
   const geomType = geomNode.attrs.type || (geomNode.attrs.mesh ? 'mesh' : 'sphere');
-  const originMatrix = matrixFromPoseAttrs(geomNode.attrs);
+  // Bake the body-chain world transform into the geom matrix: the USD converter
+  // places every link Xform at identity, so each geom carries its full world
+  // placement (body_world * geom-local pose).
+  const originMatrix = new THREE.Matrix4().copy(bodyWorld).multiply(matrixFromPoseAttrs(geomNode.attrs));
   if (geomType === 'mesh') {
     const meshName = geomNode.attrs.mesh;
     const meshAsset = meshAssets.get(meshName);
@@ -1226,11 +1231,14 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   let visualCount = 0;
   let collisionCount = 0;
 
-  async function visitBody(bodyNode, parentName = '', inheritedChildclass = '') {
+  async function visitBody(bodyNode, parentName = '', inheritedChildclass = '', parentWorld = new THREE.Matrix4()) {
     const linkName = bodyNode.attrs.name || `body_${links.length}`;
     // childclass propagates to this body's own geoms/joints and descendants
     // until overridden by a nearer childclass or an explicit element class.
     const childclass = bodyNode.attrs.childclass || inheritedChildclass;
+    // Accumulate the body-chain world transform (this body relative to parent,
+    // composed onto the parent's world frame).
+    const bodyWorld = new THREE.Matrix4().copy(parentWorld).multiply(matrixFromPoseAttrs(bodyNode.attrs));
     const linkPayload = {
       name: linkName,
       inertial: parseMujocoInertial(bodyNode),
@@ -1253,18 +1261,15 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
       const geomClass = (effAttrs.class || '').toLowerCase();
       const geomGroup = Number(effAttrs.group);
       const isVisual = Number.isFinite(geomGroup) ? geomGroup < 3
-        : geomClass.includes('collision') ? false
+        : (geomClass.includes('collision') || geomClass.includes('collider')) ? false
         : true;
+      const geomWorld = new THREE.Matrix4().copy(bodyWorld).multiply(matrixFromPoseAttrs(geomNode.attrs));
       let payloads = null;
       if (!isVisual && !opts.tessellateCollisionShapes) {
-        payloads = shapePayloadForMujocoGeom(
-          geomNode,
-          matrixFromPoseAttrs(geomNode.attrs),
-          geomName
-        );
+        payloads = shapePayloadForMujocoGeom(geomNode, geomWorld, geomName, bodyWorld);
       }
       if (!payloads) {
-        payloads = await mujocoGeomPayloads(geomNode, meshAssets, geomName, opts);
+        payloads = await mujocoGeomPayloads(geomNode, meshAssets, geomName, opts, bodyWorld);
       }
       if (isVisual) {
         linkPayload.visuals.push(...payloads.map((payload) => addMujocoPhysicsAttrs(payload, geomNode)));
@@ -1293,6 +1298,10 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
         const jAttrs = resolveElementAttrs(jointNode, defaults.joint, defaults.rootJoint, childclass);
         const axis = parseNumbers(jAttrs.axis, [0, 0, 1]);
         const range = parseNumbers(jAttrs.range, []);
+        // The USD converter expects revolute limits in radians (it re-converts
+        // to degrees). MJCF hinge ranges are in the compiler angle unit
+        // (degrees by default); slide ranges are meters and pass through.
+        const limScale = (jAttrs.type || 'hinge') === 'hinge' ? mjcfPoseCtx.toRad : 1;
         joints.push({
           name: jAttrs.name || `${parentName}_to_${linkName}`,
           type: mujocoJointType(jAttrs.type || 'hinge'),
@@ -1302,7 +1311,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
           axisToken: axisToToken(axis),
           origin: parseNumbers(bodyNode.attrs.pos, [0, 0, 0]),
           originMatrix: matrixToUSDArray(matrixFromPoseAttrs(bodyNode.attrs)),
-          limit: range.length >= 2 ? { lower: range[0], upper: range[1] } : {},
+          limit: range.length >= 2 ? { lower: range[0] * limScale, upper: range[1] * limScale } : {},
           dynamics: {
             damping: numberAttr(jAttrs, 'damping'),
             friction: numberAttr(jAttrs, 'frictionloss')
@@ -1325,7 +1334,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
     }
 
     for (const childBody of childElements(bodyNode, 'body')) {
-      await visitBody(childBody, linkName, childclass);
+      await visitBody(childBody, linkName, childclass, bodyWorld);
     }
   }
 
