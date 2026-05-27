@@ -669,6 +669,7 @@ private:
     // Array types: store count + elements in data section
     if (is_array) {
       uint64_t count = 0;
+      bool data_compressed = false; // whether the array data was compressed
       size_t elem_size = CrateValueSize(crate_type, false);
       (void)elem_size;
 
@@ -691,10 +692,32 @@ private:
           const std::vector<int32_t>* arr = val.as_int_array();
           if (arr) {
             count = arr->size();
-            size_t bytes = count * sizeof(int32_t);
-            arr_data.resize(8 + bytes);
-            std::memcpy(arr_data.data(), &count, 8);
-            std::memcpy(arr_data.data() + 8, arr->data(), bytes);
+            if (options_.compress_arrays && count >= 16) {
+              // Compressed integer array: [u64 count][u64 comp_size][LZ4+delta data]
+              std::vector<uint32_t> tmp(count);
+              for (size_t k = 0; k < count; ++k) tmp[k] = static_cast<uint32_t>((*arr)[k]);
+              std::vector<uint8_t> delta = EncodeDeltaU32(tmp.data(), count);
+              CompressResult cr = CompressCrateBlob(delta.data(), delta.size());
+              if (cr.success) {
+                arr_data.resize(8 + 8 + cr.data.size());
+                std::memcpy(arr_data.data(), &count, 8);
+                uint64_t csz = static_cast<uint64_t>(cr.data.size());
+                std::memcpy(arr_data.data() + 8, &csz, 8);
+                std::memcpy(arr_data.data() + 16, cr.data.data(), cr.data.size());
+                data_compressed = true;
+              } else {
+                // Fall back to uncompressed
+                size_t bytes = count * sizeof(int32_t);
+                arr_data.resize(8 + bytes);
+                std::memcpy(arr_data.data(), &count, 8);
+                std::memcpy(arr_data.data() + 8, arr->data(), bytes);
+              }
+            } else {
+              size_t bytes = count * sizeof(int32_t);
+              arr_data.resize(8 + bytes);
+              std::memcpy(arr_data.data(), &count, 8);
+              std::memcpy(arr_data.data() + 8, arr->data(), bytes);
+            }
           }
           break;
         }
@@ -738,7 +761,7 @@ private:
         block.data = std::move(arr_data);
         value_data_.push_back(std::move(block));
         // Return non-inline value rep (index will be resolved to offset later)
-        return ValueRep::Make(crate_type, idx, true, false);
+        return ValueRep::Make(crate_type, idx, true, false, data_compressed);
       }
     }
 
@@ -1374,6 +1397,36 @@ private:
     write_comp(spec_types.data(), num_specs);
   }
 
+  void _PatchTimeSamplesBlock(uint64_t data_idx) {
+    if (data_idx >= value_data_.size()) return;
+    DataBlock& block = value_data_[data_idx];
+    if (block.data.size() < 8) return;
+
+    uint64_t num_samples;
+    std::memcpy(&num_samples, block.data.data(), 8);
+    if (num_samples == 0 || block.data.size() < 8 + num_samples * 16) return;
+
+    for (size_t i = 0; i < num_samples; i++) {
+      size_t vrep_offset = 8 + i * 16 + 8;
+      if (vrep_offset + 8 > block.data.size()) break;
+
+      uint64_t vrep_raw;
+      std::memcpy(&vrep_raw, block.data.data() + vrep_offset, 8);
+      ValueRep vrep(vrep_raw);
+
+      if (vrep.is_inlined()) continue;
+
+      uint64_t payload = vrep.payload();
+      if (payload < value_offsets_.size()) {
+        uint64_t abs_offset = value_start_offset_ + value_offsets_[static_cast<size_t>(payload)];
+        vrep_raw = ValueRep::Make(vrep.type_id(), abs_offset,
+                                   vrep.is_array(), false,
+                                   vrep.is_compressed()).raw();
+        std::memcpy(block.data.data() + vrep_offset, &vrep_raw, 8);
+      }
+    }
+  }
+
   void WriteValueSection() {
     // Late-bind: compute actual file offsets for all value data blocks
     // The VALUE section layout:
@@ -1383,11 +1436,14 @@ private:
     // START OF VALUE SECTION to the block's data.
 
     // First pass: compute offsets for all data blocks in value_data_ order.
-    // Blocks are written sequentially, so each block i gets the cumulative
-    // size of all previous blocks as its offset.
+    // Align each block to an 8-byte boundary for memory-mapped zero-copy reads.
     value_offsets_.resize(value_data_.size());
     uint64_t current_offset = 0;
     for (size_t i = 0; i < value_data_.size(); ++i) {
+      // Align to 8 bytes before each block
+      if (current_offset % 8 != 0) {
+        current_offset += 8 - (current_offset % 8);
+      }
       value_offsets_[i] = current_offset;
       current_offset += value_data_[i].data.size();
     }
@@ -1406,27 +1462,15 @@ private:
                                          field.value_rep.is_array(), false,
                                          field.value_rep.is_compressed());
       }
-    }
-
-    // Also fix TimeSamples and TokenListOp ValueReps
-    for (auto& field : fields_) {
-      CrateTypeId type = field.value_rep.type_id();
-      if (type == CrateTypeId::TimeSamples || type == CrateTypeId::TokenListOp) {
-        if (!field.value_rep.is_inlined()) {
-          uint64_t data_idx = field.value_rep.payload();
-          if (data_idx < value_data_.size() && data_idx < value_offsets_.size()) {
-            uint64_t offset = value_start_offset_ + value_offsets_[data_idx];
-            field.value_rep = ValueRep::Make(type, offset,
-                                             field.value_rep.is_array(), false);
-          }
-        }
+      // Patch embedded ValueReps in TimeSamples data blocks
+      if (type == CrateTypeId::TimeSamples) {
+        _PatchTimeSamplesBlock(data_idx);
       }
     }
 
-    // Third pass: actually write the data blocks
+    // Third pass: actually write the data blocks, 8-byte aligned
     for (size_t i = 0; i < value_data_.size(); ++i) {
-      // Skip blocks where data was already written (not referenced by any field)
-      // All blocks are referenced, so write all.
+      writer_.align(8);
       writer_.write_bytes(value_data_[i].data.data(),
                           value_data_[i].data.size());
     }
