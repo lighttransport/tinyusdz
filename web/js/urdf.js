@@ -1546,8 +1546,14 @@ async function mujocoGeomPayloads(geomAttrs, meshAssets, fallbackName, baseMatri
 function classifyMujocoGeom(geomAttrs) {
   const attrs = geomAttrs || {};
   const className = String(attrs.class || '').toLowerCase();
-  if (className.includes('collision') || attrs.group === '3') return false;
-  if (className.includes('visual') || attrs.group === '2') return true;
+  if (className.includes('collision')) return false;
+  if (className.includes('visual')) return true;
+  // MuJoCo geom groups 3-5 are not in the default-visible set (0-2): treat them
+  // as collision/auxiliary so e.g. shadow_dexee's group-5 CollisionGeom capsules
+  // (contype=0/conaffinity=0) don't masquerade as the visual hand shell.
+  const g = Number(attrs.group);
+  if (Number.isFinite(g) && g >= 3) return false;
+  if (g === 2) return true;
   return attrs.contype === '0' && attrs.conaffinity === '0';
 }
 
