@@ -561,8 +561,8 @@ bool CrateReader::Impl::ReadTokens() {
     return false;
   }
 
-  DecompressResult dr = DecompressLZ4(compressed.data(), compressed.size(),
-                                       static_cast<size_t>(uncompressed_size));
+  DecompressResult dr = DecompressCrateBlob(compressed.data(), compressed.size(),
+                                            static_cast<size_t>(uncompressed_size));
   if (!dr.success) {
     AddError("Failed to decompress tokens: " + dr.error);
     return false;
@@ -655,14 +655,24 @@ bool CrateReader::Impl::ReadFields() {
     return false;
   }
 
-  DecompressResult dr = DecompressIntegers(indices_data.data(), indices_data.size(),
-                                            static_cast<size_t>(num_fields), false);
+  // Try pxrUSD format (n_chunks LZ4 + delta-coded) first, fall back to legacy
+  std::vector<uint32_t> token_indices_vec(static_cast<size_t>(num_fields));
+  DecompressResult dr = DecompressCompressedU32(indices_data.data(), indices_data.size(),
+                                                 token_indices_vec.data(),
+                                                 static_cast<size_t>(num_fields));
   if (!dr.success) {
-    AddError("Failed to decompress field indices: " + dr.error);
-    return false;
+    // Fall back to legacy format
+    dr = DecompressIntegers(indices_data.data(), indices_data.size(),
+                            static_cast<size_t>(num_fields), false);
+    if (!dr.success) {
+      AddError("Failed to decompress field indices: " + dr.error);
+      return false;
+    }
+    std::memcpy(token_indices_vec.data(), dr.data.data(),
+                num_fields * sizeof(uint32_t));
   }
 
-  const uint32_t* token_indices = reinterpret_cast<const uint32_t*>(dr.data.data());
+  const uint32_t* token_indices = token_indices_vec.data();
 
   uint64_t reps_size;
   if (!reader_->read_u64(reps_size)) {
@@ -684,8 +694,8 @@ bool CrateReader::Impl::ReadFields() {
       return false;
     }
 
-    DecompressResult rdr = DecompressLZ4(reps_data.data(), reps_data.size(),
-                                          static_cast<size_t>(num_fields * 8));
+    DecompressResult rdr = DecompressCrateBlob(reps_data.data(), reps_data.size(),
+                                               static_cast<size_t>(num_fields * 8));
     if (!rdr.success) {
       AddError("Failed to decompress value reps");
       return false;
@@ -727,15 +737,20 @@ bool CrateReader::Impl::ReadFieldsets() {
     return false;
   }
 
-  DecompressResult dr = DecompressIntegers(data.data(), data.size(),
-                                            static_cast<size_t>(num_fieldsets), false);
-  if (!dr.success) {
-    AddError("Failed to decompress fieldsets: " + dr.error);
-    return false;
-  }
-
   fieldset_indices_.resize(static_cast<size_t>(num_fieldsets));
-  std::memcpy(fieldset_indices_.data(), dr.data.data(), num_fieldsets * sizeof(uint32_t));
+  DecompressResult dr = DecompressCompressedU32(data.data(), data.size(),
+                                                 fieldset_indices_.data(),
+                                                 static_cast<size_t>(num_fieldsets));
+  if (!dr.success) {
+    // Legacy fallback: try EncodeIntegers (common-prefix, no LZ4)
+    dr = DecompressIntegers(data.data(), data.size(),
+                            static_cast<size_t>(num_fieldsets), false);
+    if (!dr.success) {
+      AddError("Failed to decompress fieldsets: " + dr.error);
+      return false;
+    }
+    std::memcpy(fieldset_indices_.data(), dr.data.data(), num_fieldsets * sizeof(uint32_t));
+  }
 
   return true;
 }
@@ -765,15 +780,76 @@ bool CrateReader::Impl::ReadSpecs() {
 
   specs_.resize(static_cast<size_t>(num_specs));
 
-  size_t remaining = static_cast<size_t>(section->size) - 8;
-  std::vector<uint8_t> data(remaining);
-  if (!reader_->read(data.data(), remaining)) {
-    AddError("Failed to read specs data");
-    return false;
+  uint64_t remaining_size = static_cast<uint64_t>(section->size) - 8;
+
+  // Read 3 compressed integer arrays (delta+LZ4 Usd_IntegerCompression format)
+  auto read_comp_array = [&](uint32_t* dst, size_t count, uint64_t& remaining) -> bool {
+    if (remaining < 8) {
+      AddError("Specs section: not enough data for array size");
+      return false;
+    }
+    uint64_t comp_size;
+    if (!reader_->read_u64(comp_size)) {
+      AddError("Failed to read specs array compressed size");
+      return false;
+    }
+    remaining -= 8;
+
+    if (comp_size > remaining) {
+      AddError("Specs compressed size exceeds remaining section data");
+      return false;
+    }
+
+    // Include u64 compressed_size prefix (DecompressCompressedU32 expects it)
+    std::vector<uint8_t> comp_data(8 + static_cast<size_t>(comp_size));
+    std::memcpy(comp_data.data(), &comp_size, 8);
+    if (!reader_->read(comp_data.data() + 8, static_cast<size_t>(comp_size))) {
+      AddError("Failed to read specs compressed data");
+      return false;
+    }
+    remaining -= comp_size;
+
+    DecompressResult dr = DecompressCompressedU32(comp_data.data(), comp_data.size(),
+                                                   dst, count);
+    if (!dr.success) {
+      // Fallback: try legacy EncodeIntegers (common-prefix, no LZ4)
+      dr = DecompressIntegers(comp_data.data(), comp_data.size(), count, false);
+      if (!dr.success) {
+        AddError("Failed to decompress specs array: " + dr.error);
+        return false;
+      }
+      std::memcpy(dst, dr.data.data(), count * sizeof(uint32_t));
+    }
+    return true;
+  };
+
+  std::vector<uint32_t> path_vals(static_cast<size_t>(num_specs));
+  std::vector<uint32_t> fieldset_vals(static_cast<size_t>(num_specs));
+  std::vector<uint32_t> type_vals(static_cast<size_t>(num_specs));
+
+  if (read_comp_array(path_vals.data(), static_cast<size_t>(num_specs), remaining_size) &&
+      read_comp_array(fieldset_vals.data(), static_cast<size_t>(num_specs), remaining_size) &&
+      read_comp_array(type_vals.data(), static_cast<size_t>(num_specs), remaining_size)) {
+    for (size_t i = 0; i < num_specs; i++) {
+      specs_[i].path_index.value = path_vals[i];
+      specs_[i].fieldset_index.value = fieldset_vals[i];
+      specs_[i].spec_type = static_cast<SpecType>(type_vals[i]);
+    }
   }
 
-  if (remaining == num_specs * 12) {
-    const uint8_t* ptr = data.data();
+  // Fallback: try legacy single-array format
+  if (!reader_->seek(static_cast<size_t>(section->start) + 8)) {
+    AddError("Failed to seek to specs data for legacy read");
+    return false;
+  }
+  size_t legacy_size = static_cast<size_t>(section->size) - 8;
+  std::vector<uint8_t> legacy_data(legacy_size);
+  if (!reader_->read(legacy_data.data(), legacy_size)) {
+    AddError("Failed to read specs legacy data");
+    return false;
+  }
+  if (legacy_size == num_specs * 12) {
+    const uint8_t* ptr = legacy_data.data();
     for (size_t i = 0; i < num_specs; i++) {
       std::memcpy(&specs_[i].path_index.value, ptr, 4); ptr += 4;
       std::memcpy(&specs_[i].fieldset_index.value, ptr, 4); ptr += 4;
@@ -782,8 +858,7 @@ bool CrateReader::Impl::ReadSpecs() {
       specs_[i].spec_type = static_cast<SpecType>(spec_type);
     }
   } else {
-    AddWarning("Compressed specs not fully implemented");
-    DecompressResult dr = DecompressIntegers(data.data(), remaining,
+    DecompressResult dr = DecompressIntegers(legacy_data.data(), legacy_data.size(),
                                               static_cast<size_t>(num_specs * 3), false);
     if (dr.success) {
       const uint32_t* vals = reinterpret_cast<const uint32_t*>(dr.data.data());
@@ -792,6 +867,9 @@ bool CrateReader::Impl::ReadSpecs() {
         specs_[i].fieldset_index.value = vals[i * 3 + 1];
         specs_[i].spec_type = static_cast<SpecType>(vals[i * 3 + 2]);
       }
+    } else {
+      AddError("Failed to decompress specs with any format");
+      return false;
     }
   }
 
@@ -816,18 +894,128 @@ bool CrateReader::Impl::ReadPaths() {
     return false;
   }
 
-  paths_.resize(static_cast<size_t>(num_paths));
+  if (num_paths == 0) {
+    paths_.resize(1);
+    paths_[0] = "/";
+    return true;
+  }
 
-  size_t remaining = static_cast<size_t>(section->size) - 8;
-  std::vector<uint8_t> data(remaining);
-  if (!reader_->read(data.data(), remaining)) {
-    AddError("Failed to read paths data");
+  // pxrUSD writes two u64 values: [total_path_count] [encoded_tree_node_count]
+  uint64_t num_encoded = num_paths;  // default: same as total
+  if (!reader_->read_u64(num_encoded)) {
+    // Might be a single-count format (no encoded count)
+    num_encoded = num_paths;
+  }
+
+  paths_.resize(static_cast<size_t>(num_paths));
+  if (paths_.size() > 0) {
+    paths_[0] = "/";
+  }
+  size_t n = static_cast<size_t>(num_encoded);
+
+  // Read 3 compressed integer arrays (delta+LZ4 format)
+  auto read_comp_array = [&](uint32_t* dst, size_t count, const char* name) -> bool {
+    uint64_t comp_size;
+    if (!reader_->read_u64(comp_size)) {
+      AddError(std::string("Failed to read ") + name + " compressed size");
+      return false;
+    }
+    // Include u64 compressed_size prefix (DecompressCompressedU32 expects it)
+    std::vector<uint8_t> comp_data(8 + static_cast<size_t>(comp_size));
+    std::memcpy(comp_data.data(), &comp_size, 8);
+    if (!reader_->read(comp_data.data() + 8, static_cast<size_t>(comp_size))) {
+      AddError(std::string("Failed to read ") + name + " compressed data");
+      return false;
+    }
+    DecompressResult dr = DecompressCompressedU32(comp_data.data(), comp_data.size(),
+                                                   dst, count);
+    if (!dr.success) {
+      // Fallback: legacy EncodeIntegers (common-prefix, no LZ4)
+      dr = DecompressIntegers(comp_data.data() + 8, static_cast<size_t>(comp_size), count, false);
+      if (!dr.success) {
+        AddError(std::string("Failed to decompress ") + name + ": " + dr.error);
+        return false;
+      }
+      std::memcpy(dst, dr.data.data(), count * sizeof(uint32_t));
+    }
+    return true;
+  };
+
+  std::vector<uint32_t> path_indices(n);
+  std::vector<uint32_t> element_tokens(n);
+  std::vector<uint32_t> jump_raw(n);  // stored as uint32_t, interpreted as int32_t
+
+  if (!read_comp_array(path_indices.data(), n, "path indices") ||
+      !read_comp_array(element_tokens.data(), n, "element tokens") ||
+      !read_comp_array(jump_raw.data(), n, "jump indices")) {
     return false;
   }
 
-  paths_[0] = "/";
-  for (size_t i = 1; i < num_paths && i < specs_.size(); i++) {
-    paths_[i] = "/Prim" + std::to_string(i);
+  // Reconstruct paths from tree structure
+  paths_.resize(n);
+  for (auto& p : paths_) p.clear();
+
+  std::vector<std::string> stack;  // parent path components
+  for (size_t i = 0; i < n; i++) {
+    int32_t elem_token = static_cast<int32_t>(element_tokens[i]);
+    int32_t jump = static_cast<int32_t>(jump_raw[i]);
+
+    // Get element name from token. Negative = property path (negate token index)
+    bool is_prop = false;
+    uint32_t token_idx;
+    if (elem_token < 0) {
+      is_prop = true;
+      token_idx = static_cast<uint32_t>(-elem_token);
+    } else {
+      token_idx = static_cast<uint32_t>(elem_token);
+    }
+
+    std::string elem;
+    if (token_idx < tokens_.size()) {
+      elem = tokens_[token_idx];
+    } else {
+      elem = "__unknown_token_" + std::to_string(token_idx);
+    }
+
+    // Build full path. Root element (empty string from token 0) is a marker
+    // for the root path "/" and should NOT be pushed onto the stack.
+    std::string full_path;
+    if (stack.empty() && (elem.empty() || elem == "/")) {
+      full_path = "/";
+    } else if (stack.empty()) {
+      full_path = "/" + elem;
+    } else {
+      full_path = "/";
+      for (size_t s = 0; s < stack.size(); s++) {
+        full_path += stack[s];
+        full_path += "/";
+      }
+      full_path += elem;
+    }
+
+    if (is_prop) {
+      full_path = "." + full_path;  // property paths start with "."
+    }
+
+    // Store at the original path index
+    uint32_t store_idx = path_indices[i];
+    if (store_idx < n) {
+      paths_[store_idx] = full_path;
+    }
+
+    // Update stack based on jump code.
+    // Root element (empty string, token 0) is not pushed onto stack.
+    bool is_root = (elem.empty() || elem == "/");
+    if (jump == -2) {
+      if (!stack.empty()) stack.pop_back();
+    } else if (jump == -1) {
+      if (!is_root) stack.push_back(elem);
+    } else if (jump == 0) {
+      // Stay at same level (sibling replaces previous sibling)
+    } else {
+      // j > 0: has children AND siblings
+      if (!is_root) stack.push_back(elem);
+    }
   }
 
   return true;
@@ -927,7 +1115,7 @@ bool CrateReader::Impl::ResolveFieldset(uint32_t fieldset_index,
   size_t start = fieldset_index;
   while (start < fieldset_indices_.size()) {
     uint32_t field_idx = fieldset_indices_[start];
-    if (field_idx == 0xFFFFFFFF) break;
+    if (field_idx == 0xFFFFFFFF || field_idx == 0) break;
 
     if (field_idx < fields_.size()) {
       const CrateField& field = fields_[field_idx];
