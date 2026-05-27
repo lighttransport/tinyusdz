@@ -1816,6 +1816,12 @@ class TinyUSDZLoaderNative {
     if (stage.metas().startTimeCode.authored()) {
       env.timecode = stage.metas().startTimeCode.get_value();
     }
+    env.scene_config.enable_value_clips = enable_value_clips_;
+    env.scene_config.value_clip_sample_rate = value_clip_sample_rate_;
+    env.scene_config.value_clip_use_time_range =
+        value_clip_use_time_range_;
+    env.scene_config.value_clip_start_time = value_clip_start_time_;
+    env.scene_config.value_clip_end_time = value_clip_end_time_;
     loaded_ = converter.ConvertToRenderScene(env, &render_scene_);
 
     // Capture warnings from converter (available via warn() method)
@@ -1971,6 +1977,12 @@ class TinyUSDZLoaderNative {
     if (stage.metas().startTimeCode.authored()) {
       env.timecode = stage.metas().startTimeCode.get_value();
     }
+    env.scene_config.enable_value_clips = enable_value_clips_;
+    env.scene_config.value_clip_sample_rate = value_clip_sample_rate_;
+    env.scene_config.value_clip_use_time_range =
+        value_clip_use_time_range_;
+    env.scene_config.value_clip_start_time = value_clip_start_time_;
+    env.scene_config.value_clip_end_time = value_clip_end_time_;
     loaded_ = converter.ConvertToRenderScene(env, &render_scene_);
 
     // Capture warnings from converter (available via warn() method)
@@ -2119,6 +2131,12 @@ class TinyUSDZLoaderNative {
     if (stage.metas().startTimeCode.authored()) {
       env.timecode = stage.metas().startTimeCode.get_value();
     }
+    env.scene_config.enable_value_clips = enable_value_clips_;
+    env.scene_config.value_clip_sample_rate = value_clip_sample_rate_;
+    env.scene_config.value_clip_use_time_range =
+        value_clip_use_time_range_;
+    env.scene_config.value_clip_start_time = value_clip_start_time_;
+    env.scene_config.value_clip_end_time = value_clip_end_time_;
 
     // Yield before heavy conversion
     co_await yieldToEventLoop();
@@ -3949,9 +3967,19 @@ class TinyUSDZLoaderNative {
         case tinyusdz::tydra::AnimationSourceType::BlendShape: sourceTypeStr = "BlendShape"; break;
         default: break;
       }
-      anim.set("sourceType", sourceTypeStr);
+    anim.set("sourceType", sourceTypeStr);
       anim.set("numAnimatedJoints", clip.num_animated_joints);
       anim.set("numAnimatedNodes", clip.num_animated_nodes);
+      anim.set("hasValueClip", clip.has_value_clip);
+      anim.set("valueClipBaked", clip.value_clip_baked);
+      anim.set("valueClipStartTime", clip.value_clip_start_time);
+      anim.set("valueClipEndTime", clip.value_clip_end_time);
+      anim.set("valueClipSampleRate", clip.value_clip_sample_rate);
+      emscripten::val clipAssetPaths = emscripten::val::array();
+      for (const auto &path : clip.clip_asset_paths) {
+        clipAssetPaths.call<void>("push", path);
+      }
+      anim.set("clipAssetPaths", clipAssetPaths);
     }
 
     // Convert samplers to Three.js KeyframeTrack format
@@ -3992,9 +4020,30 @@ class TinyUSDZLoaderNative {
             trackName += ".morphTargetInfluences";
             track.set("type", "number");
             break;
+          case tinyusdz::tydra::AnimationPath::CustomProperty: {
+            std::string type = "number";
+            if (!sampler.times.empty() && !sampler.values.empty() &&
+                (sampler.values.size() % sampler.times.size() == 0u)) {
+              const size_t comp_count = sampler.values.size() / sampler.times.size();
+              if (comp_count == 2) {
+                type = "vector2";
+              } else if (comp_count == 3) {
+                type = "vector3";
+              } else if (comp_count == 4) {
+                type = "vector4";
+              }
+            }
+            trackName += "." + (channel.property_name.empty() ? "value" : channel.property_name);
+            track.set("type", type);
+            break;
+          }
         }
 
         track.set("name", trackName);
+        track.set("isCustomProperty", channel.is_custom_property);
+        if (channel.is_custom_property) {
+          track.set("propertyName", channel.property_name);
+        }
         track.set("nodeName", node.prim_name);
         track.set("nodeIndex", channel.target_node);
       }
@@ -4034,6 +4083,12 @@ class TinyUSDZLoaderNative {
         case tinyusdz::tydra::AnimationPath::Weights:
           pathStr = "weights";
           break;
+        case tinyusdz::tydra::AnimationPath::CustomProperty:
+          pathStr = "custom";
+          break;
+        default:
+          pathStr = "unknown";
+          break;
       }
       track.set("path", pathStr);
 
@@ -4071,8 +4126,18 @@ class TinyUSDZLoaderNative {
         case tinyusdz::tydra::AnimationPath::Weights:
           pathStr = "Weights";
           break;
+        case tinyusdz::tydra::AnimationPath::CustomProperty:
+          pathStr = "CustomProperty";
+          break;
+        default:
+          pathStr = "Unknown";
+          break;
       }
       ch.set("path", pathStr);
+      ch.set("isCustomProperty", channel.is_custom_property);
+      if (channel.is_custom_property && !channel.property_name.empty()) {
+        ch.set("propertyName", channel.property_name);
+      }
 
       channels.call<void>("push", ch);
     }
@@ -4159,6 +4224,17 @@ class TinyUSDZLoaderNative {
       info.set("sourceType", sourceTypeStr);
       info.set("numAnimatedJoints", clip.num_animated_joints);
       info.set("numAnimatedNodes", clip.num_animated_nodes);
+      info.set("hasValueClip", clip.has_value_clip);
+      info.set("valueClipBaked", clip.value_clip_baked);
+      info.set("valueClipStartTime", clip.value_clip_start_time);
+      info.set("valueClipEndTime", clip.value_clip_end_time);
+      info.set("valueClipSampleRate", clip.value_clip_sample_rate);
+      emscripten::val infoClipAssetPaths = emscripten::val::array();
+      for (const auto &path : clip.clip_asset_paths) {
+        infoClipAssetPaths.call<void>("push", path);
+      }
+      info.set("clipAssetPaths", infoClipAssetPaths);
+      info.set("numClipAssetPaths", int(clip.clip_asset_paths.size()));
     }
 
     return info;
@@ -4373,6 +4449,43 @@ class TinyUSDZLoaderNative {
 
   bool getEnableBoneReduction() const {
     return enable_bone_reduction_;
+  }
+
+  void setEnableValueClips(bool enabled) {
+    enable_value_clips_ = enabled;
+  }
+
+  bool getEnableValueClips() const {
+    return enable_value_clips_;
+  }
+
+  void setValueClipSampleRate(float sample_rate) {
+    value_clip_sample_rate_ = sample_rate;
+  }
+
+  float getValueClipSampleRate() const {
+    return value_clip_sample_rate_;
+  }
+
+  void setValueClipUseTimeRange(bool enabled) {
+    value_clip_use_time_range_ = enabled;
+  }
+
+  bool getValueClipUseTimeRange() const {
+    return value_clip_use_time_range_;
+  }
+
+  void setValueClipTimeRange(double start_time, double end_time) {
+    value_clip_start_time_ = start_time;
+    value_clip_end_time_ = end_time;
+  }
+
+  double getValueClipStartTime() const {
+    return value_clip_start_time_;
+  }
+
+  double getValueClipEndTime() const {
+    return value_clip_end_time_;
   }
 
   void setTargetBoneCount(uint32_t count) {
@@ -5821,6 +5934,12 @@ class TinyUSDZLoaderNative {
   uint32_t target_bone_count_{4};  // Default to 4 bones (standard for WebGL/Three.js)
   bool round_bone_count_{false};   // Round up to standard GPU skinning values (4,8,16,32,48,64,80,96,128)
 
+  bool enable_value_clips_{true};
+  float value_clip_sample_rate_{0.0f};
+  bool value_clip_use_time_range_{false};
+  double value_clip_start_time_{0.0};
+  double value_clip_end_time_{0.0};
+
   // Bone texture data cache (mutable for const member function)
   mutable std::vector<float> bone_texture_data_;
   mutable std::vector<float> bone_vertex_offsets_;
@@ -6614,6 +6733,24 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::setEnableBoneReduction)
       .function("getEnableBoneReduction",
                 &TinyUSDZLoaderNative::getEnableBoneReduction)
+      .function("setEnableValueClips",
+                &TinyUSDZLoaderNative::setEnableValueClips)
+      .function("getEnableValueClips",
+                &TinyUSDZLoaderNative::getEnableValueClips)
+      .function("setValueClipSampleRate",
+                &TinyUSDZLoaderNative::setValueClipSampleRate)
+      .function("getValueClipSampleRate",
+                &TinyUSDZLoaderNative::getValueClipSampleRate)
+      .function("setValueClipUseTimeRange",
+                &TinyUSDZLoaderNative::setValueClipUseTimeRange)
+      .function("getValueClipUseTimeRange",
+                &TinyUSDZLoaderNative::getValueClipUseTimeRange)
+      .function("setValueClipTimeRange",
+                &TinyUSDZLoaderNative::setValueClipTimeRange)
+      .function("getValueClipStartTime",
+                &TinyUSDZLoaderNative::getValueClipStartTime)
+      .function("getValueClipEndTime",
+                &TinyUSDZLoaderNative::getValueClipEndTime)
       .function("setTargetBoneCount",
                 &TinyUSDZLoaderNative::setTargetBoneCount)
       .function("getTargetBoneCount",

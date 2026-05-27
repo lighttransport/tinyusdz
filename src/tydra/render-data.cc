@@ -670,6 +670,8 @@ bool RenderSceneConverter::ConvertToRenderScene(
   _skelRootToSkeleton.clear();
   _uvNameCache.clear();
   _materialBindingCache.clear();
+  _value_clip_layer_cache.clear();
+  _value_clip_stage_cache.clear();
   ResetConnectionResolveCache(env.stage);
 
   // Report initial progress
@@ -962,22 +964,34 @@ bool RenderSceneConverter::ConvertToRenderScene(
       if (node.prim && IsXformablePrim(*node.prim)) {
         const Xformable *xformable = nullptr;
         if (CastToXformable(*node.prim, &xformable) && xformable) {
-          // Check if xformable has time-sampled transforms
-          if (xformable->has_timesamples()) {
-            AnimationClip anim;
-            // node.absolute_path is already a Path object
-            const Path &prim_path = node.absolute_path;
+          AnimationClip anim;
+          bool converted = false;
 
-            // Extract xformOp animation
+          // node.absolute_path is already a Path object
+          const Path &prim_path = node.absolute_path;
+
+          // Prefer value clip animation baking when enabled.
+          if (env.scene_config.enable_value_clips &&
+              ConvertValueClipAnimation(env, *node.prim, prim_path,
+                                       node_index, &anim)) {
+            converted = true;
+          }
+
+          // Fallback to direct xformOp sampling when no clip animation exists.
+          if (!converted && xformable->has_timesamples()) {
             if (ExtractXformOpAnimation(env, prim_path, node.element_name,
                                        *xformable, node_index, &anim)) {
-              // Check if animation with this path already exists via O(1) lookup
-              const auto &anim_abs_path = anim.abs_path;
-              if (_animPathToIndex.find(anim_abs_path) == _animPathToIndex.end()) {
-                DCOUT("Extracted xformOp animation from: " << anim_abs_path);
-                _animPathToIndex[anim_abs_path] = int32_t(animations.size());
-                animations.emplace_back(std::move(anim));
-              }
+              converted = true;
+            }
+          }
+
+          if (converted) {
+            // Check if animation with this path already exists via O(1) lookup
+            const auto &anim_abs_path = anim.abs_path;
+            if (_animPathToIndex.find(anim_abs_path) == _animPathToIndex.end()) {
+              DCOUT("Extracted animation from: " << anim_abs_path);
+              _animPathToIndex[anim_abs_path] = int32_t(animations.size());
+              animations.emplace_back(std::move(anim));
             }
           }
         }

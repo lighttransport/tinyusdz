@@ -440,8 +440,13 @@ std::string DumpAnimation(const AnimationClip &anim, uint32_t indent) {
       case AnimationPath::Rotation: ss << "Rotation"; break;
       case AnimationPath::Scale: ss << "Scale"; break;
       case AnimationPath::Weights: ss << "Weights"; break;
+      case AnimationPath::CustomProperty: ss << "CustomProperty"; break;
     }
     ss << "\n";
+    if (ch.is_custom_property && !ch.property_name.empty()) {
+      ss << pprint::Indent(indent + 2) << "property_name: "
+         << ch.property_name << "\n";
+    }
     ss << pprint::Indent(indent + 1) << "}\n";
   }
 
@@ -1068,8 +1073,13 @@ static void DumpAnimationYAML(std::stringstream &ss, const AnimationClip &anim, 
         case AnimationPath::Rotation: ss << "Rotation"; break;
         case AnimationPath::Scale: ss << "Scale"; break;
         case AnimationPath::Weights: ss << "Weights"; break;
+        case AnimationPath::CustomProperty: ss << "CustomProperty"; break;
       }
       ss << "\n";
+      if (ch.is_custom_property && !ch.property_name.empty()) {
+        ss << yaml_indent(indent + 2) << "property_name: "
+           << yaml_escape(ch.property_name) << "\n";
+      }
     }
   }
 }
@@ -1488,8 +1498,13 @@ static void DumpAnimationJSON(std::stringstream &ss, const AnimationClip &anim, 
       case AnimationPath::Rotation: ss << "Rotation"; break;
       case AnimationPath::Scale: ss << "Scale"; break;
       case AnimationPath::Weights: ss << "Weights"; break;
+      case AnimationPath::CustomProperty: ss << "CustomProperty"; break;
     }
     ss << "\"\n";
+    if (ch.is_custom_property && !ch.property_name.empty()) {
+      ss << json_indent(indent + 3) << "\"property_name\": \""
+         << json_escape(ch.property_name) << "\",\n";
+    }
     ss << json_indent(indent + 2) << "}" << (i == anim.channels.size() - 1 ? "" : ",") << "\n";
   }
   ss << json_indent(indent + 1) << "]\n";
