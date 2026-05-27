@@ -45,7 +45,7 @@
     "phys-sim": "node cli/phys-sim.js",
     "urdf-to-usd": "node cli/urdf-to-usd.js",
     "usd-urdf-roundtrip": "node cli/usd-urdf-roundtrip.js",
-    "screenshot:urdf": "xvfb-run -a node tests/screenshot-urdf-batch.mjs"
+    "screenshot:urdf": "xvfb-run -a node tests/screenshot-urdf-batch.mjs --hw"
   },
   "devDependencies": {
     "@types/bun": "latest",

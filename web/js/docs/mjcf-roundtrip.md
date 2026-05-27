@@ -27,8 +27,8 @@ drives `urdf.html`, and captures the source-vs-USD split view for each robot.
 ```bash
 cd web/js
 # Curated set -> tests/screenshots (run under xvfb so Chrome has a display for WebGL):
-xvfb-run -a node tests/screenshot-urdf-batch.mjs
-npm run screenshot:urdf            # same, via package script
+xvfb-run -a node tests/screenshot-urdf-batch.mjs           # software WebGL (SwiftShader)
+npm run screenshot:urdf            # via package script (defaults to --hw GPU)
 xvfb-run -a node tests/screenshot-urdf-batch.mjs --all --out /tmp/shots
 xvfb-run -a node tests/screenshot-urdf-batch.mjs path/to/robot.xml
 ```
