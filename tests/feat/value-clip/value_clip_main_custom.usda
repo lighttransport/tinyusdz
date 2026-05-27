@@ -1,0 +1,16 @@
+#usda 1.0
+
+def Xform "Root" (
+    clips = {
+        dictionary default_clip = {
+            double2[] active = [(0, 0), (1, 0), (2, 1)]
+            asset[] assetPaths = [@tests/feat/value-clip/clip_0_custom.usda@, @tests/feat/value-clip/clip_1_custom.usda@]
+            string primPath = "/Root"
+            double2[] times = [(0, 0), (1, 1), (2, 2)]
+            bool interpolateMissingClipValues = true
+        }
+    }
+)
+{
+    uniform token[] xformOpOrder = []
+}

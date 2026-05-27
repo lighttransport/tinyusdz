@@ -148,10 +148,10 @@ private:
   std::vector<std::string> composition_stack_;
 
   // Internal composition methods
-  bool ComposeLayer(Layer& target, const Layer& source,
+  bool ComposeLayer(Layer& target, const Layer& source_layer,
                     const std::string& anchor_path, int depth);
-  bool ComposePrim(PrimSpec& target, const PrimSpec& source,
-                   const std::string& anchor_path, int depth);
+  bool ComposePrim(PrimSpec& target, const Layer& source_layer,
+                   const PrimSpec& source, const std::string& anchor_path, int depth);
 
   // Arc handling
   bool ApplyReferences(PrimSpec& prim, const std::string& anchor_path, int depth);
@@ -159,6 +159,13 @@ private:
   bool ApplyInherits(PrimSpec& prim, const Layer& layer, int depth);
   bool ApplySpecializes(PrimSpec& prim, const Layer& layer, int depth);
   bool ApplyVariants(PrimSpec& prim, const Layer& layer, int depth);
+
+  // Copy local opinions from source to target (strongest strength)
+  static void CopyLocalOpinions(PrimSpec& target, const PrimSpec& source);
+
+  // Parse layer offset string into offset and scale
+  static void ParseLayerOffset(const std::string& offset_str,
+                                double& offset, double& scale);
 
   // Helper methods
   void AddError(const std::string& msg, const std::string& prim_path,

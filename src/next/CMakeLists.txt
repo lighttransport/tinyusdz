@@ -53,6 +53,14 @@ set(TINYUSDZ_NEXT_SOURCES
     schema/usd-lux.cc
     schema/usd-geom-camera.cc
     schema/usd-shade.cc
+    schema/usd-skel.cc
+    schema/physics-scene.cc
+    schema/physics-api.cc
+    schema/physics-joint.cc
+    schema/physics-collision.cc
+    schema/usd-ar.cc
+    schema/usd-media.cc
+    schema/usd-mtlx.cc
 
     # Attribute evaluation
     eval/attribute-eval.cc
@@ -65,6 +73,7 @@ set(TINYUSDZ_NEXT_SOURCES
 
     # High-level API
     tinyusdz-next.cc
+    c-tinyusd-next.cc
 )
 
 # Define header files (for IDE project generation)
@@ -115,6 +124,15 @@ set(TINYUSDZ_NEXT_HEADERS
     schema/usd-lux.hh
     schema/usd-geom-camera.hh
     schema/usd-shade.hh
+    schema/usd-skel.hh
+    schema/physics-scene.hh
+    schema/physics-api.hh
+    schema/physics-joint.hh
+    schema/physics-collision.hh
+    schema/usd-ar.hh
+    schema/usd-media.hh
+    schema/usd-mtlx.hh
+    schema/usdPhysics.hh
 
     # Attribute evaluation
     eval/attribute-eval.hh
@@ -128,6 +146,7 @@ set(TINYUSDZ_NEXT_HEADERS
     # High-level API
     tinyusdz-next.hh
     compat.hh
+    c-tinyusd-next.h
 )
 
 # LZ4 source (from existing TinyUSDZ)
@@ -202,6 +221,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdc_writer.cc
     )
     target_link_libraries(test_usdc_writer PRIVATE tinyusdz_next)
+
+    add_executable(test_usdc_roundtrip
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdc_roundtrip.cc
+    )
+    target_link_libraries(test_usdc_roundtrip PRIVATE tinyusdz_next)
 endif()
 
 # Tydra Next (render data conversion)

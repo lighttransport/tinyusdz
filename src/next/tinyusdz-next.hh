@@ -61,6 +61,11 @@
 #include "schema/usd-lux.hh"
 #include "schema/usd-geom-camera.hh"
 #include "schema/usd-shade.hh"
+#include "schema/usd-skel.hh"
+#include "schema/usdPhysics.hh"
+#include "schema/usd-ar.hh"
+#include "schema/usd-media.hh"
+#include "schema/usd-mtlx.hh"
 
 namespace tinyusdz {
 namespace next {
