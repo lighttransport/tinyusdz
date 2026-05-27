@@ -946,58 +946,96 @@ private:
         fields_.push_back(f);
       }
 
-      // Time samples: write as TimeSamples field
-      // In USDC, time-sampled properties have a "timeSamples" field that
-      // points to a TimeSamples data block, AND the property field itself
-      // has a value that is the first/only value.
+      // Time samples: write as TimeSamples field (pxrUSD indirection format)
+      // Layout:
+      //   Header block (at offset pointed to by field's ValueRep):
+      //     [i64 fwd1]              — forward skip past times_rep + values header
+      //     [ValueRep times_rep]     — points to times array block
+      //     [i64 fwd2]              — forward skip past values header
+      //     [u64 num_values]
+      //     [ValueRep values[N]]    — each points to a sample value block
+      //   Times array block:
+      //     [u64 count][double[count]]
+      //   Sample value blocks: created by EncodeValue
       if (prim.has_any_time_samples()) {
-        // Collect time-sampled properties
-        // Write a single "timeSamples" field for each such property? No -
-        // In USD, timeSamples is a special field whose value is a TimeSamples
-        // structure containing (time, value) pairs.
         for (auto prop_id : prim.time_sampled_properties()) {
-          const std::string& ts_name = name_table.get(prop_id);
-          (void)ts_name;
-
           auto* samples = prim.time_samples(prop_id);
           if (!samples || samples->empty()) continue;
 
-          // Build TimeSamples data block:
-          // [uint64_t count, double time0, ValueRep val0, double time1, ValueRep val1, ...]
-          std::vector<uint8_t> ts_data;
           uint64_t num_samples = samples->size();
-          ts_data.resize(8); // placeholder for count
 
+          // 1. Build times array block: [u64 count][double[count]]
+          std::vector<uint8_t> times_data(8 + num_samples * 8);
+          std::memcpy(times_data.data(), &num_samples, 8);
+          size_t ti = 0;
           for (const auto& [time, val_offset] : *samples) {
-            // Write time
-            ts_data.resize(ts_data.size() + 8);
-            std::memcpy(ts_data.data() + ts_data.size() - 8, &time, 8);
+            std::memcpy(times_data.data() + 8 + ti * 8, &time, 8);
+            ti++;
+          }
+          uint64_t times_block_idx = value_data_.size();
+          value_data_.push_back({TypeId::Double, std::move(times_data)});
 
-            // Write value (as a ValueRep)
+          // 2. Build each sample value block via EncodeValue
+          std::vector<uint64_t> sample_block_indices(num_samples);
+          ti = 0;
+          for (const auto& [time, val_offset] : *samples) {
             const Value* ts_val = prim.time_sample_value(val_offset);
             if (ts_val) {
               ValueRep val_rep = EncodeValue(*ts_val);
-              uint64_t vrep_raw = val_rep.raw();
-              ts_data.resize(ts_data.size() + 8);
-              std::memcpy(ts_data.data() + ts_data.size() - 8, &vrep_raw, 8);
+              sample_block_indices[ti] = val_rep.payload(); // block index
             } else {
-              // Placeholder zero ValueRep
-              ts_data.resize(ts_data.size() + 8);
-              std::memset(ts_data.data() + ts_data.size() - 8, 0, 8);
+              // ValueBlock — store a zero ValueBlock ValueRep
+              std::vector<uint8_t> vb(8);
+              uint64_t zero = 0;
+              std::memcpy(vb.data(), &zero, 8);
+              sample_block_indices[ti] = value_data_.size();
+              value_data_.push_back({TypeId::Invalid, std::move(vb)});
             }
+            ti++;
           }
 
-          // Write actual count at the start
-          std::memcpy(ts_data.data(), &num_samples, 8);
+          // 3. Build header block with placeholder payloads
+          // [i64 fwd1=8][ValueRep times_rep][i64 fwd2=8][u64 count][ValueRep values[N]]
+          size_t header_size = 8 + 8 + 8 + 8 + num_samples * 8;
+          std::vector<uint8_t> header_data(header_size, 0);
+          size_t hp = 0;
 
-          // Store in value data section
-          uint64_t data_idx = value_data_.size();
-          value_data_.push_back({TypeId::Invalid, std::move(ts_data)}); // Special type
+          // fwd1 = 8 (skip int64 to reach times_rep)
+          int64_t fwd1 = 8;
+          std::memcpy(header_data.data() + hp, &fwd1, 8); hp += 8;
 
-          // Add a "timeSamples" field to the fieldset
+          // times_rep placeholder — payload will be patched in WriteValueSection
+          uint64_t times_rep_raw = ValueRep::Make(
+              CrateTypeId::Double, times_block_idx, true, false).raw();
+          std::memcpy(header_data.data() + hp, &times_rep_raw, 8); hp += 8;
+
+          // fwd2 = 8 (skip int64 to reach num_values)
+          int64_t fwd2 = 8;
+          std::memcpy(header_data.data() + hp, &fwd2, 8); hp += 8;
+
+          // num_values
+          std::memcpy(header_data.data() + hp, &num_samples, 8); hp += 8;
+
+          // Sample ValueReps (placeholders with block indices)
+          for (size_t si = 0; si < num_samples; si++) {
+            // Determine type — try to get it from the value data blocks
+            CrateTypeId val_type = CrateTypeId::ValueBlock;
+            if (sample_block_indices[si] < value_data_.size()) {
+              val_type = ToCrateTypeId(value_data_[sample_block_indices[si]].type);
+            }
+            uint64_t vr = ValueRep::Make(val_type, sample_block_indices[si],
+                                          false, false).raw();
+            std::memcpy(header_data.data() + hp, &vr, 8); hp += 8;
+          }
+
+          // Store header block
+          uint64_t header_idx = value_data_.size();
+          value_data_.push_back({TypeId::Invalid, std::move(header_data)});
+
+          // Add "timeSamples" field pointing to header block
           CrateField ts_field;
           ts_field.token_index.value = InternToken("timeSamples");
-          ts_field.value_rep = ValueRep::Make(CrateTypeId::TimeSamples, data_idx, false, false);
+          ts_field.value_rep = ValueRep::Make(CrateTypeId::TimeSamples, header_idx, false, false);
           fieldset.push_back(static_cast<uint32_t>(fields_.size()));
           fields_.push_back(ts_field);
         }
@@ -1398,22 +1436,42 @@ private:
   }
 
   void _PatchTimeSamplesBlock(uint64_t data_idx) {
+    // Indirection format header:
+    // [i64 fwd1=8][ValueRep times_rep][i64 fwd2=8][u64 count][ValueRep values[N]]
+    // times_rep.payload and values[i].payload are block indices to patch to abs offsets.
     if (data_idx >= value_data_.size()) return;
     DataBlock& block = value_data_[data_idx];
-    if (block.data.size() < 8) return;
+    if (block.data.size() < 32) return; // minimum: 2*i64 + 1*u64 + times_rep
 
-    uint64_t num_samples;
-    std::memcpy(&num_samples, block.data.data(), 8);
-    if (num_samples == 0 || block.data.size() < 8 + num_samples * 16) return;
-
-    for (size_t i = 0; i < num_samples; i++) {
-      size_t vrep_offset = 8 + i * 16 + 8;
-      if (vrep_offset + 8 > block.data.size()) break;
-
-      uint64_t vrep_raw;
-      std::memcpy(&vrep_raw, block.data.data() + vrep_offset, 8);
+    // Patch times_rep at offset 8
+    uint64_t vrep_raw;
+    std::memcpy(&vrep_raw, block.data.data() + 8, 8);
+    {
       ValueRep vrep(vrep_raw);
+      if (!vrep.is_inlined()) {
+        uint64_t payload = vrep.payload();
+        if (payload < value_offsets_.size()) {
+          uint64_t abs_offset = value_start_offset_ + value_offsets_[static_cast<size_t>(payload)];
+          vrep_raw = ValueRep::Make(vrep.type_id(), abs_offset,
+                                     vrep.is_array(), false,
+                                     vrep.is_compressed()).raw();
+          std::memcpy(block.data.data() + 8, &vrep_raw, 8);
+        }
+      }
+    }
 
+    // Read num_values at offset 24
+    uint64_t num_samples;
+    std::memcpy(&num_samples, block.data.data() + 24, 8);
+    if (num_samples == 0) return;
+
+    // Patch each sample ValueRep starting at offset 32
+    for (size_t i = 0; i < num_samples; i++) {
+      size_t voff = 32 + i * 8;
+      if (voff + 8 > block.data.size()) break;
+
+      std::memcpy(&vrep_raw, block.data.data() + voff, 8);
+      ValueRep vrep(vrep_raw);
       if (vrep.is_inlined()) continue;
 
       uint64_t payload = vrep.payload();
@@ -1422,7 +1480,7 @@ private:
         vrep_raw = ValueRep::Make(vrep.type_id(), abs_offset,
                                    vrep.is_array(), false,
                                    vrep.is_compressed()).raw();
-        std::memcpy(block.data.data() + vrep_offset, &vrep_raw, 8);
+        std::memcpy(block.data.data() + voff, &vrep_raw, 8);
       }
     }
   }
