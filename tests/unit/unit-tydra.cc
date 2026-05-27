@@ -9,10 +9,19 @@
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
+#include <fstream>
+#include <cmath>
+#include <map>
+#include <sstream>
+#include <string>
+#include <vector>
 
 #include "layer.hh"
 #include "core/prim.hh"
 #include "core/prim-spec.hh"
+#include "value-clip-utils.hh"
+#include "tinyusdz.hh"
 #include "tydra/attribute-eval.hh"
 #include "tydra/layer-to-renderscene.hh"
 #include "tydra/render-data.hh"
@@ -23,6 +32,120 @@
 using namespace tinyusdz;
 
 namespace {
+
+std::string ToPosixPath(std::string path) {
+  for (char &ch : path) {
+    if (ch == '\\') {
+      ch = '/';
+    }
+  }
+  return path;
+}
+
+std::string MakeTempUSDFilePath(const std::string &prefix) {
+  std::error_code ec;
+  std::filesystem::path dir = std::filesystem::temp_directory_path(ec);
+  if (ec) {
+    dir = std::filesystem::current_path();
+  }
+  static int counter = 0;
+  return (dir / (prefix + "_" + std::to_string(counter++) + ".usda")).string();
+}
+
+bool WriteTextFile(const std::string &path, const std::string &content) {
+  std::ofstream ofs(path, std::ios::out | std::ios::trunc);
+  if (!ofs) {
+    return false;
+  }
+  ofs << content;
+  return ofs.good();
+}
+
+void CleanupTempFiles(const std::vector<std::string> &paths) {
+  for (const auto &path : paths) {
+    if (path.empty()) {
+      continue;
+    }
+    std::error_code ec;
+    (void)std::filesystem::remove(path, ec);
+  }
+}
+
+bool NearlyEqual(float lhs, float rhs, float eps = 1e-5f) {
+  return std::fabs(lhs - rhs) <= eps;
+}
+
+std::string FormatDouble2Pairs(const std::vector<std::pair<double, double>> &pairs) {
+  std::ostringstream oss;
+  oss << "[";
+  for (size_t i = 0; i < pairs.size(); i++) {
+    if (i > 0) {
+      oss << ", ";
+    }
+    oss << "(" << pairs[i].first << ", " << pairs[i].second << ")";
+  }
+  oss << "]";
+  return oss.str();
+}
+
+std::string FormatActivePairs(
+    const std::vector<std::pair<double, int>> &pairs) {
+  std::ostringstream oss;
+  oss << "[";
+  for (size_t i = 0; i < pairs.size(); i++) {
+    if (i > 0) {
+      oss << ", ";
+    }
+    oss << "(" << pairs[i].first << ", " << pairs[i].second << ")";
+  }
+  oss << "]";
+  return oss.str();
+}
+
+std::string MakeValueClipAssetUSD(
+    const std::array<float, 3> &translate,
+    const std::array<float, 3> &scale,
+    const std::vector<std::pair<std::string, std::string>> &extra_props = {}) {
+  std::ostringstream oss;
+  oss << "#usda 1.0\n";
+  oss << "def Xform \"Root\"\n";
+  oss << "{\n";
+  oss << "    double3 xformOp:translate = (" << translate[0] << ", "
+      << translate[1] << ", " << translate[2] << ")\n";
+  oss << "    double3 xformOp:scale = (" << scale[0] << ", " << scale[1]
+      << ", " << scale[2] << ")\n";
+  oss << "    uniform token[] xformOpOrder = [\"xformOp:translate\", \"xformOp:scale\"]\n";
+  for (const auto &prop : extra_props) {
+    oss << "    " << prop.first << " = " << prop.second << "\n";
+  }
+  oss << "}\n";
+  return oss.str();
+}
+
+std::string MakeValueClipSceneUSD(const std::string &clip0_path,
+                                 const std::string &clip1_path,
+                                 const std::vector<std::pair<double, int>> &active,
+                                 const std::vector<std::pair<double, double>> &times,
+                                 bool interpolate_missing) {
+  std::ostringstream oss;
+  oss << "#usda 1.0\n";
+  oss << "def Xform \"Root\" (\n";
+  oss << "    clips = {\n";
+  oss << "        dictionary default_clip = {\n";
+  oss << "            double2[] active = " << FormatActivePairs(active) << "\n";
+  oss << "            asset[] assetPaths = [@" << ToPosixPath(clip0_path) << "@, @"
+      << ToPosixPath(clip1_path) << "@]\n";
+  oss << "            string primPath = \"/Root\"\n";
+  oss << "            double2[] times = " << FormatDouble2Pairs(times) << "\n";
+  if (interpolate_missing) {
+    oss << "            bool interpolateMissingClipValues = true\n";
+  }
+  oss << "        }\n";
+  oss << "    }\n";
+  oss << ")\n";
+  oss << "{}\n";
+  return oss.str();
+}
 
 std::vector<Path> MakeMultiTargetConnections() {
   return {Path("/ShaderA", "outputs:out"), Path("/ShaderB", "outputs:out")};
@@ -1949,4 +2072,433 @@ void tydra_skin_binding_validation_test(void) {
                std::string::npos);
     TEST_CHECK(converter.GetWarning().find("/MeshPrim") != std::string::npos);
   }
+}
+
+void tydra_value_clip_animation_conversion_test(void) {
+  std::string err;
+  const std::string clip0_path = MakeTempUSDFilePath("value_clip_conversion_0");
+  const std::string clip1_path = MakeTempUSDFilePath("value_clip_conversion_1");
+  const std::string scene_path = MakeTempUSDFilePath("value_clip_conversion_scene");
+
+  const auto temp_files = std::vector<std::string>{clip0_path, clip1_path, scene_path};
+  auto cleanup = [&]() { CleanupTempFiles(temp_files); };
+  const std::array<float, 3> clip0_translate{0.0f, 0.0f, 0.0f};
+  const std::array<float, 3> clip0_scale{1.0f, 1.0f, 1.0f};
+  const std::array<float, 3> clip1_translate{10.0f, 0.0f, 0.0f};
+  const std::array<float, 3> clip1_scale{2.0f, 2.0f, 2.0f};
+
+  TEST_CHECK(WriteTextFile(
+      clip0_path,
+      MakeValueClipAssetUSD(clip0_translate, clip0_scale)));
+  TEST_CHECK(WriteTextFile(
+      clip1_path,
+      MakeValueClipAssetUSD(clip1_translate, clip1_scale)));
+  TEST_CHECK(WriteTextFile(
+      scene_path,
+      MakeValueClipSceneUSD(clip0_path, clip1_path,
+                            {{0.0, 0}, {1.0, 0}, {2.0, 1}},
+                            {{0.0, 0.0}, {1.0, 1.0}, {2.0, 2.0}},
+                            false)));
+
+  Stage stage;
+  TEST_CHECK(LoadUSDFromFile(scene_path, &stage, nullptr, &err));
+
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverterEnv env(stage);
+  tydra::RenderSceneConverter converter;
+
+  TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+  TEST_CHECK(scene.animations.size() == 1);
+
+  const auto &anim = scene.animations[0];
+  TEST_CHECK(anim.has_value_clip);
+  TEST_CHECK(anim.value_clip_baked);
+  TEST_CHECK(anim.value_clip_sample_rate == 0.0f);
+  TEST_CHECK(anim.clip_asset_paths.size() == 2);
+  TEST_CHECK(anim.samplers.size() == 3);
+  TEST_CHECK(anim.channels.size() == 3);
+
+  TEST_CHECK(anim.samplers[0].times.size() == 3);
+  TEST_CHECK(anim.samplers[1].times.size() == 3);
+  TEST_CHECK(anim.samplers[2].times.size() == 3);
+  TEST_CHECK(NearlyEqual(anim.samplers[0].times[0], 0.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[0].times[1], 1.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[0].times[2], 2.0f));
+
+  TEST_CHECK(anim.samplers[0].values.size() == 9);
+  TEST_CHECK(anim.samplers[1].values.size() == 12);
+  TEST_CHECK(anim.samplers[2].values.size() == 9);
+  // Clip0 sample values
+  TEST_CHECK(NearlyEqual(anim.samplers[0].values[0], 0.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[0].values[1], 0.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[0].values[2], 0.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[1].values[3], 1.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[2].values[0], 1.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[2].values[1], 1.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[2].values[2], 1.0f));
+  // Clip1 sample values
+  TEST_CHECK(NearlyEqual(anim.samplers[0].values[6], 10.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[0].values[7], 0.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[0].values[8], 0.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[1].values[11], 1.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[2].values[6], 2.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[2].values[7], 2.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[2].values[8], 2.0f));
+
+  TEST_CHECK(anim.channels[0].path == tydra::AnimationPath::Translation);
+  TEST_CHECK(anim.channels[1].path == tydra::AnimationPath::Rotation);
+  TEST_CHECK(anim.channels[2].path == tydra::AnimationPath::Scale);
+  TEST_CHECK(anim.channels[0].sampler == 0);
+  TEST_CHECK(anim.channels[1].sampler == 1);
+  TEST_CHECK(anim.channels[2].sampler == 2);
+
+  cleanup();
+}
+
+void tydra_value_clip_animation_resample_test(void) {
+  std::string err;
+  const std::string clip0_path = MakeTempUSDFilePath("value_clip_resample_0");
+  const std::string clip1_path = MakeTempUSDFilePath("value_clip_resample_1");
+  const std::string scene_path = MakeTempUSDFilePath("value_clip_resample_scene");
+
+  const auto temp_files = std::vector<std::string>{clip0_path, clip1_path, scene_path};
+  auto cleanup = [&]() { CleanupTempFiles(temp_files); };
+  const std::array<float, 3> clip0_translate{0.0f, 0.0f, 0.0f};
+  const std::array<float, 3> clip0_scale{1.0f, 1.0f, 1.0f};
+  const std::array<float, 3> clip1_translate{10.0f, 0.0f, 0.0f};
+  const std::array<float, 3> clip1_scale{2.0f, 2.0f, 2.0f};
+
+  TEST_CHECK(WriteTextFile(
+      clip0_path,
+      MakeValueClipAssetUSD(clip0_translate, clip0_scale)));
+  TEST_CHECK(WriteTextFile(
+      clip1_path,
+      MakeValueClipAssetUSD(clip1_translate, clip1_scale)));
+  TEST_CHECK(WriteTextFile(
+      scene_path,
+      MakeValueClipSceneUSD(clip0_path, clip1_path,
+                            {{0.0, 0}, {1.0, 0}, {2.0, 1}},
+                            {{0.0, 0.0}, {1.0, 1.0}, {2.0, 2.0}},
+                            false)));
+
+  Stage stage;
+  TEST_CHECK(LoadUSDFromFile(scene_path, &stage, nullptr, &err));
+
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverterEnv env(stage);
+  env.scene_config.value_clip_sample_rate = 4.0f;
+  tydra::RenderSceneConverter converter;
+
+  TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+  TEST_CHECK(scene.animations.size() == 1);
+
+  const auto &anim = scene.animations[0];
+  TEST_CHECK(anim.has_value_clip);
+  TEST_CHECK(anim.value_clip_baked);
+  TEST_CHECK(anim.value_clip_sample_rate == 4.0f);
+  TEST_CHECK(anim.samplers[0].times.size() == 9);
+  TEST_CHECK(anim.samplers[0].values.size() == 27);
+  TEST_CHECK(anim.samplers[1].values.size() == 36);
+  TEST_CHECK(anim.samplers[2].values.size() == 27);
+
+  TEST_CHECK(NearlyEqual(anim.samplers[0].times[0], 0.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[0].times[1], 0.25f));
+  TEST_CHECK(NearlyEqual(anim.samplers[0].times[4], 1.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[0].times[8], 2.0f));
+  // t=0 from clip0
+  TEST_CHECK(NearlyEqual(anim.samplers[0].values[0], 0.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[0].values[3], 0.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[0].values[6], 0.0f));
+  // t=1 from clip0
+  TEST_CHECK(NearlyEqual(anim.samplers[0].values[12], 0.0f));
+  // t=2 from clip1
+  TEST_CHECK(NearlyEqual(anim.samplers[0].values[24], 10.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[2].values[0], 1.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[2].values[26], 2.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[1].values[3], 1.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[1].values.back(), 1.0f));
+
+  cleanup();
+}
+
+void tydra_value_clip_animation_retime_test(void) {
+  std::string err;
+  const std::string clip0_path = MakeTempUSDFilePath("value_clip_retime_0");
+  const std::string clip1_path = MakeTempUSDFilePath("value_clip_retime_1");
+  const std::string scene_path = MakeTempUSDFilePath("value_clip_retime_scene");
+
+  const auto temp_files = std::vector<std::string>{clip0_path, clip1_path, scene_path};
+  auto cleanup = [&]() { CleanupTempFiles(temp_files); };
+  const std::array<float, 3> clip0_translate{0.0f, 0.0f, 0.0f};
+  const std::array<float, 3> clip0_scale{1.0f, 1.0f, 1.0f};
+  const std::array<float, 3> clip1_translate{10.0f, 0.0f, 0.0f};
+  const std::array<float, 3> clip1_scale{2.0f, 2.0f, 2.0f};
+
+  TEST_CHECK(WriteTextFile(
+      clip0_path,
+      MakeValueClipAssetUSD(clip0_translate, clip0_scale)));
+  TEST_CHECK(WriteTextFile(
+      clip1_path,
+      MakeValueClipAssetUSD(clip1_translate, clip1_scale)));
+  TEST_CHECK(WriteTextFile(
+      scene_path,
+      MakeValueClipSceneUSD(clip0_path, clip1_path,
+                            {{0.0, 0}, {1.0, 0}, {2.0, 1}},
+                            {{0.0, 0.0}, {1.0, 1.0}, {2.0, 2.0}},
+                            false)));
+
+  Stage stage;
+  TEST_CHECK(LoadUSDFromFile(scene_path, &stage, nullptr, &err));
+
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverterEnv env(stage);
+  env.scene_config.value_clip_sample_rate = 2.0f;
+  env.scene_config.value_clip_use_time_range = true;
+  env.scene_config.value_clip_start_time = 0.5;
+  env.scene_config.value_clip_end_time = 1.5;
+  tydra::RenderSceneConverter converter;
+
+  TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+  TEST_CHECK(scene.animations.size() == 1);
+
+  const auto &anim = scene.animations[0];
+  TEST_CHECK(anim.samplers.size() >= 3);
+  TEST_CHECK(anim.samplers[0].times.size() == 3);
+  TEST_CHECK(anim.channels.size() == 3);
+
+  TEST_CHECK(NearlyEqual(anim.samplers[0].times[0], 0.5f));
+  TEST_CHECK(NearlyEqual(anim.samplers[0].times[1], 1.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[0].times[2], 1.5f));
+  TEST_CHECK(NearlyEqual(anim.value_clip_sample_rate, 2.0f));
+
+  // Retimed samples: active window is [0.5, 1.5], which remains in clip0
+  // because clip1 starts at stage time 2.0.
+  TEST_CHECK(NearlyEqual(anim.samplers[0].values[0], 0.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[0].values[3], 0.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[0].values[6], 0.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[2].values[0], 1.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[2].values[6], 1.0f));
+
+  cleanup();
+}
+
+void tydra_value_clip_animation_primpath_test(void) {
+  std::string err;
+  Dictionary clipset;
+  clipset["assetPaths"] = std::vector<value::AssetPath>{
+      value::AssetPath("clip_0.usda"), value::AssetPath("clip_1.usda")};
+  clipset["times"] = std::vector<value::double2>{
+      value::double2{0.0, 0.0}, value::double2{1.0, 1.0}};
+  clipset["active"] = std::vector<value::double2>{
+      value::double2{0.0, 0.0}, value::double2{1.0, 1.0}};
+  clipset["interpolateMissingClipValues"] = true;
+  clipset["manifestAssetPath"] = value::AssetPath("manifest.usda");
+  clipset["primPath"] = value::StringData("/Root");
+
+  std::map<std::string, MetaVariable> clips_dict;
+  clips_dict.emplace("default_clip", clipset);
+
+  ClipSetMetadata meta;
+  TEST_CHECK(ParseClipSetMetadataFull(clips_dict, &meta, &err));
+  TEST_CHECK(err.empty());
+  TEST_CHECK(meta.assetPaths.size() == 2);
+  TEST_CHECK(meta.times.size() == 2);
+  TEST_CHECK(meta.active.size() == 2);
+  TEST_CHECK(meta.assetPaths[0] == "clip_0.usda");
+  TEST_CHECK(meta.assetPaths[1] == "clip_1.usda");
+  TEST_CHECK(meta.primPath == "/Root");
+  TEST_CHECK(meta.times[0].first == 0.0);
+  TEST_CHECK(meta.times[1].first == 1.0);
+  TEST_CHECK(meta.active[0].first == 0.0);
+  TEST_CHECK(meta.active[1].second == 1);
+  TEST_CHECK(meta.manifestAssetPath == "manifest.usda");
+  TEST_CHECK(meta.interpolateMissingClipValues);
+
+  clipset["primPath"] = std::string("/AnimRoot");
+  clips_dict.clear();
+  clips_dict.emplace("default_clip", clipset);
+
+  err.clear();
+  TEST_CHECK(ParseClipSetMetadataFull(clips_dict, &meta, &err));
+  TEST_CHECK(meta.primPath == "/AnimRoot");
+}
+
+void tydra_value_clip_animation_fallback_test(void) {
+  std::string err;
+  const std::string clip0_path = MakeTempUSDFilePath("value_clip_fallback_0");
+  const std::string clip1_path = MakeTempUSDFilePath("value_clip_fallback_1");
+  const std::string scene_path =
+      MakeTempUSDFilePath("value_clip_fallback_scene");
+  const std::string scene_fallback_path =
+      MakeTempUSDFilePath("value_clip_fallback_with_interp_scene");
+
+  const auto base_scene = MakeValueClipSceneUSD(
+      clip0_path, clip1_path, {{0.0, 0}, {1.0, 99}, {2.0, 1}},
+      {{0.0, 0.0}, {1.0, 1.0}, {2.0, 2.0}}, false);
+  auto fallback_scene = MakeValueClipSceneUSD(
+      clip0_path, clip1_path, {{0.0, 0}, {1.0, 99}, {2.0, 1}},
+      {{0.0, 0.0}, {1.0, 1.0}, {2.0, 2.0}}, true);
+
+  const auto temp_files = std::vector<std::string>{clip0_path, clip1_path, scene_path,
+                                                  scene_fallback_path};
+  auto cleanup = [&]() { CleanupTempFiles(temp_files); };
+  const std::array<float, 3> clip0_translate{0.0f, 0.0f, 0.0f};
+  const std::array<float, 3> clip0_scale{1.0f, 1.0f, 1.0f};
+  const std::array<float, 3> clip1_translate{5.0f, 0.0f, 0.0f};
+  const std::array<float, 3> clip1_scale{2.0f, 2.0f, 2.0f};
+
+  TEST_CHECK(WriteTextFile(
+      clip0_path,
+      MakeValueClipAssetUSD(clip0_translate, clip0_scale)));
+  TEST_CHECK(WriteTextFile(
+      clip1_path,
+      MakeValueClipAssetUSD(clip1_translate, clip1_scale)));
+  TEST_CHECK(WriteTextFile(scene_path, base_scene));
+  TEST_CHECK(WriteTextFile(scene_fallback_path, fallback_scene));
+
+  {
+    Stage stage;
+    TEST_CHECK(LoadUSDFromFile(scene_path, &stage, nullptr, &err));
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.animations.size() == 1);
+    const auto &anim = scene.animations[0];
+    // Without fallback we expect only the valid entries at t=0 and t=2.
+    TEST_CHECK(anim.samplers[0].times.size() == 2);
+    TEST_CHECK(anim.samplers[0].values.size() == 6);
+    TEST_CHECK(NearlyEqual(anim.samplers[0].values[0], 0.0f));
+    TEST_CHECK(NearlyEqual(anim.samplers[0].values[3], 5.0f));
+  }
+
+  {
+    Stage stage;
+    TEST_CHECK(LoadUSDFromFile(scene_fallback_path, &stage, nullptr, &err));
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverterEnv env(stage);
+    // Keep this test explicit for converter output.
+    env.scene_config.value_clip_sample_rate = 0.0f;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.animations.size() == 1);
+    const auto &anim = scene.animations[0];
+    // With fallback, we expect all 3 samples to be kept.
+    TEST_CHECK(anim.samplers[0].times.size() == 3);
+    TEST_CHECK(anim.samplers[0].values.size() == 9);
+    TEST_CHECK(NearlyEqual(anim.samplers[0].values[3], 0.0f));
+    TEST_CHECK(NearlyEqual(anim.samplers[0].values[4], 0.0f));
+    TEST_CHECK(NearlyEqual(anim.samplers[0].values[5], 0.0f));
+    TEST_CHECK(NearlyEqual(anim.samplers[0].values[6], 5.0f));
+    TEST_CHECK(NearlyEqual(anim.samplers[0].values[7], 0.0f));
+    TEST_CHECK(NearlyEqual(anim.samplers[0].values[8], 0.0f));
+  }
+
+  cleanup();
+}
+
+void tydra_value_clip_animation_custom_property_test(void) {
+  std::string err;
+  const std::string clip0_path = MakeTempUSDFilePath("value_clip_custom_prop_0");
+  const std::string clip1_path = MakeTempUSDFilePath("value_clip_custom_prop_1");
+  const std::string scene_path = MakeTempUSDFilePath("value_clip_custom_prop_scene");
+
+  const auto temp_files = std::vector<std::string>{clip0_path, clip1_path,
+                                                  scene_path};
+  auto cleanup = [&]() { CleanupTempFiles(temp_files); };
+
+  const std::array<float, 3> clip0_translate{0.0f, 0.0f, 0.0f};
+  const std::array<float, 3> clip0_scale{1.0f, 1.0f, 1.0f};
+  const std::array<float, 3> clip1_translate{8.0f, 2.0f, 0.0f};
+  const std::array<float, 3> clip1_scale{2.0f, 2.0f, 2.0f};
+  const std::vector<std::pair<std::string, std::string>> custom_0 = {
+      {"float physics:radius", "1.0"},
+      {"float3 physics:traj", "(0.0, 0.0, 0.0)"}
+  };
+  const std::vector<std::pair<std::string, std::string>> custom_1 = {
+      {"float physics:radius", "4.0"},
+      {"float3 physics:traj", "(4.0, 2.0, 0.0)"}
+  };
+
+  TEST_CHECK(WriteTextFile(
+      clip0_path,
+      MakeValueClipAssetUSD(clip0_translate, clip0_scale, custom_0)));
+  TEST_CHECK(WriteTextFile(
+      clip1_path,
+      MakeValueClipAssetUSD(clip1_translate, clip1_scale, custom_1)));
+  TEST_CHECK(WriteTextFile(
+      scene_path,
+      MakeValueClipSceneUSD(clip0_path, clip1_path,
+                            {{0.0, 0}, {1.0, 0}, {2.0, 1}},
+                            {{0.0, 0.0}, {1.0, 1.0}, {2.0, 2.0}},
+                            false)));
+
+  Stage stage;
+  TEST_CHECK(LoadUSDFromFile(scene_path, &stage, nullptr, &err));
+
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverterEnv env(stage);
+  tydra::RenderSceneConverter converter;
+
+  TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+  TEST_CHECK(scene.animations.size() == 1);
+  const auto &anim = scene.animations[0];
+  TEST_CHECK(anim.channels.size() == 5);
+
+  TEST_CHECK(anim.samplers.size() >= 5);
+  TEST_CHECK(anim.samplers[0].times.size() == 3);
+  TEST_CHECK(anim.samplers[0].values.size() == 9);
+  TEST_CHECK(anim.has_value_clip);
+  TEST_CHECK(anim.value_clip_baked);
+
+  // Ensure transform channels are still available.
+  bool found_translation = false;
+  bool found_rotation = false;
+  bool found_scale = false;
+  bool found_radius = false;
+  bool found_traj = false;
+  size_t radius_sampler = 0;
+  size_t traj_sampler = 0;
+  for (const auto &ch : anim.channels) {
+    if (ch.path == tydra::AnimationPath::Translation) {
+      found_translation = true;
+    } else if (ch.path == tydra::AnimationPath::Rotation) {
+      found_rotation = true;
+    } else if (ch.path == tydra::AnimationPath::Scale) {
+      found_scale = true;
+    } else if (ch.path == tydra::AnimationPath::CustomProperty) {
+      if (ch.property_name == "physics:radius") {
+        found_radius = true;
+        radius_sampler = static_cast<size_t>(ch.sampler);
+      } else if (ch.property_name == "physics:traj") {
+        found_traj = true;
+        traj_sampler = static_cast<size_t>(ch.sampler);
+      }
+    }
+  }
+  TEST_CHECK(found_translation);
+  TEST_CHECK(found_rotation);
+  TEST_CHECK(found_scale);
+  TEST_CHECK(found_radius);
+  TEST_CHECK(found_traj);
+
+  TEST_CHECK(radius_sampler < anim.samplers.size());
+  TEST_CHECK(traj_sampler < anim.samplers.size());
+  TEST_CHECK(anim.samplers[radius_sampler].times.size() == 3);
+  TEST_CHECK(anim.samplers[radius_sampler].values.size() == 3);
+  TEST_CHECK(anim.samplers[traj_sampler].times.size() == 3);
+  TEST_CHECK(anim.samplers[traj_sampler].values.size() == 9);
+
+  TEST_CHECK(NearlyEqual(anim.samplers[radius_sampler].values[0], 1.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[radius_sampler].values[1], 1.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[radius_sampler].values[2], 4.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[traj_sampler].values[0], 0.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[traj_sampler].values[1], 0.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[traj_sampler].values[2], 0.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[traj_sampler].values[6], 4.0f));
+  TEST_CHECK(NearlyEqual(anim.samplers[traj_sampler].values[7], 2.0f));
+
+  cleanup();
 }

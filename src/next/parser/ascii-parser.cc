@@ -49,6 +49,8 @@ private:
   bool ParseRelationship();
   bool ParseMetadataBlock();
   bool ParseTimeSamples(const std::string& prop_name, TypeId type_id);
+  bool ParseVariantSetBody(const std::string& variant_set_name);
+  bool ParseVariantOption(VariantData* out);
 
   void AddError(const std::string& message);
   void AddWarning(const std::string& message);
@@ -286,6 +288,9 @@ bool AsciiParser::Impl::ParsePrim() {
 }
 
 bool AsciiParser::Impl::ParsePrimContents() {
+  PrimSpec* prim = builder_->current();
+  if (!prim) return false;
+
   while (!Check(TokenType::CloseBrace) && !AtEnd()) {
     const Token& tok = lexer_->peek();
 
@@ -300,6 +305,24 @@ bool AsciiParser::Impl::ParsePrimContents() {
     // Check for relationship
     if (tok.type == TokenType::Rel) {
       if (!ParseRelationship()) {
+        return false;
+      }
+      continue;
+    }
+
+    // Check for variantSet body
+    if (tok.type == TokenType::Identifier && tok.value == "variantSet") {
+      lexer_->next();
+      std::string vs_name;
+      if (!lexer_->expect(TokenType::String, vs_name)) {
+        AddError("Expected variantSet name");
+        return false;
+      }
+      if (!Match(TokenType::Equals)) {
+        AddError("Expected '=' in variantSet");
+        return false;
+      }
+      if (!ParseVariantSetBody(vs_name)) {
         return false;
       }
       continue;
@@ -565,6 +588,33 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       if (lexer_->expect(TokenType::PathRef, payload) || lexer_->expect(TokenType::String, payload)) {
         prim->meta().payloads.push_back(payload);
       }
+    } else if (key == "variantSets") {
+      // variantSets = ["setName1", "setName2"]
+      if (Match(TokenType::OpenBracket)) {
+        while (!Check(TokenType::CloseBracket) && !AtEnd()) {
+          std::string vs_name;
+          if (lexer_->expect(TokenType::String, vs_name) || lexer_->expect(TokenType::Identifier, vs_name)) {
+            prim->meta().variantSets.emplace_back();
+            prim->meta().variantSets.back().name = vs_name;
+          }
+          Match(TokenType::Comma);
+        }
+        Match(TokenType::CloseBracket);
+      }
+    } else if (key == "variants" || key == "variantSelection") {
+      // variants = { "set" = "selection" } or variantSelection = { "set" = "selection" }
+      if (Match(TokenType::OpenBrace)) {
+        while (!Check(TokenType::CloseBrace) && !AtEnd()) {
+          std::string set_name;
+          lexer_->expect(TokenType::Identifier, set_name);
+          if (!Match(TokenType::Equals)) break;
+          std::string sel_name;
+          if (!lexer_->expect(TokenType::String, sel_name)) break;
+          prim->meta().variantSelection = set_name + "=" + sel_name;
+          Match(TokenType::Comma);
+        }
+        Match(TokenType::CloseBrace);
+      }
     } else {
       // Generic metadata - skip the value
       TypeId type;
@@ -607,6 +657,170 @@ bool AsciiParser::Impl::ParseTimeSamples(const std::string& prop_name, TypeId ty
 
     // Optional comma
     Match(TokenType::Comma);
+  }
+
+  return Match(TokenType::CloseBrace);
+}
+
+bool AsciiParser::Impl::ParseVariantSetBody(const std::string& variant_set_name) {
+  PrimSpec* prim = builder_->current();
+  if (!prim) return false;
+
+  // variantSet "name" = { "optionName" { ... } "optionName2" { ... } }
+  if (!Match(TokenType::OpenBrace)) {
+    AddError("Expected '{' for variantSet body");
+    return false;
+  }
+
+  // Find or create the VariantSetData
+  VariantSetData* vs_data = nullptr;
+  for (auto& vs : prim->meta().variantSets) {
+    if (vs.name == variant_set_name) {
+      vs_data = &vs;
+      break;
+    }
+  }
+  if (!vs_data) {
+    prim->meta().variantSets.emplace_back();
+    vs_data = &prim->meta().variantSets.back();
+    vs_data->name = variant_set_name;
+  }
+
+  while (!Check(TokenType::CloseBrace) && !AtEnd()) {
+    VariantData variant;
+    if (!ParseVariantOption(&variant)) {
+      return false;
+    }
+    vs_data->variants.push_back(std::move(variant));
+  }
+
+  return Match(TokenType::CloseBrace);
+}
+
+bool AsciiParser::Impl::ParseVariantOption(VariantData* out) {
+  if (!out) return false;
+
+  // Parse variant option name
+  if (!lexer_->expect(TokenType::String, out->name)) {
+    AddError("Expected variant option name");
+    return false;
+  }
+
+  // Parse optional metadata
+  if (Check(TokenType::OpenParen)) {
+    lexer_->next();
+    while (!Check(TokenType::CloseParen) && !AtEnd()) {
+      std::string key;
+      if (!lexer_->expect(TokenType::Identifier, key)) break;
+      if (!Match(TokenType::Equals)) break;
+
+      if (key == "active") {
+        ParseResult result = ParseValue(*lexer_, TypeId::Bool);
+        if (result.success && result.value.as_bool()) {
+          out->active = *result.value.as_bool();
+        }
+      } else if (key == "hidden") {
+        ParseResult result = ParseValue(*lexer_, TypeId::Bool);
+        if (result.success && result.value.as_bool()) {
+          out->hidden = *result.value.as_bool();
+        }
+      } else {
+        TypeId t;
+        ParseGenericValue(*lexer_, t);
+      }
+    }
+    Match(TokenType::CloseParen);
+  }
+
+  // Parse variant body: { properties, relationships, nested variantSets }
+  if (!Match(TokenType::OpenBrace)) {
+    AddError("Expected '{' for variant option body");
+    return false;
+  }
+
+  while (!Check(TokenType::CloseBrace) && !AtEnd()) {
+    const Token& tok = lexer_->peek();
+
+    if (tok.type == TokenType::Rel) {
+      lexer_->next();
+      std::string rel_name;
+      if (!lexer_->expect(TokenType::Identifier, rel_name)) break;
+      while (Check(TokenType::Colon)) {
+        lexer_->next();
+        std::string suffix;
+        if (lexer_->expect(TokenType::Identifier, suffix)) {
+          rel_name += ":" + suffix;
+        }
+      }
+      if (Match(TokenType::Equals)) {
+        if (Check(TokenType::OpenBracket)) {
+          lexer_->next();
+          while (!Check(TokenType::CloseBracket) && !AtEnd()) {
+            std::string target;
+            if (lexer_->expect(TokenType::PathRef, target)) {
+              out->relationships[rel_name].push_back(Path(target));
+            }
+            Match(TokenType::Comma);
+          }
+          Match(TokenType::CloseBracket);
+        } else if (Check(TokenType::PathRef)) {
+          std::string target;
+          lexer_->expect(TokenType::PathRef, target);
+          out->relationships[rel_name].push_back(Path(target));
+        }
+      }
+    } else if (tok.type == TokenType::Identifier && tok.value == "variantSet") {
+      lexer_->next();
+      std::string nested_vs_name;
+      if (!lexer_->expect(TokenType::String, nested_vs_name)) break;
+      if (!Match(TokenType::Equals)) break;
+      // Nested variant sets not fully supported - skip for now
+      int brace_depth = 1;
+      while (brace_depth > 0 && !AtEnd()) {
+        const Token& t = lexer_->peek();
+        if (t.type == TokenType::OpenBrace) brace_depth++;
+        else if (t.type == TokenType::CloseBrace) brace_depth--;
+        if (brace_depth > 0) lexer_->next();
+      }
+    } else if (tok.type == TokenType::Custom || tok.type == TokenType::Uniform ||
+               tok.type == TokenType::Varying || tok.type == TokenType::Identifier) {
+      lexer_->next();
+      std::string type_name;
+      if (tok.type == TokenType::Identifier) {
+        type_name = tok.value;
+      } else {
+        if (!lexer_->expect(TokenType::Identifier, type_name)) break;
+      }
+      bool is_array = false;
+      if (Check(TokenType::OpenBracket)) {
+        lexer_->next();
+        Match(TokenType::CloseBracket);
+        is_array = true;
+      }
+      std::string prop_name;
+      if (!lexer_->expect(TokenType::Identifier, prop_name)) break;
+      while (Check(TokenType::Colon)) {
+        lexer_->next();
+        std::string suffix;
+        if (lexer_->expect(TokenType::Identifier, suffix)) {
+          prop_name += ":" + suffix;
+        }
+      }
+      if (Match(TokenType::Equals)) {
+        TypeId tid = ParseTypeName(type_name, is_array);
+        ParseResult result;
+        if (is_array) {
+          result = ParseArrayValue(*lexer_, tid);
+        } else {
+          result = ParseValue(*lexer_, tid);
+        }
+        if (result.success) {
+          out->properties.emplace_back(prop_name, std::move(result.value));
+        }
+      }
+    } else {
+      lexer_->next();
+    }
   }
 
   return Match(TokenType::CloseBrace);

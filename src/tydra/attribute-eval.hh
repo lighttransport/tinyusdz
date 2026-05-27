@@ -260,6 +260,14 @@ bool EvaluateAttribute(
     std::string *err, const double t = tinyusdz::value::TimeCode::Default(),
     const tinyusdz::value::TimeSampleInterpolationType tinterp =
         tinyusdz::value::TimeSampleInterpolationType::Linear);
+bool EvaluateAttributeFromClips(
+    const tinyusdz::Prim &prim,
+    const std::string &attr_name,
+    TerminalAttributeValue *value,
+    std::string *err, const double t = tinyusdz::value::TimeCode::Default(),
+    const tinyusdz::value::TimeSampleInterpolationType tinterp =
+        tinyusdz::value::TimeSampleInterpolationType::Linear);
+
 
 
 //
