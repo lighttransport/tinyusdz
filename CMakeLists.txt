@@ -2154,6 +2154,13 @@ if(TINYUSDZ_BUILD_TESTS)
   # Feature tests as CTest targets (Phase 0B)
   #
   if(TINYUSDZ_WITH_MODULE_USDA_READER)
+    add_executable(feat-value-clip tests/feat/value-clip/test-value-clip.cc)
+    add_sanitizers(feat-value-clip)
+    target_link_libraries(feat-value-clip PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-value-clip PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-value-clip COMMAND feat-value-clip
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     # MaterialX tests
     add_executable(feat-mtlx-parse tests/feat/mtlx/test_mtlx_parse.cc)
     add_sanitizers(feat-mtlx-parse)

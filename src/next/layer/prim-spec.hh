@@ -69,6 +69,10 @@ private:
 
 TypeNameTable& GetTypeNameTable();
 
+// Forward declarations
+struct VariantData;
+struct VariantSetData;
+
 /// PrimSpec metadata
 struct PrimSpecMeta {
   bool active = true;
@@ -83,6 +87,29 @@ struct PrimSpecMeta {
   std::vector<std::string> inherits;
   std::vector<std::string> specializes;
   std::string variantSelection;  // "variantSet=selection"
+
+  // Variant set definitions
+  std::vector<VariantSetData> variantSets;
+
+  // Layer offset (applied at evaluation time)
+  // First = offset, Second = scale. Default: (0, 1)
+  std::pair<double, double> layer_offset = {0.0, 1.0};
+};
+
+/// Variant data - properties and prims inside a single variant option
+struct VariantData {
+  std::string name;
+  bool active = true;
+  bool hidden = false;
+  std::string doc;
+  std::vector<std::pair<std::string, Value>> properties;
+  std::unordered_map<std::string, std::vector<Path>> relationships;
+};
+
+/// Variant set - a named set of variant options
+struct VariantSetData {
+  std::string name;
+  std::vector<VariantData> variants;
 };
 
 /// Value storage block
@@ -217,6 +244,9 @@ public:
   PrimSpec& operator=(PrimSpec&& other) noexcept;
   PrimSpec(const PrimSpec&) = delete;
   PrimSpec& operator=(const PrimSpec&) = delete;
+
+  /// Clone this PrimSpec (deep copy)
+  PrimSpec Clone() const;
 
   // ============================================================
   // Identity

@@ -146,6 +146,53 @@ static std::mutex &GetClipCacheMutex() {
   return s_clip_cache_mu;
 }
 
+static std::vector<std::string> GetClipPrimPathCandidates(
+    const std::string &primPath, const Path &fallback_prim_path) {
+  std::vector<std::string> candidates;
+
+  std::string p = primPath.empty() ? fallback_prim_path.full_path_name() : primPath;
+  if (!p.empty()) {
+    candidates.push_back(p);
+  }
+
+  if (!p.empty() && p[0] != '/') {
+    std::string rel = p;
+    if (rel == ".") {
+      rel.clear();
+    } else if (rel.size() >= 2 && rel[0] == '.' && rel[1] == '/') {
+      rel = rel.substr(2);
+    }
+
+    if (fallback_prim_path.is_valid()) {
+      Path parent = fallback_prim_path.get_parent_prim_path();
+      if (parent.is_valid()) {
+        std::string parent_path = parent.full_path_name();
+        if (!parent_path.empty() && parent_path != "/") {
+          if (parent_path.back() != '/') {
+            parent_path.push_back('/');
+          }
+          if (!rel.empty()) {
+            candidates.push_back(parent_path + rel);
+          } else {
+            candidates.push_back(parent_path);
+          }
+        } else if (!rel.empty()) {
+          candidates.push_back(std::string("/") + rel);
+        }
+      }
+    }
+  }
+
+  if (candidates.empty() && fallback_prim_path.is_valid()) {
+    candidates.push_back(fallback_prim_path.full_path_name());
+  }
+
+  std::sort(candidates.begin(), candidates.end());
+  candidates.erase(std::unique(candidates.begin(), candidates.end()),
+                   candidates.end());
+  return candidates;
+}
+
 // Helper: load a clip layer from file with caching.
 static std::shared_ptr<Layer> LoadClipLayer(const std::string &clipAssetPath) {
   {
@@ -177,27 +224,85 @@ static std::shared_ptr<Layer> LoadClipLayer(const std::string &clipAssetPath) {
 // Helper: query an attribute from a clip layer at a given time.
 static bool QueryClipAttribute(
     const Layer *clip_layer, const std::string &primPath,
+    const Path &fallback_prim_path,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, double clipTime,
     value::TimeSampleInterpolationType tinterp) {
-  const PrimSpec *target_ps = nullptr;
-  std::string find_err;
-  Path clip_prim_path(primPath, "");
-  if (!clip_layer->find_primspec_at(clip_prim_path, &target_ps, &find_err)) {
+  if (!clip_layer) {
     return false;
   }
-  if (!target_ps) return false;
 
-  const auto &props = target_ps->props();
-  auto prop_it = props.find(attr_name);
-  if (prop_it == props.end()) return false;
-  if (!prop_it->second.is_attribute()) return false;
+  const std::vector<std::string> candidates =
+      GetClipPrimPathCandidates(primPath, fallback_prim_path);
 
-  const Attribute &clip_attr = prop_it->second.get_attribute();
-  return ToTerminalAttributeValue(clip_attr, value, err, clipTime, tinterp);
+  const PrimSpec *target_ps = nullptr;
+  std::string find_err;
+  for (const auto &candidate : candidates) {
+    if (candidate.empty()) {
+      continue;
+    }
+    Path clip_prim_path(candidate, "");
+    if (clip_prim_path.is_valid() &&
+        clip_layer->find_primspec_at(clip_prim_path, &target_ps, &find_err)) {
+      break;
+    }
+  }
+
+  if (target_ps) {
+    const auto &props = target_ps->props();
+    auto prop_it = props.find(attr_name);
+    if (prop_it != props.end() && prop_it->second.is_attribute()) {
+      const Attribute &clip_attr = prop_it->second.get_attribute();
+      if (ToTerminalAttributeValue(clip_attr, value, err, clipTime, tinterp)) {
+        return true;
+      }
+    }
+  }
+
+  // Fallback using Stage conversion in case primspec lookup misses
+  // some metadata representation variants.
+  if (!candidates.empty()) {
+    Layer layer_copy = *clip_layer;
+    Stage clip_stage;
+    std::string warn;
+    std::string layer_err;
+    if (LayerToStage(std::move(layer_copy), &clip_stage, &warn, &layer_err)) {
+      const Prim *clip_prim = nullptr;
+      for (const auto &candidate : candidates) {
+        if (candidate.empty()) {
+          continue;
+        }
+        Path clip_prim_path(candidate, "");
+        std::string prim_find_err;
+        if (clip_prim_path.is_valid() &&
+            clip_stage.find_prim_at_path(clip_prim_path, clip_prim,
+                                         &prim_find_err)) {
+          break;
+        }
+      }
+
+      if (!clip_prim) {
+        return false;
+      }
+
+      Property prop;
+      std::string prim_get_err;
+      if (!GetProperty(*clip_prim, attr_name, &prop, &prim_get_err)) {
+        return false;
+      }
+      if (!prop.is_attribute()) {
+        return false;
+      }
+
+      const Attribute &prim_attr = prop.get_attribute();
+      return ToTerminalAttributeValue(prim_attr, value, err, clipTime, tinterp);
+    }
+  }
+
+  return false;
 }
 
-bool EvaluateAttributeFromClips(
+bool EvaluateAttributeFromClipsImpl(
     const Prim &prim,
     const std::string &attr_name,
     TerminalAttributeValue *value,
@@ -230,10 +335,21 @@ bool EvaluateAttributeFromClips(
     std::shared_ptr<Layer> manifest = LoadClipLayer(clipMeta.manifestAssetPath);
     if (manifest) {
       const PrimSpec *manifest_ps = nullptr;
+      const std::vector<std::string> candidates =
+          GetClipPrimPathCandidates(clipMeta.primPath, prim.element_path());
       std::string find_err;
-      Path manifest_prim_path(clipMeta.primPath, "");
-      if (manifest->find_primspec_at(manifest_prim_path, &manifest_ps, &find_err) &&
-          manifest_ps) {
+      for (const auto &candidate : candidates) {
+        if (candidate.empty()) {
+          continue;
+        }
+        Path manifest_path(candidate, "");
+        if (manifest_path.is_valid() &&
+            manifest->find_primspec_at(manifest_path, &manifest_ps, &find_err)) {
+          break;
+        }
+      }
+
+      if (manifest_ps) {
         // Check if the requested attribute exists in the manifest
         if (manifest_ps->props().find(attr_name) == manifest_ps->props().end()) {
           DCOUT("Attribute " << attr_name << " not listed in clip manifest");
@@ -258,7 +374,7 @@ bool EvaluateAttributeFromClips(
   std::shared_ptr<Layer> clip_layer = LoadClipLayer(clipAssetPath);
 
   if (clip_layer) {
-    if (QueryClipAttribute(clip_layer.get(), clipMeta.primPath, attr_name,
+    if (QueryClipAttribute(clip_layer.get(), clipMeta.primPath, prim.element_path(), attr_name,
                             value, err, clipTime, tinterp)) {
       return true;
     }
@@ -298,8 +414,10 @@ bool EvaluateAttributeFromClips(
       std::shared_ptr<Layer> prev = LoadClipLayer(clipMeta.assetPaths[static_cast<size_t>(assetIdx)]);
       double prevClipTime = RemapStageTimeToClipTime(clipMeta.times,
           clipMeta.active[static_cast<size_t>(prevIdx)].first);
-      if (prev && QueryClipAttribute(prev.get(), clipMeta.primPath, attr_name,
-                                      value, err, prevClipTime, tinterp)) {
+      if (prev &&
+          QueryClipAttribute(prev.get(), clipMeta.primPath, prim.element_path(),
+                            attr_name, value, err, prevClipTime,
+                            tinterp)) {
         return true;
       }
     }
@@ -309,11 +427,13 @@ bool EvaluateAttributeFromClips(
       std::shared_ptr<Layer> next = LoadClipLayer(clipMeta.assetPaths[static_cast<size_t>(assetIdx)]);
       double nextClipTime = RemapStageTimeToClipTime(clipMeta.times,
           clipMeta.active[static_cast<size_t>(nextIdx)].first);
-      if (next && QueryClipAttribute(next.get(), clipMeta.primPath, attr_name,
-                                      value, err, nextClipTime, tinterp)) {
+      if (next &&
+          QueryClipAttribute(next.get(), clipMeta.primPath, prim.element_path(),
+                            attr_name, value, err, nextClipTime,
+                            tinterp)) {
         return true;
       }
-    }
+  }
   }
 
   return false;
@@ -392,8 +512,8 @@ bool EvaluateAttributeImpl(
       if (!ToTerminalAttributeValue(attr, value, err, t, tinterp)) {
         // AOUSD Core Spec 12.3.4: Fallback to value clips
         // If the attribute has no timeSamples/default, try clips.
-        if (EvaluateAttributeFromClips(*current_prim, current_attr_name,
-                                        value, err, t, tinterp)) {
+        if (EvaluateAttributeFromClipsImpl(*current_prim, current_attr_name,
+                                          value, err, t, tinterp)) {
           return true;
         }
         return false;
@@ -486,6 +606,16 @@ bool EvaluateAttribute(
 
   return EvaluateAttributeImpl(stage, prim, attr_name, value, err,
                                visited_paths, t, tinterp);
+}
+
+bool EvaluateAttributeFromClips(
+    const Prim &prim,
+    const std::string &attr_name,
+    TerminalAttributeValue *value,
+    std::string *err,
+    const double t,
+    const value::TimeSampleInterpolationType tinterp) {
+  return EvaluateAttributeFromClipsImpl(prim, attr_name, value, err, t, tinterp);
 }
 
 bool EvaluateAttribute(

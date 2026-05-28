@@ -318,5 +318,73 @@ DecompressResult DecompressLZ4(const uint8_t* src, size_t src_size,
 DecompressResult DecompressIntegers(const uint8_t* src, size_t src_size,
                                      size_t num_integers, bool is_64bit = false);
 
+/// LZ4 compression result
+struct CompressResult {
+  bool success = false;
+  std::vector<uint8_t> data;
+  std::string error;
+};
+
+/// Compress data with LZ4
+CompressResult CompressLZ4(const uint8_t* src, size_t src_size);
+
+/// Encode integers using USD's integer compression (inverse of DecompressIntegers)
+/// Returns the compressed byte representation.
+std::vector<uint8_t> EncodeIntegers(const uint32_t* values, size_t count);
+
+/// LZ4 compression/decompression with USD's TfFastCompression wrapper.
+///
+/// pxrUSD wraps raw LZ4 block data with a n_chunks prefix byte:
+///   - n_chunks == 0: single LZ4 block follows
+///   - n_chunks > 0: n_chunks blocks, each preceded by a i32 chunk_size
+///
+/// This is used for TOKENS and FIELDS structural sections.
+///
+/// Compress with CompressCrateBlob (adds prefix).
+/// Decompress with DecompressCrateBlob (strips prefix).
+CompressResult CompressCrateBlob(const uint8_t* src, size_t src_size);
+DecompressResult DecompressCrateBlob(const uint8_t* src, size_t src_size,
+                                     size_t uncompressed_size);
+
+// ============================================================
+// pxrUSD delta-coded integer compression
+// ============================================================
+///
+/// pxrUSD's integer coding uses delta encoding with a common delta value
+/// and 2-bit-per-value code map, followed by variable-length integer data.
+///
+/// For u32: delta = i32, code 1 = int8_t, code 2 = int16_t, code 3 = int32_t
+/// For i32: delta = i32, code 1 = int16_t, code 2 = int32_t, code 3 = int64_t
+
+/// Encode uint32_t values using pxrUSD delta-coding format.
+/// Returns the raw (uncompressed) delta-coded byte sequence.
+std::vector<uint8_t> EncodeDeltaU32(const uint32_t* values, size_t count);
+
+/// Decode uint32_t values from pxrUSD delta-coded format.
+/// buffer points to the raw (already decompressed) delta-coded data.
+bool DecodeDeltaU32(const uint8_t* buffer, size_t buffer_size,
+                    uint32_t* dst, size_t count);
+
+/// Encode int32_t values using pxrUSD delta-coding format.
+std::vector<uint8_t> EncodeDeltaS32(const int32_t* values, size_t count);
+
+/// Decode int32_t values from pxrUSD delta-coded format.
+bool DecodeDeltaS32(const uint8_t* buffer, size_t buffer_size,
+                    int32_t* dst, size_t count);
+
+// ============================================================
+// pxrUSD compressed integer section I/O
+// ============================================================
+///
+/// These wrap delta-coded integers with n_chunks-prefixed LZ4 compression
+/// and a u64 size prefix, as used by pxrUSD's read_compressed_ints.
+
+/// Serialize (delta-encode + LZ4-compress + write u64 size + data).
+CompressResult WriteCompressedU32(const uint32_t* values, size_t count);
+
+/// Deserialize (read u64 size + LZ4-decompress + delta-decode).
+DecompressResult DecompressCompressedU32(const uint8_t* data, size_t data_size,
+                                         uint32_t* dst, size_t count);
+
 }  // namespace next
 }  // namespace tinyusdz

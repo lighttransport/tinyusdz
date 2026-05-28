@@ -121,6 +121,19 @@ public:
   static Value MakeFloat3Array(const std::vector<float>& data);
   static Value MakeFloat3Array(std::vector<float>&& data);
 
+  /// New array types
+  static Value MakeDoubleArray(const std::vector<double>& data);
+  static Value MakeDoubleArray(std::vector<double>&& data);
+  static Value MakeInt64Array(const std::vector<int64_t>& data);
+  static Value MakeInt64Array(std::vector<int64_t>&& data);
+  static Value MakeUIntArray(const std::vector<uint32_t>& data);
+  static Value MakeUIntArray(std::vector<uint32_t>&& data);
+  static Value MakeUInt64Array(const std::vector<uint64_t>& data);
+  static Value MakeUInt64Array(std::vector<uint64_t>&& data);
+  static Value MakeBoolArray(const std::vector<bool>& data);
+  static Value MakeTokenArray(const std::vector<std::string>& data);
+  static Value MakeTokenArray(std::vector<std::string>&& data);
+
   // ============================================================
   // Type queries
   // ============================================================
@@ -189,8 +202,18 @@ public:
   // Array accessors
   const std::vector<float>* as_float_array() const;
   const std::vector<int32_t>* as_int_array() const;
+  const std::vector<double>* as_double_array() const;
+  const std::vector<int64_t>* as_int64_array() const;
+  const std::vector<uint32_t>* as_uint_array() const;
+  const std::vector<uint64_t>* as_uint64_array() const;
+  const std::vector<uint8_t>* as_bool_array() const;   // 0/1 values
+  const std::vector<std::string>* as_token_array() const;
   std::vector<float>* as_float_array();
   std::vector<int32_t>* as_int_array();
+  std::vector<double>* as_double_array();
+  std::vector<int64_t>* as_int64_array();
+  std::vector<uint32_t>* as_uint_array();
+  std::vector<uint64_t>* as_uint64_array();
 
   // ============================================================
   // Raw data access

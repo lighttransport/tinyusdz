@@ -40,12 +40,14 @@ set(TINYUSDZ_NEXT_SOURCES
     # High-level readers
     reader/usda-reader.cc
     reader/usdc-reader.cc
+    reader/usdz-reader.cc
 
     # Writers
     writer/value-printer.cc
     writer/prim-printer.cc
     writer/usda-writer.cc
     writer/usdc-writer.cc
+    writer/usdz-writer.cc
 
     # Schema convenience APIs
     schema/geom-mesh.cc
@@ -53,6 +55,14 @@ set(TINYUSDZ_NEXT_SOURCES
     schema/usd-lux.cc
     schema/usd-geom-camera.cc
     schema/usd-shade.cc
+    schema/usd-skel.cc
+    schema/physics-scene.cc
+    schema/physics-api.cc
+    schema/physics-joint.cc
+    schema/physics-collision.cc
+    schema/usd-ar.cc
+    schema/usd-media.cc
+    schema/usd-mtlx.cc
 
     # Attribute evaluation
     eval/attribute-eval.cc
@@ -65,6 +75,7 @@ set(TINYUSDZ_NEXT_SOURCES
 
     # High-level API
     tinyusdz-next.cc
+    c-tinyusd-next.cc
 )
 
 # Define header files (for IDE project generation)
@@ -108,6 +119,7 @@ set(TINYUSDZ_NEXT_HEADERS
     writer/prim-printer.hh
     writer/usda-writer.hh
     writer/usdc-writer.hh
+    writer/usdz-writer.hh
 
     # Schema convenience APIs
     schema/geom-mesh.hh
@@ -115,6 +127,15 @@ set(TINYUSDZ_NEXT_HEADERS
     schema/usd-lux.hh
     schema/usd-geom-camera.hh
     schema/usd-shade.hh
+    schema/usd-skel.hh
+    schema/physics-scene.hh
+    schema/physics-api.hh
+    schema/physics-joint.hh
+    schema/physics-collision.hh
+    schema/usd-ar.hh
+    schema/usd-media.hh
+    schema/usd-mtlx.hh
+    schema/usdPhysics.hh
 
     # Attribute evaluation
     eval/attribute-eval.hh
@@ -128,6 +149,7 @@ set(TINYUSDZ_NEXT_HEADERS
     # High-level API
     tinyusdz-next.hh
     compat.hh
+    c-tinyusd-next.h
 )
 
 # LZ4 source (from existing TinyUSDZ)
@@ -202,6 +224,31 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdc_writer.cc
     )
     target_link_libraries(test_usdc_writer PRIVATE tinyusdz_next)
+
+    add_executable(test_usdc_roundtrip
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdc_roundtrip.cc
+    )
+    target_link_libraries(test_usdc_roundtrip PRIVATE tinyusdz_next)
+
+    add_executable(test_schemas
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_schemas.cc
+    )
+    target_link_libraries(test_schemas PRIVATE tinyusdz_next)
+
+    add_executable(test_schemas_ext
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_schemas_ext.cc
+    )
+    target_link_libraries(test_schemas_ext PRIVATE tinyusdz_next)
+
+    add_executable(test_usdcat_roundtrip
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdcat_roundtrip.cc
+    )
+    target_link_libraries(test_usdcat_roundtrip PRIVATE tinyusdz_next)
+
+    add_executable(test_usdz_writer
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdz_writer.cc
+    )
+    target_link_libraries(test_usdz_writer PRIVATE tinyusdz_next)
 endif()
 
 # Tydra Next (render data conversion)
@@ -252,4 +299,77 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/benchmark_next.cc
     )
     target_link_libraries(benchmark_next PRIVATE tinyusdz_next)
+
+    # Register tests with ctest
+    enable_testing()
+
+    add_test(NAME next_test_tinyusdz COMMAND test_tinyusdz_next
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_layer COMMAND test_layer
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_stage COMMAND test_stage
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_writer COMMAND test_writer
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_usdc_writer COMMAND test_usdc_writer
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_usdc_reader COMMAND test_usdc_reader
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_usdc_roundtrip COMMAND test_usdc_roundtrip
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_schemas COMMAND test_schemas
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_schemas_ext COMMAND test_schemas_ext
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_usdcat_roundtrip COMMAND test_usdcat_roundtrip
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_usdz_writer COMMAND test_usdz_writer
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_benchmark COMMAND benchmark_next
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endif()
+
+# ============================================================
+# Python extension module (optional)
+# ============================================================
+
+option(TINYUSDZ_NEXT_BUILD_PYTHON "Build Python extension for TinyUSDZ Next" OFF)
+
+if(TINYUSDZ_NEXT_BUILD_PYTHON)
+    find_package(Python3 3.10 COMPONENTS Interpreter Development REQUIRED)
+
+    # Determine extension suffix
+    if(WIN32)
+        set(PYTHON_EXT_SUFFIX ".pyd")
+    else()
+        set(PYTHON_EXT_SUFFIX ".so")
+    endif()
+
+    add_library(_next_core MODULE
+        ${CMAKE_CURRENT_SOURCE_DIR}/python/module.c
+    )
+
+    target_include_directories(_next_core PRIVATE
+        ${Python3_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    target_link_libraries(_next_core PRIVATE
+        tinyusdz_next
+    )
+
+    set_target_properties(_next_core PROPERTIES
+        PREFIX ""
+        SUFFIX ${PYTHON_EXT_SUFFIX}
+    )
+
+    # Install to python package directory
+    install(TARGETS _next_core
+        LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/python/next/tinyusdz_next
+        RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/python/next/tinyusdz_next
+    )
+
+    message(STATUS "TinyUSDZ Next Python extension: enabled")
+    message(STATUS "  Python version: ${Python3_VERSION}")
+    message(STATUS "  Python include: ${Python3_INCLUDE_DIRS}")
 endif()

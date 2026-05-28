@@ -58,7 +58,8 @@ const state = {
     showJointArrows: false,
     showLinkNames: false,
     showJointNames: false,
-    jointsCollapsed: false
+    jointsCollapsed: false,
+    applyHomePose: false
   }
 };
 
@@ -157,6 +158,32 @@ const exportButtons = [
   document.getElementById('exportUSDC'),
   document.getElementById('exportUSDZ')
 ];
+const DEFAULT_USDC_EXPORT_LIMIT_MB = 2048;
+const DEFAULT_MEM_EXPORT_LIMIT_MB = 4096;
+
+function parsePositiveInt(value) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+function resolveUSDCExportCapsFromRuntime() {
+  const search = (typeof window !== 'undefined' && window.location?.search) ? window.location.search : '';
+  const params = new URLSearchParams(search || '');
+
+  const queryUsdc = parsePositiveInt(params.get('maxUsdcMb'));
+  const queryMem = parsePositiveInt(params.get('maxMemMb'));
+  const globalUsdc = parsePositiveInt(
+    typeof window !== 'undefined' ? window.__TINYUSDZ_MAX_USDC_MB : undefined
+  );
+  const globalMem = parsePositiveInt(
+    typeof window !== 'undefined' ? window.__TINYUSDZ_MAX_MEM_MB : undefined
+  );
+
+  return {
+    maxUsdcMb: queryUsdc || globalUsdc || DEFAULT_USDC_EXPORT_LIMIT_MB,
+    maxMemMb: queryMem || globalMem || DEFAULT_MEM_EXPORT_LIMIT_MB,
+  };
+}
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -575,14 +602,20 @@ function syncGhosts() {
 }
 
 function isCollisionObject(object) {
+  // Prefer the explicit classification flag when present (set by the MJCF/URDF
+  // parser and the converted-USD preview). The name/path heuristic is only a
+  // fallback for imported USD without the flag — otherwise geoms legitimately
+  // named "*_collision" but tagged group=0 (visual), e.g. iit_softfoot, would be
+  // wrongly hidden.
+  if (typeof object.userData?.urdfCollision === 'boolean') {
+    return object.userData.urdfCollision;
+  }
   const marker = [
     object.name,
     object.userData?.nodeCategory,
     object.userData?.['primMeta.absPath']
   ].filter(Boolean).join(' ').toLowerCase();
-  return Boolean(object.userData?.urdfCollision)
-    || marker.includes('collision')
-    || marker.includes('collider');
+  return marker.includes('collision') || marker.includes('collider');
 }
 
 function pathInSetOrUnder(path, paths) {
@@ -602,13 +635,13 @@ function usdGeometryClassification(extracted) {
     const group = Number(prim.properties?.['mjc:group']);
     // Three independent collider signals, in priority order:
     //   1. `UsdPhysicsCollisionAPI` applied (canonical UsdPhysics)
-    //   2. `mjc:group == 3` (menagerie convention for collision-only)
+    //   2. `mjc:group >= 3` (menagerie convention: groups 3-5 are collision)
     //   3. `purpose == "guide"` (surfaced by the patched
     //      `AppendPhysicsPrimJson` in `web/binding.cc`; used by the
     //      mujoco-usd-converter to hide colliders from default renders)
     // Any of these flips the prim into the collision bucket.
     if (hasApi(prim, 'PhysicsCollisionAPI')
-        || group === 3
+        || (Number.isFinite(group) && group >= 3)
         || prim.purpose === 'guide') {
       collisionPaths.add(prim.path);
     } else {
@@ -1165,19 +1198,65 @@ function attrsFromElement(el) {
   return attrs;
 }
 
+// MuJoCo <compiler> context for angle units + euler sequence. Set per-parse in
+// parseMJCFWithMeshes; defaults match MuJoCo (degrees, "xyz").
+let mjcfPoseCtx = { toRad: Math.PI / 180, eulerseq: 'xyz' };
+
+function eulerQuatFromSeq(angles, seq, toRad) {
+  const axisFor = (c) => (c === 'x' ? new THREE.Vector3(1, 0, 0)
+    : c === 'y' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1));
+  const q = new THREE.Quaternion();
+  for (let i = 0; i < seq.length && i < angles.length; i++) {
+    const c = seq[i];
+    const lower = c.toLowerCase();
+    const qi = new THREE.Quaternion().setFromAxisAngle(axisFor(lower), (angles[i] || 0) * toRad);
+    if (c === lower) q.multiply(qi);   // lowercase = intrinsic (moving axes)
+    else q.premultiply(qi);            // uppercase = extrinsic (fixed axes)
+  }
+  return q;
+}
+
+// Resolve any MuJoCo orientation specifier (quat/axisangle/euler/xyaxes/zaxis).
+function orientationQuat(attrs, ctx) {
+  const toRad = ctx.toRad;
+  if (attrs.quat) {
+    const q = parseNumbers(attrs.quat, [1, 0, 0, 0]);
+    return new THREE.Quaternion(q[1] || 0, q[2] || 0, q[3] || 0, q[0] ?? 1).normalize();
+  }
+  if (attrs.axisangle) {
+    const a = parseNumbers(attrs.axisangle, [0, 0, 1, 0]);
+    const axis = new THREE.Vector3(a[0] || 0, a[1] || 0, a[2] || 0);
+    if (axis.lengthSq() < 1e-12) axis.set(0, 0, 1);
+    return new THREE.Quaternion().setFromAxisAngle(axis.normalize(), (a[3] || 0) * toRad);
+  }
+  if (attrs.euler) {
+    return eulerQuatFromSeq(parseNumbers(attrs.euler, [0, 0, 0]), ctx.eulerseq, toRad);
+  }
+  if (attrs.xyaxes) {
+    const v = parseNumbers(attrs.xyaxes, [1, 0, 0, 0, 1, 0]);
+    const x = new THREE.Vector3(v[0], v[1], v[2]);
+    if (x.lengthSq() < 1e-12) x.set(1, 0, 0);
+    x.normalize();
+    const y = new THREE.Vector3(v[3], v[4], v[5]);
+    y.sub(x.clone().multiplyScalar(x.dot(y)));   // Gram-Schmidt against x
+    if (y.lengthSq() < 1e-12) y.crossVectors(new THREE.Vector3(0, 0, 1), x);
+    y.normalize();
+    const z = new THREE.Vector3().crossVectors(x, y);
+    return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+  }
+  if (attrs.zaxis) {
+    const v = parseNumbers(attrs.zaxis, [0, 0, 1]);
+    const z = new THREE.Vector3(v[0] || 0, v[1] || 0, v[2] || 0);
+    if (z.lengthSq() < 1e-12) z.set(0, 0, 1);
+    return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), z.normalize());
+  }
+  return new THREE.Quaternion();
+}
+
 function matrixFromPoseAttrs(attrs = {}) {
   const pos = parseNumbers(attrs.pos, [0, 0, 0]);
   const translation = new THREE.Vector3(pos[0] || 0, pos[1] || 0, pos[2] || 0);
-  let quat = new THREE.Quaternion();
-
-  if (attrs.quat) {
-    const q = parseNumbers(attrs.quat, [1, 0, 0, 0]);
-    quat = new THREE.Quaternion(q[1] || 0, q[2] || 0, q[3] || 0, q[0] ?? 1).normalize();
-  } else if (attrs.euler) {
-    const e = parseNumbers(attrs.euler, [0, 0, 0]);
-    quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(e[0] || 0, e[1] || 0, e[2] || 0, 'XYZ'));
-  }
-
+  const quat = orientationQuat(attrs, mjcfPoseCtx);
   return new THREE.Matrix4().compose(translation, quat, new THREE.Vector3(1, 1, 1));
 }
 
@@ -1205,7 +1284,8 @@ function applyMatrixToObject(object, matrix) {
 
 function collectMujocoAssets(root) {
   const compiler = firstChildElement(root, 'compiler');
-  const meshDir = compiler?.getAttribute('meshdir') || '';
+  // <compiler meshdir> wins; assetdir is the shared meshdir/texturedir default.
+  const meshDir = compiler?.getAttribute('meshdir') || compiler?.getAttribute('assetdir') || '';
   const meshes = new Map();
   for (const asset of childElements(root, 'asset')) {
     for (const mesh of childElements(asset, 'mesh')) {
@@ -1214,7 +1294,9 @@ function collectMujocoAssets(root) {
       const name = mesh.getAttribute('name') || file.split('/').pop().replace(/\.[^.]+$/, '');
       meshes.set(name, {
         path: joinPath(meshDir, file),
-        scale: parseNumbers(mesh.getAttribute('scale'), [1, 1, 1])
+        scale: parseNumbers(mesh.getAttribute('scale'), [1, 1, 1]),
+        refpos: parseNumbers(mesh.getAttribute('refpos'), [0, 0, 0]),
+        refquat: parseNumbers(mesh.getAttribute('refquat'), [1, 0, 0, 0])
       });
     }
   }
@@ -1371,6 +1453,61 @@ function primitiveObjectFromGeometry(geometry, name) {
   return group;
 }
 
+// Merge every sub-mesh of `object` (e.g. an OBJ split into many `o`/`g`
+// objects, as in ms_human_700's Rib1L.obj) into a single mesh. A MuJoCo
+// <mesh> is one mesh regardless of how the source file is grouped, matching
+// the native loader / JS CLI and MuJoCo semantics; keeps the demo's source
+// view and exported USD mesh counts consistent with the CLI.
+function flattenToSingleMesh(object, name) {
+  object.updateMatrixWorld(true);
+  const positions = [];
+  const normals = [];
+  const uvs = [];
+  const indices = [];
+  let base = 0;
+  let hasNormals = true;
+  let hasUVs = true;
+  const v = new THREE.Vector3();
+  const nrm = new THREE.Vector3();
+  let meshCount = 0;
+  object.traverse((obj) => {
+    if (!obj.isMesh || !obj.geometry) return;
+    meshCount++;
+    const g = obj.geometry;
+    const pos = g.getAttribute('position');
+    if (!pos) return;
+    const nAttr = g.getAttribute('normal');
+    const uvAttr = g.getAttribute('uv');
+    const idx = g.getIndex();
+    const m = obj.matrixWorld;
+    const normalMat = new THREE.Matrix3().getNormalMatrix(m);
+    for (let i = 0; i < pos.count; i++) {
+      v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(m);
+      positions.push(v.x, v.y, v.z);
+      if (nAttr) {
+        nrm.set(nAttr.getX(i), nAttr.getY(i), nAttr.getZ(i)).applyMatrix3(normalMat).normalize();
+        normals.push(nrm.x, nrm.y, nrm.z);
+      } else {
+        hasNormals = false;
+      }
+      if (uvAttr) uvs.push(uvAttr.getX(i), uvAttr.getY(i)); else hasUVs = false;
+    }
+    if (idx) {
+      for (let i = 0; i < idx.count; i++) indices.push(base + idx.getX(i));
+    } else {
+      for (let i = 0; i < pos.count; i++) indices.push(base + i);
+    }
+    base += pos.count;
+  });
+  if (meshCount <= 1) return object;  // nothing to merge
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  if (hasNormals && normals.length) geom.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  if (hasUVs && uvs.length) geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geom.setIndex(indices);
+  return primitiveObjectFromGeometry(geom, name);
+}
+
 function mujocoJointType(type) {
   if (type === 'hinge') return 'revolute';
   if (type === 'slide') return 'prismatic';
@@ -1392,6 +1529,38 @@ function parseMujocoInertial(bodyNode) {
     inertial.diagonalInertia = parseNumbers(inertialNode.getAttribute('diaginertia'), []);
   }
   return inertial;
+}
+
+// MuJoCo capsule/cylinder fromto="x1 y1 z1 x2 y2 z2": the geom spans p1->p2 with
+// radius=size[0]; pos/quat are ignored when fromto is present. Returns the local
+// center, segment length, and the rotation aligning the +Y axis (three.js
+// cylinder axis) to the segment direction.
+function mujocoFromto(attrs) {
+  const ft = parseNumbers(attrs?.fromto, []);
+  if (ft.length < 6) return null;
+  const p1 = new THREE.Vector3(ft[0], ft[1], ft[2]);
+  const p2 = new THREE.Vector3(ft[3], ft[4], ft[5]);
+  const dir = p2.clone().sub(p1);
+  const length = dir.length() || 1e-6;
+  const ndir = dir.clone().normalize();
+  return {
+    center: p1.clone().add(p2).multiplyScalar(0.5),
+    length,
+    dir: ndir,
+    quatY: new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), ndir),
+    quatZ: new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), ndir)
+  };
+}
+
+// MuJoCo mesh refpos/refquat define the mesh's reference frame: vertices are
+// translated by -refpos and rotated by the conjugate of refquat before the geom
+// places them. Returns the corresponding local matrix (identity by default).
+function mujocoMeshRefMatrix(meshAsset) {
+  const rq = meshAsset?.refquat || [1, 0, 0, 0];
+  const rp = meshAsset?.refpos || [0, 0, 0];
+  const q = new THREE.Quaternion(rq[1] || 0, rq[2] || 0, rq[3] || 0, rq[0] ?? 1).normalize().conjugate();
+  return new THREE.Matrix4().makeRotationFromQuaternion(q)
+    .multiply(new THREE.Matrix4().makeTranslation(-(rp[0] || 0), -(rp[1] || 0), -(rp[2] || 0)));
 }
 
 function shapePayloadForMujocoGeom(geomAttrs, originMatrix, fallbackName) {
@@ -1416,13 +1585,20 @@ function shapePayloadForMujocoGeom(geomAttrs, originMatrix, fallbackName) {
   }
 
   if (geomType === 'cylinder' || geomType === 'capsule') {
+    // fromto: bake the segment midpoint + Z->direction into the matrix and use
+    // the segment length as height (pos/quat ignored when fromto is present).
+    const ft = mujocoFromto(attrs);
+    const matrix = ft
+      ? new THREE.Matrix4().copy(originMatrix)
+          .multiply(new THREE.Matrix4().compose(ft.center, ft.quatZ, new THREE.Vector3(1, 1, 1)))
+      : originMatrix;
     return [{
       name: fallbackName,
-      matrix: matrixToUSDArray(originMatrix),
+      matrix: matrixToUSDArray(matrix),
       shape: {
         type: geomType,
         radius: size[0] || 0.5,
-        height: size[1] ? size[1] * 2 : 1,
+        height: ft ? ft.length : (size[1] ? size[1] * 2 : 1),
         axis: 'Z'
       }
     }];
@@ -1450,7 +1626,9 @@ async function loadMujocoGeomObject(geomAttrs, meshAssets, fallbackName) {
   if (geomType === 'mesh') {
     const meshAsset = meshAssets.get(attrs.mesh);
     if (!meshAsset) return makeMissingMesh(attrs.mesh || fallbackName);
-    return loadMeshObject(meshAsset.path);
+    // A MuJoCo <mesh> is a single mesh: merge multi-object source files so the
+    // source view's mesh count matches the exported USD and the CLI.
+    return flattenToSingleMesh(await loadMeshObject(meshAsset.path), attrs.mesh || fallbackName);
   }
 
   const size = parseNumbers(attrs.size, []);
@@ -1465,7 +1643,8 @@ async function loadMujocoGeomObject(geomAttrs, meshAssets, fallbackName) {
   }
   if (geomType === 'cylinder' || geomType === 'capsule') {
     const radius = size[0] || 0.5;
-    const length = size[1] ? size[1] * 2 : 1;
+    const ft = mujocoFromto(attrs);
+    const length = ft ? ft.length : (size[1] ? size[1] * 2 : 1);
     return primitiveObjectFromGeometry(new THREE.CylinderGeometry(radius, radius, length, 24, 1), fallbackName);
   }
   if (geomType === 'plane') {
@@ -1485,10 +1664,12 @@ async function mujocoGeomPayloads(geomAttrs, meshAssets, fallbackName, baseMatri
   if (geomType === 'mesh') {
     const meshAsset = meshAssets.get(attrs.mesh);
     if (!meshAsset) return [];
-    const object = await loadMeshObject(meshAsset.path);
+    // Merge multi-object source meshes into one (MuJoCo <mesh> == one mesh).
+    const object = flattenToSingleMesh(await loadMeshObject(meshAsset.path), attrs.mesh || fallbackName);
     const scale = parseNumbers(attrs.scale, meshAsset.scale || [1, 1, 1]);
     const meshMatrix = new THREE.Matrix4()
       .copy(originMatrix)
+      .multiply(mujocoMeshRefMatrix(meshAsset))
       .multiply(new THREE.Matrix4().makeScale(scale[0] || 1, scale[1] || 1, scale[2] || 1));
     return collectNativeMeshRefPayloads(object, meshMatrix, fallbackName, meshAsset.path || attrs.mesh || fallbackName);
   }
@@ -1502,20 +1683,41 @@ async function mujocoGeomPayloads(geomAttrs, meshAssets, fallbackName, baseMatri
 
 function classifyMujocoGeom(geomAttrs) {
   const attrs = geomAttrs || {};
+  // MuJoCo visibility is by geom group: 0-2 are the default-visible set, 3-5 are
+  // hidden/auxiliary (collision). The resolved group (explicit on the geom, else
+  // from its class) is authoritative and wins over the class NAME — e.g.
+  // iit_softfoot tags class="collision" meshes with group="0" to show them, and
+  // shadow_dexee's group-5 CollisionGeom capsules must stay hidden.
+  const g = Number(attrs.group);
+  if (Number.isFinite(g)) return g < 3;
+  // No group => MuJoCo default group 0 (visible); use the class name only as a
+  // hint to keep ungrouped collision-class geoms hidden.
   const className = String(attrs.class || '').toLowerCase();
-  if (className.includes('collision') || attrs.group === '3') return false;
-  if (className.includes('visual') || attrs.group === '2') return true;
-  return attrs.contype === '0' && attrs.conaffinity === '0';
+  if (className.includes('collision') || className.includes('collider')) return false;
+  return true;
 }
 
 function applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets) {
   const attrs = geomAttrs || {};
   const geomType = attrs.type || (attrs.mesh ? 'mesh' : 'sphere');
+  // fromto fully specifies a capsule/cylinder's placement (pos/quat ignored):
+  // center it on the segment midpoint and align the cylinder's +Y axis to it.
+  if (geomType === 'cylinder' || geomType === 'capsule') {
+    const ft = mujocoFromto(attrs);
+    if (ft) {
+      applyMatrixToObject(object, new THREE.Matrix4().compose(ft.center, ft.quatY, new THREE.Vector3(1, 1, 1)));
+      return;
+    }
+  }
   const matrix = matrixFromPoseAttrs(attrs);
   if (geomType === 'mesh') {
     const meshAsset = meshAssets.get(attrs.mesh);
     const scale = parseNumbers(attrs.scale, meshAsset?.scale || [1, 1, 1]);
-    matrix.multiply(new THREE.Matrix4().makeScale(scale[0] || 1, scale[1] || 1, scale[2] || 1));
+    // Apply the mesh reference frame (refpos/refquat) before scale, so e.g.
+    // shadow_dexee's finger meshes are oriented correctly.
+    matrix
+      .multiply(mujocoMeshRefMatrix(meshAsset))
+      .multiply(new THREE.Matrix4().makeScale(scale[0] || 1, scale[1] || 1, scale[2] || 1));
   } else if (geomType === 'cylinder' || geomType === 'capsule') {
     matrix.multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
   }
@@ -1530,6 +1732,14 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     throw new Error(`Expected MJCF <mujoco> root, got <${root.localName || 'unknown'}>.`);
   }
 
+  // Honor <compiler angle="..." eulerseq="..."> for all orientation specifiers.
+  const compilerEl = firstChildElement(root, 'compiler');
+  const angleAttr = (compilerEl?.getAttribute('angle') || 'degree').toLowerCase();
+  mjcfPoseCtx = {
+    toRad: angleAttr === 'radian' ? 1 : Math.PI / 180,
+    eulerseq: compilerEl?.getAttribute('eulerseq') || 'xyz'
+  };
+
   const meshAssets = collectMujocoAssets(root);
   const defaults = collectMujocoDefaults(root);
   const group = new THREE.Group();
@@ -1539,15 +1749,19 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   group.setJointValue = (jointName, value) => {
     const joint = group.joints[jointName];
     if (!joint?.pivot) return;
+    // MuJoCo joint coordinate is qpos; the geometric displacement relative to
+    // the XML rest configuration is (qpos - ref). At qpos == ref the body is in
+    // its authored pose (zero displacement).
+    const disp = value - (joint.refRad || 0);
     if (joint.jointType === 'prismatic') {
       const offset = new THREE.Vector3(...joint.axis)
         .normalize()
         .applyQuaternion(joint.originQuat)
-        .multiplyScalar(value);
+        .multiplyScalar(disp);
       joint.pivot.position.copy(joint.origin).add(offset);
     } else {
       joint.pivot.quaternion.copy(joint.originQuat)
-        .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(...joint.axis).normalize(), value));
+        .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(...joint.axis).normalize(), disp));
     }
   };
 
@@ -1591,7 +1805,16 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       const axis = parseNumbers(jointAttrs.axis, [0, 0, 1]);
       const range = parseNumbers(jointAttrs.range, []);
       const jointName = jointAttrs.name || `${parentName}_to_${linkName}${jointNode ? '' : '_fixed'}`;
+      const rawType = jointNode ? (jointAttrs.type || 'hinge') : 'fixed';
       const type = jointNode ? mujocoJointType(jointAttrs.type || 'hinge') : 'fixed';
+      // Per-joint DOF count and reference offset for keyframe (qpos) mapping.
+      // ball=4 (quat), free=7, hinge/slide=1, fixed/weld=0. `ref` is the qpos at
+      // which the joint matches its XML configuration; rotation = qpos - ref.
+      const dofCount = rawType === 'ball' ? 4 : rawType === 'free' ? 7 : rawType === 'fixed' ? 0 : 1;
+      const refVal = numberAttr(jointAttrs, 'ref');
+      const refRad = Number.isFinite(refVal)
+        ? (rawType === 'slide' ? refVal : refVal * mjcfPoseCtx.toRad)
+        : 0;
       const bodyPose = decomposeMatrix(bodyLocalMatrix);
       const jointPos = parseNumbers(jointAttrs.pos, [0, 0, 0]);
       const localPos0 = transformPointArray(bodyLocalMatrix, jointPos);
@@ -1601,6 +1824,9 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       const jointInfo = {
         name: jointName,
         type,
+        rawType,
+        dofCount,
+        refRad,
         parent: parentName,
         child: linkName,
         axis,
@@ -1611,7 +1837,19 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
         localPos1,
         localRot0,
         localRot1,
-        limit: range.length >= 2 ? { lower: range[0], upper: range[1] } : {},
+        // Range in joint-coordinate units (radians for hinge). MuJoCo `range` is
+        // in the model's angle unit, so convert degrees -> radians; slide is
+        // meters. The USD converter expects revolute limits in radians.
+        limit: range.length >= 2
+          ? (rawType === 'slide'
+              ? { lower: range[0], upper: range[1] }
+              : { lower: range[0] * mjcfPoseCtx.toRad, upper: range[1] * mjcfPoseCtx.toRad })
+          : {},
+        uiLimit: range.length >= 2
+          ? (rawType === 'slide'
+              ? { lower: range[0], upper: range[1] }
+              : { lower: range[0] * mjcfPoseCtx.toRad, upper: range[1] * mjcfPoseCtx.toRad })
+          : null,
         dynamics: {
           damping: numberAttr(jointAttrs, 'damping'),
           friction: numberAttr(jointAttrs, 'frictionloss')
@@ -1690,6 +1928,26 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     }
   }
 
+  // Parse the model's "home" keyframe (qpos) so the robot can be posed in its
+  // natural configuration instead of the MuJoCo zero-pose. qpos layout: a
+  // floating base contributes 7 leading values (pos3 + quat4), then one value
+  // per single-DOF joint in body-tree (DFS) order — matching how `joints` is
+  // built above. qpos angles are radians regardless of <compiler angle>.
+  const keyEl = root.querySelector('keyframe key');
+  if (keyEl?.getAttribute('qpos')) {
+    const hasFree = !!root.querySelector('worldbody freejoint, worldbody joint[type="free"]');
+    group.homeKeyframe = {
+      qpos: parseNumbers(keyEl.getAttribute('qpos'), []),
+      baseDofs: hasFree ? 7 : 0,
+      // Joints in body-tree (DFS) order = MuJoCo qpos order. Each descriptor
+      // carries its DOF count so multi-DOF joints (ball=4) advance the cursor
+      // correctly and don't shift every subsequent joint's value.
+      jointOrder: joints.map((j) => ({
+        name: j.name, rawType: j.rawType, dofCount: j.dofCount, refRad: j.refRad
+      }))
+    };
+  }
+
   state.exportPayload = {
     name: group.name,
     upAxis: state.settings.upAxis,
@@ -1700,6 +1958,60 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   };
   group.userData.stats = { links: links.length, joints: joints.length, visuals: visualCount, collisions: collisionCount };
   return group;
+}
+
+// Pose a parsed MJCF robot to the MuJoCo default qpos0 = ref (XML rest pose).
+// Slider value shows ref; geometric displacement (qpos - ref) is zero.
+function poseToRest(robot) {
+  if (!robot?.joints) return;
+  for (const [name, joint] of Object.entries(robot.joints)) {
+    const ref = joint.refRad || 0;
+    state.jointValues[name] = ref;
+    if (joint.rawType === 'ball') {
+      if (joint.pivot && joint.originQuat) joint.pivot.quaternion.copy(joint.originQuat);
+    } else if (typeof robot.setJointValue === 'function') {
+      robot.setJointValue(name, ref);   // displacement = ref - ref = 0
+    }
+  }
+}
+
+// Pose to the model's "home" keyframe. qpos angles are radians; setJointValue
+// applies the (qpos - ref) displacement, so the slider value shown is the raw
+// qpos coordinate (matching the MuJoCo viewer). DOF-count aware: ball=4 (quat),
+// free=7, hinge/slide=1, so multi-DOF joints don't shift later joints' values.
+function poseFromKeyframe(robot) {
+  const kf = robot?.homeKeyframe;
+  if (!kf) { poseToRest(robot); return; }
+  const qpos = kf.qpos;
+  let cursor = kf.baseDofs;   // skip the floating-base DOFs (pos3 + quat4)
+  for (const j of kf.jointOrder) {
+    const dof = j.dofCount;
+    if (dof === 0) continue;                 // fixed/welded body: no qpos
+    if (cursor + dof > qpos.length) break;
+    if (j.rawType === 'ball') {
+      const jc = robot.joints[j.name];
+      if (jc?.pivot) {
+        const bq = new THREE.Quaternion(qpos[cursor + 1], qpos[cursor + 2], qpos[cursor + 3], qpos[cursor]).normalize();
+        jc.pivot.quaternion.copy(jc.originQuat).multiply(bq);
+      }
+    } else if (j.rawType !== 'free' && typeof robot.setJointValue === 'function') {
+      const qv = qpos[cursor];               // joint coordinate (qpos)
+      state.jointValues[j.name] = qv;
+      robot.setJointValue(j.name, qv);        // displacement = qv - ref
+    }
+    cursor += dof;
+  }
+}
+
+// Apply the active pose preset (home keyframe vs. qpos0=ref) and resync views.
+function applyPosePreset() {
+  const robot = state.robot;
+  if (!robot?.joints) return;
+  if (state.settings.applyHomePose && robot.homeKeyframe) poseFromKeyframe(robot);
+  else poseToRest(robot);
+  rebuildJointControls();
+  syncConvertedUSDToSourcePose();
+  syncGhosts();
 }
 
 function classifyRobotMeshes(robot) {
@@ -1769,18 +2081,27 @@ function applyRenderableVisibility(root) {
 function fitCamera(rootOrObjects) {
   const objects = Array.isArray(rootOrObjects) ? rootOrObjects : [rootOrObjects].filter(Boolean);
   const box = new THREE.Box3();
-  for (const object of objects) box.expandByObject(object);
-  if (!box.isEmpty()) {
-    const size = box.getSize(new THREE.Vector3());
-    const center = box.getCenter(new THREE.Vector3());
-    const radius = Math.max(size.length() * 0.5, 0.5);
-    controls.target.copy(center);
-    camera.position.copy(center).add(new THREE.Vector3(radius * 1.1, radius * 0.75, radius * 1.35));
-    camera.near = Math.max(radius / 1000, 0.001);
-    camera.far = radius * 100;
-    camera.updateProjectionMatrix();
-    controls.update();
+  for (const object of objects) {
+    if (object) { object.updateWorldMatrix(true, true); box.expandByObject(object); }
   }
+  if (box.isEmpty()) return;
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const radius = Math.max(size.length() * 0.5, 1e-3);
+  // Distance so the bounding sphere fits BOTH the vertical and horizontal
+  // frustum of a single split view (each view is ~half the window width, so the
+  // horizontal FOV is the tighter constraint), plus a safety margin.
+  const fovV = (camera.fov * Math.PI) / 180;
+  const aspect = camera.aspect || 1;
+  const fovH = 2 * Math.atan(Math.tan(fovV / 2) * aspect);
+  const dist = (radius / Math.sin(Math.max(Math.min(fovV, fovH) / 2, 1e-3))) * 1.15;
+  const dir = new THREE.Vector3(1.1, 0.75, 1.35).normalize();
+  controls.target.copy(center);
+  camera.position.copy(center).add(dir.multiplyScalar(dist));
+  camera.near = Math.max(dist / 1000, 1e-4);
+  camera.far = dist * 100;
+  camera.updateProjectionMatrix();
+  controls.update();
 }
 
 function fitCurrentView() {
@@ -1831,6 +2152,10 @@ function buildGUI() {
   gui.add(state.settings, 'showCollisions').name('Collision meshes').onChange(applyVisibility);
   gui.add(state.settings, 'ignoreJointLimits').name('Ignore limits').onChange(rebuildJointControls);
   gui.add(state.settings, 'hideFixedJoints').name('Hide fixed joints').onChange(rebuildJointControls);
+  gui.add(state.settings, 'applyHomePose').name('Home pose').onChange(() => {
+    applyPosePreset();
+    if (state.robot && state.settings.autocenter) fitCamera(currentFitObjects());
+  });
   gui.add(state.settings, 'animateJoints').name('Animate joints');
   gui.add(state.settings, 'animationSpeed', 0.1, 4.0, 0.1).name('Animation speed');
   gui.add(state.settings, 'autocenter').name('Autocenter');
@@ -1870,7 +2195,7 @@ function setJointValue(jointName, value) {
 
 function jointLimits(joint) {
   const type = joint.jointType || joint.type || 'fixed';
-  const limit = joint.limit || {};
+  const limit = joint.uiLimit || joint.limit || {};
   if (type === 'continuous') return [-Math.PI, Math.PI, 0.01];
   if (type === 'prismatic') {
     return state.settings.ignoreJointLimits
@@ -1972,6 +2297,10 @@ async function loadRobotFile(file) {
     : parseURDFMetadata(state.inputText);
   updateRobotInfo(metadata);
   captureSourceRestLinkMatrices();
+  // Apply the active pose preset: MuJoCo default qpos0 = ref (the viewer's load
+  // state), or the home keyframe when the "Home pose" toggle is on. Rest capture
+  // above stays at the XML rest, keeping the USD binding reference clean.
+  if (state.inputFormat === 'mjcf') applyPosePreset();
   updateButtonStates();
   rebuildGhosts();
   updateLabels();
@@ -2286,7 +2615,7 @@ function usdPhysicsToSourceModel(extracted) {
     prims
       .filter((prim) => prim.geometry
           && (hasApi(prim, 'PhysicsCollisionAPI')
-              || Number(prim.properties?.['mjc:group']) === 3
+              || Number(prim.properties?.['mjc:group']) >= 3
               || prim.purpose === 'guide'))
       .map((prim) => prim.path)
   );
@@ -2778,6 +3107,11 @@ async function ensureNativeExporter() {
   const loader = await ensureTinyLoader();
   if (!state.nativeExporter) {
     state.nativeExporter = new loader.native_.TinyUSDZLoaderNative();
+    const { maxUsdcMb, maxMemMb } = resolveUSDCExportCapsFromRuntime();
+    // Raise the USDC writer's conservative WASM size caps so mesh-dense scenes
+    // (e.g. robot_soccer_kit ~104MB, apptronik_apollo ~111MB) can export past
+    // the 100MB default.
+    state.nativeExporter.setUSDCExportLimitMB?.(maxUsdcMb, maxMemMb);
   }
   return state.nativeExporter;
 }
@@ -3174,6 +3508,32 @@ document.getElementById('exportUSDC').addEventListener('click', () => exportRobo
 document.getElementById('exportUSDZ').addEventListener('click', () => exportRobot('usdz'));
 fitViewButton.addEventListener('click', fitCurrentView);
 jointHeaderEl.addEventListener('click', toggleJointPanelFold);
+
+// Collapse/expand the whole Robot/Joints panel (foldable header).
+const panelHeaderEl = document.getElementById('panelHeader');
+const togglePanelFold = () => panelEl.classList.toggle('collapsed');
+panelHeaderEl?.addEventListener('click', togglePanelFold);
+panelHeaderEl?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); togglePanelFold(); }
+});
+
+// Diagnostics hook for headless drivers: count effectively-visible meshes per
+// view so a "blank render" (model loaded but nothing actually drawn) can be
+// detected instead of silently passing.
+window.__fitView = () => fitCamera(currentFitObjects());
+window.__viewerStats = () => {
+  const effVisible = (o) => { for (let c = o; c; c = c.parent) { if (!c.visible) return false; } return true; };
+  const countVisible = (root) => {
+    let n = 0;
+    root.traverse((o) => { if (o.isMesh && effVisible(o)) n++; });
+    return n;
+  };
+  return {
+    links: Object.keys(state.robot?.links || state.usdArticulation?.links || {}).length,
+    sourceVisibleMeshes: countVisible(robotGroup),
+    usdVisibleMeshes: countVisible(usdGroup)
+  };
+};
 
 window.addEventListener('keydown', (event) => {
   if (event.key.toLowerCase() !== 'f' || event.altKey || event.ctrlKey || event.metaKey) return;

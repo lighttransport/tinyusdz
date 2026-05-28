@@ -368,6 +368,19 @@ struct RenderSceneConverterConfig {
   // Only effective when merge_meshes is true.
   //
   bool merge_meshes_bake_transform{true};
+
+  // Bake USD value clip animations into animation clips.
+  bool enable_value_clips{true};
+
+  // If > 0, resample value clips to this sample rate (samples per second).
+  // If <= 0, no resampling and metadata sample times are used.
+  float value_clip_sample_rate{0.0f};
+
+  // If true, value clip resampling uses value_clip_start_time/value_clip_end_time.
+  // If false, range is inferred from clip metadata (`times`/`active`).
+  bool value_clip_use_time_range{false};
+  double value_clip_start_time{0.0};
+  double value_clip_end_time{0.0};
 };
 
 //
@@ -986,6 +999,17 @@ class RenderSceneConverter {
                         AnimationClip *anim_out);
 
   ///
+  /// Bake USD value-clip animation into AnimationClip by loading clip layers,
+  /// resolving active clip selection at sampled stage times,
+  /// and decomposing clip xform matrices into TRS tracks.
+  ///
+  bool ConvertValueClipAnimation(const RenderSceneConverterEnv &env,
+                               const Prim &prim,
+                               const Path &abs_path,
+                               int32_t target_node_index,
+                               AnimationClip *anim_out);
+
+  ///
   /// @param[in] env
   /// @param[in] root XformNode
   ///
@@ -1203,6 +1227,17 @@ class RenderSceneConverter {
     std::string error;
   };
   std::unordered_map<std::string, MaterialBindingCacheEntry> _materialBindingCache;
+
+  // Cache frequently-referenced value clip assets/stages while converting.
+  std::unordered_map<std::string, std::shared_ptr<Layer>> _value_clip_layer_cache;
+  std::unordered_map<std::string, std::shared_ptr<Stage>> _value_clip_stage_cache;
+
+  bool LoadValueClipLayer(const RenderSceneConverterEnv &env,
+                         const std::string &assetPath,
+                         std::shared_ptr<Layer> *layer_out);
+  bool LoadValueClipStage(const RenderSceneConverterEnv &env,
+                         const std::string &assetPath,
+                         std::shared_ptr<Stage> *stage_out);
 
 };
 

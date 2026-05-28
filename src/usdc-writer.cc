@@ -441,7 +441,9 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
 }
 
 bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
-                        std::string *warn, std::string *err) {
+                        std::string *warn, std::string *err,
+                        int64_t max_file_size_bytes,
+                        int64_t max_memory_bytes) {
   (void)warn;
 
   if (!output) {
@@ -465,6 +467,10 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
   opts.version_patch = 0;
   opts.enable_compression = true;
   opts.enable_deduplication = true;
+  // Optional caller overrides for the (intentionally small on WASM) resource
+  // limits; 0 keeps the built-in default.
+  if (max_file_size_bytes > 0) opts.max_file_size_bytes = max_file_size_bytes;
+  if (max_memory_bytes > 0) opts.max_memory_bytes = max_memory_bytes;
   writer.SetOptions(opts);
 
   std::string open_err;
@@ -521,10 +527,14 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
 }
 
 bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
-                        std::string *warn, std::string *err) {
+                        std::string *warn, std::string *err,
+                        int64_t max_file_size_bytes,
+                        int64_t max_memory_bytes) {
   (void)stage;
   (void)output;
   (void)warn;
+  (void)max_file_size_bytes;
+  (void)max_memory_bytes;
 
   if (err) {
     (*err) = "USDC writer feature is disabled in this build.\n";

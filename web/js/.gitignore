@@ -1,5 +1,6 @@
 # Verification artifacts (generated output)
 verification-results/
+tests/screenshots/
 
 # npm
 node_modules/
