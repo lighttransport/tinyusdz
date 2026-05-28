@@ -40,6 +40,7 @@ set(TINYUSDZ_NEXT_SOURCES
     # High-level readers
     reader/usda-reader.cc
     reader/usdc-reader.cc
+    reader/usdz-reader.cc
 
     # Writers
     writer/value-printer.cc

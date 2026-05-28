@@ -11,6 +11,8 @@
 
 #include "next/tinyusdz-next.hh"
 #include "next/layer/layer.hh"
+#include "next/crate/crate-reader.hh"
+#include "next/writer/usdc-writer.hh"
 
 using namespace tinyusdz::next;
 
@@ -343,6 +345,89 @@ void benchmark_usda_writing(int num_prims) {
 }
 
 // ============================================================
+// Benchmark: USDC writing
+// ============================================================
+
+void benchmark_usdc_writing(int num_prims) {
+  printf("\n=== USDC Writing Benchmark ===\n");
+
+  std::vector<float> points = {0,0,0, 1,0,0, 1,1,0, 0,1,0};
+  std::vector<int32_t> fvc = {4};
+  std::vector<int32_t> fvi = {0,1,2,3};
+
+  Layer layer;
+  LayerBuilder builder(layer);
+  for (int i = 0; i < num_prims; ++i) {
+    builder.begin_prim("Mesh_" + std::to_string(i), "Mesh");
+    builder.add_property("points", Value::MakeFloat3Array(points));
+    builder.add_property("faceVertexCounts", Value::MakeIntArray(fvc));
+    builder.add_property("faceVertexIndices", Value::MakeIntArray(fvi));
+    builder.end_prim();
+  }
+  builder.finalize();
+
+  Stage stage;
+  stage.SetRootLayer(std::move(layer));
+
+  Timer timer;
+  timer.start();
+  std::vector<uint8_t> buf;
+  auto result = WriteUSDCToMemory(buf, stage);
+  double elapsed = timer.elapsed_ms();
+
+  if (result.success) {
+    printf("Wrote %d prims in %.2f ms (%.0f prims/sec)\n",
+           num_prims, elapsed, num_prims / elapsed * 1000);
+    printf("  Output size: %.2f KB\n", buf.size() / 1024.0);
+  } else {
+    printf("FAIL: %s\n", result.error.c_str());
+  }
+}
+
+// ============================================================
+// Benchmark: USDC reading
+// ============================================================
+
+void benchmark_usdc_reading() {
+  printf("\n=== USDC Reading Benchmark ===\n");
+
+  std::vector<uint8_t> buf;
+  {
+    // Build a layer with 1000 prims
+    std::vector<float> points = {0,0,0, 1,0,0, 1,1,0, 0,1,0};
+    std::vector<int32_t> fvc = {4};
+    Layer layer;
+    LayerBuilder builder(layer);
+    for (int i = 0; i < 1000; ++i) {
+      builder.begin_prim("Mesh_" + std::to_string(i), "Mesh");
+      builder.add_property("points", Value::MakeFloat3Array(points));
+      builder.add_property("faceVertexCounts", Value::MakeIntArray(fvc));
+      builder.end_prim();
+    }
+    builder.finalize();
+    Stage stage;
+    stage.SetRootLayer(std::move(layer));
+    WriteUSDCToMemory(buf, stage);
+  }
+
+  Timer timer;
+  timer.start();
+  CrateReader reader;
+  auto result = reader.Read(buf.data(), buf.size());
+  double elapsed = timer.elapsed_ms();
+
+  if (result.success) {
+    printf("Read %zu prims in %.2f ms\n",
+           result.stage.GetRootPrims().size(), elapsed);
+    printf("  File size: %.2f KB\n", buf.size() / 1024.0);
+    printf("  Throughput: %.2f MB/sec\n",
+           (buf.size() / 1024.0 / 1024.0) / (elapsed / 1000.0));
+  } else {
+    printf("FAIL\n");
+  }
+}
+
+// ============================================================
 // Main
 // ============================================================
 
@@ -363,6 +448,8 @@ int main(int argc, char** argv) {
   benchmark_time_samples(100 * scale);
   benchmark_usda_parsing();
   benchmark_usda_writing(1000 * scale);
+  benchmark_usdc_writing(1000 * scale);
+  benchmark_usdc_reading();
 
   printf("\n=== Summary ===\n");
   printf("All benchmarks completed.\n");
