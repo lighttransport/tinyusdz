@@ -237,6 +237,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_schemas_ext.cc
     )
     target_link_libraries(test_schemas_ext PRIVATE tinyusdz_next)
+
+    add_executable(test_usdcat_roundtrip
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdcat_roundtrip.cc
+    )
+    target_link_libraries(test_usdcat_roundtrip PRIVATE tinyusdz_next)
 endif()
 
 # Tydra Next (render data conversion)
