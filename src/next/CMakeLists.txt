@@ -232,6 +232,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_schemas.cc
     )
     target_link_libraries(test_schemas PRIVATE tinyusdz_next)
+
+    add_executable(test_schemas_ext
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_schemas_ext.cc
+    )
+    target_link_libraries(test_schemas_ext PRIVATE tinyusdz_next)
 endif()
 
 # Tydra Next (render data conversion)
@@ -282,4 +287,49 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/benchmark_next.cc
     )
     target_link_libraries(benchmark_next PRIVATE tinyusdz_next)
+endif()
+
+# ============================================================
+# Python extension module (optional)
+# ============================================================
+
+option(TINYUSDZ_NEXT_BUILD_PYTHON "Build Python extension for TinyUSDZ Next" OFF)
+
+if(TINYUSDZ_NEXT_BUILD_PYTHON)
+    find_package(Python3 3.10 COMPONENTS Interpreter Development REQUIRED)
+
+    # Determine extension suffix
+    if(WIN32)
+        set(PYTHON_EXT_SUFFIX ".pyd")
+    else()
+        set(PYTHON_EXT_SUFFIX ".so")
+    endif()
+
+    add_library(_next_core MODULE
+        ${CMAKE_CURRENT_SOURCE_DIR}/python/module.c
+    )
+
+    target_include_directories(_next_core PRIVATE
+        ${Python3_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    target_link_libraries(_next_core PRIVATE
+        tinyusdz_next
+    )
+
+    set_target_properties(_next_core PROPERTIES
+        PREFIX ""
+        SUFFIX ${PYTHON_EXT_SUFFIX}
+    )
+
+    # Install to python package directory
+    install(TARGETS _next_core
+        LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/python/next/tinyusdz_next
+        RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/python/next/tinyusdz_next
+    )
+
+    message(STATUS "TinyUSDZ Next Python extension: enabled")
+    message(STATUS "  Python version: ${Python3_VERSION}")
+    message(STATUS "  Python include: ${Python3_INCLUDE_DIRS}")
 endif()
