@@ -1142,6 +1142,46 @@ private:
       spec.spec_type = SpecType::Prim;
       specs_.push_back(spec);
     }
+
+    // Add primChildren to pseudo-root (fieldset 0) from root prims
+    {
+      std::vector<uint32_t> root_child_tokens;
+      for (const auto& prim : layer.prims()) {
+        // Root prims have exactly one '/' in their path (e.g., "/World")
+        const std::string& path_str = prim.path().str();
+        if (!path_str.empty() && path_str != "/" &&
+            path_str.find('/', 1) == std::string::npos) {
+          root_child_tokens.push_back(InternToken(prim.name()));
+        }
+      }
+      if (!root_child_tokens.empty()) {
+        // Store as TokenListOp matching pxrUSD format:
+        // [uint8 header_bits][if HasExplicitItems: u64 count + token_idx * count]
+        constexpr uint8_t kIsExplicit = 1 << 0;
+        constexpr uint8_t kHasExplicitItems = 1 << 1;
+        constexpr uint8_t kNoOtherItems = 0;
+        uint8_t header = kIsExplicit | kHasExplicitItems;
+        size_t n = root_child_tokens.size();
+        std::vector<uint8_t> raw(1 + 8 + n * 4);
+        raw[0] = header;
+        uint64_t cnt = n;
+        std::memcpy(raw.data() + 1, &cnt, 8);
+        for (size_t i = 0; i < n; ++i) {
+          std::memcpy(raw.data() + 9 + i * 4, &root_child_tokens[i], 4);
+        }
+        uint64_t data_idx = value_data_.size();
+        value_data_.push_back({TypeId::Token, std::move(raw)});
+
+        CrateField pc_field;
+        pc_field.token_index.value = InternToken("primChildren");
+        pc_field.value_rep = ValueRep::Make(CrateTypeId::TokenListOp,
+                                            data_idx, true, false);
+        if (!fieldsets_.empty()) {
+          fieldsets_[0].push_back(static_cast<uint32_t>(fields_.size()));
+          fields_.push_back(pc_field);
+        }
+      }
+    }
   }
 
   // ============================================================
