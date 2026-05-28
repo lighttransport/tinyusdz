@@ -143,6 +143,35 @@ const TinyUSDZNextPrim* tinyusdz_next_prim_get_child(
 typedef int (*tinyusdz_next_traverse_callback_t)(
     const TinyUSDZNextPrim* prim, int depth, void* user_data);
 
+// ============================================================
+// Composition arc authoring
+// ============================================================
+
+/// Add a reference to a prim: @asset@</path>
+tinyusdz_next_result_t tinyusdz_next_prim_add_reference(
+    TinyUSDZNextStage* stage, const char* prim_path,
+    const char* asset_path, const char* ref_prim_path);
+
+/// Add a payload to a prim: @asset@</path>
+tinyusdz_next_result_t tinyusdz_next_prim_add_payload(
+    TinyUSDZNextStage* stage, const char* prim_path,
+    const char* asset_path, const char* payload_prim_path);
+
+/// Add an inherit arc: </path>
+tinyusdz_next_result_t tinyusdz_next_prim_add_inherit(
+    TinyUSDZNextStage* stage, const char* prim_path,
+    const char* inherited_prim_path);
+
+/// Add a specialize arc: </path>
+tinyusdz_next_result_t tinyusdz_next_prim_add_specialize(
+    TinyUSDZNextStage* stage, const char* prim_path,
+    const char* specialized_prim_path);
+
+/// Set a variant selection: "variantSet=variantName"
+tinyusdz_next_result_t tinyusdz_next_prim_set_variant_selection(
+    TinyUSDZNextStage* stage, const char* prim_path,
+    const char* variant_set, const char* variant_name);
+
 size_t tinyusdz_next_stage_traverse(
     const TinyUSDZNextStage* stage,
     tinyusdz_next_traverse_callback_t callback,
