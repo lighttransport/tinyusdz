@@ -47,6 +47,7 @@ set(TINYUSDZ_NEXT_SOURCES
     writer/prim-printer.cc
     writer/usda-writer.cc
     writer/usdc-writer.cc
+    writer/usdz-writer.cc
 
     # Schema convenience APIs
     schema/geom-mesh.cc
@@ -118,6 +119,7 @@ set(TINYUSDZ_NEXT_HEADERS
     writer/prim-printer.hh
     writer/usda-writer.hh
     writer/usdc-writer.hh
+    writer/usdz-writer.hh
 
     # Schema convenience APIs
     schema/geom-mesh.hh
@@ -242,6 +244,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdcat_roundtrip.cc
     )
     target_link_libraries(test_usdcat_roundtrip PRIVATE tinyusdz_next)
+
+    add_executable(test_usdz_writer
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdz_writer.cc
+    )
+    target_link_libraries(test_usdz_writer PRIVATE tinyusdz_next)
 endif()
 
 # Tydra Next (render data conversion)
