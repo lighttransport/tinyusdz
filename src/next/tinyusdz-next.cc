@@ -4,6 +4,7 @@
 // TinyUSDZ Next - High-level API Implementation
 
 #include "tinyusdz-next.hh"
+#include "reader/usdz-reader.hh"
 #include <fstream>
 #include <cstring>
 
@@ -141,8 +142,53 @@ bool LoadUSD(const std::string& filename, Stage* stage,
     }
 
     case FileFormat::USDZ: {
-      if (err) *err = "USDZ format not yet implemented";
-      return false;
+      USDZReader usdz;
+      if (!usdz.OpenFile(filename)) {
+        if (err) *err = "Failed to open USDZ file";
+        return false;
+      }
+      // Try USDC first, then USDA
+      int idx = usdz.FindUSDCFile();
+      FileFormat inner_fmt = FileFormat::USDC;
+      if (idx < 0) {
+        idx = usdz.FindUSDAFile();
+        inner_fmt = FileFormat::USDA;
+      }
+      if (idx < 0) {
+        if (err) *err = "No .usdc or .usda entry found in USDZ archive";
+        return false;
+      }
+      const uint8_t* entry_data = usdz.EntryData(idx);
+      size_t entry_size = usdz.EntrySize(idx);
+      if (!entry_data || entry_size == 0) {
+        if (err) *err = "Empty USD entry in USDZ";
+        return false;
+      }
+
+      // Delegate to USDC or USDA reader
+      if (inner_fmt == FileFormat::USDC) {
+        USDCLoadResult result = LoadUSDCFromMemory(entry_data, entry_size);
+        if (!result.success) {
+          if (err) *err = result.error_summary;
+          return false;
+        }
+        if (warn && !result.warnings.empty()) {
+          for (const auto& w : result.warnings) *warn += w + "\n";
+        }
+        *stage = std::move(result.stage);
+      } else {
+        std::string usda_str(reinterpret_cast<const char*>(entry_data), entry_size);
+        LoadResult result = LoadUSDAFromString(usda_str);
+        if (!result.success) {
+          if (err) *err = result.error_summary;
+          return false;
+        }
+        if (warn && !result.warnings.empty()) {
+          for (const auto& w : result.warnings) *warn += w + "\n";
+        }
+        *stage = std::move(result.stage);
+      }
+      return true;
     }
 
     default:
