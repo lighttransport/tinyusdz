@@ -513,3 +513,80 @@ size_t tinyusdz_next_prim_eval_float_array(
   *out_ptr = arr->data();
   return arr->size();
 }
+
+// ============================================================
+// Composition arc authoring
+// ============================================================
+
+static tinyusdz::next::PrimSpec* _GetMutablePrim(
+    TinyUSDZNextStage* stage, const char* path) {
+  if (!stage || !path) return nullptr;
+  tinyusdz::next::Layer* layer = stage->stage.GetRootLayer();
+  if (!layer) return nullptr;
+  return layer->prim_at_path_mutable(path);
+}
+
+static std::string _MakeArcString(const char* asset, const char* prim) {
+  std::string s = "@";
+  if (asset && asset[0]) s += asset;
+  s += "@";
+  if (prim && prim[0]) { s += "</"; s += prim; s += ">"; }
+  return s;
+}
+
+tinyusdz_next_result_t tinyusdz_next_prim_add_reference(
+    TinyUSDZNextStage* stage, const char* prim_path,
+    const char* asset_path, const char* ref_prim_path) {
+  auto* spec = _GetMutablePrim(stage, prim_path);
+  if (!spec) { SetError("Prim not found"); return 0; }
+  spec->meta().references.push_back(
+      _MakeArcString(asset_path, ref_prim_path));
+  return 1;
+}
+
+tinyusdz_next_result_t tinyusdz_next_prim_add_payload(
+    TinyUSDZNextStage* stage, const char* prim_path,
+    const char* asset_path, const char* payload_prim_path) {
+  auto* spec = _GetMutablePrim(stage, prim_path);
+  if (!spec) { SetError("Prim not found"); return 0; }
+  spec->meta().payloads.push_back(
+      _MakeArcString(asset_path, payload_prim_path));
+  return 1;
+}
+
+tinyusdz_next_result_t tinyusdz_next_prim_add_inherit(
+    TinyUSDZNextStage* stage, const char* prim_path,
+    const char* inherited_prim_path) {
+  auto* spec = _GetMutablePrim(stage, prim_path);
+  if (!spec) { SetError("Prim not found"); return 0; }
+  std::string s = "</";
+  if (inherited_prim_path) s += inherited_prim_path;
+  s += ">";
+  spec->meta().inherits.push_back(s);
+  return 1;
+}
+
+tinyusdz_next_result_t tinyusdz_next_prim_add_specialize(
+    TinyUSDZNextStage* stage, const char* prim_path,
+    const char* specialized_prim_path) {
+  auto* spec = _GetMutablePrim(stage, prim_path);
+  if (!spec) { SetError("Prim not found"); return 0; }
+  std::string s = "</";
+  if (specialized_prim_path) s += specialized_prim_path;
+  s += ">";
+  spec->meta().specializes.push_back(s);
+  return 1;
+}
+
+tinyusdz_next_result_t tinyusdz_next_prim_set_variant_selection(
+    TinyUSDZNextStage* stage, const char* prim_path,
+    const char* variant_set, const char* variant_name) {
+  auto* spec = _GetMutablePrim(stage, prim_path);
+  if (!spec) { SetError("Prim not found"); return 0; }
+  std::string s;
+  if (variant_set) s += variant_set;
+  s += "=";
+  if (variant_name) s += variant_name;
+  spec->meta().variantSelection = s;
+  return 1;
+}
