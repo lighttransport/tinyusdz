@@ -266,6 +266,27 @@ tinyusdz_next_value_type_t tinyusdz_next_prim_get_value_type(
       prim->prim->GetPropertyValue(prop_name);
   if (!val) return TINYUSDZ_NEXT_VALUE_UNKNOWN;
 
+  // Check array FIRST - array types have element type_id but is_array_=true
+  if (val->is_array()) {
+    switch (val->type_id()) {
+      case tinyusdz::next::TypeId::Float:
+      case tinyusdz::next::TypeId::Float3:
+        return TINYUSDZ_NEXT_VALUE_FLOAT_ARRAY;
+      case tinyusdz::next::TypeId::Int:
+        return TINYUSDZ_NEXT_VALUE_INT32_ARRAY;
+      case tinyusdz::next::TypeId::Double:
+        return TINYUSDZ_NEXT_VALUE_DOUBLE_ARRAY;
+      case tinyusdz::next::TypeId::Int64:
+        return TINYUSDZ_NEXT_VALUE_INT64_ARRAY;
+      case tinyusdz::next::TypeId::UInt:
+        return TINYUSDZ_NEXT_VALUE_UINT_ARRAY;
+      case tinyusdz::next::TypeId::UInt64:
+        return TINYUSDZ_NEXT_VALUE_UINT64_ARRAY;
+      default:
+        return TINYUSDZ_NEXT_VALUE_FLOAT_ARRAY;
+    }
+  }
+
   switch (val->type_id()) {
     case tinyusdz::next::TypeId::Bool:
       return TINYUSDZ_NEXT_VALUE_BOOL;
@@ -308,9 +329,6 @@ tinyusdz_next_value_type_t tinyusdz_next_prim_get_value_type(
     case tinyusdz::next::TypeId::Matrix4d:
       return TINYUSDZ_NEXT_VALUE_MATRIX4D;
     default:
-      if (val->is_array()) {
-        return TINYUSDZ_NEXT_VALUE_FLOAT_ARRAY;
-      }
       return TINYUSDZ_NEXT_VALUE_UNKNOWN;
   }
 }
@@ -414,6 +432,90 @@ tinyusdz_next_result_t tinyusdz_next_prim_get_matrix4d(
   return 1;
 }
 
+tinyusdz_next_result_t tinyusdz_next_prim_get_float2(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    float out[2]) {
+  if (!prim || !prim->prim || !prop_name || !out) return 0;
+  const tinyusdz::next::Value* val = prim->prim->GetPropertyValue(prop_name);
+  if (!val) return 0;
+  const float* f = val->as_float2();
+  if (!f) return 0;
+  out[0] = f[0]; out[1] = f[1];
+  return 1;
+}
+
+tinyusdz_next_result_t tinyusdz_next_prim_get_double2(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    double out[2]) {
+  if (!prim || !prim->prim || !prop_name || !out) return 0;
+  const tinyusdz::next::Value* val = prim->prim->GetPropertyValue(prop_name);
+  if (!val) return 0;
+  const double* d = val->as_double2();
+  if (!d) return 0;
+  out[0] = d[0]; out[1] = d[1];
+  return 1;
+}
+
+tinyusdz_next_result_t tinyusdz_next_prim_get_double3(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    double out[3]) {
+  if (!prim || !prim->prim || !prop_name || !out) return 0;
+  const tinyusdz::next::Value* val = prim->prim->GetPropertyValue(prop_name);
+  if (!val) return 0;
+  const double* d = val->as_double3();
+  if (!d) return 0;
+  out[0] = d[0]; out[1] = d[1]; out[2] = d[2];
+  return 1;
+}
+
+tinyusdz_next_result_t tinyusdz_next_prim_get_double4(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    double out[4]) {
+  if (!prim || !prim->prim || !prop_name || !out) return 0;
+  const tinyusdz::next::Value* val = prim->prim->GetPropertyValue(prop_name);
+  if (!val) return 0;
+  const double* d = val->as_double4();
+  if (!d) return 0;
+  out[0] = d[0]; out[1] = d[1]; out[2] = d[2]; out[3] = d[3];
+  return 1;
+}
+
+tinyusdz_next_result_t tinyusdz_next_prim_get_int64(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    int64_t* out) {
+  if (!prim || !prim->prim || !prop_name || !out) return 0;
+  const tinyusdz::next::Value* val = prim->prim->GetPropertyValue(prop_name);
+  if (!val) return 0;
+  const int64_t* i = val->as_int64();
+  if (!i) return 0;
+  *out = *i;
+  return 1;
+}
+
+tinyusdz_next_result_t tinyusdz_next_prim_get_uint32(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    uint32_t* out) {
+  if (!prim || !prim->prim || !prop_name || !out) return 0;
+  const tinyusdz::next::Value* val = prim->prim->GetPropertyValue(prop_name);
+  if (!val) return 0;
+  const uint32_t* u = val->as_uint();
+  if (!u) return 0;
+  *out = *u;
+  return 1;
+}
+
+tinyusdz_next_result_t tinyusdz_next_prim_get_uint64(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    uint64_t* out) {
+  if (!prim || !prim->prim || !prop_name || !out) return 0;
+  const tinyusdz::next::Value* val = prim->prim->GetPropertyValue(prop_name);
+  if (!val) return 0;
+  const uint64_t* u = val->as_uint64();
+  if (!u) return 0;
+  *out = *u;
+  return 1;
+}
+
 // ============================================================
 // Array value access
 // ============================================================
@@ -442,6 +544,54 @@ size_t tinyusdz_next_prim_get_int32_array(
   return arr->size();
 }
 
+size_t tinyusdz_next_prim_get_double_array(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    const double** out_ptr) {
+  if (!prim || !prim->prim || !prop_name || !out_ptr) return 0;
+  const tinyusdz::next::Value* val = prim->prim->GetPropertyValue(prop_name);
+  if (!val) return 0;
+  const std::vector<double>* arr = val->as_double_array();
+  if (!arr) return 0;
+  *out_ptr = arr->data();
+  return arr->size();
+}
+
+size_t tinyusdz_next_prim_get_int64_array(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    const int64_t** out_ptr) {
+  if (!prim || !prim->prim || !prop_name || !out_ptr) return 0;
+  const tinyusdz::next::Value* val = prim->prim->GetPropertyValue(prop_name);
+  if (!val) return 0;
+  const std::vector<int64_t>* arr = val->as_int64_array();
+  if (!arr) return 0;
+  *out_ptr = arr->data();
+  return arr->size();
+}
+
+size_t tinyusdz_next_prim_get_uint_array(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    const uint32_t** out_ptr) {
+  if (!prim || !prim->prim || !prop_name || !out_ptr) return 0;
+  const tinyusdz::next::Value* val = prim->prim->GetPropertyValue(prop_name);
+  if (!val) return 0;
+  const std::vector<uint32_t>* arr = val->as_uint_array();
+  if (!arr) return 0;
+  *out_ptr = arr->data();
+  return arr->size();
+}
+
+size_t tinyusdz_next_prim_get_uint64_array(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    const uint64_t** out_ptr) {
+  if (!prim || !prim->prim || !prop_name || !out_ptr) return 0;
+  const tinyusdz::next::Value* val = prim->prim->GetPropertyValue(prop_name);
+  if (!val) return 0;
+  const std::vector<uint64_t>* arr = val->as_uint64_array();
+  if (!arr) return 0;
+  *out_ptr = arr->data();
+  return arr->size();
+}
+
 // ============================================================
 // Relationship access
 // ============================================================
@@ -462,6 +612,22 @@ size_t tinyusdz_next_prim_get_relationship_targets(
     tls_rel_buf[i] = tls_rel_strs[i].c_str();
   }
   *out_ptr = tls_rel_buf;
+  return count;
+}
+
+size_t tinyusdz_next_prim_get_property_names(
+    const TinyUSDZNextPrim* prim, const char*** out_ptr) {
+  if (!prim || !prim->prim || !out_ptr) return 0;
+  std::vector<std::string> names = prim->prim->GetPropertyNames();
+  if (names.empty()) return 0;
+  static thread_local const char* tls_prop_buf[512];
+  static thread_local std::string tls_prop_strs[512];
+  size_t count = names.size() > 512 ? 512 : names.size();
+  for (size_t i = 0; i < count; ++i) {
+    tls_prop_strs[i] = names[i];
+    tls_prop_buf[i] = tls_prop_strs[i].c_str();
+  }
+  *out_ptr = tls_prop_buf;
   return count;
 }
 
