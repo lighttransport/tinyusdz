@@ -59,6 +59,10 @@ typedef enum {
   TINYUSDZ_NEXT_VALUE_MATRIX4D,
   TINYUSDZ_NEXT_VALUE_FLOAT_ARRAY,
   TINYUSDZ_NEXT_VALUE_INT32_ARRAY,
+  TINYUSDZ_NEXT_VALUE_DOUBLE_ARRAY,
+  TINYUSDZ_NEXT_VALUE_INT64_ARRAY,
+  TINYUSDZ_NEXT_VALUE_UINT_ARRAY,
+  TINYUSDZ_NEXT_VALUE_UINT64_ARRAY,
 } tinyusdz_next_value_type_t;
 
 // ============================================================
@@ -216,6 +220,62 @@ tinyusdz_next_result_t tinyusdz_next_prim_get_float4(
     const TinyUSDZNextPrim* prim, const char* prop_name,
     float out[4]);
 
+/// Get a float2 / vec2f property value (x, y).
+tinyusdz_next_result_t tinyusdz_next_prim_get_float2(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    float out[2]);
+
+/// Get a double2 / vec2d property value (x, y).
+tinyusdz_next_result_t tinyusdz_next_prim_get_double2(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    double out[2]);
+
+/// Get a double3 / vec3d property value (x, y, z).
+tinyusdz_next_result_t tinyusdz_next_prim_get_double3(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    double out[3]);
+
+/// Get a double4 / vec4d property value (x, y, z, w).
+tinyusdz_next_result_t tinyusdz_next_prim_get_double4(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    double out[4]);
+
+/// Get an int64 property value.
+tinyusdz_next_result_t tinyusdz_next_prim_get_int64(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    int64_t* out);
+
+/// Get a uint32 property value.
+tinyusdz_next_result_t tinyusdz_next_prim_get_uint32(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    uint32_t* out);
+
+/// Get a uint64 property value.
+tinyusdz_next_result_t tinyusdz_next_prim_get_uint64(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    uint64_t* out);
+
+/// Get a double array property value.
+/// Returns number of doubles. out_ptr points to internal data.
+size_t tinyusdz_next_prim_get_double_array(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    const double** out_ptr);
+
+/// Get an int64 array property value.
+size_t tinyusdz_next_prim_get_int64_array(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    const int64_t** out_ptr);
+
+/// Get a uint32 array property value.
+size_t tinyusdz_next_prim_get_uint_array(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    const uint32_t** out_ptr);
+
+/// Get a uint64 array property value.
+size_t tinyusdz_next_prim_get_uint64_array(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    const uint64_t** out_ptr);
+
 /// Get a float array property value.
 /// Returns number of floats in the array. out_ptr points to internal data
 /// (valid until stage is freed). Returns 0 on failure.
@@ -238,6 +298,12 @@ tinyusdz_next_result_t tinyusdz_next_prim_get_matrix4d(
 size_t tinyusdz_next_prim_get_relationship_targets(
     const TinyUSDZNextPrim* prim, const char* rel_name,
     const char*** out_ptr);
+
+/// Get all property names on a prim.
+/// Returns number of property names. out_ptr points to internal data
+/// (valid until next C API call).
+size_t tinyusdz_next_prim_get_property_names(
+    const TinyUSDZNextPrim* prim, const char*** out_ptr);
 
 // ============================================================
 // Attribute evaluation (time-sampled access)
