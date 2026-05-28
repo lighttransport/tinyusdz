@@ -737,16 +737,81 @@ private:
           break;
         }
         case TypeId::Double: {
-          const std::vector<float>* arr = val.as_float_array(); // stored as float array
+          const std::vector<double>* arr = val.as_double_array();
           if (arr) {
-            // Convert to double for storage
             count = arr->size();
             size_t bytes = count * sizeof(double);
             arr_data.resize(8 + bytes);
             std::memcpy(arr_data.data(), &count, 8);
-            // Write doubles
-            double* dptr = reinterpret_cast<double*>(arr_data.data() + 8);
-            for (size_t i = 0; i < count; ++i) dptr[i] = static_cast<double>((*arr)[i]);
+            std::memcpy(arr_data.data() + 8, arr->data(), bytes);
+          } else {
+            // Fallback: try reading as float array and convert
+            const std::vector<float>* farr = val.as_float_array();
+            if (farr) {
+              count = farr->size();
+              size_t bytes = count * sizeof(double);
+              arr_data.resize(8 + bytes);
+              std::memcpy(arr_data.data(), &count, 8);
+              double* dptr = reinterpret_cast<double*>(arr_data.data() + 8);
+              for (size_t i = 0; i < count; ++i) dptr[i] = static_cast<double>((*farr)[i]);
+            }
+          }
+          break;
+        }
+        case TypeId::Int64: {
+          const std::vector<int64_t>* arr = val.as_int64_array();
+          if (arr) {
+            count = arr->size();
+            size_t bytes = count * sizeof(int64_t);
+            arr_data.resize(8 + bytes);
+            std::memcpy(arr_data.data(), &count, 8);
+            std::memcpy(arr_data.data() + 8, arr->data(), bytes);
+          }
+          break;
+        }
+        case TypeId::UInt: {
+          const std::vector<uint32_t>* arr = val.as_uint_array();
+          if (arr) {
+            count = arr->size();
+            size_t bytes = count * sizeof(uint32_t);
+            arr_data.resize(8 + bytes);
+            std::memcpy(arr_data.data(), &count, 8);
+            std::memcpy(arr_data.data() + 8, arr->data(), bytes);
+          }
+          break;
+        }
+        case TypeId::UInt64: {
+          const std::vector<uint64_t>* arr = val.as_uint64_array();
+          if (arr) {
+            count = arr->size();
+            size_t bytes = count * sizeof(uint64_t);
+            arr_data.resize(8 + bytes);
+            std::memcpy(arr_data.data(), &count, 8);
+            std::memcpy(arr_data.data() + 8, arr->data(), bytes);
+          }
+          break;
+        }
+        case TypeId::Bool: {
+          const std::vector<uint8_t>* arr = val.as_bool_array();
+          if (arr) {
+            count = arr->size();
+            arr_data.resize(8 + count);
+            std::memcpy(arr_data.data(), &count, 8);
+            std::memcpy(arr_data.data() + 8, arr->data(), count);
+          }
+          break;
+        }
+        case TypeId::Token: {
+          const std::vector<std::string>* arr = val.as_token_array();
+          if (arr) {
+            count = arr->size();
+            // Store token indices
+            arr_data.resize(8 + count * 4);
+            std::memcpy(arr_data.data(), &count, 8);
+            for (size_t k = 0; k < count; ++k) {
+              uint32_t idx = InternToken((*arr)[k]);
+              std::memcpy(arr_data.data() + 8 + k * 4, &idx, 4);
+            }
           }
           break;
         }
