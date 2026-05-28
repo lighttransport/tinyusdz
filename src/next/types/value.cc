@@ -32,6 +32,30 @@ struct IntArrayStorage {
   std::vector<int32_t> data;
 };
 
+struct DoubleArrayStorage {
+  std::vector<double> data;
+};
+
+struct Int64ArrayStorage {
+  std::vector<int64_t> data;
+};
+
+struct UIntArrayStorage {
+  std::vector<uint32_t> data;
+};
+
+struct UInt64ArrayStorage {
+  std::vector<uint64_t> data;
+};
+
+struct BoolArrayStorage {
+  std::vector<uint8_t> data;  // stored as uint8_t (0/1)
+};
+
+struct TokenArrayStorage {
+  std::vector<std::string> data;
+};
+
 // Check if type uses string storage
 bool UsesStringStorage(TypeId id) {
   return id == TypeId::String || id == TypeId::Token || id == TypeId::AssetPath;
@@ -437,6 +461,76 @@ Value Value::MakeFloat3Array(std::vector<float>&& data) {
   return v;
 }
 
+// New array types
+Value Value::MakeDoubleArray(const std::vector<double>& data) {
+  Value v; v.type_id_ = TypeId::Double; v.is_array_ = true;
+  v.array_size_ = static_cast<uint32_t>(data.size());
+  auto* storage = new DoubleArrayStorage{data};
+  std::memcpy(v.storage_, &storage, sizeof(storage)); return v;
+}
+Value Value::MakeDoubleArray(std::vector<double>&& data) {
+  Value v; v.type_id_ = TypeId::Double; v.is_array_ = true;
+  v.array_size_ = static_cast<uint32_t>(data.size());
+  auto* storage = new DoubleArrayStorage{std::move(data)};
+  std::memcpy(v.storage_, &storage, sizeof(storage)); return v;
+}
+Value Value::MakeInt64Array(const std::vector<int64_t>& data) {
+  Value v; v.type_id_ = TypeId::Int64; v.is_array_ = true;
+  v.array_size_ = static_cast<uint32_t>(data.size());
+  auto* storage = new Int64ArrayStorage{data};
+  std::memcpy(v.storage_, &storage, sizeof(storage)); return v;
+}
+Value Value::MakeInt64Array(std::vector<int64_t>&& data) {
+  Value v; v.type_id_ = TypeId::Int64; v.is_array_ = true;
+  v.array_size_ = static_cast<uint32_t>(data.size());
+  auto* storage = new Int64ArrayStorage{std::move(data)};
+  std::memcpy(v.storage_, &storage, sizeof(storage)); return v;
+}
+Value Value::MakeUIntArray(const std::vector<uint32_t>& data) {
+  Value v; v.type_id_ = TypeId::UInt; v.is_array_ = true;
+  v.array_size_ = static_cast<uint32_t>(data.size());
+  auto* storage = new UIntArrayStorage{data};
+  std::memcpy(v.storage_, &storage, sizeof(storage)); return v;
+}
+Value Value::MakeUIntArray(std::vector<uint32_t>&& data) {
+  Value v; v.type_id_ = TypeId::UInt; v.is_array_ = true;
+  v.array_size_ = static_cast<uint32_t>(data.size());
+  auto* storage = new UIntArrayStorage{std::move(data)};
+  std::memcpy(v.storage_, &storage, sizeof(storage)); return v;
+}
+Value Value::MakeUInt64Array(const std::vector<uint64_t>& data) {
+  Value v; v.type_id_ = TypeId::UInt64; v.is_array_ = true;
+  v.array_size_ = static_cast<uint32_t>(data.size());
+  auto* storage = new UInt64ArrayStorage{data};
+  std::memcpy(v.storage_, &storage, sizeof(storage)); return v;
+}
+Value Value::MakeUInt64Array(std::vector<uint64_t>&& data) {
+  Value v; v.type_id_ = TypeId::UInt64; v.is_array_ = true;
+  v.array_size_ = static_cast<uint32_t>(data.size());
+  auto* storage = new UInt64ArrayStorage{std::move(data)};
+  std::memcpy(v.storage_, &storage, sizeof(storage)); return v;
+}
+Value Value::MakeBoolArray(const std::vector<bool>& data) {
+  Value v; v.type_id_ = TypeId::Bool; v.is_array_ = true;
+  v.array_size_ = static_cast<uint32_t>(data.size());
+  std::vector<uint8_t> tmp(data.size());
+  for (size_t i = 0; i < data.size(); i++) tmp[i] = data[i] ? 1 : 0;
+  auto* storage = new BoolArrayStorage{std::move(tmp)};
+  std::memcpy(v.storage_, &storage, sizeof(storage)); return v;
+}
+Value Value::MakeTokenArray(const std::vector<std::string>& data) {
+  Value v; v.type_id_ = TypeId::Token; v.is_array_ = true;
+  v.array_size_ = static_cast<uint32_t>(data.size());
+  auto* storage = new TokenArrayStorage{data};
+  std::memcpy(v.storage_, &storage, sizeof(storage)); return v;
+}
+Value Value::MakeTokenArray(std::vector<std::string>&& data) {
+  Value v; v.type_id_ = TypeId::Token; v.is_array_ = true;
+  v.array_size_ = static_cast<uint32_t>(data.size());
+  auto* storage = new TokenArrayStorage{std::move(data)};
+  std::memcpy(v.storage_, &storage, sizeof(storage)); return v;
+}
+
 // ============================================================
 // Queries and accessors
 // ============================================================
@@ -462,6 +556,16 @@ void Value::destroy() {
       delete static_cast<FloatArrayStorage*>(ptr);
     } else if (type_id_ == TypeId::Int) {
       delete static_cast<IntArrayStorage*>(ptr);
+    } else if (type_id_ == TypeId::Double) {
+      delete static_cast<DoubleArrayStorage*>(ptr);
+    } else if (type_id_ == TypeId::Int64) {
+      delete static_cast<Int64ArrayStorage*>(ptr);
+    } else if (type_id_ == TypeId::UInt) {
+      delete static_cast<UIntArrayStorage*>(ptr);
+    } else if (type_id_ == TypeId::UInt64) {
+      delete static_cast<UInt64ArrayStorage*>(ptr);
+    } else if (type_id_ == TypeId::Bool) {
+      delete static_cast<BoolArrayStorage*>(ptr);
     }
   } else if (UsesStringStorage(type_id_)) {
     reinterpret_cast<StringStorage*>(storage_)->~StringStorage();
@@ -485,6 +589,21 @@ void Value::copy_from(const Value& other) {
       std::memcpy(storage_, &new_storage, sizeof(new_storage));
     } else if (other.type_id_ == TypeId::Int) {
       auto* new_storage = new IntArrayStorage{static_cast<IntArrayStorage*>(ptr)->data};
+      std::memcpy(storage_, &new_storage, sizeof(new_storage));
+    } else if (other.type_id_ == TypeId::Double) {
+      auto* new_storage = new DoubleArrayStorage{static_cast<DoubleArrayStorage*>(ptr)->data};
+      std::memcpy(storage_, &new_storage, sizeof(new_storage));
+    } else if (other.type_id_ == TypeId::Int64) {
+      auto* new_storage = new Int64ArrayStorage{static_cast<Int64ArrayStorage*>(ptr)->data};
+      std::memcpy(storage_, &new_storage, sizeof(new_storage));
+    } else if (other.type_id_ == TypeId::UInt) {
+      auto* new_storage = new UIntArrayStorage{static_cast<UIntArrayStorage*>(ptr)->data};
+      std::memcpy(storage_, &new_storage, sizeof(new_storage));
+    } else if (other.type_id_ == TypeId::UInt64) {
+      auto* new_storage = new UInt64ArrayStorage{static_cast<UInt64ArrayStorage*>(ptr)->data};
+      std::memcpy(storage_, &new_storage, sizeof(new_storage));
+    } else if (other.type_id_ == TypeId::Bool) {
+      auto* new_storage = new BoolArrayStorage{static_cast<BoolArrayStorage*>(ptr)->data};
       std::memcpy(storage_, &new_storage, sizeof(new_storage));
     }
   } else if (UsesStringStorage(other.type_id_)) {
@@ -698,6 +817,57 @@ std::vector<int32_t>* Value::as_int_array() {
   void* ptr;
   std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<IntArrayStorage*>(ptr)->data;
+}
+
+const std::vector<double>* Value::as_double_array() const {
+  if (type_id_ != TypeId::Double || !is_array_) return nullptr;
+  void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
+  return &static_cast<DoubleArrayStorage*>(ptr)->data;
+}
+std::vector<double>* Value::as_double_array() {
+  if (type_id_ != TypeId::Double || !is_array_) return nullptr;
+  void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
+  return &static_cast<DoubleArrayStorage*>(ptr)->data;
+}
+const std::vector<int64_t>* Value::as_int64_array() const {
+  if (type_id_ != TypeId::Int64 || !is_array_) return nullptr;
+  void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
+  return &static_cast<Int64ArrayStorage*>(ptr)->data;
+}
+std::vector<int64_t>* Value::as_int64_array() {
+  if (type_id_ != TypeId::Int64 || !is_array_) return nullptr;
+  void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
+  return &static_cast<Int64ArrayStorage*>(ptr)->data;
+}
+const std::vector<uint32_t>* Value::as_uint_array() const {
+  if (type_id_ != TypeId::UInt || !is_array_) return nullptr;
+  void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
+  return &static_cast<UIntArrayStorage*>(ptr)->data;
+}
+std::vector<uint32_t>* Value::as_uint_array() {
+  if (type_id_ != TypeId::UInt || !is_array_) return nullptr;
+  void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
+  return &static_cast<UIntArrayStorage*>(ptr)->data;
+}
+const std::vector<uint64_t>* Value::as_uint64_array() const {
+  if (type_id_ != TypeId::UInt64 || !is_array_) return nullptr;
+  void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
+  return &static_cast<UInt64ArrayStorage*>(ptr)->data;
+}
+std::vector<uint64_t>* Value::as_uint64_array() {
+  if (type_id_ != TypeId::UInt64 || !is_array_) return nullptr;
+  void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
+  return &static_cast<UInt64ArrayStorage*>(ptr)->data;
+}
+const std::vector<uint8_t>* Value::as_bool_array() const {
+  if (type_id_ != TypeId::Bool || !is_array_) return nullptr;
+  void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
+  return &static_cast<BoolArrayStorage*>(ptr)->data;
+}
+const std::vector<std::string>* Value::as_token_array() const {
+  if (type_id_ != TypeId::Token || !is_array_) return nullptr;
+  void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
+  return &static_cast<TokenArrayStorage*>(ptr)->data;
 }
 
 // ============================================================
