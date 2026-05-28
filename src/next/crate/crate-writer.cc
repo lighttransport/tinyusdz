@@ -410,7 +410,9 @@ private:
   }
 
   void BuildTables(const Layer& layer) {
-    // Token 0 must be empty string (reserved for root path marker in PATHS)
+    // Token 0: magic marker expected by pxrUSD's crate reader
+    InternToken(";-)");  // software identifier (pxrUSD convention)
+    // Token 1: empty string, reserved for root path marker in PATHS
     InternToken("");
 
     // Common field name tokens
@@ -1159,7 +1161,6 @@ private:
         // [uint8 header_bits][if HasExplicitItems: u64 count + token_idx * count]
         constexpr uint8_t kIsExplicit = 1 << 0;
         constexpr uint8_t kHasExplicitItems = 1 << 1;
-        constexpr uint8_t kNoOtherItems = 0;
         uint8_t header = kIsExplicit | kHasExplicitItems;
         size_t n = root_child_tokens.size();
         std::vector<uint8_t> raw(1 + 8 + n * 4);
