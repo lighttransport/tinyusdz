@@ -1126,67 +1126,88 @@ bool CrateReader::Impl::BuildStage() {
     break; // Only process first PseudoRoot
   }
 
-  // Process prim specs to build prims
+  // Process prim specs to build prims with hierarchy from paths
+  struct PrimEntry {
+    std::string full_path;
+    std::string name;
+    std::string type_name;
+    PrimSpecifier specifier;
+    std::vector<std::pair<std::string, Value>> fields;
+  };
+
+  std::vector<PrimEntry> prim_entries;
   for (const auto& spec : specs_) {
-    if (spec.spec_type != SpecType::Prim) {
-      continue;
-    }
+    if (spec.spec_type != SpecType::Prim) continue;
 
-    // Get prim name from path
-    std::string prim_name;
-    if (spec.path_index.value < paths_.size()) {
-      std::string path = paths_[spec.path_index.value];
-      size_t last_slash = path.rfind('/');
-      if (last_slash != std::string::npos && last_slash < path.size() - 1) {
-        prim_name = path.substr(last_slash + 1);
-      } else {
-        prim_name = path;
-      }
-    }
+    if (spec.path_index.value >= paths_.size()) continue;
+    std::string full_path = paths_[spec.path_index.value];
+    if (full_path.empty() || full_path == "/") continue;
 
-    if (prim_name.empty()) {
-      continue;
-    }
+    size_t last_slash = full_path.rfind('/');
+    std::string prim_name = (last_slash != std::string::npos && last_slash < full_path.size() - 1)
+                            ? full_path.substr(last_slash + 1) : full_path;
+    if (prim_name.empty()) continue;
 
-    // Get fields for this spec
+    PrimEntry entry;
+    entry.full_path = full_path;
+    entry.name = prim_name;
+
     std::vector<std::pair<std::string, Value>> fields;
     ResolveFieldset(spec.fieldset_index.value, fields);
 
-    // Extract type name and specifier
-    std::string type_name;
-    PrimSpecifier specifier = PrimSpecifier::Def;
-
-    for (const auto& field : fields) {
-      if (field.first == "typeName") {
-        if (const std::string* s = field.second.as_token()) {
-          type_name = *s;
+    entry.type_name = "Xform";
+    entry.specifier = PrimSpecifier::Def;
+    for (auto& f : fields) {
+      if (f.first == "typeName") {
+        if (const std::string* s = f.second.as_token()) entry.type_name = *s;
+      } else if (f.first == "specifier") {
+        if (const std::string* s = f.second.as_token()) {
+          if (*s == "over") entry.specifier = PrimSpecifier::Over;
+          else if (*s == "class") entry.specifier = PrimSpecifier::Class;
         }
-      } else if (field.first == "specifier") {
-        if (const std::string* s = field.second.as_token()) {
-          if (*s == "over") specifier = PrimSpecifier::Over;
-          else if (*s == "class") specifier = PrimSpecifier::Class;
-        }
+      } else {
+        entry.fields.push_back(std::move(f));
       }
     }
+    prim_entries.push_back(std::move(entry));
+  }
 
-    // Begin prim
-    builder.begin_prim(prim_name, type_name, specifier);
+  // Sort by full path (produces correct depth-first order with parents before children)
+  std::sort(prim_entries.begin(), prim_entries.end(),
+    [](const PrimEntry& a, const PrimEntry& b) {
+      return a.full_path < b.full_path;
+    });
 
-    // Add properties (skip metadata fields)
-    for (auto& field : fields) {
-      if (field.first == "typeName" || field.first == "specifier" ||
-          field.first == "variability") {
-        continue;
-      }
+  // Build hierarchy using depth-based stack management
+  // Stack keeps ancestor paths at each depth level
+  std::vector<std::string> prim_stack;
 
-      // Check for uniform variability
+  for (auto& entry : prim_entries) {
+    // Compute depth of this prim (number of '/' in path)
+    size_t depth = std::count(entry.full_path.begin(), entry.full_path.end(), '/');
+
+    // Pop stack until we're at the correct parent level
+    while (prim_stack.size() > depth - 1) {
+      builder.end_prim();
+      prim_stack.pop_back();
+    }
+
+    // Begin this prim
+    builder.begin_prim(entry.name, entry.type_name, entry.specifier);
+    prim_stack.push_back(entry.name);
+
+    // Add properties
+    for (auto& field : entry.fields) {
+      if (field.first == "typeName" || field.first == "specifier") continue;
       uint16_t flags = 0;
-      // TODO: Properly parse variability from field
-
       builder.add_property(field.first, std::move(field.second), flags);
     }
+  }
 
+  // Close remaining prims
+  while (!prim_stack.empty()) {
     builder.end_prim();
+    prim_stack.pop_back();
   }
 
   // Finalize
