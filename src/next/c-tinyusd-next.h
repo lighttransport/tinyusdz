@@ -63,6 +63,8 @@ typedef enum {
   TINYUSDZ_NEXT_VALUE_INT64_ARRAY,
   TINYUSDZ_NEXT_VALUE_UINT_ARRAY,
   TINYUSDZ_NEXT_VALUE_UINT64_ARRAY,
+  TINYUSDZ_NEXT_VALUE_BOOL_ARRAY,
+  TINYUSDZ_NEXT_VALUE_TOKEN_ARRAY,
 } tinyusdz_next_value_type_t;
 
 // ============================================================
@@ -275,6 +277,18 @@ size_t tinyusdz_next_prim_get_uint_array(
 size_t tinyusdz_next_prim_get_uint64_array(
     const TinyUSDZNextPrim* prim, const char* prop_name,
     const uint64_t** out_ptr);
+
+/// Get a bool array property value.
+/// Returns number of bools. out_ptr points to internal data.
+size_t tinyusdz_next_prim_get_bool_array(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    const uint8_t** out_ptr);
+
+/// Get a token array property value.
+/// Returns number of tokens. out_ptr points to internal data.
+size_t tinyusdz_next_prim_get_token_array(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    const char*** out_ptr);
 
 /// Get a float array property value.
 /// Returns number of floats in the array. out_ptr points to internal data
