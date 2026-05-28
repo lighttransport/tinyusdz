@@ -299,6 +299,34 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/benchmark_next.cc
     )
     target_link_libraries(benchmark_next PRIVATE tinyusdz_next)
+
+    # Register tests with ctest
+    enable_testing()
+
+    add_test(NAME next_test_tinyusdz COMMAND test_tinyusdz_next
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_layer COMMAND test_layer
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_stage COMMAND test_stage
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_writer COMMAND test_writer
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_usdc_writer COMMAND test_usdc_writer
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_usdc_reader COMMAND test_usdc_reader
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_usdc_roundtrip COMMAND test_usdc_roundtrip
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_schemas COMMAND test_schemas
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_schemas_ext COMMAND test_schemas_ext
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_usdcat_roundtrip COMMAND test_usdcat_roundtrip
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_usdz_writer COMMAND test_usdz_writer
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_benchmark COMMAND benchmark_next
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 endif()
 
 # ============================================================
