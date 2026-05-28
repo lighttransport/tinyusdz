@@ -855,7 +855,9 @@ enum class AnimationPath {
   Translation,  ///< Animates position (vec3) - maps to .position in Three.js
   Rotation,     ///< Animates rotation (quat) - maps to .quaternion in Three.js
   Scale,        ///< Animates scale (vec3) - maps to .scale in Three.js
-  Weights       ///< Animates morph target weights (float array)
+  Weights,      ///< Animates morph target weights (float array)
+  CustomProperty ///< Animates arbitrary numeric prim property (e.g. trajectory
+                 ///< position or physics data)
 };
 
 ///
@@ -924,6 +926,10 @@ struct AnimationChannel {
 
   int32_t sampler{-1};        ///< Index into AnimationClip::samplers (-1 = invalid)
 
+  // For AnimationPath::CustomProperty channels.
+  bool is_custom_property{false};    ///< true when `path == AnimationPath::CustomProperty`
+  std::string property_name;         ///< The custom property name for this channel.
+
   /// Check if channel is valid based on its target type
   bool is_valid() const {
     if (sampler < 0) return false;
@@ -980,6 +986,20 @@ struct AnimationClip {
   float duration{0.0f};           ///< Animation duration in seconds
 
   AnimationSourceType source_type{AnimationSourceType::Unknown};
+
+  // Set true when animation originated from USD value clips.
+  bool has_value_clip{false};
+  // Set true when clip data has been baked into sampler arrays.
+  bool value_clip_baked{false};
+  // Time range of sampled stage time used to bake this clip.
+  float value_clip_start_time{0.0f};
+  float value_clip_end_time{0.0f};
+  // Configured sample rate used during clip baking (0 if not resampled).
+  float value_clip_sample_rate{0.0f};
+
+  // Clip asset path(s) referenced while baking this animation.
+  std::vector<std::string> clip_asset_paths;
+
   int32_t num_animated_joints{0};   ///< Count of unique joints animated
   int32_t num_animated_nodes{0};    ///< Count of unique scene nodes animated
 

@@ -335,6 +335,56 @@ PrimSpec::~PrimSpec() = default;
 PrimSpec::PrimSpec(PrimSpec&& other) noexcept = default;
 PrimSpec& PrimSpec::operator=(PrimSpec&& other) noexcept = default;
 
+PrimSpec PrimSpec::Clone() const {
+  PrimSpec c(name_);
+  c.type_id_ = type_id_;
+  c.specifier_ = specifier_;
+  c.path_ = path_;
+
+  // Deep copy properties
+  c.props_ = props_;
+
+  // Deep copy values
+  if (values_) {
+    c.values_ = std::make_unique<ValueStorage>();
+    // Copy each property value
+    for (const auto& slot : props_.slots()) {
+      const Value* v = property_value(slot.name_id);
+      if (v) {
+        c.add_property(slot.name_id, *v, slot.flags);
+      }
+    }
+  }
+
+  // Deep copy time samples
+  if (time_samples_) {
+    c.time_samples_ = std::make_unique<TimeSampleStorage>();
+    // Copy time samples per property
+    for (auto prop_id : time_sampled_properties()) {
+      auto* samples = time_samples(prop_id);
+      if (samples) {
+        for (const auto& [t, offset] : *samples) {
+          const Value* v = time_sample_value(offset);
+          if (v) {
+            c.add_time_sample(prop_id, t, *v);
+          }
+        }
+      }
+    }
+  }
+
+  // Deep copy relationships
+  c.relationships_ = relationships_;
+
+  // Deep copy children
+  c.child_indices_ = child_indices_;
+
+  // Deep copy metadata (simple struct - copyable)
+  c.meta_ = meta_;
+
+  return c;
+}
+
 const std::string& PrimSpec::type_name() const {
   return GetTypeNameTable().get(type_id_);
 }
