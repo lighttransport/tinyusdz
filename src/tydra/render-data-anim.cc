@@ -292,7 +292,7 @@ static bool AppendValueToFloatArray(const TerminalAttributeValue &value,
   if (auto *v = value.as<std::vector<bool>>()) {
     this_count = v->size();
     if (!SetOrCheckComponentCount(component_count, this_count)) return false;
-    for (const auto &e : *v) {
+    for (const auto e : *v) {
       dst->push_back(e ? 1.0f : 0.0f);
     }
     return true;
@@ -383,8 +383,9 @@ static bool AppendValueToFloatArray(const TerminalAttributeValue &value,
 }
 }
 
-bool RenderSceneConverter::LoadValueClipLayer(const std::string &assetPath,
-                                            std::shared_ptr<Layer> *layer_out) {
+bool RenderSceneConverter::LoadValueClipLayer(
+    const RenderSceneConverterEnv &env, const std::string &assetPath,
+    std::shared_ptr<Layer> *layer_out) {
   if (!layer_out) {
     return false;
   }
@@ -393,7 +394,13 @@ bool RenderSceneConverter::LoadValueClipLayer(const std::string &assetPath,
     return false;
   }
 
-  auto it = _value_clip_layer_cache.find(assetPath);
+  const std::string resolved_asset_path = env.asset_resolver.resolve(assetPath);
+  if (resolved_asset_path.empty()) {
+    PUSH_WARN(fmt::format("Failed to resolve clip layer asset path: {}", assetPath));
+    return false;
+  }
+
+  auto it = _value_clip_layer_cache.find(resolved_asset_path);
   if (it != _value_clip_layer_cache.end()) {
     *layer_out = it->second;
     return true;
@@ -401,7 +408,8 @@ bool RenderSceneConverter::LoadValueClipLayer(const std::string &assetPath,
 
   Layer layer;
   std::string warn, err;
-  if (!LoadLayerFromFile(assetPath, &layer, &warn, &err)) {
+  if (!LoadLayerFromAsset(const_cast<AssetResolutionResolver &>(env.asset_resolver),
+                         resolved_asset_path, &layer, &warn, &err)) {
     if (!warn.empty()) {
       PUSH_WARN(fmt::format("Failed to load clip layer: {}", warn));
     }
@@ -416,14 +424,15 @@ bool RenderSceneConverter::LoadValueClipLayer(const std::string &assetPath,
   if (_value_clip_layer_cache.size() >= kMaxValueClipCacheEntries) {
     _value_clip_layer_cache.erase(_value_clip_layer_cache.begin());
   }
-  _value_clip_layer_cache[assetPath] = stage_cache;
+  _value_clip_layer_cache[resolved_asset_path] = stage_cache;
   *layer_out = stage_cache;
 
   return true;
 }
 
-bool RenderSceneConverter::LoadValueClipStage(const std::string &assetPath,
-                                            std::shared_ptr<Stage> *stage_out) {
+bool RenderSceneConverter::LoadValueClipStage(
+    const RenderSceneConverterEnv &env, const std::string &assetPath,
+    std::shared_ptr<Stage> *stage_out) {
   if (!stage_out) {
     return false;
   }
@@ -432,14 +441,20 @@ bool RenderSceneConverter::LoadValueClipStage(const std::string &assetPath,
     return false;
   }
 
-  auto stage_it = _value_clip_stage_cache.find(assetPath);
+  const std::string resolved_asset_path = env.asset_resolver.resolve(assetPath);
+  if (resolved_asset_path.empty()) {
+    PUSH_WARN(fmt::format("Failed to resolve clip stage asset path: {}", assetPath));
+    return false;
+  }
+
+  auto stage_it = _value_clip_stage_cache.find(resolved_asset_path);
   if (stage_it != _value_clip_stage_cache.end()) {
     *stage_out = stage_it->second;
     return true;
   }
 
   std::shared_ptr<Layer> layer;
-  if (!LoadValueClipLayer(assetPath, &layer) || !layer) {
+  if (!LoadValueClipLayer(env, resolved_asset_path, &layer) || !layer) {
     return false;
   }
 
@@ -461,7 +476,7 @@ bool RenderSceneConverter::LoadValueClipStage(const std::string &assetPath,
   if (_value_clip_stage_cache.size() >= kMaxValueClipCacheEntries) {
     _value_clip_stage_cache.erase(_value_clip_stage_cache.begin());
   }
-  _value_clip_stage_cache[assetPath] = stage_cache;
+  _value_clip_stage_cache[resolved_asset_path] = stage_cache;
   *stage_out = stage_cache;
 
   return true;
@@ -1046,6 +1061,7 @@ bool RenderSceneConverter::ConvertValueClipAnimation(
 
   std::vector<std::pair<double, double>> times = clip_meta.times;
   std::vector<std::pair<double, int>> active = clip_meta.active;
+  constexpr double kTimeKeyEpsilon = std::numeric_limits<double>::epsilon();
 
   if (times.size() >= 2) {
     std::sort(times.begin(), times.end(),
@@ -1054,8 +1070,8 @@ bool RenderSceneConverter::ConvertValueClipAnimation(
               });
     times.erase(std::unique(times.begin(), times.end(),
                            [](const std::pair<double, double> &a,
-                              const std::pair<double, double> &b) {
-                             return a.first == b.first;
+                             const std::pair<double, double> &b) {
+                             return std::fabs(a.first - b.first) <= kTimeKeyEpsilon;
                            }),
                times.end());
   }
@@ -1067,8 +1083,8 @@ bool RenderSceneConverter::ConvertValueClipAnimation(
               });
     active.erase(std::unique(active.begin(), active.end(),
                             [](const std::pair<double, int> &a,
-                               const std::pair<double, int> &b) {
-                              return a.first == b.first;
+                              const std::pair<double, int> &b) {
+                              return std::fabs(a.first - b.first) <= kTimeKeyEpsilon;
                             }),
                 active.end());
   }
@@ -1180,12 +1196,12 @@ bool RenderSceneConverter::ConvertValueClipAnimation(
                                     clip_prim_path_candidates.end());
   }
 
-  auto resolve_clip_matrix = [this, &clip_prim_path_candidates](
+  auto resolve_clip_matrix = [this, &clip_prim_path_candidates, &env](
       const std::string &clip_asset_path,
       double clip_time, value::matrix4d *matrix_out) -> bool {
 
     std::shared_ptr<Stage> clip_stage;
-    if (!LoadValueClipStage(clip_asset_path, &clip_stage) || !clip_stage) {
+    if (!LoadValueClipStage(env, clip_asset_path, &clip_stage) || !clip_stage) {
       return false;
     }
 
@@ -1415,7 +1431,7 @@ bool RenderSceneConverter::ConvertValueClipAnimation(
 
   auto collect_clip_attr_names = [&](const std::string &clip_asset_path) -> void {
     std::shared_ptr<Stage> clip_stage;
-    if (!LoadValueClipStage(clip_asset_path, &clip_stage) || !clip_stage) {
+      if (!LoadValueClipStage(env, clip_asset_path, &clip_stage) || !clip_stage) {
       PUSH_WARN(fmt::format(
           "Failed to load value clip stage for attribute discovery: {}",
           clip_asset_path));

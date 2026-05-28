@@ -32,6 +32,16 @@ Tests the `setAssetFromRawPointer` method which enables zero-copy transfer of `U
 - Up to 67% reduction in memory copies
 - Significant performance improvement for large assets
 
+### test-value-clip.js
+
+Tests USD value clip loading and retime behavior in the WebAssembly API.
+
+**What it tests:**
+- `setEnableValueClips` + `loadFromCachedAsset` composition path
+- `hasValueClip` / `valueClipBaked` / `clipAssetPaths` metadata
+- `setValueClipSampleRate`, `setValueClipUseTimeRange`, and `setValueClipTimeRange`
+- value-clip enable/disable behavior and time resampling impact
+
 ## Running Tests
 
 ### Prerequisites
@@ -54,6 +64,7 @@ npm test
 # Run specific tests
 npm run test-memory-view    # Actual WebAssembly test
 npm run test-zero-copy      # Zero-copy mock test
+npm run test-value-clip    # Value clip WebAssembly test
 npm run test-mock          # All mock tests
 ```
 
@@ -62,6 +73,7 @@ Or directly with Node.js:
 ```bash
 node test-memory-view.js        # Requires built WebAssembly module
 node test-zero-copy-mock.js     # Mock test, no build required
+node test-value-clip.js         # Value clip WebAssembly test
 ```
 
 ## Test Structure
