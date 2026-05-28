@@ -222,6 +222,28 @@ static PyObject* _make_value(const TinyUSDZNextPrim* prim, const char* prop_name
             }
             break;
         }
+        case TINYUSDZ_NEXT_VALUE_BOOL_ARRAY: {
+            const uint8_t* arr = NULL;
+            size_t n = tinyusdz_next_prim_get_bool_array(prim, prop_name, &arr);
+            if (n > 0 && arr) {
+                PyObject* lst = PyList_New(n);
+                for (size_t i = 0; i < n; i++)
+                    PyList_SetItem(lst, i, PyBool_FromLong(arr[i]));
+                return lst;
+            }
+            break;
+        }
+        case TINYUSDZ_NEXT_VALUE_TOKEN_ARRAY: {
+            const char** arr = NULL;
+            size_t n = tinyusdz_next_prim_get_token_array(prim, prop_name, &arr);
+            if (n > 0 && arr) {
+                PyObject* lst = PyList_New(n);
+                for (size_t i = 0; i < n; i++)
+                    PyList_SetItem(lst, i, PyUnicode_FromString(arr[i]));
+                return lst;
+            }
+            break;
+        }
         default:
             break;
     }
@@ -286,6 +308,11 @@ static PyGetSetDef NextPrim_getset[] = {
     {"type_name", (getter)NextPrim_get_type_name, NULL, "Prim type name", NULL},
     {NULL}
 };
+
+// Forward declaration
+static NextPrim* NextPrim_create(TinyUSDZNextStage* c_stage, PyObject* stage_obj,
+                                  const char* path, const char* name,
+                                  const char* type_name);
 
 // Methods
 static PyObject* NextPrim_get_property(NextPrim* self, PyObject* args) {
@@ -359,6 +386,54 @@ static PyObject* NextPrim_get_properties(NextPrim* self, PyObject* args) {
     return d;
 }
 
+static PyObject* NextPrim_get_children(NextPrim* self, PyObject* args) {
+    (void)args;
+    if (!self->c_stage || !self->prim_path) Py_RETURN_NONE;
+
+    const TinyUSDZNextPrim* prim = tinyusdz_next_stage_get_prim_at_path(
+        self->c_stage, self->prim_path);
+    if (!prim) Py_RETURN_NONE;
+
+    size_t count = tinyusdz_next_prim_get_child_count(prim);
+    PyObject* lst = PyList_New(count);
+    for (size_t i = 0; i < count; i++) {
+        const TinyUSDZNextPrim* child = tinyusdz_next_prim_get_child(prim, i);
+        if (child) {
+            const char* name = tinyusdz_next_prim_get_name(child);
+            const char* path = tinyusdz_next_prim_get_path(child);
+            const char* type_name = tinyusdz_next_prim_get_type_name(child);
+            NextPrim* py_child = NextPrim_create(self->c_stage, self->stage_obj,
+                                                  path, name, type_name);
+            PyList_SetItem(lst, i, (PyObject*)py_child);
+        } else {
+            Py_INCREF(Py_None);
+            PyList_SetItem(lst, i, Py_None);
+        }
+    }
+    return lst;
+}
+
+static PyObject* NextPrim_get_relationship(NextPrim* self, PyObject* args) {
+    const char* rel_name;
+    if (!PyArg_ParseTuple(args, "s", &rel_name))
+        return NULL;
+
+    if (!self->c_stage || !self->prim_path) Py_RETURN_NONE;
+
+    const TinyUSDZNextPrim* prim = tinyusdz_next_stage_get_prim_at_path(
+        self->c_stage, self->prim_path);
+    if (!prim) Py_RETURN_NONE;
+
+    const char** targets = NULL;
+    size_t n = tinyusdz_next_prim_get_relationship_targets(prim, rel_name, &targets);
+    if (n == 0 || !targets) Py_RETURN_NONE;
+
+    PyObject* lst = PyList_New(n);
+    for (size_t i = 0; i < n; i++)
+        PyList_SetItem(lst, i, PyUnicode_FromString(targets[i]));
+    return lst;
+}
+
 static PyMethodDef NextPrim_methods[] = {
     {"get_property", (PyCFunction)NextPrim_get_property, METH_VARARGS,
      "Get a property value by name"},
@@ -368,6 +443,10 @@ static PyMethodDef NextPrim_methods[] = {
      "Get all property names"},
     {"get_properties", (PyCFunction)NextPrim_get_properties, METH_NOARGS,
      "Get all properties as a dict"},
+    {"get_children", (PyCFunction)NextPrim_get_children, METH_NOARGS,
+     "Get child prims"},
+    {"get_relationship", (PyCFunction)NextPrim_get_relationship, METH_VARARGS,
+     "Get relationship target paths"},
     {NULL}
 };
 

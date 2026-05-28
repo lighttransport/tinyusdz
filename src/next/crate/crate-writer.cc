@@ -1159,16 +1159,12 @@ private:
       if (!root_child_tokens.empty()) {
         // Store as TokenListOp matching pxrUSD format:
         // [uint8 header_bits][if HasExplicitItems: u64 count + token_idx * count]
-        constexpr uint8_t kIsExplicit = 1 << 0;
-        constexpr uint8_t kHasExplicitItems = 1 << 1;
-        uint8_t header = kIsExplicit | kHasExplicitItems;
         size_t n = root_child_tokens.size();
-        std::vector<uint8_t> raw(1 + 8 + n * 4);
-        raw[0] = header;
+        std::vector<uint8_t> raw(8 + n * 4);
         uint64_t cnt = n;
-        std::memcpy(raw.data() + 1, &cnt, 8);
+        std::memcpy(raw.data(), &cnt, 8);
         for (size_t i = 0; i < n; ++i) {
-          std::memcpy(raw.data() + 9 + i * 4, &root_child_tokens[i], 4);
+          std::memcpy(raw.data() + 8 + i * 4, &root_child_tokens[i], 4);
         }
         uint64_t data_idx = value_data_.size();
         value_data_.push_back({TypeId::Token, std::move(raw)});
@@ -1176,8 +1172,7 @@ private:
         CrateField pc_field;
         pc_field.token_index.value = InternToken("primChildren");
         // pxrUSD stores primChildren as TokenVector (41), not TokenListOp (32)
-        // TokenVector is a simple array: [u8 header][u64 count][u32 token_idx]*count
-        // Where header = 3 (IsExplicit | HasExplicitItems)
+        // TokenVector is a simple array: [u64 count][u32 token_idx]*count (no header byte)
         pc_field.value_rep = ValueRep::Make(CrateTypeId::TokenVector,
                                             data_idx, false, false);
         if (!fieldsets_.empty()) {
