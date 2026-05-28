@@ -1294,6 +1294,28 @@ json ThreeJSSceneExporter::ConvertAnimation(const AnimationClip& anim) {
         {"times", sampler.times},
         {"values", sampler.values}
       };
+    } else if (channel.path == AnimationPath::CustomProperty) {
+      std::string value_type = "number";
+      if (!sampler.times.empty() && !sampler.values.empty() &&
+          (sampler.values.size() % sampler.times.size() == 0u)) {
+        const size_t comp_count = sampler.values.size() / sampler.times.size();
+        if (comp_count == 2) {
+          value_type = "vector2";
+        } else if (comp_count == 3) {
+          value_type = "vector3";
+        } else if (comp_count == 4) {
+          value_type = "vector4";
+        }
+      }
+
+      const std::string property_name =
+          channel.property_name.empty() ? "value" : channel.property_name;
+      track = {
+        {"name", target_name + "." + property_name},
+        {"type", value_type},
+        {"times", sampler.times},
+        {"values", sampler.values}
+      };
     } else {
       continue; // Unknown path type
     }

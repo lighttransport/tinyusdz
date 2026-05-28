@@ -402,6 +402,11 @@ inline bool ParseClipSetMetadata(
       auto v = pp_it->second.get_value<std::string>();
       if (v) {
         *primPath = v.value();
+      } else {
+        auto sv = pp_it->second.get_value<value::StringData>();
+        if (sv) {
+          *primPath = sv.value().value;
+        }
       }
     }
 
