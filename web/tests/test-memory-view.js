@@ -10,14 +10,32 @@
 const fs = require('fs');
 const path = require('path');
 
-// Load TinyUSDZ module
-const TinyUSDZModule = require('../js/src/tinyusdz/tinyusdz.js');
+// Load TinyUSDZ module (prefer 64-bit/builtin 64-bit-friendly build when available)
+function loadTinyUSDZModule() {
+  const candidates = [
+    '../js/src/tinyusdz/tinyusdz_64.js',
+    '../js/src/tinyusdz/tinyusdz.js',
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const moduleObject = require(candidate);
+      return moduleObject.default || moduleObject;
+    } catch (error) {
+      console.log(`⚪ Failed to load ${candidate}: ${error.message}`);
+    }
+  }
+
+  throw new Error('Failed to load any TinyUSDZ JS module candidate');
+}
+
+const TinyUSDZInit = loadTinyUSDZModule();
 
 async function runTest() {
   console.log('Loading TinyUSDZ module...');
   
   try {
-    const tinyusdz = await TinyUSDZModule();
+    const tinyusdz = await TinyUSDZInit();
     console.log('✓ TinyUSDZ module loaded successfully');
 
     // Create a loader instance
@@ -81,7 +99,7 @@ async function runTest() {
     // Test with binary data
     console.log('Testing with binary data...');
     const binaryAssetName = 'binary-test.bin';
-    const binaryData = new Uint8Array([0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE, 0xFD, 0xFC]);
+    const binaryData = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7]);
     const binaryString = String.fromCharCode(...binaryData);
     
     loader.setAsset(binaryAssetName, binaryString);

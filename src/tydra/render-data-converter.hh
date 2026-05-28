@@ -1232,8 +1232,11 @@ class RenderSceneConverter {
   std::unordered_map<std::string, std::shared_ptr<Layer>> _value_clip_layer_cache;
   std::unordered_map<std::string, std::shared_ptr<Stage>> _value_clip_stage_cache;
 
-  bool LoadValueClipLayer(const std::string &assetPath, std::shared_ptr<Layer> *layer_out);
-  bool LoadValueClipStage(const std::string &assetPath,
+  bool LoadValueClipLayer(const RenderSceneConverterEnv &env,
+                         const std::string &assetPath,
+                         std::shared_ptr<Layer> *layer_out);
+  bool LoadValueClipStage(const RenderSceneConverterEnv &env,
+                         const std::string &assetPath,
                          std::shared_ptr<Stage> *stage_out);
 
 };

@@ -4,10 +4,12 @@
   "description": "Node.js tests for TinyUSDZ WebAssembly bindings",
   "main": "test-memory-view.js",
   "scripts": {
-    "test": "node test-memory-view-mock.js && node test-zero-copy-mock.js && echo 'Note: Run actual tests after building WebAssembly module'",
+    "test": "node test-memory-view.js && node test-value-clip.js && node test-zero-copy-mock.js && echo 'Note: Run actual tests after building WebAssembly module'",
+    "test-value-clip": "node test-value-clip.js",
     "test-memory-view": "node test-memory-view.js",
+    "test-mock": "node test-memory-view-mock.js && node test-zero-copy-mock.js",
     "test-zero-copy": "node test-zero-copy-mock.js",
-    "test-mock": "node test-memory-view-mock.js && node test-zero-copy-mock.js"
+    "test-memory-view-mock": "node test-memory-view-mock.js"
   },
   "keywords": [
     "tinyusdz",
