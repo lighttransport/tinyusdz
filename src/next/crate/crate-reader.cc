@@ -384,6 +384,51 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       out = Value::MakeFloat3Array(std::move(data));
       return true;
     }
+    case CrateTypeId::Double: {
+      std::vector<double> data(static_cast<size_t>(count));
+      if (!reader_->read(data.data(), count * sizeof(double))) return false;
+      out = Value::MakeDoubleArray(std::move(data));
+      return true;
+    }
+    case CrateTypeId::Int64: {
+      std::vector<int64_t> data(static_cast<size_t>(count));
+      if (!reader_->read(data.data(), count * sizeof(int64_t))) return false;
+      out = Value::MakeInt64Array(std::move(data));
+      return true;
+    }
+    case CrateTypeId::UInt: {
+      std::vector<uint32_t> data(static_cast<size_t>(count));
+      if (!reader_->read(data.data(), count * sizeof(uint32_t))) return false;
+      out = Value::MakeUIntArray(std::move(data));
+      return true;
+    }
+    case CrateTypeId::UInt64: {
+      std::vector<uint64_t> data(static_cast<size_t>(count));
+      if (!reader_->read(data.data(), count * sizeof(uint64_t))) return false;
+      out = Value::MakeUInt64Array(std::move(data));
+      return true;
+    }
+    case CrateTypeId::Bool: {
+      std::vector<bool> out_bool(static_cast<size_t>(count));
+      for (size_t i = 0; i < count; i++) {
+        uint8_t byte;
+        if (!reader_->read_u8(byte)) return false;
+        out_bool[i] = (byte != 0);
+      }
+      out = Value::MakeBoolArray(out_bool);
+      return true;
+    }
+    case CrateTypeId::Token: {
+      std::vector<std::string> data(static_cast<size_t>(count));
+      for (size_t i = 0; i < count; i++) {
+        uint32_t tok_idx;
+        if (!reader_->read_u32(tok_idx)) return false;
+        if (tok_idx >= tokens_.size()) return false;
+        data[i] = tokens_[tok_idx];
+      }
+      out = Value::MakeTokenArray(std::move(data));
+      return true;
+    }
     default:
       AddWarning(std::string("Unsupported array type: ") + CrateTypeIdName(type_id));
       return false;
