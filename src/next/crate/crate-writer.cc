@@ -8,6 +8,7 @@
 #include "crate-writer.hh"
 #include "../layer/property-index.hh"
 #include "../types/type-id.hh"
+#include <unordered_map>
 #include <fstream>
 #include <algorithm>
 #include <cstring>
@@ -919,6 +920,7 @@ private:
 
     // 2. Prim specs
     PropNameTable& name_table = GetPropNameTable();
+    std::unordered_map<std::string, uint32_t> path_to_fs_idx;
     for (size_t i = 0; i < layer.prims().size(); ++i) {
       const PrimSpec& prim = layer.prims()[i];
       std::vector<uint32_t> fieldset;
@@ -1136,6 +1138,7 @@ private:
       // Record fieldset
       uint32_t fs_idx = static_cast<uint32_t>(fieldsets_.size());
       fieldsets_.push_back(std::move(fieldset));
+      path_to_fs_idx[prim.path().str()] = fs_idx;
 
       // Create spec
       CrateSpec spec;
@@ -1178,6 +1181,48 @@ private:
         if (!fieldsets_.empty()) {
           fieldsets_[0].push_back(static_cast<uint32_t>(fields_.size()));
           fields_.push_back(pc_field);
+        }
+      }
+    }
+
+    // Add primChildren to non-root prims that have children
+    for (const auto& prim : layer.prims()) {
+      const std::string& prim_path = prim.path().str();
+      if (prim_path.empty() || prim_path == "/") continue;
+
+      // Build full path with trailing slash for prefix matching
+      std::string prefix = prim_path;
+      if (prefix.back() != '/') prefix += '/';
+
+      std::vector<uint32_t> child_tokens;
+      for (const auto& other : layer.prims()) {
+        const std::string& other_path = other.path().str();
+        // Child has path starting with parent path + "/" and no further "/"
+        if (other_path.size() > prefix.size() &&
+            other_path.compare(0, prefix.size(), prefix) == 0 &&
+            other_path.find('/', prefix.size()) == std::string::npos) {
+          child_tokens.push_back(InternToken(other.name()));
+        }
+      }
+
+      if (!child_tokens.empty()) {
+        std::vector<uint8_t> raw(8 + child_tokens.size() * 4);
+        uint64_t cnt = child_tokens.size();
+        std::memcpy(raw.data(), &cnt, 8);
+        for (size_t k = 0; k < child_tokens.size(); ++k) {
+          std::memcpy(raw.data() + 8 + k * 4, &child_tokens[k], 4);
+        }
+        uint64_t data_idx = value_data_.size();
+        value_data_.push_back({TypeId::Token, std::move(raw)});
+
+        CrateField f;
+        f.token_index.value = InternToken("primChildren");
+        f.value_rep = ValueRep::Make(CrateTypeId::TokenVector,
+                                      data_idx, false, false);
+        auto it = path_to_fs_idx.find(prim_path);
+        if (it != path_to_fs_idx.end() && it->second < fieldsets_.size()) {
+          fieldsets_[it->second].push_back(static_cast<uint32_t>(fields_.size()));
+          fields_.push_back(f);
         }
       }
     }
