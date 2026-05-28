@@ -434,6 +434,62 @@ static PyObject* NextPrim_get_relationship(NextPrim* self, PyObject* args) {
     return lst;
 }
 
+static PyObject* NextPrim_has_relationship(NextPrim* self, PyObject* args) {
+    const char* rel_name;
+    if (!PyArg_ParseTuple(args, "s", &rel_name)) return NULL;
+    if (!self->c_stage || !self->prim_path) Py_RETURN_FALSE;
+
+    const TinyUSDZNextPrim* prim = tinyusdz_next_stage_get_prim_at_path(
+        self->c_stage, self->prim_path);
+    if (!prim) Py_RETURN_FALSE;
+
+    return PyBool_FromLong(tinyusdz_next_prim_has_relationship(prim, rel_name));
+}
+
+static PyObject* NextPrim_has_time_samples(NextPrim* self, PyObject* args) {
+    const char* prop_name;
+    if (!PyArg_ParseTuple(args, "s", &prop_name)) return NULL;
+    if (!self->c_stage || !self->prim_path) Py_RETURN_FALSE;
+
+    const TinyUSDZNextPrim* prim = tinyusdz_next_stage_get_prim_at_path(
+        self->c_stage, self->prim_path);
+    if (!prim) Py_RETURN_FALSE;
+
+    return PyBool_FromLong(tinyusdz_next_prim_has_time_samples(prim, prop_name));
+}
+
+static PyObject* NextPrim_eval_float(NextPrim* self, PyObject* args) {
+    const char* prop_name;
+    double time;
+    if (!PyArg_ParseTuple(args, "sd", &prop_name, &time)) return NULL;
+    if (!self->c_stage || !self->prim_path) Py_RETURN_NONE;
+
+    const TinyUSDZNextPrim* prim = tinyusdz_next_stage_get_prim_at_path(
+        self->c_stage, self->prim_path);
+    if (!prim) Py_RETURN_NONE;
+
+    float val;
+    if (tinyusdz_next_prim_eval_float(prim, prop_name, time, &val))
+        return PyFloat_FromDouble(val);
+    Py_RETURN_NONE;
+}
+
+static PyObject* NextPrim_eval_float3(NextPrim* self, PyObject* args) {
+    const char* prop_name;
+    double time;
+    if (!PyArg_ParseTuple(args, "sd", &prop_name, &time)) return NULL;
+    if (!self->c_stage || !self->prim_path) Py_RETURN_NONE;
+
+    const TinyUSDZNextPrim* prim = tinyusdz_next_stage_get_prim_at_path(
+        self->c_stage, self->prim_path);
+    if (!prim) Py_RETURN_NONE;
+
+    float out[3];
+    if (tinyusdz_next_prim_eval_float3(prim, prop_name, time, out))
+        return Py_BuildValue("(fff)", out[0], out[1], out[2]);
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef NextPrim_methods[] = {
     {"get_property", (PyCFunction)NextPrim_get_property, METH_VARARGS,
      "Get a property value by name"},
@@ -447,6 +503,14 @@ static PyMethodDef NextPrim_methods[] = {
      "Get child prims"},
     {"get_relationship", (PyCFunction)NextPrim_get_relationship, METH_VARARGS,
      "Get relationship target paths"},
+    {"has_relationship", (PyCFunction)NextPrim_has_relationship, METH_VARARGS,
+     "Check if a relationship exists"},
+    {"has_time_samples", (PyCFunction)NextPrim_has_time_samples, METH_VARARGS,
+     "Check if a property has time samples"},
+    {"eval_float", (PyCFunction)NextPrim_eval_float, METH_VARARGS,
+     "Evaluate a float property at a given time"},
+    {"eval_float3", (PyCFunction)NextPrim_eval_float3, METH_VARARGS,
+     "Evaluate a float3 property at a given time"},
     {NULL}
 };
 
