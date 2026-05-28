@@ -923,6 +923,16 @@ private:
       const PrimSpec& prim = layer.prims()[i];
       std::vector<uint32_t> fieldset;
 
+      // specifier (pxrUSD convention: specifier first, then typeName)
+      {
+        CrateField f;
+        f.token_index.value = InternToken("specifier");
+        uint64_t spec_val = static_cast<uint64_t>(prim.specifier());
+        f.value_rep = ValueRep::Make(CrateTypeId::Specifier, spec_val, false, true);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
       // typeName
       if (!prim.type_name().empty()) {
         CrateField f;
@@ -930,16 +940,6 @@ private:
         f.value_rep = ValueRep::Make(CrateTypeId::Token,
                                      InternToken(prim.type_name()),
                                      false, true);
-        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-        fields_.push_back(f);
-      }
-
-      // specifier
-      {
-        CrateField f;
-        f.token_index.value = InternToken("specifier");
-        uint64_t spec_val = static_cast<uint64_t>(prim.specifier());
-        f.value_rep = ValueRep::Make(CrateTypeId::Specifier, spec_val, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
@@ -1175,8 +1175,11 @@ private:
 
         CrateField pc_field;
         pc_field.token_index.value = InternToken("primChildren");
-        pc_field.value_rep = ValueRep::Make(CrateTypeId::TokenListOp,
-                                            data_idx, true, false);
+        // pxrUSD stores primChildren as TokenVector (41), not TokenListOp (32)
+        // TokenVector is a simple array: [u8 header][u64 count][u32 token_idx]*count
+        // Where header = 3 (IsExplicit | HasExplicitItems)
+        pc_field.value_rep = ValueRep::Make(CrateTypeId::TokenVector,
+                                            data_idx, false, false);
         if (!fieldsets_.empty()) {
           fieldsets_[0].push_back(static_cast<uint32_t>(fields_.size()));
           fields_.push_back(pc_field);
