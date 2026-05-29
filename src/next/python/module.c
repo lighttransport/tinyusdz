@@ -503,8 +503,15 @@ static PyObject* NextPrim_get_relationship_names(NextPrim* self, PyObject* args)
     if (n == 0 || !names) Py_RETURN_NONE;
 
     PyObject* lst = PyList_New(n);
-    for (size_t i = 0; i < n; i++)
-        PyList_SetItem(lst, i, PyUnicode_FromString(names[i]));
+    if (!lst) return NULL;  /* propagate MemoryError */
+    for (size_t i = 0; i < n; i++) {
+        PyObject* s = PyUnicode_FromString(names[i]);
+        if (!s) {  /* e.g. invalid UTF-8: drop the partial list, propagate */
+            Py_DECREF(lst);
+            return NULL;
+        }
+        PyList_SetItem(lst, i, s);  /* steals reference to s */
+    }
     return lst;
 }
 

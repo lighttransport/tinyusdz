@@ -566,6 +566,8 @@ void Value::destroy() {
       delete static_cast<UInt64ArrayStorage*>(ptr);
     } else if (type_id_ == TypeId::Bool) {
       delete static_cast<BoolArrayStorage*>(ptr);
+    } else if (type_id_ == TypeId::Token) {
+      delete static_cast<TokenArrayStorage*>(ptr);
     }
   } else if (UsesStringStorage(type_id_)) {
     reinterpret_cast<StringStorage*>(storage_)->~StringStorage();
@@ -604,6 +606,9 @@ void Value::copy_from(const Value& other) {
       std::memcpy(storage_, &new_storage, sizeof(new_storage));
     } else if (other.type_id_ == TypeId::Bool) {
       auto* new_storage = new BoolArrayStorage{static_cast<BoolArrayStorage*>(ptr)->data};
+      std::memcpy(storage_, &new_storage, sizeof(new_storage));
+    } else if (other.type_id_ == TypeId::Token) {
+      auto* new_storage = new TokenArrayStorage{static_cast<TokenArrayStorage*>(ptr)->data};
       std::memcpy(storage_, &new_storage, sizeof(new_storage));
     }
   } else if (UsesStringStorage(other.type_id_)) {
