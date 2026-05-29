@@ -114,8 +114,8 @@ examples/                  Standalone example apps (separate builds):
                            progressive_composition, etc.
 models/                    Test USD files for development
 doc/                       Documentation (testing-cpp.md,
-                           how-to-implement-feature.md, c-py-tasks.md,
-                           crate-impl.md, ci.md — release/publish
+                           how-to-implement-feature.md, ci.md —
+                           release/publish
                            procedure, etc.)
 aousd/                     AOUSD spec text + crate-impl docs (NOT the
                            PDFs themselves — those are gitignored)

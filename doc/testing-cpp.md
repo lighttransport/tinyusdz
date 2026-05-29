@@ -37,7 +37,7 @@ Relevant options in the current build configuration:
 
 ## ctest Suite
 
-Top-level CMake registers these tests when the corresponding targets are built:
+CMake registers these tests when the corresponding targets are built (most in the top-level `CMakeLists.txt`; `unit-test-tinyusdz` in `tests/unit/CMakeLists.txt` and `mcp-test` in `tests/mcp/CMakeLists.txt`):
 
 | ctest name | Kind | Backing executable/script |
 | --- | --- | --- |
@@ -45,15 +45,17 @@ Top-level CMake registers these tests when the corresponding targets are built:
 | `usda-roundtrip-test` | USDA roundtrip corpus runner | `python3 tests/usda/roundtrip-runner.py --app build/usda_roundtrip` |
 | `usdc-roundtrip-test` | USDA -> USDC -> reparse corpus runner | `python3 tests/usda/usdc-roundtrip-runner.py --app build/usdc_roundtrip` |
 | `usdc-parser-unit-test` | Parser corpus runner | `python3 tests/usdc/unit-runner.py --app build/test_tinyusdz` |
-| `feat-mtlx-parse` | Feature test | `build/feat-mtlx-parse` |
-| `feat-mtlx-import` | Feature test | `build/feat-mtlx-import` |
-| `feat-mtlx-export` | Feature test | `build/feat-mtlx-export` |
-| `feat-variant-converter` | Feature test | `build/feat-variant-converter` |
-| `feat-variant-applier` | Feature test | `build/feat-variant-applier` |
-| `feat-mtlx-grouped-params` | Feature test | `build/feat-mtlx-grouped-params` |
-| `bench-parse-opt` | Benchmark target | `build/bench-parse-opt --quick` |
-| `usdc-writer-diff-test` | USDC writer roundtrip diff (informational) | `python3 tests/usdc-writer/usdc-writer-runner.py` |
+| `usdc-writer-diff-test` | USDC writer roundtrip diff (informational) | `python3 tests/usdc-writer/usdc-writer-runner.py ... --report-only` |
+| `feat-value-clip` | Feature test | `build/feat-value-clip` |
+| `feat-mtlx-parse`, `feat-mtlx-import`, `feat-mtlx-export` | Feature tests | `build/feat-mtlx-*` |
+| `feat-mtlx-grouped-params` | Feature test (needs `TINYUSDZ_WITH_JSON`) | `build/feat-mtlx-grouped-params` |
+| `feat-variant-converter`, `feat-variant-applier` | Feature tests | `build/feat-variant-*` |
+| `feat-subdiv-compare` | Feature test (only when `TINYUSDZ_WITH_OPENSUBDIV`) | `build/feat-subdiv-compare` |
+| `bench-parse-opt` | Benchmark target (label `benchmark`) | `build/bench-parse-opt --quick` |
 | `unit-test-tinyusdz` | Acutest unit suite | `build/unit-test-tinyusdz` |
+| `mcp-test` | MCP server unit test (only when `TINYUSDZ_WITH_MCP_SERVER`) | `build/mcp-test` |
+
+`usdc-parser-unit-test` is set to run after `unit-test-tinyusdz` (it globs `*-runtime.usdc` fixtures the unit suite generates).
 
 Only `bench-parse-opt` has a `ctest` label today:
 
@@ -106,17 +108,20 @@ The `ctest` parser and roundtrip runners only operate on top-level `*.usda` or `
 
 The main unit executable is built from `tests/unit/CMakeLists.txt` and registered through `tests/unit/unit-main.cc`.
 
-The suite currently contains roughly 370+ registered test cases. Coverage spans Core parser/value/stage/composition/writer functionality plus Tydra scene-access, RenderScene conversion, and shader queries.
+The suite currently contains 600+ registered test cases. Coverage spans Core parser/value/stage/composition/writer functionality plus Tydra scene-access, RenderScene conversion, shader queries, physics, and IK/rigid-body solvers.
 
-Major source groups in `tests/unit/`:
+Major source groups in `tests/unit/` (see `tests/unit/CMakeLists.txt` for the full source list):
 
-- Core parsing and value handling: `unit-ascii-parse`, `unit-value-types`, `unit-timesamples`, `unit-fp-parse-print`
-- Scene graph and composition: `unit-stage`, `unit-composition`, `unit-composition-arcs`, `unit-composition-graph`, `unit-layer`, `unit-primspec`, `unit-prim-api`
-- Reader/writer coverage: `unit-usda-reader`, `unit-usdc-reader`, `unit-usda-writer`, `unit-usda-roundtrip`, `unit-usdz-writer`, `unit-crate-writer`
-- Tydra coverage: `unit-tydra`, `unit-tydra-renderscene`, `unit-tydra-shader`
-- USDZ writer coverage: `unit-usdz-writer`
-- Security and utility coverage: `unit-security`, `unit-task-queue`, `unit-tiny-container`, `unit-ioutil`, `unit-pathutil`
-- PXR compat API: `unit-pxr-compat` (conditionally compiled with `TINYUSDZ_WITH_PXR_COMPAT_API`)
+- Core parsing and value handling: `unit-ascii-parse`, `unit-value-types`, `unit-customdata`, `unit-primvar`, `unit-timesamples`, `unit-fp-parse-print`, `unit-minijson`, `unit-strutil`, `unit-math`, `unit-xform`, `unit-half-roundtrip`
+- Scene graph and composition: `unit-stage`, `unit-composition`, `unit-composition-arcs`, `unit-composition-graph`, `unit-layer`, `unit-primspec`, `unit-prim-api`, `unit-prim-reconstruct`
+- Reader/writer coverage: `unit-usda-reader`, `unit-usdc-reader`, `unit-usdc-reconstruct`, `unit-usda-writer`, `unit-usda-roundtrip`, `unit-usdz-writer`, `unit-usdc-writer`, `unit-crate-writer`, `unit-usd-validation`
+- Tydra coverage: `unit-tydra`, `unit-tydra-renderscene`, `unit-tydra-shader`, `unit-tydra-subdivision`, `unit-materialx`
+- Subdivision: `unit-subdiv-tinyusdz`
+- Physics / simulation: `unit-physics`, `unit-ik`, `unit-rb-collision`, `unit-rb-dynamics`
+- Security and utility coverage: `unit-security`, `unit-task-queue`, `unit-tiny-container`, `unit-tiny-hashmap`, `unit-handle-allocator`, `unit-ioutil`, `unit-pathutil`, `unit-pprint`
+- PXR compat API: `unit-pxr-compat-api` (conditionally compiled with `TINYUSDZ_WITH_PXR_COMPAT_API`)
+
+`unit-dedup.cc` is present but temporarily disabled in `CMakeLists.txt` (needs API updates).
 
 Run it directly:
 
@@ -351,13 +356,11 @@ These directories hold `.usda` fixtures used by feature tests or as reference ma
 
 ### MaterialX standalone tests
 
-Three MaterialX source files under `tests/feat/mtlx/` are not part of the four ctest-registered `feat-mtlx-*` targets:
-
-- `test_nodegraph_export.cc` — nodegraph export coverage
-- `test_parser_debug.cc` — debug-only parser exercise
-- `threejs_mtlx_export_example.cc` — Three.js-oriented export example
-
-These build via the local Makefile in `tests/feat/mtlx/`.
+Besides the four ctest-registered targets (`feat-mtlx-parse`, `-import`,
+`-export`, `-grouped-params`), `tests/feat/mtlx/` holds extra source files built
+only via its local Makefile, e.g. `test_nodegraph_export.cc`,
+`test_mtlx_include_traversal.cc`, `test_parser_debug.cc`, and
+`threejs_mtlx_export_example.cc`.
 
 ## Additional Corpus Runner
 
@@ -457,29 +460,30 @@ Relevant fuzz entry points include:
 
 ## Disabled Tests (TODO/FIXME)
 
-The following Acutest unit tests are temporarily disabled in `tests/unit/unit-main.cc` after the `spec-2026-mar` merge. They were written against an older CrateWriter `ConvertLayerToSpecs` path that is incompatible with the improved USDC writer/reader in `spec-2026-mar`.
+The USDC memory-budget and variant PrimSpec/roundtrip tests that were disabled
+after the `spec-2026-mar` merge have since been **re-enabled** — they are all
+active registrations in `tests/unit/unit-main.cc`, and their static fixtures
+(`variantSet-collision-001.usdc`, `variantSet-prim-001.usdc` in `tests/usdc/`)
+load successfully.
 
-**CrateWriter Layer-writing tests** — the runtime fixture generation via `CrateWriter::ConvertLayerToSpecs` fails or produces USDC that the updated reader rejects:
+The only Acutest tests still disabled are the array-dedup tests. They live in
+`tests/unit/unit-dedup.cc`, which is commented out of `TEST_SOURCES` in
+`tests/unit/CMakeLists.txt`; the six matching registrations are commented out in
+`tests/unit/unit-main.cc`:
 
-- `usdc_memory_budget_references_limit_test`
-- `usdc_memory_budget_references_success_test`
-- `usdc_memory_budget_composition_limit_test`
-- `usdc_memory_budget_composition_success_test`
+- `dedup_float_array_test`
+- `dedup_double_array_test`
+- `dedup_int_array_test`
+- `dedup_unique_arrays_test`
+- `dedup_string_array_test`
+- `dedup_matrix4d_test`
 
-**Variant PrimSpec reconstruction tests** — static `.usdc` fixtures and runtime-generated fixtures use variant path structures that `spec-2026-mar`'s `ReconstructPrimSpecNode` / `ReconstructPrimSpecRecursively` does not accept:
+To re-enable them: update `unit-dedup.cc` to the current CrateWriter dedup API,
+re-add `unit-dedup.cc` to `TEST_SOURCES`, and uncomment the registrations.
 
-- `usdc_layer_variant_roundtrip_test`
-- `usdc_layer_variant_nested_roundtrip_test`
-- `usdc_stage_variant_roundtrip_test`
-- `usdc_layer_nested_variant_sets_test`
-- `usdc_layer_variant_name_collision_test`
-- `usdc_layer_variant_selection_test`
-
-To re-enable these tests:
-
-1. Update `CrateWriter::ConvertLayerToSpecs` to produce USDC that the current reader can reconstruct.
-2. Regenerate or fix the static `.usdc` variant fixtures (`variantSet-collision-001.usdc`, `variantSet-prim-001.usdc`) so they are compatible with the current `ReconstructPrimSpecNode`.
-3. Uncomment the test registrations in `tests/unit/unit-main.cc`.
+(Note: `crate_writer_validation_disabled_test` and `column_wrap_disabled_test`
+are *active* tests despite "disabled" in their names — each verifies behavior
+when a feature is turned off.)
 
 ## Large Test Fixtures
 
@@ -492,9 +496,9 @@ Files that were reduced to stay within bounds:
 
 Large fixture files outside `tests/usda/` and `tests/usdc/` (not affected by the token limit, listed for reference):
 
-- `tests/feat/node-mtlx/RealisticScene.usda` (249K)
+- `tests/feat/node-mtlx/RealisticScene.usda` (244K)
 - `tests/usda/suzanne.usda` (148K) — geometry data, tokens are short
-- `tests/feat/node-mtlx/ChainTest.usda` (85K)
+- `tests/feat/node-mtlx/ChainTest.usda` (84K)
 - `tests/feat/node-mtlx/ExtractPatternTest.usda` (72K)
 
 ## Known Gaps
