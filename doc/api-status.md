@@ -10,7 +10,7 @@ Coverage of OpenUSD schema domains in tinyusdz.
 
 | Schema | Type | Status | Notes |
 |--------|------|--------|-------|
-| Scope | concrete | done | In `model-scope.hh` |
+| Scope | concrete | done | In `core/model-scope.hh` |
 | Xform | concrete | done | |
 | Mesh | concrete | done | |
 | BasisCurves | concrete | done | |
@@ -188,8 +188,8 @@ MjcActuator, MjcTendon, MjcKeyframe (concrete); MjcSceneAPI, MjcJointAPI, MjcCol
 
 | Schema | Type | Status | Notes |
 |--------|------|--------|-------|
-| Volume | concrete | stub | Placeholder struct in `model-scope.hh`, not in pipeline |
-| OpenVDBAsset | concrete | stub | Placeholder struct in `model-scope.hh`, not in pipeline |
+| Volume | concrete | stub | Placeholder struct in `core/model-scope.hh` (holds `OpenVDBAsset`/`VoxAsset`), no type trait, not in pipeline |
+| OpenVDBAsset | concrete | stub | Placeholder struct in `core/model-scope.hh`, no type trait, not in pipeline |
 | Field3DAsset | concrete | -- | |
 | VolumeFieldBase | abstract | -- | |
 | VolumeFieldAsset | abstract | -- | |
@@ -214,6 +214,23 @@ MjcActuator, MjcTendon, MjcKeyframe (concrete); MjcSceneAPI, MjcJointAPI, MjcCol
 | RenderSettingsBase | abstract | -- | |
 
 **Coverage: 0/5 -- 0%**
+
+---
+
+## Built-in Mesh Import Plugins (non-USD formats)
+
+These are tinyusdz-specific built-in importers (not OpenUSD schemas). A file
+referenced via `references = @model.obj@` is decoded into a `GPrim`/mesh.
+Import only -- no writer.
+
+| Format | Source | Status | Notes |
+|--------|--------|--------|-------|
+| Wavefront OBJ (`usdObj`) | `src/usdObj.{hh,cc}` | partial (import) | Group/object hierarchy flattened to a single mesh; no materials; texcoords/normals expanded to face-varying. Built-in, gated by `TINYUSDZ_USE_USDOBJ`. |
+| MagicaVoxel VOX (`usdVox`) | `src/usdVox.{hh,cc}` | partial (import) | Voxel asset import only. |
+
+OBJ TODO (durable): indexed primvars for texcoords/normals, preserve shape
+hierarchy, per-face material (GeomSubset), tinyobjloader skin weights, optional
+load-time triangulation.
 
 ---
 
@@ -245,7 +262,7 @@ These prims are preserved as generic `Model` prims when encountered, so data is 
 | Preliminary AR | 7/7 (100%) | 4/4 (100%) | 11/11 (100%) |
 | UsdVol | 0/9 (0%) | 0/11 (0%) | 0/20 (0%) |
 | UsdRender | 0/5 (0%) | -- | 0/5 (0%) |
-| **Total (supported)** | **55/69 (80%)** | **36/42 (86%)** | **91/111 (82%)** |
+| **Total (supported)** | **55/69 (80%)** | **31/42 (74%)** | **86/111 (77%)** |
 | Unsupported | -- | -- | 12 schemas (UsdRi, UsdHydra, UsdUI, UsdProc) |
 
 ### Remaining gaps

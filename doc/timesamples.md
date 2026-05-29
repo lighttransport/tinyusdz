@@ -8,7 +8,9 @@ How OpenUSD (and TinyUSDZ) evaluates time-sampled attributes.
 
 With one sample at t=0, value (0.1, 0.2, 0.3):
 - All numeric time codes return (0.1, 0.2, 0.3) - held constant
-- `TimeCode::Default()` returns None (no default value set)
+- `TimeCode::Default()`: with no explicit default value authored, TinyUSDZ
+  returns the **first time sample** (here (0.1, 0.2, 0.3)). An empty (no-sample)
+  TimeSamples with no default returns no value.
 
 ### Multiple TimeSamples
 
@@ -52,14 +54,18 @@ def Xform "Example"
 
 ## TinyUSDZ Compatibility
 
-TinyUSDZ matches OpenUSD behavior for all cases:
+TinyUSDZ matches OpenUSD behavior for:
 
 1. Single time sample held constant
-2. `TimeCode::Default()` returns default value even when time samples exist
+2. `TimeCode::Default()` returns the authored default value even when time
+   samples exist
 3. Linear interpolation between samples
 4. Hold extrapolation (no backward/forward extrapolation)
 5. Held interpolation mode (step function)
 6. Edge cases and boundary conditions
+
+One deviation: when **no** default value is authored, `TimeCode::Default()`
+falls back to the first time sample (OpenUSD returns no value instead).
 
 ### Test Location
 

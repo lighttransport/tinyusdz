@@ -6,15 +6,19 @@ TinyUSDZ provides MaterialX integration including parsing `.mtlx` files, color s
 
 | File | Description |
 |------|-------------|
-| `src/usdShade.hh` | MaterialXConfigAPI, OpenPBRSurface, Material structs |
-| `src/usdMtlx.hh` | MtlxOpenPBRSurface, MtlxAutodeskStandardSurface defs |
-| `src/color-space.hh` | ColorSpace enum and utility functions |
+| `src/usdShade.hh` | MaterialXConfigAPI, OpenPBRSurface, UsdPreviewSurface, Material structs |
+| `src/usdMtlx.{hh,cc}` | MtlxOpenPBRSurface, MtlxAutodeskStandardSurface, MtlxUsdPreviewSurface; USD<->mtlx graph conversion |
+| `src/usdMtlx-write.cc` | `.mtlx` writer |
+| `src/color-space.{hh,cc}` | ColorSpace enum and token/utility functions |
 | `src/image-util.{hh,cc}` | Color space conversion functions |
 | `src/mtlx-dom.{hh,cc}` | MaterialX document object model |
-| `src/mtlx-xml-parser.{hh,cc}` | MaterialX XML parser |
+| `src/mtlx-xml-parser.{hh,cc}`, `src/mtlx-xml-tokenizer.{hh,cc}` | MaterialX XML parser/tokenizer |
 | `src/mtlx-simple-parser.{hh,cc}` | Simplified MaterialX parser |
 | `src/mtlx-usd-adapter.hh` | USD-MaterialX integration |
-| `src/tydra/render-data.{hh,cc}` | OpenPBRSurfaceShader, RenderMaterial conversion |
+| `src/prim-reconstruct-shader.cc` | Shader/Material/NodeGraph reconstruction (OpenPBRSurface, MtlxAutodeskStandardSurface, UsdPreviewSurface) |
+| `src/tydra/render-data-shader.hh` | OpenPBRSurfaceShader, PreviewSurfaceShader, RenderMaterial structs |
+| `src/tydra/render-data-material.cc` | ConvertMaterial / OpenPBR + UsdPreviewSurface shader conversion |
+| `src/tydra/render-data-material-mtlx.cc` | MaterialX NodeGraph traversal (`ExtractMtlxNodeGraphInfo`) |
 | `src/tydra/materialx-to-json.{hh,cc}` | MaterialX to JSON conversion |
 | `web/js/src/tinyusdz/TinyUSDZMaterialX.js` | JS OpenPBR to Three.js conversion |
 
@@ -24,7 +28,9 @@ TinyUSDZ provides MaterialX integration including parsing `.mtlx` files, color s
 |--------|-----------|-----------|
 | OpenPBR Surface | `OpenPBRSurface` / `MtlxOpenPBRSurface` | `ND_open_pbr_surface_surfaceshader` |
 | Standard Surface | `MtlxAutodeskStandardSurface` | `ND_standard_surface_surfaceshader` |
-| USD Preview Surface | `UsdPreviewSurface` / `MtlxUsdPreviewSurface` | `ND_UsdPreviewSurface_surfaceshader` |
+| USD Preview Surface | `UsdPreviewSurface` / `MtlxUsdPreviewSurface` | `UsdPreviewSurface` |
+
+(`info:id` constants: `kNdOpenPbrSurfaceSurfaceshader`, `kNdStandardSurfaceSurfaceshader` in `src/usdMtlx.hh`; `kUsdPreviewSurface` in `src/usdShade.hh`. Note tinyusdz uses the bare `UsdPreviewSurface` id, not `ND_UsdPreviewSurface_surfaceshader`.)
 
 ### MaterialXConfigAPI
 
@@ -32,12 +38,12 @@ TinyUSDZ provides MaterialX integration including parsing `.mtlx` files, color s
 struct MaterialXConfigAPI {
     TypedAttributeWithFallback<std::string> mtlx_version{"1.38"};
     TypedAttributeWithFallback<std::string> mtlx_namespace{""};
-    TypedAttributeWithFallback<std::string> mtlx_colorspace{""};
+    TypedAttributeWithFallback<std::string> mtlx_colorspace{"lin_rec709"};
     TypedAttributeWithFallback<std::string> mtlx_sourceUri{""};
 };
 ```
 
-Applied to `Material` prims via `config:mtlx:version`, `config:mtlx:colorspace`, etc.
+Stored as `Material::materialXConfig` (optional) and applied via `config:mtlx:version`, `config:mtlx:namespace`, `config:mtlx:colorspace`, `config:mtlx:sourceUri`.
 
 ---
 
@@ -62,11 +68,11 @@ Applied to `Material` prims via `config:mtlx:version`, `config:mtlx:colorspace`,
 | `g22_adobergb_scene` | `G22AdobeRGBScene` | Gamma 2.2 Adobe RGB |
 | `g18_rec709_scene` | `G18Rec709Scene` | Gamma 1.8 Rec.709 |
 | `data` | `Data` | Non-color data (normals, displacement) |
-| `raw` | *(alias)* | Legacy alias for `data` |
+| `raw` | `Raw` | Legacy equivalent of `data` (distinct enum; `is_data()` returns true) |
 | `unknown` | `Unknown` | Unspecified |
-| `identity` | *(alias)* | Legacy alias for `unknown` |
+| `identity` | `Identity` | Legacy equivalent of `unknown` (distinct enum) |
 
-Utility functions: `to_token()`, `from_token()`, `is_linear()`, `is_data()`.
+Utility functions (`src/color-space.{hh,cc}`): `to_token()`, `from_token()`, `is_linear()`, `is_data()`, `get_default()` (= `LinRec709Scene`). Default color space is Linear Rec.709.
 
 ### Conversion Functions (`src/image-util.{hh,cc}`)
 
@@ -92,7 +98,7 @@ bool gamma22_f32_to_linear_f32(const std::vector<float> &in, ...);
 bool gamma18_f32_to_linear_f32(const std::vector<float> &in, ...);
 ```
 
-Performance: sRGB 8-bit conversions use pre-computed 256-entry LUTs.
+Performance: sRGB 8-bit -> linear conversion uses a 256-entry lookup table (a static `SRGB_8BIT_TO_LINEAR_DOUBLE` table for the f32 path; a per-call 256-entry table for the 8bit->8bit path).
 
 ---
 
@@ -100,18 +106,20 @@ Performance: sRGB 8-bit conversions use pre-computed 256-entry LUTs.
 
 ### Conversion Flow
 
+These conversion functions live in `src/tydra/render-data-material.cc`. `ConvertMaterial`, `ConvertOpenPBRSurfaceShader`, and `ConvertPreviewSurfaceShader` are `RenderSceneConverter` methods; the `ConvertMtlx*` helpers are file-local `static` functions:
+
 ```
 USD Stage -> Material with shaders -> ConvertMaterial() -> RenderMaterial
-  ├── OpenPBRSurface         -> ConvertOpenPBRSurfaceShader()   -> RenderMaterial.openPBRShader
-  ├── MtlxOpenPBRSurface     -> (convert to OpenPBRSurface)     -> same path
-  ├── MtlxStandardSurface    -> ConvertMtlxStdSurfToOpenPBR()   -> same path
-  └── UsdPreviewSurface      -> ConvertPreviewSurfaceShader()   -> RenderMaterial.surfaceShader
+  ├── OpenPBRSurface             -> ConvertOpenPBRSurfaceShader()                  -> RenderMaterial.openPBRShader
+  ├── MtlxOpenPBRSurface         -> ConvertMtlxOpenPBRSurfaceToOpenPBRSurface()    -> same path
+  ├── MtlxAutodeskStandardSurface-> ConvertMtlxStandardSurfaceToOpenPBRSurface()   -> same path
+  └── UsdPreviewSurface          -> ConvertPreviewSurfaceShader()                  -> RenderMaterial.surfaceShader
 ```
 
-StandardSurface -> OpenPBR conversion handles key differences:
-- `coat_affect_color`: float -> color3f (broadcast scalar)
-- `opacity`: color3f -> float (luminance extraction)
-- `normal`/`tangent`: TypedAttribute -> TypedAttributeWithFallback
+`ConvertMtlxStandardSurfaceToOpenPBRSurface` maps StandardSurface params to OpenPBR equivalents. Key type differences handled:
+- `opacity`: StandardSurface `color3f` -> OpenPBR `float` (Rec.709 luminance extraction)
+- `normal` / `tangent`: copied only when authored
+- StandardSurface `transmission_extra_roughness` has no OpenPBR equivalent (dropped)
 
 ### OpenPBR Surface Fields
 
@@ -119,7 +127,7 @@ StandardSurface -> OpenPBR conversion handles key differences:
 |----------|--------|
 | Base | `base_weight`, `base_color`, `base_roughness`, `base_metalness`, `base_diffuse_roughness` |
 | Specular | `specular_weight`, `specular_color`, `specular_roughness`, `specular_ior`, `specular_ior_level`, `specular_anisotropy`, `specular_rotation`, `specular_roughness_anisotropy` |
-| Transmission | `transmission_weight`, `transmission_color`, `transmission_depth`, `transmission_scatter`, `transmission_scatter_anisotropy`, `transmission_dispersion_abbe_number`, `transmission_dispersion_scale` |
+| Transmission | `transmission_weight`, `transmission_color`, `transmission_depth`, `transmission_scatter`, `transmission_scatter_anisotropy`, `transmission_dispersion`, `transmission_dispersion_abbe_number`, `transmission_dispersion_scale` |
 | Subsurface | `subsurface_weight`, `subsurface_color`, `subsurface_radius`, `subsurface_radius_scale`, `subsurface_scale`, `subsurface_anisotropy`, `subsurface_scatter_anisotropy` |
 | Coat | `coat_weight`, `coat_color`, `coat_roughness`, `coat_anisotropy`, `coat_rotation`, `coat_ior`, `coat_affect_color`, `coat_affect_roughness`, `coat_roughness_anisotropy`, `coat_darkening` |
 | Sheen/Fuzz | `sheen_weight`, `sheen_color`, `sheen_roughness`, `fuzz_weight`, `fuzz_color`, `fuzz_roughness` |
@@ -229,7 +237,14 @@ Blender 4.5+ exports Principled BSDF as OpenPBR Surface (`ND_open_pbr_surface_su
 
 ### Blender Node to MaterialX Mapping
 
-Blender shader nodes translate to MaterialX standard library nodes. See `doc/blender_to_materialx_node_mapping.json` for the complete machine-readable mapping. Key patterns:
+Blender shader nodes translate to MaterialX standard library nodes. Machine-readable data files:
+
+- `doc/blender_shader_nodes.json` — every Blender shader node (98) with inputs/outputs/socket types/defaults.
+- `doc/blender_to_materialx_node_mapping.json` — Blender node -> MaterialX node translation (per-node `materialx_nodes` + `formula`).
+
+Note: rotation sockets (`NodeSocketRotation`) store Euler angles in **radians** internally (the Blender UI displays degrees); convert with `math.radians()` / `math.degrees()` when authoring or reading these values.
+
+Key patterns:
 
 **Color Nodes:**
 
@@ -293,23 +308,46 @@ Test files: `tests/feat/node-mtlx/*.usda`
 | MeshPhysicalMaterial | `THREE.MeshPhysicalMaterial` | Standard PBR, broad compatibility |
 | OpenPBRMaterial | Custom `ShaderMaterial` | Full OpenPBR BRDF (Oren-Nayar, coat IOR, fuzz) |
 
-### OpenPBR to MeshPhysicalMaterial Mapping
+### OpenPBR Parameters and Three.js MeshPhysicalMaterial Mapping
 
-| OpenPBR | MeshPhysicalMaterial | Notes |
-|---------|---------------------|-------|
-| `base_color` | `color` / `map` | Diffuse color |
-| `base_metalness` | `metalness` / `metalnessMap` | 0-1 |
-| `specular_roughness` | `roughness` / `roughnessMap` | 0-1 |
-| `specular_ior` | `ior` | Index of refraction |
-| `transmission_weight` | `transmission` | 0-1 |
-| `coat_weight` | `clearcoat` | 0-1 |
-| `coat_roughness` | `clearcoatRoughness` | 0-1 |
-| `fuzz_weight` / `sheen_weight` | `sheen` | Approximated |
-| `thin_film_weight` | `iridescence` | 0-1 |
-| `emission_color` | `emissive` / `emissiveMap` | RGB |
-| `emission_luminance` | `emissiveIntensity` | Nits |
-| `geometry_opacity` | `opacity` | 0-1 |
-| `geometry_normal` | `normalMap` | Tangent space |
+TinyUSDZ parses and converts the full OpenPBR parameter set (struct `OpenPBRSurfaceShader` in `src/tydra/render-data-shader.hh`; defaults below). The Three.js MeshPhysicalMaterial target supports only a subset. The MaterialX input names are the OpenPBR `inputs:<name>` attributes; Blender v4.5+ emits the same names.
+
+Support legend: `Y` full, `~` partial / workaround, `N` no Three.js equivalent.
+
+| OpenPBR param | Type | Default | MeshPhysicalMaterial | Support |
+|---------------|------|---------|----------------------|---------|
+| `base_weight` | float | 1.0 | (folded into `opacity`) | ~ |
+| `base_color` | color3f | (0.8, 0.8, 0.8) | `color` / `map` | Y |
+| `base_roughness` (diffuse) | float | 0.0 | (Oren-Nayar; no direct slot) | ~ |
+| `base_metalness` | float | 0.0 | `metalness` / `metalnessMap` | Y |
+| `specular_weight` | float | 1.0 | `reflectivity` (r170+) | ~ |
+| `specular_color` | color3f | (1, 1, 1) | `specularColor` | ~ |
+| `specular_roughness` | float | 0.3 | `roughness` / `roughnessMap` | Y |
+| `specular_ior` | float | 1.5 | `ior` | Y |
+| `specular_ior_level` | float | 0.5 | — | N |
+| `specular_anisotropy` | float | 0.0 | `anisotropy` (r170+) | ~ |
+| `specular_rotation` | float | 0.0 | `anisotropyRotation` (r170+) | ~ |
+| `transmission_weight` | float | 0.0 | `transmission` | Y |
+| `transmission_color` | color3f | (1, 1, 1) | — (Three.js assumes white) | N |
+| `transmission_depth` | float | 0.0 | `thickness` (approx) | ~ |
+| `transmission_scatter` / `_anisotropy` / `_dispersion` | — | 0 | — (volume effects) | N |
+| `subsurface_*` (weight, color, radius, scale, anisotropy) | — | see struct | — (no core SSS) | N |
+| `sheen_weight` | float | 0.0 | `sheen` | Y |
+| `sheen_color` | color3f | (1, 1, 1) | `sheenColor` | Y |
+| `sheen_roughness` | float | 0.3 | `sheenRoughness` | Y |
+| `coat_weight` | float | 0.0 | `clearcoat` | Y |
+| `coat_roughness` | float | 0.0 | `clearcoatRoughness` | Y |
+| `coat_color` | color3f | (1, 1, 1) | — (clearcoat is white) | N |
+| `coat_ior` | float | 1.5 | `ior` (shared) | ~ |
+| `coat_anisotropy` / `coat_rotation` / `coat_affect_color` / `coat_affect_roughness` / `coat_darkening` | float | 0.0 | — | N |
+| `thin_film_weight` | float | 0.0 | `iridescence` | ~ |
+| `emission_color` | color3f | (1, 1, 1) | `emissive` / `emissiveMap` | Y |
+| `emission_luminance` | float | 0.0 | `emissiveIntensity` | Y |
+| `geometry_opacity` | float | 1.0 | `opacity` + `transparent` | Y |
+| `geometry_normal` | normal3f | (0, 0, 1) | `normalMap` | Y |
+| `geometry_tangent` | vector3f | (1, 0, 0) | (computed by Three.js) | ~ |
+
+Three.js limitations: no subsurface scattering, no colored/volumetric transmission or dispersion, clearcoat is always white and isotropic, and anisotropy is experimental (r170+). Approximate unsupported features (e.g. SSS via albedo darkening) or warn and drop. The WebGPU MaterialX node path can cover more of these.
 
 ### API
 
@@ -399,28 +437,26 @@ def Material "OpenPBRMaterial" {
 
 ### Completed
 
-- MaterialX XML parsing (v1.36-1.39)
-- Color space conversions (all MaterialX spaces)
-- MaterialXConfigAPI struct and version attribute
-- OpenPBRSurface, StandardSurface, UsdPreviewSurface shader structs
-- Tydra: OpenPBR -> OpenPBRSurfaceShader conversion
-- Tydra: StandardSurface -> OpenPBR -> conversion
+- MaterialX XML parsing. `MaterialXParser::ValidateVersion()` accepts v1.36/1.37/1.38; newer versions parse with a warning.
+- Color space conversions (all MaterialX spaces; see table above)
+- MaterialXConfigAPI struct and `config:mtlx:*` attributes
+- OpenPBRSurface, MtlxAutodeskStandardSurface, UsdPreviewSurface shader structs
+- Prim reconstruction (USDA/USDC read) of Shader / Material / NodeGraph, incl. `OpenPBRSurface`, `MtlxAutodeskStandardSurface`, `UsdPreviewSurface` (`src/prim-reconstruct-shader.cc`)
+- Tydra: OpenPBR / MtlxOpenPBR / MtlxAutodeskStandardSurface -> OpenPBRSurfaceShader conversion
+- Tydra: UsdPreviewSurface -> PreviewSurfaceShader conversion
 - Tydra: NodeGraph traversal with texture/normal/tangent extraction
+- `.mtlx` writer (`src/usdMtlx-write.cc`)
 - JS: OpenPBR to MeshPhysicalMaterial / OpenPBRMaterial conversion
 - JS: NodeGraph optimizer
 
 ### Partial / In Progress
 
 - MaterialX file import via references (basic, no full composition)
-- OpenPBRSurface reconstruction in `prim-reconstruct.cc` (not yet implemented)
-- MtlxAutodeskStandardSurface reconstruction
 - Displacement/volume shader evaluation (connections tracked, not evaluated)
 
 ### Not Yet Implemented
 
-- NodeGraph prim reconstruction
-- Procedural nodes (`noise2d`, `fractal3d`)
-- MaterialX `<xi:include>` / library resolution
+- MaterialX `<xi:include>` / standard-library resolution
 - Geometry assignments and collections
 - Unit system support
 

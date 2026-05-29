@@ -1,10 +1,12 @@
 # LTE SpectralAPI Extension Proposal
 
+> **STATUS: DRAFT PROPOSAL — NOT IMPLEMENTED.** This document specifies a *proposed* USD extension. As of this writing the `wavelength:` USD attributes described below are **not parsed or composed** by the tinyusdz reader/writer, and the standard-illuminant SPD tables do **not** exist. Partial in-memory scaffolding exists in Tydra render-data only (see [Implementation Status](#implementation-status)). Do not rely on this as a shipping feature.
+
 ## Revision History
 
 | Version | Status | Date | Notes |
 |---------|--------|------|-------|
-| 0.9 | Draft | 2024 | Initial proposal |
+| 0.9 | Draft (unimplemented) | 2024 | Initial proposal |
 
 ## Extension Name
 
@@ -12,7 +14,21 @@
 
 ## Overview
 
-This extension introduces spectral data support for USD, enabling physically-based rendering with wavelength-dependent material properties. The `wavelength:` namespace is reserved for all spectral attributes.
+This proposal introduces spectral data support for USD, enabling physically-based rendering with wavelength-dependent material properties. The `wavelength:` namespace is reserved for all spectral attributes.
+
+## Implementation Status
+
+What exists in tinyusdz source today (data structures only, no USD attribute I/O):
+
+| Item | Source | State |
+|------|--------|-------|
+| `SpectralData` / `SpectralIOR` / `SpectralEmission` structs + `evaluate()` | `src/tydra/render-data-shader.hh`, `render-data-pprint.cc` | In-memory render-data; linear/held/cubic interpolation and the Sellmeier IOR equation are implemented |
+| `IlluminantPreset` enum (A, D50, D65, E, F1, F2, F7, F11), `WavelengthUnit` | `src/tydra/render-data-shader.hh` | Enum + string conversion only; **preset SPD tables are NOT implemented** (`SpectralEmission::evaluate()` returns a `1.0` placeholder for presets) |
+| `LightAPI::spectralEmission` (`float2[] wavelength:emission`) | `src/usdLux.hh` | Struct field only; not read from / written to USD |
+| `PreviewSurfaceShader::spd_reflectance`, `spd_ior` | `src/tydra/render-data-shader.hh` | Optional fields; never populated from a USD stage |
+| `SpectralEmissionToJson()` | `src/tydra/materialx-to-json.cc` | Serializes the in-memory struct to JSON |
+
+Not implemented: parsing/composition of any `wavelength:*` USD attribute or its metadata; illuminant preset SPD data; spectral textures; fluorescence; blackbody presets.
 
 ## Stage/Layer Metadata
 
@@ -70,7 +86,7 @@ float2[] wavelength:ior = [(450, 1.52), (550, 1.50), (650, 1.48)]
 - **Irradiance unit**: `W m^-2 nm^-1` (watts per square metre per nanometre) when `unitForWavelength = "nanometers"`
 - **Irradiance unit**: `W m^-2 um^-1` (watts per square metre per micrometre) when `unitForWavelength = "micrometers"`
 
-This attribute is intended for use with UsdLux light primitives (DistantLight, RectLight, SphereLight, etc.) to define physically accurate spectral emission.
+Intended for UsdLux light primitives (DistantLight, RectLight, SphereLight, etc.) to define physically accurate spectral emission. SPD values may be given explicitly, or via the `illuminantPreset` metadata (see below).
 
 **Example:**
 ```
@@ -78,20 +94,6 @@ def RectLight "SpectralLight" {
     float2[] wavelength:emission = [
         (400, 0.1), (450, 0.8), (500, 1.2), (550, 1.5),
         (600, 1.3), (650, 0.9), (700, 0.4)
-    ]
-}
-```
-
-**Example (D65 Illuminant approximation):**
-```
-def DistantLight "Sunlight" {
-    float2[] wavelength:emission = [
-        (380, 49.98), (400, 82.75), (420, 93.43), (440, 104.86),
-        (460, 117.01), (480, 117.41), (500, 109.35), (520, 104.79),
-        (540, 104.41), (560, 100.00), (580, 95.79), (600, 90.01),
-        (620, 87.70), (640, 83.29), (660, 80.03), (680, 80.21),
-        (700, 82.28), (720, 78.28), (740, 69.72), (760, 71.61),
-        (780, 74.35)
     ]
 }
 ```
@@ -192,13 +194,7 @@ When both `illuminantPreset` and explicit SPD values are provided, the explicit 
 | `"nanometers"` | W m^-2 nm^-1 | Watts per square metre per nanometre |
 | `"micrometers"` | W m^-2 um^-1 | Watts per square metre per micrometre |
 
-#### Interpolation Methods
-
-| Value | Description |
-|-------|-------------|
-| `"linear"` | Piecewise linear interpolation (default) |
-| `"held"` | USD Held interpolation (step function) |
-| `"cubic"` | Piecewise cubic interpolation (smooth) |
+Interpolation methods are `linear` (default), `held`, and `cubic` (same as `wavelength:ior`, minus `sellmeier`).
 
 ### For Spectral Textures (assetInfo)
 
