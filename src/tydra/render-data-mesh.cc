@@ -327,17 +327,29 @@ nonstd::expected<std::vector<uint8_t>, std::string> UniformToFaceVarying(
         num_uniforms, faceVertexCounts.size()));
   }
 
-  std::vector<uint8_t> buf;
-  buf.resize(stride_bytes);
-
+  // Pre-size the output to its exact byte count and write via offset memcpy.
+  // (The previous code grew `dst` with a per-face-vertex insert(), causing
+  // repeated reallocation.) Total face-vertices = sum(faceVertexCounts).
+  size_t total_fv = 0;
   for (size_t i = 0; i < faceVertexCounts.size(); i++) {
-    size_t cnt = faceVertexCounts[i];
+    if (!safe::add(total_fv, size_t(faceVertexCounts[i]), &total_fv)) {
+      return nonstd::make_unexpected(
+          "Overflow computing total face-vertex count.");
+    }
+  }
+  size_t total_bytes;
+  if (!safe::mul(total_fv, stride_bytes, &total_bytes)) {
+    return nonstd::make_unexpected("Overflow computing output buffer size.");
+  }
+  dst.resize(total_bytes);
 
-    memcpy(buf.data(), src.data() + i * stride_bytes, stride_bytes);
-
-    // repeat cnt times.
+  size_t off = 0;
+  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
+    const size_t cnt = faceVertexCounts[i];
+    const uint8_t *srcp = src.data() + i * stride_bytes;
     for (size_t k = 0; k < cnt; k++) {
-      dst.insert(dst.end(), buf.begin(), buf.end());
+      memcpy(dst.data() + off, srcp, stride_bytes);
+      off += stride_bytes;
     }
   }
 
