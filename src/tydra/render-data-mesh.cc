@@ -1157,33 +1157,50 @@ bool ArrayValueToVertexAttribute(
       break;
     }
     case VertexVariability::Uniform: {
-      if (value_counts != (elementSize * num_face_counts)) {
+      // Compute the expected count in size_t. `elementSize * num_face_counts`
+      // multiplies two uint32_t in 32-bit arithmetic and can wrap, letting a
+      // crafted array whose size equals the wrapped value pass validation.
+      size_t expected_uniform;
+      if (!safe::mul(size_t(elementSize), size_t(num_face_counts),
+                     &expected_uniform) ||
+          (value_counts != expected_uniform)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "{} # of items {} expected, but got {}. Variability = Uniform",
-            name, elementSize * num_face_counts, value_counts));
+            name, uint64_t(elementSize) * uint64_t(num_face_counts),
+            value_counts));
       }
       break;
     }
     case VertexVariability::Vertex: {
-      if (value_counts != (elementSize * num_vertices)) {
+      size_t expected_vertex;
+      if (!safe::mul(size_t(elementSize), size_t(num_vertices),
+                     &expected_vertex) ||
+          (value_counts != expected_vertex)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "{} # of items {} expected, but got {}. Variability = Vertex",
-            name, elementSize * num_vertices, value_counts));
+            name, uint64_t(elementSize) * uint64_t(num_vertices), value_counts));
       }
       break;
     case VertexVariability::Varying: {
-      if (value_counts != (elementSize * num_vertices)) {
+      size_t expected_varying;
+      if (!safe::mul(size_t(elementSize), size_t(num_vertices),
+                     &expected_varying) ||
+          (value_counts != expected_varying)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "{} # of items {} expected, but got {}. Variability = Varying",
-            name, elementSize * num_vertices, value_counts));
+            name, uint64_t(elementSize) * uint64_t(num_vertices), value_counts));
       }
       break;
     }
     case VertexVariability::FaceVarying: {
-      if (value_counts != (elementSize * num_face_vertex_indices)) {
+      size_t expected_fv;
+      if (!safe::mul(size_t(elementSize), size_t(num_face_vertex_indices),
+                     &expected_fv) ||
+          (value_counts != expected_fv)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "# of items {} expected, but got {}. Variability = FaceVarying",
-            elementSize * num_face_vertex_indices, value_counts));
+            uint64_t(elementSize) * uint64_t(num_face_vertex_indices),
+            value_counts));
       }
       break;
     }
@@ -2081,30 +2098,47 @@ static bool ReorderVertexVaryingAttributes(
           "Internal error. Invalid elementSize in mesh.joint_and_weights.");
     }
     uint32_t elementSize = uint32_t(mesh.joint_and_weights.elementSize);
-    std::vector<int> tmp_indices(num_verts * size_t(elementSize));
-    std::vector<float> tmp_weights(num_verts * size_t(elementSize));
+    // Overflow-safe allocation sizing. `elementSize` can be as large as
+    // max_skin_elementSize and `num_verts` is mesh-controlled, so the product
+    // can overflow size_t (notably on wasm32 where size_t is 32-bit).
+    size_t tmp_count;
+    if (!safe::mul(num_verts, size_t(elementSize), &tmp_count)) {
+      PUSH_ERROR_AND_RETURN("Skin weights buffer size overflow.");
+    }
+    std::vector<int> tmp_indices(tmp_count);
+    std::vector<float> tmp_weights(tmp_count);
     for (size_t v = 0; v < num_verts; v++) {
-      if ((elementSize * vert_to_point[v]) >=
-          mesh.joint_and_weights.jointIndices.size()) {
+      // Compute the source base offset in size_t. Computing
+      // `elementSize * vert_to_point[v]` directly multiplies two uint32_t in
+      // 32-bit arithmetic and can wrap, letting an out-of-range index slip
+      // past the bounds check while the access below uses the true (64-bit)
+      // offset and reads OOB. Validate the whole [off, off+elementSize) span.
+      size_t src_off;
+      if (!safe::mul(size_t(elementSize), size_t(vert_to_point[v]), &src_off)) {
+        PUSH_ERROR_AND_RETURN("Skin index offset overflow.");
+      }
+      const size_t dst_off = size_t(elementSize) * v;  // < tmp_count, no overflow
+
+      if ((src_off >= mesh.joint_and_weights.jointIndices.size()) ||
+          ((mesh.joint_and_weights.jointIndices.size() - src_off) <
+           size_t(elementSize))) {
         PUSH_ERROR_AND_RETURN(
             "Internal error. point index exceeds jointIndices.size.");
       }
       for (size_t k = 0; k < elementSize; k++) {
-        tmp_indices[size_t(elementSize) * v + k] =
-            mesh.joint_and_weights
-                .jointIndices[size_t(elementSize) * size_t(vert_to_point[v]) + k];
+        tmp_indices[dst_off + k] =
+            mesh.joint_and_weights.jointIndices[src_off + k];
       }
 
-      if ((elementSize * vert_to_point[v]) >=
-          mesh.joint_and_weights.jointWeights.size()) {
+      if ((src_off >= mesh.joint_and_weights.jointWeights.size()) ||
+          ((mesh.joint_and_weights.jointWeights.size() - src_off) <
+           size_t(elementSize))) {
         PUSH_ERROR_AND_RETURN(
             "Internal error. point index exceeds jointWeights.size.");
       }
-
       for (size_t k = 0; k < elementSize; k++) {
-        tmp_weights[size_t(elementSize) * v + k] =
-            mesh.joint_and_weights
-                .jointWeights[size_t(elementSize) * size_t(vert_to_point[v]) + k];
+        tmp_weights[dst_off + k] =
+            mesh.joint_and_weights.jointWeights[src_off + k];
       }
     }
     mesh.joint_and_weights.jointIndices.swap(tmp_indices);
