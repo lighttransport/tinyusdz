@@ -290,22 +290,22 @@ static SyntheticMesh generate_grid(size_t approx_points, bool flat_shading,
 // Position-bucketed vertex dedup (same algorithm as BuildVertexIndicesImpl)
 // ---------------------------------------------------------------------------
 
+static constexpr uint32_t kNoEntry = ~0u;
+
 struct BucketEntry {
   uint32_t fv_index;
   uint32_t out_vertex_id;
+  uint32_t next;  // arena index of next entry at this position, or kNoEntry
 };
 
-// Measure actual memory of bucket storage (inner vector allocations + outer
-// vector).
-static size_t measure_bucket_mem(
-    const std::vector<std::vector<BucketEntry>> &buckets) {
-  // Outer vector storage for the vector-of-vectors headers
-  size_t mem = buckets.capacity() * sizeof(std::vector<BucketEntry>);
-  // Each inner vector's heap allocation
-  for (const auto &b : buckets) {
-    mem += b.capacity() * sizeof(BucketEntry);
-  }
-  return mem;
+// Measure actual memory of the linked-list bucket storage
+// (head + tail position arrays + the flat entry arena).
+static size_t measure_bucket_mem(const std::vector<uint32_t> &head,
+                                 const std::vector<uint32_t> &tail,
+                                 const std::vector<BucketEntry> &arena) {
+  return head.capacity() * sizeof(uint32_t) +
+         tail.capacity() * sizeof(uint32_t) +
+         arena.capacity() * sizeof(BucketEntry);
 }
 
 struct MemStats {
@@ -362,7 +362,10 @@ static VertexDedupResult run_vertex_dedup(const SyntheticMesh &mesh) {
     return true;
   };
 
-  std::vector<std::vector<BucketEntry>> buckets(num_verts);
+  std::vector<uint32_t> head(num_verts, kNoEntry);
+  std::vector<uint32_t> tail(num_verts, kNoEntry);
+  std::vector<BucketEntry> arena;
+  arena.reserve(num_verts);
   VertexDedupResult result;
   result.out_indices.resize(num_fvs);
   result.out_point_indices.resize(num_fvs);
@@ -370,17 +373,23 @@ static VertexDedupResult run_vertex_dedup(const SyntheticMesh &mesh) {
 
   for (size_t i = 0; i < num_fvs; i++) {
     uint32_t pid = mesh.faceVertexIndices[i];
-    auto &bucket = buckets[pid];
-    uint32_t matched_id = ~0u;
-    for (const auto &entry : bucket) {
-      if (attribs_match(i, entry.fv_index)) {
-        matched_id = entry.out_vertex_id;
+    uint32_t matched_id = kNoEntry;
+    for (uint32_t e = head[pid]; e != kNoEntry; e = arena[e].next) {
+      if (attribs_match(i, arena[e].fv_index)) {
+        matched_id = arena[e].out_vertex_id;
         break;
       }
     }
-    if (matched_id == ~0u) {
+    if (matched_id == kNoEntry) {
       matched_id = next_vertex_id++;
-      bucket.push_back({uint32_t(i), matched_id});
+      const uint32_t idx = uint32_t(arena.size());
+      arena.push_back({uint32_t(i), matched_id, kNoEntry});
+      if (head[pid] == kNoEntry) {
+        head[pid] = idx;
+      } else {
+        arena[tail[pid]].next = idx;
+      }
+      tail[pid] = idx;
     }
     result.out_indices[i] = matched_id;
     result.out_point_indices[i] = pid;
@@ -390,7 +399,7 @@ static VertexDedupResult run_vertex_dedup(const SyntheticMesh &mesh) {
 
   // Measure memory
   result.mem.input_bytes = mesh.input_bytes();
-  result.mem.bucket_bytes = measure_bucket_mem(buckets);
+  result.mem.bucket_bytes = measure_bucket_mem(head, tail, arena);
   result.mem.output_bytes =
       result.out_indices.capacity() * sizeof(uint32_t) +
       result.out_point_indices.capacity() * sizeof(uint32_t);
@@ -428,24 +437,33 @@ static TangentDedupResult run_tangent_dedup(const SyntheticMesh &mesh) {
     return true;
   };
 
-  std::vector<std::vector<BucketEntry>> buckets(num_points);
+  std::vector<uint32_t> head(num_points, kNoEntry);
+  std::vector<uint32_t> tail(num_points, kNoEntry);
+  std::vector<BucketEntry> arena;
+  arena.reserve(num_points);
   TangentDedupResult result;
   result.vertex_indices.resize(num_fvs);
   uint32_t next_vertex_id = 0;
 
   for (size_t i = 0; i < num_fvs; i++) {
     uint32_t pid = mesh.faceVertexIndices[i];
-    auto &bucket = buckets[pid];
-    uint32_t matched_id = ~0u;
-    for (const auto &entry : bucket) {
-      if (attribs_match(i, entry.fv_index)) {
-        matched_id = entry.out_vertex_id;
+    uint32_t matched_id = kNoEntry;
+    for (uint32_t e = head[pid]; e != kNoEntry; e = arena[e].next) {
+      if (attribs_match(i, arena[e].fv_index)) {
+        matched_id = arena[e].out_vertex_id;
         break;
       }
     }
-    if (matched_id == ~0u) {
+    if (matched_id == kNoEntry) {
       matched_id = next_vertex_id++;
-      bucket.push_back({uint32_t(i), matched_id});
+      const uint32_t idx = uint32_t(arena.size());
+      arena.push_back({uint32_t(i), matched_id, kNoEntry});
+      if (head[pid] == kNoEntry) {
+        head[pid] = idx;
+      } else {
+        arena[tail[pid]].next = idx;
+      }
+      tail[pid] = idx;
     }
     result.vertex_indices[i] = matched_id;
   }
@@ -454,7 +472,7 @@ static TangentDedupResult run_tangent_dedup(const SyntheticMesh &mesh) {
 
   // Measure memory
   result.mem.input_bytes = mesh.input_bytes();
-  result.mem.bucket_bytes = measure_bucket_mem(buckets);
+  result.mem.bucket_bytes = measure_bucket_mem(head, tail, arena);
   result.mem.output_bytes =
       result.vertex_indices.capacity() * sizeof(uint32_t);
   result.mem.total_bytes =
@@ -774,25 +792,34 @@ static VertexDedupResult run_vertex_dedup_guarded(const SyntheticMesh &mesh,
       return true;
     };
 
-    std::vector<std::vector<BucketEntry>> buckets(num_verts);
+    std::vector<uint32_t> head(num_verts, kNoEntry);
+    std::vector<uint32_t> tail(num_verts, kNoEntry);
+    std::vector<BucketEntry> arena;
+    arena.reserve(num_verts);
     for (size_t i = 0; i < num_fvs; i++) {
       uint32_t pid = mesh.faceVertexIndices[i];
-      auto &bucket = buckets[pid];
-      uint32_t matched_id = ~0u;
-      for (const auto &entry : bucket) {
-        if (attribs_match(i, entry.fv_index)) {
-          matched_id = entry.out_vertex_id;
+      uint32_t matched_id = kNoEntry;
+      for (uint32_t e = head[pid]; e != kNoEntry; e = arena[e].next) {
+        if (attribs_match(i, arena[e].fv_index)) {
+          matched_id = arena[e].out_vertex_id;
           break;
         }
       }
-      if (matched_id == ~0u) {
+      if (matched_id == kNoEntry) {
         matched_id = next_vertex_id++;
-        bucket.push_back({uint32_t(i), matched_id});
+        const uint32_t idx = uint32_t(arena.size());
+        arena.push_back({uint32_t(i), matched_id, kNoEntry});
+        if (head[pid] == kNoEntry) {
+          head[pid] = idx;
+        } else {
+          arena[tail[pid]].next = idx;
+        }
+        tail[pid] = idx;
       }
       result.out_indices[i] = matched_id;
       result.out_point_indices[i] = pid;
     }
-    bucket_mem = measure_bucket_mem(buckets);
+    bucket_mem = measure_bucket_mem(head, tail, arena);
   }
 
   result.num_unique = next_vertex_id;
@@ -957,25 +984,34 @@ static VertexDedupResult run_vertex_dedup_close(const SyntheticMesh &mesh,
       return true;
     };
 
-    std::vector<std::vector<BucketEntry>> buckets(num_verts);
+    std::vector<uint32_t> head(num_verts, kNoEntry);
+    std::vector<uint32_t> tail(num_verts, kNoEntry);
+    std::vector<BucketEntry> arena;
+    arena.reserve(num_verts);
     for (size_t i = 0; i < num_fvs; i++) {
       uint32_t pid = mesh.faceVertexIndices[i];
-      auto &bucket = buckets[pid];
-      uint32_t matched_id = ~0u;
-      for (const auto &entry : bucket) {
-        if (attribs_match(i, entry.fv_index)) {
-          matched_id = entry.out_vertex_id;
+      uint32_t matched_id = kNoEntry;
+      for (uint32_t e = head[pid]; e != kNoEntry; e = arena[e].next) {
+        if (attribs_match(i, arena[e].fv_index)) {
+          matched_id = arena[e].out_vertex_id;
           break;
         }
       }
-      if (matched_id == ~0u) {
+      if (matched_id == kNoEntry) {
         matched_id = next_vertex_id++;
-        bucket.push_back({uint32_t(i), matched_id});
+        const uint32_t idx = uint32_t(arena.size());
+        arena.push_back({uint32_t(i), matched_id, kNoEntry});
+        if (head[pid] == kNoEntry) {
+          head[pid] = idx;
+        } else {
+          arena[tail[pid]].next = idx;
+        }
+        tail[pid] = idx;
       }
       result.out_indices[i] = matched_id;
       result.out_point_indices[i] = pid;
     }
-    bucket_mem = measure_bucket_mem(buckets);
+    bucket_mem = measure_bucket_mem(head, tail, arena);
   }
 
   result.num_unique = next_vertex_id;
