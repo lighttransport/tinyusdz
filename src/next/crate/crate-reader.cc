@@ -89,6 +89,14 @@ private:
   bool UnpackSpecifier(ValueRep rep, Value& out);
   bool UnpackVariability(ValueRep rep, Value& out);
   bool UnpackTimeSamples(ValueRep rep, Value& out);
+  bool UnpackVec2i(ValueRep rep, Value& out);
+  bool UnpackVec3i(ValueRep rep, Value& out);
+  bool UnpackVec4i(ValueRep rep, Value& out);
+  bool UnpackHalf(ValueRep rep, Value& out);
+  bool UnpackVec2h(ValueRep rep, Value& out);
+  bool UnpackVec3h(ValueRep rep, Value& out);
+  bool UnpackVec4h(ValueRep rep, Value& out);
+  bool UnpackQuath(ValueRep rep, Value& out);
 
   // Helpers
   bool GetToken(uint32_t index, std::string& out);
@@ -404,6 +412,124 @@ bool CrateReader::Impl::UnpackVariability(ValueRep rep, Value& out) {
 }
 
 // ============================================================
+// Integer vector unpackers
+// ============================================================
+
+bool CrateReader::Impl::UnpackVec2i(ValueRep rep, Value& out) {
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  int32_t data[2];
+  if (!reader_->read(data, sizeof(data))) return false;
+  out = Value::MakeInt2(data[0], data[1]);
+  return true;
+}
+
+bool CrateReader::Impl::UnpackVec3i(ValueRep rep, Value& out) {
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  int32_t data[3];
+  if (!reader_->read(data, sizeof(data))) return false;
+  out = Value::MakeInt3(data[0], data[1], data[2]);
+  return true;
+}
+
+bool CrateReader::Impl::UnpackVec4i(ValueRep rep, Value& out) {
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  int32_t data[4];
+  if (!reader_->read(data, sizeof(data))) return false;
+  out = Value::MakeInt4(data[0], data[1], data[2], data[3]);
+  return true;
+}
+
+// ============================================================
+// Half-precision unpackers
+// ============================================================
+
+namespace {
+
+// Decode IEEE 754 half-precision (16-bit) to float32
+inline float half_to_float(uint16_t h) {
+  // Sign: bit 15
+  // Exponent: bits 14-10 (5 bits, bias 15)
+  // Mantissa: bits 9-0 (10 bits)
+  uint32_t sign = (h >> 15) & 1;
+  uint32_t exp = (h >> 10) & 0x1F;
+  uint32_t mant = h & 0x3FF;
+
+  uint32_t f;
+  if (exp == 0) {
+    // Zero/subnormal
+    if (mant == 0) {
+      f = sign << 31;  // +/- zero
+    } else {
+      // Subnormal: normalize
+      int e = -1;
+      uint32_t m = mant;
+      while (!(m & 0x400)) { m <<= 1; e--; }
+      f = (sign << 31) | ((127 + e + 14) << 23) | ((m & 0x7FF) << 13);
+    }
+  } else if (exp == 31) {
+    // Inf/NaN
+    f = (sign << 31) | 0x7F800000 | (mant << 13);
+  } else {
+    // Normal
+    f = (sign << 31) | ((exp + 112) << 23) | (mant << 13);
+  }
+  float result;
+  std::memcpy(&result, &f, sizeof(result));
+  return result;
+}
+
+} // namespace
+
+bool CrateReader::Impl::UnpackHalf(ValueRep rep, Value& out) {
+  if (rep.is_inlined()) {
+    uint16_t h = static_cast<uint16_t>(rep.payload() & 0xFFFF);
+    out = Value(half_to_float(h));
+    return true;
+  }
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  uint16_t h;
+  uint8_t hb[2];
+  if (!reader_->read(hb, 2)) return false;
+  h = static_cast<uint16_t>(hb[0]) | (static_cast<uint16_t>(hb[1]) << 8);
+  out = Value(half_to_float(h));
+  return true;
+}
+
+bool CrateReader::Impl::UnpackVec2h(ValueRep rep, Value& out) {
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  uint16_t raw[2];
+  if (!reader_->read(raw, sizeof(raw))) return false;
+  out = Value::MakeFloat2(half_to_float(raw[0]), half_to_float(raw[1]));
+  return true;
+}
+
+bool CrateReader::Impl::UnpackVec3h(ValueRep rep, Value& out) {
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  uint16_t raw[3];
+  if (!reader_->read(raw, sizeof(raw))) return false;
+  out = Value::MakeFloat3(half_to_float(raw[0]), half_to_float(raw[1]), half_to_float(raw[2]));
+  return true;
+}
+
+bool CrateReader::Impl::UnpackVec4h(ValueRep rep, Value& out) {
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  uint16_t raw[4];
+  if (!reader_->read(raw, sizeof(raw))) return false;
+  out = Value::MakeFloat4(half_to_float(raw[0]), half_to_float(raw[1]),
+                           half_to_float(raw[2]), half_to_float(raw[3]));
+  return true;
+}
+
+bool CrateReader::Impl::UnpackQuath(ValueRep rep, Value& out) {
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  uint16_t raw[4];
+  if (!reader_->read(raw, sizeof(raw))) return false;
+  out = Value::MakeQuatf(half_to_float(raw[0]), half_to_float(raw[1]),
+                          half_to_float(raw[2]), half_to_float(raw[3]));
+  return true;
+}
+
+// ============================================================
 // Main value unpacker using switch statement
 // ============================================================
 
@@ -440,6 +566,14 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
     case CrateTypeId::Variability: return UnpackVariability(rep, out);
     case CrateTypeId::TimeCode: return UnpackDouble(rep, out);
     case CrateTypeId::TimeSamples: return UnpackTimeSamples(rep, out);
+    case CrateTypeId::Half: return UnpackHalf(rep, out);
+    case CrateTypeId::Vec2i: return UnpackVec2i(rep, out);
+    case CrateTypeId::Vec3i: return UnpackVec3i(rep, out);
+    case CrateTypeId::Vec4i: return UnpackVec4i(rep, out);
+    case CrateTypeId::Vec2h: return UnpackVec2h(rep, out);
+    case CrateTypeId::Vec3h: return UnpackVec3h(rep, out);
+    case CrateTypeId::Vec4h: return UnpackVec4h(rep, out);
+    case CrateTypeId::Quath: return UnpackQuath(rep, out);
 
     default:
       AddWarning(std::string("Unsupported value type: ") + CrateTypeIdName(type_id));
