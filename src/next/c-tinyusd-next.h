@@ -319,6 +319,11 @@ size_t tinyusdz_next_prim_get_relationship_targets(
 size_t tinyusdz_next_prim_get_property_names(
     const TinyUSDZNextPrim* prim, const char*** out_ptr);
 
+/// Get all relationship names on a prim.
+/// Returns number of relationships. out_ptr points to internal data.
+size_t tinyusdz_next_prim_get_relationship_names(
+    const TinyUSDZNextPrim* prim, const char*** out_ptr);
+
 // ============================================================
 // Attribute evaluation (time-sampled access)
 // ============================================================

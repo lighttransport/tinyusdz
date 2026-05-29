@@ -490,6 +490,24 @@ static PyObject* NextPrim_eval_float3(NextPrim* self, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+static PyObject* NextPrim_get_relationship_names(NextPrim* self, PyObject* args) {
+    (void)args;
+    if (!self->c_stage || !self->prim_path) Py_RETURN_NONE;
+
+    const TinyUSDZNextPrim* prim = tinyusdz_next_stage_get_prim_at_path(
+        self->c_stage, self->prim_path);
+    if (!prim) Py_RETURN_NONE;
+
+    const char** names = NULL;
+    size_t n = tinyusdz_next_prim_get_relationship_names(prim, &names);
+    if (n == 0 || !names) Py_RETURN_NONE;
+
+    PyObject* lst = PyList_New(n);
+    for (size_t i = 0; i < n; i++)
+        PyList_SetItem(lst, i, PyUnicode_FromString(names[i]));
+    return lst;
+}
+
 static PyMethodDef NextPrim_methods[] = {
     {"get_property", (PyCFunction)NextPrim_get_property, METH_VARARGS,
      "Get a property value by name"},
@@ -501,6 +519,8 @@ static PyMethodDef NextPrim_methods[] = {
      "Get all properties as a dict"},
     {"get_children", (PyCFunction)NextPrim_get_children, METH_NOARGS,
      "Get child prims"},
+    {"get_relationship_names", (PyCFunction)NextPrim_get_relationship_names, METH_NOARGS,
+     "Get relationship names"},
     {"get_relationship", (PyCFunction)NextPrim_get_relationship, METH_VARARGS,
      "Get relationship target paths"},
     {"has_relationship", (PyCFunction)NextPrim_has_relationship, METH_VARARGS,

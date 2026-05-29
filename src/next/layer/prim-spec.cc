@@ -515,6 +515,15 @@ const std::vector<Path>* PrimSpec::relationship(const std::string& name) const {
   return &it->second;
 }
 
+std::vector<std::string> PrimSpec::relationship_names() const {
+  std::vector<std::string> names;
+  names.reserve(relationships_.size());
+  for (const auto& [name, _] : relationships_) {
+    names.push_back(name);
+  }
+  return names;
+}
+
 void PrimSpec::add_child_index(uint32_t index) {
   child_indices_.push_back(index);
 }
