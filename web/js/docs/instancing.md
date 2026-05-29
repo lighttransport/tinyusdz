@@ -223,4 +223,4 @@ After loading: `numInstances()` returns 2, both with `prototypeIndex = 0` (same 
 | `web/binding.cc` | WASM bindings: `numInstances`, `getInstance`, `getInstancesForMesh`, node fields |
 | `src/tydra/render-data.hh` | `RenderInstance` struct, `Node` instance fields |
 | `src/stage.hh` | `Stage::BuildInstancePrototypes()` (InstanceKey-based grouping) |
-| `doc/instancing.md` | Full instancing spec reference and architecture doc |
+| `doc/composition.md` | Composition, instancing, and variants reference |

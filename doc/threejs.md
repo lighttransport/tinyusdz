@@ -41,40 +41,33 @@ Keyframes (raw data)
 - Time values in seconds (floating point)
 - Always prefer quaternions over Euler angles (avoids gimbal lock)
 
-### Recommended Tydra Data Structure
+### Tydra Data Structure
 
-```cpp
-struct AnimationChannel {
-    enum PropertyType { TRANSLATION, ROTATION, SCALE };
-    PropertyType type;
-    std::vector<float> times;
-    std::vector<float> values;    // Flat array
-    InterpolationType interpolation;
-    int nodeIndex;
-};
-
-struct AnimationClip {
-    std::string name;
-    float duration;
-    std::vector<AnimationChannel> channels;
-};
-```
+Tydra's actual IR splits keyframe data (`KeyframeSampler`: flat `times`/`values`
++ `AnimationInterpolation`) from bindings (`AnimationChannel`: `path`,
+`target_type`, node/joint indices, `sampler`), following the glTF model. See
+`src/tydra/render-data.hh` and [doc/tydra-animation-spec-en.md](tydra-animation-spec-en.md)
+for the full structures and the Three.js track export.
 
 ## MaterialX Support
 
-### Three.js Status (2024-2025)
+### Three.js MaterialXLoader Status (2024-2025)
 
-- **WebGPU only** (experimental) via `MaterialXLoader`
-- Supports Standard Surface materials, procedural textures, noise nodes
-- Uses TSL (Three Shading Language) for node-based material authoring
-- No WebGL/WebGL2 fallback currently
+Three.js's own `MaterialXLoader` is **WebGPU only** (experimental): it supports
+Standard Surface materials, procedural textures, and noise nodes via TSL (Three
+Shading Language) for node-based authoring, with no WebGL/WebGL2 fallback.
+
+The TinyUSDZ viewer does **not** rely on `MaterialXLoader`. It ships both a
+WebGPU demo (`web/js/materialx-webgpu.js`, TSL `NodeMaterial`) and a WebGL2 demo
+(`web/js/materialx-webgl2.js`, a custom OpenPBR WebGL material via
+`TinyUSDZOpenPBR_WebGL.js`) — see the WebGL fallback strategy below.
 
 ### TinyUSDZ MaterialX Architecture
 
-Supported shader models in `src/usdShade.hh`:
-- `MtlxUsdPreviewSurface`: MaterialX-extended UsdPreviewSurface
-- `MtlxAutodeskStandardSurface`: Autodesk Standard Surface (v1.0.1)
-- `OpenPBRSurface`: Academy Software Foundation OpenPBR model
+Supported shader models:
+- `MtlxUsdPreviewSurface` (`src/usdMtlx.hh`): MaterialX-extended UsdPreviewSurface
+- `MtlxAutodeskStandardSurface` (`src/usdMtlx.hh`): Autodesk Standard Surface
+- `OpenPBRSurface` (`src/usdShade.hh`): Academy Software Foundation OpenPBR model
 
 File format support: direct `.mtlx` loading, USD references (`@myshader.mtlx@`), embedded MaterialX.
 

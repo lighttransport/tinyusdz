@@ -214,1850 +214,369 @@
     <nav class="toc">
         <h2>Contents</h2>
         <ul>
-<li><a href="#tinyusdz-pcp-prim-composition-pipeline-public-api-documentation">TinyUSDZ PCP (Prim Composition Pipeline) Public API Documentation</a></li>
+<li><a href="#tinyusdz-dag-composition-engine-primindex-compositiongraph-api">tinyusdz DAG Composition Engine (PrimIndex / CompositionGraph) API</a></li>
 <ul>
-<li><a href="#table-of-contents">Table of Contents</a></li>
-<li><a href="#core-pcp-modules">CORE PCP MODULES</a></li>
+<li><a href="#overview">Overview</a></li>
+<li><a href="#arc-types-and-ordering">Arc types and ordering</a></li>
+<li><a href="#compnode">CompNode</a></li>
 <ul>
-<li><a href="#module-pcp-cache-pcp-cache-cc-hh">Module: pcp-cache (pcp-cache.cc/hh)</a></li>
-<ul>
-<li><a href="#key-classes">Key Classes</a></li>
+<li><a href="#nodeflags">NodeFlags</a></li>
 </ul>
-<li><a href="#module-pcp-prim-index-pcp-prim-index-cc-hh">Module: pcp-prim-index (pcp-prim-index.cc/hh)</a></li>
-<ul>
-<li><a href="#key-classes">Key Classes</a></li>
-</ul>
-<li><a href="#module-pcp-node-pcp-node-cc-hh">Module: pcp-node (pcp-node.cc/hh)</a></li>
-<ul>
-<li><a href="#key-classes">Key Classes</a></li>
-</ul>
-<li><a href="#module-pcp-map-function-pcp-map-function-cc-hh">Module: pcp-map-function (pcp-map-function.cc/hh)</a></li>
-<ul>
-<li><a href="#key-classes">Key Classes</a></li>
-</ul>
-<li><a href="#module-pcp-layer-stack-pcp-layer-stack-cc-hh">Module: pcp-layer-stack (pcp-layer-stack.cc/hh)</a></li>
-<ul>
-<li><a href="#key-classes">Key Classes</a></li>
-</ul>
-<li><a href="#module-pcp-dependencies-pcp-dependencies-cc-hh">Module: pcp-dependencies (pcp-dependencies.cc/hh)</a></li>
-<ul>
-<li><a href="#key-classes">Key Classes</a></li>
-</ul>
-<li><a href="#module-pcp-compose-site-pcp-compose-site-cc-hh">Module: pcp-compose-site (pcp-compose-site.cc/hh)</a></li>
-<ul>
-<li><a href="#key-structures">Key Structures</a></li>
-</ul>
-</ul>
-<li><a href="#advanced-modules">ADVANCED MODULES</a></li>
-<ul>
-<li><a href="#module-pcp-changes-pcp-changes-hh">Module: pcp-changes (pcp-changes.hh)</a></li>
-<ul>
-<li><a href="#key-classes">Key Classes</a></li>
-</ul>
-<li><a href="#module-pcp-path-translation-pcp-path-translation-hh">Module: pcp-path-translation (pcp-path-translation.hh)</a></li>
-<ul>
-<li><a href="#key-classes">Key Classes</a></li>
-<ul>
-<li><a href="#utility-functions">Utility Functions</a></li>
-</ul>
-</ul>
-<li><a href="#module-pcp-instancing-pcp-instancing-hh">Module: pcp-instancing (pcp-instancing.hh)</a></li>
-<ul>
-<li><a href="#key-classes">Key Classes</a></li>
-<ul>
-<li><a href="#utility-functions">Utility Functions</a></li>
-</ul>
-</ul>
-<li><a href="#module-pcp-diagnostics-pcp-diagnostics-hh">Module: pcp-diagnostics (pcp-diagnostics.hh)</a></li>
-<ul>
-<li><a href="#key-classes">Key Classes</a></li>
-<ul>
-<li><a href="#utility-functions">Utility Functions</a></li>
-</ul>
-</ul>
-<li><a href="#module-pcp-debug-utils-pcp-debug-utils-hh">Module: pcp-debug-utils (pcp-debug-utils.hh)</a></li>
-<ul>
-<li><a href="#key-classes">Key Classes</a></li>
-<ul>
-<li><a href="#utility-functions">Utility Functions</a></li>
-</ul>
-</ul>
-<li><a href="#module-pcp-performance-pcp-performance-hh">Module: pcp-performance (pcp-performance.hh)</a></li>
-<ul>
-<li><a href="#key-classes">Key Classes</a></li>
-<ul>
-<li><a href="#utility-functions">Utility Functions</a></li>
-</ul>
-</ul>
-</ul>
-<li><a href="#threading-module">THREADING MODULE</a></li>
-<ul>
-<li><a href="#module-pcp-threading-pcp-threading-hh">Module: pcp-threading (pcp-threading.hh)</a></li>
-<ul>
-<li><a href="#key-classes">Key Classes</a></li>
-</ul>
-</ul>
-<li><a href="#time-based-composition-module">TIME-BASED COMPOSITION MODULE</a></li>
-<ul>
-<li><a href="#module-pcp-timesample-pcp-timesample-hh">Module: pcp-timesample (pcp-timesample.hh)</a></li>
-<ul>
-<li><a href="#key-types">Key Types</a></li>
-<li><a href="#key-structures">Key Structures</a></li>
-<li><a href="#key-classes">Key Classes</a></li>
-</ul>
-</ul>
-<li><a href="#usage-patterns">USAGE PATTERNS</a></li>
-<ul>
-<li><a href="#pattern-1-basic-cache-and-composition">Pattern 1: Basic Cache and Composition</a></li>
-<li><a href="#pattern-2-path-translation">Pattern 2: Path Translation</a></li>
-<li><a href="#pattern-3-change-detection-and-processing">Pattern 3: Change Detection and Processing</a></li>
-<li><a href="#pattern-4-instance-detection-and-optimization">Pattern 4: Instance Detection and Optimization</a></li>
-<li><a href="#pattern-5-diagnostics-and-validation">Pattern 5: Diagnostics and Validation</a></li>
-<li><a href="#pattern-6-performance-monitoring">Pattern 6: Performance Monitoring</a></li>
-<li><a href="#pattern-7-parallel-composition">Pattern 7: Parallel Composition</a></li>
-<li><a href="#pattern-8-time-based-composition">Pattern 8: Time-Based Composition</a></li>
-<li><a href="#pattern-9-change-subscription">Pattern 9: Change Subscription</a></li>
-<li><a href="#pattern-10-complexity-analysis">Pattern 10: Complexity Analysis</a></li>
-</ul>
-<li><a href="#conclusion">Conclusion</a></li>
-<li><a href="#copyright">Copyright</a></li>
+<li><a href="#primindex">PrimIndex</a></li>
+<li><a href="#shared-tables">Shared tables</a></li>
+<li><a href="#instancekey">InstanceKey</a></li>
+<li><a href="#deferredpayloadinfo">DeferredPayloadInfo</a></li>
+<li><a href="#compositiongraphoptions">CompositionGraphOptions</a></li>
+<li><a href="#compositiongraph">CompositionGraph</a></li>
+<li><a href="#primindexbuilder-internal">PrimIndexBuilder (internal)</a></li>
+<li><a href="#usage">Usage</a></li>
+<li><a href="#status">Status</a></li>
+<li><a href="#references">References</a></li>
 </ul>
 </ul>
     </nav>
     <main class="content">
-<h1 id="tinyusdz-pcp-prim-composition-pipeline-public-api-documentation">TinyUSDZ PCP (Prim Composition Pipeline) Public API Documentation</h1>
+<h1 id="tinyusdz-dag-composition-engine-primindex-compositiongraph-api">tinyusdz DAG Composition Engine (PrimIndex / CompositionGraph) API</h1>
 
-<p>Comprehensive API reference for the Prim Composition Pipeline system in TinyUSDZ, organized by module category.</p>
-<p><strong>Document Version</strong>: 1.0</p>
-<p><strong>Last Updated</strong>: 2024-11-12</p>
-<p><strong>Author</strong>: Syoyo Fujita, Light Transport Entertainment Inc.</p>
-<p><strong>Powered By</strong>: Claude code</p>
+<p>This is the detailed API reference for tinyusdz&#39;s <strong>DAG-based</strong> composition</p>
+<p>engine — the OpenUSD-PCP-style code path that builds a per-prim composition</p>
+<p>graph (<code>PrimIndex</code>) preserving opinion provenance, supports lazy payload</p>
+<p>loading, and detects instances during composition.</p>
+<p>&gt; <strong>Two composition code paths.</strong> tinyusdz has two implementations:</p>
+<p>&gt; 1. The <strong>iterative layer-flattening</strong> pipeline (<code>CompositeAllArcs()</code> in</p>
+<p>&gt;    <code>src/composition.cc</code>) — the default, production path. See</p>
+<p>&gt;    <a href="composition.md">composition.md</a> for the conceptual overview, LIVRPS</p>
+<p>&gt;    ordering, instancing, and variants.</p>
+<p>&gt; 2. The <strong>DAG engine</strong> documented here (<code>src/composition-graph.{hh,cc}</code>,</p>
+<p>&gt;    namespace <code>tinyusdz::composition_graph</code>) — a parallel implementation that</p>
+<p>&gt;    mirrors OpenUSD&#39;s PCP design. It builds <code>PrimIndex</code> graphs, then lowers</p>
+<p>&gt;    them back to <code>PrimSpec</code>/<code>Stage</code> via the same <code>composition-reconstruct.cc</code></p>
+<p>&gt;    pipeline.</p>
+<p>&gt;</p>
+<p>&gt; All names below are verified against <code>src/composition-graph.hh</code>.</p>
+<p><strong>Header</strong>: <code>src/composition-graph.hh</code></p>
+<p><strong>Implementation</strong>: <code>src/composition-graph.cc</code></p>
+<p><strong>Namespace</strong>: <code>tinyusdz::composition_graph</code> (aliased at <code>tinyusdz::CompositionGraph</code>)</p>
 <hr>
 
-<h2 id="table-of-contents">Table of Contents</h2>
+<h2 id="overview">Overview</h2>
 
+<p>The engine implements AOUSD Core Spec section 10 (Composition):</p>
 <ul>
-<li><a href="#core-pcp-modules">Core PCP Modules</a></li>
-<li><a href="#advanced-modules">Advanced Modules</a></li>
-<li><a href="#threading-module">Threading Module</a></li>
-<li><a href="#time-based-composition-module">Time-Based Composition Module</a></li>
-<li><a href="#usage-patterns">Usage Patterns</a></li>
+<li>Full <strong>LIVRPS</strong> ordering via a priority-ordered task queue</li>
+<li>Globally-weak specializes (propagated to root)</li>
+<li>Multi-level implied inherits/specializes</li>
+<li>Instancing-aware composition (<code>InstanceKey</code>-based deduplication)</li>
+<li>Incremental payload load/unload</li>
 </ul>
 
+<p>Memory layout is deliberately compact: nodes are 40-byte <code>CompNode</code> structs</p>
+<p>stored in a contiguous pool and linked by <code>uint16_t</code> indices; paths, layer</p>
+<p>stacks, and namespace-mapping expressions are interned in shared tables owned</p>
+<p>by the <code>CompositionGraph</code>.</p>
 <hr>
 
-<h2 id="core-pcp-modules">CORE PCP MODULES</h2>
+<h2 id="arc-types-and-ordering">Arc types and ordering</h2>
 
-<p>These are the fundamental modules that implement the composition algorithm.</p>
-<h3 id="module-pcp-cache-pcp-cache-cc-hh">Module: pcp-cache (pcp-cache.cc/hh)</h3>
+<pre><code class="language-cpp"><span class="kw">enum</span> <span class="kw">class</span> ArcType : uint8_t {
+  Root = 0,        // Root node (direct local opinions)
+  SubLayer = 1,    // L: sublayer
+  Inherit = 2,     // I: inherits (<span class="kw">class</span>-based)
+  Variant = 3,     // V: variant selection
+  Relocate = 4,    // Between V and R (matches PCP <span class="kw">enum</span> ordering)
+  Reference = 5,   // R: references
+  Payload = 6,     // P: payloads
+  Specialize = 7,  // S: specializes (weakest, globally weak)
+};
 
-<p><strong>Purpose</strong>: Central cache for managing PrimIndex computations and layer stacks with BLAKE3-based instancing.</p>
-<h4 id="key-classes">Key Classes</h4>
+<span class="kw">bool</span> IsClassBasedArc(ArcType t);   // <span class="kw">true</span> <span class="kw">for</span> Inherit / Specialize
+<span class="kw">const</span> <span class="kw">char</span> *ArcTypeName(ArcType t);</code></pre>
 
-<h5 id="codeclass-cache-code"><code>class Cache</code></h5>
-
-<p>Primary composition cache management system.</p>
-<p><strong>Constructor</strong>:</p>
-<pre><code class="language-cpp">Cache(<span class="kw">const</span> CacheConfig&amp; config)</code></pre>
-
-<p><strong>Configuration Structure</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> CacheConfig {
-    Layer* root_layer = nullptr;
-    Layer* session_layer = nullptr;
-    <span class="kw">bool</span> usd_mode = <span class="kw">true</span>;
-    size_t max_memory_limit_mb = 0;  // 0 = unlimited
-    <span class="kw">bool</span> enable_instancing = <span class="kw">true</span>;
-    <span class="kw">bool</span> enable_payload_inclusion = <span class="kw">true</span>;
-};</code></pre>
-
-<p><strong>Key Public Methods</strong>:</p>
-<ul>
-<li><code>LayerStackPtr GetRootLayerStack()</code> - Get the root layer stack</li>
-<li><code>LayerStackPtr GetLayerStack(const std::string&amp; identifier)</code> - Get named layer stack</li>
-<li><code>PrimIndexPtr ComputePrimIndex(const Path&amp; prim_path, ComputePrimIndexOptions options, std::vector&lt;Error&gt;* errors)</code> - Compute prim index with options</li>
-<li><code>PrimIndexPtr GetPrimIndex(const Path&amp; prim_path)</code> - Get cached prim index</li>
-<li><code>bool HasPrimIndex(const Path&amp; prim_path) const</code> - Check cache existence</li>
-<li><code>void InvalidatePrimIndex(const Path&amp; prim_path)</code> - Invalidate cached result</li>
-<li><code>void InvalidateAll()</code> - Clear entire cache</li>
-<li><code>Dependencies* GetDependencies()</code> - Get dependency graph</li>
-</ul>
-
-<p><strong>Instance Key Computation</strong>:</p>
-<ul>
-<li>Uses BLAKE3 hashing to detect identical compositions</li>
-<li>Hashes nodes in strength order, site information, and arc types</li>
-<li>Enables automatic instancing of identical prim indexes</li>
-</ul>
-
-<hr>
-
-<h3 id="module-pcp-prim-index-pcp-prim-index-cc-hh">Module: pcp-prim-index (pcp-prim-index.cc/hh)</h3>
-
-<p><strong>Purpose</strong>: Represents the composition result - a directed acyclic graph of all composition arcs affecting a prim.</p>
-<h4 id="key-classes">Key Classes</h4>
-
-<h5 id="codeclass-primindexgraph-code"><code>class PrimIndexGraph</code></h5>
-
-<p>Core graph data structure holding composition nodes and relationships.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>NodeRef CreateRootNode(const Site&amp; site)</code> - Create root composition node</li>
-<li><code>NodeRef AddChildNode(NodeRef parent, const Arc&amp; arc, const Site&amp; site)</code> - Add child node to graph</li>
-<li><code>NodeRef GetNode(size_t index)</code> - Get node by index</li>
-<li><code>NodeRef GetRootNode()</code> - Get root node</li>
-<li><code>std::vector&lt;NodeRef&gt; GetNodes() const</code> - Get all nodes</li>
-<li><code>std::vector&lt;NodeRef&gt; GetNodesInStrengthOrder() const</code> - Get nodes sorted by strength (LIVRPS)</li>
-<li><code>bool CompareNodeStrength(size<em>t a, size</em>t b) const</code> - Compare node strength</li>
-</ul>
-
-<p><strong>Node Structure</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> Node {
-    Site site;                    // Composition site
-    Arc arc;                      // Arc to parent
-    size_t parent = SIZE_MAX;     // Parent index
-    std::<span class="kw">vector</span>&lt;size_t&gt; children; // Child indices
-    // Flags <span class="kw">for</span> composition state
-};</code></pre>
-
-<h5 id="codeclass-primindex-code"><code>class PrimIndex</code></h5>
-
-<p>High-level prim composition index.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>const Path&amp; GetPrimPath() const</code> - Get prim path</li>
-<li><code>LayerStackPtr GetRootLayerStack() const</code> - Get root layer stack</li>
-<li><code>PrimIndexGraph&amp; GetGraph()</code> - Get composition graph</li>
-<li><code>const PrimIndexGraph&amp; GetGraph() const</code> - Get graph (const)</li>
-<li><code>NodeRef GetRootNode() const</code> - Get root composition node</li>
-<li><code>std::vector&lt;NodeRef&gt; GetNodesInStrengthOrder() const</code> - Nodes by strength</li>
-</ul>
-
-<p><strong>Data Members</strong>:</p>
-<pre><code class="language-cpp">Path prim_path_;
-LayerStackPtr root_layer_stack_;
-std::<span class="kw">unique_ptr</span>&lt;PrimIndexGraph&gt; graph_;
-InstanceKey instance_key_;</code></pre>
-
-<hr>
-
-<h3 id="module-pcp-node-pcp-node-cc-hh">Module: pcp-node (pcp-node.cc/hh)</h3>
-
-<p><strong>Purpose</strong>: Represents a single composition node in the PrimIndex graph.</p>
-<h4 id="key-classes">Key Classes</h4>
-
-<h5 id="codeclass-noderef-code"><code>class NodeRef</code></h5>
-
-<p>Reference to a node within a PrimIndexGraph.</p>
-<p><strong>Construction</strong>: Typically obtained from PrimIndexGraph methods, not created directly.</p>
-<p><strong>Key Methods</strong>:</p>
-<ul>
-<li><code>bool IsValid() const</code> - Check node validity</li>
-<li><code>bool IsRootNode() const</code> - Check if node is root</li>
-<li><code>Site GetSite() const</code> - Get composition site</li>
-<li><code>LayerStackPtr GetLayerStack() const</code> - Get layer stack</li>
-<li><code>Path GetPath() const</code> - Get prim path at this site</li>
-<li><code>const Arc&amp; GetArc() const</code> - Get arc to parent</li>
-<li><code>ArcType GetArcType() const</code> - Get arc type (from LIVRPS enum)</li>
-<li><code>NodeRef GetParent() const</code> - Get parent node</li>
-<li><code>NodeRef GetOrigin() const</code> - Get origin node</li>
-<li><code>int GetSiblingNumAtOrigin() const</code> - Get sibling number</li>
-<li><code>int GetNamespaceDepth() const</code> - Get namespace depth</li>
-<li><code>std::shared_ptr&lt;MapFunction&gt; GetMapToParent() const</code> - Get path mapping</li>
-<li><code>std::shared_ptr&lt;MapFunction&gt; GetMapToRoot() const</code> - Compose all maps to root</li>
-<li><code>std::vector&lt;NodeRef&gt; GetChildren() const</code> - Get all child nodes</li>
-<li><code>size_t GetChildCount() const</code> - Number of children</li>
-<li><code>NodeRef GetChild(size_t index) const</code> - Get child by index</li>
-<li><code>NodeRef GetNextSibling() const</code> - Get next sibling</li>
-<li><code>NodeRef GetPrevSibling() const</code> - Get previous sibling</li>
-</ul>
-
-<p><strong>Data Members</strong> (accessed via methods):</p>
-<pre><code class="language-cpp">PrimIndexGraph* graph_;
-size_t index_;</code></pre>
-
-<hr>
-
-<h3 id="module-pcp-map-function-pcp-map-function-cc-hh">Module: pcp-map-function (pcp-map-function.cc/hh)</h3>
-
-<p><strong>Purpose</strong>: Represents path and value translation functions for composition arcs.</p>
-<h4 id="key-classes">Key Classes</h4>
-
-<h5 id="codeclass-mapfunction-code"><code>class MapFunction</code></h5>
-
-<p>Path translation and value mapping for composition.</p>
-<p><strong>Static Creation Methods</strong>:</p>
-<ul>
-<li><code>static MapFunctionPtr CreateIdentity()</code> - Create identity map</li>
-<li><code>static MapFunctionPtr CreatePathMap(const Path&amp; source, const Path&amp; target)</code> - Create path mapping</li>
-<li><code>static MapFunctionPtr CreateWithRelocates(const Relocates&amp; relocates)</code> - Create with relocations</li>
-<li><code>static MapFunctionPtr CreateWithLayerOffset(const LayerOffset&amp; offset)</code> - Create with time offset</li>
-<li><code>static MapFunctionPtr CreateComposite(MapFunctionPtr outer, MapFunctionPtr inner)</code> - Compose two maps</li>
-</ul>
-
-<p><strong>Key Methods</strong>:</p>
-<ul>
-<li><code>bool IsIdentity() const</code> - Check if identity map</li>
-<li><code>bool IsNull() const</code> - Check if null map</li>
-<li><code>Path MapPath(const Path&amp; path) const</code> - Apply path mapping</li>
-<li><code>Path MapPathReverse(const Path&amp; path) const</code> - Apply reverse mapping</li>
-<li><code>std::optional&lt;Path&gt; TryMapPath(const Path&amp; path) const</code> - Safe path mapping</li>
-<li><code>MapFunctionPtr Compose(const MapFunctionPtr&amp; other) const</code> - Compose with another map</li>
-<li><code>MapFunctionPtr GetInverse() const</code> - Get inverse mapping if possible</li>
-</ul>
-
-<p><strong>Data Members</strong>:</p>
-<pre><code class="language-cpp">std::<span class="kw">vector</span>&lt;std::pair&lt;Path, Path&gt;&gt; path_mappings_;
-Relocates relocates_;
-LayerOffset time_offset_;
-<span class="kw">bool</span> is_identity_;
-<span class="kw">bool</span> is_null_;
-<span class="kw">bool</span> is_invertible_;</code></pre>
-
-<hr>
-
-<h3 id="module-pcp-layer-stack-pcp-layer-stack-cc-hh">Module: pcp-layer-stack (pcp-layer-stack.cc/hh)</h3>
-
-<p><strong>Purpose</strong>: Manages layer stacks - the local layer composition for a prim site.</p>
-<h4 id="key-classes">Key Classes</h4>
-
-<h5 id="codeclass-layerstack-code"><code>class LayerStack</code></h5>
-
-<p>Manages local layer composition for composition sites.</p>
-<p><strong>Static Creation</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">static</span> LayerStackPtr LayerStack::Create(
-    Layer* root_layer,
-    Layer* session_layer,
-    <span class="kw">const</span> std::<span class="kw">string</span>&amp; identifier)</code></pre>
-
-<p><strong>Key Methods</strong>:</p>
-<ul>
-<li><code>const std::string&amp; GetIdentifier() const</code> - Get unique identifier</li>
-<li><code>Layer* GetRootLayer() const</code> - Get root layer</li>
-<li><code>Layer* GetSessionLayer() const</code> - Get session layer</li>
-<li><code>const std::vector&lt;LayerEntry&gt;&amp; GetLayers() const</code> - Get all layers in stack</li>
-<li><code>const LayerEntry* FindLayer(const std::string&amp; identifier) const</code> - Find layer by ID</li>
-<li><code>Path ApplyRelocates(const Path&amp; path) const</code> - Apply layer relocations forward</li>
-<li><code>Path ApplyRelocatesReverse(const Path&amp; path) const</code> - Apply relocations backward</li>
-<li><code>bool IsRelocatedPath(const Path&amp; path) const</code> - Check if path is relocated</li>
-<li><code>const Relocates&amp; GetRelocates() const</code> - Get all relocations</li>
-<li><code>const std::vector&lt;ExpressionVariable&gt;&amp; GetExpressionVariables() const</code> - Get expression variables</li>
-</ul>
-
-<p><strong>LayerEntry Structure</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> LayerEntry {
-    Layer* layer;
-    std::<span class="kw">string</span> layer_id;
-    size_t position;  // Position in stack
-};</code></pre>
-
-<p><strong>Layer Relationship</strong>:</p>
-<ul>
-<li>Session layer (if present) &gt; Root layer &gt; Sublayers</li>
-<li>Higher position = stronger opinions</li>
-</ul>
-
-<hr>
-
-<h3 id="module-pcp-dependencies-pcp-dependencies-cc-hh">Module: pcp-dependencies (pcp-dependencies.cc/hh)</h3>
-
-<p><strong>Purpose</strong>: Tracks composition dependencies between prims.</p>
-<h4 id="key-classes">Key Classes</h4>
-
-<h5 id="codeclass-dependencies-code"><code>class Dependencies</code></h5>
-
-<p>Tracks composition dependencies for incremental updates.</p>
-<p><strong>Key Methods</strong>:</p>
-<ul>
-<li><code>void AddDependency(const Path&amp; source, const Path&amp; target)</code> - Record dependency</li>
-<li><code>std::vector&lt;Path&gt; GetDependents(const Path&amp; prim_path) const</code> - Get dependent prims</li>
-<li><code>std::vector&lt;Path&gt; GetDependencies(const Path&amp; prim_path) const</code> - Get dependencies</li>
-<li><code>void InvalidateDependents(const Path&amp; prim_path)</code> - Mark all dependents invalid</li>
-<li><code>void Clear()</code> - Clear all dependencies</li>
-<li><code>void Rebuild(const Cache&amp; cache)</code> - Rebuild dependency graph</li>
-</ul>
-
-<p><strong>Usage</strong>: Used internally by Cache to track invalidation cascades when composition changes.</p>
-<hr>
-
-<h3 id="module-pcp-compose-site-pcp-compose-site-cc-hh">Module: pcp-compose-site (pcp-compose-site.cc/hh)</h3>
-
-<p><strong>Purpose</strong>: Defines composition sites and arcs - the basic units of USD composition.</p>
-<h4 id="key-structures">Key Structures</h4>
-
-<h5 id="codestruct-site-code"><code>struct Site</code></h5>
-
-<p>Composition site = (LayerStack, Path) pair.</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> Site {
-    LayerStackPtr layer_stack;  // Which layer stack
-    Path path;                  // Which prim path
-    
-    // Hashing support
-    <span class="kw">struct</span> Hash {
-        size_t operator()(<span class="kw">const</span> Site&amp; site) <span class="kw">const</span>;
-    };
-};</code></pre>
-
-<h5 id="codeenum-class-arctype-code"><code>enum class ArcType</code></h5>
-
-<p>Composition arc types in LIVRPS order (from OpenUSD):</p>
-<pre><code class="language-cpp"><span class="kw">enum</span> <span class="kw">class</span> ArcType {
-    INVALID = -1,
-    Local = 0,
-    Inherit = 1,
-    VariantSelection = 2,
-    Reference = 3,
-    Payload = 4,
-    Specialize = 5
-};</code></pre>
-
-<p>LIVRPS = Local, Inherit, VariantSelection, Reference, Payload, Specialize (strength order)</p>
-<h5 id="codestruct-arc-code"><code>struct Arc</code></h5>
-
-<p>Composition arc - connection between sites.</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> Arc {
-    ArcType type;                              // Arc type (LIVRPS)
-    LayerOffset layer_offset;                  // Time offset
-    MapFunctionPtr map_to_parent;              // Path mapping
-    size_t origin_node_index = SIZE_MAX;       // Where arc originates
-    <span class="kw">int</span> sibling_num_at_origin = 0;             // Sibling ordering
-    <span class="kw">int</span> namespace_depth = 0;                   // For instancing
-};</code></pre>
-
-<h5 id="codestruct-relocates-code"><code>struct Relocates</code></h5>
-
-<p>Path relocation specification.</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> Relocates {
-    Path source;  // Source path to relocate
-    Path target;  // Target path after relocation
-};</code></pre>
-
-<h5 id="codestruct-layeroffset-code"><code>struct LayerOffset</code></h5>
-
-<p>Time offset for layer composition.</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> LayerOffset {
-    <span class="kw">double</span> offset = 0.0;
-    <span class="kw">double</span> scale = 1.0;
-    
-    <span class="kw">bool</span> IsIdentity() <span class="kw">const</span> { <span class="kw">return</span> offset == 0.0 &amp;&amp; scale == 1.0; }
+<p>Lower enum value = stronger. <code>Relocate</code> sits between <code>Variant</code> and <code>Reference</code>,</p>
+<p>matching OpenUSD&#39;s <code>PcpArcType</code> ordering. See</p>
+<p><a href="composition.md#the-livrps-composition-ordering">composition.md</a> for the LIVRPS</p>
+<p>semantics.</p>
+<p>Tasks are processed in a separate priority order that drives graph construction:</p>
+<pre><code class="language-cpp"><span class="kw">enum</span> <span class="kw">class</span> TaskType : uint8_t {
+  EvalRootNode = 0,
+  EvalSubLayers = 1,
+  EvalImpliedInherits = 2,
+  EvalInherits = 3,
+  EvalVariants = 4,
+  EvalReferences = 5,
+  EvalPayloads = 6,
+  EvalImpliedSpecializes = 7,
+  EvalSpecializes = 8,
+  EvalRelocates = 9,
 };</code></pre>
 
 <hr>
 
-<h2 id="advanced-modules">ADVANCED MODULES</h2>
+<h2 id="compnode">CompNode</h2>
 
-<p>Extensions providing specific composition functionality.</p>
-<h3 id="module-pcp-changes-pcp-changes-hh">Module: pcp-changes (pcp-changes.hh)</h3>
+<p>A single node in a prim&#39;s composition DAG (<code>&lt;= 40</code> bytes, enforced by</p>
+<p><code>static_assert</code>). Children form a singly-linked sibling list in strength order</p>
+<p>(strongest first); links are <code>uint16_t</code> indices into the node pool.</p>
+<pre><code class="language-cpp"><span class="kw">struct</span> CompNode {
+  <span class="kw">static</span> constexpr uint16_t kInvalidIndex = 0xFFFF;
 
-<p><strong>Purpose</strong>: Change notification and processing system for incremental composition updates.</p>
-<h4 id="key-classes">Key Classes</h4>
+  uint16_t parent, first_child, next_sibling, origin;  // node indices
+  ArcType  arc_type;
+  uint8_t  depth;            // depth in the DAG
+  NodeFlags flags;
+  uint16_t layer_stack_idx;  // index into LayerStackEntry table
+  uint16_t layer_idx;        // layer index within the stack
+  uint16_t map_expr_idx;     // index into MapExpr pool
+  uint32_t site_path_idx;    // index into interned path table
+  int32_t  strength_order;   // pre-computed (lower = stronger)
+  uint16_t sibling_num;      // order among same-type siblings at origin
 
-<h5 id="codeenum-class-changetype-code"><code>enum class ChangeType</code></h5>
-
-<pre><code class="language-cpp"><span class="kw">enum</span> <span class="kw">class</span> ChangeType {
-    LayerContentsChanged,
-    LayerOffsetChanged,
-    LayerRelocatesChanged,
-    PrimSpecAdded,
-    PrimSpecRemoved,
-    PrimPropertyChanged,
-    ReferenceAdded,
-    ReferenceRemoved,
-    PayloadAdded,
-    PayloadRemoved,
-    InheritAdded,
-    InheritRemoved,
-    SpecializeAdded,
-    SpecializeRemoved,
-    VariantSelectionChanged,
-    ConnectionAdded,
-    ConnectionRemoved,
-    TargetPathChanged,
-    SignificantChange,
-    SubtreeChange
+  // queries: has_parent(), has_children(), has_next_sibling(),
+  //          has_specs(), is_inert(), is_culled(),
+  //          is_payload_deferred(), is_payload_loaded(), is_implied_arc()
 };</code></pre>
 
-<h5 id="codestruct-changeentry-code"><code>struct ChangeEntry</code></h5>
+<h3 id="nodeflags">NodeFlags</h3>
 
-<pre><code class="language-cpp"><span class="kw">struct</span> ChangeEntry {
-    ChangeType type;
-    Path prim_path;
-    std::<span class="kw">string</span> layer_id;
-    std::<span class="kw">string</span> field_name;
-    value::Value old_value;
-    value::Value new_value;
-    Path target_path;
-    std::<span class="kw">string</span> variant_set_name;
-    std::<span class="kw">string</span> variant_selection;
-    
-    <span class="kw">bool</span> IsSignificant() <span class="kw">const</span>;
-    <span class="kw">bool</span> AffectsComposition() <span class="kw">const</span>;
-};</code></pre>
-
-<h5 id="codeclass-changelist-code"><code>class ChangeList</code></h5>
-
-<p>Collection of changes.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>void AddChange(const ChangeEntry&amp; change)</code></li>
-<li><code>void AddLayerChange(const std::string&amp; layer_id, ChangeType type)</code></li>
-<li><code>void AddPrimChange(const Path&amp; prim<em>path, const std::string&amp; layer</em>id, ChangeType type)</code></li>
-<li><code>void AddPropertyChange(const Path&amp; prim<em>path, const std::string&amp; property</em>name, const std::string&amp; layer<em>id, const value::Value&amp; old</em>value, const value::Value&amp; new_value)</code></li>
-<li><code>bool IsEmpty() const</code></li>
-<li><code>size_t GetSize() const</code></li>
-<li><code>const std::vector&lt;ChangeEntry&gt;&amp; GetChanges() const</code></li>
-<li><code>std::vector&lt;ChangeEntry&gt; GetChangesForPrim(const Path&amp; prim_path) const</code></li>
-<li><code>std::vector&lt;ChangeEntry&gt; GetChangesForLayer(const std::string&amp; layer_id) const</code></li>
-<li><code>std::vector&lt;ChangeEntry&gt; GetCompositionChanges() const</code></li>
-<li><code>std::vector&lt;ChangeEntry&gt; GetSignificantChanges() const</code></li>
-<li><code>void Merge(const ChangeList&amp; other)</code></li>
-<li><code>void Optimize()</code> - Remove redundant changes</li>
-</ul>
-
-<h5 id="codeclass-changeprocessor-code"><code>class ChangeProcessor</code></h5>
-
-<p>Processes changes and determines invalidation scope.</p>
-<p><strong>Constructor</strong>: <code>ChangeProcessor(Cache* cache)</code></p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>ProcessingResult ProcessChanges(const ChangeList&amp; changes)</code> - Process changes and return affected prims</li>
-<li><code>bool RequiresRecomposition(const ChangeEntry&amp; change) const</code></li>
-<li><code>bool AffectsInstancing(const ChangeEntry&amp; change) const</code></li>
-<li><code>bool AffectsProperties(const ChangeEntry&amp; change) const</code></li>
-<li><code>std::vector&lt;Path&gt; GetDependentPaths(const Path&amp; path) const</code></li>
-<li><code>void InvalidatePrim(const Path&amp; path)</code></li>
-<li><code>void InvalidateSubtree(const Path&amp; path)</code></li>
-<li><code>void InvalidateAll()</code></li>
-</ul>
-
-<p><strong>ProcessingResult</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> ProcessingResult {
-    std::<span class="kw">vector</span>&lt;Path&gt; prims_to_recompose;
-    std::<span class="kw">vector</span>&lt;Path&gt; prims_to_update_properties;
-    std::<span class="kw">vector</span>&lt;Path&gt; prims_to_check_instances;
-    <span class="kw">bool</span> requires_full_recompose = <span class="kw">false</span>;
-    size_t num_changes_processed = 0;
-};</code></pre>
-
-<h5 id="codeclass-changesubscriber-code"><code>class ChangeSubscriber</code></h5>
-
-<p>Manages change notifications.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>SubscriptionId Subscribe(ChangeCallback callback, const Path&amp; filter_path = Path())</code></li>
-<li><code>SubscriptionId SubscribeToLayer(ChangeCallback callback, const std::string&amp; layer_id)</code></li>
-<li><code>void Unsubscribe(SubscriptionId id)</code></li>
-<li><code>void UnsubscribeAll()</code></li>
-<li><code>void NotifyChanges(const ChangeList&amp; changes)</code></li>
-<li><code>void BeginBatch()</code></li>
-<li><code>void EndBatch()</code></li>
-<li><code>bool IsInBatch() const</code></li>
-</ul>
-
-<h5 id="codeclass-changetransaction-code"><code>class ChangeTransaction</code></h5>
-
-<p>Atomic change application with rollback support.</p>
-<p><strong>Constructor</strong>: <code>ChangeTransaction(Cache* cache)</code></p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>void AddChange(const ChangeEntry&amp; change)</code></li>
-<li><code>void AddChanges(const ChangeList&amp; changes)</code></li>
-<li><code>void Begin()</code></li>
-<li><code>void Commit()</code></li>
-<li><code>void Rollback()</code></li>
-<li><code>bool IsActive() const</code></li>
-<li><code>const ChangeList&amp; GetPendingChanges() const</code></li>
-</ul>
+<pre><code class="language-cpp"><span class="kw">enum</span> <span class="kw">class</span> NodeFlags : uint16_t {
+  None             = 0,
+  HasSpecs         = 1 &lt;&lt; 0,  // authored specs at this path
+  Inert            = 1 &lt;&lt; 1,  // cannot contribute opinions
+  Culled           = 1 &lt;&lt; 2,  // pruned during culling
+  PermissionDenied = 1 &lt;&lt; 3,
+  PayloadLoaded    = 1 &lt;&lt; 4,
+  PayloadDeferred  = 1 &lt;&lt; 5,  // payload exists but not yet loaded
+  IsImpliedArc     = 1 &lt;&lt; 6,  // propagated implied inherit/specialize
+  IsDueToAncestor  = 1 &lt;&lt; 7,
+};
+// operators | &amp; ~ and HasFlag(flags, flag) are provided.</code></pre>
 
 <hr>
 
-<h3 id="module-pcp-path-translation-pcp-path-translation-hh">Module: pcp-path-translation (pcp-path-translation.hh)</h3>
+<h2 id="primindex">PrimIndex</h2>
 
-<p><strong>Purpose</strong>: Advanced path mapping and translation utilities across composition arcs.</p>
-<h4 id="key-classes">Key Classes</h4>
-
-<h5 id="codeclass-pathtranslationcontext-code"><code>class PathTranslationContext</code></h5>
-
-<p>Manages path translation state between nodes.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>void SetSourceNode(const NodeRef&amp; node)</code></li>
-<li><code>void SetTargetNode(const NodeRef&amp; node)</code></li>
-<li><code>void SetMapFunction(const MapFunctionPtr&amp; map_func)</code></li>
-<li><code>Path TranslatePath(const Path&amp; path) const</code></li>
-<li><code>Path ReverseTranslatePath(const Path&amp; path) const</code></li>
-<li><code>std::optional&lt;Path&gt; TryTranslatePath(const Path&amp; path) const</code></li>
-<li><code>std::optional&lt;Path&gt; TryReverseTranslatePath(const Path&amp; path) const</code></li>
-<li><code>std::vector&lt;Path&gt; TranslatePaths(const std::vector&lt;Path&gt;&amp; paths) const</code></li>
-<li><code>bool NeedsTranslation() const</code></li>
-<li><code>bool IsIdentity() const</code></li>
-</ul>
-
-<h5 id="codeclass-pathtranslator-code"><code>class PathTranslator</code></h5>
-
-<p>Manages path translations across prim index boundaries.</p>
-<p><strong>Constructor</strong>: <code>PathTranslator(Cache* cache)</code></p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>Path TranslatePathFromNodeToNode(const Path&amp; path, const NodeRef&amp; source<em>node, const NodeRef&amp; target</em>node) const</code></li>
-<li><code>Path TranslatePathBetweenPrimIndexes(const Path&amp; path, const PrimIndex&amp; source<em>index, const PrimIndex&amp; target</em>index) const</code></li>
-<li><code>std::vector&lt;TargetPath&gt; FindAllTargetPaths(const Path&amp; source<em>path, const PrimIndex&amp; prim</em>index) const</code></li>
-<li><code>std::vector&lt;Path&gt; FindSourcePaths(const Path&amp; target<em>path, const PrimIndex&amp; prim</em>index) const</code></li>
-<li><code>MappingAnalysis AnalyzeMapping(const MapFunctionPtr&amp; map<em>func, const std::vector&lt;Path&gt;&amp; source</em>paths) const</code></li>
-</ul>
-
-<p><strong>TargetPath Structure</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> TargetPath {
-    Path path;
-    NodeRef node;
-    <span class="kw">double</span> strength;  // Composition strength
+<p>The composition graph for a single prim: a DAG of <code>CompNode</code> in a contiguous</p>
+<p>vector (node 0 is always the root), plus a pre-computed strength order for fast</p>
+<p>value resolution.</p>
+<pre><code class="language-cpp"><span class="kw">class</span> PrimIndex {
+ <span class="kw">public</span>:
+  <span class="kw">const</span> Path &amp;GetPath() <span class="kw">const</span>;
+  <span class="kw">const</span> CompNode &amp;GetRootNode() <span class="kw">const</span>;             // node 0
+  <span class="kw">const</span> CompNode &amp;GetNode(uint16_t idx) <span class="kw">const</span>;
+  uint16_t GetNodeCount() <span class="kw">const</span>;
+  <span class="kw">const</span> std::<span class="kw">vector</span>&lt;uint16_t&gt; &amp;GetStrengthOrder() <span class="kw">const</span>;  // strongest first
+  <span class="kw">bool</span> HasAnySpecs() <span class="kw">const</span>;
+  <span class="kw">bool</span> IsPayloadLoaded() <span class="kw">const</span>;                    // <span class="kw">true</span> <span class="kw">if</span> no deferred payloads
+  <span class="kw">bool</span> IsInstanceable() <span class="kw">const</span>;                     // instanceable=<span class="kw">true</span> metadata
+  std::<span class="kw">string</span> DumpToString() <span class="kw">const</span>;
 };</code></pre>
 
-<p><strong>MappingAnalysis Structure</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> MappingAnalysis {
-    <span class="kw">bool</span> is_one_to_one = <span class="kw">true</span>;
-    <span class="kw">bool</span> is_onto = <span class="kw">true</span>;
-    <span class="kw">bool</span> is_invertible = <span class="kw">true</span>;
-    std::<span class="kw">vector</span>&lt;Path&gt; unmapped_sources;
-    std::<span class="kw">vector</span>&lt;Path&gt; multiply_mapped_targets;
-};</code></pre>
-
-<h5 id="codeclass-pathtranslationcache-code"><code>class PathTranslationCache</code></h5>
-
-<p>Optimized path translation caching.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>void CachePath(const Path&amp; source, const Path&amp; target, const MapFunctionPtr&amp; map_func)</code></li>
-<li><code>std::optional&lt;Path&gt; GetCachedTranslation(const Path&amp; source, const MapFunctionPtr&amp; map_func) const</code></li>
-<li><code>void Clear()</code></li>
-<li><code>void ClearForMapFunction(const MapFunctionPtr&amp; map_func)</code></li>
-<li><code>Statistics GetStatistics() const</code></li>
-<li><code>void ResetStatistics()</code></li>
-</ul>
-
-<p><strong>Statistics</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> Statistics {
-    size_t cache_hits = 0;
-    size_t cache_misses = 0;
-    size_t total_entries = 0;
-    <span class="kw">double</span> hit_rate = 0.0;
-};</code></pre>
-
-<h5 id="codeclass-filteredpathtranslator-code"><code>class FilteredPathTranslator</code></h5>
-
-<p>Path translation with filtering predicates.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>void SetSourceFilter(PathPredicate predicate)</code></li>
-<li><code>void SetTargetFilter(PathPredicate predicate)</code></li>
-<li><code>std::optional&lt;Path&gt; TranslateIfAllowed(const Path&amp; path, const MapFunctionPtr&amp; map_func) const</code></li>
-<li><code>std::vector&lt;Path&gt; TranslatePathsWithFilter(const std::vector&lt;Path&gt;&amp; paths, const MapFunctionPtr&amp; map_func) const</code></li>
-<li><code>bool PassesSourceFilter(const Path&amp; path) const</code></li>
-<li><code>bool PassesTargetFilter(const Path&amp; path) const</code></li>
-</ul>
-
-<h5 id="utility-functions">Utility Functions</h5>
-
-<pre><code class="language-cpp">Path TranslatePropertyPath(<span class="kw">const</span> Path&amp; property_path, <span class="kw">const</span> Path&amp; source_prim, <span class="kw">const</span> Path&amp; target_prim);
-Path TranslateTargetPath(<span class="kw">const</span> Path&amp; target_path, <span class="kw">const</span> MapFunctionPtr&amp; map_func);
-Path TranslateVariantPath(<span class="kw">const</span> Path&amp; variant_path, <span class="kw">const</span> std::<span class="kw">string</span>&amp; variant_set, <span class="kw">const</span> std::<span class="kw">string</span>&amp; variant_selection);
-<span class="kw">bool</span> IsTranslatable(<span class="kw">const</span> Path&amp; path, <span class="kw">const</span> MapFunctionPtr&amp; map_func);
-Path GetCommonAncestor(<span class="kw">const</span> Path&amp; path1, <span class="kw">const</span> Path&amp; path2);
-MapFunctionPtr ComposeMapFunctions(<span class="kw">const</span> std::<span class="kw">vector</span>&lt;MapFunctionPtr&gt;&amp; functions);
-MapFunctionPtr CreateMapFunctionFromPairs(<span class="kw">const</span> std::<span class="kw">vector</span>&lt;std::pair&lt;Path, Path&gt;&gt;&amp; path_pairs);
-std::optional&lt;MapFunctionPtr&gt; InvertMapFunction(<span class="kw">const</span> MapFunctionPtr&amp; map_func);</code></pre>
-
+<p><code>PrimIndex</code> borrows the shared path/layer-stack/map-expression tables from its</p>
+<p>owning <code>CompositionGraph</code>, so it must not outlive that graph.</p>
 <hr>
 
-<h3 id="module-pcp-instancing-pcp-instancing-hh">Module: pcp-instancing (pcp-instancing.hh)</h3>
+<h2 id="shared-tables">Shared tables</h2>
 
-<p><strong>Purpose</strong>: Instance detection and optimization for composition deduplication.</p>
-<h4 id="key-classes">Key Classes</h4>
+<p>Owned by <code>CompositionGraph</code>, referenced by every <code>PrimIndex</code>:</p>
+<pre><code class="language-cpp"><span class="kw">struct</span> LayerStackEntry {
+  <span class="kw">const</span> Layer *layer;       // borrowed (owned by CompositionGraph)
+  std::<span class="kw">string</span> identifier;   // asset path or layer name
+  LayerOffset offset;       // cumulative time offset to root
+};
 
-<h5 id="codestruct-instancekey-code"><code>struct InstanceKey</code></h5>
+// Namespace mapping with lazy composition up a parent chain.
+<span class="kw">struct</span> MapExpr {
+  NamespaceMapping mapping;  // direct mapping <span class="kw">for</span> this arc
+  int32_t parent_expr;       // index of parent expr (-1 = identity)
+  <span class="kw">const</span> NamespaceMapping &amp;GetComposed(<span class="kw">const</span> std::<span class="kw">vector</span>&lt;MapExpr&gt; &amp;pool) <span class="kw">const</span>;
+  Path Apply(<span class="kw">const</span> Path &amp;path, <span class="kw">const</span> std::<span class="kw">vector</span>&lt;MapExpr&gt; &amp;pool) <span class="kw">const</span>;
+};
 
-<p>128-bit hash for prim index comparison.</p>
+// Provenance of a resolved opinion.
+<span class="kw">struct</span> OpinionSource {
+  uint16_t node_idx, layer_stack_idx, layer_idx;
+  std::<span class="kw">string</span> site_path;
+};</code></pre>
+
+<p><code>MapExpr</code> is the engine&#39;s equivalent of OpenUSD&#39;s <code>PcpMapExpression</code>: composed</p>
+<p>mappings are computed lazily and cached. The underlying prefix-remapping type is</p>
+<p><code>NamespaceMapping</code> from <code>src/namespace-mapping.hh</code> (see</p>
+<p><a href="composition.md#namespace-mapping">composition.md</a>).</p>
+<hr>
+
+<h2 id="instancekey">InstanceKey</h2>
+
+<p>A 128-bit structural signature of a prim&#39;s composition graph. Two prims with</p>
+<p>equal keys have structurally identical arcs and produce identical child</p>
+<p>namespaces, so they can share a prototype (AOUSD Core Spec 11.3.3).</p>
 <pre><code class="language-cpp"><span class="kw">struct</span> InstanceKey {
-    std::array&lt;uint8_t, 16&gt; hash;
-    
-    <span class="kw">bool</span> operator==(<span class="kw">const</span> InstanceKey&amp; other) <span class="kw">const</span>;
-    <span class="kw">bool</span> operator!=(<span class="kw">const</span> InstanceKey&amp; other) <span class="kw">const</span>;
-    
-    <span class="kw">struct</span> Hash {
-        size_t operator()(<span class="kw">const</span> InstanceKey&amp; key) <span class="kw">const</span>;
-    };
-    
-    std::<span class="kw">string</span> ToString() <span class="kw">const</span>;
-    <span class="kw">static</span> InstanceKey FromString(<span class="kw">const</span> std::<span class="kw">string</span>&amp; str);
-};</code></pre>
-
-<h5 id="codeclass-instancedetector-code"><code>class InstanceDetector</code></h5>
-
-<p>Detects instanceable prims.</p>
-<p><strong>Constructor</strong>: <code>InstanceDetector(Cache* cache)</code></p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>bool CanBeInstanced(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>InstanceKey ComputeInstanceKey(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>std::vector&lt;Path&gt; FindInstanceablePrims() const</code></li>
-<li><code>std::vector&lt;InstanceGroup&gt; FindInstanceGroups() const</code></li>
-<li><code>bool CanShareInstance(const PrimIndex&amp; index1, const PrimIndex&amp; index2) const</code></li>
-<li><code>void SetConfig(const Config&amp; config)</code></li>
-<li><code>const Config&amp; GetConfig() const</code></li>
-</ul>
-
-<p><strong>Config Structure</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> Config {
-    <span class="kw">bool</span> enable_aggressive_instancing = <span class="kw">false</span>;
-    <span class="kw">bool</span> ignore_local_overrides = <span class="kw">false</span>;
-    <span class="kw">bool</span> instance_across_variants = <span class="kw">false</span>;
-    size_t min_instance_count = 2;
-    size_t max_instance_depth = 10;
-};</code></pre>
-
-<p><strong>InstanceGroup Structure</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> InstanceGroup {
-    InstanceKey key;
-    std::<span class="kw">vector</span>&lt;Path&gt; prim_paths;
-    size_t estimated_memory_saved = 0;
-};</code></pre>
-
-<h5 id="codeclass-instancemanager-code"><code>class InstanceManager</code></h5>
-
-<p>Manages instance sharing and deduplication.</p>
-<p><strong>Constructor</strong>: <code>InstanceManager(Cache* cache)</code></p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>void RegisterPrimIndex(const Path&amp; path, const PrimIndex&amp; prim_index)</code></li>
-<li><code>const PrimIndex* GetMasterForInstance(const Path&amp; instance_path) const</code></li>
-<li><code>std::vector&lt;Path&gt; GetInstancesOfMaster(const Path&amp; master_path) const</code></li>
-<li><code>OptimizationResult OptimizeInstances()</code></li>
-<li><code>Statistics GetStatistics() const</code></li>
-<li><code>void Clear()</code></li>
-<li><code>void ClearInstance(const Path&amp; path)</code></li>
-</ul>
-
-<p><strong>OptimizationResult</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> OptimizationResult {
-    size_t instances_created = 0;
-    size_t instances_shared = 0;
-    size_t memory_saved_bytes = 0;
-    std::<span class="kw">vector</span>&lt;Path&gt; optimized_prims;
-};</code></pre>
-
-<p><strong>Statistics</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> Statistics {
-    size_t total_prims = 0;
-    size_t instanceable_prims = 0;
-    size_t unique_masters = 0;
-    size_t shared_instances = 0;
-    size_t memory_usage_bytes = 0;
-    size_t memory_saved_bytes = 0;
-};</code></pre>
-
-<h5 id="codeclass-instancecompositionoptimizer-code"><code>class InstanceCompositionOptimizer</code></h5>
-
-<p>Optimizes composition for instancing.</p>
-<p><strong>Constructor</strong>: <code>InstanceCompositionOptimizer(Cache* cache)</code></p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>std::vector&lt;CompositionOptimization&gt; SuggestOptimizations(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>bool ApplyOptimization(const CompositionOptimization&amp; optimization)</code></li>
-<li><code>void ReorderArcsForInstancing(PrimIndex&amp; prim_index)</code></li>
-<li><code>std::vector&lt;PrototypePattern&gt; DetectPrototypePatterns() const</code></li>
-<li><code>std::vector&lt;ReferenceRestructuring&gt; SuggestReferenceRestructuring() const</code></li>
-</ul>
-
-<h5 id="codeclass-instancekeybuilder-code"><code>class InstanceKeyBuilder</code></h5>
-
-<p>Builds instance keys with BLAKE3.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>void AddNode(const NodeRef&amp; node)</code></li>
-<li><code>void AddPath(const Path&amp; path)</code></li>
-<li><code>void AddString(const std::string&amp; str)</code></li>
-<li><code>void AddBytes(const void* data, size_t size)</code></li>
-<li><code>void AddLayerStack(const LayerStackPtr&amp; layer_stack)</code></li>
-<li><code>void AddMapFunction(const MapFunctionPtr&amp; map_func)</code></li>
-<li><code>void AddArcType(ArcType type)</code></li>
-<li><code>void AddVariantSelection(const std::string&amp; set_name, const std::string&amp; selection)</code></li>
-<li><code>InstanceKey Finalize()</code></li>
-<li><code>void Reset()</code></li>
-</ul>
-
-<h5 id="utility-functions">Utility Functions</h5>
-
-<pre><code class="language-cpp"><span class="kw">bool</span> IsInstancePath(<span class="kw">const</span> Path&amp; path);
-Path GetMasterPath(<span class="kw">const</span> Path&amp; instance_path);
-<span class="kw">bool</span> IsInstancingBeneficial(<span class="kw">const</span> std::<span class="kw">vector</span>&lt;Path&gt;&amp; candidate_paths, size_t threshold_bytes = 1024);
-size_t EstimateInstancingBenefit(<span class="kw">const</span> PrimIndex&amp; prim_index, size_t instance_count);
-
-<span class="kw">struct</span> CommonStructure {
-    std::<span class="kw">vector</span>&lt;Path&gt; common_children;
-    std::<span class="kw">vector</span>&lt;std::<span class="kw">string</span>&gt; common_properties;
-    std::<span class="kw">vector</span>&lt;Reference&gt; common_references;
-    <span class="kw">bool</span> has_common_structure = <span class="kw">false</span>;
+  uint64_t hash_lo{0}, hash_hi{0};
+  <span class="kw">bool</span> operator==(<span class="kw">const</span> InstanceKey &amp;) <span class="kw">const</span>;
+  <span class="kw">bool</span> operator!=(<span class="kw">const</span> InstanceKey &amp;) <span class="kw">const</span>;
+  <span class="kw">bool</span> is_valid() <span class="kw">const</span>;   // non-zero
 };
 
-CommonStructure FindCommonStructure(<span class="kw">const</span> std::<span class="kw">vector</span>&lt;PrimIndex&gt;&amp; prim_indexes);</code></pre>
+<span class="kw">struct</span> InstanceKeyHasher { size_t operator()(<span class="kw">const</span> InstanceKey &amp;) <span class="kw">const</span>; };
 
+// Returns an invalid key <span class="kw">if</span> the prim is not instanceable.
+InstanceKey ComputeInstanceKey(<span class="kw">const</span> PrimIndex &amp;index,
+                               <span class="kw">const</span> std::<span class="kw">vector</span>&lt;LayerStackEntry&gt; &amp;stacks,
+                               <span class="kw">const</span> std::<span class="kw">vector</span>&lt;std::<span class="kw">string</span>&gt; &amp;path_table);</code></pre>
+
+<p>&gt; The DAG engine&#39;s <code>InstanceKey</code> is distinct from the <code>Stage</code>/<code>PrimSpec</code>-level</p>
+<p>&gt; <code>tinyusdz::InstanceKey</code> in <code>src/core/instance-key.hh</code> used by</p>
+<p>&gt; <code>Stage::BuildInstancePrototypes()</code>. Both are 128-bit hashes of the same</p>
+<p>&gt; structural inputs (type name + composition arcs + variant selections); the</p>
+<p>&gt; core one uses SpookyHash. See <a href="composition.md#instancing">composition.md</a>.</p>
 <hr>
 
-<h3 id="module-pcp-diagnostics-pcp-diagnostics-hh">Module: pcp-diagnostics (pcp-diagnostics.hh)</h3>
-
-<p><strong>Purpose</strong>: Debugging and diagnostic tools for composition validation.</p>
-<h4 id="key-classes">Key Classes</h4>
-
-<h5 id="codeenum-class-diagnosticlevel-code"><code>enum class DiagnosticLevel</code></h5>
-
-<pre><code class="language-cpp"><span class="kw">enum</span> <span class="kw">class</span> DiagnosticLevel {
-    Error,
-    Warning,
-    Info,
-    Debug,
-    Trace
-};</code></pre>
-
-<h5 id="codestruct-diagnosticmessage-code"><code>struct DiagnosticMessage</code></h5>
-
-<pre><code class="language-cpp"><span class="kw">struct</span> DiagnosticMessage {
-    DiagnosticLevel level;
-    std::<span class="kw">string</span> category;
-    std::<span class="kw">string</span> message;
-    Path prim_path;
-    std::<span class="kw">string</span> source_location;  // File:line
-    std::chrono::steady_clock::time_point timestamp;
-    
-    std::<span class="kw">string</span> ToString() <span class="kw">const</span>;
-};</code></pre>
-
-<h5 id="codeclass-diagnosticcollector-code"><code>class DiagnosticCollector</code></h5>
-
-<p>Collects diagnostic information during composition.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>void SetLevel(DiagnosticLevel level)</code></li>
-<li><code>DiagnosticLevel GetLevel() const</code></li>
-<li><code>void EnableCategory(const std::string&amp; category)</code></li>
-<li><code>void DisableCategory(const std::string&amp; category)</code></li>
-<li><code>bool IsCategoryEnabled(const std::string&amp; category) const</code></li>
-<li><code>void AddMessage(const DiagnosticMessage&amp; msg)</code></li>
-<li><code>void AddError(const std::string&amp; message, const Path&amp; path = Path())</code></li>
-<li><code>void AddWarning(const std::string&amp; message, const Path&amp; path = Path())</code></li>
-<li><code>void AddInfo(const std::string&amp; message, const Path&amp; path = Path())</code></li>
-<li><code>void AddDebug(const std::string&amp; message, const Path&amp; path = Path())</code></li>
-<li><code>void AddTrace(const std::string&amp; message, const Path&amp; path = Path())</code></li>
-<li><code>const std::vector&lt;DiagnosticMessage&gt;&amp; GetMessages() const</code></li>
-<li><code>std::vector&lt;DiagnosticMessage&gt; GetMessagesByLevel(DiagnosticLevel level) const</code></li>
-<li><code>std::vector&lt;DiagnosticMessage&gt; GetMessagesByCategory(const std::string&amp; category) const</code></li>
-<li><code>std::vector&lt;DiagnosticMessage&gt; GetMessagesForPrim(const Path&amp; path) const</code></li>
-<li><code>void Clear()</code></li>
-<li><code>std::string GenerateReport() const</code></li>
-<li><code>std::string GenerateHTMLReport() const</code></li>
-<li><code>std::string GenerateJSONReport() const</code></li>
-</ul>
-
-<h5 id="codeclass-primindexvalidator-code"><code>class PrimIndexValidator</code></h5>
-
-<p>Validates prim indexes for correctness.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>ValidationResult Validate(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>ValidationResult ValidateStructure(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>ValidationResult ValidateArcs(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>ValidationResult ValidatePaths(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>ValidationResult ValidateMapFunctions(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>ValidationResult ValidateInstancing(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>bool HasCycles(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>bool HasDuplicateArcs(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>bool HasInvalidRelocations(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>bool HasConflictingOpinions(const PrimIndex&amp; prim_index) const</code></li>
-</ul>
-
-<p><strong>ValidationResult</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> ValidationResult {
-    <span class="kw">bool</span> is_valid = <span class="kw">true</span>;
-    std::<span class="kw">vector</span>&lt;std::<span class="kw">string</span>&gt; errors;
-    std::<span class="kw">vector</span>&lt;std::<span class="kw">string</span>&gt; warnings;
-    std::<span class="kw">vector</span>&lt;std::<span class="kw">string</span>&gt; infos;
-    
-    <span class="kw">void</span> AddError(<span class="kw">const</span> std::<span class="kw">string</span>&amp; error);
-    <span class="kw">void</span> AddWarning(<span class="kw">const</span> std::<span class="kw">string</span>&amp; warning);
-    std::<span class="kw">string</span> ToString() <span class="kw">const</span>;
-};</code></pre>
-
-<h5 id="codeclass-compositiondumper-code"><code>class CompositionDumper</code></h5>
-
-<p>Dumps composition details for debugging.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>std::string DumpPrimIndex(const PrimIndex&amp; prim_index, const DumpOptions&amp; options = DumpOptions()) const</code></li>
-<li><code>std::string DumpCompositionGraph(const PrimIndex&amp; prim_index, const DumpOptions&amp; options = DumpOptions()) const</code></li>
-<li><code>std::string DumpAsDot(const PrimIndex&amp; prim_index, const DumpOptions&amp; options = DumpOptions()) const</code></li>
-<li><code>std::string DumpCacheState(const Cache&amp; cache, const DumpOptions&amp; options = DumpOptions()) const</code></li>
-<li><code>std::string DumpLayerStack(const LayerStack&amp; layer_stack, const DumpOptions&amp; options = DumpOptions()) const</code></li>
-<li><code>void DumpToFile(const std::string&amp; filename, const PrimIndex&amp; prim_index, const DumpOptions&amp; options = DumpOptions()) const</code></li>
-</ul>
-
-<p><strong>DumpOptions</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> DumpOptions {
-    <span class="kw">bool</span> include_specs = <span class="kw">true</span>;
-    <span class="kw">bool</span> include_map_functions = <span class="kw">true</span>;
-    <span class="kw">bool</span> include_layer_stacks = <span class="kw">true</span>;
-    <span class="kw">bool</span> include_dependencies = <span class="kw">true</span>;
-    <span class="kw">bool</span> include_timings = <span class="kw">false</span>;
-    <span class="kw">bool</span> use_colors = <span class="kw">false</span>;
-    size_t max_depth = SIZE_MAX;
-    DiagnosticLevel detail_level = DiagnosticLevel::Info;
-};</code></pre>
-
-<h5 id="codeclass-compositiontracer-code"><code>class CompositionTracer</code></h5>
-
-<p>Traces composition evaluation.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>void SetEnabled(bool enabled)</code></li>
-<li><code>bool IsEnabled() const</code></li>
-<li><code>void TraceNodeEvaluation(const NodeRef&amp; node, const std::string&amp; phase)</code></li>
-<li><code>void TraceArcAddition(const Arc&amp; arc, const NodeRef&amp; parent, const NodeRef&amp; child)</code></li>
-<li><code>void TracePathTranslation(const Path&amp; source, const Path&amp; target, const MapFunctionPtr&amp; func)</code></li>
-<li><code>void TraceDependencyUpdate(const Path&amp; source, const Path&amp; dependent)</code></li>
-<li><code>void TraceInstanceDetection(const Path&amp; path, const InstanceKey&amp; key)</code></li>
-<li><code>void TraceTaskQueued(const CompositionTask&amp; task)</code></li>
-<li><code>void TraceTaskStarted(const CompositionTask&amp; task)</code></li>
-<li><code>void TraceTaskCompleted(const CompositionTask&amp; task, bool success)</code></li>
-<li><code>const std::vector&lt;TraceEvent&gt;&amp; GetEvents() const</code></li>
-<li><code>std::string ExportAsJSON() const</code></li>
-<li><code>std::string ExportAsChrome() const</code>  // Chrome tracing format</li>
-<li><code>void ExportToFile(const std::string&amp; filename) const</code></li>
-<li><code>void Clear()</code></li>
-</ul>
-
-<p><strong>TraceEvent</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> TraceEvent {
-    std::<span class="kw">string</span> type;
-    std::<span class="kw">string</span> description;
-    std::chrono::steady_clock::time_point timestamp;
-    std::chrono::microseconds duration;
-    std::unordered_map&lt;std::<span class="kw">string</span>, std::<span class="kw">string</span>&gt; metadata;
-};</code></pre>
-
-<h5 id="codeclass-complexityanalyzer-code"><code>class ComplexityAnalyzer</code></h5>
-
-<p>Analyzes composition complexity.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>ComplexityMetrics Analyze(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>std::vector&lt;HotSpot&gt; IdentifyHotSpots(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>std::vector&lt;Simplification&gt; SuggestSimplifications(const PrimIndex&amp; prim_index) const</code></li>
-</ul>
-
-<p><strong>ComplexityMetrics</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> ComplexityMetrics {
-    size_t num_nodes = 0;
-    size_t num_arcs = 0;
-    size_t graph_depth = 0;
-    size_t max_breadth = 0;
-    size_t num_references = 0;
-    size_t num_payloads = 0;
-    size_t num_inherits = 0;
-    size_t num_specializes = 0;
-    size_t num_variants = 0;
-    size_t num_relocations = 0;
-    size_t cyclomatic_complexity = 0;
-    <span class="kw">double</span> average_fanout = 0.0;
-    
-    std::<span class="kw">string</span> ToString() <span class="kw">const</span>;
-};</code></pre>
-
-<h5 id="utility-functions">Utility Functions</h5>
-
-<pre><code class="language-cpp">std::<span class="kw">string</span> PrettyPrintPrimIndex(<span class="kw">const</span> PrimIndex&amp; prim_index, size_t max_depth = SIZE_MAX);
-
-<span class="kw">struct</span> PrimIndexDiff {
-    std::<span class="kw">vector</span>&lt;std::<span class="kw">string</span>&gt; additions;
-    std::<span class="kw">vector</span>&lt;std::<span class="kw">string</span>&gt; deletions;
-    std::<span class="kw">vector</span>&lt;std::<span class="kw">string</span>&gt; modifications;
-    <span class="kw">bool</span> are_equivalent = <span class="kw">false</span>;
-};
-
-PrimIndexDiff ComparePrimIndexes(<span class="kw">const</span> PrimIndex&amp; index1, <span class="kw">const</span> PrimIndex&amp; index2);
-<span class="kw">bool</span> ValidateCompositionInvariants(<span class="kw">const</span> Cache&amp; cache);
-
-<span class="kw">struct</span> MemoryLeakReport {
-    size_t leaked_nodes = 0;
-    size_t leaked_arcs = 0;
-    size_t leaked_map_functions = 0;
-    std::<span class="kw">vector</span>&lt;Path&gt; suspicious_paths;
-};
-
-MemoryLeakReport CheckForMemoryLeaks(<span class="kw">const</span> Cache&amp; cache);</code></pre>
-
-<hr>
-
-<h3 id="module-pcp-debug-utils-pcp-debug-utils-hh">Module: pcp-debug-utils (pcp-debug-utils.hh)</h3>
-
-<p><strong>Purpose</strong>: Enhanced debugging, analysis, and visualization tools.</p>
-<h4 id="key-classes">Key Classes</h4>
-
-<h5 id="codeenum-class-debugformat-code"><code>enum class DebugFormat</code></h5>
-
-<pre><code class="language-cpp"><span class="kw">enum</span> <span class="kw">class</span> DebugFormat {
-    Text,
-    JSON,
-    HTML,
-    GraphViz,
-    CSV,
-    Markdown
-};</code></pre>
-
-<h5 id="codeclass-compositiondetaileddumper-code"><code>class CompositionDetailedDumper</code></h5>
-
-<p>Detailed composition dumping.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>std::string DumpDetailed(const PrimIndex&amp; prim_index, DebugFormat format = DebugFormat::Text) const</code></li>
-<li><code>std::string DumpArcGraph(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>std::string DumpStrengthOrdering(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>std::string DumpNodeOpinions(const NodeRef&amp; node, size<em>t max</em>opinions = 10) const</code></li>
-<li><code>std::string DumpDependencies(const Cache&amp; cache, const Path&amp; prim_path) const</code></li>
-<li><code>std::string DumpArcDetails(const Arc&amp; arc, const NodeRef&amp; parent_node) const</code></li>
-<li><code>std::string DumpComparison(const PrimIndex&amp; index1, const PrimIndex&amp; index2) const</code></li>
-<li><code>std::string DumpPerformanceMetrics(const CompositionMetrics&amp; metrics) const</code></li>
-</ul>
-
-<h5 id="codeclass-pcpverifier-code"><code>class PCPVerifier</code></h5>
-
-<p>Comprehensive PCP verification.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>VerificationReport VerifyCache(const Cache&amp; cache) const</code></li>
-<li><code>VerificationReport VerifyPrimIndex(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>IssueReport FindCommonIssues(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>std::vector&lt;FixSuggestion&gt; SuggestFixes(const VerificationReport&amp; report, const PrimIndex&amp; prim_index) const</code></li>
-</ul>
-
-<p><strong>VerificationReport</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> VerificationReport {
-    <span class="kw">bool</span> is_valid = <span class="kw">true</span>;
-    std::<span class="kw">vector</span>&lt;std::<span class="kw">string</span>&gt; errors;
-    std::<span class="kw">vector</span>&lt;std::<span class="kw">string</span>&gt; warnings;
-    std::<span class="kw">vector</span>&lt;std::<span class="kw">string</span>&gt; info;
-    
-    size_t total_issues() <span class="kw">const</span>;
-};</code></pre>
-
-<p><strong>IssueReport</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> IssueReport {
-    <span class="kw">bool</span> has_cycles = <span class="kw">false</span>;
-    <span class="kw">bool</span> has_invalid_relocations = <span class="kw">false</span>;
-    <span class="kw">bool</span> has_dead_code = <span class="kw">false</span>;
-    <span class="kw">bool</span> has_redundant_arcs = <span class="kw">false</span>;
-    <span class="kw">bool</span> has_infinite_loops = <span class="kw">false</span>;
-    
-    std::<span class="kw">vector</span>&lt;Path&gt; cyclic_paths;
-    std::<span class="kw">vector</span>&lt;Path&gt; dead_paths;
-    std::<span class="kw">vector</span>&lt;std::pair&lt;Arc, Arc&gt;&gt; redundant_arc_pairs;
-};</code></pre>
-
-<h5 id="codeclass-compositiondebugger-code"><code>class CompositionDebugger</code></h5>
-
-<p>Interactive composition debugger.</p>
-<p><strong>Constructor</strong>: <code>CompositionDebugger(Cache* cache)</code></p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>std::vector&lt;DebugStep&gt; RecordCompositionSteps(const Path&amp; prim_path)</code></li>
-<li><code>std::string GetStateAtStep(size<em>t step</em>number) const</code></li>
-<li><code>std::string TraceExecution(const Path&amp; prim_path) const</code></li>
-<li><code>std::string CompareWithOpenUSD(const PrimIndex&amp; tinyusdz<em>index, const std::string&amp; openusd</em>dump) const</code></li>
-</ul>
-
-<p><strong>DebugStep</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> DebugStep {
-    size_t step_number = 0;
-    std::<span class="kw">string</span> operation;
-    NodeRef affected_node;
-    std::<span class="kw">string</span> state_before;
-    std::<span class="kw">string</span> state_after;
-};</code></pre>
-
-<h5 id="codeclass-compositionstatistics-code"><code>class CompositionStatistics</code></h5>
-
-<p>Statistical analysis of composition.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>CacheStats AnalyzeCache(const Cache&amp; cache) const</code></li>
-<li><code>std::vector&lt;CompositionPattern&gt; FindPatterns(const Cache&amp; cache) const</code></li>
-<li><code>std::string GenerateStatisticsReport(const Cache&amp; cache) const</code></li>
-<li><code>std::string ExportAsCSV(const Cache&amp; cache) const</code></li>
-<li><code>std::string ExportAsJSON(const Cache&amp; cache) const</code></li>
-</ul>
-
-<p><strong>CacheStats</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> CacheStats {
-    size_t total_cached_prims = 0;
-    size_t total_cached_layers = 0;
-    size_t avg_nodes_per_index = 0;
-    size_t max_depth = 0;
-    size_t avg_arc_count = 0;
-    <span class="kw">double</span> cache_hit_rate = 0.0;
-    size_t total_memory_bytes = 0;
-};</code></pre>
-
-<h5 id="codeclass-compositionvisualizer-code"><code>class CompositionVisualizer</code></h5>
-
-<p>Visualization helpers.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>std::string GenerateTreeView(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>std::string GenerateASCIIDiagram(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>std::string GenerateColoredDotGraph(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>std::string GenerateSVGSpec(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>std::string GenerateInteractiveHTML(const PrimIndex&amp; prim_index) const</code></li>
-</ul>
-
-<h5 id="codeclass-memoryanalyzer-code"><code>class MemoryAnalyzer</code></h5>
-
-<p>Memory analysis for compositions.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>MemoryLayout AnalyzeMemoryUsage(const PrimIndex&amp; prim_index) const</code></li>
-<li><code>std::vector&lt;MemoryHotSpot&gt; FindMemoryHotspots(const Cache&amp; cache, size<em>t top</em>n = 10) const</code></li>
-<li><code>size<em>t EstimateMemoryForComposition(const Path&amp; prim</em>path, size<em>t estimated</em>node_count) const</code></li>
-<li><code>std::vector&lt;std::string&gt; SuggestMemoryOptimizations(const Cache&amp; cache) const</code></li>
-</ul>
-
-<p><strong>MemoryLayout</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> MemoryLayout {
-    size_t node_memory_bytes = 0;
-    size_t arc_memory_bytes = 0;
-    size_t map_function_memory_bytes = 0;
-    size_t cached_data_memory_bytes = 0;
-    size_t total_bytes = 0;
-};</code></pre>
-
-<h5 id="codeclass-compositionbenchmark-code"><code>class CompositionBenchmark</code></h5>
-
-<p>Benchmarking utilities.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>BenchmarkResult BenchmarkPrimIndexCreation(Cache* cache, const Path&amp; prim_path, int iterations = 100) const</code></li>
-<li><code>BenchmarkResult BenchmarkPathTranslation(const std::vector&lt;Path&gt;&amp; paths, const MapFunctionPtr&amp; map_func, int iterations = 100) const</code></li>
-<li><code>BenchmarkResult BenchmarkCacheOperations(Cache* cache, int iterations = 100) const</code></li>
-<li><code>BenchmarkResult BenchmarkComposition(Cache* cache, const std::vector&lt;Path&gt;&amp; prim_paths) const</code></li>
-<li><code>std::string CompareBenchmarks(const BenchmarkResult&amp; result1, const BenchmarkResult&amp; result2) const</code></li>
-</ul>
-
-<p><strong>BenchmarkResult</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> BenchmarkResult {
-    std::<span class="kw">string</span> test_name;
-    <span class="kw">double</span> time_ms = 0.0;
-    size_t operations = 0;
-    <span class="kw">double</span> ops_per_ms = 0.0;
-    size_t memory_bytes = 0;
-};</code></pre>
-
-<h5 id="utility-functions">Utility Functions</h5>
-
-<pre><code class="language-cpp">std::<span class="kw">string</span> QuickDump(<span class="kw">const</span> PrimIndex&amp; prim_index);
-std::<span class="kw">string</span> QuickDump(<span class="kw">const</span> Cache&amp; cache);
-std::<span class="kw">string</span> QuickDump(<span class="kw">const</span> NodeRef&amp; node);
-std::<span class="kw">string</span> QuickDump(<span class="kw">const</span> Arc&amp; arc);
-
-<span class="kw">bool</span> SaveDumpToFile(<span class="kw">const</span> std::<span class="kw">string</span>&amp; filename, <span class="kw">const</span> std::<span class="kw">string</span>&amp; content,
-                    DebugFormat format = DebugFormat::Text);
-
-std::<span class="kw">string</span> CompareDumps(<span class="kw">const</span> std::<span class="kw">string</span>&amp; dump1, <span class="kw">const</span> std::<span class="kw">string</span>&amp; dump2);</code></pre>
-
-<hr>
-
-<h3 id="module-pcp-performance-pcp-performance-hh">Module: pcp-performance (pcp-performance.hh)</h3>
-
-<p><strong>Purpose</strong>: Performance monitoring, profiling, and optimization.</p>
-<h4 id="key-classes">Key Classes</h4>
-
-<h5 id="codeclass-perftimer-code"><code>class PerfTimer</code></h5>
-
-<p>Simple performance timer.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>void Start()</code></li>
-<li><code>void Stop()</code></li>
-<li><code>void Reset()</code></li>
-<li><code>double GetElapsedSeconds() const</code></li>
-<li><code>double GetElapsedMilliseconds() const</code></li>
-<li><code>double GetElapsedMicroseconds() const</code></li>
-<li><code>bool IsRunning() const</code></li>
-</ul>
-
-<h5 id="codeclass-perfcounter-code"><code>class PerfCounter</code></h5>
-
-<p>Atomic performance counter.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>void Increment(size_t value = 1)</code></li>
-<li><code>void Decrement(size_t value = 1)</code></li>
-<li><code>void Reset()</code></li>
-<li><code>size_t Get() const</code></li>
-</ul>
-
-<h5 id="codestruct-compositionmetrics-code"><code>struct CompositionMetrics</code></h5>
-
-<p>Comprehensive composition performance metrics.</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> CompositionMetrics {
-    <span class="kw">double</span> total_time_ms = 0.0;
-    <span class="kw">double</span> prim_index_build_time_ms = 0.0;
-    <span class="kw">double</span> arc_evaluation_time_ms = 0.0;
-    <span class="kw">double</span> path_translation_time_ms = 0.0;
-    <span class="kw">double</span> instance_detection_time_ms = 0.0;
-    <span class="kw">double</span> dependency_update_time_ms = 0.0;
-    
-    size_t num_prim_indexes_built = 0;
-    size_t num_nodes_created = 0;
-    size_t num_arcs_evaluated = 0;
-    size_t num_paths_translated = 0;
-    size_t num_cache_hits = 0;
-    size_t num_cache_misses = 0;
-    
-    size_t memory_allocated_bytes = 0;
-    size_t memory_deallocated_bytes = 0;
-    size_t peak_memory_bytes = 0;
-    size_t current_memory_bytes = 0;
-    
-    size_t num_tasks_queued = 0;
-    size_t num_tasks_processed = 0;
-    size_t max_queue_depth = 0;
-    <span class="kw">double</span> average_task_time_ms = 0.0;
-    
-    std::<span class="kw">string</span> ToString() <span class="kw">const</span>;
-    std::<span class="kw">string</span> ToJSON() <span class="kw">const</span>;
-};</code></pre>
-
-<h5 id="codeclass-performancemonitor-code"><code>class PerformanceMonitor</code></h5>
-
-<p>Real-time performance monitoring.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>void SetEnabled(bool enabled)</code></li>
-<li><code>bool IsEnabled() const</code></li>
-<li><code>void StartSession(const std::string&amp; session_name = &quot;&quot;)</code></li>
-<li><code>void EndSession()</code></li>
-<li><code>void StartTimer(const std::string&amp; name)</code></li>
-<li><code>void StopTimer(const std::string&amp; name)</code></li>
-<li><code>double GetTimerValue(const std::string&amp; name) const</code></li>
-<li><code>void IncrementCounter(const std::string&amp; name, size_t value = 1)</code></li>
-<li><code>void DecrementCounter(const std::string&amp; name, size_t value = 1)</code></li>
-<li><code>size_t GetCounterValue(const std::string&amp; name) const</code></li>
-<li><code>void RecordAllocation(size_t bytes)</code></li>
-<li><code>void RecordDeallocation(size_t bytes)</code></li>
-<li><code>CompositionMetrics GetMetrics() const</code></li>
-<li><code>void ResetMetrics()</code></li>
-<li><code>std::string GenerateReport() const</code></li>
-<li><code>std::string GenerateDetailedReport() const</code></li>
-<li><code>void SaveReport(const std::string&amp; filename) const</code></li>
-</ul>
-
-<h5 id="codeclass-scopedtimer-code"><code>class ScopedTimer</code></h5>
-
-<p>RAII timer for automatic timing.</p>
-<p><strong>Constructor</strong>: <code>ScopedTimer(PerformanceMonitor* monitor, const std::string&amp; name)</code></p>
-<h5 id="codeclass-performanceprofiler-code"><code>class PerformanceProfiler</code></h5>
-
-<p>Hierarchical performance profiling.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>void StartProfiling()</code></li>
-<li><code>void StopProfiling()</code></li>
-<li><code>bool IsProfiling() const</code></li>
-<li><code>void PushSection(const std::string&amp; name)</code></li>
-<li><code>void PopSection()</code></li>
-<li><code>const ProfileNode* GetRootNode() const</code></li>
-<li><code>std::string GenerateFlatReport() const</code></li>
-<li><code>std::string GenerateHierarchicalReport() const</code></li>
-<li><code>std::string GenerateFlameGraph() const</code></li>
-<li><code>void ExportToChrome(const std::string&amp; filename) const</code></li>
-<li><code>void ExportToCallgrind(const std::string&amp; filename) const</code></li>
-<li><code>void Clear()</code></li>
-</ul>
-
-<p><strong>ProfileNode</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> ProfileNode {
-    std::<span class="kw">string</span> name;
-    <span class="kw">double</span> self_time_ms = 0.0;
-    <span class="kw">double</span> total_time_ms = 0.0;
-    size_t call_count = 0;
-    std::<span class="kw">vector</span>&lt;std::<span class="kw">unique_ptr</span>&lt;ProfileNode&gt;&gt; children;
-    
-    <span class="kw">double</span> GetAverageTime() <span class="kw">const</span>;
-};</code></pre>
-
-<h5 id="codeclass-scopedprofiler-code"><code>class ScopedProfiler</code></h5>
-
-<p>RAII profiler section.</p>
-<p><strong>Constructor</strong>: <code>ScopedProfiler(PerformanceProfiler* profiler, const std::string&amp; section)</code></p>
-<h5 id="codeclass-cacheperformanceanalyzer-code"><code>class CachePerformanceAnalyzer</code></h5>
-
-<p>Cache-specific performance analysis.</p>
-<p><strong>Constructor</strong>: <code>CachePerformanceAnalyzer(Cache* cache)</code></p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>CacheStatistics Analyze() const</code></li>
-<li><code>std::vector&lt;OptimizationSuggestion&gt; SuggestOptimizations() const</code></li>
-<li><code>void StartMonitoring(std::chrono::milliseconds interval)</code></li>
-<li><code>void StopMonitoring()</code></li>
-<li><code>TimeSeriesData GetTimeSeriesData() const</code></li>
-</ul>
-
-<p><strong>CacheStatistics</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> CacheStatistics {
-    <span class="kw">double</span> overall_hit_rate = 0.0;
-    <span class="kw">double</span> prim_index_hit_rate = 0.0;
-    <span class="kw">double</span> layer_stack_hit_rate = 0.0;
-    <span class="kw">double</span> path_translation_hit_rate = 0.0;
-    
-    size_t num_cached_prim_indexes = 0;
-    size_t num_cached_layer_stacks = 0;
-    size_t num_cached_translations = 0;
-    size_t total_cache_memory_bytes = 0;
-    
-    <span class="kw">double</span> average_lookup_time_ms = 0.0;
-    <span class="kw">double</span> average_insertion_time_ms = 0.0;
-    size_t num_evictions = 0;
-    size_t num_invalidations = 0;
-    
-    std::<span class="kw">string</span> ToString() <span class="kw">const</span>;
-};</code></pre>
-
-<h5 id="codeclass-compositionoptimizer-code"><code>class CompositionOptimizer</code></h5>
-
-<p>Composition optimization strategies.</p>
-<p><strong>Constructor</strong>: <code>CompositionOptimizer(Cache* cache)</code></p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>void SetStrategy(OptimizationStrategy strategy)</code></li>
-<li><code>OptimizationStrategy GetStrategy() const</code></li>
-<li><code>OptimizationResult OptimizeComposition(PrimIndex&amp; prim_index)</code></li>
-<li><code>void EnableParallelComposition(size<em>t num</em>threads = 0)</code></li>
-<li><code>void DisableParallelComposition()</code></li>
-<li><code>bool IsParallelEnabled() const</code></li>
-<li><code>void EnableBatching(size<em>t batch</em>size = 100)</code></li>
-<li><code>void DisableBatching()</code></li>
-<li><code>void ProcessBatch()</code></li>
-</ul>
-
-<p><strong>OptimizationStrategy</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">enum</span> <span class="kw">class</span> OptimizationStrategy {
-    None,
-    LazyEvaluation,
-    Parallelization,
-    Caching,
-    Instancing,
-    Batching
-};</code></pre>
-
-<h5 id="codeclass-memoryprofiler-code"><code>class MemoryProfiler</code></h5>
-
-<p>Memory allocation tracking.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>void TrackAllocation(void* ptr, size_t size, const std::string&amp; type = &quot;&quot;)</code></li>
-<li><code>void TrackDeallocation(void* ptr)</code></li>
-<li><code>MemoryStatistics GetStatistics() const</code></li>
-<li><code>std::vector&lt;LeakInfo&gt; DetectLeaks() const</code></li>
-<li><code>double GetFragmentationRatio() const</code></li>
-<li><code>void Clear()</code></li>
-</ul>
-
-<p><strong>MemoryStatistics</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> MemoryStatistics {
-    size_t current_usage_bytes = 0;
-    size_t peak_usage_bytes = 0;
-    size_t total_allocated_bytes = 0;
-    size_t total_deallocated_bytes = 0;
-    size_t num_allocations = 0;
-    size_t num_deallocations = 0;
-    
-    std::unordered_map&lt;std::<span class="kw">string</span>, size_t&gt; usage_by_type;
-    
-    std::<span class="kw">string</span> ToString() <span class="kw">const</span>;
-};</code></pre>
-
-<h5 id="utility-functions">Utility Functions</h5>
-
-<pre><code class="language-cpp">// Global performance instances
-PerformanceMonitor* GetGlobalPerformanceMonitor();
-PerformanceProfiler* GetGlobalPerformanceProfiler();
-
-// Convenience macros
-#define PCP_PROFILE(profiler, name) ScopedProfiler _prof(profiler, name)
-#define PCP_TIMER(monitor, name) ScopedTimer _timer(monitor, name)</code></pre>
-
-<hr>
-
-<h2 id="threading-module">THREADING MODULE</h2>
-
-<h3 id="module-pcp-threading-pcp-threading-hh">Module: pcp-threading (pcp-threading.hh)</h3>
-
-<p><strong>Purpose</strong>: Thread pool and parallel composition evaluation infrastructure.</p>
-<h4 id="key-classes">Key Classes</h4>
-
-<h5 id="codeclass-compositiontask-code"><code>class CompositionTask</code></h5>
-
-<p>Represents a composition task for parallel execution.</p>
-<pre><code class="language-cpp"><span class="kw">class</span> CompositionTask {
-<span class="kw">public</span>:
-    <span class="kw">enum</span> <span class="kw">class</span> State {
-        PENDING,
-        RUNNING,
-        COMPLETED,
-        FAILED,
-    };
-    
-    CompositionTask(<span class="kw">const</span> Path&amp; path, CompositionCallback callback);
-    
-    Path prim_path;
-    CompositionCallback callback;
-    std::atomic&lt;State&gt; state;
-    Error error;
-    <span class="kw">int</span> error_code;
-    std::<span class="kw">shared_ptr</span>&lt;PrimIndex&gt; result;
-};</code></pre>
-
-<h5 id="codeclass-workcounter-code"><code>class WorkCounter</code></h5>
-
-<p>Thread-safe work counter for synchronization.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>void Increment()</code></li>
-<li><code>void Decrement()</code></li>
-<li><code>void Wait(int target = 0)</code></li>
-<li><code>int Count() const</code></li>
-<li><code>void Reset(int value = 0)</code></li>
-</ul>
-
-<h5 id="codeclass-threadpool-code"><code>class ThreadPool</code></h5>
-
-<p>Thread pool for parallel composition.</p>
-<p><strong>Constructor</strong>: <code>ThreadPool(size<em>t num</em>threads = 0)</code> (0 = auto-detect)</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>bool SubmitTask(std::shared_ptr&lt;CompositionTask&gt; task)</code></li>
-<li><code>size<em>t SubmitTasks(const std::vector&lt;std::shared</em>ptr&lt;CompositionTask&gt;&gt;&amp; tasks)</code></li>
-<li><code>void WaitAll()</code></li>
-<li><code>void WaitUntil(size_t count)</code></li>
-<li><code>size_t PendingTaskCount() const</code></li>
-<li><code>size_t CompletedTaskCount() const</code></li>
-<li><code>size_t ThreadCount() const</code></li>
-<li><code>void SetEnabled(bool enabled)</code></li>
-<li><code>bool IsEnabled() const</code></li>
-<li><code>void Shutdown()</code></li>
-</ul>
-
-<h5 id="codetemplate-lt-typename-keytype-typename-valuetype-gt-class-threadsafecache-code"><code>template&lt;typename KeyType, typename ValueType&gt; class ThreadSafeCache</code></h5>
-
-<p>Thread-safe cache wrapper for parallel access.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>bool Get(const KeyType&amp; key, ValueType&amp; value)</code></li>
-<li><code>void Put(const KeyType&amp; key, const ValueType&amp; value)</code></li>
-<li><code>bool Remove(const KeyType&amp; key)</code></li>
-<li><code>void Clear()</code></li>
-<li><code>size_t Size() const</code></li>
-<li><code>bool Contains(const KeyType&amp; key) const</code></li>
-</ul>
-
-<h5 id="codeclass-parallelcompositionevaluator-code"><code>class ParallelCompositionEvaluator</code></h5>
-
-<p>Parallel composition evaluation.</p>
-<p><strong>Constructor</strong>: <code>ParallelCompositionEvaluator(Cache* cache, size<em>t num</em>threads = 0)</code></p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>std::vector&lt;EvaluationResult&gt; EvaluateParallel(const std::vector&lt;Path&gt;&amp; prim_paths, const ComputePrimIndexOptions&amp; options)</code></li>
-<li><code>ThreadPool* GetThreadPool()</code></li>
-</ul>
-
-<p><strong>EvaluationResult</strong>:</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> EvaluationResult {
-    Path path;
-    std::<span class="kw">shared_ptr</span>&lt;PrimIndex&gt; prim_index;
-    std::<span class="kw">vector</span>&lt;Error&gt; errors;
+<h2 id="deferredpayloadinfo">DeferredPayloadInfo</h2>
+
+<p>Context retained for a payload skipped during initial composition so it can be</p>
+<p>loaded later:</p>
+<pre><code class="language-cpp"><span class="kw">struct</span> DeferredPayloadInfo {
+  Path prim_path;       // prim that owns the payload arc
+  Payload payload;      // the payload descriptor
+  uint16_t node_idx;    // node index in the PrimIndex
+  std::<span class="kw">string</span> current_working_path;            // resolver context at discovery
+  std::<span class="kw">vector</span>&lt;std::<span class="kw">string</span>&gt; asset_search_paths;
 };</code></pre>
 
 <hr>
 
-<h2 id="time-based-composition-module">TIME-BASED COMPOSITION MODULE</h2>
+<h2 id="compositiongraphoptions">CompositionGraphOptions</h2>
 
-<h3 id="module-pcp-timesample-pcp-timesample-hh">Module: pcp-timesample (pcp-timesample.hh)</h3>
+<pre><code class="language-cpp"><span class="kw">struct</span> CompositionGraphOptions {
+  // Return <span class="kw">true</span> to load a payload, <span class="kw">false</span> to defer. nullptr =&gt; load eagerly.
+  std::function&lt;<span class="kw">bool</span>(<span class="kw">const</span> Path &amp;prim_path, <span class="kw">const</span> Payload &amp;payload)&gt; payload_policy;
 
-<p><strong>Purpose</strong>: Animation timeline support for time-sampled composition evaluation.</p>
-<h4 id="key-types">Key Types</h4>
-
-<h5 id="codeusing-timecode-double-code"><code>using TimeCode = double</code></h5>
-
-<p>Time in seconds.</p>
-<h5 id="codeenum-class-interpolationmode-code"><code>enum class InterpolationMode</code></h5>
-
-<pre><code class="language-cpp"><span class="kw">enum</span> <span class="kw">class</span> InterpolationMode {
-    LINEAR,      // Linear interpolation between keyframes
-    STEP,        // Step function (no interpolation)
-    CUBIC,       // Cubic spline interpolation
-    BEZIER,      // Bezier curve interpolation
-    CONSTANT,    // Hold value until next keyframe
+  uint32_t max_depth{256};        // recursion limit
+  <span class="kw">bool</span> detect_instances{<span class="kw">true</span>};    // instancing detection during composition
+  std::unordered_map&lt;std::<span class="kw">string</span>, FileFormatHandler&gt; fileformats;
+  size_t max_memory_mb{16384};
+  <span class="kw">bool</span> error_when_asset_not_found{<span class="kw">false</span>};
+  <span class="kw">bool</span> error_when_unsupported_fileformat{<span class="kw">false</span>};
 };</code></pre>
-
-<h4 id="key-structures">Key Structures</h4>
-
-<h5 id="codestruct-timesample-code"><code>struct TimeSample</code></h5>
-
-<p>Single time sample in a composition timeline.</p>
-<pre><code class="language-cpp"><span class="kw">struct</span> TimeSample {
-    TimeCode time;
-    std::<span class="kw">shared_ptr</span>&lt;PrimIndex&gt; composition;
-    InterpolationMode interpolation;
-    <span class="kw">float</span> interpolation_parameter;  // 0.0 to 1.0 <span class="kw">for</span> curve shape
-};</code></pre>
-
-<h4 id="key-classes">Key Classes</h4>
-
-<h5 id="codeclass-animationtimeline-code"><code>class AnimationTimeline</code></h5>
-
-<p>Animation timeline for a single prim.</p>
-<p><strong>Constructor</strong>: <code>AnimationTimeline(const Path&amp; prim_path)</code></p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>void AddKeyframe(TimeCode time, std::shared_ptr&lt;PrimIndex&gt; composition, InterpolationMode interpolation = InterpolationMode::LINEAR)</code></li>
-<li><code>bool EvaluateAt(TimeCode time, std::shared_ptr&lt;PrimIndex&gt;&amp; composition)</code></li>
-<li><code>std::shared<em>ptr&lt;PrimIndex&gt; GetAt(TimeCode time, bool use</em>cache = true)</code></li>
-<li><code>std::vector&lt;TimeCode&gt; GetKeyframeTimes() const</code></li>
-<li><code>std::shared<em>ptr&lt;TimeSample&gt; GetKeyframeAt(size</em>t index) const</code></li>
-<li><code>size_t GetKeyframeCount() const</code></li>
-<li><code>bool GetTimeRange(TimeCode&amp; start<em>time, TimeCode&amp; end</em>time) const</code></li>
-<li><code>bool IsTimeInRange(TimeCode time) const</code></li>
-<li><code>void Clear()</code></li>
-<li><code>const Path&amp; GetPrimPath() const</code></li>
-</ul>
-
-<h5 id="codeclass-compositiontimeline-code"><code>class CompositionTimeline</code></h5>
-
-<p>Timeline management for entire composition.</p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>void AddTimeline(const Path&amp; prim<em>path, std::shared</em>ptr&lt;AnimationTimeline&gt; timeline)</code></li>
-<li><code>std::shared<em>ptr&lt;AnimationTimeline&gt; GetTimeline(const Path&amp; prim</em>path) const</code></li>
-<li><code>bool EvaluateFrame(TimeCode time, std::shared_ptr&lt;PrimIndex&gt;&amp; frame)</code></li>
-<li><code>bool GetTimeRange(TimeCode&amp; start<em>time, TimeCode&amp; end</em>time) const</code></li>
-<li><code>size_t GetTimelineCount() const</code></li>
-<li><code>std::vector&lt;Path&gt; GetAnimatedPrims() const</code></li>
-<li><code>bool HasAnimation(const Path&amp; prim_path) const</code></li>
-<li><code>void Clear()</code></li>
-<li><code>void SetFramesPerSecond(double fps)</code></li>
-<li><code>TimeCode FrameToTime(int frame_number) const</code></li>
-<li><code>int TimeToFrame(TimeCode time) const</code></li>
-</ul>
-
-<h5 id="codeclass-timebasedcompositionevaluator-code"><code>class TimeBasedCompositionEvaluator</code></h5>
-
-<p>Time-aware composition evaluation.</p>
-<p><strong>Constructor</strong>: <code>TimeBasedCompositionEvaluator(Cache* cache)</code></p>
-<p><strong>Methods</strong>:</p>
-<ul>
-<li><code>std::shared<em>ptr&lt;PrimIndex&gt; EvaluateAtTime(const Path&amp; prim</em>path, TimeCode time, std::vector&lt;Error&gt;* errors = nullptr)</code></li>
-<li><code>CompositionTimeline* GetTimeline()</code></li>
-<li><code>std::vector&lt;std::pair&lt;TimeCode, std::shared<em>ptr&lt;PrimIndex&gt;&gt;&gt; EvaluateSequence(const Path&amp; prim</em>path, TimeCode start<em>time, TimeCode end</em>time, TimeCode frame_step)</code></li>
-<li><code>void CacheCompositionAt(TimeCode time, std::shared_ptr&lt;PrimIndex&gt; composition)</code></li>
-</ul>
 
 <hr>
 
-<h2 id="usage-patterns">USAGE PATTERNS</h2>
+<h2 id="compositiongraph">CompositionGraph</h2>
 
-<h3 id="pattern-1-basic-cache-and-composition">Pattern 1: Basic Cache and Composition</h3>
+<p>The top-level engine. Move-only (it owns the layers loaded during composition).</p>
+<pre><code class="language-cpp"><span class="kw">class</span> CompositionGraph {
+ <span class="kw">public</span>:
+  // Compose a scene from a root layer (sublayers should already be composed).
+  <span class="kw">static</span> nonstd::expected&lt;CompositionGraph, std::<span class="kw">string</span>&gt; Compose(
+      AssetResolutionResolver &amp;resolver, <span class="kw">const</span> Layer &amp;root_layer,
+      <span class="kw">const</span> CompositionGraphOptions &amp;options = {});
 
-<pre><code class="language-cpp">#include &quot;pcp-cache.hh&quot;
-#include &quot;pcp-prim-index.hh&quot;
+  // -- Query --
+  <span class="kw">const</span> PrimIndex *GetPrimIndex(<span class="kw">const</span> Path &amp;prim_path) <span class="kw">const</span>;   // nullptr <span class="kw">if</span> absent
+  std::<span class="kw">vector</span>&lt;Path&gt; GetAllPrimPaths() <span class="kw">const</span>;
+  size_t GetPrototypeCount() <span class="kw">const</span>;
+  std::<span class="kw">vector</span>&lt;Path&gt; GetInstancesForPrototype(size_t prototype_idx) <span class="kw">const</span>;
+  <span class="kw">const</span> PrimIndex *GetPrototypePrimIndex(size_t prototype_idx) <span class="kw">const</span>;
 
-using namespace tinyusdz::tydra::pcp;
+  // -- Lazy payloads --
+  nonstd::expected&lt;<span class="kw">bool</span>, std::<span class="kw">string</span>&gt; LoadPayload(
+      <span class="kw">const</span> Path &amp;prim_path, AssetResolutionResolver &amp;resolver);
+  nonstd::expected&lt;<span class="kw">bool</span>, std::<span class="kw">string</span>&gt; UnloadPayload(<span class="kw">const</span> Path &amp;prim_path);
+  std::<span class="kw">vector</span>&lt;Path&gt; GetDeferredPayloadPaths() <span class="kw">const</span>;
+  <span class="kw">bool</span> HasDeferredPayload(<span class="kw">const</span> Path &amp;prim_path) <span class="kw">const</span>;
 
-// Create cache with root layer
-CacheConfig config;
-config.root_layer = my_root_layer;
-config.usd_mode = <span class="kw">true</span>;
-<span class="kw">auto</span> cache = std::make_unique&lt;Cache&gt;(config);
+  // -- Stage construction --
+  // Lowers the DAG back to a Stage via composition-reconstruct.cc; result is
+  // structurally identical to the CompositeAllArcs + LayerToStage pipeline.
+  <span class="kw">bool</span> BuildStage(Stage *stage, std::<span class="kw">string</span> *warn, std::<span class="kw">string</span> *err) <span class="kw">const</span>;
 
-// Compute prim index
-Path prim_path(&quot;/Model/Geometry/Mesh&quot;);
-std::<span class="kw">vector</span>&lt;Error&gt; errors;
-<span class="kw">auto</span> prim_index = cache-&gt;ComputePrimIndex(prim_path, {}, &amp;errors);
+  // -- Diagnostics --
+  size_t EstimateMemoryUsage() <span class="kw">const</span>;
+  std::<span class="kw">string</span> DumpToString() <span class="kw">const</span>;
+};</code></pre>
 
-<span class="kw">if</span> (prim_index) {
-    // Access composition graph
-    <span class="kw">auto</span> root_node = prim_index-&gt;GetRootNode();
-    <span class="kw">auto</span> nodes = prim_index-&gt;GetGraph().GetNodesInStrengthOrder();
-    
-    // Iterate through nodes in strength order
-    <span class="kw">for</span> (<span class="kw">const</span> <span class="kw">auto</span>&amp; node : nodes) {
-        <span class="kw">auto</span> site = node.GetSite();
-        <span class="kw">auto</span> arc_type = node.GetArcType();
-    }
-}</code></pre>
+<p><code>Compose()</code> expects the <strong>L</strong> phase (sublayers) to already be flattened into</p>
+<p><code>root_layer</code>; use <code>CompositeSublayers()</code> from <code>src/composition.hh</code> first.</p>
+<hr>
 
-<h3 id="pattern-2-path-translation">Pattern 2: Path Translation</h3>
+<h2 id="primindexbuilder-internal">PrimIndexBuilder (internal)</h2>
 
-<pre><code class="language-cpp">#include &quot;pcp-path-translation.hh&quot;
+<p><code>CompositionGraph::Compose()</code> builds each <code>PrimIndex</code> with an internal</p>
+<p><code>PrimIndexBuilder</code> driven by a <code>std::priority_queue&lt;CompositionTask&gt;</code>:</p>
+<pre><code class="language-cpp"><span class="kw">struct</span> CompositionTask {
+  TaskType type{TaskType::EvalRootNode};
+  uint16_t node_idx;     // node that spawned this task
+  uint8_t  list_op_idx;  // ListOp index
+  uint8_t  item_idx;     // item within ListOp
+  <span class="kw">bool</span> operator&lt;(<span class="kw">const</span> CompositionTask &amp;) <span class="kw">const</span>;  // lower TaskType = higher prio
+};</code></pre>
 
-using namespace tinyusdz::tydra::pcp;
+<p>The builder scans a <code>PrimSpec</code>&#39;s metadata for arcs (<code>ScanArcsAndEnqueueTasks</code>),</p>
+<p>enqueues <code>Eval*</code> tasks, and processes them in <code>TaskType</code> order. It tracks two</p>
+<p>cycle-detection sets — <code>(layer<em>id, prim</em>path)</code> pairs for references/payloads and</p>
+<p>per-path sets for inherits/specializes — collects variant opinions across</p>
+<p>phases, then computes the strength order and culls inert nodes. This is the</p>
+<p>DAG-engine analogue of the phase-by-phase flow in <code>CompositeAllArcs()</code>.</p>
+<hr>
 
-PathTranslator translator(cache.get());
+<h2 id="usage">Usage</h2>
 
-// Translate path through composition arcs
-Path source_path(&quot;/Geom/Mesh&quot;);
-Path target_path = translator.TranslatePathFromNodeToNode(
-    source_path,
-    source_node,
-    target_node);
+<pre><code class="language-cpp">#include &quot;composition-graph.hh&quot;
+#include &quot;composition.hh&quot;   // <span class="kw">for</span> CompositeSublayers
 
-// Find all target paths <span class="kw">for</span> a source
-<span class="kw">auto</span> targets = translator.FindAllTargetPaths(source_path, prim_index);
-<span class="kw">for</span> (<span class="kw">const</span> <span class="kw">auto</span>&amp; target : targets) {
-    printf(&quot;Path: %s at strength %f\n&quot;,
-           target.path.full_path_name().c_str(),
-           target.strength);
-}</code></pre>
+using namespace tinyusdz;
 
-<h3 id="pattern-3-change-detection-and-processing">Pattern 3: Change Detection and Processing</h3>
+// 1) Flatten sublayers (L) into the root layer first.
+Layer root = /* loaded + CompositeSublayers(...) */;
 
-<pre><code class="language-cpp">#include &quot;pcp-changes.hh&quot;
+// 2) Build the DAG.
+CompositionGraphOptions opts;
+opts.detect_instances = <span class="kw">true</span>;
+<span class="kw">auto</span> result = CompositionGraph::Compose(resolver, root, opts);
+<span class="kw">if</span> (!result) { /* result.error() */ }
 
-using namespace tinyusdz::tydra::pcp;
+CompositionGraph graph = std::move(*result);
 
-ChangeList changes;
-changes.AddPrimChange(
-    Path(&quot;/Model&quot;),
-    &quot;root.usda&quot;,
-    ChangeType::ReferenceAdded);
-
-ChangeProcessor processor(cache.get());
-<span class="kw">auto</span> result = processor.ProcessChanges(changes);
-
-// Handle affected prims
-<span class="kw">for</span> (<span class="kw">const</span> <span class="kw">auto</span>&amp; prim_path : result.prims_to_recompose) {
-    // Invalidate and recompute
-    cache-&gt;InvalidatePrimIndex(prim_path);
-    cache-&gt;ComputePrimIndex(prim_path, {}, nullptr);
-}</code></pre>
-
-<h3 id="pattern-4-instance-detection-and-optimization">Pattern 4: Instance Detection and Optimization</h3>
-
-<pre><code class="language-cpp">#include &quot;pcp-instancing.hh&quot;
-
-using namespace tinyusdz::tydra::pcp;
-
-InstanceDetector detector(cache.get());
-
-// Find all instanceable prims
-<span class="kw">auto</span> instanceable = detector.FindInstanceablePrims();
-printf(&quot;Found %zu instanceable prims\n&quot;, instanceable.size());
-
-// Find instance groups
-<span class="kw">auto</span> groups = detector.FindInstanceGroups();
-<span class="kw">for</span> (<span class="kw">const</span> <span class="kw">auto</span>&amp; group : groups) {
-    printf(&quot;Instance group with %zu prims saves %zu bytes\n&quot;,
-           group.prim_paths.size(),
-           group.estimated_memory_saved);
+// 3) Inspect a prim&#39;s composition graph.
+<span class="kw">if</span> (<span class="kw">const</span> PrimIndex *idx = graph.GetPrimIndex(Path(&quot;/Model/Geom&quot;))) {
+  <span class="kw">for</span> (uint16_t n : idx-&gt;GetStrengthOrder()) {
+    <span class="kw">const</span> composition_graph::CompNode &amp;node = idx-&gt;GetNode(n);
+    // node.arc_type, node.has_specs(), ...
+  }
 }
 
-// Optimize instances
-InstanceManager manager(cache.get());
-<span class="kw">auto</span> result = manager.OptimizeInstances();
-printf(&quot;Optimization saved %zu bytes\n&quot;, result.memory_saved_bytes);</code></pre>
+// 4) Lower to a Stage (reuses composition-reconstruct.cc).
+Stage stage;
+std::<span class="kw">string</span> warn, err;
+graph.BuildStage(&amp;stage, &amp;warn, &amp;err);</code></pre>
 
-<h3 id="pattern-5-diagnostics-and-validation">Pattern 5: Diagnostics and Validation</h3>
-
-<pre><code class="language-cpp">#include &quot;pcp-diagnostics.hh&quot;
-
-using namespace tinyusdz::tydra::pcp;
-
-// Validate composition
-PrimIndexValidator validator;
-<span class="kw">auto</span> validation = validator.Validate(prim_index);
-
-<span class="kw">if</span> (!validation.is_valid) {
-    printf(&quot;Validation failed:\n&quot;);
-    <span class="kw">for</span> (<span class="kw">const</span> <span class="kw">auto</span>&amp; error : validation.errors) {
-        printf(&quot;  ERROR: %s\n&quot;, error.c_str());
-    }
-}
-
-// Dump composition details
-CompositionDumper dumper;
-CompositionDumper::DumpOptions options;
-options.detail_level = DiagnosticLevel::Debug;
-std::<span class="kw">string</span> dump = dumper.DumpPrimIndex(prim_index, options);
-
-// Generate diagnostics report
-DiagnosticCollector collector;
-collector.SetLevel(DiagnosticLevel::Info);
-// ... composition operations add diagnostics ...
-std::<span class="kw">string</span> report = collector.GenerateReport();</code></pre>
-
-<h3 id="pattern-6-performance-monitoring">Pattern 6: Performance Monitoring</h3>
-
-<pre><code class="language-cpp">#include &quot;pcp-performance.hh&quot;
-
-using namespace tinyusdz::tydra::pcp;
-
-PerformanceMonitor monitor;
-monitor.SetEnabled(<span class="kw">true</span>);
-monitor.StartSession(&quot;composition&quot;);
-
-{
-    ScopedTimer timer(&amp;monitor, &quot;prim_index_computation&quot;);
-    <span class="kw">auto</span> prim_index = cache-&gt;ComputePrimIndex(prim_path, {}, nullptr);
-}
-
-monitor.EndSession();
-
-<span class="kw">auto</span> metrics = monitor.GetMetrics();
-printf(&quot;Composition took %.2f ms\n&quot;, metrics.total_time_ms);
-printf(&quot;Cache hits: %zu / %zu\n&quot;, metrics.num_cache_hits,
-       metrics.num_cache_hits + metrics.num_cache_misses);
-
-std::<span class="kw">string</span> report = monitor.GenerateReport();
-monitor.SaveReport(&quot;perf_report.txt&quot;);</code></pre>
-
-<h3 id="pattern-7-parallel-composition">Pattern 7: Parallel Composition</h3>
-
-<pre><code class="language-cpp">#include &quot;pcp-threading.hh&quot;
-
-using namespace tinyusdz::tydra::pcp;
-
-ParallelCompositionEvaluator evaluator(cache.get(), 4);
-
-std::<span class="kw">vector</span>&lt;Path&gt; prim_paths = {
-    Path(&quot;/Model/Geometry/Mesh1&quot;),
-    Path(&quot;/Model/Geometry/Mesh2&quot;),
-    Path(&quot;/Model/Geometry/Mesh3&quot;),
-};
-
-<span class="kw">auto</span> results = evaluator.EvaluateParallel(prim_paths, {});
-
-<span class="kw">for</span> (<span class="kw">const</span> <span class="kw">auto</span>&amp; result : results) {
-    <span class="kw">if</span> (result.prim_index) {
-        printf(&quot;Computed: %s\n&quot;, result.path.full_path_name().c_str());
-    } <span class="kw">else</span> {
-        printf(&quot;Failed: %s - %s\n&quot;, result.path.full_path_name().c_str(),
-               result.errors[0].message.c_str());
-    }
-}</code></pre>
-
-<h3 id="pattern-8-time-based-composition">Pattern 8: Time-Based Composition</h3>
-
-<pre><code class="language-cpp">#include &quot;pcp-timesample.hh&quot;
-
-using namespace tinyusdz::tydra::pcp;
-
-TimeBasedCompositionEvaluator time_evaluator(cache.get());
-<span class="kw">auto</span> timeline = time_evaluator.GetTimeline();
-timeline-&gt;SetFramesPerSecond(24.0);
-
-// Add keyframes
-<span class="kw">auto</span> anim_timeline = std::make_shared&lt;AnimationTimeline&gt;(Path(&quot;/Model&quot;));
-
-<span class="kw">for</span> (<span class="kw">int</span> frame = 0; frame &lt; 100; ++frame) {
-    <span class="kw">double</span> time = timeline-&gt;FrameToTime(frame);
-    <span class="kw">auto</span> prim_index = cache-&gt;ComputePrimIndex(Path(&quot;/Model&quot;), {}, nullptr);
-    anim_timeline-&gt;AddKeyframe(time, prim_index, InterpolationMode::LINEAR);
-}
-
-timeline-&gt;AddTimeline(Path(&quot;/Model&quot;), anim_timeline);
-
-// Evaluate at specific time
-<span class="kw">double</span> eval_time = 1.5;  // 1.5 seconds
-<span class="kw">auto</span> evaluated = time_evaluator.EvaluateAtTime(Path(&quot;/Model&quot;), eval_time, nullptr);
-
-// Evaluate animation sequence
-<span class="kw">auto</span> sequence = time_evaluator.EvaluateSequence(
-    Path(&quot;/Model&quot;),
-    0.0,      // start time
-    4.0,      // end time
-    1.0/24.0  // frame step
-);</code></pre>
-
-<h3 id="pattern-9-change-subscription">Pattern 9: Change Subscription</h3>
-
-<pre><code class="language-cpp">#include &quot;pcp-changes.hh&quot;
-
-using namespace tinyusdz::tydra::pcp;
-
-ChangeSubscriber subscriber;
-
-// Subscribe to changes on specific path
-<span class="kw">auto</span> sub_id = subscriber.Subscribe(
-    [](<span class="kw">const</span> ChangeList&amp; changes) {
-        printf(&quot;Changes detected on %zu prims\n&quot;, changes.GetSize());
-    },
-    Path(&quot;/Model&quot;));
-
-// Process changes
-ChangeList new_changes;
-new_changes.AddPrimChange(Path(&quot;/Model/Mesh&quot;), &quot;session.usda&quot;,
-                          ChangeType::PrimSpecAdded);
-subscriber.NotifyChanges(new_changes);
-
-// Batch notifications
-subscriber.BeginBatch();
-// ... add multiple changes ...
-subscriber.EndBatch();  // All batched changes notified together
-
-subscriber.Unsubscribe(sub_id);</code></pre>
-
-<h3 id="pattern-10-complexity-analysis">Pattern 10: Complexity Analysis</h3>
-
-<pre><code class="language-cpp">#include &quot;pcp-debug-utils.hh&quot;
-
-using namespace tinyusdz::tydra::pcp;
-
-CompositionStatistics stats;
-<span class="kw">auto</span> cache_stats = stats.AnalyzeCache(*cache);
-
-printf(&quot;Total cached prims: %zu\n&quot;, cache_stats.total_cached_prims);
-printf(&quot;Average nodes per index: %zu\n&quot;, cache_stats.avg_nodes_per_index);
-printf(&quot;Cache hit rate: %.1f%%\n&quot;, cache_stats.cache_hit_rate * 100);
-
-ComplexityAnalyzer analyzer;
-<span class="kw">auto</span> metrics = analyzer.Analyze(prim_index);
-
-printf(&quot;Composition complexity:\n&quot;);
-printf(&quot;  Nodes: %zu\n&quot;, metrics.num_nodes);
-printf(&quot;  Arcs: %zu\n&quot;, metrics.num_arcs);
-printf(&quot;  Depth: %zu\n&quot;, metrics.graph_depth);
-printf(&quot;  Cyclomatic complexity: %zu\n&quot;, metrics.cyclomatic_complexity);
-
-<span class="kw">auto</span> hotspots = analyzer.IdentifyHotSpots(prim_index);
-<span class="kw">for</span> (<span class="kw">const</span> <span class="kw">auto</span>&amp; spot : hotspots) {
-    printf(&quot;HotSpot: %s (%s, severity %zu)\n&quot;,
-           spot.path.full_path_name().c_str(),
-           spot.type.c_str(),
-           spot.severity);
+<p>Lazy payloads:</p>
+<pre><code class="language-cpp"><span class="kw">for</span> (<span class="kw">const</span> Path &amp;p : graph.GetDeferredPayloadPaths()) {
+  graph.LoadPayload(p, resolver);   // recomposes the affected prim
 }</code></pre>
 
 <hr>
 
-<h2 id="conclusion">Conclusion</h2>
+<h2 id="status">Status</h2>
 
-<p>This PCP API provides a comprehensive, well-structured system for USD composition pipeline evaluation. The modular design allows for:</p>
+<p>The DAG engine is a parallel implementation alongside the default</p>
+<p>layer-flattening pipeline (see the header comment in <code>composition-graph.hh</code>).</p>
+<p><code>BuildStage()</code> is designed to produce a <code>Stage</code> structurally identical to the</p>
+<p><code>CompositeAllArcs()</code> + <code>LayerToStage()</code> path. For the conceptual model, LIVRPS</p>
+<p>correctness analysis, instancing, and variants, see</p>
+<p><a href="composition.md">composition.md</a>.</p>
+<hr>
+
+<h2 id="references">References</h2>
+
 <ul>
-<li>Core composition computation with caching</li>
-<li>Change-driven incremental updates</li>
-<li>Performance profiling and optimization</li>
-<li>Parallel evaluation capabilities</li>
-<li>Time-based animation support</li>
-<li>Extensive debugging and validation tools</li>
+<li><code>src/composition-graph.hh</code> / <code>.cc</code> — this engine</li>
+<li><code>src/composition.hh</code> / <code>.cc</code> — default flattening pipeline</li>
+<li><code>src/composition-reconstruct.cc</code> — PrimSpec → Prim/Stage lowering</li>
+<li><code>src/core/instance-key.hh</code> — <code>Stage</code>-level <code>InstanceKey</code> (SpookyHash)</li>
+<li><code>src/namespace-mapping.hh</code> — <code>NamespaceMapping</code> prefix remapping</li>
+<li>AOUSD Core Spec v1.0.1, Section 10 (Composition), Section 11.3.3 (Instancing)</li>
 </ul>
 
-<p>All modules are production-ready and thoroughly tested against OpenUSD compatibility requirements.</p>
-<h2 id="copyright">Copyright</h2>
-
-<p>2025 - Present, Light Transport Entertainment Inc.</p>
     </main>
     <footer>
         <p>Generated with PCP API Documentation Tool</p>
