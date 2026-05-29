@@ -908,6 +908,38 @@ private:
         fields_.push_back(f);
       }
 
+      // doc
+      if (!layer.meta().doc.empty()) {
+        CrateField f;
+        f.token_index.value = InternToken("doc");
+        uint32_t str_idx = InternString(layer.meta().doc);
+        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // comment
+      if (!layer.meta().comment.empty()) {
+        CrateField f;
+        f.token_index.value = InternToken("comment");
+        uint32_t str_idx = InternString(layer.meta().comment);
+        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // subLayers
+      if (!layer.meta().subLayers.empty()) {
+        // Store first sub-layer path as a string for now
+        std::string sub_path = layer.meta().subLayers[0];
+        CrateField f;
+        f.token_index.value = InternToken("subLayers");
+        uint32_t str_idx = InternString(sub_path);
+        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
       uint32_t fs_idx = static_cast<uint32_t>(fieldsets_.size());
       fieldsets_.push_back(std::move(fieldset));
 
@@ -1005,14 +1037,18 @@ private:
         f.token_index.value = InternToken(prop_name);
         f.value_rep = EncodeValue(*val);
 
-        // Add variability flag if uniform
-        if (slot.flags & PropSlot::kFlagUniform) {
-          // Uniform flag stored as separate field in real USDC
-          // For now just mark the value rep
-        }
-
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
+
+        // Add variability field after the property if uniform
+        if (slot.flags & PropSlot::kFlagUniform) {
+          CrateField vf;
+          vf.token_index.value = InternToken("variability");
+          // Variability: 0=Varying(default), 1=Uniform, 2=Config
+          vf.value_rep = ValueRep::Make(CrateTypeId::Variability, 1, false, true);
+          fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+          fields_.push_back(vf);
+        }
       }
 
       // Time samples: write as TimeSamples field (pxrUSD indirection format)
@@ -1125,14 +1161,38 @@ private:
 
       // Add metadata as flat fields (matching reader behavior)
       if (!prim.meta().references.empty()) {
-        // Write as a single string for simplicity
-        add_string_field("references", prim.meta().references[0]);
+        std::string ref_str = prim.meta().references[0];
+        for (size_t ri = 1; ri < prim.meta().references.size(); ri++) {
+          ref_str += "; " + prim.meta().references[ri];
+        }
+        add_string_field("references", ref_str);
       }
       if (!prim.meta().payloads.empty()) {
-        add_string_field("payload", prim.meta().payloads[0]);
+        std::string payload_str = prim.meta().payloads[0];
+        for (size_t pi = 1; pi < prim.meta().payloads.size(); pi++) {
+          payload_str += "; " + prim.meta().payloads[pi];
+        }
+        add_string_field("payload", payload_str);
+      }
+      if (!prim.meta().inherits.empty()) {
+        add_string_field("inherits", prim.meta().inherits[0]);
+      }
+      if (!prim.meta().specializes.empty()) {
+        add_string_field("specializes", prim.meta().specializes[0]);
+      }
+      if (!prim.meta().comment.empty()) {
+        add_string_field("comment", prim.meta().comment);
       }
       if (!prim.meta().variantSelection.empty()) {
         add_string_field("variantSelection", prim.meta().variantSelection);
+      }
+      if (!prim.meta().variantSets.empty()) {
+        std::string vs_str;
+        for (size_t vsi = 0; vsi < prim.meta().variantSets.size(); vsi++) {
+          if (vsi > 0) vs_str += ",";
+          vs_str += prim.meta().variantSets[vsi].name;
+        }
+        add_string_field("variantSets", vs_str);
       }
 
       // Record fieldset
