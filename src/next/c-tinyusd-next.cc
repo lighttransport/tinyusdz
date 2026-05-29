@@ -672,9 +672,12 @@ size_t tinyusdz_next_prim_get_relationship_names(
   if (!prim || !prim->prim || !out_ptr) return 0;
   auto names = prim->prim->GetRelationshipNames();
   if (names.empty()) return 0;
-  static thread_local const char* tls_rn_buf[256];
-  static thread_local std::string tls_rn_strs[256];
-  size_t count = names.size() > 256 ? 256 : names.size();
+  // Cap matches tinyusdz_next_prim_get_property_names (512). Names beyond the
+  // cap are truncated; the returned pointers alias thread_local storage and are
+  // valid only until the next call on this thread (see header contract).
+  static thread_local const char* tls_rn_buf[512];
+  static thread_local std::string tls_rn_strs[512];
+  size_t count = names.size() > 512 ? 512 : names.size();
   for (size_t i = 0; i < count; ++i) {
     tls_rn_strs[i] = std::move(names[i]);
     tls_rn_buf[i] = tls_rn_strs[i].c_str();

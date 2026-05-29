@@ -928,14 +928,11 @@ private:
         fields_.push_back(f);
       }
 
-      // subLayers
+      // subLayers (token[] — all entries round-trip; the reader reads them back)
       if (!layer.meta().subLayers.empty()) {
-        // Store first sub-layer path as a string for now
-        std::string sub_path = layer.meta().subLayers[0];
         CrateField f;
         f.token_index.value = InternToken("subLayers");
-        uint32_t str_idx = InternString(sub_path);
-        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
+        f.value_rep = EncodeValue(Value::MakeTokenArray(layer.meta().subLayers));
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
@@ -1080,21 +1077,24 @@ private:
           uint64_t times_block_idx = value_data_.size();
           value_data_.push_back({TypeId::Double, std::move(times_data)});
 
-          // 2. Build each sample value block via EncodeValue
-          std::vector<uint64_t> sample_block_indices(num_samples);
+          // 2. Encode each sample value to a FULL ValueRep. We keep the whole
+          //    rep (not just the payload): inlined reps (small scalars, tokens,
+          //    strings) carry their value/index in the payload and are written
+          //    verbatim; non-inlined reps carry a value_data_ block index that
+          //    WriteValueSection/_PatchTimeSamplesBlock later patches to an
+          //    absolute file offset. This preserves type_id, is_array,
+          //    is_inlined and is_compressed for each sample.
+          std::vector<ValueRep> sample_reps(num_samples);
           ti = 0;
           for (const auto& [time, val_offset] : *samples) {
+            (void)time;
             const Value* ts_val = prim.time_sample_value(val_offset);
             if (ts_val) {
-              ValueRep val_rep = EncodeValue(*ts_val);
-              sample_block_indices[ti] = val_rep.payload(); // block index
+              sample_reps[ti] = EncodeValue(*ts_val);
             } else {
-              // ValueBlock — store a zero ValueBlock ValueRep
-              std::vector<uint8_t> vb(8);
-              uint64_t zero = 0;
-              std::memcpy(vb.data(), &zero, 8);
-              sample_block_indices[ti] = value_data_.size();
-              value_data_.push_back({TypeId::Invalid, std::move(vb)});
+              // ValueBlock sentinel: an inlined rep with no value_data_ block
+              // (_PatchTimeSamplesBlock skips inlined reps).
+              sample_reps[ti] = ValueRep::Make(CrateTypeId::ValueBlock, 0, false, true);
             }
             ti++;
           }
@@ -1121,15 +1121,11 @@ private:
           // num_values
           std::memcpy(header_data.data() + hp, &num_samples, 8); hp += 8;
 
-          // Sample ValueReps (placeholders with block indices)
+          // Sample ValueReps written verbatim. Non-inlined reps (payload =
+          // value_data_ block index) are patched to absolute file offsets by
+          // _PatchTimeSamplesBlock; inlined reps are left untouched.
           for (size_t si = 0; si < num_samples; si++) {
-            // Determine type — try to get it from the value data blocks
-            CrateTypeId val_type = CrateTypeId::ValueBlock;
-            if (sample_block_indices[si] < value_data_.size()) {
-              val_type = ToCrateTypeId(value_data_[sample_block_indices[si]].type);
-            }
-            uint64_t vr = ValueRep::Make(val_type, sample_block_indices[si],
-                                          false, false).raw();
+            uint64_t vr = sample_reps[si].raw();
             std::memcpy(header_data.data() + hp, &vr, 8); hp += 8;
           }
 
@@ -1159,27 +1155,24 @@ private:
         fields_.push_back(f);
       };
 
-      // Add metadata as flat fields (matching reader behavior)
-      if (!prim.meta().references.empty()) {
-        std::string ref_str = prim.meta().references[0];
-        for (size_t ri = 1; ri < prim.meta().references.size(); ri++) {
-          ref_str += "; " + prim.meta().references[ri];
-        }
-        add_string_field("references", ref_str);
-      }
-      if (!prim.meta().payloads.empty()) {
-        std::string payload_str = prim.meta().payloads[0];
-        for (size_t pi = 1; pi < prim.meta().payloads.size(); pi++) {
-          payload_str += "; " + prim.meta().payloads[pi];
-        }
-        add_string_field("payload", payload_str);
-      }
-      if (!prim.meta().inherits.empty()) {
-        add_string_field("inherits", prim.meta().inherits[0]);
-      }
-      if (!prim.meta().specializes.empty()) {
-        add_string_field("specializes", prim.meta().specializes[0]);
-      }
+      // Write a list of strings as a token[] array field. Each element is a
+      // separate token, so the reader reconstructs the full list — no lossy
+      // separator joining and no first-element-only truncation.
+      auto add_token_array_field = [&](const std::string& name,
+                                       const std::vector<std::string>& values) {
+        if (values.empty()) return;
+        CrateField f;
+        f.token_index.value = InternToken(name);
+        f.value_rep = EncodeValue(Value::MakeTokenArray(values));
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      };
+
+      // Composition arcs + list metadata as token[] fields (full round-trip).
+      add_token_array_field("references", prim.meta().references);
+      add_token_array_field("payload", prim.meta().payloads);
+      add_token_array_field("inherits", prim.meta().inherits);
+      add_token_array_field("specializes", prim.meta().specializes);
       if (!prim.meta().comment.empty()) {
         add_string_field("comment", prim.meta().comment);
       }
@@ -1187,12 +1180,10 @@ private:
         add_string_field("variantSelection", prim.meta().variantSelection);
       }
       if (!prim.meta().variantSets.empty()) {
-        std::string vs_str;
-        for (size_t vsi = 0; vsi < prim.meta().variantSets.size(); vsi++) {
-          if (vsi > 0) vs_str += ",";
-          vs_str += prim.meta().variantSets[vsi].name;
-        }
-        add_string_field("variantSets", vs_str);
+        std::vector<std::string> vs_names;
+        vs_names.reserve(prim.meta().variantSets.size());
+        for (const auto& vs : prim.meta().variantSets) vs_names.push_back(vs.name);
+        add_token_array_field("variantSets", vs_names);
       }
 
       // Record fieldset
@@ -1245,25 +1236,28 @@ private:
       }
     }
 
+    // Build parent-path -> ordered child name tokens in a single O(P) pass,
+    // replacing the previous O(P^2) per-prim child scan. Children are appended
+    // in prim-iteration order, matching the prior ordering (and prim names are
+    // already interned via path interning, so token indices are unchanged).
+    std::unordered_map<std::string, std::vector<uint32_t>> parent_children;
+    for (const auto& prim : layer.prims()) {
+      const std::string& p = prim.path().str();
+      if (p.empty() || p == "/") continue;
+      size_t slash = p.rfind('/');
+      if (slash == std::string::npos) continue;
+      std::string parent = (slash == 0) ? "/" : p.substr(0, slash);
+      parent_children[parent].push_back(InternToken(prim.name()));
+    }
+
     // Add primChildren to non-root prims that have children
     for (const auto& prim : layer.prims()) {
       const std::string& prim_path = prim.path().str();
       if (prim_path.empty() || prim_path == "/") continue;
 
-      // Build full path with trailing slash for prefix matching
-      std::string prefix = prim_path;
-      if (prefix.back() != '/') prefix += '/';
-
-      std::vector<uint32_t> child_tokens;
-      for (const auto& other : layer.prims()) {
-        const std::string& other_path = other.path().str();
-        // Child has path starting with parent path + "/" and no further "/"
-        if (other_path.size() > prefix.size() &&
-            other_path.compare(0, prefix.size(), prefix) == 0 &&
-            other_path.find('/', prefix.size()) == std::string::npos) {
-          child_tokens.push_back(InternToken(other.name()));
-        }
-      }
+      auto cit = parent_children.find(prim_path);
+      if (cit == parent_children.end()) continue;
+      const std::vector<uint32_t>& child_tokens = cit->second;
 
       if (!child_tokens.empty()) {
         std::vector<uint8_t> raw(8 + child_tokens.size() * 4);
@@ -1310,6 +1304,9 @@ private:
   void WriteTokensSection() {
     // Build uncompressed token data: concatenated null-terminated strings
     std::vector<uint8_t> raw;
+    size_t total = 0;
+    for (const auto& token : tokens_) total += token.size() + 1;
+    raw.reserve(total);  // avoid incremental reallocations
     for (const auto& token : tokens_) {
       raw.insert(raw.end(), token.begin(), token.end());
       raw.push_back(0);  // null terminator
