@@ -667,6 +667,22 @@ size_t tinyusdz_next_prim_get_property_names(
   return count;
 }
 
+size_t tinyusdz_next_prim_get_relationship_names(
+    const TinyUSDZNextPrim* prim, const char*** out_ptr) {
+  if (!prim || !prim->prim || !out_ptr) return 0;
+  auto names = prim->prim->GetRelationshipNames();
+  if (names.empty()) return 0;
+  static thread_local const char* tls_rn_buf[256];
+  static thread_local std::string tls_rn_strs[256];
+  size_t count = names.size() > 256 ? 256 : names.size();
+  for (size_t i = 0; i < count; ++i) {
+    tls_rn_strs[i] = std::move(names[i]);
+    tls_rn_buf[i] = tls_rn_strs[i].c_str();
+  }
+  *out_ptr = tls_rn_buf;
+  return count;
+}
+
 // ============================================================
 // Time sample evaluation
 // ============================================================
