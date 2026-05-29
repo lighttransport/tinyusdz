@@ -19,6 +19,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
+#include <limits>
 #include <unordered_set>
 
 //#include "external/fast_float/include/fast_float/bigint.h"
@@ -760,32 +762,48 @@ struct EMAssetResolutionResolver {
     return true;
   }
 
+  // Explicit zero-copy accessor: returns a typed_memory_view directly into the
+  // cached bytes. WARNING: the returned Uint8Array aliases WASM heap memory
+  // owned by this cache and becomes a dangling reference once the asset is
+  // evicted or deleted. Callers must consume it before any such mutation.
+  // Prefer the copying getAsset()/getAssetByUUID() unless you manage lifetime.
   emscripten::val getCacheDataAsMemoryView(const std::string &asset_name) const {
     if (!cache.count(asset_name)) {
       return emscripten::val::undefined();
     }
     const AssetCacheEntry &entry = cache.at(asset_name);
-    return emscripten::val(emscripten::typed_memory_view(entry.binary.size(), 
+    return emscripten::val(emscripten::typed_memory_view(entry.binary.size(),
                                                          reinterpret_cast<const uint8_t*>(entry.binary.data())));
   }
 
-  // Zero-copy method using raw pointers for direct Uint8Array access
+  // Zero-copy ingest using a raw WASM-heap pointer from JS. The caller is
+  // trusted to pass a valid [dataPtr, dataPtr+size) range inside the module's
+  // linear memory; full heap-bounds validation is not portable here, so this
+  // is the documented trust boundary. We still reject the obviously-invalid
+  // cases (null pointer, zero/absurd size) and copy the data into our own
+  // storage so the asset does not alias the caller's buffer afterwards.
   bool addFromRawPointer(const std::string &asset_name, uintptr_t dataPtr, size_t size) {
-    if (size == 0) {
+    // Cap to a generous-but-finite size to avoid a wild `size` triggering a
+    // huge read/allocation (1 GiB).
+    constexpr size_t kMaxRawAssetBytes = size_t(1) << 30;
+    if ((size == 0) || (size > kMaxRawAssetBytes)) {
       return false;
     }
-    
+    if (dataPtr == 0) {
+      return false;
+    }
+
     // Direct access to the data without copying during read
     const uint8_t* data = reinterpret_cast<const uint8_t*>(dataPtr);
-    
+
     // Only copy once into our storage format
     std::string binary;
     binary.reserve(size);
     binary.assign(reinterpret_cast<const char*>(data), size);
-    
+
     bool overwritten = has(asset_name);
     cache[asset_name] = AssetCacheEntry(std::move(binary));
-    
+
     return overwritten;
   }
 
@@ -4975,12 +4993,24 @@ class TinyUSDZLoaderNative {
     return em_resolver_.verifyHash(name, expected_hash);
   }
 
+  // Returns { name, data, sha256, uuid }. `data` is a JS-owned *copy* of the
+  // asset bytes. We intentionally copy rather than return a
+  // typed_memory_view into the cached std::string: such a view would dangle
+  // (use-after-free in JS) if the asset is later evicted or deleted. Callers
+  // that want a zero-copy view and that manage lifetime themselves can use
+  // getAssetCacheDataAsMemoryView().
   emscripten::val getAsset(const std::string &name) const {
     emscripten::val val = emscripten::val::object();
     if (em_resolver_.has(name)) {
       const AssetCacheEntry &entry = em_resolver_.get(name);
       val.set("name", name);
-      val.set("data", emscripten::typed_memory_view(entry.binary.size(), entry.binary.data()));
+      emscripten::val u8 =
+          emscripten::val::global("Uint8Array").new_(entry.binary.size());
+      u8.call<void>("set",
+                    emscripten::val(emscripten::typed_memory_view(
+                        entry.binary.size(),
+                        reinterpret_cast<const uint8_t *>(entry.binary.data()))));
+      val.set("data", u8);
       val.set("sha256", entry.sha256_hash);
       val.set("uuid", entry.uuid);
     }
@@ -5003,24 +5033,30 @@ class TinyUSDZLoaderNative {
     return em_resolver_.findAssetByUUID(uuid);
   }
 
-  // Get asset by UUID instead of name
+  // Get asset by UUID instead of name. Like getAsset(), `data` is a JS-owned
+  // *copy* to avoid a dangling view after eviction/deletion.
   emscripten::val getAssetByUUID(const std::string &uuid) const {
     emscripten::val val = emscripten::val::object();
-    
+
     if (!em_resolver_.hasByUUID(uuid)) {
       val.set("error", "Asset not found with UUID: " + uuid);
       return val;
     }
-    
+
     const AssetCacheEntry &entry = em_resolver_.getByUUID(uuid);
     const std::string name = em_resolver_.findAssetByUUID(uuid);
-    
+
     val.set("name", name);
-    val.set("data", emscripten::typed_memory_view(entry.binary.size(), 
-                                                   reinterpret_cast<const uint8_t*>(entry.binary.data())));
+    emscripten::val u8 =
+        emscripten::val::global("Uint8Array").new_(entry.binary.size());
+    u8.call<void>("set",
+                  emscripten::val(emscripten::typed_memory_view(
+                      entry.binary.size(),
+                      reinterpret_cast<const uint8_t *>(entry.binary.data()))));
+    val.set("data", u8);
     val.set("sha256", entry.sha256_hash);
     val.set("uuid", entry.uuid);
-    
+
     return val;
   }
 
@@ -5068,6 +5104,9 @@ class TinyUSDZLoaderNative {
     return em_resolver_.has(nameOrUuid) || em_resolver_.hasByUUID(nameOrUuid);
   }
 
+  // Explicit zero-copy view into the cached bytes. See the warning on
+  // EMAssetResolutionResolver::getCacheDataAsMemoryView(): the returned
+  // Uint8Array dangles after the asset is evicted/deleted. Prefer getAsset().
   emscripten::val getAssetCacheDataAsMemoryView(const std::string &name) const {
     return em_resolver_.getCacheDataAsMemoryView(name);
   }
@@ -6169,6 +6208,36 @@ void copyFromJSBuffer(const emscripten::val& data, std::vector<uint8_t>& buffer)
   heapView.call<void>("set", view);
 }
 
+/// Validate decoded image dimensions and compute the total component count
+/// (width * height * channels) with overflow checking. Image dimensions come
+/// from decoded (untrusted) headers, so this guards against integer overflow
+/// that could otherwise lead to under-allocation and out-of-bounds access.
+/// Note: on wasm32 `size_t` is 32-bit, so the fits-in-size_t check below also
+/// bounds the resulting allocation. Returns false (and leaves *out_count
+/// untouched) when the dimensions are non-positive, exceed sane limits, or the
+/// product does not fit in size_t.
+bool ComputeImageComponentCount(int width, int height, int channels,
+                                size_t* out_count) {
+  // Generous per-side limit; also keeps width*height comfortably within 64-bit.
+  constexpr int kMaxImageDim = 65536;
+  constexpr int kMaxImageChannels = 16;
+  if ((width <= 0) || (height <= 0) || (channels <= 0)) {
+    return false;
+  }
+  if ((width > kMaxImageDim) || (height > kMaxImageDim) ||
+      (channels > kMaxImageChannels)) {
+    return false;
+  }
+  const uint64_t total = uint64_t(uint32_t(width)) *
+                         uint64_t(uint32_t(height)) *
+                         uint64_t(uint32_t(channels));
+  if (total > uint64_t((std::numeric_limits<size_t>::max)())) {
+    return false;
+  }
+  (*out_count) = size_t(total);
+  return true;
+}
+
 }  // namespace
 
 #if defined(TINYUSDZ_WITH_EXR)
@@ -6214,7 +6283,14 @@ emscripten::val decodeEXR(const emscripten::val& data,
     return result;
   }
 
-  size_t pixelCount = size_t(width) * size_t(height) * 4;
+  size_t pixelCount = 0;
+  if (!ComputeImageComponentCount(width, height, 4, &pixelCount)) {
+    free(rgba);
+    result.set("success", false);
+    result.set("error",
+               std::string("EXR image dimensions are invalid or too large."));
+    return result;
+  }
 
   if (outputFormat == "float16") {
     // Convert to float16 and return as Uint16Array
@@ -6296,7 +6372,14 @@ emscripten::val decodeHDR(const emscripten::val& data,
 
   // Always output 4 channels (RGBA)
   const int outputChannels = 4;
-  size_t pixelCount = size_t(width) * size_t(height) * size_t(outputChannels);
+  size_t pixelCount = 0;
+  if (!ComputeImageComponentCount(width, height, outputChannels, &pixelCount)) {
+    stbi_image_free(floatData);
+    result.set("success", false);
+    result.set("error",
+               std::string("HDR image dimensions are invalid or too large."));
+    return result;
+  }
 
   if (outputFormat == "float32") {
     // Return as Float32Array
@@ -6374,7 +6457,14 @@ emscripten::val decodeImage(const emscripten::val& data,
   }
 
   const auto& img = loadResult.value().image;
-  size_t pixelCount = size_t(img.width) * size_t(img.height) * size_t(img.channels);
+  size_t pixelCount = 0;
+  if (!ComputeImageComponentCount(img.width, img.height, img.channels,
+                                  &pixelCount)) {
+    result.set("success", false);
+    result.set("error",
+               std::string("Decoded image dimensions are invalid or too large."));
+    return result;
+  }
   size_t dataSize = img.data.size();
 
   // Determine actual output format
@@ -6391,6 +6481,14 @@ emscripten::val decodeImage(const emscripten::val& data,
 
   // Handle float data
   if (img.format == tinyusdz::Image::PixelFormat::Float) {
+    // Guard the reinterpret/read against a buffer that is smaller than the
+    // reported dimensions imply (truncated/malformed image).
+    if (pixelCount > (dataSize / sizeof(float))) {
+      result.set("success", false);
+      result.set("error", std::string("Decoded float image buffer is smaller "
+                                       "than reported dimensions."));
+      return result;
+    }
     const float* srcData = reinterpret_cast<const float*>(img.data.data());
 
     if (actualFormat == "float16") {
@@ -6422,6 +6520,13 @@ emscripten::val decodeImage(const emscripten::val& data,
   }
   // Handle 16-bit integer data (e.g., 16-bit PNG)
   else if (img.bpp == 16) {
+    // Guard the reinterpret/read against a truncated/malformed buffer.
+    if (pixelCount > (dataSize / sizeof(uint16_t))) {
+      result.set("success", false);
+      result.set("error", std::string("Decoded 16-bit image buffer is smaller "
+                                       "than reported dimensions."));
+      return result;
+    }
     const uint16_t* srcData = reinterpret_cast<const uint16_t*>(img.data.data());
 
     // Return as Uint16Array (native format)

@@ -848,12 +848,17 @@ static bool TriangulateVertexAttribute(
 
     size_t num_vs = vattr.vertex_count();
     const size_t stride = vattr.stride_bytes();
-    const size_t total_size = triangulatedFaceVertexIndices.size() * stride;
+    size_t total_size;
+    if (!safe::mul(triangulatedFaceVertexIndices.size(), stride, &total_size)) {
+      PUSH_ERROR_AND_RETURN(
+          "Integer overflow: triangulatedFaceVertexIndices.size * stride.");
+    }
 
     std::vector<uint8_t> buf;
     buf.resize(total_size);  // Pre-allocate exact size
 
     const uint8_t* src_data = vattr.get_data().data();
+    const size_t src_size = vattr.get_data().size();
     uint8_t* dst_ptr = buf.data();
 
     for (uint32_t f = 0; f < triangulatedFaceVertexIndices.size(); f++) {
@@ -863,6 +868,13 @@ static bool TriangulateVertexAttribute(
       if (src_fvIdx >= num_vs) {
         PUSH_ERROR_AND_RETURN(
             fmt::format("triangulatedToOrigFaceVertexIndexMap[{}] {} exceeds num_vs {}.", f, src_fvIdx, num_vs));
+      }
+
+      // Guard the source read against a malformed/short backing buffer.
+      if (((size_t(src_fvIdx) * stride) + stride) > src_size) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Source read out of range in facevarying attribute remap at {}.",
+            f));
       }
 
       // Use memcpy instead of insert for better performance
@@ -885,21 +897,35 @@ static bool TriangulateVertexAttribute(
       total_triangles += triangulatedFaceCounts[f];
     }
     // Each triangle has 3 vertices
-    const size_t total_size = total_triangles * 3 * stride;
+    size_t total_verts;
+    size_t total_size;
+    if (!safe::mul(total_triangles, size_t(3), &total_verts) ||
+        !safe::mul(total_verts, stride, &total_size)) {
+      PUSH_ERROR_AND_RETURN("Integer overflow: total_triangles * 3 * stride.");
+    }
 
     std::vector<uint8_t> buf;
     buf.resize(total_size);
 
     const uint8_t* src_data = vattr.get_data().data();
+    const size_t src_size = vattr.get_data().size();
     uint8_t* dst_ptr = buf.data();
+
+    // Constant variability stores a single value (one element) that applies to
+    // every element, so the source is always read at offset 0. (The previous
+    // `src_data + f * stride` indexing read out of bounds for any mesh with
+    // more than one face, since the backing buffer holds just one element.)
+    if (src_size < stride) {
+      PUSH_ERROR_AND_RETURN(
+          "Constant attribute backing buffer is smaller than one element.");
+    }
 
     for (size_t f = 0; f < triangulatedFaceCounts.size(); f++) {
       uint32_t nf = triangulatedFaceCounts[f];
-      const uint8_t* face_data = src_data + f * stride;
 
       // copy `nf` triangles (each with 3 vertices)
-      for (size_t k = 0; k < nf * 3; k++) {
-        std::memcpy(dst_ptr, face_data, stride);
+      for (size_t k = 0; k < size_t(nf) * 3; k++) {
+        std::memcpy(dst_ptr, src_data, stride);
         dst_ptr += stride;
       }
     }
@@ -1515,6 +1541,14 @@ bool TriangulatePolygon(
       uint32_t idx1 = faceVertexIndices[faceIndexOffset + 1];
       uint32_t idx2 = faceVertexIndices[faceIndexOffset + 2];
       uint32_t idx3 = faceVertexIndices[faceIndexOffset + 3];
+
+      // Defense-in-depth: indices are expected to be pre-validated against
+      // points.size(), but guard here to avoid OOB on malformed input.
+      if ((idx0 >= points.size()) || (idx1 >= points.size()) ||
+          (idx2 >= points.size()) || (idx3 >= points.size())) {
+        err = fmt::format("Invalid vertex index at face {}.\n", i);
+        return false;
+      }
 
       const T &p0 = points[idx0];
       const T &p1 = points[idx1];
@@ -2711,10 +2745,11 @@ bool RenderSceneConverter::ConvertMesh(
             "faceVertexIndices[{}] contains negative index value {}.", i,
             indices[i]));
       }
-      if (size_t(indices[i]) > dst.points.size()) {
+      if (size_t(indices[i]) >= dst.points.size()) {
         PUSH_ERROR_AND_RETURN(
-            fmt::format("faceVertexIndices[{}] {} exceeds points.size {}.", i,
-                        indices[i], dst.points.size()));
+            fmt::format("faceVertexIndices[{}] {} is out of range. Must be less "
+                        "than points.size {}.",
+                        i, indices[i], dst.points.size()));
       }
       dst.usdFaceVertexIndices.push_back(uint32_t(indices[i]));
     }
