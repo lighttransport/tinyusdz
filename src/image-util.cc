@@ -36,6 +36,7 @@
 
 #include "image-util.hh"
 #include "value-types.hh"
+#include "safe-arithmetic.hh"
 #include "common-macros.inc"
 #include "tiny-format.hh"
 
@@ -381,7 +382,10 @@ bool linear_f32_to_srgb_8bit(const std::vector<float> &in_img, size_t width,
     }
   }
 
-  size_t dest_size = size_t(width) * size_t(height) * channel_stride;
+  size_t dest_size;
+  if (!safe::mul3(size_t(width), size_t(height), channel_stride, &dest_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channel_stride).");
+  }
   if (dest_size > in_img.size()) {
     PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", dest_size, in_img.size()));
   }
@@ -436,7 +440,10 @@ bool srgb_8bit_to_linear_f32(const std::vector<uint8_t> &in_img, size_t width,
     }
   }
 
-  size_t dest_size = size_t(width) * size_t(height) * channel_stride;
+  size_t dest_size;
+  if (!safe::mul3(size_t(width), size_t(height), channel_stride, &dest_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channel_stride).");
+  }
   if (dest_size > in_img.size()) {
     PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", dest_size, in_img.size()));
   }
@@ -493,7 +500,10 @@ bool srgb_f32_to_linear_f32(const std::vector<float> &in_img, size_t width,
     }
   }
 
-  size_t dest_size = size_t(width) * size_t(height) * channel_stride;
+  size_t dest_size;
+  if (!safe::mul3(size_t(width), size_t(height), channel_stride, &dest_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channel_stride).");
+  }
   if (dest_size > in_img.size()) {
     PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", dest_size, in_img.size()));
   }
@@ -551,7 +561,10 @@ bool srgb_8bit_to_linear_8bit(const std::vector<uint8_t> &in_img, size_t width,
     }
   }
 
-  size_t dest_size = size_t(width) * size_t(height) * channel_stride;
+  size_t dest_size;
+  if (!safe::mul3(size_t(width), size_t(height), channel_stride, &dest_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channel_stride).");
+  }
   if (dest_size > in_img.size()) {
     PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", dest_size, in_img.size()));
   }
@@ -604,7 +617,10 @@ bool u8_to_f32_image(const std::vector<uint8_t> &in_img, size_t width,
     PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
   }
 
-  size_t num_pixels = size_t(width) * size_t(height) * channels;
+  size_t num_pixels;
+  if (!safe::mul3(size_t(width), size_t(height), channels, &num_pixels)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channels).");
+  }
   if (num_pixels > in_img.size()) {
     PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", num_pixels, in_img.size()));
   }
@@ -638,7 +654,10 @@ bool f32_to_u8_image(const std::vector<float> &in_img, size_t width,
     PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
   }
 
-  size_t num_pixels = size_t(width) * size_t(height) * channels;
+  size_t num_pixels;
+  if (!safe::mul3(size_t(width), size_t(height), channels, &num_pixels)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channels).");
+  }
   if (num_pixels > in_img.size()) {
     PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", num_pixels, in_img.size()));
   }
@@ -677,8 +696,12 @@ bool linear_displayp3_to_linear_sRGB(const std::vector<float> &in_img, size_t wi
     PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
   }
 
-  if (in_img.size() != (width * height * channels)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", (width * height * channels), in_img.size()));
+  size_t expected_size;
+  if (!safe::mul3(width, height, channels, &expected_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channels).");
+  }
+  if (in_img.size() != expected_size) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", expected_size, in_img.size()));
   }
 
   out_img->resize(in_img.size());
@@ -767,8 +790,12 @@ bool linear_sRGB_to_linear_displayp3(const std::vector<float> &in_img, size_t wi
   }
 
 
-  if (in_img.size() != (width * height * channels)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", (width * height * channels), in_img.size()));
+  size_t expected_size;
+  if (!safe::mul3(width, height, channels, &expected_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channels).");
+  }
+  if (in_img.size() != expected_size) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", expected_size, in_img.size()));
   }
 
   out_img->resize(in_img.size());
@@ -855,8 +882,12 @@ bool linear_sRGB_to_ACEScg(const std::vector<float> &in_img, size_t width,
   }
 
 
-  if (in_img.size() != (width * height * channels)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", (width * height * channels), in_img.size()));
+  size_t expected_size;
+  if (!safe::mul3(width, height, channels, &expected_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channels).");
+  }
+  if (in_img.size() != expected_size) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", expected_size, in_img.size()));
   }
 
   out_img->resize(in_img.size());
@@ -946,8 +977,12 @@ bool ACEScg_to_linear_sRGB(const std::vector<float> &in_img, size_t width,
   }
 
 
-  if (in_img.size() != (width * height * channels)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", (width * height * channels), in_img.size()));
+  size_t expected_size;
+  if (!safe::mul3(width, height, channels, &expected_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channels).");
+  }
+  if (in_img.size() != expected_size) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", expected_size, in_img.size()));
   }
 
   out_img->resize(in_img.size());
@@ -1039,7 +1074,10 @@ bool displayp3_f16_to_linear_f32(const std::vector<value::half> &in_img, size_t 
     }
   }
 
-  size_t dest_size = size_t(width) * size_t(height) * channel_stride;
+  size_t dest_size;
+  if (!safe::mul3(size_t(width), size_t(height), channel_stride, &dest_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channel_stride).");
+  }
   if (dest_size > in_img.size()) {
     PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", dest_size, in_img.size()));
   }
@@ -1147,7 +1185,10 @@ bool rec2020_8bit_to_linear_f32(const std::vector<uint8_t> &in_img, size_t width
     width_byte_stride = width * channel_stride;
   }
 
-  size_t dest_size = size_t(width) * size_t(height) * channel_stride;
+  size_t dest_size;
+  if (!safe::mul3(size_t(width), size_t(height), channel_stride, &dest_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channel_stride).");
+  }
   if (dest_size > in_img.size()) {
     PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", dest_size, in_img.size()));
   }
@@ -1201,7 +1242,10 @@ bool linear_f32_to_rec2020_8bit(const std::vector<float> &in_img, size_t width,
     }
   }
 
-  size_t src_size = size_t(width) * size_t(height) * channel_stride;
+  size_t src_size;
+  if (!safe::mul3(size_t(width), size_t(height), channel_stride, &src_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channel_stride).");
+  }
   if (src_size > in_img.size()) {
     PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", src_size, in_img.size()));
   }
@@ -1247,8 +1291,12 @@ bool linear_rec2020_to_linear_sRGB(const std::vector<float> &in_img, size_t widt
     PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
   }
 
-  if (in_img.size() != (width * height * channels)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", (width * height * channels), in_img.size()));
+  size_t expected_size;
+  if (!safe::mul3(width, height, channels, &expected_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channels).");
+  }
+  if (in_img.size() != expected_size) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", expected_size, in_img.size()));
   }
 
   out_img->resize(in_img.size());
@@ -1333,8 +1381,12 @@ bool linear_sRGB_to_linear_rec2020(const std::vector<float> &in_img, size_t widt
     PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
   }
 
-  if (in_img.size() != (width * height * channels)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", (width * height * channels), in_img.size()));
+  size_t expected_size;
+  if (!safe::mul3(width, height, channels, &expected_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channels).");
+  }
+  if (in_img.size() != expected_size) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", expected_size, in_img.size()));
   }
 
   out_img->resize(in_img.size());
@@ -1416,7 +1468,10 @@ bool gamma22_f32_to_linear_f32(const std::vector<float> &in_img, size_t width,
     }
   }
 
-  size_t src_size = size_t(width) * size_t(height) * channel_stride;
+  size_t src_size;
+  if (!safe::mul3(size_t(width), size_t(height), channel_stride, &src_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channel_stride).");
+  }
   if (src_size > in_img.size()) {
     PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", src_size, in_img.size()));
   }
@@ -1473,7 +1528,10 @@ bool linear_f32_to_gamma22_f32(const std::vector<float> &in_img, size_t width,
     }
   }
 
-  size_t src_size = size_t(width) * size_t(height) * channel_stride;
+  size_t src_size;
+  if (!safe::mul3(size_t(width), size_t(height), channel_stride, &src_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channel_stride).");
+  }
   if (src_size > in_img.size()) {
     PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", src_size, in_img.size()));
   }
@@ -1530,7 +1588,10 @@ bool gamma18_f32_to_linear_f32(const std::vector<float> &in_img, size_t width,
     }
   }
 
-  size_t src_size = size_t(width) * size_t(height) * channel_stride;
+  size_t src_size;
+  if (!safe::mul3(size_t(width), size_t(height), channel_stride, &src_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channel_stride).");
+  }
   if (src_size > in_img.size()) {
     PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", src_size, in_img.size()));
   }
@@ -1587,7 +1648,10 @@ bool linear_f32_to_gamma18_f32(const std::vector<float> &in_img, size_t width,
     }
   }
 
-  size_t src_size = size_t(width) * size_t(height) * channel_stride;
+  size_t src_size;
+  if (!safe::mul3(size_t(width), size_t(height), channel_stride, &src_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channel_stride).");
+  }
   if (src_size > in_img.size()) {
     PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", src_size, in_img.size()));
   }
@@ -1638,8 +1702,12 @@ bool linear_sRGB_to_ACES2065_1(const std::vector<float> &in_img, size_t width,
     PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
   }
 
-  if (in_img.size() != (width * height * channels)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", (width * height * channels), in_img.size()));
+  size_t expected_size;
+  if (!safe::mul3(width, height, channels, &expected_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channels).");
+  }
+  if (in_img.size() != expected_size) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", expected_size, in_img.size()));
   }
 
   out_img->resize(in_img.size());
@@ -1711,8 +1779,12 @@ bool ACES2065_1_to_linear_sRGB(const std::vector<float> &in_img, size_t width,
     PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
   }
 
-  if (in_img.size() != (width * height * channels)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", (width * height * channels), in_img.size()));
+  size_t expected_size;
+  if (!safe::mul3(width, height, channels, &expected_size)) {
+    PUSH_ERROR_AND_RETURN("Image size overflow (width * height * channels).");
+  }
+  if (in_img.size() != expected_size) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", expected_size, in_img.size()));
   }
 
   out_img->resize(in_img.size());
