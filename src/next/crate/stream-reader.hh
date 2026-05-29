@@ -51,15 +51,22 @@ public:
 
   /// Skip bytes forward
   bool skip(size_t count) {
-    if (pos_ + count > size_) return false;
+    // Overflow-safe: pos_ <= size_ invariant holds, so size_ - pos_ is the
+    // exact remaining byte count and cannot wrap (unlike pos_ + count).
+    if (count > size_ - pos_) return false;
     pos_ += count;
     return true;
   }
 
   /// Align position to boundary
   bool align(size_t alignment) {
-    size_t aligned = (pos_ + alignment - 1) & ~(alignment - 1);
-    return seek(aligned);
+    if (alignment == 0) return false;
+    // Overflow-safe round-up: compute padding from the current offset and
+    // reject if it would pass end-of-buffer (pos_ + pad cannot wrap this way).
+    size_t rem = pos_ % alignment;
+    size_t pad = rem ? (alignment - rem) : 0;
+    if (pad > size_ - pos_) return false;
+    return seek(pos_ + pad);
   }
 
   // ============================================================
@@ -68,7 +75,7 @@ public:
 
   /// Read raw bytes into buffer
   bool read(void* dst, size_t count) {
-    if (pos_ + count > size_) return false;
+    if (count > size_ - pos_) return false;  // overflow-safe (pos_ <= size_)
     std::memcpy(dst, data_ + pos_, count);
     pos_ += count;
     return true;
@@ -76,7 +83,9 @@ public:
 
   /// Read raw bytes into vector
   bool read(std::vector<uint8_t>& dst, size_t count) {
-    if (pos_ + count > size_) return false;
+    // Check availability BEFORE resizing so a bogus count can't trigger a huge
+    // allocation; overflow-safe form (pos_ <= size_ invariant).
+    if (count > size_ - pos_) return false;
     dst.resize(count);
     std::memcpy(dst.data(), data_ + pos_, count);
     pos_ += count;
@@ -168,7 +177,7 @@ public:
 
   /// Read fixed-length string (may not be null-terminated)
   bool read_fixed_string(std::string& s, size_t len) {
-    if (pos_ + len > size_) return false;
+    if (len > size_ - pos_) return false;  // overflow-safe (pos_ <= size_)
     s.assign(reinterpret_cast<const char*>(data_ + pos_), len);
     pos_ += len;
     // Remove trailing nulls
@@ -182,26 +191,36 @@ public:
   // Array reading
   // ============================================================
 
+  /// True iff `count` elements of `elem_size` bytes are available from pos_,
+  /// computed without overflow (count * elem_size can wrap otherwise).
+  bool has_elements(size_t count, size_t elem_size) const {
+    return elem_size != 0 && count <= (size_ - pos_) / elem_size;
+  }
+
   /// Read array of uint32_t
   bool read_u32_array(std::vector<uint32_t>& arr, size_t count) {
+    if (!has_elements(count, sizeof(uint32_t))) return false;
     arr.resize(count);
     return read(arr.data(), count * sizeof(uint32_t));
   }
 
   /// Read array of int32_t
   bool read_i32_array(std::vector<int32_t>& arr, size_t count) {
+    if (!has_elements(count, sizeof(int32_t))) return false;
     arr.resize(count);
     return read(arr.data(), count * sizeof(int32_t));
   }
 
   /// Read array of float
   bool read_f32_array(std::vector<float>& arr, size_t count) {
+    if (!has_elements(count, sizeof(float))) return false;
     arr.resize(count);
     return read(arr.data(), count * sizeof(float));
   }
 
   /// Read array of double
   bool read_f64_array(std::vector<double>& arr, size_t count) {
+    if (!has_elements(count, sizeof(double))) return false;
     arr.resize(count);
     return read(arr.data(), count * sizeof(double));
   }

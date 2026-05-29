@@ -521,6 +521,9 @@ std::vector<std::string> PrimSpec::relationship_names() const {
   for (const auto& [name, _] : relationships_) {
     names.push_back(name);
   }
+  // relationships_ is an unordered_map; sort for a deterministic, stable order
+  // across runs/platforms (callers and tests rely on consistent ordering).
+  std::sort(names.begin(), names.end());
   return names;
 }
 
