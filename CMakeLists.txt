@@ -2095,6 +2095,15 @@ if(TINYUSDZ_BUILD_TESTS)
               --app "$<TARGET_FILE:tusdcat>"
               --basedir "${PROJECT_SOURCE_DIR}/tests/usda/validation"
       )
+
+    # Corpus-wide robustness regression: validate every parseable fixture in
+    # tests/usda and fail only if the validator crashes or hangs.
+    add_test(
+      NAME validation-regression-test
+      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/validation/run-validation-regression.py
+              --app "$<TARGET_FILE:tusdcat>"
+              --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
+      )
   endif()
 
   #

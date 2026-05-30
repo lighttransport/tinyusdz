@@ -40,6 +40,18 @@ The suite runs in CTest as `validation-suite-test`.
 python3 tests/usda/validation/run-validation-suite.py --app ./build/tusdcat
 ```
 
+## Corpus regression (robustness)
+
+`run-validation-regression.py` sweeps the validator across the **entire**
+`tests/usda` fixture corpus (450+ files, excluding `fail-case/`) and fails only
+if the validator crashes or hangs. It complements the curated suite above:
+the suite checks rule *correctness*, this checks the validator never segfaults or
+loops on real constructs. It runs in CTest as `validation-regression-test`.
+
+```bash
+python3 tests/usda/validation/run-validation-regression.py --app ./build/tusdcat
+```
+
 ## Rule groups
 
 `core` runs by default. `geom` and `shade` are opt-in (`--validate-all`, or
