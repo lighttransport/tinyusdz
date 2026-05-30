@@ -372,6 +372,10 @@ CMakeUserPresets.json
 # But keep test fixtures
 !tests/usda/*.usda
 !tests/usda/spec/*.usda
+!tests/usda/validation/valid/*.usda
+!tests/usda/validation/invalid/*.usda
+!tests/usda/validation/generated/*.usda
+!aousd/validation_*.usda
 # Test-generated runtime artifacts (roundtrip/runtime tests)
 tests/usdc/memory-budget-*-runtime.usdc
 tests/usdc/variant-*-runtime.usdc

@@ -1,0 +1,19 @@
+#usda 1.0
+# EXPECT: shade.material.bindingAPI
+(
+    doc = "material:binding authored without applying MaterialBindingAPI. Expect WARN shade.material.bindingAPI (shade group)."
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Mesh "geom"
+    {
+        # Relationship is well-formed, but MaterialBindingAPI is not applied.
+        rel material:binding = </World/mat>
+    }
+
+    def Material "mat"
+    {
+    }
+}
