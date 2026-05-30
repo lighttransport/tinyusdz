@@ -588,6 +588,7 @@ TEST_LIST = {
   { "usdz_convert_png_roundtrip_test", usdz_convert_png_roundtrip_test },
   { "usdz_convert_resize_test", usdz_convert_resize_test },
   { "usdz_convert_pack_channels_test", usdz_convert_pack_channels_test },
+  { "usdz_convert_fit_budget_test", usdz_convert_fit_budget_test },
   { "usdz_convert_pipeline_test", usdz_convert_pipeline_test },
   { "usdz_convert_repack_files_test", usdz_convert_repack_files_test },
   // Pretty-printer column wrap tests

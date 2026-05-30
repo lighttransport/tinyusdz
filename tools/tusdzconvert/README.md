@@ -52,6 +52,29 @@ tusdzconvert -repack <outputImage> -packR <src> [-packG <src> ...] [options]
 | `-pngEncoder <fpnge\|fpng>` | PNG encoder backend |
 | `-jpegQuality <1-100>` | JPEG quality (default 90) |
 | `-noReencode` | Copy unmodified textures through byte-for-byte |
+| `-targetTextureSize <size>` | Shrink all textures so their **total** fits `<size>` (e.g. `100MB`, `50mb`, `1048576`) |
+| `-fitStrategy <size\|quality>` | Lever to meet the budget: reduce dimensions (`size`) or transcode to JPEG + lower quality (`quality`) |
+| `-fitMinTextureSize <N>` | Smallest longest-edge allowed by the size search (default 64) |
+| `-fitMinQuality <1-100>` | Lowest JPEG quality allowed by the quality search (default 30) |
+
+### Fit textures to a size budget
+
+`-targetTextureSize` searches a single lever to make the **sum of all texture
+bytes** fit the given budget:
+
+```bash
+# Make all textures fit ~100 MB by reducing their dimensions (keeps PNG)
+tusdzconvert model.usd model.usdz -targetTextureSize 100MB -fitStrategy size
+
+# Fit ~25 MB by transcoding to JPEG and lowering quality (references rewritten)
+tusdzconvert model.usd model.usdz -targetTextureSize 25MB -fitStrategy quality
+
+# Combine: cap dimensions at 2048 first, then search JPEG quality to fit
+tusdzconvert model.usd model.usdz -targetTextureSize 25MB -fitStrategy quality -resizeTextures 2048
+```
+
+If the chosen lever cannot reach the budget at its floor (`-fitMinTextureSize` /
+`-fitMinQuality`), the floor is used (best effort) and a warning is printed.
 
 ### Repack mode
 
@@ -85,4 +108,7 @@ tusdzconvert in.usdz out.usdz -textureFormat png -pngEncoder fpnge
   merging them) is **not** performed in this version — repack is exposed as a
   standalone texture operation. Resize / re-encode / path-normalization in the
   conversion pipeline preserve the existing shader graph.
-- EXR/16-bit textures are passed through unchanged (no resize/transcode).
+- EXR/16-bit textures are passed through unchanged (no resize/transcode), and
+  are counted as fixed overhead against a `-targetTextureSize` budget.
+- `-targetTextureSize` budgets the **sum of texture bytes**; the final `.usdz`
+  is slightly larger (USDC layer + zip overhead).
