@@ -75,6 +75,7 @@ bool USDCReader::Impl::ReconstructPrim(const Specifier &spec, const crate::Crate
 
   prim::PrimReconstructOptions reconstruct_options;
   reconstruct_options.strict_allowedToken_check = _config.strict_allowedToken_check;
+  reconstruct_options.strict_shader_type_check = _config.strict_shader_type_check;
 
   if (!prim::ReconstructPrim<T>(spec, properties, refs, prim, &_warn, &_err, reconstruct_options)) {
     return false;

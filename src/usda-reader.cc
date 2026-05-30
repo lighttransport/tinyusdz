@@ -932,6 +932,7 @@ void USDAReader::Impl::buildReconstructOptions(
     const Path &full_path, prim::PrimReconstructOptions &options) {
   const int source_column_width = _config.error_detail ? (1024 * 1024) : 40;
   options.strict_allowedToken_check = _config.strict_allowedToken_check;
+  options.strict_shader_type_check = _config.strict_shader_type_check;
   // MaterialX validation options
   options.validate_mtlx_connection_types = _config.validate_mtlx_connection_types || _config.strict_mtlx_check;
   options.validate_mtlx_info_id = _config.validate_mtlx_info_id || _config.strict_mtlx_check;
