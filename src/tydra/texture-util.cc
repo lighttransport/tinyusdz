@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <climits>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -56,13 +57,54 @@ bool BuildOcclusionRoughnessMetallicTexture(
     size_t &dstHeight)	
 {
 	if (occlusionChannel >= occlusionImageChannels) {
+		dst.clear(); dstWidth = 0; dstHeight = 0;
 		return false;
 	}
 	if (roughnessChannel >= roughnessImageChannels) {
+		dst.clear(); dstWidth = 0; dstHeight = 0;
 		return false;
 	}
 	if (metallicChannel >= metallicImageChannels) {
+		dst.clear(); dstWidth = 0; dstHeight = 0;
 		return false;
+	}
+
+	// Validate channel counts (1-4 only, stbir limitation).
+	if (occlusionImageChannels < 1 || occlusionImageChannels > 4) {
+		dst.clear(); dstWidth = 0; dstHeight = 0;
+		return false;
+	}
+	if (roughnessImageChannels < 1 || roughnessImageChannels > 4) {
+		dst.clear(); dstWidth = 0; dstHeight = 0;
+		return false;
+	}
+	if (metallicImageChannels < 1 || metallicImageChannels > 4) {
+		dst.clear(); dstWidth = 0; dstHeight = 0;
+		return false;
+	}
+
+	// Validate source data buffer sizes.
+	auto validate_buf = [](const std::vector<uint8_t> &data, size_t w, size_t h, size_t ch) -> bool {
+		if (data.empty()) return true;
+		size_t expected;
+		if (!safe::mul3(w, h, ch, &expected)) return false;
+		return data.size() >= expected;
+	};
+	if (!validate_buf(occlusionImageData, occlusionImageWidth, occlusionImageHeight, occlusionImageChannels)) {
+		dst.clear(); dstWidth = 0; dstHeight = 0; return false;
+	}
+	if (!validate_buf(roughnessImageData, roughnessImageWidth, roughnessImageHeight, roughnessImageChannels)) {
+		dst.clear(); dstWidth = 0; dstHeight = 0; return false;
+	}
+	if (!validate_buf(metallicImageData, metallicImageWidth, metallicImageHeight, metallicImageChannels)) {
+		dst.clear(); dstWidth = 0; dstHeight = 0; return false;
+	}
+
+	// Validate positive dimensions for non-empty images.
+	if ((!occlusionImageData.empty() && (occlusionImageWidth == 0 || occlusionImageHeight == 0)) ||
+	    (!roughnessImageData.empty() && (roughnessImageWidth == 0 || roughnessImageHeight == 0)) ||
+	    (!metallicImageData.empty() && (metallicImageWidth == 0 || metallicImageHeight == 0))) {
+		dst.clear(); dstWidth = 0; dstHeight = 0; return false;
 	}
 
 	size_t maxImageWidth = 1;
@@ -103,7 +145,13 @@ bool BuildOcclusionRoughnessMetallicTexture(
 			}
 			occlusionBuf.resize(resize_size);
 
-			stbir_resize_uint8_linear(occlusionImageData.data(), int(occlusionImageWidth), int(occlusionImageHeight), 0, occlusionBuf.data(), int(maxImageWidth), int(maxImageHeight), 0, layout);
+			if (occlusionImageWidth > INT_MAX || occlusionImageHeight > INT_MAX ||
+			    maxImageWidth > INT_MAX || maxImageHeight > INT_MAX) {
+				return false;
+			}
+			if (!stbir_resize_uint8_linear(occlusionImageData.data(), int(occlusionImageWidth), int(occlusionImageHeight), 0, occlusionBuf.data(), int(maxImageWidth), int(maxImageHeight), 0, layout)) {
+				return false;
+			}
 		} else {
 			occlusionBuf = occlusionImageData;
 		}
@@ -130,7 +178,13 @@ bool BuildOcclusionRoughnessMetallicTexture(
 			}
 			metallicBuf.resize(resize_size);
 
-			stbir_resize_uint8_linear(metallicImageData.data(), int(metallicImageWidth), int(metallicImageHeight), 0, metallicBuf.data(), int(maxImageWidth), int(maxImageHeight), 0, layout);
+			if (metallicImageWidth > INT_MAX || metallicImageHeight > INT_MAX ||
+			    maxImageWidth > INT_MAX || maxImageHeight > INT_MAX) {
+				return false;
+			}
+			if (!stbir_resize_uint8_linear(metallicImageData.data(), int(metallicImageWidth), int(metallicImageHeight), 0, metallicBuf.data(), int(maxImageWidth), int(maxImageHeight), 0, layout)) {
+				return false;
+			}
 		} else {
 			metallicBuf = metallicImageData;
 		}
@@ -155,7 +209,13 @@ bool BuildOcclusionRoughnessMetallicTexture(
 			}
 			roughnessBuf.resize(resize_size);
 
-			stbir_resize_uint8_linear(roughnessImageData.data(), int(roughnessImageWidth), int(roughnessImageHeight), 0, roughnessBuf.data(), int(maxImageWidth), int(maxImageHeight), 0, layout);
+			if (roughnessImageWidth > INT_MAX || roughnessImageHeight > INT_MAX ||
+			    maxImageWidth > INT_MAX || maxImageHeight > INT_MAX) {
+				return false;
+			}
+			if (!stbir_resize_uint8_linear(roughnessImageData.data(), int(roughnessImageWidth), int(roughnessImageHeight), 0, roughnessBuf.data(), int(maxImageWidth), int(maxImageHeight), 0, layout)) {
+				return false;
+			}
 		} else {
 			roughnessBuf = roughnessImageData;
 		}
@@ -201,8 +261,10 @@ stbir_pixel_layout PixelLayoutFromChannels(int channels) {
     return STBIR_2CHANNEL;
   } else if (channels == 3) {
     return STBIR_RGB;
+  } else if (channels == 4) {
+    return STBIR_RGBA;
   }
-  return STBIR_RGBA;  // assume RGBA for 4(or more)
+  return STBIR_1CHANNEL;  // should not reach here (callers validate 1-4)
 }
 
 bool LooksSRGB(const std::string &colorspace) {
@@ -223,8 +285,8 @@ bool ResizeImage(const Image &src, int dstWidth, int dstHeight, Image *dst,
     if (err) (*err) = "ResizeImage: dst is null.";
     return false;
   }
-  if (src.width <= 0 || src.height <= 0 || src.channels <= 0) {
-    if (err) (*err) = "ResizeImage: invalid source image.";
+  if (src.width <= 0 || src.height <= 0 || src.channels < 1 || src.channels > 4) {
+    if (err) (*err) = "ResizeImage: invalid source image (channels must be 1-4).";
     return false;
   }
   if (src.bpp != 8) {
@@ -410,6 +472,15 @@ namespace {
 bool EncodeFitTexture(const FitTextureInput &in, const FitTextureOptions &opts,
                       FitStrategy strategy, int dimCap, int quality,
                       FitTextureOutput *out) {
+  // Validate source image data size.
+  size_t expected;
+  if (!safe::mul3(size_t(in.image.width), size_t(in.image.height), size_t(in.image.channels), &expected)) {
+    return false;
+  }
+  if (in.image.data.size() < expected) {
+    return false;
+  }
+
   Image img = in.image;
 
   // Apply a longest-edge cap when requested.
@@ -424,6 +495,7 @@ bool EncodeFitTexture(const FitTextureInput &in, const FitTextureOptions &opts,
       if (ResizeImage(img, nw, nh, &resized, ResizeFilter::Auto, &rerr)) {
         img = std::move(resized);
       }
+      // If resize fails, continue with original (best-effort).
     }
   }
 
@@ -437,11 +509,13 @@ bool EncodeFitTexture(const FitTextureInput &in, const FitTextureOptions &opts,
     wopt.jpeg_quality = quality;
     ext = "jpg";
     if (img.channels == 4) {
+      const size_t npix = size_t(img.width) * size_t(img.height);
+      if (img.data.size() < npix * 4) return false;
       Image rgb;
       rgb.width = img.width; rgb.height = img.height; rgb.channels = 3;
       rgb.bpp = 8; rgb.format = img.format; rgb.colorspace = img.colorspace;
-      rgb.data.resize(size_t(img.width) * size_t(img.height) * 3);
-      for (size_t i = 0; i < size_t(img.width) * size_t(img.height); i++) {
+      rgb.data.resize(npix * 3);
+      for (size_t i = 0; i < npix; i++) {
         rgb.data[3 * i + 0] = img.data[4 * i + 0];
         rgb.data[3 * i + 1] = img.data[4 * i + 1];
         rgb.data[3 * i + 2] = img.data[4 * i + 2];
@@ -455,11 +529,13 @@ bool EncodeFitTexture(const FitTextureInput &in, const FitTextureOptions &opts,
       wopt.jpeg_quality = opts.jpeg_quality;
       ext = "jpg";
       if (img.channels == 4) {
+        const size_t npix = size_t(img.width) * size_t(img.height);
+        if (img.data.size() < npix * 4) return false;
         Image rgb;
         rgb.width = img.width; rgb.height = img.height; rgb.channels = 3;
         rgb.bpp = 8; rgb.format = img.format; rgb.colorspace = img.colorspace;
-        rgb.data.resize(size_t(img.width) * size_t(img.height) * 3);
-        for (size_t i = 0; i < size_t(img.width) * size_t(img.height); i++) {
+        rgb.data.resize(npix * 3);
+        for (size_t i = 0; i < npix; i++) {
           rgb.data[3 * i + 0] = img.data[4 * i + 0];
           rgb.data[3 * i + 1] = img.data[4 * i + 1];
           rgb.data[3 * i + 2] = img.data[4 * i + 2];

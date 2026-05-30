@@ -57,6 +57,10 @@ std::string SanitizeArchiveName(const std::string &assetPath) {
     }
     name = "textures/" + base;
   }
+  // Reject paths that still contain ".." after sanitization.
+  if (name.find("..") != std::string::npos) {
+    name = "textures/texture";
+  }
   return name;
 }
 
@@ -94,7 +98,9 @@ void WriteTextureFilePath(UsdUVTexture *tex, const std::string &path) {
 // Collect mutable UsdUVTexture pointers (paired with their current file path)
 // by recursively walking the stage's Prim tree.
 void CollectTextures(Prim &prim,
-                     std::vector<std::pair<UsdUVTexture *, std::string>> *out) {
+                     std::vector<std::pair<UsdUVTexture *, std::string>> *out,
+                     int depth = 0) {
+  if (depth > 512) return;  // guard against stack overflow
   Shader *shd = prim.get_data().as<Shader>();
   if (shd && shd->info_id == "UsdUVTexture") {
     UsdUVTexture *tex = shd->value.as<UsdUVTexture>();
@@ -106,21 +112,25 @@ void CollectTextures(Prim &prim,
     }
   }
   for (auto &child : prim.children()) {
-    CollectTextures(child, out);
+    CollectTextures(child, out, depth + 1);
   }
 }
 
 bool ReadAssetBytes(AssetResolutionResolver &resolver, const std::string &assetPath,
-                    std::vector<uint8_t> *out, std::string *err) {
+                    std::vector<uint8_t> *out, std::string *warn,
+                    std::string *err) {
   const std::string resolved = resolver.resolve(assetPath);
   if (resolved.empty()) {
     if (err) (*err) = "Asset not found: " + assetPath;
     return false;
   }
   Asset asset;
-  std::string warn;
-  if (!resolver.open_asset(resolved, assetPath, &asset, &warn, err)) {
+  std::string owarn;
+  if (!resolver.open_asset(resolved, assetPath, &asset, &owarn, err)) {
     return false;
+  }
+  if (warn && !owarn.empty()) {
+    (*warn) += owarn;
   }
   out->assign(asset.data(), asset.data() + asset.size());
   return true;
@@ -180,6 +190,28 @@ bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
     return true;
   }
 
+  // Validate decoded image dimensions (guard against corrupt/malicious headers).
+  const int kMaxDimension = 32768;
+  if (img.width <= 0 || img.height <= 0 || img.channels < 1 || img.channels > 4) {
+    if (warn) {
+      (*warn) += "Invalid image dimensions for " + uri +
+                 " — copying through unchanged.\n";
+    }
+    *out_bytes = src_bytes;
+    *out_ext = src_ext_lower;
+    return true;
+  }
+  if (img.width > kMaxDimension || img.height > kMaxDimension) {
+    if (warn) {
+      (*warn) += "Image " + uri + " exceeds max dimension (" +
+                 std::to_string(img.width) + "x" + std::to_string(img.height) +
+                 ") — copying through unchanged.\n";
+    }
+    *out_bytes = src_bytes;
+    *out_ext = src_ext_lower;
+    return true;
+  }
+
   // Resize (cap longest edge).
   if (need_resize) {
     const int longest = (std::max)(img.width, img.height);
@@ -209,6 +241,16 @@ bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
     wopt.format = image::WriteImageFormat::JPEG;
     // JPEG cannot carry alpha; drop it.
     if (img.channels == 4) {
+      const size_t npix = size_t(img.width) * size_t(img.height);
+      if (img.data.size() < npix * 4) {
+        if (warn) {
+          (*warn) += "Undersized image buffer for " + uri +
+                     " — copying through unchanged.\n";
+        }
+        *out_bytes = src_bytes;
+        *out_ext = src_ext_lower;
+        return true;
+      }
       Image rgb;
       rgb.width = img.width;
       rgb.height = img.height;
@@ -216,8 +258,8 @@ bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
       rgb.bpp = 8;
       rgb.format = img.format;
       rgb.colorspace = img.colorspace;
-      rgb.data.resize(size_t(img.width) * size_t(img.height) * 3);
-      for (size_t i = 0; i < size_t(img.width) * size_t(img.height); i++) {
+      rgb.data.resize(npix * 3);
+      for (size_t i = 0; i < npix; i++) {
         rgb.data[3 * i + 0] = img.data[4 * i + 0];
         rgb.data[3 * i + 1] = img.data[4 * i + 1];
         rgb.data[3 * i + 2] = img.data[4 * i + 2];
@@ -275,6 +317,10 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   }
   if (options.output.empty()) {
     if (err) (*err) = "No output USDZ file specified.";
+    return false;
+  }
+  if (options.max_texture_size < 0) {
+    if (err) (*err) = "max_texture_size must be non-negative.";
     return false;
   }
 
@@ -401,20 +447,20 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
 
       std::vector<uint8_t> src_bytes;
       std::string rerr;
-      if (!ReadAssetBytes(resolver, orig, &src_bytes, &rerr)) {
+      if (!ReadAssetBytes(resolver, orig, &src_bytes, warn, &rerr)) {
         if (warn) (*warn) += "Skipping unreadable texture '" + orig + "': " + rerr + "\n";
         continue;
       }
 
       tydra::FitTextureInput fi;
       fi.ext = to_lower(io::GetFileExtension(orig));
-      fi.original_bytes = src_bytes;
       auto dec = image::LoadImageFromMemory(src_bytes.data(), src_bytes.size(), orig);
       if (dec && dec.value().image.bpp == 8) {
         fi.image = std::move(dec.value().image);
         fi.reencodable = true;
       } else {
         fi.reencodable = false;  // EXR/16-bit: keep as-is (fixed overhead)
+        fi.original_bytes = src_bytes;  // only needed when not reencodable
       }
       fit_paths.push_back(orig);
       fit_inputs.push_back(std::move(fi));
@@ -438,6 +484,10 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       return false;
     }
     if (warn) (*warn) += fwarn;
+    if (fouts.size() != fit_paths.size()) {
+      if (err) (*err) = "Internal error: FitTexturesToBudget returned wrong number of outputs.";
+      return false;
+    }
     for (size_t i = 0; i < fit_paths.size(); i++) {
       fitted[fit_paths[i]] = {std::move(fouts[i].bytes), fouts[i].ext};
     }
@@ -470,7 +520,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       std::string src_ext = to_lower(io::GetFileExtension(orig));
       std::vector<uint8_t> src_bytes;
       std::string rerr;
-      if (!ReadAssetBytes(resolver, orig, &src_bytes, &rerr)) {
+      if (!ReadAssetBytes(resolver, orig, &src_bytes, warn, &rerr)) {
         if (warn) {
           (*warn) += "Skipping unreadable texture '" + orig + "': " + rerr + "\n";
         }
@@ -478,8 +528,12 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
         continue;
       }
       std::string pwarn;
-      ProcessTexture(src_bytes, src_ext, options, orig, &out_bytes, &out_ext,
-                     &resized, &reencoded, &pwarn);
+      if (!ProcessTexture(src_bytes, src_ext, options, orig, &out_bytes, &out_ext,
+                     &resized, &reencoded, &pwarn)) {
+        if (warn) (*warn) += "Failed to process texture " + orig + "\n";
+        path_to_archive[orig] = archive_name;
+        continue;
+      }
       if (warn) (*warn) += pwarn;
     }
 
@@ -493,11 +547,19 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
 
     // Avoid archive name collisions for distinct sources.
     std::string unique_name = archive_name;
-    int suffix = 1;
+    uint32_t suffix = 1;
+    const uint32_t kMaxSuffix = 100000;
     while (assets.count(unique_name) &&
            assets[unique_name] != out_bytes) {
+      if (suffix > kMaxSuffix) {
+        if (warn) (*warn) += "Too many archive name collisions for " + archive_name + "\n";
+        break;
+      }
       const std::string ext = io::GetFileExtension(archive_name);
-      unique_name = archive_name.substr(0, archive_name.size() - ext.size() - 1) +
+      size_t base_len = (archive_name.size() > ext.size() + 1)
+          ? archive_name.size() - ext.size() - 1
+          : archive_name.size();
+      unique_name = archive_name.substr(0, base_len) +
                     "_" + std::to_string(suffix) + "." + ext;
       suffix++;
     }
@@ -543,7 +605,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   // Read back + validate.
   std::vector<uint8_t> usdz_bytes;
   std::string ioerr;
-  if (io::ReadWholeFile(&usdz_bytes, &ioerr, options.output, /*max*/ 0)) {
+  if (io::ReadWholeFile(&usdz_bytes, &ioerr, options.output, /*max*/ 512 * 1024 * 1024)) {
     std::string vwarn, verr;
     if (!tinyusdz::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(), &vwarn,
                                 &verr)) {

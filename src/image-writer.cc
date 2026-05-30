@@ -34,6 +34,8 @@
 #include "io-util.hh"
 #include "str-util.hh"
 
+#include <climits>
+
 namespace tinyusdz {
 namespace image {
 
@@ -83,6 +85,20 @@ bool ValidDims(const Image &image, std::string *err) {
     }
     return false;
   }
+  if (image.channels > 4) {
+    if (err) {
+      (*err) = "Only 1-4 channel images are supported.";
+    }
+    return false;
+  }
+  // Enforce a maximum dimension to prevent integer overflow in stride calculations.
+  constexpr int kMaxDimension = 65536;
+  if (image.width > kMaxDimension || image.height > kMaxDimension) {
+    if (err) {
+      (*err) = "Image dimensions exceed maximum allowed size (65536).";
+    }
+    return false;
+  }
   const int64_t npixels = int64_t(image.width) * int64_t(image.height);
   const int64_t bytes_per_channel = (image.bpp > 0) ? (image.bpp / 8) : 1;
   const int64_t expected =
@@ -116,7 +132,14 @@ bool EncodePNG_fpnge(const Image &image, std::vector<uint8_t> *out,
 
   const size_t width = size_t(image.width);
   const size_t height = size_t(image.height);
-  const size_t row_stride = width * num_channels * bytes_per_channel;
+  const uint64_t row_stride_64 = uint64_t(width) * num_channels * bytes_per_channel;
+  if (row_stride_64 > SIZE_MAX) {
+    if (err) {
+      (*err) = "fpnge: row stride too large.";
+    }
+    return false;
+  }
+  const size_t row_stride = static_cast<size_t>(row_stride_64);
 
   struct FPNGEOptions options;
   FPNGEFillOptions(&options, FPNGE_COMPRESS_LEVEL_DEFAULT, FPNGE_CICP_NONE);
@@ -180,7 +203,14 @@ bool EncodePNG_stb(const Image &image, std::vector<uint8_t> *out,
     }
     return false;
   }
-  const int stride = image.width * image.channels;
+  const int64_t stride64 = int64_t(image.width) * int64_t(image.channels);
+  if (stride64 > static_cast<int64_t>(INT_MAX)) {
+    if (err) {
+      (*err) = "stb png: image row stride exceeds INT_MAX.";
+    }
+    return false;
+  }
+  const int stride = static_cast<int>(stride64);
   out->clear();
   int ret = stbi_write_png_to_func(AppendToVector, out, image.width,
                                    image.height, image.channels,
