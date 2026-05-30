@@ -3,6 +3,7 @@
 
 #include "usd-validation.hh"
 
+#include <algorithm>
 #include <array>
 #include <set>
 #include <sstream>
@@ -923,6 +924,7 @@ USDValidationResult ValidateLayerAgainstAOUSDCore(const Layer &layer) {
 USDValidationResult ValidateLayerAgainstAOUSDCore(
     const Layer &layer, const ValidationOptions &options) {
   USDValidationResult result;
+  result.checked_groups = options;
 
   if (options.core) {
     ValidateLayerMetas(layer, &result);
@@ -939,30 +941,102 @@ USDValidationResult ValidateLayerAgainstAOUSDCore(
   return result;
 }
 
+namespace {
+
+std::string Pluralize(size_t n, const char *noun) {
+  std::ostringstream ss;
+  ss << n << " " << noun;
+  if (n != 1) {
+    ss << "s";
+  }
+  return ss.str();
+}
+
+}  // namespace
+
 std::string FormatValidationResult(const USDValidationResult &result) {
   std::ostringstream ss;
-  ss << "AOUSD validation (" << GetAOUSDCoreSpecVersionString() << ")\n";
+  ss << "AOUSD validation report (" << GetAOUSDCoreSpecVersionString() << ")\n";
+  ss << "Checked rule groups: " << result.checked_groups.group_summary()
+     << "\n";
 
-  if (result.issues.empty()) {
-    ss << "OK: no validation issues found.\n";
-    return ss.str();
-  }
-
+  // Sort a copy so the report is deterministic and scannable: errors before
+  // warnings, then grouped by location, then by rule id.
+  std::vector<const USDValidationIssue *> ordered;
+  ordered.reserve(result.issues.size());
   for (const auto &issue : result.issues) {
-    ss << (issue.severity == USDValidationSeverity::Error ? "ERROR" : "WARN")
-       << " [" << issue.rule_id << "] ";
+    ordered.push_back(&issue);
+  }
+  std::stable_sort(
+      ordered.begin(), ordered.end(),
+      [](const USDValidationIssue *a, const USDValidationIssue *b) {
+        if (a->severity != b->severity) {
+          // Error (0) sorts before Warning (1).
+          return static_cast<int>(a->severity) < static_cast<int>(b->severity);
+        }
+        // Layer-scoped issues are the most general -> show them first.
+        const bool a_layer = (a->location == kLayerLocation);
+        const bool b_layer = (b->location == kLayerLocation);
+        if (a_layer != b_layer) {
+          return a_layer;
+        }
+        if (a->location != b->location) {
+          return a->location < b->location;
+        }
+        return a->rule_id < b->rule_id;
+      });
 
-    if (!issue.location.empty()) {
-      ss << issue.location << ": ";
+  if (!ordered.empty()) {
+    ss << "\n";
+    for (const USDValidationIssue *issue : ordered) {
+      // Fixed-width severity keeps rule ids aligned.
+      ss << (issue->severity == USDValidationSeverity::Error ? "ERROR"
+                                                             : "WARN ")
+         << " [" << issue->rule_id << "] ";
+
+      if (!issue->location.empty()) {
+        ss << issue->location << ": ";
+      }
+
+      ss << issue->message << "\n";
     }
-
-    ss << issue.message << "\n";
   }
 
-  ss << "Summary: " << result.error_count() << " error(s), "
-     << result.warning_count() << " warning(s)\n";
+  const size_t errors = result.error_count();
+  const size_t warnings = result.warning_count();
+
+  ss << "\nResult: ";
+  if (errors > 0) {
+    ss << "FAILED - " << Pluralize(errors, "error") << ", "
+       << Pluralize(warnings, "warning") << "\n";
+  } else if (warnings > 0) {
+    ss << "PASSED with warnings - " << Pluralize(warnings, "warning")
+       << "\n";
+  } else {
+    ss << "PASSED - no issues found\n";
+  }
 
   return ss.str();
+}
+
+std::string ValidationOptions::group_summary() const {
+  std::string s;
+  const auto add = [&](bool enabled, const char *name) {
+    if (!enabled) {
+      return;
+    }
+    if (!s.empty()) {
+      s += ", ";
+    }
+    s += name;
+  };
+  add(core, "core");
+  add(geom, "geom");
+  add(shade, "shade");
+  if (s.empty()) {
+    s = "(none)";
+  }
+  return s;
 }
 
 }  // namespace tinyusdz

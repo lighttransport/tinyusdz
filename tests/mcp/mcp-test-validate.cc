@@ -63,6 +63,11 @@ def Xform "World"
   TEST_CHECK(result["error_count"] >= 1);
   TEST_CHECK(result["source"] == "data");
   TEST_CHECK(HasRuleId(result, "core.layer.metersPerUnit"));
+
+  // Default run is core-only; report which groups were checked.
+  TEST_CHECK(result.contains("checked_groups"));
+  TEST_CHECK(result["checked_groups"].size() == 1);
+  TEST_CHECK(result["checked_groups"][0] == "core");
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +105,7 @@ def Xform "World"
     args["groups"] = json::array({"all"});
     TEST_CHECK(UsdValidate(ctx, args, result, err));
     TEST_CHECK(HasRuleId(result, "geom.encapsulation.nestedGprim"));
+    TEST_CHECK(result["checked_groups"].size() == 3);
   }
 }
 

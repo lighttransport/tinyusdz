@@ -118,8 +118,9 @@ Validates the first input that is present (`data` base64 → `uri` file path →
 `layer_uuid` session layer), otherwise the current session stage (serialized to
 USDA and re-parsed as an uncomposed Layer). `groups` selects rule groups: any of
 `"core"` (default), `"geom"`, `"shade"`, or `"all"`. Returns
-`{ ok, error_count, warning_count, spec_version, source, issues: [{ severity,
-rule_id, location, message }] }`.
+`{ ok, error_count, warning_count, spec_version, source, checked_groups: [...],
+issues: [{ severity, rule_id, location, message }] }`. `checked_groups` reports
+which groups actually ran, so a core-only `ok` is not mistaken for full coverage.
 
 ### Scripting
 

@@ -44,6 +44,10 @@ static ValidationOptions AllGroups() {
   return opts;
 }
 
+static bool Contains(const std::string &haystack, const char *needle) {
+  return haystack.find(needle) != std::string::npos;
+}
+
 }  // namespace
 
 void usd_validation_valid_core_schema_test(void) {
@@ -445,5 +449,72 @@ def Material "mat"
       TEST_CHECK(!HasRule(all, "shade.preview.inputType"));
       TEST_CHECK(!HasRule(all, "shade.preview.unknownInput"));
     }
+  }
+}
+
+void usd_validation_report_format_test(void) {
+  // Failing core report: states checked groups + FAILED status.
+  {
+    const char *usda = R"(#usda 1.0
+(
+    metersPerUnit = 0
+)
+
+def Xform "Root"
+{
+}
+)";
+    Layer layer;
+    std::string warn;
+    std::string err;
+    TEST_CHECK(parse_layer(usda, &layer, &warn, &err));
+    const USDValidationResult result = ValidateLayerAgainstAOUSDCore(layer);
+    const std::string report = FormatValidationResult(result);
+    TEST_CHECK(Contains(report, "Checked rule groups: core"));
+    TEST_CHECK(Contains(report, "core.layer.metersPerUnit"));
+    TEST_CHECK(Contains(report, "FAILED"));
+    TEST_CHECK(Contains(report, "1 error"));
+  }
+
+  // Clean report: PASSED with no issues.
+  {
+    const char *usda = R"(#usda 1.0
+
+def Xform "Root"
+{
+}
+)";
+    Layer layer;
+    std::string warn;
+    std::string err;
+    TEST_CHECK(parse_layer(usda, &layer, &warn, &err));
+    const USDValidationResult result = ValidateLayerAgainstAOUSDCore(layer);
+    const std::string report = FormatValidationResult(result);
+    TEST_CHECK(Contains(report, "PASSED - no issues found"));
+  }
+
+  // Warnings-only report (all groups): PASSED with warnings + group coverage.
+  {
+    const char *usda = R"(#usda 1.0
+
+def Xform "World"
+{
+    def Mesh "outer"
+    {
+        def Cube "inner"
+        {
+        }
+    }
+}
+)";
+    Layer layer;
+    std::string warn;
+    std::string err;
+    TEST_CHECK(parse_layer(usda, &layer, &warn, &err));
+    const USDValidationResult result =
+        ValidateLayerAgainstAOUSDCore(layer, AllGroups());
+    const std::string report = FormatValidationResult(result);
+    TEST_CHECK(Contains(report, "Checked rule groups: core, geom, shade"));
+    TEST_CHECK(Contains(report, "PASSED with warnings"));
   }
 }
