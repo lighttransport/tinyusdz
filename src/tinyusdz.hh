@@ -115,6 +115,23 @@ struct USDLoadOptions {
   ///
   bool strict_apiSchema_check{false}; // Make parse error when unknown apiSchema
 
+  ///
+  /// Shader property(input/output) type conformance.
+  ///
+  /// When false(default), a UsdPreviewSurface-family Shader property whose
+  /// authored Sdf type does not match the canonical schema type(inferred from
+  /// `info:id` / the UsdPreviewSurface spec) is accepted with a warning. This
+  /// matches OpenUSD, which does not validate shader output types and resolves
+  /// the real type from the Sdr registry. tinyusdz has no Sdr registry, so the
+  /// hand-written shader schema type is used as the canonical type.
+  ///
+  /// When true, such a type mismatch is a hard parse error.
+  ///
+  /// Example: Unreal-exported `token outputs:result` on `UsdPrimvarReader_float2`
+  /// (canonical type is `float2`).
+  ///
+  bool strict_shader_type_check{false};
+
   // ==========================================================================
   // MaterialX Validation Options
   // ==========================================================================

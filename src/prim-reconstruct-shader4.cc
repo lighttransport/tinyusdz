@@ -103,7 +103,7 @@ static bool ReconstructPrimvarReaderShaderImpl(
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", PrimvarReaderT,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:fallback", PrimvarReaderT,
                    preader->fallback)
     PARSE_PRIMVAR_READER_VARNAME(table, prop, preader->varname, "")
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
