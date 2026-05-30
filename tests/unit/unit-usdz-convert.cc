@@ -44,6 +44,27 @@ tinyusdz::Image MakeSolidImage(int w, int h, int channels, uint8_t r, uint8_t g,
   return img;
 }
 
+// Deterministic high-entropy image so PNG/JPEG sizes are non-trivial.
+tinyusdz::Image MakeNoisyImage(int w, int h, int channels) {
+  tinyusdz::Image img;
+  img.width = w; img.height = h; img.channels = channels; img.bpp = 8;
+  img.format = tinyusdz::Image::PixelFormat::UInt;
+  img.data.resize(size_t(w) * size_t(h) * size_t(channels));
+  uint32_t s = 0x12345678u;
+  for (auto &b : img.data) {
+    s = s * 1664525u + 1013904223u;  // LCG
+    b = uint8_t(s >> 24);
+  }
+  return img;
+}
+
+std::vector<uint8_t> EncodePNG(const tinyusdz::Image &img) {
+  tinyusdz::image::WriteOption wopt;
+  wopt.format = tinyusdz::image::WriteImageFormat::PNG;
+  auto enc = tinyusdz::image::WriteImageToMemory(img, wopt);
+  return enc ? enc.value() : std::vector<uint8_t>{};
+}
+
 std::string TempDir() {
   namespace fs = std::filesystem;
   fs::path base = fs::temp_directory_path() / "tusdzconvert_test";
@@ -150,6 +171,70 @@ void usdz_convert_pack_channels_test(void) {
     TEST_CHECK(packed.data[0] == 111);  // R from red
     TEST_CHECK(packed.data[1] == 222);  // G from green
     TEST_CHECK(packed.data[2] == 7);    // B constant
+  }
+}
+
+// FitTexturesToBudget shrinks a set of textures to a tight byte budget.
+void usdz_convert_fit_budget_test(void) {
+  using namespace tinyusdz;
+
+  std::vector<tydra::FitTextureInput> inputs;
+  for (auto dim : {256, 512, 128}) {
+    tydra::FitTextureInput fi;
+    fi.image = MakeNoisyImage(dim, dim, 3);
+    fi.original_bytes = EncodePNG(fi.image);
+    fi.ext = "png";
+    fi.reencodable = true;
+    TEST_CHECK(!fi.original_bytes.empty());
+    inputs.push_back(std::move(fi));
+  }
+
+  size_t fullTotal = 0;
+  for (const auto &fi : inputs) fullTotal += fi.original_bytes.size();
+  TEST_CHECK(fullTotal > 0);
+
+  auto sumOut = [](const std::vector<tydra::FitTextureOutput> &outs) {
+    size_t s = 0;
+    for (const auto &o : outs) s += o.bytes.size();
+    return s;
+  };
+
+  // --- Size strategy: tight budget should shrink dimensions. ---
+  {
+    tydra::FitTextureOptions opt;
+    opt.target_total_bytes = fullTotal / 4;
+    opt.strategy = tydra::FitStrategy::Size;
+    opt.min_texture_size = 16;
+
+    std::vector<tydra::FitTextureOutput> outs;
+    std::string warn, err;
+    bool ok = tydra::FitTexturesToBudget(inputs, opt, &outs, &warn, &err);
+    TEST_CHECK(ok);
+    if (!ok) { TEST_MSG("fit(size) err: %s", err.c_str()); return; }
+    TEST_CHECK(outs.size() == inputs.size());
+    const size_t total = sumOut(outs);
+    // Shrunk below full size, and ideally within budget.
+    TEST_CHECK(total < fullTotal);
+    for (const auto &o : outs) TEST_CHECK(o.ext == "png");
+    // The largest (512) input must have been downscaled.
+    TEST_CHECK(outs[1].width < 512);
+  }
+
+  // --- Quality strategy: outputs are JPEG and smaller than full PNG. ---
+  {
+    tydra::FitTextureOptions opt;
+    opt.target_total_bytes = fullTotal / 4;
+    opt.strategy = tydra::FitStrategy::Quality;
+    opt.min_jpeg_quality = 20;
+
+    std::vector<tydra::FitTextureOutput> outs;
+    std::string warn, err;
+    bool ok = tydra::FitTexturesToBudget(inputs, opt, &outs, &warn, &err);
+    TEST_CHECK(ok);
+    if (!ok) { TEST_MSG("fit(quality) err: %s", err.c_str()); return; }
+    TEST_CHECK(outs.size() == inputs.size());
+    for (const auto &o : outs) TEST_CHECK(o.ext == "jpg");
+    TEST_CHECK(sumOut(outs) < fullTotal);
   }
 }
 

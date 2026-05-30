@@ -7,6 +7,7 @@
 //
 // CLI mirrors Apple's `usdzconvert` core flags where it makes sense.
 //
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -48,6 +49,14 @@ void PrintUsage(const char *prog) {
       "  -jpegQuality <1-100>      JPEG quality when (re-)encoding (default: 90).\n"
       "  -noReencode               Copy unmodified textures through byte-for-byte.\n"
       "\n"
+      "Fit textures to a total size budget:\n"
+      "  -targetTextureSize <size> Shrink all textures so their total fits <size>\n"
+      "                            (e.g. 100MB, 50mb, 1048576). Implies a fit search.\n"
+      "  -fitStrategy <size|quality>  Lever to meet the budget: reduce dimensions\n"
+      "                            (size) or transcode to JPEG + lower quality (quality).\n"
+      "  -fitMinTextureSize <N>    Smallest longest-edge allowed by the size search (default 64).\n"
+      "  -fitMinQuality <1-100>    Lowest JPEG quality allowed by the quality search (default 30).\n"
+      "\n"
       "Repack mode (merge channels into one image, e.g. R=gloss, G=roughness):\n"
       "  -repack <outputImage>     Enable repack mode; write packed image here.\n"
       "  -packR/-packG/-packB/-packA <src>\n"
@@ -68,6 +77,36 @@ image::PngEncoder ParsePngEncoder(const std::string &s) {
   if (v == "fpng") return image::PngEncoder::Fpng;
   if (v == "fpnge") return image::PngEncoder::Fpnge;
   return image::PngEncoder::Auto;
+}
+
+// Parse a human-friendly byte size: "100MB", "100mb", "100M", "50KB", "1048576".
+// Returns 0 on parse failure.
+size_t ParseByteSize(const std::string &in) {
+  std::string s = in;
+  // Trim spaces.
+  while (!s.empty() && s.front() == ' ') s.erase(s.begin());
+  while (!s.empty() && s.back() == ' ') s.pop_back();
+  if (s.empty()) return 0;
+
+  size_t i = 0;
+  double num = 0.0;
+  bool any = false;
+  while (i < s.size() && (std::isdigit((unsigned char)s[i]) || s[i] == '.')) {
+    any = true;
+    i++;
+  }
+  if (!any) return 0;
+  num = std::atof(s.substr(0, i).c_str());
+
+  std::string unit = to_lower(s.substr(i));
+  double mult = 1.0;
+  if (unit.empty() || unit == "b") mult = 1.0;
+  else if (unit == "k" || unit == "kb") mult = 1024.0;
+  else if (unit == "m" || unit == "mb") mult = 1024.0 * 1024.0;
+  else if (unit == "g" || unit == "gb") mult = 1024.0 * 1024.0 * 1024.0;
+  else return 0;
+
+  return size_t(num * mult);
 }
 
 usdz::OutputTextureFormat ParseTextureFormat(const std::string &s) {
@@ -166,6 +205,10 @@ int main(int argc, char **argv) {
   parser.add_option("-pngEncoder", true, "fpnge|fpng");
   parser.add_option("-jpegQuality", true, "1-100");
   parser.add_option("-noReencode", false, "Passthrough unmodified textures");
+  parser.add_option("-targetTextureSize", true, "Total texture budget (e.g. 100MB)");
+  parser.add_option("-fitStrategy", true, "size|quality");
+  parser.add_option("-fitMinTextureSize", true, "Min longest edge for size fit");
+  parser.add_option("-fitMinQuality", true, "Min JPEG quality for quality fit");
   // Repack mode.
   parser.add_option("-repack", true, "Repack output image");
   parser.add_option("-packR", true, "R channel source");
@@ -256,6 +299,33 @@ int main(int argc, char **argv) {
     std::string q;
     parser.get("-jpegQuality", q);
     opts.jpeg_quality = std::atoi(q.c_str());
+  }
+  if (parser.is_set("-targetTextureSize")) {
+    std::string s;
+    parser.get("-targetTextureSize", s);
+    opts.target_texture_bytes = ParseByteSize(s);
+    if (opts.target_texture_bytes == 0) {
+      std::cerr << "ERROR: could not parse -targetTextureSize '" << s
+                << "' (try e.g. 100MB).\n";
+      return 1;
+    }
+  }
+  if (parser.is_set("-fitStrategy")) {
+    std::string s;
+    parser.get("-fitStrategy", s);
+    s = to_lower(s);
+    opts.fit_strategy = (s == "quality") ? usdz::FitStrategy::Quality
+                                         : usdz::FitStrategy::Size;
+  }
+  if (parser.is_set("-fitMinTextureSize")) {
+    std::string s;
+    parser.get("-fitMinTextureSize", s);
+    opts.fit_min_texture_size = std::atoi(s.c_str());
+  }
+  if (parser.is_set("-fitMinQuality")) {
+    std::string s;
+    parser.get("-fitMinQuality", s);
+    opts.fit_min_jpeg_quality = std::atoi(s.c_str());
   }
 
   usdz::UsdzConvertStats stats;

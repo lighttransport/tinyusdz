@@ -14,6 +14,7 @@
 //
 #pragma once
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,13 @@ namespace usdz {
 /// JPEG         : transcode every texture to JPEG.
 ///
 enum class OutputTextureFormat { KeepOriginal, PNG, JPEG };
+
+///
+/// Lever used to shrink textures when fitting to a total-size budget.
+/// Size    : reduce texture dimensions (preserve each texture's format).
+/// Quality : transcode textures to JPEG and reduce JPEG quality.
+///
+enum class FitStrategy { Size, Quality };
 
 struct UsdzConvertOptions {
   // Input USD file(s). The first entry is the root layer; additional entries
@@ -52,6 +60,15 @@ struct UsdzConvertOptions {
 
   // Resize: cap the longest texture edge to this value (0 => no resize).
   int max_texture_size{0};
+
+  // Texture budget fit (0 => disabled). When > 0, all textures are globally
+  // shrunk so the sum of their encoded sizes fits this many bytes, using
+  // `fit_strategy`. Takes precedence over `max_texture_size`/`texture_format`
+  // (those become bounds/initial caps for the search).
+  size_t target_texture_bytes{0};
+  FitStrategy fit_strategy{FitStrategy::Size};
+  int fit_min_texture_size{64};   // floor for the Size strategy
+  int fit_min_jpeg_quality{30};   // floor for the Quality strategy
 
   // Texture output format policy.
   OutputTextureFormat texture_format{OutputTextureFormat::KeepOriginal};
@@ -87,6 +104,16 @@ struct UsdzConvertStats {
 ///
 bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
              std::string *warn, std::string *err);
+
+///
+/// Rewrite `UsdUVTexture.inputs:file` asset paths on a Stage according to
+/// `remap` (old asset path -> new asset path). Useful when textures are
+/// renamed (e.g. transcoded PNG -> JPG) and the references must follow.
+///
+/// @return number of texture references rewritten.
+///
+size_t RemapTextureAssetPaths(Stage &stage,
+                              const std::map<std::string, std::string> &remap);
 
 // ---------------------------------------------------------------------------
 // Standalone generic channel repacking.

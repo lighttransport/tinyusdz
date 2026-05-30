@@ -1438,6 +1438,10 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     schema["properties"]["pngEncoder"] = str_prop("fpnge | fpng");
     schema["properties"]["jpegQuality"] = int_prop("JPEG quality 1-100");
     schema["properties"]["reencode"] = bool_prop("Re-encode unmodified textures (default true)");
+    schema["properties"]["targetTextureBytes"] = num_prop("Total texture byte budget; shrink all textures to fit");
+    schema["properties"]["fitStrategy"] = str_prop("Fit lever: size | quality");
+    schema["properties"]["fitMinTextureSize"] = int_prop("Min longest edge for size-fit (default 64)");
+    schema["properties"]["fitMinQuality"] = int_prop("Min JPEG quality for quality-fit (default 30)");
     schema["required"] = nlohmann::json::array({"input", "output"});
     add_tool("usdz_convert",
              "Convert a USD file to an ARKit-friendly USDZ (flatten + texture "

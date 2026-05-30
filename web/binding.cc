@@ -55,6 +55,9 @@
 #include "sha256.hh"
 #include "logger.hh"
 #include "image-loader.hh"
+#include "image-types.hh"
+#include "tydra/texture-util.hh"
+#include "usdz-convert.hh"
 
 // TinyEXR for EXR decoding
 #if defined(TINYUSDZ_WITH_EXR)
@@ -5490,6 +5493,56 @@ class TinyUSDZLoaderNative {
         usdz_export_buf_.size(), usdz_export_buf_.data()));
   }
 
+  /// Like exportAsUSDZ(), but first rewrites UsdUVTexture `inputs:file` asset
+  /// paths according to `remap` ({oldName: newName}). Use when textures are
+  /// renamed (e.g. transcoded PNG -> JPG) so references follow.
+  emscripten::val exportAsUSDZWithRemap(emscripten::val remap) {
+    tinyusdz::Stage stage;
+    if (!getStageFromLayer(stage)) {
+      return emscripten::val::null();
+    }
+
+    // Build the remap map from the JS object.
+    std::map<std::string, std::string> remap_map;
+    emscripten::val keys =
+        emscripten::val::global("Object").call<emscripten::val>("keys", remap);
+    const size_t nkeys = keys["length"].as<size_t>();
+    for (size_t i = 0; i < nkeys; i++) {
+      std::string k = keys[i].as<std::string>();
+      remap_map[k] = remap[k].as<std::string>();
+    }
+    tinyusdz::usdz::RemapTextureAssetPaths(stage, remap_map);
+
+    // Collect image/audio assets from the resolver cache.
+    std::map<std::string, std::vector<uint8_t>> assets;
+    for (const auto &kv : em_resolver_.cache) {
+      const std::string &name = kv.first;
+      const std::string &binary = kv.second.binary;
+      std::string ext;
+      auto dot = name.rfind('.');
+      if (dot != std::string::npos) {
+        ext = name.substr(dot);
+        for (auto &c : ext) c = static_cast<char>(std::tolower(c));
+      }
+      if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
+          ext == ".avif" || ext == ".m4a" || ext == ".mp3" || ext == ".wav") {
+        assets[name] = std::vector<uint8_t>(binary.begin(), binary.end());
+      }
+    }
+
+    std::vector<uint8_t> output;
+    std::string warn, err;
+    if (!tinyusdz::SaveAsUSDZToMemory(stage, assets, &output, &warn, &err)) {
+      error_ = "USDZ export failed: " + err;
+      warn_ = warn;
+      return emscripten::val::null();
+    }
+    warn_ = warn;
+    usdz_export_buf_ = std::move(output);
+    return emscripten::val(emscripten::typed_memory_view(
+        usdz_export_buf_.size(), usdz_export_buf_.data()));
+  }
+
   /// Create a sample scene with a textured quad (checkerboard).
   /// The texture PNG must be set from JS via setAsset("textures/checkerboard.png", pngBytes)
   /// BEFORE calling exportAsUSDZ.
@@ -7036,6 +7089,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("exportAsUSDC", &TinyUSDZLoaderNative::exportAsUSDC)
       .function("setUSDCExportLimitMB", &TinyUSDZLoaderNative::setUSDCExportLimitMB)
       .function("exportAsUSDZ", &TinyUSDZLoaderNative::exportAsUSDZ)
+      .function("exportAsUSDZWithRemap", &TinyUSDZLoaderNative::exportAsUSDZWithRemap)
       .function("extractPhysicsSceneJSON", &TinyUSDZLoaderNative::extractPhysicsSceneJSON)
       .function("createSampleScene", &TinyUSDZLoaderNative::createSampleScene)
       .function("clearURDFMeshBuffers", &TinyUSDZLoaderNative::clearURDFMeshBuffers)
@@ -7077,6 +7131,301 @@ static emscripten::val decodeImage_hint(const emscripten::val& data, const std::
   return decodeImage(data, hint, "auto");
 }
 
+// ---------------------------------------------------------------------------
+// USDZ-convert texture helpers (resize/re-encode + generic channel repack).
+//
+// NOTE: fpnge uses x86 SIMD intrinsics and is NOT compiled for WASM, so PNG
+// encoding here transparently falls back to the portable `fpng` encoder.
+// ---------------------------------------------------------------------------
+
+// Copy a byte vector into a fresh JS Uint8Array (survives the C++ buffer).
+static emscripten::val bytesToUint8Array(const std::vector<uint8_t>& v) {
+  emscripten::val u8 = emscripten::val::global("Uint8Array").new_(v.size());
+  if (!v.empty()) {
+    u8.call<void>("set", emscripten::val(emscripten::typed_memory_view(
+                             v.size(), v.data())));
+  }
+  return u8;
+}
+
+static int optInt(const emscripten::val& opts, const char* key, int def) {
+  if (opts.isUndefined() || opts.isNull()) return def;
+  emscripten::val v = opts[key];
+  if (v.isUndefined() || v.isNull()) return def;
+  return v.as<int>();
+}
+
+static std::string optStr(const emscripten::val& opts, const char* key,
+                          const std::string& def) {
+  if (opts.isUndefined() || opts.isNull()) return def;
+  emscripten::val v = opts[key];
+  if (v.isUndefined() || v.isNull()) return def;
+  return v.as<std::string>();
+}
+
+static tinyusdz::image::PngEncoder parsePngEncoder(const std::string& s) {
+  if (s == "fpng") return tinyusdz::image::PngEncoder::Fpng;
+  if (s == "fpnge") return tinyusdz::image::PngEncoder::Fpnge;  // falls back to fpng in WASM
+  return tinyusdz::image::PngEncoder::Auto;
+}
+
+// Drop the alpha channel (RGBA -> RGB) for JPEG output.
+static tinyusdz::Image dropAlpha(const tinyusdz::Image& img) {
+  if (img.channels != 4) return img;
+  tinyusdz::Image out;
+  out.width = img.width; out.height = img.height; out.channels = 3;
+  out.bpp = 8; out.format = img.format; out.colorspace = img.colorspace;
+  out.data.resize(size_t(img.width) * size_t(img.height) * 3);
+  for (size_t i = 0; i < size_t(img.width) * size_t(img.height); i++) {
+    out.data[3 * i + 0] = img.data[4 * i + 0];
+    out.data[3 * i + 1] = img.data[4 * i + 1];
+    out.data[3 * i + 2] = img.data[4 * i + 2];
+  }
+  return out;
+}
+
+// convertImage(data, opts) -> { success, data?:Uint8Array, width, height, resized, error? }
+// opts: { maxSize?, width?, height?, format?:"png"|"jpeg", pngEncoder?, jpegQuality? }
+emscripten::val convertImage(const emscripten::val& data,
+                             const emscripten::val& opts) {
+  using namespace tinyusdz;
+  emscripten::val result = emscripten::val::object();
+
+  std::vector<uint8_t> buffer;
+  copyFromJSBuffer(data, buffer);
+
+  auto loaded = image::LoadImageFromMemory(buffer.data(), buffer.size(), "mem");
+  if (!loaded) {
+    result.set("success", false);
+    result.set("error", loaded.error());
+    return result;
+  }
+  Image img = std::move(loaded.value().image);
+
+  const int maxSize = optInt(opts, "maxSize", 0);
+  int tw = optInt(opts, "width", 0);
+  int th = optInt(opts, "height", 0);
+  const std::string format = optStr(opts, "format", "png");
+  const std::string pngEnc = optStr(opts, "pngEncoder", "auto");
+  const int jpegQ = optInt(opts, "jpegQuality", 90);
+
+  bool resized = false;
+  if (img.bpp == 8) {
+    if ((tw <= 0 || th <= 0) && maxSize > 0) {
+      const int longest = (std::max)(img.width, img.height);
+      if (longest > maxSize) {
+        const double sc = double(maxSize) / double(longest);
+        tw = (std::max)(1, int(img.width * sc + 0.5));
+        th = (std::max)(1, int(img.height * sc + 0.5));
+      }
+    }
+    if (tw > 0 && th > 0 && (tw != img.width || th != img.height)) {
+      Image out; std::string rerr;
+      if (tydra::ResizeImage(img, tw, th, &out, tydra::ResizeFilter::Auto, &rerr)) {
+        img = std::move(out);
+        resized = true;
+      } else {
+        result.set("success", false);
+        result.set("error", rerr);
+        return result;
+      }
+    }
+  }
+
+  image::WriteOption wopt;
+  wopt.png_encoder = parsePngEncoder(pngEnc);
+  wopt.jpeg_quality = jpegQ;
+  if (format == "jpeg" || format == "jpg") {
+    wopt.format = image::WriteImageFormat::JPEG;
+    img = dropAlpha(img);
+  } else {
+    wopt.format = image::WriteImageFormat::PNG;
+  }
+
+  auto enc = image::WriteImageToMemory(img, wopt);
+  if (!enc) {
+    result.set("success", false);
+    result.set("error", enc.error());
+    return result;
+  }
+
+  result.set("success", true);
+  result.set("data", bytesToUint8Array(enc.value()));
+  result.set("width", img.width);
+  result.set("height", img.height);
+  result.set("resized", resized);
+  return result;
+}
+
+// repackChannels(opts) -> { success, data?:Uint8Array, width, height, channels, error? }
+// opts: { channels?, width?, height?, format?, pngEncoder?, jpegQuality?,
+//         r/g/b/a: { data?:Uint8Array, channel?:int, const?:int } }
+emscripten::val repackChannels(const emscripten::val& opts) {
+  using namespace tinyusdz;
+  emscripten::val result = emscripten::val::object();
+
+  const char* slot_names[4] = {"r", "g", "b", "a"};
+  std::vector<Image> images;
+
+  tydra::ChannelPackSpec spec;
+  spec.out_channels = optInt(opts, "channels", 0);
+  spec.out_width = optInt(opts, "width", 0);
+  spec.out_height = optInt(opts, "height", 0);
+  tydra::ChannelSource* dst[4] = {&spec.r, &spec.g, &spec.b, &spec.a};
+
+  int inferred = 0;
+  for (int c = 0; c < 4; c++) {
+    emscripten::val slot = opts[slot_names[c]];
+    if (slot.isUndefined() || slot.isNull()) {
+      dst[c]->input_index = -1;
+      dst[c]->constant = (c == 3) ? 255 : 0;
+      continue;
+    }
+    inferred = (std::max)(inferred, c + 1);
+    emscripten::val sdata = slot["data"];
+    if (!sdata.isUndefined() && !sdata.isNull()) {
+      std::vector<uint8_t> buf;
+      copyFromJSBuffer(sdata, buf);
+      auto loaded = image::LoadImageFromMemory(buf.data(), buf.size(), "mem");
+      if (!loaded) {
+        result.set("success", false);
+        result.set("error", std::string("repack: failed to decode a channel image: ") + loaded.error());
+        return result;
+      }
+      dst[c]->input_index = int(images.size());
+      dst[c]->channel = optInt(slot, "channel", 0);
+      images.push_back(std::move(loaded.value().image));
+    } else {
+      dst[c]->input_index = -1;
+      dst[c]->constant = uint8_t(optInt(slot, "const", 0) & 0xff);
+    }
+  }
+
+  if (spec.out_channels < 1 || spec.out_channels > 4) {
+    spec.out_channels = inferred > 0 ? inferred : 4;
+  }
+
+  Image packed; std::string perr;
+  if (!tydra::PackChannels(images, spec, &packed, &perr)) {
+    result.set("success", false);
+    result.set("error", perr);
+    return result;
+  }
+
+  image::WriteOption wopt;
+  wopt.png_encoder = parsePngEncoder(optStr(opts, "pngEncoder", "auto"));
+  wopt.jpeg_quality = optInt(opts, "jpegQuality", 90);
+  const std::string format = optStr(opts, "format", "png");
+  if (format == "jpeg" || format == "jpg") {
+    wopt.format = image::WriteImageFormat::JPEG;
+    packed = dropAlpha(packed);
+  } else {
+    wopt.format = image::WriteImageFormat::PNG;
+  }
+
+  auto enc = image::WriteImageToMemory(packed, wopt);
+  if (!enc) {
+    result.set("success", false);
+    result.set("error", enc.error());
+    return result;
+  }
+
+  result.set("success", true);
+  result.set("data", bytesToUint8Array(enc.value()));
+  result.set("width", packed.width);
+  result.set("height", packed.height);
+  result.set("channels", packed.channels);
+  return result;
+}
+
+// fitTextures(opts) -> { success, results:[{data:Uint8Array, ext, width, height, name}], error? }
+// opts: { images:[{data:Uint8Array, name:string}], targetBytes, strategy:"size"|"quality",
+//         startMaxSize?, minTextureSize?, minQuality?, jpegQuality?, pngEncoder? }
+emscripten::val fitTextures(const emscripten::val& opts) {
+  using namespace tinyusdz;
+  emscripten::val result = emscripten::val::object();
+
+  emscripten::val jsImages = opts["images"];
+  if (jsImages.isUndefined() || jsImages.isNull()) {
+    result.set("success", false);
+    result.set("error", std::string("fitTextures: missing 'images'"));
+    return result;
+  }
+  const size_t n = jsImages["length"].as<size_t>();
+
+  std::vector<tydra::FitTextureInput> inputs;
+  std::vector<std::string> names;
+  inputs.reserve(n);
+  names.reserve(n);
+  for (size_t i = 0; i < n; i++) {
+    emscripten::val im = jsImages[i];
+    std::vector<uint8_t> buf;
+    copyFromJSBuffer(im["data"], buf);
+    const std::string name = im["name"].as<std::string>();
+
+    tydra::FitTextureInput fi;
+    fi.original_bytes = buf;
+    // lowercase extension from name
+    {
+      auto dot = name.rfind('.');
+      if (dot != std::string::npos) {
+        fi.ext = name.substr(dot + 1);
+        for (auto& c : fi.ext) c = static_cast<char>(std::tolower(c));
+      }
+    }
+    auto dec = image::LoadImageFromMemory(buf.data(), buf.size(), name);
+    if (dec && dec.value().image.bpp == 8) {
+      fi.image = std::move(dec.value().image);
+      fi.reencodable = true;
+    } else {
+      fi.reencodable = false;
+    }
+    inputs.push_back(std::move(fi));
+    names.push_back(name);
+  }
+
+  tydra::FitTextureOptions fopts;
+  {
+    emscripten::val tb = opts["targetBytes"];
+    fopts.target_total_bytes =
+        (tb.isUndefined() || tb.isNull()) ? 0 : size_t(tb.as<double>());
+  }
+  fopts.strategy = (optStr(opts, "strategy", "size") == "quality")
+                       ? tydra::FitStrategy::Quality
+                       : tydra::FitStrategy::Size;
+  fopts.start_max_size = optInt(opts, "startMaxSize", 0);
+  fopts.min_texture_size = optInt(opts, "minTextureSize", 64);
+  fopts.min_jpeg_quality = optInt(opts, "minQuality", 30);
+  fopts.jpeg_quality = optInt(opts, "jpegQuality", 90);
+  fopts.png_encoder = parsePngEncoder(optStr(opts, "pngEncoder", "auto"));
+
+  std::vector<tydra::FitTextureOutput> outs;
+  std::string warn, err;
+  if (!tydra::FitTexturesToBudget(inputs, fopts, &outs, &warn, &err)) {
+    result.set("success", false);
+    result.set("error", err);
+    return result;
+  }
+
+  emscripten::val arr = emscripten::val::array();
+  size_t total = 0;
+  for (size_t i = 0; i < outs.size(); i++) {
+    emscripten::val r = emscripten::val::object();
+    r.set("data", bytesToUint8Array(outs[i].bytes));
+    r.set("ext", outs[i].ext);
+    r.set("width", outs[i].width);
+    r.set("height", outs[i].height);
+    r.set("name", names[i]);
+    arr.call<void>("push", r);
+    total += outs[i].bytes.size();
+  }
+  result.set("success", true);
+  result.set("results", arr);
+  result.set("totalBytes", double(total));
+  result.set("warn", warn);
+  return result;
+}
+
 EMSCRIPTEN_BINDINGS(image_module) {
 #if defined(TINYUSDZ_WITH_EXR)
   // EXR decoding
@@ -7104,4 +7453,15 @@ EMSCRIPTEN_BINDINGS(image_module) {
   // Float16 <-> Float32 conversion utilities
   function("convertFloat32ToFloat16Array", &convertFloat32ToFloat16Array);
   function("convertFloat16ToFloat32Array", &convertFloat16ToFloat32Array);
+
+  // USDZ-convert texture helpers.
+  // convertImage(data, {maxSize?, width?, height?, format?, pngEncoder?, jpegQuality?})
+  //   -> { success, data:Uint8Array, width, height, resized }
+  function("convertImage", &convertImage);
+  // repackChannels({channels?, width?, height?, format?, r/g/b/a:{data?,channel?,const?}})
+  //   -> { success, data:Uint8Array, width, height, channels }
+  function("repackChannels", &repackChannels);
+  // fitTextures({images:[{data,name}], targetBytes, strategy:"size"|"quality", ...})
+  //   -> { success, results:[{data, ext, width, height, name}], totalBytes }
+  function("fitTextures", &fitTextures);
 }
