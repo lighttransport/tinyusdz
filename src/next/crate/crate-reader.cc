@@ -8,6 +8,8 @@
 #include "../types/type-info.hh"
 #include "../layer/layer.hh"
 
+#include "safe-arithmetic.hh"
+
 #include <fstream>
 #include <unordered_map>
 #include <algorithm>
@@ -609,7 +611,11 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     }
     case CrateTypeId::Vec3f: {
       if (compressed) { AddWarning("Compressed Vec3f arrays not supported"); return false; }
-      std::vector<float> data(static_cast<size_t>(count) * 3);
+      size_t data_size;
+      if (!safe::mul(static_cast<size_t>(count), size_t(3), &data_size)) {
+        return false;
+      }
+      std::vector<float> data(data_size);
       if (!read_raw(data.data(), 3 * sizeof(float))) return false;
       out = Value::MakeFloat3Array(std::move(data));
       return true;

@@ -431,7 +431,7 @@ bool makeUniqueName(std::multiset<std::string> &nameSet,
 
   if (nameSet.count(name) == 0) {
     (*unique_name) = name;
-    return 0;
+    return true;
   }
 
   // Simply add number
@@ -569,7 +569,7 @@ inline uint32_t to_codepoint(const char *s, uint32_t &char_len) {
     unsigned char s2 = static_cast<unsigned char>(s[2]);
     unsigned char s3 = static_cast<unsigned char>(s[3]);
     if (((s0 & 0xf8) == 0xf0) && ((s1 & 0xc0) == 0x80) &&
-        ((s2 & 0xc0) == 0x80) && ((s2 & 0xc0) == 0x80)) {
+        ((s2 & 0xc0) == 0x80) && ((s3 & 0xc0) == 0x80)) {
       code = (uint32_t(s0 & 0x7) << 18) | (uint32_t(s1 & 0x3f) << 12) |
              (uint32_t(s2 & 0x3f) << 6) | uint32_t(s3 & 0x3f);
     } else {
@@ -649,7 +649,7 @@ uint32_t to_utf8_code(const std::string &s) {
     unsigned char s2 = static_cast<unsigned char>(s[2]);
     unsigned char s3 = static_cast<unsigned char>(s[3]);
     if (((s0 & 0xf8) == 0xf0) && ((s1 & 0xc0) == 0x80) &&
-        ((s2 & 0xc0) == 0x80) && ((s2 & 0xc0) == 0x80)) {
+        ((s2 & 0xc0) == 0x80) && ((s3 & 0xc0) == 0x80)) {
       code = (uint32_t(s0 & 0x7) << 18) | (uint32_t(s1 & 0x3f) << 12) |
              (uint32_t(s2 & 0x3f) << 6) | uint32_t(s3 & 0x3f);
     } else {
