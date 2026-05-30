@@ -110,38 +110,38 @@ bool ReconstructShader<UsdPreviewSurface>(
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:diffuseColor", UsdPreviewSurface,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:diffuseColor", UsdPreviewSurface,
                          surface->diffuseColor)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:emissiveColor", UsdPreviewSurface,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:emissiveColor", UsdPreviewSurface,
                          surface->emissiveColor)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:roughness", UsdPreviewSurface,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:roughness", UsdPreviewSurface,
                          surface->roughness)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specularColor", UsdPreviewSurface,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:specularColor", UsdPreviewSurface,
                          surface->specularColor)  // specular workflow
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:metallic", UsdPreviewSurface,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:metallic", UsdPreviewSurface,
                          surface->metallic)  // non specular workflow
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:clearcoat", UsdPreviewSurface,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:clearcoat", UsdPreviewSurface,
                          surface->clearcoat)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:clearcoatRoughness",
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:clearcoatRoughness",
                          UsdPreviewSurface, surface->clearcoatRoughness)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:opacity", UsdPreviewSurface,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:opacity", UsdPreviewSurface,
                          surface->opacity)
     // From 2.6
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "inputs:opacityMode",
                        UsdPreviewSurface::OpacityMode, OpacityModeHandler, UsdPreviewSurface,
                        surface->opacityMode, options.strict_allowedToken_check)
 
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:opacityThreshold",
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:opacityThreshold",
                          UsdPreviewSurface, surface->opacityThreshold)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:ior", UsdPreviewSurface,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:ior", UsdPreviewSurface,
                          surface->ior)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:normal", UsdPreviewSurface,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:normal", UsdPreviewSurface,
                          surface->normal)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:dispacement", UsdPreviewSurface,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:dispacement", UsdPreviewSurface,
                          surface->displacement)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:occlusion", UsdPreviewSurface,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:occlusion", UsdPreviewSurface,
                          surface->occlusion)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:useSpecularWorkflow",
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:useSpecularWorkflow",
                          UsdPreviewSurface, surface->useSpecularWorkflow)
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:surface", UsdPreviewSurface,
                    surface->outputsSurface)
@@ -177,8 +177,8 @@ bool ReconstructShader<UsdUVTexture>(
 
   for (auto &prop : properties) {
     DCOUT("prop.name = " << prop.first);
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:file", UsdUVTexture, texture->file)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:st", UsdUVTexture,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:file", UsdUVTexture, texture->file)
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:st", UsdUVTexture,
                           texture->st)
     if (prop.first == "inputs:sourceColorSpace") {
       if (table.count("inputs:sourceColorSpace")) {
@@ -203,11 +203,11 @@ bool ReconstructShader<UsdUVTexture>(
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "inputs:wrapT",
                        UsdUVTexture::Wrap, WrapHandler, UsdUVTexture,
                        texture->wrapT, options.strict_allowedToken_check)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdUVTexture,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:fallback", UsdUVTexture,
                           texture->fallback)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:scale", UsdUVTexture,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:scale", UsdUVTexture,
                           texture->scale)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:bias", UsdUVTexture,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:bias", UsdUVTexture,
                           texture->bias)
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:r", UsdUVTexture,
                                   texture->outputsR)
@@ -245,13 +245,13 @@ bool ReconstructShader<UsdTransform2d>(
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
     DCOUT("prop = " << prop.first);
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:in", UsdTransform2d,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:in", UsdTransform2d,
                    transform->in)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:rotation", UsdTransform2d,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:rotation", UsdTransform2d,
                    transform->rotation)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:scale", UsdTransform2d,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:scale", UsdTransform2d,
                    transform->scale)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:translation", UsdTransform2d,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:translation", UsdTransform2d,
                    transform->translation)
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdTransform2d, transform->result)

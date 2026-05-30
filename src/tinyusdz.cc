@@ -139,6 +139,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
   usdc::USDCReaderConfig config;
   config.numThreads = options.num_threads;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
+  config.strict_shader_type_check = options.strict_shader_type_check;
   config.kMaxAllowedMemoryInMB = size_t(options.max_memory_limit_in_mb);
   config.mmap_zero_copy = options.mmap_zero_copy;
   usdc::USDCReader reader(&sr, config);
@@ -509,6 +510,9 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
 
     if (!ret) {
       if (err) {
+        if (!err->empty() && err->back() != '\n') {
+          (*err) += "\n";
+        }
         (*err) += "Failed to load USDC: [" + filename + "].\n";
       }
 
@@ -655,6 +659,7 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
 
   tinyusdz::usda::USDAReaderConfig config;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
+  config.strict_shader_type_check = options.strict_shader_type_check;
   config.allow_unknown_apiSchema = !options.strict_apiSchema_check;
   config.max_memory_limit_in_mb = size_t(options.max_memory_limit_in_mb);
   // MaterialX validation options
@@ -1157,6 +1162,7 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
   usdc::USDCReaderConfig config;
   config.numThreads = options.num_threads;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
+  config.strict_shader_type_check = options.strict_shader_type_check;
   config.allow_unknown_apiSchemas = !options.strict_apiSchema_check;
   usdc::USDCReader reader(&sr, config);
 
@@ -1237,6 +1243,7 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
 
   tinyusdz::usda::USDAReaderConfig config;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
+  config.strict_shader_type_check = options.strict_shader_type_check;
   // MaterialX validation options
   config.strict_mtlx_check = options.strict_mtlx_check;
   config.validate_mtlx_info_id = options.validate_mtlx_info_id;
@@ -1389,6 +1396,9 @@ bool LoadUSDZLayerFromMemory(const uint8_t *addr, const size_t length,
 
     if (!ret) {
       if (err) {
+        if (!err->empty() && err->back() != '\n') {
+          (*err) += "\n";
+        }
         (*err) += "Failed to load USDC: [" + filename + "].\n";
       }
 
