@@ -13,3 +13,4 @@ void usd_validation_nested_gprim_test(void);
 void usd_validation_shader_encapsulation_test(void);
 void usd_validation_material_binding_test(void);
 void usd_validation_preview_surface_test(void);
+void usd_validation_report_format_test(void);

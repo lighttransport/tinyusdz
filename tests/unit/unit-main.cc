@@ -387,6 +387,7 @@ TEST_LIST = {
   { "usd_validation_shader_encapsulation_test", usd_validation_shader_encapsulation_test },
   { "usd_validation_material_binding_test", usd_validation_material_binding_test },
   { "usd_validation_preview_surface_test", usd_validation_preview_surface_test },
+  { "usd_validation_report_format_test", usd_validation_report_format_test },
   { "usda_reader_class_inherits_test", usda_reader_class_inherits_test },
   { "usda_reader_internal_reference_test", usda_reader_internal_reference_test },
   { "usda_reader_nested_hierarchy_test", usda_reader_nested_hierarchy_test },

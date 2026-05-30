@@ -19,21 +19,6 @@ enum class USDValidationSeverity {
   Warning,
 };
 
-struct USDValidationIssue {
-  USDValidationSeverity severity{USDValidationSeverity::Error};
-  std::string rule_id;
-  std::string location;
-  std::string message;
-};
-
-struct USDValidationResult {
-  std::vector<USDValidationIssue> issues;
-
-  size_t error_count() const;
-  size_t warning_count() const;
-  bool ok() const;
-};
-
 // Selects which rule groups to run.
 //
 // `core` rules (default on) preserve the historical AOUSD Core behavior:
@@ -46,6 +31,28 @@ struct ValidationOptions {
   bool core{true};
   bool geom{false};
   bool shade{false};
+
+  // Human-readable list of enabled groups, e.g. "core, geom, shade".
+  std::string group_summary() const;
+};
+
+struct USDValidationIssue {
+  USDValidationSeverity severity{USDValidationSeverity::Error};
+  std::string rule_id;
+  std::string location;
+  std::string message;
+};
+
+struct USDValidationResult {
+  std::vector<USDValidationIssue> issues;
+
+  // The rule groups that were actually run to produce this result, so a report
+  // can state coverage (a core-only "OK" did not check geom/shade).
+  ValidationOptions checked_groups;
+
+  size_t error_count() const;
+  size_t warning_count() const;
+  bool ok() const;
 };
 
 const char *GetAOUSDCoreSpecVersionString();

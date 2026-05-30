@@ -66,6 +66,13 @@ void ResultToJson(const USDValidationResult &validation,
   result["warning_count"] = validation.warning_count();
   result["spec_version"] = GetAOUSDCoreSpecVersionString();
 
+  // Which rule groups actually ran (a core-only "ok" did not check geom/shade).
+  nlohmann::json groups = nlohmann::json::array();
+  if (validation.checked_groups.core) groups.push_back("core");
+  if (validation.checked_groups.geom) groups.push_back("geom");
+  if (validation.checked_groups.shade) groups.push_back("shade");
+  result["checked_groups"] = groups;
+
   nlohmann::json issues = nlohmann::json::array();
   for (const auto &issue : validation.issues) {
     nlohmann::json j;
