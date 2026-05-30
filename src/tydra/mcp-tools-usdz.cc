@@ -1,0 +1,301 @@
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2024 - Present, Light Transport Entertainment, Inc.
+
+#include "mcp-tools-usdz.hh"
+
+#include <algorithm>
+#include <map>
+#include <vector>
+
+#include "external/jsonhpp/nlohmann/json.hpp"
+
+#include "../tinyusdz.hh"
+#include "../usdz-convert.hh"
+#include "../image-loader.hh"
+#include "../image-writer.hh"
+#include "../str-util.hh"
+#include "../io-util.hh"
+#include "texture-util.hh"
+#include "mcp-context.hh"
+
+namespace tinyusdz {
+namespace tydra {
+namespace mcp {
+
+namespace {
+
+image::PngEncoder ParsePngEncoder(const nlohmann::json &args) {
+  std::string v = to_lower(args.value("pngEncoder", std::string("auto")));
+  if (v == "fpng") return image::PngEncoder::Fpng;
+  if (v == "fpnge") return image::PngEncoder::Fpnge;
+  return image::PngEncoder::Auto;
+}
+
+// Encode an Image to base64 in the requested format ("png" default, or "jpeg").
+// NOTE: this namespace (tinyusdz::tydra::mcp) has its own `Image` type, so the
+// pixel-image type must be spelled `tinyusdz::Image`.
+bool EncodeImageBase64(const tinyusdz::Image &img, const std::string &format,
+                       image::PngEncoder enc, int jpeg_quality,
+                       std::string *b64, std::string *mime, std::string &err) {
+  image::WriteOption wopt;
+  wopt.png_encoder = enc;
+  wopt.jpeg_quality = jpeg_quality;
+  std::string fmt = to_lower(format);
+  if (fmt == "jpeg" || fmt == "jpg") {
+    wopt.format = image::WriteImageFormat::JPEG;
+    *mime = "image/jpeg";
+  } else {
+    wopt.format = image::WriteImageFormat::PNG;
+    *mime = "image/png";
+  }
+
+  auto ret = image::WriteImageToMemory(img, wopt);
+  if (!ret) {
+    err = "Image encode failed: " + ret.error();
+    return false;
+  }
+  *b64 = base64_encode(ret.value().data(), static_cast<unsigned int>(ret.value().size()));
+  return true;
+}
+
+// Decode a base64 string into an Image.
+bool DecodeImageBase64(const std::string &b64, tinyusdz::Image *img, std::string &err) {
+  std::string bytes = base64_decode(b64);
+  if (bytes.empty()) {
+    err = "Empty/invalid base64 image data.";
+    return false;
+  }
+  auto ret = image::LoadImageFromMemory(
+      reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size(), "mem");
+  if (!ret) {
+    err = "Failed to decode image: " + ret.error();
+    return false;
+  }
+  *img = std::move(ret.value().image);
+  return true;
+}
+
+}  // namespace
+
+bool USDZConvert(Context &ctx, const nlohmann::json &args,
+                 nlohmann::json &result, std::string &err) {
+  (void)ctx;
+  if (!args.contains("input") || !args["input"].is_string()) {
+    err = "Missing 'input' argument";
+    return false;
+  }
+  if (!args.contains("output") || !args["output"].is_string()) {
+    err = "Missing 'output' argument";
+    return false;
+  }
+
+  usdz::UsdzConvertOptions opts;
+  opts.inputs.push_back(args["input"].get<std::string>());
+  opts.output = args["output"].get<std::string>();
+  opts.flatten = args.value("flatten", true);
+  opts.arkit_compatible = args.value("arkitCompatible", false);
+  opts.reencode = args.value("reencode", true);
+  opts.metersPerUnit = args.value("metersPerUnit", 0.0);
+  opts.max_texture_size = args.value("resizeTextures", 0);
+  opts.jpeg_quality = args.value("jpegQuality", 90);
+  opts.png_encoder = ParsePngEncoder(args);
+
+  std::string tf = to_lower(args.value("textureFormat", std::string("keep")));
+  if (tf == "png") opts.texture_format = usdz::OutputTextureFormat::PNG;
+  else if (tf == "jpeg" || tf == "jpg") opts.texture_format = usdz::OutputTextureFormat::JPEG;
+  else opts.texture_format = usdz::OutputTextureFormat::KeepOriginal;
+
+  std::string ax = to_lower(args.value("upAxis", std::string("")));
+  if (ax == "x") opts.upAxis = Axis::X;
+  else if (ax == "y") opts.upAxis = Axis::Y;
+  else if (ax == "z") opts.upAxis = Axis::Z;
+
+  usdz::UsdzConvertStats stats;
+  std::string warn;
+  if (!usdz::Convert(opts, &stats, &warn, &err)) {
+    return false;
+  }
+
+  result["success"] = true;
+  result["output"] = opts.output;
+  result["warn"] = warn;
+  result["stats"] = {
+      {"textures", stats.num_textures},
+      {"resized", stats.num_textures_resized},
+      {"reencoded", stats.num_textures_reencoded},
+      {"passthrough", stats.num_textures_passthrough},
+      {"output_size", stats.output_size},
+  };
+  return true;
+}
+
+bool USDZPack(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
+              std::string &err) {
+  if (!ctx.stage || !ctx.stage_loaded) {
+    err = "No stage loaded";
+    return false;
+  }
+
+  if (args.value("arkitCompatible", false)) {
+    ctx.stage->metas().upAxis.set_value(Axis::Y);
+  }
+
+  const std::map<std::string, std::vector<uint8_t>> assets;
+  std::string warn;
+
+  if (args.contains("uri") && args["uri"].is_string()) {
+    const std::string uri = args["uri"].get<std::string>();
+    if (!tinyusdz::SaveAsUSDZToFile(uri, *ctx.stage, assets, &warn, &err)) {
+      return false;
+    }
+    result["success"] = true;
+    result["uri"] = uri;
+    return true;
+  }
+
+  std::vector<uint8_t> out;
+  if (!tinyusdz::SaveAsUSDZToMemory(*ctx.stage, assets, &out, &warn, &err)) {
+    return false;
+  }
+  result["success"] = true;
+  result["data"] =
+      base64_encode(out.data(), static_cast<unsigned int>(out.size()));
+  result["size"] = out.size();
+  return true;
+}
+
+bool TextureResize(Context &ctx, const nlohmann::json &args,
+                   nlohmann::json &result, std::string &err) {
+  (void)ctx;
+  if (!args.contains("data") || !args["data"].is_string()) {
+    err = "Missing 'data' (base64 image) argument";
+    return false;
+  }
+
+  tinyusdz::Image img;
+  if (!DecodeImageBase64(args["data"].get<std::string>(), &img, err)) {
+    return false;
+  }
+
+  int target_w = args.value("width", 0);
+  int target_h = args.value("height", 0);
+  const int max_size = args.value("max_size", 0);
+
+  if (target_w <= 0 || target_h <= 0) {
+    if (max_size > 0) {
+      const int longest = (std::max)(img.width, img.height);
+      if (longest > max_size) {
+        const double scale = double(max_size) / double(longest);
+        target_w = (std::max)(1, int(img.width * scale + 0.5));
+        target_h = (std::max)(1, int(img.height * scale + 0.5));
+      } else {
+        target_w = img.width;
+        target_h = img.height;
+      }
+    } else {
+      err = "Provide either width+height or max_size";
+      return false;
+    }
+  }
+
+  tinyusdz::Image resized;
+  if ((target_w == img.width) && (target_h == img.height)) {
+    resized = img;
+  } else if (!tydra::ResizeImage(img, target_w, target_h, &resized,
+                                 tydra::ResizeFilter::Auto, &err)) {
+    return false;
+  }
+
+  std::string b64, mime;
+  if (!EncodeImageBase64(resized, args.value("format", std::string("png")),
+                         ParsePngEncoder(args), args.value("jpegQuality", 90),
+                         &b64, &mime, err)) {
+    return false;
+  }
+
+  result["success"] = true;
+  result["data"] = b64;
+  result["mimeType"] = mime;
+  result["width"] = resized.width;
+  result["height"] = resized.height;
+  return true;
+}
+
+bool TextureRepack(Context &ctx, const nlohmann::json &args,
+                   nlohmann::json &result, std::string &err) {
+  (void)ctx;
+
+  const char *slot_names[4] = {"r", "g", "b", "a"};
+
+  std::vector<tinyusdz::Image> images;
+  // Map a base64 payload string -> image index (dedupe identical inputs).
+  std::map<std::string, int> data_to_index;
+
+  tydra::ChannelPackSpec spec;
+  spec.out_channels = args.value("channels", 0);
+  spec.out_width = args.value("width", 0);
+  spec.out_height = args.value("height", 0);
+  tydra::ChannelSource *dst[4] = {&spec.r, &spec.g, &spec.b, &spec.a};
+
+  int inferred_channels = 0;
+  for (int c = 0; c < 4; c++) {
+    if (!args.contains(slot_names[c])) {
+      // default: opaque alpha, zero rgb (only used if out_channels covers it)
+      dst[c]->input_index = -1;
+      dst[c]->constant = (c == 3) ? 255 : 0;
+      continue;
+    }
+    inferred_channels = (std::max)(inferred_channels, c + 1);
+    const nlohmann::json &slot = args[slot_names[c]];
+
+    if (slot.contains("data") && slot["data"].is_string()) {
+      const std::string b64 = slot["data"].get<std::string>();
+      int idx;
+      auto it = data_to_index.find(b64);
+      if (it != data_to_index.end()) {
+        idx = it->second;
+      } else {
+        tinyusdz::Image im;
+        if (!DecodeImageBase64(b64, &im, err)) {
+          return false;
+        }
+        idx = int(images.size());
+        images.push_back(std::move(im));
+        data_to_index[b64] = idx;
+      }
+      dst[c]->input_index = idx;
+      dst[c]->channel = slot.value("channel", 0);
+    } else {
+      dst[c]->input_index = -1;
+      dst[c]->constant = uint8_t(slot.value("const", 0) & 0xff);
+    }
+  }
+
+  if (spec.out_channels < 1 || spec.out_channels > 4) {
+    spec.out_channels = inferred_channels > 0 ? inferred_channels : 4;
+  }
+
+  tinyusdz::Image packed;
+  if (!tydra::PackChannels(images, spec, &packed, &err)) {
+    return false;
+  }
+
+  std::string b64, mime;
+  if (!EncodeImageBase64(packed, args.value("format", std::string("png")),
+                         ParsePngEncoder(args), args.value("jpegQuality", 90),
+                         &b64, &mime, err)) {
+    return false;
+  }
+
+  result["success"] = true;
+  result["data"] = b64;
+  result["mimeType"] = mime;
+  result["width"] = packed.width;
+  result["height"] = packed.height;
+  result["channels"] = packed.channels;
+  return true;
+}
+
+}  // namespace mcp
+}  // namespace tydra
+}  // namespace tinyusdz

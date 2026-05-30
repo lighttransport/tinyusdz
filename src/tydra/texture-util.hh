@@ -23,11 +23,70 @@
 #pragma once
 
 #include <vector>
+#include <string>
 #include <cstdint>
 #include <cstdlib>
 
+#include "image-types.hh"
+
 namespace tinyusdz {
 namespace tydra {
+
+///
+/// Resize filter selection.
+/// Auto   : sRGB-aware resize when the source image colorspace looks like sRGB,
+///          linear otherwise.
+/// Linear : always resize in linear space (use for data maps: normal, ORM, ...).
+/// SRGB   : always sRGB-aware resize (use for color/albedo textures).
+///
+enum class ResizeFilter { Auto, Linear, SRGB };
+
+///
+/// Resize an 8-bit `Image` to (dstWidth, dstHeight).
+///
+/// Only 8-bit per channel images are supported (bpp == 8), 1-4 channels.
+/// The output preserves channels/format/colorspace of the source.
+///
+/// @return true on success. `err` is filled on failure.
+///
+bool ResizeImage(const Image &src, int dstWidth, int dstHeight, Image *dst,
+                 ResizeFilter filter = ResizeFilter::Auto,
+                 std::string *err = nullptr);
+
+///
+/// Source for one output channel when repacking textures.
+/// When `input_index` < 0, the constant value is written instead of sampling.
+///
+struct ChannelSource {
+  int input_index{-1};  // index into the `inputs` vector; <0 => use `constant`
+  int channel{0};       // channel to sample from inputs[input_index] (0=R,1=G,..)
+  uint8_t constant{0};  // value written when input_index < 0
+};
+
+///
+/// Generic channel pack specification: each output channel is sourced from a
+/// (input image, channel) pair or a constant. Example: out.R = gloss.R,
+/// out.G = roughness.R packs two grayscale maps into one image.
+///
+struct ChannelPackSpec {
+  int out_channels{4};  // number of channels in the output image (1-4)
+  int out_width{0};     // 0 => max width among referenced inputs
+  int out_height{0};    // 0 => max height among referenced inputs
+  ChannelSource r;
+  ChannelSource g;
+  ChannelSource b;
+  ChannelSource a{/*input_index*/ -1, /*channel*/ 0, /*constant*/ 255};
+};
+
+///
+/// Pack channels from multiple 8-bit input images into a single 8-bit output
+/// image following `spec`. Referenced inputs are resized (linear) to the output
+/// dimensions before sampling.
+///
+/// @return true on success. `err` is filled on failure.
+///
+bool PackChannels(const std::vector<Image> &inputs, const ChannelPackSpec &spec,
+                  Image *dst, std::string *err = nullptr);
 
 ///
 /// Build combined ORM (Occlusion-Roughness-Metallic) texture for glTF workflow.

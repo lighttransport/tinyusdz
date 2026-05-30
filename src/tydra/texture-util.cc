@@ -1,6 +1,9 @@
 #include "texture-util.hh"
 #include "safe-arithmetic.hh"
 
+#include <algorithm>
+#include <cctype>
+
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
@@ -185,6 +188,217 @@ bool BuildOcclusionRoughnessMetallicTexture(
 	dstHeight = maxImageHeight;
 
 	return true;
+}
+
+namespace {
+
+stbir_pixel_layout PixelLayoutFromChannels(int channels) {
+  if (channels == 1) {
+    return STBIR_1CHANNEL;
+  } else if (channels == 2) {
+    return STBIR_2CHANNEL;
+  } else if (channels == 3) {
+    return STBIR_RGB;
+  }
+  return STBIR_RGBA;  // assume RGBA for 4(or more)
+}
+
+bool LooksSRGB(const std::string &colorspace) {
+  std::string s;
+  s.reserve(colorspace.size());
+  for (char c : colorspace) {
+    s.push_back(char(std::tolower(static_cast<unsigned char>(c))));
+  }
+  // "sRGB", "srgb", "sRGB - Texture", "sRGB-texture" etc.
+  return s.find("srgb") != std::string::npos;
+}
+
+}  // namespace
+
+bool ResizeImage(const Image &src, int dstWidth, int dstHeight, Image *dst,
+                 ResizeFilter filter, std::string *err) {
+  if (dst == nullptr) {
+    if (err) (*err) = "ResizeImage: dst is null.";
+    return false;
+  }
+  if (src.width <= 0 || src.height <= 0 || src.channels <= 0) {
+    if (err) (*err) = "ResizeImage: invalid source image.";
+    return false;
+  }
+  if (src.bpp != 8) {
+    if (err) (*err) = "ResizeImage: only 8-bit per channel images are supported.";
+    return false;
+  }
+  if (dstWidth <= 0 || dstHeight <= 0) {
+    if (err) (*err) = "ResizeImage: invalid destination size.";
+    return false;
+  }
+
+  // Validate source buffer size.
+  size_t src_expected;
+  if (!safe::mul3(size_t(src.width), size_t(src.height), size_t(src.channels),
+                  &src_expected)) {
+    if (err) (*err) = "ResizeImage: source size overflow.";
+    return false;
+  }
+  if (src.data.size() < src_expected) {
+    if (err) (*err) = "ResizeImage: source buffer too small.";
+    return false;
+  }
+
+  Image out;
+  out.width = dstWidth;
+  out.height = dstHeight;
+  out.channels = src.channels;
+  out.bpp = 8;
+  out.format = src.format;
+  out.colorspace = src.colorspace;
+  out.uri = src.uri;
+
+  size_t dst_size;
+  if (!safe::mul3(size_t(dstWidth), size_t(dstHeight), size_t(src.channels),
+                  &dst_size)) {
+    if (err) (*err) = "ResizeImage: destination size overflow.";
+    return false;
+  }
+  out.data.resize(dst_size);
+
+  const stbir_pixel_layout layout = PixelLayoutFromChannels(src.channels);
+
+  bool use_srgb = false;
+  if (filter == ResizeFilter::SRGB) {
+    use_srgb = true;
+  } else if (filter == ResizeFilter::Auto) {
+    use_srgb = LooksSRGB(src.colorspace);
+  }
+
+  // No-op fast path.
+  if ((dstWidth == src.width) && (dstHeight == src.height)) {
+    std::copy(src.data.begin(), src.data.begin() + std::ptrdiff_t(dst_size),
+              out.data.begin());
+    (*dst) = std::move(out);
+    return true;
+  }
+
+  void *r = nullptr;
+  if (use_srgb) {
+    r = stbir_resize_uint8_srgb(src.data.data(), src.width, src.height, 0,
+                                out.data.data(), dstWidth, dstHeight, 0, layout);
+  } else {
+    r = stbir_resize_uint8_linear(src.data.data(), src.width, src.height, 0,
+                                  out.data.data(), dstWidth, dstHeight, 0,
+                                  layout);
+  }
+  if (r == nullptr) {
+    if (err) (*err) = "ResizeImage: stb resize failed.";
+    return false;
+  }
+
+  (*dst) = std::move(out);
+  return true;
+}
+
+bool PackChannels(const std::vector<Image> &inputs, const ChannelPackSpec &spec,
+                  Image *dst, std::string *err) {
+  if (dst == nullptr) {
+    if (err) (*err) = "PackChannels: dst is null.";
+    return false;
+  }
+  if (spec.out_channels < 1 || spec.out_channels > 4) {
+    if (err) (*err) = "PackChannels: out_channels must be 1-4.";
+    return false;
+  }
+
+  const ChannelSource *slots[4] = {&spec.r, &spec.g, &spec.b, &spec.a};
+
+  // Validate referenced inputs and determine output dims.
+  int out_w = spec.out_width;
+  int out_h = spec.out_height;
+  for (int c = 0; c < spec.out_channels; c++) {
+    const ChannelSource &cs = *slots[c];
+    if (cs.input_index < 0) {
+      continue;
+    }
+    if (size_t(cs.input_index) >= inputs.size()) {
+      if (err) (*err) = "PackChannels: input_index out of range.";
+      return false;
+    }
+    const Image &im = inputs[size_t(cs.input_index)];
+    if (im.bpp != 8 || im.width <= 0 || im.height <= 0 || im.channels <= 0) {
+      if (err) (*err) = "PackChannels: referenced input must be a valid 8-bit image.";
+      return false;
+    }
+    if (cs.channel < 0 || cs.channel >= im.channels) {
+      if (err) (*err) = "PackChannels: channel index out of range for input.";
+      return false;
+    }
+    if (out_w == 0) out_w = im.width;
+    if (out_h == 0) out_h = im.height;
+    out_w = (std::max)(out_w, im.width);
+    out_h = (std::max)(out_h, im.height);
+  }
+
+  if (out_w <= 0 || out_h <= 0) {
+    if (err) (*err) = "PackChannels: could not determine output size (no inputs and no explicit size).";
+    return false;
+  }
+
+  // Resize each referenced input to (out_w, out_h) once and cache by index.
+  std::vector<Image> resized(inputs.size());
+  std::vector<bool> have_resized(inputs.size(), false);
+  for (int c = 0; c < spec.out_channels; c++) {
+    const ChannelSource &cs = *slots[c];
+    if (cs.input_index < 0) continue;
+    size_t idx = size_t(cs.input_index);
+    if (have_resized[idx]) continue;
+    const Image &im = inputs[idx];
+    if (im.width == out_w && im.height == out_h) {
+      resized[idx] = im;
+    } else {
+      // Data maps: resize in linear space to avoid gamma shifting data values.
+      if (!ResizeImage(im, out_w, out_h, &resized[idx], ResizeFilter::Linear,
+                       err)) {
+        return false;
+      }
+    }
+    have_resized[idx] = true;
+  }
+
+  Image out;
+  out.width = out_w;
+  out.height = out_h;
+  out.channels = spec.out_channels;
+  out.bpp = 8;
+  out.format = Image::PixelFormat::UInt;
+
+  size_t out_size;
+  if (!safe::mul3(size_t(out_w), size_t(out_h), size_t(spec.out_channels),
+                  &out_size)) {
+    if (err) (*err) = "PackChannels: output size overflow.";
+    return false;
+  }
+  out.data.resize(out_size);
+
+  size_t npixels;
+  if (!safe::mul(size_t(out_w), size_t(out_h), &npixels)) {
+    if (err) (*err) = "PackChannels: pixel count overflow.";
+    return false;
+  }
+
+  for (size_t i = 0; i < npixels; i++) {
+    for (int c = 0; c < spec.out_channels; c++) {
+      const ChannelSource &cs = *slots[c];
+      uint8_t v = cs.constant;
+      if (cs.input_index >= 0) {
+        const Image &im = resized[size_t(cs.input_index)];
+        v = im.data[i * size_t(im.channels) + size_t(cs.channel)];
+      }
+      out.data[i * size_t(spec.out_channels) + size_t(c)] = v;
+    }
+  }
+
+  (*dst) = std::move(out);
+  return true;
 }
 
 } // namespace tydra
