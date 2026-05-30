@@ -401,5 +401,215 @@ bool PackChannels(const std::vector<Image> &inputs, const ChannelPackSpec &spec,
   return true;
 }
 
+namespace {
+
+// Encode one texture at a given dimension cap (Size strategy) or JPEG quality
+// (Quality strategy). Returns the encoded bytes + final ext/dims.
+bool EncodeFitTexture(const FitTextureInput &in, const FitTextureOptions &opts,
+                      FitStrategy strategy, int dimCap, int quality,
+                      FitTextureOutput *out) {
+  Image img = in.image;
+
+  // Apply a longest-edge cap when requested.
+  if (dimCap > 0) {
+    const int longest = (std::max)(img.width, img.height);
+    if (longest > dimCap) {
+      const double s = double(dimCap) / double(longest);
+      const int nw = (std::max)(1, int(img.width * s + 0.5));
+      const int nh = (std::max)(1, int(img.height * s + 0.5));
+      Image resized;
+      std::string rerr;
+      if (ResizeImage(img, nw, nh, &resized, ResizeFilter::Auto, &rerr)) {
+        img = std::move(resized);
+      }
+    }
+  }
+
+  image::WriteOption wopt;
+  wopt.png_encoder = opts.png_encoder;
+
+  std::string ext;
+  if (strategy == FitStrategy::Quality) {
+    // Transcode to JPEG.
+    wopt.format = image::WriteImageFormat::JPEG;
+    wopt.jpeg_quality = quality;
+    ext = "jpg";
+    if (img.channels == 4) {
+      Image rgb;
+      rgb.width = img.width; rgb.height = img.height; rgb.channels = 3;
+      rgb.bpp = 8; rgb.format = img.format; rgb.colorspace = img.colorspace;
+      rgb.data.resize(size_t(img.width) * size_t(img.height) * 3);
+      for (size_t i = 0; i < size_t(img.width) * size_t(img.height); i++) {
+        rgb.data[3 * i + 0] = img.data[4 * i + 0];
+        rgb.data[3 * i + 1] = img.data[4 * i + 1];
+        rgb.data[3 * i + 2] = img.data[4 * i + 2];
+      }
+      img = std::move(rgb);
+    }
+  } else {
+    // Size strategy: keep the source format (png stays png, jpg stays jpg).
+    if (in.ext == "jpg" || in.ext == "jpeg") {
+      wopt.format = image::WriteImageFormat::JPEG;
+      wopt.jpeg_quality = opts.jpeg_quality;
+      ext = "jpg";
+      if (img.channels == 4) {
+        Image rgb;
+        rgb.width = img.width; rgb.height = img.height; rgb.channels = 3;
+        rgb.bpp = 8; rgb.format = img.format; rgb.colorspace = img.colorspace;
+        rgb.data.resize(size_t(img.width) * size_t(img.height) * 3);
+        for (size_t i = 0; i < size_t(img.width) * size_t(img.height); i++) {
+          rgb.data[3 * i + 0] = img.data[4 * i + 0];
+          rgb.data[3 * i + 1] = img.data[4 * i + 1];
+          rgb.data[3 * i + 2] = img.data[4 * i + 2];
+        }
+        img = std::move(rgb);
+      }
+    } else {
+      wopt.format = image::WriteImageFormat::PNG;
+      ext = "png";
+    }
+  }
+
+  auto enc = image::WriteImageToMemory(img, wopt);
+  if (!enc) {
+    return false;
+  }
+  out->bytes = std::move(enc.value());
+  out->ext = ext;
+  out->width = img.width;
+  out->height = img.height;
+  out->changed = true;
+  return true;
+}
+
+}  // namespace
+
+bool FitTexturesToBudget(const std::vector<FitTextureInput> &inputs,
+                         const FitTextureOptions &opts,
+                         std::vector<FitTextureOutput> *out, std::string *warn,
+                         std::string *err) {
+  if (out == nullptr) {
+    if (err) (*err) = "FitTexturesToBudget: out is null.";
+    return false;
+  }
+  out->assign(inputs.size(), FitTextureOutput{});
+
+  // Indices of textures we can shrink, and the fixed overhead of the rest.
+  std::vector<size_t> idx;
+  size_t fixed = 0;
+  int maxOrigDim = 1;
+  for (size_t i = 0; i < inputs.size(); i++) {
+    const auto &in = inputs[i];
+    if (in.reencodable && in.image.bpp == 8 && in.image.width > 0 &&
+        in.image.height > 0) {
+      idx.push_back(i);
+      maxOrigDim = (std::max)(maxOrigDim, (std::max)(in.image.width, in.image.height));
+    } else {
+      // Keep original bytes; count as fixed overhead.
+      (*out)[i].bytes = in.original_bytes;
+      (*out)[i].ext = in.ext;
+      (*out)[i].width = in.image.width;
+      (*out)[i].height = in.image.height;
+      (*out)[i].changed = false;
+      fixed += in.original_bytes.size();
+    }
+  }
+
+  if (opts.start_max_size > 0) {
+    maxOrigDim = (std::min)(maxOrigDim, opts.start_max_size);
+  }
+
+  const size_t budget =
+      (opts.target_total_bytes > fixed) ? (opts.target_total_bytes - fixed) : 0;
+
+  // Helper: encode all shrinkable textures at a knob, return total bytes.
+  std::vector<FitTextureOutput> probe(idx.size());
+  auto encodeAll = [&](int dimCap, int quality, size_t *total) -> bool {
+    size_t sum = 0;
+    for (size_t k = 0; k < idx.size(); k++) {
+      if (!EncodeFitTexture(inputs[idx[k]], opts, opts.strategy, dimCap, quality,
+                            &probe[k])) {
+        return false;
+      }
+      sum += probe[k].bytes.size();
+    }
+    *total = sum;
+    return true;
+  };
+
+  // Binary search the lever for the best value that fits `budget`.
+  // Size:    knob = dimension cap in [min_texture_size, maxOrigDim] (higher = bigger).
+  // Quality: knob = JPEG quality in [min_jpeg_quality, 95]      (higher = bigger).
+  int lo, hi, bestKnob;
+  if (opts.strategy == FitStrategy::Quality) {
+    lo = (std::max)(1, opts.min_jpeg_quality);
+    hi = 95;
+    bestKnob = lo;
+  } else {
+    lo = (std::max)(1, opts.min_texture_size);
+    hi = (std::max)(lo, maxOrigDim);
+    bestKnob = lo;
+  }
+
+  size_t total = 0;
+  // If the largest setting already fits, take it (no shrink needed beyond cap).
+  {
+    int dimCap = (opts.strategy == FitStrategy::Quality) ? opts.start_max_size : hi;
+    int quality = (opts.strategy == FitStrategy::Quality) ? hi : opts.jpeg_quality;
+    if (!encodeAll(dimCap, quality, &total)) {
+      if (err) (*err) = "FitTexturesToBudget: texture encode failed.";
+      return false;
+    }
+    if (budget == 0 || total <= budget) {
+      bestKnob = hi;
+    } else {
+      // Search downward for the largest knob that fits.
+      int a = lo, b = hi;
+      bestKnob = lo;
+      // Up to ~16 iterations (converges for any practical range).
+      for (int it = 0; it < 16 && a <= b; it++) {
+        int mid = a + (b - a) / 2;
+        int dCap = (opts.strategy == FitStrategy::Quality) ? opts.start_max_size : mid;
+        int q = (opts.strategy == FitStrategy::Quality) ? mid : opts.jpeg_quality;
+        size_t t = 0;
+        if (!encodeAll(dCap, q, &t)) {
+          if (err) (*err) = "FitTexturesToBudget: texture encode failed.";
+          return false;
+        }
+        if (t <= budget) {
+          bestKnob = mid;  // fits; try larger
+          a = mid + 1;
+        } else {
+          b = mid - 1;     // too big; go smaller
+        }
+      }
+    }
+  }
+
+  // Final encode at the chosen knob and fill outputs.
+  {
+    int dimCap = (opts.strategy == FitStrategy::Quality) ? opts.start_max_size : bestKnob;
+    int quality = (opts.strategy == FitStrategy::Quality) ? bestKnob : opts.jpeg_quality;
+    if (!encodeAll(dimCap, quality, &total)) {
+      if (err) (*err) = "FitTexturesToBudget: texture encode failed.";
+      return false;
+    }
+    for (size_t k = 0; k < idx.size(); k++) {
+      (*out)[idx[k]] = std::move(probe[k]);
+    }
+  }
+
+  if (opts.target_total_bytes > 0 && (total + fixed) > opts.target_total_bytes) {
+    if (warn) {
+      (*warn) += "Could not fit textures within the target budget (" +
+                 std::to_string(opts.target_total_bytes) +
+                 " bytes); using the smallest allowed setting (~" +
+                 std::to_string(total + fixed) + " bytes).\n";
+    }
+  }
+
+  return true;
+}
+
 } // namespace tydra
 } // namespace tinyusdz

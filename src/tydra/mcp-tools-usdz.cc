@@ -100,6 +100,14 @@ bool USDZConvert(Context &ctx, const nlohmann::json &args,
   opts.jpeg_quality = args.value("jpegQuality", 90);
   opts.png_encoder = ParsePngEncoder(args);
 
+  // Texture budget fit.
+  opts.target_texture_bytes = size_t(args.value("targetTextureBytes", 0.0));
+  std::string fs = to_lower(args.value("fitStrategy", std::string("size")));
+  opts.fit_strategy = (fs == "quality") ? usdz::FitStrategy::Quality
+                                        : usdz::FitStrategy::Size;
+  opts.fit_min_texture_size = args.value("fitMinTextureSize", 64);
+  opts.fit_min_jpeg_quality = args.value("fitMinQuality", 30);
+
   std::string tf = to_lower(args.value("textureFormat", std::string("keep")));
   if (tf == "png") opts.texture_format = usdz::OutputTextureFormat::PNG;
   else if (tf == "jpeg" || tf == "jpg") opts.texture_format = usdz::OutputTextureFormat::JPEG;

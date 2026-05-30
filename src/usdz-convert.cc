@@ -250,6 +250,23 @@ bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
 
 }  // namespace
 
+size_t RemapTextureAssetPaths(Stage &stage,
+                              const std::map<std::string, std::string> &remap) {
+  std::vector<std::pair<UsdUVTexture *, std::string>> textures;
+  for (auto &p : stage.root_prims()) {
+    CollectTextures(p, &textures);
+  }
+  size_t n = 0;
+  for (auto &kv : textures) {
+    auto it = remap.find(kv.second);
+    if (it != remap.end() && it->second != kv.second) {
+      WriteTextureFilePath(kv.first, it->second);
+      n++;
+    }
+  }
+  return n;
+}
+
 bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
              std::string *warn, std::string *err) {
   if (options.inputs.empty()) {
@@ -368,6 +385,64 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   std::map<std::string, std::vector<uint8_t>> assets;  // archive name -> bytes
   std::map<std::string, std::string> path_to_archive;  // original -> archive name
 
+  const bool budget_mode = options.target_texture_bytes > 0;
+
+  // Budget mode: decode all unique textures and shrink them globally to fit
+  // options.target_texture_bytes before packing.
+  std::map<std::string, std::pair<std::vector<uint8_t>, std::string>> fitted;  // orig -> (bytes, ext)
+  if (budget_mode) {
+    std::vector<std::string> fit_paths;
+    std::vector<tydra::FitTextureInput> fit_inputs;
+    std::set<std::string> seen;
+    for (auto &kv : textures) {
+      const std::string &orig = kv.second;
+      if (seen.count(orig)) continue;
+      seen.insert(orig);
+
+      std::vector<uint8_t> src_bytes;
+      std::string rerr;
+      if (!ReadAssetBytes(resolver, orig, &src_bytes, &rerr)) {
+        if (warn) (*warn) += "Skipping unreadable texture '" + orig + "': " + rerr + "\n";
+        continue;
+      }
+
+      tydra::FitTextureInput fi;
+      fi.ext = to_lower(io::GetFileExtension(orig));
+      fi.original_bytes = src_bytes;
+      auto dec = image::LoadImageFromMemory(src_bytes.data(), src_bytes.size(), orig);
+      if (dec && dec.value().image.bpp == 8) {
+        fi.image = std::move(dec.value().image);
+        fi.reencodable = true;
+      } else {
+        fi.reencodable = false;  // EXR/16-bit: keep as-is (fixed overhead)
+      }
+      fit_paths.push_back(orig);
+      fit_inputs.push_back(std::move(fi));
+    }
+
+    tydra::FitTextureOptions fopts;
+    fopts.target_total_bytes = options.target_texture_bytes;
+    fopts.strategy = (options.fit_strategy == FitStrategy::Quality)
+                         ? tydra::FitStrategy::Quality
+                         : tydra::FitStrategy::Size;
+    fopts.start_max_size = options.max_texture_size;
+    fopts.min_texture_size = options.fit_min_texture_size;
+    fopts.min_jpeg_quality = options.fit_min_jpeg_quality;
+    fopts.jpeg_quality = options.jpeg_quality;
+    fopts.png_encoder = options.png_encoder;
+
+    std::vector<tydra::FitTextureOutput> fouts;
+    std::string fwarn, ferr;
+    if (!tydra::FitTexturesToBudget(fit_inputs, fopts, &fouts, &fwarn, &ferr)) {
+      if (err) (*err) = "Texture budget fit failed: " + ferr;
+      return false;
+    }
+    if (warn) (*warn) += fwarn;
+    for (size_t i = 0; i < fit_paths.size(); i++) {
+      fitted[fit_paths[i]] = {std::move(fouts[i].bytes), fouts[i].ext};
+    }
+  }
+
   for (auto &kv : textures) {
     const std::string &orig = kv.second;
     if (path_to_archive.count(orig)) {
@@ -375,26 +450,38 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     }
 
     std::string archive_name = SanitizeArchiveName(orig);
-    std::string src_ext = to_lower(io::GetFileExtension(orig));
-
-    std::vector<uint8_t> src_bytes;
-    std::string rerr;
-    if (!ReadAssetBytes(resolver, orig, &src_bytes, &rerr)) {
-      if (warn) {
-        (*warn) += "Skipping unreadable texture '" + orig + "': " + rerr + "\n";
-      }
-      // Keep the (sanitized) reference; nothing to pack.
-      path_to_archive[orig] = archive_name;
-      continue;
-    }
 
     std::vector<uint8_t> out_bytes;
     std::string out_ext;
     bool resized = false, reencoded = false;
-    std::string pwarn;
-    ProcessTexture(src_bytes, src_ext, options, orig, &out_bytes, &out_ext,
-                   &resized, &reencoded, &pwarn);
-    if (warn) (*warn) += pwarn;
+
+    if (budget_mode) {
+      auto it = fitted.find(orig);
+      if (it == fitted.end()) {
+        // Unreadable; keep the reference, pack nothing.
+        path_to_archive[orig] = archive_name;
+        continue;
+      }
+      out_bytes = it->second.first;
+      out_ext = it->second.second;
+      resized = (options.fit_strategy == FitStrategy::Size);
+      reencoded = true;
+    } else {
+      std::string src_ext = to_lower(io::GetFileExtension(orig));
+      std::vector<uint8_t> src_bytes;
+      std::string rerr;
+      if (!ReadAssetBytes(resolver, orig, &src_bytes, &rerr)) {
+        if (warn) {
+          (*warn) += "Skipping unreadable texture '" + orig + "': " + rerr + "\n";
+        }
+        path_to_archive[orig] = archive_name;
+        continue;
+      }
+      std::string pwarn;
+      ProcessTexture(src_bytes, src_ext, options, orig, &out_bytes, &out_ext,
+                     &resized, &reencoded, &pwarn);
+      if (warn) (*warn) += pwarn;
+    }
 
     if (!IsAllowedTextureExt(out_ext)) {
       // Should not happen, but guard the archive against invalid extensions.
