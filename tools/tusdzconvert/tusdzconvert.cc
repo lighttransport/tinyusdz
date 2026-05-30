@@ -289,6 +289,10 @@ int main(int argc, char **argv) {
     std::string n;
     parser.get("-resizeTextures", n);
     opts.max_texture_size = std::atoi(n.c_str());
+    if (opts.max_texture_size <= 0) {
+      std::cerr << "ERROR: -resizeTextures must be a positive integer (got '" << n << "').\n";
+      return 1;
+    }
   }
   if (parser.is_set("-textureFormat")) {
     std::string f;
@@ -299,6 +303,10 @@ int main(int argc, char **argv) {
     std::string q;
     parser.get("-jpegQuality", q);
     opts.jpeg_quality = std::atoi(q.c_str());
+    if (opts.jpeg_quality < 1 || opts.jpeg_quality > 100) {
+      std::cerr << "ERROR: -jpegQuality must be 1-100 (got '" << q << "').\n";
+      return 1;
+    }
   }
   if (parser.is_set("-targetTextureSize")) {
     std::string s;
@@ -335,7 +343,7 @@ int main(int argc, char **argv) {
     std::cerr << "ERROR: " << err << "\n";
     return 1;
   }
-  if (!warn.empty() && verbose) std::cerr << "WARN: " << warn << "\n";
+  if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
 
   std::cout << "Wrote: " << opts.output << " (" << stats.output_size
             << " bytes)\n"

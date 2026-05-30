@@ -10,6 +10,7 @@
 
 #include "unit-usdz-convert.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -400,4 +401,111 @@ void usdz_convert_repack_files_test(void) {
     TEST_CHECK(p.data[1] == 180);  // G from roughness
     TEST_CHECK(p.data[2] == 0);    // B constant
   }
+}
+
+// JPEG encode -> decode roundtrip preserves approximate pixel values.
+void usdz_convert_jpeg_roundtrip_test(void) {
+  using namespace tinyusdz;
+
+  // Use a solid-color image (JPEG is lossy, so avoid exact pixel comparisons
+  // for high-frequency content).
+  Image img = MakeSolidImage(16, 12, 3, 100, 150, 200, 255);
+
+  image::WriteOption wopt;
+  wopt.format = image::WriteImageFormat::JPEG;
+  wopt.jpeg_quality = 95;
+
+  auto enc = image::WriteImageToMemory(img, wopt);
+  TEST_CHECK(enc.has_value());
+  if (!enc) {
+    TEST_MSG("jpeg encode error: %s", enc.error().c_str());
+    return;
+  }
+  TEST_CHECK(enc.value().size() > 8);
+
+  auto dec = image::LoadImageFromMemory(enc.value().data(), enc.value().size(),
+                                        "roundtrip.jpg");
+  TEST_CHECK(dec.has_value());
+  if (!dec) {
+    TEST_MSG("jpeg decode error: %s", dec.error().c_str());
+    return;
+  }
+  const Image &out = dec.value().image;
+  TEST_CHECK(out.width == 16);
+  TEST_CHECK(out.height == 12);
+  TEST_CHECK(out.channels >= 3);
+  // Solid color should survive JPEG roundtrip at high quality (within
+  // tolerance for lossy codec).
+  if (out.data.size() >= 3) {
+    // Allow +-10 for JPEG quantization on a solid color at q95.
+    int dr = std::abs(int(out.data[0]) - 100);
+    int dg = std::abs(int(out.data[1]) - 150);
+    int db = std::abs(int(out.data[2]) - 200);
+    TEST_CHECK(dr <= 10);
+    TEST_CHECK(dg <= 10);
+    TEST_CHECK(db <= 10);
+  }
+}
+
+// RemapTextureAssetPaths handles an empty stage gracefully (returns 0).
+void usdz_convert_remap_asset_paths_test(void) {
+  using namespace tinyusdz;
+
+  Stage stage;
+  std::map<std::string, std::string> remap;
+  remap["old_tex.png"] = "new_tex.jpg";
+
+  // An empty stage has no textures, so count should be 0.
+  size_t count = usdz::RemapTextureAssetPaths(stage, remap);
+  TEST_CHECK(count == 0);
+}
+
+// Error-path: invalid inputs should return errors, not crash.
+void usdz_convert_error_path_test(void) {
+  using namespace tinyusdz;
+
+  // 1) Convert with nonexistent input file.
+  {
+    usdz::UsdzConvertOptions opts;
+    opts.inputs.push_back("/nonexistent/path/to/file.usda");
+    opts.output = "/tmp/should_not_exist.usdz";
+    usdz::UsdzConvertStats stats;
+    std::string warn, err;
+    bool ok = usdz::Convert(opts, &stats, &warn, &err);
+    TEST_CHECK(!ok);
+    TEST_CHECK(!err.empty());
+  }
+
+  // 2) Repack with invalid channel count.
+  {
+    usdz::RepackSpec spec;
+    spec.out_channels = 5;  // invalid
+    std::string warn, err;
+    bool ok = usdz::RepackTextureFiles(spec, "/tmp/should_not_exist.png",
+                                 image::PngEncoder::Auto, &warn, &err);
+    TEST_CHECK(!ok);
+    TEST_CHECK(!err.empty());
+  }
+
+  // 3) Resize with zero dimensions.
+  {
+    Image img = MakeSolidImage(4, 4, 4, 0, 0, 0, 255);
+    Image out;
+    std::string err;
+    bool ok = tydra::ResizeImage(img, 0, 0, &out, tydra::ResizeFilter::Linear,
+                                 &err);
+    TEST_CHECK(!ok);
+  }
+}
+
+// Cleanup: remove temp files created by earlier tests.
+void usdz_convert_cleanup_test(void) {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  fs::path base = fs::temp_directory_path() / "tusdzconvert_test";
+  if (fs::exists(base, ec)) {
+    fs::remove_all(base, ec);
+    // Not a test failure if cleanup fails (e.g. file in use).
+  }
+  TEST_CHECK(true);  // Always passes; this is a bookkeeping test.
 }

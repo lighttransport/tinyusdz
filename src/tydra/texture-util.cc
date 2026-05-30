@@ -55,13 +55,13 @@ bool BuildOcclusionRoughnessMetallicTexture(
     size_t &dstWidth,	
     size_t &dstHeight)	
 {
-	if (occlusionChannel > occlusionImageChannels) {
+	if (occlusionChannel >= occlusionImageChannels) {
 		return false;
 	}
-	if (roughnessChannel > roughnessImageChannels) {
+	if (roughnessChannel >= roughnessImageChannels) {
 		return false;
 	}
-	if (metallicChannel > metallicImageChannels) {
+	if (metallicChannel >= metallicImageChannels) {
 		return false;
 	}
 
@@ -104,6 +104,8 @@ bool BuildOcclusionRoughnessMetallicTexture(
 			occlusionBuf.resize(resize_size);
 
 			stbir_resize_uint8_linear(occlusionImageData.data(), int(occlusionImageWidth), int(occlusionImageHeight), 0, occlusionBuf.data(), int(maxImageWidth), int(maxImageHeight), 0, layout);
+		} else {
+			occlusionBuf = occlusionImageData;
 		}
 	} else {
 		occlusionBuf = occlusionImageData;
