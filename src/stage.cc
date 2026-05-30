@@ -1278,9 +1278,10 @@ size_t Stage::BuildInstancePrototypes() {
     return _prototype_count;
   }
 
-  // Recursive helper
-  std::function<void(const Prim &, const std::string &)> scan;
-  scan = [&](const Prim &prim, const std::string &parent_path) {
+  // Recursive helper with depth limit
+  std::function<void(const Prim &, const std::string &, int)> scan;
+  scan = [&](const Prim &prim, const std::string &parent_path, int depth) {
+    if (depth > 4096) return;  // guard against stack overflow
     std::string prim_path = parent_path + "/" + prim.element_name();
 
     // Per AOUSD Spec 11.3.3: instanceable=true AND at least one composition arc
@@ -1305,12 +1306,12 @@ size_t Stage::BuildInstancePrototypes() {
     }
 
     for (const auto &child : prim.children()) {
-      scan(child, prim_path);
+      scan(child, prim_path, depth + 1);
     }
   };
 
   for (const auto &root : _root_nodes) {
-    scan(root, "");
+    scan(root, "", 0);
   }
 
   return _prototype_count;
