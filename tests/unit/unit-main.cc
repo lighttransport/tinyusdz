@@ -60,6 +60,8 @@
 #include "unit-usdz-writer.h"
 #include "unit-usdc-writer.h"
 #include "unit-usd-validation.h"
+// USDZ conversion pipeline + texture ops + fpnge
+#include "unit-usdz-convert.h"
 // Physics + MuJoCo
 #include "unit-physics.h"
 // IK solver
@@ -582,6 +584,12 @@ TEST_LIST = {
   { "usdz_writer_file_roundtrip_test", usdz_writer_file_roundtrip_test },
   { "usdz_validator_large_asset_test", usdz_validator_large_asset_test },
   { "usdz_validator_bad_extension_test", usdz_validator_bad_extension_test },
+  // USDZ conversion pipeline + texture ops + fpnge
+  { "usdz_convert_png_roundtrip_test", usdz_convert_png_roundtrip_test },
+  { "usdz_convert_resize_test", usdz_convert_resize_test },
+  { "usdz_convert_pack_channels_test", usdz_convert_pack_channels_test },
+  { "usdz_convert_pipeline_test", usdz_convert_pipeline_test },
+  { "usdz_convert_repack_files_test", usdz_convert_repack_files_test },
   // Pretty-printer column wrap tests
   { "column_wrap_disabled_test", column_wrap_disabled_test },
   { "column_wrap_float3_array_test", column_wrap_float3_array_test },

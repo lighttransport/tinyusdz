@@ -8,6 +8,7 @@
 #include "mcp-tools-scene.hh"
 #include "mcp-tools-query.hh"
 #include "mcp-tools-composition.hh"
+#include "mcp-tools-usdz.hh"
 #include "mcp-js-bridge.hh"
 #include "pprinter.hh"
 #include "layer.hh"
@@ -1420,6 +1421,76 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     add_tool("read_screenshot", "Read a screenshot image", schema);
   }
 
+  // =========================================================================
+  // USDZ conversion / texture tools
+  // =========================================================================
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["input"] = str_prop("Input USD(A/C/Z) file path");
+    schema["properties"]["output"] = str_prop("Output .usdz file path");
+    schema["properties"]["flatten"] = bool_prop("Compose/flatten before writing (default true)");
+    schema["properties"]["arkitCompatible"] = bool_prop("Apply ARKit-friendly metadata");
+    schema["properties"]["metersPerUnit"] = num_prop("Override metersPerUnit");
+    schema["properties"]["upAxis"] = str_prop("Up axis X/Y/Z");
+    schema["properties"]["resizeTextures"] = int_prop("Cap texture longest edge (pixels)");
+    schema["properties"]["textureFormat"] = str_prop("keep | png | jpeg");
+    schema["properties"]["pngEncoder"] = str_prop("fpnge | fpng");
+    schema["properties"]["jpegQuality"] = int_prop("JPEG quality 1-100");
+    schema["properties"]["reencode"] = bool_prop("Re-encode unmodified textures (default true)");
+    schema["required"] = nlohmann::json::array({"input", "output"});
+    add_tool("usdz_convert",
+             "Convert a USD file to an ARKit-friendly USDZ (flatten + texture "
+             "resize/re-encode with fpnge)",
+             schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["uri"] = str_prop("Output .usdz path. If omitted, returns base64 data.");
+    schema["properties"]["arkitCompatible"] = bool_prop("Apply ARKit-friendly metadata");
+    add_tool("usdz_pack",
+             "Pack the current session stage into a USDZ (file or base64)",
+             schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["data"] = str_prop("Base64-encoded input image");
+    schema["properties"]["max_size"] = int_prop("Cap the longest edge (pixels)");
+    schema["properties"]["width"] = int_prop("Target width (with height)");
+    schema["properties"]["height"] = int_prop("Target height (with width)");
+    schema["properties"]["format"] = str_prop("Output format: png (default) or jpeg");
+    schema["properties"]["pngEncoder"] = str_prop("fpnge | fpng");
+    schema["required"] = nlohmann::json::array({"data"});
+    add_tool("texture_resize",
+             "Resize a base64 image and re-encode (PNG via fpnge)", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["channels"] = int_prop("Output channel count 1-4");
+    schema["properties"]["width"] = int_prop("Output width (default: max of inputs)");
+    schema["properties"]["height"] = int_prop("Output height (default: max of inputs)");
+    schema["properties"]["format"] = str_prop("Output format: png (default) or jpeg");
+    schema["properties"]["pngEncoder"] = str_prop("fpnge | fpng");
+    nlohmann::json chan = {
+        {"type", "object"},
+        {"description",
+         "Channel source: { data: base64, channel: int } or { const: int }"}};
+    schema["properties"]["r"] = chan;
+    schema["properties"]["g"] = chan;
+    schema["properties"]["b"] = chan;
+    schema["properties"]["a"] = chan;
+    add_tool("texture_repack",
+             "Merge channels from base64 images into one image (e.g. R=gloss, "
+             "G=roughness)",
+             schema);
+  }
+
   return true;
 }
 
@@ -1477,6 +1548,12 @@ bool CallTool(Context &ctx, const std::string &tool_name,
   if (tool_name == "schema_list_types") return SchemaListTypes(ctx, args, result, err);
   if (tool_name == "schema_get_type") return SchemaGetType(ctx, args, result, err);
   if (tool_name == "search") return Search(ctx, args, result, err);
+
+  // ---- USDZ conversion / textures ----
+  if (tool_name == "usdz_convert") return USDZConvert(ctx, args, result, err);
+  if (tool_name == "usdz_pack") return USDZPack(ctx, args, result, err);
+  if (tool_name == "texture_resize") return TextureResize(ctx, args, result, err);
+  if (tool_name == "texture_repack") return TextureRepack(ctx, args, result, err);
 
   // ---- Scripting ----
   if (tool_name == "run_script") return RunScript(ctx, args, result, err);
