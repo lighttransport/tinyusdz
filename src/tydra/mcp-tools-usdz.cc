@@ -4,6 +4,7 @@
 #include "mcp-tools-usdz.hh"
 
 #include <algorithm>
+#include <limits>
 #include <map>
 #include <vector>
 
@@ -54,6 +55,10 @@ bool EncodeImageBase64(const tinyusdz::Image &img, const std::string &format,
     err = "Image encode failed: " + ret.error();
     return false;
   }
+  if (ret.value().size() > std::numeric_limits<unsigned int>::max()) {
+    err = "Encoded image too large for base64 encoding.";
+    return false;
+  }
   *b64 = base64_encode(ret.value().data(), static_cast<unsigned int>(ret.value().size()));
   return true;
 }
@@ -90,23 +95,42 @@ bool USDZConvert(Context &ctx, const nlohmann::json &args,
   }
 
   usdz::UsdzConvertOptions opts;
-  opts.inputs.push_back(args["input"].get<std::string>());
-  opts.output = args["output"].get<std::string>();
+  std::string input_path = args["input"].get<std::string>();
+  std::string output_path = args["output"].get<std::string>();
+  // Reject path traversal.
+  if (input_path.find("..") != std::string::npos || output_path.find("..") != std::string::npos) {
+    err = "Path traversal ('..') is not allowed in input/output paths.";
+    return false;
+  }
+  opts.inputs.push_back(input_path);
+  opts.output = output_path;
   opts.flatten = args.value("flatten", true);
   opts.arkit_compatible = args.value("arkitCompatible", false);
   opts.reencode = args.value("reencode", true);
-  opts.metersPerUnit = args.value("metersPerUnit", 0.0);
-  opts.max_texture_size = args.value("resizeTextures", 0);
-  opts.jpeg_quality = args.value("jpegQuality", 90);
+
+  double mpu = args.value("metersPerUnit", 0.0);
+  opts.metersPerUnit = (mpu > 0.0 && mpu < 1e6) ? mpu : 0.0;
+
+  int rsz = args.value("resizeTextures", 0);
+  opts.max_texture_size = (rsz > 0) ? rsz : 0;
+
+  int jq = args.value("jpegQuality", 90);
+  if (jq < 1 || jq > 100) jq = 90;
+  opts.jpeg_quality = jq;
+
   opts.png_encoder = ParsePngEncoder(args);
 
   // Texture budget fit.
-  opts.target_texture_bytes = size_t(args.value("targetTextureBytes", 0.0));
+  double ttb = args.value("targetTextureBytes", 0.0);
+  opts.target_texture_bytes = (ttb > 0.0) ? size_t(ttb) : 0;
   std::string fs = to_lower(args.value("fitStrategy", std::string("size")));
   opts.fit_strategy = (fs == "quality") ? usdz::FitStrategy::Quality
-                                        : usdz::FitStrategy::Size;
-  opts.fit_min_texture_size = args.value("fitMinTextureSize", 64);
-  opts.fit_min_jpeg_quality = args.value("fitMinQuality", 30);
+                                         : usdz::FitStrategy::Size;
+
+  int fmts = args.value("fitMinTextureSize", 64);
+  opts.fit_min_texture_size = (fmts >= 1 && fmts <= 16384) ? fmts : 64;
+  int fmtq = args.value("fitMinQuality", 30);
+  opts.fit_min_jpeg_quality = (fmtq >= 1 && fmtq <= 100) ? fmtq : 30;
 
   std::string tf = to_lower(args.value("textureFormat", std::string("keep")));
   if (tf == "png") opts.texture_format = usdz::OutputTextureFormat::PNG;
@@ -163,6 +187,10 @@ bool USDZPack(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
 
   if (args.contains("uri") && args["uri"].is_string()) {
     const std::string uri = args["uri"].get<std::string>();
+    if (uri.find("..") != std::string::npos) {
+      err = "Path traversal ('..') is not allowed in uri.";
+      return false;
+    }
     if (!tinyusdz::SaveAsUSDZToFile(uri, *ctx.stage, assets, &warn, &err)) {
       return false;
     }
@@ -173,6 +201,10 @@ bool USDZPack(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
 
   std::vector<uint8_t> out;
   if (!tinyusdz::SaveAsUSDZToMemory(*ctx.stage, assets, &out, &warn, &err)) {
+    return false;
+  }
+  if (out.size() > std::numeric_limits<unsigned int>::max()) {
+    err = "USDZ archive too large for base64 encoding.";
     return false;
   }
   result["success"] = true;
@@ -192,6 +224,17 @@ bool TextureResize(Context &ctx, const nlohmann::json &args,
 
   tinyusdz::Image img;
   if (!DecodeImageBase64(args["data"].get<std::string>(), &img, err)) {
+    return false;
+  }
+
+  // Validate decoded image dimensions.
+  const int kMaxDimension = 32768;
+  if (img.width <= 0 || img.height <= 0 || img.channels < 1 || img.channels > 4) {
+    err = "Invalid decoded image dimensions.";
+    return false;
+  }
+  if (img.width > kMaxDimension || img.height > kMaxDimension) {
+    err = "Image dimensions exceed maximum allowed size.";
     return false;
   }
 

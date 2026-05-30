@@ -307,7 +307,9 @@ std::array<double, 16> toArray(const tinyusdz::value::matrix4d &m) {
 // To RGBA
 bool ToRGBA(const std::vector<uint8_t> &src, int channels,
             std::vector<uint8_t> &dst) {
-  uint32_t npixels = src.size() / channels;
+  if (channels <= 0 || channels > 4) return false;
+  size_t npixels = src.size() / static_cast<size_t>(channels);
+  if (npixels > SIZE_MAX / 4) return false;
   dst.resize(npixels * 4);
 
   if (channels == 1) {  // grayscale
@@ -329,7 +331,7 @@ bool ToRGBA(const std::vector<uint8_t> &src, int channels,
       dst[4 * i + 0] = src[3 * i + 0];
       dst[4 * i + 1] = src[3 * i + 1];
       dst[4 * i + 2] = src[3 * i + 2];
-      dst[4 * i + 3] = 1.0f;
+      dst[4 * i + 3] = 255;
     }
   } else if (channels == 4) {
     dst = src;
@@ -360,6 +362,11 @@ void copyTypedArray(const emscripten::val &data, std::vector<T> &buffer,
     return;
   }
   const size_t length = data["length"].as<size_t>();
+  constexpr size_t kMaxArraySize = size_t(1) << 28;  // 256M elements
+  if (length > kMaxArraySize) {
+    buffer.clear();
+    return;
+  }
   buffer.resize(length);
   if (length == 0) {
     return;
@@ -2778,17 +2785,25 @@ class TinyUSDZLoaderNative {
     // Each texel stores 2 influences (boneIdx0, weight0, boneIdx1, weight1)
     int influencesPerTexel = 2;
     int texelsPerVertex = (maxInfl + influencesPerTexel - 1) / influencesPerTexel;
-    int totalTexels = vertexCount * texelsPerVertex;
+    size_t totalTexels = static_cast<size_t>(vertexCount) * static_cast<size_t>(texelsPerVertex);
 
     // Find optimal texture dimensions (prefer power of 2)
-    int texWidth = 1;
+    size_t texWidth = 1;
     while (texWidth * texWidth < totalTexels && texWidth < 4096) {
       texWidth *= 2;
     }
-    int texHeight = (totalTexels + texWidth - 1) / texWidth;
+    size_t texHeight = (totalTexels + texWidth - 1) / texWidth;
+    size_t texDataSize = texWidth * texHeight * 4;
+
+    // Guard against excessive allocation.
+    constexpr size_t kMaxTexels = size_t(1) << 30;  // 1 billion texels
+    if (totalTexels > kMaxTexels || texWidth > 4096 || texHeight > 4096) {
+      result.set("error", "Bone texture dimensions too large");
+      return result;
+    }
 
     // Allocate texture data (RGBA float)
-    std::vector<float> textureData(texWidth * texHeight * 4, 0.0f);
+    std::vector<float> textureData(texDataSize, 0.0f);
 
     // Fill texture with bone data
     for (int v = 0; v < vertexCount; v++) {
@@ -2845,20 +2860,21 @@ class TinyUSDZLoaderNative {
     }
 
     // Return result
-    result.set("textureData", emscripten::val(emscripten::typed_memory_view(
-        textureData.size(), textureData.data())));
     result.set("textureWidth", texWidth);
     result.set("textureHeight", texHeight);
     result.set("texelsPerVertex", texelsPerVertex);
     result.set("maxInfluences", maxInfl);
     result.set("vertexCount", vertexCount);
     result.set("originalElementSize", elementSize);
-    result.set("vertexOffsets", emscripten::val(emscripten::typed_memory_view(
-        vertexOffsets.size(), vertexOffsets.data())));
 
-    // Store in member to keep memory alive
+    // Store in member first, then create views (avoids dangling pointers).
     bone_texture_data_ = std::move(textureData);
     bone_vertex_offsets_ = std::move(vertexOffsets);
+
+    result.set("textureData", emscripten::val(emscripten::typed_memory_view(
+        bone_texture_data_.size(), bone_texture_data_.data())));
+    result.set("vertexOffsets", emscripten::val(emscripten::typed_memory_view(
+        bone_vertex_offsets_.size(), bone_vertex_offsets_.data())));
 
     // Re-set with valid pointers
     result.set("textureData", emscripten::val(emscripten::typed_memory_view(
@@ -3284,7 +3300,7 @@ class TinyUSDZLoaderNative {
       return tex;
     }
 
-    if (tex_id >= render_scene_.textures.size()) {
+    if (tex_id < 0 || static_cast<size_t>(tex_id) >= render_scene_.textures.size()) {
       return tex;
     }
 
@@ -4430,10 +4446,23 @@ class TinyUSDZLoaderNative {
 
     result.set("joint_names", js_joint_names);
     result.set("joint_paths", js_joint_paths);
-    result.set("joint_ids", emscripten::val(emscripten::typed_memory_view(joint_ids.size(), joint_ids.data())));
-    result.set("parent_indices", emscripten::val(emscripten::typed_memory_view(parent_indices.size(), parent_indices.data())));
-    result.set("bind_matrices", emscripten::val(emscripten::typed_memory_view(bind_matrices.size(), bind_matrices.data())));
-    result.set("rest_matrices", emscripten::val(emscripten::typed_memory_view(rest_matrices.size(), rest_matrices.data())));
+    // Use JS arrays (not typed_memory_view) to avoid use-after-free when
+    // local vectors are destroyed on function return.
+    emscripten::val js_joint_ids = emscripten::val::array();
+    for (auto id : joint_ids) js_joint_ids.call<void>("push", id);
+    result.set("joint_ids", js_joint_ids);
+
+    emscripten::val js_parent_indices = emscripten::val::array();
+    for (auto idx : parent_indices) js_parent_indices.call<void>("push", idx);
+    result.set("parent_indices", js_parent_indices);
+
+    emscripten::val js_bind_matrices = emscripten::val::array();
+    for (auto m : bind_matrices) js_bind_matrices.call<void>("push", m);
+    result.set("bind_matrices", js_bind_matrices);
+
+    emscripten::val js_rest_matrices = emscripten::val::array();
+    for (auto m : rest_matrices) js_rest_matrices.call<void>("push", m);
+    result.set("rest_matrices", js_rest_matrices);
     result.set("num_joints", static_cast<int>(joint_names.size()));
 
     return result;
@@ -5194,7 +5223,12 @@ class TinyUSDZLoaderNative {
       return "{ \"error\": \"invalid session_id\"}";
     }
 
-    nlohmann::json j_args = nlohmann::json::parse(args);
+    nlohmann::json j_args;
+    try {
+      j_args = nlohmann::json::parse(args);
+    } catch (const std::exception& e) {
+      return std::string("{\"error\": \"Invalid JSON: ") + e.what() + "\"}";
+    }
 
     // Per-session context: isolated so one session cannot read/overwrite
     // another session's assets/layers/screenshots. Guarded by the
@@ -5768,6 +5802,15 @@ class TinyUSDZLoaderNative {
   /// For PNG/JPEG, use browser Canvas API instead.
   /// format: "exr", "tiff", "dng", "bmp", "png" (fallback)
   emscripten::val encodeImageNative(const std::string &pixelData, int width, int height, int channels, const std::string &format) {
+    // Validate dimensions at WASM boundary.
+    constexpr int kMaxDimension = 65536;
+    if (width <= 0 || height <= 0 || channels < 1 || channels > 4 ||
+        width > kMaxDimension || height > kMaxDimension) {
+      emscripten::val err = emscripten::val::object();
+      err.set("success", false);
+      err.set("error", "Invalid image dimensions.");
+      return err;
+    }
     tinyusdz::Image img;
     img.width = width;
     img.height = height;
@@ -6253,6 +6296,11 @@ void convertFloat32ToFloat16(const float* src, uint16_t* dst, size_t count) {
 /// Copy buffer from JS Uint8Array
 void copyFromJSBuffer(const emscripten::val& data, std::vector<uint8_t>& buffer) {
   size_t size = data["byteLength"].as<size_t>();
+  constexpr size_t kMaxBufferSize = size_t(1) << 30;  // 1 GiB
+  if (size > kMaxBufferSize) {
+    buffer.clear();
+    return;
+  }
   buffer.resize(size);
   emscripten::val view = emscripten::val::global("Uint8Array").new_(
       data["buffer"], data["byteOffset"], size);
@@ -6413,6 +6461,11 @@ emscripten::val decodeHDR(const emscripten::val& data,
 
   // Use stbi_loadf_from_memory which returns float32 RGBA data
   // Request 4 channels (RGBA) for consistency
+  if (buffer.size() > static_cast<size_t>(INT_MAX)) {
+    result.set("success", false);
+    result.set("error", "HDR file too large to decode.");
+    return result;
+  }
   float* floatData = stbi_loadf_from_memory(
       buffer.data(), static_cast<int>(buffer.size()),
       &width, &height, &channels, 4);
@@ -7172,11 +7225,15 @@ static tinyusdz::image::PngEncoder parsePngEncoder(const std::string& s) {
 // Drop the alpha channel (RGBA -> RGB) for JPEG output.
 static tinyusdz::Image dropAlpha(const tinyusdz::Image& img) {
   if (img.channels != 4) return img;
+  if (img.width <= 0 || img.height <= 0) return img;
+  size_t npix = static_cast<size_t>(img.width) * static_cast<size_t>(img.height);
+  if (img.data.size() < npix * 4) return img;  // truncated source
+  if (npix > SIZE_MAX / 3) return img;  // overflow guard
   tinyusdz::Image out;
   out.width = img.width; out.height = img.height; out.channels = 3;
   out.bpp = 8; out.format = img.format; out.colorspace = img.colorspace;
-  out.data.resize(size_t(img.width) * size_t(img.height) * 3);
-  for (size_t i = 0; i < size_t(img.width) * size_t(img.height); i++) {
+  out.data.resize(npix * 3);
+  for (size_t i = 0; i < npix; i++) {
     out.data[3 * i + 0] = img.data[4 * i + 0];
     out.data[3 * i + 1] = img.data[4 * i + 1];
     out.data[3 * i + 2] = img.data[4 * i + 2];
@@ -7409,7 +7466,8 @@ emscripten::val fitTextures(const emscripten::val& opts) {
 
   emscripten::val arr = emscripten::val::array();
   size_t total = 0;
-  for (size_t i = 0; i < outs.size(); i++) {
+  size_t limit = (std::min)(outs.size(), names.size());
+  for (size_t i = 0; i < limit; i++) {
     emscripten::val r = emscripten::val::object();
     r.set("data", bytesToUint8Array(outs[i].bytes));
     r.set("ext", outs[i].ext);
