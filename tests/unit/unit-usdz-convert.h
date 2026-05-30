@@ -8,3 +8,7 @@ void usdz_convert_pack_channels_test(void);
 void usdz_convert_fit_budget_test(void);
 void usdz_convert_pipeline_test(void);
 void usdz_convert_repack_files_test(void);
+void usdz_convert_jpeg_roundtrip_test(void);
+void usdz_convert_remap_asset_paths_test(void);
+void usdz_convert_error_path_test(void);
+void usdz_convert_cleanup_test(void);
