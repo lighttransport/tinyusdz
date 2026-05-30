@@ -8,9 +8,11 @@
 // CLI mirrors Apple's `usdzconvert` core flags where it makes sense.
 //
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -97,6 +99,7 @@ size_t ParseByteSize(const std::string &in) {
   }
   if (!any) return 0;
   num = std::atof(s.substr(0, i).c_str());
+  if (std::isnan(num) || std::isinf(num) || num < 0.0) return 0;
 
   std::string unit = to_lower(s.substr(i));
   double mult = 1.0;
@@ -106,7 +109,9 @@ size_t ParseByteSize(const std::string &in) {
   else if (unit == "g" || unit == "gb") mult = 1024.0 * 1024.0 * 1024.0;
   else return 0;
 
-  return size_t(num * mult);
+  double product = num * mult;
+  if (product < 0.0 || product > double(std::numeric_limits<size_t>::max())) return 0;
+  return size_t(product);
 }
 
 usdz::OutputTextureFormat ParseTextureFormat(const std::string &s) {
@@ -160,6 +165,10 @@ int RunRepack(const argparser::ArgParser &parser, image::PngEncoder enc) {
     std::string c;
     parser.get("-packChannels", c);
     spec.out_channels = std::atoi(c.c_str());
+    if (spec.out_channels < 1 || spec.out_channels > 4) {
+      std::cerr << "ERROR: -packChannels must be 1-4 (got '" << c << "').\n";
+      return 1;
+    }
   }
 
   if (parser.is_set("-packSize")) {
@@ -169,6 +178,10 @@ int RunRepack(const argparser::ArgParser &parser, image::PngEncoder enc) {
     if (x != std::string::npos) {
       spec.out_width = std::atoi(sz.substr(0, x).c_str());
       spec.out_height = std::atoi(sz.substr(x + 1).c_str());
+      if (spec.out_width <= 0 || spec.out_height <= 0) {
+        std::cerr << "ERROR: -packSize dimensions must be positive (got '" << sz << "').\n";
+        return 1;
+      }
     }
   }
 
@@ -282,6 +295,10 @@ int main(int argc, char **argv) {
     if (a == "x") opts.upAxis = Axis::X;
     else if (a == "y") opts.upAxis = Axis::Y;
     else if (a == "z") opts.upAxis = Axis::Z;
+    else {
+      std::cerr << "ERROR: -upAxis must be X, Y, or Z (got '" << a << "').\n";
+      return 1;
+    }
   }
   if (parser.is_set("-url")) parser.get("-url", opts.url);
   if (parser.is_set("-copyright")) parser.get("-copyright", opts.copyright);
@@ -329,11 +346,19 @@ int main(int argc, char **argv) {
     std::string s;
     parser.get("-fitMinTextureSize", s);
     opts.fit_min_texture_size = std::atoi(s.c_str());
+    if (opts.fit_min_texture_size < 1 || opts.fit_min_texture_size > 16384) {
+      std::cerr << "ERROR: -fitMinTextureSize must be 1-16384 (got '" << s << "').\n";
+      return 1;
+    }
   }
   if (parser.is_set("-fitMinQuality")) {
     std::string s;
     parser.get("-fitMinQuality", s);
     opts.fit_min_jpeg_quality = std::atoi(s.c_str());
+    if (opts.fit_min_jpeg_quality < 1 || opts.fit_min_jpeg_quality > 100) {
+      std::cerr << "ERROR: -fitMinQuality must be 1-100 (got '" << s << "').\n";
+      return 1;
+    }
   }
 
   usdz::UsdzConvertStats stats;
