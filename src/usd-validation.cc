@@ -6,6 +6,7 @@
 #include <array>
 #include <set>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "core/composition-types.hh"
@@ -14,6 +15,8 @@
 #include "core/prim-enums.hh"
 #include "core/prim-spec.hh"
 #include "path-util.hh"
+#include "pprint-enum.hh"  // to_string(APISchemas::APIName)
+#include "str-util.hh"
 
 namespace tinyusdz {
 namespace {
@@ -67,6 +70,147 @@ void AddIssue(USDValidationResult *result, USDValidationSeverity severity,
 void AddError(USDValidationResult *result, const std::string &rule_id,
               const std::string &location, const std::string &message) {
   AddIssue(result, USDValidationSeverity::Error, rule_id, location, message);
+}
+
+void AddWarning(USDValidationResult *result, const std::string &rule_id,
+                const std::string &location, const std::string &message) {
+  AddIssue(result, USDValidationSeverity::Warning, rule_id, location, message);
+}
+
+// Type-name sets for geom/shade encapsulation checks.
+//
+// Hardcoded here (rather than including the heavy usdGeom.hh/usdShade.hh) to
+// keep this TU lightweight. Keep in sync with the kGeom*/kGPrim constants in
+// src/usdGeom.hh and the kMaterial/kShader/kNodeGraph constants in
+// src/usdShade.hh.
+bool IsGprimTypeName(const std::string &type_name) {
+  static const std::unordered_set<std::string> kGprimTypes = {
+      "GPrim",       "Mesh",        "Sphere",       "Cube",
+      "Cone",        "Cylinder",    "Cylinder_1",   "Capsule",
+      "Capsule_1",   "Points",      "BasisCurves",  "NurbsCurves",
+      "NurbsPatch",  "HermiteCurves", "Plane",      "TetMesh",
+      "PointInstancer",
+  };
+  // NOTE: Xform/Scope/Camera/GeomSubset and lights are intentionally excluded
+  // -- they legitimately contain or sit beside geometry.
+  return kGprimTypes.count(type_name) > 0;
+}
+
+bool IsShadeContainerTypeName(const std::string &type_name) {
+  // Containers that may legitimately parent a Shader/NodeGraph.
+  return type_name == "Material" || type_name == "NodeGraph";
+}
+
+bool IsShadeConnectableTypeName(const std::string &type_name) {
+  return type_name == "Shader" || type_name == "NodeGraph";
+}
+
+// UsdPreviewSurface input name -> expected (role) value type.
+//
+// The table entries are generated from src/usd-preview-surface-schema.json by
+// scripts/gen-usd-preview-surface-inputs.py (the same schema drives the
+// validation fixtures). Regenerate after editing the schema; the
+// `preview-surface-schema-sync` CTest fails if usd-preview-surface-inputs.inc
+// is stale.
+const std::unordered_map<std::string, std::string> &
+UsdPreviewSurfaceInputTypes() {
+  static const std::unordered_map<std::string, std::string> kInputs = {
+#include "usd-preview-surface-inputs.inc"
+  };
+  return kInputs;
+}
+
+// Underlying base type for role-type agreement (Spec 6.5): color3f agrees with
+// float3, etc. Used so an input authored as float3 is accepted where color3f is
+// expected.
+std::string BaseValueType(const std::string &type_name) {
+  if (type_name == "color3f" || type_name == "normal3f" ||
+      type_name == "point3f" || type_name == "vector3f") {
+    return "float3";
+  }
+  if (type_name == "color4f") {
+    return "float4";
+  }
+  return type_name;
+}
+
+bool ValueTypesAgree(const std::string &authored, const std::string &expected) {
+  if (authored == expected) {
+    return true;
+  }
+  return BaseValueType(authored) == BaseValueType(expected);
+}
+
+// True if `ps` authors any composition arc. Used to gate locality-dependent
+// rules: when a prim pulls opinions from a referenced/inherited/etc. layer, an
+// attribute or parent type referenced here may be supplied by composition and
+// is not a local error.
+bool HasCompositionArc(const PrimSpec &ps) {
+  const auto &m = ps.metas();
+  return m.references.has_value() || m.payload.has_value() ||
+         m.inherits.has_value() || m.specializes.has_value() ||
+         m.variants.has_value() || m.variantSets.has_value();
+}
+
+bool IsOverride(const PrimSpec &ps) {
+  return ps.specifier() == Specifier::Over;
+}
+
+// Ancestor-derived context threaded through the recursive prim walk.
+struct AncestorContext {
+  bool has_gprim_ancestor{false};
+  std::string nearest_gprim_path;  // valid only when has_gprim_ancestor
+  std::string parent_type;         // immediate parent typeName ("" at root)
+};
+
+// Returns the `info:id` token authored on a Shader prim, or empty.
+std::string GetShaderInfoId(const PrimSpec &ps) {
+  auto it = ps.props().find("info:id");
+  if (it == ps.props().end() || !it->second.is_attribute()) {
+    return std::string();
+  }
+  auto info_id = it->second.get_attribute().get_value<value::token>();
+  return info_id ? info_id->str() : std::string();
+}
+
+// Validate a UsdPreviewSurface Shader's `inputs:*` against its schema: unknown
+// inputs and input type mismatches. Reported as warnings -- a UsdPreviewSurface
+// with off-schema inputs still loads, but the content is non-conformant.
+void ValidateUsdPreviewSurface(const PrimSpec &ps,
+                               const std::string &prim_location,
+                               USDValidationResult *result) {
+  static const std::string kInputsPrefix = "inputs:";
+  const auto &inputs = UsdPreviewSurfaceInputTypes();
+
+  for (const auto &prop_entry : ps.props()) {
+    const std::string &prop_name = prop_entry.first;
+    if (prop_name.rfind(kInputsPrefix, 0) != 0) {
+      continue;
+    }
+
+    const Property &prop = prop_entry.second;
+    if (!prop.is_attribute()) {
+      continue;
+    }
+
+    const std::string input_name = prop_name.substr(kInputsPrefix.size());
+    const std::string prop_location =
+        MakePropertyLocation(prim_location, prop_name);
+
+    auto it = inputs.find(input_name);
+    if (it == inputs.end()) {
+      AddWarning(result, "shade.preview.unknownInput", prop_location,
+                 "`" + prop_name + "` is not a UsdPreviewSurface input");
+      continue;
+    }
+
+    const std::string authored = prop.value_type_name();
+    if (!authored.empty() && !ValueTypesAgree(authored, it->second)) {
+      AddWarning(result, "shade.preview.inputType", prop_location,
+                 "UsdPreviewSurface input `" + input_name + "` should be `" +
+                     it->second + "` but is `" + authored + "`");
+    }
+  }
 }
 
 bool ValidateScenePath(const Path &path, std::string *err) {
@@ -131,9 +275,9 @@ std::vector<AppliedSchema> CollectAppliedSchemas(const PrimMeta &metas) {
 
   const APISchemas api_schemas = metas.get_apiSchemas();
   for (const auto &entry : api_schemas.names) {
-    if (entry.first == APISchemas::APIName::CollectionAPI) {
-      schemas.push_back({"CollectionAPI", entry.second});
-    }
+    // Emit the canonical schema name for every known applied schema so callers
+    // (e.g. MaterialBindingAPI / CollectionAPI checks) can look it up by name.
+    schemas.push_back({to_string(entry.first), entry.second});
   }
 
   for (const auto &entry : api_schemas.unknownSchemas) {
@@ -379,6 +523,39 @@ void ValidateLayerMetas(const Layer &layer, USDValidationResult *result) {
                "layerRelocates source and target must not be identical");
     }
   }
+
+  // upAxis: the parser only ever stores X/Y/Z, so this is defensive against
+  // other loaders leaving an Invalid axis.
+  if (metas.upAxis.authored() && metas.upAxis.get_value() == Axis::Invalid) {
+    AddWarning(result, "core.layer.upAxis", kLayerLocation,
+               "upAxis is authored but is not one of X, Y, or Z");
+  }
+
+  // metersPerUnit must be a positive scale factor.
+  if (metas.metersPerUnit.authored() && !(metas.metersPerUnit.get_value() > 0.0)) {
+    AddError(result, "core.layer.metersPerUnit", kLayerLocation,
+             "metersPerUnit must be greater than 0");
+  }
+
+  if (metas.timeCodesPerSecond.authored() &&
+      !(metas.timeCodesPerSecond.get_value() > 0.0)) {
+    AddError(result, "core.layer.timeCodesPerSecond", kLayerLocation,
+             "timeCodesPerSecond must be greater than 0");
+  }
+
+  if (metas.framesPerSecond.authored() &&
+      !(metas.framesPerSecond.get_value() > 0.0)) {
+    AddError(result, "core.layer.framesPerSecond", kLayerLocation,
+             "framesPerSecond must be greater than 0");
+  }
+
+  // startTimeCode must not exceed endTimeCode. Warning, since a single layer's
+  // range may be overridden by sublayers or the session layer.
+  if (metas.startTimeCode.authored() && metas.endTimeCode.authored() &&
+      metas.startTimeCode.get_value() > metas.endTimeCode.get_value()) {
+    AddWarning(result, "core.layer.timeCodeRange", kLayerLocation,
+               "startTimeCode is greater than endTimeCode");
+  }
 }
 
 void ValidateColorSpaceDefinitionProperty(
@@ -511,10 +688,47 @@ void ValidateCollectionProperty(
 
 void ValidatePrimSpecRecursive(const PrimSpec &ps, const Path &prim_path,
                                const ColorSpaceSet &inherited_color_spaces,
+                               const AncestorContext &ancestors,
+                               const ValidationOptions &options,
                                USDValidationResult *result) {
   const std::string prim_location = prim_path.full_path_name();
   const std::vector<AppliedSchema> applied_schemas =
       CollectAppliedSchemas(ps.metas());
+  const std::string &type_name = ps.typeName();
+  const bool has_arc = HasCompositionArc(ps);
+  const bool is_over = IsOverride(ps);
+
+  // ---- core.prim.name: prim name must be a valid USD identifier ----
+  if (options.core && !ps.name().empty() &&
+      !is_valid_utf8_identifier(ps.name())) {
+    AddError(result, "core.prim.name", prim_location,
+             "prim name `" + ps.name() + "` is not a valid identifier");
+  }
+
+  // ---- geom.encapsulation.nestedGprim: a Gprim must not nest under a Gprim ----
+  if (options.geom && IsGprimTypeName(type_name) &&
+      ancestors.has_gprim_ancestor) {
+    AddWarning(result, "geom.encapsulation.nestedGprim", prim_location,
+               "Gprim `" + type_name + "` is nested under another Gprim at `" +
+                   ancestors.nearest_gprim_path + "`");
+  }
+
+  // ---- shade.encapsulation.shaderParent: Shader/NodeGraph need a container ----
+  // Gated: a local typeless `over` or a composed parent may legitimately supply
+  // the Material/NodeGraph container.
+  if (options.shade && IsShadeConnectableTypeName(type_name) && !has_arc &&
+      !is_over && !ancestors.parent_type.empty() &&
+      !IsShadeContainerTypeName(ancestors.parent_type)) {
+    AddWarning(result, "shade.encapsulation.shaderParent", prim_location,
+               type_name + " must be parented by a Material or NodeGraph, but "
+               "its parent is `" + ancestors.parent_type + "`");
+  }
+
+  // ---- shade.preview.*: UsdPreviewSurface input schema conformance ----
+  if (options.shade && type_name == "Shader" &&
+      GetShaderInfoId(ps) == "UsdPreviewSurface") {
+    ValidateUsdPreviewSurface(ps, prim_location, result);
+  }
 
   std::set<std::string> collection_instances =
       CollectAppliedCollectionInstances(applied_schemas);
@@ -591,12 +805,63 @@ void ValidatePrimSpecRecursive(const PrimSpec &ps, const Path &prim_path,
       ValidateColorSpaceToken(color_space, visible_color_spaces,
                               "core.attr.colorSpace", prop_location, result);
     }
+
+    // ---- shade.material.binding: material:binding* must be a relationship ----
+    if (options.shade &&
+        (prop_name == "material:binding" ||
+         prop_name.rfind("material:binding:", 0) == 0)) {
+      if (!prop.is_relationship()) {
+        // Pure local syntax error -- always reported.
+        AddError(result, "shade.material.binding", prop_location,
+                 "`" + prop_name + "` must be a relationship");
+      } else if (!has_arc && !is_over &&
+                 !HasAppliedSchema(applied_schemas, "MaterialBindingAPI")) {
+        AddWarning(result, "shade.material.bindingAPI", prop_location,
+                   "`" + prop_name +
+                       "` is authored without applying MaterialBindingAPI");
+      }
+    }
+  }
+
+  // ---- core.xformOp.order: every op in xformOpOrder must be authored here ----
+  // Gated: an override or composed prim may inherit the op attributes.
+  if (options.core && !has_arc && !is_over) {
+    auto it = ps.props().find("xformOpOrder");
+    if (it != ps.props().end() && it->second.is_attribute()) {
+      auto order =
+          it->second.get_attribute().get_value<std::vector<value::token>>();
+      if (order) {
+        for (const value::token &op : order.value()) {
+          const std::string &op_name = op.str();
+          if (op_name == "!resetXformStack!") {
+            continue;
+          }
+          if (ps.props().count(op_name) == 0) {
+            AddError(result, "core.xformOp.order",
+                     MakePropertyLocation(prim_location, "xformOpOrder"),
+                     "xformOpOrder references `" + op_name +
+                         "` but no such attribute is authored on the prim");
+          }
+        }
+      }
+    }
+  }
+
+  // Propagate ancestor context to children.
+  AncestorContext child_ctx;
+  child_ctx.parent_type = type_name;
+  if (IsGprimTypeName(type_name)) {
+    child_ctx.has_gprim_ancestor = true;
+    child_ctx.nearest_gprim_path = prim_location;
+  } else {
+    child_ctx.has_gprim_ancestor = ancestors.has_gprim_ancestor;
+    child_ctx.nearest_gprim_path = ancestors.nearest_gprim_path;
   }
 
   for (const auto &child_entry : ps.children()) {
     Path child_path = prim_path.AppendPrim(child_entry.name());
     ValidatePrimSpecRecursive(child_entry, child_path, visible_color_spaces,
-                              result);
+                              child_ctx, options, result);
   }
 
   for (const auto &variant_set_entry : ps.variantSets()) {
@@ -618,8 +883,9 @@ void ValidatePrimSpecRecursive(const PrimSpec &ps, const Path &prim_path,
       }
 
       (void)variant_location;
+      // Variant body shares the owning prim's ancestor context.
       ValidatePrimSpecRecursive(variant_ps, variant_path, visible_color_spaces,
-                                result);
+                                child_ctx, options, result);
     }
   }
 }
@@ -651,15 +917,23 @@ bool USDValidationResult::ok() const { return error_count() == 0; }
 const char *GetAOUSDCoreSpecVersionString() { return kSpecVersion; }
 
 USDValidationResult ValidateLayerAgainstAOUSDCore(const Layer &layer) {
+  return ValidateLayerAgainstAOUSDCore(layer, ValidationOptions());
+}
+
+USDValidationResult ValidateLayerAgainstAOUSDCore(
+    const Layer &layer, const ValidationOptions &options) {
   USDValidationResult result;
 
-  ValidateLayerMetas(layer, &result);
+  if (options.core) {
+    ValidateLayerMetas(layer, &result);
+  }
 
   for (const auto &root_entry : layer.primspecs()) {
     const PrimSpec &ps = root_entry.second;
     Path prim_path("/", "");
     prim_path = prim_path.AppendPrim(ps.name());
-    ValidatePrimSpecRecursive(ps, prim_path, ColorSpaceSet(), &result);
+    ValidatePrimSpecRecursive(ps, prim_path, ColorSpaceSet(), AncestorContext(),
+                              options, &result);
   }
 
   return result;

@@ -6,6 +6,7 @@ set(TEST_SOURCES
 	mcp-test-stage.cc
 	mcp-test-scene.cc
 	mcp-test-query.cc
+	mcp-test-validate.cc
 	)
 
 add_executable(${TEST_TARGET_NAME}

@@ -8,6 +8,7 @@
 #include "mcp-tools-scene.hh"
 #include "mcp-tools-query.hh"
 #include "mcp-tools-composition.hh"
+#include "mcp-tools-validate.hh"
 #include "mcp-js-bridge.hh"
 #include "pprinter.hh"
 #include "layer.hh"
@@ -1235,6 +1236,34 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
   }
 
   // =========================================================================
+  // Validation
+  // =========================================================================
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["data"] =
+        str_prop("Base64-encoded USD to validate (usda/usdc/usdz)");
+    schema["properties"]["uri"] =
+        str_prop("USD file path to validate (native builds only)");
+    schema["properties"]["layer_uuid"] =
+        str_prop("UUID of a previously-loaded session layer to validate");
+    schema["properties"]["name"] =
+        str_prop("Filename hint when validating `data`");
+    schema["properties"]["groups"] = {
+        {"type", "array"},
+        {"items", {{"type", "string"}}},
+        {"description",
+         "Rule groups to run: any of \"core\", \"geom\", \"shade\", or "
+         "\"all\". Default [\"core\"]."}};
+    add_tool("usd_validate",
+             "Validate USD against AOUSD Core semantic rules. Validates "
+             "`data`/`uri`/`layer_uuid` if given, else the current session "
+             "stage. Returns structured issues (severity, rule_id, location, "
+             "message).",
+             schema);
+  }
+
+  // =========================================================================
   // Scripting
   // =========================================================================
   {
@@ -1477,6 +1506,9 @@ bool CallTool(Context &ctx, const std::string &tool_name,
   if (tool_name == "schema_list_types") return SchemaListTypes(ctx, args, result, err);
   if (tool_name == "schema_get_type") return SchemaGetType(ctx, args, result, err);
   if (tool_name == "search") return Search(ctx, args, result, err);
+
+  // ---- Validation ----
+  if (tool_name == "usd_validate") return UsdValidate(ctx, args, result, err);
 
   // ---- Scripting ----
   if (tool_name == "run_script") return RunScript(ctx, args, result, err);
