@@ -148,6 +148,16 @@ bool USDZPack(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
     ctx.stage->metas().upAxis.set_value(Axis::Y);
   }
 
+  if (args.contains("metersPerUnit") && args["metersPerUnit"].is_number()) {
+    double mpu = args["metersPerUnit"].get<double>();
+    if (mpu > 0.0) {
+      ctx.stage->metas().metersPerUnit.set_value(mpu);
+    }
+  }
+
+  // NOTE: assets map is empty -- no texture reprocessing during pack.
+  // Textures remain as file-path references in the USDC layer.
+  // For texture resize/reencode, use the full USDZConvert tool instead.
   const std::map<std::string, std::vector<uint8_t>> assets;
   std::string warn;
 

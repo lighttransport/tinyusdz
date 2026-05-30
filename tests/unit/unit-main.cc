@@ -591,6 +591,10 @@ TEST_LIST = {
   { "usdz_convert_fit_budget_test", usdz_convert_fit_budget_test },
   { "usdz_convert_pipeline_test", usdz_convert_pipeline_test },
   { "usdz_convert_repack_files_test", usdz_convert_repack_files_test },
+  { "usdz_convert_jpeg_roundtrip_test", usdz_convert_jpeg_roundtrip_test },
+  { "usdz_convert_remap_asset_paths_test", usdz_convert_remap_asset_paths_test },
+  { "usdz_convert_error_path_test", usdz_convert_error_path_test },
+  { "usdz_convert_cleanup_test", usdz_convert_cleanup_test },
   // Pretty-printer column wrap tests
   { "column_wrap_disabled_test", column_wrap_disabled_test },
   { "column_wrap_float3_array_test", column_wrap_float3_array_test },

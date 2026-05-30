@@ -315,7 +315,7 @@ bool ToRGBA(const std::vector<uint8_t> &src, int channels,
       dst[4 * i + 0] = src[i];
       dst[4 * i + 1] = src[i];
       dst[4 * i + 2] = src[i];
-      dst[4 * i + 3] = 1.0f;
+      dst[4 * i + 3] = 255;
     }
   } else if (channels == 2) {  // assume luminance + alpha
     for (size_t i = 0; i < npixels; i++) {
@@ -6964,7 +6964,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
 
       // TODO: nested variants
       .function("hasVariants",
-                &TinyUSDZLoaderNative::hasInherits)
+                &TinyUSDZLoaderNative::hasVariants)
 
       .function("composeVariants",
                 &TinyUSDZLoaderNative::composeVariants)

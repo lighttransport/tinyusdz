@@ -618,6 +618,7 @@ bool RepackTextureFiles(const RepackSpec &spec, const std::string &outputFile,
                       "': " + ret.error();
     return false;
   }
+  // No warnings to emit; PackChannels returns errors only.
   (void)warn;
   return true;
 }
