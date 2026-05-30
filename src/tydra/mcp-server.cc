@@ -27,6 +27,10 @@
 #include <unordered_set>
 #include <vector>
 
+// Defines the DCOUT debug-logging macro used below. Without this, DCOUT(...)
+// is undefined and its `<<` arguments are parsed as a real expression.
+#include "common-macros.inc"
+
 // [ ] Roots(from Protocol revision 2025-06-18)
 // [ ] Use mcp-session-id in resources and tools.
 // [ ] Server notification

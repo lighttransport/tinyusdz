@@ -412,6 +412,8 @@ void print_help() {
   std::cout << "                      (validates info:id, index bounds, etc.)\n";
   std::cout << "  --validate         Validate against AOUSD Core semantic rules\n";
   std::cout << "                      (core schemas/metadata only; no file-format checks)\n";
+  std::cout << "  --validate-all     Validate with all rule groups (core + geom + shade)\n";
+  std::cout << "                      (adds geom/shade encapsulation; warning-heavy)\n";
   std::cout << "\n";
   std::cout << "Composition graph dump options:\n";
   std::cout << "  --dump-comp-graph[=FMT]  Dump composition graph\n";
@@ -466,6 +468,7 @@ int main(int argc, char **argv) {
   // MaterialX validation
   bool strict_mtlx_check{false};
   bool validate_against_core{false};
+  bool validate_all_groups{false};
 
   // Composition graph dump
   bool do_dump_comp_graph{false};
@@ -539,6 +542,9 @@ int main(int argc, char **argv) {
       strict_mtlx_check = true;
     } else if (arg.compare("--validate") == 0) {
       validate_against_core = true;
+    } else if (arg.compare("--validate-all") == 0) {
+      validate_against_core = true;
+      validate_all_groups = true;
     } else if (tinyusdz::startsWith(arg, "--dump-comp-graph")) {
       do_dump_comp_graph = true;
       std::string rest = arg.substr(strlen("--dump-comp-graph"));
@@ -732,8 +738,14 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
 
+    tinyusdz::ValidationOptions validation_options;
+    if (validate_all_groups) {
+      validation_options.geom = true;
+      validation_options.shade = true;
+    }
+
     const tinyusdz::USDValidationResult validation =
-        tinyusdz::ValidateLayerAgainstAOUSDCore(layer);
+        tinyusdz::ValidateLayerAgainstAOUSDCore(layer, validation_options);
     std::cout << tinyusdz::FormatValidationResult(validation);
     return validation.ok() ? EXIT_SUCCESS : EXIT_FAILURE;
   }

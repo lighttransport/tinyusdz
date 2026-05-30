@@ -20,6 +20,7 @@ TinyUSDZ provides an MCP server for AI agents (Claude, GPT, etc.) to interact wi
 │   ├── Attributes       (list, get, set, block)       │
 │   ├── Composition      (refs, payloads, variants)    │
 │   ├── Query/Discover   (find by type, schema list)   │
+│   ├── Validation       (usd_validate: AOUSD Core)    │
 │   ├── Scripting        (run_script: JS + tinyusdz.*) │
 │   └── Legacy           (assets, screenshots)         │
 │                                                      │
@@ -106,6 +107,19 @@ An Express-based MCP server bridging to TinyUSDZ WASM. See `web/mcp-server/`.
 | `schema_list_types` | List all registered prim types | — |
 | `schema_get_type` | Get schema for a type | `type_name` |
 | `search` | Search prim names | `query`, `scope` |
+
+### Validation
+
+| Tool | Description | Key Args |
+|------|-------------|----------|
+| `usd_validate` | Validate against AOUSD Core semantic rules | `data`, `uri`, `layer_uuid`, `groups`, `name` |
+
+Validates the first input that is present (`data` base64 → `uri` file path →
+`layer_uuid` session layer), otherwise the current session stage (serialized to
+USDA and re-parsed as an uncomposed Layer). `groups` selects rule groups: any of
+`"core"` (default), `"geom"`, `"shade"`, or `"all"`. Returns
+`{ ok, error_count, warning_count, spec_version, source, issues: [{ severity,
+rule_id, location, message }] }`.
 
 ### Scripting
 
