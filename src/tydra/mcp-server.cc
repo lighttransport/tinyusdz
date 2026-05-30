@@ -27,6 +27,10 @@
 #include <unordered_set>
 #include <vector>
 
+// DCOUT() and related debug-print macros (used throughout this file).
+#include "pprinter.hh"
+#include "common-macros.inc"
+
 // [ ] Roots(from Protocol revision 2025-06-18)
 // [ ] Use mcp-session-id in resources and tools.
 // [ ] Server notification

@@ -59,6 +59,8 @@ set(TEST_SOURCES
 	unit-usdz-writer.cc
 	unit-usdc-writer.cc
 	unit-usd-validation.cc
+	# USDZ conversion pipeline + texture ops + fpnge
+	unit-usdz-convert.cc
 	# Physics + MuJoCo
 	unit-physics.cc
 	# IK solver
