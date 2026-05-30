@@ -55,10 +55,12 @@ bool EncodeImageBase64(const tinyusdz::Image &img, const std::string &format,
     err = "Image encode failed: " + ret.error();
     return false;
   }
-  if (ret.value().size() > std::numeric_limits<unsigned int>::max()) {
+#if SIZE_MAX > UINT_MAX
+  if (ret.value().size() > static_cast<size_t>(std::numeric_limits<unsigned int>::max())) {
     err = "Encoded image too large for base64 encoding.";
     return false;
   }
+#endif
   *b64 = base64_encode(ret.value().data(), static_cast<unsigned int>(ret.value().size()));
   return true;
 }
@@ -203,10 +205,12 @@ bool USDZPack(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
   if (!tinyusdz::SaveAsUSDZToMemory(*ctx.stage, assets, &out, &warn, &err)) {
     return false;
   }
-  if (out.size() > std::numeric_limits<unsigned int>::max()) {
+#if SIZE_MAX > UINT_MAX
+  if (out.size() > static_cast<size_t>(std::numeric_limits<unsigned int>::max())) {
     err = "USDZ archive too large for base64 encoding.";
     return false;
   }
+#endif
   result["success"] = true;
   result["data"] =
       base64_encode(out.data(), static_cast<unsigned int>(out.size()));
