@@ -272,7 +272,7 @@ int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
   if (strcmp(request_info->request_method, "OPTIONS") == 0) {
     mg_printf(conn,
               "HTTP/1.1 200 OK\r\n"
-              "Access-Control-Allow-Origin: *\r\n"
+              "Access-Control-Allow-Origin: http://localhost\r\n"
               "Access-Control-Allow-Methods: POST, OPTIONS\r\n"
               "Access-Control-Allow-Headers: Content-Type, mcp-session-id\r\n"
               "\r\n");
@@ -509,7 +509,9 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
   });
 
   // CivetWeb options
-  std::string port_str = std::to_string(port);
+  std::string port_str = host.empty()
+      ? std::to_string(port)
+      : host + ":" + std::to_string(port);
   std::vector<const char *> options;
 
   options.push_back("listening_ports");

@@ -453,8 +453,8 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
                       std::string *err) {
   (void)warn;
 
-  if (depth > (1024 * 1024 * 128)) {
-    PUSH_ERROR_AND_RETURN("PrimSpec tree too deep.");
+  if (depth > 4096) {
+    PUSH_ERROR_AND_RETURN("PrimSpec tree too deep (max 4096).");
   }
 
   // Combine metadataum (weaker fills in where stronger is not authored)
@@ -1943,8 +1943,8 @@ static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst,
                                 std::string *err) {
   (void)warn;
 
-  if (depth > (1024 * 1024 * 128)) {
-    PUSH_ERROR_AND_RETURN("PrimSpec tree too deep.");
+  if (depth > 4096) {
+    PUSH_ERROR_AND_RETURN("PrimSpec tree too deep (max 4096).");
   }
 
   DCOUT("update_from");
