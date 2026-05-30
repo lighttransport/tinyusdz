@@ -69,6 +69,7 @@
 // Rigid body simulation
 #include "unit-rb-collision.h"
 #include "unit-rb-dynamics.h"
+#include "unit-string-pool.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -521,6 +522,7 @@ TEST_LIST = {
   { "primspec_children_test", primspec_children_test },
   { "primspec_variant_selection_test", primspec_variant_selection_test },
   { "primspec_metas_test", primspec_metas_test },
+  { "primspec_metas_lazy_init_test", primspec_metas_lazy_init_test },
   // Prim API tests
   { "prim_type_check_test", prim_type_check_test },
   { "prim_add_child_test", prim_add_child_test },
@@ -822,5 +824,13 @@ TEST_LIST = {
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
+  // StringPool tests
+  { "string_pool_intern_test", string_pool_intern_test },
+  { "string_pool_intern_different_test", string_pool_intern_different_test },
+  { "string_pool_lookup_test", string_pool_lookup_test },
+  { "string_pool_pre_intern_test", string_pool_pre_intern_test },
+  { "string_pool_size_test", string_pool_size_test },
+  { "string_pool_charptr_test", string_pool_charptr_test },
+  { "string_pool_pre_intern_common_test", string_pool_pre_intern_common_test },
   { nullptr, nullptr }
 };

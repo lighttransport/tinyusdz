@@ -320,3 +320,65 @@ void primspec_metas_test(void) {
     TEST_MSG("PrimSpec should report having authored metadata");
   }
 }
+
+// Test PrimMeta lazy initialization (unique_ptr storage)
+void primspec_metas_lazy_init_test(void) {
+  // Default-constructed PrimSpec should have empty (unallocated) metas
+  {
+    PrimSpec ps;
+    // const access should return a static empty instance, not allocate
+    const PrimMeta &m = ps.metas();
+    TEST_CHECK(!m.authored());
+    TEST_MSG("Default PrimSpec metas should be empty");
+  }
+
+  // Non-const access should allocate on first call
+  {
+    PrimSpec ps;
+    PrimMeta &m = ps.metas();
+    m.set_displayName("Test");
+    TEST_CHECK(ps.metas().has_displayName());
+    TEST_CHECK(ps.metas().get_displayName() == "Test");
+    TEST_MSG("Metas should persist after lazy init");
+  }
+
+  // Copy should deep-copy metas
+  {
+    PrimSpec ps1(Specifier::Def, "Xform", "CopyTest");
+    ps1.metas().set_displayName("Original");
+    ps1.metas().set_kind(Kind::Component);
+
+    PrimSpec ps2 = ps1;
+    TEST_CHECK(ps2.metas().has_displayName());
+    TEST_CHECK(ps2.metas().get_displayName() == "Original");
+    TEST_CHECK(ps2.metas().get_kind_enum() == Kind::Component);
+
+    // Mutating ps2 should not affect ps1
+    ps2.metas().set_displayName("Modified");
+    TEST_CHECK(ps1.metas().get_displayName() == "Original");
+    TEST_CHECK(ps2.metas().get_displayName() == "Modified");
+    TEST_MSG("Deep copy should be independent");
+  }
+
+  // Move should transfer ownership
+  {
+    PrimSpec ps1(Specifier::Def, "Xform", "MoveTest");
+    ps1.metas().set_displayName("Moveable");
+
+    PrimSpec ps2 = std::move(ps1);
+    TEST_CHECK(ps2.metas().has_displayName());
+    TEST_CHECK(ps2.metas().get_displayName() == "Moveable");
+    TEST_MSG("Move should transfer metas");
+  }
+
+  // Multiple PrimSpecs should have independent metas
+  {
+    PrimSpec ps1(Specifier::Def, "Xform", "A");
+    PrimSpec ps2(Specifier::Def, "Xform", "B");
+    ps1.metas().set_displayName("A");
+    ps2.metas().set_displayName("B");
+    TEST_CHECK(ps1.metas().get_displayName() == "A");
+    TEST_CHECK(ps2.metas().get_displayName() == "B");
+    TEST_MSG("Multiple PrimSpecs should have independent metas");
+  }
+}

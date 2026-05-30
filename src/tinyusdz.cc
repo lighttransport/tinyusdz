@@ -30,6 +30,7 @@
 #include "security-policy.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
+#include "string-pool.hh"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
 #include "layer.hh"
@@ -767,6 +768,9 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
 bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
                      std::string *warn, std::string *err,
                      const USDLoadOptions &options) {
+  // Ensure common USD strings are interned for deduplication
+  PreInternCommonStrings();
+
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
   std::string base_dir = io::GetBaseDir(_filename);
 
