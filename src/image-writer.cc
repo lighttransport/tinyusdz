@@ -324,9 +324,10 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
       return nonstd::make_unexpected(
           "WriteImageToMemory: EXR/TIFF/DNG output is not implemented yet.");
     case tinyusdz::image::WriteImageFormat::Autodetect:
-    default:
       return nonstd::make_unexpected("Internal error in WriteImageToMemory.");
   }
+  // Unreachable but needed for compilers that don't recognize exhaustive switches.
+  return nonstd::make_unexpected("Internal error in WriteImageToMemory.");
 }
 
 nonstd::expected<bool, std::string> WriteImageToFile(
