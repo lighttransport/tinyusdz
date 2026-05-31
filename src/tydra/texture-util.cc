@@ -297,6 +297,12 @@ bool ResizeImage(const Image &src, int dstWidth, int dstHeight, Image *dst,
     if (err) (*err) = "ResizeImage: invalid destination size.";
     return false;
   }
+  // Cap destination dimensions to prevent excessive memory allocation.
+  constexpr int kMaxResizeDimension = 16384;
+  if (dstWidth > kMaxResizeDimension || dstHeight > kMaxResizeDimension) {
+    if (err) (*err) = "ResizeImage: destination dimensions exceed 16384 limit.";
+    return false;
+  }
 
   // Validate source buffer size.
   size_t src_expected;

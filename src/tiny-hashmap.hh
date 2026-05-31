@@ -252,8 +252,8 @@ class HashMap {
     }
     bool operator!=(const const_iterator &o) const { return !(*this == o); }
 
-    const Key &key() const { return _m->_buckets[_i].key; }
-    const Value &mapped() const { return _m->_buckets[_i].value; }
+    const Key &key() const { return _m->_buckets[_i].kv.first; }
+    const Value &mapped() const { return _m->_buckets[_i].kv.second; }
   };
 
   HashMap() : _size(0), _mask(0), _max_load(0.5f), _buckets(), _hash(), _eq() {}

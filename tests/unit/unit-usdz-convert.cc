@@ -498,6 +498,314 @@ void usdz_convert_error_path_test(void) {
   }
 }
 
+// Adversarial: feed truncated/corrupted image data to decoders; must not crash.
+void usdz_convert_adversarial_image_test(void) {
+  using namespace tinyusdz;
+
+  // 1) Truncated PNG (valid header, then garbage).
+  {
+    const uint8_t truncated_png[] = {
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+      0x00, 0x00, 0x00, 0x01
+    };
+    auto dec = image::LoadImageFromMemory(truncated_png, sizeof(truncated_png),
+                                          "truncated.png");
+    TEST_CHECK(!dec.has_value());
+  }
+
+  // 2) Truncated JPEG.
+  {
+    const uint8_t truncated_jpg[] = {0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10};
+    auto dec = image::LoadImageFromMemory(truncated_jpg, sizeof(truncated_jpg),
+                                          "truncated.jpg");
+    TEST_CHECK(!dec.has_value());
+  }
+
+  // 3) Zero-length input.
+  {
+    auto dec = image::LoadImageFromMemory(nullptr, 0, "empty.png");
+    TEST_CHECK(!dec.has_value());
+  }
+
+  // 4) Completely random bytes.
+  {
+    uint8_t garbage[64];
+    for (int i = 0; i < 64; i++) garbage[i] = uint8_t(i * 37 + 13);
+    auto dec = image::LoadImageFromMemory(garbage, sizeof(garbage),
+                                          "garbage.png");
+    TEST_CHECK(!dec.has_value());
+  }
+
+  // 5) ResizeImage with oversized destination.
+  {
+    Image img = MakeSolidImage(4, 4, 4, 0, 0, 0, 255);
+    Image out;
+    std::string err;
+    bool ok = tydra::ResizeImage(img, 20000, 20000, &out,
+                                 tydra::ResizeFilter::Linear, &err);
+    TEST_CHECK(!ok);
+    TEST_CHECK(!err.empty());
+  }
+
+  // 6) ResizeImage with negative destination dimensions.
+  {
+    Image img = MakeSolidImage(4, 4, 4, 0, 0, 0, 255);
+    Image out;
+    std::string err;
+    bool ok = tydra::ResizeImage(img, -1, -1, &out,
+                                 tydra::ResizeFilter::Linear, &err);
+    TEST_CHECK(!ok);
+  }
+}
+
+// PackChannels error paths.
+void usdz_convert_pack_channels_error_test(void) {
+  using namespace tinyusdz;
+
+  // 1) Empty inputs vector.
+  {
+    std::vector<Image> inputs;
+    tydra::ChannelPackSpec spec;
+    spec.out_channels = 3;
+    spec.r.input_index = 0;
+    spec.r.channel = 0;
+    Image packed;
+    std::string err;
+    bool ok = tydra::PackChannels(inputs, spec, &packed, &err);
+    TEST_CHECK(!ok);
+    TEST_CHECK(!err.empty());
+  }
+
+  // 2) out_channels = 0.
+  {
+    std::vector<Image> inputs = {MakeSolidImage(4, 4, 1, 10, 0, 0, 0)};
+    tydra::ChannelPackSpec spec;
+    spec.out_channels = 0;
+    Image packed;
+    std::string err;
+    bool ok = tydra::PackChannels(inputs, spec, &packed, &err);
+    TEST_CHECK(!ok);
+  }
+
+  // 3) out_channels = 5.
+  {
+    std::vector<Image> inputs = {MakeSolidImage(4, 4, 1, 10, 0, 0, 0)};
+    tydra::ChannelPackSpec spec;
+    spec.out_channels = 5;
+    Image packed;
+    std::string err;
+    bool ok = tydra::PackChannels(inputs, spec, &packed, &err);
+    TEST_CHECK(!ok);
+  }
+
+  // 4) Input index out of range.
+  {
+    std::vector<Image> inputs = {MakeSolidImage(4, 4, 1, 10, 0, 0, 0)};
+    tydra::ChannelPackSpec spec;
+    spec.out_channels = 1;
+    spec.r.input_index = 99;
+    spec.r.channel = 0;
+    Image packed;
+    std::string err;
+    bool ok = tydra::PackChannels(inputs, spec, &packed, &err);
+    TEST_CHECK(!ok);
+  }
+
+  // 5) 4-channel output with alpha.
+  {
+    Image r = MakeSolidImage(4, 4, 1, 50, 0, 0, 0);
+    Image g = MakeSolidImage(4, 4, 1, 100, 0, 0, 0);
+    Image b = MakeSolidImage(4, 4, 1, 150, 0, 0, 0);
+    Image a = MakeSolidImage(4, 4, 1, 200, 0, 0, 0);
+    std::vector<Image> inputs = {r, g, b, a};
+    tydra::ChannelPackSpec spec;
+    spec.out_channels = 4;
+    spec.r.input_index = 0; spec.r.channel = 0;
+    spec.g.input_index = 1; spec.g.channel = 0;
+    spec.b.input_index = 2; spec.b.channel = 0;
+    spec.a.input_index = 3; spec.a.channel = 0;
+    Image packed;
+    std::string err;
+    bool ok = tydra::PackChannels(inputs, spec, &packed, &err);
+    TEST_CHECK(ok);
+    if (ok) {
+      TEST_CHECK(packed.channels == 4);
+      TEST_CHECK(packed.width == 4);
+      TEST_CHECK(packed.height == 4);
+      if (packed.data.size() >= 4) {
+        TEST_CHECK(packed.data[0] == 50);
+        TEST_CHECK(packed.data[1] == 100);
+        TEST_CHECK(packed.data[2] == 150);
+        TEST_CHECK(packed.data[3] == 200);
+      }
+    }
+  }
+}
+
+// FitTexturesToBudget error paths and edge cases.
+void usdz_convert_fit_budget_error_test(void) {
+  using namespace tinyusdz;
+
+  // 1) Empty inputs.
+  {
+    std::vector<tydra::FitTextureInput> inputs;
+    tydra::FitTextureOptions opt;
+    opt.target_total_bytes = 1000;
+    opt.strategy = tydra::FitStrategy::Size;
+    opt.min_texture_size = 16;
+    std::vector<tydra::FitTextureOutput> outs;
+    std::string warn, err;
+    bool ok = tydra::FitTexturesToBudget(inputs, opt, &outs, &warn, &err);
+    TEST_CHECK(ok);
+    TEST_CHECK(outs.empty());
+  }
+
+  // 2) Non-reencodable textures only.
+  {
+    std::vector<tydra::FitTextureInput> inputs;
+    for (int i = 0; i < 3; i++) {
+      tydra::FitTextureInput fi;
+      fi.image = MakeSolidImage(32, 32, 3, 100, 100, 100, 255);
+      fi.original_bytes = EncodePNG(fi.image);
+      fi.ext = "png";
+      fi.reencodable = false;
+      inputs.push_back(std::move(fi));
+    }
+    tydra::FitTextureOptions opt;
+    opt.target_total_bytes = 100;
+    opt.strategy = tydra::FitStrategy::Size;
+    opt.min_texture_size = 8;
+    std::vector<tydra::FitTextureOutput> outs;
+    std::string warn, err;
+    bool ok = tydra::FitTexturesToBudget(inputs, opt, &outs, &warn, &err);
+    TEST_CHECK(ok);
+    TEST_CHECK(outs.size() == inputs.size());
+  }
+
+  // 3) ResizeFilter::SRGB path.
+  {
+    Image img = MakeSolidImage(16, 8, 3, 128, 128, 128, 255);
+    Image out;
+    std::string err;
+    bool ok = tydra::ResizeImage(img, 8, 4, &out,
+                                 tydra::ResizeFilter::SRGB, &err);
+    TEST_CHECK(ok);
+    if (ok) {
+      TEST_CHECK(out.width == 8);
+      TEST_CHECK(out.height == 4);
+      TEST_CHECK(out.channels == 3);
+    }
+  }
+
+  // 4) ResizeFilter::Auto path.
+  {
+    Image img = MakeSolidImage(16, 16, 4, 128, 128, 128, 255);
+    img.colorspace = "sRGB";
+    Image out;
+    std::string err;
+    bool ok = tydra::ResizeImage(img, 8, 8, &out,
+                                 tydra::ResizeFilter::Auto, &err);
+    TEST_CHECK(ok);
+    if (ok) {
+      TEST_CHECK(out.width == 8);
+      TEST_CHECK(out.height == 8);
+    }
+  }
+}
+
+// Pipeline test with JPEG output format.
+void usdz_convert_pipeline_jpeg_test(void) {
+  using namespace tinyusdz;
+  namespace fs = std::filesystem;
+
+  const std::string dir = TempDir();
+  const std::string png_path = (fs::path(dir) / "tex_jpg.png").string();
+  const std::string usda_path = (fs::path(dir) / "scene_jpg.usda").string();
+  const std::string usdz_path = (fs::path(dir) / "out_jpg.usdz").string();
+
+  Image tex = MakeSolidImage(64, 64, 4, 200, 150, 100, 255);
+  {
+    image::WriteOption wopt;
+    wopt.format = image::WriteImageFormat::PNG;
+    auto enc = image::WriteImageToMemory(tex, wopt);
+    TEST_CHECK(enc.has_value());
+    if (!enc) return;
+    std::string werr;
+    bool wok = io::WriteWholeFile(png_path, enc.value().data(),
+                                  enc.value().size(), &werr);
+    TEST_CHECK(wok);
+    if (!wok) return;
+  }
+
+  {
+    const std::string usda =
+        "#usda 1.0\n"
+        "(\n"
+        "    defaultPrim = \"root\"\n"
+        "    upAxis = \"Y\"\n"
+        ")\n"
+        "\n"
+        "def Xform \"root\"\n"
+        "{\n"
+        "    def Material \"mat\"\n"
+        "    {\n"
+        "        token outputs:surface.connect = </root/mat/surface.outputs:surface>\n"
+        "        def Shader \"surface\"\n"
+        "        {\n"
+        "            uniform token info:id = \"UsdPreviewSurface\"\n"
+        "            color3f inputs:diffuseColor.connect = </root/mat/tex.outputs:rgb>\n"
+        "            token outputs:surface\n"
+        "        }\n"
+        "        def Shader \"tex\"\n"
+        "        {\n"
+        "            uniform token info:id = \"UsdUVTexture\"\n"
+        "            asset inputs:file = @tex_jpg.png@\n"
+        "            float3 outputs:rgb\n"
+        "        }\n"
+        "    }\n"
+        "}\n";
+    std::string werr;
+    bool wok = io::WriteWholeFile(
+        usda_path, reinterpret_cast<const unsigned char *>(usda.data()),
+        usda.size(), &werr);
+    TEST_CHECK(wok);
+    if (!wok) return;
+  }
+
+  usdz::UsdzConvertOptions opts;
+  opts.inputs.push_back(usda_path);
+  opts.output = usdz_path;
+  opts.flatten = true;
+  opts.arkit_compatible = true;
+  opts.max_texture_size = 32;
+  opts.texture_format = usdz::OutputTextureFormat::JPEG;
+  opts.jpeg_quality = 80;
+
+  usdz::UsdzConvertStats stats;
+  std::string warn, err;
+  bool ok = usdz::Convert(opts, &stats, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("convert error: %s", err.c_str());
+    return;
+  }
+  TEST_CHECK(stats.num_textures >= 1);
+
+  std::vector<uint8_t> usdz_bytes;
+  std::string ioerr;
+  bool rok = io::ReadWholeFile(&usdz_bytes, &ioerr, usdz_path, 0);
+  TEST_CHECK(rok);
+  if (!rok) return;
+  std::string vwarn, verr;
+  bool valid = tinyusdz::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(),
+                                      &vwarn, &verr);
+  TEST_CHECK(valid);
+  if (!valid) {
+    TEST_MSG("validate: %s", verr.c_str());
+  }
+}
+
 // Cleanup: remove temp files created by earlier tests.
 void usdz_convert_cleanup_test(void) {
   namespace fs = std::filesystem;

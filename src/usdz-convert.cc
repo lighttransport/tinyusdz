@@ -132,6 +132,14 @@ bool ReadAssetBytes(AssetResolutionResolver &resolver, const std::string &assetP
   if (warn && !owarn.empty()) {
     (*warn) += owarn;
   }
+  // Cap asset size to avoid unbounded allocation from malicious assets.
+  constexpr size_t kMaxAssetBytes = size_t(256) * 1024 * 1024;  // 256 MiB
+  if (asset.size() > kMaxAssetBytes) {
+    if (err) {
+      (*err) = "Asset size exceeds 256 MiB limit.";
+    }
+    return false;
+  }
   out->assign(asset.data(), asset.data() + asset.size());
   return true;
 }

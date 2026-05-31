@@ -523,6 +523,8 @@ TEST_LIST = {
   { "primspec_variant_selection_test", primspec_variant_selection_test },
   { "primspec_metas_test", primspec_metas_test },
   { "primspec_metas_lazy_init_test", primspec_metas_lazy_init_test },
+  { "primspec_primchildren_propertynames_test", primspec_primchildren_propertynames_test },
+  { "primspec_working_path_test", primspec_working_path_test },
   // Prim API tests
   { "prim_type_check_test", prim_type_check_test },
   { "prim_add_child_test", prim_add_child_test },
@@ -596,6 +598,10 @@ TEST_LIST = {
   { "usdz_convert_jpeg_roundtrip_test", usdz_convert_jpeg_roundtrip_test },
   { "usdz_convert_remap_asset_paths_test", usdz_convert_remap_asset_paths_test },
   { "usdz_convert_error_path_test", usdz_convert_error_path_test },
+  { "usdz_convert_adversarial_image_test", usdz_convert_adversarial_image_test },
+  { "usdz_convert_pack_channels_error_test", usdz_convert_pack_channels_error_test },
+  { "usdz_convert_fit_budget_error_test", usdz_convert_fit_budget_error_test },
+  { "usdz_convert_pipeline_jpeg_test", usdz_convert_pipeline_jpeg_test },
   { "usdz_convert_cleanup_test", usdz_convert_cleanup_test },
   // Pretty-printer column wrap tests
   { "column_wrap_disabled_test", column_wrap_disabled_test },

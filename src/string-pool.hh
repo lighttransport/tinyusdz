@@ -31,6 +31,7 @@ public:
   }
 
   const char *intern(const char *s) {
+    if (!s) return nullptr;
     return intern(std::string(s));
   }
 
@@ -41,6 +42,7 @@ public:
   }
 
   const char *lookup(const char *s) const {
+    if (!s) return nullptr;
     return lookup(std::string(s));
   }
 

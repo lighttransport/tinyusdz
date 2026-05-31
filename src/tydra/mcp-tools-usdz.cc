@@ -67,9 +67,21 @@ bool EncodeImageBase64(const tinyusdz::Image &img, const std::string &format,
 
 // Decode a base64 string into an Image.
 bool DecodeImageBase64(const std::string &b64, tinyusdz::Image *img, std::string &err) {
+  // Cap input size to avoid unbounded allocation.
+  constexpr size_t kMaxBase64Input = size_t(64) * 1024 * 1024;  // 64 MiB base64
+  if (b64.size() > kMaxBase64Input) {
+    err = "Base64 input exceeds 64 MiB limit.";
+    return false;
+  }
   std::string bytes = base64_decode(b64);
   if (bytes.empty()) {
     err = "Empty/invalid base64 image data.";
+    return false;
+  }
+  // Cap decoded size.
+  constexpr size_t kMaxDecodedBytes = size_t(256) * 1024 * 1024;  // 256 MiB
+  if (bytes.size() > kMaxDecodedBytes) {
+    err = "Decoded image data exceeds 256 MiB limit.";
     return false;
   }
   auto ret = image::LoadImageFromMemory(
@@ -99,9 +111,17 @@ bool USDZConvert(Context &ctx, const nlohmann::json &args,
   usdz::UsdzConvertOptions opts;
   std::string input_path = args["input"].get<std::string>();
   std::string output_path = args["output"].get<std::string>();
-  // Reject path traversal.
-  if (input_path.find("..") != std::string::npos || output_path.find("..") != std::string::npos) {
-    err = "Path traversal ('..') is not allowed in input/output paths.";
+  // Reject path traversal and unsafe paths.
+  auto isUnsafePath = [](const std::string &p) -> bool {
+    if (p.empty()) return true;
+    if (p.find("..") != std::string::npos) return true;
+    if (p.find('\0') != std::string::npos) return true;
+    if (p[0] == '/' || p[0] == '\\') return true;
+    if (p.size() >= 2 && p[1] == ':') return true;
+    return false;
+  };
+  if (isUnsafePath(input_path) || isUnsafePath(output_path)) {
+    err = "Path contains unsafe characters or traversal sequences.";
     return false;
   }
   opts.inputs.push_back(input_path);
@@ -189,8 +209,12 @@ bool USDZPack(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
 
   if (args.contains("uri") && args["uri"].is_string()) {
     const std::string uri = args["uri"].get<std::string>();
-    if (uri.find("..") != std::string::npos) {
-      err = "Path traversal ('..') is not allowed in uri.";
+    // Reject unsafe paths (same checks as USDZConvert).
+    if (uri.empty() || uri.find("..") != std::string::npos ||
+        uri.find('\0') != std::string::npos ||
+        uri[0] == '/' || uri[0] == '\\' ||
+        (uri.size() >= 2 && uri[1] == ':')) {
+      err = "Path contains unsafe characters or traversal sequences.";
       return false;
     }
     if (!tinyusdz::SaveAsUSDZToFile(uri, *ctx.stage, assets, &warn, &err)) {
@@ -203,6 +227,12 @@ bool USDZPack(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
 
   std::vector<uint8_t> out;
   if (!tinyusdz::SaveAsUSDZToMemory(*ctx.stage, assets, &out, &warn, &err)) {
+    return false;
+  }
+  // Cap in-memory archive size before base64 encoding.
+  constexpr size_t kMaxUSDZArchiveBytes = size_t(256) * 1024 * 1024;  // 256 MiB
+  if (out.size() > kMaxUSDZArchiveBytes) {
+    err = "USDZ archive exceeds 256 MiB limit for in-memory encoding.";
     return false;
   }
 #if SIZE_MAX > UINT_MAX

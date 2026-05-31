@@ -344,7 +344,16 @@ bool ToRGBA(const std::vector<uint8_t> &src, int channels,
 
 bool uint8arrayToBuffer(const emscripten::val& u8, tinyusdz::TypedArray<uint8_t> &buf) {
   size_t n = u8["byteLength"].as<size_t>();
-  buf.resize(n);
+  // Cap allocation to avoid OOM from untrusted JS typed arrays.
+  constexpr size_t kMaxUint8ArrayBytes = size_t(1) << 30;  // 1 GiB
+  if (n == 0 || n > kMaxUint8ArrayBytes) {
+    return false;
+  }
+  try {
+    buf.resize(n);
+  } catch (const std::bad_alloc&) {
+    return false;
+  }
 
   // Copy JS typed array -> v (one memcpy under the hood)
   emscripten::val view = emscripten::val::global("Uint8Array").new_(u8["buffer"], u8["byteOffset"], n);
@@ -786,20 +795,18 @@ struct EMAssetResolutionResolver {
                                                          reinterpret_cast<const uint8_t*>(entry.binary.data())));
   }
 
-  // Zero-copy ingest using a raw WASM-heap pointer from JS. The caller is
-  // trusted to pass a valid [dataPtr, dataPtr+size) range inside the module's
-  // linear memory; full heap-bounds validation is not portable here, so this
-  // is the documented trust boundary. We still reject the obviously-invalid
-  // cases (null pointer, zero/absurd size) and copy the data into our own
-  // storage so the asset does not alias the caller's buffer afterwards.
+  // Zero-copy ingest using a raw WASM-heap pointer from JS.
+  // Rejects null pointer and absurd sizes; copies data into our own storage.
   bool addFromRawPointer(const std::string &asset_name, uintptr_t dataPtr, size_t size) {
-    // Cap to a generous-but-finite size to avoid a wild `size` triggering a
-    // huge read/allocation (1 GiB).
-    constexpr size_t kMaxRawAssetBytes = size_t(1) << 30;
+    constexpr size_t kMaxRawAssetBytes = size_t(1) << 30;  // 1 GiB
     if ((size == 0) || (size > kMaxRawAssetBytes)) {
       return false;
     }
     if (dataPtr == 0) {
+      return false;
+    }
+    // Overflow guard: reject if pointer + size wraps around.
+    if (dataPtr + size < dataPtr) {
       return false;
     }
 
@@ -896,6 +903,14 @@ struct EMAssetResolutionResolver {
     if (size == 0) {
       result.set("success", false);
       result.set("error", "Size must be greater than 0");
+      return result;
+    }
+
+    // Cap single buffer allocation to avoid OOM in WASM's ~2GB linear memory.
+    constexpr size_t kMaxZeroCopyBufferBytes = size_t(1) << 28;  // 256 MiB
+    if (size > kMaxZeroCopyBufferBytes) {
+      result.set("success", false);
+      result.set("error", "Buffer size exceeds 256 MiB limit");
       return result;
     }
 
@@ -3321,11 +3336,11 @@ class TinyUSDZLoaderNative {
       return img;
     }
 
-    if (img_id >= render_scene_.images.size()) {
+    if (img_id < 0 || static_cast<size_t>(img_id) >= render_scene_.images.size()) {
       return img;
     }
 
-    const auto &i = render_scene_.images[img_id];
+    const auto &i = render_scene_.images[size_t(img_id)];
 
     img.set("width", int(i.width));
     img.set("height", int(i.height));
@@ -3355,7 +3370,7 @@ class TinyUSDZLoaderNative {
       return mesh;
     }
 
-    if (mesh_id >= render_scene_.meshes.size()) {
+    if (mesh_id < 0 || static_cast<size_t>(mesh_id) >= render_scene_.meshes.size()) {
       return mesh;
     }
 
@@ -3982,11 +3997,11 @@ class TinyUSDZLoaderNative {
       return anim;
     }
 
-    if (anim_id >= render_scene_.animations.size()) {
+    if (anim_id < 0 || static_cast<size_t>(anim_id) >= render_scene_.animations.size()) {
       return anim;
     }
 
-    const auto &clip = render_scene_.animations[anim_id];
+    const auto &clip = render_scene_.animations[size_t(anim_id)];
 
     // Basic animation metadata
     anim.set("name", clip.name.empty() ? "Animation" + std::to_string(anim_id) : clip.name);
