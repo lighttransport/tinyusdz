@@ -1253,8 +1253,8 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
         {"type", "array"},
         {"items", {{"type", "string"}}},
         {"description",
-         "Rule groups to run: any of \"core\", \"geom\", \"shade\", or "
-         "\"all\". Default [\"core\"]."}};
+         "Rule groups to run: any of \"core\", \"geom\", \"shade\", "
+         "\"lux\", \"physics\", \"crate\", or \"all\". Default [\"core\"]."}};
     add_tool("usd_validate",
              "Validate USD against AOUSD Core semantic rules. Validates "
              "`data`/`uri`/`layer_uuid` if given, else the current session "

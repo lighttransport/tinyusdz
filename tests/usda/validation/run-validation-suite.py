@@ -8,7 +8,7 @@ Each fixture embeds machine-readable expectations as `#` comment markers:
 
 The runner invokes `tusdcat --validate-all <file>`, parses the reported
 `[rule_id]` tokens, and checks them against the markers. For fixtures whose
-expected rules are all in opt-in groups (geom.* / shade.*), it additionally runs
+expected rules are all in opt-in groups (geom.* / shade.* / lux.* / physics.*), it additionally runs
 core-only `--validate` and asserts no issues are reported -- verifying the
 groups really are opt-in.
 
@@ -94,7 +94,9 @@ def main():
 
         # Opt-in regression: if every expected rule is in an opt-in group,
         # core-only validation must report nothing.
-        if expected_rules and all(r.startswith(("geom.", "shade.")) for r in expected_rules):
+        if expected_rules and all(r.startswith(("geom.", "shade.", "lux.",
+                                                "physics."))
+                                  for r in expected_rules):
             core_out = run_validator(args.app, fixture, all_groups=False)
             core_got = reported_rules(core_out)
             if core_got:

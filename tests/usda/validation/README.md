@@ -7,7 +7,7 @@ and the `tusdcat --validate` / `--validate-all` CLI).
 ## Layout
 
 - `valid/` — scenes that must produce **no issues**.
-  - `clean.usda` — passes every rule group (core + geom + shade).
+  - `clean.usda` — passes every rule group (core + geom + shade + lux + physics).
   - `gated-composition.usda` — proves locality-dependent rules do not fire on
     prims that carry composition arcs (no false positives).
 - `invalid/` — hand-written; each file trips a specific rule.
@@ -32,7 +32,7 @@ after the `#usda 1.0` header:
 
 `run-validation-suite.py` reads these markers, runs `tusdcat --validate-all`,
 and checks the reported `[rule_id]` tokens against them. For fixtures whose
-expected rules are all opt-in (`geom.*` / `shade.*`), it also runs core-only
+expected rules are all opt-in (`geom.*` / `shade.*` / `lux.*` / `physics.*`), it also runs core-only
 `--validate` and asserts nothing is reported — verifying the groups are opt-in.
 The suite runs in CTest as `validation-suite-test`.
 
@@ -54,7 +54,7 @@ python3 tests/usda/validation/run-validation-regression.py --app ./build/tusdcat
 
 ## Rule groups
 
-`core` runs by default. `geom` and `shade` are opt-in (`--validate-all`, or
+`core` runs by default. `geom`, `shade`, `lux`, and `physics` are opt-in (`--validate-all`, or
 `groups: ["all"]` via the `usd_validate` MCP tool), because they are
 warning-heavy and composition-sensitive.
 
@@ -68,13 +68,38 @@ warning-heavy and composition-sensitive.
 | `invalid/bad-xformop-order.usda` | core | `core.xformOp.order` | error |
 | `invalid/colorspace-unknown.usda` | core | `core.schema.ColorSpaceAPI.name` | error |
 | `invalid/collection-bad-expansion.usda` | core | `core.schema.CollectionAPI.expansionRule` | error |
+| `invalid/composition-bad-arcs.usda` | core | `core.composition.*` | mixed |
+| `invalid/metadata-bad.usda` | core | `core.layer.*`, `core.prim.*`, `core.apiSchema.*`, `core.attr.*`, `core.relationship.*` | mixed |
 | `invalid/multi-violation.usda` | core+geom | (three rules at once) | mixed |
 | `invalid/nested-gprim.usda` | geom | `geom.encapsulation.nestedGprim` | warning |
+| `invalid/mesh-bad-topology.usda` | geom | `geom.mesh.topology.*` | error |
+| `invalid/geomsubset-bad-indices.usda` | geom | `geom.subset.indices` | error |
+| `invalid/primvar-bad-indices-metadata.usda` | core+geom | `core.attr.*`, `geom.primvar.indices`, `geom.primvar.metadata` | error |
+| `invalid/geom-primitive-bad.usda` | geom | `geom.gprim.*`, `geom.primitive.*` | error |
+| `invalid/points-curves-bad.usda` | geom | `geom.points.*`, `geom.curves.*` | error |
+| `invalid/pointinstancer-bad.usda` | geom | `geom.pointInstancer.*` | error |
+| `invalid/camera-bad.usda` | geom | `geom.camera.*` | error |
+| `invalid/lux-bad-light.usda` | lux | `lux.*` | mixed |
+| `invalid/physics-bad.usda` | physics | `physics.*` | error |
+| `invalid/physics-inertia-bad.usda` | physics | `physics.inertia`, `physics.quaternion`, `physics.collisionGroup.*` | mixed |
+| `invalid/physics-extension-mjc-bad.usda` | physics | `physics.extension.mjc.*` | mixed |
+| `invalid/physics-extension-newton-bad.usda` | physics | `physics.extension.newton.*` | mixed |
+| `invalid/physics-preliminary-bad.usda` | physics | `physics.preliminary.*` | error |
+| `invalid/usdskel-bad-binding.usda` | geom | `geom.skel.*` | mixed |
+| `invalid/usdskel-animation-bad.usda` | geom | `geom.skel.animation.*`, `geom.skel.skinning.*` | mixed |
+| `invalid/blendshape-bad.usda` | geom | `geom.skel.blendShape.*` | mixed |
+| `invalid/clips-bad.usda` | core | `core.clips.*` | error |
 | `invalid/shader-bad-parent.usda` | shade | `shade.encapsulation.shaderParent` | warning |
 | `invalid/material-binding-as-attr.usda` | shade | `shade.material.binding` | error |
 | `invalid/material-binding-missing-api.usda` | shade | `shade.material.bindingAPI` | warning |
+| `invalid/material-bad-output.usda` | shade | `shade.material.outputConnection`, `shade.connection.target` | mixed |
+| `invalid/materialx-bad-config.usda` | shade | `shade.materialX.*` | warning |
 | `invalid/preview-bad-input-type.usda` | shade | `shade.preview.inputType` | warning |
 | `invalid/preview-unknown-input.usda` | shade | `shade.preview.unknownInput` | warning |
+| `invalid/preview-surface-bad-range.usda` | shade | `shade.preview.inputRange`, `shade.preview.opacityMode` | warning |
+| `invalid/uvtexture-bad-inputs.usda` | shade | `shade.uvTexture.file`, `shade.uvTexture.wrap`, `shade.uvTexture.sourceColorSpace` | warning |
+| `invalid/primvar-reader-missing-varname.usda` | shade | `shade.primvarReader.varname` | warning |
+| `invalid/primvar-reader-bad-result.usda` | shade | `shade.primvarReader.result` | warning |
 | `generated/usdpreviewsurface-badtype.usda` | shade | `shade.preview.inputType` | warning |
 | `generated/usdpreviewsurface-unknown-input.usda` | shade | `shade.preview.unknownInput` | warning |
 | `generated/usdpreviewsurface-valid.usda` | — | (none — EXPECT-OK) | — |
@@ -111,7 +136,7 @@ a new shader type, add a matching lookup in `src/usd-validation.cc`.
 ```bash
 # Core only
 ./build/tusdcat --validate     tests/usda/validation/invalid/bad-meters-per-unit.usda
-# All groups (core + geom + shade)
+# All groups (core + geom + shade + lux + physics + crate)
 ./build/tusdcat --validate-all tests/usda/validation/invalid/nested-gprim.usda
 ./build/tusdcat --validate-all tests/usda/validation/valid/clean.usda   # OK
 ```

@@ -1,0 +1,42 @@
+#usda 1.0
+# EXPECT: lux.light.inputs
+# EXPECT: lux.shaping.inputs
+# EXPECT: lux.shadow.inputs
+# EXPECT: lux.light.size
+# EXPECT: lux.light.angle
+# EXPECT: lux.texture.file
+# EXPECT: lux.texture.format
+# EXPECT: lux.dome.poleAxis
+# EXPECT: lux.relationship.target
+(
+    doc = "UsdLux schema value checks: negative energy/size, invalid shaping/shadow ranges, bad texture metadata, and non-relationship light filters."
+)
+
+def SphereLight "sphere"
+{
+    float inputs:intensity = -1
+    float inputs:shaping:cone:softness = 2
+    float inputs:shadow:distance = -2
+    float inputs:radius = 0
+    token light:filters = "notARelationship"
+}
+
+def RectLight "rect"
+{
+    float inputs:width = -1
+    float inputs:height = 0
+    token inputs:texture:file = "notAnAssetPath"
+}
+
+def DistantLight "sun"
+{
+    float inputs:angle = 200
+}
+
+def DomeLight_1 "dome"
+{
+    float guideRadius = -1
+    token inputs:texture:format = "cubeMap"
+    token poleAxis = "X"
+    asset inputs:texture:file = @@
+}

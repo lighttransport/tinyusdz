@@ -2104,6 +2104,33 @@ if(TINYUSDZ_BUILD_TESTS)
               --app "$<TARGET_FILE:tusdcat>"
               --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
       )
+
+    add_test(
+      NAME validation-usdz-cube-test
+      COMMAND "$<TARGET_FILE:tusdcat>" --validate
+              "${PROJECT_SOURCE_DIR}/models/cube.usdz"
+      )
+
+    add_test(
+      NAME validation-usdz-texture-cat-plane-test
+      COMMAND "$<TARGET_FILE:tusdcat>" --validate
+              "${PROJECT_SOURCE_DIR}/models/texture-cat-plane.usdz"
+      )
+
+    find_program(TINYUSDZ_NODE_EXECUTABLE node)
+    if(TINYUSDZ_NODE_EXECUTABLE
+       AND EXISTS "${PROJECT_SOURCE_DIR}/web/js/src/tinyusdz/tinyusdz.js"
+       AND EXISTS "${PROJECT_SOURCE_DIR}/web/js/src/tinyusdz/tinyusdz.wasm")
+      add_test(
+        NAME web-validation-parity-test
+        COMMAND ${CMAKE_COMMAND} -E env
+                "TUSDCAT_PATH=$<TARGET_FILE:tusdcat>"
+                "TINYUSDZ_WASM_DIR=${PROJECT_SOURCE_DIR}/web/js/src/tinyusdz"
+                "TINYUSDZ_PARITY_SKIP_STALE_WASM=1"
+                "${TINYUSDZ_NODE_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/web/js/tests/validation-parity.mjs"
+        )
+    endif()
   endif()
 
   #

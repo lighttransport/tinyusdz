@@ -3,6 +3,7 @@
 
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "external/jsonhpp/nlohmann/json.hpp"
 
@@ -12,6 +13,7 @@
 #include "tinyusdz.hh"
 #include "str-util.hh"
 #include "tydra/js-script.hh"
+#include "usdc-writer.hh"
 
 using namespace tinyusdz::tydra::mcp;
 using json = nlohmann::json;
@@ -30,6 +32,19 @@ bool HasRuleId(const json &result, const std::string &rule_id) {
   }
   for (const auto &issue : result["issues"]) {
     if (issue.contains("rule_id") && issue["rule_id"] == rule_id) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool HasCheckedGroup(const json &result, const std::string &group) {
+  if (!result.contains("checked_groups") ||
+      !result["checked_groups"].is_array()) {
+    return false;
+  }
+  for (const auto &checked : result["checked_groups"]) {
+    if (checked.is_string() && checked == group) {
       return true;
     }
   }
@@ -105,8 +120,107 @@ def Xform "World"
     args["groups"] = json::array({"all"});
     TEST_CHECK(UsdValidate(ctx, args, result, err));
     TEST_CHECK(HasRuleId(result, "geom.encapsulation.nestedGprim"));
-    TEST_CHECK(result["checked_groups"].size() == 3);
+    TEST_CHECK(result["checked_groups"].size() == 5);
+    TEST_CHECK(HasCheckedGroup(result, "lux"));
+    TEST_CHECK(HasCheckedGroup(result, "physics"));
+    TEST_CHECK(!HasCheckedGroup(result, "crate"));
   }
+
+  // groups: ["geom"] runs geom without leaking core diagnostics.
+  {
+    const char *mixed_usda = R"(#usda 1.0
+(
+    metersPerUnit = 0
+)
+
+def Xform "World"
+{
+    def Mesh "outer"
+    {
+        def Cube "inner"
+        {
+        }
+    }
+}
+)";
+    json args, result;
+    args["data"] = B64(mixed_usda);
+    args["groups"] = json::array({"geom"});
+    TEST_CHECK(UsdValidate(ctx, args, result, err));
+    TEST_CHECK(HasRuleId(result, "geom.encapsulation.nestedGprim"));
+    TEST_CHECK(!HasRuleId(result, "core.layer.metersPerUnit"));
+    TEST_CHECK(result["checked_groups"].size() == 1);
+    TEST_CHECK(result["checked_groups"][0] == "geom");
+  }
+
+  // Structured JSON issues use the same order as the text report: errors
+  // before warnings.
+  {
+    const char *mixed_usda = R"(#usda 1.0
+(
+    metersPerUnit = 0
+)
+
+def Xform "World"
+{
+    def Mesh "outer"
+    {
+        def Cube "inner"
+        {
+        }
+    }
+}
+)";
+    json args, result;
+    args["data"] = B64(mixed_usda);
+    args["groups"] = json::array({"all"});
+    TEST_CHECK(UsdValidate(ctx, args, result, err));
+    TEST_CHECK(result["issues"].size() >= 2);
+    TEST_CHECK(result["issues"][0]["severity"] == "error");
+  }
+
+  // Binary data uses the same wrapper as tusdcat/web, so all-groups validation
+  // includes USDC crate checks when the source bytes are USDC.
+  {
+    tinyusdz::Stage stage;
+    std::vector<uint8_t> usdc;
+    std::string warn;
+    std::string write_err;
+    TEST_CHECK(tinyusdz::usdc::SaveAsUSDCToMemory(stage, &usdc, &warn,
+                                                  &write_err));
+    TEST_CHECK(!usdc.empty());
+
+    json args, result;
+    args["data"] = B64(std::string(reinterpret_cast<const char *>(usdc.data()),
+                                   usdc.size()));
+    args["name"] = "generated.usdc";
+    args["groups"] = json::array({"all"});
+    TEST_CHECK(UsdValidate(ctx, args, result, err));
+    TEST_CHECK(HasCheckedGroup(result, "core"));
+    TEST_CHECK(HasCheckedGroup(result, "geom"));
+    TEST_CHECK(HasCheckedGroup(result, "shade"));
+    TEST_CHECK(HasCheckedGroup(result, "lux"));
+    TEST_CHECK(HasCheckedGroup(result, "physics"));
+    TEST_CHECK(HasCheckedGroup(result, "crate"));
+  }
+
+#if !defined(__EMSCRIPTEN__)
+  // File/URI validation also uses the wrapper path, so USDZ package validation
+  // is covered outside base64 data uploads.
+  {
+    json args, result;
+    args["uri"] = "../models/cube.usdz";
+    args["groups"] = json::array({"all"});
+    TEST_CHECK(UsdValidate(ctx, args, result, err));
+    TEST_CHECK(result["source"] == "uri");
+    TEST_CHECK(HasCheckedGroup(result, "core"));
+    TEST_CHECK(HasCheckedGroup(result, "geom"));
+    TEST_CHECK(HasCheckedGroup(result, "shade"));
+    TEST_CHECK(HasCheckedGroup(result, "lux"));
+    TEST_CHECK(HasCheckedGroup(result, "physics"));
+    TEST_CHECK(HasCheckedGroup(result, "crate"));
+  }
+#endif
 }
 
 // ---------------------------------------------------------------------------
