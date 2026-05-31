@@ -39,18 +39,25 @@ bool IsAllowedTextureExt(const std::string &ext_lower) {
 // Turn an arbitrary asset path into a safe, relative USDZ archive name.
 // Absolute paths and paths escaping the archive root are reduced to a
 // "textures/<basename>" form.
+bool IsUnsafeUnresolvedTexturePath(const std::string &assetPath) {
+  std::string p = assetPath;
+  std::replace(p.begin(), p.end(), '\\', '/');
+  return p.empty() || (p[0] == '/') || (p.find(':') != std::string::npos) ||
+         (p == "..") || tinyusdz::startsWith(p, "../") ||
+         (p.find("/../") != std::string::npos) ||
+         tinyusdz::endsWith(p, "/..");
+}
+
 std::string SanitizeArchiveName(const std::string &assetPath) {
   std::string p = assetPath;
   // Normalize backslashes.
   std::replace(p.begin(), p.end(), '\\', '/');
 
-  const bool unsafe = p.empty() || (p[0] == '/') ||
-                      (p.find(':') != std::string::npos) ||   // drive/scheme
-                      (p.find("../") != std::string::npos) ||  // escapes root
-                      tinyusdz::startsWith(p, "./");
+  const bool needs_sanitize = IsUnsafeUnresolvedTexturePath(p) ||
+                              tinyusdz::startsWith(p, "./");
 
   std::string name = p;
-  if (unsafe) {
+  if (needs_sanitize) {
     std::string base = io::GetBaseFilename(p);
     if (base.empty()) {
       base = "texture";
@@ -456,6 +463,13 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       std::vector<uint8_t> src_bytes;
       std::string rerr;
       if (!ReadAssetBytes(resolver, orig, &src_bytes, warn, &rerr)) {
+        if (IsUnsafeUnresolvedTexturePath(orig)) {
+          if (err) {
+            (*err) = "Unsafe texture path could not be packed: " + orig +
+                     " (" + rerr + ")";
+          }
+          return false;
+        }
         if (warn) (*warn) += "Skipping unreadable texture '" + orig + "': " + rerr + "\n";
         continue;
       }
@@ -516,8 +530,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     if (budget_mode) {
       auto it = fitted.find(orig);
       if (it == fitted.end()) {
-        // Unreadable; keep the reference, pack nothing.
-        path_to_archive[orig] = archive_name;
+        // Unreadable safe relative path; leave the original reference unchanged.
         continue;
       }
       out_bytes = it->second.first;
@@ -529,17 +542,24 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       std::vector<uint8_t> src_bytes;
       std::string rerr;
       if (!ReadAssetBytes(resolver, orig, &src_bytes, warn, &rerr)) {
+        if (IsUnsafeUnresolvedTexturePath(orig)) {
+          if (err) {
+            (*err) = "Unsafe texture path could not be packed: " + orig +
+                     " (" + rerr + ")";
+          }
+          return false;
+        }
         if (warn) {
           (*warn) += "Skipping unreadable texture '" + orig + "': " + rerr + "\n";
         }
-        path_to_archive[orig] = archive_name;
+        // Leave safe missing references untouched instead of creating broken
+        // sanitized references to assets that are not present in the archive.
         continue;
       }
       std::string pwarn;
       if (!ProcessTexture(src_bytes, src_ext, options, orig, &out_bytes, &out_ext,
                      &resized, &reencoded, &pwarn)) {
         if (warn) (*warn) += "Failed to process texture " + orig + "\n";
-        path_to_archive[orig] = archive_name;
         continue;
       }
       if (warn) (*warn) += pwarn;
