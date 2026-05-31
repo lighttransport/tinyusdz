@@ -1,0 +1,11 @@
+#usda 1.0
+# EXPECT: geom.pointInstancer.prototypes
+# EXPECT: geom.pointInstancer.indices
+# EXPECT: geom.pointInstancer.arraySize
+
+def PointInstancer "pi"
+{
+    point3f[] positions = [(0, 0, 0), (1, 0, 0)]
+    int[] protoIndices = [0, -1]
+    quath[] orientations = [(1, 0, 0, 0)]
+}
