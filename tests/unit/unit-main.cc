@@ -601,6 +601,7 @@ TEST_LIST = {
   { "usdz_convert_adversarial_image_test", usdz_convert_adversarial_image_test },
   { "usdz_convert_pack_channels_error_test", usdz_convert_pack_channels_error_test },
   { "usdz_convert_fit_budget_error_test", usdz_convert_fit_budget_error_test },
+  { "usdz_convert_missing_texture_reference_test", usdz_convert_missing_texture_reference_test },
   { "usdz_convert_pipeline_jpeg_test", usdz_convert_pipeline_jpeg_test },
   { "usdz_convert_cleanup_test", usdz_convert_cleanup_test },
   // Pretty-printer column wrap tests

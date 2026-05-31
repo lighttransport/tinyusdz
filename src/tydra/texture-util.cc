@@ -254,6 +254,26 @@ bool BuildOcclusionRoughnessMetallicTexture(
 
 namespace {
 
+bool ValidateImageBuffer(const Image &im, std::string *err,
+                         const char *prefix) {
+  if (im.bpp != 8 || im.width <= 0 || im.height <= 0 || im.channels < 1 ||
+      im.channels > 4) {
+    if (err) (*err) = std::string(prefix) + ": referenced input must be a valid 8-bit image.";
+    return false;
+  }
+  size_t expected;
+  if (!safe::mul3(size_t(im.width), size_t(im.height), size_t(im.channels),
+                  &expected)) {
+    if (err) (*err) = std::string(prefix) + ": referenced input size overflow.";
+    return false;
+  }
+  if (im.data.size() < expected) {
+    if (err) (*err) = std::string(prefix) + ": referenced input buffer too small.";
+    return false;
+  }
+  return true;
+}
+
 stbir_pixel_layout PixelLayoutFromChannels(int channels) {
   if (channels == 1) {
     return STBIR_1CHANNEL;
@@ -394,8 +414,7 @@ bool PackChannels(const std::vector<Image> &inputs, const ChannelPackSpec &spec,
       return false;
     }
     const Image &im = inputs[size_t(cs.input_index)];
-    if (im.bpp != 8 || im.width <= 0 || im.height <= 0 || im.channels <= 0) {
-      if (err) (*err) = "PackChannels: referenced input must be a valid 8-bit image.";
+    if (!ValidateImageBuffer(im, err, "PackChannels")) {
       return false;
     }
     if (cs.channel < 0 || cs.channel >= im.channels) {
@@ -410,6 +429,11 @@ bool PackChannels(const std::vector<Image> &inputs, const ChannelPackSpec &spec,
 
   if (out_w <= 0 || out_h <= 0) {
     if (err) (*err) = "PackChannels: could not determine output size (no inputs and no explicit size).";
+    return false;
+  }
+  constexpr int kMaxPackDimension = 16384;
+  if (out_w > kMaxPackDimension || out_h > kMaxPackDimension) {
+    if (err) (*err) = "PackChannels: output dimensions exceed 16384 limit.";
     return false;
   }
 
@@ -445,6 +469,11 @@ bool PackChannels(const std::vector<Image> &inputs, const ChannelPackSpec &spec,
   if (!safe::mul3(size_t(out_w), size_t(out_h), size_t(spec.out_channels),
                   &out_size)) {
     if (err) (*err) = "PackChannels: output size overflow.";
+    return false;
+  }
+  constexpr size_t kMaxPackBytes = size_t(256) * 1024 * 1024;
+  if (out_size > kMaxPackBytes) {
+    if (err) (*err) = "PackChannels: output image exceeds 256 MiB limit.";
     return false;
   }
   out.data.resize(out_size);
@@ -595,7 +624,10 @@ bool FitTexturesToBudget(const std::vector<FitTextureInput> &inputs,
       (*out)[i].width = in.image.width;
       (*out)[i].height = in.image.height;
       (*out)[i].changed = false;
-      fixed += in.original_bytes.size();
+      if (!safe::add(fixed, in.original_bytes.size(), &fixed)) {
+        if (err) (*err) = "FitTexturesToBudget: fixed texture byte size overflow.";
+        return false;
+      }
     }
   }
 
@@ -615,7 +647,9 @@ bool FitTexturesToBudget(const std::vector<FitTextureInput> &inputs,
                             &probe[k])) {
         return false;
       }
-      sum += probe[k].bytes.size();
+      if (!safe::add(sum, probe[k].bytes.size(), &sum)) {
+        return false;
+      }
     }
     *total = sum;
     return true;
@@ -644,7 +678,9 @@ bool FitTexturesToBudget(const std::vector<FitTextureInput> &inputs,
       if (err) (*err) = "FitTexturesToBudget: texture encode failed.";
       return false;
     }
-    if (budget == 0 || total <= budget) {
+    if (opts.target_total_bytes > 0 && fixed >= opts.target_total_bytes) {
+      bestKnob = lo;
+    } else if (budget == 0 || total <= budget) {
       bestKnob = hi;
     } else {
       // Search downward for the largest knob that fits.
@@ -683,12 +719,17 @@ bool FitTexturesToBudget(const std::vector<FitTextureInput> &inputs,
     }
   }
 
-  if (opts.target_total_bytes > 0 && (total + fixed) > opts.target_total_bytes) {
+  size_t final_total = 0;
+  if (!safe::add(total, fixed, &final_total)) {
+    if (err) (*err) = "FitTexturesToBudget: final texture byte size overflow.";
+    return false;
+  }
+  if (opts.target_total_bytes > 0 && final_total > opts.target_total_bytes) {
     if (warn) {
       (*warn) += "Could not fit textures within the target budget (" +
                  std::to_string(opts.target_total_bytes) +
                  " bytes); using the smallest allowed setting (~" +
-                 std::to_string(total + fixed) + " bytes).\n";
+                 std::to_string(final_total) + " bytes).\n";
     }
   }
 
