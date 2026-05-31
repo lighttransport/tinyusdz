@@ -1466,6 +1466,7 @@ def MjcActuator "act"
 def MjcTendon "tendon"
 {
     token mjc:type = "rope"
+    int mjc:maxhullvert = -1
     double mjc:width = -1
     double[] mjc:solimp = [1, 2, 3]
 }
@@ -1482,6 +1483,19 @@ def MjcTendon "tendon"
   TEST_CHECK(HasRule(result, "physics.extension.mjc.range"));
   TEST_CHECK(HasRule(result, "physics.extension.mjc.array"));
   TEST_CHECK(HasRule(result, "physics.extension.mjc.relationship"));
+
+  const char *valid_sentinel_usda = R"(#usda 1.0
+
+def Mesh "mesh"
+{
+    int mjc:maxhullvert = -1
+}
+)";
+  Layer valid_layer;
+  TEST_CHECK(parse_layer(valid_sentinel_usda, &valid_layer, &warn, &err));
+  const USDValidationResult valid_result =
+      ValidateLayerAgainstAOUSDCore(valid_layer, AllGroups());
+  TEST_CHECK(!HasRule(valid_result, "physics.extension.mjc.range"));
 }
 
 void usd_validation_physics_newton_extension_test(void) {
@@ -1499,6 +1513,7 @@ def NewtonActuator "act"
 
 def PhysicsScene "scene"
 {
+    int newton:maxSolverIterations = -1
     token newton:kamino:padmm:warmstarting = "hot"
     float newton:xpbd:softBodyRelaxation = 2
 }
@@ -1516,6 +1531,19 @@ def PhysicsScene "scene"
   TEST_CHECK(HasRule(result, "physics.extension.newton.lookup"));
   TEST_CHECK(HasRule(result, "physics.extension.newton.relationship"));
   TEST_CHECK(HasRule(result, "physics.extension.newton.token"));
+
+  const char *valid_sentinel_usda = R"(#usda 1.0
+
+def PhysicsScene "scene"
+{
+    int newton:maxSolverIterations = -1
+}
+)";
+  Layer valid_layer;
+  TEST_CHECK(parse_layer(valid_sentinel_usda, &valid_layer, &warn, &err));
+  const USDValidationResult valid_result =
+      ValidateLayerAgainstAOUSDCore(valid_layer, AllGroups());
+  TEST_CHECK(!HasRule(valid_result, "physics.extension.newton.range"));
 }
 
 void usd_validation_physics_preliminary_test(void) {

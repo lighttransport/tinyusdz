@@ -2154,13 +2154,15 @@ void ValidateMjcPhysics(const PrimSpec &ps,
       "mjc:group", "mjc:priority", "mjc:condim",
       "mjc:option:iterations", "mjc:option:ls_iterations",
       "mjc:option:noslip_iterations", "mjc:option:ccd_iterations",
-      "mjc:option:sdf_iterations", "mjc:option:sdf_initpoints",
-      "mjc:maxhullvert"};
+      "mjc:option:sdf_iterations", "mjc:option:sdf_initpoints"};
   for (const std::string &prop_name : kNonNegativeInts) {
     ValidateNonNegativeIntegerProperty(ps, prop_name,
                                        "physics.extension.mjc.range",
                                        prim_location, result);
   }
+  ValidateNumericMinProperty(ps, "mjc:maxhullvert", -1.0,
+                             "physics.extension.mjc.range", prim_location,
+                             result);
 
   ValidateNumericMinMaxPair(ps, "mjc:ctrlRange:min", "mjc:ctrlRange:max",
                             "physics.extension.mjc.range", prim_location,
@@ -2238,9 +2240,9 @@ void ValidateNewtonPhysics(const PrimSpec &ps,
     return;
   }
 
-  ValidateNonNegativeIntegerProperty(ps, "newton:maxSolverIterations",
-                                     "physics.extension.newton.range",
-                                     prim_location, result);
+  ValidateNumericMinProperty(ps, "newton:maxSolverIterations", -1.0,
+                             "physics.extension.newton.range", prim_location,
+                             result);
   ValidatePositiveNumericProperty(ps, "newton:timeStepsPerSecond",
                                   "physics.extension.newton.range",
                                   prim_location, result);
