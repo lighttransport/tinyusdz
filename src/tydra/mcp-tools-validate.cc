@@ -19,16 +19,19 @@ namespace mcp {
 
 namespace {
 
-// Map the optional `groups` argument to ValidationOptions.
-// No `groups` -> core only (default). When `groups` is present, start all-off
-// and enable the listed groups; "all" enables everything.
+// Map the optional `groups` argument to ValidationOptions. No `groups` -> core
+// only. When `groups` is present, start all-off and enable the listed groups;
+// "all" matches tusdcat --validate-all.
 ValidationOptions ParseGroups(const nlohmann::json &args) {
-  ValidationOptions opts;  // {core=true, geom=false, shade=false}
+  ValidationOptions opts;
 
   if (args.contains("groups") && args["groups"].is_array()) {
     opts.core = false;
     opts.geom = false;
     opts.shade = false;
+    opts.lux = false;
+    opts.physics = false;
+    opts.crate = false;
     for (const auto &g : args["groups"]) {
       if (!g.is_string()) {
         continue;
@@ -40,14 +43,19 @@ ValidationOptions ParseGroups(const nlohmann::json &args) {
         opts.geom = true;
       } else if (name == "shade") {
         opts.shade = true;
+      } else if (name == "lux") {
+        opts.lux = true;
+      } else if (name == "physics") {
+        opts.physics = true;
+      } else if (name == "crate") {
+        opts.crate = true;
       } else if (name == "all") {
-        opts.core = true;
-        opts.geom = true;
-        opts.shade = true;
+        opts = MakeValidateAllOptions();
       }
     }
     // If nothing recognized, fall back to core so we never run an empty pass.
-    if (!opts.core && !opts.geom && !opts.shade) {
+    if (!opts.core && !opts.geom && !opts.shade && !opts.lux &&
+        !opts.physics && !opts.crate) {
       opts.core = true;
     }
   }
@@ -68,18 +76,19 @@ void ResultToJson(const USDValidationResult &validation,
 
   // Which rule groups actually ran (a core-only "ok" did not check geom/shade).
   nlohmann::json groups = nlohmann::json::array();
-  if (validation.checked_groups.core) groups.push_back("core");
-  if (validation.checked_groups.geom) groups.push_back("geom");
-  if (validation.checked_groups.shade) groups.push_back("shade");
+  for (const std::string &name :
+       GetValidationGroupNames(validation.checked_groups)) {
+    groups.push_back(name);
+  }
   result["checked_groups"] = groups;
 
   nlohmann::json issues = nlohmann::json::array();
-  for (const auto &issue : validation.issues) {
+  for (const USDValidationIssue *issue : GetOrderedValidationIssues(validation)) {
     nlohmann::json j;
-    j["severity"] = SeverityString(issue.severity);
-    j["rule_id"] = issue.rule_id;
-    j["location"] = issue.location;
-    j["message"] = issue.message;
+    j["severity"] = SeverityString(issue->severity);
+    j["rule_id"] = issue->rule_id;
+    j["location"] = issue->location;
+    j["message"] = issue->message;
     issues.push_back(j);
   }
   result["issues"] = issues;
@@ -92,21 +101,26 @@ bool UsdValidate(Context &ctx, const nlohmann::json &args,
   const ValidationOptions options = ParseGroups(args);
 
   Layer layer;
+  USDValidationResult validation;
   std::string warn;
   std::string source;
 
   if (args.contains("data") && args["data"].is_string()) {
     const std::string binary = base64_decode(args["data"].get<std::string>());
     const std::string name = args.value("name", std::string("memory.usd"));
-    if (!LoadLayerFromMemory(reinterpret_cast<const uint8_t *>(binary.data()),
-                             binary.size(), name, &layer, &warn, &err)) {
+    USDLoadOptions load_options;
+    if (!ValidateUSDFromMemoryAgainstAOUSDCore(
+            reinterpret_cast<const uint8_t *>(binary.data()), binary.size(),
+            name, options, load_options, &validation, &warn, &err)) {
       return false;
     }
     source = "data";
   } else if (args.contains("uri") && args["uri"].is_string()) {
 #if !defined(__EMSCRIPTEN__)
     const std::string uri = args["uri"].get<std::string>();
-    if (!LoadLayerFromFile(uri, &layer, &warn, &err)) {
+    USDLoadOptions load_options;
+    if (!ValidateUSDFileAgainstAOUSDCore(uri, options, load_options,
+                                         &validation, &warn, &err)) {
       return false;
     }
     source = "uri";
@@ -122,6 +136,7 @@ bool UsdValidate(Context &ctx, const nlohmann::json &args,
       return false;
     }
     layer = it->second.layer;
+    validation = ValidateLayerAgainstAOUSDCore(layer, options);
     source = "layer_uuid";
   } else {
     // No explicit input: validate the current session stage by serializing it
@@ -138,11 +153,9 @@ bool UsdValidate(Context &ctx, const nlohmann::json &args,
                              &err)) {
       return false;
     }
+    validation = ValidateLayerAgainstAOUSDCore(layer, options);
     source = "stage";
   }
-
-  const USDValidationResult validation =
-      ValidateLayerAgainstAOUSDCore(layer, options);
 
   ResultToJson(validation, result);
   result["source"] = source;

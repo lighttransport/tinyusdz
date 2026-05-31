@@ -1,0 +1,15 @@
+#usda 1.0
+# EXPECT: shade.preview.inputRange
+# EXPECT: shade.preview.opacityMode
+
+def Material "mat"
+{
+    def Shader "surface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        float inputs:roughness = 2.0
+        float inputs:ior = 0.0
+        token inputs:opacityMode = "vanish"
+        token outputs:surface
+    }
+}

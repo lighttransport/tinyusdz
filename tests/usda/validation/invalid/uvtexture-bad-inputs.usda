@@ -1,0 +1,16 @@
+#usda 1.0
+# EXPECT: shade.uvTexture.file
+# EXPECT: shade.uvTexture.wrap
+# EXPECT: shade.uvTexture.sourceColorSpace
+
+def Material "mat"
+{
+    def Shader "tex"
+    {
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file = @@
+        token inputs:wrapS = "tileForever"
+        token inputs:sourceColorSpace = "ACEScg"
+        float3 outputs:rgb
+    }
+}

@@ -47,6 +47,7 @@
 #include "usdc-writer.hh"
 #include "image-writer.hh"
 #include "usdGeom.hh"
+#include "usd-validation.hh"
 #include "usdPhysics.hh"
 #include "mjcPhysics.hh"
 #include "usdShade.hh"
@@ -91,6 +92,97 @@
 
 
 using namespace emscripten;
+
+namespace {
+
+tinyusdz::ValidationOptions ParseValidationOptionsJSONForWeb(
+    const std::string &options_json) {
+  tinyusdz::ValidationOptions opts;
+  if (options_json.empty()) {
+    return opts;
+  }
+
+  nlohmann::json args = nlohmann::json::parse(options_json, nullptr, false);
+  if (args.is_discarded() || !args.is_object() || !args.contains("groups") ||
+      !args["groups"].is_array()) {
+    return opts;
+  }
+
+  opts.core = false;
+  opts.geom = false;
+  opts.shade = false;
+  opts.lux = false;
+  opts.physics = false;
+  opts.crate = false;
+  for (const auto &group : args["groups"]) {
+    if (!group.is_string()) {
+      continue;
+    }
+    const std::string name = group.get<std::string>();
+    if (name == "core") {
+      opts.core = true;
+    } else if (name == "geom") {
+      opts.geom = true;
+    } else if (name == "shade") {
+      opts.shade = true;
+    } else if (name == "lux") {
+      opts.lux = true;
+    } else if (name == "physics") {
+      opts.physics = true;
+    } else if (name == "crate") {
+      opts.crate = true;
+    } else if (name == "all") {
+      opts = tinyusdz::MakeValidateAllOptions();
+    }
+  }
+
+  if (!opts.core && !opts.geom && !opts.shade && !opts.lux &&
+      !opts.physics && !opts.crate) {
+    opts.core = true;
+  }
+  return opts;
+}
+
+const char *ValidationSeverityString(tinyusdz::USDValidationSeverity severity) {
+  return severity == tinyusdz::USDValidationSeverity::Error ? "error"
+                                                            : "warning";
+}
+
+nlohmann::json ValidationGroupsToJSON(
+    const tinyusdz::ValidationOptions &options) {
+  nlohmann::json groups = nlohmann::json::array();
+  for (const std::string &name : tinyusdz::GetValidationGroupNames(options)) {
+    groups.push_back(name);
+  }
+  return groups;
+}
+
+nlohmann::json ValidationResultToJSON(
+    const tinyusdz::USDValidationResult &validation) {
+  nlohmann::json result;
+  result["parse_ok"] = true;
+  result["ok"] = validation.ok();
+  result["error_count"] = validation.error_count();
+  result["warning_count"] = validation.warning_count();
+  result["spec_version"] = tinyusdz::GetAOUSDCoreSpecVersionString();
+  result["checked_groups"] =
+      ValidationGroupsToJSON(validation.checked_groups);
+
+  nlohmann::json issues = nlohmann::json::array();
+  for (const tinyusdz::USDValidationIssue *issue :
+       tinyusdz::GetOrderedValidationIssues(validation)) {
+    nlohmann::json item;
+    item["severity"] = ValidationSeverityString(issue->severity);
+    item["rule_id"] = issue->rule_id;
+    item["location"] = issue->location;
+    item["message"] = issue->message;
+    issues.push_back(item);
+  }
+  result["issues"] = issues;
+  return result;
+}
+
+}  // namespace
 
 // Fix degenerate tangent: when a tangent vector is zero, near-zero, NaN, or
 // Inf, generate a fallback perpendicular to the normal.  Also handles
@@ -4834,6 +4926,59 @@ class TinyUSDZLoaderNative {
     return tinyusdz::to_string(curr);
   }
 
+  std::string validateLoadedLayer(const std::string &options_json) const {
+    nlohmann::json result;
+    if (!loaded_ || !loaded_as_layer_) {
+      result["parse_ok"] = false;
+      result["ok"] = false;
+      result["error"] = "No Layer is loaded. Use loadAsLayerFromBinary first.";
+      return result.dump();
+    }
+
+    const tinyusdz::ValidationOptions options =
+        ParseValidationOptionsJSONForWeb(options_json);
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    result = ValidationResultToJSON(
+        tinyusdz::ValidateLayerAgainstAOUSDCore(curr, options));
+    if (!warn_.empty()) {
+      result["warn"] = warn_;
+    }
+    return result.dump();
+  }
+
+  std::string validateFromBinary(const std::string &binary,
+                                 const std::string &filename,
+                                 const std::string &options_json) {
+    warn_.clear();
+    error_.clear();
+
+    tinyusdz::USDLoadOptions load_options;
+    load_options.max_memory_limit_in_mb = max_memory_limit_mb_;
+
+    nlohmann::json result;
+    const tinyusdz::ValidationOptions options =
+        ParseValidationOptionsJSONForWeb(options_json);
+    tinyusdz::USDValidationResult validation;
+    const bool loaded = tinyusdz::ValidateUSDFromMemoryAgainstAOUSDCore(
+        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
+        filename, options, load_options, &validation, &warn_, &error_);
+    if (!loaded) {
+      result["parse_ok"] = false;
+      result["ok"] = false;
+      result["error"] = error_;
+      if (!warn_.empty()) {
+        result["warn"] = warn_;
+      }
+      return result.dump();
+    }
+
+    result = ValidationResultToJSON(validation);
+    if (!warn_.empty()) {
+      result["warn"] = warn_;
+    }
+    return result.dump();
+  }
+
   void clearAssets() {
     em_resolver_.clear();
   }
@@ -6998,6 +7143,10 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
 
       .function("layerToString",
                 &TinyUSDZLoaderNative::layerToString)
+      .function("validateFromBinary",
+                &TinyUSDZLoaderNative::validateFromBinary)
+      .function("validateLoadedLayer",
+                &TinyUSDZLoaderNative::validateLoadedLayer)
       
       // JSON conversion methods
       .function("layerToJSON",

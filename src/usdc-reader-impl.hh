@@ -270,9 +270,20 @@ class USDCReader::Impl {
   /// --------------------------------------------------
   ///
 
-  void PushError(const std::string &s) { _err = s + _err; }
+  static std::string StackMessage(const std::string &outer,
+                                  const std::string &inner) {
+    if (inner.empty()) {
+      return outer;
+    }
+    if (outer.empty() || outer.back() == '\n') {
+      return outer + inner;
+    }
+    return outer + "\n" + inner;
+  }
 
-  void PushWarn(const std::string &s) { _warn = s + _warn; }
+  void PushError(const std::string &s) { _err = StackMessage(s, _err); }
+
+  void PushWarn(const std::string &s) { _warn = StackMessage(s, _warn); }
 
   std::string GetError() { return _err; }
 

@@ -30,20 +30,26 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
   APISchemas schemas;
 
   auto SchemaHandler =
-      [](const value::token &tok) -> nonstd::optional<APISchemas::APIName> {
-    return enum_handler::APISchemaNameOpt(tok.str());
+      [](const std::string &schemaName) -> nonstd::optional<APISchemas::APIName> {
+    return enum_handler::APISchemaNameOpt(schemaName);
   };
 
   // Process a list of schema tokens into schemas.names/unknownSchemas.
   auto ProcessItems = [&](const std::vector<value::token> &items)
       -> nonstd::expected<bool, std::string> {
     for (const auto &item : items) {
-      if (auto pv = SchemaHandler(item)) {
-        std::string instanceName;  // TODO: parse instance name
+      std::string schemaName = item.str();
+      std::string instanceName;
+      const size_t colonPos = schemaName.find(':');
+      if (colonPos != std::string::npos) {
+        instanceName = schemaName.substr(colonPos + 1);
+        schemaName = schemaName.substr(0, colonPos);
+      }
+
+      if (auto pv = SchemaHandler(schemaName)) {
         schemas.names.push_back({pv.value(), instanceName});
       } else if (ignore_unknown) {
-        std::string instanceName;
-        schemas.unknownSchemas.push_back({item.str(), instanceName});
+        schemas.unknownSchemas.push_back({schemaName, instanceName});
         warn += "Preserving unknown API schema: " + item.str() + "\n";
       } else {
         return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
