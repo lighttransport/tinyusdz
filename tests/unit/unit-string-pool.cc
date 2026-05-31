@@ -110,3 +110,120 @@ void string_pool_pre_intern_common_test(void) {
   TEST_CHECK(pool.lookup("UsdPreviewSurface") != nullptr);
   TEST_MSG("PreInternCommonStrings should intern common USD strings");
 }
+
+void string_pool_concurrent_test(void) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  StringPool &pool = StringPool::instance();
+
+  const int kThreads = 8;
+  const int kPerThread = 2000;
+
+  std::vector<std::thread> threads;
+  std::vector<std::vector<const char *>> shared_ptrs(kThreads);
+  std::vector<char> uniq_ok(kThreads, 1);
+
+  for (int t = 0; t < kThreads; t++) {
+    shared_ptrs[t].reserve(kPerThread);
+    threads.emplace_back([&pool, t, &shared_ptrs, &uniq_ok]() {
+      for (int i = 0; i < kPerThread; i++) {
+        const char *shared = pool.intern("concurrent_shared_key");
+        shared_ptrs[t].push_back(shared);
+
+        std::string uniq =
+            "concurrent_t" + std::to_string(t) + "_i" + std::to_string(i);
+        const char *p = pool.intern(uniq);
+        if (p == nullptr) uniq_ok[t] = 0;
+
+        (void)pool.lookup("concurrent_shared_key");
+      }
+    });
+  }
+
+  for (auto &th : threads) {
+    th.join();
+  }
+
+  const char *expected = pool.lookup("concurrent_shared_key");
+  TEST_CHECK(expected != nullptr);
+  for (int t = 0; t < kThreads; t++) {
+    TEST_CHECK(uniq_ok[t] != 0);
+    for (const char *p : shared_ptrs[t]) {
+      TEST_CHECK(p == expected);
+    }
+  }
+  TEST_MSG("Concurrent intern/lookup should be race-free and deduplicated");
+#else
+  TEST_MSG("Skipped: built without TINYUSDZ_ENABLE_THREAD");
+#endif
+}
+
+// Edge case: intern nullptr via const char* overload should not crash.
+void string_pool_nullptr_test(void) {
+  StringPool &pool = StringPool::instance();
+
+  const char *result = pool.intern(static_cast<const char *>(nullptr));
+  TEST_CHECK(result == nullptr);
+
+  const char *found = pool.lookup(static_cast<const char *>(nullptr));
+  TEST_CHECK(found == nullptr);
+}
+
+// Edge case: intern empty string.
+void string_pool_empty_string_test(void) {
+  StringPool &pool = StringPool::instance();
+
+  const char *s = pool.intern("");
+  TEST_CHECK(s != nullptr);
+  TEST_CHECK(std::string(s).empty());
+
+  const char *s2 = pool.intern("");
+  TEST_CHECK(s == s2);
+}
+
+// Edge case: interning a long string (not pathological, just > 1KB).
+void string_pool_long_string_test(void) {
+  StringPool &pool = StringPool::instance();
+
+  std::string long_str(4096, 'X');
+  const char *s = pool.intern(long_str);
+  TEST_CHECK(s != nullptr);
+  TEST_CHECK(std::string(s) == long_str);
+
+  const char *s2 = pool.intern(long_str);
+  TEST_CHECK(s == s2);
+}
+
+// Edge case: many unique strings to exercise pool growth.
+void string_pool_many_strings_test(void) {
+  StringPool &pool = StringPool::instance();
+  size_t before = pool.size();
+
+  const int N = 1000;
+  std::vector<const char *> ptrs;
+  ptrs.reserve(N);
+  for (int i = 0; i < N; i++) {
+    std::string key = "pool_growth_test_" + std::to_string(i);
+    ptrs.push_back(pool.intern(key));
+  }
+
+  for (int i = 0; i < N; i++) {
+    TEST_CHECK(ptrs[i] != nullptr);
+  }
+  for (int i = 0; i < N; i++) {
+    for (int j = i + 1; j < N; j++) {
+      TEST_CHECK(ptrs[i] != ptrs[j]);
+    }
+  }
+  TEST_CHECK(pool.size() >= before + N);
+}
+
+// Edge case: PreInternCommonStrings idempotency.
+void string_pool_pre_intern_idempotent_test(void) {
+  PreInternCommonStrings();
+  PreInternCommonStrings();
+  PreInternCommonStrings();
+
+  StringPool &pool = StringPool::instance();
+  TEST_CHECK(pool.lookup("Mesh") != nullptr);
+  TEST_CHECK(pool.lookup("Material") != nullptr);
+}

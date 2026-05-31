@@ -100,6 +100,13 @@ bool ValidDims(const Image &image, std::string *err) {
     return false;
   }
   const int64_t npixels = int64_t(image.width) * int64_t(image.height);
+  // bpp must be a positive multiple of 8 (8, 16, 24, 32).
+  if (image.bpp > 0 && (image.bpp % 8 != 0)) {
+    if (err) {
+      (*err) = "Image bits-per-pixel must be a multiple of 8.";
+    }
+    return false;
+  }
   const int64_t bytes_per_channel = (image.bpp > 0) ? (image.bpp / 8) : 1;
   const int64_t expected =
       npixels * int64_t(image.channels) * bytes_per_channel;
