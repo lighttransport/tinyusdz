@@ -98,9 +98,10 @@ size_t ParseByteSize(const std::string &in) {
     i++;
   }
   if (!any) return 0;
+  std::string num_part = s.substr(0, i);
   char *endptr = nullptr;
-  num = std::strtod(s.substr(0, i).c_str(), &endptr);
-  if (endptr != s.c_str() + i) return 0;  // partial parse
+  num = std::strtod(num_part.c_str(), &endptr);
+  if (endptr != num_part.c_str() + i) return 0;  // partial parse
   if (std::isnan(num) || std::isinf(num) || num < 0.0) return 0;
 
   std::string unit = to_lower(s.substr(i));
