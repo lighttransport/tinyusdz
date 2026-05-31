@@ -56,6 +56,7 @@
 #include "logger.hh"
 #include "image-loader.hh"
 #include "image-types.hh"
+#include "safe-arithmetic.hh"
 #include "tydra/texture-util.hh"
 #include "usdz-convert.hh"
 
@@ -371,8 +372,24 @@ void copyTypedArray(const emscripten::val &data, std::vector<T> &buffer,
     return;
   }
   const size_t length = data["length"].as<size_t>();
+  const size_t byteOffset = data["byteOffset"].as<size_t>();
+  const size_t byteLength = data["buffer"]["byteLength"].as<size_t>();
   constexpr size_t kMaxArraySize = size_t(1) << 28;  // 256M elements
   if (length > kMaxArraySize) {
+    buffer.clear();
+    return;
+  }
+  // Validate that the requested range fits within the backing buffer.
+  // Each element is sizeof(T) bytes; compute total bytes needed.
+  size_t needed_bytes;
+  if (tinyusdz::safe::mul(
+          size_t(length), size_t(sizeof(T)), &needed_bytes)) {
+    if (byteOffset > byteLength ||
+        needed_bytes > byteLength - byteOffset) {
+      buffer.clear();
+      return;
+    }
+  } else {
     buffer.clear();
     return;
   }
@@ -381,7 +398,7 @@ void copyTypedArray(const emscripten::val &data, std::vector<T> &buffer,
     return;
   }
   emscripten::val view = emscripten::val::global(array_ctor).new_(
-      data["buffer"], data["byteOffset"], length);
+      data["buffer"], byteOffset, length);
   emscripten::val heapView =
       emscripten::val(emscripten::typed_memory_view(length, buffer.data()));
   heapView.call<void>("set", view);
@@ -2781,6 +2798,10 @@ class TinyUSDZLoaderNative {
     }
 
     int elementSize = jw.elementSize;
+    if (elementSize <= 0) {
+      result.set("error", "Invalid skinning data (elementSize <= 0)");
+      return result;
+    }
     int vertexCount = static_cast<int>(jw.jointIndices.size()) / elementSize;
 
     // Determine max influences for texture
