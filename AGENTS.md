@@ -167,7 +167,81 @@ cd python && python3 -m pytest tests/ -q
 
 ## Testing
 
-See `doc/testing-cpp.md` for full details on the C++ test infrastructure.
+See `doc/testing-cpp.md` for full details on the C++ test infrastructure, and use [the Regression Test Procedure](doc/testing-cpp.md#regression-test-procedure) before merging/refactoring.
+
+### Pre-merge checklist
+
+Before merging refactors or feature branches, confirm all required checks pass:
+
+1. Validate clean build and native regression coverage
+
+```bash
+cmake -S . -B build -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_EXAMPLES=ON
+cmake --build build -j16
+cd build
+ctest --output-on-failure
+ctest -R unit --output-on-failure
+ctest -R roundtrip --output-on-failure
+ctest -R feat --output-on-failure
+```
+
+2. Run web/WASM checks when web or JS-facing code changed
+
+```bash
+cd web
+emcmake cmake -S . -B build
+cmake --build build -j16
+ctest --test-dir build --output-on-failure
+```
+
+3. Run Pixar compatibility regression if available
+
+```bash
+USDCAT_PATH=~/local/USD/dist/bin/usdcat TUSDCAT_PATH=./build/tusdcat \
+  bash tests/run-usdcat-compare.sh
+```
+
+4. Check docs and commit hygiene
+
+- Confirm any behavior-impacting changes are covered in [doc/testing-cpp.md](doc/testing-cpp.md)
+- Verify no unrelated artifacts are left uncommitted for review
+
+Do not merge if any command in steps 1–3 fails.
+
+Copy-paste pre-merge script:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="${ROOT_DIR:-$(git rev-parse --show-toplevel)}"
+cd "$ROOT_DIR"
+JOBS="${JOBS:-16}"
+
+cmake -S "$ROOT_DIR" -B "$ROOT_DIR/build" \
+  -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_EXAMPLES=ON
+cmake --build "$ROOT_DIR/build" -j"$JOBS"
+
+cd "$ROOT_DIR/build"
+ctest --output-on-failure
+ctest -R unit --output-on-failure
+ctest -R roundtrip --output-on-failure
+ctest -R feat --output-on-failure
+
+cd "$ROOT_DIR/web"
+if [ -f "$ROOT_DIR/web/CMakeLists.txt" ]; then
+  emcmake cmake -S . -B build
+  cmake --build build -j"$JOBS"
+  ctest --test-dir build --output-on-failure
+fi
+
+if [ -x "$ROOT_DIR/tests/run-usdcat-compare.sh" ]; then
+  USDCAT_PATH="${USDCAT_PATH:-$HOME/local/USD/dist/bin/usdcat}"
+  TUSDCAT_PATH="${TUSDCAT_PATH:-$ROOT_DIR/build/tusdcat}"
+  USDCAT_PATH="$USDCAT_PATH" TUSDCAT_PATH="$TUSDCAT_PATH" \
+    bash "$ROOT_DIR/tests/run-usdcat-compare.sh"
+fi
+```
 
 ```bash
 # Run all ctest-registered tests (from build/)
@@ -244,6 +318,83 @@ Concise imperative subjects (e.g. "Fix double-quoting in USDC metadata"). Body o
 ## Release / Versioning
 
 Cutting a release (version bump, git tag, PyPI wheel publish, npm package publish) is documented in **[doc/ci.md](doc/ci.md)**. Read it before bumping any version or pushing a `v*.*.*` tag — the tag push triggers an automated PyPI publish via `.github/workflows/wheels.yml` (OIDC trusted publishing), and the npm publish is a manual `workflow_dispatch` on `.github/workflows/wasmPublish.yml`. The version sources that need hand-editing are `src/tinyusdz.hh` (C++ constants) and `web/{npm,js}/package.json` (npm packages); the Python wheel version is derived from the git tag by `setuptools_scm` and must NOT be edited by hand.
+
+### Versioning and tagging checklist
+
+Use this for release preparation and tag creation:
+
+1. Decide bump level (MAJOR/MINOR/PATCH) and update all version sources in the same commit:
+   - `src/tinyusdz.hh`
+   - `web/npm/package.json`
+   - `web/js/package.json`
+2. Run the standard regression checks above (pre-merge checklist).
+3. Verify generated artifacts are clean and consistent:
+   - `git diff --stat`
+   - `git status --short`
+4. Create signed or annotated tag:
+
+```bash
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+```
+
+5. Push tag only after approval:
+
+```bash
+git push origin vX.Y.Z
+```
+
+6. Confirm CI/publish flows:
+   - Verify `.github/workflows/wheels.yml` completed for PyPI.
+   - Trigger/verify WebAssembly publish flow (`.github/workflows/wasmPublish.yml`) if npm packages changed.
+
+Copy-paste versioning script:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="${ROOT_DIR:-$(git rev-parse --show-toplevel)}"
+cd "$ROOT_DIR"
+VERSION="${1:?Usage: $0 <semver>}"
+if ! printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+  echo "ERROR: version must be X.Y.Z" >&2
+  exit 1
+fi
+
+python3 - "$ROOT_DIR" "$VERSION" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1]).resolve()
+version = sys.argv[2]
+major, minor, patch = version.split(".")
+
+header = root / "src/tinyusdz.hh"
+text = header.read_text()
+text = re.sub(r"#define TINYUSDZ_VERSION_MAJOR +[0-9]+", f"#define TINYUSDZ_VERSION_MAJOR {major}", text)
+text = re.sub(r"#define TINYUSDZ_VERSION_MINOR +[0-9]+", f"#define TINYUSDZ_VERSION_MINOR {minor}", text)
+text = re.sub(r"#define TINYUSDZ_VERSION_PATCH +[0-9]+", f"#define TINYUSDZ_VERSION_PATCH {patch}", text)
+header.write_text(text)
+
+for rel in ("web/npm/package.json", "web/js/package.json"):
+    p = root / rel
+    data = json.loads(p.read_text())
+    data["version"] = version
+    p.write_text(json.dumps(data, indent=2) + "\n")
+PY
+
+git add "$ROOT_DIR/src/tinyusdz.hh" "$ROOT_DIR/web/npm/package.json" "$ROOT_DIR/web/js/package.json"
+echo "Version bump prepared for $VERSION"
+
+USDCAT_PATH="${USDCAT_PATH:-$HOME/local/USD/dist/bin/usdcat}" \
+TUSDCAT_PATH="${TUSDCAT_PATH:-$ROOT_DIR/build/tusdcat}" \
+  bash "$ROOT_DIR/tests/run-usdcat-compare.sh"
+
+git commit -m "Bump version to $VERSION"
+git tag -a "v$VERSION" -m "Release v$VERSION"
+```
 
 ## Git Push Policy (mandatory pre-push checklist)
 

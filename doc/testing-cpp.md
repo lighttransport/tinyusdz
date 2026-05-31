@@ -86,6 +86,65 @@ ctest -R roundtrip --output-on-failure
 ctest --output-on-failure -LE benchmark
 ```
 
+## Regression Test Procedure
+
+Use this procedure for merge-level validation, release checks, and refactor hardening:
+
+### 1) CTest matrix (native)
+
+```bash
+cd build
+
+# Native regression gate for parser/roundtrip/unit/feature tests
+ctest --output-on-failure
+
+# Optional focused subsets
+ctest -R unit --output-on-failure
+ctest -R roundtrip --output-on-failure
+ctest -R feat --output-on-failure
+```
+
+### 2) Feature binaries (target-level)
+
+Run feature targets directly when an individual behavior needs isolation:
+
+```bash
+./build/feat-mtlx-parse
+./build/feat-mtlx-import
+./build/feat-mtlx-export
+./build/feat-variant-converter
+./build/feat-variant-applier
+./build/feat-mtlx-grouped-params
+```
+
+### 3) WASM regression checks
+
+For web changes, build and validate the WebAssembly tree:
+
+```bash
+cd web
+emcmake cmake -S . -B build
+cmake --build web/build -j16
+ctest --test-dir web/build --output-on-failure
+```
+
+If your local web build does not register ctest targets, use the web package checks documented by the web frontend pipeline as the functional equivalent.
+
+### 4) Roundtrip comparison against Pixar USD
+
+These checks catch cross-version serialization or compatibility drift:
+
+```bash
+# Batch script for broad coverage
+USDCAT_PATH=~/local/USD/dist/bin/usdcat TUSDCAT_PATH=./build/tusdcat \
+  bash tests/run-usdcat-compare.sh
+
+# Per-file diff for regression investigation
+node tests/compare-usda.js --detailed-diff \
+  --tusdcat ./build/tusdcat --usdcat ~/local/USD/dist/bin/usdcat \
+  tests/usda/somefile.usda
+```
+
 `bench-parse-opt` is intentionally split into two profiles:
 
 - `ctest` runs `bench-parse-opt --quick` to keep suite wall time short.
