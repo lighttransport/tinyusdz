@@ -382,3 +382,32 @@ void primspec_metas_lazy_init_test(void) {
     TEST_MSG("Multiple PrimSpecs should have independent metas");
   }
 }
+
+// primChildren and propertyNames accessors.
+void primspec_primchildren_propertynames_test(void) {
+  using namespace tinyusdz;
+
+  PrimSpec ps(Specifier::Def, "Scope", "TestScope");
+
+  // Initially empty.
+  TEST_CHECK(ps.primChildren().empty());
+  TEST_CHECK(ps.propertyNames().empty());
+}
+
+// set_current_working_path / get_current_working_path.
+void primspec_working_path_test(void) {
+  using namespace tinyusdz;
+
+  PrimSpec ps(Specifier::Def, "Xform", "PathTest");
+
+  TEST_CHECK(ps.get_current_working_path().empty());
+
+  ps.set_current_working_path("/some/path");
+  TEST_CHECK(ps.get_current_working_path() == "/some/path");
+
+  ps.set_asset_resolution_state("/cwp", {"/search1", "/search2"});
+  TEST_CHECK(ps.get_current_working_path() == "/cwp");
+  TEST_CHECK(ps.get_asset_search_paths().size() == 2);
+  TEST_CHECK(ps.get_asset_search_paths()[0] == "/search1");
+  TEST_CHECK(ps.get_asset_search_paths()[1] == "/search2");
+}
