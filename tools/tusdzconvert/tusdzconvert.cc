@@ -25,6 +25,19 @@ using namespace tinyusdz;
 
 namespace {
 
+// Safe integer parser: returns true and sets `out` on full-string parse.
+// On failure (empty, trailing chars, overflow) returns false.
+bool ParseInt(const std::string &s, int *out) {
+  if (s.empty() || out == nullptr) return false;
+  char *endptr = nullptr;
+  long val = std::strtol(s.c_str(), &endptr, 10);
+  if (endptr != s.c_str() + s.size()) return false;
+  if (val < static_cast<long>(std::numeric_limits<int>::min()) ||
+      val > static_cast<long>(std::numeric_limits<int>::max())) return false;
+  *out = static_cast<int>(val);
+  return true;
+}
+
 void PrintUsage(const char *prog) {
   std::printf(
       "tusdzconvert - convert USD to USDZ (texture resize/repack, flatten, fpnge)\n"
@@ -129,7 +142,9 @@ usdz::RepackChannel ParseChannelSrc(const std::string &s) {
   usdz::RepackChannel rc;
   if (startsWith(s, "const:")) {
     rc.input_file.clear();
-    rc.constant = uint8_t(std::strtol(s.substr(6).c_str(), nullptr, 10) & 0xff);
+    int cv = 0;
+    if (!ParseInt(s.substr(6), &cv)) cv = 0;
+    rc.constant = uint8_t(cv & 0xff);
     return rc;
   }
   // Treat a trailing ":<digit>" as a channel selector.
@@ -142,7 +157,7 @@ usdz::RepackChannel ParseChannelSrc(const std::string &s) {
     }
     if (all_digit && tail.size() <= 1) {
       rc.input_file = s.substr(0, pos);
-      rc.channel = static_cast<int>(std::strtol(tail.c_str(), nullptr, 10));
+      if (!ParseInt(tail, &rc.channel)) rc.channel = 0;
       return rc;
     }
   }
@@ -167,7 +182,7 @@ int RunRepack(const argparser::ArgParser &parser, image::PngEncoder enc) {
   if (parser.is_set("-packChannels")) {
     std::string c;
     parser.get("-packChannels", c);
-    spec.out_channels = static_cast<int>(std::strtol(c.c_str(), nullptr, 10));
+    if (!ParseInt(c, &spec.out_channels)) spec.out_channels = 0;
     if (spec.out_channels < 1 || spec.out_channels > 4) {
       std::cerr << "ERROR: -packChannels must be 1-4 (got '" << c << "').\n";
       return 1;
@@ -179,8 +194,8 @@ int RunRepack(const argparser::ArgParser &parser, image::PngEncoder enc) {
     parser.get("-packSize", sz);
     auto x = sz.find('x');
     if (x != std::string::npos) {
-      spec.out_width = static_cast<int>(std::strtol(sz.substr(0, x).c_str(), nullptr, 10));
-      spec.out_height = static_cast<int>(std::strtol(sz.substr(x + 1).c_str(), nullptr, 10));
+      if (!ParseInt(sz.substr(0, x), &spec.out_width)) spec.out_width = 0;
+      if (!ParseInt(sz.substr(x + 1), &spec.out_height)) spec.out_height = 0;
       if (spec.out_width <= 0 || spec.out_height <= 0) {
         std::cerr << "ERROR: -packSize dimensions must be positive (got '" << sz << "').\n";
         return 1;
@@ -308,7 +323,7 @@ int main(int argc, char **argv) {
   if (parser.is_set("-resizeTextures")) {
     std::string n;
     parser.get("-resizeTextures", n);
-    opts.max_texture_size = static_cast<int>(std::strtol(n.c_str(), nullptr, 10));
+    if (!ParseInt(n, &opts.max_texture_size)) opts.max_texture_size = 0;
     if (opts.max_texture_size <= 0) {
       std::cerr << "ERROR: -resizeTextures must be a positive integer (got '" << n << "').\n";
       return 1;
@@ -322,7 +337,7 @@ int main(int argc, char **argv) {
   if (parser.is_set("-jpegQuality")) {
     std::string q;
     parser.get("-jpegQuality", q);
-    opts.jpeg_quality = static_cast<int>(std::strtol(q.c_str(), nullptr, 10));
+    if (!ParseInt(q, &opts.jpeg_quality)) opts.jpeg_quality = 0;
     if (opts.jpeg_quality < 1 || opts.jpeg_quality > 100) {
       std::cerr << "ERROR: -jpegQuality must be 1-100 (got '" << q << "').\n";
       return 1;
@@ -348,7 +363,7 @@ int main(int argc, char **argv) {
   if (parser.is_set("-fitMinTextureSize")) {
     std::string s;
     parser.get("-fitMinTextureSize", s);
-    opts.fit_min_texture_size = static_cast<int>(std::strtol(s.c_str(), nullptr, 10));
+    if (!ParseInt(s, &opts.fit_min_texture_size)) opts.fit_min_texture_size = 0;
     if (opts.fit_min_texture_size < 1 || opts.fit_min_texture_size > 16384) {
       std::cerr << "ERROR: -fitMinTextureSize must be 1-16384 (got '" << s << "').\n";
       return 1;
@@ -357,7 +372,7 @@ int main(int argc, char **argv) {
   if (parser.is_set("-fitMinQuality")) {
     std::string s;
     parser.get("-fitMinQuality", s);
-    opts.fit_min_jpeg_quality = static_cast<int>(std::strtol(s.c_str(), nullptr, 10));
+    if (!ParseInt(s, &opts.fit_min_jpeg_quality)) opts.fit_min_jpeg_quality = 0;
     if (opts.fit_min_jpeg_quality < 1 || opts.fit_min_jpeg_quality > 100) {
       std::cerr << "ERROR: -fitMinQuality must be 1-100 (got '" << s << "').\n";
       return 1;
