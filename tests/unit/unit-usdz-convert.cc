@@ -24,6 +24,7 @@
 #include "io-util.hh"
 #include "tydra/texture-util.hh"
 #include "usdz-convert.hh"
+#include "usdShade.hh"
 
 namespace {
 
@@ -72,6 +73,71 @@ std::string TempDir() {
   std::error_code ec;
   fs::create_directories(base, ec);
   return base.string();
+}
+
+bool WriteTexturedUSDA(const std::string &path, const std::string &texture_path) {
+  const std::string usda =
+      "#usda 1.0\n"
+      "(\n"
+      "    defaultPrim = \"root\"\n"
+      "    upAxis = \"Y\"\n"
+      ")\n"
+      "\n"
+      "def Xform \"root\"\n"
+      "{\n"
+      "    def Material \"mat\"\n"
+      "    {\n"
+      "        token outputs:surface.connect = </root/mat/surface.outputs:surface>\n"
+      "        def Shader \"surface\"\n"
+      "        {\n"
+      "            uniform token info:id = \"UsdPreviewSurface\"\n"
+      "            color3f inputs:diffuseColor.connect = </root/mat/tex.outputs:rgb>\n"
+      "            token outputs:surface\n"
+      "        }\n"
+      "        def Shader \"tex\"\n"
+      "        {\n"
+      "            uniform token info:id = \"UsdUVTexture\"\n"
+      "            asset inputs:file = @" + texture_path + "@\n"
+      "            float3 outputs:rgb\n"
+      "        }\n"
+      "    }\n"
+      "}\n";
+  std::string werr;
+  return tinyusdz::io::WriteWholeFile(
+      path, reinterpret_cast<const unsigned char *>(usda.data()), usda.size(),
+      &werr);
+}
+
+bool FindTextureFilePath(const tinyusdz::Prim &prim, std::string *out) {
+  const tinyusdz::Shader *shd = prim.as<tinyusdz::Shader>();
+  if (shd && shd->info_id == "UsdUVTexture") {
+    const tinyusdz::UsdUVTexture *tex = shd->value.as<tinyusdz::UsdUVTexture>();
+    if (tex) {
+      const auto av = tex->file.get_value();
+      if (av && av.value().is_scalar()) {
+        tinyusdz::value::AssetPath ap;
+        if (av.value().get_scalar(&ap)) {
+          *out = ap.GetAssetPath();
+          return true;
+        }
+      }
+    }
+  }
+  for (const auto &child : prim.children()) {
+    if (FindTextureFilePath(child, out)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool FindTextureFilePath(const tinyusdz::Stage &stage, std::string *out) {
+  for (const auto &prim : stage.root_prims()) {
+    if (FindTextureFilePath(prim, out)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace
@@ -641,6 +707,37 @@ void usdz_convert_pack_channels_error_test(void) {
       }
     }
   }
+
+  // 6) Same-size input with undersized data must be rejected before sampling.
+  {
+    Image bad = MakeSolidImage(4, 4, 1, 10, 0, 0, 0);
+    bad.data.resize(1);
+    std::vector<Image> inputs = {bad};
+    tydra::ChannelPackSpec spec;
+    spec.out_channels = 1;
+    spec.r.input_index = 0;
+    spec.r.channel = 0;
+    Image packed;
+    std::string err;
+    bool ok = tydra::PackChannels(inputs, spec, &packed, &err);
+    TEST_CHECK(!ok);
+    TEST_CHECK(!err.empty());
+  }
+
+  // 7) Constant-only output with excessive dimensions must be capped.
+  {
+    usdz::RepackSpec spec;
+    spec.out_channels = 1;
+    spec.out_width = 20000;
+    spec.out_height = 20000;
+    spec.r.input_file.clear();
+    spec.r.constant = 128;
+    std::string warn, err;
+    bool ok = usdz::RepackTextureFiles(spec, "/tmp/should_not_exist.png",
+                                       image::PngEncoder::Auto, &warn, &err);
+    TEST_CHECK(!ok);
+    TEST_CHECK(!err.empty());
+  }
 }
 
 // FitTexturesToBudget error paths and edge cases.
@@ -711,6 +808,103 @@ void usdz_convert_fit_budget_error_test(void) {
       TEST_CHECK(out.width == 8);
       TEST_CHECK(out.height == 8);
     }
+  }
+
+  // 5) Fixed overhead over budget should still shrink reencodable textures
+  // to the configured floor instead of keeping the largest setting.
+  {
+    std::vector<tydra::FitTextureInput> inputs;
+    tydra::FitTextureInput shrinkable;
+    shrinkable.image = MakeNoisyImage(128, 128, 3);
+    shrinkable.ext = "png";
+    shrinkable.reencodable = true;
+    inputs.push_back(std::move(shrinkable));
+
+    tydra::FitTextureInput fixed;
+    fixed.original_bytes.assign(1024, uint8_t(7));
+    fixed.ext = "exr";
+    fixed.reencodable = false;
+    inputs.push_back(std::move(fixed));
+
+    tydra::FitTextureOptions opt;
+    opt.target_total_bytes = 16;
+    opt.strategy = tydra::FitStrategy::Size;
+    opt.min_texture_size = 16;
+
+    std::vector<tydra::FitTextureOutput> outs;
+    std::string warn, err;
+    bool ok = tydra::FitTexturesToBudget(inputs, opt, &outs, &warn, &err);
+    TEST_CHECK(ok);
+    if (ok) {
+      TEST_CHECK(outs.size() == 2);
+      TEST_CHECK(outs[0].width == 16);
+      TEST_CHECK(outs[0].height == 16);
+      TEST_CHECK(!warn.empty());
+    }
+  }
+}
+
+void usdz_convert_missing_texture_reference_test(void) {
+  using namespace tinyusdz;
+  namespace fs = std::filesystem;
+
+  const std::string dir = TempDir();
+
+  // A safe relative missing texture should remain unchanged, not be rewritten
+  // to a sanitized archive path that is not actually present.
+  {
+    const std::string usda_path =
+        (fs::path(dir) / "scene_missing_safe.usda").string();
+    const std::string usdz_path =
+        (fs::path(dir) / "out_missing_safe.usdz").string();
+    TEST_CHECK(WriteTexturedUSDA(usda_path, "missing.png"));
+
+    usdz::UsdzConvertOptions opts;
+    opts.inputs.push_back(usda_path);
+    opts.output = usdz_path;
+    opts.flatten = true;
+
+    usdz::UsdzConvertStats stats;
+    std::string warn, err;
+    bool ok = usdz::Convert(opts, &stats, &warn, &err);
+    TEST_CHECK(ok);
+    TEST_CHECK(!warn.empty());
+    TEST_CHECK(stats.num_textures == 0);
+    if (!ok) {
+      TEST_MSG("convert error: %s", err.c_str());
+      return;
+    }
+
+    Stage stage;
+    std::string lwarn, lerr;
+    bool loaded = LoadUSDFromFile(usdz_path, &stage, &lwarn, &lerr);
+    TEST_CHECK(loaded);
+    if (loaded) {
+      std::string texture_path;
+      TEST_CHECK(FindTextureFilePath(stage, &texture_path));
+      TEST_CHECK(texture_path == "missing.png");
+    }
+  }
+
+  // A missing path that escapes the package root should fail instead of being
+  // preserved or rewritten to a broken internal reference.
+  {
+    const std::string usda_path =
+        (fs::path(dir) / "scene_missing_unsafe.usda").string();
+    const std::string usdz_path =
+        (fs::path(dir) / "out_missing_unsafe.usdz").string();
+    TEST_CHECK(WriteTexturedUSDA(usda_path, "../missing.png"));
+
+    usdz::UsdzConvertOptions opts;
+    opts.inputs.push_back(usda_path);
+    opts.output = usdz_path;
+    opts.flatten = true;
+
+    usdz::UsdzConvertStats stats;
+    std::string warn, err;
+    bool ok = usdz::Convert(opts, &stats, &warn, &err);
+    TEST_CHECK(!ok);
+    TEST_CHECK(err.find("Unsafe texture path") != std::string::npos);
   }
 }
 
