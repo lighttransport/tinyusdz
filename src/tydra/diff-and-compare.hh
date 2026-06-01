@@ -12,8 +12,15 @@ namespace tydra {
 
 struct PropDiff
 {
+  struct ModifiedProp {
+    std::string name;
+    std::string lhs;
+    std::string rhs;
+  };
+
   std::vector<std::string> addedProps;
   std::vector<std::string> modifiedProps;
+  std::vector<ModifiedProp> modifiedPropDetails;
   std::vector<std::string> deletedProps;
 };
 

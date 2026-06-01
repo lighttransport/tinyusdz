@@ -47,6 +47,18 @@ namespace tinyusdz {
 
 namespace {
 constexpr uint32_t kMaxZstdNestingDepth = 2;
+
+std::string GetLayerBaseDirForAssetName(const std::string &asset_name) {
+  if (asset_name.empty()) {
+    return std::string();
+  }
+
+  std::string basedir = io::GetBaseDir(asset_name);
+  if (basedir.empty()) {
+    return ".";
+  }
+  return basedir;
+}
 }
 
 // Global flag to control DCOUT output. Defaults to false to suppress flood of output.
@@ -1512,7 +1524,9 @@ bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
 
   if (ret) {
     std::vector<std::string> search_paths; // empty
-    std::string basedir = io::GetBaseDir(asset_name);
+    std::string basedir = GetLayerBaseDirForAssetName(asset_name);
+    layer->set_asset_resolution_state(basedir, search_paths,
+                                      /* userdata */ nullptr);
     // Save current working path to each PrimSpec in the layer
     // for the subsequent composition operation.
     for (auto &root_ps : layer->primspecs()) {

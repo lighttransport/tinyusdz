@@ -112,6 +112,8 @@ bool GetAssetDescription(Context &ctx, const nlohmann::json &args,
                           nlohmann::json &result, std::string &err);
 bool ListPrimSpecs(Context &ctx, const nlohmann::json &args,
                     nlohmann::json &result, std::string &err);
+bool DebugPrimSpecDump(Context &ctx, const nlohmann::json &args,
+                       nlohmann::json &result, std::string &err);
 bool ToUSDA(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
             std::string &err);
 bool SaveScreenshot(Context &ctx, const nlohmann::json &args,
@@ -589,6 +591,65 @@ bool ListPrimSpecs(Context &ctx, const nlohmann::json &args,
     content["text"] = ps.first;
     result["content"].push_back(content);
   }
+
+  return true;
+}
+
+bool DebugPrimSpecDump(Context &ctx, const nlohmann::json &args,
+                       nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+
+  std::string uuid = args.value("uuid", std::string{});
+  std::string name = args.value("name", std::string{});
+  std::string path = args.value("path", std::string{});
+  uint32_t max_depth = 1;
+  if (args.contains("max_depth") && args["max_depth"].is_number_integer()) {
+    int depth = args["max_depth"];
+    if (depth >= 0) {
+      max_depth = static_cast<uint32_t>(depth);
+    }
+  }
+
+  if (uuid.empty() && name.empty()) {
+    err = "Either `name` or `uuid` arg required\n";
+    return false;
+  }
+  if (path.empty()) {
+    err = "`path` arg required\n";
+    return false;
+  }
+  if (uuid.empty()) {
+    uuid = FindUUID(name, ctx.layers);
+  }
+  if (!ctx.layers.count(uuid)) {
+    err = "Layer not found: " + uuid;
+    return false;
+  }
+
+  Path prim_path(path, "");
+  if (!prim_path.is_valid()) {
+    err = "Invalid prim path: " + path;
+    return false;
+  }
+
+  const PrimSpec *ps = nullptr;
+  std::string find_err;
+  const Layer &layer = ctx.layers.at(uuid).layer;
+  if (!layer.find_primspec_at(prim_path, &ps, &find_err) || !ps) {
+    err = "PrimSpec not found at " + path;
+    if (!find_err.empty()) {
+      err += ": " + find_err;
+    }
+    return false;
+  }
+
+  nlohmann::json content;
+  content["type"] = "text";
+  content["mimeType"] = "application/json";
+  content["text"] = PrimSpecToJSON(*ps, max_depth).dump(2);
+
+  result["content"] = nlohmann::json::array();
+  result["content"].push_back(content);
 
   return true;
 }
@@ -1318,6 +1379,20 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
              "List root PrimSpecs in a loaded USD Layer", schema);
   }
 
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["uuid"] = str_prop("Layer UUID");
+    schema["properties"]["name"] = str_prop("Layer name");
+    schema["properties"]["path"] = str_prop("Absolute PrimSpec path");
+    schema["properties"]["max_depth"] =
+        int_prop("Maximum child depth to include");
+    schema["required"] = nlohmann::json::array({"path"});
+    add_tool("debug_primspec_dump",
+             "Dump a loaded Layer PrimSpec as deterministic JSON for debugging",
+             schema);
+  }
+
   // =========================================================================
   // Existing: Asset management tools (kept from original)
   // =========================================================================
@@ -1582,6 +1657,9 @@ bool CallTool(Context &ctx, const std::string &tool_name,
   }
   if (tool_name == "list_primspecs") {
     return ListPrimSpecs(ctx, args, result, err);
+  }
+  if (tool_name == "debug_primspec_dump") {
+    return DebugPrimSpecDump(ctx, args, result, err);
   }
   if (tool_name == "load_usd_layer_from_asset") {
     // Not implemented yet

@@ -634,15 +634,16 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
     }
   }
 
-  // inputs:fallback (color4f) - fallback color when texture is missing
+  // inputs:fallback (float4) - fallback color when texture is missing
   if (uv_texture->fallback.authored()) {
-    crate::CrateValue fallback_value;
-    const value::color4f& fallback = uv_texture->fallback.get_value();
-    // Convert color4f to float4 for CrateValue
-    value::float4 fallback_as_float4 = {fallback.r, fallback.g, fallback.b, fallback.a};
-    fallback_value.Set(fallback_as_float4);
-    if (!add_input_spec("inputs:fallback", "color4f", fallback_value)) {
-      return false;
+    const Animatable<value::float4> &fallback =
+        uv_texture->fallback.get_value();
+    if (fallback.has_default()) {
+      crate::CrateValue fallback_value;
+      fallback_value.Set(fallback.get_scalar_ref());
+      if (!add_input_spec("inputs:fallback", "float4", fallback_value)) {
+        return false;
+      }
     }
   }
 
