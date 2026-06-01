@@ -54,6 +54,15 @@ bool IsUnsafeUnresolvedTexturePath(const std::string &assetPath) {
 // to prevent pathological entry names from causing issues).
 constexpr size_t kMaxArchiveNameLen = 256;
 
+bool IsSafeArchiveSegment(const std::string &segment) {
+  return !segment.empty() && segment != "." && segment != ".." &&
+         segment.find('\0') == std::string::npos &&
+         segment.find('/') == std::string::npos &&
+         segment.find('\\') == std::string::npos &&
+         segment.find(':') == std::string::npos &&
+         segment.find("..") == std::string::npos;
+}
+
 std::string SanitizeArchiveName(const std::string &assetPath) {
   std::string p = assetPath;
   // Normalize backslashes.
@@ -65,13 +74,21 @@ std::string SanitizeArchiveName(const std::string &assetPath) {
   std::string name = p;
   if (needs_sanitize) {
     std::string base = io::GetBaseFilename(p);
-    if (base.empty()) {
+    if (!IsSafeArchiveSegment(base)) {
       base = "texture";
     }
     name = "textures/" + base;
   }
-  // Reject paths that still contain ".." after sanitization.
-  if (name.find("..") != std::string::npos) {
+  // Reject paths that still contain unsafe archive syntax after sanitization.
+  if (name.find('\0') != std::string::npos ||
+      name.find('\\') != std::string::npos ||
+      name.find(':') != std::string::npos ||
+      name.find("..") != std::string::npos ||
+      name.find("//") != std::string::npos ||
+      tinyusdz::startsWith(name, "/") ||
+      tinyusdz::startsWith(name, "./") ||
+      tinyusdz::startsWith(name, "../") ||
+      tinyusdz::endsWith(name, "/")) {
     name = "textures/texture";
   }
   // Enforce maximum archive name length.
@@ -79,6 +96,30 @@ std::string SanitizeArchiveName(const std::string &assetPath) {
     name = "textures/texture";
   }
   return name;
+}
+
+std::string MakeCollisionArchiveName(const std::string &archive_name,
+                                     uint32_t suffix) {
+  const std::string ext = io::GetFileExtension(archive_name);
+  const size_t base_len = (!ext.empty() && archive_name.size() > ext.size() + 1)
+      ? archive_name.size() - ext.size() - 1
+      : archive_name.size();
+  std::string base = archive_name.substr(0, base_len);
+  const std::string suffix_part =
+      "_" + std::to_string(suffix) + (ext.empty() ? std::string() : "." + ext);
+  if (base.size() + suffix_part.size() > kMaxArchiveNameLen) {
+    if (suffix_part.size() >= kMaxArchiveNameLen) {
+      return "textures/texture";
+    }
+    base.resize(kMaxArchiveNameLen - suffix_part.size());
+    if (base.empty() || tinyusdz::endsWith(base, "/")) {
+      base += "texture";
+      if (base.size() + suffix_part.size() > kMaxArchiveNameLen) {
+        base.resize(kMaxArchiveNameLen - suffix_part.size());
+      }
+    }
+  }
+  return base + suffix_part;
 }
 
 std::string ReplaceExtension(const std::string &name, const std::string &newExtNoDot) {
@@ -208,7 +249,7 @@ bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
   if (!decoded) {
     if (warn) {
       (*warn) += "Could not decode texture (" + uri + "): " + decoded.error() +
-                 " — copying through unchanged.\n";
+                 " - copying through unchanged.\n";
     }
     *out_bytes = src_bytes;
     *out_ext = src_ext_lower;
@@ -229,7 +270,7 @@ bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
   if (img.width <= 0 || img.height <= 0 || img.channels < 1 || img.channels > 4) {
     if (warn) {
       (*warn) += "Invalid image dimensions for " + uri +
-                 " — copying through unchanged.\n";
+                 " - copying through unchanged.\n";
     }
     *out_bytes = src_bytes;
     *out_ext = src_ext_lower;
@@ -239,7 +280,7 @@ bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
     if (warn) {
       (*warn) += "Image " + uri + " exceeds max dimension (" +
                  std::to_string(img.width) + "x" + std::to_string(img.height) +
-                 ") — copying through unchanged.\n";
+                 ") - copying through unchanged.\n";
     }
     *out_bytes = src_bytes;
     *out_ext = src_ext_lower;
@@ -279,7 +320,7 @@ bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
       if (img.data.size() < npix * 4) {
         if (warn) {
           (*warn) += "Undersized image buffer for " + uri +
-                     " — copying through unchanged.\n";
+                     " - copying through unchanged.\n";
         }
         *out_bytes = src_bytes;
         *out_ext = src_ext_lower;
@@ -311,7 +352,7 @@ bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
   if (!enc) {
     if (warn) {
       (*warn) += "Encode failed for " + uri + ": " + enc.error() +
-                 " — copying through unchanged.\n";
+                 " - copying through unchanged.\n";
     }
     *out_bytes = src_bytes;
     *out_ext = src_ext_lower;
@@ -602,7 +643,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       if (suffix > kMaxSuffix) {
         if (warn) {
           (*warn) += "Too many archive name collisions for " + archive_name +
-                     "; risking overwrite — skipping texture.\n";
+                     "; skipping texture to avoid overwrite.\n";
         }
         // Exhausted suffixes: do NOT proceed with a name that already exists
         // with different bytes (that would overwrite the existing entry in
@@ -610,17 +651,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
         collision_ok = false;
         break;
       }
-      const std::string ext = io::GetFileExtension(archive_name);
-      size_t base_len = (archive_name.size() > ext.size() + 1)
-          ? archive_name.size() - ext.size() - 1
-          : archive_name.size();
-      if (ext.empty()) {
-        unique_name = archive_name.substr(0, base_len) +
-                      "_" + std::to_string(suffix);
-      } else {
-        unique_name = archive_name.substr(0, base_len) +
-                      "_" + std::to_string(suffix) + "." + ext;
-      }
+      unique_name = MakeCollisionArchiveName(archive_name, suffix);
       suffix++;
     }
     if (!collision_ok) {

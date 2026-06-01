@@ -1337,16 +1337,13 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
   }
 
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
-  try {
-    (*value) = uint32_t(std::stoull(str));
-  } catch (const std::invalid_argument &e) {
-    (void)e;
-    PushError("Not an 64bit unsigned integer literal.\n");
-    return false;
-  } catch (const std::out_of_range &e) {
-    (void)e;
-    PushError("64bit unsigned integer value out of range.\n");
-    return false;
+  {
+    nonstd::optional<uint32_t> parsed = tinyusdz::atou(str);
+    if (!parsed.has_value()) {
+      PushError("Not an 32bit unsigned integer literal or value out of range.\n");
+      return false;
+    }
+    (*value) = parsed.value();
   }
   return true;
 #else
@@ -1368,16 +1365,10 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
   } else if (retcode == jsteemann::INVALID_INPUT) {
     PushError("Not an 32bit unsigned integer literal.\n");
     return false;
-  } else if (retcode == jsteemann::INVALID_NEGATIVE_SIGN) {
-    PushError("Negative sign `-` specified for uint32 integer.\n");
-    return false;
-  } else if (retcode == jsteemann::VALUE_OVERFLOW) {
-    PushError("Integer value overflows.\n");
+  } else {
+    PushError("32bit unsigned integer value out of range.\n");
     return false;
   }
-
-  PushError("Invalid integer literal\n");
-  return false;
 #endif
 }
 
@@ -1571,16 +1562,13 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
 
   // TODO(syoyo): Use ryu parse.
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
-  try {
-    (*value) = std::stoull(str);
-  } catch (const std::invalid_argument &e) {
-    (void)e;
-    PushError("Not an 64bit unsigned integer literal.\n");
-    return false;
-  } catch (const std::out_of_range &e) {
-    (void)e;
-    PushError("64bit unsigned integer value out of range.\n");
-    return false;
+  {
+    nonstd::optional<uint64_t> parsed = tinyusdz::atoull(str);
+    if (!parsed.has_value()) {
+      PushError("Not an 64bit unsigned integer literal or value out of range.\n");
+      return false;
+    }
+    (*value) = parsed.value();
   }
 
   return true;

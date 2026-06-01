@@ -11,3 +11,4 @@ void usdz_validator_empty_input_test(void);
 void usdz_writer_file_roundtrip_test(void);
 void usdz_validator_large_asset_test(void);
 void usdz_validator_bad_extension_test(void);
+void usdz_writer_rejects_unsafe_asset_names_test(void);

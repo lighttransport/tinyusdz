@@ -1844,12 +1844,76 @@ bool IsAllowedUSDZExtension(const std::string &filename) {
           lower_ext == "m4a" || lower_ext == "mp3" || lower_ext == "wav");
 }
 
+bool IsSafeUSDZEntryName(const std::string &name, std::string *reason) {
+  if (name.empty()) {
+    if (reason) *reason = "entry name is empty";
+    return false;
+  }
+  if (name.size() > UINT16_MAX) {
+    if (reason) *reason = "entry name exceeds ZIP filename length limit";
+    return false;
+  }
+  if (name[0] == '/' || name[0] == '\\') {
+    if (reason) *reason = "entry name must be relative";
+    return false;
+  }
+  if (name.find('\0') != std::string::npos) {
+    if (reason) *reason = "entry name contains NUL byte";
+    return false;
+  }
+  if (name.find('\\') != std::string::npos) {
+    if (reason) *reason = "entry name contains backslash";
+    return false;
+  }
+  if (name.find(':') != std::string::npos) {
+    if (reason) *reason = "entry name contains drive/URI separator";
+    return false;
+  }
+
+  size_t pos = 0;
+  while (pos <= name.size()) {
+    size_t next = name.find('/', pos);
+    std::string segment = (next == std::string::npos)
+                              ? name.substr(pos)
+                              : name.substr(pos, next - pos);
+    if (segment.empty() || segment == "." || segment == "..") {
+      if (reason) *reason = "entry name contains empty or dot segment";
+      return false;
+    }
+    if (next == std::string::npos) break;
+    pos = next + 1;
+  }
+
+  return true;
+}
+
 // Write a single entry to a USDZ archive buffer with 64-byte alignment.
 // Returns false on error.
 bool WriteUSDZEntry(std::vector<uint8_t> &buf,
                     std::vector<std::tuple<std::string, uint32_t, uint32_t, size_t>> &central_dir_entries,
                     const std::string &name, const uint8_t *data, size_t data_size,
                     std::string *err) {
+  std::string reason;
+  if (!IsSafeUSDZEntryName(name, &reason)) {
+    if (err) {
+      (*err) += "Unsafe USDZ entry name '" + name + "': " + reason + "\n";
+    }
+    return false;
+  }
+  if (data_size > UINT32_MAX) {
+    if (err) {
+      (*err) += "USDZ entry '" + name + "' exceeds ZIP32 size limit\n";
+    }
+    return false;
+  }
+  if (buf.size() > UINT32_MAX) {
+    if (err) {
+      (*err) += "USDZ archive exceeds ZIP32 offset limit before entry '" +
+                name + "'\n";
+    }
+    return false;
+  }
+
   // Calculate padding needed for 64-byte alignment of file data
   size_t header_size = kZipLocalHeaderSize + name.size();
   size_t padding = 0;
@@ -1911,6 +1975,13 @@ bool WriteUSDZEntry(std::vector<uint8_t> &buf,
   if (data && data_size > 0) {
     buf.insert(buf.end(), data, data + data_size);
   }
+  if (buf.size() > UINT32_MAX) {
+    if (err) {
+      (*err) += "USDZ archive exceeds ZIP32 size limit after entry '" + name +
+                "'\n";
+    }
+    return false;
+  }
 
   // Record for central directory
   central_dir_entries.emplace_back(name, crc, sz32, local_header_offset);
@@ -1919,16 +1990,36 @@ bool WriteUSDZEntry(std::vector<uint8_t> &buf,
 }
 
 // Write the central directory and end-of-central-directory record.
-void WriteUSDZCentralDirectory(
+bool WriteUSDZCentralDirectory(
     std::vector<uint8_t> &buf,
-    const std::vector<std::tuple<std::string, uint32_t, uint32_t, size_t>> &entries) {
+    const std::vector<std::tuple<std::string, uint32_t, uint32_t, size_t>> &entries,
+    std::string *err) {
+  if (entries.size() > UINT16_MAX) {
+    if (err) {
+      (*err) += "USDZ archive has too many entries for ZIP32\n";
+    }
+    return false;
+  }
+  if (buf.size() > UINT32_MAX) {
+    if (err) {
+      (*err) += "USDZ central directory offset exceeds ZIP32 limit\n";
+    }
+    return false;
+  }
   size_t cd_offset = buf.size();
 
   for (const auto &entry : entries) {
     const auto &name = std::get<0>(entry);
     uint32_t crc = std::get<1>(entry);
     uint32_t size = std::get<2>(entry);
-    uint32_t local_offset = static_cast<uint32_t>(std::get<3>(entry));
+    size_t local_offset_size = std::get<3>(entry);
+    if (name.size() > UINT16_MAX || local_offset_size > UINT32_MAX) {
+      if (err) {
+        (*err) += "USDZ central directory entry exceeds ZIP32 limits\n";
+      }
+      return false;
+    }
+    uint32_t local_offset = static_cast<uint32_t>(local_offset_size);
 
     uint8_t cdr[46];
     memset(cdr, 0, sizeof(cdr));
@@ -1956,6 +2047,12 @@ void WriteUSDZCentralDirectory(
   }
 
   size_t cd_size = buf.size() - cd_offset;
+  if (cd_size > UINT32_MAX || buf.size() > UINT32_MAX) {
+    if (err) {
+      (*err) += "USDZ central directory exceeds ZIP32 limits\n";
+    }
+    return false;
+  }
 
   // End of central directory record
   uint8_t eocd[22];
@@ -1975,6 +2072,7 @@ void WriteUSDZCentralDirectory(
   memcpy(&eocd[16], &cd_offset32, 4);
 
   buf.insert(buf.end(), eocd, eocd + 22);
+  return true;
 }
 
 }  // namespace
@@ -2020,6 +2118,14 @@ bool SaveAsUSDZToMemory(const Stage &stage,
 
   // Step 3: Add additional assets
   for (const auto &asset : assets) {
+    std::string reason;
+    if (!IsSafeUSDZEntryName(asset.first, &reason)) {
+      if (err) {
+        (*err) += "Unsafe USDZ asset entry name '" + asset.first +
+                  "': " + reason + "\n";
+      }
+      return false;
+    }
     if (!IsAllowedUSDZExtension(asset.first)) {
       if (warn) {
         (*warn) += "Skipping asset with disallowed extension: " + asset.first + "\n";
@@ -2034,7 +2140,9 @@ bool SaveAsUSDZToMemory(const Stage &stage,
   }
 
   // Step 4: Write central directory (must be at the end with no padding)
-  WriteUSDZCentralDirectory(buf, central_dir_entries);
+  if (!WriteUSDZCentralDirectory(buf, central_dir_entries, err)) {
+    return false;
+  }
 
   *output = std::move(buf);
   return true;

@@ -387,3 +387,39 @@ void usdz_validator_bad_extension_test(void) {
   // Should have a warning about the skipped extension
   TEST_CHECK(warn.find("disallowed") != std::string::npos);
 }
+
+void usdz_writer_rejects_unsafe_asset_names_test(void) {
+  tinyusdz::Stage stage;
+  stage.metas().defaultPrim = tinyusdz::value::token("root");
+
+  tinyusdz::Xform xform;
+  xform.name = "root";
+  xform.spec = tinyusdz::Specifier::Def;
+  tinyusdz::value::Value primdata = xform;
+  tinyusdz::Prim prim("root", primdata);
+  prim.prim_type_name() = "Xform";
+  stage.add_root_prim(std::move(prim));
+
+  std::vector<std::string> bad_names = {
+      "",
+      "/abs.png",
+      "../escape.png",
+      "textures/../escape.png",
+      "textures\\bad.png",
+      "C:bad.png",
+      "textures//bad.png",
+      "textures/.",
+  };
+  bad_names.push_back(std::string("bad\0name.png", 12));
+  bad_names.push_back(std::string(70000, 'a') + ".png");
+
+  for (const std::string &name : bad_names) {
+    std::map<std::string, std::vector<uint8_t>> assets;
+    assets[name] = std::vector<uint8_t>(8, 0x42);
+    std::vector<uint8_t> usdz_data;
+    std::string warn, err;
+    bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
+    TEST_CHECK(!ret);
+    TEST_CHECK(!err.empty());
+  }
+}

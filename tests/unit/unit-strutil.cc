@@ -218,6 +218,15 @@ void strutil_parse_helpers_test(void) {
   TEST_CHECK(!tinyusdz::atoi(static_cast<const char *>(nullptr)).has_value());
 
   {
+    nonstd::optional<uint32_t> v = tinyusdz::atou("4294967295");
+    TEST_CHECK(v.has_value());
+    TEST_CHECK(v.value() == (std::numeric_limits<uint32_t>::max)());
+  }
+  TEST_CHECK(!tinyusdz::atou("4294967296").has_value());
+  TEST_CHECK(!tinyusdz::atou("-1").has_value());
+  TEST_CHECK(!tinyusdz::atou("1x").has_value());
+
+  {
     nonstd::optional<int64_t> v = tinyusdz::atoll("9223372036854775807");
     TEST_CHECK(v.has_value());
     TEST_CHECK(v.value() == (std::numeric_limits<int64_t>::max)());
@@ -232,11 +241,22 @@ void strutil_parse_helpers_test(void) {
   TEST_CHECK(!tinyusdz::atoll(static_cast<const char *>(nullptr)).has_value());
 
   {
+    nonstd::optional<uint64_t> v = tinyusdz::atoull("18446744073709551615");
+    TEST_CHECK(v.has_value());
+    TEST_CHECK(v.value() == (std::numeric_limits<uint64_t>::max)());
+  }
+  TEST_CHECK(!tinyusdz::atoull("18446744073709551616").has_value());
+  TEST_CHECK(!tinyusdz::atoull("-1").has_value());
+  TEST_CHECK(!tinyusdz::atoull(static_cast<const char *>(nullptr)).has_value());
+
+  {
     nonstd::optional<double> v = tinyusdz::atod(" 3.5 ");
     TEST_CHECK(v.has_value());
     TEST_CHECK(v.value() == 3.5);
   }
   TEST_CHECK(!tinyusdz::atod("3.5x").has_value());
+  TEST_CHECK(!tinyusdz::atod("nan").has_value());
+  TEST_CHECK(!tinyusdz::atod("inf").has_value());
   TEST_CHECK(!tinyusdz::atod(static_cast<const char *>(nullptr)).has_value());
 
   {
@@ -245,6 +265,8 @@ void strutil_parse_helpers_test(void) {
     TEST_CHECK(v.value() == -2.25f);
   }
   TEST_CHECK(!tinyusdz::atof_float("1.0x").has_value());
+  TEST_CHECK(!tinyusdz::atof_float("nan").has_value());
+  TEST_CHECK(!tinyusdz::atof_float("inf").has_value());
   TEST_CHECK(!tinyusdz::atof_float(static_cast<const char *>(nullptr)).has_value());
 }
 

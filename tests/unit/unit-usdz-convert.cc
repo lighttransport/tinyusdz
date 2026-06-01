@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -98,6 +99,46 @@ bool WriteTexturedUSDA(const std::string &path, const std::string &texture_path)
       "        {\n"
       "            uniform token info:id = \"UsdUVTexture\"\n"
       "            asset inputs:file = @" + texture_path + "@\n"
+      "            float3 outputs:rgb\n"
+      "        }\n"
+      "    }\n"
+      "}\n";
+  std::string werr;
+  return tinyusdz::io::WriteWholeFile(
+      path, reinterpret_cast<const unsigned char *>(usda.data()), usda.size(),
+      &werr);
+}
+
+bool WriteTwoTexturedUSDA(const std::string &path, const std::string &tex0,
+                          const std::string &tex1) {
+  const std::string usda =
+      "#usda 1.0\n"
+      "(\n"
+      "    defaultPrim = \"root\"\n"
+      "    upAxis = \"Y\"\n"
+      ")\n"
+      "\n"
+      "def Xform \"root\"\n"
+      "{\n"
+      "    def Material \"mat\"\n"
+      "    {\n"
+      "        token outputs:surface.connect = </root/mat/surface.outputs:surface>\n"
+      "        def Shader \"surface\"\n"
+      "        {\n"
+      "            uniform token info:id = \"UsdPreviewSurface\"\n"
+      "            color3f inputs:diffuseColor.connect = </root/mat/tex0.outputs:rgb>\n"
+      "            token outputs:surface\n"
+      "        }\n"
+      "        def Shader \"tex0\"\n"
+      "        {\n"
+      "            uniform token info:id = \"UsdUVTexture\"\n"
+      "            asset inputs:file = @" + tex0 + "@\n"
+      "            float3 outputs:rgb\n"
+      "        }\n"
+      "        def Shader \"tex1\"\n"
+      "        {\n"
+      "            uniform token info:id = \"UsdUVTexture\"\n"
+      "            asset inputs:file = @" + tex1 + "@\n"
       "            float3 outputs:rgb\n"
       "        }\n"
       "    }\n"
@@ -264,6 +305,86 @@ void usdz_convert_orm_scalar_fallback_test(void) {
     TEST_CHECK(out[0] == 63);
     TEST_CHECK(out[1] == 127);
     TEST_CHECK(out[2] == 191);
+  }
+}
+
+void usdz_convert_orm_scalar_nonfinite_test(void) {
+  using namespace tinyusdz;
+
+  std::vector<uint8_t> out;
+  size_t out_w = 0;
+  size_t out_h = 0;
+  bool ok = tydra::BuildOcclusionRoughnessMetallicTexture(
+      std::numeric_limits<float>::infinity(),
+      -1000.0f,
+      std::numeric_limits<float>::quiet_NaN(),
+      {}, 0, 0, 0, 0,
+      {}, 0, 0, 0, 0,
+      {}, 0, 0, 0, 0,
+      out, out_w, out_h);
+
+  TEST_CHECK(ok);
+  TEST_CHECK(out_w == 1);
+  TEST_CHECK(out_h == 1);
+  TEST_CHECK(out.size() == 3);
+  if (out.size() == 3) {
+    TEST_CHECK(out[0] == 0);
+    TEST_CHECK(out[1] == 0);
+    TEST_CHECK(out[2] == 0);
+  }
+}
+
+void usdz_convert_archive_collision_name_test(void) {
+  using namespace tinyusdz;
+  namespace fs = std::filesystem;
+
+  const std::string dir = TempDir();
+  const fs::path a_dir = fs::path(dir) / "collision_a";
+  const fs::path b_dir = fs::path(dir) / "collision_b";
+  std::error_code ec;
+  fs::create_directories(a_dir, ec);
+  fs::create_directories(b_dir, ec);
+  const std::string tex_a = (a_dir / "same.png").string();
+  const std::string tex_b = (b_dir / "same.png").string();
+  const std::string usda_path = (fs::path(dir) / "scene_collision.usda").string();
+  const std::string usdz_path = (fs::path(dir) / "out_collision.usdz").string();
+
+  auto write_png = [](const std::string &path, const Image &img) -> bool {
+    image::WriteOption wopt;
+    wopt.format = image::WriteImageFormat::PNG;
+    auto enc = image::WriteImageToMemory(img, wopt);
+    if (!enc) return false;
+    std::string werr;
+    return io::WriteWholeFile(path, enc.value().data(), enc.value().size(),
+                              &werr);
+  };
+
+  TEST_CHECK(write_png(tex_a, MakeSolidImage(4, 4, 4, 255, 0, 0, 255)));
+  TEST_CHECK(write_png(tex_b, MakeSolidImage(4, 4, 4, 0, 255, 0, 255)));
+  TEST_CHECK(WriteTwoTexturedUSDA(usda_path, tex_a, tex_b));
+
+  usdz::UsdzConvertOptions opts;
+  opts.inputs.push_back(usda_path);
+  opts.output = usdz_path;
+  opts.flatten = true;
+
+  usdz::UsdzConvertStats stats;
+  std::string warn, err;
+  bool ok = usdz::Convert(opts, &stats, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("convert error: %s", err.c_str());
+    return;
+  }
+  TEST_CHECK(stats.num_textures == 2);
+
+  USDZAsset asset;
+  std::string awarn, aerr;
+  bool read_ok = ReadUSDZAssetInfoFromFile(usdz_path, &asset, &awarn, &aerr);
+  TEST_CHECK(read_ok);
+  if (read_ok) {
+    TEST_CHECK(asset.asset_map.count("textures/same.png") == 1);
+    TEST_CHECK(asset.asset_map.count("textures/same_1.png") == 1);
   }
 }
 
