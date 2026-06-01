@@ -1454,16 +1454,13 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
 
   // TODO(syoyo): Use ryu parse.
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
-  try {
-    (*value) = std::stoll(str);  // Use stoll for signed int64
-  } catch (const std::invalid_argument &e) {
-    (void)e;
-    PushError("Not an 64bit signed integer literal.\n");
-    return false;
-  } catch (const std::out_of_range &e) {
-    (void)e;
-    PushError("64bit signed integer value out of range.\n");
-    return false;
+  {
+    nonstd::optional<int64_t> parsed = tinyusdz::atoll(str);
+    if (!parsed.has_value()) {
+      PushError("Not an 64bit signed integer literal.\n");
+      return false;
+    }
+    (*value) = parsed.value();
   }
 
   return true;

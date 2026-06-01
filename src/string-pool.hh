@@ -7,9 +7,9 @@
 
 #pragma once
 
-#include <string>
-#include <vector>
+#include <deque>
 #include <initializer_list>
+#include <string>
 #include "tiny-hashmap.hh"
 
 namespace tinyusdz {
@@ -68,8 +68,9 @@ private:
 
   // Map: string -> pointer into _storage
   HashMap<std::string, const char *> _map;
-  // Backing storage: all interned strings live here
-  std::vector<std::string> _storage;
+  // Backing storage: all interned strings live here. std::deque keeps
+  // references/pointers to existing elements stable when appending.
+  std::deque<std::string> _storage;
 };
 
 }  // namespace tinyusdz

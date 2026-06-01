@@ -54,6 +54,12 @@ class HashMap {
     Bucket() : dist(0), kv() {}
   };
 
+  struct InsertResult {
+    size_type index;
+    bool inserted;
+    bool ok;
+  };
+
   static uint64_t mix64(uint64_t x) {
     x ^= x >> 30;
     x *= 0xbf58476d1ce4e5b9ULL;
@@ -118,7 +124,10 @@ class HashMap {
   // Pass by value so callers may pass either lvalues, rvalues, or
   // function-style cast prvalues like `Key(k)` — MSVC has trouble binding
   // those to `Key&&` parameters, so by-value sidesteps the issue.
-  std::pair<size_type, bool> insert_into_table(Key k, Value v) {
+  InsertResult insert_into_table(Key k, Value v) {
+    if (_buckets.empty() || _size >= _buckets.size()) {
+      return {0, false, false};
+    }
     size_type idx = ideal_index(k);
     uint32_t dist = 1;
     Key cur_key = std::move(k);
@@ -133,12 +142,12 @@ class HashMap {
         slot.dist = dist;
         ++_size;
         if (first_seen == static_cast<size_type>(-1)) first_seen = idx;
-        return {first_seen, inserted_new};
+        return {first_seen, inserted_new, true};
       }
       if (slot.dist == dist && _eq(slot.kv.first, cur_key)) {
         // Key already present — do not overwrite (std::unordered_map::insert
         // semantics). Caller can mutate via the returned reference if needed.
-        return {idx, false};
+        return {idx, false, true};
       }
       if (slot.dist < dist) {
         // Robin-hood: rob from the rich.
@@ -152,8 +161,8 @@ class HashMap {
       // Probe-distance bound: cannot exceed table capacity.
       if (dist > _buckets.size()) {
         // Table is full — should not happen if callers resize properly.
-        // Return the first-seen index so the caller can handle the overflow.
-        return {first_seen, false};
+        // Report failure explicitly so callers never index a sentinel bucket.
+        return {0, false, false};
       }
     }
   }
@@ -341,13 +350,15 @@ class HashMap {
     Key k = kv.first;
     Value v = kv.second;
     auto r = insert_into_table(std::move(k), std::move(v));
-    return {iterator(this, r.first), r.second};
+    if (!r.ok) return {end(), false};
+    return {iterator(this, r.index), r.inserted};
   }
 
   std::pair<iterator, bool> insert(value_type &&kv) {
     grow_if_needed();
     auto r = insert_into_table(std::move(kv.first), std::move(kv.second));
-    return {iterator(this, r.first), r.second};
+    if (!r.ok) return {end(), false};
+    return {iterator(this, r.index), r.inserted};
   }
 
   template <typename K2, typename V2>
@@ -355,7 +366,8 @@ class HashMap {
     grow_if_needed();
     auto r = insert_into_table(Key(std::forward<K2>(k)),
                                Value(std::forward<V2>(v)));
-    return {iterator(this, r.first), r.second};
+    if (!r.ok) return {end(), false};
+    return {iterator(this, r.index), r.inserted};
   }
 
   // C++17 insert_or_assign: overwrite the existing value on duplicate key.
@@ -363,19 +375,30 @@ class HashMap {
   std::pair<iterator, bool> insert_or_assign(K2 &&k, V2 &&v) {
     grow_if_needed();
     auto r = insert_into_table(Key(std::forward<K2>(k)), Value());
-    _buckets[r.first].kv.second = Value(std::forward<V2>(v));
-    return {iterator(this, r.first), r.second};
+    if (!r.ok) return {end(), false};
+    _buckets[r.index].kv.second = Value(std::forward<V2>(v));
+    return {iterator(this, r.index), r.inserted};
   }
 
   Value &operator[](const Key &k) {
     grow_if_needed();
     auto r = insert_into_table(Key(k), Value());
-    return _buckets[r.first].kv.second;
+    if (!r.ok) {
+      static Value sink{};
+      sink = Value();
+      return sink;
+    }
+    return _buckets[r.index].kv.second;
   }
   Value &operator[](Key &&k) {
     grow_if_needed();
     auto r = insert_into_table(std::move(k), Value());
-    return _buckets[r.first].kv.second;
+    if (!r.ok) {
+      static Value sink{};
+      sink = Value();
+      return sink;
+    }
+    return _buckets[r.index].kv.second;
   }
 
   // Hardened: on miss, return a static fallback without aborting.

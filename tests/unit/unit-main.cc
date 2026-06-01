@@ -115,6 +115,7 @@ TEST_LIST = {
   { "strutil_test", strutil_test },
   { "tinystring_test", tinystring_test },
   { "parse_int_test", parse_int_test },
+  { "strutil_parse_helpers_test", strutil_parse_helpers_test },
   { "fp_string_conversion_test", fp_string_conversion_test },
   { "timesamples_test", timesamples_test },
   { "fp_roundtrip_basic_test", fp_roundtrip_basic_test },
@@ -592,6 +593,7 @@ TEST_LIST = {
   { "usdz_convert_png_roundtrip_test", usdz_convert_png_roundtrip_test },
   { "usdz_convert_resize_test", usdz_convert_resize_test },
   { "usdz_convert_pack_channels_test", usdz_convert_pack_channels_test },
+  { "usdz_convert_orm_scalar_fallback_test", usdz_convert_orm_scalar_fallback_test },
   { "usdz_convert_fit_budget_test", usdz_convert_fit_budget_test },
   { "usdz_convert_pipeline_test", usdz_convert_pipeline_test },
   { "usdz_convert_repack_files_test", usdz_convert_repack_files_test },
@@ -839,5 +841,6 @@ TEST_LIST = {
   { "string_pool_size_test", string_pool_size_test },
   { "string_pool_charptr_test", string_pool_charptr_test },
   { "string_pool_pre_intern_common_test", string_pool_pre_intern_common_test },
+  { "string_pool_many_strings_test", string_pool_many_strings_test },
   { nullptr, nullptr }
 };

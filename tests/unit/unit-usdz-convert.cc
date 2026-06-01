@@ -241,6 +241,32 @@ void usdz_convert_pack_channels_test(void) {
   }
 }
 
+// Empty ORM inputs should produce a scalar fallback texture. Missing maps are
+// represented with empty buffers and zero channels by callers.
+void usdz_convert_orm_scalar_fallback_test(void) {
+  using namespace tinyusdz;
+
+  std::vector<uint8_t> out;
+  size_t out_w = 0;
+  size_t out_h = 0;
+  bool ok = tydra::BuildOcclusionRoughnessMetallicTexture(
+      0.25f, 0.5f, 0.75f,
+      {}, 0, 0, 0, 0,
+      {}, 0, 0, 0, 0,
+      {}, 0, 0, 0, 0,
+      out, out_w, out_h);
+
+  TEST_CHECK(ok);
+  TEST_CHECK(out_w == 1);
+  TEST_CHECK(out_h == 1);
+  TEST_CHECK(out.size() == 3);
+  if (out.size() == 3) {
+    TEST_CHECK(out[0] == 63);
+    TEST_CHECK(out[1] == 127);
+    TEST_CHECK(out[2] == 191);
+  }
+}
+
 // FitTexturesToBudget shrinks a set of textures to a tight byte budget.
 void usdz_convert_fit_budget_test(void) {
   using namespace tinyusdz;

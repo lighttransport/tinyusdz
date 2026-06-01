@@ -5,11 +5,14 @@
 #include "unicode-xid.hh"
 #include "common-macros.inc"
 #include "value-types.hh"
+#include "external/fast_float/include/fast_float/fast_float.h"
 
 #include <cstring>
 #include <cstdint>
 #include <cmath>
 #include <array>
+#include <cstdlib>
+#include <limits>
 
 // Disable dragonbox's internal asserts for hardened builds
 // We handle all special cases (inf, nan, zero) before calling dragonbox
@@ -759,6 +762,172 @@ double atof(const char *p) {
 
 double atof(const std::string &s) {
   return atof(s.c_str());
+}
+
+//
+// Safe integer/double parse helpers (replacement for std::st*)
+// No exceptions — returns nullopt on error
+//
+
+nonstd::optional<int> atoi(const std::string &s) {
+  return atoi(s.c_str());
+}
+
+namespace {
+
+inline bool IsParseSpace(char c) {
+  return c == ' ' || c == '\t';
+}
+
+nonstd::optional<uint64_t> ParseUnsignedMagnitude(const char *s, bool *negative, const char **end) {
+  if (!s) {
+    return nonstd::nullopt;
+  }
+
+  while (IsParseSpace(*s)) {
+    ++s;
+  }
+
+  if (*s == '\0') {
+    return nonstd::nullopt;
+  }
+
+  bool is_negative = false;
+
+  if (*s == '-') {
+    is_negative = true;
+    ++s;
+  } else if (*s == '+') {
+    ++s;
+  }
+
+  if (*s == '\0') {
+    return nonstd::nullopt;
+  }
+
+  uint64_t result = 0;
+  const char *p = s;
+  const uint64_t positive_limit = static_cast<uint64_t>((std::numeric_limits<int64_t>::max)());
+  const uint64_t negative_limit = positive_limit + 1u;
+  const uint64_t limit = is_negative ? negative_limit : positive_limit;
+
+  while (*p >= '0' && *p <= '9') {
+    const uint64_t digit = static_cast<uint64_t>(*p - '0');
+
+    if (result > limit / 10u || (result == limit / 10u && digit > limit % 10u)) {
+      return nonstd::nullopt;
+    }
+    result *= 10;
+    result += digit;
+    ++p;
+  }
+
+  if (p == s) {
+    return nonstd::nullopt;
+  }
+
+  *negative = is_negative;
+  *end = p;
+  return result;
+}
+
+inline bool HasTrailingNonSpace(const char *p) {
+  while (*p != '\0') {
+    if (!IsParseSpace(*p)) {
+      return true;
+    }
+    ++p;
+  }
+  return false;
+}
+
+}  // namespace
+
+nonstd::optional<int> atoi(const char *s) {
+  bool negative = false;
+  const char *end = nullptr;
+  nonstd::optional<uint64_t> magnitude = ParseUnsignedMagnitude(s, &negative, &end);
+  if (!magnitude.has_value() || HasTrailingNonSpace(end)) {
+    return nonstd::nullopt;
+  }
+
+  if (negative) {
+    if (magnitude.value() > static_cast<uint64_t>(std::numeric_limits<int>::max()) + 1u) {
+      return nonstd::nullopt;
+    }
+    int64_t val = -static_cast<int64_t>(magnitude.value());
+    if (val < std::numeric_limits<int>::min()) {
+      return nonstd::nullopt;
+    }
+    return static_cast<int>(val);
+  } else {
+    if (magnitude.value() > static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+      return nonstd::nullopt;
+    }
+    return static_cast<int>(magnitude.value());
+  }
+}
+
+nonstd::optional<int64_t> atoll(const std::string &s) {
+  return atoll(s.c_str());
+}
+
+nonstd::optional<int64_t> atoll(const char *s) {
+  bool negative = false;
+  const char *end = nullptr;
+  nonstd::optional<uint64_t> magnitude = ParseUnsignedMagnitude(s, &negative, &end);
+  if (!magnitude.has_value() || HasTrailingNonSpace(end)) {
+    return nonstd::nullopt;
+  }
+
+  if (negative) {
+    const uint64_t min_magnitude = static_cast<uint64_t>((std::numeric_limits<int64_t>::max)()) + 1u;
+    if (magnitude.value() == min_magnitude) {
+      return (std::numeric_limits<int64_t>::min)();
+    }
+    return -static_cast<int64_t>(magnitude.value());
+  }
+  return static_cast<int64_t>(magnitude.value());
+}
+
+nonstd::optional<float> atof_float(const std::string &s) {
+  return atof_float(s.c_str());
+}
+
+nonstd::optional<float> atof_float(const char *s) {
+  if (!s) {
+    return nonstd::nullopt;
+  }
+  while (IsParseSpace(*s)) {
+    ++s;
+  }
+  float result = 0.0f;
+  const char *end = s + strlen(s);
+  auto r = fast_float::from_chars(s, end, result);
+  if (r.ec == std::errc{} && !HasTrailingNonSpace(r.ptr)) {
+    return result;
+  }
+  return nonstd::nullopt;
+}
+
+nonstd::optional<double> atod(const std::string &s) {
+  return atod(s.c_str());
+}
+
+nonstd::optional<double> atod(const char *s) {
+  if (!s) {
+    return nonstd::nullopt;
+  }
+  while (IsParseSpace(*s)) {
+    ++s;
+  }
+  double result = 0.0;
+  const char *end = s + strlen(s);
+  auto r = fast_float::from_chars(s, end, result);
+  if (r.ec == std::errc{} && !HasTrailingNonSpace(r.ptr)) {
+    return result;
+  }
+  return nonstd::nullopt;
 }
 
 /*
