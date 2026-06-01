@@ -234,9 +234,17 @@ static ParseResult ParseTypedAttributeUnified(
   Attribute &attr = prop.attribute();
   std::string attr_type_name = attr.type_name();
 
-  // Check type match
+  // Check type match. Role types (for example color4f) are accepted when
+  // their underlying storage matches the schema type (for example float4).
+  const uint32_t target_underlying_type_id =
+      value::TypeTraits<T>::underlying_type_id();
+  const uint32_t attr_underlying_type_id =
+      value::GetUnderlyingTypeId(attr_type_name);
   if ((value::TypeTraits<T>::type_name() != attr_type_name) &&
-      (value::TypeTraits<T>::underlying_type_name() != attr_type_name)) {
+      (value::TypeTraits<T>::underlying_type_name() != attr_type_name) &&
+      (target_underlying_type_id == value::TYPE_ID_INVALID ||
+       attr_underlying_type_id == value::TYPE_ID_INVALID ||
+       target_underlying_type_id != attr_underlying_type_id)) {
     DCOUT("tyname = " << value::TypeTraits<T>::type_name() << ", attr.type = " << attr_type_name);
     ret.code = ParseResult::ResultCode::TypeMismatch;
     ret.err = fmt::format("Property type mismatch. {} expects type `{}` but defined as type `{}`",
