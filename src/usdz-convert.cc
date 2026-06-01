@@ -12,6 +12,8 @@
 #include "tinyusdz.hh"
 #include "composition.hh"
 #include "asset-resolution.hh"
+#include "usda-writer.hh"
+#include "usdc-writer.hh"
 #include "usdShade.hh"
 #include "core/animatable.hh"
 #include "image-loader.hh"
@@ -29,6 +31,64 @@ void Log(bool verbose, const std::string &msg) {
   if (verbose) {
     std::printf("[tusdzconvert] %s\n", msg.c_str());
   }
+}
+
+// Compute a relative path from `base_dir` to `target`.
+// Both paths should be normalized (forward slashes, no trailing slash).
+// Returns `target` unchanged when paths cannot be relativized (e.g. different
+// roots on Windows).
+std::string ToRelativePath(const std::string &base_dir,
+                           const std::string &target) {
+  // Normalize backslashes.
+  std::string b = base_dir;
+  std::string t = target;
+  std::replace(b.begin(), b.end(), '\\', '/');
+  std::replace(t.begin(), t.end(), '\\', '/');
+  // Strip trailing slashes.
+  while (!b.empty() && b.back() == '/') b.pop_back();
+  while (!t.empty() && t.back() == '/') t.pop_back();
+  // If either is empty or not absolute, return target as-is.
+  if (b.empty() || t.empty() || b[0] != '/' || t[0] != '/') {
+    return target;
+  }
+  // Split into components.
+  auto split = [](const std::string &p) -> std::vector<std::string> {
+    std::vector<std::string> parts;
+    size_t start = 0;
+    while (start < p.size()) {
+      size_t slash = p.find('/', start);
+      if (slash == std::string::npos) {
+        parts.push_back(p.substr(start));
+        break;
+      }
+      if (slash > start) {
+        parts.push_back(p.substr(start, slash - start));
+      }
+      start = slash + 1;
+    }
+    return parts;
+  };
+  std::vector<std::string> bparts = split(b);
+  std::vector<std::string> tparts = split(t);
+  // Find common prefix length.
+  size_t common = 0;
+  while (common < bparts.size() && common < tparts.size() &&
+         bparts[common] == tparts[common]) {
+    common++;
+  }
+  // Build relative path.
+  std::string rel;
+  for (size_t i = common; i < bparts.size(); i++) {
+    rel += "../";
+  }
+  for (size_t i = common; i < tparts.size(); i++) {
+    if (i > common) rel += "/";
+    rel += tparts[i];
+  }
+  if (rel.empty()) {
+    rel = ".";
+  }
+  return rel;
 }
 
 bool IsAllowedTextureExt(const std::string &ext_lower) {
@@ -188,6 +248,14 @@ bool ReadAssetBytes(AssetResolutionResolver &resolver, const std::string &assetP
                     std::string *err) {
   const std::string resolved = resolver.resolve(assetPath);
   if (resolved.empty()) {
+    // The resolver may not handle absolute filesystem paths.  Fall back to
+    // reading the path directly if it is a plausible absolute path.
+    if (io::IsAbsPath(assetPath)) {
+      std::string ioerr;
+      if (io::ReadWholeFile(out, &ioerr, assetPath)) {
+        return true;
+      }
+    }
     if (err) (*err) = "Asset not found: " + assetPath;
     return false;
   }
@@ -502,9 +570,14 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   Log(options.verbose,
       "Found " + std::to_string(textures.size()) + " texture reference(s).");
 
-  // --- Process unique textures, build the asset map ---
+  // Texture packing is only relevant when writing a USDZ archive.
+  // For flat USDC/USDA output, textures remain as external references.
   std::map<std::string, std::vector<uint8_t>> assets;  // archive name -> bytes
   std::map<std::string, std::string> path_to_archive;  // original -> archive name
+
+  if (options.output_format == OutputFormat::USDZ) {
+    Log(options.verbose,
+        "Processing textures for USDZ packaging.");
 
   const bool budget_mode = options.target_texture_bytes > 0;
 
@@ -687,29 +760,84 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     }
   }
 
-  // --- Write + validate USDZ ---
-  Log(options.verbose, "Writing USDZ: " + options.output);
+  } else {
+    Log(options.verbose,
+        "Rewriting absolute texture paths to relative (flat output).");
+    std::string out_dir = io::GetBaseDir(options.output);
+    if (out_dir.empty()) {
+      out_dir = ".";
+    }
+    std::map<std::string, std::string> remap;
+    for (auto &kv : textures) {
+      const std::string &orig = kv.second;
+      if (remap.count(orig)) continue;
+      // Only relativize absolute paths.
+      if (orig.empty() || !io::IsAbsPath(orig)) {
+        continue;
+      }
+      std::string rel = ToRelativePath(out_dir, orig);
+      if (rel != orig) {
+        remap[orig] = rel;
+      }
+    }
+    if (!remap.empty()) {
+      size_t n = RemapTextureAssetPaths(stage, remap);
+      Log(options.verbose,
+          "Relativized " + std::to_string(n) + " texture path(s).");
+    }
+  }  // if USDZ
+
+  // --- Write output ---
+  bool write_ok = false;
   std::string swarn, serr;
-  if (!tinyusdz::SaveAsUSDZToFile(options.output, stage, assets, &swarn, &serr)) {
-    if (err) (*err) = "Failed to write USDZ: " + serr;
+  switch (options.output_format) {
+    case OutputFormat::USDZ: {
+      Log(options.verbose, "Writing USDZ: " + options.output);
+      write_ok =
+          tinyusdz::SaveAsUSDZToFile(options.output, stage, assets, &swarn, &serr);
+      if (!write_ok && err) (*err) = "Failed to write USDZ: " + serr;
+      break;
+    }
+    case OutputFormat::USDC: {
+      Log(options.verbose, "Writing USDC: " + options.output);
+      write_ok = tinyusdz::usdc::SaveAsUSDCToFile(options.output, stage, &swarn, &serr);
+      if (!write_ok && err) (*err) = "Failed to write USDC: " + serr;
+      break;
+    }
+    case OutputFormat::USDA: {
+      Log(options.verbose, "Writing USDA: " + options.output);
+      write_ok = tinyusdz::usda::SaveAsUSDA(options.output, stage, &swarn, &serr);
+      if (!write_ok && err) (*err) = "Failed to write USDA: " + serr;
+      break;
+    }
+  }
+  if (!write_ok) {
     return false;
   }
   if (warn) (*warn) += swarn;
 
-  // Read back + validate.
-  std::vector<uint8_t> usdz_bytes;
-  std::string ioerr;
-  if (io::ReadWholeFile(&usdz_bytes, &ioerr, options.output, /*max*/ 512 * 1024 * 1024)) {
-    std::string vwarn, verr;
-    if (!tinyusdz::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(), &vwarn,
-                                &verr)) {
-      if (warn) {
-        (*warn) += "USDZ validation reported issues: " + verr + "\n";
+  // When writing USDZ, read back and validate.
+  if (options.output_format == OutputFormat::USDZ) {
+    std::vector<uint8_t> usdz_bytes;
+    std::string ioerr;
+    if (io::ReadWholeFile(&usdz_bytes, &ioerr, options.output,
+                          /*max*/ 512 * 1024 * 1024)) {
+      std::string vwarn, verr;
+      if (!tinyusdz::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(), &vwarn,
+                                  &verr)) {
+        if (warn) {
+          (*warn) += "USDZ validation reported issues: " + verr + "\n";
+        }
+      } else {
+        Log(options.verbose, "USDZ validation: OK");
       }
-    } else {
-      Log(options.verbose, "USDZ validation: OK");
+      if (stats) stats->output_size = usdz_bytes.size();
     }
-    if (stats) stats->output_size = usdz_bytes.size();
+  } else {
+    if (stats) {
+      // For flat files, report filesystem size when available.
+      stats->output_size = 0;
+    }
   }
 
   return true;
