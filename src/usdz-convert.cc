@@ -42,11 +42,17 @@ bool IsAllowedTextureExt(const std::string &ext_lower) {
 bool IsUnsafeUnresolvedTexturePath(const std::string &assetPath) {
   std::string p = assetPath;
   std::replace(p.begin(), p.end(), '\\', '/');
+  // Reject null bytes (could corrupt ZIP entry names).
+  if (p.find('\0') != std::string::npos) return true;
   return p.empty() || (p[0] == '/') || (p.find(':') != std::string::npos) ||
          (p == "..") || tinyusdz::startsWith(p, "../") ||
          (p.find("/../") != std::string::npos) ||
          tinyusdz::endsWith(p, "/..");
 }
+
+// Maximum ZIP entry name length (ZIP spec allows 64 KB, but we cap much lower
+// to prevent pathological entry names from causing issues).
+constexpr size_t kMaxArchiveNameLen = 256;
 
 std::string SanitizeArchiveName(const std::string &assetPath) {
   std::string p = assetPath;
@@ -68,6 +74,10 @@ std::string SanitizeArchiveName(const std::string &assetPath) {
   if (name.find("..") != std::string::npos) {
     name = "textures/texture";
   }
+  // Enforce maximum archive name length.
+  if (name.size() > kMaxArchiveNameLen) {
+    name = "textures/texture";
+  }
   return name;
 }
 
@@ -80,6 +90,7 @@ std::string ReplaceExtension(const std::string &name, const std::string &newExtN
 }
 
 // Read the (default, scalar) asset path string from a UsdUVTexture.file attr.
+// Path length is capped to prevent excessive memory usage downstream.
 bool ReadTextureFilePath(const UsdUVTexture &tex, std::string *out) {
   const auto av = tex.file.get_value();  // optional<Animatable<AssetPath>>
   if (!av) {
@@ -92,7 +103,12 @@ bool ReadTextureFilePath(const UsdUVTexture &tex, std::string *out) {
   if (!av.value().get_scalar(&ap)) {
     return false;
   }
-  (*out) = ap.GetAssetPath();
+  std::string path = ap.GetAssetPath();
+  constexpr size_t kMaxPathLength = 4096;
+  if (path.size() > kMaxPathLength) {
+    return false;
+  }
+  (*out) = path;
   return !out->empty();
 }
 
@@ -104,10 +120,13 @@ void WriteTextureFilePath(UsdUVTexture *tex, const std::string &path) {
 
 // Collect mutable UsdUVTexture pointers (paired with their current file path)
 // by recursively walking the stage's Prim tree.
+// Guards against excessive texture counts to prevent memory exhaustion.
 void CollectTextures(Prim &prim,
                      std::vector<std::pair<UsdUVTexture *, std::string>> *out,
                      int depth = 0) {
   if (depth > 512) return;  // guard against stack overflow
+  constexpr size_t kMaxTextureCount = 10000;
+  if (out->size() >= kMaxTextureCount) return;  // guard against memory exhaustion
   Shader *shd = prim.get_data().as<Shader>();
   if (shd && shd->info_id == "UsdUVTexture") {
     UsdUVTexture *tex = shd->value.as<UsdUVTexture>();
@@ -577,19 +596,35 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     std::string unique_name = archive_name;
     uint32_t suffix = 1;
     const uint32_t kMaxSuffix = 100000;
+    bool collision_ok = true;
     while (assets.count(unique_name) &&
            assets[unique_name] != out_bytes) {
       if (suffix > kMaxSuffix) {
-        if (warn) (*warn) += "Too many archive name collisions for " + archive_name + "\n";
+        if (warn) {
+          (*warn) += "Too many archive name collisions for " + archive_name +
+                     "; risking overwrite — skipping texture.\n";
+        }
+        // Exhausted suffixes: do NOT proceed with a name that already exists
+        // with different bytes (that would overwrite the existing entry in
+        // the ZIP archive). Skip this texture instead.
+        collision_ok = false;
         break;
       }
       const std::string ext = io::GetFileExtension(archive_name);
       size_t base_len = (archive_name.size() > ext.size() + 1)
           ? archive_name.size() - ext.size() - 1
           : archive_name.size();
-      unique_name = archive_name.substr(0, base_len) +
-                    "_" + std::to_string(suffix) + "." + ext;
+      if (ext.empty()) {
+        unique_name = archive_name.substr(0, base_len) +
+                      "_" + std::to_string(suffix);
+      } else {
+        unique_name = archive_name.substr(0, base_len) +
+                      "_" + std::to_string(suffix) + "." + ext;
+      }
       suffix++;
+    }
+    if (!collision_ok) {
+      continue;  // skip this texture; do NOT add to assets
     }
     archive_name = unique_name;
 
