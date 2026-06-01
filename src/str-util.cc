@@ -5,7 +5,15 @@
 #include "unicode-xid.hh"
 #include "common-macros.inc"
 #include "value-types.hh"
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
 #include "external/fast_float/include/fast_float/fast_float.h"
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 #include <cstring>
 #include <cstdint>
