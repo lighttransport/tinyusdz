@@ -375,19 +375,23 @@ double atof(const std::string &s);
 ///
 /// Return nonstd::optional<T> with the parsed value, or nullopt on error.
 /// Uses fast_float::from_chars for float/double, manual parsing for int.
-/// No exceptions thrown — check .has_value() to detect errors.
+/// No exceptions thrown - check .has_value() to detect errors.
 ///
 /// @param[in] s String to parse
 /// @return optional<T> with parsed value, or nullopt on invalid input
 ///
 nonstd::optional<int> atoi(const std::string &s);
+nonstd::optional<uint32_t> atou(const std::string &s);
 nonstd::optional<int64_t> atoll(const std::string &s);
+nonstd::optional<uint64_t> atoull(const std::string &s);
 nonstd::optional<float> atof_float(const std::string &s);
 nonstd::optional<double> atod(const std::string &s);
 
 // char* overloads
 nonstd::optional<int> atoi(const char *s);
+nonstd::optional<uint32_t> atou(const char *s);
 nonstd::optional<int64_t> atoll(const char *s);
+nonstd::optional<uint64_t> atoull(const char *s);
 nonstd::optional<float> atof_float(const char *s);
 nonstd::optional<double> atod(const char *s);
 

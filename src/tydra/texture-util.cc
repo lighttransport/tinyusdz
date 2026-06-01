@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <climits>
+#include <cmath>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -32,6 +33,18 @@
 
 namespace tinyusdz {
 namespace tydra {
+
+namespace {
+
+uint8_t ScalarFactorToByte(float factor) {
+	if (!std::isfinite(factor)) {
+		factor = 0.0f;
+	}
+	factor = (std::max)(0.0f, (std::min)(1.0f, factor));
+	return static_cast<uint8_t>(factor * 255.0f);
+}
+
+} // namespace
 
 bool BuildOcclusionRoughnessMetallicTexture(
 		const float occlusionFactor,
@@ -207,9 +220,9 @@ bool BuildOcclusionRoughnessMetallicTexture(
 		}
 	} 
 
-	uint8_t occlusionValue = uint8_t((std::max)((std::min)(255, int(occlusionFactor * 255.0f)), 0));
-	uint8_t metallicValue = uint8_t((std::max)((std::min)(255, int(metallicFactor * 255.0f)), 0));
-	uint8_t roughnessValue = uint8_t((std::max)((std::min)(255, int(roughnessFactor * 255.0f)), 0));
+	uint8_t occlusionValue = ScalarFactorToByte(occlusionFactor);
+	uint8_t metallicValue = ScalarFactorToByte(metallicFactor);
+	uint8_t roughnessValue = ScalarFactorToByte(roughnessFactor);
 
 	size_t resize_size;
 	if (!safe::mul3(maxImageWidth, maxImageHeight, size_t(3), &resize_size)) {

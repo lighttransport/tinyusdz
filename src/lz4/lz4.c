@@ -566,7 +566,7 @@ LZ4_memcpy_using_offset(BYTE* dstPtr, const BYTE* srcPtr, BYTE* dstEnd, const si
 **************************************/
 static unsigned LZ4_NbCommonBytes (reg_t val)
 {
-    assert(val != 0);
+    if (val == 0) return 0;
     if (LZ4_isLittleEndian()) {
         if (sizeof(val) == 8) {
 #       if defined(_MSC_VER) && (_MSC_VER >= 1800) && (defined(_M_AMD64) && !defined(_M_ARM64EC)) && !defined(LZ4_FORCE_SW_BITCOUNT)
@@ -1454,7 +1454,7 @@ int LZ4_compress_default(const char* src, char* dst, int srcSize, int maxOutputS
 static int LZ4_compress_destSize_extState (LZ4_stream_t* state, const char* src, char* dst, int* srcSizePtr, int targetDstSize)
 {
     void* const s = LZ4_initStream(state, sizeof (*state));
-    assert(s != NULL); (void)s;
+    if (s == NULL) return 0;
 
     if (targetDstSize >= LZ4_compressBound(*srcSizePtr)) {  /* compression success is guaranteed */
         return LZ4_compress_fast_extState(state, src, dst, *srcSizePtr, targetDstSize, 1);
