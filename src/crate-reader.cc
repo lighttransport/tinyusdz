@@ -2348,13 +2348,13 @@ bool CrateReader::ReadTOC() {
 
   DCOUT("toc sections = " << num_sections);
 
-  _toc.sections.resize(static_cast<size_t>(num_sections));
-
   size_t toc_bytes{0};
-  if (!safe::mul(num_sections, sizeof(Section), &toc_bytes)) {
-    PUSH_ERROR("Integer overflow in TOC sections size computation");
+  if (!safe::n_to_size<Section>(num_sections, &toc_bytes)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in TOC sections size computation");
   }
   CHECK_MEMORY_USAGE(toc_bytes);
+
+  _toc.sections.resize(static_cast<size_t>(num_sections));
 
   for (size_t i = 0; i < num_sections; i++) {
     if (!ReadSection(&_toc.sections[i])) {

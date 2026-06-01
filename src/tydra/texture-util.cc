@@ -56,31 +56,17 @@ bool BuildOcclusionRoughnessMetallicTexture(
     size_t &dstWidth,	
     size_t &dstHeight)	
 {
-	if (occlusionChannel >= occlusionImageChannels) {
-		dst.clear(); dstWidth = 0; dstHeight = 0;
-		return false;
-	}
-	if (roughnessChannel >= roughnessImageChannels) {
-		dst.clear(); dstWidth = 0; dstHeight = 0;
-		return false;
-	}
-	if (metallicChannel >= metallicImageChannels) {
-		dst.clear(); dstWidth = 0; dstHeight = 0;
-		return false;
-	}
-
-	// Validate channel counts (1-4 only, stbir limitation).
-	if (occlusionImageChannels < 1 || occlusionImageChannels > 4) {
-		dst.clear(); dstWidth = 0; dstHeight = 0;
-		return false;
-	}
-	if (roughnessImageChannels < 1 || roughnessImageChannels > 4) {
-		dst.clear(); dstWidth = 0; dstHeight = 0;
-		return false;
-	}
-	if (metallicImageChannels < 1 || metallicImageChannels > 4) {
-		dst.clear(); dstWidth = 0; dstHeight = 0;
-		return false;
+	// Validate channel counts only for present images. Empty inputs are allowed
+	// and use the scalar factors below.
+	auto validate_channel = [](const std::vector<uint8_t> &data, size_t channels, size_t channel) -> bool {
+		if (data.empty()) return true;
+		if (channels < 1 || channels > 4) return false;
+		return channel < channels;
+	};
+	if (!validate_channel(occlusionImageData, occlusionImageChannels, occlusionChannel) ||
+	    !validate_channel(roughnessImageData, roughnessImageChannels, roughnessChannel) ||
+	    !validate_channel(metallicImageData, metallicImageChannels, metallicChannel)) {
+		dst.clear(); dstWidth = 0; dstHeight = 0; return false;
 	}
 
 	// Validate source data buffer sizes.

@@ -208,6 +208,8 @@ void string_pool_many_strings_test(void) {
 
   for (int i = 0; i < N; i++) {
     TEST_CHECK(ptrs[i] != nullptr);
+    std::string key = "pool_growth_test_" + std::to_string(i);
+    TEST_CHECK(std::string(ptrs[i]) == key);
   }
   for (int i = 0; i < N; i++) {
     for (int j = i + 1; j < N; j++) {
