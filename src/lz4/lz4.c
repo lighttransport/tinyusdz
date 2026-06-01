@@ -1354,8 +1354,9 @@ LZ4_FORCE_INLINE int LZ4_compress_generic(
 
 int LZ4_compress_fast_extState(void* state, const char* source, char* dest, int inputSize, int maxOutputSize, int acceleration)
 {
-    LZ4_stream_t_internal* const ctx = & LZ4_initStream(state, sizeof(LZ4_stream_t)) -> internal_donotuse;
-    if (ctx == NULL) return -1;
+    LZ4_stream_t* const stream = LZ4_initStream(state, sizeof(LZ4_stream_t));
+    if (stream == NULL) return -1;
+    LZ4_stream_t_internal* const ctx = &stream->internal_donotuse;
     if (acceleration < 1) acceleration = LZ4_ACCELERATION_DEFAULT;
     if (acceleration > LZ4_ACCELERATION_MAX) acceleration = LZ4_ACCELERATION_MAX;
     if (maxOutputSize >= LZ4_compressBound(inputSize)) {
@@ -2571,8 +2572,9 @@ LZ4_FORCE_O2 int
 LZ4_decompress_fast_continue (LZ4_streamDecode_t* LZ4_streamDecode,
                         const char* source, char* dest, int originalSize)
 {
+    if (LZ4_streamDecode == NULL) return -1;
     LZ4_streamDecode_t_internal* const lz4sd =
-        (LZ4_streamDecode!=NULL) ? &LZ4_streamDecode->internal_donotuse : NULL;
+        &LZ4_streamDecode->internal_donotuse;
     int result;
 
     DEBUGLOG(5, "LZ4_decompress_fast_continue (toDecodeSize=%i)", originalSize);

@@ -11,6 +11,7 @@
 #include "tydra/urdf-to-usd.hh"
 #include "usda-writer.hh"
 #include "usdc-writer.hh"
+#include "str-util.hh"
 
 #include <algorithm>
 #include <array>
@@ -717,8 +718,15 @@ bool LoadOBJ(const fs::path &filename, MeshData *mesh, std::string *err) {
       std::string tok;
       while (ss >> tok) {
         const size_t slash = tok.find('/');
-        const int idx = std::stoi(slash == std::string::npos ? tok : tok.substr(0, slash));
-        face.push_back(idx > 0 ? idx - 1 : int(vertices.size()) + idx);
+        {
+          nonstd::optional<int> idx_opt = tinyusdz::atoi(slash == std::string::npos ? tok : tok.substr(0, slash));
+          if (!idx_opt.has_value()) {
+            std::cerr << "Invalid face vertex index: " << tok << "\n";
+            return false;
+          }
+          int idx_val = idx_opt.value();
+          face.push_back(idx_val > 0 ? idx_val - 1 : static_cast<int>(vertices.size()) + idx_val);
+        }
       }
       for (size_t i = 1; i + 1 < face.size(); i++) {
         const int tri[3] = {face[0], face[i], face[i + 1]};
