@@ -65,6 +65,9 @@ void PrintUsage(const char *prog) {
       "  -h, -help                 Show this help.\n"
       "  -v, -verbose              Verbose logging.\n"
       "  -noFlatten                Do not compose/flatten before writing (default: flatten).\n"
+      "  --outputFormat <fmt>     Output format: usdz (default), usdc, or usda.\n"
+      "                            usdc/usda produce flat files (textures stay as external refs).\n"
+      "  --pxr-usdcat <path>      Also run pxrUSD usdcat --flatten to produce a reference file.\n"
       "  -arkitCompatible          Apply ARKit-friendly stage metadata (Y-up, etc).\n"
       "  -metersPerUnit <value>    Override stage metersPerUnit.\n"
       "  -upAxis <X|Y|Z>           Override stage up axis.\n"
@@ -320,6 +323,8 @@ int main(int argc, char **argv) {
   parser.add_option("-packA", true, "A channel source");
   parser.add_option("-packChannels", true, "Output channels 1-4");
   parser.add_option("-packSize", true, "WxH");
+  parser.add_option("--outputFormat", true, "Output format: usdz|usdc|usda");
+  parser.add_option("--pxr-usdcat", true, "Path to pxrUSD usdcat for reference file");
 
   if (!parser.parse(argc, argv)) {
     std::cerr << "ERROR: failed to parse arguments.\n\n";
@@ -472,6 +477,28 @@ int main(int argc, char **argv) {
     }
   }
 
+  if (parser.is_set("--outputFormat")) {
+    std::string f;
+    parser.get("--outputFormat", f);
+    f = to_lower(f);
+    if (f == "usdz") {
+      opts.output_format = usdz::OutputFormat::USDZ;
+    } else if (f == "usdc") {
+      opts.output_format = usdz::OutputFormat::USDC;
+    } else if (f == "usda") {
+      opts.output_format = usdz::OutputFormat::USDA;
+    } else {
+      std::cerr << "ERROR: --outputFormat must be usdz, usdc, or usda (got '"
+                << f << "').\n";
+      return 1;
+    }
+  }
+
+  std::string pxr_usdcat_path;
+  if (parser.is_set("--pxr-usdcat")) {
+    parser.get("--pxr-usdcat", pxr_usdcat_path);
+  }
+
   usdz::UsdzConvertStats stats;
   std::string warn, err;
   if (!usdz::Convert(opts, &stats, &warn, &err)) {
@@ -487,5 +514,25 @@ int main(int argc, char **argv) {
             << ", resized: " << stats.num_textures_resized
             << ", reencoded: " << stats.num_textures_reencoded
             << ", passthrough: " << stats.num_textures_passthrough << "\n";
+
+  // Optionally run pxrUSD usdcat to produce a reference file for comparison.
+  // usdcat's --usdFormat flag requires a .usd extension on the output file.
+  if (!pxr_usdcat_path.empty()) {
+    std::string ref_fmt = "usdc";
+    if (opts.output_format == usdz::OutputFormat::USDA) {
+      ref_fmt = "usda";
+    }
+    std::string ref_path = opts.output + ".reference.usd";
+    std::string cmd = pxr_usdcat_path + " --flatten --usdFormat " + ref_fmt +
+                      " -o " + ref_path + " " + pos[0];
+    std::cout << "Running reference: " << cmd << "\n";
+    int rc = std::system(cmd.c_str());
+    if (rc == 0) {
+      std::cout << "Reference written: " << ref_path << "\n";
+    } else {
+      std::cerr << "WARN: pxrUSD usdcat returned exit code " << rc << "\n";
+    }
+  }
+
   return 0;
 }
