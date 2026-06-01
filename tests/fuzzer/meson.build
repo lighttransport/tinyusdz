@@ -71,10 +71,9 @@ tinyusdz_sources=[
   '../../src/tydra/shader-network.cc',
   '../../src/tydra/scene-access.cc',
   '../../src/tydra/attribute-eval.cc',
-  '../../src/tydra/attribute-eval-typed.cc',
-  '../../src/tydra/attribute-eval-typed-fallback.cc',
-  '../../src/tydra/attribute-eval-typed-animatable.cc',
-  '../../src/tydra/attribute-eval-typed-animatable-fallback.cc',
+  '../../src/tydra/attribute-eval-typed-all.cc',
+  '../../src/tydra/attribute-eval-typed-inst-scalar.cc',
+  '../../src/tydra/attribute-eval-typed-inst-array.cc',
   '../../src/tydra/texture-util.cc',
   '../../src/tydra/materialx-to-json.cc',
   '../../src/tydra/bone-util.cc',
@@ -221,4 +220,49 @@ executable('fuzz_subdiv_tinyusdz',
   include_directories : incdirs,
   cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1',
               '-DTINYUSDZ_WITH_TINYSUBDIV'],
+  link_args : '-fsanitize=address,fuzzer' )
+
+executable('fuzz_lz4_null_deref',
+  'lz4_null_deref_fuzzmain.cc',
+  '../../src/lz4/lz4.c',
+  install: true,
+  include_directories : incdirs,
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  link_args : '-fsanitize=address,fuzzer' )
+
+executable('fuzz_str_parse_null',
+  'str_parse_null_fuzzmain.cc',
+  '../../src/str-util.cc',
+  '../../src/value-types.cc',
+  install: true,
+  include_directories : incdirs,
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  link_args : '-fsanitize=address,fuzzer' )
+
+executable('fuzz_tiny_hashmap_collision',
+  'tiny_hashmap_collision_fuzzmain.cc',
+  install: true,
+  include_directories : incdirs,
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  link_args : '-fsanitize=address,fuzzer' )
+
+executable('fuzz_string_pool_stability',
+  'string_pool_stability_fuzzmain.cc',
+  install: true,
+  include_directories : incdirs,
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  link_args : '-fsanitize=address,fuzzer' )
+
+executable('fuzz_orm_texture_bounds',
+  'orm_texture_bounds_fuzzmain.cc',
+  '../../src/tydra/texture-util.cc',
+  '../../src/image-writer.cc',
+  '../../src/image-util.cc',
+  '../../src/io-util.cc',
+  '../../src/tiny-format.cc',
+  '../../src/value-types.cc',
+  '../../src/external/fpng.cpp',
+  install: true,
+  include_directories : incdirs,
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
