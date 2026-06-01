@@ -1,12 +1,15 @@
 # tusdzconvert
 
-Convert USD (`.usda` / `.usdc` / `.usdz`) into an ARKit-friendly USDZ package.
+Convert USD (`.usda` / `.usdc` / `.usdz`) into an ARKit-friendly USDZ package,
+or flatten to a single USDC/USDA file.
 
 Capabilities:
 
 - **Read USD, pack to USDZ** — loads any USD format and writes a spec-compliant
   USDZ (AOUSD Core Spec §17: uncompressed zip, 64-byte aligned, root layer first),
   then validates the result with `ValidateUSDZ`.
+- **Flat USDC / USDA output** — write a single flattened binary or ASCII file
+  (textures stay as external references) with `--outputFormat usdc` or `--outputFormat usda`.
 - **Composition flatten** — resolves sublayers / references / payloads / variants
   (LIVRPS) into a single flattened stage before writing.
 - **Texture resize** — caps each texture's longest edge.
@@ -43,6 +46,8 @@ tusdzconvert -repack <outputImage> -packR <src> [-packG <src> ...] [options]
 |------|---------|
 | `-v`, `-verbose` | Verbose logging |
 | `-noFlatten` | Do not compose/flatten (default: flatten) |
+| `--outputFormat <fmt>` | Output format: `usdz` (default), `usdc`, or `usda`. `usdc`/`usda` produce flat files with external texture references |
+| `--pxr-usdcat <path>` | After conversion, also run pxrUSD `usdcat --flatten` to produce a reference file for comparison (e.g. `output.usdz.reference.usdc`) |
 | `-arkitCompatible` | Apply ARKit-friendly stage metadata (Y-up, etc) |
 | `-metersPerUnit <v>` | Override stage `metersPerUnit` |
 | `-upAxis <X\|Y\|Z>` | Override stage up axis |
@@ -96,6 +101,15 @@ tusdzconvert -repack packed.png -packR gloss.png:0 -packG rough.png:0 -packChann
 ```bash
 # Flatten + ARKit + downscale textures to 1024 px
 tusdzconvert model.usd model.usdz -arkitCompatible -resizeTextures 1024 -v
+
+# Flat USDC (binary) without texture embed
+tusdzconvert model.usd model.usdc --outputFormat usdc
+
+# Flat USDA (ASCII) for human-readable diff
+tusdzconvert model.usd model.usda --outputFormat usda
+
+# USDZ with pxrUSD reference file for comparison
+tusdzconvert model.usd model.usdz --pxr-usdcat ../OpenUSD/dist/bin/usdcat
 
 # Repack a USDZ, transcoding every texture to fpnge-encoded PNG
 tusdzconvert in.usdz out.usdz -textureFormat png -pngEncoder fpnge

@@ -25,6 +25,14 @@ namespace tinyusdz {
 namespace usdz {
 
 ///
+/// Output container format.
+/// USDZ : ZIP archive with USDC root layer + embedded textures (default).
+/// USDC : single flat binary Crate file (textures stay as external refs).
+/// USDA : single flat ASCII file (textures stay as external refs).
+///
+enum class OutputFormat { USDZ, USDC, USDA };
+
+///
 /// Output texture format policy.
 /// KeepOriginal : re-encode in the source format (PNG -> PNG via fpnge, etc).
 /// PNG          : transcode every texture to PNG (fpnge when available).
@@ -82,6 +90,9 @@ struct UsdzConvertOptions {
   // Re-encode textures even when no resize/transcode is required. When false,
   // unmodified textures are copied through byte-for-byte.
   bool reencode{true};
+
+  // Output container format (USDZ, USDC, or USDA).
+  OutputFormat output_format{OutputFormat::USDZ};
 
   // Verbose logging to stdout.
   bool verbose{false};
