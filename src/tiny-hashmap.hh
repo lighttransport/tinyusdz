@@ -384,7 +384,7 @@ class HashMap {
     grow_if_needed();
     auto r = insert_into_table(Key(k), Value());
     if (!r.ok) {
-      static Value sink{};
+      static thread_local Value sink{};
       sink = Value();
       return sink;
     }
@@ -394,7 +394,7 @@ class HashMap {
     grow_if_needed();
     auto r = insert_into_table(std::move(k), Value());
     if (!r.ok) {
-      static Value sink{};
+      static thread_local Value sink{};
       sink = Value();
       return sink;
     }
@@ -407,7 +407,7 @@ class HashMap {
   Value &at(const Key &k) {
     size_type i = find_index(k);
     if (i == static_cast<size_type>(-1)) {
-      static Value sink{};
+      static thread_local Value sink{};
       sink = Value();
       return sink;
     }

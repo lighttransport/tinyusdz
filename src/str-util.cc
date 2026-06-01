@@ -766,7 +766,7 @@ double atof(const std::string &s) {
 
 //
 // Safe integer/double parse helpers (replacement for std::st*)
-// No exceptions — returns nullopt on error
+// No exceptions - returns nullopt on error
 //
 
 nonstd::optional<int> atoi(const std::string &s) {
@@ -776,7 +776,8 @@ nonstd::optional<int> atoi(const std::string &s) {
 namespace {
 
 inline bool IsParseSpace(char c) {
-  return c == ' ' || c == '\t';
+  return c == ' ' || c == '\t' || c == '\n' || c == '\r' ||
+         c == '\f' || c == '\v';
 }
 
 nonstd::optional<uint64_t> ParseUnsignedMagnitude(const char *s, bool *negative, const char **end) {
@@ -831,6 +832,51 @@ nonstd::optional<uint64_t> ParseUnsignedMagnitude(const char *s, bool *negative,
   return result;
 }
 
+nonstd::optional<uint64_t> ParseUnsignedInteger(const char *s,
+                                                uint64_t limit,
+                                                const char **end) {
+  if (!s) {
+    return nonstd::nullopt;
+  }
+
+  while (IsParseSpace(*s)) {
+    ++s;
+  }
+
+  if (*s == '\0') {
+    return nonstd::nullopt;
+  }
+
+  if (*s == '+') {
+    ++s;
+  } else if (*s == '-') {
+    return nonstd::nullopt;
+  }
+
+  if (*s == '\0') {
+    return nonstd::nullopt;
+  }
+
+  uint64_t result = 0;
+  const char *p = s;
+  while (*p >= '0' && *p <= '9') {
+    const uint64_t digit = static_cast<uint64_t>(*p - '0');
+    if (result > limit / 10u || (result == limit / 10u && digit > limit % 10u)) {
+      return nonstd::nullopt;
+    }
+    result *= 10u;
+    result += digit;
+    ++p;
+  }
+
+  if (p == s) {
+    return nonstd::nullopt;
+  }
+
+  *end = p;
+  return result;
+}
+
 inline bool HasTrailingNonSpace(const char *p) {
   while (*p != '\0') {
     if (!IsParseSpace(*p)) {
@@ -868,6 +914,20 @@ nonstd::optional<int> atoi(const char *s) {
   }
 }
 
+nonstd::optional<uint32_t> atou(const std::string &s) {
+  return atou(s.c_str());
+}
+
+nonstd::optional<uint32_t> atou(const char *s) {
+  const char *end = nullptr;
+  nonstd::optional<uint64_t> value = ParseUnsignedInteger(
+      s, static_cast<uint64_t>((std::numeric_limits<uint32_t>::max)()), &end);
+  if (!value.has_value() || HasTrailingNonSpace(end)) {
+    return nonstd::nullopt;
+  }
+  return static_cast<uint32_t>(value.value());
+}
+
 nonstd::optional<int64_t> atoll(const std::string &s) {
   return atoll(s.c_str());
 }
@@ -890,6 +950,20 @@ nonstd::optional<int64_t> atoll(const char *s) {
   return static_cast<int64_t>(magnitude.value());
 }
 
+nonstd::optional<uint64_t> atoull(const std::string &s) {
+  return atoull(s.c_str());
+}
+
+nonstd::optional<uint64_t> atoull(const char *s) {
+  const char *end = nullptr;
+  nonstd::optional<uint64_t> value =
+      ParseUnsignedInteger(s, (std::numeric_limits<uint64_t>::max)(), &end);
+  if (!value.has_value() || HasTrailingNonSpace(end)) {
+    return nonstd::nullopt;
+  }
+  return value.value();
+}
+
 nonstd::optional<float> atof_float(const std::string &s) {
   return atof_float(s.c_str());
 }
@@ -904,7 +978,8 @@ nonstd::optional<float> atof_float(const char *s) {
   float result = 0.0f;
   const char *end = s + strlen(s);
   auto r = fast_float::from_chars(s, end, result);
-  if (r.ec == std::errc{} && !HasTrailingNonSpace(r.ptr)) {
+  if (r.ec == std::errc{} && std::isfinite(result) &&
+      !HasTrailingNonSpace(r.ptr)) {
     return result;
   }
   return nonstd::nullopt;
@@ -924,7 +999,8 @@ nonstd::optional<double> atod(const char *s) {
   double result = 0.0;
   const char *end = s + strlen(s);
   auto r = fast_float::from_chars(s, end, result);
-  if (r.ec == std::errc{} && !HasTrailingNonSpace(r.ptr)) {
+  if (r.ec == std::errc{} && std::isfinite(result) &&
+      !HasTrailingNonSpace(r.ptr)) {
     return result;
   }
   return nonstd::nullopt;
