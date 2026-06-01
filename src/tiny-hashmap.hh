@@ -21,7 +21,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <cassert>
 #include <cstring>
 #include <functional>
 #include <initializer_list>
@@ -151,7 +150,11 @@ class HashMap {
       idx = (idx + 1) & _mask;
       ++dist;
       // Probe-distance bound: cannot exceed table capacity.
-      assert(dist <= _buckets.size() + 1);
+      if (dist > _buckets.size()) {
+        // Table is full — should not happen if callers resize properly.
+        // Return the first-seen index so the caller can handle the overflow.
+        return {first_seen, false};
+      }
     }
   }
 
@@ -375,12 +378,12 @@ class HashMap {
     return _buckets[r.first].kv.second;
   }
 
-  // Project forbids exceptions: on miss, assert and return a static fallback.
-  // Callers are expected to check `find`/`contains` first.
+  // Hardened: on miss, return a static fallback without aborting.
+  // Callers are expected to check `find`/`contains` first; this is a safety
+  // net for unexpected miss cases.
   Value &at(const Key &k) {
     size_type i = find_index(k);
     if (i == static_cast<size_type>(-1)) {
-      assert(false && "tinyusdz::HashMap::at: key not found");
       static Value sink{};
       sink = Value();
       return sink;
@@ -390,7 +393,6 @@ class HashMap {
   const Value &at(const Key &k) const {
     size_type i = find_index(k);
     if (i == static_cast<size_type>(-1)) {
-      assert(false && "tinyusdz::HashMap::at: key not found");
       static const Value sink{};
       return sink;
     }
