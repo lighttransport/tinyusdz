@@ -568,22 +568,23 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
   if (prop_name.compare(name) == 0) {
     if (table.count(name)) {
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
-      return ret;
+      goto end;
     }
 
     if (prop.is_attribute_connection()) {
       ret.code = ParseResult::ResultCode::ConnectionNotAllowed;
       ret.err = "Connection is not allowed for output terminal attribute.";
-      return ret;
-    } else {
+      goto end;
+    }
 
-      if (prop.get_property_type() != Property::Type::EmptyAttrib) {
-          DCOUT("Output Invalid shader output terminal attribute");
-          ret.err = "No value should be assigned for shader output terminal attribute.";
-          ret.code = ParseResult::ResultCode::InvalidConnection;
-          return ret;
-      }
+    if (prop.get_property_type() != Property::Type::EmptyAttrib) {
+        DCOUT("Output Invalid shader output terminal attribute");
+        ret.err = "No value should be assigned for shader output terminal attribute.";
+        ret.code = ParseResult::ResultCode::InvalidConnection;
+        goto end;
+    }
 
+    {
       const Attribute &attr = prop.get_attribute();
 
       std::string attr_type_name = attr.type_name();
@@ -594,14 +595,13 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
       DCOUT("value typename = " << value::TypeTraits<T>::type_name());
       DCOUT("attr-type_name = " << attr_type_name);
 
-
       // Accept a non-conformant authored type for a shader output terminal:
       // keep the schema type `T`(the canonical type inferred from `info:id` /
       // the UsdPreviewSurface spec) for connection/render semantics, remember
       // the authored type, and report a warning. This matches OpenUSD, which
       // does not validate shader output types. Only used when
       // `strict_type_check` is false.
-      auto accept_nonconformant = [&]() -> ParseResult {
+      auto accept_nonconformant = [&]() {
         target.set_authored(true);
         target.set_actual_type_name(attr_type_name);
         target.metas() = prop.get_attribute().metas();
@@ -613,7 +613,6 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
             "OpenUSD). Set strict_shader_type_check=true to make this an error.",
             name, attr_type_name, value::TypeTraits<T>::type_name());
         ret.code = ParseResult::ResultCode::Success;
-        return ret;
       };
 
       // First check if both types are same, then
@@ -625,35 +624,41 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
         target.metas() = prop.get_attribute().metas();
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
-        return ret;
-      } else if (value::TypeTraits<T>::is_role_type()) {
+        goto end;
+      }
+
+      if (value::TypeTraits<T>::is_role_type()) {
         if (attr_is_role_type) {
-          if (!strict_type_check) { return accept_nonconformant(); }
+          if (!strict_type_check) { accept_nonconformant(); goto end; }
           ret.code = ParseResult::ResultCode::TypeMismatch;
           ret.err = fmt::format("Attribute type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
-          return ret;
-        } else {
-          if (value::TypeTraits<T>::underlying_type_name() == attr_type_name) {
-            target.set_authored(true);
-            target.set_actual_type_name(attr_type_name);
-            target.metas() = prop.get_attribute().metas();
-            table.insert(name);
-            ret.code = ParseResult::ResultCode::Success;
-            return ret;
-          } else {
-            if (!strict_type_check) { return accept_nonconformant(); }
-            ret.code = ParseResult::ResultCode::TypeMismatch;
-            ret.err = fmt::format("Attribute type mismatch. {} expects type `{}`(and its underlying types) but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
-            return ret;
-          }
+          goto end;
         }
-      } else if (attr_is_role_type) {
+
+        if (value::TypeTraits<T>::underlying_type_name() == attr_type_name) {
+          target.set_authored(true);
+          target.set_actual_type_name(attr_type_name);
+          target.metas() = prop.get_attribute().metas();
+          table.insert(name);
+          ret.code = ParseResult::ResultCode::Success;
+          goto end;
+        }
+
+        if (!strict_type_check) { accept_nonconformant(); goto end; }
+        ret.code = ParseResult::ResultCode::TypeMismatch;
+        ret.err = fmt::format("Attribute type mismatch. {} expects type `{}`(and its underlying types) but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
+        goto end;
+      }
+
+      if (attr_is_role_type) {
         if (value::TypeTraits<T>::is_role_type()) {
-          if (!strict_type_check) { return accept_nonconformant(); }
+          if (!strict_type_check) { accept_nonconformant(); goto end; }
           ret.code = ParseResult::ResultCode::TypeMismatch;
           ret.err = fmt::format("Attribute type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
-          return ret;
-        } else {
+          goto end;
+        }
+
+        {
           uint32_t attr_underlying_type_id = value::GetUnderlyingTypeId(attr_type_name);
           if (value::TypeTraits<T>::type_id() == attr_underlying_type_id) {
             target.set_authored(true);
@@ -661,26 +666,26 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
             target.metas() = prop.get_attribute().metas();
             table.insert(name);
             ret.code = ParseResult::ResultCode::Success;
-            return ret;
-          } else {
-            if (!strict_type_check) { return accept_nonconformant(); }
-            ret.code = ParseResult::ResultCode::TypeMismatch;
-            ret.err = fmt::format("Attribute type mismatch. {} expects type `{}` but defined as type `{}`(and its underlying types).", name, value::TypeTraits<T>::type_name(), attr_type_name);
-            return ret;
+            goto end;
           }
         }
 
-      } else {
-        DCOUT("attr.type = " << attr_type_name);
-        if (!strict_type_check) { return accept_nonconformant(); }
+        if (!strict_type_check) { accept_nonconformant(); goto end; }
         ret.code = ParseResult::ResultCode::TypeMismatch;
-        ret.err = fmt::format("Property type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
-        return ret;
+        ret.err = fmt::format("Attribute type mismatch. {} expects type `{}` but defined as type `{}`(and its underlying types).", name, value::TypeTraits<T>::type_name(), attr_type_name);
+        goto end;
       }
+
+      DCOUT("attr.type = " << attr_type_name);
+      if (!strict_type_check) { accept_nonconformant(); goto end; }
+      ret.code = ParseResult::ResultCode::TypeMismatch;
+      ret.err = fmt::format("Property type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
+      goto end;
     }
   }
 
   ret.code = ParseResult::ResultCode::Unmatched;
+end:
   return ret;
 }
 

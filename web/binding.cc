@@ -67,7 +67,15 @@
 #define STBI_ONLY_HDR
 #define STBI_NO_STDIO
 #define STB_IMAGE_IMPLEMENTATION
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#endif
 #include "external/stb_image.h"
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -929,7 +937,7 @@ struct EMAssetResolutionResolver {
       return false;
     }
     
-    cache[asset_name] = std::move(entry.finalize());
+    cache[asset_name] = entry.finalize();
     streaming_cache.erase(asset_name);
     return true;
   }
@@ -1327,15 +1335,6 @@ bool AddTypedAttr(json &props, const std::string &name,
   return true;
 }
 
-bool AddTypedAttr(json &props, const std::string &name,
-                  const tinyusdz::TypedAttribute<tinyusdz::value::float3> &attr) {
-  auto v = attr.get_value();
-  if (!v) {
-    return false;
-  }
-  props[name] = Vec3Json(v.value());
-  return true;
-}
 
 bool AddTypedAttr(json &props, const std::string &name,
                   const tinyusdz::TypedAttribute<tinyusdz::value::vector3f> &attr) {
@@ -1953,10 +1952,6 @@ class TinyUSDZLoaderNative {
 
   bool loadAsLayerFromBinary(const std::string &binary, const std::string &filename) {
 
-
-    bool is_usdz = tinyusdz::IsUSDZ(
-        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
-
     tinyusdz::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
 
@@ -2562,7 +2557,7 @@ class TinyUSDZLoaderNative {
     
     // Test 15: Quaternion types
     {
-      tinyusdz::value::quatf q{0.0f, 0.0f, 0.0f, 1.0f};
+      tinyusdz::value::quatf q{{0.0f, 0.0f, 0.0f}, 1.0f};
       tinyusdz::value::Value v(q);
       emscripten::val test = emscripten::val::object();
       test.set("name", "quatf");
@@ -2979,7 +2974,7 @@ class TinyUSDZLoaderNative {
       return result;
     }
 
-    if (mat_id < 0 || mat_id >= render_scene_.materials.size()) {
+    if (mat_id < 0 || mat_id >= static_cast<int>(render_scene_.materials.size())) {
       result.set("error", "Invalid material ID");
       return result;
     }
@@ -3373,7 +3368,7 @@ class TinyUSDZLoaderNative {
       return tex;
     }
 
-    if (tex_id >= render_scene_.textures.size()) {
+    if (tex_id >= static_cast<int>(render_scene_.textures.size())) {
       return tex;
     }
 
@@ -3394,7 +3389,7 @@ class TinyUSDZLoaderNative {
       return img;
     }
 
-    if (img_id >= render_scene_.images.size()) {
+    if (img_id >= static_cast<int>(render_scene_.images.size())) {
       return img;
     }
 
@@ -3428,7 +3423,7 @@ class TinyUSDZLoaderNative {
       return mesh;
     }
 
-    if (mesh_id >= render_scene_.meshes.size()) {
+    if (mesh_id >= static_cast<int>(render_scene_.meshes.size())) {
       return mesh;
     }
 
@@ -3875,12 +3870,10 @@ class TinyUSDZLoaderNative {
         } else {
           // Float3 (Vec3) or unpacked from 1010102
           const float* src;
-          bool useCache = false;
           if (rmesh.normals.format == VertexAttributeFormat::Uint) {
             // 1010102 was already unpacked to normals_cache_ by the primary export above
             if (normals_cache_.count(mesh_id)) {
               src = normals_cache_[mesh_id].data();
-              useCache = true;
             } else {
               src = reinterpret_cast<const float*>(rmesh.normals.data.data());
             }
@@ -3971,6 +3964,64 @@ class TinyUSDZLoaderNative {
         mesh.set("tangents", emscripten::typed_memory_view(cache.tangents.size(), cache.tangents.data()));
       }
 
+      // Reorder vertex skinning data. Joint indices/weights are authored per
+      // original mesh point, while this path expands points to one vertex per
+      // triangle corner for material grouping.
+      if (!rmesh.joint_and_weights.jointIndices.empty() &&
+          !rmesh.joint_and_weights.jointWeights.empty() &&
+          rmesh.joint_and_weights.elementSize > 0) {
+        const int elementSize = rmesh.joint_and_weights.elementSize;
+        const size_t skinIndexCount = rmesh.joint_and_weights.jointIndices.size();
+        const size_t skinWeightCount = rmesh.joint_and_weights.jointWeights.size();
+        const size_t sourceSkinVertexCount =
+            std::min(skinIndexCount, skinWeightCount) / size_t(elementSize);
+        const bool skinIsPerPoint = sourceSkinVertexCount == rmesh.points.size();
+        const bool skinIsFaceVarying = sourceSkinVertexCount == fvIndices.size();
+        const size_t totalVerts = numNewTriangles * 3;
+
+        if (skinIsPerPoint || skinIsFaceVarying) {
+          auto& cache = reordered_mesh_cache_[mesh_id];
+          cache.jointIndices.assign(totalVerts * size_t(elementSize), 0);
+          cache.jointWeights.assign(totalVerts * size_t(elementSize), 0.0f);
+
+          for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
+            int oldTriIdx = reorderMap[newTriIdx];
+            for (int v = 0; v < 3; v++) {
+              size_t oldFV = size_t(oldTriIdx) * 3 + size_t(v);
+              size_t newV = newTriIdx * 3 + size_t(v);
+              size_t srcVertex = oldFV;
+              if (skinIsPerPoint) {
+                if (oldFV >= fvIndices.size()) {
+                  continue;
+                }
+                srcVertex = size_t(fvIndices[oldFV]);
+              }
+              if (srcVertex >= sourceSkinVertexCount) {
+                continue;
+              }
+
+              const size_t srcBase = srcVertex * size_t(elementSize);
+              const size_t dstBase = newV * size_t(elementSize);
+              for (int j = 0; j < elementSize; j++) {
+                const size_t srcIdx = srcBase + size_t(j);
+                const size_t dstIdx = dstBase + size_t(j);
+                if (srcIdx < skinIndexCount && srcIdx < skinWeightCount) {
+                  cache.jointIndices[dstIdx] =
+                      rmesh.joint_and_weights.jointIndices[srcIdx];
+                  cache.jointWeights[dstIdx] =
+                      rmesh.joint_and_weights.jointWeights[srcIdx];
+                }
+              }
+            }
+          }
+
+          mesh.set("jointIndices", emscripten::typed_memory_view(
+              cache.jointIndices.size(), cache.jointIndices.data()));
+          mesh.set("jointWeights", emscripten::typed_memory_view(
+              cache.jointWeights.size(), cache.jointWeights.data()));
+        }
+      }
+
       // Generate new sequential indices (0, 1, 2, 3, 4, 5, ...)
       // Since we reordered the vertex data to facevarying, indices are sequential
       std::vector<uint32_t> newIndices(numNewTriangles * 3);
@@ -3995,7 +4046,7 @@ class TinyUSDZLoaderNative {
   emscripten::val getRootNode(int idx) {
     emscripten::val val = emscripten::val::object();
 
-    if ((idx < 0) || (idx >= render_scene_.nodes.size())) {
+    if ((idx < 0) || (idx >= static_cast<int>(render_scene_.nodes.size()))) {
       return val;
     }
 
@@ -4055,7 +4106,7 @@ class TinyUSDZLoaderNative {
       return anim;
     }
 
-    if (anim_id >= render_scene_.animations.size()) {
+    if (anim_id >= static_cast<int>(render_scene_.animations.size())) {
       return anim;
     }
 
@@ -4096,7 +4147,7 @@ class TinyUSDZLoaderNative {
     emscripten::val tracks = emscripten::val::array();
 
     for (const auto &channel : clip.channels) {
-      if (!channel.is_valid() || channel.sampler >= clip.samplers.size()) {
+      if (!channel.is_valid() || channel.sampler >= static_cast<int32_t>(clip.samplers.size())) {
         continue;
       }
 
@@ -4108,7 +4159,7 @@ class TinyUSDZLoaderNative {
       emscripten::val track = emscripten::val::object();
 
       // Set track name based on target node and property
-      if (channel.target_node >= 0 && channel.target_node < render_scene_.nodes.size()) {
+      if (channel.target_node >= 0 && channel.target_node < static_cast<int32_t>(render_scene_.nodes.size())) {
         const auto &node = render_scene_.nodes[channel.target_node];
         std::string trackName = node.abs_path.empty() ? node.prim_name : node.abs_path;
 
@@ -4290,7 +4341,7 @@ class TinyUSDZLoaderNative {
       return animations;
     }
 
-    for (int i = 0; i < render_scene_.animations.size(); ++i) {
+    for (int i = 0; i < static_cast<int>(render_scene_.animations.size()); ++i) {
       animations.call<void>("push", getAnimation(i));
     }
 
@@ -4301,7 +4352,7 @@ class TinyUSDZLoaderNative {
   emscripten::val getAnimationInfo(int anim_id) const {
     emscripten::val info = emscripten::val::object();
 
-    if (!loaded_ || anim_id >= render_scene_.animations.size()) {
+    if (!loaded_ || anim_id >= static_cast<int>(render_scene_.animations.size())) {
       return info;
     }
 
@@ -4358,7 +4409,7 @@ class TinyUSDZLoaderNative {
       return infos;
     }
 
-    for (int i = 0; i < render_scene_.animations.size(); ++i) {
+    for (int i = 0; i < static_cast<int>(render_scene_.animations.size()); ++i) {
       infos.call<void>("push", getAnimationInfo(i));
     }
 
@@ -6163,6 +6214,8 @@ class TinyUSDZLoaderNative {
     std::vector<int16_t> normals_i16;  // SNorm16x3 normals
     std::vector<float> texcoords;
     std::vector<float> tangents;
+    std::vector<int> jointIndices;
+    std::vector<float> jointWeights;
     std::vector<uint32_t> faceVertexIndices;
   };
   mutable std::unordered_map<int, ReorderedMeshCache> reordered_mesh_cache_;
@@ -6321,18 +6374,6 @@ inline float float16ToFloat32(uint16_t h) {
 
   o.u |= (hp.u & 0x8000U) << 16U;
   return o.f;
-}
-
-/// Convert int32 to float16 (with normalization)
-inline uint16_t int32ToFloat16(int32_t value, float scale = 1.0f / 2147483647.0f) {
-  float normalized = static_cast<float>(value) * scale;
-  return float32ToFloat16(normalized);
-}
-
-/// Convert uint32 to float16 (with normalization)
-inline uint16_t uint32ToFloat16(uint32_t value, float scale = 1.0f / 4294967295.0f) {
-  float normalized = static_cast<float>(value) * scale;
-  return float32ToFloat16(normalized);
 }
 
 /// Convert float32 array to float16 array
