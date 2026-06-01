@@ -1663,7 +1663,10 @@ void AddGeometryJson(json &prim_json, json &props,
 }
 
 void AppendPhysicsPrimJson(const tinyusdz::Prim &prim, const std::string &path,
-                           json &prims) {
+                           json &prims, int depth = 0) {
+  // Guard against stack overflow from deeply nested USD stages.
+  if (depth > 1024) return;
+
   json item;
   item["path"] = path;
   item["name"] = prim.element_name();
@@ -1737,7 +1740,7 @@ void AppendPhysicsPrimJson(const tinyusdz::Prim &prim, const std::string &path,
   prims.push_back(std::move(item));
 
   for (const auto &child : prim.children()) {
-    AppendPhysicsPrimJson(child, path + "/" + child.element_name(), prims);
+    AppendPhysicsPrimJson(child, path + "/" + child.element_name(), prims, depth + 1);
   }
 }
 
@@ -5457,7 +5460,7 @@ class TinyUSDZLoaderNative {
     root["prims"] = json::array();
 
     for (const auto &prim : stage.root_prims()) {
-      AppendPhysicsPrimJson(prim, "/" + prim.element_name(), root["prims"]);
+      AppendPhysicsPrimJson(prim, "/" + prim.element_name(), root["prims"], 0);
     }
 
     return root.dump();
@@ -7503,6 +7506,13 @@ emscripten::val fitTextures(const emscripten::val& opts) {
   emscripten::val arr = emscripten::val::array();
   size_t total = 0;
   size_t limit = (std::min)(outs.size(), names.size());
+  if (outs.size() != names.size()) {
+    if (!warn.empty()) {
+      warn += "Texture count mismatch: ";
+    }
+    warn += std::to_string(names.size()) + " inputs but " +
+            std::to_string(outs.size()) + " outputs; results may be incomplete.";
+  }
   for (size_t i = 0; i < limit; i++) {
     emscripten::val r = emscripten::val::object();
     r.set("data", bytesToUint8Array(outs[i].bytes));
