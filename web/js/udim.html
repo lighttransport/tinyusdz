@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TinyUSDZ — UDIM (Three.js)</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font: 14px/1.5 system-ui, sans-serif;
+      background: #15171c; color: #e6e6e6; overflow: hidden;
+    }
+    #view { position: fixed; inset: 0; }
+    #panel {
+      position: fixed; top: 12px; left: 12px; width: 320px; max-height: calc(100vh - 24px);
+      overflow: auto; background: #1e2127ee; border: 1px solid #333; border-radius: 8px;
+      padding: 12px 14px; backdrop-filter: blur(4px);
+    }
+    h1 { font-size: 15px; margin: 0 0 8px; }
+    p.sub { color: #9aa0a6; font-size: 12px; margin: 0 0 10px; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+    button, label.btn {
+      background: #2f6df6; color: #fff; border: 0; border-radius: 6px;
+      padding: 6px 12px; cursor: pointer; font-size: 13px;
+    }
+    button.secondary, label.btn.secondary { background: #3a3f47; }
+    button:disabled { opacity: .5; cursor: default; }
+    #drop {
+      border: 1px dashed #4a4f57; border-radius: 6px; padding: 14px; text-align: center;
+      color: #9aa0a6; font-size: 12px; margin: 8px 0;
+    }
+    #drop.active { border-color: #2f6df6; color: #cdd; background: #2f6df61a; }
+    fieldset { border: 1px solid #333; border-radius: 6px; margin: 8px 0; padding: 8px 10px; }
+    legend { color: #9aa0a6; font-size: 12px; padding: 0 4px; }
+    label.opt { display: inline-flex; gap: 5px; align-items: center; font-size: 13px; margin-right: 12px; }
+    pre#info {
+      background: #14161a; border: 1px solid #2a2d33; border-radius: 6px;
+      padding: 8px; font-size: 11px; line-height: 1.45; white-space: pre-wrap;
+      word-break: break-word; max-height: 240px; overflow: auto; margin: 6px 0 0;
+    }
+    #log { color: #9aa0a6; font-size: 11px; margin-top: 6px; min-height: 16px; }
+  </style>
+</head>
+<body>
+  <div id="view"></div>
+
+  <div id="panel">
+    <h1>UDIM textures · Three.js path</h1>
+    <p class="sub">
+      Tiles are passed through (sparse), packed into a <code>sampler2DArray</code>,
+      and fetched by a custom UV-remap shader (no native WebGL UDIM).
+    </p>
+
+    <div class="row">
+      <button id="btnSample">Load sample (2×2)</button>
+      <label class="btn secondary">Upload…<input id="filesInput" type="file" multiple
+        accept=".usd,.usda,.usdc,.png,.jpg,.jpeg" style="display:none"></label>
+    </div>
+    <div id="drop">Drag &amp; drop a USD + UDIM tiles (or a folder) here</div>
+
+    <fieldset>
+      <legend>Render mode</legend>
+      <label class="opt"><input type="radio" name="mode" value="passthrough" checked>
+        Passthrough (sparse + JS shader)</label>
+      <label class="opt"><input type="radio" name="mode" value="combine">
+        Combine (core atlas)</label>
+    </fieldset>
+
+    <div class="row">
+      <button id="btnExport" class="secondary" disabled>Export USDZ (passthrough)</button>
+    </div>
+
+    <pre id="info">No scene loaded.</pre>
+    <div id="log"></div>
+  </div>
+
+  <script type="module" src="./udim.js"></script>
+</body>
+</html>
