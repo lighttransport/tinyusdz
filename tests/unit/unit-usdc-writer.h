@@ -21,6 +21,7 @@ void usdc_writer_skelroot_test(void);
 
 // Shader / Material
 void usdc_writer_shader_terminal_test(void);
+void usdc_writer_layer_empty_shader_outputs_test(void);
 void usdc_writer_material_outputs_test(void);
 void usdc_writer_uvtexture_test(void);
 void usdc_writer_primvarreader_test(void);

@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <deque>
+#include <fstream>
 #include <map>
 #include <set>
 #include <utility>
@@ -19,6 +21,7 @@
 #include "image-loader.hh"
 #include "image-writer.hh"
 #include "io-util.hh"
+#include "pprinter.hh"
 #include "str-util.hh"
 #include "tydra/texture-util.hh"
 
@@ -96,6 +99,28 @@ bool IsAllowedTextureExt(const std::string &ext_lower) {
          ext_lower == "exr";
 }
 
+bool IsAllowedARKitTextureExt(const std::string &ext_lower) {
+  return ext_lower == "png" || ext_lower == "jpg" || ext_lower == "jpeg" ||
+         ext_lower == "exr";
+}
+
+bool IsAllowedARKitPrimType(const std::string &type_name) {
+  static const std::set<std::string> allowed = {
+      "", "Scope", "Xform", "Camera", "Shader", "Material", "Mesh",
+      "Sphere", "Cube", "Cylinder", "Cone", "Capsule", "GeomSubset",
+      "Points", "SkelRoot", "Skeleton", "SkelAnimation", "BlendShape",
+      "SpatialAudio", "PhysicsScene", "Preliminary_ReferenceImage",
+      "Preliminary_Text", "Preliminary_Trigger"};
+  return allowed.count(type_name) || tinyusdz::startsWith(type_name, "RealityKit");
+}
+
+bool IsAllowedARKitShaderId(const std::string &shader_id) {
+  return shader_id == "UsdPreviewSurface" || shader_id == "UsdUVTexture" ||
+         shader_id == "UsdTransform2d" ||
+         tinyusdz::startsWith(shader_id, "UsdPrimvarReader") ||
+         tinyusdz::startsWith(shader_id, "ND_");
+}
+
 // Turn an arbitrary asset path into a safe, relative USDZ archive name.
 // Absolute paths and paths escaping the archive root are reduced to a
 // "textures/<basename>" form.
@@ -108,6 +133,65 @@ bool IsUnsafeUnresolvedTexturePath(const std::string &assetPath) {
          (p == "..") || tinyusdz::startsWith(p, "../") ||
          (p.find("/../") != std::string::npos) ||
          tinyusdz::endsWith(p, "/..");
+}
+
+std::string RelativeToSearchPath(const std::string &asset_path,
+                                 const std::vector<std::string> &search_paths) {
+  std::string p = asset_path;
+  std::replace(p.begin(), p.end(), '\\', '/');
+
+  for (std::string base : search_paths) {
+    if (base.empty()) {
+      continue;
+    }
+    std::replace(base.begin(), base.end(), '\\', '/');
+    while (!base.empty() && base.back() == '/') {
+      base.pop_back();
+    }
+
+    if (base.empty()) {
+      continue;
+    }
+
+    if (io::IsAbsPath(p)) {
+      continue;
+    }
+
+    if (p == base) {
+      return io::GetBaseFilename(p);
+    }
+    if (tinyusdz::startsWith(p, base + "/")) {
+      return p.substr(base.size() + 1);
+    }
+  }
+
+  return asset_path;
+}
+
+std::string SafeMissingArchiveReference(
+    const std::string &asset_path,
+    const std::vector<std::string> &search_paths) {
+  const std::string rel = RelativeToSearchPath(asset_path, search_paths);
+  if (rel != asset_path) {
+    return IsUnsafeUnresolvedTexturePath(rel) ? std::string() : rel;
+  }
+
+  if (!io::IsAbsPath(asset_path)) {
+    return IsUnsafeUnresolvedTexturePath(asset_path) ? std::string()
+                                                    : asset_path;
+  }
+
+  for (const std::string &base : search_paths) {
+    if (base.empty() || !io::IsAbsPath(base)) {
+      continue;
+    }
+    const std::string rel = ToRelativePath(base, asset_path);
+    if (rel != asset_path && !IsUnsafeUnresolvedTexturePath(rel)) {
+      return rel;
+    }
+  }
+
+  return std::string();
 }
 
 // Maximum ZIP entry name length (ZIP spec allows 64 KB, but we cap much lower
@@ -154,6 +238,39 @@ std::string SanitizeArchiveName(const std::string &assetPath) {
   // Enforce maximum archive name length.
   if (name.size() > kMaxArchiveNameLen) {
     name = "textures/texture";
+  }
+  return name;
+}
+
+std::string SanitizeLayerArchiveName(const std::string &assetPath) {
+  std::string p = assetPath;
+  std::replace(p.begin(), p.end(), '\\', '/');
+
+  const bool needs_sanitize = IsUnsafeUnresolvedTexturePath(p) ||
+                              tinyusdz::startsWith(p, "./");
+
+  std::string name = p;
+  if (needs_sanitize) {
+    std::string base = io::GetBaseFilename(p);
+    if (!IsSafeArchiveSegment(base)) {
+      base = "layer";
+    }
+    name = "layers/" + base;
+  }
+
+  if (name.find('\0') != std::string::npos ||
+      name.find('\\') != std::string::npos ||
+      name.find(':') != std::string::npos ||
+      name.find("..") != std::string::npos ||
+      name.find("//") != std::string::npos ||
+      tinyusdz::startsWith(name, "/") ||
+      tinyusdz::startsWith(name, "./") ||
+      tinyusdz::startsWith(name, "../") ||
+      tinyusdz::endsWith(name, "/")) {
+    name = "layers/layer";
+  }
+  if (name.size() > kMaxArchiveNameLen) {
+    name = "layers/layer";
   }
   return name;
 }
@@ -243,18 +360,328 @@ void CollectTextures(Prim &prim,
   }
 }
 
+void CollectLayerTextureAssetPaths(const PrimSpec &primspec,
+                                   std::vector<std::string> *out,
+                                   int depth = 0) {
+  if (depth > 512) return;
+  constexpr size_t kMaxTextureCount = 10000;
+  if (out->size() >= kMaxTextureCount) return;
+
+  for (const auto &item : primspec.props()) {
+    const Attribute *attr = item.second.get_attribute_or_null();
+    if (!attr || !attr->has_value()) {
+      continue;
+    }
+
+    value::AssetPath asset_path;
+    if (!attr->get_value(&asset_path)) {
+      continue;
+    }
+
+    const std::string path = asset_path.GetAssetPath();
+    const std::string ext = to_lower(io::GetFileExtension(path));
+    if (!path.empty() && IsAllowedTextureExt(ext)) {
+      out->push_back(path);
+      if (out->size() >= kMaxTextureCount) return;
+    }
+  }
+
+  for (const PrimSpec &child : primspec.children()) {
+    CollectLayerTextureAssetPaths(child, out, depth + 1);
+    if (out->size() >= kMaxTextureCount) return;
+  }
+}
+
+void CollectLayerTextureAssetPaths(const Layer &layer,
+                                   std::vector<std::string> *out) {
+  for (const auto &item : layer.primspecs()) {
+    CollectLayerTextureAssetPaths(item.second, out);
+  }
+}
+
+void CollectARKitCompatibilityWarnings(const PrimSpec &primspec,
+                                       std::string *warn,
+                                       int depth = 0) {
+  if (depth > 512) return;
+
+  if (!IsAllowedARKitPrimType(primspec.typeName()) && warn) {
+    *warn += "ARKit compatibility: prim '" + primspec.name() +
+             "' has unsupported type '" + primspec.typeName() + "'.\n";
+  }
+
+  if (primspec.typeName() == "Shader") {
+    const auto prop_it = primspec.props().find("info:id");
+    if (prop_it != primspec.props().end()) {
+      const Attribute *attr = prop_it->second.get_attribute_or_null();
+      value::token shader_id;
+      if (attr && attr->get_value(&shader_id) &&
+          !IsAllowedARKitShaderId(shader_id.str()) && warn) {
+        *warn += "ARKit compatibility: shader '" + primspec.name() +
+                 "' has unsupported info:id '" + shader_id.str() + "'.\n";
+      }
+    }
+  }
+
+  for (const auto &variant_set : primspec.variantSets()) {
+    for (const auto &variant : variant_set.second.variantSet) {
+      CollectARKitCompatibilityWarnings(variant.second, warn, depth + 1);
+    }
+  }
+  for (const PrimSpec &child : primspec.children()) {
+    CollectARKitCompatibilityWarnings(child, warn, depth + 1);
+  }
+}
+
+void CollectARKitCompatibilityWarnings(const Layer &layer, std::string *warn) {
+  for (const auto &item : layer.primspecs()) {
+    CollectARKitCompatibilityWarnings(item.second, warn);
+  }
+}
+
+void CollectCompositionAssetPaths(const PrimSpec &primspec,
+                                  std::vector<std::string> *out,
+                                  int depth = 0) {
+  if (depth > 512) return;
+  constexpr size_t kMaxLayerDependencyCount = 10000;
+  if (out->size() >= kMaxLayerDependencyCount) return;
+
+  const PrimMeta &metas = primspec.metas();
+  if (metas.references) {
+    for (const auto &op : metas.references.value()) {
+      for (const Reference &ref : op.second) {
+        const std::string path = ref.asset_path.GetAssetPath();
+        if (!path.empty()) {
+          out->push_back(path);
+          if (out->size() >= kMaxLayerDependencyCount) return;
+        }
+      }
+    }
+  }
+  if (metas.payload) {
+    for (const auto &op : metas.payload.value()) {
+      for (const Payload &payload : op.second) {
+        const std::string path = payload.asset_path.GetAssetPath();
+        if (!path.empty()) {
+          out->push_back(path);
+          if (out->size() >= kMaxLayerDependencyCount) return;
+        }
+      }
+    }
+  }
+
+  for (const auto &variant_set : primspec.variantSets()) {
+    for (const auto &variant : variant_set.second.variantSet) {
+      CollectCompositionAssetPaths(variant.second, out, depth + 1);
+      if (out->size() >= kMaxLayerDependencyCount) return;
+    }
+  }
+
+  for (const PrimSpec &child : primspec.children()) {
+    CollectCompositionAssetPaths(child, out, depth + 1);
+    if (out->size() >= kMaxLayerDependencyCount) return;
+  }
+}
+
+void CollectCompositionAssetPaths(const Layer &layer,
+                                  std::vector<std::string> *out) {
+  constexpr size_t kMaxLayerDependencyCount = 10000;
+  for (const SubLayer &sublayer : layer.metas().subLayers) {
+    const std::string path = sublayer.assetPath.GetAssetPath();
+    if (!path.empty()) {
+      out->push_back(path);
+      if (out->size() >= kMaxLayerDependencyCount) return;
+    }
+  }
+  for (const auto &item : layer.primspecs()) {
+    CollectCompositionAssetPaths(item.second, out);
+    if (out->size() >= kMaxLayerDependencyCount) return;
+  }
+}
+
+size_t RemapCompositionAssetPaths(
+    PrimSpec &primspec, const std::map<std::string, std::string> &remap,
+    int depth = 0) {
+  if (depth > 512) return 0;
+
+  size_t n = 0;
+  PrimMeta &metas = primspec.metas();
+  if (metas.references) {
+    for (auto &op : metas.references.value()) {
+      for (Reference &ref : op.second) {
+        const auto it = remap.find(ref.asset_path.GetAssetPath());
+        if (it != remap.end() && it->second != ref.asset_path.GetAssetPath()) {
+          ref.asset_path = value::AssetPath(it->second);
+          n++;
+        }
+      }
+    }
+  }
+  if (metas.payload) {
+    for (auto &op : metas.payload.value()) {
+      for (Payload &payload : op.second) {
+        const auto it = remap.find(payload.asset_path.GetAssetPath());
+        if (it != remap.end() &&
+            it->second != payload.asset_path.GetAssetPath()) {
+          payload.asset_path = value::AssetPath(it->second);
+          n++;
+        }
+      }
+    }
+  }
+
+  for (auto &variant_set : primspec.variantSets()) {
+    for (auto &variant : variant_set.second.variantSet) {
+      n += RemapCompositionAssetPaths(variant.second, remap, depth + 1);
+    }
+  }
+
+  for (PrimSpec &child : primspec.children()) {
+    n += RemapCompositionAssetPaths(child, remap, depth + 1);
+  }
+  return n;
+}
+
+size_t RemapCompositionAssetPaths(
+    Layer &layer, const std::map<std::string, std::string> &remap) {
+  size_t n = 0;
+  for (SubLayer &sublayer : layer.metas().subLayers) {
+    const auto it = remap.find(sublayer.assetPath.GetAssetPath());
+    if (it != remap.end() && it->second != sublayer.assetPath.GetAssetPath()) {
+      sublayer.assetPath = value::AssetPath(it->second);
+      n++;
+    }
+  }
+  for (auto &item : layer.primspecs()) {
+    n += RemapCompositionAssetPaths(item.second, remap);
+  }
+  return n;
+}
+
+size_t RemapLayerAssetPaths(PrimSpec &primspec,
+                            const std::map<std::string, std::string> &remap,
+                            int depth = 0) {
+  if (depth > 512) return 0;
+
+  size_t n = 0;
+  for (auto &item : primspec.props()) {
+    Attribute *attr = item.second.get_attribute_or_null();
+    if (!attr || !attr->has_value()) {
+      continue;
+    }
+
+    value::AssetPath asset_path;
+    if (!attr->get_value(&asset_path)) {
+      continue;
+    }
+
+    const auto it = remap.find(asset_path.GetAssetPath());
+    if (it == remap.end() || it->second == asset_path.GetAssetPath()) {
+      continue;
+    }
+
+    attr->set_value(value::AssetPath(it->second));
+    n++;
+  }
+
+  for (PrimSpec &child : primspec.children()) {
+    n += RemapLayerAssetPaths(child, remap, depth + 1);
+  }
+  return n;
+}
+
+size_t RemapLayerAssetPaths(Layer &layer,
+                            const std::map<std::string, std::string> &remap) {
+  size_t n = 0;
+  for (auto &item : layer.primspecs()) {
+    n += RemapLayerAssetPaths(item.second, remap);
+  }
+  return n;
+}
+
+bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
+                              const Layer &root_layer,
+                              Layer *composited_layer,
+                              std::string *warn,
+                              std::string *err) {
+  if (!composited_layer) {
+    if (err) {
+      (*err) = "composited_layer is null.";
+    }
+    return false;
+  }
+
+  Layer src_layer = root_layer;
+
+  if (!src_layer.metas().subLayers.empty()) {
+    Layer tmp;
+    if (!tinyusdz::CompositeSublayers(resolver, src_layer, &tmp, warn, err)) {
+      return false;
+    }
+    src_layer = std::move(tmp);
+  }
+
+  constexpr int kMaxIteration = 64;
+  for (int i = 0; i < kMaxIteration; i++) {
+    bool has_unresolved = false;
+
+    if (src_layer.check_unresolved_references()) {
+      has_unresolved = true;
+      Layer tmp;
+      if (!tinyusdz::CompositeReferences(resolver, src_layer, &tmp, warn, err)) {
+        return false;
+      }
+      src_layer = std::move(tmp);
+    }
+
+    if (src_layer.check_unresolved_payload()) {
+      has_unresolved = true;
+      Layer tmp;
+      if (!tinyusdz::CompositePayload(resolver, src_layer, &tmp, warn, err)) {
+        return false;
+      }
+      src_layer = std::move(tmp);
+    }
+
+    if (src_layer.check_unresolved_inherits()) {
+      has_unresolved = true;
+      Layer tmp;
+      if (!tinyusdz::CompositeInherits(src_layer, &tmp, warn, err)) {
+        return false;
+      }
+      src_layer = std::move(tmp);
+    }
+
+    if (src_layer.check_unresolved_variant()) {
+      has_unresolved = true;
+      Layer tmp;
+      if (!tinyusdz::CompositeVariant(src_layer, &tmp, warn, err)) {
+        return false;
+      }
+      src_layer = std::move(tmp);
+    }
+
+    if (!has_unresolved) {
+      *composited_layer = std::move(src_layer);
+      return true;
+    }
+  }
+
+  if (err) {
+    (*err) += "Composition did not converge before the iteration limit.";
+  }
+  return false;
+}
+
 bool ReadAssetBytes(AssetResolutionResolver &resolver, const std::string &assetPath,
                     std::vector<uint8_t> *out, std::string *warn,
                     std::string *err) {
   const std::string resolved = resolver.resolve(assetPath);
   if (resolved.empty()) {
     // The resolver may not handle absolute filesystem paths.  Fall back to
-    // reading the path directly if it is a plausible absolute path.
-    if (io::IsAbsPath(assetPath)) {
-      std::string ioerr;
-      if (io::ReadWholeFile(out, &ioerr, assetPath)) {
-        return true;
-      }
+    // reading the path directly if it is already a filesystem path.
+    std::string ioerr;
+    if (io::ReadWholeFile(out, &ioerr, assetPath)) {
+      return true;
     }
     if (err) (*err) = "Asset not found: " + assetPath;
     return false;
@@ -279,6 +706,30 @@ bool ReadAssetBytes(AssetResolutionResolver &resolver, const std::string &assetP
   return true;
 }
 
+bool ReadAssetBytesWithBase(AssetResolutionResolver &resolver,
+                            const std::string &assetPath,
+                            const std::string &base_dir,
+                            std::vector<uint8_t> *out, std::string *warn,
+                            std::string *err) {
+  std::string local_err;
+  if (ReadAssetBytes(resolver, assetPath, out, warn, &local_err)) {
+    return true;
+  }
+
+  if (!base_dir.empty() && !io::IsAbsPath(assetPath)) {
+    const std::string candidate = io::JoinPath(base_dir, assetPath);
+    std::string ioerr;
+    if (io::ReadWholeFile(out, &ioerr, candidate)) {
+      return true;
+    }
+  }
+
+  if (err) {
+    *err = local_err.empty() ? ("Asset not found: " + assetPath) : local_err;
+  }
+  return false;
+}
+
 // Process one texture's bytes: optionally decode -> resize -> re-encode.
 // On success fills `out_bytes` and `out_ext` (lowercase, no dot) and sets the
 // resize/reencode flags. Falls back to passthrough on decode failure.
@@ -296,6 +747,9 @@ bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
     target_ext = "png";
   } else if (opts.texture_format == OutputTextureFormat::JPEG) {
     target_ext = "jpg";
+  }
+  if (opts.arkit_compatible && !IsAllowedARKitTextureExt(target_ext)) {
+    target_ext = "png";
   }
   const bool transcode = (target_ext != src_ext_lower) &&
                          !(target_ext == "jpg" && src_ext_lower == "jpeg");
@@ -433,6 +887,378 @@ bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
   return true;
 }
 
+struct NonFlattenLayerPackage {
+  Layer layer;
+  std::string source_path;
+  std::string base_dir;
+  std::string archive_name;
+};
+
+std::string ResolveDependencySourcePath(AssetResolutionResolver &resolver,
+                                        const std::string &asset_path,
+                                        const std::string &base_dir) {
+  if (asset_path.empty()) {
+    return std::string();
+  }
+  if (io::IsAbsPath(asset_path)) {
+    return asset_path;
+  }
+  if (!base_dir.empty()) {
+    const std::string candidate = io::JoinPath(base_dir, asset_path);
+    if (io::FileExists(candidate)) {
+      return candidate;
+    }
+  }
+  const std::string resolved = resolver.resolve(asset_path);
+  if (!resolved.empty()) {
+    return resolved;
+  }
+  return asset_path;
+}
+
+bool LoadLayerForPackaging(AssetResolutionResolver &resolver,
+                           const std::string &source_path,
+                           const std::string &authored_path,
+                           Layer *layer, std::string *warn,
+                           std::string *err) {
+  if (io::FileExists(source_path)) {
+    return tinyusdz::LoadLayerFromFile(source_path, layer, warn, err);
+  }
+
+  const std::string resolved = resolver.resolve(source_path);
+  if (!resolved.empty()) {
+    return tinyusdz::LoadLayerFromAsset(resolver, resolved, layer, warn, err);
+  }
+
+  const std::string authored_resolved = resolver.resolve(authored_path);
+  if (!authored_resolved.empty()) {
+    return tinyusdz::LoadLayerFromAsset(resolver, authored_resolved, layer, warn,
+                                        err);
+  }
+
+  if (err) {
+    *err = "Failed to resolve layer asset: " + authored_path;
+  }
+  return false;
+}
+
+std::string MakeLayerArchiveName(const std::string &source_path,
+                                 const std::string &authored_path,
+                                 const std::vector<std::string> &search_paths,
+                                 USDZRootLayerFormat format) {
+  std::string name = RelativeToSearchPath(source_path, search_paths);
+  if (name == source_path && !authored_path.empty()) {
+    name = authored_path;
+  }
+  name = SanitizeLayerArchiveName(name);
+  const std::string ext = (format == USDZRootLayerFormat::USDA) ? "usda" : "usdc";
+  if (to_lower(io::GetFileExtension(name)) != ext) {
+    name = ReplaceExtension(name, ext);
+  }
+  return name;
+}
+
+bool SerializeLayerForUSDZ(const Layer &layer, USDZRootLayerFormat format,
+                           std::vector<uint8_t> *out, std::string *warn,
+                           std::string *err) {
+  if (format == USDZRootLayerFormat::USDA) {
+    const std::string text = tinyusdz::print_layer(layer, 0);
+    if (text.empty()) {
+      if (err) *err = "USDA serialization produced empty data.";
+      return false;
+    }
+    out->assign(text.begin(), text.end());
+    return true;
+  }
+
+  return tinyusdz::usdc::SaveAsUSDCToMemory(layer, out, warn, err);
+}
+
+bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
+                           AssetResolutionResolver &resolver,
+                           const std::vector<std::string> &search_paths,
+                           UsdzConvertStats *stats, std::string *warn,
+                           std::string *err) {
+  const std::string &root_input = options.inputs[0];
+  Log(options.verbose, "Loading + packaging layers (no flatten): " + root_input);
+
+  std::vector<NonFlattenLayerPackage> packages;
+  packages.push_back(NonFlattenLayerPackage{});
+  std::string lwarn, lerr;
+  if (!tinyusdz::LoadLayerFromFile(root_input, &packages[0].layer, &lwarn,
+                                   &lerr)) {
+    if (err) *err = "Failed to load root layer: " + lerr;
+    return false;
+  }
+  if (warn) *warn += lwarn;
+  packages[0].source_path = root_input;
+  packages[0].base_dir = io::GetBaseDir(root_input);
+
+  if (options.upAxis != Axis::Invalid) {
+    packages[0].layer.metas().upAxis.set_value(options.upAxis);
+  } else if (options.arkit_compatible) {
+    packages[0].layer.metas().upAxis.set_value(Axis::Y);
+  }
+  if (options.metersPerUnit > 0.0) {
+    packages[0].layer.metas().metersPerUnit.set_value(options.metersPerUnit);
+  }
+  if (!options.copyright.empty() || !options.url.empty()) {
+    std::string doc;
+    if (!options.copyright.empty()) doc += options.copyright;
+    if (!options.url.empty()) {
+      if (!doc.empty()) doc += "\n";
+      doc += options.url;
+    }
+    packages[0].layer.metas().doc = doc;
+  }
+
+  std::map<std::string, size_t> source_to_package;
+  source_to_package[root_input] = 0;
+  std::vector<std::map<std::string, std::string>> composition_remaps;
+  composition_remaps.resize(1);
+
+  std::deque<size_t> queue;
+  queue.push_back(0);
+  constexpr size_t kMaxLayerCount = 1000;
+  while (!queue.empty()) {
+    const size_t package_index = queue.front();
+    queue.pop_front();
+
+    std::vector<std::string> deps;
+    CollectCompositionAssetPaths(packages[package_index].layer, &deps);
+    for (const std::string &dep : deps) {
+      const std::string source = ResolveDependencySourcePath(
+          resolver, dep, packages[package_index].base_dir);
+
+      auto seen = source_to_package.find(source);
+      if (seen == source_to_package.end()) {
+        if (packages.size() >= kMaxLayerCount) {
+          if (err) *err = "Too many layer dependencies while packaging USDZ.";
+          return false;
+        }
+
+        NonFlattenLayerPackage pkg;
+        pkg.source_path = source;
+        pkg.base_dir = io::GetBaseDir(source);
+        pkg.archive_name = MakeLayerArchiveName(source, dep, search_paths,
+                                                USDZRootLayerFormat::USDA);
+
+        uint32_t suffix = 1;
+        bool archive_collision = true;
+        while (archive_collision) {
+          archive_collision = false;
+          for (const NonFlattenLayerPackage &existing : packages) {
+            if (existing.archive_name == pkg.archive_name) {
+              archive_collision = true;
+              pkg.archive_name = MakeCollisionArchiveName(pkg.archive_name,
+                                                          suffix++);
+              break;
+            }
+          }
+        }
+
+        std::string dwarn, derr;
+        if (!LoadLayerForPackaging(resolver, source, dep, &pkg.layer, &dwarn,
+                                   &derr)) {
+          if (err) *err = "Failed to load dependency layer: " + derr;
+          return false;
+        }
+        if (warn) *warn += dwarn;
+
+        const size_t new_index = packages.size();
+        source_to_package[source] = new_index;
+        composition_remaps.push_back(std::map<std::string, std::string>());
+        packages.push_back(std::move(pkg));
+        queue.push_back(new_index);
+        seen = source_to_package.find(source);
+      }
+
+      composition_remaps[package_index][dep] =
+          packages[seen->second].archive_name;
+    }
+  }
+
+  for (size_t i = 0; i < packages.size(); i++) {
+    if (!composition_remaps[i].empty()) {
+      const size_t n = RemapCompositionAssetPaths(packages[i].layer,
+                                                  composition_remaps[i]);
+      Log(options.verbose, "Remapped " + std::to_string(n) +
+                               " composition path(s) in package layer " +
+                               std::to_string(i) + ".");
+    }
+  }
+
+  struct TextureRef {
+    size_t package_index{0};
+    std::string authored_path;
+    std::string source_path;
+  };
+
+  std::vector<TextureRef> texture_refs;
+  for (size_t i = 0; i < packages.size(); i++) {
+    std::vector<std::string> paths;
+    CollectLayerTextureAssetPaths(packages[i].layer, &paths);
+    for (const std::string &path : paths) {
+      TextureRef ref;
+      ref.package_index = i;
+      ref.authored_path = path;
+      ref.source_path = ResolveDependencySourcePath(resolver, path,
+                                                    packages[i].base_dir);
+      texture_refs.push_back(std::move(ref));
+    }
+  }
+  Log(options.verbose, "Found " + std::to_string(texture_refs.size()) +
+                           " texture reference(s).");
+
+  std::map<std::string, std::vector<uint8_t>> assets;
+  std::map<std::string, std::string> source_to_archive;
+  std::vector<std::map<std::string, std::string>> texture_remaps;
+  texture_remaps.resize(packages.size());
+
+  for (const TextureRef &ref : texture_refs) {
+    auto existing = source_to_archive.find(ref.source_path);
+    if (existing != source_to_archive.end()) {
+      texture_remaps[ref.package_index][ref.authored_path] = existing->second;
+      continue;
+    }
+
+    std::string archive_name = SanitizeArchiveName(
+        RelativeToSearchPath(ref.source_path, search_paths));
+    if (archive_name == ref.source_path) {
+      archive_name = SanitizeArchiveName(ref.authored_path);
+    }
+
+    std::vector<uint8_t> src_bytes;
+    std::string rerr;
+    if (!ReadAssetBytesWithBase(resolver, ref.authored_path,
+                                packages[ref.package_index].base_dir,
+                                &src_bytes, warn, &rerr)) {
+      const std::string missing_ref =
+          SafeMissingArchiveReference(ref.authored_path, search_paths);
+      if (missing_ref.empty()) {
+        if (err) {
+          *err = "Unsafe texture path could not be packed: " +
+                 ref.authored_path + " (" + rerr + ")";
+        }
+        return false;
+      }
+      texture_remaps[ref.package_index][ref.authored_path] = missing_ref;
+      if (warn) {
+        *warn += "Skipping unreadable texture '" + ref.authored_path + "': " +
+                 rerr + "\n";
+      }
+      continue;
+    }
+
+    const std::string src_ext = to_lower(io::GetFileExtension(ref.authored_path));
+    std::vector<uint8_t> out_bytes;
+    std::string out_ext;
+    bool resized = false;
+    bool reencoded = false;
+    std::string pwarn;
+    if (!ProcessTexture(src_bytes, src_ext, options, ref.authored_path,
+                        &out_bytes, &out_ext, &resized, &reencoded, &pwarn)) {
+      if (warn) *warn += "Failed to process texture " + ref.authored_path + "\n";
+      continue;
+    }
+    if (warn) *warn += pwarn;
+
+    if (options.arkit_compatible && !IsAllowedARKitTextureExt(out_ext)) {
+      if (err) {
+        *err = "ARKit-compatible USDZ cannot package texture '" +
+               ref.authored_path + "' with unsupported output extension '" +
+               out_ext + "'.";
+      }
+      return false;
+    }
+
+    if (!IsAllowedTextureExt(out_ext)) {
+      out_ext = "png";
+    }
+    if (to_lower(io::GetFileExtension(archive_name)) != out_ext) {
+      archive_name = ReplaceExtension(archive_name, out_ext);
+    }
+
+    std::string unique_name = archive_name;
+    uint32_t suffix = 1;
+    while (assets.count(unique_name) && assets[unique_name] != out_bytes) {
+      unique_name = MakeCollisionArchiveName(archive_name, suffix++);
+    }
+    archive_name = unique_name;
+
+    assets[archive_name] = std::move(out_bytes);
+    source_to_archive[ref.source_path] = archive_name;
+    texture_remaps[ref.package_index][ref.authored_path] = archive_name;
+
+    if (stats) {
+      stats->num_textures++;
+      if (resized) stats->num_textures_resized++;
+      if (reencoded) {
+        stats->num_textures_reencoded++;
+      } else {
+        stats->num_textures_passthrough++;
+      }
+    }
+    Log(options.verbose, "  " + ref.authored_path + " -> " + archive_name +
+                             (resized ? " [resized]" : "") +
+                             (reencoded ? " [reencoded]" : " [passthrough]"));
+  }
+
+  for (size_t i = 0; i < packages.size(); i++) {
+    if (!texture_remaps[i].empty()) {
+      RemapLayerAssetPaths(packages[i].layer, texture_remaps[i]);
+    }
+  }
+
+  for (size_t i = 1; i < packages.size(); i++) {
+    std::vector<uint8_t> layer_bytes;
+    std::string swarn, serr;
+    if (!SerializeLayerForUSDZ(packages[i].layer, USDZRootLayerFormat::USDA,
+                               &layer_bytes,
+                               &swarn, &serr)) {
+      if (err) *err = "Failed to serialize dependency layer: " + serr;
+      return false;
+    }
+    if (warn) *warn += swarn;
+    assets[packages[i].archive_name] = std::move(layer_bytes);
+  }
+
+  tinyusdz::USDZWriteOptions write_options;
+  write_options.root_layer_format = tinyusdz::USDZRootLayerFormat::USDA;
+  if (options.usdz_root_layer_format == USDZRootLayerFormat::USDC && warn) {
+    *warn += "Non-flatten USDZ uses a USDA root layer to preserve composition "
+             "arcs for downstream loaders.\n";
+  }
+
+  std::string swarn, serr;
+  if (!tinyusdz::SaveAsUSDZToFile(options.output, packages[0].layer, assets,
+                                  write_options, &swarn, &serr)) {
+    if (err) *err = "Failed to write USDZ: " + serr;
+    return false;
+  }
+  if (warn) *warn += swarn;
+
+  std::vector<uint8_t> usdz_bytes;
+  std::string ioerr;
+  if (io::ReadWholeFile(&usdz_bytes, &ioerr, options.output,
+                        /*max*/ 512 * 1024 * 1024)) {
+    std::string vwarn, verr;
+    if (!tinyusdz::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(), &vwarn,
+                                &verr)) {
+      if (warn) *warn += "USDZ validation reported issues: " + verr + "\n";
+    } else {
+      if (warn) *warn += vwarn;
+    }
+    if (stats) stats->output_size = usdz_bytes.size();
+  } else if (warn) {
+    *warn += "Could not read output USDZ for validation: " + ioerr + "\n";
+  }
+
+  Log(options.verbose, "Packaged " + std::to_string(packages.size()) +
+                           " layer(s) without flattening.");
+  return true;
+}
+
 }  // namespace
 
 size_t RemapTextureAssetPaths(Stage &stage,
@@ -505,11 +1331,24 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     }
   }
 
+  if (!options.flatten && options.arkit_compatible && warn) {
+    *warn += "ARKit-compatible USDZ requires a flattened package; ignoring "
+             "-noFlatten.\n";
+  }
+
+  if (!options.flatten && !options.arkit_compatible &&
+      options.output_format == OutputFormat::USDZ) {
+    return ConvertNonFlattenUSDZ(options, resolver, search_paths, stats, warn,
+                                 err);
+  }
+
   // --- Load + (optionally) flatten the stage ---
   Stage stage;
+  Layer layer_for_write;
+  bool has_layer_for_write = false;
   std::string lwarn, lerr;
 
-  if (options.flatten) {
+  if (options.flatten || options.arkit_compatible) {
     Log(options.verbose, "Loading + compositing (flatten): " + root_input);
     Layer root_layer;
     if (!tinyusdz::LoadLayerFromFile(root_input, &root_layer, &lwarn, &lerr)) {
@@ -524,12 +1363,14 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     }
 
     Layer composited;
-    if (!tinyusdz::CompositeAllArcs(resolver, root_layer, &composited, &lwarn,
-                                    &lerr)) {
+    if (!ComposeLayerToFixedPoint(resolver, root_layer, &composited, &lwarn,
+                                  &lerr)) {
       if (err) (*err) = "Composition failed: " + lerr;
       return false;
     }
-    if (!tinyusdz::LayerToStage(std::move(composited), &stage, &lwarn, &lerr)) {
+    layer_for_write = std::move(composited);
+    has_layer_for_write = true;
+    if (!tinyusdz::LayerToStage(Layer(layer_for_write), &stage, &lwarn, &lerr)) {
       if (err) (*err) = "LayerToStage failed: " + lerr;
       return false;
     }
@@ -542,15 +1383,33 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   }
   if (warn) (*warn) += lwarn;
 
+  if (options.arkit_compatible) {
+    if (has_layer_for_write) {
+      CollectARKitCompatibilityWarnings(layer_for_write, warn);
+    } else if (warn) {
+      *warn += "ARKit compatibility: unable to inspect Layer-level prim "
+               "metadata for warnings.\n";
+    }
+  }
+
   // --- ARKit / metadata fixups ---
   if (options.upAxis != Axis::Invalid) {
     stage.metas().upAxis.set_value(options.upAxis);
+    if (has_layer_for_write) {
+      layer_for_write.metas().upAxis.set_value(options.upAxis);
+    }
   } else if (options.arkit_compatible) {
     // ARKit expects Y-up.
     stage.metas().upAxis.set_value(Axis::Y);
+    if (has_layer_for_write) {
+      layer_for_write.metas().upAxis.set_value(Axis::Y);
+    }
   }
   if (options.metersPerUnit > 0.0) {
     stage.metas().metersPerUnit.set_value(options.metersPerUnit);
+    if (has_layer_for_write) {
+      layer_for_write.metas().metersPerUnit.set_value(options.metersPerUnit);
+    }
   }
   if (!options.copyright.empty() || !options.url.empty()) {
     std::string doc;
@@ -560,15 +1419,26 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       doc += options.url;
     }
     stage.metas().doc = doc;
+    if (has_layer_for_write) {
+      layer_for_write.metas().doc = doc;
+    }
   }
 
   // --- Enumerate textures ---
   std::vector<std::pair<UsdUVTexture *, std::string>> textures;
-  for (auto &p : stage.root_prims()) {
-    CollectTextures(p, &textures);
+  std::vector<std::string> texture_paths;
+  if (has_layer_for_write) {
+    CollectLayerTextureAssetPaths(layer_for_write, &texture_paths);
+  } else {
+    for (auto &p : stage.root_prims()) {
+      CollectTextures(p, &textures);
+    }
+    for (const auto &texture : textures) {
+      texture_paths.push_back(texture.second);
+    }
   }
   Log(options.verbose,
-      "Found " + std::to_string(textures.size()) + " texture reference(s).");
+      "Found " + std::to_string(texture_paths.size()) + " texture reference(s).");
 
   // Texture packing is only relevant when writing a USDZ archive.
   // For flat USDC/USDA output, textures remain as external references.
@@ -588,21 +1458,23 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     std::vector<std::string> fit_paths;
     std::vector<tydra::FitTextureInput> fit_inputs;
     std::set<std::string> seen;
-    for (auto &kv : textures) {
-      const std::string &orig = kv.second;
+    for (const std::string &orig : texture_paths) {
       if (seen.count(orig)) continue;
       seen.insert(orig);
 
       std::vector<uint8_t> src_bytes;
       std::string rerr;
       if (!ReadAssetBytes(resolver, orig, &src_bytes, warn, &rerr)) {
-        if (IsUnsafeUnresolvedTexturePath(orig)) {
+        const std::string missing_ref =
+            SafeMissingArchiveReference(orig, search_paths);
+        if (missing_ref.empty()) {
           if (err) {
             (*err) = "Unsafe texture path could not be packed: " + orig +
                      " (" + rerr + ")";
           }
           return false;
         }
+        path_to_archive[orig] = missing_ref;
         if (warn) (*warn) += "Skipping unreadable texture '" + orig + "': " + rerr + "\n";
         continue;
       }
@@ -648,13 +1520,13 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     }
   }
 
-  for (auto &kv : textures) {
-    const std::string &orig = kv.second;
+  for (const std::string &orig : texture_paths) {
     if (path_to_archive.count(orig)) {
       continue;  // already processed
     }
 
-    std::string archive_name = SanitizeArchiveName(orig);
+    std::string archive_name =
+        SanitizeArchiveName(RelativeToSearchPath(orig, search_paths));
 
     std::vector<uint8_t> out_bytes;
     std::string out_ext;
@@ -675,13 +1547,16 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       std::vector<uint8_t> src_bytes;
       std::string rerr;
       if (!ReadAssetBytes(resolver, orig, &src_bytes, warn, &rerr)) {
-        if (IsUnsafeUnresolvedTexturePath(orig)) {
+        const std::string missing_ref =
+            SafeMissingArchiveReference(orig, search_paths);
+        if (missing_ref.empty()) {
           if (err) {
             (*err) = "Unsafe texture path could not be packed: " + orig +
                      " (" + rerr + ")";
           }
           return false;
         }
+        path_to_archive[orig] = missing_ref;
         if (warn) {
           (*warn) += "Skipping unreadable texture '" + orig + "': " + rerr + "\n";
         }
@@ -696,6 +1571,14 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
         continue;
       }
       if (warn) (*warn) += pwarn;
+    }
+
+    if (options.arkit_compatible && !IsAllowedARKitTextureExt(out_ext)) {
+      if (err) {
+        *err = "ARKit-compatible USDZ cannot package texture '" + orig +
+               "' with unsupported output extension '" + out_ext + "'.";
+      }
+      return false;
     }
 
     if (!IsAllowedTextureExt(out_ext)) {
@@ -750,13 +1633,26 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   }
 
   // --- Rewrite texture file paths to the archive-relative names ---
-  for (auto &kv : textures) {
-    UsdUVTexture *tex = kv.first;
-    const std::string &orig = kv.second;
-    auto it = path_to_archive.find(orig);
-    if (it == path_to_archive.end()) continue;
-    if (it->second != orig) {
-      WriteTextureFilePath(tex, it->second);
+  if (has_layer_for_write) {
+    RemapLayerAssetPaths(layer_for_write, path_to_archive);
+    if (options.arkit_compatible) {
+      std::string rwarn, rerr;
+      if (!tinyusdz::LayerToStage(Layer(layer_for_write), &stage, &rwarn,
+                                  &rerr)) {
+        if (err) *err = "LayerToStage after ARKit remap failed: " + rerr;
+        return false;
+      }
+      if (warn) *warn += rwarn;
+    }
+  } else {
+    for (auto &kv : textures) {
+      UsdUVTexture *tex = kv.first;
+      const std::string &orig = kv.second;
+      auto it = path_to_archive.find(orig);
+      if (it == path_to_archive.end()) continue;
+      if (it->second != orig) {
+        WriteTextureFilePath(tex, it->second);
+      }
     }
   }
 
@@ -768,8 +1664,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       out_dir = ".";
     }
     std::map<std::string, std::string> remap;
-    for (auto &kv : textures) {
-      const std::string &orig = kv.second;
+    for (const std::string &orig : texture_paths) {
       if (remap.count(orig)) continue;
       // Only relativize absolute paths.
       if (orig.empty() || !io::IsAbsPath(orig)) {
@@ -781,7 +1676,9 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       }
     }
     if (!remap.empty()) {
-      size_t n = RemapTextureAssetPaths(stage, remap);
+      size_t n = has_layer_for_write
+                     ? RemapLayerAssetPaths(layer_for_write, remap)
+                     : RemapTextureAssetPaths(stage, remap);
       Log(options.verbose,
           "Relativized " + std::to_string(n) + " texture path(s).");
     }
@@ -793,20 +1690,54 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   switch (options.output_format) {
     case OutputFormat::USDZ: {
       Log(options.verbose, "Writing USDZ: " + options.output);
-      write_ok =
-          tinyusdz::SaveAsUSDZToFile(options.output, stage, assets, &swarn, &serr);
+      tinyusdz::USDZWriteOptions write_options;
+      write_options.root_layer_format =
+          (options.arkit_compatible)
+              ? tinyusdz::USDZRootLayerFormat::USDC
+          : (options.usdz_root_layer_format == USDZRootLayerFormat::USDA)
+              ? tinyusdz::USDZRootLayerFormat::USDA
+              : tinyusdz::USDZRootLayerFormat::USDC;
+      if (options.arkit_compatible &&
+          options.usdz_root_layer_format != USDZRootLayerFormat::USDC &&
+          warn) {
+        *warn += "ARKit-compatible USDZ requires a USDC root layer; ignoring "
+                 "--rootLayerFormat.\n";
+      }
+      write_ok = has_layer_for_write
+          ? (options.arkit_compatible
+                 ? tinyusdz::SaveAsUSDZToFile(options.output, stage, assets,
+                                              write_options, &swarn, &serr)
+                 : tinyusdz::SaveAsUSDZToFile(options.output, layer_for_write,
+                                              assets, write_options, &swarn,
+                                              &serr))
+          : tinyusdz::SaveAsUSDZToFile(options.output, stage, assets,
+                                       write_options, &swarn, &serr);
       if (!write_ok && err) (*err) = "Failed to write USDZ: " + serr;
       break;
     }
     case OutputFormat::USDC: {
       Log(options.verbose, "Writing USDC: " + options.output);
-      write_ok = tinyusdz::usdc::SaveAsUSDCToFile(options.output, stage, &swarn, &serr);
+      write_ok = has_layer_for_write
+          ? tinyusdz::usdc::SaveAsUSDCToFile(options.output, layer_for_write,
+                                             &swarn, &serr)
+          : tinyusdz::usdc::SaveAsUSDCToFile(options.output, stage, &swarn, &serr);
       if (!write_ok && err) (*err) = "Failed to write USDC: " + serr;
       break;
     }
     case OutputFormat::USDA: {
       Log(options.verbose, "Writing USDA: " + options.output);
-      write_ok = tinyusdz::usda::SaveAsUSDA(options.output, stage, &swarn, &serr);
+      if (has_layer_for_write) {
+        std::ofstream ofs(options.output);
+        if (ofs) {
+          ofs << tinyusdz::print_layer(layer_for_write, 0);
+          write_ok = bool(ofs);
+        } else {
+          serr = "Failed to open output file.";
+          write_ok = false;
+        }
+      } else {
+        write_ok = tinyusdz::usda::SaveAsUSDA(options.output, stage, &swarn, &serr);
+      }
       if (!write_ok && err) (*err) = "Failed to write USDA: " + serr;
       break;
     }
