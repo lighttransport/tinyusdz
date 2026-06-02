@@ -920,61 +920,57 @@ void VulkanRenderer::destroyScene() {
   whiteDesc_ = VK_NULL_HANDLE;
 }
 
-bool VulkanRenderer::uploadScene(const DrawScene& scene, std::string* err) {
-  (void)err;
+void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
+                                int textureCount) {
   if (device_) vkDeviceWaitIdle(device_);
-  destroyScene();
+  destroyScene();  // resets texPool_, clears texDescs_, sets whiteDesc_ = NULL
 
-  // Default white texture descriptor (used by untextured submeshes).
+  // Default white texture descriptor + one white slot per texture (filled lazily).
   whiteDesc_ = allocTexDescriptor(whiteView_);
+  texDescs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, whiteDesc_);
 
-  // Base-color textures.
-  texImgs_.reserve(scene.textures.size());
-  for (const auto& t : scene.textures) {
-    VkImage img = VK_NULL_HANDLE;
-    VkDeviceMemory mem = VK_NULL_HANDLE;
-    VkImageView view = VK_NULL_HANDLE;
-    if (createTextureImage(t.image, &img, &mem, &view)) {
-      texImgs_.push_back(img);
-      texMems_.push_back(mem);
-      texViews_.push_back(view);
-      texDescs_.push_back(allocTexDescriptor(view));
-    } else {
-      // Keep indices aligned with DrawScene::textures; fall back to white.
-      texDescs_.push_back(whiteDesc_);
-    }
+  matColor_.resize(materials.size() * 4);
+  matBaseTex_.resize(materials.size());
+  for (size_t i = 0; i < materials.size(); ++i) {
+    matColor_[i * 4 + 0] = materials[i].baseColor[0];
+    matColor_[i * 4 + 1] = materials[i].baseColor[1];
+    matColor_[i * 4 + 2] = materials[i].baseColor[2];
+    matColor_[i * 4 + 3] = materials[i].alpha;
+    matBaseTex_[i] = materials[i].baseColorTex;
   }
+}
 
-  matColor_.resize(scene.materials.size() * 4);
-  matBaseTex_.resize(scene.materials.size());
-  for (size_t i = 0; i < scene.materials.size(); ++i) {
-    matColor_[i * 4 + 0] = scene.materials[i].baseColor[0];
-    matColor_[i * 4 + 1] = scene.materials[i].baseColor[1];
-    matColor_[i * 4 + 2] = scene.materials[i].baseColor[2];
-    matColor_[i * 4 + 3] = scene.materials[i].alpha;
-    matBaseTex_[i] = scene.materials[i].baseColorTex;
+void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
+  if (slot < 0 || static_cast<size_t>(slot) >= texDescs_.size()) return;
+  VkImage img = VK_NULL_HANDLE;
+  VkDeviceMemory mem = VK_NULL_HANDLE;
+  VkImageView view = VK_NULL_HANDLE;
+  if (createTextureImage(t.image, &img, &mem, &view)) {
+    texImgs_.push_back(img);
+    texMems_.push_back(mem);
+    texViews_.push_back(view);
+    texDescs_[static_cast<size_t>(slot)] = allocTexDescriptor(view);
   }
+}
 
-  for (const auto& sm : scene.meshes) {
-    if (sm.vertices.empty() || sm.indices.empty()) continue;
-    VkMeshGPU gm;
-    gm.submeshes = sm.submeshes;
-    std::memcpy(gm.world, sm.world, sizeof(gm.world));
-    if (!createHostBuffer(sm.vertices.size() * sizeof(DrawVertex),
-                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sm.vertices.data(),
-                          &gm.vbo, &gm.vboMem)) {
-      continue;
-    }
-    if (!createHostBuffer(sm.indices.size() * sizeof(uint32_t),
-                          VK_BUFFER_USAGE_INDEX_BUFFER_BIT, sm.indices.data(),
-                          &gm.ebo, &gm.eboMem)) {
-      vkDestroyBuffer(device_, gm.vbo, nullptr);
-      vkFreeMemory(device_, gm.vboMem, nullptr);
-      continue;
-    }
-    meshes_.push_back(gm);
+void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
+  if (sm.vertices.empty() || sm.indices.empty()) return;
+  VkMeshGPU gm;
+  gm.submeshes = sm.submeshes;
+  std::memcpy(gm.world, sm.world, sizeof(gm.world));
+  if (!createHostBuffer(sm.vertices.size() * sizeof(DrawVertex),
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sm.vertices.data(), &gm.vbo,
+                        &gm.vboMem)) {
+    return;
   }
-  return true;
+  if (!createHostBuffer(sm.indices.size() * sizeof(uint32_t),
+                        VK_BUFFER_USAGE_INDEX_BUFFER_BIT, sm.indices.data(), &gm.ebo,
+                        &gm.eboMem)) {
+    vkDestroyBuffer(device_, gm.vbo, nullptr);
+    vkFreeMemory(device_, gm.vboMem, nullptr);
+    return;
+  }
+  meshes_.push_back(gm);
 }
 
 void VulkanRenderer::destroyOffscreen() {

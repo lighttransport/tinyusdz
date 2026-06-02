@@ -119,19 +119,65 @@ bool App::initImGui(std::string* err) {
   return renderer_->initImGui(err);
 }
 
-void App::applyLoaded(bool ok) {
-  std::string uerr;
-  renderer_->uploadScene(draw_, &uerr);  // draw_ is empty when !ok
-  gui_.setScene(&loaded_, &draw_);
+void App::applyLoaded(bool ok, bool progressive) {
+  progressiveActive_ = false;
+  nextMesh_ = 0;
+  nextTex_ = 0;
+
   if (ok) {
     const std::string& up = loaded_.render.meta.upAxis;
     camera_.setUpAxis((up == "Z" || up == "z") ? 2 : 1);
     if (draw_.hasBounds) camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
-    std::fprintf(stderr, "[tusdview] loaded %s: %zu mesh(es), %zu tri(s)%s\n",
+  }
+
+  if (ok && progressive) {
+    // Reserve materials + texture slots now; stream meshes then textures over
+    // the next frames (stepProgressiveUpload) so geometry pops in and the UI
+    // stays at frame rate instead of stalling on one big upload.
+    renderer_->beginScene(draw_.materials, static_cast<int>(draw_.textures.size()));
+    progressiveActive_ = true;
+    std::fprintf(stderr,
+                 "[tusdview] loaded %s: %zu mesh(es), %zu tri(s)%s; streaming to GPU...\n",
                  loaded_.filepath.c_str(), draw_.meshes.size(), draw_.triangleCount,
-                 draw_.truncated ? " [truncated: render budget]" : "");
+                 draw_.truncated ? " [truncated]" : "");
   } else {
-    std::fprintf(stderr, "[tusdview] load failed: %s\n", loaded_.err.c_str());
+    // Synchronous full upload (headless / failure). draw_ is empty when !ok.
+    std::string uerr;
+    renderer_->uploadScene(draw_, &uerr);
+    if (ok) {
+      std::fprintf(stderr, "[tusdview] loaded %s: %zu mesh(es), %zu tri(s)%s\n",
+                   loaded_.filepath.c_str(), draw_.meshes.size(), draw_.triangleCount,
+                   draw_.truncated ? " [truncated: render budget]" : "");
+    } else {
+      std::fprintf(stderr, "[tusdview] load failed: %s\n", loaded_.err.c_str());
+    }
+  }
+  gui_.setScene(&loaded_, &draw_);
+}
+
+void App::stepProgressiveUpload() {
+  if (!progressiveActive_) return;
+  const auto t0 = std::chrono::steady_clock::now();
+  auto elapsedMs = [&]() {
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                     t0)
+        .count();
+  };
+  // Geometry first so meshes appear, ~4ms/frame.
+  while (nextMesh_ < draw_.meshes.size()) {
+    renderer_->appendMesh(draw_.meshes[nextMesh_++]);
+    if (elapsedMs() > 4.0) break;
+  }
+  // Then stream textures (meshes show base color until their texture lands).
+  if (nextMesh_ >= draw_.meshes.size()) {
+    while (nextTex_ < draw_.textures.size()) {
+      renderer_->uploadTexture(static_cast<int>(nextTex_), draw_.textures[nextTex_]);
+      ++nextTex_;
+      if (elapsedMs() > 7.0) break;
+    }
+  }
+  if (nextMesh_ >= draw_.meshes.size() && nextTex_ >= draw_.textures.size()) {
+    progressiveActive_ = false;
   }
 }
 
@@ -142,7 +188,7 @@ void App::loadFileBlocking(const std::string& path) {
   loaded_ = std::move(tmp);
   draw_ = DrawScene{};
   if (ok) BuildDrawScene(loaded_.render, &draw_, &loadCtrl_);
-  applyLoaded(ok);
+  applyLoaded(ok, /*progressive=*/false);
 }
 
 void App::startLoadAsync(const std::string& path) {
@@ -174,7 +220,7 @@ void App::finishLoadIfReady() {
   pendingLoaded_.reset();
   pendingDraw_.reset();
   loadActive_ = false;
-  applyLoaded(ok);  // GPU upload on the main/context thread
+  applyLoaded(ok, /*progressive=*/true);  // stream to GPU over the next frames
 }
 
 void App::cancelAndJoinLoad() {
@@ -252,8 +298,10 @@ int App::run(const std::string& initialFile, int maxFrames,
   while (!glfwWindowShouldClose(window_)) {
     glfwPollEvents();
 
-    // Pick up a completed async load (uploads to GPU on this thread).
+    // Pick up a completed async load, then stream its meshes/textures to the
+    // GPU a little per frame so the UI stays responsive (progressive upload).
     finishLoadIfReady();
+    stepProgressiveUpload();
 
     // Feed the GUI the current load status for the loading modal.
     Gui::LoadStatus ls;
