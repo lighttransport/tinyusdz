@@ -67,7 +67,17 @@ bool App::initWindow(std::string* err) {
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
   }
 
-  window_ = glfwCreateWindow(1280, 800, "tusdview", nullptr, nullptr);
+  // Scale the default window with the UI scale (4K panels need a larger window
+  // so the HiDPI-scaled panels aren't cramped), clamped to the monitor work area.
+  int winW = static_cast<int>(1280.0f * uiScale_);
+  int winH = static_cast<int>(800.0f * uiScale_);
+  if (GLFWmonitor* mon = glfwGetPrimaryMonitor()) {
+    int mx = 0, my = 0, mw = 0, mh = 0;
+    glfwGetMonitorWorkarea(mon, &mx, &my, &mw, &mh);
+    if (mw > 0 && winW > mw) winW = mw;
+    if (mh > 0 && winH > mh) winH = mh;
+  }
+  window_ = glfwCreateWindow(winW, winH, "tusdview", nullptr, nullptr);
   if (!window_) {
     *err = "glfwCreateWindow failed";
     return false;
