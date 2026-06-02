@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 
+#include "gpu_scene.hh"  // DrawScene
 #include "io-util.hh"  // tinyusdz::io::MMapFileHandle
 #include "load_control.hh"
 #include "stage.hh"
@@ -26,12 +27,18 @@ struct LoadedScene {
   std::shared_ptr<tinyusdz::io::MMapFileHandle> mmap;
 };
 
-// Load `path` (usd/usda/usdc/usdz) and convert to a RenderScene configured for
-// single-index OpenGL/Vulkan rendering. Returns false with `out->err` filled on
-// failure (out->stage may still be partially populated for inspection).
+// Load `path` (usd/usda/usdc/usdz), convert to a RenderScene configured for
+// single-index OpenGL/Vulkan rendering, and build the backend-neutral
+// `DrawScene` (`draw`) in the same streaming pass (Tydra
+// ConvertToRenderSceneStreaming): mesh geometry is interleaved as each mesh
+// converts, world placement applied when the node hierarchy is built, and
+// textures/materials decoded on completion. Returns false with `out->err`
+// filled on failure (out->stage may still be partially populated for inspection).
 //
-// `ctrl` (optional) enables cancellation, progress reporting and a conversion
-// time budget. Safe to call on a worker thread (no GPU access).
-bool LoadUSD(const std::string& path, LoadedScene* out, LoadControl* ctrl = nullptr);
+// `ctrl` (optional) enables cancellation, progress reporting, a conversion time
+// budget and a draw-side triangle/vertex budget. Safe to call on a worker
+// thread (no GPU access).
+bool LoadUSD(const std::string& path, LoadedScene* out, DrawScene* draw,
+             LoadControl* ctrl = nullptr);
 
 }  // namespace tusdview

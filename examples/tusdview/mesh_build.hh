@@ -5,6 +5,7 @@
 #include "gpu_scene.hh"
 #include "load_control.hh"
 #include "tydra/render-data.hh"
+#include "tydra/render-data-converter.hh"
 
 namespace tusdview {
 
@@ -19,5 +20,17 @@ namespace tusdview {
 // is set (prevents per-frame freeze and VRAM thrashing on huge scenes).
 void BuildDrawScene(const tinyusdz::tydra::RenderScene& rs, DrawScene* out,
                     LoadControl* ctrl = nullptr);
+
+// Streaming variant: run `converter.ConvertToRenderSceneStreaming` and build the
+// DrawScene incrementally as elements are produced (mesh geometry as each mesh
+// converts, world placement when the node hierarchy is built, textures and
+// materials on completion). Produces the same DrawScene as
+// ConvertToRenderScene + BuildDrawScene, while also fully populating `render`.
+// Returns the conversion result. `ctrl` bounds the build by the triangle /
+// vertex-byte budget (draw-side truncation; conversion still completes).
+bool BuildDrawSceneStreaming(tinyusdz::tydra::RenderSceneConverter& converter,
+                             const tinyusdz::tydra::RenderSceneConverterEnv& env,
+                             tinyusdz::tydra::RenderScene* render, DrawScene* out,
+                             LoadControl* ctrl = nullptr);
 
 }  // namespace tusdview

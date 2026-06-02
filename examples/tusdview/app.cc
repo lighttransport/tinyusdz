@@ -184,10 +184,11 @@ void App::stepProgressiveUpload() {
 void App::loadFileBlocking(const std::string& path) {
   loadCtrl_.resetProgress();
   LoadedScene tmp;
-  const bool ok = LoadUSD(path, &tmp, &loadCtrl_);
+  DrawScene drawTmp;
+  // Streaming convert+build in one pass (also fully populates tmp.render).
+  const bool ok = LoadUSD(path, &tmp, &drawTmp, &loadCtrl_);
   loaded_ = std::move(tmp);
-  draw_ = DrawScene{};
-  if (ok) BuildDrawScene(loaded_.render, &draw_, &loadCtrl_);
+  draw_ = ok ? std::move(drawTmp) : DrawScene{};
   applyLoaded(ok, /*progressive=*/false);
 }
 
@@ -202,10 +203,10 @@ void App::startLoadAsync(const std::string& path) {
   pendingDraw_ = std::make_unique<DrawScene>();
   LoadedScene* lp = pendingLoaded_.get();
   DrawScene* dp = pendingDraw_.get();
-  // Worker touches only CPU data (no GL/VK), so this is thread-safe.
+  // Worker touches only CPU data (no GL/VK), so this is thread-safe. The
+  // streaming load convert+builds the DrawScene (dp) in one pass.
   loadThread_ = std::thread([this, path, lp, dp]() {
-    const bool ok = LoadUSD(path, lp, &loadCtrl_);
-    if (ok) BuildDrawScene(lp->render, dp, &loadCtrl_);
+    LoadUSD(path, lp, dp, &loadCtrl_);
     loadFinished_.store(true, std::memory_order_release);
   });
 }
