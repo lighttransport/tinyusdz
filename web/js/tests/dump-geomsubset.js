@@ -124,7 +124,7 @@ async function main() {
     let totalExpectedGroups = 0;
 
     for (let meshIdx = 0; meshIdx < numMeshes; meshIdx++) {
-        const meshData = nativeLoader.getMesh(meshIdx);
+        const meshData = nativeLoader.getMeshCopy(meshIdx);
         if (!meshData) {
             console.log(`  Mesh ${meshIdx}: ERROR - failed to get mesh data`);
             continue;
