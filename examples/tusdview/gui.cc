@@ -34,6 +34,14 @@ const char* NodeTypeName(tydra::NodeType t) {
   }
 }
 
+// Greyed, word-wrapped hint text (TextDisabled does not wrap and would clip in
+// a narrow panel).
+void HintWrapped(const char* s) {
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+  ImGui::TextWrapped("%s", s);
+  ImGui::PopStyleColor();
+}
+
 const tinyusdz::Prim* FindPrimByPath(const tinyusdz::Prim& prim,
                                      const std::string& path) {
   if (prim.absolute_path().full_path_name() == path) return &prim;
@@ -248,8 +256,8 @@ void Gui::drawHierarchy() {
       for (const auto& root : loaded_->stage.root_prims()) drawPrimTree(root);
     }
   } else {
-    ImGui::TextDisabled("No scene loaded.");
-    ImGui::TextDisabled("File > Open... to load a USD file.");
+    HintWrapped("No scene loaded.");
+    HintWrapped("File > Open... to load a USD file.");
   }
   ImGui::End();
 }
@@ -293,9 +301,9 @@ void Gui::drawInspector() {
     }
   } else if (!selPath_.empty()) {
     ImGui::TextWrapped("%s", selPath_.c_str());
-    ImGui::TextDisabled("(RenderScene node; no matching Stage prim)");
+    HintWrapped("(RenderScene node; no matching Stage prim)");
   } else {
-    ImGui::TextDisabled("Select a prim in the Hierarchy.");
+    HintWrapped("Select a prim in the Hierarchy.");
   }
   ImGui::End();
 }
@@ -428,8 +436,14 @@ void Gui::drawViewport() {
     vpHovered_ = ImGui::IsItemHovered();
 
     if (draw_ && draw_->empty()) {
-      ImGui::SetCursorPos(ImVec2(12, 28));
-      ImGui::TextColored(ImVec4(1, 1, 1, 0.7f), "No renderable meshes in this scene.");
+      // Center the message in the viewport (a fixed pixel offset clips under the
+      // tab bar at HiDPI scale).
+      const char* msg = (loaded_ && loaded_->ok)
+                            ? "No renderable meshes in this scene."
+                            : "No scene loaded. Use File > Open...";
+      const ImVec2 ts = ImGui::CalcTextSize(msg);
+      ImGui::SetCursorPos(ImVec2((avail.x - ts.x) * 0.5f, (avail.y - ts.y) * 0.5f));
+      ImGui::TextColored(ImVec4(1, 1, 1, 0.7f), "%s", msg);
     }
   } else {
     vpHovered_ = false;
