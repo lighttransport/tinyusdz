@@ -504,6 +504,7 @@ def Shader "tex" {
   float4 inputs:scale = (1, 1, 1, 1)
   float4 inputs:bias = (0, 0, 0, 0)
   float3 outputs:rgb
+  float4 outputs:rgba
 }
 )";
   RT_OK(usda);
@@ -521,6 +522,7 @@ def Shader "tex" {
   TEST_CHECK(uv->sourceColorSpace.authored());
   // terminal output
   TEST_CHECK(uv->outputsRGB.authored());
+  TEST_CHECK(uv->outputsRGBA.authored());
 }
 
 void usdc_writer_primvarreader_test(void) {

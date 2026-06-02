@@ -643,6 +643,7 @@ bool CrateWriter::ConvertSinglePrim(
           add_t("outputs:b", uv_texture->outputsB, "float");
           add_t("outputs:a", uv_texture->outputsA, "float");
           add_t("outputs:rgb", uv_texture->outputsRGB, "float3");
+          add_t("outputs:rgba", uv_texture->outputsRGBA, "float4");
         }
       } else if (shader->info_id == "UsdTransform2d") {
         if (auto* transform2d = shader->value.as<UsdTransform2d>()) {
