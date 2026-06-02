@@ -7,8 +7,6 @@
 // here uses the portable `fpng` encoder. The native `tusdzconvert` CLI uses
 // fpnge.
 
-import * as THREE from 'three';
-
 import {
   loadWasm,
   isImageName,
@@ -85,7 +83,7 @@ container.innerHTML = `
     <p style="color:#888;font-size:12px;margin:10px 0 0">
       Set a <b>target total texture size</b> to auto-fit all textures to a budget — choose the lever:
       reduce <b>texture size</b> (keeps PNG) or lower <b>JPEG quality</b> (transcodes to JPG).
-      Without a target, browser-supported textures are resized/re-encoded through Three.js/canvas;
+      Without a target, browser-supported textures are resized/re-encoded through the canvas API;
       unsupported formats are routed to TinyUSDZ WASM.
     </p>
   </fieldset>
@@ -306,10 +304,6 @@ async function browserTextureProcessor({ name, data, maxTextureSize, reencode, t
   ctx.drawImage(bitmap, 0, 0, width, height);
   bitmap.close?.();
 
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.needsUpdate = true;
-  texture.dispose();
-
   const encoded = await encodeCanvas(canvas, target.mime, Math.max(0.01, Math.min(1, jpegQuality / 100)));
   return {
     data: encoded,
@@ -380,9 +374,6 @@ async function browserRepackChannels(slots, channels) {
   }
 
   ctx.putImageData(out, 0, 0);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.needsUpdate = true;
-  texture.dispose();
   return {
     data: await encodeCanvas(canvas, 'image/png', 1),
     width,
