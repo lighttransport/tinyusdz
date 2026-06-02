@@ -17,6 +17,7 @@
     "dev:progress-offscreen": "vite --open /progress-offscreenwebgl.html",
     "dev:usd-export": "vite --open /usd-export.html",
     "dev:usdzconvert": "vite --open /usdzconvert.html",
+    "dev:udim": "vite --open /udim.html",
     "dev:urdf": "vite --open /urdf.html",
     "build": "vite build",
     "preview": "vite preview",
