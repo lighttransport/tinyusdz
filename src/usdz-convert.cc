@@ -887,6 +887,114 @@ bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
   return true;
 }
 
+// Expand a UDIM texture asset path (e.g. `diffuse.<UDIM>.png`), pack each
+// resolved tile (1001..1100) into `assets`, and produce the archive-side
+// `<UDIM>` pattern (e.g. `textures/diffuse.<UDIM>.png`). Each tile is run
+// through ProcessTexture (resize/re-encode) like an ordinary texture.
+//
+// Returns false only on a hard error (caller should abort). On success,
+// `*packed` indicates whether at least one tile was packed and
+// `*archive_pattern` holds the rewritten `<UDIM>` reference.
+bool ExpandAndPackUDIM(const std::string &udim_path,
+                       AssetResolutionResolver &resolver,
+                       const std::vector<std::string> &search_paths,
+                       const std::string &base_dir,
+                       const UsdzConvertOptions &options,
+                       std::map<std::string, std::vector<uint8_t>> *assets,
+                       std::string *archive_pattern, bool *packed,
+                       UsdzConvertStats *stats, std::string *warn,
+                       std::string *err) {
+  (void)err;
+  *packed = false;
+
+  std::string prefix, suffix;
+  if (!io::SplitUDIMPath(udim_path, &prefix, &suffix)) {
+    return true;  // not a UDIM path
+  }
+
+  std::string pattern_archive;
+  for (uint32_t id = 1001; id <= 1100; id++) {
+    const std::string tile_orig = prefix + std::to_string(id) + suffix;
+
+    std::vector<uint8_t> src_bytes;
+    std::string rerr;
+    if (!ReadAssetBytesWithBase(resolver, tile_orig, base_dir, &src_bytes, warn,
+                                &rerr)) {
+      continue;  // tile not present
+    }
+
+    const std::string src_ext = to_lower(io::GetFileExtension(tile_orig));
+    std::vector<uint8_t> out_bytes;
+    std::string out_ext;
+    bool resized = false, reencoded = false;
+    std::string pwarn;
+    if (!ProcessTexture(src_bytes, src_ext, options, tile_orig, &out_bytes,
+                        &out_ext, &resized, &reencoded, &pwarn)) {
+      if (warn) *warn += "Failed to process UDIM tile " + tile_orig + "\n";
+      continue;
+    }
+    if (warn) *warn += pwarn;
+
+    if (!IsAllowedTextureExt(out_ext)) {
+      out_ext = "png";
+    }
+
+    std::string tile_archive =
+        SanitizeArchiveName(RelativeToSearchPath(tile_orig, search_paths));
+    if (tile_archive == tile_orig) {
+      tile_archive = SanitizeArchiveName(tile_orig);
+    }
+    if (to_lower(io::GetFileExtension(tile_archive)) != out_ext) {
+      tile_archive = ReplaceExtension(tile_archive, out_ext);
+    }
+
+    // Avoid collisions across distinct tile bytes.
+    std::string unique_name = tile_archive;
+    uint32_t collision_suffix = 1;
+    while (assets->count(unique_name) &&
+           (*assets)[unique_name] != out_bytes) {
+      unique_name = MakeCollisionArchiveName(tile_archive, collision_suffix++);
+    }
+    tile_archive = unique_name;
+
+    (*assets)[tile_archive] = std::move(out_bytes);
+
+    if (pattern_archive.empty()) {
+      // Derive the archive `<UDIM>` pattern from the first packed tile by
+      // replacing the tile id with the `<UDIM>` token.
+      const std::string idstr = std::to_string(id);
+      const size_t pos = tile_archive.rfind(idstr);
+      if (pos != std::string::npos) {
+        pattern_archive = tile_archive.substr(0, pos) + "<UDIM>" +
+                          tile_archive.substr(pos + idstr.size());
+      } else {
+        pattern_archive = tile_archive;
+      }
+    }
+
+    if (stats) {
+      stats->num_textures++;
+      if (resized) stats->num_textures_resized++;
+      if (reencoded) {
+        stats->num_textures_reencoded++;
+      } else {
+        stats->num_textures_passthrough++;
+      }
+    }
+
+    Log(options.verbose, "  UDIM tile " + tile_orig + " -> " + tile_archive +
+                             (resized ? " [resized]" : "") +
+                             (reencoded ? " [reencoded]" : " [passthrough]"));
+
+    *packed = true;
+  }
+
+  if (*packed) {
+    *archive_pattern = pattern_archive;
+  }
+  return true;
+}
+
 struct NonFlattenLayerPackage {
   Layer layer;
   std::string source_path;
@@ -1119,6 +1227,26 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
     auto existing = source_to_archive.find(ref.source_path);
     if (existing != source_to_archive.end()) {
       texture_remaps[ref.package_index][ref.authored_path] = existing->second;
+      continue;
+    }
+
+    // UDIM texture: expand to tiles, pack each, and rewrite the authored
+    // `<UDIM>` reference to the archive-side `<UDIM>` pattern.
+    if (io::IsUDIMPath(ref.authored_path)) {
+      std::string udim_pattern;
+      bool udim_packed = false;
+      if (!ExpandAndPackUDIM(ref.authored_path, resolver, search_paths,
+                             packages[ref.package_index].base_dir, options,
+                             &assets, &udim_pattern, &udim_packed, stats, warn,
+                             err)) {
+        return false;
+      }
+      if (udim_packed) {
+        source_to_archive[ref.source_path] = udim_pattern;
+        texture_remaps[ref.package_index][ref.authored_path] = udim_pattern;
+      } else if (warn) {
+        *warn += "No UDIM tiles found for '" + ref.authored_path + "'.\n";
+      }
       continue;
     }
 
@@ -1462,6 +1590,10 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       if (seen.count(orig)) continue;
       seen.insert(orig);
 
+      // UDIM textures are expanded and packed per-tile in the main loop below
+      // (the budget fitter operates on single decoded images).
+      if (io::IsUDIMPath(orig)) continue;
+
       std::vector<uint8_t> src_bytes;
       std::string rerr;
       if (!ReadAssetBytes(resolver, orig, &src_bytes, warn, &rerr)) {
@@ -1523,6 +1655,25 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   for (const std::string &orig : texture_paths) {
     if (path_to_archive.count(orig)) {
       continue;  // already processed
+    }
+
+    // UDIM texture: expand to tiles, pack each, and rewrite the authored
+    // `<UDIM>` reference to the archive-side `<UDIM>` pattern.
+    if (io::IsUDIMPath(orig)) {
+      std::string udim_pattern;
+      bool udim_packed = false;
+      if (!ExpandAndPackUDIM(orig, resolver, search_paths, /*base_dir*/ "",
+                             options, &assets, &udim_pattern, &udim_packed,
+                             stats, warn, err)) {
+        return false;
+      }
+      if (udim_packed) {
+        path_to_archive[orig] = udim_pattern;
+        Log(options.verbose, "  " + orig + " -> " + udim_pattern + " [UDIM]");
+      } else if (warn) {
+        (*warn) += "No UDIM tiles found for '" + orig + "'.\n";
+      }
+      continue;
     }
 
     std::string archive_name =

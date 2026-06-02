@@ -1783,6 +1783,9 @@ class TinyUSDZLoaderNative {
 
     env.material_config.preserve_texel_bitdepth = true;
 
+    // UDIM: combine tiles into a single atlas, or keep them sparse for editing.
+    env.material_config.combine_udim_tiles = combineUDIMTiles_;
+
     // Free GeomMesh data in stage after using it to save memory.
     env.mesh_config.lowmem = true;
 
@@ -1967,6 +1970,9 @@ class TinyUSDZLoaderNative {
 
     env.material_config.preserve_texel_bitdepth = true;
 
+    // UDIM: combine tiles into a single atlas, or keep them sparse for editing.
+    env.material_config.combine_udim_tiles = combineUDIMTiles_;
+
     if (is_usdz) {
       // TODO: Support USDZ + Composition
       // Setup AssetResolutionResolver to read a asset(file) from memory.
@@ -2124,6 +2130,9 @@ class TinyUSDZLoaderNative {
     tinyusdz::tydra::RenderSceneConverterEnv env(stage);
     env.scene_config.load_texture_assets = loadTextureInNative_;
     env.material_config.preserve_texel_bitdepth = true;
+
+    // UDIM: combine tiles into a single atlas, or keep them sparse for editing.
+    env.material_config.combine_udim_tiles = combineUDIMTiles_;
     env.mesh_config.lowmem = true;
     env.mesh_config.defer_tangent_computation = defer_tangent_computation_;
     env.mesh_config.compute_tangents_only_with_normal_map = true;
@@ -3350,7 +3359,57 @@ class TinyUSDZLoaderNative {
     tex.set("wrapT", to_string(t.wrapT));
     //  TOOD: bias, scale, rot/scale/trans, etc
 
+    // UDIM: expose remap (combined atlas) or sparse-tile linkage.
+    tex.set("isUDIM", bool(t.is_udim));
+    if (t.is_udim) {
+      tex.set("udimTextureId", int(t.udim_texture_id));
+      tex.set("udimUvScaleU", float(t.udim_uv_scale[0]));
+      tex.set("udimUvScaleV", float(t.udim_uv_scale[1]));
+      tex.set("udimUvOffsetU", float(t.udim_uv_offset[0]));
+      tex.set("udimUvOffsetV", float(t.udim_uv_offset[1]));
+    }
+
     return tex;
+  }
+
+  int numUDIMTextures() const { return render_scene_.udim_textures.size(); }
+
+  // Return a sparse (keep-as-is) UDIM texture: its `<UDIM>` asset identifier
+  // and the list of resolved tiles { udim, u, v, imageId }. Each tile image can
+  // be fetched with getImage(imageId).
+  emscripten::val getUDIMTexture(int udim_id) const {
+    emscripten::val out = emscripten::val::object();
+
+    if (!loaded_) {
+      return out;
+    }
+
+    if (udim_id < 0 ||
+        static_cast<size_t>(udim_id) >= render_scene_.udim_textures.size()) {
+      return out;
+    }
+
+    const auto &u = render_scene_.udim_textures[size_t(udim_id)];
+
+    out.set("primName", u.prim_name);
+    out.set("absPath", u.abs_path);
+    out.set("displayName", u.display_name);
+    out.set("assetIdentifier", u.asset_identifier);
+
+    emscripten::val tiles = emscripten::val::array();
+    int idx = 0;
+    for (const auto &kv : u.imageTileIds) {
+      const uint32_t tile_id = kv.first;
+      emscripten::val tile = emscripten::val::object();
+      tile.set("udim", int(tile_id));
+      tile.set("u", int((tile_id - 1001u) % 10u));
+      tile.set("v", int((tile_id - 1001u) / 10u));
+      tile.set("imageId", int(kv.second));
+      tiles.set(idx++, tile);
+    }
+    out.set("tiles", tiles);
+
+    return out;
   }
 
   emscripten::val getImage(int img_id) const {
@@ -4604,6 +4663,16 @@ class TinyUSDZLoaderNative {
     return defer_tangent_computation_;
   }
 
+  // UDIM: combine tiles into a single atlas (true, default) or keep them
+  // sparse for per-tile editing (false).
+  void setCombineUDIMTiles(bool enabled) {
+    combineUDIMTiles_ = enabled;
+  }
+
+  bool getCombineUDIMTiles() const {
+    return combineUDIMTiles_;
+  }
+
   // MMap zero-copy configuration
   void setMMapZeroCopy(bool enabled) {
     mmap_zero_copy_ = enabled;
@@ -5533,7 +5602,7 @@ class TinyUSDZLoaderNative {
     for (const auto &kv : em_resolver_.cache) {
       const std::string &name = kv.first;
       const std::string &binary = kv.second.binary;
-      // Only include image/audio assets (skip USD files)
+      // Include dependency layers and payload assets.
       std::string ext;
       {
         auto dot = name.rfind('.');
@@ -5543,7 +5612,8 @@ class TinyUSDZLoaderNative {
           for (auto &c : ext) c = static_cast<char>(std::tolower(c));
         }
       }
-      if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+      if (ext == ".usd" || ext == ".usda" || ext == ".usdc" ||
+          ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
           ext == ".exr" || ext == ".avif" ||
           ext == ".m4a" || ext == ".mp3" || ext == ".wav") {
         assets[name] = std::vector<uint8_t>(binary.begin(), binary.end());
@@ -5586,7 +5656,7 @@ class TinyUSDZLoaderNative {
     }
     tinyusdz::usdz::RemapTextureAssetPaths(stage, remap_map);
 
-    // Collect image/audio assets from the resolver cache.
+    // Collect dependency layers and payload assets from the resolver cache.
     std::map<std::string, std::vector<uint8_t>> assets;
     for (const auto &kv : em_resolver_.cache) {
       const std::string &name = kv.first;
@@ -5597,7 +5667,8 @@ class TinyUSDZLoaderNative {
         ext = name.substr(dot);
         for (auto &c : ext) c = static_cast<char>(std::tolower(c));
       }
-      if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
+      if (ext == ".usd" || ext == ".usda" || ext == ".usdc" ||
+          ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
           ext == ".avif" || ext == ".m4a" || ext == ".mp3" || ext == ".wav") {
         assets[name] = std::vector<uint8_t>(binary.begin(), binary.end());
       }
@@ -5606,6 +5677,134 @@ class TinyUSDZLoaderNative {
     std::vector<uint8_t> output;
     std::string warn, err;
     if (!tinyusdz::SaveAsUSDZToMemory(stage, assets, &output, &warn, &err)) {
+      error_ = "USDZ export failed: " + err;
+      warn_ = warn;
+      return emscripten::val::null();
+    }
+    warn_ = warn;
+    usdz_export_buf_ = std::move(output);
+    return emscripten::val(emscripten::typed_memory_view(
+        usdz_export_buf_.size(), usdz_export_buf_.data()));
+  }
+
+  /// Export USDZ with optional texture remap and write options.
+  /// options: { rootLayerFormat?: "usdc"|"usda", arkitCompatible?: bool }
+  emscripten::val exportAsUSDZWithOptions(emscripten::val remap,
+                                          emscripten::val options) {
+    tinyusdz::Stage stage;
+    if (!getStageFromLayer(stage)) {
+      return emscripten::val::null();
+    }
+
+    std::map<std::string, std::string> remap_map;
+    if (!remap.isUndefined() && !remap.isNull()) {
+      emscripten::val keys =
+          emscripten::val::global("Object").call<emscripten::val>("keys", remap);
+      const size_t nkeys = keys["length"].as<size_t>();
+      for (size_t i = 0; i < nkeys; i++) {
+        std::string k = keys[i].as<std::string>();
+        remap_map[k] = remap[k].as<std::string>();
+      }
+    }
+    if (!remap_map.empty()) {
+      tinyusdz::usdz::RemapTextureAssetPaths(stage, remap_map);
+    }
+
+    tinyusdz::USDZWriteOptions write_options;
+    bool arkit_compatible = false;
+    if (!options.isUndefined() && !options.isNull()) {
+      emscripten::val arkit_val = options["arkitCompatible"];
+      if (!arkit_val.isUndefined() && !arkit_val.isNull()) {
+        arkit_compatible = arkit_val.as<bool>();
+      }
+      emscripten::val root_format_val = options["rootLayerFormat"];
+      if (!root_format_val.isUndefined() && !root_format_val.isNull()) {
+        std::string root_format = root_format_val.as<std::string>();
+        for (auto &c : root_format) c = static_cast<char>(std::tolower(c));
+        if (root_format == "usda") {
+          write_options.root_layer_format = tinyusdz::USDZRootLayerFormat::USDA;
+        }
+      }
+    }
+    if (arkit_compatible) {
+      stage.metas().upAxis.set_value(tinyusdz::Axis::Y);
+      write_options.root_layer_format = tinyusdz::USDZRootLayerFormat::USDC;
+    }
+
+    std::map<std::string, std::vector<uint8_t>> assets;
+    for (const auto &kv : em_resolver_.cache) {
+      const std::string &name = kv.first;
+      const std::string &binary = kv.second.binary;
+      std::string ext;
+      auto dot = name.rfind('.');
+      if (dot != std::string::npos) {
+        ext = name.substr(dot);
+        for (auto &c : ext) c = static_cast<char>(std::tolower(c));
+      }
+      if (ext == ".usd" || ext == ".usda" || ext == ".usdc" ||
+          ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
+          ext == ".avif" || ext == ".m4a" || ext == ".mp3" || ext == ".wav") {
+        assets[name] = std::vector<uint8_t>(binary.begin(), binary.end());
+      }
+    }
+
+    std::vector<uint8_t> output;
+    std::string warn, err;
+    if (!tinyusdz::SaveAsUSDZToMemory(stage, assets, &output, write_options,
+                                      &warn, &err)) {
+      error_ = "USDZ export failed: " + err;
+      warn_ = warn;
+      return emscripten::val::null();
+    }
+    warn_ = warn;
+    usdz_export_buf_ = std::move(output);
+    return emscripten::val(emscripten::typed_memory_view(
+        usdz_export_buf_.size(), usdz_export_buf_.data()));
+  }
+
+  /// Export the current layer as the USDZ root layer. This is used for
+  /// non-flattened packaging so composition arcs stay authored in the root.
+  emscripten::val exportLayerAsUSDZWithOptions(emscripten::val options) {
+    if (!loaded_ || !loaded_as_layer_) {
+      error_ = "No layer loaded";
+      return emscripten::val::null();
+    }
+
+    tinyusdz::USDZWriteOptions write_options;
+    write_options.root_layer_format = tinyusdz::USDZRootLayerFormat::USDA;
+    if (!options.isUndefined() && !options.isNull()) {
+      emscripten::val root_format_val = options["rootLayerFormat"];
+      if (!root_format_val.isUndefined() && !root_format_val.isNull()) {
+        std::string root_format = root_format_val.as<std::string>();
+        for (auto &c : root_format) c = static_cast<char>(std::tolower(c));
+        if (root_format == "usdc") {
+          write_options.root_layer_format = tinyusdz::USDZRootLayerFormat::USDC;
+        }
+      }
+    }
+
+    std::map<std::string, std::vector<uint8_t>> assets;
+    for (const auto &kv : em_resolver_.cache) {
+      const std::string &name = kv.first;
+      const std::string &binary = kv.second.binary;
+      std::string ext;
+      auto dot = name.rfind('.');
+      if (dot != std::string::npos) {
+        ext = name.substr(dot);
+        for (auto &c : ext) c = static_cast<char>(std::tolower(c));
+      }
+      if (ext == ".usd" || ext == ".usda" || ext == ".usdc" ||
+          ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
+          ext == ".avif" || ext == ".m4a" || ext == ".mp3" || ext == ".wav") {
+        assets[name] = std::vector<uint8_t>(binary.begin(), binary.end());
+      }
+    }
+
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    std::vector<uint8_t> output;
+    std::string warn, err;
+    if (!tinyusdz::SaveAsUSDZToMemory(curr, assets, &output, write_options,
+                                      &warn, &err)) {
       error_ = "USDZ export failed: " + err;
       warn_ = warn;
       return emscripten::val::null();
@@ -6082,6 +6281,11 @@ class TinyUSDZLoaderNative {
   bool loaded_as_layer_{false};
   bool enableComposition_{false};
   bool loadTextureInNative_{false}; // true: Let JavaScript to decode texture image.
+
+  // UDIM: when false, keep UDIM tiles separate (sparse tydra::UDIMTexture)
+  // for editing tiles in the web RenderScene. When true (default), combine
+  // tiles into a single atlas texture.
+  bool combineUDIMTiles_{true};
 
   // Set appropriate default memory limits based on WASM architecture
 #ifdef TINYUSDZ_WASM_MEMORY64
@@ -6941,6 +7145,12 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("numTextures", &TinyUSDZLoaderNative::numTextures)
       .function("getImage", &TinyUSDZLoaderNative::getImage)
       .function("numImages", &TinyUSDZLoaderNative::numImages)
+      .function("numUDIMTextures", &TinyUSDZLoaderNative::numUDIMTextures)
+      .function("getUDIMTexture", &TinyUSDZLoaderNative::getUDIMTexture)
+      .function("setCombineUDIMTiles",
+                &TinyUSDZLoaderNative::setCombineUDIMTiles)
+      .function("getCombineUDIMTiles",
+                &TinyUSDZLoaderNative::getCombineUDIMTiles)
       .function("getDefaultRootNodeId",
                 &TinyUSDZLoaderNative::getDefaultRootNodeId)
       .function("getRootNode", &TinyUSDZLoaderNative::getRootNode)
@@ -7032,6 +7242,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::extractReferencesAssetPaths)
       .function("extractPayloadAssetPaths",
                 &TinyUSDZLoaderNative::extractPayloadAssetPaths)
+
+      .function("hasSublayers",
+                &TinyUSDZLoaderNative::hasSublayers)
 
       .function("composeSublayers",
                 &TinyUSDZLoaderNative::composeSublayers)
@@ -7182,6 +7395,8 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("setUSDCExportLimitMB", &TinyUSDZLoaderNative::setUSDCExportLimitMB)
       .function("exportAsUSDZ", &TinyUSDZLoaderNative::exportAsUSDZ)
       .function("exportAsUSDZWithRemap", &TinyUSDZLoaderNative::exportAsUSDZWithRemap)
+      .function("exportAsUSDZWithOptions", &TinyUSDZLoaderNative::exportAsUSDZWithOptions)
+      .function("exportLayerAsUSDZWithOptions", &TinyUSDZLoaderNative::exportLayerAsUSDZWithOptions)
       .function("extractPhysicsSceneJSON", &TinyUSDZLoaderNative::extractPhysicsSceneJSON)
       .function("createSampleScene", &TinyUSDZLoaderNative::createSampleScene)
       .function("clearURDFMeshBuffers", &TinyUSDZLoaderNative::clearURDFMeshBuffers)
