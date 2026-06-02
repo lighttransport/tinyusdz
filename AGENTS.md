@@ -127,23 +127,29 @@ sandbox/                   Experimental tooling and prototypes
 
 ## Build Commands
 
+Coding agents should prefer Ninja build directories for compile/test work. Use
+`build_ninja/` for native builds and `web/build_ninja/` for WASM builds unless
+the user explicitly asks to reuse another configured build tree.
+
 ```bash
 # Native build (Linux/macOS)
-mkdir build && cd build
-cmake .. -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_EXAMPLES=ON
-make -j16
+cmake -S . -B build_ninja -G Ninja \
+  -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_EXAMPLES=ON
+cmake --build build_ninja
 
 # Or use bootstrap script
 ./scripts/bootstrap-cmake-linux.sh
 cd build && make -j16
 
 # WASM build
-cd web && mkdir build && cd build
-emcmake cmake ..
-make
+cd web
+emcmake cmake -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -B build_ninja
+cmake --build build_ninja
 ```
 
-Build folder: `build/` (native), `web/build/` (WASM).
+Preferred build folders for coding agents: `build_ninja/` (native),
+`web/build_ninja/` (WASM). Legacy build folders: `build/` (native),
+`web/build/` (WASM).
 
 ```bash
 # Python extension (CPython abi3 wheel)
@@ -207,7 +213,8 @@ node tests/compare-usda.js --detailed-diff \
 1. Declare in `tests/unit/unit-<module>.h`
 2. Implement in `tests/unit/unit-<module>.cc`
 3. Register in `tests/unit/unit-main.cc` (`TEST_LIST` array)
-4. Rebuild and verify: `make -j16 && ctest -R unit-test-tinyusdz --output-on-failure`
+4. Rebuild and verify: `cmake --build build_ninja` then
+   `ctest --test-dir build_ninja -R unit-test-tinyusdz --output-on-failure`
 
 ## Key Data Flow
 

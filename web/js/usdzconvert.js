@@ -7,10 +7,13 @@
 // here uses the portable `fpng` encoder. The native `tusdzconvert` CLI uses
 // fpnge.
 
+import * as THREE from 'three';
+
 import {
   loadWasm,
   isImageName,
   convertFolderToUSDZ,
+  outputFormatForImage,
   parseByteSize,
 } from './src/usdzconvert.js';
 
@@ -44,6 +47,25 @@ container.innerHTML = `
       <label>Max texture size (px)</label>
       <input id="maxSize" type="number" min="0" step="64" value="0" style="padding:4px;width:120px" title="0 = do not resize">
 
+      <label>Texture format</label>
+      <select id="textureFormat" style="padding:4px;width:120px">
+        <option value="keep">Keep</option>
+        <option value="png">PNG</option>
+        <option value="jpeg">JPEG</option>
+      </select>
+
+      <label>USDZ root layer</label>
+      <select id="rootLayerFormat" style="padding:4px;width:120px">
+        <option value="usdc">USDC</option>
+        <option value="usda">USDA</option>
+      </select>
+
+      <label>Flatten stage</label>
+      <input id="flatten" type="checkbox" checked style="justify-self:start">
+
+      <label>ARKit compatible</label>
+      <input id="arkitCompatible" type="checkbox" style="justify-self:start">
+
       <label>Target total texture size</label>
       <input id="targetSize" type="text" placeholder="e.g. 100MB (blank = off)" style="padding:4px;width:200px"
              title="Shrink all textures so their total fits this size">
@@ -63,7 +85,8 @@ container.innerHTML = `
     <p style="color:#888;font-size:12px;margin:10px 0 0">
       Set a <b>target total texture size</b> to auto-fit all textures to a budget — choose the lever:
       reduce <b>texture size</b> (keeps PNG) or lower <b>JPEG quality</b> (transcodes to JPG).
-      Without a target, textures are resized/re-encoded in place. PNG uses the portable <code>fpng</code> encoder in WASM.
+      Without a target, browser-supported textures are resized/re-encoded through Three.js/canvas;
+      unsupported formats are routed to TinyUSDZ WASM.
     </p>
   </fieldset>
 
@@ -107,6 +130,10 @@ const els = {
   fileList: document.getElementById('fileList'),
   rootSelect: document.getElementById('rootSelect'),
   maxSize: document.getElementById('maxSize'),
+  textureFormat: document.getElementById('textureFormat'),
+  rootLayerFormat: document.getElementById('rootLayerFormat'),
+  flatten: document.getElementById('flatten'),
+  arkitCompatible: document.getElementById('arkitCompatible'),
   reencode: document.getElementById('reencode'),
   jpegQuality: document.getElementById('jpegQuality'),
   btnConvert: document.getElementById('btnConvert'),
@@ -223,6 +250,148 @@ els.drop.addEventListener('drop', async e => {
 });
 
 // ---------------------------------------------------------------------------
+// Browser texture helpers
+// ---------------------------------------------------------------------------
+
+function browserImageFormat(name) {
+  const ext = (name.toLowerCase().split('.').pop() || '');
+  if (ext === 'jpg' || ext === 'jpeg') return 'jpeg';
+  if (ext === 'png') return 'png';
+  return null;
+}
+
+function targetBrowserFormat(name, requested) {
+  const fmt = outputFormatForImage(name, requested);
+  if (fmt.format === 'jpeg') return { format: 'jpeg', mime: 'image/jpeg', ext: fmt.ext };
+  if (fmt.format === 'png') return { format: 'png', mime: 'image/png', ext: fmt.ext };
+  return null;
+}
+
+function encodeCanvas(canvas, mime, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if (!blob) {
+        reject(new Error('Canvas encoding failed.'));
+        return;
+      }
+      blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)), reject);
+    }, mime, mime === 'image/jpeg' ? quality : undefined);
+  });
+}
+
+async function imageBitmapFromBytes(data, name) {
+  const fmt = browserImageFormat(name);
+  if (!fmt) return null;
+  const mime = fmt === 'jpeg' ? 'image/jpeg' : 'image/png';
+  return await createImageBitmap(new Blob([data], { type: mime }));
+}
+
+async function browserTextureProcessor({ name, data, maxTextureSize, reencode, textureFormat, jpegQuality }) {
+  const target = targetBrowserFormat(name, textureFormat);
+  if (!target) return null;
+  const mustTranscode = String(textureFormat || 'keep').toLowerCase() !== 'keep';
+  const wantResize = maxTextureSize > 0;
+  if (!wantResize && !reencode && !mustTranscode) return null;
+
+  const bitmap = await imageBitmapFromBytes(data, name);
+  if (!bitmap) return null;
+
+  const scale = wantResize ? Math.min(1, maxTextureSize / Math.max(bitmap.width, bitmap.height)) : 1;
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d', { alpha: target.format !== 'jpeg' });
+  ctx.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close?.();
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  texture.dispose();
+
+  const encoded = await encodeCanvas(canvas, target.mime, Math.max(0.01, Math.min(1, jpegQuality / 100)));
+  return {
+    data: encoded,
+    ext: target.ext,
+    resized: scale < 1,
+    reencoded: true,
+  };
+}
+
+async function imageDataFromSlot(slot) {
+  const bitmap = await imageBitmapFromBytes(slot.data, slot.name);
+  if (!bitmap) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(bitmap, 0, 0);
+  bitmap.close?.();
+  return {
+    width: canvas.width,
+    height: canvas.height,
+    data: ctx.getImageData(0, 0, canvas.width, canvas.height).data,
+  };
+}
+
+async function browserRepackChannels(slots, channels) {
+  const sources = [];
+  for (const slot of slots) {
+    if (!slot || !slot.data) {
+      sources.push(null);
+      continue;
+    }
+    const image = await imageDataFromSlot(slot);
+    if (!image) return null;
+    sources.push({ ...image, channel: slot.channel });
+  }
+
+  const first = sources.find(Boolean);
+  const width = first ? first.width : 1;
+  const height = first ? first.height : 1;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  const out = ctx.createImageData(width, height);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const dst = (y * width + x) * 4;
+      for (let c = 0; c < 4; c++) {
+        if (c >= channels) {
+          out.data[dst + c] = c === 3 ? 255 : 0;
+          continue;
+        }
+        const slot = slots[c];
+        const src = sources[c];
+        if (src) {
+          const sx = Math.min(src.width - 1, Math.floor(x * src.width / width));
+          const sy = Math.min(src.height - 1, Math.floor(y * src.height / height));
+          out.data[dst + c] = src.data[(sy * src.width + sx) * 4 + src.channel];
+        } else if (slot && slot.const !== undefined) {
+          out.data[dst + c] = slot.const;
+        } else {
+          out.data[dst + c] = c === 3 ? 255 : 0;
+        }
+      }
+    }
+  }
+
+  ctx.putImageData(out, 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  texture.dispose();
+  return {
+    data: await encodeCanvas(canvas, 'image/png', 1),
+    width,
+    height,
+    channels,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Convert
 // ---------------------------------------------------------------------------
 
@@ -240,7 +409,12 @@ els.btnConvert.addEventListener('click', async () => {
       targetTextureBytes,
       fitStrategy,
       reencode: els.reencode.checked,
+      textureFormat: els.textureFormat.value,
+      rootLayerFormat: els.rootLayerFormat.value,
+      flatten: els.flatten.checked,
+      arkitCompatible: els.arkitCompatible.checked,
       jpegQuality: parseInt(els.jpegQuality.value, 10) || 90,
+      textureProcessor: browserTextureProcessor,
       log,
     };
     if (targetTextureBytes > 0) {
@@ -289,27 +463,48 @@ els.repackSlots.querySelectorAll('input[type=file]').forEach(inp => {
   inp.addEventListener('change', async e => {
     const i = +inp.dataset.slot;
     const f = e.target.files[0];
-    repackFiles[i] = f ? new Uint8Array(await f.arrayBuffer()) : null;
+    repackFiles[i] = f ? { name: f.name, data: new Uint8Array(await f.arrayBuffer()) } : null;
     els.repackSlots.querySelector(`[data-slotname="${i}"]`).textContent = f ? f.name : '(none)';
   });
 });
 
 els.btnRepack.addEventListener('click', async () => {
   try {
-    await ensureWasm();
-    const args = { channels: parseInt(els.repackChannels.value, 10) || 3, format: 'png' };
+    const channels = parseInt(els.repackChannels.value, 10) || 3;
+    const slots = [];
+    const args = { channels, format: 'png' };
     for (let i = 0; i < 4; i++) {
       const constEl = els.repackSlots.querySelector(`[data-slotconst="${i}"]`);
       const chEl = els.repackSlots.querySelector(`[data-slotch="${i}"]`);
       const key = REPACK_CHANS[i].toLowerCase();
       if (repackFiles[i]) {
-        args[key] = { data: repackFiles[i], channel: parseInt(chEl.value, 10) || 0 };
+        const channel = parseInt(chEl.value, 10) || 0;
+        args[key] = { data: repackFiles[i].data, channel };
+        slots[i] = { ...repackFiles[i], channel };
       } else if (constEl.value !== '') {
-        args[key] = { const: parseInt(constEl.value, 10) || 0 };
+        const value = parseInt(constEl.value, 10) || 0;
+        args[key] = { const: value };
+        slots[i] = { const: value };
+      } else {
+        slots[i] = null;
       }
     }
     log('Repacking channels...');
-    const res = native.repackChannels(args);
+    let res = null;
+    try {
+      res = await browserRepackChannels(slots, channels);
+    } catch (err) {
+      log(`  browser repack failed (${err && err.message ? err.message : err})`);
+    }
+    if (res) {
+      log(`Packed ${res.width}x${res.height}x${res.channels}, ${res.data.length} bytes [browser]`);
+      downloadBlob(new Blob([res.data], { type: 'image/png' }), 'packed.png');
+      return;
+    }
+
+    log('Browser repack unavailable for these inputs; using TinyUSDZ WASM.');
+    await ensureWasm();
+    res = native.repackChannels(args);
     if (!res.success) throw new Error(res.error);
     log(`Packed ${res.width}x${res.height}x${res.channels}, ${res.data.length} bytes`);
     downloadBlob(new Blob([new Uint8Array(res.data)], { type: 'image/png' }), 'packed.png');

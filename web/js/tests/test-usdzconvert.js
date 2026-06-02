@@ -13,6 +13,7 @@ import {
   isImageName,
   isUsdName,
   imageFormatFromName,
+  outputFormatForImage,
   parseByteSize,
   replaceExt,
   rootUsdFromMap,
@@ -23,6 +24,46 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let passed = 0;
 let failed = 0;
+
+function firstZipEntryName(bytes) {
+  assert.equal(bytes[0], 0x50, 'first byte should be P (ZIP magic)');
+  assert.equal(bytes[1], 0x4b, 'second byte should be K (ZIP magic)');
+  assert.equal(bytes[2], 0x03, 'third byte should be local file header marker');
+  assert.equal(bytes[3], 0x04, 'fourth byte should be local file header marker');
+  const nameLen = bytes[26] | (bytes[27] << 8);
+  const extraLen = bytes[28] | (bytes[29] << 8);
+  assert.ok(nameLen > 0, 'first ZIP entry should have a name');
+  assert.ok(extraLen >= 0, 'extra field length should be valid');
+  const nameBytes = bytes.slice(30, 30 + nameLen);
+  return new TextDecoder().decode(nameBytes);
+}
+
+function zipEntries(bytes) {
+  const entries = new Map();
+  let offset = 0;
+  const decoder = new TextDecoder();
+  while (offset + 30 <= bytes.length) {
+    if (bytes[offset] !== 0x50 || bytes[offset + 1] !== 0x4b ||
+        bytes[offset + 2] !== 0x03 || bytes[offset + 3] !== 0x04) {
+      break;
+    }
+    const method = bytes[offset + 8] | (bytes[offset + 9] << 8);
+    const compressedSize =
+      bytes[offset + 18] | (bytes[offset + 19] << 8) |
+      (bytes[offset + 20] << 16) | (bytes[offset + 21] << 24);
+    const nameLen = bytes[offset + 26] | (bytes[offset + 27] << 8);
+    const extraLen = bytes[offset + 28] | (bytes[offset + 29] << 8);
+    const nameStart = offset + 30;
+    const dataStart = nameStart + nameLen + extraLen;
+    const dataEnd = dataStart + compressedSize;
+    const name = decoder.decode(bytes.slice(nameStart, nameStart + nameLen));
+    assert.equal(method, 0, `ZIP entry ${name} should be stored`);
+    assert.ok(dataEnd <= bytes.length, `ZIP entry ${name} should fit`);
+    entries.set(name, bytes.slice(dataStart, dataEnd));
+    offset = dataEnd;
+  }
+  return entries;
+}
 
 function test(name, fn) {
   try {
@@ -86,6 +127,15 @@ test('exr returns null', () => assert.equal(imageFormatFromName('tex.exr'), null
 test('avif returns null', () => assert.equal(imageFormatFromName('tex.avif'), null));
 test('no extension', () => assert.equal(imageFormatFromName('noext'), null));
 test('case insensitive', () => assert.equal(imageFormatFromName('TEX.PNG'), 'png'));
+
+// ============================================================
+console.log('outputFormatForImage');
+// ============================================================
+test('keep png', () => assert.deepEqual(outputFormatForImage('tex.png'), { format: 'png', ext: 'png' }));
+test('keep jpeg preserves extension', () => assert.deepEqual(outputFormatForImage('tex.jpeg'), { format: 'jpeg', ext: 'jpeg' }));
+test('force jpeg', () => assert.deepEqual(outputFormatForImage('tex.png', 'jpeg'), { format: 'jpeg', ext: 'jpg' }));
+test('force png', () => assert.deepEqual(outputFormatForImage('tex.jpg', 'png'), { format: 'png', ext: 'png' }));
+test('unsupported keep', () => assert.deepEqual(outputFormatForImage('tex.exr'), { format: null, ext: null }));
 
 // ============================================================
 console.log('parseByteSize');
@@ -186,6 +236,24 @@ def Xform "root"
 `;
   const usdaPath = path.join(tmpDir, 'scene.usda');
   fs.writeFileSync(usdaPath, usdaContent);
+  const rootWithSublayer = `#usda 1.0
+(
+    defaultPrim = "root"
+    subLayers = [
+        @sub.usda@
+    ]
+)
+
+def Xform "root"
+{
+}
+`;
+  const sublayerContent = `#usda 1.0
+
+def Xform "fromSub"
+{
+}
+`;
 
   await testAsync('convertFolderToUSDZ produces valid USDZ', async () => {
     const native = await loadWasm(() => import(wasmGlue));
@@ -214,6 +282,71 @@ def Xform "root"
       maxTextureSize: 64,
     });
     assert.ok(usdz.length > 0, 'USDZ with resize should not be empty');
+  });
+
+  await testAsync('convertFolderToUSDZ can request USDA root layer', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const assetMap = new Map();
+    assetMap.set('scene.usda', new Uint8Array(fs.readFileSync(usdaPath)));
+
+    const { usdz, stats } = await convertFolderToUSDZ(native, assetMap, {
+      rootPath: 'scene.usda',
+      rootLayerFormat: 'usda',
+    });
+    assert.ok(usdz.length > 0, 'USDZ should not be empty');
+    assert.equal(stats.rootLayerFormat, 'usda');
+    assert.equal(firstZipEntryName(usdz), 'root.usda');
+  });
+
+  await testAsync('convertFolderToUSDZ arkitCompatible forces USDC root layer', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const assetMap = new Map();
+    assetMap.set('scene.usda', new Uint8Array(fs.readFileSync(usdaPath)));
+
+    const { usdz, stats } = await convertFolderToUSDZ(native, assetMap, {
+      rootPath: 'scene.usda',
+      rootLayerFormat: 'usda',
+      arkitCompatible: true,
+    });
+    assert.ok(usdz.length > 0, 'USDZ should not be empty');
+    assert.equal(stats.rootLayerFormat, 'usdc');
+    assert.equal(firstZipEntryName(usdz), 'root.usdc');
+  });
+
+  await testAsync('convertFolderToUSDZ flatten composes local sublayers', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const assetMap = new Map();
+    assetMap.set('asset/root.usda', new TextEncoder().encode(rootWithSublayer));
+    assetMap.set('asset/sub.usda', new TextEncoder().encode(sublayerContent));
+
+    const { usdz, stats } = await convertFolderToUSDZ(native, assetMap, {
+      rootPath: 'asset/root.usda',
+      rootLayerFormat: 'usda',
+      flatten: true,
+    });
+    assert.equal(stats.flatten, true);
+    const entries = zipEntries(usdz);
+    const root = new TextDecoder().decode(entries.get('root.usda'));
+    assert.match(root, /def Xform "fromSub"/);
+  });
+
+  await testAsync('convertFolderToUSDZ non-flatten packages local sublayers', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const assetMap = new Map();
+    assetMap.set('asset/root.usda', new TextEncoder().encode(rootWithSublayer));
+    assetMap.set('asset/sub.usda', new TextEncoder().encode(sublayerContent));
+
+    const { usdz, stats } = await convertFolderToUSDZ(native, assetMap, {
+      rootPath: 'asset/root.usda',
+      flatten: false,
+    });
+    assert.equal(stats.flatten, false);
+    assert.equal(stats.rootLayerFormat, 'usda');
+    const entries = zipEntries(usdz);
+    assert.ok(entries.has('root.usda'));
+    assert.ok(entries.has('sub.usda'));
+    const root = new TextDecoder().decode(entries.get('root.usda'));
+    assert.match(root, /@sub\.usda@/);
   });
 
   await testAsync('convertFolderToUSDZ errors on no USD file', async () => {

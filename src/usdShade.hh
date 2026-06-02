@@ -266,6 +266,7 @@ struct UsdUVTexture : ShaderNode {
   TypedTerminalAttribute<float> outputsB; // "float outputs:b"
   TypedTerminalAttribute<float> outputsA; // "float outputs:a"
   TypedTerminalAttribute<value::float3> outputsRGB; // "float outputs:rgb" in schema. Allow color3f as well(please use TypedTerminalAttribute::get_actual_type_name() to get a actual type name in USDA/USDC).
+  TypedTerminalAttribute<value::float4> outputsRGBA; // "float4 outputs:rgba"
 
   // Note: Texture coordinate orientation follows USD convention (origin at bottom-left).
   // See: https://openusd.org/release/spec_usdpreviewsurface.html

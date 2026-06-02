@@ -2,9 +2,10 @@
 // (web/js/usdzconvert.js) and the Node CLI (web/js/cli/usdzconvert.js).
 //
 // Flow: load the root USD as a layer -> for every referenced texture, optionally
-// resize / re-encode it (via the WASM `convertImage` binding, fpng in WASM) and
-// register it in the asset cache under its USD-relative name -> exportAsUSDZ()
-// (which flattens the stage and packs the cached image assets).
+// resize / re-encode it (via an injected browser texture processor, or the WASM
+// `convertImage` binding as fallback) and register it in the asset cache under
+// its USD-relative name -> exportAsUSDZ() (which flattens the stage and packs
+// the cached image assets).
 
 const USD_RE = /\.(usd|usda|usdc|usdz)$/i;
 const IMG_RE = /\.(png|jpg|jpeg|exr|avif)$/i;
@@ -24,6 +25,25 @@ export function imageFormatFromName(name) {
   if (ext === 'jpg' || ext === 'jpeg') return 'jpeg';
   if (ext === 'png') return 'png';
   return null;
+}
+
+export function normalizedTextureFormat(format) {
+  const f = String(format || 'keep').toLowerCase();
+  if (f === 'jpg') return 'jpeg';
+  if (f === 'jpeg' || f === 'png') return f;
+  return 'keep';
+}
+
+export function outputFormatForImage(name, textureFormat = 'keep') {
+  const requested = normalizedTextureFormat(textureFormat);
+  const fmt = requested === 'keep' ? imageFormatFromName(name) : requested;
+  if (fmt === 'jpeg') {
+    const originalExt = (name.toLowerCase().split('.').pop() || '');
+    const ext = requested === 'keep' && originalExt === 'jpeg' ? 'jpeg' : 'jpg';
+    return { format: 'jpeg', ext };
+  }
+  if (fmt === 'png') return { format: 'png', ext: 'png' };
+  return { format: null, ext: null };
 }
 
 // Parse a human byte size: "100MB", "50mb", "1.5g", "1048576" -> bytes (0 on fail).
@@ -73,12 +93,68 @@ export function rootUsdFromMap(assetMap, preferred) {
 
 // Convert an asset map (Map<path, Uint8Array>) into a USDZ Uint8Array.
 //
-// opts: { rootPath?, maxTextureSize?, reencode?, pngEncoder?, jpegQuality?, log? }
+function exportUSDZ(usd, remap, opts) {
+  const rootLayerFormat = String(opts.rootLayerFormat || 'usdc').toLowerCase() === 'usda' ? 'usda' : 'usdc';
+  const exportOpts = {
+    rootLayerFormat: opts.arkitCompatible ? 'usdc' : rootLayerFormat,
+    arkitCompatible: !!opts.arkitCompatible,
+  };
+  if (opts.flatten === false && !opts.arkitCompatible &&
+      typeof usd.exportLayerAsUSDZWithOptions === 'function') {
+    return usd.exportLayerAsUSDZWithOptions({ rootLayerFormat: 'usda' });
+  }
+  const hasRemap = remap && Object.keys(remap).length > 0;
+  const hasOptions = exportOpts.rootLayerFormat !== 'usdc' || exportOpts.arkitCompatible;
+  if (typeof usd.exportAsUSDZWithOptions === 'function' && (hasRemap || hasOptions)) {
+    return usd.exportAsUSDZWithOptions(remap || {}, exportOpts);
+  }
+  if (hasRemap) return usd.exportAsUSDZWithRemap(remap);
+  return usd.exportAsUSDZ();
+}
+
+function composeToFixedPoint(usd) {
+  const steps = [
+    { has: 'hasSublayers', compose: 'composeSublayers', name: 'sublayers' },
+    { has: 'hasReferences', compose: 'composeReferences', name: 'references' },
+    { has: 'hasPayload', compose: 'composePayload', name: 'payloads' },
+    { has: 'hasInherits', compose: 'composeInherits', name: 'inherits' },
+    { has: 'hasVariants', compose: 'composeVariants', name: 'variants' },
+  ];
+  for (let iter = 0; iter < 64; iter++) {
+    let didCompose = false;
+    for (const step of steps) {
+      if (typeof usd[step.has] !== 'function' ||
+          typeof usd[step.compose] !== 'function') {
+        continue;
+      }
+      if (!usd[step.has]()) {
+        continue;
+      }
+      if (!usd[step.compose]()) {
+        throw new Error(`Failed to compose ${step.name}: ${usd.error()}`);
+      }
+      didCompose = true;
+    }
+    if (!didCompose) {
+      return;
+    }
+  }
+  throw new Error('Composition did not converge before the iteration limit.');
+}
+
+// opts: {
+//   rootPath?, maxTextureSize?, reencode?, pngEncoder?, jpegQuality?, log?,
+//   textureFormat?: "keep"|"png"|"jpeg", rootLayerFormat?: "usdc"|"usda",
+//   arkitCompatible?, flatten?, textureProcessor?
+// }
 // returns { usdz: Uint8Array, stats: { textures, resized, reencoded, rootPath } }
 export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
   const log = opts.log || (() => {});
   const rootPath = opts.rootPath || rootUsdFromMap(assetMap);
   if (!rootPath) throw new Error('No USD file (.usd/.usda/.usdc/.usdz) found in the input.');
+  const textureFormat = normalizedTextureFormat(opts.textureFormat);
+  const rootLayerFormat = String(opts.rootLayerFormat || 'usdc').toLowerCase() === 'usda' ? 'usda' : 'usdc';
+  const flatten = opts.flatten !== false || !!opts.arkitCompatible;
 
   const images = [...assetMap.keys()].filter(isImageName);
   if (/\.usdz$/i.test(rootPath) && images.length === 0) {
@@ -88,14 +164,49 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
 
   // Directory of the root USD; texture references are relative to it.
   const rootDir = rootPath.includes('/') ? rootPath.slice(0, rootPath.lastIndexOf('/') + 1) : '';
-  const stats = { textures: 0, resized: 0, reencoded: 0, rootPath };
+  const stats = {
+    textures: 0,
+    resized: 0,
+    reencoded: 0,
+    rootPath,
+    rootLayerFormat: flatten ? (opts.arkitCompatible ? 'usdc' : rootLayerFormat) : 'usda',
+    flatten,
+    arkitCompatible: !!opts.arkitCompatible,
+  };
+  if (opts.flatten === false) {
+    log('WARN: non-flattened USDZ output preserves composition arcs and writes a USDA root layer.');
+  }
 
   // USD-relative asset name for a given uploaded path.
   const assetNameFor = (path) =>
     (rootDir && path.startsWith(rootDir)) ? path.slice(rootDir.length) : path;
 
+  const registerDependencyLayers = (usd) => {
+    for (const path of assetMap.keys()) {
+      if (path === rootPath || !isUsdName(path)) {
+        continue;
+      }
+      if (/\.usdz$/i.test(path)) {
+        continue;
+      }
+      usd.setAsset(assetNameFor(path), assetMap.get(path));
+    }
+  };
+
+  const loadRootLayer = (usd) => {
+    const usdBytes = assetMap.get(rootPath);
+    const ok = usd.loadAsLayerFromBinary(usdBytes, rootPath.split('/').pop());
+    if (!ok) throw new Error('Failed to load USD: ' + usd.error());
+    if (typeof usd.warn === 'function' && usd.warn()) log('WARN: ' + usd.warn());
+    if (flatten) {
+      composeToFixedPoint(usd);
+    }
+  };
+
   const usd = new native.TinyUSDZLoaderNative();
   try {
+    registerDependencyLayers(usd);
+
     // --- Budget-fit path: shrink all textures to a total byte budget. ---
     const budget = opts.targetTextureBytes || 0;
     if (budget > 0 && images.length > 0) {
@@ -128,20 +239,17 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
         log(`  ${oldName} -> ${newName} [${r.width}x${r.height}, ${r.data.length} bytes]`);
       }
 
-      const usdBytes = assetMap.get(rootPath);
-      const ok = usd.loadAsLayerFromBinary(usdBytes, rootPath.split('/').pop());
-      if (!ok) throw new Error('Failed to load USD: ' + usd.error());
-      if (typeof usd.warn === 'function' && usd.warn()) log('WARN: ' + usd.warn());
+      loadRootLayer(usd);
 
-      const data = Object.keys(remap).length > 0
-        ? usd.exportAsUSDZWithRemap(remap)
-        : usd.exportAsUSDZ();
+      const data = exportUSDZ(usd, remap, opts);
       if (!data) throw new Error('USDZ export failed: ' + usd.error());
       stats.fitTotalBytes = fit.totalBytes;
       return { usdz: new Uint8Array(data), stats };
     }
 
-    // --- Default path: per-texture resize/re-encode (preserve names). ---
+    // --- Default path: per-texture resize/re-encode (preserve names unless
+    // the requested output format changes the extension).
+    const textureRemap = {};
     for (const path of images) {
       const bytes = assetMap.get(path);
       // Name as the USD most likely references it (relative to the USD's dir).
@@ -150,17 +258,53 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
       stats.textures++;
       let outBytes = bytes;
 
-      const fmt = imageFormatFromName(path);
+      const fmtInfo = outputFormatForImage(path, textureFormat);
       const wantResize = (opts.maxTextureSize || 0) > 0;
-      if (fmt && (wantResize || opts.reencode)) {
+      let processed = null;
+      if (typeof opts.textureProcessor === 'function') {
+        try {
+          processed = await opts.textureProcessor({
+            path,
+            name: assetName,
+            data: bytes,
+            maxTextureSize: opts.maxTextureSize || 0,
+            reencode: opts.reencode,
+            textureFormat,
+            jpegQuality: opts.jpegQuality || 90,
+            log,
+          });
+        } catch (err) {
+          log(`  ${assetName}: browser texture processing failed (${err && err.message ? err.message : err}); trying WASM`);
+        }
+      }
+
+      if (processed && processed.data) {
+        outBytes = new Uint8Array(processed.data);
+        if (processed.name && processed.name !== assetName) {
+          textureRemap[assetName] = processed.name;
+          assetName = processed.name;
+        } else if (processed.ext) {
+          const newName = replaceExt(assetName, processed.ext);
+          if (newName !== assetName) textureRemap[assetName] = newName;
+          assetName = newName;
+        }
+        if (processed.resized) stats.resized++;
+        if (processed.reencoded || outBytes !== bytes) stats.reencoded++;
+        log(`  ${assetName}: ${bytes.length} -> ${outBytes.length} bytes [browser]`);
+      } else if (fmtInfo.format && (wantResize || opts.reencode || textureFormat !== 'keep')) {
         const res = native.convertImage(bytes, {
           maxSize: opts.maxTextureSize || 0,
-          format: fmt,
+          format: fmtInfo.format,
           pngEncoder: opts.pngEncoder || 'auto',
           jpegQuality: opts.jpegQuality || 90,
         });
         if (res && res.success) {
           outBytes = new Uint8Array(res.data); // copy out of wasm heap
+          if (fmtInfo.ext) {
+            const newName = replaceExt(assetName, fmtInfo.ext);
+            if (newName !== assetName) textureRemap[assetName] = newName;
+            assetName = newName;
+          }
           if (res.resized) stats.resized++;
           stats.reencoded++;
           log(`  ${assetName}: ${bytes.length} -> ${outBytes.length} bytes` +
@@ -175,12 +319,9 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
       usd.setAsset(assetName, outBytes);
     }
 
-    const usdBytes = assetMap.get(rootPath);
-    const ok = usd.loadAsLayerFromBinary(usdBytes, rootPath.split('/').pop());
-    if (!ok) throw new Error('Failed to load USD: ' + usd.error());
-    if (typeof usd.warn === 'function' && usd.warn()) log('WARN: ' + usd.warn());
+    loadRootLayer(usd);
 
-    const data = usd.exportAsUSDZ();
+    const data = exportUSDZ(usd, textureRemap, opts);
     if (!data) throw new Error('USDZ export failed: ' + usd.error());
     const usdz = new Uint8Array(data); // copy out of wasm heap
 

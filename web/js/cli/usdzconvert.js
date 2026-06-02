@@ -28,6 +28,10 @@ Convert options:
   -o, --output <file>      Output .usdz path (default: <root>.usdz)
   --root <relpath>         Root USD layer within the input dir (default: auto)
   --resize <N>             Cap each texture's longest edge to N pixels
+  --texture-format <fmt>   Texture output: keep, png, jpeg (default: keep)
+  --root-layer-format <fmt> USDZ root layer: usdc, usda (default: usdc)
+  --arkit-compatible       Force ARKit-friendly flattened USDC package metadata
+  --no-flatten             Accepted for parity; JS/WASM export still flattens
   --jpeg-quality <1-100>   JPEG quality when re-encoding (default 90)
   --png-encoder <fpnge|fpng|auto>  PNG encoder hint (WASM always uses fpng)
   --no-reencode            Copy unmodified textures through unchanged
@@ -59,6 +63,8 @@ function parseArgs() {
   const o = {
     input: null, output: null, root: null, resize: 0, jpegQuality: 90,
     pngEncoder: 'auto', reencode: true, verbose: false,
+    textureFormat: 'keep', rootLayerFormat: 'usdc', arkitCompatible: false,
+    flatten: true,
     targetSize: 0, fitStrategy: 'size', fitMinSize: 64, fitMinQuality: 30,
     repack: null, packChannels: 0, pack: { R: null, G: null, B: null, A: null },
   };
@@ -68,6 +74,10 @@ function parseArgs() {
     else if (a === '-o' || a === '--output') o.output = args[++i];
     else if (a === '--root') o.root = args[++i];
     else if (a === '--resize') o.resize = parseInt(args[++i], 10) || 0;
+    else if (a === '--texture-format') o.textureFormat = args[++i];
+    else if (a === '--root-layer-format') o.rootLayerFormat = args[++i];
+    else if (a === '--arkit-compatible') o.arkitCompatible = true;
+    else if (a === '--no-flatten') o.flatten = false;
     else if (a === '--jpeg-quality') o.jpegQuality = parseInt(args[++i], 10) || 90;
     else if (a === '--png-encoder') o.pngEncoder = args[++i];
     else if (a === '--no-reencode') o.reencode = false;
@@ -140,6 +150,14 @@ async function main() {
 
   const native = await loadWasm(() => import(wasmGlue));
   if (o.verbose) console.log('WASM module loaded.');
+  if (!['keep', 'png', 'jpeg', 'jpg'].includes(String(o.textureFormat).toLowerCase())) {
+    console.error('Invalid --texture-format. Expected keep, png, or jpeg.');
+    process.exit(1);
+  }
+  if (!['usdc', 'usda'].includes(String(o.rootLayerFormat).toLowerCase())) {
+    console.error('Invalid --root-layer-format. Expected usdc or usda.');
+    process.exit(1);
+  }
 
   if (o.repack) {
     await runRepack(native, o);
@@ -171,6 +189,10 @@ async function main() {
     fitMinTextureSize: o.fitMinSize,
     fitMinQuality: o.fitMinQuality,
     reencode: o.reencode,
+    textureFormat: o.textureFormat,
+    rootLayerFormat: o.rootLayerFormat,
+    arkitCompatible: o.arkitCompatible,
+    flatten: o.flatten,
     pngEncoder: o.pngEncoder,
     jpegQuality: o.jpegQuality,
     log,
