@@ -19,7 +19,9 @@ class GLRenderer final : public Renderer {
 
   bool init(GLFWwindow* window, std::string* err) override;
   bool initImGui(std::string* err) override;
-  bool uploadScene(const DrawScene& scene, std::string* err) override;
+  void beginScene(const std::vector<DrawMaterialCPU>& materials, int textureCount) override;
+  void appendMesh(const DrawMeshCPU& mesh) override;
+  void uploadTexture(int slot, const DrawTextureCPU& tex) override;
   void resizeViewport(int width, int height) override;
   void newFrame() override;
   void renderFrame(const RenderFrameParams& params) override;
@@ -43,7 +45,9 @@ class GLRenderer final : public Renderer {
     float metallic{0.0f}, roughness{0.5f};
     float emissive[3]{0, 0, 0};
     float alpha{1.0f};
-    GLuint baseColorTex{0}, metalRoughTex{0}, normalTex{0}, emissiveTex{0};
+    // Texture slot indices into textures_ (-1 = none). Resolved at draw time so
+    // lazily-uploaded textures appear without re-touching materials.
+    int baseColorTex{-1}, metalRoughTex{-1}, normalTex{-1}, emissiveTex{-1};
   };
 
   void destroyScene();

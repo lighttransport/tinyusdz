@@ -24,7 +24,9 @@ class VulkanRenderer final : public Renderer {
 
   bool init(GLFWwindow* window, std::string* err) override;
   bool initImGui(std::string* err) override;
-  bool uploadScene(const DrawScene& scene, std::string* err) override;
+  void beginScene(const std::vector<DrawMaterialCPU>& materials, int textureCount) override;
+  void appendMesh(const DrawMeshCPU& mesh) override;
+  void uploadTexture(int slot, const DrawTextureCPU& tex) override;
   void resizeViewport(int width, int height) override;
   void newFrame() override;
   void renderFrame(const RenderFrameParams& params) override;
