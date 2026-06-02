@@ -801,12 +801,56 @@ class RenderSceneConverter {
                           const std::string& mesh_name, const std::string& message);
 
   ///
+  /// Streaming emit helpers (for use by MeshVisitor and the node builders during
+  /// ConvertToRenderSceneStreaming). Each returns true (continue) when no sink is
+  /// set or the corresponding slot is unset; otherwise it calls the slot and
+  /// returns its bool (false == cancel). They read the just-appended element from
+  /// this converter's member array by index.
+  ///
+  /// True while a streaming sink is active (inside ConvertToRenderSceneStreaming).
+  bool HasStreamingSink() const { return _sink != nullptr; }
+  bool EmitPhase(StreamPhase phase);
+  bool EmitImage(size_t index);
+  bool EmitBuffer(size_t index);
+  bool EmitTexture(size_t index, const std::string &abs_path);
+  bool EmitUdimTexture(size_t index);
+  bool EmitMaterial(size_t index, const std::string &abs_path);
+  bool EmitMesh(size_t index, const std::string &abs_path);
+  bool EmitLight(size_t index, const std::string &abs_path);
+  bool EmitCamera(size_t index, const std::string &abs_path);
+  bool EmitRootNode(size_t index);
+  bool EmitSkeleton(size_t index, const std::string &abs_path);
+  bool EmitAnimation(size_t index, const std::string &abs_path);
+  bool EmitInstance(size_t index, const std::string &abs_path);
+  bool EmitComplete(const RenderScene &scene);
+
+  ///
   /// All-in-one Stage to RenderScene conversion.
   ///
   /// Convert Stage to RenderScene.
   /// Must be called after SetStage, SetMaterialConverterConfig(optional)
   ///
   bool ConvertToRenderScene(const RenderSceneConverterEnv &env, RenderScene *scene);
+
+  ///
+  /// Streaming (progressive) variant of ConvertToRenderScene.
+  ///
+  /// Runs the SAME phases as ConvertToRenderScene and ALSO fully populates
+  /// `scene` (so callers get the complete result), while invoking `sink`
+  /// callbacks at each production point so a consumer can upload / display
+  /// meshes, materials and textures as they are produced.
+  ///
+  /// Any sink callback returning false cancels conversion: this function then
+  /// returns false and `*scene` is left unpopulated (the elements already
+  /// delivered via callbacks are the partial result). On success `*scene` is
+  /// populated identically to ConvertToRenderScene.
+  ///
+  /// All callbacks fire synchronously on the calling thread; keep them fast
+  /// (enqueue-only) if conversion runs on a worker thread. See `RenderSceneSink`.
+  ///
+  bool ConvertToRenderSceneStreaming(const RenderSceneConverterEnv &env,
+                                     const RenderSceneSink &sink,
+                                     RenderScene *scene);
 
   const std::string &GetInfo() const { return _info; }
   const std::string &GetWarning() const { return _warn; }
@@ -1285,6 +1329,16 @@ class RenderSceneConverter {
   ///
   bool CallDetailedProgressCallback(const DetailedProgressInfo &info);
 
+  ///
+  /// Shared implementation behind ConvertToRenderScene (sink == nullptr) and
+  /// ConvertToRenderSceneStreaming (sink != nullptr). With a null sink the
+  /// Emit* helpers are no-ops, so the code path and output are identical to the
+  /// legacy ConvertToRenderScene.
+  ///
+  bool ConvertToRenderSceneImpl(const RenderSceneConverterEnv &env,
+                                RenderScene *scene,
+                                const RenderSceneSink *sink);
+
   std::string _info;
   std::string _err;
   std::string _warn;
@@ -1299,6 +1353,10 @@ class RenderSceneConverter {
 
   // Progress state for detailed tracking
   mutable DetailedProgressInfo _progress_info;
+
+  // Streaming sink for ConvertToRenderSceneStreaming. Set for the duration of
+  // ConvertToRenderSceneImpl when streaming, nullptr otherwise. Not owned.
+  const RenderSceneSink *_sink{nullptr};
 
   // Reusable buffers for mesh conversion to avoid repeated allocation
   mutable std::vector<value::float3> _tmp_points_buffer;
