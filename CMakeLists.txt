@@ -96,6 +96,9 @@ option(TINYUSDZ_BUILD_EXAMPLES
        "Build examples(but not all examples in `examples` folder are being built)"
        ${TINYUSDZ_DEFAULT_BUILD_EXAMPLES})
 option(TINYUSDZ_BUILD_TOOLS "Build tools (tusddumpcrate, etc.)" OFF)
+option(TINYUSDZ_BUILD_GUI_VIEWER
+       "Build the interactive GUI USD viewer example 'tusdview' (requires OpenGL/GLFW; Vulkan optional). Pulls in window-system deps; keep OFF for headless CI."
+       OFF)
 option(TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER
        "Build with built-in image loader(stb_image and fpng). When disabled, app need to provide image loader callback to load images."
        ${TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER})
@@ -2000,6 +2003,10 @@ if(TINYUSDZ_BUILD_EXAMPLES)
     add_subdirectory(examples/variant-analyzer)
     add_subdirectory(examples/usddiff)
     add_subdirectory(examples/urdf-to-usd)
+
+    if (TINYUSDZ_BUILD_GUI_VIEWER)
+      add_subdirectory(examples/tusdview)
+    endif()
 
     if (TINYUSDZ_WITH_MCP_SERVER)
       add_subdirectory(examples/mcp_server)
