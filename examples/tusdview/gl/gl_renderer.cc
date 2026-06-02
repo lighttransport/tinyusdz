@@ -104,6 +104,34 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glBindTexture(GL_TEXTURE_2D, 0);
+
+  // Unlit, vertex-colored line program for debug helpers (grid/axes/bbox).
+  {
+    static const char* kLineVS =
+        "#version 330 core\n"
+        "layout(location=0) in vec3 aPos;\n"
+        "layout(location=1) in vec3 aCol;\n"
+        "uniform mat4 uVP;\n"
+        "out vec3 vCol;\n"
+        "void main(){ vCol=aCol; gl_Position=uVP*vec4(aPos,1.0); }\n";
+    static const char* kLineFS =
+        "#version 330 core\n"
+        "in vec3 vCol; out vec4 fragColor;\n"
+        "void main(){ fragColor=vec4(vCol,1.0); }\n";
+    std::string lerr;
+    lineProgram_ = glutil::CompileProgram(kLineVS, kLineFS, &lerr);
+    if (lineProgram_) uLineVP_ = glGetUniformLocation(lineProgram_, "uVP");
+    glGenVertexArrays(1, &lineVao_);
+    glGenBuffers(1, &lineVbo_);
+    glBindVertexArray(lineVao_);
+    glBindBuffer(GL_ARRAY_BUFFER, lineVbo_);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(HelperVertex), (void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(HelperVertex),
+                          (void*)(3 * sizeof(float)));
+    glBindVertexArray(0);
+  }
   return true;
 }
 
@@ -365,6 +393,30 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
   }
 
   glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+  // Debug helper lines (grid/axes/bbox), world space, depth-tested so they are
+  // occluded by geometry.
+  if (params.helperLines && params.helperLineVertexCount > 0 && lineProgram_) {
+    glUseProgram(lineProgram_);
+    const light3d::Mat4 VP = ToMat4(params.proj) * ToMat4(params.view);
+    glUniformMatrix4fv(uLineVP_, 1, GL_FALSE, VP.m);
+    glBindVertexArray(lineVao_);
+    glBindBuffer(GL_ARRAY_BUFFER, lineVbo_);
+    const size_t bytes =
+        static_cast<size_t>(params.helperLineVertexCount) * sizeof(HelperVertex);
+    if (bytes > lineVboCap_) {
+      glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(bytes), params.helperLines,
+                   GL_DYNAMIC_DRAW);
+      lineVboCap_ = bytes;
+    } else {
+      glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(bytes),
+                      params.helperLines);
+    }
+    glDisable(GL_CULL_FACE);
+    glDrawArrays(GL_LINES, 0, params.helperLineVertexCount);
+    glBindVertexArray(0);
+  }
+
   glUseProgram(0);
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
@@ -439,6 +491,9 @@ void GLRenderer::shutdown() {
   if (depthRbo_) { glDeleteRenderbuffers(1, &depthRbo_); depthRbo_ = 0; }
   if (fbo_) { glDeleteFramebuffers(1, &fbo_); fbo_ = 0; }
   if (program_) { glDeleteProgram(program_); program_ = 0; }
+  if (lineProgram_) { glDeleteProgram(lineProgram_); lineProgram_ = 0; }
+  if (lineVbo_) { glDeleteBuffers(1, &lineVbo_); lineVbo_ = 0; }
+  if (lineVao_) { glDeleteVertexArrays(1, &lineVao_); lineVao_ = 0; }
   if (imguiInited_) {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();

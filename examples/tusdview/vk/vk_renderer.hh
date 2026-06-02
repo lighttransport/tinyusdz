@@ -59,6 +59,7 @@ class VulkanRenderer final : public Renderer {
   bool createSync(std::string* err);
   bool createOffscreenRenderPass(std::string* err);
   bool createPipeline(std::string* err);
+  bool createLinePipeline(std::string* err);
   bool createSampler(std::string* err);
   bool createDescriptorInfra(std::string* err);
   bool createWhiteTexture(std::string* err);
@@ -116,6 +117,15 @@ class VulkanRenderer final : public Renderer {
   // Pipeline
   VkPipelineLayout pipelineLayout_{VK_NULL_HANDLE};
   VkPipeline pipeline_{VK_NULL_HANDLE};
+
+  // Unlit line pipeline for debug helpers (grid/axes/bbox). Per-frame host
+  // buffers (grow on demand) so a frame never writes a buffer still in flight.
+  VkPipelineLayout lineLayout_{VK_NULL_HANDLE};
+  VkPipeline linePipeline_{VK_NULL_HANDLE};
+  VkBuffer helperBuf_[kFramesInFlight]{};
+  VkDeviceMemory helperMem_[kFramesInFlight]{};
+  VkDeviceSize helperCap_[kFramesInFlight]{};
+  std::vector<HelperVertex> helperCopy_;  // copied in renderFrame, drawn in present
 
   // Textures (base color). One combined-image-sampler descriptor per texture,
   // plus a default 1x1 white texture for untextured submeshes.

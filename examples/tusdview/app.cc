@@ -124,6 +124,8 @@ void App::applyLoaded(bool ok) {
   renderer_->uploadScene(draw_, &uerr);  // draw_ is empty when !ok
   gui_.setScene(&loaded_, &draw_);
   if (ok) {
+    const std::string& up = loaded_.render.meta.upAxis;
+    camera_.setUpAxis((up == "Z" || up == "z") ? 2 : 1);
     if (draw_.hasBounds) camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
     std::fprintf(stderr, "[tusdview] loaded %s: %zu mesh(es), %zu tri(s)%s\n",
                  loaded_.filepath.c_str(), draw_.meshes.size(), draw_.triangleCount,
