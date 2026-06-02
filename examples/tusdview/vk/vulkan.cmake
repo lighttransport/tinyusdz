@@ -20,7 +20,7 @@ if(NOT GLSLANG)
     "configure with -DCMAKE_DISABLE_FIND_PACKAGE_Vulkan=ON for a GL-only build.")
 endif()
 
-set(_shader_srcs mesh.vert mesh.frag)
+set(_shader_srcs mesh.vert mesh.frag line.vert line.frag)
 set(_spv_headers "")
 foreach(sh ${_shader_srcs})
   string(REPLACE "." "_" sym ${sh})  # mesh_vert / mesh_frag

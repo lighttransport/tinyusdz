@@ -51,4 +51,37 @@ std::string PropertyToString(const tinyusdz::Property& prop) {
   return "(empty)";
 }
 
+std::string PrimMetaSummary(const tinyusdz::Prim& prim) {
+  const auto& m = prim.metas();
+  std::string s;
+  auto add = [&](const char* k, const std::string& v) {
+    if (!s.empty()) s += "\n";
+    s += k;
+    s += ": ";
+    s += v;
+  };
+  if (m.has_kind()) add("kind", m.get_kind_str());
+  if (m.has_active()) add("active", m.get_active() ? "true" : "false");
+  if (m.has_hidden()) add("hidden", m.get_hidden() ? "true" : "false");
+  if (m.has_displayName()) add("displayName", m.get_displayName());
+  if (m.has_doc()) add("documentation", m.get_doc().value);
+  if (m.has_comment()) add("comment", m.get_comment().value);
+  if (m.has_customData()) add("customData", "(authored)");
+  return s;
+}
+
+std::string AttrMetaSummary(const tinyusdz::Attribute& attr) {
+  const auto& m = attr.metas();
+  std::string s;
+  auto add = [&](const std::string& kv) {
+    if (!s.empty()) s += "  ";
+    s += kv;
+  };
+  if (m.has_interpolation()) add("interpolation=" + m.get_interpolation().str());
+  if (m.has_elementSize()) add("elementSize=" + std::to_string(m.get_elementSize()));
+  if (m.has_displayName()) add("displayName=" + m.get_displayName());
+  if (m.has_customData()) add("customData");
+  return s;
+}
+
 }  // namespace tusdview

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "gui.hh"
 
+#include <algorithm>
 #include <cmath>
 
 #include "core/prim.hh"
@@ -59,6 +60,11 @@ void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
   selPrim_ = nullptr;
   selPath_.clear();
   selMeshIndex_ = -1;
+  // Auto-select the first renderable mesh so the inspector + selection bbox show
+  // something immediately.
+  if (loaded_ && loaded_->ok && draw_ && !draw_->meshes.empty()) {
+    selectByPath(draw_->meshes[0].absPath, 0);
+  }
 }
 
 void Gui::frame(Renderer* renderer, OrbitCamera* camera) {
@@ -67,6 +73,7 @@ void Gui::frame(Renderer* renderer, OrbitCamera* camera) {
   drawDockspaceAndMenu();
   drawHierarchy();
   drawInspector();
+  drawStageMeta();
   drawStats();
   drawViewport();
   drawLoadingModal();
@@ -114,10 +121,13 @@ void Gui::buildDefaultLayout(unsigned int dockId) {
   ImGuiID center = dockId;
   ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f, nullptr, &center);
   ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.28f, nullptr, &center);
+  ImGuiID rightBottom =
+      ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.40f, nullptr, &right);
 
   ImGui::DockBuilderDockWindow("Hierarchy", left);
   ImGui::DockBuilderDockWindow("Stats", left);
   ImGui::DockBuilderDockWindow("Inspector", right);
+  ImGui::DockBuilderDockWindow("Stage", rightBottom);
   ImGui::DockBuilderDockWindow("Viewport", center);
   ImGui::DockBuilderFinish(dockId);
 }
@@ -165,6 +175,11 @@ void Gui::drawDockspaceAndMenu() {
         cam_->fitToScene(draw_->aabbMin, draw_->aabbMax);
       }
       ImGui::Checkbox("Show RenderScene nodes", &showRenderNodes_);
+      ImGui::Separator();
+      ImGui::MenuItem("Grid", nullptr, &showGrid_);
+      ImGui::MenuItem("Axes", nullptr, &showAxes_);
+      ImGui::MenuItem("Scene bounds", nullptr, &showSceneBbox_);
+      ImGui::MenuItem("Selected bounds", nullptr, &showPrimBbox_);
       ImGui::EndMenu();
     }
     ImGui::EndMenuBar();
@@ -269,6 +284,13 @@ void Gui::drawInspector() {
     std::string typeName = selPrim_->prim_type_name();
     if (typeName.empty()) typeName = selPrim_->type_name();
     ImGui::TextDisabled("Type: %s", typeName.c_str());
+
+    // Prim metadata (kind/active/hidden/displayName/doc/...).
+    const std::string primMeta = PrimMetaSummary(*selPrim_);
+    if (!primMeta.empty() &&
+        ImGui::CollapsingHeader("Prim metadata", ImGuiTreeNodeFlags_DefaultOpen)) {
+      HintWrapped(primMeta.c_str());
+    }
     ImGui::Separator();
 
     std::vector<std::string> names;
@@ -278,7 +300,8 @@ void Gui::drawInspector() {
                             ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg |
                                 ImGuiTableFlags_BordersInnerH |
                                 ImGuiTableFlags_ScrollY)) {
-        ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+        ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed,
+                                ImGui::GetFontSize() * 8.0f);
         ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableHeadersRow();
         for (const std::string& name : names) {
@@ -290,6 +313,10 @@ void Gui::drawInspector() {
           ImGui::TableSetColumnIndex(1);
           if (tydra::GetProperty(*selPrim_, name, &prop, &perr)) {
             ImGui::TextWrapped("%s", PropertyToString(prop).c_str());
+            if (prop.is_attribute()) {
+              const std::string am = AttrMetaSummary(prop.get_attribute());
+              if (!am.empty()) HintWrapped(am.c_str());
+            }
           } else {
             ImGui::TextDisabled("<error>");
           }
@@ -297,7 +324,7 @@ void Gui::drawInspector() {
         ImGui::EndTable();
       }
     } else {
-      ImGui::TextDisabled("No properties.");
+      HintWrapped("No properties.");
     }
   } else if (!selPath_.empty()) {
     ImGui::TextWrapped("%s", selPath_.c_str());
@@ -426,6 +453,9 @@ void Gui::drawViewport() {
     p.mode = mode_;
     p.highlightMeshIndex = selMeshIndex_;
     for (int i = 0; i < 4; ++i) p.clearColor[i] = clearColor_[i];
+    buildHelpers();
+    p.helperLines = helperLines_.empty() ? nullptr : helperLines_.data();
+    p.helperLineVertexCount = static_cast<int>(helperLines_.size());
     renderer_->renderFrame(p);
 
     const ImTextureID tex = static_cast<ImTextureID>(renderer_->viewportTexture());
@@ -447,6 +477,123 @@ void Gui::drawViewport() {
     }
   } else {
     vpHovered_ = false;
+  }
+  ImGui::End();
+}
+
+void Gui::buildHelpers() {
+  helperLines_.clear();
+  const bool zUp = loaded_ && loaded_->ok && loaded_->render.meta.upAxis == "Z";
+
+  auto addLine = [&](float ax, float ay, float az, float bx, float by, float bz,
+                     float r, float g, float b) {
+    helperLines_.push_back(HelperVertex{{ax, ay, az}, {r, g, b}});
+    helperLines_.push_back(HelperVertex{{bx, by, bz}, {r, g, b}});
+  };
+  auto addBox = [&](const float mn[3], const float mx[3], float r, float g, float b) {
+    const float xs[2] = {mn[0], mx[0]}, ys[2] = {mn[1], mx[1]}, zs[2] = {mn[2], mx[2]};
+    for (int yi = 0; yi < 2; ++yi)
+      for (int zi = 0; zi < 2; ++zi)
+        addLine(xs[0], ys[yi], zs[zi], xs[1], ys[yi], zs[zi], r, g, b);
+    for (int xi = 0; xi < 2; ++xi)
+      for (int zi = 0; zi < 2; ++zi)
+        addLine(xs[xi], ys[0], zs[zi], xs[xi], ys[1], zs[zi], r, g, b);
+    for (int xi = 0; xi < 2; ++xi)
+      for (int yi = 0; yi < 2; ++yi)
+        addLine(xs[xi], ys[yi], zs[0], xs[xi], ys[yi], zs[1], r, g, b);
+  };
+
+  // Grid/axes extent from scene bounds.
+  float half = 10.0f;
+  if (draw_ && draw_->hasBounds) {
+    float ex = 0.0f;
+    for (int i = 0; i < 3; ++i)
+      ex = std::max(ex, draw_->aabbMax[i] - draw_->aabbMin[i]);
+    if (ex > 1e-3f) half = std::max(1.0f, std::ceil(ex));
+  }
+
+  if (showGrid_) {
+    const int n = 10;
+    const float step = half / static_cast<float>(n);
+    const float gc = 0.32f;
+    for (int i = -n; i <= n; ++i) {
+      const float t = static_cast<float>(i) * step;
+      if (zUp) {  // ground = XY plane (z = 0)
+        addLine(-half, t, 0, half, t, 0, gc, gc, gc);
+        addLine(t, -half, 0, t, half, 0, gc, gc, gc);
+      } else {  // ground = XZ plane (y = 0)
+        addLine(-half, 0, t, half, 0, t, gc, gc, gc);
+        addLine(t, 0, -half, t, 0, half, gc, gc, gc);
+      }
+    }
+  }
+  if (showAxes_) {
+    const float L = half;
+    addLine(0, 0, 0, L, 0, 0, 0.90f, 0.20f, 0.20f);  // X red
+    addLine(0, 0, 0, 0, L, 0, 0.20f, 0.85f, 0.25f);  // Y green
+    addLine(0, 0, 0, 0, 0, L, 0.30f, 0.50f, 1.00f);  // Z blue
+  }
+  if (showSceneBbox_ && draw_ && draw_->hasBounds) {
+    addBox(draw_->aabbMin, draw_->aabbMax, 0.90f, 0.90f, 0.30f);
+  }
+  if (showPrimBbox_ && draw_ && selMeshIndex_ >= 0 &&
+      static_cast<size_t>(selMeshIndex_) < draw_->meshes.size()) {
+    const auto& m = draw_->meshes[static_cast<size_t>(selMeshIndex_)];
+    addBox(m.aabbMin, m.aabbMax, 1.00f, 0.60f, 0.10f);
+  }
+}
+
+void Gui::drawStageMeta() {
+  ImGui::Begin("Stage");
+  if (loaded_ && loaded_->ok) {
+    const auto& meta = loaded_->render.meta;
+    const auto& smeta = loaded_->stage.metas();
+    if (ImGui::BeginTable("##stagemeta", 2,
+                          ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_BordersInnerH)) {
+      ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed,
+                              ImGui::GetFontSize() * 9.0f);
+      ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+      ImGui::TableHeadersRow();
+      auto row = [&](const char* k, const std::string& v) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(k);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextWrapped("%s", v.c_str());
+      };
+      row("upAxis", meta.upAxis);
+      row("metersPerUnit", std::to_string(meta.metersPerUnit));
+      row("framesPerSecond", std::to_string(meta.framesPerSecond));
+      row("timeCodesPerSecond", std::to_string(meta.timeCodesPerSecond));
+      if (meta.startTimeCode.has_value())
+        row("startTimeCode", std::to_string(*meta.startTimeCode));
+      if (meta.endTimeCode.has_value())
+        row("endTimeCode", std::to_string(*meta.endTimeCode));
+      if (!smeta.defaultPrim.str().empty()) row("defaultPrim", smeta.defaultPrim.str());
+      if (!meta.copyright.empty()) row("copyright", meta.copyright);
+      if (!meta.comment.empty()) row("comment", meta.comment);
+      if (!smeta.doc.value.empty()) row("documentation", smeta.doc.value);
+      if (!smeta.subLayers.empty()) {
+        std::string s;
+        for (const auto& sl : smeta.subLayers) {
+          if (!s.empty()) s += "\n";
+          s += sl.assetPath.GetAssetPath();
+        }
+        row("subLayers", s);
+      }
+      if (!smeta.customLayerData.empty()) {
+        std::string s;
+        for (const auto& kv : smeta.customLayerData) {
+          if (!s.empty()) s += ", ";
+          s += kv.first;
+        }
+        row("customLayerData", s);
+      }
+      ImGui::EndTable();
+    }
+  } else {
+    HintWrapped("No stage loaded.");
   }
   ImGui::End();
 }
