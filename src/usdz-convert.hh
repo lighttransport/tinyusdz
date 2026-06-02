@@ -33,6 +33,11 @@ namespace usdz {
 enum class OutputFormat { USDZ, USDC, USDA };
 
 ///
+/// Root layer format used inside USDZ output.
+///
+enum class USDZRootLayerFormat { USDC, USDA };
+
+///
 /// Output texture format policy.
 /// KeepOriginal : re-encode in the source format (PNG -> PNG via fpnge, etc).
 /// PNG          : transcode every texture to PNG (fpnge when available).
@@ -93,6 +98,9 @@ struct UsdzConvertOptions {
 
   // Output container format (USDZ, USDC, or USDA).
   OutputFormat output_format{OutputFormat::USDZ};
+
+  // Root layer format when output_format is USDZ.
+  USDZRootLayerFormat usdz_root_layer_format{USDZRootLayerFormat::USDC};
 
   // Verbose logging to stdout.
   bool verbose{false};

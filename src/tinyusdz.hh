@@ -494,19 +494,27 @@ bool LoadLayerFromAsset(AssetResolutionResolver &resolver,
                        std::string *warn, std::string *err,
                        const USDLoadOptions &options = USDLoadOptions());
 
+enum class USDZRootLayerFormat {
+  USDC,
+  USDA,
+};
 
+struct USDZWriteOptions {
+  USDZRootLayerFormat root_layer_format{USDZRootLayerFormat::USDC};
+};
 
 ///
 /// Save Stage as USDZ (uncompressed ZIP package) to a file.
 ///
-/// The root layer is written as USDC (binary Crate format) as the first
-/// entry in the ZIP archive. Additional assets (images, audio) can be
-/// included via the `assets` parameter.
+/// The root layer is written as USDC (binary Crate format) by default as the
+/// first entry in the ZIP archive. Use USDZWriteOptions to request a USDA root
+/// layer. Additional assets (images, audio) can be included via the `assets`
+/// parameter.
 ///
 /// Conforms to AOUSD Core Spec section 17 (USDZ Package Format):
 /// - Uncompressed ZIP (store method)
 /// - 64-byte data alignment for all entries
-/// - First entry is the root .usdc layer
+/// - First entry is the root .usdc or .usda layer
 /// - Allowed types: .usd, .usda, .usdc, .png, .jpg, .jpeg, .exr, .avif, .m4a, .mp3, .wav
 ///
 /// @param[in] filename Output USDZ filename
@@ -518,6 +526,16 @@ bool LoadLayerFromAsset(AssetResolutionResolver &resolver,
 ///
 bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
                       const std::map<std::string, std::vector<uint8_t>> &assets,
+                      std::string *warn, std::string *err);
+
+bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
+                      const std::map<std::string, std::vector<uint8_t>> &assets,
+                      const USDZWriteOptions &options,
+                      std::string *warn, std::string *err);
+
+bool SaveAsUSDZToFile(const std::string &filename, const Layer &layer,
+                      const std::map<std::string, std::vector<uint8_t>> &assets,
+                      const USDZWriteOptions &options,
                       std::string *warn, std::string *err);
 
 ///
@@ -533,6 +551,18 @@ bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
 bool SaveAsUSDZToMemory(const Stage &stage,
                         const std::map<std::string, std::vector<uint8_t>> &assets,
                         std::vector<uint8_t> *output,
+                        std::string *warn, std::string *err);
+
+bool SaveAsUSDZToMemory(const Stage &stage,
+                        const std::map<std::string, std::vector<uint8_t>> &assets,
+                        std::vector<uint8_t> *output,
+                        const USDZWriteOptions &options,
+                        std::string *warn, std::string *err);
+
+bool SaveAsUSDZToMemory(const Layer &layer,
+                        const std::map<std::string, std::vector<uint8_t>> &assets,
+                        std::vector<uint8_t> *output,
+                        const USDZWriteOptions &options,
                         std::string *warn, std::string *err);
 
 ///

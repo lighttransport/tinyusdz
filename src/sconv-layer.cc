@@ -29,12 +29,6 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
     Path root_path("/", "");  // Root path - use standard constructor
     crate::FieldValuePairVector root_fields;
 
-    // PseudoRoot needs at least one field to create a valid fieldset
-    // Add specifier field (PseudoRoot always uses Def)
-    crate::CrateValue spec_value;
-    spec_value.Set(Specifier::Def);
-    root_fields.push_back({"specifier", spec_value});
-
     // Extract and add layer metadata from Layer.metas()
     const LayerMetas& metas = layer.metas();
 
@@ -116,6 +110,25 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
       crate::CrateValue custom_data_value;
       custom_data_value.Set(metas.customLayerData);
       root_fields.push_back({"customLayerData", custom_data_value});
+    }
+
+    if (!metas.subLayers.empty()) {
+      std::vector<std::string> sublayer_paths;
+      sublayer_paths.reserve(metas.subLayers.size());
+
+      for (const SubLayer &sublayer : metas.subLayers) {
+        sublayer_paths.push_back(sublayer.assetPath.GetAssetPath());
+      }
+
+      crate::CrateValue sublayers_value;
+      sublayers_value.Set(sublayer_paths);
+      root_fields.push_back({"subLayers", sublayers_value});
+    }
+
+    if (root_fields.empty()) {
+      crate::CrateValue doc_value;
+      doc_value.Set(std::string());
+      root_fields.push_back({"documentation", doc_value});
     }
 
     // Add PseudoRoot spec

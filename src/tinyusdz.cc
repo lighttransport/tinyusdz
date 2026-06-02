@@ -35,9 +35,11 @@
 #include "tinyusdz.hh"
 #include "layer.hh"
 #include "usda-reader.hh"
+#include "usda-writer.hh"
 #include "usdc-reader.hh"
 #include "usdc-writer.hh"
 #include "mmap-array-ref.hh"
+#include "pprinter.hh"
 #include "value-pprint.hh"
 
 
@@ -2089,44 +2091,115 @@ bool WriteUSDZCentralDirectory(
   return true;
 }
 
+bool SerializeUSDZRootLayer(const Stage &stage, const USDZWriteOptions &options,
+                            std::vector<uint8_t> *root_data,
+                            std::string *root_name,
+                            std::string *warn, std::string *err) {
+  if (!root_data || !root_name) {
+    if (err) { (*err) += "`root_data` or `root_name` is nullptr.\n"; }
+    return false;
+  }
+
+  switch (options.root_layer_format) {
+    case USDZRootLayerFormat::USDC: {
+      if (!usdc::SaveAsUSDCToMemory(stage, root_data, warn, err)) {
+        if (err) { (*err) += "Failed to serialize root layer as USDC.\n"; }
+        return false;
+      }
+      if (root_data->empty()) {
+        if (err) { (*err) += "USDC serialization produced empty data.\n"; }
+        return false;
+      }
+      *root_name = "root.usdc";
+      return true;
+    }
+    case USDZRootLayerFormat::USDA: {
+      std::string usda_text;
+      if (!usda::ExportToUSDAString(stage, &usda_text, warn, err)) {
+        if (err) { (*err) += "Failed to serialize root layer as USDA.\n"; }
+        return false;
+      }
+      if (usda_text.empty()) {
+        if (err) { (*err) += "USDA serialization produced empty data.\n"; }
+        return false;
+      }
+      root_data->assign(usda_text.begin(), usda_text.end());
+      *root_name = "root.usda";
+      return true;
+    }
+  }
+
+  if (err) { (*err) += "Invalid USDZ root layer format.\n"; }
+  return false;
+}
+
+bool SerializeUSDZRootLayer(const Layer &layer, const USDZWriteOptions &options,
+                            std::vector<uint8_t> *root_data,
+                            std::string *root_name,
+                            std::string *warn, std::string *err) {
+  if (!root_data || !root_name) {
+    if (err) { (*err) += "`root_data` or `root_name` is nullptr.\n"; }
+    return false;
+  }
+
+  switch (options.root_layer_format) {
+    case USDZRootLayerFormat::USDC: {
+      if (!usdc::SaveAsUSDCToMemory(layer, root_data, warn, err)) {
+        if (err) { (*err) += "Failed to serialize root layer as USDC.\n"; }
+        return false;
+      }
+      if (root_data->empty()) {
+        if (err) { (*err) += "USDC serialization produced empty data.\n"; }
+        return false;
+      }
+      *root_name = "root.usdc";
+      return true;
+    }
+    case USDZRootLayerFormat::USDA: {
+      const std::string usda_text = tinyusdz::print_layer(layer, 0);
+      if (usda_text.empty()) {
+        if (err) { (*err) += "USDA serialization produced empty data.\n"; }
+        return false;
+      }
+      root_data->assign(usda_text.begin(), usda_text.end());
+      *root_name = "root.usda";
+      return true;
+    }
+  }
+
+  if (err) { (*err) += "Invalid USDZ root layer format.\n"; }
+  return false;
+}
+
 }  // namespace
 
 bool SaveAsUSDZToMemory(const Stage &stage,
                         const std::map<std::string, std::vector<uint8_t>> &assets,
                         std::vector<uint8_t> *output,
+                        const USDZWriteOptions &options,
                         std::string *warn, std::string *err) {
   if (!output) {
     if (err) { (*err) += "`output` is nullptr.\n"; }
     return false;
   }
 
-  // Step 1: Serialize the root layer as USDC to memory
-  std::vector<uint8_t> usdc_data;
-  if (!usdc::SaveAsUSDCToMemory(stage, &usdc_data, warn, err)) {
-    if (err) { (*err) += "Failed to serialize root layer as USDC.\n"; }
-    return false;
-  }
-
-  if (usdc_data.empty()) {
-    if (err) { (*err) += "USDC serialization produced empty data.\n"; }
+  // Step 1: Serialize the root layer to memory.
+  std::vector<uint8_t> root_data;
+  std::string root_name;
+  if (!SerializeUSDZRootLayer(stage, options, &root_data, &root_name, warn, err)) {
     return false;
   }
 
   // Step 2: Build USDZ archive
   std::vector<uint8_t> buf;
-  buf.reserve(usdc_data.size() + 4096);  // rough estimate
+  buf.reserve(root_data.size() + 4096);  // rough estimate
 
   // entries: (name, crc32, size, local_header_offset)
   std::vector<std::tuple<std::string, uint32_t, uint32_t, size_t>> central_dir_entries;
 
   // Root layer must be the first entry (AOUSD Core Spec 17.2)
-  std::string root_name = "root.usdc";
-  if (stage.metas().defaultPrim.valid()) {
-    // Use defaultPrim name for the root file if available
-  }
-
   if (!WriteUSDZEntry(buf, central_dir_entries, root_name,
-                       usdc_data.data(), usdc_data.size(), err)) {
+                       root_data.data(), root_data.size(), err)) {
     return false;
   }
 
@@ -2162,12 +2235,76 @@ bool SaveAsUSDZToMemory(const Stage &stage,
   return true;
 }
 
+bool SaveAsUSDZToMemory(const Layer &layer,
+                        const std::map<std::string, std::vector<uint8_t>> &assets,
+                        std::vector<uint8_t> *output,
+                        const USDZWriteOptions &options,
+                        std::string *warn, std::string *err) {
+  if (!output) {
+    if (err) { (*err) += "`output` is nullptr.\n"; }
+    return false;
+  }
+
+  std::vector<uint8_t> root_data;
+  std::string root_name;
+  if (!SerializeUSDZRootLayer(layer, options, &root_data, &root_name, warn, err)) {
+    return false;
+  }
+
+  std::vector<uint8_t> buf;
+  buf.reserve(root_data.size() + 4096);
+
+  std::vector<std::tuple<std::string, uint32_t, uint32_t, size_t>> central_dir_entries;
+
+  if (!WriteUSDZEntry(buf, central_dir_entries, root_name,
+                       root_data.data(), root_data.size(), err)) {
+    return false;
+  }
+
+  for (const auto &asset : assets) {
+    std::string reason;
+    if (!IsSafeUSDZEntryName(asset.first, &reason)) {
+      if (err) {
+        (*err) += "Unsafe USDZ asset entry name '" + asset.first +
+                  "': " + reason + "\n";
+      }
+      return false;
+    }
+    if (!IsAllowedUSDZExtension(asset.first)) {
+      if (warn) {
+        (*warn) += "Skipping asset with disallowed extension: " + asset.first + "\n";
+      }
+      continue;
+    }
+
+    if (!WriteUSDZEntry(buf, central_dir_entries, asset.first,
+                         asset.second.data(), asset.second.size(), err)) {
+      return false;
+    }
+  }
+
+  if (!WriteUSDZCentralDirectory(buf, central_dir_entries, err)) {
+    return false;
+  }
+
+  *output = std::move(buf);
+  return true;
+}
+
+bool SaveAsUSDZToMemory(const Stage &stage,
+                        const std::map<std::string, std::vector<uint8_t>> &assets,
+                        std::vector<uint8_t> *output,
+                        std::string *warn, std::string *err) {
+  return SaveAsUSDZToMemory(stage, assets, output, USDZWriteOptions{}, warn, err);
+}
+
 bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
                       const std::map<std::string, std::vector<uint8_t>> &assets,
+                      const USDZWriteOptions &options,
                       std::string *warn, std::string *err) {
   std::vector<uint8_t> usdz_data;
 
-  if (!SaveAsUSDZToMemory(stage, assets, &usdz_data, warn, err)) {
+  if (!SaveAsUSDZToMemory(stage, assets, &usdz_data, options, warn, err)) {
     return false;
   }
 
@@ -2189,6 +2326,42 @@ bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
   }
 
   return true;
+}
+
+bool SaveAsUSDZToFile(const std::string &filename, const Layer &layer,
+                      const std::map<std::string, std::vector<uint8_t>> &assets,
+                      const USDZWriteOptions &options,
+                      std::string *warn, std::string *err) {
+  std::vector<uint8_t> usdz_data;
+
+  if (!SaveAsUSDZToMemory(layer, assets, &usdz_data, options, warn, err)) {
+    return false;
+  }
+
+  std::ofstream ofs(filename, std::ios::binary);
+  if (!ofs) {
+    if (err) {
+      (*err) += "Failed to open file for writing: " + filename + "\n";
+    }
+    return false;
+  }
+
+  ofs.write(reinterpret_cast<const char *>(usdz_data.data()),
+            static_cast<std::streamsize>(usdz_data.size()));
+  if (!ofs) {
+    if (err) {
+      (*err) += "Failed to write USDZ data to file: " + filename + "\n";
+    }
+    return false;
+  }
+
+  return true;
+}
+
+bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
+                      const std::map<std::string, std::vector<uint8_t>> &assets,
+                      std::string *warn, std::string *err) {
+  return SaveAsUSDZToFile(filename, stage, assets, USDZWriteOptions{}, warn, err);
 }
 
 // ============================================================================

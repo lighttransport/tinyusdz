@@ -36,9 +36,13 @@ to `fpng`.
 ## Usage
 
 ```
-tusdzconvert inputFile [outputFile] [options]
+tusdzconvert inputFileOrDirectory [outputFile] [options]
 tusdzconvert -repack <outputImage> -packR <src> [-packG <src> ...] [options]
 ```
+
+When the input is a directory, it must contain exactly one top-level `.usd`,
+`.usda`, or `.usdc` root layer. Subdirectories are used for referenced assets,
+but root-layer discovery itself is not recursive.
 
 ### Conversion options
 
@@ -47,8 +51,9 @@ tusdzconvert -repack <outputImage> -packR <src> [-packG <src> ...] [options]
 | `-v`, `-verbose` | Verbose logging |
 | `-noFlatten` | Do not compose/flatten (default: flatten) |
 | `--outputFormat <fmt>` | Output format: `usdz` (default), `usdc`, or `usda`. `usdc`/`usda` produce flat files with external texture references |
+| `--rootLayerFormat <fmt>` | Root layer format inside flattened USDZ: `usdc` (default) or `usda`; `-noFlatten` writes a USDA root to preserve composition arcs |
 | `--pxr-usdcat <path>` | After conversion, also run pxrUSD `usdcat --flatten` to produce a reference file for comparison (e.g. `output.usdz.reference.usdc`) |
-| `-arkitCompatible` | Apply ARKit-friendly stage metadata (Y-up, etc) |
+| `-arkitCompatible` | Apply ARKit USDZ policy: flatten for USDZ, force a USDC root, apply Y-up metadata, and use stricter texture checks |
 | `-metersPerUnit <v>` | Override stage `metersPerUnit` |
 | `-upAxis <X\|Y\|Z>` | Override stage up axis |
 | `-url <s>` / `-copyright <s>` | Store in stage documentation |
@@ -107,6 +112,9 @@ tusdzconvert model.usd model.usdc --outputFormat usdc
 
 # Flat USDA (ASCII) for human-readable diff
 tusdzconvert model.usd model.usda --outputFormat usda
+
+# Directory input, flattened USDZ with an ASCII root layer
+tusdzconvert asset_dir asset.usdz --rootLayerFormat usda
 
 # USDZ with pxrUSD reference file for comparison
 tusdzconvert model.usd model.usdz --pxr-usdcat ../OpenUSD/dist/bin/usdcat

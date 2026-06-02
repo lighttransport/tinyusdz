@@ -10,6 +10,8 @@ void usdz_convert_orm_scalar_nonfinite_test(void);
 void usdz_convert_archive_collision_name_test(void);
 void usdz_convert_fit_budget_test(void);
 void usdz_convert_pipeline_test(void);
+void usdz_convert_usdz_root_layer_format_test(void);
+void usdz_convert_arkit_forces_flattened_usdc_root_test(void);
 void usdz_convert_repack_files_test(void);
 void usdz_convert_jpeg_roundtrip_test(void);
 void usdz_convert_remap_asset_paths_test(void);
