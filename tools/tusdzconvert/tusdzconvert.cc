@@ -18,6 +18,12 @@
 #include <string>
 #include <vector>
 
+#if defined(_WIN32)
+#else
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 #include "arg-parser.hh"
 #include "str-util.hh"
 #include "io-util.hh"
@@ -196,6 +202,49 @@ bool ParseUSDZRootLayerFormat(const std::string &s,
     return true;
   }
   return false;
+}
+
+int RunProcess(const std::vector<std::string> &args, std::string *err) {
+  if (args.empty()) {
+    if (err) *err = "empty command";
+    return -1;
+  }
+#if defined(_WIN32)
+  if (err) {
+    *err = "reference usdcat execution is not implemented on this platform";
+  }
+  return -1;
+#else
+  std::vector<char *> argv;
+  argv.reserve(args.size() + 1);
+  for (const std::string &arg : args) {
+    argv.push_back(const_cast<char *>(arg.c_str()));
+  }
+  argv.push_back(nullptr);
+
+  pid_t pid = fork();
+  if (pid < 0) {
+    if (err) *err = "fork failed";
+    return -1;
+  }
+  if (pid == 0) {
+    execvp(args[0].c_str(), argv.data());
+    _exit(127);
+  }
+
+  int status = 0;
+  if (waitpid(pid, &status, 0) < 0) {
+    if (err) *err = "waitpid failed";
+    return -1;
+  }
+  if (WIFEXITED(status)) {
+    return WEXITSTATUS(status);
+  }
+  if (WIFSIGNALED(status)) {
+    return 128 + WTERMSIG(status);
+  }
+  return -1;
+#endif
 }
 
 bool IsUSDFileExtension(const std::string &path) {
@@ -643,14 +692,23 @@ int main(int argc, char **argv) {
       ref_fmt = "usda";
     }
     std::string ref_path = opts.output + ".reference.usd";
-    std::string cmd = pxr_usdcat_path + " --flatten --usdFormat " + ref_fmt +
-                      " -o " + ref_path + " " + root_input;
-    std::cout << "Running reference: " << cmd << "\n";
-    int rc = std::system(cmd.c_str());
+    std::vector<std::string> ref_args = {
+        pxr_usdcat_path, "--flatten", "--usdFormat", ref_fmt,
+        "-o", ref_path, root_input};
+    std::cout << "Running reference:";
+    for (const std::string &arg : ref_args) {
+      std::cout << " [" << arg << "]";
+    }
+    std::cout << "\n";
+    std::string ref_err;
+    int rc = RunProcess(ref_args, &ref_err);
     if (rc == 0) {
       std::cout << "Reference written: " << ref_path << "\n";
     } else {
       std::cerr << "WARN: pxrUSD usdcat returned exit code " << rc << "\n";
+      if (!ref_err.empty()) {
+        std::cerr << "WARN: " << ref_err << "\n";
+      }
     }
   }
 
