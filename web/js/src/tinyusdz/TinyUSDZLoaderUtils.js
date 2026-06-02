@@ -377,7 +377,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         const tex = usdScene.getTexture(textureId);
 
-        const texImage = usdScene.getImage(tex.textureImageId);
+        const texImage = usdScene.getImageCopy(tex.textureImageId);
 
         // there are 3 states for texture:
         // 1. URI only. Need to fetch texture(file) from URI in JS layer.
@@ -1229,7 +1229,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         } else if (usdNode.nodeType == 'mesh') {
 
             // contentId is the mesh ID in the USD scene.
-            const mesh = usdScene.getMesh(usdNode.contentId);
+            const mesh = usdScene.getMeshCopy(usdNode.contentId);
 
             // Update progress before building mesh
             if (options._progressState && options.onProgress) {
@@ -1675,7 +1675,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
      */
     static async loadDomeLightFromTextureId(light, usdLoader, envmapTextureId, textureFile, pmremGenerator) {
         try {
-            const imageData = usdLoader.getImage(envmapTextureId);
+            const imageData = usdLoader.getImageCopy(envmapTextureId);
             if (!imageData || !imageData.data || imageData.data.length === 0) {
                 console.warn(`DomeLight: No image data found for texture ID ${envmapTextureId}`);
                 return null;

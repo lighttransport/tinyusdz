@@ -77,22 +77,30 @@ Normal formats: TinyUSDZ may store normals packed. `getMeshPtr` exposes
 
 ### Owned copy: `getMeshCopy(i)` / `getImageCopy(i)`
 
-Same shape, but each attribute carries an **owned JS-heap `data` TypedArray**
-instead of a `ptr` — safe to retain, hand to `THREE.BufferAttribute` /
-`DataTexture`, or process on the CPU. Use these when a view/ptr doesn't apply,
-e.g. assembling a UDIM atlas / `DataArrayTexture` on a canvas (resize, flip,
-channel-pack) before upload.
+A **drop-in replacement** for `getMesh(i)` / `getImage(i)`: the **exact same
+object shape**, but every heap-backed TypedArray (including nested ones like
+`uvSets.uvN.data`) is an **owned JS-heap copy** — safe to retain, hand to
+`THREE.BufferAttribute` / `DataTexture`, or process on the CPU. Use these when a
+view/ptr doesn't apply, e.g. assembling a UDIM atlas / `DataArrayTexture` on a
+canvas (resize, flip, channel-pack) before upload, or any CPU mesh work.
 
 ```js
-mesh:  { ..., points: { data: Float32Array, length, comps, count, dtype }, ... }
-image: { width, height, channels, decoded, ..., data: Uint8Array }
+// identical to getMesh()/getImage(), just owned arrays:
+mesh:  { points: Float32Array, normals, normalsFormat, texcoords, uvSets,
+         faceVertexIndices, faceVertexCounts, tangents, materialId, ... }
+image: { width, height, channels, decoded, colorSpace, bufferId, data: Uint8Array }
 ```
+
+Migrating existing `getMesh`/`getImage` callers is therefore a mechanical rename
+(`getMesh` → `getMeshCopy`, `getImage` → `getImageCopy`) with no call-site
+changes.
 
 ### Deprecated: `getMesh(i)` / `getImage(i)`
 
 Kept for backward compatibility; each logs a one-time `console.warn`. They
 return heap-aliasing views with **no explicit lifetime contract** (the original
-source of corruption bugs). Migrate to `*Ptr` (zero-copy) or `*Copy` (owned).
+source of corruption bugs). Migrate to `*Copy` (owned, drop-in) or, for GPU
+upload, `*Ptr` (zero-copy).
 
 ## Lifecycle contract
 

@@ -3414,6 +3414,10 @@ class TinyUSDZLoaderNative {
 
   emscripten::val getImage(int img_id) const {
     warnDeprecated_("getImage", "getImagePtr()/getImageCopy()");
+    return buildImageVal_(img_id);
+  }
+
+  emscripten::val buildImageVal_(int img_id) const {
     emscripten::val img = emscripten::val::object();
 
     if (!loaded_) {
@@ -3460,10 +3464,10 @@ class TinyUSDZLoaderNative {
   //     into linear memory; it survives heap growth (a TypedArray view would
   //     NOT — growth detaches it), as long as the loader isn't deleted/reloaded.
   //
-  //   getMeshCopy(i) / getImageCopy(i) -> the same shape but each attribute
-  //     carries an owned (JS-heap) `data` TypedArray copy. Use when a view/ptr
-  //     is not applicable — e.g. assembling a UDIM atlas/array-texture on a
-  //     canvas (resize/flip) before upload.
+  //   getMeshCopy(i) / getImageCopy(i) -> the SAME shape as the deprecated
+  //     getMesh()/getImage() (a drop-in replacement), but every heap-backed
+  //     TypedArray is an owned (JS-heap) copy — safe to retain, hand to
+  //     THREE.BufferAttribute, or process on the CPU (e.g. UDIM atlas assembly).
   //
   // getMesh()/getImage() remain (deprecated) for backward compatibility.
   // ---------------------------------------------------------------------------
@@ -3475,34 +3479,36 @@ class TinyUSDZLoaderNative {
     return 1;  // snorm8 / u8
   }
 
-  // Build one attribute descriptor. `length` is the total scalar count
-  // (vertices * comps). When `copy` is true the bytes are sliced into an owned
-  // JS TypedArray (`data`); otherwise the raw heap offset (`ptr`) is exposed.
+  // Build one zero-copy attribute descriptor: {ptr, length, comps, count,
+  // dtype, byteLength}. `length` is the total scalar count (vertices * comps).
   static emscripten::val heapAttr_(const void *p, size_t length, int comps,
-                                   const char *dtype, bool copy) {
+                                   const char *dtype) {
     emscripten::val a = emscripten::val::object();
     a.set("length", emscripten::val(static_cast<double>(length)));
     a.set("comps", comps);
     a.set("dtype", std::string(dtype));
     a.set("count", emscripten::val(static_cast<double>(comps ? length / comps : length)));
-    if (copy) {
-      std::string d(dtype);
-      emscripten::val view;
-      if (d == "f32") {
-        view = emscripten::val(emscripten::typed_memory_view(length, reinterpret_cast<const float *>(p)));
-      } else if (d == "u32") {
-        view = emscripten::val(emscripten::typed_memory_view(length, reinterpret_cast<const uint32_t *>(p)));
-      } else if (d == "snorm16") {
-        view = emscripten::val(emscripten::typed_memory_view(length, reinterpret_cast<const int16_t *>(p)));
-      } else {
-        view = emscripten::val(emscripten::typed_memory_view(length, reinterpret_cast<const int8_t *>(p)));
-      }
-      a.set("data", view.call<emscripten::val>("slice"));  // owned JS-heap copy
-    } else {
-      a.set("ptr", emscripten::val(static_cast<double>(reinterpret_cast<uintptr_t>(p))));
-      a.set("byteLength", emscripten::val(static_cast<double>(length * dtypeByteSize_(dtype))));
-    }
+    a.set("ptr", emscripten::val(static_cast<double>(reinterpret_cast<uintptr_t>(p))));
+    a.set("byteLength", emscripten::val(static_cast<double>(length * dtypeByteSize_(dtype))));
     return a;
+  }
+
+  // Replace every (possibly nested) TypedArray in `v` with an owned JS-heap
+  // copy (`.slice()`), turning a heap-aliasing getMesh()/getImage() result into
+  // a retain-safe one without duplicating those builders.
+  static void deepCopyTypedArrays_(emscripten::val v) {
+    emscripten::val keys = emscripten::val::global("Object").call<emscripten::val>("keys", v);
+    const size_t n = keys["length"].as<size_t>();
+    for (size_t i = 0; i < n; i++) {
+      const std::string k = keys[i].as<std::string>();
+      emscripten::val child = v[k];
+      if (child.isNull() || child.isUndefined()) continue;
+      if (!child["BYTES_PER_ELEMENT"].isUndefined()) {
+        v.set(k, child.call<emscripten::val>("slice"));  // TypedArray -> owned copy
+      } else if (child.typeOf().as<std::string>() == "object") {
+        deepCopyTypedArrays_(child);  // recurse (e.g. uvSets.uvN.data)
+      }
+    }
   }
 
   void warnDeprecated_(const char *fn, const char *repl) const {
@@ -3516,8 +3522,9 @@ class TinyUSDZLoaderNative {
     }
   }
 
-  // Shared builder for getMeshPtr (copy=false) / getMeshCopy (copy=true).
-  emscripten::val buildMeshHeap_(int mesh_id, bool copy) const {
+  // Zero-copy mesh descriptor: per-attribute {ptr,length,comps,count,dtype,
+  // byteLength}. Subset needed for GPU rendering (points/indices/normals/uv0).
+  emscripten::val getMeshPtr(int mesh_id) const {
     emscripten::val out = emscripten::val::object();
     if (!loaded_ || mesh_id < 0 ||
         static_cast<size_t>(mesh_id) >= render_scene_.meshes.size()) {
@@ -3533,24 +3540,21 @@ class TinyUSDZLoaderNative {
     out.set("doubleSided", rmesh.doubleSided);
     out.set("primName", rmesh.prim_name);
 
-    // points (vec3 f32)
     out.set("points",
             heapAttr_(reinterpret_cast<const float *>(rmesh.points.data()),
-                      vtx * 3, 3, "f32", copy));
+                      vtx * 3, 3, "f32"));
 
-    // indices (u32) + faceVertexCounts (u32) + triangulated flag
     const auto &idx = rmesh.faceVertexIndices();
     const auto &cnt = rmesh.faceVertexCounts();
     if (!idx.empty()) {
-      out.set("indices", heapAttr_(idx.data(), idx.size(), 1, "u32", copy));
+      out.set("indices", heapAttr_(idx.data(), idx.size(), 1, "u32"));
     }
     bool triangulated = !cnt.empty();
     for (uint32_t c : cnt) {
       if (c != 3) { triangulated = false; break; }
     }
     if (!cnt.empty()) {
-      out.set("faceVertexCounts",
-              heapAttr_(cnt.data(), cnt.size(), 1, "u32", copy));
+      out.set("faceVertexCounts", heapAttr_(cnt.data(), cnt.size(), 1, "u32"));
     }
     out.set("triangulated", triangulated);
 
@@ -3558,11 +3562,9 @@ class TinyUSDZLoaderNative {
     if (!rmesh.normals.empty()) {
       const size_t nv = rmesh.normals.vertex_count();
       if (rmesh.normals.format == VertexAttributeFormat::Char3) {
-        out.set("normals", heapAttr_(rmesh.normals.data.data(), nv * 3, 3,
-                                     "snorm8", copy));
+        out.set("normals", heapAttr_(rmesh.normals.data.data(), nv * 3, 3, "snorm8"));
       } else if (rmesh.normals.format == VertexAttributeFormat::Short3) {
-        out.set("normals", heapAttr_(rmesh.normals.data.data(), nv * 3, 3,
-                                     "snorm16", copy));
+        out.set("normals", heapAttr_(rmesh.normals.data.data(), nv * 3, 3, "snorm16"));
       } else if (rmesh.normals.format == VertexAttributeFormat::Uint) {
         auto &cache = normals_cache_[mesh_id];
         if (cache.size() != nv * 3) {
@@ -3574,36 +3576,62 @@ class TinyUSDZLoaderNative {
                 P[i], cache[i * 3 + 0], cache[i * 3 + 1], cache[i * 3 + 2]);
           }
         }
-        out.set("normals", heapAttr_(cache.data(), nv * 3, 3, "f32", copy));
+        out.set("normals", heapAttr_(cache.data(), nv * 3, 3, "f32"));
       } else {
         out.set("normals",
                 heapAttr_(reinterpret_cast<const float *>(rmesh.normals.data.data()),
-                          nv * 3, 3, "f32", copy));
+                          nv * 3, 3, "f32"));
       }
     }
 
-    // uv set 0 (vec2 f32)
     auto uvit = rmesh.texcoords.find(0);
     if (uvit != rmesh.texcoords.end()) {
       const size_t uvn = uvit->second.vertex_count();
       out.set("uv0",
               heapAttr_(reinterpret_cast<const float *>(uvit->second.data.data()),
-                        uvn * 2, 2, "f32", copy));
+                        uvn * 2, 2, "f32"));
     }
     return out;
   }
 
-  emscripten::val getMeshPtr(int mesh_id) const { return buildMeshHeap_(mesh_id, false); }
-  emscripten::val getMeshCopy(int mesh_id) const { return buildMeshHeap_(mesh_id, true); }
+  // Owned, retain-safe drop-in for getMesh(): identical shape, copied arrays.
+  emscripten::val getMeshCopy(int mesh_id) const {
+    emscripten::val m = buildMeshVal_(mesh_id);
+    deepCopyTypedArrays_(m);
+    return m;
+  }
 
-  // Shared builder for getImagePtr (copy=false) / getImageCopy (copy=true).
-  emscripten::val buildImageHeap_(int img_id, bool copy) const {
-    emscripten::val out = emscripten::val::object();
+  // Zero-copy image descriptor: {width,height,channels,decoded,colorSpace,
+  // usdColorSpace,uri,bufferId, ptr,byteLength}.
+  emscripten::val getImagePtr(int img_id) const {
+    emscripten::val out = imageMeta_(img_id);
+    if (out.isUndefined()) return emscripten::val::object();
+    const auto &i = render_scene_.images[size_t(img_id)];
+    if (i.buffer_id >= 0 &&
+        static_cast<size_t>(i.buffer_id) < render_scene_.buffers.size()) {
+      const auto &b = render_scene_.buffers[size_t(i.buffer_id)];
+      out.set("ptr", emscripten::val(static_cast<double>(
+                         reinterpret_cast<uintptr_t>(b.data.data()))));
+      out.set("byteLength", emscripten::val(static_cast<double>(b.data.size())));
+    }
+    return out;
+  }
+
+  // Owned, retain-safe drop-in for getImage(): identical shape, copied data.
+  emscripten::val getImageCopy(int img_id) const {
+    emscripten::val m = buildImageVal_(img_id);
+    deepCopyTypedArrays_(m);
+    return m;
+  }
+
+  // Image metadata common to getImage/getImagePtr/getImageCopy (no pixel data).
+  emscripten::val imageMeta_(int img_id) const {
     if (!loaded_ || img_id < 0 ||
         static_cast<size_t>(img_id) >= render_scene_.images.size()) {
-      return out;
+      return emscripten::val::undefined();
     }
     const auto &i = render_scene_.images[size_t(img_id)];
+    emscripten::val out = emscripten::val::object();
     out.set("width", int(i.width));
     out.set("height", int(i.height));
     out.set("channels", int(i.channels));
@@ -3611,27 +3639,16 @@ class TinyUSDZLoaderNative {
     out.set("colorSpace", to_string(i.colorSpace));
     out.set("usdColorSpace", to_string(i.usdColorSpace));
     out.set("uri", i.asset_identifier);
-    if (i.buffer_id >= 0 &&
-        static_cast<size_t>(i.buffer_id) < render_scene_.buffers.size()) {
-      const auto &b = render_scene_.buffers[size_t(i.buffer_id)];
-      if (copy) {
-        emscripten::val view =
-            emscripten::val(emscripten::typed_memory_view(b.data.size(), b.data.data()));
-        out.set("data", view.call<emscripten::val>("slice"));
-      } else {
-        out.set("ptr", emscripten::val(static_cast<double>(
-                           reinterpret_cast<uintptr_t>(b.data.data()))));
-        out.set("byteLength", emscripten::val(static_cast<double>(b.data.size())));
-      }
-    }
+    out.set("bufferId", int(i.buffer_id));
     return out;
   }
 
-  emscripten::val getImagePtr(int img_id) const { return buildImageHeap_(img_id, false); }
-  emscripten::val getImageCopy(int img_id) const { return buildImageHeap_(img_id, true); }
-
   emscripten::val getMesh(int mesh_id) const {
     warnDeprecated_("getMesh", "getMeshPtr()/getMeshCopy()");
+    return buildMeshVal_(mesh_id);
+  }
+
+  emscripten::val buildMeshVal_(int mesh_id) const {
     emscripten::val mesh = emscripten::val::object();
 
     if (!loaded_) {
