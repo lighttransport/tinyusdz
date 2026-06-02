@@ -3260,10 +3260,18 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       rmaterial_id = int64_t(mat_id);
 
     } else {
+      RenderSceneConverter *conv = visitorEnv->converter;
+
+      // Record the current sizes so we can stream the buffers/images/textures
+      // this material conversion appends (no-op without a streaming sink).
+      const size_t buf_begin = conv->buffers.size();
+      const size_t img_begin = conv->images.size();
+      const size_t tex_begin = conv->textures.size();
+      const size_t udim_begin = conv->udim_textures.size();
+
       RenderMaterial rmat;
-      if (!visitorEnv->converter->ConvertMaterial(*visitorEnv->env,
-                                                  bound_material_path,
-                                                  *bound_material, &rmat)) {
+      if (!conv->ConvertMaterial(*visitorEnv->env, bound_material_path,
+                                 *bound_material, &rmat)) {
         if (err) {
           (*err) += fmt::format("Material conversion failed: {}",
                                 bound_material_path);
@@ -3291,6 +3299,41 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
                                      << " ( " << rmat.name << " ) ");
 
       rmaterials.push_back(rmat);
+
+      // Stream the newly produced GPU dependencies then the material itself, in
+      // dependency order (buffers -> images -> textures -> udim -> material), so
+      // a consumer's material references already-delivered textures/images.
+      if (conv->HasStreamingSink()) {
+        for (size_t i = buf_begin; i < conv->buffers.size(); i++) {
+          if (!conv->EmitBuffer(i)) {
+            if (err) (*err) += "Conversion cancelled by user.\n";
+            return false;
+          }
+        }
+        for (size_t i = img_begin; i < conv->images.size(); i++) {
+          if (!conv->EmitImage(i)) {
+            if (err) (*err) += "Conversion cancelled by user.\n";
+            return false;
+          }
+        }
+        for (size_t i = tex_begin; i < conv->textures.size(); i++) {
+          if (!conv->EmitTexture(i, conv->textures[i].abs_path)) {
+            if (err) (*err) += "Conversion cancelled by user.\n";
+            return false;
+          }
+        }
+        for (size_t i = udim_begin; i < conv->udim_textures.size(); i++) {
+          if (!conv->EmitUdimTexture(i)) {
+            if (err) (*err) += "Conversion cancelled by user.\n";
+            return false;
+          }
+        }
+        if (!conv->EmitMaterial(size_t(rmaterial_id),
+                                bound_material_path.full_path_name())) {
+          if (err) (*err) += "Conversion cancelled by user.\n";
+          return false;
+        }
+      }
     }
 
     return true;
@@ -3555,6 +3598,15 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
         return false;
       }
+      // Stream the just-converted mesh (LOCAL space; world placement arrives in
+      // the Hierarchy phase). No-op without a streaming sink.
+      if (!visitorEnv->converter->EmitMesh(size_t(mesh_id),
+                                           abs_path.full_path_name())) {
+        if (err) {
+          (*err) += "Conversion cancelled by user.\n";
+        }
+        return false;
+      }
       DCOUT("[Tydra] Mesh " << visitorEnv->meshes_processed << "/" << visitorEnv->meshes_total
             << ": " << abs_path.full_path_name());
     }
@@ -3636,6 +3688,13 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       }
       return false;
     }
+    if (!visitorEnv->converter->EmitMesh(size_t(mesh_id),
+                                         abs_path.full_path_name())) {
+      if (err) {
+        (*err) += "Conversion cancelled by user.\n";
+      }
+      return false;
+    }
     DCOUT("[Tydra] Mesh " << visitorEnv->meshes_processed << "/" << visitorEnv->meshes_total
           << " (cube): " << abs_path.full_path_name());
   }
@@ -3711,6 +3770,13 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     if (!visitorEnv->converter->ReportMeshProgress(
             visitorEnv->meshes_processed, visitorEnv->meshes_total,
             abs_path.full_path_name(), msg)) {
+      if (err) {
+        (*err) += "Conversion cancelled by user.\n";
+      }
+      return false;
+    }
+    if (!visitorEnv->converter->EmitMesh(size_t(mesh_id),
+                                         abs_path.full_path_name())) {
       if (err) {
         (*err) += "Conversion cancelled by user.\n";
       }

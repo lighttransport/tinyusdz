@@ -1706,6 +1706,84 @@ class RenderScene {
 };
 
 ///
+/// Phase tag delivered alongside streamed elements during progressive
+/// (streaming) conversion, so a consumer knows what arrives when.
+/// See `RenderSceneSink` and `RenderSceneConverter::ConvertToRenderSceneStreaming`.
+///
+enum class StreamPhase {
+  MaterialsAndMeshes,  ///< images, buffers, textures, materials, meshes (meshes are LOCAL space)
+  Hierarchy,           ///< nodes (with world matrices), lights, cameras
+  Animations,          ///< skeletons, animation clips
+  Instances,           ///< render instances
+  Complete             ///< conversion finished; RenderScene fully populated
+};
+
+///
+/// Push "sink" for streaming/progressive scene conversion.
+///
+/// Set only the callbacks you care about; an unset slot is a no-op that means
+/// "continue". Every callback returns bool: `true` to continue, `false` to
+/// cancel conversion (matches the existing progress-callback convention).
+///
+/// `index` is the element's final index in the corresponding RenderScene array;
+/// `abs_path` is the USD absolute prim path (empty where not applicable).
+///
+/// The element passed to a callback is a `const&` still owned by the converter
+/// (it has not yet been moved into the RenderScene). COPY out what you need
+/// (e.g. enqueue a copy for GPU upload on another thread); do not move from it.
+///
+/// All callbacks fire synchronously on the converting thread. If conversion runs
+/// on a worker thread the sink must be thread-safe (enqueue-only); do no GPU work
+/// inside it.
+///
+/// Ordering: on_phase(MaterialsAndMeshes) then, per prim in traversal order, that
+/// prim's newly-produced images -> buffers -> textures -> udim_textures, then
+/// on_material, then on_mesh (re-used/cached materials are not re-emitted). A
+/// streamed mesh is in LOCAL space; its final world placement is only known once
+/// the Hierarchy phase delivers the node tree (on_root_node, with world
+/// matrices). Then Animations, then Instances, then on_phase(Complete) +
+/// on_complete (once).
+///
+struct RenderSceneSink {
+  // --- Phase: MaterialsAndMeshes ---
+  std::function<bool(const TextureImage &, size_t index, void *)> on_image;
+  std::function<bool(const BufferData &, size_t index, void *)> on_buffer;
+  std::function<bool(const UVTexture &, size_t index, const std::string &abs_path, void *)>
+      on_texture;
+  std::function<bool(const UDIMTexture &, size_t index, void *)> on_udim_texture;
+  std::function<bool(const RenderMaterial &, size_t index, const std::string &abs_path, void *)>
+      on_material;
+  /// Mesh is delivered in LOCAL space (no final world matrix). See on_root_node.
+  std::function<bool(const RenderMesh &, size_t index, const std::string &abs_path, void *)>
+      on_mesh;
+
+  // --- Phase: Hierarchy ---
+  std::function<bool(const RenderLight &, size_t index, const std::string &abs_path, void *)>
+      on_light;
+  std::function<bool(const RenderCamera &, size_t index, const std::string &abs_path, void *)>
+      on_camera;
+  /// Delivered after the node tree is built. Each Node carries local/world
+  /// matrices; node.id indexes meshes/lights/cameras per its type.
+  std::function<bool(const Node &root, size_t index, void *)> on_root_node;
+
+  // --- Phase: Animations ---
+  std::function<bool(const SkelHierarchy &, size_t index, const std::string &abs_path, void *)>
+      on_skeleton;
+  std::function<bool(const AnimationClip &, size_t index, const std::string &abs_path, void *)>
+      on_animation;
+
+  // --- Phase: Instances ---
+  std::function<bool(const RenderInstance &, size_t index, const std::string &abs_path, void *)>
+      on_instance;
+
+  // --- Phase boundaries / completion ---
+  std::function<bool(StreamPhase, void *)> on_phase;        ///< start of each phase
+  std::function<bool(const RenderScene &, void *)> on_complete;  ///< once, at the end
+
+  void *userdata{nullptr};
+};
+
+///
 
 /// Dump RenderScene to string (for debugging)
 ///

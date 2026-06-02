@@ -558,6 +558,10 @@ TEST_LIST = {
   { "tydra_renderscene_camera_test", tydra_renderscene_camera_test },
   { "tydra_renderscene_memory_estimation_test",
     tydra_renderscene_memory_estimation_test },
+  { "tydra_renderscene_streaming_equivalence_test",
+    tydra_renderscene_streaming_equivalence_test },
+  { "tydra_renderscene_streaming_cancel_test",
+    tydra_renderscene_streaming_cancel_test },
   // Phase 5: Tydra shader / scene-access tests
   { "tydra_shader_list_prims_test", tydra_shader_list_prims_test },
   { "tydra_shader_list_shaders_test", tydra_shader_list_shaders_test },
