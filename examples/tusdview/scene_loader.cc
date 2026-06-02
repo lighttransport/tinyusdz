@@ -3,6 +3,7 @@
 
 #include <chrono>
 
+#include "mesh_build.hh"
 #include "tinyusdz.hh"
 #include "tydra/render-data-converter.hh"
 
@@ -23,11 +24,13 @@ std::string DirName(const std::string& path) {
 
 }  // namespace
 
-bool LoadUSD(const std::string& path, LoadedScene* out, LoadControl* ctrl) {
+bool LoadUSD(const std::string& path, LoadedScene* out, DrawScene* draw,
+             LoadControl* ctrl) {
   out->filepath = path;
   out->ok = false;
   out->warn.clear();
   out->err.clear();
+  if (draw) *draw = DrawScene{};
 
   if (ctrl && ctrl->cancel.load()) {
     out->err = "Load cancelled.";
@@ -123,7 +126,13 @@ bool LoadUSD(const std::string& path, LoadedScene* out, LoadControl* ctrl) {
         nullptr);
   }
 
-  if (!converter.ConvertToRenderScene(env, &out->render)) {
+  // Streaming convert: builds `draw` incrementally as meshes/materials/textures
+  // are produced (and fully populates out->render). Falls back to the monolithic
+  // path if no DrawScene sink was requested.
+  const bool converted =
+      draw ? BuildDrawSceneStreaming(converter, env, &out->render, draw, ctrl)
+           : converter.ConvertToRenderScene(env, &out->render);
+  if (!converted) {
     if (ctrl && ctrl->cancel.load()) {
       out->err = "Load cancelled.";
     } else if (budgetHit) {
