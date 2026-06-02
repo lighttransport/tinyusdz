@@ -10,6 +10,7 @@ void tydra_skel_scene_access_test(void);
 void tydra_blendshape_resolution_test(void);
 void tydra_material_binding_validation_test(void);
 void tydra_texture_loader_policy_test(void);
+void tydra_udim_texture_test(void);
 void tydra_envmap_loader_policy_test(void);
 void tydra_geometry_light_validation_test(void);
 void tydra_mesh_fallback_policy_test(void);

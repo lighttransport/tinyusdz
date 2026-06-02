@@ -200,6 +200,7 @@ TEST_LIST = {
   { "tydra_material_binding_validation_test",
     tydra_material_binding_validation_test },
   { "tydra_texture_loader_policy_test", tydra_texture_loader_policy_test },
+  { "tydra_udim_texture_test", tydra_udim_texture_test },
   { "tydra_envmap_loader_policy_test", tydra_envmap_loader_policy_test },
   { "tydra_geometry_light_validation_test",
     tydra_geometry_light_validation_test },
