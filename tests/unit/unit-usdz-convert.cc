@@ -181,6 +181,22 @@ bool FindTextureFilePath(const tinyusdz::Stage &stage, std::string *out) {
   return false;
 }
 
+std::string FirstUSDZEntryName(const std::vector<uint8_t> &data) {
+  if (data.size() < 30 ||
+      data[0] != 0x50 || data[1] != 0x4b ||
+      data[2] != 0x03 || data[3] != 0x04) {
+    return std::string();
+  }
+  const uint16_t name_len =
+      static_cast<uint16_t>(data[26]) |
+      static_cast<uint16_t>(static_cast<uint16_t>(data[27]) << 8);
+  if (size_t(30) + size_t(name_len) > data.size()) {
+    return std::string();
+  }
+  return std::string(reinterpret_cast<const char *>(data.data() + 30),
+                     name_len);
+}
+
 }  // namespace
 
 // fpnge/fpng PNG encode -> decode roundtrip preserves pixels.
@@ -558,6 +574,124 @@ void usdz_convert_pipeline_test(void) {
   if (!valid) {
     TEST_MSG("validate: %s", verr.c_str());
   }
+}
+
+void usdz_convert_usdz_root_layer_format_test(void) {
+  using namespace tinyusdz;
+  namespace fs = std::filesystem;
+
+  const std::string dir = TempDir();
+  const std::string png_path = (fs::path(dir) / "root_format_tex.png").string();
+  const std::string usda_path =
+      (fs::path(dir) / "root_format_scene.usda").string();
+  const std::string usdz_path =
+      (fs::path(dir) / "root_format_out.usdz").string();
+
+  {
+    Image tex = MakeSolidImage(4, 4, 4, 20, 40, 60, 255);
+    image::WriteOption wopt;
+    wopt.format = image::WriteImageFormat::PNG;
+    auto enc = image::WriteImageToMemory(tex, wopt);
+    TEST_CHECK(enc.has_value());
+    if (!enc) return;
+    std::string werr;
+    TEST_CHECK(io::WriteWholeFile(png_path, enc.value().data(),
+                                  enc.value().size(), &werr));
+  }
+
+  TEST_CHECK(WriteTexturedUSDA(usda_path, "root_format_tex.png"));
+
+  usdz::UsdzConvertOptions opts;
+  opts.inputs.push_back(usda_path);
+  opts.output = usdz_path;
+  opts.flatten = true;
+  opts.usdz_root_layer_format = usdz::USDZRootLayerFormat::USDA;
+
+  usdz::UsdzConvertStats stats;
+  std::string warn, err;
+  bool ok = usdz::Convert(opts, &stats, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("convert error: %s", err.c_str());
+    return;
+  }
+  TEST_CHECK(stats.num_textures == 1);
+
+  std::vector<uint8_t> usdz_bytes;
+  std::string ioerr;
+  bool rok = io::ReadWholeFile(&usdz_bytes, &ioerr, usdz_path, 0);
+  TEST_CHECK(rok);
+  if (!rok) {
+    TEST_MSG("read usdz: %s", ioerr.c_str());
+    return;
+  }
+
+  TEST_CHECK(FirstUSDZEntryName(usdz_bytes) == "root.usda");
+  std::string vwarn, verr;
+  TEST_CHECK(ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(), &vwarn,
+                          &verr));
+
+  Stage loaded_stage;
+  std::string lwarn, lerr;
+  TEST_CHECK(LoadUSDFromFile(usdz_path, &loaded_stage, &lwarn, &lerr));
+}
+
+void usdz_convert_arkit_forces_flattened_usdc_root_test(void) {
+  using namespace tinyusdz;
+  namespace fs = std::filesystem;
+
+  const std::string dir = TempDir();
+  const std::string png_path = (fs::path(dir) / "arkit_tex.png").string();
+  const std::string usda_path =
+      (fs::path(dir) / "arkit_scene.usda").string();
+  const std::string usdz_path =
+      (fs::path(dir) / "arkit_out.usdz").string();
+
+  {
+    Image tex = MakeSolidImage(4, 4, 4, 80, 90, 100, 255);
+    image::WriteOption wopt;
+    wopt.format = image::WriteImageFormat::PNG;
+    auto enc = image::WriteImageToMemory(tex, wopt);
+    TEST_CHECK(enc.has_value());
+    if (!enc) return;
+    std::string werr;
+    TEST_CHECK(io::WriteWholeFile(png_path, enc.value().data(),
+                                  enc.value().size(), &werr));
+  }
+
+  TEST_CHECK(WriteTexturedUSDA(usda_path, "arkit_tex.png"));
+
+  usdz::UsdzConvertOptions opts;
+  opts.inputs.push_back(usda_path);
+  opts.output = usdz_path;
+  opts.flatten = false;
+  opts.arkit_compatible = true;
+  opts.usdz_root_layer_format = usdz::USDZRootLayerFormat::USDA;
+
+  usdz::UsdzConvertStats stats;
+  std::string warn, err;
+  bool ok = usdz::Convert(opts, &stats, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("convert error: %s", err.c_str());
+    return;
+  }
+  TEST_CHECK(warn.find("requires a flattened package") != std::string::npos);
+  TEST_CHECK(warn.find("requires a USDC root layer") != std::string::npos);
+
+  std::vector<uint8_t> usdz_bytes;
+  std::string ioerr;
+  bool rok = io::ReadWholeFile(&usdz_bytes, &ioerr, usdz_path, 0);
+  TEST_CHECK(rok);
+  if (!rok) {
+    TEST_MSG("read usdz: %s", ioerr.c_str());
+    return;
+  }
+
+  TEST_CHECK(FirstUSDZEntryName(usdz_bytes) == "root.usdc");
+  std::string vwarn, verr;
+  TEST_CHECK(ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(), &vwarn,
+                          &verr));
 }
 
 // Standalone RepackTextureFiles: two grayscale PNGs -> packed RG image.

@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -67,8 +68,11 @@ void PrintUsage(const char *prog) {
       "  -noFlatten                Do not compose/flatten before writing (default: flatten).\n"
       "  --outputFormat <fmt>     Output format: usdz (default), usdc, or usda.\n"
       "                            usdc/usda produce flat files (textures stay as external refs).\n"
+      "  --rootLayerFormat <fmt>  USDZ root layer format: usdc (default) or usda.\n"
+      "                            -noFlatten currently writes a USDA root to preserve arcs.\n"
       "  --pxr-usdcat <path>      Also run pxrUSD usdcat --flatten to produce a reference file.\n"
-      "  -arkitCompatible          Apply ARKit-friendly stage metadata (Y-up, etc).\n"
+      "  -arkitCompatible          Apply ARKit USDZ policy: flatten, USDC root,\n"
+      "                            Y-up metadata, and stricter texture checks.\n"
       "  -metersPerUnit <value>    Override stage metersPerUnit.\n"
       "  -upAxis <X|Y|Z>           Override stage up axis.\n"
       "  -url <string>             Store a URL in stage documentation.\n"
@@ -177,6 +181,107 @@ bool ParseTextureFormat(const std::string &s, usdz::OutputTextureFormat *out) {
     return true;
   }
   return false;
+}
+
+bool ParseUSDZRootLayerFormat(const std::string &s,
+                              usdz::USDZRootLayerFormat *out) {
+  if (out == nullptr) return false;
+  std::string v = to_lower(s);
+  if (v == "usdc") {
+    *out = usdz::USDZRootLayerFormat::USDC;
+    return true;
+  }
+  if (v == "usda") {
+    *out = usdz::USDZRootLayerFormat::USDA;
+    return true;
+  }
+  return false;
+}
+
+bool IsUSDFileExtension(const std::string &path) {
+  std::string ext = to_lower(io::GetFileExtension(path));
+  return ext == "usd" || ext == "usda" || ext == "usdc";
+}
+
+bool ResolveInputPath(const std::string &arg, std::string *root_input,
+                      bool *input_was_directory, std::string *err) {
+  if (!root_input || !input_was_directory) {
+    if (err) (*err) = "internal error: null ResolveInputPath output";
+    return false;
+  }
+
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path input_path(arg);
+  if (!fs::is_directory(input_path, ec)) {
+    *root_input = arg;
+    *input_was_directory = false;
+    return true;
+  }
+
+  std::vector<fs::path> candidates;
+  for (const fs::directory_entry &entry : fs::directory_iterator(input_path, ec)) {
+    if (ec) {
+      if (err) (*err) = "failed to read input directory: " + arg;
+      return false;
+    }
+    if (!entry.is_regular_file(ec)) {
+      ec.clear();
+      continue;
+    }
+    const std::string path = entry.path().string();
+    if (IsUSDFileExtension(path)) {
+      candidates.push_back(entry.path());
+    }
+  }
+  if (ec) {
+    if (err) (*err) = "failed to read input directory: " + arg;
+    return false;
+  }
+
+  if (candidates.empty()) {
+    if (err) {
+      (*err) = "input directory must contain exactly one top-level .usd, "
+               ".usda, or .usdc file: " + arg;
+    }
+    return false;
+  }
+  if (candidates.size() > 1) {
+    if (err) {
+      (*err) = "input directory has multiple top-level USD root candidates:";
+      for (const fs::path &candidate : candidates) {
+        (*err) += "\n  " + candidate.string();
+      }
+    }
+    return false;
+  }
+
+  *root_input = candidates.front().string();
+  *input_was_directory = true;
+  return true;
+}
+
+std::string DefaultOutputPath(const std::string &input_arg,
+                              const std::string &root_input,
+                              bool input_was_directory,
+                              usdz::OutputFormat output_format) {
+  std::string stem = input_was_directory ? input_arg : root_input;
+  if (!input_was_directory) {
+    const std::string ext = io::GetFileExtension(stem);
+    if (!ext.empty()) {
+      stem = stem.substr(0, stem.size() - ext.size() - 1);
+    }
+  }
+
+  switch (output_format) {
+    case usdz::OutputFormat::USDC:
+      return stem + ".usdc";
+    case usdz::OutputFormat::USDA:
+      return stem + ".usda";
+    case usdz::OutputFormat::USDZ:
+      return stem + ".usdz";
+  }
+  return stem + ".usdz";
 }
 
 // Parse "file.png:CH" or "const:VALUE".
@@ -300,7 +405,7 @@ int main(int argc, char **argv) {
   parser.add_option("-v", false, "Verbose");
   parser.add_option("-verbose", false, "Verbose");
   parser.add_option("-noFlatten", false, "Disable flatten");
-  parser.add_option("-arkitCompatible", false, "ARKit metadata");
+  parser.add_option("-arkitCompatible", false, "ARKit USDZ policy");
   parser.add_option("-metersPerUnit", true, "metersPerUnit");
   parser.add_option("-upAxis", true, "Up axis X/Y/Z");
   parser.add_option("-url", true, "URL metadata");
@@ -324,6 +429,7 @@ int main(int argc, char **argv) {
   parser.add_option("-packChannels", true, "Output channels 1-4");
   parser.add_option("-packSize", true, "WxH");
   parser.add_option("--outputFormat", true, "Output format: usdz|usdc|usda");
+  parser.add_option("--rootLayerFormat", true, "USDZ root layer format: usdc|usda");
   parser.add_option("--pxr-usdcat", true, "Path to pxrUSD usdcat for reference file");
 
   if (!parser.parse(argc, argv)) {
@@ -362,18 +468,49 @@ int main(int argc, char **argv) {
   }
 
   usdz::UsdzConvertOptions opts;
-  opts.inputs.push_back(pos[0]);
+
+  if (parser.is_set("--outputFormat")) {
+    std::string f;
+    parser.get("--outputFormat", f);
+    f = to_lower(f);
+    if (f == "usdz") {
+      opts.output_format = usdz::OutputFormat::USDZ;
+    } else if (f == "usdc") {
+      opts.output_format = usdz::OutputFormat::USDC;
+    } else if (f == "usda") {
+      opts.output_format = usdz::OutputFormat::USDA;
+    } else {
+      std::cerr << "ERROR: --outputFormat must be usdz, usdc, or usda (got '"
+                << f << "').\n";
+      return 1;
+    }
+  }
+
+  if (parser.is_set("--rootLayerFormat")) {
+    std::string f;
+    parser.get("--rootLayerFormat", f);
+    if (!ParseUSDZRootLayerFormat(f, &opts.usdz_root_layer_format)) {
+      std::cerr << "ERROR: --rootLayerFormat must be usdc or usda (got '"
+                << f << "').\n";
+      return 1;
+    }
+  }
+
+  std::string root_input;
+  bool input_was_directory = false;
+  std::string input_err;
+  if (!ResolveInputPath(pos[0], &root_input, &input_was_directory,
+                        &input_err)) {
+    std::cerr << "ERROR: " << input_err << "\n";
+    return 1;
+  }
+  opts.inputs.push_back(root_input);
 
   if (pos.size() >= 2) {
     opts.output = pos[1];
   } else {
-    // Derive <input-stem>.usdz next to the input.
-    const std::string ext = io::GetFileExtension(pos[0]);
-    std::string stem = pos[0];
-    if (!ext.empty()) {
-      stem = pos[0].substr(0, pos[0].size() - ext.size() - 1);
-    }
-    opts.output = stem + ".usdz";
+    opts.output = DefaultOutputPath(pos[0], root_input, input_was_directory,
+                                    opts.output_format);
   }
 
   opts.flatten = !parser.is_set("-noFlatten");
@@ -477,23 +614,6 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (parser.is_set("--outputFormat")) {
-    std::string f;
-    parser.get("--outputFormat", f);
-    f = to_lower(f);
-    if (f == "usdz") {
-      opts.output_format = usdz::OutputFormat::USDZ;
-    } else if (f == "usdc") {
-      opts.output_format = usdz::OutputFormat::USDC;
-    } else if (f == "usda") {
-      opts.output_format = usdz::OutputFormat::USDA;
-    } else {
-      std::cerr << "ERROR: --outputFormat must be usdz, usdc, or usda (got '"
-                << f << "').\n";
-      return 1;
-    }
-  }
-
   std::string pxr_usdcat_path;
   if (parser.is_set("--pxr-usdcat")) {
     parser.get("--pxr-usdcat", pxr_usdcat_path);
@@ -524,7 +644,7 @@ int main(int argc, char **argv) {
     }
     std::string ref_path = opts.output + ".reference.usd";
     std::string cmd = pxr_usdcat_path + " --flatten --usdFormat " + ref_fmt +
-                      " -o " + ref_path + " " + pos[0];
+                      " -o " + ref_path + " " + root_input;
     std::cout << "Running reference: " << cmd << "\n";
     int rc = std::system(cmd.c_str());
     if (rc == 0) {
