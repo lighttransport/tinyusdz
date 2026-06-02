@@ -25,14 +25,20 @@ displays it with an ImGui docking UI.
   run on a **worker thread** with a live progress modal; the GPU upload happens
   on the render thread when the worker finishes. The window stays interactive
   while a large file loads.
-- **mmap + progressive loading** for interactivity:
+- **mmap + streaming/progressive loading** for interactivity:
   - The USDC file is **memory-mapped** (`io::MMapFile` + `LoadUSDFromMemory`,
     mapping kept alive for the Stage); uncompressed arrays stay zero-copy.
+  - The Tydra conversion runs through the **streaming API**
+    (`RenderSceneConverter::ConvertToRenderSceneStreaming`): the `DrawScene` is
+    built **incrementally as each element is produced** — mesh geometry is
+    interleaved as each mesh converts, world placement is applied when the node
+    hierarchy is built, and textures/materials are decoded on completion (see
+    `mesh_build.cc: BuildDrawSceneStreaming`). It produces a `DrawScene` identical
+    to the monolithic `ConvertToRenderScene` + `BuildDrawScene` path.
   - After the worker finishes, meshes are **streamed to the GPU progressively**
     (time-budgeted per frame) so geometry pops in incrementally, then **textures
     stream in lazily** (surfaces show base color until their texture lands).
-    The render loop never stalls on one big upload. (Tydra conversion itself is
-    monolithic — covered by the progress modal + Cancel.) Headless `--frames`
+    The render loop never stalls on one big upload. Headless `--frames`
     uploads synchronously for deterministic screenshots.
 - **Interruptible / budgeted loading** so huge scenes can't freeze the app or
   thrash VRAM:
