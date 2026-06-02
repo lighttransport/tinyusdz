@@ -9,7 +9,8 @@
 // NOT, so views are created and consumed synchronously here, never retained.
 //
 // meshCopyToGeometry() is the fallback for non-triangulated / facevarying
-// meshes, built from getMeshCopy(i) (owned arrays) — safe to retain.
+// meshes, built from getMeshCopy(i) (a flat, owned drop-in of getMesh) — safe
+// to retain.
 
 import * as THREE from 'three';
 
@@ -81,18 +82,20 @@ export function meshPtrToGeometry(gl, module, mptr) {
   return { geometry: g, glBuffers };
 }
 
-// Fallback geometry from getMeshCopy(i) (owned arrays). Handles polygon
-// fan-triangulation and facevarying de-indexing. Safe to retain.
-export function meshCopyToGeometry(mcopy) {
-  if (!mcopy || !mcopy.points) return null;
+// Fallback geometry from getMeshCopy(i) — a flat, owned drop-in of getMesh()
+// (mesh.points, mesh.texcoords, mesh.faceVertexIndices, mesh.normals +
+// mesh.normalsFormat). Handles polygon fan-triangulation and facevarying
+// de-indexing. Safe to retain.
+export function meshCopyToGeometry(mesh) {
+  if (!mesh || !mesh.points) return null;
   const g = new THREE.BufferGeometry();
-  const points = mcopy.points.data;
-  const uv = mcopy.uv0 ? mcopy.uv0.data : null;
-  const normals = (mcopy.normals && mcopy.normals.dtype === 'f32') ? mcopy.normals.data : null;
-  const fvi = mcopy.indices ? mcopy.indices.data : null;
-  const counts = mcopy.faceVertexCounts ? mcopy.faceVertexCounts.data : null;
-  const vertexCount = mcopy.vertexCount;
-  const facevarying = uv && (mcopy.uv0.count !== vertexCount);
+  const points = mesh.points;
+  const uv = mesh.texcoords || mesh.uvSets?.uv0?.data || null;
+  const normals = (mesh.normalsFormat === 'float32') ? mesh.normals : null;
+  const fvi = mesh.faceVertexIndices || null;
+  const counts = mesh.faceVertexCounts || null;
+  const vertexCount = points.length / 3;
+  const facevarying = uv && (uv.length / 2 !== vertexCount);
 
   // Fan-triangulate.
   const triCorners = [], triVerts = [];

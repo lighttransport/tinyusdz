@@ -311,7 +311,7 @@ async function dumpMaterials(options) {
     // Check for meshes with GeomSubsets
     let subsetsFound = 0;
     for (let i = 0; i < numMeshes; i++) {
-      const mesh = usd.getMesh(i);
+      const mesh = usd.getMeshCopy(i);
       if (mesh.materialSubsets && mesh.materialSubsets.length > 0) {
         subsetsFound++;
         console.error(`  Mesh ${i} "${mesh.primName}" has ${mesh.materialSubsets.length} material subset(s)`);
@@ -335,7 +335,7 @@ async function dumpMaterials(options) {
         continue;
       }
 
-      const mesh = usd.getMesh(meshId);
+      const mesh = usd.getMeshCopy(meshId);
       if (!mesh) {
         console.error(`Warning: Could not get mesh ${meshId}`);
         continue;
