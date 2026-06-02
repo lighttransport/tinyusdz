@@ -63,8 +63,27 @@ class Renderer {
   // Wire up the ImGui platform+renderer backends. Call after ImGui::CreateContext().
   virtual bool initImGui(std::string* err) = 0;
 
-  // Replace the uploaded scene with `scene`. Returns false + err on failure.
-  virtual bool uploadScene(const DrawScene& scene, std::string* err) = 0;
+  // --- Incremental scene upload (for progressive / lazy loading) ---
+  // Reset the GPU scene, set materials, and reserve `textureCount` texture slots
+  // (each starts as white until filled by uploadTexture). Materials reference
+  // texture slots by index.
+  virtual void beginScene(const std::vector<DrawMaterialCPU>& materials,
+                          int textureCount) = 0;
+  // Append one mesh (uploaded immediately). Rendered from the next frame on.
+  virtual void appendMesh(const DrawMeshCPU& mesh) = 0;
+  // Fill texture slot `slot`; materials referencing it switch from white to it.
+  virtual void uploadTexture(int slot, const DrawTextureCPU& tex) = 0;
+
+  // Convenience: upload an entire scene in one call (used by the headless /
+  // synchronous path so screenshots are deterministic).
+  bool uploadScene(const DrawScene& scene, std::string* /*err*/) {
+    beginScene(scene.materials, static_cast<int>(scene.textures.size()));
+    for (size_t i = 0; i < scene.textures.size(); ++i) {
+      uploadTexture(static_cast<int>(i), scene.textures[i]);
+    }
+    for (const auto& m : scene.meshes) appendMesh(m);
+    return true;
+  }
 
   // Resize the offscreen viewport target (dock content size). Clamped to >= 1.
   virtual void resizeViewport(int width, int height) = 0;

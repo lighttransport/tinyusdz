@@ -162,42 +162,13 @@ void GLRenderer::destroyScene() {
   materials_.clear();
 }
 
-bool GLRenderer::uploadScene(const DrawScene& scene, std::string* err) {
-  (void)err;
+void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
+                            int textureCount) {
   destroyScene();
-
-  // Textures
-  textures_.reserve(scene.textures.size());
-  for (const auto& t : scene.textures) {
-    GLuint tex = 0;
-    glGenTextures(1, &tex);
-    glBindTexture(GL_TEXTURE_2D, tex);
-    // Upload as plain RGBA8 (no sRGB->linear on sample). The simple light3d
-    // shader and the linear RGBA8 offscreen target do not re-encode gamma on
-    // output, so sampling sRGB textures linearly would render too dark. Using
-    // the texel values as-is keeps textured surfaces at their expected
-    // brightness for this viewer. (t.srgb is retained for future tonemapping.)
-    const GLint internal = GL_RGBA8;
-    glTexImage2D(GL_TEXTURE_2D, 0, internal, t.image.width, t.image.height, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE,
-                 t.image.data.empty() ? nullptr : t.image.data.data());
-    glGenerateMipmap(GL_TEXTURE_2D);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GLWrap(t.wrapS));
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GLWrap(t.wrapT));
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    textures_.push_back(tex);
-  }
-  glBindTexture(GL_TEXTURE_2D, 0);
-
-  auto texHandle = [&](int idx) -> GLuint {
-    if (idx < 0 || static_cast<size_t>(idx) >= textures_.size()) return 0;
-    return textures_[static_cast<size_t>(idx)];
-  };
-
-  // Materials
-  materials_.reserve(scene.materials.size());
-  for (const auto& m : scene.materials) {
+  // Reserve texture slots (0 = not yet uploaded -> resolved to white at draw).
+  textures_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, 0);
+  materials_.reserve(materials.size());
+  for (const auto& m : materials) {
     GLMaterial gm;
     gm.baseColor[0] = m.baseColor[0];
     gm.baseColor[1] = m.baseColor[1];
@@ -208,46 +179,64 @@ bool GLRenderer::uploadScene(const DrawScene& scene, std::string* err) {
     gm.emissive[1] = m.emissive[1];
     gm.emissive[2] = m.emissive[2];
     gm.alpha = m.alpha;
-    gm.baseColorTex = texHandle(m.baseColorTex);
-    gm.metalRoughTex = texHandle(m.metalRoughTex);
-    gm.normalTex = texHandle(m.normalTex);
-    gm.emissiveTex = texHandle(m.emissiveTex);
+    gm.baseColorTex = m.baseColorTex;  // slot indices (resolved at draw)
+    gm.metalRoughTex = m.metalRoughTex;
+    gm.normalTex = m.normalTex;
+    gm.emissiveTex = m.emissiveTex;
     materials_.push_back(gm);
   }
+}
 
-  // Meshes
-  meshes_.reserve(scene.meshes.size());
-  for (const auto& sm : scene.meshes) {
-    GLMesh gm;
-    gm.submeshes = sm.submeshes;
-    std::memcpy(gm.world, sm.world, sizeof(gm.world));
-    gm.doubleSided = sm.doubleSided;
-
-    glGenVertexArrays(1, &gm.vao);
-    glBindVertexArray(gm.vao);
-    glGenBuffers(1, &gm.vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, gm.vbo);
-    glBufferData(GL_ARRAY_BUFFER,
-                 static_cast<GLsizeiptr>(sm.vertices.size() * sizeof(DrawVertex)),
-                 sm.vertices.data(), GL_STATIC_DRAW);
-    glGenBuffers(1, &gm.ebo);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gm.ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-                 static_cast<GLsizeiptr>(sm.indices.size() * sizeof(uint32_t)),
-                 sm.indices.data(), GL_STATIC_DRAW);
-    const GLsizei stride = sizeof(DrawVertex);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void*)(6 * sizeof(float)));
-    glBindVertexArray(0);
-    meshes_.push_back(gm);
+void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
+  if (slot < 0 || static_cast<size_t>(slot) >= textures_.size()) return;
+  GLuint tex = 0;
+  glGenTextures(1, &tex);
+  glBindTexture(GL_TEXTURE_2D, tex);
+  // Upload as plain RGBA8 (texels used as-is; see note: the simple shader and
+  // linear RGBA8 target don't re-encode gamma).
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, t.image.width, t.image.height, 0, GL_RGBA,
+               GL_UNSIGNED_BYTE, t.image.data.empty() ? nullptr : t.image.data.data());
+  glGenerateMipmap(GL_TEXTURE_2D);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GLWrap(t.wrapS));
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GLWrap(t.wrapT));
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  if (textures_[static_cast<size_t>(slot)]) {
+    glDeleteTextures(1, &textures_[static_cast<size_t>(slot)]);
   }
+  textures_[static_cast<size_t>(slot)] = tex;
+}
+
+void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
+  GLMesh gm;
+  gm.submeshes = sm.submeshes;
+  std::memcpy(gm.world, sm.world, sizeof(gm.world));
+  gm.doubleSided = sm.doubleSided;
+
+  glGenVertexArrays(1, &gm.vao);
+  glBindVertexArray(gm.vao);
+  glGenBuffers(1, &gm.vbo);
+  glBindBuffer(GL_ARRAY_BUFFER, gm.vbo);
+  glBufferData(GL_ARRAY_BUFFER,
+               static_cast<GLsizeiptr>(sm.vertices.size() * sizeof(DrawVertex)),
+               sm.vertices.data(), GL_STATIC_DRAW);
+  glGenBuffers(1, &gm.ebo);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gm.ebo);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+               static_cast<GLsizeiptr>(sm.indices.size() * sizeof(uint32_t)),
+               sm.indices.data(), GL_STATIC_DRAW);
+  const GLsizei stride = sizeof(DrawVertex);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0);
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
+  glEnableVertexAttribArray(2);
+  glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void*)(6 * sizeof(float)));
+  glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-  return true;
+  meshes_.push_back(gm);
 }
 
 void GLRenderer::ensureFbo(int w, int h) {
@@ -322,23 +311,32 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uHasNormalTex_, 0);
         glUniform1i(uHasEmissiveTex_, 0);
       } else {
+        // Resolve a material texture slot to a GPU texture; white if the slot is
+        // out of range or not yet uploaded (lazy texture streaming).
+        auto slotTex = [&](int slot) -> GLuint {
+          if (slot >= 0 && static_cast<size_t>(slot) < textures_.size() &&
+              textures_[static_cast<size_t>(slot)]) {
+            return textures_[static_cast<size_t>(slot)];
+          }
+          return whiteTex_;
+        };
         glUniform3fv(uBaseColor_, 1, mat.baseColor);
         glUniform1f(uMetallic_, mat.metallic);
         glUniform1f(uRoughness_, mat.roughness);
         glUniform3fv(uEmissive_, 1, mat.emissive);
         glUniform1f(uAlpha_, mat.alpha);
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, mat.baseColorTex ? mat.baseColorTex : whiteTex_);
-        glUniform1i(uHasBaseColorTex_, mat.baseColorTex ? 1 : 0);
+        glBindTexture(GL_TEXTURE_2D, slotTex(mat.baseColorTex));
+        glUniform1i(uHasBaseColorTex_, mat.baseColorTex >= 0 ? 1 : 0);
         glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, mat.metalRoughTex ? mat.metalRoughTex : whiteTex_);
-        glUniform1i(uHasMetalRoughTex_, mat.metalRoughTex ? 1 : 0);
+        glBindTexture(GL_TEXTURE_2D, slotTex(mat.metalRoughTex));
+        glUniform1i(uHasMetalRoughTex_, mat.metalRoughTex >= 0 ? 1 : 0);
         glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, mat.normalTex ? mat.normalTex : whiteTex_);
-        glUniform1i(uHasNormalTex_, mat.normalTex ? 1 : 0);
+        glBindTexture(GL_TEXTURE_2D, slotTex(mat.normalTex));
+        glUniform1i(uHasNormalTex_, mat.normalTex >= 0 ? 1 : 0);
         glActiveTexture(GL_TEXTURE3);
-        glBindTexture(GL_TEXTURE_2D, mat.emissiveTex ? mat.emissiveTex : whiteTex_);
-        glUniform1i(uHasEmissiveTex_, mat.emissiveTex ? 1 : 0);
+        glBindTexture(GL_TEXTURE_2D, slotTex(mat.emissiveTex));
+        glUniform1i(uHasEmissiveTex_, mat.emissiveTex >= 0 ? 1 : 0);
       }
       glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount), GL_UNSIGNED_INT,
                      (void*)(static_cast<uintptr_t>(sub.indexOffset) * sizeof(uint32_t)));

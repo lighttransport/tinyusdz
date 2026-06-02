@@ -57,7 +57,8 @@ class App {
   void loadFileBlocking(const std::string& path);
   void startLoadAsync(const std::string& path);
   void finishLoadIfReady();
-  void applyLoaded(bool ok);  // upload + bind on the main thread
+  void applyLoaded(bool ok, bool progressive);  // upload + bind on the main thread
+  void stepProgressiveUpload();  // stream meshes then textures, budgeted per frame
   void cancelAndJoinLoad();
 
   Backend backend_;
@@ -81,6 +82,11 @@ class App {
   std::unique_ptr<DrawScene> pendingDraw_;
   std::string loadingPath_;
   std::chrono::steady_clock::time_point loadStart_;
+
+  // Progressive GPU upload (interactive path): stream meshes then textures.
+  bool progressiveActive_{false};
+  size_t nextMesh_{0};
+  size_t nextTex_{0};
 };
 
 }  // namespace tusdview

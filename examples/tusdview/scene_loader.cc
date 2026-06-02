@@ -34,7 +34,35 @@ bool LoadUSD(const std::string& path, LoadedScene* out, LoadControl* ctrl) {
     return false;
   }
 
-  if (!tinyusdz::LoadUSDFromFile(path, &out->stage, &out->warn, &out->err)) {
+  // mmap-based load: memory-map the file ourselves and parse from it. We keep
+  // the mapping alive in LoadedScene so zero-copy USDC arrays (which reference
+  // offsets into the mapping) stay valid for the Stage's lifetime.
+  tinyusdz::USDLoadOptions opts;
+  opts.mmap_zero_copy = true;
+
+  auto mh = std::shared_ptr<tinyusdz::io::MMapFileHandle>(
+      new tinyusdz::io::MMapFileHandle(),
+      [](tinyusdz::io::MMapFileHandle* h) {
+        std::string e;
+        tinyusdz::io::UnmapFile(*h, &e);
+        delete h;
+      });
+  std::string merr;
+  const bool mapped = tinyusdz::io::MMapFile(path, mh.get(), /*writable=*/false, &merr) &&
+                      mh->addr && mh->size > 0;
+
+  bool ok = false;
+  if (mapped) {
+    out->mmap = mh;  // keep the mapping alive alongside the Stage
+    ok = tinyusdz::LoadUSDFromMemory(mh->addr, static_cast<size_t>(mh->size), path,
+                                     &out->stage, &out->warn, &out->err, opts);
+  } else {
+    // Fall back to a regular (copying) file load. Disable zero-copy: it requires
+    // a persistent mapping which we don't have on this path.
+    opts.mmap_zero_copy = false;
+    ok = tinyusdz::LoadUSDFromFile(path, &out->stage, &out->warn, &out->err, opts);
+  }
+  if (!ok) {
     if (out->err.empty()) {
       out->err = "Failed to load USD file: " + path;
     }

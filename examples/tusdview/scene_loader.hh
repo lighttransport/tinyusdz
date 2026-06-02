@@ -2,8 +2,10 @@
 // tusdview - load a USD file into a Stage and convert it to a Tydra RenderScene.
 #pragma once
 
+#include <memory>
 #include <string>
 
+#include "io-util.hh"  // tinyusdz::io::MMapFileHandle
 #include "load_control.hh"
 #include "stage.hh"
 #include "tydra/render-data.hh"
@@ -19,6 +21,9 @@ struct LoadedScene {
   std::string warn;
   std::string err;
   bool ok{false};
+  // Memory-mapped file handle kept alive for the Stage's lifetime (zero-copy
+  // USDC arrays reference this mapping). Unmapped when this LoadedScene dies.
+  std::shared_ptr<tinyusdz::io::MMapFileHandle> mmap;
 };
 
 // Load `path` (usd/usda/usdc/usdz) and convert to a RenderScene configured for
