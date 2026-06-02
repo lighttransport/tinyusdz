@@ -60,8 +60,10 @@ class Gui {
   void drawStats();
   void drawViewport();
   void drawLoadingModal();
+  void drawStageMeta();
   void handleNavigation();
   void selectByPath(const std::string& absPath, int meshIndex);
+  void buildHelpers();  // grid / axes / bbox lines for the current frame
 
   Renderer* renderer_{nullptr};
   OrbitCamera* cam_{nullptr};
@@ -76,6 +78,13 @@ class Gui {
   RenderMode mode_{RenderMode::Shaded};
   bool showRenderNodes_{false};
   bool dockBuilt_{false};
+
+  // Helper display toggles (View menu).
+  bool showGrid_{true};
+  bool showAxes_{true};
+  bool showSceneBbox_{false};
+  bool showPrimBbox_{true};
+  std::vector<HelperVertex> helperLines_;  // rebuilt each frame
 
   // Viewport interaction
   bool vpHovered_{false};

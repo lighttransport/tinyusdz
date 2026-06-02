@@ -22,6 +22,13 @@ enum class Backend { GL, Vulkan };
 
 enum class RenderMode : int { Shaded = 0, Wireframe = 1, Normals = 2 };
 
+// Unlit, vertex-colored line vertex for debug helpers (grid, axes, bboxes).
+// Drawn as GL_LINES / VK_PRIMITIVE_TOPOLOGY_LINE_LIST in world space.
+struct HelperVertex {
+  float pos[3];
+  float col[3];
+};
+
 struct RendererCaps {
   const char* backend_name{""};
   bool usesZeroToOneDepth{false};  // Vulkan clip space Z in [0,1]; GL in [-1,1]
@@ -35,6 +42,10 @@ struct RenderFrameParams {
   RenderMode mode{RenderMode::Shaded};
   float clearColor[4]{0.12f, 0.12f, 0.13f, 1.0f};
   int highlightMeshIndex{-1};  // draw a wireframe overlay on this mesh (-1 = none)
+
+  // Debug helper lines (grid / axes / bounding boxes), in world space.
+  const HelperVertex* helperLines{nullptr};
+  int helperLineVertexCount{0};  // total vertices (2 per segment)
 };
 
 // Opaque texture handle for ImGui::Image. GL: a GLuint texture id. Vulkan: a

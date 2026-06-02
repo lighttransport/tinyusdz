@@ -63,6 +63,12 @@ class GLRenderer final : public Renderer {
 
   GLuint whiteTex_{0};
 
+  // Unlit line program for debug helpers (grid/axes/bbox).
+  GLuint lineProgram_{0};
+  GLint uLineVP_{-1};
+  GLuint lineVao_{0}, lineVbo_{0};
+  size_t lineVboCap_{0};
+
   // Offscreen target
   GLuint fbo_{0}, colorTex_{0}, depthRbo_{0};
   int vpW_{0}, vpH_{0};
