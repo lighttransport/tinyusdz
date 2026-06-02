@@ -3413,6 +3413,7 @@ class TinyUSDZLoaderNative {
   }
 
   emscripten::val getImage(int img_id) const {
+    warnDeprecated_("getImage", "getImagePtr()/getImageCopy()");
     emscripten::val img = emscripten::val::object();
 
     if (!loaded_) {
@@ -3446,7 +3447,191 @@ class TinyUSDZLoaderNative {
     return img;
   }
 
+  // ---------------------------------------------------------------------------
+  // Id-based, OpenGL-style heap accessors (zero-copy + explicit copy)
+  //
+  // The scene owns mesh/image data in the WASM heap, addressed by id. Transfer
+  // to the GPU lazily, when needed:
+  //
+  //   getMeshPtr(i) / getImagePtr(i)  -> per-attribute {ptr,length,comps,dtype,
+  //     byteLength} descriptors (NO TypedArrays). Build a view on the *live*
+  //     Module.HEAPU8.buffer at the instant of gl.bufferData/texImage2D, then
+  //     keep only the GL object (like an OpenGL name). `ptr` is the byte offset
+  //     into linear memory; it survives heap growth (a TypedArray view would
+  //     NOT — growth detaches it), as long as the loader isn't deleted/reloaded.
+  //
+  //   getMeshCopy(i) / getImageCopy(i) -> the same shape but each attribute
+  //     carries an owned (JS-heap) `data` TypedArray copy. Use when a view/ptr
+  //     is not applicable — e.g. assembling a UDIM atlas/array-texture on a
+  //     canvas (resize/flip) before upload.
+  //
+  // getMesh()/getImage() remain (deprecated) for backward compatibility.
+  // ---------------------------------------------------------------------------
+
+  static size_t dtypeByteSize_(const char *dtype) {
+    std::string d(dtype);
+    if (d == "f32" || d == "u32") return 4;
+    if (d == "snorm16") return 2;
+    return 1;  // snorm8 / u8
+  }
+
+  // Build one attribute descriptor. `length` is the total scalar count
+  // (vertices * comps). When `copy` is true the bytes are sliced into an owned
+  // JS TypedArray (`data`); otherwise the raw heap offset (`ptr`) is exposed.
+  static emscripten::val heapAttr_(const void *p, size_t length, int comps,
+                                   const char *dtype, bool copy) {
+    emscripten::val a = emscripten::val::object();
+    a.set("length", emscripten::val(static_cast<double>(length)));
+    a.set("comps", comps);
+    a.set("dtype", std::string(dtype));
+    a.set("count", emscripten::val(static_cast<double>(comps ? length / comps : length)));
+    if (copy) {
+      std::string d(dtype);
+      emscripten::val view;
+      if (d == "f32") {
+        view = emscripten::val(emscripten::typed_memory_view(length, reinterpret_cast<const float *>(p)));
+      } else if (d == "u32") {
+        view = emscripten::val(emscripten::typed_memory_view(length, reinterpret_cast<const uint32_t *>(p)));
+      } else if (d == "snorm16") {
+        view = emscripten::val(emscripten::typed_memory_view(length, reinterpret_cast<const int16_t *>(p)));
+      } else {
+        view = emscripten::val(emscripten::typed_memory_view(length, reinterpret_cast<const int8_t *>(p)));
+      }
+      a.set("data", view.call<emscripten::val>("slice"));  // owned JS-heap copy
+    } else {
+      a.set("ptr", emscripten::val(static_cast<double>(reinterpret_cast<uintptr_t>(p))));
+      a.set("byteLength", emscripten::val(static_cast<double>(length * dtypeByteSize_(dtype))));
+    }
+    return a;
+  }
+
+  void warnDeprecated_(const char *fn, const char *repl) const {
+    if (deprecation_warned_.insert(fn).second) {
+      emscripten::val::global("console").call<void>(
+          "warn", std::string("[tinyusdz] ") + fn +
+                      "() is deprecated; prefer " + repl +
+                      ". (Heap views from the old API alias WASM memory and can"
+                      " dangle; the *Ptr/*Copy accessors make the contract"
+                      " explicit.)");
+    }
+  }
+
+  // Shared builder for getMeshPtr (copy=false) / getMeshCopy (copy=true).
+  emscripten::val buildMeshHeap_(int mesh_id, bool copy) const {
+    emscripten::val out = emscripten::val::object();
+    if (!loaded_ || mesh_id < 0 ||
+        static_cast<size_t>(mesh_id) >= render_scene_.meshes.size()) {
+      return out;
+    }
+    using tinyusdz::tydra::VertexAttributeFormat;
+    const tinyusdz::tydra::RenderMesh &rmesh =
+        render_scene_.meshes[size_t(mesh_id)];
+
+    const size_t vtx = rmesh.points.size();
+    out.set("vertexCount", emscripten::val(static_cast<double>(vtx)));
+    out.set("materialId", rmesh.material_id);
+    out.set("doubleSided", rmesh.doubleSided);
+    out.set("primName", rmesh.prim_name);
+
+    // points (vec3 f32)
+    out.set("points",
+            heapAttr_(reinterpret_cast<const float *>(rmesh.points.data()),
+                      vtx * 3, 3, "f32", copy));
+
+    // indices (u32) + faceVertexCounts (u32) + triangulated flag
+    const auto &idx = rmesh.faceVertexIndices();
+    const auto &cnt = rmesh.faceVertexCounts();
+    if (!idx.empty()) {
+      out.set("indices", heapAttr_(idx.data(), idx.size(), 1, "u32", copy));
+    }
+    bool triangulated = !cnt.empty();
+    for (uint32_t c : cnt) {
+      if (c != 3) { triangulated = false; break; }
+    }
+    if (!cnt.empty()) {
+      out.set("faceVertexCounts",
+              heapAttr_(cnt.data(), cnt.size(), 1, "u32", copy));
+    }
+    out.set("triangulated", triangulated);
+
+    // normals (snorm8 / snorm16 / f32; 1010102 unpacked to a stable f32 cache)
+    if (!rmesh.normals.empty()) {
+      const size_t nv = rmesh.normals.vertex_count();
+      if (rmesh.normals.format == VertexAttributeFormat::Char3) {
+        out.set("normals", heapAttr_(rmesh.normals.data.data(), nv * 3, 3,
+                                     "snorm8", copy));
+      } else if (rmesh.normals.format == VertexAttributeFormat::Short3) {
+        out.set("normals", heapAttr_(rmesh.normals.data.data(), nv * 3, 3,
+                                     "snorm16", copy));
+      } else if (rmesh.normals.format == VertexAttributeFormat::Uint) {
+        auto &cache = normals_cache_[mesh_id];
+        if (cache.size() != nv * 3) {
+          cache.resize(nv * 3);
+          const uint32_t *P =
+              reinterpret_cast<const uint32_t *>(rmesh.normals.data.data());
+          for (size_t i = 0; i < nv; i++) {
+            tinyusdz::tydra::tangent_quantize::unpack_normal_1010102(
+                P[i], cache[i * 3 + 0], cache[i * 3 + 1], cache[i * 3 + 2]);
+          }
+        }
+        out.set("normals", heapAttr_(cache.data(), nv * 3, 3, "f32", copy));
+      } else {
+        out.set("normals",
+                heapAttr_(reinterpret_cast<const float *>(rmesh.normals.data.data()),
+                          nv * 3, 3, "f32", copy));
+      }
+    }
+
+    // uv set 0 (vec2 f32)
+    auto uvit = rmesh.texcoords.find(0);
+    if (uvit != rmesh.texcoords.end()) {
+      const size_t uvn = uvit->second.vertex_count();
+      out.set("uv0",
+              heapAttr_(reinterpret_cast<const float *>(uvit->second.data.data()),
+                        uvn * 2, 2, "f32", copy));
+    }
+    return out;
+  }
+
+  emscripten::val getMeshPtr(int mesh_id) const { return buildMeshHeap_(mesh_id, false); }
+  emscripten::val getMeshCopy(int mesh_id) const { return buildMeshHeap_(mesh_id, true); }
+
+  // Shared builder for getImagePtr (copy=false) / getImageCopy (copy=true).
+  emscripten::val buildImageHeap_(int img_id, bool copy) const {
+    emscripten::val out = emscripten::val::object();
+    if (!loaded_ || img_id < 0 ||
+        static_cast<size_t>(img_id) >= render_scene_.images.size()) {
+      return out;
+    }
+    const auto &i = render_scene_.images[size_t(img_id)];
+    out.set("width", int(i.width));
+    out.set("height", int(i.height));
+    out.set("channels", int(i.channels));
+    out.set("decoded", bool(i.decoded));
+    out.set("colorSpace", to_string(i.colorSpace));
+    out.set("usdColorSpace", to_string(i.usdColorSpace));
+    out.set("uri", i.asset_identifier);
+    if (i.buffer_id >= 0 &&
+        static_cast<size_t>(i.buffer_id) < render_scene_.buffers.size()) {
+      const auto &b = render_scene_.buffers[size_t(i.buffer_id)];
+      if (copy) {
+        emscripten::val view =
+            emscripten::val(emscripten::typed_memory_view(b.data.size(), b.data.data()));
+        out.set("data", view.call<emscripten::val>("slice"));
+      } else {
+        out.set("ptr", emscripten::val(static_cast<double>(
+                           reinterpret_cast<uintptr_t>(b.data.data()))));
+        out.set("byteLength", emscripten::val(static_cast<double>(b.data.size())));
+      }
+    }
+    return out;
+  }
+
+  emscripten::val getImagePtr(int img_id) const { return buildImageHeap_(img_id, false); }
+  emscripten::val getImageCopy(int img_id) const { return buildImageHeap_(img_id, true); }
+
   emscripten::val getMesh(int mesh_id) const {
+    warnDeprecated_("getMesh", "getMeshPtr()/getMeshCopy()");
     emscripten::val mesh = emscripten::val::object();
 
     if (!loaded_) {
@@ -6368,6 +6553,9 @@ class TinyUSDZLoaderNative {
   mutable std::unordered_map<int, std::vector<float>> tangents4_cache_;
   mutable std::unordered_map<int, std::vector<float>> normals3_cache_;
 
+  // Deprecated-method names already warned about (warn once per name).
+  mutable std::set<std::string> deprecation_warned_;
+
   // Per-session MCP contexts. key = session_id. Each session gets its own
   // isolated Context so tools cannot read/overwrite another session's state.
   std::unordered_map<std::string, tinyusdz::tydra::mcp::Context> mcp_ctx_;
@@ -7126,7 +7314,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       // For Stage 
       .function("extractUnresolvedTexturePaths", &TinyUSDZLoaderNative::extractUnresolvedTexturePaths)
       .function("getURI", &TinyUSDZLoaderNative::getURI)
-      .function("getMesh", &TinyUSDZLoaderNative::getMesh)
+      .function("getMesh", &TinyUSDZLoaderNative::getMesh)  // deprecated: use getMeshPtr/getMeshCopy
+      .function("getMeshPtr", &TinyUSDZLoaderNative::getMeshPtr)
+      .function("getMeshCopy", &TinyUSDZLoaderNative::getMeshCopy)
       .function("numMeshes", &TinyUSDZLoaderNative::numMeshes)
       .function("numInstances", &TinyUSDZLoaderNative::numInstances)
       .function("getInstance", &TinyUSDZLoaderNative::getInstance)
@@ -7143,7 +7333,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("numCameras", &TinyUSDZLoaderNative::numCameras)
       .function("getTexture", &TinyUSDZLoaderNative::getTexture)
       .function("numTextures", &TinyUSDZLoaderNative::numTextures)
-      .function("getImage", &TinyUSDZLoaderNative::getImage)
+      .function("getImage", &TinyUSDZLoaderNative::getImage)  // deprecated: use getImagePtr/getImageCopy
+      .function("getImagePtr", &TinyUSDZLoaderNative::getImagePtr)
+      .function("getImageCopy", &TinyUSDZLoaderNative::getImageCopy)
       .function("numImages", &TinyUSDZLoaderNative::numImages)
       .function("numUDIMTextures", &TinyUSDZLoaderNative::numUDIMTextures)
       .function("getUDIMTexture", &TinyUSDZLoaderNative::getUDIMTexture)
