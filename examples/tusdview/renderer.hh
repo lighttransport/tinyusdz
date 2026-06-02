@@ -1,0 +1,108 @@
+// SPDX-License-Identifier: Apache-2.0
+// tusdview - abstract Renderer interface (the GL/Vulkan boundary).
+//
+// Both backends render the 3D scene into an *offscreen* color target and expose
+// it as an opaque texture handle. The GUI shows that handle via ImGui::Image in
+// the "Viewport" dock window, so the 3D view participates in docking. All
+// backend-specific ImGui wiring (NewFrame/Init/RenderDrawData, swap/present)
+// lives behind this interface so the app main-loop is backend-agnostic.
+#pragma once
+
+#include <cstdint>
+#include <memory>
+#include <string>
+
+#include "gpu_scene.hh"
+
+struct GLFWwindow;
+
+namespace tusdview {
+
+enum class Backend { GL, Vulkan };
+
+enum class RenderMode : int { Shaded = 0, Wireframe = 1, Normals = 2 };
+
+struct RendererCaps {
+  const char* backend_name{""};
+  bool usesZeroToOneDepth{false};  // Vulkan clip space Z in [0,1]; GL in [-1,1]
+  bool flipViewportV{false};       // GL FBO textures are bottom-up
+};
+
+struct RenderFrameParams {
+  const float* view{nullptr};  // column-major 4x4 (light3d::Mat4 layout)
+  const float* proj{nullptr};  // column-major 4x4 (GL: Z[-1,1]; VK: Z[0,1])
+  float cameraPos[3]{0, 0, 0};
+  RenderMode mode{RenderMode::Shaded};
+  float clearColor[4]{0.12f, 0.12f, 0.13f, 1.0f};
+  int highlightMeshIndex{-1};  // draw a wireframe overlay on this mesh (-1 = none)
+};
+
+// Opaque texture handle for ImGui::Image. GL: a GLuint texture id. Vulkan: a
+// VkDescriptorSet. Both fit in 64 bits (ImTextureID is ImU64).
+using ViewportTexHandle = uint64_t;
+
+class Renderer {
+ public:
+  virtual ~Renderer() = default;
+
+  // Create device resources. `window` is the GLFW window (Vulkan creates its
+  // surface from it; GL assumes its context is already current).
+  virtual bool init(GLFWwindow* window, std::string* err) = 0;
+
+  // Wire up the ImGui platform+renderer backends. Call after ImGui::CreateContext().
+  virtual bool initImGui(std::string* err) = 0;
+
+  // Replace the uploaded scene with `scene`. Returns false + err on failure.
+  virtual bool uploadScene(const DrawScene& scene, std::string* err) = 0;
+
+  // Resize the offscreen viewport target (dock content size). Clamped to >= 1.
+  virtual void resizeViewport(int width, int height) = 0;
+
+  // Per-frame backend ImGui new-frame (ImGui_ImplOpenGL3/Vulkan_NewFrame).
+  virtual void newFrame() = 0;
+
+  // Render the 3D scene with `params`. GL renders to its FBO immediately; Vulkan
+  // records the parameters and renders during present().
+  virtual void renderFrame(const RenderFrameParams& params) = 0;
+
+  // Texture handle of the offscreen color target for ImGui::Image.
+  virtual ViewportTexHandle viewportTexture() const = 0;
+
+  // Composite: draw the current ImGui draw data to the window and present/swap.
+  // Must be called after ImGui::Render().
+  virtual void present() = 0;
+
+  // Read back the offscreen 3D viewport as top-down RGBA8 (headless QA).
+  // Returns false if unsupported.
+  virtual bool captureViewport(std::vector<uint8_t>* rgba, int* w, int* h) {
+    (void)rgba;
+    (void)w;
+    (void)h;
+    return false;
+  }
+
+  // Ask the next present() to grab the composited window (back buffer) so it can
+  // be retrieved with captureWindow() afterwards. No-op if unsupported.
+  virtual void requestWindowCapture() {}
+
+  // Return the window grabbed by the most recent requestWindowCapture()+present(),
+  // as top-down RGBA8. Returns false if unsupported / nothing captured.
+  virtual bool captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) {
+    (void)rgba;
+    (void)w;
+    (void)h;
+    return false;
+  }
+
+  virtual const RendererCaps& caps() const = 0;
+
+  // Tear down ImGui backend + device resources.
+  virtual void shutdown() = 0;
+};
+
+std::unique_ptr<Renderer> CreateGLRenderer();
+#if defined(HAVE_VULKAN)
+std::unique_ptr<Renderer> CreateVulkanRenderer();
+#endif
+
+}  // namespace tusdview
