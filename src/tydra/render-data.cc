@@ -656,8 +656,33 @@ bool RenderSceneConverter::GetBoundMaterialCached(
   return found;
 }
 
+namespace {
+// Clears the converter's streaming-sink pointer on every exit path of
+// ConvertToRenderSceneImpl (works without exceptions). Declared at the top of
+// the function so all `return`s (incl. PUSH_ERROR_AND_RETURN) run the dtor.
+struct SinkScopeGuard {
+  const RenderSceneSink **slot;
+  ~SinkScopeGuard() { *slot = nullptr; }
+};
+}  // namespace
+
 bool RenderSceneConverter::ConvertToRenderScene(
     const RenderSceneConverterEnv &env, RenderScene *scene) {
+  return ConvertToRenderSceneImpl(env, scene, /* sink */ nullptr);
+}
+
+bool RenderSceneConverter::ConvertToRenderSceneStreaming(
+    const RenderSceneConverterEnv &env, const RenderSceneSink &sink,
+    RenderScene *scene) {
+  return ConvertToRenderSceneImpl(env, scene, &sink);
+}
+
+bool RenderSceneConverter::ConvertToRenderSceneImpl(
+    const RenderSceneConverterEnv &env, RenderScene *scene,
+    const RenderSceneSink *sink) {
+  _sink = sink;
+  SinkScopeGuard _sink_guard{&_sink};
+
   if (!scene) {
     PUSH_ERROR_AND_RETURN("nullptr for RenderScene argument.");
   }
@@ -841,6 +866,10 @@ bool RenderSceneConverter::ConvertToRenderScene(
     PushError("Conversion cancelled by user.\n");
     return false;
   }
+  if (!EmitPhase(StreamPhase::MaterialsAndMeshes)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
+  }
 
   MeshVisitorEnv menv;
   menv.env = &env;
@@ -932,9 +961,36 @@ bool RenderSceneConverter::ConvertToRenderScene(
     PushError("Conversion cancelled by user.\n");
     return false;
   }
+  if (!EmitPhase(StreamPhase::Hierarchy)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
+  }
 
   if (!BuildNodeHierarchy(env, xform_node)) {
     return false;
+  }
+
+  // Stream cameras, lights and the node tree now that world matrices are known.
+  // (Skipped entirely without a streaming sink.)
+  if (_sink) {
+    for (size_t i = 0; i < cameras.size(); i++) {
+      if (!EmitCamera(i, cameras[i].abs_path)) {
+        PushError("Conversion cancelled by user.\n");
+        return false;
+      }
+    }
+    for (size_t i = 0; i < lights.size(); i++) {
+      if (!EmitLight(i, lights[i].abs_path)) {
+        PushError("Conversion cancelled by user.\n");
+        return false;
+      }
+    }
+    for (size_t i = 0; i < root_nodes.size(); i++) {
+      if (!EmitRootNode(i)) {
+        PushError("Conversion cancelled by user.\n");
+        return false;
+      }
+    }
   }
 
   // Report progress after node hierarchy building (85%)
@@ -1090,6 +1146,37 @@ bool RenderSceneConverter::ConvertToRenderScene(
   // render_scene.imageMap = std::move(imageMap);
   // render_scene.bufferMap = std::move(bufferMap);
 
+  // Stream skeletons/animations then instances (fast tail phases) before the
+  // member arrays are moved into the RenderScene. Skipped without a sink.
+  if (_sink) {
+    if (!EmitPhase(StreamPhase::Animations)) {
+      PushError("Conversion cancelled by user.\n");
+      return false;
+    }
+    for (size_t i = 0; i < skeletons.size(); i++) {
+      if (!EmitSkeleton(i, skeletons[i].abs_path)) {
+        PushError("Conversion cancelled by user.\n");
+        return false;
+      }
+    }
+    for (size_t i = 0; i < animations.size(); i++) {
+      if (!EmitAnimation(i, animations[i].abs_path)) {
+        PushError("Conversion cancelled by user.\n");
+        return false;
+      }
+    }
+    if (!EmitPhase(StreamPhase::Instances)) {
+      PushError("Conversion cancelled by user.\n");
+      return false;
+    }
+    for (size_t i = 0; i < instances.size(); i++) {
+      if (!EmitInstance(i, instances[i].abs_path)) {
+        PushError("Conversion cancelled by user.\n");
+        return false;
+      }
+    }
+  }
+
   RenderScene render_scene;
   render_scene.usd_filename = env.usd_filename;
   render_scene.default_root_node = 0;
@@ -1180,6 +1267,15 @@ bool RenderSceneConverter::ConvertToRenderScene(
     return false;
   }
   CallProgressCallback(1.0f);
+
+  if (!EmitPhase(StreamPhase::Complete)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
+  }
+  if (!EmitComplete(*scene)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
+  }
 
   DCOUT("[Tydra] Conversion complete: " << scene->meshes.size() << " meshes, "
         << scene->materials.size() << " materials, " << scene->textures.size() << " textures");
@@ -1918,6 +2014,96 @@ bool RenderSceneConverter::ReportMeshProgress(size_t meshes_processed, size_t me
   _progress_info.progress = mesh_progress;
 
   return CallDetailedProgressCallback(_progress_info);
+}
+
+// ---------------------------------------------------------------------------
+// Streaming emit helpers (no-ops unless a sink is set via
+// ConvertToRenderSceneStreaming). Each reads the just-appended element from the
+// converter's member array by index and returns false to request cancellation.
+// ---------------------------------------------------------------------------
+bool RenderSceneConverter::EmitPhase(StreamPhase phase) {
+  if (_sink && _sink->on_phase) {
+    return _sink->on_phase(phase, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitImage(size_t index) {
+  if (_sink && _sink->on_image) {
+    return _sink->on_image(images[index], index, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitBuffer(size_t index) {
+  if (_sink && _sink->on_buffer) {
+    return _sink->on_buffer(buffers[index], index, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitTexture(size_t index, const std::string &abs_path) {
+  if (_sink && _sink->on_texture) {
+    return _sink->on_texture(textures[index], index, abs_path, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitUdimTexture(size_t index) {
+  if (_sink && _sink->on_udim_texture) {
+    return _sink->on_udim_texture(udim_textures[index], index, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitMaterial(size_t index, const std::string &abs_path) {
+  if (_sink && _sink->on_material) {
+    return _sink->on_material(materials[index], index, abs_path, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitMesh(size_t index, const std::string &abs_path) {
+  if (_sink && _sink->on_mesh) {
+    return _sink->on_mesh(meshes[index], index, abs_path, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitLight(size_t index, const std::string &abs_path) {
+  if (_sink && _sink->on_light) {
+    return _sink->on_light(lights[index], index, abs_path, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitCamera(size_t index, const std::string &abs_path) {
+  if (_sink && _sink->on_camera) {
+    return _sink->on_camera(cameras[index], index, abs_path, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitRootNode(size_t index) {
+  if (_sink && _sink->on_root_node) {
+    return _sink->on_root_node(root_nodes[index], index, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitSkeleton(size_t index, const std::string &abs_path) {
+  if (_sink && _sink->on_skeleton) {
+    return _sink->on_skeleton(skeletons[index], index, abs_path, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitAnimation(size_t index, const std::string &abs_path) {
+  if (_sink && _sink->on_animation) {
+    return _sink->on_animation(animations[index], index, abs_path, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitInstance(size_t index, const std::string &abs_path) {
+  if (_sink && _sink->on_instance) {
+    return _sink->on_instance(instances[index], index, abs_path, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitComplete(const RenderScene &scene) {
+  if (_sink && _sink->on_complete) {
+    return _sink->on_complete(scene, _sink->userdata);
+  }
+  return true;
 }
 
 bool RenderSceneConverter::IsMeshMergeable(const RenderMesh &mesh) const {
