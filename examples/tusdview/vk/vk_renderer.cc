@@ -1075,10 +1075,23 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
   caps_.usesZeroToOneDepth = true;
   caps_.flipViewportV = false;  // we Y-flip via a negative-height viewport
 
+  // Resolve the Vulkan loader at runtime (dlopen libvulkan / vulkan-1.dll). No
+  // link-time dependency on the Vulkan SDK. Fails cleanly when no ICD/loader is
+  // installed, letting the app fall back to the GL backend.
+  if (volkInitialize() != VK_SUCCESS) {
+    if (err) *err = "Vulkan loader not found (volkInitialize failed)";
+    return false;
+  }
+
   if (!createInstance(err)) return false;
+  // Load instance-level entrypoints now that we have a VkInstance.
+  volkLoadInstance(instance_);
   if (!headless_ && !createSurface(err)) return false;
   if (!pickPhysicalDevice(err)) return false;
   if (!createDevice(err)) return false;
+  // Re-resolve device-level entrypoints through the device for direct dispatch
+  // (skips the loader trampoline).
+  volkLoadDevice(device_);
   if (headless_) {
     if (!createHeadlessSwapchain(err)) return false;  // owns images + views
   } else {

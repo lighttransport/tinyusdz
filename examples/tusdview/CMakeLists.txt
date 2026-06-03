@@ -20,8 +20,15 @@ if(NOT TARGET glfw)
   add_subdirectory(${COMMON_DIR}/glfw-3.3.6 ${CMAKE_BINARY_DIR}/_deps/tusdview-glfw EXCLUDE_FROM_ALL)
 endif()
 
-# Vulkan is optional. When present the Vulkan backend + imgui_impl_vulkan are
-# compiled and SPIR-V shaders are generated.
+# Vulkan backend. Entry points are resolved at runtime via the vendored volk
+# meta-loader (examples/common/volk) — we do NOT link the Vulkan SDK loader, so
+# no find_package(Vulkan) / Vulkan::Vulkan dependency. Only a build-time glslang
+# is needed to compile the GLSL shaders to SPIR-V; if it is missing the Vulkan
+# backend is skipped and the app builds GL-only.
+#
+# find_package(Vulkan) is still probed (QUIET) purely so vulkan.cmake can fall
+# back to the SDK's glslangValidator when no local/system one is found.
+option(TUSDVIEW_WITH_VULKAN "Build the Vulkan backend (runtime-loaded via volk)" ON)
 find_package(Vulkan QUIET)
 
 # Optional native file dialog (needs GTK3 on Linux). Skipped if unavailable.
@@ -98,10 +105,24 @@ elseif(APPLE)
       "-framework Cocoa" "-framework IOKit" "-framework CoreVideo")
 endif()
 
+# MinGW (e.g. llvm-mingw): statically link the C++/runtime support libs so the
+# .exe is self-contained and needs no libc++.dll / libunwind.dll /
+# libwinpthread-1.dll alongside it. Only the toolchain runtime is pulled in
+# statically; Windows system DLLs (kernel32, user32, ws2_32, …) and the UCRT
+# stay dynamic. Opt out with -DTUSDVIEW_STATIC_RUNTIME=OFF.
+if(MINGW)
+  option(TUSDVIEW_STATIC_RUNTIME
+         "Statically link the MinGW C++/unwind/pthread runtime into tusdview" ON)
+  if(TUSDVIEW_STATIC_RUNTIME)
+    target_link_options(${EXAMPLE_TARGET} PRIVATE -static)
+    message(STATUS "tusdview: static C++ runtime (-static) for MinGW build")
+  endif()
+endif()
+
 # ---------------------------------------------------------------------------
 # Vulkan backend (optional) - SPIR-V generation + vk_renderer + imgui_impl_vulkan
 # ---------------------------------------------------------------------------
-if(Vulkan_FOUND)
+if(TUSDVIEW_WITH_VULKAN)
   include(${CMAKE_CURRENT_SOURCE_DIR}/vk/vulkan.cmake)
 endif()
 
@@ -139,6 +160,10 @@ if(TUSDVIEW_ENABLE_MCP)
   target_link_libraries(${EXAMPLE_TARGET} PRIVATE ${CMAKE_DL_LIBS})
   if(UNIX)
     target_link_libraries(${EXAMPLE_TARGET} PRIVATE Threads::Threads)
+  elseif(WIN32)
+    # civetweb's HTTP transport uses Winsock (socket/bind/listen/WSAStartup),
+    # and its clock_gettime() comes from winpthread under mingw.
+    target_link_libraries(${EXAMPLE_TARGET} PRIVATE ws2_32 winpthread)
   endif()
   message(STATUS "tusdview: embedded MCP server ENABLED (stdio + HTTP)")
 else()

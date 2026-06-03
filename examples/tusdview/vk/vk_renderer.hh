@@ -7,7 +7,11 @@
 // sets for the 3D pass, no textures). Textures remain a GL-only feature for now.
 #pragma once
 
-#include <vulkan/vulkan.h>
+// Vulkan entry points are resolved at runtime via volk (cuew-style): we never
+// link the Vulkan loader. volk.h pulls in <vulkan/vulkan.h> with
+// VK_NO_PROTOTYPES and declares the vk* symbols as function pointers that
+// volkInitialize()/volkLoadInstance()/volkLoadDevice() populate.
+#include "volk.h"
 
 #include <cstdint>
 #include <string>
