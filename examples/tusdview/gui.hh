@@ -9,6 +9,7 @@
 
 #include "camera_nav.hh"
 #include "gpu_scene.hh"
+#include "imgui.h"  // ImGuiTextFilter
 #include "load_control.hh"
 #include "renderer.hh"
 #include "scene_loader.hh"
@@ -50,19 +51,24 @@ class Gui {
     wantOpen_ = wantReload_ = wantQuit_ = wantCancelLoad_ = false;
   }
 
+  // Selection: set focus by absolute prim path (meshIndex < 0 = look up by path);
+  // read the current focus. Used by the GUI and the MCP server.
+  void selectByPath(const std::string& absPath, int meshIndex);
+  const std::string& selectedPath() const { return selPath_; }
+  int selectedMeshIndex() const { return selMeshIndex_; }
+
  private:
   void drawDockspaceAndMenu();
   void buildDefaultLayout(unsigned int dockId);
   void drawHierarchy();
-  void drawPrimTree(const tinyusdz::Prim& prim);
-  void drawNodeTree(const tinyusdz::tydra::Node& node);
+  bool drawPrimTree(const tinyusdz::Prim& prim);  // returns true if shown (filter)
+  bool drawNodeTree(const tinyusdz::tydra::Node& node);
   void drawInspector();
   void drawStats();
   void drawViewport();
   void drawLoadingModal();
   void drawStageMeta();
   void handleNavigation();
-  void selectByPath(const std::string& absPath, int meshIndex);
   void buildHelpers();  // grid / axes / bbox lines for the current frame
 
   Renderer* renderer_{nullptr};
@@ -78,6 +84,11 @@ class Gui {
   RenderMode mode_{RenderMode::Shaded};
   bool showRenderNodes_{false};
   bool dockBuilt_{false};
+
+  // Per-panel search/filter (case-insensitive substring; ImGui built-in).
+  ImGuiTextFilter hierFilter_;   // Hierarchy: prim name/type/path
+  ImGuiTextFilter propFilter_;   // Inspector: property name/value
+  ImGuiTextFilter metaFilter_;   // Stage metadata: key/value
 
   // Helper display toggles (View menu).
   bool showGrid_{true};
