@@ -24,6 +24,10 @@ class VulkanRenderer final : public Renderer {
   ~VulkanRenderer() override;
 
   bool init(GLFWwindow* window, std::string* err) override;
+  void setHeadlessSize(int w, int h) override {
+    if (w > 0) headlessW_ = w;
+    if (h > 0) headlessH_ = h;
+  }
   bool initImGui(std::string* err) override;
   void beginScene(const std::vector<DrawMaterialCPU>& materials, int textureCount) override;
   void appendMesh(const DrawMeshCPU& mesh) override;
@@ -34,6 +38,7 @@ class VulkanRenderer final : public Renderer {
   ViewportTexHandle viewportTexture() const override;
   void present() override;
   bool captureViewport(std::vector<uint8_t>* rgba, int* w, int* h) override;
+  bool captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) override;  // headless composite
   const RendererCaps& caps() const override { return caps_; }
   bool rayTracingAvailable() const override { return rtSupported_; }
   bool rayTracingActive() const override { return rtActive_; }
@@ -71,6 +76,10 @@ class VulkanRenderer final : public Renderer {
   bool createDevice(std::string* err);
   bool createSwapchain(std::string* err);
   bool createSwapchainViews(std::string* err);
+  // Windowless substitute for the swapchain: kFramesInFlight color images we own
+  // (color-attachment + transfer-src) that the ImGui composite pass renders into
+  // and captureWindow() reads back.
+  bool createHeadlessSwapchain(std::string* err);
   bool createSwapchainRenderPass(std::string* err);
   bool createSwapchainFramebuffers(std::string* err);
   bool createCommands(std::string* err);
@@ -110,6 +119,9 @@ class VulkanRenderer final : public Renderer {
   VkShaderModule createShader(const uint32_t* code, size_t bytes);
 
   GLFWwindow* window_{nullptr};
+  bool headless_{false};       // windowless: no surface/swapchain, render offscreen
+  int headlessW_{1280}, headlessH_{800};  // composite size when headless
+  uint32_t lastSwapIndex_{0};  // last composite image written (for captureWindow)
   RendererCaps caps_{};
   bool imguiInited_{false};
 
@@ -125,6 +137,7 @@ class VulkanRenderer final : public Renderer {
   VkFormat swapFormat_{VK_FORMAT_UNDEFINED};
   VkExtent2D swapExtent_{};
   std::vector<VkImage> swapImages_;
+  std::vector<VkDeviceMemory> swapMem_;  // headless only: backing for swapImages_
   std::vector<VkImageView> swapViews_;
   std::vector<VkFramebuffer> swapFramebuffers_;
   VkRenderPass swapRenderPass_{VK_NULL_HANDLE};

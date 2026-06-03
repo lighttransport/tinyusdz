@@ -144,30 +144,49 @@ runs load on the worker thread.
 
 ### Headless / CI (no physical display)
 
-Both backends still create a window (the GL context / the Vulkan swapchain
-surface come from GLFW), so they need *an* X server — but not a real one. On a
-machine with no display (CI, a remote box), wrap the headless screenshot run in
-`xvfb-run`, which spins up an in-memory X server. The GPU is still used for the
-actual rendering; only window-system integration goes through the virtual
-display.
+**Truly windowless (Vulkan, no X server at all)** — `--headless` skips GLFW, the
+surface and the swapchain entirely: it renders the frame (and the full ImGui UI)
+into an offscreen image on the GPU and reads it back. Nothing touches a display,
+so it runs on a bare host with `DISPLAY` unset.
 
 ```bash
-# Vulkan offscreen render on a headless host (uses the real GPU, no monitor):
-xvfb-run -a -s "-screen 0 1280x800x24" \
-  ./build/tusdview --backend vk --frames 8 --screenshot out.ppm model.usdz
+# 3D viewport screenshot, no display:
+./build/tusdview --headless --frames 8 --screenshot out.ppm model.usdz
 
-# OpenGL works the same way:
+# Full UI composite (Hierarchy / Viewport / Inspector / Stage), no display:
+./build/tusdview --headless --frames 8 --window-shot ui.ppm model.usdz
+
+# Ray tracing works headless too:
+./build/tusdview --headless --rt --frames 8 --screenshot rt.ppm model.usdz
+```
+
+`--headless` is Vulkan-only (OpenGL needs a window/context) and implies
+`--backend vk`; it needs `--frames N` (windowless runs are bounded by frame
+count). The composite size is `1280×800 × --ui-scale`. Unlike the GL
+`--window-shot`, the headless `--window-shot` captures the **full UI** (it reads
+the Vulkan composite image, not a GL back buffer).
+
+**xvfb-run (either backend, in-memory X server)** — for the OpenGL backend (or
+the windowed Vulkan path) on a machine with no display, wrap the run in
+`xvfb-run`, which spins up a virtual X server. The GPU still does the rendering;
+only window-system integration goes through the virtual display.
+
+```bash
+# OpenGL offscreen render on a headless host (uses the real GPU, no monitor):
 xvfb-run -a -s "-screen 0 1280x800x24" \
   ./build/tusdview --backend gl --frames 8 --screenshot out.ppm model.usdz
+
+# Vulkan via xvfb also works (windowed path):
+xvfb-run -a -s "-screen 0 1280x800x24" \
+  ./build/tusdview --backend vk --frames 8 --screenshot out.ppm model.usdz
 ```
 
 - Use a **24-bit** screen depth (`x24`); the `xvfb-run` default (8-bit) can't
   give GL/Vulkan a usable visual.
-- The output PPM is the **3D viewport** at the (clamped) window size — to make
-  it deterministic regardless of the virtual screen size, also pass a smaller
-  `--ui-scale` (the default 2× plus a small Xvfb screen yields a small viewport).
-- `--window-shot` (full UI capture) currently grabs the **GL** back buffer, so
-  use it with the GL backend only.
+- The screenshot PPM is the **3D viewport** at the (clamped) window size — pass a
+  smaller `--ui-scale` to make it deterministic regardless of the screen size.
+- The GL `--window-shot` grabs the GL back buffer (full UI on the GL backend);
+  for windowless Vulkan UI capture use `--headless --window-shot` (above).
 
 ## MCP server (drive the viewer from an LLM/agent)
 

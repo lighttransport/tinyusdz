@@ -54,6 +54,10 @@ class App
   // Write a PPM of the full composited window after the last frame (QA).
   void setWindowShot(const std::string& path) { windowShot_ = path; }
 
+  // Windowless rendering: no GLFW window, surface or swapchain (Vulkan only).
+  // Renders frames offscreen for --screenshot / --window-shot. Requires --frames.
+  void setHeadless(bool on) { headless_ = on; }
+
   // Embedded MCP server transports (no-op unless built with TUSDVIEW_ENABLE_MCP).
   void setMcpStdio(bool on) { mcpStdio_ = on; }
   void setMcpHttp(int port) { mcpHttpPort_ = port; }  // 0 = off
@@ -103,6 +107,7 @@ class App
 
   float uiScale_{2.0f};  // HiDPI scale (font px = 16 * uiScale_)
   std::string windowShot_;
+  bool headless_{false};  // windowless offscreen rendering (Vulkan only)
 
   // Ray tracing: requested via --rt; rtPath_ is the effective state after the
   // renderer reports capability (drives the RT-friendly conversion config).
