@@ -71,6 +71,8 @@ in each entry.
 | virtualGizmo3D | BSD 2-Clause | `examples/common/virtualGizmo3D/license.txt` |
 | miniaudio | Public domain or MIT-0 | `examples/common/miniaudio.LICENSE` |
 | cuew | Apache 2.0 | `examples/common/cuew/LICENSE` |
+| volk | MIT | `examples/common/volk/LICENSE.md` |
+| Vulkan-Headers | Apache 2.0 | `examples/common/vulkan-headers/include/vulkan/vulkan_core.h` |
 | bvh | MIT | `examples/common/bvh/LICENSE.txt` |
 | Metal-cpp | Apache 2.0 | `examples/common/metalcpp/LICENSE.txt` |
 | Roboto Mono embedded assets | Apache 2.0 | `examples/common/LICENSE.roboto_mono_embed.md` |
