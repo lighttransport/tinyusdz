@@ -643,6 +643,7 @@ bool CrateWriter::ConvertSinglePrim(
           add_t("outputs:b", uv_texture->outputsB, "float");
           add_t("outputs:a", uv_texture->outputsA, "float");
           add_t("outputs:rgb", uv_texture->outputsRGB, "float3");
+          add_t("outputs:rgba", uv_texture->outputsRGBA, "float4");
         }
       } else if (shader->info_id == "UsdTransform2d") {
         if (auto* transform2d = shader->value.as<UsdTransform2d>()) {
@@ -2016,11 +2017,11 @@ bool CrateWriter::ConvertPropertyToFields(
     crate::FieldValuePairVector& fields,
     std::string* err) {
 
-  // Dispatch based on property type
-  if (prop.is_empty()) {
-    // Empty property - skip
-    return true;
-  } else if (prop.is_attribute()) {
+  // Dispatch based on property type. A typed attribute with no default,
+  // timeSamples, or connections is still an authored declaration, e.g.
+  // shader terminal outputs, so handle attributes before the generic empty
+  // check.
+  if (prop.is_attribute()) {
     // Convert attribute - creates separate spec, doesn't add to fields
     // Pass the custom flag to be added to the attribute spec
     return ConvertAttributeToFields(prop_name, prop.get_attribute(), parent_path, prop.has_custom(), err);
@@ -2038,6 +2039,9 @@ bool CrateWriter::ConvertPropertyToFields(
   } else if (prop.is_attribute_connection()) {
     // Convert connection - creates separate spec, doesn't add to fields
     return ConvertConnectionToFields(prop_name, prop.get_attribute(), parent_path, err);
+  } else if (prop.is_empty()) {
+    // Empty property - skip
+    return true;
   } else {
     if (err) *err = "Unknown property type for: " + prop_name;
     return false;

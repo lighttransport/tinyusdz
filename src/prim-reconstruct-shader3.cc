@@ -219,6 +219,8 @@ bool ReconstructShader<UsdUVTexture>(
                                   texture->outputsA)
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:rgb", UsdUVTexture,
                                   texture->outputsRGB)
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:rgba", UsdUVTexture,
+                                  texture->outputsRGBA)
     ADD_PROPERTY(table, prop, UsdUVTexture, texture->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }

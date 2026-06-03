@@ -546,7 +546,10 @@ void CrateWriter::Close() {
 template<typename T>
 std::vector<char> SerializeArrayToBytes(const std::vector<T>& arr) {
   std::vector<char> bytes;
-  size_t total_size = sizeof(T) * arr.size();
+  size_t total_size;
+  if (!safe::mul(arr.size(), sizeof(T), &total_size)) {
+    return {};  // overflow
+  }
   bytes.resize(total_size);
   std::memcpy(bytes.data(), arr.data(), total_size);
   return bytes;

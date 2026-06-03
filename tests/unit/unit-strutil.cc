@@ -10,6 +10,7 @@
 #include "tiny-string.hh"
 #include "value-types.hh"
 #include <cmath>
+#include <limits>
 
 using namespace tinyusdz;
 
@@ -198,6 +199,75 @@ void parse_int_test(void) {
     TEST_CHECK(!parse_int(sv, &result));
   }
 
+}
+
+void strutil_parse_helpers_test(void) {
+  {
+    nonstd::optional<int> v = tinyusdz::atoi("2147483647");
+    TEST_CHECK(v.has_value());
+    TEST_CHECK(v.value() == 2147483647);
+  }
+  {
+    nonstd::optional<int> v = tinyusdz::atoi("-2147483648");
+    TEST_CHECK(v.has_value());
+    TEST_CHECK(v.value() == (std::numeric_limits<int>::min)());
+  }
+  TEST_CHECK(!tinyusdz::atoi("2147483648").has_value());
+  TEST_CHECK(!tinyusdz::atoi("-2147483649").has_value());
+  TEST_CHECK(!tinyusdz::atoi("123abc").has_value());
+  TEST_CHECK(!tinyusdz::atoi(static_cast<const char *>(nullptr)).has_value());
+
+  {
+    nonstd::optional<uint32_t> v = tinyusdz::atou("4294967295");
+    TEST_CHECK(v.has_value());
+    TEST_CHECK(v.value() == (std::numeric_limits<uint32_t>::max)());
+  }
+  TEST_CHECK(!tinyusdz::atou("4294967296").has_value());
+  TEST_CHECK(!tinyusdz::atou("-1").has_value());
+  TEST_CHECK(!tinyusdz::atou("1x").has_value());
+
+  {
+    nonstd::optional<int64_t> v = tinyusdz::atoll("9223372036854775807");
+    TEST_CHECK(v.has_value());
+    TEST_CHECK(v.value() == (std::numeric_limits<int64_t>::max)());
+  }
+  {
+    nonstd::optional<int64_t> v = tinyusdz::atoll("-9223372036854775808");
+    TEST_CHECK(v.has_value());
+    TEST_CHECK(v.value() == (std::numeric_limits<int64_t>::min)());
+  }
+  TEST_CHECK(!tinyusdz::atoll("9223372036854775808").has_value());
+  TEST_CHECK(!tinyusdz::atoll("-9223372036854775809").has_value());
+  TEST_CHECK(!tinyusdz::atoll(static_cast<const char *>(nullptr)).has_value());
+
+  {
+    nonstd::optional<uint64_t> v = tinyusdz::atoull("18446744073709551615");
+    TEST_CHECK(v.has_value());
+    TEST_CHECK(v.value() == (std::numeric_limits<uint64_t>::max)());
+  }
+  TEST_CHECK(!tinyusdz::atoull("18446744073709551616").has_value());
+  TEST_CHECK(!tinyusdz::atoull("-1").has_value());
+  TEST_CHECK(!tinyusdz::atoull(static_cast<const char *>(nullptr)).has_value());
+
+  {
+    nonstd::optional<double> v = tinyusdz::atod(" 3.5 ");
+    TEST_CHECK(v.has_value());
+    TEST_CHECK(v.value() == 3.5);
+  }
+  TEST_CHECK(!tinyusdz::atod("3.5x").has_value());
+  TEST_CHECK(!tinyusdz::atod("nan").has_value());
+  TEST_CHECK(!tinyusdz::atod("inf").has_value());
+  TEST_CHECK(!tinyusdz::atod(static_cast<const char *>(nullptr)).has_value());
+
+  {
+    nonstd::optional<float> v = tinyusdz::atof_float("-2.25");
+    TEST_CHECK(v.has_value());
+    TEST_CHECK(v.value() == -2.25f);
+  }
+  TEST_CHECK(!tinyusdz::atof_float("1.0x").has_value());
+  TEST_CHECK(!tinyusdz::atof_float("nan").has_value());
+  TEST_CHECK(!tinyusdz::atof_float("inf").has_value());
+  TEST_CHECK(!tinyusdz::atof_float(static_cast<const char *>(nullptr)).has_value());
 }
 
 void dtoa_test(void) {

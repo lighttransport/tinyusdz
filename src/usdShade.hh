@@ -248,7 +248,8 @@ struct UsdUVTexture : ShaderNode {
   TypedAttributeWithFallback<Animatable<Wrap>> wrapS{Wrap::UseMetadata}; // "token inputs:wrapS" interfaceOnly
   TypedAttributeWithFallback<Animatable<Wrap>> wrapT{Wrap::UseMetadata}; // "token inputs:wrapT" interfaceOnly
 
-  TypedAttributeWithFallback<value::color4f> fallback{{0.0f, 0.0f, 0.0f, 1.0f}}; // "inputs:fallback" Fallback value when no texture is connected
+  TypedAttributeWithFallback<Animatable<value::float4>> fallback{
+      Animatable<value::float4>(value::float4{0.0f, 0.0f, 0.0f, 1.0f})}; // "inputs:fallback" Fallback value when no texture is connected
 
   TypedAttributeWithFallback<Animatable<SourceColorSpace>> sourceColorSpace{SourceColorSpace::Auto}; // "token inputs:sourceColorSpace" interfaceOnly
 
@@ -265,6 +266,7 @@ struct UsdUVTexture : ShaderNode {
   TypedTerminalAttribute<float> outputsB; // "float outputs:b"
   TypedTerminalAttribute<float> outputsA; // "float outputs:a"
   TypedTerminalAttribute<value::float3> outputsRGB; // "float outputs:rgb" in schema. Allow color3f as well(please use TypedTerminalAttribute::get_actual_type_name() to get a actual type name in USDA/USDC).
+  TypedTerminalAttribute<value::float4> outputsRGBA; // "float4 outputs:rgba"
 
   // Note: Texture coordinate orientation follows USD convention (origin at bottom-left).
   // See: https://openusd.org/release/spec_usdpreviewsurface.html

@@ -2547,12 +2547,12 @@ function resolveTextureId(nativeLoader, textureId) {
     if (textureId < 0) return textureId;
     try {
         const tex = nativeLoader.getTexture(textureId);
-        const texImage = nativeLoader.getImage(tex.textureImageId);
+        const texImage = nativeLoader.getImageCopy(tex.textureImageId);
         if (texImage.bufferId === -1 && texImage.uri) {
             const filename = texImage.uri.replace(/^\.\//, '');
             const numImages = nativeLoader.numImages();
             for (let i = 0; i < numImages; i++) {
-                const altImage = nativeLoader.getImage(i);
+                const altImage = nativeLoader.getImageCopy(i);
                 if (altImage.bufferId >= 0 && altImage.uri === filename) {
                     const numTextures = nativeLoader.numTextures();
                     for (let t = 0; t < numTextures; t++) {
@@ -2577,7 +2577,7 @@ function findTextureIdByFilename(nativeLoader, filename) {
 
     const numImages = nativeLoader.numImages();
     for (let i = 0; i < numImages; i++) {
-        const img = nativeLoader.getImage(i);
+        const img = nativeLoader.getImageCopy(i);
         if (!img.uri) continue;
         const imgName = img.uri.replace(/^\.\//, '');
         if (imgName === cleanName || imgName.endsWith(cleanName) || cleanName.endsWith(imgName)) {
@@ -2592,7 +2592,7 @@ function findTextureIdByFilename(nativeLoader, filename) {
                 // Look for any texture pointing to this image
                 for (let t = 0; t < numTextures; t++) {
                     const tex = nativeLoader.getTexture(t);
-                    const altImg = nativeLoader.getImage(tex.textureImageId);
+                    const altImg = nativeLoader.getImageCopy(tex.textureImageId);
                     if (altImg.bufferId >= 0 && altImg.uri) {
                         const altName = altImg.uri.replace(/^\.\//, '');
                         if (altName === cleanName) return t;
@@ -3080,7 +3080,7 @@ async function buildScene() {
         const numMeshes = usd.numMeshes();
 
         for (let i = 0; i < numMeshes; i++) {
-            const meshData = usd.getMesh(i);
+            const meshData = usd.getMeshCopy(i);
             if (!meshData || !meshData.points || meshData.points.length === 0) continue;
 
             const geometry = TinyUSDZLoaderUtils.convertUsdMeshToThreeMesh(meshData);

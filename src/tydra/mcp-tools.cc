@@ -9,6 +9,7 @@
 #include "mcp-tools-query.hh"
 #include "mcp-tools-composition.hh"
 #include "mcp-tools-validate.hh"
+#include "mcp-tools-usdz.hh"
 #include "mcp-js-bridge.hh"
 #include "pprinter.hh"
 #include "layer.hh"
@@ -112,6 +113,8 @@ bool GetAssetDescription(Context &ctx, const nlohmann::json &args,
                           nlohmann::json &result, std::string &err);
 bool ListPrimSpecs(Context &ctx, const nlohmann::json &args,
                     nlohmann::json &result, std::string &err);
+bool DebugPrimSpecDump(Context &ctx, const nlohmann::json &args,
+                       nlohmann::json &result, std::string &err);
 bool ToUSDA(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
             std::string &err);
 bool SaveScreenshot(Context &ctx, const nlohmann::json &args,
@@ -589,6 +592,65 @@ bool ListPrimSpecs(Context &ctx, const nlohmann::json &args,
     content["text"] = ps.first;
     result["content"].push_back(content);
   }
+
+  return true;
+}
+
+bool DebugPrimSpecDump(Context &ctx, const nlohmann::json &args,
+                       nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+
+  std::string uuid = args.value("uuid", std::string{});
+  std::string name = args.value("name", std::string{});
+  std::string path = args.value("path", std::string{});
+  uint32_t max_depth = 1;
+  if (args.contains("max_depth") && args["max_depth"].is_number_integer()) {
+    int depth = args["max_depth"];
+    if (depth >= 0) {
+      max_depth = static_cast<uint32_t>(depth);
+    }
+  }
+
+  if (uuid.empty() && name.empty()) {
+    err = "Either `name` or `uuid` arg required\n";
+    return false;
+  }
+  if (path.empty()) {
+    err = "`path` arg required\n";
+    return false;
+  }
+  if (uuid.empty()) {
+    uuid = FindUUID(name, ctx.layers);
+  }
+  if (!ctx.layers.count(uuid)) {
+    err = "Layer not found: " + uuid;
+    return false;
+  }
+
+  Path prim_path(path, "");
+  if (!prim_path.is_valid()) {
+    err = "Invalid prim path: " + path;
+    return false;
+  }
+
+  const PrimSpec *ps = nullptr;
+  std::string find_err;
+  const Layer &layer = ctx.layers.at(uuid).layer;
+  if (!layer.find_primspec_at(prim_path, &ps, &find_err) || !ps) {
+    err = "PrimSpec not found at " + path;
+    if (!find_err.empty()) {
+      err += ": " + find_err;
+    }
+    return false;
+  }
+
+  nlohmann::json content;
+  content["type"] = "text";
+  content["mimeType"] = "application/json";
+  content["text"] = PrimSpecToJSON(*ps, max_depth).dump(2);
+
+  result["content"] = nlohmann::json::array();
+  result["content"].push_back(content);
 
   return true;
 }
@@ -1346,6 +1408,20 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
              "List root PrimSpecs in a loaded USD Layer", schema);
   }
 
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["uuid"] = str_prop("Layer UUID");
+    schema["properties"]["name"] = str_prop("Layer name");
+    schema["properties"]["path"] = str_prop("Absolute PrimSpec path");
+    schema["properties"]["max_depth"] =
+        int_prop("Maximum child depth to include");
+    schema["required"] = nlohmann::json::array({"path"});
+    add_tool("debug_primspec_dump",
+             "Dump a loaded Layer PrimSpec as deterministic JSON for debugging",
+             schema);
+  }
+
   // =========================================================================
   // Existing: Asset management tools (kept from original)
   // =========================================================================
@@ -1449,6 +1525,80 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     add_tool("read_screenshot", "Read a screenshot image", schema);
   }
 
+  // =========================================================================
+  // USDZ conversion / texture tools
+  // =========================================================================
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["input"] = str_prop("Input USD(A/C/Z) file path");
+    schema["properties"]["output"] = str_prop("Output .usdz file path");
+    schema["properties"]["flatten"] = bool_prop("Compose/flatten before writing (default true)");
+    schema["properties"]["arkitCompatible"] = bool_prop("Apply ARKit-friendly metadata");
+    schema["properties"]["metersPerUnit"] = num_prop("Override metersPerUnit");
+    schema["properties"]["upAxis"] = str_prop("Up axis X/Y/Z");
+    schema["properties"]["resizeTextures"] = int_prop("Cap texture longest edge (pixels)");
+    schema["properties"]["textureFormat"] = str_prop("keep | png | jpeg");
+    schema["properties"]["pngEncoder"] = str_prop("fpnge | fpng");
+    schema["properties"]["jpegQuality"] = int_prop("JPEG quality 1-100");
+    schema["properties"]["reencode"] = bool_prop("Re-encode unmodified textures (default true)");
+    schema["properties"]["targetTextureBytes"] = num_prop("Total texture byte budget; shrink all textures to fit");
+    schema["properties"]["fitStrategy"] = str_prop("Fit lever: size | quality");
+    schema["properties"]["fitMinTextureSize"] = int_prop("Min longest edge for size-fit (default 64)");
+    schema["properties"]["fitMinQuality"] = int_prop("Min JPEG quality for quality-fit (default 30)");
+    schema["required"] = nlohmann::json::array({"input", "output"});
+    add_tool("usdz_convert",
+             "Convert a USD file to an ARKit-friendly USDZ (flatten + texture "
+             "resize/re-encode with fpnge)",
+             schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["uri"] = str_prop("Output .usdz path. If omitted, returns base64 data.");
+    schema["properties"]["arkitCompatible"] = bool_prop("Apply ARKit-friendly metadata");
+    add_tool("usdz_pack",
+             "Pack the current session stage into a USDZ (file or base64)",
+             schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["data"] = str_prop("Base64-encoded input image");
+    schema["properties"]["max_size"] = int_prop("Cap the longest edge (pixels)");
+    schema["properties"]["width"] = int_prop("Target width (with height)");
+    schema["properties"]["height"] = int_prop("Target height (with width)");
+    schema["properties"]["format"] = str_prop("Output format: png (default) or jpeg");
+    schema["properties"]["pngEncoder"] = str_prop("fpnge | fpng");
+    schema["required"] = nlohmann::json::array({"data"});
+    add_tool("texture_resize",
+             "Resize a base64 image and re-encode (PNG via fpnge)", schema);
+  }
+
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["channels"] = int_prop("Output channel count 1-4");
+    schema["properties"]["width"] = int_prop("Output width (default: max of inputs)");
+    schema["properties"]["height"] = int_prop("Output height (default: max of inputs)");
+    schema["properties"]["format"] = str_prop("Output format: png (default) or jpeg");
+    schema["properties"]["pngEncoder"] = str_prop("fpnge | fpng");
+    nlohmann::json chan = {
+        {"type", "object"},
+        {"description",
+         "Channel source: { data: base64, channel: int } or { const: int }"}};
+    schema["properties"]["r"] = chan;
+    schema["properties"]["g"] = chan;
+    schema["properties"]["b"] = chan;
+    schema["properties"]["a"] = chan;
+    add_tool("texture_repack",
+             "Merge channels from base64 images into one image (e.g. R=gloss, "
+             "G=roughness)",
+             schema);
+  }
+
   return true;
 }
 
@@ -1510,6 +1660,12 @@ bool CallTool(Context &ctx, const std::string &tool_name,
   // ---- Validation ----
   if (tool_name == "usd_validate") return UsdValidate(ctx, args, result, err);
 
+  // ---- USDZ conversion / textures ----
+  if (tool_name == "usdz_convert") return USDZConvert(ctx, args, result, err);
+  if (tool_name == "usdz_pack") return USDZPack(ctx, args, result, err);
+  if (tool_name == "texture_resize") return TextureResize(ctx, args, result, err);
+  if (tool_name == "texture_repack") return TextureRepack(ctx, args, result, err);
+
   // ---- Scripting ----
   if (tool_name == "run_script") return RunScript(ctx, args, result, err);
 
@@ -1533,6 +1689,9 @@ bool CallTool(Context &ctx, const std::string &tool_name,
   }
   if (tool_name == "list_primspecs") {
     return ListPrimSpecs(ctx, args, result, err);
+  }
+  if (tool_name == "debug_primspec_dump") {
+    return DebugPrimSpecDump(ctx, args, result, err);
   }
   if (tool_name == "load_usd_layer_from_asset") {
     // Not implemented yet

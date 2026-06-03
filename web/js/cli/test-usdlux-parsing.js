@@ -153,7 +153,7 @@ async function testFile(testConfig) {
       const numMeshes = usd.numMeshes();
 
       for (let i = 0; i < numMeshes; i++) {
-        const mesh = usd.getMesh(i);
+        const mesh = usd.getMeshCopy(i);
         if (!mesh || !mesh.isAreaLight) continue;
 
         // Extract light color from typed memory view

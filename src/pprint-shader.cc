@@ -187,6 +187,7 @@ static std::string print_shader_params(const UsdUVTexture &shader,
   ss << print_typed_terminal_attr(shader.outputsB, "outputs:b", indent);
   ss << print_typed_terminal_attr(shader.outputsA, "outputs:a", indent);
   ss << print_typed_terminal_attr(shader.outputsRGB, "outputs:rgb", indent);
+  ss << print_typed_terminal_attr(shader.outputsRGBA, "outputs:rgba", indent);
 
   ss << print_common_shader_params(shader, indent);
 
