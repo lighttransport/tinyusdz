@@ -4,6 +4,7 @@
 #include "mcp-tools-usdz.hh"
 
 #include <algorithm>
+#include <climits>
 #include <limits>
 #include <map>
 #include <vector>

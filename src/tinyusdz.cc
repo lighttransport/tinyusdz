@@ -51,13 +51,14 @@ namespace {
 constexpr uint32_t kMaxZstdNestingDepth = 2;
 
 std::string GetLayerBaseDirForAssetName(const std::string &asset_name) {
+  std::string basedir;
   if (asset_name.empty()) {
-    return std::string();
+    return basedir;
   }
 
-  std::string basedir = io::GetBaseDir(asset_name);
+  basedir = io::GetBaseDir(asset_name);
   if (basedir.empty()) {
-    return ".";
+    basedir = ".";
   }
   return basedir;
 }
