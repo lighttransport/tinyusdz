@@ -175,6 +175,8 @@ cd python && python3 -m pytest tests/ -q
 
 See `doc/testing-cpp.md` for full details on the C++ test infrastructure, and use [the Regression Test Procedure](doc/testing-cpp.md#regression-test-procedure) before merging/refactoring.
 
+The experimental `next` module (`src/next/`, `tests/next/`) is **excluded from the regression gate** by design — it is a standalone CMake project that the main `build/` does not compile (`TINYUSDZ_NEXT_BUILD_TESTS=OFF`), so it never appears in `ctest`. Do not block merges on it; build/run it on demand only (see [Experimental `next` library tests](doc/testing-cpp.md#experimental-next-library-tests)).
+
 ### Pre-merge checklist
 
 Before merging refactors or feature branches, confirm all required checks pass:
