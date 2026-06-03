@@ -650,9 +650,6 @@ class USDAReader::Impl {
   bool ReconstructPrimMeta(const ascii::AsciiParser::PrimMetaMap &in_meta,
                            PrimMeta *out) {
 
-    // Use centralized handler from enum-handlers.hh
-    auto ApiSchemaHandler = enum_handler::APISchemaName;
-
     auto BuildVariants = [](const Dictionary &dict) -> nonstd::expected<VariantSelectionMap, std::string> {
 
       // Allow empty dict.
@@ -959,6 +956,7 @@ class USDAReader::Impl {
           }
           APISchemas empty;
           empty.listOpQual = ListEditQual::ResetToExplicit;
+          empty.explicitlyEmpty = true;  // authored as `apiSchemas = None`
           out->set_apiSchemas(std::move(empty));
           continue;
         }
@@ -995,12 +993,20 @@ class USDAReader::Impl {
           "`token[]`. got type `"
           << var.type_name() << "`");
         }
+        // Preserve this op verbatim (qualifier + raw schema strings, in order)
+        // so the writer can reproduce the authored SdfTokenListOp losslessly.
+        // The resolved view (`names`/`deletedNames`) is still maintained below
+        // for downstream schema-application consumers.
+        std::vector<std::pair<std::string, std::string>> authoredItems;
         for (const auto &item : pv.value()) {
-          // TODO: Multi-apply schema(instance name)
-          const std::string instanceName = "";
-          auto ret = ApiSchemaHandler(item.str());
+          // The authored op is preserved verbatim (full token, incl. any
+          // `:instance` suffix) so the writer reproduces it exactly.
+          authoredItems.push_back(std::make_pair(item.str(), std::string()));
+          // For the resolved view, split multi-apply instances:
+          // `SchemaName:instanceName` -> (SchemaName, instanceName).
+          auto ret = enum_handler::APISchemaNameWithInstanceOpt(item.str());
           if (ret) {
-            const auto entry = std::make_pair(ret.value(), instanceName);
+            const auto entry = ret.value();  // (APIName, instanceName)
             if (isDelete) {
               apiSchemas.deletedNames.push_back(entry);
               apiSchemas.names.erase(
@@ -1010,6 +1016,7 @@ class USDAReader::Impl {
               apiSchemas.names.push_back(entry);
             }
           } else if (_config.allow_unknown_apiSchema) {
+            const std::string instanceName = "";
             const auto entry = std::make_pair(item.str(), instanceName);
             if (isDelete) {
               apiSchemas.deletedUnknownSchemas.push_back(entry);
@@ -1021,9 +1028,11 @@ class USDAReader::Impl {
               PUSH_WARN("(PrimMeta) Preserving unknown API schema: " << item.str());
             }
           } else {
-            PUSH_ERROR_AND_RETURN("Unknown or invalid apiSchema: " + ret.error());
+            PUSH_ERROR_AND_RETURN("Unknown or invalid apiSchema: " + item.str());
           }
         }
+        apiSchemas.authoredOps.push_back(
+            std::make_pair(listEditQual, std::move(authoredItems)));
 
         out->set_apiSchemas(std::move(apiSchemas));
       } else if (meta.first == "references") {

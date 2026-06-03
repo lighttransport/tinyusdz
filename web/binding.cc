@@ -32,6 +32,7 @@
 #include "tydra/tangent-quantize.hh"
 #include "tydra/scene-access.hh"
 #include "tydra/material-serializer.hh"
+#include "tydra/diff-and-compare.hh"
 
 #include "tydra/mcp-context.hh"
 // mcp::Context holds a std::unique_ptr<JSEngineState>; the full definition is
@@ -7954,6 +7955,90 @@ emscripten::val fitTextures(const emscripten::val& opts) {
   return result;
 }
 
+// usddiff(opts) -> { success, hasDiffs, text?, json?, error?, warn? }
+// opts: { left:{data:Uint8Array, name?:string}, right:{data:Uint8Array, name?:string},
+//         format?:"text"|"json"|"both" (default "text") }
+//
+// Loads both inputs as Layers (pre-composition, so the full PrimSpec/Attribute
+// tree is preserved) and diffs them with tinyusdz::tydra. Mirrors the native
+// `usddiff` / `tusddiff` tool (examples/usddiff/usddiff-main.cc).
+emscripten::val usddiff(const emscripten::val& opts) {
+  using namespace tinyusdz;
+  emscripten::val result = emscripten::val::object();
+
+  if (opts.isUndefined() || opts.isNull()) {
+    result.set("success", false);
+    result.set("error", std::string("usddiff: missing options"));
+    return result;
+  }
+
+  emscripten::val left = opts["left"];
+  emscripten::val right = opts["right"];
+  if (left.isUndefined() || left.isNull() || right.isUndefined() ||
+      right.isNull()) {
+    result.set("success", false);
+    result.set("error", std::string("usddiff: 'left' and 'right' are required"));
+    return result;
+  }
+
+  std::vector<uint8_t> lhsBuf, rhsBuf;
+  copyFromJSBuffer(left["data"], lhsBuf);
+  copyFromJSBuffer(right["data"], rhsBuf);
+
+  const std::string lhsName = optStr(left, "name", "left");
+  const std::string rhsName = optStr(right, "name", "right");
+  const std::string format = optStr(opts, "format", "text");
+
+  USDLoadOptions loadOpts;
+
+  Layer lhsLayer, rhsLayer;
+  std::string warn, err;
+
+  if (!LoadLayerFromMemory(lhsBuf.data(), lhsBuf.size(), lhsName, &lhsLayer,
+                           &warn, &err, loadOpts)) {
+    result.set("success", false);
+    result.set("error", std::string("Error loading ") + lhsName + ": " + err);
+    return result;
+  }
+  std::string accumWarn = warn;
+
+  warn.clear();
+  err.clear();
+  if (!LoadLayerFromMemory(rhsBuf.data(), rhsBuf.size(), rhsName, &rhsLayer,
+                           &warn, &err, loadOpts)) {
+    result.set("success", false);
+    result.set("error", std::string("Error loading ") + rhsName + ": " + err);
+    return result;
+  }
+  if (!warn.empty()) {
+    if (!accumWarn.empty()) accumWarn += "\n";
+    accumWarn += warn;
+  }
+
+  tinyusdz::HashMap<std::string, tydra::PrimSpecDiff> psDiffs;
+  tinyusdz::HashMap<std::string, tydra::PropDiff> propDiffs;
+  tydra::Diff(lhsLayer, rhsLayer, psDiffs, propDiffs);
+
+  const bool hasDiffs = !psDiffs.empty() || !propDiffs.empty();
+
+  result.set("success", true);
+  result.set("hasDiffs", hasDiffs);
+  if (!accumWarn.empty()) result.set("warn", accumWarn);
+
+  if (format == "json" || format == "both") {
+    result.set("json", tydra::DiffToJSON(lhsLayer, rhsLayer, lhsName, rhsName));
+  }
+  if (format == "text" || format == "both") {
+    if (hasDiffs) {
+      result.set("text", tydra::DiffToText(lhsLayer, rhsLayer, lhsName, rhsName));
+    } else {
+      result.set("text", std::string("No differences found.\n"));
+    }
+  }
+
+  return result;
+}
+
 EMSCRIPTEN_BINDINGS(image_module) {
 #if defined(TINYUSDZ_WITH_EXR)
   // EXR decoding
@@ -7992,4 +8077,8 @@ EMSCRIPTEN_BINDINGS(image_module) {
   // fitTextures({images:[{data,name}], targetBytes, strategy:"size"|"quality", ...})
   //   -> { success, results:[{data, ext, width, height, name}], totalBytes }
   function("fitTextures", &fitTextures);
+
+  // usddiff({left:{data,name?}, right:{data,name?}, format?:"text"|"json"|"both"})
+  //   -> { success, hasDiffs, text?, json?, error?, warn? }
+  function("usddiff", &usddiff);
 }
