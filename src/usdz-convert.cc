@@ -1504,10 +1504,19 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     }
   } else {
     Log(options.verbose, "Loading (no flatten): " + root_input);
-    if (!tinyusdz::LoadUSDFromFile(root_input, &stage, &lwarn, &lerr)) {
-      if (err) (*err) = "Failed to load USD: " + lerr;
+    // Load as a Layer (no composition) so usdc/usda output goes through the
+    // faithful PrimSpec-based writers. Loading into a Stage here would route
+    // output through the typed Stage->crate reconstruction, which injects
+    // schema fallbacks (purpose/visibility), drops relationships not modeled by
+    // the typed schema (e.g. skel:animationSource), and loses `uniform`
+    // variability. (USDZ -noFlatten is handled earlier by ConvertNonFlattenUSDZ;
+    // all downstream `stage` uses below are guarded by !has_layer_for_write.)
+    if (!tinyusdz::LoadLayerFromFile(root_input, &layer_for_write, &lwarn,
+                                     &lerr)) {
+      if (err) (*err) = "Failed to load layer: " + lerr;
       return false;
     }
+    has_layer_for_write = true;
   }
   if (warn) (*warn) += lwarn;
 
