@@ -19,9 +19,22 @@ displays it with an ImGui docking UI.
   - **Search boxes** in the Hierarchy (filters prims by name/type/path, keeping
     matches' ancestors and auto-expanding), the Inspector (filters properties by
     name/value), and the Stage metadata panel (filters by key/value).
-- **Maya-style navigation** (only when the viewport is hovered):
+- **Maya-style navigation & selection** (only when the viewport is hovered):
   - `Alt + LMB` orbit, `Alt + MMB` pan, `Alt + RMB` / **mouse wheel** dolly.
-  - `F` frames (fits) the whole scene.
+  - **Click to pick** — a plain left click selects the nearest mesh under the
+    cursor (world-space ray vs. per-mesh AABB then ray/triangle), updating the
+    hierarchy highlight, inspector and selection bbox.
+  - `F` frames (fits) the **selected** mesh (falls back to the whole scene);
+    `A` frames the whole scene.
+  - **Hide family** (Maya 2016+): `H` toggle-hide the selection, `Ctrl+H` hide,
+    `Shift+H` show, `Alt+H` isolate (hide everything else). **View ▸ Unhide all**
+    restores. Visibility is viewer-side (raster paths; the RT path traces all
+    meshes) and is not written back to the USD `visibility` attribute.
+- **Skeleton (UsdSkel) display** — the joint hierarchy is drawn as world-space
+  bone line segments (parent→child) plus a small cross per joint, as an **X-ray
+  overlay** (depth-test disabled, so bones stay visible through solid geometry).
+  Joint bind poses are placed by the skinned mesh's world matrix (so bones align
+  with the mesh even across an up-axis conversion). Toggle from **View ▸ Skeleton**.
 - **Base-color textures** on both backends (UsdPreviewSurface diffuse maps; GL
   also does metal/rough + emissive maps).
 - **Three render techniques** — OpenGL raster, **Vulkan raster** (baseline), and
@@ -206,6 +219,6 @@ ready. The worker only touches CPU data — no GL/VK calls off-thread.
   backend additionally uses metal-rough and emissive maps. Normal mapping is not
   done on either backend yet.
 - Single hard-coded directional light (USD lights are not consumed yet).
-- Y-up scenes assumed for navigation; tangents/normal-mapping, animation,
-  instancing transforms, viewport click-picking and multi-viewport are out of
-  scope for this pass.
+- Skeleton display shows the **bind pose** only (no animation/skinning playback).
+- Tangents/normal-mapping, animation, instancing transforms and multi-viewport
+  are out of scope for this pass.

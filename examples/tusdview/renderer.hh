@@ -44,9 +44,21 @@ struct RenderFrameParams {
   float clearColor[4]{0.12f, 0.12f, 0.13f, 1.0f};
   int highlightMeshIndex{-1};  // draw a wireframe overlay on this mesh (-1 = none)
 
-  // Debug helper lines (grid / axes / bounding boxes), in world space.
+  // Debug helper lines (grid / axes / bounding boxes), world space, depth-tested
+  // so geometry occludes them.
   const HelperVertex* helperLines{nullptr};
   int helperLineVertexCount{0};  // total vertices (2 per segment)
+
+  // Overlay lines (skeleton bones), world space, drawn on top with depth testing
+  // disabled so they stay visible through solid geometry (X-ray).
+  const HelperVertex* overlayLines{nullptr};
+  int overlayLineVertexCount{0};  // total vertices (2 per segment)
+
+  // Per-mesh visibility mask (index i <-> the i-th appended mesh, same order as
+  // highlightMeshIndex). null = all meshes visible. Applies to the raster paths
+  // (GL + VK raster); the VK ray-tracing path traces the whole TLAS.
+  const uint8_t* meshVisible{nullptr};
+  int meshVisibleCount{0};
 };
 
 // Opaque texture handle for ImGui::Image. GL: a GLuint texture id. Vulkan: a
