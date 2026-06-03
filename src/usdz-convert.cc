@@ -185,9 +185,9 @@ std::string SafeMissingArchiveReference(
     if (base.empty() || !io::IsAbsPath(base)) {
       continue;
     }
-    const std::string rel = ToRelativePath(base, asset_path);
-    if (rel != asset_path && !IsUnsafeUnresolvedTexturePath(rel)) {
-      return rel;
+    const std::string base_rel = ToRelativePath(base, asset_path);
+    if (base_rel != asset_path && !IsUnsafeUnresolvedTexturePath(base_rel)) {
+      return base_rel;
     }
   }
 
@@ -1005,23 +1005,25 @@ struct NonFlattenLayerPackage {
 std::string ResolveDependencySourcePath(AssetResolutionResolver &resolver,
                                         const std::string &asset_path,
                                         const std::string &base_dir) {
+  std::string result;
   if (asset_path.empty()) {
-    return std::string();
+    return result;
   }
   if (io::IsAbsPath(asset_path)) {
-    return asset_path;
+    result = asset_path;
+    return result;
   }
   if (!base_dir.empty()) {
-    const std::string candidate = io::JoinPath(base_dir, asset_path);
-    if (io::FileExists(candidate)) {
-      return candidate;
+    result = io::JoinPath(base_dir, asset_path);
+    if (io::FileExists(result)) {
+      return result;
     }
   }
-  const std::string resolved = resolver.resolve(asset_path);
-  if (!resolved.empty()) {
-    return resolved;
+  result = resolver.resolve(asset_path);
+  if (result.empty()) {
+    result = asset_path;
   }
-  return asset_path;
+  return result;
 }
 
 bool LoadLayerForPackaging(AssetResolutionResolver &resolver,
