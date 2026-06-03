@@ -25,7 +25,7 @@ std::string DirName(const std::string& path) {
 }  // namespace
 
 bool LoadUSD(const std::string& path, LoadedScene* out, DrawScene* draw,
-             LoadControl* ctrl) {
+             bool rtPath, LoadControl* ctrl) {
   out->filepath = path;
   out->ok = false;
   out->warn.clear();
@@ -79,7 +79,9 @@ bool LoadUSD(const std::string& path, LoadedScene* out, DrawScene* draw,
   // Configure for a single-index OpenGL/Vulkan renderer.
   auto& mc = env.mesh_config;
   mc.triangulate = true;
-  mc.build_vertex_indices = true;
+  // Ray tracing only needs triangulated positions + a uint32 index buffer for the
+  // BLAS, so skip the rasterization-only single-index dedup on the RT path.
+  mc.build_vertex_indices = !rtPath;
   mc.compute_normals = true;
   // Keep normals as plain float3 (native default) and skip tangents: the simple
   // light3d shaders don't read tangents, and the native tangent default is a

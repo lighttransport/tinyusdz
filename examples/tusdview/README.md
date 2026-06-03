@@ -21,6 +21,19 @@ displays it with an ImGui docking UI.
   - `F` frames (fits) the whole scene.
 - **Base-color textures** on both backends (UsdPreviewSurface diffuse maps; GL
   also does metal/rough + emissive maps).
+- **Three render techniques** — OpenGL raster, **Vulkan raster** (baseline), and
+  **Vulkan ray tracing (ray query)**. RT is enabled only when the GPU exposes
+  `VK_KHR_acceleration_structure` + `VK_KHR_ray_query` (+ `bufferDeviceAddress`)
+  and the project was built with an RT-capable `glslangValidator`; otherwise the
+  viewer transparently falls back to Vulkan rasterization. The RT path builds a
+  BLAS per mesh + a TLAS, then a compute shader (`vk/shaders/raytrace.comp`)
+  traces primary + shadow rays with `rayQueryEXT` into a storage image that is
+  copied into the displayed target. Shading mirrors the raster look (material
+  base color + the same directional light) plus **hard shadows**. Toggle it from
+  **View ▸ Ray tracing (Vulkan)** (greyed out when unsupported) or start in RT
+  with `--rt`. RT uses a ray-tracer-friendly conversion (no single-index dedup;
+  `build_vertex_indices=false`). _v1 RT limitations:_ base color only (no
+  textures), one material per mesh, no helper-line overlay.
 - **Responsive, non-freezing UI**: USD parse → Tydra convert → DrawScene build
   run on a **worker thread** with a live progress modal; the GPU upload happens
   on the render thread when the worker finishes. The window stays interactive
@@ -71,6 +84,12 @@ cmake --build build -j16 --target tusdview
 - **Vulkan** is enabled automatically when `find_package(Vulkan)` succeeds (needs
   `glslangValidator` to compile the shaders). Force a GL-only build with
   `-DCMAKE_DISABLE_FIND_PACKAGE_Vulkan=ON`.
+- **Vulkan ray tracing** additionally needs a `glslangValidator` that supports
+  `GL_EXT_ray_query` (≈ glslang ≥ 11 / a Vulkan SDK build). CMake probes the
+  compiler at configure time and only enables RT if it can compile
+  `vk/shaders/raytrace.comp`; otherwise it prints a notice and the Vulkan backend
+  uses rasterization. Point CMake at a newer compiler with
+  `-DTUSDVIEW_GLSLANG=/path/to/glslangValidator` and reconfigure.
 - The **native file dialog** (File > Open) is enabled when GTK3 is available on
   Linux (always on Windows/macOS); otherwise pass a file on the command line.
 
@@ -79,9 +98,11 @@ cmake --build build -j16 --target tusdview
 ```bash
 ./build/tusdview models/suzanne-pbr.usda
 ./build/tusdview --backend vk models/suzanne-pbr.usda
+./build/tusdview --rt models/suzanne-pbr.usda          # Vulkan ray tracing (implies --backend vk)
 
 # Headless smoke test / screenshot (renders N frames then exits):
 ./build/tusdview --frames 5 --screenshot out.ppm models/suzanne-pbr.usda
+./build/tusdview --backend vk --rt --frames 8 --screenshot rt.ppm models/suzanne-pbr.usda
 
 # HiDPI: 2x is the default; tune for your display:
 ./build/tusdview --ui-scale 1.5 model.usdz

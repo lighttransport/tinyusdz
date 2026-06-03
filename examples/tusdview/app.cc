@@ -186,7 +186,7 @@ void App::loadFileBlocking(const std::string& path) {
   LoadedScene tmp;
   DrawScene drawTmp;
   // Streaming convert+build in one pass (also fully populates tmp.render).
-  const bool ok = LoadUSD(path, &tmp, &drawTmp, &loadCtrl_);
+  const bool ok = LoadUSD(path, &tmp, &drawTmp, rtPath_, &loadCtrl_);
   loaded_ = std::move(tmp);
   draw_ = ok ? std::move(drawTmp) : DrawScene{};
   applyLoaded(ok, /*progressive=*/false);
@@ -205,8 +205,9 @@ void App::startLoadAsync(const std::string& path) {
   DrawScene* dp = pendingDraw_.get();
   // Worker touches only CPU data (no GL/VK), so this is thread-safe. The
   // streaming load convert+builds the DrawScene (dp) in one pass.
-  loadThread_ = std::thread([this, path, lp, dp]() {
-    LoadUSD(path, lp, dp, &loadCtrl_);
+  const bool rt = rtPath_;
+  loadThread_ = std::thread([this, path, lp, dp, rt]() {
+    LoadUSD(path, lp, dp, rt, &loadCtrl_);
     loadFinished_.store(true, std::memory_order_release);
   });
 }
@@ -278,6 +279,21 @@ int App::run(const std::string& initialFile, int maxFrames,
     std::fprintf(stderr, "[tusdview] renderer init failed: %s\n", err.c_str());
     return 1;
   }
+
+  // Activate Vulkan ray tracing if requested and supported; else stay on raster.
+  if (rtRequested_) {
+    if (renderer_->rayTracingAvailable()) {
+      rtPath_ = true;
+      renderer_->setRayTracing(true);
+      std::fprintf(stderr, "[tusdview] Vulkan ray tracing (ray query) enabled.\n");
+    } else {
+      std::fprintf(stderr,
+                   "[tusdview] --rt requested but ray tracing is unavailable "
+                   "(needs the Vulkan backend on an RT-capable GPU + an RT-capable "
+                   "glslang at build time); using rasterization.\n");
+    }
+  }
+
   if (!initImGui(&err)) {
     std::fprintf(stderr, "[tusdview] ImGui init failed: %s\n", err.c_str());
     return 1;

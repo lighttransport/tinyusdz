@@ -27,6 +27,7 @@ int main(int argc, char** argv) {
   long long maxTris = 0;      // 0 = default budget
   double timeBudget = 0.0;    // 0 = unlimited
   float uiScale = 2.0f;       // HiDPI UI scale (font px = 16 * uiScale)
+  bool wantRt = false;        // request Vulkan ray tracing (if supported)
 
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--backend") == 0 && (i + 1) < argc) {
@@ -48,22 +49,31 @@ int main(int argc, char** argv) {
       uiScale = static_cast<float>(std::atof(argv[++i]));
     } else if (std::strcmp(argv[i], "--window-shot") == 0 && (i + 1) < argc) {
       windowShot = argv[++i];
+    } else if (std::strcmp(argv[i], "--rt") == 0) {
+      wantRt = true;
     } else if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0) {
       std::printf(
-          "Usage: tusdview [--backend gl|vk] [--frames N] [--screenshot out.ppm]\n"
+          "Usage: tusdview [--backend gl|vk] [--rt] [--frames N] "
+          "[--screenshot out.ppm]\n"
           "                [--max-tris N] [--time-budget SECONDS] [--ui-scale S] "
-          "[file.usd|usda|usdc|usdz]\n");
+          "[file.usd|usda|usdc|usdz]\n"
+          "  --rt   Use Vulkan ray tracing (ray query) when the GPU supports it "
+          "(implies --backend vk).\n");
       return 0;
     } else if (argv[i][0] != '-') {
       file = argv[i];
     }
   }
 
+  // Ray tracing is a Vulkan technique, so --rt implies the Vulkan backend.
+  if (wantRt) backend = tusdview::Backend::Vulkan;
+
 #if !defined(HAVE_VULKAN)
   if (backend == tusdview::Backend::Vulkan) {
     std::fprintf(stderr,
                  "[tusdview] Vulkan backend not compiled in; using OpenGL.\n");
     backend = tusdview::Backend::GL;
+    wantRt = false;
   }
 #endif
 
@@ -71,5 +81,6 @@ int main(int argc, char** argv) {
   app.setLoadBudget(static_cast<std::size_t>(maxTris < 0 ? 0 : maxTris), timeBudget);
   app.setUiScale(uiScale);
   app.setWindowShot(windowShot);
+  app.setRequestRayTracing(wantRt);
   return app.run(file, maxFrames, screenshot);
 }

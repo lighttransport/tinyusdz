@@ -1,0 +1,109 @@
+#version 460
+
+// Vulkan ray-query primary + shadow tracer. Writes a shaded image that mirrors
+// the rasterizer's look (same directional light + ambient as mesh.frag), plus
+// hard shadows from one shadow ray. Base color only (no textures) for v1.
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_buffer_reference2 : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+// Vertex buffer = interleaved DrawVertex (8 floats: pos.xyz, nrm.xyz, uv.xy).
+layout(buffer_reference, scalar) readonly buffer Verts { float v[]; };
+layout(buffer_reference, scalar) readonly buffer Idx   { uint  i[]; };
+
+struct MeshDesc {
+  uint64_t vtxAddr;   // device address of the vertex buffer (DrawVertex[])
+  uint64_t idxAddr;   // device address of the index buffer (uint[])
+  uint     matId;     // index into the materials SSBO (-1 as 0xffffffff -> gray)
+  uint     pad;
+  vec4     nrm0;      // normal matrix columns (xyz used)
+  vec4     nrm1;
+  vec4     nrm2;
+};
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT TLAS;
+layout(set = 0, binding = 1, rgba8) uniform writeonly image2D outImg;
+layout(set = 0, binding = 2, scalar) readonly buffer Meshes { MeshDesc meshes[]; };
+layout(set = 0, binding = 3, scalar) readonly buffer Mats   { vec4 baseColor[]; };
+
+layout(push_constant) uniform PC {
+  mat4 invViewProj;  // inverse(proj * view)
+  vec4 camPos;       // xyz = camera world position
+  vec4 lightDir;     // xyz = unit direction *towards* the light
+  vec4 clearColor;   // rgb background for ray misses
+} pc;
+
+vec3 fetchPos(Verts vb, uint vi) {
+  return vec3(vb.v[vi * 8u + 0u], vb.v[vi * 8u + 1u], vb.v[vi * 8u + 2u]);
+}
+vec3 fetchNrm(Verts vb, uint vi) {
+  return vec3(vb.v[vi * 8u + 3u], vb.v[vi * 8u + 4u], vb.v[vi * 8u + 5u]);
+}
+
+void main() {
+  ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+  ivec2 size = imageSize(outImg);
+  if (px.x >= size.x || px.y >= size.y) return;
+
+  // Pixel -> NDC -> world ray via the inverse view-projection.
+  vec2 uv = (vec2(px) + 0.5) / vec2(size);
+  vec2 ndc = uv * 2.0 - 1.0;
+  vec4 nearH = pc.invViewProj * vec4(ndc, 0.0, 1.0);
+  vec4 farH  = pc.invViewProj * vec4(ndc, 1.0, 1.0);
+  vec3 nearW = nearH.xyz / nearH.w;
+  vec3 farW  = farH.xyz / farH.w;
+  vec3 origin = nearW;
+  vec3 dir = normalize(farW - nearW);
+
+  vec3 outc = pc.clearColor.rgb;
+
+  rayQueryEXT rq;
+  rayQueryInitializeEXT(rq, TLAS, gl_RayFlagsOpaqueEXT, 0xFF, origin, 1e-3, dir, 1e30);
+  while (rayQueryProceedEXT(rq)) {}
+
+  if (rayQueryGetIntersectionTypeEXT(rq, true) ==
+      gl_RayQueryCommittedIntersectionTriangleEXT) {
+    int inst = rayQueryGetIntersectionInstanceCustomIndexEXT(rq, true);
+    int prim = rayQueryGetIntersectionPrimitiveIndexEXT(rq, true);
+    vec2 bc = rayQueryGetIntersectionBarycentricsEXT(rq, true);
+    float t = rayQueryGetIntersectionTEXT(rq, true);
+    vec3 hit = origin + dir * t;
+
+    MeshDesc md = meshes[inst];
+    Verts vb = Verts(md.vtxAddr);
+    Idx ib = Idx(md.idxAddr);
+    uint i0 = ib.i[prim * 3u + 0u];
+    uint i1 = ib.i[prim * 3u + 1u];
+    uint i2 = ib.i[prim * 3u + 2u];
+    float w0 = 1.0 - bc.x - bc.y;
+    vec3 nObj = fetchNrm(vb, i0) * w0 + fetchNrm(vb, i1) * bc.x + fetchNrm(vb, i2) * bc.y;
+    mat3 nmat = mat3(md.nrm0.xyz, md.nrm1.xyz, md.nrm2.xyz);
+    vec3 N = normalize(nmat * nObj);
+
+    vec3 base = vec3(0.6);
+    if (md.matId != 0xffffffffu) base = baseColor[md.matId].rgb;
+
+    vec3 L = normalize(pc.lightDir.xyz);
+    float diff = max(dot(N, L), 0.0);
+
+    // Shadow ray towards the light (hard shadows).
+    float shadow = 1.0;
+    if (diff > 0.0) {
+      rayQueryEXT sq;
+      rayQueryInitializeEXT(sq, TLAS,
+                            gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+                            0xFF, hit + N * 1e-3, 1e-3, L, 1e30);
+      while (rayQueryProceedEXT(sq)) {}
+      if (rayQueryGetIntersectionTypeEXT(sq, true) !=
+          gl_RayQueryCommittedIntersectionNoneEXT) {
+        shadow = 0.0;
+      }
+    }
+    outc = base * (0.25 + 0.85 * diff * shadow);
+  }
+
+  imageStore(outImg, px, vec4(outc, 1.0));
+}
