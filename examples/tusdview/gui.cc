@@ -805,8 +805,6 @@ void Gui::buildHelpers() {
   // matrix carries the scene placement + up-axis conversion, so we transform the
   // joint positions by it to align the bones with the rendered mesh.
   if (showSkeleton_ && loaded_ && loaded_->ok) {
-    const float cs = std::max(half * 0.01f, 1e-3f);  // joint cross half-size
-
     // World matrix of the mesh skinned by skeleton `si` (identity if none).
     auto skelWorld = [&](size_t si) -> light3d::Mat4 {
       for (const auto& rm : loaded_->render.meshes) {
@@ -827,32 +825,40 @@ void Gui::buildHelpers() {
     for (size_t si = 0; si < skels.size(); ++si) {
       const auto& skel = skels[si];
       const size_t nj = skel.num_joints();
-      if (skel.bind_transforms.size() != nj ||
+      if (nj == 0 || skel.bind_transforms.size() != nj ||
           skel.parent_joint_indices.size() != nj) {
-        continue;  // malformed topology; skip
+        continue;  // empty or malformed topology; skip
       }
       const light3d::Mat4 W = skelWorld(si);
-      auto jointPos = [&](size_t i, float out[3]) {
+
+      // World-space joint positions + this skeleton's own AABB.
+      std::vector<light3d::Vec3> jp(nj);
+      light3d::Vec3 mn{1e30f, 1e30f, 1e30f};
+      light3d::Vec3 mx{-1e30f, -1e30f, -1e30f};
+      for (size_t i = 0; i < nj; ++i) {
         const auto& m = skel.bind_transforms[i].m;  // double m[4][4], row-major
-        const light3d::Vec3 w = light3d::transformPoint(
+        jp[i] = light3d::transformPoint(
             W, {static_cast<float>(m[3][0]), static_cast<float>(m[3][1]),
                 static_cast<float>(m[3][2])});
-        out[0] = w.x;
-        out[1] = w.y;
-        out[2] = w.z;
-      };
+        mn.x = std::min(mn.x, jp[i].x); mn.y = std::min(mn.y, jp[i].y);
+        mn.z = std::min(mn.z, jp[i].z);
+        mx.x = std::max(mx.x, jp[i].x); mx.y = std::max(mx.y, jp[i].y);
+        mx.z = std::max(mx.z, jp[i].z);
+      }
+      // Joint-cross size scaled to THIS skeleton's extent (not the whole scene)
+      // so crosses stay proportional across characters of different scales.
+      const float cs = std::max(light3d::length(mx - mn) * 0.02f, 1e-5f);
+
       for (size_t i = 0; i < nj; ++i) {
-        float p[3];
-        jointPos(i, p);
+        const light3d::Vec3& p = jp[i];
         // Small axis cross so leaf/isolated joints are visible too.
-        addOverlay(p[0] - cs, p[1], p[2], p[0] + cs, p[1], p[2], 0.20f, 0.95f, 0.95f);
-        addOverlay(p[0], p[1] - cs, p[2], p[0], p[1] + cs, p[2], 0.20f, 0.95f, 0.95f);
-        addOverlay(p[0], p[1], p[2] - cs, p[0], p[1], p[2] + cs, 0.20f, 0.95f, 0.95f);
+        addOverlay(p.x - cs, p.y, p.z, p.x + cs, p.y, p.z, 0.20f, 0.95f, 0.95f);
+        addOverlay(p.x, p.y - cs, p.z, p.x, p.y + cs, p.z, 0.20f, 0.95f, 0.95f);
+        addOverlay(p.x, p.y, p.z - cs, p.x, p.y, p.z + cs, 0.20f, 0.95f, 0.95f);
         const int par = skel.parent_joint_indices[i];
         if (par >= 0 && static_cast<size_t>(par) < nj) {
-          float pp[3];
-          jointPos(static_cast<size_t>(par), pp);
-          addOverlay(pp[0], pp[1], pp[2], p[0], p[1], p[2], 0.10f, 0.80f, 0.90f);
+          const light3d::Vec3& pp = jp[static_cast<size_t>(par)];
+          addOverlay(pp.x, pp.y, pp.z, p.x, p.y, p.z, 0.10f, 0.80f, 0.90f);
         }
       }
     }
