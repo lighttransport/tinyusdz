@@ -7,8 +7,11 @@ message(STATUS "tusdview: Vulkan backend ENABLED (${Vulkan_LIBRARIES})")
 set(TUSDVIEW_SHADER_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/tusdview_shaders)
 file(MAKE_DIRECTORY ${TUSDVIEW_SHADER_GEN_DIR})
 
-# Prefer the compiler discovered by FindVulkan; otherwise search PATH + known prefix.
-if(Vulkan_GLSLANG_VALIDATOR_EXECUTABLE)
+# Prefer an explicit override (TUSDVIEW_GLSLANG, e.g. a modern glslangValidator
+# that supports GL_EXT_ray_query), then the FindVulkan compiler, then PATH.
+if(TUSDVIEW_GLSLANG)
+  set(GLSLANG ${TUSDVIEW_GLSLANG})
+elseif(Vulkan_GLSLANG_VALIDATOR_EXECUTABLE)
   set(GLSLANG ${Vulkan_GLSLANG_VALIDATOR_EXECUTABLE})
 else()
   find_program(GLSLANG glslangValidator HINTS $ENV{HOME}/local/bin /usr/bin /usr/local/bin)
@@ -34,13 +37,43 @@ foreach(sh ${_shader_srcs})
     VERBATIM)
   list(APPEND _spv_headers ${out})
 endforeach()
+
+# Ray-query compute shader needs SPIR-V 1.4 (ray query + buffer_reference), which
+# requires a glslang with GL_EXT_ray_query support (>= ~11 / a Vulkan SDK build).
+# Probe the chosen compiler at configure time; only enable the Vulkan RT path when
+# it can actually compile the shader. Older glslang (no ray_query) -> RT compiled
+# out, VK falls back to rasterization. Override with -DTUSDVIEW_GLSLANG=/path.
+set(_rt_out ${TUSDVIEW_SHADER_GEN_DIR}/raytrace_comp.spv.h)
+execute_process(
+  COMMAND ${GLSLANG} -V --target-env vulkan1.2 --vn raytrace_comp_spv
+          -o ${_rt_out} ${CMAKE_CURRENT_SOURCE_DIR}/vk/shaders/raytrace.comp
+  RESULT_VARIABLE _rt_probe_rc OUTPUT_QUIET ERROR_QUIET)
+if(_rt_probe_rc EQUAL 0)
+  set(_have_rt_shader 1)
+  add_custom_command(
+    OUTPUT ${_rt_out}
+    COMMAND ${GLSLANG} -V --target-env vulkan1.2 --vn raytrace_comp_spv
+            -o ${_rt_out} ${CMAKE_CURRENT_SOURCE_DIR}/vk/shaders/raytrace.comp
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/vk/shaders/raytrace.comp
+    COMMENT "tusdview: glslang raytrace.comp -> raytrace_comp.spv.h (vulkan1.2)"
+    VERBATIM)
+  list(APPEND _spv_headers ${_rt_out})
+  message(STATUS "tusdview: Vulkan ray query ENABLED (glslang supports GL_EXT_ray_query)")
+else()
+  set(_have_rt_shader 0)
+  message(STATUS "tusdview: Vulkan ray tracing DISABLED — '${GLSLANG}' cannot compile "
+    "GL_EXT_ray_query. Install a newer glslang and reconfigure with "
+    "-DTUSDVIEW_GLSLANG=/path/to/glslangValidator. VK uses rasterization.")
+endif()
+
 add_custom_target(tusdview_shaders DEPENDS ${_spv_headers})
 
 # --- Backend sources + link ------------------------------------------------
 target_sources(${EXAMPLE_TARGET} PRIVATE
     vk/vk_renderer.cc
     ${COMMON_DIR}/imgui/imgui_impl_vulkan.cpp)
-target_compile_definitions(${EXAMPLE_TARGET} PRIVATE HAVE_VULKAN=1)
+target_compile_definitions(${EXAMPLE_TARGET} PRIVATE HAVE_VULKAN=1
+    TUSDVIEW_HAVE_RT_SHADER=${_have_rt_shader})
 target_include_directories(${EXAMPLE_TARGET} PRIVATE ${TUSDVIEW_SHADER_GEN_DIR})
 target_link_libraries(${EXAMPLE_TARGET} PRIVATE Vulkan::Vulkan)
 add_dependencies(${EXAMPLE_TARGET} tusdview_shaders)

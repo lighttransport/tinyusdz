@@ -171,6 +171,14 @@ void Gui::drawDockspaceAndMenu() {
       if (ImGui::MenuItem("Shaded", nullptr, shaded)) mode_ = RenderMode::Shaded;
       if (ImGui::MenuItem("Wireframe", nullptr, wire)) mode_ = RenderMode::Wireframe;
       ImGui::Separator();
+      // Ray tracing (Vulkan only; disabled when the device/build can't do it).
+      // The checkmark mirrors the renderer's actual technique.
+      const bool rtAvail = renderer_ && renderer_->rayTracingAvailable();
+      const bool rtOn = renderer_ && renderer_->rayTracingActive();
+      if (ImGui::MenuItem("Ray tracing (Vulkan)", nullptr, rtOn, rtAvail)) {
+        if (renderer_) renderer_->setRayTracing(!rtOn);
+      }
+      ImGui::Separator();
       if (ImGui::MenuItem("Fit to scene", "F", false, draw_ && draw_->hasBounds)) {
         cam_->fitToScene(draw_->aabbMin, draw_->aabbMax);
       }

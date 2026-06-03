@@ -10,6 +10,7 @@
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "gpu_scene.hh"
@@ -34,6 +35,9 @@ class VulkanRenderer final : public Renderer {
   void present() override;
   bool captureViewport(std::vector<uint8_t>* rgba, int* w, int* h) override;
   const RendererCaps& caps() const override { return caps_; }
+  bool rayTracingAvailable() const override { return rtSupported_; }
+  bool rayTracingActive() const override { return rtActive_; }
+  void setRayTracing(bool enable) override;
   void shutdown() override;
 
  private:
@@ -46,6 +50,18 @@ class VulkanRenderer final : public Renderer {
     VkDeviceMemory eboMem{VK_NULL_HANDLE};
     std::vector<DrawSubmesh> submeshes;
     float world[16];
+    // Ray tracing (built when RT is supported): a BLAS over this mesh's
+    // triangles plus device addresses + counts for the shader.
+    VkAccelerationStructureKHR blas{VK_NULL_HANDLE};
+    VkBuffer blasBuf{VK_NULL_HANDLE};
+    VkDeviceMemory blasMem{VK_NULL_HANDLE};
+    VkDeviceAddress blasAddr{0};
+    VkDeviceAddress vboAddr{0};
+    VkDeviceAddress eboAddr{0};
+    uint32_t vertexCount{0};
+    uint32_t indexCount{0};
+    int matId{-1};       // material id of the mesh's first submesh (RT shading)
+    float normalMat[9];  // inverse-transpose of world 3x3 (object->world normals)
   };
 
   // setup helpers
@@ -66,6 +82,18 @@ class VulkanRenderer final : public Renderer {
   bool createDescriptorInfra(std::string* err);
   bool createWhiteTexture(std::string* err);
 
+  // --- Ray tracing (ray query) ---
+  void detectRtSupport();              // sets rtSupported_ + loads RT entrypoints
+  bool createRtResources(std::string* err);  // descriptor layout/pool + pipeline
+  void destroyRt();
+  VkDeviceAddress bufferDeviceAddress(VkBuffer buf) const;
+  bool createDeviceBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
+                          VkBuffer* buf, VkDeviceMemory* mem);  // device-local + addr
+  void buildBlas(VkMeshGPU& m);
+  void rebuildTlas();                  // (re)build TLAS + MeshDesc/Material SSBOs
+  void createRtImage();                // storage image sized to the viewport
+  void traceRt(VkCommandBuffer cb);    // dispatch + copy into colorImg_
+
   void destroySwapchain();
   bool recreateSwapchain();
   void destroyOffscreen();
@@ -73,7 +101,7 @@ class VulkanRenderer final : public Renderer {
 
   uint32_t findMemoryType(uint32_t typeBits, VkMemoryPropertyFlags props) const;
   bool createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usage, const void* data,
-                        VkBuffer* buf, VkDeviceMemory* mem);
+                        VkBuffer* buf, VkDeviceMemory* mem, bool deviceAddress = false);
   bool createTextureImage(const light3d::Image& img, VkImage* outImg,
                           VkDeviceMemory* outMem, VkImageView* outView);
   VkDescriptorSet allocTexDescriptor(VkImageView view);
@@ -161,6 +189,43 @@ class VulkanRenderer final : public Renderer {
   float proj_[16];
   float cameraPos_[3]{0, 0, 0};
   float clear_[4]{0.12f, 0.12f, 0.13f, 1.0f};
+
+  // --- Ray tracing (ray query) state ---
+  bool rtSupported_{false};   // device + shader available
+  bool rtActive_{false};      // RT technique currently selected
+  bool tlasDirty_{true};      // TLAS / SSBOs need rebuild
+  std::string techniqueLabel_{"Vulkan"};  // caps_.backend_name points here
+  uint32_t scratchAlign_{256};
+
+  PFN_vkGetBufferDeviceAddressKHR pfnGetBufferDeviceAddress_{nullptr};
+  PFN_vkGetAccelerationStructureBuildSizesKHR pfnGetASBuildSizes_{nullptr};
+  PFN_vkCreateAccelerationStructureKHR pfnCreateAS_{nullptr};
+  PFN_vkDestroyAccelerationStructureKHR pfnDestroyAS_{nullptr};
+  PFN_vkCmdBuildAccelerationStructuresKHR pfnCmdBuildAS_{nullptr};
+  PFN_vkGetAccelerationStructureDeviceAddressKHR pfnGetASDeviceAddress_{nullptr};
+
+  VkAccelerationStructureKHR tlas_{VK_NULL_HANDLE};
+  VkBuffer tlasBuf_{VK_NULL_HANDLE};
+  VkDeviceMemory tlasMem_{VK_NULL_HANDLE};
+  VkBuffer instBuf_{VK_NULL_HANDLE};       // VkAccelerationStructureInstanceKHR[]
+  VkDeviceMemory instMem_{VK_NULL_HANDLE};
+  VkDeviceSize instCap_{0};
+  VkBuffer meshDescBuf_{VK_NULL_HANDLE};    // per-mesh {addrs, matId, normalMat}
+  VkDeviceMemory meshDescMem_{VK_NULL_HANDLE};
+  VkDeviceSize meshDescCap_{0};
+  VkBuffer rtMatBuf_{VK_NULL_HANDLE};       // vec4 baseColor[]
+  VkDeviceMemory rtMatMem_{VK_NULL_HANDLE};
+  VkDeviceSize rtMatCap_{0};
+
+  VkImage rtImage_{VK_NULL_HANDLE};
+  VkDeviceMemory rtImageMem_{VK_NULL_HANDLE};
+  VkImageView rtImageView_{VK_NULL_HANDLE};
+
+  VkDescriptorSetLayout rtSetLayout_{VK_NULL_HANDLE};
+  VkDescriptorPool rtPool_{VK_NULL_HANDLE};
+  VkDescriptorSet rtSet_{VK_NULL_HANDLE};
+  VkPipelineLayout rtPipelineLayout_{VK_NULL_HANDLE};
+  VkPipeline rtPipeline_{VK_NULL_HANDLE};
 };
 
 }  // namespace tusdview
