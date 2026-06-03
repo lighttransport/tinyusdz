@@ -34,87 +34,64 @@ wasm builds are byte-for-byte unaffected. `shared_ptr` keeps `Layer`
 copyable/movable. Covered by `pcp_singlethread_vs_multithread_identical_test`
 and `pcp_mt_shared_reference_test`.
 
+### TaskQueue / TaskQueueFunc payload publication — **FIXED**
+The lock-free ring claimed a slot via CAS on `_write_pos`/`_read_pos` and only
+*then* stored/loaded the `TaskItem` payload (`src/task-queue.hh` Push/Pop), so
+the payload access was unordered w.r.t. the position publish → a consumer could
+read a slot before the producer wrote it. TSan flagged this in
+`task_queue_multithreaded_test`. (pcp itself never uses `TaskQueue`; the
+producer here is `src/prim-pprint-parallel.cc`.)
+
+Fix: rewrote both queues as a Dmitry Vyukov bounded MPMC queue. Each ring slot
+carries a `std::atomic<uint64_t> seq`; the producer stores the payload then
+`seq.store(release)`, and the consumer `seq.load(acquire)` before reading — so
+publication is correctly ordered. Single `std::atomic`-based implementation
+(replaces the hand-rolled `__atomic_*` / mutex-fallback dual path); public API
+(`Push`/`Pop`/`Size`/`Empty`/`Capacity`/`Clear`) unchanged. The i386 64-bit
+atomic test skip stays (std::atomic is still correct there, just not lock-free).
+TSan-clean in `task_queue_multithreaded_test`.
+
+### Path::variant_part() / element_name() mutable buffers — **FIXED**
+Both `const` accessors wrote `mutable` string buffers (`_variant_part_str`,
+`_element`), racing if called on a shared `Path` from two threads.
+
+Fix: both now return `std::string` **by value**. `variant_part()` builds the
+string locally (the `mutable _variant_part_str` member is removed entirely).
+`element_name()` returns the construction-time `_element` (now a plain,
+non-`mutable` member written only by non-const `_update`/append paths) or
+computes the fallback locally without writing — so no `const` mutation remains.
+`Path::operator==` compares `full_path_name()` and never depended on the removed
+lazy side-effect.
+
+### Layer::check_unresolved_*() mutable flags — **FIXED**
+The six `const` compute-and-cache methods (`check_unresolved_references` … and
+`check_over_primspec`) and their `has_unresolved_*()` getters touched
+`mutable bool _has_*` flags without synchronization. Now each write and each
+getter read is wrapped in a `std::lock_guard` on the gated `LayerImpl::_cache_mu`
+(`#if defined(TINYUSDZ_ENABLE_THREAD)`), reusing the same mutex as the lookup
+cache. Zero overhead when threads are off.
+
+### Layer copy carries stale cache pointers + shared mutex — **FIXED**
+`Layer::Layer(const Layer&)` / `operator=` copied `*other._impl` wholesale,
+which (a) copied `_primspec_path_cache` (`const PrimSpec*` into the *source's*
+tree) and (b) copied the `shared_ptr<mutex> _cache_mu` **by value**, so a copy
+*shared the source's mutex*. Both copy paths now reset the lookup cache on the
+new impl: `_dirty = true`, `_primspec_path_cache.clear()`, and (gated) a fresh
+`_cache_mu = std::make_shared<std::mutex>()`.
+
+### Callback thread-safety contract — **DOCUMENTED**
+`CompositionGraphOptions::payload_policy` and `::fileformats` (in
+`src/composition-graph.hh`) and `pcp::CacheOptions::composition` /
+`PrewarmPrimIndices` / `BuildStage` (in `src/pcp/cache.hh`) now carry doc
+comments stating that, with `num_threads != 1`, these callbacks run concurrently
+on worker threads and must be thread-safe. No code change.
+
 ---
 
 ## Remaining issues
 
-### 1. Pre-existing — `TaskQueue::Push`/`Pop` data races (NOT used by pcp)
-- **Where:** `src/task-queue.hh:100` (`_tasks[index] = TaskItem(...)` store in
-  `Push`) and `:147` (`task = _tasks[index]` load in `Pop`); the
-  `TaskQueueFunc` variant has the same pattern at `:279`/`:297` and `:164`.
-- **Why:** the lock-free ring orders slots with atomic `_write_pos`/`_read_pos`
-  but the **payload** `TaskItem` store/load is a plain (non-atomic) access, so
-  TSan flags producer/consumer overlap on the same slot. Exercised by
-  `tests/unit/unit-task-queue.cc:163/176` (`task_queue_multithreaded_test`).
-- **Impact on pcp:** none. `src/pcp/cache-parallel.cc` deliberately does **not**
-  use `TaskQueue`; it uses `std::thread` + a `std::atomic<size_t>` work index
-  and pre-sized per-worker output slots. This entry is recorded only because the
-  full-suite TSan run surfaced it.
-- **Severity:** medium (real on weak memory models). Pre-existing; the MT
-  TaskQueue test is already skipped on i386 due to 64-bit atomics.
-- **Fix sketch:** make the slot payload publication ordered w.r.t. the position
-  CAS — e.g. store the `TaskItem` *before* the releasing `_write_pos` update and
-  load it *after* the acquiring `_read_pos` check, with `std::atomic_ref` (C++20)
-  or by making `_tasks[i]` an atomic/seqlock'd cell. Or gate the test out of TSan.
-
-### 2. Latent — `Path::variant_part()` / `element_name()` mutable buffers
-- **Where:** `src/core/path.hh` — `mutable std::string _variant_part_str` (L385)
-  and `mutable std::string _element` (L386), written by the `const` accessors
-  `variant_part()` (L116-119) and `element_name()` (L201, def in `path.cc`).
-- **Why:** these `const` methods write the mutable buffers, so calling them on a
-  **shared** `Path` from two threads races.
-- **Triggered today?** **No.** The build path (`composition-graph.cc`,
-  `layer.cc`, `namespace-mapping.*`) calls neither on shared `Path`s — it uses
-  `prim_part()` (returns a member ref, pure) and `full_path_name()` (builds a
-  local string, pure). Confirmed by grep.
-- **Severity:** low now, but a footgun: any future build-path code that calls
-  `variant_part()`/`element_name()` on a `Path` living inside a shared
-  layer's `PrimSpec` metadata (e.g. `Reference::prim_path`, an inherit/specialize
-  target) during a parallel build would introduce a fresh race.
-- **Fix sketch:** make these return a computed `std::string` by value instead of
-  caching into a mutable buffer (drops the `mutable` members entirely); or add a
-  short comment at the call-free build sites warning not to call them on shared
-  Paths under MT.
-
-### 3. Latent — `Layer::check_unresolved_*()` mutable flags
-- **Where:** `src/layer.cc` — `mutable bool _has_unresolved_references` … (L251-257)
-  written by `check_unresolved_references()` (sets at L528), `…_payload` (L543),
-  `…_over_primspec` (L603), etc. — all `const` methods that compute-and-cache.
-- **Why:** unsynchronized writes to the mutable flags if two threads call
-  `check_unresolved_*()` on the same shared `Layer` concurrently.
-- **Triggered today?** **No.** The parallel build reads `PrimSpec` metadata
-  directly (`ps->metas().references`, …) and never calls
-  `Layer::has_unresolved_*()` / `check_unresolved_*()` on shared layers. These
-  flags are computed single-threaded (sublayer composition in `Cache::Open()`,
-  or during layer load under the registry lock).
-- **Severity:** low; footgun if a future MT path calls these on a shared layer.
-- **Fix sketch:** reuse the same `LayerImpl::_cache_mu` (gated) to guard these
-  flags, or compute them eagerly at load time.
-
-### 4. Latent / pre-existing — `Layer` copy carries stale cache pointers
-- **Where:** `Layer::Layer(const Layer&)` (`src/layer.cc:274`) deep-copies
-  `*other._impl`, which copies `_primspec_path_cache` (a map of
-  `const PrimSpec*` pointing into the **source** layer's `_prim_specs` tree) and
-  `_dirty`.
-- **Why:** the copy's cache entries point into the *original* layer's tree. If
-  the source had `_dirty == false` (cache populated), the copy returns pointers
-  into the source layer from `find_primspec_at` — dangling if the source is
-  destroyed, or wrong after either layer mutates.
-- **Triggered today?** Not observed: composition copies layers while they are
-  still `_dirty` (freshly built, not yet queried), so the copy clears the cache
-  on first use. Not introduced by this work.
-- **Severity:** low-but-real correctness footgun (independent of threading).
-- **Fix sketch:** give `LayerImpl` a user-defined copy ctor that copies data but
-  resets the lookup cache (`_dirty = true`, empty cache, fresh `_cache_mu`).
-
-### 5. By-design caveat — user callbacks under multithreading
-- `CacheOptions::composition.payload_policy` (a `std::function`) and the
-  `fileformats` handlers are invoked from worker threads during a parallel
-  build. Each worker uses its own *copy* of the `std::function`, but any state
-  the closure **captures** may be shared.
-- **Action:** document that these callbacks must be thread-safe when
-  `num_threads != 1`. Not a code bug; an API contract to record (e.g. in
-  `cache.hh` near `CacheOptions`).
+None. All audited items are fixed or documented above. The full unit suite is
+TSan-clean (see *Reproducing*).
 
 ---
 
@@ -155,10 +132,10 @@ setarch -R ./build-tsan/unit-test-tinyusdz pcp_mt_shared_reference_test \
 setarch -R ./build-tsan/unit-test-tinyusdz
 ```
 
-The pcp tests must report **0 data races**. Any race whose stack mentions
-`src/pcp/`, `src/layer.cc`, `src/composition-graph.cc`, or `src/tiny-hashmap.hh`
-is a regression in this work; races in `src/task-queue.hh` are item #1
-(pre-existing, not used by pcp).
+The **entire** suite must now report **0 data races** — including
+`task_queue_multithreaded_test`. Any race whose stack mentions `src/pcp/`,
+`src/layer.cc`, `src/composition-graph.cc`, `src/task-queue.hh`, or
+`src/tiny-hashmap.hh` is a regression in this work.
 
 After any change, also run the normal builds:
 ```bash
@@ -173,34 +150,19 @@ breaks `Layer` copy/move.
 
 ---
 
-## Resume prompt
+## Maintenance note
 
-Paste this to continue the work in a fresh session:
+All audited items are resolved; the full unit suite is TSan-clean. Rules to keep
+in mind when touching this code in the future:
 
-```
-Continue the thread-safety hardening on branch pcp-2026. Read doc/datarace.md
-first — it records the audited state. Background: tinyusdz::pcp::Cache (src/pcp/)
-has an optional multithreaded build path; the one race that mattered
-(Layer::find_primspec_at lookup cache) is already fixed and TSan-clean.
-
-Remaining items, in priority order:
-  1. Pre-existing TaskQueue::Push/Pop races (src/task-queue.hh:100/147) — make
-     the slot payload publication ordered w.r.t. the position CAS, or gate the
-     task_queue_multithreaded_test out of TSan. pcp does not use TaskQueue.
-  2. Latent: Path::variant_part()/element_name() mutable buffers
-     (src/core/path.hh:385-386) — prefer returning by value to drop the mutable
-     members; not currently called on shared Paths in the build path.
-  3. Latent: Layer::check_unresolved_*() mutable flags (src/layer.cc:251-257) —
-     guard with the gated LayerImpl::_cache_mu or compute eagerly at load.
-  4. Layer copy carries stale lookup-cache pointers (Layer::Layer(const Layer&),
-     src/layer.cc:274) — add a LayerImpl copy ctor that resets the cache.
-  5. Document the payload_policy/fileformats thread-safety contract near
-     CacheOptions in src/pcp/cache.hh.
-
-Rules: gate all synchronization on TINYUSDZ_ENABLE_THREAD; keep non-threaded and
-wasm builds zero-overhead; never add a mutex member that breaks Layer copy/move
-(use shared_ptr<mutex> if needed). After each change, verify with ThreadSanitizer
-per doc/datarace.md (build-tsan + `setarch -R`), and run the full unit suite
-threads-off and threads-on (expect 0 races in pcp/layer/composition-graph/
-tiny-hashmap; the only acceptable races are item #1 in task-queue.hh).
-```
+- Gate all synchronization on `TINYUSDZ_ENABLE_THREAD`; keep non-threaded and
+  wasm builds zero-overhead.
+- Never add a mutex member that breaks `Layer` copy/move — use
+  `shared_ptr<mutex>` (and reset it in `Layer`'s copy paths so copies don't share
+  it).
+- Don't add new `mutable` compute-and-cache state to `Path` / `Layer` / `PrimSpec`
+  that a `const` accessor writes; either compute by value or guard it with the
+  gated `LayerImpl::_cache_mu`.
+- After any change, verify with ThreadSanitizer per the *Reproducing* section
+  (build-tsan + `setarch -R`) and run the full unit suite threads-off and
+  threads-on. Expect **0 races** across the whole suite.

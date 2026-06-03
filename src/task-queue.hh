@@ -1,24 +1,23 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2025-Present Light Transport Entertainment Inc.
 //
-// Lock-free task queue for multi-threaded task execution
+// Lock-free task queue for multi-threaded task execution.
+//
+// Implemented as a bounded multi-producer/multi-consumer (MPMC) queue using
+// Dmitry Vyukov's algorithm: each ring slot carries an atomic sequence number
+// so the payload store is release-ordered against the slot becoming visible to
+// consumers, and the payload load is acquire-ordered against the producer's
+// publish. This makes the payload access correctly synchronized w.r.t. the
+// position counters (the earlier hand-rolled ring claimed the slot with a CAS
+// and only *then* touched the payload, leaving the payload access unordered).
 //
 #pragma once
 
 #include <atomic>
-#include <mutex>
 #include <functional>
-#include <vector>
+#include <memory>
 #include <cstdint>
 #include <cstddef>
-
-// Detect compiler support for GCC-style lock-free atomics
-// MSVC does not have __atomic_* builtins, so it uses the mutex fallback
-#if (defined(__GNUC__) || defined(__clang__)) && !defined(_MSC_VER)
-  #define TINYUSDZ_TASK_QUEUE_HAS_BUILTIN_ATOMICS 1
-#else
-  #define TINYUSDZ_TASK_QUEUE_HAS_BUILTIN_ATOMICS 0
-#endif
 
 namespace tinyusdz {
 
@@ -42,9 +41,122 @@ struct TaskItemFunc {
   explicit TaskItemFunc(std::function<void()> f) : func(std::move(f)) {}
 };
 
+namespace detail {
+
+// One ring slot: an atomic sequence number plus the payload.
+template <typename T>
+struct TaskQueueCell {
+  std::atomic<uint64_t> seq;
+  T data;
+  TaskQueueCell() : seq(0), data() {}
+};
+
 ///
-/// Lock-free task queue for C function pointers
-/// Uses lock-free atomics when available, falls back to mutex otherwise
+/// Bounded MPMC queue (Vyukov). Shared core for the TaskItem and TaskItemFunc
+/// queues. Capacity is fixed at construction; works for any capacity (slot
+/// index is `pos % capacity`).
+///
+template <typename T>
+class TaskQueueBase {
+ public:
+  explicit TaskQueueBase(size_t capacity)
+      : _capacity(capacity ? capacity : 1),
+        _buffer(new detail::TaskQueueCell<T>[_capacity]),
+        _enqueue_pos(0),
+        _dequeue_pos(0) {
+    // Seed each slot's sequence with its index (enqueue-ready state).
+    for (size_t i = 0; i < _capacity; i++) {
+      _buffer[i].seq.store(i, std::memory_order_relaxed);
+    }
+  }
+
+  ~TaskQueueBase() = default;
+
+  TaskQueueBase(const TaskQueueBase&) = delete;
+  TaskQueueBase& operator=(const TaskQueueBase&) = delete;
+
+  /// Enqueue. Returns false if the queue is full.
+  bool enqueue(T&& item) {
+    detail::TaskQueueCell<T>* cell;
+    uint64_t pos = _enqueue_pos.load(std::memory_order_relaxed);
+    for (;;) {
+      cell = &_buffer[pos % _capacity];
+      uint64_t seq = cell->seq.load(std::memory_order_acquire);
+      int64_t dif = static_cast<int64_t>(seq) - static_cast<int64_t>(pos);
+      if (dif == 0) {
+        // Slot is free and ours to claim.
+        if (_enqueue_pos.compare_exchange_weak(pos, pos + 1,
+                                                std::memory_order_relaxed)) {
+          break;
+        }
+      } else if (dif < 0) {
+        return false;  // full
+      } else {
+        pos = _enqueue_pos.load(std::memory_order_relaxed);
+      }
+    }
+    cell->data = std::move(item);
+    // Publish: a consumer that acquire-loads this sees the payload above.
+    cell->seq.store(pos + 1, std::memory_order_release);
+    return true;
+  }
+
+  /// Dequeue into `out`. Returns false if the queue is empty.
+  bool dequeue(T& out) {
+    detail::TaskQueueCell<T>* cell;
+    uint64_t pos = _dequeue_pos.load(std::memory_order_relaxed);
+    for (;;) {
+      cell = &_buffer[pos % _capacity];
+      uint64_t seq = cell->seq.load(std::memory_order_acquire);
+      int64_t dif = static_cast<int64_t>(seq) - static_cast<int64_t>(pos + 1);
+      if (dif == 0) {
+        if (_dequeue_pos.compare_exchange_weak(pos, pos + 1,
+                                               std::memory_order_relaxed)) {
+          break;
+        }
+      } else if (dif < 0) {
+        return false;  // empty
+      } else {
+        pos = _dequeue_pos.load(std::memory_order_relaxed);
+      }
+    }
+    out = std::move(cell->data);
+    // Release the slot for reuse one ring-lap ahead.
+    cell->seq.store(pos + _capacity, std::memory_order_release);
+    return true;
+  }
+
+  /// Approximate count under concurrent use; exact when quiescent.
+  size_t size() const {
+    uint64_t e = _enqueue_pos.load(std::memory_order_acquire);
+    uint64_t d = _dequeue_pos.load(std::memory_order_acquire);
+    return (e >= d) ? static_cast<size_t>(e - d) : 0;
+  }
+
+  bool empty() const { return size() == 0; }
+
+  size_t capacity() const { return _capacity; }
+
+  /// Drain all pending items. Intended for single-threaded use (no concurrent
+  /// enqueue/dequeue in flight).
+  void clear() {
+    T tmp;
+    while (dequeue(tmp)) {
+    }
+  }
+
+ private:
+  const size_t _capacity;
+  std::unique_ptr<detail::TaskQueueCell<T>[]> _buffer;
+  // Padding-free: contention on these two counters is inherent to MPMC.
+  std::atomic<uint64_t> _enqueue_pos;
+  std::atomic<uint64_t> _dequeue_pos;
+};
+
+}  // namespace detail
+
+///
+/// Lock-free (bounded MPMC) task queue for C function pointers.
 ///
 /// Example:
 ///   TaskQueue queue(1024);
@@ -56,16 +168,10 @@ struct TaskItemFunc {
 ///
 class TaskQueue {
  public:
-  explicit TaskQueue(size_t capacity = 1024)
-      : _capacity(capacity),
-        _write_pos(0),
-        _read_pos(0) {
-    _tasks.resize(_capacity);
-  }
+  explicit TaskQueue(size_t capacity = 1024) : _q(capacity) {}
 
   ~TaskQueue() = default;
 
-  // Disable copy
   TaskQueue(const TaskQueue&) = delete;
   TaskQueue& operator=(const TaskQueue&) = delete;
 
@@ -79,46 +185,7 @@ class TaskQueue {
     if (!func) {
       return false;
     }
-
-#if TINYUSDZ_TASK_QUEUE_HAS_BUILTIN_ATOMICS
-    // Lock-free implementation with CAS
-    while (true) {
-      uint64_t current_write = __atomic_load_n(&_write_pos, __ATOMIC_ACQUIRE);
-      uint64_t current_read = __atomic_load_n(&_read_pos, __ATOMIC_ACQUIRE);
-
-      // Check if queue is full
-      if (current_write - current_read >= _capacity) {
-        return false;
-      }
-
-      // Try to claim this slot with CAS
-      uint64_t next_write = current_write + 1;
-      if (__atomic_compare_exchange_n(&_write_pos, &current_write, next_write,
-                                       false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-        // Successfully claimed slot, now store the task
-        size_t index = current_write % _capacity;
-        _tasks[index] = TaskItem(func, user_data);
-        return true;
-      }
-      // CAS failed, retry
-    }
-#else
-    // Mutex fallback
-    std::lock_guard<std::mutex> lock(_mutex);
-
-    uint64_t current_write = _write_pos.load(std::memory_order_acquire);
-    uint64_t next_write = current_write + 1;
-    uint64_t current_read = _read_pos.load(std::memory_order_acquire);
-
-    if (next_write - current_read > _capacity) {
-      return false;
-    }
-
-    size_t index = current_write % _capacity;
-    _tasks[index] = TaskItem(func, user_data);
-    _write_pos.store(next_write, std::memory_order_release);
-    return true;
-#endif
+    return _q.enqueue(TaskItem(func, user_data));
   }
 
   ///
@@ -126,105 +193,24 @@ class TaskQueue {
   /// @param[out] task Retrieved task item
   /// @return true if a task was retrieved, false if queue is empty
   ///
-  bool Pop(TaskItem& task) {
-#if TINYUSDZ_TASK_QUEUE_HAS_BUILTIN_ATOMICS
-    // Lock-free implementation with CAS
-    while (true) {
-      uint64_t current_read = __atomic_load_n(&_read_pos, __ATOMIC_ACQUIRE);
-      uint64_t current_write = __atomic_load_n(&_write_pos, __ATOMIC_ACQUIRE);
+  bool Pop(TaskItem& task) { return _q.dequeue(task); }
 
-      // Check if queue is empty
-      if (current_read >= current_write) {
-        return false;
-      }
+  /// Current queue size (approximate under concurrent use).
+  size_t Size() const { return _q.size(); }
 
-      // Try to claim this slot with CAS
-      uint64_t next_read = current_read + 1;
-      if (__atomic_compare_exchange_n(&_read_pos, &current_read, next_read,
-                                       false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-        // Successfully claimed slot, now load the task
-        size_t index = current_read % _capacity;
-        task = _tasks[index];
-        return true;
-      }
-      // CAS failed, retry
-    }
-#else
-    // Mutex fallback
-    std::lock_guard<std::mutex> lock(_mutex);
+  bool Empty() const { return _q.empty(); }
 
-    uint64_t current_read = _read_pos.load(std::memory_order_acquire);
-    uint64_t current_write = _write_pos.load(std::memory_order_acquire);
+  size_t Capacity() const { return _q.capacity(); }
 
-    if (current_read >= current_write) {
-      return false;
-    }
-
-    size_t index = current_read % _capacity;
-    task = _tasks[index];
-    _read_pos.store(current_read + 1, std::memory_order_release);
-    return true;
-#endif
-  }
-
-  ///
-  /// Get current queue size (approximate in lock-free mode)
-  ///
-  size_t Size() const {
-#if TINYUSDZ_TASK_QUEUE_HAS_BUILTIN_ATOMICS
-    uint64_t w = __atomic_load_n(&_write_pos, __ATOMIC_ACQUIRE);
-    uint64_t r = __atomic_load_n(&_read_pos, __ATOMIC_ACQUIRE);
-#else
-    uint64_t w = _write_pos.load(std::memory_order_acquire);
-    uint64_t r = _read_pos.load(std::memory_order_acquire);
-#endif
-    return (w >= r) ? static_cast<size_t>(w - r) : 0;
-  }
-
-  ///
-  /// Check if queue is empty
-  ///
-  bool Empty() const {
-    return Size() == 0;
-  }
-
-  ///
-  /// Get queue capacity
-  ///
-  size_t Capacity() const {
-    return _capacity;
-  }
-
-  ///
-  /// Clear all pending tasks
-  ///
-  void Clear() {
-#if TINYUSDZ_TASK_QUEUE_HAS_BUILTIN_ATOMICS
-    uint64_t w = __atomic_load_n(&_write_pos, __ATOMIC_ACQUIRE);
-    __atomic_store_n(&_read_pos, w, __ATOMIC_RELEASE);
-#else
-    std::lock_guard<std::mutex> lock(_mutex);
-    uint64_t w = _write_pos.load(std::memory_order_acquire);
-    _read_pos.store(w, std::memory_order_release);
-#endif
-  }
+  /// Clear all pending tasks (single-threaded use).
+  void Clear() { _q.clear(); }
 
  private:
-  const size_t _capacity;
-  std::vector<TaskItem> _tasks;
-
-#if TINYUSDZ_TASK_QUEUE_HAS_BUILTIN_ATOMICS
-  uint64_t _write_pos;
-  uint64_t _read_pos;
-#else
-  std::atomic<uint64_t> _write_pos;
-  std::atomic<uint64_t> _read_pos;
-  std::mutex _mutex;
-#endif
+  detail::TaskQueueBase<TaskItem> _q;
 };
 
 ///
-/// Task queue for std::function version
+/// Lock-free (bounded MPMC) task queue for the std::function version.
 ///
 /// Example:
 ///   TaskQueueFunc queue(1024);
@@ -236,16 +222,10 @@ class TaskQueue {
 ///
 class TaskQueueFunc {
  public:
-  explicit TaskQueueFunc(size_t capacity = 1024)
-      : _capacity(capacity),
-        _write_pos(0),
-        _read_pos(0) {
-    _tasks.resize(_capacity);
-  }
+  explicit TaskQueueFunc(size_t capacity = 1024) : _q(capacity) {}
 
   ~TaskQueueFunc() = default;
 
-  // Disable copy
   TaskQueueFunc(const TaskQueueFunc&) = delete;
   TaskQueueFunc& operator=(const TaskQueueFunc&) = delete;
 
@@ -258,46 +238,7 @@ class TaskQueueFunc {
     if (!func) {
       return false;
     }
-
-#if TINYUSDZ_TASK_QUEUE_HAS_BUILTIN_ATOMICS
-    // Lock-free implementation with CAS
-    while (true) {
-      uint64_t current_write = __atomic_load_n(&_write_pos, __ATOMIC_ACQUIRE);
-      uint64_t current_read = __atomic_load_n(&_read_pos, __ATOMIC_ACQUIRE);
-
-      // Check if queue is full
-      if (current_write - current_read >= _capacity) {
-        return false;
-      }
-
-      // Try to claim this slot with CAS
-      uint64_t next_write = current_write + 1;
-      if (__atomic_compare_exchange_n(&_write_pos, &current_write, next_write,
-                                       false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-        // Successfully claimed slot, now store the task
-        size_t index = current_write % _capacity;
-        _tasks[index] = TaskItemFunc(std::move(func));
-        return true;
-      }
-      // CAS failed, retry
-    }
-#else
-    // Mutex fallback
-    std::lock_guard<std::mutex> lock(_mutex);
-
-    uint64_t current_write = _write_pos.load(std::memory_order_acquire);
-    uint64_t next_write = current_write + 1;
-    uint64_t current_read = _read_pos.load(std::memory_order_acquire);
-
-    if (next_write - current_read > _capacity) {
-      return false;
-    }
-
-    size_t index = current_write % _capacity;
-    _tasks[index] = TaskItemFunc(std::move(func));
-    _write_pos.store(next_write, std::memory_order_release);
-    return true;
-#endif
+    return _q.enqueue(TaskItemFunc(std::move(func)));
   }
 
   ///
@@ -305,101 +246,20 @@ class TaskQueueFunc {
   /// @param[out] task Retrieved task item
   /// @return true if a task was retrieved, false if queue is empty
   ///
-  bool Pop(TaskItemFunc& task) {
-#if TINYUSDZ_TASK_QUEUE_HAS_BUILTIN_ATOMICS
-    // Lock-free implementation with CAS
-    while (true) {
-      uint64_t current_read = __atomic_load_n(&_read_pos, __ATOMIC_ACQUIRE);
-      uint64_t current_write = __atomic_load_n(&_write_pos, __ATOMIC_ACQUIRE);
+  bool Pop(TaskItemFunc& task) { return _q.dequeue(task); }
 
-      // Check if queue is empty
-      if (current_read >= current_write) {
-        return false;
-      }
+  /// Current queue size (approximate under concurrent use).
+  size_t Size() const { return _q.size(); }
 
-      // Try to claim this slot with CAS
-      uint64_t next_read = current_read + 1;
-      if (__atomic_compare_exchange_n(&_read_pos, &current_read, next_read,
-                                       false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-        // Successfully claimed slot, now load the task
-        size_t index = current_read % _capacity;
-        task = std::move(_tasks[index]);
-        return true;
-      }
-      // CAS failed, retry
-    }
-#else
-    // Mutex fallback
-    std::lock_guard<std::mutex> lock(_mutex);
+  bool Empty() const { return _q.empty(); }
 
-    uint64_t current_read = _read_pos.load(std::memory_order_acquire);
-    uint64_t current_write = _write_pos.load(std::memory_order_acquire);
+  size_t Capacity() const { return _q.capacity(); }
 
-    if (current_read >= current_write) {
-      return false;
-    }
-
-    size_t index = current_read % _capacity;
-    task = std::move(_tasks[index]);
-    _read_pos.store(current_read + 1, std::memory_order_release);
-    return true;
-#endif
-  }
-
-  ///
-  /// Get current queue size (approximate in lock-free mode)
-  ///
-  size_t Size() const {
-#if TINYUSDZ_TASK_QUEUE_HAS_BUILTIN_ATOMICS
-    uint64_t w = __atomic_load_n(&_write_pos, __ATOMIC_ACQUIRE);
-    uint64_t r = __atomic_load_n(&_read_pos, __ATOMIC_ACQUIRE);
-#else
-    uint64_t w = _write_pos.load(std::memory_order_acquire);
-    uint64_t r = _read_pos.load(std::memory_order_acquire);
-#endif
-    return (w >= r) ? static_cast<size_t>(w - r) : 0;
-  }
-
-  ///
-  /// Check if queue is empty
-  ///
-  bool Empty() const {
-    return Size() == 0;
-  }
-
-  ///
-  /// Get queue capacity
-  ///
-  size_t Capacity() const {
-    return _capacity;
-  }
-
-  ///
-  /// Clear all pending tasks
-  ///
-  void Clear() {
-#if TINYUSDZ_TASK_QUEUE_HAS_BUILTIN_ATOMICS
-    uint64_t w = __atomic_load_n(&_write_pos, __ATOMIC_ACQUIRE);
-    __atomic_store_n(&_read_pos, w, __ATOMIC_RELEASE);
-#else
-    std::lock_guard<std::mutex> lock(_mutex);
-    uint64_t w = _write_pos.load(std::memory_order_acquire);
-    _read_pos.store(w, std::memory_order_release);
-#endif
-  }
+  /// Clear all pending tasks (single-threaded use).
+  void Clear() { _q.clear(); }
 
  private:
-  const size_t _capacity;
-  std::vector<TaskItemFunc> _tasks;
-
-#if TINYUSDZ_TASK_QUEUE_HAS_BUILTIN_ATOMICS
-  uint64_t _write_pos;
-  uint64_t _read_pos;
-#else
-  std::atomic<uint64_t> _write_pos;
-  std::atomic<uint64_t> _read_pos;
-  std::mutex _mutex;
-#endif
+  detail::TaskQueueBase<TaskItemFunc> _q;
 };
 
 }  // namespace tinyusdz

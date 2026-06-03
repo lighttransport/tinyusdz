@@ -349,6 +349,12 @@ struct DeferredPayloadInfo {
 struct CompositionGraphOptions {
   /// Payload loading policy. Return true to load, false to defer.
   /// When nullptr (default), all payloads are loaded eagerly.
+  ///
+  /// THREAD-SAFETY: when these options drive a multithreaded build
+  /// (pcp::CacheOptions::num_threads != 1), this callback is invoked
+  /// concurrently from worker threads. Each worker uses its own copy of the
+  /// std::function, but any state the closure *captures* is shared — the
+  /// closure must be thread-safe (or capture nothing mutable).
   std::function<bool(const Path &prim_path, const Payload &payload)>
       payload_policy;
 
@@ -359,6 +365,11 @@ struct CompositionGraphOptions {
   bool detect_instances{true};
 
   /// File format handlers for non-USD assets.
+  ///
+  /// THREAD-SAFETY: under a multithreaded build
+  /// (pcp::CacheOptions::num_threads != 1), the handler functions
+  /// (checker/reader/writer) and their `userdata` are invoked concurrently from
+  /// worker threads. They must be thread-safe.
   std::unordered_map<std::string, FileFormatHandler> fileformats;
 
   /// Maximum memory limit in MB.

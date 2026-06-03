@@ -53,6 +53,11 @@ namespace cg = tinyusdz::composition_graph;
 struct CacheOptions {
   /// Options forwarded to the underlying composition engine (payload policy,
   /// max depth, file formats, ...).
+  ///
+  /// THREAD-SAFETY: when num_threads != 1, any user callbacks here
+  /// (composition.payload_policy and composition.fileformats handlers) are
+  /// invoked concurrently from worker threads. They must be thread-safe; see
+  /// the notes on those fields in composition-graph.hh.
   cg::CompositionGraphOptions composition;
 
   /// Worker thread count for PrewarmPrimIndices()/BuildStage():
@@ -60,6 +65,9 @@ struct CacheOptions {
   ///  -1  = std::thread::hardware_concurrency()
   ///  >1  = exactly that many workers
   /// Ignored (treated as 1) when threads are not compiled in.
+  ///
+  /// NOTE: with num_threads != 1, the composition callbacks above run on
+  /// worker threads — see the thread-safety note on `composition`.
   int num_threads{1};
 
   /// Below this many requested paths, batch building stays single-threaded.
@@ -97,12 +105,16 @@ class Cache {
   /// Build the PrimIndices for `paths` as a batch. Parallel iff num_threads !=
   /// 1 and threads are compiled in; otherwise sequential. Best-effort: a prim
   /// that fails to build is skipped.
+  /// In the parallel path, user callbacks in CacheOptions::composition run on
+  /// worker threads and must be thread-safe (see CacheOptions).
   nonstd::expected<bool, std::string> PrewarmPrimIndices(
       const std::vector<Path> &paths, std::string *warn, std::string *err);
 
   /// Materialize a full Stage: computes every prim's PrimIndex (honoring
   /// num_threads) and lowers them via the shared reconstruct pipeline. The
   /// result is structurally identical to CompositionGraph::BuildStage().
+  /// With num_threads != 1, user callbacks in CacheOptions::composition run on
+  /// worker threads and must be thread-safe (see CacheOptions).
   bool BuildStage(Stage *stage, std::string *warn, std::string *err);
 
   // -- Payloads --
