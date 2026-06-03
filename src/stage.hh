@@ -5,6 +5,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <unordered_map>
 
 #include "nonstd/expected.hpp"
@@ -394,6 +395,21 @@ class Stage {
   mutable bool _prim_id_dirty{true}; // True when Prim Id assignent changed(TODO: Unify with `_dirty` flag)
 
   mutable HandleAllocator<uint64_t> _prim_id_allocator;
+
+  // Guards the lazy lookup caches (_prim_path_cache / _prim_id_cache and their
+  // _dirty / _prim_id_dirty flags) so the `const` GetPrimAtPath() /
+  // find_prim_by_prim_id() are safe under concurrent readers (e.g. a shared
+  // Stage queried from multiple threads). shared_ptr keeps Stage
+  // copyable/movable; the _root_nodes Prim tree is read lock-free during the
+  // walk. Reset (not shared) in Stage's copy paths.
+  //
+  // NOTE: this member is *unconditional* (not gated on TINYUSDZ_ENABLE_THREAD)
+  // on purpose. TINYUSDZ_ENABLE_THREAD is PRIVATE to the library target, so
+  // gating a member of this *public* header would make sizeof(Stage) differ
+  // between the library and its consumers (ODR violation / stack corruption).
+  // Only the locking in stage.cc is gated; the lone mutex alloc per Stage is
+  // negligible since Stages are not created in bulk.
+  std::shared_ptr<std::mutex> _cache_mu{std::make_shared<std::mutex>()};
 
   // mmap zero-copy support (optional, set by USDC reader)
   std::unique_ptr<MMapArrayTable> _mmap_table;
