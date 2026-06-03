@@ -185,9 +185,9 @@ std::string SafeMissingArchiveReference(
     if (base.empty() || !io::IsAbsPath(base)) {
       continue;
     }
-    const std::string rel = ToRelativePath(base, asset_path);
-    if (rel != asset_path && !IsUnsafeUnresolvedTexturePath(rel)) {
-      return rel;
+    const std::string rel_to_base = ToRelativePath(base, asset_path);
+    if (rel_to_base != asset_path && !IsUnsafeUnresolvedTexturePath(rel_to_base)) {
+      return rel_to_base;
     }
   }
 
