@@ -278,6 +278,10 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
   light3d::Mat4 V = ToMat4(params.view);
 
   for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+    if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
+        !params.meshVisible[mi]) {
+      continue;  // hidden by the viewer's per-mesh visibility mask
+    }
     const GLMesh& mesh = meshes_[mi];
     light3d::Mat4 W = ToMat4(mesh.world);
     light3d::Mat4 MVP = P * V * W;
@@ -412,6 +416,31 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     }
     glDisable(GL_CULL_FACE);
     glDrawArrays(GL_LINES, 0, params.helperLineVertexCount);
+    glBindVertexArray(0);
+  }
+
+  // Overlay lines (skeleton bones): drawn on top with depth testing disabled so
+  // they remain visible through the mesh (X-ray). Reuses the line program/VBO.
+  if (params.overlayLines && params.overlayLineVertexCount > 0 && lineProgram_) {
+    glUseProgram(lineProgram_);
+    const light3d::Mat4 VP = ToMat4(params.proj) * ToMat4(params.view);
+    glUniformMatrix4fv(uLineVP_, 1, GL_FALSE, VP.m);
+    glBindVertexArray(lineVao_);
+    glBindBuffer(GL_ARRAY_BUFFER, lineVbo_);
+    const size_t bytes =
+        static_cast<size_t>(params.overlayLineVertexCount) * sizeof(HelperVertex);
+    if (bytes > lineVboCap_) {
+      glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(bytes), params.overlayLines,
+                   GL_DYNAMIC_DRAW);
+      lineVboCap_ = bytes;
+    } else {
+      glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(bytes),
+                      params.overlayLines);
+    }
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_DEPTH_TEST);
+    glDrawArrays(GL_LINES, 0, params.overlayLineVertexCount);
+    glEnable(GL_DEPTH_TEST);
     glBindVertexArray(0);
   }
 

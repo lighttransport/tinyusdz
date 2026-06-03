@@ -770,9 +770,18 @@ bool VulkanRenderer::createLinePipeline(std::string* err) {
   ci.subpass = 0;
   VkResult r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
                                          &linePipeline_);
+
+  // Second variant with depth testing disabled, for the skeleton X-ray overlay.
+  VkPipelineDepthStencilStateCreateInfo dsNo = ds;
+  dsNo.depthTestEnable = VK_FALSE;
+  dsNo.depthWriteEnable = VK_FALSE;
+  ci.pDepthStencilState = &dsNo;
+  VkResult r2 = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
+                                          &linePipelineNoDepth_);
+
   vkDestroyShaderModule(device_, vs, nullptr);
   vkDestroyShaderModule(device_, fs, nullptr);
-  if (r != VK_SUCCESS) {
+  if (r != VK_SUCCESS || r2 != VK_SUCCESS) {
     if (err) *err = "vkCreateGraphicsPipelines(line) failed";
     return false;
   }
@@ -1791,6 +1800,23 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   } else {
     helperCopy_.clear();
   }
+
+  // Copy overlay (skeleton X-ray) lines.
+  if (params.overlayLines && params.overlayLineVertexCount > 0) {
+    overlayCopy_.assign(params.overlayLines,
+                        params.overlayLines + params.overlayLineVertexCount);
+  } else {
+    overlayCopy_.clear();
+  }
+
+  // Copy the per-mesh visibility mask (same lifetime caveat; consumed in
+  // present(), which records the draw commands after this call returns).
+  if (params.meshVisible && params.meshVisibleCount > 0) {
+    meshVisible_.assign(params.meshVisible,
+                        params.meshVisible + params.meshVisibleCount);
+  } else {
+    meshVisible_.clear();
+  }
 }
 
 ViewportTexHandle VulkanRenderer::viewportTexture() const {
@@ -1868,7 +1894,11 @@ void VulkanRenderer::present() {
 
     light3d::Mat4 P = ToMat4(proj_);
     light3d::Mat4 V = ToMat4(view_);
-    for (const auto& mesh : meshes_) {
+    for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+      if (mi < meshVisible_.size() && !meshVisible_[mi]) {
+        continue;  // hidden by the viewer's per-mesh visibility mask
+      }
+      const auto& mesh = meshes_[mi];
       light3d::Mat4 W = ToMat4(mesh.world);
       light3d::Mat4 MVP = P * V * W;
       float nmat9[9];
@@ -1941,6 +1971,35 @@ void VulkanRenderer::present() {
         VkDeviceSize off = 0;
         vkCmdBindVertexBuffers(cb, 0, 1, &helperBuf_[frame_], &off);
         vkCmdDraw(cb, static_cast<uint32_t>(helperCopy_.size()), 1, 0, 0);
+      }
+    }
+    // Overlay (skeleton X-ray) lines: depth-test-disabled pipeline, on top.
+    if (!overlayCopy_.empty() && linePipelineNoDepth_) {
+      const VkDeviceSize bytes = overlayCopy_.size() * sizeof(HelperVertex);
+      if (bytes > overlayCap_[frame_]) {
+        if (overlayBuf_[frame_]) vkDestroyBuffer(device_, overlayBuf_[frame_], nullptr);
+        if (overlayMem_[frame_]) vkFreeMemory(device_, overlayMem_[frame_], nullptr);
+        overlayBuf_[frame_] = VK_NULL_HANDLE;
+        overlayMem_[frame_] = VK_NULL_HANDLE;
+        if (createHostBuffer(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                             overlayCopy_.data(), &overlayBuf_[frame_],
+                             &overlayMem_[frame_])) {
+          overlayCap_[frame_] = bytes;
+        }
+      } else {
+        void* p = nullptr;
+        vkMapMemory(device_, overlayMem_[frame_], 0, bytes, 0, &p);
+        std::memcpy(p, overlayCopy_.data(), static_cast<size_t>(bytes));
+        vkUnmapMemory(device_, overlayMem_[frame_]);
+      }
+      if (overlayBuf_[frame_]) {
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, linePipelineNoDepth_);
+        const light3d::Mat4 VP = P * V;
+        vkCmdPushConstants(cb, lineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                           sizeof(float) * 16, VP.m);
+        VkDeviceSize off = 0;
+        vkCmdBindVertexBuffers(cb, 0, 1, &overlayBuf_[frame_], &off);
+        vkCmdDraw(cb, static_cast<uint32_t>(overlayCopy_.size()), 1, 0, 0);
       }
     }
     vkCmdEndRenderPass(cb);
@@ -2109,12 +2168,17 @@ void VulkanRenderer::shutdown() {
   if (pipeline_) { vkDestroyPipeline(device_, pipeline_, nullptr); pipeline_ = VK_NULL_HANDLE; }
   if (pipelineLayout_) { vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr); pipelineLayout_ = VK_NULL_HANDLE; }
   if (linePipeline_) { vkDestroyPipeline(device_, linePipeline_, nullptr); linePipeline_ = VK_NULL_HANDLE; }
+  if (linePipelineNoDepth_) { vkDestroyPipeline(device_, linePipelineNoDepth_, nullptr); linePipelineNoDepth_ = VK_NULL_HANDLE; }
   if (lineLayout_) { vkDestroyPipelineLayout(device_, lineLayout_, nullptr); lineLayout_ = VK_NULL_HANDLE; }
   for (int i = 0; i < kFramesInFlight; ++i) {
     if (helperBuf_[i]) vkDestroyBuffer(device_, helperBuf_[i], nullptr);
     if (helperMem_[i]) vkFreeMemory(device_, helperMem_[i], nullptr);
     helperBuf_[i] = VK_NULL_HANDLE;
     helperMem_[i] = VK_NULL_HANDLE;
+    if (overlayBuf_[i]) vkDestroyBuffer(device_, overlayBuf_[i], nullptr);
+    if (overlayMem_[i]) vkFreeMemory(device_, overlayMem_[i], nullptr);
+    overlayBuf_[i] = VK_NULL_HANDLE;
+    overlayMem_[i] = VK_NULL_HANDLE;
   }
   if (offscreenPass_) { vkDestroyRenderPass(device_, offscreenPass_, nullptr); offscreenPass_ = VK_NULL_HANDLE; }
   for (int i = 0; i < kFramesInFlight; ++i) {

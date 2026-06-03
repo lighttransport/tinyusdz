@@ -88,6 +88,8 @@ void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
   selPrim_ = nullptr;
   selPath_.clear();
   selMeshIndex_ = -1;
+  // Reset per-mesh visibility to all-visible for the new scene.
+  meshVisible_.assign(draw_ ? draw_->meshes.size() : 0, uint8_t{1});
   // Auto-select the first renderable mesh so the inspector + selection bbox show
   // something immediately.
   if (loaded_ && loaded_->ok && draw_ && !draw_->meshes.empty()) {
@@ -207,8 +209,22 @@ void Gui::drawDockspaceAndMenu() {
         if (renderer_) renderer_->setRayTracing(!rtOn);
       }
       ImGui::Separator();
-      if (ImGui::MenuItem("Fit to scene", "F", false, draw_ && draw_->hasBounds)) {
-        cam_->fitToScene(draw_->aabbMin, draw_->aabbMax);
+      const bool haveBounds = draw_ && draw_->hasBounds;
+      if (ImGui::MenuItem("Frame selected", "F", false, haveBounds)) frameSelected();
+      if (ImGui::MenuItem("Frame all", "A", false, haveBounds)) frameAll();
+      ImGui::Separator();
+      // Hide family (Maya): also available via H / Ctrl+H / Shift+H / Alt+H.
+      const bool haveSel = selMeshIndex_ >= 0 &&
+                           static_cast<size_t>(selMeshIndex_) < meshVisible_.size();
+      if (ImGui::MenuItem("Hide selection", "Ctrl+H", false, haveSel)) {
+        meshVisible_[static_cast<size_t>(selMeshIndex_)] = 0;
+      }
+      if (ImGui::MenuItem("Isolate selection", "Alt+H", false, haveSel)) {
+        for (size_t i = 0; i < meshVisible_.size(); ++i)
+          meshVisible_[i] = (static_cast<int>(i) == selMeshIndex_) ? 1 : 0;
+      }
+      if (ImGui::MenuItem("Unhide all", nullptr, false, !meshVisible_.empty())) {
+        unhideAll();
       }
       ImGui::Checkbox("Show RenderScene nodes", &showRenderNodes_);
       ImGui::Separator();
@@ -216,6 +232,7 @@ void Gui::drawDockspaceAndMenu() {
       ImGui::MenuItem("Axes", nullptr, &showAxes_);
       ImGui::MenuItem("Scene bounds", nullptr, &showSceneBbox_);
       ImGui::MenuItem("Selected bounds", nullptr, &showPrimBbox_);
+      ImGui::MenuItem("Skeleton", nullptr, &showSkeleton_);
       ImGui::EndMenu();
     }
     ImGui::EndMenuBar();
@@ -478,9 +495,152 @@ void Gui::handleNavigation() {
 
   if (vpHovered_ && io.MouseWheel != 0.0f) cam_->dolly(io.MouseWheel);
 
-  if (vpHovered_ && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F)) {
-    if (draw_ && draw_->hasBounds) cam_->fitToScene(draw_->aabbMin, draw_->aabbMax);
+  // Maya-style hotkeys (viewport hovered, no text field focused).
+  if (vpHovered_ && !io.WantTextInput) {
+    if (ImGui::IsKeyPressed(ImGuiKey_F)) frameSelected();  // frame selection
+    if (ImGui::IsKeyPressed(ImGuiKey_A)) frameAll();        // frame all
+
+    // Hide family. Needs a valid selected mesh (except none is required for the
+    // plain toggle/show, but those are no-ops without a selection too).
+    if (ImGui::IsKeyPressed(ImGuiKey_H)) {
+      const int sel = selMeshIndex_;
+      const bool haveSel =
+          sel >= 0 && static_cast<size_t>(sel) < meshVisible_.size();
+      if (io.KeyAlt) {
+        // Alt+H: isolate the selection (hide everything else).
+        if (haveSel) {
+          for (size_t i = 0; i < meshVisible_.size(); ++i)
+            meshVisible_[i] = (static_cast<int>(i) == sel) ? 1 : 0;
+        }
+      } else if (io.KeyCtrl) {
+        if (haveSel) meshVisible_[static_cast<size_t>(sel)] = 0;  // hide selection
+      } else if (io.KeyShift) {
+        if (haveSel) meshVisible_[static_cast<size_t>(sel)] = 1;  // show selection
+      } else if (haveSel) {
+        // Plain H: toggle the selection's visibility.
+        meshVisible_[static_cast<size_t>(sel)] =
+            meshVisible_[static_cast<size_t>(sel)] ? 0 : 1;
+      }
+    }
   }
+}
+
+void Gui::frameSelected() {
+  if (!cam_ || !draw_) return;
+  const int sel = selMeshIndex_;
+  if (sel >= 0 && static_cast<size_t>(sel) < draw_->meshes.size()) {
+    const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(sel)];
+    cam_->fitToScene(m.aabbMin, m.aabbMax);
+  } else if (draw_->hasBounds) {
+    cam_->fitToScene(draw_->aabbMin, draw_->aabbMax);
+  }
+}
+
+void Gui::frameAll() {
+  if (cam_ && draw_ && draw_->hasBounds) {
+    cam_->fitToScene(draw_->aabbMin, draw_->aabbMax);
+  }
+}
+
+void Gui::unhideAll() {
+  for (auto& v : meshVisible_) v = 1;
+}
+
+int Gui::pickMesh(float px, float py, int vpW, int vpH) const {
+  if (!cam_ || !renderer_ || !draw_ || draw_->meshes.empty() || vpW <= 0 ||
+      vpH <= 0) {
+    return -1;
+  }
+
+  // Build a world-space ray through the clicked pixel. The displayed image is
+  // upright on both backends (GL flips via UVs, VK via a negative-height
+  // viewport), so screen-top maps to NDC y = +1 regardless of flipViewportV.
+  const bool z01 = renderer_->caps().usesZeroToOneDepth;
+  const light3d::Mat4 V = cam_->view();
+  const light3d::Mat4 P = cam_->proj(z01);
+  const light3d::Mat4 invVP = (P * V).inverse();
+
+  const float ndcx = 2.0f * (px / static_cast<float>(vpW)) - 1.0f;
+  const float ndcy = 1.0f - 2.0f * (py / static_cast<float>(vpH));
+
+  auto unproject = [&](float nz) -> light3d::Vec3 {
+    const float* m = invVP.m;  // column-major: m[col*4 + row]
+    const float ox = m[0] * ndcx + m[4] * ndcy + m[8] * nz + m[12];
+    const float oy = m[1] * ndcx + m[5] * ndcy + m[9] * nz + m[13];
+    const float oz = m[2] * ndcx + m[6] * ndcy + m[10] * nz + m[14];
+    const float ow = m[3] * ndcx + m[7] * ndcy + m[11] * nz + m[15];
+    const float inv = (ow != 0.0f) ? 1.0f / ow : 1.0f;
+    return {ox * inv, oy * inv, oz * inv};
+  };
+
+  const light3d::Vec3 nearW = unproject(z01 ? 0.0f : -1.0f);
+  const light3d::Vec3 farW = unproject(1.0f);
+  const light3d::Vec3 ro = cam_->eye();
+  const light3d::Vec3 rd = light3d::normalize(farW - nearW);
+
+  // Slab test against a world-space AABB; returns true if the ray hits within
+  // [0, tMax) and never starts the search past an already-closer hit.
+  const float invdx = (rd.x != 0.0f) ? 1.0f / rd.x : 1e30f;
+  const float invdy = (rd.y != 0.0f) ? 1.0f / rd.y : 1e30f;
+  const float invdz = (rd.z != 0.0f) ? 1.0f / rd.z : 1e30f;
+  auto hitAabb = [&](const float mn[3], const float mx[3], float tMax) -> bool {
+    float t1 = (mn[0] - ro.x) * invdx, t2 = (mx[0] - ro.x) * invdx;
+    float tmin = std::min(t1, t2), tmax = std::max(t1, t2);
+    t1 = (mn[1] - ro.y) * invdy; t2 = (mx[1] - ro.y) * invdy;
+    tmin = std::max(tmin, std::min(t1, t2));
+    tmax = std::min(tmax, std::max(t1, t2));
+    t1 = (mn[2] - ro.z) * invdz; t2 = (mx[2] - ro.z) * invdz;
+    tmin = std::max(tmin, std::min(t1, t2));
+    tmax = std::min(tmax, std::max(t1, t2));
+    return tmax >= std::max(tmin, 0.0f) && tmin < tMax;
+  };
+
+  // Moller-Trumbore ray/triangle in world space.
+  auto rayTri = [&](const light3d::Vec3& a, const light3d::Vec3& b,
+                    const light3d::Vec3& c, float& tOut) -> bool {
+    const light3d::Vec3 e1 = b - a, e2 = c - a;
+    const light3d::Vec3 pv = light3d::cross(rd, e2);
+    const float det = light3d::dot(e1, pv);
+    if (std::fabs(det) < 1e-9f) return false;  // parallel
+    const float invDet = 1.0f / det;
+    const light3d::Vec3 tv = ro - a;
+    const float u = light3d::dot(tv, pv) * invDet;
+    if (u < 0.0f || u > 1.0f) return false;
+    const light3d::Vec3 qv = light3d::cross(tv, e1);
+    const float vv = light3d::dot(rd, qv) * invDet;
+    if (vv < 0.0f || u + vv > 1.0f) return false;
+    const float t = light3d::dot(e2, qv) * invDet;
+    if (t <= 1e-5f) return false;  // behind the ray origin
+    tOut = t;
+    return true;
+  };
+
+  int best = -1;
+  float bestT = 1e30f;
+  for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
+    // Skip hidden meshes (they aren't drawn, so they shouldn't be pickable).
+    if (mi < meshVisible_.size() && !meshVisible_[mi]) continue;
+    const DrawMeshCPU& m = draw_->meshes[mi];
+    if (m.vertices.empty() || m.indices.size() < 3) continue;
+    if (!hitAabb(m.aabbMin, m.aabbMax, bestT)) continue;
+
+    light3d::Mat4 W;
+    for (int k = 0; k < 16; ++k) W.m[k] = m.world[k];
+    for (size_t i = 0; i + 2 < m.indices.size(); i += 3) {
+      const DrawVertex& va = m.vertices[m.indices[i + 0]];
+      const DrawVertex& vb = m.vertices[m.indices[i + 1]];
+      const DrawVertex& vc = m.vertices[m.indices[i + 2]];
+      const light3d::Vec3 a = light3d::transformPoint(W, {va.px, va.py, va.pz});
+      const light3d::Vec3 b = light3d::transformPoint(W, {vb.px, vb.py, vb.pz});
+      const light3d::Vec3 c = light3d::transformPoint(W, {vc.px, vc.py, vc.pz});
+      float t;
+      if (rayTri(a, b, c, t) && t < bestT) {
+        bestT = t;
+        best = static_cast<int>(mi);
+      }
+    }
+  }
+  return best;
 }
 
 void Gui::drawViewport() {
@@ -510,11 +670,22 @@ void Gui::drawViewport() {
     p.cameraPos[1] = eye.y;
     p.cameraPos[2] = eye.z;
     p.mode = mode_;
-    p.highlightMeshIndex = selMeshIndex_;
+    // Don't outline a hidden selection.
+    const bool selHidden =
+        selMeshIndex_ >= 0 &&
+        static_cast<size_t>(selMeshIndex_) < meshVisible_.size() &&
+        !meshVisible_[static_cast<size_t>(selMeshIndex_)];
+    p.highlightMeshIndex = selHidden ? -1 : selMeshIndex_;
     for (int i = 0; i < 4; ++i) p.clearColor[i] = clearColor_[i];
+    if (!meshVisible_.empty()) {
+      p.meshVisible = meshVisible_.data();
+      p.meshVisibleCount = static_cast<int>(meshVisible_.size());
+    }
     buildHelpers();
     p.helperLines = helperLines_.empty() ? nullptr : helperLines_.data();
     p.helperLineVertexCount = static_cast<int>(helperLines_.size());
+    p.overlayLines = overlayLines_.empty() ? nullptr : overlayLines_.data();
+    p.overlayLineVertexCount = static_cast<int>(overlayLines_.size());
     renderer_->renderFrame(p);
 
     const ImTextureID tex = static_cast<ImTextureID>(renderer_->viewportTexture());
@@ -523,6 +694,23 @@ void Gui::drawViewport() {
     const ImVec2 uv1 = flip ? ImVec2(1, 0) : ImVec2(1, 1);
     ImGui::Image(tex, avail, uv0, uv1);
     vpHovered_ = ImGui::IsItemHovered();
+
+    // Click-to-pick: a plain left click (no Alt-navigation in progress) selects
+    // the nearest mesh under the cursor.
+    {
+      ImGuiIO& io = ImGui::GetIO();
+      if (vpHovered_ && navMode_ == 0 && !io.KeyAlt &&
+          ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        const ImVec2 rmin = ImGui::GetItemRectMin();
+        const ImVec2 mp = io.MousePos;
+        const float px = mp.x - rmin.x;
+        const float py = mp.y - rmin.y;
+        const int hit = pickMesh(px, py, w, h);
+        if (hit >= 0 && static_cast<size_t>(hit) < draw_->meshes.size()) {
+          selectByPath(draw_->meshes[static_cast<size_t>(hit)].absPath, hit);
+        }
+      }
+    }
 
     if (draw_ && draw_->empty()) {
       // Center the message in the viewport (a fixed pixel offset clips under the
@@ -542,12 +730,18 @@ void Gui::drawViewport() {
 
 void Gui::buildHelpers() {
   helperLines_.clear();
+  overlayLines_.clear();
   const bool zUp = loaded_ && loaded_->ok && loaded_->render.meta.upAxis == "Z";
 
   auto addLine = [&](float ax, float ay, float az, float bx, float by, float bz,
                      float r, float g, float b) {
     helperLines_.push_back(HelperVertex{{ax, ay, az}, {r, g, b}});
     helperLines_.push_back(HelperVertex{{bx, by, bz}, {r, g, b}});
+  };
+  auto addOverlay = [&](float ax, float ay, float az, float bx, float by, float bz,
+                        float r, float g, float b) {
+    overlayLines_.push_back(HelperVertex{{ax, ay, az}, {r, g, b}});
+    overlayLines_.push_back(HelperVertex{{bx, by, bz}, {r, g, b}});
   };
   auto addBox = [&](const float mn[3], const float mx[3], float r, float g, float b) {
     const float xs[2] = {mn[0], mx[0]}, ys[2] = {mn[1], mx[1]}, zs[2] = {mn[2], mx[2]};
@@ -599,6 +793,65 @@ void Gui::buildHelpers() {
       static_cast<size_t>(selMeshIndex_) < draw_->meshes.size()) {
     const auto& m = draw_->meshes[static_cast<size_t>(selMeshIndex_)];
     addBox(m.aabbMin, m.aabbMax, 1.00f, 0.60f, 0.10f);
+  }
+
+  // UsdSkel joint hierarchy as bone line segments + a small cross per joint.
+  // bind_transforms hold each joint's bind pose in the skeleton's own (model)
+  // space (translation at m[3][0..2], row-major). The skinned mesh's world
+  // matrix carries the scene placement + up-axis conversion, so we transform the
+  // joint positions by it to align the bones with the rendered mesh.
+  if (showSkeleton_ && loaded_ && loaded_->ok) {
+    const float cs = std::max(half * 0.01f, 1e-3f);  // joint cross half-size
+
+    // World matrix of the mesh skinned by skeleton `si` (identity if none).
+    auto skelWorld = [&](size_t si) -> light3d::Mat4 {
+      for (const auto& rm : loaded_->render.meshes) {
+        if (rm.skel_id != static_cast<int>(si)) continue;
+        if (!draw_) break;
+        for (const auto& dm : draw_->meshes) {
+          if (dm.absPath == rm.abs_path) {
+            light3d::Mat4 W;
+            for (int k = 0; k < 16; ++k) W.m[k] = dm.world[k];
+            return W;
+          }
+        }
+      }
+      return light3d::Mat4::identity();
+    };
+
+    const auto& skels = loaded_->render.skeletons;
+    for (size_t si = 0; si < skels.size(); ++si) {
+      const auto& skel = skels[si];
+      const size_t nj = skel.num_joints();
+      if (skel.bind_transforms.size() != nj ||
+          skel.parent_joint_indices.size() != nj) {
+        continue;  // malformed topology; skip
+      }
+      const light3d::Mat4 W = skelWorld(si);
+      auto jointPos = [&](size_t i, float out[3]) {
+        const auto& m = skel.bind_transforms[i].m;  // double m[4][4], row-major
+        const light3d::Vec3 w = light3d::transformPoint(
+            W, {static_cast<float>(m[3][0]), static_cast<float>(m[3][1]),
+                static_cast<float>(m[3][2])});
+        out[0] = w.x;
+        out[1] = w.y;
+        out[2] = w.z;
+      };
+      for (size_t i = 0; i < nj; ++i) {
+        float p[3];
+        jointPos(i, p);
+        // Small axis cross so leaf/isolated joints are visible too.
+        addOverlay(p[0] - cs, p[1], p[2], p[0] + cs, p[1], p[2], 0.20f, 0.95f, 0.95f);
+        addOverlay(p[0], p[1] - cs, p[2], p[0], p[1] + cs, p[2], 0.20f, 0.95f, 0.95f);
+        addOverlay(p[0], p[1], p[2] - cs, p[0], p[1], p[2] + cs, 0.20f, 0.95f, 0.95f);
+        const int par = skel.parent_joint_indices[i];
+        if (par >= 0 && static_cast<size_t>(par) < nj) {
+          float pp[3];
+          jointPos(static_cast<size_t>(par), pp);
+          addOverlay(pp[0], pp[1], pp[2], p[0], p[1], p[2], 0.10f, 0.80f, 0.90f);
+        }
+      }
+    }
   }
 }
 

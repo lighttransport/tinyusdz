@@ -69,7 +69,14 @@ class Gui {
   void drawLoadingModal();
   void drawStageMeta();
   void handleNavigation();
-  void buildHelpers();  // grid / axes / bbox lines for the current frame
+  void buildHelpers();  // grid / axes / bbox / skeleton lines for the current frame
+  // Pick the nearest mesh hit by a ray through viewport-local pixel (px,py).
+  // Returns the DrawScene mesh index, or -1 on a miss. Per-click cost only.
+  int pickMesh(float px, float py, int vpW, int vpH) const;
+  // Camera framing / visibility helpers (shared by hotkeys and the View menu).
+  void frameSelected();  // F: fit the selected mesh's AABB (fall back to scene)
+  void frameAll();       // A: fit the whole-scene AABB
+  void unhideAll();      // restore every mesh to visible
 
   Renderer* renderer_{nullptr};
   OrbitCamera* cam_{nullptr};
@@ -95,7 +102,13 @@ class Gui {
   bool showAxes_{true};
   bool showSceneBbox_{false};
   bool showPrimBbox_{true};
-  std::vector<HelperVertex> helperLines_;  // rebuilt each frame
+  bool showSkeleton_{true};  // UsdSkel joint hierarchy as world-space lines
+  std::vector<HelperVertex> helperLines_;   // depth-tested (grid/axes/bbox)
+  std::vector<HelperVertex> overlayLines_;  // X-ray on top (skeleton bones)
+
+  // Per-mesh visibility (Maya hide/show/isolate). Index i <-> draw_->meshes[i];
+  // reset to all-visible on setScene. Empty == all visible.
+  std::vector<uint8_t> meshVisible_;
 
   // Viewport interaction
   bool vpHovered_{false};
