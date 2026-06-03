@@ -141,6 +141,11 @@ std::string to_string(const APISchemas::APIName &name) {
       s = "PhysicsArticulationRootAPI";
       break;
     }
+    // PhysX (Omniverse)
+    case APISchemas::APIName::PhysxJointAPI: {
+      s = "PhysxJointAPI";
+      break;
+    }
     case APISchemas::APIName::AssetPreviewsAPI: {
       s = "AssetPreviewsAPI";
       break;
