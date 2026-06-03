@@ -88,6 +88,51 @@ on worker threads and must be thread-safe. No code change.
 
 ---
 
+## Fixed — Round 2 (repo-wide audit of tinyusdz + tydra)
+
+A second, broader audit swept every concurrency entry point and shared-mutable
+candidate across `src/` (including `src/tydra/`). The findings below were fixed;
+everything else is recorded under *Confirmed safe* / *Latent — by design*.
+
+### Stage::GetPrimAtPath / find_prim_by_prim_id lazy caches + copy — **FIXED**
+`Stage::GetPrimAtPath()` and `find_prim_by_prim_id()` are `const` but clear+populate
+lazy caches `mutable HashMap _prim_path_cache` / `_prim_id_cache` and the
+`_dirty` / `_prim_id_dirty` flags (`src/stage.cc`). `tinyusdz::HashMap`
+(`src/tiny-hashmap.hh`) has no internal locking, so concurrent reads on a shared
+`Stage` race exactly like the `Layer::find_primspec_at` case. `Stage` is also
+**copyable** and the cached `const Prim*` point into the source's `_root_nodes`,
+so a copy carried stale pointers.
+
+Fix: a gated `std::shared_ptr<std::mutex> Stage::_cache_mu` (`src/stage.hh`)
+guards the cache read/write in both methods with the same lock → unlock for the
+lock-free `_root_nodes` walk → relock-for-insert pattern as `Layer`. The
+user-defined copy ctor / `operator=` reset both caches and install a fresh mutex
+(`_dirty=_prim_id_dirty=true`, `clear()`, gated `make_shared`). Move stays
+`=default`. Covered by `stage_concurrent_find_prim_test` (8 threads × shared
+Stage, TSan-clean).
+
+### Xformable::GetLocalMatrix lazy matrix cache — **FIXED (cache removed)**
+`GetLocalMatrix()` (`src/xform.hh`) is `const` but cached into `mutable
+value::matrix4d _matrix` / `mutable bool _dirty`, racing if one `Xformable` is
+evaluated from two threads. `Xformable` is embedded by value in every xformable
+prim (potentially millions), so a per-object mutex was rejected on memory
+grounds. Usage analysis showed the cache is barely useful (`set_dirty()` has no
+callers; the 2 `GetLocalMatrix` callers pass a time and the cache only applied to
+default-time). Fix: compute and return by value on every call; the `_matrix` /
+`_dirty` members are removed and `set_dirty(bool)` is now a deprecated no-op shim
+(kept for source compatibility). Race removed at the source, zero overhead. To
+parallelize over one logical Xformable, give each worker its own (cheap) copy.
+
+### Prim::get_child_indices_from_primChildren lazy cache — **FIXED (cache removed)**
+This `const` accessor (`src/prim-types.cc`) cached into `mutable
+_primChildrenIndices` / `_child_dirty` / `_primChildrenIndicesIsValid`
+(`src/core/prim.hh`) and is effectively dead (no callers outside its own TU). Fix:
+returns `std::vector<int64_t>` **by value**, computed locally; the three mutable
+members and the `_child_dirty=true` writes in `add_child`/`replace_child` are
+removed. `force_update` is retained as a no-op for signature compatibility.
+
+---
+
 ## Remaining issues
 
 None. All audited items are fixed or documented above. The full unit suite is
@@ -110,6 +155,32 @@ TSan-clean (see *Reproducing*).
   indices; the cache maps (`index_cache`, `site_to_indices`, `index_to_sites`)
   are mutated only in the single-threaded merge after the join barrier.
 
+Round-2 audit, confirmed safe with no change:
+
+- **MCP server** (`src/tydra/mcp-server.cc`): CivetWeb runs 4 worker threads, but
+  `Impl::process_request()` holds a single global `std::mutex mu_` over the
+  *entire* handler, so all tool execution is serialized — `mcp_ctx_` (Stage,
+  layers, js_engine) and the `g_js_stage` global are never touched concurrently.
+  The module is `OFF` by default (`TINYUSDZ_WITH_MCP_SERVER`) and example-only.
+  Note: that safety rests entirely on the coarse lock; removing/narrowing it would
+  expose races on `mcp_ctx_` / `g_js_stage`.
+- **`MapExpr::GetComposed()`** (`src/composition-graph.hh`): mutates a `mutable
+  _composed_cache`, but the `MapExpr` pool is private to each worker's
+  `PrimIndexBuilder`/`CompositionContext`, and the lazy path is currently dead
+  (the only caller is `GetComposed` itself; `MapExpr::Apply` is unused). Not
+  reachable concurrently.
+- **`CrateReader`** mutable state (`_shared_times_cache`, decompression buffers,
+  `_err`/`_warn`): layer parsing is parse-once-serialized under the
+  `LayerRegistry` mutex and each `CrateReader` instance is used by a single
+  thread, so its `const`-method mutations are never concurrent.
+- **`Stage::_err` / `_warn` / `_prim_id_allocator`**: written only on parse/compose
+  paths (non-const, or the const-but-parse-time `allocate_prim_id` reached only
+  via `compute_absolute_prim_path_and_assign_prim_id`), never on the concurrent
+  `GetPrimAtPath` read path — so they are not guarded by `_cache_mu`.
+- **tydra** spawns no threads of its own; `attribute-eval.cc`'s clip cache is
+  mutex-guarded and `render-data-material.cc`'s connection cache is
+  `thread_local`.
+
 ---
 
 ## Reproducing with ThreadSanitizer
@@ -127,15 +198,17 @@ cmake --build build-tsan --target unit-test-tinyusdz -j16
 # due to high ASLR entropy. Run under `setarch -R` (disable randomization),
 # or lower vm.mmap_rnd_bits (needs root).
 setarch -R ./build-tsan/unit-test-tinyusdz pcp_mt_shared_reference_test \
-                                            pcp_singlethread_vs_multithread_identical_test
-# Full suite (will surface the pre-existing TaskQueue races, item #1):
+                                            pcp_singlethread_vs_multithread_identical_test \
+                                            stage_concurrent_find_prim_test
+# Full suite:
 setarch -R ./build-tsan/unit-test-tinyusdz
 ```
 
-The **entire** suite must now report **0 data races** — including
-`task_queue_multithreaded_test`. Any race whose stack mentions `src/pcp/`,
-`src/layer.cc`, `src/composition-graph.cc`, `src/task-queue.hh`, or
-`src/tiny-hashmap.hh` is a regression in this work.
+The **entire** suite must report **0 data races** — including
+`task_queue_multithreaded_test` and `stage_concurrent_find_prim_test`. Any race
+whose stack mentions `src/pcp/`, `src/layer.cc`, `src/stage.cc`,
+`src/composition-graph.cc`, `src/task-queue.hh`, or `src/tiny-hashmap.hh` is a
+regression in this work.
 
 After any change, also run the normal builds:
 ```bash
@@ -147,6 +220,15 @@ cd web && cmake --build build -j16                                              
 Constraint for all fixes: keep non-threaded and wasm builds zero-overhead — gate
 synchronization on `TINYUSDZ_ENABLE_THREAD` and never add a mutex member that
 breaks `Layer` copy/move.
+
+ODR gotcha (learned the hard way): `TINYUSDZ_ENABLE_THREAD` is **PRIVATE** to the
+library target (`CMakeLists.txt`), so it is **not** defined when a consumer TU
+(e.g. the unit tests) compiles a public header. Never `#if`-gate a *data member*
+of a public-header class (e.g. `Stage`, which is held by value across the
+library/consumer boundary) on it — that makes `sizeof` differ between TUs and
+corrupts the stack. Gate only the *locking code* in `.cc` files; keep the mutex
+member unconditional. (`LayerImpl::_cache_mu` is safe to gate only because
+`LayerImpl` is pimpl'd — `sizeof(Layer)` is macro-independent.)
 
 ---
 
