@@ -88,8 +88,16 @@ cmake --build build -j16 --target tusdview
   `GL_EXT_ray_query` (≈ glslang ≥ 11 / a Vulkan SDK build). CMake probes the
   compiler at configure time and only enables RT if it can compile
   `vk/shaders/raytrace.comp`; otherwise it prints a notice and the Vulkan backend
-  uses rasterization. Point CMake at a newer compiler with
-  `-DTUSDVIEW_GLSLANG=/path/to/glslangValidator` and reconfigure.
+  uses rasterization. If your system glslang is too old, build a local one once
+  (Linux):
+
+  ```bash
+  examples/common/build-glslang.sh      # clones + installs to examples/common/glslang
+  cmake -S . -B build                    # auto-detects it (see the configure log)
+  ```
+
+  CMake prefers, in order: `-DTUSDVIEW_GLSLANG=/path`, `examples/common/glslang`,
+  then the system compiler.
 - The **native file dialog** (File > Open) is enabled when GTK3 is available on
   Linux (always on Windows/macOS); otherwise pass a file on the command line.
 

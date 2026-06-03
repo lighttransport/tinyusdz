@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "imgui.h"
@@ -241,7 +242,12 @@ void VulkanRenderer::detectRtSupport() {
     for (const auto& e : have) {
       if (std::strcmp(e.extensionName, req) == 0) { found = true; break; }
     }
-    if (!found) return;  // missing extension -> stay on rasterization
+    if (!found) {
+      if (std::getenv("TUSDVIEW_RT_DEBUG")) {
+        std::fprintf(stderr, "[rt] missing device extension: %s\n", req);
+      }
+      return;  // missing extension -> stay on rasterization
+    }
   }
 
   // Confirm the feature bits are actually enabled-able.
@@ -257,7 +263,13 @@ void VulkanRenderer::detectRtSupport() {
   f2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
   f2.pNext = &bda;
   vkGetPhysicalDeviceFeatures2(phys_, &f2);
-  if (!rqf.rayQuery || !asf.accelerationStructure || !bda.bufferDeviceAddress) return;
+  if (!rqf.rayQuery || !asf.accelerationStructure || !bda.bufferDeviceAddress) {
+    if (std::getenv("TUSDVIEW_RT_DEBUG")) {
+      std::fprintf(stderr, "[rt] feature veto: rayQuery=%d as=%d bda=%d\n", rqf.rayQuery,
+                   asf.accelerationStructure, bda.bufferDeviceAddress);
+    }
+    return;
+  }
 
   // Cache the scratch-buffer alignment requirement.
   VkPhysicalDeviceAccelerationStructurePropertiesKHR asp{};
@@ -316,9 +328,15 @@ bool VulkanRenderer::createDevice(std::string* err) {
 
   // Load the RT entrypoints (extension functions aren't statically exported).
   if (rtSupported_) {
+    // bufferDeviceAddress is Vulkan 1.2 core here (not the KHR extension), so the
+    // core entrypoint is what's exported; fall back to the KHR alias.
     pfnGetBufferDeviceAddress_ =
         reinterpret_cast<PFN_vkGetBufferDeviceAddressKHR>(
-            vkGetDeviceProcAddr(device_, "vkGetBufferDeviceAddressKHR"));
+            vkGetDeviceProcAddr(device_, "vkGetBufferDeviceAddress"));
+    if (!pfnGetBufferDeviceAddress_) {
+      pfnGetBufferDeviceAddress_ = reinterpret_cast<PFN_vkGetBufferDeviceAddressKHR>(
+          vkGetDeviceProcAddr(device_, "vkGetBufferDeviceAddressKHR"));
+    }
     pfnGetASBuildSizes_ = reinterpret_cast<PFN_vkGetAccelerationStructureBuildSizesKHR>(
         vkGetDeviceProcAddr(device_, "vkGetAccelerationStructureBuildSizesKHR"));
     pfnCreateAS_ = reinterpret_cast<PFN_vkCreateAccelerationStructureKHR>(
@@ -333,7 +351,18 @@ bool VulkanRenderer::createDevice(std::string* err) {
     if (!pfnGetBufferDeviceAddress_ || !pfnGetASBuildSizes_ || !pfnCreateAS_ ||
         !pfnDestroyAS_ || !pfnCmdBuildAS_ || !pfnGetASDeviceAddress_) {
       rtSupported_ = false;  // any missing entrypoint -> rasterization only
+      if (std::getenv("TUSDVIEW_RT_DEBUG")) {
+        std::fprintf(stderr,
+                     "[rt] PFN load failed: bda=%p sizes=%p create=%p destroy=%p "
+                     "build=%p addr=%p\n",
+                     (void*)pfnGetBufferDeviceAddress_, (void*)pfnGetASBuildSizes_,
+                     (void*)pfnCreateAS_, (void*)pfnDestroyAS_, (void*)pfnCmdBuildAS_,
+                     (void*)pfnGetASDeviceAddress_);
+      }
     }
+  }
+  if (std::getenv("TUSDVIEW_RT_DEBUG")) {
+    std::fprintf(stderr, "[rt] after createDevice: rtSupported_=%d\n", rtSupported_ ? 1 : 0);
   }
   return true;
 }
@@ -1005,6 +1034,9 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
   if (rtSupported_) {
     std::string rterr;
     if (!createRtResources(&rterr)) {
+      if (std::getenv("TUSDVIEW_RT_DEBUG")) {
+        std::fprintf(stderr, "[rt] createRtResources failed: %s\n", rterr.c_str());
+      }
       destroyRt();
       rtSupported_ = false;  // fall back to rasterization
     }

@@ -5,6 +5,9 @@
 
 # App-specific
 .opencode/
+# Locally built glslang (examples/common/build-glslang.sh) — build artifacts.
+examples/common/glslang/
+examples/common/glslang-src/
 build/
 build_ninja/
 build-tinysubdiv/
