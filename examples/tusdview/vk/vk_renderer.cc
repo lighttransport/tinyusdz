@@ -160,9 +160,14 @@ bool VulkanRenderer::createInstance(std::string* err) {
   // 1.2 for bufferDeviceAddress (core) + ray query against acceleration structures.
   app.apiVersion = VK_API_VERSION_1_2;
 
-  uint32_t extCount = 0;
-  const char** glfwExt = glfwGetRequiredInstanceExtensions(&extCount);
-  std::vector<const char*> exts(glfwExt, glfwExt + extCount);
+  // Windowed: GLFW tells us which surface extensions it needs. Headless: none
+  // (no surface), so we also don't depend on GLFW being initialized.
+  std::vector<const char*> exts;
+  if (!headless_) {
+    uint32_t extCount = 0;
+    const char** glfwExt = glfwGetRequiredInstanceExtensions(&extCount);
+    exts.assign(glfwExt, glfwExt + extCount);
+  }
 
   VkInstanceCreateInfo ci{};
   ci.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -197,8 +202,8 @@ bool VulkanRenderer::pickPhysicalDevice(std::string* err) {
     std::vector<VkQueueFamilyProperties> qfp(qn);
     vkGetPhysicalDeviceQueueFamilyProperties(d, &qn, qfp.data());
     for (uint32_t i = 0; i < qn; ++i) {
-      VkBool32 present = VK_FALSE;
-      vkGetPhysicalDeviceSurfaceSupportKHR(d, i, surface_, &present);
+      VkBool32 present = VK_TRUE;  // headless: presentation not required
+      if (!headless_) vkGetPhysicalDeviceSurfaceSupportKHR(d, i, surface_, &present);
       if ((qfp[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && present) {
         VkPhysicalDeviceProperties props;
         vkGetPhysicalDeviceProperties(d, &props);
@@ -292,7 +297,10 @@ bool VulkanRenderer::createDevice(std::string* err) {
   qci.queueCount = 1;
   qci.pQueuePriorities = &prio;
 
-  std::vector<const char*> devExts = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+  // Swapchain extension only when presenting (its instance-surface dependency is
+  // not enabled in the headless path).
+  std::vector<const char*> devExts;
+  if (!headless_) devExts.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   VkDeviceCreateInfo ci{};
   ci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
   ci.queueCreateInfoCount = 1;
@@ -433,6 +441,56 @@ bool VulkanRenderer::createSwapchainViews(std::string* err) {
   return true;
 }
 
+bool VulkanRenderer::createHeadlessSwapchain(std::string* err) {
+  // Own a small ring of color images to stand in for swapchain images. RGBA8 so
+  // the composite reads back without a channel swizzle; TRANSFER_SRC so the
+  // render pass can leave it copy-ready for captureWindow().
+  swapFormat_ = VK_FORMAT_R8G8B8A8_UNORM;
+  swapExtent_ = {static_cast<uint32_t>(headlessW_ > 0 ? headlessW_ : 1),
+                 static_cast<uint32_t>(headlessH_ > 0 ? headlessH_ : 1)};
+  const size_t count = kFramesInFlight;
+  swapImages_.resize(count);
+  swapMem_.resize(count, VK_NULL_HANDLE);
+  swapViews_.resize(count);
+  for (size_t i = 0; i < count; ++i) {
+    VkImageCreateInfo ici{};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = swapFormat_;
+    ici.extent = {swapExtent_.width, swapExtent_.height, 1};
+    ici.mipLevels = 1;
+    ici.arrayLayers = 1;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VK_CHECK(vkCreateImage(device_, &ici, nullptr, &swapImages_[i]),
+             "headless composite image");
+    VkMemoryRequirements req;
+    vkGetImageMemoryRequirements(device_, swapImages_[i], &req);
+    VkMemoryAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex =
+        findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VK_CHECK(vkAllocateMemory(device_, &ai, nullptr, &swapMem_[i]),
+             "headless composite memory");
+    vkBindImageMemory(device_, swapImages_[i], swapMem_[i], 0);
+
+    VkImageViewCreateInfo vci{};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = swapImages_[i];
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = swapFormat_;
+    vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    vci.subresourceRange.levelCount = 1;
+    vci.subresourceRange.layerCount = 1;
+    VK_CHECK(vkCreateImageView(device_, &vci, nullptr, &swapViews_[i]),
+             "headless composite view");
+  }
+  return true;
+}
+
 bool VulkanRenderer::createSwapchainRenderPass(std::string* err) {
   VkAttachmentDescription color{};
   color.format = swapFormat_;
@@ -442,7 +500,10 @@ bool VulkanRenderer::createSwapchainRenderPass(std::string* err) {
   color.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
   color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
   color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  color.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+  // Headless: leave the composite copy-ready for captureWindow(); windowed:
+  // hand it to the presentation engine.
+  color.finalLayout = headless_ ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+                                 : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
   VkAttachmentReference ref{};
   ref.attachment = 0;
@@ -1009,16 +1070,21 @@ bool VulkanRenderer::createWhiteTexture(std::string* err) {
 
 bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
   window_ = window;
+  headless_ = (window == nullptr);  // windowless: no surface/swapchain
   caps_.backend_name = "Vulkan";
   caps_.usesZeroToOneDepth = true;
   caps_.flipViewportV = false;  // we Y-flip via a negative-height viewport
 
   if (!createInstance(err)) return false;
-  if (!createSurface(err)) return false;
+  if (!headless_ && !createSurface(err)) return false;
   if (!pickPhysicalDevice(err)) return false;
   if (!createDevice(err)) return false;
-  if (!createSwapchain(err)) return false;
-  if (!createSwapchainViews(err)) return false;
+  if (headless_) {
+    if (!createHeadlessSwapchain(err)) return false;  // owns images + views
+  } else {
+    if (!createSwapchain(err)) return false;
+    if (!createSwapchainViews(err)) return false;
+  }
   if (!createSwapchainRenderPass(err)) return false;
   if (!createSwapchainFramebuffers(err)) return false;
   if (!createOffscreenRenderPass(err)) return false;
@@ -1046,7 +1112,9 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
 }
 
 bool VulkanRenderer::initImGui(std::string* err) {
-  if (!ImGui_ImplGlfw_InitForVulkan(window_, true)) {
+  // Headless: no GLFW platform backend (the app drives io.DisplaySize/DeltaTime
+  // itself); only the Vulkan render backend is needed.
+  if (!headless_ && !ImGui_ImplGlfw_InitForVulkan(window_, true)) {
     if (err) *err = "ImGui_ImplGlfw_InitForVulkan failed";
     return false;
   }
@@ -1847,13 +1915,16 @@ void VulkanRenderer::present() {
 
   vkWaitForFences(device_, 1, &inFlight_[frame_], VK_TRUE, UINT64_MAX);
 
-  uint32_t imageIndex = 0;
-  VkResult acq = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX,
-                                       imageAvailable_[frame_], VK_NULL_HANDLE,
-                                       &imageIndex);
-  if (acq == VK_ERROR_OUT_OF_DATE_KHR) {
-    recreateSwapchain();
-    return;
+  // Headless: no swapchain to acquire from — composite into our own image ring.
+  uint32_t imageIndex = frame_;
+  if (!headless_) {
+    VkResult acq = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX,
+                                         imageAvailable_[frame_], VK_NULL_HANDLE,
+                                         &imageIndex);
+    if (acq == VK_ERROR_OUT_OF_DATE_KHR) {
+      recreateSwapchain();
+      return;
+    }
   }
   vkResetFences(device_, 1, &inFlight_[frame_]);
 
@@ -2024,25 +2095,34 @@ void VulkanRenderer::present() {
   VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
   VkSubmitInfo si{};
   si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-  si.waitSemaphoreCount = 1;
-  si.pWaitSemaphores = &imageAvailable_[frame_];
-  si.pWaitDstStageMask = &waitStage;
   si.commandBufferCount = 1;
   si.pCommandBuffers = &cb;
-  si.signalSemaphoreCount = 1;
-  si.pSignalSemaphores = &renderFinished_[frame_];
+  // Windowed: gate the composite pass on image acquisition and signal present.
+  // Headless: no acquire/present, so the fence alone orders frames.
+  if (!headless_) {
+    si.waitSemaphoreCount = 1;
+    si.pWaitSemaphores = &imageAvailable_[frame_];
+    si.pWaitDstStageMask = &waitStage;
+    si.signalSemaphoreCount = 1;
+    si.pSignalSemaphores = &renderFinished_[frame_];
+  }
   vkQueueSubmit(queue_, 1, &si, inFlight_[frame_]);
 
-  VkPresentInfoKHR pi{};
-  pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-  pi.waitSemaphoreCount = 1;
-  pi.pWaitSemaphores = &renderFinished_[frame_];
-  pi.swapchainCount = 1;
-  pi.pSwapchains = &swapchain_;
-  pi.pImageIndices = &imageIndex;
-  VkResult pres = vkQueuePresentKHR(queue_, &pi);
-  if (pres == VK_ERROR_OUT_OF_DATE_KHR || pres == VK_SUBOPTIMAL_KHR) {
-    recreateSwapchain();
+  if (headless_) {
+    // The composite image is left in TRANSFER_SRC_OPTIMAL; captureWindow() reads it.
+    lastSwapIndex_ = imageIndex;
+  } else {
+    VkPresentInfoKHR pi{};
+    pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    pi.waitSemaphoreCount = 1;
+    pi.pWaitSemaphores = &renderFinished_[frame_];
+    pi.swapchainCount = 1;
+    pi.pSwapchains = &swapchain_;
+    pi.pImageIndices = &imageIndex;
+    VkResult pres = vkQueuePresentKHR(queue_, &pi);
+    if (pres == VK_ERROR_OUT_OF_DATE_KHR || pres == VK_SUBOPTIMAL_KHR) {
+      recreateSwapchain();
+    }
   }
   frame_ = (frame_ + 1) % kFramesInFlight;
 }
@@ -2138,12 +2218,74 @@ bool VulkanRenderer::captureViewport(std::vector<uint8_t>* rgba, int* w, int* h)
   return true;  // colorFormat_ is R8G8B8A8_UNORM, top-down (Y-flipped viewport)
 }
 
+bool VulkanRenderer::captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) {
+  // Headless only: read back the last composite image (UI + viewport). The swap
+  // render pass left it in TRANSFER_SRC_OPTIMAL, so we can copy it straight out.
+  if (!headless_ || !device_ || swapImages_.empty() ||
+      lastSwapIndex_ >= swapImages_.size()) {
+    return false;
+  }
+  vkDeviceWaitIdle(device_);
+  const uint32_t cw = swapExtent_.width, ch = swapExtent_.height;
+  const VkDeviceSize size = static_cast<VkDeviceSize>(cw) * ch * 4;
+
+  VkBuffer buf = VK_NULL_HANDLE;
+  VkDeviceMemory mem = VK_NULL_HANDLE;
+  VkBufferCreateInfo bi{};
+  bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bi.size = size;
+  bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+  bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  if (vkCreateBuffer(device_, &bi, nullptr, &buf) != VK_SUCCESS) return false;
+  VkMemoryRequirements req;
+  vkGetBufferMemoryRequirements(device_, buf, &req);
+  VkMemoryAllocateInfo ai{};
+  ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  ai.allocationSize = req.size;
+  ai.memoryTypeIndex = findMemoryType(
+      req.memoryTypeBits,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  vkAllocateMemory(device_, &ai, nullptr, &mem);
+  vkBindBufferMemory(device_, buf, mem, 0);
+
+  VkCommandBuffer cb = beginOneShot();
+  VkBufferImageCopy region{};
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.layerCount = 1;
+  region.imageExtent = {cw, ch, 1};
+  vkCmdCopyImageToBuffer(cb, swapImages_[lastSwapIndex_],
+                         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buf, 1, &region);
+  endOneShot(cb);
+
+  void* mapped = nullptr;
+  vkMapMemory(device_, mem, 0, size, 0, &mapped);
+  rgba->resize(static_cast<size_t>(size));
+  std::memcpy(rgba->data(), mapped, static_cast<size_t>(size));
+  vkUnmapMemory(device_, mem);
+  vkDestroyBuffer(device_, buf, nullptr);
+  vkFreeMemory(device_, mem, nullptr);
+
+  *w = static_cast<int>(cw);
+  *h = static_cast<int>(ch);
+  return true;  // R8G8B8A8_UNORM, top-down
+}
+
 void VulkanRenderer::destroySwapchain() {
   for (auto fb : swapFramebuffers_) vkDestroyFramebuffer(device_, fb, nullptr);
   swapFramebuffers_.clear();
   for (auto v : swapViews_) vkDestroyImageView(device_, v, nullptr);
   swapViews_.clear();
-  if (swapchain_) {
+  if (headless_) {
+    // We own the composite images + their memory in the headless path.
+    for (auto img : swapImages_) {
+      if (img) vkDestroyImage(device_, img, nullptr);
+    }
+    for (auto m : swapMem_) {
+      if (m) vkFreeMemory(device_, m, nullptr);
+    }
+    swapImages_.clear();
+    swapMem_.clear();
+  } else if (swapchain_) {
     vkDestroySwapchainKHR(device_, swapchain_, nullptr);
     swapchain_ = VK_NULL_HANDLE;
   }

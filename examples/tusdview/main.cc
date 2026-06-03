@@ -31,6 +31,7 @@ int main(int argc, char** argv) {
   bool wantRt = false;        // request Vulkan ray tracing (if supported)
   bool mcpStdio = false;      // MCP server: stdio transport
   int mcpHttpPort = 0;        // MCP server: HTTP transport port (0 = off)
+  bool headless = false;      // windowless offscreen rendering (Vulkan only)
 
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--backend") == 0 && (i + 1) < argc) {
@@ -52,6 +53,8 @@ int main(int argc, char** argv) {
       uiScale = static_cast<float>(std::atof(argv[++i]));
     } else if (std::strcmp(argv[i], "--window-shot") == 0 && (i + 1) < argc) {
       windowShot = argv[++i];
+    } else if (std::strcmp(argv[i], "--headless") == 0) {
+      headless = true;
     } else if (std::strcmp(argv[i], "--rt") == 0) {
       wantRt = true;
     } else if (std::strcmp(argv[i], "--mcp-stdio") == 0) {
@@ -68,10 +71,12 @@ int main(int argc, char** argv) {
           "Usage: tusdview [--backend gl|vk] [--rt] [--frames N] "
           "[--screenshot out.ppm]\n"
           "                [--max-tris N] [--time-budget SECONDS] [--ui-scale S]\n"
-          "                [--mcp-stdio] [--mcp-http[=PORT]] [--mcp] "
+          "                [--headless] [--mcp-stdio] [--mcp-http[=PORT]] [--mcp] "
           "[file.usd|usda|usdc|usdz]\n"
           "  --rt          Use Vulkan ray tracing (ray query) when supported "
           "(implies --backend vk).\n"
+          "  --headless    Windowless offscreen rendering, no display needed "
+          "(Vulkan only; needs --frames + --screenshot/--window-shot).\n"
           "  --mcp-stdio   Run the MCP server over stdio (JSON-RPC on stdin/stdout).\n"
           "  --mcp-http    Run the MCP server over HTTP (default port 8080).\n"
           "  --mcp         Both transports.\n");
@@ -83,6 +88,8 @@ int main(int argc, char** argv) {
 
   // Ray tracing is a Vulkan technique, so --rt implies the Vulkan backend.
   if (wantRt) backend = tusdview::Backend::Vulkan;
+  // Windowless rendering is a Vulkan-only path (GL needs a window/context).
+  if (headless) backend = tusdview::Backend::Vulkan;
 
 #if !defined(HAVE_VULKAN)
   if (backend == tusdview::Backend::Vulkan) {
@@ -99,5 +106,6 @@ int main(int argc, char** argv) {
   app.setRequestRayTracing(wantRt);
   app.setMcpStdio(mcpStdio);
   app.setMcpHttp(mcpHttpPort);
+  app.setHeadless(headless);
   return app.run(file, maxFrames, screenshot);
 }

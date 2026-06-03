@@ -70,8 +70,15 @@ class Renderer {
   virtual ~Renderer() = default;
 
   // Create device resources. `window` is the GLFW window (Vulkan creates its
-  // surface from it; GL assumes its context is already current).
+  // surface from it; GL assumes its context is already current). A null window
+  // requests a windowless/offscreen backend (Vulkan only): no surface, no
+  // swapchain — the composited frame is rendered to an offscreen target sized by
+  // setHeadlessSize() and retrieved via captureWindow().
   virtual bool init(GLFWwindow* window, std::string* err) = 0;
+
+  // Set the headless composite (full-window) size in pixels. Must be called
+  // before init() when `window` is null. No-op for backends that need a window.
+  virtual void setHeadlessSize(int /*w*/, int /*h*/) {}
 
   // Wire up the ImGui platform+renderer backends. Call after ImGui::CreateContext().
   virtual bool initImGui(std::string* err) = 0;
