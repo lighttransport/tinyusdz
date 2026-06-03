@@ -54,6 +54,7 @@ class Gui {
   // Selection: set focus by absolute prim path (meshIndex < 0 = look up by path);
   // read the current focus. Used by the GUI and the MCP server.
   void selectByPath(const std::string& absPath, int meshIndex);
+  void clearSelection();  // deselect (e.g. clicking empty viewport space)
   const std::string& selectedPath() const { return selPath_; }
   int selectedMeshIndex() const { return selMeshIndex_; }
 
