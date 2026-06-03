@@ -78,4 +78,12 @@ void OrbitCamera::fitToScene(const float aabbMin[3], const float aabbMax[3]) {
   zfar_ = distance_ + radius * 4.0f;
 }
 
+void OrbitCamera::setOrbit(const light3d::Vec3& target, float yawRad, float pitchRad,
+                           float dist) {
+  target_ = target;
+  yaw_ = yawRad;
+  pitch_ = std::max(-kPitchLimit, std::min(kPitchLimit, pitchRad));
+  distance_ = std::max(dist, 1e-3f);
+}
+
 }  // namespace tusdview

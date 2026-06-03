@@ -120,5 +120,30 @@ else()
   message(STATUS "tusdview: native file dialog disabled (pass a file on CLI)")
 endif()
 
+# ---------------------------------------------------------------------------
+# Embedded MCP (Model Context Protocol) server: stdio + HTTP transports.
+# Dependencies (nlohmann/json + civetweb) are vendored in tinyusdz/src/external,
+# so this defaults ON (no system packages needed).
+# ---------------------------------------------------------------------------
+option(TUSDVIEW_ENABLE_MCP "Build the embedded MCP server (stdio + HTTP)" ON)
+if(TUSDVIEW_ENABLE_MCP)
+  target_sources(${EXAMPLE_TARGET} PRIVATE
+      mcp/mcp_server.cc
+      mcp/mcp_http.cc
+      mcp/mcp_stdio.cc
+      mcp/app_mcp.cc
+      ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c)
+  target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
+      TUSDVIEW_HAVE_MCP=1
+      NO_SSL NO_CGI USE_WEBSOCKET=0)  # civetweb: no OpenSSL / CGI / websockets
+  target_link_libraries(${EXAMPLE_TARGET} PRIVATE ${CMAKE_DL_LIBS})
+  if(UNIX)
+    target_link_libraries(${EXAMPLE_TARGET} PRIVATE Threads::Threads)
+  endif()
+  message(STATUS "tusdview: embedded MCP server ENABLED (stdio + HTTP)")
+else()
+  message(STATUS "tusdview: embedded MCP server disabled")
+endif()
+
 set_target_properties(${EXAMPLE_TARGET} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

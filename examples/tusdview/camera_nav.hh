@@ -32,6 +32,14 @@ class OrbitCamera {
   void fitToScene(const float aabbMin[3], const float aabbMax[3]);
 
   const light3d::Vec3& target() const { return target_; }
+  float yaw() const { return yaw_; }
+  float pitch() const { return pitch_; }
+  float distance() const { return distance_; }
+
+  // Absolute camera placement (e.g. driven by the MCP viewport tool). Pitch is
+  // clamped like orbit(); distance kept positive.
+  void setOrbit(const light3d::Vec3& target, float yawRad, float pitchRad,
+                float dist);
 
  private:
   light3d::Vec3 target_{0.0f, 0.0f, 0.0f};

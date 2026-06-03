@@ -43,6 +43,11 @@ void WritePPM(const std::string& path, const std::vector<uint8_t>& rgba, int w, 
 }  // namespace
 
 App::~App() {
+#if defined(TUSDVIEW_HAVE_MCP)
+  // Stop the MCP transports first so no worker thread calls back into App while
+  // its members are being destroyed.
+  if (mcp_) mcp_->stop();
+#endif
   cancelAndJoinLoad();  // must run before members the worker writes into are destroyed
   if (renderer_) renderer_->shutdown();
   if (ImGui::GetCurrentContext()) ImGui::DestroyContext();
@@ -298,6 +303,20 @@ int App::run(const std::string& initialFile, int maxFrames,
 
   gui_.setScene(&loaded_, &draw_);
   gui_.setBudget(&loadCtrl_);
+
+#if defined(TUSDVIEW_HAVE_MCP)
+  // Start the embedded MCP server (tool calls are drained on the main thread).
+  if (mcpStdio_ || mcpHttpPort_ > 0) {
+    mcp_ = std::make_unique<MCPServer>(this);
+    if (mcpHttpPort_ > 0) mcp_->startHttp(mcpHttpPort_);
+    if (mcpStdio_) mcp_->startStdio();
+  }
+#else
+  if (mcpStdio_ || mcpHttpPort_ > 0) {
+    LOGW("MCP requested but not compiled in (build with -DTUSDVIEW_ENABLE_MCP=ON).");
+  }
+#endif
+
   if (!initialFile.empty()) {
     // Headless (--frames) loads synchronously so screenshots are deterministic;
     // interactive runs load on a worker thread to keep the window responsive.
@@ -349,6 +368,9 @@ int App::run(const std::string& initialFile, int maxFrames,
     const bool quit = gui_.wantQuit();
     const bool cancelLoad = gui_.wantCancelLoad();
     gui_.clearActions();
+#if defined(TUSDVIEW_HAVE_MCP)
+    if (mcp_) mcp_->drain();  // run queued MCP tool calls on the main thread
+#endif
     if (cancelLoad) loadCtrl_.cancel.store(true);
     if (quit) glfwSetWindowShouldClose(window_, GLFW_TRUE);
     if (reload && !loaded_.filepath.empty()) startLoadAsync(loaded_.filepath);
