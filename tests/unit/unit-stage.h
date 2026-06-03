@@ -10,3 +10,4 @@ void stage_metas_test(void);
 void stage_memory_estimation_test(void);
 void stage_empty_test(void);
 void stage_nested_hierarchy_test(void);
+void stage_concurrent_find_prim_test(void);

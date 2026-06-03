@@ -13,6 +13,12 @@
 #include "usda-writer.hh"
 #include "stage.hh"
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <atomic>
+#include <thread>
+#include <vector>
+#endif
+
 using namespace tinyusdz;
 
 // Helper to build a test hierarchy:
@@ -550,4 +556,62 @@ void stage_nested_hierarchy_test(void) {
     auto r = stage.GetPrimAtPath(p);
     TEST_CHECK(!r.has_value());
   }
+}
+
+// Shares ONE Stage across many threads, all calling the const read API
+// find_prim_at_path() concurrently. This exercises the lazy lookup-cache
+// (clear-on-dirty + insert) under contention. Must be ThreadSanitizer-clean
+// (the cache read/write is guarded by Stage::_cache_mu).
+void stage_concurrent_find_prim_test(void) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  Stage stage = build_test_stage();
+
+  const std::vector<std::string> hit_paths = {
+      "/Root",
+      "/Root/Child1",
+      "/Root/Child1/GrandChild1",
+      "/Root/Child1/GrandChild2",
+      "/Root/Child2",
+      "/Root/Child2/GrandChild3"};
+  const std::string miss_path = "/Root/DoesNotExist";
+
+  const int kThreads = 8;
+  const int kIters = 2000;
+  std::atomic<bool> ok{true};
+
+  auto worker = [&]() {
+    for (int it = 0; it < kIters; ++it) {
+      for (const auto &sp : hit_paths) {
+        const Prim *prim = nullptr;
+        std::string err;
+        bool found = stage.find_prim_at_path(Path(sp, ""), prim, &err);
+        if (!found || prim == nullptr) {
+          ok.store(false);
+        }
+      }
+      {
+        const Prim *prim = nullptr;
+        std::string err;
+        bool found = stage.find_prim_at_path(Path(miss_path, ""), prim, &err);
+        if (found) {
+          ok.store(false);
+        }
+      }
+    }
+  };
+
+  std::vector<std::thread> ts;
+  ts.reserve(kThreads);
+  for (int i = 0; i < kThreads; ++i) {
+    ts.emplace_back(worker);
+  }
+  for (auto &t : ts) {
+    t.join();
+  }
+
+  TEST_CHECK(ok.load());
+#else
+  // Threads disabled: the const read API is covered by the other Stage tests.
+  TEST_CHECK(true);
+#endif
 }

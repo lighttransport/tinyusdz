@@ -544,6 +544,7 @@ TEST_LIST = {
   { "stage_memory_estimation_test", stage_memory_estimation_test },
   { "stage_empty_test", stage_empty_test },
   { "stage_nested_hierarchy_test", stage_nested_hierarchy_test },
+  { "stage_concurrent_find_prim_test", stage_concurrent_find_prim_test },
   // Phase 2: Layer API tests
   { "layer_create_empty_test", layer_create_empty_test },
   { "layer_add_primspec_test", layer_add_primspec_test },
