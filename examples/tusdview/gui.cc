@@ -52,6 +52,34 @@ const tinyusdz::Prim* FindPrimByPath(const tinyusdz::Prim& prim,
   return nullptr;
 }
 
+// --- Hierarchy search predicates (name + type + abs path) ---
+bool PrimPasses(ImGuiTextFilter& f, const tinyusdz::Prim& prim) {
+  std::string typeName = prim.prim_type_name();
+  if (typeName.empty()) typeName = prim.type_name();
+  std::string s = prim.element_name() + " " + typeName + " " +
+                  prim.absolute_path().full_path_name();
+  return f.PassFilter(s.c_str());
+}
+bool PrimSubtreePasses(ImGuiTextFilter& f, const tinyusdz::Prim& prim) {
+  if (PrimPasses(f, prim)) return true;
+  for (const auto& c : prim.children()) {
+    if (PrimSubtreePasses(f, c)) return true;
+  }
+  return false;
+}
+bool NodePasses(ImGuiTextFilter& f, const tydra::Node& node) {
+  std::string s = node.prim_name + " " + node.abs_path + " " +
+                  NodeTypeName(node.nodeType);
+  return f.PassFilter(s.c_str());
+}
+bool NodeSubtreePasses(ImGuiTextFilter& f, const tydra::Node& node) {
+  if (NodePasses(f, node)) return true;
+  for (const auto& c : node.children) {
+    if (NodeSubtreePasses(f, c)) return true;
+  }
+  return false;
+}
+
 }  // namespace
 
 void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
@@ -217,7 +245,12 @@ void Gui::selectByPath(const std::string& absPath, int meshIndex) {
   }
 }
 
-void Gui::drawPrimTree(const tinyusdz::Prim& prim) {
+bool Gui::drawPrimTree(const tinyusdz::Prim& prim) {
+  // When filtering, hide whole subtrees that contain no match; expand the rest
+  // so matches are visible in context.
+  const bool filtering = hierFilter_.IsActive();
+  if (filtering && !PrimSubtreePasses(hierFilter_, prim)) return false;
+
   ImGui::PushID(static_cast<const void*>(&prim));
   std::string typeName = prim.prim_type_name();
   if (typeName.empty()) typeName = prim.type_name();
@@ -232,6 +265,7 @@ void Gui::drawPrimTree(const tinyusdz::Prim& prim) {
   if (leaf) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_Bullet;
   if (selPrim_ == &prim) flags |= ImGuiTreeNodeFlags_Selected;
 
+  if (filtering) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
   const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
   if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
     selectByPath(prim.absolute_path().full_path_name(), -1);
@@ -242,9 +276,13 @@ void Gui::drawPrimTree(const tinyusdz::Prim& prim) {
     ImGui::TreePop();
   }
   ImGui::PopID();
+  return true;
 }
 
-void Gui::drawNodeTree(const tydra::Node& node) {
+bool Gui::drawNodeTree(const tydra::Node& node) {
+  const bool filtering = hierFilter_.IsActive();
+  if (filtering && !NodeSubtreePasses(hierFilter_, node)) return false;
+
   ImGui::PushID(static_cast<const void*>(&node));
   std::string label = node.prim_name.empty() ? "<node>" : node.prim_name;
   label += "  {";
@@ -258,6 +296,7 @@ void Gui::drawNodeTree(const tydra::Node& node) {
   if (leaf) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_Bullet;
   if (!selPath_.empty() && selPath_ == node.abs_path) flags |= ImGuiTreeNodeFlags_Selected;
 
+  if (filtering) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
   const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
   if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
     const int meshIdx = (node.nodeType == tydra::NodeType::Mesh) ? node.id : -1;
@@ -268,11 +307,14 @@ void Gui::drawNodeTree(const tydra::Node& node) {
     ImGui::TreePop();
   }
   ImGui::PopID();
+  return true;
 }
 
 void Gui::drawHierarchy() {
   ImGui::Begin("Hierarchy");
   if (loaded_ && loaded_->ok) {
+    hierFilter_.Draw("Search", -1.0f);  // name / type / path
+    ImGui::Separator();
     if (showRenderNodes_) {
       for (const auto& n : loaded_->render.nodes) drawNodeTree(n);
     } else {
@@ -300,6 +342,7 @@ void Gui::drawInspector() {
       HintWrapped(primMeta.c_str());
     }
     ImGui::Separator();
+    propFilter_.Draw("Search##props", -1.0f);  // property name / value
 
     std::vector<std::string> names;
     std::string err;
@@ -315,12 +358,20 @@ void Gui::drawInspector() {
         for (const std::string& name : names) {
           tinyusdz::Property prop;
           std::string perr;
+          const bool gotProp = tydra::GetProperty(*selPrim_, name, &prop, &perr);
+          const std::string valStr =
+              gotProp ? PropertyToString(prop) : std::string("<error>");
+          // Filter rows by property name or value.
+          if (propFilter_.IsActive() && !propFilter_.PassFilter(name.c_str()) &&
+              !propFilter_.PassFilter(valStr.c_str())) {
+            continue;
+          }
           ImGui::TableNextRow();
           ImGui::TableSetColumnIndex(0);
           ImGui::TextUnformatted(name.c_str());
           ImGui::TableSetColumnIndex(1);
-          if (tydra::GetProperty(*selPrim_, name, &prop, &perr)) {
-            ImGui::TextWrapped("%s", PropertyToString(prop).c_str());
+          if (gotProp) {
+            ImGui::TextWrapped("%s", valStr.c_str());
             if (prop.is_attribute()) {
               const std::string am = AttrMetaSummary(prop.get_attribute());
               if (!am.empty()) HintWrapped(am.c_str());
@@ -556,6 +607,7 @@ void Gui::drawStageMeta() {
   if (loaded_ && loaded_->ok) {
     const auto& meta = loaded_->render.meta;
     const auto& smeta = loaded_->stage.metas();
+    metaFilter_.Draw("Search##meta", -1.0f);  // key / value
     if (ImGui::BeginTable("##stagemeta", 2,
                           ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg |
                               ImGuiTableFlags_BordersInnerH)) {
@@ -564,6 +616,10 @@ void Gui::drawStageMeta() {
       ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
       ImGui::TableHeadersRow();
       auto row = [&](const char* k, const std::string& v) {
+        if (metaFilter_.IsActive() && !metaFilter_.PassFilter(k) &&
+            !metaFilter_.PassFilter(v.c_str())) {
+          return;  // filtered out
+        }
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
         ImGui::TextUnformatted(k);
