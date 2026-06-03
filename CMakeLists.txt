@@ -1350,6 +1350,15 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-switch-default")
   endif()
 
+  # clang 21+ (e.g. llvm-mingw clang 22) adds -Wnrvo and tightens
+  # -Wthread-safety-negative under -Weverything. -Wnrvo flags every place the
+  # compiler declined to elide a named return value (advisory, not a defect),
+  # and -Wthread-safety-negative demands negative-capability annotations the
+  # codebase does not use. Suppress both rather than churn the source.
+  if (${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 20)
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-nrvo -Wno-thread-safety-negative")
+  endif()
+
   if(TINYUSDZ_COMPILE_TIME_TRACE)
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -ftime-trace ")
   endif()
