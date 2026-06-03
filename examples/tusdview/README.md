@@ -16,6 +16,9 @@ displays it with an ImGui docking UI.
     `ImGui::Image`.
   - **Stats** — fps, mesh/triangle/material/texture counts, scene bounds, and a
     list of anything skipped (UDIM/undecoded textures, empty meshes).
+  - **Search boxes** in the Hierarchy (filters prims by name/type/path, keeping
+    matches' ancestors and auto-expanding), the Inspector (filters properties by
+    name/value), and the Stage metadata panel (filters by key/value).
 - **Maya-style navigation** (only when the viewport is hovered):
   - `Alt + LMB` orbit, `Alt + MMB` pan, `Alt + RMB` / **mouse wheel** dolly.
   - `F` frames (fits) the whole scene.
@@ -125,6 +128,43 @@ cmake --build build -j16 --target tusdview
 
 Note: `--frames` loads synchronously (deterministic screenshots); interactive
 runs load on the worker thread.
+
+## MCP server (drive the viewer from an LLM/agent)
+
+tusdview embeds an **MCP (Model Context Protocol)** server so an LLM/agent can
+inspect and control the running viewer. It speaks JSON-RPC 2.0 over two
+transports:
+
+```bash
+./build/tusdview --mcp-http=8080 model.usdz   # HTTP: POST JSON-RPC to http://localhost:8080/mcp
+./build/tusdview --mcp-stdio    model.usdz     # stdio: JSON-RPC on stdin/stdout (logs on stderr)
+./build/tusdview --mcp          model.usdz     # both (HTTP on 8080)
+```
+
+Tools (`tools/list` for schemas):
+
+| tool | does |
+|---|---|
+| `load_usd {path}` | load a USD file (async; poll `get_scene_info`) |
+| `get_scene_info` / `get_scene_bbox` | filepath, mesh/triangle/material counts, up axis, world-space AABB |
+| `get_focused_prim` | selected prim: path, vertex/triangle counts, bbox, world matrix, material (id/name/base color/metal/rough) |
+| `set_focus {path}` | select a prim by absolute path; returns the same info |
+| `viewport {op}` | `orbit`/`pan {dx,dy}`, `dolly {amount}`, `fit`, `set {target,yaw,pitch,distance}`; returns the camera state |
+| `list_prims {max?}` | renderable mesh prim paths |
+
+Example:
+
+```bash
+curl -s -XPOST localhost:8080/mcp \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
+       "params":{"name":"viewport","arguments":{"op":"fit"}}}'
+```
+
+Tool calls are marshalled onto the render thread (GL/VK/camera are
+main-thread-only), so they take effect on the next frame. The server is built by
+default (deps — `nlohmann/json` + civetweb — are vendored in `src/external`);
+disable with `-DTUSDVIEW_ENABLE_MCP=OFF`. The HTTP transport is the minimal
+"Streamable HTTP" subset (one JSON response per POST; no SSE).
 
 ## Architecture
 

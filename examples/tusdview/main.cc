@@ -29,6 +29,8 @@ int main(int argc, char** argv) {
   double timeBudget = 0.0;    // 0 = unlimited
   float uiScale = 2.0f;       // HiDPI UI scale (font px = 16 * uiScale)
   bool wantRt = false;        // request Vulkan ray tracing (if supported)
+  bool mcpStdio = false;      // MCP server: stdio transport
+  int mcpHttpPort = 0;        // MCP server: HTTP transport port (0 = off)
 
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--backend") == 0 && (i + 1) < argc) {
@@ -52,14 +54,27 @@ int main(int argc, char** argv) {
       windowShot = argv[++i];
     } else if (std::strcmp(argv[i], "--rt") == 0) {
       wantRt = true;
+    } else if (std::strcmp(argv[i], "--mcp-stdio") == 0) {
+      mcpStdio = true;
+    } else if (std::strncmp(argv[i], "--mcp-http", 10) == 0) {
+      const char* eq = std::strchr(argv[i], '=');
+      mcpHttpPort = eq ? std::atoi(eq + 1) : 8080;
+      if (mcpHttpPort <= 0) mcpHttpPort = 8080;
+    } else if (std::strcmp(argv[i], "--mcp") == 0) {
+      mcpStdio = true;
+      if (mcpHttpPort == 0) mcpHttpPort = 8080;
     } else if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0) {
       std::printf(
           "Usage: tusdview [--backend gl|vk] [--rt] [--frames N] "
           "[--screenshot out.ppm]\n"
-          "                [--max-tris N] [--time-budget SECONDS] [--ui-scale S] "
+          "                [--max-tris N] [--time-budget SECONDS] [--ui-scale S]\n"
+          "                [--mcp-stdio] [--mcp-http[=PORT]] [--mcp] "
           "[file.usd|usda|usdc|usdz]\n"
-          "  --rt   Use Vulkan ray tracing (ray query) when the GPU supports it "
-          "(implies --backend vk).\n");
+          "  --rt          Use Vulkan ray tracing (ray query) when supported "
+          "(implies --backend vk).\n"
+          "  --mcp-stdio   Run the MCP server over stdio (JSON-RPC on stdin/stdout).\n"
+          "  --mcp-http    Run the MCP server over HTTP (default port 8080).\n"
+          "  --mcp         Both transports.\n");
       return 0;
     } else if (argv[i][0] != '-') {
       file = argv[i];
@@ -82,5 +97,7 @@ int main(int argc, char** argv) {
   app.setUiScale(uiScale);
   app.setWindowShot(windowShot);
   app.setRequestRayTracing(wantRt);
+  app.setMcpStdio(mcpStdio);
+  app.setMcpHttp(mcpHttpPort);
   return app.run(file, maxFrames, screenshot);
 }
