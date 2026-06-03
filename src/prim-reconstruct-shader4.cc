@@ -88,6 +88,40 @@ bool ReconstructShader(
 // This helper eliminates ~220 lines of duplication.
 
 template<typename PrimvarReaderT>
+static bool ParsePrimvarReaderResult(
+    std::set<std::string> &table,
+    std::pair<const std::string, Property> &prop,
+    PrimvarReaderT *preader,
+    bool strict_type_check,
+    std::string *err) {
+  if (prop.first != "outputs:result" || table.count("outputs:result")) {
+    return false;
+  }
+
+  auto ret = ParseShaderOutputTerminalAttribute(
+      table, prop.first, prop.second, "outputs:result", preader->result,
+      strict_type_check);
+  if (ret.code == ParseResult::ResultCode::Success) {
+    return true;
+  }
+
+  if (ret.code == ParseResult::ResultCode::TypeMismatch &&
+      prop.second.is_attribute()) {
+    const Attribute &attr = prop.second.get_attribute();
+    if (attr.type_name() == value::TypeTraits<value::token>::type_name()) {
+      preader->result.set_authored(true);
+      preader->result.set_actual_type_name(attr.type_name());
+      table.insert("outputs:result");
+      return true;
+    }
+  }
+
+  PUSH_ERROR_AND_RETURN(
+      fmt::format("Parsing shader output property `outputs:result` failed. "
+                  "Error: {}", ret.err));
+}
+
+template<typename PrimvarReaderT>
 static bool ReconstructPrimvarReaderShaderImpl(
     const Specifier &spec,
     PropertyMap &properties,
@@ -99,15 +133,16 @@ static bool ReconstructPrimvarReaderShaderImpl(
 {
   (void)spec;
   (void)references;
-  (void)options;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
     PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:fallback", PrimvarReaderT,
                    preader->fallback)
     PARSE_PRIMVAR_READER_VARNAME(table, prop, preader->varname, "")
-    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
-                                  PrimvarReaderT, preader->result)
+    if (ParsePrimvarReaderResult(table, prop, preader,
+                                 options.strict_shader_type_check, err)) {
+      continue;
+    }
     ADD_PROPERTY(table, prop, PrimvarReaderT, preader->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }

@@ -58,6 +58,8 @@
 #include "unit-usdz-writer.h"
 #include "unit-usdc-writer.h"
 #include "unit-usd-validation.h"
+// USDZ conversion pipeline + texture ops + fpnge
+#include "unit-usdz-convert.h"
 // Physics + MuJoCo
 #include "unit-physics.h"
 // IK solver
@@ -65,6 +67,7 @@
 // Rigid body simulation
 #include "unit-rb-collision.h"
 #include "unit-rb-dynamics.h"
+#include "unit-string-pool.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -110,6 +113,7 @@ TEST_LIST = {
   { "strutil_test", strutil_test },
   { "tinystring_test", tinystring_test },
   { "parse_int_test", parse_int_test },
+  { "strutil_parse_helpers_test", strutil_parse_helpers_test },
   { "fp_string_conversion_test", fp_string_conversion_test },
   { "timesamples_test", timesamples_test },
   { "fp_roundtrip_basic_test", fp_roundtrip_basic_test },
@@ -162,6 +166,7 @@ TEST_LIST = {
   { "tydra_material_binding_validation_test",
     tydra_material_binding_validation_test },
   { "tydra_texture_loader_policy_test", tydra_texture_loader_policy_test },
+  { "tydra_udim_texture_test", tydra_udim_texture_test },
   { "tydra_envmap_loader_policy_test", tydra_envmap_loader_policy_test },
   { "tydra_geometry_light_validation_test",
     tydra_geometry_light_validation_test },
@@ -292,6 +297,7 @@ TEST_LIST = {
   { "tiny_hashmap_load_factor_test", tiny_hashmap_load_factor_test },
   { "tiny_hashmap_int_keys_test", tiny_hashmap_int_keys_test },
   { "tiny_hashmap_insert_or_assign_test", tiny_hashmap_insert_or_assign_test },
+  { "tiny_hashmap_at_miss_test", tiny_hashmap_at_miss_test },
   { "usda_roundtrip_basic_test", usda_roundtrip_basic_test },
   { "usda_roundtrip_xform_test", usda_roundtrip_xform_test },
   { "usda_roundtrip_mesh_test", usda_roundtrip_mesh_test },
@@ -510,6 +516,9 @@ TEST_LIST = {
   { "primspec_children_test", primspec_children_test },
   { "primspec_variant_selection_test", primspec_variant_selection_test },
   { "primspec_metas_test", primspec_metas_test },
+  { "primspec_metas_lazy_init_test", primspec_metas_lazy_init_test },
+  { "primspec_primchildren_propertynames_test", primspec_primchildren_propertynames_test },
+  { "primspec_working_path_test", primspec_working_path_test },
   // Prim API tests
   { "prim_type_check_test", prim_type_check_test },
   { "prim_add_child_test", prim_add_child_test },
@@ -565,6 +574,7 @@ TEST_LIST = {
   { "security_sha256_overflow_rejected_test", security_sha256_overflow_rejected_test },
   // USDZ writer and validation tests
   { "usdz_writer_basic_roundtrip_test", usdz_writer_basic_roundtrip_test },
+  { "usdz_writer_root_layer_format_test", usdz_writer_root_layer_format_test },
   { "usdz_writer_with_assets_test", usdz_writer_with_assets_test },
   { "usdz_validator_alignment_test", usdz_validator_alignment_test },
   { "usdz_validator_crc32_test", usdz_validator_crc32_test },
@@ -573,6 +583,28 @@ TEST_LIST = {
   { "usdz_writer_file_roundtrip_test", usdz_writer_file_roundtrip_test },
   { "usdz_validator_large_asset_test", usdz_validator_large_asset_test },
   { "usdz_validator_bad_extension_test", usdz_validator_bad_extension_test },
+  { "usdz_writer_rejects_unsafe_asset_names_test", usdz_writer_rejects_unsafe_asset_names_test },
+  // USDZ conversion pipeline + texture ops + fpnge
+  { "usdz_convert_png_roundtrip_test", usdz_convert_png_roundtrip_test },
+  { "usdz_convert_resize_test", usdz_convert_resize_test },
+  { "usdz_convert_pack_channels_test", usdz_convert_pack_channels_test },
+  { "usdz_convert_orm_scalar_fallback_test", usdz_convert_orm_scalar_fallback_test },
+  { "usdz_convert_orm_scalar_nonfinite_test", usdz_convert_orm_scalar_nonfinite_test },
+  { "usdz_convert_archive_collision_name_test", usdz_convert_archive_collision_name_test },
+  { "usdz_convert_fit_budget_test", usdz_convert_fit_budget_test },
+  { "usdz_convert_pipeline_test", usdz_convert_pipeline_test },
+  { "usdz_convert_usdz_root_layer_format_test", usdz_convert_usdz_root_layer_format_test },
+  { "usdz_convert_arkit_forces_flattened_usdc_root_test", usdz_convert_arkit_forces_flattened_usdc_root_test },
+  { "usdz_convert_repack_files_test", usdz_convert_repack_files_test },
+  { "usdz_convert_jpeg_roundtrip_test", usdz_convert_jpeg_roundtrip_test },
+  { "usdz_convert_remap_asset_paths_test", usdz_convert_remap_asset_paths_test },
+  { "usdz_convert_error_path_test", usdz_convert_error_path_test },
+  { "usdz_convert_adversarial_image_test", usdz_convert_adversarial_image_test },
+  { "usdz_convert_pack_channels_error_test", usdz_convert_pack_channels_error_test },
+  { "usdz_convert_fit_budget_error_test", usdz_convert_fit_budget_error_test },
+  { "usdz_convert_missing_texture_reference_test", usdz_convert_missing_texture_reference_test },
+  { "usdz_convert_pipeline_jpeg_test", usdz_convert_pipeline_jpeg_test },
+  { "usdz_convert_cleanup_test", usdz_convert_cleanup_test },
   // Pretty-printer column wrap tests
   { "column_wrap_disabled_test", column_wrap_disabled_test },
   { "column_wrap_float3_array_test", column_wrap_float3_array_test },
@@ -593,6 +625,7 @@ TEST_LIST = {
   { "usdc_writer_blendshape_test", usdc_writer_blendshape_test },
   { "usdc_writer_skelroot_test", usdc_writer_skelroot_test },
   { "usdc_writer_shader_terminal_test", usdc_writer_shader_terminal_test },
+  { "usdc_writer_layer_empty_shader_outputs_test", usdc_writer_layer_empty_shader_outputs_test },
   { "usdc_writer_material_outputs_test", usdc_writer_material_outputs_test },
   { "usdc_writer_uvtexture_test", usdc_writer_uvtexture_test },
   { "usdc_writer_primvarreader_test", usdc_writer_primvarreader_test },
@@ -802,5 +835,14 @@ TEST_LIST = {
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
+  // StringPool tests
+  { "string_pool_intern_test", string_pool_intern_test },
+  { "string_pool_intern_different_test", string_pool_intern_different_test },
+  { "string_pool_lookup_test", string_pool_lookup_test },
+  { "string_pool_pre_intern_test", string_pool_pre_intern_test },
+  { "string_pool_size_test", string_pool_size_test },
+  { "string_pool_charptr_test", string_pool_charptr_test },
+  { "string_pool_pre_intern_common_test", string_pool_pre_intern_common_test },
+  { "string_pool_many_strings_test", string_pool_many_strings_test },
   { nullptr, nullptr }
 };

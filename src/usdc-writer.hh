@@ -31,6 +31,10 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
                       std::string *warn, std::string *err,
                       const USDWriteOptions &options = USDWriteOptions());
 
+bool SaveAsUSDCToFile(const std::string &filename, const Layer &layer,
+                      std::string *warn, std::string *err,
+                      const USDWriteOptions &options = USDWriteOptions());
+
 ///
 /// Save scene as USDC(binary) to a memory
 ///
@@ -46,6 +50,11 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
 /// @return true upon success.
 ///
 bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
+                        std::string *warn, std::string *err,
+                        int64_t max_file_size_bytes = 0,
+                        int64_t max_memory_bytes = 0);
+
+bool SaveAsUSDCToMemory(const Layer &layer, std::vector<uint8_t> *output,
                         std::string *warn, std::string *err,
                         int64_t max_file_size_bytes = 0,
                         int64_t max_memory_bytes = 0);

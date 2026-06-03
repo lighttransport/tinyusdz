@@ -895,6 +895,7 @@ bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs,
     if (err) {
       (*err) += "child_prim_name is empty.\n";
     }
+    return false;
   }
 
   if (!ValidatePrimElementName(child_prim_name)) {
@@ -902,6 +903,7 @@ bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs,
       (*err) +=
           fmt::format("`{}` is not a valid Prim name.\n", child_prim_name);
     }
+    return false;
   }
 
   if (_children.size() != _childrenNameSet.size()) {

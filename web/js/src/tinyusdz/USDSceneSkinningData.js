@@ -23,7 +23,7 @@ export function extractSkinnedMeshData(usdScene, options = {}) {
   const skinnedMeshDataByName = new Map();
 
   for (let i = 0; i < numMeshes; i++) {
-    const mesh = usdScene.getMesh(i);
+    const mesh = usdScene.getMeshCopy(i);
     const hasJointIndices = mesh.jointIndices && mesh.jointIndices.length > 0;
     const hasJointWeights = mesh.jointWeights && mesh.jointWeights.length > 0;
     if (!hasJointIndices && !hasJointWeights) {

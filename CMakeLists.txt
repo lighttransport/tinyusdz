@@ -105,6 +105,14 @@ option(TINYUSDZ_WITH_TYDRA
 option(TINYUSDZ_WITH_MCP_SERVER
        "Build with C++ MCP server(http server) support."
        OFF)
+option(TINYUSDZ_WITH_FPNGE
+       "Build with fpnge(veluca93) fast PNG encoder. When ON, PNG encoding uses fpnge by default(SIMD path selected by TINYUSDZ_FPNGE_SIMD)."
+       OFF)
+# fpnge SIMD path, selected at compile time: avx2 | sse41 | sse2 | scalar.
+# avx2/sse41 compile fpnge with the matching ISA. sse2/scalar do NOT compile
+# fpnge(upstream requires SSE4.1 minimum) and PNG encoding falls back to fpng.
+set(TINYUSDZ_FPNGE_SIMD "avx2" CACHE STRING "fpnge SIMD path: avx2, sse41, sse2 or scalar")
+set_property(CACHE TINYUSDZ_FPNGE_SIMD PROPERTY STRINGS avx2 sse41 sse2 scalar)
 option(TINYUSDZ_WITH_QJS
        "Build with QuickJS(JavaScript) support."
        OFF)
@@ -579,6 +587,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/image-writer.cc
     ${PROJECT_SOURCE_DIR}/src/image-util.cc
+    ${PROJECT_SOURCE_DIR}/src/usdz-convert.cc
     ${PROJECT_SOURCE_DIR}/src/linear-algebra.cc
     ${PROJECT_SOURCE_DIR}/src/value-eval-util.cc
     ${PROJECT_SOURCE_DIR}/src/usdGeom.cc
@@ -712,6 +721,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-composition.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-validate.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-validate.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-usdz.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-usdz.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.cc
@@ -761,11 +772,43 @@ if(TINYUSDZ_WITH_TYDRA)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/mikktspace/mikktspace.c)
 endif()
 
+set(TINYUSDZ_FPNG_ENABLED OFF)
 if (TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER)
+  set(TINYUSDZ_FPNG_ENABLED ON)
   list(APPEND TINYUSDZ_DEP_SOURCES  ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp)
   # Disable SSE for a while, since -mpclmul required to use SSE feature of fpng.
   set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/fpng.cpp
                               PROPERTIES COMPILE_DEFINITIONS "FPNG_NO_SSE=1")
+endif()
+
+# fpnge: fast PNG encoder. Upstream requires SSE4.1 minimum(AVX2 preferred);
+# there is no SSE2/scalar code path, so for sse2/scalar we skip compiling fpnge
+# and let PNG encoding fall back to the portable fpng encoder.
+set(TINYUSDZ_FPNGE_ENABLED OFF)
+if (TINYUSDZ_WITH_FPNGE)
+  string(TOLOWER "${TINYUSDZ_FPNGE_SIMD}" _fpnge_simd)
+  if (_fpnge_simd STREQUAL "avx2" OR _fpnge_simd STREQUAL "sse41")
+    set(TINYUSDZ_FPNGE_ENABLED ON)
+    list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/fpnge/fpnge.cc)
+    if (MSVC)
+      if (_fpnge_simd STREQUAL "avx2")
+        set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/fpnge/fpnge.cc
+                                    PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
+      endif()
+      # MSVC implies SSE4.1/PCLMUL inside fpnge.cc; no extra flag needed for sse41.
+    else()
+      if (_fpnge_simd STREQUAL "avx2")
+        set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/fpnge/fpnge.cc
+                                    PROPERTIES COMPILE_OPTIONS "-mavx2;-mpclmul")
+      else()
+        set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/fpnge/fpnge.cc
+                                    PROPERTIES COMPILE_OPTIONS "-msse4.1;-mpclmul")
+      endif()
+    endif()
+    message(STATUS "fpnge: enabled (SIMD=${_fpnge_simd})")
+  else()
+    message(STATUS "fpnge: requested SIMD '${_fpnge_simd}' has no fpnge code path; PNG encoding falls back to fpng.")
+  endif()
 endif()
 
 if(TINYUSDZ_WITH_USDMTLX)
@@ -1328,6 +1371,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-query.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-scene.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-validate.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-usdz.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/urdf-to-usd.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/js-script-persistent.cc)
@@ -1756,6 +1800,16 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "OPENSSL_API_3_0")
   endif(TINYUSDZ_WITH_MCP_SERVER)
 
+  if(TINYUSDZ_FPNGE_ENABLED)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_HAVE_FPNGE")
+  endif(TINYUSDZ_FPNGE_ENABLED)
+
+  if(TINYUSDZ_FPNG_ENABLED)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_HAVE_FPNG")
+  endif(TINYUSDZ_FPNG_ENABLED)
+
   if(TINYUSDZ_WITH_QJS)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_QJS")
@@ -1980,6 +2034,7 @@ endif(TINYUSDZ_BUILD_EXAMPLES)
 # Tools
 if(TINYUSDZ_BUILD_TOOLS)
   add_subdirectory(tools/tusddumpcrate)
+  add_subdirectory(tools/tusdzconvert)
 endif()
 
 if(TINYUSDZ_BUILD_BENCHMARKS)

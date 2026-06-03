@@ -1287,5 +1287,245 @@ std::vector<std::string> GetPrimTypeNames() {
   };
 }
 
+namespace {
+
+std::string PathToString(const Path &path) {
+  return path.is_valid() ? path.full_path_name() : std::string();
+}
+
+const char *SpecifierToString(Specifier spec) {
+  switch (spec) {
+    case Specifier::Def:
+      return "def";
+    case Specifier::Over:
+      return "over";
+    case Specifier::Class:
+      return "class";
+    case Specifier::Invalid:
+      return "invalid";
+  }
+  return "invalid";
+}
+
+const char *VariabilityToString(Variability variability) {
+  switch (variability) {
+    case Variability::Varying:
+      return "varying";
+    case Variability::Uniform:
+      return "uniform";
+    case Variability::Config:
+      return "config";
+    case Variability::Invalid:
+      return "invalid";
+  }
+  return "invalid";
+}
+
+const char *ListEditQualToString(ListEditQual qual) {
+  switch (qual) {
+    case ListEditQual::ResetToExplicit:
+      return "explicit";
+    case ListEditQual::Add:
+      return "add";
+    case ListEditQual::Delete:
+      return "delete";
+    case ListEditQual::Order:
+      return "order";
+    case ListEditQual::Prepend:
+      return "prepend";
+    case ListEditQual::Append:
+      return "append";
+    case ListEditQual::Invalid:
+      return "invalid";
+  }
+  return "invalid";
+}
+
+nlohmann::json PathListToJSON(const std::vector<Path> &paths) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (const Path &path : paths) {
+    arr.push_back(PathToString(path));
+  }
+  return arr;
+}
+
+nlohmann::json ReferencesToJSON(
+    const std::vector<std::pair<ListEditQual, std::vector<Reference>>> &ops) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (const auto &op : ops) {
+    nlohmann::json item;
+    item["op"] = ListEditQualToString(op.first);
+    item["items"] = nlohmann::json::array();
+    for (const Reference &ref : op.second) {
+      item["items"].push_back({
+          {"assetPath", ref.asset_path.GetAssetPath()},
+          {"primPath", PathToString(ref.prim_path)},
+          {"layerOffset",
+           {{"offset", ref.layerOffset._offset},
+            {"scale", ref.layerOffset._scale}}},
+      });
+    }
+    arr.push_back(std::move(item));
+  }
+  return arr;
+}
+
+nlohmann::json PayloadsToJSON(
+    const std::vector<std::pair<ListEditQual, std::vector<Payload>>> &ops) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (const auto &op : ops) {
+    nlohmann::json item;
+    item["op"] = ListEditQualToString(op.first);
+    item["items"] = nlohmann::json::array();
+    for (const Payload &payload : op.second) {
+      item["items"].push_back({
+          {"assetPath", payload.asset_path.GetAssetPath()},
+          {"primPath", PathToString(payload.prim_path)},
+          {"layerOffset",
+           {{"offset", payload.layerOffset._offset},
+            {"scale", payload.layerOffset._scale}}},
+      });
+    }
+    arr.push_back(std::move(item));
+  }
+  return arr;
+}
+
+nlohmann::json PathListOpsToJSON(
+    const std::vector<std::pair<ListEditQual, std::vector<Path>>> &ops) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (const auto &op : ops) {
+    arr.push_back({{"op", ListEditQualToString(op.first)},
+                   {"items", PathListToJSON(op.second)}});
+  }
+  return arr;
+}
+
+nlohmann::json PrimMetaCompositionToJSON(const PrimMeta &meta) {
+  nlohmann::json j = nlohmann::json::object();
+  if (meta.references) {
+    j["references"] = ReferencesToJSON(meta.references.value());
+  }
+  if (meta.payload) {
+    j["payload"] = PayloadsToJSON(meta.payload.value());
+  }
+  if (meta.inherits) {
+    j["inherits"] = PathListOpsToJSON(meta.inherits.value());
+  }
+  if (meta.specializes) {
+    j["specializes"] = PathListOpsToJSON(meta.specializes.value());
+  }
+  if (meta.inheritPaths) {
+    j["inheritPaths"] = PathListOpsToJSON(meta.inheritPaths.value());
+  }
+  if (meta.specializePaths) {
+    j["specializePaths"] = PathListOpsToJSON(meta.specializePaths.value());
+  }
+  if (!meta.arc_origins.empty()) {
+    j["arcOrigins"] = nlohmann::json::array();
+    for (const ArcOrigin &origin : meta.arc_origins) {
+      j["arcOrigins"].push_back({
+          {"sourceLayerId", origin.source_layer_id},
+          {"sourcePrimPath", PathToString(origin.source_prim_path)},
+      });
+    }
+  }
+  return j;
+}
+
+}  // namespace
+
+nlohmann::json AttributeToJSON(const Attribute &attr) {
+  nlohmann::json j;
+  j["kind"] = "attribute";
+  j["name"] = attr.name();
+  j["typeName"] = attr.type_name();
+  j["typeId"] = attr.type_id();
+  j["variability"] = VariabilityToString(attr.variability());
+  j["varyingAuthored"] = attr.is_varying_authored();
+  j["blocked"] = attr.is_blocked();
+  j["hasValue"] = attr.has_value();
+  j["hasTimeSamples"] = attr.has_timesamples();
+  j["connections"] = PathListToJSON(attr.connections());
+
+  if (attr.has_value()) {
+    j["value"] = ValueToJSON(attr.get_var().value_raw());
+  }
+  if (attr.has_timesamples()) {
+    j["timeSamples"] = nlohmann::json::array();
+    for (const auto &sample : attr.get_var().ts_raw().get_samples()) {
+      j["timeSamples"].push_back({
+          {"time", sample.t},
+          {"blocked", sample.blocked},
+          {"value", sample.blocked ? nlohmann::json(nullptr)
+                                   : ValueToJSON(sample.value)},
+      });
+    }
+  }
+
+  return j;
+}
+
+nlohmann::json RelationshipToJSON(const Relationship &rel) {
+  nlohmann::json j;
+  j["kind"] = "relationship";
+  j["listOp"] = ListEditQualToString(rel.get_listedit_qual());
+  j["varyingAuthored"] = rel.is_varying_authored();
+  j["blocked"] = rel.is_blocked();
+  j["targets"] = nlohmann::json::array();
+  if (rel.is_path()) {
+    j["targets"].push_back(PathToString(rel.targetPath));
+  } else if (rel.is_pathvector()) {
+    j["targets"] = PathListToJSON(rel.targetPathVector);
+  }
+  return j;
+}
+
+nlohmann::json PropertyToJSON(const Property &prop) {
+  nlohmann::json j;
+  j["custom"] = prop.has_custom();
+  j["valueTypeName"] = prop.value_type_name();
+  if (prop.is_attribute()) {
+    j.update(AttributeToJSON(prop.get_attribute()));
+  } else if (prop.is_relationship()) {
+    j.update(RelationshipToJSON(prop.get_relationship()));
+  } else {
+    j["kind"] = "empty";
+  }
+  return j;
+}
+
+nlohmann::json PrimSpecToJSON(const PrimSpec &ps, uint32_t max_depth,
+                              uint32_t depth) {
+  nlohmann::json j;
+  j["name"] = ps.name();
+  j["typeName"] = ps.typeName();
+  j["specifier"] = SpecifierToString(ps.specifier());
+  j["currentWorkingPath"] = ps.get_current_working_path();
+  j["assetSearchPaths"] = ps.get_asset_search_paths();
+
+  j["properties"] = nlohmann::json::object();
+  for (const auto &prop : ps.props()) {
+    j["properties"][prop.first] = PropertyToJSON(prop.second);
+  }
+
+  j["metadata"] = PrimMetaCompositionToJSON(ps.metas());
+  j["children"] = nlohmann::json::array();
+  if (depth < max_depth) {
+    for (const PrimSpec &child : ps.children()) {
+      j["children"].push_back(PrimSpecToJSON(child, max_depth, depth + 1));
+    }
+  } else {
+    for (const PrimSpec &child : ps.children()) {
+      j["children"].push_back({{"name", child.name()},
+                               {"typeName", child.typeName()},
+                               {"specifier", SpecifierToString(child.specifier())},
+                               {"childCount", child.children().size()},
+                               {"propertyCount", child.props().size()}});
+    }
+  }
+  return j;
+}
+
 } // namespace tydra
 } // namespace tinyusdz

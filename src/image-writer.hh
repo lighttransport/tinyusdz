@@ -19,6 +19,12 @@ namespace image {
 //
 enum class WriteImageFormat { Autodetect, BMP, PNG, JPEG, EXR, TIFF, DNG };
 
+// PNG encoder backend selection.
+// Auto  : use fpnge(veluca93) when available(TINYUSDZ_HAVE_FPNGE), otherwise fpng.
+// Fpnge : force fpnge. Falls back to fpng when fpnge is not compiled in.
+// Fpng  : force fpng(portable).
+enum class PngEncoder { Auto, Fpnge, Fpng };
+
 struct WriteOption {
   WriteImageFormat format{WriteImageFormat::Autodetect};
   bool half{false};  // Use half float for EXR
@@ -26,7 +32,13 @@ struct WriteOption {
   // When non-zero value is set, prefer this bitdepth than Image's bpp.
   // Can specify 10, 12 and 14 for DNG when writing 16bit input image as 10, 12 and 14bit respectively.
   int bitdepth{
-      0};  
+      0};
+
+  // PNG encoder backend(only used for PNG output).
+  PngEncoder png_encoder{PngEncoder::Auto};
+
+  // JPEG quality(1-100). Only used for JPEG output.
+  int jpeg_quality{90};
 };
 
 ///

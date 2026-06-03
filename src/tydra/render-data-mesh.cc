@@ -1846,9 +1846,29 @@ template void BuildIndices<
 
 namespace {
 
+// UDIM atlas UV remap for one primvar: uv' = uv * scale + offset.
+struct UDIMUVRemap {
+  vec2 scale{1.0f, 1.0f};
+  vec2 offset{0.0f, 0.0f};
+};
+
 bool ListUVNames(const RenderMaterial &material,
                  const std::vector<UVTexture> &textures,
-                 StringAndIdMap &si_map) {
+                 StringAndIdMap &si_map,
+                 std::map<std::string, UDIMUVRemap> *udim_remaps = nullptr) {
+  // Record the UV-set remap for combined-UDIM textures so the mesh UV set can
+  // be rebaked into the atlas layout. Keep-as-is UDIM textures
+  // (udim_texture_id >= 0) keep their tiles separate and are not remapped.
+  auto record_udim = [&](const UVTexture &tex) {
+    if (!udim_remaps) return;
+    if (!tex.is_udim || tex.udim_texture_id >= 0) return;
+    if (tex.varname_uv.empty()) return;
+    UDIMUVRemap r;
+    r.scale = tex.udim_uv_scale;
+    r.offset = tex.udim_uv_offset;
+    (*udim_remaps)[tex.varname_uv] = r;
+  };
+
   // Helper lambdas to extract UV names from shader parameters
   auto fun_vec3 = [&](const ShaderParam<vec3> &param) {
     int32_t texId = param.texture_id;
@@ -1860,6 +1880,7 @@ bool ListUVNames(const RenderMaterial &material,
           DCOUT("Add textureSlot: " << tex.varname_uv << ", " << slotId);
           si_map.add(tex.varname_uv, slotId);
         }
+        record_udim(tex);
       }
     }
   };
@@ -1874,6 +1895,7 @@ bool ListUVNames(const RenderMaterial &material,
           DCOUT("Add textureSlot: " << tex.varname_uv << ", " << slotId);
           si_map.add(tex.varname_uv, slotId);
         }
+        record_udim(tex);
       }
     }
   };
@@ -3033,6 +3055,11 @@ bool RenderSceneConverter::ConvertMesh(
   // key:slotId, value:texcoord data
   tinyusdz::HashMap<uint32_t, VertexAttribute> uvAttrs;
 
+  // UDIM atlas UV remaps for this mesh, keyed by texcoord primvar name.
+  // {scale.x, scale.y, offset.x, offset.y}. Populated from combined-UDIM
+  // textures bound to this mesh's material(s); consumed below to rebake UVs.
+  std::map<std::string, std::array<float, 4>> mesh_udim_remaps;
+
   // We need Material info to get corresponding primvar name.
   if (rmaterial_map.empty()) {
     // No material assigned to the Mesh, but we may still want texcoords solely(
@@ -3066,13 +3093,29 @@ bool RenderSceneConverter::ConvertMesh(
         auto uv_cache_it = _uvNameCache.find(rmaterial_id);
         if (uv_cache_it == _uvNameCache.end()) {
           StringAndIdMap tmp;
-          if (!ListUVNames(material, textures, tmp)) {
+          std::map<std::string, UDIMUVRemap> remaps;
+          if (!ListUVNames(material, textures, tmp, &remaps)) {
             DCOUT("Failed to list UV names");
             return false;
           }
           uv_cache_it = _uvNameCache.emplace(rmaterial_id, std::move(tmp)).first;
+
+          std::map<std::string, std::array<float, 4>> packed;
+          for (const auto &kv : remaps) {
+            packed[kv.first] = {kv.second.scale[0], kv.second.scale[1],
+                                kv.second.offset[0], kv.second.offset[1]};
+          }
+          _udimRemapCache.emplace(rmaterial_id, std::move(packed));
         }
         const StringAndIdMap &uvname_map = uv_cache_it->second;
+
+        // Accumulate UDIM remaps bound to this mesh's material(s).
+        const auto udim_cache_it = _udimRemapCache.find(rmaterial_id);
+        if (udim_cache_it != _udimRemapCache.end()) {
+          for (const auto &kv : udim_cache_it->second) {
+            mesh_udim_remaps[kv.first] = kv.second;
+          }
+        }
 
         for (auto it = uvname_map.i_begin(); it != uvname_map.i_end(); it++) {
           uint64_t slotId = it->first;
@@ -3424,6 +3467,40 @@ bool RenderSceneConverter::ConvertMesh(
       }
     } else {
       dst.texcoords[uint32_t(slotId)] = std::move(vattr);
+    }
+  }
+
+  // Rebake mesh UV sets used by combined-UDIM textures so each tile lands in
+  // its atlas cell: uv' = uv * scale + offset.
+  if (!mesh_udim_remaps.empty()) {
+    for (auto &kv : dst.texcoords) {
+      VertexAttribute &uvattr = kv.second;
+      const auto rit = mesh_udim_remaps.find(uvattr.name);
+      if (rit == mesh_udim_remaps.end()) {
+        continue;
+      }
+      const std::array<float, 4> &r = rit->second;
+      // Skip identity remap (e.g. single-tile UDIM at 1001).
+      if (r[0] == 1.0f && r[1] == 1.0f && r[2] == 0.0f && r[3] == 0.0f) {
+        continue;
+      }
+      if (uvattr.format != VertexAttributeFormat::Vec2) {
+        continue;
+      }
+      std::vector<uint8_t> &data = uvattr.get_data();
+      const size_t n = uvattr.vertex_count();
+      if (data.size() < n * 2 * sizeof(float)) {
+        continue;
+      }
+      float *fp = reinterpret_cast<float *>(data.data());
+      for (size_t i = 0; i < n; i++) {
+        fp[i * 2 + 0] = fp[i * 2 + 0] * r[0] + r[2];
+        fp[i * 2 + 1] = fp[i * 2 + 1] * r[1] + r[3];
+      }
+      DCOUT("Rebaked UDIM texcoord `" << uvattr.name << "` ("
+                                      << n << " elems) scale=(" << r[0] << ","
+                                      << r[1] << ") offset=(" << r[2] << ","
+                                      << r[3] << ")");
     }
   }
 

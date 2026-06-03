@@ -2126,7 +2126,7 @@ async function loadTextureFromUSD(textureId) {
         }
 
         // Get image data
-        const imgData = currentNativeLoader.getImage(texData.textureImageId);
+        const imgData = currentNativeLoader.getImageCopy(texData.textureImageId);
         if (!imgData) {
             console.warn(`Image ${texData.textureImageId} not found`);
             return null;
@@ -5424,7 +5424,7 @@ function loadMeshes() {
 
     for (let i = 0; i < numMeshes; i++) {
         try {
-            const meshData = currentNativeLoader.getMesh(i);
+            const meshData = currentNativeLoader.getMeshCopy(i);
             console.log(`Mesh ${i} data:`, meshData);
 
             if (!meshData) {

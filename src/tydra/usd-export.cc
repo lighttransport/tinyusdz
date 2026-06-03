@@ -443,11 +443,24 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
     UsdUVTexture image_tex;
     image_tex.name = "Image_Texture_" + param_name;
 
-    DCOUT("asset_identifier: " << src_teximg.asset_identifier);
-    if (src_teximg.asset_identifier.empty()) {
+    // For a sparse (keep-as-is) UDIM texture, write back the original
+    // `<UDIM>` pattern rather than the representative tile's path, so the
+    // UDIM asset round-trips through USDA/USDC.
+    std::string file_asset_path = src_teximg.asset_identifier;
+    if (tex.is_udim && tex.udim_texture_id >= 0 &&
+        size_t(tex.udim_texture_id) < scene.udim_textures.size()) {
+      const std::string &udim_path =
+          scene.udim_textures[size_t(tex.udim_texture_id)].asset_identifier;
+      if (!udim_path.empty()) {
+        file_asset_path = udim_path;
+      }
+    }
+
+    DCOUT("asset_identifier: " << file_asset_path);
+    if (file_asset_path.empty()) {
       PUSH_ERROR_AND_RETURN(fmt::format("file asset name is empty for texture image `{}`", param_name));
     }
-    value::AssetPath fileAssetPath(src_teximg.asset_identifier);
+    value::AssetPath fileAssetPath(file_asset_path);
     image_tex.file = fileAssetPath;
 
     // TODO: Set colorSpace in attribute meta.
