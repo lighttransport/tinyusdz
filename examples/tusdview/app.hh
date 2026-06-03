@@ -15,12 +15,20 @@
 #include "load_control.hh"
 #include "renderer.hh"
 #include "scene_loader.hh"
+#if defined(TUSDVIEW_HAVE_MCP)
+#include "mcp/mcp_host.hh"
+#include "mcp/mcp_server.hh"
+#endif
 
 struct GLFWwindow;
 
 namespace tusdview {
 
-class App {
+class App
+#if defined(TUSDVIEW_HAVE_MCP)
+    : public McpHost
+#endif
+{
  public:
   explicit App(Backend backend) : backend_(backend) {}
   ~App();
@@ -42,6 +50,20 @@ class App {
 
   // Write a PPM of the full composited window after the last frame (QA).
   void setWindowShot(const std::string& path) { windowShot_ = path; }
+
+  // Embedded MCP server transports (no-op unless built with TUSDVIEW_ENABLE_MCP).
+  void setMcpStdio(bool on) { mcpStdio_ = on; }
+  void setMcpHttp(int port) { mcpHttpPort_ = port; }  // 0 = off
+
+#if defined(TUSDVIEW_HAVE_MCP)
+  // McpHost tool handlers (defined in mcp/app_mcp.cc; run on the main thread).
+  nlohmann::json mcpLoadUsd(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpSceneInfo(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpGetFocusedPrim(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpSetFocus(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpViewport(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpListPrims(const nlohmann::json& a, std::string& e) override;
+#endif
 
   // Initialize window + renderer + ImGui, optionally load `initialFile`, then
   // run the main loop. `maxFrames >= 0` renders that many frames then exits
@@ -96,6 +118,13 @@ class App {
   bool progressiveActive_{false};
   size_t nextMesh_{0};
   size_t nextTex_{0};
+
+  // MCP server (transports started in run(); commands drained each frame).
+  bool mcpStdio_{false};
+  int mcpHttpPort_{0};
+#if defined(TUSDVIEW_HAVE_MCP)
+  std::unique_ptr<MCPServer> mcp_;
+#endif
 };
 
 }  // namespace tusdview
