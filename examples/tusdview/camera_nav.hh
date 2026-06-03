@@ -31,6 +31,10 @@ class OrbitCamera {
   // Frame the given world-space AABB.
   void fitToScene(const float aabbMin[3], const float aabbMax[3]);
 
+  // Full-scene radius used to size the near/far planes (so zooming out never
+  // clips the scene/grid). Set once per loaded scene from its world AABB.
+  void setSceneRadius(float r) { sceneRadius_ = (r > 1e-4f) ? r : 1.0f; }
+
   const light3d::Vec3& target() const { return target_; }
   float yaw() const { return yaw_; }
   float pitch() const { return pitch_; }
@@ -49,8 +53,7 @@ class OrbitCamera {
   int upAxis_{1};         // 1 = +Y, 2 = +Z
   float fovYDeg_{45.0f};
   float aspect_{1.3333f};
-  float znear_{0.05f};
-  float zfar_{1000.0f};
+  float sceneRadius_{1.0f};  // full-scene radius; drives dynamic near/far
 };
 
 }  // namespace tusdview

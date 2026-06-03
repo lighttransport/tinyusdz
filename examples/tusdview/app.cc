@@ -134,7 +134,14 @@ void App::applyLoaded(bool ok, bool progressive) {
     ++sceneGen_;  // invalidate the MCP library-tool Stage snapshot
     const std::string& up = loaded_.render.meta.upAxis;
     camera_.setUpAxis((up == "Z" || up == "z") ? 2 : 1);
-    if (draw_.hasBounds) camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
+    if (draw_.hasBounds) {
+      // Size the near/far planes from the full scene radius, then frame it.
+      const float dx = draw_.aabbMax[0] - draw_.aabbMin[0];
+      const float dy = draw_.aabbMax[1] - draw_.aabbMin[1];
+      const float dz = draw_.aabbMax[2] - draw_.aabbMin[2];
+      camera_.setSceneRadius(0.5f * std::sqrt(dx * dx + dy * dy + dz * dz));
+      camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
+    }
   }
 
   if (ok && progressive) {

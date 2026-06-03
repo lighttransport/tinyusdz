@@ -90,11 +90,7 @@ void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
   selMeshIndex_ = -1;
   // Reset per-mesh visibility to all-visible for the new scene.
   meshVisible_.assign(draw_ ? draw_->meshes.size() : 0, uint8_t{1});
-  // Auto-select the first renderable mesh so the inspector + selection bbox show
-  // something immediately.
-  if (loaded_ && loaded_->ok && draw_ && !draw_->meshes.empty()) {
-    selectByPath(draw_->meshes[0].absPath, 0);
-  }
+  // Start with nothing selected; the user selects via the viewport or hierarchy.
 }
 
 void Gui::frame(Renderer* renderer, OrbitCamera* camera) {
@@ -260,6 +256,12 @@ void Gui::selectByPath(const std::string& absPath, int meshIndex) {
       }
     }
   }
+}
+
+void Gui::clearSelection() {
+  selPath_.clear();
+  selMeshIndex_ = -1;
+  selPrim_ = nullptr;
 }
 
 bool Gui::drawPrimTree(const tinyusdz::Prim& prim) {
@@ -708,6 +710,8 @@ void Gui::drawViewport() {
         const int hit = pickMesh(px, py, w, h);
         if (hit >= 0 && static_cast<size_t>(hit) < draw_->meshes.size()) {
           selectByPath(draw_->meshes[static_cast<size_t>(hit)].absPath, hit);
+        } else {
+          clearSelection();  // clicked empty space -> deselect
         }
       }
     }
