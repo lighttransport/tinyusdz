@@ -11,6 +11,7 @@
 #include "gui_style.hh"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
+#include "log.hh"
 #include "mesh_build.hh"
 
 #if defined(HAVE_NFD)
@@ -21,7 +22,7 @@ namespace tusdview {
 
 namespace {
 void GlfwErrorCallback(int code, const char* desc) {
-  std::fprintf(stderr, "[glfw] error %d: %s\n", code, desc);
+  LOGE("glfw error %d: %s", code, desc);
 }
 
 // Write top-down RGBA8 rows as a binary PPM (RGB).
@@ -136,20 +137,19 @@ void App::applyLoaded(bool ok, bool progressive) {
     // stays at frame rate instead of stalling on one big upload.
     renderer_->beginScene(draw_.materials, static_cast<int>(draw_.textures.size()));
     progressiveActive_ = true;
-    std::fprintf(stderr,
-                 "[tusdview] loaded %s: %zu mesh(es), %zu tri(s)%s; streaming to GPU...\n",
-                 loaded_.filepath.c_str(), draw_.meshes.size(), draw_.triangleCount,
-                 draw_.truncated ? " [truncated]" : "");
+    LOGI("loaded %s: %zu mesh(es), %zu tri(s)%s; streaming to GPU...",
+         loaded_.filepath.c_str(), draw_.meshes.size(), draw_.triangleCount,
+         draw_.truncated ? " [truncated]" : "");
   } else {
     // Synchronous full upload (headless / failure). draw_ is empty when !ok.
     std::string uerr;
     renderer_->uploadScene(draw_, &uerr);
     if (ok) {
-      std::fprintf(stderr, "[tusdview] loaded %s: %zu mesh(es), %zu tri(s)%s\n",
-                   loaded_.filepath.c_str(), draw_.meshes.size(), draw_.triangleCount,
-                   draw_.truncated ? " [truncated: render budget]" : "");
+      LOGI("loaded %s: %zu mesh(es), %zu tri(s)%s", loaded_.filepath.c_str(),
+           draw_.meshes.size(), draw_.triangleCount,
+           draw_.truncated ? " [truncated: render budget]" : "");
     } else {
-      std::fprintf(stderr, "[tusdview] load failed: %s\n", loaded_.err.c_str());
+      LOGE("load failed: %s", loaded_.err.c_str());
     }
   }
   gui_.setScene(&loaded_, &draw_);
@@ -249,9 +249,7 @@ void App::openFileDialog() {
   }
   NFD_Quit();
 #else
-  std::fprintf(stderr,
-               "[tusdview] File dialog not available in this build. Pass a USD "
-               "file on the command line.\n");
+  LOGW("File dialog not available in this build. Pass a USD file on the command line.");
 #endif
 }
 
@@ -259,7 +257,7 @@ int App::run(const std::string& initialFile, int maxFrames,
              const std::string& screenshot) {
   std::string err;
   if (!initWindow(&err)) {
-    std::fprintf(stderr, "[tusdview] %s\n", err.c_str());
+    LOGE("%s", err.c_str());
     return 1;
   }
 
@@ -272,11 +270,11 @@ int App::run(const std::string& initialFile, int maxFrames,
   }
 #endif
   if (!renderer_) {
-    std::fprintf(stderr, "[tusdview] no renderer for requested backend\n");
+    LOGE("no renderer for requested backend");
     return 1;
   }
   if (!renderer_->init(window_, &err)) {
-    std::fprintf(stderr, "[tusdview] renderer init failed: %s\n", err.c_str());
+    LOGE("renderer init failed: %s", err.c_str());
     return 1;
   }
 
@@ -285,17 +283,16 @@ int App::run(const std::string& initialFile, int maxFrames,
     if (renderer_->rayTracingAvailable()) {
       rtPath_ = true;
       renderer_->setRayTracing(true);
-      std::fprintf(stderr, "[tusdview] Vulkan ray tracing (ray query) enabled.\n");
+      LOGI("Vulkan ray tracing (ray query) enabled.");
     } else {
-      std::fprintf(stderr,
-                   "[tusdview] --rt requested but ray tracing is unavailable "
-                   "(needs the Vulkan backend on an RT-capable GPU + an RT-capable "
-                   "glslang at build time); using rasterization.\n");
+      LOGW("--rt requested but ray tracing is unavailable (needs the Vulkan "
+           "backend on an RT-capable GPU + an RT-capable glslang at build time); "
+           "using rasterization.");
     }
   }
 
   if (!initImGui(&err)) {
-    std::fprintf(stderr, "[tusdview] ImGui init failed: %s\n", err.c_str());
+    LOGE("ImGui init failed: %s", err.c_str());
     return 1;
   }
 
@@ -375,9 +372,9 @@ int App::run(const std::string& initialFile, int maxFrames,
                            : renderer_->captureViewport(&rgba, &w, &h);
     if (ok && w > 0 && h > 0) {
       WritePPM(path, rgba, w, h);
-      std::fprintf(stderr, "[tusdview] wrote %s (%dx%d)\n", path.c_str(), w, h);
+      LOGI("wrote %s (%dx%d)", path.c_str(), w, h);
     } else {
-      std::fprintf(stderr, "[tusdview] capture not supported by this backend\n");
+      LOGW("capture not supported by this backend");
     }
   };
   shot(screenshot, /*window=*/false);
