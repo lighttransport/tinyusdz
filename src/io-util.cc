@@ -94,12 +94,12 @@ namespace {
 // MIT license
 [[maybe_unused]] std::string GetErrorMessageWin32(DWORD error_code) {
   std::string ret;
-  LPSTR lpMsgBuf = NULL;
+  LPSTR lpMsgBuf = nullptr;
   DWORD bufLen = FormatMessageA(
       FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
           FORMAT_MESSAGE_IGNORE_INSERTS,
-      NULL, error_code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-      (LPSTR)&lpMsgBuf, 0, NULL);
+      nullptr, error_code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+      reinterpret_cast<LPSTR>(&lpMsgBuf), 0, nullptr);
   if (!bufLen) {
     ret = "Win32 error code: " + std::to_string(error_code);
   } else {
@@ -115,8 +115,8 @@ static std::string llama_format_win_err(DWORD err) {
   size_t size = FormatMessageA(
       FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
           FORMAT_MESSAGE_IGNORE_INSERTS,
-      NULL, err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&buf, 0,
-      NULL);
+      nullptr, err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+      reinterpret_cast<LPSTR>(&buf), 0, nullptr);
   if (!size) {
     return "FormatMessageA failed";
   }
@@ -143,7 +143,7 @@ bool IsMMapSupported() {
 
 
 #if defined(_WIN32)
-bool MMapFileImplWin32(HANDLE hFile, MMapFileHandle *handle, bool writable, std::string *err) {
+static bool MMapFileImplWin32(HANDLE hFile, MMapFileHandle *handle, bool writable, std::string *err) {
 
   uint64_t size{0};
   {
@@ -156,7 +156,7 @@ bool MMapFileImplWin32(HANDLE hFile, MMapFileHandle *handle, bool writable, std:
       return false;
     }
 
-    size = sz.QuadPart;
+    size = static_cast<uint64_t>(sz.QuadPart);
   }
 
   HANDLE hMapping = CreateFileMapping(
@@ -205,7 +205,8 @@ bool MMapFileImplWin32(HANDLE hFile, MMapFileHandle *handle, bool writable, std:
       }
     }
 #else
-    throw std::runtime_error("PrefetchVirtualMemory unavailable");
+    // tinyusdz is built with -fno-exceptions, so report via `err` instead of
+    // throwing.
     if (err) {
       (*err) += "PrefetchVirtualMemory unavailable";
     }
