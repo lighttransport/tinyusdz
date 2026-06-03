@@ -16,6 +16,7 @@
 #include <string>
 
 #include "app.hh"
+#include "log.hh"
 #include "renderer.hh"
 
 int main(int argc, char** argv) {
@@ -70,8 +71,7 @@ int main(int argc, char** argv) {
 
 #if !defined(HAVE_VULKAN)
   if (backend == tusdview::Backend::Vulkan) {
-    std::fprintf(stderr,
-                 "[tusdview] Vulkan backend not compiled in; using OpenGL.\n");
+    LOGW("Vulkan backend not compiled in; using OpenGL.");
     backend = tusdview::Backend::GL;
     wantRt = false;
   }
