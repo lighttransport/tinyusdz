@@ -31,6 +31,11 @@
 #include "tydra/scene-access.hh"
 #include "tydra/material-serializer.hh"
 
+// js-script.hh must precede mcp-context.hh: tydra::mcp::Context holds a
+// std::unique_ptr<JSEngineState> and relies on its implicit destructor, which
+// requires the complete JSEngineState type (forward-declared in mcp-context.hh,
+// defined in js-script.hh).
+#include "tydra/js-script.hh"
 #include "tydra/mcp-context.hh"
 // mcp-context.hh's Context holds a unique_ptr<JSEngineState> (forward-declared
 // there); js-script.hh provides the complete type so Context's destructor can
