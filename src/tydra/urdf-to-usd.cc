@@ -43,6 +43,15 @@ namespace tinyusdz {
 namespace tydra {
 namespace {
 
+constexpr int32_t kMjcfDefaultGroup = 0;
+constexpr int32_t kMjcfDefaultCondim = 3;
+constexpr double kMjcfDefaultSolmix = 1.0;
+constexpr double kMjcfDefaultMargin = 0.0;
+constexpr double kMjcfDefaultGap = 0.0;
+constexpr int32_t kLegacyUrdfCollisionGroup = 3;
+constexpr int32_t kLegacyUrdfVisualGroup = 2;
+constexpr int32_t kDefaultNewtonMaxHullVertices = 64;
+
 std::string SanitizeUSDIdentifier(const std::string &name,
                                   const std::string &fallback) {
   std::string out;
@@ -137,6 +146,17 @@ std::vector<double> JsonDoubleArray(const nlohmann::json &j, const char *key) {
     }
   }
   return out;
+}
+
+std::vector<double> JsonDoubleArrayFromObjectOrParent(
+    const nlohmann::json &src, const char *object_key, const char *key) {
+  if (const nlohmann::json *obj = JsonObjectOrNull(src, object_key)) {
+    std::vector<double> out = JsonDoubleArray(*obj, key);
+    if (!out.empty()) {
+      return out;
+    }
+  }
+  return JsonDoubleArray(src, key);
 }
 
 std::vector<float> JsonFloatArray(const nlohmann::json &j, const char *key) {
@@ -270,6 +290,51 @@ int32_t JsonIntFromObjectOrParent(const nlohmann::json &src,
   return JsonInt(src, key, fallback);
 }
 
+bool JsonIntFromObjectOrParent(const nlohmann::json &src,
+                               const char *object_key,
+                               const char *key,
+                               int32_t *out) {
+  if (!out) {
+    return false;
+  }
+  auto read_value = [key, out](const nlohmann::json &j) -> bool {
+    if (!j.is_object() || !j.contains(key)) {
+      return false;
+    }
+    const auto &item = j.at(key);
+    if (item.is_number_integer()) {
+      *out = item.get<int32_t>();
+      return true;
+    }
+    if (item.is_number()) {
+      *out = static_cast<int32_t>(item.get<double>());
+      return true;
+    }
+    return false;
+  };
+  if (const nlohmann::json *obj = JsonObjectOrNull(src, object_key)) {
+    if (read_value(*obj)) {
+      return true;
+    }
+  }
+  return read_value(src);
+}
+
+bool JsonNumberFromObjectOrParent(const nlohmann::json &src,
+                                  const char *object_key,
+                                  const char *key,
+                                  double *out) {
+  if (!out) {
+    return false;
+  }
+  if (const nlohmann::json *obj = JsonObjectOrNull(src, object_key)) {
+    if (JsonNumber(*obj, key, out)) {
+      return true;
+    }
+  }
+  return JsonNumber(src, key, out);
+}
+
 void AddTransformOp(Xformable &xformable, const value::matrix4d &matrix) {
   XformOp op;
   op.op_type = XformOp::OpType::Transform;
@@ -279,7 +344,7 @@ void AddTransformOp(Xformable &xformable, const value::matrix4d &matrix) {
 
 template <typename GeomT>
 void AddCollisionAPIs(GeomT &geom, bool mesh_collision,
-                      const nlohmann::json &src) {
+                      const nlohmann::json &src, bool mjcf_source) {
   // Schemas applied to every collider geom: UsdPhysics core, plus the
   // codeless MjcPhysics mirror (read by `prim-reconstruct-physics.cc`
   // and consumed by the lightgeom + mujoco-usd-converter pipelines).
@@ -308,22 +373,92 @@ void AddCollisionAPIs(GeomT &geom, bool mesh_collision,
             value::token(JsonString(src, "approximation", "convexHull")), true);
     AddAttr(geom.props, "mjc:inertia", value::token("legacy"), true);
   }
-  AddAttr(geom.props, "mjc:group", JsonInt(src, "group", 3), true);
-  AddAttr(geom.props, "mjc:condim", JsonInt(src, "condim", 3), true);
-  AddAttr(geom.props, "mjc:solmix",
-          JsonNumberFromObjectOrParent(src, "mjc", "solmix", 1.0), true);
-  const double margin =
-      JsonNumberFromObjectOrParent(src, "mjc", "margin", 0.0);
-  AddAttr(geom.props, "mjc:margin", margin, true);
-  AddAttr(geom.props, "newton:contactMargin",
-          static_cast<float>(JsonNumberFromObjectOrParent(
-              src, "newton", "contactMargin", margin)));
-  AddAttr(geom.props, "newton:contactGap",
-          static_cast<float>(JsonNumberFromObjectOrParent(
-              src, "newton", "contactGap", 0.0)));
+  if (mjcf_source) {
+    int32_t ivalue = 0;
+    double dvalue = 0.0;
+    if (JsonIntFromObjectOrParent(src, "mjc", "group", &ivalue)) {
+      AddAttr(geom.props, "mjc:group", ivalue, true);
+    } else if (src.contains("group")) {
+      AddAttr(geom.props, "mjc:group",
+              JsonInt(src, "group", kMjcfDefaultGroup), true);
+    }
+    if (JsonIntFromObjectOrParent(src, "mjc", "condim", &ivalue)) {
+      AddAttr(geom.props, "mjc:condim", ivalue, true);
+    } else if (src.contains("condim")) {
+      AddAttr(geom.props, "mjc:condim",
+              JsonInt(src, "condim", kMjcfDefaultCondim), true);
+    }
+    if (JsonIntFromObjectOrParent(src, "mjc", "geomContype", &ivalue) ||
+        JsonIntFromObjectOrParent(src, "mjc", "contype", &ivalue)) {
+      AddAttr(geom.props, "mjc:geomContype", ivalue, true);
+    }
+    if (JsonIntFromObjectOrParent(src, "mjc", "geomConaffinity", &ivalue) ||
+        JsonIntFromObjectOrParent(src, "mjc", "conaffinity", &ivalue)) {
+      AddAttr(geom.props, "mjc:geomConaffinity", ivalue, true);
+    }
+    if (JsonIntFromObjectOrParent(src, "mjc", "priority", &ivalue)) {
+      AddAttr(geom.props, "mjc:priority", ivalue, true);
+    }
+    if (JsonNumberFromObjectOrParent(src, "mjc", "solmix", &dvalue)) {
+      AddAttr(geom.props, "mjc:solmix", dvalue, true);
+    }
+    if (JsonNumberFromObjectOrParent(src, "mjc", "margin", &dvalue)) {
+      AddAttr(geom.props, "mjc:margin", dvalue, true);
+      AddAttr(geom.props, "newton:contactMargin", static_cast<float>(dvalue));
+    } else if (JsonNumberFromObjectOrParent(src, "newton", "contactMargin",
+                                            &dvalue)) {
+      AddAttr(geom.props, "newton:contactMargin", static_cast<float>(dvalue));
+    }
+    if (JsonNumberFromObjectOrParent(src, "mjc", "gap", &dvalue)) {
+      AddAttr(geom.props, "mjc:gap", dvalue, true);
+      AddAttr(geom.props, "newton:contactGap", static_cast<float>(dvalue));
+    } else if (JsonNumberFromObjectOrParent(src, "newton", "contactGap",
+                                            &dvalue)) {
+      AddAttr(geom.props, "newton:contactGap", static_cast<float>(dvalue));
+    }
+    std::vector<double> values =
+        JsonDoubleArrayFromObjectOrParent(src, "mjc", "geomFriction");
+    if (values.empty()) {
+      values = JsonDoubleArrayFromObjectOrParent(src, "mjc", "friction");
+    }
+    if (!values.empty()) {
+      AddAttr(geom.props, "mjc:geomFriction", values, true);
+    }
+    values = JsonDoubleArrayFromObjectOrParent(src, "mjc", "solref");
+    if (!values.empty()) {
+      AddAttr(geom.props, "mjc:solref", values, true);
+    }
+    values = JsonDoubleArrayFromObjectOrParent(src, "mjc", "solimp");
+    if (!values.empty()) {
+      AddAttr(geom.props, "mjc:solimp", values, true);
+    }
+    values = JsonDoubleArrayFromObjectOrParent(src, "mjc", "geomSize");
+    if (!values.empty()) {
+      AddAttr(geom.props, "mjc:geomSize", values, true);
+    }
+  } else {
+    AddAttr(geom.props, "mjc:group",
+            JsonInt(src, "group", kLegacyUrdfCollisionGroup), true);
+    AddAttr(geom.props, "mjc:condim",
+            JsonInt(src, "condim", kMjcfDefaultCondim), true);
+    AddAttr(geom.props, "mjc:solmix",
+            JsonNumberFromObjectOrParent(src, "mjc", "solmix",
+                                         kMjcfDefaultSolmix), true);
+    const double margin =
+        JsonNumberFromObjectOrParent(src, "mjc", "margin",
+                                     kMjcfDefaultMargin);
+    AddAttr(geom.props, "mjc:margin", margin, true);
+    AddAttr(geom.props, "newton:contactMargin",
+            static_cast<float>(JsonNumberFromObjectOrParent(
+                src, "newton", "contactMargin", margin)));
+    AddAttr(geom.props, "newton:contactGap",
+            static_cast<float>(JsonNumberFromObjectOrParent(
+                src, "newton", "contactGap", kMjcfDefaultGap)));
+  }
   if (mesh_collision) {
     AddAttr(geom.props, "newton:maxHullVertices",
-            JsonIntFromObjectOrParent(src, "newton", "maxHullVertices", 64),
+            JsonIntFromObjectOrParent(src, "newton", "maxHullVertices",
+                                      kDefaultNewtonMaxHullVertices),
             true);
   }
 
@@ -654,7 +789,7 @@ bool AddNewtonActuatorFromJson(
 bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
                      const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
                      const std::string &fallback_name, bool collision,
-                     std::string *warn, std::string *err) {
+                     bool mjcf_source, std::string *warn, std::string *err) {
   const nlohmann::json *geom = &mesh_json;
   if (mesh_json.contains("geometry") && mesh_json["geometry"].is_object()) {
     geom = &mesh_json["geometry"];
@@ -763,10 +898,20 @@ bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
   }
 
   if (collision) {
-    AddCollisionAPIs(mesh, true, mesh_json);
+    AddCollisionAPIs(mesh, true, mesh_json, mjcf_source);
   } else {
     AddAPISchemas(mesh.metas(), {{APISchemas::APIName::MjcImageableAPI, ""}});
-    AddAttr(mesh.props, "mjc:group", JsonInt(mesh_json, "group", 2), true);
+    if (mjcf_source) {
+      int32_t group = 0;
+      if (JsonIntFromObjectOrParent(mesh_json, "mjc", "group", &group) ||
+          mesh_json.contains("group")) {
+        AddAttr(mesh.props, "mjc:group", JsonInt(mesh_json, "group", group),
+                true);
+      }
+    } else {
+      AddAttr(mesh.props, "mjc:group",
+              JsonInt(mesh_json, "group", kLegacyUrdfVisualGroup), true);
+    }
   }
 
   std::string add_err;
@@ -780,7 +925,8 @@ bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
 bool AddNativeCollisionShapeFromJson(Prim &link_prim,
                                      const nlohmann::json &shape_json,
                                      const std::string &fallback_name,
-                                     std::string *warn, std::string *err) {
+                                     bool mjcf_source, std::string *warn,
+                                     std::string *err) {
   const nlohmann::json shape =
       (shape_json.contains("shape") && shape_json["shape"].is_object())
           ? shape_json["shape"]
@@ -803,7 +949,7 @@ bool AddNativeCollisionShapeFromJson(Prim &link_prim,
     if (matrix.size() == 16) {
       AddTransformOp(cube, MatrixFromUSDArray(matrix));
     }
-    AddCollisionAPIs(cube, false, shape_json);
+    AddCollisionAPIs(cube, false, shape_json, mjcf_source);
     return AddGeomChild(link_prim, std::move(cube), name, err);
   }
 
@@ -816,7 +962,7 @@ bool AddNativeCollisionShapeFromJson(Prim &link_prim,
     if (matrix.size() == 16) {
       AddTransformOp(sphere, MatrixFromUSDArray(matrix));
     }
-    AddCollisionAPIs(sphere, false, shape_json);
+    AddCollisionAPIs(sphere, false, shape_json, mjcf_source);
     return AddGeomChild(link_prim, std::move(sphere), name, err);
   }
 
@@ -833,7 +979,7 @@ bool AddNativeCollisionShapeFromJson(Prim &link_prim,
     if (matrix.size() == 16) {
       AddTransformOp(cylinder, MatrixFromUSDArray(matrix));
     }
-    AddCollisionAPIs(cylinder, false, shape_json);
+    AddCollisionAPIs(cylinder, false, shape_json, mjcf_source);
     return AddGeomChild(link_prim, std::move(cylinder), name, err);
   }
 
@@ -850,7 +996,7 @@ bool AddNativeCollisionShapeFromJson(Prim &link_prim,
     if (matrix.size() == 16) {
       AddTransformOp(capsule, MatrixFromUSDArray(matrix));
     }
-    AddCollisionAPIs(capsule, false, shape_json);
+    AddCollisionAPIs(capsule, false, shape_json, mjcf_source);
     return AddGeomChild(link_prim, std::move(capsule), name, err);
   }
 
@@ -867,7 +1013,7 @@ bool AddNativeCollisionShapeFromJson(Prim &link_prim,
     if (matrix.size() == 16) {
       AddTransformOp(plane, MatrixFromUSDArray(matrix));
     }
-    AddCollisionAPIs(plane, false, shape_json);
+    AddCollisionAPIs(plane, false, shape_json, mjcf_source);
     return AddGeomChild(link_prim, std::move(plane), name, err);
   }
 
@@ -912,6 +1058,10 @@ bool ConvertURDFJsonToUSDStage(
       (root.contains("actuators") && root["actuators"].is_array())
           ? root["actuators"]
           : empty_array;
+  const std::string source_format = JsonString(root, "sourceFormat");
+  const bool mjcf_source = (source_format == "mjcf" ||
+                            source_format == "MJCF" ||
+                            JsonString(root, "inputFormat") == "mjcf");
   if (links_json.empty()) {
     SetErr(err, "URDF export JSON has no links");
     return false;
@@ -973,6 +1123,7 @@ bool ConvertURDFJsonToUSDStage(
   joints_scope.name = "Joints";
 
   std::map<std::string, std::string> link_name_to_usd;
+  std::map<std::string, size_t> link_name_to_index;
   std::set<std::string> used_link_names;
   std::vector<Prim> link_prims;
   std::set<std::string> child_links;
@@ -994,6 +1145,7 @@ bool ConvertURDFJsonToUSDStage(
     const std::string usd_link_name =
         UniqueUSDIdentifier(link_name, used_link_names, "link");
     link_name_to_usd[link_name] = usd_link_name;
+    link_name_to_index[link_name] = link_prims.size();
 
     Xform link_xform;
     link_xform.name = usd_link_name;
@@ -1036,8 +1188,8 @@ bool ConvertURDFJsonToUSDStage(
       size_t i = 0;
       for (const auto &visual : link_json["visuals"]) {
         if (!AddMeshFromJson(link_prim, visual, mesh_buffers,
-                             "visual_" + std::to_string(i++), false, warn,
-                             err)) {
+                             "visual_" + std::to_string(i++), false,
+                             mjcf_source, warn, err)) {
           return false;
         }
       }
@@ -1049,19 +1201,53 @@ bool ConvertURDFJsonToUSDStage(
         const std::string fallback = "collision_" + std::to_string(i++);
         if (collision.contains("shape") && collision["shape"].is_object()) {
           if (!AddNativeCollisionShapeFromJson(link_prim, collision, fallback,
-                                               warn, err)) {
+                                               mjcf_source, warn, err)) {
             return false;
           }
           continue;
         }
         if (!AddMeshFromJson(link_prim, collision, mesh_buffers, fallback, true,
-                             warn, err)) {
+                             mjcf_source, warn, err)) {
           return false;
         }
       }
     }
 
     link_prims.push_back(std::move(link_prim));
+  }
+
+  if (root.contains("filteredPairs") && root["filteredPairs"].is_array()) {
+    std::map<std::string, std::vector<Path>> filtered_targets;
+    for (const auto &pair_json : root["filteredPairs"]) {
+      if (!pair_json.is_object()) {
+        continue;
+      }
+      const std::string body1 = JsonString(pair_json, "body1");
+      const std::string body2 = JsonString(pair_json, "body2");
+      auto it1 = link_name_to_usd.find(body1);
+      auto it2 = link_name_to_usd.find(body2);
+      if (it1 == link_name_to_usd.end() || it2 == link_name_to_usd.end()) {
+        AppendWarn(warn, "Skipping filtered pair `" + body1 + "` / `" +
+                             body2 + "`: link was not exported.\n");
+        continue;
+      }
+      filtered_targets[body1].push_back(
+          Path("/World/Links/" + it2->second, ""));
+    }
+    for (const auto &kv : filtered_targets) {
+      auto index_it = link_name_to_index.find(kv.first);
+      if (index_it == link_name_to_index.end() ||
+          index_it->second >= link_prims.size() || kv.second.empty()) {
+        continue;
+      }
+      Prim &prim = link_prims[index_it->second];
+      AppendAPISchema(prim.metas(), APISchemas::APIName::PhysicsFilteredPairsAPI);
+      Relationship rel;
+      rel.set(kv.second);
+      if (auto *xform = prim.get_data().as<Xform>()) {
+        xform->props["physics:filteredPairs"] = Property(std::move(rel), false);
+      }
+    }
   }
 
   Prim joints_prim(joints_scope);
