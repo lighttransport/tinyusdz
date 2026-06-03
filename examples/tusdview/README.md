@@ -160,6 +160,13 @@ curl -s -XPOST localhost:8080/mcp \
        "params":{"name":"viewport","arguments":{"op":"fit"}}}'
 ```
 
+In addition to the viewer tools above, the server also exposes the **tinyusdz
+library's own USD tools** (`stage_info`, `prim_list`, `prim_get`, `attr_get`,
+`query_prims_by_type`, `search`, `run_script`, composition tools, …) — any tool
+name that isn't a viewer tool is forwarded to `tydra::mcp::CallTool` and run
+against a snapshot of the currently-loaded Stage. (Query tools see a per-load
+snapshot; tool-side edits aren't reflected in the 3D viewport.)
+
 Tool calls are marshalled onto the render thread (GL/VK/camera are
 main-thread-only), so they take effect on the next frame. The server is built by
 default (deps — `nlohmann/json` + civetweb — are vendored in `src/external`);

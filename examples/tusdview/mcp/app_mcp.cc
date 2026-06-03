@@ -3,10 +3,12 @@
 // (the MCP server marshals tool calls into the render loop), so they freely read
 // the loaded scene / DrawScene and drive the camera and selection.
 #include <cmath>
+#include <memory>
 #include <string>
 
 #include "app.hh"
 #include "light3d/math.h"
+#include "tydra/mcp-tools.hh"  // tinyusdz::tydra::mcp::CallTool
 
 namespace tusdview {
 
@@ -139,6 +141,28 @@ json App::mcpListPrims(const json& args, std::string&) {
     paths.push_back(m.absPath);
   }
   return json{{"count", paths.size()}, {"paths", paths}};
+}
+
+json App::mcpCallLibraryTool(const std::string& name, const json& args,
+                             std::string& err) {
+  // Lazily snapshot the loaded Stage into the library-tool Context (copied at
+  // most once per loaded scene; the viewer's Stage is never disturbed).
+  if (loaded_.ok) {
+    if (mcpCtxGen_ != sceneGen_ || !mcpCtx_.stage) {
+      mcpCtx_.stage = std::make_unique<tinyusdz::Stage>(loaded_.stage);
+      mcpCtx_.stage_loaded = true;
+      mcpCtxGen_ = sceneGen_;
+    }
+  } else {
+    mcpCtx_.stage.reset();
+    mcpCtx_.stage_loaded = false;
+  }
+  json result;
+  if (!tinyusdz::tydra::mcp::CallTool(mcpCtx_, name, args, result, err)) {
+    if (err.empty()) err = "unknown tool: " + name;
+    return json::object();
+  }
+  return result;
 }
 
 }  // namespace tusdview
