@@ -152,10 +152,17 @@ class VulkanRenderer final : public Renderer {
   // buffers (grow on demand) so a frame never writes a buffer still in flight.
   VkPipelineLayout lineLayout_{VK_NULL_HANDLE};
   VkPipeline linePipeline_{VK_NULL_HANDLE};
+  VkPipeline linePipelineNoDepth_{VK_NULL_HANDLE};  // X-ray overlay (skeleton)
   VkBuffer helperBuf_[kFramesInFlight]{};
   VkDeviceMemory helperMem_[kFramesInFlight]{};
   VkDeviceSize helperCap_[kFramesInFlight]{};
   std::vector<HelperVertex> helperCopy_;  // copied in renderFrame, drawn in present
+  // Overlay (skeleton X-ray) per-frame line buffers + copy.
+  VkBuffer overlayBuf_[kFramesInFlight]{};
+  VkDeviceMemory overlayMem_[kFramesInFlight]{};
+  VkDeviceSize overlayCap_[kFramesInFlight]{};
+  std::vector<HelperVertex> overlayCopy_;
+  std::vector<uint8_t> meshVisible_;  // per-mesh visibility mask (raster), copied in renderFrame
 
   // Textures (base color). One combined-image-sampler descriptor per texture,
   // plus a default 1x1 white texture for untextured submeshes.
