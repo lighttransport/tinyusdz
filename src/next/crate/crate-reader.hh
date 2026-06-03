@@ -29,6 +29,14 @@ struct CrateReadOptions {
   /// Maximum number of specs allowed
   size_t max_specs = 10 * 1024 * 1024;
 
+  /// Maximum number of paths allowed
+  size_t max_paths = 10 * 1024 * 1024;
+
+  /// Maximum number of elements in a single value array
+  /// (mirrors pxrUSD/legacy core's 1<<30 cap; guards against a malformed
+  /// count triggering an enormous allocation).
+  size_t max_array_elements = 1024 * 1024 * 1024;
+
   /// Maximum recursion depth for path decoding
   size_t max_path_depth = 256;
 

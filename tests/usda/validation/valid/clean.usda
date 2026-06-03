@@ -1,0 +1,34 @@
+#usda 1.0
+# EXPECT-OK
+(
+    doc = "Passes all validation groups (core + geom + shade)."
+    defaultPrim = "World"
+    metersPerUnit = 0.01
+    upAxis = "Y"
+    startTimeCode = 0
+    endTimeCode = 24
+)
+
+def Xform "World"
+{
+    def Mesh "geom" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </World/mat>
+        float3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Material "mat"
+    {
+        token outputs:surface.connect = </World/mat/shader.outputs:surface>
+
+        def Shader "shader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.1, 0.2, 0.3)
+            token outputs:surface
+        }
+    }
+}

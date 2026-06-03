@@ -327,17 +327,29 @@ nonstd::expected<std::vector<uint8_t>, std::string> UniformToFaceVarying(
         num_uniforms, faceVertexCounts.size()));
   }
 
-  std::vector<uint8_t> buf;
-  buf.resize(stride_bytes);
-
+  // Pre-size the output to its exact byte count and write via offset memcpy.
+  // (The previous code grew `dst` with a per-face-vertex insert(), causing
+  // repeated reallocation.) Total face-vertices = sum(faceVertexCounts).
+  size_t total_fv = 0;
   for (size_t i = 0; i < faceVertexCounts.size(); i++) {
-    size_t cnt = faceVertexCounts[i];
+    if (!safe::add(total_fv, size_t(faceVertexCounts[i]), &total_fv)) {
+      return nonstd::make_unexpected(
+          "Overflow computing total face-vertex count.");
+    }
+  }
+  size_t total_bytes;
+  if (!safe::mul(total_fv, stride_bytes, &total_bytes)) {
+    return nonstd::make_unexpected("Overflow computing output buffer size.");
+  }
+  dst.resize(total_bytes);
 
-    memcpy(buf.data(), src.data() + i * stride_bytes, stride_bytes);
-
-    // repeat cnt times.
+  size_t off = 0;
+  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
+    const size_t cnt = faceVertexCounts[i];
+    const uint8_t *srcp = src.data() + i * stride_bytes;
     for (size_t k = 0; k < cnt; k++) {
-      dst.insert(dst.end(), buf.begin(), buf.end());
+      memcpy(dst.data() + off, srcp, stride_bytes);
+      off += stride_bytes;
     }
   }
 
@@ -848,12 +860,17 @@ static bool TriangulateVertexAttribute(
 
     size_t num_vs = vattr.vertex_count();
     const size_t stride = vattr.stride_bytes();
-    const size_t total_size = triangulatedFaceVertexIndices.size() * stride;
+    size_t total_size;
+    if (!safe::mul(triangulatedFaceVertexIndices.size(), stride, &total_size)) {
+      PUSH_ERROR_AND_RETURN(
+          "Integer overflow: triangulatedFaceVertexIndices.size * stride.");
+    }
 
     std::vector<uint8_t> buf;
     buf.resize(total_size);  // Pre-allocate exact size
 
     const uint8_t* src_data = vattr.get_data().data();
+    const size_t src_size = vattr.get_data().size();
     uint8_t* dst_ptr = buf.data();
 
     for (uint32_t f = 0; f < triangulatedFaceVertexIndices.size(); f++) {
@@ -863,6 +880,13 @@ static bool TriangulateVertexAttribute(
       if (src_fvIdx >= num_vs) {
         PUSH_ERROR_AND_RETURN(
             fmt::format("triangulatedToOrigFaceVertexIndexMap[{}] {} exceeds num_vs {}.", f, src_fvIdx, num_vs));
+      }
+
+      // Guard the source read against a malformed/short backing buffer.
+      if (((size_t(src_fvIdx) * stride) + stride) > src_size) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Source read out of range in facevarying attribute remap at {}.",
+            f));
       }
 
       // Use memcpy instead of insert for better performance
@@ -885,21 +909,35 @@ static bool TriangulateVertexAttribute(
       total_triangles += triangulatedFaceCounts[f];
     }
     // Each triangle has 3 vertices
-    const size_t total_size = total_triangles * 3 * stride;
+    size_t total_verts;
+    size_t total_size;
+    if (!safe::mul(total_triangles, size_t(3), &total_verts) ||
+        !safe::mul(total_verts, stride, &total_size)) {
+      PUSH_ERROR_AND_RETURN("Integer overflow: total_triangles * 3 * stride.");
+    }
 
     std::vector<uint8_t> buf;
     buf.resize(total_size);
 
     const uint8_t* src_data = vattr.get_data().data();
+    const size_t src_size = vattr.get_data().size();
     uint8_t* dst_ptr = buf.data();
+
+    // Constant variability stores a single value (one element) that applies to
+    // every element, so the source is always read at offset 0. (The previous
+    // `src_data + f * stride` indexing read out of bounds for any mesh with
+    // more than one face, since the backing buffer holds just one element.)
+    if (src_size < stride) {
+      PUSH_ERROR_AND_RETURN(
+          "Constant attribute backing buffer is smaller than one element.");
+    }
 
     for (size_t f = 0; f < triangulatedFaceCounts.size(); f++) {
       uint32_t nf = triangulatedFaceCounts[f];
-      const uint8_t* face_data = src_data + f * stride;
 
       // copy `nf` triangles (each with 3 vertices)
-      for (size_t k = 0; k < nf * 3; k++) {
-        std::memcpy(dst_ptr, face_data, stride);
+      for (size_t k = 0; k < size_t(nf) * 3; k++) {
+        std::memcpy(dst_ptr, src_data, stride);
         dst_ptr += stride;
       }
     }
@@ -1131,33 +1169,50 @@ bool ArrayValueToVertexAttribute(
       break;
     }
     case VertexVariability::Uniform: {
-      if (value_counts != (elementSize * num_face_counts)) {
+      // Compute the expected count in size_t. `elementSize * num_face_counts`
+      // multiplies two uint32_t in 32-bit arithmetic and can wrap, letting a
+      // crafted array whose size equals the wrapped value pass validation.
+      size_t expected_uniform;
+      if (!safe::mul(size_t(elementSize), size_t(num_face_counts),
+                     &expected_uniform) ||
+          (value_counts != expected_uniform)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "{} # of items {} expected, but got {}. Variability = Uniform",
-            name, elementSize * num_face_counts, value_counts));
+            name, uint64_t(elementSize) * uint64_t(num_face_counts),
+            value_counts));
       }
       break;
     }
     case VertexVariability::Vertex: {
-      if (value_counts != (elementSize * num_vertices)) {
+      size_t expected_vertex;
+      if (!safe::mul(size_t(elementSize), size_t(num_vertices),
+                     &expected_vertex) ||
+          (value_counts != expected_vertex)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "{} # of items {} expected, but got {}. Variability = Vertex",
-            name, elementSize * num_vertices, value_counts));
+            name, uint64_t(elementSize) * uint64_t(num_vertices), value_counts));
       }
       break;
     case VertexVariability::Varying: {
-      if (value_counts != (elementSize * num_vertices)) {
+      size_t expected_varying;
+      if (!safe::mul(size_t(elementSize), size_t(num_vertices),
+                     &expected_varying) ||
+          (value_counts != expected_varying)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "{} # of items {} expected, but got {}. Variability = Varying",
-            name, elementSize * num_vertices, value_counts));
+            name, uint64_t(elementSize) * uint64_t(num_vertices), value_counts));
       }
       break;
     }
     case VertexVariability::FaceVarying: {
-      if (value_counts != (elementSize * num_face_vertex_indices)) {
+      size_t expected_fv;
+      if (!safe::mul(size_t(elementSize), size_t(num_face_vertex_indices),
+                     &expected_fv) ||
+          (value_counts != expected_fv)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "# of items {} expected, but got {}. Variability = FaceVarying",
-            elementSize * num_face_vertex_indices, value_counts));
+            uint64_t(elementSize) * uint64_t(num_face_vertex_indices),
+            value_counts));
       }
       break;
     }
@@ -1515,6 +1570,14 @@ bool TriangulatePolygon(
       uint32_t idx1 = faceVertexIndices[faceIndexOffset + 1];
       uint32_t idx2 = faceVertexIndices[faceIndexOffset + 2];
       uint32_t idx3 = faceVertexIndices[faceIndexOffset + 3];
+
+      // Defense-in-depth: indices are expected to be pre-validated against
+      // points.size(), but guard here to avoid OOB on malformed input.
+      if ((idx0 >= points.size()) || (idx1 >= points.size()) ||
+          (idx2 >= points.size()) || (idx3 >= points.size())) {
+        err = fmt::format("Invalid vertex index at face {}.\n", i);
+        return false;
+      }
 
       const T &p0 = points[idx0];
       const T &p1 = points[idx1];
@@ -2047,30 +2110,47 @@ static bool ReorderVertexVaryingAttributes(
           "Internal error. Invalid elementSize in mesh.joint_and_weights.");
     }
     uint32_t elementSize = uint32_t(mesh.joint_and_weights.elementSize);
-    std::vector<int> tmp_indices(num_verts * size_t(elementSize));
-    std::vector<float> tmp_weights(num_verts * size_t(elementSize));
+    // Overflow-safe allocation sizing. `elementSize` can be as large as
+    // max_skin_elementSize and `num_verts` is mesh-controlled, so the product
+    // can overflow size_t (notably on wasm32 where size_t is 32-bit).
+    size_t tmp_count;
+    if (!safe::mul(num_verts, size_t(elementSize), &tmp_count)) {
+      PUSH_ERROR_AND_RETURN("Skin weights buffer size overflow.");
+    }
+    std::vector<int> tmp_indices(tmp_count);
+    std::vector<float> tmp_weights(tmp_count);
     for (size_t v = 0; v < num_verts; v++) {
-      if ((elementSize * vert_to_point[v]) >=
-          mesh.joint_and_weights.jointIndices.size()) {
+      // Compute the source base offset in size_t. Computing
+      // `elementSize * vert_to_point[v]` directly multiplies two uint32_t in
+      // 32-bit arithmetic and can wrap, letting an out-of-range index slip
+      // past the bounds check while the access below uses the true (64-bit)
+      // offset and reads OOB. Validate the whole [off, off+elementSize) span.
+      size_t src_off;
+      if (!safe::mul(size_t(elementSize), size_t(vert_to_point[v]), &src_off)) {
+        PUSH_ERROR_AND_RETURN("Skin index offset overflow.");
+      }
+      const size_t dst_off = size_t(elementSize) * v;  // < tmp_count, no overflow
+
+      if ((src_off >= mesh.joint_and_weights.jointIndices.size()) ||
+          ((mesh.joint_and_weights.jointIndices.size() - src_off) <
+           size_t(elementSize))) {
         PUSH_ERROR_AND_RETURN(
             "Internal error. point index exceeds jointIndices.size.");
       }
       for (size_t k = 0; k < elementSize; k++) {
-        tmp_indices[size_t(elementSize) * v + k] =
-            mesh.joint_and_weights
-                .jointIndices[size_t(elementSize) * size_t(vert_to_point[v]) + k];
+        tmp_indices[dst_off + k] =
+            mesh.joint_and_weights.jointIndices[src_off + k];
       }
 
-      if ((elementSize * vert_to_point[v]) >=
-          mesh.joint_and_weights.jointWeights.size()) {
+      if ((src_off >= mesh.joint_and_weights.jointWeights.size()) ||
+          ((mesh.joint_and_weights.jointWeights.size() - src_off) <
+           size_t(elementSize))) {
         PUSH_ERROR_AND_RETURN(
             "Internal error. point index exceeds jointWeights.size.");
       }
-
       for (size_t k = 0; k < elementSize; k++) {
-        tmp_weights[size_t(elementSize) * v + k] =
-            mesh.joint_and_weights
-                .jointWeights[size_t(elementSize) * size_t(vert_to_point[v]) + k];
+        tmp_weights[dst_off + k] =
+            mesh.joint_and_weights.jointWeights[src_off + k];
       }
     }
     mesh.joint_and_weights.jointIndices.swap(tmp_indices);
@@ -2711,10 +2791,11 @@ bool RenderSceneConverter::ConvertMesh(
             "faceVertexIndices[{}] contains negative index value {}.", i,
             indices[i]));
       }
-      if (size_t(indices[i]) > dst.points.size()) {
+      if (size_t(indices[i]) >= dst.points.size()) {
         PUSH_ERROR_AND_RETURN(
-            fmt::format("faceVertexIndices[{}] {} exceeds points.size {}.", i,
-                        indices[i], dst.points.size()));
+            fmt::format("faceVertexIndices[{}] {} is out of range. Must be less "
+                        "than points.size {}.",
+                        i, indices[i], dst.points.size()));
       }
       dst.usdFaceVertexIndices.push_back(uint32_t(indices[i]));
     }

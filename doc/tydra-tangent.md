@@ -10,13 +10,13 @@ Tangent-space normal mapping requires per-vertex tangent and bitangent (binormal
 
 | File | Purpose |
 |------|---------|
-| `src/tydra/render-data.hh` | `MeshConverterConfig` — tangent/normal storage format enums |
-| `src/tydra/render-data.cc` | `ComputeDeferredTangents()`, `QuantizeMeshNormals()` |
-| `src/tydra/tangent-quantize.hh` | Pack/unpack for tangent and normal quantized formats |
+| `src/tydra/render-data-converter.hh` | `MeshConverterConfig` — tangent method + tangent/normal storage format enums |
+| `src/tydra/render-data-mesh.cc` | `ComputeDeferredTangents()`, `QuantizeMeshTangents()` |
+| `src/tydra/render-data-mesh-tangent.cc` | `QuantizeMeshNormals()` and quantize helpers |
+| `src/tydra/tangent-quantize.hh` | Pack/unpack + batch quantize for tangent and normal formats, `MeasureQuantizeError`, FP16 conversion |
 | `src/tydra/fast-mikktspace.hh` | FastMikkTSpace and Hybrid implementations |
 | `src/tydra/fast-math.hh` | Fast math (rsqrt, acos) for fp16-level precision |
 | `src/tydra/mikktspace-tangent.hh` | Reference MikkTSpace wrapper |
-| `src/tydra/tangent-quantize.hh` | Packed tangent formats for GPU |
 
 ## Computation Methods
 
@@ -228,9 +228,15 @@ Handles all edge cases: NaN, infinity, denormals, zero, overflow, underflow.
 
 ### WebGL2 Tangent Formats
 
-**WASM default**: `PackedSNorm8` (SNorm8x4, 4 bytes/vertex). This is the widest-compatibility option — works with both WebGL1 (`GL_BYTE` normalized) and WebGL2.
+**Defaults**: `MeshConverterConfig::tangent_storage` defaults to `PackedFp16`
+natively and `PackedSNorm8` under Emscripten. The actual WASM binding
+(`web/binding.cc`) overrides this to `Packed1010102` (`GL_INT_2_10_10_10_REV`,
+4 bytes/vertex, WebGL2-native). `PackedSNorm8` (`GL_BYTE` normalized) remains
+the widest-compatibility option and is what to use for WebGL1.
 
-For WebGL2, `GL_INT_2_10_10_10_REV` provides better precision (0.08 deg vs 0.34 deg) at the same 4 bytes, and is natively supported by `vertexAttribPointer`:
+`GL_INT_2_10_10_10_REV` gives better precision than SNorm8x4 (0.08 deg vs
+0.34 deg) at the same 4 bytes, and is natively supported by
+`vertexAttribPointer`:
 
 ```javascript
 // Upload packed tangent buffer

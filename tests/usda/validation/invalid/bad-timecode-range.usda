@@ -1,0 +1,12 @@
+#usda 1.0
+# EXPECT: core.layer.timeCodeRange
+(
+    doc = "startTimeCode must not exceed endTimeCode. Expect WARN core.layer.timeCodeRange."
+    defaultPrim = "World"
+    startTimeCode = 10
+    endTimeCode = 0
+)
+
+def Xform "World"
+{
+}

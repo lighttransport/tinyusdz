@@ -1,0 +1,54 @@
+#usda 1.0
+# EXPECT: physics.scene.gravity
+# EXPECT: physics.value.range
+# EXPECT: physics.collision.approximation
+# EXPECT: physics.relationship.target
+# EXPECT: physics.joint.body
+# EXPECT: physics.joint.axis
+# EXPECT: physics.joint.limit
+# EXPECT: physics.joint.distance
+# EXPECT: physics.drive.dof
+# EXPECT: physics.drive.type
+# EXPECT: physics.drive.value
+# EXPECT: physics.limit.range
+(
+    doc = "UsdPhysics schema value checks: invalid scene gravity, negative mass/density, invalid collision approximation, malformed relationships, joint limits, and drive/limit API values."
+)
+
+def PhysicsScene "scene"
+{
+    vector3f physics:gravityDirection = (0, 0, 0)
+    float physics:gravityMagnitude = -1
+}
+
+def Mesh "body" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMeshCollisionAPI", "PhysicsFilteredPairsAPI"]
+)
+{
+    float physics:mass = -1
+    float physics:density = -2
+    token physics:approximation = "triangleSoup"
+    token physics:simulationOwner = "notARelationship"
+    token physics:filteredPairs = "notARelationship"
+}
+
+def PhysicsRevoluteJoint "hinge" (
+    prepend apiSchemas = ["PhysicsDriveAPI:rotQ", "PhysicsLimitAPI:transX"]
+)
+{
+    token physics:axis = "W"
+    token physics:body0 = "notARelationship"
+    float physics:breakForce = -1
+    float physics:lowerLimit = 10
+    float physics:upperLimit = 0
+    token physics:drive:rotQ:type = "speed"
+    float physics:drive:rotQ:maxForce = -1
+    float physics:limit:transX:low = 10
+    float physics:limit:transX:high = 0
+}
+
+def PhysicsDistanceJoint "distance"
+{
+    float physics:minDistance = 5
+    float physics:maxDistance = 1
+}

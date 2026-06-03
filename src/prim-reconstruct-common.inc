@@ -560,29 +560,31 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
   const std::string prop_name,
   Property &prop,  // Non-const to allow move from metadata
   const std::string &name,
-  TypedTerminalAttribute<T> &target) /* out */
+  TypedTerminalAttribute<T> &target, /* out */
+  bool strict_type_check) // false: accept non-conformant authored type with a warning
 {
   ParseResult ret;
 
   if (prop_name.compare(name) == 0) {
     if (table.count(name)) {
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
-      return ret;
+      goto end;
     }
 
     if (prop.is_attribute_connection()) {
       ret.code = ParseResult::ResultCode::ConnectionNotAllowed;
       ret.err = "Connection is not allowed for output terminal attribute.";
-      return ret;
-    } else {
+      goto end;
+    }
 
-      if (prop.get_property_type() != Property::Type::EmptyAttrib) {
-          DCOUT("Output Invalid shader output terminal attribute");
-          ret.err = "No value should be assigned for shader output terminal attribute.";
-          ret.code = ParseResult::ResultCode::InvalidConnection;
-          return ret;
-      }
+    if (prop.get_property_type() != Property::Type::EmptyAttrib) {
+        DCOUT("Output Invalid shader output terminal attribute");
+        ret.err = "No value should be assigned for shader output terminal attribute.";
+        ret.code = ParseResult::ResultCode::InvalidConnection;
+        goto end;
+    }
 
+    {
       const Attribute &attr = prop.get_attribute();
 
       std::string attr_type_name = attr.type_name();
@@ -593,6 +595,25 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
       DCOUT("value typename = " << value::TypeTraits<T>::type_name());
       DCOUT("attr-type_name = " << attr_type_name);
 
+      // Accept a non-conformant authored type for a shader output terminal:
+      // keep the schema type `T`(the canonical type inferred from `info:id` /
+      // the UsdPreviewSurface spec) for connection/render semantics, remember
+      // the authored type, and report a warning. This matches OpenUSD, which
+      // does not validate shader output types. Only used when
+      // `strict_type_check` is false.
+      auto accept_nonconformant = [&]() {
+        target.set_authored(true);
+        target.set_actual_type_name(attr_type_name);
+        target.metas() = prop.get_attribute().metas();
+        table.insert(name);
+        ret.warn = fmt::format(
+            "Shader output `{}` is declared as type `{}` but `{}` is expected per "
+            "the shader schema(UsdPreviewSurface / info:id). Accepting the declared "
+            "type; the schema type is used for connection/render semantics(matches "
+            "OpenUSD). Set strict_shader_type_check=true to make this an error.",
+            name, attr_type_name, value::TypeTraits<T>::type_name());
+        ret.code = ParseResult::ResultCode::Success;
+      };
 
       // First check if both types are same, then
       // Allow either type is role-types(e.g. allow color3f attribute for TypedTerminalAttribute<float3>)
@@ -603,32 +624,41 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
         target.metas() = prop.get_attribute().metas();
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
-        return ret;
-      } else if (value::TypeTraits<T>::is_role_type()) {
+        goto end;
+      }
+
+      if (value::TypeTraits<T>::is_role_type()) {
         if (attr_is_role_type) {
+          if (!strict_type_check) { accept_nonconformant(); goto end; }
           ret.code = ParseResult::ResultCode::TypeMismatch;
           ret.err = fmt::format("Attribute type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
-          return ret;
-        } else {
-          if (value::TypeTraits<T>::underlying_type_name() == attr_type_name) {
-            target.set_authored(true);
-            target.set_actual_type_name(attr_type_name);
-            target.metas() = prop.get_attribute().metas();
-            table.insert(name);
-            ret.code = ParseResult::ResultCode::Success;
-            return ret;
-          } else {
-            ret.code = ParseResult::ResultCode::TypeMismatch;
-            ret.err = fmt::format("Attribute type mismatch. {} expects type `{}`(and its underlying types) but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
-            return ret;
-          }
+          goto end;
         }
-      } else if (attr_is_role_type) {
+
+        if (value::TypeTraits<T>::underlying_type_name() == attr_type_name) {
+          target.set_authored(true);
+          target.set_actual_type_name(attr_type_name);
+          target.metas() = prop.get_attribute().metas();
+          table.insert(name);
+          ret.code = ParseResult::ResultCode::Success;
+          goto end;
+        }
+
+        if (!strict_type_check) { accept_nonconformant(); goto end; }
+        ret.code = ParseResult::ResultCode::TypeMismatch;
+        ret.err = fmt::format("Attribute type mismatch. {} expects type `{}`(and its underlying types) but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
+        goto end;
+      }
+
+      if (attr_is_role_type) {
         if (value::TypeTraits<T>::is_role_type()) {
+          if (!strict_type_check) { accept_nonconformant(); goto end; }
           ret.code = ParseResult::ResultCode::TypeMismatch;
           ret.err = fmt::format("Attribute type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
-          return ret;
-        } else {
+          goto end;
+        }
+
+        {
           uint32_t attr_underlying_type_id = value::GetUnderlyingTypeId(attr_type_name);
           if (value::TypeTraits<T>::type_id() == attr_underlying_type_id) {
             target.set_authored(true);
@@ -636,24 +666,26 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
             target.metas() = prop.get_attribute().metas();
             table.insert(name);
             ret.code = ParseResult::ResultCode::Success;
-            return ret;
-          } else {
-            ret.code = ParseResult::ResultCode::TypeMismatch;
-            ret.err = fmt::format("Attribute type mismatch. {} expects type `{}` but defined as type `{}`(and its underlying types).", name, value::TypeTraits<T>::type_name(), attr_type_name);
-            return ret;
+            goto end;
           }
         }
 
-      } else {
-        DCOUT("attr.type = " << attr_type_name);
+        if (!strict_type_check) { accept_nonconformant(); goto end; }
         ret.code = ParseResult::ResultCode::TypeMismatch;
-        ret.err = fmt::format("Property type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
-        return ret;
+        ret.err = fmt::format("Attribute type mismatch. {} expects type `{}` but defined as type `{}`(and its underlying types).", name, value::TypeTraits<T>::type_name(), attr_type_name);
+        goto end;
       }
+
+      DCOUT("attr.type = " << attr_type_name);
+      if (!strict_type_check) { accept_nonconformant(); goto end; }
+      ret.code = ParseResult::ResultCode::TypeMismatch;
+      ret.err = fmt::format("Property type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
+      goto end;
     }
   }
 
   ret.code = ParseResult::ResultCode::Unmatched;
+end:
   return ret;
 }
 
@@ -766,8 +798,9 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
 
 
 #define PARSE_SHADER_TERMINAL_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
-  ParseResult ret = ParseShaderOutputTerminalAttribute(__table, __prop.first, __prop.second, __name, __target); \
+  ParseResult ret = ParseShaderOutputTerminalAttribute(__table, __prop.first, __prop.second, __name, __target, options.strict_shader_type_check); \
   if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
+    if (!ret.warn.empty()) { PUSH_WARN(ret.warn); } \
     DCOUT("Added shader terminal attribute: " << __name); \
     continue; /* got it */\
   } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
@@ -806,6 +839,30 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
     /* go next */ \
   } else { \
     PUSH_ERROR_AND_RETURN(fmt::format("Parsing attribute `{}` failed. Error: {}", __name, ret.err)); \
+  } \
+}
+
+// Shader INPUT attribute parse with relaxed type-conformance.
+// Same as PARSE_TYPED_ATTRIBUTE, but when the authored Sdf type does not match
+// the canonical schema type, behavior depends on options.strict_shader_type_check:
+//   true  -> hard error (same as PARSE_TYPED_ATTRIBUTE).
+//   false -> warn and leave the property unconsumed so the trailing
+//            ADD_PROPERTY captures it as a custom property (no data loss). The
+//            typed field stays unauthored; the canonical schema type is kept.
+// Intended for UsdPreviewSurface-family shader inputs. Requires `options`
+// (PrimReconstructOptions) and ADD_PROPERTY at the end of the parse loop.
+#define PARSE_SHADER_INPUT_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
+  ParseResult ret = ParseTypedAttribute(__table, __prop.first, __prop.second, __name, __target); \
+  if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
+    if (!ret.warn.empty()) { PUSH_WARN(ret.warn); } \
+    continue; /* got it */\
+  } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
+    /* go next */ \
+  } else if ((ret.code == ParseResult::ResultCode::TypeMismatch) && !options.strict_shader_type_check) { \
+    PUSH_WARN(fmt::format("Shader input `{}` declared with a non-conformant type: {} Accepting; preserving the authored value as a custom property. Set strict_shader_type_check=true to make this an error.", __name, ret.err)); \
+    /* do not consume: fall through so the trailing ADD_PROPERTY captures it */ \
+  } else { \
+    PUSH_ERROR_AND_RETURN(fmt::format("Parsing shader input property `{}` failed. Error: {}", __name, ret.err)); \
   } \
 }
 

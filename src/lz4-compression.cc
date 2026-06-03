@@ -7,9 +7,7 @@
 //
 #include <cstring>
 #include <cstdlib>
-#include <memory>
 #include <algorithm>
-#include <iostream>
 
 //
 
@@ -149,9 +147,6 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressedPtr,
   DCOUT("compressedSize = " << compressedSize);
   DCOUT("maxOutputSize = " << maxOutputSize);
   DCOUT("nChunks = " << nChunks);
-  //std::cout << "compressedSize = " << compressedSize << "\n";
-  //std::cout << "maxOutputSize = " << maxOutputSize << "\n";
-  //std::cout << "nChunks = " << nChunks << "\n";
 
   size_t consumedCompressedSize = 1;
 
@@ -209,13 +204,23 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressedPtr,
 
       DCOUT("chunk[" << i << "] size = " << chunkSize);
 
-      //std::cout << "chunkSize = " << chunkSize << "\n";
       consumedCompressedSize += sizeof(chunkSize);
-      //std::cout << "consumedCompressedSize = " << consumedCompressedSize << "\n";
-      //std::cout << "compressedSize = " << compressedSize << "\n";
       if (consumedCompressedSize > compressedSize) {
         if (err) {
            (*err) += "Total chunk size exceeds input compressedSize.\n";
+        }
+        return 0;
+      }
+
+      // The chunk's compressed payload must be fully contained in the input
+      // buffer. LZ4_decompress_safe() trusts `srcSize` (== chunkSize) and may
+      // read up to that many bytes from `compressedPtr`, so validate it
+      // against the remaining input before decompressing. Without this a
+      // crafted chunkSize larger than the remaining bytes would cause an
+      // out-of-bounds read.
+      if (size_t(chunkSize) > (compressedSize - consumedCompressedSize)) {
+        if (err) {
+           (*err) += "Chunk size exceeds remaining compressed input.\n";
         }
         return 0;
       }
@@ -233,7 +238,6 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressedPtr,
         }
         return 0;
       }
-      //std::cout << "nDecompressed = " << nDecompressed << "\n";
       if (nDecompressed > maxOutputSize) {
         if (err) {
           (*err) =
@@ -241,7 +245,10 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressedPtr,
         }
         return 0;
       }
+      // Advance past the chunk payload and account for it in the consumed
+      // byte count so the next iteration's bounds checks remain correct.
       compressedPtr += chunkSize;
+      consumedCompressedSize += size_t(chunkSize);
       outputPtr += nDecompressed;
       maxOutputSize -= size_t(nDecompressed);
       totalDecompressed += size_t(nDecompressed);

@@ -8,6 +8,7 @@
 #include "crate-writer.hh"
 #include "../layer/property-index.hh"
 #include "../types/type-id.hh"
+#include <unordered_map>
 #include <fstream>
 #include <algorithm>
 #include <cstring>
@@ -410,7 +411,9 @@ private:
   }
 
   void BuildTables(const Layer& layer) {
-    // Token 0 must be empty string (reserved for root path marker in PATHS)
+    // Token 0: magic marker expected by pxrUSD's crate reader
+    InternToken(";-)");  // software identifier (pxrUSD convention)
+    // Token 1: empty string, reserved for root path marker in PATHS
     InternToken("");
 
     // Common field name tokens
@@ -905,6 +908,35 @@ private:
         fields_.push_back(f);
       }
 
+      // doc
+      if (!layer.meta().doc.empty()) {
+        CrateField f;
+        f.token_index.value = InternToken("doc");
+        uint32_t str_idx = InternString(layer.meta().doc);
+        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // comment
+      if (!layer.meta().comment.empty()) {
+        CrateField f;
+        f.token_index.value = InternToken("comment");
+        uint32_t str_idx = InternString(layer.meta().comment);
+        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // subLayers (token[] — all entries round-trip; the reader reads them back)
+      if (!layer.meta().subLayers.empty()) {
+        CrateField f;
+        f.token_index.value = InternToken("subLayers");
+        f.value_rep = EncodeValue(Value::MakeTokenArray(layer.meta().subLayers));
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
       uint32_t fs_idx = static_cast<uint32_t>(fieldsets_.size());
       fieldsets_.push_back(std::move(fieldset));
 
@@ -917,9 +949,20 @@ private:
 
     // 2. Prim specs
     PropNameTable& name_table = GetPropNameTable();
+    std::unordered_map<std::string, uint32_t> path_to_fs_idx;
     for (size_t i = 0; i < layer.prims().size(); ++i) {
       const PrimSpec& prim = layer.prims()[i];
       std::vector<uint32_t> fieldset;
+
+      // specifier (pxrUSD convention: specifier first, then typeName)
+      {
+        CrateField f;
+        f.token_index.value = InternToken("specifier");
+        uint64_t spec_val = static_cast<uint64_t>(prim.specifier());
+        f.value_rep = ValueRep::Make(CrateTypeId::Specifier, spec_val, false, true);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
 
       // typeName
       if (!prim.type_name().empty()) {
@@ -928,16 +971,6 @@ private:
         f.value_rep = ValueRep::Make(CrateTypeId::Token,
                                      InternToken(prim.type_name()),
                                      false, true);
-        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-        fields_.push_back(f);
-      }
-
-      // specifier
-      {
-        CrateField f;
-        f.token_index.value = InternToken("specifier");
-        uint64_t spec_val = static_cast<uint64_t>(prim.specifier());
-        f.value_rep = ValueRep::Make(CrateTypeId::Specifier, spec_val, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
@@ -1001,14 +1034,18 @@ private:
         f.token_index.value = InternToken(prop_name);
         f.value_rep = EncodeValue(*val);
 
-        // Add variability flag if uniform
-        if (slot.flags & PropSlot::kFlagUniform) {
-          // Uniform flag stored as separate field in real USDC
-          // For now just mark the value rep
-        }
-
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
+
+        // Add variability field after the property if uniform
+        if (slot.flags & PropSlot::kFlagUniform) {
+          CrateField vf;
+          vf.token_index.value = InternToken("variability");
+          // Variability: 0=Varying(default), 1=Uniform, 2=Config
+          vf.value_rep = ValueRep::Make(CrateTypeId::Variability, 1, false, true);
+          fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+          fields_.push_back(vf);
+        }
       }
 
       // Time samples: write as TimeSamples field (pxrUSD indirection format)
@@ -1040,21 +1077,24 @@ private:
           uint64_t times_block_idx = value_data_.size();
           value_data_.push_back({TypeId::Double, std::move(times_data)});
 
-          // 2. Build each sample value block via EncodeValue
-          std::vector<uint64_t> sample_block_indices(num_samples);
+          // 2. Encode each sample value to a FULL ValueRep. We keep the whole
+          //    rep (not just the payload): inlined reps (small scalars, tokens,
+          //    strings) carry their value/index in the payload and are written
+          //    verbatim; non-inlined reps carry a value_data_ block index that
+          //    WriteValueSection/_PatchTimeSamplesBlock later patches to an
+          //    absolute file offset. This preserves type_id, is_array,
+          //    is_inlined and is_compressed for each sample.
+          std::vector<ValueRep> sample_reps(num_samples);
           ti = 0;
           for (const auto& [time, val_offset] : *samples) {
+            (void)time;
             const Value* ts_val = prim.time_sample_value(val_offset);
             if (ts_val) {
-              ValueRep val_rep = EncodeValue(*ts_val);
-              sample_block_indices[ti] = val_rep.payload(); // block index
+              sample_reps[ti] = EncodeValue(*ts_val);
             } else {
-              // ValueBlock — store a zero ValueBlock ValueRep
-              std::vector<uint8_t> vb(8);
-              uint64_t zero = 0;
-              std::memcpy(vb.data(), &zero, 8);
-              sample_block_indices[ti] = value_data_.size();
-              value_data_.push_back({TypeId::Invalid, std::move(vb)});
+              // ValueBlock sentinel: an inlined rep with no value_data_ block
+              // (_PatchTimeSamplesBlock skips inlined reps).
+              sample_reps[ti] = ValueRep::Make(CrateTypeId::ValueBlock, 0, false, true);
             }
             ti++;
           }
@@ -1081,15 +1121,11 @@ private:
           // num_values
           std::memcpy(header_data.data() + hp, &num_samples, 8); hp += 8;
 
-          // Sample ValueReps (placeholders with block indices)
+          // Sample ValueReps written verbatim. Non-inlined reps (payload =
+          // value_data_ block index) are patched to absolute file offsets by
+          // _PatchTimeSamplesBlock; inlined reps are left untouched.
           for (size_t si = 0; si < num_samples; si++) {
-            // Determine type — try to get it from the value data blocks
-            CrateTypeId val_type = CrateTypeId::ValueBlock;
-            if (sample_block_indices[si] < value_data_.size()) {
-              val_type = ToCrateTypeId(value_data_[sample_block_indices[si]].type);
-            }
-            uint64_t vr = ValueRep::Make(val_type, sample_block_indices[si],
-                                          false, false).raw();
+            uint64_t vr = sample_reps[si].raw();
             std::memcpy(header_data.data() + hp, &vr, 8); hp += 8;
           }
 
@@ -1119,21 +1155,41 @@ private:
         fields_.push_back(f);
       };
 
-      // Add metadata as flat fields (matching reader behavior)
-      if (!prim.meta().references.empty()) {
-        // Write as a single string for simplicity
-        add_string_field("references", prim.meta().references[0]);
-      }
-      if (!prim.meta().payloads.empty()) {
-        add_string_field("payload", prim.meta().payloads[0]);
+      // Write a list of strings as a token[] array field. Each element is a
+      // separate token, so the reader reconstructs the full list — no lossy
+      // separator joining and no first-element-only truncation.
+      auto add_token_array_field = [&](const std::string& name,
+                                       const std::vector<std::string>& values) {
+        if (values.empty()) return;
+        CrateField f;
+        f.token_index.value = InternToken(name);
+        f.value_rep = EncodeValue(Value::MakeTokenArray(values));
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      };
+
+      // Composition arcs + list metadata as token[] fields (full round-trip).
+      add_token_array_field("references", prim.meta().references);
+      add_token_array_field("payload", prim.meta().payloads);
+      add_token_array_field("inherits", prim.meta().inherits);
+      add_token_array_field("specializes", prim.meta().specializes);
+      if (!prim.meta().comment.empty()) {
+        add_string_field("comment", prim.meta().comment);
       }
       if (!prim.meta().variantSelection.empty()) {
         add_string_field("variantSelection", prim.meta().variantSelection);
+      }
+      if (!prim.meta().variantSets.empty()) {
+        std::vector<std::string> vs_names;
+        vs_names.reserve(prim.meta().variantSets.size());
+        for (const auto& vs : prim.meta().variantSets) vs_names.push_back(vs.name);
+        add_token_array_field("variantSets", vs_names);
       }
 
       // Record fieldset
       uint32_t fs_idx = static_cast<uint32_t>(fieldsets_.size());
       fieldsets_.push_back(std::move(fieldset));
+      path_to_fs_idx[prim.path().str()] = fs_idx;
 
       // Create spec
       CrateSpec spec;
@@ -1141,6 +1197,88 @@ private:
       spec.fieldset_index.value = fs_idx;
       spec.spec_type = SpecType::Prim;
       specs_.push_back(spec);
+    }
+
+    // Add primChildren to pseudo-root (fieldset 0) from root prims
+    {
+      std::vector<uint32_t> root_child_tokens;
+      for (const auto& prim : layer.prims()) {
+        // Root prims have exactly one '/' in their path (e.g., "/World")
+        const std::string& path_str = prim.path().str();
+        if (!path_str.empty() && path_str != "/" &&
+            path_str.find('/', 1) == std::string::npos) {
+          root_child_tokens.push_back(InternToken(prim.name()));
+        }
+      }
+      if (!root_child_tokens.empty()) {
+        // Store as TokenListOp matching pxrUSD format:
+        // [uint8 header_bits][if HasExplicitItems: u64 count + token_idx * count]
+        size_t n = root_child_tokens.size();
+        std::vector<uint8_t> raw(8 + n * 4);
+        uint64_t cnt = n;
+        std::memcpy(raw.data(), &cnt, 8);
+        for (size_t i = 0; i < n; ++i) {
+          std::memcpy(raw.data() + 8 + i * 4, &root_child_tokens[i], 4);
+        }
+        uint64_t data_idx = value_data_.size();
+        value_data_.push_back({TypeId::Token, std::move(raw)});
+
+        CrateField pc_field;
+        pc_field.token_index.value = InternToken("primChildren");
+        // pxrUSD stores primChildren as TokenVector (41), not TokenListOp (32)
+        // TokenVector is a simple array: [u64 count][u32 token_idx]*count (no header byte)
+        pc_field.value_rep = ValueRep::Make(CrateTypeId::TokenVector,
+                                            data_idx, false, false);
+        if (!fieldsets_.empty()) {
+          fieldsets_[0].push_back(static_cast<uint32_t>(fields_.size()));
+          fields_.push_back(pc_field);
+        }
+      }
+    }
+
+    // Build parent-path -> ordered child name tokens in a single O(P) pass,
+    // replacing the previous O(P^2) per-prim child scan. Children are appended
+    // in prim-iteration order, matching the prior ordering (and prim names are
+    // already interned via path interning, so token indices are unchanged).
+    std::unordered_map<std::string, std::vector<uint32_t>> parent_children;
+    for (const auto& prim : layer.prims()) {
+      const std::string& p = prim.path().str();
+      if (p.empty() || p == "/") continue;
+      size_t slash = p.rfind('/');
+      if (slash == std::string::npos) continue;
+      std::string parent = (slash == 0) ? "/" : p.substr(0, slash);
+      parent_children[parent].push_back(InternToken(prim.name()));
+    }
+
+    // Add primChildren to non-root prims that have children
+    for (const auto& prim : layer.prims()) {
+      const std::string& prim_path = prim.path().str();
+      if (prim_path.empty() || prim_path == "/") continue;
+
+      auto cit = parent_children.find(prim_path);
+      if (cit == parent_children.end()) continue;
+      const std::vector<uint32_t>& child_tokens = cit->second;
+
+      if (!child_tokens.empty()) {
+        std::vector<uint8_t> raw(8 + child_tokens.size() * 4);
+        uint64_t cnt = child_tokens.size();
+        std::memcpy(raw.data(), &cnt, 8);
+        for (size_t k = 0; k < child_tokens.size(); ++k) {
+          std::memcpy(raw.data() + 8 + k * 4, &child_tokens[k], 4);
+        }
+        uint64_t data_idx = value_data_.size();
+        value_data_.push_back({TypeId::Token, std::move(raw)});
+
+        CrateField f;
+        f.token_index.value = InternToken("primChildren");
+        f.value_rep = ValueRep::Make(CrateTypeId::TokenVector,
+                                      data_idx, false, false);
+        auto it = path_to_fs_idx.find(prim_path);
+        if (it != path_to_fs_idx.end() && it->second < fieldsets_.size()) {
+          fieldsets_[it->second].push_back(static_cast<uint32_t>(fields_.size()));
+          fields_.push_back(f);
+        }
+      }
     }
   }
 
@@ -1166,6 +1304,9 @@ private:
   void WriteTokensSection() {
     // Build uncompressed token data: concatenated null-terminated strings
     std::vector<uint8_t> raw;
+    size_t total = 0;
+    for (const auto& token : tokens_) total += token.size() + 1;
+    raw.reserve(total);  // avoid incremental reallocations
     for (const auto& token : tokens_) {
       raw.insert(raw.end(), token.begin(), token.end());
       raw.push_back(0);  // null terminator

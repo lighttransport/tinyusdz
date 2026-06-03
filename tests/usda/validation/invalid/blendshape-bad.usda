@@ -1,0 +1,12 @@
+#usda 1.0
+# EXPECT: geom.skel.blendShape.normalOffsets
+# EXPECT: geom.skel.blendShape.pointIndices
+# EXPECT: geom.skel.blendShape.inbetween
+
+def BlendShape "Bad"
+{
+    uniform vector3f[] offsets = [(0, 0, 0), (1, 0, 0)]
+    uniform vector3f[] normalOffsets = [(0, 0, 1)]
+    uniform int[] pointIndices = [0, -1]
+    uniform vector3f[] inbetweens:low = [(0, 0, 0)]
+}

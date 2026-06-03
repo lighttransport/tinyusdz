@@ -710,6 +710,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-query.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-composition.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-composition.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-validate.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-validate.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.cc
@@ -1325,6 +1327,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-composition.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-query.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-scene.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-validate.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/urdf-to-usd.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/js-script-persistent.cc)
@@ -2080,6 +2083,65 @@ if(TINYUSDZ_BUILD_TESTS)
               "$<TARGET_FILE:test_tinyusdz>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
       )
   endif()
+
+  #
+  # AOUSD validation fixture suite (self-checking via `# EXPECT:` markers).
+  # Runs `tusdcat --validate-all` over tests/usda/validation/**.
+  #
+  if(TARGET tusdcat)
+    add_test(
+      NAME validation-suite-test
+      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/validation/run-validation-suite.py
+              --app "$<TARGET_FILE:tusdcat>"
+              --basedir "${PROJECT_SOURCE_DIR}/tests/usda/validation"
+      )
+
+    # Corpus-wide robustness regression: validate every parseable fixture in
+    # tests/usda and fail only if the validator crashes or hangs.
+    add_test(
+      NAME validation-regression-test
+      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/validation/run-validation-regression.py
+              --app "$<TARGET_FILE:tusdcat>"
+              --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
+      )
+
+    add_test(
+      NAME validation-usdz-cube-test
+      COMMAND "$<TARGET_FILE:tusdcat>" --validate
+              "${PROJECT_SOURCE_DIR}/models/cube.usdz"
+      )
+
+    add_test(
+      NAME validation-usdz-texture-cat-plane-test
+      COMMAND "$<TARGET_FILE:tusdcat>" --validate
+              "${PROJECT_SOURCE_DIR}/models/texture-cat-plane.usdz"
+      )
+
+    find_program(TINYUSDZ_NODE_EXECUTABLE node)
+    if(TINYUSDZ_NODE_EXECUTABLE
+       AND EXISTS "${PROJECT_SOURCE_DIR}/web/js/src/tinyusdz/tinyusdz.js"
+       AND EXISTS "${PROJECT_SOURCE_DIR}/web/js/src/tinyusdz/tinyusdz.wasm")
+      add_test(
+        NAME web-validation-parity-test
+        COMMAND ${CMAKE_COMMAND} -E env
+                "TUSDCAT_PATH=$<TARGET_FILE:tusdcat>"
+                "TINYUSDZ_WASM_DIR=${PROJECT_SOURCE_DIR}/web/js/src/tinyusdz"
+                "TINYUSDZ_PARITY_SKIP_STALE_WASM=1"
+                "${TINYUSDZ_NODE_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/web/js/tests/validation-parity.mjs"
+        )
+    endif()
+  endif()
+
+  #
+  # Guard that src/usd-preview-surface-inputs.inc (the validator's table) stays
+  # in sync with src/usd-preview-surface-schema.json. Fails if a schema edit was
+  # not followed by `python3 scripts/gen-usd-preview-surface-inputs.py`.
+  #
+  add_test(
+    NAME preview-surface-schema-sync
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/gen-usd-preview-surface-inputs.py --check
+    )
 
   #
   # USDA roundtrip tester

@@ -44,7 +44,10 @@ struct USDCReaderConfig {
   bool allow_unknown_apiSchemas = true;
 
   bool strict_allowedToken_check = false;
-  
+
+  // Shader input/output type conformance(false: warn, true: error)
+  bool strict_shader_type_check = false;
+
   // Memory optimization: use mmap for uncompressed arrays
   bool use_mmap = false;
 

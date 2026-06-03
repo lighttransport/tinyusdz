@@ -1,13 +1,13 @@
 # USDC Crate Writer
 
-The TinyUSDZ USDC Crate Writer (`src/crate-writer.{cc,hh}`) writes USD Stage data to binary USDC (Crate) format version 0.8.0. Status: experimental but functional with comprehensive test coverage.
+The TinyUSDZ USDC Crate Writer writes USD Stage data to binary USDC (Crate) format version 0.8.0. Status: experimental but functional with comprehensive test coverage.
 
 ## Integration Points
 
-- Core: `src/crate-writer.cc` (3,470+ lines)
-- Stage converter: `src/stage-converter.cc`
+- Core writer: `src/crate-writer.cc` (sections/TOC/compression), `src/crate-writer-values.cc` (value-data encoding + dedup), `src/crate-writer-inline.cc` (`TryInlineValue`), `src/crate-writer.hh`
+- Stage converter: `src/stage-converter.cc` (Stage/Prim/property → crate spec+field model)
 - CLI: `examples/tusdcat` with `-o/--output` option
-- Unit tests: 62 tests (all passing)
+- Unit tests: `tests/unit/unit-crate-writer.cc` (69 test functions)
 
 ## Usage
 
@@ -36,28 +36,54 @@ The TinyUSDZ USDC Crate Writer (`src/crate-writer.{cc,hh}`) writes USD Stage dat
 
 **Metadata**: Prim/attribute/relationship metadata, CustomData, AssetInfo, layer metadata (framesPerSecond, startTimeCode, endTimeCode, upAxis, metersPerUnit).
 
-**Composition**: References with customData, payloads, inherits, sublayers with LayerOffset, specializes arc.
+**Composition**: References (single + multiple) with customData, payloads, inherits, sublayers with LayerOffset, specializes arc, variantSets/variantSelection.
+
+**Specs**: Separate `Attribute`, `Relationship`, `Connection`, `VariantSet`, and `Variant` specs (no longer embedded in the parent prim — see the `AddSpec(..., SpecType::*)` calls in `stage-converter.cc`). Property `variability` (Uniform) is written for uniform attributes.
 
 **Safety**: Error context reporting, memory limits, filesize limits, validation (enable/disable), compression.
 
-## Not Yet Implemented
-
-- Separate attribute/connection specs (currently embedded in parent prim)
-- Variant/VariantSet specs
-
 ## Resolved Issues
 
-### TypeName Encoding (Fixed 2025-11-16)
+### TypeName Encoding
 
-Token index (uint32_t) was stored instead of the token object. Fixed in 3 locations in `src/stage-converter.cc`.
+Token index (uint32_t) was stored instead of the token object. Fixed to store the `value::token` (see `stage-converter.cc`, "Store the token, not the index!").
 
-### TimeSamples Size Mismatch (Fixed 2025-11-16)
+### SpecTypePseudoRoot Ordering
 
-`get_samples()` returned empty when `_use_pod` was true but `_pod_samples` was empty. Fixed in `src/timesamples.hh` to fall through to unified POD storage. Also fixed TimeSamples binary format to use ValueRep structures.
+Spec sorting didn't guarantee PseudoRoot at index 0. The comparator in `crate-writer.cc` always sorts PseudoRoot first, with post-sort validation that the first spec is the PseudoRoot.
 
-### SpecTypePseudoRoot Ordering (Fixed 2025-11-16)
+### Token Index 0 Sentinel
 
-Spec sorting didn't guarantee PseudoRoot at index 0. Fixed comparator in `src/crate-writer.cc` to always sort PseudoRoot first with post-sort validation.
+Index 0 is reserved for the pxrUSD magic token `;-)` before any real token is registered. Because `-0 == 0`, a property/path element at index 0 would otherwise be misread (the path-encoding bit games make element 0 ambiguous).
+
+### TimeSamples Binary Format
+
+TimeSamples are written using embedded `ValueRep` structures (indirection format matching pxrUSD). The earlier POD-vs-`_samples` storage split has been removed — `TimeSamples` now uses a single unified storage (see memory-and-performance.md / the refactor below).
+
+### Dictionary (customData) Binary Format
+
+Dictionaries (`customData`, and any nested dict value) use a recursive offset
+layout, matching what the reader expects (`ReadCustomData` in
+`src/crate-reader-values.cc`; `RecursiveRead` in pxrUSD's `crateFile.cpp`):
+
+```
+uint64_t count
+repeat count times:
+  StringIndex  key       // 4 bytes
+  int64_t      offset    // 8 bytes, relative to the byte AFTER this field
+  ValueRep     value     // 8 bytes (or points to an out-of-line value)
+```
+
+`offset == 8` means the `ValueRep` immediately follows the offset field; the
+reader seeks `offset - 8` from the current position to reach the value.
+
+Write ordering matters: the writer first **reserves** `8 + 20*count` bytes for
+the dict frame (8 for the count + 4+8+8 per entry), packs each value (nested
+out-of-line writes then land *after* the reserved frame), and finally seeks
+back to backfill the count, keys, offsets, and `ValueRep`s
+(`src/crate-writer-values.cc`). Writing the entries inline first — as OpenUSD's
+`WriteMap` does — produces a stream this reader cannot parse: it misreads a
+`ValueRep` as an offset and fails with `Invalid offset value: <huge number>`.
 
 ## Debugging
 
@@ -98,7 +124,7 @@ Written to dedicated sections: TOKENS, STRINGS, FIELDS, FIELDSETS, PATHS.
 
 **OpenUSD reference**: `_ValueHandler<T>` template deduplicates data values with separate dedup maps for scalars and arrays per concrete type, lazy allocation, cleared after write.
 
-**TinyUSDZ implementation**: TimeSamples values are deduplicated using NaN-aware hashing (`NanAwareHash` in `crate-writer.hh`). This follows the OpenUSD `TfHash` pattern where +0.0 and -0.0 are treated as identical (both canonicalized to zero bits before hashing). The hash function is XXH3_64bits (from xxHash v0.8.3), which provides 2.7x–25x speedup over FNV-1a depending on buffer size. Collision verification uses NaN-aware byte equality (`buffers_equal`).
+**TinyUSDZ implementation**: out-of-line values (including TimeSamples) are deduplicated using NaN-aware hashing (`NanAwareHash` in `crate-writer.hh`). This follows the OpenUSD `TfHash` pattern where +0.0 and -0.0 are treated as identical (both canonicalized to zero bits before hashing). The hash function is XXH3_64bits (from xxHash v0.8.3), which is 1.1x–12.3x faster than FNV-1a depending on buffer size (see benchmark below). Collision verification uses NaN-aware byte equality (`buffers_equal`).
 
 Dedup map type: `unordered_multimap<size_t, ValueDedupEntry>` keyed by XXH3 hash, with byte content stored for collision verification.
 
@@ -107,10 +133,13 @@ Non-float types (int, string, token, half): XXH3 on raw bytes directly.
 
 ### Value Classification
 
-1. **Always Inlined** (<=4 bytes or index types): bool, int32, float, string, token, path
-2. **Conditionally Inlined**: Values that happen to fit in 4 bytes
-3. **Value-Deduplicated**: Larger values hashed (NaN-aware XXH3) and stored once
-4. **Array-Deduplicated**: Separate map, empty arrays always inlined
+TinyUSDZ inlining lives in `CrateWriter::TryInlineValue` (`crate-writer-inline.cc`). A `ValueRep` carries a 48-bit payload; a value is inlined iff it fits:
+
+1. **Always inlined**: token / string / AssetPath (as their TOKENS/STRINGS index), bool, int32, uint32, half, float, and the `Specifier`/`Permission`/`Variability` enums.
+2. **Conditionally inlined**: int64 / uint64 — only when the value fits in 48 bits; otherwise written out-of-line.
+3. **Never inlined**: double (64 bits > 48-bit payload), vectors, matrices, and all arrays — written to the VALUE section.
+4. **Value-deduplicated**: out-of-line values hashed (NaN-aware XXH3) and stored once.
+5. **Array-deduplicated**: separate path; empty arrays inlined.
 
 ## Array Compression (v0.5.0+)
 
@@ -151,7 +180,7 @@ Zero collisions for both at 1M unique random inputs.
 
 ## Enhancement Roadmap
 
-Priority order:
-1. Separate attribute/connection specs (correctness)
-2. Variant/VariantSet support
-3. Performance optimizations (incremental writing, parallelism)
+Separate attribute/connection/relationship specs and Variant/VariantSet authoring are now implemented (see Implemented Features). Remaining:
+
+- Performance optimizations (incremental writing, parallelism).
+- Broader binary-compatibility verification against OpenUSD-written files.

@@ -20,6 +20,7 @@ TinyUSDZ provides an MCP server for AI agents (Claude, GPT, etc.) to interact wi
 │   ├── Attributes       (list, get, set, block)       │
 │   ├── Composition      (refs, payloads, variants)    │
 │   ├── Query/Discover   (find by type, schema list)   │
+│   ├── Validation       (usd_validate: AOUSD Core)    │
 │   ├── Scripting        (run_script: JS + tinyusdz.*) │
 │   └── Legacy           (assets, screenshots)         │
 │                                                      │
@@ -37,11 +38,11 @@ A C++ MCP server using CivetWeb HTTP library. JSON-RPC 2.0 over HTTP POST on `/m
 cmake .. -DTINYUSDZ_WITH_MCP_SERVER=ON
 make -j16
 
-# Run the example MCP server
-./build/examples/mcp_server/mcp_server
+# Run the example MCP server (source: examples/mcp_server/example-mcp-server.cc)
+./build/mcp_server            # optional: --port <N>
 ```
 
-Default port: 8085. Configure via `MCPServerOptions`.
+Default port: 8085. Body-size limits are configured via `MCPServerOptions`.
 
 ### JS/WASM Server
 
@@ -59,6 +60,7 @@ An Express-based MCP server bridging to TinyUSDZ WASM. See `web/mcp-server/`.
 | `stage_export` | Export stage to file | `uri`, `format` |
 | `stage_to_string` | Export stage to USDA string | `format` |
 | `stage_info` | Get stage metadata | — |
+| `get_version` | Get TinyUSDZ MCP server version | — |
 
 ### Scene Graph
 
@@ -93,6 +95,7 @@ An Express-based MCP server bridging to TinyUSDZ WASM. See `web/mcp-server/`.
 | `inherit_add` | Add inherit arc | `path`, `prim_path` |
 | `specialize_add` | Add specialize arc | `path`, `prim_path` |
 | `variant_list_sets` | List variant sets | `path` |
+| `variant_define` | Define a variant set / variant on a prim | `path`, `variant_set`, `variant_name` |
 | `variant_get_selection` | Get variant selection | `path`, `variant_set` |
 | `variant_set_selection` | Set variant selection | `path`, `variant_set`, `variant` |
 
@@ -104,6 +107,20 @@ An Express-based MCP server bridging to TinyUSDZ WASM. See `web/mcp-server/`.
 | `schema_list_types` | List all registered prim types | — |
 | `schema_get_type` | Get schema for a type | `type_name` |
 | `search` | Search prim names | `query`, `scope` |
+
+### Validation
+
+| Tool | Description | Key Args |
+|------|-------------|----------|
+| `usd_validate` | Validate against AOUSD Core semantic rules | `data`, `uri`, `layer_uuid`, `groups`, `name` |
+
+Validates the first input that is present (`data` base64 → `uri` file path →
+`layer_uuid` session layer), otherwise the current session stage (serialized to
+USDA and re-parsed as an uncomposed Layer). `groups` selects rule groups: any of
+`"core"` (default), `"geom"`, `"shade"`, or `"all"`. Returns
+`{ ok, error_count, warning_count, spec_version, source, checked_groups: [...],
+issues: [{ severity, rule_id, location, message }] }`. `checked_groups` reports
+which groups actually ran, so a core-only `ok` is not mistaken for full coverage.
 
 ### Scripting
 
@@ -125,10 +142,13 @@ An Express-based MCP server bridging to TinyUSDZ WASM. See `web/mcp-server/`.
 | `save_screenshot` | Save a screenshot |
 | `list_screenshots` | List screenshots |
 | `read_screenshot` | Read screenshot image |
-| `load_usd_layer_from_file` | Load USD as Layer (C++ native) |
+| `load_usd_layer_from_file` | Load USD as Layer from file (C++ native only) |
 | `load_usd_layer_from_data` | Load USD as Layer from base64 |
-| `to_usda` | Convert Layer to USDA text |
-| `list_primspecs` | List root PrimSpecs |
+| `load_usd_layer_from_asset` | Load USD as Layer from a stored asset |
+| `to_usda` | Convert a loaded Layer to USDA text |
+| `list_primspecs` | List root PrimSpecs in a loaded Layer |
+| `get_usd_description` | Get description of a loaded USD Layer |
+| `get_all_usd_descriptions` | Get descriptions of all loaded USD Layers |
 
 ## JavaScript Scripting
 

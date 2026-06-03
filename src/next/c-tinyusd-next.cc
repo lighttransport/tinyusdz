@@ -282,6 +282,10 @@ tinyusdz_next_value_type_t tinyusdz_next_prim_get_value_type(
         return TINYUSDZ_NEXT_VALUE_UINT_ARRAY;
       case tinyusdz::next::TypeId::UInt64:
         return TINYUSDZ_NEXT_VALUE_UINT64_ARRAY;
+      case tinyusdz::next::TypeId::Bool:
+        return TINYUSDZ_NEXT_VALUE_BOOL_ARRAY;
+      case tinyusdz::next::TypeId::Token:
+        return TINYUSDZ_NEXT_VALUE_TOKEN_ARRAY;
       default:
         return TINYUSDZ_NEXT_VALUE_FLOAT_ARRAY;
     }
@@ -592,6 +596,38 @@ size_t tinyusdz_next_prim_get_uint64_array(
   return arr->size();
 }
 
+size_t tinyusdz_next_prim_get_bool_array(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    const uint8_t** out_ptr) {
+  if (!prim || !prim->prim || !prop_name || !out_ptr) return 0;
+  const tinyusdz::next::Value* val = prim->prim->GetPropertyValue(prop_name);
+  if (!val) return 0;
+  const std::vector<uint8_t>* arr = val->as_bool_array();
+  if (!arr) return 0;
+  *out_ptr = arr->data();
+  return arr->size();
+}
+
+size_t tinyusdz_next_prim_get_token_array(
+    const TinyUSDZNextPrim* prim, const char* prop_name,
+    const char*** out_ptr) {
+  if (!prim || !prim->prim || !prop_name || !out_ptr) return 0;
+  const tinyusdz::next::Value* val = prim->prim->GetPropertyValue(prop_name);
+  if (!val) return 0;
+  const std::vector<std::string>* arr = val->as_token_array();
+  if (!arr) return 0;
+
+  static thread_local const char* tls_tok_buf[512];
+  static thread_local std::string tls_tok_strs[512];
+  size_t count = arr->size() > 512 ? 512 : arr->size();
+  for (size_t i = 0; i < count; ++i) {
+    tls_tok_strs[i] = (*arr)[i];
+    tls_tok_buf[i] = tls_tok_strs[i].c_str();
+  }
+  *out_ptr = tls_tok_buf;
+  return count;
+}
+
 // ============================================================
 // Relationship access
 // ============================================================
@@ -628,6 +664,25 @@ size_t tinyusdz_next_prim_get_property_names(
     tls_prop_buf[i] = tls_prop_strs[i].c_str();
   }
   *out_ptr = tls_prop_buf;
+  return count;
+}
+
+size_t tinyusdz_next_prim_get_relationship_names(
+    const TinyUSDZNextPrim* prim, const char*** out_ptr) {
+  if (!prim || !prim->prim || !out_ptr) return 0;
+  auto names = prim->prim->GetRelationshipNames();
+  if (names.empty()) return 0;
+  // Cap matches tinyusdz_next_prim_get_property_names (512). Names beyond the
+  // cap are truncated; the returned pointers alias thread_local storage and are
+  // valid only until the next call on this thread (see header contract).
+  static thread_local const char* tls_rn_buf[512];
+  static thread_local std::string tls_rn_strs[512];
+  size_t count = names.size() > 512 ? 512 : names.size();
+  for (size_t i = 0; i < count; ++i) {
+    tls_rn_strs[i] = std::move(names[i]);
+    tls_rn_buf[i] = tls_rn_strs[i].c_str();
+  }
+  *out_ptr = tls_rn_buf;
   return count;
 }
 
