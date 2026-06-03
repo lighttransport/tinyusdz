@@ -131,6 +131,7 @@ void App::applyLoaded(bool ok, bool progressive) {
   nextTex_ = 0;
 
   if (ok) {
+    ++sceneGen_;  // invalidate the MCP library-tool Stage snapshot
     const std::string& up = loaded_.render.meta.upAxis;
     camera_.setUpAxis((up == "Z" || up == "z") ? 2 : 1);
     if (draw_.hasBounds) camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);

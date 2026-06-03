@@ -6,6 +6,9 @@
 
 #include "log.hh"
 #include "mcp/mcp_host.hh"
+#include "tydra/js-script.hh"    // complete JSEngineState (held in Context by value)
+#include "tydra/mcp-context.hh"  // tinyusdz::tydra::mcp::Context
+#include "tydra/mcp-tools.hh"    // GetToolsList (library tool schemas)
 
 namespace tusdview {
 
@@ -81,6 +84,20 @@ json MCPServer::buildToolsList() const {
       json::array({"op"})));
   tools.push_back(tool("list_prims", "List renderable mesh prim paths in the scene.",
                        {{"max", {{"type", "integer"}, {"description", "cap (default 1000)"}}}}));
+
+  // Append the tinyusdz library's USD tools (stage/prim/attr query, composition,
+  // search, run_script, ...). GetToolsList emits static schemas (no stage), so it
+  // is safe to call here on the transport thread.
+  try {
+    tinyusdz::tydra::mcp::Context ctx;
+    json libList;
+    if (tinyusdz::tydra::mcp::GetToolsList(ctx, libList) && libList.contains("tools") &&
+        libList["tools"].is_array()) {
+      for (auto& t : libList["tools"]) tools.push_back(t);
+    }
+  } catch (const std::exception& e) {
+    LOGD("MCP: GetToolsList failed: %s", e.what());
+  }
   return tools;
 }
 
@@ -187,7 +204,8 @@ void MCPServer::drain() {
       } else if (t == "list_prims") {
         payload = host_->mcpListPrims(cmd->args, err);
       } else {
-        err = "Unknown tool: " + t;
+        // Not a viewer tool -> forward to the tinyusdz library tool dispatcher.
+        payload = host_->mcpCallLibraryTool(t, cmd->args, err);
       }
     } catch (const std::exception& e) {
       err = std::string("tool exception: ") + e.what();
