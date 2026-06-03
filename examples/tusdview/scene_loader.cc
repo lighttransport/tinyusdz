@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "scene_loader.hh"
 
+#include <cctype>
 #include <chrono>
 
 #include "mesh_build.hh"
@@ -20,6 +21,13 @@ std::string DirName(const std::string& path) {
     return path.substr(0, 1);
   }
   return path.substr(0, slash);
+}
+
+bool HasUsdzExtension(const std::string& path) {
+  if (path.size() < 5) return false;
+  std::string ext = path.substr(path.size() - 5);
+  for (char& c : ext) c = static_cast<char>(std::tolower(c));
+  return ext == ".usdz";
 }
 
 }  // namespace
@@ -75,6 +83,36 @@ bool LoadUSD(const std::string& path, LoadedScene* out, DrawScene* draw,
   tinyusdz::tydra::RenderSceneConverterEnv env(out->stage);
   env.usd_filename = path;
   env.set_search_paths({DirName(path)});
+
+  // USDZ assets (textures, audio, ...) live *inside* the .usdz archive. Register
+  // the archive's internal asset map with the resolver so embedded textures
+  // resolve; without this only assets that happen to exist on disk next to the
+  // .usdz would load. `usdzAsset` must outlive the RenderScene conversion below
+  // (the resolver retains a pointer to it); it is a local here, and conversion
+  // happens before this function returns.
+  tinyusdz::USDZAsset usdzAsset;
+  if (HasUsdzExtension(path)) {
+    std::string uwarn, uerr;
+    bool gotInfo = false;
+    if (mapped) {
+      // Zero-copy: reference the mmap (kept alive in out->mmap through the
+      // conversion below).
+      gotInfo = tinyusdz::ReadUSDZAssetInfoFromMemory(
+          mh->addr, static_cast<size_t>(mh->size), /*asset_on_memory=*/true,
+          &usdzAsset, &uwarn, &uerr);
+    } else {
+      gotInfo = tinyusdz::ReadUSDZAssetInfoFromFile(path, &usdzAsset, &uwarn, &uerr);
+    }
+    if (gotInfo) {
+      if (!tinyusdz::SetupUSDZAssetResolution(env.asset_resolver, &usdzAsset)) {
+        out->warn += "Failed to set up USDZ asset resolution; embedded textures "
+                     "may not load.\n";
+      }
+    } else {
+      out->warn += "Failed to read USDZ asset info" +
+                   (uerr.empty() ? std::string() : ": " + uerr) + "\n";
+    }
+  }
 
   // Configure for a single-index OpenGL/Vulkan renderer.
   auto& mc = env.mesh_config;
