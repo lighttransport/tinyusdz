@@ -1,0 +1,15 @@
+#usda 1.0
+(
+    defaultPrim = "joint"
+    upAxis = "Y"
+)
+
+# Regression test: `PhysxJointAPI` (PhysX / Omniverse) is a known API schema.
+# Verifies it round-trips as a recognized schema (not demoted to the
+# unknown-schema preservation path), alongside a standard UsdPhysics schema.
+
+def Xform "joint" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysxJointAPI"]
+)
+{
+}

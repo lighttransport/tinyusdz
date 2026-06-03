@@ -29,73 +29,87 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
     const ListOp<value::token> &arg, bool ignore_unknown, std::string &warn) {
   APISchemas schemas;
 
-  auto SchemaHandler =
-      [](const value::token &tok) -> nonstd::optional<APISchemas::APIName> {
-    return enum_handler::APISchemaNameOpt(tok.str());
-  };
-
-  // Process a list of schema tokens into schemas.names/unknownSchemas.
-  auto ProcessItems = [&](const std::vector<value::token> &items)
+  // Resolve a list of schema tokens into the resolved view
+  // (schemas.names/unknownSchemas for additive ops, deleted* for delete) and
+  // record the op verbatim in `authoredOps` for lossless round-trip.
+  auto ProcessItems = [&](const std::vector<value::token> &items,
+                          ListEditQual qual)
       -> nonstd::expected<bool, std::string> {
+    const bool isDelete = (qual == ListEditQual::Delete);
+    std::vector<std::pair<std::string, std::string>> authoredItems;
     for (const auto &item : items) {
-      if (auto pv = SchemaHandler(item)) {
-        std::string instanceName;  // TODO: parse instance name
-        schemas.names.push_back({pv.value(), instanceName});
+      // Preserve the full token (incl. any `:instance` suffix) for round-trip.
+      authoredItems.push_back({item.str(), std::string()});
+      // Resolved view: split multi-apply instances `SchemaName:instanceName`.
+      if (auto pv = enum_handler::APISchemaNameWithInstanceOpt(item.str())) {
+        const std::pair<APISchemas::APIName, std::string> entry = pv.value();
+        if (isDelete) {
+          schemas.deletedNames.push_back(entry);
+          schemas.names.erase(
+              std::remove(schemas.names.begin(), schemas.names.end(), entry),
+              schemas.names.end());
+        } else {
+          schemas.names.push_back(entry);
+        }
       } else if (ignore_unknown) {
-        std::string instanceName;
-        schemas.unknownSchemas.push_back({item.str(), instanceName});
-        warn += "Preserving unknown API schema: " + item.str() + "\n";
+        // Unknown base schema: keep the full token verbatim.
+        const std::pair<std::string, std::string> entry{item.str(), std::string()};
+        if (isDelete) {
+          schemas.deletedUnknownSchemas.push_back(entry);
+          schemas.unknownSchemas.erase(
+              std::remove(schemas.unknownSchemas.begin(), schemas.unknownSchemas.end(), entry),
+              schemas.unknownSchemas.end());
+        } else {
+          schemas.unknownSchemas.push_back(entry);
+          warn += "Preserving unknown API schema: " + item.str() + "\n";
+        }
       } else {
         return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                        item.str());
       }
     }
+    schemas.authoredOps.push_back({qual, std::move(authoredItems)});
+    // First non-delete qualifier wins for the resolved single-qualifier view.
+    if (!isDelete && schemas.listOpQual == ListEditQual::ResetToExplicit) {
+      schemas.listOpQual = qual;
+    }
     return true;
   };
 
   if (arg.IsExplicit()) {  // fast path
-    auto r = ProcessItems(arg.GetExplicitItems());
+    if (arg.GetExplicitItems().empty()) {
+      // `apiSchemas = None` (explicit empty list).
+      schemas.explicitlyEmpty = true;
+    }
+    auto r = ProcessItems(arg.GetExplicitItems(), ListEditQual::ResetToExplicit);
     if (!r) return nonstd::make_unexpected(r.error());
-    schemas.listOpQual = ListEditQual::ResetToExplicit;
+    if (schemas.explicitlyEmpty) {
+      schemas.authoredOps.clear();  // None has no items to author
+    }
 
   } else {
-    // Currently only support a single ListEdit qualifier at a time.
-    struct { const std::vector<value::token>& items; ListEditQual qual; } candidates[] = {
-      {arg.GetExplicitItems(), ListEditQual::ResetToExplicit},
+    // USD allows multiple list-edit qualifiers on the same field (e.g.
+    // `delete` + `prepend`). Process each present group, preserving it in
+    // `authoredOps`. Canonical apply order: delete, add, append, prepend.
+    if (arg.GetOrderedItems().size()) {
+      return nonstd::make_unexpected("TODO: Ordered apiSchemas ListOp items.");
+    }
+    struct { const std::vector<value::token>& items; ListEditQual qual; } groups[] = {
+      {arg.GetDeletedItems(), ListEditQual::Delete},
       {arg.GetAddedItems(), ListEditQual::Add},
       {arg.GetAppendedItems(), ListEditQual::Append},
-      {arg.GetDeletedItems(), ListEditQual::Delete},
       {arg.GetPrependedItems(), ListEditQual::Prepend},
     };
-
-    size_t active_count = 0;
-    size_t active_idx = 0;
-    for (size_t i = 0; i < 5; ++i) {
-      if (!candidates[i].items.empty()) {
-        ++active_count;
-        active_idx = i;
-      }
+    bool any = false;
+    for (const auto &g : groups) {
+      if (g.items.empty()) continue;
+      any = true;
+      auto r = ProcessItems(g.items, g.qual);
+      if (!r) return nonstd::make_unexpected(r.error());
     }
-    if (arg.GetOrderedItems().size()) {
-      ++active_count;
-    }
-
-    if (active_count > 1) {
-      return nonstd::make_unexpected(
-          "Currently TinyUSDZ does not support ListOp with different "
-          "ListEdit qualifiers.");
-    }
-
-    if (active_count == 0) {
-      if (arg.GetOrderedItems().size()) {
-        return nonstd::make_unexpected("TODO: Ordered ListOp items.");
-      }
+    if (!any) {
       return nonstd::make_unexpected("Internal error: ListOp conversion.");
     }
-
-    auto r = ProcessItems(candidates[active_idx].items);
-    if (!r) return nonstd::make_unexpected(r.error());
-    schemas.listOpQual = candidates[active_idx].qual;
   }
 
   return std::move(schemas);
