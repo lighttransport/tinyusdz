@@ -657,16 +657,19 @@ Path Path::get_parent_prim_path() const {
   return Path(_prim_part.substr(0, n), "");
 }
 
-const std::string &Path::element_name() const {
-  if (_element.empty()) {
-    // Get last item.
-    std::vector<std::string> tokenized_prim_names = split(prim_part(), "/");
-    if (tokenized_prim_names.size()) {
-      _element = tokenized_prim_names[size_t(tokenized_prim_names.size() - 1)];
-    }
+std::string Path::element_name() const {
+  // `_element` is normally populated at construction/update time. When it is
+  // empty, fall back to the last item of prim_part(). Returns by value and does
+  // not mutate `_element`, so this is safe to call on a shared Path concurrently.
+  if (!_element.empty()) {
+    return _element;
   }
 
-  return _element;
+  std::vector<std::string> tokenized_prim_names = split(prim_part(), "/");
+  if (tokenized_prim_names.size()) {
+    return tokenized_prim_names[size_t(tokenized_prim_names.size() - 1)];
+  }
+  return std::string();
 }
 
 nonstd::optional<Kind> KindFromString(const std::string &str) {

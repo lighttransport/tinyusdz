@@ -113,10 +113,11 @@ class Path {
   const std::string &prim_part() const { return _prim_part; }
   const std::string &prop_part() const { return _prop_part; }
 
-  const std::string &variant_part() const {
-    _variant_part_str =
-        "{" + _variant_part + "=" + _variant_selection_part + "}";
-    return _variant_part_str;
+  // Returns by value: the formatted variant string is built on each call.
+  // (Was previously cached in a `mutable` buffer, which races when the same
+  // Path is read from multiple threads.)
+  std::string variant_part() const {
+    return "{" + _variant_part + "=" + _variant_selection_part + "}";
   }
 
   void set_path_type(const PathType ty) { _path_type = ty; }
@@ -197,8 +198,9 @@ class Path {
   const Path AppendElement(const std::string &elem) const;
 
   // Get element name(the last element of Path. i.e. Prim's name, Property's
-  // name)
-  const std::string &element_name() const;
+  // name). Returns by value (computed on each call) so it is safe to call on a
+  // shared Path from multiple threads.
+  std::string element_name() const;
 
   ///
   /// Split a path to the root(common ancestor) and its siblings
@@ -369,7 +371,6 @@ class Path {
     total += _prop_part.capacity();
     total += _variant_part.capacity();
     total += _variant_selection_part.capacity();
-    total += _variant_part_str.capacity();
     total += _element.capacity();
     return total;
   }
@@ -382,8 +383,7 @@ class Path {
   std::string _variant_part;  // e.g. `variantColor` for {variantColor=green}
   std::string _variant_selection_part;  // e.g. `green` for {variantColor=green}
                                         // . Could be empty({variantColor=}).
-  mutable std::string _variant_part_str;  // str buffer for variant_part()
-  mutable std::string _element;           // Element name
+  std::string _element;  // Element name, set at construction/update time.
 
   nonstd::optional<PathType> _path_type;  // Currently optional.
 

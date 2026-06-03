@@ -271,11 +271,27 @@ Layer::Layer() : _impl(std::make_unique<LayerImpl>()) {}
 
 Layer::~Layer() = default;
 
-Layer::Layer(const Layer& other) : _impl(std::make_unique<LayerImpl>(*other._impl)) {}
+Layer::Layer(const Layer& other) : _impl(std::make_unique<LayerImpl>(*other._impl)) {
+  // The lookup cache stores `const PrimSpec*` pointing into `other`'s
+  // `_prim_specs` tree; those pointers are invalid for this copy. Reset the
+  // cache so find_primspec_at() rebuilds it against our own tree on first use.
+  _impl->_dirty = true;
+  _impl->_primspec_path_cache.clear();
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Copies must not share the source's cache mutex.
+  _impl->_cache_mu = std::make_shared<std::mutex>();
+#endif
+}
 
 Layer& Layer::operator=(const Layer& other) {
   if (this != &other) {
     *_impl = *other._impl;
+    // See copy ctor: reset the per-layer lookup cache (stale pointers + shared mutex).
+    _impl->_dirty = true;
+    _impl->_primspec_path_cache.clear();
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    _impl->_cache_mu = std::make_shared<std::mutex>();
+#endif
   }
   return *this;
 }
@@ -393,31 +409,55 @@ bool Layer::replace_primspec(const std::string &name, PrimSpec &&ps) {
   return true;
 }
 
+// These getters read flags computed (and cached) by the matching
+// check_unresolved_*() methods. Take the same gated lock for a consistent read
+// when a parallel build path touches a shared Layer.
 bool Layer::has_unresolved_references() const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
+#endif
   return _impl->_has_unresolved_references;
 }
 
 bool Layer::has_unresolved_payload() const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
+#endif
   return _impl->_has_unresolved_payload;
 }
 
 bool Layer::has_unresolved_variant() const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
+#endif
   return _impl->_has_unresolved_variant;
 }
 
 bool Layer::has_over_primspec() const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
+#endif
   return _impl->_has_over_primspec;
 }
 
 bool Layer::has_class_primspec() const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
+#endif
   return _impl->_has_class_primspec;
 }
 
 bool Layer::has_unresolved_inherits() const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
+#endif
   return _impl->_has_unresolved_inherits;
 }
 
 bool Layer::has_unresolved_specializes() const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
+#endif
   return _impl->_has_unresolved_specializes;
 }
 
@@ -525,6 +565,9 @@ bool Layer::check_unresolved_references(const uint32_t max_depth) const {
     }
   }
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
+#endif
   _impl->_has_unresolved_references = ret;
   return _impl->_has_unresolved_references;
 }
@@ -540,6 +583,9 @@ bool Layer::check_unresolved_payload(const uint32_t max_depth) const {
     }
   }
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
+#endif
   _impl->_has_unresolved_payload = ret;
   return _impl->_has_unresolved_payload;
 }
@@ -555,6 +601,9 @@ bool Layer::check_unresolved_variant(const uint32_t max_depth) const {
     }
   }
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
+#endif
   _impl->_has_unresolved_variant = ret;
   return _impl->_has_unresolved_variant;
 }
@@ -570,6 +619,9 @@ bool Layer::check_unresolved_inherits(const uint32_t max_depth) const {
     }
   }
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
+#endif
   _impl->_has_unresolved_inherits = ret;
   return _impl->_has_unresolved_inherits;
 }
@@ -585,6 +637,9 @@ bool Layer::check_unresolved_specializes(const uint32_t max_depth) const {
     }
   }
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
+#endif
   _impl->_has_unresolved_specializes = ret;
   return _impl->_has_unresolved_specializes;
 }
@@ -600,6 +655,9 @@ bool Layer::check_over_primspec(const uint32_t max_depth) const {
     }
   }
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
+#endif
   _impl->_has_over_primspec = ret;
   return _impl->_has_over_primspec;
 }
