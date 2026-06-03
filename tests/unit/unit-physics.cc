@@ -2152,3 +2152,131 @@ void urdf_json_mjcf_contact_export_test(void) {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// upAxis handling for URDF/MJCF export (see doc/usd-physics-upAxis.md):
+//  - `physics:axis` is a LOCAL-frame token: it must be passed through unchanged
+//    regardless of the stage upAxis (remapping it would double-rotate).
+//  - URDF/MJCF source data is Z-up; a Y-up stage must be reconciled with a
+//    SINGLE corrective root rotation Rx(-90deg) on /World, never per-property.
+// ---------------------------------------------------------------------------
+void physics_urdf_upaxis_axis_invariant_test(void) {
+  // Same Z-up robot (joint axis token "Z"), exported once per up axis.
+  auto convert = [](const char *up_axis, const char *gravity_json,
+                    Stage *out) -> bool {
+    const std::string robot_json =
+        std::string("{\n  \"name\": \"AxisBot\",\n  \"upAxis\": \"") + up_axis +
+        "\",\n  \"gravity\": " + gravity_json +
+        ",\n"
+        "  \"links\": [\n"
+        "    { \"name\": \"base\", \"inertial\": { \"mass\": 1.0 } },\n"
+        "    { \"name\": \"arm\", \"inertial\": { \"mass\": 0.25 } }\n"
+        "  ],\n"
+        "  \"joints\": [\n"
+        "    { \"name\": \"hinge\", \"type\": \"revolute\",\n"
+        "      \"parent\": \"base\", \"child\": \"arm\",\n"
+        "      \"axis\": [0, 0, 1], \"axisToken\": \"Z\",\n"
+        "      \"originMatrix\": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],\n"
+        "      \"limit\": { \"lower\": -1.0, \"upper\": 1.0 } }\n"
+        "  ]\n}";
+    std::string warn, err;
+    bool ok =
+        tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, out, &warn, &err);
+    if (!ok) { TEST_MSG("convert (%s) failed: %s", up_axis, err.c_str()); }
+    return ok;
+  };
+
+  // Reads /World/Joints/hinge's physics:axis token. The invariant under test:
+  // it is ALWAYS "Z" (never remapped to the stage up axis).
+  auto joint_axis = [](Stage *stage, std::string *out_axis) -> bool {
+    auto r = stage->GetPrimAtPath(Path("/World/Joints/hinge", ""));
+    if (!r) return false;
+    const auto *joint = (*r)->as<PhysicsRevoluteJoint>();
+    if (!joint) return false;
+    auto a = joint->axis.get_value();
+    if (!a.has_value()) return false;
+    *out_axis = a.value().str();
+    return true;
+  };
+
+  // --- Z-up: native target, no corrective rotation ---
+  {
+    Stage stage;
+    TEST_CHECK(convert("Z", "[0, 0, -1]", &stage));
+    TEST_CHECK(stage.metas().upAxis.get_value() == Axis::Z);
+
+    std::string axis;
+    TEST_CHECK(joint_axis(&stage, &axis));
+    TEST_CHECK(axis == "Z");  // pass-through
+
+    auto wr = stage.GetPrimAtPath(Path("/World", ""));
+    TEST_CHECK(bool(wr));
+    if (wr) {
+      const auto *world = (*wr)->as<Xform>();
+      TEST_CHECK(world != nullptr);
+      if (world) {
+        // Z-up source -> Z-up stage: no corrective root rotation.
+        TEST_CHECK(world->xformOps.empty());
+      }
+    }
+
+    auto sr = stage.GetPrimAtPath(Path("/World/PhysicsScene", ""));
+    TEST_CHECK(bool(sr));
+    if (sr) {
+      const auto *scene = (*sr)->as<PhysicsScene>();
+      TEST_CHECK(scene != nullptr);
+      auto g = scene->gravityDirection.get_value();
+      TEST_CHECK(g.has_value());
+      if (g.has_value()) {
+        TEST_CHECK(approx_eq(g.value()[0], 0.0));
+        TEST_CHECK(approx_eq(g.value()[1], 0.0));
+        TEST_CHECK(approx_eq(g.value()[2], -1.0));
+      }
+    }
+  }
+
+  // --- Y-up: single corrective root rotation Rx(-90), axis token UNCHANGED ---
+  {
+    Stage stage;
+    TEST_CHECK(convert("Y", "[0, -1, 0]", &stage));
+    TEST_CHECK(stage.metas().upAxis.get_value() == Axis::Y);
+
+    std::string axis;
+    TEST_CHECK(joint_axis(&stage, &axis));
+    TEST_CHECK(axis == "Z");  // STILL "Z" — not remapped to Y (no double-rotate)
+
+    auto wr = stage.GetPrimAtPath(Path("/World", ""));
+    TEST_CHECK(bool(wr));
+    if (wr) {
+      const auto *world = (*wr)->as<Xform>();
+      TEST_CHECK(world != nullptr);
+      if (world) {
+        // Exactly one corrective op: xformOp:rotateX = -90 (+Z -> +Y).
+        TEST_CHECK(world->xformOps.size() == 1);
+        if (world->xformOps.size() == 1) {
+          const XformOp &op = world->xformOps[0];
+          TEST_CHECK(op.op_type == XformOp::OpType::RotateX);
+          auto angle = op.get_value<double>();
+          TEST_CHECK(angle.has_value());
+          if (angle.has_value()) {
+            TEST_CHECK(approx_eq(angle.value(), -90.0));
+          }
+        }
+      }
+    }
+
+    auto sr = stage.GetPrimAtPath(Path("/World/PhysicsScene", ""));
+    TEST_CHECK(bool(sr));
+    if (sr) {
+      const auto *scene = (*sr)->as<PhysicsScene>();
+      TEST_CHECK(scene != nullptr);
+      auto g = scene->gravityDirection.get_value();
+      TEST_CHECK(g.has_value());
+      if (g.has_value()) {
+        TEST_CHECK(approx_eq(g.value()[0], 0.0));
+        TEST_CHECK(approx_eq(g.value()[1], -1.0));
+        TEST_CHECK(approx_eq(g.value()[2], 0.0));
+      }
+    }
+  }
+}

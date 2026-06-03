@@ -10,9 +10,6 @@ import {
   parseUSDSceneFromArrayBuffer
 } from 'tinyusdz/LoaderConfigUtils.js';
 
-const MJCF_DEFAULT_CONTYPE = 1;
-const MJCF_DEFAULT_CONAFFINITY = 1;
-
 const state = {
   robot: null,
   usdObject: null,
@@ -1700,74 +1697,6 @@ function classifyMujocoGeom(geomAttrs) {
   return true;
 }
 
-function addMujocoPhysicsAttrs(payload, geomAttrs) {
-  const attrs = geomAttrs || {};
-  if (!payload) return payload;
-  const group = numberAttr(attrs, 'group');
-  if (Number.isFinite(group)) payload.group = group;
-  const condim = numberAttr(attrs, 'condim');
-  if (Number.isFinite(condim)) payload.condim = condim;
-  const contype = numberAttr(attrs, 'contype');
-  const conaffinity = numberAttr(attrs, 'conaffinity');
-  const priority = numberAttr(attrs, 'priority');
-  const margin = numberAttr(attrs, 'margin');
-  const gap = numberAttr(attrs, 'gap');
-  const solmix = numberAttr(attrs, 'solmix');
-  const friction = parseNumbers(attrs.friction, []);
-  const solref = parseNumbers(attrs.solref, []);
-  const solimp = parseNumbers(attrs.solimp, []);
-  const size = parseNumbers(attrs.size, []);
-  if (Number.isFinite(contype) || Number.isFinite(conaffinity) ||
-      Number.isFinite(priority) || Number.isFinite(margin) ||
-      Number.isFinite(gap) || Number.isFinite(solmix) ||
-      friction.length || solref.length || solimp.length || size.length) {
-    payload.mjc = payload.mjc || {};
-    if (Number.isFinite(contype)) payload.mjc.geomContype = contype;
-    if (Number.isFinite(conaffinity)) payload.mjc.geomConaffinity = conaffinity;
-    if (Number.isFinite(priority)) payload.mjc.priority = priority;
-    if (Number.isFinite(margin)) payload.mjc.margin = margin;
-    if (Number.isFinite(gap)) payload.mjc.gap = gap;
-    if (Number.isFinite(solmix)) payload.mjc.solmix = solmix;
-    if (friction.length) payload.mjc.geomFriction = friction;
-    if (solref.length) payload.mjc.solref = solref;
-    if (solimp.length) payload.mjc.solimp = solimp;
-    if (size.length) payload.mjc.geomSize = size;
-  }
-  return payload;
-}
-
-function buildFilteredPairs(bodyFilters, root) {
-  const pairKey = (a, b) => (String(a) < String(b) ? `${a}\u0000${b}` : `${b}\u0000${a}`);
-  const pairs = new Map();
-  const addPair = (a, b) => {
-    if (!a || !b || a === b) return;
-    const key = pairKey(a, b);
-    if (!pairs.has(key)) pairs.set(key, String(a) < String(b) ? [a, b] : [b, a]);
-  };
-  const collides = (a, b) => {
-    for (const fa of a.filters) {
-      for (const fb of b.filters) {
-        if (((fa.contype & fb.conaffinity) | (fb.contype & fa.conaffinity)) !== 0) return true;
-      }
-    }
-    return false;
-  };
-  for (let i = 0; i < bodyFilters.length; i++) {
-    if (!bodyFilters[i].filters.length) continue;
-    for (let j = i + 1; j < bodyFilters.length; j++) {
-      if (!bodyFilters[j].filters.length) continue;
-      if (!collides(bodyFilters[i], bodyFilters[j])) addPair(bodyFilters[i].name, bodyFilters[j].name);
-    }
-  }
-  for (const contactRoot of childElements(root, 'contact')) {
-    for (const exclude of childElements(contactRoot, 'exclude')) {
-      const attrs = attrsFromElement(exclude);
-      addPair(attrs.body1, attrs.body2);
-    }
-  }
-  return [...pairs.values()].map(([body1, body2]) => ({ body1, body2 }));
-}
-
 function applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets) {
   const attrs = geomAttrs || {};
   const geomType = attrs.type || (attrs.mesh ? 'mesh' : 'sphere');
@@ -1838,7 +1767,6 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
 
   const links = [];
   const joints = [];
-  const bodyFilters = [];
   let visualCount = 0;
   let collisionCount = 0;
 
@@ -1860,7 +1788,6 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       visuals: [],
       collisions: []
     };
-    const bodyFilter = { name: linkName, filters: [] };
 
     const pivot = new THREE.Group();
     pivot.name = `${linkName}_joint`;
@@ -1972,7 +1899,7 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       });
 
       if (isVisual) {
-        linkPayload.visuals.push(...payloads.map((payload) => addMujocoPhysicsAttrs(payload, geomAttrs)));
+        linkPayload.visuals.push(...payloads);
         visualCount += payloads.length;
       } else {
         // Default approximation `convexHull` matches the writer in
@@ -1981,16 +1908,6 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
         // payload.approximation are preserved.
         for (const payload of payloads) {
           payload.approximation = payload.approximation || 'convexHull';
-          addMujocoPhysicsAttrs(payload, geomAttrs);
-        }
-        const contype = numberAttr(geomAttrs, 'contype', MJCF_DEFAULT_CONTYPE);
-        const conaffinity = numberAttr(
-          geomAttrs,
-          'conaffinity',
-          MJCF_DEFAULT_CONAFFINITY
-        );
-        if (contype !== 0 || conaffinity !== 0) {
-          bodyFilter.filters.push({ contype: contype | 0, conaffinity: conaffinity | 0 });
         }
         linkPayload.collisions.push(...payloads);
         collisionCount += payloads.length;
@@ -1999,7 +1916,6 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     }
 
     links.push(linkPayload);
-    bodyFilters.push(bodyFilter);
 
     for (const childBody of childElements(bodyNode, 'body')) {
       await visitBody(childBody, linkObject, linkName, bodyWorldMatrix, childClass);
@@ -2035,12 +1951,10 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   state.exportPayload = {
     name: group.name,
     upAxis: state.settings.upAxis,
-    sourceFormat: 'mjcf',
     gravity: state.settings.upAxis === 'Z' ? [0, 0, -1] : [0, -1, 0],
     timestep: numberAttr(firstChildElement(root, 'option'), 'timestep'),
     links,
-    joints,
-    filteredPairs: buildFilteredPairs(bodyFilters, root)
+    joints
   };
   group.userData.stats = { links: links.length, joints: joints.length, visuals: visualCount, collisions: collisionCount };
   return group;
