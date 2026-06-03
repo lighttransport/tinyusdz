@@ -7,10 +7,20 @@ message(STATUS "tusdview: Vulkan backend ENABLED (${Vulkan_LIBRARIES})")
 set(TUSDVIEW_SHADER_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/tusdview_shaders)
 file(MAKE_DIRECTORY ${TUSDVIEW_SHADER_GEN_DIR})
 
-# Prefer an explicit override (TUSDVIEW_GLSLANG, e.g. a modern glslangValidator
-# that supports GL_EXT_ray_query), then the FindVulkan compiler, then PATH.
+# glslang selection order:
+#   1. explicit override -DTUSDVIEW_GLSLANG=/path
+#   2. the locally built one (examples/common/build-glslang.sh -> common/glslang)
+#      — preferred for this checkout because it's new enough for GL_EXT_ray_query
+#   3. the FindVulkan compiler, then PATH (system default)
+set(_local_glslang ${COMMON_DIR}/glslang/bin/glslangValidator)
+if(NOT EXISTS ${_local_glslang})
+  set(_local_glslang ${COMMON_DIR}/glslang/bin/glslang)  # newer glslang binary name
+endif()
 if(TUSDVIEW_GLSLANG)
   set(GLSLANG ${TUSDVIEW_GLSLANG})
+elseif(EXISTS ${_local_glslang})
+  set(GLSLANG ${_local_glslang})
+  message(STATUS "tusdview: using locally built glslang: ${GLSLANG}")
 elseif(Vulkan_GLSLANG_VALIDATOR_EXECUTABLE)
   set(GLSLANG ${Vulkan_GLSLANG_VALIDATOR_EXECUTABLE})
 else()
