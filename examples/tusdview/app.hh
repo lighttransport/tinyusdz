@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <thread>
@@ -18,6 +19,8 @@
 #if defined(TUSDVIEW_HAVE_MCP)
 #include "mcp/mcp_host.hh"
 #include "mcp/mcp_server.hh"
+#include "tydra/js-script.hh"    // complete JSEngineState (held in Context)
+#include "tydra/mcp-context.hh"  // tinyusdz::tydra::mcp::Context (library tool bridge)
 #endif
 
 struct GLFWwindow;
@@ -63,6 +66,8 @@ class App
   nlohmann::json mcpSetFocus(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpViewport(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpListPrims(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpCallLibraryTool(const std::string& name, const nlohmann::json& a,
+                                    std::string& e) override;
 #endif
 
   // Initialize window + renderer + ImGui, optionally load `initialFile`, then
@@ -122,8 +127,15 @@ class App
   // MCP server (transports started in run(); commands drained each frame).
   bool mcpStdio_{false};
   int mcpHttpPort_{0};
+  // Bumped on each successful load so the MCP library-tool bridge knows when to
+  // re-snapshot the Stage into its Context.
+  std::uint64_t sceneGen_{0};
 #if defined(TUSDVIEW_HAVE_MCP)
   std::unique_ptr<MCPServer> mcp_;
+  // Context for the tinyusdz library tools; its Stage is a lazy snapshot of
+  // loaded_.stage, refreshed when sceneGen_ changes.
+  tinyusdz::tydra::mcp::Context mcpCtx_;
+  std::uint64_t mcpCtxGen_{~std::uint64_t(0)};
 #endif
 };
 
