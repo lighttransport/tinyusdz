@@ -269,7 +269,18 @@ void App::openFileDialog() {
 int App::run(const std::string& initialFile, int maxFrames,
              const std::string& screenshot) {
   std::string err;
-  if (!initWindow(&err)) {
+  // Headless composite size (no monitor to clamp to); used for the windowless
+  // ImGui DisplaySize and the offscreen composite image.
+  const int winW = static_cast<int>(1280.0f * uiScale_);
+  const int winH = static_cast<int>(800.0f * uiScale_);
+  if (headless_) {
+    if (backend_ != Backend::Vulkan) {
+      LOGE("--headless requires the Vulkan backend (pass --backend vk)");
+      return 1;
+    }
+    if (maxFrames < 0) maxFrames = 4;  // windowless runs are bounded by frame count
+    // GLFW is never initialized in the headless path (no window, no surface).
+  } else if (!initWindow(&err)) {
     LOGE("%s", err.c_str());
     return 1;
   }
@@ -286,7 +297,8 @@ int App::run(const std::string& initialFile, int maxFrames,
     LOGE("no renderer for requested backend");
     return 1;
   }
-  if (!renderer_->init(window_, &err)) {
+  if (headless_) renderer_->setHeadlessSize(winW, winH);
+  if (!renderer_->init(headless_ ? nullptr : window_, &err)) {
     LOGE("renderer init failed: %s", err.c_str());
     return 1;
   }
@@ -336,8 +348,17 @@ int App::run(const std::string& initialFile, int maxFrames,
   }
 
   int frameCount = 0;
-  while (!glfwWindowShouldClose(window_)) {
-    glfwPollEvents();
+  bool running = true;
+  while (running) {
+    if (headless_) {
+      // No platform backend: drive ImGui's display size + timestep ourselves.
+      ImGuiIO& hio = ImGui::GetIO();
+      hio.DisplaySize = ImVec2(static_cast<float>(winW), static_cast<float>(winH));
+      hio.DeltaTime = 1.0f / 60.0f;
+    } else {
+      if (glfwWindowShouldClose(window_)) break;
+      glfwPollEvents();
+    }
 
     // Pick up a completed async load, then stream its meshes/textures to the
     // GPU a little per frame so the UI stays responsive (progressive upload).
@@ -357,12 +378,12 @@ int App::run(const std::string& initialFile, int maxFrames,
     gui_.setLoadStatus(ls);
 
     renderer_->newFrame();
-    ImGui_ImplGlfw_NewFrame();
+    if (!headless_) ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
     gui_.frame(renderer_.get(), &camera_);
 
-    // Grab the composited window on the final headless frame (--window-shot).
+    // Grab the composited window on the final frame (--window-shot).
     if (!windowShot_.empty() && maxFrames >= 0 && frameCount == maxFrames - 1) {
       renderer_->requestWindowCapture();
     }
@@ -380,17 +401,20 @@ int App::run(const std::string& initialFile, int maxFrames,
     if (mcp_) mcp_->drain();  // run queued MCP tool calls on the main thread
 #endif
     if (cancelLoad) loadCtrl_.cancel.store(true);
-    if (quit) glfwSetWindowShouldClose(window_, GLFW_TRUE);
     if (reload && !loaded_.filepath.empty()) startLoadAsync(loaded_.filepath);
-    if (open) openFileDialog();
+    if (open && !headless_) openFileDialog();
 
-    ImGuiIO& io = ImGui::GetIO();
-    if (!io.WantTextInput && glfwGetKey(window_, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-      glfwSetWindowShouldClose(window_, GLFW_TRUE);
+    if (!headless_) {
+      if (quit) glfwSetWindowShouldClose(window_, GLFW_TRUE);
+      ImGuiIO& io = ImGui::GetIO();
+      if (!io.WantTextInput && glfwGetKey(window_, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+        glfwSetWindowShouldClose(window_, GLFW_TRUE);
+      }
     }
 
     if (maxFrames >= 0 && ++frameCount >= maxFrames) {
-      glfwSetWindowShouldClose(window_, GLFW_TRUE);
+      running = false;
+      if (!headless_) glfwSetWindowShouldClose(window_, GLFW_TRUE);
     }
   }
 
