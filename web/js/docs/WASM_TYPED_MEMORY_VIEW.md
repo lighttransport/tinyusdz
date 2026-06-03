@@ -1,5 +1,13 @@
 # WASM typed_memory_view and Data Copying
 
+> **Prefer the explicit-lifetime accessors.** New code should use the id-based
+> `getMeshPtr`/`getImagePtr` (zero-copy) and `getMeshCopy`/`getImageCopy`
+> (owned) accessors documented in [`HEAP_DATA_ACCESS.md`](./HEAP_DATA_ACCESS.md).
+> `getMesh()`/`getImage()` (discussed below) are deprecated and warn at runtime;
+> their returned views alias the heap and have no lifetime contract — the source
+> of the corruption described here. This document remains as the post-mortem and
+> applies to any remaining `getMesh()`/`getImage()` users.
+
 ## Summary
 
 All data retrieved from Emscripten `typed_memory_view` must be copied into JS-owned buffers

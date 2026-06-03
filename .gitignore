@@ -4,11 +4,14 @@
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
 # App-specific
+.opencode/
 build/
+build_ninja/
 build-tinysubdiv/
 build-*/
 web/demo/dist/
 web/site/dist/
+web/build_ninja/
 web/cmake-build/
 web/cmake-build64/
 web/npm/dist/

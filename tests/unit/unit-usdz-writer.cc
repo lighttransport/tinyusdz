@@ -21,6 +21,41 @@
 #include "usdGeom.hh"
 #include "stage.hh"
 
+namespace {
+
+tinyusdz::Stage MakeSimpleUSDZWriterStage() {
+  tinyusdz::Stage stage;
+  stage.metas().defaultPrim = tinyusdz::value::token("root");
+
+  tinyusdz::Xform xform;
+  xform.name = "root";
+  xform.spec = tinyusdz::Specifier::Def;
+
+  tinyusdz::value::Value primdata = xform;
+  tinyusdz::Prim prim("root", primdata);
+  prim.prim_type_name() = "Xform";
+  stage.add_root_prim(std::move(prim));
+  return stage;
+}
+
+std::string FirstUSDZEntryName(const std::vector<uint8_t> &data) {
+  if (data.size() < 30 ||
+      data[0] != 0x50 || data[1] != 0x4b ||
+      data[2] != 0x03 || data[3] != 0x04) {
+    return std::string();
+  }
+  const uint16_t name_len =
+      static_cast<uint16_t>(data[26]) |
+      static_cast<uint16_t>(static_cast<uint16_t>(data[27]) << 8);
+  if (size_t(30) + size_t(name_len) > data.size()) {
+    return std::string();
+  }
+  return std::string(reinterpret_cast<const char *>(data.data() + 30),
+                     name_len);
+}
+
+}  // namespace
+
 // Test 1: Basic USDZ write -> read roundtrip
 void usdz_writer_basic_roundtrip_test(void) {
   // Build a simple stage with one Xform
@@ -76,6 +111,62 @@ void usdz_writer_basic_roundtrip_test(void) {
 
   // Verify the loaded stage has the root prim
   TEST_CHECK(loaded_stage.root_prims().size() >= 1);
+}
+
+void usdz_writer_root_layer_format_test(void) {
+  tinyusdz::Stage stage = MakeSimpleUSDZWriterStage();
+  std::map<std::string, std::vector<uint8_t>> assets;
+
+  {
+    std::vector<uint8_t> usdz_data;
+    std::string warn, err;
+    bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data,
+                                            tinyusdz::USDZWriteOptions{},
+                                            &warn, &err);
+    TEST_CHECK(ret);
+    if (!ret) {
+      TEST_MSG("SaveAsUSDZToMemory USDC failed: %s", err.c_str());
+      return;
+    }
+    TEST_CHECK(FirstUSDZEntryName(usdz_data) == "root.usdc");
+  }
+
+  {
+    tinyusdz::USDZWriteOptions options;
+    options.root_layer_format = tinyusdz::USDZRootLayerFormat::USDA;
+
+    std::vector<uint8_t> usdz_data;
+    std::string warn, err;
+    bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data,
+                                            options, &warn, &err);
+    TEST_CHECK(ret);
+    if (!ret) {
+      TEST_MSG("SaveAsUSDZToMemory USDA failed: %s", err.c_str());
+      return;
+    }
+    TEST_CHECK(FirstUSDZEntryName(usdz_data) == "root.usda");
+
+    warn.clear();
+    err.clear();
+    ret = tinyusdz::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn,
+                                 &err);
+    TEST_CHECK(ret);
+    if (!ret) {
+      TEST_MSG("ValidateUSDZ USDA root failed: %s", err.c_str());
+    }
+
+    tinyusdz::Stage loaded_stage;
+    warn.clear();
+    err.clear();
+    ret = tinyusdz::LoadUSDZFromMemory(usdz_data.data(), usdz_data.size(),
+                                       "root-format.usdz", &loaded_stage,
+                                       &warn, &err);
+    TEST_CHECK(ret);
+    if (!ret) {
+      TEST_MSG("LoadUSDZFromMemory USDA root failed: %s", err.c_str());
+    }
+    TEST_CHECK(loaded_stage.root_prims().size() >= 1);
+  }
 }
 
 // Test 2: USDZ with additional assets (fake PNG data)
@@ -386,4 +477,40 @@ void usdz_validator_bad_extension_test(void) {
   TEST_CHECK(ret);
   // Should have a warning about the skipped extension
   TEST_CHECK(warn.find("disallowed") != std::string::npos);
+}
+
+void usdz_writer_rejects_unsafe_asset_names_test(void) {
+  tinyusdz::Stage stage;
+  stage.metas().defaultPrim = tinyusdz::value::token("root");
+
+  tinyusdz::Xform xform;
+  xform.name = "root";
+  xform.spec = tinyusdz::Specifier::Def;
+  tinyusdz::value::Value primdata = xform;
+  tinyusdz::Prim prim("root", primdata);
+  prim.prim_type_name() = "Xform";
+  stage.add_root_prim(std::move(prim));
+
+  std::vector<std::string> bad_names = {
+      "",
+      "/abs.png",
+      "../escape.png",
+      "textures/../escape.png",
+      "textures\\bad.png",
+      "C:bad.png",
+      "textures//bad.png",
+      "textures/.",
+  };
+  bad_names.push_back(std::string("bad\0name.png", 12));
+  bad_names.push_back(std::string(70000, 'a') + ".png");
+
+  for (const std::string &name : bad_names) {
+    std::map<std::string, std::vector<uint8_t>> assets;
+    assets[name] = std::vector<uint8_t>(8, 0x42);
+    std::vector<uint8_t> usdz_data;
+    std::string warn, err;
+    bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
+    TEST_CHECK(!ret);
+    TEST_CHECK(!err.empty());
+  }
 }

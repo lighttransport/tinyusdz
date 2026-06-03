@@ -275,7 +275,7 @@ ExpansionRule(const std::string &tok) {
 nonstd::expected<APISchemas::APIName, std::string>
 APISchemaName(const std::string &tok) {
   using E = APISchemas::APIName;
-  constexpr std::array<std::pair<E, const char *>, 60> enums = {{
+  constexpr std::array<std::pair<E, const char *>, 61> enums = {{
       {E::SkelBindingAPI, "SkelBindingAPI"},
       {E::CollectionAPI, "CollectionAPI"},
       {E::MaterialBindingAPI, "MaterialBindingAPI"},
@@ -337,6 +337,8 @@ APISchemaName(const std::string &tok) {
       {E::PhysicsMassAPI, "PhysicsMassAPI"},
       {E::PhysicsFilteredPairsAPI, "PhysicsFilteredPairsAPI"},
       {E::PhysicsArticulationRootAPI, "PhysicsArticulationRootAPI"},
+      // PhysX (Omniverse)
+      {E::PhysxJointAPI, "PhysxJointAPI"},
       // UsdMedia
       {E::AssetPreviewsAPI, "AssetPreviewsAPI"},
       // Multi-apply
@@ -351,6 +353,24 @@ APISchemaNameOpt(const std::string &tok) {
   auto result = APISchemaName(tok);
   if (result) {
     return result.value();
+  }
+  return nonstd::nullopt;
+}
+
+nonstd::optional<std::pair<APISchemas::APIName, std::string>>
+APISchemaNameWithInstanceOpt(const std::string &tok) {
+  // Multi-apply instances are authored as `SchemaName:instanceName`; the
+  // instance name follows the first ':'. (Schema names are bare identifiers, so
+  // any ':' separates the base schema from its instance.)
+  std::string base = tok;
+  std::string instance;
+  const auto pos = tok.find(':');
+  if (pos != std::string::npos) {
+    base = tok.substr(0, pos);
+    instance = tok.substr(pos + 1);
+  }
+  if (auto e = APISchemaNameOpt(base)) {
+    return std::make_pair(e.value(), instance);
   }
   return nonstd::nullopt;
 }

@@ -912,7 +912,8 @@ void crate_writer_usd_uv_texture_test(void) {
     uv_texture.wrapT.set_value(wrapt_anim);
 
     // Set fallback color
-    value::color4f fallback{1.0f, 0.0f, 1.0f, 1.0f};
+    Animatable<value::float4> fallback(
+        value::float4{1.0f, 0.0f, 1.0f, 1.0f});
     uv_texture.fallback.set_value(fallback);
 
     // Set color space

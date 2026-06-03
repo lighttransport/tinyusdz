@@ -1,5 +1,6 @@
 #include "diff-and-compare.hh"
 #include "../layer.hh"
+#include "../pprint-enum.hh"
 #include "../value-pprint.hh"
 #include "../common-macros.inc"
 #include <sstream>
@@ -16,6 +17,211 @@ namespace tydra {
 
 namespace detail {
 
+static std::string TruncateForDiff(const std::string &s) {
+  constexpr size_t kMaxDiffValueChars = 240;
+  if (s.size() <= kMaxDiffValueChars) {
+    return s;
+  }
+  return s.substr(0, kMaxDiffValueChars) + "...";
+}
+
+static std::string JoinPrimPath(const std::string &parent,
+                                const std::string &child) {
+  if (parent.empty() || parent == "/") {
+    return "/" + child;
+  }
+  return parent + "/" + child;
+}
+
+static std::string JoinPathList(const std::vector<Path> &paths) {
+  std::stringstream ss;
+  ss << "[";
+  for (size_t i = 0; i < paths.size(); ++i) {
+    if (i > 0) {
+      ss << ", ";
+    }
+    ss << "<" << paths[i].full_path_name() << ">";
+  }
+  ss << "]";
+  return ss.str();
+}
+
+static std::string NormalizeAssetPathForDiff(std::string path) {
+  std::replace(path.begin(), path.end(), '\\', '/');
+  while (path.size() >= 2 && path[0] == '.' && path[1] == '/') {
+    path.erase(0, 2);
+  }
+  while (path.size() > 1 && path.back() == '/') {
+    path.pop_back();
+  }
+  return path;
+}
+
+static std::string AssetPathLeafForDiff(const std::string &path) {
+  const size_t slash = path.find_last_of('/');
+  if (slash == std::string::npos) {
+    return path;
+  }
+  return path.substr(slash + 1);
+}
+
+static bool HasPathComponentSuffix(const std::string &path,
+                                   const std::string &suffix) {
+  if (path == suffix) {
+    return true;
+  }
+  if (path.size() <= suffix.size()) {
+    return false;
+  }
+  const size_t offset = path.size() - suffix.size();
+  return path.compare(offset, suffix.size(), suffix) == 0 &&
+         path[offset - 1] == '/';
+}
+
+static bool AssetPathStringsEquivalentForDiff(const std::string &lhs_path,
+                                              const std::string &rhs_path) {
+  const std::string lhs = NormalizeAssetPathForDiff(lhs_path);
+  const std::string rhs = NormalizeAssetPathForDiff(rhs_path);
+  if (lhs == rhs) {
+    return true;
+  }
+  if (HasPathComponentSuffix(lhs, rhs) || HasPathComponentSuffix(rhs, lhs)) {
+    return true;
+  }
+
+  const std::string lhs_leaf = AssetPathLeafForDiff(lhs);
+  const std::string rhs_leaf = AssetPathLeafForDiff(rhs);
+  return !lhs_leaf.empty() && lhs_leaf == rhs_leaf;
+}
+
+template <typename T>
+static bool NumericValuesEquivalentForDiff(const value::Value &lhs,
+                                           const value::Value &rhs,
+                                           double abs_tol,
+                                           double rel_tol) {
+  const auto lhs_num = lhs.get_value<T>(false);
+  const auto rhs_num = rhs.get_value<T>(false);
+  if (!lhs_num || !rhs_num) {
+    return false;
+  }
+
+  const double lhs_value = static_cast<double>(lhs_num.value());
+  const double rhs_value = static_cast<double>(rhs_num.value());
+  const double diff = std::fabs(lhs_value - rhs_value);
+  if (diff <= abs_tol) {
+    return true;
+  }
+
+  const double scale = std::max(std::fabs(lhs_value), std::fabs(rhs_value));
+  return diff <= rel_tol * scale;
+}
+
+static bool ValuesEquivalentForDiff(const value::Value &lhs,
+                                    const value::Value &rhs) {
+  const auto lhs_asset = lhs.get_value<value::AssetPath>(false);
+  const auto rhs_asset = rhs.get_value<value::AssetPath>(false);
+  if (lhs_asset && rhs_asset) {
+    return AssetPathStringsEquivalentForDiff(lhs_asset.value().GetAssetPath(),
+                                             rhs_asset.value().GetAssetPath());
+  }
+  if (NumericValuesEquivalentForDiff<float>(lhs, rhs, 1.0e-6, 1.0e-6)) {
+    return true;
+  }
+  if (NumericValuesEquivalentForDiff<double>(lhs, rhs, 1.0e-12, 1.0e-12)) {
+    return true;
+  }
+  return value::pprint_value(lhs) == value::pprint_value(rhs);
+}
+
+static std::string ListEditQualForDiff(ListEditQual qual) {
+  std::string s = tinyusdz::to_string(qual);
+  if (s.empty()) {
+    return "explicit";
+  }
+  return s;
+}
+
+static const char *RelationshipTypeName(Relationship::Type type) {
+  switch (type) {
+    case Relationship::Type::DefineOnly:
+      return "define";
+    case Relationship::Type::Path:
+      return "path";
+    case Relationship::Type::PathVector:
+      return "pathVector";
+    case Relationship::Type::ValueBlock:
+      return "blocked";
+  }
+  return "unknown";
+}
+
+static std::string FormatAttributeForDiff(const Attribute &attr) {
+  std::stringstream ss;
+  ss << "attr";
+  ss << " type=" << attr.type_name();
+  ss << " variability=" << tinyusdz::to_string(attr.variability());
+  if (attr.is_varying_authored()) {
+    ss << " varyingAuthored=true";
+  }
+
+  if (attr.has_connections()) {
+    ss << " connections=" << JoinPathList(attr.connections());
+  }
+  if (attr.is_blocked()) {
+    ss << " value=None";
+  } else if (attr.has_value()) {
+    ss << " value="
+       << TruncateForDiff(value::pprint_value(attr.get_var().value_raw()));
+  }
+  if (attr.has_timesamples()) {
+    const auto &samples = attr.get_var().ts_raw().get_samples();
+    ss << " timeSamples=" << samples.size();
+    if (!samples.empty()) {
+      ss << " firstTime=" << samples.front().t
+         << " lastTime=" << samples.back().t;
+    }
+  }
+
+  return ss.str();
+}
+
+static std::string FormatRelationshipForDiff(const Relationship &rel) {
+  std::stringstream ss;
+  ss << "rel";
+  ss << " type=" << RelationshipTypeName(rel.type);
+  if (rel.is_varying_authored()) {
+    ss << " varyingAuthored=true";
+  }
+
+  if (rel.is_path()) {
+    ss << " target=<" << rel.targetPath.full_path_name() << ">";
+  } else if (rel.is_pathvector()) {
+    ss << " targets=" << JoinPathList(rel.targetPathVector);
+  } else if (rel.is_blocked()) {
+    ss << " target=None";
+  }
+
+  return ss.str();
+}
+
+static std::string FormatPropertyForDiff(const Property &prop) {
+  std::stringstream ss;
+  if (prop.has_custom()) {
+    ss << "custom ";
+  }
+  ss << "listOp=" << ListEditQualForDiff(prop.get_listedit_qual()) << " ";
+
+  if (prop.is_attribute()) {
+    ss << FormatAttributeForDiff(prop.get_attribute());
+  } else if (prop.is_relationship()) {
+    ss << FormatRelationshipForDiff(prop.get_relationship());
+  } else {
+    ss << "empty";
+  }
+
+  return ss.str();
+}
+
 struct FNV1StringHash {
   size_t operator()(const std::string &s) const noexcept {
     static constexpr uint64_t kFNV_Prime = 0x00000100000001B3ull;
@@ -30,7 +236,15 @@ struct FNV1StringHash {
 };
 
 static bool CompareAttributeValues(const Attribute &lhs, const Attribute &rhs) {
-  if (lhs.type_name() != rhs.type_name()) return false;
+  if (lhs.type_name() != rhs.type_name()) {
+    const uint32_t lhsUnderlying = value::GetUnderlyingTypeId(lhs.type_name());
+    const uint32_t rhsUnderlying = value::GetUnderlyingTypeId(rhs.type_name());
+    if (lhsUnderlying == value::TYPE_ID_INVALID ||
+        rhsUnderlying == value::TYPE_ID_INVALID ||
+        lhsUnderlying != rhsUnderlying) {
+      return false;
+    }
+  }
   if (lhs.variability() != rhs.variability()) return false;
   if (lhs.is_varying_authored() != rhs.is_varying_authored()) return false;
   if (lhs.has_connections() != rhs.has_connections()) return false;
@@ -42,10 +256,18 @@ static bool CompareAttributeValues(const Attribute &lhs, const Attribute &rhs) {
 
   const auto &lhsVar = lhs.get_var();
   const auto &rhsVar = rhs.get_var();
-  if (lhsVar.type_id() != rhsVar.type_id()) return false;
+  if (lhsVar.type_id() != rhsVar.type_id()) {
+    const uint32_t lhsUnderlying = value::GetUnderlyingTypeId(lhsVar.type_name());
+    const uint32_t rhsUnderlying = value::GetUnderlyingTypeId(rhsVar.type_name());
+    if (lhsUnderlying == value::TYPE_ID_INVALID ||
+        rhsUnderlying == value::TYPE_ID_INVALID ||
+        lhsUnderlying != rhsUnderlying) {
+      return false;
+    }
+  }
 
   if (lhs.has_value()) {
-    if (value::pprint_value(lhsVar.value_raw()) != value::pprint_value(rhsVar.value_raw())) {
+    if (!ValuesEquivalentForDiff(lhsVar.value_raw(), rhsVar.value_raw())) {
       return false;
     }
   }
@@ -60,7 +282,7 @@ static bool CompareAttributeValues(const Attribute &lhs, const Attribute &rhs) {
       if (std::fabs(lhsSamples[i].t - rhsSamples[i].t) >= eps) return false;
       if (lhsSamples[i].blocked != rhsSamples[i].blocked) return false;
       if (!lhsSamples[i].blocked &&
-          (value::pprint_value(lhsSamples[i].value) != value::pprint_value(rhsSamples[i].value))) {
+          !ValuesEquivalentForDiff(lhsSamples[i].value, rhsSamples[i].value)) {
         return false;
       }
     }
@@ -147,6 +369,9 @@ static void ComputePropDiff(const std::string &path, const PrimSpec &lhs, const 
     if (it != rhs_props.end()) {
       if (!ArePropertiesEquivalent(prop.second, it->second)) {
         diff.modifiedProps.push_back(prop.first);
+        diff.modifiedPropDetails.push_back(
+            {prop.first, FormatPropertyForDiff(prop.second),
+             FormatPropertyForDiff(it->second)});
       }
     }
   }
@@ -216,7 +441,7 @@ static bool ComputeDiffImpl(
   for (const auto &child : lhs_children) {
     auto it = rhs_child_map.find(child.name());
     if (it != rhs_child_map.end()) {
-      std::string child_path = path + "/" + child.name();
+      std::string child_path = detail::JoinPrimPath(path, child.name());
       if (ComputeDiffImpl(depth + 1, child_path, child, *it->second, psDiffs, propDiffs)) {
         psDiff.modifiedPS.push_back(child.name());
         hasDiff = true;
@@ -322,19 +547,19 @@ std::string DiffToText(const Layer &lhs, const Layer &rhs,
       
       if (!psDiff.deletedPS.empty()) {
         for (const std::string &name : psDiff.deletedPS) {
-          ss << "- " << path << "/" << name << " (PrimSpec deleted)" << std::endl;
+          ss << "- " << detail::JoinPrimPath(path, name) << " (PrimSpec deleted)" << std::endl;
         }
       }
       
       if (!psDiff.addedPS.empty()) {
         for (const std::string &name : psDiff.addedPS) {
-          ss << "+ " << path << "/" << name << " (PrimSpec added)" << std::endl;
+          ss << "+ " << detail::JoinPrimPath(path, name) << " (PrimSpec added)" << std::endl;
         }
       }
       
       if (!psDiff.modifiedPS.empty()) {
         for (const std::string &name : psDiff.modifiedPS) {
-          ss << "~ " << path << "/" << name << " (PrimSpec modified)" << std::endl;
+          ss << "~ " << detail::JoinPrimPath(path, name) << " (PrimSpec modified)" << std::endl;
         }
       }
     }
@@ -357,8 +582,12 @@ std::string DiffToText(const Layer &lhs, const Layer &rhs,
       }
       
       if (!propDiff.modifiedProps.empty()) {
-        for (const std::string &name : propDiff.modifiedProps) {
-          ss << "~ " << path << "." << name << " (Property modified)" << std::endl;
+        for (const PropDiff::ModifiedProp &modified :
+             propDiff.modifiedPropDetails) {
+          ss << "~ " << path << "." << modified.name
+             << " (Property modified)" << std::endl;
+          ss << "  - " << modified.lhs << std::endl;
+          ss << "  + " << modified.rhs << std::endl;
         }
       }
     }
@@ -459,6 +688,17 @@ std::string DiffToJSON(const Layer &lhs, const Layer &rhs,
     for (size_t i = 0; i < diff.modifiedProps.size(); ++i) {
       if (i > 0) ss << ", ";
       ss << "\"" << detail::EscapeJSON(diff.modifiedProps[i]) << "\"";
+    }
+    ss << "],\n";
+
+    ss << "      \"modified_details\": [";
+    for (size_t i = 0; i < diff.modifiedPropDetails.size(); ++i) {
+      if (i > 0) ss << ", ";
+      const PropDiff::ModifiedProp &modified = diff.modifiedPropDetails[i];
+      ss << "{\"name\":\"" << detail::EscapeJSON(modified.name)
+         << "\", \"left\":\"" << detail::EscapeJSON(modified.lhs)
+         << "\", \"right\":\"" << detail::EscapeJSON(modified.rhs)
+         << "\"}";
     }
     ss << "]\n";
     

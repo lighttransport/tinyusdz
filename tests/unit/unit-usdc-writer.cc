@@ -390,6 +390,79 @@ def Material "mat" {
   }
 }
 
+void usdc_writer_layer_empty_shader_outputs_test(void) {
+  const char *usda = R"(#usda 1.0
+def Material "mat" {
+  token outputs:surface.connect = </mat/pbr.outputs:surface>
+
+  def Shader "pbr" {
+    uniform token info:id = "UsdPreviewSurface"
+    token outputs:surface
+  }
+
+  def Shader "tex" {
+    uniform token info:id = "UsdUVTexture"
+    float3 outputs:rgb
+    float outputs:r
+  }
+}
+)";
+
+  std::string warn, err;
+  Layer layer;
+  bool ok = LoadLayerFromMemory(reinterpret_cast<const uint8_t *>(usda),
+                                std::strlen(usda), "test.usda", &layer,
+                                &warn, &err);
+  if (!ok) { TEST_MSG("load layer failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  std::vector<uint8_t> buf;
+  ok = usdc::SaveAsUSDCToMemory(layer, &buf, &warn, &err);
+  if (!ok) { TEST_MSG("write layer failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  TEST_CHECK(!buf.empty());
+  if (!ok || buf.empty()) return;
+
+  Layer roundtrip_layer;
+  ok = LoadLayerFromMemory(buf.data(), buf.size(), "test.usdc",
+                           &roundtrip_layer, &warn, &err);
+  if (!ok) { TEST_MSG("reload layer failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  const PrimSpec *pbr = nullptr;
+  TEST_CHECK(roundtrip_layer.find_primspec_at(Path("/mat/pbr", ""), &pbr, &err));
+  TEST_CHECK(pbr != nullptr);
+  if (pbr) {
+    auto it = pbr->props().find("outputs:surface");
+    TEST_CHECK(it != pbr->props().end());
+    if (it != pbr->props().end()) {
+      TEST_CHECK(it->second.is_attribute());
+      TEST_CHECK(it->second.get_attribute().type_name() == "token");
+    }
+  }
+
+  const PrimSpec *tex = nullptr;
+  TEST_CHECK(roundtrip_layer.find_primspec_at(Path("/mat/tex", ""), &tex, &err));
+  TEST_CHECK(tex != nullptr);
+  if (tex) {
+    auto rgb = tex->props().find("outputs:rgb");
+    TEST_CHECK(rgb != tex->props().end());
+    if (rgb != tex->props().end()) {
+      TEST_CHECK(rgb->second.is_attribute());
+      TEST_CHECK(rgb->second.get_attribute().type_name() == "float3");
+    }
+
+    auto r = tex->props().find("outputs:r");
+    TEST_CHECK(r != tex->props().end());
+    if (r != tex->props().end()) {
+      TEST_CHECK(r->second.is_attribute());
+      TEST_CHECK(r->second.get_attribute().type_name() == "float");
+    }
+  }
+}
+
 // =========================================================================
 // Material / Shader tests
 // =========================================================================
@@ -431,6 +504,7 @@ def Shader "tex" {
   float4 inputs:scale = (1, 1, 1, 1)
   float4 inputs:bias = (0, 0, 0, 0)
   float3 outputs:rgb
+  float4 outputs:rgba
 }
 )";
   RT_OK(usda);
@@ -448,6 +522,7 @@ def Shader "tex" {
   TEST_CHECK(uv->sourceColorSpace.authored());
   // terminal output
   TEST_CHECK(uv->outputsRGB.authored());
+  TEST_CHECK(uv->outputsRGBA.authored());
 }
 
 void usdc_writer_primvarreader_test(void) {

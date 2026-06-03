@@ -35,6 +35,72 @@ Relevant options in the current build configuration:
 - `TINYUSDZ_WITH_TYDRA=ON`
 - `TINYUSDZ_WITH_PXR_COMPAT_API=ON`
 
+## Full Regression Tests
+
+Run the full regression suite before changes that affect parsing, composition,
+USDA/USDC writing, USDZ packaging, schema reconstruction, or tool output.
+
+The full regression pass has two parts:
+
+1. All CMake/CTest-registered tests, including parser corpus tests, roundtrip
+   corpus tests, registered feature tests, benchmarks in quick mode, MCP tests,
+   and the main Acutest unit suite.
+2. The Node.js `tusdcat` vs OpenUSD v26.05 `usdcat` comparison runner, which
+   checks TinyUSDZ output against `usdcat` over the USDA and USDC fixture
+   corpora.
+
+Recommended command sequence from the repository root:
+
+```bash
+# Build all configured tests and examples, including tusdcat.
+cmake --build build
+
+# 1. Run all CTest-registered tests.
+cd build
+ctest --output-on-failure
+cd ..
+
+# 2. Run the Node.js roundtrip/comparison suite against OpenUSD v26.05.
+TUSDCAT_PATH=./build/tusdcat \
+USDCAT_PATH=../OpenUSD/dist/bin/usdcat \
+  bash tests/run-usdcat-compare.sh
+```
+
+`tests/run-usdcat-compare.sh` requires Node.js and a working OpenUSD v26.05
+`usdcat`. Prefer a sibling OpenUSD v26.05 install at
+`../OpenUSD/dist/bin/usdcat`. The script falls back to
+`~/local/USD/dist/bin/usdcat` when the sibling install is not present, but full
+regression results should use v26.05 unless a test intentionally targets
+another OpenUSD release. Set `USDCAT_PATH` explicitly when needed.
+
+The comparison runner writes detailed logs to `tests/comparison-results/` and
+prints a failure/warning summary. It continues across individual files so one
+failure does not hide later failures; inspect the summary and log even when the
+shell command itself completes.
+
+Useful variants:
+
+```bash
+# Quieter comparison logs.
+SHOW_DETAILED_DIFF=false \
+TUSDCAT_PATH=./build/tusdcat \
+USDCAT_PATH=../OpenUSD/dist/bin/usdcat \
+  bash tests/run-usdcat-compare.sh
+
+# Longer per-file timeout for slow debug/ASan builds.
+TIMEOUT_MS=120000 \
+TUSDCAT_PATH=./build/tusdcat \
+USDCAT_PATH=../OpenUSD/dist/bin/usdcat \
+  bash tests/run-usdcat-compare.sh
+
+# Single-file comparison through the Node.js runner.
+node tests/compare-usda.js \
+  --tusdcat ./build/tusdcat \
+  --usdcat ../OpenUSD/dist/bin/usdcat \
+  --detailed-diff \
+  tests/usda/somefile.usda
+```
+
 ## ctest Suite
 
 CMake registers these tests when the corresponding targets are built (most in the top-level `CMakeLists.txt`; `unit-test-tinyusdz` in `tests/unit/CMakeLists.txt` and `mcp-test` in `tests/mcp/CMakeLists.txt`):
@@ -439,22 +505,27 @@ Typical usage:
 python3 tests/parse_usd/runner.py models --timeout 180
 ```
 
-## Roundtrip Comparison Against Pixar USD
+## Roundtrip Comparison Against OpenUSD
 
-For USDA textual comparison against Pixar's `usdcat`, use:
+For the full batch comparison against OpenUSD v26.05 `usdcat`, use the second half of
+the [Full Regression Tests](#full-regression-tests) sequence above. The runner
+compares all top-level USDA fixtures under `tests/usda/` and all top-level USDC
+fixtures under `tests/usdc/`.
+
+Short form:
 
 ```bash
 TUSDCAT_PATH=./build/tusdcat \
-USDCAT_PATH=~/local/USD/dist/bin/usdcat \
+USDCAT_PATH=../OpenUSD/dist/bin/usdcat \
   bash tests/run-usdcat-compare.sh
 ```
 
-Single-file mode:
+Single-file mode through the Node.js comparator:
 
 ```bash
 node tests/compare-usda.js \
   --tusdcat ./build/tusdcat \
-  --usdcat ~/local/USD/dist/bin/usdcat \
+  --usdcat ../OpenUSD/dist/bin/usdcat \
   --detailed-diff \
   tests/usda/somefile.usda
 ```
