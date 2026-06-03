@@ -109,9 +109,8 @@ tests/                     C++ tests + roundtrip + Python harness
 
 examples/                  Standalone example apps (separate builds):
                            tusdcat, api_tutorial, asset_resolution,
-                           c_api_example, mcp_server, openglviewer,
-                           optixviewer, file_format, js-script,
-                           progressive_composition, etc.
+                           c_api_example, mcp_server, file_format,
+                           js-script, progressive_composition, etc.
 models/                    Test USD files for development
 doc/                       Documentation (testing-cpp.md,
                            how-to-implement-feature.md, ci.md —

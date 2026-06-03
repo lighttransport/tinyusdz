@@ -114,9 +114,6 @@ For package build details, see [python_binding.md](python_binding.md).
   progressive composition example.
 - [../examples/usddiff](../examples/usddiff): USD diff utility.
 - [../examples/usd_to_gltf](../examples/usd_to_gltf): USD to glTF example.
-- [../examples/openglviewer](../examples/openglviewer),
-  [../examples/sdlviewer](../examples/sdlviewer), and
-  [../examples/optixviewer](../examples/optixviewer): viewer examples.
 
 Not every directory under `examples/` is built by the top-level CMake build, and
 some viewer examples have their own setup requirements.
