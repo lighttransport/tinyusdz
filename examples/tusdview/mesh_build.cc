@@ -295,7 +295,9 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
       v.nx = nrm[0]; v.ny = nrm[1]; v.nz = nrm[2];
       float uv[2] = {0, 0};
       if (uvPerVertex) ReadFloats(*uvAttr, i, 2, uv);
-      v.u = uv[0]; v.v = uv[1];
+      // Flip V: USD `st` has v=0 at the image bottom, but decoded images are
+      // top-row-first and uploaded so v=0 samples the top, so invert here.
+      v.u = uv[0]; v.v = 1.0f - uv[1];
     }
     dm.indices.assign(srcIndices.begin(), srcIndices.end());
     gotNormals = normalsPerVertex;
@@ -323,7 +325,9 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
       float uv[2] = {0, 0};
       if (uvFV) ReadFloats(*uvAttr, k, 2, uv);
       else if (uvPerVertex && pidx < nPoints) ReadFloats(*uvAttr, pidx, 2, uv);
-      v.u = uv[0]; v.v = uv[1];
+      // Flip V: USD `st` has v=0 at the image bottom, but decoded images are
+      // top-row-first and uploaded so v=0 samples the top, so invert here.
+      v.u = uv[0]; v.v = 1.0f - uv[1];
       dm.indices[k] = static_cast<uint32_t>(k);
     }
   }
