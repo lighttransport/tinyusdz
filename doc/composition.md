@@ -14,7 +14,7 @@ that all conforming implementations must follow.
 
 This document compares two implementations:
 
-1. **OpenUSD PCP** (Prim Composition Protocol) — the reference implementation,
+1. **OpenUSD PCP** (Prim Cache Population) — the reference implementation,
    a recursive DAG-based algorithm that preserves full opinion provenance.
 2. **tinyusdz** — a progressive, iterative layer-flattening approach designed
    for minimal memory, zero dependencies, and security-focused parsing.
@@ -56,92 +56,25 @@ namespace by renaming prims after composition arcs are resolved (AOUSD Core Spec
 
 ---
 
-## OpenUSD's PCP (Prim Composition Protocol)
+## OpenUSD's PCP (Prim Cache Population)
 
-### DAG-Based Composition Graph
+OpenUSD's reference composition engine is **PCP** — *Prim Cache Population*. For
+each prim it builds a **PcpPrimIndex**: a directed acyclic graph of `PcpNodeRef`
+nodes (one per opinion source), constructed by a priority-ordered task queue
+(`Pcp_BuildPrimIndex` in `pxr/usd/pcp/primIndex.cpp`). The DAG preserves full
+opinion provenance, propagates implied class arcs, makes specializes globally
+weak by propagating them to the graph root, and supports cycle detection, node
+culling, lazy payloads, and incremental change tracking.
 
-PCP builds a **PcpPrimIndex** for each prim — a directed acyclic graph (DAG) of
-`PcpNodeRef` nodes. Each node represents an opinion source with its arc type,
-layer stack site, and namespace mapping. The graph preserves the full provenance
-of every opinion, enabling introspection, debugging, and incremental updates.
+The arc strength order is the `PcpArcType` enum (`pxr/usd/pcp/types.h`): Root,
+Inherit, Variant, **Relocate** (between Variant and Reference), Reference,
+Payload, Specialize — matching the AOUSD LIVERPS ordering.
 
-**Entry point:** `Pcp_BuildPrimIndex()` in `pxr/usd/pcp/primIndex.cpp`
-
-The algorithm uses a **priority-ordered task queue** combined with recursive
-construction via `PcpPrimIndex_StackFrame`. Tasks are enqueued for each arc type
-discovered during a pre-scan (`_ScanArcs()`), and processed in task-evaluation
-order (distinct from final arc strength; see the `PcpArcType` enum below):
-
-```
-EvalNodeRelocations → EvalNodeReferences → EvalNodePayloads
-  → EvalNodeInherits → EvalNodeSpecializes
-```
-
-Variant and dynamic payload evaluation is deferred to maintain correct strength
-ordering within the task queue.
-
-The arc types are defined in the `PcpArcType` enum (`pxr/usd/pcp/types.h`):
-
-```cpp
-enum PcpArcType {
-    PcpArcTypeRoot,
-    PcpArcTypeInherit,     // Strongest
-    PcpArcTypeVariant,
-    PcpArcTypeRelocate,    // Between Variant and Reference
-    PcpArcTypeReference,
-    PcpArcTypePayload,
-    PcpArcTypeSpecialize,  // Weakest
-};
-```
-
-Note that **Relocate sits between Variant and Reference** in the enum ordering,
-giving it a defined strength position in the graph.
-
-### Strength Ordering
-
-`PcpCompareSiblingNodeStrength()` in `strengthOrdering.cpp` determines which of
-two sibling nodes is stronger. The comparison uses multiple criteria in order:
-
-1. **Arc type enum value** — lower values are stronger
-2. **Namespace depth** — deeper opinions are stronger (for non-specializes arcs)
-3. **Origin node strength** — recursively compares origin chains for propagated arcs
-4. **Sibling arc number** — among same-type siblings, lower arc numbers are stronger
-
-Specializes arcs receive special handling: propagated specializes nodes track
-their "origin root distance" (chain length from the authored arc to the
-propagated location), and the comparison considers the namespace depth of the
-class hierarchy that the node belongs to.
-
-For comparing arbitrary (non-sibling) nodes, `PcpCompareNodeStrength()` walks
-up to the lowest common ancestor and compares at the divergence point.
-
-### Key PCP Features
-
-| Feature | Implementation |
-|---------|---------------|
-| Cycle detection | `_CheckForCycle()` — walks ancestor chain and parent stack frames |
-| Specializes propagation | `_PropagateNodeToRoot()` — copies subtree to graph root for globally-weak semantics |
-| Relocate handling | `_EvalNodeRelocations()` — adds relocation arcs, manages "spooky ancestors" (inherited opinions from relocation source) |
-| Deferred evaluation | Variants and dynamic payloads evaluated lazily within the task queue |
-| Node culling | Inert and culled nodes reduce traversal cost without losing dependency tracking |
-| Namespace mapping | `PcpMapExpression` — composable, lazy-evaluated path mapping across arcs |
-| Opinion retention | Full DAG preserves all opinion sources for later value resolution |
-
-### Conceptual PcpPrimIndex DAG
-
-```
-Root (local layer stack)
-├── Inherit → /__class__/Base
-│   └── Reference → asset.usd</Base>
-├── Variant → {modelingVariant=high}
-├── Reference → model.usd</Model>
-│   ├── Inherit → /__class__/ModelBase  (implied)
-│   └── Payload → geo.usd</Geo>
-└── Specialize → /__class__/Defaults  (propagated to root)
-```
-
-Each node carries: arc type, layer stack, prim path, map-to-parent, map-to-root,
-flags (has specs, is inert, is culled), and origin tracking.
+> **The full PCP engine model** — the data model, the task-queue algorithm,
+> implied / globally-weak specializes, namespace mapping, instancing, change
+> tracking, the error taxonomy, the AOUSD §10 spec mapping, and the
+> **PCP ↔ AOUSD ↔ tinyusdz correspondence table** — lives in **[pcp.md](pcp.md)**,
+> which also documents tinyusdz's mirroring DAG engine.
 
 ---
 
