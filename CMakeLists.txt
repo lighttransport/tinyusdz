@@ -102,6 +102,9 @@ option(TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER
 option(TINYUSDZ_WITH_TYDRA
        "Build with Tydra module(Handly USD scene converter for the renderer, DCC, etc)."
        ON)
+option(TINYUSDZ_WITH_PCP
+       "Build the cached/lazy (partial-composition) composition cache (src/pcp)."
+       ON)
 option(TINYUSDZ_WITH_MCP_SERVER
        "Build with C++ MCP server(http server) support."
        OFF)
@@ -629,6 +632,17 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/prim-pprint-parallel.hh
 
     )
+
+if (TINYUSDZ_WITH_PCP)
+    list(APPEND TINYUSDZ_SOURCES
+        ${PROJECT_SOURCE_DIR}/src/pcp/layer-registry.cc
+        ${PROJECT_SOURCE_DIR}/src/pcp/layer-registry.hh
+        ${PROJECT_SOURCE_DIR}/src/pcp/cache.cc
+        ${PROJECT_SOURCE_DIR}/src/pcp/cache.hh
+        ${PROJECT_SOURCE_DIR}/src/pcp/cache-impl.hh
+        ${PROJECT_SOURCE_DIR}/src/pcp/cache-parallel.cc
+    )
+endif()
 
 if (TINYUSDZ_WITH_TYDRA)
     list(APPEND TINYUSDZ_SOURCES
@@ -1699,6 +1713,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   if(TINYUSDZ_WITH_USDVOX)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_USE_USDVOX")
+  endif()
+
+  if(TINYUSDZ_WITH_PCP)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_PCP")
   endif()
 
   target_link_libraries(${TINYUSDZ_LIB_TARGET} ${TINYUSDZ_EXT_LIBRARIES}
