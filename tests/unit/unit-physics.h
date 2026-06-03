@@ -34,4 +34,4 @@ void physics_drive_limit_api_test(void);
 void physics_mesh_collider_convention_test(void);
 void physics_newton_collision_material_api_test(void);
 void urdf_json_newton_api_export_test(void);
-void physics_urdf_upaxis_axis_invariant_test(void);
+void urdf_json_mjcf_contact_export_test(void);

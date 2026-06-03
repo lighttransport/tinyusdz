@@ -4,7 +4,16 @@
 #include <cctype>
 #include <functional>
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
 #include "external/jsonhpp/nlohmann/json.hpp"
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 #include "../value-types.hh"
 #include "value-to-json.hh"
@@ -22,6 +31,7 @@ namespace {
 void CollectPrimsByType(const Prim &prim, const std::string &type_name,
                         const std::string &parent_path,
                         std::vector<std::string> &results) {
+  (void)parent_path;
   if (prim.prim_type_name() == type_name) {
     results.push_back(prim.absolute_path().full_path_name());
   }
@@ -33,6 +43,7 @@ void CollectPrimsByType(const Prim &prim, const std::string &type_name,
 void SearchInPrimNames(const Prim &prim, const std::string &query,
                        const std::string &parent_path,
                        std::vector<std::string> &results) {
+  (void)parent_path;
   std::string name = prim.element_name();
   // Case-insensitive substring match
   auto it = std::search(

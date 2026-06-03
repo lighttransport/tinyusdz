@@ -3,8 +3,18 @@
 #include <sstream>
 #include <vector>
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
 #include "external/jsonhpp/nlohmann/json.hpp"
-#include "common-macros.inc"  // kMaxDefaultTraversalLimit (recursion depth guard)
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
+#include "common-macros.inc"
 
 namespace tinyusdz {
 namespace tydra {
@@ -277,6 +287,7 @@ nlohmann::json ValueToJSON(const value::Value &val, uint32_t depth) {
   if (depth > kMaxDefaultTraversalLimit) {
     return {{"type", "error"}, {"error", "max recursion depth exceeded"}};
   }
+
   if (val.is_empty()) {
     return {{"type", "null"}};
   }
@@ -573,6 +584,7 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
     if (err) *err = "JSONToValue: max recursion depth exceeded";
     return nonstd::nullopt;
   }
+
   if (!j.is_object() || !j.contains("type")) {
     if (err) *err = "JSON value must be object with 'type' field";
     return nonstd::nullopt;
@@ -757,9 +769,10 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
             value::matrix2d m;
             for (size_t row = 0; row < 2; row++) {
               for (size_t col = 0; col < 2; col++) {
-                m.m[row][col] = mat[row].is_array() && mat[row].size() > col
-                                    ? mat[row][col].get<double>()
-                                    : 0.0;
+                m.m[row][col] =
+                    mat[row].is_array() && mat[row].size() > col
+                        ? mat[row][col].get<double>()
+                        : 0.0;
               }
             }
             vec.push_back(m);
@@ -775,9 +788,10 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
             value::matrix3d m;
             for (size_t row = 0; row < 3; row++) {
               for (size_t col = 0; col < 3; col++) {
-                m.m[row][col] = mat[row].is_array() && mat[row].size() > col
-                                    ? mat[row][col].get<double>()
-                                    : 0.0;
+                m.m[row][col] =
+                    mat[row].is_array() && mat[row].size() > col
+                        ? mat[row][col].get<double>()
+                        : 0.0;
               }
             }
             vec.push_back(m);
@@ -1035,23 +1049,23 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
                                    val_json[3].get<int32_t>()});
   } else if (base_type == "quath") {
     if (val_json.size() < 4) return nonstd::nullopt;
-    return make_scalar(value::quath{
-        {value::float_to_half_full(static_cast<float>(val_json[0].get<double>())),
-         value::float_to_half_full(static_cast<float>(val_json[1].get<double>())),
-         value::float_to_half_full(static_cast<float>(val_json[2].get<double>()))},
+    return make_scalar(value::quath{{
+        value::float_to_half_full(static_cast<float>(val_json[0].get<double>())),
+        value::float_to_half_full(static_cast<float>(val_json[1].get<double>())),
+        value::float_to_half_full(static_cast<float>(val_json[2].get<double>()))},
         value::float_to_half_full(static_cast<float>(val_json[3].get<double>()))});
   } else if (base_type == "quatf") {
     if (val_json.size() < 4) return nonstd::nullopt;
-    return make_scalar(value::quatf{
-        {static_cast<float>(val_json[0].get<double>()),
-         static_cast<float>(val_json[1].get<double>()),
-         static_cast<float>(val_json[2].get<double>())},
+    return make_scalar(value::quatf{{
+        static_cast<float>(val_json[0].get<double>()),
+        static_cast<float>(val_json[1].get<double>()),
+        static_cast<float>(val_json[2].get<double>())},
         static_cast<float>(val_json[3].get<double>())});
   } else if (base_type == "quatd") {
     if (val_json.size() < 4) return nonstd::nullopt;
     return make_scalar(value::quatd{{val_json[0].get<double>(),
-                                     val_json[1].get<double>(),
-                                     val_json[2].get<double>()},
+                                    val_json[1].get<double>(),
+                                    val_json[2].get<double>()},
                                     val_json[3].get<double>()});
   }
 
@@ -1185,6 +1199,7 @@ nlohmann::json ValueTypeToJSONSchema(const std::string &type_name,
   if (depth > kMaxDefaultTraversalLimit) {
     return {{"type", "error"}, {"error", "max recursion depth exceeded"}};
   }
+
   bool is_array = false;
   std::string base = type_name;
   if (type_name.size() >= 3 &&
