@@ -38,7 +38,12 @@ struct LoadedScene {
 // `ctrl` (optional) enables cancellation, progress reporting, a conversion time
 // budget and a draw-side triangle/vertex budget. Safe to call on a worker
 // thread (no GPU access).
+//
+// `rtPath` selects ray-tracer-friendly conversion: it disables the
+// rasterization-only single-index dedup (build_vertex_indices=false), yielding a
+// triangle-soup vertex/index layout that a BLAS consumes directly (still
+// renderable by the raster path too).
 bool LoadUSD(const std::string& path, LoadedScene* out, DrawScene* draw,
-             LoadControl* ctrl = nullptr);
+             bool rtPath = false, LoadControl* ctrl = nullptr);
 
 }  // namespace tusdview

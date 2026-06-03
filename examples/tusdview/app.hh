@@ -36,6 +36,10 @@ class App {
     if (s > 0.25f) uiScale_ = s;
   }
 
+  // Request the Vulkan ray-tracing technique at startup (honored only when the
+  // device supports it; otherwise the viewer stays on rasterization).
+  void setRequestRayTracing(bool on) { rtRequested_ = on; }
+
   // Write a PPM of the full composited window after the last frame (QA).
   void setWindowShot(const std::string& path) { windowShot_ = path; }
 
@@ -72,6 +76,11 @@ class App {
 
   float uiScale_{2.0f};  // HiDPI scale (font px = 16 * uiScale_)
   std::string windowShot_;
+
+  // Ray tracing: requested via --rt; rtPath_ is the effective state after the
+  // renderer reports capability (drives the RT-friendly conversion config).
+  bool rtRequested_{false};
+  bool rtPath_{false};
 
   // Async loading
   std::thread loadThread_;

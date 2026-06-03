@@ -33,6 +33,7 @@ struct RendererCaps {
   const char* backend_name{""};
   bool usesZeroToOneDepth{false};  // Vulkan clip space Z in [0,1]; GL in [-1,1]
   bool flipViewportV{false};       // GL FBO textures are bottom-up
+  bool supportsRayTracing{false};  // device has the RT extensions (Vulkan only)
 };
 
 struct RenderFrameParams {
@@ -125,6 +126,17 @@ class Renderer {
   }
 
   virtual const RendererCaps& caps() const = 0;
+
+  // --- Ray tracing (Vulkan only) ---
+  // True when the device supports the RT extensions and a ray-tracing technique
+  // is available. The GL backend always returns false.
+  virtual bool rayTracingAvailable() const { return false; }
+  // Whether the ray-tracing technique is currently active.
+  virtual bool rayTracingActive() const { return false; }
+  // Switch the active technique between rasterization (false) and ray tracing
+  // (true). No-op / ignored when ray tracing is unavailable. Both techniques
+  // consume the same uploaded scene, so toggling needs no reload.
+  virtual void setRayTracing(bool /*enable*/) {}
 
   // Tear down ImGui backend + device resources.
   virtual void shutdown() = 0;

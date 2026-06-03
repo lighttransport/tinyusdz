@@ -18,6 +18,9 @@
 #include "line_vert.spv.h"
 #include "mesh_frag.spv.h"
 #include "mesh_vert.spv.h"
+#if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
+#include "raytrace_comp.spv.h"  // ray-query compute shader (when glslang supports it)
+#endif
 
 namespace tusdview {
 
@@ -70,6 +73,68 @@ struct PushC {
   float baseColor[4];
 };
 
+// Ray-tracing compute push constants (must match raytrace.comp).
+struct RtPushC {
+  float invViewProj[16];
+  float camPos[4];
+  float lightDir[4];
+  float clearColor[4];
+};
+
+// Per-mesh descriptor for the RT shader (scalar layout, must match raytrace.comp).
+struct MeshDescGPU {
+  uint64_t vtxAddr;
+  uint64_t idxAddr;
+  uint32_t matId;
+  uint32_t pad;
+  float nrm0[4];  // normal matrix columns (xyz used)
+  float nrm1[4];
+  float nrm2[4];
+};
+static_assert(sizeof(MeshDescGPU) == 72, "MeshDescGPU must be tightly packed (scalar)");
+
+// General column-major 4x4 inverse (for the camera's inverse view-projection).
+bool Mat4Inverse(const float m[16], float out[16]) {
+  float inv[16];
+  inv[0] = m[5]*m[10]*m[15] - m[5]*m[11]*m[14] - m[9]*m[6]*m[15] +
+           m[9]*m[7]*m[14] + m[13]*m[6]*m[11] - m[13]*m[7]*m[10];
+  inv[4] = -m[4]*m[10]*m[15] + m[4]*m[11]*m[14] + m[8]*m[6]*m[15] -
+           m[8]*m[7]*m[14] - m[12]*m[6]*m[11] + m[12]*m[7]*m[10];
+  inv[8] = m[4]*m[9]*m[15] - m[4]*m[11]*m[13] - m[8]*m[5]*m[15] +
+           m[8]*m[7]*m[13] + m[12]*m[5]*m[11] - m[12]*m[7]*m[9];
+  inv[12] = -m[4]*m[9]*m[14] + m[4]*m[10]*m[13] + m[8]*m[5]*m[14] -
+            m[8]*m[6]*m[13] - m[12]*m[5]*m[10] + m[12]*m[6]*m[9];
+  inv[1] = -m[1]*m[10]*m[15] + m[1]*m[11]*m[14] + m[9]*m[2]*m[15] -
+           m[9]*m[3]*m[14] - m[13]*m[2]*m[11] + m[13]*m[3]*m[10];
+  inv[5] = m[0]*m[10]*m[15] - m[0]*m[11]*m[14] - m[8]*m[2]*m[15] +
+           m[8]*m[3]*m[14] + m[12]*m[2]*m[11] - m[12]*m[3]*m[10];
+  inv[9] = -m[0]*m[9]*m[15] + m[0]*m[11]*m[13] + m[8]*m[1]*m[15] -
+           m[8]*m[3]*m[13] - m[12]*m[1]*m[11] + m[12]*m[3]*m[9];
+  inv[13] = m[0]*m[9]*m[14] - m[0]*m[10]*m[13] - m[8]*m[1]*m[14] +
+            m[8]*m[2]*m[13] + m[12]*m[1]*m[10] - m[12]*m[2]*m[9];
+  inv[2] = m[1]*m[6]*m[15] - m[1]*m[7]*m[14] - m[5]*m[2]*m[15] +
+           m[5]*m[3]*m[14] + m[13]*m[2]*m[7] - m[13]*m[3]*m[6];
+  inv[6] = -m[0]*m[6]*m[15] + m[0]*m[7]*m[14] + m[4]*m[2]*m[15] -
+           m[4]*m[3]*m[14] - m[12]*m[2]*m[7] + m[12]*m[3]*m[6];
+  inv[10] = m[0]*m[5]*m[15] - m[0]*m[7]*m[13] - m[4]*m[1]*m[15] +
+            m[4]*m[3]*m[13] + m[12]*m[1]*m[7] - m[12]*m[3]*m[5];
+  inv[14] = -m[0]*m[5]*m[14] + m[0]*m[6]*m[13] + m[4]*m[1]*m[14] -
+            m[4]*m[2]*m[13] - m[12]*m[1]*m[6] + m[12]*m[2]*m[5];
+  inv[3] = -m[1]*m[6]*m[11] + m[1]*m[7]*m[10] + m[5]*m[2]*m[11] -
+           m[5]*m[3]*m[10] - m[9]*m[2]*m[7] + m[9]*m[3]*m[6];
+  inv[7] = m[0]*m[6]*m[11] - m[0]*m[7]*m[10] - m[4]*m[2]*m[11] +
+           m[4]*m[3]*m[10] + m[8]*m[2]*m[7] - m[8]*m[3]*m[6];
+  inv[11] = -m[0]*m[5]*m[11] + m[0]*m[7]*m[9] + m[4]*m[1]*m[11] -
+            m[4]*m[3]*m[9] - m[8]*m[1]*m[7] + m[8]*m[3]*m[5];
+  inv[15] = m[0]*m[5]*m[10] - m[0]*m[6]*m[9] - m[4]*m[1]*m[10] +
+            m[4]*m[2]*m[9] + m[8]*m[1]*m[6] - m[8]*m[2]*m[5];
+  float det = m[0]*inv[0] + m[1]*inv[4] + m[2]*inv[8] + m[3]*inv[12];
+  if (std::fabs(det) < 1e-20f) return false;
+  det = 1.0f / det;
+  for (int i = 0; i < 16; ++i) out[i] = inv[i] * det;
+  return true;
+}
+
 }  // namespace
 
 VulkanRenderer::~VulkanRenderer() { shutdown(); }
@@ -91,7 +156,8 @@ bool VulkanRenderer::createInstance(std::string* err) {
   VkApplicationInfo app{};
   app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
   app.pApplicationName = "tusdview";
-  app.apiVersion = VK_API_VERSION_1_1;
+  // 1.2 for bufferDeviceAddress (core) + ray query against acceleration structures.
+  app.apiVersion = VK_API_VERSION_1_2;
 
   uint32_t extCount = 0;
   const char** glfwExt = glfwGetRequiredInstanceExtensions(&extCount);
@@ -156,7 +222,61 @@ bool VulkanRenderer::pickPhysicalDevice(std::string* err) {
   return false;
 }
 
+void VulkanRenderer::detectRtSupport() {
+  rtSupported_ = false;
+#if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
+  if (!phys_) return;
+
+  // Required device extensions for the ray-query path. (descriptor_indexing,
+  // buffer_device_address and spirv_1_4 are Vulkan 1.2 core, so not listed here.)
+  const char* needed[] = {VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+                          VK_KHR_RAY_QUERY_EXTENSION_NAME,
+                          VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME};
+  uint32_t n = 0;
+  vkEnumerateDeviceExtensionProperties(phys_, nullptr, &n, nullptr);
+  std::vector<VkExtensionProperties> have(n);
+  vkEnumerateDeviceExtensionProperties(phys_, nullptr, &n, have.data());
+  for (const char* req : needed) {
+    bool found = false;
+    for (const auto& e : have) {
+      if (std::strcmp(e.extensionName, req) == 0) { found = true; break; }
+    }
+    if (!found) return;  // missing extension -> stay on rasterization
+  }
+
+  // Confirm the feature bits are actually enabled-able.
+  VkPhysicalDeviceRayQueryFeaturesKHR rqf{};
+  rqf.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+  VkPhysicalDeviceAccelerationStructureFeaturesKHR asf{};
+  asf.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+  asf.pNext = &rqf;
+  VkPhysicalDeviceBufferDeviceAddressFeatures bda{};
+  bda.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+  bda.pNext = &asf;
+  VkPhysicalDeviceFeatures2 f2{};
+  f2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+  f2.pNext = &bda;
+  vkGetPhysicalDeviceFeatures2(phys_, &f2);
+  if (!rqf.rayQuery || !asf.accelerationStructure || !bda.bufferDeviceAddress) return;
+
+  // Cache the scratch-buffer alignment requirement.
+  VkPhysicalDeviceAccelerationStructurePropertiesKHR asp{};
+  asp.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR;
+  VkPhysicalDeviceProperties2 p2{};
+  p2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+  p2.pNext = &asp;
+  vkGetPhysicalDeviceProperties2(phys_, &p2);
+  if (asp.minAccelerationStructureScratchOffsetAlignment > 0) {
+    scratchAlign_ = asp.minAccelerationStructureScratchOffsetAlignment;
+  }
+
+  rtSupported_ = true;  // device-side OK; PFN load in createDevice may still veto
+#endif
+}
+
 bool VulkanRenderer::createDevice(std::string* err) {
+  detectRtSupport();
+
   float prio = 1.0f;
   VkDeviceQueueCreateInfo qci{};
   qci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
@@ -164,15 +284,57 @@ bool VulkanRenderer::createDevice(std::string* err) {
   qci.queueCount = 1;
   qci.pQueuePriorities = &prio;
 
-  const char* devExts[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+  std::vector<const char*> devExts = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
   VkDeviceCreateInfo ci{};
   ci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
   ci.queueCreateInfoCount = 1;
   ci.pQueueCreateInfos = &qci;
-  ci.enabledExtensionCount = 1;
-  ci.ppEnabledExtensionNames = devExts;
+
+  // Ray-tracing feature chain (only when supported; otherwise device is created
+  // exactly as before so the rasterization path is unaffected).
+  VkPhysicalDeviceRayQueryFeaturesKHR rqf{};
+  rqf.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+  rqf.rayQuery = VK_TRUE;
+  VkPhysicalDeviceAccelerationStructureFeaturesKHR asf{};
+  asf.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+  asf.accelerationStructure = VK_TRUE;
+  asf.pNext = &rqf;
+  VkPhysicalDeviceBufferDeviceAddressFeatures bda{};
+  bda.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+  bda.bufferDeviceAddress = VK_TRUE;
+  bda.pNext = &asf;
+  if (rtSupported_) {
+    devExts.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+    devExts.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+    devExts.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+    ci.pNext = &bda;
+  }
+  ci.enabledExtensionCount = static_cast<uint32_t>(devExts.size());
+  ci.ppEnabledExtensionNames = devExts.data();
   VK_CHECK(vkCreateDevice(phys_, &ci, nullptr, &device_), "vkCreateDevice");
   vkGetDeviceQueue(device_, queueFamily_, 0, &queue_);
+
+  // Load the RT entrypoints (extension functions aren't statically exported).
+  if (rtSupported_) {
+    pfnGetBufferDeviceAddress_ =
+        reinterpret_cast<PFN_vkGetBufferDeviceAddressKHR>(
+            vkGetDeviceProcAddr(device_, "vkGetBufferDeviceAddressKHR"));
+    pfnGetASBuildSizes_ = reinterpret_cast<PFN_vkGetAccelerationStructureBuildSizesKHR>(
+        vkGetDeviceProcAddr(device_, "vkGetAccelerationStructureBuildSizesKHR"));
+    pfnCreateAS_ = reinterpret_cast<PFN_vkCreateAccelerationStructureKHR>(
+        vkGetDeviceProcAddr(device_, "vkCreateAccelerationStructureKHR"));
+    pfnDestroyAS_ = reinterpret_cast<PFN_vkDestroyAccelerationStructureKHR>(
+        vkGetDeviceProcAddr(device_, "vkDestroyAccelerationStructureKHR"));
+    pfnCmdBuildAS_ = reinterpret_cast<PFN_vkCmdBuildAccelerationStructuresKHR>(
+        vkGetDeviceProcAddr(device_, "vkCmdBuildAccelerationStructuresKHR"));
+    pfnGetASDeviceAddress_ =
+        reinterpret_cast<PFN_vkGetAccelerationStructureDeviceAddressKHR>(
+            vkGetDeviceProcAddr(device_, "vkGetAccelerationStructureDeviceAddressKHR"));
+    if (!pfnGetBufferDeviceAddress_ || !pfnGetASBuildSizes_ || !pfnCreateAS_ ||
+        !pfnDestroyAS_ || !pfnCmdBuildAS_ || !pfnGetASDeviceAddress_) {
+      rtSupported_ = false;  // any missing entrypoint -> rasterization only
+    }
+  }
   return true;
 }
 
@@ -838,6 +1000,18 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
   if (!createPipeline(err)) return false;       // needs texSetLayout_
   if (!createLinePipeline(err)) return false;   // needs offscreenPass_
   if (!createWhiteTexture(err)) return false;   // needs commandPool_ + texPool_
+
+  // Ray tracing (ray query) resources, when the device + shader support it.
+  if (rtSupported_) {
+    std::string rterr;
+    if (!createRtResources(&rterr)) {
+      destroyRt();
+      rtSupported_ = false;  // fall back to rasterization
+    }
+  }
+  techniqueLabel_ = rtSupported_ ? "Vulkan (raster)" : "Vulkan";
+  caps_.backend_name = techniqueLabel_.c_str();
+  caps_.supportsRayTracing = rtSupported_;
   return true;
 }
 
@@ -847,7 +1021,7 @@ bool VulkanRenderer::initImGui(std::string* err) {
     return false;
   }
   ImGui_ImplVulkan_InitInfo info{};
-  info.ApiVersion = VK_API_VERSION_1_1;
+  info.ApiVersion = VK_API_VERSION_1_2;
   info.Instance = instance_;
   info.PhysicalDevice = phys_;
   info.Device = device_;
@@ -869,12 +1043,11 @@ bool VulkanRenderer::initImGui(std::string* err) {
 
 bool VulkanRenderer::createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                                       const void* data, VkBuffer* buf,
-                                      VkDeviceMemory* mem) {
-  std::string* err = nullptr;
+                                      VkDeviceMemory* mem, bool deviceAddress) {
   VkBufferCreateInfo bi{};
   bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
   bi.size = size;
-  bi.usage = usage;
+  bi.usage = usage | (deviceAddress ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0);
   bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   if (vkCreateBuffer(device_, &bi, nullptr, buf) != VK_SUCCESS) return false;
 
@@ -886,6 +1059,10 @@ bool VulkanRenderer::createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usag
   ai.memoryTypeIndex = findMemoryType(
       req.memoryTypeBits,
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  VkMemoryAllocateFlagsInfo fi{};
+  fi.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+  fi.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+  if (deviceAddress) ai.pNext = &fi;
   if (vkAllocateMemory(device_, &ai, nullptr, mem) != VK_SUCCESS) return false;
   vkBindBufferMemory(device_, *buf, *mem, 0);
 
@@ -893,8 +1070,41 @@ bool VulkanRenderer::createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usag
   vkMapMemory(device_, *mem, 0, size, 0, &mapped);
   std::memcpy(mapped, data, static_cast<size_t>(size));
   vkUnmapMemory(device_, *mem);
-  (void)err;
   return true;
+}
+
+// Device-local buffer (no initial data) with a device address — for AS storage
+// and scratch buffers.
+bool VulkanRenderer::createDeviceBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
+                                        VkBuffer* buf, VkDeviceMemory* mem) {
+  VkBufferCreateInfo bi{};
+  bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bi.size = size;
+  bi.usage = usage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+  bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  if (vkCreateBuffer(device_, &bi, nullptr, buf) != VK_SUCCESS) return false;
+  VkMemoryRequirements req;
+  vkGetBufferMemoryRequirements(device_, *buf, &req);
+  VkMemoryAllocateFlagsInfo fi{};
+  fi.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+  fi.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+  VkMemoryAllocateInfo ai{};
+  ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  ai.pNext = &fi;
+  ai.allocationSize = req.size;
+  ai.memoryTypeIndex = findMemoryType(req.memoryTypeBits,
+                                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  if (vkAllocateMemory(device_, &ai, nullptr, mem) != VK_SUCCESS) return false;
+  vkBindBufferMemory(device_, *buf, *mem, 0);
+  return true;
+}
+
+VkDeviceAddress VulkanRenderer::bufferDeviceAddress(VkBuffer buf) const {
+  if (!pfnGetBufferDeviceAddress_ || !buf) return 0;
+  VkBufferDeviceAddressInfo info{};
+  info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+  info.buffer = buf;
+  return pfnGetBufferDeviceAddress_(device_, &info);
 }
 
 void VulkanRenderer::destroyScene() {
@@ -903,10 +1113,25 @@ void VulkanRenderer::destroyScene() {
     if (m.vboMem) vkFreeMemory(device_, m.vboMem, nullptr);
     if (m.ebo) vkDestroyBuffer(device_, m.ebo, nullptr);
     if (m.eboMem) vkFreeMemory(device_, m.eboMem, nullptr);
+    if (m.blas && pfnDestroyAS_) pfnDestroyAS_(device_, m.blas, nullptr);
+    if (m.blasBuf) vkDestroyBuffer(device_, m.blasBuf, nullptr);
+    if (m.blasMem) vkFreeMemory(device_, m.blasMem, nullptr);
   }
   meshes_.clear();
   matColor_.clear();
   matBaseTex_.clear();
+
+  // Per-scene acceleration structure + RT scene buffers (rebuilt on next trace).
+  if (tlas_) { if (pfnDestroyAS_) pfnDestroyAS_(device_, tlas_, nullptr); tlas_ = VK_NULL_HANDLE; }
+  if (tlasBuf_) { vkDestroyBuffer(device_, tlasBuf_, nullptr); tlasBuf_ = VK_NULL_HANDLE; }
+  if (tlasMem_) { vkFreeMemory(device_, tlasMem_, nullptr); tlasMem_ = VK_NULL_HANDLE; }
+  if (instBuf_) { vkDestroyBuffer(device_, instBuf_, nullptr); instBuf_ = VK_NULL_HANDLE; }
+  if (instMem_) { vkFreeMemory(device_, instMem_, nullptr); instMem_ = VK_NULL_HANDLE; }
+  if (meshDescBuf_) { vkDestroyBuffer(device_, meshDescBuf_, nullptr); meshDescBuf_ = VK_NULL_HANDLE; }
+  if (meshDescMem_) { vkFreeMemory(device_, meshDescMem_, nullptr); meshDescMem_ = VK_NULL_HANDLE; }
+  if (rtMatBuf_) { vkDestroyBuffer(device_, rtMatBuf_, nullptr); rtMatBuf_ = VK_NULL_HANDLE; }
+  if (rtMatMem_) { vkFreeMemory(device_, rtMatMem_, nullptr); rtMatMem_ = VK_NULL_HANDLE; }
+  tlasDirty_ = true;
 
   for (auto v : texViews_) vkDestroyImageView(device_, v, nullptr);
   for (auto i : texImgs_) vkDestroyImage(device_, i, nullptr);
@@ -958,19 +1183,489 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   VkMeshGPU gm;
   gm.submeshes = sm.submeshes;
   std::memcpy(gm.world, sm.world, sizeof(gm.world));
-  if (!createHostBuffer(sm.vertices.size() * sizeof(DrawVertex),
-                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sm.vertices.data(), &gm.vbo,
-                        &gm.vboMem)) {
+
+  // When RT is supported the vertex/index buffers double as BLAS build input and
+  // SSBOs read by the ray-query shader (device addresses).
+  VkBufferUsageFlags vboUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+  VkBufferUsageFlags eboUsage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+  if (rtSupported_) {
+    const VkBufferUsageFlags rtExtra =
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    vboUsage |= rtExtra;
+    eboUsage |= rtExtra;
+  }
+  if (!createHostBuffer(sm.vertices.size() * sizeof(DrawVertex), vboUsage,
+                        sm.vertices.data(), &gm.vbo, &gm.vboMem, rtSupported_)) {
     return;
   }
-  if (!createHostBuffer(sm.indices.size() * sizeof(uint32_t),
-                        VK_BUFFER_USAGE_INDEX_BUFFER_BIT, sm.indices.data(), &gm.ebo,
-                        &gm.eboMem)) {
+  if (!createHostBuffer(sm.indices.size() * sizeof(uint32_t), eboUsage,
+                        sm.indices.data(), &gm.ebo, &gm.eboMem, rtSupported_)) {
     vkDestroyBuffer(device_, gm.vbo, nullptr);
     vkFreeMemory(device_, gm.vboMem, nullptr);
     return;
   }
+
+  if (rtSupported_) {
+    gm.vertexCount = static_cast<uint32_t>(sm.vertices.size());
+    gm.indexCount = static_cast<uint32_t>(sm.indices.size());
+    gm.vboAddr = bufferDeviceAddress(gm.vbo);
+    gm.eboAddr = bufferDeviceAddress(gm.ebo);
+    gm.matId = sm.submeshes.empty() ? -1 : sm.submeshes.front().materialId;
+    NormalMatrix3(gm.world, gm.normalMat);
+    tlasDirty_ = true;  // BLAS built lazily in rebuildTlas() before the next trace
+  }
   meshes_.push_back(gm);
+}
+
+void VulkanRenderer::buildBlas(VkMeshGPU& m) {
+  if (m.blas != VK_NULL_HANDLE || m.indexCount < 3 || !pfnCreateAS_) return;
+
+  VkAccelerationStructureGeometryKHR geom{};
+  geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+  geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+  geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+  auto& tri = geom.geometry.triangles;
+  tri.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+  tri.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+  tri.vertexData.deviceAddress = m.vboAddr;
+  tri.vertexStride = sizeof(DrawVertex);
+  tri.maxVertex = m.vertexCount - 1;
+  tri.indexType = VK_INDEX_TYPE_UINT32;
+  tri.indexData.deviceAddress = m.eboAddr;
+
+  const uint32_t primCount = m.indexCount / 3;
+
+  VkAccelerationStructureBuildGeometryInfoKHR bgi{};
+  bgi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+  bgi.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+  bgi.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+  bgi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+  bgi.geometryCount = 1;
+  bgi.pGeometries = &geom;
+
+  VkAccelerationStructureBuildSizesInfoKHR sizes{};
+  sizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+  pfnGetASBuildSizes_(device_, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &bgi,
+                      &primCount, &sizes);
+
+  if (!createDeviceBuffer(sizes.accelerationStructureSize,
+                          VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+                          &m.blasBuf, &m.blasMem)) {
+    return;
+  }
+  VkAccelerationStructureCreateInfoKHR aci{};
+  aci.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+  aci.buffer = m.blasBuf;
+  aci.size = sizes.accelerationStructureSize;
+  aci.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+  if (pfnCreateAS_(device_, &aci, nullptr, &m.blas) != VK_SUCCESS) return;
+
+  // Scratch (over-allocate by the alignment so we can align the start address).
+  VkBuffer scratch = VK_NULL_HANDLE;
+  VkDeviceMemory scratchMem = VK_NULL_HANDLE;
+  if (!createDeviceBuffer(sizes.buildScratchSize + scratchAlign_,
+                          VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &scratch, &scratchMem)) {
+    return;
+  }
+  VkDeviceAddress sa = bufferDeviceAddress(scratch);
+  sa = (sa + scratchAlign_ - 1) & ~(static_cast<VkDeviceAddress>(scratchAlign_) - 1);
+
+  bgi.dstAccelerationStructure = m.blas;
+  bgi.scratchData.deviceAddress = sa;
+  VkAccelerationStructureBuildRangeInfoKHR range{};
+  range.primitiveCount = primCount;
+  const VkAccelerationStructureBuildRangeInfoKHR* pRange = &range;
+
+  VkCommandBuffer cb = beginOneShot();
+  pfnCmdBuildAS_(cb, 1, &bgi, &pRange);
+  endOneShot(cb);
+
+  vkDestroyBuffer(device_, scratch, nullptr);
+  vkFreeMemory(device_, scratchMem, nullptr);
+
+  VkAccelerationStructureDeviceAddressInfoKHR dai{};
+  dai.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+  dai.accelerationStructure = m.blas;
+  m.blasAddr = pfnGetASDeviceAddress_(device_, &dai);
+}
+
+void VulkanRenderer::rebuildTlas() {
+  if (!rtSupported_ || meshes_.empty() || !rtSet_) return;
+  vkDeviceWaitIdle(device_);
+
+  // Drop the previous per-scene TLAS + scene buffers.
+  if (tlas_) { pfnDestroyAS_(device_, tlas_, nullptr); tlas_ = VK_NULL_HANDLE; }
+  if (tlasBuf_) { vkDestroyBuffer(device_, tlasBuf_, nullptr); tlasBuf_ = VK_NULL_HANDLE; }
+  if (tlasMem_) { vkFreeMemory(device_, tlasMem_, nullptr); tlasMem_ = VK_NULL_HANDLE; }
+  if (instBuf_) { vkDestroyBuffer(device_, instBuf_, nullptr); instBuf_ = VK_NULL_HANDLE; }
+  if (instMem_) { vkFreeMemory(device_, instMem_, nullptr); instMem_ = VK_NULL_HANDLE; }
+  if (meshDescBuf_) { vkDestroyBuffer(device_, meshDescBuf_, nullptr); meshDescBuf_ = VK_NULL_HANDLE; }
+  if (meshDescMem_) { vkFreeMemory(device_, meshDescMem_, nullptr); meshDescMem_ = VK_NULL_HANDLE; }
+  if (rtMatBuf_) { vkDestroyBuffer(device_, rtMatBuf_, nullptr); rtMatBuf_ = VK_NULL_HANDLE; }
+  if (rtMatMem_) { vkFreeMemory(device_, rtMatMem_, nullptr); rtMatMem_ = VK_NULL_HANDLE; }
+
+  // Ensure every mesh has a BLAS, and build the instance + descriptor arrays.
+  std::vector<VkAccelerationStructureInstanceKHR> insts;
+  std::vector<MeshDescGPU> descs(meshes_.size());
+  for (uint32_t i = 0; i < meshes_.size(); ++i) {
+    VkMeshGPU& m = meshes_[i];
+    buildBlas(m);
+    MeshDescGPU& d = descs[i];
+    d.vtxAddr = m.vboAddr;
+    d.idxAddr = m.eboAddr;
+    d.matId = (m.matId < 0) ? 0xffffffffu : static_cast<uint32_t>(m.matId);
+    for (int k = 0; k < 3; ++k) {
+      d.nrm0[k] = m.normalMat[0 * 3 + k];
+      d.nrm1[k] = m.normalMat[1 * 3 + k];
+      d.nrm2[k] = m.normalMat[2 * 3 + k];
+    }
+    if (m.blas == VK_NULL_HANDLE) continue;
+    VkAccelerationStructureInstanceKHR inst{};
+    for (int r = 0; r < 3; ++r)
+      for (int c = 0; c < 4; ++c)
+        inst.transform.matrix[r][c] = m.world[c * 4 + r];  // col-major -> row 3x4
+    inst.instanceCustomIndex = i;
+    inst.mask = 0xFF;
+    inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+    inst.accelerationStructureReference = m.blasAddr;
+    insts.push_back(inst);
+  }
+  if (insts.empty()) return;
+
+  // Instances buffer (AS build input, device address).
+  createHostBuffer(insts.size() * sizeof(VkAccelerationStructureInstanceKHR),
+                   VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+                   insts.data(), &instBuf_, &instMem_, /*deviceAddress=*/true);
+
+  VkAccelerationStructureGeometryKHR geom{};
+  geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+  geom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+  geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+  geom.geometry.instances.sType =
+      VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+  geom.geometry.instances.data.deviceAddress = bufferDeviceAddress(instBuf_);
+
+  const uint32_t instCount = static_cast<uint32_t>(insts.size());
+  VkAccelerationStructureBuildGeometryInfoKHR bgi{};
+  bgi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+  bgi.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+  bgi.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+  bgi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+  bgi.geometryCount = 1;
+  bgi.pGeometries = &geom;
+
+  VkAccelerationStructureBuildSizesInfoKHR sizes{};
+  sizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+  pfnGetASBuildSizes_(device_, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &bgi,
+                      &instCount, &sizes);
+
+  if (!createDeviceBuffer(sizes.accelerationStructureSize,
+                          VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+                          &tlasBuf_, &tlasMem_)) {
+    return;
+  }
+  VkAccelerationStructureCreateInfoKHR aci{};
+  aci.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+  aci.buffer = tlasBuf_;
+  aci.size = sizes.accelerationStructureSize;
+  aci.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+  if (pfnCreateAS_(device_, &aci, nullptr, &tlas_) != VK_SUCCESS) return;
+
+  VkBuffer scratch = VK_NULL_HANDLE;
+  VkDeviceMemory scratchMem = VK_NULL_HANDLE;
+  if (!createDeviceBuffer(sizes.buildScratchSize + scratchAlign_,
+                          VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &scratch, &scratchMem)) {
+    return;
+  }
+  VkDeviceAddress sa = bufferDeviceAddress(scratch);
+  sa = (sa + scratchAlign_ - 1) & ~(static_cast<VkDeviceAddress>(scratchAlign_) - 1);
+  bgi.dstAccelerationStructure = tlas_;
+  bgi.scratchData.deviceAddress = sa;
+
+  VkAccelerationStructureBuildRangeInfoKHR range{};
+  range.primitiveCount = instCount;
+  const VkAccelerationStructureBuildRangeInfoKHR* pRange = &range;
+  VkCommandBuffer cb = beginOneShot();
+  pfnCmdBuildAS_(cb, 1, &bgi, &pRange);
+  endOneShot(cb);
+  vkDestroyBuffer(device_, scratch, nullptr);
+  vkFreeMemory(device_, scratchMem, nullptr);
+
+  // Per-mesh descriptor SSBO + materials SSBO.
+  createHostBuffer(descs.size() * sizeof(MeshDescGPU), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   descs.data(), &meshDescBuf_, &meshDescMem_);
+  std::vector<float> mats = matColor_;       // vec4 baseColor per material
+  if (mats.empty()) mats.assign(4, 0.6f);    // dummy so the SSBO is non-empty
+  createHostBuffer(mats.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   mats.data(), &rtMatBuf_, &rtMatMem_);
+
+  // Update descriptors: TLAS(0), meshDesc(2), material(3). Image(1) set elsewhere.
+  VkWriteDescriptorSetAccelerationStructureKHR asInfo{};
+  asInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+  asInfo.accelerationStructureCount = 1;
+  asInfo.pAccelerationStructures = &tlas_;
+  VkDescriptorBufferInfo descInfo{meshDescBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo matInfo{rtMatBuf_, 0, VK_WHOLE_SIZE};
+  VkWriteDescriptorSet w[3]{};
+  w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w[0].pNext = &asInfo;
+  w[0].dstSet = rtSet_;
+  w[0].dstBinding = 0;
+  w[0].descriptorCount = 1;
+  w[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+  w[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w[1].dstSet = rtSet_;
+  w[1].dstBinding = 2;
+  w[1].descriptorCount = 1;
+  w[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  w[1].pBufferInfo = &descInfo;
+  w[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w[2].dstSet = rtSet_;
+  w[2].dstBinding = 3;
+  w[2].descriptorCount = 1;
+  w[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  w[2].pBufferInfo = &matInfo;
+  vkUpdateDescriptorSets(device_, 3, w, 0, nullptr);
+
+  tlasDirty_ = false;
+}
+
+bool VulkanRenderer::createRtResources(std::string* err) {
+#if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
+  VkDescriptorSetLayoutBinding b[4]{};
+  b[0].binding = 0;
+  b[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+  b[0].descriptorCount = 1;
+  b[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  b[1].binding = 1;
+  b[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  b[1].descriptorCount = 1;
+  b[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  b[2].binding = 2;
+  b[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  b[2].descriptorCount = 1;
+  b[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  b[3] = b[2];
+  b[3].binding = 3;
+  VkDescriptorSetLayoutCreateInfo lci{};
+  lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  lci.bindingCount = 4;
+  lci.pBindings = b;
+  VK_CHECK(vkCreateDescriptorSetLayout(device_, &lci, nullptr, &rtSetLayout_),
+           "rt descriptor set layout");
+
+  VkDescriptorPoolSize ps[3]{};
+  ps[0] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1};
+  ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1};
+  ps[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2};
+  VkDescriptorPoolCreateInfo pci{};
+  pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  pci.maxSets = 1;
+  pci.poolSizeCount = 3;
+  pci.pPoolSizes = ps;
+  VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &rtPool_), "rt descriptor pool");
+
+  VkDescriptorSetAllocateInfo ai{};
+  ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  ai.descriptorPool = rtPool_;
+  ai.descriptorSetCount = 1;
+  ai.pSetLayouts = &rtSetLayout_;
+  VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &rtSet_), "rt descriptor set");
+
+  VkPushConstantRange pcr{};
+  pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  pcr.size = sizeof(RtPushC);
+  VkPipelineLayoutCreateInfo plci{};
+  plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  plci.setLayoutCount = 1;
+  plci.pSetLayouts = &rtSetLayout_;
+  plci.pushConstantRangeCount = 1;
+  plci.pPushConstantRanges = &pcr;
+  VK_CHECK(vkCreatePipelineLayout(device_, &plci, nullptr, &rtPipelineLayout_),
+           "rt pipeline layout");
+
+  VkShaderModule cs = createShader(raytrace_comp_spv, sizeof(raytrace_comp_spv));
+  if (!cs) {
+    if (err) *err = "rt shader module";
+    return false;
+  }
+  VkComputePipelineCreateInfo cpci{};
+  cpci.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+  cpci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  cpci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+  cpci.stage.module = cs;
+  cpci.stage.pName = "main";
+  cpci.layout = rtPipelineLayout_;
+  VkResult r = vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &cpci, nullptr,
+                                        &rtPipeline_);
+  vkDestroyShaderModule(device_, cs, nullptr);
+  if (r != VK_SUCCESS) {
+    if (err) *err = "rt compute pipeline";
+    return false;
+  }
+  return true;
+#else
+  (void)err;
+  return false;
+#endif
+}
+
+void VulkanRenderer::createRtImage() {
+  if (!rtSupported_ || vpW_ < 1 || vpH_ < 1) return;
+  if (rtImageView_) { vkDestroyImageView(device_, rtImageView_, nullptr); rtImageView_ = VK_NULL_HANDLE; }
+  if (rtImage_) { vkDestroyImage(device_, rtImage_, nullptr); rtImage_ = VK_NULL_HANDLE; }
+  if (rtImageMem_) { vkFreeMemory(device_, rtImageMem_, nullptr); rtImageMem_ = VK_NULL_HANDLE; }
+
+  VkImageCreateInfo ici{};
+  ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  ici.imageType = VK_IMAGE_TYPE_2D;
+  ici.format = colorFormat_;
+  ici.extent = {static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_), 1};
+  ici.mipLevels = 1;
+  ici.arrayLayers = 1;
+  ici.samples = VK_SAMPLE_COUNT_1_BIT;
+  ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+  ici.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+  ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (vkCreateImage(device_, &ici, nullptr, &rtImage_) != VK_SUCCESS) return;
+  VkMemoryRequirements req;
+  vkGetImageMemoryRequirements(device_, rtImage_, &req);
+  VkMemoryAllocateInfo mai{};
+  mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  mai.allocationSize = req.size;
+  mai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  if (vkAllocateMemory(device_, &mai, nullptr, &rtImageMem_) != VK_SUCCESS) return;
+  vkBindImageMemory(device_, rtImage_, rtImageMem_, 0);
+  VkImageViewCreateInfo vci{};
+  vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  vci.image = rtImage_;
+  vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  vci.format = colorFormat_;
+  vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  vci.subresourceRange.levelCount = 1;
+  vci.subresourceRange.layerCount = 1;
+  if (vkCreateImageView(device_, &vci, nullptr, &rtImageView_) != VK_SUCCESS) return;
+
+  // Transition UNDEFINED -> GENERAL (kept GENERAL between frames).
+  VkCommandBuffer cb = beginOneShot();
+  VkImageMemoryBarrier toGen{};
+  toGen.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  toGen.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  toGen.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+  toGen.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toGen.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toGen.image = rtImage_;
+  toGen.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  toGen.subresourceRange.levelCount = 1;
+  toGen.subresourceRange.layerCount = 1;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                       &toGen);
+  endOneShot(cb);
+
+  if (rtSet_) {
+    VkDescriptorImageInfo ii{};
+    ii.imageView = rtImageView_;
+    ii.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VkWriteDescriptorSet w{};
+    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w.dstSet = rtSet_;
+    w.dstBinding = 1;
+    w.descriptorCount = 1;
+    w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    w.pImageInfo = &ii;
+    vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+  }
+}
+
+void VulkanRenderer::traceRt(VkCommandBuffer cb) {
+  // rtImage_ is in GENERAL. Dispatch the ray-query trace, then copy into colorImg_.
+  vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, rtPipeline_);
+  vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, rtPipelineLayout_, 0, 1,
+                          &rtSet_, 0, nullptr);
+  RtPushC pc{};
+  light3d::Mat4 PV = ToMat4(proj_) * ToMat4(view_);
+  if (!Mat4Inverse(PV.m, pc.invViewProj)) {
+    for (int i = 0; i < 16; ++i) pc.invViewProj[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+  }
+  pc.camPos[0] = cameraPos_[0]; pc.camPos[1] = cameraPos_[1]; pc.camPos[2] = cameraPos_[2];
+  // Same fixed light direction as mesh.frag.
+  float lx = 0.5f, ly = 0.8f, lz = 0.6f;
+  float ll = std::sqrt(lx * lx + ly * ly + lz * lz);
+  pc.lightDir[0] = lx / ll; pc.lightDir[1] = ly / ll; pc.lightDir[2] = lz / ll;
+  for (int i = 0; i < 4; ++i) pc.clearColor[i] = clear_[i];
+  vkCmdPushConstants(cb, rtPipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(RtPushC),
+                     &pc);
+  vkCmdDispatch(cb, (static_cast<uint32_t>(vpW_) + 7) / 8,
+                (static_cast<uint32_t>(vpH_) + 7) / 8, 1);
+
+  auto imgBarrier = [&](VkImage img, VkImageLayout oldL, VkImageLayout newL,
+                        VkAccessFlags srcA, VkAccessFlags dstA, VkPipelineStageFlags srcS,
+                        VkPipelineStageFlags dstS) {
+    VkImageMemoryBarrier b{};
+    b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    b.oldLayout = oldL;
+    b.newLayout = newL;
+    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = img;
+    b.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    b.subresourceRange.levelCount = 1;
+    b.subresourceRange.layerCount = 1;
+    b.srcAccessMask = srcA;
+    b.dstAccessMask = dstA;
+    vkCmdPipelineBarrier(cb, srcS, dstS, 0, 0, nullptr, 0, nullptr, 1, &b);
+  };
+  imgBarrier(rtImage_, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+             VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+  imgBarrier(colorImg_, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
+             VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+             VK_PIPELINE_STAGE_TRANSFER_BIT);
+  VkImageCopy copy{};
+  copy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  copy.srcSubresource.layerCount = 1;
+  copy.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  copy.dstSubresource.layerCount = 1;
+  copy.extent = {static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_), 1};
+  vkCmdCopyImage(cb, rtImage_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, colorImg_,
+                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+  imgBarrier(colorImg_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+             VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+  imgBarrier(rtImage_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+             VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+}
+
+void VulkanRenderer::setRayTracing(bool enable) {
+  bool want = enable && rtSupported_;
+  if (want == rtActive_) return;
+  rtActive_ = want;
+  techniqueLabel_ = rtActive_ ? "Vulkan (ray query)" : "Vulkan (raster)";
+  caps_.backend_name = techniqueLabel_.c_str();
+  if (rtActive_) tlasDirty_ = true;  // build AS lazily before the next trace
+}
+
+void VulkanRenderer::destroyRt() {
+  if (tlas_) { if (pfnDestroyAS_) pfnDestroyAS_(device_, tlas_, nullptr); tlas_ = VK_NULL_HANDLE; }
+  if (tlasBuf_) { vkDestroyBuffer(device_, tlasBuf_, nullptr); tlasBuf_ = VK_NULL_HANDLE; }
+  if (tlasMem_) { vkFreeMemory(device_, tlasMem_, nullptr); tlasMem_ = VK_NULL_HANDLE; }
+  if (instBuf_) { vkDestroyBuffer(device_, instBuf_, nullptr); instBuf_ = VK_NULL_HANDLE; }
+  if (instMem_) { vkFreeMemory(device_, instMem_, nullptr); instMem_ = VK_NULL_HANDLE; }
+  if (meshDescBuf_) { vkDestroyBuffer(device_, meshDescBuf_, nullptr); meshDescBuf_ = VK_NULL_HANDLE; }
+  if (meshDescMem_) { vkFreeMemory(device_, meshDescMem_, nullptr); meshDescMem_ = VK_NULL_HANDLE; }
+  if (rtMatBuf_) { vkDestroyBuffer(device_, rtMatBuf_, nullptr); rtMatBuf_ = VK_NULL_HANDLE; }
+  if (rtMatMem_) { vkFreeMemory(device_, rtMatMem_, nullptr); rtMatMem_ = VK_NULL_HANDLE; }
+  if (rtImageView_) { vkDestroyImageView(device_, rtImageView_, nullptr); rtImageView_ = VK_NULL_HANDLE; }
+  if (rtImage_) { vkDestroyImage(device_, rtImage_, nullptr); rtImage_ = VK_NULL_HANDLE; }
+  if (rtImageMem_) { vkFreeMemory(device_, rtImageMem_, nullptr); rtImageMem_ = VK_NULL_HANDLE; }
+  if (rtPipeline_) { vkDestroyPipeline(device_, rtPipeline_, nullptr); rtPipeline_ = VK_NULL_HANDLE; }
+  if (rtPipelineLayout_) { vkDestroyPipelineLayout(device_, rtPipelineLayout_, nullptr); rtPipelineLayout_ = VK_NULL_HANDLE; }
+  if (rtPool_) { vkDestroyDescriptorPool(device_, rtPool_, nullptr); rtPool_ = VK_NULL_HANDLE; rtSet_ = VK_NULL_HANDLE; }
+  if (rtSetLayout_) { vkDestroyDescriptorSetLayout(device_, rtSetLayout_, nullptr); rtSetLayout_ = VK_NULL_HANDLE; }
 }
 
 void VulkanRenderer::destroyOffscreen() {
@@ -1052,6 +1747,11 @@ void VulkanRenderer::resizeViewport(int width, int height) {
     offscreenTexId_ = ImGui_ImplVulkan_AddTexture(
         sampler_, colorView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   }
+
+  // Ray-trace storage image (same size); the compute shader writes it and we copy
+  // it into colorImg_ for display.
+  createRtImage();
+  tlasDirty_ = true;
 }
 
 void VulkanRenderer::newFrame() { ImGui_ImplVulkan_NewFrame(); }
@@ -1091,6 +1791,13 @@ bool VulkanRenderer::recreateSwapchain() {
 
 void VulkanRenderer::present() {
   if (!device_) return;
+
+  // Build/refresh the acceleration structure before the frame (synchronous; uses
+  // its own one-shot submissions) so the trace below sees a ready TLAS.
+  const bool rtFrame = rtActive_ && rtSupported_ && hasParams_ && offscreenFb_ &&
+                       rtImage_ && !meshes_.empty();
+  if (rtFrame && tlasDirty_) rebuildTlas();
+
   vkWaitForFences(device_, 1, &inFlight_[frame_], VK_TRUE, UINT64_MAX);
 
   uint32_t imageIndex = 0;
@@ -1109,8 +1816,10 @@ void VulkanRenderer::present() {
   bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
   vkBeginCommandBuffer(cb, &bi);
 
-  // ---- Offscreen 3D pass ----
-  if (offscreenFb_ && hasParams_) {
+  // ---- Offscreen 3D pass: ray query (compute) or rasterization ----
+  if (rtFrame && tlas_ != VK_NULL_HANDLE) {
+    traceRt(cb);
+  } else if (offscreenFb_ && hasParams_) {
     VkClearValue clears[2];
     clears[0].color = {{clear_[0], clear_[1], clear_[2], clear_[3]}};
     clears[1].depthStencil = {1.0f, 0};
@@ -1363,6 +2072,7 @@ void VulkanRenderer::destroySwapchain() {
 void VulkanRenderer::shutdown() {
   if (device_) vkDeviceWaitIdle(device_);
   destroyScene();
+  destroyRt();
   destroyOffscreen();
   if (imguiInited_) {
     ImGui_ImplVulkan_Shutdown();
