@@ -142,6 +142,33 @@ cmake --build build -j16 --target tusdview
 Note: `--frames` loads synchronously (deterministic screenshots); interactive
 runs load on the worker thread.
 
+### Headless / CI (no physical display)
+
+Both backends still create a window (the GL context / the Vulkan swapchain
+surface come from GLFW), so they need *an* X server — but not a real one. On a
+machine with no display (CI, a remote box), wrap the headless screenshot run in
+`xvfb-run`, which spins up an in-memory X server. The GPU is still used for the
+actual rendering; only window-system integration goes through the virtual
+display.
+
+```bash
+# Vulkan offscreen render on a headless host (uses the real GPU, no monitor):
+xvfb-run -a -s "-screen 0 1280x800x24" \
+  ./build/tusdview --backend vk --frames 8 --screenshot out.ppm model.usdz
+
+# OpenGL works the same way:
+xvfb-run -a -s "-screen 0 1280x800x24" \
+  ./build/tusdview --backend gl --frames 8 --screenshot out.ppm model.usdz
+```
+
+- Use a **24-bit** screen depth (`x24`); the `xvfb-run` default (8-bit) can't
+  give GL/Vulkan a usable visual.
+- The output PPM is the **3D viewport** at the (clamped) window size — to make
+  it deterministic regardless of the virtual screen size, also pass a smaller
+  `--ui-scale` (the default 2× plus a small Xvfb screen yields a small viewport).
+- `--window-shot` (full UI capture) currently grabs the **GL** back buffer, so
+  use it with the GL backend only.
+
 ## MCP server (drive the viewer from an LLM/agent)
 
 tusdview embeds an **MCP (Model Context Protocol)** server so an LLM/agent can
