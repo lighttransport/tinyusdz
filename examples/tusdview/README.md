@@ -172,6 +172,9 @@ the windowed Vulkan path) on a machine with no display, wrap the run in
 only window-system integration goes through the virtual display.
 
 ```bash
+# No X server at all (Vulkan) — preferred when available:
+./build/tusdview --headless --frames 8 --screenshot out.ppm model.usdz
+
 # OpenGL offscreen render on a headless host (uses the real GPU, no monitor):
 xvfb-run -a -s "-screen 0 1280x800x24" \
   ./build/tusdview --backend gl --frames 8 --screenshot out.ppm model.usdz
@@ -181,6 +184,9 @@ xvfb-run -a -s "-screen 0 1280x800x24" \
   ./build/tusdview --backend vk --frames 8 --screenshot out.ppm model.usdz
 ```
 
+- **No-X option:** `--headless` (Vulkan, above) needs no X server at all — prefer
+  it on bare hosts. Use `xvfb-run` for the **OpenGL** backend or when you need the
+  windowed (swapchain) Vulkan path.
 - Use a **24-bit** screen depth (`x24`); the `xvfb-run` default (8-bit) can't
   give GL/Vulkan a usable visual.
 - The screenshot PPM is the **3D viewport** at the (clamped) window size — pass a
