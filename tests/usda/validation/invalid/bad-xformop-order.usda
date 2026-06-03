@@ -1,0 +1,14 @@
+#usda 1.0
+# EXPECT: core.xformOp.order
+(
+    doc = "xformOpOrder references an op that is not authored. Expect ERROR core.xformOp.order."
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    float3 xformOp:scale = (1, 1, 1)
+    # References `xformOp:translate`, which is not authored on this prim and the
+    # prim has no composition arc, so this is a local error.
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}

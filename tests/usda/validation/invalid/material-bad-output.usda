@@ -1,0 +1,15 @@
+#usda 1.0
+# EXPECT: shade.material.outputConnection
+# EXPECT: shade.connection.target
+
+def Material "mat"
+{
+    token outputs:surface = "notAConnection"
+
+    def Mesh "notShader"
+    {
+        token outputs:surface
+    }
+
+    token outputs:volume.connect = </mat/notShader.outputs:surface>
+}

@@ -1,0 +1,17 @@
+#usda 1.0
+# EXPECT: geom.encapsulation.nestedGprim
+(
+    doc = "A Gprim nested under another Gprim. Expect WARN geom.encapsulation.nestedGprim (geom group)."
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Mesh "outer"
+    {
+        def Cube "inner"
+        {
+            double size = 1
+        }
+    }
+}

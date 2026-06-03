@@ -9,9 +9,9 @@ TinyUSDZ supports the full USD lighting schema (UsdLux) including parsing, recon
 | `src/usdLux.hh` | Light prim structs, API schemas, enums |
 | `src/usdLux.cc` | Utility functions, enum conversion, light computation helpers |
 | `src/prim-property-tables.hh` | Property table macros for light attribute binding |
-| `src/prim-reconstruct.cc` | Deserialization of light prims from USD |
+| `src/prim-reconstruct-lightprim.cc` | Deserialization of light prims from USD |
 | `src/tydra/render-data.hh` | `RenderLight` struct for rendering pipelines |
-| `src/tydra/render-data.cc` | `ConvertXxxLight()` functions (Tydra conversion) |
+| `src/tydra/render-light-converter.cc` | `Convert*Light()` functions (Tydra conversion) |
 
 ---
 
@@ -85,11 +85,14 @@ Applied to all light types.
 
 ### MeshLightAPI / VolumeLightAPI
 
-Applied to Mesh/Volume prims to make them emit light. Fields: `materialSyncMode` (enum: NoMaterialSync, MaterialSyncDefault).
+Applied to Mesh/Volume prims to make them emit light. Field: `light:materialSyncMode` (token, default `"materialGlowTintsLight"`).
 
 ---
 
 ## DomeLight Texture Formats
+
+`DomeLight::TextureFormat` (and `DomeLight_1::TextureFormat`) in `src/usdLux.hh`;
+Tydra mirrors this as `RenderLight::DomeTextureFormat`:
 
 ```cpp
 enum class TextureFormat {
@@ -143,7 +146,7 @@ struct RenderLight {
   Type type;
 
   // LightAPI
-  value::float3 color;
+  vec3 color;
   float intensity, exposure;
   float diffuse, specular;
   bool normalize;
@@ -151,9 +154,9 @@ struct RenderLight {
   float colorTemperature;
 
   // Transform
-  value::matrix4f transform;   // world transform
-  value::float3 position;      // world position
-  value::float3 direction;     // light direction (-Z in local space)
+  mat4 transform;              // world transform
+  vec3 position;               // world position
+  vec3 direction;              // light direction (-Z in local space)
 
   // Type-specific
   float radius;                // Sphere/Disk
@@ -161,21 +164,21 @@ struct RenderLight {
   float length;                // Cylinder
   float angle;                 // Distant (degrees)
   std::string textureFile;     // Dome/Rect texture path
-  DomeLight::TextureFormat domeTextureFormat;
+  DomeTextureFormat domeTextureFormat;  // embedded enum
   float guideRadius;           // Dome visualization
   int32_t envmap_texture_id;   // Index into RenderScene textures (-1 = none)
 
   // ShapingAPI
   float shapingConeAngle, shapingConeSoftness;
   float shapingFocus;
-  value::float3 shapingFocusTint;
+  vec3 shapingFocusTint;
   std::string shapingIesFile;
   float shapingIesAngleScale;
   bool shapingIesNormalize;
 
   // ShadowAPI
   bool shadowEnable;
-  value::float3 shadowColor;
+  vec3 shadowColor;
   float shadowDistance, shadowFalloff, shadowFalloffGamma;
 
   // GeometryLight
@@ -189,7 +192,8 @@ struct RenderLight {
 
 ### Conversion Functions
 
-Each light type has a dedicated converter in `RenderSceneConverter`:
+Each light type has a dedicated `RenderSceneConverter` method (declared in
+`src/tydra/render-data-converter.hh`, defined in `src/tydra/render-light-converter.cc`):
 
 ```cpp
 bool ConvertSphereLight(env, abs_path, light, rlight_out);
@@ -223,7 +227,7 @@ World transformation is extracted from the Tydra scene graph's `global_matrix`:
 
 ## Reconstruction (USD Parsing)
 
-Light prims are reconstructed in `src/prim-reconstruct.cc` via `ReconstructPrim<T>` template specializations. Each light type uses property table macros from `src/prim-property-tables.hh` to bind USD attributes to C++ struct fields.
+Light prims are reconstructed in `src/prim-reconstruct-lightprim.cc` via `ReconstructPrim<T>` template specializations. Each light type uses property table macros from `src/prim-property-tables.hh` to bind USD attributes to C++ struct fields.
 
 Property tables are organized as:
 - `LIGHT_COMMON_ATTRS` - color, intensity, exposure, diffuse, specular, normalize, color temperature

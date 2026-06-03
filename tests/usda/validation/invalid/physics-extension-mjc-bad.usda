@@ -1,0 +1,25 @@
+#usda 1.0
+# EXPECT: physics.extension.mjc.token
+# EXPECT: physics.extension.mjc.range
+# EXPECT: physics.extension.mjc.array
+# EXPECT: physics.extension.mjc.relationship
+(
+    doc = "MuJoCo physics extension validation for tokens, ranges, arrays, and relationships."
+)
+
+def MjcActuator "act"
+{
+    token mjc:ctrlLimited = "maybe"
+    double mjc:ctrlRange:min = 2
+    double mjc:ctrlRange:max = 1
+    double[] mjc:gear = [1, 2, 3]
+    double[] mjc:solref = [1]
+    rel mjc:target = </act>
+}
+
+def MjcTendon "tendon"
+{
+    token mjc:type = "rope"
+    double mjc:width = -1
+    double[] mjc:solimp = [1, 2, 3]
+}

@@ -1,0 +1,25 @@
+#usda 1.0
+# EXPECT: physics.extension.newton.range
+# EXPECT: physics.extension.newton.asset
+# EXPECT: physics.extension.newton.lookup
+# EXPECT: physics.extension.newton.relationship
+# EXPECT: physics.extension.newton.token
+(
+    doc = "Newton physics extension validation for ranges, assets, lookup tables, relationships, and tokens."
+)
+
+def NewtonActuator "act"
+{
+    int newton:delaySteps = 0
+    float newton:kp = -1
+    asset newton:modelPath = @@
+    float[] newton:lookupPositions = [0, 0]
+    float[] newton:lookupEfforts = [1]
+    rel newton:targets = </act>
+}
+
+def PhysicsScene "scene"
+{
+    token newton:kamino:padmm:warmstarting = "hot"
+    float newton:xpbd:softBodyRelaxation = 2
+}

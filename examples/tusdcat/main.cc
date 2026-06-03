@@ -411,7 +411,9 @@ void print_help() {
   std::cout << "  --strict-mtlx-check Enable strict MaterialX validation\n";
   std::cout << "                      (validates info:id, index bounds, etc.)\n";
   std::cout << "  --validate         Validate against AOUSD Core semantic rules\n";
-  std::cout << "                      (core schemas/metadata only; no file-format checks)\n";
+  std::cout << "                      (core schemas/metadata; binary inputs add Crate/USDZ checks)\n";
+  std::cout << "  --validate-all     Validate with all rule groups (core + geom + shade + lux + physics + crate)\n";
+  std::cout << "                      (adds geom/shade/lux/physics/crate checks; warning-heavy)\n";
   std::cout << "\n";
   std::cout << "Composition graph dump options:\n";
   std::cout << "  --dump-comp-graph[=FMT]  Dump composition graph\n";
@@ -466,6 +468,7 @@ int main(int argc, char **argv) {
   // MaterialX validation
   bool strict_mtlx_check{false};
   bool validate_against_core{false};
+  bool validate_all_groups{false};
 
   // Composition graph dump
   bool do_dump_comp_graph{false};
@@ -539,6 +542,9 @@ int main(int argc, char **argv) {
       strict_mtlx_check = true;
     } else if (arg.compare("--validate") == 0) {
       validate_against_core = true;
+    } else if (arg.compare("--validate-all") == 0) {
+      validate_against_core = true;
+      validate_all_groups = true;
     } else if (tinyusdz::startsWith(arg, "--dump-comp-graph")) {
       do_dump_comp_graph = true;
       std::string rest = arg.substr(strlen("--dump-comp-graph"));
@@ -717,9 +723,14 @@ int main(int argc, char **argv) {
     tinyusdz::USDLoadOptions options;
     options.error_detail = error_detail;
 
-    tinyusdz::Layer layer;
-    const bool ret =
-        tinyusdz::LoadLayerFromFile(filepath, &layer, &warn, &err, options);
+    tinyusdz::ValidationOptions validation_options;
+    if (validate_all_groups) {
+      validation_options = tinyusdz::MakeValidateAllOptions();
+    }
+
+    tinyusdz::USDValidationResult validation;
+    const bool ret = tinyusdz::ValidateUSDFileAgainstAOUSDCore(
+        filepath, validation_options, options, &validation, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN: " << warn << "\n";
     }
@@ -732,8 +743,6 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
 
-    const tinyusdz::USDValidationResult validation =
-        tinyusdz::ValidateLayerAgainstAOUSDCore(layer);
     std::cout << tinyusdz::FormatValidationResult(validation);
     return validation.ok() ? EXIT_SUCCESS : EXIT_FAILURE;
   }

@@ -150,8 +150,8 @@ Example:
 | File | Action |
 |------|--------|
 | **`src/prim-reconstruct-foo.cc`** (new) | `ReconstructPrim<T>` specializations. Must define `PushError`, `PushWarn`, `PUSH_WARN_F` macros. Use `EXPAND_TYPED_ATTR`, `EXPAND_SINGLE_REL`, `ADD_PROPERTY`, `PARSE_PROPERTY_END_MAKE_WARN` in the property loop. |
-| **`src/usda-reader.cc`** | `#include "usdFoo.hh"`. Add 3 things: `RECONSTRUCT_PRIM_DECL(Foo)` (near line 125), `DEFINE_PRIM_TYPE(Foo, kFoo, value::TYPE_ID_FOO)` (near line 626), `RegisterReconstructCallback<Foo>()` (near line 2237). |
-| **`src/usdc-reader-prim.cc`** | `#include "usdFoo.hh"`. Add `INSTANTIATE_RECONSTRUCT_PRIM(Foo)` (near line 158) and `RECONSTRUCT_PRIM(Foo, typeName, prim_name, spec)` dispatch (near line 495). |
+| **`src/usda-reader.cc`** | `#include "usdFoo.hh"`. Add 3 things: a `RECONSTRUCT_PRIM_DECL(Foo)`, a `DEFINE_PRIM_TYPE(Foo, kFoo, value::TYPE_ID_FOO)`, and a `RegisterReconstructCallback<Foo>()` (follow the existing `Physics*` entries). |
+| **`src/usdc-reader-prim.cc`** | `#include "usdFoo.hh"`. Add an `INSTANTIATE_RECONSTRUCT_PRIM(Foo)` and a `RECONSTRUCT_PRIM(Foo, typeName, prim_name, spec)` dispatch entry. |
 
 ### Phase D -- Writer integration
 
@@ -159,22 +159,22 @@ Example:
 |------|--------|
 | **`src/pprint-foo.cc`** (new) | `to_string()` overloads using `PRINT_PRIM_HEADER`/`PRINT_PRIM_FOOTER`, `print_typed_attr()`, `print_rel_prop()`. |
 | **`src/pprinter.hh`** | `#include "usdFoo.hh"`. Add `to_string()` declarations. |
-| **`src/value-pprint.cc`** | Add typed schemas to `CASE_GPRIM_LIST` macro. |
+| **`src/value-pprint-prim.cc`** | `#include "usdFoo.hh"`. Add typed schemas to the `CASE_GPRIM_LIST` macro. |
 | **`src/sconv-foo.cc`** (new) | `CrateWriter::ExtractFooProperties()` using `EXTRACT_TYPED`, `EXTRACT_FALLBACK`, `EXTRACT_TOKEN`, `EXTRACT_REL` macros. |
 | **`src/crate-writer.hh`** | Add `ExtractFooProperties()` method declaration. |
-| **`src/stage-converter.cc`** | Add `else if (type_name == "Foo")` dispatch entry (near line 1010). |
+| **`src/stage-converter.cc`** | Add an `else if (type_name == "Foo")` dispatch entry (alongside the `PhysicsScene` / `SpatialAudio` cases). |
 
 ### Phase E -- Prim infrastructure
 
 | File | Action |
 |------|--------|
-| **`src/prim-types.cc`** | `#include "usdFoo.hh"`. Add `EXTRACT_NAME_AND_RETURN_PATH(Foo)` (near line 897) and `SET_ELEMENT_NAME(elementName, Foo)` (near line 963). |
+| **`src/prim-types-schema.cc`** | `#include "usdFoo.hh"`. Add `EXTRACT_NAME_AND_RETURN_PATH(Foo)` and `SET_ELEMENT_NAME(elementName, Foo)` to the per-type macro lists. |
 
 ### Phase F -- Build system
 
 | File | Action |
 |------|--------|
-| **`CMakeLists.txt`** | Add new `.cc` files: `sconv-foo.cc` (near line 449), `prim-reconstruct-foo.cc` (near line 459), `pprint-foo.cc` (near line 501), `tydra/foo-to-json.cc` (near line 562). |
+| **`CMakeLists.txt`** | Add the new `.cc` files to the source lists, next to their `*-physics.cc` siblings: `sconv-foo.cc`, `prim-reconstruct-foo.cc`, `pprint-foo.cc`, and (if applicable) `tydra/foo-to-json.cc`. |
 
 ### Phase G -- API schema enum (only for new applied API schemas)
 
@@ -205,7 +205,7 @@ tests/usda/foo-basic.usda        # Typed prim with all attributes set
 tests/usda/foo-api-schema.usda   # Host prim with applied API schema (if applicable)
 ```
 
-**Note**: `tests/usda/*.usda` may be gitignored. Use `git add -f` to track new test files.
+**Note**: `.gitignore` ignores `*.usda` globally but re-includes `tests/usda/*.usda` (and `tests/usda/spec/*.usda`) via a negation rule, so fixtures placed directly in those directories are tracked normally. A `.usda` added elsewhere still needs `git add -f`.
 
 ### Test file template
 
@@ -263,7 +263,7 @@ ctest -R unit-test-tinyusdz --output-on-failure       # Unit tests
 | Missing `PUSH_WARN_F` macro | Compile error: "no arguments to 'PUSH_WARN_F' that depend on a template parameter" | Add `#define PUSH_WARN_F(s, ...) PUSH_WARN(fmt::format(s, __VA_ARGS__))` in the reconstruct `.cc` file |
 | Using `value::TimeCode` for timecode attributes | Compile error: "incomplete type `TypeTraits<TimeCode>`" | Use `double` for timecode-valued attributes |
 | Adding TYPE_ID for API schemas | Unnecessary, wastes ID space | Only typed schemas (standalone prims) need TYPE_ID entries |
-| Test file gitignored | `git add` silently skips the file | Use `git add -f tests/usda/foo.usda` |
+| Test file gitignored | `git add` silently skips the file | `tests/usda/*.usda` is re-included by `.gitignore` and tracks normally; a `.usda` placed elsewhere needs `git add -f` |
 
 ---
 

@@ -996,9 +996,15 @@ class USDAReader::Impl {
           << var.type_name() << "`");
         }
         for (const auto &item : pv.value()) {
-          // TODO: Multi-apply schema(instance name)
-          const std::string instanceName = "";
-          auto ret = ApiSchemaHandler(item.str());
+          std::string schemaName = item.str();
+          std::string instanceName;
+          const size_t colonPos = schemaName.find(':');
+          if (colonPos != std::string::npos) {
+            instanceName = schemaName.substr(colonPos + 1);
+            schemaName = schemaName.substr(0, colonPos);
+          }
+
+          auto ret = ApiSchemaHandler(schemaName);
           if (ret) {
             const auto entry = std::make_pair(ret.value(), instanceName);
             if (isDelete) {
@@ -1010,7 +1016,7 @@ class USDAReader::Impl {
               apiSchemas.names.push_back(entry);
             }
           } else if (_config.allow_unknown_apiSchema) {
-            const auto entry = std::make_pair(item.str(), instanceName);
+            const auto entry = std::make_pair(schemaName, instanceName);
             if (isDelete) {
               apiSchemas.deletedUnknownSchemas.push_back(entry);
               apiSchemas.unknownSchemas.erase(

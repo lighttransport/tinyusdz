@@ -1,0 +1,15 @@
+#usda 1.0
+# EXPECT: shade.encapsulation.shaderParent
+(
+    doc = "A Shader parented by an Xform instead of a Material/NodeGraph. Expect WARN shade.encapsulation.shaderParent (shade group)."
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Shader "shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        token outputs:surface
+    }
+}

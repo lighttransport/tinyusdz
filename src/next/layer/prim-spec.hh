@@ -346,6 +346,9 @@ public:
   /// Get relationship targets
   const std::vector<Path>* relationship(const std::string& name) const;
 
+  /// Get all relationship names
+  std::vector<std::string> relationship_names() const;
+
   // ============================================================
   // Children (stored as indices into Layer's prim array)
   // ============================================================

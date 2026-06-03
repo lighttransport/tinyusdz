@@ -151,6 +151,11 @@ const std::vector<Path>* UsdPrim::GetRelationship(const std::string& name) const
   return spec_->relationship(name);
 }
 
+std::vector<std::string> UsdPrim::GetRelationshipNames() const {
+  if (!spec_) return {};
+  return spec_->relationship_names();
+}
+
 UsdPrim UsdPrim::GetParent() const {
   if (!spec_ || !layer_) return UsdPrim();
 

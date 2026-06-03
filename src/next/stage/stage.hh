@@ -95,6 +95,9 @@ public:
   /// Get relationship targets
   const std::vector<Path>* GetRelationship(const std::string& name) const;
 
+  /// Get all relationship names
+  std::vector<std::string> GetRelationshipNames() const;
+
   // ============================================================
   // Hierarchy
   // ============================================================

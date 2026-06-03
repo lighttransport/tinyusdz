@@ -39,6 +39,7 @@ export function buildSkeletonDataFromUSD(usdScene, options = {}) {
       skeletonDataArray.push({
         skelId,
         bones: skelBones,
+        boneInverses: skeletonData.boneInverses,
         rootBone: skelRootBone,
         skeletonAbsPath: skelAbsPath,
         boneMap: skelBoneMap
@@ -141,4 +142,3 @@ export function buildSkeletonDataFromUSD(usdScene, options = {}) {
     fallbackSkeletonCreated
   };
 }
-

@@ -6,9 +6,9 @@ Version-bump, tagging, and publish procedure for TinyUSDZ.
 
 | Component | File | How version is set |
 |---|---|---|
-| C++ library (compile-time constants) | `src/tinyusdz.hh` lines 50–53 | Hand-edit |
-| Python wheel (`tinyusdz` on PyPI) | derived from git tag via `setuptools_scm` (config in `pyproject.toml` line 52–53; written to `python/tinyusdz/_version.py` at build time) | Automatic from tag |
-| NPM package (`tinyusdz` on npmjs.org) | `web/npm/package.json` line 4 (source-of-truth) and `web/js/package.json` line 4 | Hand-edit; workflow can override via `--release-version=` |
+| C++ library (compile-time constants) | `src/tinyusdz.hh` (the `version_major/minor/micro/rev` constants near line 51) | Hand-edit |
+| Python wheel (`tinyusdz` on PyPI) | derived from git tag via `setuptools_scm` (config in `pyproject.toml` `[tool.setuptools_scm]`; written to `python/tinyusdz/_version.py` at build time) | Automatic from tag |
+| NPM package (`tinyusdz` on npmjs.org) | `web/npm/package.json` `"version"` (source-of-truth) and `web/js/package.json` `"version"` | Hand-edit; workflow can override via `release_version` input |
 
 There is no `CHANGELOG.md` / release-notes file in the repo. GitHub Release notes are written on the GitHub UI when cutting the release.
 
@@ -23,8 +23,8 @@ Edit `src/tinyusdz.hh`:
 ```cpp
 constexpr int version_major = 0;
 constexpr int version_minor = 9;
-constexpr int version_micro = 2;    // bump
-constexpr auto version_rev = "";    // e.g. "rc.1" for pre-releases
+constexpr int version_micro = 9;    // bump
+constexpr auto version_rev = "rc6"; // e.g. "rc1" for pre-releases, "" for stable
 ```
 
 These are the only C++ version constants; `CMakeLists.txt` does not hardcode a version.

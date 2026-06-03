@@ -1,0 +1,17 @@
+#usda 1.0
+(
+    doc = "Shader parented by an Xform instead of a Material/NodeGraph. TinyUSDZ: shade.encapsulation.shaderParent. OpenUSD usdchecker: usdShade EncapsulationRulesValidator."
+    defaultPrim = "World"
+    upAxis = "Y"
+    metersPerUnit = 0.01
+)
+
+def Xform "World"
+{
+    def Shader "shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.18, 0.18, 0.18)
+        token outputs:surface
+    }
+}

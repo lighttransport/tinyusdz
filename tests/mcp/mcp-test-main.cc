@@ -25,5 +25,11 @@ TEST_LIST = {
   { "mcp_schema_get_type", mcp_schema_get_type_test },
   { "mcp_search", mcp_search_test },
 
+  // Validation
+  { "mcp_validate_data", mcp_validate_data_test },
+  { "mcp_validate_groups", mcp_validate_groups_test },
+  { "mcp_validate_session_stage", mcp_validate_session_stage_test },
+  { "mcp_validate_no_input", mcp_validate_no_input_test },
+
   { NULL, NULL }
 };
