@@ -11,6 +11,7 @@
 #include "tiny-format.hh"
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
+#include <memory>
 #include <mutex>
 #endif
 
@@ -237,6 +238,14 @@ struct LayerImpl {
   mutable std::map<std::string, const PrimSpec *> _primspec_path_cache;
   mutable bool _dirty{true};
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Guards the lookup cache above so the `const` find_primspec_at() is safe
+  // under concurrent readers (e.g. pcp::Cache parallel builds share a Layer).
+  // shared_ptr keeps LayerImpl implicitly copyable/movable; the immutable
+  // PrimSpec tree (_prim_specs) is read lock-free during the lookup.
+  std::shared_ptr<std::mutex> _cache_mu{std::make_shared<std::mutex>()};
+#endif
+
   // Cached flags for composition.
   // true by default even PrimSpec tree does not contain any `references`, `payload`, etc.
   mutable bool _has_unresolved_references{true};
@@ -459,6 +468,13 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
     PUSH_ERROR_AND_RETURN(fmt::format("Path is not absolute path: {}", path.full_path_name()));
   }
 
+  // Cache read/write is guarded so this `const` method is safe under
+  // concurrent readers (the PrimSpec tree itself is immutable during the
+  // lookup, so the tree walk below runs lock-free). Lock is a no-op build
+  // when threads are disabled.
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::unique_lock<std::mutex> cache_lock(*_impl->_cache_mu);
+#endif
   if (_impl->_dirty) {
     DCOUT("clear cache.");
     // Clear cache.
@@ -474,6 +490,9 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
       return true;
     }
   }
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  cache_lock.unlock();  // release during the (lock-free) tree walk
+#endif
 
   // Direct path-based lookup (iterative, no string allocation)
   for (const auto &parent : _impl->_prim_specs) {
@@ -482,6 +501,9 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
 
       // Add to cache.
       // Assume pointer address does not change unless dirty state changes.
+#if defined(TINYUSDZ_ENABLE_THREAD)
+      cache_lock.lock();
+#endif
       _impl->_primspec_path_cache[path.prim_part()] = pv.value();
       return true;
     }
