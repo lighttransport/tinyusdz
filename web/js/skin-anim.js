@@ -493,6 +493,20 @@ function updateJointSpheres() {
 	});
 }
 
+function applySkeletonHelperOptions() {
+	for (const helper of skeletonHelpers) {
+		if (helper && typeof helper.setDisplayOptions === 'function') {
+			helper.setDisplayOptions({
+				mode: animationParams.skeletonDisplayMode,
+				showTips: animationParams.showSkeletonTips,
+				capTips: animationParams.capSkeletonTips,
+				tipMaxLength: animationParams.skeletonTipMaxLength
+			});
+		}
+		helper.visible = animationParams.showSkeleton;
+	}
+}
+
 /**
  * Update shadow camera frustum based on scene bounding box
  * @param {THREE.DirectionalLight} light - Directional light with shadow
@@ -1158,6 +1172,10 @@ async function processUSDScene(usd_scene, filename) {
 		usdScene: usd_scene,
 		showMesh: animationParams.showMesh,
 		showSkeleton: animationParams.showSkeleton,
+		skeletonDisplayMode: animationParams.skeletonDisplayMode,
+		showSkeletonTips: animationParams.showSkeletonTips,
+		capSkeletonTips: animationParams.capSkeletonTips,
+		skeletonTipMaxLength: animationParams.skeletonTipMaxLength,
 		useWASMBoneTexture: animationParams.useWASMBoneTexture,
 		logger: console
 	});
@@ -1641,10 +1659,23 @@ animationParams = {
 
 	showSkeleton: false,
 	toggleSkeleton: function() {
-		// Update all skeleton helpers
-		for (const helper of skeletonHelpers) {
-			helper.visible = this.showSkeleton;
-		}
+		applySkeletonHelperOptions();
+	},
+	skeletonDisplayMode: 'full',
+	updateSkeletonDisplay: function() {
+		applySkeletonHelperOptions();
+	},
+	showSkeletonTips: true,
+	toggleSkeletonTips: function() {
+		applySkeletonHelperOptions();
+	},
+	capSkeletonTips: false,
+	toggleSkeletonTipCap: function() {
+		applySkeletonHelperOptions();
+	},
+	skeletonTipMaxLength: 120,
+	updateSkeletonTipMaxLength: function() {
+		applySkeletonHelperOptions();
 	},
 
 	// Camera controls
@@ -1982,6 +2013,21 @@ visualFolder.add(animationParams, 'showMesh')
 visualFolder.add(animationParams, 'showSkeleton')
 	.name('Show Skeleton')
 	.onChange(() => animationParams.toggleSkeleton());
+visualFolder.add(animationParams, 'skeletonDisplayMode', {
+	Full: 'full',
+	'Deforming Only': 'deforming'
+})
+	.name('Skeleton Mode')
+	.onChange(() => animationParams.updateSkeletonDisplay());
+visualFolder.add(animationParams, 'showSkeletonTips')
+	.name('Show Tip Bones')
+	.onChange(() => animationParams.toggleSkeletonTips());
+visualFolder.add(animationParams, 'capSkeletonTips')
+	.name('Cap Tip Bones')
+	.onChange(() => animationParams.toggleSkeletonTipCap());
+visualFolder.add(animationParams, 'skeletonTipMaxLength', 1, 1000, 1)
+	.name('Tip Max Length')
+	.onChange(() => animationParams.updateSkeletonTipMaxLength());
 visualFolder.add(animationParams, 'enableShadows')
 	.name('Enable Shadows')
 	.onChange(() => animationParams.toggleShadows());

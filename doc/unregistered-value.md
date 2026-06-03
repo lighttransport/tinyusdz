@@ -197,25 +197,25 @@ Note: quoted strings in the original USDA are stored with quotes as part of the 
 
 ### Key Types
 
-**CustomDataType / Dictionary** (`src/core/meta-variable.hh:23-28`):
+**CustomDataType / Dictionary** (`src/core/meta-variable.hh`):
 ```cpp
 class MetaVariable;
 using CustomDataType = std::map<std::string, MetaVariable>;
-using Dictionary = CustomDataType;  // alias
+using Dictionary = CustomDataType;  // alias to CustomDataType
 ```
 
-**MetaVariable** (`src/core/meta-variable.hh:54-145`):
-- Wraps a `value::Value` object
-- Supports a limited set of types for metadata (security-focused design)
-- No 'custom' keyword, no TimeSamples, no Connections, no Relationships
+**MetaVariable** (`src/core/meta-variable.hh`, `class MetaVariable`):
+- Wraps a `value::Value` object (the accepted value-type set is broad — see "Supported types" below)
+- Hardened for metadata: no `custom` keyword, no TimeSamples, no Connections, no Relationships; the value must be assigned
+- Can be a string-only entry (then the name is interpreted as a comment)
 - Can contain nested dictionaries
 
-**any_value** (`src/value-types.hh:1837-1856`):
+**any_value** (`src/value-types.hh`, `class any_value`):
 - Purpose-built type-erased container (replaced linb::any)
 - 48-byte Small Buffer Optimization (SBO)
 - Direct `type_id`/`underlying_type_id` members
 
-**Crate Type IDs** (`src/crate-format.hh:108-109`):
+**Crate Type IDs** (`src/crate-format.hh`):
 ```
 CRATE_DATA_TYPE_UNREGISTERED_VALUE = 53
 CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP = 54
@@ -223,7 +223,7 @@ CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP = 54
 
 ### Dictionary Parsing (USDA)
 
-The ASCII parser handles dictionaries in `ParseDictElement()` (`src/ascii-parser.cc:1278-1440`).
+The ASCII parser handles dictionaries in `AsciiParser::ParseDictElement()` (`src/ascii-parser.cc`).
 
 Each dictionary entry must have an **explicit type declaration**:
 ```usda
@@ -237,32 +237,36 @@ customData = {
 }
 ```
 
-Supported types (via `APPLY_TO_METAVARIABLE_TYPE` macro at `src/ascii-parser.cc:1386`):
-- `bool`, `int`, `uint`, `float`, `double`, `timecode`, `token`, `asset`, `string`
+Supported types (the `APPLY_TO_METAVARIABLE_TYPE` macro in `src/ascii-parser.cc`, plus a few extra cases in the `ParseDictElement` switch):
+- Scalars: `bool`, `token`, `int`/`uint`, `int64`/`uint64`, `half`, `float`, `double`, `string`, `asset`
+- Vector/role types: `half2-4`, `int2-4`, `uint2-4`, `float2-4`, `double2-4`, `normal3{h,f,d}`, `vector3{h,f,d}`, `point3{h,f,d}`, `color3{f,d}`/`color4{f,d}`, `texcoord2/3{h,f,d}`
+- Matrices `matrix2-4{f,d}`, quaternions `quat{h,f,d}`
 - Arrays of the above (with `[]` suffix)
-- Nested `dictionary`
+- Nested `dictionary` (depth limited to 64)
+
+(`timecode` is *not* among the accepted dict element types.)
 
 ### Crate Reader: Unregistered Values
 
-(`src/crate-reader.cc:5330-5422`)
+(`src/crate-reader-values.cc`, `CRATE_DATA_TYPE_UNREGISTERED_VALUE` case)
 
 The crate reader handles unregistered values based on the inner value type:
-1. **STRING** (lines 5369-5397): Stores as string in the value
-2. **DICTIONARY** (lines 5398-5416): Calls `ReadCustomData()` to deserialize into `CustomDataType`
+1. **STRING**: Stores as string in the value
+2. **DICTIONARY**: Calls `CrateReader::ReadCustomData()` to deserialize into `CustomDataType`
 
 ```
-// Line 5368 comment:
-// "Should be STRING or DICTIONARY for UNREGISTERED_VALUE"
+// Source comment:
+// "Should be STRING or DICTIONARY for UNREGISTERED_VALUE."
 ```
 
 ### Numeric Parsing
 
-TinyUSDZ parses numbers in the ASCII parser (`src/ascii-parser-basetype.cc:110-186`):
-- `parseInt()` (lines 110-160): Integer parsing with overflow checks
-- `ParseFloat()` (lines 162-173): Uses `fast_float::from_chars()`
-- `ParseDouble()` (lines 175-186): Uses `fast_float::from_chars()`
+TinyUSDZ parses numbers in `src/ascii-parser-basetype-impl.inc`:
+- `parseInt()`: Integer parsing with overflow checks
+- `ParseFloat()`: Uses `fast_float::from_chars()`
+- `ParseDouble()`: Uses `fast_float::from_chars()`
 
-Float detection (`src/ascii-parser.cc:3500-3588`):
+Float detection (`src/ascii-parser.cc`, the token-reading number path):
 - Contains `.` → float/double
 - Contains `e` or `E` → float/double (exponential notation)
 
@@ -270,12 +274,11 @@ Float detection (`src/ascii-parser.cc:3500-3588`):
 
 ### Writers
 
-**USDA Writer** (`src/usda-writer.cc`):
+**USDA Writer** (`print_customData()` in `src/pprint-meta.cc`):
 - Writes customData from the `CustomDataType` map with type annotations preserved
 
-**Crate Writer** (`src/crate-writer.cc:1825-1979`):
-- Serializes `CustomDataType` with full type dispatch
-- Value packing at lines 1858-1925
+**Crate Writer** (`src/crate-writer.cc` + `src/crate-writer-values.cc`):
+- Serializes `CustomDataType` like a dictionary, with per-entry `value::Value` type dispatch (value packing in `crate-writer-values.cc`)
 
 ---
 
@@ -287,11 +290,11 @@ Float detection (`src/ascii-parser.cc:3500-3588`):
 | **Dictionary values** | Fully typed via `VtDictionary` | Fully typed via `CustomDataType` (map of MetaVariable) |
 | **Type inference for unreg. fields** | None (string recording) | None (explicit type required) |
 | **Parser numeric variant** | `variant<uint64_t, int64_t, double, ...>` | Separate `parseInt`/`ParseFloat`/`ParseDouble` functions |
-| **Integer width in parser** | 64-bit (`int64_t`/`uint64_t`) | 32-bit (`int`/`uint`) for dict entries, 64-bit for `int64`/`uint64` |
-| **Dict sub-value types** | Broad (most USD types) | Limited set (bool, int, uint, float, double, timecode, token, asset, string) |
+| **Integer width in parser** | 64-bit (`int64_t`/`uint64_t`) | Per declared dict type: 32-bit (`int`/`uint`) or 64-bit (`int64`/`uint64`) |
+| **Dict sub-value types** | Broad (most USD types) | Broad (numeric, vector, matrix, quat, role types; nested dict) — see list above; no `timecode` |
 | **Type erasure** | `VtValue` (boost/std any) | `any_value` (48-byte SBO, purpose-built) |
 | **Crate type ID** | 53 (UnregisteredValue) | 53 (same) |
-| **Security model** | General purpose | Restricted type set reduces attack surface |
+| **Security model** | General purpose | `MetaVariable` disallows TimeSamples / Connections / Relationships / `custom`; value must be assigned |
 
 ### Key Takeaways
 
@@ -301,4 +304,4 @@ Float detection (`src/ascii-parser.cc:3500-3588`):
 
 3. **OpenUSD's numeric inference (int64/uint64/double)** only applies to registered fields during lexing. The 32-bit narrowing happens later via `GfNumericCast` based on the schema type.
 
-4. **TinyUSDZ's limited type set** for dictionaries is a deliberate security choice, not a limitation to fix.
+4. **TinyUSDZ's `MetaVariable` constraints** (no TimeSamples/Connections/Relationships, no `custom`, value-must-be-assigned) are a deliberate hardening choice for metadata, not a limitation to fix. The accepted *value* types for dictionary entries are broad.

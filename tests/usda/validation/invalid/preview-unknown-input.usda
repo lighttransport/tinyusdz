@@ -1,0 +1,22 @@
+#usda 1.0
+# EXPECT: shade.preview.unknownInput
+(
+    doc = "UsdPreviewSurface with an unknown/misspelled input. Expect WARN shade.preview.unknownInput (shade group)."
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Material "mat"
+    {
+        token outputs:surface.connect = </World/mat/surface.outputs:surface>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            # Misspelled `roughness`.
+            float inputs:rooughness = 0.5
+            token outputs:surface
+        }
+    }
+}

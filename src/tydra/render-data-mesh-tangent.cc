@@ -465,26 +465,48 @@ bool ComputeTangentsAndBinormals(
         return true;
       };
 
+      // Per-position buckets as intrusive singly-linked lists over a single
+      // flat arena. This replaces `vector<vector<BucketEntry>>` (which made
+      // `numPoints` heap allocations plus per-bucket reallocations) with a few
+      // flat allocations: `head`/`tail` (one slot per position) and `arena`
+      // (one entry per unique vertex).
+      static constexpr uint32_t kNoEntry = ~0u;
       struct BucketEntry {
         uint32_t fv_index;
         uint32_t out_vertex_id;
+        uint32_t next;  // arena index of next entry at this position, or kNoEntry
       };
 
-      std::vector<std::vector<BucketEntry>> buckets(numPoints);
+      std::vector<uint32_t> head(numPoints, kNoEntry);
+      std::vector<uint32_t> tail(numPoints, kNoEntry);
+      std::vector<BucketEntry> arena;
+      arena.reserve(numPoints);  // typical meshes dedup to ~numPoints vertices
 
       for (size_t i = 0; i < faceVertexIndices.size(); i++) {
         uint32_t pid = faceVertexIndices[i];
-        auto &bucket = buckets[pid];
-        uint32_t matched_id = ~0u;
-        for (const auto &entry : bucket) {
-          if (attribs_match(i, entry.fv_index)) {
-            matched_id = entry.out_vertex_id;
+        uint32_t matched_id = kNoEntry;
+        // Traverse oldest-to-newest (insertion order). With a tolerant
+        // attribs_match (dedup_eps > 0) the match relation is not transitive,
+        // so a query can match more than one entry; preserving insertion-order
+        // traversal makes the first match identical to the previous
+        // vector<vector> + push_back code, keeping vertex_indices[]
+        // byte-identical.
+        for (uint32_t e = head[pid]; e != kNoEntry; e = arena[e].next) {
+          if (attribs_match(i, arena[e].fv_index)) {
+            matched_id = arena[e].out_vertex_id;
             break;
           }
         }
-        if (matched_id == ~0u) {
+        if (matched_id == kNoEntry) {
           matched_id = next_vertex_id++;
-          bucket.push_back({uint32_t(i), matched_id});
+          const uint32_t idx = uint32_t(arena.size());
+          arena.push_back({uint32_t(i), matched_id, kNoEntry});
+          if (head[pid] == kNoEntry) {
+            head[pid] = idx;
+          } else {
+            arena[tail[pid]].next = idx;
+          }
+          tail[pid] = idx;
         }
         vertex_indices[i] = matched_id;
       }

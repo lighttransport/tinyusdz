@@ -29,6 +29,13 @@ struct PrimReconstructOptions
   // `info:implementationSource` + `info:mdl:sourceAsset`).
   bool strict_shader_check{false};
 
+  // When true, a shader property(input/output) whose authored Sdf type does
+  // not match the canonical schema type(from `info:id` / UsdPreviewSurface
+  // spec) is a parse error. When false(default), it is accepted with a
+  // warning: the canonical schema type is kept for connection/render
+  // semantics(matching OpenUSD, which does not validate shader output types).
+  bool strict_shader_type_check{false};
+
   // MaterialX validation options
   bool validate_mtlx_connection_types{false};
   bool validate_mtlx_info_id{false};

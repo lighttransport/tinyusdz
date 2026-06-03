@@ -74,7 +74,10 @@ localSkinnedPoint = skelSkinnedPoint * skelLocalToWorld * inv(gprimLocalToWorld)
 
 ## Dual Quaternion Skinning (DQS)
 
-Supported via `primvars:skel:skinningMethod = "DualQuaternion"`. Same pipeline as LBS but uses dual quaternion interpolation (preserves volume better).
+USD selects DQS via `primvars:skel:skinningMethod = "DualQuaternion"` (same
+pipeline as LBS but with dual-quaternion interpolation, which preserves volume
+better). **Not yet implemented in TinyUSDZ**: the skinning utilities below are
+LBS-only and `skinningMethod` is not currently read.
 
 ## Blend Shapes
 
@@ -84,24 +87,40 @@ Applied BEFORE joint skinning: offsets added to input positions, then standard s
 
 ## TinyUSDZ Tydra Data Export
 
-Tydra does NOT compute skinning transforms. It exports raw USD data:
+The RenderScene conversion exports **raw USD skinning data** (it does not bake
+skinned positions); mesh xformOps are kept rather than stripped. Standalone
+skinning utilities are provided separately in `scene-access.hh` — see
+[Skinning Utilities](#skinning-utilities) — but they are not invoked during the
+default export.
 
-**Per-mesh** (`RenderMesh::joint_and_weights`):
-- `geomBindTransform`: matrix4d (as-is from USD, or identity)
-- `jointIndices`: int[] (vertexCount x elementSize)
-- `jointWeights`: float[] (vertexCount x elementSize)
-- `elementSize`: influences per vertex
-- `skel_id`: index into `RenderScene::skeletons`
+**Per-mesh**: `RenderMesh::joint_and_weights` (a `JointAndWeight`) holds
+`geomBindTransform` (matrix4d, as-is or identity), `jointIndices` (int[],
+vertexCount x elementSize), `jointWeights` (float[], same layout, **not
+normalized**), and `elementSize` (influences per vertex). `RenderMesh::skel_id`
+indexes `RenderScene::skeletons`.
 
-**Per-skeleton** (`SkelHierarchy` -> `SkelNode` tree):
+**Per-skeleton** (`SkelHierarchy` -> `SkelNode` tree, plus flat
+`bind_transforms`/`rest_transforms`/`parent_joint_indices` arrays):
 - `bind_transform`: world-space bind pose
 - `rest_transform`: joint-local rest pose
 - `joint_id`: index in skeleton's joints array
 
-**Animation** (`AnimationClip`):
-- Per-joint TRS channels with samplers (time/value arrays)
+**Animation** (`AnimationClip`): per-joint TRS channels with samplers
+(time/value arrays).
 
-Tydra does **not** strip mesh xformOps for skinned prims.
+## Skinning Utilities
+
+`scene-access.hh` provides standalone helpers ported from OpenUSD's
+`UsdSkelUtils` (callers run them on the exported raw data):
+
+- `SkinPointsLBS` / `SkinNormalsLBS` — linear blend skinning of points/normals
+  (normals via inverse-transpose). **LBS only; no DQS.**
+- `ConcatJointTransforms` / `ComputeJointLocalTransforms` — convert between
+  local and world joint transforms given topology.
+- `SkelMakeTransform` — compose joint-local TRS (Scale-Rotate-Translate).
+- `ComputeJointsExtent` / `ComputeSkinnedExtentPadding` /
+  `ComputeSkinnedMeshExtent` — fast pivot-based skinned bounds.
+- `ExpandConstantInfluencesToVarying` — expand constant influences to per-vertex.
 
 ---
 

@@ -1,4 +1,8 @@
-# Composition in USD: OpenUSD PCP vs tinyusdz
+# Composition in USD: LIVRPS, Instancing, and Variants
+
+How tinyusdz composes a USD scene — LIVRPS arc ordering (compared against
+OpenUSD PCP), instancing, and variants. For the DAG-engine API, see
+[pcp.md](pcp.md).
 
 ## Overview
 
@@ -10,13 +14,18 @@ that all conforming implementations must follow.
 
 This document compares two implementations:
 
-1. **OpenUSD PCP** (Prim Composition Protocol) — the reference implementation,
+1. **OpenUSD PCP** (Prim Cache Population) — the reference implementation,
    a recursive DAG-based algorithm that preserves full opinion provenance.
 2. **tinyusdz** — a progressive, iterative layer-flattening approach designed
    for minimal memory, zero dependencies, and security-focused parsing.
 
 The goal is to analyze whether tinyusdz's approach correctly satisfies LIVRPS
 ordering, document known limitations, and identify areas for future work.
+
+This document covers the conceptual model plus **Instancing** and **Variants**.
+tinyusdz also ships a parallel **DAG-based** engine that mirrors OpenUSD's PCP
+design (`src/composition-graph.{hh,cc}`); its detailed API reference lives in
+[pcp.md](pcp.md).
 
 ---
 
@@ -47,91 +56,25 @@ namespace by renaming prims after composition arcs are resolved (AOUSD Core Spec
 
 ---
 
-## OpenUSD's PCP (Prim Composition Protocol)
+## OpenUSD's PCP (Prim Cache Population)
 
-### DAG-Based Composition Graph
+OpenUSD's reference composition engine is **PCP** — *Prim Cache Population*. For
+each prim it builds a **PcpPrimIndex**: a directed acyclic graph of `PcpNodeRef`
+nodes (one per opinion source), constructed by a priority-ordered task queue
+(`Pcp_BuildPrimIndex` in `pxr/usd/pcp/primIndex.cpp`). The DAG preserves full
+opinion provenance, propagates implied class arcs, makes specializes globally
+weak by propagating them to the graph root, and supports cycle detection, node
+culling, lazy payloads, and incremental change tracking.
 
-PCP builds a **PcpPrimIndex** for each prim — a directed acyclic graph (DAG) of
-`PcpNodeRef` nodes. Each node represents an opinion source with its arc type,
-layer stack site, and namespace mapping. The graph preserves the full provenance
-of every opinion, enabling introspection, debugging, and incremental updates.
+The arc strength order is the `PcpArcType` enum (`pxr/usd/pcp/types.h`): Root,
+Inherit, Variant, **Relocate** (between Variant and Reference), Reference,
+Payload, Specialize — matching the AOUSD LIVERPS ordering.
 
-**Entry point:** `Pcp_BuildPrimIndex()` in `pxr/usd/pcp/primIndex.cpp`
-
-The algorithm uses a **priority-ordered task queue** combined with recursive
-construction via `PcpPrimIndex_StackFrame`. Tasks are enqueued for each arc type
-discovered during a pre-scan (`_ScanArcs()`), and processed in strength order:
-
-```
-EvalNodeRelocations → EvalNodeReferences → EvalNodePayloads
-  → EvalNodeInherits → EvalNodeSpecializes
-```
-
-Variant and dynamic payload evaluation is deferred to maintain correct strength
-ordering within the task queue.
-
-The arc types are defined in the `PcpArcType` enum (`pxr/usd/pcp/types.h`):
-
-```cpp
-enum PcpArcType {
-    PcpArcTypeRoot,
-    PcpArcTypeInherit,     // Strongest
-    PcpArcTypeVariant,
-    PcpArcTypeRelocate,    // Between Variant and Reference
-    PcpArcTypeReference,
-    PcpArcTypePayload,
-    PcpArcTypeSpecialize,  // Weakest
-};
-```
-
-Note that **Relocate sits between Variant and Reference** in the enum ordering,
-giving it a defined strength position in the graph.
-
-### Strength Ordering
-
-`PcpCompareSiblingNodeStrength()` in `strengthOrdering.cpp` determines which of
-two sibling nodes is stronger. The comparison uses multiple criteria in order:
-
-1. **Arc type enum value** — lower values are stronger
-2. **Namespace depth** — deeper opinions are stronger (for non-specializes arcs)
-3. **Origin node strength** — recursively compares origin chains for propagated arcs
-4. **Sibling arc number** — among same-type siblings, lower arc numbers are stronger
-
-Specializes arcs receive special handling: propagated specializes nodes track
-their "origin root distance" (chain length from the authored arc to the
-propagated location), and the comparison considers the namespace depth of the
-class hierarchy that the node belongs to.
-
-For comparing arbitrary (non-sibling) nodes, `PcpCompareNodeStrength()` walks
-up to the lowest common ancestor and compares at the divergence point.
-
-### Key PCP Features
-
-| Feature | Implementation |
-|---------|---------------|
-| Cycle detection | `_CheckForCycle()` — walks ancestor chain and parent stack frames |
-| Specializes propagation | `_PropagateNodeToRoot()` — copies subtree to graph root for globally-weak semantics |
-| Relocate handling | `_EvalNodeRelocations()` — adds relocation arcs, manages "spooky ancestors" (inherited opinions from relocation source) |
-| Deferred evaluation | Variants and dynamic payloads evaluated lazily within the task queue |
-| Node culling | Inert and culled nodes reduce traversal cost without losing dependency tracking |
-| Namespace mapping | `PcpMapExpression` — composable, lazy-evaluated path mapping across arcs |
-| Opinion retention | Full DAG preserves all opinion sources for later value resolution |
-
-### Conceptual PcpPrimIndex DAG
-
-```
-Root (local layer stack)
-├── Inherit → /__class__/Base
-│   └── Reference → asset.usd</Base>
-├── Variant → {modelingVariant=high}
-├── Reference → model.usd</Model>
-│   ├── Inherit → /__class__/ModelBase  (implied)
-│   └── Payload → geo.usd</Geo>
-└── Specialize → /__class__/Defaults  (propagated to root)
-```
-
-Each node carries: arc type, layer stack, prim path, map-to-parent, map-to-root,
-flags (has specs, is inert, is culled), and origin tracking.
+> **The full PCP engine model** — the data model, the task-queue algorithm,
+> implied / globally-weak specializes, namespace mapping, instancing, change
+> tracking, the error taxonomy, the AOUSD §10 spec mapping, and the
+> **PCP ↔ AOUSD ↔ tinyusdz correspondence table** — lives in **[pcp.md](pcp.md)**,
+> which also documents tinyusdz's mirroring DAG engine.
 
 ---
 
@@ -149,20 +92,19 @@ Design goals:
 - **Minimal peak memory** — in-place variants free source data after copying
 - **Zero external dependencies** — no Boost, TBB, or similar
 - **Security-focused** — configurable depth limits, bounds checking, no exceptions
-- **Simplicity** — ~2,700 lines of C++ vs OpenUSD PCP's ~10,000+ lines
+- **Simplicity** — a few thousand lines of C++ vs OpenUSD PCP's ~10,000+ lines
 
 Core files:
-- `src/composition.hh` — public API (427 lines)
-- `src/composition.cc` — implementation (2,035 lines)
-- `src/composition-reconstruct.cc` — PrimSpec-to-Prim conversion (681 lines)
+- `src/composition.hh` — public API
+- `src/composition.cc` — implementation
+- `src/composition-reconstruct.cc` — PrimSpec-to-Prim conversion
 - `src/namespace-mapping.hh` — path remapping utilities
-- `src/core/composition-types.hh` — Reference, Payload, ArcOrigin, LayerOffset
+- `src/core/composition-types.hh` — `Reference`, `Payload`, `ArcOrigin`, `LayerOffset`
 
 ### CompositeAllArcs — The Main Pipeline
 
-`CompositeAllArcs()` (`composition.cc` lines 1942–2033) orchestrates all
-composition arcs in LIVRPS order. Sublayers (L) are composed before this
-function is called.
+`CompositeAllArcs()` orchestrates all composition arcs in LIVRPS order.
+Sublayers (L) are composed before this function is called.
 
 ```
 Input: Layer with sublayers already composed (L done)
@@ -198,7 +140,7 @@ unnecessary work for simple scenes.
 
 All composition arcs ultimately merge PrimSpec trees using one of two operations:
 
-**InheritPrimSpec** (`composition.cc` lines 1593–1678)
+**InheritPrimSpec**
 
 Creates a copy of the source (weaker) PrimSpec, then overlays the destination
 (stronger) PrimSpec's opinions on top. Properties present in `dst` override
@@ -213,7 +155,7 @@ Result.props[p] = dst.props[p] if exists, else keep src.props[p]
 
 Used for: prepend references, prepend payloads, inherits, specializes.
 
-**OverridePrimSpec** (`composition.cc` lines 1520–1588)
+**OverridePrimSpec**
 
 Directly overlays the source (stronger) PrimSpec onto the destination (weaker).
 Source properties replace destination properties.
@@ -236,20 +178,18 @@ Both operations implement AOUSD Core Spec section 12.2 metadata resolution:
 
 ### SubLayer Composition
 
-`CompositeSublayersRec()` (lines 566–650):
+`CompositeSublayersRec()`:
 
 - Processes the root layer first (strongest), then sublayers in declaration order
 - Uses `CombinePrimSpecRec()` for merging (weaker fills in gaps, does not override)
-- **Cycle detection** via `IsVisited()` — tracks visited layer names in a stack of
-  sets (lines 47–55, 597–602)
+- **Cycle detection** via `IsVisited()` — tracks visited layer names in a stack of sets
 - Applies layer offsets to timeSamples per Spec 10.3.1 via `ApplyLayerOffsetRec()`
 - Tags PrimSpecs with arc origins via `TagPrimSpecArcOriginRec()` for implied
   inherit propagation
 
 ### Reference and Payload Composition
 
-`CompositeReferencesRec()` (lines 698–895) and `CompositePayloadRec()` (lines
-897–1075) share the same structure:
+`CompositeReferencesRec()` and `CompositePayloadRec()` share the same structure:
 
 1. **Depth-first traversal** — process children before the current prim
 2. **Asset resolution** — `LoadAsset()` resolves paths using per-PrimSpec
@@ -258,8 +198,11 @@ Both operations implement AOUSD Core Spec section 12.2 metadata resolution:
    inherit-like operations within the same layer
 4. **ListOp handling:**
    - `prepend` / `resetToExplicit` → `InheritPrimSpec()` (weaker fills in)
-   - `append` / `add` → `OverridePrimSpec()` (stronger replaces)
-   - `delete`, `order` → not yet supported (returns error)
+   - `append` / `add` → `OverridePrimSpec()` (stronger replaces); `add` is
+     deprecated and treated as `append` with a warning (Spec 6.6.3.10)
+   - `delete` → pre-pass filters matching arcs out of prepend/append
+   - `order` → warns and skips (would require preserving the prepend/append
+     merge distinction)
 5. **Layer offset** — applied to timeSamples per Spec 10.3.2.2
 6. **Arc origin tracking** — recorded for implied inherit propagation (Spec 10.3.2.3)
 7. **Path prefix replacement** — `ReplaceRootPrimPathRec()` remaps referenced
@@ -267,38 +210,37 @@ Both operations implement AOUSD Core Spec section 12.2 metadata resolution:
 
 ### Inherits Composition
 
-`CompositeInheritsRec()` (lines 1103–1220):
+`CompositeInheritsRec()`:
 
-- Finds the target PrimSpec by absolute path within the same layer
-- Applies `InheritPrimSpec()` — inherited content provides defaults
-- **Implied inherits/specializes** (Spec 10.3.2.3/10.3.2.4): single-level
-  propagation from referenced/payload layers via `inheritPaths`/`specializePaths`
-  (lines 1170–1217). Checks `arc_origins` and `inheritPaths` metadata propagated
-  from referenced layers. If matching class prims exist in the current layer,
-  applies them via `InheritPrimSpec()`.
-- Limitation: only single inherit target per prim (line 1128)
-- Limitation: ListEditQual is ignored — all inherits treated as prepend (line 1148)
+- Resolves all `inherits` ListEditQual ops (prepend, append, delete, order) into
+  a single ordered path list via `ResolveListOps()`, then applies each target in
+  order via `InheritPrimSpec()` — inherited content provides defaults
+- Cycle detection via a visited-path set
+- **Implied inherits** (Spec 10.3.2.3): multi-level propagation from
+  referenced/payload layers via `inheritPaths` metadata (capped at depth 32).
+  After applying an implied inherit, the inherited prim's own `inheritPaths`
+  cascade. If matching class prims exist in the current layer stack, they are
+  applied via `InheritPrimSpec()`.
 
 ### Specializes Composition
 
-`CompositeSpecializesRec()` (lines 1432–1496):
+`CompositeSpecializesRec()`:
 
-- Same structure as inherits composition
+- Same structure as inherits composition (resolves ListEditQual ops, multi-target)
 - Uses `InheritPrimSpecImpl()` — identical property-override semantics
 - Applied last in `CompositeAllArcs()` to ensure globally weaker behavior
-- Limitation: only single specialize target per prim (line 1455)
-- Limitation: ListEditQual is ignored (line 1473)
+- Implied specializes via `specializePaths` metadata (Spec 10.3.2.4)
 
 ### Deferred Variant Evaluation
 
 Implements AOUSD Core Spec 10.3.2.5 in three phases:
 
-1. **Collect** — `CollectVariantSelectionOpinionsRec()` (lines 1734–1747) gathers
-   per-prim `VariantSelectionMap` values from each composition phase (local, I, R, P)
-2. **Resolve** — `ComputeVariantSelections()` (lines 1759–1771) takes the
-   strongest opinion per variant set name (first in the collected vector wins)
-3. **Apply** — `ApplyDeferredVariantSelectionsRec()` (lines 1774–1809) applies
-   resolved selections via `VariantSelectPrimSpec()`
+1. **Collect** — `CollectVariantSelectionOpinions()` gathers per-prim
+   `VariantSelectionMap` values after each composition phase (local, I, R, P)
+2. **Resolve** — `ComputeVariantSelections()` takes the strongest opinion per
+   variant set name (first in the collected vector wins)
+3. **Apply** — `ApplyDeferredVariantSelectionsRec()` applies resolved selections
+   via `VariantSelectPrimSpec()`
 
 This correctly ensures that variant selection can be influenced by opinions from
 references and payloads, not just local opinions.
@@ -371,7 +313,7 @@ data as soon as it has been merged into the target.
 | **Multiple inherit targets** | Fully supported | Fully supported (processed in list order) |
 | **Multiple specialize targets** | Fully supported | Fully supported (processed in list order) |
 | **ListEditQual (inherits/specializes)** | Full support (prepend, append, delete, order) | Full support via ResolveListOpsT (prepend, append, delete, order) |
-| **Implied inherits/specializes** | Multi-level propagation | Single-level propagation via inheritPaths/specializePaths |
+| **Implied inherits/specializes** | Multi-level propagation | Multi-level propagation via inheritPaths/specializePaths (depth-capped) |
 | **Lazy payload evaluation** | Yes (can defer loading) | Yes (via `load_policy` callback in PayloadCompositionOptions) |
 | **Deferred variant selection** | Yes | Yes (Spec 10.3.2.5 compliant) |
 | **Layer offset application** | Yes | Yes (Spec 10.3.1, 10.3.2.2) |
@@ -404,11 +346,11 @@ that local opinions override.
 - ListEditQual is handled: prepend/append use `InheritPrimSpec()`, delete/order
   warn and skip (cannot undo flattened opinions)
 - Cycle detection via visited path set prevents infinite recursion
-- Implied inherits: single-level propagation from referenced/payload layers is
-  implemented. When a referenced prim has `inherits`, those paths are propagated
-  via `inheritPaths` metadata and applied if matching class prims exist in the
-  referencing layer stack. Multi-level propagation (chains of references each
-  carrying inherits) works through the progressive composition model.
+- Implied inherits: multi-level propagation from referenced/payload layers.
+  When a referenced prim has `inherits`, those paths are propagated via
+  `inheritPaths` metadata and applied if matching class prims exist in the
+  referencing layer stack; the inherited prim's own `inheritPaths` cascade
+  (depth-capped at 32).
 
 ### V (Variants): Correct
 
@@ -442,9 +384,9 @@ Specializes are applied last in `CompositeAllArcs()`, which correctly makes them
 globally weaker than all other opinions per Spec 10.4.1.
 
 - Multiple specialize targets supported, ListEditQual handled
-- Implied specializes: single-level propagation from referenced/payload layers
-  via `specializePaths` metadata (Spec 10.3.2.4), applied if matching prims
-  exist in the referencing layer stack
+- Implied specializes: propagation from referenced/payload layers via
+  `specializePaths` metadata (Spec 10.3.2.4), applied if matching prims exist
+  in the referencing layer stack
 - Cycle detection via visited path set
 
 **Caveat:** For complex scenarios with nested arcs, the flattening approach
@@ -498,6 +440,226 @@ do not impact the majority of real-world USD scenes.
 
 ---
 
+## Instancing
+
+Instancing lets multiple prims that share the same composition structure reuse a
+single **prototype** representation. Instead of composing and storing each
+identical subtree independently, the stage composes it once and shares the
+result. The canonical use case is a scene with hundreds of identical assets
+(trees, bolts, chairs) referenced from the same source: without instancing each
+is a full copy in memory; with instancing they all share one prototype.
+
+| Term | Meaning |
+|------|---------|
+| **Instance prim** | A prim with `instanceable = true` *and* at least one composition arc |
+| **Prototype** | The shared composed representation that matching instances point to |
+| **Instance key** | A structural signature (composition arcs + variant selections) determining which instances share a prototype |
+| **Instance proxy** | (OpenUSD concept) A virtual prim at an instance path that transparently redirects to the prototype |
+
+### Spec requirements (AOUSD Core Spec 11.3.3)
+
+A prim becomes an **instance** only when **both** hold:
+
+1. The strongest opinion of `instanceable` is `true`.
+2. The prim has at least one composition arc — a value in `references`,
+   `payload`, `inheritPaths`, `variantSets`, or `specializes`.
+
+A prim with `instanceable = true` but no composition arc is **not** an instance.
+`instanceable` (Spec 7.6.2.4.3, fallback `false`) is a *population* field
+resolved by standard strongest-opinion rules; it does not affect a layer's
+available specs. When a prim is an instance, the spec further requires:
+single composition (all instances composed once), no overrides on the instance
+prim, and **local opinions discarded** — including local contributions to
+`primChildren`, so the child set comes only from the composition arc.
+
+### USDA examples
+
+Three trees sharing one prototype (identical reference, no variant difference):
+
+```usda
+def Xform "World" {
+    def Xform "Tree_1" (
+        instanceable = true
+        references = @./tree.usda@
+    ) { }
+    def Xform "Tree_2" (
+        instanceable = true
+        references = @./tree.usda@
+    ) { }
+}
+```
+
+Different variant selections break sharing (different instance key → different
+prototype):
+
+```usda
+def Xform "Chair_1" (
+    instanceable = true
+    references = @./chair.usda@
+    variants = { string style = "modern" }
+) { }
+
+def Xform "Chair_3" (
+    instanceable = true
+    references = @./chair.usda@
+    variants = { string style = "classic" }   # different prototype
+) { }
+```
+
+`instanceable = true` with **no** composition arc is not an instance:
+
+```usda
+def Mesh "DirectMesh" (instanceable = true) {
+    float3[] points = [(0,0,0), (1,0,0), (0,1,0)]   # local opinions kept
+}
+```
+
+### tinyusdz implementation status
+
+**Core layer**
+
+- `instanceable` field: stored in `MetadataBase` (`src/core/metadata-base.hh`)
+  with `has_/get_/set_/remove_instanceable()`; round-trips through USDA/USDC.
+- Prim queries (`src/core/prim.hh`): `Prim::IsInstance()` (checks
+  `instanceable=true`) and `Prim::HasCompositionArcs()` (references, payload,
+  inherits, specializes, or variantSets).
+- **Instance key** (`src/core/instance-key.{hh,cc}`): 128-bit SpookyHash of
+  type name + references + payloads + inherits + specializes + variant
+  selections. Two entry points:
+  `ComputeInstanceKeyFromPrimSpec(const PrimSpec&, InstanceKey*)` and
+  `ComputeInstanceKeyFromPrimMetas(const PrimMeta&, const std::string& type_name, InstanceKey*)`
+  (the latter used by `Stage::BuildInstancePrototypes()`). The parallel DAG
+  engine has its own `ComputeInstanceKey(const PrimIndex&, …)` — see
+  [pcp.md](pcp.md#instancekey).
+
+**Stage-level API** (`src/stage.hh`):
+
+```cpp
+size_t BuildInstancePrototypes();                       // group instances by InstanceKey
+int    GetPrototypeIndex(const Path&) const;            // -1 if not an instance
+int    GetPrototypeIndexForInstance(const Path&) const; // alias
+bool   IsInstancePrim(const Path&) const;
+std::vector<Path> GetInstancesForPrototype(int prototype_index) const;
+std::string       GetPrototypeSourcePath(int prototype_index) const;
+size_t num_prototypes() const;
+void   ImportInstanceData(...);                         // from the DAG engine
+```
+
+`BuildInstancePrototypes()` registers only prims that satisfy *both* Spec
+11.3.3 conditions (instanceable + at least one composition arc).
+
+**Tydra / render layer** (`src/tydra/render-data.hh`): `RenderInstance` holds
+`prototype_index`, `mesh_id` (index into the shared `RenderScene::meshes`),
+`material_id`, and local/global matrices; `Node` carries `is_instance`,
+`prototype_index`, and `instance_id`. `RenderScene::instances` is populated in
+`ConvertToRenderScene()` after mesh conversion, with `mesh_id` pointing at
+shared mesh data.
+
+**WASM/JS** (`web/binding.cc`): `numInstances()`, `getInstance(id)`,
+`getInstancesForMesh(mesh_id)`, plus `isInstance` / `prototypeIndex` /
+`instanceId` on every node.
+
+### Instancing gaps
+
+| Gap | Description | Reference |
+|-----|-------------|-----------|
+| Prototype sharing | Each instance still holds a full Prim subtree copy; no memory dedup | Spec 11.3.3 |
+| Local opinion filtering | Instance prims don't yet filter local opinions during population | Spec 11.3.3 |
+| Instance proxies | No virtual proxy prims redirecting to a prototype | OpenUSD extension |
+| Nested instancing | No instances within prototypes | OpenUSD extension |
+| Edit restrictions | No enforcement that instance prims can't be overridden | Spec 11.3.3 |
+
+Detection and grouping (the instance *key* path) is implemented; the remaining
+work is the memory-sharing/population side.
+
+---
+
+## Variants
+
+Variants provide multiple mutually-exclusive representations of an asset within
+a single prim — e.g. level-of-detail, material options, or geometry
+configurations. tinyusdz parses and writes variants in both USDA and USDC,
+including nested variant sets, and resolves selections during composition (see
+[Deferred Variant Evaluation](#deferred-variant-evaluation) above, which
+implements Spec 10.3.2.5).
+
+### Data structures
+
+`Variant` and `VariantSet` live in `src/core/variant-types.hh` (a `Variant`
+carries prim metadata, properties, prim children, and nested variant sets, all
+behind accessors):
+
+```cpp
+struct Variant {
+  PrimMeta &metas();                                   // variant metadata
+  std::map<std::string, Property> &properties();        // properties
+  std::vector<Prim> &primChildren();                    // child prims
+  std::map<std::string, VariantSet> &variantSets();     // nested variant sets
+};
+
+struct VariantSet {
+  std::string name;
+  std::map<std::string, Variant> variantSet;            // variant name -> Variant
+};
+```
+
+The composition-side `variantSet` statement is represented by `VariantSetSpec`
+(holding `PrimSpec` children) in the same header. Variant *selections* are
+stored in prim metadata as a `VariantSelectionMap`
+(`= std::map<std::string,std::string>`, in `src/core/meta-variable.hh`):
+`PrimMeta::variants` holds the selections and `PrimMeta::variantSets` holds the
+authored variant-set list (a ListOp).
+
+### USDA syntax
+
+```usda
+def Xform "Asset" (
+    prepend variantSets = "lod"
+    variants = { string lod = "high" }
+)
+{
+    variantSet "lod" = {
+        "high" { def Mesh "Mesh" { } }   # high-detail geometry
+        "low"  { def Mesh "Mesh" { } }   # low-detail geometry
+    }
+}
+```
+
+Nested variant sets:
+
+```usda
+variantSet "lod" = {
+    "high" ( prepend variantSets = "material" ) {
+        def Mesh "Mesh" { }
+        variantSet "material" = { "plastic" { } "metal" { } }
+    }
+}
+```
+
+### Authoring guidance
+
+- Use `snake_case` set names and descriptive lowercase option names
+  (`level_of_detail`/`high`, not `var1`/`opt_a`).
+- One dimension of variation per variant set (a `material_type` set, not a set
+  mixing LOD and material into `high_plastic`/`low_metal`).
+- Keep nesting shallow — 3 levels is a practical maximum (deeper parsing works,
+  but combinations explode: 3×3 = manageable, 3×3×4×4×3 = 432).
+
+### Testing
+
+Variant roundtrip tests live in `tests/usda/` (`variantSet-*.usda` for basic
+parsing, `variantSet-nested-*.usda` for nested structures). Printing is driven
+by `print_variantSetStmt()` in `src/pprinter.cc`; parsing by
+`src/ascii-parser.cc`. Run a single compare:
+
+```bash
+node tests/compare-usda.js --detailed-diff \
+  --tusdcat ./build/tusdcat --usdcat usdcat \
+  tests/usda/variantSet-nested-001.usda
+```
+
+---
+
 ## Known Limitations and Gaps
 
 | # | Limitation | Severity | Impact |
@@ -532,8 +694,13 @@ Remaining items (all Low severity):
   - `pxr/usd/pcp/types.h` — arc type enum and strength ordering
   - `pxr/usd/pcp/composeSite.cpp` — single-site field composition
 - tinyusdz source:
-  - `src/composition.hh` — public composition API
-  - `src/composition.cc` — composition implementation
+  - `src/composition.hh` / `.cc` — default flattening pipeline
+  - `src/composition-graph.hh` / `.cc` — parallel DAG engine (see [pcp.md](pcp.md))
   - `src/composition-reconstruct.cc` — PrimSpec-to-Prim conversion
   - `src/namespace-mapping.hh` — namespace mapping utilities
-  - `src/core/composition-types.hh` — Reference, Payload, ArcOrigin, LayerOffset types
+  - `src/core/composition-types.hh` — `Reference`, `Payload`, `ArcOrigin`, `LayerOffset`
+  - `src/core/instance-key.{hh,cc}` — `InstanceKey` (instancing)
+  - `src/core/prim.hh` — `Prim::IsInstance()` / `HasCompositionArcs()`
+  - `src/stage.hh` — `Stage::BuildInstancePrototypes()` and instance queries
+  - `src/core/variant-types.hh` — `Variant`, `VariantSet`, `VariantSetSpec`
+- Related docs: [pcp.md](pcp.md) — DAG-engine (PrimIndex/CompositionGraph) API reference

@@ -450,28 +450,65 @@ MjcImageableAPI marks entities as strictly visual (contype = conaffinity = 0).
 |---|---|---|
 | UsdPhysics type definitions | Done | `src/usdPhysics.hh` |
 | mjcPhysics type definitions | Done | `src/mjcPhysics.hh` |
-| USDA parsing (all 9 concrete prims) | Done | `src/prim-reconstruct-physics.cc`, `src/usda-reader.cc` |
+| Newton type definitions | Done | `src/newtonPhysics.hh` |
+| USDA parsing (all concrete prims) | Done | `src/prim-reconstruct-physics*.cc`, `src/usda-reader.cc` |
 | USDC parsing | Done | `src/usdc-reader-prim.cc` |
 | Pretty-printing (USDA output) | Done | `src/pprint-physics.cc` |
 | Tydra JSON export | Done | `src/tydra/physics-to-json.cc` |
 
 ### API schemas supported
 
-- **UsdPhysics**: PhysicsRigidBodyAPI, PhysicsCollisionAPI, PhysicsMaterialAPI, PhysicsMeshCollisionAPI
+Registered in the `APISchemas::APIName` enum (`src/core/composition-types.hh`):
+
+- **UsdPhysics**: PhysicsRigidBodyAPI, PhysicsCollisionAPI, PhysicsMaterialAPI, PhysicsMeshCollisionAPI, PhysicsMassAPI, PhysicsFilteredPairsAPI, PhysicsArticulationRootAPI; multi-apply: PhysicsDriveAPI, PhysicsLimitAPI
 - **mjcPhysics**: MjcSceneAPI, MjcJointAPI, MjcCollisionAPI, MjcMeshCollisionAPI, MjcMaterialAPI, MjcSiteAPI, MjcImageableAPI, MjcEqualityAPI (+ Connect, Weld, Joint variants)
+- **Newton**: NewtonSceneAPI, NewtonXpbdSceneAPI, NewtonKaminoSceneAPI, NewtonArticulationRootAPI, NewtonCollisionAPI, NewtonMeshCollisionAPI, NewtonMaterialAPI, NewtonMimicAPI, and the actuator control/clamping APIs
 
 ### Concrete prim types
 
-- **UsdPhysics**: PhysicsScene, PhysicsRevoluteJoint, PhysicsPrismaticJoint, PhysicsSphericalJoint, PhysicsFixedJoint, PhysicsDistanceJoint
-- **mjcPhysics**: MjcActuator, MjcTendon, MjcKeyframe
+(`ReconstructPrim<T>` specializations exist for all of these)
 
-### Blender integration
-
-- `blender/usd_physics_hook.py` — Blender addon (4.0+) with USD export/import hooks
-- See [`doc/blender-physics.md`](blender-physics.md) for usage details
+- **UsdPhysics**: PhysicsScene, PhysicsJoint (generic D6), PhysicsRevoluteJoint, PhysicsPrismaticJoint, PhysicsSphericalJoint, PhysicsFixedJoint, PhysicsDistanceJoint, PhysicsCollisionGroup (8)
+- **mjcPhysics**: MjcActuator, MjcTendon, MjcKeyframe (3)
+- **Newton**: NewtonActuator (1)
 
 ### Test coverage
 
-- 13 unit tests covering all 9 concrete prim types, API schemas, pprint roundtrip, and JSON export
-- 8 synthetic USDA test files for roundtrip testing (`tests/usda/physics-*.usda`)
-- Blender export roundtrip test: `models/blender-physics.usda`
+- ~30 unit tests in `tests/unit/unit-physics.cc` covering the concrete prim types, UsdPhysics/mjcPhysics/Newton API schemas, pprint roundtrip, and Tydra JSON export
+- `tests/usda/physics-*.usda` synthetic test files for USDA/USDC roundtrip
+- Blender export roundtrip test asset: `models/blender-physics.usda`
+
+---
+
+## Blender Integration
+
+`blender/usd_physics_hook.py` is a Blender addon (4.0+) that bridges Blender's
+rigid-body simulation with the UsdPhysics and mjcPhysics schemas. It installs as
+a normal addon (Edit > Preferences > Add-ons > Install from Disk) and runs
+automatically on File > Export/Import > USD (`.usda`/`.usdc`/`.usdz`). Blender's
+bundled `pxr` Python modules are required.
+
+**Schema mode** (addon preference): `USD` (UsdPhysics only), `MJC` (MuJoCo `mjc:`
+attributes only), or `BOTH` (default — both).
+
+**Export mapping (Blender → USD):**
+
+| Blender Feature | USD Schema | Key Attributes |
+|---|---|---|
+| Gravity | `PhysicsScene` | `physics:gravityDirection`, `physics:gravityMagnitude` |
+| Rigid body (active) | `PhysicsRigidBodyAPI` + `PhysicsMassAPI` | `physics:rigidBodyEnabled`, `physics:mass` |
+| Rigid body (passive) | `PhysicsRigidBodyAPI` | `physics:rigidBodyEnabled=false`, `physics:kinematicEnabled` |
+| Collision shape | `PhysicsCollisionAPI` | applied to mesh prims |
+| Friction / restitution | `PhysicsMaterialAPI` | `physics:staticFriction`, `physics:dynamicFriction`, `physics:restitution` |
+| Hinge / Slider / Fixed / Point / Spring constraint | `PhysicsRevolute` / `Prismatic` / `Fixed` / `Spherical` / `DistanceJoint` | `physics:axis`, limits, `physics:body0/1`, `physics:localPos0/1` |
+
+When the mode includes MuJoCo, collision/world/constraint prims also get
+`mjc:condim`, `mjc:friction`, `mjc:solmix`, `mjc:margin`, `mjc:option:timestep`,
+`mjc:option:iterations`, `mjc:flag:gravity`, `mjc:damping`, `mjc:stiffness`,
+`mjc:group`. Import reverses the joint/body/material mapping and matches USD prim
+names to Blender objects (exact, then `.`→`_` fallback).
+
+**Limitations:** soft body and cloth are not exported; collision groups are not
+mapped; per-axis springs export only the X-axis spring/damping; MuJoCo actuators
+and tendons have no Blender equivalent (preserved only if authored directly in
+the USD).

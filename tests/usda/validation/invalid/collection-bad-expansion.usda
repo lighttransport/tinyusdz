@@ -1,0 +1,13 @@
+#usda 1.0
+# EXPECT: core.schema.CollectionAPI.expansionRule
+(
+    doc = "CollectionAPI expansionRule has an invalid value. Expect ERROR core.schema.CollectionAPI.expansionRule."
+)
+
+def Scope "Root" (
+    prepend apiSchemas = ["CollectionAPI:lookset"]
+)
+{
+    uniform token collection:lookset:expansionRule = "bogusRule"
+    rel collection:lookset:includes = [</Root>]
+}

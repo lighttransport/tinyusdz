@@ -154,7 +154,7 @@ int main(int argc, char **argv) {
   }
 
   for (const tinyusdz::Prim &prim : stage.root_prims()) {
-    std::cout << prim.absolute_path() << "\n";
+    std::cout << prim.element_name() << "\n";
   }
 
   return EXIT_SUCCESS;

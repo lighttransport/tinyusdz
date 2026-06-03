@@ -89,6 +89,14 @@ private:
   bool UnpackSpecifier(ValueRep rep, Value& out);
   bool UnpackVariability(ValueRep rep, Value& out);
   bool UnpackTimeSamples(ValueRep rep, Value& out);
+  bool UnpackVec2i(ValueRep rep, Value& out);
+  bool UnpackVec3i(ValueRep rep, Value& out);
+  bool UnpackVec4i(ValueRep rep, Value& out);
+  bool UnpackHalf(ValueRep rep, Value& out);
+  bool UnpackVec2h(ValueRep rep, Value& out);
+  bool UnpackVec3h(ValueRep rep, Value& out);
+  bool UnpackVec4h(ValueRep rep, Value& out);
+  bool UnpackQuath(ValueRep rep, Value& out);
 
   // Helpers
   bool GetToken(uint32_t index, std::string& out);
@@ -184,10 +192,35 @@ bool CrateReader::Impl::UnpackDouble(ValueRep rep, Value& out) {
 }
 
 bool CrateReader::Impl::UnpackTimeSamples(ValueRep rep, Value& out) {
-  // TimeSamples unpacking not yet implemented in the Value type system.
-  // The roundtrip test passes because TimeSamples fields are silently skipped
-  // when UnpackValue returns false.
-  AddWarning("TimeSamples unpacking not supported yet");
+  (void)out;
+  // TimeSamples indirection format at rep.payload():
+  //   [i64 fwd1=8][ValueRep times_rep][i64 fwd2=8][u64 count][ValueRep samples[N]]
+  //
+  // The current writer emits every time-sampled property under a single field
+  // named "timeSamples" with no link back to the owning property, so the parsed
+  // (time, value) pairs cannot be re-associated with a property at this layer.
+  // Rather than fabricate a placeholder token value — which would surface as a
+  // bogus stray property on read — validate the header and skip the field:
+  // ResolveFieldset drops fields whose UnpackValue returns false.
+  //
+  // NOTE: a proper fix requires a TimeSamples-aware value path and a writer that
+  // names the field after its property (see the review's out-of-scope note).
+  if (rep.is_inlined()) return false;
+
+  uint64_t header_offset = rep.payload();
+  if (!reader_->seek(static_cast<size_t>(header_offset))) return false;
+
+  // Skip fwd1(8) + times_rep(8) + fwd2(8) to reach the sample count.
+  if (!reader_->skip(24)) return false;
+
+  uint64_t num_samples;
+  if (!reader_->read_u64(num_samples)) return false;
+  if (num_samples > 1000000) {
+    AddWarning("Too many time samples");
+    return false;
+  }
+
+  AddWarning("TimeSamples skipped: not yet wired to per-property storage");
   return false;
 }
 
@@ -310,6 +343,152 @@ bool CrateReader::Impl::UnpackVariability(ValueRep rep, Value& out) {
 }
 
 // ============================================================
+// Integer vector unpackers
+// ============================================================
+
+bool CrateReader::Impl::UnpackVec2i(ValueRep rep, Value& out) {
+  // 8 bytes — never inlinable (inline payload is 6 bytes).
+  if (rep.is_inlined()) return false;
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  int32_t data[2];
+  if (!reader_->read(data, sizeof(data))) return false;
+  out = Value::MakeInt2(data[0], data[1]);
+  return true;
+}
+
+bool CrateReader::Impl::UnpackVec3i(ValueRep rep, Value& out) {
+  if (rep.is_inlined()) return false;  // 12 bytes — never inlinable
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  int32_t data[3];
+  if (!reader_->read(data, sizeof(data))) return false;
+  out = Value::MakeInt3(data[0], data[1], data[2]);
+  return true;
+}
+
+bool CrateReader::Impl::UnpackVec4i(ValueRep rep, Value& out) {
+  if (rep.is_inlined()) return false;  // 16 bytes — never inlinable
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  int32_t data[4];
+  if (!reader_->read(data, sizeof(data))) return false;
+  out = Value::MakeInt4(data[0], data[1], data[2], data[3]);
+  return true;
+}
+
+// ============================================================
+// Half-precision unpackers
+// ============================================================
+
+namespace {
+
+// Decode IEEE 754 half-precision (16-bit) to float32
+inline float half_to_float(uint16_t h) {
+  // Sign: bit 15
+  // Exponent: bits 14-10 (5 bits, bias 15)
+  // Mantissa: bits 9-0 (10 bits)
+  uint32_t sign = (h >> 15) & 1;
+  uint32_t exp = (h >> 10) & 0x1F;
+  uint32_t mant = h & 0x3FF;
+
+  uint32_t f;
+  if (exp == 0) {
+    // Zero/subnormal
+    if (mant == 0) {
+      f = sign << 31;  // +/- zero
+    } else {
+      // Subnormal: normalize so the leading 1 lands at bit 10, then drop it
+      // (it becomes the implicit float mantissa bit). Each left shift lowers
+      // the effective exponent by one: after s shifts e == -(s+1), and the
+      // float exponent field is 113 - s == 114 + e. The leading 1 must be
+      // masked off (0x3FF) so it does not bleed into the exponent field.
+      int e = -1;
+      uint32_t m = mant;
+      while (!(m & 0x400)) { m <<= 1; e--; }
+      f = (sign << 31) | (static_cast<uint32_t>(114 + e) << 23) |
+          ((m & 0x3FF) << 13);
+    }
+  } else if (exp == 31) {
+    // Inf/NaN
+    f = (sign << 31) | 0x7F800000 | (mant << 13);
+  } else {
+    // Normal
+    f = (sign << 31) | ((exp + 112) << 23) | (mant << 13);
+  }
+  float result;
+  std::memcpy(&result, &f, sizeof(result));
+  return result;
+}
+
+} // namespace
+
+bool CrateReader::Impl::UnpackHalf(ValueRep rep, Value& out) {
+  if (rep.is_inlined()) {
+    uint16_t h = static_cast<uint16_t>(rep.payload() & 0xFFFF);
+    out = Value(half_to_float(h));
+    return true;
+  }
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  uint16_t h;
+  uint8_t hb[2];
+  if (!reader_->read(hb, 2)) return false;
+  h = static_cast<uint16_t>(hb[0]) | (static_cast<uint16_t>(hb[1]) << 8);
+  out = Value(half_to_float(h));
+  return true;
+}
+
+bool CrateReader::Impl::UnpackVec2h(ValueRep rep, Value& out) {
+  uint16_t raw[2];
+  if (rep.is_inlined()) {
+    // 4 bytes fit in the inline payload (little-endian half lanes).
+    uint64_t p = rep.payload();
+    raw[0] = static_cast<uint16_t>(p & 0xFFFF);
+    raw[1] = static_cast<uint16_t>((p >> 16) & 0xFFFF);
+  } else {
+    if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+    if (!reader_->read(raw, sizeof(raw))) return false;
+  }
+  out = Value::MakeFloat2(half_to_float(raw[0]), half_to_float(raw[1]));
+  return true;
+}
+
+bool CrateReader::Impl::UnpackVec3h(ValueRep rep, Value& out) {
+  uint16_t raw[3];
+  if (rep.is_inlined()) {
+    // 6 bytes fit in the 48-bit inline payload (little-endian half lanes).
+    uint64_t p = rep.payload();
+    raw[0] = static_cast<uint16_t>(p & 0xFFFF);
+    raw[1] = static_cast<uint16_t>((p >> 16) & 0xFFFF);
+    raw[2] = static_cast<uint16_t>((p >> 32) & 0xFFFF);
+  } else {
+    if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+    if (!reader_->read(raw, sizeof(raw))) return false;
+  }
+  out = Value::MakeFloat3(half_to_float(raw[0]), half_to_float(raw[1]), half_to_float(raw[2]));
+  return true;
+}
+
+bool CrateReader::Impl::UnpackVec4h(ValueRep rep, Value& out) {
+  // 8 bytes — never inlinable (inline payload is 6 bytes).
+  if (rep.is_inlined()) return false;
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  uint16_t raw[4];
+  if (!reader_->read(raw, sizeof(raw))) return false;
+  out = Value::MakeFloat4(half_to_float(raw[0]), half_to_float(raw[1]),
+                           half_to_float(raw[2]), half_to_float(raw[3]));
+  return true;
+}
+
+bool CrateReader::Impl::UnpackQuath(ValueRep rep, Value& out) {
+  // 8 bytes — never inlinable (inline payload is 6 bytes).
+  if (rep.is_inlined()) return false;
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  uint16_t raw[4];
+  if (!reader_->read(raw, sizeof(raw))) return false;
+  out = Value::MakeQuatf(half_to_float(raw[0]), half_to_float(raw[1]),
+                          half_to_float(raw[2]), half_to_float(raw[3]));
+  return true;
+}
+
+// ============================================================
 // Main value unpacker using switch statement
 // ============================================================
 
@@ -346,6 +525,14 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
     case CrateTypeId::Variability: return UnpackVariability(rep, out);
     case CrateTypeId::TimeCode: return UnpackDouble(rep, out);
     case CrateTypeId::TimeSamples: return UnpackTimeSamples(rep, out);
+    case CrateTypeId::Half: return UnpackHalf(rep, out);
+    case CrateTypeId::Vec2i: return UnpackVec2i(rep, out);
+    case CrateTypeId::Vec3i: return UnpackVec3i(rep, out);
+    case CrateTypeId::Vec4i: return UnpackVec4i(rep, out);
+    case CrateTypeId::Vec2h: return UnpackVec2h(rep, out);
+    case CrateTypeId::Vec3h: return UnpackVec3h(rep, out);
+    case CrateTypeId::Vec4h: return UnpackVec4h(rep, out);
+    case CrateTypeId::Quath: return UnpackQuath(rep, out);
 
     default:
       AddWarning(std::string("Unsupported value type: ") + CrateTypeIdName(type_id));
@@ -356,75 +543,125 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
 bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   CrateTypeId type_id = rep.type_id();
 
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) {
+  // Arrays below this length are always stored uncompressed even if the
+  // is_compressed bit is set (matches pxrUSD / legacy core kMinCompressedArraySize).
+  constexpr uint64_t kMinCompressedArraySize = 16;
+
+  // payload()==0 (non-inlined) denotes an empty array (pxrUSD convention); no
+  // data block to seek to. Otherwise seek to the block and read the count.
+  uint64_t count = 0;
+  if (rep.payload() != 0) {
+    if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+    if (!reader_->read_u64(count)) return false;
+  }
+
+  // Bound the file-controlled element count before any allocation.
+  if (count > options_.max_array_elements) {
+    AddWarning("Array element count exceeds max_array_elements limit");
     return false;
   }
 
-  uint64_t count;
-  if (!reader_->read_u64(count)) {
-    return false;
-  }
+  const bool compressed = rep.is_compressed();
+
+  // Decode a compressed integer array ([u64 compSize][LZ4(delta) blob]) in place,
+  // mirroring ReadFields. dst must hold `count` uint32_t.
+  auto read_compressed_u32 = [&](uint32_t* dst) -> bool {
+    uint64_t comp_size;
+    if (!reader_->read_u64(comp_size)) return false;
+    std::vector<uint8_t> blob;
+    if (!reader_->read(blob, static_cast<size_t>(comp_size))) return false;  // overflow-safe
+    std::vector<uint8_t> with_prefix(8 + blob.size());
+    std::memcpy(with_prefix.data(), &comp_size, 8);
+    if (!blob.empty()) std::memcpy(with_prefix.data() + 8, blob.data(), blob.size());
+    DecompressResult dr = DecompressCompressedU32(
+        with_prefix.data(), with_prefix.size(), dst, static_cast<size_t>(count));
+    if (!dr.success) {
+      AddWarning("Failed to decompress integer array: " + dr.error);
+      return false;
+    }
+    return true;
+  };
+
+  // Read `count` raw elements of `elem_size` bytes into `dst` (overflow-safe).
+  auto read_raw = [&](void* dst, size_t elem_size) -> bool {
+    if (count == 0) return true;
+    if (!reader_->has_elements(count, elem_size)) return false;
+    return reader_->read(dst, static_cast<size_t>(count) * elem_size);
+  };
 
   switch (type_id) {
     case CrateTypeId::Float: {
+      if (compressed) { AddWarning("Compressed float arrays not supported"); return false; }
       std::vector<float> data(static_cast<size_t>(count));
-      if (!reader_->read(data.data(), count * sizeof(float))) return false;
+      if (!read_raw(data.data(), sizeof(float))) return false;
       out = Value::MakeFloatArray(std::move(data));
       return true;
     }
     case CrateTypeId::Int: {
       std::vector<int32_t> data(static_cast<size_t>(count));
-      if (!reader_->read(data.data(), count * sizeof(int32_t))) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_u32(reinterpret_cast<uint32_t*>(data.data()))) return false;
+      } else if (!read_raw(data.data(), sizeof(int32_t))) {
+        return false;
+      }
       out = Value::MakeIntArray(std::move(data));
       return true;
     }
     case CrateTypeId::Vec3f: {
-      std::vector<float> data(static_cast<size_t>(count * 3));
-      if (!reader_->read(data.data(), count * 3 * sizeof(float))) return false;
+      if (compressed) { AddWarning("Compressed Vec3f arrays not supported"); return false; }
+      std::vector<float> data(static_cast<size_t>(count) * 3);
+      if (!read_raw(data.data(), 3 * sizeof(float))) return false;
       out = Value::MakeFloat3Array(std::move(data));
       return true;
     }
     case CrateTypeId::Double: {
+      if (compressed) { AddWarning("Compressed double arrays not supported"); return false; }
       std::vector<double> data(static_cast<size_t>(count));
-      if (!reader_->read(data.data(), count * sizeof(double))) return false;
+      if (!read_raw(data.data(), sizeof(double))) return false;
       out = Value::MakeDoubleArray(std::move(data));
       return true;
     }
     case CrateTypeId::Int64: {
+      if (compressed) { AddWarning("Compressed int64 arrays not supported"); return false; }
       std::vector<int64_t> data(static_cast<size_t>(count));
-      if (!reader_->read(data.data(), count * sizeof(int64_t))) return false;
+      if (!read_raw(data.data(), sizeof(int64_t))) return false;
       out = Value::MakeInt64Array(std::move(data));
       return true;
     }
     case CrateTypeId::UInt: {
       std::vector<uint32_t> data(static_cast<size_t>(count));
-      if (!reader_->read(data.data(), count * sizeof(uint32_t))) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_u32(data.data())) return false;
+      } else if (!read_raw(data.data(), sizeof(uint32_t))) {
+        return false;
+      }
       out = Value::MakeUIntArray(std::move(data));
       return true;
     }
     case CrateTypeId::UInt64: {
+      if (compressed) { AddWarning("Compressed uint64 arrays not supported"); return false; }
       std::vector<uint64_t> data(static_cast<size_t>(count));
-      if (!reader_->read(data.data(), count * sizeof(uint64_t))) return false;
+      if (!read_raw(data.data(), sizeof(uint64_t))) return false;
       out = Value::MakeUInt64Array(std::move(data));
       return true;
     }
     case CrateTypeId::Bool: {
+      if (compressed) { AddWarning("Compressed bool arrays not supported"); return false; }
+      std::vector<uint8_t> bytes(static_cast<size_t>(count));
+      if (!read_raw(bytes.data(), sizeof(uint8_t))) return false;
       std::vector<bool> out_bool(static_cast<size_t>(count));
-      for (size_t i = 0; i < count; i++) {
-        uint8_t byte;
-        if (!reader_->read_u8(byte)) return false;
-        out_bool[i] = (byte != 0);
-      }
+      for (size_t i = 0; i < count; i++) out_bool[i] = (bytes[i] != 0);
       out = Value::MakeBoolArray(out_bool);
       return true;
     }
     case CrateTypeId::Token: {
+      if (compressed) { AddWarning("Compressed token arrays not supported"); return false; }
+      std::vector<uint32_t> idxs(static_cast<size_t>(count));
+      if (!read_raw(idxs.data(), sizeof(uint32_t))) return false;  // bulk read indices
       std::vector<std::string> data(static_cast<size_t>(count));
       for (size_t i = 0; i < count; i++) {
-        uint32_t tok_idx;
-        if (!reader_->read_u32(tok_idx)) return false;
-        if (tok_idx >= tokens_.size()) return false;
-        data[i] = tokens_[tok_idx];
+        if (idxs[i] >= tokens_.size()) return false;
+        data[i] = tokens_[idxs[i]];
       }
       out = Value::MakeTokenArray(std::move(data));
       return true;
@@ -466,6 +703,11 @@ CrateReadResult CrateReader::Impl::Read(const uint8_t* data, size_t size) {
   if (!ReadSpecs()) return std::move(result_);
   if (!ReadPaths()) return std::move(result_);
   if (!BuildStage()) return std::move(result_);
+
+  // The fieldset cache held a full second copy of every fieldset's unpacked
+  // Values (including large arrays) purely to serve BuildStage. The data now
+  // lives in the built Stage/Layer, so release the duplicate to reclaim memory.
+  fieldset_cache_.clear();
 
   result_.success = result_.errors.empty();
   result_.version = version_;
@@ -571,8 +813,12 @@ bool CrateReader::Impl::ReadTOC() {
       return false;
     }
 
+    // Overflow-safe: s.start + s.size as int64 can wrap. Check each term
+    // against the file size with subtraction that cannot overflow.
+    const size_t fsize = reader_->size();
     if (s.start < 0 || s.size < 0 ||
-        static_cast<size_t>(s.start + s.size) > reader_->size()) {
+        static_cast<size_t>(s.start) > fsize ||
+        static_cast<size_t>(s.size) > fsize - static_cast<size_t>(s.start)) {
       AddError("Invalid section bounds: " + s.name_str());
       return false;
     }
@@ -610,8 +856,10 @@ bool CrateReader::Impl::ReadTokens() {
     return false;
   }
 
-  std::vector<uint8_t> compressed(static_cast<size_t>(compressed_size));
-  if (!reader_->read(compressed.data(), static_cast<size_t>(compressed_size))) {
+  // Use the check-before-resize read overload so a bogus compressed_size
+  // cannot trigger a huge allocation before the bounds check.
+  std::vector<uint8_t> compressed;
+  if (!reader_->read(compressed, static_cast<size_t>(compressed_size))) {
     AddError("Failed to read compressed tokens");
     return false;
   }
@@ -704,8 +952,8 @@ bool CrateReader::Impl::ReadFields() {
     return false;
   }
 
-  std::vector<uint8_t> indices_data(static_cast<size_t>(indices_size));
-  if (!reader_->read(indices_data.data(), static_cast<size_t>(indices_size))) {
+  std::vector<uint8_t> indices_data;
+  if (!reader_->read(indices_data, static_cast<size_t>(indices_size))) {
     AddError("Failed to read field indices");
     return false;
   }
@@ -725,6 +973,10 @@ bool CrateReader::Impl::ReadFields() {
                             static_cast<size_t>(num_fields), false);
     if (!dr.success) {
       AddError("Failed to decompress field indices: " + dr.error);
+      return false;
+    }
+    if (dr.data.size() < num_fields * sizeof(uint32_t)) {
+      AddError("Decompressed field indices shorter than expected");
       return false;
     }
     std::memcpy(token_indices_vec.data(), dr.data.data(),
@@ -747,8 +999,8 @@ bool CrateReader::Impl::ReadFields() {
       return false;
     }
   } else {
-    std::vector<uint8_t> reps_data(static_cast<size_t>(reps_size));
-    if (!reader_->read(reps_data.data(), static_cast<size_t>(reps_size))) {
+    std::vector<uint8_t> reps_data;
+    if (!reader_->read(reps_data, static_cast<size_t>(reps_size))) {
       AddError("Failed to read compressed value reps");
       return false;
     }
@@ -757,6 +1009,10 @@ bool CrateReader::Impl::ReadFields() {
                                                static_cast<size_t>(num_fields * 8));
     if (!rdr.success) {
       AddError("Failed to decompress value reps");
+      return false;
+    }
+    if (rdr.data.size() < num_fields * 8) {
+      AddError("Decompressed value reps shorter than expected");
       return false;
     }
     std::memcpy(value_reps.data(), rdr.data.data(), num_fields * 8);
@@ -789,9 +1045,20 @@ bool CrateReader::Impl::ReadFieldsets() {
     return false;
   }
 
+  // fieldset_indices_ entries index into fields_; bound the count to avoid a
+  // huge allocation from a malformed value (no dedicated max, reuse max_fields).
+  if (num_fieldsets > options_.max_fields) {
+    AddError("Too many fieldset indices");
+    return false;
+  }
+
+  if (section->size < 8) {
+    AddError("FIELDSETS section too small");
+    return false;
+  }
   size_t data_size = static_cast<size_t>(section->size) - 8;
-  std::vector<uint8_t> data(data_size);
-  if (!reader_->read(data.data(), data_size)) {
+  std::vector<uint8_t> data;
+  if (!reader_->read(data, data_size)) {
     AddError("Failed to read fieldset data");
     return false;
   }
@@ -806,6 +1073,10 @@ bool CrateReader::Impl::ReadFieldsets() {
                             static_cast<size_t>(num_fieldsets), false);
     if (!dr.success) {
       AddError("Failed to decompress fieldsets: " + dr.error);
+      return false;
+    }
+    if (dr.data.size() < num_fieldsets * sizeof(uint32_t)) {
+      AddError("Decompressed fieldsets shorter than expected");
       return false;
     }
     std::memcpy(fieldset_indices_.data(), dr.data.data(), num_fieldsets * sizeof(uint32_t));
@@ -834,6 +1105,11 @@ bool CrateReader::Impl::ReadSpecs() {
 
   if (num_specs > options_.max_specs) {
     AddError("Too many specs");
+    return false;
+  }
+
+  if (section->size < 8) {
+    AddError("SPECS section too small");
     return false;
   }
 
@@ -875,6 +1151,10 @@ bool CrateReader::Impl::ReadSpecs() {
       dr = DecompressIntegers(comp_data.data(), comp_data.size(), count, false);
       if (!dr.success) {
         AddError("Failed to decompress specs array: " + dr.error);
+        return false;
+      }
+      if (dr.data.size() < count * sizeof(uint32_t)) {
+        AddError("Decompressed specs array shorter than expected");
         return false;
       }
       std::memcpy(dst, dr.data.data(), count * sizeof(uint32_t));
@@ -960,11 +1240,21 @@ bool CrateReader::Impl::ReadPaths() {
     return true;
   }
 
+  if (num_paths > options_.max_paths) {
+    AddError("Too many paths");
+    return false;
+  }
+
   // pxrUSD writes two u64 values: [total_path_count] [encoded_tree_node_count]
   uint64_t num_encoded = num_paths;  // default: same as total
   if (!reader_->read_u64(num_encoded)) {
     // Might be a single-count format (no encoded count)
     num_encoded = num_paths;
+  }
+
+  if (num_encoded > options_.max_paths) {
+    AddError("Too many encoded path nodes");
+    return false;
   }
 
   paths_.resize(static_cast<size_t>(num_paths));
@@ -978,6 +1268,11 @@ bool CrateReader::Impl::ReadPaths() {
     uint64_t comp_size;
     if (!reader_->read_u64(comp_size)) {
       AddError(std::string("Failed to read ") + name + " compressed size");
+      return false;
+    }
+    // Bound the compressed size against remaining bytes before allocating.
+    if (comp_size > reader_->remaining()) {
+      AddError(std::string(name) + " compressed size exceeds remaining data");
       return false;
     }
     // Include u64 compressed_size prefix (DecompressCompressedU32 expects it)
@@ -994,6 +1289,10 @@ bool CrateReader::Impl::ReadPaths() {
       dr = DecompressIntegers(comp_data.data() + 8, static_cast<size_t>(comp_size), count, false);
       if (!dr.success) {
         AddError(std::string("Failed to decompress ") + name + ": " + dr.error);
+        return false;
+      }
+      if (dr.data.size() < count * sizeof(uint32_t)) {
+        AddError(std::string("Decompressed ") + name + " shorter than expected");
         return false;
       }
       std::memcpy(dst, dr.data.data(), count * sizeof(uint32_t));
@@ -1025,7 +1324,9 @@ bool CrateReader::Impl::ReadPaths() {
     uint32_t token_idx;
     if (elem_token < 0) {
       is_prop = true;
-      token_idx = static_cast<uint32_t>(-elem_token);
+      // Promote to int64 before negating: -elem_token is UB for INT32_MIN.
+      // INT32_MIN yields 0x80000000, which fails the tokens_ bounds check below.
+      token_idx = static_cast<uint32_t>(-static_cast<int64_t>(elem_token));
     } else {
       token_idx = static_cast<uint32_t>(elem_token);
     }
@@ -1121,72 +1422,174 @@ bool CrateReader::Impl::BuildStage() {
       } else if (field.first == "comment") {
         if (const std::string* s = field.second.as_string())
           layer.meta().comment = *s;
+      } else if (field.first == "subLayers") {
+        if (const std::vector<std::string>* arr = field.second.as_token_array()) {
+          for (const auto& s : *arr) layer.meta().subLayers.push_back(s);
+        } else if (const std::string* s = field.second.as_string()) {
+          layer.meta().subLayers.push_back(*s);
+        } else if (const std::string* s = field.second.as_token()) {
+          layer.meta().subLayers.push_back(*s);
+        }
       }
     }
     break; // Only process first PseudoRoot
   }
 
-  // Process prim specs to build prims
+  // Process prim specs to build prims with hierarchy from paths
+  struct PrimEntry {
+    std::string full_path;
+    std::string name;
+    std::string type_name;
+    PrimSpecifier specifier;
+    std::vector<std::pair<std::string, Value>> fields;
+  };
+
+  std::vector<PrimEntry> prim_entries;
   for (const auto& spec : specs_) {
-    if (spec.spec_type != SpecType::Prim) {
-      continue;
-    }
+    if (spec.spec_type != SpecType::Prim) continue;
 
-    // Get prim name from path
-    std::string prim_name;
-    if (spec.path_index.value < paths_.size()) {
-      std::string path = paths_[spec.path_index.value];
-      size_t last_slash = path.rfind('/');
-      if (last_slash != std::string::npos && last_slash < path.size() - 1) {
-        prim_name = path.substr(last_slash + 1);
-      } else {
-        prim_name = path;
-      }
-    }
+    if (spec.path_index.value >= paths_.size()) continue;
+    std::string full_path = paths_[spec.path_index.value];
+    if (full_path.empty() || full_path == "/") continue;
 
-    if (prim_name.empty()) {
-      continue;
-    }
+    size_t last_slash = full_path.rfind('/');
+    std::string prim_name = (last_slash != std::string::npos && last_slash < full_path.size() - 1)
+                            ? full_path.substr(last_slash + 1) : full_path;
+    if (prim_name.empty()) continue;
 
-    // Get fields for this spec
+    PrimEntry entry;
+    entry.full_path = full_path;
+    entry.name = prim_name;
+
     std::vector<std::pair<std::string, Value>> fields;
     ResolveFieldset(spec.fieldset_index.value, fields);
 
-    // Extract type name and specifier
-    std::string type_name;
-    PrimSpecifier specifier = PrimSpecifier::Def;
-
-    for (const auto& field : fields) {
-      if (field.first == "typeName") {
-        if (const std::string* s = field.second.as_token()) {
-          type_name = *s;
+    entry.type_name = "Xform";
+    entry.specifier = PrimSpecifier::Def;
+    for (auto& f : fields) {
+      if (f.first == "typeName") {
+        if (const std::string* s = f.second.as_token()) entry.type_name = *s;
+      } else if (f.first == "specifier") {
+        if (const std::string* s = f.second.as_token()) {
+          if (*s == "over") entry.specifier = PrimSpecifier::Over;
+          else if (*s == "class") entry.specifier = PrimSpecifier::Class;
         }
-      } else if (field.first == "specifier") {
-        if (const std::string* s = field.second.as_token()) {
-          if (*s == "over") specifier = PrimSpecifier::Over;
-          else if (*s == "class") specifier = PrimSpecifier::Class;
-        }
+      } else {
+        entry.fields.push_back(std::move(f));
       }
     }
+    prim_entries.push_back(std::move(entry));
+  }
 
-    // Begin prim
-    builder.begin_prim(prim_name, type_name, specifier);
+  // Sort by full path (produces correct depth-first order with parents before children)
+  std::sort(prim_entries.begin(), prim_entries.end(),
+    [](const PrimEntry& a, const PrimEntry& b) {
+      return a.full_path < b.full_path;
+    });
 
-    // Add properties (skip metadata fields)
-    for (auto& field : fields) {
-      if (field.first == "typeName" || field.first == "specifier" ||
-          field.first == "variability") {
-        continue;
+  // Build hierarchy using depth-based stack management
+  // Stack keeps ancestor paths at each depth level
+  std::vector<std::string> prim_stack;
+
+  for (auto& entry : prim_entries) {
+    // Compute depth of this prim (number of '/' in path)
+    size_t depth = std::count(entry.full_path.begin(), entry.full_path.end(), '/');
+
+    // Pop stack until we're at the correct parent level
+    while (prim_stack.size() > depth - 1) {
+      builder.end_prim();
+      prim_stack.pop_back();
+    }
+
+    // Begin this prim
+    builder.begin_prim(entry.name, entry.type_name, entry.specifier);
+    prim_stack.push_back(entry.name);
+
+    // builder.current() is valid immediately after begin_prim; capture it once
+    // and guard the metadata derefs (every other current() site is guarded too).
+    PrimSpec* ps = builder.current();
+
+    // Extracts a token-list metadata field (written as a token array, with
+    // single-token / string fallbacks for older encodings). Warns rather than
+    // silently dropping a known arc field that fails to decode.
+    auto append_token_list = [&](const Value& v, std::vector<std::string>& dst,
+                                 const char* field_name) {
+      if (const std::vector<std::string>* arr = v.as_token_array()) {
+        for (const auto& s : *arr) dst.push_back(s);
+      } else if (const std::string* s = v.as_token()) {
+        dst.push_back(*s);
+      } else if (const std::string* s = v.as_string()) {
+        dst.push_back(*s);
+      } else {
+        AddWarning(std::string("Composition arc field '") + field_name +
+                   "' has unexpected encoding; dropped");
       }
+    };
 
-      // Check for uniform variability
+    // Add properties and extract composition arcs / metadata into PrimSpecMeta
+    for (auto& field : entry.fields) {
+      if (field.first == "typeName" || field.first == "specifier") continue;
+
+      // Composition arc + metadata fields: store in PrimSpecMeta, not as
+      // regular properties. (Guarded by ps; if current() were null we simply
+      // skip them rather than crash.)
+      if (ps) {
+        if (field.first == "references") {
+          append_token_list(field.second, ps->meta().references, "references");
+          continue;
+        }
+        if (field.first == "payload") {
+          append_token_list(field.second, ps->meta().payloads, "payload");
+          continue;
+        }
+        if (field.first == "inherits") {
+          append_token_list(field.second, ps->meta().inherits, "inherits");
+          continue;
+        }
+        if (field.first == "specializes") {
+          append_token_list(field.second, ps->meta().specializes, "specializes");
+          continue;
+        }
+        if (field.first == "variantSelection") {
+          if (const std::string* s = field.second.as_token())
+            ps->meta().variantSelection = *s;
+          else if (const std::string* s = field.second.as_string())
+            ps->meta().variantSelection = *s;
+          continue;
+        }
+        if (field.first == "comment") {
+          if (const std::string* s = field.second.as_token())
+            ps->meta().comment = *s;
+          else if (const std::string* s = field.second.as_string())
+            ps->meta().comment = *s;
+          continue;
+        }
+        if (field.first == "variantSets") {
+          // Writer stores the variant-set names only; reconstruct name entries.
+          std::vector<std::string> names;
+          append_token_list(field.second, names, "variantSets");
+          for (auto& n : names) {
+            VariantSetData vsd;
+            vsd.name = std::move(n);
+            ps->meta().variantSets.push_back(std::move(vsd));
+          }
+          continue;
+        }
+      }
+      // The sibling "variability" field cannot be re-associated with its
+      // property in the current format; consume it so it does not surface as a
+      // stray property. (Uniformity is not yet round-tripped — see review note.)
+      if (field.first == "variability") continue;
+
       uint16_t flags = 0;
-      // TODO: Properly parse variability from field
-
       builder.add_property(field.first, std::move(field.second), flags);
     }
+  }
 
+  // Close remaining prims
+  while (!prim_stack.empty()) {
     builder.end_prim();
+    prim_stack.pop_back();
   }
 
   // Finalize

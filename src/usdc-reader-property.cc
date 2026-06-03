@@ -402,8 +402,12 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         DCOUT("elementSize = " << to_string(p));
 
         if ((p < 1) || (uint32_t(p) > _config.kMaxElementSize)) {
-          PUSH_WARN(
-              fmt::format("`elementSize` too large. Must be within [{}, {}), but got {}",
+          // Reject out-of-range `elementSize`: it feeds downstream stride
+          // computations, so an oversized value must not be propagated.
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag,
+              fmt::format("`elementSize` is out of range. Must be within [{}, "
+                          "{}], but got {}",
                           1, _config.kMaxElementSize, p));
         }
 

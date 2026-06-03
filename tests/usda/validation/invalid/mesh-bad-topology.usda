@@ -1,0 +1,14 @@
+#usda 1.0
+# EXPECT: geom.mesh.topology.count
+# EXPECT: geom.mesh.topology.size
+# EXPECT: geom.mesh.topology.index
+(
+    doc = "Mesh has a zero face count, mismatched faceVertexIndices size, and an out-of-range point index."
+)
+
+def Mesh "badMesh"
+{
+    point3f[] points = [(0, 0, 0), (1, 0, 0)]
+    int[] faceVertexCounts = [3, 0]
+    int[] faceVertexIndices = [0, 1, 9, 0]
+}

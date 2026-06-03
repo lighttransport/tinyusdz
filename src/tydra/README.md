@@ -113,7 +113,7 @@ See [doc/tydra-tangent.md](../../doc/tydra-tangent.md) for details.
 * [doc/skinning.md](../../doc/skinning.md) - UsdSkel skinning equations and Tydra export
 * [doc/tydra-tangent.md](../../doc/tydra-tangent.md) - Tangent computation algorithms and quantization
 * [doc/threejs.md](../../doc/threejs.md) - Three.js animation and material integration
-* [doc/memory-usage-tasks.md](../../doc/memory-usage-tasks.md) - Memory profiling and optimization
+* [doc/memory-and-performance.md](../../doc/memory-and-performance.md) - Memory profiling and optimization
 
 ## TODO
 
