@@ -4495,6 +4495,40 @@ def Material "M" {
   TEST_CHECK(paths[0].full_path_name() == "/M.inputs:stPrimvarName");
 }
 
+// Regression: a UsdTransform2d's connected `inputs:in` (wired to a
+// UsdPrimvarReader's st output) must survive a USDC write. Dropping it (only the
+// value form was handled) makes UsdUVTexture evaluation fail with
+// `inputs:in` must be a connection.
+void usdc_writer_transform2d_in_connection_test(void) {
+  const char *usda = R"(#usda 1.0
+def Shader "streader" {
+  uniform token info:id = "UsdPrimvarReader_float2"
+  float2 outputs:result
+}
+def Shader "place" {
+  uniform token info:id = "UsdTransform2d"
+  float2 inputs:in.connect = </streader.outputs:result>
+  float2 inputs:scale = (2, 2)
+  float2 outputs:result
+}
+)";
+  RT_OK(usda);
+  const auto *t = find_root<Shader>(stage, "place");
+  TEST_CHECK(t != nullptr);
+  if (!t) return;
+  const auto *xf = t->value.as<UsdTransform2d>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+
+  TEST_CHECK(xf->in.authored());
+  TEST_CHECK(xf->in.has_connections());
+  if (!xf->in.has_connections()) return;
+  const auto &paths = xf->in.connections();
+  TEST_CHECK(paths.size() == 1);
+  if (paths.size() != 1) return;
+  TEST_CHECK(paths[0].full_path_name() == "/streader.outputs:result");
+}
+
 void usdc_writer_shader_info_id_uniform_test(void) {
   const char *usda = R"(#usda 1.0
 def Shader "S" {

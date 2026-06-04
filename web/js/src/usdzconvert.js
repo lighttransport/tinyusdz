@@ -26,18 +26,21 @@ export function isAudioName(name) {
 }
 
 // Format string for the WASM convertImage() encoder, or null if we should not
-// re-encode (e.g. EXR/AVIF — left untouched).
+// re-encode (e.g. AVIF — left untouched). EXR is encodable now (recent USDZ
+// allows EXR textures): the WASM build can resize and re-encode it, or transcode
+// it to PNG/JPEG.
 export function imageFormatFromName(name) {
   const ext = (name.toLowerCase().split('.').pop() || '');
   if (ext === 'jpg' || ext === 'jpeg') return 'jpeg';
   if (ext === 'png') return 'png';
+  if (ext === 'exr') return 'exr';
   return null;
 }
 
 export function normalizedTextureFormat(format) {
   const f = String(format || 'keep').toLowerCase();
   if (f === 'jpg') return 'jpeg';
-  if (f === 'jpeg' || f === 'png') return f;
+  if (f === 'jpeg' || f === 'png' || f === 'exr') return f;
   return 'keep';
 }
 
@@ -50,6 +53,8 @@ export function outputFormatForImage(name, textureFormat = 'keep') {
     return { format: 'jpeg', ext };
   }
   if (fmt === 'png') return { format: 'png', ext: 'png' };
+  // Keep EXR as EXR (resize-only), or force EXR output for any input.
+  if (fmt === 'exr') return { format: 'exr', ext: 'exr' };
   return { format: null, ext: null };
 }
 
@@ -199,6 +204,16 @@ function exportUSDZ(usd, remap, opts) {
     return usd.exportLayerAsUSDZWithOptions({ rootLayerFormat: 'usda' });
   }
   const hasRemap = remap && Object.keys(remap).length > 0;
+  // Faithful path: when no texture path remapping is needed (passthrough /
+  // USDZ->USDZ roundtrip), write the composed LAYER directly. This preserves all
+  // PrimSpec data and matches the native tusdzconvert output. The Stage-based
+  // export below reconstructs typed Prims and drops typed shader inputs that lack
+  // a USDC serializer (e.g. OpenPBR surface inputs), so only use it when a remap
+  // or ARKit metadata rewrite is required.
+  if (!hasRemap && !opts.arkitCompatible &&
+      typeof usd.exportLayerAsUSDZWithOptions === 'function') {
+    return usd.exportLayerAsUSDZWithOptions({ rootLayerFormat });
+  }
   const hasOptions = exportOpts.rootLayerFormat !== 'usdc' || exportOpts.arkitCompatible;
   if (typeof usd.exportAsUSDZWithOptions === 'function' && (hasRemap || hasOptions)) {
     return usd.exportAsUSDZWithOptions(remap || {}, exportOpts);
