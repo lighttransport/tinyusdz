@@ -52,10 +52,12 @@ class Cache {
   const PrimIndex *ComputePrimIndex(const Path &prim_path, std::string *warn,
                                     std::string *err);
 
-  /// Build (and cache) the PrimIndices for a batch of paths. Currently
-  /// sequential; `CompositionOptions::num_threads` is a forward-compat hint
-  /// (lock-free parallel composition is a follow-up that needs per-worker
-  /// contexts). Best-effort: a path that fails to build is skipped.
+  /// Build (and cache) the PrimIndices for a batch of paths. With thread
+  /// support enabled and `CompositionOptions::num_threads != 1`, independent
+  /// prim indices are built in parallel using per-worker contexts and a
+  /// deterministic merge. Payload-policy and custom resolver callbacks must be
+  /// thread-safe in that mode. Best-effort: a path that fails to build is
+  /// skipped.
   bool PrewarmPrimIndices(const std::vector<Path> &paths, std::string *warn,
                           std::string *err);
 

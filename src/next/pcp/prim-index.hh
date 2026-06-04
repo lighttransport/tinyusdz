@@ -32,6 +32,7 @@ namespace pcp {
 /// and is refcount-shared across every node/index that uses it (parse-once).
 struct LayerStack {
   std::vector<std::shared_ptr<Layer>> layers;  // strongest first
+  std::vector<std::string> layer_identifiers;  // resolved id for each layer
   std::string identifier;                       // resolved asset path (registry key)
   LayerOffset offset;                           // cumulative time offset to root
 };
@@ -66,6 +67,7 @@ struct CompositionOptions {
   /// Per-payload load policy. Invoked with (prim path that authors the payload,
   /// payload asset path); return true to load, false to defer. When null, the
   /// `load_payloads` flag is used. (Per-prim Load/UnloadPayload overrides this.)
+  /// Must be thread-safe when PrewarmPrimIndices runs with num_threads != 1.
   std::function<bool(const Path &, const std::string &)> payload_policy;
 };
 
@@ -73,6 +75,9 @@ struct CompositionOptions {
 /// owning Cache (the table outlives every PrimIndex it backs).
 class PrimIndex {
  public:
+  static constexpr uint16_t kInvalidNode = 0xFFFF;
+  static constexpr size_t kMaxNodeCount = kInvalidNode;
+
   PrimIndex() = default;
 
   const Path &GetPath() const { return prim_path_; }
@@ -112,6 +117,7 @@ class PrimIndex {
   void SetLayerStacks(const std::vector<LayerStack> *t) { layer_stacks_ = t; }
   void SetPathTable(const std::vector<std::string> *t) { path_table_ = t; }
   uint16_t AddNode(CompNode &&n) {
+    if (nodes_.size() >= kMaxNodeCount) return kInvalidNode;
     nodes_.push_back(std::move(n));
     return static_cast<uint16_t>(nodes_.size() - 1);
   }

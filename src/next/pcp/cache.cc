@@ -9,6 +9,7 @@
 #include "../composition/composition.hh"  // reuse ParseReference / ParsePayload / CopyLocalOpinions
 
 #include <algorithm>
+#include <limits>
 #include <map>
 #include <set>
 #include <unordered_map>
@@ -135,6 +136,9 @@ struct Cache::Impl {
 
   // --- layer stacks -------------------------------------------------------
 
+  static constexpr uint32_t kInvalidStack =
+      (std::numeric_limits<uint32_t>::max)();
+
   static std::string DirOf(const std::string &path) {
     return AssetResolver::GetDirectory(path);
   }
@@ -147,7 +151,12 @@ struct Cache::Impl {
 
     LayerStack st;
     st.identifier = identifier;
-    AppendLayerAndSublayers(st, layer, identifier, warn, err);
+    std::set<std::string> visiting;
+    visiting.insert(identifier);
+    if (!AppendLayerAndSublayers(st, layer, identifier, &visiting, 0, warn,
+                                 err)) {
+      return kInvalidStack;
+    }
 
     uint32_t idx = static_cast<uint32_t>(layer_stacks.size());
     layer_stacks.push_back(std::move(st));
@@ -155,38 +164,85 @@ struct Cache::Impl {
     return idx;
   }
 
-  void AppendLayerAndSublayers(LayerStack &st, std::shared_ptr<Layer> layer,
-                               const std::string &identifier, std::string *warn,
+  bool AppendLayerAndSublayers(LayerStack &st, std::shared_ptr<Layer> layer,
+                               const std::string &identifier,
+                               std::set<std::string> *visiting,
+                               uint32_t depth, std::string *warn,
                                std::string *err) {
+    if (!layer) return false;
+    if (depth > options.max_depth) {
+      if (err) *err += "Sublayer max depth exceeded at: " + identifier + "\n";
+      return false;
+    }
     st.layers.push_back(layer);
+    st.layer_identifiers.push_back(identifier);
     const std::string anchor = DirOf(identifier);
     for (const std::string &sub : layer->meta().subLayers) {
+      const std::string sub_id = resolver->ResolvePath(sub, anchor);
+      if (sub_id.empty()) {
+        if (err) *err += "Failed to resolve sublayer: " + sub + "\n";
+        if (options.error_when_asset_not_found) return false;
+        continue;
+      }
+      if (visiting && visiting->count(sub_id)) {
+        if (err) *err += "Sublayer cycle detected at: " + sub_id + "\n";
+        return false;
+      }
       std::shared_ptr<Layer> sl =
           reg_->GetOrLoad(*resolver, sub, anchor, warn, err);
       if (sl) {
-        const std::string sub_id = resolver->ResolvePath(sub, anchor);
-        AppendLayerAndSublayers(st, sl, sub_id, warn, err);
+        if (visiting) visiting->insert(sub_id);
+        if (!AppendLayerAndSublayers(st, sl, sub_id, visiting, depth + 1,
+                                     warn, err)) {
+          if (visiting) visiting->erase(sub_id);
+          return false;
+        }
+        if (visiting) visiting->erase(sub_id);
+      } else if (options.error_when_asset_not_found) {
+        return false;
       }
     }
+    return true;
   }
 
   // --- spec lookup --------------------------------------------------------
 
+  struct SpecRef {
+    const PrimSpec *spec = nullptr;
+    const Layer *layer = nullptr;
+    std::string layer_id;
+  };
+
+  std::vector<SpecRef> FindSpecs(const LayerStack &st,
+                                 const std::string &site) const {
+    std::vector<SpecRef> refs;
+    Path p(site);
+    for (size_t i = 0; i < st.layers.size(); ++i) {
+      const auto &lp = st.layers[i];
+      if (const PrimSpec *s = lp->prim_at_path(p)) {
+        SpecRef r;
+        r.spec = s;
+        r.layer = lp.get();
+        if (i < st.layer_identifiers.size()) r.layer_id = st.layer_identifiers[i];
+        refs.push_back(std::move(r));
+      }
+    }
+    return refs;
+  }
+
   const PrimSpec *FindSpec(const LayerStack &st, const std::string &site,
                            const Layer **out_layer) const {
-    Path p(site);
-    for (const auto &lp : st.layers) {
-      if (const PrimSpec *s = lp->prim_at_path(p)) {
-        if (out_layer) *out_layer = lp.get();
-        return s;
-      }
+    std::vector<SpecRef> refs = FindSpecs(st, site);
+    if (!refs.empty()) {
+      if (out_layer) *out_layer = refs[0].layer;
+      return refs[0].spec;
     }
     return nullptr;
   }
 
   bool AnyAuthors(const std::vector<Src> &srcs) const {
     for (const Src &s : srcs) {
-      if (FindSpec(layer_stacks[s.stack_idx], s.site, nullptr)) return true;
+      if (!FindSpecs(layer_stacks[s.stack_idx], s.site).empty()) return true;
     }
     return false;
   }
@@ -246,8 +302,9 @@ struct Cache::Impl {
   bool IsInstanceableSources(const std::vector<Src> &srcs) const {
     if (srcs.size() <= 1) return false;
     for (const Src &s : srcs) {
-      const PrimSpec *sp = FindSpec(layer_stacks[s.stack_idx], s.site, nullptr);
-      if (sp && sp->meta().instanceable) return true;
+      for (const SpecRef &sr : FindSpecs(layer_stacks[s.stack_idx], s.site)) {
+        if (sr.spec->meta().instanceable) return true;
+      }
     }
     return false;
   }
@@ -258,11 +315,15 @@ struct Cache::Impl {
   std::string ComputeInstanceKeyImpl(const std::vector<Src> &srcs) const {
     std::string key;
     for (const Src &s : srcs) {
-      const PrimSpec *sp = FindSpec(layer_stacks[s.stack_idx], s.site, nullptr);
-      if (sp && !sp->type_name().empty()) {
-        key += "T:" + sp->type_name() + ";";
-        break;
+      bool found_type = false;
+      for (const SpecRef &sr : FindSpecs(layer_stacks[s.stack_idx], s.site)) {
+        if (!sr.spec->type_name().empty()) {
+          key += "T:" + sr.spec->type_name() + ";";
+          found_type = true;
+          break;
+        }
       }
+      if (found_type) break;
     }
     for (size_t i = 1; i < srcs.size(); ++i) {
       const Src &s = srcs[i];
@@ -356,6 +417,7 @@ struct Cache::Impl {
       }
       const std::string arc_id = resolver->ResolvePath(arc.asset_path, anchor);
       arc_stack_idx = InternLayerStack(arc_layer, arc_id, warn, err);
+      if (arc_stack_idx == kInvalidStack) return;
       if (!arc.prim_path.empty()) {
         arc_site = arc.prim_path;
       } else if (!arc_layer->meta().defaultPrim.empty()) {
@@ -398,7 +460,7 @@ struct Cache::Impl {
       std::set<uint32_t> seen_stack;
       for (uint32_t as : chain) {
         if (as == arc_stack_idx || !seen_stack.insert(as).second) continue;
-        if (!FindSpec(layer_stacks[as], arc_site, nullptr)) continue;
+        if (FindSpecs(layer_stacks[as], arc_site).empty()) continue;
         Src implied = arc_src;
         implied.stack_idx = as;
         std::set<std::string> ic = cycle;
@@ -428,78 +490,83 @@ struct Cache::Impl {
                   std::string *err) {
     out->push_back(src);
 
-    const Layer *src_layer = nullptr;
-    const PrimSpec *spec =
-        FindSpec(layer_stacks[src.stack_idx], src.site, &src_layer);
-    if (!spec) return;
+    const std::vector<SpecRef> specs =
+        FindSpecs(layer_stacks[src.stack_idx], src.site);
+    if (specs.empty()) return;
 
     // Record this source's variant selections (strong-first wins) so a selection
     // authored on a stronger source applies to a variantSet defined on a weaker
     // one (cross-source selection).
-    RecordSelections(*spec, sels);
+    for (const SpecRef &sr : specs) RecordSelections(*sr.spec, sels);
 
-    // Inherits (stronger than references).
-    for (const std::string &s : spec->meta().inherits) {
-      ProcessArc(src, Compositor::ParseReference(s), ArcType::Inherit, cycle,
-                 out, spec_out, sels, chain, warn, err);
-    }
+    for (const SpecRef &sr : specs) {
+      const PrimSpec *spec = sr.spec;
 
-    // Variants (weaker than inherits, stronger than references). For each
-    // selected variant, graft its inline opinions and/or its content subtree.
-    if (!spec->meta().variantSets.empty()) {
-      for (const VariantData *vd : SelectVariants(*spec, *sels)) {
-        // Subtree content: model as a reference-style Variant source into the
-        // content layer's "/__self__" root, so child prims compose normally.
-        if (vd->content) {
-          const std::string vid =
-              "variant:" + std::to_string(reinterpret_cast<uintptr_t>(vd));
-          uint32_t cstack = InternLayerStack(vd->content, vid, warn, err);
-          Src vsrc;
-          vsrc.stack_idx = cstack;
-          vsrc.site = "/__self__";
-          vsrc.map = NamespaceMapping::Compose(
-              src.map, NamespaceMapping{"/__self__", src.site});
-          vsrc.offset = src.offset;
-          vsrc.arc_kind = ArcType::Variant;
-          std::set<std::string> vc = cycle;
-          vc.insert(vid + ":/__self__");
-          ExpandArcs(vsrc, std::move(vc), out, spec_out, sels, chain, warn, err);
-        }
-        // Inline opinions (properties/relationships on the host prim itself).
-        if (!vd->properties.empty() || !vd->relationships.empty()) {
-          Src vsrc = src;
-          vsrc.arc_kind = ArcType::Variant;
-          vsrc.variant = vd;
-          out->push_back(std::move(vsrc));
+      // Inherits (stronger than references).
+      for (const std::string &s : spec->meta().inherits) {
+        ProcessArc(src, Compositor::ParseReference(s), ArcType::Inherit, cycle,
+                   out, spec_out, sels, chain, warn, err);
+      }
+
+      // Variants (weaker than inherits, stronger than references). For each
+      // selected variant, graft its inline opinions and/or its content subtree.
+      if (!spec->meta().variantSets.empty()) {
+        for (const VariantData *vd : SelectVariants(*spec, *sels)) {
+          // Subtree content: model as a reference-style Variant source into the
+          // content layer's "/__self__" root, so child prims compose normally.
+          if (vd->content) {
+            const std::string vid =
+                "variant:" + std::to_string(reinterpret_cast<uintptr_t>(vd));
+            uint32_t cstack = InternLayerStack(vd->content, vid, warn, err);
+            if (cstack == kInvalidStack) continue;
+            Src vsrc;
+            vsrc.stack_idx = cstack;
+            vsrc.site = "/__self__";
+            vsrc.map = NamespaceMapping::Compose(
+                src.map, NamespaceMapping{"/__self__", src.site});
+            vsrc.offset = src.offset;
+            vsrc.arc_kind = ArcType::Variant;
+            std::set<std::string> vc = cycle;
+            vc.insert(vid + ":/__self__");
+            ExpandArcs(vsrc, std::move(vc), out, spec_out, sels, chain, warn,
+                       err);
+          }
+          // Inline opinions (properties/relationships on the host prim itself).
+          if (!vd->properties.empty() || !vd->relationships.empty()) {
+            Src vsrc = src;
+            vsrc.arc_kind = ArcType::Variant;
+            vsrc.variant = vd;
+            out->push_back(std::move(vsrc));
+          }
         }
       }
-    }
 
-    // References.
-    for (const std::string &ref_str : spec->meta().references) {
-      ProcessArc(src, Compositor::ParseReference(ref_str), ArcType::Reference,
-                 cycle, out, spec_out, sels, chain, warn, err);
-    }
-
-    // Payloads (deferrable, weaker than references).
-    if (!spec->meta().payloads.empty()) {
-      const std::string root_prim_path = src.map.Apply(src.site);
-      for (const std::string &pl_str : spec->meta().payloads) {
-        CompositionArc arc = Compositor::ParsePayload(pl_str);
-        if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
-          deferred_payload_prims.insert(root_prim_path);
-          continue;  // deferred: contributes no opinions.
-        }
-        deferred_payload_prims.erase(root_prim_path);
-        ProcessArc(src, arc, ArcType::Payload, cycle, out, spec_out, sels, chain, warn,
-                   err);
+      // References.
+      for (const std::string &ref_str : spec->meta().references) {
+        ProcessArc(src, Compositor::ParseReference(ref_str), ArcType::Reference,
+                   cycle, out, spec_out, sels, chain, warn, err);
       }
-    }
 
-    // Specializes (globally weakest; routed into spec_out by ProcessArc).
-    for (const std::string &s : spec->meta().specializes) {
-      ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize, cycle,
-                 out, spec_out, sels, chain, warn, err);
+      // Payloads (deferrable, weaker than references).
+      if (!spec->meta().payloads.empty()) {
+        const std::string root_prim_path = src.map.Apply(src.site);
+        for (const std::string &pl_str : spec->meta().payloads) {
+          CompositionArc arc = Compositor::ParsePayload(pl_str);
+          if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
+            deferred_payload_prims.insert(root_prim_path);
+            continue;  // deferred: contributes no opinions.
+          }
+          deferred_payload_prims.erase(root_prim_path);
+          ProcessArc(src, arc, ArcType::Payload, cycle, out, spec_out, sels,
+                     chain, warn, err);
+        }
+      }
+
+      // Specializes (globally weakest; routed into spec_out by ProcessArc).
+      for (const std::string &s : spec->meta().specializes) {
+        ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize,
+                   cycle, out, spec_out, sels, chain, warn, err);
+      }
     }
   }
 
@@ -592,31 +659,36 @@ struct Cache::Impl {
         continue;
       }
 
-      const Layer *layer = nullptr;
-      const PrimSpec *spec = FindSpec(layer_stacks[s.stack_idx], s.site, &layer);
-      if (!spec) continue;
+      const std::vector<SpecRef> specs =
+          FindSpecs(layer_stacks[s.stack_idx], s.site);
+      if (specs.empty()) continue;
 
-      if (!specifier_set) {
-        out->set_specifier(spec->specifier());
-        specifier_set = true;
-      }
+      for (const SpecRef &sr : specs) {
+        const PrimSpec *spec = sr.spec;
+        const Layer *layer = sr.layer;
 
-      Compositor::CopyLocalOpinions(*out, *spec);
-
-      for (const std::string &rn : spec->relationship_names()) {
-        if (out->relationship(rn)) continue;
-        const std::vector<Path> *tgts = spec->relationship(rn);
-        if (!tgts) continue;
-        for (const Path &t : *tgts) {
-          out->add_relationship(rn, Path(s.map.Apply(t.str())));
+        if (!specifier_set) {
+          out->set_specifier(spec->specifier());
+          specifier_set = true;
         }
-      }
 
-      for (uint32_t ci : spec->child_indices()) {
-        const PrimSpec *cs = layer->prim(ci);
-        if (!cs) continue;
-        if (seen_child.insert(cs->name()).second) {
-          child_names.push_back(cs->name());
+        Compositor::CopyLocalOpinions(*out, *spec);
+
+        for (const std::string &rn : spec->relationship_names()) {
+          if (out->relationship(rn)) continue;
+          const std::vector<Path> *tgts = spec->relationship(rn);
+          if (!tgts) continue;
+          for (const Path &t : *tgts) {
+            out->add_relationship(rn, Path(s.map.Apply(t.str())));
+          }
+        }
+
+        for (uint32_t ci : spec->child_indices()) {
+          const PrimSpec *cs = layer->prim(ci);
+          if (!cs) continue;
+          if (seen_child.insert(cs->name()).second) {
+            child_names.push_back(cs->name());
+          }
         }
       }
     }
@@ -637,8 +709,6 @@ struct Cache::Impl {
       return nullptr;  // prim does not exist in the composed namespace.
     }
 
-    RegisterInstance(key, srcs);
-
     auto index = std::unique_ptr<PrimIndex>(new PrimIndex());
     index->SetPath(prim_path);
     index->SetLayerStacks(&layer_stacks);
@@ -655,15 +725,31 @@ struct Cache::Impl {
       n.site_path_idx = InternPath(s.site);
       n.map_to_root = s.map;
       n.offset = s.offset;
-      if (FindSpec(layer_stacks[s.stack_idx], s.site, nullptr)) {
+      const std::vector<SpecRef> specs =
+          FindSpecs(layer_stacks[s.stack_idx], s.site);
+      if (!specs.empty()) {
         n.flags |= NodeFlags::HasSpecs;
-        sites.push_back(Site{layer_stacks[s.stack_idx].identifier, s.site});
+        for (const SpecRef &sr : specs) {
+          sites.push_back(Site{sr.layer_id.empty()
+                                   ? layer_stacks[s.stack_idx].identifier
+                                   : sr.layer_id,
+                               s.site});
+        }
       }
       uint16_t ni = index->AddNode(std::move(n));
+      if (ni == PrimIndex::kInvalidNode) {
+        if (err) {
+          *err += "PrimIndex node count exceeds uint16 capacity for " + key +
+                  "\n";
+        }
+        return nullptr;
+      }
       if (i != 0) index->MutableNode(0).children.push_back(ni);
-      order.push_back(static_cast<uint16_t>(i));
+      order.push_back(ni);
     }
     index->SetStrengthOrder(std::move(order));
+
+    RegisterInstance(key, srcs);
 
     for (const Site &site : sites) site_to_indices[site].insert(key);
     index_to_sites[key] = std::move(sites);
@@ -728,8 +814,16 @@ struct Cache::Impl {
     auto out = std::unique_ptr<Layer>(new Layer());
 
     const Layer *root = layer_stacks[0].layers[0].get();
-    for (uint32_t ri : root->root_indices()) {
-      const std::string nm = root->prim(ri)->name();
+    std::set<std::string> seen_root;
+    std::vector<std::string> root_names;
+    for (const auto &lp : layer_stacks[0].layers) {
+      for (uint32_t ri : lp->root_indices()) {
+        const PrimSpec *ps = lp->prim(ri);
+        if (!ps) continue;
+        if (seen_root.insert(ps->name()).second) root_names.push_back(ps->name());
+      }
+    }
+    for (const std::string &nm : root_names) {
       BuildStageRec(Path("/" + nm), Path("/" + nm), out.get(), 0,
                     /*is_root=*/true, warn, err);
     }
@@ -766,9 +860,9 @@ struct Cache::Impl {
     std::unique_ptr<PrimIndex> idx = std::move(wit->second);
 
     std::unordered_map<uint32_t, uint32_t> stack_remap, path_remap;
-    const uint16_t n = idx->GetNodeCount();
-    for (uint16_t i = 0; i < n; ++i) {
-      CompNode &node = idx->MutableNode(i);
+    const size_t n = idx->GetNodes().size();
+    for (size_t i = 0; i < n; ++i) {
+      CompNode &node = idx->MutableNode(static_cast<uint16_t>(i));
       auto sr = stack_remap.find(node.layer_stack_idx);
       if (sr == stack_remap.end()) {
         uint32_t m = AdoptStack(w.layer_stacks[node.layer_stack_idx]);
@@ -1025,7 +1119,14 @@ nonstd::expected<Cache, std::string> Cache::Open(
   cache.impl_->root_identifier = root_identifier;
 
   std::string warn, err;
-  cache.impl_->InternLayerStack(root_layer, root_identifier, &warn, &err);
+  uint32_t root_stack =
+      cache.impl_->InternLayerStack(root_layer, root_identifier, &warn, &err);
+  if (root_stack == Impl::kInvalidStack) {
+    return nonstd::make_unexpected(err.empty()
+                                       ? std::string("pcp::Cache::Open: failed "
+                                                     "to build root layer stack")
+                                       : err);
+  }
   cache.impl_->CollectRelocates();
   return cache;
 }

@@ -63,7 +63,12 @@ class LayerRegistry {
 
   /// Total number of actual parses performed (cache misses). Used by tests to
   /// assert parse-once behavior.
-  size_t parse_count() const { return _parse_count; }
+  size_t parse_count() const {
+#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
+    std::lock_guard<std::mutex> lock(*_mu);
+#endif
+    return _parse_count;
+  }
 
  private:
   HashMap<std::string, std::shared_ptr<Layer>> _by_resolved;
