@@ -131,7 +131,13 @@ bool IsMMapSupported();
 struct MMapFileHandle
 {
   std::string filename;
-#if defined(WIN32)
+  // NOTE: gate on `_WIN32` (defined by the compiler everywhere on Windows), not
+  // bare `WIN32` (only defined once <windows.h> is included). The MMapFile
+  // implementation accesses hFile/unicode_filename under `_WIN32`; using `WIN32`
+  // here made this struct's layout differ between TUs that include <windows.h>
+  // and those that don't, corrupting `addr` in the caller (crash on USDC load
+  // under llvm-mingw, where the compiler does not predefine bare `WIN32`).
+#if defined(_WIN32)
   std::wstring unicode_filename;
   void *hFile = nullptr;
 #endif
