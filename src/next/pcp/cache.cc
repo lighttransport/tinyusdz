@@ -334,11 +334,26 @@ struct Cache::Impl {
     arc_src.offset = src.offset;
     arc_src.arc_kind = kind;
 
-    std::set<std::string> child_cycle = cycle;
-    child_cycle.insert(key);
     // A specialize subtree is globally weakest: it (and everything beneath it)
     // is collected into spec_out.
     std::vector<Src> *target = (kind == ArcType::Specialize) ? spec_out : out;
+
+    // Implied class-arc propagation: a class (inherit/specialize) reached
+    // through a reference is ALSO expressed in the ROOT layer stack, so a
+    // root-authored override on the same class path composes -- and, pushed
+    // first, outranks the referenced-stack class opinions. Class paths are
+    // global, so the site is unchanged in the root stack.
+    if (IsClassBasedArc(kind) && arc_stack_idx != 0 &&
+        FindSpec(layer_stacks[0], arc_site, nullptr)) {
+      Src implied = arc_src;
+      implied.stack_idx = 0;
+      std::set<std::string> ic = cycle;
+      ic.insert(layer_stacks[0].identifier + ":" + arc_site);
+      ExpandArcs(implied, std::move(ic), target, spec_out, warn, err);
+    }
+
+    std::set<std::string> child_cycle = cycle;
+    child_cycle.insert(key);
     ExpandArcs(arc_src, std::move(child_cycle), target, spec_out, warn, err);
   }
 
@@ -814,6 +829,10 @@ bool Cache::HasComputedPrimIndex(const Path &prim_path) const {
 }
 size_t Cache::ComputedPrimIndexCount() const { return impl_->index_cache.size(); }
 const LayerRegistry &Cache::layer_registry() const { return impl_->registry; }
+void Cache::PreloadLayer(const std::string &identifier,
+                         std::shared_ptr<Layer> layer) {
+  impl_->registry.Preload(identifier, std::move(layer));
+}
 
 }  // namespace pcp
 }  // namespace next

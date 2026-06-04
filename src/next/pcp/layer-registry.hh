@@ -37,6 +37,13 @@ class LayerRegistry {
                                    const std::string &anchor,
                                    std::string *warn, std::string *err);
 
+  /// Pre-register an in-memory layer under a resolved identifier (so a reference
+  /// resolving to that id composes it without touching disk). Does not count as
+  /// a parse. Useful for embedding already-loaded layers.
+  void Preload(const std::string &resolved_id, std::shared_ptr<Layer> layer) {
+    by_resolved_[resolved_id] = std::move(layer);
+  }
+
   /// Drop a single cached layer by resolved path. Caller must have already
   /// invalidated every PrimIndex that referenced it.
   void Drop(const std::string &resolved_path);
