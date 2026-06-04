@@ -95,17 +95,23 @@ struct TimeSamples {
     if (!_times.empty()) {
       // Binary storage path
       if (src_idx >= _times.size()) return false;
+      if (src_idx >= _blocked.size()) return false;
+      if (src_idx >= _data_offsets.size()) return false;
+
+      const bool src_blocked = (_blocked[src_idx] != 0) ||
+                               (_data_offsets[src_idx] == BLOCKED_OFFSET);
+      if (_is_array && !src_blocked && src_idx >= _array_counts.size()) {
+        return false;
+      }
 
       _times.push_back(new_time);
       _blocked.push_back(_blocked[src_idx]);
 
-      if (src_idx < _data_offsets.size()) {
-        // Reuse the same byte offset — zero-copy dedup
-        _data_offsets.push_back(_data_offsets[src_idx]);
-      }
+      // Reuse the same byte offset - zero-copy dedup.
+      _data_offsets.push_back(_data_offsets[src_idx]);
 
-      if (_is_array && src_idx < _array_counts.size()) {
-        _array_counts.push_back(_array_counts[src_idx]);
+      if (_is_array) {
+        _array_counts.push_back(src_blocked ? 0 : _array_counts[src_idx]);
       }
 
       invalidate_reconstructed_samples_cache();
@@ -328,6 +334,29 @@ struct TimeSamples {
       return nonstd::nullopt;
     }
     return samples[idx].value;
+  }
+
+  /// Reconstruct a single sample by index WITHOUT materializing all samples.
+  /// Unlike get_samples() (which builds and caches the full N-sample vector and
+  /// thus expands read-side-deduplicated values into N independent copies), this
+  /// touches only one sample's worth of memory. Pair it with get_data_offsets()
+  /// so callers can skip reconstructing samples that share an underlying value
+  /// block. Returns false if idx is out of range.
+  bool get_sample_at(size_t idx, Sample *out) const {
+    if (!out) {
+      return false;
+    }
+    if (_dirty) {
+      update();
+    }
+    if (!_times.empty()) {
+      return reconstruct_binary_sample(idx, out);
+    }
+    if (idx >= _samples.size()) {
+      return false;
+    }
+    *out = _samples[idx];
+    return true;
   }
 
   uint32_t type_id() const {

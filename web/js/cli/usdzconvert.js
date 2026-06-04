@@ -33,6 +33,10 @@ Convert options:
   --arkit-compatible       Force ARKit-friendly flattened USDC package metadata
   --no-flatten             Accepted for parity; JS/WASM export still flattens
   --jpeg-quality <1-100>   JPEG quality when re-encoding (default 90)
+  --max-usdc-mb <N>        Raise the USDC root-layer write size cap to N MB
+                           (0 = keep the conservative ~100 MB WASM default).
+                           Needed for very large scenes.
+  --max-mem-mb <N>         Raise the USDC writer memory cap to N MB (0 = default)
   --png-encoder <fpnge|fpng|auto>  PNG encoder hint (WASM always uses fpng)
   --no-reencode            Copy unmodified textures through unchanged
   -v, --verbose            Verbose logging
@@ -66,6 +70,7 @@ function parseArgs() {
     textureFormat: 'keep', rootLayerFormat: 'usdc', arkitCompatible: false,
     flatten: true,
     targetSize: 0, fitStrategy: 'size', fitMinSize: 64, fitMinQuality: 30,
+    maxUsdcMb: 0, maxMemMb: 0,
     repack: null, packChannels: 0, pack: { R: null, G: null, B: null, A: null },
   };
   for (let i = 0; i < args.length; i++) {
@@ -85,6 +90,8 @@ function parseArgs() {
     else if (a === '--fit-strategy') o.fitStrategy = args[++i];
     else if (a === '--fit-min-size') o.fitMinSize = parseInt(args[++i], 10) || 64;
     else if (a === '--fit-min-quality') o.fitMinQuality = parseInt(args[++i], 10) || 30;
+    else if (a === '--max-usdc-mb') o.maxUsdcMb = parseInt(args[++i], 10) || 0;
+    else if (a === '--max-mem-mb') o.maxMemMb = parseInt(args[++i], 10) || 0;
     else if (a === '-v' || a === '--verbose') o.verbose = true;
     else if (a === '--repack') o.repack = args[++i];
     else if (a === '--pack-channels') o.packChannels = parseInt(args[++i], 10) || 0;
@@ -106,7 +113,7 @@ function readDirToMap(dir) {
       const full = path.join(cur, entry.name);
       const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) walk(full, rel);
-      else if (entry.isFile()) map.set(rel, new Uint8Array(fs.readFileSync(full)));
+      else if (entry.isFile()) map.set(rel, fs.readFileSync(full));
     }
   };
   walk(dir, '');
@@ -132,7 +139,7 @@ async function runRepack(native, o) {
     const key = slots[i].toLowerCase();
     if (parsed.file !== undefined) {
       if (!fs.existsSync(parsed.file)) { console.error('File not found: ' + parsed.file); process.exit(1); }
-      args[key] = { data: new Uint8Array(fs.readFileSync(parsed.file)), channel: parsed.channel };
+      args[key] = { data: fs.readFileSync(parsed.file), channel: parsed.channel };
     } else {
       args[key] = { const: parsed.const };
     }
@@ -177,7 +184,7 @@ async function main() {
     // A .usdz is self-contained; read only the archive and let the converter
     // unpack it to repack its internal textures (avoids slurping siblings).
     const base = path.basename(o.input);
-    assetMap = new Map([[base, new Uint8Array(fs.readFileSync(o.input))]]);
+    assetMap = new Map([[base, fs.readFileSync(o.input)]]);
     rootRel = o.root || base;
   } else {
     // Single file: read its whole directory so sibling textures resolve.
@@ -201,6 +208,8 @@ async function main() {
     flatten: o.flatten,
     pngEncoder: o.pngEncoder,
     jpegQuality: o.jpegQuality,
+    maxUsdcMb: o.maxUsdcMb,
+    maxMemMb: o.maxMemMb,
     log,
   });
 

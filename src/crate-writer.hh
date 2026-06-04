@@ -805,6 +805,11 @@ private:
   tinyusdz::HashMap<Path, crate::PathIndex, crate::PathHasher, crate::PathKeyEqual> path_to_index_;
   std::vector<Path> paths_;  // Index -> path
 
+  // Set of paths that already have a spec, for O(1) duplicate-spec detection in
+  // AddSpec (avoids an O(n^2) linear scan over spec_data_). Keyed like
+  // path_to_index_ but distinct because that map also holds ancestor paths.
+  tinyusdz::HashMap<Path, uint32_t, crate::PathHasher, crate::PathKeyEqual> spec_path_set_;
+
   tinyusdz::HashMap<crate::Field, crate::FieldIndex, crate::FieldHasher, crate::FieldKeyEqual> field_to_index_;
   std::vector<crate::Field> fields_;  // Index -> field
 
@@ -846,13 +851,6 @@ private:
     static bool buffers_equal(const void *a, const void *b, size_t byte_count,
                               size_t element_size, bool is_float);
   };
-  struct ValueDedupEntry {
-    std::vector<char> bytes;
-    size_t element_size;
-    bool is_float;
-    int64_t offset;
-  };
-  std::unordered_multimap<size_t, ValueDedupEntry> value_dedup_map_;
 };
 
 } // namespace experimental
