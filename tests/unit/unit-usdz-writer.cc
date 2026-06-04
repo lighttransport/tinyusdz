@@ -353,6 +353,27 @@ void usdz_validator_empty_input_test(void) {
   TEST_CHECK(err.find("magic") != std::string::npos);
 }
 
+void usdz_validator_missing_eocd_test(void) {
+  const std::string name = "root.usda";
+  const uint16_t name_len = static_cast<uint16_t>(name.size());
+  const uint16_t extra_len = static_cast<uint16_t>(64 - 30 - name.size());
+
+  std::vector<uint8_t> malformed(64, 0);
+  malformed[0] = 0x50;
+  malformed[1] = 0x4b;
+  malformed[2] = 0x03;
+  malformed[3] = 0x04;
+  memcpy(&malformed[26], &name_len, sizeof(name_len));
+  memcpy(&malformed[28], &extra_len, sizeof(extra_len));
+  memcpy(malformed.data() + 30, name.data(), name.size());
+
+  std::string warn, err;
+  bool ret = tinyusdz::ValidateUSDZ(malformed.data(), malformed.size(),
+                                    &warn, &err);
+  TEST_CHECK(!ret);
+  TEST_CHECK(err.find("End of central directory") != std::string::npos);
+}
+
 // Test 7: File-based write and read roundtrip
 void usdz_writer_file_roundtrip_test(void) {
   tinyusdz::Stage stage;
