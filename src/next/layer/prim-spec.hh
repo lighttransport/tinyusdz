@@ -77,6 +77,7 @@ struct VariantSetData;
 struct PrimSpecMeta {
   bool active = true;
   bool hidden = false;
+  bool instanceable = false;  // when true (with arcs), the prim is an instance
   std::string doc;
   std::string comment;
   std::vector<std::string> apiSchemas;

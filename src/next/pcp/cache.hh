@@ -52,8 +52,38 @@ class Cache {
   const PrimIndex *ComputePrimIndex(const Path &prim_path, std::string *warn,
                                     std::string *err);
 
+  /// Build (and cache) the PrimIndices for a batch of paths. Currently
+  /// sequential; `CompositionOptions::num_threads` is a forward-compat hint
+  /// (lock-free parallel composition is a follow-up that needs per-worker
+  /// contexts). Best-effort: a path that fails to build is skipped.
+  bool PrewarmPrimIndices(const std::vector<Path> &paths, std::string *warn,
+                          std::string *err);
+
   /// Materialize the fully-composed scene into `stage` (a fresh root Layer).
   bool BuildStage(Stage *stage, std::string *warn, std::string *err);
+
+  // --- instancing ---------------------------------------------------------
+
+  /// Whether `prim_path` is an instance (instanceable, and not the prototype of
+  /// its instance group).
+  bool IsInstance(const Path &prim_path) const;
+
+  /// The prototype prim path for `prim_path` (itself if it is the prototype, or
+  /// empty if not instanceable / not computed).
+  Path GetPrototype(const Path &prim_path) const;
+
+  /// All prototype prim paths discovered so far.
+  std::vector<Path> GetPrototypePaths() const;
+
+  /// All instances (including the prototype) sharing a prototype.
+  std::vector<Path> GetInstancesForPrototype(const Path &prototype) const;
+
+  /// Number of distinct prototypes (instance groups).
+  size_t PrototypeCount() const;
+
+  /// Compute the structural instance key for `prim_path` (for diagnostics/tests).
+  std::string ComputeInstanceKey(const Path &prim_path, std::string *warn,
+                                 std::string *err);
 
   /// Load a deferred payload on `prim_path` and recompose the affected prims.
   bool LoadPayload(const Path &prim_path, std::string *warn, std::string *err);
