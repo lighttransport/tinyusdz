@@ -628,6 +628,72 @@ static void test_cross_source_variant() {
   std::cout << "  OK" << std::endl;
 }
 
+// FU8: implied class arcs propagate into INTERMEDIATE stacks of a multi-level
+// reference chain (root -> A -> B), not just root. B inherits a class; each of
+// B's, A's, and root's class opinions composes onto the final prim.
+static void test_implied_intermediate() {
+  std::cout << "test_implied_intermediate..." << std::endl;
+
+  auto B = std::make_shared<Layer>();
+  {
+    LayerBuilder bb(*B);
+    bb.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
+    bb.add_property("fooB", Value::MakeFloat3(1, 0, 0));
+    bb.end_prim();
+    bb.begin_prim("B", "Mesh");
+    bb.current()->meta().inherits.push_back("</_class_Foo>");
+    bb.end_prim();
+    bb.finalize();
+  }
+  auto A = std::make_shared<Layer>();
+  {
+    LayerBuilder ab(*A);
+    ab.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
+    ab.add_property("fooA", Value::MakeFloat3(0, 1, 0));
+    ab.end_prim();
+    ab.begin_prim("A", "");
+    ab.current()->meta().references.push_back("@assetB@</B>");
+    ab.end_prim();
+    ab.finalize();
+  }
+  auto rootL = std::make_shared<Layer>();
+  {
+    LayerBuilder rb(*rootL);
+    rb.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
+    rb.add_property("fooRoot", Value::MakeFloat3(0, 0, 1));
+    rb.end_prim();
+    rb.begin_prim("World", "Xform");
+    rb.begin_prim("T", "");
+    rb.current()->meta().references.push_back("@assetA@</A>");
+    rb.end_prim();
+    rb.end_prim();
+    rb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [](const std::string &a, const std::string &) { return a; });
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  cache.PreloadLayer("assetA", A);
+  cache.PreloadLayer("assetB", B);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  UsdPrim t = stage.GetPrimAtPath("/World/T");
+  assert(t.IsValid());
+  assert(t.GetTypeName() == "Mesh");
+  assert(t.GetPropertyValue("fooB") != nullptr && "direct (B stack) class missing");
+  assert(t.GetPropertyValue("fooA") != nullptr &&
+         "implied INTERMEDIATE (A stack) class missing");
+  assert(t.GetPropertyValue("fooRoot") != nullptr &&
+         "implied root class missing");
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_build_stage();
@@ -643,6 +709,7 @@ int main() {
   test_instance_proxy();
   test_parallel_prewarm();
   test_cross_source_variant();
+  test_implied_intermediate();
   std::cout << "All next/pcp tests passed." << std::endl;
   return 0;
 }
