@@ -81,6 +81,21 @@ struct Cache::Impl {
   std::unordered_map<std::string, std::string> prototype_of;           // prim -> prototype
   std::unordered_map<std::string, std::vector<std::string>> instances_by_prototype;
 
+  // Relocates: composed source path -> target path (collected from the root
+  // layer stack at Open). Applied as a same-parent namespace rename in BuildStage.
+  std::map<std::string, std::string> relocates_map;
+
+  void CollectRelocates() {
+    relocates_map.clear();
+    for (const auto &lp : layer_stacks[0].layers) {
+      for (const PrimSpec &ps : lp->prims()) {
+        for (const auto &r : ps.meta().relocates) {
+          relocates_map[r.first] = r.second;
+        }
+      }
+    }
+  }
+
   // --- layer stacks -------------------------------------------------------
 
   static std::string DirOf(const std::string &path) {
@@ -529,12 +544,15 @@ struct Cache::Impl {
 
   // --- BuildStage ---------------------------------------------------------
 
-  void BuildStageRec(const Path &path, Layer *out, uint32_t parent_idx,
-                     bool is_root, std::string *warn, std::string *err) {
-    const std::vector<Src> &srcs = SourcesForPath(path, warn, err);
+  // `src_path` is where composition opinions are gathered; `out_path` is where
+  // the composed prim is placed (differs when a relocate renames it).
+  void BuildStageRec(const Path &src_path, const Path &out_path, Layer *out,
+                     uint32_t parent_idx, bool is_root, std::string *warn,
+                     std::string *err) {
+    const std::vector<Src> &srcs = SourcesForPath(src_path, warn, err);
 
-    PrimSpec spec(path.name());
-    spec.set_path(path);
+    PrimSpec spec(out_path.name());
+    spec.set_path(out_path);
     std::vector<std::string> children = ComposeInto(srcs, &spec);
 
     uint32_t idx = out->add_prim(std::move(spec));
@@ -545,7 +563,17 @@ struct Cache::Impl {
     }
 
     for (const std::string &cn : children) {
-      BuildStageRec(path.append_child(cn), out, idx, /*is_root=*/false, warn, err);
+      Path child_src = src_path.append_child(cn);
+      Path child_out;
+      auto rit = relocates_map.find(child_src.str());
+      if (rit != relocates_map.end() &&
+          Path(rit->second).parent().str() == out_path.str()) {
+        // Same-parent relocate: keep the source opinions, rename in output.
+        child_out = Path(rit->second);
+      } else {
+        child_out = out_path.append_child(cn);
+      }
+      BuildStageRec(child_src, child_out, out, idx, /*is_root=*/false, warn, err);
     }
   }
 
@@ -555,7 +583,8 @@ struct Cache::Impl {
     const Layer *root = layer_stacks[0].layers[0].get();
     for (uint32_t ri : root->root_indices()) {
       const std::string nm = root->prim(ri)->name();
-      BuildStageRec(Path("/" + nm), out.get(), 0, /*is_root=*/true, warn, err);
+      BuildStageRec(Path("/" + nm), Path("/" + nm), out.get(), 0,
+                    /*is_root=*/true, warn, err);
     }
 
     out->finalize();
@@ -674,6 +703,7 @@ nonstd::expected<Cache, std::string> Cache::Open(
 
   std::string warn, err;
   cache.impl_->InternLayerStack(root_layer, root_identifier, &warn, &err);
+  cache.impl_->CollectRelocates();
   return cache;
 }
 
