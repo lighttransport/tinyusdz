@@ -494,6 +494,8 @@ TEST_LIST = {
   { "pcp_layer_parsed_once_test", pcp_layer_parsed_once_test },
   { "pcp_invalidate_drops_dependents_test", pcp_invalidate_drops_dependents_test },
   { "pcp_payload_load_unload_test", pcp_payload_load_unload_test },
+  { "pcp_payload_defaultprim_eager_test", pcp_payload_defaultprim_eager_test },
+  { "pcp_payload_defaultprim_deferred_load_test", pcp_payload_defaultprim_deferred_load_test },
   { "pcp_buildstage_matches_compgraph_test", pcp_buildstage_matches_compgraph_test },
   { "pcp_singlethread_vs_multithread_identical_test", pcp_singlethread_vs_multithread_identical_test },
   { "pcp_mt_shared_reference_test", pcp_mt_shared_reference_test },

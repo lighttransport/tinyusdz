@@ -18,6 +18,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <cstdio>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -337,10 +339,64 @@ static void test_stress_parallel() {
             << " threads x " << kRounds << " rounds)" << std::endl;
 }
 
+static void test_parallel_same_asset_parse_once() {
+  std::cout << "test_parallel_same_asset_parse_once..." << std::endl;
+  const std::string asset_path = "/tmp/next_pcp_parallel_shared.usda";
+  {
+    std::ofstream f(asset_path);
+    f << "#usda 1.0\n"
+         "def Mesh \"A\"\n"
+         "{\n"
+         "    custom int sharedVal = 11\n"
+         "}\n";
+  }
+
+  const int kNumPrims = 64;
+  auto root = std::make_shared<Layer>();
+  {
+    LayerBuilder lb(*root);
+    lb.begin_prim("World", "Xform");
+    for (int i = 0; i < kNumPrims; ++i) {
+      lb.begin_prim("R" + std::to_string(i), "");
+      lb.current()->meta().references.push_back("@next_pcp_parallel_shared.usda@</A>");
+      lb.end_prim();
+    }
+    lb.end_prim();
+    lb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  pcp::CompositionOptions opts;
+  opts.num_threads = 8;
+  auto opened = pcp::Cache::Open(resolver, root, "", opts);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  std::vector<Path> paths;
+  for (int i = 0; i < kNumPrims; ++i) {
+    paths.push_back(Path("/World/R" + std::to_string(i)));
+  }
+
+  std::string warn, err;
+  assert(cache.PrewarmPrimIndices(paths, &warn, &err));
+  assert(cache.layer_registry().parse_count() == 1 &&
+         "same referenced asset should be parsed exactly once");
+  assert(cache.layer_registry().size() == 1);
+  for (const Path &p : paths) {
+    const pcp::PrimIndex *idx = cache.ComputePrimIndex(p, &warn, &err);
+    assert(idx && idx->GetNodeCount() >= 2);
+  }
+
+  std::remove(asset_path.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_minimal_parallel();
   test_complex_parallel();
   test_stress_parallel();
+  test_parallel_same_asset_parse_once();
   std::cout << "All next/pcp parallel tests passed." << std::endl;
   return 0;
 }

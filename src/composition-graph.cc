@@ -893,8 +893,15 @@ bool PrimIndexBuilder::EvalPayloads(uint16_t node_idx, std::string *err) {
               pl_root_ps) {
             uint16_t pl_ls_idx =
                 _ctx->AddLayerStack(pl_layer, asset_path_str, pl.layerOffset);
+            NamespaceMapping loaded_mapping =
+                MakeReferenceMapping(target_path, _result._prim_path, false);
+            uint16_t loaded_map_idx =
+                _ctx->AddMapExpression(loaded_mapping, -1);
 
             _result._nodes[child_idx].layer_stack_idx = pl_ls_idx;
+            _result._nodes[child_idx].site_path_idx =
+                _ctx->InternPath(target_path.prim_part());
+            _result._nodes[child_idx].map_expr_idx = loaded_map_idx;
             _result._nodes[child_idx].flags =
                 _result._nodes[child_idx].flags |
                 NodeFlags::PayloadLoaded | NodeFlags::HasSpecs;
@@ -1625,12 +1632,31 @@ nonstd::expected<bool, std::string> CompositionGraph::LoadPayload(
   const Layer *layer_raw = layer_ptr.get();
   _ctx._loaded_layers.push_back(std::move(layer_ptr));
 
+  Path target_path = info->payload.prim_path;
+  if (!target_path.is_valid() || target_path.prim_part().empty()) {
+    std::string dp = layer_raw->metas().defaultPrim.str();
+    if (!dp.empty()) target_path = Path("/" + dp, "");
+  }
+  const PrimSpec *pl_root_ps = nullptr;
+  std::string find_err;
+  if (!target_path.is_valid() ||
+      !layer_raw->find_primspec_at(target_path, &pl_root_ps, &find_err) ||
+      !pl_root_ps) {
+    return nonstd::make_unexpected(
+        "Payload target prim not found in " + asset_path_str);
+  }
+  NamespaceMapping mapping =
+      MakeReferenceMapping(target_path, prim_path, false);
+  uint16_t map_idx = _ctx.AddMapExpression(mapping, -1);
   uint16_t ls_idx =
       _ctx.AddLayerStack(layer_raw, asset_path_str, info->payload.layerOffset);
 
   // Update the node
   node.layer_stack_idx = ls_idx;
-  node.flags = (node.flags & ~NodeFlags::PayloadDeferred) |
+  node.site_path_idx = _ctx.InternPath(target_path.prim_part());
+  node.map_expr_idx = map_idx;
+  node.flags = (node.flags & ~NodeFlags::PayloadDeferred &
+                ~NodeFlags::Inert & ~NodeFlags::Culled) |
                NodeFlags::PayloadLoaded | NodeFlags::HasSpecs;
 
   RecomputeStrengthOrder(index);
