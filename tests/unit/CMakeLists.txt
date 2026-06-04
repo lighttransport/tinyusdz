@@ -24,6 +24,7 @@ set(TEST_SOURCES
 	unit-tydra-subdivision.cc
 	unit-subdiv-tinyusdz.cc
 	unit-dedup.cc
+	unit-path.cc
 	unit-crate-writer.cc
 	unit-stage.cc
 	unit-tiny-container.cc
