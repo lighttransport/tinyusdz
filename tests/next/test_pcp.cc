@@ -68,6 +68,20 @@ static std::shared_ptr<Layer> BuildRootLayer() {
     lb.current()->meta().variantSelection = "vset=high";
   }
   lb.end_prim();  // V
+  // Three instanceable prims: Inst1/Inst2 reference the same asset (one
+  // prototype, shared); Inst3 references a different asset (separate prototype).
+  lb.begin_prim("Inst1", "");
+  lb.current()->meta().references.push_back("</Lib/Model>");
+  lb.current()->meta().instanceable = true;
+  lb.end_prim();
+  lb.begin_prim("Inst2", "");
+  lb.current()->meta().references.push_back("</Lib/Model>");
+  lb.current()->meta().instanceable = true;
+  lb.end_prim();
+  lb.begin_prim("Inst3", "");
+  lb.current()->meta().references.push_back("</Lib/RefModel>");
+  lb.current()->meta().instanceable = true;
+  lb.end_prim();
   lb.end_prim();  // World
 
   lb.begin_prim("Lib", "Scope");
@@ -277,6 +291,42 @@ static void test_variants() {
   std::cout << "  OK" << std::endl;
 }
 
+// Phase 5: instancing - structural prototype detection + grouping.
+static void test_instancing() {
+  std::cout << "test_instancing..." << std::endl;
+  AssetResolver resolver;
+  auto root = BuildRootLayer();
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  std::string warn, err;
+  std::vector<Path> paths{Path("/World/Inst1"), Path("/World/Inst2"),
+                          Path("/World/Inst3")};
+  assert(cache.PrewarmPrimIndices(paths, &warn, &err));
+
+  // Two distinct prototypes: {Inst1,Inst2} share, Inst3 is its own.
+  assert(cache.PrototypeCount() == 2);
+
+  std::string k1 = cache.ComputeInstanceKey(Path("/World/Inst1"), &warn, &err);
+  std::string k2 = cache.ComputeInstanceKey(Path("/World/Inst2"), &warn, &err);
+  std::string k3 = cache.ComputeInstanceKey(Path("/World/Inst3"), &warn, &err);
+  assert(k1 == k2 && "same-asset instances must share a key");
+  assert(k1 != k3 && "different-asset instances must differ");
+
+  Path p1 = cache.GetPrototype(Path("/World/Inst1"));
+  Path p2 = cache.GetPrototype(Path("/World/Inst2"));
+  assert(p1 == p2 && "Inst1/Inst2 must share a prototype");
+  assert(cache.GetInstancesForPrototype(p1).size() == 2);
+
+  // Exactly one of the two is the prototype (IsInstance == false), the other an
+  // instance (IsInstance == true).
+  bool i1 = cache.IsInstance(Path("/World/Inst1"));
+  bool i2 = cache.IsInstance(Path("/World/Inst2"));
+  assert(i1 != i2);
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_build_stage();
@@ -285,6 +335,7 @@ int main() {
   test_deferred_payload();
   test_inherits_specializes();
   test_variants();
+  test_instancing();
   std::cout << "All next/pcp tests passed." << std::endl;
   return 0;
 }
