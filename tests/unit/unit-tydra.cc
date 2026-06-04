@@ -22,6 +22,8 @@
 #include "core/prim-spec.hh"
 #include "value-clip-utils.hh"
 #include "tinyusdz.hh"
+#include "image-types.hh"
+#include "image-writer.hh"
 #include "tydra/attribute-eval.hh"
 #include "tydra/layer-to-renderscene.hh"
 #include "tydra/render-data.hh"
@@ -1647,6 +1649,203 @@ void tydra_texture_loader_policy_test(void) {
     TEST_CHECK(converter.GetWarning().find("Failed to resolve") ==
                std::string::npos);
   }
+}
+
+void tydra_udim_texture_test(void) {
+  // --- Set up a temp directory with 3 UDIM tiles: 1001, 1002, 1011 ---
+  // Tiles: 1001 -> (u0,v0), 1002 -> (u1,v0), 1011 -> (u0,v1).
+  // Grid bounds => cols=2, rows=2.
+  std::error_code ec;
+  std::filesystem::path tmpdir =
+      std::filesystem::temp_directory_path(ec) / "tinyusdz_udim_test";
+  if (ec) {
+    tmpdir = std::filesystem::current_path() / "tinyusdz_udim_test";
+  }
+  std::filesystem::create_directories(tmpdir, ec);
+
+  auto make_tile = [](uint8_t r, uint8_t g, uint8_t b) {
+    Image img;
+    img.width = 8;
+    img.height = 8;
+    img.channels = 4;
+    img.bpp = 8;
+    img.format = Image::PixelFormat::UInt;
+    img.data.resize(8 * 8 * 4);
+    for (size_t i = 0; i < 8 * 8; i++) {
+      img.data[i * 4 + 0] = r;
+      img.data[i * 4 + 1] = g;
+      img.data[i * 4 + 2] = b;
+      img.data[i * 4 + 3] = 255;
+    }
+    return img;
+  };
+
+  struct TileSpec { uint32_t id; uint8_t r, g, b; };
+  const std::vector<TileSpec> tile_specs = {
+      {1001, 255, 0, 0}, {1002, 0, 255, 0}, {1011, 0, 0, 255}};
+
+  std::vector<std::string> tile_files;
+  bool wrote_all = true;
+  for (const auto &ts : tile_specs) {
+    Image img = make_tile(ts.r, ts.g, ts.b);
+    const std::string path =
+        (tmpdir / ("tile." + std::to_string(ts.id) + ".png")).string();
+    auto wret = image::WriteImageToFile(path, img);
+    if (!wret) {
+      wrote_all = false;
+      break;
+    }
+    tile_files.push_back(path);
+  }
+  TEST_CHECK(wrote_all);
+  if (!wrote_all) {
+    return;
+  }
+
+  const std::string udim_asset = "tile.<UDIM>.png";
+
+  // --- Direct helper test: ExpandUDIMTiles ---
+  {
+    AssetResolutionResolver resolver;
+    resolver.set_search_paths({tmpdir.string()});
+
+    std::vector<tydra::UDIMTile> tiles;
+    std::string warn, err;
+    bool ok = tydra::ExpandUDIMTiles(udim_asset, resolver, /*max_tiles*/ 100,
+                                     &tiles, &warn, &err);
+    TEST_CHECK(ok);
+    TEST_CHECK(tiles.size() == 3);
+    if (tiles.size() == 3) {
+      TEST_CHECK(tiles[0].udim_id == 1001);
+      TEST_CHECK(tiles[0].u == 0 && tiles[0].v == 0);
+      TEST_CHECK(tiles[1].udim_id == 1002);
+      TEST_CHECK(tiles[1].u == 1 && tiles[1].v == 0);
+      TEST_CHECK(tiles[2].udim_id == 1011);
+      TEST_CHECK(tiles[2].u == 0 && tiles[2].v == 1);
+    }
+
+    // --- Direct helper test: BuildUDIMAtlas ---
+    if (tiles.size() == 3) {
+      tydra::UDIMAtlas atlas;
+      std::string awarn, aerr;
+      bool aok = tydra::BuildUDIMAtlas(tiles, resolver, /*max_atlas_size*/ 256,
+                                       /*srgb*/ true, &atlas, &awarn, &aerr);
+      TEST_CHECK(aok);
+      if (aok) {
+        TEST_CHECK(atlas.cols == 2);
+        TEST_CHECK(atlas.rows == 2);
+        TEST_CHECK(NearlyEqual(atlas.uv_scale[0], 0.5f));
+        TEST_CHECK(NearlyEqual(atlas.uv_scale[1], 0.5f));
+        TEST_CHECK(NearlyEqual(atlas.uv_offset[0], 0.0f));
+        TEST_CHECK(NearlyEqual(atlas.uv_offset[1], 0.0f));
+        // per-tile cell = floor_pow2(256/2) = 128 -> atlas 256x256.
+        TEST_CHECK(atlas.image.width == 256);
+        TEST_CHECK(atlas.image.height == 256);
+        TEST_CHECK(atlas.image.channels == 4);
+        TEST_CHECK(atlas.image.width <= 256 && atlas.image.height <= 256);
+      }
+    }
+  }
+
+  // --- Pipeline test helper: stage with a UDIM diffuse texture ---
+  auto make_stage = [&]() {
+    Stage stage;
+
+    GeomMesh mesh;
+    mesh.points = Animatable<std::vector<value::point3f>>(
+        std::vector<value::point3f>{{0.0f, 0.0f, 0.0f},
+                                    {1.0f, 0.0f, 0.0f},
+                                    {0.0f, 1.0f, 0.0f}});
+    mesh.faceVertexCounts = Animatable<std::vector<int32_t>>(
+        std::vector<int32_t>{3});
+    mesh.faceVertexIndices = Animatable<std::vector<int32_t>>(
+        std::vector<int32_t>{0, 1, 2});
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    Material material;
+    material.surface.set(Path("/PreviewSurface", "outputs:surface"));
+
+    UsdPreviewSurface preview_surface;
+    preview_surface.outputsSurface.set_authored(true);
+    preview_surface.diffuseColor.set_connection(Path("/Tex", "outputs:rgb"));
+    preview_surface.diffuseColor.set_value_empty();
+
+    Shader preview_shader;
+    preview_shader.info_id = kUsdPreviewSurface;
+    preview_shader.value = preview_surface;
+
+    UsdUVTexture uv_texture;
+    uv_texture.outputsRGB.set_authored(true);
+    uv_texture.file.set_value(
+        Animatable<value::AssetPath>(value::AssetPath(udim_asset)));
+
+    Shader tex_shader;
+    tex_shader.info_id = kUsdUVTexture;
+    tex_shader.value = uv_texture;
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(Prim("MaterialPrim", material)));
+    TEST_CHECK(stage.add_root_prim(Prim("PreviewSurface", preview_shader)));
+    TEST_CHECK(stage.add_root_prim(Prim("Tex", tex_shader)));
+
+    return stage;
+  };
+
+  // --- Combine mode (default): single atlas image + remap on the texture ---
+  {
+    Stage stage = make_stage();
+    tydra::RenderSceneConverterEnv env(stage);
+    env.set_search_paths({tmpdir.string()});
+    env.material_config.combine_udim_tiles = true;
+    env.material_config.udim_max_atlas_size = 256;
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+    bool ok = converter.ConvertToRenderScene(env, &scene);
+    TEST_CHECK(ok);
+    TEST_CHECK(scene.textures.size() == 1);
+    TEST_CHECK(scene.images.size() == 1);  // one combined atlas
+    TEST_CHECK(scene.udim_textures.empty());
+    if (scene.textures.size() == 1) {
+      TEST_CHECK(scene.textures[0].is_udim);
+      TEST_CHECK(scene.textures[0].udim_texture_id < 0);
+      TEST_CHECK(NearlyEqual(scene.textures[0].udim_uv_scale[0], 0.5f));
+      TEST_CHECK(NearlyEqual(scene.textures[0].udim_uv_scale[1], 0.5f));
+    }
+  }
+
+  // --- Keep-as-is mode: sparse UDIMTexture with per-tile images ---
+  {
+    Stage stage = make_stage();
+    tydra::RenderSceneConverterEnv env(stage);
+    env.set_search_paths({tmpdir.string()});
+    env.material_config.combine_udim_tiles = false;
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+    bool ok = converter.ConvertToRenderScene(env, &scene);
+    TEST_CHECK(ok);
+    TEST_CHECK(scene.textures.size() == 1);
+    TEST_CHECK(scene.udim_textures.size() == 1);
+    TEST_CHECK(scene.images.size() == 3);  // 3 separate tiles
+    if (scene.udim_textures.size() == 1) {
+      const auto &udim = scene.udim_textures[0];
+      TEST_CHECK(udim.imageTileIds.size() == 3);
+      TEST_CHECK(udim.imageTileIds.count(1001) == 1);
+      TEST_CHECK(udim.imageTileIds.count(1002) == 1);
+      TEST_CHECK(udim.imageTileIds.count(1011) == 1);
+      TEST_CHECK(udim.asset_identifier == udim_asset);
+    }
+    if (scene.textures.size() == 1) {
+      TEST_CHECK(scene.textures[0].is_udim);
+      TEST_CHECK(scene.textures[0].udim_texture_id == 0);
+    }
+  }
+
+  CleanupTempFiles(tile_files);
+  std::filesystem::remove(tmpdir, ec);
 }
 
 void tydra_envmap_loader_policy_test(void) {

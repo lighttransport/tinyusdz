@@ -21,6 +21,7 @@ void usdc_writer_skelroot_test(void);
 
 // Shader / Material
 void usdc_writer_shader_terminal_test(void);
+void usdc_writer_layer_empty_shader_outputs_test(void);
 void usdc_writer_material_outputs_test(void);
 void usdc_writer_uvtexture_test(void);
 void usdc_writer_primvarreader_test(void);
@@ -214,3 +215,10 @@ void usdc_writer_reference_customdata_mixed_test(void);
 
 // Attribute meta `allowedTokens` USDC roundtrip
 void usdc_writer_allowed_tokens_test(void);
+
+// Shader info:id uniform + UsdPrimvarReader varname-connection (USDC write regression)
+void usdc_writer_primvar_reader_varname_connection_test(void);
+void usdc_writer_shader_info_id_uniform_test(void);
+
+// UsdTransform2d connected inputs:in (USDC write regression)
+void usdc_writer_transform2d_in_connection_test(void);

@@ -399,7 +399,7 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
             return null;
         }
 
-        const imgData = usdScene.getImage(texData.textureImageId);
+        const imgData = usdScene.getImageCopy(texData.textureImageId);
         if (!imgData) {
             console.warn(`Image ${texData.textureImageId} not found`);
             return null;
@@ -417,7 +417,7 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
             if (typeof usdScene.numImages === 'function') {
                 const numImages = usdScene.numImages();
                 for (let i = 0; i < numImages; i++) {
-                    const altImg = usdScene.getImage(i);
+                    const altImg = usdScene.getImageCopy(i);
                     if (altImg.bufferId >= 0 && altImg.uri === filename) {
                         // Found embedded version - use it instead
                         const altImgData = altImg;

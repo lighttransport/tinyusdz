@@ -81,8 +81,10 @@ class MMapDataSource {
   const T *get_ptr(const MMapArrayRef &ref) const {
     if (!is_valid()) return nullptr;
     if (ref.element_size != sizeof(T)) return nullptr;
-    uint64_t end = ref.byte_offset + ref.element_count * sizeof(T);
-    if (end > _size) return nullptr;
+    if (ref.element_count > (UINT64_MAX / sizeof(T))) return nullptr;
+    uint64_t byte_count = ref.element_count * sizeof(T);
+    if (ref.byte_offset > _size) return nullptr;
+    if (byte_count > (_size - ref.byte_offset)) return nullptr;
     auto ptr = reinterpret_cast<const T *>(_addr + ref.byte_offset);
     // Alignment check
     if (reinterpret_cast<uintptr_t>(ptr) % alignof(T) != 0) return nullptr;

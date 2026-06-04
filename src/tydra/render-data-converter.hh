@@ -13,7 +13,11 @@
 
 #pragma once
 
+#include <array>
+#include <map>
+
 #include "render-data.hh"
+#include "image-types.hh"
 
 namespace tinyusdz {
 namespace tydra {
@@ -56,8 +60,65 @@ bool DefaultTextureImageLoaderFunction(const value::AssetPath &assetPath,
                                        std::string *err);
 
 ///
-/// TODO: UDIM loder
+/// UDIM texture support.
 ///
+
+///
+/// One resolved UDIM tile.
+///
+struct UDIMTile {
+  uint32_t udim_id{1001};  // [1001, 1100]
+  uint32_t u{0};           // 0-based column = (udim_id - 1001) % 10
+  uint32_t v{0};           // 0-based row    = (udim_id - 1001) / 10
+  std::string asset_path;  // un-resolved per-tile asset path (prefix+id+suffix)
+};
+
+///
+/// Result of combining UDIM tiles into a single grid atlas.
+///
+struct UDIMAtlas {
+  tinyusdz::Image image;   // combined atlas image (8-bit, RGBA)
+  uint32_t cols{1};        // number of grid columns
+  uint32_t rows{1};        // number of grid rows
+  uint32_t min_u{0};       // grid origin (lowest tile column)
+  uint32_t min_v{0};       // grid origin (lowest tile row)
+
+  // UV remap so that `uv' = uv * scale + offset` places tile (u,v) into its
+  // atlas cell. scale = (1/cols, 1/rows), offset = (-min_u/cols, -min_v/rows).
+  vec2 uv_scale{1.0f, 1.0f};
+  vec2 uv_offset{0.0f, 0.0f};
+};
+
+///
+/// Discover the set of UDIM tiles that actually resolve for a UDIM asset path.
+///
+/// `udimAssetPath` must contain the `<UDIM>` token (see io::IsUDIMPath()).
+/// Iterates ids 1001..1100 (capped by `max_tiles`), building
+/// `prefix + to_string(id) + suffix` and keeping those that the resolver can
+/// resolve. Mirrors OpenUSD `_FindUdimTiles`.
+///
+/// @return true if at least one tile resolved. `tilesOut` is filled in
+/// ascending UDIM id order.
+///
+bool ExpandUDIMTiles(const std::string &udimAssetPath,
+                     const AssetResolutionResolver &assetResolver,
+                     int max_tiles, std::vector<UDIMTile> *tilesOut,
+                     std::string *warn, std::string *err);
+
+///
+/// Combine resolved UDIM tiles into a single grid-atlas image.
+///
+/// Each tile is decoded, resized (sRGB-aware when `srgb` is true) to the
+/// derived per-tile cell size and blitted into its grid cell. Empty cells are
+/// left transparent. The longest atlas edge is bounded by `max_atlas_size`.
+///
+/// @return true on success. `atlasOut` is filled with the combined image and
+/// the UV remap.
+///
+bool BuildUDIMAtlas(const std::vector<UDIMTile> &tiles,
+                    const AssetResolutionResolver &assetResolver,
+                    int max_atlas_size, bool srgb, UDIMAtlas *atlasOut,
+                    std::string *warn, std::string *err);
 
 struct MeshConverterConfig {
   bool triangulate{true};
@@ -325,6 +386,32 @@ struct MaterialConverterConfig {
   // unshaded material. Set to true if a downstream renderer requires a
   // complete shading network and the asset is expected to provide one.
   bool strict_material_check{false};
+
+  // --- UDIM texture support ---
+  //
+  // A UDIM asset path (e.g. `diffuse.<UDIM>.png`) expands to per-tile files
+  // numbered 1001..1100, where tile `1000 + (u+1) + 10*v` covers UV region
+  // `[u,u+1] x [v,v+1]`.
+  //
+  // When `combine_udim_tiles` is true (default), the converter loads the
+  // resolved tiles through the asset resolver and packs them into a single
+  // grid-atlas TextureImage. The referenced mesh UV set is rebaked so each
+  // tile lands in its atlas cell, producing an ordinary single-texture
+  // material suitable for WebGL/USDZ viewers.
+  //
+  // When false, tiles are loaded as-is and kept sparse: a
+  // `tydra::UDIMTexture` is recorded in `RenderScene::udim_textures` and
+  // referenced from the `UVTexture` via `udim_texture_id`. This mode is
+  // intended for editing UDIM tiles in the web RenderScene/binding.
+  bool combine_udim_tiles{true};
+
+  // Max longest edge (in pixels) of the combined UDIM atlas. The per-tile
+  // cell size is derived as the largest power-of-two <=
+  // `udim_max_atlas_size / max(grid_cols, grid_rows)`.
+  int udim_max_atlas_size{4096};
+
+  // Safety cap on the number of UDIM tiles to load (UDIM is 1001..1100).
+  int udim_max_tiles{100};
 
 };
 
@@ -739,6 +826,17 @@ class RenderSceneConverter {
   StringAndIdMap bufferMap;
   StringAndIdMap animationMap;
 
+  // UDIM info cache, keyed by the (un-resolved) `<UDIM>` asset path. Used to
+  // restore UDIM remap / sparse-texture linkage when a UDIM texture image is
+  // reused from `imageMap`.
+  struct UDIMInfo {
+    bool is_udim{false};
+    vec2 uv_scale{1.0f, 1.0f};
+    vec2 uv_offset{0.0f, 0.0f};
+    int64_t udim_texture_id{-1};
+  };
+  std::map<std::string, UDIMInfo> udimInfoMap;
+
   int default_node{-1};
 
 #ifdef TYDRA_USE_CHUNKED_ARRAY
@@ -748,6 +846,7 @@ class RenderSceneConverter {
   ChunkedVectorArray<RenderCamera> cameras;
   ChunkedVectorArray<RenderLight> lights;
   ChunkedVectorArray<UVTexture> textures;
+  ChunkedVectorArray<UDIMTexture> udim_textures;
   ChunkedVectorArray<TextureImage> images;
   ChunkedVectorArray<BufferData> buffers;
   ChunkedVectorArray<SkelHierarchy> skeletons;
@@ -760,6 +859,7 @@ class RenderSceneConverter {
   std::vector<RenderCamera> cameras;
   std::vector<RenderLight> lights;
   std::vector<UVTexture> textures;
+  std::vector<UDIMTexture> udim_textures;
   std::vector<TextureImage> images;
   std::vector<BufferData> buffers;
   std::vector<SkelHierarchy> skeletons;
@@ -1217,6 +1317,12 @@ class RenderSceneConverter {
 
   // Cached ListUVNames results per material ID
   std::unordered_map<int64_t, StringAndIdMap> _uvNameCache;
+
+  // Cached combined-UDIM UV remaps per material ID, keyed by texcoord primvar
+  // name: {scale.x, scale.y, offset.x, offset.y}. Used to rebake mesh UV sets
+  // into the UDIM atlas layout.
+  std::unordered_map<int64_t, std::map<std::string, std::array<float, 4>>>
+      _udimRemapCache;
 
   // Cached material binding results: key = "prim_path\0purpose" → (found, materialPath, material_ptr).
   // Avoids repeated ancestor walks for sibling prims.

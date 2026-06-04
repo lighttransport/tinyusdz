@@ -11,4 +11,4 @@ void nodegraph_support_test(void);
 void materialx_shader_constants_test(void);
 void materialx_shader_fallback_values_test(void);
 void materialx_include_path_traversal_test(void);
-void materialx_tests(void);
+void materialx_tests(void);void nodegraph_reconstruct_from_layer_test(void);

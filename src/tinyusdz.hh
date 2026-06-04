@@ -179,9 +179,10 @@ struct USDLoadOptions {
   std::map<std::string, FileFormatHandler> fileformats;
 
   /// Enable mmap zero-copy for uncompressed USDC arrays.
-  /// When true and data is loaded from mmap, defers reading uncompressed
-  /// float/double arrays and records their mmap offsets instead.
-  /// The mmap must remain valid for the lifetime of the Stage.
+  /// When true, defers reading eligible uncompressed USDC arrays and records
+  /// their offsets instead. File-based loaders keep the mmap/file buffer alive
+  /// through Stage ownership. Memory-based loaders still require the caller's
+  /// input buffer to remain alive while the Stage uses zero-copy arrays.
   bool mmap_zero_copy{false};
 
   Axis upAxis{Axis::Y};
@@ -511,19 +512,27 @@ bool LoadLayerFromAsset(AssetResolutionResolver &resolver,
                        std::string *warn, std::string *err,
                        const USDLoadOptions &options = USDLoadOptions());
 
+enum class USDZRootLayerFormat {
+  USDC,
+  USDA,
+};
 
+struct USDZWriteOptions {
+  USDZRootLayerFormat root_layer_format{USDZRootLayerFormat::USDC};
+};
 
 ///
 /// Save Stage as USDZ (uncompressed ZIP package) to a file.
 ///
-/// The root layer is written as USDC (binary Crate format) as the first
-/// entry in the ZIP archive. Additional assets (images, audio) can be
-/// included via the `assets` parameter.
+/// The root layer is written as USDC (binary Crate format) by default as the
+/// first entry in the ZIP archive. Use USDZWriteOptions to request a USDA root
+/// layer. Additional assets (images, audio) can be included via the `assets`
+/// parameter.
 ///
 /// Conforms to AOUSD Core Spec section 17 (USDZ Package Format):
 /// - Uncompressed ZIP (store method)
 /// - 64-byte data alignment for all entries
-/// - First entry is the root .usdc layer
+/// - First entry is the root .usdc or .usda layer
 /// - Allowed types: .usd, .usda, .usdc, .png, .jpg, .jpeg, .exr, .avif, .m4a, .mp3, .wav
 ///
 /// @param[in] filename Output USDZ filename
@@ -535,6 +544,16 @@ bool LoadLayerFromAsset(AssetResolutionResolver &resolver,
 ///
 bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
                       const std::map<std::string, std::vector<uint8_t>> &assets,
+                      std::string *warn, std::string *err);
+
+bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
+                      const std::map<std::string, std::vector<uint8_t>> &assets,
+                      const USDZWriteOptions &options,
+                      std::string *warn, std::string *err);
+
+bool SaveAsUSDZToFile(const std::string &filename, const Layer &layer,
+                      const std::map<std::string, std::vector<uint8_t>> &assets,
+                      const USDZWriteOptions &options,
                       std::string *warn, std::string *err);
 
 ///
@@ -550,6 +569,18 @@ bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
 bool SaveAsUSDZToMemory(const Stage &stage,
                         const std::map<std::string, std::vector<uint8_t>> &assets,
                         std::vector<uint8_t> *output,
+                        std::string *warn, std::string *err);
+
+bool SaveAsUSDZToMemory(const Stage &stage,
+                        const std::map<std::string, std::vector<uint8_t>> &assets,
+                        std::vector<uint8_t> *output,
+                        const USDZWriteOptions &options,
+                        std::string *warn, std::string *err);
+
+bool SaveAsUSDZToMemory(const Layer &layer,
+                        const std::map<std::string, std::vector<uint8_t>> &assets,
+                        std::vector<uint8_t> *output,
+                        const USDZWriteOptions &options,
                         std::string *warn, std::string *err);
 
 ///

@@ -5,6 +5,7 @@
 
 #include "../value-types.hh"
 #include "../core/prim-metas.hh"
+#include "../core/prim-spec.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -50,6 +51,14 @@ nlohmann::json ValueTypeToJSONSchema(const std::string &type_name,
 
 /// Convert PrimMeta to JSON
 nlohmann::json PrimMetaToJSON(const PrimMeta &meta);
+
+/// Convert layer/PrimSpec internals to deterministic JSON for debugging
+/// composition and MCP/JS inspection.
+nlohmann::json PrimSpecToJSON(const PrimSpec &ps, uint32_t max_depth = 1,
+                              uint32_t depth = 0);
+nlohmann::json PropertyToJSON(const Property &prop);
+nlohmann::json AttributeToJSON(const Attribute &attr);
+nlohmann::json RelationshipToJSON(const Relationship &rel);
 
 /// List all known role type names
 std::vector<std::string> GetRoleTypeNames();
