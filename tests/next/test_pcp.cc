@@ -575,6 +575,59 @@ static void test_parallel_prewarm() {
   std::cout << "  OK" << std::endl;
 }
 
+// FU7: cross-source variant selection - the variantSet is defined on a
+// referenced asset, but the SELECTION is authored on the (stronger) local prim.
+static void test_cross_source_variant() {
+  std::cout << "test_cross_source_variant..." << std::endl;
+
+  // Asset defines variantSet "vs" with variant "hi" (grafts xvar), no selection.
+  auto asset = std::make_shared<Layer>();
+  {
+    LayerBuilder ab(*asset);
+    ab.begin_prim("A", "");
+    VariantSetData vss;
+    vss.name = "vs";
+    VariantData hi;
+    hi.name = "hi";
+    hi.properties.push_back({"xvar", Value::MakeFloat3(5, 5, 5)});
+    vss.variants.push_back(std::move(hi));
+    ab.current()->meta().variantSets.push_back(std::move(vss));
+    ab.end_prim();
+    ab.finalize();
+  }
+
+  // Root: CS references the asset AND authors the selection vs=hi.
+  auto rootL = std::make_shared<Layer>();
+  {
+    LayerBuilder rb(*rootL);
+    rb.begin_prim("World", "Xform");
+    rb.begin_prim("CS", "");
+    rb.current()->meta().references.push_back("@cs_asset@</A>");
+    rb.current()->meta().variantSelection = "vs=hi";
+    rb.end_prim();
+    rb.end_prim();
+    rb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [](const std::string &a, const std::string &) { return a; });
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  cache.PreloadLayer("cs_asset", asset);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  UsdPrim cs = stage.GetPrimAtPath("/World/CS");
+  assert(cs.IsValid());
+  assert(cs.GetPropertyValue("xvar") != nullptr &&
+         "cross-source variant selection failed");
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_build_stage();
@@ -589,6 +642,7 @@ int main() {
   test_implied_inherit();
   test_instance_proxy();
   test_parallel_prewarm();
+  test_cross_source_variant();
   std::cout << "All next/pcp tests passed." << std::endl;
   return 0;
 }
