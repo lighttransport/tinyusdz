@@ -34,6 +34,7 @@ container.innerHTML = `
     <label class="btn">Choose Folder<input id="folderInput" type="file" webkitdirectory multiple style="display:none"></label>
     <label class="btn">Choose Files<input id="filesInput" type="file" multiple
        accept=".usd,.usda,.usdc,.usdz,.png,.jpg,.jpeg,.exr" style="display:none"></label>
+    <button id="btnClear" class="btn" disabled title="Remove all uploaded files and start over">Clear</button>
   </div>
 
   <div id="fileList" style="display:none;background:#111;border-radius:6px;padding:10px;margin-bottom:14px;font-size:13px;max-height:160px;overflow:auto"></div>
@@ -145,6 +146,7 @@ const els = {
   drop: document.getElementById('drop'),
   folderInput: document.getElementById('folderInput'),
   filesInput: document.getElementById('filesInput'),
+  btnClear: document.getElementById('btnClear'),
   fileList: document.getElementById('fileList'),
   rootSelect: document.getElementById('rootSelect'),
   maxSize: document.getElementById('maxSize'),
@@ -221,9 +223,13 @@ async function ensureWasm() {
 function refreshFileList() {
   if (!uploaded.length) {
     els.fileList.style.display = 'none';
+    els.fileList.innerHTML = '';
+    els.rootSelect.innerHTML = '';
     els.btnConvert.disabled = true;
+    els.btnClear.disabled = true;
     return;
   }
+  els.btnClear.disabled = false;
   els.fileList.style.display = 'block';
   els.fileList.innerHTML = uploaded
     .map(({ path, file }) => `<div>${isImageName(path) ? '🖼️' : '📄'} ${path} <span style="color:#777">(${(file.size / 1024).toFixed(1)} KB)</span></div>`)
@@ -248,6 +254,19 @@ function invalidateResult() {
   els.btnDownload.disabled = true;
 }
 
+// Remove all uploaded files and reset to the initial state. Clearing the file
+// inputs' .value lets the user re-pick the same folder/files afterwards.
+function clearFiles() {
+  uploaded = [];
+  invalidateResult();
+  els.folderInput.value = '';
+  els.filesInput.value = '';
+  refreshFileList();
+  refreshNamePreview();
+  setStatus('Cleared. Upload a folder or files to begin.');
+  log('Cleared uploaded files.');
+}
+
 async function addFiles(fileEntries) {
   // fileEntries: array of { path, file }
   for (const e of fileEntries) {
@@ -265,6 +284,7 @@ function entriesFromFileList(files) {
 
 els.folderInput.addEventListener('change', e => addFiles(entriesFromFileList(e.target.files)));
 els.filesInput.addEventListener('change', e => addFiles(entriesFromFileList(e.target.files)));
+els.btnClear.addEventListener('click', clearFiles);
 
 // Output-name controls: live preview; a name change does not invalidate the
 // already-converted bytes (it only affects the download filename).

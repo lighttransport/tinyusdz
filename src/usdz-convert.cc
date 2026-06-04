@@ -4,6 +4,7 @@
 #include "usdz-convert.hh"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <deque>
 #include <fstream>
@@ -35,6 +36,44 @@ void Log(bool verbose, const std::string &msg) {
     std::printf("[tusdzconvert] %s\n", msg.c_str());
   }
 }
+
+// Coarse phase timer for progress reporting / profiling. Call begin("name") at
+// the start of each phase; the elapsed time of the previous phase is printed
+// when the next phase begins (and on end()). Active only when verbose.
+class PhaseTimer {
+ public:
+  explicit PhaseTimer(bool verbose) : verbose_(verbose) {}
+  void begin(const std::string &name) {
+    flush();
+    cur_ = name;
+    start_ = std::chrono::steady_clock::now();
+    active_ = true;
+    if (verbose_) {
+      std::printf("[tusdzconvert][phase] %-22s ...\n", name.c_str());
+      std::fflush(stdout);
+    }
+  }
+  void end() { flush(); }
+
+ private:
+  void flush() {
+    if (active_ && verbose_) {
+      double ms = std::chrono::duration<double, std::milli>(
+                      std::chrono::steady_clock::now() - start_)
+                      .count();
+      total_ms_ += ms;
+      std::printf("[tusdzconvert][phase] %-22s %9.1f ms  (total %9.1f ms)\n",
+                  cur_.c_str(), ms, total_ms_);
+      std::fflush(stdout);
+    }
+    active_ = false;
+  }
+  bool verbose_;
+  bool active_ = false;
+  double total_ms_ = 0.0;
+  std::string cur_;
+  std::chrono::steady_clock::time_point start_;
+};
 
 // Compute a relative path from `base_dir` to `target`.
 // Both paths should be normalized (forward slashes, no trailing slash).
@@ -1423,6 +1462,8 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     return false;
   }
 
+  PhaseTimer timer(options.verbose);
+
   const std::string &root_input = options.inputs[0];
 
   // --- Asset resolution setup (handles on-disk and in-USDZ assets) ---
@@ -1480,6 +1521,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
 
   if (options.flatten || options.arkit_compatible) {
     Log(options.verbose, "Loading + compositing (flatten): " + root_input);
+    timer.begin("load-layer");
     Layer root_layer;
     if (!tinyusdz::LoadLayerFromFile(root_input, &root_layer, &lwarn, &lerr)) {
       if (err) (*err) = "Failed to load layer: " + lerr;
@@ -1492,6 +1534,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       root_layer.metas().subLayers.push_back(sl);
     }
 
+    timer.begin("compose-fixedpoint");
     Layer composited;
     if (!ComposeLayerToFixedPoint(resolver, root_layer, &composited, &lwarn,
                                   &lerr)) {
@@ -1500,12 +1543,14 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     }
     layer_for_write = std::move(composited);
     has_layer_for_write = true;
+    timer.begin("layer-to-stage");
     if (!tinyusdz::LayerToStage(Layer(layer_for_write), &stage, &lwarn, &lerr)) {
       if (err) (*err) = "LayerToStage failed: " + lerr;
       return false;
     }
   } else {
     Log(options.verbose, "Loading (no flatten): " + root_input);
+    timer.begin("load-layer");
     // Load as a Layer (no composition) so usdc/usda output goes through the
     // faithful PrimSpec-based writers. Loading into a Stage here would route
     // output through the typed Stage->crate reconstruction, which injects
@@ -1564,6 +1609,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   }
 
   // --- Enumerate textures ---
+  timer.begin("enumerate-textures");
   std::vector<std::pair<UsdUVTexture *, std::string>> textures;
   std::vector<std::string> texture_paths;
   if (has_layer_for_write) {
@@ -1587,6 +1633,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   if (options.output_format == OutputFormat::USDZ) {
     Log(options.verbose,
         "Processing textures for USDZ packaging.");
+    timer.begin("process-textures");
 
   const bool budget_mode = options.target_texture_bytes > 0;
 
@@ -1795,6 +1842,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   }
 
   // --- Rewrite texture file paths to the archive-relative names ---
+  timer.begin("rewrite-texture-paths");
   if (has_layer_for_write) {
     RemapLayerAssetPaths(layer_for_write, path_to_archive);
     if (options.arkit_compatible) {
@@ -1847,6 +1895,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   }  // if USDZ
 
   // --- Write output ---
+  timer.begin("write-output");
   bool write_ok = false;
   std::string swarn, serr;
   switch (options.output_format) {
@@ -1911,6 +1960,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
 
   // When writing USDZ, read back and validate.
   if (options.output_format == OutputFormat::USDZ) {
+    timer.begin("validate-usdz");
     std::vector<uint8_t> usdz_bytes;
     std::string ioerr;
     if (io::ReadWholeFile(&usdz_bytes, &ioerr, options.output,
@@ -1933,6 +1983,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     }
   }
 
+  timer.end();
   return true;
 }
 

@@ -2207,7 +2207,9 @@ bool SerializeUSDZRootLayer(const Stage &stage, const USDZWriteOptions &options,
 
   switch (options.root_layer_format) {
     case USDZRootLayerFormat::USDC: {
-      if (!usdc::SaveAsUSDCToMemory(stage, root_data, warn, err)) {
+      if (!usdc::SaveAsUSDCToMemory(stage, root_data, warn, err,
+                                    options.max_file_size_bytes,
+                                    options.max_memory_bytes)) {
         if (err) { (*err) += "Failed to serialize root layer as USDC.\n"; }
         return false;
       }
@@ -2249,7 +2251,9 @@ bool SerializeUSDZRootLayer(const Layer &layer, const USDZWriteOptions &options,
 
   switch (options.root_layer_format) {
     case USDZRootLayerFormat::USDC: {
-      if (!usdc::SaveAsUSDCToMemory(layer, root_data, warn, err)) {
+      if (!usdc::SaveAsUSDCToMemory(layer, root_data, warn, err,
+                                    options.max_file_size_bytes,
+                                    options.max_memory_bytes)) {
         if (err) { (*err) += "Failed to serialize root layer as USDC.\n"; }
         return false;
       }

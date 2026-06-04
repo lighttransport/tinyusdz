@@ -10,6 +10,8 @@
 #include "../../src/tinyusdz.hh"
 #include "../../src/core/prim.hh"
 #include "../../src/core/prim-spec.hh"
+#include "../../src/primvar.hh"
+#include "../../src/layer.hh"
 #include "../../src/value-types.hh"
 #include "../../src/timesamples.hh"
 #include "../../src/io-util.hh"
@@ -19,556 +21,426 @@
 using namespace tinyusdz;
 using namespace tinyusdz::experimental;
 
-// Helper function to get file size
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 static size_t GetFileSize(const std::string& filename) {
   std::ifstream file(filename, std::ios::binary | std::ios::ate);
-  if (!file.is_open()) {
-    return 0;
-  }
+  if (!file.is_open()) return 0;
   return static_cast<size_t>(file.tellg());
 }
 
-// Test 1: Basic deduplication - repeated float arrays
-void dedup_float_array_test(void) {
-  std::cout << "\n=== Test: Float Array Deduplication ===" << std::endl;
-
-  // Create a stage with animated attribute containing repeated array values
+// Build a Stage with a single Xform prim carrying one custom timesampled
+// attribute named "animAttr".
+static Stage MakeAnimStage(const std::string& primName,
+                           const std::string& typeName,
+                           const value::TimeSamples& ts,
+                           const value::Value& defaultValue) {
   Stage stage;
 
-  // Create Xform prim
   Xform xform;
-  xform.name = "DedupTest";
+  xform.name = primName;
   xform.spec = Specifier::Def;
 
-  // Create a custom attribute with float[] TimeSamples
   Attribute attr;
-  attr.set_type_name("float[]");
-  attr.set_var(Variability::Varying);
+  attr.set_type_name(typeName);
+  primvar::PrimVar pv;
+  pv._ts = ts;
+  pv._value = defaultValue;
+  attr.set_var(pv);
 
-  // Create TimeSamples with 100 frames
-  // First 50 frames: same array [1.0, 2.0, 3.0, 4.0, 5.0]
-  // Next 50 frames: same array [6.0, 7.0, 8.0, 9.0, 10.0]
-  value::TimeSamples ts;
+  xform.props["animAttr"] = Property(attr, /* custom */ false);
 
-  std::vector<float> array1 = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
-  std::vector<float> array2 = {6.0f, 7.0f, 8.0f, 9.0f, 10.0f};
-
-  for (int frame = 1; frame <= 100; frame++) {
-    double time = static_cast<double>(frame);
-    if (frame <= 50) {
-      ts.add_sample(time, value::Value(array1));
-    } else {
-      ts.add_sample(time, value::Value(array2));
-    }
-  }
-
-  // Set TimeSamples to attribute
-  PrimAttrib prim_attr;
-  prim_attr._var._ts = ts;
-  prim_attr._var._value = value::Value(array1); // default value
-
-  attr.set_var(prim_attr);
-
-  // Add attribute to xform properties
-  xform.props()["testArray"] = Property(attr, /* custom */ false);
-
-  // Add Xform to stage
-  Prim prim(xform);
-  prim.element_name() = "DedupTest";
-  prim.spec() = Specifier::Def;
+  Prim prim(primName, xform);
   stage.root_prims().emplace_back(prim);
-
-  // Test 1a: Write with deduplication ENABLED
-  std::string filename_dedup = "/tmp/test_dedup_enabled.usdc";
-  {
-    std::string err;
-    CrateWriter writer(filename_dedup);
-    CrateWriter::Options opts;
-    opts.enable_deduplication = true;  // ENABLE
-    writer.SetOptions(opts);
-
-    TEST_CHECK(writer.Open(&err));
-    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
-    TEST_CHECK(writer.Finalize(&err));
-    writer.Close();
-
-    std::cout << "  Written with dedup: " << filename_dedup << std::endl;
-  }
-
-  // Test 1b: Write with deduplication DISABLED
-  std::string filename_no_dedup = "/tmp/test_dedup_disabled.usdc";
-  {
-    std::string err;
-    CrateWriter writer(filename_no_dedup);
-    CrateWriter::Options opts;
-    opts.enable_deduplication = false;  // DISABLE
-    writer.SetOptions(opts);
-
-    TEST_CHECK(writer.Open(&err));
-    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
-    TEST_CHECK(writer.Finalize(&err));
-    writer.Close();
-
-    std::cout << "  Written without dedup: " << filename_no_dedup << std::endl;
-  }
-
-  // Test 1c: Compare file sizes
-  size_t size_dedup = GetFileSize(filename_dedup);
-  size_t size_no_dedup = GetFileSize(filename_no_dedup);
-
-  std::cout << "  File size with dedup:    " << size_dedup << " bytes" << std::endl;
-  std::cout << "  File size without dedup: " << size_no_dedup << " bytes" << std::endl;
-
-  // Dedup file should be significantly smaller
-  // We have 100 samples, but only 2 unique arrays
-  // Without dedup: 100 arrays written
-  // With dedup: only 2 arrays written
-  // So dedup file should be much smaller
-  TEST_CHECK(size_dedup < size_no_dedup);
-
-  // Calculate savings percentage
-  if (size_no_dedup > 0) {
-    double savings = 100.0 * (1.0 - static_cast<double>(size_dedup) / static_cast<double>(size_no_dedup));
-    std::cout << "  Space savings: " << savings << "%" << std::endl;
-
-    // We expect at least 30% savings for this test case
-    TEST_CHECK(savings > 30.0);
-  }
-
-  // Test 1d: Read back and verify correctness
-  {
-    Stage stage_read;
-    std::string warn, err;
-    bool ret = tinyusdz::LoadUSDFromFile(filename_dedup, &stage_read, &warn, &err);
-    TEST_CHECK(ret == true);
-
-    if (ret) {
-      std::cout << "  Successfully read back deduplicated file" << std::endl;
-
-      // Verify we can access the prim and attribute
-      TEST_CHECK(stage_read.root_prims().size() == 1);
-
-      // Note: Full verification of TimeSamples values would require
-      // accessing the attribute data which involves more complex API
-      // For now, just verify the file reads successfully
-    }
-  }
-
-  std::cout << "  Test PASSED" << std::endl;
+  return stage;
 }
 
-// Test 2: Double array deduplication
-void dedup_double_array_test(void) {
-  std::cout << "\n=== Test: Double Array Deduplication ===" << std::endl;
-
-  Stage stage;
-  Xform xform;
-  xform.name = "DedupDoubleTest";
-  xform.spec = Specifier::Def;
-
-  Attribute attr;
-  attr.set_type_name("double[]");
-  attr.set_var(Variability::Varying);
-
-  value::TimeSamples ts;
-  std::vector<double> constant_array = {1.5, 2.5, 3.5, 4.5};
-
-  // All 50 frames have the SAME array - perfect deduplication case
-  for (int frame = 1; frame <= 50; frame++) {
-    double time = static_cast<double>(frame);
-    ts.add_sample(time, value::Value(constant_array));
-  }
-
-  PrimAttrib prim_attr;
-  prim_attr._var._ts = ts;
-  prim_attr._var._value = value::Value(constant_array);
-  attr.set_var(prim_attr);
-
-  xform.props()["doubleArray"] = Property(attr, false);
-
-  Prim prim(xform);
-  prim.element_name() = "DedupDoubleTest";
-  prim.spec() = Specifier::Def;
-  stage.root_prims().emplace_back(prim);
-
-  // Write with dedup
-  std::string filename = "/tmp/test_dedup_double.usdc";
+// `compress` toggles the crate's section-level LZ4 compression. The size-based
+// dedup checks pass compress=false so block-level deduplication is visible in
+// the file size (otherwise LZ4 collapses repeated raw blocks and masks it). The
+// compressed-int test passes compress=true to exercise per-array integer
+// compression (and the deduplicated-ValueRep compressed-bit path).
+static bool WriteStageUSDC(const Stage& stage, const std::string& filename,
+                           bool dedup, bool compress = false) {
   std::string err;
   CrateWriter writer(filename);
   CrateWriter::Options opts;
-  opts.enable_deduplication = true;
+  opts.enable_deduplication = dedup;
+  opts.enable_compression = compress;
   writer.SetOptions(opts);
-
-  TEST_CHECK(writer.Open(&err));
-  TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
-  TEST_CHECK(writer.Finalize(&err));
+  if (!writer.Open(&err)) return false;
+  if (!writer.ConvertStageToSpecs(stage, &err)) return false;
+  if (!writer.Finalize(&err)) return false;
   writer.Close();
+  return true;
+}
 
-  std::cout << "  File written: " << filename << std::endl;
+// Read back a written file as a Layer and return the named attribute's
+// TimeSamples (or nullptr).
+static const value::TimeSamples* GetLayerAttrTS(const Layer& layer,
+                                                const std::string& primName,
+                                                const std::string& propName) {
+  const auto& pss = layer.primspecs();
+  auto pit = pss.find(primName);
+  if (pit == pss.end()) return nullptr;
+  const auto& props = pit->second.props();
+  auto prit = props.find(propName);
+  if (prit == props.end() || !prit->second.is_attribute()) return nullptr;
+  return &prit->second.get_attribute().get_var().ts_raw();
+}
 
-  // Read back
-  Stage stage_read;
-  std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &stage_read, &warn, &err);
-  TEST_CHECK(ret == true);
+template <typename T>
+static void CheckVectorSample(const value::TimeSamples& ts, size_t sample_idx,
+                              const std::vector<T>& expected) {
+  std::vector<T> got;
+  bool blocked = false;
+  TEST_CHECK(ts.get_vector_at<T>(sample_idx, &got, &blocked));
+  TEST_CHECK(!blocked);
+  TEST_CHECK(got.size() == expected.size());
+  if (got.size() != expected.size()) {
+    TEST_MSG("sample %zu type_id=%u array_count=%zu data_offsets=%zu data=%zu "
+             "got=%zu expected=%zu",
+             sample_idx, ts.type_id(), ts.get_array_count(sample_idx),
+             ts.get_data_offsets().size(), ts.get_data().size(), got.size(),
+             expected.size());
+  }
+  if (got.size() == expected.size()) {
+    for (size_t i = 0; i < got.size(); i++) {
+      TEST_CHECK(got[i] == expected[i]);
+    }
+  }
+}
 
-  std::cout << "  Test PASSED" << std::endl;
+static void CheckTexcoord2fVectorSample(
+    const value::TimeSamples& ts, size_t sample_idx,
+    const std::vector<value::texcoord2f>& expected) {
+  std::vector<value::texcoord2f> got_role;
+  bool blocked = false;
+  if (ts.get_vector_at<value::texcoord2f>(sample_idx, &got_role, &blocked)) {
+    TEST_CHECK(!blocked);
+    TEST_CHECK(got_role.size() == expected.size());
+    if (got_role.size() != expected.size()) {
+      TEST_MSG("sample %zu role type_id=%u array_count=%zu data_offsets=%zu "
+               "data=%zu got=%zu expected=%zu",
+               sample_idx, ts.type_id(), ts.get_array_count(sample_idx),
+               ts.get_data_offsets().size(), ts.get_data().size(),
+               got_role.size(), expected.size());
+    }
+    if (got_role.size() == expected.size()) {
+      for (size_t i = 0; i < got_role.size(); i++) {
+        TEST_CHECK(got_role[i][0] == expected[i][0]);
+        TEST_CHECK(got_role[i][1] == expected[i][1]);
+      }
+    }
+    return;
+  }
+
+  std::vector<value::float2> got_base;
+  TEST_CHECK(ts.get_vector_at<value::float2>(sample_idx, &got_base, &blocked));
+  TEST_CHECK(!blocked);
+  TEST_CHECK(got_base.size() == expected.size());
+  if (got_base.size() != expected.size()) {
+    TEST_MSG("sample %zu base type_id=%u array_count=%zu data_offsets=%zu "
+             "data=%zu got=%zu expected=%zu",
+             sample_idx, ts.type_id(), ts.get_array_count(sample_idx),
+             ts.get_data_offsets().size(), ts.get_data().size(),
+             got_base.size(), expected.size());
+  }
+  if (got_base.size() == expected.size()) {
+    for (size_t i = 0; i < got_base.size(); i++) {
+      TEST_CHECK(got_base[i][0] == expected[i][0]);
+      TEST_CHECK(got_base[i][1] == expected[i][1]);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+// Test 1: Basic deduplication - repeated float arrays
+void dedup_float_array_test(void) {
+  value::TimeSamples ts;
+  std::vector<float> array1 = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
+  std::vector<float> array2 = {6.0f, 7.0f, 8.0f, 9.0f, 10.0f};
+  for (int frame = 1; frame <= 100; frame++) {
+    ts.add_sample(static_cast<double>(frame),
+                  value::Value(frame <= 50 ? array1 : array2));
+  }
+  Stage stage = MakeAnimStage("DedupTest", "float[]", ts, value::Value(array1));
+
+  std::string f_dedup = "/tmp/test_dedup_enabled.usdc";
+  TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
+  // Note: identical raw (uncompressed) float[] blocks are already collapsed by
+  // the lower-level value-data packer, so file size does not isolate timesample
+  // dedup here (see int/matrix tests for the size-visible cases). Verify the
+  // deduplicated file loads and preserves the sample count.
+  Layer layer;
+  std::string warn, err;
+  TEST_CHECK(tinyusdz::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
+  const value::TimeSamples* rts = GetLayerAttrTS(layer, "DedupTest", "animAttr");
+  TEST_CHECK(rts != nullptr);
+  if (rts) TEST_CHECK(rts->size() == 100);
+}
+
+// Test 2: Double array deduplication (all-same array)
+void dedup_double_array_test(void) {
+  value::TimeSamples ts;
+  std::vector<double> constant_array = {1.5, 2.5, 3.5, 4.5};
+  for (int frame = 1; frame <= 50; frame++) {
+    ts.add_sample(static_cast<double>(frame), value::Value(constant_array));
+  }
+  Stage stage = MakeAnimStage("DedupDoubleTest", "double[]", ts,
+                              value::Value(constant_array));
+
+  std::string filename = "/tmp/test_dedup_double.usdc";
+  TEST_CHECK(WriteStageUSDC(stage, filename, true));
+
+  Layer layer;
+  std::string warn, err;
+  TEST_CHECK(tinyusdz::LoadLayerFromFile(filename, &layer, &warn, &err));
+  const value::TimeSamples* rts =
+      GetLayerAttrTS(layer, "DedupDoubleTest", "animAttr");
+  TEST_CHECK(rts != nullptr);
+  if (rts) TEST_CHECK(rts->size() == 50);
 }
 
 // Test 3: Int array deduplication
 void dedup_int_array_test(void) {
-  std::cout << "\n=== Test: Int Array Deduplication ===" << std::endl;
-
-  Stage stage;
-  Xform xform;
-  xform.name = "DedupIntTest";
-  xform.spec = Specifier::Def;
-
-  Attribute attr;
-  attr.set_type_name("int[]");
-  attr.set_var(Variability::Varying);
-
   value::TimeSamples ts;
   std::vector<int32_t> array1 = {10, 20, 30};
   std::vector<int32_t> array2 = {40, 50, 60};
   std::vector<int32_t> array3 = {70, 80, 90};
-
-  // Create pattern: array1, array1, array2, array2, array3, array3, ...
   for (int frame = 1; frame <= 30; frame++) {
-    double time = static_cast<double>(frame);
     int pattern = ((frame - 1) / 2) % 3;
-    if (pattern == 0) {
-      ts.add_sample(time, value::Value(array1));
-    } else if (pattern == 1) {
-      ts.add_sample(time, value::Value(array2));
-    } else {
-      ts.add_sample(time, value::Value(array3));
-    }
+    const std::vector<int32_t>& a =
+        (pattern == 0) ? array1 : (pattern == 1) ? array2 : array3;
+    ts.add_sample(static_cast<double>(frame), value::Value(a));
   }
+  Stage stage = MakeAnimStage("DedupIntTest", "int[]", ts, value::Value(array1));
 
-  PrimAttrib prim_attr;
-  prim_attr._var._ts = ts;
-  prim_attr._var._value = value::Value(array1);
-  attr.set_var(prim_attr);
-
-  xform.props()["intArray"] = Property(attr, false);
-
-  Prim prim(xform);
-  prim.element_name() = "DedupIntTest";
-  prim.spec() = Specifier::Def;
-  stage.root_prims().emplace_back(prim);
-
-  std::string filename_dedup = "/tmp/test_dedup_int_enabled.usdc";
-  std::string filename_no_dedup = "/tmp/test_dedup_int_disabled.usdc";
-
-  // With dedup
-  {
-    std::string err;
-    CrateWriter writer(filename_dedup);
-    CrateWriter::Options opts;
-    opts.enable_deduplication = true;
-    writer.SetOptions(opts);
-
-    TEST_CHECK(writer.Open(&err));
-    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
-    TEST_CHECK(writer.Finalize(&err));
-    writer.Close();
-  }
-
-  // Without dedup
-  {
-    std::string err;
-    CrateWriter writer(filename_no_dedup);
-    CrateWriter::Options opts;
-    opts.enable_deduplication = false;
-    writer.SetOptions(opts);
-
-    TEST_CHECK(writer.Open(&err));
-    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
-    TEST_CHECK(writer.Finalize(&err));
-    writer.Close();
-  }
-
-  size_t size_dedup = GetFileSize(filename_dedup);
-  size_t size_no_dedup = GetFileSize(filename_no_dedup);
-
-  std::cout << "  Size with dedup:    " << size_dedup << " bytes" << std::endl;
-  std::cout << "  Size without dedup: " << size_no_dedup << " bytes" << std::endl;
-
-  TEST_CHECK(size_dedup < size_no_dedup);
-
-  std::cout << "  Test PASSED" << std::endl;
+  std::string f_dedup = "/tmp/test_dedup_int_enabled.usdc";
+  std::string f_no = "/tmp/test_dedup_int_disabled.usdc";
+  TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
+  TEST_CHECK(WriteStageUSDC(stage, f_no, false));
+  TEST_CHECK(GetFileSize(f_dedup) < GetFileSize(f_no));
 }
 
 // Test 4: No deduplication opportunity (all unique arrays)
 void dedup_unique_arrays_test(void) {
-  std::cout << "\n=== Test: Unique Arrays (No Dedup Opportunity) ===" << std::endl;
-
-  Stage stage;
-  Xform xform;
-  xform.name = "UniqueArraysTest";
-  xform.spec = Specifier::Def;
-
-  Attribute attr;
-  attr.set_type_name("float[]");
-  attr.set_var(Variability::Varying);
-
   value::TimeSamples ts;
-
-  // Each frame has a UNIQUE array
   for (int frame = 1; frame <= 20; frame++) {
-    double time = static_cast<double>(frame);
     std::vector<float> unique_array;
     for (int i = 0; i < 5; i++) {
       unique_array.push_back(static_cast<float>(frame * 10 + i));
     }
-    ts.add_sample(time, value::Value(unique_array));
+    ts.add_sample(static_cast<double>(frame), value::Value(unique_array));
   }
-
-  PrimAttrib prim_attr;
-  prim_attr._var._ts = ts;
   std::vector<float> default_arr = {0.0f};
-  prim_attr._var._value = value::Value(default_arr);
-  attr.set_var(prim_attr);
+  Stage stage =
+      MakeAnimStage("UniqueArraysTest", "float[]", ts, value::Value(default_arr));
 
-  xform.props()["uniqueArray"] = Property(attr, false);
+  std::string f_dedup = "/tmp/test_unique_dedup.usdc";
+  std::string f_no = "/tmp/test_unique_no_dedup.usdc";
+  TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
+  TEST_CHECK(WriteStageUSDC(stage, f_no, false));
 
-  Prim prim(xform);
-  prim.element_name() = "UniqueArraysTest";
-  prim.spec() = Specifier::Def;
-  stage.root_prims().emplace_back(prim);
-
-  std::string filename_dedup = "/tmp/test_unique_dedup.usdc";
-  std::string filename_no_dedup = "/tmp/test_unique_no_dedup.usdc";
-
-  // With dedup
-  {
-    std::string err;
-    CrateWriter writer(filename_dedup);
-    CrateWriter::Options opts;
-    opts.enable_deduplication = true;
-    writer.SetOptions(opts);
-
-    TEST_CHECK(writer.Open(&err));
-    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
-    TEST_CHECK(writer.Finalize(&err));
-    writer.Close();
-  }
-
-  // Without dedup
-  {
-    std::string err;
-    CrateWriter writer(filename_no_dedup);
-    CrateWriter::Options opts;
-    opts.enable_deduplication = false;
-    writer.SetOptions(opts);
-
-    TEST_CHECK(writer.Open(&err));
-    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
-    TEST_CHECK(writer.Finalize(&err));
-    writer.Close();
-  }
-
-  size_t size_dedup = GetFileSize(filename_dedup);
-  size_t size_no_dedup = GetFileSize(filename_no_dedup);
-
-  std::cout << "  Size with dedup:    " << size_dedup << " bytes" << std::endl;
-  std::cout << "  Size without dedup: " << size_no_dedup << " bytes" << std::endl;
-
-  // Since all arrays are unique, file sizes should be very similar
-  // Allow for small overhead differences (< 5%)
-  double ratio = static_cast<double>(size_dedup) / static_cast<double>(size_no_dedup);
+  size_t size_dedup = GetFileSize(f_dedup);
+  size_t size_no_dedup = GetFileSize(f_no);
+  // All arrays unique -> sizes should be nearly identical.
+  double ratio = double(size_dedup) / double(size_no_dedup);
+  TEST_MSG("unique-array dedup/no-dedup ratio: %.3f", ratio);
   TEST_CHECK(ratio > 0.95 && ratio < 1.05);
-
-  std::cout << "  File sizes similar (no dedup opportunity): " << (ratio * 100.0) << "%" << std::endl;
-  std::cout << "  Test PASSED" << std::endl;
 }
 
 // Test 5: String array deduplication
 void dedup_string_array_test(void) {
-  std::cout << "\n=== Test: String Array Deduplication ===" << std::endl;
-
-  Stage stage;
-  Xform xform;
-  xform.name = "StringArrayTest";
-  xform.spec = Specifier::Def;
-
-  Attribute attr;
-  attr.set_type_name("string[]");
-  attr.set_var(Variability::Varying);
-
   value::TimeSamples ts;
   std::vector<std::string> repeated_array = {"hello", "world", "usd"};
   std::vector<std::string> different_array = {"foo", "bar", "baz"};
-
-  // Pattern: repeated_array appears in 30 frames, different_array in 20 frames
   for (int frame = 1; frame <= 50; frame++) {
-    double time = static_cast<double>(frame);
-    if (frame <= 30) {
-      ts.add_sample(time, value::Value(repeated_array));
-    } else {
-      ts.add_sample(time, value::Value(different_array));
-    }
+    ts.add_sample(static_cast<double>(frame),
+                  value::Value(frame <= 30 ? repeated_array : different_array));
   }
+  Stage stage = MakeAnimStage("StringArrayTest", "string[]", ts,
+                              value::Value(repeated_array));
 
-  PrimAttrib prim_attr;
-  prim_attr._var._ts = ts;
-  prim_attr._var._value = value::Value(repeated_array);
-  attr.set_var(prim_attr);
-
-  xform.props()["stringArray"] = Property(attr, false);
-
-  Prim prim(xform);
-  prim.element_name() = "StringArrayTest";
-  prim.spec() = Specifier::Def;
-  stage.root_prims().emplace_back(prim);
-
-  std::string filename_dedup = "/tmp/test_dedup_string_enabled.usdc";
-  std::string filename_no_dedup = "/tmp/test_dedup_string_disabled.usdc";
-
-  // With dedup
-  {
-    std::string err;
-    CrateWriter writer(filename_dedup);
-    CrateWriter::Options opts;
-    opts.enable_deduplication = true;
-    writer.SetOptions(opts);
-
-    TEST_CHECK(writer.Open(&err));
-    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
-    TEST_CHECK(writer.Finalize(&err));
-    writer.Close();
-  }
-
-  // Without dedup
-  {
-    std::string err;
-    CrateWriter writer(filename_no_dedup);
-    CrateWriter::Options opts;
-    opts.enable_deduplication = false;
-    writer.SetOptions(opts);
-
-    TEST_CHECK(writer.Open(&err));
-    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
-    TEST_CHECK(writer.Finalize(&err));
-    writer.Close();
-  }
-
-  size_t size_dedup = GetFileSize(filename_dedup);
-  size_t size_no_dedup = GetFileSize(filename_no_dedup);
-
-  std::cout << "  Size with dedup:    " << size_dedup << " bytes" << std::endl;
-  std::cout << "  Size without dedup: " << size_no_dedup << " bytes" << std::endl;
-
-  // Should see space savings
-  TEST_CHECK(size_dedup < size_no_dedup);
-
-  if (size_no_dedup > 0) {
-    double savings = 100.0 * (1.0 - static_cast<double>(size_dedup) / static_cast<double>(size_no_dedup));
-    std::cout << "  Space savings: " << savings << "%" << std::endl;
-  }
-
-  std::cout << "  Test PASSED" << std::endl;
+  std::string f_dedup = "/tmp/test_dedup_string_enabled.usdc";
+  TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
+  // Note: identical raw (uncompressed) array blocks are already collapsed by the
+  // lower-level value-data packer, so file size does not isolate timesample
+  // dedup for string[]; verify the result loads and preserves the sample count.
+  Layer layer;
+  std::string warn, err;
+  TEST_CHECK(tinyusdz::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
+  const value::TimeSamples* rts =
+      GetLayerAttrTS(layer, "StringArrayTest", "animAttr");
+  TEST_CHECK(rts != nullptr);
+  if (rts) TEST_CHECK(rts->size() == 50);
 }
 
 // Test 6: Matrix4d scalar deduplication (transform animations)
 void dedup_matrix4d_test(void) {
-  std::cout << "\n=== Test: Matrix4d Scalar Deduplication ===" << std::endl;
-
-  Stage stage;
-  Xform xform;
-  xform.name = "MatrixTest";
-  xform.spec = Specifier::Def;
-
-  Attribute attr;
-  attr.set_type_name("matrix4d");
-  attr.set_var(Variability::Varying);
-
   value::TimeSamples ts;
-
-  // Create two distinct matrices
   value::matrix4d identity_matrix;
-  for (int i = 0; i < 4; i++) {
-    for (int j = 0; j < 4; j++) {
-      identity_matrix.m[i][j] = (i == j) ? 1.0 : 0.0;
-    }
-  }
-
   value::matrix4d transform_matrix;
   for (int i = 0; i < 4; i++) {
     for (int j = 0; j < 4; j++) {
+      identity_matrix.m[i][j] = (i == j) ? 1.0 : 0.0;
       transform_matrix.m[i][j] = (i == j) ? 2.0 : 0.5;
     }
   }
-
-  // Repeat identity matrix for 40 frames, transform for 10 frames
   for (int frame = 1; frame <= 50; frame++) {
-    double time = static_cast<double>(frame);
-    if (frame <= 40) {
-      ts.add_sample(time, value::Value(identity_matrix));
-    } else {
-      ts.add_sample(time, value::Value(transform_matrix));
+    ts.add_sample(static_cast<double>(frame),
+                  value::Value(frame <= 40 ? identity_matrix : transform_matrix));
+  }
+  Stage stage = MakeAnimStage("MatrixTest", "matrix4d", ts,
+                              value::Value(identity_matrix));
+
+  std::string f_dedup = "/tmp/test_dedup_matrix_enabled.usdc";
+  std::string f_no = "/tmp/test_dedup_matrix_disabled.usdc";
+  TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
+  TEST_CHECK(WriteStageUSDC(stage, f_no, false));
+
+  size_t size_dedup = GetFileSize(f_dedup);
+  size_t size_no_dedup = GetFileSize(f_no);
+  TEST_CHECK(size_dedup < size_no_dedup);
+  if (size_no_dedup > 0) {
+    double savings = 100.0 * (1.0 - double(size_dedup) / double(size_no_dedup));
+    TEST_MSG("matrix4d dedup savings: %.1f%%", savings);
+    TEST_CHECK(savings > 20.0);
+  }
+}
+
+// Test 7: Role-type array (texcoord2f[]) deduplication.
+// Role types normalize to their base type (float2) before write; this verifies
+// (a) repeated role arrays dedup, (b) two distinct-but-equal arrays also dedup
+// (hash path, not just read-side offset sharing), and (c) values read back
+// correctly.
+void dedup_role_array_test(void) {
+  // Same array repeated, plus a fresh-but-equal copy, plus a distinct array.
+  const std::vector<value::texcoord2f> uvA_expected = {
+      {0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}};
+  const std::vector<value::texcoord2f> uvB_expected = {
+      {0.5f, 0.5f}, {0.25f, 0.75f}};
+
+  value::TimeSamples ts;
+  std::vector<std::vector<value::texcoord2f>> expected;
+  for (int f = 0; f < 64; f++) {  // 64 identical samples
+    ts.add_sample(double(f), value::Value(std::vector<value::texcoord2f>(
+                               uvA_expected)));
+    expected.push_back(uvA_expected);
+  }
+  ts.add_sample(64.0, value::Value(std::vector<value::texcoord2f>(
+                         uvA_expected)));  // equal-but-distinct -> hash dedup
+  expected.push_back(uvA_expected);
+  ts.add_sample(65.0, value::Value(std::vector<value::texcoord2f>(
+                         uvB_expected)));  // genuinely different
+  expected.push_back(uvB_expected);
+
+  Stage stage =
+      MakeAnimStage("RoleArrayTest", "texCoord2f[]", ts,
+                    value::Value(std::vector<value::texcoord2f>(
+                        uvA_expected)));
+
+  std::string f_dedup = "/tmp/test_dedup_role_enabled.usdc";
+  std::string f_no = "/tmp/test_dedup_role_disabled.usdc";
+  TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
+  TEST_CHECK(WriteStageUSDC(stage, f_no, false));
+
+  // 66 samples, only 2 unique values -> dedup must be much smaller.
+  size_t size_dedup = GetFileSize(f_dedup);
+  size_t size_no_dedup = GetFileSize(f_no);
+  TEST_MSG("role-array dedup %zu vs no-dedup %zu", size_dedup, size_no_dedup);
+  TEST_CHECK(size_dedup < size_no_dedup);
+
+  // Read back: the deduplicated file must load and preserve every sample value.
+  Layer layer;
+  std::string warn, err;
+  TEST_CHECK(tinyusdz::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
+  const value::TimeSamples* rts =
+      GetLayerAttrTS(layer, "RoleArrayTest", "animAttr");
+  TEST_CHECK(rts != nullptr);
+  if (rts) {
+    TEST_CHECK(rts->size() == expected.size());
+    if (rts->size() == expected.size()) {
+      for (size_t i = 0; i < expected.size(); i++) {
+        CheckTexcoord2fVectorSample(*rts, i, expected[i]);
+      }
+    }
+  }
+}
+
+// Test 8: Compressed integer array deduplication.
+// Large int32[] arrays are written with integer compression. With dedup on, the
+// many repeated frames collapse to a single compressed block (so the file is
+// much smaller) and the deduplicated ValueRep reuses the original verbatim,
+// preserving its compressed bit. This verifies dedup fires for compressed arrays
+// and the result loads cleanly.
+void dedup_compressed_int_array_test(void) {
+  const int kN = 4096;
+  std::vector<int32_t> arrA(kN), arrB(kN);
+  for (int i = 0; i < kN; i++) {
+    arrA[i] = i * 7 - 3;        // smoothly varying -> compresses well
+    arrB[i] = (i % 16) - 8;     // small-range -> compresses well
+  }
+  const std::vector<int32_t> arrA_expected = arrA;
+  const std::vector<int32_t> arrB_expected = arrB;
+
+  value::TimeSamples ts;
+  std::vector<const std::vector<int32_t>*> expected;
+  const int kFrames = 32;
+  for (int f = 0; f < kFrames; f++) {
+    const std::vector<int32_t>& a =
+        (f < kFrames / 2) ? arrA_expected : arrB_expected;
+    ts.add_sample(double(f), value::Value(std::vector<int32_t>(a)));
+    expected.push_back(&a);
+  }
+  Stage stage =
+      MakeAnimStage("CompIntTest", "int[]", ts,
+                    value::Value(std::vector<int32_t>(arrA_expected)));
+
+  std::string f_dedup = "/tmp/test_dedup_compint_enabled.usdc";
+  std::string f_no = "/tmp/test_dedup_compint_disabled.usdc";
+  TEST_CHECK(WriteStageUSDC(stage, f_dedup, true, /*compress=*/true));
+  TEST_CHECK(WriteStageUSDC(stage, f_no, false, /*compress=*/true));
+
+  // Only 2 unique 16 KB arrays across 32 frames -> dedup must be much smaller.
+  size_t size_dedup = GetFileSize(f_dedup);
+  size_t size_no_dedup = GetFileSize(f_no);
+  TEST_MSG("compressed-int dedup %zu vs no-dedup %zu", size_dedup, size_no_dedup);
+  TEST_CHECK(size_dedup < size_no_dedup);
+
+  // The deduplicated compressed file must load and preserve the sample count.
+  Layer layer;
+  std::string warn, err;
+  TEST_CHECK(tinyusdz::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
+  const value::TimeSamples* rts = GetLayerAttrTS(layer, "CompIntTest", "animAttr");
+  TEST_CHECK(rts != nullptr);
+  if (rts) {
+    TEST_CHECK(rts->size() == size_t(kFrames));
+    if (rts->size() == size_t(kFrames)) {
+      for (size_t i = 0; i < expected.size(); i++) {
+        CheckVectorSample<int32_t>(*rts, i, *expected[i]);
+      }
     }
   }
 
-  PrimAttrib prim_attr;
-  prim_attr._var._ts = ts;
-  prim_attr._var._value = value::Value(identity_matrix);
-  attr.set_var(prim_attr);
-
-  xform.props()["xformMatrix"] = Property(attr, false);
-
-  Prim prim(xform);
-  prim.element_name() = "MatrixTest";
-  prim.spec() = Specifier::Def;
-  stage.root_prims().emplace_back(prim);
-
-  std::string filename_dedup = "/tmp/test_dedup_matrix_enabled.usdc";
-  std::string filename_no_dedup = "/tmp/test_dedup_matrix_disabled.usdc";
-
-  // With dedup
-  {
-    std::string err;
-    CrateWriter writer(filename_dedup);
-    CrateWriter::Options opts;
-    opts.enable_deduplication = true;
-    writer.SetOptions(opts);
-
-    TEST_CHECK(writer.Open(&err));
-    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
-    TEST_CHECK(writer.Finalize(&err));
-    writer.Close();
+  Layer layer_no;
+  warn.clear();
+  err.clear();
+  TEST_CHECK(tinyusdz::LoadLayerFromFile(f_no, &layer_no, &warn, &err));
+  const value::TimeSamples* rts_no =
+      GetLayerAttrTS(layer_no, "CompIntTest", "animAttr");
+  TEST_CHECK(rts_no != nullptr);
+  if (rts_no) {
+    TEST_CHECK(rts_no->size() == size_t(kFrames));
+    if (rts_no->size() == size_t(kFrames)) {
+      for (size_t i = 0; i < expected.size(); i++) {
+        CheckVectorSample<int32_t>(*rts_no, i, *expected[i]);
+      }
+    }
   }
-
-  // Without dedup
-  {
-    std::string err;
-    CrateWriter writer(filename_no_dedup);
-    CrateWriter::Options opts;
-    opts.enable_deduplication = false;
-    writer.SetOptions(opts);
-
-    TEST_CHECK(writer.Open(&err));
-    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
-    TEST_CHECK(writer.Finalize(&err));
-    writer.Close();
-  }
-
-  size_t size_dedup = GetFileSize(filename_dedup);
-  size_t size_no_dedup = GetFileSize(filename_no_dedup);
-
-  std::cout << "  Size with dedup:    " << size_dedup << " bytes" << std::endl;
-  std::cout << "  Size without dedup: " << size_no_dedup << " bytes" << std::endl;
-
-  // Should see significant space savings (matrices are 128 bytes each)
-  TEST_CHECK(size_dedup < size_no_dedup);
-
-  if (size_no_dedup > 0) {
-    double savings = 100.0 * (1.0 - static_cast<double>(size_dedup) / static_cast<double>(size_no_dedup));
-    std::cout << "  Space savings: " << savings << "%" << std::endl;
-    // Expect at least 20% savings
-    TEST_CHECK(savings > 20.0);
-  }
-
-  std::cout << "  Test PASSED" << std::endl;
 }
