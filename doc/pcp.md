@@ -1099,20 +1099,29 @@ Strength order `Local > Inherit > Variant > Reference > Payload > Specialize`:
 
 ### Threading
 
-Built with `-DTINYUSDZ_NEXT_ENABLE_THREAD=ON`, the `LayerRegistry` is thread-safe
-(parse-outside-lock, double-checked publish) and `PrewarmPrimIndices` with
-`num_threads != 1` prefetches first-level reference/payload layers in parallel
-before a serial index build. Verified ThreadSanitizer-clean. Default builds are
-sequential and zero-overhead.
+Built with `-DTINYUSDZ_NEXT_ENABLE_THREAD=ON`:
+
+- The `LayerRegistry` is thread-safe (parse-outside-lock, double-checked publish).
+- `PrewarmPrimIndices` with `num_threads != 1` prefetches first-level
+  reference/payload layers in parallel before a serial index build.
+- The **`Cache` itself is thread-safe**: every public entry point (`ComputePrimIndex`,
+  `BuildStage`, payload load/unload, invalidation, and all instancing/index queries)
+  is serialized by a per-cache `std::recursive_mutex` (the `NEXT_PCP_LOCK` macro,
+  compiled out in non-threaded builds). Multiple threads may safely query/compose a
+  shared cache concurrently; results are stable borrowed pointers.
+
+Verified ThreadSanitizer-clean (8 threads × 1000 iterations querying a shared cache,
+see `test_concurrent_queries`). Default builds are sequential and zero-overhead — the
+lock macro expands to `(void)0`.
 
 ### Known limitations / future work
 
-- The `next` **USDA parser** does not yet parse `references` / `payload` /
-  `inherits` / `specializes` metadata, so file-based *arc* composition is blocked
-  at the reader (the engine itself handles arcs; in-memory and `PreloadLayer`
-  paths work).
 - Per-prim **parallel index building** (per-worker `CompositionContext`s, as in
-  `src/pcp/cache-parallel.cc`) — only layer loading is parallelized today.
+  `src/pcp/cache-parallel.cc`) is not yet implemented: the thread-safe `Cache`
+  serializes concurrent `ComputePrimIndex` calls under one mutex, so it is *safe*
+  but not *parallel* for the build step (only layer loading runs in parallel). A
+  lock-free per-worker build is a deferred refinement; parsing — already
+  parallelized in the prefetch — dominates the cost in practice.
 - `CompNode` map-expression interning; variant-child relocate interplay.
 
 ### Tests
@@ -1120,4 +1129,4 @@ sequential and zero-overhead.
 `tests/next/test_pcp.cc` (built with `-DTINYUSDZ_NEXT_BUILD_TESTS=ON`) covers each
 arc, ancestral composition, deferred payloads, instancing + proxies, relocates,
 cross-source variants, implied class propagation (incl. intermediate stacks), the
-parallel prefetch, and the one-call helpers.
+parallel prefetch, concurrent shared-cache queries (TSan), and the one-call helpers.

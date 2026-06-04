@@ -4,10 +4,13 @@
 // Test for the native PCP-style lazy composition cache (next/pcp).
 // Phase 1: internal references + lazy ComputePrimIndex + BuildStage.
 
+#include <atomic>
 #include <cassert>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <thread>
+#include <vector>
 
 #include "next/layer/layer.hh"
 #include "next/pcp/cache.hh"
@@ -732,6 +735,44 @@ static void test_compose_from_file() {
   std::cout << "  OK" << std::endl;
 }
 
+// FU9: the Cache is thread-safe (built with TINYUSDZ_ENABLE_THREAD) -- multiple
+// threads may query/compose a shared cache concurrently.
+static void test_concurrent_queries() {
+  std::cout << "test_concurrent_queries..." << std::endl;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  AssetResolver resolver;
+  auto root = BuildRootLayer();
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  const std::vector<std::string> existing = {
+      "/World", "/World/A", "/World/A/Inner", "/World/I",
+      "/World/IR", "/World/SP", "/World/V", "/Lib/Model"};
+
+  const int kThreads = 8;
+  const int kIters = 1000;
+  std::atomic<bool> ok{true};
+  auto worker = [&]() {
+    std::string w, e;
+    for (int it = 0; it < kIters; ++it) {
+      for (const std::string &p : existing) {
+        if (cache.ComputePrimIndex(Path(p), &w, &e) == nullptr) ok.store(false);
+      }
+      (void)cache.ComputedPrimIndexCount();
+      (void)cache.HasComputedPrimIndex(Path("/World/A"));
+    }
+  };
+  std::vector<std::thread> ts;
+  for (int i = 0; i < kThreads; ++i) ts.emplace_back(worker);
+  for (auto &t : ts) t.join();
+  assert(ok.load());
+#else
+  std::cout << "  (skipped: build with -DTINYUSDZ_NEXT_ENABLE_THREAD=ON)\n";
+#endif
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_build_stage();
@@ -749,6 +790,7 @@ int main() {
   test_cross_source_variant();
   test_implied_intermediate();
   test_compose_from_file();
+  test_concurrent_queries();
   std::cout << "All next/pcp tests passed." << std::endl;
   return 0;
 }
