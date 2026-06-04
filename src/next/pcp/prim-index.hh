@@ -57,6 +57,8 @@ struct CompositionOptions {
   bool load_payloads = true;       // default policy when payload_policy is null.
   uint32_t max_depth = 256;        // arc recursion limit / cycle backstop.
   bool error_when_asset_not_found = false;
+  bool detect_instances = true;    // group instanceable prims into prototypes.
+  int num_threads = 1;             // PrewarmPrimIndices worker hint (see note).
 
   /// Per-payload load policy. Invoked with (prim path that authors the payload,
   /// payload asset path); return true to load, false to defer. When null, the

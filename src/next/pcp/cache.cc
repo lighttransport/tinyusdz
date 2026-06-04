@@ -8,6 +8,7 @@
 
 #include "../composition/composition.hh"  // reuse ParseReference / ParsePayload / CopyLocalOpinions
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <unordered_map>
@@ -74,6 +75,11 @@ struct Cache::Impl {
   std::set<std::string> deferred_payload_prims;    // root-space prim paths
   std::set<std::string> payloads_force_loaded;     // explicit LoadPayload overrides
   std::set<std::string> payloads_force_unloaded;   // explicit UnloadPayload overrides
+
+  // Instancing: instance key -> prototype prim path; and the groupings.
+  std::map<std::string, std::string> prototype_by_key;
+  std::unordered_map<std::string, std::string> prototype_of;           // prim -> prototype
+  std::unordered_map<std::string, std::vector<std::string>> instances_by_prototype;
 
   // --- layer stacks -------------------------------------------------------
 
@@ -160,6 +166,79 @@ struct Cache::Impl {
       }
     }
     return nullptr;
+  }
+
+  // --- instancing ---------------------------------------------------------
+
+  // Instanceable iff some contributing spec set instanceable=true AND the prim
+  // actually has a composition arc (more than just its own root opinions).
+  bool IsInstanceableSources(const std::vector<Src> &srcs) const {
+    if (srcs.size() <= 1) return false;
+    for (const Src &s : srcs) {
+      const PrimSpec *sp = FindSpec(layer_stacks[s.stack_idx], s.site, nullptr);
+      if (sp && sp->meta().instanceable) return true;
+    }
+    return false;
+  }
+
+  // Structural key: composed type + each arc's (kind, layer-id, site, variant).
+  // The root node (i==0) is excluded because its site is the instance's own
+  // path, which differs between instances of the same asset.
+  std::string ComputeInstanceKeyImpl(const std::vector<Src> &srcs) const {
+    std::string key;
+    for (const Src &s : srcs) {
+      const PrimSpec *sp = FindSpec(layer_stacks[s.stack_idx], s.site, nullptr);
+      if (sp && !sp->type_name().empty()) {
+        key += "T:" + sp->type_name() + ";";
+        break;
+      }
+    }
+    for (size_t i = 1; i < srcs.size(); ++i) {
+      const Src &s = srcs[i];
+      key += ArcTypeName(s.arc_kind);
+      key += "|" + layer_stacks[s.stack_idx].identifier + "|" + s.site;
+      if (s.variant) key += "|v:" + s.variant->name;
+      key += ";";
+    }
+    return key;
+  }
+
+  void RegisterInstance(const std::string &prim_path,
+                        const std::vector<Src> &srcs) {
+    if (!options.detect_instances || !IsInstanceableSources(srcs)) return;
+    const std::string ik = ComputeInstanceKeyImpl(srcs);
+    auto pit = prototype_by_key.find(ik);
+    std::string proto;
+    if (pit == prototype_by_key.end()) {
+      prototype_by_key[ik] = prim_path;  // first of its key becomes prototype
+      proto = prim_path;
+    } else {
+      proto = pit->second;
+    }
+    prototype_of[prim_path] = proto;
+    auto &vec = instances_by_prototype[proto];
+    if (std::find(vec.begin(), vec.end(), prim_path) == vec.end()) {
+      vec.push_back(prim_path);
+    }
+  }
+
+  void DropInstancing(const std::string &prim_path) {
+    prototype_of.erase(prim_path);
+    for (auto it = instances_by_prototype.begin();
+         it != instances_by_prototype.end();) {
+      auto &v = it->second;
+      v.erase(std::remove(v.begin(), v.end(), prim_path), v.end());
+      const bool was_prototype = (it->first == prim_path);
+      if (was_prototype || v.empty()) {
+        for (auto kit = prototype_by_key.begin(); kit != prototype_by_key.end();) {
+          if (kit->second == it->first) kit = prototype_by_key.erase(kit);
+          else ++kit;
+        }
+        it = instances_by_prototype.erase(it);
+      } else {
+        ++it;
+      }
+    }
   }
 
   // --- arc expansion (inherits/variants/references/payloads/specializes) ---
@@ -413,6 +492,8 @@ struct Cache::Impl {
       return nullptr;  // prim does not exist in the composed namespace.
     }
 
+    RegisterInstance(key, srcs);
+
     auto index = std::unique_ptr<PrimIndex>(new PrimIndex());
     index->SetPath(prim_path);
     index->SetLayerStacks(&layer_stacks);
@@ -483,6 +564,20 @@ struct Cache::Impl {
     return true;
   }
 
+  // Sequential batch build. (num_threads is a forward-compat hint; lock-free
+  // parallel composition needs per-worker contexts -- a follow-up.)
+  bool PrewarmPrimIndices(const std::vector<Path> &paths, std::string *warn,
+                          std::string *err) {
+    for (const Path &p : paths) ComputePrimIndex(p, warn, err);
+    return true;
+  }
+
+  std::string ComputeInstanceKey(const Path &path, std::string *warn,
+                                 std::string *err) {
+    const std::vector<Src> &srcs = SourcesForPath(path, warn, err);
+    return ComputeInstanceKeyImpl(srcs);
+  }
+
   // --- invalidation -------------------------------------------------------
 
   void DropIndex(const std::string &key) {
@@ -496,6 +591,7 @@ struct Cache::Impl {
     }
     index_cache.erase(key);
     sources_cache.erase(key);
+    DropInstancing(key);
   }
 
   void Invalidate(const Path &prim_path) {
@@ -586,9 +682,42 @@ const PrimIndex *Cache::ComputePrimIndex(const Path &prim_path,
   return impl_->ComputePrimIndex(prim_path, warn, err);
 }
 
+bool Cache::PrewarmPrimIndices(const std::vector<Path> &paths, std::string *warn,
+                               std::string *err) {
+  return impl_->PrewarmPrimIndices(paths, warn, err);
+}
+
 bool Cache::BuildStage(Stage *stage, std::string *warn, std::string *err) {
   if (!stage) return false;
   return impl_->BuildStage(stage, warn, err);
+}
+
+bool Cache::IsInstance(const Path &p) const {
+  auto it = impl_->prototype_of.find(p.str());
+  return it != impl_->prototype_of.end() && it->second != p.str();
+}
+Path Cache::GetPrototype(const Path &p) const {
+  auto it = impl_->prototype_of.find(p.str());
+  return it != impl_->prototype_of.end() ? Path(it->second) : Path();
+}
+std::vector<Path> Cache::GetPrototypePaths() const {
+  std::vector<Path> out;
+  out.reserve(impl_->instances_by_prototype.size());
+  for (const auto &kv : impl_->instances_by_prototype) out.push_back(Path(kv.first));
+  return out;
+}
+std::vector<Path> Cache::GetInstancesForPrototype(const Path &proto) const {
+  std::vector<Path> out;
+  auto it = impl_->instances_by_prototype.find(proto.str());
+  if (it != impl_->instances_by_prototype.end()) {
+    for (const std::string &s : it->second) out.push_back(Path(s));
+  }
+  return out;
+}
+size_t Cache::PrototypeCount() const { return impl_->instances_by_prototype.size(); }
+std::string Cache::ComputeInstanceKey(const Path &p, std::string *warn,
+                                      std::string *err) {
+  return impl_->ComputeInstanceKey(p, warn, err);
 }
 
 bool Cache::LoadPayload(const Path &p, std::string *warn, std::string *err) {
