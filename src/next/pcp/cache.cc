@@ -929,6 +929,33 @@ void Cache::PreloadLayer(const std::string &identifier,
   impl_->registry.Preload(identifier, std::move(layer));
 }
 
+// --- one-call composition helpers ------------------------------------------
+
+bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
+                           AssetResolver &resolver, Stage *out_stage,
+                           const std::string &root_identifier,
+                           const CompositionOptions &options, std::string *warn,
+                           std::string *err) {
+  if (!root_layer || !out_stage) return false;
+  auto opened = Cache::Open(resolver, std::move(root_layer), root_identifier,
+                            options);
+  if (!opened) {
+    if (err) *err += opened.error() + "\n";
+    return false;
+  }
+  Cache cache = std::move(*opened);
+  return cache.BuildStage(out_stage, warn, err);
+}
+
+bool ComposeStageFromFile(const std::string &filename, AssetResolver &resolver,
+                          Stage *out_stage, const CompositionOptions &options,
+                          std::string *warn, std::string *err) {
+  std::shared_ptr<Layer> root = LoadLayerFromFile(filename, warn, err);
+  if (!root) return false;
+  return ComposeStageFromLayer(std::move(root), resolver, out_stage, filename,
+                               options, warn, err);
+}
+
 }  // namespace pcp
 }  // namespace next
 }  // namespace tinyusdz
