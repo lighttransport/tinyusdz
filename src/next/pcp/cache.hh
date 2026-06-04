@@ -119,6 +119,25 @@ class Cache {
   std::unique_ptr<Impl> impl_;
 };
 
+// --- one-call composition helpers ------------------------------------------
+
+/// Load a root layer from `filename`, compose it (sublayers + references +
+/// inherits + variants + payloads + specializes + relocates + instancing), and
+/// materialize the result into `out_stage`. References resolve relative to the
+/// root file's directory.
+bool ComposeStageFromFile(const std::string &filename, AssetResolver &resolver,
+                          Stage *out_stage,
+                          const CompositionOptions &options = {},
+                          std::string *warn = nullptr, std::string *err = nullptr);
+
+/// Compose an already-loaded in-memory root layer into `out_stage`.
+bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
+                           AssetResolver &resolver, Stage *out_stage,
+                           const std::string &root_identifier = "",
+                           const CompositionOptions &options = {},
+                           std::string *warn = nullptr,
+                           std::string *err = nullptr);
+
 }  // namespace pcp
 }  // namespace next
 }  // namespace tinyusdz
