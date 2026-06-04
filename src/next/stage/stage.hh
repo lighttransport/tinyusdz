@@ -125,6 +125,11 @@ public:
   const PrimSpec* GetPrimSpec() const { return spec_; }
 
 private:
+  // Resolves to the prototype's spec when this prim is an instance proxy
+  // (meta().instance_prototype set); otherwise returns spec_. Used for child
+  // enumeration so instance children come from the prototype.
+  const PrimSpec* ChildSourceSpec() const;
+
   const PrimSpec* spec_ = nullptr;
   const Layer* layer_ = nullptr;
   uint32_t index_ = UINT32_MAX;

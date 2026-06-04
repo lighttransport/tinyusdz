@@ -612,12 +612,27 @@ struct Cache::Impl {
     spec.set_path(out_path);
     std::vector<std::string> children = ComposeInto(srcs, &spec);
 
+    // Instancing: register this prim. If it is an instance (not the prototype of
+    // its group), link it to the prototype and do NOT duplicate its subtree --
+    // children are provided by the prototype (UsdPrim follows instance_prototype).
+    RegisterInstance(out_path.str(), srcs);
+    bool is_instance = false;
+    {
+      auto pit = prototype_of.find(out_path.str());
+      if (pit != prototype_of.end() && pit->second != out_path.str()) {
+        spec.meta().instance_prototype = pit->second;
+        is_instance = true;
+      }
+    }
+
     uint32_t idx = out->add_prim(std::move(spec));
     if (is_root) {
       out->add_root(idx);
     } else {
       out->set_parent(idx, parent_idx);
     }
+
+    if (is_instance) return;  // prototype provides the subtree
 
     for (const std::string &cn : children) {
       Path child_src = src_path.append_child(cn);
