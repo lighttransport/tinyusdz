@@ -24,7 +24,7 @@ struct Src {
   std::string site;            // prim path within the layer stack
   NamespaceMapping map;        // remap site-namespace -> root-prim namespace
   LayerOffset offset;
-  bool is_payload = false;     // arrived via a payload arc (weaker than reference)
+  ArcType arc_kind = ArcType::Root;  // arc this source arrived through
 };
 
 // Reverse-dependency key: which (layer, prim-path) an index read from.
@@ -145,9 +145,13 @@ struct Cache::Impl {
   // --- arc expansion (references + payloads); pre-order DFS == strength ----
 
   // Resolve+recurse an external/internal arc target from source `src`.
-  void ProcessArc(const Src &src, const CompositionArc &arc, bool is_payload,
+  // `kind` is the arc type; `out` collects ordinary opinions and `spec_out`
+  // collects specialize-derived opinions (globally weakest). A specialize arc
+  // (and its entire subtree) routes into `spec_out`.
+  void ProcessArc(const Src &src, const CompositionArc &arc, ArcType kind,
                   const std::set<std::string> &cycle, std::vector<Src> *out,
-                  std::string *warn, std::string *err) {
+                  std::vector<Src> *spec_out, std::string *warn,
+                  std::string *err) {
     uint32_t arc_stack_idx;
     std::string arc_site;
     if (arc.is_internal || arc.asset_path.empty()) {
@@ -191,15 +195,21 @@ struct Cache::Impl {
     arc_src.site = arc_site;
     arc_src.map = NamespaceMapping::Compose(src.map, local);
     arc_src.offset = src.offset;
-    arc_src.is_payload = is_payload || src.is_payload;
+    arc_src.arc_kind = kind;
 
     std::set<std::string> child_cycle = cycle;
     child_cycle.insert(key);
-    ExpandArcs(arc_src, std::move(child_cycle), out, warn, err);
+    // A specialize subtree is globally weakest: it (and everything beneath it)
+    // is collected into spec_out.
+    std::vector<Src> *target = (kind == ArcType::Specialize) ? spec_out : out;
+    ExpandArcs(arc_src, std::move(child_cycle), target, spec_out, warn, err);
   }
 
+  // Pre-order DFS == strength order. Per source: local (pushed) > inherits >
+  // references > payloads; specializes routed to `spec_out` (globally weakest).
   void ExpandArcs(const Src &src, std::set<std::string> cycle,
-                  std::vector<Src> *out, std::string *warn, std::string *err) {
+                  std::vector<Src> *out, std::vector<Src> *spec_out,
+                  std::string *warn, std::string *err) {
     out->push_back(src);
 
     const Layer *src_layer = nullptr;
@@ -207,10 +217,16 @@ struct Cache::Impl {
         FindSpec(layer_stacks[src.stack_idx], src.site, &src_layer);
     if (!spec) return;
 
-    // References (stronger than payloads).
+    // Inherits (stronger than references).
+    for (const std::string &s : spec->meta().inherits) {
+      ProcessArc(src, Compositor::ParseReference(s), ArcType::Inherit, cycle,
+                 out, spec_out, warn, err);
+    }
+
+    // References.
     for (const std::string &ref_str : spec->meta().references) {
-      ProcessArc(src, Compositor::ParseReference(ref_str), /*is_payload=*/false,
-                 cycle, out, warn, err);
+      ProcessArc(src, Compositor::ParseReference(ref_str), ArcType::Reference,
+                 cycle, out, spec_out, warn, err);
     }
 
     // Payloads (deferrable, weaker than references).
@@ -223,20 +239,31 @@ struct Cache::Impl {
           continue;  // deferred: contributes no opinions.
         }
         deferred_payload_prims.erase(root_prim_path);
-        ProcessArc(src, arc, /*is_payload=*/true, cycle, out, warn, err);
+        ProcessArc(src, arc, ArcType::Payload, cycle, out, spec_out, warn, err);
       }
+    }
+
+    // Specializes (globally weakest; routed into spec_out by ProcessArc).
+    for (const std::string &s : spec->meta().specializes) {
+      ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize, cycle,
+                 out, spec_out, warn, err);
     }
   }
 
   std::vector<Src> ExpandList(const std::vector<Src> &base, std::string *warn,
                               std::string *err) {
-    std::vector<Src> out;
+    std::vector<Src> main;
+    std::vector<Src> spec;  // specialize-derived: globally weakest
     for (const Src &s : base) {
       std::set<std::string> cycle;
       cycle.insert(layer_stacks[s.stack_idx].identifier + ":" + s.site);
-      ExpandArcs(s, std::move(cycle), &out, warn, err);
+      // Carry a base source's own arc kind so a specialize re-rooted onto a
+      // child stays globally weakest.
+      std::vector<Src> *tgt = (s.arc_kind == ArcType::Specialize) ? &spec : &main;
+      ExpandArcs(s, std::move(cycle), tgt, &spec, warn, err);
     }
-    return out;
+    main.insert(main.end(), spec.begin(), spec.end());
+    return main;
   }
 
   // --- ancestral source resolution (cached) -------------------------------
@@ -270,7 +297,7 @@ struct Cache::Impl {
         c.site = ps.site + "/" + cn;
         c.map = ps.map;
         c.offset = ps.offset;
-        c.is_payload = ps.is_payload;
+        c.arc_kind = ps.arc_kind;
         base.push_back(std::move(c));
       }
     }
@@ -343,8 +370,7 @@ struct Cache::Impl {
     for (size_t i = 0; i < srcs.size(); ++i) {
       const Src &s = srcs[i];
       CompNode n;
-      n.arc_type = (i == 0) ? ArcType::Root
-                            : (s.is_payload ? ArcType::Payload : ArcType::Reference);
+      n.arc_type = (i == 0) ? ArcType::Root : s.arc_kind;
       n.parent = (i == 0) ? 0xFFFF : 0;
       n.layer_stack_idx = s.stack_idx;
       n.site_prim_path = s.site;
