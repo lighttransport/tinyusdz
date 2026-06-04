@@ -173,6 +173,12 @@ async function main() {
   if (st.isDirectory()) {
     assetMap = readDirToMap(o.input);
     rootRel = o.root || null;
+  } else if (/\.usdz$/i.test(o.input)) {
+    // A .usdz is self-contained; read only the archive and let the converter
+    // unpack it to repack its internal textures (avoids slurping siblings).
+    const base = path.basename(o.input);
+    assetMap = new Map([[base, new Uint8Array(fs.readFileSync(o.input))]]);
+    rootRel = o.root || base;
   } else {
     // Single file: read its whole directory so sibling textures resolve.
     const dir = path.dirname(o.input);
@@ -202,7 +208,8 @@ async function main() {
     `${stats.rootPath.split('/').pop().replace(/\.(usd|usda|usdc|usdz)$/i, '')}.usdz`;
   fs.writeFileSync(outPath, usdz);
   console.log(`Wrote ${outPath} (${usdz.length} bytes) — root: ${stats.rootPath}, ` +
-              `textures: ${stats.textures}, resized: ${stats.resized}, reencoded: ${stats.reencoded}`);
+              `textures: ${stats.textures}, resized: ${stats.resized}, reencoded: ${stats.reencoded}, ` +
+              `audio: ${stats.audio || 0}, other assets: ${stats.otherAssets || 0}`);
 }
 
 main().catch(err => { console.error('Error:', err); process.exit(1); });

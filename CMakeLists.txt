@@ -2001,7 +2001,6 @@ if(TINYUSDZ_BUILD_EXAMPLES)
     add_subdirectory(examples/tydra_to_renderscene)
     add_subdirectory(examples/variant-lister)
     add_subdirectory(examples/variant-analyzer)
-    add_subdirectory(examples/usddiff)
     add_subdirectory(examples/urdf-to-usd)
 
     if (TINYUSDZ_WITH_MCP_SERVER)
@@ -2035,6 +2034,10 @@ endif(TINYUSDZ_BUILD_EXAMPLES)
 if(TINYUSDZ_BUILD_TOOLS)
   add_subdirectory(tools/tusddumpcrate)
   add_subdirectory(tools/tusdzconvert)
+  # tusddiff uses the Tydra diff-and-compare API.
+  if(TINYUSDZ_WITH_TYDRA)
+    add_subdirectory(tools/tusddiff)
+  endif()
 endif()
 
 if(TINYUSDZ_BUILD_BENCHMARKS)
@@ -2241,14 +2244,17 @@ if(TINYUSDZ_BUILD_TESTS)
     # Uses --report-only so it does not fail the suite (informational baseline).
     # Run without --report-only for strict validation:
     #   python3 tests/usdc-writer/usdc-writer-runner.py --tusdcat ./build/tusdcat --tusddiff ./build/tusddiff --basedir tests/usda --verbose
-    add_test(
-      NAME usdc-writer-diff-test
-      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usdc-writer/usdc-writer-runner.py
-              --tusdcat "$<TARGET_FILE:tusdcat>"
-              --tusddiff "$<TARGET_FILE:tusddiff>"
-              --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
-              --report-only
-      )
+    # tusddiff now lives under tools/ (TINYUSDZ_BUILD_TOOLS); skip if not built.
+    if(TARGET tusddiff)
+      add_test(
+        NAME usdc-writer-diff-test
+        COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usdc-writer/usdc-writer-runner.py
+                --tusdcat "$<TARGET_FILE:tusdcat>"
+                --tusddiff "$<TARGET_FILE:tusddiff>"
+                --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
+                --report-only
+        )
+    endif()
   endif()
 
   #

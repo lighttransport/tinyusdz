@@ -384,7 +384,7 @@ python3 tests/usdc-writer/usdc-writer-runner.py \
 
 ### tusddiff
 
-`tusddiff` is the Layer-level diff tool built from `examples/usddiff/`. It loads both files via `LoadLayerFromFile` (PrimSpec tree) and reports added, deleted, and modified prims and properties.
+`tusddiff` is the Layer-level diff tool built from `tools/tusddiff/` (requires `-DTINYUSDZ_BUILD_TOOLS=ON`). It loads both files via `LoadLayerFromFile` (PrimSpec tree) and reports added, deleted, and modified prims and properties.
 
 ```bash
 # Text diff

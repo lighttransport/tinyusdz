@@ -14,3 +14,4 @@ void layer_check_over_primspec_test(void);
 void layer_metas_test(void);
 void layer_asset_resolution_state_test(void);
 void layer_memory_estimation_test(void);
+void layer_moved_from_is_valid_test(void);

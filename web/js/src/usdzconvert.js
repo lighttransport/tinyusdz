@@ -9,6 +9,9 @@
 
 const USD_RE = /\.(usd|usda|usdc|usdz)$/i;
 const IMG_RE = /\.(png|jpg|jpeg|exr|avif)$/i;
+// Audio formats referenced by UsdMediaSpatialAudio (filePath asset). USD itself
+// is codec-agnostic; these are the formats commonly embedded in USDZ.
+const AUDIO_RE = /\.(m4a|mp3|wav|aac|ogg|flac|aiff|aif)$/i;
 
 export function isImageName(name) {
   return IMG_RE.test(name);
@@ -16,6 +19,10 @@ export function isImageName(name) {
 
 export function isUsdName(name) {
   return USD_RE.test(name);
+}
+
+export function isAudioName(name) {
+  return AUDIO_RE.test(name);
 }
 
 // Format string for the WASM convertImage() encoder, or null if we should not
@@ -75,6 +82,94 @@ export function replaceExt(name, ext) {
 export async function loadWasm(importer) {
   const mod = await importer();
   return await mod.default();
+}
+
+// Unpack a USDZ archive (Uint8Array) into { entries: Map<name, Uint8Array>,
+// order: string[] }. USDZ mandates STORE (no compression) and 64-byte data
+// alignment, so we only walk the central directory — no inflate needed.
+// Throws on a compressed entry or a malformed archive.
+export function unpackUSDZ(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  if (u8.length < 22) throw new Error('Not a valid USDZ/ZIP (too small).');
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const td = new TextDecoder();
+
+  // Locate the End Of Central Directory record (sig 0x06054b50), scanning back
+  // over the (≤64KB) trailing comment.
+  let eocd = -1;
+  const minStart = Math.max(0, u8.length - 22 - 0xffff);
+  for (let i = u8.length - 22; i >= minStart; i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('Not a valid USDZ/ZIP (no EOCD record).');
+
+  const count = dv.getUint16(eocd + 10, true);
+  let off = dv.getUint32(eocd + 16, true); // central directory offset
+  const entries = new Map();
+  const order = [];
+  for (let n = 0; n < count; n++) {
+    if (dv.getUint32(off, true) !== 0x02014b50) {
+      throw new Error('Corrupt USDZ: bad central directory header.');
+    }
+    const method = dv.getUint16(off + 10, true);
+    const compSize = dv.getUint32(off + 20, true);
+    const uncompSize = dv.getUint32(off + 24, true);
+    const nameLen = dv.getUint16(off + 28, true);
+    const extraLen = dv.getUint16(off + 30, true);
+    const commentLen = dv.getUint16(off + 32, true);
+    const lho = dv.getUint32(off + 42, true); // local header offset
+    const name = td.decode(u8.subarray(off + 46, off + 46 + nameLen));
+
+    if (!name.endsWith('/')) {
+      if (method !== 0) {
+        throw new Error(`USDZ entry "${name}" is compressed (method ${method}); ` +
+          'only STORE is supported.');
+      }
+      // Local header is 30 bytes + its own (possibly different) name/extra lens.
+      const lNameLen = dv.getUint16(lho + 26, true);
+      const lExtraLen = dv.getUint16(lho + 28, true);
+      const dataStart = lho + 30 + lNameLen + lExtraLen;
+      const size = compSize || uncompSize;
+      entries.set(name, u8.slice(dataStart, dataStart + size)); // copy out
+      order.push(name);
+    }
+    off += 46 + nameLen + extraLen + commentLen;
+  }
+  return { entries, order };
+}
+
+// Expand any .usdz archives in an asset map into their contents, so internal
+// textures can be repacked. Returns { assetMap, innerRoot } where innerRoot is
+// the first USD layer found inside a .usdz (USDZ guarantees the first archive
+// entry is the default root layer). Separately-supplied (non-.usdz) files are
+// overlaid on top so they can override archive contents.
+export function expandUsdzInputs(assetMap, opts = {}) {
+  const log = opts.log || (() => {});
+  const out = new Map();
+  let innerRoot = null;
+  // Pass 1: unpack archives.
+  for (const [path, data] of assetMap) {
+    if (!/\.usdz$/i.test(path)) continue;
+    let unpacked;
+    try {
+      unpacked = unpackUSDZ(data);
+    } catch (err) {
+      log(`WARN: could not unpack ${path}: ${err && err.message ? err.message : err}`);
+      out.set(path, data);
+      continue;
+    }
+    for (const name of unpacked.order) out.set(name, unpacked.entries.get(name));
+    const root = unpacked.order.find(isUsdName);
+    if (root && !innerRoot) innerRoot = root;
+    log(`Unpacked ${path}: ${unpacked.order.length} entr${unpacked.order.length === 1 ? 'y' : 'ies'}` +
+        (root ? ` (root layer: ${root})` : ''));
+  }
+  // Pass 2: overlay non-archive inputs (override archive contents).
+  for (const [path, data] of assetMap) {
+    if (/\.usdz$/i.test(path)) continue;
+    out.set(path, data);
+  }
+  return { assetMap: out, innerRoot };
 }
 
 // Pick the root USD layer from an asset map (Map<path, bytes>).
@@ -150,16 +245,29 @@ function composeToFixedPoint(usd) {
 // returns { usdz: Uint8Array, stats: { textures, resized, reencoded, rootPath } }
 export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
   const log = opts.log || (() => {});
-  const rootPath = opts.rootPath || rootUsdFromMap(assetMap);
+  let rootPath = opts.rootPath || rootUsdFromMap(assetMap);
   if (!rootPath) throw new Error('No USD file (.usd/.usda/.usdc/.usdz) found in the input.');
+
+  // If the root is a self-contained .usdz, unpack it so its internal textures
+  // can be repacked (passthrough by default). Disable with repackUsdz: false.
+  if (/\.usdz$/i.test(rootPath) && opts.repackUsdz !== false) {
+    const expanded = expandUsdzInputs(assetMap, { log });
+    if (expanded.innerRoot || [...expanded.assetMap.keys()].some(isUsdName)) {
+      assetMap = expanded.assetMap;
+      rootPath = expanded.innerRoot || rootUsdFromMap(assetMap);
+      if (!rootPath) throw new Error('USDZ archive contained no USD layer.');
+      log(`Repacking USDZ; inner root layer: ${rootPath}`);
+    }
+  }
+
   const textureFormat = normalizedTextureFormat(opts.textureFormat);
   const rootLayerFormat = String(opts.rootLayerFormat || 'usdc').toLowerCase() === 'usda' ? 'usda' : 'usdc';
   const flatten = opts.flatten !== false || !!opts.arkitCompatible;
 
   const images = [...assetMap.keys()].filter(isImageName);
-  if (/\.usdz$/i.test(rootPath) && images.length === 0) {
-    log('WARN: root is a self-contained .usdz with no separate texture files; ' +
-        'internal textures are not repacked in the web version (use the native tusdzconvert CLI).');
+  if (/\.usdz$/i.test(rootPath)) {
+    log('WARN: root is still a .usdz (could not be unpacked for texture repack); ' +
+        'passing it through as an opaque layer.');
   }
 
   // Directory of the root USD; texture references are relative to it.
@@ -168,6 +276,8 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
     textures: 0,
     resized: 0,
     reencoded: 0,
+    audio: 0,
+    otherAssets: 0,
     rootPath,
     rootLayerFormat: flatten ? (opts.arkitCompatible ? 'usdc' : rootLayerFormat) : 'usda',
     flatten,
@@ -190,6 +300,35 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
         continue;
       }
       usd.setAsset(assetNameFor(path), assetMap.get(path));
+    }
+  };
+
+  // Carry through non-USD, non-image assets (audio, etc.) so they survive into
+  // the repacked USDZ. Images are handled by the texture pipeline; USD layers by
+  // registerDependencyLayers. Everything else is copied as-is here.
+  //
+  // Audio is a placeholder for a future transcode step: opts.audioProcessor, if
+  // provided, may return { data, name } to replace the bytes; by default audio
+  // passes through unchanged (no audio codecs are bundled in the web build).
+  const registerPassthroughAssets = async (usd) => {
+    for (const path of assetMap.keys()) {
+      if (path === rootPath || isUsdName(path) || isImageName(path)) {
+        continue;
+      }
+      const name = assetNameFor(path);
+      let bytes = assetMap.get(path);
+      const audio = isAudioName(path);
+      if (audio && typeof opts.audioProcessor === 'function') {
+        try {
+          const processed = await opts.audioProcessor({ path, name, data: bytes, log });
+          if (processed && processed.data) bytes = new Uint8Array(processed.data);
+        } catch (err) {
+          log(`  ${name}: audio processing failed (${err && err.message ? err.message : err}); passing through`);
+        }
+      }
+      usd.setAsset(name, bytes);
+      if (audio) { stats.audio++; log(`  ${name}: ${bytes.length} bytes [audio passthrough]`); }
+      else { stats.otherAssets++; log(`  ${name}: ${bytes.length} bytes [asset passthrough]`); }
     }
   };
 
@@ -239,6 +378,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
         log(`  ${oldName} -> ${newName} [${r.width}x${r.height}, ${r.data.length} bytes]`);
       }
 
+      await registerPassthroughAssets(usd);
       loadRootLayer(usd);
 
       const data = exportUSDZ(usd, remap, opts);
@@ -319,6 +459,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
       usd.setAsset(assetName, outBytes);
     }
 
+    await registerPassthroughAssets(usd);
     loadRootLayer(usd);
 
     const data = exportUSDZ(usd, textureRemap, opts);
