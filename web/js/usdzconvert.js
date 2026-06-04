@@ -48,10 +48,12 @@ container.innerHTML = `
       <input id="maxSize" type="number" min="0" step="64" value="0" style="padding:4px;width:120px" title="0 = do not resize">
 
       <label>Texture format</label>
-      <select id="textureFormat" style="padding:4px;width:120px">
+      <select id="textureFormat" style="padding:4px;width:120px"
+        title="Keep = preserve source format (incl. EXR). EXR keeps HDR; PNG/JPEG tone-map EXR to LDR.">
         <option value="keep">Keep</option>
         <option value="png">PNG</option>
         <option value="jpeg">JPEG</option>
+        <option value="exr">EXR (HDR)</option>
       </select>
 
       <label>USDZ root layer</label>
@@ -86,7 +88,8 @@ container.innerHTML = `
       Set a <b>target total texture size</b> to auto-fit all textures to a budget — choose the lever:
       reduce <b>texture size</b> (keeps PNG) or lower <b>JPEG quality</b> (transcodes to JPG).
       Without a target, browser-supported textures are resized/re-encoded through the canvas API;
-      unsupported formats are routed to TinyUSDZ WASM.
+      other formats are routed to TinyUSDZ WASM. <b>EXR</b> textures (HDR, allowed in recent USDZ)
+      keep their format by default and can be resized; choose PNG/JPEG to tone-map them to LDR.
     </p>
   </fieldset>
 

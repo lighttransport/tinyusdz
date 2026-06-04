@@ -1292,3 +1292,69 @@ void usdz_convert_cleanup_test(void) {
   }
   TEST_CHECK(true);  // Always passes; this is a bookkeeping test.
 }
+
+// EXR encode + decode roundtrip. Guards two fixes: WriteImageToMemory EXR
+// output (previously a stub) and the inverted LoadEXRFromMemory success check
+// (which made every successful EXR decode report failure).
+void usdz_convert_exr_roundtrip_test(void) {
+  using namespace tinyusdz;
+
+  Image img;
+  img.width = 4; img.height = 4; img.channels = 4; img.bpp = 32;
+  img.format = Image::PixelFormat::Float;
+  img.data.resize(size_t(4) * 4 * 4 * sizeof(float));
+  {
+    float *fp = reinterpret_cast<float *>(img.data.data());
+    for (int i = 0; i < 4 * 4; i++) {
+      fp[i * 4 + 0] = 0.25f;
+      fp[i * 4 + 1] = 0.5f;
+      fp[i * 4 + 2] = 0.75f;
+      fp[i * 4 + 3] = 1.0f;
+    }
+  }
+
+  image::WriteOption wopt;
+  wopt.format = image::WriteImageFormat::EXR;
+  auto enc = image::WriteImageToMemory(img, wopt);
+  TEST_CHECK(bool(enc));
+  if (!enc) { TEST_MSG("EXR encode: %s", enc.error().c_str()); return; }
+  const auto &b = enc.value();
+  TEST_CHECK(b.size() >= 4);
+  TEST_CHECK(b[0] == 0x76 && b[1] == 0x2f && b[2] == 0x31 && b[3] == 0x01);
+
+  auto dec = image::LoadImageFromMemory(b.data(), b.size(), "rt.exr");
+  TEST_CHECK(bool(dec));
+  if (!dec) { TEST_MSG("EXR decode: %s", dec.error().c_str()); return; }
+  const Image &out = dec.value().image;
+  TEST_CHECK(out.width == 4 && out.height == 4);
+  TEST_CHECK(out.format == Image::PixelFormat::Float && out.bpp == 32);
+  const float *of = reinterpret_cast<const float *>(out.data.data());
+  // fp16 storage roundtrip — allow a small tolerance.
+  TEST_CHECK(std::fabs(of[0] - 0.25f) < 0.01f);
+  TEST_CHECK(std::fabs(of[1] - 0.5f) < 0.01f);
+  TEST_CHECK(std::fabs(of[2] - 0.75f) < 0.01f);
+}
+
+// fp32 (HDR) resize support in ResizeImage (previously 8-bit only).
+void usdz_convert_resize_float_test(void) {
+  using namespace tinyusdz;
+
+  Image img;
+  img.width = 8; img.height = 8; img.channels = 3; img.bpp = 32;
+  img.format = Image::PixelFormat::Float;
+  img.data.resize(size_t(8) * 8 * 3 * sizeof(float));
+  {
+    float *fp = reinterpret_cast<float *>(img.data.data());
+    for (size_t i = 0; i < size_t(8) * 8 * 3; i++) fp[i] = 0.5f;
+  }
+
+  Image out;
+  std::string err;
+  bool ok = tydra::ResizeImage(img, 4, 4, &out, tydra::ResizeFilter::Auto, &err);
+  TEST_CHECK(ok);
+  if (!ok) { TEST_MSG("float resize: %s", err.c_str()); return; }
+  TEST_CHECK(out.width == 4 && out.height == 4 && out.channels == 3);
+  TEST_CHECK(out.bpp == 32 && out.format == Image::PixelFormat::Float);
+  const float *of = reinterpret_cast<const float *>(out.data.data());
+  TEST_CHECK(std::fabs(of[0] - 0.5f) < 0.001f);
+}

@@ -137,7 +137,7 @@ console.log('imageFormatFromName');
 test('png format', () => assert.equal(imageFormatFromName('tex.png'), 'png'));
 test('jpg format', () => assert.equal(imageFormatFromName('tex.jpg'), 'jpeg'));
 test('jpeg format', () => assert.equal(imageFormatFromName('tex.jpeg'), 'jpeg'));
-test('exr returns null', () => assert.equal(imageFormatFromName('tex.exr'), null));
+test('exr is exr', () => assert.equal(imageFormatFromName('tex.exr'), 'exr'));
 test('avif returns null', () => assert.equal(imageFormatFromName('tex.avif'), null));
 test('no extension', () => assert.equal(imageFormatFromName('noext'), null));
 test('case insensitive', () => assert.equal(imageFormatFromName('TEX.PNG'), 'png'));
@@ -149,7 +149,11 @@ test('keep png', () => assert.deepEqual(outputFormatForImage('tex.png'), { forma
 test('keep jpeg preserves extension', () => assert.deepEqual(outputFormatForImage('tex.jpeg'), { format: 'jpeg', ext: 'jpeg' }));
 test('force jpeg', () => assert.deepEqual(outputFormatForImage('tex.png', 'jpeg'), { format: 'jpeg', ext: 'jpg' }));
 test('force png', () => assert.deepEqual(outputFormatForImage('tex.jpg', 'png'), { format: 'png', ext: 'png' }));
-test('unsupported keep', () => assert.deepEqual(outputFormatForImage('tex.exr'), { format: null, ext: null }));
+test('keep exr stays exr', () => assert.deepEqual(outputFormatForImage('tex.exr'), { format: 'exr', ext: 'exr' }));
+test('exr to png', () => assert.deepEqual(outputFormatForImage('tex.exr', 'png'), { format: 'png', ext: 'png' }));
+test('exr to jpeg', () => assert.deepEqual(outputFormatForImage('tex.exr', 'jpeg'), { format: 'jpeg', ext: 'jpg' }));
+test('png to exr', () => assert.deepEqual(outputFormatForImage('tex.png', 'exr'), { format: 'exr', ext: 'exr' }));
+test('unsupported avif keep', () => assert.deepEqual(outputFormatForImage('tex.avif'), { format: null, ext: null }));
 
 // ============================================================
 console.log('parseByteSize');
@@ -560,6 +564,76 @@ def Material "M"
     });
     const { entries } = unpackUSDZ(usdz);
     assert.deepEqual(entries.get('snd.mp3'), replacement, 'audioProcessor output should be packed');
+  });
+
+  // EXR texture handling: keep+resize as EXR, and transcode EXR -> PNG/JPEG.
+  // (Regression: native EXR decode had an inverted success check, and EXR
+  // resize/encode were unimplemented.)
+  await testAsync('convertImage keeps + resizes EXR and transcodes to PNG/JPEG', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    // Synthesize an EXR from a solid 16x16 PNG (no external fixture needed).
+    const packed = native.repackChannels({ channels: 3, width: 16, height: 16,
+      r: { const: 200 }, g: { const: 100 }, b: { const: 50 } });
+    assert.ok(packed && packed.success, 'repackChannels should produce a PNG');
+    const exrRes = native.convertImage(new Uint8Array(packed.data), { format: 'exr' });
+    assert.ok(exrRes && exrRes.success, 'PNG -> EXR: ' + (exrRes && exrRes.error));
+    const exr = new Uint8Array(exrRes.data);
+    assert.deepEqual([...exr.slice(0, 4)], [0x76, 0x2f, 0x31, 0x01], 'valid EXR magic');
+
+    // Keep EXR + resize.
+    const kept = native.convertImage(exr, { format: 'exr', maxSize: 8 });
+    assert.ok(kept && kept.success, 'EXR resize: ' + (kept && kept.error));
+    assert.equal(kept.width, 8);
+    assert.equal(kept.height, 8);
+    assert.equal(kept.resized, true);
+    assert.deepEqual([...new Uint8Array(kept.data).slice(0, 2)], [0x76, 0x2f], 'still EXR');
+    // The resized EXR must re-decode.
+    const redec = native.convertImage(new Uint8Array(kept.data), { format: 'png' });
+    assert.ok(redec && redec.success, 'resized EXR should re-decode');
+
+    // Transcode EXR -> PNG and EXR -> JPEG.
+    const toPng = native.convertImage(exr, { format: 'png' });
+    assert.ok(toPng && toPng.success, 'EXR -> PNG: ' + (toPng && toPng.error));
+    assert.deepEqual([...new Uint8Array(toPng.data).slice(0, 4)], [0x89, 0x50, 0x4e, 0x47], 'PNG magic');
+    const toJpg = native.convertImage(exr, { format: 'jpeg', jpegQuality: 80 });
+    assert.ok(toJpg && toJpg.success, 'EXR -> JPEG: ' + (toJpg && toJpg.error));
+    assert.deepEqual([...new Uint8Array(toJpg.data).slice(0, 2)], [0xff, 0xd8], 'JPEG magic');
+  });
+
+  // EXR -> PNG applies an ACES filmic tonemap (not a plain clamp). A 0.502
+  // linear gray maps to ~165 under ACES+sRGB vs ~188 for a plain sRGB clamp.
+  await testAsync('EXR -> PNG applies ACES filmic tonemap', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const { PNG } = await import('pngjs');
+    const packed = native.repackChannels({ channels: 3, width: 4, height: 4,
+      r: { const: 128 }, g: { const: 128 }, b: { const: 128 } });
+    const exr = new Uint8Array(native.convertImage(new Uint8Array(packed.data), { format: 'exr' }).data);
+    const pngRes = native.convertImage(exr, { format: 'png' });
+    assert.ok(pngRes && pngRes.success, 'EXR -> PNG: ' + (pngRes && pngRes.error));
+    const png = PNG.sync.read(Buffer.from(new Uint8Array(pngRes.data)));
+    const v = png.data[0];
+    assert.ok(v >= 158 && v <= 172, `expected ACES-tonemapped gray ~165, got ${v}`);
+  });
+
+  // fitTextures: EXR participates in the SIZE strategy (kept as EXR) and is
+  // passed through unchanged under the QUALITY strategy (no HDR->JPEG).
+  await testAsync('fitTextures keeps EXR under size, passes through under quality', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const packed = native.repackChannels({ channels: 3, width: 64, height: 64,
+      r: { const: 200 }, g: { const: 100 }, b: { const: 50 } });
+    const exr = new Uint8Array(native.convertImage(new Uint8Array(packed.data), { format: 'exr' }).data);
+
+    const sized = native.fitTextures({ images: [{ data: exr, name: 'e.exr' }],
+      targetBytes: 256, strategy: 'size', minTextureSize: 8 });
+    assert.ok(sized && sized.success, sized && sized.error);
+    assert.equal(sized.results[0].ext, 'exr', 'EXR stays EXR under size strategy');
+    assert.deepEqual([...new Uint8Array(sized.results[0].data).slice(0, 2)], [0x76, 0x2f], 'EXR magic');
+
+    const qual = native.fitTextures({ images: [{ data: exr, name: 'e.exr' }],
+      targetBytes: 256, strategy: 'quality', minQuality: 30 });
+    assert.ok(qual && qual.success, qual && qual.error);
+    assert.equal(qual.results[0].ext, 'exr', 'EXR untouched under quality strategy');
+    assert.equal(new Uint8Array(qual.results[0].data).length, exr.length, 'EXR passed through verbatim');
   });
 
   // Cleanup temp files.

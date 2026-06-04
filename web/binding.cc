@@ -7951,6 +7951,88 @@ static tinyusdz::Image dropAlpha(const tinyusdz::Image& img) {
   return out;
 }
 
+// ACES filmic tonemap (Stephen Hill's "ACES Fitted"): scene-linear -> ACEScg,
+// the RRT+ODT fit, then back to sRGB/Rec.709 linear. This compresses HDR
+// highlights the way DCC tools (Blender, Unreal) do by default.
+static inline float acesRrtOdtFit(float v) {
+  const float a = v * (v + 0.0245786f) - 0.000090537f;
+  const float b = v * (0.983729f * v + 0.4329510f) + 0.238081f;
+  return (b != 0.0f) ? (a / b) : 0.0f;
+}
+// In-place ACES tonemap of one linear RGB triple. Output is sRGB/Rec.709 linear
+// (apply the sRGB OETF afterwards before quantizing to 8-bit).
+static inline void acesFittedRGB(float& r, float& g, float& b) {
+  // sRGB/Rec.709 linear -> ACEScg (ACESInputMat).
+  const float ir = 0.59719f * r + 0.35458f * g + 0.04823f * b;
+  const float ig = 0.07600f * r + 0.90834f * g + 0.01566f * b;
+  const float ib = 0.02840f * r + 0.13383f * g + 0.83777f * b;
+  const float fr = acesRrtOdtFit(ir);
+  const float fg = acesRrtOdtFit(ig);
+  const float fb = acesRrtOdtFit(ib);
+  // ACEScg -> sRGB/Rec.709 linear (ACESOutputMat).
+  r =  1.60475f * fr - 0.53108f * fg - 0.07367f * fb;
+  g = -0.10208f * fr + 1.10813f * fg - 0.00605f * fb;
+  b = -0.00327f * fr - 0.07276f * fg + 1.07602f * fb;
+}
+
+// Convert an fp32 (HDR/EXR) image to 8-bit LDR so it can be written as PNG/JPEG.
+// USDZ delivers color textures as sRGB-encoded 8-bit, while EXR data is
+// scene-linear, so we apply a default ACES filmic tonemap to the color channels
+// and then the sRGB OETF; an alpha channel (index 3) is treated as linear data.
+// Returns the input unchanged if it is not fp32 float.
+// TODO: exposure/EV control and per-texture colorspace (data vs color) handling.
+static tinyusdz::Image floatImageTo8bit(const tinyusdz::Image& img) {
+  using PF = tinyusdz::Image::PixelFormat;
+  if (!(img.bpp == 32 && img.format == PF::Float)) return img;
+  if (img.width <= 0 || img.height <= 0 || img.channels < 1 || img.channels > 4) {
+    return img;
+  }
+  const size_t npix = static_cast<size_t>(img.width) *
+                      static_cast<size_t>(img.height);
+  const size_t ch = static_cast<size_t>(img.channels);
+  if (npix > SIZE_MAX / ch) return img;
+  if (img.data.size() < npix * ch * sizeof(float)) return img;
+
+  auto srgb8 = [](float x) -> uint8_t {
+    if (!(x > 0.0f)) x = 0.0f;  // also maps NaN -> 0
+    if (x > 1.0f) x = 1.0f;
+    const float s = (x <= 0.0031308f) ? (12.92f * x)
+                                      : (1.055f * std::pow(x, 1.0f / 2.4f) - 0.055f);
+    int v = static_cast<int>(s * 255.0f + 0.5f);
+    return static_cast<uint8_t>(v < 0 ? 0 : (v > 255 ? 255 : v));
+  };
+  auto lin8 = [](float x) -> uint8_t {
+    if (!(x > 0.0f)) x = 0.0f;
+    if (x > 1.0f) x = 1.0f;
+    int v = static_cast<int>(x * 255.0f + 0.5f);
+    return static_cast<uint8_t>(v < 0 ? 0 : (v > 255 ? 255 : v));
+  };
+
+  const float* src = reinterpret_cast<const float*>(img.data.data());
+  tinyusdz::Image out;
+  out.width = img.width; out.height = img.height; out.channels = img.channels;
+  out.bpp = 8; out.format = PF::UInt; out.colorspace = img.colorspace;
+  out.data.resize(npix * ch);
+  for (size_t i = 0; i < npix; i++) {
+    const float* p = &src[i * ch];
+    uint8_t* o = &out.data[i * ch];
+    if (ch >= 3) {
+      float r = p[0], g = p[1], b = p[2];
+      acesFittedRGB(r, g, b);     // tonemap color, then sRGB-encode below.
+      o[0] = srgb8(r);
+      o[1] = srgb8(g);
+      o[2] = srgb8(b);
+      if (ch == 4) o[3] = lin8(p[3]);
+    } else if (ch == 2) {
+      o[0] = srgb8(acesRrtOdtFit(p[0]));  // grayscale tonemap (no matrix)
+      o[1] = lin8(p[1]);
+    } else {  // ch == 1
+      o[0] = srgb8(acesRrtOdtFit(p[0]));
+    }
+  }
+  return out;
+}
+
 // convertImage(data, opts) -> { success, data?:Uint8Array, width, height, resized, error? }
 // opts: { maxSize?, width?, height?, format?:"png"|"jpeg", pngEncoder?, jpegQuality? }
 emscripten::val convertImage(const emscripten::val& data,
@@ -7976,8 +8058,9 @@ emscripten::val convertImage(const emscripten::val& data,
   const std::string pngEnc = optStr(opts, "pngEncoder", "auto");
   const int jpegQ = optInt(opts, "jpegQuality", 90);
 
+  // Resize works for both 8-bit (LDR) and fp32 (HDR/EXR) images now.
   bool resized = false;
-  if (img.bpp == 8) {
+  {
     if ((tw <= 0 || th <= 0) && maxSize > 0) {
       const int longest = (std::max)(img.width, img.height);
       if (longest > maxSize) {
@@ -8002,11 +8085,16 @@ emscripten::val convertImage(const emscripten::val& data,
   image::WriteOption wopt;
   wopt.png_encoder = parsePngEncoder(pngEnc);
   wopt.jpeg_quality = jpegQ;
-  if (format == "jpeg" || format == "jpg") {
+  if (format == "exr") {
+    // Keep HDR/float data; WriteImageToMemory promotes 8-bit input if needed.
+    wopt.format = image::WriteImageFormat::EXR;
+  } else if (format == "jpeg" || format == "jpg") {
     wopt.format = image::WriteImageFormat::JPEG;
+    img = floatImageTo8bit(img);  // tone-map fp32 -> 8-bit (no-op if 8-bit)
     img = dropAlpha(img);
   } else {
     wopt.format = image::WriteImageFormat::PNG;
+    img = floatImageTo8bit(img);  // tone-map fp32 -> 8-bit (no-op if 8-bit)
   }
 
   auto enc = image::WriteImageToMemory(img, wopt);
@@ -8141,9 +8229,19 @@ emscripten::val fitTextures(const emscripten::val& opts) {
       }
     }
     auto dec = image::LoadImageFromMemory(buf.data(), buf.size(), name);
-    if (dec && dec.value().image.bpp == 8) {
-      fi.image = std::move(dec.value().image);
-      fi.reencodable = true;
+    if (dec) {
+      const Image& dimg = dec.value().image;
+      // 8-bit LDR can be resized/transcoded; fp32 EXR can be resized (kept as
+      // EXR under the size strategy). The fit logic decides per strategy.
+      const bool fittable =
+          (dimg.bpp == 8) ||
+          (dimg.bpp == 32 && dimg.format == Image::PixelFormat::Float);
+      if (fittable) {
+        fi.image = std::move(dec.value().image);
+        fi.reencodable = true;
+      } else {
+        fi.reencodable = false;
+      }
     } else {
       fi.reencodable = false;
     }

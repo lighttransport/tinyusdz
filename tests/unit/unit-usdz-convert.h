@@ -22,3 +22,7 @@ void usdz_convert_fit_budget_error_test(void);
 void usdz_convert_missing_texture_reference_test(void);
 void usdz_convert_pipeline_jpeg_test(void);
 void usdz_convert_cleanup_test(void);
+
+// EXR encode/decode + fp32 resize (HDR texture support)
+void usdz_convert_exr_roundtrip_test(void);
+void usdz_convert_resize_float_test(void);
