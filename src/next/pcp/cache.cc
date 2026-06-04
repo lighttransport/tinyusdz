@@ -300,7 +300,8 @@ struct Cache::Impl {
   void ProcessArc(const Src &src, const CompositionArc &arc, ArcType kind,
                   const std::set<std::string> &cycle, std::vector<Src> *out,
                   std::vector<Src> *spec_out,
-                  std::map<std::string, std::string> *sels, std::string *warn,
+                  std::map<std::string, std::string> *sels,
+                  const std::vector<uint32_t> &chain, std::string *warn,
                   std::string *err) {
     uint32_t arc_stack_idx;
     std::string arc_site;
@@ -352,29 +353,42 @@ struct Cache::Impl {
     std::vector<Src> *target = (kind == ArcType::Specialize) ? spec_out : out;
 
     // Implied class-arc propagation: a class (inherit/specialize) reached
-    // through a reference is ALSO expressed in the ROOT layer stack, so a
-    // root-authored override on the same class path composes -- and, pushed
-    // first, outranks the referenced-stack class opinions. Class paths are
-    // global, so the site is unchanged in the root stack.
-    if (IsClassBasedArc(kind) && arc_stack_idx != 0 &&
-        FindSpec(layer_stacks[0], arc_site, nullptr)) {
-      Src implied = arc_src;
-      implied.stack_idx = 0;
-      std::set<std::string> ic = cycle;
-      ic.insert(layer_stacks[0].identifier + ":" + arc_site);
-      ExpandArcs(implied, std::move(ic), target, spec_out, sels, warn, err);
+    // through a reference chain is ALSO expressed in EVERY ancestor layer stack
+    // on that chain (root + intermediate references), so an override authored on
+    // the same class path at any level composes. Ancestors are pushed first
+    // (root strongest) so they outrank the referenced-stack class opinions.
+    // Class paths are global, so the site is unchanged across stacks.
+    if (IsClassBasedArc(kind)) {
+      std::set<uint32_t> seen_stack;
+      for (uint32_t as : chain) {
+        if (as == arc_stack_idx || !seen_stack.insert(as).second) continue;
+        if (!FindSpec(layer_stacks[as], arc_site, nullptr)) continue;
+        Src implied = arc_src;
+        implied.stack_idx = as;
+        std::set<std::string> ic = cycle;
+        ic.insert(layer_stacks[as].identifier + ":" + arc_site);
+        std::vector<uint32_t> ichain{as};
+        ExpandArcs(implied, std::move(ic), target, spec_out, sels, ichain, warn,
+                   err);
+      }
     }
+
+    // Reference/payload arcs descend into a new layer stack -> extend the chain.
+    std::vector<uint32_t> child_chain = chain;
+    if (arc_stack_idx != src.stack_idx) child_chain.push_back(arc_stack_idx);
 
     std::set<std::string> child_cycle = cycle;
     child_cycle.insert(key);
-    ExpandArcs(arc_src, std::move(child_cycle), target, spec_out, sels, warn, err);
+    ExpandArcs(arc_src, std::move(child_cycle), target, spec_out, sels,
+               child_chain, warn, err);
   }
 
   // Pre-order DFS == strength order. Per source: local (pushed) > inherits >
   // references > payloads; specializes routed to `spec_out` (globally weakest).
   void ExpandArcs(const Src &src, std::set<std::string> cycle,
                   std::vector<Src> *out, std::vector<Src> *spec_out,
-                  std::map<std::string, std::string> *sels, std::string *warn,
+                  std::map<std::string, std::string> *sels,
+                  const std::vector<uint32_t> &chain, std::string *warn,
                   std::string *err) {
     out->push_back(src);
 
@@ -391,7 +405,7 @@ struct Cache::Impl {
     // Inherits (stronger than references).
     for (const std::string &s : spec->meta().inherits) {
       ProcessArc(src, Compositor::ParseReference(s), ArcType::Inherit, cycle,
-                 out, spec_out, sels, warn, err);
+                 out, spec_out, sels, chain, warn, err);
     }
 
     // Variants (weaker than inherits, stronger than references). For each
@@ -413,7 +427,7 @@ struct Cache::Impl {
           vsrc.arc_kind = ArcType::Variant;
           std::set<std::string> vc = cycle;
           vc.insert(vid + ":/__self__");
-          ExpandArcs(vsrc, std::move(vc), out, spec_out, sels, warn, err);
+          ExpandArcs(vsrc, std::move(vc), out, spec_out, sels, chain, warn, err);
         }
         // Inline opinions (properties/relationships on the host prim itself).
         if (!vd->properties.empty() || !vd->relationships.empty()) {
@@ -428,7 +442,7 @@ struct Cache::Impl {
     // References.
     for (const std::string &ref_str : spec->meta().references) {
       ProcessArc(src, Compositor::ParseReference(ref_str), ArcType::Reference,
-                 cycle, out, spec_out, sels, warn, err);
+                 cycle, out, spec_out, sels, chain, warn, err);
     }
 
     // Payloads (deferrable, weaker than references).
@@ -441,7 +455,7 @@ struct Cache::Impl {
           continue;  // deferred: contributes no opinions.
         }
         deferred_payload_prims.erase(root_prim_path);
-        ProcessArc(src, arc, ArcType::Payload, cycle, out, spec_out, sels, warn,
+        ProcessArc(src, arc, ArcType::Payload, cycle, out, spec_out, sels, chain, warn,
                    err);
       }
     }
@@ -449,7 +463,7 @@ struct Cache::Impl {
     // Specializes (globally weakest; routed into spec_out by ProcessArc).
     for (const std::string &s : spec->meta().specializes) {
       ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize, cycle,
-                 out, spec_out, sels, warn, err);
+                 out, spec_out, sels, chain, warn, err);
     }
   }
 
@@ -465,7 +479,8 @@ struct Cache::Impl {
       // Carry a base source's own arc kind so a specialize re-rooted onto a
       // child stays globally weakest.
       std::vector<Src> *tgt = (s.arc_kind == ArcType::Specialize) ? &spec : &main;
-      ExpandArcs(s, std::move(cycle), tgt, &spec, &sels, warn, err);
+      std::vector<uint32_t> chain{s.stack_idx};
+      ExpandArcs(s, std::move(cycle), tgt, &spec, &sels, chain, warn, err);
     }
     main.insert(main.end(), spec.begin(), spec.end());
     return main;
