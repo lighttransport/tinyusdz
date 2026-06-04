@@ -1038,3 +1038,86 @@ comparison table and correctness analysis in
 ### Related docs
 
 - [composition.md](composition.md) — the default flattening pipeline, the LIVRPS table, the LIVRPS-correctness analysis, the OpenUSD-vs-tinyusdz comparison table, instancing examples, and variants.
+
+---
+
+## tinyusdz::next::pcp — native composition for the `next` module
+
+The `next` module (`src/next/`) is a standalone, low-dependency rewrite of
+tinyusdz (runtime type dispatch, flat index-based storage, SBO `Value`). It does
+**not** link the main library, so the main `pcp::Cache` (built on
+`tinyusdz::Layer` / `composition-graph.cc`) cannot be reused directly. Instead,
+`src/next/pcp/` is a **native, standalone re-implementation of the same PCP
+design** on `next`'s own types (C++14, only `next/` + STL + vendored
+`nonstd/expected`).
+
+### Design
+
+- **Lazy per-prim composition.** `Cache::ComputePrimIndex(path)` builds and caches
+  one prim's composition graph on demand; you pay only for prims you query.
+  `BuildStage()` materializes the whole composed scene into a `next::Stage`.
+- **`PrimIndex` / `CompNode`** mirror the main engine: a per-prim DAG of
+  strength-ordered sources. Site prim paths are interned into a shared table
+  (`CompNode` stores a `uint32` index) and deduped across all cached indices;
+  layers are shared by `shared_ptr` (parse-once).
+- **Parse-once `LayerRegistry`** keyed by resolved path; `Cache::PreloadLayer`
+  registers an in-memory layer under an identifier (embedding helper).
+- **Dependency-aware invalidation.** `Invalidate(path)` / `InvalidateLayer(id)`
+  drop exactly the cached indices that read the affected sites (reverse `Site`
+  maps).
+
+### Supported arcs — full LIVRPS + relocates + instancing
+
+Strength order `Local > Inherit > Variant > Reference > Payload > Specialize`:
+
+- **Sublayers (L)** — the root layer stack `[root, sublayers…]`.
+- **References (R)** — internal + external (resolved via `AssetResolver`), nested,
+  with namespace mapping and cycle detection.
+- **Payloads (P)** — deferred via `CompositionOptions::payload_policy`;
+  `LoadPayload` / `UnloadPayload` / `HasDeferredPayload` / `GetDeferredPayloadPaths`.
+- **Inherits / Specializes (I/S)** — class arcs; specializes are globally weakest
+  (collected to the tail). **Implied** class arcs propagate into every ancestor
+  layer stack on the reference chain (root + intermediate), so an override on the
+  class at any level composes.
+- **Variants (V)** — selection grafts the chosen variant's inline opinions and/or
+  its **content subtree** (a variant that adds child prims). Multi-selection
+  (`variantSelections`) and **cross-source** selection (selection on a stronger
+  source than the variantSet) are supported.
+- **Relocates** — same-parent namespace rename in `BuildStage`.
+- **Ancestral composition** — a descendant of a referenced prim composes even
+  with no local spec.
+- **Instancing** — `instanceable` prims with the same structural `InstanceKey`
+  (type + arcs + variant selections) share a prototype; `BuildStage` materializes
+  instances as proxies (`PrimSpecMeta::instance_prototype`) so subtrees are not
+  duplicated, while `UsdPrim` child access transparently follows the prototype.
+  API: `IsInstance` / `GetPrototype` / `GetInstancesForPrototype` / `PrototypeCount`.
+
+### One-call helpers
+
+- `pcp::ComposeStageFromFile(filename, resolver, &stage, options, …)`
+- `pcp::ComposeStageFromLayer(root_layer, resolver, &stage, root_id, options, …)`
+
+### Threading
+
+Built with `-DTINYUSDZ_NEXT_ENABLE_THREAD=ON`, the `LayerRegistry` is thread-safe
+(parse-outside-lock, double-checked publish) and `PrewarmPrimIndices` with
+`num_threads != 1` prefetches first-level reference/payload layers in parallel
+before a serial index build. Verified ThreadSanitizer-clean. Default builds are
+sequential and zero-overhead.
+
+### Known limitations / future work
+
+- The `next` **USDA parser** does not yet parse `references` / `payload` /
+  `inherits` / `specializes` metadata, so file-based *arc* composition is blocked
+  at the reader (the engine itself handles arcs; in-memory and `PreloadLayer`
+  paths work).
+- Per-prim **parallel index building** (per-worker `CompositionContext`s, as in
+  `src/pcp/cache-parallel.cc`) — only layer loading is parallelized today.
+- `CompNode` map-expression interning; variant-child relocate interplay.
+
+### Tests
+
+`tests/next/test_pcp.cc` (built with `-DTINYUSDZ_NEXT_BUILD_TESTS=ON`) covers each
+arc, ancestral composition, deferred payloads, instancing + proxies, relocates,
+cross-source variants, implied class propagation (incl. intermediate stacks), the
+parallel prefetch, and the one-call helpers.
