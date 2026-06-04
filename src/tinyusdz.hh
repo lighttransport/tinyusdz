@@ -179,9 +179,10 @@ struct USDLoadOptions {
   std::map<std::string, FileFormatHandler> fileformats;
 
   /// Enable mmap zero-copy for uncompressed USDC arrays.
-  /// When true and data is loaded from mmap, defers reading uncompressed
-  /// float/double arrays and records their mmap offsets instead.
-  /// The mmap must remain valid for the lifetime of the Stage.
+  /// When true, defers reading eligible uncompressed USDC arrays and records
+  /// their offsets instead. File-based loaders keep the mmap/file buffer alive
+  /// through Stage ownership. Memory-based loaders still require the caller's
+  /// input buffer to remain alive while the Stage uses zero-copy arrays.
   bool mmap_zero_copy{false};
 
   Axis upAxis{Axis::Y};

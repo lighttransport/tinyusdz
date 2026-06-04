@@ -254,6 +254,7 @@ TEST_LIST = {
   { "crate_writer_prim_children_test", crate_writer_prim_children_test },
   { "stage_get_prim_at_path_test", stage_get_prim_at_path_test },
   { "stage_find_prim_by_id_test", stage_find_prim_by_id_test },
+  { "stage_adopt_mmap_buffer_lifetime_test", stage_adopt_mmap_buffer_lifetime_test },
   { "usdc_reconstruct_variant_properties_test", usdc_reconstruct_variant_properties_test },
   { "usdc_reconstruct_variant_prim_children_test", usdc_reconstruct_variant_prim_children_test },
   { "usdc_reconstruct_nested_variant_sets_test", usdc_reconstruct_nested_variant_sets_test },
@@ -580,6 +581,7 @@ TEST_LIST = {
   { "usdz_validator_crc32_test", usdz_validator_crc32_test },
   { "usdz_validator_size_consistency_test", usdz_validator_size_consistency_test },
   { "usdz_validator_empty_input_test", usdz_validator_empty_input_test },
+  { "usdz_validator_missing_eocd_test", usdz_validator_missing_eocd_test },
   { "usdz_writer_file_roundtrip_test", usdz_writer_file_roundtrip_test },
   { "usdz_validator_large_asset_test", usdz_validator_large_asset_test },
   { "usdz_validator_bad_extension_test", usdz_validator_bad_extension_test },
@@ -828,6 +830,7 @@ TEST_LIST = {
   { "rb_aabb_broadphase_test", rb_aabb_broadphase_test },
   { "rb_gjk_box_box_test", rb_gjk_box_box_test },
   // Rigid body dynamics
+  { "rb_invalid_body_indices_rejected_test", rb_invalid_body_indices_rejected_test },
   { "rb_falling_sphere_test", rb_falling_sphere_test },
   { "rb_pendulum_hinge_test", rb_pendulum_hinge_test },
   { "rb_stacking_sleep_test", rb_stacking_sleep_test },

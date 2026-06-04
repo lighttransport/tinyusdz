@@ -793,8 +793,15 @@ bool CrateReader::DescribeValueRep(const crate::ValueRep &rep,
   ref->type_id = uint32_t(dty.dtype_id);
 
   // Skip past the data
+  if (elem_size != 0 && n > (UINT64_MAX / elem_size)) {
+    return false;
+  }
   uint64_t data_size = n * elem_size;
-  if (!_sr->seek_set(ref->byte_offset + data_size)) {
+  if (ref->byte_offset > (UINT64_MAX - data_size)) {
+    return false;
+  }
+  uint64_t data_end = ref->byte_offset + data_size;
+  if (!_sr->seek_set(data_end)) {
     return false;
   }
 

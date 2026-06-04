@@ -20,6 +20,7 @@
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "image-loader.hh"
@@ -61,6 +62,42 @@ std::string GetLayerBaseDirForAssetName(const std::string &asset_name) {
     basedir = ".";
   }
   return basedir;
+}
+
+bool AdoptStageMMapFileForZeroCopy(Stage *stage, io::MMapFileHandle *handle,
+                                   std::string *err) {
+  if (!stage || !handle) {
+    if (err) {
+      (*err) += "Internal error: invalid Stage or mmap handle for zero-copy ownership.\n";
+    }
+    return false;
+  }
+
+  if (!stage->adopt_mmap_file(std::move(*handle))) {
+    if (err) {
+      (*err) += "Failed to attach mmap file lifetime to Stage for zero-copy arrays.\n";
+    }
+    return false;
+  }
+  return true;
+}
+
+bool AdoptStageBufferForZeroCopy(Stage *stage, std::vector<uint8_t> *data,
+                                 std::string *err) {
+  if (!stage || !data) {
+    if (err) {
+      (*err) += "Internal error: invalid Stage or buffer for zero-copy ownership.\n";
+    }
+    return false;
+  }
+
+  if (!stage->adopt_mmap_buffer(std::move(*data))) {
+    if (err) {
+      (*err) += "Failed to attach file buffer lifetime to Stage for zero-copy arrays.\n";
+    }
+    return false;
+  }
+  return true;
 }
 }
 
@@ -179,6 +216,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
 
   // Reconstruct `Stage`(scene) object
   {
+    stage->clear_mmap_data();
     if (!reader.ReconstructStage(stage)) {
       DCOUT("Failed to reconstruct Stage from Crate.");
       if (warn) {
@@ -239,8 +277,15 @@ bool LoadUSDCFromFile(const std::string &_filename, Stage *stage,
 
     bool ret = LoadUSDCFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
                               err, options);
+    bool keep_mmap = false;
+    if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
+      keep_mmap = AdoptStageMMapFileForZeroCopy(stage, &handle, err);
+      if (!keep_mmap) {
+        ret = false;
+      }
+    }
 
-    {
+    if (!keep_mmap) {
       std::string _err;
       // Ignore unmap result for now.
       io::UnmapFile(handle, &_err);
@@ -277,8 +322,15 @@ bool LoadUSDCFromFile(const std::string &_filename, Stage *stage,
       return false;
     }
 
-    return LoadUSDCFromMemory(data.data(), data.size(), filepath, stage, warn,
-                              err, options);
+    bool ret = LoadUSDCFromMemory(data.data(), data.size(), filepath, stage, warn,
+                                  err, options);
+    if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
+      if (!AdoptStageBufferForZeroCopy(stage, &data, err)) {
+        return false;
+      }
+    }
+
+    return ret;
   }
 }
 
@@ -396,7 +448,8 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
       return false;
     }
 
-    uint16_t compr_method = *reinterpret_cast<uint16_t *>(&local_header[0] + 8);
+    uint16_t compr_method;
+    memcpy(&compr_method, &local_header[8], sizeof(compr_method));
     // uint32_t compr_bytes = *reinterpret_cast<uint32_t*>(&local_header[0]+18);
     uint32_t uncompr_bytes;
     memcpy(&uncompr_bytes, &local_header[22], sizeof(uncompr_bytes));
@@ -405,6 +458,13 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
     if (compr_method != 0) {
       if (err) {
         (*err) += "Compressed ZIP is not supported for USDZ\n";
+      }
+      return false;
+    }
+
+    if (uncompr_bytes > (length - offset)) {
+      if (err) {
+        (*err) += "Invalid uncompressed size in ZIP data\n";
       }
       return false;
     }
@@ -607,8 +667,15 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
 
     bool ret = LoadUSDZFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
                               err, options);
+    bool keep_mmap = false;
+    if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
+      keep_mmap = AdoptStageMMapFileForZeroCopy(stage, &handle, err);
+      if (!keep_mmap) {
+        ret = false;
+      }
+    }
 
-    {
+    if (!keep_mmap) {
       std::string _err;
       // Ignore unmap result for now.
       io::UnmapFile(handle, &_err);
@@ -638,8 +705,15 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
       return false;
     }
 
-    return LoadUSDZFromMemory(data.data(), data.size(), filepath, stage, warn,
-                              err, options);
+    bool ret = LoadUSDZFromMemory(data.data(), data.size(), filepath, stage, warn,
+                                  err, options);
+    if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
+      if (!AdoptStageBufferForZeroCopy(stage, &data, err)) {
+        return false;
+      }
+    }
+
+    return ret;
   }
 }
 
@@ -815,8 +889,15 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
 
     bool ret = LoadUSDFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
                               err, options);
+    bool keep_mmap = false;
+    if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
+      keep_mmap = AdoptStageMMapFileForZeroCopy(stage, &handle, err);
+      if (!keep_mmap) {
+        ret = false;
+      }
+    }
 
-    {
+    if (!keep_mmap) {
       std::string _err;
       // Ignore unmap result for now.
       io::UnmapFile(handle, &_err);
@@ -837,8 +918,15 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
       return false;
     }
 
-    return LoadUSDFromMemory(data.data(), data.size(), base_dir, stage, warn, err,
-                             options);
+    bool ret = LoadUSDFromMemory(data.data(), data.size(), base_dir, stage, warn,
+                                 err, options);
+    if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
+      if (!AdoptStageBufferForZeroCopy(stage, &data, err)) {
+        return false;
+      }
+    }
+
+    return ret;
   }
 }
 
@@ -887,9 +975,15 @@ static bool LoadUSDFromMemoryImpl(const uint8_t *addr, const size_t length,
       return false;
     }
 
+    // The decompressed buffer is local to this stack frame, so zero-copy refs
+    // cannot safely outlive this call.
+    USDLoadOptions decompressed_options = options;
+    decompressed_options.mmap_zero_copy = false;
+
     // Recursively call with bounded nested zstd depth.
     return LoadUSDFromMemoryImpl(decompressed_data.data(), decompressed_data.size(),
-                                 base_dir, stage, warn, err, options, zstd_depth + 1);
+                                 base_dir, stage, warn, err,
+                                 decompressed_options, zstd_depth + 1);
 #else
     if (err) {
       (*err) += "zstd-compressed USD file detected, but zstd compression support is not enabled. "
@@ -2520,7 +2614,7 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
     uint32_t header_crc;
     memcpy(&header_crc, &local_header[14], 4);
 
-    if (uncompr_size > 0 && offset + uncompr_size <= length) {
+    if (uncompr_size > 0 && uncompr_size <= length - offset) {
       uint32_t actual_crc = ComputeCRC32(addr + offset, uncompr_size);
       if (header_crc != 0 && actual_crc != header_crc) {
         if (err) {
@@ -2530,7 +2624,7 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
         }
         valid = false;
       }
-    } else if (uncompr_size > 0 && offset + uncompr_size > length) {
+    } else if (uncompr_size > 0 && uncompr_size > length - offset) {
       if (err) {
         (*err) += "Entry '" + name + "': data extends beyond file end.\n";
       }
@@ -2556,7 +2650,8 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
   // A minimal check: look for EOCD signature near the end
   bool found_eocd = false;
   if (length >= 22) {
-    for (size_t i = length - 22; i >= (length > 65557 ? length - 65557 : 0); i--) {
+    const size_t eocd_lower = (length > 65557) ? (length - 65557) : 0;
+    for (size_t i = length - 22;; i--) {
       if (addr[i] == 0x50 && addr[i + 1] == 0x4b &&
           addr[i + 2] == 0x05 && addr[i + 3] == 0x06) {
         found_eocd = true;
@@ -2570,6 +2665,9 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
         }
         break;
       }
+      if (i == eocd_lower) {
+        break;
+      }
     }
   }
 
@@ -2578,7 +2676,8 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
     valid = false;
   } else {
     // Validate central directory entry count matches local headers
-    for (size_t i = length - 22; i >= (length > 65557 ? length - 65557 : 0); i--) {
+    const size_t eocd_lower = (length > 65557) ? (length - 65557) : 0;
+    for (size_t i = length - 22;; i--) {
       if (addr[i] == 0x50 && addr[i + 1] == 0x4b &&
           addr[i + 2] == 0x05 && addr[i + 3] == 0x06) {
         uint16_t cd_entry_count;
@@ -2591,6 +2690,9 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
                        std::to_string(entry_index) + ").\n";
           }
         }
+        break;
+      }
+      if (i == eocd_lower) {
         break;
       }
     }
