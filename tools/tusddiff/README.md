@@ -1,10 +1,10 @@
-# usddiff - USD Layer Diff Tool
+# tusddiff - USD Layer Diff Tool
 
 A command-line tool for computing and displaying differences between USD (Universal Scene Description) files.
 
 ## Description
 
-`usddiff` compares two USD files and reports differences in their structure, including:
+`tusddiff` compares two USD files and reports differences in their structure, including:
 - Added, deleted, and modified primitive specifications (PrimSpecs)
 - Changes in primitive properties (attributes and relationships)
 - Hierarchical differences in the USD scene graph
@@ -15,13 +15,13 @@ The tool supports both human-readable text output (similar to Unix `diff`) and s
 
 ```bash
 # Basic text diff
-usddiff file1.usd file2.usd
+tusddiff file1.usd file2.usd
 
 # JSON output
-usddiff --json scene1.usda scene2.usda
+tusddiff --json scene1.usda scene2.usda
 
 # Show help
-usddiff --help
+tusddiff --help
 ```
 
 ### Command Line Options
@@ -85,33 +85,33 @@ Structured format suitable for programmatic processing:
 ### Compare Two Scene Files
 
 ```bash
-usddiff models/scene_v1.usd models/scene_v2.usd
+tusddiff models/scene_v1.usd models/scene_v2.usd
 ```
 
 ### Export Differences as JSON
 
 ```bash
-usddiff --json old_model.usda new_model.usda > changes.json
+tusddiff --json old_model.usda new_model.usda > changes.json
 ```
 
 ### Using with Kitchen Set Example
 
 ```bash
 # Compare different Kitchen Set configurations
-usddiff models/Kitchen_set/Kitchen_set.usd models/Kitchen_set/Kitchen_set_instanced.usd
+tusddiff models/Kitchen_set/Kitchen_set.usd models/Kitchen_set/Kitchen_set_instanced.usd
 ```
 
 ## Building
 
-The `usddiff` tool is built automatically when examples are enabled:
+The `tusddiff` tool is built when tools are enabled:
 
 ```bash
 mkdir build && cd build
-cmake -DTINYUSDZ_BUILD_EXAMPLES=ON ..
-make usddiff
+cmake -DTINYUSDZ_BUILD_TOOLS=ON ..
+make tusddiff
 ```
 
-The executable will be created in `build/examples/usddiff/usddiff`.
+The executable will be created at `build/tusddiff`.
 
 ## Implementation Details
 

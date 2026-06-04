@@ -329,3 +329,51 @@ void layer_memory_estimation_test(void) {
   TEST_CHECK(mem > 0);
   TEST_MSG("Layer memory usage estimate: %zu bytes", mem);
 }
+
+// Regression: a moved-from Layer must remain valid and assignable. The internal
+// _impl was previously left null by the move ctor / move assignment, so reusing
+// a moved-from Layer as a copy-assignment target (as the composition fixed-point
+// loop does: `a = std::move(b); Composite(..., &b);`) dereferenced a null _impl
+// and crashed. These checks pin the "moved-from stays valid" invariant.
+void layer_moved_from_is_valid_test(void) {
+  // 1. Move-construct, then assign INTO the moved-from source.
+  {
+    Layer src;
+    src.set_name("src");
+    PrimSpec ps(Specifier::Def, "Xform", "Root");
+    src.add_primspec("Root", ps);
+
+    Layer dst(std::move(src));
+    TEST_CHECK(dst.name() == "src");
+    TEST_CHECK(dst.has_primspec("Root"));
+
+    // Assigning into the moved-from `src` must not crash (was a null-deref).
+    Layer other;
+    other.set_name("other");
+    src = other;  // copy-assign into moved-from
+    TEST_CHECK(src.name() == "other");
+  }
+
+  // 2. Move-assign, then reuse the moved-from source as a copy-assign target.
+  {
+    Layer a, b;
+    b.set_name("b");
+    b.add_primspec("P", PrimSpec(Specifier::Def, "Mesh", "P"));
+
+    a = std::move(b);
+    TEST_CHECK(a.name() == "b");
+    TEST_CHECK(a.has_primspec("P"));
+
+    // `b` is moved-from; copy-assigning into it must be safe.
+    Layer c;
+    c.set_name("c");
+    b = c;
+    TEST_CHECK(b.name() == "c");
+
+    // And copy-CONSTRUCTING from a freshly moved-from layer must be safe too.
+    Layer d = std::move(a);
+    Layer e(a);  // a is moved-from here
+    TEST_CHECK(e.name().empty());
+    TEST_CHECK(d.name() == "b");
+  }
+}

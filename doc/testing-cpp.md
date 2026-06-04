@@ -35,6 +35,80 @@ Relevant options in the current build configuration:
 - `TINYUSDZ_WITH_TYDRA=ON`
 - `TINYUSDZ_WITH_PXR_COMPAT_API=ON`
 
+## Full Regression Tests
+
+Run the full regression suite before changes that affect parsing, composition,
+USDA/USDC writing, USDZ packaging, schema reconstruction, or tool output.
+
+> **Scope:** The experimental `next` module (`src/next/`, `tinyusdz_next`) and
+> its tests under `tests/next/` are **not** part of this regression suite. They
+> are a standalone CMake project, are not built by the main `build/` (so they do
+> not appear in `ctest`), and are not run by the Pixar comparison runner. Do not
+> treat `next` results as part of the regression gate. See
+> [Experimental `next` library tests](#experimental-next-library-tests) for how
+> to build and run them on demand.
+
+The full regression pass has two parts:
+
+1. All CMake/CTest-registered tests, including parser corpus tests, roundtrip
+   corpus tests, registered feature tests, benchmarks in quick mode, MCP tests,
+   and the main Acutest unit suite.
+2. The Node.js `tusdcat` vs OpenUSD v26.05 `usdcat` comparison runner, which
+   checks TinyUSDZ output against `usdcat` over the USDA and USDC fixture
+   corpora.
+
+Recommended command sequence from the repository root:
+
+```bash
+# Build all configured tests and examples, including tusdcat.
+cmake --build build
+
+# 1. Run all CTest-registered tests.
+cd build
+ctest --output-on-failure
+cd ..
+
+# 2. Run the Node.js roundtrip/comparison suite against OpenUSD v26.05.
+TUSDCAT_PATH=./build/tusdcat \
+USDCAT_PATH=../OpenUSD/dist/bin/usdcat \
+  bash tests/run-usdcat-compare.sh
+```
+
+`tests/run-usdcat-compare.sh` requires Node.js and a working OpenUSD v26.05
+`usdcat`. Prefer a sibling OpenUSD v26.05 install at
+`../OpenUSD/dist/bin/usdcat`. The script falls back to
+`~/local/USD/dist/bin/usdcat` when the sibling install is not present, but full
+regression results should use v26.05 unless a test intentionally targets
+another OpenUSD release. Set `USDCAT_PATH` explicitly when needed.
+
+The comparison runner writes detailed logs to `tests/comparison-results/` and
+prints a failure/warning summary. It continues across individual files so one
+failure does not hide later failures; inspect the summary and log even when the
+shell command itself completes.
+
+Useful variants:
+
+```bash
+# Quieter comparison logs.
+SHOW_DETAILED_DIFF=false \
+TUSDCAT_PATH=./build/tusdcat \
+USDCAT_PATH=../OpenUSD/dist/bin/usdcat \
+  bash tests/run-usdcat-compare.sh
+
+# Longer per-file timeout for slow debug/ASan builds.
+TIMEOUT_MS=120000 \
+TUSDCAT_PATH=./build/tusdcat \
+USDCAT_PATH=../OpenUSD/dist/bin/usdcat \
+  bash tests/run-usdcat-compare.sh
+
+# Single-file comparison through the Node.js runner.
+node tests/compare-usda.js \
+  --tusdcat ./build/tusdcat \
+  --usdcat ../OpenUSD/dist/bin/usdcat \
+  --detailed-diff \
+  tests/usda/somefile.usda
+```
+
 ## ctest Suite
 
 CMake registers these tests when the corresponding targets are built (most in the top-level `CMakeLists.txt`; `unit-test-tinyusdz` in `tests/unit/CMakeLists.txt` and `mcp-test` in `tests/mcp/CMakeLists.txt`):
@@ -86,6 +160,65 @@ ctest -R roundtrip --output-on-failure
 
 # Exclude benchmark-labeled tests
 ctest --output-on-failure -LE benchmark
+```
+
+## Regression Test Procedure
+
+Use this procedure for merge-level validation, release checks, and refactor hardening:
+
+### 1) CTest matrix (native)
+
+```bash
+cd build
+
+# Native regression gate for parser/roundtrip/unit/feature tests
+ctest --output-on-failure
+
+# Optional focused subsets
+ctest -R unit --output-on-failure
+ctest -R roundtrip --output-on-failure
+ctest -R feat --output-on-failure
+```
+
+### 2) Feature binaries (target-level)
+
+Run feature targets directly when an individual behavior needs isolation:
+
+```bash
+./build/feat-mtlx-parse
+./build/feat-mtlx-import
+./build/feat-mtlx-export
+./build/feat-variant-converter
+./build/feat-variant-applier
+./build/feat-mtlx-grouped-params
+```
+
+### 3) WASM regression checks
+
+For web changes, build and validate the WebAssembly tree:
+
+```bash
+cd web
+emcmake cmake -S . -B build
+cmake --build web/build -j16
+ctest --test-dir web/build --output-on-failure
+```
+
+If your local web build does not register ctest targets, use the web package checks documented by the web frontend pipeline as the functional equivalent.
+
+### 4) Roundtrip comparison against Pixar USD
+
+These checks catch cross-version serialization or compatibility drift:
+
+```bash
+# Batch script for broad coverage
+USDCAT_PATH=~/local/USD/dist/bin/usdcat TUSDCAT_PATH=./build/tusdcat \
+  bash tests/run-usdcat-compare.sh
+
+# Per-file diff for regression investigation
+node tests/compare-usda.js --detailed-diff \
+  --tusdcat ./build/tusdcat --usdcat ~/local/USD/dist/bin/usdcat \
+  tests/usda/somefile.usda
 ```
 
 `bench-parse-opt` is intentionally split into two profiles:
@@ -251,7 +384,7 @@ python3 tests/usdc-writer/usdc-writer-runner.py \
 
 ### tusddiff
 
-`tusddiff` is the Layer-level diff tool built from `examples/usddiff/`. It loads both files via `LoadLayerFromFile` (PrimSpec tree) and reports added, deleted, and modified prims and properties.
+`tusddiff` is the Layer-level diff tool built from `tools/tusddiff/` (requires `-DTINYUSDZ_BUILD_TOOLS=ON`). It loads both files via `LoadLayerFromFile` (PrimSpec tree) and reports added, deleted, and modified prims and properties.
 
 ```bash
 # Text diff
@@ -323,6 +456,37 @@ python3 ../tests/tydra_to_renderscene/runner.py ../models
 
 ## Standalone and Manual Targets
 
+### Experimental `next` library tests
+
+`next` (`src/next/`, library `tinyusdz_next`) is an **experimental, under-construction**
+rewrite of the core with a new modular architecture. It is intentionally kept
+out of the main regression suite:
+
+- It is a **standalone CMake project** (`src/next/CMakeLists.txt` with its own
+  `project()`), *not* added by the top-level `CMakeLists.txt`. The default
+  `build/` therefore does not compile it, and none of its tests appear in the
+  `build/` `ctest` run or the Pixar comparison runner.
+- Its tests are gated behind `TINYUSDZ_NEXT_BUILD_TESTS` (**OFF by default**).
+- Treat its results as informational only — **not** a merge/regression gate.
+  Do not wire `next` into the full regression gate until the suite is hardened.
+
+Build and run them on demand in a separate build directory:
+
+```bash
+# Configure the standalone next project with its tests enabled.
+cmake -S src/next -B build-next -DTINYUSDZ_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-next -j16
+ctest --test-dir build-next --output-on-failure
+```
+
+> **Caveat — use a Debug build.** The `tests/next/` programs validate via bare
+> `assert()`. Under `NDEBUG` (i.e. `Release`/`RelWithDebInfo`) `assert(expr)`
+> does not evaluate `expr`, so these tests check nothing — and any side effect
+> placed inside an `assert()` is silently dropped (this previously caused a
+> null-dereference SIGSEGV in `test_usdc_roundtrip` when the `toc`-populating
+> `ParseUSDCBinary()` call was compiled out). Build with `-DCMAKE_BUILD_TYPE=Debug`
+> for meaningful validation, and keep side-effecting calls out of `assert()`.
+
 ### CMake targets not in ctest
 
 These targets exist in the CMake test infrastructure but are not currently registered with `ctest`:
@@ -380,22 +544,27 @@ Typical usage:
 python3 tests/parse_usd/runner.py models --timeout 180
 ```
 
-## Roundtrip Comparison Against Pixar USD
+## Roundtrip Comparison Against OpenUSD
 
-For USDA textual comparison against Pixar's `usdcat`, use:
+For the full batch comparison against OpenUSD v26.05 `usdcat`, use the second half of
+the [Full Regression Tests](#full-regression-tests) sequence above. The runner
+compares all top-level USDA fixtures under `tests/usda/` and all top-level USDC
+fixtures under `tests/usdc/`.
+
+Short form:
 
 ```bash
 TUSDCAT_PATH=./build/tusdcat \
-USDCAT_PATH=~/local/USD/dist/bin/usdcat \
+USDCAT_PATH=../OpenUSD/dist/bin/usdcat \
   bash tests/run-usdcat-compare.sh
 ```
 
-Single-file mode:
+Single-file mode through the Node.js comparator:
 
 ```bash
 node tests/compare-usda.js \
   --tusdcat ./build/tusdcat \
-  --usdcat ~/local/USD/dist/bin/usdcat \
+  --usdcat ../OpenUSD/dist/bin/usdcat \
   --detailed-diff \
   tests/usda/somefile.usda
 ```
@@ -511,3 +680,4 @@ The current infrastructure has a few operational gaps worth keeping in mind:
 - Several standalone feature benchmarks and tools under `tests/feat/` (hash, tangent, tydra-mesh-build, zstdusd) use local Makefiles and are not part of CMake or `ctest`.
 - The Python bindings test (`tests/python/test_basic.py`) is not integrated into `ctest`.
 - Feature fixture directories (`lux/`, `node-mtlx/`, `skinning/`) provide test data but are not exercised by any automated runner.
+- The experimental `next` module (`src/next/`, `tests/next/`) is a standalone CMake project excluded from `build/` `ctest` and the regression gate by design (`TINYUSDZ_NEXT_BUILD_TESTS=OFF`); its `assert()`-based tests are only meaningful in Debug builds. See [Experimental `next` library tests](#experimental-next-library-tests).

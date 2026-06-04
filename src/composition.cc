@@ -33,17 +33,26 @@
 #include "usdShade.hh"
 #include "usda-reader.hh"
 
-#define PushError(s) \
-  do { if (err) {         \
-    (*err) += s;     \
-  } } while(0)
-
-#define PushWarn(s) \
-  do { if (warn) {       \
-    (*warn) += s;   \
-  } } while(0)
-
 namespace tinyusdz {
+
+namespace {
+
+void AppendDiagnostic(std::string *dst, const std::string &msg) {
+  if (!dst) {
+    return;
+  }
+
+  (*dst) += msg;
+  if (msg.empty() || msg.back() != '\n') {
+    (*dst) += '\n';
+  }
+}
+
+}  // namespace
+
+#define PushError(s) AppendDiagnostic(err, s)
+
+#define PushWarn(s) AppendDiagnostic(warn, s)
 
 namespace {
 
@@ -59,6 +68,23 @@ bool IsVisited(const std::vector<std::set<std::string>> layer_names_stack,
 
 std::string GetExtension(const std::string &name) {
   return to_lower(io::GetFileExtension(name));
+}
+
+void PushChildAndVariantPrimSpecs(PrimSpec &ps, std::vector<PrimSpec *> *stack) {
+  if (!stack) {
+    return;
+  }
+
+  auto &children = ps.children();
+  for (auto it = children.rbegin(); it != children.rend(); ++it) {
+    stack->push_back(&(*it));
+  }
+
+  for (auto &variant_set_item : ps.variantSets()) {
+    for (auto &variant_item : variant_set_item.second.variantSet) {
+      stack->push_back(&variant_item.second);
+    }
+  }
 }
 
 bool IsUSDFileFormat(const std::string &name) {
@@ -100,7 +126,7 @@ bool IsBuiltinFileFormat(const std::string &name) {
   return false;
 }
 
-bool ReplaceRootPrimPathRec(
+[[maybe_unused]] bool ReplaceRootPrimPathRec(
   const Path &srcPrefix,
   const Path &dstPrefix,
   PrimSpec &ps,
@@ -157,14 +183,110 @@ bool ReplaceRootPrimPathRec(
 
     }
 
-    // Push children in reverse order to preserve DFS order.
-    auto &children = current->children();
-    for (auto it = children.rbegin(); it != children.rend(); ++it) {
-      stack.push_back(&(*it));
-    }
+    PushChildAndVariantPrimSpecs(*current, &stack);
   }
 
   return true;
+}
+
+void ApplyLayerOffsetRec(PrimSpec &ps, const LayerOffset &offset);
+void RemapPathsInPrimSpecTree(PrimSpec &ps, const NamespaceMapping &mapping);
+
+bool IsURIAssetPath(const std::string &asset_path) {
+  return asset_path.find("://") != std::string::npos;
+}
+
+std::string ResolveAuthoredAssetPathForFlatten(
+    const std::string &asset_path,
+    const std::string &current_working_path) {
+  if (asset_path.empty() || current_working_path.empty() ||
+      IsURIAssetPath(asset_path) || io::IsAbsPath(asset_path)) {
+    return asset_path;
+  }
+
+  return io::JoinPath(current_working_path, asset_path);
+}
+
+void ResolveAssetAttributesInPrimSpecTree(
+    PrimSpec &ps,
+    const std::string &fallback_current_working_path = std::string()) {
+  constexpr size_t kMaxIter = 1024 * 1024 * 128;
+
+  std::vector<PrimSpec *> stack;
+  stack.push_back(&ps);
+  size_t iter = 0;
+
+  while (!stack.empty()) {
+    if (iter++ > kMaxIter) {
+      return;
+    }
+
+    PrimSpec *current = stack.back();
+    stack.pop_back();
+
+    std::string cwp = current->get_current_working_path();
+    if ((cwp.empty() || cwp == "." || cwp == "./") &&
+        !fallback_current_working_path.empty()) {
+      cwp = fallback_current_working_path;
+    }
+    for (auto &prop : current->props()) {
+      if (!prop.second.is_attribute()) {
+        continue;
+      }
+
+      Attribute &attr = prop.second.attribute();
+      if (!attr.has_value()) {
+        continue;
+      }
+
+      nonstd::optional<value::AssetPath> ap =
+          attr.get_value<value::AssetPath>();
+      if (!ap) {
+        continue;
+      }
+
+      std::string resolved = ResolveAuthoredAssetPathForFlatten(
+          ap.value().GetAssetPath(), cwp);
+      if (resolved != ap.value().GetAssetPath() ||
+          ap.value().GetResolvedPath().empty()) {
+        attr.set_value(value::AssetPath(resolved, resolved));
+      }
+    }
+
+    PushChildAndVariantPrimSpecs(*current, &stack);
+  }
+}
+
+Path GetReferencedPrimPath(const Path &authored_path,
+                           const PrimSpec &src_ps) {
+  if (authored_path.is_valid() && !authored_path.prim_part().empty() &&
+      authored_path.prim_part() != "/") {
+    return authored_path;
+  }
+  return Path("/" + src_ps.name(), "");
+}
+
+PrimSpec PrepareComposedArcPrimSpec(const PrimSpec &src_ps,
+                                    const Path &authored_src_path,
+                                    const Path &dst_prim_path,
+                                    bool is_internal_arc,
+                                    const LayerOffset &layer_offset,
+                                    bool resolve_asset_paths) {
+  PrimSpec prepared = src_ps;
+  const Path src_path = GetReferencedPrimPath(authored_src_path, prepared);
+  const NamespaceMapping mapping =
+      MakeReferenceMapping(src_path, dst_prim_path, is_internal_arc);
+  RemapPathsInPrimSpecTree(prepared, mapping);
+
+  if (layer_offset._offset != 0.0 || layer_offset._scale != 1.0) {
+    ApplyLayerOffsetRec(prepared, layer_offset);
+  }
+
+  if (resolve_asset_paths) {
+    ResolveAssetAttributesInPrimSpecTree(prepared);
+  }
+
+  return prepared;
 }
 
 // Copy assetresolver state to all PrimSpec in the tree.
@@ -190,11 +312,7 @@ bool PropagateAssetResolverState(PrimSpec &ps,
 
     current->set_asset_resolution_state(cwp, search_paths);
 
-    // Push children in reverse order to preserve DFS order.
-    auto &children = current->children();
-    for (auto it = children.rbegin(); it != children.rend(); ++it) {
-      stack.push_back(&(*it));
-    }
+    PushChildAndVariantPrimSpecs(*current, &stack);
   }
 
   return true;
@@ -453,8 +571,8 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
                       std::string *err) {
   (void)warn;
 
-  if (depth > (1024 * 1024 * 128)) {
-    PUSH_ERROR_AND_RETURN("PrimSpec tree too deep.");
+  if (depth > 4096) {
+    PUSH_ERROR_AND_RETURN("PrimSpec tree too deep (max 4096).");
   }
 
   // Combine metadataum (weaker fills in where stronger is not authored)
@@ -630,6 +748,12 @@ void ApplyLayerOffsetRec(PrimSpec &ps, const LayerOffset &offset) {
 
   for (auto &child : ps.children()) {
     ApplyLayerOffsetRec(child, offset);
+  }
+
+  for (auto &variant_set_item : ps.variantSets()) {
+    for (auto &variant_item : variant_set_item.second.variantSet) {
+      ApplyLayerOffsetRec(variant_item.second, offset);
+    }
   }
 }
 
@@ -926,20 +1050,15 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
             continue;
           }
 
+          PrimSpec prepared_src = PrepareComposedArcPrimSpec(
+              *src_ps, reference.prim_path, dst_prim_path,
+              reference.asset_path.GetAssetPath().empty(),
+              reference.layerOffset,
+              !reference.asset_path.GetAssetPath().empty());
+
           // AOUSD Core Spec 10.3.2.3/10.3.2.4: Propagate implied inherit/specialize
           // paths from the referenced prim before flattening consumes them.
-          PropagateImpliedArcPaths(*src_ps, primspec);
-
-          // Replace prim path prefix
-          if (!ReplaceRootPrimPathRec(reference.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
-            return false;
-          }
-
-          // AOUSD Core Spec 10.3.2.2: Apply reference layerOffset to timeSamples.
-          if (reference.layerOffset._offset != 0.0 ||
-              reference.layerOffset._scale != 1.0) {
-            ApplyLayerOffsetRec(*const_cast<PrimSpec *>(src_ps), reference.layerOffset);
-          }
+          PropagateImpliedArcPaths(prepared_src, primspec);
 
           // AOUSD Core Spec 10.3.2.3: Record arc origin for implied inherit propagation
           if (!reference.asset_path.GetAssetPath().empty()) {
@@ -950,17 +1069,18 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
           }
 
           // `inherits` op
-          if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
+          if (!InheritPrimSpec(primspec, prepared_src, warn, err)) {
             PUSH_ERROR_AND_RETURN(fmt::format("Failed to reference layer `{}`",
                                               reference.asset_path));
           }
 
           // Modify Prim type if this PrimSpec is Model type.
           if (primspec.typeName().empty() || primspec.typeName() == "Model") {
-            if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
+            if (prepared_src.typeName().empty() ||
+                prepared_src.typeName() == "Model") {
               // pass
             } else {
-              primspec.typeName() = src_ps->typeName();
+              primspec.typeName() = prepared_src.typeName();
             }
           }
 
@@ -1032,8 +1152,14 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
             continue;
           }
 
+          PrimSpec prepared_src = PrepareComposedArcPrimSpec(
+              *src_ps, reference.prim_path, dst_prim_path,
+              reference.asset_path.GetAssetPath().empty(),
+              reference.layerOffset,
+              !reference.asset_path.GetAssetPath().empty());
+
           // AOUSD Core Spec 10.3.2.3/10.3.2.4: Propagate implied arc paths.
-          PropagateImpliedArcPaths(*src_ps, primspec);
+          PropagateImpliedArcPaths(prepared_src, primspec);
 
           // AOUSD Core Spec 10.3.2.3: Record arc origin for implied inherit propagation
           if (!reference.asset_path.GetAssetPath().empty()) {
@@ -1043,29 +1169,19 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
             primspec.metas().arc_origins.push_back(origin);
           }
 
-          // AOUSD Core Spec 10.3.2.2: Apply reference layerOffset to timeSamples.
-          if (reference.layerOffset._offset != 0.0 ||
-              reference.layerOffset._scale != 1.0) {
-            ApplyLayerOffsetRec(*const_cast<PrimSpec *>(src_ps), reference.layerOffset);
-          }
-
-          // Replace prim path prefix
-          if (!ReplaceRootPrimPathRec(reference.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
-            return false;
-          }
-
           // `over` op
-          if (!OverridePrimSpec(primspec, *src_ps, warn, err)) {
+          if (!OverridePrimSpec(primspec, prepared_src, warn, err)) {
             PUSH_ERROR_AND_RETURN(fmt::format("Failed to reference layer `{}`",
                                               reference.asset_path));
           }
 
           // Modify Prim type if this PrimSpec is Model type.
           if (primspec.typeName().empty() || primspec.typeName() == "Model") {
-            if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
+            if (prepared_src.typeName().empty() ||
+                prepared_src.typeName() == "Model") {
               // pass
             } else {
-              primspec.typeName() = src_ps->typeName();
+              primspec.typeName() = prepared_src.typeName();
             }
           }
         }
@@ -1183,31 +1299,27 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
             continue;
           }
 
+          PrimSpec prepared_src = PrepareComposedArcPrimSpec(
+              *src_ps, pl.prim_path, dst_prim_path,
+              pl.asset_path.GetAssetPath().empty(), pl.layerOffset,
+              !pl.asset_path.GetAssetPath().empty());
+
           // AOUSD Core Spec 10.3.2.3/10.3.2.4: Propagate implied arc paths.
-          PropagateImpliedArcPaths(*src_ps, primspec);
-
-          // AOUSD Core Spec 10.3.2.2: Apply payload layerOffset to timeSamples.
-          if (pl.layerOffset._offset != 0.0 || pl.layerOffset._scale != 1.0) {
-            ApplyLayerOffsetRec(*const_cast<PrimSpec *>(src_ps), pl.layerOffset);
-          }
-
-          // Replace prim path prefix
-          if (!ReplaceRootPrimPathRec(pl.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
-            return false;
-          }
+          PropagateImpliedArcPaths(prepared_src, primspec);
 
           // `inherits` op
-          if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
+          if (!InheritPrimSpec(primspec, prepared_src, warn, err)) {
             PUSH_ERROR_AND_RETURN(
                 fmt::format("Failed to payload layer `{}`", asset_path));
           }
 
           // Modify Prim type if this PrimSpec is Model type.
           if (primspec.typeName().empty() || primspec.typeName() == "Model") {
-            if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
+            if (prepared_src.typeName().empty() ||
+                prepared_src.typeName() == "Model") {
               // pass
             } else {
-              primspec.typeName() = src_ps->typeName();
+              primspec.typeName() = prepared_src.typeName();
             }
           }
 
@@ -1287,31 +1399,27 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
             continue;
           }
 
+          PrimSpec prepared_src = PrepareComposedArcPrimSpec(
+              *src_ps, pl.prim_path, dst_prim_path,
+              pl.asset_path.GetAssetPath().empty(), pl.layerOffset,
+              !pl.asset_path.GetAssetPath().empty());
+
           // AOUSD Core Spec 10.3.2.3/10.3.2.4: Propagate implied arc paths.
-          PropagateImpliedArcPaths(*src_ps, primspec);
-
-          // AOUSD Core Spec 10.3.2.2: Apply payload layerOffset to timeSamples.
-          if (pl.layerOffset._offset != 0.0 || pl.layerOffset._scale != 1.0) {
-            ApplyLayerOffsetRec(*const_cast<PrimSpec *>(src_ps), pl.layerOffset);
-          }
-
-          // Replace prim path prefix
-          if (!ReplaceRootPrimPathRec(pl.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
-            return false;
-          }
+          PropagateImpliedArcPaths(prepared_src, primspec);
 
           // `over` op
-          if (!OverridePrimSpec(primspec, *src_ps, warn, err)) {
+          if (!OverridePrimSpec(primspec, prepared_src, warn, err)) {
             PUSH_ERROR_AND_RETURN(
                 fmt::format("Failed to payload layer `{}`", asset_path));
           }
 
           // Modify Prim type if this PrimSpec is Model type.
           if (primspec.typeName().empty() || primspec.typeName() == "Model") {
-            if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
+            if (prepared_src.typeName().empty() ||
+                prepared_src.typeName() == "Model") {
               // pass
             } else {
-              primspec.typeName() = src_ps->typeName();
+              primspec.typeName() = prepared_src.typeName();
             }
           }
         }
@@ -1938,13 +2046,38 @@ bool CompositeSpecializes(const Layer &in_layer, Layer *composited_layer,
 
 namespace detail {
 
+static Property ComposeStrongerPropertyOverWeaker(const Property &stronger,
+                                                  const Property &weaker) {
+  Property composed = stronger;
+  if (!composed.is_attribute() || !weaker.is_attribute()) {
+    return composed;
+  }
+
+  Attribute &composed_attr = composed.attribute();
+  const Attribute &weaker_attr = weaker.get_attribute();
+
+  if (!composed_attr.has_connections() && weaker_attr.has_connections()) {
+    composed_attr.set_connections(weaker_attr.connections());
+  }
+
+  if (!composed_attr.has_value() && !composed_attr.has_timesamples() &&
+      !composed_attr.is_blocked() &&
+      (weaker_attr.has_value() || weaker_attr.has_timesamples() ||
+       weaker_attr.is_blocked())) {
+    primvar::PrimVar weaker_var = weaker_attr.get_var();
+    composed_attr.set_var(weaker_var);
+  }
+
+  return composed;
+}
+
 static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst,
                                 const PrimSpec &src, std::string *warn,
                                 std::string *err) {
   (void)warn;
 
-  if (depth > (1024 * 1024 * 128)) {
-    PUSH_ERROR_AND_RETURN("PrimSpec tree too deep.");
+  if (depth > 4096) {
+    PUSH_ERROR_AND_RETURN("PrimSpec tree too deep (max 4096).");
   }
 
   DCOUT("update_from");
@@ -1964,7 +2097,8 @@ static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst,
       }
 
       bool dst_custom = dst.props().at(prop.first).has_custom();
-      dst.props()[prop.first] = prop.second;
+      dst.props()[prop.first] = ComposeStrongerPropertyOverWeaker(
+          prop.second, dst.props().at(prop.first));
       if (dst_custom && !prop.second.has_custom()) {
         dst.props()[prop.first].set_custom(true);
       }
@@ -2058,7 +2192,8 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
 
       // AOUSD Core Spec 12.2.4: OR the custom flags before replacing
       bool src_custom = ps.props().at(prop.first).has_custom();
-      ps.props().at(prop.first) = prop.second;
+      ps.props().at(prop.first) = ComposeStrongerPropertyOverWeaker(
+          prop.second, ps.props().at(prop.first));
       if (src_custom && !prop.second.has_custom()) {
         ps.props().at(prop.first).set_custom(true);
       }
@@ -2394,9 +2529,7 @@ void RemapPathsInPrimSpecTree(PrimSpec &ps, const NamespaceMapping &mapping) {
       }
     }
 
-    for (auto &child : current->children()) {
-      stack.push_back(&child);
-    }
+    PushChildAndVariantPrimSpecs(*current, &stack);
   }
 }
 
@@ -2829,6 +2962,11 @@ bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
         ++it;
       }
     }
+  }
+
+  for (auto &ps_item : working.primspecs()) {
+    ResolveAssetAttributesInPrimSpecTree(
+        ps_item.second, working.get_current_working_path());
   }
 
   *composited_layer = std::move(working);

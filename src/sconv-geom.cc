@@ -1963,6 +1963,49 @@ bool CrateWriter::AddMaterialBindingSpecs(
 
 
 // ============================================================================
+// SkelBindingAPI relationship specs
+// ============================================================================
+//
+// skel:animationSource, skel:skeleton and skel:blendShapeTargets are stored as
+// typed `nonstd::optional<Relationship>` fields on Skeleton/SkelRoot/GeomMesh
+// rather than in the generic `props` map, so the generic props serialization in
+// ConvertSinglePrim() never visits them. Without this, a USDC roundtrip silently
+// drops e.g. the SkelRoot/Skeleton -> SkelAnimation binding, losing all skeletal
+// animation even though the SkelAnimation prim itself survives.
+bool CrateWriter::AddSkelBindingSpecs(
+  const Prim& prim,
+  const Path& prim_path,
+  std::string* err
+) {
+  auto emit = [&](const char* rel_name,
+                  const nonstd::optional<Relationship>& rel) -> bool {
+    if (!rel.has_value()) {
+      return true;
+    }
+    if (!ConvertRelationshipToFields(rel_name, rel.value(), prim_path, err)) {
+      if (err) *err = std::string("Failed to add ") + rel_name + " relationship: " + *err;
+      return false;
+    }
+    return true;
+  };
+
+  if (const Skeleton* skel = prim.data().as<Skeleton>()) {
+    return emit("skel:animationSource", skel->animationSource);
+  }
+  if (const SkelRoot* skel_root = prim.data().as<SkelRoot>()) {
+    return emit("skel:animationSource", skel_root->animationSource) &&
+           emit("skel:skeleton", skel_root->skeleton);
+  }
+  if (const GeomMesh* mesh = prim.data().as<GeomMesh>()) {
+    return emit("skel:skeleton", mesh->skeleton) &&
+           emit("skel:blendShapeTargets", mesh->blendShapeTargets);
+  }
+
+  return true;
+}
+
+
+// ============================================================================
 // PointInstancer prototypes relationship spec
 // ============================================================================
 

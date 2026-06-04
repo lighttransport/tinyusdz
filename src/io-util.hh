@@ -39,14 +39,14 @@ struct UDIMAssetTiles
 
   static uint32_t UDIMIndex(uint32_t u, uint32_t v) {
     uint32_t uu = (std::min)(9u, u);
-    uint32_t vv = (std::max)(9u, v);
+    uint32_t vv = (std::min)(9u, v);
 
     return 1001 + uu + vv * 10;
   }
 
   static std::string UVTILEIndex(uint32_t u, uint32_t v) {
     uint32_t uu = (std::min)(9u, u);
-    uint32_t vv = (std::max)(9u, v);
+    uint32_t vv = (std::min)(9u, v);
 
     return "u" + std::to_string(uu+1) + "_" + std::to_string(vv+1);
   }

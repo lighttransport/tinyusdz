@@ -29,12 +29,6 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
     Path root_path("/", "");  // Root path - use standard constructor
     crate::FieldValuePairVector root_fields;
 
-    // PseudoRoot needs at least one field to create a valid fieldset
-    // Add specifier field (PseudoRoot always uses Def)
-    crate::CrateValue spec_value;
-    spec_value.Set(Specifier::Def);
-    root_fields.push_back({"specifier", spec_value});
-
     // Extract and add layer metadata from Layer.metas()
     const LayerMetas& metas = layer.metas();
 
@@ -116,6 +110,47 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
       crate::CrateValue custom_data_value;
       custom_data_value.Set(metas.customLayerData);
       root_fields.push_back({"customLayerData", custom_data_value});
+    }
+
+    if (!metas.subLayers.empty()) {
+      std::vector<std::string> sublayer_paths;
+      sublayer_paths.reserve(metas.subLayers.size());
+
+      for (const SubLayer &sublayer : metas.subLayers) {
+        sublayer_paths.push_back(sublayer.assetPath.GetAssetPath());
+      }
+
+      crate::CrateValue sublayers_value;
+      sublayers_value.Set(sublayer_paths);
+      root_fields.push_back({"subLayers", sublayers_value});
+    }
+
+    // Root `primChildren`: list the top-level prim names so readers can
+    // enumerate the scene (see per-prim note below). Prefer the authored
+    // ordering from layer metadata; fall back to the primspecs map.
+    {
+      std::vector<value::token> root_children;
+      for (const auto& tok : metas.primChildren) {
+        if (layer.has_primspec(tok.str())) root_children.push_back(tok);
+      }
+      for (const auto& item : layer.primspecs()) {
+        bool listed = false;
+        for (const auto& t : root_children) {
+          if (t.str() == item.first) { listed = true; break; }
+        }
+        if (!listed) root_children.push_back(value::token(item.first));
+      }
+      if (!root_children.empty()) {
+        crate::CrateValue pc_value;
+        pc_value.Set(root_children);
+        root_fields.push_back({"primChildren", pc_value});
+      }
+    }
+
+    if (root_fields.empty()) {
+      crate::CrateValue doc_value;
+      doc_value.Set(std::string());
+      root_fields.push_back({"documentation", doc_value});
     }
 
     // Add PseudoRoot spec
@@ -207,11 +242,11 @@ bool CrateWriter::ConvertSinglePrimSpec(
   }
 
   if (metas.has_kind()) {
+    // `kind` is a `token`-typed field. Store it as a value::token (the crate
+    // writer interns it); storing the raw token *index* as a uint produces a
+    // mistyped field that strict readers (incl. tinyusdz's own) reject.
     crate::CrateValue kind_value;
-    // get_kind() returns the kind as a string
-    std::string kind_str = metas.get_kind();
-    crate::TokenIndex kind_tok = GetOrCreateToken(kind_str);
-    kind_value.Set(kind_tok.value);
+    kind_value.Set(value::token(metas.get_kind()));
     fields.push_back({"kind", kind_value});
   }
 
@@ -389,55 +424,72 @@ bool CrateWriter::ConvertSinglePrimSpec(
   if (metas.has_apiSchemas()) {
     const APISchemas& api_schemas = metas.get_apiSchemas();
 
-    // Convert APISchemas to TokenListOp
-    ListOp<value::token> api_listop;
-
-    // Build list of API schema names as tokens
-    std::vector<value::token> api_tokens;
-    for (const auto& item : api_schemas.names) {
-      const auto& api_name = item.first;
-      const auto& instance_name = item.second;
-      std::string api_str = to_string(api_name);
-
-      // For multi-apply API schemas, append instance name
-      // e.g. "CollectionAPI:material:MainMaterial"
-      if (!instance_name.empty()) {
-        api_str += ":" + instance_name;
+    // Helper: an op's items (schemaName[, instanceName]) -> tokens.
+    auto toTokens = [](const std::vector<std::pair<std::string, std::string>>& items) {
+      std::vector<value::token> toks;
+      for (const auto& it : items) {
+        std::string s = it.first;  // raw schema name (known or unknown)
+        if (!it.second.empty()) s += ":" + it.second;  // multi-apply instance
+        toks.push_back(value::token(s));
       }
+      return toks;
+    };
+    // Helper: apply one op group to the ListOp by qualifier.
+    auto applyOp = [](ListOp<value::token>& op, ListEditQual qual,
+                      const std::vector<value::token>& toks) {
+      switch (qual) {
+        case ListEditQual::ResetToExplicit:
+          op.ClearAndMakeExplicit();
+          op.SetExplicitItems(toks);
+          break;
+        case ListEditQual::Prepend: op.SetPrependedItems(toks); break;
+        case ListEditQual::Append:  op.SetAppendedItems(toks);  break;
+        case ListEditQual::Add:     op.SetAddedItems(toks);     break;
+        case ListEditQual::Delete:  op.SetDeletedItems(toks);   break;
+        default:                    op.SetPrependedItems(toks); break;
+      }
+    };
 
-      api_tokens.push_back(value::token(api_str));
+    ListOp<value::token> api_listop;
+    bool emit = true;
+
+    if (api_schemas.explicitlyEmpty) {
+      // `apiSchemas = None` (explicit empty list).
+      api_listop.ClearAndMakeExplicit();
+    } else if (!api_schemas.authoredOps.empty()) {
+      // Faithful path: reproduce each authored op verbatim (preserves
+      // delete+prepend, unknown schemas, and multi-apply instances).
+      for (const auto& op : api_schemas.authoredOps) {
+        applyOp(api_listop, op.first, toTokens(op.second));
+      }
+    } else {
+      // Fallback for programmatically-built APISchemas (no authoredOps):
+      // use the resolved view, including unknown schemas so they round-trip.
+      std::vector<value::token> api_tokens;
+      for (const auto& item : api_schemas.names) {
+        std::string s = to_string(item.first);
+        if (!item.second.empty()) s += ":" + item.second;
+        api_tokens.push_back(value::token(s));
+      }
+      for (const auto& item : api_schemas.unknownSchemas) {
+        std::string s = item.first;
+        if (!item.second.empty()) s += ":" + item.second;
+        api_tokens.push_back(value::token(s));
+      }
+      // Avoid emitting a non-explicit ListOp with no items (which strict
+      // readers reject); nothing meaningful to author in that case.
+      if (api_tokens.empty()) {
+        emit = false;
+      } else {
+        applyOp(api_listop, api_schemas.listOpQual, api_tokens);
+      }
     }
 
-    // Set the appropriate list based on ListEditQual
-    switch (api_schemas.listOpQual) {
-      case ListEditQual::ResetToExplicit:
-        api_listop.ClearAndMakeExplicit();
-        api_listop.SetExplicitItems(api_tokens);
-        break;
-      case ListEditQual::Prepend:
-        api_listop.SetPrependedItems(api_tokens);
-        break;
-      case ListEditQual::Append:
-        api_listop.SetAppendedItems(api_tokens);
-        break;
-      case ListEditQual::Add:
-        api_listop.SetAddedItems(api_tokens);
-        break;
-      case ListEditQual::Delete:
-        api_listop.SetDeletedItems(api_tokens);
-        break;
-      default:
-        // Default to prepend (USD convention)
-        api_listop.SetPrependedItems(api_tokens);
-        break;
+    if (emit) {
+      crate::CrateValue api_value;
+      api_value.Set(api_listop);
+      fields.push_back({"apiSchemas", api_value});
     }
-
-    crate::CrateValue api_value;
-    api_value.Set(api_listop);
-    fields.push_back({"apiSchemas", api_value});
-
-    DCOUT("[ConvertPrimSpecRecursive] Added apiSchemas with "
-              << api_tokens.size() << " schemas");
   }
 
   // Add inherits if present
@@ -548,6 +600,38 @@ bool CrateWriter::ConvertSinglePrimSpec(
     fields.push_back({"instanceable", instanceable_value});
     DCOUT("[ConvertPrimSpecRecursive] Added instanceable: "
               << metas.get_instanceable());
+  }
+
+  // Emit `primChildren` / `properties` token-vectors. USD crate readers
+  // (including pxrUSD) use these fields to enumerate a prim's children and
+  // properties — the spec table alone is not traversed, so omitting them makes
+  // the prim appear empty (or absent) to other USD tools. Prefer the authored
+  // ordering vectors; fall back to the live children()/props() containers.
+  {
+    std::vector<value::token> child_tokens = primspec.primChildren();
+    if (child_tokens.empty()) {
+      for (const auto& child : primspec.children()) {
+        child_tokens.push_back(value::token(child.name()));
+      }
+    }
+    if (!child_tokens.empty()) {
+      crate::CrateValue pc_value;
+      pc_value.Set(child_tokens);
+      fields.push_back({"primChildren", pc_value});
+    }
+  }
+  {
+    std::vector<value::token> prop_tokens = primspec.propertyNames();
+    if (prop_tokens.empty()) {
+      for (const auto& item : primspec.props()) {
+        prop_tokens.push_back(value::token(item.first));
+      }
+    }
+    if (!prop_tokens.empty()) {
+      crate::CrateValue props_value;
+      props_value.Set(prop_tokens);
+      fields.push_back({"properties", props_value});
+    }
   }
 
   // 5. Add spec to file
