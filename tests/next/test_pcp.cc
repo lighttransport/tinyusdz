@@ -478,6 +478,40 @@ static void test_implied_inherit() {
   std::cout << "  OK" << std::endl;
 }
 
+// FU5: BuildStage materializes instances as proxies that share the prototype's
+// subtree (no duplication), with transparent child access.
+static void test_instance_proxy() {
+  std::cout << "test_instance_proxy..." << std::endl;
+  AssetResolver resolver;
+  auto root = BuildRootLayer();
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  UsdPrim i1 = stage.GetPrimAtPath("/World/Inst1");
+  UsdPrim i2 = stage.GetPrimAtPath("/World/Inst2");
+  assert(i1.IsValid() && i2.IsValid());
+
+  // Inst1 is the prototype (subtree materialized); Inst2 links to it.
+  assert(i1.GetMeta().instance_prototype.empty());
+  assert(i2.GetMeta().instance_prototype == "/World/Inst1");
+
+  // The prototype owns the referenced child; the instance's subtree is NOT
+  // duplicated in the layer.
+  assert(stage.GetPrimAtPath("/World/Inst1/Inner").IsValid());
+  assert(!stage.GetPrimAtPath("/World/Inst2/Inner").IsValid() &&
+         "instance subtree was duplicated");
+
+  // ...but child access through the instance is transparent (proxy).
+  assert(i2.GetChildCount() == i1.GetChildCount());
+  assert(i2.GetChild("Inner").IsValid() && "instance proxy child access failed");
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_build_stage();
@@ -490,6 +524,7 @@ int main() {
   test_instancing();
   test_relocates();
   test_implied_inherit();
+  test_instance_proxy();
   std::cout << "All next/pcp tests passed." << std::endl;
   return 0;
 }
