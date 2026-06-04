@@ -72,6 +72,7 @@ TypeNameTable& GetTypeNameTable();
 // Forward declarations
 struct VariantData;
 struct VariantSetData;
+class Layer;  // for VariantData::content (variant subtree)
 
 /// PrimSpec metadata
 struct PrimSpecMeta {
@@ -87,7 +88,10 @@ struct PrimSpecMeta {
   std::vector<std::string> payloads;
   std::vector<std::string> inherits;
   std::vector<std::string> specializes;
-  std::string variantSelection;  // "variantSet=selection"
+  std::string variantSelection;  // legacy single "variantSet=selection"
+  // Multiple variant selections (set -> selection); composed in addition to the
+  // legacy single field.
+  std::vector<std::pair<std::string, std::string>> variantSelections;
 
   // Variant set definitions
   std::vector<VariantSetData> variantSets;
@@ -108,6 +112,11 @@ struct VariantData {
   std::string doc;
   std::vector<std::pair<std::string, Value>> properties;
   std::unordered_map<std::string, std::vector<Path>> relationships;
+  // Optional subtree for variants that add prim-level opinions and/or child
+  // prims: a Layer whose root prim "__self__" carries the host opinions and
+  // whose descendants become the host prim's children when this variant is
+  // selected. (Composed reference-style, so it supports child prims.)
+  std::shared_ptr<Layer> content;
 };
 
 /// Variant set - a named set of variant options

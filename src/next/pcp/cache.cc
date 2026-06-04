@@ -180,19 +180,30 @@ struct Cache::Impl {
 
   // --- variant selection --------------------------------------------------
 
-  // Resolve the selected variant on `spec` (single "set=sel" selection for now).
-  // Returns the chosen VariantData (owned by spec's layer) or nullptr.
-  const VariantData *SelectVariant(const PrimSpec &spec) const {
-    VariantSelection sel =
-        Compositor::ParseVariantSelection(spec.meta().variantSelection);
-    if (sel.variant_set.empty()) return nullptr;
-    for (const VariantSetData &vss : spec.meta().variantSets) {
-      if (vss.name != sel.variant_set) continue;
-      for (const VariantData &vd : vss.variants) {
-        if (vd.name == sel.variant_name) return &vd;
+  // Resolve all selected variants on `spec` (legacy single field + the
+  // variantSelections vector). Returns one VariantData per selected set.
+  std::vector<const VariantData *> SelectVariants(const PrimSpec &spec) const {
+    std::vector<std::pair<std::string, std::string>> sels =
+        spec.meta().variantSelections;
+    if (!spec.meta().variantSelection.empty()) {
+      VariantSelection s =
+          Compositor::ParseVariantSelection(spec.meta().variantSelection);
+      if (!s.variant_set.empty()) sels.emplace_back(s.variant_set, s.variant_name);
+    }
+    std::vector<const VariantData *> out;
+    for (const auto &sel : sels) {
+      for (const VariantSetData &vss : spec.meta().variantSets) {
+        if (vss.name != sel.first) continue;
+        for (const VariantData &vd : vss.variants) {
+          if (vd.name == sel.second) {
+            out.push_back(&vd);
+            break;
+          }
+        }
+        break;
       }
     }
-    return nullptr;
+    return out;
   }
 
   // --- instancing ---------------------------------------------------------
@@ -349,16 +360,34 @@ struct Cache::Impl {
                  out, spec_out, warn, err);
     }
 
-    // Variants (weaker than inherits, stronger than references). The selected
-    // variant's inline opinions are grafted as a Variant source on this prim.
-    if (!spec->meta().variantSets.empty() &&
-        !spec->meta().variantSelection.empty()) {
-      const VariantData *vd = SelectVariant(*spec);
-      if (vd) {
-        Src vsrc = src;
-        vsrc.arc_kind = ArcType::Variant;
-        vsrc.variant = vd;
-        out->push_back(std::move(vsrc));
+    // Variants (weaker than inherits, stronger than references). For each
+    // selected variant, graft its inline opinions and/or its content subtree.
+    if (!spec->meta().variantSets.empty()) {
+      for (const VariantData *vd : SelectVariants(*spec)) {
+        // Subtree content: model as a reference-style Variant source into the
+        // content layer's "/__self__" root, so child prims compose normally.
+        if (vd->content) {
+          const std::string vid =
+              "variant:" + std::to_string(reinterpret_cast<uintptr_t>(vd));
+          uint32_t cstack = InternLayerStack(vd->content, vid, warn, err);
+          Src vsrc;
+          vsrc.stack_idx = cstack;
+          vsrc.site = "/__self__";
+          vsrc.map = NamespaceMapping::Compose(
+              src.map, NamespaceMapping{"/__self__", src.site});
+          vsrc.offset = src.offset;
+          vsrc.arc_kind = ArcType::Variant;
+          std::set<std::string> vc = cycle;
+          vc.insert(vid + ":/__self__");
+          ExpandArcs(vsrc, std::move(vc), out, spec_out, warn, err);
+        }
+        // Inline opinions (properties/relationships on the host prim itself).
+        if (!vd->properties.empty() || !vd->relationships.empty()) {
+          Src vsrc = src;
+          vsrc.arc_kind = ArcType::Variant;
+          vsrc.variant = vd;
+          out->push_back(std::move(vsrc));
+        }
       }
     }
 
