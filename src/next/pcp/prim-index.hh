@@ -36,16 +36,19 @@ struct LayerStack {
   LayerOffset offset;                           // cumulative time offset to root
 };
 
-/// One composition source for a prim.
+/// One composition source for a prim. The site prim path is interned into a
+/// shared path table (owned by the Cache; borrowed by PrimIndex) and referenced
+/// by a small index, so per-node storage stays compact and paths are deduped
+/// across every cached index.
 struct CompNode {
   ArcType arc_type = ArcType::Root;
-  uint16_t parent = 0xFFFF;          // 0xFFFF == none (root)
-  std::vector<uint16_t> children;    // child node indices (build order)
-  uint32_t layer_stack_idx = 0;      // index into Cache's layer-stack table
-  std::string site_prim_path;        // prim path within that layer stack
-  NamespaceMapping map_to_root;      // remap this node's namespace -> root prim namespace
-  LayerOffset offset;                // cumulative time offset for this node
   NodeFlags flags = NodeFlags::None;
+  uint16_t parent = 0xFFFF;          // 0xFFFF == none (root)
+  uint32_t layer_stack_idx = 0;      // index into Cache's layer-stack table
+  uint32_t site_path_idx = 0;        // index into Cache's interned path table
+  LayerOffset offset;                // cumulative time offset for this node
+  NamespaceMapping map_to_root;      // remap this node's namespace -> root namespace
+  std::vector<uint16_t> children;    // child node indices (build order)
 
   bool has_specs() const { return HasFlag(flags, NodeFlags::HasSpecs); }
   bool is_inert() const { return HasFlag(flags, NodeFlags::Inert); }
@@ -80,6 +83,13 @@ class PrimIndex {
   const std::vector<uint16_t> &GetStrengthOrder() const { return strength_order_; }
   const std::vector<LayerStack> *GetLayerStacks() const { return layer_stacks_; }
 
+  /// Resolve a node's interned site prim path (empty if no path table bound).
+  const std::string &SitePath(const CompNode &n) const {
+    static const std::string kEmpty;
+    if (!path_table_ || n.site_path_idx >= path_table_->size()) return kEmpty;
+    return (*path_table_)[n.site_path_idx];
+  }
+
   bool HasAnySpecs() const {
     for (const auto &n : nodes_) if (n.has_specs()) return true;
     return false;
@@ -92,7 +102,7 @@ class PrimIndex {
       const CompNode &n = nodes_[oi];
       s += "  [" + std::to_string(oi) + "] " + ArcTypeName(n.arc_type) +
            " stack=" + std::to_string(n.layer_stack_idx) + " site=" +
-           n.site_prim_path + (n.has_specs() ? " (specs)" : "") + "\n";
+           SitePath(n) + (n.has_specs() ? " (specs)" : "") + "\n";
     }
     return s;
   }
@@ -100,6 +110,7 @@ class PrimIndex {
   // Build API (used by Cache::Impl).
   void SetPath(const Path &p) { prim_path_ = p; }
   void SetLayerStacks(const std::vector<LayerStack> *t) { layer_stacks_ = t; }
+  void SetPathTable(const std::vector<std::string> *t) { path_table_ = t; }
   uint16_t AddNode(CompNode &&n) {
     nodes_.push_back(std::move(n));
     return static_cast<uint16_t>(nodes_.size() - 1);
@@ -112,6 +123,7 @@ class PrimIndex {
   std::vector<CompNode> nodes_;            // node 0 == root
   std::vector<uint16_t> strength_order_;   // strongest first
   const std::vector<LayerStack> *layer_stacks_ = nullptr;  // borrowed
+  const std::vector<std::string> *path_table_ = nullptr;   // borrowed (interned sites)
 };
 
 }  // namespace pcp

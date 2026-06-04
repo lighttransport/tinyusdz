@@ -66,6 +66,18 @@ struct Cache::Impl {
   std::vector<LayerStack> layer_stacks;             // table; [0] == root stack
   std::map<std::string, uint32_t> stack_by_id;      // dedup by resolved identifier
 
+  // Interned prim-path table shared by all PrimIndex nodes (dedup across indices).
+  std::vector<std::string> path_table;
+  std::unordered_map<std::string, uint32_t> path_intern;
+  uint32_t InternPath(const std::string &p) {
+    auto it = path_intern.find(p);
+    if (it != path_intern.end()) return it->second;
+    uint32_t idx = static_cast<uint32_t>(path_table.size());
+    path_table.push_back(p);
+    path_intern.emplace(p, idx);
+    return idx;
+  }
+
   std::unordered_map<std::string, std::unique_ptr<PrimIndex>> index_cache;
   std::unordered_map<std::string, std::vector<Src>> sources_cache;  // path -> expanded sources
   std::unordered_map<Site, std::set<std::string>, SiteHash> site_to_indices;
@@ -512,6 +524,7 @@ struct Cache::Impl {
     auto index = std::unique_ptr<PrimIndex>(new PrimIndex());
     index->SetPath(prim_path);
     index->SetLayerStacks(&layer_stacks);
+    index->SetPathTable(&path_table);
 
     std::vector<uint16_t> order;
     std::vector<Site> sites;
@@ -521,7 +534,7 @@ struct Cache::Impl {
       n.arc_type = (i == 0) ? ArcType::Root : s.arc_kind;
       n.parent = (i == 0) ? 0xFFFF : 0;
       n.layer_stack_idx = s.stack_idx;
-      n.site_prim_path = s.site;
+      n.site_path_idx = InternPath(s.site);
       n.map_to_root = s.map;
       n.offset = s.offset;
       if (FindSpec(layer_stacks[s.stack_idx], s.site, nullptr)) {
