@@ -12,6 +12,10 @@
 #include <map>
 #include <set>
 #include <unordered_map>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <atomic>
+#include <thread>
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -665,10 +669,53 @@ struct Cache::Impl {
     return true;
   }
 
-  // Sequential batch build. (num_threads is a forward-compat hint; lock-free
-  // parallel composition needs per-worker contexts -- a follow-up.)
+  // Batch build. When threads are enabled and num_threads != 1, first-level
+  // reference/payload layers are prefetched into the (thread-safe) registry in
+  // parallel, then indices are built serially (the shared Impl state -- caches,
+  // dependency maps -- is mutated single-threaded). This parallelizes the
+  // I/O-bound parsing; per-prim parallel index building (per-worker contexts) is
+  // a deeper refactor left as future work.
   bool PrewarmPrimIndices(const std::vector<Path> &paths, std::string *warn,
                           std::string *err) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    int nt = options.num_threads;
+    if (nt < 0) nt = static_cast<int>(std::thread::hardware_concurrency());
+    if (nt > 1) {
+      const std::string anchor = DirOf(layer_stacks[0].identifier);
+      std::vector<std::pair<std::string, std::string>> assets;  // (asset, anchor)
+      std::set<std::string> seen;
+      for (const auto &lp : layer_stacks[0].layers) {
+        for (const PrimSpec &ps : lp->prims()) {
+          for (const std::string &r : ps.meta().references) {
+            CompositionArc a = Compositor::ParseReference(r);
+            if (!a.asset_path.empty() && seen.insert(a.asset_path).second)
+              assets.emplace_back(a.asset_path, anchor);
+          }
+          for (const std::string &r : ps.meta().payloads) {
+            CompositionArc a = Compositor::ParsePayload(r);
+            if (!a.asset_path.empty() && seen.insert(a.asset_path).second)
+              assets.emplace_back(a.asset_path, anchor);
+          }
+        }
+      }
+      if (!assets.empty()) {
+        std::atomic<size_t> next_idx{0};
+        int workers = std::min<int>(nt, static_cast<int>(assets.size()));
+        std::vector<std::thread> ts;
+        auto fn = [&]() {
+          for (;;) {
+            size_t i = next_idx.fetch_add(1);
+            if (i >= assets.size()) break;
+            std::string w, e;
+            registry.GetOrLoad(*resolver, assets[i].first, assets[i].second, &w, &e);
+          }
+        };
+        ts.reserve(static_cast<size_t>(workers));
+        for (int t = 0; t < workers; ++t) ts.emplace_back(fn);
+        for (auto &t : ts) t.join();
+      }
+    }
+#endif
     for (const Path &p : paths) ComputePrimIndex(p, warn, err);
     return true;
   }
