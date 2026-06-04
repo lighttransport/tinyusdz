@@ -247,6 +247,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_pcp PRIVATE tinyusdz_next)
 
+    add_executable(test_pcp_parallel
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_pcp_parallel.cc
+    )
+    target_link_libraries(test_pcp_parallel PRIVATE tinyusdz_next)
+
     add_executable(test_writer
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_writer.cc
     )
