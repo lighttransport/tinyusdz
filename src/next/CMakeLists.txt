@@ -73,6 +73,10 @@ set(TINYUSDZ_NEXT_SOURCES
     # Composition
     composition/composition.cc
 
+    # PCP-style lazy composition cache (native to next)
+    pcp/layer-registry.cc
+    pcp/cache.cc
+
     # High-level API
     tinyusdz-next.cc
     c-tinyusd-next.cc
@@ -146,6 +150,13 @@ set(TINYUSDZ_NEXT_HEADERS
     # Composition
     composition/composition.hh
 
+    # PCP-style lazy composition cache (native to next)
+    pcp/arc-types.hh
+    pcp/namespace-mapping.hh
+    pcp/prim-index.hh
+    pcp/layer-registry.hh
+    pcp/cache.hh
+
     # High-level API
     tinyusdz-next.hh
     compat.hh
@@ -214,6 +225,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_stage.cc
     )
     target_link_libraries(test_stage PRIVATE tinyusdz_next)
+
+    add_executable(test_pcp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_pcp.cc
+    )
+    target_link_libraries(test_pcp PRIVATE tinyusdz_next)
 
     add_executable(test_writer
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_writer.cc

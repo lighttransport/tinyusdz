@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2024-Present Light Transport Entertainment Inc.
+//
+// TinyUSDZ Next - PCP LayerRegistry
+//
+// Parse-once, resolved-path-keyed cache of layers. A referenced/sublayer file
+// is parsed exactly once and shared (shared_ptr) across every prim index that
+// uses it. Standalone, C++14.
+
+#pragma once
+
+#include "../layer/layer.hh"
+#include "../resolver/asset-resolver.hh"
+
+#include <memory>
+#include <string>
+#include <unordered_map>
+
+namespace tinyusdz {
+namespace next {
+namespace pcp {
+
+class LayerRegistry {
+ public:
+  LayerRegistry() = default;
+
+  // Move-only (owns shared layers).
+  LayerRegistry(LayerRegistry &&) = default;
+  LayerRegistry &operator=(LayerRegistry &&) = default;
+  LayerRegistry(const LayerRegistry &) = delete;
+  LayerRegistry &operator=(const LayerRegistry &) = delete;
+
+  /// Resolve `asset_path` against `anchor` (the referencing file's directory),
+  /// parse once, and return shared ownership. Returns nullptr on failure.
+  std::shared_ptr<Layer> GetOrLoad(AssetResolver &resolver,
+                                   const std::string &asset_path,
+                                   const std::string &anchor,
+                                   std::string *warn, std::string *err);
+
+  /// Drop a single cached layer by resolved path. Caller must have already
+  /// invalidated every PrimIndex that referenced it.
+  void Drop(const std::string &resolved_path);
+
+  void Clear() { by_resolved_.clear(); }
+  size_t size() const { return by_resolved_.size(); }
+  size_t parse_count() const { return parse_count_; }
+
+ private:
+  std::unordered_map<std::string, std::shared_ptr<Layer>> by_resolved_;
+  size_t parse_count_ = 0;
+};
+
+/// Load a layer from a resolved file path, dispatching by extension to the
+/// next USDA / USDC readers. Returns nullptr on failure. (USDZ: TODO.)
+std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
+                                         std::string *warn, std::string *err);
+
+}  // namespace pcp
+}  // namespace next
+}  // namespace tinyusdz
