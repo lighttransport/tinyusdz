@@ -92,6 +92,9 @@ struct PrimSpecMeta {
   // Variant set definitions
   std::vector<VariantSetData> variantSets;
 
+  // Relocates: namespace renames (absolute source path -> absolute target path).
+  std::vector<std::pair<std::string, std::string>> relocates;
+
   // Layer offset (applied at evaluation time)
   // First = offset, Second = scale. Default: (0, 1)
   std::pair<double, double> layer_offset = {0.0, 1.0};

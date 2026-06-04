@@ -82,6 +82,10 @@ static std::shared_ptr<Layer> BuildRootLayer() {
   lb.current()->meta().references.push_back("</Lib/RefModel>");
   lb.current()->meta().instanceable = true;
   lb.end_prim();
+  // Relocate /World/Old -> /World/New (authored on World).
+  lb.current()->meta().relocates.push_back({"/World/Old", "/World/New"});
+  lb.begin_prim("Old", "Scope");
+  lb.end_prim();  // Old (relocated to New)
   lb.end_prim();  // World
 
   lb.begin_prim("Lib", "Scope");
@@ -327,6 +331,25 @@ static void test_instancing() {
   std::cout << "  OK" << std::endl;
 }
 
+// FU1: relocates rename a prim in the composed namespace.
+static void test_relocates() {
+  std::cout << "test_relocates..." << std::endl;
+  AssetResolver resolver;
+  auto root = BuildRootLayer();
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  assert(stage.GetPrimAtPath("/World/New").IsValid() && "relocate target missing");
+  assert(!stage.GetPrimAtPath("/World/Old").IsValid() && "relocate source leaked");
+  assert(stage.GetPrimAtPath("/World/New").GetTypeName() == "Scope");
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_build_stage();
@@ -336,6 +359,7 @@ int main() {
   test_inherits_specializes();
   test_variants();
   test_instancing();
+  test_relocates();
   std::cout << "All next/pcp tests passed." << std::endl;
   return 0;
 }
