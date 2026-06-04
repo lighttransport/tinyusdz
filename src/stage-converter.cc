@@ -531,6 +531,7 @@ bool CrateWriter::ConvertSinglePrim(
     "blendShapes",  // SkelAnimation
     "inactiveIds",  // PointInstancer
     "purpose", "doubleSided",  // GPrim
+    "info:id",  // Shader (UsdShade: `uniform token info:id`)
   };
 
   // Create separate Attribute specs for each property
@@ -682,6 +683,13 @@ bool CrateWriter::ConvertSinglePrim(
   // This applies to any prim that might have material bindings (typically geometry)
   if (!AddMaterialBindingSpecs(prim, prim_path, err)) {
     // Don't fail on material binding errors - just warn
+  }
+
+  // SkelBindingAPI relationships (skel:animationSource / skel:skeleton /
+  // skel:blendShapeTargets) are stored as typed optional Relationship fields and
+  // would otherwise be dropped on USDC write, losing skeletal animation bindings.
+  if (!AddSkelBindingSpecs(prim, prim_path, err)) {
+    // Don't fail the whole export on a skel binding error - just warn.
   }
 
   // Handle doubleSided for GPrim-derived types via ConvertPropertyToFields

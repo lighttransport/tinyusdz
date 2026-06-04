@@ -4432,3 +4432,105 @@ def Xform "x" {
   TEST_CHECK(toks[1].str() == "right");
   TEST_CHECK(toks[2].str() == "both");
 }
+
+// =========================================================================
+// UsdPrimvarReader varname-connection + uniform info:id (USDC write regression)
+//
+// Regression for two USDC writer bugs found while converting UE-exported USD:
+//   1) A UsdPrimvarReader's `inputs:varname` authored as a CONNECTION
+//      (`inputs:varname.connect = </Mat.inputs:stPrimvarName>`) was dropped on
+//      write (only the value form was handled), which broke UsdUVTexture
+//      evaluation and made the whole render-scene load fail.
+//   2) Shader `info:id` was written with `varying` variability instead of the
+//      schema-required `uniform`.
+// =========================================================================
+
+void usdc_writer_primvar_reader_varname_connection_test(void) {
+  const char *usda = R"(#usda 1.0
+def Material "M" {
+  token inputs:stPrimvarName = "st"
+  token outputs:surface.connect = </M/S.outputs:surface>
+
+  def Shader "P" {
+    uniform token info:id = "UsdPrimvarReader_float2"
+    string inputs:varname.connect = </M.inputs:stPrimvarName>
+    float2 outputs:result
+  }
+  def Shader "S" {
+    uniform token info:id = "UsdPreviewSurface"
+    token outputs:surface
+  }
+}
+)";
+  RT_OK(usda);
+  const auto *mat = find_root<Material>(stage, "M");
+  TEST_CHECK(mat != nullptr);
+  if (!mat) return;
+
+  const Prim *matPrim = find_root_prim(stage, "M");
+  TEST_CHECK(matPrim != nullptr);
+  if (!matPrim) return;
+
+  // Locate the PrimvarReader child shader "P".
+  const Shader *reader_shader = nullptr;
+  for (const auto &child : matPrim->children()) {
+    if (child.element_name() == "P") {
+      reader_shader = child.data().as<Shader>();
+    }
+  }
+  TEST_CHECK(reader_shader != nullptr);
+  if (!reader_shader) return;
+
+  const auto *reader = reader_shader->value.as<UsdPrimvarReader_float2>();
+  TEST_CHECK(reader != nullptr);
+  if (!reader) return;
+
+  // The connected varname must survive the USDC roundtrip.
+  TEST_CHECK(reader->varname.authored());
+  TEST_CHECK(reader->varname.has_connections());
+  if (!reader->varname.has_connections()) return;
+  const auto &paths = reader->varname.connections();
+  TEST_CHECK(paths.size() == 1);
+  if (paths.size() != 1) return;
+  TEST_CHECK(paths[0].full_path_name() == "/M.inputs:stPrimvarName");
+}
+
+void usdc_writer_shader_info_id_uniform_test(void) {
+  const char *usda = R"(#usda 1.0
+def Shader "S" {
+  uniform token info:id = "UsdPreviewSurface"
+  token outputs:surface
+}
+)";
+  std::string warn, err;
+  Layer layer;
+  bool ok = LoadLayerFromMemory(reinterpret_cast<const uint8_t *>(usda),
+                                std::strlen(usda), "test.usda", &layer,
+                                &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) { TEST_MSG("load failed: %s", err.c_str()); return; }
+
+  std::vector<uint8_t> buf;
+  ok = usdc::SaveAsUSDCToMemory(layer, &buf, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) { TEST_MSG("write failed: %s", err.c_str()); return; }
+
+  Layer rt;
+  ok = LoadLayerFromMemory(buf.data(), buf.size(), "test.usdc", &rt, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) { TEST_MSG("reload failed: %s", err.c_str()); return; }
+
+  const PrimSpec *ps = nullptr;
+  TEST_CHECK(rt.find_primspec_at(Path("/S", ""), &ps, &err));
+  TEST_CHECK(ps != nullptr);
+  if (!ps) return;
+
+  auto it = ps->props().find("info:id");
+  TEST_CHECK(it != ps->props().end());
+  if (it == ps->props().end()) return;
+  TEST_CHECK(it->second.is_attribute());
+  if (!it->second.is_attribute()) return;
+  // info:id is `uniform token` per the UsdShade schema; it must not degrade to
+  // `varying` through the USDC writer.
+  TEST_CHECK(it->second.get_attribute().variability() == Variability::Uniform);
+}

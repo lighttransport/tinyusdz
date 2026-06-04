@@ -215,3 +215,7 @@ void usdc_writer_reference_customdata_mixed_test(void);
 
 // Attribute meta `allowedTokens` USDC roundtrip
 void usdc_writer_allowed_tokens_test(void);
+
+// Shader info:id uniform + UsdPrimvarReader varname-connection (USDC write regression)
+void usdc_writer_primvar_reader_varname_connection_test(void);
+void usdc_writer_shader_info_id_uniform_test(void);

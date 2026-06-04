@@ -24,7 +24,9 @@ container.style.cssText = 'max-width:820px;margin:32px auto;padding:20px;font-fa
 container.innerHTML = `
   <h1 style="margin:0 0 6px">TinyUSDZ — usdzconvert</h1>
   <p style="color:#aaa;margin:0 0 18px">
-    Drop or pick a <b>folder</b> (USD + textures) or multiple files, set options, convert to USDZ, and download.
+    Drop or pick a <b>folder</b> (USD + textures), multiple files, or a single <b>.usdz</b>
+    (its textures are unpacked and repacked — passthrough by default), set options,
+    <b>Convert</b> to validate, then <b>Download</b>.
   </p>
 
   <div id="drop" style="border:2px dashed #555;border-radius:8px;padding:22px;text-align:center;margin-bottom:14px;background:#1a1a2e">
@@ -75,7 +77,7 @@ container.innerHTML = `
       </div>
 
       <label>Re-encode textures</label>
-      <input id="reencode" type="checkbox" checked style="justify-self:start">
+      <input id="reencode" type="checkbox" style="justify-self:start" title="Off = passthrough (copy textures unchanged into the repacked USDZ)">
 
       <label>JPEG quality</label>
       <input id="jpegQuality" type="number" min="1" max="100" value="90" style="padding:4px;width:120px">
@@ -88,8 +90,23 @@ container.innerHTML = `
     </p>
   </fieldset>
 
+  <fieldset style="border:1px solid #444;border-radius:6px;padding:12px;margin-bottom:14px">
+    <legend style="color:#bbb">Output name</legend>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center;font-size:14px">
+      <label title="Appended to the source name (before .usdz). Ignored when a custom filename is set.">Filename suffix</label>
+      <input id="nameSuffix" type="text" placeholder="e.g. _opt (blank = none)" style="padding:4px;width:240px">
+
+      <label title="Overrides the whole output filename. Leave blank to use source name + suffix.">Custom filename</label>
+      <input id="nameCustom" type="text" placeholder="auto: <source><suffix>.usdz" style="padding:4px;width:240px">
+    </div>
+    <p style="color:#888;font-size:12px;margin:8px 0 0">
+      <span id="namePreview" style="color:#9bb">output: —</span>
+    </p>
+  </fieldset>
+
   <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-    <button id="btnConvert" class="btn primary" disabled>Convert &amp; Download USDZ</button>
+    <button id="btnConvert" class="btn primary" disabled>Convert</button>
+    <button id="btnDownload" class="btn" disabled>Download USDZ</button>
     <span id="status" style="color:#aaa;font-size:13px"></span>
   </div>
 
@@ -134,7 +151,11 @@ const els = {
   arkitCompatible: document.getElementById('arkitCompatible'),
   reencode: document.getElementById('reencode'),
   jpegQuality: document.getElementById('jpegQuality'),
+  nameSuffix: document.getElementById('nameSuffix'),
+  nameCustom: document.getElementById('nameCustom'),
+  namePreview: document.getElementById('namePreview'),
   btnConvert: document.getElementById('btnConvert'),
+  btnDownload: document.getElementById('btnDownload'),
   status: document.getElementById('status'),
   repackSlots: document.getElementById('repackSlots'),
   repackChannels: document.getElementById('repackChannels'),
@@ -164,6 +185,27 @@ function downloadBlob(blob, filename) {
 
 let native = null;
 let uploaded = []; // [{ path, file }]
+let lastResult = null; // { usdz: Uint8Array, filename: string } after a successful convert
+
+// Sanitize a user-supplied filename fragment (strip path separators).
+function sanitizeName(s) {
+  return String(s || '').replace(/[\\/]+/g, '_').trim();
+}
+
+// Compute the output filename from the selected source + suffix/custom inputs.
+function outputFilename() {
+  const custom = sanitizeName(els.nameCustom.value);
+  if (custom) return /\.usdz$/i.test(custom) ? custom : custom + '.usdz';
+  const src = els.rootSelect.value || 'output';
+  const base = src.split('/').pop().replace(/\.(usd|usda|usdc|usdz)$/i, '') || 'output';
+  return base + sanitizeName(els.nameSuffix.value) + '.usdz';
+}
+
+function refreshNamePreview() {
+  els.namePreview.textContent = uploaded.length
+    ? `output: ${outputFilename()}`
+    : 'output: —';
+}
 
 async function ensureWasm() {
   if (native) return native;
@@ -191,8 +233,16 @@ function refreshFileList() {
   if (usds.length === 0) {
     setStatus('No USD file found in the upload.');
   } else {
-    setStatus(`${uploaded.length} files, ${usds.length} USD layer(s).`);
+    setStatus(`${uploaded.length} files, ${usds.length} USD layer(s). Ready to convert.`);
   }
+  // New input invalidates any prior conversion result.
+  invalidateResult();
+  refreshNamePreview();
+}
+
+function invalidateResult() {
+  lastResult = null;
+  els.btnDownload.disabled = true;
 }
 
 async function addFiles(fileEntries) {
@@ -212,6 +262,12 @@ function entriesFromFileList(files) {
 
 els.folderInput.addEventListener('change', e => addFiles(entriesFromFileList(e.target.files)));
 els.filesInput.addEventListener('change', e => addFiles(entriesFromFileList(e.target.files)));
+
+// Output-name controls: live preview; a name change does not invalidate the
+// already-converted bytes (it only affects the download filename).
+els.nameSuffix.addEventListener('input', refreshNamePreview);
+els.nameCustom.addEventListener('input', refreshNamePreview);
+els.rootSelect.addEventListener('change', () => { invalidateResult(); refreshNamePreview(); });
 
 // Drag & drop (supports folders via webkitGetAsEntry).
 ['dragenter', 'dragover'].forEach(ev =>
@@ -389,6 +445,7 @@ async function browserRepackChannels(slots, channels) {
 els.btnConvert.addEventListener('click', async () => {
   try {
     els.btnConvert.disabled = true;
+    invalidateResult();
     await ensureWasm();
 
     const rootPath = els.rootSelect.value;
@@ -418,19 +475,35 @@ els.btnConvert.addEventListener('click', async () => {
       assetMap.set(path, new Uint8Array(await file.arrayBuffer()));
     }
 
+    // Convert-only: validate the conversion and report bytes/warnings/errors.
+    // The download is a separate, explicit step (Download button below).
     setStatus('Converting...');
     const { usdz, stats } = await convertFolderToUSDZ(native, assetMap, opts);
-    log(`Done. textures: ${stats.textures}, resized: ${stats.resized}, reencoded: ${stats.reencoded}. USDZ: ${usdz.length} bytes`);
+    log(`Converted OK. textures: ${stats.textures}, resized: ${stats.resized}, ` +
+        `reencoded: ${stats.reencoded}, audio: ${stats.audio || 0}, ` +
+        `other assets: ${stats.otherAssets || 0}. USDZ: ${usdz.length} bytes`);
 
-    const base = rootPath.split('/').pop().replace(/\.(usd|usda|usdc|usdz)$/i, '');
-    downloadBlob(new Blob([usdz], { type: 'model/vnd.usdz+zip' }), `${base}.usdz`);
-    setStatus('USDZ downloaded.');
+    lastResult = { usdz, filename: outputFilename() };
+    els.btnDownload.disabled = false;
+    refreshNamePreview();
+    setStatus(`✓ Converted — ${usdz.length.toLocaleString()} bytes. Ready to download.`);
   } catch (err) {
     log('ERROR: ' + (err && err.message ? err.message : err));
-    setStatus('Failed.');
+    setStatus('✗ Conversion failed — see log.');
   } finally {
     els.btnConvert.disabled = false;
   }
+});
+
+els.btnDownload.addEventListener('click', () => {
+  if (!lastResult) {
+    setStatus('Nothing to download — convert first.');
+    return;
+  }
+  const filename = outputFilename(); // re-read in case the name was edited
+  downloadBlob(new Blob([lastResult.usdz], { type: 'model/vnd.usdz+zip' }), filename);
+  log(`Downloaded ${filename} (${lastResult.usdz.length} bytes)`);
+  setStatus(`Downloaded ${filename}.`);
 });
 
 // ---------------------------------------------------------------------------

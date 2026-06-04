@@ -262,20 +262,40 @@ Layer::Layer() : _impl(std::make_unique<LayerImpl>()) {}
 
 Layer::~Layer() = default;
 
-Layer::Layer(const Layer& other) : _impl(std::make_unique<LayerImpl>(*other._impl)) {}
+Layer::Layer(const Layer& other)
+    : _impl(other._impl ? std::make_unique<LayerImpl>(*other._impl)
+                        : std::make_unique<LayerImpl>()) {}
 
 Layer& Layer::operator=(const Layer& other) {
   if (this != &other) {
-    *_impl = *other._impl;
+    // `this` may be a moved-from Layer (null _impl); restore the invariant
+    // that a live Layer always owns a LayerImpl before dereferencing it.
+    if (!_impl) {
+      _impl = std::make_unique<LayerImpl>();
+    }
+    if (other._impl) {
+      *_impl = *other._impl;
+    } else {
+      *_impl = LayerImpl{};
+    }
   }
   return *this;
 }
 
-Layer::Layer(Layer&& other) noexcept : _impl(std::move(other._impl)) {}
+// A moved-from Layer must remain valid and assignable (its _impl is reused as a
+// composition output target via operator=), so re-establish an empty LayerImpl
+// in the source instead of leaving _impl null.
+Layer::Layer(Layer&& other) noexcept : _impl(std::move(other._impl)) {
+  other._impl = std::make_unique<LayerImpl>();
+}
 
 Layer& Layer::operator=(Layer&& other) noexcept {
   if (this != &other) {
     _impl = std::move(other._impl);
+    if (!_impl) {
+      _impl = std::make_unique<LayerImpl>();
+    }
+    other._impl = std::make_unique<LayerImpl>();
   }
   return *this;
 }

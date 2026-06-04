@@ -510,6 +510,7 @@ TEST_LIST = {
   { "layer_metas_test", layer_metas_test },
   { "layer_asset_resolution_state_test", layer_asset_resolution_state_test },
   { "layer_memory_estimation_test", layer_memory_estimation_test },
+  { "layer_moved_from_is_valid_test", layer_moved_from_is_valid_test },
   // PrimSpec tests
   { "primspec_create_test", primspec_create_test },
   { "primspec_specifiers_test", primspec_specifiers_test },
@@ -671,6 +672,8 @@ TEST_LIST = {
   { "usdc_writer_nested_prim_paths_test", usdc_writer_nested_prim_paths_test },
   { "usdc_writer_uvtexture_st_connection_test", usdc_writer_uvtexture_st_connection_test },
   { "usdc_writer_uvtexture_file_connection_test", usdc_writer_uvtexture_file_connection_test },
+  { "usdc_writer_primvar_reader_varname_connection_test", usdc_writer_primvar_reader_varname_connection_test },
+  { "usdc_writer_shader_info_id_uniform_test", usdc_writer_shader_info_id_uniform_test },
   { "usdc_writer_preview_metallic_connection_test", usdc_writer_preview_metallic_connection_test },
   { "usdc_writer_preview_roughness_connection_test", usdc_writer_preview_roughness_connection_test },
   { "usdc_writer_timesamples_half_test", usdc_writer_timesamples_half_test },

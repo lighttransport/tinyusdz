@@ -571,6 +571,12 @@ private:
   /// Add PointInstancer prototypes relationship as separate relationship spec
   bool AddPointInstancerPrototypesSpec(const Prim& prim, const Path& prim_path, std::string* err);
 
+  /// Add SkelBindingAPI relationships as separate relationship specs (called after Prim spec is added)
+  /// Handles skel:animationSource (Skeleton, SkelRoot), skel:skeleton (SkelRoot, GeomMesh),
+  /// and skel:blendShapeTargets (GeomMesh). These are stored as typed optional Relationship
+  /// fields, so they are not covered by the generic props_map serialization path.
+  bool AddSkelBindingSpecs(const Prim& prim, const Path& prim_path, std::string* err);
+
   /// Extract xformOps from Xformable (GPrim or Xform)
   /// Creates separate Attribute specs for each xformOp property
   bool ExtractXformOpsFromXformable(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
