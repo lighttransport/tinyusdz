@@ -1102,26 +1102,38 @@ Strength order `Local > Inherit > Variant > Reference > Payload > Specialize`:
 Built with `-DTINYUSDZ_NEXT_ENABLE_THREAD=ON`:
 
 - The `LayerRegistry` is thread-safe (parse-outside-lock, double-checked publish).
-- `PrewarmPrimIndices` with `num_threads != 1` prefetches first-level
-  reference/payload layers in parallel before a serial index build.
 - The **`Cache` itself is thread-safe**: every public entry point (`ComputePrimIndex`,
   `BuildStage`, payload load/unload, invalidation, and all instancing/index queries)
   is serialized by a per-cache `std::recursive_mutex` (the `NEXT_PCP_LOCK` macro,
   compiled out in non-threaded builds). Multiple threads may safely query/compose a
   shared cache concurrently; results are stable borrowed pointers.
+- **Parallel per-prim index building.** `PrewarmPrimIndices` with `num_threads != 1`
+  (and more than one path) first prefetches first-level reference/payload layers into
+  the shared registry, then builds the per-prim indices **concurrently**: the batch is
+  split into contiguous chunks and each worker runs the ordinary build on its **own
+  private `Cache::Impl`** that *borrows the shared, parse-once `LayerRegistry`*. Because
+  a worker touches only its private tables plus the internally-locked registry, the
+  read-only layer data, and the pure `AssetResolver`, the heavy composition work runs
+  **without any shared lock**. A deterministic, input-order merge then folds each
+  worker's `PrimIndex` into the cache — remapping the worker's private layer-stack /
+  path-table indices onto the shared tables (sites use identifier strings, so no remap)
+  and assigning instance prototypes **in input order**, so the composed result is
+  byte-for-byte identical to a serial build (only the internal interning *index
+  integers* may differ, which is unobservable). `BuildStage` (a single recursive tree
+  walk) remains serial.
 
-Verified ThreadSanitizer-clean (8 threads × 1000 iterations querying a shared cache,
-see `test_concurrent_queries`). Default builds are sequential and zero-overhead — the
-lock macro expands to `(void)0`.
+Verified ThreadSanitizer-clean: 8 threads × 1000 iterations querying a shared cache
+(`test_concurrent_queries`) and a parallel batch build whose every index + instance
+grouping matches the serial baseline (`test_parallel_build_matches_serial`). Default
+builds are sequential and zero-overhead — the parallel path and lock macro compile out.
 
 ### Known limitations / future work
 
-- Per-prim **parallel index building** (per-worker `CompositionContext`s, as in
-  `src/pcp/cache-parallel.cc`) is not yet implemented: the thread-safe `Cache`
-  serializes concurrent `ComputePrimIndex` calls under one mutex, so it is *safe*
-  but not *parallel* for the build step (only layer loading runs in parallel). A
-  lock-free per-worker build is a deferred refinement; parsing — already
-  parallelized in the prefetch — dominates the cost in practice.
+- `BuildStage` is still serial — only the batch `PrewarmPrimIndices` build is
+  parallelized (see Threading). Parallelizing the `BuildStage` tree walk is future work.
+- Worker `sources_cache` entries are not merged back (only the published `PrimIndex`
+  is), so a later query for a *non-prewarmed* path recomputes its sources — correct,
+  just not pre-warmed.
 - `CompNode` map-expression interning; variant-child relocate interplay.
 
 ### Tests
@@ -1129,4 +1141,5 @@ lock macro expands to `(void)0`.
 `tests/next/test_pcp.cc` (built with `-DTINYUSDZ_NEXT_BUILD_TESTS=ON`) covers each
 arc, ancestral composition, deferred payloads, instancing + proxies, relocates,
 cross-source variants, implied class propagation (incl. intermediate stacks), the
-parallel prefetch, concurrent shared-cache queries (TSan), and the one-call helpers.
+parallel batch build vs. a serial baseline, concurrent shared-cache queries (TSan),
+and the one-call helpers.

@@ -4,12 +4,14 @@
 // Test for the native PCP-style lazy composition cache (next/pcp).
 // Phase 1: internal references + lazy ComputePrimIndex + BuildStage.
 
+#include <algorithm>
 #include <atomic>
 #include <cassert>
 #include <fstream>
 #include <iostream>
 #include <memory>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "next/layer/layer.hh"
@@ -773,6 +775,95 @@ static void test_concurrent_queries() {
   std::cout << "  OK" << std::endl;
 }
 
+// FU9 (parallel build): a canonical, index-order-independent serialization of a
+// PrimIndex -- strength-ordered (arc, site-string, has-specs) tuples + count.
+// Captures everything observable about composition while ignoring the internal
+// interning integers (which may differ between a serial and a parallel build).
+static std::string CanonIndex(const pcp::PrimIndex *idx) {
+  if (!idx) return "<null>";
+  std::string s = "n=" + std::to_string(idx->GetNodeCount()) + ";";
+  for (uint16_t ni : idx->GetStrengthOrder()) {
+    const pcp::CompNode &node = idx->GetNode(ni);
+    s += std::to_string(static_cast<int>(node.arc_type)) + ":" +
+         idx->SitePath(node) + ":" + (node.has_specs() ? "1" : "0") + "|";
+  }
+  return s;
+}
+
+// Canonical (sorted) dump of the instance/prototype groupings of a cache.
+static std::string CanonInstances(const pcp::Cache &cache) {
+  std::vector<Path> protos = cache.GetPrototypePaths();
+  std::vector<std::string> rows;
+  for (const Path &p : protos) {
+    std::vector<Path> inst = cache.GetInstancesForPrototype(p);
+    std::vector<std::string> names;
+    for (const Path &i : inst) names.push_back(i.str());
+    std::sort(names.begin(), names.end());
+    std::string row = p.str() + "=>";
+    for (const std::string &n : names) row += n + ",";
+    rows.push_back(row);
+  }
+  std::sort(rows.begin(), rows.end());
+  std::string out;
+  for (const std::string &r : rows) out += r + ";";
+  return out;
+}
+
+// FU9 (parallel build): building a batch with num_threads>1 must produce indices
+// structurally identical to a serial (num_threads=1) build, and the same
+// instance/prototype groupings. Exercises the per-worker lock-free build + the
+// deterministic input-order merge (incl. ordered prototype assignment).
+static void test_parallel_build_matches_serial() {
+  std::cout << "test_parallel_build_matches_serial..." << std::endl;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  const std::vector<std::string> path_strs = {
+      "/World",          "/World/A",     "/World/A/Inner", "/World/I",
+      "/World/IR",       "/World/SP",    "/World/V",       "/World/VC",
+      "/World/VC/Geom",  "/World/MV",    "/World/Inst1",   "/World/Inst2",
+      "/World/Inst3",    "/Lib/Model",   "/Lib/Model/Inner", "/Lib/RefModel"};
+  std::vector<Path> paths;
+  for (const std::string &p : path_strs) paths.push_back(Path(p));
+
+  auto run = [&](int num_threads) -> std::pair<std::vector<std::string>, std::string> {
+    AssetResolver resolver;
+    auto root = BuildRootLayer();
+    pcp::CompositionOptions opts;
+    opts.num_threads = num_threads;
+    auto opened = pcp::Cache::Open(resolver, root, "", opts);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    std::string warn, err;
+    assert(cache.PrewarmPrimIndices(paths, &warn, &err));
+    std::vector<std::string> dumps;
+    for (const Path &p : paths) {
+      dumps.push_back(CanonIndex(cache.ComputePrimIndex(p, &warn, &err)));
+    }
+    return {dumps, CanonInstances(cache)};
+  };
+
+  auto serial = run(1);
+  auto parallel = run(4);
+
+  for (size_t i = 0; i < paths.size(); ++i) {
+    if (serial.first[i] != parallel.first[i]) {
+      std::cout << "  MISMATCH at " << path_strs[i] << "\n   serial:   "
+                << serial.first[i] << "\n   parallel: " << parallel.first[i]
+                << std::endl;
+    }
+    assert(serial.first[i] == parallel.first[i] &&
+           "parallel-built index differs from serial");
+  }
+  assert(serial.second == parallel.second &&
+         "parallel instance groupings differ from serial");
+  // Sanity: the instanceable prims actually grouped (Inst1+Inst2 share a
+  // prototype; Inst3 is its own), so the ordered-merge path was exercised.
+  assert(!parallel.second.empty() && "expected instance groupings");
+#else
+  std::cout << "  (skipped: build with -DTINYUSDZ_NEXT_ENABLE_THREAD=ON)\n";
+#endif
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_build_stage();
@@ -791,6 +882,7 @@ int main() {
   test_implied_intermediate();
   test_compose_from_file();
   test_concurrent_queries();
+  test_parallel_build_matches_serial();
   std::cout << "All next/pcp tests passed." << std::endl;
   return 0;
 }

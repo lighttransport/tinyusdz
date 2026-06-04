@@ -70,9 +70,19 @@ bool IsAtOrUnder(const std::string &child, const std::string &base) {
 struct Cache::Impl {
   AssetResolver *resolver = nullptr;
   CompositionOptions options;
-  LayerRegistry registry;
+  LayerRegistry registry;          // owned by this Impl
+  LayerRegistry *reg_ = &registry;  // borrowed pointer: worker Impls point this
+                                    // at the *main* Impl's registry (parse-once
+                                    // shared across the parallel build).
 #if defined(TINYUSDZ_ENABLE_THREAD)
   mutable std::recursive_mutex api_mu_;  // guards all shared state below
+
+  // --- parallel-build worker hooks (see PrewarmPrimIndices) ---------------
+  // When set, RegisterInstance stashes its (instanceable, key) into
+  // pending_instance_ instead of mutating the prototype maps, so the merge can
+  // assign prototypes deterministically in input order.
+  bool defer_instances_ = false;
+  std::unordered_map<std::string, std::pair<bool, std::string>> pending_instance_;
 #endif
 
   std::shared_ptr<Layer> root_layer;  // kept alive (also layer_stacks[0].layers[0])
@@ -152,7 +162,7 @@ struct Cache::Impl {
     const std::string anchor = DirOf(identifier);
     for (const std::string &sub : layer->meta().subLayers) {
       std::shared_ptr<Layer> sl =
-          registry.GetOrLoad(*resolver, sub, anchor, warn, err);
+          reg_->GetOrLoad(*resolver, sub, anchor, warn, err);
       if (sl) {
         const std::string sub_id = resolver->ResolvePath(sub, anchor);
         AppendLayerAndSublayers(st, sl, sub_id, warn, err);
@@ -264,10 +274,11 @@ struct Cache::Impl {
     return key;
   }
 
-  void RegisterInstance(const std::string &prim_path,
-                        const std::vector<Src> &srcs) {
-    if (!options.detect_instances || !IsInstanceableSources(srcs)) return;
-    const std::string ik = ComputeInstanceKeyImpl(srcs);
+  // Prototype bookkeeping for a prim known to be an instance with key `ik`.
+  // First prim of a given key becomes the prototype; the rest link to it.
+  // Order-sensitive: the caller must invoke this deterministically (the parallel
+  // build defers it to an input-order merge).
+  void AssignPrototype(const std::string &prim_path, const std::string &ik) {
     auto pit = prototype_by_key.find(ik);
     std::string proto;
     if (pit == prototype_by_key.end()) {
@@ -281,6 +292,20 @@ struct Cache::Impl {
     if (std::find(vec.begin(), vec.end(), prim_path) == vec.end()) {
       vec.push_back(prim_path);
     }
+  }
+
+  void RegisterInstance(const std::string &prim_path,
+                        const std::vector<Src> &srcs) {
+    if (!options.detect_instances || !IsInstanceableSources(srcs)) return;
+    const std::string ik = ComputeInstanceKeyImpl(srcs);
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (defer_instances_) {
+      // Worker mode: stash for the deterministic input-order merge.
+      pending_instance_[prim_path] = {true, ik};
+      return;
+    }
+#endif
+    AssignPrototype(prim_path, ik);
   }
 
   void DropInstancing(const std::string &prim_path) {
@@ -322,7 +347,7 @@ struct Cache::Impl {
     } else {
       const std::string anchor = DirOf(layer_stacks[src.stack_idx].identifier);
       std::shared_ptr<Layer> arc_layer =
-          registry.GetOrLoad(*resolver, arc.asset_path, anchor, warn, err);
+          reg_->GetOrLoad(*resolver, arc.asset_path, anchor, warn, err);
       if (!arc_layer) {
         if (options.error_when_asset_not_found && err) {
           *err += "Arc asset not found: " + arc.asset_path + "\n";
@@ -715,12 +740,79 @@ struct Cache::Impl {
     return true;
   }
 
-  // Batch build. When threads are enabled and num_threads != 1, first-level
-  // reference/payload layers are prefetched into the (thread-safe) registry in
-  // parallel, then indices are built serially (the shared Impl state -- caches,
-  // dependency maps -- is mutated single-threaded). This parallelizes the
-  // I/O-bound parsing; per-prim parallel index building (per-worker contexts) is
-  // a deeper refactor left as future work.
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // --- parallel-build merge helpers (main thread only) --------------------
+
+  // Adopt a worker's prebuilt LayerStack into the main table (dedup by resolved
+  // identifier). Returns the main-table index. The LayerStack is copied, which
+  // just bumps the shared_ptr<Layer> refcounts -- the layers stay shared.
+  uint32_t AdoptStack(const LayerStack &ws) {
+    auto it = stack_by_id.find(ws.identifier);
+    if (it != stack_by_id.end()) return it->second;
+    uint32_t idx = static_cast<uint32_t>(layer_stacks.size());
+    layer_stacks.push_back(ws);
+    stack_by_id.emplace(ws.identifier, idx);
+    return idx;
+  }
+
+  // Fold the worker-built PrimIndex for `key` into the main cache, remapping its
+  // private layer-stack / path-table indices onto the shared tables. Sites use
+  // identifier strings, so they need no remap. Instancing is assigned in the
+  // caller's (input) order so the prototype choice matches a serial build.
+  void MergeWorkerIndex(Impl &w, const std::string &key) {
+    auto wit = w.index_cache.find(key);
+    if (wit == w.index_cache.end()) return;  // worker didn't build it (nullptr)
+    if (index_cache.count(key)) return;      // already merged (duplicate path)
+    std::unique_ptr<PrimIndex> idx = std::move(wit->second);
+
+    std::unordered_map<uint32_t, uint32_t> stack_remap, path_remap;
+    const uint16_t n = idx->GetNodeCount();
+    for (uint16_t i = 0; i < n; ++i) {
+      CompNode &node = idx->MutableNode(i);
+      auto sr = stack_remap.find(node.layer_stack_idx);
+      if (sr == stack_remap.end()) {
+        uint32_t m = AdoptStack(w.layer_stacks[node.layer_stack_idx]);
+        stack_remap.emplace(node.layer_stack_idx, m);
+        node.layer_stack_idx = m;
+      } else {
+        node.layer_stack_idx = sr->second;
+      }
+      auto pr = path_remap.find(node.site_path_idx);
+      if (pr == path_remap.end()) {
+        uint32_t m = InternPath(w.path_table[node.site_path_idx]);
+        path_remap.emplace(node.site_path_idx, m);
+        node.site_path_idx = m;
+      } else {
+        node.site_path_idx = pr->second;
+      }
+    }
+    idx->SetLayerStacks(&layer_stacks);
+    idx->SetPathTable(&path_table);
+
+    auto sit = w.index_to_sites.find(key);
+    if (sit != w.index_to_sites.end()) {
+      for (const Site &s : sit->second) site_to_indices[s].insert(key);
+      index_to_sites[key] = sit->second;
+    }
+
+    index_cache.emplace(key, std::move(idx));
+
+    if (options.detect_instances) {
+      auto piit = w.pending_instance_.find(key);
+      if (piit != w.pending_instance_.end() && piit->second.first) {
+        AssignPrototype(key, piit->second.second);
+      }
+    }
+  }
+#endif  // TINYUSDZ_ENABLE_THREAD
+
+  // Batch build. With threads enabled and num_threads != 1, this first prefetches
+  // first-level reference/payload layers into the (thread-safe) registry in
+  // parallel, then builds the per-prim indices CONCURRENTLY: each worker runs the
+  // ordinary build on its own private Impl (borrowing the shared, parse-once
+  // registry), and a deterministic input-order merge folds the results into the
+  // cache. Composed values are identical to a serial run. Non-threaded builds (or
+  // num_threads <= 1) use the plain serial loop.
   bool PrewarmPrimIndices(const std::vector<Path> &paths, std::string *warn,
                           std::string *err) {
     NEXT_PCP_LOCK(api_mu_);
@@ -728,6 +820,8 @@ struct Cache::Impl {
     int nt = options.num_threads;
     if (nt < 0) nt = static_cast<int>(std::thread::hardware_concurrency());
     if (nt > 1) {
+      // (a) Prefetch root-level reference/payload assets to warm the shared
+      // registry (reduces redundant double-parses across workers).
       const std::string anchor = DirOf(layer_stacks[0].identifier);
       std::vector<std::pair<std::string, std::string>> assets;  // (asset, anchor)
       std::set<std::string> seen;
@@ -747,19 +841,77 @@ struct Cache::Impl {
       }
       if (!assets.empty()) {
         std::atomic<size_t> next_idx{0};
-        int workers = std::min<int>(nt, static_cast<int>(assets.size()));
+        int pf = std::min<int>(nt, static_cast<int>(assets.size()));
         std::vector<std::thread> ts;
         auto fn = [&]() {
           for (;;) {
             size_t i = next_idx.fetch_add(1);
             if (i >= assets.size()) break;
             std::string w, e;
-            registry.GetOrLoad(*resolver, assets[i].first, assets[i].second, &w, &e);
+            reg_->GetOrLoad(*resolver, assets[i].first, assets[i].second, &w, &e);
           }
         };
-        ts.reserve(static_cast<size_t>(workers));
-        for (int t = 0; t < workers; ++t) ts.emplace_back(fn);
+        ts.reserve(static_cast<size_t>(pf));
+        for (int t = 0; t < pf; ++t) ts.emplace_back(fn);
         for (auto &t : ts) t.join();
+      }
+
+      // (b) Parallel per-prim index build into private worker Impls, then a
+      // deterministic input-order merge.
+      if (paths.size() > 1) {
+        const int W = std::min<int>(nt, static_cast<int>(paths.size()));
+        auto chunk_start = [&](int t) -> size_t {
+          return static_cast<size_t>(t) * paths.size() / static_cast<size_t>(W);
+        };
+
+        std::vector<std::unique_ptr<Impl>> workers;
+        workers.reserve(static_cast<size_t>(W));
+        std::vector<std::string> wwarn(static_cast<size_t>(W));
+        std::vector<std::string> werr(static_cast<size_t>(W));
+        for (int t = 0; t < W; ++t) {
+          std::unique_ptr<Impl> wp(new Impl());
+          wp->resolver = resolver;
+          wp->options = options;
+          wp->reg_ = reg_;  // borrow the shared, parse-once registry
+          wp->root_layer = root_layer;
+          wp->root_identifier = root_identifier;
+          wp->defer_instances_ = true;
+          std::string sw, se;
+          wp->InternLayerStack(root_layer, root_identifier, &sw, &se);  // root @0
+          workers.push_back(std::move(wp));
+        }
+
+        std::vector<std::thread> bts;
+        bts.reserve(static_cast<size_t>(W));
+        for (int t = 0; t < W; ++t) {
+          Impl *wk = workers[static_cast<size_t>(t)].get();
+          size_t s = chunk_start(t), e = chunk_start(t + 1);
+          std::string *pw = &wwarn[static_cast<size_t>(t)];
+          std::string *pe = &werr[static_cast<size_t>(t)];
+          bts.emplace_back([wk, s, e, &paths, pw, pe]() {
+            for (size_t i = s; i < e; ++i) {
+              wk->ComputePrimIndex(paths[i], pw, pe);
+            }
+          });
+        }
+        for (auto &t : bts) t.join();
+
+        // Merge in input order (chunks are contiguous and ascending).
+        for (int t = 0; t < W; ++t) {
+          size_t s = chunk_start(t), e = chunk_start(t + 1);
+          for (size_t i = s; i < e; ++i) {
+            MergeWorkerIndex(*workers[static_cast<size_t>(t)], paths[i].str());
+          }
+        }
+        for (int t = 0; t < W; ++t) {
+          if (warn) *warn += wwarn[static_cast<size_t>(t)];
+          if (err) *err += werr[static_cast<size_t>(t)];
+          for (const std::string &dp :
+               workers[static_cast<size_t>(t)]->deferred_payload_prims) {
+            deferred_payload_prims.insert(dp);
+          }
+        }
+        return true;
       }
     }
 #endif
@@ -828,7 +980,7 @@ struct Cache::Impl {
     for (const std::string &k : to_drop) DropIndex(k);
     // Conservative: a referenced layer feeds many prims' sources.
     sources_cache.clear();
-    registry.Drop(layer_id);
+    reg_->Drop(layer_id);
   }
 
   // --- payloads -----------------------------------------------------------
