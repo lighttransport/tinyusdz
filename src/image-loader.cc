@@ -455,8 +455,15 @@ bool DecodeImageEXR(const uint8_t *bytes, const size_t size,
     FreeEXRErrorMessage(exrerr);
   }
 
-  if (!ret) {
+  // LoadEXRFromMemory returns TINYEXR_SUCCESS (0) on success and a negative
+  // error code otherwise, so test against TINYEXR_SUCCESS (the previous `!ret`
+  // inverted this and reported failure on every successful load).
+  if (ret != TINYEXR_SUCCESS) {
     (*err) += "Failed to load EXR image: " + uri + "\n";
+    return false;
+  }
+  if (rgba == nullptr) {
+    (*err) += "EXR decode returned no pixel data: " + uri + "\n";
     return false;
   }
 

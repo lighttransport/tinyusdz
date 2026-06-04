@@ -241,7 +241,12 @@ void test_roundtrip_schema_types() {
 
   // Parse TOC
   TocInfo toc;
-  assert(ParseUSDCBinary(buffer.data(), buffer.size(), toc));
+  // NOTE: ParseUSDCBinary() populates `toc` as a side effect, so it must run
+  // outside assert() — under NDEBUG `assert(expr)` does not evaluate `expr`,
+  // which would leave `toc` empty and null-deref the section lookups below.
+  const bool toc_parsed = ParseUSDCBinary(buffer.data(), buffer.size(), toc);
+  assert(toc_parsed);
+  (void)toc_parsed;
 
   // Verify required sections exist
   auto* tokens_sec = toc.find("TOKENS");
@@ -430,7 +435,12 @@ void test_roundtrip_layer_metadata() {
 
   // Parse TOC and verify
   TocInfo toc;
-  assert(ParseUSDCBinary(buffer.data(), buffer.size(), toc));
+  // NOTE: ParseUSDCBinary() populates `toc` as a side effect, so it must run
+  // outside assert() — under NDEBUG `assert(expr)` does not evaluate `expr`,
+  // which would leave `toc` empty and null-deref the section lookups below.
+  const bool toc_parsed = ParseUSDCBinary(buffer.data(), buffer.size(), toc);
+  assert(toc_parsed);
+  (void)toc_parsed;
 
   auto* tokens_sec = toc.find("TOKENS");
   assert(tokens_sec != nullptr);
@@ -491,7 +501,12 @@ void test_roundtrip_time_samples() {
   assert(std::memcmp(buffer.data(), kCrateMagic, 8) == 0);
 
   TocInfo toc;
-  assert(ParseUSDCBinary(buffer.data(), buffer.size(), toc));
+  // NOTE: ParseUSDCBinary() populates `toc` as a side effect, so it must run
+  // outside assert() — under NDEBUG `assert(expr)` does not evaluate `expr`,
+  // which would leave `toc` empty and null-deref the section lookups below.
+  const bool toc_parsed = ParseUSDCBinary(buffer.data(), buffer.size(), toc);
+  assert(toc_parsed);
+  (void)toc_parsed;
 
   auto* ts = toc.find("TOKENS");
   assert(ts != nullptr);

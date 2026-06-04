@@ -909,7 +909,9 @@ bool SplitUDIMPath(const std::string &path, std::string *pre,
   }
 
   if (post) {
-    (*post) = std::string(re, path.end());
+    // `post` is everything AFTER the `<UDIM>` tag (the tag itself is excluded).
+    // e.g. diffuse.<UDIM>.png => pre="diffuse.", post=".png"
+    (*post) = std::string(re + std::ptrdiff_t(tag.size()), path.end());
   }
 
   return true;

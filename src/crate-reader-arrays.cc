@@ -12,6 +12,7 @@
 #endif
 
 #include "crate-reader.hh"
+#include "safe-arithmetic.hh"
 
 #ifdef __wasi__
 #else
@@ -152,6 +153,12 @@ bool CrateReader::ReadIntArray(bool is_compressed, std::vector<T> *d) {
       return false;
     }
 
+#if SIZE_MAX < UINT64_MAX
+    if (n > static_cast<uint64_t>(SIZE_MAX)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Array element count exceeds addressable memory");
+    }
+#endif
+
     DCOUT("array.len = " << n);
     length = size_t(n);
   }
@@ -166,14 +173,18 @@ bool CrateReader::ReadIntArray(bool is_compressed, std::vector<T> *d) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too large array elements.");
   }
 
-  CHECK_MEMORY_USAGE(sizeof(T) * length);
+  size_t byte_count;
+  if (!safe::mul(sizeof(T), length, &byte_count)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
+  }
+  CHECK_MEMORY_USAGE(byte_count);
 
   d->resize(length);
 
   if (!is_compressed) {
 
     // TODO(syoyo): Zero-copy
-    if (!_sr->read(sizeof(T) * length, sizeof(T) * length,
+    if (!_sr->read(byte_count, byte_count,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read integer array data.");
     }
@@ -217,6 +228,11 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
       return false;
     }
 
+#if SIZE_MAX < UINT64_MAX
+    if (n > static_cast<uint64_t>(SIZE_MAX)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Array element count exceeds addressable memory");
+    }
+#endif
     length = size_t(n);
   }
 
@@ -224,7 +240,11 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
     PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Too many array elements {}.", length));
   }
 
-  CHECK_MEMORY_USAGE(length * sizeof(uint16_t));
+  size_t half_bytes;
+  if (!safe::mul(length, sizeof(uint16_t), &half_bytes)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in half array size computation");
+  }
+  CHECK_MEMORY_USAGE(half_bytes);
 
   d->resize(length);
 
@@ -357,6 +377,11 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
       return false;
     }
 
+#if SIZE_MAX < UINT64_MAX
+    if (n > static_cast<uint64_t>(SIZE_MAX)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Array element count exceeds addressable memory");
+    }
+#endif
     length = size_t(n);
   }
 
@@ -364,7 +389,11 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
   }
 
-  CHECK_MEMORY_USAGE(length * sizeof(float));
+  size_t float_bytes;
+  if (!safe::mul(length, sizeof(float), &float_bytes)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in float array size computation");
+  }
+  CHECK_MEMORY_USAGE(float_bytes);
 
   d->resize(length);
 
@@ -494,6 +523,11 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
       return false;
     }
 
+#if SIZE_MAX < UINT64_MAX
+    if (n > static_cast<uint64_t>(SIZE_MAX)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Array element count exceeds addressable memory");
+    }
+#endif
     length = size_t(n);
   }
 
@@ -506,7 +540,11 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
   }
 
-  CHECK_MEMORY_USAGE(length * sizeof(double));
+  size_t double_bytes;
+  if (!safe::mul(length, sizeof(double), &double_bytes)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in double array size computation");
+  }
+  CHECK_MEMORY_USAGE(double_bytes);
 
   d->resize(length);
 
@@ -634,6 +672,11 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
       _err += "Failed to read the number of array elements.\n";
       return false;
     }
+#if SIZE_MAX < UINT64_MAX
+    if (n > static_cast<uint64_t>(SIZE_MAX)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Array element count exceeds addressable memory");
+    }
+#endif
     length = size_t(n);
   }
 
@@ -641,7 +684,11 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
   }
 
-  CHECK_MEMORY_USAGE(length * sizeof(float));
+  size_t float_bytes;
+  if (!safe::mul(length, sizeof(float), &float_bytes)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in float array size computation");
+  }
+  CHECK_MEMORY_USAGE(float_bytes);
 
   d->resize(length);
 
@@ -756,6 +803,11 @@ bool CrateReader::ReadFloat2ArrayTyped(TypedArray<value::float2> *d) {
       _err += "Failed to read the number of array elements.\n";
       return false;
     }
+#if SIZE_MAX < UINT64_MAX
+    if (n > static_cast<uint64_t>(SIZE_MAX)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Array element count exceeds addressable memory");
+    }
+#endif
     length = size_t(n);
   }
 
@@ -797,6 +849,11 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
       _err += "Failed to read the number of array elements.\n";
       return false;
     }
+#if SIZE_MAX < UINT64_MAX
+    if (n > static_cast<uint64_t>(SIZE_MAX)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Array element count exceeds addressable memory");
+    }
+#endif
     length = size_t(n);
   }
 
@@ -809,7 +866,11 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
   }
 
-  CHECK_MEMORY_USAGE(length * sizeof(double));
+  size_t double_bytes;
+  if (!safe::mul(length, sizeof(double), &double_bytes)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in double array size computation");
+  }
+  CHECK_MEMORY_USAGE(double_bytes);
 
   d->resize(length);
 
@@ -924,6 +985,11 @@ bool CrateReader::ReadIntArrayTyped(bool is_compressed, TypedArray<T> *d) {
       _err += "Failed to read the number of array elements.\n";
       return false;
     }
+#if SIZE_MAX < UINT64_MAX
+    if (n > static_cast<uint64_t>(SIZE_MAX)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Array element count exceeds addressable memory");
+    }
+#endif
     length = size_t(n);
   }
 

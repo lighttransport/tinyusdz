@@ -218,8 +218,10 @@ VEC2/3/4 F/D/H, scalar FLOAT/DOUBLE/HALF, MATRIX2/3/4D. NOT eligible: INT/UINT/I
 (LZ4 + integer compression). Minimum threshold: 1024 elements.
 
 Activation: `--mmap-lowmem` (CLI `tydra_to_renderscene`), `setMMapZeroCopy(true)` (WASM,
-default off), or `USDLoadOptions::mmap_zero_copy = true` (C++). The mmap'd / input buffer
-must stay alive while the Stage is in use.
+default off), or `USDLoadOptions::mmap_zero_copy = true` (C++). File-based loaders keep
+the backing mmap/file buffer alive through `Stage` ownership; memory-based loaders require
+the caller's input buffer to remain alive while zero-copy refs may be used. See
+[mmap.md](mmap.md) for API usage and lifecycle details.
 
 **Limitations:** TimeSamples are NOT deferred (V2 only handles `default` values);
 `ExportToString`/pprinter and direct Stage accessors (`get_points()`, …) return empty

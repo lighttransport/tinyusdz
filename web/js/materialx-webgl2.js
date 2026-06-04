@@ -277,7 +277,7 @@ async function buildScene() {
     const root = new THREE.Group();
 
     for (let i = 0; i < numMeshes; i++) {
-        const meshData = usd.getMesh(i);
+        const meshData = usd.getMeshCopy(i);
         if (!meshData || !meshData.vertices) continue;
 
         const geometry = createGeometry(meshData);

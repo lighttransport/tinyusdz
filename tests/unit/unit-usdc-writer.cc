@@ -390,6 +390,79 @@ def Material "mat" {
   }
 }
 
+void usdc_writer_layer_empty_shader_outputs_test(void) {
+  const char *usda = R"(#usda 1.0
+def Material "mat" {
+  token outputs:surface.connect = </mat/pbr.outputs:surface>
+
+  def Shader "pbr" {
+    uniform token info:id = "UsdPreviewSurface"
+    token outputs:surface
+  }
+
+  def Shader "tex" {
+    uniform token info:id = "UsdUVTexture"
+    float3 outputs:rgb
+    float outputs:r
+  }
+}
+)";
+
+  std::string warn, err;
+  Layer layer;
+  bool ok = LoadLayerFromMemory(reinterpret_cast<const uint8_t *>(usda),
+                                std::strlen(usda), "test.usda", &layer,
+                                &warn, &err);
+  if (!ok) { TEST_MSG("load layer failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  std::vector<uint8_t> buf;
+  ok = usdc::SaveAsUSDCToMemory(layer, &buf, &warn, &err);
+  if (!ok) { TEST_MSG("write layer failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  TEST_CHECK(!buf.empty());
+  if (!ok || buf.empty()) return;
+
+  Layer roundtrip_layer;
+  ok = LoadLayerFromMemory(buf.data(), buf.size(), "test.usdc",
+                           &roundtrip_layer, &warn, &err);
+  if (!ok) { TEST_MSG("reload layer failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  const PrimSpec *pbr = nullptr;
+  TEST_CHECK(roundtrip_layer.find_primspec_at(Path("/mat/pbr", ""), &pbr, &err));
+  TEST_CHECK(pbr != nullptr);
+  if (pbr) {
+    auto it = pbr->props().find("outputs:surface");
+    TEST_CHECK(it != pbr->props().end());
+    if (it != pbr->props().end()) {
+      TEST_CHECK(it->second.is_attribute());
+      TEST_CHECK(it->second.get_attribute().type_name() == "token");
+    }
+  }
+
+  const PrimSpec *tex = nullptr;
+  TEST_CHECK(roundtrip_layer.find_primspec_at(Path("/mat/tex", ""), &tex, &err));
+  TEST_CHECK(tex != nullptr);
+  if (tex) {
+    auto rgb = tex->props().find("outputs:rgb");
+    TEST_CHECK(rgb != tex->props().end());
+    if (rgb != tex->props().end()) {
+      TEST_CHECK(rgb->second.is_attribute());
+      TEST_CHECK(rgb->second.get_attribute().type_name() == "float3");
+    }
+
+    auto r = tex->props().find("outputs:r");
+    TEST_CHECK(r != tex->props().end());
+    if (r != tex->props().end()) {
+      TEST_CHECK(r->second.is_attribute());
+      TEST_CHECK(r->second.get_attribute().type_name() == "float");
+    }
+  }
+}
+
 // =========================================================================
 // Material / Shader tests
 // =========================================================================
@@ -431,6 +504,7 @@ def Shader "tex" {
   float4 inputs:scale = (1, 1, 1, 1)
   float4 inputs:bias = (0, 0, 0, 0)
   float3 outputs:rgb
+  float4 outputs:rgba
 }
 )";
   RT_OK(usda);
@@ -448,6 +522,7 @@ def Shader "tex" {
   TEST_CHECK(uv->sourceColorSpace.authored());
   // terminal output
   TEST_CHECK(uv->outputsRGB.authored());
+  TEST_CHECK(uv->outputsRGBA.authored());
 }
 
 void usdc_writer_primvarreader_test(void) {
@@ -4356,4 +4431,140 @@ def Xform "x" {
   TEST_CHECK(toks[0].str() == "left");
   TEST_CHECK(toks[1].str() == "right");
   TEST_CHECK(toks[2].str() == "both");
+}
+
+// =========================================================================
+// UsdPrimvarReader varname-connection + uniform info:id (USDC write regression)
+//
+// Regression for two USDC writer bugs found while converting UE-exported USD:
+//   1) A UsdPrimvarReader's `inputs:varname` authored as a CONNECTION
+//      (`inputs:varname.connect = </Mat.inputs:stPrimvarName>`) was dropped on
+//      write (only the value form was handled), which broke UsdUVTexture
+//      evaluation and made the whole render-scene load fail.
+//   2) Shader `info:id` was written with `varying` variability instead of the
+//      schema-required `uniform`.
+// =========================================================================
+
+void usdc_writer_primvar_reader_varname_connection_test(void) {
+  const char *usda = R"(#usda 1.0
+def Material "M" {
+  token inputs:stPrimvarName = "st"
+  token outputs:surface.connect = </M/S.outputs:surface>
+
+  def Shader "P" {
+    uniform token info:id = "UsdPrimvarReader_float2"
+    string inputs:varname.connect = </M.inputs:stPrimvarName>
+    float2 outputs:result
+  }
+  def Shader "S" {
+    uniform token info:id = "UsdPreviewSurface"
+    token outputs:surface
+  }
+}
+)";
+  RT_OK(usda);
+  const auto *mat = find_root<Material>(stage, "M");
+  TEST_CHECK(mat != nullptr);
+  if (!mat) return;
+
+  const Prim *matPrim = find_root_prim(stage, "M");
+  TEST_CHECK(matPrim != nullptr);
+  if (!matPrim) return;
+
+  // Locate the PrimvarReader child shader "P".
+  const Shader *reader_shader = nullptr;
+  for (const auto &child : matPrim->children()) {
+    if (child.element_name() == "P") {
+      reader_shader = child.data().as<Shader>();
+    }
+  }
+  TEST_CHECK(reader_shader != nullptr);
+  if (!reader_shader) return;
+
+  const auto *reader = reader_shader->value.as<UsdPrimvarReader_float2>();
+  TEST_CHECK(reader != nullptr);
+  if (!reader) return;
+
+  // The connected varname must survive the USDC roundtrip.
+  TEST_CHECK(reader->varname.authored());
+  TEST_CHECK(reader->varname.has_connections());
+  if (!reader->varname.has_connections()) return;
+  const auto &paths = reader->varname.connections();
+  TEST_CHECK(paths.size() == 1);
+  if (paths.size() != 1) return;
+  TEST_CHECK(paths[0].full_path_name() == "/M.inputs:stPrimvarName");
+}
+
+// Regression: a UsdTransform2d's connected `inputs:in` (wired to a
+// UsdPrimvarReader's st output) must survive a USDC write. Dropping it (only the
+// value form was handled) makes UsdUVTexture evaluation fail with
+// `inputs:in` must be a connection.
+void usdc_writer_transform2d_in_connection_test(void) {
+  const char *usda = R"(#usda 1.0
+def Shader "streader" {
+  uniform token info:id = "UsdPrimvarReader_float2"
+  float2 outputs:result
+}
+def Shader "place" {
+  uniform token info:id = "UsdTransform2d"
+  float2 inputs:in.connect = </streader.outputs:result>
+  float2 inputs:scale = (2, 2)
+  float2 outputs:result
+}
+)";
+  RT_OK(usda);
+  const auto *t = find_root<Shader>(stage, "place");
+  TEST_CHECK(t != nullptr);
+  if (!t) return;
+  const auto *xf = t->value.as<UsdTransform2d>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+
+  TEST_CHECK(xf->in.authored());
+  TEST_CHECK(xf->in.has_connections());
+  if (!xf->in.has_connections()) return;
+  const auto &paths = xf->in.connections();
+  TEST_CHECK(paths.size() == 1);
+  if (paths.size() != 1) return;
+  TEST_CHECK(paths[0].full_path_name() == "/streader.outputs:result");
+}
+
+void usdc_writer_shader_info_id_uniform_test(void) {
+  const char *usda = R"(#usda 1.0
+def Shader "S" {
+  uniform token info:id = "UsdPreviewSurface"
+  token outputs:surface
+}
+)";
+  std::string warn, err;
+  Layer layer;
+  bool ok = LoadLayerFromMemory(reinterpret_cast<const uint8_t *>(usda),
+                                std::strlen(usda), "test.usda", &layer,
+                                &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) { TEST_MSG("load failed: %s", err.c_str()); return; }
+
+  std::vector<uint8_t> buf;
+  ok = usdc::SaveAsUSDCToMemory(layer, &buf, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) { TEST_MSG("write failed: %s", err.c_str()); return; }
+
+  Layer rt;
+  ok = LoadLayerFromMemory(buf.data(), buf.size(), "test.usdc", &rt, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) { TEST_MSG("reload failed: %s", err.c_str()); return; }
+
+  const PrimSpec *ps = nullptr;
+  TEST_CHECK(rt.find_primspec_at(Path("/S", ""), &ps, &err));
+  TEST_CHECK(ps != nullptr);
+  if (!ps) return;
+
+  auto it = ps->props().find("info:id");
+  TEST_CHECK(it != ps->props().end());
+  if (it == ps->props().end()) return;
+  TEST_CHECK(it->second.is_attribute());
+  if (!it->second.is_attribute()) return;
+  // info:id is `uniform token` per the UsdShade schema; it must not degrade to
+  // `varying` through the USDC writer.
+  TEST_CHECK(it->second.get_attribute().variability() == Variability::Uniform);
 }

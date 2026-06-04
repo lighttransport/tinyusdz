@@ -583,18 +583,17 @@ int main(int argc, char **argv) {
       }
     } else if (tinyusdz::startsWith(arg, "--snip=")) {
       std::string snip_str = tinyusdz::removePrefix(arg, "--snip=");
-      try {
-        int snip_val = std::stoi(snip_str);
-        if (snip_val < 1) {
-          std::cerr << "Invalid snip value: " << snip_val
-                    << ". Must be >= 1\n";
-          return EXIT_FAILURE;
-        }
-        inspect_opts.snip_count = static_cast<size_t>(snip_val);
-      } catch (...) {
+      nonstd::optional<int> snip_val = tinyusdz::atoi(snip_str);
+      if (!snip_val.has_value()) {
         std::cerr << "Invalid snip value: " << snip_str << "\n";
         return EXIT_FAILURE;
       }
+      if (snip_val.value() < 1) {
+        std::cerr << "Invalid snip value: " << snip_val.value()
+                  << ". Must be >= 1\n";
+        return EXIT_FAILURE;
+      }
+      inspect_opts.snip_count = static_cast<size_t>(snip_val.value());
     } else if (tinyusdz::startsWith(arg, "--path=")) {
       inspect_opts.prim_path_pattern = tinyusdz::removePrefix(arg, "--path=");
     } else if (tinyusdz::startsWith(arg, "--attr=")) {
@@ -607,23 +606,23 @@ int main(int argc, char **argv) {
       if (colon_pos != std::string::npos) {
         std::string start_str = time_str.substr(0, colon_pos);
         std::string end_str = time_str.substr(colon_pos + 1);
-        try {
-          inspect_opts.time_start = std::stod(start_str);
-          inspect_opts.time_end = std::stod(end_str);
-        } catch (...) {
+        nonstd::optional<double> t_start = tinyusdz::atod(start_str);
+        nonstd::optional<double> t_end = tinyusdz::atod(end_str);
+        if (!t_start.has_value() || !t_end.has_value()) {
           std::cerr << "Invalid time range: " << time_str << "\n";
           return EXIT_FAILURE;
         }
+        inspect_opts.time_start = t_start.value();
+        inspect_opts.time_end = t_end.value();
       } else {
         // Single time value
-        try {
-          double t = std::stod(time_str);
-          inspect_opts.time_start = t;
-          inspect_opts.time_end = t;
-        } catch (...) {
+        nonstd::optional<double> t = tinyusdz::atod(time_str);
+        if (!t.has_value()) {
           std::cerr << "Invalid time value: " << time_str << "\n";
           return EXIT_FAILURE;
         }
+        inspect_opts.time_start = t.value();
+        inspect_opts.time_end = t.value();
       }
     } else if (arg.compare("--loglevel") == 0) {
       if (i + 1 >= argc) {
@@ -631,20 +630,19 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
       }
       i++; // Move to next argument
-      try {
-        int log_level = std::stoi(argv[i]);
-        if (log_level < 0 || log_level > 5) {
-          std::cerr << "Invalid log level: " << log_level << ". Must be between 0 and 5.\n";
+      {
+        nonstd::optional<int> log_level = tinyusdz::atoi(argv[i]);
+        if (!log_level.has_value()) {
+          std::cerr << "Invalid log level argument: " << argv[i] << ". Must be an integer.\n";
+          return EXIT_FAILURE;
+        }
+        int ll = log_level.value();
+        if (ll < 0 || ll > 5) {
+          std::cerr << "Invalid log level: " << ll << ". Must be between 0 and 5.\n";
           return EXIT_FAILURE;
         }
         tinyusdz::logging::Logger::getInstance().setLogLevel(
-            static_cast<tinyusdz::logging::LogLevel>(log_level));
-      } catch (const std::invalid_argument& e) {
-        std::cerr << "Invalid log level argument: " << argv[i] << ". Must be an integer.\n";
-        return EXIT_FAILURE;
-      } catch (const std::out_of_range& e) {
-        std::cerr << "Log level value out of range: " << argv[i] << "\n";
-        return EXIT_FAILURE;
+            static_cast<tinyusdz::logging::LogLevel>(ll));
       }
     } else if (tinyusdz::startsWith(arg, "--composition=")) {
       std::string value_str = tinyusdz::removePrefix(arg, "--composition=");

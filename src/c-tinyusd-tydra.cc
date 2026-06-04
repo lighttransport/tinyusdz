@@ -954,6 +954,7 @@ int c_tinyusd_animation_get_channel(const CTinyUSDAnimationClip *a,
     case AnimationPath::Rotation:    *out_path = 1; break;
     case AnimationPath::Scale:       *out_path = 2; break;
     case AnimationPath::Weights:     *out_path = 3; break;
+    default:                         *out_path = -1; break;
   }
   *out_target_type = (c.target_type == ChannelTargetType::SkeletonJoint) ? 1 : 0;
   *out_target_node = c.target_node;

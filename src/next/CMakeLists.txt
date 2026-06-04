@@ -211,7 +211,15 @@ else()
 endif()
 
 # Optional: Create test executable
-option(TINYUSDZ_NEXT_BUILD_TESTS "Build tests for TinyUSDZ Next" OFF)
+#
+# EXPERIMENTAL / under-construction module. `next` is a standalone CMake project
+# (not added by the top-level CMakeLists) and its tests are OFF by default, so it
+# is intentionally excluded from the main native regression suite (`build/` ctest)
+# and from the Pixar comparison runner. Its tests may be unstable and use bare
+# assert() (no-ops under NDEBUG). Build/run them on demand only — see
+# doc/testing-cpp.md ("Experimental `next` library tests"). Do NOT add `next` to
+# the full regression gate without first hardening the suite.
+option(TINYUSDZ_NEXT_BUILD_TESTS "Build tests for TinyUSDZ Next (experimental; excluded from main regression)" OFF)
 
 if(TINYUSDZ_NEXT_BUILD_TESTS)
     add_executable(test_tinyusdz_next
