@@ -700,8 +700,6 @@ struct EMAssetResolutionResolver {
                      std::string *resolved_asset_name, std::string *err,
                      void *userdata) {
     (void)err;
-    (void)userdata;
-    (void)search_paths;
 
     if (!asset_name) {
       return -2;  // err
@@ -711,9 +709,55 @@ struct EMAssetResolutionResolver {
       return -2;  // err
     }
 
-    // TODO: searchpath
+    EMAssetResolutionResolver *p =
+        reinterpret_cast<EMAssetResolutionResolver *>(userdata);
+
+    // Without a cache to consult, echo the name back (legacy behavior).
+    if (!p) {
+      (*resolved_asset_name) = asset_name;
+      return 0;
+    }
+
+    // 1) Direct hit: the name is already a cache key.
+    if (p->has(asset_name)) {
+      (*resolved_asset_name) = asset_name;
+      return 0;
+    }
+
+    // 2) Honor search paths. A nested reference path is authored relative to the
+    //    referencing layer's directory; composition pushes that directory into
+    //    `search_paths`. Try "<search_path>/<asset_name>" against the cache.
+    const std::string name(asset_name);
+    for (const std::string &sp : search_paths) {
+      if (sp.empty() || sp == "." || sp == "./") {
+        continue;
+      }
+      std::string base = sp;
+      while (!base.empty() && base.back() == '/') {
+        base.pop_back();
+      }
+      const std::string cand = base + "/" + name;
+      if (p->has(cand)) {
+        (*resolved_asset_name) = cand;
+        return 0;
+      }
+    }
+
+    // 3) Fallback: match by trailing path segment, so a relative ref resolves to
+    //    a uniquely-named cached asset regardless of its subdirectory.
+    const std::string suffix = "/" + name;
+    for (const auto &kv : p->cache) {
+      const std::string &key = kv.first;
+      if (key.size() >= suffix.size() &&
+          key.compare(key.size() - suffix.size(), suffix.size(), suffix) == 0) {
+        (*resolved_asset_name) = key;
+        return 0;
+      }
+    }
+
+    // Not found in cache: echo the name so Size/Read report a clean miss.
     (*resolved_asset_name) = asset_name;
-    return 0;  // OK
+    return 0;
   }
 
   // AssetResoltion handlers
@@ -736,6 +780,12 @@ struct EMAssetResolutionResolver {
     }
 
     EMAssetResolutionResolver *p = reinterpret_cast<EMAssetResolutionResolver *>(userdata);
+    if (!p || !p->has(asset_name)) {
+      if (err) {
+        (*err) += "Asset not found in cache: " + std::string(asset_name) + "\n";
+      }
+      return -1;  // not found
+    }
     const AssetCacheEntry &entry = p->get(asset_name);
 
     //std::cout << asset_name << ".size " << entry.binary.size() << "\n";
@@ -8157,7 +8207,7 @@ emscripten::val fitTextures(const emscripten::val& opts) {
 //
 // Loads both inputs as Layers (pre-composition, so the full PrimSpec/Attribute
 // tree is preserved) and diffs them with tinyusdz::tydra. Mirrors the native
-// `usddiff` / `tusddiff` tool (examples/usddiff/usddiff-main.cc).
+// `tusddiff` tool (tools/tusddiff/tusddiff.cc).
 emscripten::val usddiff(const emscripten::val& opts) {
   using namespace tinyusdz;
   emscripten::val result = emscripten::val::object();

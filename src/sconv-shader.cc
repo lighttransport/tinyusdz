@@ -715,27 +715,61 @@ bool CrateWriter::AddUsdPrimvarReaderInputSpecs(
     return AddSpec(input_path, SpecType::Attribute, input_fields, err);
   };
 
+  // Helper: emit an input that holds a connection (no concrete value), e.g.
+  // `inputs:varname.connect = </Material.inputs:stPrimvarName>`. Without this,
+  // a connected varname (the common case for UV-coordinate readers wired to the
+  // material's primvar-name interface input) is dropped on USDC write, which
+  // later breaks UsdUVTexture evaluation (missing st reader varname).
+  auto add_input_connection_spec = [&](const std::string& input_name,
+                                        const std::string& type_name,
+                                        const std::vector<Path>& conn_paths) -> bool {
+    Path input_path = prim_path.AppendProperty(input_name);
+    crate::FieldValuePairVector input_fields;
+
+    crate::CrateValue type_value;
+    value::token type_tok(type_name);
+    type_value.Set(type_tok);
+    input_fields.push_back({"typeName", type_value});
+
+    ListOp<Path> conn_listop;
+    conn_listop.ClearAndMakeExplicit();
+    conn_listop.SetExplicitItems(conn_paths);
+    crate::CrateValue conn_value;
+    conn_value.Set(conn_listop);
+    input_fields.push_back({"connectionPaths", conn_value});
+
+    return AddSpec(input_path, SpecType::Attribute, input_fields, err);
+  };
+
   // Extract varname (string) - common to all UsdPrimvarReader variants
   // Try to get varname from the shader value using type-erased access
   std::string varname_str;
   bool has_varname = false;
+  std::vector<Path> varname_conns;
+  bool has_varname_conn = false;
 
   // The varname field is TypedAttribute<Animatable<std::string>>
   // We need to extract it generically from the shader_value
 
-  // Helper macro to try extracting varname from a specific UsdPrimvarReader type
+  // Helper macro to try extracting varname (value or connection) from a
+  // specific UsdPrimvarReader type.
   #define TRY_EXTRACT_VARNAME(ReaderType) \
-    if (!has_varname) { \
+    if (!has_varname && !has_varname_conn) { \
       if (auto* reader = shader_value.as<ReaderType>()) { \
         if (reader->varname.authored()) { \
-          auto varname_opt = reader->varname.get_value(); \
-          if (varname_opt.has_value()) { \
-            const auto& varname_anim = varname_opt.value(); \
-            if (!varname_anim.is_timesamples()) { \
-              std::string vn; \
-              if (varname_anim.get_scalar(&vn)) { \
-                varname_str = vn; \
-                has_varname = true; \
+          if (reader->varname.has_connections()) { \
+            varname_conns = reader->varname.connections(); \
+            has_varname_conn = !varname_conns.empty(); \
+          } else { \
+            auto varname_opt = reader->varname.get_value(); \
+            if (varname_opt.has_value()) { \
+              const auto& varname_anim = varname_opt.value(); \
+              if (!varname_anim.is_timesamples()) { \
+                std::string vn; \
+                if (varname_anim.get_scalar(&vn)) { \
+                  varname_str = vn; \
+                  has_varname = true; \
+                } \
               } \
             } \
           } \
@@ -756,11 +790,15 @@ bool CrateWriter::AddUsdPrimvarReaderInputSpecs(
 
   #undef TRY_EXTRACT_VARNAME
 
-  // Add inputs:varname (string)
+  // Add inputs:varname (string) - as a concrete value or a connection.
   if (has_varname) {
     crate::CrateValue varname_value;
     varname_value.Set(varname_str);
     if (!add_input_spec("inputs:varname", "string", varname_value)) {
+      return false;
+    }
+  } else if (has_varname_conn) {
+    if (!add_input_connection_spec("inputs:varname", "string", varname_conns)) {
       return false;
     }
   }

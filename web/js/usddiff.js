@@ -3,7 +3,7 @@
 // Layer / PrimSpec / Attribute level, and view the result as text or JSON.
 //
 // Files are loaded as Layers (pre-composition), so the full prim/attribute tree
-// is compared. Mirrors the native `usddiff` / `tusddiff` tool.
+// is compared. Mirrors the native `tusddiff` tool (tools/tusddiff/tusddiff.cc).
 
 import { loadWasm } from './src/usdzconvert.js';
 

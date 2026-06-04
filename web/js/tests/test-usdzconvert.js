@@ -19,6 +19,9 @@ import {
   rootUsdFromMap,
   loadWasm,
   convertFolderToUSDZ,
+  unpackUSDZ,
+  expandUsdzInputs,
+  isAudioName,
 } from '../src/usdzconvert.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -116,6 +119,17 @@ test('png is not usd', () => assert.equal(isUsdName('tex.png'), false));
 test('case insensitive USDA', () => assert.equal(isUsdName('SCENE.USDA'), true));
 test('path with dirs', () => assert.equal(isUsdName('models/scene.usda'), true));
 test('empty string', () => assert.equal(isUsdName(''), false));
+
+// ============================================================
+console.log('isAudioName');
+// ============================================================
+test('m4a is audio', () => assert.equal(isAudioName('clip.m4a'), true));
+test('mp3 is audio', () => assert.equal(isAudioName('clip.mp3'), true));
+test('wav is audio', () => assert.equal(isAudioName('clip.wav'), true));
+test('aac is audio', () => assert.equal(isAudioName('clip.AAC'), true));
+test('png is not audio', () => assert.equal(isAudioName('tex.png'), false));
+test('usd is not audio', () => assert.equal(isAudioName('scene.usda'), false));
+test('audio path with dirs', () => assert.equal(isAudioName('audio/voice.mp3'), true));
 
 // ============================================================
 console.log('imageFormatFromName');
@@ -371,6 +385,181 @@ def Xform "fromSub"
     } catch (e) {
       assert.ok(e.message.includes('Failed to load USD'), 'error should mention load failure');
     }
+  });
+
+  // --- USDZ unpack + repack (passthrough) round-trip ---
+  await testAsync('unpackUSDZ round-trips a generated USDZ', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const assetMap = new Map();
+    assetMap.set('scene.usda', new TextEncoder().encode(usdaContent));
+    const { usdz } = await convertFolderToUSDZ(native, assetMap, { rootPath: 'scene.usda' });
+    const { entries, order } = unpackUSDZ(usdz);
+    assert.ok(order.length >= 1, 'archive should have at least one entry');
+    assert.ok(order.some(isUsdName), 'archive should contain a USD layer');
+    for (const name of order) {
+      assert.ok(entries.get(name) instanceof Uint8Array, `${name} should be bytes`);
+    }
+  });
+
+  await testAsync('unpackUSDZ rejects a non-zip buffer', () => {
+    assert.throws(() => unpackUSDZ(new Uint8Array([1, 2, 3, 4, 5])), /USDZ|ZIP/);
+  });
+
+  await testAsync('expandUsdzInputs unpacks a .usdz into its contents', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const seed = new Map([['scene.usda', new TextEncoder().encode(usdaContent)]]);
+    const { usdz } = await convertFolderToUSDZ(native, seed, { rootPath: 'scene.usda' });
+    const { assetMap, innerRoot } = expandUsdzInputs(new Map([['model.usdz', usdz]]));
+    assert.ok(innerRoot && isUsdName(innerRoot), 'innerRoot should be a USD layer');
+    assert.ok(!assetMap.has('model.usdz'), 'archive itself should be expanded away');
+    assert.ok(assetMap.has(innerRoot), 'expanded map should contain the inner root');
+  });
+
+  await testAsync('convertFolderToUSDZ repacks a .usdz input (passthrough)', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const seed = new Map([['scene.usda', new TextEncoder().encode(usdaContent)]]);
+    const first = await convertFolderToUSDZ(native, seed, { rootPath: 'scene.usda' });
+    // Feed the produced USDZ back in as the sole input — should unpack & repack.
+    const repacked = await convertFolderToUSDZ(
+      native,
+      new Map([['model.usdz', first.usdz]]),
+      { rootPath: 'model.usdz', reencode: false },
+    );
+    assert.ok(repacked.usdz instanceof Uint8Array, 'repack should produce bytes');
+    assert.equal(repacked.usdz[0], 0x50, 'output should be a ZIP (P)');
+    assert.ok(!/\.usdz$/i.test(repacked.stats.rootPath),
+      'root should resolve to the inner layer, not the .usdz');
+    // The repacked archive must still be loadable.
+    const usd = new native.TinyUSDZLoaderNative();
+    try {
+      assert.ok(usd.loadFromBinary(repacked.usdz, 'repacked.usdz'),
+        'repacked USDZ should load: ' + usd.error());
+    } finally {
+      usd.delete();
+    }
+  });
+
+  // Regression: skel:animationSource (SkelBindingAPI relationship) must survive a
+  // USDC-root export, otherwise skeletal animation is silently dropped on convert.
+  await testAsync('convertFolderToUSDZ preserves skeletal animation (USDC root)', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const skelUsda = `#usda 1.0
+(
+    defaultPrim = "root"
+    upAxis = "Y"
+)
+
+def SkelRoot "root"
+{
+    def Skeleton "skel"
+    {
+        uniform matrix4d[] bindTransforms = [( (1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1) )]
+        uniform token[] joints = ["joint0"]
+        uniform matrix4d[] restTransforms = [( (1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1) )]
+        rel skel:animationSource = </root/anim>
+    }
+
+    def SkelAnimation "anim"
+    {
+        uniform token[] joints = ["joint0"]
+        quatf[] rotations = [(1, 0, 0, 0)]
+        half3[] scales = [(1, 1, 1)]
+        float3[] translations.timeSamples = {
+            0: [(0, 0, 0)],
+            10: [(1, 0, 0)],
+        }
+    }
+}
+`;
+    const assetMap = new Map([['skel.usda', new TextEncoder().encode(skelUsda)]]);
+    // Sanity-check the source actually has a skeleton + animation.
+    const src = new native.TinyUSDZLoaderNative();
+    assert.ok(src.loadFromBinary(new TextEncoder().encode(skelUsda), 'skel.usda'));
+    assert.equal(src.numSkeletons(), 1, 'source should have a skeleton');
+    assert.equal(src.numAnimations(), 1, 'source should have a skel animation');
+    src.delete();
+
+    const { usdz } = await convertFolderToUSDZ(native, assetMap, {
+      rootPath: 'skel.usda', rootLayerFormat: 'usdc',
+    });
+    const out = new native.TinyUSDZLoaderNative();
+    try {
+      assert.ok(out.loadFromBinary(usdz, 'out.usdz'), 'converted USDZ should load');
+      assert.equal(out.numSkeletons(), 1, 'skeleton should survive conversion');
+      assert.equal(out.numAnimations(), 1,
+        'skeletal animation must survive USDC conversion (skel:animationSource binding)');
+    } finally {
+      out.delete();
+    }
+  });
+
+  // Regression: a UsdPrimvarReader's connected `inputs:varname` (and the uniform
+  // `info:id`) must survive a USDC write. Dropping the varname connection breaks
+  // UsdUVTexture evaluation, making the whole render-scene load fail.
+  await testAsync('USDC write preserves shader varname connection + uniform info:id', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const matUsda = `#usda 1.0
+def Material "M"
+{
+    token inputs:stPrimvarName = "st"
+    token outputs:surface.connect = </M/S.outputs:surface>
+    def Shader "P"
+    {
+        uniform token info:id = "UsdPrimvarReader_float2"
+        string inputs:varname.connect = </M.inputs:stPrimvarName>
+        float2 outputs:result
+    }
+    def Shader "S"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        token outputs:surface
+    }
+}
+`;
+    const usd = new native.TinyUSDZLoaderNative();
+    assert.ok(usd.loadAsLayerFromBinary(new TextEncoder().encode(matUsda), 'm.usda'));
+    const usdc = usd.exportAsUSDC();
+    usd.delete();
+    const rt = new native.TinyUSDZLoaderNative();
+    try {
+      assert.ok(rt.loadAsLayerFromBinary(new Uint8Array(usdc), 'rt.usdc'), 'USDC reload');
+      const out = rt.exportAsUSDA();
+      assert.match(out, /inputs:varname\.connect\s*=\s*<\/M\.inputs:stPrimvarName>/,
+        'varname connection must survive the USDC round-trip');
+      assert.match(out, /uniform token info:id\s*=\s*"UsdPrimvarReader_float2"/,
+        'info:id must remain uniform after the USDC round-trip');
+    } finally {
+      rt.delete();
+    }
+  });
+
+  await testAsync('convertFolderToUSDZ passes audio assets through into the USDZ', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const audioBytes = new Uint8Array([0x66, 0x4c, 0x61, 0x43, 1, 2, 3, 4, 5, 6, 7, 8]); // 'fLaC' + filler
+    const assetMap = new Map([
+      ['scene.usda', new TextEncoder().encode(usdaContent)],
+      ['audio/voice.wav', audioBytes],
+    ]);
+    const { usdz, stats } = await convertFolderToUSDZ(native, assetMap, { rootPath: 'scene.usda' });
+    assert.equal(stats.audio, 1, 'one audio asset should be counted');
+    const { entries } = unpackUSDZ(usdz);
+    assert.ok(entries.has('audio/voice.wav'), 'audio file should be packed into the USDZ');
+    assert.deepEqual(entries.get('audio/voice.wav'), audioBytes, 'audio bytes should pass through unchanged');
+  });
+
+  await testAsync('audioProcessor hook can replace audio bytes', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const assetMap = new Map([
+      ['scene.usda', new TextEncoder().encode(usdaContent)],
+      ['snd.mp3', new Uint8Array([1, 1, 1])],
+    ]);
+    const replacement = new Uint8Array([9, 9, 9, 9]);
+    const { usdz } = await convertFolderToUSDZ(native, assetMap, {
+      rootPath: 'scene.usda',
+      audioProcessor: () => ({ data: replacement }),
+    });
+    const { entries } = unpackUSDZ(usdz);
+    assert.deepEqual(entries.get('snd.mp3'), replacement, 'audioProcessor output should be packed');
   });
 
   // Cleanup temp files.
