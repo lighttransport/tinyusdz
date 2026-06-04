@@ -680,25 +680,46 @@ void stage_concurrent_timesamples_read_test(void) {
   ts.add_sample<double>(1.0, 10.0);
   ts.add_sample<double>(3.0, 30.0);
 
-  // Finalize once, single-threaded (mirrors what the parsers do at load).
+  // Finalize once, single-threaded (mirrors what the parsers do at load). This
+  // sorts unified storage but intentionally leaves _samples unmaterialized, so
+  // the threads below race on the first get_samples() materialization — which
+  // must be internally guarded.
   ts.update();
   TEST_CHECK(ts.size() == 4);
 
   const int kThreads = 8;
   const int kIters = 5000;
   std::atomic<bool> ok{true};
+  // Start barrier so all threads hit the cold first get_samples() (the lazy
+  // materialization) at the same instant. NOTE: this validates functional
+  // correctness under concurrency; the acutest binary's in-process TSan does not
+  // reliably flag data races (see doc/datarace.md) — the authoritative TSan
+  // check for this fix is the standalone harness documented there.
+  std::atomic<int> ready{0};
+  std::atomic<bool> go{false};
 
   auto worker = [&]() {
+    ready.fetch_add(1);
+    while (!go.load(std::memory_order_acquire)) {
+      // spin until released
+    }
     for (int it = 0; it < kIters; ++it) {
       if (ts.size() != 4) {
         ok.store(false);
       }
       double v = 0.0;
-      // Held interpolation; just exercise the read path concurrently.
+      // Binary scalar fast path.
       if (ts.get<double>(&v, 1.0)) {
         if (v != 10.0) {
           ok.store(false);
         }
+      }
+      // Generic-samples path: this lazily materializes `_samples` from unified
+      // storage on first call (the const-read mutation being guarded). Exercise
+      // it concurrently so the materialization race would surface under TSan.
+      const std::vector<value::TimeSamples::Sample> &samples = ts.get_samples();
+      if (samples.size() != 4) {
+        ok.store(false);
       }
     }
   };
@@ -708,6 +729,10 @@ void stage_concurrent_timesamples_read_test(void) {
   for (int i = 0; i < kThreads; ++i) {
     threads.emplace_back(worker);
   }
+  // Release all workers once they're all spun up.
+  while (ready.load() < kThreads) {
+  }
+  go.store(true, std::memory_order_release);
   for (auto &t : threads) {
     t.join();
   }
