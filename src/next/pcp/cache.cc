@@ -14,7 +14,15 @@
 #include <unordered_map>
 #if defined(TINYUSDZ_ENABLE_THREAD)
 #include <atomic>
+#include <mutex>
 #include <thread>
+// Serializes the engine's shared mutable state so the Cache is safe to use
+// (ComputePrimIndex / BuildStage / queries / payload edits) from multiple
+// threads. Recursive because some entry points call others (e.g. LoadPayload ->
+// ComputePrimIndex). Compiles to nothing in non-threaded builds.
+#define NEXT_PCP_LOCK(m) std::lock_guard<std::recursive_mutex> _pcp_lk(m)
+#else
+#define NEXT_PCP_LOCK(m) (void)0
 #endif
 
 namespace tinyusdz {
@@ -63,6 +71,9 @@ struct Cache::Impl {
   AssetResolver *resolver = nullptr;
   CompositionOptions options;
   LayerRegistry registry;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  mutable std::recursive_mutex api_mu_;  // guards all shared state below
+#endif
 
   std::shared_ptr<Layer> root_layer;  // kept alive (also layer_stacks[0].layers[0])
   std::string root_identifier;
@@ -591,6 +602,7 @@ struct Cache::Impl {
 
   const PrimIndex *ComputePrimIndex(const Path &prim_path, std::string *warn,
                                     std::string *err) {
+    NEXT_PCP_LOCK(api_mu_);
     const std::string key = prim_path.str();
     auto it = index_cache.find(key);
     if (it != index_cache.end()) return it->second.get();
@@ -687,6 +699,7 @@ struct Cache::Impl {
   }
 
   bool BuildStage(Stage *stage, std::string *warn, std::string *err) {
+    NEXT_PCP_LOCK(api_mu_);
     auto out = std::unique_ptr<Layer>(new Layer());
 
     const Layer *root = layer_stacks[0].layers[0].get();
@@ -710,6 +723,7 @@ struct Cache::Impl {
   // a deeper refactor left as future work.
   bool PrewarmPrimIndices(const std::vector<Path> &paths, std::string *warn,
                           std::string *err) {
+    NEXT_PCP_LOCK(api_mu_);
 #if defined(TINYUSDZ_ENABLE_THREAD)
     int nt = options.num_threads;
     if (nt < 0) nt = static_cast<int>(std::thread::hardware_concurrency());
@@ -755,6 +769,7 @@ struct Cache::Impl {
 
   std::string ComputeInstanceKey(const Path &path, std::string *warn,
                                  std::string *err) {
+    NEXT_PCP_LOCK(api_mu_);
     const std::vector<Src> &srcs = SourcesForPath(path, warn, err);
     return ComputeInstanceKeyImpl(srcs);
   }
@@ -776,6 +791,7 @@ struct Cache::Impl {
   }
 
   void Invalidate(const Path &prim_path) {
+    NEXT_PCP_LOCK(api_mu_);
     const std::string base = prim_path.str();
     std::set<std::string> to_drop;
 
@@ -802,6 +818,7 @@ struct Cache::Impl {
   }
 
   void InvalidateLayer(const std::string &layer_id) {
+    NEXT_PCP_LOCK(api_mu_);
     std::set<std::string> to_drop;
     for (const auto &kv : site_to_indices) {
       if (kv.first.layer_id == layer_id) {
@@ -817,6 +834,7 @@ struct Cache::Impl {
   // --- payloads -----------------------------------------------------------
 
   bool LoadPayload(const Path &prim_path, std::string *warn, std::string *err) {
+    NEXT_PCP_LOCK(api_mu_);
     payloads_force_loaded.insert(prim_path.str());
     payloads_force_unloaded.erase(prim_path.str());
     Invalidate(prim_path);
@@ -825,6 +843,7 @@ struct Cache::Impl {
   }
 
   bool UnloadPayload(const Path &prim_path) {
+    NEXT_PCP_LOCK(api_mu_);
     payloads_force_unloaded.insert(prim_path.str());
     payloads_force_loaded.erase(prim_path.str());
     Invalidate(prim_path);
@@ -875,20 +894,24 @@ bool Cache::BuildStage(Stage *stage, std::string *warn, std::string *err) {
 }
 
 bool Cache::IsInstance(const Path &p) const {
+  NEXT_PCP_LOCK(impl_->api_mu_);
   auto it = impl_->prototype_of.find(p.str());
   return it != impl_->prototype_of.end() && it->second != p.str();
 }
 Path Cache::GetPrototype(const Path &p) const {
+  NEXT_PCP_LOCK(impl_->api_mu_);
   auto it = impl_->prototype_of.find(p.str());
   return it != impl_->prototype_of.end() ? Path(it->second) : Path();
 }
 std::vector<Path> Cache::GetPrototypePaths() const {
+  NEXT_PCP_LOCK(impl_->api_mu_);
   std::vector<Path> out;
   out.reserve(impl_->instances_by_prototype.size());
   for (const auto &kv : impl_->instances_by_prototype) out.push_back(Path(kv.first));
   return out;
 }
 std::vector<Path> Cache::GetInstancesForPrototype(const Path &proto) const {
+  NEXT_PCP_LOCK(impl_->api_mu_);
   std::vector<Path> out;
   auto it = impl_->instances_by_prototype.find(proto.str());
   if (it != impl_->instances_by_prototype.end()) {
@@ -896,7 +919,10 @@ std::vector<Path> Cache::GetInstancesForPrototype(const Path &proto) const {
   }
   return out;
 }
-size_t Cache::PrototypeCount() const { return impl_->instances_by_prototype.size(); }
+size_t Cache::PrototypeCount() const {
+  NEXT_PCP_LOCK(impl_->api_mu_);
+  return impl_->instances_by_prototype.size();
+}
 std::string Cache::ComputeInstanceKey(const Path &p, std::string *warn,
                                       std::string *err) {
   return impl_->ComputeInstanceKey(p, warn, err);
@@ -907,9 +933,11 @@ bool Cache::LoadPayload(const Path &p, std::string *warn, std::string *err) {
 }
 bool Cache::UnloadPayload(const Path &p) { return impl_->UnloadPayload(p); }
 bool Cache::HasDeferredPayload(const Path &p) const {
+  NEXT_PCP_LOCK(impl_->api_mu_);
   return impl_->deferred_payload_prims.count(p.str()) != 0;
 }
 std::vector<Path> Cache::GetDeferredPayloadPaths() const {
+  NEXT_PCP_LOCK(impl_->api_mu_);
   std::vector<Path> out;
   out.reserve(impl_->deferred_payload_prims.size());
   for (const std::string &s : impl_->deferred_payload_prims) out.push_back(Path(s));
@@ -920,9 +948,13 @@ void Cache::Invalidate(const Path &prim_path) { impl_->Invalidate(prim_path); }
 void Cache::InvalidateLayer(const std::string &id) { impl_->InvalidateLayer(id); }
 
 bool Cache::HasComputedPrimIndex(const Path &prim_path) const {
+  NEXT_PCP_LOCK(impl_->api_mu_);
   return impl_->index_cache.count(prim_path.str()) != 0;
 }
-size_t Cache::ComputedPrimIndexCount() const { return impl_->index_cache.size(); }
+size_t Cache::ComputedPrimIndexCount() const {
+  NEXT_PCP_LOCK(impl_->api_mu_);
+  return impl_->index_cache.size();
+}
 const LayerRegistry &Cache::layer_registry() const { return impl_->registry; }
 void Cache::PreloadLayer(const std::string &identifier,
                          std::shared_ptr<Layer> layer) {
