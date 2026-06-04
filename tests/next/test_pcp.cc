@@ -31,6 +31,10 @@ static std::shared_ptr<Layer> BuildRootLayer() {
   // Internal reference to /Lib/Model in the same layer.
   lb.current()->meta().references.push_back("</Lib/Model>");
   lb.end_prim();  // A
+  // P carries a PAYLOAD (deferrable) to the same Model.
+  lb.begin_prim("P", "");
+  lb.current()->meta().payloads.push_back("</Lib/Model>");
+  lb.end_prim();  // P
   lb.end_prim();  // World
 
   lb.begin_prim("Lib", "Scope");
@@ -126,10 +130,66 @@ static void test_invalidate() {
   std::cout << "  OK" << std::endl;
 }
 
+// Phase 2: ancestral composition - a descendant of a referenced prim can be
+// computed lazily even though it has no local spec.
+static void test_ancestral_compute() {
+  std::cout << "test_ancestral_compute..." << std::endl;
+  AssetResolver resolver;
+  auto root = BuildRootLayer();
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  std::string warn, err;
+  // /World/A/Inner exists only because /World/A references /Lib/Model whose
+  // child is Inner. No local spec at /World/A/Inner.
+  const pcp::PrimIndex *inner =
+      cache.ComputePrimIndex(Path("/World/A/Inner"), &warn, &err);
+  assert(inner != nullptr && "ancestral composition failed for /World/A/Inner");
+  assert(inner->HasAnySpecs());
+  std::cout << "  OK" << std::endl;
+}
+
+// Phase 2: deferred payloads.
+static void test_deferred_payload() {
+  std::cout << "test_deferred_payload..." << std::endl;
+  AssetResolver resolver;
+  auto root = BuildRootLayer();
+
+  pcp::CompositionOptions opts;
+  opts.payload_policy = [](const Path &, const std::string &) { return false; };
+  auto opened = pcp::Cache::Open(resolver, root, "", opts);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  // Payload deferred: /World/P composed but WITHOUT the payload's content.
+  assert(cache.HasDeferredPayload(Path("/World/P")) && "payload not deferred");
+  UsdPrim p = stage.GetPrimAtPath("/World/P");
+  assert(p.IsValid());
+  assert(p.GetPropertyValue("size") == nullptr && "payload content leaked while deferred");
+  assert(!stage.GetPrimAtPath("/World/P/Inner").IsValid());
+
+  // Load the payload and recompose: content now present.
+  assert(cache.LoadPayload(Path("/World/P"), &warn, &err));
+  assert(!cache.HasDeferredPayload(Path("/World/P")));
+  Stage stage2;
+  assert(cache.BuildStage(&stage2, &warn, &err));
+  UsdPrim p2 = stage2.GetPrimAtPath("/World/P");
+  assert(p2.GetPropertyValue("size") != nullptr && "payload did not load");
+  assert(stage2.GetPrimAtPath("/World/P/Inner").IsValid());
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_build_stage();
   test_invalidate();
+  test_ancestral_compute();
+  test_deferred_payload();
   std::cout << "All next/pcp tests passed." << std::endl;
   return 0;
 }

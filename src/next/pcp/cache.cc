@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - PCP Cache implementation (phase 1: sublayers + references)
+// TinyUSDZ Next - PCP Cache implementation
+// Phase 1: sublayers + references.  Phase 2: ancestral opinions + deferred payloads.
 
 #include "cache.hh"
 
-#include "../composition/composition.hh"  // reuse ParseReference / CopyLocalOpinions
+#include "../composition/composition.hh"  // reuse ParseReference / ParsePayload / CopyLocalOpinions
 
 #include <map>
 #include <set>
@@ -23,6 +24,7 @@ struct Src {
   std::string site;            // prim path within the layer stack
   NamespaceMapping map;        // remap site-namespace -> root-prim namespace
   LayerOffset offset;
+  bool is_payload = false;     // arrived via a payload arc (weaker than reference)
 };
 
 // Reverse-dependency key: which (layer, prim-path) an index read from.
@@ -40,6 +42,13 @@ struct SiteHash {
   }
 };
 
+// True if `child` == `base` or a namespace descendant of `base`.
+bool IsAtOrUnder(const std::string &child, const std::string &base) {
+  if (child == base) return true;
+  return child.size() > base.size() &&
+         child.compare(0, base.size(), base) == 0 && child[base.size()] == '/';
+}
+
 }  // namespace
 
 struct Cache::Impl {
@@ -54,8 +63,14 @@ struct Cache::Impl {
   std::map<std::string, uint32_t> stack_by_id;      // dedup by resolved identifier
 
   std::unordered_map<std::string, std::unique_ptr<PrimIndex>> index_cache;
+  std::unordered_map<std::string, std::vector<Src>> sources_cache;  // path -> expanded sources
   std::unordered_map<Site, std::set<std::string>, SiteHash> site_to_indices;
   std::unordered_map<std::string, std::vector<Site>> index_to_sites;
+
+  // Deferred payload state.
+  std::set<std::string> deferred_payload_prims;    // root-space prim paths
+  std::set<std::string> payloads_force_loaded;     // explicit LoadPayload overrides
+  std::set<std::string> payloads_force_unloaded;   // explicit UnloadPayload overrides
 
   // --- layer stacks -------------------------------------------------------
 
@@ -63,8 +78,6 @@ struct Cache::Impl {
     return AssetResolver::GetDirectory(path);
   }
 
-  // Build [layer, sublayers...] (strong first) for `layer`, loading sublayers
-  // through the parse-once registry. `identifier` anchors relative paths.
   uint32_t InternLayerStack(std::shared_ptr<Layer> layer,
                             const std::string &identifier, std::string *warn,
                             std::string *err) {
@@ -110,99 +123,161 @@ struct Cache::Impl {
     return nullptr;
   }
 
-  bool AnyLayerAuthors(const LayerStack &st, const std::string &site) const {
-    return FindSpec(st, site, nullptr) != nullptr;
+  bool AnyAuthors(const std::vector<Src> &srcs) const {
+    for (const Src &s : srcs) {
+      if (FindSpec(layer_stacks[s.stack_idx], s.site, nullptr)) return true;
+    }
+    return false;
   }
 
-  // --- reference expansion (pre-order DFS == strength order) --------------
+  // --- payload policy -----------------------------------------------------
 
-  void ExpandRefs(const Src &src, std::set<std::string> cycle,
+  bool ShouldLoadPayload(const std::string &root_prim_path,
+                         const std::string &asset) {
+    if (payloads_force_unloaded.count(root_prim_path)) return false;
+    if (payloads_force_loaded.count(root_prim_path)) return true;
+    if (options.payload_policy) {
+      return options.payload_policy(Path(root_prim_path), asset);
+    }
+    return options.load_payloads;
+  }
+
+  // --- arc expansion (references + payloads); pre-order DFS == strength ----
+
+  // Resolve+recurse an external/internal arc target from source `src`.
+  void ProcessArc(const Src &src, const CompositionArc &arc, bool is_payload,
+                  const std::set<std::string> &cycle, std::vector<Src> *out,
+                  std::string *warn, std::string *err) {
+    uint32_t arc_stack_idx;
+    std::string arc_site;
+    if (arc.is_internal || arc.asset_path.empty()) {
+      arc_stack_idx = src.stack_idx;
+      arc_site = arc.prim_path.empty() ? src.site : arc.prim_path;
+    } else {
+      const std::string anchor = DirOf(layer_stacks[src.stack_idx].identifier);
+      std::shared_ptr<Layer> arc_layer =
+          registry.GetOrLoad(*resolver, arc.asset_path, anchor, warn, err);
+      if (!arc_layer) {
+        if (options.error_when_asset_not_found && err) {
+          *err += "Arc asset not found: " + arc.asset_path + "\n";
+        }
+        return;
+      }
+      const std::string arc_id = resolver->ResolvePath(arc.asset_path, anchor);
+      arc_stack_idx = InternLayerStack(arc_layer, arc_id, warn, err);
+      if (!arc.prim_path.empty()) {
+        arc_site = arc.prim_path;
+      } else if (!arc_layer->meta().defaultPrim.empty()) {
+        arc_site = "/" + arc_layer->meta().defaultPrim;
+      } else {
+        const auto &roots = arc_layer->root_indices();
+        arc_site = roots.empty() ? "/" : "/" + arc_layer->prim(roots[0])->name();
+      }
+    }
+
+    const std::string key = layer_stacks[arc_stack_idx].identifier + ":" + arc_site;
+    if (cycle.count(key)) {
+      if (err) *err += "Composition cycle detected at arc: " + key + "\n";
+      return;
+    }
+    if (cycle.size() >= options.max_depth) {
+      if (err) *err += "Composition max depth exceeded\n";
+      return;
+    }
+
+    NamespaceMapping local{arc_site, src.site};
+    Src arc_src;
+    arc_src.stack_idx = arc_stack_idx;
+    arc_src.site = arc_site;
+    arc_src.map = NamespaceMapping::Compose(src.map, local);
+    arc_src.offset = src.offset;
+    arc_src.is_payload = is_payload || src.is_payload;
+
+    std::set<std::string> child_cycle = cycle;
+    child_cycle.insert(key);
+    ExpandArcs(arc_src, std::move(child_cycle), out, warn, err);
+  }
+
+  void ExpandArcs(const Src &src, std::set<std::string> cycle,
                   std::vector<Src> *out, std::string *warn, std::string *err) {
     out->push_back(src);
 
     const Layer *src_layer = nullptr;
-    const PrimSpec *spec = FindSpec(layer_stacks[src.stack_idx], src.site, &src_layer);
+    const PrimSpec *spec =
+        FindSpec(layer_stacks[src.stack_idx], src.site, &src_layer);
     if (!spec) return;
 
+    // References (stronger than payloads).
     for (const std::string &ref_str : spec->meta().references) {
-      CompositionArc arc = Compositor::ParseReference(ref_str);
+      ProcessArc(src, Compositor::ParseReference(ref_str), /*is_payload=*/false,
+                 cycle, out, warn, err);
+    }
 
-      uint32_t ref_stack_idx;
-      std::string ref_site;
-      if (arc.is_internal || arc.asset_path.empty()) {
-        // Internal reference: same layer stack, target prim path within it.
-        ref_stack_idx = src.stack_idx;
-        ref_site = arc.prim_path.empty() ? src.site : arc.prim_path;
-      } else {
-        const std::string anchor = DirOf(layer_stacks[src.stack_idx].identifier);
-        std::shared_ptr<Layer> ref_layer =
-            registry.GetOrLoad(*resolver, arc.asset_path, anchor, warn, err);
-        if (!ref_layer) {
-          if (options.error_when_asset_not_found && err) {
-            *err += "Reference asset not found: " + arc.asset_path + "\n";
-          }
-          continue;
+    // Payloads (deferrable, weaker than references).
+    if (!spec->meta().payloads.empty()) {
+      const std::string root_prim_path = src.map.Apply(src.site);
+      for (const std::string &pl_str : spec->meta().payloads) {
+        CompositionArc arc = Compositor::ParsePayload(pl_str);
+        if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
+          deferred_payload_prims.insert(root_prim_path);
+          continue;  // deferred: contributes no opinions.
         }
-        const std::string ref_id =
-            resolver->ResolvePath(arc.asset_path, anchor);
-        ref_stack_idx = InternLayerStack(ref_layer, ref_id, warn, err);
-        if (!arc.prim_path.empty()) {
-          ref_site = arc.prim_path;
-        } else if (!ref_layer->meta().defaultPrim.empty()) {
-          ref_site = "/" + ref_layer->meta().defaultPrim;
-        } else {
-          const auto &roots = ref_layer->root_indices();
-          ref_site = roots.empty()
-                         ? "/"
-                         : "/" + ref_layer->prim(roots[0])->name();
-        }
+        deferred_payload_prims.erase(root_prim_path);
+        ProcessArc(src, arc, /*is_payload=*/true, cycle, out, warn, err);
       }
-
-      const std::string key =
-          layer_stacks[ref_stack_idx].identifier + ":" + ref_site;
-      if (cycle.count(key)) {
-        if (err) *err += "Composition cycle detected at reference: " + key + "\n";
-        continue;
-      }
-      if (cycle.size() >= options.max_depth) {
-        if (err) *err += "Composition max depth exceeded\n";
-        continue;
-      }
-
-      // Map referenced namespace -> this prim's namespace, composed to root.
-      NamespaceMapping local{ref_site, src.site};
-      Src ref_src;
-      ref_src.stack_idx = ref_stack_idx;
-      ref_src.site = ref_site;
-      ref_src.map = NamespaceMapping::Compose(src.map, local);
-      ref_src.offset = src.offset;  // phase 1: layer offset not yet parsed
-
-      std::set<std::string> child_cycle = cycle;
-      child_cycle.insert(key);
-      ExpandRefs(ref_src, std::move(child_cycle), out, warn, err);
     }
   }
 
-  std::vector<Src> ExpandSources(const Src &root, std::string *warn,
-                                 std::string *err) {
-    std::vector<Src> out;
-    std::set<std::string> cycle;
-    cycle.insert(layer_stacks[root.stack_idx].identifier + ":" + root.site);
-    ExpandRefs(root, std::move(cycle), &out, warn, err);
-    return out;
-  }
-
-  // Expand a whole list of base sources (each gets its own cycle set seeded by
-  // its site). Preserves order (strength).
   std::vector<Src> ExpandList(const std::vector<Src> &base, std::string *warn,
                               std::string *err) {
     std::vector<Src> out;
     for (const Src &s : base) {
       std::set<std::string> cycle;
       cycle.insert(layer_stacks[s.stack_idx].identifier + ":" + s.site);
-      ExpandRefs(s, std::move(cycle), &out, warn, err);
+      ExpandArcs(s, std::move(cycle), &out, warn, err);
     }
     return out;
+  }
+
+  // --- ancestral source resolution (cached) -------------------------------
+
+  // The expanded composition sources for `path`. A root-level prim seeds from
+  // the root layer stack; a descendant re-roots each of its parent's expanded
+  // sources at the child name (so arcs authored on an ancestor reach it), then
+  // expands that child's own arcs. Cached per path.
+  const std::vector<Src> &SourcesForPath(const Path &path, std::string *warn,
+                                         std::string *err) {
+    const std::string key = path.str();
+    auto it = sources_cache.find(key);
+    if (it != sources_cache.end()) return it->second;
+
+    std::vector<Src> base;
+    Path parent = path.parent();
+    const bool parent_is_root =
+        parent.is_root() || parent.empty() || parent.str() == "/";
+    if (parent_is_root) {
+      Src s;
+      s.stack_idx = 0;
+      s.site = key;
+      base.push_back(std::move(s));
+    } else {
+      const std::vector<Src> &psrc = SourcesForPath(parent, warn, err);
+      const std::string cn = path.name();
+      base.reserve(psrc.size());
+      for (const Src &ps : psrc) {
+        Src c;
+        c.stack_idx = ps.stack_idx;
+        c.site = ps.site + "/" + cn;
+        c.map = ps.map;
+        c.offset = ps.offset;
+        c.is_payload = ps.is_payload;
+        base.push_back(std::move(c));
+      }
+    }
+
+    std::vector<Src> expanded = ExpandList(base, warn, err);
+    auto res = sources_cache.emplace(key, std::move(expanded));
+    return res.first->second;
   }
 
   // --- value resolution ---------------------------------------------------
@@ -224,10 +299,8 @@ struct Cache::Impl {
         specifier_set = true;
       }
 
-      // type / properties / time-samples / metadata (strongest-wins, fill-absent)
       Compositor::CopyLocalOpinions(*out, *spec);
 
-      // relationships (fill-absent, remap targets to root namespace)
       for (const std::string &rn : spec->relationship_names()) {
         if (out->relationship(rn)) continue;
         const std::vector<Path> *tgts = spec->relationship(rn);
@@ -237,7 +310,6 @@ struct Cache::Impl {
         }
       }
 
-      // children (union across all sources, in strength order)
       for (uint32_t ci : spec->child_indices()) {
         const PrimSpec *cs = layer->prim(ci);
         if (!cs) continue;
@@ -257,15 +329,10 @@ struct Cache::Impl {
     auto it = index_cache.find(key);
     if (it != index_cache.end()) return it->second.get();
 
-    // Existence: a local spec must exist in the root layer stack.
-    if (!AnyLayerAuthors(layer_stacks[0], key)) {
-      return nullptr;
+    const std::vector<Src> &srcs = SourcesForPath(prim_path, warn, err);
+    if (!AnyAuthors(srcs)) {
+      return nullptr;  // prim does not exist in the composed namespace.
     }
-
-    Src root;
-    root.stack_idx = 0;
-    root.site = key;
-    std::vector<Src> srcs = ExpandSources(root, warn, err);
 
     auto index = std::unique_ptr<PrimIndex>(new PrimIndex());
     index->SetPath(prim_path);
@@ -276,13 +343,14 @@ struct Cache::Impl {
     for (size_t i = 0; i < srcs.size(); ++i) {
       const Src &s = srcs[i];
       CompNode n;
-      n.arc_type = (i == 0) ? ArcType::Root : ArcType::Reference;
+      n.arc_type = (i == 0) ? ArcType::Root
+                            : (s.is_payload ? ArcType::Payload : ArcType::Reference);
       n.parent = (i == 0) ? 0xFFFF : 0;
       n.layer_stack_idx = s.stack_idx;
       n.site_prim_path = s.site;
       n.map_to_root = s.map;
       n.offset = s.offset;
-      if (AnyLayerAuthors(layer_stacks[s.stack_idx], s.site)) {
+      if (FindSpec(layer_stacks[s.stack_idx], s.site, nullptr)) {
         n.flags |= NodeFlags::HasSpecs;
         sites.push_back(Site{layer_stacks[s.stack_idx].identifier, s.site});
       }
@@ -292,10 +360,7 @@ struct Cache::Impl {
     }
     index->SetStrengthOrder(std::move(order));
 
-    // Register reverse dependencies.
-    for (const Site &site : sites) {
-      site_to_indices[site].insert(key);
-    }
+    for (const Site &site : sites) site_to_indices[site].insert(key);
     index_to_sites[key] = std::move(sites);
 
     const PrimIndex *ret = index.get();
@@ -305,17 +370,13 @@ struct Cache::Impl {
 
   // --- BuildStage ---------------------------------------------------------
 
-  // Compose a prim from a list of base sources, then recurse into its children.
-  // Children are derived from the EXPANDED sources (so referenced subtrees and
-  // their namespace mapping carry down), each re-rooted at the child name.
-  void BuildPrimFromBase(const std::vector<Src> &base, const std::string &name,
-                         const Path &out_path, Layer *out, uint32_t parent_idx,
-                         bool is_root, std::string *warn, std::string *err) {
-    std::vector<Src> expanded = ExpandList(base, warn, err);
+  void BuildStageRec(const Path &path, Layer *out, uint32_t parent_idx,
+                     bool is_root, std::string *warn, std::string *err) {
+    const std::vector<Src> &srcs = SourcesForPath(path, warn, err);
 
-    PrimSpec spec(name);
-    spec.set_path(out_path);
-    std::vector<std::string> children = ComposeInto(expanded, &spec);
+    PrimSpec spec(path.name());
+    spec.set_path(path);
+    std::vector<std::string> children = ComposeInto(srcs, &spec);
 
     uint32_t idx = out->add_prim(std::move(spec));
     if (is_root) {
@@ -325,20 +386,7 @@ struct Cache::Impl {
     }
 
     for (const std::string &cn : children) {
-      // Child sources = every expanded source re-rooted at the child. Sources
-      // that don't author the child contribute nothing (FindSpec misses).
-      std::vector<Src> child_base;
-      child_base.reserve(expanded.size());
-      for (const Src &s : expanded) {
-        Src c;
-        c.stack_idx = s.stack_idx;
-        c.site = s.site + "/" + cn;
-        c.map = s.map;
-        c.offset = s.offset;
-        child_base.push_back(std::move(c));
-      }
-      BuildPrimFromBase(child_base, cn, out_path.append_child(cn), out, idx,
-                        /*is_root=*/false, warn, err);
+      BuildStageRec(path.append_child(cn), out, idx, /*is_root=*/false, warn, err);
     }
   }
 
@@ -348,16 +396,10 @@ struct Cache::Impl {
     const Layer *root = layer_stacks[0].layers[0].get();
     for (uint32_t ri : root->root_indices()) {
       const std::string nm = root->prim(ri)->name();
-      Src s;
-      s.stack_idx = 0;
-      s.site = "/" + nm;
-      std::vector<Src> base{s};
-      BuildPrimFromBase(base, nm, Path("/" + nm), out.get(), 0,
-                        /*is_root=*/true, warn, err);
+      BuildStageRec(Path("/" + nm), out.get(), 0, /*is_root=*/true, warn, err);
     }
 
     out->finalize();
-    // Carry root layer metadata onto the composed result.
     out->meta() = root->meta();
     stage->SetRootLayer(std::move(*out));
     return true;
@@ -375,31 +417,33 @@ struct Cache::Impl {
       index_to_sites.erase(it);
     }
     index_cache.erase(key);
+    sources_cache.erase(key);
   }
 
   void Invalidate(const Path &prim_path) {
     const std::string base = prim_path.str();
     std::set<std::string> to_drop;
 
-    // The prim itself + namespace descendants.
     for (const auto &kv : index_cache) {
-      const std::string &k = kv.first;
-      if (k == base || (k.size() > base.size() &&
-                        k.compare(0, base.size(), base) == 0 &&
-                        k[base.size()] == '/')) {
-        to_drop.insert(k);
-      }
+      if (IsAtOrUnder(kv.first, base)) to_drop.insert(kv.first);
     }
-    // Indices that read a site at/under prim_path.
     for (const auto &kv : site_to_indices) {
-      const std::string &sp = kv.first.prim_path;
-      if (sp == base || (sp.size() > base.size() &&
-                         sp.compare(0, base.size(), base) == 0 &&
-                         sp[base.size()] == '/')) {
+      if (IsAtOrUnder(kv.first.prim_path, base)) {
         for (const std::string &dep : kv.second) to_drop.insert(dep);
       }
     }
     for (const std::string &k : to_drop) DropIndex(k);
+
+    // sources_cache + deferred state may have descendants not in index_cache.
+    for (auto it = sources_cache.begin(); it != sources_cache.end();) {
+      if (IsAtOrUnder(it->first, base)) it = sources_cache.erase(it);
+      else ++it;
+    }
+    for (auto it = deferred_payload_prims.begin();
+         it != deferred_payload_prims.end();) {
+      if (IsAtOrUnder(*it, base)) it = deferred_payload_prims.erase(it);
+      else ++it;
+    }
   }
 
   void InvalidateLayer(const std::string &layer_id) {
@@ -410,7 +454,26 @@ struct Cache::Impl {
       }
     }
     for (const std::string &k : to_drop) DropIndex(k);
+    // Conservative: a referenced layer feeds many prims' sources.
+    sources_cache.clear();
     registry.Drop(layer_id);
+  }
+
+  // --- payloads -----------------------------------------------------------
+
+  bool LoadPayload(const Path &prim_path, std::string *warn, std::string *err) {
+    payloads_force_loaded.insert(prim_path.str());
+    payloads_force_unloaded.erase(prim_path.str());
+    Invalidate(prim_path);
+    ComputePrimIndex(prim_path, warn, err);  // recompose now.
+    return true;
+  }
+
+  bool UnloadPayload(const Path &prim_path) {
+    payloads_force_unloaded.insert(prim_path.str());
+    payloads_force_loaded.erase(prim_path.str());
+    Invalidate(prim_path);
+    return true;
   }
 };
 
@@ -448,6 +511,20 @@ const PrimIndex *Cache::ComputePrimIndex(const Path &prim_path,
 bool Cache::BuildStage(Stage *stage, std::string *warn, std::string *err) {
   if (!stage) return false;
   return impl_->BuildStage(stage, warn, err);
+}
+
+bool Cache::LoadPayload(const Path &p, std::string *warn, std::string *err) {
+  return impl_->LoadPayload(p, warn, err);
+}
+bool Cache::UnloadPayload(const Path &p) { return impl_->UnloadPayload(p); }
+bool Cache::HasDeferredPayload(const Path &p) const {
+  return impl_->deferred_payload_prims.count(p.str()) != 0;
+}
+std::vector<Path> Cache::GetDeferredPayloadPaths() const {
+  std::vector<Path> out;
+  out.reserve(impl_->deferred_payload_prims.size());
+  for (const std::string &s : impl_->deferred_payload_prims) out.push_back(Path(s));
+  return out;
 }
 
 void Cache::Invalidate(const Path &prim_path) { impl_->Invalidate(prim_path); }
