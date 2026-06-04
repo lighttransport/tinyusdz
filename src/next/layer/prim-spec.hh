@@ -79,6 +79,9 @@ struct PrimSpecMeta {
   bool active = true;
   bool hidden = false;
   bool instanceable = false;  // when true (with arcs), the prim is an instance
+  // When non-empty (set by composition), this prim is an instance whose children
+  // are provided by the prototype prim at this path (no duplicated subtree).
+  std::string instance_prototype;
   std::string doc;
   std::string comment;
   std::vector<std::string> apiSchemas;
