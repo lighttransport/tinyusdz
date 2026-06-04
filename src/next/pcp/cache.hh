@@ -55,6 +55,18 @@ class Cache {
   /// Materialize the fully-composed scene into `stage` (a fresh root Layer).
   bool BuildStage(Stage *stage, std::string *warn, std::string *err);
 
+  /// Load a deferred payload on `prim_path` and recompose the affected prims.
+  bool LoadPayload(const Path &prim_path, std::string *warn, std::string *err);
+
+  /// Unload (defer) the payload on `prim_path` and recompose.
+  bool UnloadPayload(const Path &prim_path);
+
+  /// Whether `prim_path` has an unloaded (deferred) payload.
+  bool HasDeferredPayload(const Path &prim_path) const;
+
+  /// All prims that currently have a deferred payload.
+  std::vector<Path> GetDeferredPayloadPaths() const;
+
   /// Drop the cached index for `prim_path` and every index that depended on a
   /// site at/under it.
   void Invalidate(const Path &prim_path);
