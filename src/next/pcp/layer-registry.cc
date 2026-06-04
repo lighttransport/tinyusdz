@@ -66,37 +66,26 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
                                                 const std::string &anchor,
                                                 std::string *warn,
                                                 std::string *err) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(*mu_);
+#endif
+
   const std::string resolved = resolver.ResolvePath(asset_path, anchor);
   if (resolved.empty()) {
     if (err) *err += "Failed to resolve asset path: " + asset_path + "\n";
     return nullptr;
   }
 
-  // Fast path: cache hit under the lock.
-  {
-#if defined(TINYUSDZ_ENABLE_THREAD)
-    std::lock_guard<std::mutex> lk(*mu_);
-#endif
-    auto it = by_resolved_.find(resolved);
-    if (it != by_resolved_.end()) {
-      return it->second;  // Cache hit -- no re-parse.
-    }
+  auto it = by_resolved_.find(resolved);
+  if (it != by_resolved_.end()) {
+    return it->second;  // Cache hit -- no re-parse.
   }
 
-  // Parse OUTSIDE the lock so distinct assets load concurrently.
   std::shared_ptr<Layer> layer = LoadLayerFromFile(resolved, warn, err);
   if (!layer) {
     return nullptr;
   }
 
-  // Publish under the lock; another thread may have raced us to the same asset.
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  std::lock_guard<std::mutex> lk(*mu_);
-  auto it = by_resolved_.find(resolved);
-  if (it != by_resolved_.end()) {
-    return it->second;  // Lost the race; use the already-published layer.
-  }
-#endif
   ++parse_count_;
   by_resolved_.emplace(resolved, layer);
   return layer;

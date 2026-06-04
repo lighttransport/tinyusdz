@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cassert>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -737,6 +738,180 @@ static void test_compose_from_file() {
   std::cout << "  OK" << std::endl;
 }
 
+// Sublayers: weaker layer-stack opinions fill stronger root opinions; roots,
+// child prims, and arcs authored only in a sublayer must still compose.
+static void test_sublayer_stack_composition() {
+  std::cout << "test_sublayer_stack_composition..." << std::endl;
+
+  const std::string sub = "/tmp/next_pcp_sublayer_sub.usda";
+  {
+    std::ofstream f(sub);
+    f << "#usda 1.0\n"
+         "def Xform \"World\"\n"
+         "{\n"
+         "    custom int weakVal = 5\n"
+         "    def Scope \"WeakChild\"\n"
+         "    {\n"
+         "    }\n"
+         "    def \"SubRef\" (\n"
+         "        prepend references = [</Lib/Model>]\n"
+         "    )\n"
+         "    {\n"
+         "    }\n"
+         "    def \"SubPayload\" (\n"
+         "        payload = </Lib/Model>\n"
+         "    )\n"
+         "    {\n"
+         "    }\n"
+         "}\n"
+         "def Scope \"OnlyInSub\"\n"
+         "{\n"
+         "    custom int subOnly = 9\n"
+         "}\n"
+         "def Scope \"Lib\"\n"
+         "{\n"
+         "    def Mesh \"Model\"\n"
+         "    {\n"
+         "        custom int modelVal = 7\n"
+         "    }\n"
+         "}\n";
+  }
+
+  auto root_layer = std::make_shared<Layer>();
+  {
+    root_layer->meta().subLayers.push_back("next_pcp_sublayer_sub.usda");
+    LayerBuilder rb(*root_layer);
+    rb.begin_prim("World", "Xform");
+    rb.begin_prim("StrongChild", "Scope");
+    rb.end_prim();
+    rb.end_prim();
+    rb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  std::string warn, err;
+  auto opened = pcp::Cache::Open(resolver, root_layer,
+                                 "/tmp/next_pcp_sublayer_root.usda");
+  assert(opened && "sublayer Cache::Open failed");
+  pcp::Cache cache = std::move(*opened);
+  Stage stage;
+  bool ok = cache.BuildStage(&stage, &warn, &err);
+  if (!ok) std::cout << "  [diag] err=" << err << std::endl;
+  assert(ok && "sublayer BuildStage failed");
+
+  UsdPrim world = stage.GetPrimAtPath("/World");
+  assert(world.IsValid());
+  assert(world.GetPropertyValue("weakVal") != nullptr &&
+         "weaker sublayer property did not fill");
+  assert(stage.GetPrimAtPath("/World/StrongChild").IsValid());
+  assert(stage.GetPrimAtPath("/World/WeakChild").IsValid() &&
+         "weaker sublayer child missing");
+  assert(stage.GetPrimAtPath("/OnlyInSub").IsValid() &&
+         "sublayer-only root missing");
+
+  UsdPrim sub_ref = stage.GetPrimAtPath("/World/SubRef");
+  assert(sub_ref.IsValid());
+  assert(sub_ref.GetTypeName() == "Mesh" &&
+         "sublayer-authored reference did not compose");
+  assert(sub_ref.GetPropertyValue("modelVal") != nullptr);
+
+  UsdPrim sub_payload = stage.GetPrimAtPath("/World/SubPayload");
+  assert(sub_payload.IsValid());
+  assert(sub_payload.GetTypeName() == "Mesh" &&
+         "sublayer-authored payload did not compose");
+  assert(sub_payload.GetPropertyValue("modelVal") != nullptr);
+
+  std::remove(sub.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+static void test_sublayer_cycle_and_depth() {
+  std::cout << "test_sublayer_cycle_and_depth..." << std::endl;
+
+  const std::string cycle_root = "/tmp/next_pcp_cycle_root.usda";
+  {
+    std::ofstream f(cycle_root);
+    f << "#usda 1.0\n"
+         "def Xform \"Root\"\n"
+         "{\n"
+         "}\n";
+  }
+  auto cycle_layer = std::make_shared<Layer>();
+  {
+    cycle_layer->meta().subLayers.push_back("next_pcp_cycle_root.usda");
+    LayerBuilder lb(*cycle_layer);
+    lb.begin_prim("Root", "Xform");
+    lb.end_prim();
+    lb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  std::string warn, err;
+  auto cycle_opened = pcp::Cache::Open(resolver, cycle_layer, cycle_root);
+  assert(!cycle_opened && "sublayer cycle should fail Cache::Open");
+  assert(cycle_opened.error().find("Sublayer cycle") != std::string::npos);
+
+  const std::string depth_sub = "/tmp/next_pcp_depth_sub.usda";
+  {
+    std::ofstream f(depth_sub);
+    f << "#usda 1.0\n"
+         "def Scope \"Sub\"\n"
+         "{\n"
+         "}\n";
+  }
+
+  auto root_layer = std::make_shared<Layer>();
+  {
+    root_layer->meta().subLayers.push_back("next_pcp_depth_sub.usda");
+    LayerBuilder lb(*root_layer);
+    lb.begin_prim("Root", "Xform");
+    lb.end_prim();
+    lb.finalize();
+  }
+  pcp::CompositionOptions opts;
+  opts.max_depth = 0;
+  auto opened = pcp::Cache::Open(resolver, root_layer,
+                                 "/tmp/next_pcp_depth_root.usda", opts);
+  assert(!opened && "sublayer depth overflow should fail Cache::Open");
+
+  std::remove(cycle_root.c_str());
+  std::remove(depth_sub.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+static void test_node_overflow_fails_cleanly() {
+  std::cout << "test_node_overflow_fails_cleanly..." << std::endl;
+
+  auto root = std::make_shared<Layer>();
+  {
+    LayerBuilder lb(*root);
+    lb.begin_prim("Boom", "");
+    for (size_t i = 0; i < pcp::PrimIndex::kMaxNodeCount; ++i) {
+      lb.current()->meta().references.push_back("</Lib/A>");
+    }
+    lb.end_prim();
+    lb.begin_prim("Lib", "Scope");
+    lb.begin_prim("A", "Mesh");
+    lb.end_prim();
+    lb.end_prim();
+    lb.finalize();
+  }
+
+  AssetResolver resolver;
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  std::string warn, err;
+  const pcp::PrimIndex *idx =
+      cache.ComputePrimIndex(Path("/Boom"), &warn, &err);
+  assert(idx == nullptr && "overflowing PrimIndex should not be published");
+  assert(err.find("uint16 capacity") != std::string::npos);
+  assert(!cache.HasComputedPrimIndex(Path("/Boom")));
+  std::cout << "  OK" << std::endl;
+}
+
 // FU9: the Cache is thread-safe (built with TINYUSDZ_ENABLE_THREAD) -- multiple
 // threads may query/compose a shared cache concurrently.
 static void test_concurrent_queries() {
@@ -881,6 +1056,9 @@ int main() {
   test_cross_source_variant();
   test_implied_intermediate();
   test_compose_from_file();
+  test_sublayer_stack_composition();
+  test_sublayer_cycle_and_depth();
+  test_node_overflow_fails_cleanly();
   test_concurrent_queries();
   test_parallel_build_matches_serial();
   std::cout << "All next/pcp tests passed." << std::endl;

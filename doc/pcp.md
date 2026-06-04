@@ -1101,7 +1101,8 @@ Strength order `Local > Inherit > Variant > Reference > Payload > Specialize`:
 
 Built with `-DTINYUSDZ_NEXT_ENABLE_THREAD=ON`:
 
-- The `LayerRegistry` is thread-safe (parse-outside-lock, double-checked publish).
+- The `LayerRegistry` is thread-safe and serializes the same-asset resolve + parse
+  + publish path, so a referenced/payload/sublayer file is parsed exactly once.
 - The **`Cache` itself is thread-safe**: every public entry point (`ComputePrimIndex`,
   `BuildStage`, payload load/unload, invalidation, and all instancing/index queries)
   is serialized by a per-cache `std::recursive_mutex` (the `NEXT_PCP_LOCK` macro,
@@ -1112,9 +1113,10 @@ Built with `-DTINYUSDZ_NEXT_ENABLE_THREAD=ON`:
   the shared registry, then builds the per-prim indices **concurrently**: the batch is
   split into contiguous chunks and each worker runs the ordinary build on its **own
   private `Cache::Impl`** that *borrows the shared, parse-once `LayerRegistry`*. Because
-  a worker touches only its private tables plus the internally-locked registry, the
-  read-only layer data, and the pure `AssetResolver`, the heavy composition work runs
-  **without any shared lock**. A deterministic, input-order merge then folds each
+  a worker touches only its private tables plus the internally-locked registry and
+  read-only layer data, the heavy composition work runs **without any shared cache
+  lock**. Custom `AssetResolver` callbacks and `payload_policy` callbacks must be
+  thread-safe when used with parallel prewarm. A deterministic, input-order merge then folds each
   worker's `PrimIndex` into the cache — remapping the worker's private layer-stack /
   path-table indices onto the shared tables (sites use identifier strings, so no remap)
   and assigning instance prototypes **in input order**, so the composed result is
@@ -1140,9 +1142,12 @@ builds are sequential and zero-overhead — the parallel path and lock macro com
 
 `tests/next/test_pcp.cc` (built with `-DTINYUSDZ_NEXT_BUILD_TESTS=ON`) covers each
 arc, ancestral composition, deferred payloads, instancing + proxies, relocates,
-cross-source variants, implied class propagation (incl. intermediate stacks), the
-parallel batch build vs. a serial baseline, concurrent shared-cache queries (TSan),
-and the one-call helpers. `tests/next/test_pcp_parallel.cc` adds dedicated
+cross-source variants, implied class propagation (incl. intermediate stacks),
+sublayer stack composition/cycle/depth errors, node-overflow rejection, the parallel
+batch build vs. a serial baseline, concurrent shared-cache queries (TSan), and the
+one-call helpers. `tests/next/test_pcp_parallel.cc` adds dedicated
 minimal/complex/stress coverage for the parallel build on *synthetically generated*
-scenes (up to ~900 paths × 8 threads × repeated rounds), asserting every index and
-prototype grouping matches the serial baseline and is stable across runs (TSan-clean).
+scenes (up to ~900 paths × 8 threads × repeated rounds), plus same-asset parse-once
+contention coverage, asserting every index and prototype grouping matches the serial
+baseline and is stable across runs (TSan-clean). Both executables are registered as
+`next_test_pcp` and `next_test_pcp_parallel` in CTest.

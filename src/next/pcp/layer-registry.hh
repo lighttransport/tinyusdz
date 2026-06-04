@@ -58,9 +58,24 @@ class LayerRegistry {
   /// invalidated every PrimIndex that referenced it.
   void Drop(const std::string &resolved_path);
 
-  void Clear() { by_resolved_.clear(); }
-  size_t size() const { return by_resolved_.size(); }
-  size_t parse_count() const { return parse_count_; }
+  void Clear() {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    std::lock_guard<std::mutex> lk(*mu_);
+#endif
+    by_resolved_.clear();
+  }
+  size_t size() const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    std::lock_guard<std::mutex> lk(*mu_);
+#endif
+    return by_resolved_.size();
+  }
+  size_t parse_count() const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    std::lock_guard<std::mutex> lk(*mu_);
+#endif
+    return parse_count_;
+  }
 
  private:
   std::unordered_map<std::string, std::shared_ptr<Layer>> by_resolved_;
