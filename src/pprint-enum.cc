@@ -60,6 +60,10 @@ std::string to_string(const APISchemas::APIName &name) {
       s = "NodeDefAPI";
       break;
     }
+    case APISchemas::APIName::MaterialXConfigAPI: {
+      s = "MaterialXConfigAPI";
+      break;
+    }
     case APISchemas::APIName::MaterialBindingAPI: {
       s = "MaterialBindingAPI";
       break;

@@ -308,8 +308,15 @@ bool ResizeImage(const Image &src, int dstWidth, int dstHeight, Image *dst,
     if (err) (*err) = "ResizeImage: invalid source image (channels must be 1-4).";
     return false;
   }
-  if (src.bpp != 8) {
-    if (err) (*err) = "ResizeImage: only 8-bit per channel images are supported.";
+  // 8-bit (LDR) and fp32 (HDR, e.g. EXR decoded to float RGBA) are supported.
+  const bool is_float =
+      (src.bpp == 32) && (src.format == Image::PixelFormat::Float);
+  if (src.bpp != 8 && !is_float) {
+    if (err) {
+      (*err) =
+          "ResizeImage: only 8-bit-per-channel or fp32 float images are "
+          "supported.";
+    }
     return false;
   }
   if (dstWidth <= 0 || dstHeight <= 0) {
@@ -323,13 +330,16 @@ bool ResizeImage(const Image &src, int dstWidth, int dstHeight, Image *dst,
     return false;
   }
 
-  // Validate source buffer size.
-  size_t src_expected;
+  const size_t bytes_per_channel = size_t(src.bpp / 8);
+
+  // Validate source buffer size (in bytes).
+  size_t src_elems;
   if (!safe::mul3(size_t(src.width), size_t(src.height), size_t(src.channels),
-                  &src_expected)) {
+                  &src_elems)) {
     if (err) (*err) = "ResizeImage: source size overflow.";
     return false;
   }
+  const size_t src_expected = src_elems * bytes_per_channel;
   if (src.data.size() < src_expected) {
     if (err) (*err) = "ResizeImage: source buffer too small.";
     return false;
@@ -339,17 +349,18 @@ bool ResizeImage(const Image &src, int dstWidth, int dstHeight, Image *dst,
   out.width = dstWidth;
   out.height = dstHeight;
   out.channels = src.channels;
-  out.bpp = 8;
+  out.bpp = src.bpp;
   out.format = src.format;
   out.colorspace = src.colorspace;
   out.uri = src.uri;
 
-  size_t dst_size;
+  size_t dst_elems;
   if (!safe::mul3(size_t(dstWidth), size_t(dstHeight), size_t(src.channels),
-                  &dst_size)) {
+                  &dst_elems)) {
     if (err) (*err) = "ResizeImage: destination size overflow.";
     return false;
   }
+  const size_t dst_size = dst_elems * bytes_per_channel;
   out.data.resize(dst_size);
 
   const stbir_pixel_layout layout = PixelLayoutFromChannels(src.channels);
@@ -370,7 +381,13 @@ bool ResizeImage(const Image &src, int dstWidth, int dstHeight, Image *dst,
   }
 
   void *r = nullptr;
-  if (use_srgb) {
+  if (is_float) {
+    // HDR/float resize is always done in linear space.
+    r = stbir_resize_float_linear(
+        reinterpret_cast<const float *>(src.data.data()), src.width, src.height,
+        0, reinterpret_cast<float *>(out.data.data()), dstWidth, dstHeight, 0,
+        layout);
+  } else if (use_srgb) {
     r = stbir_resize_uint8_srgb(src.data.data(), src.width, src.height, 0,
                                 out.data.data(), dstWidth, dstHeight, 0, layout);
   } else {
@@ -576,6 +593,10 @@ bool EncodeFitTexture(const FitTextureInput &in, const FitTextureOptions &opts,
         }
         img = std::move(rgb);
       }
+    } else if (in.ext == "exr") {
+      // Keep HDR data: resize-only, re-encode as EXR.
+      wopt.format = image::WriteImageFormat::EXR;
+      ext = "exr";
     } else {
       wopt.format = image::WriteImageFormat::PNG;
       ext = "png";
@@ -612,7 +633,14 @@ bool FitTexturesToBudget(const std::vector<FitTextureInput> &inputs,
   int maxOrigDim = 1;
   for (size_t i = 0; i < inputs.size(); i++) {
     const auto &in = inputs[i];
-    if (in.reencodable && in.image.bpp == 8 && in.image.width > 0 &&
+    // 8-bit textures can be shrunk by either strategy. fp32/EXR can only be
+    // shrunk by resizing (size strategy); the quality strategy would transcode
+    // to JPEG and discard the HDR data, so EXR is passed through there.
+    const bool is8 = in.image.bpp == 8;
+    const bool isFloatExr = in.image.bpp == 32 &&
+                            in.image.format == Image::PixelFormat::Float &&
+                            opts.strategy == FitStrategy::Size;
+    if (in.reencodable && (is8 || isFloatExr) && in.image.width > 0 &&
         in.image.height > 0) {
       idx.push_back(i);
       maxOrigDim = (std::max)(maxOrigDim, (std::max)(in.image.width, in.image.height));

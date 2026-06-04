@@ -325,11 +325,63 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
       }
       return out;
     }
-    case tinyusdz::image::WriteImageFormat::EXR:
+    case tinyusdz::image::WriteImageFormat::EXR: {
+#if defined(TINYUSDZ_WITH_EXR)
+      const int comps = image.channels;
+      if (comps < 1 || comps > 4) {
+        return nonstd::make_unexpected("EXR: channels must be 1, 3 or 4.");
+      }
+      if (image.width <= 0 || image.height <= 0) {
+        return nonstd::make_unexpected("EXR: invalid image dimensions.");
+      }
+      const size_t npix =
+          size_t(image.width) * size_t(image.height) * size_t(comps);
+
+      // SaveEXRToMemory expects interleaved fp32. Use the source float data
+      // directly when it is already fp32, otherwise promote 8-bit integer data
+      // (e.g. when transcoding PNG->EXR) to normalized float.
+      std::vector<float> fdata;
+      const float *fptr = nullptr;
+      if (image.format == Image::PixelFormat::Float && image.bpp == 32) {
+        if (image.data.size() < npix * sizeof(float)) {
+          return nonstd::make_unexpected("EXR: float buffer too small.");
+        }
+        fptr = reinterpret_cast<const float *>(image.data.data());
+      } else if (image.bpp == 8) {
+        if (image.data.size() < npix) {
+          return nonstd::make_unexpected("EXR: 8-bit buffer too small.");
+        }
+        fdata.resize(npix);
+        for (size_t i = 0; i < npix; i++) {
+          fdata[i] = float(image.data[i]) / 255.0f;
+        }
+        fptr = fdata.data();
+      } else {
+        return nonstd::make_unexpected("EXR: unsupported source bit depth.");
+      }
+
+      unsigned char *buf = nullptr;
+      const char *exr_err = nullptr;
+      // Save as fp16 — the common, compact EXR texture encoding.
+      int ret = SaveEXRToMemory(fptr, image.width, image.height, comps,
+                                /* save_as_fp16 */ 1, &buf, &exr_err);
+      if (ret <= 0) {
+        std::string e = exr_err ? std::string(exr_err) : "EXR encode failed.";
+        if (exr_err) FreeEXRErrorMessage(exr_err);
+        return nonstd::make_unexpected("EXR: " + e);
+      }
+      std::vector<uint8_t> exr_out(buf, buf + size_t(ret));
+      free(buf);
+      return exr_out;
+#else
+      return nonstd::make_unexpected(
+          "EXR output requires building with TINYUSDZ_WITH_EXR.");
+#endif
+    }
     case tinyusdz::image::WriteImageFormat::TIFF:
     case tinyusdz::image::WriteImageFormat::DNG:
       return nonstd::make_unexpected(
-          "WriteImageToMemory: EXR/TIFF/DNG output is not implemented yet.");
+          "WriteImageToMemory: TIFF/DNG output is not implemented yet.");
     case tinyusdz::image::WriteImageFormat::Autodetect:
       return nonstd::make_unexpected("Internal error in WriteImageToMemory.");
   }

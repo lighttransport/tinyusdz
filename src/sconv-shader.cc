@@ -834,6 +834,32 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
     return AddSpec(input_path, SpecType::Attribute, input_fields, err);
   };
 
+  // Helper: emit an input that holds a connection (no concrete value), e.g.
+  // `inputs:in.connect = </.../PrimvarReader.outputs:result>`. UsdTransform2d's
+  // `in` is normally wired to a UsdPrimvarReader's st output; without this the
+  // connection is dropped on USDC write and UsdUVTexture evaluation fails
+  // (`inputs:in` must be a connection).
+  auto add_input_connection_spec = [&](const std::string& input_name,
+                                        const std::string& type_name,
+                                        const std::vector<Path>& conn_paths) -> bool {
+    Path input_path = prim_path.AppendProperty(input_name);
+    crate::FieldValuePairVector input_fields;
+
+    crate::CrateValue type_value;
+    value::token type_tok(type_name);
+    type_value.Set(type_tok);
+    input_fields.push_back({"typeName", type_value});
+
+    ListOp<Path> conn_listop;
+    conn_listop.ClearAndMakeExplicit();
+    conn_listop.SetExplicitItems(conn_paths);
+    crate::CrateValue conn_value;
+    conn_value.Set(conn_listop);
+    input_fields.push_back({"connectionPaths", conn_value});
+
+    return AddSpec(input_path, SpecType::Attribute, input_fields, err);
+  };
+
   // Helper to handle timesampled float2 inputs
   auto add_input_spec_with_timesamples_float2 = [&](
       const std::string& input_name,
@@ -902,14 +928,22 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
     return true;
   };
 
-  // Extract inputs:in (float2)
+  // Extract inputs:in (float2) - as a connection (the common case: wired to a
+  // UsdPrimvarReader's st output) or a concrete value.
   if (transform2d->in.authored()) {
-    crate::CrateValue in_crate_value;
-    value::float2 in_value = {0.0f, 0.0f};
-    if (transform2d->in.get_value().get_scalar(&in_value)) {
-      in_crate_value.Set(in_value);
-      if (!add_input_spec_with_timesamples_float2("inputs:in", in_crate_value, &transform2d->in.get_value())) {
+    if (transform2d->in.has_connections()) {
+      if (!add_input_connection_spec("inputs:in", "float2",
+                                     transform2d->in.connections())) {
         return false;
+      }
+    } else {
+      crate::CrateValue in_crate_value;
+      value::float2 in_value = {0.0f, 0.0f};
+      if (transform2d->in.get_value().get_scalar(&in_value)) {
+        in_crate_value.Set(in_value);
+        if (!add_input_spec_with_timesamples_float2("inputs:in", in_crate_value, &transform2d->in.get_value())) {
+          return false;
+        }
       }
     }
   }

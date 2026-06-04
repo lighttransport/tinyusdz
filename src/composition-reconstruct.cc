@@ -68,6 +68,7 @@ RECONSTRUCT_PRIM_DECL(Skeleton);
 RECONSTRUCT_PRIM_DECL(BlendShape);
 RECONSTRUCT_PRIM_DECL(Material);
 RECONSTRUCT_PRIM_DECL(Shader);
+RECONSTRUCT_PRIM_DECL(NodeGraph);
 
 #undef RECONSTRUCT_PRIM_DECL
 
@@ -151,6 +152,7 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
   RECONSTRUCT_PRIM(SkelAnimation)
   RECONSTRUCT_PRIM(BlendShape)
   RECONSTRUCT_PRIM(Shader)
+  RECONSTRUCT_PRIM(NodeGraph)
   RECONSTRUCT_PRIM(Material) {
     PUSH_WARN("TODO or unsupported prim type: " << primspec.typeName());
     return nonstd::nullopt;

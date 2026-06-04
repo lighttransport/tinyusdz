@@ -35,6 +35,7 @@ struct APISchemas {
     ConnectableAPI, // "ConnectableAPI"
     CoordSysAPI, // "CoordSysAPI"
     NodeDefAPI, // "NodeDefAPI"
+    MaterialXConfigAPI, // "MaterialXConfigAPI" (usdMtlx: config:mtlx:*)
 
     CollectionAPI,      // "CollectionAPI"
     // usdGeom

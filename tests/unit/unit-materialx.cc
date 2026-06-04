@@ -28,6 +28,8 @@
 #include "prim-reconstruct.hh"
 #include "usda-reader.hh"
 #include "usdShade.hh"
+#include "layer.hh"
+#include "composition.hh"
 #include "usdMtlx.hh"
 #include "asset-resolution.hh"
 #include "value-types.hh"
@@ -103,6 +105,22 @@ def Material "TestMaterial" (
     TEST_CHECK(ret == true);
 
     if (ret && material_prim) {
+      // Regression: MaterialXConfigAPI must be recognized as a known (built-in)
+      // API schema, not preserved as an "unknown API schema". Recognition is
+      // separate from the typed reconstruct below.
+      TEST_CHECK(material_prim->metas().has_apiSchemas());
+      if (material_prim->metas().has_apiSchemas()) {
+        const auto &schemas = material_prim->metas().get_apiSchemas();
+        bool known = false;
+        for (const auto &n : schemas.names) {
+          if (n.first == APISchemas::APIName::MaterialXConfigAPI) {
+            known = true;
+          }
+        }
+        TEST_CHECK(known);
+        TEST_CHECK(schemas.unknownSchemas.empty());
+      }
+
       const Material *mat = material_prim->data().as<Material>();
       TEST_CHECK(mat != nullptr);
 
@@ -404,6 +422,47 @@ def NodeGraph "TestNodeGraph"
     }
   }
   */
+}
+
+// Regression: a NodeGraph PrimSpec must survive Layer->Stage reconstruction
+// (composition flatten). It was previously dropped as "TODO or unsupported prim
+// type: NodeGraph", which lost the whole MaterialX network on a USDZ roundtrip.
+void nodegraph_reconstruct_from_layer_test(void) {
+  Layer layer;
+  PrimSpec ng(Specifier::Def, "NodeGraph", "MyNodeGraph");
+
+  // A MaterialX image shader node inside the node graph.
+  PrimSpec shader(Specifier::Def, "Shader", "ImageNode");
+  {
+    Attribute attr;
+    attr.set_value(value::token("ND_image_color3"));
+    attr.set_type_name("token");
+    attr.variability() = Variability::Uniform;
+    shader.props()["info:id"] = Property(attr, false);
+  }
+  ng.children().push_back(shader);
+  layer.add_primspec("MyNodeGraph", ng);
+
+  Stage stage;
+  std::string warn, err;
+  bool ok = LayerToStage(std::move(layer), &stage, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("LayerToStage failed: %s", err.c_str());
+    return;
+  }
+
+  // The NodeGraph prim (and its Shader child) must survive, not be dropped.
+  Path path("/MyNodeGraph", "");
+  auto result = stage.GetPrimAtPath(path);
+  TEST_CHECK(result.has_value());
+  if (result) {
+    TEST_CHECK(result.value()->data().as<NodeGraph>() != nullptr);
+    TEST_CHECK(result.value()->children().size() == 1);
+    if (result.value()->children().size() == 1) {
+      TEST_CHECK(result.value()->children()[0].data().as<Shader>() != nullptr);
+    }
+  }
 }
 
 // Test MaterialX shader type constants
