@@ -22,7 +22,7 @@
 #include "unit-task-queue.h"
 #include "unit-tydra.h"
 #include "unit-tydra-subdivision.h"
-//#include "unit-dedup.h"  // Temporarily disabled - needs API updates
+#include "unit-dedup.h"
 #include "unit-crate-writer.h"
 #include "unit-stage.h"
 #include "unit-tiny-container.h"
@@ -177,13 +177,14 @@ TEST_LIST = {
     tydra_skel_animation_validation_test },
   { "tydra_skin_binding_validation_test",
     tydra_skin_binding_validation_test },
-  // Temporarily disabled - unit-dedup needs API updates
-  //{ "dedup_float_array_test", dedup_float_array_test },
-  //{ "dedup_double_array_test", dedup_double_array_test },
-  //{ "dedup_int_array_test", dedup_int_array_test },
-  //{ "dedup_unique_arrays_test", dedup_unique_arrays_test },
-  //{ "dedup_string_array_test", dedup_string_array_test },
-  //{ "dedup_matrix4d_test", dedup_matrix4d_test },
+  { "dedup_float_array_test", dedup_float_array_test },
+  { "dedup_double_array_test", dedup_double_array_test },
+  { "dedup_int_array_test", dedup_int_array_test },
+  { "dedup_unique_arrays_test", dedup_unique_arrays_test },
+  { "dedup_string_array_test", dedup_string_array_test },
+  { "dedup_matrix4d_test", dedup_matrix4d_test },
+  { "dedup_role_array_test", dedup_role_array_test },
+  { "dedup_compressed_int_array_test", dedup_compressed_int_array_test },
   { "crate_writer_basic_creation_test", crate_writer_basic_creation_test },
   { "crate_writer_simple_prim_test", crate_writer_simple_prim_test },
   { "crate_writer_typename_encoding_test", crate_writer_typename_encoding_test },

@@ -282,12 +282,12 @@ bool CrateWriter::AddSpec(const Path& path,
     return false;
   }
 
-  // Check for duplicate specs with same path
-  // USD Crate format requires each path to appear only once
-  for (const auto& existing_spec : spec_data_) {
-    if (existing_spec.path.full_path_name() == path.full_path_name()) {
-      return true;  // Silently skip duplicate (not an error)
-    }
+  // Check for duplicate specs with same path (USD Crate requires each path to
+  // appear only once). O(1) via spec_path_set_ — a prior implementation did an
+  // O(n^2) linear scan of spec_data_, each step allocating two full_path_name()
+  // strings, which dominated write time for spec-dense scenes.
+  if (spec_path_set_.count(path)) {
+    return true;  // Silently skip duplicate (not an error)
   }
 
   // Create spec data
@@ -317,6 +317,7 @@ bool CrateWriter::AddSpec(const Path& path,
   // We'll fill in the actual crate::Spec later during Finalize
   // For now, just accumulate the data
   spec_data_.push_back(spec_data);
+  spec_path_set_.emplace(path, 1u);
   memory_used_estimate_ += estimated_memory;
 
   // Pre-register the path for deduplication

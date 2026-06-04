@@ -135,7 +135,7 @@ export function unpackUSDZ(bytes) {
       const lExtraLen = dv.getUint16(lho + 28, true);
       const dataStart = lho + 30 + lNameLen + lExtraLen;
       const size = compSize || uncompSize;
-      entries.set(name, u8.slice(dataStart, dataStart + size)); // copy out
+      entries.set(name, u8.subarray(dataStart, dataStart + size));
       order.push(name);
     }
     off += 46 + nameLen + extraLen + commentLen;
@@ -263,6 +263,36 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
   let rootPath = opts.rootPath || rootUsdFromMap(assetMap);
   if (!rootPath) throw new Error('No USD file (.usd/.usda/.usdc/.usdz) found in the input.');
 
+  const textureFormat = normalizedTextureFormat(opts.textureFormat);
+  const hasSingleUsdzInput = /\.usdz$/i.test(rootPath) && assetMap.size === 1 &&
+    assetMap.has(rootPath);
+  const canPassthroughUsdz = hasSingleUsdzInput &&
+    opts.passthroughUsdz !== false &&
+    opts.reencode === false &&
+    textureFormat === 'keep' &&
+    (opts.maxTextureSize || 0) <= 0 &&
+    (opts.targetTextureBytes || 0) <= 0 &&
+    !opts.arkitCompatible;
+  if (canPassthroughUsdz) {
+    const data = assetMap.get(rootPath);
+    log(`Passing through USDZ unchanged: ${rootPath}`);
+    return {
+      usdz: data instanceof Uint8Array ? data : new Uint8Array(data),
+      stats: {
+        textures: 0,
+        resized: 0,
+        reencoded: 0,
+        audio: 0,
+        otherAssets: 0,
+        rootPath,
+        rootLayerFormat: null,
+        flatten: false,
+        arkitCompatible: false,
+        passthrough: true,
+      },
+    };
+  }
+
   // If the root is a self-contained .usdz, unpack it so its internal textures
   // can be repacked (passthrough by default). Disable with repackUsdz: false.
   if (/\.usdz$/i.test(rootPath) && opts.repackUsdz !== false) {
@@ -275,7 +305,6 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
     }
   }
 
-  const textureFormat = normalizedTextureFormat(opts.textureFormat);
   const rootLayerFormat = String(opts.rootLayerFormat || 'usdc').toLowerCase() === 'usda' ? 'usda' : 'usdc';
   const flatten = opts.flatten !== false || !!opts.arkitCompatible;
 
@@ -359,6 +388,14 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
 
   const usd = new native.TinyUSDZLoaderNative();
   try {
+    // Raise the USDC writer resource limits when requested (0 = keep the
+    // conservative WASM default). Needed to export large scenes (dense meshes /
+    // big timesample data) that exceed the built-in 100 MB / 256 MB caps.
+    if ((opts.maxUsdcMb > 0 || opts.maxMemMb > 0) &&
+        typeof usd.setUSDCExportLimitMB === 'function') {
+      usd.setUSDCExportLimitMB(opts.maxUsdcMb || 0, opts.maxMemMb || 0);
+    }
+
     registerDependencyLayers(usd);
 
     // --- Budget-fit path: shrink all textures to a total byte budget. ---

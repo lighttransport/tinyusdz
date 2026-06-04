@@ -6075,9 +6075,14 @@ class TinyUSDZLoaderNative {
       }
     }
 
+    tinyusdz::USDZWriteOptions write_options;
+    write_options.max_file_size_bytes = usdc_max_file_size_bytes_;
+    write_options.max_memory_bytes = usdc_max_memory_bytes_;
+
     std::vector<uint8_t> output;
     std::string warn, err;
-    if (!tinyusdz::SaveAsUSDZToMemory(stage, assets, &output, &warn, &err)) {
+    if (!tinyusdz::SaveAsUSDZToMemory(stage, assets, &output, write_options,
+                                      &warn, &err)) {
       error_ = "USDZ export failed: " + err;
       warn_ = warn;
       return emscripten::val::null();
@@ -6129,9 +6134,14 @@ class TinyUSDZLoaderNative {
       }
     }
 
+    tinyusdz::USDZWriteOptions write_options;
+    write_options.max_file_size_bytes = usdc_max_file_size_bytes_;
+    write_options.max_memory_bytes = usdc_max_memory_bytes_;
+
     std::vector<uint8_t> output;
     std::string warn, err;
-    if (!tinyusdz::SaveAsUSDZToMemory(stage, assets, &output, &warn, &err)) {
+    if (!tinyusdz::SaveAsUSDZToMemory(stage, assets, &output, write_options,
+                                      &warn, &err)) {
       error_ = "USDZ export failed: " + err;
       warn_ = warn;
       return emscripten::val::null();
@@ -6166,6 +6176,8 @@ class TinyUSDZLoaderNative {
     }
 
     tinyusdz::USDZWriteOptions write_options;
+    write_options.max_file_size_bytes = usdc_max_file_size_bytes_;
+    write_options.max_memory_bytes = usdc_max_memory_bytes_;
     bool arkit_compatible = false;
     if (!options.isUndefined() && !options.isNull()) {
       emscripten::val arkit_val = options["arkitCompatible"];
@@ -6227,6 +6239,8 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::USDZWriteOptions write_options;
     write_options.root_layer_format = tinyusdz::USDZRootLayerFormat::USDA;
+    write_options.max_file_size_bytes = usdc_max_file_size_bytes_;
+    write_options.max_memory_bytes = usdc_max_memory_bytes_;
     if (!options.isUndefined() && !options.isNull()) {
       emscripten::val root_format_val = options["rootLayerFormat"];
       if (!root_format_val.isUndefined() && !root_format_val.isNull()) {

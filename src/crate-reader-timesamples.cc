@@ -1499,20 +1499,18 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
       }
     }
 
-    // Check dedup: if we've already unpacked an identical ValueRep, share data
+    // Check dedup: if we've already unpacked an identical ValueRep, share data.
     uint64_t rep_data = rep.GetData();
     auto dedup_it = dedup_map.find(rep_data);
     if (dedup_it != dedup_map.end()) {
-      // Duplicate — reuse previously unpacked sample (zero-copy for binary storage)
+      // Duplicate - reuse a previously unpacked sample (zero-copy for binary
+      // storage). Entries are inserted only after the source unpack succeeds.
       if (!d->duplicate_sample(dedup_it->second, curr_time)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "Failed to duplicate sample in TimeSamples.");
       }
       continue;
     }
-
-    // First occurrence — record index and unpack from file
-    dedup_map[rep_data] = i;
 
     if (!rep.IsInlined()) {
       _sr->seek_set(rep.GetPayload());
@@ -1522,9 +1520,18 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
     // pre-allocation
     size_t prealloc_hint = (i == 0) ? expected_total_samples : 0;
 
+    const size_t dst_idx = d->size();
     if (!(this->*unpack_fn)(curr_time, rep, *d, prealloc_hint)) {
       return false;
     }
+    if (d->size() != dst_idx + 1) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "TimeSamples unpack did not append a sample.");
+    }
+
+    // First occurrence - record the actual destination sample index only after
+    // the sample's data, offset, and array count have been stored.
+    dedup_map.emplace(rep_data, dst_idx);
   }
 
 

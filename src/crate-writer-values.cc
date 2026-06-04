@@ -17,6 +17,7 @@
 #include <cstring>
 #include <set>
 #include <sstream>
+#include <unordered_map>
 
 #include "common-macros.inc"
 #include "safe-arithmetic.hh"
@@ -176,6 +177,147 @@ static bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue*
     *err = "ConvertValueToCrateValue: Unsupported type_id " + std::to_string(type_id) +
            " (type_name: " + val.type_name() + ")";
   }
+  return false;
+}
+
+// Build the canonical deduplication key for a timesample CrateValue.
+//
+// Covers every out-of-line array element type (and the out-of-line vec/matrix/
+// quat scalar types, e.g. animated matrix4d transforms) that
+// ConvertValueToCrateValue can emit. Role types (texcoord2f, point3f, normal3f,
+// color*, etc.) are already normalized to their base type (float2, float3, etc.) by
+// ConvertValueToCrateValue's non-strict `as<>`, so no separate role entries are
+// needed and coverage is complete by construction.
+//
+// Returns false for types we intentionally don't deduplicate (bool[], uint8[],
+// value::AssetPath[] - layout-coupled or side-effectful via the string pool -
+// and dictionaries / list ops); the caller then packs them normally.
+//
+// For float/double-component types, *element_size is the PER-COMPONENT width (4
+// or 8) so NanAwareHash canonicalizes +0.0/-0.0 per component; binary types use
+// element_size 1 with is_float=false (raw-byte hashing).
+static constexpr uint32_t kDedupArrayTagBit = 1u << 31;
+
+static bool ComputeArrayDedupDescriptor(const crate::CrateValue& cv,
+                                        std::vector<char>* bytes,
+                                        size_t* element_size,
+                                        bool* is_float,
+                                        uint32_t* wire_tag) {
+#define DEDUP_DESC_ARRAY(Type, ElemSize, IsFloat, CrateType)                 \
+  if (auto* arr = cv.as<std::vector<Type>>()) {                              \
+    size_t bsz;                                                              \
+    if (!safe::mul(arr->size(), sizeof(Type), &bsz)) return false;          \
+    bytes->resize(bsz);                                                      \
+    if (bsz) std::memcpy(bytes->data(), arr->data(), bsz);                   \
+    *element_size = (ElemSize); *is_float = (IsFloat);                       \
+    *wire_tag = kDedupArrayTagBit |                                          \
+        static_cast<uint32_t>(crate::CrateDataTypeId::CrateType);            \
+    return true;                                                             \
+  }
+#define DEDUP_DESC_SCALAR(Type, ElemSize, IsFloat, CrateType)                \
+  if (auto* p = cv.as<Type>()) {                                             \
+    bytes->resize(sizeof(Type));                                             \
+    std::memcpy(bytes->data(), p, sizeof(Type));                             \
+    *element_size = (ElemSize); *is_float = (IsFloat);                       \
+    *wire_tag = static_cast<uint32_t>(crate::CrateDataTypeId::CrateType);    \
+    return true;                                                             \
+  }
+
+  // Float/double component arrays (per-component element_size, NaN/+0/-0-aware).
+  DEDUP_DESC_ARRAY(float, sizeof(float), true, CRATE_DATA_TYPE_FLOAT)
+  DEDUP_DESC_ARRAY(double, sizeof(double), true, CRATE_DATA_TYPE_DOUBLE)
+  DEDUP_DESC_ARRAY(value::float2, sizeof(float), true, CRATE_DATA_TYPE_VEC2F)
+  DEDUP_DESC_ARRAY(value::float3, sizeof(float), true, CRATE_DATA_TYPE_VEC3F)
+  DEDUP_DESC_ARRAY(value::float4, sizeof(float), true, CRATE_DATA_TYPE_VEC4F)
+  DEDUP_DESC_ARRAY(value::double2, sizeof(double), true, CRATE_DATA_TYPE_VEC2D)
+  DEDUP_DESC_ARRAY(value::double3, sizeof(double), true, CRATE_DATA_TYPE_VEC3D)
+  DEDUP_DESC_ARRAY(value::double4, sizeof(double), true, CRATE_DATA_TYPE_VEC4D)
+  DEDUP_DESC_ARRAY(value::matrix2d, sizeof(double), true, CRATE_DATA_TYPE_MATRIX2D)
+  DEDUP_DESC_ARRAY(value::matrix3d, sizeof(double), true, CRATE_DATA_TYPE_MATRIX3D)
+  DEDUP_DESC_ARRAY(value::matrix4d, sizeof(double), true, CRATE_DATA_TYPE_MATRIX4D)
+  DEDUP_DESC_ARRAY(value::quatf, sizeof(float), true, CRATE_DATA_TYPE_QUATF)
+  DEDUP_DESC_ARRAY(value::quatd, sizeof(double), true, CRATE_DATA_TYPE_QUATD)
+  // Raw-byte (binary) arrays.
+  DEDUP_DESC_ARRAY(int32_t, 1, false, CRATE_DATA_TYPE_INT)
+  DEDUP_DESC_ARRAY(uint32_t, 1, false, CRATE_DATA_TYPE_UINT)
+  DEDUP_DESC_ARRAY(int64_t, 1, false, CRATE_DATA_TYPE_INT64)
+  DEDUP_DESC_ARRAY(uint64_t, 1, false, CRATE_DATA_TYPE_UINT64)
+  DEDUP_DESC_ARRAY(value::half, 1, false, CRATE_DATA_TYPE_HALF)
+  DEDUP_DESC_ARRAY(value::half2, 1, false, CRATE_DATA_TYPE_VEC2H)
+  DEDUP_DESC_ARRAY(value::half3, 1, false, CRATE_DATA_TYPE_VEC3H)
+  DEDUP_DESC_ARRAY(value::half4, 1, false, CRATE_DATA_TYPE_VEC4H)
+  DEDUP_DESC_ARRAY(value::int2, 1, false, CRATE_DATA_TYPE_VEC2I)
+  DEDUP_DESC_ARRAY(value::int3, 1, false, CRATE_DATA_TYPE_VEC3I)
+  DEDUP_DESC_ARRAY(value::int4, 1, false, CRATE_DATA_TYPE_VEC4I)
+  DEDUP_DESC_ARRAY(value::quath, 1, false, CRATE_DATA_TYPE_QUATH)
+
+  // Out-of-line scalars (vec/matrix/quat). Checked after arrays so an array
+  // never matches a scalar branch (distinct types).
+  DEDUP_DESC_SCALAR(value::float2, sizeof(float), true, CRATE_DATA_TYPE_VEC2F)
+  DEDUP_DESC_SCALAR(value::float3, sizeof(float), true, CRATE_DATA_TYPE_VEC3F)
+  DEDUP_DESC_SCALAR(value::float4, sizeof(float), true, CRATE_DATA_TYPE_VEC4F)
+  DEDUP_DESC_SCALAR(value::double2, sizeof(double), true, CRATE_DATA_TYPE_VEC2D)
+  DEDUP_DESC_SCALAR(value::double3, sizeof(double), true, CRATE_DATA_TYPE_VEC3D)
+  DEDUP_DESC_SCALAR(value::double4, sizeof(double), true, CRATE_DATA_TYPE_VEC4D)
+  DEDUP_DESC_SCALAR(value::matrix2d, sizeof(double), true, CRATE_DATA_TYPE_MATRIX2D)
+  DEDUP_DESC_SCALAR(value::matrix3d, sizeof(double), true, CRATE_DATA_TYPE_MATRIX3D)
+  DEDUP_DESC_SCALAR(value::matrix4d, sizeof(double), true, CRATE_DATA_TYPE_MATRIX4D)
+  DEDUP_DESC_SCALAR(value::quatf, sizeof(float), true, CRATE_DATA_TYPE_QUATF)
+  DEDUP_DESC_SCALAR(value::quatd, sizeof(double), true, CRATE_DATA_TYPE_QUATD)
+  DEDUP_DESC_SCALAR(value::quath, 1, false, CRATE_DATA_TYPE_QUATH)
+  DEDUP_DESC_SCALAR(value::half2, 1, false, CRATE_DATA_TYPE_VEC2H)
+  DEDUP_DESC_SCALAR(value::half3, 1, false, CRATE_DATA_TYPE_VEC3H)
+  DEDUP_DESC_SCALAR(value::half4, 1, false, CRATE_DATA_TYPE_VEC4H)
+  DEDUP_DESC_SCALAR(value::int2, 1, false, CRATE_DATA_TYPE_VEC2I)
+  DEDUP_DESC_SCALAR(value::int3, 1, false, CRATE_DATA_TYPE_VEC3I)
+  DEDUP_DESC_SCALAR(value::int4, 1, false, CRATE_DATA_TYPE_VEC4I)
+
+#undef DEDUP_DESC_ARRAY
+#undef DEDUP_DESC_SCALAR
+
+  // String/token arrays: canonical variable-length serialization
+  // (count + (len + bytes) per element) as the dedup key.
+  if (auto* string_arr = cv.as<std::vector<std::string>>()) {
+    size_t total = sizeof(uint64_t);
+    for (const auto& s : *string_arr) total += sizeof(uint64_t) + s.size();
+    bytes->clear();
+    bytes->reserve(total);
+    uint64_t count = string_arr->size();
+    bytes->insert(bytes->end(), reinterpret_cast<const char*>(&count),
+                  reinterpret_cast<const char*>(&count) + sizeof(uint64_t));
+    for (const auto& s : *string_arr) {
+      uint64_t len = s.size();
+      bytes->insert(bytes->end(), reinterpret_cast<const char*>(&len),
+                    reinterpret_cast<const char*>(&len) + sizeof(uint64_t));
+      bytes->insert(bytes->end(), s.begin(), s.end());
+    }
+    *element_size = 1;
+    *is_float = false;
+    *wire_tag = kDedupArrayTagBit |
+        static_cast<uint32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING);
+    return true;
+  }
+  if (auto* token_arr = cv.as<std::vector<value::token>>()) {
+    size_t total = sizeof(uint64_t);
+    for (const auto& t : *token_arr) total += sizeof(uint64_t) + t.str().size();
+    bytes->clear();
+    bytes->reserve(total);
+    uint64_t count = token_arr->size();
+    bytes->insert(bytes->end(), reinterpret_cast<const char*>(&count),
+                  reinterpret_cast<const char*>(&count) + sizeof(uint64_t));
+    for (const auto& t : *token_arr) {
+      uint64_t len = t.str().size();
+      bytes->insert(bytes->end(), reinterpret_cast<const char*>(&len),
+                    reinterpret_cast<const char*>(&len) + sizeof(uint64_t));
+      bytes->insert(bytes->end(), t.str().begin(), t.str().end());
+    }
+    *element_size = 1;
+    *is_float = false;
+    *wire_tag = kDedupArrayTagBit |
+        static_cast<uint32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN);
+    return true;
+  }
+
   return false;
 }
 
@@ -1305,18 +1447,53 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
     }
     value_data_end_offset_ = Tell() + num_samples_size;  // Reserve space for ValueReps
 
-    // Get samples - this works for both binary and generic value-backed types
-    const auto& samples = timesamples_val->get_samples();
+    // Read-side deduplication is encoded in the per-sample data offsets: two
+    // samples that share a byte offset reference the same value block. We reuse
+    // the already-written ValueRep for a repeated offset so deduplicated
+    // timesamples are NOT materialized into N independent copies (which would
+    // blow memory up to many GB for animated arrays). For generic (non-binary)
+    // storage get_data_offsets() is empty and we fall back to per-sample
+    // reconstruction + the value-bytes dedup map below.
+    // The offset fast-path is itself a deduplication mechanism (it reuses a
+    // prior ValueRep), so it must honor enable_deduplication: with dedup off we
+    // reconstruct and pack every sample independently (no sharing). Memory stays
+    // bounded either way because get_sample_at reconstructs one sample at a time.
+    const std::vector<size_t>& sample_offsets = timesamples_val->get_data_offsets();
+    const bool has_offsets =
+        options_.enable_deduplication && !sample_offsets.empty();
+    std::unordered_map<size_t, uint64_t> offset_rep_cache;
 
-    if (samples.size() != num_samples) {
-      if (err) *err = "TimeSamples: samples size mismatch (size=" + std::to_string(num_samples) +
-                       ", get_samples=" + std::to_string(samples.size()) + ")";
-      return -1;
-    }
+    struct LocalValueDedupEntry {
+      std::vector<char> bytes;
+      size_t element_size;
+      bool is_float;
+      uint32_t wire_tag;
+      uint64_t rep_data;
+    };
+    std::unordered_multimap<size_t, LocalValueDedupEntry> value_dedup_map;
 
     // Write ValueRep for each value
     for (size_t i = 0; i < num_samples; ++i) {
-      const auto& sample = samples[i];
+      // Fast path: this sample reuses an offset whose ValueRep was already
+      // serialized - emit it verbatim without reconstructing the value.
+      if (has_offsets && i < sample_offsets.size() &&
+          sample_offsets[i] != value::TimeSamples::BLOCKED_OFFSET) {
+        auto cached = offset_rep_cache.find(sample_offsets[i]);
+        if (cached != offset_rep_cache.end()) {
+          if (!Write(cached->second)) {
+            if (err) *err = "Failed to write deduplicated TimeSamples ValueRep at index " + std::to_string(i);
+            return -1;
+          }
+          continue;
+        }
+      }
+
+      // Reconstruct only THIS sample (O(one sample) memory, not O(N)).
+      value::TimeSamples::Sample sample;
+      if (!timesamples_val->get_sample_at(i, &sample)) {
+        if (err) *err = "Failed to reconstruct TimeSamples sample at index " + std::to_string(i);
+        return -1;
+      }
 
       // Check if this is a blocked value (ValueBlock/None)
       if (sample.blocked) {
@@ -1339,202 +1516,62 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
         return -1;
       }
 
-      // DEDUPLICATION: Check if this value can be deduplicated
+      // DEDUPLICATION: reuse a prior ValueRep for a value-identical sample.
+      // We compute the canonical key bytes once (ComputeArrayDedupDescriptor),
+      // hash them, and on a full-buffer match reuse the stored ValueRep
+      // VERBATIM - which carries the type, array, and compressed bits, so a
+      // deduplicated compressed array reads back correctly. On a miss we pack
+      // the value and record its ValueRep. Mirrors OpenUSD's
+      // unordered_map<VtArray<T>, ValueRep> dedup.
       crate::ValueRep value_rep;
       bool dedup_attempted = false;
 
       if (options_.enable_deduplication) {
-        bool is_dedup_candidate = false;
         std::vector<char> value_bytes;
         size_t dedup_element_size = 1;
         bool dedup_is_float = false;
+        uint32_t dedup_wire_tag = 0;
 
-        // Byte-packing macros with NaN-aware element type tracking
-#define DEDUP_FLOAT_ARRAY(Type, ElemSize) \
-        else if (auto* arr = crate_value.as<std::vector<Type>>()) { \
-          is_dedup_candidate = true; \
-          dedup_element_size = ElemSize; dedup_is_float = true; \
-          size_t bsz; \
-          if (!safe::mul(arr->size(), sizeof(Type), &bsz)) { \
-            if (err) *err = "Integer overflow in DEDUP_FLOAT_ARRAY"; \
-            return -1; \
-          } \
-          value_bytes.resize(bsz); \
-          std::memcpy(value_bytes.data(), arr->data(), bsz); }
+        if (ComputeArrayDedupDescriptor(crate_value, &value_bytes,
+                                        &dedup_element_size, &dedup_is_float,
+                                        &dedup_wire_tag) &&
+            !value_bytes.empty()) {
+          // Mix the wire tag into the hash so byte-identical blocks with
+          // different crate identity land in different buckets.
+          const size_t h = NanAwareHash::combine(
+              NanAwareHash::hash_buffer(value_bytes.data(), value_bytes.size(),
+                                        dedup_element_size, dedup_is_float),
+              dedup_wire_tag);
 
-#define DEDUP_BINARY_ARRAY(Type) \
-        else if (auto* arr = crate_value.as<std::vector<Type>>()) { \
-          is_dedup_candidate = true; \
-          size_t bsz; \
-          if (!safe::mul(arr->size(), sizeof(Type), &bsz)) { \
-            if (err) *err = "Integer overflow in DEDUP_BINARY_ARRAY"; \
-            return -1; \
-          } \
-          value_bytes.resize(bsz); \
-          std::memcpy(value_bytes.data(), arr->data(), bsz); }
-
-#define DEDUP_FLOAT_SCALAR(Type, ElemSize) \
-        else if (auto* ptr = crate_value.as<Type>()) { \
-          is_dedup_candidate = true; \
-          dedup_element_size = ElemSize; dedup_is_float = true; \
-          value_bytes.resize(sizeof(Type)); \
-          std::memcpy(value_bytes.data(), ptr, sizeof(Type)); }
-
-#define DEDUP_BINARY_SCALAR(Type) \
-        else if (auto* ptr = crate_value.as<Type>()) { \
-          is_dedup_candidate = true; \
-          value_bytes.resize(sizeof(Type)); \
-          std::memcpy(value_bytes.data(), ptr, sizeof(Type)); }
-
-        if (auto* arr = crate_value.as<std::vector<float>>()) {
-          is_dedup_candidate = true;
-          dedup_element_size = sizeof(float); dedup_is_float = true;
-          size_t bsz;
-          if (!safe::mul(arr->size(), sizeof(float), &bsz)) {
-            if (err) *err = "Integer overflow in float array dedup";
-            return -1;
-          }
-          value_bytes.resize(bsz);
-          std::memcpy(value_bytes.data(), arr->data(), bsz);
-        }
-        DEDUP_FLOAT_ARRAY(double, sizeof(double))
-        DEDUP_BINARY_ARRAY(int32_t)
-        DEDUP_BINARY_ARRAY(uint32_t)
-        DEDUP_BINARY_ARRAY(int64_t)
-        DEDUP_BINARY_ARRAY(uint64_t)
-        // String/token arrays: variable-length serialization (not macroable)
-        else if (auto* string_arr = crate_value.as<std::vector<std::string>>()) {
-          is_dedup_candidate = true;
-          size_t total_size = sizeof(uint64_t);
-          for (const auto& str : *string_arr) { total_size += sizeof(uint64_t) + str.size(); }
-          value_bytes.reserve(total_size);
-          uint64_t count = string_arr->size();
-          value_bytes.insert(value_bytes.end(), reinterpret_cast<const char*>(&count), reinterpret_cast<const char*>(&count) + sizeof(uint64_t));
-          for (const auto& str : *string_arr) {
-            uint64_t len = str.size();
-            value_bytes.insert(value_bytes.end(), reinterpret_cast<const char*>(&len), reinterpret_cast<const char*>(&len) + sizeof(uint64_t));
-            value_bytes.insert(value_bytes.end(), str.begin(), str.end());
-          }
-        } else if (auto* token_arr = crate_value.as<std::vector<value::token>>()) {
-          is_dedup_candidate = true;
-          size_t total_size = sizeof(uint64_t);
-          for (const auto& tok : *token_arr) { total_size += sizeof(uint64_t) + tok.str().size(); }
-          value_bytes.reserve(total_size);
-          uint64_t count = token_arr->size();
-          value_bytes.insert(value_bytes.end(), reinterpret_cast<const char*>(&count), reinterpret_cast<const char*>(&count) + sizeof(uint64_t));
-          for (const auto& tok : *token_arr) {
-            uint64_t len = tok.str().size();
-            value_bytes.insert(value_bytes.end(), reinterpret_cast<const char*>(&len), reinterpret_cast<const char*>(&len) + sizeof(uint64_t));
-            value_bytes.insert(value_bytes.end(), tok.str().begin(), tok.str().end());
-          }
-        }
-        // Float vector arrays
-        DEDUP_FLOAT_ARRAY(value::float3, sizeof(float))
-        DEDUP_FLOAT_ARRAY(value::float2, sizeof(float))
-        DEDUP_FLOAT_ARRAY(value::float4, sizeof(float))
-        // Double vector arrays
-        DEDUP_FLOAT_ARRAY(value::double3, sizeof(double))
-        // Scalar types (matrix=double, quaternion, vector)
-        DEDUP_FLOAT_SCALAR(value::matrix2d, sizeof(double))
-        DEDUP_FLOAT_SCALAR(value::matrix3d, sizeof(double))
-        DEDUP_FLOAT_SCALAR(value::matrix4d, sizeof(double))
-        DEDUP_FLOAT_SCALAR(value::quatf, sizeof(float))
-        DEDUP_FLOAT_SCALAR(value::quatd, sizeof(double))
-        DEDUP_BINARY_SCALAR(value::quath)  // half is uint16_t, raw byte hash
-        DEDUP_FLOAT_SCALAR(value::float3, sizeof(float))
-        DEDUP_FLOAT_SCALAR(value::double3, sizeof(double))
-        DEDUP_FLOAT_SCALAR(value::float2, sizeof(float))
-        DEDUP_FLOAT_SCALAR(value::float4, sizeof(float))
-        DEDUP_FLOAT_SCALAR(value::double2, sizeof(double))
-        DEDUP_FLOAT_SCALAR(value::double4, sizeof(double))
-#undef DEDUP_FLOAT_ARRAY
-#undef DEDUP_BINARY_ARRAY
-#undef DEDUP_FLOAT_SCALAR
-#undef DEDUP_BINARY_SCALAR
-
-        if (is_dedup_candidate && !value_bytes.empty()) {
-          // NaN-aware hash lookup
-          size_t h = NanAwareHash::hash_buffer(
-              value_bytes.data(), value_bytes.size(),
-              dedup_element_size, dedup_is_float);
-
-          int64_t cached_offset = -1;
-          auto range = value_dedup_map_.equal_range(h);
+          bool found = false;
+          auto range = value_dedup_map.equal_range(h);
           for (auto it = range.first; it != range.second; ++it) {
             const auto &entry = it->second;
-            if (entry.bytes.size() == value_bytes.size() &&
+            if (entry.wire_tag == dedup_wire_tag &&
+                entry.bytes.size() == value_bytes.size() &&
                 entry.element_size == dedup_element_size &&
                 entry.is_float == dedup_is_float &&
                 NanAwareHash::buffers_equal(
                     entry.bytes.data(), value_bytes.data(),
                     value_bytes.size(), dedup_element_size, dedup_is_float)) {
-              cached_offset = entry.offset;
+              // Reuse the prior ValueRep verbatim (type/array/compressed bits).
+              value_rep = crate::ValueRep(entry.rep_data);
+              found = true;
               break;
             }
           }
 
-          if (cached_offset >= 0) {
-            // Determine CrateDataTypeId for the cached ValueRep
-            crate::CrateDataTypeId type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID;
-            bool is_array = false;
-
-#define DEDUP_TYPE_ARRAY(CppType, CrateType) \
-            else if (crate_value.as<std::vector<CppType>>()) { \
-              type_id = crate::CrateDataTypeId::CrateType; is_array = true; }
-
-#define DEDUP_TYPE_SCALAR(CppType, CrateType) \
-            else if (crate_value.as<CppType>()) { \
-              type_id = crate::CrateDataTypeId::CrateType; is_array = false; }
-
-            if (crate_value.as<std::vector<float>>()) {
-              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT; is_array = true;
-            }
-            DEDUP_TYPE_ARRAY(double, CRATE_DATA_TYPE_DOUBLE)
-            DEDUP_TYPE_ARRAY(int32_t, CRATE_DATA_TYPE_INT)
-            DEDUP_TYPE_ARRAY(uint32_t, CRATE_DATA_TYPE_UINT)
-            DEDUP_TYPE_ARRAY(int64_t, CRATE_DATA_TYPE_INT64)
-            DEDUP_TYPE_ARRAY(uint64_t, CRATE_DATA_TYPE_UINT64)
-            DEDUP_TYPE_ARRAY(std::string, CRATE_DATA_TYPE_STRING)
-            DEDUP_TYPE_ARRAY(value::token, CRATE_DATA_TYPE_TOKEN)
-            DEDUP_TYPE_ARRAY(value::float3, CRATE_DATA_TYPE_VEC3F)
-            DEDUP_TYPE_ARRAY(value::double3, CRATE_DATA_TYPE_VEC3D)
-            DEDUP_TYPE_ARRAY(value::float2, CRATE_DATA_TYPE_VEC2F)
-            DEDUP_TYPE_ARRAY(value::double2, CRATE_DATA_TYPE_VEC2D)
-            DEDUP_TYPE_ARRAY(value::float4, CRATE_DATA_TYPE_VEC4F)
-            DEDUP_TYPE_ARRAY(value::double4, CRATE_DATA_TYPE_VEC4D)
-            DEDUP_TYPE_SCALAR(value::matrix2d, CRATE_DATA_TYPE_MATRIX2D)
-            DEDUP_TYPE_SCALAR(value::matrix3d, CRATE_DATA_TYPE_MATRIX3D)
-            DEDUP_TYPE_SCALAR(value::matrix4d, CRATE_DATA_TYPE_MATRIX4D)
-            DEDUP_TYPE_SCALAR(value::quatf, CRATE_DATA_TYPE_QUATF)
-            DEDUP_TYPE_SCALAR(value::quatd, CRATE_DATA_TYPE_QUATD)
-            DEDUP_TYPE_SCALAR(value::quath, CRATE_DATA_TYPE_QUATH)
-            DEDUP_TYPE_SCALAR(value::float3, CRATE_DATA_TYPE_VEC3F)
-            DEDUP_TYPE_SCALAR(value::double3, CRATE_DATA_TYPE_VEC3D)
-            DEDUP_TYPE_SCALAR(value::float2, CRATE_DATA_TYPE_VEC2F)
-            DEDUP_TYPE_SCALAR(value::float4, CRATE_DATA_TYPE_VEC4F)
-            DEDUP_TYPE_SCALAR(value::double2, CRATE_DATA_TYPE_VEC2D)
-            DEDUP_TYPE_SCALAR(value::double4, CRATE_DATA_TYPE_VEC4D)
-#undef DEDUP_TYPE_ARRAY
-#undef DEDUP_TYPE_SCALAR
-
-            value_rep.SetType(static_cast<int32_t>(type_id));
-            if (is_array) { value_rep.SetIsArray(); }
-            value_rep.SetPayload(static_cast<uint64_t>(cached_offset));
-            dedup_attempted = true;
-
-          } else {
-            // New value - pack normally and cache the offset
+          if (!found) {
+            // New value: pack it and remember its full ValueRep.
             value_rep = PackValue(crate_value, err);
             if (err && !err->empty()) {
               return -1;
             }
-            int64_t new_offset = static_cast<int64_t>(value_rep.GetPayload());
-            value_dedup_map_.emplace(h, ValueDedupEntry{
+            value_dedup_map.emplace(h, LocalValueDedupEntry{
                 std::move(value_bytes), dedup_element_size,
-                dedup_is_float, new_offset});
-            dedup_attempted = true;
-
+                dedup_is_float, dedup_wire_tag, value_rep.GetData()});
           }
+          dedup_attempted = true;
         }
       }
 
@@ -1551,6 +1588,14 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       if (!Write(rep_data)) {
         if (err) *err = "Failed to write TimeSamples ValueRep at index " + std::to_string(i);
         return -1;
+      }
+
+      // Record this sample's source byte offset -> ValueRep so later samples
+      // that share the offset (read-side dedup) reuse it without reconstruction
+      // or hashing. Never cache the BLOCKED sentinel.
+      if (has_offsets && i < sample_offsets.size() &&
+          sample_offsets[i] != value::TimeSamples::BLOCKED_OFFSET) {
+        offset_rep_cache.emplace(sample_offsets[i], rep_data);
       }
     }
 

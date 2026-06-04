@@ -519,6 +519,13 @@ enum class USDZRootLayerFormat {
 
 struct USDZWriteOptions {
   USDZRootLayerFormat root_layer_format{USDZRootLayerFormat::USDC};
+
+  // Optional overrides for the USDC root-layer writer resource limits (bytes).
+  // 0 keeps the built-in default (intentionally small on WASM to guard against
+  // resource exhaustion on untrusted input). Raise these to write large scenes
+  // (e.g. dense meshes / roundtrip testing).
+  int64_t max_file_size_bytes{0};
+  int64_t max_memory_bytes{0};
 };
 
 ///
