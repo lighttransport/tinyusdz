@@ -16,7 +16,9 @@
 #include "arc-types.hh"
 #include "namespace-mapping.hh"
 #include "../layer/layer.hh"
+#include "../prim/path.hh"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -50,11 +52,16 @@ struct CompNode {
   bool is_culled() const { return HasFlag(flags, NodeFlags::Culled); }
 };
 
-/// Composition options (subset for phase 1; grows with later phases).
+/// Composition options.
 struct CompositionOptions {
-  bool load_payloads = true;       // phase 2: eager unless a policy defers.
+  bool load_payloads = true;       // default policy when payload_policy is null.
   uint32_t max_depth = 256;        // arc recursion limit / cycle backstop.
   bool error_when_asset_not_found = false;
+
+  /// Per-payload load policy. Invoked with (prim path that authors the payload,
+  /// payload asset path); return true to load, false to defer. When null, the
+  /// `load_payloads` flag is used. (Per-prim Load/UnloadPayload overrides this.)
+  std::function<bool(const Path &, const std::string &)> payload_policy;
 };
 
 /// The composed graph for a single prim. Borrows its layer-stack table from the
