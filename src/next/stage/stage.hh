@@ -156,6 +156,11 @@ public:
   const Layer* GetRootLayer() const { return root_layer_.get(); }
   Layer* GetRootLayer() { return root_layer_.get(); }
 
+  /// Move the root layer out of the stage (transfers ownership). Used by the
+  /// pcp LayerRegistry to obtain a shareable Layer from a freshly-loaded Stage.
+  /// After this the stage has no root layer.
+  std::unique_ptr<Layer> ReleaseRootLayer() { return std::move(root_layer_); }
+
   /// Add a sublayer (for composition)
   void AddSubLayer(Layer&& layer);
 
