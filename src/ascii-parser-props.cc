@@ -1416,6 +1416,11 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
       }
     }
 
+    // Finalize (sort) once, single-threaded, so later const reads are pure and
+    // the TimeSamples can be safely shared across threads. See
+    // value::TimeSamples::update().
+    ts.update();
+
     // Attribute metadatum is not allowed for timeSamples.
     if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;

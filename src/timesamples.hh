@@ -296,6 +296,15 @@ struct TimeSamples {
 
 
  public:
+  /// Finalize (sort) the samples and clear the dirty flag.
+  ///
+  /// const read accessors (size(), get(), ...) call this lazily when `_dirty`,
+  /// which mutates the internal `mutable` storage. Call update() ONCE
+  /// (single-threaded) after populating a TimeSamples so that subsequent const
+  /// reads are pure and the object can be safely shared across threads. The
+  /// USDA/USDC parsers call this at load time; user-built TimeSamples (via
+  /// add_sample()) should call it before sharing for concurrent reads.
+  /// Idempotent: a no-op when already sorted/clean.
   void update() const;
 
   bool has_sample_at(const double t) const;
