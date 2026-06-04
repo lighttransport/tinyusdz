@@ -68,6 +68,49 @@ static std::shared_ptr<Layer> BuildRootLayer() {
     lb.current()->meta().variantSelection = "vset=high";
   }
   lb.end_prim();  // V
+  // VC has a variant whose CONTENT subtree adds a host property + a child prim.
+  {
+    auto content = std::make_shared<Layer>();
+    LayerBuilder cb(*content);
+    cb.begin_prim("__self__", "");
+    cb.add_property("hostProp", Value::MakeFloat3(7, 7, 7));
+    cb.begin_prim("Geom", "Mesh");
+    cb.end_prim();  // Geom
+    cb.end_prim();  // __self__
+    cb.finalize();
+
+    lb.begin_prim("VC", "");
+    VariantSetData vss;
+    vss.name = "geo";
+    VariantData full;
+    full.name = "full";
+    full.content = content;
+    vss.variants.push_back(std::move(full));
+    lb.current()->meta().variantSets.push_back(std::move(vss));
+    lb.current()->meta().variantSelection = "geo=full";
+    lb.end_prim();  // VC
+  }
+  // MV selects TWO variant sets at once via variantSelections.
+  {
+    lb.begin_prim("MV", "");
+    VariantSetData s1;
+    s1.name = "s1";
+    VariantData s1on;
+    s1on.name = "on";
+    s1on.properties.push_back({"p1", Value::MakeFloat3(1, 1, 1)});
+    s1.variants.push_back(std::move(s1on));
+    VariantSetData s2;
+    s2.name = "s2";
+    VariantData s2on;
+    s2on.name = "on";
+    s2on.properties.push_back({"p2", Value::MakeFloat3(2, 2, 2)});
+    s2.variants.push_back(std::move(s2on));
+    lb.current()->meta().variantSets.push_back(std::move(s1));
+    lb.current()->meta().variantSets.push_back(std::move(s2));
+    lb.current()->meta().variantSelections.push_back({"s1", "on"});
+    lb.current()->meta().variantSelections.push_back({"s2", "on"});
+    lb.end_prim();  // MV
+  }
   // Three instanceable prims: Inst1/Inst2 reference the same asset (one
   // prototype, shared); Inst3 references a different asset (separate prototype).
   lb.begin_prim("Inst1", "");
@@ -295,6 +338,35 @@ static void test_variants() {
   std::cout << "  OK" << std::endl;
 }
 
+// FU2: variant subtree (adds geometry) + multi-selection.
+static void test_variants_v2() {
+  std::cout << "test_variants_v2..." << std::endl;
+  AssetResolver resolver;
+  auto root = BuildRootLayer();
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  // Content variant grafts a host property AND a child prim.
+  UsdPrim vc = stage.GetPrimAtPath("/World/VC");
+  assert(vc.IsValid());
+  assert(vc.GetPropertyValue("hostProp") != nullptr && "variant host opinion missing");
+  UsdPrim geom = stage.GetPrimAtPath("/World/VC/Geom");
+  assert(geom.IsValid() && "variant child prim not grafted");
+  assert(geom.GetTypeName() == "Mesh");
+
+  // Multi-selection: both selected variant sets contribute.
+  UsdPrim mv = stage.GetPrimAtPath("/World/MV");
+  assert(mv.IsValid());
+  assert(mv.GetPropertyValue("p1") != nullptr && "variant set s1 not applied");
+  assert(mv.GetPropertyValue("p2") != nullptr && "variant set s2 not applied");
+  std::cout << "  OK" << std::endl;
+}
+
 // Phase 5: instancing - structural prototype detection + grouping.
 static void test_instancing() {
   std::cout << "test_instancing..." << std::endl;
@@ -358,6 +430,7 @@ int main() {
   test_deferred_payload();
   test_inherits_specializes();
   test_variants();
+  test_variants_v2();
   test_instancing();
   test_relocates();
   std::cout << "All next/pcp tests passed." << std::endl;
