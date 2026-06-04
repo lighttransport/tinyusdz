@@ -109,6 +109,10 @@ class Cache {
   size_t ComputedPrimIndexCount() const;
   const LayerRegistry &layer_registry() const;
 
+  /// Pre-register an in-memory layer under `identifier`, so a reference/payload
+  /// resolving to that id composes it without disk I/O (embedding helper).
+  void PreloadLayer(const std::string &identifier, std::shared_ptr<Layer> layer);
+
   struct Impl;
 
  private:

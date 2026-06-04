@@ -422,6 +422,62 @@ static void test_relocates() {
   std::cout << "  OK" << std::endl;
 }
 
+// FU3: implied inherit propagation. A referenced asset inherits a class; a
+// root-authored override on the same class path composes (implied into root).
+static void test_implied_inherit() {
+  std::cout << "test_implied_inherit..." << std::endl;
+
+  // In-memory referenced asset: a class with libClassProp + an Asset prim that
+  // inherits it.
+  auto asset = std::make_shared<Layer>();
+  {
+    LayerBuilder ab(*asset);
+    ab.begin_prim("_class_Over", "Scope", PrimSpecifier::Class);
+    ab.add_property("libClassProp", Value::MakeFloat3(1, 1, 1));
+    ab.end_prim();
+    ab.begin_prim("Asset", "Mesh");
+    ab.current()->meta().inherits.push_back("</_class_Over>");
+    ab.end_prim();
+    ab.finalize();
+  }
+
+  // Root layer: its OWN _class_Over (rootClassProp) + Q references the asset.
+  auto rootL = std::make_shared<Layer>();
+  {
+    LayerBuilder rb(*rootL);
+    rb.begin_prim("_class_Over", "Scope", PrimSpecifier::Class);
+    rb.add_property("rootClassProp", Value::MakeFloat3(2, 2, 2));
+    rb.end_prim();
+    rb.begin_prim("World", "Xform");
+    rb.begin_prim("Q", "");
+    rb.current()->meta().references.push_back("@mem_asset@</Asset>");
+    rb.end_prim();
+    rb.end_prim();
+    rb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [](const std::string &a, const std::string &) { return a; });
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  cache.PreloadLayer("mem_asset", asset);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  UsdPrim q = stage.GetPrimAtPath("/World/Q");
+  assert(q.IsValid());
+  assert(q.GetTypeName() == "Mesh" && "cross-file reference type missing");
+  assert(q.GetPropertyValue("libClassProp") != nullptr &&
+         "direct (referenced-stack) inherit missing");
+  assert(q.GetPropertyValue("rootClassProp") != nullptr &&
+         "IMPLIED root-stack inherit override missing");
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_build_stage();
@@ -433,6 +489,7 @@ int main() {
   test_variants_v2();
   test_instancing();
   test_relocates();
+  test_implied_inherit();
   std::cout << "All next/pcp tests passed." << std::endl;
   return 0;
 }
