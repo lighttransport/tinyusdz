@@ -988,7 +988,7 @@ static size_t EstimateSinglePrimMemory(const Prim &prim) {
   total += prim.data().estimate_memory_usage();
 
   // String members
-  total += prim.element_name().capacity();
+  total += prim.element_name().size();
   total += prim.element_path().full_path_name().capacity();
   total += prim.prim_type_name().capacity();
   total += prim.absolute_path().full_path_name().capacity();

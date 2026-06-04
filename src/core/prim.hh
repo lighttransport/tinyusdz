@@ -172,7 +172,7 @@ class Prim {
   const Path &element_path() const { return _elementPath; }
 
   // elementName = element_path's prim part
-  const std::string &element_name() const { return _elementPath.prim_part(); }
+  tstring_view element_name() const { return _elementPath.prim_part(); }
 
   const std::string type_name() const { return _data.type_name(); }
 
