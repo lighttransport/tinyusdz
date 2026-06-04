@@ -132,6 +132,15 @@ void tydra_phys_body_default(TydraPhysBody *body) {
   body->motion_energy = 0.0f;
 }
 
+static int body_index_is_valid(const TydraPhysWorld *world, int32_t idx) {
+  return world && idx >= 0 && idx < world->num_bodies;
+}
+
+static int body_index_or_world_is_valid(const TydraPhysWorld *world,
+                                        int32_t idx) {
+  return idx < 0 || body_index_is_valid(world, idx);
+}
+
 int32_t tydra_phys_add_body(TydraPhysWorld *world, const TydraPhysBody *body) {
   if (!world || !body) return -1;
   if (world->num_bodies >= world->max_bodies) return -1;
@@ -145,6 +154,7 @@ int32_t tydra_phys_add_collider(TydraPhysWorld *world,
                                  const TydraPhysCollider *col) {
   if (!world || !col) return -1;
   if (world->num_colliders >= world->max_colliders) return -1;
+  if (!body_index_or_world_is_valid(world, col->body_index)) return -1;
   int32_t idx = world->num_colliders;
   world->colliders[idx] = *col;
   world->num_colliders++;
@@ -155,6 +165,8 @@ int32_t tydra_phys_add_joint(TydraPhysWorld *world,
                               const TydraPhysJoint *joint) {
   if (!world || !joint) return -1;
   if (world->num_joints >= world->max_joints) return -1;
+  if (!body_index_or_world_is_valid(world, joint->body_a)) return -1;
+  if (!body_index_or_world_is_valid(world, joint->body_b)) return -1;
   int32_t idx = world->num_joints;
   world->joints[idx] = *joint;
   world->num_joints++;
@@ -356,6 +368,11 @@ static void prepare_contacts(TydraPhysWorld *world) {
   for (i = 0; i < num; i++) {
     TydraPhysContact *c = &world->contacts[i];
     ContactConstraint *cc = &get_contact_cache(world)[i];
+    if (!body_index_is_valid(world, c->body_a) ||
+        !body_index_is_valid(world, c->body_b)) {
+      memset(cc, 0, sizeof(ContactConstraint));
+      continue;
+    }
     TydraPhysBody *ba = &world->bodies[c->body_a];
     TydraPhysBody *bb = &world->bodies[c->body_b];
 
@@ -422,6 +439,10 @@ static void solve_contacts(TydraPhysWorld *world) {
   for (i = 0; i < num; i++) {
     TydraPhysContact *c = &world->contacts[i];
     ContactConstraint *cc = &get_contact_cache(world)[i];
+    if (!body_index_is_valid(world, c->body_a) ||
+        !body_index_is_valid(world, c->body_b)) {
+      continue;
+    }
     TydraPhysBody *ba = &world->bodies[c->body_a];
     TydraPhysBody *bb = &world->bodies[c->body_b];
 
@@ -557,8 +578,10 @@ static void resolve_joint_bodies(TydraPhysWorld *world, TydraPhysJoint *j,
   dummy->local_inv_inertia = tp_v3(0, 0, 0);
   dummy->inv_inertia_world = tp_m3_identity();
   memset(dummy->inv_inertia_world.m, 0, sizeof(dummy->inv_inertia_world.m));
-  *ba = (j->body_a >= 0) ? &world->bodies[j->body_a] : dummy;
-  *bb = (j->body_b >= 0) ? &world->bodies[j->body_b] : dummy;
+  *ba = body_index_is_valid(world, j->body_a) ? &world->bodies[j->body_a]
+                                              : dummy;
+  *bb = body_index_is_valid(world, j->body_b) ? &world->bodies[j->body_b]
+                                              : dummy;
 }
 
 /* Solve a single ball joint (3 positional constraints) */
@@ -866,6 +889,7 @@ static void detect_islands(TydraPhysWorld *world) {
     int32_t a = world->contacts[i].body_a;
     int32_t b = world->contacts[i].body_b;
     if (a < 0 || b < 0) continue;
+    if (!body_index_is_valid(world, a) || !body_index_is_valid(world, b)) continue;
     if (world->bodies[a].body_type == TYDRA_PHYS_BODY_STATIC) continue;
     if (world->bodies[b].body_type == TYDRA_PHYS_BODY_STATIC) continue;
     uf_union(world->island_union, a, b);
@@ -876,6 +900,7 @@ static void detect_islands(TydraPhysWorld *world) {
     int32_t a = world->joints[i].body_a;
     int32_t b = world->joints[i].body_b;
     if (a < 0 || b < 0) continue;
+    if (!body_index_is_valid(world, a) || !body_index_is_valid(world, b)) continue;
     if (world->bodies[a].body_type == TYDRA_PHYS_BODY_STATIC) continue;
     if (world->bodies[b].body_type == TYDRA_PHYS_BODY_STATIC) continue;
     uf_union(world->island_union, a, b);
@@ -1049,15 +1074,22 @@ TydraPhysResult tydra_phys_step(TydraPhysWorld *world) {
   for (i = 0; i < world->broadphase.num_pairs; i++) {
     int32_t a = world->broadphase.pairs[i].a;
     int32_t b = world->broadphase.pairs[i].b;
+    int32_t body_a = world->colliders[a].body_index;
+    int32_t body_b = world->colliders[b].body_index;
     TydraPhysTransform xa, xb;
 
-    if (world->colliders[a].body_index >= 0) {
-      xa = world->bodies[world->colliders[a].body_index].xform;
+    if (!body_index_or_world_is_valid(world, body_a) ||
+        !body_index_or_world_is_valid(world, body_b)) {
+      continue;
+    }
+
+    if (body_index_is_valid(world, body_a)) {
+      xa = world->bodies[body_a].xform;
     } else {
       xa = tp_xform_identity();
     }
-    if (world->colliders[b].body_index >= 0) {
-      xb = world->bodies[world->colliders[b].body_index].xform;
+    if (body_index_is_valid(world, body_b)) {
+      xb = world->bodies[body_b].xform;
     } else {
       xb = tp_xform_identity();
     }
@@ -1074,8 +1106,8 @@ TydraPhysResult tydra_phys_step(TydraPhysWorld *world) {
       int32_t k;
       for (k = 0; k < nc; k++) {
         TydraPhysContact *c = &world->contacts[world->num_contacts + k];
-        c->body_a = world->colliders[a].body_index;
-        c->body_b = world->colliders[b].body_index;
+        c->body_a = body_a;
+        c->body_b = body_b;
         c->collider_a = a;
         c->collider_b = b;
         c->normal_impulse_accum = 0.0f;
@@ -1311,6 +1343,19 @@ bool BuildPhysWorld(
     return false;
   }
 
+  if (options.max_bodies <= 0 || options.max_colliders <= 0 ||
+      options.max_joints <= 0 || options.max_contacts <= 0 ||
+      options.max_pairs <= 0 || options.max_islands <= 0) {
+    if (err) *err = "Physics world buffer capacities must be positive";
+    return false;
+  }
+
+  size_t island_body_count = 0;
+  if (!safe::mul(size_t(options.max_bodies), size_t(2), &island_body_count)) {
+    if (err) *err = "Integer overflow computing physics island body buffer size";
+    return false;
+  }
+
   /* Validate allocation sizes against memory budget and overflow */
   {
     size_t total_bytes = 0;
@@ -1337,7 +1382,7 @@ bool BuildPhysWorld(
     RB_MUL_CHECK(options.max_colliders, sizeof(int32_t));
     RB_MUL_CHECK(options.max_islands, sizeof(TydraPhysIsland));
     RB_MUL_CHECK(options.max_bodies, sizeof(int32_t));
-    RB_MUL_CHECK(options.max_bodies * 2, sizeof(int32_t));
+    RB_MUL_CHECK(island_body_count, sizeof(int32_t));
     RB_MUL_CHECK(options.max_contacts, sizeof(ContactConstraint));
 
 #undef RB_MUL_CHECK
@@ -1376,7 +1421,7 @@ bool BuildPhysWorld(
       static_cast<size_t>(options.max_bodies)]);
   /* island_body_buf needs space for counts (max_bodies) + body lists (max_bodies) */
   std::unique_ptr<int32_t[]> island_body_buf(new int32_t[
-      static_cast<size_t>(options.max_bodies * 2)]);
+      island_body_count]);
 
   tydra_phys_world_init(out_world,
                          body_buf.get(), options.max_bodies,

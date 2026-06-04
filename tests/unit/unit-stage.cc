@@ -12,6 +12,10 @@
 #include "usdGeom.hh"
 #include "usda-writer.hh"
 #include "stage.hh"
+#include "mmap-array-ref.hh"
+
+#include <cstdint>
+#include <vector>
 
 using namespace tinyusdz;
 
@@ -247,6 +251,39 @@ void stage_find_prim_by_id_test(void) {
     TEST_CHECK(ok1 && ok2);
     TEST_CHECK(found1 == found2);  // Same pointer from cache
   }
+}
+
+void stage_adopt_mmap_buffer_lifetime_test(void) {
+  std::vector<uint8_t> bytes = {0, 1, 2, 3, 4, 5, 6, 7};
+
+  Stage stage;
+  stage.set_mmap_source(MMapDataSource(bytes.data() + 2, 4));
+
+  MMapArrayRef ref;
+  ref.byte_offset = 1;
+  ref.element_count = 2;
+  ref.element_size = sizeof(uint8_t);
+
+  MMapArrayTable table;
+  table.add("/Mesh", "points", ref);
+  stage.set_mmap_table(std::move(table));
+
+  TEST_CHECK(stage.adopt_mmap_buffer(std::move(bytes)));
+  TEST_CHECK(stage.has_mmap_zero_copy());
+
+  const MMapArrayRef *stored_ref = stage.mmap_table()->find("/Mesh", "points");
+  TEST_CHECK(stored_ref != nullptr);
+  if (stored_ref) {
+    const uint8_t *ptr = stage.mmap_source()->get_ptr<uint8_t>(*stored_ref);
+    TEST_CHECK(ptr != nullptr);
+    if (ptr) {
+      TEST_CHECK(ptr[0] == 3);
+      TEST_CHECK(ptr[1] == 4);
+    }
+  }
+
+  stage.clear_mmap_data();
+  TEST_CHECK(!stage.has_mmap_zero_copy());
 }
 
 void stage_add_root_prim_test(void) {

@@ -8,8 +8,10 @@
 #include <cctype>  // std::tolower
 #include <chrono>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <sstream>
+#include <utility>
 #include "asset-resolution.hh"
 
 //
@@ -119,6 +121,19 @@ nonstd::optional<const Prim *> GetPrimAtPathIterative(
 // -- Stage
 //
 
+struct StageMMapFileOwner {
+  explicit StageMMapFileOwner(io::MMapFileHandle &&h) : handle(std::move(h)) {}
+  ~StageMMapFileOwner() {
+    std::string ignored;
+    io::UnmapFile(handle, &ignored);
+  }
+
+  StageMMapFileOwner(const StageMMapFileOwner &) = delete;
+  StageMMapFileOwner &operator=(const StageMMapFileOwner &) = delete;
+
+  io::MMapFileHandle handle;
+};
+
 Stage::Stage() = default;
 Stage::~Stage() = default;
 
@@ -132,7 +147,7 @@ Stage::Stage(const Stage &other)
       _warn(other._warn),
       _dirty(other._dirty),
       _prim_id_dirty(other._prim_id_dirty) {
-  // unique_ptr members (_mmap_table, _mmap_source) are not copied.
+  // mmap unique_ptr members are not copied.
   // mmap data is only valid for the original Stage loaded from USDC.
 }
 
@@ -150,6 +165,8 @@ Stage &Stage::operator=(const Stage &other) {
     // unique_ptr members are not copied (mmap data is not transferable)
     _mmap_table.reset();
     _mmap_source.reset();
+    _mmap_file_owner.reset();
+    _mmap_buffer_owner.reset();
   }
   return *this;
 }
@@ -1257,7 +1274,71 @@ void Stage::set_mmap_table(MMapArrayTable &&table) {
 }
 
 void Stage::set_mmap_source(const MMapDataSource &src) {
+  _mmap_file_owner.reset();
+  _mmap_buffer_owner.reset();
   _mmap_source.reset(new MMapDataSource(src));
+}
+
+bool Stage::adopt_mmap_file(io::MMapFileHandle &&handle) {
+  if (!_mmap_source || !handle.addr || handle.size == 0) {
+    return false;
+  }
+
+  const uintptr_t base = reinterpret_cast<uintptr_t>(handle.addr);
+  const uintptr_t src = reinterpret_cast<uintptr_t>(_mmap_source->addr());
+  if (handle.size > uint64_t((std::numeric_limits<uintptr_t>::max)() - base)) {
+    return false;
+  }
+  const uintptr_t end = base + static_cast<uintptr_t>(handle.size);
+  if (src < base || src >= end) {
+    return false;
+  }
+
+  const uint64_t source_offset = static_cast<uint64_t>(src - base);
+  if (_mmap_source->size() > handle.size - source_offset) {
+    return false;
+  }
+
+  _mmap_buffer_owner.reset();
+  _mmap_file_owner.reset(new StageMMapFileOwner(std::move(handle)));
+  return true;
+}
+
+bool Stage::adopt_mmap_buffer(std::vector<uint8_t> &&buffer) {
+  if (!_mmap_source || buffer.empty()) {
+    return false;
+  }
+
+  const uintptr_t base = reinterpret_cast<uintptr_t>(buffer.data());
+  const uintptr_t src = reinterpret_cast<uintptr_t>(_mmap_source->addr());
+  const uint64_t buffer_size = static_cast<uint64_t>(buffer.size());
+  if (buffer_size > uint64_t((std::numeric_limits<uintptr_t>::max)() - base)) {
+    return false;
+  }
+  const uintptr_t end = base + static_cast<uintptr_t>(buffer_size);
+  if (src < base || src >= end) {
+    return false;
+  }
+
+  const uint64_t source_offset = static_cast<uint64_t>(src - base);
+  const uint64_t source_size = _mmap_source->size();
+  if (source_size > buffer_size - source_offset) {
+    return false;
+  }
+
+  _mmap_file_owner.reset();
+  _mmap_buffer_owner.reset(new std::vector<uint8_t>(std::move(buffer)));
+  _mmap_source.reset(new MMapDataSource(
+      _mmap_buffer_owner->data() + static_cast<size_t>(source_offset),
+      source_size));
+  return true;
+}
+
+void Stage::clear_mmap_data() {
+  _mmap_table.reset();
+  _mmap_source.reset();
+  _mmap_file_owner.reset();
+  _mmap_buffer_owner.reset();
 }
 
 bool Stage::has_mmap_zero_copy() const {
