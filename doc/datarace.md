@@ -140,6 +140,22 @@ mutation that a real multithread user would hit (loading/writing files, reading
 animated attributes from several threads) — none of which the pcp-focused tests
 exercised.
 
+### TimeSamples::get_samples() unified→generic materialization — **FIXED (audit follow-up)**
+A re-audit of the round-3 commit found the eager-finalize was *incomplete*.
+`TimeSamples::update()` only sorts; it does not build the generic `_samples`
+vector. USDC numeric attributes use unified (`_times`/`_data`) storage with
+`_samples` empty, so the first generic read — `get_samples()`, reached by
+`get_value()` and array/non-binary `get<T>()` (`src/timesamples-eval.cc`) —
+lazily materialized `mutable _samples` under `const`. Two threads reading the
+same shared file-loaded attribute that way still raced (TSan-confirmed at
+`src/timesamples.cc` get_samples). Fix: a `mutable std::atomic<bool>
+_samples_ready` guards the one-time build — lock-free acquire fast path once
+built, a function-local static mutex for the cold initial build, release-store on
+completion. Materialization stays lazy (no eager memory cost); the flag is reset
+in `invalidate_reconstructed_samples_cache()` (and copy/move/clear handle it).
+Reads are now genuinely pure once built. Verified with the standalone TSan
+harness below (race before, clean after).
+
 ### ParserProfiler global singleton — **FIXED**
 `TINYUSDZ_PROFILE_FUNCTION`/`_SCOPE` (`src/parser-timing.hh`) unconditionally called
 `ParserProfiler::GetInstance().GetTimer(name)` → `timers_[name]` (mutating a shared
@@ -254,6 +270,30 @@ Round-3 audit, confirmed safe / contract (no change):
 ---
 
 ## Reproducing with ThreadSanitizer
+
+> **IMPORTANT — the acutest unit-test binary is NOT a reliable TSan race
+> detector.** A deliberately-injected data race inside a `unit-*.cc` test goes
+> *unreported* by `./build-tsan/unit-test-tinyusdz` (both the in-process
+> single-test path and the forked full-suite path), even though the binary is
+> TSan-instrumented and prints the "Running under ThreadSanitizer" banner. The
+> same race compiled as a small standalone IS caught. Root cause undetermined
+> (some acutest × TSan × large-binary interaction). Treat a "0 races" from the
+> unit-test binary as *weak* evidence only. TSan crashes/stack-smashes still
+> surface (as `Unexpected exit code [66]` from the forked child), and the suite
+> is still useful for **functional** concurrency checks.
+>
+> **Authoritative TSan check: a standalone that links the TSan-built static
+> library** and exercises the shared object directly. This reliably reports
+> races (verified: it flags the get_samples() race with the fix reverted, and is
+> clean with the fix):
+>
+> ```bash
+> cmake --build build-tsan --target tinyusdz_static -j16
+> # write a small main() that builds the shared object and reads it from N threads
+> g++ -std=c++17 -fsanitize=thread -O1 -g -Isrc -Isrc/external repro.cc \
+>     build-tsan/libtinyusdz_static.a -lpthread -ldl -o repro
+> setarch -R ./repro        # exit 66 + "WARNING: ThreadSanitizer" on a real race
+> ```
 
 ```bash
 # Build a TSan unit-test binary (threads on).
