@@ -1142,4 +1142,7 @@ builds are sequential and zero-overhead — the parallel path and lock macro com
 arc, ancestral composition, deferred payloads, instancing + proxies, relocates,
 cross-source variants, implied class propagation (incl. intermediate stacks), the
 parallel batch build vs. a serial baseline, concurrent shared-cache queries (TSan),
-and the one-call helpers.
+and the one-call helpers. `tests/next/test_pcp_parallel.cc` adds dedicated
+minimal/complex/stress coverage for the parallel build on *synthetically generated*
+scenes (up to ~900 paths × 8 threads × repeated rounds), asserting every index and
+prototype grouping matches the serial baseline and is stable across runs (TSan-clean).
