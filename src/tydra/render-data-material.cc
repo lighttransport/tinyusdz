@@ -2052,7 +2052,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     // Check if this is a MaterialX connection to a NodeGraph
     if (is_materialx && param.get_connections().size() == 1) {
       const Path &conn_path = param.get_connections()[0];
-      if (conn_path.prim_part().find("/NodeGraphs") != std::string::npos) {
+      if (conn_path.prim_part().contains("/NodeGraphs")) {
         // This is a MaterialX NodeGraph connection, traverse to find texture
         const Shader *image_shader{nullptr};
         Path texPath;

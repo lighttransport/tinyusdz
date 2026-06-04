@@ -330,9 +330,8 @@ inline void hash_combine(std::size_t &seed, const T &v) {
 
 struct PathHasher {
   size_t operator()(const Path &path) const {
-    size_t seed = std::hash<std::string>()(path.prim_part());
-    hash_combine(seed, std::hash<std::string>()(path.prop_part()));
-    //hash_combine(seed, std::hash<std::string>()(path.GetLocalPart()));
+    size_t seed = std::hash<tinyusdz::tstring_view>()(path.prim_part());
+    hash_combine(seed, std::hash<tinyusdz::tstring_view>()(path.prop_part()));
     hash_combine(seed, std::hash<bool>()(path.is_valid()));
 
     return seed;

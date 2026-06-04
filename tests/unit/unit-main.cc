@@ -23,6 +23,7 @@
 #include "unit-tydra.h"
 #include "unit-tydra-subdivision.h"
 #include "unit-dedup.h"
+#include "unit-path.h"
 #include "unit-crate-writer.h"
 #include "unit-stage.h"
 #include "unit-tiny-container.h"
@@ -183,6 +184,11 @@ TEST_LIST = {
   { "dedup_unique_arrays_test", dedup_unique_arrays_test },
   { "dedup_string_array_test", dedup_string_array_test },
   { "dedup_matrix4d_test", dedup_matrix4d_test },
+  { "path_parts_views_test", path_parts_views_test },
+  { "path_append_build_test", path_append_build_test },
+  { "path_variant_test", path_variant_test },
+  { "path_compare_hash_test", path_compare_hash_test },
+  { "path_parent_relative_test", path_parent_relative_test },
   { "dedup_role_array_test", dedup_role_array_test },
   { "dedup_compressed_int_array_test", dedup_compressed_int_array_test },
   { "crate_writer_basic_creation_test", crate_writer_basic_creation_test },
