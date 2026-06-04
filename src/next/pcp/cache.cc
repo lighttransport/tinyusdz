@@ -25,6 +25,9 @@ struct Src {
   NamespaceMapping map;        // remap site-namespace -> root-prim namespace
   LayerOffset offset;
   ArcType arc_kind = ArcType::Root;  // arc this source arrived through
+  // For Variant sources: the selected variant's inline opinions (lives inside a
+  // shared layer's PrimSpecMeta, so the pointer is stable). null otherwise.
+  const VariantData *variant = nullptr;
 };
 
 // Reverse-dependency key: which (layer, prim-path) an index read from.
@@ -142,7 +145,24 @@ struct Cache::Impl {
     return options.load_payloads;
   }
 
-  // --- arc expansion (references + payloads); pre-order DFS == strength ----
+  // --- variant selection --------------------------------------------------
+
+  // Resolve the selected variant on `spec` (single "set=sel" selection for now).
+  // Returns the chosen VariantData (owned by spec's layer) or nullptr.
+  const VariantData *SelectVariant(const PrimSpec &spec) const {
+    VariantSelection sel =
+        Compositor::ParseVariantSelection(spec.meta().variantSelection);
+    if (sel.variant_set.empty()) return nullptr;
+    for (const VariantSetData &vss : spec.meta().variantSets) {
+      if (vss.name != sel.variant_set) continue;
+      for (const VariantData &vd : vss.variants) {
+        if (vd.name == sel.variant_name) return &vd;
+      }
+    }
+    return nullptr;
+  }
+
+  // --- arc expansion (inherits/variants/references/payloads/specializes) ---
 
   // Resolve+recurse an external/internal arc target from source `src`.
   // `kind` is the arc type; `out` collects ordinary opinions and `spec_out`
@@ -223,6 +243,19 @@ struct Cache::Impl {
                  out, spec_out, warn, err);
     }
 
+    // Variants (weaker than inherits, stronger than references). The selected
+    // variant's inline opinions are grafted as a Variant source on this prim.
+    if (!spec->meta().variantSets.empty() &&
+        !spec->meta().variantSelection.empty()) {
+      const VariantData *vd = SelectVariant(*spec);
+      if (vd) {
+        Src vsrc = src;
+        vsrc.arc_kind = ArcType::Variant;
+        vsrc.variant = vd;
+        out->push_back(std::move(vsrc));
+      }
+    }
+
     // References.
     for (const std::string &ref_str : spec->meta().references) {
       ProcessArc(src, Compositor::ParseReference(ref_str), ArcType::Reference,
@@ -292,6 +325,9 @@ struct Cache::Impl {
       const std::string cn = path.name();
       base.reserve(psrc.size());
       for (const Src &ps : psrc) {
+        // Variant sources are inline opinions on the prim itself; they do not
+        // (yet) carry child prims, so they don't propagate to children.
+        if (ps.variant) continue;
         Src c;
         c.stack_idx = ps.stack_idx;
         c.site = ps.site + "/" + cn;
@@ -317,6 +353,22 @@ struct Cache::Impl {
     bool specifier_set = false;
 
     for (const Src &s : srcs) {
+      // Variant source: graft the selected variant's inline opinions
+      // (properties + relationships) with fill-absent semantics. Variant child
+      // prims are not yet modeled (VariantData has no child storage).
+      if (s.variant) {
+        for (const auto &pr : s.variant->properties) {
+          if (!out->property(pr.first)) out->add_property(pr.first, pr.second);
+        }
+        for (const auto &rp : s.variant->relationships) {
+          if (out->relationship(rp.first)) continue;
+          for (const Path &t : rp.second) {
+            out->add_relationship(rp.first, Path(s.map.Apply(t.str())));
+          }
+        }
+        continue;
+      }
+
       const Layer *layer = nullptr;
       const PrimSpec *spec = FindSpec(layer_stacks[s.stack_idx], s.site, &layer);
       if (!spec) continue;

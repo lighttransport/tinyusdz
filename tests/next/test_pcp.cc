@@ -51,6 +51,23 @@ static std::shared_ptr<Layer> BuildRootLayer() {
   lb.current()->meta().references.push_back("</Lib/RefModel>");
   lb.current()->meta().specializes.push_back("</_class_Base>");
   lb.end_prim();  // SP
+  // V has a variant set "vset" with selection "high".
+  lb.begin_prim("V", "");
+  {
+    VariantSetData vss;
+    vss.name = "vset";
+    VariantData hi;
+    hi.name = "high";
+    hi.properties.push_back({"variantHigh", Value::MakeFloat3(9, 9, 9)});
+    VariantData lo;
+    lo.name = "low";
+    lo.properties.push_back({"variantLow", Value::MakeFloat3(1, 1, 1)});
+    vss.variants.push_back(std::move(hi));
+    vss.variants.push_back(std::move(lo));
+    lb.current()->meta().variantSets.push_back(std::move(vss));
+    lb.current()->meta().variantSelection = "vset=high";
+  }
+  lb.end_prim();  // V
   lb.end_prim();  // World
 
   lb.begin_prim("Lib", "Scope");
@@ -238,6 +255,28 @@ static void test_inherits_specializes() {
   std::cout << "  OK" << std::endl;
 }
 
+// Phase 4: variant selection grafts the chosen variant's opinions only.
+static void test_variants() {
+  std::cout << "test_variants..." << std::endl;
+  AssetResolver resolver;
+  auto root = BuildRootLayer();
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  UsdPrim v = stage.GetPrimAtPath("/World/V");
+  assert(v.IsValid());
+  assert(v.GetPropertyValue("variantHigh") != nullptr &&
+         "selected variant 'high' not grafted");
+  assert(v.GetPropertyValue("variantLow") == nullptr &&
+         "non-selected variant 'low' leaked");
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_build_stage();
@@ -245,6 +284,7 @@ int main() {
   test_ancestral_compute();
   test_deferred_payload();
   test_inherits_specializes();
+  test_variants();
   std::cout << "All next/pcp tests passed." << std::endl;
   return 0;
 }
