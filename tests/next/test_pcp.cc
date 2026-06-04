@@ -35,6 +35,22 @@ static std::shared_ptr<Layer> BuildRootLayer() {
   lb.begin_prim("P", "");
   lb.current()->meta().payloads.push_back("</Lib/Model>");
   lb.end_prim();  // P
+  // I inherits the class (provides type "Scope").
+  lb.begin_prim("I", "");
+  lb.current()->meta().inherits.push_back("</_class_Base>");
+  lb.end_prim();  // I
+  // IR inherits the class AND references RefModel (Mesh): inherit (Scope) is
+  // STRONGER than the reference (Mesh), so composed type == "Scope".
+  lb.begin_prim("IR", "");
+  lb.current()->meta().inherits.push_back("</_class_Base>");
+  lb.current()->meta().references.push_back("</Lib/RefModel>");
+  lb.end_prim();  // IR
+  // SP references RefModel (Mesh) AND specializes the class (Scope):
+  // specialize is globally WEAKEST, so the reference (Mesh) wins.
+  lb.begin_prim("SP", "");
+  lb.current()->meta().references.push_back("</Lib/RefModel>");
+  lb.current()->meta().specializes.push_back("</_class_Base>");
+  lb.end_prim();  // SP
   lb.end_prim();  // World
 
   lb.begin_prim("Lib", "Scope");
@@ -43,7 +59,13 @@ static std::shared_ptr<Layer> BuildRootLayer() {
   lb.begin_prim("Inner", "Sphere");
   lb.end_prim();  // Inner
   lb.end_prim();  // Model
+  lb.begin_prim("RefModel", "Mesh");
+  lb.end_prim();  // RefModel
   lb.end_prim();  // Lib
+
+  // Abstract class used by inherits/specializes (type "Scope").
+  lb.begin_prim("_class_Base", "Scope", PrimSpecifier::Class);
+  lb.end_prim();  // _class_Base
 
   lb.finalize();
   return std::make_shared<Layer>(std::move(layer));
@@ -184,12 +206,45 @@ static void test_deferred_payload() {
   std::cout << "  OK" << std::endl;
 }
 
+// Phase 3: inherits + specializes, with LIVRPS strength
+// (Local > Inherit > Reference > Payload > Specialize).
+static void test_inherits_specializes() {
+  std::cout << "test_inherits_specializes..." << std::endl;
+  AssetResolver resolver;
+  auto root = BuildRootLayer();
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  // Inherit composes the class type.
+  UsdPrim i = stage.GetPrimAtPath("/World/I");
+  assert(i.IsValid());
+  assert(i.GetTypeName() == "Scope" && "inherit did not compose class type");
+
+  // Inherit (Scope) is STRONGER than the reference (Mesh).
+  UsdPrim ir = stage.GetPrimAtPath("/World/IR");
+  assert(ir.IsValid());
+  assert(ir.GetTypeName() == "Scope" && "inherit should outrank reference");
+
+  // Specialize (Scope) is WEAKER than the reference (Mesh).
+  UsdPrim sp = stage.GetPrimAtPath("/World/SP");
+  assert(sp.IsValid());
+  assert(sp.GetTypeName() == "Mesh" && "reference should outrank specialize");
+
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_build_stage();
   test_invalidate();
   test_ancestral_compute();
   test_deferred_payload();
+  test_inherits_specializes();
   std::cout << "All next/pcp tests passed." << std::endl;
   return 0;
 }
