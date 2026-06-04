@@ -3,6 +3,7 @@
 // Copyright 2023 - Present, Light Transport Entertinament Inc.
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 //#include <cassert>
 #include <cctype>  // std::tolower
@@ -1798,25 +1799,26 @@ bool SetupUSDZAssetResolution(
 
 namespace {
 
-// CRC32 lookup table (IEEE 802.3 polynomial)
-static uint32_t usdz_crc32_table[256];
-static bool usdz_crc32_table_initialized = false;
-
-static void InitCRC32Table() {
-  for (uint32_t i = 0; i < 256; i++) {
-    uint32_t c = i;
-    for (int j = 0; j < 8; j++) {
-      c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+// CRC32 lookup table (IEEE 802.3 polynomial).
+// Thread-safe one-time init via a function-local static (C++11 magic statics),
+// so concurrent USDZ writes don't race on a hand-rolled init flag.
+static const std::array<uint32_t, 256> &Usdz_CRC32Table() {
+  static const std::array<uint32_t, 256> table = [] {
+    std::array<uint32_t, 256> t{};
+    for (uint32_t i = 0; i < 256; i++) {
+      uint32_t c = i;
+      for (int j = 0; j < 8; j++) {
+        c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+      }
+      t[i] = c;
     }
-    usdz_crc32_table[i] = c;
-  }
-  usdz_crc32_table_initialized = true;
+    return t;
+  }();
+  return table;
 }
 
 static uint32_t ComputeCRC32(const uint8_t *data, size_t len) {
-  if (!usdz_crc32_table_initialized) {
-    InitCRC32Table();
-  }
+  const std::array<uint32_t, 256> &usdz_crc32_table = Usdz_CRC32Table();
   uint32_t crc = 0xFFFFFFFFu;
   for (size_t i = 0; i < len; i++) {
     crc = usdz_crc32_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);

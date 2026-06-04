@@ -133,6 +133,56 @@ removed. `force_update` is retained as a no-op for signature compatibility.
 
 ---
 
+## Fixed — Round 3 (process-wide state + value finalization)
+
+A third sweep targeted process-wide shared mutable state and remaining lazy-const
+mutation that a real multithread user would hit (loading/writing files, reading
+animated attributes from several threads) — none of which the pcp-focused tests
+exercised.
+
+### ParserProfiler global singleton — **FIXED**
+`TINYUSDZ_PROFILE_FUNCTION`/`_SCOPE` (`src/parser-timing.hh`) unconditionally called
+`ParserProfiler::GetInstance().GetTimer(name)` → `timers_[name]` (mutating a shared
+`std::map`) at the top of *every* parse, regardless of the default-off
+`enable_profiling`. Two threads each calling `LoadUSDFromFile` raced on that map
+(independent of pcp). Fix: (a) the scope macros now pass a null timer when
+profiling is disabled (`ScopedTimer` no-ops on null), so the default build never
+touches the singleton — zero overhead; (b) `timers_` is guarded by a new
+`std::mutex ParserProfiler::mu_` in `GetTimer`/`GenerateReport`/`ClearAll` for the
+enabled path (`std::map` keeps element pointers valid across inserts, so the
+returned `ParserTimer*` stays valid after unlock). Per-timer counters remain
+approximate under concurrent profiling; set config before spawning threads.
+Covered by `stage_concurrent_parse_test`.
+
+### CRC32 / base122 double-checked table init — **FIXED**
+`usdz_crc32_table` (`src/tinyusdz.cc`), the identical table in
+`src/next/writer/usdz-writer.cc`, and `base122_decode_map` (`src/base122.cc`) used
+a hand-rolled `static bool …_ready` flag with no atomics → racy on concurrent USDZ
+write/decode. Replaced each with a function-local `static const std::array<…>`
+returned by reference (C++11 magic statics: thread-safe one-time init). The CRC
+polynomial / initial values are byte-for-byte unchanged.
+
+### TimeSamples lazy sort on read — **FIXED (eager-finalize at parse)**
+`value::TimeSamples` const reads (`size()`, `get()`, …) call `update()`, which
+sorts `mutable` parallel arrays in place and flips `mutable _dirty` — racy if a
+shared time-sampled attribute is read from two threads. Fix: `update()` is now
+called once (single-threaded) at the parse chokepoints — USDA in
+`src/ascii-parser-props.cc` (after `ParseTimeSamples`/`…OfArray`), USDC in
+`src/crate-reader-values.cc` (after `ReadTimeSamples`) — so every file-loaded
+TimeSamples is sorted/clean before exposure and subsequent const reads are pure.
+`update()` is public + idempotent; user-built TimeSamples (`add_sample`) must call
+it before sharing for concurrent reads (documented on the method). Mirrors the
+"compute eagerly so reads are pure" approach used for `Path`/`Xformable`. Covered
+by `stage_concurrent_timesamples_read_test`.
+
+### LayerRegistry resolver-cwp save/restore — **HARDENED**
+`LayerRegistry::GetOrLoad` (`src/pcp/layer-registry.cc`) set→resolve→restored the
+shared resolver's working path manually; an early return/throw would leak a stale
+cwp to the next worker. Now a local RAII guard restores it on every exit path
+(still inside the registry lock). Behavior otherwise unchanged.
+
+---
+
 ## Remaining issues
 
 None. All audited items are fixed or documented above. The full unit suite is
@@ -181,6 +231,26 @@ Round-2 audit, confirmed safe with no change:
   mutex-guarded and `render-data-material.cc`'s connection cache is
   `thread_local`.
 
+Round-3 audit, confirmed safe / contract (no change):
+
+- **Read/write contract for `Layer` / `Stage`**: the lock-free tree walk in
+  `find_primspec_at` / `GetPrimAtPath` and the returned `const PrimSpec*`/`Prim*`
+  are safe under the standard **concurrent-reads XOR exclusive-write** contract.
+  Mutators (`add_primspec`, `add_root_prim`, compose/flatten) are single-threaded
+  build APIs — never mutate a `Layer`/`Stage` while other threads read it. Cache
+  inserts don't invalidate returned data pointers (they point into the stable
+  `_prim_specs`/`_root_nodes` tree, not the cache map).
+- **`prim-pprint-parallel.cc`** drain loop is correct: `producer_done` is stored
+  only *after* every `Push()` returns, and `Push` returns only after the Vyukov
+  `seq.store(release)` publish, so `done==true` ⟹ all items published; a worker
+  that claimed a slot owns it. No lost-task race.
+- **`value::any_value`** (no mutable members; `cast()` const-path is a pure
+  reinterpret) and **`Animatable<T>`** scalar reads are pure. The only lazy state
+  was `TimeSamples` (now eager-finalized at parse).
+- **User-built `TimeSamples`** (via `add_sample`, not from a file) must be
+  `update()`-finalized once, single-threaded, before sharing for concurrent reads
+  (documented on `TimeSamples::update()`).
+
 ---
 
 ## Reproducing with ThreadSanitizer
@@ -199,7 +269,9 @@ cmake --build build-tsan --target unit-test-tinyusdz -j16
 # or lower vm.mmap_rnd_bits (needs root).
 setarch -R ./build-tsan/unit-test-tinyusdz pcp_mt_shared_reference_test \
                                             pcp_singlethread_vs_multithread_identical_test \
-                                            stage_concurrent_find_prim_test
+                                            stage_concurrent_find_prim_test \
+                                            stage_concurrent_parse_test \
+                                            stage_concurrent_timesamples_read_test
 # Full suite:
 setarch -R ./build-tsan/unit-test-tinyusdz
 ```

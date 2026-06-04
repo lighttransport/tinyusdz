@@ -2867,6 +2867,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read TimeSamples data");
       }
 
+      // Finalize (sort) once, single-threaded, so later const reads are pure and
+      // the TimeSamples can be safely shared across threads. See
+      // value::TimeSamples::update().
+      ts.update();
+
       //TUSDZ_LOG_I("Set TimeSamples begin\n");
       value->Set(std::move(ts));
       //TUSDZ_LOG_I("Set TimeSamples end\n");
