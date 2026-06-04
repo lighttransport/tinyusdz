@@ -12,6 +12,7 @@
 #include "usdGeom.hh"
 #include "usda-writer.hh"
 #include "stage.hh"
+#include "timesamples.hh"
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
 #include <atomic>
@@ -612,6 +613,107 @@ void stage_concurrent_find_prim_test(void) {
   TEST_CHECK(ok.load());
 #else
   // Threads disabled: the const read API is covered by the other Stage tests.
+  TEST_CHECK(true);
+#endif
+}
+
+// N threads each parse the SAME in-memory USDA buffer (read-only) into their
+// OWN Stage, concurrently. This exercises process-wide parse state — notably the
+// ParserProfiler singleton, which used to mutate a shared std::map on every
+// parse. The buffer contains an out-of-order timeSamples block so the parse-time
+// TimeSamples finalize (sort) runs too. Must be ThreadSanitizer-clean.
+void stage_concurrent_parse_test(void) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  const std::string usda =
+      "#usda 1.0\n"
+      "def Xform \"Root\"\n"
+      "{\n"
+      "    double val.timeSamples = {\n"
+      "        2: 2.0,\n"
+      "        0: 0.0,\n"
+      "        1: 1.0,\n"
+      "    }\n"
+      "    def Xform \"Child\"\n"
+      "    {\n"
+      "    }\n"
+      "}\n";
+
+  const int kThreads = 8;
+  std::atomic<int> ok_count{0};
+
+  auto worker = [&]() {
+    Stage stage;
+    std::string warn, err;
+    bool ok = tinyusdz::LoadUSDAFromMemory(
+        reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+        /* base_dir */ "", &stage, &warn, &err);
+    if (ok) {
+      ok_count.fetch_add(1);
+    }
+  };
+
+  std::vector<std::thread> ts;
+  ts.reserve(kThreads);
+  for (int i = 0; i < kThreads; ++i) {
+    ts.emplace_back(worker);
+  }
+  for (auto &t : ts) {
+    t.join();
+  }
+
+  TEST_CHECK(ok_count.load() == kThreads);
+#else
+  TEST_CHECK(true);
+#endif
+}
+
+// A finalized (update()-sorted) TimeSamples must be safe to read from many
+// threads: the const accessors (get()/size()) must not mutate it. Build with
+// out-of-order samples, finalize once (as the parsers now do), then read
+// concurrently. Must be ThreadSanitizer-clean.
+void stage_concurrent_timesamples_read_test(void) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  value::TimeSamples ts;
+  // Add out of time order so update() actually sorts.
+  ts.add_sample<double>(2.0, 20.0);
+  ts.add_sample<double>(0.0, 0.0);
+  ts.add_sample<double>(1.0, 10.0);
+  ts.add_sample<double>(3.0, 30.0);
+
+  // Finalize once, single-threaded (mirrors what the parsers do at load).
+  ts.update();
+  TEST_CHECK(ts.size() == 4);
+
+  const int kThreads = 8;
+  const int kIters = 5000;
+  std::atomic<bool> ok{true};
+
+  auto worker = [&]() {
+    for (int it = 0; it < kIters; ++it) {
+      if (ts.size() != 4) {
+        ok.store(false);
+      }
+      double v = 0.0;
+      // Held interpolation; just exercise the read path concurrently.
+      if (ts.get<double>(&v, 1.0)) {
+        if (v != 10.0) {
+          ok.store(false);
+        }
+      }
+    }
+  };
+
+  std::vector<std::thread> threads;
+  threads.reserve(kThreads);
+  for (int i = 0; i < kThreads; ++i) {
+    threads.emplace_back(worker);
+  }
+  for (auto &t : threads) {
+    t.join();
+  }
+
+  TEST_CHECK(ok.load());
+#else
   TEST_CHECK(true);
 #endif
 }

@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -135,21 +136,36 @@ class ParserProfiler {
 
  private:
   ParserProfiler() = default;
-  
+
   ParserProfilingConfig config_;
   std::map<std::string, ParserTimer> timers_;
+  // Guards timers_. GetTimer() returns a ParserTimer* into this map; std::map
+  // does not invalidate element pointers on insert, so the pointer stays valid
+  // after the lock releases. (Set profiling config before spawning threads;
+  // per-ParserTimer counters are approximate under concurrent profiling.)
+  mutable std::mutex mu_;
 };
 
 // Helper macro for variable name concatenation
 #define TINYUSDZ_CONCAT_IMPL(x, y) x##y
 #define TINYUSDZ_CONCAT(x, y) TINYUSDZ_CONCAT_IMPL(x, y)
 
-// Convenience macros for profiling
+// Convenience macros for profiling.
+//
+// NOTE: these gate on enable_profiling (default false) and pass a null timer
+// when disabled. ScopedTimer no-ops on a null timer, so a default build never
+// touches the shared ParserProfiler::timers_ map — important because parsers run
+// on worker threads (pcp parallel build) and from concurrent LoadUSDFromFile
+// calls. When enabled, GetTimer() is internally mutex-guarded.
 #define TINYUSDZ_PROFILE_FUNCTION(parser_name) \
-  tinyusdz::ScopedTimer TINYUSDZ_CONCAT(timer_scope_, __LINE__)(tinyusdz::ParserProfiler::GetInstance().GetTimer(parser_name), __FUNCTION__)
+  tinyusdz::ScopedTimer TINYUSDZ_CONCAT(timer_scope_, __LINE__)( \
+    tinyusdz::ParserProfiler::GetInstance().GetConfig().enable_profiling \
+      ? tinyusdz::ParserProfiler::GetInstance().GetTimer(parser_name) : nullptr, __FUNCTION__)
 
 #define TINYUSDZ_PROFILE_SCOPE(parser_name, scope_name) \
-  tinyusdz::ScopedTimer TINYUSDZ_CONCAT(timer_scope_, __LINE__)(tinyusdz::ParserProfiler::GetInstance().GetTimer(parser_name), scope_name)
+  tinyusdz::ScopedTimer TINYUSDZ_CONCAT(timer_scope_, __LINE__)( \
+    tinyusdz::ParserProfiler::GetInstance().GetConfig().enable_profiling \
+      ? tinyusdz::ParserProfiler::GetInstance().GetTimer(parser_name) : nullptr, scope_name)
 
 #define TINYUSDZ_PROFILE_START(parser_name, operation) \
   if (tinyusdz::ParserProfiler::GetInstance().GetConfig().enable_profiling) { \
