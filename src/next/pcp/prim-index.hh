@@ -1,0 +1,110 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2024-Present Light Transport Entertainment Inc.
+//
+// TinyUSDZ Next - PCP PrimIndex
+//
+// Per-prim composition graph (DAG of CompNodes in strength order). Mirrors the
+// design of composition_graph::PrimIndex but on next types. Standalone, C++14.
+//
+// NOTE (memory): Phase 1 stores the site path as a std::string and children as
+// a small vector per node for clarity. Interning the path table and packing
+// CompNode into a fixed <=40B struct with uint16 indices is the next
+// optimization (tracked in the plan); the public shape here is stable.
+
+#pragma once
+
+#include "arc-types.hh"
+#include "namespace-mapping.hh"
+#include "../layer/layer.hh"
+
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace tinyusdz {
+namespace next {
+namespace pcp {
+
+/// An ordered stack of layers (strong -> weak): a root/referenced layer plus
+/// its composed sublayers. Layers are shared_ptr so a parsed file exists once
+/// and is refcount-shared across every node/index that uses it (parse-once).
+struct LayerStack {
+  std::vector<std::shared_ptr<Layer>> layers;  // strongest first
+  std::string identifier;                       // resolved asset path (registry key)
+  LayerOffset offset;                           // cumulative time offset to root
+};
+
+/// One composition source for a prim.
+struct CompNode {
+  ArcType arc_type = ArcType::Root;
+  uint16_t parent = 0xFFFF;          // 0xFFFF == none (root)
+  std::vector<uint16_t> children;    // child node indices (build order)
+  uint32_t layer_stack_idx = 0;      // index into Cache's layer-stack table
+  std::string site_prim_path;        // prim path within that layer stack
+  NamespaceMapping map_to_root;      // remap this node's namespace -> root prim namespace
+  LayerOffset offset;                // cumulative time offset for this node
+  NodeFlags flags = NodeFlags::None;
+
+  bool has_specs() const { return HasFlag(flags, NodeFlags::HasSpecs); }
+  bool is_inert() const { return HasFlag(flags, NodeFlags::Inert); }
+  bool is_culled() const { return HasFlag(flags, NodeFlags::Culled); }
+};
+
+/// Composition options (subset for phase 1; grows with later phases).
+struct CompositionOptions {
+  bool load_payloads = true;       // phase 2: eager unless a policy defers.
+  uint32_t max_depth = 256;        // arc recursion limit / cycle backstop.
+  bool error_when_asset_not_found = false;
+};
+
+/// The composed graph for a single prim. Borrows its layer-stack table from the
+/// owning Cache (the table outlives every PrimIndex it backs).
+class PrimIndex {
+ public:
+  PrimIndex() = default;
+
+  const Path &GetPath() const { return prim_path_; }
+  const CompNode &GetRootNode() const { return nodes_[0]; }
+  const CompNode &GetNode(uint16_t i) const { return nodes_[i]; }
+  uint16_t GetNodeCount() const { return static_cast<uint16_t>(nodes_.size()); }
+  const std::vector<CompNode> &GetNodes() const { return nodes_; }
+  const std::vector<uint16_t> &GetStrengthOrder() const { return strength_order_; }
+  const std::vector<LayerStack> *GetLayerStacks() const { return layer_stacks_; }
+
+  bool HasAnySpecs() const {
+    for (const auto &n : nodes_) if (n.has_specs()) return true;
+    return false;
+  }
+
+  std::string DumpToString() const {
+    std::string s = "PrimIndex<" + prim_path_.str() + "> nodes=" +
+                    std::to_string(nodes_.size()) + "\n";
+    for (uint16_t oi : strength_order_) {
+      const CompNode &n = nodes_[oi];
+      s += "  [" + std::to_string(oi) + "] " + ArcTypeName(n.arc_type) +
+           " stack=" + std::to_string(n.layer_stack_idx) + " site=" +
+           n.site_prim_path + (n.has_specs() ? " (specs)" : "") + "\n";
+    }
+    return s;
+  }
+
+  // Build API (used by Cache::Impl).
+  void SetPath(const Path &p) { prim_path_ = p; }
+  void SetLayerStacks(const std::vector<LayerStack> *t) { layer_stacks_ = t; }
+  uint16_t AddNode(CompNode &&n) {
+    nodes_.push_back(std::move(n));
+    return static_cast<uint16_t>(nodes_.size() - 1);
+  }
+  CompNode &MutableNode(uint16_t i) { return nodes_[i]; }
+  void SetStrengthOrder(std::vector<uint16_t> &&o) { strength_order_ = std::move(o); }
+
+ private:
+  Path prim_path_;
+  std::vector<CompNode> nodes_;            // node 0 == root
+  std::vector<uint16_t> strength_order_;   // strongest first
+  const std::vector<LayerStack> *layer_stacks_ = nullptr;  // borrowed
+};
+
+}  // namespace pcp
+}  // namespace next
+}  // namespace tinyusdz

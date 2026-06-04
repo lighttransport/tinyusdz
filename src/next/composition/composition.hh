@@ -122,6 +122,12 @@ public:
   /// Parse variant selection from string "variantSet=selection"
   static VariantSelection ParseVariantSelection(const std::string& str);
 
+  /// Merge local opinions from `source` into `target` (strongest-wins,
+  /// fill-absent): type name, properties, time samples, and metadata. Public so
+  /// the pcp value-resolution path can reuse it. Does NOT copy relationships or
+  /// children (callers handle those, incl. namespace remapping).
+  static void CopyLocalOpinions(PrimSpec& target, const PrimSpec& source);
+
   // ============================================================
   // Layer cache
   // ============================================================
@@ -159,9 +165,6 @@ private:
   bool ApplyInherits(PrimSpec& prim, const Layer& layer, int depth);
   bool ApplySpecializes(PrimSpec& prim, const Layer& layer, int depth);
   bool ApplyVariants(PrimSpec& prim, const Layer& layer, int depth);
-
-  // Copy local opinions from source to target (strongest strength)
-  static void CopyLocalOpinions(PrimSpec& target, const PrimSpec& source);
 
   // Parse layer offset string into offset and scale
   static void ParseLayerOffset(const std::string& offset_str,
