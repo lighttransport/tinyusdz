@@ -13,6 +13,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>  // for SIZE_MAX
 #include <limits>
@@ -929,10 +930,19 @@ struct TimeSamples {
   mutable bool _dirty{false};
   bool _is_array{false};                            // true if storing array data
 
+  // Guards the one-time lazy materialization of `_samples` from unified
+  // (`_times`/`_data`) storage in get_samples(): once finalized (set at parse
+  // time, see update()), reads must be pure so a shared TimeSamples is safe to
+  // read from multiple threads. Lock-free fast path once set; the cold-path
+  // build serializes on a function-local static mutex (see get_samples()).
+  mutable std::atomic<bool> _samples_ready{false};
+
   // _pod_samples removed - using unified storage directly
 
   void invalidate_reconstructed_samples_cache() {
     _samples.clear();
+    // Force get_samples() to re-materialize from unified storage on next call.
+    _samples_ready.store(false);
   }
 
   /// Find index for time value in _times vector using epsilon comparison
