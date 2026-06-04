@@ -184,27 +184,35 @@ struct Cache::Impl {
 
   // --- variant selection --------------------------------------------------
 
-  // Resolve all selected variants on `spec` (legacy single field + the
-  // variantSelections vector). Returns one VariantData per selected set.
-  std::vector<const VariantData *> SelectVariants(const PrimSpec &spec) const {
-    std::vector<std::pair<std::string, std::string>> sels =
-        spec.meta().variantSelections;
+  // Record `spec`'s variant selections into the accumulator (strong-first wins,
+  // so a selection authored on a stronger source overrides a weaker one).
+  void RecordSelections(const PrimSpec &spec,
+                        std::map<std::string, std::string> *sels) const {
     if (!spec.meta().variantSelection.empty()) {
       VariantSelection s =
           Compositor::ParseVariantSelection(spec.meta().variantSelection);
-      if (!s.variant_set.empty()) sels.emplace_back(s.variant_set, s.variant_name);
+      if (!s.variant_set.empty()) sels->emplace(s.variant_set, s.variant_name);
     }
+    for (const auto &sel : spec.meta().variantSelections) {
+      sels->emplace(sel.first, sel.second);
+    }
+  }
+
+  // Resolve the selected variants for the variantSets defined on `spec`, using
+  // the accumulated cross-source selection map. Returns one VariantData per
+  // selected set.
+  std::vector<const VariantData *> SelectVariants(
+      const PrimSpec &spec,
+      const std::map<std::string, std::string> &sels) const {
     std::vector<const VariantData *> out;
-    for (const auto &sel : sels) {
-      for (const VariantSetData &vss : spec.meta().variantSets) {
-        if (vss.name != sel.first) continue;
-        for (const VariantData &vd : vss.variants) {
-          if (vd.name == sel.second) {
-            out.push_back(&vd);
-            break;
-          }
+    for (const VariantSetData &vss : spec.meta().variantSets) {
+      auto sit = sels.find(vss.name);
+      if (sit == sels.end()) continue;  // no selection for this set
+      for (const VariantData &vd : vss.variants) {
+        if (vd.name == sit->second) {
+          out.push_back(&vd);
+          break;
         }
-        break;
       }
     }
     return out;
@@ -291,7 +299,8 @@ struct Cache::Impl {
   // (and its entire subtree) routes into `spec_out`.
   void ProcessArc(const Src &src, const CompositionArc &arc, ArcType kind,
                   const std::set<std::string> &cycle, std::vector<Src> *out,
-                  std::vector<Src> *spec_out, std::string *warn,
+                  std::vector<Src> *spec_out,
+                  std::map<std::string, std::string> *sels, std::string *warn,
                   std::string *err) {
     uint32_t arc_stack_idx;
     std::string arc_site;
@@ -353,19 +362,20 @@ struct Cache::Impl {
       implied.stack_idx = 0;
       std::set<std::string> ic = cycle;
       ic.insert(layer_stacks[0].identifier + ":" + arc_site);
-      ExpandArcs(implied, std::move(ic), target, spec_out, warn, err);
+      ExpandArcs(implied, std::move(ic), target, spec_out, sels, warn, err);
     }
 
     std::set<std::string> child_cycle = cycle;
     child_cycle.insert(key);
-    ExpandArcs(arc_src, std::move(child_cycle), target, spec_out, warn, err);
+    ExpandArcs(arc_src, std::move(child_cycle), target, spec_out, sels, warn, err);
   }
 
   // Pre-order DFS == strength order. Per source: local (pushed) > inherits >
   // references > payloads; specializes routed to `spec_out` (globally weakest).
   void ExpandArcs(const Src &src, std::set<std::string> cycle,
                   std::vector<Src> *out, std::vector<Src> *spec_out,
-                  std::string *warn, std::string *err) {
+                  std::map<std::string, std::string> *sels, std::string *warn,
+                  std::string *err) {
     out->push_back(src);
 
     const Layer *src_layer = nullptr;
@@ -373,16 +383,21 @@ struct Cache::Impl {
         FindSpec(layer_stacks[src.stack_idx], src.site, &src_layer);
     if (!spec) return;
 
+    // Record this source's variant selections (strong-first wins) so a selection
+    // authored on a stronger source applies to a variantSet defined on a weaker
+    // one (cross-source selection).
+    RecordSelections(*spec, sels);
+
     // Inherits (stronger than references).
     for (const std::string &s : spec->meta().inherits) {
       ProcessArc(src, Compositor::ParseReference(s), ArcType::Inherit, cycle,
-                 out, spec_out, warn, err);
+                 out, spec_out, sels, warn, err);
     }
 
     // Variants (weaker than inherits, stronger than references). For each
     // selected variant, graft its inline opinions and/or its content subtree.
     if (!spec->meta().variantSets.empty()) {
-      for (const VariantData *vd : SelectVariants(*spec)) {
+      for (const VariantData *vd : SelectVariants(*spec, *sels)) {
         // Subtree content: model as a reference-style Variant source into the
         // content layer's "/__self__" root, so child prims compose normally.
         if (vd->content) {
@@ -398,7 +413,7 @@ struct Cache::Impl {
           vsrc.arc_kind = ArcType::Variant;
           std::set<std::string> vc = cycle;
           vc.insert(vid + ":/__self__");
-          ExpandArcs(vsrc, std::move(vc), out, spec_out, warn, err);
+          ExpandArcs(vsrc, std::move(vc), out, spec_out, sels, warn, err);
         }
         // Inline opinions (properties/relationships on the host prim itself).
         if (!vd->properties.empty() || !vd->relationships.empty()) {
@@ -413,7 +428,7 @@ struct Cache::Impl {
     // References.
     for (const std::string &ref_str : spec->meta().references) {
       ProcessArc(src, Compositor::ParseReference(ref_str), ArcType::Reference,
-                 cycle, out, spec_out, warn, err);
+                 cycle, out, spec_out, sels, warn, err);
     }
 
     // Payloads (deferrable, weaker than references).
@@ -426,14 +441,15 @@ struct Cache::Impl {
           continue;  // deferred: contributes no opinions.
         }
         deferred_payload_prims.erase(root_prim_path);
-        ProcessArc(src, arc, ArcType::Payload, cycle, out, spec_out, warn, err);
+        ProcessArc(src, arc, ArcType::Payload, cycle, out, spec_out, sels, warn,
+                   err);
       }
     }
 
     // Specializes (globally weakest; routed into spec_out by ProcessArc).
     for (const std::string &s : spec->meta().specializes) {
       ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize, cycle,
-                 out, spec_out, warn, err);
+                 out, spec_out, sels, warn, err);
     }
   }
 
@@ -441,13 +457,15 @@ struct Cache::Impl {
                               std::string *err) {
     std::vector<Src> main;
     std::vector<Src> spec;  // specialize-derived: globally weakest
+    // Variant selections accumulated across the prim's sources (cross-source).
+    std::map<std::string, std::string> sels;
     for (const Src &s : base) {
       std::set<std::string> cycle;
       cycle.insert(layer_stacks[s.stack_idx].identifier + ":" + s.site);
       // Carry a base source's own arc kind so a specialize re-rooted onto a
       // child stays globally weakest.
       std::vector<Src> *tgt = (s.arc_kind == ArcType::Specialize) ? &spec : &main;
-      ExpandArcs(s, std::move(cycle), tgt, &spec, warn, err);
+      ExpandArcs(s, std::move(cycle), tgt, &spec, &sels, warn, err);
     }
     main.insert(main.end(), spec.begin(), spec.end());
     return main;
