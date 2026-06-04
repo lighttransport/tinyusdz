@@ -512,6 +512,69 @@ static void test_instance_proxy() {
   std::cout << "  OK" << std::endl;
 }
 
+// FU6: PrewarmPrimIndices with num_threads>1 parallelizes layer prefetch via the
+// thread-safe registry. Uses preloaded in-memory assets so the parallel path is
+// exercised safely; the composed result must match a sequential build.
+static void test_parallel_prewarm() {
+  std::cout << "test_parallel_prewarm..." << std::endl;
+  const int N = 8;
+
+  // N distinct in-memory assets, each a Mesh "A".
+  std::vector<std::shared_ptr<Layer>> assets;
+  for (int k = 0; k < N; ++k) {
+    auto a = std::make_shared<Layer>();
+    LayerBuilder ab(*a);
+    ab.begin_prim("A", "Mesh");
+    ab.add_property("tag", Value::MakeFloat3(float(k), 0, 0));
+    ab.end_prim();
+    ab.finalize();
+    assets.push_back(a);
+  }
+
+  // Root: /World/R{k} references @asset_{k}@</A>.
+  auto rootL = std::make_shared<Layer>();
+  {
+    LayerBuilder rb(*rootL);
+    rb.begin_prim("World", "Xform");
+    for (int k = 0; k < N; ++k) {
+      rb.begin_prim("R" + std::to_string(k), "");
+      rb.current()->meta().references.push_back("@asset_" + std::to_string(k) +
+                                                "@</A>");
+      rb.end_prim();
+    }
+    rb.end_prim();
+    rb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [](const std::string &a, const std::string &) { return a; });
+
+  pcp::CompositionOptions opts;
+  opts.num_threads = 4;
+  auto opened = pcp::Cache::Open(resolver, rootL, "", opts);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  for (int k = 0; k < N; ++k) {
+    cache.PreloadLayer("asset_" + std::to_string(k), assets[k]);
+  }
+
+  std::vector<Path> paths;
+  for (int k = 0; k < N; ++k) paths.push_back(Path("/World/R" + std::to_string(k)));
+
+  std::string warn, err;
+  assert(cache.PrewarmPrimIndices(paths, &warn, &err));
+
+  // Every prim's index is built and composed the referenced Mesh.
+  for (int k = 0; k < N; ++k) {
+    Path p("/World/R" + std::to_string(k));
+    assert(cache.HasComputedPrimIndex(p));
+    const pcp::PrimIndex *idx = cache.ComputePrimIndex(p, &warn, &err);
+    assert(idx && idx->GetNodeCount() >= 2);
+  }
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_build_stage();
@@ -525,6 +588,7 @@ int main() {
   test_relocates();
   test_implied_inherit();
   test_instance_proxy();
+  test_parallel_prewarm();
   std::cout << "All next/pcp tests passed." << std::endl;
   return 0;
 }

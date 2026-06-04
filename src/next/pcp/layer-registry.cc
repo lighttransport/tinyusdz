@@ -72,21 +72,40 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
     return nullptr;
   }
 
-  auto it = by_resolved_.find(resolved);
-  if (it != by_resolved_.end()) {
-    return it->second;  // Cache hit -- no re-parse.
+  // Fast path: cache hit under the lock.
+  {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    std::lock_guard<std::mutex> lk(*mu_);
+#endif
+    auto it = by_resolved_.find(resolved);
+    if (it != by_resolved_.end()) {
+      return it->second;  // Cache hit -- no re-parse.
+    }
   }
 
+  // Parse OUTSIDE the lock so distinct assets load concurrently.
   std::shared_ptr<Layer> layer = LoadLayerFromFile(resolved, warn, err);
   if (!layer) {
     return nullptr;
   }
+
+  // Publish under the lock; another thread may have raced us to the same asset.
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(*mu_);
+  auto it = by_resolved_.find(resolved);
+  if (it != by_resolved_.end()) {
+    return it->second;  // Lost the race; use the already-published layer.
+  }
+#endif
   ++parse_count_;
   by_resolved_.emplace(resolved, layer);
   return layer;
 }
 
 void LayerRegistry::Drop(const std::string &resolved_path) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(*mu_);
+#endif
   by_resolved_.erase(resolved_path);
 }
 

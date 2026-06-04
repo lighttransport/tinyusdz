@@ -15,6 +15,9 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <mutex>
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -22,7 +25,11 @@ namespace pcp {
 
 class LayerRegistry {
  public:
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  LayerRegistry() : mu_(new std::mutex()) {}
+#else
   LayerRegistry() = default;
+#endif
 
   // Move-only (owns shared layers).
   LayerRegistry(LayerRegistry &&) = default;
@@ -41,6 +48,9 @@ class LayerRegistry {
   /// resolving to that id composes it without touching disk). Does not count as
   /// a parse. Useful for embedding already-loaded layers.
   void Preload(const std::string &resolved_id, std::shared_ptr<Layer> layer) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    std::lock_guard<std::mutex> lk(*mu_);
+#endif
     by_resolved_[resolved_id] = std::move(layer);
   }
 
@@ -55,6 +65,10 @@ class LayerRegistry {
  private:
   std::unordered_map<std::string, std::shared_ptr<Layer>> by_resolved_;
   size_t parse_count_ = 0;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Heap-allocated so the registry stays movable. Guards by_resolved_/parse_count_.
+  std::unique_ptr<std::mutex> mu_;
+#endif
 };
 
 /// Load a layer from a resolved file path, dispatching by extension to the

@@ -182,6 +182,14 @@ add_library(tinyusdz_next STATIC
 # Set C++14 standard
 target_compile_features(tinyusdz_next PUBLIC cxx_std_14)
 
+# Optional threading: enables the parallel layer-prefetch path in next::pcp.
+option(TINYUSDZ_NEXT_ENABLE_THREAD "Enable std::thread parallel paths in next" OFF)
+if(TINYUSDZ_NEXT_ENABLE_THREAD)
+    find_package(Threads REQUIRED)
+    target_compile_definitions(tinyusdz_next PUBLIC TINYUSDZ_ENABLE_THREAD)
+    target_link_libraries(tinyusdz_next PUBLIC Threads::Threads)
+endif()
+
 # Set include directories
 target_include_directories(tinyusdz_next PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
