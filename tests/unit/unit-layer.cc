@@ -131,6 +131,47 @@ void layer_find_primspec_at_test(void) {
   }
 }
 
+// Regression: copying a Layer must reset its lazy path->PrimSpec lookup cache.
+// The cache stores `const PrimSpec*` into the SOURCE layer's _prim_specs tree;
+// before the fix a copy returned the source's pointers (dangling once the
+// source is destroyed) and even shared its cache mutex. After the fix the copy
+// rebuilds against its own tree.
+void layer_copy_resets_lookup_cache_test(void) {
+  Layer a;
+  a.add_primspec("Foo", PrimSpec(Specifier::Def, "Xform", "Foo"));
+
+  // Populate A's lookup cache: _dirty becomes false and the cache holds a
+  // pointer into A's own _prim_specs.
+  const PrimSpec *a_hit = nullptr;
+  std::string err;
+  TEST_CHECK(a.find_primspec_at(Path("/Foo", ""), &a_hit, &err));
+  TEST_CHECK(a_hit == &a.primspecs().at("Foo"));
+
+  // Copy-construct: the copy must serve a pointer into ITSELF, not into A.
+  {
+    Layer b(a);
+    const PrimSpec *b_hit = nullptr;
+    TEST_CHECK(b.find_primspec_at(Path("/Foo", ""), &b_hit, &err));
+    TEST_CHECK_(b_hit == &b.primspecs().at("Foo"),
+                "copy ctor: find_primspec_at must return a pointer into the COPY");
+    TEST_CHECK_(b_hit != a_hit,
+                "copy ctor: must not return the source layer's PrimSpec pointer");
+  }
+
+  // Copy-assign (onto a non-empty target): same guarantee.
+  {
+    Layer c;
+    c.add_primspec("Bar", PrimSpec(Specifier::Def, "Xform", "Bar"));
+    c = a;  // overwrites c with a's data; the lookup cache must be reset
+    const PrimSpec *c_hit = nullptr;
+    TEST_CHECK(c.find_primspec_at(Path("/Foo", ""), &c_hit, &err));
+    TEST_CHECK_(c_hit == &c.primspecs().at("Foo"),
+                "copy assign: find_primspec_at must return a pointer into the COPY");
+    TEST_CHECK_(c_hit != a_hit,
+                "copy assign: must not return the source layer's PrimSpec pointer");
+  }
+}
+
 void layer_check_unresolved_refs_test(void) {
   // Layer with references should return true
   {

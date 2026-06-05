@@ -246,6 +246,20 @@ struct LayerImpl {
   std::shared_ptr<std::mutex> _cache_mu{std::make_shared<std::mutex>()};
 #endif
 
+  // Reset the derived path->PrimSpec lookup cache. Its values are
+  // `const PrimSpec*` pointing INTO _prim_specs, so they must never survive a
+  // copy: a copied layer has to drop them (and take a fresh mutex) and rebuild
+  // lazily against its OWN _prim_specs tree. Without this, find_primspec_at()
+  // on a copied Layer returned the SOURCE layer's PrimSpec pointers -- dangling
+  // once the source is destroyed, and a shared mutex across two layers.
+  void reset_lookup_cache() {
+    _primspec_path_cache.clear();
+    _dirty = true;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    _cache_mu = std::make_shared<std::mutex>();
+#endif
+  }
+
   // Cached flags for composition.
   // true by default even PrimSpec tree does not contain any `references`, `payload`, etc.
   mutable bool _has_unresolved_references{true};
@@ -273,7 +287,16 @@ Layer::~Layer() = default;
 
 Layer::Layer(const Layer& other)
     : _impl(other._impl ? std::make_unique<LayerImpl>(*other._impl)
-                        : std::make_unique<LayerImpl>()) {}
+                        : std::make_unique<LayerImpl>()) {
+  // The implicit LayerImpl copy duplicated the source's lookup cache (pointers
+  // into the SOURCE's _prim_specs) and shared its mutex; drop both so this copy
+  // rebuilds against its own tree. (Move ctor below is unaffected: moving the
+  // node-based _prim_specs keeps element addresses stable, so its cache stays
+  // valid.)
+  if (_impl) {
+    _impl->reset_lookup_cache();
+  }
+}
 
 Layer& Layer::operator=(const Layer& other) {
   if (this != &other) {
@@ -284,6 +307,7 @@ Layer& Layer::operator=(const Layer& other) {
     }
     if (other._impl) {
       *_impl = *other._impl;
+      _impl->reset_lookup_cache();  // drop the source's pointer cache + mutex
     } else {
       *_impl = LayerImpl{};
     }
