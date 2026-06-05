@@ -1446,6 +1446,25 @@ struct UVTexture {
 
   int64_t texture_image_id{-1};  // Index to TextureImage
   uint64_t handle{0};            // Handle ID for Graphics API. 0 = invalid
+
+  // --- UDIM texture support ---
+  // True when this UVTexture originates from a UDIM asset path
+  // (e.g. `diffuse.<UDIM>.png`).
+  bool is_udim{false};
+
+  // When `is_udim` is true and tiles were combined into a single atlas
+  // (`MaterialConverterConfig::combine_udim_tiles`), the referenced mesh UV
+  // set must be remapped by `uv' = uv * udim_uv_scale + udim_uv_offset` so
+  // that tile (u,v) lands in its atlas cell. The mesh-UV rebake pass consumes
+  // these values; `texture_image_id` already points at the combined atlas.
+  vec2 udim_uv_scale{1.0f, 1.0f};
+  vec2 udim_uv_offset{0.0f, 0.0f};
+
+  // When tiles are kept sparse (combine disabled), index into
+  // `RenderScene::udim_textures`. -1 = not a sparse UDIM texture. In this case
+  // `texture_image_id` points at a representative tile (lowest UDIM id) for
+  // renderers that do not understand UDIM.
+  int64_t udim_texture_id{-1};
 };
 
 // to_string functions for UVTexture nested types
@@ -1459,12 +1478,16 @@ struct UDIMTexture {
   std::string abs_path; // Absolute Prim path
   std::string display_name; // displayName prim metadatum
 
+  // Original UDIM asset path containing the `<UDIM>` token
+  // (e.g. `diffuse.<UDIM>.png`).
+  std::string asset_identifier;
+
   // NOTE: for single channel(e.g. R) fetch, Only [0] will be filled for the
   // return value.
   vec4 fetch(size_t faceId, float varyu, float varyv, float varyw = 1.0f,
              Channel channel = Channel::RGB);
 
-  // key = UDIM id(e.g. 1001)
+  // key = UDIM id(e.g. 1001), value = index into RenderScene::images
   std::unordered_map<uint32_t, int32_t> imageTileIds;
 };
 
@@ -1639,6 +1662,7 @@ class RenderScene {
   ChunkedVectorArray<RenderCamera> cameras;
   ChunkedVectorArray<RenderLight> lights;
   ChunkedVectorArray<UVTexture> textures;
+  ChunkedVectorArray<UDIMTexture> udim_textures;
   ChunkedVectorArray<RenderMesh> meshes;
   ChunkedVectorArray<AnimationClip> animations;  ///< Animation clips (glTF/Three.js compatible)
   ChunkedVectorArray<SkelHierarchy> skeletons;
@@ -1652,6 +1676,7 @@ class RenderScene {
   std::vector<RenderCamera> cameras;
   std::vector<RenderLight> lights;
   std::vector<UVTexture> textures;
+  std::vector<UDIMTexture> udim_textures;
   std::vector<RenderMesh> meshes;
   std::vector<AnimationClip> animations;  ///< Animation clips (glTF/Three.js compatible)
   std::vector<SkelHierarchy> skeletons;

@@ -443,6 +443,7 @@ class CrateReader {
 
   // implementation in crate-reader-timesamples.cc
   bool UnpackTimeSampleValue_BOOL(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_UCHAR(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_INT32(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_UINT32(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_INT64(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);

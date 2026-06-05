@@ -2,6 +2,7 @@
 #include "core/prim.hh"
 #include "layer.hh"
 #include "tinyusdz.hh"
+#include "value-to-json.hh"
 
 #if defined(TINYUSDZ_WITH_QJS)
 // external
@@ -19,6 +20,7 @@
 #endif
 
 #include "external/quickjs-ng/quickjs.h"
+#include "external/jsonhpp/nlohmann/json.hpp"
 
 #if defined(__clang__)
 #pragma clang diagnostic pop
@@ -1031,55 +1033,12 @@ static std::string PrimMetasToJSON(const PrimMeta* metas) {
   return oss.str();
 }
 
-static std::string PrimSpecToJSON(const PrimSpec* ps) {
+static std::string PrimSpecToJSON(const PrimSpec* ps, uint32_t max_depth = 1) {
   if (!ps) {
     return "null";
   }
-  
-  std::ostringstream oss;
-  oss << std::setprecision(17);
-  oss << "{";
-  
-  // Basic PrimSpec info
-  oss << "\"name\":\"" << ps->name() << "\",";
-  oss << "\"typeName\":\"" << ps->typeName() << "\",";
-  oss << "\"specifier\":\"";
-  switch (ps->specifier()) {
-    case Specifier::Def: oss << "def"; break;
-    case Specifier::Over: oss << "over"; break;
-    case Specifier::Class: oss << "class"; break;
-    case Specifier::Invalid: oss << "invalid"; break;
-  }
-  oss << "\",";
-  
-  // Add property count
-  oss << "\"propertyCount\":" << ps->props().size() << ",";
-  
-  // Add children count
-  oss << "\"childrenCount\":" << ps->children().size() << ",";
-  
-  // Property names array
-  oss << "\"propertyNames\":[";
-  bool first = true;
-  for (const auto& prop : ps->props()) {
-    if (!first) oss << ",";
-    oss << "\"" << prop.first << "\"";
-    first = false;
-  }
-  oss << "],";
-  
-  // Children names array
-  oss << "\"childrenNames\":[";
-  first = true;
-  for (const auto& child : ps->children()) {
-    if (!first) oss << ",";
-    oss << "\"" << child.name() << "\"";
-    first = false;
-  }
-  oss << "]";
-  
-  oss << "}";
-  return oss.str();
+
+  return tinyusdz::tydra::PrimSpecToJSON(*ps, max_depth).dump();
 }
 
 static JSValue js_getLayerMetas(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv, int magic, JSValueConst *func_data) {
@@ -1135,8 +1094,16 @@ static JSValue js_findPrimSpecByPath(JSContext *ctx, JSValueConst this_val, int 
     return JS_NULL;
   }
 
+  uint32_t max_depth = 1;
+  if (argc >= 2 && JS_IsNumber(argv[1])) {
+    int32_t depth = 1;
+    if (JS_ToInt32(ctx, &depth, argv[1]) >= 0 && depth >= 0) {
+      max_depth = static_cast<uint32_t>(depth);
+    }
+  }
+
   // Convert PrimSpec to JSON and parse it
-  std::string json = PrimSpecToJSON(ps);
+  std::string json = PrimSpecToJSON(ps, max_depth);
   JSValue result = JS_ParseJSON(ctx, json.c_str(), json.length(), "<primspec>");
   if (JS_IsException(result)) {
     return JS_EXCEPTION;
@@ -1418,4 +1385,3 @@ bool RunJSScriptWithLayer(const std::string &js_code, const class Layer* layer, 
 
 } // namespace tydra
 } // namespace tinyusdz
-

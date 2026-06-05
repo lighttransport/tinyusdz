@@ -169,9 +169,15 @@ class PrimSpec {
   std::map<std::string, VariantSetSpec> &variantSets() { return _variantSets; }
   const std::map<std::string, VariantSetSpec> &variantSets() const { return _variantSets; }
 
-  const PrimMeta &metas() const { return _metas; }
+  const PrimMeta &metas() const {
+    static const PrimMeta empty;
+    return _metas ? *_metas : empty;
+  }
 
-  PrimMeta &metas() { return _metas; }
+  PrimMeta &metas() {
+    if (!_metas) _metas = std::make_unique<PrimMeta>();
+    return *_metas;
+  }
 
   using PropertyMap = std::map<std::string, Property>;
 
@@ -233,7 +239,7 @@ class PrimSpec {
     _properties = rhs._properties;
     _variantChildren = rhs._variantChildren;
 
-    _metas = rhs._metas;
+    _metas = rhs._metas ? std::make_unique<PrimMeta>(*rhs._metas) : nullptr;
 
     _current_working_path = rhs._current_working_path;
     _asset_search_paths = rhs._asset_search_paths;
@@ -288,7 +294,7 @@ class PrimSpec {
   std::vector<value::token> _properties;    // List of property names
   std::vector<value::token> _variantChildren;
 
-  PrimMeta _metas;
+  std::unique_ptr<PrimMeta> _metas;
 
   ///
   /// For solving asset path in nested composition.

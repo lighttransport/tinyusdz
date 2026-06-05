@@ -68,6 +68,7 @@ RECONSTRUCT_PRIM_DECL(Skeleton);
 RECONSTRUCT_PRIM_DECL(BlendShape);
 RECONSTRUCT_PRIM_DECL(Material);
 RECONSTRUCT_PRIM_DECL(Shader);
+RECONSTRUCT_PRIM_DECL(NodeGraph);
 
 #undef RECONSTRUCT_PRIM_DECL
 
@@ -151,6 +152,7 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
   RECONSTRUCT_PRIM(SkelAnimation)
   RECONSTRUCT_PRIM(BlendShape)
   RECONSTRUCT_PRIM(Shader)
+  RECONSTRUCT_PRIM(NodeGraph)
   RECONSTRUCT_PRIM(Material) {
     PUSH_WARN("TODO or unsupported prim type: " << primspec.typeName());
     return nonstd::nullopt;
@@ -214,52 +216,58 @@ bool LayerToStage(Layer &&layer, Stage *stage_out, std::string *warn,
 namespace detail {
 
 // In-place conversion helper: Move PrimSpec data to Prim and free source memory
-static nonstd::optional<Prim> ReconstructPrimFromPrimSpecInPlace(
-    std::unique_ptr<PrimSpec> primspec, std::string *warn, std::string *err) {
-
-  nonstd::optional<Prim> prim_opt;
+static std::unique_ptr<Prim> ReconstructPrimFromPrimSpecInPlace(
+    std::unique_ptr<PrimSpec> primspec, std::string *warn, std::string *err,
+    int depth = 0) {
 
   if (!primspec) {
     if (err) {
       (*err) += "PrimSpec is null";
     }
-  } else {
+    return nullptr;
+  }
 
-    // First reconstruct the prim normally
-    prim_opt = ReconstructPrimFromPrimSpec(*primspec, warn, err);
+  if (depth > 4096) {
+    if (err) {
+      (*err) += "PrimSpec tree too deep (max 4096).";
+    }
+    return nullptr;
+  }
 
-    if (prim_opt) {
+  // First reconstruct the prim normally
+  auto prim_opt = ReconstructPrimFromPrimSpec(*primspec, warn, err);
 
-      // Now we can clear the primspec data to free memory
-      // The data has been copied to the Prim, so we can safely clear it
+  if (!prim_opt) {
+    return nullptr;
+  }
 
-      // Clear properties (these can be large)
-      primspec->props().clear();
+  auto result = std::make_unique<Prim>(std::move(prim_opt.value()));
 
-      // Clear metadata
-      primspec->metas() = PrimMeta();
+  // Now we can clear the primspec data to free memory
+  // The data has been copied to the Prim, so we can safely clear it
 
-      // Clear relationships (if they exist)
-      // primspec->relationships().clear();
+  // Clear properties (these can be large)
+  primspec->props().clear();
 
-      // Clear variant sets
-      primspec->variantSets().clear();
+  // Clear metadata
+  primspec->metas() = PrimMeta();
 
-      // Process children recursively
-      for (auto& child : primspec->children()) {
-        auto child_ptr = std::make_unique<PrimSpec>(std::move(child));
-        if (auto child_prim = ReconstructPrimFromPrimSpecInPlace(std::move(child_ptr), warn, err)) {
-          prim_opt.value().children().emplace_back(std::move(child_prim.value()));
-        }
-      }
+  // Clear variant sets
+  primspec->variantSets().clear();
 
-      // Clear children vector
-      primspec->children().clear();
-      primspec->children().shrink_to_fit();
+  // Process children recursively
+  for (auto& child : primspec->children()) {
+    auto child_ptr = std::make_unique<PrimSpec>(std::move(child));
+    if (auto child_prim = ReconstructPrimFromPrimSpecInPlace(std::move(child_ptr), warn, err, depth + 1)) {
+      result->children().emplace_back(std::move(*child_prim));
     }
   }
 
-  return prim_opt;
+  // Clear children vector
+  primspec->children().clear();
+  primspec->children().shrink_to_fit();
+
+  return result;
 }
 
 } // namespace detail
@@ -305,7 +313,7 @@ bool LayerToStageInPlace(std::unique_ptr<Layer> layer, Stage *stage_out,
 
       // Convert to Prim in-place
       if (auto pv = detail::ReconstructPrimFromPrimSpecInPlace(std::move(primspec_ptr), warn, err)) {
-        stage.add_root_prim(std::move(pv.value()));
+        stage.add_root_prim(std::move(*pv));
       }
     }
   }
@@ -335,13 +343,13 @@ bool PrimSpecToPrimInPlace(std::unique_ptr<PrimSpec> primspec, Prim *prim_out,
     return false;
   }
 
-  auto prim_opt = detail::ReconstructPrimFromPrimSpecInPlace(std::move(primspec), warn, err);
+  auto prim = detail::ReconstructPrimFromPrimSpecInPlace(std::move(primspec), warn, err);
 
-  if (!prim_opt) {
+  if (!prim) {
     return false;
   }
 
-  (*prim_out) = std::move(prim_opt.value());
+  (*prim_out) = std::move(*prim);
 
   return true;
 }

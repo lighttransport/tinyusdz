@@ -480,16 +480,31 @@ bool Cache::Impl::BuildStage(Stage *stage, std::string *warn,
     composed_layer.metas() = root_layer->metas();
   }
 
+  // Build a parent -> direct-children adjacency map in a single O(N) pass.
+  // The previous recursive prefix scan re-walked the whole index_cache for
+  // every prim -> O(N^2) in prim count. A path's parent is everything before
+  // its last '/'; a single leading '/' marks a root prim. Children are kept in
+  // index_cache iteration order so the composed result is byte-identical.
+  HashMap<std::string, std::vector<std::string>> children_of;
+  std::vector<std::string> roots;
+  for (const auto &kv : index_cache) {
+    const std::string &p = kv.first;
+    const size_t slash = p.rfind('/');
+    if (slash == 0) {
+      roots.push_back(p);  // "/Foo" -> root prim
+    } else if (slash != std::string::npos) {
+      children_of[p.substr(0, slash)].push_back(p);
+    }
+  }
+
   std::function<void(const std::string &, PrimSpec &)> compose_children =
       [&](const std::string &parent_path, PrimSpec &parent_ps) {
-        const std::string prefix = parent_path + "/";
-        for (const auto &kv : index_cache) {
-          const std::string &cpath = kv.first;
-          if (cpath.size() <= prefix.size()) continue;
-          if (cpath.compare(0, prefix.size(), prefix) != 0) continue;
-          if (cpath.find('/', prefix.size()) != std::string::npos) continue;
-
-          const CachedPrimIndex &ce = *kv.second;
+        auto cit = children_of.find(parent_path);
+        if (cit == children_of.end()) return;
+        for (const std::string &cpath : cit->second) {
+          auto eit = index_cache.find(cpath);
+          if (eit == index_cache.end()) continue;  // every child is a key
+          const CachedPrimIndex &ce = *eit->second;
           PrimSpec child_ps;
           if (cg::ComposePrimSpecFromIndex(ce.ctx._layer_stacks,
                                            ce.ctx._path_table, ce.index,
@@ -500,11 +515,10 @@ bool Cache::Impl::BuildStage(Stage *stage, std::string *warn,
         }
       };
 
-  for (const auto &kv : index_cache) {
-    const std::string &path_str = kv.first;
-    if (std::count(path_str.begin(), path_str.end(), '/') != 1) continue;
-
-    const CachedPrimIndex &entry = *kv.second;
+  for (const std::string &path_str : roots) {
+    auto eit = index_cache.find(path_str);
+    if (eit == index_cache.end()) continue;
+    const CachedPrimIndex &entry = *eit->second;
     PrimSpec composed_ps;
     if (!cg::ComposePrimSpecFromIndex(entry.ctx._layer_stacks,
                                       entry.ctx._path_table, entry.index,

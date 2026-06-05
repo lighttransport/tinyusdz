@@ -17,14 +17,13 @@
 #include "unit-strutil.h"
 #include "unit-timesamples.h"
 #include "unit-fp-parse-print.h"
-#include "unit-minijson.h"
 #include "unit-pprint.h"
 #include "unit-materialx.h"
 #include "unit-task-queue.h"
 #include "unit-tydra.h"
 #include "unit-tydra-subdivision.h"
-#include "unit-subdiv-tinyusdz.h"
-//#include "unit-dedup.h"  // Temporarily disabled - needs API updates
+#include "unit-dedup.h"
+#include "unit-path.h"
 #include "unit-crate-writer.h"
 #include "unit-stage.h"
 #include "unit-tiny-container.h"
@@ -62,6 +61,8 @@
 #include "unit-usdz-writer.h"
 #include "unit-usdc-writer.h"
 #include "unit-usd-validation.h"
+// USDZ conversion pipeline + texture ops + fpnge
+#include "unit-usdz-convert.h"
 // Physics + MuJoCo
 #include "unit-physics.h"
 // IK solver
@@ -69,6 +70,7 @@
 // Rigid body simulation
 #include "unit-rb-collision.h"
 #include "unit-rb-dynamics.h"
+#include "unit-string-pool.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -95,6 +97,7 @@ TEST_LIST = {
   { "value_types_test", value_types_test },
   { "role_type_cast_test", role_type_cast_test },
   { "value_types_typed_array_memory_test", value_types_typed_array_memory_test },
+  { "value_construct_from_lvalue_copies_test", value_construct_from_lvalue_copies_test },
   { "xformOp_test", xformOp_test },
   { "rotation_order_quat_vs_matrix_test", rotation_order_quat_vs_matrix_test },
   { "rotation_order_distinct_test", rotation_order_distinct_test },
@@ -114,6 +117,7 @@ TEST_LIST = {
   { "strutil_test", strutil_test },
   { "tinystring_test", tinystring_test },
   { "parse_int_test", parse_int_test },
+  { "strutil_parse_helpers_test", strutil_parse_helpers_test },
   { "fp_string_conversion_test", fp_string_conversion_test },
   { "timesamples_test", timesamples_test },
   { "fp_roundtrip_basic_test", fp_roundtrip_basic_test },
@@ -123,23 +127,15 @@ TEST_LIST = {
   { "fp_roundtrip_buffer_test", fp_roundtrip_buffer_test },
   { "fp_shortest_representation_test", fp_shortest_representation_test },
   { "fp_format_range_test", fp_format_range_test },
-  { "minijson_parse_basic_test", minijson_parse_basic_test },
-  { "minijson_unicode_escape_test", minijson_unicode_escape_test },
-  { "minijson_reject_invalid_utf8_test", minijson_reject_invalid_utf8_test },
-  { "minijson_reject_duplicate_key_test", minijson_reject_duplicate_key_test },
-  { "minijson_reject_invalid_number_test", minijson_reject_invalid_number_test },
-  { "minijson_reject_depth_limit_test", minijson_reject_depth_limit_test },
-  { "minijson_reject_nonfinite_serialize_test", minijson_reject_nonfinite_serialize_test },
-  { "minijson_serialize_escapes_control_chars_test", minijson_serialize_escapes_control_chars_test },
   { "parse_array_test", parse_array_test },
   { "materialx_config_api_struct_test", materialx_config_api_struct_test },
   { "materialx_config_api_parsing_test", materialx_config_api_parsing_test },
   { "openpbr_surface_reconstruction_test", openpbr_surface_reconstruction_test },
   { "mtlx_standard_surface_reconstruction_test", mtlx_standard_surface_reconstruction_test },
   { "nodegraph_support_test", nodegraph_support_test },
+  { "nodegraph_reconstruct_from_layer_test", nodegraph_reconstruct_from_layer_test },
   { "materialx_shader_constants_test", materialx_shader_constants_test },
   { "materialx_shader_fallback_values_test", materialx_shader_fallback_values_test },
-  { "materialx_include_path_traversal_test", materialx_include_path_traversal_test },
   { "tydra_subdivision_catmullclark_test", tydra_subdivision_catmullclark_test },
   { "tydra_subdivision_loop_test", tydra_subdivision_loop_test },
   { "tydra_subdivision_bilinear_test", tydra_subdivision_bilinear_test },
@@ -159,29 +155,6 @@ TEST_LIST = {
   { "tydra_subdivision_rejects_tangents_test", tydra_subdivision_rejects_tangents_test },
   { "tydra_subdivision_rejects_binormals_test", tydra_subdivision_rejects_binormals_test },
   { "tydra_subdivision_rejects_skinning_test", tydra_subdivision_rejects_skinning_test },
-  // TinySubdiv direct API unit tests
-  { "subdiv_validate_halfedge_test", subdiv_validate_halfedge_test },
-  { "subdiv_convert_to_halfedge_test", subdiv_convert_to_halfedge_test },
-  { "subdiv_convert_from_halfedge_test", subdiv_convert_from_halfedge_test },
-  { "subdiv_invalid_mesh_rejected_test", subdiv_invalid_mesh_rejected_test },
-  { "subdiv_cc_quad_test", subdiv_cc_quad_test },
-  { "subdiv_cc_quad_l2_test", subdiv_cc_quad_l2_test },
-  { "subdiv_cc_cube_test", subdiv_cc_cube_test },
-  { "subdiv_cc_cube_l2_test", subdiv_cc_cube_l2_test },
-  { "subdiv_cc_boundary_test", subdiv_cc_boundary_test },
-  { "subdiv_cc_facepoint_position_test", subdiv_cc_facepoint_position_test },
-  { "subdiv_loop_triangle_test", subdiv_loop_triangle_test },
-  { "subdiv_loop_triangle_l2_test", subdiv_loop_triangle_l2_test },
-  { "subdiv_loop_tetrahedron_test", subdiv_loop_tetrahedron_test },
-  { "subdiv_loop_rejects_quads_test", subdiv_loop_rejects_quads_test },
-  { "subdiv_loop_edge_vertex_position_test", subdiv_loop_edge_vertex_position_test },
-  { "subdiv_bilinear_quad_test", subdiv_bilinear_quad_test },
-  { "subdiv_bilinear_quad_l2_test", subdiv_bilinear_quad_l2_test },
-  { "subdiv_bilinear_triangle_test", subdiv_bilinear_triangle_test },
-  { "subdiv_bilinear_mixed_test", subdiv_bilinear_mixed_test },
-  { "subdiv_level0_no_change_test", subdiv_level0_no_change_test },
-  { "subdiv_max_level_clamped_test", subdiv_max_level_clamped_test },
-  { "subdiv_boundary_interpolation_modes_test", subdiv_boundary_interpolation_modes_test },
   { "task_queue_basic_test", task_queue_basic_test },
   { "task_queue_func_test", task_queue_func_test },
   { "task_queue_full_test", task_queue_full_test },
@@ -198,6 +171,7 @@ TEST_LIST = {
   { "tydra_material_binding_validation_test",
     tydra_material_binding_validation_test },
   { "tydra_texture_loader_policy_test", tydra_texture_loader_policy_test },
+  { "tydra_udim_texture_test", tydra_udim_texture_test },
   { "tydra_envmap_loader_policy_test", tydra_envmap_loader_policy_test },
   { "tydra_geometry_light_validation_test",
     tydra_geometry_light_validation_test },
@@ -207,25 +181,34 @@ TEST_LIST = {
     tydra_skel_animation_validation_test },
   { "tydra_skin_binding_validation_test",
     tydra_skin_binding_validation_test },
-  { "tydra_value_clip_animation_conversion_test",
-    tydra_value_clip_animation_conversion_test },
-  { "tydra_value_clip_animation_resample_test",
-    tydra_value_clip_animation_resample_test },
-  { "tydra_value_clip_animation_retime_test",
-    tydra_value_clip_animation_retime_test },
-  { "tydra_value_clip_animation_primpath_test",
-    tydra_value_clip_animation_primpath_test },
-  { "tydra_value_clip_animation_fallback_test",
-    tydra_value_clip_animation_fallback_test },
-  { "tydra_value_clip_animation_custom_property_test",
-    tydra_value_clip_animation_custom_property_test },
-  // Temporarily disabled - unit-dedup needs API updates
-  //{ "dedup_float_array_test", dedup_float_array_test },
-  //{ "dedup_double_array_test", dedup_double_array_test },
-  //{ "dedup_int_array_test", dedup_int_array_test },
-  //{ "dedup_unique_arrays_test", dedup_unique_arrays_test },
-  //{ "dedup_string_array_test", dedup_string_array_test },
-  //{ "dedup_matrix4d_test", dedup_matrix4d_test },
+  { "dedup_float_array_test", dedup_float_array_test },
+  { "dedup_double_array_test", dedup_double_array_test },
+  { "dedup_int_array_test", dedup_int_array_test },
+  { "dedup_unique_arrays_test", dedup_unique_arrays_test },
+  { "dedup_string_array_test", dedup_string_array_test },
+  { "dedup_matrix4d_test", dedup_matrix4d_test },
+  { "dedup_cross_attribute_timesamples_test", dedup_cross_attribute_timesamples_test },
+  { "dedup_default_scalar_values_test", dedup_default_scalar_values_test },
+  { "inline_openusd_value_coverage_test", inline_openusd_value_coverage_test },
+  { "dedup_shared_times_arrays_test", dedup_shared_times_arrays_test },
+  { "dedup_low_memory_budget_test", dedup_low_memory_budget_test },
+  { "path_parts_views_test", path_parts_views_test },
+  { "path_append_build_test", path_append_build_test },
+  { "path_variant_test", path_variant_test },
+  { "path_compare_hash_test", path_compare_hash_test },
+  { "path_variant_hash_test", path_variant_hash_test },
+  { "path_parent_relative_test", path_parent_relative_test },
+  { "dedup_role_array_test", dedup_role_array_test },
+  { "dedup_compressed_int_array_test", dedup_compressed_int_array_test },
+  { "timesample_array_dedup_no_inflation_test", timesample_array_dedup_no_inflation_test },
+  { "uchar_roundtrip_test", uchar_roundtrip_test },
+  { "dedup_cross_attr_value_readback_test", dedup_cross_attr_value_readback_test },
+  { "dedup_cross_type_no_false_share_test", dedup_cross_type_no_false_share_test },
+  { "dedup_nan_signed_zero_roundtrip_test", dedup_nan_signed_zero_roundtrip_test },
+  { "dedup_blocked_timesamples_roundtrip_test", dedup_blocked_timesamples_roundtrip_test },
+  { "dedup_blocked_array_timesamples_roundtrip_test", dedup_blocked_array_timesamples_roundtrip_test },
+  { "dedup_empty_array_roundtrip_test", dedup_empty_array_roundtrip_test },
+  { "inline_inf_double_test", inline_inf_double_test },
   { "crate_writer_basic_creation_test", crate_writer_basic_creation_test },
   { "crate_writer_simple_prim_test", crate_writer_simple_prim_test },
   { "crate_writer_typename_encoding_test", crate_writer_typename_encoding_test },
@@ -297,6 +280,7 @@ TEST_LIST = {
   { "crate_writer_prim_children_test", crate_writer_prim_children_test },
   { "stage_get_prim_at_path_test", stage_get_prim_at_path_test },
   { "stage_find_prim_by_id_test", stage_find_prim_by_id_test },
+  { "stage_adopt_mmap_buffer_lifetime_test", stage_adopt_mmap_buffer_lifetime_test },
   { "usdc_reconstruct_variant_properties_test", usdc_reconstruct_variant_properties_test },
   { "usdc_reconstruct_variant_prim_children_test", usdc_reconstruct_variant_prim_children_test },
   { "usdc_reconstruct_nested_variant_sets_test", usdc_reconstruct_nested_variant_sets_test },
@@ -340,6 +324,7 @@ TEST_LIST = {
   { "tiny_hashmap_load_factor_test", tiny_hashmap_load_factor_test },
   { "tiny_hashmap_int_keys_test", tiny_hashmap_int_keys_test },
   { "tiny_hashmap_insert_or_assign_test", tiny_hashmap_insert_or_assign_test },
+  { "tiny_hashmap_at_miss_test", tiny_hashmap_at_miss_test },
   { "usda_roundtrip_basic_test", usda_roundtrip_basic_test },
   { "usda_roundtrip_xform_test", usda_roundtrip_xform_test },
   { "usda_roundtrip_mesh_test", usda_roundtrip_mesh_test },
@@ -535,6 +520,8 @@ TEST_LIST = {
   { "pcp_buildstage_matches_compgraph_test", pcp_buildstage_matches_compgraph_test },
   { "pcp_singlethread_vs_multithread_identical_test", pcp_singlethread_vs_multithread_identical_test },
   { "pcp_mt_shared_reference_test", pcp_mt_shared_reference_test },
+  { "pcp_external_payload_load_unload_test", pcp_external_payload_load_unload_test },
+  { "pcp_buildstage_reference_grandchildren_test", pcp_buildstage_reference_grandchildren_test },
   // Phase 2: Stage API tests (extended)
   { "stage_add_root_prim_test", stage_add_root_prim_test },
   { "stage_replace_root_prim_test", stage_replace_root_prim_test },
@@ -550,6 +537,7 @@ TEST_LIST = {
   { "layer_emplace_primspec_test", layer_emplace_primspec_test },
   { "layer_replace_primspec_test", layer_replace_primspec_test },
   { "layer_find_primspec_at_test", layer_find_primspec_at_test },
+  { "layer_copy_resets_lookup_cache_test", layer_copy_resets_lookup_cache_test },
   { "layer_check_unresolved_refs_test", layer_check_unresolved_refs_test },
   { "layer_check_unresolved_payload_test", layer_check_unresolved_payload_test },
   { "layer_check_unresolved_inherits_test", layer_check_unresolved_inherits_test },
@@ -559,6 +547,7 @@ TEST_LIST = {
   { "layer_metas_test", layer_metas_test },
   { "layer_asset_resolution_state_test", layer_asset_resolution_state_test },
   { "layer_memory_estimation_test", layer_memory_estimation_test },
+  { "layer_moved_from_is_valid_test", layer_moved_from_is_valid_test },
   // PrimSpec tests
   { "primspec_create_test", primspec_create_test },
   { "primspec_specifiers_test", primspec_specifiers_test },
@@ -566,6 +555,9 @@ TEST_LIST = {
   { "primspec_children_test", primspec_children_test },
   { "primspec_variant_selection_test", primspec_variant_selection_test },
   { "primspec_metas_test", primspec_metas_test },
+  { "primspec_metas_lazy_init_test", primspec_metas_lazy_init_test },
+  { "primspec_primchildren_propertynames_test", primspec_primchildren_propertynames_test },
+  { "primspec_working_path_test", primspec_working_path_test },
   // Prim API tests
   { "prim_type_check_test", prim_type_check_test },
   { "prim_add_child_test", prim_add_child_test },
@@ -621,14 +613,40 @@ TEST_LIST = {
   { "security_sha256_overflow_rejected_test", security_sha256_overflow_rejected_test },
   // USDZ writer and validation tests
   { "usdz_writer_basic_roundtrip_test", usdz_writer_basic_roundtrip_test },
+  { "usdz_writer_root_layer_format_test", usdz_writer_root_layer_format_test },
   { "usdz_writer_with_assets_test", usdz_writer_with_assets_test },
   { "usdz_validator_alignment_test", usdz_validator_alignment_test },
   { "usdz_validator_crc32_test", usdz_validator_crc32_test },
   { "usdz_validator_size_consistency_test", usdz_validator_size_consistency_test },
   { "usdz_validator_empty_input_test", usdz_validator_empty_input_test },
+  { "usdz_validator_missing_eocd_test", usdz_validator_missing_eocd_test },
   { "usdz_writer_file_roundtrip_test", usdz_writer_file_roundtrip_test },
   { "usdz_validator_large_asset_test", usdz_validator_large_asset_test },
   { "usdz_validator_bad_extension_test", usdz_validator_bad_extension_test },
+  { "usdz_writer_rejects_unsafe_asset_names_test", usdz_writer_rejects_unsafe_asset_names_test },
+  // USDZ conversion pipeline + texture ops + fpnge
+  { "usdz_convert_png_roundtrip_test", usdz_convert_png_roundtrip_test },
+  { "usdz_convert_resize_test", usdz_convert_resize_test },
+  { "usdz_convert_exr_roundtrip_test", usdz_convert_exr_roundtrip_test },
+  { "usdz_convert_resize_float_test", usdz_convert_resize_float_test },
+  { "usdz_convert_pack_channels_test", usdz_convert_pack_channels_test },
+  { "usdz_convert_orm_scalar_fallback_test", usdz_convert_orm_scalar_fallback_test },
+  { "usdz_convert_orm_scalar_nonfinite_test", usdz_convert_orm_scalar_nonfinite_test },
+  { "usdz_convert_archive_collision_name_test", usdz_convert_archive_collision_name_test },
+  { "usdz_convert_fit_budget_test", usdz_convert_fit_budget_test },
+  { "usdz_convert_pipeline_test", usdz_convert_pipeline_test },
+  { "usdz_convert_usdz_root_layer_format_test", usdz_convert_usdz_root_layer_format_test },
+  { "usdz_convert_arkit_forces_flattened_usdc_root_test", usdz_convert_arkit_forces_flattened_usdc_root_test },
+  { "usdz_convert_repack_files_test", usdz_convert_repack_files_test },
+  { "usdz_convert_jpeg_roundtrip_test", usdz_convert_jpeg_roundtrip_test },
+  { "usdz_convert_remap_asset_paths_test", usdz_convert_remap_asset_paths_test },
+  { "usdz_convert_error_path_test", usdz_convert_error_path_test },
+  { "usdz_convert_adversarial_image_test", usdz_convert_adversarial_image_test },
+  { "usdz_convert_pack_channels_error_test", usdz_convert_pack_channels_error_test },
+  { "usdz_convert_fit_budget_error_test", usdz_convert_fit_budget_error_test },
+  { "usdz_convert_missing_texture_reference_test", usdz_convert_missing_texture_reference_test },
+  { "usdz_convert_pipeline_jpeg_test", usdz_convert_pipeline_jpeg_test },
+  { "usdz_convert_cleanup_test", usdz_convert_cleanup_test },
   // Pretty-printer column wrap tests
   { "column_wrap_disabled_test", column_wrap_disabled_test },
   { "column_wrap_float3_array_test", column_wrap_float3_array_test },
@@ -649,6 +667,7 @@ TEST_LIST = {
   { "usdc_writer_blendshape_test", usdc_writer_blendshape_test },
   { "usdc_writer_skelroot_test", usdc_writer_skelroot_test },
   { "usdc_writer_shader_terminal_test", usdc_writer_shader_terminal_test },
+  { "usdc_writer_layer_empty_shader_outputs_test", usdc_writer_layer_empty_shader_outputs_test },
   { "usdc_writer_material_outputs_test", usdc_writer_material_outputs_test },
   { "usdc_writer_uvtexture_test", usdc_writer_uvtexture_test },
   { "usdc_writer_primvarreader_test", usdc_writer_primvarreader_test },
@@ -692,12 +711,16 @@ TEST_LIST = {
   { "usdc_writer_nested_prim_paths_test", usdc_writer_nested_prim_paths_test },
   { "usdc_writer_uvtexture_st_connection_test", usdc_writer_uvtexture_st_connection_test },
   { "usdc_writer_uvtexture_file_connection_test", usdc_writer_uvtexture_file_connection_test },
+  { "usdc_writer_primvar_reader_varname_connection_test", usdc_writer_primvar_reader_varname_connection_test },
+  { "usdc_writer_transform2d_in_connection_test", usdc_writer_transform2d_in_connection_test },
+  { "usdc_writer_shader_info_id_uniform_test", usdc_writer_shader_info_id_uniform_test },
   { "usdc_writer_preview_metallic_connection_test", usdc_writer_preview_metallic_connection_test },
   { "usdc_writer_preview_roughness_connection_test", usdc_writer_preview_roughness_connection_test },
   { "usdc_writer_timesamples_half_test", usdc_writer_timesamples_half_test },
   { "usdc_writer_timesamples_color3f_test", usdc_writer_timesamples_color3f_test },
   { "usdc_writer_timesamples_negative_time_test", usdc_writer_timesamples_negative_time_test },
   { "usdc_writer_timesamples_blocked_sample_test", usdc_writer_timesamples_blocked_sample_test },
+  { "usdc_writer_timesamples_blocked_array_sample_test", usdc_writer_timesamples_blocked_array_sample_test },
   { "usdc_writer_large_int_array_test", usdc_writer_large_int_array_test },
   { "usdc_writer_large_float_array_test", usdc_writer_large_float_array_test },
   { "usdc_writer_variant_with_connection_test", usdc_writer_variant_with_connection_test },
@@ -834,6 +857,8 @@ TEST_LIST = {
   { "physics_mesh_collider_convention_test", physics_mesh_collider_convention_test },
   { "physics_newton_collision_material_api_test", physics_newton_collision_material_api_test },
   { "urdf_json_newton_api_export_test", urdf_json_newton_api_export_test },
+  { "urdf_json_mjcf_contact_export_test", urdf_json_mjcf_contact_export_test },
+  { "physics_urdf_upaxis_axis_invariant_test", physics_urdf_upaxis_axis_invariant_test },
   // IK solver
   { "ik_forward_kinematics_test", ik_forward_kinematics_test },
   { "ik_ccd_solve_test", ik_ccd_solve_test },
@@ -849,6 +874,7 @@ TEST_LIST = {
   { "rb_aabb_broadphase_test", rb_aabb_broadphase_test },
   { "rb_gjk_box_box_test", rb_gjk_box_box_test },
   // Rigid body dynamics
+  { "rb_invalid_body_indices_rejected_test", rb_invalid_body_indices_rejected_test },
   { "rb_falling_sphere_test", rb_falling_sphere_test },
   { "rb_pendulum_hinge_test", rb_pendulum_hinge_test },
   { "rb_stacking_sleep_test", rb_stacking_sleep_test },
@@ -856,5 +882,14 @@ TEST_LIST = {
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
+  // StringPool tests
+  { "string_pool_intern_test", string_pool_intern_test },
+  { "string_pool_intern_different_test", string_pool_intern_different_test },
+  { "string_pool_lookup_test", string_pool_lookup_test },
+  { "string_pool_pre_intern_test", string_pool_pre_intern_test },
+  { "string_pool_size_test", string_pool_size_test },
+  { "string_pool_charptr_test", string_pool_charptr_test },
+  { "string_pool_pre_intern_common_test", string_pool_pre_intern_common_test },
+  { "string_pool_many_strings_test", string_pool_many_strings_test },
   { nullptr, nullptr }
 };

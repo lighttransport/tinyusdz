@@ -4428,7 +4428,7 @@ void ValidateCollectionProperty(
     if (member == "excludes") {
       for (const Path &target : prop.get_relationTargets()) {
         if (target.is_property_path() &&
-            target.prop_part().rfind("collection:", 0) == 0) {
+            target.prop_part().starts_with("collection:")) {
           AddError(
               result, "core.schema.CollectionAPI.excludes", location,
               "excludes must not target a property referring to another collection");
