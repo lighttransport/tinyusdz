@@ -18,6 +18,7 @@
 #include "stage.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
+#include "usdMtlx.hh"  // For MtlxOpenPBRSurface
 #include "usdSkel.hh"
 #include "usdLux.hh"
 
@@ -559,6 +560,11 @@ private:
 
   /// Add UsdTransform2d shader input specs as separate attribute specs (called after Shader prim spec is added)
   bool AddUsdTransform2dInputSpecs(const UsdTransform2d* transform2d, const Path& prim_path, std::string* err);
+
+  /// Add MtlxOpenPBRSurface shader input specs as separate attribute specs.
+  /// Mirrors AddUsdPreviewSurfaceInputSpecs (value + connectionPaths); without
+  /// this the typed MaterialX OpenPBR inputs are dropped on stage->USDC write.
+  bool AddMtlxOpenPBRSurfaceInputSpecs(const MtlxOpenPBRSurface* surface, const Path& prim_path, std::string* err);
 
   /// Add material binding relationships as separate relationship specs (called after Prim spec is added)
   /// Handles material:binding, material:binding:preview, and material:binding:full relationships
