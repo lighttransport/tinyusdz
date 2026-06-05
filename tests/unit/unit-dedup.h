@@ -6,3 +6,4 @@ void dedup_string_array_test(void);
 void dedup_matrix4d_test(void);
 void dedup_role_array_test(void);
 void dedup_compressed_int_array_test(void);
+void timesample_array_dedup_no_inflation_test(void);
