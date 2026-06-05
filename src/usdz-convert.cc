@@ -26,6 +26,18 @@
 #include "str-util.hh"
 #include "tydra/texture-util.hh"
 
+// Emscripten's <stdio.h> defines `stdout` as a self-referential macro
+// (`#define stdout (stdout)`) so the same identifier works both as a
+// macro and as a real variable. The recursion trips clang's
+// -Wdisabled-macro-expansion diagnostic at every call site that names
+// `stdout` (e.g. `std::fflush(stdout)`). Undefining the macro here makes
+// the bare token refer to the underlying `extern FILE *const stdout`
+// variable; the FILE* value is identical. This is a no-op on platforms
+// where `stdout` is not a macro (e.g. glibc, where it's a plain extern).
+#ifdef __EMSCRIPTEN__
+# undef stdout
+#endif
+
 namespace tinyusdz {
 namespace usdz {
 

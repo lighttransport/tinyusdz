@@ -22,6 +22,8 @@ import {
   unpackUSDZ,
   expandUsdzInputs,
   isAudioName,
+  parseUSDZEntries,
+  buildUSDZWithNewRoot,
 } from '../src/usdzconvert.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -391,7 +393,7 @@ def Xform "fromSub"
     }
   });
 
-  // --- USDZ unpack + repack (passthrough) round-trip ---
+  // --- USDZ unpack + repack round-trips ---
   await testAsync('unpackUSDZ round-trips a generated USDZ', async () => {
     const native = await loadWasm(() => import(wasmGlue));
     const assetMap = new Map();
@@ -419,11 +421,12 @@ def Xform "fromSub"
     assert.ok(assetMap.has(innerRoot), 'expanded map should contain the inner root');
   });
 
-  await testAsync('convertFolderToUSDZ repacks a .usdz input (passthrough)', async () => {
+  await testAsync('convertFolderToUSDZ flattens a .usdz input with low heap root rewrite', async () => {
     const native = await loadWasm(() => import(wasmGlue));
     const seed = new Map([['scene.usda', new TextEncoder().encode(usdaContent)]]);
     const first = await convertFolderToUSDZ(native, seed, { rootPath: 'scene.usda' });
-    // Feed the produced USDZ back in as the sole input — should unpack & repack.
+    // Feed the produced USDZ back in as the sole input. With flatten enabled
+    // (the default), this should rewrite only the root layer and copy entries in JS.
     const repacked = await convertFolderToUSDZ(
       native,
       new Map([['model.usdz', first.usdz]]),
@@ -431,6 +434,10 @@ def Xform "fromSub"
     );
     assert.ok(repacked.usdz instanceof Uint8Array, 'repack should produce bytes');
     assert.equal(repacked.usdz[0], 0x50, 'output should be a ZIP (P)');
+    assert.equal(firstZipEntryName(repacked.usdz), 'root.usdc',
+      'low-heap flattened output should write a USDC root');
+    assert.equal(repacked.stats.lowHeapFlatten, true,
+      'stats should identify the low-heap flatten path');
     assert.ok(!/\.usdz$/i.test(repacked.stats.rootPath),
       'root should resolve to the inner layer, not the .usdz');
     // The repacked archive must still be loadable.
@@ -438,6 +445,57 @@ def Xform "fromSub"
     try {
       assert.ok(usd.loadFromBinary(repacked.usdz, 'repacked.usdz'),
         'repacked USDZ should load: ' + usd.error());
+    } finally {
+      usd.delete();
+    }
+  });
+
+  await testAsync('convertFolderToUSDZ passthrough keeps a .usdz byte-identical when flatten is disabled', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const seed = new Map([['scene.usda', new TextEncoder().encode(usdaContent)]]);
+    const first = await convertFolderToUSDZ(native, seed, { rootPath: 'scene.usda' });
+    const repacked = await convertFolderToUSDZ(
+      native,
+      new Map([['model.usdz', first.usdz]]),
+      { rootPath: 'model.usdz', reencode: false, flatten: false },
+    );
+    assert.deepEqual(Array.from(repacked.usdz), Array.from(first.usdz),
+      'non-flatten passthrough should be byte-identical');
+    assert.equal(repacked.stats.passthrough, true,
+      'stats should identify the exact passthrough path');
+  });
+
+  // The low-heap flatten path rewrites the root as a top-level `root.usdc` and
+  // strips the root's directory prefix. For a USDZ whose root layer lives in a
+  // subdirectory that rename would re-anchor relative asset references, so the
+  // converter must fall back to the standard repack path instead.
+  await testAsync('convertFolderToUSDZ falls back to standard repack for a subdirectory-rooted .usdz', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const seed = new Map([['scene.usda', new TextEncoder().encode(usdaContent)]]);
+    const first = await convertFolderToUSDZ(native, seed, { rootPath: 'scene.usda' });
+    // Re-pack the produced (self-contained) root layer so it lives in a
+    // subdirectory inside the archive.
+    const innerRoot = parseUSDZEntries(first.usdz).find((e) => isUsdName(e.name));
+    assert.ok(innerRoot, 'seed USDZ should contain a USD root');
+    const nested = buildUSDZWithNewRoot('sub/root.usdc', innerRoot.data, []);
+    assert.equal(firstZipEntryName(nested), 'sub/root.usdc',
+      'fixture should have a subdirectory-rooted layer');
+
+    const repacked = await convertFolderToUSDZ(
+      native,
+      new Map([['model.usdz', nested]]),
+      { rootPath: 'model.usdz', reencode: false },
+    );
+    assert.ok(repacked.usdz instanceof Uint8Array, 'repack should produce bytes');
+    assert.equal(repacked.usdz[0], 0x50, 'output should be a ZIP (P)');
+    // The low-heap flatten path must be skipped for a subdirectory-rooted input.
+    assert.notEqual(repacked.stats.lowHeapFlatten, true,
+      'subdirectory-rooted input must fall back to the standard repack path');
+    // The fallback output must still be loadable.
+    const usd = new native.TinyUSDZLoaderNative();
+    try {
+      assert.ok(usd.loadFromBinary(repacked.usdz, 'repacked.usdz'),
+        'repacked nested-root USDZ should load: ' + usd.error());
     } finally {
       usd.delete();
     }
