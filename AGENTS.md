@@ -473,6 +473,39 @@ else
 fi
 ```
 
+##### Proprietary asset names & personal paths — scan commit *messages*, not just the diff
+
+The credential grep and the scanners above look at the code diff. Private
+**asset filenames** (model/scene names, customer assets) and **personal paths**
+leak just as easily through **commit messages** and **source comments** — e.g. a
+perf note that says "model `PrivateScene_X.usdz` took 57 s", or a comment
+`// e.g. CustomerScene: 5273 shaders`. Public history should describe *what*
+changed in generic terms ("a ~5000-shader scene", "a reference folder scene"),
+never the private asset that exercised it. Run both scans over the push range:
+
+```bash
+RANGE="$(git rev-parse --abbrev-ref --symbolic-full-name @{upstream})..HEAD"
+
+# (a) Personal paths in BOTH messages and source — must be empty.
+{ git log "$RANGE" --format='%B'; git diff "$RANGE" -- 'src/*' 'web/*' 'python/*'; } \
+  | grep -inE '/home/[a-z]|/Users/[A-Za-z]|C:\\Users\\' \
+  && { echo "ABORT: personal path in messages or source"; } \
+  || echo "clean: no personal paths"
+
+# (b) Asset-filename tokens in messages + added source lines — EYEBALL each and
+#     strip any that names a private/proprietary/customer asset. Generic names
+#     (root.usdc, bare extensions, public samples) are fine.
+{ git log "$RANGE" --format='%B'; git diff "$RANGE" -- 'src/*' 'web/*' 'python/*' | grep '^+'; } \
+  | grep -oiE '[A-Za-z0-9_-]{3,}\.(usdz|usda|usdc|png|jpg|jpeg|exr|gltf|glb|fbx|obj)' \
+  | sort -u
+```
+
+Any private asset name → rewrite before pushing. Messages:
+`git filter-branch --msg-filter '…'` (or `git filter-repo --replace-message`;
+`git rebase -i` if your harness allows it — some sandboxes block `-i`). Source
+comments: edit + `git commit --amend` / rebase. **Re-run every Check 1 scan
+(incl. the scanners) after the rewrite — the commit hashes change.**
+
 #### Check 2 — No build artifacts
 
 Build outputs do not belong in Git. They explode the pack size, cause merge conflicts on every rebuild, and routinely contain absolute paths from the developer's machine. If you find any of these in the push range, drop the file (and ignore the path going forward).
