@@ -1877,8 +1877,13 @@ class Value {
     //TUSDZ_LOG_I("Value templated constructor called with type: " << typeid(T).name());
   }
 
+  // Perfect-forwarding constructor. Use std::forward (NOT std::move): since
+  // `T&&` is a forwarding reference, an unconditional std::move here would steal
+  // from a non-const lvalue, e.g. `std::vector<uint8_t> a{...}; Value(a);` would
+  // silently empty `a`. std::forward moves only genuine rvalues; lvalues copy.
+  // (Callers that intend a move pass `Value(std::move(x))`.)
   template <class T>
-  Value(T &&v) noexcept : v_(std::move(v)) {
+  Value(T &&v) noexcept : v_(std::forward<T>(v)) {
     //TUSDZ_LOG_I("Value templated move constructor called with type: " << typeid(T).name());
   }
 

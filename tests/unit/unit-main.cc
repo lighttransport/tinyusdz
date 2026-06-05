@@ -95,6 +95,7 @@ TEST_LIST = {
   { "value_types_test", value_types_test },
   { "role_type_cast_test", role_type_cast_test },
   { "value_types_typed_array_memory_test", value_types_typed_array_memory_test },
+  { "value_construct_from_lvalue_copies_test", value_construct_from_lvalue_copies_test },
   { "xformOp_test", xformOp_test },
   { "rotation_order_quat_vs_matrix_test", rotation_order_quat_vs_matrix_test },
   { "rotation_order_distinct_test", rotation_order_distinct_test },
