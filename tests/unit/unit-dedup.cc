@@ -1628,3 +1628,49 @@ void dedup_empty_array_roundtrip_test(void) {
     }
   }
 }
+
+// Regression: +/-inf doubles are EXACTLY representable as float, so OpenUSD (and
+// TryInlineValue) inline them (DOUBLE rep, inlined float bits). A previous
+// warning fix used is_close(roundtrip, value, 0) for the float-exact check, but
+// is_close(inf,inf,0) is false (inf-inf == NaN), which silently wrote inf
+// doubles out-of-line -- a byte/parity divergence. This guards the bit-exact
+// (memcmp) check. A non-float-exact double (0.1) is the out-of-line control.
+void inline_inf_double_test(void) {
+  const double pinf = std::numeric_limits<double>::infinity();
+  const double ninf = -std::numeric_limits<double>::infinity();
+
+  Stage stage;
+  Xform xform;
+  xform.name = "InfDouble";
+  xform.spec = Specifier::Def;
+  AddCustomAttribute(&xform, "pinf", "double", value::Value(pinf));
+  AddCustomAttribute(&xform, "ninf", "double", value::Value(ninf));
+  AddCustomAttribute(&xform, "notexact", "double", value::Value(0.1));
+  Prim prim("InfDouble", xform);
+  stage.root_prims().emplace_back(prim);
+
+  const std::string fn = "/tmp/test_inline_inf_double.usdc";
+  TEST_CHECK(WriteStageUSDC(stage, fn, /*dedup*/ true));
+
+  std::vector<CrateValueRep> reps;
+  std::string err;
+  TEST_CHECK(ReadFieldValueRepsByToken(fn, "default", &reps, &err));
+  // inf doubles inline; the non-float-exact 0.1 stays out-of-line.
+  TEST_CHECK_(HasValueRep(reps, CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE, true),
+              "inf double must be INLINED (regression: is_close(inf,inf,0)==false)");
+  TEST_CHECK_(HasValueRep(reps, CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE, false),
+              "non-float-exact double (0.1) must be out-of-line");
+
+  // Values must survive the roundtrip.
+  Layer layer;
+  std::string warn;
+  TEST_CHECK(tinyusdz::LoadLayerFromFile(fn, &layer, &warn, &err));
+  const value::Value* vp = GetLayerAttrValue(layer, "InfDouble", "pinf");
+  const value::Value* vn = GetLayerAttrValue(layer, "InfDouble", "ninf");
+  const value::Value* vx = GetLayerAttrValue(layer, "InfDouble", "notexact");
+  TEST_CHECK(vp && vp->as<double>() && std::isinf(*vp->as<double>()) &&
+             *vp->as<double>() > 0.0);
+  TEST_CHECK(vn && vn->as<double>() && std::isinf(*vn->as<double>()) &&
+             *vn->as<double>() < 0.0);
+  TEST_CHECK(vx && vx->as<double>() && *vx->as<double>() == 0.1);
+}

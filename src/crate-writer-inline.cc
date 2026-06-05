@@ -267,9 +267,14 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
   // the float bits in the 32-bit payload.
   if (auto* double_val = value.as<double>()) {
     float f = static_cast<float>(*double_val);
-    // Inline only doubles that are EXACTLY representable as float (no precision
-    // loss). is_close with eps 0 is bit-exact equality without -Wfloat-equal.
-    if (math::is_close(static_cast<double>(f), *double_val, 0.0)) {
+    // Inline only doubles that round-trip through float EXACTLY (no precision
+    // loss), matching OpenUSD. Compare the float-roundtrip against the original
+    // with a bit-exact memcmp: it avoids -Wfloat-equal AND, unlike is_close with
+    // eps 0, treats +-inf as equal (is_close(inf,inf,0) is false because
+    // inf-inf is NaN). `f` preserves the sign of a zero double, so signed zeros
+    // also compare bit-equal here, exactly as the original `==` did.
+    const double roundtrip = static_cast<double>(f);
+    if (std::memcmp(&roundtrip, double_val, sizeof(double)) == 0) {
       uint32_t float_bits = 0;
       memcpy(&float_bits, &f, sizeof(float));
       rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE));
