@@ -504,7 +504,11 @@ function maxUSDCExportBytes(opts) {
 }
 
 function initialLowHeapRootCapacity(inputBytes, opts) {
-  const multiplier = Number(opts.lowHeapRootSizeMultiplier || 3);
+  // The keep-textures root crate is geometry-only (textures pass through), so it
+  // is usually <= the input .usdz. Start at 1.5x and let the too-small retry
+  // (exportUSDCOutsideWasmHeap doubles) handle the rare inflating scene — much
+  // tighter than the old 3x, which over-allocated ~600 MB for big scenes.
+  const multiplier = Number(opts.lowHeapRootSizeMultiplier || 1.5);
   const minBytes = 64 * 1024 * 1024;
   const wanted = Math.max(minBytes, Math.ceil(inputBytes * Math.max(1, multiplier)));
   return Math.min(maxUSDCExportBytes(opts), wanted);
@@ -519,8 +523,10 @@ function isBufferTooSmallError(error) {
 // kind='stage' writes the typed-Prim-reconstructed Stage (the arkit/flatten
 // path) — same streaming, so large typed-flatten scenes stay off the wasm heap.
 function exportUSDCOutsideWasmHeap(usd, inputBytes, opts, log, kind = 'layer') {
-  const isStage = kind === 'stage';
-  const bufMethod = isStage
+  // 'layer': write the composed Layer's PrimSpecs (faithful; used for both the
+  //          composeToFixedPoint and the C++ flattenLayer() flatten).
+  // 'stage': typed-Prim Stage reconstruction (ARKit-style; heaviest).
+  const bufMethod = kind === 'stage'
     ? 'exportStageAsUSDCToBufferWithOptions'
     : 'exportLayerAsUSDCToBufferWithOptions';
 
@@ -528,7 +534,7 @@ function exportUSDCOutsideWasmHeap(usd, inputBytes, opts, log, kind = 'layer') {
     // Fallback: in-heap export (defeats the low-heap intent, but keeps working
     // on older glue builds).
     log(`WARN: WASM module lacks ${bufMethod}; falling back to heap-copy export.`);
-    const exported = isStage
+    const exported = kind === 'stage'
       ? usd.exportAsUSDC()
       : (typeof usd.exportLayerAsUSDCWithOptions === 'function'
           ? usd.exportLayerAsUSDCWithOptions({ rootLayerFormat: 'usdc' })
@@ -574,8 +580,10 @@ function exportLayerAsUSDCOutsideWasmHeap(usd, inputBytes, opts, log) {
   return exportUSDCOutsideWasmHeap(usd, inputBytes, opts, log, 'layer');
 }
 
+// mode: 'layer' (composed PrimSpecs), 'stage' (typed-Prim, heaviest), or
+// 'flatten-layer' (C++ flatten then write Layer — lightest faithful path).
 async function convertSingleUSDZToLowHeapFlattenedUSDZ(native, rootPath, bytes,
-                                                       opts, log, useStage = false) {
+                                                       opts, log, mode = 'layer') {
   const archiveEntries = parseUSDZEntries(bytes);
   const rootEntry = archiveEntries.find((entry) => isUsdName(entry.name));
   if (!rootEntry) {
@@ -613,10 +621,11 @@ async function convertSingleUSDZToLowHeapFlattenedUSDZ(native, rootPath, bytes,
     rootPath: rootEntry.name,
     rootLayerFormat: 'usdc',
     flatten: true,
-    // Stage mode is the typed-Prim reconstruction path used for ARKit packaging.
-    arkitCompatible: useStage,
+    // 'stage'/'flatten-layer' are the ARKit-style flatten paths.
+    arkitCompatible: mode !== 'layer',
     lowHeapFlatten: true,
-    lowHeapStage: useStage,
+    lowHeapStage: mode === 'stage',
+    lowHeapFlattenLayer: mode === 'flatten-layer',
   };
 
   let rootUSDC = null;
@@ -634,15 +643,23 @@ async function convertSingleUSDZToLowHeapFlattenedUSDZ(native, rootPath, bytes,
       usd.setAsset(assetNameFor(entry.name), entry.data);
     }
 
-    log(`Low-heap ${useStage ? 'stage(typed)' : 'layer'} flatten; inner root layer: ${rootEntry.name}`);
+    log(`Low-heap ${mode} flatten; inner root layer: ${rootEntry.name}`);
     if (!usd.loadAsLayerFromBinary(rootEntry.data, rootEntry.name.split('/').pop())) {
       throw new Error('Failed to load USD: ' + usd.error());
     }
     if (typeof usd.warn === 'function' && usd.warn()) log('WARN: ' + usd.warn());
-    composeToFixedPoint(usd);
+    // Flatten step. 'flatten-layer' uses the single C++ flattenLayer() call
+    // (lightest); the others compose at the layer level via composeToFixedPoint.
+    if (mode === 'flatten-layer' && typeof usd.flattenLayer === 'function') {
+      if (!usd.flattenLayer()) throw new Error('Layer flatten failed: ' + usd.error());
+    } else {
+      composeToFixedPoint(usd);
+    }
 
-    rootUSDC = exportUSDCOutsideWasmHeap(usd, bytes.length, opts, log,
-                                         useStage ? 'stage' : 'layer');
+    // Both 'layer' and 'flatten-layer' write the composed Layer (retriable);
+    // only 'stage' writes the typed Stage.
+    const writeKind = mode === 'stage' ? 'stage' : 'layer';
+    rootUSDC = exportUSDCOutsideWasmHeap(usd, bytes.length, opts, log, writeKind);
   } finally {
     usd.delete();
   }
@@ -706,12 +723,16 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
     // which preserves the full asset directory layout.
   }
 
-  // Low-heap STAGE (typed-Prim / ARKit-style flatten) path: keeps textures
-  // (no re-encode), streams the typed-flattened root USDC into a JS buffer and
-  // repacks the zip in JS, so large scenes that OOM the in-heap arkit path fit.
+  // Low-heap ARKit-style flatten path: keeps textures (no re-encode), streams
+  // the flattened root USDC into a JS buffer and repacks the zip in JS, so large
+  // scenes that OOM the in-heap arkit path fit. Default to 'flatten-layer' (C++
+  // Layer->Layer flatten then write Layer — no typed Stage, no layer copy:
+  // lighter on the wasm heap and faithful). Set opts.lowHeapStageMode='stage'
+  // to force the typed-Prim Stage reconstruction instead.
   if (shouldUseLowHeapStageFlattenedUSDZ(rootPath, assetMap, opts, textureFormat)) {
+    const mode = opts.lowHeapStageMode === 'stage' ? 'stage' : 'flatten-layer';
     const lowHeap = await convertSingleUSDZToLowHeapFlattenedUSDZ(
-      native, rootPath, assetMap.get(rootPath), opts, log, /* useStage */ true);
+      native, rootPath, assetMap.get(rootPath), opts, log, mode);
     if (lowHeap) {
       return lowHeap;
     }
