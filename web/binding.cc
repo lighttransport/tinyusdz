@@ -52,6 +52,7 @@
 #include "json-to-usd.hh"
 #include "usda-writer.hh"
 #include "usdc-writer.hh"
+#include "crate-writer.hh"
 #include "image-writer.hh"
 #include "usdGeom.hh"
 #include "usd-validation.hh"
@@ -261,17 +262,71 @@ static inline void FixupZeroTangent(float &tx, float &ty, float &tz,
 // NOTE: const char* params are BigInt in MEMORY64 mode, but UTF8ToString
 // expects Number. Using Number() is a no-op for regular numbers (32-bit)
 // and converts BigInt→Number (64-bit), so it works for both modes.
-EM_JS(void, reportTydraProgress, (int current, int total, const char* stage, const char* meshName, float progress), {
+EM_JS(void, reportTydraProgress, (int current, int total, const char* stage, const char* meshName, int materialsCurrent, int materialsTotal, const char* materialName, float progress), {
   if (typeof Module.onTydraProgress === 'function') {
     Module.onTydraProgress({
       meshCurrent: current,
       meshTotal: total,
       stage: UTF8ToString(Number(stage)),
       meshName: UTF8ToString(Number(meshName)),
+      materialsCurrent,
+      materialsTotal,
+      materialName: UTF8ToString(Number(materialName)),
       progress: progress
     });
   }
 });
+
+EM_JS(double, getWasmHeapByteLengthForDebug, (), {
+  return HEAPU8.buffer.byteLength;
+});
+
+EM_JS(void, reportTinyUSDZDebug, (const char* phase, const char* detail, double heapBytes, double inputBytes, int isUsdz, int materialsCurrent, int materialsTotal, const char* materialName), {
+  const event = {
+    phase: UTF8ToString(Number(phase)),
+    detail: UTF8ToString(Number(detail)),
+    heapBytes,
+    inputBytes,
+    isUsdz: !!isUsdz,
+    materialsCurrent,
+    materialsTotal,
+    materialName: UTF8ToString(Number(materialName))
+  };
+  if (typeof Module.onTinyUSDZDebug === 'function') {
+    Module.onTinyUSDZDebug(event);
+  }
+});
+
+static inline double GetWasmHeapByteLengthForDebug() {
+  return getWasmHeapByteLengthForDebug();
+}
+
+// Cheap test for whether a JS debug listener is attached. Lets hot paths skip
+// building debug strings / querying the heap size when nobody is listening.
+EM_JS(int, isTinyUSDZDebugEnabled, (), {
+  return (typeof Module.onTinyUSDZDebug === 'function') ? 1 : 0;
+});
+
+static inline bool IsTinyUSDZDebugEnabled() {
+  return isTinyUSDZDebugEnabled() != 0;
+}
+
+static inline void ReportTinyUSDZDebugEvent(
+    const char *phase, const std::string &detail, size_t input_bytes = 0,
+    bool is_usdz = false, size_t materials_current = 0,
+    size_t materials_total = 0, const std::string &material_name = "") {
+  // No JS listener => skip the heap-size query and the JS event construction
+  // entirely. This keeps debug instrumentation off the cost path in the common
+  // (no-listener) case.
+  if (!IsTinyUSDZDebugEnabled()) {
+    return;
+  }
+  reportTinyUSDZDebug(
+      phase, detail.c_str(), GetWasmHeapByteLengthForDebug(),
+      static_cast<double>(input_bytes), is_usdz ? 1 : 0,
+      static_cast<int>(materials_current), static_cast<int>(materials_total),
+      material_name.c_str());
+}
 
 // Report conversion stage change
 EM_JS(void, reportTydraStage, (const char* stage, const char* message), {
@@ -691,6 +746,87 @@ struct ZeroCopyStreamingBuffer {
     result.set("bufferPtr", double(getBufferPtr()));
     return result;
   }
+};
+
+class JSUint8ArrayOutputStream
+    : public tinyusdz::experimental::IOutputStream {
+ public:
+  JSUint8ArrayOutputStream(const emscripten::val &buffer, size_t capacity)
+      : buffer_(buffer), capacity_(capacity) {}
+
+  bool Open(std::string *err) override {
+    if (buffer_.isNull() || buffer_.isUndefined() || capacity_ == 0) {
+      if (err) {
+        *err = "JS output buffer is empty.";
+      }
+      return false;
+    }
+    pos_ = 0;
+    max_pos_ = 0;
+    open_ = true;
+    error_.clear();
+    return true;
+  }
+
+  void Close() override { open_ = false; }
+
+  bool IsOpen() const override { return open_; }
+
+  int64_t Tell() override { return static_cast<int64_t>(pos_); }
+
+  bool Seek(int64_t pos) override {
+    if (pos < 0) {
+      error_ = "Negative seek in JS output buffer.";
+      return false;
+    }
+    const size_t next = static_cast<size_t>(pos);
+    if (next > capacity_) {
+      error_ = "Seek exceeds JS output buffer capacity.";
+      return false;
+    }
+    pos_ = next;
+    return true;
+  }
+
+  bool Write(const void *data, size_t size) override {
+    if (!open_) {
+      error_ = "JS output buffer is not open.";
+      return false;
+    }
+    if (size == 0) {
+      return true;
+    }
+    if (!data) {
+      error_ = "Null write data for JS output buffer.";
+      return false;
+    }
+    if (pos_ > capacity_ || size > capacity_ - pos_) {
+      error_ = "JS output buffer too small for USDC export.";
+      return false;
+    }
+
+    emscripten::val src = emscripten::val(emscripten::typed_memory_view(
+        size, reinterpret_cast<const uint8_t *>(data)));
+    buffer_.call<void>("set", src, emscripten::val(static_cast<double>(pos_)));
+    pos_ += size;
+    if (pos_ > max_pos_) {
+      max_pos_ = pos_;
+    }
+    return true;
+  }
+
+  bool Flush() override { return true; }
+
+  size_t written() const { return max_pos_; }
+  const std::string &error() const { return error_; }
+
+ private:
+  emscripten::val buffer_;
+  size_t capacity_{0};
+  size_t pos_{0};
+  size_t max_pos_{0};
+  bool open_{false};
+  std::string error_;
 };
 
 struct EMAssetResolutionResolver {
@@ -1923,6 +2059,10 @@ class TinyUSDZLoaderNative {
 #endif
 
   bool stageToRenderScene(const tinyusdz::Stage &stage, bool is_usdz, const std::string &binary) {
+    ReportTinyUSDZDebugEvent(
+        "renderScene.begin",
+        "filename=" + filename_ + " inputBytes=" + std::to_string(binary.size()),
+        binary.size(), is_usdz);
 
     tinyusdz::tydra::RenderSceneConverterEnv env(stage);
 
@@ -1963,13 +2103,25 @@ class TinyUSDZLoaderNative {
       bool asset_on_memory =
           false;  // duplicate asset data from USDZ(binary) to UDSZAsset struct.
 
+      ReportTinyUSDZDebugEvent(
+          "usdzAssetInfo.begin",
+          "asset_on_memory=false filename=" + filename_, binary.size(),
+          is_usdz);
       if (!tinyusdz::ReadUSDZAssetInfoFromMemory(
               reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
               asset_on_memory, &usdz_asset_, &warn_, &error_)) {
         std::cerr << "Failed to read USDZ assetInfo. \n";
+        ReportTinyUSDZDebugEvent(
+            "usdzAssetInfo.failed", error_, binary.size(), is_usdz);
         loaded_ = false;
         return false;
       }
+      ReportTinyUSDZDebugEvent(
+          "usdzAssetInfo.end",
+          "entries=" + std::to_string(usdz_asset_.asset_map.size()) +
+              " copiedBytes=" + std::to_string(usdz_asset_.data.size()) +
+              " backingBytes=" + std::to_string(usdz_asset_.size),
+          binary.size(), is_usdz);
 
       tinyusdz::AssetResolutionResolver arr;
 
@@ -1977,18 +2129,32 @@ class TinyUSDZLoaderNative {
       // RenderSceneConverter::ConvertToRenderScene.
       if (!tinyusdz::SetupUSDZAssetResolution(arr, &usdz_asset_)) {
         std::cerr << "Failed to setup AssetResolution for USDZ asset\n";
+        ReportTinyUSDZDebugEvent(
+            "usdzAssetResolution.failed", "SetupUSDZAssetResolution failed",
+            binary.size(), is_usdz);
         loaded_ = false;
         return false;
       }
+      ReportTinyUSDZDebugEvent(
+          "usdzAssetResolution.end",
+          "entries=" + std::to_string(usdz_asset_.asset_map.size()),
+          binary.size(), is_usdz);
 
       env.asset_resolver = arr;
     } else {
       tinyusdz::AssetResolutionResolver arr;
       if (!SetupEMAssetResolution(arr, &em_resolver_)) {
         std::cerr << "Failed to setup FetchAssetResolution\n";
+        ReportTinyUSDZDebugEvent(
+            "emAssetResolution.failed", "SetupEMAssetResolution failed",
+            binary.size(), is_usdz);
         loaded_ = false;
         return false;
       }
+      ReportTinyUSDZDebugEvent(
+          "emAssetResolution.end",
+          "cacheEntries=" + std::to_string(em_resolver_.cache.size()),
+          binary.size(), is_usdz);
 
       env.asset_resolver = arr;
     }
@@ -1998,7 +2164,7 @@ class TinyUSDZLoaderNative {
 
     // Set up detailed progress callback to update parsing_progress_ and call JS
     converter.SetDetailedProgressCallback(
-        [](const tinyusdz::tydra::DetailedProgressInfo &info, void *userptr) -> bool {
+        [input_size = binary.size(), is_usdz, debug_enabled = IsTinyUSDZDebugEnabled()](const tinyusdz::tydra::DetailedProgressInfo &info, void *userptr) -> bool {
           ParsingProgress *pp = static_cast<ParsingProgress *>(userptr);
           if (pp) {
             pp->meshes_processed = info.meshes_processed;
@@ -2012,12 +2178,32 @@ class TinyUSDZLoaderNative {
             pp->progress = 0.8f + (info.progress * 0.2f);
           }
 
+          // Build the (per-tick) debug detail string only when a JS listener is
+          // attached; otherwise this hot callback pays nothing for debugging.
+          if (debug_enabled) {
+            std::ostringstream detail;
+            detail << "stage=" << info.GetStageName()
+                   << " message=" << info.message
+                   << " mesh=" << info.meshes_processed << "/"
+                   << info.meshes_total
+                   << " material=" << info.materials_processed << "/"
+                   << info.materials_total
+                   << " currentMaterial=" << info.current_material_name;
+            ReportTinyUSDZDebugEvent(
+                "renderScene.progress", detail.str(), input_size, is_usdz,
+                info.materials_processed, info.materials_total,
+                info.current_material_name);
+          }
+
           // Call JavaScript synchronously via EM_JS
           reportTydraProgress(
             static_cast<int>(info.meshes_processed),
             static_cast<int>(info.meshes_total),
             info.GetStageName(),  // Already returns const char*
             info.current_mesh_name.c_str(),
+            static_cast<int>(info.materials_processed),
+            static_cast<int>(info.materials_total),
+            info.current_material_name.c_str(),
             info.progress
           );
 
@@ -2036,7 +2222,17 @@ class TinyUSDZLoaderNative {
         value_clip_use_time_range_;
     env.scene_config.value_clip_start_time = value_clip_start_time_;
     env.scene_config.value_clip_end_time = value_clip_end_time_;
+    ReportTinyUSDZDebugEvent(
+        "convertToRenderScene.begin",
+        "loadTextureInNative=" + std::to_string(loadTextureInNative_ ? 1 : 0) +
+            " combineUDIMTiles=" + std::to_string(combineUDIMTiles_ ? 1 : 0) +
+            " deferTangents=" +
+            std::to_string(defer_tangent_computation_ ? 1 : 0),
+        binary.size(), is_usdz);
     loaded_ = converter.ConvertToRenderScene(env, &render_scene_);
+    ReportTinyUSDZDebugEvent(
+        loaded_ ? "convertToRenderScene.end" : "convertToRenderScene.failed",
+        loaded_ ? "success" : converter.GetError(), binary.size(), is_usdz);
 
     // Capture warnings from converter (available via warn() method)
     if (!converter.GetWarning().empty()) {
@@ -2083,6 +2279,10 @@ class TinyUSDZLoaderNative {
 
     bool is_usdz = tinyusdz::IsUSDZ(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
+    ReportTinyUSDZDebugEvent(
+        "loadFromBinary.begin",
+        "filename=" + filename + " bytes=" + std::to_string(binary.size()),
+        binary.size(), is_usdz);
 
     tinyusdz::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
@@ -2094,8 +2294,16 @@ class TinyUSDZLoaderNative {
         filename, &stage, &warn_, &error_, options);
 
     if (!loaded_) {
+      ReportTinyUSDZDebugEvent(
+          "loadFromBinary.parseFailed", error_, binary.size(), is_usdz);
       return false;
     }
+    ReportTinyUSDZDebugEvent(
+        "loadFromBinary.parsed",
+        "warnBytes=" + std::to_string(warn_.size()) +
+            " maxMemoryLimitMB=" + std::to_string(max_memory_limit_mb_) +
+            " mmapZeroCopy=" + std::to_string(mmap_zero_copy_ ? 1 : 0),
+        binary.size(), is_usdz);
 
     loaded_as_layer_ = false;
     filename_ = filename;
@@ -2178,6 +2386,9 @@ class TinyUSDZLoaderNative {
             static_cast<int>(info.meshes_total),
             info.GetStageName(),  // Already returns const char*
             info.current_mesh_name.c_str(),
+            static_cast<int>(info.materials_processed),
+            static_cast<int>(info.materials_total),
+            info.current_material_name.c_str(),
             info.progress
           );
 
@@ -2338,6 +2549,9 @@ class TinyUSDZLoaderNative {
             static_cast<int>(info.meshes_total),
             info.GetStageName(),
             info.current_mesh_name.c_str(),
+            static_cast<int>(info.materials_processed),
+            static_cast<int>(info.materials_total),
+            info.current_material_name.c_str(),
             info.progress
           );
           return true;
@@ -6020,6 +6234,14 @@ class TinyUSDZLoaderNative {
         memory_mb > 0 ? static_cast<int64_t>(memory_mb) * 1024 * 1024 : 0;
   }
 
+  emscripten::val debugLogMemory(const std::string &label) {
+    ReportTinyUSDZDebugEvent("manual", label);
+    emscripten::val result = emscripten::val::object();
+    result.set("label", label);
+    result.set("heapBytes", GetWasmHeapByteLengthForDebug());
+    return result;
+  }
+
   emscripten::val exportAsUSDC() {
     tinyusdz::Stage stage;
     if (!getStageFromLayer(stage)) {
@@ -6042,6 +6264,124 @@ class TinyUSDZLoaderNative {
     usdc_export_buf_ = std::move(output);
     return emscripten::val(emscripten::typed_memory_view(
         usdc_export_buf_.size(), usdc_export_buf_.data()));
+  }
+
+  /// Export the current layer as USDC (binary Crate) - returns Uint8Array.
+  /// This avoids Stage reconstruction and USDZ packaging, and is used by the
+  /// JS low-heap USDZ repacker to rewrite only the archive root layer.
+  emscripten::val exportLayerAsUSDCWithOptions(emscripten::val options) {
+    (void)options;
+    if (!loaded_ || !loaded_as_layer_) {
+      error_ = "No layer loaded";
+      return emscripten::val::null();
+    }
+
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    std::vector<uint8_t> output;
+    std::string warn, err;
+    if (!tinyusdz::usdc::SaveAsUSDCToMemory(curr, &output, &warn, &err,
+                                            usdc_max_file_size_bytes_,
+                                            usdc_max_memory_bytes_)) {
+      error_ = "USDC export failed: " + err;
+      warn_ = warn;
+      return emscripten::val::null();
+    }
+
+    warn_ = warn;
+    usdc_export_buf_ = std::move(output);
+    return emscripten::val(emscripten::typed_memory_view(
+        usdc_export_buf_.size(), usdc_export_buf_.data()));
+  }
+
+  /// Export the current layer as USDC directly into a JS Uint8Array.
+  /// This avoids retaining the whole written crate in a WASM-side vector.
+  emscripten::val exportLayerAsUSDCToBufferWithOptions(
+      emscripten::val buffer, emscripten::val options) {
+    (void)options;
+    emscripten::val result = emscripten::val::object();
+    result.set("success", false);
+    result.set("size", 0.0);
+
+    if (!loaded_ || !loaded_as_layer_) {
+      error_ = "No layer loaded";
+      result.set("error", error_);
+      return result;
+    }
+    if (buffer.isNull() || buffer.isUndefined()) {
+      error_ = "USDC export output buffer is null.";
+      result.set("error", error_);
+      return result;
+    }
+
+    size_t capacity = 0;
+    try {
+      capacity = buffer["byteLength"].as<size_t>();
+    } catch (...) {
+      error_ = "USDC export output must be a Uint8Array.";
+      result.set("error", error_);
+      return result;
+    }
+    if (capacity == 0) {
+      error_ = "USDC export output buffer is empty.";
+      result.set("error", error_);
+      return result;
+    }
+
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+
+    auto js_stream = std::unique_ptr<JSUint8ArrayOutputStream>(
+        new JSUint8ArrayOutputStream(buffer, capacity));
+    JSUint8ArrayOutputStream *stream_ptr = js_stream.get();
+    std::unique_ptr<tinyusdz::experimental::IOutputStream> out_stream(
+        std::move(js_stream));
+    tinyusdz::experimental::CrateWriter writer(std::move(out_stream));
+
+    tinyusdz::experimental::CrateWriter::Options opts;
+    opts.version_major = 0;
+    opts.version_minor = 8;
+    opts.version_patch = 0;
+    opts.enable_compression = true;
+    opts.enable_deduplication = true;
+    if (usdc_max_file_size_bytes_ > 0) {
+      opts.max_file_size_bytes = usdc_max_file_size_bytes_;
+    }
+    if (usdc_max_memory_bytes_ > 0) {
+      opts.max_memory_bytes = usdc_max_memory_bytes_;
+    }
+    writer.SetOptions(opts);
+
+    std::string open_err;
+    if (!writer.Open(&open_err)) {
+      error_ = "Failed to open CrateWriter: " + open_err;
+      result.set("error", error_);
+      return result;
+    }
+
+    std::string convert_err;
+    if (!writer.ConvertLayerToSpecs(curr, &convert_err)) {
+      writer.Close();
+      error_ = "Failed to convert Layer to USDC: " + convert_err;
+      result.set("error", error_);
+      return result;
+    }
+
+    std::string finalize_err;
+    if (!writer.Finalize(&finalize_err)) {
+      writer.Close();
+      error_ = "Failed to finalize USDC: " + finalize_err;
+      if (!stream_ptr->error().empty()) {
+        error_ += " " + stream_ptr->error();
+      }
+      result.set("error", error_);
+      return result;
+    }
+
+    writer.Close();
+    warn_.clear();
+    result.set("success", true);
+    result.set("size", static_cast<double>(stream_ptr->written()));
+    result.set("warn", warn_);
+    return result;
   }
 
   /// Export loaded scene as USDZ (ZIP package with packed assets) — returns Uint8Array
@@ -7862,7 +8202,10 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       // USD Export
       .function("exportAsUSDA", &TinyUSDZLoaderNative::exportAsUSDA)
       .function("exportAsUSDC", &TinyUSDZLoaderNative::exportAsUSDC)
+      .function("exportLayerAsUSDCWithOptions", &TinyUSDZLoaderNative::exportLayerAsUSDCWithOptions)
+      .function("exportLayerAsUSDCToBufferWithOptions", &TinyUSDZLoaderNative::exportLayerAsUSDCToBufferWithOptions)
       .function("setUSDCExportLimitMB", &TinyUSDZLoaderNative::setUSDCExportLimitMB)
+      .function("debugLogMemory", &TinyUSDZLoaderNative::debugLogMemory)
       .function("exportAsUSDZ", &TinyUSDZLoaderNative::exportAsUSDZ)
       .function("exportAsUSDZWithRemap", &TinyUSDZLoaderNative::exportAsUSDZWithRemap)
       .function("exportAsUSDZWithOptions", &TinyUSDZLoaderNative::exportAsUSDZWithOptions)

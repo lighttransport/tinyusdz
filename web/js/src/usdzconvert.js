@@ -58,6 +58,250 @@ export function outputFormatForImage(name, textureFormat = 'keep') {
   return { format: null, ext: null };
 }
 
+const ZIP_LOCAL_HEADER_SIZE = 30;
+const ZIP_CENTRAL_DIR_HEADER_SIZE = 46;
+const USDZ_ALIGNMENT = 64;
+
+function crc32Table() {
+  if (crc32Table.cache) return crc32Table.cache;
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) {
+      c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    table[i] = c >>> 0;
+  }
+  crc32Table.cache = table;
+  return table;
+}
+
+function crc32(bytes) {
+  const table = crc32Table();
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) {
+    c = table[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function zipPaddingForDataOffset(offset, nameLength) {
+  const headerSize = ZIP_LOCAL_HEADER_SIZE + nameLength;
+  const remainder = (offset + headerSize) % USDZ_ALIGNMENT;
+  return remainder === 0 ? 0 : USDZ_ALIGNMENT - remainder;
+}
+
+function assertZip32Size(name, size) {
+  if (size > 0xffffffff) {
+    throw new Error(`USDZ entry "${name}" exceeds ZIP32 size limit.`);
+  }
+}
+
+function writeAsciiName(out, offset, nameBytes) {
+  out.set(nameBytes, offset);
+  return offset + nameBytes.length;
+}
+
+function writeLocalEntry(out, offset, entry) {
+  const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  const nameBytes = entry.nameBytes;
+  const data = entry.data;
+  const padding = zipPaddingForDataOffset(offset, nameBytes.length);
+  if (padding > 0xffff) {
+    throw new Error(`USDZ alignment padding is too large for "${entry.name}".`);
+  }
+  entry.localHeaderOffset = offset;
+
+  dv.setUint32(offset + 0, 0x04034b50, true);
+  dv.setUint16(offset + 4, 20, true);
+  dv.setUint16(offset + 6, 0, true);
+  dv.setUint16(offset + 8, 0, true);
+  dv.setUint16(offset + 10, 0, true);
+  dv.setUint16(offset + 12, 0, true);
+  dv.setUint32(offset + 14, entry.crc32 >>> 0, true);
+  dv.setUint32(offset + 18, data.length >>> 0, true);
+  dv.setUint32(offset + 22, data.length >>> 0, true);
+  dv.setUint16(offset + 26, nameBytes.length, true);
+  dv.setUint16(offset + 28, padding, true);
+  offset += ZIP_LOCAL_HEADER_SIZE;
+  offset = writeAsciiName(out, offset, nameBytes);
+  offset += padding;
+  if (offset % USDZ_ALIGNMENT !== 0) {
+    throw new Error(`Internal error: USDZ alignment failed for "${entry.name}".`);
+  }
+  out.set(data, offset);
+  return offset + data.length;
+}
+
+function writeCentralDirectory(out, offset, entries) {
+  const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  const cdOffset = offset;
+  for (const entry of entries) {
+    const nameBytes = entry.nameBytes;
+    dv.setUint32(offset + 0, 0x02014b50, true);
+    dv.setUint16(offset + 4, 20, true);
+    dv.setUint16(offset + 6, 20, true);
+    dv.setUint16(offset + 8, 0, true);
+    dv.setUint16(offset + 10, 0, true);
+    dv.setUint16(offset + 12, 0, true);
+    dv.setUint16(offset + 14, 0, true);
+    dv.setUint32(offset + 16, entry.crc32 >>> 0, true);
+    dv.setUint32(offset + 20, entry.data.length >>> 0, true);
+    dv.setUint32(offset + 24, entry.data.length >>> 0, true);
+    dv.setUint16(offset + 28, nameBytes.length, true);
+    dv.setUint16(offset + 30, 0, true);
+    dv.setUint16(offset + 32, 0, true);
+    dv.setUint16(offset + 34, 0, true);
+    dv.setUint16(offset + 36, 0, true);
+    dv.setUint32(offset + 38, 0, true);
+    dv.setUint32(offset + 42, entry.localHeaderOffset >>> 0, true);
+    offset += ZIP_CENTRAL_DIR_HEADER_SIZE;
+    offset = writeAsciiName(out, offset, nameBytes);
+  }
+  const cdSize = offset - cdOffset;
+  if (entries.length > 0xffff || cdOffset > 0xffffffff || cdSize > 0xffffffff) {
+    throw new Error('USDZ central directory exceeds ZIP32 limits.');
+  }
+
+  dv.setUint32(offset + 0, 0x06054b50, true);
+  dv.setUint16(offset + 4, 0, true);
+  dv.setUint16(offset + 6, 0, true);
+  dv.setUint16(offset + 8, entries.length, true);
+  dv.setUint16(offset + 10, entries.length, true);
+  dv.setUint32(offset + 12, cdSize >>> 0, true);
+  dv.setUint32(offset + 16, cdOffset >>> 0, true);
+  dv.setUint16(offset + 20, 0, true);
+  return offset + 22;
+}
+
+// Parse a STORE-only USDZ/ZIP archive into ordered entry descriptors. Entry
+// `data` fields are subarray views into the original archive bytes.
+export function parseUSDZEntries(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  if (u8.length < 22) throw new Error('Not a valid USDZ/ZIP (too small).');
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const td = new TextDecoder();
+
+  let eocd = -1;
+  const minStart = Math.max(0, u8.length - 22 - 0xffff);
+  for (let i = u8.length - 22; i >= minStart; i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('Not a valid USDZ/ZIP (no EOCD record).');
+
+  const count = dv.getUint16(eocd + 10, true);
+  let off = dv.getUint32(eocd + 16, true);
+  const entries = [];
+  for (let n = 0; n < count; n++) {
+    if (off + ZIP_CENTRAL_DIR_HEADER_SIZE > u8.length ||
+        dv.getUint32(off, true) !== 0x02014b50) {
+      throw new Error('Corrupt USDZ: bad central directory header.');
+    }
+    const method = dv.getUint16(off + 10, true);
+    const crc = dv.getUint32(off + 16, true);
+    const compSize = dv.getUint32(off + 20, true);
+    const uncompSize = dv.getUint32(off + 24, true);
+    const nameLen = dv.getUint16(off + 28, true);
+    const extraLen = dv.getUint16(off + 30, true);
+    const commentLen = dv.getUint16(off + 32, true);
+    const lho = dv.getUint32(off + 42, true);
+    if (off + ZIP_CENTRAL_DIR_HEADER_SIZE + nameLen + extraLen + commentLen >
+        u8.length) {
+      throw new Error('Corrupt USDZ: truncated central directory entry.');
+    }
+    const name = td.decode(u8.subarray(off + 46, off + 46 + nameLen));
+
+    if (!name.endsWith('/')) {
+      if (method !== 0) {
+        throw new Error(`USDZ entry "${name}" is compressed (method ${method}); ` +
+          'only STORE is supported.');
+      }
+      if (compSize !== uncompSize) {
+        throw new Error(`USDZ entry "${name}" has mismatched compressed/uncompressed size.`);
+      }
+      if (lho + ZIP_LOCAL_HEADER_SIZE > u8.length ||
+          dv.getUint32(lho, true) !== 0x04034b50) {
+        throw new Error(`Corrupt USDZ: bad local header for "${name}".`);
+      }
+      const lNameLen = dv.getUint16(lho + 26, true);
+      const lExtraLen = dv.getUint16(lho + 28, true);
+      const dataStart = lho + ZIP_LOCAL_HEADER_SIZE + lNameLen + lExtraLen;
+      const dataEnd = dataStart + compSize;
+      if (dataEnd > u8.length) {
+        throw new Error(`Corrupt USDZ: truncated data for "${name}".`);
+      }
+      if (dataStart % USDZ_ALIGNMENT !== 0) {
+        throw new Error(`USDZ entry "${name}" is not 64-byte aligned.`);
+      }
+      entries.push({
+        name,
+        data: u8.subarray(dataStart, dataEnd),
+        size: compSize,
+        crc32: crc >>> 0,
+        index: n,
+      });
+    }
+    off += ZIP_CENTRAL_DIR_HEADER_SIZE + nameLen + extraLen + commentLen;
+  }
+  return entries;
+}
+
+export function buildUSDZWithNewRoot(rootName, rootData, passthroughEntries) {
+  const encoder = new TextEncoder();
+  const entries = [{
+    name: rootName,
+    nameBytes: encoder.encode(rootName),
+    data: rootData instanceof Uint8Array ? rootData : new Uint8Array(rootData),
+    crc32: crc32(rootData instanceof Uint8Array ? rootData : new Uint8Array(rootData)),
+    localHeaderOffset: 0,
+  }];
+  for (const src of passthroughEntries) {
+    const data = src.data instanceof Uint8Array ? src.data : new Uint8Array(src.data);
+    entries.push({
+      name: src.name,
+      nameBytes: encoder.encode(src.name),
+      data,
+      crc32: src.crc32 >>> 0,
+      localHeaderOffset: 0,
+    });
+  }
+
+  let offset = 0;
+  for (const entry of entries) {
+    assertZip32Size(entry.name, entry.data.length);
+    if (entry.nameBytes.length > 0xffff) {
+      throw new Error(`USDZ entry name is too long: "${entry.name}".`);
+    }
+    const padding = zipPaddingForDataOffset(offset, entry.nameBytes.length);
+    offset += ZIP_LOCAL_HEADER_SIZE + entry.nameBytes.length + padding +
+      entry.data.length;
+    if (offset > 0xffffffff) {
+      throw new Error('USDZ archive exceeds ZIP32 size limit.');
+    }
+  }
+  const centralDirOffset = offset;
+  for (const entry of entries) {
+    offset += ZIP_CENTRAL_DIR_HEADER_SIZE + entry.nameBytes.length;
+  }
+  const centralDirSize = offset - centralDirOffset;
+  if (entries.length > 0xffff || centralDirOffset > 0xffffffff ||
+      centralDirSize > 0xffffffff || offset + 22 > 0xffffffff) {
+    throw new Error('USDZ central directory exceeds ZIP32 limits.');
+  }
+  offset += 22;
+
+  const out = new Uint8Array(offset);
+  let writeOffset = 0;
+  for (const entry of entries) {
+    writeOffset = writeLocalEntry(out, writeOffset, entry);
+  }
+  writeOffset = writeCentralDirectory(out, writeOffset, entries);
+  if (writeOffset !== out.length) {
+    throw new Error('Internal error: USDZ output size mismatch.');
+  }
+  return out;
+}
+
 // Parse a human byte size: "100MB", "50mb", "1.5g", "1048576" -> bytes (0 on fail).
 export function parseByteSize(input) {
   if (typeof input === 'number') return Math.max(0, Math.floor(input));
@@ -84,9 +328,9 @@ export function replaceExt(name, ext) {
 
 // Instantiate the Emscripten module. `importer` returns the dynamic import of
 // the compiled glue (e.g. () => import('./src/tinyusdz/tinyusdz.js')).
-export async function loadWasm(importer) {
+export async function loadWasm(importer, options = {}) {
   const mod = await importer();
-  return await mod.default();
+  return await mod.default(options);
 }
 
 // Unpack a USDZ archive (Uint8Array) into { entries: Map<name, Uint8Array>,
@@ -94,51 +338,11 @@ export async function loadWasm(importer) {
 // alignment, so we only walk the central directory — no inflate needed.
 // Throws on a compressed entry or a malformed archive.
 export function unpackUSDZ(bytes) {
-  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  if (u8.length < 22) throw new Error('Not a valid USDZ/ZIP (too small).');
-  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
-  const td = new TextDecoder();
-
-  // Locate the End Of Central Directory record (sig 0x06054b50), scanning back
-  // over the (≤64KB) trailing comment.
-  let eocd = -1;
-  const minStart = Math.max(0, u8.length - 22 - 0xffff);
-  for (let i = u8.length - 22; i >= minStart; i--) {
-    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
-  }
-  if (eocd < 0) throw new Error('Not a valid USDZ/ZIP (no EOCD record).');
-
-  const count = dv.getUint16(eocd + 10, true);
-  let off = dv.getUint32(eocd + 16, true); // central directory offset
   const entries = new Map();
   const order = [];
-  for (let n = 0; n < count; n++) {
-    if (dv.getUint32(off, true) !== 0x02014b50) {
-      throw new Error('Corrupt USDZ: bad central directory header.');
-    }
-    const method = dv.getUint16(off + 10, true);
-    const compSize = dv.getUint32(off + 20, true);
-    const uncompSize = dv.getUint32(off + 24, true);
-    const nameLen = dv.getUint16(off + 28, true);
-    const extraLen = dv.getUint16(off + 30, true);
-    const commentLen = dv.getUint16(off + 32, true);
-    const lho = dv.getUint32(off + 42, true); // local header offset
-    const name = td.decode(u8.subarray(off + 46, off + 46 + nameLen));
-
-    if (!name.endsWith('/')) {
-      if (method !== 0) {
-        throw new Error(`USDZ entry "${name}" is compressed (method ${method}); ` +
-          'only STORE is supported.');
-      }
-      // Local header is 30 bytes + its own (possibly different) name/extra lens.
-      const lNameLen = dv.getUint16(lho + 26, true);
-      const lExtraLen = dv.getUint16(lho + 28, true);
-      const dataStart = lho + 30 + lNameLen + lExtraLen;
-      const size = compSize || uncompSize;
-      entries.set(name, u8.subarray(dataStart, dataStart + size));
-      order.push(name);
-    }
-    off += 46 + nameLen + extraLen + commentLen;
+  for (const entry of parseUSDZEntries(bytes)) {
+    entries.set(entry.name, entry.data);
+    order.push(entry.name);
   }
   return { entries, order };
 }
@@ -252,6 +456,163 @@ function composeToFixedPoint(usd) {
   throw new Error('Composition did not converge before the iteration limit.');
 }
 
+function shouldUseLowHeapFlattenedUSDZ(rootPath, assetMap, opts, textureFormat) {
+  const rootLayerFormat =
+    String(opts.rootLayerFormat || 'usdc').toLowerCase() === 'usda' ? 'usda' : 'usdc';
+  return /\.usdz$/i.test(rootPath) &&
+    assetMap.size === 1 &&
+    assetMap.has(rootPath) &&
+    opts.lowHeapFlattenUsdz !== false &&
+    opts.repackUsdz !== false &&
+    opts.flatten !== false &&
+    opts.reencode === false &&
+    textureFormat === 'keep' &&
+    rootLayerFormat === 'usdc' &&
+    (opts.maxTextureSize || 0) <= 0 &&
+    (opts.targetTextureBytes || 0) <= 0 &&
+    !opts.arkitCompatible &&
+    typeof opts.textureProcessor !== 'function' &&
+    typeof opts.audioProcessor !== 'function';
+}
+
+function maxUSDCExportBytes(opts) {
+  const configuredMb = Number(opts.maxUsdcMb || 0);
+  if (configuredMb > 0) return Math.floor(configuredMb * 1024 * 1024);
+  return 1024 * 1024 * 1024;
+}
+
+function initialLowHeapRootCapacity(inputBytes, opts) {
+  const multiplier = Number(opts.lowHeapRootSizeMultiplier || 3);
+  const minBytes = 64 * 1024 * 1024;
+  const wanted = Math.max(minBytes, Math.ceil(inputBytes * Math.max(1, multiplier)));
+  return Math.min(maxUSDCExportBytes(opts), wanted);
+}
+
+function isBufferTooSmallError(error) {
+  return /buffer|capacity|too small|exceeds/i.test(String(error || ''));
+}
+
+function exportLayerAsUSDCOutsideWasmHeap(usd, inputBytes, opts, log) {
+  if (typeof usd.exportLayerAsUSDCToBufferWithOptions !== 'function') {
+    if (typeof usd.exportLayerAsUSDCWithOptions !== 'function') {
+      throw new Error('WASM module missing layer USDC export API; rebuild tinyusdz.js.');
+    }
+    log('WARN: WASM module lacks direct-buffer USDC export; falling back to heap-copy export.');
+    const exported = usd.exportLayerAsUSDCWithOptions({ rootLayerFormat: 'usdc' });
+    if (!exported) {
+      throw new Error('USDC layer export failed: ' + usd.error());
+    }
+    return new Uint8Array(exported);
+  }
+
+  const maxBytes = maxUSDCExportBytes(opts);
+  let capacity = initialLowHeapRootCapacity(inputBytes, opts);
+  if (capacity <= 0) {
+    throw new Error('USDC export buffer capacity is zero.');
+  }
+
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const rootBuffer = new Uint8Array(capacity);
+    const result = usd.exportLayerAsUSDCToBufferWithOptions(
+      rootBuffer, { rootLayerFormat: 'usdc' });
+    if (result && result.success) {
+      const size = Number(result.size || 0);
+      if (size <= 0 || size > rootBuffer.length) {
+        throw new Error(`USDC layer export returned invalid size ${size}.`);
+      }
+      return rootBuffer.subarray(0, size);
+    }
+
+    const err = (result && result.error) ? result.error : usd.error();
+    if (!isBufferTooSmallError(err) || capacity >= maxBytes) {
+      throw new Error('USDC layer export failed: ' + err);
+    }
+
+    const nextCapacity = Math.min(maxBytes, Math.max(capacity + 1, capacity * 2));
+    log(`USDC export buffer too small (${capacity} bytes); retrying with ${nextCapacity} bytes`);
+    capacity = nextCapacity;
+  }
+
+  throw new Error('USDC layer export failed after repeated buffer growth.');
+}
+
+async function convertSingleUSDZToLowHeapFlattenedUSDZ(native, rootPath, bytes,
+                                                       opts, log) {
+  const archiveEntries = parseUSDZEntries(bytes);
+  const rootEntry = archiveEntries.find((entry) => isUsdName(entry.name));
+  if (!rootEntry) {
+    throw new Error('USDZ archive contained no USD layer.');
+  }
+
+  const rootDir = rootEntry.name.includes('/')
+    ? rootEntry.name.slice(0, rootEntry.name.lastIndexOf('/') + 1)
+    : '';
+
+  // The low-heap path rewrites the inner root as a top-level `root.usdc` and
+  // strips the root's directory prefix when registering sublayer assets. If the
+  // inner root lives in a subdirectory, that rename would re-anchor the
+  // flattened root's relative asset references (textures, any remaining
+  // sublayers) to the wrong archive paths. Bail out so the caller falls through
+  // to the standard unpack+repack path, which keeps every entry's original full
+  // path. Top-level roots (the common USDZ layout) take the low-heap path.
+  if (rootDir) {
+    log('Low-heap flatten skipped: inner root layer is in a subdirectory ' +
+        `("${rootEntry.name}"); using standard repack to preserve asset paths.`);
+    return null;
+  }
+
+  const assetNameFor = (path) =>
+    (rootDir && path.startsWith(rootDir)) ? path.slice(rootDir.length) : path;
+
+  const stats = {
+    textures: archiveEntries.filter((entry) => isImageName(entry.name)).length,
+    resized: 0,
+    reencoded: 0,
+    audio: archiveEntries.filter((entry) => isAudioName(entry.name)).length,
+    otherAssets: archiveEntries.filter((entry) =>
+      entry !== rootEntry && !isUsdName(entry.name) && !isImageName(entry.name) &&
+      !isAudioName(entry.name)).length,
+    rootPath: rootEntry.name,
+    rootLayerFormat: 'usdc',
+    flatten: true,
+    arkitCompatible: false,
+    lowHeapFlatten: true,
+  };
+
+  let rootUSDC = null;
+  const usd = new native.TinyUSDZLoaderNative();
+  try {
+    if ((opts.maxUsdcMb > 0 || opts.maxMemMb > 0) &&
+        typeof usd.setUSDCExportLimitMB === 'function') {
+      usd.setUSDCExportLimitMB(opts.maxUsdcMb || 0, opts.maxMemMb || 0);
+    }
+
+    for (const entry of archiveEntries) {
+      if (entry === rootEntry || !isUsdName(entry.name) || /\.usdz$/i.test(entry.name)) {
+        continue;
+      }
+      usd.setAsset(assetNameFor(entry.name), entry.data);
+    }
+
+    log(`Low-heap flattened USDZ; inner root layer: ${rootEntry.name}`);
+    if (!usd.loadAsLayerFromBinary(rootEntry.data, rootEntry.name.split('/').pop())) {
+      throw new Error('Failed to load USD: ' + usd.error());
+    }
+    if (typeof usd.warn === 'function' && usd.warn()) log('WARN: ' + usd.warn());
+    composeToFixedPoint(usd);
+
+    rootUSDC = exportLayerAsUSDCOutsideWasmHeap(usd, bytes.length, opts, log);
+  } finally {
+    usd.delete();
+  }
+
+  const passthroughEntries = archiveEntries.filter((entry) => entry !== rootEntry);
+  const usdz = buildUSDZWithNewRoot('root.usdc', rootUSDC, passthroughEntries);
+  log(`Low-heap flattened USDZ wrote root.usdc (${rootUSDC.length} bytes) ` +
+      `and copied ${passthroughEntries.length} entr${passthroughEntries.length === 1 ? 'y' : 'ies'}`);
+  return { usdz, stats };
+}
+
 // opts: {
 //   rootPath?, maxTextureSize?, reencode?, pngEncoder?, jpegQuality?, log?,
 //   textureFormat?: "keep"|"png"|"jpeg", rootLayerFormat?: "usdc"|"usda",
@@ -268,6 +629,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
     assetMap.has(rootPath);
   const canPassthroughUsdz = hasSingleUsdzInput &&
     opts.passthroughUsdz !== false &&
+    opts.flatten === false &&
     opts.reencode === false &&
     textureFormat === 'keep' &&
     (opts.maxTextureSize || 0) <= 0 &&
@@ -291,6 +653,16 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
         passthrough: true,
       },
     };
+  }
+
+  if (shouldUseLowHeapFlattenedUSDZ(rootPath, assetMap, opts, textureFormat)) {
+    const lowHeap = await convertSingleUSDZToLowHeapFlattenedUSDZ(
+      native, rootPath, assetMap.get(rootPath), opts, log);
+    if (lowHeap) {
+      return lowHeap;
+    }
+    // Nested-root archive: fall through to the standard unpack+repack path,
+    // which preserves the full asset directory layout.
   }
 
   // If the root is a self-contained .usdz, unpack it so its internal textures
