@@ -433,6 +433,46 @@ git diff "$RANGE" -- ':!**/*.md' ':!**/*.txt' \
 
 This is a heuristic, not a guarantee. If a commit touches anything that *talks* to an external service (CI, package upload, asset server) eyeball the diff manually too.
 
+##### Automated secret scanners (run when available — preferred over the grep heuristic)
+
+When `gitleaks` and/or `trufflehog` are installed, run them over the **same push range** as a stronger, entropy- and rule-aware complement to the grep above. They do not replace the manual eyeball — they catch what the regex misses. **Any finding blocks the push** (resolve with `git rebase -i` / `git filter-repo`, treat the secret as compromised, and rotate before doing anything else). If a tool is missing, note that it was skipped and fall back to the grep heuristic.
+
+```bash
+# Same range as Check 1 (BASE..HEAD).
+RANGE="${RANGE:-$(git rev-parse --abbrev-ref --symbolic-full-name @{upstream})..HEAD}"
+BASE="$(git rev-parse "${RANGE%%..*}")"
+REPO="$(git rev-parse --show-toplevel)"
+BRANCH="$(git branch --show-current)"
+# trufflehog's go-git backend can't read a *worktree* `.git` file, so point it at
+# the main worktree directory (its `.git` is a real directory) and pick the
+# branch explicitly. For a normal checkout this resolves to the repo root.
+MAIN_WT="$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')"
+
+# gitleaks — handles worktrees natively; scans exactly the commits in the range
+# via `git log` options. Exit 0 = clean, non-zero = leaks (or error). --redact
+# keeps any secret out of logs/stdout.
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks detect --source "$REPO" --redact --log-opts="$RANGE" \
+    && echo "gitleaks: clean over $RANGE" \
+    || { echo "ABORT: gitleaks flagged secrets in $RANGE"; exit 1; }
+else
+  echo "gitleaks not installed; skipping (https://github.com/gitleaks/gitleaks). Rely on the grep heuristic above."
+fi
+
+# trufflehog — default binary at ~/go/bin/trufflehog, else PATH. Scans BASE..tip
+# of $BRANCH; --fail exits 183 when results are found (verified live secrets +
+# verification-errored). Add --only-verified for the lowest-noise gate.
+TRUFFLEHOG="${TRUFFLEHOG:-$HOME/go/bin/trufflehog}"
+[ -x "$TRUFFLEHOG" ] || TRUFFLEHOG="$(command -v trufflehog || true)"
+if [ -n "$TRUFFLEHOG" ] && [ -x "$TRUFFLEHOG" ]; then
+  "$TRUFFLEHOG" git "file://$MAIN_WT" --since-commit="$BASE" --branch="$BRANCH" --fail \
+    && echo "trufflehog: clean over $RANGE" \
+    || { echo "ABORT: trufflehog flagged secrets in $RANGE"; exit 1; }
+else
+  echo "trufflehog not installed; skipping (default path: ~/go/bin/trufflehog). Rely on the grep heuristic above."
+fi
+```
+
 #### Check 2 — No build artifacts
 
 Build outputs do not belong in Git. They explode the pack size, cause merge conflicts on every rebuild, and routinely contain absolute paths from the developer's machine. If you find any of these in the push range, drop the file (and ignore the path going forward).
