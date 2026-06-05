@@ -208,6 +208,7 @@ TEST_LIST = {
   { "dedup_blocked_timesamples_roundtrip_test", dedup_blocked_timesamples_roundtrip_test },
   { "dedup_blocked_array_timesamples_roundtrip_test", dedup_blocked_array_timesamples_roundtrip_test },
   { "dedup_empty_array_roundtrip_test", dedup_empty_array_roundtrip_test },
+  { "inline_inf_double_test", inline_inf_double_test },
   { "crate_writer_basic_creation_test", crate_writer_basic_creation_test },
   { "crate_writer_simple_prim_test", crate_writer_simple_prim_test },
   { "crate_writer_typename_encoding_test", crate_writer_typename_encoding_test },
