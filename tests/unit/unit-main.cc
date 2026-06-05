@@ -188,6 +188,7 @@ TEST_LIST = {
   { "path_append_build_test", path_append_build_test },
   { "path_variant_test", path_variant_test },
   { "path_compare_hash_test", path_compare_hash_test },
+  { "path_variant_hash_test", path_variant_hash_test },
   { "path_parent_relative_test", path_parent_relative_test },
   { "dedup_role_array_test", dedup_role_array_test },
   { "dedup_compressed_int_array_test", dedup_compressed_int_array_test },

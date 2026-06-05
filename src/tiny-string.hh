@@ -9,6 +9,7 @@
 
 #include <vector>
 #include <cstddef>
+#include <cstdint>   // SIZE_MAX / UINT64_C used by std::hash<tstring_view>
 #include <functional>
 #include <ostream>
 #include <string>
@@ -482,15 +483,28 @@ namespace std {
 
 // Hash a tstring_view by its bytes (FNV-1a), so views can key unordered
 // containers. Equal byte sequences hash equally regardless of origin buffer.
+// Uses 64-bit FNV-1a on 64-bit size_t platforms and 32-bit FNV-1a on 32-bit
+// size_t platforms (e.g. wasm32). The 64-bit constant 0xCBF29CE484222325
+// (= 14695981039346656037) does NOT fit in a 32-bit size_t, so it must not
+// be used as-is on 32-bit platforms (suppresses -Wconstant-conversion).
 template <>
 struct hash<tinyusdz::tstring_view> {
   size_t operator()(const tinyusdz::tstring_view &v) const noexcept {
-    size_t h = 1469598103934665603ULL;  // FNV offset basis (64-bit)
+#if SIZE_MAX >= UINT64_C(0xFFFFFFFFFFFFFFFF)
+    // 64-bit FNV-1a
+    constexpr size_t kFnvOffsetBasis = static_cast<size_t>(UINT64_C(0xCBF29CE484222325));
+    constexpr size_t kFnvPrime = static_cast<size_t>(UINT64_C(0x100000001B3));
+#else
+    // 32-bit FNV-1a
+    constexpr size_t kFnvOffsetBasis = static_cast<size_t>(0x811C9DC5);
+    constexpr size_t kFnvPrime = static_cast<size_t>(0x01000193);
+#endif
+    size_t h = kFnvOffsetBasis;
     const char *p = v.c_str();
     const size_t n = v.size();
     for (size_t i = 0; i < n; i++) {
       h ^= static_cast<unsigned char>(p[i]);
-      h *= 1099511628211ULL;  // FNV prime (64-bit)
+      h *= kFnvPrime;
     }
     return h;
   }

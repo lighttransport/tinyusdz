@@ -202,8 +202,10 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
 
     _dirty = false;
   } else {
-    // First find from a cache.
-    auto ret = _prim_path_cache.find(path.prim_part());
+    // First find from a cache. The Path is hashed directly via PathHasher
+    // (no implicit std::string allocation from tstring_view conversion);
+    // the cache owns its own copy of the Path. See concern #1 in review.md.
+    auto ret = _prim_path_cache.find(path);
     if (ret != _prim_path_cache.end()) {
       DCOUT("Found cache.");
       return ret->second;
@@ -215,7 +217,7 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
   if (auto pv = GetPrimAtPathIterative(_root_nodes, path)) {
     // Add to cache.
     // Assume pointer address does not change unless dirty state.
-    _prim_path_cache[path.prim_part()] = pv.value();
+    _prim_path_cache[path] = pv.value();
     return pv.value();
   }
 
