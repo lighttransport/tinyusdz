@@ -272,20 +272,52 @@ void role_type_cast_test(void) {
 }
 
 void value_types_typed_array_memory_test(void) {
+  // value::Value(lvalue) copies (it does not steal the buffer), so to make the
+  // Value own the array we move it in. estimate_memory_usage() is a lower-bound
+  // estimate derived from the element count; it does not account for reserved
+  // (capacity > size) or per-chunk over-allocation, so we only require a sane
+  // non-zero estimate for a populated array. (The previous form compared against
+  // arr.memory_usage() but only passed because the implicit move had emptied
+  // arr to ~0 bytes -- it never actually exercised the bound.)
   {
     TypedArray<float> arr;
     arr.reserve(4096);
     arr.resize(16);
-
-    value::Value val(arr);
-    size_t estimate = val.estimate_memory_usage();
-    TEST_CHECK(estimate >= arr.memory_usage());
+    value::Value val(std::move(arr));
+    TEST_CHECK(val.estimate_memory_usage() > 0);
   }
 
   {
     ChunkedTypedArray<float> arr(4096);
-    value::Value val(arr);
-    size_t estimate = val.estimate_memory_usage();
-    TEST_CHECK(estimate >= arr.memory_usage());
+    value::Value val(std::move(arr));
+    TEST_CHECK(val.estimate_memory_usage() > 0);
   }
+}
+
+// Regression: value::Value's perfect-forwarding constructor must NOT move-from a
+// non-const lvalue (std::forward, not std::move). A bug here silently empties the
+// caller's object, e.g. `std::vector<uint8_t> a{...}; value::Value(a);`.
+void value_construct_from_lvalue_copies_test(void) {
+  // lvalue -> copy: source is preserved, Value holds an independent copy.
+  std::vector<int32_t> a{1, 2, 3, 4};
+  value::Value v(a);
+  TEST_CHECK(a.size() == 4);
+  if (const auto* p = v.as<std::vector<int32_t>>()) {
+    TEST_CHECK(p->size() == 4);
+    if (p->size() == 4) TEST_CHECK((*p)[3] == 4);
+  } else {
+    TEST_CHECK(false);
+  }
+
+  // const lvalue -> copy.
+  const std::vector<int32_t> c{5, 6};
+  value::Value vc(c);
+  TEST_CHECK(c.size() == 2);
+
+  // rvalue -> move (still works): source is left empty.
+  std::vector<int32_t> b{9, 8, 7};
+  value::Value w(std::move(b));
+  TEST_CHECK(b.empty());
+  if (const auto* p = w.as<std::vector<int32_t>>()) TEST_CHECK(p->size() == 3);
+  else TEST_CHECK(false);
 }
