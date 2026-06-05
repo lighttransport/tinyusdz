@@ -145,6 +145,52 @@ nlohmann::json ArrayValuesToJSON<value::token>(const std::vector<value::token> &
   return arr;
 }
 
+template <>
+nlohmann::json ArrayValuesToJSON<uint8_t>(const std::vector<uint8_t> &vec) {
+  // uchar[]: emit as integers (0..255), not characters.
+  nlohmann::json arr = nlohmann::json::array();
+  for (const auto &elem : vec) {
+    arr.push_back(static_cast<unsigned int>(elem));
+  }
+  return arr;
+}
+
+template <>
+nlohmann::json ArrayValuesToJSON<bool>(const std::vector<bool> &vec) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (bool elem : vec) {
+    arr.push_back(elem);
+  }
+  return arr;
+}
+
+template <>
+nlohmann::json ArrayValuesToJSON<uint32_t>(const std::vector<uint32_t> &vec) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (const auto &elem : vec) {
+    arr.push_back(elem);
+  }
+  return arr;
+}
+
+template <>
+nlohmann::json ArrayValuesToJSON<int64_t>(const std::vector<int64_t> &vec) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (const auto &elem : vec) {
+    arr.push_back(elem);
+  }
+  return arr;
+}
+
+template <>
+nlohmann::json ArrayValuesToJSON<uint64_t>(const std::vector<uint64_t> &vec) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (const auto &elem : vec) {
+    arr.push_back(elem);
+  }
+  return arr;
+}
+
 // ---------------------------------------------------------------------------
 // Matrix helpers
 // ---------------------------------------------------------------------------
@@ -191,6 +237,15 @@ nlohmann::json QuatToJSON<value::quath>(const value::quath &q) {
   arr.push_back(static_cast<double>(value::half_to_float(q[1])));
   arr.push_back(static_cast<double>(value::half_to_float(q[2])));
   arr.push_back(static_cast<double>(value::half_to_float(q[3])));
+  return arr;
+}
+
+template <typename T>
+nlohmann::json QuatArrayToJSON(const std::vector<T> &vec) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (const auto &q : vec) {
+    arr.push_back(QuatToJSON<T>(q));
+  }
   return arr;
 }
 
@@ -312,6 +367,16 @@ nlohmann::json ValueToJSON(const value::Value &val, uint32_t depth) {
       if (!TryGetArrayValue<double>(val, values)) goto fallback;
     } else if (elem_tid == value::TypeTraits<int32_t>::type_id()) {
       if (!TryGetArrayValue<int32_t>(val, values)) goto fallback;
+    } else if (elem_tid == value::TypeTraits<uint8_t>::type_id()) {
+      if (!TryGetArrayValue<uint8_t>(val, values)) goto fallback;
+    } else if (elem_tid == value::TypeTraits<bool>::type_id()) {
+      if (!TryGetArrayValue<bool>(val, values)) goto fallback;
+    } else if (elem_tid == value::TypeTraits<uint32_t>::type_id()) {
+      if (!TryGetArrayValue<uint32_t>(val, values)) goto fallback;
+    } else if (elem_tid == value::TypeTraits<int64_t>::type_id()) {
+      if (!TryGetArrayValue<int64_t>(val, values)) goto fallback;
+    } else if (elem_tid == value::TypeTraits<uint64_t>::type_id()) {
+      if (!TryGetArrayValue<uint64_t>(val, values)) goto fallback;
     } else if (elem_tid == value::TypeTraits<value::half>::type_id()) {
       if (!TryGetArrayValue<value::half>(val, values)) goto fallback;
     } else if (elem_tid == value::TypeTraits<std::string>::type_id()) {
@@ -342,6 +407,10 @@ nlohmann::json ValueToJSON(const value::Value &val, uint32_t depth) {
       if (!TryGetArrayValue<value::half3>(val, values)) goto fallback;
     } else if (elem_tid == value::TypeTraits<value::half4>::type_id()) {
       if (!TryGetArrayValue<value::half4>(val, values)) goto fallback;
+    } else if (elem_tid == value::TypeTraits<value::matrix2d>::type_id()) {
+      auto v = val.get_value<std::vector<value::matrix2d>>(false);
+      if (v) values = MatrixArrayToJSON<value::matrix2d, 2, 2>(v.value());
+      else goto fallback;
     } else if (elem_tid == value::TypeTraits<value::matrix3d>::type_id()) {
       auto v = val.get_value<std::vector<value::matrix3d>>(false);
       if (v) values = MatrixArrayToJSON<value::matrix3d, 3, 3>(v.value());
@@ -349,6 +418,18 @@ nlohmann::json ValueToJSON(const value::Value &val, uint32_t depth) {
     } else if (elem_tid == value::TypeTraits<value::matrix4d>::type_id()) {
       auto v = val.get_value<std::vector<value::matrix4d>>(false);
       if (v) values = MatrixArrayToJSON<value::matrix4d, 4, 4>(v.value());
+      else goto fallback;
+    } else if (elem_tid == value::TypeTraits<value::quatf>::type_id()) {
+      auto v = val.get_value<std::vector<value::quatf>>(false);
+      if (v) values = QuatArrayToJSON<value::quatf>(v.value());
+      else goto fallback;
+    } else if (elem_tid == value::TypeTraits<value::quatd>::type_id()) {
+      auto v = val.get_value<std::vector<value::quatd>>(false);
+      if (v) values = QuatArrayToJSON<value::quatd>(v.value());
+      else goto fallback;
+    } else if (elem_tid == value::TypeTraits<value::quath>::type_id()) {
+      auto v = val.get_value<std::vector<value::quath>>(false);
+      if (v) values = QuatArrayToJSON<value::quath>(v.value());
       else goto fallback;
     } else {
       goto fallback;
@@ -371,6 +452,10 @@ nlohmann::json ValueToJSON(const value::Value &val, uint32_t depth) {
     } else if (tid == value::TypeTraits<int32_t>::type_id()) {
       nlohmann::json v;
       if (TryGetValueAs<int32_t>(val, v))
+        return {{"type", type_name}, {"value", v}};
+    } else if (tid == value::TypeTraits<uint8_t>::type_id()) {
+      nlohmann::json v;
+      if (TryGetValueAs<uint8_t>(val, v))
         return {{"type", type_name}, {"value", v}};
     } else if (tid == value::TypeTraits<uint32_t>::type_id()) {
       nlohmann::json v;
