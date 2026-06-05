@@ -190,7 +190,7 @@ function collectRenderMeshes(native) {
   const map = new Map();
   const count = native.numMeshes ? native.numMeshes() : 0;
   for (let i = 0; i < count; i++) {
-    const m = native.getMesh(i);
+    const m = native.getMeshCopy(i);
     if (!m || !m.absPath || !m.points || m.points.length < 9) continue;
     map.set(m.absPath, {
       points: Float32Array.from(m.points),

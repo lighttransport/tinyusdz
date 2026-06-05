@@ -1001,7 +1001,8 @@ bool ACEScg_to_linear_sRGB(const std::vector<float> &in_img, size_t width,
 
         float out_rgb[3];
         out_rgb[0] =  1.705052f * r -0.621792f * g   -0.083258f * b;
-        out_rgb[1] = -0.130257f * r + 1.140805f *  -0.010548f * b;
+        out_rgb[1] = -0.130257f * r + 1.140805f * g - 0.010548f * b;
+
         out_rgb[2] = -0.024004f * r -0.128969f *g + 1.152972f * b;
 
         // clamp negative
@@ -1026,7 +1027,7 @@ bool ACEScg_to_linear_sRGB(const std::vector<float> &in_img, size_t width,
 
         float out_rgb[3];
         out_rgb[0] =  1.705052f * r -0.621792f * g   -0.083258f * b;
-        out_rgb[1] = -0.130257f * r + 1.140805f *  -0.010548f * b;
+        out_rgb[1] = -0.130257f * r + 1.140805f * g - 0.010548f * b;
         out_rgb[2] = -0.024004f * r -0.128969f *g + 1.152972f * b;
 
         // clamp negative value

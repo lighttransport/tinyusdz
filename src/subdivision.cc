@@ -12,6 +12,10 @@
 #include <set>
 #include <cstring>
 
+#ifdef __clang__
+#pragma clang diagnostic ignored "-Wnrvo"
+#endif
+
 namespace tinyusdz {
 namespace subdiv {
 

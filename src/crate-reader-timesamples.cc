@@ -361,6 +361,77 @@ bool add_blocked_sample_to_timesamples(value::TimeSamples *d, double time,
   return d->add_blocked_sample<T>(time, err, expected_total_samples);
 }
 
+// Add a blocked (None/ValueBlock) sample to an ARRAY-valued timesamples.
+// Binary array-storage element types must register the blocked sample against
+// the ARRAY type id (via add_array_blocked_sample); routing them through the
+// scalar add_blocked_sample<T> conflicts with the array type id and fails the
+// add, dropping the whole TimeSamples on read. Generic-storage element types
+// (bool/uchar/string/token/asset) use the same generic blocked path for both
+// scalar and array, so they fall through to add_blocked_sample<T>.
+template <typename T>
+bool add_array_blocked_sample_to_timesamples(value::TimeSamples *d, double time,
+                                             std::string *err,
+                                             size_t expected_total_samples = 0) {
+  if constexpr (value::uses_binary_timesample_array_storage_v<T>) {
+    return d->add_array_blocked_sample<T>(time, err, expected_total_samples);
+  } else {
+    return d->add_blocked_sample<T>(time, err, expected_total_samples);
+  }
+}
+
+// Centralized blocked-sample dispatch. Adds a None/ValueBlock sample with the
+// timesamples' actual array-ness (known up front as crate_is_array), so a `None`
+// authored on an animated array attribute no longer corrupts the type id. The
+// type list mirrors the UNPACK_CASE switch in UnpackValueRepsToTimeSamples.
+static bool AddBlockedTimeSampleForType(value::TimeSamples *d, double time,
+                                        crate::CrateDataTypeId type_id,
+                                        bool is_array, size_t hint,
+                                        std::string *err) {
+#define BLOCKED_TS_CASE(CRATE_TYPE, CPP_TYPE)                                  \
+  case crate::CrateDataTypeId::CRATE_TYPE:                                     \
+    return is_array                                                           \
+        ? add_array_blocked_sample_to_timesamples<CPP_TYPE>(d, time, err,     \
+                                                            hint)             \
+        : add_blocked_sample_to_timesamples<CPP_TYPE>(d, time, err, hint);
+  switch (type_id) {
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_BOOL, bool)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_UCHAR, uint8_t)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_INT, int32_t)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_UINT, uint32_t)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_INT64, int64_t)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_UINT64, uint64_t)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_HALF, value::half)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_FLOAT, float)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_DOUBLE, double)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_VEC2H, value::half2)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_VEC3H, value::half3)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_VEC4H, value::half4)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_VEC2F, value::float2)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_VEC3F, value::float3)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_VEC4F, value::float4)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_VEC2D, value::double2)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_VEC3D, value::double3)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_VEC4D, value::double4)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_VEC2I, value::int2)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_VEC3I, value::int3)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_VEC4I, value::int4)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_QUATF, value::quatf)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_QUATH, value::quath)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_QUATD, value::quatd)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_MATRIX2D, value::matrix2d)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_MATRIX3D, value::matrix3d)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_MATRIX4D, value::matrix4d)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_ASSET_PATH, value::AssetPath)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_STRING, std::string)
+    BLOCKED_TS_CASE(CRATE_DATA_TYPE_TOKEN, value::token)
+    default:
+      // Unknown element type: fall back to a type-agnostic blocked sample so we
+      // never drop the sample (the all-blocked path uses the same default).
+      return d->add_blocked_sample(time, value::Value(), err);
+  }
+#undef BLOCKED_TS_CASE
+}
+
 bool CrateReader::UnpackTimeSampleValue_BOOL(double t,
                                              const crate::ValueRep &rep,
                                              value::TimeSamples &dst,
@@ -430,6 +501,62 @@ bool CrateReader::UnpackTimeSampleValue_BOOL(double t,
     // Non-array value is not supported
 
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for boolean is invalid.");
+  }
+
+  return true;
+}
+
+// uchar (uint8_t). Mirrors BOOL: 1-byte scalar inline, raw-byte array via
+// ReadArray. Unlike bool, no 0/1 normalization is needed.
+bool CrateReader::UnpackTimeSampleValue_UCHAR(double t,
+                                              const crate::ValueRep &rep,
+                                              value::TimeSamples &dst,
+                                              size_t expected_total_samples) {
+  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
+      crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
+    if (!add_blocked_sample_to_timesamples<uint8_t>(&dst, t, &_err,
+                                                    expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Failed to add blocked sample to TimeSamples.");
+    }
+    return true;
+  }
+
+  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) !=
+      crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid ValueRep type in TimeSamples.");
+  }
+
+  if (rep.IsInlined()) {
+    if (rep.IsCompressed() || rep.IsArray()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Invalid inlined ValueRep in TimeSamples.");
+    }
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    uint8_t val = static_cast<uint8_t>(data & 0xFFu);
+    if (!add_sample_to_timesamples<uint8_t>(&dst, t, val, &_err,
+                                            expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
+  } else if (rep.IsArray()) {
+    std::vector<uint8_t> v;
+    if (rep.GetPayload() == 0) {  // empty array
+      if (!add_array_sample_to_timesamples<uint8_t>(&dst, t, v, &_err,
+                                                    expected_total_samples)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "Failed to add sample to TimeSamples.");
+      }
+      return true;
+    }
+    if (!ReadArray(&v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uchar array.");
+    }
+    if (!add_array_sample_to_timesamples<uint8_t>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
+  } else {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for uchar is invalid.");
   }
 
   return true;
@@ -1445,6 +1572,7 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
 
   switch (crate_type_id) {
     UNPACK_CASE(CRATE_DATA_TYPE_BOOL, BOOL)
+    UNPACK_CASE(CRATE_DATA_TYPE_UCHAR, UCHAR)
     UNPACK_CASE(CRATE_DATA_TYPE_INT, INT32)
     UNPACK_CASE(CRATE_DATA_TYPE_UINT, UINT32)
     UNPACK_CASE(CRATE_DATA_TYPE_INT64, INT64)
@@ -1489,30 +1617,48 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
     const crate::ValueRep &rep = vreps[i];
     const double curr_time = times[i];
 
-    // Allow VALUE_BLOCK to mix with the actual type
     crate::CrateDataTypeId curr_type_id =
         static_cast<crate::CrateDataTypeId>(rep.GetType());
-    if (curr_type_id != crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
-      if (curr_type_id != crate_type_id || rep.IsArray() != crate_is_array) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  "Inconsistent ValueRep type in TimeSamples.");
+
+    // Blocked (None/ValueBlock) sample: add it with the timesamples' actual
+    // array-ness (crate_is_array, resolved up front). Routing an array-typed
+    // timesamples' blocked sample through the scalar blocked path corrupts the
+    // type id and drops every sample on read. Blocked reps are never
+    // value-deduplicated (they all share the same rep bits), so handle them
+    // before the dedup map and skip the per-type unpack.
+    if (curr_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
+      const size_t dst_idx = d->size();
+      const size_t prealloc_hint = (i == 0) ? expected_total_samples : 0;
+      if (!AddBlockedTimeSampleForType(d, curr_time, crate_type_id,
+                                       crate_is_array, prealloc_hint, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "Failed to add blocked sample to TimeSamples.");
       }
+      if (d->size() != dst_idx + 1) {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "TimeSamples blocked unpack did not append a sample.");
+      }
+      continue;
     }
 
-    // Check dedup: if we've already unpacked an identical ValueRep, share data
+    // Non-blocked sample must match the timesamples' element type and array-ness.
+    if (curr_type_id != crate_type_id || rep.IsArray() != crate_is_array) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Inconsistent ValueRep type in TimeSamples.");
+    }
+
+    // Check dedup: if we've already unpacked an identical ValueRep, share data.
     uint64_t rep_data = rep.GetData();
     auto dedup_it = dedup_map.find(rep_data);
     if (dedup_it != dedup_map.end()) {
-      // Duplicate — reuse previously unpacked sample (zero-copy for binary storage)
+      // Duplicate - reuse a previously unpacked sample (zero-copy for binary
+      // storage). Entries are inserted only after the source unpack succeeds.
       if (!d->duplicate_sample(dedup_it->second, curr_time)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "Failed to duplicate sample in TimeSamples.");
       }
       continue;
     }
-
-    // First occurrence — record index and unpack from file
-    dedup_map[rep_data] = i;
 
     if (!rep.IsInlined()) {
       _sr->seek_set(rep.GetPayload());
@@ -1522,9 +1668,18 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
     // pre-allocation
     size_t prealloc_hint = (i == 0) ? expected_total_samples : 0;
 
+    const size_t dst_idx = d->size();
     if (!(this->*unpack_fn)(curr_time, rep, *d, prealloc_hint)) {
       return false;
     }
+    if (d->size() != dst_idx + 1) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "TimeSamples unpack did not append a sample.");
+    }
+
+    // First occurrence - record the actual destination sample index only after
+    // the sample's data, offset, and array count have been stored.
+    dedup_map.emplace(rep_data, dst_idx);
   }
 
 

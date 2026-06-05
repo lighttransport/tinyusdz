@@ -87,8 +87,16 @@ size_t LZ4Compression::CompressToBuffer(char const *input, char *compressed,
   char const *const origCompressed = compressed;
   if (inputSize <= LZ4_MAX_INPUT_SIZE) {
     compressed[0] = 0;  // < zero byte means one chunk.
-    compressed += 1 + LZ4_compress_default(input, compressed + 1, int(inputSize),
-                                           int(GetCompressedBufferSize(inputSize)));
+    int n = LZ4_compress_default(input, compressed + 1, int(inputSize),
+                                 int(GetCompressedBufferSize(inputSize)));
+    if (n <= 0) {
+      if (err) {
+        (*err) = "LZ4 compression failed with error code: " +
+                 std::to_string(n) + "\n";
+      }
+      return 0;
+    }
+    compressed += 1 + n;
   } else {
     size_t nWholeChunks = inputSize / LZ4_MAX_INPUT_SIZE;
     size_t partChunkSz = inputSize % LZ4_MAX_INPUT_SIZE;
@@ -101,20 +109,32 @@ size_t LZ4Compression::CompressToBuffer(char const *input, char *compressed,
       return 0;
     }
     *compressed++ = char(numChunks);
-    auto writeChunk = [](char const *&_input, char *&_output, size_t size) {
+    auto writeChunk = [err](char const *&_input, char *&_output, size_t size) {
       char *o = _output;
       _output += sizeof(int32_t);
       int32_t n =
           LZ4_compress_default(_input, _output, int(size), LZ4_compressBound(int(size)));
+      if (n <= 0) {
+        if (err) {
+          (*err) = "LZ4 chunk compression failed with error code: " +
+                   std::to_string(n) + "\n";
+        }
+        return false;
+      }
       memcpy(o, &n, sizeof(n));
       _output += n;
       _input += size;
+      return true;
     };
     for (size_t chunk = 0; chunk != nWholeChunks; ++chunk) {
-      writeChunk(input, compressed, LZ4_MAX_INPUT_SIZE);
+      if (!writeChunk(input, compressed, LZ4_MAX_INPUT_SIZE)) {
+        return 0;
+      }
     }
     if (partChunkSz) {
-      writeChunk(input, compressed, partChunkSz);
+      if (!writeChunk(input, compressed, partChunkSz)) {
+        return 0;
+      }
     }
   }
 

@@ -30,6 +30,7 @@
 #include "image-loader.hh"
 #include "image-util.hh"
 #include "image-types.hh"
+#include "io-util.hh"
 #include "linear-algebra.hh"
 #include "math-util.inc"
 #include "pprinter.hh"
@@ -1193,11 +1194,108 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
     // Check image cache first - if the same asset path was already loaded,
     // reuse the existing image to avoid redundant I/O and memory usage
     std::string cacheKey = assetPath.GetAssetPath();
+
+    // UDIM texture (e.g. `diffuse.<UDIM>.png`)?
+    const bool is_udim = io::IsUDIMPath(cacheKey);
+    const bool udim_keep_as_is =
+        is_udim && !env.material_config.combine_udim_tiles;
+
     const auto cachedImageIt = imageMap.find(cacheKey);
     if (cachedImageIt != imageMap.s_end()) {
       // Image already loaded, reuse it
       tex.texture_image_id = int64_t(cachedImageIt->second);
       DCOUT("Reusing cached image for: " << cacheKey << " (image_id=" << tex.texture_image_id << ")");
+
+      // Restore UDIM remap / sparse-texture linkage for the reused image.
+      const auto udimInfoIt = udimInfoMap.find(cacheKey);
+      if (udimInfoIt != udimInfoMap.end() && udimInfoIt->second.is_udim) {
+        tex.is_udim = true;
+        tex.udim_uv_scale = udimInfoIt->second.uv_scale;
+        tex.udim_uv_offset = udimInfoIt->second.uv_offset;
+        tex.udim_texture_id = udimInfoIt->second.udim_texture_id;
+      }
+    } else if (udim_keep_as_is) {
+      // ---- UDIM keep-as-is mode: load resolved tiles as separate images ----
+      // and record a sparse `tydra::UDIMTexture` for web editing.
+      std::vector<UDIMTile> tiles;
+      std::string udim_warn, udim_err;
+      if (!ExpandUDIMTiles(cacheKey, env.asset_resolver,
+                           env.material_config.udim_max_tiles, &tiles,
+                           &udim_warn, &udim_err)) {
+        if (udim_warn.size()) PushWarn(udim_warn);
+        if (!env.material_config.allow_texture_load_failure &&
+            !env.material_config.allow_missing_asset) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "Failed to expand UDIM tiles for `{}`: {}", cacheKey, udim_err));
+        }
+        PUSH_WARN(fmt::format(
+            "Failed to expand UDIM tiles for `{}`. Skip. reason = {}",
+            cacheKey, udim_err));
+      } else {
+        if (udim_warn.size()) PushWarn(udim_warn);
+
+        TextureImageLoaderFunction tile_loader =
+            env.material_config.texture_image_loader_function;
+        if (!tile_loader) {
+          tile_loader = DefaultTextureImageLoaderFunction;
+        }
+
+        UDIMTexture udim;
+        udim.asset_identifier = cacheKey;
+        udim.prim_name = tex_abs_path.element_name();
+        udim.abs_path = tex_abs_path.prim_part();
+
+        int64_t representative = -1;
+        for (const auto &t : tiles) {
+          TextureImage tileImage;
+          BufferData tileBuffer;
+          tileBuffer.componentType = ComponentType::UInt8;
+
+          std::string w, e;
+          value::AssetPath tileAssetPath(t.asset_path);
+          if (!tile_loader(
+                  tileAssetPath, assetInfo, env.asset_resolver, &tileImage,
+                  &tileBuffer.data,
+                  env.material_config.texture_image_loader_function_userdata,
+                  &w, &e)) {
+            if (w.size()) PushWarn(w);
+            PUSH_WARN(fmt::format("Skip UDIM tile {} (`{}`): {}", t.udim_id,
+                                  t.asset_path, e));
+            continue;
+          }
+          if (w.size()) PushWarn(w);
+
+          tileImage.asset_identifier = t.asset_path;
+          tileImage.decoded = true;
+
+          tileImage.buffer_id = int64_t(buffers.size());
+          buffers.emplace_back(std::move(tileBuffer));
+
+          const int64_t imgId = int64_t(images.size());
+          images.emplace_back(tileImage);
+
+          udim.imageTileIds[t.udim_id] = int32_t(imgId);
+          if (representative < 0) {
+            representative = imgId;
+          }
+        }
+
+        if (!udim.imageTileIds.empty()) {
+          tex.is_udim = true;
+          tex.texture_image_id = representative;
+          tex.udim_texture_id = int64_t(udim_textures.size());
+
+          imageMap.add(cacheKey, uint64_t(representative));
+          UDIMInfo info;
+          info.is_udim = true;
+          info.udim_texture_id = tex.udim_texture_id;
+          udimInfoMap[cacheKey] = info;
+
+          udim_textures.emplace_back(std::move(udim));
+          DCOUT("Loaded UDIM (keep-as-is) " << cacheKey << " : "
+                                            << tex.udim_texture_id);
+        }
+      }
     } else {
       // Image not in cache, need to load it
 
@@ -1220,11 +1318,62 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         tex_loader_fun = DefaultTextureImageLoaderFunction;
       }
 
-      tex_loaded = tex_loader_fun(
-          assetPath, assetInfo, env.asset_resolver, &texImage,
-          &assetImageBuffer.data,
-          env.material_config.texture_image_loader_function_userdata, &warn,
-          &err);
+      if (is_udim) {
+        // UDIM combine mode: discover tiles, build a single grid atlas and
+        // inject it as the decoded image so the existing color-space /
+        // bit-depth pipeline below handles it like an ordinary texture. The
+        // referenced mesh UV set is rebaked afterwards (ApplyUDIMUVTransforms).
+        std::vector<UDIMTile> tiles;
+        std::string udim_warn, udim_err;
+        UDIMAtlas atlas;
+
+        // Resize tiles in sRGB-aware space unless the texture is explicitly
+        // authored as Raw (e.g. normal / data maps).
+        bool srgb_resize = true;
+        if (texture.sourceColorSpace.authored()) {
+          UsdUVTexture::SourceColorSpace scs;
+          std::string scs_err;
+          if (ResolveSourceColorSpace(env.stage, texture.sourceColorSpace,
+                                      env.timecode, env.tinterp, &scs,
+                                      &scs_err)) {
+            if (scs == UsdUVTexture::SourceColorSpace::Raw) {
+              srgb_resize = false;
+            }
+          }
+        }
+
+        if (ExpandUDIMTiles(assetPath.GetAssetPath(), env.asset_resolver,
+                            env.material_config.udim_max_tiles, &tiles,
+                            &udim_warn, &udim_err) &&
+            BuildUDIMAtlas(tiles, env.asset_resolver,
+                           env.material_config.udim_max_atlas_size, srgb_resize,
+                           &atlas, &udim_warn, &udim_err)) {
+          if (udim_warn.size()) PushWarn(udim_warn);
+
+          texImage.channels = atlas.image.channels;
+          texImage.width = atlas.image.width;
+          texImage.height = atlas.image.height;
+          texImage.assetTexelComponentType = ComponentType::UInt8;
+          assetImageBuffer.componentType = ComponentType::UInt8;
+          assetImageBuffer.data = std::move(atlas.image.data);
+
+          tex_loaded = true;
+
+          tex.is_udim = true;
+          tex.udim_uv_scale = atlas.uv_scale;
+          tex.udim_uv_offset = atlas.uv_offset;
+        } else {
+          if (udim_warn.size()) PushWarn(udim_warn);
+          err += udim_err;
+          tex_loaded = false;
+        }
+      } else {
+        tex_loaded = tex_loader_fun(
+            assetPath, assetInfo, env.asset_resolver, &texImage,
+            &assetImageBuffer.data,
+            env.material_config.texture_image_loader_function_userdata, &warn,
+            &err);
+      }
 
       if (warn.size()) {
         DCOUT("WARN: " << warn);
@@ -1654,6 +1803,17 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       // Add to image cache for reuse by other textures with same asset path
       imageMap.add(cacheKey, uint64_t(tex.texture_image_id));
 
+      // Cache UDIM remap so reused (combined) atlas images restore the mesh-UV
+      // transform on subsequent textures referencing the same `<UDIM>` path.
+      if (tex.is_udim) {
+        UDIMInfo info;
+        info.is_udim = true;
+        info.uv_scale = tex.udim_uv_scale;
+        info.uv_offset = tex.udim_uv_offset;
+        info.udim_texture_id = tex.udim_texture_id;
+        udimInfoMap[cacheKey] = info;
+      }
+
       images.emplace_back(texImage);
 
       std::stringstream ss;
@@ -1892,7 +2052,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     // Check if this is a MaterialX connection to a NodeGraph
     if (is_materialx && param.get_connections().size() == 1) {
       const Path &conn_path = param.get_connections()[0];
-      if (conn_path.prim_part().find("/NodeGraphs") != std::string::npos) {
+      if (conn_path.prim_part().contains("/NodeGraphs")) {
         // This is a MaterialX NodeGraph connection, traverse to find texture
         const Shader *image_shader{nullptr};
         Path texPath;

@@ -279,6 +279,15 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       }
       break;
     }
+    // uchar[] (std::vector<uint8_t>): operator<< prints elements as integers.
+    case TypeTraits<std::vector<uint8_t>>::type_id(): {
+      if (auto p = v.as<std::vector<uint8_t>>()) {
+        os << (*p);
+      } else {
+        os << "[InternalError: uchar[] TypeId mismatch.]";
+      }
+      break;
+    }
     case TypeTraits<value::ValueBlock>::type_id(): {
       if (v.as<value::ValueBlock>()) {
         os << "None";

@@ -28,11 +28,25 @@ reported 16 races at `src/layer.cc` before the fix, 0 after.
 
 Fix: a gated `std::shared_ptr<std::mutex> LayerImpl::_cache_mu` (`src/layer.cc`
 ~L246) guards only the cache read/write in `find_primspec_at()` (`cache_lock`
-at ~L476, released for the lock-free `_prim_specs` tree walk at ~L494, re-taken
-for the insert at ~L505). Gated on `TINYUSDZ_ENABLE_THREAD`, so non-threaded /
+at L520, released for the lock-free `_prim_specs` tree walk at L538, re-taken
+for the insert at L549). Gated on `TINYUSDZ_ENABLE_THREAD`, so non-threaded /
 wasm builds are byte-for-byte unaffected. `shared_ptr` keeps `Layer`
 copyable/movable. Covered by `pcp_singlethread_vs_multithread_identical_test`
 and `pcp_mt_shared_reference_test`.
+
+### Layer copy carried stale lookup-cache pointers — **FIXED**
+`Layer`'s copy ctor / copy-assignment deep-copied `LayerImpl`, which carried
+`_primspec_path_cache` (a map of `const PrimSpec*` into the **source** layer's
+`_prim_specs` tree) and the source's `_cache_mu`. A copy made after the source
+was queried (`_dirty == false`) would hand out pointers into the *source* layer
+— dangling if the source died, wrong after either mutated; the shared mutex also
+leaked across copies.
+
+Fix: `LayerImpl::reset_lookup_cache()` (`src/layer.cc` ~L255) clears the cache,
+sets `_dirty = true`, and installs a **fresh** `_cache_mu`; it is called from
+the copy ctor (`src/layer.cc:297`) and copy-assignment (`:310`). The copy now
+rebuilds its cache lazily against its own tree and owns an independent mutex.
+This was item #4 below; resolved by the `dedup-2026` merge.
 
 ---
 
@@ -91,21 +105,10 @@ and `pcp_mt_shared_reference_test`.
 - **Fix sketch:** reuse the same `LayerImpl::_cache_mu` (gated) to guard these
   flags, or compute them eagerly at load time.
 
-### 4. Latent / pre-existing — `Layer` copy carries stale cache pointers
-- **Where:** `Layer::Layer(const Layer&)` (`src/layer.cc:274`) deep-copies
-  `*other._impl`, which copies `_primspec_path_cache` (a map of
-  `const PrimSpec*` pointing into the **source** layer's `_prim_specs` tree) and
-  `_dirty`.
-- **Why:** the copy's cache entries point into the *original* layer's tree. If
-  the source had `_dirty == false` (cache populated), the copy returns pointers
-  into the source layer from `find_primspec_at` — dangling if the source is
-  destroyed, or wrong after either layer mutates.
-- **Triggered today?** Not observed: composition copies layers while they are
-  still `_dirty` (freshly built, not yet queried), so the copy clears the cache
-  on first use. Not introduced by this work.
-- **Severity:** low-but-real correctness footgun (independent of threading).
-- **Fix sketch:** give `LayerImpl` a user-defined copy ctor that copies data but
-  resets the lookup cache (`_dirty = true`, empty cache, fresh `_cache_mu`).
+### 4. ~~Latent — `Layer` copy carries stale cache pointers~~ — **FIXED**
+Resolved by the `dedup-2026` merge (`LayerImpl::reset_lookup_cache()` called
+from the copy ctor/assignment, `src/layer.cc:255/297/310`). See the *Fixed*
+section above. Kept here, struck through, so the item numbers below stay stable.
 
 ### 5. By-design caveat — user callbacks under multithreading
 - `CacheOptions::composition.payload_policy` (a `std::function`) and the
@@ -192,8 +195,8 @@ Remaining items, in priority order:
      members; not currently called on shared Paths in the build path.
   3. Latent: Layer::check_unresolved_*() mutable flags (src/layer.cc:251-257) —
      guard with the gated LayerImpl::_cache_mu or compute eagerly at load.
-  4. Layer copy carries stale lookup-cache pointers (Layer::Layer(const Layer&),
-     src/layer.cc:274) — add a LayerImpl copy ctor that resets the cache.
+  4. (DONE) Layer copy stale lookup-cache pointers — fixed via
+     LayerImpl::reset_lookup_cache() on copy (merged from dedup-2026).
   5. Document the payload_policy/fileformats thread-safety contract near
      CacheOptions in src/pcp/cache.hh.
 

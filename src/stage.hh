@@ -4,14 +4,17 @@
 // Stage: Similar to Scene or Scene graph
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <unordered_map>
+#include <vector>
 
 #include "nonstd/expected.hpp"
 
 #include "composition.hh"
 #include "core/instance-key.hh"  // InstanceKey, InstanceKeyHasher
 #include "core/prim.hh"          // Prim class (transitively: path, prim-enums, prim-metas)
+#include "crate-format.hh"       // PathHasher / PathKeyEqual for _prim_path_cache
 #include "core/layer-types.hh"   // LayerMetas (aliased as StageMetas)
 #include "handle-allocator.hh"   // HandleAllocator
 
@@ -20,6 +23,10 @@ namespace tinyusdz {
 // Forward declarations for mmap zero-copy support
 class MMapArrayTable;
 class MMapDataSource;
+struct StageMMapFileOwner;
+namespace io {
+struct MMapFileHandle;
+}
 
 using StageMetas = LayerMetas;
 
@@ -382,8 +389,13 @@ class Stage {
   mutable std::string _warn;
 
   // Cached prim path.
-  // key : prim_part string (e.g. "/path/bora")
-  mutable tinyusdz::HashMap<std::string, const Prim *> _prim_path_cache;
+  // key : Path (the prim part is used to match; the Path is owned by the
+  // cache, avoiding the per-lookup std::string allocation that would result
+  // from passing tstring_view as a key to a HashMap<std::string, ...>).
+  // See concern #1 in review.md.
+  mutable tinyusdz::HashMap<Path, const Prim *, tinyusdz::crate::PathHasher,
+                            tinyusdz::crate::PathKeyEqual>
+      _prim_path_cache;
 
   // Cached prim_id -> Prim lookup
   // key : prim_id
@@ -398,10 +410,15 @@ class Stage {
   // mmap zero-copy support (optional, set by USDC reader)
   std::unique_ptr<MMapArrayTable> _mmap_table;
   std::unique_ptr<MMapDataSource> _mmap_source;
+  std::unique_ptr<StageMMapFileOwner> _mmap_file_owner;
+  std::unique_ptr<std::vector<uint8_t>> _mmap_buffer_owner;
 
  public:
   void set_mmap_table(MMapArrayTable &&table);
   void set_mmap_source(const MMapDataSource &src);
+  bool adopt_mmap_file(io::MMapFileHandle &&handle);
+  bool adopt_mmap_buffer(std::vector<uint8_t> &&buffer);
+  void clear_mmap_data();
   const MMapArrayTable *mmap_table() const { return _mmap_table.get(); }
   const MMapDataSource *mmap_source() const { return _mmap_source.get(); }
   bool has_mmap_zero_copy() const;

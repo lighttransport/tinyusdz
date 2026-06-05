@@ -332,6 +332,11 @@ bool CrateReader::ReadDoubleVector(std::vector<double> *d) {
     return false;
   }
 
+#if SIZE_MAX < UINT64_MAX
+  if (n > static_cast<uint64_t>(SIZE_MAX)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Array element count exceeds addressable memory");
+  }
+#endif
   length = size_t(n);
 
   if (length == 0) {
@@ -343,7 +348,13 @@ bool CrateReader::ReadDoubleVector(std::vector<double> *d) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
   }
 
-  CHECK_MEMORY_USAGE(length * sizeof(double));
+  {
+    size_t byte_count;
+    if (!safe::mul(length, sizeof(double), &byte_count)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
+    }
+    CHECK_MEMORY_USAGE(byte_count);
+  }
 
   d->resize(length);
 
@@ -370,7 +381,13 @@ bool CrateReader::ReadStringArray(std::vector<std::string> *d) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
     }
 
-    CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
+    {
+      size_t byte_count;
+      if (!safe::n_to_size<crate::Index>(n, &byte_count)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
+      }
+      CHECK_MEMORY_USAGE(byte_count);
+    }
 
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
@@ -382,7 +399,13 @@ bool CrateReader::ReadStringArray(std::vector<std::string> *d) {
     }
 
     // reconstruct
-    CHECK_MEMORY_USAGE(size_t(n) * sizeof(void *));
+    {
+      size_t byte_count;
+      if (!safe::mul(size_t(n), sizeof(void *), &byte_count)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
+      }
+      CHECK_MEMORY_USAGE(byte_count);
+    }
     result.resize(static_cast<size_t>(n));
     for (size_t i = 0; i < n; i++) {
       if (auto v = GetStringToken(ivalue[i])) {
@@ -522,7 +545,13 @@ bool CrateReader::ReadLayerOffsetArray(std::vector<LayerOffset> *d) {
     return true;
   }
 
-  CHECK_MEMORY_USAGE(size_t(n) * sizeof(LayerOffset));
+  {
+    size_t byte_count;
+    if (!safe::n_to_size<LayerOffset>(n, &byte_count)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
+    }
+    CHECK_MEMORY_USAGE(byte_count);
+  }
 
   d->resize(size_t(n));
 
@@ -550,7 +579,13 @@ bool CrateReader::ReadPathArray(std::vector<Path> *d) {
       return false;
     }
 
-    CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
+    {
+      size_t byte_count;
+      if (!safe::n_to_size<crate::Index>(n, &byte_count)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
+      }
+      CHECK_MEMORY_USAGE(byte_count);
+    }
 
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
@@ -611,7 +646,13 @@ bool CrateReader::ReadTokenListOp(ListOp<value::token> *d) {
       return false;
     }
 
-    CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
+    {
+      size_t byte_count;
+      if (!safe::n_to_size<crate::Index>(n, &byte_count)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
+      }
+      CHECK_MEMORY_USAGE(byte_count);
+    }
 
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
@@ -724,7 +765,13 @@ bool CrateReader::ReadStringListOp(ListOp<std::string> *d) {
       return false;
     }
 
-    CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
+    {
+      size_t byte_count;
+      if (!safe::n_to_size<crate::Index>(n, &byte_count)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
+      }
+      CHECK_MEMORY_USAGE(byte_count);
+    }
 
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
@@ -837,7 +884,13 @@ bool CrateReader::ReadPathListOp(ListOp<Path> *d) {
       return false;
     }
 
-    CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
+    {
+      size_t byte_count;
+      if (!safe::n_to_size<crate::Index>(n, &byte_count)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
+      }
+      CHECK_MEMORY_USAGE(byte_count);
+    }
 
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
@@ -1042,7 +1095,19 @@ bool CrateReader::ReadArray(std::vector<T> *d) {
     return true;
   }
 
-  CHECK_MEMORY_USAGE(sizeof(T) * size_t(n));
+#if SIZE_MAX < UINT64_MAX
+  if (n > static_cast<uint64_t>(SIZE_MAX)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Array element count exceeds addressable memory");
+  }
+#endif
+
+  {
+    size_t byte_count;
+    if (!safe::n_to_size<T>(n, &byte_count)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
+    }
+    CHECK_MEMORY_USAGE(byte_count);
+  }
 
   d->resize(size_t(n));
   if (!_sr->read(sizeof(T) * n, sizeof(T) * size_t(n), reinterpret_cast<uint8_t *>(d->data()))) {
@@ -1493,14 +1558,26 @@ bool CrateReader::ReadFields() {
     }
   }
 
-  CHECK_MEMORY_USAGE(size_t(num_fields) * sizeof(Field));
+  {
+    size_t byte_count;
+    if (!safe::n_to_size<Field>(num_fields, &byte_count)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
+    }
+    CHECK_MEMORY_USAGE(byte_count);
+  }
 
   _fields.resize(static_cast<size_t>(num_fields));
 
   // indices
   {
 
-    CHECK_MEMORY_USAGE(size_t(num_fields) * sizeof(uint32_t));
+    {
+      size_t byte_count;
+      if (!safe::n_to_size<uint32_t>(num_fields, &byte_count)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
+      }
+      CHECK_MEMORY_USAGE(byte_count);
+    }
 
     std::vector<uint32_t> tmp;
     tmp.resize(size_t(num_fields));
@@ -1619,7 +1696,13 @@ bool CrateReader::ReadFieldSets() {
     PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Too many FieldSets {}. maxNumFieldSets is set to {}", num_fieldsets, _config.maxNumFieldSets));
   }
 
-  CHECK_MEMORY_USAGE(size_t(num_fieldsets) * sizeof(uint32_t));
+  {
+    size_t byte_count;
+    if (!safe::n_to_size<uint32_t>(num_fieldsets, &byte_count)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
+    }
+    CHECK_MEMORY_USAGE(byte_count);
+  }
 
   _fieldset_indices.resize(static_cast<size_t>(num_fieldsets));
 
@@ -1629,7 +1712,13 @@ bool CrateReader::ReadFieldSets() {
 
   CHECK_MEMORY_USAGE(compBufferSize);
 
-  CHECK_MEMORY_USAGE(sizeof(uint32_t) * size_t(num_fieldsets));
+  {
+    size_t byte_count;
+    if (!safe::mul(sizeof(uint32_t), size_t(num_fieldsets), &byte_count)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
+    }
+    CHECK_MEMORY_USAGE(byte_count);
+  }
   std::vector<uint32_t> tmp;
   tmp.resize(static_cast<size_t>(num_fieldsets));
 
@@ -1922,7 +2011,13 @@ bool CrateReader::ReadSpecs() {
 
   DCOUT("num_specs " << num_specs);
 
-  CHECK_MEMORY_USAGE(size_t(num_specs) * sizeof(Spec));
+  {
+    size_t byte_count;
+    if (!safe::n_to_size<Spec>(num_specs, &byte_count)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
+    }
+    CHECK_MEMORY_USAGE(byte_count);
+  }
 
   _specs.resize(static_cast<size_t>(num_specs));
 
@@ -1933,7 +2028,13 @@ bool CrateReader::ReadSpecs() {
       static_cast<size_t>(num_specs));
 
   CHECK_MEMORY_USAGE(compBufferSize);
-  CHECK_MEMORY_USAGE(size_t(num_specs) * sizeof(uint32_t)); // tmp
+  {
+    size_t byte_count;
+    if (!safe::n_to_size<uint32_t>(num_specs, &byte_count)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
+    }
+    CHECK_MEMORY_USAGE(byte_count);
+  }
 
   std::vector<uint32_t> tmp(static_cast<size_t>(num_specs));
 
@@ -2247,9 +2348,13 @@ bool CrateReader::ReadTOC() {
 
   DCOUT("toc sections = " << num_sections);
 
-  _toc.sections.resize(static_cast<size_t>(num_sections));
+  size_t toc_bytes{0};
+  if (!safe::n_to_size<Section>(num_sections, &toc_bytes)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in TOC sections size computation");
+  }
+  CHECK_MEMORY_USAGE(toc_bytes);
 
-  CHECK_MEMORY_USAGE(num_sections * sizeof(Section));
+  _toc.sections.resize(static_cast<size_t>(num_sections));
 
   for (size_t i = 0; i < num_sections; i++) {
     if (!ReadSection(&_toc.sections[i])) {

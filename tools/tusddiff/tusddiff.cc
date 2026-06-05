@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2025-Present Light Transport Entertainment, Inc.
 //
-// USD Layer Diff Tool
+// tusddiff — USD Layer Diff Tool
 //
 // Usage:
-//   usddiff file1.usd file2.usd
-//   usddiff --json file1.usd file2.usd
-//   usddiff --help
+//   tusddiff file1.usd file2.usd
+//   tusddiff --json file1.usd file2.usd
+//   tusddiff --help
 //
 // Exit codes:
 //   0 = no differences found
@@ -26,10 +26,10 @@
 namespace {
 
 void print_usage() {
-  std::cout << "USD Layer Diff Tool\n";
+  std::cout << "tusddiff — USD Layer Diff Tool\n";
   std::cout << "\n";
   std::cout << "USAGE:\n";
-  std::cout << "  usddiff [OPTIONS] <file1> <file2>\n";
+  std::cout << "  tusddiff [OPTIONS] <file1> <file2>\n";
   std::cout << "\n";
   std::cout << "OPTIONS:\n";
   std::cout << "  --json      Output diff in JSON format\n";
@@ -43,9 +43,9 @@ void print_usage() {
   std::cout << "  2  Error (file not found, parse failure, etc.)\n";
   std::cout << "\n";
   std::cout << "EXAMPLES:\n";
-  std::cout << "  usddiff old.usd new.usd\n";
-  std::cout << "  usddiff --json scene1.usda scene2.usda\n";
-  std::cout << "  usddiff --quiet model.usda model.usdc\n";
+  std::cout << "  tusddiff old.usd new.usd\n";
+  std::cout << "  tusddiff --json scene1.usda scene2.usda\n";
+  std::cout << "  tusddiff --quiet model.usda model.usdc\n";
   std::cout << "\n";
   std::cout << "SUPPORTED FORMATS:\n";
   std::cout << "  .usd, .usda, .usdc, .usdz\n";

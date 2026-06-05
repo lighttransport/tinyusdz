@@ -1633,7 +1633,7 @@ async function buildThreeNode(usdNode, defaultMtl, usdScene, options) {
         const matrix = toMatrix4(usdNode.localMatrix);
         node.applyMatrix4(matrix);
     } else if (usdNode.nodeType === 'mesh') {
-        const mesh = usdScene.getMesh(usdNode.contentId);
+        const mesh = usdScene.getMeshCopy(usdNode.contentId);
         const threeMesh = await setupMesh(mesh, defaultMtl, usdScene, options);
         node = threeMesh;
 
@@ -1708,7 +1708,7 @@ async function buildMeshesFallback() {
     threeState.scene.add(sceneState.root);
 
     for (let i = 0; i < numMeshes; i++) {
-        const meshData = loaderState.nativeLoader.getMesh(i);
+        const meshData = loaderState.nativeLoader.getMeshCopy(i);
         if (!meshData) continue;
 
         const geometry = convertUsdMeshToThreeMesh(meshData);
