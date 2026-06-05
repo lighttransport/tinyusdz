@@ -1134,3 +1134,497 @@ void uchar_roundtrip_test(void) {
     TEST_CHECK(got == expected[i]);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Read-back correctness tests.
+//
+// The suite above is mostly *size*-oriented (it proves identical values
+// collapse). These tests instead lock the property that dedup never *corrupts*
+// a materialized value: the deduplicated file must read back bit-for-bit what a
+// non-deduplicated file would, including across the trickier paths (cross-type
+// false-sharing, NaN/signed-zero, blocked timesamples, empty arrays).
+// ---------------------------------------------------------------------------
+
+// Fetch a Layer attribute's default (non-timesampled) value, or nullptr.
+static const value::Value* GetLayerAttrValue(const Layer& layer,
+                                             const std::string& primName,
+                                             const std::string& propName) {
+  const auto& pss = layer.primspecs();
+  auto pit = pss.find(primName);
+  if (pit == pss.end()) return nullptr;
+  const auto& props = pit->second.props();
+  auto prit = props.find(propName);
+  if (prit == props.end() || !prit->second.is_attribute()) return nullptr;
+  return &prit->second.get_attribute().get_var().value_raw();
+}
+
+// Cross-attribute default-value dedup must read back correct values for EVERY
+// sharing attribute, not merely produce a smaller file. N attributes share one
+// value of each of several types; we require (a) dedup makes the file smaller,
+// (b) every attribute in the deduplicated file materializes the shared value,
+// and (c) the deduplicated file is value-identical to the non-deduplicated one.
+void dedup_cross_attr_value_readback_test(void) {
+  const std::vector<value::float3> shared_f3 = {
+      {1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}, {7.0f, 8.0f, 9.0f},
+      {-1.5f, -2.5f, -3.5f}};
+  const std::vector<double> shared_d = {0.1, 0.2, 0.3, 0.4, 0.5};
+  const std::vector<int32_t> shared_i = {11, 22, 33, 44, 55, 66};
+  const std::vector<std::string> shared_s = {"alpha", "beta", "gamma"};
+  const double shared_scalar = 0.1;  // not float-exact -> out-of-line, dedup-able
+
+  const int kAttrs = 24;
+  auto build = [&]() -> Stage {
+    Stage stage;
+    Xform xform;
+    xform.name = "ShareRoot";
+    xform.spec = Specifier::Def;
+    for (int i = 0; i < kAttrs; ++i) {
+      const std::string s = std::to_string(i);
+      AddCustomAttribute(&xform, "f3_" + s, "float3[]", value::Value(shared_f3));
+      AddCustomAttribute(&xform, "d_" + s, "double[]", value::Value(shared_d));
+      AddCustomAttribute(&xform, "i_" + s, "int[]", value::Value(shared_i));
+      AddCustomAttribute(&xform, "s_" + s, "string[]", value::Value(shared_s));
+      AddCustomAttribute(&xform, "sc_" + s, "double", value::Value(shared_scalar));
+    }
+    Prim prim("ShareRoot", xform);
+    stage.root_prims().emplace_back(prim);
+    return stage;
+  };
+
+  const std::string f_dedup = "/tmp/test_cross_attr_readback_dedup.usdc";
+  const std::string f_no = "/tmp/test_cross_attr_readback_no_dedup.usdc";
+  TEST_CHECK(WriteStageUSDC(build(), f_dedup, true));
+  TEST_CHECK(WriteStageUSDC(build(), f_no, false));
+
+  const size_t sz_dedup = GetFileSize(f_dedup);
+  const size_t sz_no = GetFileSize(f_no);
+  TEST_MSG("cross-attr readback dedup=%zu no-dedup=%zu", sz_dedup, sz_no);
+  TEST_CHECK(sz_dedup < sz_no);
+
+  // Both files must read back identical, correct values for every attribute.
+  for (const std::string& fn : {f_dedup, f_no}) {
+    Layer layer;
+    std::string warn, err;
+    TEST_CHECK_(tinyusdz::LoadLayerFromFile(fn, &layer, &warn, &err),
+                "load %s: %s", fn.c_str(), err.c_str());
+    for (int i = 0; i < kAttrs; ++i) {
+      const std::string s = std::to_string(i);
+
+      const value::Value* vf3 = GetLayerAttrValue(layer, "ShareRoot", "f3_" + s);
+      TEST_CHECK(vf3 != nullptr);
+      if (vf3) {
+        const auto* p = vf3->as<std::vector<value::float3>>();
+        TEST_CHECK(p != nullptr);
+        if (p) {
+          TEST_CHECK(p->size() == shared_f3.size());
+          if (p->size() == shared_f3.size()) {
+            for (size_t k = 0; k < p->size(); ++k) {
+              TEST_CHECK((*p)[k][0] == shared_f3[k][0] &&
+                         (*p)[k][1] == shared_f3[k][1] &&
+                         (*p)[k][2] == shared_f3[k][2]);
+            }
+          }
+        }
+      }
+
+      const value::Value* vd = GetLayerAttrValue(layer, "ShareRoot", "d_" + s);
+      TEST_CHECK(vd != nullptr);
+      if (vd) {
+        const auto* p = vd->as<std::vector<double>>();
+        TEST_CHECK(p != nullptr && p && *p == shared_d);
+      }
+
+      const value::Value* vi = GetLayerAttrValue(layer, "ShareRoot", "i_" + s);
+      TEST_CHECK(vi != nullptr);
+      if (vi) {
+        const auto* p = vi->as<std::vector<int32_t>>();
+        TEST_CHECK(p != nullptr && p && *p == shared_i);
+      }
+
+      const value::Value* vs = GetLayerAttrValue(layer, "ShareRoot", "s_" + s);
+      TEST_CHECK(vs != nullptr);
+      if (vs) {
+        const auto* p = vs->as<std::vector<std::string>>();
+        TEST_CHECK(p != nullptr && p && *p == shared_s);
+      }
+
+      const value::Value* vsc = GetLayerAttrValue(layer, "ShareRoot", "sc_" + s);
+      TEST_CHECK(vsc != nullptr);
+      if (vsc) {
+        const auto* p = vsc->as<double>();
+        TEST_CHECK(p != nullptr && p && *p == shared_scalar);
+      }
+    }
+  }
+}
+
+// Cross-type non-collision: values whose canonical dedup bytes are identical but
+// whose *type* (wire_tag) differs must NEVER share an on-disk ValueRep. The
+// dangerous case is a differing element-count: float[]{a,b,c,d} (count 4) and
+// float2[]{(a,b),(c,d)} (count 2) carry the same 16 data bytes, so a wire_tag
+// regression would let the second alias the first's offset and read back the
+// wrong array length. We pack all the colliding pairs into ONE deduplicated file
+// and require each to read back at its own correct length/value.
+void dedup_cross_type_no_false_share_test(void) {
+  const std::vector<float> f1 = {1.5f, 2.5f, 3.5f, 4.5f};        // count 4
+  const std::vector<value::float2> f2 = {{1.5f, 2.5f},
+                                         {3.5f, 4.5f}};           // count 2, == bytes
+  const std::vector<int32_t> i1 = {7, 8, 9, 10};                 // count 4
+  const std::vector<value::int2> i2 = {{7, 8}, {9, 10}};          // count 2, == bytes
+  const double ds = 0.1;                                          // scalar double
+  const std::vector<double> da = {0.1};                          // count 1, == 8 bytes
+
+  Stage stage;
+  Xform xform;
+  xform.name = "NoFalseShare";
+  xform.spec = Specifier::Def;
+  AddCustomAttribute(&xform, "f1", "float[]", value::Value(f1));
+  AddCustomAttribute(&xform, "f2", "float2[]", value::Value(f2));
+  AddCustomAttribute(&xform, "i1", "int[]", value::Value(i1));
+  AddCustomAttribute(&xform, "i2", "int2[]", value::Value(i2));
+  AddCustomAttribute(&xform, "ds", "double", value::Value(ds));
+  AddCustomAttribute(&xform, "da", "double[]", value::Value(da));
+  Prim prim("NoFalseShare", xform);
+  stage.root_prims().emplace_back(prim);
+
+  const std::string fn = "/tmp/test_no_false_share.usdc";
+  TEST_CHECK(WriteStageUSDC(stage, fn, /*dedup*/ true));
+
+  Layer layer;
+  std::string warn, err;
+  TEST_CHECK(tinyusdz::LoadLayerFromFile(fn, &layer, &warn, &err));
+
+  const value::Value* vf1 = GetLayerAttrValue(layer, "NoFalseShare", "f1");
+  TEST_CHECK(vf1 && vf1->as<std::vector<float>>());
+  if (vf1 && vf1->as<std::vector<float>>()) {
+    TEST_CHECK(*vf1->as<std::vector<float>>() == f1);
+  }
+  const value::Value* vf2 = GetLayerAttrValue(layer, "NoFalseShare", "f2");
+  TEST_CHECK(vf2 && vf2->as<std::vector<value::float2>>());
+  if (vf2 && vf2->as<std::vector<value::float2>>()) {
+    const auto& g = *vf2->as<std::vector<value::float2>>();
+    TEST_CHECK(g.size() == f2.size());
+    if (g.size() == f2.size()) {
+      for (size_t k = 0; k < g.size(); ++k) {
+        TEST_CHECK(g[k][0] == f2[k][0] && g[k][1] == f2[k][1]);
+      }
+    }
+  }
+  const value::Value* vi1 = GetLayerAttrValue(layer, "NoFalseShare", "i1");
+  TEST_CHECK(vi1 && vi1->as<std::vector<int32_t>>());
+  if (vi1 && vi1->as<std::vector<int32_t>>()) {
+    TEST_CHECK(*vi1->as<std::vector<int32_t>>() == i1);
+  }
+  const value::Value* vi2 = GetLayerAttrValue(layer, "NoFalseShare", "i2");
+  TEST_CHECK(vi2 && vi2->as<std::vector<value::int2>>());
+  if (vi2 && vi2->as<std::vector<value::int2>>()) {
+    const auto& g = *vi2->as<std::vector<value::int2>>();
+    TEST_CHECK(g.size() == i2.size());
+    if (g.size() == i2.size()) {
+      for (size_t k = 0; k < g.size(); ++k) {
+        TEST_CHECK(g[k][0] == i2[k][0] && g[k][1] == i2[k][1]);
+      }
+    }
+  }
+  const value::Value* vds = GetLayerAttrValue(layer, "NoFalseShare", "ds");
+  TEST_CHECK(vds && vds->as<double>());
+  if (vds && vds->as<double>()) {
+    TEST_CHECK(*vds->as<double>() == ds);
+  }
+  const value::Value* vda = GetLayerAttrValue(layer, "NoFalseShare", "da");
+  TEST_CHECK(vda && vda->as<std::vector<double>>());
+  if (vda && vda->as<std::vector<double>>()) {
+    TEST_CHECK(*vda->as<std::vector<double>>() == da);
+  }
+}
+
+// NaN and signed-zero behaviour through dedup.
+//  - NaN must survive the write/dedup/read round-trip (kept by bit pattern; the
+//    NaN-aware hash only canonicalizes +0/-0, never NaN), and many identical
+//    NaN-bearing samples must still collapse (NaN==NaN by bits -> dedup).
+//  - +0.0 / -0.0 are deduplicated together (matches OpenUSD TfHash / IEEE
+//    +0==-0), so the *sign* of zero is not guaranteed to survive, but the
+//    numeric value (0.0) must.
+void dedup_nan_signed_zero_roundtrip_test(void) {
+  const float qnan = std::numeric_limits<float>::quiet_NaN();
+
+  // (1) Timesamples: K identical {NaN, 1, 2} samples + one distinct sample.
+  value::TimeSamples ts;
+  const std::vector<float> nan_arr = {qnan, 1.0f, 2.0f};
+  const std::vector<float> other = {3.0f, 4.0f, 5.0f};
+  const int kRepeat = 40;
+  for (int f = 0; f < kRepeat; ++f) {
+    ts.add_sample(double(f), value::Value(std::vector<float>(nan_arr)));
+  }
+  ts.add_sample(double(kRepeat), value::Value(std::vector<float>(other)));
+
+  Stage stage;
+  {
+    Xform xform;
+    xform.name = "NanPrim";
+    xform.spec = Specifier::Def;
+    AddCustomAttribute(&xform, "animAttr", "float[]", value::Value(nan_arr), &ts);
+    // Signed-zero default array on a second attribute.
+    AddCustomAttribute(&xform, "negzero", "float[]",
+                       value::Value(std::vector<float>{-0.0f, 1.0f}));
+    Prim prim("NanPrim", xform);
+    stage.root_prims().emplace_back(prim);
+  }
+
+  const std::string f_dedup = "/tmp/test_nan_dedup.usdc";
+  const std::string f_no = "/tmp/test_nan_no_dedup.usdc";
+  TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
+  TEST_CHECK(WriteStageUSDC(stage, f_no, false));
+  // Identical NaN samples collapse -> dedup strictly smaller.
+  TEST_CHECK(GetFileSize(f_dedup) < GetFileSize(f_no));
+
+  Layer layer;
+  std::string warn, err;
+  TEST_CHECK(tinyusdz::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
+  const value::TimeSamples* rts = GetLayerAttrTS(layer, "NanPrim", "animAttr");
+  TEST_CHECK(rts != nullptr);
+  if (rts) {
+    TEST_CHECK(rts->size() == size_t(kRepeat + 1));
+    for (int f = 0; f < kRepeat; ++f) {
+      std::vector<float> got;
+      bool blocked = false;
+      TEST_CHECK(rts->get_vector_at<float>(size_t(f), &got, &blocked));
+      TEST_CHECK(!blocked && got.size() == 3);
+      if (got.size() == 3) {
+        TEST_CHECK(std::isnan(got[0]));  // NaN survived
+        TEST_CHECK(got[1] == 1.0f && got[2] == 2.0f);
+      }
+    }
+    std::vector<float> last;
+    bool blocked = false;
+    TEST_CHECK(rts->get_vector_at<float>(size_t(kRepeat), &last, &blocked));
+    TEST_CHECK(!blocked && last == other);
+  }
+
+  // Signed zero: numeric value preserved (sign may be canonicalized by dedup).
+  const value::Value* nz = GetLayerAttrValue(layer, "NanPrim", "negzero");
+  TEST_CHECK(nz != nullptr);
+  if (nz) {
+    const auto* p = nz->as<std::vector<float>>();
+    TEST_CHECK(p != nullptr);
+    if (p) {
+      TEST_CHECK(p->size() == 2);
+      if (p->size() == 2) {
+        TEST_CHECK((*p)[0] == 0.0f);  // -0.0f == 0.0f numerically
+        TEST_CHECK((*p)[1] == 1.0f);
+      }
+    }
+  }
+}
+
+// Blocked timesamples through dedup: two attributes carry the SAME (scalar
+// double3) timesamples containing both real (repeated) and blocked (ValueBlock)
+// samples. The two identical TimeSamples objects must cross-attribute dedup
+// (smaller file) AND both must read back with blocked samples blocked and real
+// samples intact -- this exercises the BLOCKED_OFFSET serialization in the
+// TimeSamples dedup descriptor and the write/read of blocked samples.
+// (Scalar/vector storage is used here; array-element timesamples + blocked is a
+// separate, dedup-orthogonal roundtrip path.)
+void dedup_blocked_timesamples_roundtrip_test(void) {
+  const value::double3 v = {{1.0, 2.0, 3.0}};
+  const int kFrames = 32;
+  auto is_blocked_frame = [](int f) { return (f % 5) == 2; };
+
+  auto make_ts = [&]() {
+    value::TimeSamples ts;
+    // Establish the type with a real sample first.
+    ts.add_sample(0.0, value::Value(v));
+    for (int f = 1; f < kFrames; ++f) {
+      if (is_blocked_frame(f)) {
+        ts.add_blocked_sample(double(f), value::Value(value::double3{}));
+      } else {
+        ts.add_sample(double(f), value::Value(v));
+      }
+    }
+    return ts;
+  };
+
+  Stage stage =
+      MakeMultiAttrAnimStage("BlockedTS", "double3", {make_ts(), make_ts()},
+                             value::Value(v));
+
+  const std::string f_dedup = "/tmp/test_blocked_ts_dedup.usdc";
+  const std::string f_no = "/tmp/test_blocked_ts_no_dedup.usdc";
+  TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
+  TEST_CHECK(WriteStageUSDC(stage, f_no, false));
+  // Two identical (blocked-containing) timesamples -> cross-attr dedup shrinks.
+  TEST_MSG("blocked-ts dedup=%zu no-dedup=%zu", GetFileSize(f_dedup),
+           GetFileSize(f_no));
+  TEST_CHECK(GetFileSize(f_dedup) < GetFileSize(f_no));
+
+  for (const std::string& fn : {f_dedup, f_no}) {
+    Layer layer;
+    std::string warn, err;
+    TEST_CHECK(tinyusdz::LoadLayerFromFile(fn, &layer, &warn, &err));
+    for (const char* attr : {"animAttr_0", "animAttr_1"}) {
+      const value::TimeSamples* rts = GetLayerAttrTS(layer, "BlockedTS", attr);
+      TEST_CHECK_(rts != nullptr, "%s: missing %s", fn.c_str(), attr);
+      if (!rts) continue;
+      TEST_CHECK(rts->size() == size_t(kFrames));
+      for (int f = 0; f < kFrames; ++f) {
+        value::TimeSamples::Sample s;
+        const bool ok = rts->get_sample_at(size_t(f), &s);
+        TEST_CHECK_(ok, "%s/%s frame %d get_sample_at failed", fn.c_str(), attr,
+                    f);
+        if (!ok) continue;
+        if (is_blocked_frame(f)) {
+          TEST_CHECK_(s.blocked, "%s/%s frame %d expected blocked", fn.c_str(),
+                      attr, f);
+        } else {
+          TEST_CHECK_(!s.blocked, "%s/%s frame %d unexpectedly blocked",
+                      fn.c_str(), attr, f);
+          const auto* dv = s.value.as<value::double3>();
+          TEST_CHECK_(dv != nullptr, "%s/%s frame %d wrong type", fn.c_str(),
+                      attr, f);
+          if (dv) {
+            TEST_CHECK_((*dv)[0] == v[0] && (*dv)[1] == v[1] && (*dv)[2] == v[2],
+                        "%s/%s frame %d wrong value", fn.c_str(), attr, f);
+          }
+        }
+      }
+    }
+  }
+}
+
+// Regression for the array-element timesamples + blocked (None/ValueBlock)
+// USDC read-path bug: a single `None` sample in an animated ARRAY attribute used
+// to abort TimeSamples reconstruction and silently drop EVERY sample (the reader
+// added the blocked sample via the scalar type id, which conflicts with the
+// array type id). Two attributes carry the same float[] timesamples with blocked
+// samples interleaved, so this also covers cross-attribute dedup of a
+// blocked-containing array timesamples. Real samples must read back via
+// get_vector_at<float>; blocked samples must report blocked.
+void dedup_blocked_array_timesamples_roundtrip_test(void) {
+  const std::vector<float> arr = {1.0f, 2.0f, 3.0f};
+  const int kFrames = 24;
+  auto is_blocked_frame = [](int f) { return (f % 5) == 2; };
+
+  auto make_ts = [&]() {
+    value::TimeSamples ts;
+    ts.add_sample(0.0, value::Value(std::vector<float>(arr)));  // establish type
+    for (int f = 1; f < kFrames; ++f) {
+      if (is_blocked_frame(f)) {
+        ts.add_blocked_sample(double(f), value::Value(std::vector<float>{}));
+      } else {
+        ts.add_sample(double(f), value::Value(std::vector<float>(arr)));
+      }
+    }
+    return ts;
+  };
+
+  Stage stage =
+      MakeMultiAttrAnimStage("BlockedArrTS", "float[]", {make_ts(), make_ts()},
+                             value::Value(std::vector<float>(arr)));
+
+  const std::string f_dedup = "/tmp/test_blocked_arr_ts_dedup.usdc";
+  const std::string f_no = "/tmp/test_blocked_arr_ts_no_dedup.usdc";
+  TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
+  TEST_CHECK(WriteStageUSDC(stage, f_no, false));
+
+  for (const std::string& fn : {f_dedup, f_no}) {
+    Layer layer;
+    std::string warn, err;
+    TEST_CHECK(tinyusdz::LoadLayerFromFile(fn, &layer, &warn, &err));
+    for (const char* attr : {"animAttr_0", "animAttr_1"}) {
+      const value::TimeSamples* rts = GetLayerAttrTS(layer, "BlockedArrTS", attr);
+      TEST_CHECK_(rts != nullptr, "%s: missing %s", fn.c_str(), attr);
+      if (!rts) continue;
+      // The bug dropped every sample -> size 0. Require the full count back.
+      TEST_CHECK_(rts->size() == size_t(kFrames),
+                  "%s/%s: size=%zu expected %d (None dropped samples?)",
+                  fn.c_str(), attr, rts->size(), kFrames);
+      if (rts->size() != size_t(kFrames)) continue;
+      for (int f = 0; f < kFrames; ++f) {
+        std::vector<float> got;
+        bool blocked = false;
+        const bool ok = rts->get_vector_at<float>(size_t(f), &got, &blocked);
+        if (is_blocked_frame(f)) {
+          TEST_CHECK_(blocked, "%s/%s frame %d expected blocked", fn.c_str(),
+                      attr, f);
+        } else {
+          TEST_CHECK_(ok && !blocked && got == arr,
+                      "%s/%s frame %d expected real value", fn.c_str(), attr, f);
+        }
+      }
+    }
+  }
+}
+
+// Empty arrays take the inline (payload=0) path and skip dedup; they must still
+// round-trip as empty, must not crash the empty-buffer hash guard, and must not
+// disturb neighbouring non-empty values. Mixed empty/non-empty across several
+// element types in one deduplicated file.
+void dedup_empty_array_roundtrip_test(void) {
+  const std::vector<float> nonempty_f = {1.0f, 2.0f};
+  const std::vector<int32_t> nonempty_i = {3, 4, 5};
+
+  Stage stage;
+  Xform xform;
+  xform.name = "EmptyArr";
+  xform.spec = Specifier::Def;
+  AddCustomAttribute(&xform, "empty_f", "float[]",
+                     value::Value(std::vector<float>{}));
+  AddCustomAttribute(&xform, "empty_f2", "float[]",
+                     value::Value(std::vector<float>{}));  // 2nd empty float[]
+  AddCustomAttribute(&xform, "empty_i", "int[]",
+                     value::Value(std::vector<int32_t>{}));
+  AddCustomAttribute(&xform, "empty_s", "string[]",
+                     value::Value(std::vector<std::string>{}));
+  AddCustomAttribute(&xform, "full_f", "float[]", value::Value(nonempty_f));
+  AddCustomAttribute(&xform, "full_i", "int[]", value::Value(nonempty_i));
+  Prim prim("EmptyArr", xform);
+  stage.root_prims().emplace_back(prim);
+
+  const std::string fn = "/tmp/test_empty_array_dedup.usdc";
+  TEST_CHECK(WriteStageUSDC(stage, fn, /*dedup*/ true));
+
+  Layer layer;
+  std::string warn, err;
+  TEST_CHECK(tinyusdz::LoadLayerFromFile(fn, &layer, &warn, &err));
+
+  for (const char* name : {"empty_f", "empty_f2"}) {
+    const value::Value* v = GetLayerAttrValue(layer, "EmptyArr", name);
+    TEST_CHECK_(v != nullptr, "missing %s", name);
+    if (v) {
+      const auto* p = v->as<std::vector<float>>();
+      TEST_CHECK(p != nullptr && p && p->empty());
+    }
+  }
+  {
+    const value::Value* v = GetLayerAttrValue(layer, "EmptyArr", "empty_i");
+    TEST_CHECK(v != nullptr);
+    if (v) {
+      const auto* p = v->as<std::vector<int32_t>>();
+      TEST_CHECK(p != nullptr && p && p->empty());
+    }
+  }
+  {
+    const value::Value* v = GetLayerAttrValue(layer, "EmptyArr", "empty_s");
+    TEST_CHECK(v != nullptr);
+    if (v) {
+      const auto* p = v->as<std::vector<std::string>>();
+      TEST_CHECK(p != nullptr && p && p->empty());
+    }
+  }
+  {
+    const value::Value* v = GetLayerAttrValue(layer, "EmptyArr", "full_f");
+    TEST_CHECK(v != nullptr);
+    if (v) {
+      const auto* p = v->as<std::vector<float>>();
+      TEST_CHECK(p != nullptr && p && *p == nonempty_f);
+    }
+  }
+  {
+    const value::Value* v = GetLayerAttrValue(layer, "EmptyArr", "full_i");
+    TEST_CHECK(v != nullptr);
+    if (v) {
+      const auto* p = v->as<std::vector<int32_t>>();
+      TEST_CHECK(p != nullptr && p && *p == nonempty_i);
+    }
+  }
+}
