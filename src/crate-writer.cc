@@ -140,7 +140,11 @@ size_t CrateWriter::NanAwareHash::hash_buffer(const void *data,
   // Float/double: canonicalize +0/-0 into a temp buffer, then XXH3
   // (We copy to avoid mutating the caller's data.)
   std::vector<uint8_t> canon(byte_count);
-  std::memcpy(canon.data(), data, byte_count);
+  // Guard the copy: an empty float/double array reaches here with
+  // byte_count==0 (and possibly-null data/canon pointers); memcpy(null,null,0)
+  // is UB-by-the-letter / flagged by UBSan's nonnull check. XXH3 of 0 bytes
+  // below is already safe.
+  if (byte_count) std::memcpy(canon.data(), data, byte_count);
 
   if (element_size == sizeof(float)) {
     size_t count = byte_count / sizeof(float);

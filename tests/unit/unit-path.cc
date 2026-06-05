@@ -132,6 +132,38 @@ void path_compare_hash_test(void) {
   TEST_CHECK(!eq(a, ap));
 }
 
+// Test 4b: PathHasher and PathKeyEqual must distinguish paths that differ in
+// variant selection. NOTE: append_element() embeds the variant group into the
+// prim text, so prim_part() already differs ("/A{color=red}" vs
+// "/A{color=blue}") — that prim-part difference alone is what drives the
+// distinct hashes here. The variant-member hashing added for concern 5 is
+// belt-and-suspenders for a hypothetical variant-only-in-members path, which
+// the public API can't currently construct. This test pins the contract that
+// variant-bearing paths hash distinctly and that the hasher agrees with
+// operator==. See concern 5 in review.md.
+void path_variant_hash_test(void) {
+  Path base_red("/A", "");
+  base_red.append_element("{color=red}");
+  Path base_blue("/A", "");
+  base_blue.append_element("{color=blue}");
+
+  // operator== agrees the paths differ.
+  TEST_CHECK(!(base_red == base_blue));
+
+  crate::PathHasher hasher;
+  crate::PathKeyEqual eq;
+
+  // PathHasher and PathKeyEqual must agree with operator!=.
+  TEST_CHECK(hasher(base_red) != hasher(base_blue));
+  TEST_CHECK(!eq(base_red, base_blue));
+
+  // And the same path inserted twice collapses as expected.
+  Path base_red_dup("/A", "");
+  base_red_dup.append_element("{color=red}");
+  TEST_CHECK(hasher(base_red) == hasher(base_red_dup));
+  TEST_CHECK(eq(base_red, base_red_dup));
+}
+
 // Test 5: get_parent_path and make_relative.
 void path_parent_relative_test(void) {
   Path p("/A/B/C", "");

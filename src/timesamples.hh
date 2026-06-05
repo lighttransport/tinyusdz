@@ -304,6 +304,12 @@ struct TimeSamples {
  public:
   void update() const;
 
+  // Returns true if an internal invariant violation was detected during
+  // update() (e.g. parallel arrays get out of sync). When true, getters may
+  // return incomplete / mismatched data; callers should not trust the
+  // TimeSamples and treat it as unusable. See concern 4 in review.md.
+  bool has_error() const { return _has_error; }
+
   bool has_sample_at(const double t) const;
 
   nonstd::optional<double> get_time(size_t idx) const {
@@ -947,6 +953,7 @@ struct TimeSamples {
   uint32_t _type_id{0};
   uint32_t _element_size{0};                        // sizeof(T) for binary elements
   mutable bool _dirty{false};
+  mutable bool _has_error{false};                   // Set if update() detected a parallel-array invariant violation
   bool _is_array{false};                            // true if storing array data
 
   // _pod_samples removed - using unified storage directly

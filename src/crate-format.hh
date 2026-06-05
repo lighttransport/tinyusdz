@@ -333,6 +333,13 @@ struct PathHasher {
     size_t seed = std::hash<tinyusdz::tstring_view>()(path.prim_part());
     hash_combine(seed, std::hash<tinyusdz::tstring_view>()(path.prop_part()));
     hash_combine(seed, std::hash<bool>()(path.is_valid()));
+    // Variant parts: typically empty for spec paths, but mixing them in
+    // makes the hasher robust if a variant-bearing path is ever passed.
+    // Uses the private _variant_part / _variant_selection_part directly
+    // (Path declares these structs as friends) to avoid the per-call
+    // std::string allocation in variant_part(). See concern 5 in review.md.
+    hash_combine(seed, std::hash<std::string>()(path._variant_part));
+    hash_combine(seed, std::hash<std::string>()(path._variant_selection_part));
 
     return seed;
   }
@@ -344,6 +351,9 @@ struct PathKeyEqual {
     ret &= lhs.prop_part() == rhs.prop_part();
     //ret &= lhs.GetLocalPart() == rhs.GetLocalPart();
     ret &= lhs.is_valid() == rhs.is_valid();
+    // See concern 5 in review.md. See note in PathHasher about friendship.
+    ret &= lhs._variant_part == rhs._variant_part;
+    ret &= lhs._variant_selection_part == rhs._variant_selection_part;
 
     return ret;
   }
