@@ -43,6 +43,8 @@
 #include "unit-composition-arcs.h"
 // Phase 1b: DAG-based composition graph
 #include "unit-composition-graph.h"
+// Phase 1c: cached/lazy composition engine (src/pcp)
+#include "unit-pcp-cache.h"
 // Phase 2: layer API
 #include "unit-layer.h"
 // Phase 3: primspec and prim API
@@ -509,6 +511,14 @@ TEST_LIST = {
   { "compgraph_random_inherits_chain_test", compgraph_random_inherits_chain_test },
   { "compgraph_random_mixed_arcs_test", compgraph_random_mixed_arcs_test },
   { "compgraph_random_specializes_vs_inherits_test", compgraph_random_specializes_vs_inherits_test },
+  // Phase 1c: cached/lazy composition engine (src/pcp)
+  { "pcp_lazy_compute_caches_pointer_test", pcp_lazy_compute_caches_pointer_test },
+  { "pcp_layer_parsed_once_test", pcp_layer_parsed_once_test },
+  { "pcp_invalidate_drops_dependents_test", pcp_invalidate_drops_dependents_test },
+  { "pcp_payload_load_unload_test", pcp_payload_load_unload_test },
+  { "pcp_buildstage_matches_compgraph_test", pcp_buildstage_matches_compgraph_test },
+  { "pcp_singlethread_vs_multithread_identical_test", pcp_singlethread_vs_multithread_identical_test },
+  { "pcp_mt_shared_reference_test", pcp_mt_shared_reference_test },
   // Phase 2: Stage API tests (extended)
   { "stage_add_root_prim_test", stage_add_root_prim_test },
   { "stage_replace_root_prim_test", stage_replace_root_prim_test },
