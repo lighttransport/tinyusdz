@@ -519,6 +519,8 @@ TEST_LIST = {
   { "pcp_buildstage_matches_compgraph_test", pcp_buildstage_matches_compgraph_test },
   { "pcp_singlethread_vs_multithread_identical_test", pcp_singlethread_vs_multithread_identical_test },
   { "pcp_mt_shared_reference_test", pcp_mt_shared_reference_test },
+  { "pcp_external_payload_load_unload_test", pcp_external_payload_load_unload_test },
+  { "pcp_buildstage_reference_grandchildren_test", pcp_buildstage_reference_grandchildren_test },
   // Phase 2: Stage API tests (extended)
   { "stage_add_root_prim_test", stage_add_root_prim_test },
   { "stage_replace_root_prim_test", stage_replace_root_prim_test },
