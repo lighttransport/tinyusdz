@@ -237,6 +237,24 @@ static bool ComputeArrayDedupDescriptor(const crate::CrateValue& cv,
   DEDUP_DESC_ARRAY(value::matrix4d, sizeof(double), true, CRATE_DATA_TYPE_MATRIX4D)
   DEDUP_DESC_ARRAY(value::quatf, sizeof(float), true, CRATE_DATA_TYPE_QUATF)
   DEDUP_DESC_ARRAY(value::quatd, sizeof(double), true, CRATE_DATA_TYPE_QUATD)
+  // std::vector<bool> is the bit-packed standard-library specialization, so it
+  // has no contiguous `.data()` and cannot go through DEDUP_DESC_ARRAY. Expand
+  // it to one byte per element so it gets a stable dedup key like every other
+  // array type. Without this, animated bool[] (visibility/mask) timesamples are
+  // never deduplicated and re-expand to N full copies on write (the cause of
+  // the outpost_19 78 MB -> 384 MB USDC roundtrip blowup).
+  if (auto* barr = cv.as<std::vector<bool>>()) {
+    bytes->resize(barr->size());
+    for (size_t i = 0; i < barr->size(); ++i) {
+      (*bytes)[i] = (*barr)[i] ? char(1) : char(0);
+    }
+    *element_size = 1;
+    *is_float = false;
+    *wire_tag = kDedupArrayTagBit |
+        static_cast<uint32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL);
+    return true;
+  }
+
   // Raw-byte (binary) arrays.
   DEDUP_DESC_ARRAY(int32_t, 1, false, CRATE_DATA_TYPE_INT)
   DEDUP_DESC_ARRAY(uint32_t, 1, false, CRATE_DATA_TYPE_UINT)
@@ -315,6 +333,31 @@ static bool ComputeArrayDedupDescriptor(const crate::CrateValue& cv,
     *is_float = false;
     *wire_tag = kDedupArrayTagBit |
         static_cast<uint32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN);
+    return true;
+  }
+  // asset[] is serialized as the asset-path strings only (resolved paths are not
+  // written), so the path text is the correct, complete dedup key.
+  if (auto* asset_arr = cv.as<std::vector<value::AssetPath>>()) {
+    size_t total = sizeof(uint64_t);
+    for (const auto& a : *asset_arr) {
+      total += sizeof(uint64_t) + a.GetAssetPath().size();
+    }
+    bytes->clear();
+    bytes->reserve(total);
+    uint64_t count = asset_arr->size();
+    bytes->insert(bytes->end(), reinterpret_cast<const char*>(&count),
+                  reinterpret_cast<const char*>(&count) + sizeof(uint64_t));
+    for (const auto& a : *asset_arr) {
+      const std::string& s = a.GetAssetPath();
+      uint64_t len = s.size();
+      bytes->insert(bytes->end(), reinterpret_cast<const char*>(&len),
+                    reinterpret_cast<const char*>(&len) + sizeof(uint64_t));
+      bytes->insert(bytes->end(), s.begin(), s.end());
+    }
+    *element_size = 1;
+    *is_float = false;
+    *wire_tag = kDedupArrayTagBit |
+        static_cast<uint32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH);
     return true;
   }
 

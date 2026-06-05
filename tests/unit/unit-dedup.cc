@@ -15,7 +15,9 @@
 #include "../../src/value-types.hh"
 #include "../../src/timesamples.hh"
 #include "../../src/io-util.hh"
+#include <cctype>
 #include <cmath>
+#include <functional>
 #include <fstream>
 
 using namespace tinyusdz;
@@ -443,4 +445,259 @@ void dedup_compressed_int_array_test(void) {
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Regression: every array-valued timesample type must deduplicate
+// identical-across-frames samples. A type the writer's dedup descriptor does
+// not recognize is silently re-expanded to N full copies on write — the
+// std::vector<bool> inflation bug (bit-packed, no contiguous .data(), so it was
+// excluded from ComputeArrayDedupDescriptor; outpost_19's animated bool[]
+// visibility masks blew an 78 MB USDC up to 384 MB on roundtrip).
+//
+// For each array type we write K *identical* arrays and K *distinct* arrays,
+// both with dedup ON, and require the identical file to be far smaller than the
+// distinct one. A missing/broken descriptor makes identical ~= distinct.
+// ---------------------------------------------------------------------------
+
+static std::string SanitizeForPath(const char* s) {
+  std::string out;
+  for (const char* p = s; *p; ++p) {
+    out += std::isalnum(static_cast<unsigned char>(*p)) ? *p : '_';
+  }
+  return out;
+}
+
+template <typename T>
+static void CheckTSArrayNoInflation(
+    const char* type_name, int k_frames,
+    const std::function<std::vector<T>(int /*frame*/)>& make_for_frame) {
+  const std::vector<T> seed = make_for_frame(0);
+
+  value::TimeSamples ts_id, ts_uq;
+  for (int f = 0; f < k_frames; ++f) {
+    ts_id.add_sample(double(f), value::Value(seed));               // identical
+    ts_uq.add_sample(double(f), value::Value(make_for_frame(f)));  // distinct
+  }
+
+  Stage s_id = MakeAnimStage("TSInfl", type_name, ts_id, value::Value(seed));
+  Stage s_uq = MakeAnimStage("TSInfl", type_name, ts_uq, value::Value(seed));
+
+  const std::string base = "/tmp/tsinfl_" + SanitizeForPath(type_name);
+  const std::string f_id = base + "_id.usdc";
+  const std::string f_uq = base + "_uq.usdc";
+  TEST_CHECK_(WriteStageUSDC(s_id, f_id, /*dedup*/ true),
+              "%s: identical-array write failed", type_name);
+  TEST_CHECK_(WriteStageUSDC(s_uq, f_uq, /*dedup*/ true),
+              "%s: distinct-array write failed", type_name);
+
+  const size_t s_identical = GetFileSize(f_id);
+  const size_t s_distinct = GetFileSize(f_uq);
+  TEST_MSG("%-11s identical=%zu distinct=%zu ratio=%.3f", type_name, s_identical,
+           s_distinct, s_distinct ? double(s_identical) / double(s_distinct) : 0.0);
+  TEST_CHECK_(s_identical > 0 && s_distinct > 0, "%s: empty USDC output",
+              type_name);
+  // K identical arrays must collapse well below K distinct ones. The bool[] bug
+  // produced identical ~= distinct (dedup skipped -> N full copies written).
+  TEST_CHECK_(s_identical * 2 < s_distinct,
+              "%s: identical-array timesamples did NOT deduplicate "
+              "(identical=%zu, distinct=%zu) -> data inflation",
+              type_name, s_identical, s_distinct);
+}
+
+void timesample_array_dedup_no_inflation_test(void) {
+  const int K = 64;
+  const size_t N = 256;  // > K so the bool flip-bit generator yields K distinct
+
+  // --- scalar-element arrays ---
+  CheckTSArrayNoInflation<bool>("bool[]", K, [&](int f) {
+    std::vector<bool> v(N);
+    for (size_t i = 0; i < N; ++i) v[i] = ((i % 3 == 0) != (i == size_t(f)));
+    return v;
+  });
+  CheckTSArrayNoInflation<int32_t>("int[]", K, [&](int f) {
+    std::vector<int32_t> v(N);
+    for (size_t i = 0; i < N; ++i) v[i] = int32_t(i * 7 + f * 100003);
+    return v;
+  });
+  CheckTSArrayNoInflation<uint32_t>("uint[]", K, [&](int f) {
+    std::vector<uint32_t> v(N);
+    for (size_t i = 0; i < N; ++i) v[i] = uint32_t(i * 7 + f * 100003);
+    return v;
+  });
+  CheckTSArrayNoInflation<int64_t>("int64[]", K, [&](int f) {
+    std::vector<int64_t> v(N);
+    for (size_t i = 0; i < N; ++i) v[i] = int64_t(i) * 7 + int64_t(f) * 1000003;
+    return v;
+  });
+  CheckTSArrayNoInflation<uint64_t>("uint64[]", K, [&](int f) {
+    std::vector<uint64_t> v(N);
+    for (size_t i = 0; i < N; ++i) v[i] = uint64_t(i) * 7 + uint64_t(f) * 1000003;
+    return v;
+  });
+  CheckTSArrayNoInflation<value::half>("half[]", K, [&](int f) {
+    std::vector<value::half> v(N);
+    for (size_t i = 0; i < N; ++i)
+      v[i] = value::float_to_half_full(float(i) * 0.5f + float(f));
+    return v;
+  });
+  CheckTSArrayNoInflation<float>("float[]", K, [&](int f) {
+    std::vector<float> v(N);
+    for (size_t i = 0; i < N; ++i) v[i] = float(i) * 0.5f + float(f);
+    return v;
+  });
+  CheckTSArrayNoInflation<double>("double[]", K, [&](int f) {
+    std::vector<double> v(N);
+    for (size_t i = 0; i < N; ++i) v[i] = double(i) * 0.5 + double(f);
+    return v;
+  });
+
+  // --- multi-component (std::array) arrays ---
+  CheckTSArrayNoInflation<value::float2>("float2[]", K, [&](int f) {
+    std::vector<value::float2> v(N);
+    for (size_t i = 0; i < N; ++i) v[i] = {{float(i) + f, float(i) * 2 + f}};
+    return v;
+  });
+  CheckTSArrayNoInflation<value::float3>("float3[]", K, [&](int f) {
+    std::vector<value::float3> v(N);
+    for (size_t i = 0; i < N; ++i)
+      v[i] = {{float(i) + f, float(i) * 2 + f, float(i) * 3 + f}};
+    return v;
+  });
+  CheckTSArrayNoInflation<value::float4>("float4[]", K, [&](int f) {
+    std::vector<value::float4> v(N);
+    for (size_t i = 0; i < N; ++i)
+      v[i] = {{float(i) + f, float(i) + 1, float(i) + 2, float(i) * 4 + f}};
+    return v;
+  });
+  CheckTSArrayNoInflation<value::double2>("double2[]", K, [&](int f) {
+    std::vector<value::double2> v(N);
+    for (size_t i = 0; i < N; ++i) v[i] = {{double(i) + f, double(i) * 2 + f}};
+    return v;
+  });
+  CheckTSArrayNoInflation<value::double3>("double3[]", K, [&](int f) {
+    std::vector<value::double3> v(N);
+    for (size_t i = 0; i < N; ++i)
+      v[i] = {{double(i) + f, double(i) * 2 + f, double(i) * 3 + f}};
+    return v;
+  });
+  CheckTSArrayNoInflation<value::double4>("double4[]", K, [&](int f) {
+    std::vector<value::double4> v(N);
+    for (size_t i = 0; i < N; ++i)
+      v[i] = {{double(i) + f, double(i) + 1, double(i) + 2, double(i) * 4 + f}};
+    return v;
+  });
+  CheckTSArrayNoInflation<value::int2>("int2[]", K, [&](int f) {
+    std::vector<value::int2> v(N);
+    for (size_t i = 0; i < N; ++i) v[i] = {{int32_t(i + f), int32_t(i * 2 + f)}};
+    return v;
+  });
+  CheckTSArrayNoInflation<value::int3>("int3[]", K, [&](int f) {
+    std::vector<value::int3> v(N);
+    for (size_t i = 0; i < N; ++i)
+      v[i] = {{int32_t(i + f), int32_t(i * 2 + f), int32_t(i * 3 + f)}};
+    return v;
+  });
+  CheckTSArrayNoInflation<value::int4>("int4[]", K, [&](int f) {
+    std::vector<value::int4> v(N);
+    for (size_t i = 0; i < N; ++i)
+      v[i] = {{int32_t(i + f), int32_t(i + 1), int32_t(i + 2), int32_t(i * 4 + f)}};
+    return v;
+  });
+  CheckTSArrayNoInflation<value::half3>("half3[]", K, [&](int f) {
+    std::vector<value::half3> v(N);
+    for (size_t i = 0; i < N; ++i) {
+      v[i] = {{value::float_to_half_full(float(i) + f),
+               value::float_to_half_full(float(i) * 2 + f),
+               value::float_to_half_full(float(i) * 3 + f)}};
+    }
+    return v;
+  });
+
+  // --- role types: must normalize to their base (float3 / float2) before the
+  // dedup descriptor, so they dedup via the base-type path ---
+  CheckTSArrayNoInflation<value::point3f>("point3f[]", K, [&](int f) {
+    std::vector<value::point3f> v(N);
+    for (size_t i = 0; i < N; ++i)
+      v[i] = {float(i) + f, float(i) * 2 + f, float(i) * 3 + f};
+    return v;
+  });
+  CheckTSArrayNoInflation<value::texcoord2f>("texcoord2f[]", K, [&](int f) {
+    std::vector<value::texcoord2f> v(N);
+    for (size_t i = 0; i < N; ++i) v[i] = {float(i) + f, float(i) * 2 + f};
+    return v;
+  });
+
+  // --- matrices ---
+  CheckTSArrayNoInflation<value::matrix2d>("matrix2d[]", K, [&](int f) {
+    std::vector<value::matrix2d> v(N);
+    for (size_t i = 0; i < N; ++i)
+      for (int r = 0; r < 2; ++r)
+        for (int c = 0; c < 2; ++c) v[i].m[r][c] = double(i * 4 + r * 2 + c) + f;
+    return v;
+  });
+  CheckTSArrayNoInflation<value::matrix3d>("matrix3d[]", K, [&](int f) {
+    std::vector<value::matrix3d> v(N);
+    for (size_t i = 0; i < N; ++i)
+      for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c) v[i].m[r][c] = double(i * 9 + r * 3 + c) + f;
+    return v;
+  });
+  CheckTSArrayNoInflation<value::matrix4d>("matrix4d[]", K, [&](int f) {
+    std::vector<value::matrix4d> v(N);
+    for (size_t i = 0; i < N; ++i)
+      for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c) v[i].m[r][c] = double(i * 16 + r * 4 + c) + f;
+    return v;
+  });
+
+  // --- quaternions ---
+  CheckTSArrayNoInflation<value::quatf>("quatf[]", K, [&](int f) {
+    std::vector<value::quatf> v(N);
+    for (size_t i = 0; i < N; ++i) {
+      v[i].imag = {{float(i) + f, float(i) + 1, float(i) + 2}};
+      v[i].real = float(i) * 0.5f + f;
+    }
+    return v;
+  });
+  CheckTSArrayNoInflation<value::quatd>("quatd[]", K, [&](int f) {
+    std::vector<value::quatd> v(N);
+    for (size_t i = 0; i < N; ++i) {
+      v[i].imag = {{double(i) + f, double(i) + 1, double(i) + 2}};
+      v[i].real = double(i) * 0.5 + f;
+    }
+    return v;
+  });
+  CheckTSArrayNoInflation<value::quath>("quath[]", K, [&](int f) {
+    std::vector<value::quath> v(N);
+    for (size_t i = 0; i < N; ++i) {
+      v[i].imag = {{value::float_to_half_full(float(i) + f),
+                    value::float_to_half_full(float(i) + 1),
+                    value::float_to_half_full(float(i) + 2)}};
+      v[i].real = value::float_to_half_full(float(i) * 0.5f + f);
+    }
+    return v;
+  });
+
+  // --- string / token (also collapse at the value-data packer; identical must
+  // still land far below distinct) ---
+  CheckTSArrayNoInflation<std::string>("string[]", K, [&](int f) {
+    std::vector<std::string> v(N);
+    for (size_t i = 0; i < N; ++i)
+      v[i] = "s" + std::to_string(i) + "_" + std::to_string(f);
+    return v;
+  });
+  CheckTSArrayNoInflation<value::token>("token[]", K, [&](int f) {
+    std::vector<value::token> v(N);
+    for (size_t i = 0; i < N; ++i)
+      v[i] = value::token("t" + std::to_string(i) + "_" + std::to_string(f));
+    return v;
+  });
+  CheckTSArrayNoInflation<value::AssetPath>("asset[]", K, [&](int f) {
+    std::vector<value::AssetPath> v(N);
+    for (size_t i = 0; i < N; ++i)
+      v[i] = value::AssetPath("a" + std::to_string(i) + "_" + std::to_string(f) +
+                              ".usd");
+    return v;
+  });
 }
