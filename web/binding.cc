@@ -5683,7 +5683,8 @@ class TinyUSDZLoaderNative {
     // Clear export state
     export_stage_ = tinyusdz::Stage();
     has_stage_ = false;
-    usdc_export_buf_.clear();
+    // (USDC export no longer retains a wasm-side buffer; it copies straight to a
+    // JS-owned Uint8Array — see toOwnedUint8Array().)
     usdz_export_buf_.clear();
     image_export_buf_.clear();
   }
@@ -6157,6 +6158,24 @@ class TinyUSDZLoaderNative {
   // USD Export Methods
   // =========================================================================
 
+  /// Helper: return a detach-safe, JS-owned Uint8Array COPY of `bytes`.
+  ///
+  /// A bare `typed_memory_view` aliases the WASM heap's ArrayBuffer; if the
+  /// caller holds it across any later embind call that grows the heap (e.g.
+  /// `delete()` then `new TinyUSDZLoaderNative()`), the view's ArrayBuffer is
+  /// detached and reads return garbage. Buffer exporters whose result a caller
+  /// may retain must therefore hand back an independent JS-owned copy. Same
+  /// idiom as getAsset()/getAssetByUUID().
+  static emscripten::val toOwnedUint8Array(const std::vector<uint8_t> &bytes) {
+    emscripten::val u8 =
+        emscripten::val::global("Uint8Array").new_(bytes.size());
+    if (!bytes.empty()) {
+      u8.call<void>("set", emscripten::val(emscripten::typed_memory_view(
+                               bytes.size(), bytes.data())));
+    }
+    return u8;
+  }
+
   /// Helper: convert current loaded layer to a Stage
   bool getStageFromLayer(tinyusdz::Stage &stage) {
     if (!loaded_) {
@@ -6260,10 +6279,12 @@ class TinyUSDZLoaderNative {
 
     warn_ = warn;
 
-    // Copy to JS Uint8Array
-    usdc_export_buf_ = std::move(output);
-    return emscripten::val(emscripten::typed_memory_view(
-        usdc_export_buf_.size(), usdc_export_buf_.data()));
+    // Return a JS-owned COPY, not a heap view: callers commonly hold the result
+    // across delete()/new-loader calls that grow the WASM heap and would detach
+    // a typed_memory_view (yielding a garbage buffer). Copy straight from the
+    // local `output` so the USDC bytes are freed wasm-side on return rather than
+    // retained in a member. See toOwnedUint8Array().
+    return toOwnedUint8Array(output);
   }
 
   /// Export the current layer as USDC (binary Crate) - returns Uint8Array.
@@ -6288,9 +6309,10 @@ class TinyUSDZLoaderNative {
     }
 
     warn_ = warn;
-    usdc_export_buf_ = std::move(output);
-    return emscripten::val(emscripten::typed_memory_view(
-        usdc_export_buf_.size(), usdc_export_buf_.data()));
+    // JS-owned copy (not a heap view) — detach-safe if the caller retains it
+    // across heap-growing WASM calls; copied from the local so nothing is
+    // retained wasm-side after return. See toOwnedUint8Array().
+    return toOwnedUint8Array(output);
   }
 
   /// Export the current layer as USDC directly into a JS Uint8Array.
@@ -6386,6 +6408,14 @@ class TinyUSDZLoaderNative {
 
   /// Export loaded scene as USDZ (ZIP package with packed assets) — returns Uint8Array
   /// Assets are collected from the em_resolver_ cache.
+  ///
+  /// CONTRACT: the four exportAsUSDZ*/exportLayerAsUSDZ* methods return a
+  /// `typed_memory_view` aliasing the WASM heap (cheap, no copy — these buffers
+  /// can be large). The caller MUST copy the result (e.g. `new Uint8Array(v)`)
+  /// before invoking any other method that can grow the heap, or the view is
+  /// detached and reads garbage. The in-tree callers (usdzconvert.js exportUSDZ)
+  /// copy immediately. If you may retain the result across WASM calls, prefer a
+  /// USDC exporter (those return JS-owned copies via toOwnedUint8Array).
   emscripten::val exportAsUSDZ() {
     tinyusdz::Stage stage;
     if (!getStageFromLayer(stage)) {
@@ -6397,7 +6427,6 @@ class TinyUSDZLoaderNative {
     for (const auto &kv : em_resolver_.cache) {
       const std::string &name = kv.first;
       const std::string &binary = kv.second.binary;
-      // Include dependency layers and payload assets.
       std::string ext;
       {
         auto dot = name.rfind('.');
@@ -6407,10 +6436,13 @@ class TinyUSDZLoaderNative {
           for (auto &c : ext) c = static_cast<char>(std::tolower(c));
         }
       }
-      if (ext == ".usd" || ext == ".usda" || ext == ".usdc" ||
-          ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
-          ext == ".exr" || ext == ".avif" ||
-          ext == ".m4a" || ext == ".mp3" || ext == ".wav") {
+      // The stage is flattened (getStageFromLayer composed all sublayers /
+      // references / payloads in), so .usd/.usda/.usdc dependency layers are
+      // already inlined into the root — packing them would duplicate the
+      // geometry. Pack only the image/audio assets the flattened root still
+      // references.
+      if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
+          ext == ".avif" || ext == ".m4a" || ext == ".mp3" || ext == ".wav") {
         assets[name] = std::vector<uint8_t>(binary.begin(), binary.end());
       }
     }
@@ -6456,7 +6488,9 @@ class TinyUSDZLoaderNative {
     }
     tinyusdz::usdz::RemapTextureAssetPaths(stage, remap_map);
 
-    // Collect dependency layers and payload assets from the resolver cache.
+    // The stage is flattened, so .usd/.usda/.usdc dependency layers are already
+    // inlined into the root; pack only the image/audio assets it references
+    // (packing the inlined layers would duplicate the geometry).
     std::map<std::string, std::vector<uint8_t>> assets;
     for (const auto &kv : em_resolver_.cache) {
       const std::string &name = kv.first;
@@ -6467,8 +6501,7 @@ class TinyUSDZLoaderNative {
         ext = name.substr(dot);
         for (auto &c : ext) c = static_cast<char>(std::tolower(c));
       }
-      if (ext == ".usd" || ext == ".usda" || ext == ".usdc" ||
-          ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
+      if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
           ext == ".avif" || ext == ".m4a" || ext == ".mp3" || ext == ".wav") {
         assets[name] = std::vector<uint8_t>(binary.begin(), binary.end());
       }
@@ -6538,6 +6571,9 @@ class TinyUSDZLoaderNative {
       write_options.root_layer_format = tinyusdz::USDZRootLayerFormat::USDC;
     }
 
+    // The stage is flattened, so .usd/.usda/.usdc dependency layers are already
+    // inlined into the root; pack only the image/audio assets it references
+    // (packing the inlined layers would duplicate the geometry).
     std::map<std::string, std::vector<uint8_t>> assets;
     for (const auto &kv : em_resolver_.cache) {
       const std::string &name = kv.first;
@@ -6548,8 +6584,7 @@ class TinyUSDZLoaderNative {
         ext = name.substr(dot);
         for (auto &c : ext) c = static_cast<char>(std::tolower(c));
       }
-      if (ext == ".usd" || ext == ".usda" || ext == ".usdc" ||
-          ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
+      if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
           ext == ".avif" || ext == ".m4a" || ext == ".mp3" || ext == ".wav") {
         assets[name] = std::vector<uint8_t>(binary.begin(), binary.end());
       }
@@ -6592,6 +6627,12 @@ class TinyUSDZLoaderNative {
       }
     }
 
+    // When the layer was composed (composited_), `curr` below is the composed
+    // layer with all sublayers/references/payloads resolved in, so the
+    // .usd/.usda/.usdc dependency layers are already inlined and packing them
+    // would duplicate the geometry. When the raw layer is exported (not
+    // composited), composition arcs stay authored in the root, so those
+    // dependency layers are still required.
     std::map<std::string, std::vector<uint8_t>> assets;
     for (const auto &kv : em_resolver_.cache) {
       const std::string &name = kv.first;
@@ -6602,9 +6643,12 @@ class TinyUSDZLoaderNative {
         ext = name.substr(dot);
         for (auto &c : ext) c = static_cast<char>(std::tolower(c));
       }
-      if (ext == ".usd" || ext == ".usda" || ext == ".usdc" ||
-          ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
-          ext == ".avif" || ext == ".m4a" || ext == ".mp3" || ext == ".wav") {
+      const bool is_usd_layer =
+          (ext == ".usd" || ext == ".usda" || ext == ".usdc");
+      const bool is_media =
+          (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
+           ext == ".avif" || ext == ".m4a" || ext == ".mp3" || ext == ".wav");
+      if (is_media || (is_usd_layer && !composited_)) {
         assets[name] = std::vector<uint8_t>(binary.begin(), binary.end());
       }
     }
@@ -7148,7 +7192,6 @@ class TinyUSDZLoaderNative {
   // Export state
   tinyusdz::Stage export_stage_;
   bool has_stage_{false};
-  std::vector<uint8_t> usdc_export_buf_;
   std::vector<uint8_t> usdz_export_buf_;
   std::vector<uint8_t> image_export_buf_;
   // Optional USDC writer resource-limit overrides (bytes; 0 = built-in default).
