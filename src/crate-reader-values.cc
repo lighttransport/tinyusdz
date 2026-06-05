@@ -891,13 +891,6 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
   const auto dty = tyRet.value();
 
-#define TODO_IMPLEMENT(__dty)                                            \
-  {                                                                      \
-    PUSH_ERROR("TODO: '" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
-               "' data is not yet implemented.");                        \
-    return false;                                                        \
-  }
-
 #define COMPRESS_UNSUPPORTED_CHECK(__dty)                                     \
   if (rep.IsCompressed()) {                                                   \
     PUSH_ERROR("Compressed [" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
@@ -934,6 +927,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     // Set a properly-typed empty array value
     switch (tyRet0.value().dtype_id) {
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL:   value->Set(std::vector<bool>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR:  value->Set(std::vector<uint8_t>()); break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT:    value->Set(std::vector<int32_t>()); break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT:   value->Set(std::vector<uint32_t>()); break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64:  value->Set(std::vector<int64_t>()); break;
@@ -1231,8 +1225,50 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       return false;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
       NON_ARRAY_UNSUPPORTED_CHECK(dty)
-      TODO_IMPLEMENT(dty)
+
+      if (rep.IsArray()) {
+        // uchar[] is stored as a raw uint8 array (count + bytes), like bool[]
+        // but without the 0/1 normalization.
+        std::vector<uint8_t> v;
+
+        if (rep.GetPayload() == 0) {  // empty array
+          value->Set(std::move(v));
+          return true;
+        }
+
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of uchar array too large. TinyUSDZ limits it up to {}", _config.maxArrayElements));
+        }
+
+        size_t uint8_t_size;
+        if (!safe::n_to_size<uint8_t>(n, &uint8_t_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(uint8_t)");
+        }
+        CHECK_MEMORY_USAGE(uint8_t_size);
+
+        v.resize(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(uint8_t),
+                       size_t(n) * sizeof(uint8_t),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read uchar array.");
+          return false;
+        }
+
+        value->Set(std::move(v));
+        return true;
+
+      } else {
+        // non array uchar should be inline encoded.
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "uchar value must be inlined.");
+      }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT: {
       NON_ARRAY_UNSUPPORTED_CHECK(dty)
@@ -3163,7 +3199,6 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     }
   }
 
-#undef TODO_IMPLEMENT
 #undef COMPRESS_UNSUPPORTED_CHECK
 #undef NON_ARRAY_UNSUPPORTED_CHECK
 

@@ -1201,7 +1201,11 @@ using timesample_storage_type_t = typename std::decay<T>::type;
 template <typename T>
 inline constexpr bool uses_binary_timesample_scalar_storage_v =
     is_binary_serializable_v<timesample_storage_type_t<T>> &&
-    !std::is_same_v<timesample_storage_type_t<T>, bool>;
+    !std::is_same_v<timesample_storage_type_t<T>, bool> &&
+    // uchar (uint8_t) uses generic value::Value timesample storage, like bool —
+    // the binary flat-storage reconstruction path does not handle the 1-byte
+    // element type, so route it through the generic path for a correct roundtrip.
+    !std::is_same_v<timesample_storage_type_t<T>, uint8_t>;
 
 template <typename T>
 inline constexpr bool uses_binary_timesample_array_storage_v =
