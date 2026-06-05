@@ -2137,7 +2137,8 @@ def Xform "x" {
 }
 
 void usdc_writer_int64_scalar_test(void) {
-  // int64 outside 48-bit inline range -> out-of-line write path
+  // Large int64 values outside the OpenUSD-style int32 inline range use the
+  // out-of-line write path.
   const char *usda = R"(#usda 1.0
 def Xform "x" {
   custom int64 big = 9223372036854775000
@@ -3742,9 +3743,8 @@ def BasisCurves "c" {
 }
 
 void usdc_writer_int64_large_test(void) {
-  // -9876543210 fits in 48 bits; verify the writer's inline path and the
-  // reader's 48-bit sign-extension preserve the full value (regression:
-  // reader was truncating to 32 bits, returning -1286608618).
+  // Values outside the OpenUSD-style int32 inline range still round-trip via
+  // out-of-line storage.
   const char *usda = R"(#usda 1.0
 def Xform "x" {
   custom int64 v = -9876543210

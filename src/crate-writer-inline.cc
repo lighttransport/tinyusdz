@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2025, Light Transport Entertainment Inc.
 //
-// CrateWriter::TryInlineValue — split out of crate-writer-values.cc.
+// CrateWriter::TryInlineValue - split out of crate-writer-values.cc.
 // Decides whether a CrateValue can be inlined directly into its ValueRep (small
 // PODs, string/token/asset indices, empty arrays) rather than written out-of-line.
 // Self-contained: its own CANNOT_INLINE / TRY_INLINE_EMPTY_ARRAY macros, no
@@ -10,6 +10,7 @@
 #include "crate-writer.hh"
 
 #include <cstring>
+#include <limits>
 #include <sstream>
 
 #if defined(__clang__)
@@ -24,6 +25,111 @@
 
 namespace tinyusdz {
 namespace experimental {
+
+namespace {
+
+template <typename T>
+bool EncodeInt8Exact(T v, int8_t *out) {
+  const T lo = static_cast<T>(std::numeric_limits<int8_t>::lowest());
+  const T hi = static_cast<T>(std::numeric_limits<int8_t>::max());
+  if (!(lo <= v && v <= hi)) {
+    return false;
+  }
+  int8_t i = static_cast<int8_t>(v);
+  if (static_cast<T>(i) != v) {
+    return false;
+  }
+  *out = i;
+  return true;
+}
+
+template <typename Vec, size_t N>
+bool EncodeVecInlineInt8(const Vec& vec, uint32_t *packed) {
+  int8_t ivec[N];
+  for (size_t i = 0; i < N; ++i) {
+    if (!EncodeInt8Exact(vec[i], &ivec[i])) {
+      return false;
+    }
+  }
+  *packed = 0;
+  memcpy(packed, ivec, sizeof(ivec));
+  return true;
+}
+
+template <typename Vec, size_t N>
+bool TryInlineVecInt8(const Vec& vec, crate::CrateDataTypeId type_id,
+                      crate::ValueRep* rep) {
+  uint32_t packed = 0;
+  if (!EncodeVecInlineInt8<Vec, N>(vec, &packed)) {
+    return false;
+  }
+  rep->SetType(static_cast<int32_t>(type_id));
+  rep->SetIsInlined();
+  rep->SetPayload(static_cast<uint64_t>(packed));
+  return true;
+}
+
+template <typename Vec, size_t N>
+bool EncodeHalfVecInlineInt8(const Vec& vec, uint32_t *packed) {
+  int8_t ivec[N];
+  for (size_t i = 0; i < N; ++i) {
+    const float f = value::half_to_float(vec[i]);
+    if (!EncodeInt8Exact(f, &ivec[i])) {
+      return false;
+    }
+  }
+  *packed = 0;
+  memcpy(packed, ivec, sizeof(ivec));
+  return true;
+}
+
+template <typename Vec, size_t N>
+bool TryInlineHalfVecInt8(const Vec& vec, crate::CrateDataTypeId type_id,
+                          crate::ValueRep* rep) {
+  uint32_t packed = 0;
+  if (!EncodeHalfVecInlineInt8<Vec, N>(vec, &packed)) {
+    return false;
+  }
+  rep->SetType(static_cast<int32_t>(type_id));
+  rep->SetIsInlined();
+  rep->SetPayload(static_cast<uint64_t>(packed));
+  return true;
+}
+
+template <typename Matrix, size_t N>
+bool EncodeMatrixInlineDiagonalInt8(const Matrix& mat, uint32_t *packed) {
+  int8_t diag[N];
+  for (size_t r = 0; r < N; ++r) {
+    for (size_t c = 0; c < N; ++c) {
+      if (r == c) {
+        if (!EncodeInt8Exact(mat.m[r][c], &diag[r])) {
+          return false;
+        }
+      } else if (mat.m[r][c] != 0.0) {
+        return false;
+      }
+    }
+  }
+  *packed = 0;
+  memcpy(packed, diag, sizeof(diag));
+  return true;
+}
+
+template <typename Matrix, size_t N>
+bool TryInlineMatrixDiagonalInt8(const Matrix& mat,
+                                 crate::CrateDataTypeId type_id,
+                                 crate::ValueRep* rep) {
+  uint32_t packed = 0;
+  if (!EncodeMatrixInlineDiagonalInt8<Matrix, N>(mat, &packed)) {
+    return false;
+  }
+  rep->SetType(static_cast<int32_t>(type_id));
+  rep->SetIsInlined();
+  rep->SetPayload(static_cast<uint64_t>(packed));
+  return true;
+}
+
+}  // namespace
 
 bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep* rep) {
   // Phase 1: String/Token/AssetPath values
@@ -102,29 +208,31 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     return true;
   }
 
-  // Try to get as int64
+  // OpenUSD inlines int64/uint64 only when exactly representable by signed or
+  // unsigned 32-bit integer payloads, respectively.
   if (auto* int64_val = value.as<int64_t>()) {
-    // int64 cannot be inlined if value doesn't fit in 48 bits
-    // (48 bits is the payload size in ValueRep)
-    if (*int64_val >= -(1LL << 47) && *int64_val < (1LL << 47)) {
+    if (*int64_val >= int64_t((std::numeric_limits<int32_t>::min)()) &&
+        *int64_val <= int64_t((std::numeric_limits<int32_t>::max)())) {
+      int32_t rep32 = static_cast<int32_t>(*int64_val);
+      uint32_t packed = 0;
+      memcpy(&packed, &rep32, sizeof(rep32));
       rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64));
       rep->SetIsInlined();
-      rep->SetPayload(static_cast<uint64_t>(*int64_val));
+      rep->SetPayload(static_cast<uint64_t>(packed));
       return true;
     }
-    // Falls through to out-of-line storage
+    return false;
   }
 
-  // Try to get as uint64
   if (auto* uint64_val = value.as<uint64_t>()) {
-    // uint64 can only be inlined if value fits in 48 bits
-    if (*uint64_val < (1ULL << 48)) {
+    if (*uint64_val <= uint64_t((std::numeric_limits<uint32_t>::max)())) {
+      uint32_t rep32 = static_cast<uint32_t>(*uint64_val);
       rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64));
       rep->SetIsInlined();
-      rep->SetPayload(*uint64_val);
+      rep->SetPayload(static_cast<uint64_t>(rep32));
       return true;
     }
-    // Falls through to out-of-line storage
+    return false;
   }
 
   // Try to get as float
@@ -138,8 +246,20 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     return true;
   }
 
-  // Double cannot be inlined (64 bits > 48 bit payload)
-  if (value.as<double>()) { return false; }
+  // OpenUSD inlines doubles that are exactly representable as float by storing
+  // the float bits in the 32-bit payload.
+  if (auto* double_val = value.as<double>()) {
+    float f = static_cast<float>(*double_val);
+    if (static_cast<double>(f) == *double_val) {
+      uint32_t float_bits = 0;
+      memcpy(&float_bits, &f, sizeof(float));
+      rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE));
+      rep->SetIsInlined();
+      rep->SetPayload(static_cast<uint64_t>(float_bits));
+      return true;
+    }
+    return false;
+  }
 
   // Try to get as half
   if (auto* half_val = value.as<value::half>()) {
@@ -175,13 +295,12 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     return true;
   }
 
-  // Phase 1: Vector types
-  // Vectors can be inlined if they fit in 48 bits (6 bytes)
-  // Vec2h (4 bytes), Vec2f/Vec2i (8 bytes) cannot be inlined
-  // Vec3/Vec4 cannot be inlined (12+ bytes)
+  // Phase 1: Vector/matrix types. OpenUSD inlines Vec2h as raw half bits,
+  // other small vectors when all components are exactly int8, and square
+  // matrices when only the diagonal is non-zero and diagonal values are int8.
 
   // Vec2h - half2 (4 bytes = sizeof(uint32_t)): "always inlined" in Pixar's
-  // crate format — raw half bit patterns stored directly via memcpy, NOT int8.
+  // crate format - raw half bit patterns stored directly via memcpy, NOT int8.
   if (auto* vec2h_val = value.as<value::half2>()) {
     rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H));
     rep->SetIsInlined();
@@ -192,63 +311,100 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     return true;
   }
 
-  // Types that cannot be inlined (too large for 48-bit payload)
+  // Types that cannot be inlined by OpenUSD's special-case encoders.
 #define CANNOT_INLINE(Type) \
   if (value.as<Type>()) { return false; }
 
-  CANNOT_INLINE(value::float2)   // 8 bytes
-  CANNOT_INLINE(value::double2)  // 16 bytes
-  CANNOT_INLINE(value::int2)     // 8 bytes
-
-  // Vec3h - half3: inline only if each component is exactly int8
-  if (auto* vec3h_val = value.as<value::half3>()) {
-    rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H));
-    float f[3];
-    f[0] = value::half_to_float((*vec3h_val)[0]);
-    f[1] = value::half_to_float((*vec3h_val)[1]);
-    f[2] = value::half_to_float((*vec3h_val)[2]);
-    bool can_inline = true;
-    int8_t ivec[3];
-    for (int i = 0; i < 3; ++i) {
-      float roundtripped = static_cast<float>(static_cast<int8_t>(f[i]));
-      if (f[i] < -128.0f || f[i] > 127.0f ||
-          std::memcmp(&roundtripped, &f[i], sizeof(float)) != 0) {
-        can_inline = false;
-        break;
-      }
-      ivec[i] = static_cast<int8_t>(f[i]);
-    }
-    if (can_inline) {
-      uint32_t packed = 0;
-      memcpy(&packed, ivec, sizeof(ivec));
-      rep->SetIsInlined();
-      rep->SetPayload(static_cast<uint64_t>(packed));
-      return true;
-    }
-    return false;  // can't inline, write out-of-line
+  if (auto* vec2f_val = value.as<value::float2>()) {
+    return TryInlineVecInt8<value::float2, 2>(
+        *vec2f_val, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F, rep);
+  }
+  if (auto* vec2d_val = value.as<value::double2>()) {
+    return TryInlineVecInt8<value::double2, 2>(
+        *vec2d_val, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D, rep);
+  }
+  if (auto* vec2i_val = value.as<value::int2>()) {
+    return TryInlineVecInt8<value::int2, 2>(
+        *vec2i_val, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2I, rep);
   }
 
-  CANNOT_INLINE(value::float3)   // 12 bytes
-  CANNOT_INLINE(value::double3)  // 24 bytes
-  CANNOT_INLINE(value::int3)     // 12 bytes
-  CANNOT_INLINE(value::half4)    // 8 bytes
-  CANNOT_INLINE(value::float4)   // 16 bytes
-  CANNOT_INLINE(value::double4)  // 32 bytes
-  CANNOT_INLINE(value::int4)     // 16 bytes
-  CANNOT_INLINE(value::matrix2d) // 32 bytes
-  CANNOT_INLINE(value::matrix3d) // 72 bytes
-  CANNOT_INLINE(value::matrix4d) // 128 bytes
+  // Vec3h/Vec4h: inline only if each component is exactly int8.
+  if (auto* vec3h_val = value.as<value::half3>()) {
+    return TryInlineHalfVecInt8<value::half3, 3>(
+        *vec3h_val, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H, rep);
+  }
+
+  if (auto* vec3f_val = value.as<value::float3>()) {
+    return TryInlineVecInt8<value::float3, 3>(
+        *vec3f_val, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F, rep);
+  }
+  if (auto* vec3d_val = value.as<value::double3>()) {
+    return TryInlineVecInt8<value::double3, 3>(
+        *vec3d_val, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D, rep);
+  }
+  if (auto* vec3i_val = value.as<value::int3>()) {
+    return TryInlineVecInt8<value::int3, 3>(
+        *vec3i_val, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3I, rep);
+  }
+  if (auto* vec4h_val = value.as<value::half4>()) {
+    return TryInlineHalfVecInt8<value::half4, 4>(
+        *vec4h_val, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4H, rep);
+  }
+  if (auto* vec4f_val = value.as<value::float4>()) {
+    return TryInlineVecInt8<value::float4, 4>(
+        *vec4f_val, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F, rep);
+  }
+  if (auto* vec4d_val = value.as<value::double4>()) {
+    return TryInlineVecInt8<value::double4, 4>(
+        *vec4d_val, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D, rep);
+  }
+  if (auto* vec4i_val = value.as<value::int4>()) {
+    return TryInlineVecInt8<value::int4, 4>(
+        *vec4i_val, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4I, rep);
+  }
+  if (auto* mat2d_val = value.as<value::matrix2d>()) {
+    return TryInlineMatrixDiagonalInt8<value::matrix2d, 2>(
+        *mat2d_val, crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D, rep);
+  }
+  if (auto* mat3d_val = value.as<value::matrix3d>()) {
+    return TryInlineMatrixDiagonalInt8<value::matrix3d, 3>(
+        *mat3d_val, crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D, rep);
+  }
+  if (auto* mat4d_val = value.as<value::matrix4d>()) {
+    return TryInlineMatrixDiagonalInt8<value::matrix4d, 4>(
+        *mat4d_val, crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D, rep);
+  }
   CANNOT_INLINE(value::quath)    // 8 bytes
   CANNOT_INLINE(value::quatf)    // 16 bytes
   CANNOT_INLINE(value::quatd)    // 32 bytes
 
 #undef CANNOT_INLINE
 
-  // Phase 2: Dictionary, ListOps, Reference, and Payload are NEVER inlined - always out-of-line storage
-  if (value.as<value::dict>()) {
+  // Empty dictionaries are inlined with payload=0, matching OpenUSD's
+  // VtDictionary path. Non-empty dictionaries remain out-of-line.
+  if (auto* dict_val = value.as<value::dict>()) {
+    if (dict_val->empty()) {
+      rep->SetType(static_cast<int32_t>(
+          crate::CrateDataTypeId::CRATE_DATA_TYPE_DICTIONARY));
+      rep->SetIsInlined();
+      rep->SetPayload(0);
+      return true;
+    }
+    return false;
+  }
+  if (auto* custom_data = value.as<CustomDataType>()) {
+    if (custom_data->empty()) {
+      rep->SetType(static_cast<int32_t>(
+          crate::CrateDataTypeId::CRATE_DATA_TYPE_DICTIONARY));
+      rep->SetIsInlined();
+      rep->SetPayload(0);
+      return true;
+    }
     return false;
   }
 
+  // Phase 2: ListOps, Reference, and Payload are NEVER inlined - always
+  // out-of-line storage.
   if (value.as<ListOp<value::token>>() ||
       value.as<ListOp<std::string>>() ||
       value.as<ListOp<Path>>() ||

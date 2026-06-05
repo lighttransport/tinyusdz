@@ -2284,6 +2284,15 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-value-clip COMMAND feat-value-clip
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    if(TINYUSDZ_WITH_MODULE_USDC_WRITER AND TINYUSDZ_WITH_MODULE_USDC_READER)
+      add_executable(feat-dedp tests/feat/dedp/test-dedp.cc)
+      add_sanitizers(feat-dedp)
+      target_link_libraries(feat-dedp PRIVATE ${TINYUSDZ_TARGET_STATIC})
+      target_include_directories(feat-dedp PRIVATE ${PROJECT_SOURCE_DIR}/src)
+      add_test(NAME feat-dedp COMMAND feat-dedp
+               WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    endif()
+
     # MaterialX tests
     add_executable(feat-mtlx-parse tests/feat/mtlx/test_mtlx_parse.cc)
     add_sanitizers(feat-mtlx-parse)
