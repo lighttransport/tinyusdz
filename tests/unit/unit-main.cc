@@ -536,6 +536,7 @@ TEST_LIST = {
   { "layer_emplace_primspec_test", layer_emplace_primspec_test },
   { "layer_replace_primspec_test", layer_replace_primspec_test },
   { "layer_find_primspec_at_test", layer_find_primspec_at_test },
+  { "layer_copy_resets_lookup_cache_test", layer_copy_resets_lookup_cache_test },
   { "layer_check_unresolved_refs_test", layer_check_unresolved_refs_test },
   { "layer_check_unresolved_payload_test", layer_check_unresolved_payload_test },
   { "layer_check_unresolved_inherits_test", layer_check_unresolved_inherits_test },
