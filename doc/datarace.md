@@ -48,28 +48,41 @@ the copy ctor (`src/layer.cc:297`) and copy-assignment (`:310`). The copy now
 rebuilds its cache lazily against its own tree and owns an independent mutex.
 This was item #4 below; resolved by the `dedup-2026` merge.
 
+### TaskQueue lock-free queue dropped/raced payloads — **FIXED**
+The old lock-free `TaskQueue`/`TaskQueueFunc` advanced the shared `_write_pos`
+*before* writing the slot payload (`_tasks[index] = TaskItem(...)` ran after the
+CAS that published the slot). Because consumers key their emptiness check off
+`_write_pos`, a consumer could claim and read a slot **before** the producer had
+written it — reading a default `TaskItem{nullptr,nullptr}`, advancing past it,
+and **silently dropping the task**. Independent of timing, the plain payload
+store/load had no release/acquire edge, so it was also a data race (UB). Both
+were reproduced: a plain `-O2` build dropped ~1 task per 2M transfers, and TSan
+flagged `Push` (`task-queue.hh:100`) vs `Pop` (`:147`) on the same cell. The
+only in-tree user is `src/prim-pprint-parallel.cc` (parallel Stage/Layer→USDA
+text, gated on `TINYUSDZ_ENABLE_THREAD`, enabled by default at ≥4 prims), where
+the symptom would be a rarely dropped/garbled prim in serialized output. The
+default and wasm builds compile the parallel path out, so they were unaffected.
+
+Fix: `src/task-queue.hh` is now a **Vyukov bounded MPMC queue** — each cell has
+an `std::atomic<size_t> sequence`; a producer writes the payload then publishes
+the cell with a release store of the sequence, and a consumer reads the payload
+only after an acquire load observes that sequence. That release/acquire pairing
+gives a clean happens-before edge, so payloads are never accessed concurrently
+and a not-yet-published slot reads as empty (the consumer retries) instead of
+being consumed. The buggy `__atomic_*` path and the mutex fallback were dropped
+in favour of portable `std::atomic` (also fixes MSVC, which previously fell back
+to a lock). Verified: 0 dropped tasks over ~7.2M transfers (`-O2`), TSan-clean,
+and all `task_queue_*` unit tests pass.
+
 ---
 
 ## Remaining issues
 
-### 1. Pre-existing — `TaskQueue::Push`/`Pop` data races (NOT used by pcp)
-- **Where:** `src/task-queue.hh:100` (`_tasks[index] = TaskItem(...)` store in
-  `Push`) and `:147` (`task = _tasks[index]` load in `Pop`); the
-  `TaskQueueFunc` variant has the same pattern at `:279`/`:297` and `:164`.
-- **Why:** the lock-free ring orders slots with atomic `_write_pos`/`_read_pos`
-  but the **payload** `TaskItem` store/load is a plain (non-atomic) access, so
-  TSan flags producer/consumer overlap on the same slot. Exercised by
-  `tests/unit/unit-task-queue.cc:163/176` (`task_queue_multithreaded_test`).
-- **Impact on pcp:** none. `src/pcp/cache-parallel.cc` deliberately does **not**
-  use `TaskQueue`; it uses `std::thread` + a `std::atomic<size_t>` work index
-  and pre-sized per-worker output slots. This entry is recorded only because the
-  full-suite TSan run surfaced it.
-- **Severity:** medium (real on weak memory models). Pre-existing; the MT
-  TaskQueue test is already skipped on i386 due to 64-bit atomics.
-- **Fix sketch:** make the slot payload publication ordered w.r.t. the position
-  CAS — e.g. store the `TaskItem` *before* the releasing `_write_pos` update and
-  load it *after* the acquiring `_read_pos` check, with `std::atomic_ref` (C++20)
-  or by making `_tasks[i]` an atomic/seqlock'd cell. Or gate the test out of TSan.
+### 1. ~~`TaskQueue::Push`/`Pop` data races~~ — **FIXED**
+Resolved by rewriting `src/task-queue.hh` as a Vyukov bounded MPMC queue. See
+the *Fixed* section above. `TaskQueue` is not used by pcp (`cache-parallel.cc`
+uses `std::thread` + a `std::atomic<size_t>` work index), but the queue itself
+is now correct. Kept here, struck through, so the item numbers below stay stable.
 
 ### 2. Latent — `Path::variant_part()` / `element_name()` mutable buffers
 - **Where:** `src/core/path.hh` — `mutable std::string _variant_part_str` (L385)
@@ -154,14 +167,14 @@ cmake --build build-tsan --target unit-test-tinyusdz -j16
 # or lower vm.mmap_rnd_bits (needs root).
 setarch -R ./build-tsan/unit-test-tinyusdz pcp_mt_shared_reference_test \
                                             pcp_singlethread_vs_multithread_identical_test
-# Full suite (will surface the pre-existing TaskQueue races, item #1):
+# Full suite:
 setarch -R ./build-tsan/unit-test-tinyusdz
 ```
 
 The pcp tests must report **0 data races**. Any race whose stack mentions
-`src/pcp/`, `src/layer.cc`, `src/composition-graph.cc`, or `src/tiny-hashmap.hh`
-is a regression in this work; races in `src/task-queue.hh` are item #1
-(pre-existing, not used by pcp).
+`src/pcp/`, `src/layer.cc`, `src/composition-graph.cc`, `src/task-queue.hh`, or
+`src/tiny-hashmap.hh` is a regression — including `task_queue_multithreaded_test`,
+which is now TSan-clean after the Vyukov rewrite (was item #1).
 
 After any change, also run the normal builds:
 ```bash
@@ -187,9 +200,9 @@ has an optional multithreaded build path; the one race that mattered
 (Layer::find_primspec_at lookup cache) is already fixed and TSan-clean.
 
 Remaining items, in priority order:
-  1. Pre-existing TaskQueue::Push/Pop races (src/task-queue.hh:100/147) — make
-     the slot payload publication ordered w.r.t. the position CAS, or gate the
-     task_queue_multithreaded_test out of TSan. pcp does not use TaskQueue.
+  1. (DONE) TaskQueue::Push/Pop races — fixed by rewriting src/task-queue.hh as
+     a Vyukov bounded MPMC queue (per-cell atomic sequence; payload published
+     release / consumed acquire). TSan-clean. pcp does not use TaskQueue.
   2. Latent: Path::variant_part()/element_name() mutable buffers
      (src/core/path.hh:385-386) — prefer returning by value to drop the mutable
      members; not currently called on shared Paths in the build path.
@@ -205,5 +218,5 @@ wasm builds zero-overhead; never add a mutex member that breaks Layer copy/move
 (use shared_ptr<mutex> if needed). After each change, verify with ThreadSanitizer
 per doc/datarace.md (build-tsan + `setarch -R`), and run the full unit suite
 threads-off and threads-on (expect 0 races in pcp/layer/composition-graph/
-tiny-hashmap; the only acceptable races are item #1 in task-queue.hh).
+task-queue/tiny-hashmap — there are no longer any acceptable known races).
 ```
