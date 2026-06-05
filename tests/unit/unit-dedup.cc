@@ -515,6 +515,11 @@ void timesample_array_dedup_no_inflation_test(void) {
     for (size_t i = 0; i < N; ++i) v[i] = ((i % 3 == 0) != (i == size_t(f)));
     return v;
   });
+  CheckTSArrayNoInflation<uint8_t>("uchar[]", K, [&](int f) {
+    std::vector<uint8_t> v(N);
+    for (size_t i = 0; i < N; ++i) v[i] = uint8_t((i * 7 + f) & 0xFF);
+    return v;
+  });
   CheckTSArrayNoInflation<int32_t>("int[]", K, [&](int f) {
     std::vector<int32_t> v(N);
     for (size_t i = 0; i < N; ++i) v[i] = int32_t(i * 7 + f * 100003);
@@ -700,4 +705,58 @@ void timesample_array_dedup_no_inflation_test(void) {
                               ".usd");
     return v;
   });
+}
+
+// End-to-end uchar[] USDC roundtrip: a single attribute carries both a default
+// uchar[] value (exercises the general value read path, ReadValue UCHAR) and
+// animated uchar[] timesamples (exercises UnpackTimeSampleValue_UCHAR). Verifies
+// every byte survives write -> read.
+void uchar_roundtrip_test(void) {
+  const std::vector<uint8_t> default_arr = {0, 1, 127, 128, 254, 255};
+
+  value::TimeSamples ts;
+  std::vector<std::vector<uint8_t>> expected;
+  for (int f = 0; f < 8; ++f) {
+    std::vector<uint8_t> a(6);
+    for (size_t i = 0; i < a.size(); ++i) {
+      a[i] = static_cast<uint8_t>((i * 37 + f * 53) & 0xFF);
+    }
+    expected.push_back(a);  // capture before value::Value(a) takes ownership of a
+    ts.add_sample(double(f), value::Value(a));
+  }
+
+  Stage stage =
+      MakeAnimStage("UCharPrim", "uchar[]", ts, value::Value(default_arr));
+  const std::string fn = "/tmp/uchar_roundtrip.usdc";
+  TEST_CHECK(WriteStageUSDC(stage, fn, /*dedup*/ true));
+
+  Layer layer;
+  std::string warn, err;
+  TEST_CHECK(tinyusdz::LoadLayerFromFile(fn, &layer, &warn, &err));
+
+  const auto& pss = layer.primspecs();
+  auto pit = pss.find("UCharPrim");
+  TEST_CHECK(pit != pss.end());
+  if (pit == pss.end()) return;
+  auto prit = pit->second.props().find("animAttr");
+  TEST_CHECK(prit != pit->second.props().end() && prit->second.is_attribute());
+  if (prit == pit->second.props().end() || !prit->second.is_attribute()) return;
+  const primvar::PrimVar& pv = prit->second.get_attribute().get_var();
+
+  // (a) default uchar[] value survives the general value read path.
+  const value::Value& dv = pv.value_raw();
+  const std::vector<uint8_t>* dptr = dv.as<std::vector<uint8_t>>();
+  TEST_CHECK(dptr != nullptr);
+  if (dptr) TEST_CHECK(*dptr == default_arr);
+
+  // (b) uchar[] timesamples survive UnpackTimeSampleValue_UCHAR.
+  const value::TimeSamples& rts = pv.ts_raw();
+  TEST_CHECK(rts.size() == expected.size());
+  for (size_t i = 0; i < expected.size() && i < rts.size(); ++i) {
+    std::vector<uint8_t> got;
+    bool blocked = false;
+    TEST_CHECK(rts.get_vector_at<uint8_t>(i, &got, &blocked));
+    TEST_CHECK(!blocked);
+    TEST_CHECK(got == expected[i]);
+  }
 }

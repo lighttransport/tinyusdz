@@ -73,6 +73,7 @@ static bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue*
 
   // Scalar numeric types
   CONVERT_CRATE_VALUE(bool)
+  CONVERT_CRATE_VALUE(uint8_t)  // uchar
   CONVERT_CRATE_VALUE(int32_t)
   CONVERT_CRATE_VALUE(uint32_t)
   CONVERT_CRATE_VALUE(int64_t)
@@ -92,6 +93,7 @@ static bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue*
   CONVERT_CRATE_VALUE(value::int4)
   // Array types - numeric scalars
   CONVERT_CRATE_VALUE(std::vector<bool>)
+  CONVERT_CRATE_VALUE(std::vector<uint8_t>)  // uchar[]
   CONVERT_CRATE_VALUE(std::vector<int32_t>)
   CONVERT_CRATE_VALUE(std::vector<uint32_t>)
   CONVERT_CRATE_VALUE(std::vector<int64_t>)
@@ -256,6 +258,7 @@ static bool ComputeArrayDedupDescriptor(const crate::CrateValue& cv,
   }
 
   // Raw-byte (binary) arrays.
+  DEDUP_DESC_ARRAY(uint8_t, 1, false, CRATE_DATA_TYPE_UCHAR)  // uchar[]
   DEDUP_DESC_ARRAY(int32_t, 1, false, CRATE_DATA_TYPE_INT)
   DEDUP_DESC_ARRAY(uint32_t, 1, false, CRATE_DATA_TYPE_UINT)
   DEDUP_DESC_ARRAY(int64_t, 1, false, CRATE_DATA_TYPE_INT64)

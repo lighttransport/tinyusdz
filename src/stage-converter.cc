@@ -1718,10 +1718,20 @@ bool CrateWriter::ConvertValue(
       out.Set(*v);
       return true;
     }
+  } else if (type_name == "uchar") {
+    if (auto v = val.get_value<uint8_t>()) {
+      out.Set(*v);
+      return true;
+    }
   }
 
   // Array types
-  else if (type_name == "int[]") {
+  else if (type_name == "uchar[]") {
+    if (auto v = val.get_value<std::vector<uint8_t>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "int[]") {
     if (auto v = val.get_value<std::vector<int32_t>>()) {
       out.Set(*v);
       return true;
