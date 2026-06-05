@@ -6406,6 +6406,169 @@ class TinyUSDZLoaderNative {
     return result;
   }
 
+  /// Export the current layer's COMPOSED STAGE (typed-Prim reconstruction, the
+  /// same path as exportAsUSDC()/exportAsUSDZWithOptions()) as USDC directly
+  /// into a JS Uint8Array. Low-heap counterpart of the in-heap stage export:
+  /// the finalized crate streams into `buffer` instead of a WASM-side vector,
+  /// so large scenes that overflow the 2 GB wasm32 heap when the whole USDZ is
+  /// built in-heap can be repacked from JS (keep textures + JS-side zip).
+  emscripten::val exportStageAsUSDCToBufferWithOptions(
+      emscripten::val buffer, emscripten::val options) {
+    (void)options;
+    emscripten::val result = emscripten::val::object();
+    result.set("success", false);
+    result.set("size", 0.0);
+
+    if (buffer.isNull() || buffer.isUndefined()) {
+      error_ = "USDC export output buffer is null.";
+      result.set("error", error_);
+      return result;
+    }
+    size_t capacity = 0;
+    try {
+      capacity = buffer["byteLength"].as<size_t>();
+    } catch (...) {
+      error_ = "USDC export output must be a Uint8Array.";
+      result.set("error", error_);
+      return result;
+    }
+    if (capacity == 0) {
+      error_ = "USDC export output buffer is empty.";
+      result.set("error", error_);
+      return result;
+    }
+
+    tinyusdz::Stage stage;
+    if (!getStageFromLayer(stage)) {
+      result.set("error", error_);
+      return result;
+    }
+
+    auto js_stream = std::unique_ptr<JSUint8ArrayOutputStream>(
+        new JSUint8ArrayOutputStream(buffer, capacity));
+    JSUint8ArrayOutputStream *stream_ptr = js_stream.get();
+    std::unique_ptr<tinyusdz::experimental::IOutputStream> out_stream(
+        std::move(js_stream));
+    tinyusdz::experimental::CrateWriter writer(std::move(out_stream));
+
+    tinyusdz::experimental::CrateWriter::Options opts;
+    opts.version_major = 0;
+    opts.version_minor = 8;
+    opts.version_patch = 0;
+    opts.enable_compression = true;
+    opts.enable_deduplication = true;
+    if (usdc_max_file_size_bytes_ > 0) {
+      opts.max_file_size_bytes = usdc_max_file_size_bytes_;
+    }
+    if (usdc_max_memory_bytes_ > 0) {
+      opts.max_memory_bytes = usdc_max_memory_bytes_;
+    }
+    writer.SetOptions(opts);
+
+    std::string open_err;
+    if (!writer.Open(&open_err)) {
+      error_ = "Failed to open CrateWriter: " + open_err;
+      result.set("error", error_);
+      return result;
+    }
+
+    std::string convert_err;
+    if (!writer.ConvertStageToSpecs(stage, &convert_err)) {
+      writer.Close();
+      error_ = "Failed to convert Stage to USDC: " + convert_err;
+      result.set("error", error_);
+      return result;
+    }
+
+    std::string finalize_err;
+    if (!writer.Finalize(&finalize_err)) {
+      writer.Close();
+      error_ = "Failed to finalize USDC: " + finalize_err;
+      if (!stream_ptr->error().empty()) {
+        error_ += " " + stream_ptr->error();
+      }
+      result.set("error", error_);
+      return result;
+    }
+
+    writer.Close();
+    warn_.clear();
+    result.set("success", true);
+    result.set("size", static_cast<double>(stream_ptr->written()));
+    result.set("warn", warn_);
+    return result;
+  }
+
+  /// Flatten the loaded layer at the LAYER level: compose
+  /// sublayers/references/payload/inherits/variants into a single Layer and
+  /// store it as composed_layer_ (composited_=true). Non-consuming, so the
+  /// caller writes the result with exportLayerAsUSDCToBufferWithOptions (which
+  /// is retriable for buffer growth). This is the non-Stage flatten entry: it
+  /// avoids the Layer->Stage typed reconstruction AND the layer copy
+  /// getStageFromLayer makes, so it is much lighter on the wasm heap and
+  /// faithful (PrimSpecs written as-authored, no typed-input drop).
+  bool flattenLayer() {
+    if (!loaded_ || !loaded_as_layer_) {
+      error_ = "No layer loaded";
+      return false;
+    }
+
+    tinyusdz::AssetResolutionResolver resolver;
+    if (!SetupEMAssetResolution(resolver, &em_resolver_)) {
+      error_ = "Failed to setup asset resolution for flatten.";
+      return false;
+    }
+    resolver.set_current_working_path("./");
+    resolver.set_search_paths({"./"});
+
+    // Move the current layer out — flatten in place, never duplicating it.
+    tinyusdz::Layer src_layer =
+        composited_ ? std::move(composed_layer_) : std::move(layer_);
+
+    // LIVRPS flatten: subLayers, then references/payload/inherits/variants to a
+    // fixed point. Each Composite* moves the prior layer into the next.
+    {
+      tinyusdz::Layer tmp;
+      if (!tinyusdz::CompositeSublayers(resolver, src_layer, &tmp, &warn_, &error_)) {
+        error_ = "Failed to composite subLayers: " + error_;
+        return false;
+      }
+      src_layer = std::move(tmp);
+    }
+    constexpr int kMaxFlattenIter = 32;
+    for (int i = 0; i < kMaxFlattenIter; i++) {
+      bool unresolved = false;
+      if (src_layer.check_unresolved_references()) {
+        tinyusdz::Layer tmp;
+        if (!tinyusdz::CompositeReferences(resolver, src_layer, &tmp, &warn_, &error_)) return false;
+        src_layer = std::move(tmp); unresolved = true;
+      }
+      if (src_layer.check_unresolved_payload()) {
+        tinyusdz::Layer tmp;
+        if (!tinyusdz::CompositePayload(resolver, src_layer, &tmp, &warn_, &error_)) return false;
+        src_layer = std::move(tmp); unresolved = true;
+      }
+      if (src_layer.check_unresolved_inherits()) {
+        tinyusdz::Layer tmp;
+        if (!tinyusdz::CompositeInherits(src_layer, &tmp, &warn_, &error_)) return false;
+        src_layer = std::move(tmp); unresolved = true;
+      }
+      if (src_layer.check_unresolved_variant()) {
+        tinyusdz::Layer tmp;
+        if (!tinyusdz::CompositeVariant(src_layer, &tmp, &warn_, &error_)) return false;
+        src_layer = std::move(tmp); unresolved = true;
+      }
+      if (!unresolved) break;
+    }
+
+    // Store the flattened layer; exportLayerAsUSDCToBufferWithOptions writes it
+    // (and can be retried with a larger buffer without re-flattening).
+    composed_layer_ = std::move(src_layer);
+    composited_ = true;
+    loaded_as_layer_ = true;
+    return true;
+  }
+
   /// Export loaded scene as USDZ (ZIP package with packed assets) — returns Uint8Array
   /// Assets are collected from the em_resolver_ cache.
   ///
@@ -8247,6 +8410,8 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("exportAsUSDC", &TinyUSDZLoaderNative::exportAsUSDC)
       .function("exportLayerAsUSDCWithOptions", &TinyUSDZLoaderNative::exportLayerAsUSDCWithOptions)
       .function("exportLayerAsUSDCToBufferWithOptions", &TinyUSDZLoaderNative::exportLayerAsUSDCToBufferWithOptions)
+      .function("exportStageAsUSDCToBufferWithOptions", &TinyUSDZLoaderNative::exportStageAsUSDCToBufferWithOptions)
+      .function("flattenLayer", &TinyUSDZLoaderNative::flattenLayer)
       .function("setUSDCExportLimitMB", &TinyUSDZLoaderNative::setUSDCExportLimitMB)
       .function("debugLogMemory", &TinyUSDZLoaderNative::debugLogMemory)
       .function("exportAsUSDZ", &TinyUSDZLoaderNative::exportAsUSDZ)

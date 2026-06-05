@@ -17,6 +17,7 @@
 #include "pprinter.hh"  // For to_string(Specifier), to_string(Variability)
 #include "pprint-enum.hh"  // For to_string(APISchemas::APIName)
 #include "usdShade.hh"  // For Material and Shader
+#include "usdMtlx.hh"  // For MtlxOpenPBRSurface (concrete ShaderNode subtype)
 #include "usdPhysics.hh"  // For PhysicsScene, PhysicsJoint, PhysicsCollisionGroup
 #include "common-macros.inc"
 
@@ -35,6 +36,41 @@ namespace tinyusdz {
 namespace experimental {
 
 namespace {
+
+// Shader::value stores a CONCRETE ShaderNode subtype (UsdPreviewSurface,
+// UsdUVTexture, UsdPrimvarReader_*, ...). value::Value::as<T> matches the exact
+// type id, so as<ShaderNode>() (the base) does NOT match a concrete node.
+// Dispatch each concrete type to reach its inherited UsdShadePrim::props — the
+// map where reconstruction (ADD_PROPERTY) stashes authored inputs that aren't
+// modeled as typed schema fields (e.g. Unreal's inputs:anisotropy / scalar
+// inputs:specular / inputs:tangent on UsdPreviewSurface). Without this, those
+// authored inputs are silently dropped on stage->USDC writes. Mirrors the
+// concrete-type dispatch in pprint-shader.cc.
+const std::map<std::string, Property> *GetShaderNodeProps(
+    const value::Value &v) {
+#define GET_SHADER_NODE_PROPS(__ty) \
+  if (auto *p = v.as<__ty>()) {     \
+    return &(p->props);             \
+  }
+  GET_SHADER_NODE_PROPS(UsdPreviewSurface)
+  GET_SHADER_NODE_PROPS(UsdUVTexture)
+  GET_SHADER_NODE_PROPS(UsdTransform2d)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_float)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_float2)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_float3)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_float4)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_int)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_string)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_normal)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_vector)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_point)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_matrix)
+  GET_SHADER_NODE_PROPS(OpenPBRSurface)
+  GET_SHADER_NODE_PROPS(MtlxOpenPBRSurface)
+  GET_SHADER_NODE_PROPS(ShaderNode)  // generic fallback (info:id-only shaders)
+#undef GET_SHADER_NODE_PROPS
+  return nullptr;
+}
 
 const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
 #define GET_PRIM_PROPS(__ty)        \
@@ -73,13 +109,14 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   GET_PRIM_PROPS(RectLight)
   GET_PRIM_PROPS(Material)
   // Shader stores generic/unknown shader inputs inside Shader::value
-  // (a ShaderNode) rather than Shader::props. Prefer the inner map when
-  // the outer one is empty so generic shaders keep their inputs/outputs
-  // through USDC roundtrip.
+  // (a concrete ShaderNode subtype) rather than Shader::props. Prefer the inner
+  // map when the outer one is empty so shaders keep their non-schema inputs/
+  // outputs through USDC roundtrip. Note: as<ShaderNode>() does not match a
+  // concrete node (exact-type id), so we dispatch each concrete subtype.
   if (auto *sh = v.as<Shader>()) {
     if (sh->props.empty()) {
-      if (auto *node = sh->value.as<ShaderNode>()) {
-        return &node->props;
+      if (const auto *node_props = GetShaderNodeProps(sh->value)) {
+        return node_props;
       }
     }
     return &sh->props;
@@ -373,6 +410,14 @@ bool CrateWriter::ConvertSinglePrim(
 
   Path prim_path(abs_path_str, "");
   std::string type_name = prim.prim_type_name();
+
+  // All specs this prim contributes (its Prim spec + Attribute/Relationship/
+  // Connection specs) are appended to spec_data_ within this call. Record the
+  // start index so the "properties"-field pass below scans only this prim's
+  // specs instead of all accumulated specs — the prior all-specs scan made
+  // ConvertSinglePrim O(prims x total_specs), which dominated write time for
+  // spec-dense scenes (e.g. a scene with ~5000 shaders -> ~57 s write).
+  const size_t my_specs_begin = spec_data_.size();
 
   DCOUT("ConvertSinglePrim: name=" << prim_name << " abs=" << abs_path_str << " type=" << type_name);
 
@@ -675,6 +720,12 @@ bool CrateWriter::ConvertSinglePrim(
         else if (auto *p3 = shader->value.as<UsdPrimvarReader_float4>()) add_pr_terminal(p3);
         else if (auto *p4 = shader->value.as<UsdPrimvarReader_int>()) add_pr_terminal(p4);
         else if (auto *p5 = shader->value.as<UsdPrimvarReader_string>()) add_pr_terminal(p5);
+      } else if (auto* mtlx_surface = shader->value.as<MtlxOpenPBRSurface>()) {
+        // MaterialX ND_open_pbr_surface_surfaceshader -> typed MtlxOpenPBRSurface
+        if (!AddMtlxOpenPBRSurfaceInputSpecs(mtlx_surface, prim_path, err)) {
+          if (err) *err = "Failed to add MtlxOpenPBRSurface input specs: " + *err;
+          return false;
+        }
       }
     }
   }
@@ -868,7 +919,11 @@ bool CrateWriter::ConvertSinglePrim(
     const std::string prim_prefix = abs_path_str + ".";
     std::vector<value::token> property_names;
     std::set<std::string> seen;
-    for (const auto &sd : spec_data_) {
+    // Scan only the specs this prim added (see my_specs_begin), not all of
+    // spec_data_ — direct-child Attribute/Relationship specs are always among
+    // this prim's own specs.
+    for (size_t _i = my_specs_begin; _i < spec_data_.size(); ++_i) {
+      const auto &sd = spec_data_[_i];
       if (sd.spec_type == SpecType::Attribute ||
           sd.spec_type == SpecType::Relationship) {
         const std::string &fp = sd.path.full_path_name();
@@ -886,10 +941,12 @@ bool CrateWriter::ConvertSinglePrim(
       }
     }
     if (!property_names.empty()) {
-      // Append "properties" field to the existing prim spec
-      for (auto &sd : spec_data_) {
-        if (sd.path.full_path_name() == abs_path_str &&
-            sd.spec_type == SpecType::Prim) {
+      // Append "properties" field to this prim's Prim spec (also within the
+      // [my_specs_begin, end) range this call appended).
+      for (size_t _i = my_specs_begin; _i < spec_data_.size(); ++_i) {
+        auto &sd = spec_data_[_i];
+        if (sd.spec_type == SpecType::Prim &&
+            sd.path.full_path_name() == abs_path_str) {
           crate::CrateValue props_value;
           props_value.Set(property_names);
           sd.fields.push_back({"properties", props_value});
