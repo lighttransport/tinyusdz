@@ -34,12 +34,12 @@ namespace pcp {
 nonstd::expected<bool, std::string> Cache::Impl::BuildParallel(
     const std::vector<Path> &paths, size_t num_threads, std::string *warn,
     std::string *err) {
-  (void)warn;
-  (void)err;
+  (void)err;  // best-effort: per-path failures are surfaced via `warn`, not err
 
   struct Slot {
     Path path;
     std::shared_ptr<CachedPrimIndex> entry;  // null if skipped/failed
+    std::string err;                         // build error when entry is null
   };
 
   std::vector<Slot> slots(paths.size());
@@ -47,11 +47,17 @@ nonstd::expected<bool, std::string> Cache::Impl::BuildParallel(
     slots[i].path = paths[i];
   }
 
+  const size_t count = slots.size();
+  if (count == 0) {
+    return true;  // nothing to build
+  }
+
   // Pull work items by atomically incrementing a shared index. Each worker
   // writes only to its own slot -> no shared mutable state in this region
-  // (the LayerRegistry, reached via BuildEntry, locks internally).
+  // (the LayerRegistry, reached via BuildEntry, locks internally). BuildEntry
+  // reports failures via nonstd::expected (no C++ exceptions), so a failed
+  // build is recorded in the slot and skipped, never aborting the batch.
   std::atomic<size_t> next_idx{0};
-  const size_t count = slots.size();
 
   auto worker = [&]() {
     for (;;) {
@@ -61,29 +67,57 @@ nonstd::expected<bool, std::string> Cache::Impl::BuildParallel(
       auto built = BuildEntry(slots[i].path, &w, &e);
       if (built) {
         slots[i].entry = built.value();
+      } else {
+        slots[i].err = built.error();  // record; keep draining the queue
       }
     }
   };
 
+  // Never spawn more threads than work items, and let the calling thread run as
+  // one worker (spawn count-1). This bounds std::thread creation -- which can
+  // itself fail under resource pressure -- and keeps progress when fewer workers
+  // than requested are available. All threads drain the same atomic queue, so
+  // the result is independent of how many actually run.
   if (num_threads < 1) num_threads = 1;
+  if (num_threads > count) num_threads = count;
+
   std::vector<std::thread> workers;
-  workers.reserve(num_threads);
-  for (size_t t = 0; t < num_threads; t++) {
+  workers.reserve(num_threads - 1);
+  for (size_t t = 0; t + 1 < num_threads; t++) {
     workers.emplace_back(worker);
   }
+  worker();  // calling thread participates
   for (auto &t : workers) {
     t.join();
   }
 
   // Deterministic merge (input order): identical to the sequential path.
+  size_t failed = 0;
+  std::string fail_detail;
   for (auto &s : slots) {
-    if (!s.entry) continue;
+    if (!s.entry) {
+      // Null entry == BuildEntry failed for this path (best-effort skip).
+      failed++;
+      if (fail_detail.size() < 4000) {  // bound the aggregated message
+        fail_detail += "  " + s.path.prim_part() + ": " + s.err + "\n";
+      }
+      continue;
+    }
     const std::string key = s.path.prim_part();
     if (index_cache.find(key) != index_cache.end()) {
       continue;  // already cached (keep the existing entry)
     }
     index_cache[key] = s.entry;
     RegisterDependencies(key, *s.entry);
+  }
+
+  // Surface best-effort failures as a warning rather than dropping them
+  // silently. Non-fatal by design, so the batch still succeeds.
+  if (failed && warn) {
+    *warn += "pcp::Cache: " + std::to_string(failed) + " of " +
+             std::to_string(count) +
+             " prim indices failed to build during parallel prewarm:\n" +
+             fail_detail;
   }
 
   return true;
