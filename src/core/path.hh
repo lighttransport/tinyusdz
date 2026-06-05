@@ -10,6 +10,7 @@
 
 #include "nonstd/optional.hpp"
 #include "value-types.hh"
+#include "tiny-string.hh"
 
 namespace tinyusdz {
 
@@ -47,8 +48,20 @@ bool ValidatePrimElementName(const std::string &tok);
 ///
 /// and have more limitatons.
 ///
+namespace crate {
+struct PathHasher;  // forward decl: defined in src/crate-format.hh
+struct PathKeyEqual;
+}  // namespace crate
+
 class Path {
  public:
+  // PathHasher and PathKeyEqual need to read the private _variant_part /
+  // _variant_selection_part fields directly (see concern 5 in review.md),
+  // so we friend them here. variant_part() is the public formatter but
+  // allocates a std::string on every call, which is too expensive for a
+  // hot-path hasher.
+  friend struct crate::PathHasher;
+  friend struct crate::PathKeyEqual;
   // Similar to SdfPathNode
   enum class PathType {
     Prim,
@@ -65,11 +78,8 @@ class Path {
   Path() : _valid(false) {}
 
   static Path make_root_path() {
-    Path p = Path("/", "");
-    // elementPath is empty for root.
-    p._element = "";
-    p._valid = true;
-    return p;
+    // _assemble() sets _full="/", _prim_len=1, empty element, _valid=true.
+    return Path("/", "");
   }
 
   // Create Path both from Prim Path and Prop
@@ -94,29 +104,59 @@ class Path {
   Path &operator=(const Path &rhs) = default;
   Path &operator=(Path &&rhs) noexcept = default;
 
-  std::string full_path_name() const {
-    std::string s;
-    if (!_valid) {
-      s += "#INVALID#";
-    }
-
-    s += _prim_part;
-    if (_prop_part.empty()) {
-      return s;
-    }
-
-    s += "." + _prop_part;
-
-    return s;
+  // The canonical path text ("prim" or "prim.prop") is stored ONCE in `_full`;
+  // every part accessor returns a non-allocating tstring_view slice into it.
+  //
+  // NOTE: prim_part() / element_name() are *interior* slices and are therefore
+  // NOT NUL-terminated at view.size(); use size-aware operations (==, <, ...)
+  // and to_string(view) if you need an owned std::string. prop_part() and
+  // full_path_view() ARE NUL-terminated (suffix / whole buffer).
+  //
+  // Lifetime: the returned view borrows from `_full`. The view is valid only
+  // as long as this Path is alive and not mutated via _assemble() / _update().
+  // See concern 3 in review.md.
+  tstring_view full_path_view() const {
+    return tstring_view(_full.data(), _full.size());
+  }
+  tstring_view prim_part_view() const {
+    return tstring_view(_full.data(), _prim_len);
+  }
+  tstring_view prop_part_view() const {
+    return _prop_len ? tstring_view(_full.data() + _prim_len + 1, _prop_len)
+                     : tstring_view(_full.data() + _full.size(), size_t(0));
+  }
+  tstring_view element_name_view() const {
+    return tstring_view(_full.data() + _elem_off, _elem_len);
   }
 
-  const std::string &prim_part() const { return _prim_part; }
-  const std::string &prop_part() const { return _prop_part; }
+  // Back-compatible names, now returning views (return-type change).
+  tstring_view prim_part() const { return prim_part_view(); }
+  tstring_view prop_part() const { return prop_part_view(); }
+  // element_name() is declared below and defined out-of-line (prim-types.cc).
 
-  const std::string &variant_part() const {
-    _variant_part_str =
-        "{" + _variant_part + "=" + _variant_selection_part + "}";
-    return _variant_part_str;
+  // Owning full path name ("prim" or "prim.prop"). Allocates; prefer
+  // full_path_view() / append_full_path_name() on hot paths.
+  std::string full_path_name() const {
+    if (_valid) {
+      return _full;
+    }
+    return "#INVALID#" + _full;
+  }
+
+  // Append the full path name into `out` with no intermediate allocation; reuse
+  // one `out` buffer across a loop to avoid per-call allocation.
+  void append_full_path_name(std::string *out) const {
+    if (!out) return;
+    if (!_valid) {
+      out->append("#INVALID#");
+    }
+    out->append(_full);
+  }
+
+  // Formatted variant string "{var=sel}". Returns by value (no cached mutable
+  // state -> safe to call on a shared const Path from multiple threads).
+  std::string variant_part() const {
+    return "{" + _variant_part + "=" + _variant_selection_part + "}";
   }
 
   void set_path_type(const PathType ty) { _path_type = ty; }
@@ -138,11 +178,11 @@ class Path {
     }
 
     // TODO: RelationalAttribute
-    if (_prim_part.empty()) {
+    if (_prim_len == 0) {
       return false;
     }
 
-    if (_prop_part.size()) {
+    if (_prop_len) {
       return true;
     }
 
@@ -151,11 +191,11 @@ class Path {
 
   // Is Prim path?
   bool is_prim_path() const {
-    if (_prop_part.size()) {
+    if (_prop_len) {
       return false;
     }
 
-    if (_prim_part.size()) {
+    if (_prim_len) {
       return true;
     }
 
@@ -165,10 +205,10 @@ class Path {
   // Is Prim's property path?
   // True when both PrimPart and PropPart are not empty.
   bool is_prim_property_path() const {
-    if (_prim_part.empty()) {
+    if (_prim_len == 0) {
       return false;
     }
-    if (_prop_part.size()) {
+    if (_prop_len) {
       return true;
     }
     return false;
@@ -177,7 +217,7 @@ class Path {
   bool is_valid() const { return _valid; }
 
   bool is_empty() {
-    return (_prim_part.empty() && _variant_part.empty() && _prop_part.empty());
+    return (_prim_len == 0 && _variant_part.empty() && _prop_len == 0);
   }
 
   // static Path RelativePath() { return Path("."); }
@@ -198,7 +238,7 @@ class Path {
 
   // Get element name(the last element of Path. i.e. Prim's name, Property's
   // name)
-  const std::string &element_name() const;
+  tstring_view element_name() const;
 
   ///
   /// Split a path to the root(common ancestor) and its siblings
@@ -279,7 +319,7 @@ class Path {
       return false;
     }
 
-    if ((_prim_part.size() == 1) && (_prim_part[0] == '/')) {
+    if ((_prim_len == 1) && (_full[0] == '/')) {
       return true;
     }
 
@@ -298,9 +338,9 @@ class Path {
       return false;
     }
 
-    if ((_prim_part.size() > 1) && (_prim_part[0] == '/')) {
-      // no other '/' except for the fist one
-      if (_prim_part.find_last_of('/') == 0) {
+    if ((_prim_len > 1) && (_full[0] == '/')) {
+      // no other '/' in the prim region except for the first one
+      if (_full.rfind('/', size_t(_prim_len) - 1) == 0) {
         return true;
       }
     }
@@ -309,7 +349,7 @@ class Path {
   }
 
   bool is_absolute_path() const {
-    if (_prim_part.size() && _prim_part[0] == '/') {
+    if (_prim_len && _full[0] == '/') {
       return true;
     }
 
@@ -317,7 +357,7 @@ class Path {
   }
 
   bool is_relative_path() const {
-    if (_prim_part.size()) {
+    if (_prim_len) {
       return !is_absolute_path();
     }
 
@@ -326,9 +366,11 @@ class Path {
 
   // Strip '/'
   Path &make_relative() {
-    if (is_absolute_path() && (_prim_part.size() > 1)) {
-      // Remove first '/'
-      _prim_part.erase(0, 1);
+    if (is_absolute_path() && (_prim_len > 1)) {
+      // Remove leading '/' from the single buffer and shift offsets left by 1.
+      _full.erase(0, 1);
+      _prim_len -= 1;
+      if (_elem_off > 0) _elem_off -= 1;
     }
     return *this;
   }
@@ -349,12 +391,14 @@ class Path {
   // To sort paths lexicographically.
   // TODO: consider abs and relative path correctly
   bool operator<(const Path &rhs) const {
-    if (full_path_name() == rhs.full_path_name()) {
+    // Equal iff both parts match (no full_path_name() allocation).
+    if (prim_part_view() == rhs.prim_part_view() &&
+        prop_part_view() == rhs.prop_part_view()) {
       return false;
     }
 
-    if (prim_part().empty() || rhs.prim_part().empty()) {
-      return prim_part().empty() && rhs.prim_part().size();
+    if (_prim_len == 0 || rhs._prim_len == 0) {
+      return _prim_len == 0 && rhs._prim_len != 0;
     }
 
     return LessThan(*this, rhs);
@@ -365,29 +409,36 @@ class Path {
   ///
   size_t estimate_memory_usage() const {
     size_t total = sizeof(Path);
-    total += _prim_part.capacity();
-    total += _prop_part.capacity();
+    total += _full.capacity();
     total += _variant_part.capacity();
     total += _variant_selection_part.capacity();
-    total += _variant_part_str.capacity();
-    total += _element.capacity();
     return total;
   }
 
  private:
   void _update(const std::string &p, const std::string &prop);
 
-  std::string _prim_part;     // e.g. /Model/MyMesh, MySphere
-  std::string _prop_part;     // e.g. visibility (`.` is not included)
+  // Single canonical owning buffer "prim" or "prim.prop" (e.g.
+  // "/Model/MyMesh.visibility"); all string parts are views into this. Built
+  // eagerly at construction/mutation, immutable afterwards -> lock-free reads.
+  std::string _full;
+  uint32_t _prim_len{0};   // prim_part = _full[0 .. _prim_len)
+  uint32_t _prop_len{0};   // prop_part = _full[_prim_len+1 .. +_prop_len); 0 = no prop
+  uint32_t _elem_off{0};   // element_name = _full[_elem_off .. +_elem_len)
+  uint32_t _elem_len{0};
+
+  // Variant tokens are rare; kept as small separate strings (usually empty ->
+  // SSO, no heap). `{var=sel}` is also embedded in the prim region of `_full`.
   std::string _variant_part;  // e.g. `variantColor` for {variantColor=green}
-  std::string _variant_selection_part;  // e.g. `green` for {variantColor=green}
-                                        // . Could be empty({variantColor=}).
-  mutable std::string _variant_part_str;  // str buffer for variant_part()
-  mutable std::string _element;           // Element name
+  std::string _variant_selection_part;  // e.g. `green`; could be empty.
 
   nonstd::optional<PathType> _path_type;  // Currently optional.
 
   bool _valid{false};
+
+  // Assemble `_full` + offsets from prim/prop parts (eager, no mutable state).
+  // Defined in prim-types.cc.
+  void _assemble(const std::string &prim, const std::string &prop);
 };
 
 bool operator==(const Path &lhs, const Path &rhs);

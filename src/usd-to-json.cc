@@ -39,7 +39,10 @@ size_t USDToJSONContext::AddArrayData(const void* data, size_t elementSize, size
     return SIZE_MAX;  // Invalid accessor index
   }
   
-  size_t totalBytes = elementSize * elementCount;
+  size_t totalBytes;
+  if (!safe::mul(elementSize, elementCount, &totalBytes)) {
+    return SIZE_MAX;  // overflow
+  }
   
   // Create or use existing buffer
   if (buffers.empty()) {

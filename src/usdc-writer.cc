@@ -440,6 +440,69 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
 #endif
 }
 
+bool SaveAsUSDCToFile(const std::string &filename, const Layer &layer,
+                      std::string *warn, std::string *err,
+                      const USDWriteOptions &options) {
+#ifdef __ANDROID__
+  (void)filename;
+  (void)layer;
+  (void)warn;
+  (void)options;
+  if (err) {
+    (*err) += "TODO: Implement Android file saving.\n";
+  }
+  return false;
+#else
+  std::vector<uint8_t> output;
+  if (!SaveAsUSDCToMemory(layer, &output, warn, err)) {
+    return false;
+  }
+
+  bool use_compression = options.use_zstd_compression || HasZstdExtension(filename);
+  const uint8_t *write_data = output.data();
+  size_t write_size = output.size();
+  std::vector<uint8_t> compressed;
+
+  if (use_compression) {
+#ifdef TINYUSDZ_WITH_ZSTD_COMPRESSION
+    if (!ZstdCompression::Compress(output.data(), output.size(),
+                                   &compressed, options.zstd_compression_level, err)) {
+      return false;
+    }
+    write_data = compressed.data();
+    write_size = compressed.size();
+#else
+    std::vector<uint8_t> compressed;
+    (void)compressed;
+    if (err) {
+      (*err) = "zstd compression requested but TINYUSDZ_WITH_ZSTD_COMPRESSION is not enabled.\n";
+    }
+    return false;
+#endif
+  }
+
+  FILE *fp = fopen(filename.c_str(), "wb");
+  if (!fp) {
+    if (err) {
+      (*err) += "Failed to open file: " + filename + "\n";
+    }
+    return false;
+  }
+
+  size_t n = fwrite(write_data, 1, write_size, fp);
+  fclose(fp);
+
+  if (n < write_size) {
+    if (err) {
+      (*err) += "Failed to write data to a file.\n";
+    }
+    return false;
+  }
+
+  return true;
+#endif
+}
+
 bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
                         std::string *warn, std::string *err,
                         int64_t max_file_size_bytes,
@@ -503,6 +566,66 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
   return true;
 }
 
+bool SaveAsUSDCToMemory(const Layer &layer, std::vector<uint8_t> *output,
+                        std::string *warn, std::string *err,
+                        int64_t max_file_size_bytes,
+                        int64_t max_memory_bytes) {
+  (void)warn;
+
+  if (!output) {
+    if (err) {
+      (*err) += "Output buffer is null.\n";
+    }
+    return false;
+  }
+
+  auto mem_stream = std::unique_ptr<experimental::MemoryOutputStream>(
+      new experimental::MemoryOutputStream());
+  auto* mem_ptr = mem_stream.get();
+
+  experimental::CrateWriter writer(
+      std::unique_ptr<experimental::IOutputStream>(std::move(mem_stream)));
+
+  experimental::CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  opts.enable_compression = true;
+  opts.enable_deduplication = true;
+  if (max_file_size_bytes > 0) opts.max_file_size_bytes = max_file_size_bytes;
+  if (max_memory_bytes > 0) opts.max_memory_bytes = max_memory_bytes;
+  writer.SetOptions(opts);
+
+  std::string open_err;
+  if (!writer.Open(&open_err)) {
+    if (err) {
+      (*err) += "Failed to open CrateWriter: " + open_err + "\n";
+    }
+    return false;
+  }
+
+  std::string convert_err;
+  if (!writer.ConvertLayerToSpecs(layer, &convert_err)) {
+    if (err) {
+      (*err) += "Failed to convert Layer to USDC: " + convert_err + "\n";
+    }
+    return false;
+  }
+
+  std::string finalize_err;
+  if (!writer.Finalize(&finalize_err)) {
+    if (err) {
+      (*err) += "Failed to finalize USDC: " + finalize_err + "\n";
+    }
+    return false;
+  }
+
+  writer.Close();
+
+  *output = mem_ptr->TakeBuffer();
+  return true;
+}
+
 }  // namespace usdc
 }  // namespace tinyusdz
 
@@ -526,11 +649,43 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
   return false;
 }
 
+bool SaveAsUSDCToFile(const std::string &filename, const Layer &layer,
+                      std::string *warn, std::string *err,
+                      const USDWriteOptions &options) {
+  (void)filename;
+  (void)layer;
+  (void)warn;
+  (void)options;
+
+  if (err) {
+    (*err) = "USDC writer feature is disabled in this build.\n";
+  }
+
+  return false;
+}
+
 bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
                         std::string *warn, std::string *err,
                         int64_t max_file_size_bytes,
                         int64_t max_memory_bytes) {
   (void)stage;
+  (void)output;
+  (void)warn;
+  (void)max_file_size_bytes;
+  (void)max_memory_bytes;
+
+  if (err) {
+    (*err) = "USDC writer feature is disabled in this build.\n";
+  }
+
+  return false;
+}
+
+bool SaveAsUSDCToMemory(const Layer &layer, std::vector<uint8_t> *output,
+                        std::string *warn, std::string *err,
+                        int64_t max_file_size_bytes,
+                        int64_t max_memory_bytes) {
+  (void)layer;
   (void)output;
   (void)warn;
   (void)max_file_size_bytes;

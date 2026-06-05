@@ -54,6 +54,41 @@ static void init_test_world(TydraPhysWorld *world, TestWorldBuffers *buf) {
   tydra_phys_world_defaults(world);
 }
 
+void rb_invalid_body_indices_rejected_test(void) {
+  TydraPhysWorld world;
+  TestWorldBuffers buf;
+  init_test_world(&world, &buf);
+
+  TydraPhysBody body;
+  tydra_phys_body_default(&body);
+  int body_idx = tydra_phys_add_body(&world, &body);
+  TEST_CHECK(body_idx == 0);
+
+  TydraPhysCollider col;
+  memset(&col, 0, sizeof(col));
+  col.shape.type = TYDRA_PHYS_SHAPE_SPHERE;
+  col.shape.data.sphere.radius = 1.0f;
+  col.local_pose = tp_xform_identity();
+  col.collision_group = 1;
+  col.collision_mask = 1;
+
+  col.body_index = world.num_bodies;
+  TEST_CHECK(tydra_phys_add_collider(&world, &col) == -1);
+
+  col.body_index = -1;
+  TEST_CHECK(tydra_phys_add_collider(&world, &col) >= 0);
+
+  TydraPhysJoint joint;
+  memset(&joint, 0, sizeof(joint));
+  joint.type = TYDRA_PHYS_JOINT_BALL;
+  joint.body_a = 0;
+  joint.body_b = world.num_bodies;
+  TEST_CHECK(tydra_phys_add_joint(&world, &joint) == -1);
+
+  joint.body_b = -1;
+  TEST_CHECK(tydra_phys_add_joint(&world, &joint) >= 0);
+}
+
 // -----------------------------------------------------------------------
 // 1. Falling sphere: sphere should fall under gravity onto a plane
 // -----------------------------------------------------------------------

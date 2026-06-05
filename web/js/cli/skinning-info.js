@@ -39,7 +39,7 @@ function printSkeletonInfo(usd, detailed = false) {
 
   for (let i = 0; i < numMeshes; i++) {
     try {
-      const mesh = usd.getMesh(i);
+      const mesh = usd.getMeshCopy(i);
       if (mesh && mesh.skel_id !== undefined && mesh.skel_id >= 0) {
         skeletonIds.add(mesh.skel_id);
       }
@@ -111,7 +111,7 @@ function printSkeletonInfo(usd, detailed = false) {
     const meshesUsingSkeleton = [];
     for (let i = 0; i < numMeshes; i++) {
       try {
-        const mesh = usd.getMesh(i);
+        const mesh = usd.getMeshCopy(i);
         if (mesh && mesh.skel_id === skelId) {
           meshesUsingSkeleton.push(mesh.primName || mesh.displayName || `Mesh_${i}`);
         }
@@ -159,7 +159,7 @@ function printSkinningInfo(usd, detailed = false, boneReductionInfo = null, test
 
   for (let i = 0; i < numMeshes; i++) {
     try {
-      const mesh = usd.getMesh(i);
+      const mesh = usd.getMeshCopy(i);
 
       if (!mesh) {
         console.log(`Mesh ${i}: (unable to load)`);

@@ -18,6 +18,7 @@
 #include "stage.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
+#include "usdMtlx.hh"  // For MtlxOpenPBRSurface
 #include "usdSkel.hh"
 #include "usdLux.hh"
 
@@ -560,6 +561,11 @@ private:
   /// Add UsdTransform2d shader input specs as separate attribute specs (called after Shader prim spec is added)
   bool AddUsdTransform2dInputSpecs(const UsdTransform2d* transform2d, const Path& prim_path, std::string* err);
 
+  /// Add MtlxOpenPBRSurface shader input specs as separate attribute specs.
+  /// Mirrors AddUsdPreviewSurfaceInputSpecs (value + connectionPaths); without
+  /// this the typed MaterialX OpenPBR inputs are dropped on stage->USDC write.
+  bool AddMtlxOpenPBRSurfaceInputSpecs(const MtlxOpenPBRSurface* surface, const Path& prim_path, std::string* err);
+
   /// Add material binding relationships as separate relationship specs (called after Prim spec is added)
   /// Handles material:binding, material:binding:preview, and material:binding:full relationships
   bool AddMaterialBindingSpecs(const Prim& prim, const Path& prim_path, std::string* err);
@@ -570,6 +576,12 @@ private:
 
   /// Add PointInstancer prototypes relationship as separate relationship spec
   bool AddPointInstancerPrototypesSpec(const Prim& prim, const Path& prim_path, std::string* err);
+
+  /// Add SkelBindingAPI relationships as separate relationship specs (called after Prim spec is added)
+  /// Handles skel:animationSource (Skeleton, SkelRoot), skel:skeleton (SkelRoot, GeomMesh),
+  /// and skel:blendShapeTargets (GeomMesh). These are stored as typed optional Relationship
+  /// fields, so they are not covered by the generic props_map serialization path.
+  bool AddSkelBindingSpecs(const Prim& prim, const Path& prim_path, std::string* err);
 
   /// Extract xformOps from Xformable (GPrim or Xform)
   /// Creates separate Attribute specs for each xformOp property
@@ -799,6 +811,11 @@ private:
   tinyusdz::HashMap<Path, crate::PathIndex, crate::PathHasher, crate::PathKeyEqual> path_to_index_;
   std::vector<Path> paths_;  // Index -> path
 
+  // Set of paths that already have a spec, for O(1) duplicate-spec detection in
+  // AddSpec (avoids an O(n^2) linear scan over spec_data_). Keyed like
+  // path_to_index_ but distinct because that map also holds ancestor paths.
+  tinyusdz::HashMap<Path, uint32_t, crate::PathHasher, crate::PathKeyEqual> spec_path_set_;
+
   tinyusdz::HashMap<crate::Field, crate::FieldIndex, crate::FieldHasher, crate::FieldKeyEqual> field_to_index_;
   std::vector<crate::Field> fields_;  // Index -> field
 
@@ -815,7 +832,7 @@ private:
   int64_t value_data_start_offset_ = 0;
   int64_t value_data_end_offset_ = 0;
 
-  // Phase 5: TimeSamples value deduplication with NaN-aware hashing.
+  // Phase 5: Value deduplication with NaN-aware hashing.
   // Follows OpenUSD TfHash pattern: +0.0 and -0.0 hash identically;
   // all other values hash by bit pattern.
   struct NanAwareHash {
@@ -840,13 +857,33 @@ private:
     static bool buffers_equal(const void *a, const void *b, size_t byte_count,
                               size_t element_size, bool is_float);
   };
+
   struct ValueDedupEntry {
     std::vector<char> bytes;
-    size_t element_size;
-    bool is_float;
-    int64_t offset;
+    size_t element_size = 1;
+    bool is_float = false;
+    uint32_t wire_tag = 0;
+    uint64_t rep_data = 0;
+    size_t retained_bytes = 0;
   };
+
+  static bool ComputeValueDedupDescriptor(const crate::CrateValue& value,
+                                          std::vector<char>* bytes,
+                                          size_t* element_size,
+                                          bool* is_float,
+                                          uint32_t* wire_tag);
+  bool LookupDeduplicatedValue(const std::vector<char>& bytes,
+                               size_t element_size, bool is_float,
+                               uint32_t wire_tag, crate::ValueRep* rep) const;
+  bool CanRetainDeduplicatedValue(size_t byte_count) const;
+  void RetainDeduplicatedValue(size_t hash, std::vector<char> bytes,
+                               size_t element_size, bool is_float,
+                               uint32_t wire_tag,
+                               const crate::ValueRep& rep);
+  size_t GetValueDedupBudgetBytes() const;
+
   std::unordered_multimap<size_t, ValueDedupEntry> value_dedup_map_;
+  size_t value_dedup_bytes_ = 0;
 };
 
 } // namespace experimental

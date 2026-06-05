@@ -81,9 +81,10 @@ bool operator==(const Path &lhs, const Path &rhs) {
     return false;
   }
 
-  // Currently simply compare string.
-  // FIXME: Better Path identity check.
-  return (lhs.full_path_name() == rhs.full_path_name());
+  // Compare the parts directly (no full_path_name() allocation). Two paths are
+  // equal iff prim and prop parts match.
+  return lhs.prim_part() == rhs.prim_part() &&
+         lhs.prop_part() == rhs.prop_part();
 }
 
 bool ConvertTokenAttributeToStringAttribute(
@@ -133,6 +134,36 @@ bool ConvertTokenAttributeToStringAttribute(
 // -- Path
 //
 
+// Build the single canonical buffer `_full` and the part offsets from prim and
+// prop strings (eager, lock-free). element = property name (when present) else
+// the last '/'-delimited segment of the prim part.
+void Path::_assemble(const std::string &prim, const std::string &prop) {
+  _full = prim;
+  _prim_len = static_cast<uint32_t>(prim.size());
+  if (!prop.empty()) {
+    _full.push_back('.');
+    _full.append(prop);
+    _prop_len = static_cast<uint32_t>(prop.size());
+    _elem_off = _prim_len + 1u;
+    _elem_len = _prop_len;
+  } else {
+    _prop_len = 0;
+    if (_prim_len == 0) {
+      _elem_off = 0;
+      _elem_len = 0;
+    } else {
+      const size_t pos = prim.rfind('/');
+      if (pos == std::string::npos) {
+        _elem_off = 0;
+        _elem_len = _prim_len;
+      } else {
+        _elem_off = static_cast<uint32_t>(pos + 1);
+        _elem_len = static_cast<uint32_t>(_prim_len - (pos + 1));
+      }
+    }
+  }
+}
+
 void Path::_update(const std::string &p, const std::string &prop) {
   //
   // For absolute path, starts with '/' and no other '/' exists.
@@ -147,18 +178,12 @@ void Path::_update(const std::string &p, const std::string &prop) {
   auto slash_fun = [](const char c) { return c == '/'; };
   auto dot_fun = [](const char c) { return c == '.'; };
 
-  std::vector<std::string> prims = split(p, "/");
-
-  // TODO: More checks('{', '[', ...)
-
   if (prop.size()) {
     // prop should not contain slashes
-    auto nslashes = std::count_if(prop.begin(), prop.end(), slash_fun);
-    if (nslashes) {
+    if (std::count_if(prop.begin(), prop.end(), slash_fun)) {
       _valid = false;
       return;
     }
-
     // prop does not start with '.'
     if (startsWith(prop, ".")) {
       _valid = false;
@@ -166,136 +191,72 @@ void Path::_update(const std::string &p, const std::string &prop) {
     }
   }
 
-  if (p[0] == '/') {
+  std::string lp;   // prim part
+  std::string lpr;  // prop part
+
+  if (!p.empty() && p[0] == '/') {
     // absolute path
-
     auto ndots = std::count_if(p.begin(), p.end(), dot_fun);
-
     if (ndots == 0) {
-      // absolute prim.
-      _prim_part = p;
-
-      if (prop.size()) {
-        _prop_part = prop;
-        _element = prop;
-      } else {
-        if (prims.size()) {
-          _element = prims[prims.size() - 1];
-        } else {
-          _element = p;
-        }
-      }
-      _valid = true;
+      lp = p;
+      lpr = prop;
     } else if (ndots == 1) {
-      // prim_part contains property name.
+      // prim_part contains property name; prop must be empty.
       if (prop.size()) {
-        // prop must be empty.
         _valid = false;
         return;
       }
-
       if (p.size() < 3) {
-        // "/."
         _valid = false;
         return;
       }
-
       auto loc = p.find_first_of('.');
       if (loc == std::string::npos) {
-        // ?
         _valid = false;
         return;
       }
-
-      if (loc <= 0) {
-        // this should not happen though.
-        _valid = false;
-      }
-
-      // split
-      std::string prop_name = p.substr(size_t(loc));
-
-      _prop_part = prop_name.erase(0, 1);  // remove '.'
-      _prim_part = p.substr(0, size_t(loc));
-      _element = _prop_part;  // elementName is property path
-
-      _valid = true;
-
+      lp = p.substr(0, size_t(loc));
+      lpr = p.substr(size_t(loc) + 1);  // remove '.'
     } else {
       _valid = false;
       return;
     }
-
-  } else if (p[0] == '.') {
-    // maybe relative(e.g. "./xform", "../xform")
-    // FIXME: Support relative path fully
-
-    _prim_part = p;
-    if (prop.size()) {
-      _prop_part = prop;
-      _element = prop;
-    } else {
-      if (prims.size()) {
-        _element = prims[prims.size() - 1];
-      } else {
-        _element = p;
-      }
-    }
-    _valid = true;
-
-
+  } else if (!p.empty() && p[0] == '.') {
+    // maybe relative(e.g. "./xform", "../xform"). FIXME: Support fully.
+    lp = p;
+    lpr = prop;
   } else {
-    // prim.prop
-
+    // prim or prim.prop (relative)
     auto ndots = std::count_if(p.begin(), p.end(), dot_fun);
     if (ndots == 0) {
-      // relative prim.
-      _prim_part = p;
-      if (prop.size()) {
-        _prop_part = prop;
-        _element = prop;
-      } else {
-        _element = p;
-      }
-      _valid = true;
+      lp = p;
+      lpr = prop;
     } else if (ndots == 1) {
       if (p.size() < 3) {
-        // "/."
         _valid = false;
         return;
       }
-
       auto loc = p.find_first_of('.');
       if (loc == std::string::npos) {
-        // ?
         _valid = false;
         return;
       }
-
-      if (loc <= 0) {
-        // this should not happen though.
-        _valid = false;
-      }
-
-      // split
-      std::string prop_name = p.substr(size_t(loc));
-
-      // Check if No '/' in prop_part
+      std::string prop_name = p.substr(size_t(loc) + 1);  // remove '.'
+      // Check no '/' in prop part.
       if (std::count_if(prop_name.begin(), prop_name.end(), slash_fun) > 0) {
         _valid = false;
         return;
       }
-
-      _prim_part = p.substr(0, size_t(loc));
-      _prop_part = prop_name.erase(0, 1);  // remove '.'
-
-      _valid = true;
-
+      lp = p.substr(0, size_t(loc));
+      lpr = prop_name;
     } else {
       _valid = false;
       return;
     }
   }
+
+  _assemble(lp, lpr);
+  _valid = true;
 }
 
 Path::Path(const std::string &p, const std::string &prop) {
@@ -327,10 +288,8 @@ Path Path::append_property(const std::string &elem) {
     p._valid = false;
     return p;
   } else {
-    // TODO: Validate property path.
-    p._prop_part = elem;
-    p._element = elem;
-
+    // TODO: Validate property path. Keep the prim part, set the property part.
+    p._assemble(std::string(p._full.data(), p._prim_len), elem);
     return p;
   }
 }
@@ -397,18 +356,15 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
   }
 
   if (lhs.prim_part() == rhs.prim_part()) {
-    // compare property
-    const std::string &lhs_prop_part = lhs.prop_part();
-    const std::string &rhs_prop_part = rhs.prop_part();
+    // compare property (view-based, byte-wise lexicographic)
+    const tstring_view lhs_prop_part = lhs.prop_part();
+    const tstring_view rhs_prop_part = rhs.prop_part();
 
     if (lhs_prop_part.empty() || rhs_prop_part.empty()) {
       return lhs_prop_part.empty();
     }
 
-    return ::tinyusdz::lexicographical_compare(
-        lhs_prop_part.begin(), lhs_prop_part.end(), rhs_prop_part.begin(),
-        rhs_prop_part.end());
-
+    return lhs_prop_part < rhs_prop_part;
   }
 
   // Different prim parts: compare using full_path_name with special
@@ -427,9 +383,18 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
   // /A{v=sel}/S → /A{v=sel}\x7F/S (replace / after } with high char)
   // Actually simpler: just ensure VariantSet comes first by making its
   // comparison key shorter.
-  const std::string &l = lhs.full_path_name();
-  const std::string &r = rhs.full_path_name();
-  return l < r;
+  //
+  // Build the two full path names into reused thread-local buffers (clear()
+  // keeps capacity, so no per-call heap allocation after warm-up; thread_local
+  // makes this race-free for concurrent sorts), preserving the exact ordering
+  // of the previous `full_path_name() < full_path_name()` comparison.
+  thread_local std::string l_buf;
+  thread_local std::string r_buf;
+  l_buf.clear();
+  r_buf.clear();
+  lhs.append_full_path_name(&l_buf);
+  rhs.append_full_path_name(&r_buf);
+  return l_buf < r_buf;
 }
 
 std::pair<Path, Path> Path::split_at_root() const {
@@ -477,8 +442,10 @@ bool Path::has_prefix(const Path &prefix) const {
   }
 
   if (prefix.is_prim_property_path()) {
-    // No hierarchy in Prim's property path, so use ==.
-    return full_path_name() == prefix.full_path_name();
+    // No hierarchy in Prim's property path, so use == (compare parts directly,
+    // no full_path_name() allocation).
+    return prim_part() == prefix.prim_part() &&
+           prop_part() == prefix.prop_part();
   } else if (prefix.is_prim_path()) {
     // '/', prefix = '/'
     if (is_root_path() && prefix.is_root_path()) {
@@ -534,14 +501,19 @@ Path Path::append_element(const std::string &elem) {
     return p;
   }
 
+  // Current prim/prop parts (copied out before _assemble rebuilds _full).
+  std::string cur_prim(p._full.data(), p._prim_len);
+  std::string cur_prop =
+      p._prop_len ? std::string(p._full.data() + p._prim_len + 1, p._prop_len)
+                  : std::string();
+
   // {variant=value}
   if (is_variantElementName(elem)) {
     std::array<std::string, 2> variant;
     if (tokenize_variantElement(elem, &variant)) {
-      _variant_part = variant[0];
-      _variant_selection_part = variant[0];
-      _prim_part += elem;
-      _element = elem;
+      _variant_part = variant[0];           // variant set name, e.g. `color`
+      _variant_selection_part = variant[1];  // selection, e.g. `red` (may be empty)
+      p._assemble(cur_prim + elem, cur_prop);
       return p;
     } else {
       p._valid = false;
@@ -558,17 +530,12 @@ Path Path::append_element(const std::string &elem) {
     p._valid = false;
     return p;
   } else {
-    // std::cout << "elem " << elem << "\n";
-    if ((p._prim_part.size() == 1) && (p._prim_part[0] == '/')) {
-      p._prim_part += elem;
+    if ((p._prim_len == 1) && (p._full[0] == '/')) {
+      p._assemble(cur_prim + elem, cur_prop);
     } else {
       // TODO: Validate element name.
-      p._prim_part += '/' + elem;
+      p._assemble(cur_prim + '/' + elem, cur_prop);
     }
-
-    // Also store raw element name
-    p._element = elem;
-
     return p;
   }
 }
@@ -583,20 +550,23 @@ Path Path::get_parent_path() const {
     return p;
   }
 
+  // Prim part as an owning string for substring/find operations.
+  const std::string prim(_full.data(), _prim_len);
+
   if (is_prim_property_path()) {
-    return Path(prim_part(), "");
+    return Path(prim, "");
   }
 
   // Handle variant paths where the LAST element is a variant: /A{v} -> /A
   // Only applies when there's no '/' after the last '{'.
   // For /A{v=sel}/C, the normal '/' splitting handles it → parent is /A{v=sel}.
   {
-    auto brace_pos = _prim_part.find_last_of('{');
-    auto last_slash = _prim_part.find_last_of('/');
+    auto brace_pos = prim.find_last_of('{');
+    auto last_slash = prim.find_last_of('/');
     if (brace_pos != std::string::npos && brace_pos > 0 &&
         (last_slash == std::string::npos || last_slash < brace_pos)) {
       // The variant element is the last component (no '/' after it)
-      std::string parent_str = _prim_part.substr(0, brace_pos);
+      std::string parent_str = prim.substr(0, brace_pos);
       if (parent_str.empty()) {
         return Path("/", "");
       }
@@ -604,7 +574,7 @@ Path Path::get_parent_path() const {
     }
   }
 
-  size_t n = _prim_part.find_last_of('/');
+  size_t n = prim.find_last_of('/');
   if (n == std::string::npos) {
     return Path();
   }
@@ -613,7 +583,7 @@ Path Path::get_parent_path() const {
     return Path("/", "");
   }
 
-  return Path(_prim_part.substr(0, n), "");
+  return Path(prim.substr(0, n), "");
 }
 
 Path Path::get_parent_prim_path() const {
@@ -621,13 +591,16 @@ Path Path::get_parent_prim_path() const {
     return Path();
   }
 
+  // Prim part as an owning string for substring/find operations.
+  const std::string prim(_full.data(), _prim_len);
+
   // Handle variant paths FIRST — /A{v} -> /A, /A{v=sel} -> /A
   // Must check before is_root_prim() because /A{v} passes the root prim
   // test (only one '/') but is actually a sub-element of /A.
   {
-    auto brace_pos = _prim_part.find_last_of('{');
+    auto brace_pos = prim.find_last_of('{');
     if (brace_pos != std::string::npos && brace_pos > 0) {
-      std::string parent_str = _prim_part.substr(0, brace_pos);
+      std::string parent_str = prim.substr(0, brace_pos);
       if (parent_str.empty()) {
         return Path("/", "");
       }
@@ -640,10 +613,10 @@ Path Path::get_parent_prim_path() const {
   }
 
   if (is_prim_property_path()) {
-    return Path(prim_part(), "");
+    return Path(prim, "");
   }
 
-  size_t n = _prim_part.find_last_of('/');
+  size_t n = prim.find_last_of('/');
   if (n == std::string::npos) {
     // this should never happen though.
     return Path();
@@ -654,19 +627,14 @@ Path Path::get_parent_prim_path() const {
     return Path("/", "");
   }
 
-  return Path(_prim_part.substr(0, n), "");
+  return Path(prim.substr(0, n), "");
 }
 
-const std::string &Path::element_name() const {
-  if (_element.empty()) {
-    // Get last item.
-    std::vector<std::string> tokenized_prim_names = split(prim_part(), "/");
-    if (tokenized_prim_names.size()) {
-      _element = tokenized_prim_names[size_t(tokenized_prim_names.size() - 1)];
-    }
-  }
-
-  return _element;
+tstring_view Path::element_name() const {
+  // The element slice is computed eagerly during construction / append_* (the
+  // last '/'-segment of the prim path, or the property name). Lock-free read
+  // (no mutable state) -> safe on a shared const Path across threads.
+  return element_name_view();
 }
 
 nonstd::optional<Kind> KindFromString(const std::string &str) {
@@ -895,6 +863,7 @@ bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs,
     if (err) {
       (*err) += "child_prim_name is empty.\n";
     }
+    return false;
   }
 
   if (!ValidatePrimElementName(child_prim_name)) {
@@ -902,6 +871,7 @@ bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs,
       (*err) +=
           fmt::format("`{}` is not a valid Prim name.\n", child_prim_name);
     }
+    return false;
   }
 
   if (_children.size() != _childrenNameSet.size()) {

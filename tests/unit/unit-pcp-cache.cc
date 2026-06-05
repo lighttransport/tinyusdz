@@ -491,3 +491,166 @@ void pcp_mt_shared_reference_test(void) {
     TEST_CHECK(has_ref);
   }
 }
+
+// ---------------------------------------------------------------------------
+// pcp_external_payload_load_unload_test
+// Deferred<->loaded toggle for an EXTERNAL payload. Unlike the internal-payload
+// test, this drives LoadPayload's external branch: GetOrLoad (parse-on-demand
+// through the registry), ValidateAndNormalizeAssetPath, and AddLayerStack.
+// ---------------------------------------------------------------------------
+
+void pcp_external_payload_load_unload_test(void) {
+  const char *root_usda = R"(#usda 1.0
+def Xform "Consumer" (
+    payload = @payload.usda@</PPrim>
+)
+{
+    custom int localAttr = 10
+}
+)";
+
+  MemAsset mem;
+  mem.content =
+      "#usda 1.0\n"
+      "def Xform \"PPrim\"\n"
+      "{\n"
+      "    custom int payloadAttr = 77\n"
+      "}\n";
+
+  AssetResolutionResolver resolver;
+  install_mem_handler(&resolver, &mem);
+
+  pcp::CacheOptions opts;
+  opts.composition.payload_policy = [](const Path &, const Payload &) {
+    return false;  // defer all payloads at compose
+  };
+
+  pcp::Cache cache;
+  std::string err;
+  TEST_CHECK(open_cache(root_usda, resolver, cache, opts, &err));
+  if (!err.empty()) { TEST_MSG("open err: %s", err.c_str()); return; }
+
+  std::string w, e;
+  const auto *idx = cache.ComputePrimIndex(Path("/Consumer", ""), &w, &e);
+  TEST_CHECK(idx != nullptr);
+  if (!idx) return;
+
+  // Deferred: the external file must NOT be parsed yet.
+  TEST_CHECK(cache.HasDeferredPayload(Path("/Consumer", "")));
+  TEST_CHECK_(cache.layer_registry().parse_count() == 0,
+              "external payload must not parse while deferred, got %zu",
+              cache.layer_registry().parse_count());
+
+  // Load -> registry parses payload.usda on demand; a payload-loaded node appears.
+  auto loaded = cache.LoadPayload(Path("/Consumer", ""), &w, &e);
+  TEST_CHECK_(loaded.has_value(), "LoadPayload failed: %s",
+              loaded ? "" : loaded.error().c_str());
+  TEST_CHECK(!cache.HasDeferredPayload(Path("/Consumer", "")));
+  TEST_CHECK_(cache.layer_registry().parse_count() == 1,
+              "expected external payload parsed once, got %zu",
+              cache.layer_registry().parse_count());
+
+  bool any_loaded = false;
+  for (uint16_t i = 0; i < idx->GetNodeCount(); i++) {
+    if (idx->GetNode(i).is_payload_loaded()) any_loaded = true;
+  }
+  TEST_CHECK_(any_loaded, "expected a payload-loaded node after LoadPayload");
+
+  // Unload -> back to deferred (the parsed layer stays cached in the registry).
+  auto unloaded = cache.UnloadPayload(Path("/Consumer", ""));
+  TEST_CHECK(unloaded.has_value());
+  TEST_CHECK(cache.HasDeferredPayload(Path("/Consumer", "")));
+  TEST_CHECK(cache.layer_registry().parse_count() == 1);
+}
+
+// ---------------------------------------------------------------------------
+// pcp_buildstage_reference_grandchildren_test
+// A reference targets a prim that has child/grandchild prims with NO local
+// opinion in the root layer. The composition_graph engine (both the eager
+// CompositionGraph and pcp::Cache) composes the reference's opinions onto the
+// referencing prim but does not currently expand the referenced child subtree
+// into separate prim paths. BuildStage::GatherAllPrimPaths walks only LOCAL
+// primspec paths, so this guards that pcp's BuildStage stays in PARITY with the
+// eager CompositionGraph (same has/!has decision for every candidate path) and
+// that the reference arc is actually processed -- catching any future
+// divergence where pcp drops or gains a prim relative to the eager engine.
+// ---------------------------------------------------------------------------
+
+void pcp_buildstage_reference_grandchildren_test(void) {
+  const char *root_usda = R"(#usda 1.0
+def Xform "Inst" (
+    prepend references = @ref.usda@</Base>
+)
+{
+    custom int localTop = 1
+}
+)";
+
+  MemAsset mem;
+  mem.content =
+      "#usda 1.0\n"
+      "def Xform \"Base\"\n"
+      "{\n"
+      "    custom int baseAttr = 5\n"
+      "    def Scope \"Sub\"\n"
+      "    {\n"
+      "        custom int subAttr = 6\n"
+      "        def Scope \"Leaf\" { custom int leafAttr = 7 }\n"
+      "    }\n"
+      "}\n";
+
+  std::string warn, err;
+
+  // pcp::Cache path.
+  AssetResolutionResolver resolver_a;
+  install_mem_handler(&resolver_a, &mem);
+  pcp::Cache cache;
+  TEST_CHECK(open_cache(root_usda, resolver_a, cache, {}, &err));
+  if (!err.empty()) { TEST_MSG("open err: %s", err.c_str()); return; }
+  Stage pcp_stage;
+  TEST_CHECK(cache.BuildStage(&pcp_stage, &warn, &err));
+  if (!err.empty()) { TEST_MSG("pcp BuildStage err: %s", err.c_str()); return; }
+
+  // eager CompositionGraph oracle.
+  Layer layer;
+  TEST_CHECK(tinyusdz_test::parse_usda_to_layer(root_usda, &layer, &warn, &err));
+  AssetResolutionResolver resolver_b;
+  install_mem_handler(&resolver_b, &mem);
+  auto cg = composition_graph::CompositionGraph::Compose(
+      resolver_b, layer, composition_graph::CompositionGraphOptions());
+  TEST_CHECK(cg.has_value());
+  if (!cg) { TEST_MSG("cg err: %s", cg.error().c_str()); return; }
+  Stage cg_stage;
+  TEST_CHECK(cg->BuildStage(&cg_stage, &warn, &err));
+
+  // pcp and the eager graph must agree on every candidate path (present or
+  // absent) -- a divergence means pcp's BuildStage dropped or gained a prim.
+  const char *paths[] = {"/Inst", "/Inst/Sub", "/Inst/Sub/Leaf"};
+  for (const char *p : paths) {
+    auto a = pcp_stage.GetPrimAtPath(Path(p, ""));
+    auto b = cg_stage.GetPrimAtPath(Path(p, ""));
+    TEST_CHECK_(a.has_value() == b.has_value(),
+                "path %s parity broken: pcp=%d cg=%d", p, int(a.has_value()),
+                int(b.has_value()));
+  }
+  // Non-vacuous: the referencing prim itself is present in both.
+  TEST_CHECK(pcp_stage.GetPrimAtPath(Path("/Inst", "")).has_value());
+  TEST_CHECK(cg_stage.GetPrimAtPath(Path("/Inst", "")).has_value());
+  TEST_CHECK_(pcp_stage.root_prims().size() == cg_stage.root_prims().size(),
+              "pcp roots=%zu cg roots=%zu", pcp_stage.root_prims().size(),
+              cg_stage.root_prims().size());
+
+  // The reference must actually be processed by pcp (an arc node exists), so the
+  // parity above is not vacuously comparing two unreferenced prims.
+  std::string w, e;
+  const auto *inst = cache.ComputePrimIndex(Path("/Inst", ""), &w, &e);
+  TEST_CHECK(inst != nullptr);
+  bool has_ref = false;
+  if (inst) {
+    for (uint16_t i = 0; i < inst->GetNodeCount(); i++) {
+      if (inst->GetNode(i).arc_type == composition_graph::ArcType::Reference)
+        has_ref = true;
+    }
+  }
+  TEST_CHECK_(has_ref, "expected a Reference arc node on /Inst");
+}

@@ -643,7 +643,7 @@ async function dumpLights(options) {
       if (options.showMeshes && lightData.type === 'geometry') {
         const meshId = lightData.geometryMeshId ?? lightData.geometry_mesh_id;
         if (meshId !== undefined && meshId >= 0 && meshId < usd.numMeshes()) {
-          const mesh = usd.getMesh(meshId);
+          const mesh = usd.getMeshCopy(meshId);
           lightData.mesh_geometry = {
             primName: mesh.primName,
             numVertices: mesh.faceVertexIndices?.length || 0,
@@ -657,7 +657,7 @@ async function dumpLights(options) {
         // Find material bound to the mesh if available
         const meshId = lightData.geometryMeshId ?? lightData.geometry_mesh_id;
         if (meshId !== undefined && meshId >= 0 && meshId < usd.numMeshes()) {
-          const mesh = usd.getMesh(meshId);
+          const mesh = usd.getMeshCopy(meshId);
           if (mesh.materialId !== undefined && mesh.materialId >= 0) {
             const material = usd.getMaterial(mesh.materialId);
             lightData.material_info = {

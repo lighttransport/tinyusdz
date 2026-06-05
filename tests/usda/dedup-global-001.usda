@@ -1,0 +1,73 @@
+#usda 1.0
+(
+    defaultPrim = "DedupRoot"
+    startTimeCode = 0
+    endTimeCode = 7
+    timeCodesPerSecond = 24
+)
+
+def Xform "DedupRoot"
+{
+    custom double scalarA = 42.25
+    custom double scalarB = 42.25
+    custom double scalarC = 42.25
+    custom double scalarD = 42.25
+    custom double scalarE = 42.25
+    custom double scalarF = 42.25
+    custom double scalarG = 42.25
+    custom double scalarH = 42.25
+
+    custom double3 vectorA = (1.25, 2.5, 3.75)
+    custom double3 vectorB = (1.25, 2.5, 3.75)
+    custom double3 vectorC = (1.25, 2.5, 3.75)
+    custom double3 vectorD = (1.25, 2.5, 3.75)
+
+    custom double3[] vectorArrayA = [(1, 2, 3), (4, 5, 6), (7, 8, 9), (10, 11, 12)]
+    custom double3[] vectorArrayB = [(1, 2, 3), (4, 5, 6), (7, 8, 9), (10, 11, 12)]
+    custom double3[] vectorArrayC = [(1, 2, 3), (4, 5, 6), (7, 8, 9), (10, 11, 12)]
+    custom double3[] vectorArrayD = [(1, 2, 3), (4, 5, 6), (7, 8, 9), (10, 11, 12)]
+
+    double3 animA.timeSamples = {
+        0: (0, 1, 2),
+        1: (1, 2, 3),
+        2: (2, 3, 4),
+        3: (3, 4, 5),
+        4: (4, 5, 6),
+        5: (5, 6, 7),
+        6: (6, 7, 8),
+        7: (7, 8, 9),
+    }
+
+    double3 animB.timeSamples = {
+        0: (0, 1, 2),
+        1: (1, 2, 3),
+        2: (2, 3, 4),
+        3: (3, 4, 5),
+        4: (4, 5, 6),
+        5: (5, 6, 7),
+        6: (6, 7, 8),
+        7: (7, 8, 9),
+    }
+
+    double3 animC.timeSamples = {
+        0: (0, 1, 2),
+        1: (1, 2, 3),
+        2: (2, 3, 4),
+        3: (3, 4, 5),
+        4: (4, 5, 6),
+        5: (5, 6, 7),
+        6: (6, 7, 8),
+        7: (7, 8, 9),
+    }
+
+    double3 animSharedTimesUniqueValues.timeSamples = {
+        0: (100, 101, 102),
+        1: (101, 102, 103),
+        2: (102, 103, 104),
+        3: (103, 104, 105),
+        4: (104, 105, 106),
+        5: (105, 106, 107),
+        6: (106, 107, 108),
+        7: (107, 108, 109),
+    }
+}

@@ -140,7 +140,11 @@ size_t CrateWriter::NanAwareHash::hash_buffer(const void *data,
   // Float/double: canonicalize +0/-0 into a temp buffer, then XXH3
   // (We copy to avoid mutating the caller's data.)
   std::vector<uint8_t> canon(byte_count);
-  std::memcpy(canon.data(), data, byte_count);
+  // Guard the copy: an empty float/double array reaches here with
+  // byte_count==0 (and possibly-null data/canon pointers); memcpy(null,null,0)
+  // is UB-by-the-letter / flagged by UBSan's nonnull check. XXH3 of 0 bytes
+  // below is already safe.
+  if (byte_count) std::memcpy(canon.data(), data, byte_count);
 
   if (element_size == sizeof(float)) {
     size_t count = byte_count / sizeof(float);
@@ -282,12 +286,12 @@ bool CrateWriter::AddSpec(const Path& path,
     return false;
   }
 
-  // Check for duplicate specs with same path
-  // USD Crate format requires each path to appear only once
-  for (const auto& existing_spec : spec_data_) {
-    if (existing_spec.path.full_path_name() == path.full_path_name()) {
-      return true;  // Silently skip duplicate (not an error)
-    }
+  // Check for duplicate specs with same path (USD Crate requires each path to
+  // appear only once). O(1) via spec_path_set_ — a prior implementation did an
+  // O(n^2) linear scan of spec_data_, each step allocating two full_path_name()
+  // strings, which dominated write time for spec-dense scenes.
+  if (spec_path_set_.count(path)) {
+    return true;  // Silently skip duplicate (not an error)
   }
 
   // Create spec data
@@ -317,6 +321,7 @@ bool CrateWriter::AddSpec(const Path& path,
   // We'll fill in the actual crate::Spec later during Finalize
   // For now, just accumulate the data
   spec_data_.push_back(spec_data);
+  spec_path_set_.emplace(path, 1u);
   memory_used_estimate_ += estimated_memory;
 
   // Pre-register the path for deduplication
@@ -546,7 +551,10 @@ void CrateWriter::Close() {
 template<typename T>
 std::vector<char> SerializeArrayToBytes(const std::vector<T>& arr) {
   std::vector<char> bytes;
-  size_t total_size = sizeof(T) * arr.size();
+  size_t total_size;
+  if (!safe::mul(arr.size(), sizeof(T), &total_size)) {
+    return {};  // overflow
+  }
   bytes.resize(total_size);
   std::memcpy(bytes.data(), arr.data(), total_size);
   return bytes;
@@ -1300,6 +1308,27 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
     return rep;
   }
 
+  bool dedup_candidate = false;
+  std::vector<char> dedup_bytes;
+  size_t dedup_element_size = 1;
+  bool dedup_is_float = false;
+  uint32_t dedup_wire_tag = 0;
+  size_t dedup_hash = 0;
+
+  if (options_.enable_deduplication &&
+      ComputeValueDedupDescriptor(value, &dedup_bytes, &dedup_element_size,
+                                  &dedup_is_float, &dedup_wire_tag)) {
+    dedup_hash = NanAwareHash::combine(
+        NanAwareHash::hash_buffer(dedup_bytes.data(), dedup_bytes.size(),
+                                  dedup_element_size, dedup_is_float),
+        dedup_wire_tag);
+    if (LookupDeduplicatedValue(dedup_bytes, dedup_element_size,
+                                dedup_is_float, dedup_wire_tag, &rep)) {
+      return rep;
+    }
+    dedup_candidate = true;
+  }
+
   // Value cannot be inlined, write to value data section
   bool is_compressed = false;
   int64_t offset = WriteValueData(value, &is_compressed, err);
@@ -1437,6 +1466,12 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   rep.SetPayload(static_cast<uint64_t>(offset));
   if (is_compressed) {
     rep.SetIsCompressed();
+  }
+
+  if (dedup_candidate) {
+    RetainDeduplicatedValue(dedup_hash, std::move(dedup_bytes),
+                            dedup_element_size, dedup_is_float,
+                            dedup_wire_tag, rep);
   }
 
   return rep;

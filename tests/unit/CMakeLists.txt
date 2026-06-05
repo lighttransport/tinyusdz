@@ -23,7 +23,8 @@ set(TEST_SOURCES
 	unit-tydra.cc
 	unit-tydra-subdivision.cc
 	unit-subdiv-tinyusdz.cc
-	# unit-dedup.cc  # Temporarily disabled - needs API updates
+	unit-dedup.cc
+	unit-path.cc
 	unit-crate-writer.cc
 	unit-stage.cc
 	unit-tiny-container.cc
@@ -61,6 +62,10 @@ set(TEST_SOURCES
 	unit-usdz-writer.cc
 	unit-usdc-writer.cc
 	unit-usd-validation.cc
+	# USDZ conversion pipeline + texture ops + fpnge
+	unit-usdz-convert.cc
+	# StringPool interning
+	unit-string-pool.cc
 	# Physics + MuJoCo
 	unit-physics.cc
 	# IK solver

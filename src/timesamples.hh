@@ -95,17 +95,23 @@ struct TimeSamples {
     if (!_times.empty()) {
       // Binary storage path
       if (src_idx >= _times.size()) return false;
+      if (src_idx >= _blocked.size()) return false;
+      if (src_idx >= _data_offsets.size()) return false;
+
+      const bool src_blocked = (_blocked[src_idx] != 0) ||
+                               (_data_offsets[src_idx] == BLOCKED_OFFSET);
+      if (_is_array && !src_blocked && src_idx >= _array_counts.size()) {
+        return false;
+      }
 
       _times.push_back(new_time);
       _blocked.push_back(_blocked[src_idx]);
 
-      if (src_idx < _data_offsets.size()) {
-        // Reuse the same byte offset — zero-copy dedup
-        _data_offsets.push_back(_data_offsets[src_idx]);
-      }
+      // Reuse the same byte offset - zero-copy dedup.
+      _data_offsets.push_back(_data_offsets[src_idx]);
 
-      if (_is_array && src_idx < _array_counts.size()) {
-        _array_counts.push_back(_array_counts[src_idx]);
+      if (_is_array) {
+        _array_counts.push_back(src_blocked ? 0 : _array_counts[src_idx]);
       }
 
       invalidate_reconstructed_samples_cache();
@@ -298,6 +304,12 @@ struct TimeSamples {
  public:
   void update() const;
 
+  // Returns true if an internal invariant violation was detected during
+  // update() (e.g. parallel arrays get out of sync). When true, getters may
+  // return incomplete / mismatched data; callers should not trust the
+  // TimeSamples and treat it as unusable. See concern 4 in review.md.
+  bool has_error() const { return _has_error; }
+
   bool has_sample_at(const double t) const;
 
   nonstd::optional<double> get_time(size_t idx) const {
@@ -328,6 +340,29 @@ struct TimeSamples {
       return nonstd::nullopt;
     }
     return samples[idx].value;
+  }
+
+  /// Reconstruct a single sample by index WITHOUT materializing all samples.
+  /// Unlike get_samples() (which builds and caches the full N-sample vector and
+  /// thus expands read-side-deduplicated values into N independent copies), this
+  /// touches only one sample's worth of memory. Pair it with get_data_offsets()
+  /// so callers can skip reconstructing samples that share an underlying value
+  /// block. Returns false if idx is out of range.
+  bool get_sample_at(size_t idx, Sample *out) const {
+    if (!out) {
+      return false;
+    }
+    if (_dirty) {
+      update();
+    }
+    if (!_times.empty()) {
+      return reconstruct_binary_sample(idx, out);
+    }
+    if (idx >= _samples.size()) {
+      return false;
+    }
+    *out = _samples[idx];
+    return true;
   }
 
   uint32_t type_id() const {
@@ -739,6 +774,42 @@ struct TimeSamples {
     return true;
   }
 
+  /// Add a blocked (None / ValueBlock) sample to an ARRAY-valued binary
+  /// timesamples. Mirrors add_array_sample's bookkeeping — it validates the
+  /// ARRAY type id, sets `_is_array`, and pushes an aligned `_array_counts`
+  /// entry (0) alongside the BLOCKED_OFFSET. The scalar add_binary_blocked_sample
+  /// validates the *scalar* type id, which conflicts with an array-typed
+  /// TimeSamples and fails the add — that aborts reconstruction and silently
+  /// drops every sample of an animated array attribute that authors a `None`
+  /// time sample. Use this for the array case instead.
+  template<typename T>
+  bool add_array_blocked_sample(double t, std::string* err = nullptr,
+                                size_t expected_total_samples = 0) {
+    (void)expected_total_samples;
+    static_assert(value::uses_binary_timesample_array_storage_v<T>,
+                  "add_array_blocked_sample requires binary-serializable array "
+                  "element types");
+
+    if (!validate_type_or_init(
+            _type_id != 0 ? _type_id
+                          : value::TypeTraits<std::vector<T>>::type_id(),
+            err, "add_array_blocked_sample")) {
+      return false;
+    }
+
+    _element_size = static_cast<uint32_t>(sizeof(T));
+    _is_array = true;
+
+    _times.push_back(t);
+    _blocked.push_back(1);  // Blocked
+    _data_offsets.push_back(BLOCKED_OFFSET);
+    _array_counts.push_back(0);  // keep _array_counts aligned with _times
+
+    invalidate_reconstructed_samples_cache();
+    _dirty = true;
+    return true;
+  }
+
   //
   // std::vector<T> support (Phase 2 Step 3)
   //
@@ -918,6 +989,7 @@ struct TimeSamples {
   uint32_t _type_id{0};
   uint32_t _element_size{0};                        // sizeof(T) for binary elements
   mutable bool _dirty{false};
+  mutable bool _has_error{false};                   // Set if update() detected a parallel-array invariant violation
   bool _is_array{false};                            // true if storing array data
 
   // _pod_samples removed - using unified storage directly

@@ -3,8 +3,18 @@
 #include <sstream>
 #include <vector>
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
 #include "external/jsonhpp/nlohmann/json.hpp"
-#include "common-macros.inc"  // kMaxDefaultTraversalLimit (recursion depth guard)
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
+#include "common-macros.inc"
 
 namespace tinyusdz {
 namespace tydra {
@@ -135,6 +145,52 @@ nlohmann::json ArrayValuesToJSON<value::token>(const std::vector<value::token> &
   return arr;
 }
 
+template <>
+nlohmann::json ArrayValuesToJSON<uint8_t>(const std::vector<uint8_t> &vec) {
+  // uchar[]: emit as integers (0..255), not characters.
+  nlohmann::json arr = nlohmann::json::array();
+  for (const auto &elem : vec) {
+    arr.push_back(static_cast<unsigned int>(elem));
+  }
+  return arr;
+}
+
+template <>
+nlohmann::json ArrayValuesToJSON<bool>(const std::vector<bool> &vec) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (bool elem : vec) {
+    arr.push_back(elem);
+  }
+  return arr;
+}
+
+template <>
+nlohmann::json ArrayValuesToJSON<uint32_t>(const std::vector<uint32_t> &vec) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (const auto &elem : vec) {
+    arr.push_back(elem);
+  }
+  return arr;
+}
+
+template <>
+nlohmann::json ArrayValuesToJSON<int64_t>(const std::vector<int64_t> &vec) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (const auto &elem : vec) {
+    arr.push_back(elem);
+  }
+  return arr;
+}
+
+template <>
+nlohmann::json ArrayValuesToJSON<uint64_t>(const std::vector<uint64_t> &vec) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (const auto &elem : vec) {
+    arr.push_back(elem);
+  }
+  return arr;
+}
+
 // ---------------------------------------------------------------------------
 // Matrix helpers
 // ---------------------------------------------------------------------------
@@ -181,6 +237,15 @@ nlohmann::json QuatToJSON<value::quath>(const value::quath &q) {
   arr.push_back(static_cast<double>(value::half_to_float(q[1])));
   arr.push_back(static_cast<double>(value::half_to_float(q[2])));
   arr.push_back(static_cast<double>(value::half_to_float(q[3])));
+  return arr;
+}
+
+template <typename T>
+nlohmann::json QuatArrayToJSON(const std::vector<T> &vec) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (const auto &q : vec) {
+    arr.push_back(QuatToJSON<T>(q));
+  }
   return arr;
 }
 
@@ -277,6 +342,7 @@ nlohmann::json ValueToJSON(const value::Value &val, uint32_t depth) {
   if (depth > kMaxDefaultTraversalLimit) {
     return {{"type", "error"}, {"error", "max recursion depth exceeded"}};
   }
+
   if (val.is_empty()) {
     return {{"type", "null"}};
   }
@@ -301,6 +367,16 @@ nlohmann::json ValueToJSON(const value::Value &val, uint32_t depth) {
       if (!TryGetArrayValue<double>(val, values)) goto fallback;
     } else if (elem_tid == value::TypeTraits<int32_t>::type_id()) {
       if (!TryGetArrayValue<int32_t>(val, values)) goto fallback;
+    } else if (elem_tid == value::TypeTraits<uint8_t>::type_id()) {
+      if (!TryGetArrayValue<uint8_t>(val, values)) goto fallback;
+    } else if (elem_tid == value::TypeTraits<bool>::type_id()) {
+      if (!TryGetArrayValue<bool>(val, values)) goto fallback;
+    } else if (elem_tid == value::TypeTraits<uint32_t>::type_id()) {
+      if (!TryGetArrayValue<uint32_t>(val, values)) goto fallback;
+    } else if (elem_tid == value::TypeTraits<int64_t>::type_id()) {
+      if (!TryGetArrayValue<int64_t>(val, values)) goto fallback;
+    } else if (elem_tid == value::TypeTraits<uint64_t>::type_id()) {
+      if (!TryGetArrayValue<uint64_t>(val, values)) goto fallback;
     } else if (elem_tid == value::TypeTraits<value::half>::type_id()) {
       if (!TryGetArrayValue<value::half>(val, values)) goto fallback;
     } else if (elem_tid == value::TypeTraits<std::string>::type_id()) {
@@ -331,6 +407,10 @@ nlohmann::json ValueToJSON(const value::Value &val, uint32_t depth) {
       if (!TryGetArrayValue<value::half3>(val, values)) goto fallback;
     } else if (elem_tid == value::TypeTraits<value::half4>::type_id()) {
       if (!TryGetArrayValue<value::half4>(val, values)) goto fallback;
+    } else if (elem_tid == value::TypeTraits<value::matrix2d>::type_id()) {
+      auto v = val.get_value<std::vector<value::matrix2d>>(false);
+      if (v) values = MatrixArrayToJSON<value::matrix2d, 2, 2>(v.value());
+      else goto fallback;
     } else if (elem_tid == value::TypeTraits<value::matrix3d>::type_id()) {
       auto v = val.get_value<std::vector<value::matrix3d>>(false);
       if (v) values = MatrixArrayToJSON<value::matrix3d, 3, 3>(v.value());
@@ -338,6 +418,18 @@ nlohmann::json ValueToJSON(const value::Value &val, uint32_t depth) {
     } else if (elem_tid == value::TypeTraits<value::matrix4d>::type_id()) {
       auto v = val.get_value<std::vector<value::matrix4d>>(false);
       if (v) values = MatrixArrayToJSON<value::matrix4d, 4, 4>(v.value());
+      else goto fallback;
+    } else if (elem_tid == value::TypeTraits<value::quatf>::type_id()) {
+      auto v = val.get_value<std::vector<value::quatf>>(false);
+      if (v) values = QuatArrayToJSON<value::quatf>(v.value());
+      else goto fallback;
+    } else if (elem_tid == value::TypeTraits<value::quatd>::type_id()) {
+      auto v = val.get_value<std::vector<value::quatd>>(false);
+      if (v) values = QuatArrayToJSON<value::quatd>(v.value());
+      else goto fallback;
+    } else if (elem_tid == value::TypeTraits<value::quath>::type_id()) {
+      auto v = val.get_value<std::vector<value::quath>>(false);
+      if (v) values = QuatArrayToJSON<value::quath>(v.value());
       else goto fallback;
     } else {
       goto fallback;
@@ -360,6 +452,10 @@ nlohmann::json ValueToJSON(const value::Value &val, uint32_t depth) {
     } else if (tid == value::TypeTraits<int32_t>::type_id()) {
       nlohmann::json v;
       if (TryGetValueAs<int32_t>(val, v))
+        return {{"type", type_name}, {"value", v}};
+    } else if (tid == value::TypeTraits<uint8_t>::type_id()) {
+      nlohmann::json v;
+      if (TryGetValueAs<uint8_t>(val, v))
         return {{"type", type_name}, {"value", v}};
     } else if (tid == value::TypeTraits<uint32_t>::type_id()) {
       nlohmann::json v;
@@ -573,6 +669,7 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
     if (err) *err = "JSONToValue: max recursion depth exceeded";
     return nonstd::nullopt;
   }
+
   if (!j.is_object() || !j.contains("type")) {
     if (err) *err = "JSON value must be object with 'type' field";
     return nonstd::nullopt;
@@ -757,9 +854,10 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
             value::matrix2d m;
             for (size_t row = 0; row < 2; row++) {
               for (size_t col = 0; col < 2; col++) {
-                m.m[row][col] = mat[row].is_array() && mat[row].size() > col
-                                    ? mat[row][col].get<double>()
-                                    : 0.0;
+                m.m[row][col] =
+                    mat[row].is_array() && mat[row].size() > col
+                        ? mat[row][col].get<double>()
+                        : 0.0;
               }
             }
             vec.push_back(m);
@@ -775,9 +873,10 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
             value::matrix3d m;
             for (size_t row = 0; row < 3; row++) {
               for (size_t col = 0; col < 3; col++) {
-                m.m[row][col] = mat[row].is_array() && mat[row].size() > col
-                                    ? mat[row][col].get<double>()
-                                    : 0.0;
+                m.m[row][col] =
+                    mat[row].is_array() && mat[row].size() > col
+                        ? mat[row][col].get<double>()
+                        : 0.0;
               }
             }
             vec.push_back(m);
@@ -1035,23 +1134,23 @@ nonstd::optional<value::Value> JSONToValue(const nlohmann::json &j,
                                    val_json[3].get<int32_t>()});
   } else if (base_type == "quath") {
     if (val_json.size() < 4) return nonstd::nullopt;
-    return make_scalar(value::quath{
-        {value::float_to_half_full(static_cast<float>(val_json[0].get<double>())),
-         value::float_to_half_full(static_cast<float>(val_json[1].get<double>())),
-         value::float_to_half_full(static_cast<float>(val_json[2].get<double>()))},
+    return make_scalar(value::quath{{
+        value::float_to_half_full(static_cast<float>(val_json[0].get<double>())),
+        value::float_to_half_full(static_cast<float>(val_json[1].get<double>())),
+        value::float_to_half_full(static_cast<float>(val_json[2].get<double>()))},
         value::float_to_half_full(static_cast<float>(val_json[3].get<double>()))});
   } else if (base_type == "quatf") {
     if (val_json.size() < 4) return nonstd::nullopt;
-    return make_scalar(value::quatf{
-        {static_cast<float>(val_json[0].get<double>()),
-         static_cast<float>(val_json[1].get<double>()),
-         static_cast<float>(val_json[2].get<double>())},
+    return make_scalar(value::quatf{{
+        static_cast<float>(val_json[0].get<double>()),
+        static_cast<float>(val_json[1].get<double>()),
+        static_cast<float>(val_json[2].get<double>())},
         static_cast<float>(val_json[3].get<double>())});
   } else if (base_type == "quatd") {
     if (val_json.size() < 4) return nonstd::nullopt;
     return make_scalar(value::quatd{{val_json[0].get<double>(),
-                                     val_json[1].get<double>(),
-                                     val_json[2].get<double>()},
+                                    val_json[1].get<double>(),
+                                    val_json[2].get<double>()},
                                     val_json[3].get<double>()});
   }
 
@@ -1185,6 +1284,7 @@ nlohmann::json ValueTypeToJSONSchema(const std::string &type_name,
   if (depth > kMaxDefaultTraversalLimit) {
     return {{"type", "error"}, {"error", "max recursion depth exceeded"}};
   }
+
   bool is_array = false;
   std::string base = type_name;
   if (type_name.size() >= 3 &&
@@ -1270,6 +1370,246 @@ std::vector<std::string> GetPrimTypeNames() {
       "RenderVar",   "RenderSettings", "PluginLight",
       "PluginLightFilter",
   };
+}
+
+namespace {
+
+std::string PathToString(const Path &path) {
+  return path.is_valid() ? path.full_path_name() : std::string();
+}
+
+const char *SpecifierToString(Specifier spec) {
+  switch (spec) {
+    case Specifier::Def:
+      return "def";
+    case Specifier::Over:
+      return "over";
+    case Specifier::Class:
+      return "class";
+    case Specifier::Invalid:
+      return "invalid";
+  }
+  return "invalid";
+}
+
+const char *VariabilityToString(Variability variability) {
+  switch (variability) {
+    case Variability::Varying:
+      return "varying";
+    case Variability::Uniform:
+      return "uniform";
+    case Variability::Config:
+      return "config";
+    case Variability::Invalid:
+      return "invalid";
+  }
+  return "invalid";
+}
+
+const char *ListEditQualToString(ListEditQual qual) {
+  switch (qual) {
+    case ListEditQual::ResetToExplicit:
+      return "explicit";
+    case ListEditQual::Add:
+      return "add";
+    case ListEditQual::Delete:
+      return "delete";
+    case ListEditQual::Order:
+      return "order";
+    case ListEditQual::Prepend:
+      return "prepend";
+    case ListEditQual::Append:
+      return "append";
+    case ListEditQual::Invalid:
+      return "invalid";
+  }
+  return "invalid";
+}
+
+nlohmann::json PathListToJSON(const std::vector<Path> &paths) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (const Path &path : paths) {
+    arr.push_back(PathToString(path));
+  }
+  return arr;
+}
+
+nlohmann::json ReferencesToJSON(
+    const std::vector<std::pair<ListEditQual, std::vector<Reference>>> &ops) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (const auto &op : ops) {
+    nlohmann::json item;
+    item["op"] = ListEditQualToString(op.first);
+    item["items"] = nlohmann::json::array();
+    for (const Reference &ref : op.second) {
+      item["items"].push_back({
+          {"assetPath", ref.asset_path.GetAssetPath()},
+          {"primPath", PathToString(ref.prim_path)},
+          {"layerOffset",
+           {{"offset", ref.layerOffset._offset},
+            {"scale", ref.layerOffset._scale}}},
+      });
+    }
+    arr.push_back(std::move(item));
+  }
+  return arr;
+}
+
+nlohmann::json PayloadsToJSON(
+    const std::vector<std::pair<ListEditQual, std::vector<Payload>>> &ops) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (const auto &op : ops) {
+    nlohmann::json item;
+    item["op"] = ListEditQualToString(op.first);
+    item["items"] = nlohmann::json::array();
+    for (const Payload &payload : op.second) {
+      item["items"].push_back({
+          {"assetPath", payload.asset_path.GetAssetPath()},
+          {"primPath", PathToString(payload.prim_path)},
+          {"layerOffset",
+           {{"offset", payload.layerOffset._offset},
+            {"scale", payload.layerOffset._scale}}},
+      });
+    }
+    arr.push_back(std::move(item));
+  }
+  return arr;
+}
+
+nlohmann::json PathListOpsToJSON(
+    const std::vector<std::pair<ListEditQual, std::vector<Path>>> &ops) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (const auto &op : ops) {
+    arr.push_back({{"op", ListEditQualToString(op.first)},
+                   {"items", PathListToJSON(op.second)}});
+  }
+  return arr;
+}
+
+nlohmann::json PrimMetaCompositionToJSON(const PrimMeta &meta) {
+  nlohmann::json j = nlohmann::json::object();
+  if (meta.references) {
+    j["references"] = ReferencesToJSON(meta.references.value());
+  }
+  if (meta.payload) {
+    j["payload"] = PayloadsToJSON(meta.payload.value());
+  }
+  if (meta.inherits) {
+    j["inherits"] = PathListOpsToJSON(meta.inherits.value());
+  }
+  if (meta.specializes) {
+    j["specializes"] = PathListOpsToJSON(meta.specializes.value());
+  }
+  if (meta.inheritPaths) {
+    j["inheritPaths"] = PathListOpsToJSON(meta.inheritPaths.value());
+  }
+  if (meta.specializePaths) {
+    j["specializePaths"] = PathListOpsToJSON(meta.specializePaths.value());
+  }
+  if (!meta.arc_origins.empty()) {
+    j["arcOrigins"] = nlohmann::json::array();
+    for (const ArcOrigin &origin : meta.arc_origins) {
+      j["arcOrigins"].push_back({
+          {"sourceLayerId", origin.source_layer_id},
+          {"sourcePrimPath", PathToString(origin.source_prim_path)},
+      });
+    }
+  }
+  return j;
+}
+
+}  // namespace
+
+nlohmann::json AttributeToJSON(const Attribute &attr) {
+  nlohmann::json j;
+  j["kind"] = "attribute";
+  j["name"] = attr.name();
+  j["typeName"] = attr.type_name();
+  j["typeId"] = attr.type_id();
+  j["variability"] = VariabilityToString(attr.variability());
+  j["varyingAuthored"] = attr.is_varying_authored();
+  j["blocked"] = attr.is_blocked();
+  j["hasValue"] = attr.has_value();
+  j["hasTimeSamples"] = attr.has_timesamples();
+  j["connections"] = PathListToJSON(attr.connections());
+
+  if (attr.has_value()) {
+    j["value"] = ValueToJSON(attr.get_var().value_raw());
+  }
+  if (attr.has_timesamples()) {
+    j["timeSamples"] = nlohmann::json::array();
+    for (const auto &sample : attr.get_var().ts_raw().get_samples()) {
+      j["timeSamples"].push_back({
+          {"time", sample.t},
+          {"blocked", sample.blocked},
+          {"value", sample.blocked ? nlohmann::json(nullptr)
+                                   : ValueToJSON(sample.value)},
+      });
+    }
+  }
+
+  return j;
+}
+
+nlohmann::json RelationshipToJSON(const Relationship &rel) {
+  nlohmann::json j;
+  j["kind"] = "relationship";
+  j["listOp"] = ListEditQualToString(rel.get_listedit_qual());
+  j["varyingAuthored"] = rel.is_varying_authored();
+  j["blocked"] = rel.is_blocked();
+  j["targets"] = nlohmann::json::array();
+  if (rel.is_path()) {
+    j["targets"].push_back(PathToString(rel.targetPath));
+  } else if (rel.is_pathvector()) {
+    j["targets"] = PathListToJSON(rel.targetPathVector);
+  }
+  return j;
+}
+
+nlohmann::json PropertyToJSON(const Property &prop) {
+  nlohmann::json j;
+  j["custom"] = prop.has_custom();
+  j["valueTypeName"] = prop.value_type_name();
+  if (prop.is_attribute()) {
+    j.update(AttributeToJSON(prop.get_attribute()));
+  } else if (prop.is_relationship()) {
+    j.update(RelationshipToJSON(prop.get_relationship()));
+  } else {
+    j["kind"] = "empty";
+  }
+  return j;
+}
+
+nlohmann::json PrimSpecToJSON(const PrimSpec &ps, uint32_t max_depth,
+                              uint32_t depth) {
+  nlohmann::json j;
+  j["name"] = ps.name();
+  j["typeName"] = ps.typeName();
+  j["specifier"] = SpecifierToString(ps.specifier());
+  j["currentWorkingPath"] = ps.get_current_working_path();
+  j["assetSearchPaths"] = ps.get_asset_search_paths();
+
+  j["properties"] = nlohmann::json::object();
+  for (const auto &prop : ps.props()) {
+    j["properties"][prop.first] = PropertyToJSON(prop.second);
+  }
+
+  j["metadata"] = PrimMetaCompositionToJSON(ps.metas());
+  j["children"] = nlohmann::json::array();
+  if (depth < max_depth) {
+    for (const PrimSpec &child : ps.children()) {
+      j["children"].push_back(PrimSpecToJSON(child, max_depth, depth + 1));
+    }
+  } else {
+    for (const PrimSpec &child : ps.children()) {
+      j["children"].push_back({{"name", child.name()},
+                               {"typeName", child.typeName()},
+                               {"specifier", SpecifierToString(child.specifier())},
+                               {"childCount", child.children().size()},
+                               {"propertyCount", child.props().size()}});
+    }
+  }
+  return j;
 }
 
 } // namespace tydra

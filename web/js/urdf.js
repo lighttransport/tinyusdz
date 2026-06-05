@@ -15,6 +15,9 @@ const state = {
   usdObject: null,
   usdRestObject: null,
   usdArticulation: null,
+  // True when the USD view is a conversion of the current source robot (vs an
+  // imported USD). Lets the "Export upAxis" toggle auto-reconvert.
+  usdIsConverted: false,
   sourceGhost: null,
   usdGhost: null,
   usdLinkBindings: [],
@@ -265,6 +268,7 @@ function clearUSD() {
   state.usdObject = null;
   state.usdRestObject = null;
   state.usdArticulation = null;
+  state.usdIsConverted = false;
   state.usdName = '';
   state.latestUSDBytes = null;
   state.latestUSDFormat = '';
@@ -2022,7 +2026,11 @@ function classifyRobotMeshes(robot) {
     let cursor = obj;
     let ownerLink = null;
     let isCollision = false;
-    while (cursor && cursor !== robot) {
+    // Walk up to the owning link. Check `robot` itself too: urdf-loader makes
+    // the ROOT link node the URDFRobot root (robot.links[root] === robot), so
+    // stopping at `cursor !== robot` would orphan the root link's meshes (they
+    // then get dropped from the export payload).
+    while (cursor) {
       const marker = `${cursor.type || ''} ${cursor.name || ''}`.toLowerCase();
       if (cursor.isURDFCollider || cursor.isURDFCollision || marker.includes('collision') || marker.includes('collider')) {
         isCollision = true;
@@ -2031,6 +2039,7 @@ function classifyRobotMeshes(robot) {
         ownerLink = cursor;
         break;
       }
+      if (cursor === robot) break;
       cursor = cursor.parent;
     }
     obj.userData.urdfOwnerLink = ownerLink;
@@ -2100,11 +2109,20 @@ function fitCurrentView() {
 }
 
 function applySceneOrientation() {
-  for (const root of [sourceView.root, sourceView.ghostRoot, usdView.root, usdView.ghostRoot]) {
+  // The source robot is built directly from URDF/MJCF, which are always Z-up,
+  // so it always needs the -90deg X display rotation to stand upright in
+  // three.js (Y-up).
+  for (const root of [sourceView.root, sourceView.ghostRoot]) {
     root.rotation.set(0, 0, 0);
+    root.rotation.x = -Math.PI / 2;
   }
-  if (state.settings.upAxis === 'Z') {
-    for (const root of [sourceView.root, sourceView.ghostRoot, usdView.root, usdView.ghostRoot]) {
+  // The USD view shows the actual loaded USD (converted or imported). A Z-up USD
+  // needs the same -90deg X display rotation; a Y-up USD already carries the
+  // converter's /World rotateX (applied by the loader and preserved by
+  // buildArticulatedRobotFromUSD), so it is already upright.
+  for (const root of [usdView.root, usdView.ghostRoot]) {
+    root.rotation.set(0, 0, 0);
+    if (state.settings.upAxis === 'Z') {
       root.rotation.x = -Math.PI / 2;
     }
   }
@@ -2118,6 +2136,15 @@ function applyAxisHelperVisibility() {
 function buildGUI() {
   const gui = new GUI({ title: 'Robot Controls' });
   gui.add(state.settings, 'upAxis', ['Z', 'Y']).name('Export upAxis').onChange(() => {
+    // If a converted USD is on screen, re-export with the new up axis so the
+    // USD view stays in sync (convertSourceToUSD re-applies orientation + fit).
+    if (state.robot && state.usdIsConverted) {
+      convertSourceToUSD(state.latestUSDFormat || 'usdc').catch((err) => {
+        console.error(err);
+        setStatus(`Convert to USD failed: ${err.message}`);
+      });
+      return;
+    }
     applySceneOrientation();
     if ((state.robot || state.usdObject) && state.settings.autocenter) fitCamera(currentFitObjects());
   });
@@ -3015,9 +3042,19 @@ function buildArticulatedRobotFromUSD(model, sourceObject, options = {}) {
   };
   for (const link of rootLinks) attachLink(link.path, group);
 
+  // Place each mesh relative to its link's pose in the LOADED USD, not the
+  // assembled rest world. These are equal when the USD bakes link world
+  // transforms, but differ when the writer keeps bodies at the origin and
+  // encodes pose only via joint frames (the tinyusdz URDF/MJCF converter does
+  // this, MuJoCo-style). The link node is positioned at its rest world via the
+  // joint chain below, so using the loaded pose here avoids cancelling the
+  // joint offsets — which otherwise collapsed every mesh onto its link-local
+  // origin (base appeared missing, the rig looked inverted).
   const linkInverseWorld = new Map();
-  for (const [path, restWorld] of restWorldByLinkPath) {
-    linkInverseWorld.set(path, restWorld.clone().invert());
+  for (const link of model.links || []) {
+    const linkObj = usdObjectsByPath.get(link.path);
+    const loadedWorld = linkObj ? matrixInSceneRoot(linkObj, sourceObject) : new THREE.Matrix4();
+    linkInverseWorld.set(link.path, loadedWorld.invert());
   }
 
   if (options.resetMeshLists) {
@@ -3320,17 +3357,43 @@ function exportSourceXML() {
 async function convertSourceToUSD(format = 'usdc') {
   const result = await createUSDBytesFromSource(format);
   clearUSD();
-  const restObject = await loadUSDObjectFromBytes(result.bytes, result.filename);
-  const object = buildConvertedUSDPreviewFromPayload(result.payload);
+  const object = await loadUSDObjectFromBytes(result.bytes, result.filename);
   state.usdObject = object;
-  state.usdRestObject = restObject;
+  state.usdRestObject = object;
   state.usdName = result.filename;
   state.latestUSDBytes = result.bytes;
   state.latestUSDFormat = format;
   usdGroup.add(object);
   applySceneOrientation();
-  bindConvertedUSDLinksToSource();
-  syncConvertedUSDToSourcePose();
+  // Articulate from the *exported USD's* own physics, exactly like the import
+  // path. This replaces the former payload-based preview that was positioned
+  // from the source's world-space link matrices + a world-delta source sync:
+  // that path dropped links on URDF input (the inverseSourceRest correction was
+  // MJCF-only) and stopped following joints once the source and USD views no
+  // longer shared a frame. Driving the USD's own joints is robust to both.
+  try {
+    const extracted = await extractUSDPhysicsJSONFromBytes(result.bytes, result.filename);
+    annotateUSDRenderableClasses(object, extracted);
+    const model = usdPhysicsToSourceModel(extracted);
+    if (model.links.length && model.joints.length) {
+      const articulated = buildArticulatedRobotFromUSD(model, object, {
+        name: object.name,
+        resetMeshLists: false,
+        inferMissingJointFrames: true
+      });
+      usdGroup.remove(object);
+      state.usdObject = articulated;
+      state.usdArticulation = articulated;
+      usdGroup.add(articulated);
+      // Match the USD articulation to the source's current joint pose.
+      for (const [name, value] of Object.entries(state.jointValues)) {
+        articulated.setJointValue?.(name, value);
+      }
+    }
+  } catch (err) {
+    console.warn('USD Physics articulation skipped:', err);
+  }
+  state.usdIsConverted = true;
   updateButtonStates();
   rebuildGhosts();
   updateLabels();

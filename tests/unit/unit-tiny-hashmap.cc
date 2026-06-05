@@ -262,6 +262,25 @@ void tiny_hashmap_insert_or_assign_test(void) {
   TEST_CHECK(m.at("b") == 7);
 }
 
+void tiny_hashmap_at_miss_test(void) {
+  HashMap<std::string, int> m;
+  m["present"] = 9;
+  size_t before = m.size();
+
+  int &missing = m.at("missing");
+  TEST_CHECK(m.size() == before);
+  TEST_CHECK(!m.contains("missing"));
+  TEST_CHECK(missing == 0);
+
+  missing = 123;
+  TEST_CHECK(m.size() == before);
+  TEST_CHECK(!m.contains("missing"));
+
+  const HashMap<std::string, int> &cm = m;
+  const int &const_missing = cm.at("missing");
+  TEST_CHECK(const_missing == 0);
+}
+
 void tiny_hashmap_int_keys_test(void) {
   HashMap<int, int> m;
   std::unordered_map<int, int> ref;

@@ -37,15 +37,24 @@ inline void insertion_sort_samples(std::vector<value::TimeSamples::Sample>& samp
   }
 }
 
-// Sort flat binary storage by permuting parallel arrays
-inline void sort_flat_storage(
+// Sort flat binary storage by permuting parallel arrays.
+// Returns true on success, false if the parallel-array invariant
+// (times.size() == blocked.size() == data_offsets.size() ==
+//  array_counts->size() if array_counts) is violated. On false, the
+// caller's data is left unchanged. See concern 4 in review.md.
+inline bool sort_flat_storage(
     std::vector<double>& times,
     Buffer<16>& blocked,
     std::vector<size_t>& data_offsets,
     std::vector<uint32_t>* array_counts) {
 
   const size_t n = times.size();
-  if (n < 2) return;
+  if (times.size() != blocked.size() ||
+      times.size() != data_offsets.size() ||
+      (array_counts && times.size() != array_counts->size())) {
+    return false;
+  }
+  if (n < 2) return true;
 
   // Create index array
   std::vector<size_t> indices(n);
@@ -79,6 +88,7 @@ inline void sort_flat_storage(
   if (!sorted_counts.empty()) {
     (*array_counts) = std::move(sorted_counts);
   }
+  return true;
 }
 
 } // anonymous namespace
@@ -94,8 +104,14 @@ void TimeSamples::update() const {
       return;
     }
 
-    sort_flat_storage(_times, _blocked, _data_offsets,
-                      _is_array ? &_array_counts : nullptr);
+    if (!sort_flat_storage(_times, _blocked, _data_offsets,
+                           _is_array ? &_array_counts : nullptr)) {
+      // Parallel-array invariant violated; mark the TimeSamples as
+      // broken so callers can detect via has_error(). See concern 4 in
+      // review.md.
+      _has_error = true;
+      return;
+    }
   } else if (!_samples.empty()) {
     if (_samples.size() < 2) {
       _dirty = false;

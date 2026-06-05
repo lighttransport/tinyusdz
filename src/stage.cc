@@ -8,8 +8,10 @@
 #include <cctype>  // std::tolower
 #include <chrono>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <sstream>
+#include <utility>
 #include "asset-resolution.hh"
 
 //
@@ -119,6 +121,19 @@ nonstd::optional<const Prim *> GetPrimAtPathIterative(
 // -- Stage
 //
 
+struct StageMMapFileOwner {
+  explicit StageMMapFileOwner(io::MMapFileHandle &&h) : handle(std::move(h)) {}
+  ~StageMMapFileOwner() {
+    std::string ignored;
+    io::UnmapFile(handle, &ignored);
+  }
+
+  StageMMapFileOwner(const StageMMapFileOwner &) = delete;
+  StageMMapFileOwner &operator=(const StageMMapFileOwner &) = delete;
+
+  io::MMapFileHandle handle;
+};
+
 Stage::Stage() = default;
 Stage::~Stage() = default;
 
@@ -132,7 +147,7 @@ Stage::Stage(const Stage &other)
       _warn(other._warn),
       _dirty(other._dirty),
       _prim_id_dirty(other._prim_id_dirty) {
-  // unique_ptr members (_mmap_table, _mmap_source) are not copied.
+  // mmap unique_ptr members are not copied.
   // mmap data is only valid for the original Stage loaded from USDC.
 }
 
@@ -150,6 +165,8 @@ Stage &Stage::operator=(const Stage &other) {
     // unique_ptr members are not copied (mmap data is not transferable)
     _mmap_table.reset();
     _mmap_source.reset();
+    _mmap_file_owner.reset();
+    _mmap_buffer_owner.reset();
   }
   return *this;
 }
@@ -185,8 +202,10 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
 
     _dirty = false;
   } else {
-    // First find from a cache.
-    auto ret = _prim_path_cache.find(path.prim_part());
+    // First find from a cache. The Path is hashed directly via PathHasher
+    // (no implicit std::string allocation from tstring_view conversion);
+    // the cache owns its own copy of the Path. See concern #1 in review.md.
+    auto ret = _prim_path_cache.find(path);
     if (ret != _prim_path_cache.end()) {
       DCOUT("Found cache.");
       return ret->second;
@@ -198,7 +217,7 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
   if (auto pv = GetPrimAtPathIterative(_root_nodes, path)) {
     // Add to cache.
     // Assume pointer address does not change unless dirty state.
-    _prim_path_cache[path.prim_part()] = pv.value();
+    _prim_path_cache[path] = pv.value();
     return pv.value();
   }
 
@@ -971,7 +990,7 @@ static size_t EstimateSinglePrimMemory(const Prim &prim) {
   total += prim.data().estimate_memory_usage();
 
   // String members
-  total += prim.element_name().capacity();
+  total += prim.element_name().size();
   total += prim.element_path().full_path_name().capacity();
   total += prim.prim_type_name().capacity();
   total += prim.absolute_path().full_path_name().capacity();
@@ -1257,7 +1276,71 @@ void Stage::set_mmap_table(MMapArrayTable &&table) {
 }
 
 void Stage::set_mmap_source(const MMapDataSource &src) {
+  _mmap_file_owner.reset();
+  _mmap_buffer_owner.reset();
   _mmap_source.reset(new MMapDataSource(src));
+}
+
+bool Stage::adopt_mmap_file(io::MMapFileHandle &&handle) {
+  if (!_mmap_source || !handle.addr || handle.size == 0) {
+    return false;
+  }
+
+  const uintptr_t base = reinterpret_cast<uintptr_t>(handle.addr);
+  const uintptr_t src = reinterpret_cast<uintptr_t>(_mmap_source->addr());
+  if (handle.size > uint64_t((std::numeric_limits<uintptr_t>::max)() - base)) {
+    return false;
+  }
+  const uintptr_t end = base + static_cast<uintptr_t>(handle.size);
+  if (src < base || src >= end) {
+    return false;
+  }
+
+  const uint64_t source_offset = static_cast<uint64_t>(src - base);
+  if (_mmap_source->size() > handle.size - source_offset) {
+    return false;
+  }
+
+  _mmap_buffer_owner.reset();
+  _mmap_file_owner.reset(new StageMMapFileOwner(std::move(handle)));
+  return true;
+}
+
+bool Stage::adopt_mmap_buffer(std::vector<uint8_t> &&buffer) {
+  if (!_mmap_source || buffer.empty()) {
+    return false;
+  }
+
+  const uintptr_t base = reinterpret_cast<uintptr_t>(buffer.data());
+  const uintptr_t src = reinterpret_cast<uintptr_t>(_mmap_source->addr());
+  const uint64_t buffer_size = static_cast<uint64_t>(buffer.size());
+  if (buffer_size > uint64_t((std::numeric_limits<uintptr_t>::max)() - base)) {
+    return false;
+  }
+  const uintptr_t end = base + static_cast<uintptr_t>(buffer_size);
+  if (src < base || src >= end) {
+    return false;
+  }
+
+  const uint64_t source_offset = static_cast<uint64_t>(src - base);
+  const uint64_t source_size = _mmap_source->size();
+  if (source_size > buffer_size - source_offset) {
+    return false;
+  }
+
+  _mmap_file_owner.reset();
+  _mmap_buffer_owner.reset(new std::vector<uint8_t>(std::move(buffer)));
+  _mmap_source.reset(new MMapDataSource(
+      _mmap_buffer_owner->data() + static_cast<size_t>(source_offset),
+      source_size));
+  return true;
+}
+
+void Stage::clear_mmap_data() {
+  _mmap_table.reset();
+  _mmap_source.reset();
+  _mmap_file_owner.reset();
+  _mmap_buffer_owner.reset();
 }
 
 bool Stage::has_mmap_zero_copy() const {
@@ -1278,9 +1361,10 @@ size_t Stage::BuildInstancePrototypes() {
     return _prototype_count;
   }
 
-  // Recursive helper
-  std::function<void(const Prim &, const std::string &)> scan;
-  scan = [&](const Prim &prim, const std::string &parent_path) {
+  // Recursive helper with depth limit
+  std::function<void(const Prim &, const std::string &, int)> scan;
+  scan = [&](const Prim &prim, const std::string &parent_path, int depth) {
+    if (depth > 4096) return;  // guard against stack overflow
     std::string prim_path = parent_path + "/" + prim.element_name();
 
     // Per AOUSD Spec 11.3.3: instanceable=true AND at least one composition arc
@@ -1305,12 +1389,12 @@ size_t Stage::BuildInstancePrototypes() {
     }
 
     for (const auto &child : prim.children()) {
-      scan(child, prim_path);
+      scan(child, prim_path, depth + 1);
     }
   };
 
   for (const auto &root : _root_nodes) {
-    scan(root, "");
+    scan(root, "", 0);
   }
 
   return _prototype_count;

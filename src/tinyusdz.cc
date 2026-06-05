@@ -20,6 +20,7 @@
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "image-loader.hh"
@@ -30,13 +31,16 @@
 #include "security-policy.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
+#include "string-pool.hh"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
 #include "layer.hh"
 #include "usda-reader.hh"
+#include "usda-writer.hh"
 #include "usdc-reader.hh"
 #include "usdc-writer.hh"
 #include "mmap-array-ref.hh"
+#include "pprinter.hh"
 #include "value-pprint.hh"
 
 
@@ -46,6 +50,55 @@ namespace tinyusdz {
 
 namespace {
 constexpr uint32_t kMaxZstdNestingDepth = 2;
+
+std::string GetLayerBaseDirForAssetName(const std::string &asset_name) {
+  std::string basedir;
+  if (asset_name.empty()) {
+    return basedir;
+  }
+
+  basedir = io::GetBaseDir(asset_name);
+  if (basedir.empty()) {
+    basedir = ".";
+  }
+  return basedir;
+}
+
+bool AdoptStageMMapFileForZeroCopy(Stage *stage, io::MMapFileHandle *handle,
+                                   std::string *err) {
+  if (!stage || !handle) {
+    if (err) {
+      (*err) += "Internal error: invalid Stage or mmap handle for zero-copy ownership.\n";
+    }
+    return false;
+  }
+
+  if (!stage->adopt_mmap_file(std::move(*handle))) {
+    if (err) {
+      (*err) += "Failed to attach mmap file lifetime to Stage for zero-copy arrays.\n";
+    }
+    return false;
+  }
+  return true;
+}
+
+bool AdoptStageBufferForZeroCopy(Stage *stage, std::vector<uint8_t> *data,
+                                 std::string *err) {
+  if (!stage || !data) {
+    if (err) {
+      (*err) += "Internal error: invalid Stage or buffer for zero-copy ownership.\n";
+    }
+    return false;
+  }
+
+  if (!stage->adopt_mmap_buffer(std::move(*data))) {
+    if (err) {
+      (*err) += "Failed to attach file buffer lifetime to Stage for zero-copy arrays.\n";
+    }
+    return false;
+  }
+  return true;
+}
 }
 
 // Global flag to control DCOUT output. Defaults to false to suppress flood of output.
@@ -163,6 +216,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
 
   // Reconstruct `Stage`(scene) object
   {
+    stage->clear_mmap_data();
     if (!reader.ReconstructStage(stage)) {
       DCOUT("Failed to reconstruct Stage from Crate.");
       if (warn) {
@@ -223,8 +277,15 @@ bool LoadUSDCFromFile(const std::string &_filename, Stage *stage,
 
     bool ret = LoadUSDCFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
                               err, options);
+    bool keep_mmap = false;
+    if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
+      keep_mmap = AdoptStageMMapFileForZeroCopy(stage, &handle, err);
+      if (!keep_mmap) {
+        ret = false;
+      }
+    }
 
-    {
+    if (!keep_mmap) {
       std::string _err;
       // Ignore unmap result for now.
       io::UnmapFile(handle, &_err);
@@ -261,8 +322,15 @@ bool LoadUSDCFromFile(const std::string &_filename, Stage *stage,
       return false;
     }
 
-    return LoadUSDCFromMemory(data.data(), data.size(), filepath, stage, warn,
-                              err, options);
+    bool ret = LoadUSDCFromMemory(data.data(), data.size(), filepath, stage, warn,
+                                  err, options);
+    if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
+      if (!AdoptStageBufferForZeroCopy(stage, &data, err)) {
+        return false;
+      }
+    }
+
+    return ret;
   }
 }
 
@@ -380,7 +448,8 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
       return false;
     }
 
-    uint16_t compr_method = *reinterpret_cast<uint16_t *>(&local_header[0] + 8);
+    uint16_t compr_method;
+    memcpy(&compr_method, &local_header[8], sizeof(compr_method));
     // uint32_t compr_bytes = *reinterpret_cast<uint32_t*>(&local_header[0]+18);
     uint32_t uncompr_bytes;
     memcpy(&uncompr_bytes, &local_header[22], sizeof(uncompr_bytes));
@@ -389,6 +458,13 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
     if (compr_method != 0) {
       if (err) {
         (*err) += "Compressed ZIP is not supported for USDZ\n";
+      }
+      return false;
+    }
+
+    if (uncompr_bytes > (length - offset)) {
+      if (err) {
+        (*err) += "Invalid uncompressed size in ZIP data\n";
       }
       return false;
     }
@@ -591,8 +667,15 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
 
     bool ret = LoadUSDZFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
                               err, options);
+    bool keep_mmap = false;
+    if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
+      keep_mmap = AdoptStageMMapFileForZeroCopy(stage, &handle, err);
+      if (!keep_mmap) {
+        ret = false;
+      }
+    }
 
-    {
+    if (!keep_mmap) {
       std::string _err;
       // Ignore unmap result for now.
       io::UnmapFile(handle, &_err);
@@ -622,8 +705,15 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
       return false;
     }
 
-    return LoadUSDZFromMemory(data.data(), data.size(), filepath, stage, warn,
-                              err, options);
+    bool ret = LoadUSDZFromMemory(data.data(), data.size(), filepath, stage, warn,
+                                  err, options);
+    if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
+      if (!AdoptStageBufferForZeroCopy(stage, &data, err)) {
+        return false;
+      }
+    }
+
+    return ret;
   }
 }
 
@@ -772,6 +862,9 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
 bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
                      std::string *warn, std::string *err,
                      const USDLoadOptions &options) {
+  // Ensure common USD strings are interned for deduplication
+  PreInternCommonStrings();
+
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
   std::string base_dir = io::GetBaseDir(_filename);
 
@@ -796,8 +889,15 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
 
     bool ret = LoadUSDFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
                               err, options);
+    bool keep_mmap = false;
+    if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
+      keep_mmap = AdoptStageMMapFileForZeroCopy(stage, &handle, err);
+      if (!keep_mmap) {
+        ret = false;
+      }
+    }
 
-    {
+    if (!keep_mmap) {
       std::string _err;
       // Ignore unmap result for now.
       io::UnmapFile(handle, &_err);
@@ -818,8 +918,15 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
       return false;
     }
 
-    return LoadUSDFromMemory(data.data(), data.size(), base_dir, stage, warn, err,
-                             options);
+    bool ret = LoadUSDFromMemory(data.data(), data.size(), base_dir, stage, warn,
+                                 err, options);
+    if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
+      if (!AdoptStageBufferForZeroCopy(stage, &data, err)) {
+        return false;
+      }
+    }
+
+    return ret;
   }
 }
 
@@ -868,9 +975,15 @@ static bool LoadUSDFromMemoryImpl(const uint8_t *addr, const size_t length,
       return false;
     }
 
+    // The decompressed buffer is local to this stack frame, so zero-copy refs
+    // cannot safely outlive this call.
+    USDLoadOptions decompressed_options = options;
+    decompressed_options.mmap_zero_copy = false;
+
     // Recursively call with bounded nested zstd depth.
     return LoadUSDFromMemoryImpl(decompressed_data.data(), decompressed_data.size(),
-                                 base_dir, stage, warn, err, options, zstd_depth + 1);
+                                 base_dir, stage, warn, err,
+                                 decompressed_options, zstd_depth + 1);
 #else
     if (err) {
       (*err) += "zstd-compressed USD file detected, but zstd compression support is not enabled. "
@@ -1518,7 +1631,9 @@ bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
 
   if (ret) {
     std::vector<std::string> search_paths; // empty
-    std::string basedir = io::GetBaseDir(asset_name);
+    std::string basedir = GetLayerBaseDirForAssetName(asset_name);
+    layer->set_asset_resolution_state(basedir, search_paths,
+                                      /* userdata */ nullptr);
     // Save current working path to each PrimSpec in the layer
     // for the subsequent composition operation.
     for (auto &root_ps : layer->primspecs()) {
@@ -1850,12 +1965,76 @@ bool IsAllowedUSDZExtension(const std::string &filename) {
           lower_ext == "m4a" || lower_ext == "mp3" || lower_ext == "wav");
 }
 
+bool IsSafeUSDZEntryName(const std::string &name, std::string *reason) {
+  if (name.empty()) {
+    if (reason) *reason = "entry name is empty";
+    return false;
+  }
+  if (name.size() > UINT16_MAX) {
+    if (reason) *reason = "entry name exceeds ZIP filename length limit";
+    return false;
+  }
+  if (name[0] == '/' || name[0] == '\\') {
+    if (reason) *reason = "entry name must be relative";
+    return false;
+  }
+  if (name.find('\0') != std::string::npos) {
+    if (reason) *reason = "entry name contains NUL byte";
+    return false;
+  }
+  if (name.find('\\') != std::string::npos) {
+    if (reason) *reason = "entry name contains backslash";
+    return false;
+  }
+  if (name.find(':') != std::string::npos) {
+    if (reason) *reason = "entry name contains drive/URI separator";
+    return false;
+  }
+
+  size_t pos = 0;
+  while (pos <= name.size()) {
+    size_t next = name.find('/', pos);
+    std::string segment = (next == std::string::npos)
+                              ? name.substr(pos)
+                              : name.substr(pos, next - pos);
+    if (segment.empty() || segment == "." || segment == "..") {
+      if (reason) *reason = "entry name contains empty or dot segment";
+      return false;
+    }
+    if (next == std::string::npos) break;
+    pos = next + 1;
+  }
+
+  return true;
+}
+
 // Write a single entry to a USDZ archive buffer with 64-byte alignment.
 // Returns false on error.
 bool WriteUSDZEntry(std::vector<uint8_t> &buf,
                     std::vector<std::tuple<std::string, uint32_t, uint32_t, size_t>> &central_dir_entries,
                     const std::string &name, const uint8_t *data, size_t data_size,
                     std::string *err) {
+  std::string reason;
+  if (!IsSafeUSDZEntryName(name, &reason)) {
+    if (err) {
+      (*err) += "Unsafe USDZ entry name '" + name + "': " + reason + "\n";
+    }
+    return false;
+  }
+  if (data_size > UINT32_MAX) {
+    if (err) {
+      (*err) += "USDZ entry '" + name + "' exceeds ZIP32 size limit\n";
+    }
+    return false;
+  }
+  if (buf.size() > UINT32_MAX) {
+    if (err) {
+      (*err) += "USDZ archive exceeds ZIP32 offset limit before entry '" +
+                name + "'\n";
+    }
+    return false;
+  }
+
   // Calculate padding needed for 64-byte alignment of file data
   size_t header_size = kZipLocalHeaderSize + name.size();
   size_t padding = 0;
@@ -1917,6 +2096,13 @@ bool WriteUSDZEntry(std::vector<uint8_t> &buf,
   if (data && data_size > 0) {
     buf.insert(buf.end(), data, data + data_size);
   }
+  if (buf.size() > UINT32_MAX) {
+    if (err) {
+      (*err) += "USDZ archive exceeds ZIP32 size limit after entry '" + name +
+                "'\n";
+    }
+    return false;
+  }
 
   // Record for central directory
   central_dir_entries.emplace_back(name, crc, sz32, local_header_offset);
@@ -1925,16 +2111,36 @@ bool WriteUSDZEntry(std::vector<uint8_t> &buf,
 }
 
 // Write the central directory and end-of-central-directory record.
-void WriteUSDZCentralDirectory(
+bool WriteUSDZCentralDirectory(
     std::vector<uint8_t> &buf,
-    const std::vector<std::tuple<std::string, uint32_t, uint32_t, size_t>> &entries) {
+    const std::vector<std::tuple<std::string, uint32_t, uint32_t, size_t>> &entries,
+    std::string *err) {
+  if (entries.size() > UINT16_MAX) {
+    if (err) {
+      (*err) += "USDZ archive has too many entries for ZIP32\n";
+    }
+    return false;
+  }
+  if (buf.size() > UINT32_MAX) {
+    if (err) {
+      (*err) += "USDZ central directory offset exceeds ZIP32 limit\n";
+    }
+    return false;
+  }
   size_t cd_offset = buf.size();
 
   for (const auto &entry : entries) {
     const auto &name = std::get<0>(entry);
     uint32_t crc = std::get<1>(entry);
     uint32_t size = std::get<2>(entry);
-    uint32_t local_offset = static_cast<uint32_t>(std::get<3>(entry));
+    size_t local_offset_size = std::get<3>(entry);
+    if (name.size() > UINT16_MAX || local_offset_size > UINT32_MAX) {
+      if (err) {
+        (*err) += "USDZ central directory entry exceeds ZIP32 limits\n";
+      }
+      return false;
+    }
+    uint32_t local_offset = static_cast<uint32_t>(local_offset_size);
 
     uint8_t cdr[46];
     memset(cdr, 0, sizeof(cdr));
@@ -1962,6 +2168,12 @@ void WriteUSDZCentralDirectory(
   }
 
   size_t cd_size = buf.size() - cd_offset;
+  if (cd_size > UINT32_MAX || buf.size() > UINT32_MAX) {
+    if (err) {
+      (*err) += "USDZ central directory exceeds ZIP32 limits\n";
+    }
+    return false;
+  }
 
   // End of central directory record
   uint8_t eocd[22];
@@ -1981,6 +2193,91 @@ void WriteUSDZCentralDirectory(
   memcpy(&eocd[16], &cd_offset32, 4);
 
   buf.insert(buf.end(), eocd, eocd + 22);
+  return true;
+}
+
+bool SerializeUSDZRootLayer(const Stage &stage, const USDZWriteOptions &options,
+                            std::vector<uint8_t> *root_data,
+                            std::string *root_name,
+                            std::string *warn, std::string *err) {
+  if (!root_data || !root_name) {
+    if (err) { (*err) += "`root_data` or `root_name` is nullptr.\n"; }
+    return false;
+  }
+
+  switch (options.root_layer_format) {
+    case USDZRootLayerFormat::USDC: {
+      if (!usdc::SaveAsUSDCToMemory(stage, root_data, warn, err,
+                                    options.max_file_size_bytes,
+                                    options.max_memory_bytes)) {
+        if (err) { (*err) += "Failed to serialize root layer as USDC.\n"; }
+        return false;
+      }
+      if (root_data->empty()) {
+        if (err) { (*err) += "USDC serialization produced empty data.\n"; }
+        return false;
+      }
+      *root_name = "root.usdc";
+      return true;
+    }
+    case USDZRootLayerFormat::USDA: {
+      std::string usda_text;
+      if (!usda::ExportToUSDAString(stage, &usda_text, warn, err)) {
+        if (err) { (*err) += "Failed to serialize root layer as USDA.\n"; }
+        return false;
+      }
+      if (usda_text.empty()) {
+        if (err) { (*err) += "USDA serialization produced empty data.\n"; }
+        return false;
+      }
+      root_data->assign(usda_text.begin(), usda_text.end());
+      *root_name = "root.usda";
+      return true;
+    }
+  }
+
+  if (err) { (*err) += "Invalid USDZ root layer format.\n"; }
+  return false;
+}
+
+bool SerializeUSDZRootLayer(const Layer &layer, const USDZWriteOptions &options,
+                            std::vector<uint8_t> *root_data,
+                            std::string *root_name,
+                            std::string *warn, std::string *err) {
+  if (!root_data || !root_name) {
+    if (err) { (*err) += "`root_data` or `root_name` is nullptr.\n"; }
+    return false;
+  }
+
+  switch (options.root_layer_format) {
+    case USDZRootLayerFormat::USDC: {
+      if (!usdc::SaveAsUSDCToMemory(layer, root_data, warn, err,
+                                    options.max_file_size_bytes,
+                                    options.max_memory_bytes)) {
+        if (err) { (*err) += "Failed to serialize root layer as USDC.\n"; }
+        return false;
+      }
+      if (root_data->empty()) {
+        if (err) { (*err) += "USDC serialization produced empty data.\n"; }
+        return false;
+      }
+      *root_name = "root.usdc";
+      return true;
+    }
+    case USDZRootLayerFormat::USDA: {
+      const std::string usda_text = tinyusdz::print_layer(layer, 0);
+      if (usda_text.empty()) {
+        if (err) { (*err) += "USDA serialization produced empty data.\n"; }
+        return false;
+      }
+      root_data->assign(usda_text.begin(), usda_text.end());
+      *root_name = "root.usda";
+      return true;
+    }
+  }
+
+  if (err) { (*err) += "Invalid USDZ root layer format.\n"; }
+  return false;
 }
 
 }  // namespace
@@ -1988,44 +2285,43 @@ void WriteUSDZCentralDirectory(
 bool SaveAsUSDZToMemory(const Stage &stage,
                         const std::map<std::string, std::vector<uint8_t>> &assets,
                         std::vector<uint8_t> *output,
+                        const USDZWriteOptions &options,
                         std::string *warn, std::string *err) {
   if (!output) {
     if (err) { (*err) += "`output` is nullptr.\n"; }
     return false;
   }
 
-  // Step 1: Serialize the root layer as USDC to memory
-  std::vector<uint8_t> usdc_data;
-  if (!usdc::SaveAsUSDCToMemory(stage, &usdc_data, warn, err)) {
-    if (err) { (*err) += "Failed to serialize root layer as USDC.\n"; }
-    return false;
-  }
-
-  if (usdc_data.empty()) {
-    if (err) { (*err) += "USDC serialization produced empty data.\n"; }
+  // Step 1: Serialize the root layer to memory.
+  std::vector<uint8_t> root_data;
+  std::string root_name;
+  if (!SerializeUSDZRootLayer(stage, options, &root_data, &root_name, warn, err)) {
     return false;
   }
 
   // Step 2: Build USDZ archive
   std::vector<uint8_t> buf;
-  buf.reserve(usdc_data.size() + 4096);  // rough estimate
+  buf.reserve(root_data.size() + 4096);  // rough estimate
 
   // entries: (name, crc32, size, local_header_offset)
   std::vector<std::tuple<std::string, uint32_t, uint32_t, size_t>> central_dir_entries;
 
   // Root layer must be the first entry (AOUSD Core Spec 17.2)
-  std::string root_name = "root.usdc";
-  if (stage.metas().defaultPrim.valid()) {
-    // Use defaultPrim name for the root file if available
-  }
-
   if (!WriteUSDZEntry(buf, central_dir_entries, root_name,
-                       usdc_data.data(), usdc_data.size(), err)) {
+                       root_data.data(), root_data.size(), err)) {
     return false;
   }
 
   // Step 3: Add additional assets
   for (const auto &asset : assets) {
+    std::string reason;
+    if (!IsSafeUSDZEntryName(asset.first, &reason)) {
+      if (err) {
+        (*err) += "Unsafe USDZ asset entry name '" + asset.first +
+                  "': " + reason + "\n";
+      }
+      return false;
+    }
     if (!IsAllowedUSDZExtension(asset.first)) {
       if (warn) {
         (*warn) += "Skipping asset with disallowed extension: " + asset.first + "\n";
@@ -2040,18 +2336,84 @@ bool SaveAsUSDZToMemory(const Stage &stage,
   }
 
   // Step 4: Write central directory (must be at the end with no padding)
-  WriteUSDZCentralDirectory(buf, central_dir_entries);
+  if (!WriteUSDZCentralDirectory(buf, central_dir_entries, err)) {
+    return false;
+  }
 
   *output = std::move(buf);
   return true;
 }
 
+bool SaveAsUSDZToMemory(const Layer &layer,
+                        const std::map<std::string, std::vector<uint8_t>> &assets,
+                        std::vector<uint8_t> *output,
+                        const USDZWriteOptions &options,
+                        std::string *warn, std::string *err) {
+  if (!output) {
+    if (err) { (*err) += "`output` is nullptr.\n"; }
+    return false;
+  }
+
+  std::vector<uint8_t> root_data;
+  std::string root_name;
+  if (!SerializeUSDZRootLayer(layer, options, &root_data, &root_name, warn, err)) {
+    return false;
+  }
+
+  std::vector<uint8_t> buf;
+  buf.reserve(root_data.size() + 4096);
+
+  std::vector<std::tuple<std::string, uint32_t, uint32_t, size_t>> central_dir_entries;
+
+  if (!WriteUSDZEntry(buf, central_dir_entries, root_name,
+                       root_data.data(), root_data.size(), err)) {
+    return false;
+  }
+
+  for (const auto &asset : assets) {
+    std::string reason;
+    if (!IsSafeUSDZEntryName(asset.first, &reason)) {
+      if (err) {
+        (*err) += "Unsafe USDZ asset entry name '" + asset.first +
+                  "': " + reason + "\n";
+      }
+      return false;
+    }
+    if (!IsAllowedUSDZExtension(asset.first)) {
+      if (warn) {
+        (*warn) += "Skipping asset with disallowed extension: " + asset.first + "\n";
+      }
+      continue;
+    }
+
+    if (!WriteUSDZEntry(buf, central_dir_entries, asset.first,
+                         asset.second.data(), asset.second.size(), err)) {
+      return false;
+    }
+  }
+
+  if (!WriteUSDZCentralDirectory(buf, central_dir_entries, err)) {
+    return false;
+  }
+
+  *output = std::move(buf);
+  return true;
+}
+
+bool SaveAsUSDZToMemory(const Stage &stage,
+                        const std::map<std::string, std::vector<uint8_t>> &assets,
+                        std::vector<uint8_t> *output,
+                        std::string *warn, std::string *err) {
+  return SaveAsUSDZToMemory(stage, assets, output, USDZWriteOptions{}, warn, err);
+}
+
 bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
                       const std::map<std::string, std::vector<uint8_t>> &assets,
+                      const USDZWriteOptions &options,
                       std::string *warn, std::string *err) {
   std::vector<uint8_t> usdz_data;
 
-  if (!SaveAsUSDZToMemory(stage, assets, &usdz_data, warn, err)) {
+  if (!SaveAsUSDZToMemory(stage, assets, &usdz_data, options, warn, err)) {
     return false;
   }
 
@@ -2073,6 +2435,42 @@ bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
   }
 
   return true;
+}
+
+bool SaveAsUSDZToFile(const std::string &filename, const Layer &layer,
+                      const std::map<std::string, std::vector<uint8_t>> &assets,
+                      const USDZWriteOptions &options,
+                      std::string *warn, std::string *err) {
+  std::vector<uint8_t> usdz_data;
+
+  if (!SaveAsUSDZToMemory(layer, assets, &usdz_data, options, warn, err)) {
+    return false;
+  }
+
+  std::ofstream ofs(filename, std::ios::binary);
+  if (!ofs) {
+    if (err) {
+      (*err) += "Failed to open file for writing: " + filename + "\n";
+    }
+    return false;
+  }
+
+  ofs.write(reinterpret_cast<const char *>(usdz_data.data()),
+            static_cast<std::streamsize>(usdz_data.size()));
+  if (!ofs) {
+    if (err) {
+      (*err) += "Failed to write USDZ data to file: " + filename + "\n";
+    }
+    return false;
+  }
+
+  return true;
+}
+
+bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
+                      const std::map<std::string, std::vector<uint8_t>> &assets,
+                      std::string *warn, std::string *err) {
+  return SaveAsUSDZToFile(filename, stage, assets, USDZWriteOptions{}, warn, err);
 }
 
 // ============================================================================
@@ -2220,7 +2618,7 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
     uint32_t header_crc;
     memcpy(&header_crc, &local_header[14], 4);
 
-    if (uncompr_size > 0 && offset + uncompr_size <= length) {
+    if (uncompr_size > 0 && uncompr_size <= length - offset) {
       uint32_t actual_crc = ComputeCRC32(addr + offset, uncompr_size);
       if (header_crc != 0 && actual_crc != header_crc) {
         if (err) {
@@ -2230,7 +2628,7 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
         }
         valid = false;
       }
-    } else if (uncompr_size > 0 && offset + uncompr_size > length) {
+    } else if (uncompr_size > 0 && uncompr_size > length - offset) {
       if (err) {
         (*err) += "Entry '" + name + "': data extends beyond file end.\n";
       }
@@ -2256,7 +2654,8 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
   // A minimal check: look for EOCD signature near the end
   bool found_eocd = false;
   if (length >= 22) {
-    for (size_t i = length - 22; i >= (length > 65557 ? length - 65557 : 0); i--) {
+    const size_t eocd_lower = (length > 65557) ? (length - 65557) : 0;
+    for (size_t i = length - 22;; i--) {
       if (addr[i] == 0x50 && addr[i + 1] == 0x4b &&
           addr[i + 2] == 0x05 && addr[i + 3] == 0x06) {
         found_eocd = true;
@@ -2270,6 +2669,9 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
         }
         break;
       }
+      if (i == eocd_lower) {
+        break;
+      }
     }
   }
 
@@ -2278,7 +2680,8 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
     valid = false;
   } else {
     // Validate central directory entry count matches local headers
-    for (size_t i = length - 22; i >= (length > 65557 ? length - 65557 : 0); i--) {
+    const size_t eocd_lower = (length > 65557) ? (length - 65557) : 0;
+    for (size_t i = length - 22;; i--) {
       if (addr[i] == 0x50 && addr[i + 1] == 0x4b &&
           addr[i + 2] == 0x05 && addr[i + 3] == 0x06) {
         uint16_t cd_entry_count;
@@ -2291,6 +2694,9 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
                        std::to_string(entry_index) + ").\n";
           }
         }
+        break;
+      }
+      if (i == eocd_lower) {
         break;
       }
     }
