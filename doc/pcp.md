@@ -43,7 +43,7 @@ three systems. Use it to jump between a symbol you know and its counterpart.
 
 | Concept | OpenUSD PCP (symbol · header) | AOUSD § | tinyusdz `composition_graph` |
 |---|---|---|---|
-| Composition cache | `PcpCache` · `cache.h` | §10.1 | `CompositionGraph` (loose — no persistent cache) |
+| Composition cache | `PcpCache` · `cache.h` | §10.1 | `composition_graph::CompositionGraph` (eager) · `pcp::Cache` (lazy + cached, `src/pcp/cache.hh`) |
 | Per-prim composition graph | `PcpPrimIndex` · `primIndex.h` | §10 | `PrimIndex` |
 | Shared COW node pool | `PcpPrimIndex_Graph` · `primIndex_Graph.h` | — | node pool inside `PrimIndex` |
 | Graph node / opinion site | `PcpNodeRef`, `_Node` · `node.h` | §10 | `CompNode` |
@@ -58,7 +58,7 @@ three systems. Use it to jump between a symbol you know and its counterpart.
 | Payload inclusion control | `PcpCache` payload set · `cache.h` | §10.3.2.2 | `DeferredPayloadInfo` + `payload_policy` |
 | Property composition | `PcpPropertyIndex` · `propertyIndex.h` | §11.3.2 | *(gap — value resolution handles this)* |
 | Composition errors | `PcpErrorType` · `errors.h` | §10.6 | error strings via `nonstd::expected` |
-| Change / dependency tracking | `PcpChanges`, `PcpDependencies` · `changes.h`, `dependencies.h` | — | *(gap — recompose affected prim on payload load)* |
+| Change / dependency tracking | `PcpChanges`, `PcpDependencies` · `changes.h`, `dependencies.h` | — | `pcp::Cache` site→index reverse map + `Invalidate()` (no edit-diffing yet) |
 
 Throughout, citations use **symbol names** rather than pinned line numbers, which
 drift between OpenUSD checkouts.
@@ -500,8 +500,12 @@ PCP records, for every cached index, the sites it depends on, so an edit trigger
   apply it (invalidate caches) — with a `PcpLifeboat` retaining referenced layers
   until clients re-pull.
 
-**tinyusdz has no equivalent** — there is no persistent, change-tracked cache; the
-DAG engine recomposes the affected prim when a payload is loaded or unloaded.
+**tinyusdz's `composition_graph::CompositionGraph` has no equivalent** — it composes
+once and recomposes the affected prim when a payload is loaded or unloaded. The
+**`pcp::Cache`** engine (below) adds the cached/lazy counterpart: a per-prim result
+cache, a site→index reverse-dependency map, and an explicit `Invalidate(path)` that
+drops only the affected indices. It does *not* implement PCP's two-phase
+`PcpChanges` edit-diffing — invalidation is explicit, not derived from scene edits.
 
 ### Error Types
 
@@ -895,15 +899,93 @@ correctness analysis, instancing, and variants, see
 
 ---
 
+## The tinyusdz Composition Cache (`pcp::Cache`)
+
+`tinyusdz::pcp::Cache` (`src/pcp/cache.hh`, namespace `tinyusdz::pcp`) is the
+cached, lazy, partial-composition counterpart to OpenUSD's `PcpCache`. It is a
+thin layer *on top of* the `composition_graph` engine — it reuses `PrimIndex`,
+`CompNode`, and `PrimIndexBuilder` unchanged — and adds the four things the eager
+`CompositionGraph` lacks. It is the closest tinyusdz analogue to `PcpCache`'s
+"compute on demand and remember" model.
+
+**What it adds over `CompositionGraph`:**
+
+1. **Lazy / partial composition.** `ComputePrimIndex(path)` builds and caches the
+   `PrimIndex` for *just that prim* on demand, instead of eagerly composing every
+   prim up front. You only pay for the prims you query.
+2. **Parse-once layer-asset cache** (`pcp::LayerRegistry`, `src/pcp/layer-registry.hh`).
+   A referenced / sublayer / payload file is resolved and parsed **once**, keyed by
+   its resolved asset path, and shared across every prim that uses it. (The eager
+   `CompositionGraph` re-parses each file per use.)
+3. **Dependency tracking + invalidation.** As each `PrimIndex` is built, the cache
+   records every opinion **site** — a `(resolved-layer-id, prim-path)` pair derived
+   from each node's `layer_stack_idx`/`site_path_idx` — in a reverse map. `Invalidate(path)`
+   drops the index for `path`, its namespace descendants, **and** every cached index
+   that read a site at/under `path`; `InvalidateLayer(id)` does the same per layer.
+4. **Threading.** Single-threaded by default (and the only path on wasm).
+   `PrewarmPrimIndices()` / `BuildStage()` optionally build independent prim indices
+   in parallel when `CacheOptions::num_threads != 1` and `TINYUSDZ_ENABLE_THREAD` is
+   compiled in — each worker builds into its own context (no shared mutable state),
+   with only the `LayerRegistry` serialized, then a deterministic merge folds the
+   results in input order so single- and multi-threaded runs are identical.
+
+**Decoupling.** To let the cache drive per-prim builds, `PrimIndexBuilder` was
+refactored to depend on a `composition_graph::CompositionContext` (shared tables +
+resolver + options + a `load_layer` seam) rather than directly on `CompositionGraph`.
+Both engines now drive the same builder. Each cached prim owns its own
+`CompositionContext` tables; the heavy parsed layers are shared via the registry.
+The whole `Cache` lives behind a heap-pinned `Impl` (pimpl) so it is cheaply movable
+without disturbing the cached indices' internal pointers.
+
+The result cache, the reverse-dependency map, and the `LayerRegistry` use the
+in-tree open-addressing robin-hood map `tinyusdz::HashMap` (`src/tiny-hashmap.hh`)
+rather than `std::unordered_map` — exceptions-free, and its `find()` is move-safe
+(it guards an empty table before masking). Thread-safety is provided externally
+where needed: `LayerRegistry` serializes its load path with a mutex; the per-prim
+maps are only mutated single-threaded (parallel workers build into private
+contexts and a single-threaded barrier merges the results).
+
+**API sketch** (`src/pcp/cache.hh`):
+
+```cpp
+using namespace tinyusdz;
+
+// CompositeSublayers (the L phase) is run internally by Open().
+auto r = pcp::Cache::Open(resolver, root_layer, pcp::CacheOptions{});
+pcp::Cache cache = std::move(*r);
+
+// Partial: compose only what you need (cached; stable pointer).
+if (const auto *idx = cache.ComputePrimIndex(Path("/Model/Geom"), &warn, &err)) {
+  for (uint16_t n : idx->GetStrengthOrder()) { /* idx->GetNode(n) ... */ }
+}
+
+// Lazy payloads, targeted invalidation.
+cache.LoadPayload(Path("/Model"), &warn, &err);
+cache.Invalidate(Path("/Model"));   // drops /Model + dependents only
+
+// Full materialization (reuses composition-reconstruct.cc; structurally
+// identical to CompositionGraph::BuildStage / CompositeAllArcs + LayerToStage).
+Stage stage;
+cache.BuildStage(&stage, &warn, &err);
+```
+
+**Scope (first cut).** Lazy + caches + explicit invalidate. There is no
+`PcpChanges`-style processor that *diffs* arbitrary scene edits, no separate
+property index, and instancing detection is left to the eager path / `Stage`-level
+`BuildInstancePrototypes()`. Built behind the `TINYUSDZ_WITH_PCP` CMake option (ON).
+
+---
+
 ## PCP ↔ tinyusdz: Where They Diverge
 
 The two engines share a data model, but the tinyusdz DAG engine is intentionally
 narrower than OpenUSD PCP:
 
-- **No persistent, change-tracked cache.** `CompositionGraph` composes once; it
-  has no `PcpChanges`/`PcpDependencies` machinery for minimal recomposition.
-  Editing scene description means recomposing, not invalidating a dependency
-  graph. (Payload load/unload recomposes just the affected prim.)
+- **No full `PcpChanges` edit-diffing.** `CompositionGraph` composes once, and
+  `pcp::Cache` adds a persistent per-prim cache with a site→index reverse-dependency
+  map and explicit `Invalidate(path)` / `InvalidateLayer(id)`. Neither implements
+  PCP's two-phase change processor that *derives* the minimal recomposition set from
+  an arbitrary scene edit — invalidation in `pcp::Cache` is explicit, caller-driven.
 - **No separate property index.** There is no `PcpPropertyIndex`; property
   opinions are resolved during reconstruction / value resolution.
 - **Simpler namespace mapping.** `NamespaceMapping` is a prefix-remap with lazy
@@ -940,7 +1022,9 @@ comparison table and correctness analysis in
 
 ### tinyusdz source
 
-- `src/composition-graph.hh` / `.cc` — this engine.
+- `src/composition-graph.hh` / `.cc` — this (eager) engine; also `CompositionContext` + `PrimIndexBuilder` reused by `pcp::Cache`.
+- `src/pcp/cache.hh` / `.cc` — `pcp::Cache`, the cached/lazy composition engine (+ `cache-impl.hh`, `cache-parallel.cc`).
+- `src/pcp/layer-registry.hh` / `.cc` — parse-once, resolved-path-keyed layer cache.
 - `src/composition.hh` / `.cc` — default flattening pipeline (`CompositeAllArcs`).
 - `src/composition-reconstruct.cc` — PrimSpec → Prim/Stage lowering (shared by both paths).
 - `src/core/instance-key.hh` — `Stage`-level `InstanceKey` (SpookyHash).
