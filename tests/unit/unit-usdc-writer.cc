@@ -2520,6 +2520,43 @@ def Xform "x" {
   TEST_CHECK(samples[1].blocked);
 }
 
+void usdc_writer_timesamples_blocked_array_sample_test(void) {
+  // ValueBlock as one of multiple ARRAY time samples. Regression: a single
+  // `None` in an animated array attribute used to drop the entire timeSamples
+  // on USDC read-back (scalar-vs-array blocked type-id conflict in the reader).
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom float[] widths.timeSamples = {
+    0: [1, 2, 3],
+    5: None,
+    10: [4, 5, 6]
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("widths");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  const auto &ts = it->second.get_attribute().get_var().ts_raw();
+  const auto &samples = ts.get_samples();
+  TEST_CHECK(samples.size() == 3);
+  if (samples.size() != 3) return;
+  // Blocked sample preserved.
+  TEST_CHECK(samples[1].blocked);
+  // Real array samples preserved with their values.
+  std::vector<float> got;
+  bool blocked = false;
+  TEST_CHECK(ts.get_vector_at<float>(0, &got, &blocked) && !blocked &&
+             got == std::vector<float>({1.0f, 2.0f, 3.0f}));
+  TEST_CHECK(ts.get_vector_at<float>(2, &got, &blocked) && !blocked &&
+             got == std::vector<float>({4.0f, 5.0f, 6.0f}));
+}
+
 void usdc_writer_large_int_array_test(void) {
   // 1000-element int[] — exercises compressed-array writer
   std::string usda = "#usda 1.0\ndef Xform \"x\" {\n  custom int[] big = [";
