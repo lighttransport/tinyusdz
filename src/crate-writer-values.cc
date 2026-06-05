@@ -465,9 +465,14 @@ bool CrateWriter::CanRetainDeduplicatedValue(size_t byte_count) const {
     return false;
   }
 
+  // Guard the int64_t cast below against size_t overflow. Only meaningful where
+  // size_t can exceed INT64_MAX (64-bit); on 32-bit targets (e.g. wasm) size_t
+  // never does, so the check is omitted to avoid a tautological-compare warning.
+#if SIZE_MAX > INT64_MAX
   if (retained_bytes > static_cast<size_t>((std::numeric_limits<int64_t>::max)())) {
     return false;
   }
+#endif
   return !WouldExceedMemoryLimit(static_cast<int64_t>(retained_bytes));
 }
 

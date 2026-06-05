@@ -12,6 +12,13 @@
 #include <cstring>
 #include <limits>
 #include <sstream>
+#include <type_traits>
+
+// math::is_close — used for exact (eps == 0) floating-point comparison without
+// tripping -Wfloat-equal. is_close(a, b, 0) computes fabs(a - b) <= 0, which is
+// bit-exact equality for finite values; a non-zero eps would be WRONG here (it
+// would inline values that are merely close, losing precision on write).
+#include "math-util.inc"
 
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -36,8 +43,17 @@ bool EncodeInt8Exact(T v, int8_t *out) {
     return false;
   }
   int8_t i = static_cast<int8_t>(v);
-  if (static_cast<T>(i) != v) {
-    return false;
+  // The int8 round-trip must be exact (lossless inline). For floating-point T
+  // use math::is_close with eps 0 (bit-exact, no -Wfloat-equal); integer T uses
+  // a plain integer compare (no float warning, exact by construction).
+  if constexpr (std::is_floating_point_v<T>) {
+    if (!math::is_close(static_cast<T>(i), v, static_cast<T>(0))) {
+      return false;
+    }
+  } else {
+    if (static_cast<T>(i) != v) {
+      return false;
+    }
   }
   *out = i;
   return true;
@@ -105,7 +121,8 @@ bool EncodeMatrixInlineDiagonalInt8(const Matrix& mat, uint32_t *packed) {
         if (!EncodeInt8Exact(mat.m[r][c], &diag[r])) {
           return false;
         }
-      } else if (mat.m[r][c] != 0.0) {
+      } else if (!math::is_close(mat.m[r][c], 0.0, 0.0)) {
+        // Off-diagonal must be exactly 0 for the diagonal-only inline encoding.
         return false;
       }
     }
@@ -250,7 +267,9 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
   // the float bits in the 32-bit payload.
   if (auto* double_val = value.as<double>()) {
     float f = static_cast<float>(*double_val);
-    if (static_cast<double>(f) == *double_val) {
+    // Inline only doubles that are EXACTLY representable as float (no precision
+    // loss). is_close with eps 0 is bit-exact equality without -Wfloat-equal.
+    if (math::is_close(static_cast<double>(f), *double_val, 0.0)) {
       uint32_t float_bits = 0;
       memcpy(&float_bits, &f, sizeof(float));
       rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE));
