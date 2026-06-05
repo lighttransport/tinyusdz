@@ -6,12 +6,14 @@
 #include "acutest.h"
 
 #include "unit-dedup.h"
+#include "../../src/crate-reader.hh"
 #include "../../src/crate-writer.hh"
 #include "../../src/tinyusdz.hh"
 #include "../../src/core/prim.hh"
 #include "../../src/core/prim-spec.hh"
 #include "../../src/primvar.hh"
 #include "../../src/layer.hh"
+#include "../../src/stream-reader.hh"
 #include "../../src/value-types.hh"
 #include "../../src/timesamples.hh"
 #include "../../src/io-util.hh"
@@ -19,9 +21,13 @@
 #include <cmath>
 #include <functional>
 #include <fstream>
+#include <limits>
 
 using namespace tinyusdz;
 using namespace tinyusdz::experimental;
+
+using CrateDataTypeId = tinyusdz::crate::CrateDataTypeId;
+using CrateValueRep = tinyusdz::crate::ValueRep;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -53,6 +59,42 @@ static Stage MakeAnimStage(const std::string& primName,
   attr.set_var(pv);
 
   xform.props["animAttr"] = Property(attr, /* custom */ false);
+
+  Prim prim(primName, xform);
+  stage.root_prims().emplace_back(prim);
+  return stage;
+}
+
+static void AddCustomAttribute(Xform* xform, const std::string& name,
+                               const std::string& typeName,
+                               const value::Value& defaultValue,
+                               const value::TimeSamples* ts = nullptr) {
+  Attribute attr;
+  attr.set_type_name(typeName);
+  primvar::PrimVar pv;
+  pv._value = defaultValue;
+  if (ts) {
+    pv._ts = *ts;
+  }
+  attr.set_var(pv);
+  xform->props[name] = Property(attr, /* custom */ false);
+}
+
+static Stage MakeMultiAttrAnimStage(
+    const std::string& primName,
+    const std::string& typeName,
+    const std::vector<value::TimeSamples>& samples,
+    const value::Value& defaultValue) {
+  Stage stage;
+
+  Xform xform;
+  xform.name = primName;
+  xform.spec = Specifier::Def;
+
+  for (size_t i = 0; i < samples.size(); ++i) {
+    AddCustomAttribute(&xform, "animAttr_" + std::to_string(i), typeName,
+                       defaultValue, &samples[i]);
+  }
 
   Prim prim(primName, xform);
   stage.root_prims().emplace_back(prim);
@@ -91,6 +133,47 @@ static const value::TimeSamples* GetLayerAttrTS(const Layer& layer,
   auto prit = props.find(propName);
   if (prit == props.end() || !prit->second.is_attribute()) return nullptr;
   return &prit->second.get_attribute().get_var().ts_raw();
+}
+
+static bool ReadFieldValueRepsByToken(const std::string& filename,
+                                      const std::string& field_name,
+                                      std::vector<CrateValueRep>* reps,
+                                      std::string* err) {
+  std::vector<uint8_t> data;
+  if (!tinyusdz::io::ReadWholeFile(&data, err, filename, 0, nullptr)) {
+    return false;
+  }
+
+  StreamReader sr(data.data(), data.size(), /* swap_endian */ false);
+  tinyusdz::crate::CrateReaderConfig config;
+  config.numThreads = 1;
+  tinyusdz::crate::CrateReader reader(&sr, config);
+
+  if (!reader.ReadBootStrap() || !reader.ReadTOC() || !reader.ReadTokens() ||
+      !reader.ReadFields()) {
+    if (err) *err = reader.GetError();
+    return false;
+  }
+
+  for (const auto& field : reader.GetFields()) {
+    auto token = reader.GetToken(field.token_index);
+    if (token && token->str() == field_name) {
+      reps->push_back(field.value_rep);
+    }
+  }
+
+  return true;
+}
+
+static bool HasValueRep(const std::vector<CrateValueRep>& reps,
+                        CrateDataTypeId type_id, bool is_inlined) {
+  for (const auto& rep : reps) {
+    if (rep.GetType() == static_cast<int32_t>(type_id) &&
+        rep.IsInlined() == is_inlined) {
+      return true;
+    }
+  }
+  return false;
 }
 
 template <typename T>
@@ -316,7 +399,298 @@ void dedup_matrix4d_test(void) {
   }
 }
 
-// Test 7: Role-type array (texcoord2f[]) deduplication.
+// Test 7: Global cross-attribute TimeSamples value deduplication.
+// Each attribute has unique values across time, so per-attribute dedup has no
+// opportunity. The same curve repeated across attributes should share the
+// writer-wide ValueReps.
+void dedup_cross_attribute_timesamples_test(void) {
+  const size_t k_attrs = 8;
+  const int k_frames = 48;
+  std::vector<value::TimeSamples> samples(k_attrs);
+
+  for (size_t a = 0; a < k_attrs; ++a) {
+    for (int f = 0; f < k_frames; ++f) {
+      value::double3 v = {{double(f) * 1.25, double(f * f) + 0.5,
+                           double(f) * -3.0}};
+      samples[a].add_sample(double(f), value::Value(v));
+    }
+  }
+
+  value::double3 default_value = {{0.0, 0.0, 0.0}};
+  Stage stage = MakeMultiAttrAnimStage("CrossAttrTS", "double3", samples,
+                                       value::Value(default_value));
+
+  const std::string f_dedup = "/tmp/test_cross_attr_ts_dedup.usdc";
+  const std::string f_no = "/tmp/test_cross_attr_ts_no_dedup.usdc";
+  TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
+  TEST_CHECK(WriteStageUSDC(stage, f_no, false));
+
+  const size_t size_dedup = GetFileSize(f_dedup);
+  const size_t size_no = GetFileSize(f_no);
+  TEST_MSG("cross-attr timesample dedup %zu vs no-dedup %zu", size_dedup,
+           size_no);
+  TEST_CHECK(size_dedup < size_no);
+
+  Layer layer;
+  std::string warn, err;
+  TEST_CHECK(tinyusdz::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
+  for (size_t a = 0; a < k_attrs; ++a) {
+    const value::TimeSamples* rts =
+        GetLayerAttrTS(layer, "CrossAttrTS", "animAttr_" + std::to_string(a));
+    TEST_CHECK(rts != nullptr);
+    if (rts) TEST_CHECK(rts->size() == size_t(k_frames));
+  }
+}
+
+// Test 8: Global default-value scalar deduplication.
+// Covers matrix4d, double3 and scalar double defaults. The scalar-double-only
+// half uses a non-float-exact double so it still catches the out-of-line
+// primitive scalar path now that OpenUSD-style inline doubles are supported.
+void dedup_default_scalar_values_test(void) {
+  value::matrix4d mat;
+  for (int r = 0; r < 4; ++r) {
+    for (int c = 0; c < 4; ++c) {
+      mat.m[r][c] = (r == c) ? 1.0 : 0.0;
+    }
+  }
+  value::double3 vec = {{1.25, 2.5, 3.75}};
+
+  {
+    Stage stage;
+    Xform xform;
+    xform.name = "DefaultScalars";
+    xform.spec = Specifier::Def;
+    for (int i = 0; i < 48; ++i) {
+      AddCustomAttribute(&xform, "m_" + std::to_string(i), "matrix4d",
+                         value::Value(mat));
+      AddCustomAttribute(&xform, "v_" + std::to_string(i), "double3",
+                         value::Value(vec));
+    }
+    Prim prim("DefaultScalars", xform);
+    stage.root_prims().emplace_back(prim);
+
+    const std::string f_dedup = "/tmp/test_default_scalar_dedup.usdc";
+    const std::string f_no = "/tmp/test_default_scalar_no_dedup.usdc";
+    TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
+    TEST_CHECK(WriteStageUSDC(stage, f_no, false));
+    const size_t size_dedup = GetFileSize(f_dedup);
+    const size_t size_no = GetFileSize(f_no);
+    TEST_MSG("default matrix/double3 dedup %zu vs no-dedup %zu", size_dedup,
+             size_no);
+    TEST_CHECK(size_dedup < size_no);
+  }
+
+  {
+    Stage stage;
+    Xform xform;
+    xform.name = "DefaultDoubles";
+    xform.spec = Specifier::Def;
+    for (int i = 0; i < 1024; ++i) {
+      AddCustomAttribute(&xform, "d_" + std::to_string(i), "double",
+                         value::Value(0.1));
+    }
+    Prim prim("DefaultDoubles", xform);
+    stage.root_prims().emplace_back(prim);
+
+    const std::string f_dedup = "/tmp/test_default_double_dedup.usdc";
+    const std::string f_no = "/tmp/test_default_double_no_dedup.usdc";
+    TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
+    TEST_CHECK(WriteStageUSDC(stage, f_no, false));
+    const size_t size_dedup = GetFileSize(f_dedup);
+    const size_t size_no = GetFileSize(f_no);
+    TEST_MSG("default double dedup %zu vs no-dedup %zu", size_dedup,
+             size_no);
+    TEST_CHECK(size_dedup < size_no);
+  }
+}
+
+void inline_openusd_value_coverage_test(void) {
+  value::matrix2d m2 = {};
+  m2.m[0][0] = -1.0;
+  m2.m[1][1] = 2.0;
+
+  value::matrix3d m3 = {};
+  m3.m[0][0] = 1.0;
+  m3.m[1][1] = -2.0;
+  m3.m[2][2] = 3.0;
+
+  value::matrix4d m4 = {};
+  m4.m[0][0] = 1.0;
+  m4.m[1][1] = 2.0;
+  m4.m[2][2] = 3.0;
+  m4.m[3][3] = 4.0;
+
+  value::matrix4d m4_noninline = m4;
+  m4_noninline.m[0][1] = 0.5;
+
+  value::half4 h4 = {{
+      value::float_to_half_full(1.0f),
+      value::float_to_half_full(-2.0f),
+      value::float_to_half_full(3.0f),
+      value::float_to_half_full(4.0f),
+  }};
+  value::double4 d4 = {{1.0, 2.0, -3.0, 4.0}};
+  int64_t i64_inline = int64_t((std::numeric_limits<int32_t>::min)());
+  int64_t i64_noninline = int64_t((std::numeric_limits<int32_t>::min)()) - 1;
+  uint64_t u64_inline = uint64_t((std::numeric_limits<uint32_t>::max)());
+  uint64_t u64_noninline = uint64_t((std::numeric_limits<uint32_t>::max)()) + 1;
+
+  Stage stage;
+  Xform xform;
+  xform.name = "InlineCoverage";
+  xform.spec = Specifier::Def;
+
+  AddCustomAttribute(&xform, "m2", "matrix2d", value::Value(m2));
+  AddCustomAttribute(&xform, "m3", "matrix3d", value::Value(m3));
+  AddCustomAttribute(&xform, "m4", "matrix4d", value::Value(m4));
+  AddCustomAttribute(&xform, "m4_noninline", "matrix4d",
+                     value::Value(m4_noninline));
+  AddCustomAttribute(&xform, "h4", "half4", value::Value(h4));
+  AddCustomAttribute(&xform, "d4", "double4", value::Value(d4));
+  AddCustomAttribute(&xform, "i64_inline", "int64",
+                     value::Value(i64_inline));
+  AddCustomAttribute(&xform, "i64_noninline", "int64",
+                     value::Value(i64_noninline));
+  AddCustomAttribute(&xform, "u64_inline", "uint64",
+                     value::Value(u64_inline));
+  AddCustomAttribute(&xform, "u64_noninline", "uint64",
+                     value::Value(u64_noninline));
+
+  Attribute attr_with_custom_data;
+  attr_with_custom_data.set_type_name("double");
+  primvar::PrimVar pv;
+  pv._value = value::Value(1.0);
+  attr_with_custom_data.set_var(pv);
+  attr_with_custom_data.metas().set_customData(Dictionary());
+  xform.props["emptyCustomData"] =
+      Property(attr_with_custom_data, /* custom */ false);
+
+  Prim prim("InlineCoverage", xform);
+  stage.root_prims().emplace_back(prim);
+
+  const std::string filename = "/tmp/test_inline_openusd_coverage.usdc";
+  TEST_CHECK(WriteStageUSDC(stage, filename, true));
+
+  std::vector<CrateValueRep> default_reps;
+  std::string err;
+  bool ret = ReadFieldValueRepsByToken(filename, "default", &default_reps, &err);
+  TEST_CHECK(ret);
+  if (!ret) {
+    TEST_MSG("failed to read default ValueReps: %s", err.c_str());
+    return;
+  }
+
+  TEST_CHECK(HasValueRep(default_reps, CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D,
+                         true));
+  TEST_CHECK(HasValueRep(default_reps, CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D,
+                         true));
+  TEST_CHECK(HasValueRep(default_reps, CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D,
+                         true));
+  TEST_CHECK(HasValueRep(default_reps, CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D,
+                         false));
+  TEST_CHECK(HasValueRep(default_reps, CrateDataTypeId::CRATE_DATA_TYPE_VEC4H,
+                         true));
+  TEST_CHECK(HasValueRep(default_reps, CrateDataTypeId::CRATE_DATA_TYPE_VEC4D,
+                         true));
+  TEST_CHECK(HasValueRep(default_reps, CrateDataTypeId::CRATE_DATA_TYPE_INT64,
+                         true));
+  TEST_CHECK(HasValueRep(default_reps, CrateDataTypeId::CRATE_DATA_TYPE_INT64,
+                         false));
+  TEST_CHECK(HasValueRep(default_reps, CrateDataTypeId::CRATE_DATA_TYPE_UINT64,
+                         true));
+  TEST_CHECK(HasValueRep(default_reps, CrateDataTypeId::CRATE_DATA_TYPE_UINT64,
+                         false));
+
+  std::vector<CrateValueRep> custom_data_reps;
+  ret = ReadFieldValueRepsByToken(filename, "customData", &custom_data_reps,
+                                  &err);
+  TEST_CHECK(ret);
+  if (!ret) {
+    TEST_MSG("failed to read customData ValueReps: %s", err.c_str());
+    return;
+  }
+  TEST_CHECK(HasValueRep(custom_data_reps,
+                         CrateDataTypeId::CRATE_DATA_TYPE_DICTIONARY,
+                         true));
+
+  Layer layer;
+  std::string warn;
+  err.clear();
+  TEST_CHECK(tinyusdz::LoadLayerFromFile(filename, &layer, &warn, &err));
+  if (!err.empty()) {
+    TEST_MSG("LoadLayerFromFile error: %s", err.c_str());
+  }
+}
+
+// Test 9: Global dedup of TimeSamples time arrays.
+// Values are intentionally unique per attribute and frame; the shared time-code
+// arrays are the primary dedup opportunity.
+void dedup_shared_times_arrays_test(void) {
+  const size_t k_attrs = 8;
+  const int k_frames = 128;
+  std::vector<value::TimeSamples> samples(k_attrs);
+
+  for (size_t a = 0; a < k_attrs; ++a) {
+    for (int f = 0; f < k_frames; ++f) {
+      value::double3 v = {{double(a) * 10000.0 + double(f),
+                           double(a) * -17.0 + double(f) * 0.25,
+                           double(a + 1) * double(f + 3)}};
+      samples[a].add_sample(double(f) * 0.5, value::Value(v));
+    }
+  }
+
+  value::double3 default_value = {{-1.0, -2.0, -3.0}};
+  Stage stage = MakeMultiAttrAnimStage("SharedTimes", "double3", samples,
+                                       value::Value(default_value));
+
+  const std::string f_dedup = "/tmp/test_shared_times_dedup.usdc";
+  const std::string f_no = "/tmp/test_shared_times_no_dedup.usdc";
+  TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
+  TEST_CHECK(WriteStageUSDC(stage, f_no, false));
+  const size_t size_dedup = GetFileSize(f_dedup);
+  const size_t size_no = GetFileSize(f_no);
+  TEST_MSG("shared times-array dedup %zu vs no-dedup %zu", size_dedup,
+           size_no);
+  TEST_CHECK(size_dedup < size_no);
+}
+
+// Test 10: Dedup retention respects the memory budget without failing writes.
+void dedup_low_memory_budget_test(void) {
+  std::vector<float> large_array(32768);
+  for (size_t i = 0; i < large_array.size(); ++i) {
+    large_array[i] = float(i) * 0.125f;
+  }
+
+  value::TimeSamples ts;
+  for (int f = 0; f < 4; ++f) {
+    ts.add_sample(double(f), value::Value(large_array));
+  }
+  Stage stage = MakeAnimStage("LowMemDedup", "float[]", ts,
+                              value::Value(large_array));
+
+  const std::string filename = "/tmp/test_low_memory_dedup.usdc";
+  std::string err;
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.enable_deduplication = true;
+  opts.enable_compression = false;
+  opts.max_memory_bytes = 64 * 1024;
+  writer.SetOptions(opts);
+  TEST_CHECK(writer.Open(&err));
+  TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
+  TEST_CHECK(writer.Finalize(&err));
+  writer.Close();
+
+  Layer layer;
+  std::string warn;
+  TEST_CHECK(tinyusdz::LoadLayerFromFile(filename, &layer, &warn, &err));
+  const value::TimeSamples* rts =
+      GetLayerAttrTS(layer, "LowMemDedup", "animAttr");
+  TEST_CHECK(rts != nullptr);
+  if (rts) TEST_CHECK(rts->size() == 4);
+}
+
+// Role-type array (texcoord2f[]) deduplication.
 // Role types normalize to their base type (float2) before write; this verifies
 // (a) repeated role arrays dedup, (b) two distinct-but-equal arrays also dedup
 // (hash path, not just read-side offset sharing), and (c) values read back
@@ -450,9 +824,9 @@ void dedup_compressed_int_array_test(void) {
 // ---------------------------------------------------------------------------
 // Regression: every array-valued timesample type must deduplicate
 // identical-across-frames samples. A type the writer's dedup descriptor does
-// not recognize is silently re-expanded to N full copies on write — the
+// not recognize is silently re-expanded to N full copies on write - the
 // std::vector<bool> inflation bug (bit-packed, no contiguous .data(), so it was
-// excluded from ComputeArrayDedupDescriptor; outpost_19's animated bool[]
+// excluded from ComputeValueDedupDescriptor; outpost_19's animated bool[]
 // visibility masks blew an 78 MB USDC up to 384 MB on roundtrip).
 //
 // For each array type we write K *identical* arrays and K *distinct* arrays,

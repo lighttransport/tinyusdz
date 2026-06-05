@@ -826,7 +826,7 @@ private:
   int64_t value_data_start_offset_ = 0;
   int64_t value_data_end_offset_ = 0;
 
-  // Phase 5: TimeSamples value deduplication with NaN-aware hashing.
+  // Phase 5: Value deduplication with NaN-aware hashing.
   // Follows OpenUSD TfHash pattern: +0.0 and -0.0 hash identically;
   // all other values hash by bit pattern.
   struct NanAwareHash {
@@ -851,6 +851,33 @@ private:
     static bool buffers_equal(const void *a, const void *b, size_t byte_count,
                               size_t element_size, bool is_float);
   };
+
+  struct ValueDedupEntry {
+    std::vector<char> bytes;
+    size_t element_size = 1;
+    bool is_float = false;
+    uint32_t wire_tag = 0;
+    uint64_t rep_data = 0;
+    size_t retained_bytes = 0;
+  };
+
+  static bool ComputeValueDedupDescriptor(const crate::CrateValue& value,
+                                          std::vector<char>* bytes,
+                                          size_t* element_size,
+                                          bool* is_float,
+                                          uint32_t* wire_tag);
+  bool LookupDeduplicatedValue(const std::vector<char>& bytes,
+                               size_t element_size, bool is_float,
+                               uint32_t wire_tag, crate::ValueRep* rep) const;
+  bool CanRetainDeduplicatedValue(size_t byte_count) const;
+  void RetainDeduplicatedValue(size_t hash, std::vector<char> bytes,
+                               size_t element_size, bool is_float,
+                               uint32_t wire_tag,
+                               const crate::ValueRep& rep);
+  size_t GetValueDedupBudgetBytes() const;
+
+  std::unordered_multimap<size_t, ValueDedupEntry> value_dedup_map_;
+  size_t value_dedup_bytes_ = 0;
 };
 
 } // namespace experimental

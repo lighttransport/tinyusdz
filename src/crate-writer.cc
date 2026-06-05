@@ -1308,6 +1308,27 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
     return rep;
   }
 
+  bool dedup_candidate = false;
+  std::vector<char> dedup_bytes;
+  size_t dedup_element_size = 1;
+  bool dedup_is_float = false;
+  uint32_t dedup_wire_tag = 0;
+  size_t dedup_hash = 0;
+
+  if (options_.enable_deduplication &&
+      ComputeValueDedupDescriptor(value, &dedup_bytes, &dedup_element_size,
+                                  &dedup_is_float, &dedup_wire_tag)) {
+    dedup_hash = NanAwareHash::combine(
+        NanAwareHash::hash_buffer(dedup_bytes.data(), dedup_bytes.size(),
+                                  dedup_element_size, dedup_is_float),
+        dedup_wire_tag);
+    if (LookupDeduplicatedValue(dedup_bytes, dedup_element_size,
+                                dedup_is_float, dedup_wire_tag, &rep)) {
+      return rep;
+    }
+    dedup_candidate = true;
+  }
+
   // Value cannot be inlined, write to value data section
   bool is_compressed = false;
   int64_t offset = WriteValueData(value, &is_compressed, err);
@@ -1445,6 +1466,12 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   rep.SetPayload(static_cast<uint64_t>(offset));
   if (is_compressed) {
     rep.SetIsCompressed();
+  }
+
+  if (dedup_candidate) {
+    RetainDeduplicatedValue(dedup_hash, std::move(dedup_bytes),
+                            dedup_element_size, dedup_is_float,
+                            dedup_wire_tag, rep);
   }
 
   return rep;
