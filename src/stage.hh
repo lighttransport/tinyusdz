@@ -14,6 +14,7 @@
 #include "composition.hh"
 #include "core/instance-key.hh"  // InstanceKey, InstanceKeyHasher
 #include "core/prim.hh"          // Prim class (transitively: path, prim-enums, prim-metas)
+#include "crate-format.hh"       // PathHasher / PathKeyEqual for _prim_path_cache
 #include "core/layer-types.hh"   // LayerMetas (aliased as StageMetas)
 #include "handle-allocator.hh"   // HandleAllocator
 
@@ -388,8 +389,13 @@ class Stage {
   mutable std::string _warn;
 
   // Cached prim path.
-  // key : prim_part string (e.g. "/path/bora")
-  mutable tinyusdz::HashMap<std::string, const Prim *> _prim_path_cache;
+  // key : Path (the prim part is used to match; the Path is owned by the
+  // cache, avoiding the per-lookup std::string allocation that would result
+  // from passing tstring_view as a key to a HashMap<std::string, ...>).
+  // See concern #1 in review.md.
+  mutable tinyusdz::HashMap<Path, const Prim *, tinyusdz::crate::PathHasher,
+                            tinyusdz::crate::PathKeyEqual>
+      _prim_path_cache;
 
   // Cached prim_id -> Prim lookup
   // key : prim_id

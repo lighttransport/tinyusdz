@@ -48,8 +48,20 @@ bool ValidatePrimElementName(const std::string &tok);
 ///
 /// and have more limitatons.
 ///
+namespace crate {
+struct PathHasher;  // forward decl: defined in src/crate-format.hh
+struct PathKeyEqual;
+}  // namespace crate
+
 class Path {
  public:
+  // PathHasher and PathKeyEqual need to read the private _variant_part /
+  // _variant_selection_part fields directly (see concern 5 in review.md),
+  // so we friend them here. variant_part() is the public formatter but
+  // allocates a std::string on every call, which is too expensive for a
+  // hot-path hasher.
+  friend struct crate::PathHasher;
+  friend struct crate::PathKeyEqual;
   // Similar to SdfPathNode
   enum class PathType {
     Prim,
@@ -99,6 +111,10 @@ class Path {
   // NOT NUL-terminated at view.size(); use size-aware operations (==, <, ...)
   // and to_string(view) if you need an owned std::string. prop_part() and
   // full_path_view() ARE NUL-terminated (suffix / whole buffer).
+  //
+  // Lifetime: the returned view borrows from `_full`. The view is valid only
+  // as long as this Path is alive and not mutated via _assemble() / _update().
+  // See concern 3 in review.md.
   tstring_view full_path_view() const {
     return tstring_view(_full.data(), _full.size());
   }

@@ -1534,10 +1534,13 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
 
         if (ComputeArrayDedupDescriptor(crate_value, &value_bytes,
                                         &dedup_element_size, &dedup_is_float,
-                                        &dedup_wire_tag) &&
-            !value_bytes.empty()) {
-          // Mix the wire tag into the hash so byte-identical blocks with
-          // different crate identity land in different buckets.
+                                        &dedup_wire_tag)) {
+          // Dedup is keyed on (content hash, wire_tag) so byte-identical
+          // blocks with different crate identity land in different buckets.
+          // Empty arrays are deduped too: every empty array hashes to the
+          // same content hash (XXH3 of 0 bytes ignores element_size/is_float),
+          // so the wire_tag alone is what distinguishes e.g. an empty int
+          // array from an empty float array. See concern #2 in review.md.
           const size_t h = NanAwareHash::combine(
               NanAwareHash::hash_buffer(value_bytes.data(), value_bytes.size(),
                                         dedup_element_size, dedup_is_float),
