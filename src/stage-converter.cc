@@ -411,6 +411,14 @@ bool CrateWriter::ConvertSinglePrim(
   Path prim_path(abs_path_str, "");
   std::string type_name = prim.prim_type_name();
 
+  // All specs this prim contributes (its Prim spec + Attribute/Relationship/
+  // Connection specs) are appended to spec_data_ within this call. Record the
+  // start index so the "properties"-field pass below scans only this prim's
+  // specs instead of all accumulated specs — the prior all-specs scan made
+  // ConvertSinglePrim O(prims x total_specs), which dominated write time for
+  // spec-dense scenes (e.g. a scene with ~5000 shaders -> ~57 s write).
+  const size_t my_specs_begin = spec_data_.size();
+
   DCOUT("ConvertSinglePrim: name=" << prim_name << " abs=" << abs_path_str << " type=" << type_name);
 
   // Extract properties from this prim
@@ -911,7 +919,11 @@ bool CrateWriter::ConvertSinglePrim(
     const std::string prim_prefix = abs_path_str + ".";
     std::vector<value::token> property_names;
     std::set<std::string> seen;
-    for (const auto &sd : spec_data_) {
+    // Scan only the specs this prim added (see my_specs_begin), not all of
+    // spec_data_ — direct-child Attribute/Relationship specs are always among
+    // this prim's own specs.
+    for (size_t _i = my_specs_begin; _i < spec_data_.size(); ++_i) {
+      const auto &sd = spec_data_[_i];
       if (sd.spec_type == SpecType::Attribute ||
           sd.spec_type == SpecType::Relationship) {
         const std::string &fp = sd.path.full_path_name();
@@ -929,10 +941,12 @@ bool CrateWriter::ConvertSinglePrim(
       }
     }
     if (!property_names.empty()) {
-      // Append "properties" field to the existing prim spec
-      for (auto &sd : spec_data_) {
-        if (sd.path.full_path_name() == abs_path_str &&
-            sd.spec_type == SpecType::Prim) {
+      // Append "properties" field to this prim's Prim spec (also within the
+      // [my_specs_begin, end) range this call appended).
+      for (size_t _i = my_specs_begin; _i < spec_data_.size(); ++_i) {
+        auto &sd = spec_data_[_i];
+        if (sd.spec_type == SpecType::Prim &&
+            sd.path.full_path_name() == abs_path_str) {
           crate::CrateValue props_value;
           props_value.Set(property_names);
           sd.fields.push_back({"properties", props_value});
