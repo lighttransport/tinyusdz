@@ -64,7 +64,8 @@ def Camera "cam" {
 }
 )";
 
-  // Debug: check if 2.5 is in the USDC bytes
+  // Debug: check if 2.5 is in the USDC bytes. OpenUSD-style writers may store
+  // float-exact doubles inline as float bits, so accept either representation.
   {
     Stage tmp;
     std::string w2, e2;
@@ -76,6 +77,7 @@ def Camera "cam" {
     uint8_t target_bytes[8];
     std::memcpy(target_bytes, &target, 8);
     bool found = false;
+    bool found_inline = false;
     size_t found_offset = 0;
     for (size_t i = 0; i + 8 <= bytes.size(); i++) {
       if (std::memcmp(bytes.data() + i, target_bytes, 8) == 0) {
@@ -84,8 +86,21 @@ def Camera "cam" {
         break;
       }
     }
-    TEST_CHECK(found);
-    TEST_MSG("USDC bytes=%zu, found 2.5 at offset %zu (found=%d)", bytes.size(), found_offset, found);
+    float inline_target = 2.5f;
+    uint8_t inline_bytes[4];
+    std::memcpy(inline_bytes, &inline_target, 4);
+    for (size_t i = 0; i + 4 <= bytes.size(); i++) {
+      if (std::memcmp(bytes.data() + i, inline_bytes, 4) == 0) {
+        found_inline = true;
+        if (!found) {
+          found_offset = i;
+        }
+        break;
+      }
+    }
+    TEST_CHECK(found || found_inline);
+    TEST_MSG("USDC bytes=%zu, found 2.5 at offset %zu (raw=%d inline=%d)",
+             bytes.size(), found_offset, found, found_inline);
   }
 
   Stage stage;

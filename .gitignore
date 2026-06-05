@@ -378,6 +378,7 @@ CMakeUserPresets.json
 !tests/usda/validation/valid/*.usda
 !tests/usda/validation/invalid/*.usda
 !tests/usda/validation/generated/*.usda
+!tests/usdc/dedup-global-001.usdc
 !aousd/validation_*.usda
 # Test-generated runtime artifacts (roundtrip/runtime tests)
 tests/usdc/memory-budget-*-runtime.usdc
