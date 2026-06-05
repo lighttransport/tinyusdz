@@ -193,6 +193,7 @@ TEST_LIST = {
   { "dedup_role_array_test", dedup_role_array_test },
   { "dedup_compressed_int_array_test", dedup_compressed_int_array_test },
   { "timesample_array_dedup_no_inflation_test", timesample_array_dedup_no_inflation_test },
+  { "uchar_roundtrip_test", uchar_roundtrip_test },
   { "crate_writer_basic_creation_test", crate_writer_basic_creation_test },
   { "crate_writer_simple_prim_test", crate_writer_simple_prim_test },
   { "crate_writer_typename_encoding_test", crate_writer_typename_encoding_test },

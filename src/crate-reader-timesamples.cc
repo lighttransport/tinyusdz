@@ -435,6 +435,62 @@ bool CrateReader::UnpackTimeSampleValue_BOOL(double t,
   return true;
 }
 
+// uchar (uint8_t). Mirrors BOOL: 1-byte scalar inline, raw-byte array via
+// ReadArray. Unlike bool, no 0/1 normalization is needed.
+bool CrateReader::UnpackTimeSampleValue_UCHAR(double t,
+                                              const crate::ValueRep &rep,
+                                              value::TimeSamples &dst,
+                                              size_t expected_total_samples) {
+  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
+      crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
+    if (!add_blocked_sample_to_timesamples<uint8_t>(&dst, t, &_err,
+                                                    expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Failed to add blocked sample to TimeSamples.");
+    }
+    return true;
+  }
+
+  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) !=
+      crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid ValueRep type in TimeSamples.");
+  }
+
+  if (rep.IsInlined()) {
+    if (rep.IsCompressed() || rep.IsArray()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Invalid inlined ValueRep in TimeSamples.");
+    }
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    uint8_t val = static_cast<uint8_t>(data & 0xFFu);
+    if (!add_sample_to_timesamples<uint8_t>(&dst, t, val, &_err,
+                                            expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
+  } else if (rep.IsArray()) {
+    std::vector<uint8_t> v;
+    if (rep.GetPayload() == 0) {  // empty array
+      if (!add_array_sample_to_timesamples<uint8_t>(&dst, t, v, &_err,
+                                                    expected_total_samples)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "Failed to add sample to TimeSamples.");
+      }
+      return true;
+    }
+    if (!ReadArray(&v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uchar array.");
+    }
+    if (!add_array_sample_to_timesamples<uint8_t>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
+  } else {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for uchar is invalid.");
+  }
+
+  return true;
+}
+
 // Macro for simple scalar/array types with memcpy-style inline decode.
 // FUNC_SUFFIX: function name suffix (e.g. INT32)
 // CPP_TYPE: C++ type (e.g. int32_t)
@@ -1445,6 +1501,7 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
 
   switch (crate_type_id) {
     UNPACK_CASE(CRATE_DATA_TYPE_BOOL, BOOL)
+    UNPACK_CASE(CRATE_DATA_TYPE_UCHAR, UCHAR)
     UNPACK_CASE(CRATE_DATA_TYPE_INT, INT32)
     UNPACK_CASE(CRATE_DATA_TYPE_UINT, UINT32)
     UNPACK_CASE(CRATE_DATA_TYPE_INT64, INT64)
