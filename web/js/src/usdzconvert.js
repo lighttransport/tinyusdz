@@ -475,6 +475,28 @@ function shouldUseLowHeapFlattenedUSDZ(rootPath, assetMap, opts, textureFormat) 
     typeof opts.audioProcessor !== 'function';
 }
 
+// Like shouldUseLowHeapFlattenedUSDZ, but for the STAGE (typed-Prim,
+// ARKit-style flatten) path: a single self-contained .usdz, ARKit-compatible,
+// textures kept (no re-encode). Streams the typed-flattened root USDC into a JS
+// buffer and repacks the zip in JS, so the in-heap stage path's 2 GB wasm32 OOM
+// on large scenes (texture decode + whole crate + zip in heap) is avoided.
+function shouldUseLowHeapStageFlattenedUSDZ(rootPath, assetMap, opts, textureFormat) {
+  return /\.usdz$/i.test(rootPath) &&
+    assetMap.size === 1 &&
+    assetMap.has(rootPath) &&
+    !!opts.arkitCompatible &&
+    opts.lowHeapStageUsdz !== false &&
+    opts.lowHeapFlattenUsdz !== false &&
+    opts.repackUsdz !== false &&
+    opts.flatten !== false &&
+    opts.reencode === false &&
+    textureFormat === 'keep' &&
+    (opts.maxTextureSize || 0) <= 0 &&
+    (opts.targetTextureBytes || 0) <= 0 &&
+    typeof opts.textureProcessor !== 'function' &&
+    typeof opts.audioProcessor !== 'function';
+}
+
 function maxUSDCExportBytes(opts) {
   const configuredMb = Number(opts.maxUsdcMb || 0);
   if (configuredMb > 0) return Math.floor(configuredMb * 1024 * 1024);
@@ -492,15 +514,27 @@ function isBufferTooSmallError(error) {
   return /buffer|capacity|too small|exceeds/i.test(String(error || ''));
 }
 
-function exportLayerAsUSDCOutsideWasmHeap(usd, inputBytes, opts, log) {
-  if (typeof usd.exportLayerAsUSDCToBufferWithOptions !== 'function') {
-    if (typeof usd.exportLayerAsUSDCWithOptions !== 'function') {
-      throw new Error('WASM module missing layer USDC export API; rebuild tinyusdz.js.');
-    }
-    log('WARN: WASM module lacks direct-buffer USDC export; falling back to heap-copy export.');
-    const exported = usd.exportLayerAsUSDCWithOptions({ rootLayerFormat: 'usdc' });
+// Export the composed root USDC straight into a JS buffer (outside the wasm
+// heap). kind='layer' writes the composed Layer's PrimSpecs as-is (faithful);
+// kind='stage' writes the typed-Prim-reconstructed Stage (the arkit/flatten
+// path) — same streaming, so large typed-flatten scenes stay off the wasm heap.
+function exportUSDCOutsideWasmHeap(usd, inputBytes, opts, log, kind = 'layer') {
+  const isStage = kind === 'stage';
+  const bufMethod = isStage
+    ? 'exportStageAsUSDCToBufferWithOptions'
+    : 'exportLayerAsUSDCToBufferWithOptions';
+
+  if (typeof usd[bufMethod] !== 'function') {
+    // Fallback: in-heap export (defeats the low-heap intent, but keeps working
+    // on older glue builds).
+    log(`WARN: WASM module lacks ${bufMethod}; falling back to heap-copy export.`);
+    const exported = isStage
+      ? usd.exportAsUSDC()
+      : (typeof usd.exportLayerAsUSDCWithOptions === 'function'
+          ? usd.exportLayerAsUSDCWithOptions({ rootLayerFormat: 'usdc' })
+          : null);
     if (!exported) {
-      throw new Error('USDC layer export failed: ' + usd.error());
+      throw new Error(`USDC ${kind} export failed: ` + usd.error());
     }
     return new Uint8Array(exported);
   }
@@ -513,19 +547,18 @@ function exportLayerAsUSDCOutsideWasmHeap(usd, inputBytes, opts, log) {
 
   for (let attempt = 0; attempt < 4; attempt++) {
     const rootBuffer = new Uint8Array(capacity);
-    const result = usd.exportLayerAsUSDCToBufferWithOptions(
-      rootBuffer, { rootLayerFormat: 'usdc' });
+    const result = usd[bufMethod](rootBuffer, { rootLayerFormat: 'usdc' });
     if (result && result.success) {
       const size = Number(result.size || 0);
       if (size <= 0 || size > rootBuffer.length) {
-        throw new Error(`USDC layer export returned invalid size ${size}.`);
+        throw new Error(`USDC ${kind} export returned invalid size ${size}.`);
       }
       return rootBuffer.subarray(0, size);
     }
 
     const err = (result && result.error) ? result.error : usd.error();
     if (!isBufferTooSmallError(err) || capacity >= maxBytes) {
-      throw new Error('USDC layer export failed: ' + err);
+      throw new Error(`USDC ${kind} export failed: ` + err);
     }
 
     const nextCapacity = Math.min(maxBytes, Math.max(capacity + 1, capacity * 2));
@@ -533,11 +566,16 @@ function exportLayerAsUSDCOutsideWasmHeap(usd, inputBytes, opts, log) {
     capacity = nextCapacity;
   }
 
-  throw new Error('USDC layer export failed after repeated buffer growth.');
+  throw new Error(`USDC ${kind} export failed after repeated buffer growth.`);
+}
+
+// Back-compat alias for the layer-only callers.
+function exportLayerAsUSDCOutsideWasmHeap(usd, inputBytes, opts, log) {
+  return exportUSDCOutsideWasmHeap(usd, inputBytes, opts, log, 'layer');
 }
 
 async function convertSingleUSDZToLowHeapFlattenedUSDZ(native, rootPath, bytes,
-                                                       opts, log) {
+                                                       opts, log, useStage = false) {
   const archiveEntries = parseUSDZEntries(bytes);
   const rootEntry = archiveEntries.find((entry) => isUsdName(entry.name));
   if (!rootEntry) {
@@ -575,8 +613,10 @@ async function convertSingleUSDZToLowHeapFlattenedUSDZ(native, rootPath, bytes,
     rootPath: rootEntry.name,
     rootLayerFormat: 'usdc',
     flatten: true,
-    arkitCompatible: false,
+    // Stage mode is the typed-Prim reconstruction path used for ARKit packaging.
+    arkitCompatible: useStage,
     lowHeapFlatten: true,
+    lowHeapStage: useStage,
   };
 
   let rootUSDC = null;
@@ -594,14 +634,15 @@ async function convertSingleUSDZToLowHeapFlattenedUSDZ(native, rootPath, bytes,
       usd.setAsset(assetNameFor(entry.name), entry.data);
     }
 
-    log(`Low-heap flattened USDZ; inner root layer: ${rootEntry.name}`);
+    log(`Low-heap ${useStage ? 'stage(typed)' : 'layer'} flatten; inner root layer: ${rootEntry.name}`);
     if (!usd.loadAsLayerFromBinary(rootEntry.data, rootEntry.name.split('/').pop())) {
       throw new Error('Failed to load USD: ' + usd.error());
     }
     if (typeof usd.warn === 'function' && usd.warn()) log('WARN: ' + usd.warn());
     composeToFixedPoint(usd);
 
-    rootUSDC = exportLayerAsUSDCOutsideWasmHeap(usd, bytes.length, opts, log);
+    rootUSDC = exportUSDCOutsideWasmHeap(usd, bytes.length, opts, log,
+                                         useStage ? 'stage' : 'layer');
   } finally {
     usd.delete();
   }
@@ -663,6 +704,18 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
     }
     // Nested-root archive: fall through to the standard unpack+repack path,
     // which preserves the full asset directory layout.
+  }
+
+  // Low-heap STAGE (typed-Prim / ARKit-style flatten) path: keeps textures
+  // (no re-encode), streams the typed-flattened root USDC into a JS buffer and
+  // repacks the zip in JS, so large scenes that OOM the in-heap arkit path fit.
+  if (shouldUseLowHeapStageFlattenedUSDZ(rootPath, assetMap, opts, textureFormat)) {
+    const lowHeap = await convertSingleUSDZToLowHeapFlattenedUSDZ(
+      native, rootPath, assetMap.get(rootPath), opts, log, /* useStage */ true);
+    if (lowHeap) {
+      return lowHeap;
+    }
+    // Nested-root archive: fall through to the standard (in-heap) path.
   }
 
   // If the root is a self-contained .usdz, unpack it so its internal textures
