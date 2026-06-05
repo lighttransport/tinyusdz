@@ -3,6 +3,9 @@ import path from 'path';
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  // Multi-page app: serve each .html directly and return 404 for unmatched
+  // routes instead of falling back to index.html (the default SPA behavior).
+  appType: 'mpa',
   server: {
     fs: {
       allow: [
