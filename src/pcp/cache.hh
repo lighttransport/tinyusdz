@@ -53,6 +53,17 @@ namespace cg = tinyusdz::composition_graph;
 struct CacheOptions {
   /// Options forwarded to the underlying composition engine (payload policy,
   /// max depth, file formats, ...).
+  ///
+  /// THREAD-SAFETY CONTRACT: when num_threads != 1, any user callbacks reachable
+  /// through these options -- notably composition.payload_policy and the
+  /// `fileformats` handlers -- are invoked concurrently from worker threads
+  /// during PrewarmPrimIndices()/BuildStage(). Each worker uses its own copy of
+  /// the std::function, but any state the callback *captures* (or any global it
+  /// touches) is shared, so such callbacks MUST be thread-safe (e.g. guard
+  /// captured mutable state, avoid non-reentrant globals). Callbacks that only
+  /// read immutable captured data, or pure functions, are fine. With the default
+  /// num_threads == 1 (and on wasm) callbacks are only ever called on the
+  /// calling thread and need no synchronization.
   cg::CompositionGraphOptions composition;
 
   /// Worker thread count for PrewarmPrimIndices()/BuildStage():
@@ -60,6 +71,8 @@ struct CacheOptions {
   ///  -1  = std::thread::hardware_concurrency()
   ///  >1  = exactly that many workers
   /// Ignored (treated as 1) when threads are not compiled in.
+  /// NOTE: values != 1 require thread-safe `composition` callbacks; see the
+  /// thread-safety contract on `composition` above.
   int num_threads{1};
 
   /// Below this many requested paths, batch building stays single-threaded.
