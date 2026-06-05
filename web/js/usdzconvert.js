@@ -474,20 +474,33 @@ els.btnConvert.addEventListener('click', async () => {
     const rootPath = els.rootSelect.value;
     const fitStrategy = (document.querySelector('input[name="fitStrategy"]:checked') || {}).value || 'size';
     const targetTextureBytes = parseByteSize(document.getElementById('targetSize').value);
+    const maxTextureSize = parseInt(els.maxSize.value, 10) || 0;
+    const textureFormat = els.textureFormat.value;
+    const reencode = els.reencode.checked;
+    // Only attach the browser texture processor when textures actually need work
+    // (resize / re-encode / format change / size-fit). When they pass through
+    // unchanged, omitting it lets the low-heap flatten path engage for a single
+    // self-contained .usdz (streams the root USDC out of the wasm heap and
+    // repacks the zip in JS), so large scenes convert without exhausting the
+    // 2 GB wasm32 heap. ARKit + passthrough uses the faithful Layer->Layer
+    // flatten by default ('flatten-layer'); set lowHeapStageMode:'stage' to
+    // force the typed-Prim Stage reconstruction.
+    const needsTextureWork = maxTextureSize > 0 || reencode ||
+      String(textureFormat).toLowerCase() !== 'keep' || targetTextureBytes > 0;
     const opts = {
       rootPath,
-      maxTextureSize: parseInt(els.maxSize.value, 10) || 0,
+      maxTextureSize,
       targetTextureBytes,
       fitStrategy,
-      reencode: els.reencode.checked,
-      textureFormat: els.textureFormat.value,
+      reencode,
+      textureFormat,
       rootLayerFormat: els.rootLayerFormat.value,
       flatten: els.flatten.checked,
       arkitCompatible: els.arkitCompatible.checked,
       jpegQuality: parseInt(els.jpegQuality.value, 10) || 90,
-      textureProcessor: browserTextureProcessor,
       log,
     };
+    if (needsTextureWork) opts.textureProcessor = browserTextureProcessor;
     if (targetTextureBytes > 0) {
       log(`Fitting textures to ${(targetTextureBytes / 1048576).toFixed(1)} MB via "${fitStrategy}" strategy...`);
     }
