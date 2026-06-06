@@ -1,6 +1,8 @@
 name: iOS
 
 on:
+  # Allows manual build verification on any branch/tag (e.g. physics-2026)
+  workflow_dispatch:
   push:
     branches: [ release ]
     tags: [ 'v*.*.*' ]
