@@ -1061,7 +1061,11 @@ bool RenderSceneConverter::ConvertValueClipAnimation(
 
   std::vector<std::pair<double, double>> times = clip_meta.times;
   std::vector<std::pair<double, int>> active = clip_meta.active;
-  constexpr double kTimeKeyEpsilon = std::numeric_limits<double>::epsilon();
+  // static storage duration so the comparison lambdas below can use it
+  // without capturing: clang's -Wunused-lambda-capture rejects capturing a
+  // constant expression, while MSVC's C3493 rejects using a local one without
+  // a capture. A static constexpr sidesteps both.
+  static constexpr double kTimeKeyEpsilon = std::numeric_limits<double>::epsilon();
 
   if (times.size() >= 2) {
     std::sort(times.begin(), times.end(),
