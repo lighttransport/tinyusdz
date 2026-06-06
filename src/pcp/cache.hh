@@ -24,6 +24,25 @@
 // State lives behind a heap-pinned Impl (pimpl), so a Cache is cheaply movable
 // without disturbing the cached PrimIndices' internal pointers.
 //
+// Threading model
+// ---------------
+//   * A single Cache instance is NOT safe for concurrent use by multiple
+//     threads. The methods that mutate cache state -- ComputePrimIndex,
+//     Invalidate, InvalidateLayer, LoadPayload, UnloadPayload (and Open) --
+//     must be called from one thread at a time, and never concurrently with
+//     PrewarmPrimIndices()/BuildStage() on the same Cache.
+//   * The ONLY parallelism is INTERNAL to PrewarmPrimIndices()/BuildStage():
+//     when CacheOptions::num_threads != 1 (and threads are compiled in, never
+//     on wasm) they build independent prim indices on worker threads, then
+//     merge single-threaded. That internal fan-out is self-synchronized (each
+//     worker builds into a private CompositionContext; the shared root layer is
+//     read-only and the LayerRegistry is internally locked).
+//   * Because that fan-out runs user callbacks on worker threads, any state
+//     captured by CacheOptions::composition.payload_policy / the `fileformats`
+//     handlers must be thread-safe; see the contract on CacheOptions below.
+//   * Distinct Cache instances are independent and may be used from different
+//     threads concurrently.
+//
 #pragma once
 
 #include <memory>

@@ -147,6 +147,52 @@ Not a code bug; an API contract — now stated where users set the options.
 
 ---
 
+## Hardening review (round 2)
+
+A second deep pass over the whole parallel surface found **no live data race or
+correctness bug**. Re-verified by inspection: Vyukov queue memory ordering and
+recycle math; `cache-parallel.cc` per-worker `slots[]` + atomic pull + single-
+threaded merge; `BuildEntry` writing only a private `CompositionContext`; the
+parallel build touching the shared resolver ONLY via the locked
+`LoadLayerThunk → LayerRegistry::GetOrLoad` seam (`DefaultLoadAndOwnLayer` is
+bypassed when `load_layer_fn` is set, and `CompositionGraph::LoadPayload` is the
+legacy single-threaded engine, not reachable from a worker); `LayerRegistry`
+returning a `const Layer*` to a `make_shared`-heap Layer (stable across map
+rehash because the map stores `shared_ptr`, not the Layer by value).
+
+Hardening applied:
+- **TaskQueue ring is now power-of-two + bitmask** (`src/task-queue.hh`). The
+  requested capacity is rounded up to the next power of two and the cell index is
+  `pos & (cap-1)` instead of `pos % cap`. This removes the (theoretical) index
+  discontinuity when the free-running position counter wraps `size_t` with a
+  non-pow2 capacity, drops the modulo, and matches the canonical Vyukov form.
+  `capacity == 0/1` round to 1 (a valid SPSC ring). Covered by
+  `task_queue_nonpow2_capacity_test`.
+- **Cache threading model documented** (`src/pcp/cache.hh` header): a single
+  `Cache` is not for concurrent use; only the internal
+  `PrewarmPrimIndices()`/`BuildStage()` fan-out parallelizes (and needs
+  thread-safe `composition` callbacks); the mutating methods are one-thread-only.
+
+Watch items (safe today; would need attention if a future MT path reaches them):
+1. `MapExpr::GetComposed()` writes a `mutable _composed_cache` unsynchronized
+   (`src/composition-graph.hh`). Currently dead in the build path (no call-sites)
+   and per-worker if exercised. If lazy value resolution later reads SHARED
+   cached indices from multiple threads, eager-compose at `AddMapExpression`
+   time and drop the mutable. Commented at the declaration.
+2. `Layer::_cache_mu` is a `shared_ptr<std::mutex>` that `reset_lookup_cache()`
+   REPLACES on copy; lockers bind to `*_cache_mu` without holding a ref. A Layer
+   shared across threads for composition must not be copied/copy-assigned/
+   mutated/destroyed during that window. We deliberately do not copy the
+   shared_ptr per lock (hot-path atomic contention); the contract is documented
+   at the member and is honored by the engine (it never copies/mutates a shared
+   layer mid-build).
+3. `Layer::set/get_asset_resolution_state()` write the mutable
+   `_current_working_path` / `_asset_search_paths` / `_asset_resolution_userdata`
+   members; only set single-threaded at layer load (under the registry lock), so
+   not a live race.
+
+---
+
 ## Reproducing with ThreadSanitizer
 
 ```bash

@@ -160,6 +160,7 @@ TEST_LIST = {
   { "task_queue_full_test", task_queue_full_test },
   { "task_queue_multithreaded_test", task_queue_multithreaded_test },
   { "task_queue_clear_test", task_queue_clear_test },
+  { "task_queue_nonpow2_capacity_test", task_queue_nonpow2_capacity_test },
   { "tydra_connection_validation_test", tydra_connection_validation_test },
   { "tydra_inplace_conversion_guard_test", tydra_inplace_conversion_guard_test },
   { "tydra_geommesh_property_accessor_test", tydra_geommesh_property_accessor_test },
