@@ -176,9 +176,19 @@ struct MapExpr {
   int32_t parent_expr{-1};   ///< Index of parent expression (-1 = identity)
 
   /// Lazily computed full chain from this expression to root.
+  ///
+  /// THREAD-SAFETY: this mutable cache is written by the `const` GetComposed()
+  /// below WITHOUT synchronization. That is safe today only because the MapExpr
+  /// `pool` lives in a per-build CompositionContext (private to one worker
+  /// thread during a parallel pcp build) and GetComposed() is never called
+  /// concurrently on a SHARED, already-cached PrimIndex. If lazy value
+  /// resolution is later added that reads cached indices from multiple threads,
+  /// compose eagerly at CompositionContext::AddMapExpression() time and drop
+  /// this `mutable` member instead of guarding it.
   mutable nonstd::optional<NamespaceMapping> _composed_cache;
 
   /// Get the fully composed mapping (composes up the chain, cached).
+  /// Not safe to call concurrently on a shared pool (see _composed_cache).
   const NamespaceMapping &GetComposed(const std::vector<MapExpr> &pool) const {
     if (_composed_cache.has_value()) return *_composed_cache;
 

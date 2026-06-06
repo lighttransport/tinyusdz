@@ -246,6 +246,16 @@ struct LayerImpl {
   // LayerImpl implicitly copyable/movable; the immutable PrimSpec tree
   // (_prim_specs) is read lock-free during those computations. None of the
   // guarded methods call each other, so a plain (non-recursive) mutex is safe.
+  //
+  // CONTRACT: this mutex only makes CONCURRENT CONST READS of a shared Layer
+  // safe. A Layer shared across threads for composition must NOT be copied,
+  // copy-assigned, mutated (add/replace/del primspec), or destroyed during that
+  // window: reset_lookup_cache() REPLACES this shared_ptr on copy, and the
+  // lockers bind to `*_cache_mu` rather than holding a ref, so a concurrent
+  // copy/destroy could free the mutex out from under a holder. We intentionally
+  // do NOT copy the shared_ptr per lock (that would add an atomic refcount
+  // bounce to the hot find_primspec_at path); the engine never copies/mutates a
+  // shared layer mid-build, so the contract holds. See doc/datarace.md.
   std::shared_ptr<std::mutex> _cache_mu{std::make_shared<std::mutex>()};
 #endif
 
