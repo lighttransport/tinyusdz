@@ -29,6 +29,21 @@
 
 namespace tinyusdz {
 
+namespace detail {
+// Round `n` up to the next power of two (>= 1). Used to size the ring so the
+// cell index is a cheap `pos & (cap-1)` mask and the free-running position
+// counter wraps cleanly (a plain `pos % cap` would have an index discontinuity
+// when `pos` wraps SIZE_MAX unless `cap` is a power of two).
+inline size_t NextPow2(size_t n) {
+  if (n < 2) return 1;
+  n--;
+  for (size_t shift = 1; shift < sizeof(size_t) * 8; shift <<= 1) {
+    n |= n >> shift;
+  }
+  return n + 1;
+}
+}  // namespace detail
+
 // C function pointer task type
 typedef void (*TaskFuncPtr)(void* user_data);
 
@@ -62,9 +77,13 @@ struct TaskItemFunc {
 ///
 class TaskQueue {
  public:
+  // `capacity` is rounded up to the next power of two (>= 1) so the ring can be
+  // indexed with a bitmask; a non-pow2 request just yields a slightly larger
+  // ring. Capacity() returns the rounded value.
   explicit TaskQueue(size_t capacity = 1024)
-      : _capacity(capacity),
-        _cells(new Cell[capacity]),
+      : _capacity(detail::NextPow2(capacity)),
+        _mask(_capacity - 1),
+        _cells(new Cell[_capacity]),
         _write_pos(0),
         _read_pos(0) {
     // Each cell starts "free for position i".
@@ -93,7 +112,7 @@ class TaskQueue {
     Cell* cell;
     size_t pos = _write_pos.load(std::memory_order_relaxed);
     for (;;) {
-      cell = &_cells[pos % _capacity];
+      cell = &_cells[pos & _mask];
       size_t seq = cell->sequence.load(std::memory_order_acquire);
       intptr_t diff = static_cast<intptr_t>(seq) - static_cast<intptr_t>(pos);
       if (diff == 0) {
@@ -128,7 +147,7 @@ class TaskQueue {
     Cell* cell;
     size_t pos = _read_pos.load(std::memory_order_relaxed);
     for (;;) {
-      cell = &_cells[pos % _capacity];
+      cell = &_cells[pos & _mask];
       size_t seq = cell->sequence.load(std::memory_order_acquire);
       intptr_t diff =
           static_cast<intptr_t>(seq) - static_cast<intptr_t>(pos + 1);
@@ -196,7 +215,8 @@ class TaskQueue {
     Cell() : data(), sequence(0) {}
   };
 
-  const size_t _capacity;
+  const size_t _capacity;  // power of two
+  const size_t _mask;      // _capacity - 1
   std::unique_ptr<Cell[]> _cells;
   std::atomic<size_t> _write_pos;
   std::atomic<size_t> _read_pos;
@@ -215,9 +235,11 @@ class TaskQueue {
 ///
 class TaskQueueFunc {
  public:
+  // `capacity` is rounded up to the next power of two (>= 1); see TaskQueue.
   explicit TaskQueueFunc(size_t capacity = 1024)
-      : _capacity(capacity),
-        _cells(new Cell[capacity]),
+      : _capacity(detail::NextPow2(capacity)),
+        _mask(_capacity - 1),
+        _cells(new Cell[_capacity]),
         _write_pos(0),
         _read_pos(0) {
     for (size_t i = 0; i < _capacity; i++) {
@@ -244,7 +266,7 @@ class TaskQueueFunc {
     Cell* cell;
     size_t pos = _write_pos.load(std::memory_order_relaxed);
     for (;;) {
-      cell = &_cells[pos % _capacity];
+      cell = &_cells[pos & _mask];
       size_t seq = cell->sequence.load(std::memory_order_acquire);
       intptr_t diff = static_cast<intptr_t>(seq) - static_cast<intptr_t>(pos);
       if (diff == 0) {
@@ -273,7 +295,7 @@ class TaskQueueFunc {
     Cell* cell;
     size_t pos = _read_pos.load(std::memory_order_relaxed);
     for (;;) {
-      cell = &_cells[pos % _capacity];
+      cell = &_cells[pos & _mask];
       size_t seq = cell->sequence.load(std::memory_order_acquire);
       intptr_t diff =
           static_cast<intptr_t>(seq) - static_cast<intptr_t>(pos + 1);
@@ -334,7 +356,8 @@ class TaskQueueFunc {
     Cell() : data(), sequence(0) {}
   };
 
-  const size_t _capacity;
+  const size_t _capacity;  // power of two
+  const size_t _mask;      // _capacity - 1
   std::unique_ptr<Cell[]> _cells;
   std::atomic<size_t> _write_pos;
   std::atomic<size_t> _read_pos;
