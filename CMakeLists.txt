@@ -2147,13 +2147,16 @@ if(TINYUSDZ_BUILD_TESTS)
   # Runs `tusdcat --validate-all` over tests/usda/validation/**.
   #
   # These are end-to-end tests that spawn the `tusdcat` binary. On 32-bit
-  # (i386) + AddressSanitizer, gcc's libsanitizer fails to mmap an allocator
-  # region for this large binary and `tusdcat` aborts at startup before doing
-  # any work (`ERROR: Failed to mmap`), so the tests cannot run. The validation
-  # logic itself is correct on 32-bit (verified with a non-ASan i386 build:
-  # full suite passes) and is exercised by every 64-bit job, and ASan coverage
-  # of the core library is still provided by unit-test-tinyusdz. So skip just
-  # these tusdcat-driven E2E tests in the 32-bit+ASan configuration.
+  # (i386) + AddressSanitizer, the sanitizer runtime cannot reserve memory for
+  # this large binary and `tusdcat` aborts at startup before doing any work
+  # (`ERROR: Failed to mmap`, mmap -> ENOMEM). This reproduces identically with
+  # both gcc's libsanitizer and clang's compiler-rt, so it is a 32-bit
+  # address-space limitation for this binary, not a toolchain bug. The
+  # validation logic itself is correct on 32-bit (verified with a non-ASan i386
+  # build: full suite passes) and is exercised by every 64-bit job, and ASan
+  # coverage of the core library is still provided by unit-test-tinyusdz (which
+  # runs fine under 32-bit ASan). So skip just these tusdcat-driven E2E tests in
+  # the 32-bit+ASan configuration.
   set(_tinyusdz_tusdcat_e2e_ok TRUE)
   if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND SANITIZE_ADDRESS)
     set(_tinyusdz_tusdcat_e2e_ok FALSE)
