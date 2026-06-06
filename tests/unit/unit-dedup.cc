@@ -19,6 +19,7 @@
 #include <cmath>
 #include <functional>
 #include <fstream>
+#include <filesystem>
 
 using namespace tinyusdz;
 using namespace tinyusdz::experimental;
@@ -31,6 +32,16 @@ static size_t GetFileSize(const std::string& filename) {
   std::ifstream file(filename, std::ios::binary | std::ios::ate);
   if (!file.is_open()) return 0;
   return static_cast<size_t>(file.tellg());
+}
+
+// Build a portable temp file path. A hardcoded "/tmp/..." does not exist on
+// Windows, where WriteStageUSDC would then fail to open the output file.
+static std::string TempPath(const std::string& name) {
+  namespace fs = std::filesystem;
+  fs::path base = fs::temp_directory_path() / "tinyusdz_dedup_test";
+  std::error_code ec;
+  fs::create_directories(base, ec);
+  return (base / name).string();
 }
 
 // Build a Stage with a single Xform prim carrying one custom timesampled
@@ -173,7 +184,7 @@ void dedup_float_array_test(void) {
   }
   Stage stage = MakeAnimStage("DedupTest", "float[]", ts, value::Value(array1));
 
-  std::string f_dedup = "/tmp/test_dedup_enabled.usdc";
+  std::string f_dedup = TempPath("test_dedup_enabled.usdc");
   TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
   // Note: identical raw (uncompressed) float[] blocks are already collapsed by
   // the lower-level value-data packer, so file size does not isolate timesample
@@ -197,7 +208,7 @@ void dedup_double_array_test(void) {
   Stage stage = MakeAnimStage("DedupDoubleTest", "double[]", ts,
                               value::Value(constant_array));
 
-  std::string filename = "/tmp/test_dedup_double.usdc";
+  std::string filename = TempPath("test_dedup_double.usdc");
   TEST_CHECK(WriteStageUSDC(stage, filename, true));
 
   Layer layer;
@@ -223,8 +234,8 @@ void dedup_int_array_test(void) {
   }
   Stage stage = MakeAnimStage("DedupIntTest", "int[]", ts, value::Value(array1));
 
-  std::string f_dedup = "/tmp/test_dedup_int_enabled.usdc";
-  std::string f_no = "/tmp/test_dedup_int_disabled.usdc";
+  std::string f_dedup = TempPath("test_dedup_int_enabled.usdc");
+  std::string f_no = TempPath("test_dedup_int_disabled.usdc");
   TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
   TEST_CHECK(WriteStageUSDC(stage, f_no, false));
   TEST_CHECK(GetFileSize(f_dedup) < GetFileSize(f_no));
@@ -244,8 +255,8 @@ void dedup_unique_arrays_test(void) {
   Stage stage =
       MakeAnimStage("UniqueArraysTest", "float[]", ts, value::Value(default_arr));
 
-  std::string f_dedup = "/tmp/test_unique_dedup.usdc";
-  std::string f_no = "/tmp/test_unique_no_dedup.usdc";
+  std::string f_dedup = TempPath("test_unique_dedup.usdc");
+  std::string f_no = TempPath("test_unique_no_dedup.usdc");
   TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
   TEST_CHECK(WriteStageUSDC(stage, f_no, false));
 
@@ -269,7 +280,7 @@ void dedup_string_array_test(void) {
   Stage stage = MakeAnimStage("StringArrayTest", "string[]", ts,
                               value::Value(repeated_array));
 
-  std::string f_dedup = "/tmp/test_dedup_string_enabled.usdc";
+  std::string f_dedup = TempPath("test_dedup_string_enabled.usdc");
   TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
   // Note: identical raw (uncompressed) array blocks are already collapsed by the
   // lower-level value-data packer, so file size does not isolate timesample
@@ -301,8 +312,8 @@ void dedup_matrix4d_test(void) {
   Stage stage = MakeAnimStage("MatrixTest", "matrix4d", ts,
                               value::Value(identity_matrix));
 
-  std::string f_dedup = "/tmp/test_dedup_matrix_enabled.usdc";
-  std::string f_no = "/tmp/test_dedup_matrix_disabled.usdc";
+  std::string f_dedup = TempPath("test_dedup_matrix_enabled.usdc");
+  std::string f_no = TempPath("test_dedup_matrix_disabled.usdc");
   TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
   TEST_CHECK(WriteStageUSDC(stage, f_no, false));
 
@@ -347,8 +358,8 @@ void dedup_role_array_test(void) {
                     value::Value(std::vector<value::texcoord2f>(
                         uvA_expected)));
 
-  std::string f_dedup = "/tmp/test_dedup_role_enabled.usdc";
-  std::string f_no = "/tmp/test_dedup_role_disabled.usdc";
+  std::string f_dedup = TempPath("test_dedup_role_enabled.usdc");
+  std::string f_no = TempPath("test_dedup_role_disabled.usdc");
   TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
   TEST_CHECK(WriteStageUSDC(stage, f_no, false));
 
@@ -404,8 +415,8 @@ void dedup_compressed_int_array_test(void) {
       MakeAnimStage("CompIntTest", "int[]", ts,
                     value::Value(std::vector<int32_t>(arrA_expected)));
 
-  std::string f_dedup = "/tmp/test_dedup_compint_enabled.usdc";
-  std::string f_no = "/tmp/test_dedup_compint_disabled.usdc";
+  std::string f_dedup = TempPath("test_dedup_compint_enabled.usdc");
+  std::string f_no = TempPath("test_dedup_compint_disabled.usdc");
   TEST_CHECK(WriteStageUSDC(stage, f_dedup, true, /*compress=*/true));
   TEST_CHECK(WriteStageUSDC(stage, f_no, false, /*compress=*/true));
 
@@ -483,7 +494,7 @@ static void CheckTSArrayNoInflation(
   Stage s_id = MakeAnimStage("TSInfl", type_name, ts_id, value::Value(seed));
   Stage s_uq = MakeAnimStage("TSInfl", type_name, ts_uq, value::Value(seed));
 
-  const std::string base = "/tmp/tsinfl_" + SanitizeForPath(type_name);
+  const std::string base = TempPath("tsinfl_" + SanitizeForPath(type_name));
   const std::string f_id = base + "_id.usdc";
   const std::string f_uq = base + "_uq.usdc";
   TEST_CHECK_(WriteStageUSDC(s_id, f_id, /*dedup*/ true),
@@ -727,7 +738,7 @@ void uchar_roundtrip_test(void) {
 
   Stage stage =
       MakeAnimStage("UCharPrim", "uchar[]", ts, value::Value(default_arr));
-  const std::string fn = "/tmp/uchar_roundtrip.usdc";
+  const std::string fn = TempPath("uchar_roundtrip.usdc");
   TEST_CHECK(WriteStageUSDC(stage, fn, /*dedup*/ true));
 
   Layer layer;
