@@ -38,10 +38,12 @@ Convert options:
   -o, --output <file>      Output .usdz path (default: <root>.usdz)
   --root <relpath>         Root USD layer within the input dir (default: auto)
   --resize <N>             Cap each texture's longest edge to N pixels
-  --resize-colorspace <s>  'srgb' = resample in linear light (correct for sRGB
-                           color textures); default = gamma-space (correct for
-                           linear data maps: normal/ORM/height). Applies to all
-                           resized textures, so use only when they're sRGB color.
+  --resize-colorspace <s>  How to resample when resizing:
+                           'auto'   = per-texture from UsdUVTexture sourceColorSpace
+                                      (sRGB textures in linear light, data maps
+                                      gamma-space) — correct without guessing;
+                           'srgb'   = force linear-light for ALL resized textures;
+                           'linear' = force gamma-space for all (default).
   --texture-format <fmt>   Texture output: keep, png, jpeg (default: keep)
   --root-layer-format <fmt> USDZ root layer: usdc, usda (default: usdc)
   --arkit-compatible       Force ARKit-friendly flattened USDC package metadata
