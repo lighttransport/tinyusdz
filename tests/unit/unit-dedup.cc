@@ -826,8 +826,8 @@ void dedup_compressed_int_array_test(void) {
 // identical-across-frames samples. A type the writer's dedup descriptor does
 // not recognize is silently re-expanded to N full copies on write - the
 // std::vector<bool> inflation bug (bit-packed, no contiguous .data(), so it was
-// excluded from ComputeValueDedupDescriptor; outpost_19's animated bool[]
-// visibility masks blew an 78 MB USDC up to 384 MB on roundtrip).
+// excluded from ComputeValueDedupDescriptor; a large scene's animated bool[]
+// visibility masks blew a 78 MB USDC up to 384 MB on roundtrip).
 //
 // For each array type we write K *identical* arrays and K *distinct* arrays,
 // both with dedup ON, and require the identical file to be far smaller than the
