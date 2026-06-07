@@ -8897,6 +8897,7 @@ emscripten::val convertImage(const emscripten::val& data,
   wopt.jpeg_quality = jpegQ;
   if (format == "exr") {
     // Keep HDR/float data; WriteImageToMemory promotes 8-bit input if needed.
+    // (EXR output is already encoded as fp16 — the compact texture form.)
     wopt.format = image::WriteImageFormat::EXR;
   } else if (format == "jpeg" || format == "jpg") {
     wopt.format = image::WriteImageFormat::JPEG;
