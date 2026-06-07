@@ -245,7 +245,7 @@ bool CrateWriter::ComputeValueDedupDescriptor(const crate::CrateValue& cv,
   // it to one byte per element so it gets a stable dedup key like every other
   // array type. Without this, animated bool[] (visibility/mask) timesamples are
   // never deduplicated and re-expand to N full copies on write (the cause of
-  // the outpost_19 78 MB -> 384 MB USDC roundtrip blowup).
+  // a 78 MB -> 384 MB USDC roundtrip blowup observed on a large animated scene).
   if (auto* barr = cv.as<std::vector<bool>>()) {
     bytes->resize(barr->size());
     for (size_t i = 0; i < barr->size(); ++i) {
