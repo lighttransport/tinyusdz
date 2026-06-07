@@ -1411,8 +1411,8 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         BufferData imageBuffer;
         imageBuffer.componentType = tydra::ComponentType::UInt8;
 
-        imageBuffer.data.resize(asset.size());
-        memcpy(imageBuffer.data.data(), asset.data(), asset.size());
+        // Steal the asset's bytes (no copy); `asset` is not used afterward.
+        SetBufferDataBytes(imageBuffer, asset.release_buffer());
 
         // Assign buffer id
         texImage.buffer_id = int64_t(buffers.size());
@@ -1420,7 +1420,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         // TODO: Share image data as much as possible.
         // e.g. Texture A and B uses same image file, but texturing parameter is
         // different.
-        buffers.emplace_back(imageBuffer);
+        buffers.emplace_back(std::move(imageBuffer));
 
         texImage.decoded = false;
         DCOUT("texture image is read, but not decoded.");
@@ -1796,7 +1796,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       // Assign buffer id
       texImage.buffer_id = int64_t(buffers.size());
 
-      buffers.emplace_back(imageBuffer);
+      buffers.emplace_back(std::move(imageBuffer));
 
       tex.texture_image_id = int64_t(images.size());
 

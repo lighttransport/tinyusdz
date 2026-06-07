@@ -2413,7 +2413,7 @@ bool RenderSceneConverter::ConvertDomeLight(
 
           // Add buffer
           texImage.buffer_id = int64_t(buffers.size());
-          buffers.emplace_back(imageBuffer);
+          buffers.emplace_back(std::move(imageBuffer));
 
           // Add image and set envmap_texture_id
           rlight.envmap_texture_id = int32_t(images.size());
@@ -2439,11 +2439,11 @@ bool RenderSceneConverter::ConvertDomeLight(
 
             fallbackTexImage.asset_identifier = resolvedPath;
 
-            fallbackImageBuffer.data.resize(asset.size());
-            memcpy(fallbackImageBuffer.data.data(), asset.data(), asset.size());
+            // Steal the asset's bytes (no copy); `asset` is not used afterward.
+            SetBufferDataBytes(fallbackImageBuffer, asset.release_buffer());
 
             fallbackTexImage.buffer_id = int64_t(buffers.size());
-            buffers.emplace_back(fallbackImageBuffer);
+            buffers.emplace_back(std::move(fallbackImageBuffer));
 
             fallbackTexImage.decoded = false;
             fallbackTexImage.usdColorSpace = ColorSpace::Raw;
@@ -2472,11 +2472,11 @@ bool RenderSceneConverter::ConvertDomeLight(
 
           texImage.asset_identifier = resolvedPath;
 
-          imageBuffer.data.resize(asset.size());
-          memcpy(imageBuffer.data.data(), asset.data(), asset.size());
+          // Steal the asset's bytes (no copy); `asset` is not used afterward.
+          SetBufferDataBytes(imageBuffer, asset.release_buffer());
 
           texImage.buffer_id = int64_t(buffers.size());
-          buffers.emplace_back(imageBuffer);
+          buffers.emplace_back(std::move(imageBuffer));
 
           texImage.decoded = false;
           texImage.usdColorSpace = ColorSpace::Raw;
