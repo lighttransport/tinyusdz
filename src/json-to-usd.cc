@@ -108,14 +108,15 @@ bool JSONToUSDContext::ParseBuffers(const json& j, std::string* err) {
         return false;
       }
       std::string decoded = base64_decode(base64_data);
-      
+
       if (decoded.size() != byteLength) {
         if (err) (*err) = "Buffer size mismatch";
         return false;
       }
-      
-      buffer_data.resize(decoded.size());
-      std::memcpy(buffer_data.data(), decoded.data(), decoded.size());
+
+      // Move the bytes across in a single pass: assign() avoids resize()'s
+      // redundant zero-fill of the whole buffer before the copy.
+      buffer_data.assign(decoded.begin(), decoded.end());
     } else {
       // External file - would need file I/O implementation
       if (err) (*err) = "External buffer files not yet supported";

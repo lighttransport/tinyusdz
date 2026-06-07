@@ -339,6 +339,23 @@ struct BufferData {
   // TODO: Stride?
 };
 
+// Move raw bytes into a BufferData's storage. In the default (std::vector)
+// configuration this steals `src`'s buffer in O(1) with no copy; the chunked
+// storage build cannot adopt a std::vector's buffer, so it falls back to an
+// element-wise copy. `src` is left empty either way.
+inline void SetBufferDataBytes(BufferData &dst, std::vector<uint8_t> &&src) {
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  dst.data.resize(src.size());
+  for (size_t i = 0; i < src.size(); i++) {
+    dst.data[i] = src[i];
+  }
+  src.clear();
+  src.shrink_to_fit();
+#else
+  dst.data = std::move(src);
+#endif
+}
+
 // Compound of ComponentType x component
 enum class VertexAttributeFormat {
   Bool,     // bool(1 byte)
