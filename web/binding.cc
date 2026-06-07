@@ -28,6 +28,9 @@
 #include "pprinter.hh"
 #include "typed-array-core.hh"
 #include "value-types.hh"
+
+// next: low-memory lazy-ValueRep flatten pipeline (src/next/).
+#include "next/pipeline/flatten.hh"
 #include "tydra/render-data.hh"
 #include "tydra/tangent-quantize.hh"
 #include "tydra/scene-access.hh"
@@ -54,6 +57,7 @@
 #include "usdc-writer.hh"
 #include "crate-writer.hh"
 #include "image-writer.hh"
+#include "external/miniz.h"  // streaming zlib (mz_inflate/mz_deflate) + mz_crc32
 #include "usdGeom.hh"
 #include "usd-validation.hh"
 #include "usdPhysics.hh"
@@ -518,8 +522,11 @@ bool uint8arrayToBuffer(const emscripten::val& u8, tinyusdz::TypedArray<uint8_t>
     return false;
   }
 
-  // Copy JS typed array -> v (one memcpy under the hood)
-  emscripten::val view = emscripten::val::global("Uint8Array").new_(u8["buffer"], u8["byteOffset"], n);
+  // Copy JS typed array -> v (one memcpy under the hood). Length must be a JS
+  // Number (double): a C++ size_t marshals to a BigInt under wasm64 and
+  // `new Uint8Array(buffer, byteOffset, bigint)` throws.
+  emscripten::val view = emscripten::val::global("Uint8Array").new_(
+      u8["buffer"], u8["byteOffset"], emscripten::val(static_cast<double>(n)));
   emscripten::val heapView = emscripten::val(emscripten::typed_memory_view(n, buf.data()));
   heapView.call<void>("set", view);
 
@@ -559,8 +566,11 @@ void copyTypedArray(const emscripten::val &data, std::vector<T> &buffer,
   if (length == 0) {
     return;
   }
+  // byteOffset/length as JS Numbers (double): size_t -> BigInt under wasm64
+  // breaks the typed-array constructor.
   emscripten::val view = emscripten::val::global(array_ctor).new_(
-      data["buffer"], byteOffset, length);
+      data["buffer"], emscripten::val(static_cast<double>(byteOffset)),
+      emscripten::val(static_cast<double>(length)));
   emscripten::val heapView =
       emscripten::val(emscripten::typed_memory_view(length, buffer.data()));
   heapView.call<void>("set", view);
@@ -1302,6 +1312,17 @@ struct EMAssetResolutionResolver {
     cache[cache_key] = buf.finalize();
     zerocopy_buffers.erase(uuid);
     return true;
+  }
+
+  /// Move the raw bytes out of a zero-copy buffer (and erase it), for callers
+  /// that want to adopt the streamed input directly (e.g. the next flatten
+  /// pipeline) instead of caching it as an asset. Returns empty on unknown uuid.
+  std::string takeZeroCopyBufferString(const std::string &uuid) {
+    auto it = zerocopy_buffers.find(uuid);
+    if (it == zerocopy_buffers.end()) return std::string();
+    std::string s = std::move(it->second.buffer);
+    zerocopy_buffers.erase(it);
+    return s;
   }
 
   /// Cancel and free zero-copy buffer
@@ -5815,7 +5836,7 @@ class TinyUSDZLoaderNative {
       const AssetCacheEntry &entry = em_resolver_.get(name);
       val.set("name", name);
       emscripten::val u8 =
-          emscripten::val::global("Uint8Array").new_(entry.binary.size());
+          emscripten::val::global("Uint8Array").new_(emscripten::val(static_cast<double>(entry.binary.size())));
       u8.call<void>("set",
                     emscripten::val(emscripten::typed_memory_view(
                         entry.binary.size(),
@@ -5858,7 +5879,7 @@ class TinyUSDZLoaderNative {
 
     val.set("name", name);
     emscripten::val u8 =
-        emscripten::val::global("Uint8Array").new_(entry.binary.size());
+        emscripten::val::global("Uint8Array").new_(emscripten::val(static_cast<double>(entry.binary.size())));
     u8.call<void>("set",
                   emscripten::val(emscripten::typed_memory_view(
                       entry.binary.size(),
@@ -6167,13 +6188,88 @@ class TinyUSDZLoaderNative {
   /// may retain must therefore hand back an independent JS-owned copy. Same
   /// idiom as getAsset()/getAssetByUUID().
   static emscripten::val toOwnedUint8Array(const std::vector<uint8_t> &bytes) {
-    emscripten::val u8 =
-        emscripten::val::global("Uint8Array").new_(bytes.size());
+    // Pass the length as a double (JS Number), not size_t: under wasm64
+    // (MEMORY64) size_t marshals to a BigInt and `new Uint8Array(bigint)`
+    // throws "Cannot convert a BigInt value to a number". double is exact for
+    // these sizes and works on both wasm32 and wasm64.
+    emscripten::val u8 = emscripten::val::global("Uint8Array").new_(
+        static_cast<double>(bytes.size()));
     if (!bytes.empty()) {
       u8.call<void>("set", emscripten::val(emscripten::typed_memory_view(
                                bytes.size(), bytes.data())));
     }
     return u8;
+  }
+
+  // ============================================================
+  // next: low-memory lazy-ValueRep flatten pipeline
+  // ============================================================
+
+  /// Flatten a USDC buffer via the next lazy pipeline: numeric arrays are kept
+  /// as lazy references into a single moved-in source buffer, composed
+  /// structurally (no array copy), and written back by copying unchanged
+  /// compressed blocks verbatim. This avoids the eager path's 5-10x heap
+  /// blow-up. Returns {success, data?:Uint8Array, error?, inputBytes,
+  /// outputBytes, primCount, arraysPassedThrough, arraysReencoded}.
+  // Shared: flatten an owned USDC buffer and build the JS result object.
+  emscripten::val nextFlattenOwned(std::string &&input, bool lazyArrays) {
+    emscripten::val result = emscripten::val::object();
+    std::vector<uint8_t> out;
+    tinyusdz::next::pipeline::FlattenOptions opts;
+    opts.read.lazy_arrays = lazyArrays;  // false => eager decode (A/B baseline)
+    tinyusdz::next::pipeline::FlattenStats stats;
+    std::string err;
+    bool ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCOwned(
+        std::move(input), out, opts, &stats, &err);
+
+    result.set("success", ok);
+    if (!ok) {
+      result.set("error", err);
+      return result;
+    }
+    result.set("data", toOwnedUint8Array(out));
+    result.set("inputBytes", static_cast<double>(stats.input_bytes));
+    result.set("outputBytes", static_cast<double>(stats.output_bytes));
+    result.set("primCount", static_cast<double>(stats.prim_count));
+    result.set("arraysPassedThrough",
+               static_cast<double>(stats.arrays_passed_through));
+    result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
+    return result;
+  }
+
+  emscripten::val nextFlattenUSDC(emscripten::val data, bool lazyArrays) {
+    // One JS->WASM copy into an owned std::string; the pipeline then MOVES it
+    // into the retained crate buffer (the single in-heap copy of the input).
+    size_t size = data["byteLength"].as<size_t>();
+    std::string input;
+    input.resize(size);
+    if (size > 0) {
+      // Pass length as a JS Number (double): under wasm64 size_t marshals to a
+      // BigInt and `new Uint8Array(buffer, byteOffset, bigint)` throws.
+      emscripten::val view = emscripten::val::global("Uint8Array").new_(
+          data["buffer"], data["byteOffset"],
+          emscripten::val(static_cast<double>(size)));
+      emscripten::val heapView = emscripten::val(emscripten::typed_memory_view(
+          size, reinterpret_cast<uint8_t *>(&input[0])));
+      heapView.call<void>("set", view);
+    }
+    return nextFlattenOwned(std::move(input), lazyArrays);
+  }
+
+  /// Streaming-input flatten: the caller first allocates a buffer via
+  /// allocateZeroCopyBuffer(name, size), fills it directly through module.HEAPU8
+  /// (in chunks, re-grabbing HEAPU8 after the alloc), then calls this. The
+  /// buffer's bytes are MOVED straight into the retained crate buffer — no
+  /// embind marshalling and no second copy. The buffer is consumed (erased).
+  emscripten::val nextFlattenBuffer(const std::string &uuid, bool lazyArrays) {
+    std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
+    if (input.empty()) {
+      emscripten::val result = emscripten::val::object();
+      result.set("success", false);
+      result.set("error", "Unknown or empty zero-copy buffer: " + uuid);
+      return result;
+    }
+    return nextFlattenOwned(std::move(input), lazyArrays);
   }
 
   /// Helper: convert current loaded layer to a Stage
@@ -7554,7 +7650,8 @@ void copyFromJSBuffer(const emscripten::val& data, std::vector<uint8_t>& buffer)
   }
   buffer.resize(size);
   emscripten::val view = emscripten::val::global("Uint8Array").new_(
-      data["buffer"], data["byteOffset"], size);
+      data["buffer"], data["byteOffset"],
+      emscripten::val(static_cast<double>(size)));  // double: wasm64 BigInt-safe
   emscripten::val heapView = emscripten::val(
       emscripten::typed_memory_view(size, buffer.data()));
   heapView.call<void>("set", view);
@@ -7651,7 +7748,7 @@ emscripten::val decodeEXR(const emscripten::val& data,
     free(rgba);
 
     emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
-    emscripten::val pixelData = Uint16Array.new_(pixelCount);
+    emscripten::val pixelData = Uint16Array.new_(emscripten::val(static_cast<double>(pixelCount)));
     emscripten::val jsHeap = emscripten::val(
         emscripten::typed_memory_view(pixelCount, fp16Data.data()));
     pixelData.call<void>("set", jsHeap);
@@ -7662,7 +7759,7 @@ emscripten::val decodeEXR(const emscripten::val& data,
   } else {
     // Return as Float32Array (default)
     emscripten::val Float32Array = emscripten::val::global("Float32Array");
-    emscripten::val pixelData = Float32Array.new_(pixelCount);
+    emscripten::val pixelData = Float32Array.new_(emscripten::val(static_cast<double>(pixelCount)));
     emscripten::val jsHeap = emscripten::val(
         emscripten::typed_memory_view(pixelCount, rgba));
     pixelData.call<void>("set", jsHeap);
@@ -7741,7 +7838,7 @@ emscripten::val decodeHDR(const emscripten::val& data,
   if (outputFormat == "float32") {
     // Return as Float32Array
     emscripten::val Float32Array = emscripten::val::global("Float32Array");
-    emscripten::val pixelData = Float32Array.new_(pixelCount);
+    emscripten::val pixelData = Float32Array.new_(emscripten::val(static_cast<double>(pixelCount)));
     emscripten::val jsHeap = emscripten::val(
         emscripten::typed_memory_view(pixelCount, floatData));
     pixelData.call<void>("set", jsHeap);
@@ -7755,7 +7852,7 @@ emscripten::val decodeHDR(const emscripten::val& data,
     convertFloat32ToFloat16(floatData, fp16Data.data(), pixelCount);
 
     emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
-    emscripten::val pixelData = Uint16Array.new_(pixelCount);
+    emscripten::val pixelData = Uint16Array.new_(emscripten::val(static_cast<double>(pixelCount)));
     emscripten::val jsHeap = emscripten::val(
         emscripten::typed_memory_view(pixelCount, fp16Data.data()));
     pixelData.call<void>("set", jsHeap);
@@ -7854,7 +7951,7 @@ emscripten::val decodeImage(const emscripten::val& data,
       convertFloat32ToFloat16(srcData, fp16Data.data(), pixelCount);
 
       emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
-      emscripten::val pixelData = Uint16Array.new_(pixelCount);
+      emscripten::val pixelData = Uint16Array.new_(emscripten::val(static_cast<double>(pixelCount)));
       emscripten::val jsHeap = emscripten::val(
           emscripten::typed_memory_view(pixelCount, fp16Data.data()));
       pixelData.call<void>("set", jsHeap);
@@ -7865,7 +7962,7 @@ emscripten::val decodeImage(const emscripten::val& data,
     } else {
       // Keep as float32
       emscripten::val Float32Array = emscripten::val::global("Float32Array");
-      emscripten::val pixelData = Float32Array.new_(pixelCount);
+      emscripten::val pixelData = Float32Array.new_(emscripten::val(static_cast<double>(pixelCount)));
       emscripten::val jsHeap = emscripten::val(
           emscripten::typed_memory_view(pixelCount, srcData));
       pixelData.call<void>("set", jsHeap);
@@ -7888,7 +7985,7 @@ emscripten::val decodeImage(const emscripten::val& data,
 
     // Return as Uint16Array (native format)
     emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
-    emscripten::val pixelData = Uint16Array.new_(pixelCount);
+    emscripten::val pixelData = Uint16Array.new_(emscripten::val(static_cast<double>(pixelCount)));
     emscripten::val jsHeap = emscripten::val(
         emscripten::typed_memory_view(pixelCount, srcData));
     pixelData.call<void>("set", jsHeap);
@@ -7900,7 +7997,7 @@ emscripten::val decodeImage(const emscripten::val& data,
   // Handle 8-bit data
   else {
     emscripten::val Uint8Array = emscripten::val::global("Uint8Array");
-    emscripten::val pixelData = Uint8Array.new_(dataSize);
+    emscripten::val pixelData = Uint8Array.new_(emscripten::val(static_cast<double>(dataSize)));
     emscripten::val jsHeap = emscripten::val(
         emscripten::typed_memory_view(dataSize, img.data.data()));
     pixelData.call<void>("set", jsHeap);
@@ -7937,7 +8034,7 @@ emscripten::val convertFloat32ToFloat16Array(const emscripten::val& float32Data)
 
   // Return as Uint16Array
   emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
-  emscripten::val result = Uint16Array.new_(count);
+  emscripten::val result = Uint16Array.new_(emscripten::val(static_cast<double>(count)));
   emscripten::val jsHeap = emscripten::val(
       emscripten::typed_memory_view(count, fp16Data.data()));
   result.call<void>("set", jsHeap);
@@ -7966,7 +8063,7 @@ emscripten::val convertFloat16ToFloat32Array(const emscripten::val& uint16Data) 
 
   // Return as Float32Array
   emscripten::val Float32Array = emscripten::val::global("Float32Array");
-  emscripten::val result = Float32Array.new_(count);
+  emscripten::val result = Float32Array.new_(emscripten::val(static_cast<double>(count)));
   emscripten::val jsHeap = emscripten::val(
       emscripten::typed_memory_view(count, fp32Data.data()));
   result.call<void>("set", jsHeap);
@@ -8121,6 +8218,8 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
 #endif
       .function("loadAsLayerFromBinary", &TinyUSDZLoaderNative::loadAsLayerFromBinary)
       .function("loadFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
+      .function("nextFlattenUSDC", &TinyUSDZLoaderNative::nextFlattenUSDC)
+      .function("nextFlattenBuffer", &TinyUSDZLoaderNative::nextFlattenBuffer)
 #if defined(TINYUSDZ_USE_COROUTINE)
       .function("loadFromBinaryAsync", &TinyUSDZLoaderNative::loadFromBinaryAsync)  // C++20 coroutine async version
 #endif
@@ -8468,7 +8567,7 @@ static emscripten::val decodeImage_hint(const emscripten::val& data, const std::
 
 // Copy a byte vector into a fresh JS Uint8Array (survives the C++ buffer).
 static emscripten::val bytesToUint8Array(const std::vector<uint8_t>& v) {
-  emscripten::val u8 = emscripten::val::global("Uint8Array").new_(v.size());
+  emscripten::val u8 = emscripten::val::global("Uint8Array").new_(emscripten::val(static_cast<double>(v.size())));
   if (!v.empty()) {
     u8.call<void>("set", emscripten::val(emscripten::typed_memory_view(
                              v.size(), v.data())));
@@ -8600,6 +8699,223 @@ static tinyusdz::Image floatImageTo8bit(const tinyusdz::Image& img) {
 
 // convertImage(data, opts) -> { success, data?:Uint8Array, width, height, resized, error? }
 // opts: { maxSize?, width?, height?, format?:"png"|"jpeg", pngEncoder?, jpegQuality? }
+// Streaming PNG -> PNG transcoder (re-compress with filter optimization) that
+// processes ONE scanline at a time: inflate IDAT -> unfilter -> pick best filter
+// -> deflate. Peak memory is O(a few scanlines + the compressed output) instead
+// of the full decoded RGBA (W*H*4) plus a full-image encoder buffer — so a
+// 6144x6144 PNG re-encodes in ~tens of MB rather than ~600 MB. Returns false
+// (caller falls back to the whole-image decode/encode path) for anything outside
+// 8-bit, non-interlaced, color types gray/GA/RGB/RGBA.
+static bool transcodePNGStreaming(const uint8_t* data, size_t size,
+                                  std::vector<uint8_t>& out) {
+  static const uint8_t SIG[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+  if (size < 8 || std::memcmp(data, SIG, 8) != 0) return false;
+  auto rd32 = [](const uint8_t* p) -> uint32_t {
+    return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) |
+           (uint32_t(p[2]) << 8) | uint32_t(p[3]);
+  };
+
+  std::vector<std::pair<const uint8_t*, size_t>> chunks;  // (start, total bytes)
+  std::vector<std::pair<const uint8_t*, uint32_t>> idats; // (data, len)
+  uint32_t W = 0, H = 0;
+  uint8_t bd = 0, ct = 0;
+  bool have_ihdr = false;
+  for (size_t pos = 8; pos + 12 <= size;) {
+    uint32_t len = rd32(data + pos);
+    const uint8_t* type = data + pos + 4;
+    if (pos + 12 + (size_t)len > size) return false;  // truncated
+    const uint8_t* cdata = data + pos + 8;
+    size_t total = 12 + (size_t)len;
+    if (std::memcmp(type, "IHDR", 4) == 0) {
+      if (len < 13) return false;
+      W = rd32(cdata); H = rd32(cdata + 4);
+      bd = cdata[8]; ct = cdata[9];
+      // compression/filter/interlace must be the standard 0/0/0.
+      if (cdata[10] != 0 || cdata[11] != 0 || cdata[12] != 0) return false;
+      have_ihdr = true;
+    } else if (std::memcmp(type, "IDAT", 4) == 0) {
+      idats.emplace_back(cdata, len);
+    }
+    chunks.emplace_back(data + pos, total);
+    pos += total;
+    if (std::memcmp(type, "IEND", 4) == 0) break;
+  }
+  if (!have_ihdr || idats.empty() || W == 0 || H == 0) return false;
+  // Channels per color type: gray=1, RGB=3, palette=1 (index), gray+alpha=2,
+  // RGBA=4. Bit depth 8 is supported for all; sub-byte (1/2/4) only for the
+  // single-channel types (palette / grayscale). 16-bit is not handled here.
+  size_t channels;
+  if (ct == 0) channels = 1;
+  else if (ct == 2) channels = 3;
+  else if (ct == 3) channels = 1;
+  else if (ct == 4) channels = 2;
+  else if (ct == 6) channels = 4;
+  else return false;
+  if (ct == 3 || ct == 0) {
+    if (!(bd == 1 || bd == 2 || bd == 4 || bd == 8)) return false;
+  } else if (bd != 8) {
+    return false;
+  }
+  const size_t bits_per_pixel = (size_t)bd * channels;
+  const size_t bpp = (bits_per_pixel + 7) / 8;        // >=1, for filtering
+  const size_t rowlen = ((size_t)W * bits_per_pixel + 7) / 8;
+  const size_t stride = rowlen + 1;
+
+  auto paeth = [](int a, int b, int c) -> uint8_t {
+    int p = a + b - c, pa = std::abs(p - a), pb = std::abs(p - b), pc = std::abs(p - c);
+    if (pa <= pb && pa <= pc) return (uint8_t)a;
+    if (pb <= pc) return (uint8_t)b;
+    return (uint8_t)c;
+  };
+
+  mz_stream istrm; std::memset(&istrm, 0, sizeof(istrm));
+  if (mz_inflateInit(&istrm) != MZ_OK) return false;
+  mz_stream dstrm; std::memset(&dstrm, 0, sizeof(dstrm));
+  if (mz_deflateInit2(&dstrm, 9, MZ_DEFLATED, MZ_DEFAULT_WINDOW_BITS, 9,
+                      MZ_DEFAULT_STRATEGY) != MZ_OK) {
+    mz_inflateEnd(&istrm);
+    return false;
+  }
+  std::vector<uint8_t> idat_out;
+  idat_out.reserve(size / 2 + 4096);
+  std::vector<uint8_t> dbuf(1 << 16);
+  std::vector<uint8_t> scan(stride);
+  std::vector<uint8_t> prev(rowlen, 0), cur(rowlen), filt(stride);
+  size_t scan_filled = 0, rows_done = 0;
+  bool ok = true;
+
+  auto pump_deflate = [&](const uint8_t* p, size_t n, int flush) -> bool {
+    dstrm.next_in = p; dstrm.avail_in = (unsigned)n;
+    for (;;) {
+      dstrm.next_out = dbuf.data(); dstrm.avail_out = (unsigned)dbuf.size();
+      int r = mz_deflate(&dstrm, flush);
+      if (r != MZ_OK && r != MZ_STREAM_END && r != MZ_BUF_ERROR) return false;
+      size_t produced = dbuf.size() - dstrm.avail_out;
+      if (produced) idat_out.insert(idat_out.end(), dbuf.data(), dbuf.data() + produced);
+      if (r == MZ_STREAM_END) break;
+      if (dstrm.avail_out != 0) { if (flush != MZ_FINISH) break; }
+    }
+    return true;
+  };
+
+  auto process_scanline = [&]() -> bool {
+    uint8_t ft = scan[0];
+    const uint8_t* f = scan.data() + 1;
+    for (size_t i = 0; i < rowlen; ++i) {
+      uint8_t a = (i >= bpp) ? cur[i - bpp] : 0;
+      uint8_t b = prev[i];
+      uint8_t c = (i >= bpp) ? prev[i - bpp] : 0;
+      uint8_t v;
+      switch (ft) {
+        case 0: v = f[i]; break;
+        case 1: v = (uint8_t)(f[i] + a); break;
+        case 2: v = (uint8_t)(f[i] + b); break;
+        case 3: v = (uint8_t)(f[i] + (uint8_t)((a + b) >> 1)); break;
+        case 4: v = (uint8_t)(f[i] + paeth(a, b, c)); break;
+        default: return false;
+      }
+      cur[i] = v;
+    }
+    // Choose the filter minimizing the sum of |signed bytes| (libpng heuristic).
+    int best = 0; uint64_t best_sum = UINT64_MAX;
+    for (int t = 0; t < 5; ++t) {
+      uint64_t sum = 0;
+      for (size_t i = 0; i < rowlen; ++i) {
+        uint8_t a = (i >= bpp) ? cur[i - bpp] : 0, b = prev[i],
+                c = (i >= bpp) ? prev[i - bpp] : 0, fv;
+        switch (t) {
+          case 0: fv = cur[i]; break;
+          case 1: fv = (uint8_t)(cur[i] - a); break;
+          case 2: fv = (uint8_t)(cur[i] - b); break;
+          case 3: fv = (uint8_t)(cur[i] - (uint8_t)((a + b) >> 1)); break;
+          default: fv = (uint8_t)(cur[i] - paeth(a, b, c)); break;
+        }
+        int8_t s = (int8_t)fv; sum += (uint64_t)(s < 0 ? -s : s);
+      }
+      if (sum < best_sum) { best_sum = sum; best = t; }
+    }
+    filt[0] = (uint8_t)best;
+    for (size_t i = 0; i < rowlen; ++i) {
+      uint8_t a = (i >= bpp) ? cur[i - bpp] : 0, b = prev[i],
+              c = (i >= bpp) ? prev[i - bpp] : 0, fv;
+      switch (best) {
+        case 0: fv = cur[i]; break;
+        case 1: fv = (uint8_t)(cur[i] - a); break;
+        case 2: fv = (uint8_t)(cur[i] - b); break;
+        case 3: fv = (uint8_t)(cur[i] - (uint8_t)((a + b) >> 1)); break;
+        default: fv = (uint8_t)(cur[i] - paeth(a, b, c)); break;
+      }
+      filt[1 + i] = fv;
+    }
+    if (!pump_deflate(filt.data(), stride, MZ_NO_FLUSH)) return false;
+    prev.swap(cur);
+    return true;
+  };
+
+  bool done = false;
+  for (auto& id : idats) {
+    istrm.next_in = id.first; istrm.avail_in = id.second;
+    bool need_input = false;
+    while (!need_input && ok) {
+      // Drive the loop by OUTPUT progress, not avail_in: mz_inflate buffers the
+      // compressed input internally, so a small IDAT can be fully consumed in
+      // one call while many scanlines are still pending in the decoder.
+      istrm.next_out = scan.data() + scan_filled;
+      istrm.avail_out = (unsigned)(stride - scan_filled);
+      int r = mz_inflate(&istrm, MZ_NO_FLUSH);
+      scan_filled = stride - istrm.avail_out;
+      if (scan_filled == stride) {
+        if (rows_done >= H || !process_scanline()) { ok = false; break; }
+        scan_filled = 0; ++rows_done;
+      }
+      if (r == MZ_STREAM_END) { done = true; break; }
+      if (r == MZ_OK) {
+        // Keep calling while progress is possible. avail_out!=0 with avail_in>0
+        // is just miniz's 32KB dictionary boundary, NOT end of input — only stop
+        // for the next chunk once this input is fully consumed.
+        if (istrm.avail_in == 0 && istrm.avail_out != 0) need_input = true;
+      } else if (r == MZ_BUF_ERROR) {
+        need_input = true;                            // needs the next IDAT chunk
+      } else {
+        ok = false; break;
+      }
+    }
+    if (!ok || done) break;
+  }
+  if (ok) ok = pump_deflate(nullptr, 0, MZ_FINISH);
+  mz_inflateEnd(&istrm);
+  mz_deflateEnd(&dstrm);
+  if (!ok || rows_done != H) return false;  // incomplete -> fall back
+
+  // Re-emit: signature + original chunks, with the IDAT run replaced by one new
+  // IDAT carrying the recompressed data.
+  out.clear();
+  out.reserve(idat_out.size() + 1024);
+  out.insert(out.end(), SIG, SIG + 8);
+  auto wr32 = [&](uint32_t v) {
+    out.push_back((uint8_t)(v >> 24)); out.push_back((uint8_t)(v >> 16));
+    out.push_back((uint8_t)(v >> 8)); out.push_back((uint8_t)v);
+  };
+  bool idat_emitted = false;
+  for (auto& ck : chunks) {
+    const uint8_t* st = ck.first;
+    if (std::memcmp(st + 4, "IDAT", 4) == 0) {
+      if (idat_emitted) continue;
+      idat_emitted = true;
+      wr32((uint32_t)idat_out.size());
+      size_t tpos = out.size();
+      const char idat[4] = {'I', 'D', 'A', 'T'};
+      out.insert(out.end(), idat, idat + 4);
+      out.insert(out.end(), idat_out.begin(), idat_out.end());
+      mz_ulong c = mz_crc32(MZ_CRC32_INIT, out.data() + tpos, 4 + idat_out.size());
+      wr32((uint32_t)c);
+    } else {
+      out.insert(out.end(), st, st + ck.second);  // copy IHDR/ancillary/IEND
+    }
+  }
+  return true;
+}
+
 emscripten::val convertImage(const emscripten::val& data,
                              const emscripten::val& opts) {
   using namespace tinyusdz;
@@ -8608,6 +8924,31 @@ emscripten::val convertImage(const emscripten::val& data,
   std::vector<uint8_t> buffer;
   copyFromJSBuffer(data, buffer);
 
+  // Fast path: re-encoding a PNG to PNG with no resize. Transcode it
+  // scanline-by-scanline (peak ~tens of MB) instead of decoding the whole image
+  // to RGBA + a full-image encode buffer (~hundreds of MB for large textures).
+  {
+    const std::string fmt0 = optStr(opts, "format", "png");
+    const bool noResize = optInt(opts, "maxSize", 0) <= 0 &&
+                          optInt(opts, "width", 0) <= 0 &&
+                          optInt(opts, "height", 0) <= 0;
+    if (fmt0 == "png" && noResize) {
+      std::vector<uint8_t> trans;
+      if (transcodePNGStreaming(buffer.data(), buffer.size(), trans)) {
+        auto rd32 = [](const uint8_t* p) {
+          return (int)((uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) |
+                       (uint32_t(p[2]) << 8) | uint32_t(p[3]));
+        };
+        result.set("success", true);
+        result.set("width", rd32(trans.data() + 16));   // IHDR width
+        result.set("height", rd32(trans.data() + 20));  // IHDR height
+        result.set("resized", false);
+        result.set("data", bytesToUint8Array(trans));
+        return result;
+      }
+    }
+  }
+
   auto loaded = image::LoadImageFromMemory(buffer.data(), buffer.size(), "mem");
   if (!loaded) {
     result.set("success", false);
@@ -8615,6 +8956,9 @@ emscripten::val convertImage(const emscripten::val& data,
     return result;
   }
   Image img = std::move(loaded.value().image);
+  // The compressed input is no longer needed once decoded; release it so it
+  // does not coexist with the (much larger) decoded RGBA + the encoder output.
+  std::vector<uint8_t>().swap(buffer);
 
   const int maxSize = optInt(opts, "maxSize", 0);
   int tw = optInt(opts, "width", 0);
