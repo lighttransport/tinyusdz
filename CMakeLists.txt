@@ -590,6 +590,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/image-writer.cc
     ${PROJECT_SOURCE_DIR}/src/image-util.cc
+    ${PROJECT_SOURCE_DIR}/src/imageio/png-stream.cc
+    ${PROJECT_SOURCE_DIR}/src/imageproc/simd.cc
     ${PROJECT_SOURCE_DIR}/src/usdz-convert.cc
     ${PROJECT_SOURCE_DIR}/src/linear-algebra.cc
     ${PROJECT_SOURCE_DIR}/src/value-eval-util.cc
@@ -823,6 +825,27 @@ if (TINYUSDZ_WITH_FPNGE)
   else()
     message(STATUS "fpnge: requested SIMD '${_fpnge_simd}' has no fpnge code path; PNG encoding falls back to fpng.")
   endif()
+endif()
+
+# Native SIMD for the image-processing row kernels (src/imageproc/simd.cc).
+# When enabled on x86 GCC/Clang, the kernels use function multi-versioning
+# (target_clones + ifunc) to dispatch SSE2/SSE4.1/AVX/AVX2 at runtime. Off, or
+# on non-x86 / non-ELF / MSVC, a single auto-vectorized build is used. (WASM
+# auto-vectorizes via -msimd128 regardless; see web/CMakeLists.txt.)
+option(TINYUSDZ_ENABLE_NATIVE_SIMD "Runtime-dispatched native SIMD for image kernels" ON)
+# Disable FP contraction so vectorized kernels match the scalar reference bit-for-bit.
+if (NOT MSVC)
+  set_source_files_properties(${PROJECT_SOURCE_DIR}/src/imageproc/simd.cc
+                              PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
+if (TINYUSDZ_ENABLE_NATIVE_SIMD AND NOT EMSCRIPTEN AND NOT MSVC AND
+    (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i[3-6]86" OR
+     CMAKE_SYSTEM_PROCESSOR STREQUAL ""))
+  set_source_files_properties(${PROJECT_SOURCE_DIR}/src/imageproc/simd.cc
+                              PROPERTIES COMPILE_DEFINITIONS TINYUSDZ_IMAGEPROC_MULTIVERSION)
+  message(STATUS "imageproc: native SIMD multi-versioning enabled (sse2/sse4.1/avx/avx2 runtime dispatch)")
+else()
+  message(STATUS "imageproc: native SIMD multi-versioning disabled (single auto-vectorized build)")
 endif()
 
 if(TINYUSDZ_WITH_USDMTLX)
