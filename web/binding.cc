@@ -58,6 +58,7 @@
 #include "crate-writer.hh"
 #include "image-writer.hh"
 #include "imageio/png-stream.hh"  // streaming scanline PNG codec
+#include "imageproc/simd.hh"      // SIMD row kernels (channel pack)
 #include "usdGeom.hh"
 #include "usd-validation.hh"
 #include "usdPhysics.hh"
@@ -8935,17 +8936,25 @@ emscripten::val repackChannels(const emscripten::val& opts) {
           std::vector<uint8_t> rows[4];
           for (int c = 0; c < 4; c++) if (s[c].has) rows[c].resize(rd[c].info().row_bytes);
           std::vector<uint8_t> outrow((size_t)W * out_channels);
+          // Per-output-channel source descriptors (row pointers are stable across
+          // scanlines); the SIMD kernel does the per-row gather/interleave.
+          tinyusdz::imageproc::PackSource srcs[4];
+          for (int oc = 0; oc < out_channels; oc++) {
+            if (s[oc].has) {
+              srcs[oc].in = rows[oc].data();
+              srcs[oc].in_stride = in_ch[oc];
+              srcs[oc].channel = s[oc].channel;
+            } else {
+              srcs[oc].in = nullptr;
+              srcs[oc].constant = s[oc].cst;
+            }
+          }
           bool good = true;
           for (uint32_t y = 0; y < H && good; y++) {
             for (int c = 0; c < 4; c++)
               if (s[c].has && !rd[c].NextRow(rows[c].data())) { good = false; break; }
             if (!good) break;
-            for (uint32_t x = 0; x < W; x++) {
-              for (int oc = 0; oc < out_channels; oc++) {
-                outrow[x * out_channels + oc] =
-                    s[oc].has ? rows[oc][x * in_ch[oc] + s[oc].channel] : s[oc].cst;
-              }
-            }
+            tinyusdz::imageproc::PackChannels8(outrow.data(), W, out_channels, srcs);
             if (!wr.WriteRow(outrow.data())) good = false;
           }
           std::vector<uint8_t> outpng;
