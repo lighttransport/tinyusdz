@@ -830,6 +830,7 @@ TEST_LIST = {
   { "physics_drive_limit_api_test", physics_drive_limit_api_test },
   { "physics_mesh_collider_convention_test", physics_mesh_collider_convention_test },
   { "physics_newton_collision_material_api_test", physics_newton_collision_material_api_test },
+  { "urdf_json_spherical_joint_export_test", urdf_json_spherical_joint_export_test },
   { "urdf_json_newton_api_export_test", urdf_json_newton_api_export_test },
   { "urdf_json_mjcf_contact_export_test", urdf_json_mjcf_contact_export_test },
   { "physics_urdf_upaxis_axis_invariant_test", physics_urdf_upaxis_axis_invariant_test },
