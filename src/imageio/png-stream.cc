@@ -479,26 +479,25 @@ void ResizeOutputCb(const void *out_ptr, int num_pixels, int y, void *ud) {
 
 }  // namespace
 
+namespace {
+inline float SrgbCurve(float c, ColorspaceXform xf) {
+  if (xf == ColorspaceXform::SrgbToLinear) {
+    return (c <= 0.04045f) ? (c / 12.92f)
+                           : std::pow((c + 0.055f) / 1.055f, 2.4f);
+  }
+  return (c <= 0.0031308f) ? (c * 12.92f)
+                           : (1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f);
+}
+}  // namespace
+
 bool ConvertColorspacePNG(const uint8_t *data, size_t size, ColorspaceXform xf,
                           std::vector<uint8_t> &out) {
   PngScanlineReader reader;
   if (!reader.Open(data, size)) return false;
   const PngImageInfo &in = reader.info();
-  if (in.bit_depth != 8 || in.color_type == 3) return false;  // palette/sub-byte
+  if (in.color_type == 3) return false;                       // palette
+  if (in.bit_depth != 8 && in.bit_depth != 16) return false;  // sub-byte
 
-  // Build the 8-bit sRGB<->linear LUT.
-  uint8_t lut[256];
-  for (int i = 0; i < 256; ++i) {
-    float c = float(i) / 255.0f, o;
-    if (xf == ColorspaceXform::SrgbToLinear) {
-      o = (c <= 0.04045f) ? (c / 12.92f) : std::pow((c + 0.055f) / 1.055f, 2.4f);
-    } else {
-      o = (c <= 0.0031308f) ? (c * 12.92f)
-                            : (1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f);
-    }
-    int v = int(o * 255.0f + 0.5f);
-    lut[i] = (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v);
-  }
   // Color channels to transform (alpha is preserved): 1ch gray -> ch0;
   // 2ch gray+alpha -> ch0; 3ch RGB / 4ch RGBA -> ch0..2.
   const int total_ch = in.channels;
@@ -507,14 +506,44 @@ bool ConvertColorspacePNG(const uint8_t *data, size_t size, ColorspaceXform xf,
   PngScanlineWriter writer;
   if (!writer.Begin(in)) return false;  // fresh: drop stale color-profile chunks
   std::vector<uint8_t> row(in.row_bytes);
-  for (uint32_t y = 0; y < in.height; ++y) {
-    if (!reader.NextRow(row.data())) return false;
-    uint8_t *r = row.data();
-    for (uint32_t x = 0; x < in.width; ++x) {
-      uint8_t *px = r + (size_t)x * total_ch;
-      for (int c = 0; c < ncolor; ++c) px[c] = lut[px[c]];
+
+  if (in.bit_depth == 8) {
+    uint8_t lut[256];
+    for (int i = 0; i < 256; ++i) {
+      int v = int(SrgbCurve(float(i) / 255.0f, xf) * 255.0f + 0.5f);
+      lut[i] = (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v);
     }
-    if (!writer.WriteRow(row.data())) return false;
+    for (uint32_t y = 0; y < in.height; ++y) {
+      if (!reader.NextRow(row.data())) return false;
+      uint8_t *r = row.data();
+      for (uint32_t x = 0; x < in.width; ++x) {
+        uint8_t *px = r + (size_t)x * total_ch;
+        for (int c = 0; c < ncolor; ++c) px[c] = lut[px[c]];
+      }
+      if (!writer.WriteRow(row.data())) return false;
+    }
+  } else {  // 16-bit, big-endian samples
+    std::vector<uint16_t> lut(65536);
+    for (int i = 0; i < 65536; ++i) {
+      int v = int(SrgbCurve(float(i) / 65535.0f, xf) * 65535.0f + 0.5f);
+      lut[i] = (uint16_t)(v < 0 ? 0 : v > 65535 ? 65535 : v);
+    }
+    const size_t pix_bytes = (size_t)total_ch * 2;
+    for (uint32_t y = 0; y < in.height; ++y) {
+      if (!reader.NextRow(row.data())) return false;
+      uint8_t *r = row.data();
+      for (uint32_t x = 0; x < in.width; ++x) {
+        uint8_t *px = r + (size_t)x * pix_bytes;
+        for (int c = 0; c < ncolor; ++c) {
+          uint8_t *s = px + (size_t)c * 2;
+          uint32_t idx = (uint32_t(s[0]) << 8) | uint32_t(s[1]);  // BE
+          uint16_t v = lut[idx];
+          s[0] = (uint8_t)(v >> 8);
+          s[1] = (uint8_t)(v & 0xFF);
+        }
+      }
+      if (!writer.WriteRow(row.data())) return false;
+    }
   }
   if (!reader.ok()) return false;
   return writer.Finish(out);
