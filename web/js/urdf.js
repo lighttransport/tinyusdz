@@ -843,7 +843,7 @@ function debugVisualizationEnabled() {
 const labelSpriteCache = new Map();
 
 function labelSpriteAssets(text, color) {
-  const key = `${color} ${text}`;
+  const key = `${color} ${text}`;
   const cached = labelSpriteCache.get(key);
   if (cached) return cached;
 
@@ -1159,6 +1159,17 @@ function parseURDFMetadata(text) {
     const originQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(rpy[0] || 0, rpy[1] || 0, rpy[2] || 0, 'XYZ'));
     const limitEl = jointEl.querySelector(':scope > limit');
     const dynamicsEl = jointEl.querySelector(':scope > dynamics');
+    // URDF <mimic> couples this joint to another via a gear ratio. USD physics
+    // has no direct mimic analog and the converter drops it; surface that.
+    const mimicEl = jointEl.querySelector(':scope > mimic');
+    if (mimicEl) {
+      const mimicName = jointEl.getAttribute('name') || '?';
+      console.warn(
+        `URDF joint "${mimicName}" has a <mimic> (couples to `
+        + `"${mimicEl.getAttribute('joint') || '?'}"); mimic coupling is not exported to USD.`
+      );
+      setStatus('Note: URDF <mimic> joint coupling is not exported.');
+    }
     joints.push({
       name: jointEl.getAttribute('name') || `joint_${joints.length}`,
       type: jointEl.getAttribute('type') || 'fixed',
@@ -1546,6 +1557,10 @@ function mujocoJointType(type) {
   if (type === 'hinge') return 'revolute';
   if (type === 'slide') return 'prismatic';
   if (type === 'free') return 'floating';
+  // MuJoCo ball joint (3-DOF rotation) -> USD PhysicsSphericalJoint. Best-effort:
+  // the joint round-trips structurally; the single-slider preview leaves it at
+  // rest (see setJointValue) rather than collapsing it to a rigid weld.
+  if (type === 'ball') return 'spherical';
   return 'fixed';
 }
 
@@ -1559,6 +1574,16 @@ function parseMujocoInertial(bodyNode) {
   };
   if (full.length >= 3) {
     inertial.diagonalInertia = [full[0], full[1], full[2]];
+    // fullinertia is "Ixx Iyy Izz Ixy Ixz Iyz"; USD physics:diagonalInertia +
+    // physics:principalAxes would be needed to represent a non-diagonal tensor.
+    // We only export the diagonal, so flag when off-diagonal terms are dropped.
+    if (full.length >= 6 && full.slice(3, 6).some((v) => Math.abs(v) > 1e-9)) {
+      const name = bodyNode.getAttribute?.('name') || '?';
+      console.warn(
+        `MJCF body "${name}" has a non-diagonal fullinertia; off-diagonal terms `
+        + `(Ixy/Ixz/Iyz) are dropped — only the diagonal is exported.`
+      );
+    }
   } else {
     inertial.diagonalInertia = parseNumbers(inertialNode.getAttribute('diaginertia'), []);
   }
@@ -1758,6 +1783,24 @@ function applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets) {
   applyMatrixToObject(object, matrix);
 }
 
+// MuJoCo features with no UsdPhysics analog in this converter. We don't model
+// them, but they should be visible rather than silently dropped.
+function warnUnsupportedMujocoElements(root) {
+  const unsupported = [
+    ['tendon', 'tendons (cable/spatial constraints)'],
+    ['equality', 'equality constraints'],
+    ['actuator', 'actuators'],
+    ['contact', 'explicit contact pairs/exclusions']
+  ];
+  for (const [tag, label] of unsupported) {
+    const count = root.querySelectorAll(tag).length;
+    if (count) {
+      console.warn(`MJCF: ${count} <${tag}> element(s) — ${label} are not converted to USD.`);
+      setStatus(`Note: MJCF ${label} are not converted.`);
+    }
+  }
+}
+
 async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   const expanded = await expandMujocoIncludes(xmlText, baseDir);
   const doc = parseXMLDocument(expanded);
@@ -1774,6 +1817,8 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     eulerseq: compilerEl?.getAttribute('eulerseq') || 'xyz'
   };
 
+  warnUnsupportedMujocoElements(root);
+
   const meshAssets = collectMujocoAssets(root);
   const defaults = collectMujocoDefaults(root);
   const group = new THREE.Group();
@@ -1787,6 +1832,12 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     // the XML rest configuration is (qpos - ref). At qpos == ref the body is in
     // its authored pose (zero displacement).
     const disp = value - (joint.refRad || 0);
+    // Spherical (ball) and floating (free) joints are multi-DOF; a single slider
+    // value can't drive them meaningfully, so leave them at their rest pose
+    // instead of misapplying it as a 1-DOF hinge rotation.
+    if (joint.jointType === 'spherical' || joint.jointType === 'floating') {
+      return;
+    }
     if (joint.jointType === 'prismatic') {
       const offset = new THREE.Vector3(...joint.axis)
         .normalize()
@@ -1834,7 +1885,19 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     group.links[linkName] = linkObject;
 
     if (parentName) {
-      const jointNode = firstChildElement(bodyNode, 'joint');
+      const jointNodes = childElements(bodyNode, 'joint');
+      const jointNode = jointNodes[0] || null;
+      // MuJoCo allows several <joint> per body (a composite/universal joint).
+      // USD physics joints are pairwise, so we represent the first and warn that
+      // the rest are dropped rather than silently losing DOFs.
+      if (jointNodes.length > 1) {
+        console.warn(
+          `MJCF body "${linkName}" has ${jointNodes.length} joints; only the first `
+          + `("${jointNodes[0].getAttribute('name') || '?'}") is converted — the `
+          + `remaining ${jointNodes.length - 1} DOF(s) are dropped.`
+        );
+        setStatus(`Note: body "${linkName}" has ${jointNodes.length} joints; extras dropped.`);
+      }
       const jointAttrs = jointNode ? resolveMujocoAttrs(jointNode, defaults, 'joint', childClass) : {};
       const axis = parseNumbers(jointAttrs.axis, [0, 0, 1]);
       const range = parseNumbers(jointAttrs.range, []);
@@ -2530,13 +2593,15 @@ function usdPhysicsToUrdf(extracted) {
   }
 
   const joints = prims
-    .filter((prim) => /^Physics(?:Revolute|Prismatic|Fixed|Joint)/.test(prim.type))
+    .filter((prim) => /^Physics(?:Revolute|Prismatic|Spherical|Fixed|Joint)/.test(prim.type))
     .map((prim) => {
       const type = prim.type === 'PhysicsRevoluteJoint'
         ? 'revolute'
         : prim.type === 'PhysicsPrismaticJoint'
           ? 'prismatic'
-          : 'fixed';
+          : prim.type === 'PhysicsSphericalJoint'
+            ? 'spherical'
+            : 'fixed';
       const parentPath = firstRelTarget(prim, 'physics:body0');
       const childPath = firstRelTarget(prim, 'physics:body1');
       const axisToken = prim.properties?.['physics:axis'] || 'X';
@@ -2607,13 +2672,15 @@ function usdPhysicsToSourceModel(extracted) {
   const linksByPath = new Map(links.map((link) => [link.path, link]));
 
   const joints = prims
-    .filter((prim) => /^Physics(?:Revolute|Prismatic|Fixed|Joint)/.test(prim.type))
+    .filter((prim) => /^Physics(?:Revolute|Prismatic|Spherical|Fixed|Joint)/.test(prim.type))
     .map((prim) => {
       const type = prim.type === 'PhysicsRevoluteJoint'
         ? 'revolute'
         : prim.type === 'PhysicsPrismaticJoint'
           ? 'prismatic'
-          : 'fixed';
+          : prim.type === 'PhysicsSphericalJoint'
+            ? 'spherical'
+            : 'fixed';
       const parentPath = firstRelTarget(prim, 'physics:body0');
       const childPath = firstRelTarget(prim, 'physics:body1');
       const axisToken = prim.properties?.['physics:axis'] || 'X';
@@ -3131,7 +3198,8 @@ function buildArticulatedRobotFromUSD(model, sourceObject, options = {}) {
     if (joint.jointType === 'prismatic') {
       const offset = axisVector(joint.axis).normalize().applyQuaternion(joint.originQuat).multiplyScalar(value);
       joint.pivot.position.copy(joint.origin).add(offset);
-    } else if (joint.jointType !== 'fixed') {
+    } else if (joint.jointType !== 'fixed' && joint.jointType !== 'spherical') {
+      // Spherical (3-DOF) joints can't be driven by a single scalar; leave at rest.
       joint.pivot.quaternion.copy(joint.originQuat)
         .multiply(new THREE.Quaternion().setFromAxisAngle(axisVector(joint.axis).normalize(), value));
     }

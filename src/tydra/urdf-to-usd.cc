@@ -555,6 +555,26 @@ value::quatf QuatFromJoint(const nlohmann::json &joint_json, const char *key) {
   return value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f};
 }
 
+// The joint frame rotation is authored via the JSON `localRot0`/`localRot1`
+// quaternions (see QuatFromJoint), which every producer in this repo supplies.
+// `originMatrix` is consumed only for its translation (LocalPos0FromJoint); its
+// rotation is intentionally NOT decoded into localRot0. Detect the case where a
+// producer encoded a rotation only in `originMatrix` so we can warn instead of
+// silently dropping it. Returns true if originMatrix has 16 elems and a
+// non-identity upper-left 3x3.
+bool JointOriginMatrixHasRotation(const nlohmann::json &joint_json) {
+  const std::vector<double> m = JsonDoubleArray(joint_json, "originMatrix");
+  if (m.size() != 16) return false;
+  // Column-major (THREE/USD bridge): rotation basis is indices 0,1,2 / 4,5,6 /
+  // 8,9,10. Compare against identity with a loose tolerance.
+  const double expect[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+  const size_t idx[9] = {0, 1, 2, 4, 5, 6, 8, 9, 10};
+  for (size_t i = 0; i < 9; i++) {
+    if (std::abs(m[idx[i]] - expect[i]) > 1e-6) return true;
+  }
+  return false;
+}
+
 template <typename JointT>
 void AssignJointBase(JointT &joint, const nlohmann::json &joint_json,
                      const std::string &parent_name,
@@ -1280,6 +1300,17 @@ bool ConvertURDFJsonToUSDStage(
     const std::string axis = AxisToken(joint_json);
     const bool rotational = (type == "revolute" || type == "continuous");
 
+    // localRot0 is authoritative for the joint frame rotation. If a producer
+    // omitted it but baked a rotation into originMatrix, that rotation is lost
+    // (we only read originMatrix's translation) — surface it rather than drop
+    // it silently.
+    if (!joint_json.contains("localRot0") &&
+        JointOriginMatrixHasRotation(joint_json)) {
+      AppendWarn(warn, "Joint `" + joint_name +
+                           "` has a rotation in originMatrix but no localRot0; "
+                           "the rotation is ignored (supply localRot0).\n");
+    }
+
     std::string add_err;
     if (type == "revolute" || type == "continuous") {
       PhysicsRevoluteJoint joint;
@@ -1340,6 +1371,20 @@ bool ConvertURDFJsonToUSDStage(
       }
       if (!joints_prim.add_child(Prim(joint), true, &add_err)) {
         SetErr(err, "Failed to add prismatic joint `" + joint_name +
+                        "`: " + add_err);
+        return false;
+      }
+    } else if (type == "spherical") {
+      // MuJoCo ball joint (3-DOF rotation) -> PhysicsSphericalJoint. Cone-angle
+      // limits aren't carried in the JSON, so they're left unauthored (free
+      // rotation), which round-trips structurally for the preview/articulation.
+      PhysicsSphericalJoint joint;
+      joint.name = joint_name;
+      AssignJointBase(joint, joint_json, parent_usd, child_usd,
+                      joint_name_to_usd);
+      joint.axis.set_value(value::token(axis));
+      if (!joints_prim.add_child(Prim(joint), true, &add_err)) {
+        SetErr(err, "Failed to add spherical joint `" + joint_name +
                         "`: " + add_err);
         return false;
       }

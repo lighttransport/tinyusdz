@@ -37,12 +37,19 @@ bool GetPhysicsRigidBodyData(const Stage& stage, const UsdPrim& prim,
 
   out->rigidBodyEnabled =
       eval.EvalOr(prim, "physics:rigidBodyEnabled", true);
-  out->velocity[0] = eval.EvalOr(prim, "physics:velocityX", 0.0f);
-  out->velocity[1] = eval.EvalOr(prim, "physics:velocityY", 0.0f);
-  out->velocity[2] = eval.EvalOr(prim, "physics:velocityZ", 0.0f);
-  out->angularVelocity[0] = eval.EvalOr(prim, "physics:angularVelocityX", 0.0f);
-  out->angularVelocity[1] = eval.EvalOr(prim, "physics:angularVelocityY", 0.0f);
-  out->angularVelocity[2] = eval.EvalOr(prim, "physics:angularVelocityZ", 0.0f);
+  // UsdPhysicsRigidBodyAPI authors velocity/angularVelocity as single vector3f
+  // attributes (`physics:velocity`, `physics:angularVelocity`) — NOT per-axis
+  // `…X/Y/Z` scalars, which don't exist in the schema.
+  {
+    const Value* val = prim.GetPropertyValue("physics:velocity");
+    const float* v = val ? val->as_float3() : nullptr;
+    if (v) { out->velocity[0] = v[0]; out->velocity[1] = v[1]; out->velocity[2] = v[2]; }
+  }
+  {
+    const Value* val = prim.GetPropertyValue("physics:angularVelocity");
+    const float* v = val ? val->as_float3() : nullptr;
+    if (v) { out->angularVelocity[0] = v[0]; out->angularVelocity[1] = v[1]; out->angularVelocity[2] = v[2]; }
+  }
   out->startsAsleep = eval.EvalOr(prim, "physics:startsAsleep", false);
 
   return true;
