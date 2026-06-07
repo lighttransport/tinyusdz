@@ -20,6 +20,8 @@
 #include "unit-pprint.h"
 #include "unit-materialx.h"
 #include "unit-task-queue.h"
+#include "unit-png-stream.h"
+#include "unit-imageproc.h"
 #include "unit-tydra.h"
 #include "unit-tydra-subdivision.h"
 #include "unit-dedup.h"
@@ -161,6 +163,18 @@ TEST_LIST = {
   { "task_queue_multithreaded_test", task_queue_multithreaded_test },
   { "task_queue_clear_test", task_queue_clear_test },
   { "task_queue_nonpow2_capacity_test", task_queue_nonpow2_capacity_test },
+  { "png_stream_transcode_rgba_test", png_stream_transcode_rgba_test },
+  { "png_stream_transcode_rgb_test", png_stream_transcode_rgb_test },
+  { "png_stream_transcode_gray_test", png_stream_transcode_gray_test },
+  { "png_stream_reader_writer_roundtrip_test", png_stream_reader_writer_roundtrip_test },
+  { "png_stream_reject_nonpng_test", png_stream_reject_nonpng_test },
+  { "png_stream_resize_rgb_test", png_stream_resize_rgb_test },
+  { "png_stream_resize_rgba_test", png_stream_resize_rgba_test },
+  { "png_stream_colorspace_test", png_stream_colorspace_test },
+  { "imageproc_mat3_identity_test", imageproc_mat3_identity_test },
+  { "imageproc_mat3_swap_test", imageproc_mat3_swap_test },
+  { "imageproc_mat3_parity_test", imageproc_mat3_parity_test },
+  { "imageproc_simd_level_test", imageproc_simd_level_test },
   { "tydra_connection_validation_test", tydra_connection_validation_test },
   { "tydra_inplace_conversion_guard_test", tydra_inplace_conversion_guard_test },
   { "tydra_geommesh_property_accessor_test", tydra_geommesh_property_accessor_test },
