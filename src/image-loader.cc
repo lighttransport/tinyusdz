@@ -124,6 +124,17 @@ namespace image {
 
 namespace {
 
+// Safety net against image "decompression bombs": a tiny compressed file can
+// declare enormous dimensions that pass each decoder's per-axis limit (e.g.
+// stb's STBI_MAX_DIMENSIONS = 1<<24) yet expand to a multi-GB buffer. The
+// per-decoder size math below already guards integer overflow with safe::mul*,
+// but the resulting resize() would still attempt a huge allocation — and under
+// -fno-exceptions an allocation failure aborts the process rather than throwing.
+// We reject anything above this ceiling with a clean error instead. This is a
+// ceiling, not a policy limit: legitimate textures are far smaller (a 16K RGBA8
+// image is 1 GiB; fp32 would be 4 GiB).
+static constexpr size_t kMaxDecodedImageBytes = size_t(2048) * 1024 * 1024;  // 2 GiB
+
 #if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
 
 bool DecodeImageWUFF(const uint8_t *bytes, const size_t size,
@@ -226,6 +237,13 @@ bool DecodeImageSTB(const uint8_t *bytes, const size_t size,
   if (!safe::mul(count, size_t(bits / 8), &total_size)) {
     return false;
   }
+  if (total_size > kMaxDecodedImageBytes) {
+    stbi_image_free(data);
+    if (err) {
+      (*err) += "Decoded image exceeds the maximum allowed size for: " + uri + "\n";
+    }
+    return false;
+  }
   image->data.resize(total_size);
   std::copy(data, data + total_size, image->data.begin());
   stbi_image_free(data);
@@ -302,6 +320,13 @@ bool DecodeImageHDR(const uint8_t *bytes, const size_t size,
     stbi_image_free(data);
     if (err) {
       (*err) += "Integer overflow computing HDR image data size for: " + uri + "\n";
+    }
+    return false;
+  }
+  if (dataSize > kMaxDecodedImageBytes) {
+    stbi_image_free(data);
+    if (err) {
+      (*err) += "Decoded HDR image exceeds the maximum allowed size for: " + uri + "\n";
     }
     return false;
   }
@@ -407,6 +432,13 @@ bool DecodeImageNanoimage(const uint8_t *bytes, const size_t size,
   image->channels = int(ni_img.channels);
   image->bpp = int(ni_img.bit_depth);
   image->format = Image::PixelFormat::UInt;
+  if (ni_img.data_size > kMaxDecodedImageBytes) {
+    ni_image_free(&ni_img);
+    if (err) {
+      (*err) += "Decoded image exceeds the maximum allowed size for: " + uri + "\n";
+    }
+    return false;
+  }
   image->data.resize(ni_img.data_size);
   std::memcpy(image->data.data(), ni_img.data, ni_img.data_size);
   ni_image_free(&ni_img);
@@ -478,6 +510,11 @@ bool DecodeImageEXR(const uint8_t *bytes, const size_t size,
   }
   size_t total_size;
   if (!safe::mul(count, sizeof(float), &total_size)) {
+    return false;
+  }
+  if (total_size > kMaxDecodedImageBytes) {
+    free(rgba);
+    (*err) += "Decoded EXR image exceeds the maximum allowed size for: " + uri + "\n";
     return false;
   }
   image->data.resize(total_size);
@@ -644,6 +681,13 @@ bool DecodeImageEXRHalf(const uint8_t *bytes, size_t size,
   size_t npix, total;
   if (!safe::mul(size_t(exr.width), size_t(exr.height), &npix) ||
       !safe::mul(npix, size_t(4 * 2), &total)) {  // RGBA * 2 bytes/half
+    FreeEXRImage(&exr);
+    FreeEXRHeader(&header);
+    return false;
+  }
+  if (total > kMaxDecodedImageBytes) {
+    // Oversized: bail so the caller falls back to the fp32 path, which emits a
+    // clean over-size error of its own.
     FreeEXRImage(&exr);
     FreeEXRHeader(&header);
     return false;
