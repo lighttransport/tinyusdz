@@ -172,6 +172,7 @@ TEST_LIST = {
   { "png_stream_resize_rgba_test", png_stream_resize_rgba_test },
   { "png_stream_resize_srgb_test", png_stream_resize_srgb_test },
   { "png_stream_colorspace_test", png_stream_colorspace_test },
+  { "png_stream_colorspace_16bit_test", png_stream_colorspace_16bit_test },
   { "png_stream_transcode_16bit_test", png_stream_transcode_16bit_test },
   { "png_stream_resize_16bit_test", png_stream_resize_16bit_test },
   { "imageproc_mat3_identity_test", imageproc_mat3_identity_test },

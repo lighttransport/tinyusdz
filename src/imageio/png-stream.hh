@@ -109,10 +109,11 @@ class PngScanlineWriter {
 
 enum class ColorspaceXform { SrgbToLinear, LinearToSrgb };
 
-// Streaming PNG -> colorspace-converted PNG (sRGB<->linear, 8-bit, via a 256-LUT
-// applied per scanline to the color channels; alpha is preserved). Output drops
-// the source's ancillary chunks (so no stale color-profile tag remains). Returns
-// false (caller falls back) for palette / sub-byte / 16-bit / non-PNG inputs.
+// Streaming PNG -> colorspace-converted PNG (sRGB<->linear) via a per-scanline
+// LUT on the color channels (alpha preserved): 256-entry for 8-bit, 65536-entry
+// for 16-bit (big-endian samples). Output drops the source's ancillary chunks
+// (so no stale color-profile tag remains). Returns false (caller falls back) for
+// palette / sub-byte / non-PNG inputs.
 bool ConvertColorspacePNG(const uint8_t *data, size_t size, ColorspaceXform xf,
                           std::vector<uint8_t> &out);
 

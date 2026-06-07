@@ -246,6 +246,59 @@ void png_stream_resize_16bit_test(void) {
   TEST_CHECK(good);
 }
 
+// 16-bit grayscale sRGB->linear colorspace conversion must apply the 16-bit LUT.
+void png_stream_colorspace_16bit_test(void) {
+  const uint32_t W = 40, H = 24;
+  tinyusdz::imageio::PngImageInfo info;
+  info.width = W;
+  info.height = H;
+  info.bit_depth = 16;
+  info.color_type = 0;
+  tinyusdz::imageio::PngScanlineWriter w;
+  TEST_CHECK(w.Begin(info));
+  std::vector<std::vector<uint8_t>> rows(H, std::vector<uint8_t>((size_t)W * 2));
+  for (uint32_t y = 0; y < H; ++y) {
+    for (uint32_t x = 0; x < W; ++x) {
+      uint16_t v = (uint16_t)((x * 1619 + y * 4099) & 0xFFFF);
+      rows[y][x * 2] = (uint8_t)(v >> 8);
+      rows[y][x * 2 + 1] = (uint8_t)(v & 0xFF);
+    }
+    TEST_CHECK(w.WriteRow(rows[y].data()));
+  }
+  std::vector<uint8_t> png;
+  TEST_CHECK(w.Finish(png));
+
+  std::vector<uint8_t> out;
+  bool ok = tinyusdz::imageio::ConvertColorspacePNG(
+      png.data(), png.size(), tinyusdz::imageio::ColorspaceXform::SrgbToLinear,
+      out);
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  std::vector<uint16_t> lut(65536);
+  for (int i = 0; i < 65536; ++i) {
+    float c = float(i) / 65535.0f;
+    float o = (c <= 0.04045f) ? (c / 12.92f)
+                              : std::pow((c + 0.055f) / 1.055f, 2.4f);
+    int v = int(o * 65535.0f + 0.5f);
+    lut[i] = (uint16_t)(v < 0 ? 0 : v > 65535 ? 65535 : v);
+  }
+  tinyusdz::imageio::PngScanlineReader r;
+  TEST_CHECK(r.Open(out.data(), out.size()));
+  TEST_CHECK(r.info().bit_depth == 16 && r.info().color_type == 0);
+  std::vector<uint8_t> orow(r.info().row_bytes);
+  bool good = true;
+  for (uint32_t y = 0; y < H && good; ++y) {
+    if (!r.NextRow(orow.data())) { good = false; break; }
+    for (uint32_t x = 0; x < W; ++x) {
+      uint16_t inv = (uint16_t)((rows[y][x * 2] << 8) | rows[y][x * 2 + 1]);
+      uint16_t outv = (uint16_t)((orow[x * 2] << 8) | orow[x * 2 + 1]);
+      if (outv != lut[inv]) { good = false; break; }
+    }
+  }
+  TEST_CHECK(good);
+}
+
 void png_stream_resize_rgb_test(void) { ResizeParity(128, 96, 3, 40, 33); }
 void png_stream_resize_rgba_test(void) { ResizeParity(100, 100, 4, 50, 25); }
 void png_stream_resize_srgb_test(void) { ResizeParity(128, 96, 3, 40, 33, true); }
