@@ -841,11 +841,31 @@ function debugVisualizationEnabled() {
 // wrapper + its position are recreated. Cleared on robot/USD swap (see
 // disposeLabelSpriteCache) since link/joint names may then differ.
 const labelSpriteCache = new Map();
+const LABEL_CACHE_LIMIT = 512;
+const LABEL_MAX_CHARS = 160;
+const LABEL_MAX_CANVAS_WIDTH = 2048;
+
+function labelTextForSprite(text) {
+  const raw = String(text ?? '');
+  return raw.length > LABEL_MAX_CHARS
+    ? `${raw.slice(0, LABEL_MAX_CHARS - 3)}...`
+    : raw;
+}
+
+function disposeLabelSpriteAssets(assets) {
+  assets.material.map?.dispose();
+  assets.material.dispose();
+}
 
 function labelSpriteAssets(text, color) {
-  const key = `${color} ${text}`;
+  const displayText = labelTextForSprite(text);
+  const key = JSON.stringify([color, displayText]);
   const cached = labelSpriteCache.get(key);
-  if (cached) return cached;
+  if (cached) {
+    labelSpriteCache.delete(key);
+    labelSpriteCache.set(key, cached);
+    return cached;
+  }
 
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
@@ -853,8 +873,11 @@ function labelSpriteAssets(text, color) {
   const paddingX = 14;
   const paddingY = 8;
   ctx.font = `600 ${fontSize}px system-ui, sans-serif`;
-  const metrics = ctx.measureText(text);
-  canvas.width = Math.ceil(metrics.width + paddingX * 2);
+  const metrics = ctx.measureText(displayText);
+  canvas.width = Math.min(
+    LABEL_MAX_CANVAS_WIDTH,
+    Math.max(1, Math.ceil(metrics.width + paddingX * 2))
+  );
   canvas.height = fontSize + paddingY * 2;
 
   ctx.font = `600 ${fontSize}px system-ui, sans-serif`;
@@ -864,7 +887,7 @@ function labelSpriteAssets(text, color) {
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
   ctx.strokeRect(0.5, 0.5, canvas.width - 1, canvas.height - 1);
   ctx.fillStyle = color;
-  ctx.fillText(text, paddingX, canvas.height * 0.5);
+  ctx.fillText(displayText, paddingX, canvas.height * 0.5, canvas.width - paddingX * 2);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.userData.debugLabelTexture = true;
@@ -874,10 +897,13 @@ function labelSpriteAssets(text, color) {
     depthTest: false,
     depthWrite: false
   });
-  // Shared+cached: disposeObject must not free this on the per-frame rebuild.
-  material.userData.debugLabelMaterial = true;
+  const cacheable = labelSpriteCache.size < LABEL_CACHE_LIMIT;
+  if (cacheable) {
+    // Shared+cached: disposeObject must not free this on the per-frame rebuild.
+    material.userData.debugLabelMaterial = true;
+  }
   const assets = { material, aspect: canvas.width / canvas.height };
-  labelSpriteCache.set(key, assets);
+  if (cacheable) labelSpriteCache.set(key, assets);
   return assets;
 }
 
@@ -891,10 +917,7 @@ function makeTextSprite(text, color) {
 }
 
 function disposeLabelSpriteCache() {
-  for (const { material } of labelSpriteCache.values()) {
-    material.map?.dispose();
-    material.dispose();
-  }
+  for (const assets of labelSpriteCache.values()) disposeLabelSpriteAssets(assets);
   labelSpriteCache.clear();
 }
 
@@ -1159,16 +1182,18 @@ function parseURDFMetadata(text) {
     const originQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(rpy[0] || 0, rpy[1] || 0, rpy[2] || 0, 'XYZ'));
     const limitEl = jointEl.querySelector(':scope > limit');
     const dynamicsEl = jointEl.querySelector(':scope > dynamics');
-    // URDF <mimic> couples this joint to another via a gear ratio. USD physics
-    // has no direct mimic analog and the converter drops it; surface that.
     const mimicEl = jointEl.querySelector(':scope > mimic');
-    if (mimicEl) {
+    let mimic = null;
+    if (mimicEl?.getAttribute('joint')) {
+      mimic = {
+        joint: mimicEl.getAttribute('joint'),
+        multiplier: numberAttr(mimicEl, 'multiplier', 1),
+        offset: numberAttr(mimicEl, 'offset', 0)
+      };
+    } else if (mimicEl) {
       const mimicName = jointEl.getAttribute('name') || '?';
-      console.warn(
-        `URDF joint "${mimicName}" has a <mimic> (couples to `
-        + `"${mimicEl.getAttribute('joint') || '?'}"); mimic coupling is not exported to USD.`
-      );
-      setStatus('Note: URDF <mimic> joint coupling is not exported.');
+      console.warn(`URDF joint "${mimicName}" has a <mimic> with no joint target; mimic coupling is not exported to USD.`);
+      setStatus('Note: malformed URDF <mimic> joint coupling is not exported.');
     }
     joints.push({
       name: jointEl.getAttribute('name') || `joint_${joints.length}`,
@@ -1192,7 +1217,8 @@ function parseURDFMetadata(text) {
       dynamics: dynamicsEl ? {
         damping: Number(dynamicsEl.getAttribute('damping')),
         friction: Number(dynamicsEl.getAttribute('friction'))
-      } : {}
+      } : {},
+      ...(mimic ? { mimic } : {})
     });
   }
 
@@ -1789,7 +1815,6 @@ function warnUnsupportedMujocoElements(root) {
   const unsupported = [
     ['tendon', 'tendons (cable/spatial constraints)'],
     ['equality', 'equality constraints'],
-    ['actuator', 'actuators'],
     ['contact', 'explicit contact pairs/exclusions']
   ];
   for (const [tag, label] of unsupported) {
@@ -1799,6 +1824,49 @@ function warnUnsupportedMujocoElements(root) {
       setStatus(`Note: MJCF ${label} are not converted.`);
     }
   }
+}
+
+function buildMujocoActuators(root) {
+  const actuators = [];
+  for (const actuatorRoot of childElements(root, 'actuator')) {
+    for (const actNode of childElements(actuatorRoot)) {
+      const attrs = attrsFromElement(actNode);
+      const joint = attrs.joint || '';
+      const name = attrs.name || `${actNode.localName || 'actuator'}_${joint || actuators.length}`;
+      if (!joint) {
+        console.warn(`MJCF actuator "${name}" has no joint target; it is not converted to USD.`);
+        setStatus('Note: MJCF non-joint actuators are not converted.');
+        continue;
+      }
+      const act = { name, joint, control: 'pd' };
+      const kp = numberAttr(attrs, 'kp');
+      if (Number.isFinite(kp)) {
+        act.kp = kp;
+      } else {
+        const gain = parseNumbers(attrs.gainprm, []);
+        if (gain.length) act.kp = gain[0];
+      }
+      const kd = numberAttr(attrs, 'kv');
+      if (Number.isFinite(kd)) {
+        act.kd = kd;
+      } else {
+        const bias = parseNumbers(attrs.biasprm, []);
+        if (bias.length >= 3) act.kd = Math.abs(bias[2]);
+      }
+      const forceRange = parseNumbers(attrs.forcerange, []);
+      if (forceRange.length >= 2) {
+        act.maxEffort = Math.max(Math.abs(forceRange[0]), Math.abs(forceRange[1]));
+      }
+      const ctrlRange = parseNumbers(attrs.ctrlrange, []);
+      if (actNode.localName === 'motor' && ctrlRange.length >= 2) {
+        act.constEffort = Math.max(Math.abs(ctrlRange[0]), Math.abs(ctrlRange[1]));
+      }
+      const delay = numberAttr(attrs, 'delay');
+      if (Number.isFinite(delay)) act.delaySteps = Math.max(1, Math.round(delay));
+      actuators.push(act);
+    }
+  }
+  return actuators;
 }
 
 async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
@@ -1821,6 +1889,7 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
 
   const meshAssets = collectMujocoAssets(root);
   const defaults = collectMujocoDefaults(root);
+  const actuators = buildMujocoActuators(root);
   const group = new THREE.Group();
   group.name = root.getAttribute('model') || filename.replace(/\.[^.]+$/, '') || 'mujoco_scene';
   group.links = {};
@@ -2051,9 +2120,16 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     gravity: state.settings.upAxis === 'Z' ? [0, 0, -1] : [0, -1, 0],
     timestep: numberAttr(firstChildElement(root, 'option'), 'timestep'),
     links,
-    joints
+    joints,
+    actuators
   };
-  group.userData.stats = { links: links.length, joints: joints.length, visuals: visualCount, collisions: collisionCount };
+  group.userData.stats = {
+    links: links.length,
+    joints: joints.length,
+    visuals: visualCount,
+    collisions: collisionCount,
+    actuators: actuators.length
+  };
   return group;
 }
 
@@ -2843,6 +2919,13 @@ function mjcfFromSourceModel(model) {
     `<mujoco model="${escapeXML(model.name || 'ConvertedFromUSD')}">`,
     '  <worldbody>'
   ];
+  const mjcfJointType = (joint) => joint.type === 'prismatic'
+    ? 'slide'
+    : joint.type === 'fixed'
+      ? 'fixed'
+      : joint.type === 'spherical'
+        ? 'ball'
+        : 'hinge';
 
   function writeBody(link, indent) {
     const pad = ' '.repeat(indent);
@@ -2850,7 +2933,7 @@ function mjcfFromSourceModel(model) {
     for (const joint of childJoints.get(link.name) || []) {
       const child = linksByName.get(joint.child);
       if (!child) continue;
-      const jointType = joint.type === 'prismatic' ? 'slide' : joint.type === 'fixed' ? 'fixed' : 'hinge';
+      const jointType = mjcfJointType(joint);
       const range = joint.limit && Number.isFinite(joint.limit.lower) && Number.isFinite(joint.limit.upper)
         ? ` range="${fmtNumber(joint.limit.lower)} ${fmtNumber(joint.limit.upper)}"`
         : '';
@@ -2871,7 +2954,7 @@ function mjcfFromSourceModel(model) {
 
   function writeBodyFromJoint(parent, joint, link, indent) {
     const pad = ' '.repeat(indent);
-    const jointType = joint.type === 'prismatic' ? 'slide' : joint.type === 'fixed' ? 'fixed' : 'hinge';
+    const jointType = mjcfJointType(joint);
     const range = joint.limit && Number.isFinite(joint.limit.lower) && Number.isFinite(joint.limit.upper)
       ? ` range="${fmtNumber(joint.limit.lower)} ${fmtNumber(joint.limit.upper)}"`
       : '';

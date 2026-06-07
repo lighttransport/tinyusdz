@@ -453,6 +453,11 @@ which parse the source robot and emit per-joint frames (`localPos0/1`,
 `createURDFPhysicsScene` in `web/binding.cc`; re-importing the stage for the
 preview goes back through `extractPhysicsSceneJSON`.
 
+The node CLI treats URDF/MJCF XML as untrusted by default: mesh assets and MJCF
+`<include>` files are read only from the input directory, `--asset-dir`, or
+`--package-root`. Use `--allow-unsafe-paths` only for trusted legacy XML that
+intentionally references files outside those roots.
+
 ### Joint type mapping
 
 | Source joint | USD prim | Notes |
@@ -487,8 +492,9 @@ status line) instead of being dropped silently:
 | MJCF body with multiple `<joint>` | only the first joint is converted; the remaining DOFs are dropped (USD joints are pairwise) |
 | MJCF `ball` joint | mapped to `PhysicsSphericalJoint`; the single-slider preview leaves it at rest (3 DOF can't be driven by one scalar) |
 | MJCF non-diagonal `fullinertia` | only the diagonal is exported (`physics:diagonalInertia`); off-diagonal terms (`physics:principalAxes`) are not authored |
-| URDF `<mimic>` | parsed but not exported — USD has no direct mimic analog (Newton's `NewtonMimicAPI` is the closest, see above) |
-| MJCF `<tendon>`, `<equality>`, `<actuator>`, `<contact>` | not converted to USD physics |
+| URDF `<mimic>` | exported as `NewtonMimicAPI` when the target joint is also exported |
+| MJCF joint-targeted `<actuator>` | exported as `NewtonActuator` best-effort (`kp`/`kv` or `gainprm`/`biasprm`, force/control range, delay); non-joint actuators are not converted |
+| MJCF `<tendon>`, `<equality>`, `<contact>` | not converted to USD physics |
 
 ---
 
