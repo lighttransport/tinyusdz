@@ -386,6 +386,66 @@ void png_stream_exr_fp16_roundtrip_test(void) {
   TEST_CHECK(good);
 }
 
+// A fp16 EXR must decode consistently via both paths: DecodeImageEXRHalf (half,
+// no widening) and LoadImageFromMemory (fp32) — and the fp32 values must be the
+// exact float equivalents of the stored halfs (0x3C00=1.0, 0x3800=0.5).
+void png_stream_exr_half_float_consistency_test(void) {
+  const int W = 8, H = 6, ch = 4;
+  tinyusdz::Image img;
+  img.width = W;
+  img.height = H;
+  img.channels = ch;
+  img.bpp = 16;
+  img.format = tinyusdz::Image::PixelFormat::Float;
+  img.data.resize((size_t)W * H * ch * 2);
+  uint16_t *s = reinterpret_cast<uint16_t *>(img.data.data());
+  for (size_t i = 0; i < (size_t)W * H * ch; ++i)
+    s[i] = (i % 2) ? 0x3800 : 0x3C00;  // 0.5 : 1.0
+
+  tinyusdz::image::WriteOption wopt;
+  wopt.format = tinyusdz::image::WriteImageFormat::EXR;
+  auto enc = tinyusdz::image::WriteImageToMemory(img, wopt);
+  TEST_CHECK(bool(enc));
+  if (!enc) return;
+
+  // (a) half decode -> 16-bit, 4-channel.
+  tinyusdz::Image half;
+  std::string e1;
+  bool okh = tinyusdz::image::DecodeImageEXRHalf(enc.value().data(),
+                                                 enc.value().size(), "m", &half,
+                                                 &e1);
+  TEST_CHECK(okh && half.bpp == 16 && half.channels == 4 && half.width == W);
+
+  // (b) fp32 decode via LoadImageFromMemory -> exact float values.
+  auto dec = tinyusdz::image::LoadImageFromMemory(enc.value().data(),
+                                                  enc.value().size(), "m.exr");
+  TEST_CHECK(bool(dec));
+  if (!dec) return;
+  const auto &f = dec.value().image;
+  TEST_CHECK(f.bpp == 32 && f.format == tinyusdz::Image::PixelFormat::Float &&
+             f.channels == 4);
+  const float *fp = reinterpret_cast<const float *>(f.data.data());
+  bool good = f.data.size() >= (size_t)W * H * 4 * sizeof(float);
+  for (size_t i = 0; good && i < (size_t)W * H * 4; ++i) {
+    float expect = (i % 2) ? 0.5f : 1.0f;
+    if (fp[i] != expect) good = false;
+  }
+  TEST_CHECK(good);
+}
+
+// GetImageInfoFromMemory reports correct dimensions without a full decode.
+void image_get_info_test(void) {
+  tinyusdz::Image img = MakeImage(40, 24, 3);
+  std::vector<uint8_t> png = EncodePNG(img);
+  TEST_CHECK(png.size() > 0);
+  auto info =
+      tinyusdz::image::GetImageInfoFromMemory(png.data(), png.size(), "m.png");
+  TEST_CHECK(bool(info));
+  if (!info) return;
+  TEST_CHECK(info.value().width == 40 && info.value().height == 24);
+  TEST_CHECK(info.value().channels >= 1 && info.value().channels <= 4);
+}
+
 void png_stream_resize_rgb_test(void) { ResizeParity(128, 96, 3, 40, 33); }
 void png_stream_resize_rgba_test(void) { ResizeParity(100, 100, 4, 50, 25); }
 void png_stream_resize_srgb_test(void) { ResizeParity(128, 96, 3, 40, 33, true); }
