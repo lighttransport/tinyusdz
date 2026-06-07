@@ -14,6 +14,7 @@
 
 #include "composition.hh"  // CompositeSublayers, LayerToStage
 #include "core/prim-spec.hh"
+#include "namespace-mapping.hh"
 #include "pcp/cache-impl.hh"
 #include "security-policy.hh"
 #include "stage.hh"
@@ -355,10 +356,11 @@ nonstd::expected<bool, std::string> Cache::Impl::LoadPayload(
 
   std::string asset_path = info->payload.asset_path.GetAssetPath();
   uint16_t ls_idx = cg::CompNode::kInvalidIndex;
+  Path target;
 
   if (asset_path.empty()) {
     // Internal payload: the target lives in the root layer stack.
-    Path target = info->payload.prim_path;
+    target = info->payload.prim_path;
     const PrimSpec *target_ps = nullptr;
     std::string find_err;
     if (!target.is_valid() ||
@@ -384,7 +386,7 @@ nonstd::expected<bool, std::string> Cache::Impl::LoadPayload(
                                      asset_path);
     }
     // Resolve the target prim (defaultPrim fallback).
-    Path target = info->payload.prim_path;
+    target = info->payload.prim_path;
     if (!target.is_valid() || target.prim_part().empty()) {
       std::string dp = layer->metas().defaultPrim.str();
       if (!dp.empty()) target = Path("/" + dp, "");
@@ -400,7 +402,14 @@ nonstd::expected<bool, std::string> Cache::Impl::LoadPayload(
   }
 
   node.layer_stack_idx = ls_idx;
-  node.flags = (node.flags & ~cg::NodeFlags::PayloadDeferred) |
+  if (target.is_valid() && !target.prim_part().empty()) {
+    NamespaceMapping mapping =
+        MakeReferenceMapping(target, prim_path, asset_path.empty());
+    node.site_path_idx = entry.ctx.InternPath(target.prim_part());
+    node.map_expr_idx = entry.ctx.AddMapExpression(mapping, -1);
+  }
+  node.flags = (node.flags & ~cg::NodeFlags::PayloadDeferred &
+                ~cg::NodeFlags::Inert & ~cg::NodeFlags::Culled) |
                cg::NodeFlags::PayloadLoaded | cg::NodeFlags::HasSpecs;
 
   cg::RecomputeStrengthOrder(entry.index);

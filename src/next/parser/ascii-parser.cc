@@ -533,7 +533,56 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
     return false;
   }
 
+  // Read one composition-arc reference into canonical "@asset@</prim>" /
+  // "</prim>" form (the lexer yields @asset@ as a String without '@' and
+  // </prim> as a PathRef without '<>'). Peeks before consuming so a missing
+  // optional token does not eat the next one. Returns false if no arc token.
+  auto ReadArcRef = [this](std::string* out) -> bool {
+    std::string ref;
+    if (Check(TokenType::String)) {
+      std::string asset;
+      lexer_->expect(TokenType::String, asset);
+      ref = "@" + asset + "@";
+      if (Check(TokenType::PathRef)) {
+        std::string pr;
+        lexer_->expect(TokenType::PathRef, pr);
+        ref += "<" + pr + ">";
+      }
+    } else if (Check(TokenType::PathRef)) {
+      std::string pr;
+      lexer_->expect(TokenType::PathRef, pr);
+      ref = "<" + pr + ">";
+    } else {
+      return false;
+    }
+    *out = ref;
+    return true;
+  };
+  // Read an arc value that may be a bracketed list or a single value.
+  auto ReadArcList = [this, &ReadArcRef](std::vector<std::string>* target) {
+    if (Match(TokenType::OpenBracket)) {
+      while (!Check(TokenType::CloseBracket) && !AtEnd()) {
+        std::string ref;
+        if (!ReadArcRef(&ref)) break;
+        target->push_back(ref);
+        Match(TokenType::Comma);
+      }
+      Match(TokenType::CloseBracket);
+    } else {
+      std::string ref;
+      if (ReadArcRef(&ref)) target->push_back(ref);
+    }
+  };
+
   while (!Check(TokenType::CloseParen) && !AtEnd()) {
+    // Optional list-op qualifier keyword (prepend/append/delete/reorder)
+    // precedes the real key, e.g. `prepend references = [...]`. Consume it; the
+    // qualifier semantics are not yet modeled (arcs are a flat list).
+    if (!(Match(TokenType::Prepend) || Match(TokenType::Append) ||
+          Match(TokenType::Delete) || Match(TokenType::Reorder))) {
+      // no qualifier
+    }
+
     std::string key;
     if (!lexer_->expect(TokenType::Identifier, key)) {
       AddError("Expected metadata key");
@@ -573,21 +622,13 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         Match(TokenType::CloseBracket);
       }
     } else if (key == "references") {
-      if (Match(TokenType::OpenBracket)) {
-        while (!Check(TokenType::CloseBracket) && !AtEnd()) {
-          std::string ref;
-          if (lexer_->expect(TokenType::PathRef, ref) || lexer_->expect(TokenType::String, ref)) {
-            prim->meta().references.push_back(ref);
-          }
-          Match(TokenType::Comma);
-        }
-        Match(TokenType::CloseBracket);
-      }
+      ReadArcList(&prim->meta().references);
     } else if (key == "payload") {
-      std::string payload;
-      if (lexer_->expect(TokenType::PathRef, payload) || lexer_->expect(TokenType::String, payload)) {
-        prim->meta().payloads.push_back(payload);
-      }
+      ReadArcList(&prim->meta().payloads);
+    } else if (key == "inherits") {
+      ReadArcList(&prim->meta().inherits);
+    } else if (key == "specializes") {
+      ReadArcList(&prim->meta().specializes);
     } else if (key == "variantSets") {
       // variantSets = ["setName1", "setName2"]
       if (Match(TokenType::OpenBracket)) {

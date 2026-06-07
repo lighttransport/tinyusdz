@@ -77,6 +77,10 @@ set(TINYUSDZ_NEXT_SOURCES
     # Low-memory flatten pipeline
     pipeline/flatten.cc
 
+    # PCP-style lazy composition cache (native to next)
+    pcp/layer-registry.cc
+    pcp/cache.cc
+
     # High-level API
     tinyusdz-next.cc
     c-tinyusd-next.cc
@@ -150,6 +154,13 @@ set(TINYUSDZ_NEXT_HEADERS
     # Composition
     composition/composition.hh
 
+    # PCP-style lazy composition cache (native to next)
+    pcp/arc-types.hh
+    pcp/namespace-mapping.hh
+    pcp/prim-index.hh
+    pcp/layer-registry.hh
+    pcp/cache.hh
+
     # High-level API
     tinyusdz-next.hh
     compat.hh
@@ -174,6 +185,14 @@ add_library(tinyusdz_next STATIC
 
 # Set C++14 standard
 target_compile_features(tinyusdz_next PUBLIC cxx_std_14)
+
+# Optional threading: enables the parallel layer-prefetch path in next::pcp.
+option(TINYUSDZ_NEXT_ENABLE_THREAD "Enable std::thread parallel paths in next" OFF)
+if(TINYUSDZ_NEXT_ENABLE_THREAD)
+    find_package(Threads REQUIRED)
+    target_compile_definitions(tinyusdz_next PUBLIC TINYUSDZ_ENABLE_THREAD)
+    target_link_libraries(tinyusdz_next PUBLIC Threads::Threads)
+endif()
 
 # Set include directories
 target_include_directories(tinyusdz_next PUBLIC
@@ -226,6 +245,16 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_stage.cc
     )
     target_link_libraries(test_stage PRIVATE tinyusdz_next)
+
+    add_executable(test_pcp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_pcp.cc
+    )
+    target_link_libraries(test_pcp PRIVATE tinyusdz_next)
+
+    add_executable(test_pcp_parallel
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_pcp_parallel.cc
+    )
+    target_link_libraries(test_pcp_parallel PRIVATE tinyusdz_next)
 
     add_executable(test_writer
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_writer.cc
@@ -335,6 +364,10 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     add_test(NAME next_test_layer COMMAND test_layer
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_stage COMMAND test_stage
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_pcp COMMAND test_pcp
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_pcp_parallel COMMAND test_pcp_parallel
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_writer COMMAND test_writer
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
