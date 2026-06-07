@@ -166,6 +166,47 @@ static void ResizeParity(int w, int h, int ch, int tw, int th) {
   TEST_CHECK(maxdiff <= 1);  // streaming vs whole-image: identical within 1 LSB
 }
 
+// 16-bit grayscale PNG transcode must be lossless (byte-wise codec). The writer
+// (fresh mode) builds the 16-bit PNG so the test needs no external 16-bit codec.
+void png_stream_transcode_16bit_test(void) {
+  const uint32_t W = 50, H = 37;
+  tinyusdz::imageio::PngImageInfo info;
+  info.width = W;
+  info.height = H;
+  info.bit_depth = 16;
+  info.color_type = 0;  // grayscale
+  tinyusdz::imageio::PngScanlineWriter w;
+  TEST_CHECK(w.Begin(info));
+  std::vector<std::vector<uint8_t>> rows(H, std::vector<uint8_t>((size_t)W * 2));
+  for (uint32_t y = 0; y < H; ++y) {
+    for (uint32_t x = 0; x < W; ++x) {
+      uint16_t v = (uint16_t)((x * 257 + y * 131) & 0xFFFF);
+      rows[y][x * 2] = (uint8_t)(v >> 8);       // big-endian (PNG)
+      rows[y][x * 2 + 1] = (uint8_t)(v & 0xFF);
+    }
+    TEST_CHECK(w.WriteRow(rows[y].data()));
+  }
+  std::vector<uint8_t> png16;
+  TEST_CHECK(w.Finish(png16));
+
+  std::vector<uint8_t> out;
+  bool ok = tinyusdz::imageio::TranscodePNG(png16.data(), png16.size(), out);
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  tinyusdz::imageio::PngScanlineReader r;
+  TEST_CHECK(r.Open(out.data(), out.size()));
+  TEST_CHECK(r.info().bit_depth == 16 && r.info().color_type == 0 &&
+             r.info().width == W && r.info().height == H);
+  std::vector<uint8_t> row(r.info().row_bytes);
+  bool good = true;
+  for (uint32_t y = 0; y < H && good; ++y) {
+    if (!r.NextRow(row.data())) { good = false; break; }
+    if (row != rows[y]) good = false;  // lossless: identical 16-bit samples
+  }
+  TEST_CHECK(good);
+}
+
 void png_stream_resize_rgb_test(void) { ResizeParity(128, 96, 3, 40, 33); }
 void png_stream_resize_rgba_test(void) { ResizeParity(100, 100, 4, 50, 25); }
 
