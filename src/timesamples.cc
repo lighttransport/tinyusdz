@@ -10,6 +10,7 @@
 #include "core/extent.hh"  // value::TypeTraits<Extent> (extent timesamples)
 #include <algorithm>
 #include <cstring>
+#include <mutex>
 
 namespace tinyusdz {
 
@@ -446,23 +447,36 @@ std::vector<TimeSamples::Sample> &TimeSamples::samples() {
 }
 
 const std::vector<TimeSamples::Sample> &TimeSamples::get_samples() const {
-    // If unified storage has data, convert to generic samples on demand.
-    if (!_times.empty() && _samples.empty()) {
-      if (_dirty) {
-        update();
-      }
-
-      _samples.clear();
-      _samples.reserve(_times.size());
-
-      for (size_t i = 0; i < _times.size(); ++i) {
-        Sample s;
-        if (!reconstruct_binary_sample(i, &s)) {
-          s.t = (i < _times.size()) ? _times[i] : 0.0;
-          s.value = value::Value();
-          s.blocked = true;
+    // Unified storage (_times/_data): convert to generic `_samples` once.
+    //
+    // This is a lazy const-mutation of `mutable _samples`. To keep a shared
+    // (e.g. file-loaded) TimeSamples safe to read from multiple threads, the
+    // one-time build is guarded: a lock-free acquire fast path once built, and a
+    // function-local static mutex for the cold initial build (materialization is
+    // kept lazy so unified storage isn't duplicated unless generic samples are
+    // actually requested).
+    if (!_times.empty() &&
+        !_samples_ready.load(std::memory_order_acquire)) {
+      static std::mutex s_materialize_mu;
+      std::lock_guard<std::mutex> lk(s_materialize_mu);
+      if (!_samples_ready.load(std::memory_order_relaxed)) {
+        if (_dirty) {
+          update();
         }
-        _samples.push_back(s);
+
+        _samples.clear();
+        _samples.reserve(_times.size());
+
+        for (size_t i = 0; i < _times.size(); ++i) {
+          Sample s;
+          if (!reconstruct_binary_sample(i, &s)) {
+            s.t = (i < _times.size()) ? _times[i] : 0.0;
+            s.value = value::Value();
+            s.blocked = true;
+          }
+          _samples.push_back(s);
+        }
+        _samples_ready.store(true, std::memory_order_release);
       }
       return _samples;
     }
@@ -494,11 +508,13 @@ TimeSamples::TimeSamples(TimeSamples&& other) noexcept
       _type_id(other._type_id),
       _element_size(other._element_size),
       _dirty(other._dirty),
-      _is_array(other._is_array) {
+      _is_array(other._is_array),
+      _samples_ready(other._samples_ready.load()) {
   other._type_id = 0;
   other._element_size = 0;
   other._dirty = false;
   other._is_array = false;
+  other._samples_ready.store(false);
 }
 
 // Move assignment operator
@@ -514,11 +530,13 @@ TimeSamples& TimeSamples::operator=(TimeSamples&& other) noexcept {
     _element_size = other._element_size;
     _dirty = other._dirty;
     _is_array = other._is_array;
+    _samples_ready.store(other._samples_ready.load());
 
     other._type_id = 0;
     other._element_size = 0;
     other._dirty = false;
     other._is_array = false;
+    other._samples_ready.store(false);
   }
   return *this;
 }
@@ -534,7 +552,8 @@ TimeSamples::TimeSamples(const TimeSamples& other)
       _type_id(other._type_id),
       _element_size(other._element_size),
       _dirty(other._dirty),
-      _is_array(other._is_array) {
+      _is_array(other._is_array),
+      _samples_ready(other._samples_ready.load()) {
 }
 
 // Copy assignment operator
@@ -550,6 +569,7 @@ TimeSamples& TimeSamples::operator=(const TimeSamples& other) {
     _element_size = other._element_size;
     _dirty = other._dirty;
     _is_array = other._is_array;
+    _samples_ready.store(other._samples_ready.load());
   }
   return *this;
 }
@@ -562,6 +582,7 @@ void TimeSamples::clear() {
   _data.clear();
   _data_offsets.clear();
   _array_counts.clear();
+  _samples_ready.store(false);
   _type_id = 0;
   _element_size = 0;
   _dirty = true;

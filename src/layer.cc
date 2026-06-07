@@ -302,10 +302,11 @@ Layer::Layer(const Layer& other)
     : _impl(other._impl ? std::make_unique<LayerImpl>(*other._impl)
                         : std::make_unique<LayerImpl>()) {
   // The implicit LayerImpl copy duplicated the source's lookup cache (pointers
-  // into the SOURCE's _prim_specs) and shared its mutex; drop both so this copy
-  // rebuilds against its own tree. (Move ctor below is unaffected: moving the
-  // node-based _prim_specs keeps element addresses stable, so its cache stays
-  // valid.)
+  // into the SOURCE's _prim_specs) and shared its mutex; reset_lookup_cache()
+  // drops both (clears the cache, marks dirty, and installs a fresh mutex) so
+  // this copy rebuilds against its own tree. (Move ctor below is unaffected:
+  // moving the node-based _prim_specs keeps element addresses stable, so its
+  // cache stays valid.)
   if (_impl) {
     _impl->reset_lookup_cache();
   }
@@ -324,6 +325,12 @@ Layer& Layer::operator=(const Layer& other) {
     } else {
       *_impl = LayerImpl{};
     }
+    // See copy ctor: reset the per-layer lookup cache (stale pointers + shared mutex).
+    _impl->_dirty = true;
+    _impl->_primspec_path_cache.clear();
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    _impl->_cache_mu = std::make_shared<std::mutex>();
+#endif
   }
   return *this;
 }
@@ -450,6 +457,9 @@ bool Layer::replace_primspec(const std::string &name, PrimSpec &&ps) {
   return true;
 }
 
+// These getters read flags computed (and cached) by the matching
+// check_unresolved_*() methods. Take the same gated lock for a consistent read
+// when a parallel build path touches a shared Layer.
 bool Layer::has_unresolved_references() const {
 #if defined(TINYUSDZ_ENABLE_THREAD)
   std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
