@@ -207,6 +207,42 @@ void png_stream_transcode_16bit_test(void) {
   TEST_CHECK(good);
 }
 
+// 16-bit resize: a constant image must resize to the same constant (any linear
+// filter preserves constants) — this also exercises the BE<->native byte swap.
+void png_stream_resize_16bit_test(void) {
+  const uint32_t W = 40, H = 30;
+  tinyusdz::imageio::PngImageInfo info;
+  info.width = W;
+  info.height = H;
+  info.bit_depth = 16;
+  info.color_type = 0;  // grayscale
+  tinyusdz::imageio::PngScanlineWriter w;
+  TEST_CHECK(w.Begin(info));
+  std::vector<uint8_t> row((size_t)W * 2);
+  for (uint32_t x = 0; x < W; ++x) { row[x * 2] = 0xAB; row[x * 2 + 1] = 0xCD; }
+  for (uint32_t y = 0; y < H; ++y) TEST_CHECK(w.WriteRow(row.data()));
+  std::vector<uint8_t> png;
+  TEST_CHECK(w.Finish(png));
+
+  std::vector<uint8_t> out;
+  bool ok = tinyusdz::imageio::ResizePNG(png.data(), png.size(), 20, 15,
+                                         /*srgb=*/false, out);
+  TEST_CHECK(ok);
+  if (!ok) return;
+  tinyusdz::imageio::PngScanlineReader r;
+  TEST_CHECK(r.Open(out.data(), out.size()));
+  TEST_CHECK(r.info().bit_depth == 16 && r.info().color_type == 0 &&
+             r.info().width == 20 && r.info().height == 15);
+  std::vector<uint8_t> orow(r.info().row_bytes);
+  bool good = true;
+  for (uint32_t y = 0; y < 15 && good; ++y) {
+    if (!r.NextRow(orow.data())) { good = false; break; }
+    for (uint32_t x = 0; x < 20; ++x)
+      if (orow[x * 2] != 0xAB || orow[x * 2 + 1] != 0xCD) { good = false; break; }
+  }
+  TEST_CHECK(good);
+}
+
 void png_stream_resize_rgb_test(void) { ResizeParity(128, 96, 3, 40, 33); }
 void png_stream_resize_rgba_test(void) { ResizeParity(100, 100, 4, 50, 25); }
 

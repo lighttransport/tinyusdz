@@ -408,12 +408,23 @@ struct ResizeCtx {
   size_t plte_entries = 0;
   const uint8_t *trns = nullptr;  // palette alpha
   size_t trns_len = 0;
+  int bps = 1;               // bytes per sample (1 for 8-bit, 2 for 16-bit)
+  bool swap16 = false;       // 16-bit on a little-endian host -> byte-swap pairs
   std::vector<uint8_t> raw_row;     // reader's native scanline
-  std::vector<uint8_t> sample_row;  // expanded RGB(A) for palette inputs
+  std::vector<uint8_t> sample_row;  // palette-expanded or endian-swapped samples
+  std::vector<uint8_t> out_swap;    // 16-bit output: native -> big-endian buffer
   long cur_y = -1;                  // last decoded input row index
   uint32_t out_rows = 0;
   bool error = false;
 };
+
+// Swap byte pairs (PNG 16-bit is big-endian; stbir UINT16 wants host-native).
+inline void SwapPairs(const uint8_t *in, uint8_t *out, size_t nsamples) {
+  for (size_t i = 0; i < nsamples; ++i) {
+    out[i * 2 + 0] = in[i * 2 + 1];
+    out[i * 2 + 1] = in[i * 2 + 0];
+  }
+}
 
 const void *ResizeInputCb(void *opt_out, const void *plane, int num_pixels,
                           int x, int y, void *ud) {
@@ -441,17 +452,25 @@ const void *ResizeInputCb(void *opt_out, const void *plane, int num_pixels,
         if (ch == 4)
           o[i * ch + 3] = (c->trns && idx < c->trns_len) ? c->trns[idx] : 255;
       }
+    } else if (c->swap16) {
+      SwapPairs(c->raw_row.data(), c->sample_row.data(),
+                (size_t)c->in_w * c->rs_channels);
     }
   }
-  const uint8_t *base = c->palette ? c->sample_row.data() : c->raw_row.data();
-  return base + (size_t)x * c->rs_channels;
+  const uint8_t *base = (c->palette || c->swap16) ? c->sample_row.data()
+                                                  : c->raw_row.data();
+  return base + (size_t)x * c->rs_channels * c->bps;
 }
 
 void ResizeOutputCb(const void *out_ptr, int num_pixels, int y, void *ud) {
-  (void)num_pixels;
   (void)y;
   ResizeCtx *c = static_cast<ResizeCtx *>(ud);
-  if (!c->writer->WriteRow(static_cast<const uint8_t *>(out_ptr))) {
+  const uint8_t *row = static_cast<const uint8_t *>(out_ptr);
+  if (c->swap16) {
+    SwapPairs(row, c->out_swap.data(), (size_t)num_pixels * c->rs_channels);
+    row = c->out_swap.data();
+  }
+  if (!c->writer->WriteRow(row)) {
     c->error = true;
   } else {
     ++c->out_rows;
@@ -507,18 +526,21 @@ bool ResizePNG(const uint8_t *data, size_t size, uint32_t out_w, uint32_t out_h,
   PngScanlineReader reader;
   if (!reader.Open(data, size)) return false;
   const PngImageInfo &in = reader.info();
-  if (in.bit_depth != 8) return false;  // sub-byte / 16-bit -> fall back
+  if (in.bit_depth != 8 && in.bit_depth != 16) return false;  // sub-byte -> fall back
+  if (in.color_type == 3 && in.bit_depth != 8) return false;   // palette is 8-bit
 
   ResizeCtx ctx;
   ctx.reader = &reader;
   ctx.in_w = in.width;
+  ctx.bps = in.bit_depth / 8;  // 1 or 2
+  {
+    const uint16_t one = 1;
+    ctx.swap16 = (ctx.bps == 2) && (*reinterpret_cast<const uint8_t *>(&one) == 1);
+  }
 
-  uint8_t out_ct = 0;
-  if (in.color_type == 0) { ctx.rs_channels = 1; out_ct = 0; }
-  else if (in.color_type == 4) { ctx.rs_channels = 2; out_ct = 4; }
-  else if (in.color_type == 2) { ctx.rs_channels = 3; out_ct = 2; }
-  else if (in.color_type == 6) { ctx.rs_channels = 4; out_ct = 6; }
-  else if (in.color_type == 3) {  // palette -> RGB / RGBA
+  uint8_t out_ct = in.color_type;
+  uint8_t out_bd = (uint8_t)in.bit_depth;
+  if (in.color_type == 3) {  // palette (8-bit) -> RGB / RGBA 8-bit
     ctx.palette = true;
     for (auto &ck : reader.chunks()) {
       const uint8_t *st = ck.first;
@@ -535,27 +557,34 @@ bool ResizePNG(const uint8_t *data, size_t size, uint32_t out_w, uint32_t out_h,
     if (!ctx.plte) return false;  // malformed palette PNG
     ctx.rs_channels = ctx.trns ? 4 : 3;
     out_ct = ctx.trns ? 6 : 2;
-  } else {
-    return false;
+    out_bd = 8;
+  } else {  // gray / gray+alpha / RGB / RGBA (8 or 16-bit)
+    ctx.rs_channels = in.channels;
   }
 
   ctx.raw_row.resize(in.row_bytes);
-  if (ctx.palette) ctx.sample_row.resize((size_t)in.width * ctx.rs_channels);
+  if (ctx.palette)
+    ctx.sample_row.resize((size_t)in.width * ctx.rs_channels);  // 8-bit RGB(A)
+  else if (ctx.swap16)
+    ctx.sample_row.resize((size_t)in.width * ctx.rs_channels * 2);  // native u16
+  if (ctx.swap16) ctx.out_swap.resize((size_t)out_w * ctx.rs_channels * 2);
 
   PngScanlineWriter writer;
   PngImageInfo oinfo;
   oinfo.width = out_w;
   oinfo.height = out_h;
-  oinfo.bit_depth = 8;
+  oinfo.bit_depth = out_bd;
   oinfo.color_type = out_ct;
   if (!writer.Begin(oinfo)) return false;
   ctx.writer = &writer;
 
+  const stbir_datatype dtype =
+      (ctx.bps == 2) ? STBIR_TYPE_UINT16
+                     : (srgb ? STBIR_TYPE_UINT8_SRGB : STBIR_TYPE_UINT8);
   STBIR_RESIZE rs;
   stbir_resize_init(&rs, nullptr, (int)in.width, (int)in.height, 0, nullptr,
                     (int)out_w, (int)out_h, 0,
-                    (stbir_pixel_layout)ctx.rs_channels,
-                    srgb ? STBIR_TYPE_UINT8_SRGB : STBIR_TYPE_UINT8);
+                    (stbir_pixel_layout)ctx.rs_channels, dtype);
   stbir_set_pixel_callbacks(&rs, ResizeInputCb, ResizeOutputCb);
   stbir_set_user_data(&rs, &ctx);
   int ok = stbir_resize_extended(&rs);
