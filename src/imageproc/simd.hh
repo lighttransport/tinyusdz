@@ -30,5 +30,21 @@ const char *ToString(SimdLevel level);
 // Used by linear colorspace conversions (DisplayP3/Rec2020/ACEScg <-> sRGB).
 void Mat3MulRGBf(const float *in, float *out, size_t n_pixels, const float m[9]);
 
+// One output channel's source for PackChannels8: each output pixel's byte is
+// `in[x*in_stride + channel]`, or `constant` when `in` is null.
+struct PackSource {
+  const uint8_t *in = nullptr;  // null => emit `constant`
+  int in_stride = 1;            // input bytes per pixel
+  int channel = 0;              // byte offset within the input pixel
+  uint8_t constant = 0;
+};
+
+// Pack `out_channels` (1..4) sources into the interleaved 8-bit row `out`:
+// out[x*out_channels + c] = sources[c] sampled at pixel x, for `n_pixels`.
+// Used by the channel repack/unpack paths (combine grayscale maps into ORM/RGBA
+// etc.). Bytewise, so the vectorized result equals the scalar result exactly.
+void PackChannels8(uint8_t *out, size_t n_pixels, int out_channels,
+                   const PackSource *sources);
+
 }  // namespace imageproc
 }  // namespace tinyusdz

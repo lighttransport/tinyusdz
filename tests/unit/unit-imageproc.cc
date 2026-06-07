@@ -76,6 +76,38 @@ void imageproc_mat3_parity_test(void) {
   TEST_CHECK(ok);
 }
 
+void imageproc_pack_channels_test(void) {
+  const size_t n = 333;
+  // Three inputs: a single-channel gloss, an RGB map, and a 2-ch GA map.
+  std::vector<uint8_t> gloss(n), rgb(n * 3), ga(n * 2);
+  for (size_t i = 0; i < n; ++i) {
+    gloss[i] = uint8_t((i * 7) & 0xFF);
+    rgb[i * 3 + 0] = uint8_t(i & 0xFF);
+    rgb[i * 3 + 1] = uint8_t((i * 3) & 0xFF);
+    rgb[i * 3 + 2] = uint8_t((i * 5) & 0xFF);
+    ga[i * 2 + 0] = uint8_t((i * 11) & 0xFF);
+    ga[i * 2 + 1] = uint8_t((i * 13) & 0xFF);
+  }
+  // out.R = gloss.R, out.G = rgb.G, out.B = ga.A(ch1), out.A = constant 200.
+  imageproc::PackSource srcs[4];
+  srcs[0].in = gloss.data(); srcs[0].in_stride = 1; srcs[0].channel = 0;
+  srcs[1].in = rgb.data();   srcs[1].in_stride = 3; srcs[1].channel = 1;
+  srcs[2].in = ga.data();    srcs[2].in_stride = 2; srcs[2].channel = 1;
+  srcs[3].in = nullptr;      srcs[3].constant = 200;
+
+  std::vector<uint8_t> out(n * 4, 0xEE);
+  imageproc::PackChannels8(out.data(), n, 4, srcs);
+
+  bool ok = true;
+  for (size_t x = 0; x < n; ++x) {
+    if (out[x * 4 + 0] != gloss[x]) { ok = false; break; }
+    if (out[x * 4 + 1] != rgb[x * 3 + 1]) { ok = false; break; }
+    if (out[x * 4 + 2] != ga[x * 2 + 1]) { ok = false; break; }
+    if (out[x * 4 + 3] != 200) { ok = false; break; }
+  }
+  TEST_CHECK(ok);  // dispatched kernel matches the scalar gather exactly
+}
+
 void imageproc_simd_level_test(void) {
   imageproc::SimdLevel lvl = imageproc::ActiveSimdLevel();
   const char *name = imageproc::ToString(lvl);
