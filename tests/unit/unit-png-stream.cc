@@ -126,7 +126,8 @@ void png_stream_reject_nonpng_test(void) {
 
 // Streaming resize must match the whole-image tydra::ResizeImage (same stbir lib
 // + same linear filter) to within rounding.
-static void ResizeParity(int w, int h, int ch, int tw, int th) {
+static void ResizeParity(int w, int h, int ch, int tw, int th,
+                         bool srgb = false) {
   tinyusdz::Image img = MakeImage(w, h, ch);
   std::vector<uint8_t> png = EncodePNG(img);
   TEST_CHECK(png.size() > 0);
@@ -134,7 +135,7 @@ static void ResizeParity(int w, int h, int ch, int tw, int th) {
   // Streaming resize -> decode result.
   std::vector<uint8_t> rpng;
   bool ok = tinyusdz::imageio::ResizePNG(png.data(), png.size(), (uint32_t)tw,
-                                         (uint32_t)th, /*srgb=*/false, rpng);
+                                         (uint32_t)th, srgb, rpng);
   TEST_CHECK(ok);
   if (!ok) return;
   auto dec = tinyusdz::image::LoadImageFromMemory(rpng.data(), rpng.size(), "m");
@@ -146,9 +147,11 @@ static void ResizeParity(int w, int h, int ch, int tw, int th) {
   // Whole-image reference.
   tinyusdz::Image ref;
   std::string err;
-  bool rok = tinyusdz::tydra::ResizeImage(img, tw, th, &ref,
-                                          tinyusdz::tydra::ResizeFilter::Linear,
-                                          &err);
+  bool rok = tinyusdz::tydra::ResizeImage(
+      img, tw, th, &ref,
+      srgb ? tinyusdz::tydra::ResizeFilter::SRGB
+           : tinyusdz::tydra::ResizeFilter::Linear,
+      &err);
   TEST_CHECK(rok);
   if (!rok) return;
 
@@ -245,6 +248,7 @@ void png_stream_resize_16bit_test(void) {
 
 void png_stream_resize_rgb_test(void) { ResizeParity(128, 96, 3, 40, 33); }
 void png_stream_resize_rgba_test(void) { ResizeParity(100, 100, 4, 50, 25); }
+void png_stream_resize_srgb_test(void) { ResizeParity(128, 96, 3, 40, 33, true); }
 
 void png_stream_colorspace_test(void) {
   const int w = 64, h = 48, ch = 4;  // RGBA: convert RGB, preserve alpha

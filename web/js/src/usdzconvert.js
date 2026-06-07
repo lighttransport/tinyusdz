@@ -440,6 +440,7 @@ function repackUSDZEntries(native, rootName, rootData, archiveEntries, rootEntry
           format: fmtInfo.format,
           pngEncoder: opts.pngEncoder || 'auto',
           jpegQuality: opts.jpegQuality || 90,
+          resizeColorspace: opts.resizeColorspace || '',
         });
         if (res && res.success) {
           reencoded++;
@@ -1307,6 +1308,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
           format: fmtInfo.format,
           pngEncoder: opts.pngEncoder || 'auto',
           jpegQuality: opts.jpegQuality || 90,
+          resizeColorspace: opts.resizeColorspace || '',
         });
         if (res && res.success) {
           outBytes = new Uint8Array(res.data); // copy out of wasm heap
