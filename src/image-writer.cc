@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache 2.0
 #if defined(TINYUSDZ_WITH_EXR)
+#if defined(TINYUSDZ_EXR_V3)
+#include "external/tinyexr/include/exr.h"
+#else
 #include "external/tinyexr.h"
+#endif
 #endif
 
 #if defined(TINYUSDZ_WITH_TIFF)
@@ -341,6 +345,117 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
       const size_t npix =
           size_t(image.width) * size_t(image.height) * size_t(comps);
 
+#if defined(TINYUSDZ_EXR_V3)
+      // --- TinyEXR v3 C encode: de-interleave the interleaved samples into
+      // planar channels (HALF for fp16/8-bit input, FLOAT for fp32), then stream
+      // them through the mid-level writer. Channels are matched by name, so no
+      // A/B/G/R reordering is needed. ---
+      {
+        const size_t pix = size_t(image.width) * size_t(image.height);
+        const char *kNames1[1] = {"Y"};
+        const char *kNames3[3] = {"R", "G", "B"};
+        const char *kNames4[4] = {"R", "G", "B", "A"};
+        const char *const *names =
+            (comps == 1) ? kNames1 : (comps == 3) ? kNames3 : kNames4;
+
+        exr_pixel_type ptype;
+        std::vector<std::vector<uint16_t>> hplanes;  // HALF channel planes
+        std::vector<std::vector<float>> fplanes;     // FLOAT channel planes
+
+        if (image.format == Image::PixelFormat::Float && image.bpp == 16) {
+          if (image.data.size() < npix * 2)
+            return nonstd::make_unexpected("EXR: fp16 buffer too small.");
+          ptype = EXR_PIXEL_HALF;
+          const uint16_t *src =
+              reinterpret_cast<const uint16_t *>(image.data.data());
+          hplanes.assign(size_t(comps), std::vector<uint16_t>(pix));
+          for (size_t i = 0; i < pix; i++)
+            for (int c = 0; c < comps; c++)
+              hplanes[size_t(c)][i] = src[i * size_t(comps) + size_t(c)];
+        } else if (image.format == Image::PixelFormat::Float &&
+                   image.bpp == 32) {
+          if (image.data.size() < npix * sizeof(float))
+            return nonstd::make_unexpected("EXR: float buffer too small.");
+          ptype = EXR_PIXEL_FLOAT;
+          const float *src = reinterpret_cast<const float *>(image.data.data());
+          fplanes.assign(size_t(comps), std::vector<float>(pix));
+          for (size_t i = 0; i < pix; i++)
+            for (int c = 0; c < comps; c++)
+              fplanes[size_t(c)][i] = src[i * size_t(comps) + size_t(c)];
+        } else if (image.bpp == 8) {
+          if (image.data.size() < npix)
+            return nonstd::make_unexpected("EXR: 8-bit buffer too small.");
+          ptype = EXR_PIXEL_HALF;  // normalized 8-bit fits exactly in half
+          hplanes.assign(size_t(comps), std::vector<uint16_t>(pix));
+          for (size_t i = 0; i < pix; i++)
+            for (int c = 0; c < comps; c++) {
+              float f =
+                  float(image.data[i * size_t(comps) + size_t(c)]) / 255.0f;
+              uint16_t h;
+              exr_float_to_half(&f, &h, 1);
+              hplanes[size_t(c)][i] = h;
+            }
+        } else {
+          return nonstd::make_unexpected("EXR: unsupported source bit depth.");
+        }
+
+        exr_header hdr;
+        std::memset(&hdr, 0, sizeof(hdr));
+        hdr.part_type = EXR_PART_SCANLINE;
+        hdr.compression = (image.width < 16 && image.height < 16)
+                              ? EXR_COMPRESSION_NONE
+                              : EXR_COMPRESSION_ZIP;
+        hdr.line_order = EXR_LINEORDER_INCREASING_Y;
+        hdr.data_window.min_x = 0;
+        hdr.data_window.min_y = 0;
+        hdr.data_window.max_x = image.width - 1;
+        hdr.data_window.max_y = image.height - 1;
+        hdr.display_window = hdr.data_window;
+        hdr.pixel_aspect_ratio = 1.0f;
+        hdr.screen_window_width = 1.0f;
+        hdr.num_channels = comps;
+        std::vector<exr_channel> chans(static_cast<size_t>(comps));
+        for (int c = 0; c < comps; c++) {
+          std::memset(&chans[size_t(c)], 0, sizeof(exr_channel));
+          std::strncpy(chans[size_t(c)].name, names[c], EXR_MAX_NAME - 1);
+          chans[size_t(c)].pixel_type = ptype;
+          chans[size_t(c)].x_sampling = 1;
+          chans[size_t(c)].y_sampling = 1;
+        }
+        hdr.channels = chans.data();
+
+        exr_writer *w = nullptr;
+        if (!EXR_OK(exr_writer_create(/* alloc */ nullptr, &w)))
+          return nonstd::make_unexpected("EXR: writer create failed.");
+        int32_t part = 0;
+        if (!EXR_OK(exr_writer_add_part(w, &hdr, &part))) {
+          exr_writer_destroy(w);
+          return nonstd::make_unexpected("EXR: add_part failed.");
+        }
+        for (int c = 0; c < comps; c++) {
+          const void *planar =
+              (ptype == EXR_PIXEL_HALF)
+                  ? static_cast<const void *>(hplanes[size_t(c)].data())
+                  : static_cast<const void *>(fplanes[size_t(c)].data());
+          if (!EXR_OK(exr_writer_set_channel(w, part, names[c], planar))) {
+            exr_writer_destroy(w);
+            return nonstd::make_unexpected("EXR: set_channel failed.");
+          }
+        }
+        void *outdata = nullptr;
+        size_t outsize = 0;
+        exr_result wr = exr_writer_finalize_to_memory(w, &outdata, &outsize);
+        exr_writer_destroy(w);
+        if (!EXR_OK(wr) || outdata == nullptr || outsize == 0) {
+          if (outdata) free(outdata);
+          return nonstd::make_unexpected("EXR: encode failed.");
+        }
+        std::vector<uint8_t> out(static_cast<uint8_t *>(outdata),
+                                 static_cast<uint8_t *>(outdata) + outsize);
+        free(outdata);
+        return out;
+      }
+#else
       // fp16 (half) input -> encode HALF directly, with NO fp32 widening:
       // split the interleaved half samples into planar half channels and hand
       // them to SaveEXRImageToMemory (the half values are written as-is).
@@ -454,6 +569,7 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
       std::vector<uint8_t> exr_out(buf, buf + size_t(ret));
       free(buf);
       return exr_out;
+#endif  // TINYUSDZ_EXR_V3
 #else
       return nonstd::make_unexpected(
           "EXR output requires building with TINYUSDZ_WITH_EXR.");

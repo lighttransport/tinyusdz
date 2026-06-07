@@ -310,7 +310,7 @@ option(TINYUSDZ_WITH_TIFF
 
 # -- EXR --
 option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
-option(TINYUSDZ_USE_TINYEXR_V3 "Use TinyEXR v3 API (modern C17/C++17 API). Set OFF for legacy v1 API" ON)
+option(TINYUSDZ_USE_TINYEXR_V3 "Use the pure-C11 TinyEXR v3 C EXR backend (minimal codecs: no HTJ2K/ZSTD). Set OFF for the deprecated legacy v1 API" ON)
 # ---------
 
 # -- ColorIO --
@@ -903,34 +903,24 @@ endif(TINYUSDZ_WITH_TIFF)
 
 if(TINYUSDZ_WITH_EXR)
   if(TINYUSDZ_USE_TINYEXR_V3)
-    # TinyEXR v3 API (modern C17/C++17 API)
-    # NOTE: We also compile tinyexr.cc (v1 implementation) for backward compatibility
-    # since image-loader.cc uses the v1 API (LoadEXRFromMemory, etc.)
-    message(STATUS "TinyUSDZ: Using TinyEXR v3 API")
+    # TinyEXR v3 C API (pure-C11 reader/writer; upstream `include/exr.h`).
+    # The vendored src/external/tinyexr/src/ holds only the minimal codec set:
+    # HTJ2K (EXR_NO_JPH) and ZSTD (EXR_NO_ZSTD) are compiled out for a small
+    # footprint. The v3 C core is self-contained (its own DEFLATE via fpnge), so
+    # it depends on neither miniz nor zlib.
+    message(STATUS "TinyUSDZ: Using TinyEXR v3 C API (pure-C11, minimal codecs)")
 
-    if(TINYUSDZ_USE_SYSTEM_ZLIB)
-      set_source_files_properties(
-        ${PROJECT_SOURCE_DIR}/src/external/tinyexr_c_impl.c
-        PROPERTIES COMPILE_DEFINITIONS "TINYEXR_V3_HAS_DEFLATE=1;TINYEXR_V3_NO_MINIZ=1")
-      set_source_files_properties(
-        ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
-        PROPERTIES COMPILE_DEFINITIONS "TINYEXR_USE_MINIZ=0")
-    else()
-      # Use bundled miniz (default)
-      set_source_files_properties(
-        ${PROJECT_SOURCE_DIR}/src/external/tinyexr_c_impl.c
-        PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
-      set_source_files_properties(
-        ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
-        PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
-    endif()
+    file(GLOB TINYEXR_V3_SOURCES
+         ${PROJECT_SOURCE_DIR}/src/external/tinyexr/src/*.c)
 
-    list(APPEND TINYUSDZ_DEP_SOURCES
-         ${PROJECT_SOURCE_DIR}/src/external/tinyexr_c_impl.c
-         ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
+    set_source_files_properties(${TINYEXR_V3_SOURCES} PROPERTIES
+      INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/external/tinyexr/include;${PROJECT_SOURCE_DIR}/src/external/tinyexr/src"
+      COMPILE_DEFINITIONS "EXR_NO_JPH;EXR_NO_ZSTD")
+
+    list(APPEND TINYUSDZ_DEP_SOURCES ${TINYEXR_V3_SOURCES})
 
   else()
-    # TinyEXR v1 API (legacy API)
+    # TinyEXR v1 API (legacy; deprecated, kept behind TINYUSDZ_USE_TINYEXR_V3=OFF).
     message(STATUS "TinyUSDZ: Using TinyEXR v1 API (legacy)")
 
     if(TINYUSDZ_USE_SYSTEM_ZLIB)
@@ -1816,6 +1806,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   if(TINYUSDZ_WITH_EXR)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_EXR")
+    if(TINYUSDZ_USE_TINYEXR_V3)
+      # Select the pure-C11 v3 C EXR backend in image-loader.cc / image-writer.cc.
+      target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                                 PRIVATE "TINYUSDZ_EXR_V3=1")
+    endif()
   endif(TINYUSDZ_WITH_EXR)
 
   if(TINYUSDZ_WITH_COLORIO)
