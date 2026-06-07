@@ -567,6 +567,110 @@ bool DecodeImageTIFF(const uint8_t *bytes, const size_t size,
 
 }  // namespace
 
+#if defined(TINYUSDZ_WITH_EXR)
+bool DecodeImageEXRHalf(const uint8_t *bytes, size_t size,
+                        const std::string &uri, Image *image,
+                        std::string *err) {
+  (void)uri;
+  (void)err;
+  EXRVersion version;
+  if (ParseEXRVersionFromMemory(&version, bytes, size) != TINYEXR_SUCCESS) {
+    return false;  // not EXR / unparseable -> caller falls back
+  }
+  if (version.multipart || version.tiled || version.non_image) {
+    return false;  // unsupported layout -> fp32 path
+  }
+
+  EXRHeader header;
+  InitEXRHeader(&header);
+  const char *exrerr = nullptr;
+  if (ParseEXRHeaderFromMemory(&header, &version, bytes, size, &exrerr) !=
+      TINYEXR_SUCCESS) {
+    if (exrerr) FreeEXRErrorMessage(exrerr);
+    // ParseEXRHeader may allocate the header (ConvertHeader) before failing;
+    // free it. (LoadEXRImageFromMemory, by contrast, frees its image itself on
+    // failure — calling FreeEXRImage there double-frees.)
+    FreeEXRHeader(&header);
+    return false;
+  }
+
+  // Only take the half path when EVERY channel is HALF in the file — tinyexr
+  // cannot narrow a FLOAT channel to half on load.
+  bool all_half = header.num_channels > 0;
+  for (int c = 0; c < header.num_channels; c++) {
+    if (header.pixel_types[c] != TINYEXR_PIXELTYPE_HALF) {
+      all_half = false;
+      break;
+    }
+    header.requested_pixel_types[c] = TINYEXR_PIXELTYPE_HALF;  // load as-is
+  }
+  if (!all_half) {
+    FreeEXRHeader(&header);
+    return false;  // float channels present -> fp32 path
+  }
+
+  EXRImage exr;
+  InitEXRImage(&exr);
+  if (LoadEXRImageFromMemory(&exr, &header, bytes, size, &exrerr) !=
+      TINYEXR_SUCCESS) {
+    if (exrerr) FreeEXRErrorMessage(exrerr);
+    FreeEXRHeader(&header);
+    return false;
+  }
+
+  // Map channel names to RGBA (EXR usually stores (A)BGR order; Y = luminance).
+  int idxR = -1, idxG = -1, idxB = -1, idxA = -1, idxY = -1;
+  for (int c = 0; c < header.num_channels; c++) {
+    const char *n = header.channels[c].name;
+    if (std::strcmp(n, "R") == 0) idxR = c;
+    else if (std::strcmp(n, "G") == 0) idxG = c;
+    else if (std::strcmp(n, "B") == 0) idxB = c;
+    else if (std::strcmp(n, "A") == 0) idxA = c;
+    else if (std::strcmp(n, "Y") == 0) idxY = c;
+  }
+
+  size_t npix, total;
+  if (!safe::mul(size_t(exr.width), size_t(exr.height), &npix) ||
+      !safe::mul(npix, size_t(4 * 2), &total)) {  // RGBA * 2 bytes/half
+    FreeEXRImage(&exr);
+    FreeEXRHeader(&header);
+    return false;
+  }
+
+  image->width = exr.width;
+  image->height = exr.height;
+  image->channels = 4;
+  image->bpp = 16;
+  image->format = Image::PixelFormat::Float;
+  image->data.resize(total);
+  uint16_t *out = reinterpret_cast<uint16_t *>(image->data.data());
+
+  auto chan = [&](int idx) -> const uint16_t * {
+    return idx >= 0 ? reinterpret_cast<const uint16_t *>(exr.images[idx])
+                    : nullptr;
+  };
+  const uint16_t *R = chan(idxR), *G = chan(idxG), *B = chan(idxB),
+                 *A = chan(idxA), *Y = chan(idxY);
+  const uint16_t kOne = 0x3C00;  // half 1.0
+  const uint16_t kZero = 0x0000;
+  for (size_t p = 0; p < npix; p++) {
+    out[p * 4 + 0] = R ? R[p] : (Y ? Y[p] : kZero);
+    out[p * 4 + 1] = G ? G[p] : (Y ? Y[p] : kZero);
+    out[p * 4 + 2] = B ? B[p] : (Y ? Y[p] : kZero);
+    out[p * 4 + 3] = A ? A[p] : kOne;
+  }
+
+  FreeEXRImage(&exr);
+  FreeEXRHeader(&header);
+  return true;
+}
+#else
+bool DecodeImageEXRHalf(const uint8_t *, size_t, const std::string &, Image *,
+                        std::string *) {
+  return false;  // built without EXR support
+}
+#endif
+
 nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
     const uint8_t *addr, size_t sz, const std::string &uri) {
   image::ImageResult ret;

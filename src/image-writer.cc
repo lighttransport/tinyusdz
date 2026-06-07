@@ -337,6 +337,83 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
       const size_t npix =
           size_t(image.width) * size_t(image.height) * size_t(comps);
 
+      // fp16 (half) input -> encode HALF directly, with NO fp32 widening:
+      // split the interleaved half samples into planar half channels and hand
+      // them to SaveEXRImageToMemory (the half values are written as-is).
+      if (image.format == Image::PixelFormat::Float && image.bpp == 16) {
+        if (image.data.size() < npix * 2) {
+          return nonstd::make_unexpected("EXR: fp16 buffer too small.");
+        }
+        const uint16_t *hsrc =
+            reinterpret_cast<const uint16_t *>(image.data.data());
+        const size_t pix = size_t(image.width) * size_t(image.height);
+        std::vector<unsigned short> ch[4];
+        for (int c = 0; c < comps; c++) ch[c].resize(pix);
+        for (size_t i = 0; i < pix; i++)
+          for (int c = 0; c < comps; c++)
+            ch[c][i] = hsrc[i * size_t(comps) + size_t(c)];
+
+        // EXR channels are written in (A)BGR order (what most viewers expect).
+        unsigned char *image_ptr[4] = {nullptr, nullptr, nullptr, nullptr};
+        const char *names[4] = {"R", "G", "B", "A"};
+        if (comps == 4) {
+          image_ptr[0] = reinterpret_cast<unsigned char *>(ch[3].data());
+          image_ptr[1] = reinterpret_cast<unsigned char *>(ch[2].data());
+          image_ptr[2] = reinterpret_cast<unsigned char *>(ch[1].data());
+          image_ptr[3] = reinterpret_cast<unsigned char *>(ch[0].data());
+          names[0] = "A"; names[1] = "B"; names[2] = "G"; names[3] = "R";
+        } else if (comps == 3) {
+          image_ptr[0] = reinterpret_cast<unsigned char *>(ch[2].data());
+          image_ptr[1] = reinterpret_cast<unsigned char *>(ch[1].data());
+          image_ptr[2] = reinterpret_cast<unsigned char *>(ch[0].data());
+          names[0] = "B"; names[1] = "G"; names[2] = "R";
+        } else {  // comps == 1
+          image_ptr[0] = reinterpret_cast<unsigned char *>(ch[0].data());
+          names[0] = "Y";
+        }
+
+        EXRHeader header;
+        InitEXRHeader(&header);
+        header.compression_type = (image.width < 16 && image.height < 16)
+                                      ? TINYEXR_COMPRESSIONTYPE_NONE
+                                      : TINYEXR_COMPRESSIONTYPE_ZIP;
+        EXRImage exr;
+        InitEXRImage(&exr);
+        exr.num_channels = comps;
+        exr.images = image_ptr;
+        exr.width = image.width;
+        exr.height = image.height;
+
+        header.num_channels = comps;
+        header.channels = static_cast<EXRChannelInfo *>(
+            malloc(sizeof(EXRChannelInfo) * size_t(comps)));
+        header.pixel_types =
+            static_cast<int *>(malloc(sizeof(int) * size_t(comps)));
+        header.requested_pixel_types =
+            static_cast<int *>(malloc(sizeof(int) * size_t(comps)));
+        for (int c = 0; c < comps; c++) {
+          std::strncpy(header.channels[c].name, names[c], 255);
+          header.channels[c].name[strlen(names[c])] = '\0';
+          header.pixel_types[c] = TINYEXR_PIXELTYPE_HALF;       // input is half
+          header.requested_pixel_types[c] = TINYEXR_PIXELTYPE_HALF;  // store half
+        }
+
+        unsigned char *mem = nullptr;
+        const char *exr_err = nullptr;
+        size_t msize = SaveEXRImageToMemory(&exr, &header, &mem, &exr_err);
+        free(header.channels);
+        free(header.pixel_types);
+        free(header.requested_pixel_types);
+        if (msize == 0 || mem == nullptr) {
+          std::string e = exr_err ? std::string(exr_err) : "EXR fp16 encode failed.";
+          if (exr_err) FreeEXRErrorMessage(exr_err);
+          return nonstd::make_unexpected("EXR: " + e);
+        }
+        std::vector<uint8_t> out(mem, mem + msize);
+        free(mem);
+        return out;
+      }
+
       // SaveEXRToMemory expects interleaved fp32. Use the source float data
       // directly when it is already fp32, otherwise promote 8-bit integer data
       // (e.g. when transcoding PNG->EXR) to normalized float.
