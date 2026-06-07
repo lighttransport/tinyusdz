@@ -22,18 +22,30 @@ TinyUSDZ is beging built with C++20 to use C++20 coruntine to support async over
 
 ```bash
 $ ./bootstrap-linux.sh
-$ cd build
-$ make
+$ ninja -C build          # or: cmake --build build
 ```
 
 ### WASM64/MEMORY64 build (8GB memory limit)
 
 ```bash
-$ rm -rf build
-$ emcmake cmake -DCMAKE_BUILD_TYPE=MinSizeRel -DTINYUSDZ_WASM64=ON -Bbuild
-$ cd build
-$ make
+$ ./bootstrap-linux-wasm64.sh
+$ ninja -C build_64       # or: cmake --build build_64
 ```
+
+### Build type & generator (.wasm size)
+
+The default bootstrap scripts (`bootstrap-linux.sh`, `bootstrap-linux-wasm64.sh`)
+use the **Ninja** generator with **`CMAKE_BUILD_TYPE=MinSizeRel`**. MinSizeRel
+applies emscripten's link-time `-Oz` (and drops runtime assertions), which is
+what keeps the module small — the `.wasm` is roughly **~5MB**. A plain
+`Release` build does **not** apply link-time size optimization (emscripten links
+at `-O0`, pulling debug system libs + assertions), producing a **~13MB** `.wasm`
+from the same code. Always ship MinSizeRel.
+
+For an experimental speed-over-size build (larger `.wasm`, no `-Oz`/assertions),
+use `bootstrap-linux-release.sh` / `bootstrap-linux-wasm64-release.sh`. The
+`*-ninja.sh` scripts build the same MinSizeRel config into separate
+`build_ninja` / `build_64_ninja` directories.
 
 ### Memory Limit Defaults
 
