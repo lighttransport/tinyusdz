@@ -205,6 +205,9 @@ function disposeObject(root) {
     if (obj.material && obj.material !== collisionMaterial) {
       const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
       for (const mat of mats) {
+        // Label sprite materials/textures are shared and cached across frames;
+        // disposeLabelSpriteCache() owns their lifetime, skip them here.
+        if (mat.userData?.debugLabelMaterial) continue;
         if (mat.map?.userData?.debugLabelTexture) mat.map.dispose();
         mat.dispose?.();
       }
@@ -257,6 +260,7 @@ function clearRobot() {
   updateButtonStates();
   clearGhosts();
   clearDebugVisualizations();
+  disposeLabelSpriteCache();
   updateLabels();
 }
 
@@ -276,6 +280,7 @@ function clearUSD() {
   updateButtonStates();
   clearGhosts();
   clearDebugVisualizations();
+  disposeLabelSpriteCache();
   updateLabels();
 }
 
@@ -829,7 +834,19 @@ function debugVisualizationEnabled() {
     || state.settings.showJointNames;
 }
 
-function makeTextSprite(text, color) {
+// Rasterizing label text and uploading a CanvasTexture is expensive, and the
+// skeleton debug overlay is rebuilt every frame (positions follow the joints).
+// Label text/color never changes between frames, so cache the texture+material
+// per (text, color): frames reuse the GPU texture and only the cheap Sprite
+// wrapper + its position are recreated. Cleared on robot/USD swap (see
+// disposeLabelSpriteCache) since link/joint names may then differ.
+const labelSpriteCache = new Map();
+
+function labelSpriteAssets(text, color) {
+  const key = `${color} ${text}`;
+  const cached = labelSpriteCache.get(key);
+  if (cached) return cached;
+
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   const fontSize = 36;
@@ -857,11 +874,28 @@ function makeTextSprite(text, color) {
     depthTest: false,
     depthWrite: false
   });
+  // Shared+cached: disposeObject must not free this on the per-frame rebuild.
+  material.userData.debugLabelMaterial = true;
+  const assets = { material, aspect: canvas.width / canvas.height };
+  labelSpriteCache.set(key, assets);
+  return assets;
+}
+
+function makeTextSprite(text, color) {
+  const { material, aspect } = labelSpriteAssets(text, color);
   const sprite = new THREE.Sprite(material);
   const height = 0.018;
-  sprite.scale.set(height * (canvas.width / canvas.height), height, 1);
+  sprite.scale.set(height * aspect, height, 1);
   sprite.renderOrder = 20;
   return sprite;
+}
+
+function disposeLabelSpriteCache() {
+  for (const { material } of labelSpriteCache.values()) {
+    material.map?.dispose();
+    material.dispose();
+  }
+  labelSpriteCache.clear();
 }
 
 function addLabel(root, text, position, color, offsetY = 0.035) {
@@ -3042,19 +3076,30 @@ function buildArticulatedRobotFromUSD(model, sourceObject, options = {}) {
   };
   for (const link of rootLinks) attachLink(link.path, group);
 
-  // Place each mesh relative to its link's pose in the LOADED USD, not the
-  // assembled rest world. These are equal when the USD bakes link world
-  // transforms, but differ when the writer keeps bodies at the origin and
-  // encodes pose only via joint frames (the tinyusdz URDF/MJCF converter does
-  // this, MuJoCo-style). The link node is positioned at its rest world via the
-  // joint chain below, so using the loaded pose here avoids cancelling the
-  // joint offsets — which otherwise collapsed every mesh onto its link-local
-  // origin (base appeared missing, the rig looked inverted).
+  // Localize each mesh against the SAME rest world used to place its link node
+  // (the joint chain above), not the loaded USD's link-Xform world. The link
+  // node sits at `restWorldByLinkPath`, so a mesh placed with
+  //   meshLocal = restWorld⁻¹ · meshWorld(loaded)
+  // lands back at meshWorld(loaded) in the rest pose — the rig reproduces the
+  // loaded USD exactly, then articulates from there.
+  //
+  // This is robust to where the writer parks the body-world transform:
+  //   • baked into the link Xform (link world == restWorld): equivalent to the
+  //     old loaded-Xform math, and
+  //   • baked into the geoms with the link Xform left at identity (the current
+  //     tinyusdz URDF/MJCF converter, MuJoCo-style): the old code used the
+  //     identity link Xform, so meshLocal == full kinematic world, which the
+  //     joint-positioned link node then double-applied — exploding the rig.
+  // Falls back to the loaded link world, then identity, when a link has no
+  // rest-world entry.
   const linkInverseWorld = new Map();
   for (const link of model.links || []) {
-    const linkObj = usdObjectsByPath.get(link.path);
-    const loadedWorld = linkObj ? matrixInSceneRoot(linkObj, sourceObject) : new THREE.Matrix4();
-    linkInverseWorld.set(link.path, loadedWorld.invert());
+    let baseWorld = restWorldByLinkPath.get(link.path);
+    if (!baseWorld) {
+      const linkObj = usdObjectsByPath.get(link.path);
+      baseWorld = linkObj ? matrixInSceneRoot(linkObj, sourceObject) : new THREE.Matrix4();
+    }
+    linkInverseWorld.set(link.path, baseWorld.clone().invert());
   }
 
   if (options.resetMeshLists) {
