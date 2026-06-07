@@ -48,6 +48,14 @@ container.innerHTML = `
       <label>Max texture size (px)</label>
       <input id="maxSize" type="number" min="0" step="64" value="0" style="padding:4px;width:120px" title="0 = do not resize">
 
+      <label>Resize colorspace</label>
+      <select id="resizeColorspace" style="padding:4px;width:160px"
+        title="How to resample when resizing. Auto = per-texture from UsdUVTexture sourceColorSpace (sRGB color resampled in linear light, data maps in gamma space). Applies to WASM-processed textures (incl. EXR).">
+        <option value="linear">Linear (default, fast canvas path)</option>
+        <option value="auto">Auto — per-texture sRGB-aware (WASM)</option>
+        <option value="srgb">sRGB — force linear-light (WASM)</option>
+      </select>
+
       <label>Texture format</label>
       <select id="textureFormat" style="padding:4px;width:120px"
         title="Keep = preserve source format (incl. EXR). EXR keeps HDR; PNG/JPEG tone-map EXR to LDR.">
@@ -91,6 +99,11 @@ container.innerHTML = `
       Without a target, browser-supported textures are resized/re-encoded through the canvas API;
       other formats are routed to TinyUSDZ WASM. <b>EXR</b> textures (HDR, allowed in recent USDZ)
       keep their format by default and can be resized; choose PNG/JPEG to tone-map them to LDR.
+      EXR is encoded as <b>fp16</b> (half) — EXR→EXR stays half end-to-end (decode → resize → encode,
+      no fp32 widening), so HDR re-encode/resize uses about half the memory.
+      <b>Resize colorspace</b> controls how WASM-processed textures (incl. EXR) are resampled:
+      <i>Auto</i> reads each UsdUVTexture's <code>sourceColorSpace</code> (sRGB color → linear-light,
+      data maps → gamma space); <i>sRGB</i> forces linear-light for all; <i>Linear</i> keeps gamma space.
     </p>
   </fieldset>
 
@@ -150,6 +163,7 @@ const els = {
   fileList: document.getElementById('fileList'),
   rootSelect: document.getElementById('rootSelect'),
   maxSize: document.getElementById('maxSize'),
+  resizeColorspace: document.getElementById('resizeColorspace'),
   textureFormat: document.getElementById('textureFormat'),
   rootLayerFormat: document.getElementById('rootLayerFormat'),
   flatten: document.getElementById('flatten'),
@@ -490,6 +504,7 @@ els.btnConvert.addEventListener('click', async () => {
     const opts = {
       rootPath,
       maxTextureSize,
+      resizeColorspace: els.resizeColorspace.value,
       targetTextureBytes,
       fitStrategy,
       reencode,
@@ -500,7 +515,14 @@ els.btnConvert.addEventListener('click', async () => {
       jpegQuality: parseInt(els.jpegQuality.value, 10) || 90,
       log,
     };
-    if (needsTextureWork) opts.textureProcessor = browserTextureProcessor;
+    // The browser canvas resizes in gamma space (== "linear" filter). When the
+    // user asks for colorspace-aware resampling (auto/sRGB), route textures to
+    // TinyUSDZ WASM instead so convertImage can honor it (the canvas can't).
+    const colorspaceAware = opts.resizeColorspace === 'auto' ||
+                            opts.resizeColorspace === 'srgb';
+    if (needsTextureWork && !colorspaceAware) {
+      opts.textureProcessor = browserTextureProcessor;
+    }
     if (targetTextureBytes > 0) {
       log(`Fitting textures to ${(targetTextureBytes / 1048576).toFixed(1)} MB via "${fitStrategy}" strategy...`);
     }
