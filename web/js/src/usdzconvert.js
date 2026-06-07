@@ -146,8 +146,11 @@ function writeCentralDirectory(out, offset, entries) {
     dv.setUint16(offset + 12, 0, true);
     dv.setUint16(offset + 14, 0, true);
     dv.setUint32(offset + 16, entry.crc32 >>> 0, true);
-    dv.setUint32(offset + 20, entry.data.length >>> 0, true);
-    dv.setUint32(offset + 24, entry.data.length >>> 0, true);
+    // Use the stored size: entry.data may have been freed after its local entry
+    // was written (consume mode) to bound peak memory.
+    const entrySize = (entry.size != null ? entry.size : entry.data.length) >>> 0;
+    dv.setUint32(offset + 20, entrySize, true);
+    dv.setUint32(offset + 24, entrySize, true);
     dv.setUint16(offset + 28, nameBytes.length, true);
     dv.setUint16(offset + 30, 0, true);
     dv.setUint16(offset + 32, 0, true);
@@ -246,14 +249,24 @@ export function parseUSDZEntries(bytes) {
   return entries;
 }
 
-export function buildUSDZWithNewRoot(rootName, rootData, passthroughEntries) {
+export function buildUSDZWithNewRoot(rootName, rootData, passthroughEntries,
+                                     opts = {}) {
+  // consume: free each entry's bytes (and the caller's source reference) right
+  // after writing its local entry, so the source arrays and the growing output
+  // buffer do not both fully coexist. Lets texture-streaming repack a large
+  // .usdz without holding 2× the output in memory. Safe only when the caller no
+  // longer needs the passed-in entry/root bytes afterward.
+  const consume = !!opts.consume;
   const encoder = new TextEncoder();
+  const rootBytes = rootData instanceof Uint8Array ? rootData : new Uint8Array(rootData);
   const entries = [{
     name: rootName,
     nameBytes: encoder.encode(rootName),
-    data: rootData instanceof Uint8Array ? rootData : new Uint8Array(rootData),
-    crc32: crc32(rootData instanceof Uint8Array ? rootData : new Uint8Array(rootData)),
+    data: rootBytes,
+    size: rootBytes.length,
+    crc32: crc32(rootBytes),
     localHeaderOffset: 0,
+    _src: null,
   }];
   for (const src of passthroughEntries) {
     const data = src.data instanceof Uint8Array ? src.data : new Uint8Array(src.data);
@@ -261,8 +274,10 @@ export function buildUSDZWithNewRoot(rootName, rootData, passthroughEntries) {
       name: src.name,
       nameBytes: encoder.encode(src.name),
       data,
+      size: data.length,
       crc32: src.crc32 >>> 0,
       localHeaderOffset: 0,
+      _src: consume ? src : null,
     });
   }
 
@@ -294,12 +309,177 @@ export function buildUSDZWithNewRoot(rootName, rootData, passthroughEntries) {
   let writeOffset = 0;
   for (const entry of entries) {
     writeOffset = writeLocalEntry(out, writeOffset, entry);
+    if (consume) {
+      // Bytes are now copied into `out`; drop the source references so the
+      // input/re-encoded buffers can be reclaimed while the rest is written.
+      entry.data = null;
+      if (entry._src) { entry._src.data = null; entry._src = null; }
+    }
   }
   writeOffset = writeCentralDirectory(out, writeOffset, entries);
   if (writeOffset !== out.length) {
     throw new Error('Internal error: USDZ output size mismatch.');
   }
   return out;
+}
+
+// Incremental STORE-only USDZ writer. addEntry() emits one 64-byte-aligned local
+// entry to `sink` immediately (so the caller can release the bytes right after),
+// and finalize() appends the central directory + EOCD. Only one entry's bytes are
+// held at a time, so a large texture-streamed archive can be written to disk
+// without the whole output (and all its source entries) coexisting in memory.
+export class ZipStreamWriter {
+  constructor(sink) {
+    this._sink = sink;  // (Uint8Array) => void  (appends bytes to the output)
+    this.offset = 0;
+    this.entries = [];  // { nameBytes, crc32, size, localHeaderOffset }
+    this._enc = new TextEncoder();
+  }
+  _emit(bytes) { this._sink(bytes); this.offset += bytes.length; }
+  addEntry(name, data) {
+    const u8 = data instanceof Uint8Array ? data : new Uint8Array(data);
+    assertZip32Size(name, u8.length);
+    const nameBytes = this._enc.encode(name);
+    if (nameBytes.length > 0xffff) {
+      throw new Error(`USDZ entry name is too long: "${name}".`);
+    }
+    const padding = zipPaddingForDataOffset(this.offset, nameBytes.length);
+    if (padding > 0xffff) {
+      throw new Error(`USDZ alignment padding is too large for "${name}".`);
+    }
+    const localHeaderOffset = this.offset;
+    if (localHeaderOffset > 0xffffffff) {
+      throw new Error('USDZ archive exceeds ZIP32 size limit.');
+    }
+    const crc = crc32(u8) >>> 0;
+    const head = new Uint8Array(ZIP_LOCAL_HEADER_SIZE + nameBytes.length + padding);
+    const dv = new DataView(head.buffer);
+    dv.setUint32(0, 0x04034b50, true);
+    dv.setUint16(4, 20, true);
+    dv.setUint32(14, crc, true);
+    dv.setUint32(18, u8.length >>> 0, true);
+    dv.setUint32(22, u8.length >>> 0, true);
+    dv.setUint16(26, nameBytes.length, true);
+    dv.setUint16(28, padding, true);
+    head.set(nameBytes, ZIP_LOCAL_HEADER_SIZE);
+    this._emit(head);
+    this._emit(u8);
+    if (this.offset > 0xffffffff) {
+      throw new Error('USDZ archive exceeds ZIP32 size limit.');
+    }
+    this.entries.push({ nameBytes, crc32: crc, size: u8.length, localHeaderOffset });
+  }
+  finalize() {
+    const cdOffset = this.offset;
+    for (const e of this.entries) {
+      const hdr = new Uint8Array(ZIP_CENTRAL_DIR_HEADER_SIZE + e.nameBytes.length);
+      const dv = new DataView(hdr.buffer);
+      dv.setUint32(0, 0x02014b50, true);
+      dv.setUint16(4, 20, true);
+      dv.setUint16(6, 20, true);
+      dv.setUint32(16, e.crc32 >>> 0, true);
+      dv.setUint32(20, e.size >>> 0, true);
+      dv.setUint32(24, e.size >>> 0, true);
+      dv.setUint16(28, e.nameBytes.length, true);
+      dv.setUint32(42, e.localHeaderOffset >>> 0, true);
+      hdr.set(e.nameBytes, ZIP_CENTRAL_DIR_HEADER_SIZE);
+      this._emit(hdr);
+    }
+    const cdSize = this.offset - cdOffset;
+    if (this.entries.length > 0xffff || cdOffset > 0xffffffff ||
+        cdSize > 0xffffffff) {
+      throw new Error('USDZ central directory exceeds ZIP32 limits.');
+    }
+    const eocd = new Uint8Array(22);
+    const dv = new DataView(eocd.buffer);
+    dv.setUint32(0, 0x06054b50, true);
+    dv.setUint16(8, this.entries.length, true);
+    dv.setUint16(10, this.entries.length, true);
+    dv.setUint32(12, cdSize >>> 0, true);
+    dv.setUint32(16, cdOffset >>> 0, true);
+    this._emit(eocd);
+  }
+}
+
+// Repack a flattened root + the archive's non-root entries into a USDZ. Images
+// are re-encoded/resized one at a time (keep format only) when requested, else
+// passed through. If opts.zipSink is given the archive is streamed straight to
+// it (one entry held at a time — the lowest-peak path); otherwise it is built in
+// memory and returned. Shared by the legacy texture-streaming path and the next
+// low-memory pipeline. Returns { usdz, streamedToSink, textures, resized,
+// reencoded, audio, otherAssets }.
+function repackUSDZEntries(native, rootName, rootData, archiveEntries, rootEntry,
+                           opts, log) {
+  const wantResize = (opts.maxTextureSize || 0) > 0;
+  const keepFmt = normalizedTextureFormat(opts.textureFormat) === 'keep';
+  // Re-encode only for keep format (format conversion would need in-layer asset
+  // remap, which this path does not do — those textures pass through unchanged).
+  const doReencode = (wantResize || opts.reencode === true) && keepFmt;
+  // Re-compressing a JPEG (decode->encode) is LOSSY and would decode the whole
+  // image into the WASM heap; with no resize and no explicit quality reduction
+  // it gains nothing, so JPEGs pass through losslessly. (PNG re-encodes via the
+  // streaming transcoder in convertImage.) Only a resize or an explicit lower
+  // --jpeg-quality re-encodes a JPEG.
+  const jpegRecompress = (opts.jpegQuality || 90) < 90;
+  let reencoded = 0, resized = 0, textures = 0, audio = 0, otherAssets = 0;
+  const tally = (name) => {
+    if (isImageName(name)) textures++;
+    else if (isAudioName(name)) audio++;
+    else if (!isUsdName(name)) otherAssets++;
+  };
+  const produce = (e) => {
+    if (isImageName(e.name) && doReencode) {
+      const fmtInfo = outputFormatForImage(e.name, 'keep');
+      if (fmtInfo.format === 'jpeg' && !wantResize && !jpegRecompress) {
+        log(`  ${e.name}: ${e.data.length} bytes [jpeg passthrough — lossless]`);
+        return e.data;
+      }
+      if (fmtInfo.format) {
+        const res = native.convertImage(e.data, {
+          maxSize: opts.maxTextureSize || 0,
+          format: fmtInfo.format,
+          pngEncoder: opts.pngEncoder || 'auto',
+          jpegQuality: opts.jpegQuality || 90,
+        });
+        if (res && res.success) {
+          reencoded++;
+          if (res.resized) resized++;
+          log(`  ${e.name}: ${e.data.length} -> ${res.data.length} bytes` +
+              (res.resized ? ` [resized ${res.width}x${res.height}]` : ' [reencoded]'));
+          return new Uint8Array(res.data);
+        }
+        log(`  ${e.name}: convertImage failed (${res && res.error}); passthrough`);
+      }
+    }
+    return e.data;
+  };
+
+  const sink = typeof opts.zipSink === 'function' ? opts.zipSink : null;
+  let usdz = null;
+  if (sink) {
+    const zw = new ZipStreamWriter(sink);
+    zw.addEntry(rootName, rootData);
+    rootData = null;
+    for (const e of archiveEntries) {
+      if (e === rootEntry) continue;
+      let data = produce(e);
+      zw.addEntry(e.name, data);
+      tally(e.name);
+      data = null;
+      e.data = null;  // release the input slice reference as we go
+    }
+    zw.finalize();
+  } else {
+    const outEntries = [];
+    for (const e of archiveEntries) {
+      if (e === rootEntry) continue;
+      outEntries.push({ name: e.name, data: produce(e) });
+      tally(e.name);
+    }
+    usdz = buildUSDZWithNewRoot(rootName, rootData, outEntries, { consume: true });
+  }
+  return { usdz, streamedToSink: !!sink, textures, resized, reencoded, audio,
+           otherAssets };
 }
 
 // Parse a human byte size: "100MB", "50mb", "1.5g", "1048576" -> bytes (0 on fail).
@@ -671,6 +851,161 @@ async function convertSingleUSDZToLowHeapFlattenedUSDZ(native, rootPath, bytes,
   return { usdz, stats };
 }
 
+// Stream a USDC buffer into the WASM heap (chunked, single copy) and flatten it
+// with the next low-memory lazy-ValueRep pipeline. Returns
+// { data: Uint8Array, stats } or null if the next pipeline is unavailable or
+// declines (so the caller can fall back to the legacy path). `native` is the
+// Emscripten Module (exposes HEAPU8); `usd` is a TinyUSDZLoaderNative instance.
+export function nextFlattenViaStreaming(native, usd, usdcBytes, log = () => {}, lazy = true) {
+  if (typeof usd.nextFlattenBuffer !== 'function' ||
+      typeof usd.allocateZeroCopyBuffer !== 'function') {
+    return null;  // old wasm without the next pipeline
+  }
+  const size = usdcBytes.length;
+  const info = usd.allocateZeroCopyBuffer('__next_input__', size);
+  if (!info || !info.success) {
+    log(`next: zero-copy alloc declined (${info && info.error}); falling back.`);
+    return null;  // e.g. exceeds the 256 MiB single-buffer cap
+  }
+  // Re-grab HEAPU8 AFTER the allocation (it may have grown/detached the view).
+  const ptr = Number(info.bufferPtr);
+  const CHUNK = 16 * 1024 * 1024;
+  for (let off = 0; off < size; off += CHUNK) {
+    const end = Math.min(off + CHUNK, size);
+    native.HEAPU8.set(usdcBytes.subarray(off, end), ptr + off);
+  }
+  const res = usd.nextFlattenBuffer(info.uuid, lazy);
+  if (!res || !res.success) {
+    log('next flatten failed: ' + (res && res.error));
+    return null;
+  }
+  return { data: new Uint8Array(res.data), stats: res };
+}
+
+// Gated conversion path: flatten a single-.usdz (USDC root) with the next
+// low-memory pipeline, then repack the flattened root with the original
+// (unchanged) texture/audio entries. Returns { usdz, stats } or null to fall
+// back to the legacy path. The next reader handles USDC only and flattens the
+// single root layer (no sublayer/reference expansion yet), so non-USDC or
+// nested/sublayered roots decline.
+async function convertSingleUSDZToNextLowMemUSDZ(native, bytes, opts, log) {
+  const archiveEntries = parseUSDZEntries(bytes);
+  const rootEntry = archiveEntries.find((entry) => isUsdName(entry.name));
+  if (!rootEntry) throw new Error('USDZ archive contained no USD layer.');
+
+  if (!/\.usdc$/i.test(rootEntry.name)) {
+    log(`next pipeline: root "${rootEntry.name}" is not USDC; falling back.`);
+    return null;
+  }
+  if (rootEntry.name.includes('/')) {
+    log(`next pipeline: inner root "${rootEntry.name}" is in a subdirectory; falling back.`);
+    return null;
+  }
+
+  let flat = null;
+  const usd = new native.TinyUSDZLoaderNative();
+  try {
+    flat = nextFlattenViaStreaming(native, usd, rootEntry.data, log, opts.nextEager !== true);
+  } finally {
+    usd.delete();
+  }
+  if (!flat) return null;
+
+  // Repack: next-flattened root + textures (re-encoded one-at-a-time when
+  // requested, else passthrough), streamed to opts.zipSink when given. Combined
+  // with the next low-memory flatten this is the lowest-peak full path.
+  const rootData = flat.data;
+  const r = repackUSDZEntries(native, 'root.usdc', rootData, archiveEntries,
+                              rootEntry, opts, log);
+  log(`next low-mem flatten: root.usdc ${flat.stats.inputBytes} -> ${flat.stats.outputBytes} bytes ` +
+      `(passthrough=${flat.stats.arraysPassedThrough}, reencoded=${flat.stats.arraysReencoded}); ` +
+      `repacked ${r.textures} texture(s), re-encoded ${r.reencoded}${r.streamedToSink ? ' [streamed to sink]' : ''}`);
+  return {
+    usdz: r.usdz,
+    streamedToSink: r.streamedToSink,
+    stats: {
+      textures: r.textures, resized: r.resized, reencoded: r.reencoded,
+      audio: r.audio, otherAssets: r.otherAssets,
+      rootPath: rootEntry.name,
+      rootLayerFormat: 'usdc',
+      flatten: true,
+      pipeline: 'next',
+      arraysPassedThrough: flat.stats.arraysPassedThrough,
+      arraysReencoded: flat.stats.arraysReencoded,
+    },
+  };
+}
+
+// Track B: stream textures one at a time so re-encoded images never accumulate
+// in the WASM heap. Flattens the root (legacy loader/writer — robust on complex
+// scenes), keeping textures OUT of WASM, then re-encodes each image singly via
+// native.convertImage (keeping its format, so no asset-path remap is needed) and
+// repacks in JS. Peak WASM stays ~= root layer + one image, instead of all
+// re-encoded textures. Returns { usdz, stats } or null to fall back to legacy.
+// Applies only to a single .usdz with a top-level USD root and textureFormat
+// 'keep'; format conversions (png<->jpeg) still use the legacy path (which
+// rewrites the renamed asset references inside the layer).
+async function convertSingleUSDZStreamTextures(native, bytes, opts, log) {
+  const archiveEntries = parseUSDZEntries(bytes);
+  const rootEntry = archiveEntries.find((e) => isUsdName(e.name));
+  if (!rootEntry) throw new Error('USDZ archive contained no USD layer.');
+  if (rootEntry.name.includes('/')) {
+    log(`stream-textures: inner root "${rootEntry.name}" in subdir; falling back.`);
+    return null;
+  }
+  if (normalizedTextureFormat(opts.textureFormat) !== 'keep') {
+    log('stream-textures: only textureFormat=keep is supported; falling back.');
+    return null;
+  }
+
+  // 1) Flatten the root layer low-heap. Textures are NOT registered in WASM.
+  let rootUSDC = null;
+  const usd = new native.TinyUSDZLoaderNative();
+  try {
+    if ((opts.maxUsdcMb > 0 || opts.maxMemMb > 0) &&
+        typeof usd.setUSDCExportLimitMB === 'function') {
+      usd.setUSDCExportLimitMB(opts.maxUsdcMb || 0, opts.maxMemMb || 0);
+    }
+    // Register only dependency USD layers (sublayers/refs), never images.
+    for (const e of archiveEntries) {
+      if (e === rootEntry || !isUsdName(e.name) || /\.usdz$/i.test(e.name)) continue;
+      usd.setAsset(e.name, e.data);
+    }
+    if (!usd.loadAsLayerFromBinary(rootEntry.data, rootEntry.name.split('/').pop())) {
+      throw new Error('Failed to load USD: ' + usd.error());
+    }
+    const flatten = opts.flatten !== false || !!opts.arkitCompatible;
+    if (flatten) {
+      if (typeof usd.flattenLayer === 'function') {
+        if (!usd.flattenLayer()) throw new Error('Layer flatten failed: ' + usd.error());
+      } else {
+        composeToFixedPoint(usd);
+      }
+    }
+    rootUSDC = exportUSDCOutsideWasmHeap(usd, bytes.length, opts, log, 'layer');
+  } finally {
+    usd.delete();  // free the WASM-side layer before re-encoding textures
+  }
+
+  // 2) Repack: re-encode images one at a time (WASM holds one at a time) and
+  //    stream straight to opts.zipSink when given, else build in memory.
+  const rootLen = rootUSDC.length;
+  const r = repackUSDZEntries(native, 'root.usdc', rootUSDC, archiveEntries,
+                              rootEntry, opts, log);
+  rootUSDC = null;
+  log(`stream-textures: root.usdc ${rootLen} bytes, re-encoded ${r.reencoded}/${r.textures} textures (one at a time)${r.streamedToSink ? ' [streamed to sink]' : ''}`);
+  return {
+    usdz: r.usdz,
+    streamedToSink: r.streamedToSink,
+    stats: {
+      textures: r.textures, resized: r.resized, reencoded: r.reencoded,
+      audio: r.audio, otherAssets: r.otherAssets,
+      rootPath: rootEntry.name, rootLayerFormat: 'usdc',
+      flatten: true, streamTextures: true,
+    },
+  };
+}
+
 // opts: {
 //   rootPath?, maxTextureSize?, reencode?, pngEncoder?, jpegQuality?, log?,
 //   textureFormat?: "keep"|"png"|"jpeg", rootLayerFormat?: "usdc"|"usda",
@@ -711,6 +1046,43 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
         passthrough: true,
       },
     };
+  }
+
+  // Experimental: next low-memory lazy-ValueRep flatten pipeline. Opt-in via
+  // opts.pipeline === 'next'. Only applies to a single .usdz with a top-level
+  // USDC root (keeping textures as JS passthrough); declines (and falls back to
+  // the legacy paths below) otherwise. Output fidelity is still limited (the
+  // next writer drops some property types), so this is not the default.
+  if (opts.pipeline === 'next' && hasSingleUsdzInput) {
+    try {
+      const next = await convertSingleUSDZToNextLowMemUSDZ(
+        native, assetMap.get(rootPath), opts, log);
+      if (next) return next;
+      log('next pipeline declined; falling back to the legacy flatten path.');
+    } catch (e) {
+      log('next pipeline error (' + (e && e.message) + '); falling back to legacy.');
+    }
+  }
+
+  // Stream textures one at a time to bound WASM heap when re-encoding/resizing a
+  // single .usdz (textureFormat 'keep'). This is the LOW-MEMORY default for that
+  // case (the in-heap batch path holds every decoded image at once and OOMs the
+  // wasm32 2 GB ceiling on large texture-heavy scenes). It is enabled
+  // automatically; set opts.streamTextures === false (CLI: --no-stream-textures)
+  // to force the in-heap path. Declines (falls back) for nested roots / non-keep
+  // formats / custom texture processors.
+  const wantTextureWork = (opts.maxTextureSize || 0) > 0 || opts.reencode === true;
+  if (opts.streamTextures !== false && hasSingleUsdzInput &&
+      textureFormat === 'keep' && wantTextureWork &&
+      typeof opts.textureProcessor !== 'function') {
+    try {
+      const streamed = await convertSingleUSDZStreamTextures(
+        native, assetMap.get(rootPath), opts, log);
+      if (streamed) return streamed;
+      log('stream-textures declined; falling back to the standard texture path.');
+    } catch (e) {
+      log('stream-textures error (' + (e && e.message) + '); falling back.');
+    }
   }
 
   if (shouldUseLowHeapFlattenedUSDZ(rootPath, assetMap, opts, textureFormat)) {

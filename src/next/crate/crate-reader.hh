@@ -42,6 +42,11 @@ struct CrateReadOptions {
 
   /// Maximum memory budget (bytes, 0 = unlimited)
   size_t max_memory = 0;
+
+  /// Keep numeric POD arrays as lazy references into the retained source buffer
+  /// instead of eagerly decoding them (low-memory load/compose/write path).
+  /// Set false to force eager decode (e.g. for A/B memory comparisons).
+  bool lazy_arrays = true;
 };
 
 /// Error from crate reading
@@ -73,8 +78,13 @@ public:
   CrateReader(CrateReader&&) noexcept;
   CrateReader& operator=(CrateReader&&) noexcept;
 
-  /// Read from memory buffer
+  /// Read from memory buffer (copies the input into a retained buffer).
   CrateReadResult Read(const uint8_t* data, size_t size);
+
+  /// Read from an owned buffer, adopted by move (single in-heap copy). Prefer
+  /// this on memory-constrained targets (e.g. WASM) when the caller can give up
+  /// ownership of the input bytes.
+  CrateReadResult ReadOwned(std::string&& owned);
 
   /// Read from file
   CrateReadResult ReadFile(const char* filename);
@@ -94,6 +104,9 @@ public:
 
   /// Get specs table
   const std::vector<CrateSpec>& specs() const;
+
+  /// Get fieldset-indices table (flattened; 0xFFFFFFFF terminates each set)
+  const std::vector<uint32_t>& fieldset_indices() const;
 
 private:
   class Impl;

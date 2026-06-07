@@ -117,8 +117,10 @@ TypeNameTable& GetTypeNameTable() {
 // ============================================================
 
 ValueStorage::ValueStorage() {
-  data_.reserve(4096);  // Initial 4KB
-  values_.reserve(64);
+  // Grow on demand. Eagerly reserving 4 KB (data_) + 64 Values (~8.7 KB) here
+  // cost ~13 KB PER PRIM regardless of property count — catastrophic on
+  // high-prim-count scenes (e.g. 25k-prim layers used GBs). store() uses values_
+  // (not data_), so data_ is left empty until allocate()/reserve() needs it.
 }
 
 ValueStorage::~ValueStorage() = default;
@@ -180,7 +182,7 @@ void ValueStorage::clear() {
 // ============================================================
 
 TimeSampleStorage::TimeSampleStorage() {
-  values_.reserve(64);
+  // Grow on demand (was reserve(64) ~= 8.7 KB per prim with time samples).
 }
 
 TimeSampleStorage::~TimeSampleStorage() = default;
@@ -341,19 +343,16 @@ PrimSpec PrimSpec::Clone() const {
   c.specifier_ = specifier_;
   c.path_ = path_;
 
-  // Deep copy properties
+  // Deep copy properties (slots carry value-storage indices + flags).
   c.props_ = props_;
 
-  // Deep copy values
+  // Deep copy the value storage. A slot's value_offset is a position in the
+  // values_ vector, so copying the vector keeps every offset valid — no need to
+  // re-add (the old code did both `c.props_ = props_` AND a re-add loop, which
+  // duplicated every property). Lazy array Values copy as a shared_ptr bump
+  // (no payload copy), so cloning a crate-backed prim stays cheap.
   if (values_) {
-    c.values_ = std::make_unique<ValueStorage>();
-    // Copy each property value
-    for (const auto& slot : props_.slots()) {
-      const Value* v = property_value(slot.name_id);
-      if (v) {
-        c.add_property(slot.name_id, *v, slot.flags);
-      }
-    }
+    c.values_ = std::make_unique<ValueStorage>(*values_);
   }
 
   // Deep copy time samples
@@ -375,6 +374,10 @@ PrimSpec PrimSpec::Clone() const {
 
   // Deep copy relationships
   c.relationships_ = relationships_;
+
+  // Deep copy attribute connections + declared type names
+  c.connections_ = connections_;
+  c.prop_type_names_ = prop_type_names_;
 
   // Deep copy children
   c.child_indices_ = child_indices_;
@@ -525,6 +528,35 @@ std::vector<std::string> PrimSpec::relationship_names() const {
   // across runs/platforms (callers and tests rely on consistent ordering).
   std::sort(names.begin(), names.end());
   return names;
+}
+
+void PrimSpec::add_connection(const std::string& prop_name, const Path& target) {
+  connections_[GetPropNameTable().intern(prop_name).id].push_back(target);
+}
+
+const std::vector<Path>* PrimSpec::connection(const std::string& prop_name) const {
+  PropNameId id = GetPropNameTable().find(prop_name);
+  if (!id.is_valid()) return nullptr;
+  auto it = connections_.find(id.id);
+  if (it == connections_.end()) return nullptr;
+  return &it->second;
+}
+
+void PrimSpec::set_property_type_name(const std::string& prop_name,
+                                      const std::string& type_name) {
+  // Intern both name and typeName; typeNames are few and highly shared.
+  prop_type_names_[GetPropNameTable().intern(prop_name).id] =
+      GetPropNameTable().intern(type_name).id;
+}
+
+const std::string* PrimSpec::property_type_name(const std::string& prop_name) const {
+  PropNameId id = GetPropNameTable().find(prop_name);
+  if (!id.is_valid()) return nullptr;
+  auto it = prop_type_names_.find(id.id);
+  if (it == prop_type_names_.end()) return nullptr;
+  PropNameId tn_id;
+  tn_id.id = it->second;
+  return &GetPropNameTable().get(tn_id);
 }
 
 void PrimSpec::add_child_index(uint32_t index) {
