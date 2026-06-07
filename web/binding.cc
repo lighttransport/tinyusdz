@@ -8698,6 +8698,55 @@ static tinyusdz::Image floatImageTo8bit(const tinyusdz::Image& img) {
   return out;
 }
 
+// Read a scalar token/string attribute from a PrimSpec (default time).
+static std::string psAttrStr(const tinyusdz::PrimSpec& ps, const char* name) {
+  auto it = ps.props().find(name);
+  if (it == ps.props().end() || !it->second.is_attribute()) return "";
+  const auto& a = it->second.get_attribute();
+  if (auto v = a.get_value<tinyusdz::value::token>()) return v.value().str();
+  if (auto v = a.get_value<std::string>()) return v.value();
+  if (auto v = a.get_value<tinyusdz::value::AssetPath>())
+    return v.value().GetAssetPath();
+  return "";
+}
+
+// Walk PrimSpecs collecting {texture-file-basename -> sourceColorSpace} from
+// UsdUVTexture shaders (authored value only; absent => "auto").
+static void collectTexColorspaces(const tinyusdz::PrimSpec& ps,
+                                  emscripten::val& out) {
+  if (ps.typeName() == "Shader" &&
+      psAttrStr(ps, "info:id") == "UsdUVTexture") {
+    std::string file = psAttrStr(ps, "inputs:file");
+    if (!file.empty()) {
+      size_t s = file.find_last_of("/\\");
+      std::string base = (s == std::string::npos) ? file : file.substr(s + 1);
+      if (!base.empty()) {
+        std::string cs = psAttrStr(ps, "inputs:sourceColorSpace");
+        out.set(base, cs.empty() ? std::string("auto") : cs);
+      }
+    }
+  }
+  for (const auto& c : ps.children()) collectTexColorspaces(c, out);
+}
+
+// getTextureColorspaceMap(rootUsdcBytes) -> { "<basename>": "sRGB"|"raw"|"auto" }
+// Loads the root layer and reports each UsdUVTexture's authored sourceColorSpace
+// so the JS pipeline can pick a per-texture resize colorspace (role-aware).
+// Returns an empty object on load failure (caller falls back to a global default).
+emscripten::val getTextureColorspaceMap(const emscripten::val& data) {
+  emscripten::val result = emscripten::val::object();
+  std::vector<uint8_t> buffer;
+  copyFromJSBuffer(data, buffer);
+  tinyusdz::Layer layer;
+  std::string warn, err;
+  if (!tinyusdz::LoadLayerFromMemory(buffer.data(), buffer.size(), "root",
+                                     &layer, &warn, &err)) {
+    return result;
+  }
+  for (const auto& kv : layer.primspecs()) collectTexColorspaces(kv.second, result);
+  return result;
+}
+
 // convertImage(data, opts) -> { success, data?:Uint8Array, width, height, resized, error? }
 // opts: { maxSize?, width?, height?, format?:"png"|"jpeg", pngEncoder?, jpegQuality? }
 // The streaming PNG->PNG transcoder now lives in src/imageio/png-stream.cc
@@ -9266,6 +9315,7 @@ EMSCRIPTEN_BINDINGS(image_module) {
   // convertImage(data, {maxSize?, width?, height?, format?, pngEncoder?, jpegQuality?})
   //   -> { success, data:Uint8Array, width, height, resized }
   function("convertImage", &convertImage);
+  function("getTextureColorspaceMap", &getTextureColorspaceMap);
   // repackChannels({channels?, width?, height?, format?, r/g/b/a:{data?,channel?,const?}})
   //   -> { success, data:Uint8Array, width, height, channels }
   function("repackChannels", &repackChannels);

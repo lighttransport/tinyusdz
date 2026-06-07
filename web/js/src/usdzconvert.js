@@ -408,6 +408,26 @@ export class ZipStreamWriter {
 // memory and returned. Shared by the legacy texture-streaming path and the next
 // low-memory pipeline. Returns { usdz, streamedToSink, textures, resized,
 // reencoded, audio, otherAssets }.
+// Build a per-texture resize-colorspace picker(name)->('srgb'|'linear'|'').
+// With resizeColorspace:'auto' it reads each UsdUVTexture's authored
+// sourceColorSpace from the root layer (basename-keyed): 'sRGB' -> 'srgb'
+// (linear-light resample), everything else -> 'linear' (gamma-space, safe for
+// data maps). Non-'auto' returns the global value for every texture.
+function makeResizeCsPicker(native, rootBytes, opts) {
+  const want = String((opts && opts.resizeColorspace) || '');
+  if (want.toLowerCase() !== 'auto') return () => want;
+  let csMap = null;
+  if ((opts.maxTextureSize || 0) > 0 && rootBytes &&
+      typeof native.getTextureColorspaceMap === 'function') {
+    try { csMap = native.getTextureColorspaceMap(rootBytes); } catch (e) { csMap = null; }
+  }
+  const base = (n) => { const s = n.lastIndexOf('/'); return s < 0 ? n : n.slice(s + 1); };
+  return (name) => {
+    const cs = csMap ? csMap[base(name)] : undefined;
+    return (cs === 'sRGB' || cs === 'srgb') ? 'srgb' : 'linear';
+  };
+}
+
 function repackUSDZEntries(native, rootName, rootData, archiveEntries, rootEntry,
                            opts, log) {
   const wantResize = (opts.maxTextureSize || 0) > 0;
@@ -421,6 +441,12 @@ function repackUSDZEntries(native, rootName, rootData, archiveEntries, rootEntry
   // streaming transcoder in convertImage.) Only a resize or an explicit lower
   // --jpeg-quality re-encodes a JPEG.
   const jpegRecompress = (opts.jpegQuality || 90) < 90;
+  // Role-aware resize colorspace: with resizeColorspace:'auto', read each
+  // texture's authored UsdUVTexture sourceColorSpace from the root layer once.
+  // 'sRGB' textures resample in linear light; everything else (raw/auto/unknown)
+  // stays gamma-space — safe for linear data maps (normal/ORM/height).
+  const roleAware = String(opts.resizeColorspace || '').toLowerCase() === 'auto';
+  const resizeCsFor = makeResizeCsPicker(native, rootData, opts);
   let reencoded = 0, resized = 0, textures = 0, audio = 0, otherAssets = 0;
   const tally = (name) => {
     if (isImageName(name)) textures++;
@@ -440,13 +466,14 @@ function repackUSDZEntries(native, rootName, rootData, archiveEntries, rootEntry
           format: fmtInfo.format,
           pngEncoder: opts.pngEncoder || 'auto',
           jpegQuality: opts.jpegQuality || 90,
-          resizeColorspace: opts.resizeColorspace || '',
+          resizeColorspace: resizeCsFor(e.name),
         });
         if (res && res.success) {
           reencoded++;
           if (res.resized) resized++;
           log(`  ${e.name}: ${e.data.length} -> ${res.data.length} bytes` +
-              (res.resized ? ` [resized ${res.width}x${res.height}]` : ' [reencoded]'));
+              (res.resized ? ` [resized ${res.width}x${res.height}` +
+                 (roleAware ? ` ${resizeCsFor(e.name)}]` : ']') : ' [reencoded]'));
           return new Uint8Array(res.data);
         }
         log(`  ${e.name}: convertImage failed (${res && res.error}); passthrough`);
@@ -1261,6 +1288,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
     // --- Default path: per-texture resize/re-encode (preserve names unless
     // the requested output format changes the extension).
     const textureRemap = {};
+    const pickResizeCs = makeResizeCsPicker(native, assetMap.get(rootPath), opts);
     for (const path of images) {
       const bytes = assetMap.get(path);
       // Name as the USD most likely references it (relative to the USD's dir).
@@ -1308,7 +1336,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
           format: fmtInfo.format,
           pngEncoder: opts.pngEncoder || 'auto',
           jpegQuality: opts.jpegQuality || 90,
-          resizeColorspace: opts.resizeColorspace || '',
+          resizeColorspace: pickResizeCs(assetName),
         });
         if (res && res.success) {
           outBytes = new Uint8Array(res.data); // copy out of wasm heap
