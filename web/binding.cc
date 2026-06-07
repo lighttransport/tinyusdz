@@ -74,10 +74,14 @@
 #include "tydra/texture-util.hh"
 #include "usdz-convert.hh"
 
-// TinyEXR for EXR decoding
-#if defined(TINYUSDZ_WITH_EXR)
-#include "external/tinyexr.h"
-#endif
+// EXR detection here is backend-agnostic (a magic-number test). Decoding goes
+// through tinyusdz::image::LoadImageFromMemory, which selects the active EXR
+// backend (pure-C11 v3 C by default), so binding.cc no longer depends on a
+// specific tinyexr API.
+static inline bool IsEXRMagic(const uint8_t *p, size_t n) {
+  // EXR magic 20000630 == 0x01312F76, stored little-endian.
+  return n >= 4 && p[0] == 0x76 && p[1] == 0x2f && p[2] == 0x31 && p[3] == 0x01;
+}
 
 // stb_image for HDR (Radiance RGBE) decoding
 // Only compile HDR support to minimize code size
@@ -7707,35 +7711,27 @@ emscripten::val decodeEXR(const emscripten::val& data,
   std::vector<uint8_t> buffer;
   copyFromJSBuffer(data, buffer);
 
-  if (IsEXRFromMemory(buffer.data(), buffer.size()) != TINYEXR_SUCCESS) {
+  if (!IsEXRMagic(buffer.data(), buffer.size())) {
     result.set("success", false);
     result.set("error", std::string("Not a valid EXR file"));
     return result;
   }
 
-  float* rgba = nullptr;
-  int width = 0;
-  int height = 0;
-  const char* err = nullptr;
-
-  // LoadEXRFromMemory always returns float32 RGBA
-  int ret = LoadEXRFromMemory(&rgba, &width, &height,
-                               buffer.data(), buffer.size(), &err);
-
-  if (ret != TINYEXR_SUCCESS) {
+  // Decode via the backend-agnostic image loader (EXR -> fp32 RGBA).
+  auto loaded = tinyusdz::image::LoadImageFromMemory(buffer.data(),
+                                                     buffer.size(), "decodeEXR");
+  if (!loaded) {
     result.set("success", false);
-    if (err) {
-      result.set("error", std::string(err));
-      FreeEXRErrorMessage(err);
-    } else {
-      result.set("error", std::string("Failed to decode EXR"));
-    }
+    result.set("error", loaded.error());
     return result;
   }
+  tinyusdz::Image& im = loaded.value().image;
+  const int width = im.width;
+  const int height = im.height;
+  float* rgba = reinterpret_cast<float*>(im.data.data());
 
   size_t pixelCount = 0;
   if (!ComputeImageComponentCount(width, height, 4, &pixelCount)) {
-    free(rgba);
     result.set("success", false);
     result.set("error",
                std::string("EXR image dimensions are invalid or too large."));
@@ -7746,7 +7742,6 @@ emscripten::val decodeEXR(const emscripten::val& data,
     // Convert to float16 and return as Uint16Array
     std::vector<uint16_t> fp16Data(pixelCount);
     convertFloat32ToFloat16(rgba, fp16Data.data(), pixelCount);
-    free(rgba);
 
     emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
     emscripten::val pixelData = Uint16Array.new_(emscripten::val(static_cast<double>(pixelCount)));
@@ -7764,7 +7759,6 @@ emscripten::val decodeEXR(const emscripten::val& data,
     emscripten::val jsHeap = emscripten::val(
         emscripten::typed_memory_view(pixelCount, rgba));
     pixelData.call<void>("set", jsHeap);
-    free(rgba);
 
     result.set("data", pixelData);
     result.set("pixelFormat", std::string("float32"));
@@ -7786,7 +7780,7 @@ bool isEXR(const emscripten::val& data) {
 
   std::vector<uint8_t> buffer;
   copyFromJSBuffer(data, buffer);
-  return IsEXRFromMemory(buffer.data(), buffer.size()) == TINYEXR_SUCCESS;
+  return IsEXRMagic(buffer.data(), buffer.size());
 }
 #endif
 
@@ -7895,7 +7889,7 @@ emscripten::val decodeImage(const emscripten::val& data,
 
 #if defined(TINYUSDZ_WITH_EXR)
   // Check for EXR first
-  if (IsEXRFromMemory(buffer.data(), buffer.size()) == TINYEXR_SUCCESS) {
+  if (IsEXRMagic(buffer.data(), buffer.size())) {
     std::string exrFormat = (outputFormat == "auto") ? "float32" : outputFormat;
     return decodeEXR(data, exrFormat);
   }
