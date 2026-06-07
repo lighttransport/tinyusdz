@@ -8844,13 +8844,33 @@ emscripten::val convertImage(const emscripten::val& data,
     }
   }
 
-  auto loaded = image::LoadImageFromMemory(buffer.data(), buffer.size(), "mem");
-  if (!loaded) {
-    result.set("success", false);
-    result.set("error", loaded.error());
-    return result;
+  Image img;
+  {
+    // EXR -> EXR keeps half precision end-to-end: fp16 decode -> fp16 resize ->
+    // fp16 encode, with NO fp32 widening (halves HDR memory). Taken only when
+    // every channel is half (DecodeImageEXRHalf returns false otherwise) and the
+    // output is EXR; everything else uses the fp32 LoadImageFromMemory path.
+    static const uint8_t EXRMAGIC[4] = {0x76, 0x2f, 0x31, 0x01};
+    const bool is_exr = buffer.size() > 4 &&
+                        std::memcmp(buffer.data(), EXRMAGIC, 4) == 0;
+    const bool out_exr = optStr(opts, "format", "png") == "exr";
+    bool got = false;
+    if (is_exr && out_exr) {
+      std::string e;
+      got = tinyusdz::image::DecodeImageEXRHalf(buffer.data(), buffer.size(),
+                                                "mem", &img, &e);
+    }
+    if (!got) {
+      auto loaded =
+          image::LoadImageFromMemory(buffer.data(), buffer.size(), "mem");
+      if (!loaded) {
+        result.set("success", false);
+        result.set("error", loaded.error());
+        return result;
+      }
+      img = std::move(loaded.value().image);
+    }
   }
-  Image img = std::move(loaded.value().image);
   // The compressed input is no longer needed once decoded; release it so it
   // does not coexist with the (much larger) decoded RGBA + the encoder output.
   std::vector<uint8_t>().swap(buffer);

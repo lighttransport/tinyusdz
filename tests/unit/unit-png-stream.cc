@@ -329,6 +329,45 @@ void png_stream_resize_fp16_test(void) {
   TEST_CHECK(good);
 }
 
+// fp16 EXR round-trip: encode an fp16 RGBA image as half EXR (no fp32 widening)
+// then decode it back as half — the half bit patterns must survive exactly
+// (EXR ZIP is lossless; half->half has no conversion).
+void png_stream_exr_fp16_roundtrip_test(void) {
+  const int W = 24, H = 18, ch = 4;
+  tinyusdz::Image img;
+  img.width = W;
+  img.height = H;
+  img.channels = ch;
+  img.bpp = 16;
+  img.format = tinyusdz::Image::PixelFormat::Float;
+  img.data.resize((size_t)W * H * ch * 2);
+  uint16_t *s = reinterpret_cast<uint16_t *>(img.data.data());
+  for (size_t i = 0; i < (size_t)W * H * ch; ++i)
+    s[i] = (uint16_t)(0x3000 + (i % 0x200));  // finite positive half normals
+
+  tinyusdz::image::WriteOption wopt;
+  wopt.format = tinyusdz::image::WriteImageFormat::EXR;
+  auto enc = tinyusdz::image::WriteImageToMemory(img, wopt);
+  TEST_CHECK(bool(enc));
+  if (!enc) return;
+
+  tinyusdz::Image dec;
+  std::string err;
+  bool ok = tinyusdz::image::DecodeImageEXRHalf(enc.value().data(),
+                                                enc.value().size(), "m", &dec,
+                                                &err);
+  TEST_CHECK(ok);
+  if (!ok) return;
+  TEST_CHECK(dec.width == W && dec.height == H && dec.bpp == 16 &&
+             dec.channels == 4 &&
+             dec.format == tinyusdz::Image::PixelFormat::Float);
+  const uint16_t *d = reinterpret_cast<const uint16_t *>(dec.data.data());
+  bool good = dec.data.size() == (size_t)W * H * 4 * 2;
+  for (size_t i = 0; good && i < (size_t)W * H * ch; ++i)
+    if (d[i] != s[i]) good = false;
+  TEST_CHECK(good);
+}
+
 void png_stream_resize_rgb_test(void) { ResizeParity(128, 96, 3, 40, 33); }
 void png_stream_resize_rgba_test(void) { ResizeParity(100, 100, 4, 50, 25); }
 void png_stream_resize_srgb_test(void) { ResizeParity(128, 96, 3, 40, 33, true); }
