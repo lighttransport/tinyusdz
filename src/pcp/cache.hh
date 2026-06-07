@@ -129,12 +129,16 @@ class Cache {
   /// Build the PrimIndices for `paths` as a batch. Parallel iff num_threads !=
   /// 1 and threads are compiled in; otherwise sequential. Best-effort: a prim
   /// that fails to build is skipped.
+  /// In the parallel path, user callbacks in CacheOptions::composition run on
+  /// worker threads and must be thread-safe (see CacheOptions).
   nonstd::expected<bool, std::string> PrewarmPrimIndices(
       const std::vector<Path> &paths, std::string *warn, std::string *err);
 
   /// Materialize a full Stage: computes every prim's PrimIndex (honoring
   /// num_threads) and lowers them via the shared reconstruct pipeline. The
   /// result is structurally identical to CompositionGraph::BuildStage().
+  /// With num_threads != 1, user callbacks in CacheOptions::composition run on
+  /// worker threads and must be thread-safe (see CacheOptions).
   bool BuildStage(Stage *stage, std::string *warn, std::string *err);
 
   // -- Payloads --

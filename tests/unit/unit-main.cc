@@ -518,6 +518,8 @@ TEST_LIST = {
   { "pcp_layer_parsed_once_test", pcp_layer_parsed_once_test },
   { "pcp_invalidate_drops_dependents_test", pcp_invalidate_drops_dependents_test },
   { "pcp_payload_load_unload_test", pcp_payload_load_unload_test },
+  { "pcp_payload_defaultprim_eager_test", pcp_payload_defaultprim_eager_test },
+  { "pcp_payload_defaultprim_deferred_load_test", pcp_payload_defaultprim_deferred_load_test },
   { "pcp_buildstage_matches_compgraph_test", pcp_buildstage_matches_compgraph_test },
   { "pcp_singlethread_vs_multithread_identical_test", pcp_singlethread_vs_multithread_identical_test },
   { "pcp_mt_shared_reference_test", pcp_mt_shared_reference_test },
@@ -532,6 +534,9 @@ TEST_LIST = {
   { "stage_memory_estimation_test", stage_memory_estimation_test },
   { "stage_empty_test", stage_empty_test },
   { "stage_nested_hierarchy_test", stage_nested_hierarchy_test },
+  { "stage_concurrent_find_prim_test", stage_concurrent_find_prim_test },
+  { "stage_concurrent_parse_test", stage_concurrent_parse_test },
+  { "stage_concurrent_timesamples_read_test", stage_concurrent_timesamples_read_test },
   // Phase 2: Layer API tests
   { "layer_create_empty_test", layer_create_empty_test },
   { "layer_add_primspec_test", layer_add_primspec_test },

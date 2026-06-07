@@ -27,6 +27,7 @@
 #include "layer.hh"
 #include "pcp/cache.hh"
 #include "stage.hh"
+#include "usdGeom.hh"
 
 using namespace tinyusdz;
 
@@ -308,6 +309,115 @@ def Xform "Consumer" (
   auto unloaded = cache.UnloadPayload(Path("/Consumer", ""));
   TEST_CHECK(unloaded.has_value());
   TEST_CHECK(cache.HasDeferredPayload(Path("/Consumer", "")));
+}
+
+// ---------------------------------------------------------------------------
+// pcp_payload_defaultprim_eager_test
+// An external payload with omitted prim path uses the target layer defaultPrim.
+// ---------------------------------------------------------------------------
+
+void pcp_payload_defaultprim_eager_test(void) {
+  const char *root_usda = R"(#usda 1.0
+def Xform "Consumer" (
+    payload = @payload.usda@
+)
+{
+    custom int localAttr = 10
+}
+)";
+
+  MemAsset mem;
+  mem.content =
+      "#usda 1.0\n"
+      "(\n"
+      "    defaultPrim = \"PayloadRoot\"\n"
+      ")\n"
+      "def Xform \"PayloadRoot\"\n"
+      "{\n"
+      "    custom int payloadAttr = 42\n"
+      "    def Scope \"Child\" { custom int childAttr = 3 }\n"
+      "}\n";
+
+  AssetResolutionResolver resolver;
+  install_mem_handler(&resolver, &mem);
+
+  pcp::Cache cache;
+  std::string err;
+  TEST_CHECK(open_cache(root_usda, resolver, cache, {}, &err));
+  if (!err.empty()) { TEST_MSG("open err: %s", err.c_str()); return; }
+
+  Stage stage;
+  std::string warn;
+  TEST_CHECK(cache.BuildStage(&stage, &warn, &err));
+  if (!err.empty()) { TEST_MSG("BuildStage err: %s", err.c_str()); return; }
+
+  auto consumer = stage.GetPrimAtPath(Path("/Consumer", ""));
+  TEST_CHECK(consumer.has_value());
+  if (!consumer) return;
+  const Xform *xf = (*consumer)->as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (xf) TEST_CHECK(xf->props.count("payloadAttr") == 1);
+}
+
+// ---------------------------------------------------------------------------
+// pcp_payload_defaultprim_deferred_load_test
+// Lazy LoadPayload must retarget the payload node to the resolved defaultPrim.
+// ---------------------------------------------------------------------------
+
+void pcp_payload_defaultprim_deferred_load_test(void) {
+  const char *root_usda = R"(#usda 1.0
+def Xform "Consumer" (
+    payload = @payload.usda@
+)
+{
+    custom int localAttr = 10
+}
+)";
+
+  MemAsset mem;
+  mem.content =
+      "#usda 1.0\n"
+      "(\n"
+      "    defaultPrim = \"PayloadRoot\"\n"
+      ")\n"
+      "def Xform \"PayloadRoot\"\n"
+      "{\n"
+      "    custom int payloadAttr = 42\n"
+      "    def Scope \"Child\" { custom int childAttr = 3 }\n"
+      "}\n";
+
+  AssetResolutionResolver resolver;
+  install_mem_handler(&resolver, &mem);
+
+  pcp::CacheOptions opts;
+  opts.composition.payload_policy = [](const Path &, const Payload &) {
+    return false;
+  };
+
+  pcp::Cache cache;
+  std::string err;
+  TEST_CHECK(open_cache(root_usda, resolver, cache, opts, &err));
+  if (!err.empty()) { TEST_MSG("open err: %s", err.c_str()); return; }
+
+  Stage stage0;
+  std::string warn;
+  TEST_CHECK(cache.BuildStage(&stage0, &warn, &err));
+  TEST_CHECK(cache.HasDeferredPayload(Path("/Consumer", "")));
+  TEST_CHECK(!stage0.GetPrimAtPath(Path("/Consumer/Child", "")).has_value());
+
+  auto loaded = cache.LoadPayload(Path("/Consumer", ""), &warn, &err);
+  TEST_CHECK_(loaded.has_value(), "LoadPayload failed: %s",
+              loaded ? "" : loaded.error().c_str());
+  TEST_CHECK(!cache.HasDeferredPayload(Path("/Consumer", "")));
+
+  Stage stage1;
+  TEST_CHECK(cache.BuildStage(&stage1, &warn, &err));
+  auto consumer = stage1.GetPrimAtPath(Path("/Consumer", ""));
+  TEST_CHECK(consumer.has_value());
+  if (!consumer) return;
+  const Xform *xf = (*consumer)->as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (xf) TEST_CHECK(xf->props.count("payloadAttr") == 1);
 }
 
 // ---------------------------------------------------------------------------

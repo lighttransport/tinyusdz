@@ -149,6 +149,16 @@ Stage::Stage(const Stage &other)
       _prim_id_dirty(other._prim_id_dirty) {
   // mmap unique_ptr members are not copied.
   // mmap data is only valid for the original Stage loaded from USDC.
+
+  // The lazy lookup caches hold `const Prim*` into other's _root_nodes tree;
+  // those pointers are invalid for this copy. Force a rebuild against our own
+  // tree on first use, and (under threading) use a private cache mutex.
+  _dirty = true;
+  _prim_id_dirty = true;
+  _prim_path_cache.clear();
+  _prim_id_cache.clear();
+  // Unconditional (see stage.hh): copies must not share the source's mutex.
+  _cache_mu = std::make_shared<std::mutex>();
 }
 
 Stage &Stage::operator=(const Stage &other) {
@@ -167,6 +177,13 @@ Stage &Stage::operator=(const Stage &other) {
     _mmap_source.reset();
     _mmap_file_owner.reset();
     _mmap_buffer_owner.reset();
+
+    // See copy ctor: reset the lazy lookup caches (stale Prim* + shared mutex).
+    _dirty = true;
+    _prim_id_dirty = true;
+    _prim_path_cache.clear();
+    _prim_id_cache.clear();
+    _cache_mu = std::make_shared<std::mutex>();
   }
   return *this;
 }
@@ -195,6 +212,9 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
         "Path is not absolute. Non-absolute Path is TODO.\n");
   }
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::unique_lock<std::mutex> cache_lock(*_cache_mu);
+#endif
   if (_dirty) {
     DCOUT("clear cache.");
     // Clear cache.
@@ -211,12 +231,20 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
       return ret->second;
     }
   }
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  cache_lock.unlock();  // release during the (lock-free) _root_nodes walk
+#endif
 
 
   // Direct path-based lookup (no brute-force search)
   if (auto pv = GetPrimAtPathIterative(_root_nodes, path)) {
     // Add to cache.
     // Assume pointer address does not change unless dirty state.
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    cache_lock.lock();  // re-acquire before mutating the cache (released above)
+#endif
+    // Key on the full Path (matches the find() above; the cache is Path-hashed
+    // via PathHasher, so no string allocation).
     _prim_path_cache[path] = pv.value();
     return pv.value();
   }
@@ -325,6 +353,9 @@ bool Stage::find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim,
     return false;
   }
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::unique_lock<std::mutex> cache_lock(*_cache_mu);
+#endif
   if (_prim_id_dirty) {
     DCOUT("clear prim_id cache.");
     // Clear cache.
@@ -340,9 +371,15 @@ bool Stage::find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim,
       return true;
     }
   }
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  cache_lock.unlock();  // release during the (lock-free) _root_nodes walk
+#endif
 
   const Prim *p{nullptr};
   if (FindPrimByPrimIdIterative(prim_id, _root_nodes, &p)) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    cache_lock.lock();
+#endif
     _prim_id_cache[prim_id] = p;
     prim = p;
     return true;
