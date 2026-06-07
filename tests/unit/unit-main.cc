@@ -171,6 +171,7 @@ TEST_LIST = {
   { "png_stream_resize_rgb_test", png_stream_resize_rgb_test },
   { "png_stream_resize_rgba_test", png_stream_resize_rgba_test },
   { "png_stream_colorspace_test", png_stream_colorspace_test },
+  { "png_stream_transcode_16bit_test", png_stream_transcode_16bit_test },
   { "imageproc_mat3_identity_test", imageproc_mat3_identity_test },
   { "imageproc_mat3_swap_test", imageproc_mat3_swap_test },
   { "imageproc_mat3_parity_test", imageproc_mat3_parity_test },

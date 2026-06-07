@@ -38,10 +38,17 @@ bool DeriveLayout(const PngImageInfo &in, PngImageInfo *out) {
   else if (ct == 4) channels = 2;
   else if (ct == 6) channels = 4;
   else return false;
-  if (ct == 3 || ct == 0) {
+  // Palette indices are <= 8-bit; grayscale also allows sub-byte; all non-palette
+  // types allow 16-bit. (PNG filtering is byte-wise with bytes_per_pixel below,
+  // so the codec is bit-depth-agnostic for lossless transcode. ResizePNG /
+  // ConvertColorspacePNG keep their own 8-bit guards — they interpret samples,
+  // which would need endian handling for 16-bit.)
+  if (ct == 3) {
     if (!(bd == 1 || bd == 2 || bd == 4 || bd == 8)) return false;
-  } else if (bd != 8) {
-    return false;
+  } else if (ct == 0) {
+    if (!(bd == 1 || bd == 2 || bd == 4 || bd == 8 || bd == 16)) return false;
+  } else {  // RGB / gray+alpha / RGBA
+    if (!(bd == 8 || bd == 16)) return false;
   }
   const size_t bits_per_pixel = (size_t)bd * channels;
   *out = in;
