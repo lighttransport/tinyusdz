@@ -328,7 +328,11 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
     case tinyusdz::image::WriteImageFormat::EXR: {
 #if defined(TINYUSDZ_WITH_EXR)
       const int comps = image.channels;
-      if (comps < 1 || comps > 4) {
+      // EXR here supports 1 (Y), 3 (RGB) or 4 (RGBA). 2-channel is rejected: the
+      // fp32 SaveEXRToMemory rejects it too, and the fp16 planar setup below only
+      // names 1/3/4 channels (a 2-ch path would leave a null channel pointer ->
+      // crash in tinyexr).
+      if (comps != 1 && comps != 3 && comps != 4) {
         return nonstd::make_unexpected("EXR: channels must be 1, 3 or 4.");
       }
       if (image.width <= 0 || image.height <= 0) {

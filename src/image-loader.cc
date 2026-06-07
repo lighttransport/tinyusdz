@@ -617,6 +617,11 @@ bool DecodeImageEXRHalf(const uint8_t *bytes, size_t size,
     FreeEXRHeader(&header);
     return false;
   }
+  if (exr.images == nullptr || exr.width <= 0 || exr.height <= 0) {
+    FreeEXRImage(&exr);  // load succeeded -> safe to free here
+    FreeEXRHeader(&header);
+    return false;
+  }
 
   // Map channel names to RGBA (EXR usually stores (A)BGR order; Y = luminance).
   int idxR = -1, idxG = -1, idxB = -1, idxA = -1, idxY = -1;
@@ -627,6 +632,13 @@ bool DecodeImageEXRHalf(const uint8_t *bytes, size_t size,
     else if (std::strcmp(n, "B") == 0) idxB = c;
     else if (std::strcmp(n, "A") == 0) idxA = c;
     else if (std::strcmp(n, "Y") == 0) idxY = c;
+  }
+  // No standard color channel (e.g. custom/layered names) — bail so the caller
+  // falls back to the fp32 path instead of emitting a silently-black image.
+  if (idxR < 0 && idxG < 0 && idxB < 0 && idxY < 0) {
+    FreeEXRImage(&exr);
+    FreeEXRHeader(&header);
+    return false;
   }
 
   size_t npix, total;
