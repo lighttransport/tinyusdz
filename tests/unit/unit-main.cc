@@ -178,6 +178,7 @@ TEST_LIST = {
   { "imageproc_mat3_identity_test", imageproc_mat3_identity_test },
   { "imageproc_mat3_swap_test", imageproc_mat3_swap_test },
   { "imageproc_mat3_parity_test", imageproc_mat3_parity_test },
+  { "imageproc_pack_channels_test", imageproc_pack_channels_test },
   { "imageproc_simd_level_test", imageproc_simd_level_test },
   { "tydra_connection_validation_test", tydra_connection_validation_test },
   { "tydra_inplace_conversion_guard_test", tydra_inplace_conversion_guard_test },

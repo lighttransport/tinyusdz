@@ -72,5 +72,25 @@ void Mat3MulRGBf(const float *in, float *out, size_t n_pixels,
   }
 }
 
+IMAGEPROC_MV
+void PackChannels8(uint8_t *out, size_t n_pixels, int out_channels,
+                   const PackSource *sources) {
+  // Channel-outer so each inner pixel loop has fixed (compile-visible) strides —
+  // a strided gather/scatter the vectorizer handles far better than a per-pixel
+  // loop over a runtime channel count. Output is identical either way.
+  const int oc = out_channels;
+  for (int c = 0; c < oc; ++c) {
+    const PackSource &s = sources[c];
+    if (s.in) {
+      const uint8_t *in = s.in + s.channel;
+      const int istr = s.in_stride;
+      for (size_t x = 0; x < n_pixels; ++x) out[x * oc + c] = in[x * istr];
+    } else {
+      const uint8_t v = s.constant;
+      for (size_t x = 0; x < n_pixels; ++x) out[x * oc + c] = v;
+    }
+  }
+}
+
 }  // namespace imageproc
 }  // namespace tinyusdz
