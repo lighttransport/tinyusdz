@@ -299,6 +299,24 @@ void png_stream_colorspace_16bit_test(void) {
   TEST_CHECK(good);
 }
 
+// A PNG declaring absurd dimensions must be rejected (not overflow/crash) so the
+// caller falls back to the whole-image codec.
+void png_stream_reject_huge_dims_test(void) {
+  tinyusdz::Image img = MakeImage(16, 16, 3);
+  std::vector<uint8_t> png = EncodePNG(img);
+  TEST_CHECK(png.size() > 24);
+  if (png.size() <= 24) return;
+  // Patch IHDR width (offset 16, big-endian) to ~2^31 (the reader doesn't
+  // validate the IHDR CRC, so this reaches the dimension guard).
+  png[16] = 0x7F; png[17] = 0xFF; png[18] = 0xFF; png[19] = 0xFF;
+  std::vector<uint8_t> out;
+  TEST_CHECK(!tinyusdz::imageio::TranscodePNG(png.data(), png.size(), out));
+  TEST_CHECK(
+      !tinyusdz::imageio::ResizePNG(png.data(), png.size(), 8, 8, false, out));
+  tinyusdz::imageio::PngScanlineReader r;
+  TEST_CHECK(!r.Open(png.data(), png.size()));
+}
+
 // fp16 (half-float) resize: a constant image must resize to the same constant,
 // exercising tydra::ResizeImage's STBIR_TYPE_HALF_FLOAT path. 0x3C00 = half 1.0.
 void png_stream_resize_fp16_test(void) {

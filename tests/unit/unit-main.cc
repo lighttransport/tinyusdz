@@ -168,6 +168,7 @@ TEST_LIST = {
   { "png_stream_transcode_gray_test", png_stream_transcode_gray_test },
   { "png_stream_reader_writer_roundtrip_test", png_stream_reader_writer_roundtrip_test },
   { "png_stream_reject_nonpng_test", png_stream_reject_nonpng_test },
+  { "png_stream_reject_huge_dims_test", png_stream_reject_huge_dims_test },
   { "png_stream_resize_fp16_test", png_stream_resize_fp16_test },
   { "png_stream_exr_fp16_roundtrip_test", png_stream_exr_fp16_roundtrip_test },
   { "png_stream_resize_rgb_test", png_stream_resize_rgb_test },
