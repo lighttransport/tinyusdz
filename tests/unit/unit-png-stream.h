@@ -9,3 +9,4 @@ void png_stream_resize_rgb_test(void);
 void png_stream_resize_rgba_test(void);
 void png_stream_colorspace_test(void);
 void png_stream_transcode_16bit_test(void);
+void png_stream_resize_16bit_test(void);
