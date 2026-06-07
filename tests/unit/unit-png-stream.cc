@@ -299,6 +299,36 @@ void png_stream_colorspace_16bit_test(void) {
   TEST_CHECK(good);
 }
 
+// fp16 (half-float) resize: a constant image must resize to the same constant,
+// exercising tydra::ResizeImage's STBIR_TYPE_HALF_FLOAT path. 0x3C00 = half 1.0.
+void png_stream_resize_fp16_test(void) {
+  const int W = 40, H = 30, ch = 3;
+  tinyusdz::Image img;
+  img.width = W;
+  img.height = H;
+  img.channels = ch;
+  img.bpp = 16;
+  img.format = tinyusdz::Image::PixelFormat::Float;
+  img.data.resize((size_t)W * H * ch * 2);
+  for (size_t i = 0; i < (size_t)W * H * ch; ++i) {
+    img.data[i * 2] = 0x00;  // half 1.0 = 0x3C00, little-endian
+    img.data[i * 2 + 1] = 0x3C;
+  }
+  tinyusdz::Image out;
+  std::string err;
+  bool ok = tinyusdz::tydra::ResizeImage(
+      img, 20, 15, &out, tinyusdz::tydra::ResizeFilter::Linear, &err);
+  TEST_CHECK(ok);
+  if (!ok) return;
+  TEST_CHECK(out.width == 20 && out.height == 15 && out.bpp == 16 &&
+             out.channels == ch &&
+             out.format == tinyusdz::Image::PixelFormat::Float);
+  bool good = out.data.size() == (size_t)20 * 15 * ch * 2;
+  for (size_t i = 0; good && i < (size_t)20 * 15 * ch; ++i)
+    if (out.data[i * 2] != 0x00 || out.data[i * 2 + 1] != 0x3C) good = false;
+  TEST_CHECK(good);
+}
+
 void png_stream_resize_rgb_test(void) { ResizeParity(128, 96, 3, 40, 33); }
 void png_stream_resize_rgba_test(void) { ResizeParity(100, 100, 4, 50, 25); }
 void png_stream_resize_srgb_test(void) { ResizeParity(128, 96, 3, 40, 33, true); }
