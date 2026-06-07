@@ -57,7 +57,7 @@
 #include "usdc-writer.hh"
 #include "crate-writer.hh"
 #include "image-writer.hh"
-#include "external/miniz.h"  // streaming zlib (mz_inflate/mz_deflate) + mz_crc32
+#include "imageio/png-stream.hh"  // streaming scanline PNG codec
 #include "usdGeom.hh"
 #include "usd-validation.hh"
 #include "usdPhysics.hh"
@@ -8699,223 +8699,9 @@ static tinyusdz::Image floatImageTo8bit(const tinyusdz::Image& img) {
 
 // convertImage(data, opts) -> { success, data?:Uint8Array, width, height, resized, error? }
 // opts: { maxSize?, width?, height?, format?:"png"|"jpeg", pngEncoder?, jpegQuality? }
-// Streaming PNG -> PNG transcoder (re-compress with filter optimization) that
-// processes ONE scanline at a time: inflate IDAT -> unfilter -> pick best filter
-// -> deflate. Peak memory is O(a few scanlines + the compressed output) instead
-// of the full decoded RGBA (W*H*4) plus a full-image encoder buffer — so a
-// 6144x6144 PNG re-encodes in ~tens of MB rather than ~600 MB. Returns false
-// (caller falls back to the whole-image decode/encode path) for anything outside
-// 8-bit, non-interlaced, color types gray/GA/RGB/RGBA.
-static bool transcodePNGStreaming(const uint8_t* data, size_t size,
-                                  std::vector<uint8_t>& out) {
-  static const uint8_t SIG[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
-  if (size < 8 || std::memcmp(data, SIG, 8) != 0) return false;
-  auto rd32 = [](const uint8_t* p) -> uint32_t {
-    return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) |
-           (uint32_t(p[2]) << 8) | uint32_t(p[3]);
-  };
-
-  std::vector<std::pair<const uint8_t*, size_t>> chunks;  // (start, total bytes)
-  std::vector<std::pair<const uint8_t*, uint32_t>> idats; // (data, len)
-  uint32_t W = 0, H = 0;
-  uint8_t bd = 0, ct = 0;
-  bool have_ihdr = false;
-  for (size_t pos = 8; pos + 12 <= size;) {
-    uint32_t len = rd32(data + pos);
-    const uint8_t* type = data + pos + 4;
-    if (pos + 12 + (size_t)len > size) return false;  // truncated
-    const uint8_t* cdata = data + pos + 8;
-    size_t total = 12 + (size_t)len;
-    if (std::memcmp(type, "IHDR", 4) == 0) {
-      if (len < 13) return false;
-      W = rd32(cdata); H = rd32(cdata + 4);
-      bd = cdata[8]; ct = cdata[9];
-      // compression/filter/interlace must be the standard 0/0/0.
-      if (cdata[10] != 0 || cdata[11] != 0 || cdata[12] != 0) return false;
-      have_ihdr = true;
-    } else if (std::memcmp(type, "IDAT", 4) == 0) {
-      idats.emplace_back(cdata, len);
-    }
-    chunks.emplace_back(data + pos, total);
-    pos += total;
-    if (std::memcmp(type, "IEND", 4) == 0) break;
-  }
-  if (!have_ihdr || idats.empty() || W == 0 || H == 0) return false;
-  // Channels per color type: gray=1, RGB=3, palette=1 (index), gray+alpha=2,
-  // RGBA=4. Bit depth 8 is supported for all; sub-byte (1/2/4) only for the
-  // single-channel types (palette / grayscale). 16-bit is not handled here.
-  size_t channels;
-  if (ct == 0) channels = 1;
-  else if (ct == 2) channels = 3;
-  else if (ct == 3) channels = 1;
-  else if (ct == 4) channels = 2;
-  else if (ct == 6) channels = 4;
-  else return false;
-  if (ct == 3 || ct == 0) {
-    if (!(bd == 1 || bd == 2 || bd == 4 || bd == 8)) return false;
-  } else if (bd != 8) {
-    return false;
-  }
-  const size_t bits_per_pixel = (size_t)bd * channels;
-  const size_t bpp = (bits_per_pixel + 7) / 8;        // >=1, for filtering
-  const size_t rowlen = ((size_t)W * bits_per_pixel + 7) / 8;
-  const size_t stride = rowlen + 1;
-
-  auto paeth = [](int a, int b, int c) -> uint8_t {
-    int p = a + b - c, pa = std::abs(p - a), pb = std::abs(p - b), pc = std::abs(p - c);
-    if (pa <= pb && pa <= pc) return (uint8_t)a;
-    if (pb <= pc) return (uint8_t)b;
-    return (uint8_t)c;
-  };
-
-  mz_stream istrm; std::memset(&istrm, 0, sizeof(istrm));
-  if (mz_inflateInit(&istrm) != MZ_OK) return false;
-  mz_stream dstrm; std::memset(&dstrm, 0, sizeof(dstrm));
-  if (mz_deflateInit2(&dstrm, 9, MZ_DEFLATED, MZ_DEFAULT_WINDOW_BITS, 9,
-                      MZ_DEFAULT_STRATEGY) != MZ_OK) {
-    mz_inflateEnd(&istrm);
-    return false;
-  }
-  std::vector<uint8_t> idat_out;
-  idat_out.reserve(size / 2 + 4096);
-  std::vector<uint8_t> dbuf(1 << 16);
-  std::vector<uint8_t> scan(stride);
-  std::vector<uint8_t> prev(rowlen, 0), cur(rowlen), filt(stride);
-  size_t scan_filled = 0, rows_done = 0;
-  bool ok = true;
-
-  auto pump_deflate = [&](const uint8_t* p, size_t n, int flush) -> bool {
-    dstrm.next_in = p; dstrm.avail_in = (unsigned)n;
-    for (;;) {
-      dstrm.next_out = dbuf.data(); dstrm.avail_out = (unsigned)dbuf.size();
-      int r = mz_deflate(&dstrm, flush);
-      if (r != MZ_OK && r != MZ_STREAM_END && r != MZ_BUF_ERROR) return false;
-      size_t produced = dbuf.size() - dstrm.avail_out;
-      if (produced) idat_out.insert(idat_out.end(), dbuf.data(), dbuf.data() + produced);
-      if (r == MZ_STREAM_END) break;
-      if (dstrm.avail_out != 0) { if (flush != MZ_FINISH) break; }
-    }
-    return true;
-  };
-
-  auto process_scanline = [&]() -> bool {
-    uint8_t ft = scan[0];
-    const uint8_t* f = scan.data() + 1;
-    for (size_t i = 0; i < rowlen; ++i) {
-      uint8_t a = (i >= bpp) ? cur[i - bpp] : 0;
-      uint8_t b = prev[i];
-      uint8_t c = (i >= bpp) ? prev[i - bpp] : 0;
-      uint8_t v;
-      switch (ft) {
-        case 0: v = f[i]; break;
-        case 1: v = (uint8_t)(f[i] + a); break;
-        case 2: v = (uint8_t)(f[i] + b); break;
-        case 3: v = (uint8_t)(f[i] + (uint8_t)((a + b) >> 1)); break;
-        case 4: v = (uint8_t)(f[i] + paeth(a, b, c)); break;
-        default: return false;
-      }
-      cur[i] = v;
-    }
-    // Choose the filter minimizing the sum of |signed bytes| (libpng heuristic).
-    int best = 0; uint64_t best_sum = UINT64_MAX;
-    for (int t = 0; t < 5; ++t) {
-      uint64_t sum = 0;
-      for (size_t i = 0; i < rowlen; ++i) {
-        uint8_t a = (i >= bpp) ? cur[i - bpp] : 0, b = prev[i],
-                c = (i >= bpp) ? prev[i - bpp] : 0, fv;
-        switch (t) {
-          case 0: fv = cur[i]; break;
-          case 1: fv = (uint8_t)(cur[i] - a); break;
-          case 2: fv = (uint8_t)(cur[i] - b); break;
-          case 3: fv = (uint8_t)(cur[i] - (uint8_t)((a + b) >> 1)); break;
-          default: fv = (uint8_t)(cur[i] - paeth(a, b, c)); break;
-        }
-        int8_t s = (int8_t)fv; sum += (uint64_t)(s < 0 ? -s : s);
-      }
-      if (sum < best_sum) { best_sum = sum; best = t; }
-    }
-    filt[0] = (uint8_t)best;
-    for (size_t i = 0; i < rowlen; ++i) {
-      uint8_t a = (i >= bpp) ? cur[i - bpp] : 0, b = prev[i],
-              c = (i >= bpp) ? prev[i - bpp] : 0, fv;
-      switch (best) {
-        case 0: fv = cur[i]; break;
-        case 1: fv = (uint8_t)(cur[i] - a); break;
-        case 2: fv = (uint8_t)(cur[i] - b); break;
-        case 3: fv = (uint8_t)(cur[i] - (uint8_t)((a + b) >> 1)); break;
-        default: fv = (uint8_t)(cur[i] - paeth(a, b, c)); break;
-      }
-      filt[1 + i] = fv;
-    }
-    if (!pump_deflate(filt.data(), stride, MZ_NO_FLUSH)) return false;
-    prev.swap(cur);
-    return true;
-  };
-
-  bool done = false;
-  for (auto& id : idats) {
-    istrm.next_in = id.first; istrm.avail_in = id.second;
-    bool need_input = false;
-    while (!need_input && ok) {
-      // Drive the loop by OUTPUT progress, not avail_in: mz_inflate buffers the
-      // compressed input internally, so a small IDAT can be fully consumed in
-      // one call while many scanlines are still pending in the decoder.
-      istrm.next_out = scan.data() + scan_filled;
-      istrm.avail_out = (unsigned)(stride - scan_filled);
-      int r = mz_inflate(&istrm, MZ_NO_FLUSH);
-      scan_filled = stride - istrm.avail_out;
-      if (scan_filled == stride) {
-        if (rows_done >= H || !process_scanline()) { ok = false; break; }
-        scan_filled = 0; ++rows_done;
-      }
-      if (r == MZ_STREAM_END) { done = true; break; }
-      if (r == MZ_OK) {
-        // Keep calling while progress is possible. avail_out!=0 with avail_in>0
-        // is just miniz's 32KB dictionary boundary, NOT end of input — only stop
-        // for the next chunk once this input is fully consumed.
-        if (istrm.avail_in == 0 && istrm.avail_out != 0) need_input = true;
-      } else if (r == MZ_BUF_ERROR) {
-        need_input = true;                            // needs the next IDAT chunk
-      } else {
-        ok = false; break;
-      }
-    }
-    if (!ok || done) break;
-  }
-  if (ok) ok = pump_deflate(nullptr, 0, MZ_FINISH);
-  mz_inflateEnd(&istrm);
-  mz_deflateEnd(&dstrm);
-  if (!ok || rows_done != H) return false;  // incomplete -> fall back
-
-  // Re-emit: signature + original chunks, with the IDAT run replaced by one new
-  // IDAT carrying the recompressed data.
-  out.clear();
-  out.reserve(idat_out.size() + 1024);
-  out.insert(out.end(), SIG, SIG + 8);
-  auto wr32 = [&](uint32_t v) {
-    out.push_back((uint8_t)(v >> 24)); out.push_back((uint8_t)(v >> 16));
-    out.push_back((uint8_t)(v >> 8)); out.push_back((uint8_t)v);
-  };
-  bool idat_emitted = false;
-  for (auto& ck : chunks) {
-    const uint8_t* st = ck.first;
-    if (std::memcmp(st + 4, "IDAT", 4) == 0) {
-      if (idat_emitted) continue;
-      idat_emitted = true;
-      wr32((uint32_t)idat_out.size());
-      size_t tpos = out.size();
-      const char idat[4] = {'I', 'D', 'A', 'T'};
-      out.insert(out.end(), idat, idat + 4);
-      out.insert(out.end(), idat_out.begin(), idat_out.end());
-      mz_ulong c = mz_crc32(MZ_CRC32_INIT, out.data() + tpos, 4 + idat_out.size());
-      wr32((uint32_t)c);
-    } else {
-      out.insert(out.end(), st, st + ck.second);  // copy IHDR/ancillary/IEND
-    }
-  }
-  return true;
-}
-
+// The streaming PNG->PNG transcoder now lives in src/imageio/png-stream.cc
+// (tinyusdz::imageio::TranscodePNG); convertImage() calls it for the PNG
+// no-resize fast path below.
 emscripten::val convertImage(const emscripten::val& data,
                              const emscripten::val& opts) {
   using namespace tinyusdz;
@@ -8924,27 +8710,79 @@ emscripten::val convertImage(const emscripten::val& data,
   std::vector<uint8_t> buffer;
   copyFromJSBuffer(data, buffer);
 
-  // Fast path: re-encoding a PNG to PNG with no resize. Transcode it
-  // scanline-by-scanline (peak ~tens of MB) instead of decoding the whole image
-  // to RGBA + a full-image encode buffer (~hundreds of MB for large textures).
+  // Fast path: PNG -> PNG, scanline-streamed (peak ~a few scanlines + the
+  // compressed output) instead of decoding the whole image to RGBA + a
+  // full-image resize/encode buffer (~hundreds of MB for large textures).
+  //   - no resize        -> TranscodePNG (filter-optimize + recompress)
+  //   - resize requested -> ResizePNG (stbir scanline callbacks)
+  // Falls through to the whole-image path on any unsupported case.
   {
+    static const uint8_t PNGSIG[8] = {0x89, 'P', 'N', 'G', 0x0D,
+                                      0x0A, 0x1A, 0x0A};
     const std::string fmt0 = optStr(opts, "format", "png");
-    const bool noResize = optInt(opts, "maxSize", 0) <= 0 &&
-                          optInt(opts, "width", 0) <= 0 &&
-                          optInt(opts, "height", 0) <= 0;
-    if (fmt0 == "png" && noResize) {
+    const bool is_png = buffer.size() > 24 &&
+                        std::memcmp(buffer.data(), PNGSIG, 8) == 0;
+    auto rd32 = [](const uint8_t* p) {
+      return (int)((uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) |
+                   (uint32_t(p[2]) << 8) | uint32_t(p[3]));
+    };
+    if (fmt0 == "png" && is_png) {
+      const int W = rd32(buffer.data() + 16);  // IHDR width
+      const int H = rd32(buffer.data() + 20);  // IHDR height
+      const int maxSize = optInt(opts, "maxSize", 0);
+      int tw = optInt(opts, "width", 0);
+      int th = optInt(opts, "height", 0);
+      // Mirror the whole-image path's target-dimension computation exactly.
+      if ((tw <= 0 || th <= 0) && maxSize > 0 && W > 0 && H > 0) {
+        const int longest = (std::max)(W, H);
+        if (longest > maxSize) {
+          const double sc = double(maxSize) / double(longest);
+          tw = (std::max)(1, int(W * sc + 0.5));
+          th = (std::max)(1, int(H * sc + 0.5));
+        }
+      }
+      const bool wantResize = (tw > 0 && th > 0 && (tw != W || th != H));
+      // Optional sRGB<->linear colorspace conversion (no-resize PNG path).
+      const std::string cs = optStr(opts, "colorspace", "");
+      const bool wantCS = (cs == "srgb-to-linear" || cs == "srgbToLinear" ||
+                           cs == "linear-to-srgb" || cs == "linearToSrgb");
       std::vector<uint8_t> trans;
-      if (transcodePNGStreaming(buffer.data(), buffer.size(), trans)) {
-        auto rd32 = [](const uint8_t* p) {
-          return (int)((uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) |
-                       (uint32_t(p[2]) << 8) | uint32_t(p[3]));
-        };
-        result.set("success", true);
-        result.set("width", rd32(trans.data() + 16));   // IHDR width
-        result.set("height", rd32(trans.data() + 20));  // IHDR height
-        result.set("resized", false);
-        result.set("data", bytesToUint8Array(trans));
-        return result;
+      if (!wantResize && wantCS) {
+        auto xf = (cs[0] == 's')
+                      ? tinyusdz::imageio::ColorspaceXform::SrgbToLinear
+                      : tinyusdz::imageio::ColorspaceXform::LinearToSrgb;
+        if (tinyusdz::imageio::ConvertColorspacePNG(buffer.data(),
+                                                    buffer.size(), xf, trans)) {
+          result.set("success", true);
+          result.set("width", rd32(trans.data() + 16));
+          result.set("height", rd32(trans.data() + 20));
+          result.set("resized", false);
+          result.set("data", bytesToUint8Array(trans));
+          return result;
+        }
+      } else if (!wantResize) {
+        if (tinyusdz::imageio::TranscodePNG(buffer.data(), buffer.size(),
+                                            trans)) {
+          result.set("success", true);
+          result.set("width", rd32(trans.data() + 16));
+          result.set("height", rd32(trans.data() + 20));
+          result.set("resized", false);
+          result.set("data", bytesToUint8Array(trans));
+          return result;
+        }
+      } else {
+        // Linear filtering matches ResizeImage(Auto): a freshly decoded PNG has
+        // no colorspace metadata, so LooksSRGB() is false -> linear.
+        if (tinyusdz::imageio::ResizePNG(buffer.data(), buffer.size(),
+                                         (uint32_t)tw, (uint32_t)th,
+                                         /*srgb=*/false, trans)) {
+          result.set("success", true);
+          result.set("width", rd32(trans.data() + 16));
+          result.set("height", rd32(trans.data() + 20));
+          result.set("resized", true);
+          result.set("data", bytesToUint8Array(trans));
+          return result;
+        }
       }
     }
   }
@@ -9029,6 +8867,88 @@ emscripten::val repackChannels(const emscripten::val& opts) {
   emscripten::val result = emscripten::val::object();
 
   const char* slot_names[4] = {"r", "g", "b", "a"};
+
+  // Streaming fast path: all referenced inputs are 8-bit, same-size, non-palette
+  // PNGs, output is PNG, and no resize is requested. Pack per-scanline (peak ~N
+  // input rows + one output row) instead of decoding every input whole plus a
+  // whole-image output buffer. Falls through to the whole-image path otherwise.
+  {
+    const std::string fmt = optStr(opts, "format", "png");
+    if (fmt == "png") {
+      struct SlotS { bool has = false; std::vector<uint8_t> bytes; int channel = 0; uint8_t cst = 0; };
+      SlotS s[4];
+      const int req_w = optInt(opts, "width", 0);
+      const int req_h = optInt(opts, "height", 0);
+      int reqCh = optInt(opts, "channels", 0);
+      int inferred = 0;
+      bool any = false;
+      for (int c = 0; c < 4; c++) {
+        emscripten::val slot = opts[slot_names[c]];
+        if (slot.isUndefined() || slot.isNull()) { s[c].cst = (c == 3) ? 255 : 0; continue; }
+        inferred = (std::max)(inferred, c + 1);
+        emscripten::val sd = slot["data"];
+        if (!sd.isUndefined() && !sd.isNull()) {
+          copyFromJSBuffer(sd, s[c].bytes);
+          s[c].has = true;
+          s[c].channel = optInt(slot, "channel", 0);
+          any = true;
+        } else {
+          s[c].cst = uint8_t(optInt(slot, "const", 0) & 0xff);
+        }
+      }
+      const int out_channels = (reqCh >= 1 && reqCh <= 4) ? reqCh : (inferred > 0 ? inferred : 4);
+      bool ok = any;
+      uint32_t W = 0, H = 0;
+      int in_ch[4] = {0, 0, 0, 0};
+      tinyusdz::imageio::PngScanlineReader rd[4];
+      for (int c = 0; c < 4 && ok; c++) {
+        if (!s[c].has) continue;
+        if (!rd[c].Open(s[c].bytes.data(), s[c].bytes.size())) { ok = false; break; }
+        const auto& info = rd[c].info();
+        if (info.bit_depth != 8 || info.color_type == 3) { ok = false; break; }  // palette/sub-byte -> fallback
+        in_ch[c] = info.channels;
+        if (W == 0) { W = info.width; H = info.height; }
+        else if (info.width != W || info.height != H) { ok = false; break; }
+        if (s[c].channel < 0 || s[c].channel >= in_ch[c]) { ok = false; break; }
+      }
+      if (ok && req_w > 0 && uint32_t(req_w) != W) ok = false;  // resize needed -> fallback
+      if (ok && req_h > 0 && uint32_t(req_h) != H) ok = false;
+      if (ok && W > 0 && H > 0) {
+        const uint8_t out_ct = (out_channels == 1) ? 0 : (out_channels == 2) ? 4 : (out_channels == 3) ? 2 : 6;
+        tinyusdz::imageio::PngScanlineWriter wr;
+        tinyusdz::imageio::PngImageInfo oi;
+        oi.width = W; oi.height = H; oi.bit_depth = 8; oi.color_type = out_ct;
+        if (wr.Begin(oi)) {
+          std::vector<uint8_t> rows[4];
+          for (int c = 0; c < 4; c++) if (s[c].has) rows[c].resize(rd[c].info().row_bytes);
+          std::vector<uint8_t> outrow((size_t)W * out_channels);
+          bool good = true;
+          for (uint32_t y = 0; y < H && good; y++) {
+            for (int c = 0; c < 4; c++)
+              if (s[c].has && !rd[c].NextRow(rows[c].data())) { good = false; break; }
+            if (!good) break;
+            for (uint32_t x = 0; x < W; x++) {
+              for (int oc = 0; oc < out_channels; oc++) {
+                outrow[x * out_channels + oc] =
+                    s[oc].has ? rows[oc][x * in_ch[oc] + s[oc].channel] : s[oc].cst;
+              }
+            }
+            if (!wr.WriteRow(outrow.data())) good = false;
+          }
+          std::vector<uint8_t> outpng;
+          if (good && wr.Finish(outpng)) {
+            result.set("success", true);
+            result.set("data", bytesToUint8Array(outpng));
+            result.set("width", (int)W);
+            result.set("height", (int)H);
+            result.set("channels", out_channels);
+            return result;
+          }
+        }
+      }
+    }
+  }
+
   std::vector<Image> images;
 
   tydra::ChannelPackSpec spec;

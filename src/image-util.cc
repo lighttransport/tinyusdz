@@ -39,6 +39,7 @@
 #include "safe-arithmetic.hh"
 #include "common-macros.inc"
 #include "tiny-format.hh"
+#include "imageproc/simd.hh"  // SIMD Mat3MulRGBf row kernel
 
 #if defined(TINYUSDZ_WITH_COLORIO)
 #include "external/tiny-color-io.h"
@@ -48,6 +49,47 @@
   if (err) { \
     (*err) += msg; \
   }
+
+namespace {
+// Apply a row-major 3x3 matrix to interleaved RGB(A) float pixels, optionally
+// clamping the RGB result to >= 0. Alpha (channels==4) passes through. The tight
+// RGB (channels==3) path uses the SIMD-dispatched imageproc::Mat3MulRGBf kernel;
+// the RGBA path keeps a strided scalar loop. `out` must already be sized to
+// `in.size()`. This replaces the per-function hand-written matrix loops so all
+// linear colorspace conversions share one (SIMD) implementation.
+inline void ApplyColorMatrix(const std::vector<float> &in,
+                             std::vector<float> *out, size_t n_pixels,
+                             size_t channels, const float m[9],
+                             bool clamp_nonneg) {
+  if (channels == 3) {
+    tinyusdz::imageproc::Mat3MulRGBf(in.data(), out->data(), n_pixels, m);
+    if (clamp_nonneg) {
+      float *o = out->data();
+      const size_t n = n_pixels * 3;
+      for (size_t i = 0; i < n; ++i)
+        if (o[i] < 0.0f) o[i] = 0.0f;
+    }
+  } else {  // channels == 4: matrix on RGB, copy alpha
+    const float *ip = in.data();
+    float *op = out->data();
+    for (size_t i = 0; i < n_pixels; ++i) {
+      const float r = ip[4 * i + 0], g = ip[4 * i + 1], b = ip[4 * i + 2];
+      float o0 = m[0] * r + m[1] * g + m[2] * b;
+      float o1 = m[3] * r + m[4] * g + m[5] * b;
+      float o2 = m[6] * r + m[7] * g + m[8] * b;
+      if (clamp_nonneg) {
+        if (o0 < 0.0f) o0 = 0.0f;
+        if (o1 < 0.0f) o1 = 0.0f;
+        if (o2 < 0.0f) o2 = 0.0f;
+      }
+      op[4 * i + 0] = o0;
+      op[4 * i + 1] = o1;
+      op[4 * i + 2] = o2;
+      op[4 * i + 3] = ip[4 * i + 3];
+    }
+  }
+}
+}  // namespace
 
 // From https://www.nayuki.io/page/srgb-transform-library --------------------
 /*
@@ -711,56 +753,12 @@ bool linear_displayp3_to_linear_sRGB(const std::vector<float> &in_img, size_t wi
 
 
 
-  if (channels == 3) {
-    for (size_t y = 0; y < height; y++) {
-      for (size_t x = 0; x < width; x++) {
-        float r, g, b;
-        r = in_img[3 * (y * width + x) + 0];
-        g = in_img[3 * (y * width + x) + 1];
-        b = in_img[3 * (y * width + x) + 2];
-
-        float out_rgb[3];
-        out_rgb[0] = 1.2249f * r - 0.2247f * g;
-        out_rgb[1] = -0.0420f * r + 1.0419f * g;
-        out_rgb[2] = -0.0197f * r - 0.0786f * g + 1.0979f * b;
-
-        // clamp
-        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
-        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
-        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
-
-        (*out_img)[3 * (y * width + x) + 0] = out_rgb[0];
-        (*out_img)[3 * (y * width + x) + 1] = out_rgb[1];
-        (*out_img)[3 * (y * width + x) + 2] = out_rgb[2];
-      }
-    }
-
-  } else { // rgba
-    for (size_t y = 0; y < height; y++) {
-      for (size_t x = 0; x < width; x++) {
-        float r, g, b, a;
-        r = in_img[4 * (y * width + x) + 0];
-        g = in_img[4 * (y * width + x) + 1];
-        b = in_img[4 * (y * width + x) + 2];
-        a = in_img[4 * (y * width + x) + 3];
-
-        float out_rgb[3];
-        out_rgb[0] = 1.2249f * r - 0.2247f * g;
-        out_rgb[1] = -0.0420f * r + 1.0419f * g;
-        out_rgb[2] = -0.0197f * r - 0.0786f * g + 1.0979f * b;
-
-        // clamp
-        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
-        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
-        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
-
-        (*out_img)[4 * (y * width + x) + 0] = out_rgb[0];
-        (*out_img)[4 * (y * width + x) + 1] = out_rgb[1];
-        (*out_img)[4 * (y * width + x) + 2] = out_rgb[2];
-        (*out_img)[4 * (y * width + x) + 3] = a;
-      }
-    }
-  }
+  // Display P3 (linear) -> sRGB (linear), clamped to >= 0.
+  const float M[9] = {1.2249f,  -0.2247f, 0.0f,
+                      -0.0420f, 1.0419f,  0.0f,
+                      -0.0197f, -0.0786f, 1.0979f};
+  ApplyColorMatrix(in_img, out_img, width * height, channels, M,
+                   /*clamp_nonneg=*/true);
 
   return true;
 }
@@ -803,56 +801,12 @@ bool linear_sRGB_to_linear_displayp3(const std::vector<float> &in_img, size_t wi
   // http://endavid.com/index.php?entry=79
   // https://tech.metail.com/introduction-colour-spaces-dci-p3/
 
-  if (channels == 3) {
-    for (size_t y = 0; y < height; y++) {
-      for (size_t x = 0; x < width; x++) {
-        float r, g, b;
-        r = in_img[3 * (y * width + x) + 0];
-        g = in_img[3 * (y * width + x) + 1];
-        b = in_img[3 * (y * width + x) + 2];
-
-        float out_rgb[3];
-        out_rgb[0] = 0.8225f * r + 0.1774f * g;
-        out_rgb[1] = 0.0332f * r + 0.9669f * g;
-        out_rgb[2] = 0.0171f * r + 0.0724f * g + 0.9108f * b;
-
-        // clamp for just in case.
-        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
-        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
-        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
-
-        (*out_img)[3 * (y * width + x) + 0] = out_rgb[0];
-        (*out_img)[3 * (y * width + x) + 1] = out_rgb[1];
-        (*out_img)[3 * (y * width + x) + 2] = out_rgb[2];
-      }
-    }
-
-  } else { // rgba
-    for (size_t y = 0; y < height; y++) {
-      for (size_t x = 0; x < width; x++) {
-        float r, g, b, a;
-        r = in_img[4 * (y * width + x) + 0];
-        g = in_img[4 * (y * width + x) + 1];
-        b = in_img[4 * (y * width + x) + 2];
-        a = in_img[4 * (y * width + x) + 3];
-
-        float out_rgb[3];
-        out_rgb[0] = 0.8225f * r + 0.1774f * g;
-        out_rgb[1] = 0.0332f * r + 0.9669f * g;
-        out_rgb[2] = 0.0171f * r + 0.0724f * g + 0.9108f * b;
-
-        // clamp for just in case.
-        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
-        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
-        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
-
-        (*out_img)[4 * (y * width + x) + 0] = out_rgb[0];
-        (*out_img)[4 * (y * width + x) + 1] = out_rgb[1];
-        (*out_img)[4 * (y * width + x) + 2] = out_rgb[2];
-        (*out_img)[4 * (y * width + x) + 3] = a;
-      }
-    }
-  }
+  // sRGB (linear) -> Display P3 (linear), clamped to >= 0.
+  const float M[9] = {0.8225f, 0.1774f, 0.0f,
+                      0.0332f, 0.9669f, 0.0f,
+                      0.0171f, 0.0724f, 0.9108f};
+  ApplyColorMatrix(in_img, out_img, width * height, channels, M,
+                   /*clamp_nonneg=*/true);
 
   return true;
 }
@@ -898,56 +852,12 @@ bool linear_sRGB_to_ACEScg(const std::vector<float> &in_img, size_t width,
   // https://computergraphics.stackexchange.com/questions/9834/how-to-convert-from-xyz-or-srgb-to-acescg-ap1
   // https://gist.github.com/Opioid/442d4975a23eed9a9e129bc3de97ea2a
 
-  if (channels == 3) {
-    for (size_t y = 0; y < height; y++) {
-      for (size_t x = 0; x < width; x++) {
-        float r, g, b;
-        r = in_img[3 * (y * width + x) + 0];
-        g = in_img[3 * (y * width + x) + 1];
-        b = in_img[3 * (y * width + x) + 2];
-
-        float out_rgb[3];
-        out_rgb[0] = 0.6130973f * r + 0.33952285f * g +  0.04737928f * b;
-        out_rgb[1] = 0.07019422f * r + 0.91635557f * g + 0.01345259f * b;
-        out_rgb[2] = 0.0206156f * r + 0.10956983f * g + 0.86981512f  *b;
-
-        // clamp negative value just in case.
-        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
-        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
-        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
-
-        (*out_img)[3 * (y * width + x) + 0] = out_rgb[0];
-        (*out_img)[3 * (y * width + x) + 1] = out_rgb[1];
-        (*out_img)[3 * (y * width + x) + 2] = out_rgb[2];
-      }
-    }
-
-  } else { // rgba
-    for (size_t y = 0; y < height; y++) {
-      for (size_t x = 0; x < width; x++) {
-        float r, g, b, a;
-        r = in_img[4 * (y * width + x) + 0];
-        g = in_img[4 * (y * width + x) + 1];
-        b = in_img[4 * (y * width + x) + 2];
-        a = in_img[4 * (y * width + x) + 3];
-
-        float out_rgb[3];
-        out_rgb[0] = 0.6130973f * r + 0.33952285f * g +  0.04737928f * b;
-        out_rgb[1] = 0.07019422f * r + 0.91635557f * g + 0.01345259f * b;
-        out_rgb[2] = 0.0206156f * r + 0.10956983f * g + 0.86981512f  *b;
-
-        // clamp for just in case.
-        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
-        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
-        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
-
-        (*out_img)[4 * (y * width + x) + 0] = out_rgb[0];
-        (*out_img)[4 * (y * width + x) + 1] = out_rgb[1];
-        (*out_img)[4 * (y * width + x) + 2] = out_rgb[2];
-        (*out_img)[4 * (y * width + x) + 3] = a;
-      }
-    }
-  }
+  // sRGB (linear) -> ACEScg (AP1), clamped to >= 0.
+  const float M[9] = {0.6130973f,  0.33952285f, 0.04737928f,
+                      0.07019422f, 0.91635557f, 0.01345259f,
+                      0.0206156f,  0.10956983f, 0.86981512f};
+  ApplyColorMatrix(in_img, out_img, width * height, channels, M,
+                   /*clamp_nonneg=*/true);
 
   return true;
 }
@@ -991,57 +901,12 @@ bool ACEScg_to_linear_sRGB(const std::vector<float> &in_img, size_t width,
   // 
   // https://www.shadertoy.com/view/WltSRB
 
-  if (channels == 3) {
-    for (size_t y = 0; y < height; y++) {
-      for (size_t x = 0; x < width; x++) {
-        float r, g, b;
-        r = in_img[3 * (y * width + x) + 0];
-        g = in_img[3 * (y * width + x) + 1];
-        b = in_img[3 * (y * width + x) + 2];
-
-        float out_rgb[3];
-        out_rgb[0] =  1.705052f * r -0.621792f * g   -0.083258f * b;
-        out_rgb[1] = -0.130257f * r + 1.140805f * g - 0.010548f * b;
-
-        out_rgb[2] = -0.024004f * r -0.128969f *g + 1.152972f * b;
-
-        // clamp negative
-        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
-        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
-        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
-
-        (*out_img)[3 * (y * width + x) + 0] = out_rgb[0];
-        (*out_img)[3 * (y * width + x) + 1] = out_rgb[1];
-        (*out_img)[3 * (y * width + x) + 2] = out_rgb[2];
-      }
-    }
-
-  } else { // rgba
-    for (size_t y = 0; y < height; y++) {
-      for (size_t x = 0; x < width; x++) {
-        float r, g, b, a;
-        r = in_img[4 * (y * width + x) + 0];
-        g = in_img[4 * (y * width + x) + 1];
-        b = in_img[4 * (y * width + x) + 2];
-        a = in_img[4 * (y * width + x) + 3];
-
-        float out_rgb[3];
-        out_rgb[0] =  1.705052f * r -0.621792f * g   -0.083258f * b;
-        out_rgb[1] = -0.130257f * r + 1.140805f * g - 0.010548f * b;
-        out_rgb[2] = -0.024004f * r -0.128969f *g + 1.152972f * b;
-
-        // clamp negative value
-        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
-        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
-        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
-
-        (*out_img)[4 * (y * width + x) + 0] = out_rgb[0];
-        (*out_img)[4 * (y * width + x) + 1] = out_rgb[1];
-        (*out_img)[4 * (y * width + x) + 2] = out_rgb[2];
-        (*out_img)[4 * (y * width + x) + 3] = a;
-      }
-    }
-  }
+  // ACEScg (AP1) -> sRGB (linear), clamped to >= 0.
+  const float M[9] = {1.705052f,  -0.621792f, -0.083258f,
+                      -0.130257f, 1.140805f,  -0.010548f,
+                      -0.024004f, -0.128969f, 1.152972f};
+  ApplyColorMatrix(in_img, out_img, width * height, channels, M,
+                   /*clamp_nonneg=*/true);
 
   return true;
 }
@@ -1309,55 +1174,12 @@ bool linear_rec2020_to_linear_sRGB(const std::vector<float> &in_img, size_t widt
   // sRGB: R(0.64, 0.33), G(0.30, 0.60), B(0.15, 0.06)
   // Matrix values from: https://www.itu.int/rec/R-REC-BT.2020/en
 
-  if (channels == 3) {
-    for (size_t y = 0; y < height; y++) {
-      for (size_t x = 0; x < width; x++) {
-        float r = in_img[3 * (y * width + x) + 0];
-        float g = in_img[3 * (y * width + x) + 1];
-        float b = in_img[3 * (y * width + x) + 2];
-
-        // Rec.2020 to XYZ to sRGB conversion matrix
-        float out_rgb[3];
-        out_rgb[0] =  1.6604910f * r - 0.5876411f * g - 0.0728499f * b;
-        out_rgb[1] = -0.1245505f * r + 1.1328999f * g - 0.0083494f * b;
-        out_rgb[2] = -0.0181508f * r - 0.1005789f * g + 1.1187297f * b;
-
-        // Clamp negative values
-        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
-        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
-        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
-
-        (*out_img)[3 * (y * width + x) + 0] = out_rgb[0];
-        (*out_img)[3 * (y * width + x) + 1] = out_rgb[1];
-        (*out_img)[3 * (y * width + x) + 2] = out_rgb[2];
-      }
-    }
-  } else { // rgba
-    for (size_t y = 0; y < height; y++) {
-      for (size_t x = 0; x < width; x++) {
-        float r = in_img[4 * (y * width + x) + 0];
-        float g = in_img[4 * (y * width + x) + 1];
-        float b = in_img[4 * (y * width + x) + 2];
-        float a = in_img[4 * (y * width + x) + 3];
-
-        // Rec.2020 to XYZ to sRGB conversion matrix
-        float out_rgb[3];
-        out_rgb[0] =  1.6604910f * r - 0.5876411f * g - 0.0728499f * b;
-        out_rgb[1] = -0.1245505f * r + 1.1328999f * g - 0.0083494f * b;
-        out_rgb[2] = -0.0181508f * r - 0.1005789f * g + 1.1187297f * b;
-
-        // Clamp negative values
-        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
-        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
-        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
-
-        (*out_img)[4 * (y * width + x) + 0] = out_rgb[0];
-        (*out_img)[4 * (y * width + x) + 1] = out_rgb[1];
-        (*out_img)[4 * (y * width + x) + 2] = out_rgb[2];
-        (*out_img)[4 * (y * width + x) + 3] = a;
-      }
-    }
-  }
+  // Rec.2020 (linear) -> sRGB (linear), clamped to >= 0.
+  const float M[9] = {1.6604910f,  -0.5876411f, -0.0728499f,
+                      -0.1245505f, 1.1328999f,  -0.0083494f,
+                      -0.0181508f, -0.1005789f, 1.1187297f};
+  ApplyColorMatrix(in_img, out_img, width * height, channels, M,
+                   /*clamp_nonneg=*/true);
 
   return true;
 }
@@ -1395,48 +1217,12 @@ bool linear_sRGB_to_linear_rec2020(const std::vector<float> &in_img, size_t widt
   // Color space conversion matrix from sRGB to Rec.2020
   // This is the inverse of the Rec.2020 to sRGB matrix
 
-  if (channels == 3) {
-    for (size_t y = 0; y < height; y++) {
-      for (size_t x = 0; x < width; x++) {
-        float r = in_img[3 * (y * width + x) + 0];
-        float g = in_img[3 * (y * width + x) + 1];
-        float b = in_img[3 * (y * width + x) + 2];
-
-        // sRGB to XYZ to Rec.2020 conversion matrix
-        float out_rgb[3];
-        out_rgb[0] = 0.6274040f * r + 0.3292820f * g + 0.0433136f * b;
-        out_rgb[1] = 0.0690970f * r + 0.9195404f * g + 0.0113612f * b;
-        out_rgb[2] = 0.0163916f * r + 0.0880133f * g + 0.8955950f * b;
-
-        // No need to clamp as this conversion shouldn't produce negative values
-        // when input is valid sRGB
-
-        (*out_img)[3 * (y * width + x) + 0] = out_rgb[0];
-        (*out_img)[3 * (y * width + x) + 1] = out_rgb[1];
-        (*out_img)[3 * (y * width + x) + 2] = out_rgb[2];
-      }
-    }
-  } else { // rgba
-    for (size_t y = 0; y < height; y++) {
-      for (size_t x = 0; x < width; x++) {
-        float r = in_img[4 * (y * width + x) + 0];
-        float g = in_img[4 * (y * width + x) + 1];
-        float b = in_img[4 * (y * width + x) + 2];
-        float a = in_img[4 * (y * width + x) + 3];
-
-        // sRGB to XYZ to Rec.2020 conversion matrix
-        float out_rgb[3];
-        out_rgb[0] = 0.6274040f * r + 0.3292820f * g + 0.0433136f * b;
-        out_rgb[1] = 0.0690970f * r + 0.9195404f * g + 0.0113612f * b;
-        out_rgb[2] = 0.0163916f * r + 0.0880133f * g + 0.8955950f * b;
-
-        (*out_img)[4 * (y * width + x) + 0] = out_rgb[0];
-        (*out_img)[4 * (y * width + x) + 1] = out_rgb[1];
-        (*out_img)[4 * (y * width + x) + 2] = out_rgb[2];
-        (*out_img)[4 * (y * width + x) + 3] = a;
-      }
-    }
-  }
+  // sRGB (linear) -> Rec.2020 (linear). No clamp (valid sRGB stays non-negative).
+  const float M[9] = {0.6274040f, 0.3292820f, 0.0433136f,
+                      0.0690970f, 0.9195404f, 0.0113612f,
+                      0.0163916f, 0.0880133f, 0.8955950f};
+  ApplyColorMatrix(in_img, out_img, width * height, channels, M,
+                   /*clamp_nonneg=*/false);
 
   return true;
 }
@@ -1717,45 +1503,12 @@ bool linear_sRGB_to_ACES2065_1(const std::vector<float> &in_img, size_t width,
   // Reference: https://www.oscars.org/science-technology/sci-tech-projects/aces
   // Matrix from sRGB primaries to ACES AP0 primaries
 
-  if (channels == 3) {
-    for (size_t y = 0; y < height; y++) {
-      for (size_t x = 0; x < width; x++) {
-        float r = in_img[3 * (y * width + x) + 0];
-        float g = in_img[3 * (y * width + x) + 1];
-        float b = in_img[3 * (y * width + x) + 2];
-
-        // sRGB to ACES 2065-1 (AP0) conversion matrix
-        float out_rgb[3];
-        out_rgb[0] = 0.4397010f * r + 0.3829780f * g + 0.1773350f * b;
-        out_rgb[1] = 0.0897923f * r + 0.8134207f * g + 0.0967616f * b;
-        out_rgb[2] = 0.0175440f * r + 0.1115440f * g + 0.8707127f * b;
-
-        (*out_img)[3 * (y * width + x) + 0] = out_rgb[0];
-        (*out_img)[3 * (y * width + x) + 1] = out_rgb[1];
-        (*out_img)[3 * (y * width + x) + 2] = out_rgb[2];
-      }
-    }
-  } else { // rgba
-    for (size_t y = 0; y < height; y++) {
-      for (size_t x = 0; x < width; x++) {
-        float r = in_img[4 * (y * width + x) + 0];
-        float g = in_img[4 * (y * width + x) + 1];
-        float b = in_img[4 * (y * width + x) + 2];
-        float a = in_img[4 * (y * width + x) + 3];
-
-        // sRGB to ACES 2065-1 (AP0) conversion matrix
-        float out_rgb[3];
-        out_rgb[0] = 0.4397010f * r + 0.3829780f * g + 0.1773350f * b;
-        out_rgb[1] = 0.0897923f * r + 0.8134207f * g + 0.0967616f * b;
-        out_rgb[2] = 0.0175440f * r + 0.1115440f * g + 0.8707127f * b;
-
-        (*out_img)[4 * (y * width + x) + 0] = out_rgb[0];
-        (*out_img)[4 * (y * width + x) + 1] = out_rgb[1];
-        (*out_img)[4 * (y * width + x) + 2] = out_rgb[2];
-        (*out_img)[4 * (y * width + x) + 3] = a;
-      }
-    }
-  }
+  // sRGB (linear) -> ACES 2065-1 (AP0). No clamp (matches original).
+  const float M[9] = {0.4397010f, 0.3829780f, 0.1773350f,
+                      0.0897923f, 0.8134207f, 0.0967616f,
+                      0.0175440f, 0.1115440f, 0.8707127f};
+  ApplyColorMatrix(in_img, out_img, width * height, channels, M,
+                   /*clamp_nonneg=*/false);
 
   return true;
 }
@@ -1793,55 +1546,12 @@ bool ACES2065_1_to_linear_sRGB(const std::vector<float> &in_img, size_t width,
   // ACES 2065-1 (AP0) to sRGB/Rec.709 conversion matrix
   // This is the inverse of the sRGB to ACES 2065-1 matrix
 
-  if (channels == 3) {
-    for (size_t y = 0; y < height; y++) {
-      for (size_t x = 0; x < width; x++) {
-        float r = in_img[3 * (y * width + x) + 0];
-        float g = in_img[3 * (y * width + x) + 1];
-        float b = in_img[3 * (y * width + x) + 2];
-
-        // ACES 2065-1 (AP0) to sRGB conversion matrix
-        float out_rgb[3];
-        out_rgb[0] =  2.5216490f * r - 1.1368901f * g - 0.3847580f * b;
-        out_rgb[1] = -0.2764799f * r + 1.3727190f * g - 0.0962386f * b;
-        out_rgb[2] = -0.0153780f * r - 0.1529968f * g + 1.1683748f * b;
-
-        // Clamp negative values
-        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
-        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
-        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
-
-        (*out_img)[3 * (y * width + x) + 0] = out_rgb[0];
-        (*out_img)[3 * (y * width + x) + 1] = out_rgb[1];
-        (*out_img)[3 * (y * width + x) + 2] = out_rgb[2];
-      }
-    }
-  } else { // rgba
-    for (size_t y = 0; y < height; y++) {
-      for (size_t x = 0; x < width; x++) {
-        float r = in_img[4 * (y * width + x) + 0];
-        float g = in_img[4 * (y * width + x) + 1];
-        float b = in_img[4 * (y * width + x) + 2];
-        float a = in_img[4 * (y * width + x) + 3];
-
-        // ACES 2065-1 (AP0) to sRGB conversion matrix
-        float out_rgb[3];
-        out_rgb[0] =  2.5216490f * r - 1.1368901f * g - 0.3847580f * b;
-        out_rgb[1] = -0.2764799f * r + 1.3727190f * g - 0.0962386f * b;
-        out_rgb[2] = -0.0153780f * r - 0.1529968f * g + 1.1683748f * b;
-
-        // Clamp negative values
-        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
-        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
-        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
-
-        (*out_img)[4 * (y * width + x) + 0] = out_rgb[0];
-        (*out_img)[4 * (y * width + x) + 1] = out_rgb[1];
-        (*out_img)[4 * (y * width + x) + 2] = out_rgb[2];
-        (*out_img)[4 * (y * width + x) + 3] = a;
-      }
-    }
-  }
+  // ACES 2065-1 (AP0) -> sRGB (linear), clamped to >= 0.
+  const float M[9] = {2.5216490f,  -1.1368901f, -0.3847580f,
+                      -0.2764799f, 1.3727190f,  -0.0962386f,
+                      -0.0153780f, -0.1529968f, 1.1683748f};
+  ApplyColorMatrix(in_img, out_img, width * height, channels, M,
+                   /*clamp_nonneg=*/true);
 
   return true;
 }

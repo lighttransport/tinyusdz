@@ -20,6 +20,8 @@ set(TEST_SOURCES
 	unit-minijson.cc
 	unit-materialx.cc
 	unit-task-queue.cc
+	unit-png-stream.cc
+	unit-imageproc.cc
 	unit-tydra.cc
 	unit-tydra-subdivision.cc
 	unit-subdiv-tinyusdz.cc
