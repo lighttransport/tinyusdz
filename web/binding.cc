@@ -8742,6 +8742,13 @@ emscripten::val convertImage(const emscripten::val& data,
         }
       }
       const bool wantResize = (tw > 0 && th > 0 && (tw != W || th != H));
+      // Resize colorspace: "srgb" resamples sRGB color textures in linear light
+      // (correct downsampling, avoids the gamma-space darkening of mipmaps).
+      // Default keeps gamma-space (linear-filter) resampling, which matches the
+      // legacy path AND is correct for linear DATA maps (normal / ORM / height)
+      // — forcing sRGB on those would corrupt them, so this is opt-in.
+      const std::string rcs = optStr(opts, "resizeColorspace", "");
+      const bool resizeSrgb = (rcs == "srgb");
       // Optional sRGB<->linear colorspace conversion (no-resize PNG path).
       const std::string cs = optStr(opts, "colorspace", "");
       const bool wantCS = (cs == "srgb-to-linear" || cs == "srgbToLinear" ||
@@ -8771,11 +8778,11 @@ emscripten::val convertImage(const emscripten::val& data,
           return result;
         }
       } else {
-        // Linear filtering matches ResizeImage(Auto): a freshly decoded PNG has
-        // no colorspace metadata, so LooksSRGB() is false -> linear.
+        // srgb=false (linear) matches ResizeImage(Auto) on a colorspace-less PNG;
+        // resizeColorspace:"srgb" opts into linear-light resampling.
         if (tinyusdz::imageio::ResizePNG(buffer.data(), buffer.size(),
                                          (uint32_t)tw, (uint32_t)th,
-                                         /*srgb=*/false, trans)) {
+                                         resizeSrgb, trans)) {
           result.set("success", true);
           result.set("width", rd32(trans.data() + 16));
           result.set("height", rd32(trans.data() + 20));
@@ -8804,6 +8811,10 @@ emscripten::val convertImage(const emscripten::val& data,
   const std::string format = optStr(opts, "format", "png");
   const std::string pngEnc = optStr(opts, "pngEncoder", "auto");
   const int jpegQ = optInt(opts, "jpegQuality", 90);
+  // resizeColorspace:"srgb" resamples in linear light (correct for sRGB color
+  // textures); default keeps gamma-space (Auto -> linear on colorspace-less
+  // images), correct for linear data maps.
+  const bool resizeSrgb = optStr(opts, "resizeColorspace", "") == "srgb";
 
   // Resize works for both 8-bit (LDR) and fp32 (HDR/EXR) images now.
   bool resized = false;
@@ -8818,7 +8829,9 @@ emscripten::val convertImage(const emscripten::val& data,
     }
     if (tw > 0 && th > 0 && (tw != img.width || th != img.height)) {
       Image out; std::string rerr;
-      if (tydra::ResizeImage(img, tw, th, &out, tydra::ResizeFilter::Auto, &rerr)) {
+      const tydra::ResizeFilter rfilter =
+          resizeSrgb ? tydra::ResizeFilter::SRGB : tydra::ResizeFilter::Auto;
+      if (tydra::ResizeImage(img, tw, th, &out, rfilter, &rerr)) {
         img = std::move(out);
         resized = true;
       } else {

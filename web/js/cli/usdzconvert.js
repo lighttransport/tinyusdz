@@ -38,6 +38,10 @@ Convert options:
   -o, --output <file>      Output .usdz path (default: <root>.usdz)
   --root <relpath>         Root USD layer within the input dir (default: auto)
   --resize <N>             Cap each texture's longest edge to N pixels
+  --resize-colorspace <s>  'srgb' = resample in linear light (correct for sRGB
+                           color textures); default = gamma-space (correct for
+                           linear data maps: normal/ORM/height). Applies to all
+                           resized textures, so use only when they're sRGB color.
   --texture-format <fmt>   Texture output: keep, png, jpeg (default: keep)
   --root-layer-format <fmt> USDZ root layer: usdc, usda (default: usdc)
   --arkit-compatible       Force ARKit-friendly flattened USDC package metadata
@@ -89,7 +93,7 @@ function parseArgs() {
   const args = process.argv.slice(2);
   const o = {
     input: null, output: null, root: null, resize: 0, jpegQuality: 90,
-    pngEncoder: 'auto', reencode: true, verbose: false,
+    pngEncoder: 'auto', reencode: true, verbose: false, resizeColorspace: '',
     textureFormat: 'keep', rootLayerFormat: 'usdc', arkitCompatible: false,
     flatten: true,
     targetSize: 0, fitStrategy: 'size', fitMinSize: 64, fitMinQuality: 30,
@@ -106,6 +110,7 @@ function parseArgs() {
     else if (a === '-o' || a === '--output') o.output = args[++i];
     else if (a === '--root') o.root = args[++i];
     else if (a === '--resize') o.resize = parseInt(args[++i], 10) || 0;
+    else if (a === '--resize-colorspace') o.resizeColorspace = args[++i];
     else if (a === '--texture-format') o.textureFormat = args[++i];
     else if (a === '--root-layer-format') o.rootLayerFormat = args[++i];
     else if (a === '--arkit-compatible') o.arkitCompatible = true;
@@ -242,6 +247,7 @@ async function main() {
   const { usdz, streamedToSink, stats } = await convertFolderToUSDZ(native, assetMap, {
     rootPath: rootRel,
     maxTextureSize: o.resize,
+    resizeColorspace: o.resizeColorspace,
     targetTextureBytes: o.targetSize,
     fitStrategy: o.fitStrategy,
     fitMinTextureSize: o.fitMinSize,
