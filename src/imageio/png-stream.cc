@@ -29,8 +29,19 @@ inline uint8_t paeth(int a, int b, int c) {
   return (uint8_t)c;
 }
 
+// Upper bound on width/height for the streaming codec. Rejecting larger images
+// (caller falls back to the whole-image codec) keeps every row-based size
+// computation (row_bytes = width * up-to-8 bytes, sample/swap rows) far below a
+// 32-bit size_t, so a malicious PNG/IHDR cannot integer-overflow an allocation
+// into a heap overflow on wasm32. 65536 is well beyond any real texture.
+constexpr uint32_t kMaxDim = 1u << 16;
+
 bool DeriveLayout(const PngImageInfo &in, PngImageInfo *out) {
   uint8_t ct = in.color_type, bd = in.bit_depth;
+  if (in.width == 0 || in.height == 0 || in.width > kMaxDim ||
+      in.height > kMaxDim) {
+    return false;  // reject absurd dimensions -> caller falls back
+  }
   uint8_t channels;
   if (ct == 0) channels = 1;
   else if (ct == 2) channels = 3;
@@ -552,6 +563,7 @@ bool ConvertColorspacePNG(const uint8_t *data, size_t size, ColorspaceXform xf,
 bool ResizePNG(const uint8_t *data, size_t size, uint32_t out_w, uint32_t out_h,
                bool srgb, std::vector<uint8_t> &out) {
   if (out_w == 0 || out_h == 0) return false;
+  if (out_w > kMaxDim || out_h > kMaxDim) return false;  // bound output buffers
   PngScanlineReader reader;
   if (!reader.Open(data, size)) return false;
   const PngImageInfo &in = reader.info();
