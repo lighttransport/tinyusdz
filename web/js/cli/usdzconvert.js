@@ -13,8 +13,18 @@ import path from 'node:path';
 import { convertFolderToUSDZ, loadWasm, parseByteSize } from '../src/usdzconvert.js';
 
 // Load the Emscripten glue directly (no three.js / vite-node dependency) so the
-// CLI runs with plain `node`.
-const wasmGlue = new URL('../src/tinyusdz/tinyusdz.js', import.meta.url).href;
+// CLI runs with plain `node`. TINYUSDZ_WASM64=1 selects the 64-bit (8 GB) glue
+// — used as a fallback for scenes that overflow the wasm32 2 GB ceiling. Falls
+// back to the 32-bit glue if the 64-bit build is not present.
+function selectWasmGlue() {
+  if (process.env.TINYUSDZ_WASM64 === '1') {
+    const url64 = new URL('../src/tinyusdz/tinyusdz_64.js', import.meta.url);
+    if (fs.existsSync(url64)) return url64.href;
+    console.error('[usdzconvert] TINYUSDZ_WASM64=1 but tinyusdz_64.js not found; using wasm32.');
+  }
+  return new URL('../src/tinyusdz/tinyusdz.js', import.meta.url).href;
+}
+const wasmGlue = selectWasmGlue();
 
 function printHelp() {
   console.log(`
@@ -37,6 +47,19 @@ Convert options:
                            (0 = keep the conservative ~100 MB WASM default).
                            Needed for very large scenes.
   --max-mem-mb <N>         Raise the USDC writer memory cap to N MB (0 = default)
+  --pipeline <legacy|next> Flatten pipeline (default: legacy). 'next' uses the
+                           experimental low-memory lazy-ValueRep path for a single
+                           .usdz with a top-level USDC root; falls back to legacy
+                           otherwise. Also via TINYUSDZ_PIPELINE env.
+  --stream-textures        Re-encode/resize textures one at a time and repack in
+                           JS, so decoded images never accumulate in the WASM
+                           heap. This is the DEFAULT for a single .usdz with
+                           --texture-format keep + re-encode/resize (it keeps
+                           large texture-heavy scenes under the wasm32
+                           2 GB ceiling). The flag forces it; otherwise it is
+                           auto-enabled and falls back for nested roots / non-keep
+                           formats.
+  --no-stream-textures     Force the in-heap batch texture path (higher memory).
   --png-encoder <fpnge|fpng|auto>  PNG encoder hint (WASM always uses fpng)
   --no-reencode            Copy unmodified textures through unchanged
   -v, --verbose            Verbose logging
@@ -71,6 +94,10 @@ function parseArgs() {
     flatten: true,
     targetSize: 0, fitStrategy: 'size', fitMinSize: 64, fitMinQuality: 30,
     maxUsdcMb: 0, maxMemMb: 0,
+    pipeline: process.env.TINYUSDZ_PIPELINE || 'legacy',
+    // undefined => auto (stream textures for a single .usdz keep-format re-encode,
+    // the low-memory default); true => force; false => force the in-heap path.
+    streamTextures: undefined,
     repack: null, packChannels: 0, pack: { R: null, G: null, B: null, A: null },
   };
   for (let i = 0; i < args.length; i++) {
@@ -92,6 +119,9 @@ function parseArgs() {
     else if (a === '--fit-min-quality') o.fitMinQuality = parseInt(args[++i], 10) || 30;
     else if (a === '--max-usdc-mb') o.maxUsdcMb = parseInt(args[++i], 10) || 0;
     else if (a === '--max-mem-mb') o.maxMemMb = parseInt(args[++i], 10) || 0;
+    else if (a === '--pipeline') o.pipeline = args[++i];
+    else if (a === '--stream-textures') o.streamTextures = true;
+    else if (a === '--no-stream-textures') o.streamTextures = false;
     else if (a === '-v' || a === '--verbose') o.verbose = true;
     else if (a === '--repack') o.repack = args[++i];
     else if (a === '--pack-channels') o.packChannels = parseInt(args[++i], 10) || 0;
@@ -194,7 +224,22 @@ async function main() {
   }
 
   const log = o.verbose ? (m) => console.log(m) : () => {};
-  const { usdz, stats } = await convertFolderToUSDZ(native, assetMap, {
+
+  // When an explicit -o path is given, offer a file-backed zip sink so the
+  // texture-streaming path can write the archive straight to disk (one entry at
+  // a time) instead of building the whole USDZ in memory — the lowest-peak
+  // legacy path for texture-heavy scenes. Opened lazily on first write, so if a
+  // non-streaming path runs the sink is simply never used.
+  let streamFd = null, streamBytes = 0;
+  const zipSink = o.output
+    ? (chunk) => {
+        if (streamFd === null) streamFd = fs.openSync(o.output, 'w');
+        fs.writeSync(streamFd, chunk);
+        streamBytes += chunk.length;
+      }
+    : undefined;
+
+  const { usdz, streamedToSink, stats } = await convertFolderToUSDZ(native, assetMap, {
     rootPath: rootRel,
     maxTextureSize: o.resize,
     targetTextureBytes: o.targetSize,
@@ -210,15 +255,26 @@ async function main() {
     jpegQuality: o.jpegQuality,
     maxUsdcMb: o.maxUsdcMb,
     maxMemMb: o.maxMemMb,
+    pipeline: o.pipeline,
+    streamTextures: o.streamTextures,
+    zipSink,
     log,
   });
 
-  const outPath = o.output ||
-    `${stats.rootPath.split('/').pop().replace(/\.(usd|usda|usdc|usdz)$/i, '')}.usdz`;
-  fs.writeFileSync(outPath, usdz);
-  console.log(`Wrote ${outPath} (${usdz.length} bytes) — root: ${stats.rootPath}, ` +
-              `textures: ${stats.textures}, resized: ${stats.resized}, reencoded: ${stats.reencoded}, ` +
-              `audio: ${stats.audio || 0}, other assets: ${stats.otherAssets || 0}`);
+  const statLine = `root: ${stats.rootPath}, textures: ${stats.textures}, ` +
+    `resized: ${stats.resized}, reencoded: ${stats.reencoded}, ` +
+    `audio: ${stats.audio || 0}, other assets: ${stats.otherAssets || 0}`;
+
+  if (streamedToSink && streamFd !== null) {
+    fs.closeSync(streamFd);
+    console.log(`Wrote ${o.output} (${streamBytes} bytes, streamed) — ${statLine}`);
+  } else {
+    if (streamFd !== null) fs.closeSync(streamFd);  // sink opened but path bailed
+    const outPath = o.output ||
+      `${stats.rootPath.split('/').pop().replace(/\.(usd|usda|usdc|usdz)$/i, '')}.usdz`;
+    fs.writeFileSync(outPath, usdz);
+    console.log(`Wrote ${outPath} (${usdz.length} bytes) — ${statLine}`);
+  }
 }
 
 main().catch(err => { console.error('Error:', err); process.exit(1); });

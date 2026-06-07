@@ -34,6 +34,7 @@ set(TINYUSDZ_NEXT_SOURCES
 
     # Crate (binary) reader/writer
     crate/crate-format.cc
+    crate/crate-data-source.cc
     crate/crate-reader.cc
     crate/crate-writer.cc
 
@@ -72,6 +73,9 @@ set(TINYUSDZ_NEXT_SOURCES
 
     # Composition
     composition/composition.cc
+
+    # Low-memory flatten pipeline
+    pipeline/flatten.cc
 
     # High-level API
     tinyusdz-next.cc
@@ -238,6 +242,16 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_usdc_roundtrip PRIVATE tinyusdz_next)
 
+    add_executable(test_lazy_array
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_lazy_array.cc
+    )
+    target_link_libraries(test_lazy_array PRIVATE tinyusdz_next)
+
+    add_executable(bench_lazy_mem
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/bench_lazy_mem.cc
+    )
+    target_link_libraries(bench_lazy_mem PRIVATE tinyusdz_next)
+
     add_executable(test_schemas
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_schemas.cc
     )
@@ -257,6 +271,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdz_writer.cc
     )
     target_link_libraries(test_usdz_writer PRIVATE tinyusdz_next)
+
+    add_executable(test_composition
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_composition.cc
+    )
+    target_link_libraries(test_composition PRIVATE tinyusdz_next)
 endif()
 
 # Tydra Next (render data conversion)
@@ -325,6 +344,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_usdc_roundtrip COMMAND test_usdc_roundtrip
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_lazy_array COMMAND test_lazy_array
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_schemas COMMAND test_schemas
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_schemas_ext COMMAND test_schemas_ext
@@ -332,6 +353,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     add_test(NAME next_test_usdcat_roundtrip COMMAND test_usdcat_roundtrip
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_usdz_writer COMMAND test_usdz_writer
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_composition COMMAND test_composition
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_benchmark COMMAND benchmark_next
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

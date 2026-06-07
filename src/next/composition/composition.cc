@@ -26,20 +26,42 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
                                             const std::string& anchor_path) {
   errors_.clear();
   composition_stack_.clear();
+  arc_resolved_.clear();
+  pending_graft_.clear();
+  graft_paths_.clear();
 
   auto result = std::make_unique<Layer>();
   result->meta() = root_layer.meta();
 
-  // Compose sublayers first (weakest to strongest)
+  // Pass 1 — merge local opinions (sublayers weakest-first, then the root
+  // layer strongest). Arc-free scenes are fully composed by this pass alone.
   if (!root_layer.meta().subLayers.empty()) {
     auto sublayer_base = ComposeSublayers(root_layer, anchor_path);
     if (sublayer_base) {
       ComposeLayer(*result, *sublayer_base, anchor_path, 0);
     }
   }
-
-  // Then compose root layer on top (stronger)
   ComposeLayer(*result, root_layer, anchor_path, 0);
+
+  // Pass 2 — expand composition arcs over the merged layer. Build the path
+  // index first so internal-arc / inherit / specialize lookups resolve (the
+  // layer is not finalized yet). Iterate by index up to the current count;
+  // ResolveArcsForPrim only mutates existing prims (grafted subtrees are
+  // buffered in pending_graft_ and appended afterward).
+  result->build_path_index();
+  size_t n = result->prim_count();
+  for (size_t i = 0; i < n; ++i) {
+    PrimSpec* p = result->prim_mutable(static_cast<uint32_t>(i));
+    if (p) ResolveArcsForPrim(*result, *p, anchor_path, 0);
+  }
+  // Append grafted subtree prims brought in by references/payloads.
+  for (auto& g : pending_graft_) {
+    std::string gp = g.path().str();
+    if (result->prim_at_path(gp)) continue;  // a local override already exists
+    result->add_prim(std::move(g));
+  }
+  pending_graft_.clear();
+  graft_paths_.clear();
 
   // Finalize the composed layer
   result->finalize();
@@ -119,37 +141,14 @@ bool Compositor::ComposeLayer(Layer& target, const Layer& source_layer,
 bool Compositor::ComposePrim(PrimSpec& target, const Layer& source_layer,
                               const PrimSpec& source,
                               const std::string& anchor_path, int depth) {
+  (void)source_layer;
+  (void)anchor_path;
   if (depth > options_.max_depth) return false;
-
-  // Apply composition arcs in LIVRPS strength order:
-  // Weakest first -> strongest last
-  // 1. Specializes (weakest)
-  // 2. Inherits
-  // 3. Variants
-  // 4. Payloads (if loaded)
-  // 5. References
-  // 6. Local opinions (strongest)
-
-  if (options_.resolve_specializes) {
-    if (!ApplySpecializes(target, source_layer, depth)) return false;
-  }
-
-  if (options_.resolve_inherits) {
-    if (!ApplyInherits(target, source_layer, depth)) return false;
-  }
-
-  if (options_.resolve_variants) {
-    if (!ApplyVariants(target, source_layer, depth)) return false;
-  }
-
-  if (options_.load_payloads) {
-    if (!ApplyPayloads(target, anchor_path, depth)) return false;
-  }
-
-  if (!ApplyReferences(target, anchor_path, depth)) return false;
-
+  // Pass 1 only merges local opinions across layers (sublayers + root). The
+  // stronger (later) layer's opinions are already in `target`; CopyLocalOpinions
+  // fills in only what `target` lacks. Composition arcs are expanded later in
+  // pass 2 (ResolveArcsForPrim), once the full local-opinion layer exists.
   CopyLocalOpinions(target, source);
-
   return true;
 }
 
@@ -159,18 +158,36 @@ void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source) {
     target.set_type_name(source.type_name());
   }
 
-  // Copy properties (source overrides target for time-sampled props)
+  // Copy properties (source overrides target for time-sampled props).
+  // Preserves valueless slots (connection-only / declared-only attributes),
+  // their declared type names, and connection targets for USDC fidelity.
+  PropNameTable& name_table = GetPropNameTable();
   for (const auto& slot : source.properties().slots()) {
+    const PropSlot* tgt_slot = target.property(slot.name_id);
+    if (tgt_slot) continue;  // target opinion wins (incl. time-sampled merge)
+    const std::string& pname = name_table.get(slot.name_id);
     const Value* src_val = source.property_value(slot.name_id);
     if (src_val) {
-      // Only copy if target doesn't have this property as non-time-sampled
-      const PropSlot* tgt_slot = target.property(slot.name_id);
-      if (!tgt_slot) {
-        target.add_property(slot.name_id, *src_val, slot.flags);
-      } else if (tgt_slot->flags & PropSlot::kFlagTimeSampled) {
-        // Prefer time-sampled values over static ones
-        // (in practice this is a merge, not a replacement)
-      }
+      target.add_property(slot.name_id, *src_val, slot.flags);
+    } else {
+      // No authored default: carry the typed slot across (connection-only /
+      // declared-only attribute).
+      target.add_property_slot(slot.name_id,
+                               static_cast<TypeId>(slot.value_type), slot.flags);
+    }
+    if (const std::string* tn = source.property_type_name(pname)) {
+      target.set_property_type_name(pname, *tn);
+    }
+    if (const std::vector<Path>* conns = source.connection(pname)) {
+      for (const auto& c : *conns) target.add_connection(pname, c);
+    }
+  }
+
+  // Copy relationships not already present on the target.
+  for (const auto& rel_name : source.relationship_names()) {
+    if (target.relationship(rel_name)) continue;
+    if (const std::vector<Path>* tgts = source.relationship(rel_name)) {
+      for (const auto& t : *tgts) target.add_relationship(rel_name, t);
     }
   }
 
@@ -201,181 +218,149 @@ void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source) {
   }
 }
 
-bool Compositor::ApplyReferences(PrimSpec& prim, const std::string& anchor_path,
-                                  int depth) {
-  (void)depth;
-  const auto& refs = prim.meta().references;
-  if (refs.empty()) return true;
+void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
+                                    const std::string& anchor_path, int depth) {
+  if (depth > options_.max_depth) return;
+  const std::string self = prim.path().str();
+  // Mark before recursing: prevents infinite recursion on cycles and avoids
+  // recomposing a prim referenced by several others.
+  if (!arc_resolved_.insert(self).second) return;
 
-  for (const auto& ref_str : refs) {
-    CompositionArc arc = ParseReference(ref_str);
-
-    std::string resolved_path = arc.asset_path;
-    if (!arc.is_internal && resolver_) {
-      resolved_path = resolver_->ResolvePath(arc.asset_path, anchor_path);
+  // References (strongest arc) then payloads — both bring in a target prim's
+  // opinions plus its descendant subtree.
+  for (const auto& ref_str : prim.meta().references) {
+    ResolveRefArc(layer, prim, ParseReference(ref_str), anchor_path, depth);
+  }
+  if (options_.load_payloads) {
+    for (const auto& pl_str : prim.meta().payloads) {
+      ResolveRefArc(layer, prim, ParsePayload(pl_str), anchor_path, depth);
     }
+  }
 
-    if (CheckCycle(resolved_path)) {
-      AddError("Circular reference detected", prim.path().str(),
-               ref_str, ArcType::Reference);
-      continue;
-    }
-
-    PushStack(resolved_path);
-
-    if (arc.is_internal) {
-      // Internal reference - same layer, different prim path
-      // The referenced prim is already in the layer, nothing to load
-      // (Handled by the caller through existing prim merging)
-    } else {
-      const Layer* ref_layer = GetCachedLayer(resolved_path);
-      if (!ref_layer) {
-        AddError("Failed to load reference: " + arc.asset_path,
-                 prim.path().str(), ref_str, ArcType::Reference);
-        PopStack();
+  // Inherits — copy opinions from same-layer class prims (resolve them first).
+  if (options_.resolve_inherits) {
+    for (const auto& inh : prim.meta().inherits) {
+      PrimSpec* cls = layer.prim_at_path_mutable(inh);
+      if (!cls) {
+        AddError("Inherited class not found: " + inh, self, inh,
+                 ArcType::Inherits);
         continue;
       }
+      ResolveArcsForPrim(layer, *cls, anchor_path, depth + 1);
+      CopyLocalOpinions(prim, *cls);
+      GraftSubtree(layer, inh, self);
+    }
+  }
 
-      std::string target_path = arc.prim_path;
-      if (target_path.empty()) {
-        target_path = "/" + ref_layer->meta().defaultPrim;
-      }
+  // Variants (if the reader populated variant content).
+  if (options_.resolve_variants) {
+    ApplyVariants(prim, layer, depth);
+  }
 
-      const PrimSpec* ref_prim = ref_layer->prim_at_path(target_path);
-      if (!ref_prim) {
-        AddError("Referenced prim not found: " + target_path,
-                 prim.path().str(), ref_str, ArcType::Reference);
-        PopStack();
+  // Specializes (weakest) — same-layer, fill only what is still missing.
+  if (options_.resolve_specializes) {
+    for (const auto& sp : prim.meta().specializes) {
+      PrimSpec* spec = layer.prim_at_path_mutable(sp);
+      if (!spec) {
+        AddError("Specialized prim not found: " + sp, self, sp,
+                 ArcType::Specializes);
         continue;
       }
-
-      // Compose the referenced prim onto our prim
-      CopyLocalOpinions(prim, *ref_prim);
-
-      // Apply layer offset: adjust time sample times
-      double offset = 0.0;
-      double scale = 1.0;
-      if (!arc.layer_offset.empty()) {
-        ParseLayerOffset(arc.layer_offset, offset, scale);
-      }
-      // Layer offset is applied at evaluation time (interpolate_time_sample).
-      // Store the offset/scale on the prim's metadata so the evaluator
-      // can adjust time values when looking up time samples.
-      if (offset != 0.0 || scale != 1.0) {
-        prim.meta().layer_offset = std::make_pair(offset, scale);
-      }
+      ResolveArcsForPrim(layer, *spec, anchor_path, depth + 1);
+      CopyLocalOpinions(prim, *spec);
+      GraftSubtree(layer, sp, self);
     }
+  }
 
+  // Flatten: drop the now-resolved arcs so they are not re-emitted. Variant
+  // sets/selection are baked too (the selected opinions are now local).
+  prim.meta().references.clear();
+  prim.meta().payloads.clear();
+  prim.meta().inherits.clear();
+  prim.meta().specializes.clear();
+  prim.meta().variantSets.clear();
+  prim.meta().variantSelection.clear();
+}
+
+void Compositor::ResolveRefArc(Layer& layer, PrimSpec& prim,
+                               const CompositionArc& arc,
+                               const std::string& anchor_path, int depth) {
+  const std::string self = prim.path().str();
+
+  if (arc.is_internal) {
+    // Internal arc: target prim lives in this same composed layer.
+    const std::string& tp = arc.prim_path;
+    if (tp.empty()) return;
+    PrimSpec* target = layer.prim_at_path_mutable(tp);
+    if (!target) {
+      AddError("Internal reference target not found: " + tp, self, tp,
+               arc.type);
+      return;
+    }
+    if (tp == self) return;  // self-reference
+    ResolveArcsForPrim(layer, *target, anchor_path, depth + 1);
+    CopyLocalOpinions(prim, *target);
+    GraftSubtree(layer, tp, self);
+    return;
+  }
+
+  // External arc: load the referenced layer via the loader/cache.
+  std::string resolved = arc.asset_path;
+  if (resolver_) resolved = resolver_->ResolvePath(arc.asset_path, anchor_path);
+  if (CheckCycle(resolved)) {
+    AddError("Circular reference detected", self, arc.asset_path, arc.type);
+    return;
+  }
+  PushStack(resolved);
+  const Layer* ext = GetCachedLayer(resolved);
+  if (!ext) {
+    AddError("Failed to load reference: " + arc.asset_path, self,
+             arc.asset_path, arc.type);
     PopStack();
+    return;
   }
-
-  return true;
-}
-
-bool Compositor::ApplyPayloads(PrimSpec& prim, const std::string& anchor_path,
-                                int depth) {
-  (void)depth;
-  if (!options_.load_payloads) return true;
-
-  const auto& payloads = prim.meta().payloads;
-  if (payloads.empty()) return true;
-
-  for (const auto& payload_str : payloads) {
-    CompositionArc arc = ParsePayload(payload_str);
-
-    std::string resolved_path = arc.asset_path;
-    if (resolver_) {
-      resolved_path = resolver_->ResolvePath(arc.asset_path, anchor_path);
-    }
-
-    if (CheckCycle(resolved_path)) {
-      AddError("Circular payload detected", prim.path().str(),
-               payload_str, ArcType::Payload);
-      continue;
-    }
-
-    PushStack(resolved_path);
-
-    const Layer* payload_layer = GetCachedLayer(resolved_path);
-    if (!payload_layer) {
-      AddError("Failed to load payload: " + arc.asset_path,
-               prim.path().str(), payload_str, ArcType::Payload);
-      PopStack();
-      continue;
-    }
-
-    std::string target_path = arc.prim_path;
-    if (target_path.empty()) {
-      target_path = "/" + payload_layer->meta().defaultPrim;
-    }
-
-    const PrimSpec* payload_prim = payload_layer->prim_at_path(target_path);
-    if (!payload_prim) {
-      AddError("Payload prim not found: " + target_path,
-               prim.path().str(), payload_str, ArcType::Payload);
-      PopStack();
-      continue;
-    }
-
-    CopyLocalOpinions(prim, *payload_prim);
+  std::string tp = arc.prim_path;
+  if (tp.empty()) tp = "/" + ext->meta().defaultPrim;
+  const PrimSpec* target = ext->prim_at_path(tp);
+  if (!target) {
+    AddError("Referenced prim not found: " + tp, self, arc.asset_path, arc.type);
     PopStack();
+    return;
   }
+  CopyLocalOpinions(prim, *target);
+  GraftSubtree(*ext, tp, self);
 
-  return true;
+  // Layer offset (applied at evaluation time via prim metadata).
+  if (!arc.layer_offset.empty()) {
+    double offset = 0.0, scale = 1.0;
+    ParseLayerOffset(arc.layer_offset, offset, scale);
+    if (offset != 0.0 || scale != 1.0) {
+      prim.meta().layer_offset = std::make_pair(offset, scale);
+    }
+  }
+  PopStack();
 }
 
-bool Compositor::ApplyInherits(PrimSpec& prim, const Layer& layer, int depth) {
-  (void)depth;
-  if (!options_.resolve_inherits) return true;
-
-  const auto& inherits = prim.meta().inherits;
-  if (inherits.empty()) return true;
-
-  for (const auto& inherit_path : inherits) {
-    const PrimSpec* class_prim = layer.prim_at_path(inherit_path);
-    if (!class_prim) {
-      AddError("Inherited class not found: " + inherit_path,
-               prim.path().str(), inherit_path, ArcType::Inherits);
-      continue;
+void Compositor::GraftSubtree(const Layer& src, const std::string& src_root,
+                              const std::string& dst_root) {
+  // Copy every descendant of src_root in `src` to the matching path under
+  // dst_root, buffered in pending_graft_ (added after pass 2). Local overrides
+  // already present in the result win (checked when appending).
+  const std::string prefix = src_root + "/";
+  for (size_t i = 0; i < src.prim_count(); ++i) {
+    const PrimSpec* d = src.prim(static_cast<uint32_t>(i));
+    if (!d) continue;
+    const std::string& dp = d->path().str();
+    if (dp.size() <= prefix.size() ||
+        dp.compare(0, prefix.size(), prefix) != 0) {
+      continue;  // not a descendant of src_root
     }
-
-    CopyLocalOpinions(prim, *class_prim);
+    std::string new_path = dst_root + dp.substr(src_root.size());
+    if (!graft_paths_.insert(new_path).second) continue;  // already grafted
+    PrimSpec g = d->Clone();
+    g.set_path(Path(new_path));
+    pending_graft_.push_back(std::move(g));
   }
-
-  return true;
-}
-
-bool Compositor::ApplySpecializes(PrimSpec& prim, const Layer& layer, int depth) {
-  (void)depth;
-  if (!options_.resolve_specializes) return true;
-
-  const auto& specializes = prim.meta().specializes;
-  if (specializes.empty()) return true;
-
-  for (const auto& spec_path : specializes) {
-    const PrimSpec* spec_prim = layer.prim_at_path(spec_path);
-    if (!spec_prim) {
-      AddError("Specialized prim not found: " + spec_path,
-               prim.path().str(), spec_path, ArcType::Specializes);
-      continue;
-    }
-
-    // Specializes is weaker - only copy if target doesn't have the property
-    for (const auto& slot : spec_prim->properties().slots()) {
-      if (!prim.property(slot.name_id)) {
-        const Value* val = spec_prim->property_value(slot.name_id);
-        if (val) {
-          prim.add_property(slot.name_id, *val, slot.flags);
-        }
-      }
-    }
-
-    if (prim.type_name().empty() && !spec_prim->type_name().empty()) {
-      prim.set_type_name(spec_prim->type_name());
-    }
-  }
-
-  return true;
 }
 
 bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer, int depth) {
@@ -383,50 +368,50 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer, int depth) {
   (void)depth;
   if (!options_.resolve_variants) return true;
 
-  const std::string& var_sel = prim.meta().variantSelection;
-  if (var_sel.empty()) return true;
+  // Apply EACH variant set's selected variant (a prim may select several sets).
+  // Variant opinions are weaker than local opinions already on the prim, so use
+  // the dedup-skip-existing copy. The per-set selection is `vs.selected`; fall
+  // back to the legacy single-string `variantSelection` if that is unset.
+  VariantSelection legacy = ParseVariantSelection(prim.meta().variantSelection);
 
-  VariantSelection sel = ParseVariantSelection(var_sel);
-  if (sel.variant_set.empty() || sel.variant_name.empty()) return true;
-
-  // Find the variant set in prim's variantSets
   for (const auto& vs : prim.meta().variantSets) {
-    if (vs.name != sel.variant_set) continue;
+    std::string chosen = vs.selected;
+    if (chosen.empty() && vs.name == legacy.variant_set) {
+      chosen = legacy.variant_name;
+    }
+    if (chosen.empty()) continue;
 
-    // Find the selected variant option
     for (const auto& variant : vs.variants) {
-      if (variant.name != sel.variant_name) continue;
+      if (variant.name != chosen) continue;
 
-      // Apply variant properties
       for (const auto& [prop_name, prop_val] : variant.properties) {
-        const Value* existing = prim.property_value(prop_name);
-        if (!existing) {
+        if (!prim.property_value(prop_name)) {
           prim.add_property(prop_name, prop_val);
         }
       }
-
-      // Apply variant relationships
       for (const auto& [rel_name, targets] : variant.relationships) {
-        for (const auto& target : targets) {
-          prim.add_relationship(rel_name, target);
+        if (!prim.relationship(rel_name)) {
+          for (const auto& target : targets) prim.add_relationship(rel_name, target);
         }
       }
-
-      // Apply variant metadata
       if (!variant.doc.empty() && prim.meta().doc.empty()) {
         prim.meta().doc = variant.doc;
       }
-      prim.meta().active = variant.active;
-
-      // If the variant has nested variantSets, recurse
-      // (Variant variantSets not fully stored in this model - would need nested data)
       break;
     }
-    break;
-  }
 
-  (void)layer;
-  (void)depth;
+    // Read the selected variant's holder prim ("<prim>/{vset=sel}"): copy its
+    // own opinions (the variant's properties on the owning prim, as authored in
+    // the layer) and graft its descendant subtree (variant CHILD prims) under
+    // <prim>. (The vs.variants loop above covers in-memory model variants; this
+    // covers reader-produced variants whose content lives in the layer.)
+    const std::string holder =
+        prim.path().str() + "/{" + vs.name + "=" + chosen + "}";
+    if (const PrimSpec* h = layer.prim_at_path(holder)) {
+      CopyLocalOpinions(prim, *h);
+    }
+    GraftSubtree(layer, holder, prim.path().str());
+  }
 
   return true;
 }

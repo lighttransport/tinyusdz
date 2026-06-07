@@ -108,10 +108,38 @@ endif()
 # [tinyusdz]
 add_subdirectory(../  tinyusdz)
 
+# [tinyusdz next] Low-memory lazy-ValueRep flatten pipeline. Compiled directly
+# into the WASM module (not the standalone next lib) so it shares the main lib's
+# lz4 (avoids duplicate LZ4_* symbols). Only the sources the flatten pipeline
+# needs are listed; unused code is stripped by wasm-ld DCE.
+set(TINYUSDZ_NEXT_DIR "${PROJECT_SOURCE_DIR}/../src/next")
+list(
+  APPEND
+  NEXT_SOURCES
+  ${TINYUSDZ_NEXT_DIR}/types/type-info.cc
+  ${TINYUSDZ_NEXT_DIR}/types/value.cc
+  ${TINYUSDZ_NEXT_DIR}/types/interpolation.cc
+  ${TINYUSDZ_NEXT_DIR}/prim/path.cc
+  ${TINYUSDZ_NEXT_DIR}/prim/attribute.cc
+  ${TINYUSDZ_NEXT_DIR}/prim/prim.cc
+  ${TINYUSDZ_NEXT_DIR}/layer/property-index.cc
+  ${TINYUSDZ_NEXT_DIR}/layer/prim-spec.cc
+  ${TINYUSDZ_NEXT_DIR}/layer/layer.cc
+  ${TINYUSDZ_NEXT_DIR}/stage/stage.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-format.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-data-source.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-writer.cc
+  ${TINYUSDZ_NEXT_DIR}/composition/composition.cc
+  ${TINYUSDZ_NEXT_DIR}/resolver/asset-resolver.cc
+  ${TINYUSDZ_NEXT_DIR}/pipeline/flatten.cc
+)
+
 list(
   APPEND
   SOURCES
   binding.cc
+  ${NEXT_SOURCES}
 )
 
 
