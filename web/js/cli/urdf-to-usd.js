@@ -434,6 +434,10 @@ function parseURDFMetadata(urdfText) {
         multiplier: numberAttr(mimicEl.attrs, 'multiplier', 1),
         offset: numberAttr(mimicEl.attrs, 'offset', 0)
       };
+      // Parsed for completeness, but USD physics has no direct mimic analog and
+      // the converter does not export the coupling — make that visible.
+      console.warn(`URDF joint "${joint.name}" has a <mimic> (couples to `
+        + `"${mimicEl.attrs.joint}"); mimic coupling is not exported to USD.`);
     }
     joints.push(joint);
   }
@@ -895,6 +899,8 @@ function mujocoJointType(type) {
   if (type === 'hinge') return 'revolute';
   if (type === 'slide') return 'prismatic';
   if (type === 'free') return 'floating';
+  // ball (3-DOF rotation) -> USD PhysicsSphericalJoint (matches web/js/urdf.js).
+  if (type === 'ball') return 'spherical';
   return 'fixed';
 }
 
@@ -908,12 +914,15 @@ function parseMujocoInertial(bodyNode) {
   };
   if (full.length >= 3) {
     inertial.diagonalInertia = [full[0], full[1], full[2]];
+    if (full.length >= 6 && full.slice(3, 6).some((v) => Math.abs(v) > 1e-9)) {
+      console.warn(`MJCF body "${bodyNode.attrs?.name || '?'}" has a non-diagonal `
+        + 'fullinertia; off-diagonal terms are dropped (only the diagonal is exported).');
+    }
   } else {
-    inertial.diagonalInertia = [
-      numberAttr(inertialNode.attrs, 'diaginertia', undefined),
-      undefined,
-      undefined
-    ].filter(Number.isFinite);
+    // `diaginertia` is "Ixx Iyy Izz" — parse all three (numberAttr only reads a
+    // single Number(), which yields NaN for the multi-value string and silently
+    // dropped the inertia). Mirrors web/js/urdf.js::parseMujocoInertial.
+    inertial.diagonalInertia = parseNumbers(inertialNode.attrs.diaginertia, []);
   }
   return inertial;
 }
@@ -1293,7 +1302,14 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
     links.push(linkPayload);
 
     if (parentName) {
-      const jointNode = firstChild(bodyNode, 'joint');
+      const jointNodes = childElements(bodyNode, 'joint');
+      const jointNode = jointNodes[0] || null;
+      // MuJoCo permits multiple <joint> per body; USD joints are pairwise, so we
+      // represent the first and warn that the rest are dropped (matches urdf.js).
+      if (jointNodes.length > 1) {
+        console.warn(`MJCF body "${linkName}" has ${jointNodes.length} joints; only the `
+          + `first is converted — ${jointNodes.length - 1} DOF(s) dropped.`);
+      }
       if (jointNode) {
         const jAttrs = resolveElementAttrs(jointNode, defaults.joint, defaults.rootJoint, childclass);
         const axis = parseNumbers(jAttrs.axis, [0, 0, 1]);
