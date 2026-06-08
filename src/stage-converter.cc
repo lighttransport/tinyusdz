@@ -187,6 +187,16 @@ const Collection *GetPrimCollection(const value::Value &v) {
   GET_PRIM_COLLECTION(GeomCapsule_1)
   GET_PRIM_COLLECTION(GeomTetMesh)
   GET_PRIM_COLLECTION(GeomNurbsPatch)
+  // Lights inherit Collection (light:link / shadow:link collections).
+  GET_PRIM_COLLECTION(SphereLight)
+  GET_PRIM_COLLECTION(RectLight)
+  GET_PRIM_COLLECTION(DiskLight)
+  GET_PRIM_COLLECTION(CylinderLight)
+  GET_PRIM_COLLECTION(DistantLight)
+  GET_PRIM_COLLECTION(DomeLight)
+  GET_PRIM_COLLECTION(DomeLight_1)
+  GET_PRIM_COLLECTION(GeometryLight)
+  GET_PRIM_COLLECTION(PortalLight)
 
 #undef GET_PRIM_COLLECTION
   return nullptr;

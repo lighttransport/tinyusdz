@@ -17,6 +17,8 @@
 #include "usdShade.hh"
 #include "usdLux.hh"
 #include "usdSkel.hh"
+#include "usdPhysics.hh"
+#include "core/collection-api.hh"
 #include "core/model-scope.hh"
 #include "math-util.inc"
 
@@ -1576,4 +1578,581 @@ def BlendShape "blend" {
   TEST_CHECK(bs->offsets.authored());
   TEST_CHECK(bs->normalOffsets.authored());
   TEST_CHECK(bs->pointIndices.authored());
+}
+
+void usda_reader_physics_collisiongroup_schema_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsCollisionGroup "cg" {
+    uniform token physics:mergeGroup = "groupA"
+    uniform bool physics:invertFilteredGroups = true
+    rel physics:filteredGroups = [</cg2>]
+}
+def PhysicsCollisionGroup "cg2" {}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  auto result = stage.GetPrimAtPath(Path("/cg", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const PhysicsCollisionGroup *cg = (*result)->as<PhysicsCollisionGroup>();
+  TEST_CHECK(cg != nullptr);
+  if (!cg) return;
+
+  TEST_CHECK(cg->mergeGroup.authored());
+  value::token mg;
+  if (cg->mergeGroup.get_value(&mg)) TEST_CHECK(mg.str() == "groupA");
+  TEST_CHECK(cg->invertFilteredGroups.authored());
+  TEST_CHECK(cg->invertFilteredGroups.get_value() == true);
+  TEST_CHECK(cg->filteredGroups.authored());
+  TEST_CHECK(cg->filteredGroups.get_targetPaths().size() == 1);
+}
+
+// PhysicsRigidBodyAPI/MassAPI/CollisionAPI are applied API schemas; their props
+// live in the host prim's generic map. Verify the typed tydra getters extract
+// them. (Regression for the new GetPhysics*API helpers.)
+void usda_reader_physics_api_schemas_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def Xform "body" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsCollisionAPI"]
+)
+{
+    bool physics:rigidBodyEnabled = true
+    vector3f physics:velocity = (1, 2, 3)
+    vector3f physics:angularVelocity = (4, 5, 6)
+    float physics:mass = 2.5
+    point3f physics:centerOfMass = (0.5, 0.5, 0.5)
+    float3 physics:diagonalInertia = (1, 2, 3)
+    bool physics:collisionEnabled = false
+    rel physics:simulationOwner = [</Scene>]
+}
+def PhysicsScene "Scene" {}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  auto result = stage.GetPrimAtPath(Path("/body", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const Prim *prim = *result;
+
+  // RigidBodyAPI
+  {
+    PhysicsRigidBodyAPI rb;
+    TEST_CHECK(GetPhysicsRigidBodyAPI(*prim, &rb));
+    TEST_CHECK(rb.mass.authored());
+    if (auto v = rb.mass.get_value()) TEST_CHECK(math::is_close(*v, 2.5f));
+    TEST_CHECK(rb.velocity.authored());
+    if (rb.velocity.get_value()) {
+      value::vector3f vel;
+      if (rb.velocity.get_value().value().get_scalar(&vel)) {
+        TEST_CHECK(math::is_close(vel[0], 1.0f) && math::is_close(vel[2], 3.0f));
+      }
+    }
+    TEST_CHECK(rb.centerOfMass.authored());
+    TEST_CHECK(rb.rigidBodyEnabled.get_value() == true);
+  }
+  // MassAPI
+  {
+    PhysicsMassAPI mass;
+    TEST_CHECK(GetPhysicsMassAPI(*prim, &mass));
+    TEST_CHECK(mass.mass.authored());
+    if (mass.mass.authored()) TEST_CHECK(math::is_close(mass.mass.get_value(), 2.5f));
+    TEST_CHECK(mass.centerOfMass.authored());
+    TEST_CHECK(mass.diagonalInertia.authored());
+  }
+  // CollisionAPI
+  {
+    PhysicsCollisionAPI col;
+    TEST_CHECK(GetPhysicsCollisionAPI(*prim, &col));
+    TEST_CHECK(col.collisionEnabled.authored());
+    TEST_CHECK(col.collisionEnabled.get_value() == false);
+    TEST_CHECK(col.simulationOwner.authored());
+    TEST_CHECK(col.simulationOwner.get_targetPaths().size() == 1);
+  }
+  // Negative: a schema not in apiSchemas must report false.
+  {
+    PhysicsMaterialAPI mat;
+    TEST_CHECK(GetPhysicsMaterialAPI(*prim, &mat) == false);
+  }
+}
+
+void usda_reader_physics_material_schema_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def Material "mat" (
+    prepend apiSchemas = ["PhysicsMaterialAPI"]
+)
+{
+    float physics:staticFriction = 0.5
+    float physics:dynamicFriction = 0.4
+    float physics:restitution = 0.2
+    float physics:density = 1000
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  auto result = stage.GetPrimAtPath(Path("/mat", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+
+  PhysicsMaterialAPI matapi;
+  TEST_CHECK(GetPhysicsMaterialAPI(**result, &matapi));
+  TEST_CHECK(matapi.staticFriction.authored());
+  if (auto v = matapi.staticFriction.get_value()) TEST_CHECK(math::is_close(*v, 0.5f));
+  TEST_CHECK(matapi.dynamicFriction.authored());
+  TEST_CHECK(matapi.restitution.authored());
+  TEST_CHECK(matapi.density.authored());
+  if (auto v = matapi.density.get_value()) TEST_CHECK(math::is_close(*v, 1000.0f));
+}
+
+void usda_reader_collection_schema_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def Mesh "mesh" {
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    uniform token collection:foo:expansionRule = "expandPrimsAndProperties"
+    bool collection:foo:includeRoot = true
+    rel collection:foo:includes = [</mesh>]
+    rel collection:foo:excludes = [</other>]
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  auto result = stage.GetPrimAtPath(Path("/mesh", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const GeomMesh *mesh = (*result)->as<GeomMesh>();
+  TEST_CHECK(mesh != nullptr);
+  if (!mesh) return;
+
+  const CollectionInstance *coll = nullptr;
+  TEST_CHECK(mesh->get_instance("foo", &coll));
+  if (coll) {
+    TEST_CHECK(coll->expansionRule.get_value() ==
+               CollectionInstance::ExpansionRule::ExpandPrimsAndProperties);
+    TEST_CHECK(coll->includeRoot.authored());
+    TEST_CHECK(coll->includes.authored());
+    TEST_CHECK(coll->includes.get_targetPaths().size() == 1);
+    TEST_CHECK(coll->excludes.authored());
+    TEST_CHECK(coll->excludes.get_targetPaths().size() == 1);
+  }
+}
+
+void usda_reader_lightfilter_schema_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def LightFilter "filter" {
+    uniform token visibility = "invisible"
+}
+def PluginLightFilter "plug" {
+    uniform token light:shaderId = "MyFilterShader"
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  {
+    auto result = stage.GetPrimAtPath(Path("/filter", ""));
+    TEST_CHECK(bool(result));
+    if (result) {
+      const LightFilter *lf = (*result)->as<LightFilter>();
+      TEST_CHECK(lf != nullptr);
+      if (lf) TEST_CHECK(lf->visibility.authored());
+    }
+  }
+  {
+    auto result = stage.GetPrimAtPath(Path("/plug", ""));
+    TEST_CHECK(bool(result));
+    if (result) {
+      const PluginLightFilter *plf = (*result)->as<PluginLightFilter>();
+      TEST_CHECK(plf != nullptr);
+      if (plf) {
+        TEST_CHECK(plf->shaderId.authored());
+        if (plf->shaderId.get_value()) {
+          value::token sid;
+          if (plf->shaderId.get_value().value().get_scalar(&sid)) {
+            TEST_CHECK(sid.str() == "MyFilterShader");
+          }
+        }
+      }
+    }
+  }
+}
+
+namespace {
+// Read a TypedAttributeWithFallback<Animatable<double>> default value.
+bool get_anim_double(const TypedAttributeWithFallback<Animatable<double>> &a,
+                     double *out) {
+  return a.get_value().get_scalar(out);
+}
+}  // namespace
+
+// Geometric intrinsics (Cube/Sphere/Cone/Cylinder/Capsule/Plane): size/radius/
+// height/width/length + axis. Previously only exercised by the crate writer.
+void usda_reader_geom_intrinsics_schema_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def Cube "cube" {
+    double size = 3.0
+}
+def Sphere "sphere" {
+    double radius = 1.5
+}
+def Cone "cone" {
+    double height = 4
+    double radius = 2
+    uniform token axis = "X"
+}
+def Cylinder "cyl" {
+    double height = 5
+    double radius = 1
+    uniform token axis = "Y"
+}
+def Capsule "cap" {
+    double height = 3
+    double radius = 0.5
+    uniform token axis = "Z"
+}
+def Plane "plane" {
+    double width = 6
+    double length = 7
+    uniform token axis = "Y"
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  double d = 0.0;
+  {
+    auto r = stage.GetPrimAtPath(Path("/cube", ""));
+    TEST_CHECK(bool(r));
+    if (r) { const GeomCube *c = (*r)->as<GeomCube>(); TEST_CHECK(c != nullptr);
+      if (c) { TEST_CHECK(c->size.authored()); if (get_anim_double(c->size, &d)) TEST_CHECK(math::is_close(d, 3.0)); } }
+  }
+  {
+    auto r = stage.GetPrimAtPath(Path("/sphere", ""));
+    TEST_CHECK(bool(r));
+    if (r) { const GeomSphere *c = (*r)->as<GeomSphere>(); TEST_CHECK(c != nullptr);
+      if (c) { TEST_CHECK(c->radius.authored()); if (get_anim_double(c->radius, &d)) TEST_CHECK(math::is_close(d, 1.5)); } }
+  }
+  {
+    auto r = stage.GetPrimAtPath(Path("/cone", ""));
+    TEST_CHECK(bool(r));
+    if (r) { const GeomCone *c = (*r)->as<GeomCone>(); TEST_CHECK(c != nullptr);
+      if (c) {
+        TEST_CHECK(c->height.authored()); if (get_anim_double(c->height, &d)) TEST_CHECK(math::is_close(d, 4.0));
+        TEST_CHECK(c->radius.authored());
+        TEST_CHECK(c->axis.authored()); TEST_CHECK(c->axis.get_value() == Axis::X);
+      } }
+  }
+  {
+    auto r = stage.GetPrimAtPath(Path("/cyl", ""));
+    TEST_CHECK(bool(r));
+    if (r) { const GeomCylinder *c = (*r)->as<GeomCylinder>(); TEST_CHECK(c != nullptr);
+      if (c) { TEST_CHECK(c->height.authored()); TEST_CHECK(c->radius.authored());
+        TEST_CHECK(c->axis.get_value() == Axis::Y); } }
+  }
+  {
+    auto r = stage.GetPrimAtPath(Path("/cap", ""));
+    TEST_CHECK(bool(r));
+    if (r) { const GeomCapsule *c = (*r)->as<GeomCapsule>(); TEST_CHECK(c != nullptr);
+      if (c) { TEST_CHECK(c->height.authored()); TEST_CHECK(c->radius.authored());
+        TEST_CHECK(c->axis.get_value() == Axis::Z); } }
+  }
+  {
+    auto r = stage.GetPrimAtPath(Path("/plane", ""));
+    TEST_CHECK(bool(r));
+    if (r) { const GeomPlane *c = (*r)->as<GeomPlane>(); TEST_CHECK(c != nullptr);
+      if (c) { TEST_CHECK(c->width.authored()); TEST_CHECK(c->length.authored());
+        TEST_CHECK(c->axis.get_value() == Axis::Y); } }
+  }
+}
+
+void usda_reader_geom_tetmesh_schema_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def TetMesh "tet" {
+    point3f[] points = [(0,0,0), (1,0,0), (0,1,0), (0,0,1)]
+    int4[] tetVertexIndices = [(0, 1, 2, 3)]
+    int3[] surfaceFaceVertexIndices = [(0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)]
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  auto r = stage.GetPrimAtPath(Path("/tet", ""));
+  TEST_CHECK(bool(r));
+  if (!r) return;
+  const GeomTetMesh *tet = (*r)->as<GeomTetMesh>();
+  TEST_CHECK(tet != nullptr);
+  if (!tet) return;
+  TEST_CHECK(tet->points.authored());
+  TEST_CHECK(tet->tetVertexIndices.authored());
+  TEST_CHECK(tet->surfaceFaceVertexIndices.authored());
+}
+
+void usda_reader_geom_nurbspatch_schema_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def NurbsPatch "patch" {
+    int uVertexCount = 4
+    int vVertexCount = 4
+    int uOrder = 3
+    int vOrder = 3
+    double[] uKnots = [0, 0, 0, 1, 2, 2, 2]
+    double[] vKnots = [0, 0, 0, 1, 2, 2, 2]
+    point3f[] points = [(0,0,0), (1,0,0), (2,0,0), (3,0,0)]
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  auto r = stage.GetPrimAtPath(Path("/patch", ""));
+  TEST_CHECK(bool(r));
+  if (!r) return;
+  const GeomNurbsPatch *patch = (*r)->as<GeomNurbsPatch>();
+  TEST_CHECK(patch != nullptr);
+  if (!patch) return;
+  TEST_CHECK(patch->uVertexCount.authored());
+  TEST_CHECK(patch->vVertexCount.authored());
+  TEST_CHECK(patch->uOrder.authored());
+  TEST_CHECK(patch->uKnots.authored());
+  TEST_CHECK(patch->vKnots.authored());
+  TEST_CHECK(patch->points.authored());
+}
+
+void usda_reader_geom_hermite_schema_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def HermiteCurves "herm" {
+    int[] curveVertexCounts = [2]
+    point3f[] points = [(0,0,0), (1,1,0)]
+    vector3f[] tangents = [(1,0,0), (1,0,0)]
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  auto r = stage.GetPrimAtPath(Path("/herm", ""));
+  TEST_CHECK(bool(r));
+  if (!r) return;
+  const GeomHermiteCurves *herm = (*r)->as<GeomHermiteCurves>();
+  TEST_CHECK(herm != nullptr);
+  if (!herm) return;
+  TEST_CHECK(herm->curveVertexCounts.authored());
+  TEST_CHECK(herm->points.authored());
+  TEST_CHECK(herm->tangents.authored());
+}
+
+void usda_reader_portal_geometry_dome1_lights_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def GeometryLight "glight" {
+    float inputs:intensity = 2.0
+    rel geometry = </geo>
+}
+def PortalLight "portal" {
+    float inputs:intensity = 1.0
+}
+def DomeLight_1 "dome" {
+    float inputs:intensity = 3.0
+    float guideRadius = 500
+    uniform token poleAxis = "Y"
+}
+def Mesh "geo" {}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  {
+    auto r = stage.GetPrimAtPath(Path("/glight", ""));
+    TEST_CHECK(bool(r));
+    if (r) { const GeometryLight *l = (*r)->as<GeometryLight>(); TEST_CHECK(l != nullptr);
+      if (l) TEST_CHECK(l->intensity.authored()); }
+  }
+  {
+    auto r = stage.GetPrimAtPath(Path("/portal", ""));
+    TEST_CHECK(bool(r));
+    if (r) { const PortalLight *l = (*r)->as<PortalLight>(); TEST_CHECK(l != nullptr);
+      if (l) TEST_CHECK(l->intensity.authored()); }
+  }
+  {
+    auto r = stage.GetPrimAtPath(Path("/dome", ""));
+    TEST_CHECK(bool(r));
+    if (r) { const DomeLight_1 *l = (*r)->as<DomeLight_1>(); TEST_CHECK(l != nullptr);
+      if (l) {
+        TEST_CHECK(l->intensity.authored());
+        TEST_CHECK(l->guideRadius.authored());
+        TEST_CHECK(l->poleAxis.authored());
+        TEST_CHECK(l->poleAxis.get_value().str() == "Y");
+      } }
+  }
+}
+
+// Collection-based material binding: `material:binding:collection:<name>` is
+// reconstructed into MaterialBinding's collection map (not just generic props).
+void usda_reader_collection_material_binding_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def Mesh "mesh" (
+    prepend apiSchemas = ["CollectionAPI:metalBits"]
+)
+{
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]
+    uniform token collection:metalBits:expansionRule = "expandPrims"
+    rel collection:metalBits:includes = [</mesh>]
+    rel material:binding:collection:metalBits = [</Mtl/Metal>]
+}
+def Material "Mtl" { def Material "Metal" {} }
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  auto r = stage.GetPrimAtPath(Path("/mesh", ""));
+  TEST_CHECK(bool(r));
+  if (!r) return;
+  const GeomMesh *mesh = (*r)->as<GeomMesh>();
+  TEST_CHECK(mesh != nullptr);
+  if (!mesh) return;
+
+  // Use the const accessor (has_materialBindingCollection is non-const).
+  TEST_CHECK(mesh->materialBindingCollectionMap().count("metalBits") == 1);
+}
+
+// Value clips: the `clips` prim metadata (a Dictionary) must reconstruct.
+void usda_reader_value_clips_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def Xform "anim" (
+    clips = {
+        dictionary clipSet = {
+            asset[] assetPaths = [@./clip0.usd@, @./clip1.usd@]
+            string primPath = "/anim"
+            double2[] active = [(0, 0), (10, 1)]
+            double2[] times = [(0, 0), (10, 10)]
+            asset manifestAssetPath = @./manifest.usd@
+        }
+    }
+)
+{
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  auto r = stage.GetPrimAtPath(Path("/anim", ""));
+  TEST_CHECK(bool(r));
+  if (!r) return;
+  TEST_CHECK((*r)->metas().has_clips());
+}
+
+// Light/shadow linking: lights inherit Collection, so collection:lightLink:* /
+// collection:shadowLink:* must reconstruct into the typed Collection map
+// (previously dropped to generic props because the light reader didn't run
+// ReconstructCollectionProperties).
+void usda_reader_light_linking_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def SphereLight "light" (
+    prepend apiSchemas = ["CollectionAPI:lightLink", "CollectionAPI:shadowLink"]
+)
+{
+    float inputs:intensity = 1.0
+    uniform token collection:lightLink:expansionRule = "expandPrims"
+    rel collection:lightLink:includes = [</geoA>]
+    uniform token collection:shadowLink:expansionRule = "expandPrims"
+    rel collection:shadowLink:excludes = [</geoB>]
+}
+def Mesh "geoA" {}
+def Mesh "geoB" {}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  auto r = stage.GetPrimAtPath(Path("/light", ""));
+  TEST_CHECK(bool(r));
+  if (!r) return;
+  const SphereLight *light = (*r)->as<SphereLight>();
+  TEST_CHECK(light != nullptr);
+  if (!light) return;
+
+  const CollectionInstance *ll = nullptr;
+  TEST_CHECK(light->get_instance("lightLink", &ll));
+  if (ll) {
+    TEST_CHECK(ll->includes.authored());
+    TEST_CHECK(ll->includes.get_targetPaths().size() == 1);
+  }
+  const CollectionInstance *sl = nullptr;
+  TEST_CHECK(light->get_instance("shadowLink", &sl));
+  if (sl) {
+    TEST_CHECK(sl->excludes.authored());
+    TEST_CHECK(sl->excludes.get_targetPaths().size() == 1);
+  }
+}
+
+// Collection-based physics: a PhysicsCollisionGroup's `colliders` collection
+// (the set of prims in the group) is read via GetPhysicsCollidersCollection.
+void usda_reader_physics_colliders_collection_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsCollisionGroup "cg" (
+    prepend apiSchemas = ["CollectionAPI:colliders"]
+)
+{
+    uniform token collection:colliders:expansionRule = "expandPrims"
+    rel collection:colliders:includes = [</geoA>, </geoB>]
+    rel collection:colliders:excludes = [</geoC>]
+}
+def Mesh "geoA" {}
+def Mesh "geoB" {}
+def Mesh "geoC" {}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  auto r = stage.GetPrimAtPath(Path("/cg", ""));
+  TEST_CHECK(bool(r));
+  if (!r) return;
+
+  std::vector<Path> includes, excludes;
+  TEST_CHECK(GetPhysicsCollidersCollection(**r, &includes, &excludes));
+  TEST_CHECK(includes.size() == 2);
+  TEST_CHECK(excludes.size() == 1);
 }
