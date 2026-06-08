@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <set>
 #include <sstream>
 #include <unordered_map>
@@ -182,7 +183,7 @@ static bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue*
   return false;
 }
 
-// Build the canonical deduplication key for a timesample CrateValue.
+// Build the canonical deduplication key for an out-of-line CrateValue.
 //
 // Covers every out-of-line array element type (and the out-of-line vec/matrix/
 // quat scalar types, e.g. animated matrix4d transforms) that
@@ -191,20 +192,20 @@ static bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue*
 // ConvertValueToCrateValue's non-strict `as<>`, so no separate role entries are
 // needed and coverage is complete by construction.
 //
-// Returns false for types we intentionally don't deduplicate (bool[], uint8[],
-// value::AssetPath[] - layout-coupled or side-effectful via the string pool -
-// and dictionaries / list ops); the caller then packs them normally.
+// Returns false for types we intentionally don't deduplicate (dictionaries /
+// list ops / paths and other layout-coupled recursive values); the caller then
+// packs them normally.
 //
 // For float/double-component types, *element_size is the PER-COMPONENT width (4
 // or 8) so NanAwareHash canonicalizes +0.0/-0.0 per component; binary types use
 // element_size 1 with is_float=false (raw-byte hashing).
 static constexpr uint32_t kDedupArrayTagBit = 1u << 31;
 
-static bool ComputeArrayDedupDescriptor(const crate::CrateValue& cv,
-                                        std::vector<char>* bytes,
-                                        size_t* element_size,
-                                        bool* is_float,
-                                        uint32_t* wire_tag) {
+bool CrateWriter::ComputeValueDedupDescriptor(const crate::CrateValue& cv,
+                                              std::vector<char>* bytes,
+                                              size_t* element_size,
+                                              bool* is_float,
+                                              uint32_t* wire_tag) {
 #define DEDUP_DESC_ARRAY(Type, ElemSize, IsFloat, CrateType)                 \
   if (auto* arr = cv.as<std::vector<Type>>()) {                              \
     size_t bsz;                                                              \
@@ -244,7 +245,7 @@ static bool ComputeArrayDedupDescriptor(const crate::CrateValue& cv,
   // it to one byte per element so it gets a stable dedup key like every other
   // array type. Without this, animated bool[] (visibility/mask) timesamples are
   // never deduplicated and re-expand to N full copies on write (the cause of
-  // the outpost_19 78 MB -> 384 MB USDC roundtrip blowup).
+  // a 78 MB -> 384 MB USDC roundtrip blowup observed on a large animated scene).
   if (auto* barr = cv.as<std::vector<bool>>()) {
     bytes->resize(barr->size());
     for (size_t i = 0; i < barr->size(); ++i) {
@@ -274,6 +275,9 @@ static bool ComputeArrayDedupDescriptor(const crate::CrateValue& cv,
 
   // Out-of-line scalars (vec/matrix/quat). Checked after arrays so an array
   // never matches a scalar branch (distinct types).
+  DEDUP_DESC_SCALAR(double, sizeof(double), true, CRATE_DATA_TYPE_DOUBLE)
+  DEDUP_DESC_SCALAR(int64_t, 1, false, CRATE_DATA_TYPE_INT64)
+  DEDUP_DESC_SCALAR(uint64_t, 1, false, CRATE_DATA_TYPE_UINT64)
   DEDUP_DESC_SCALAR(value::float2, sizeof(float), true, CRATE_DATA_TYPE_VEC2F)
   DEDUP_DESC_SCALAR(value::float3, sizeof(float), true, CRATE_DATA_TYPE_VEC3F)
   DEDUP_DESC_SCALAR(value::float4, sizeof(float), true, CRATE_DATA_TYPE_VEC4F)
@@ -295,6 +299,67 @@ static bool ComputeArrayDedupDescriptor(const crate::CrateValue& cv,
 
 #undef DEDUP_DESC_ARRAY
 #undef DEDUP_DESC_SCALAR
+
+  if (auto* ts = cv.as<value::TimeSamples>()) {
+    if (!ts->is_using_binary_storage()) {
+      return false;
+    }
+
+    bytes->clear();
+    auto append_raw = [&](const void* ptr, size_t nbytes) {
+      if (nbytes == 0) {
+        return;
+      }
+      const char* p = reinterpret_cast<const char*>(ptr);
+      bytes->insert(bytes->end(), p, p + nbytes);
+    };
+    auto append_u64 = [&](uint64_t v) {
+      append_raw(&v, sizeof(v));
+    };
+    auto append_u32 = [&](uint32_t v) {
+      append_raw(&v, sizeof(v));
+    };
+    auto append_u8 = [&](uint8_t v) {
+      append_raw(&v, sizeof(v));
+    };
+
+    const uint64_t sample_count = static_cast<uint64_t>(ts->size());
+    append_u64(sample_count);
+    append_u32(ts->type_id());
+    append_u32(ts->element_size());
+    append_u8(ts->is_array() ? uint8_t(1) : uint8_t(0));
+
+    const std::vector<double>& times = ts->get_times();
+    append_u64(static_cast<uint64_t>(times.size()));
+    append_raw(times.data(), times.size() * sizeof(double));
+
+    const Buffer<16>& blocked = ts->get_blocked();
+    append_u64(static_cast<uint64_t>(blocked.size()));
+    append_raw(blocked.data(), blocked.size());
+
+    const std::vector<size_t>& offsets = ts->get_data_offsets();
+    append_u64(static_cast<uint64_t>(offsets.size()));
+    for (size_t off : offsets) {
+      uint64_t wire_off = (off == value::TimeSamples::BLOCKED_OFFSET)
+          ? std::numeric_limits<uint64_t>::max()
+          : static_cast<uint64_t>(off);
+      append_u64(wire_off);
+    }
+
+    const std::vector<uint32_t>& counts = ts->get_array_counts();
+    append_u64(static_cast<uint64_t>(counts.size()));
+    append_raw(counts.data(), counts.size() * sizeof(uint32_t));
+
+    const std::vector<uint8_t>& data = ts->get_data();
+    append_u64(static_cast<uint64_t>(data.size()));
+    append_raw(data.data(), data.size());
+
+    *element_size = 1;
+    *is_float = false;
+    *wire_tag = static_cast<uint32_t>(
+        crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_SAMPLES);
+    return true;
+  }
 
   // String/token arrays: canonical variable-length serialization
   // (count + (len + bytes) per element) as the dedup key.
@@ -365,6 +430,96 @@ static bool ComputeArrayDedupDescriptor(const crate::CrateValue& cv,
   }
 
   return false;
+}
+
+size_t CrateWriter::GetValueDedupBudgetBytes() const {
+  if (options_.max_memory_bytes <= 0) {
+    return (std::numeric_limits<size_t>::max)();
+  }
+
+  constexpr uint64_t kMaxDedupBudgetBytes = 512ull * 1024ull * 1024ull;
+  uint64_t budget = static_cast<uint64_t>(options_.max_memory_bytes) / 4ull;
+  if (budget > kMaxDedupBudgetBytes) {
+    budget = kMaxDedupBudgetBytes;
+  }
+
+#if SIZE_MAX < UINT64_MAX
+  if (budget > (std::numeric_limits<size_t>::max)()) {
+    return (std::numeric_limits<size_t>::max)();
+  }
+#endif
+  return static_cast<size_t>(budget);
+}
+
+bool CrateWriter::CanRetainDeduplicatedValue(size_t byte_count) const {
+  size_t retained_bytes = 0;
+  if (!safe::add(byte_count, sizeof(ValueDedupEntry), &retained_bytes)) {
+    return false;
+  }
+
+  size_t next_dedup_bytes = 0;
+  if (!safe::add(value_dedup_bytes_, retained_bytes, &next_dedup_bytes)) {
+    return false;
+  }
+  if (next_dedup_bytes > GetValueDedupBudgetBytes()) {
+    return false;
+  }
+
+  // Guard the int64_t cast below against size_t overflow. Only meaningful where
+  // size_t can exceed INT64_MAX (64-bit); on 32-bit targets (e.g. wasm) size_t
+  // never does, so the check is omitted to avoid a tautological-compare warning.
+#if SIZE_MAX > INT64_MAX
+  if (retained_bytes > static_cast<size_t>((std::numeric_limits<int64_t>::max)())) {
+    return false;
+  }
+#endif
+  return !WouldExceedMemoryLimit(static_cast<int64_t>(retained_bytes));
+}
+
+bool CrateWriter::LookupDeduplicatedValue(const std::vector<char>& bytes,
+                                          size_t element_size, bool is_float,
+                                          uint32_t wire_tag,
+                                          crate::ValueRep* rep) const {
+  const size_t h = NanAwareHash::combine(
+      NanAwareHash::hash_buffer(bytes.data(), bytes.size(), element_size,
+                                is_float),
+      wire_tag);
+
+  auto range = value_dedup_map_.equal_range(h);
+  for (auto it = range.first; it != range.second; ++it) {
+    const auto& entry = it->second;
+    if (entry.wire_tag == wire_tag &&
+        entry.bytes.size() == bytes.size() &&
+        entry.element_size == element_size &&
+        entry.is_float == is_float &&
+        NanAwareHash::buffers_equal(entry.bytes.data(), bytes.data(),
+                                    bytes.size(), element_size, is_float)) {
+      if (rep) {
+        *rep = crate::ValueRep(entry.rep_data);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+void CrateWriter::RetainDeduplicatedValue(size_t hash, std::vector<char> bytes,
+                                          size_t element_size, bool is_float,
+                                          uint32_t wire_tag,
+                                          const crate::ValueRep& rep) {
+  size_t retained_bytes = 0;
+  if (!safe::add(bytes.size(), sizeof(ValueDedupEntry), &retained_bytes)) {
+    return;
+  }
+  if (!CanRetainDeduplicatedValue(bytes.size())) {
+    return;
+  }
+
+  value_dedup_bytes_ += retained_bytes;
+  memory_used_estimate_ += static_cast<int64_t>(retained_bytes);
+  value_dedup_map_.emplace(hash, ValueDedupEntry{
+      std::move(bytes), element_size, is_float, wire_tag, rep.GetData(),
+      retained_bytes});
 }
 
 int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
@@ -563,33 +718,27 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       }
     }
   }
-  // Float arrays use a tagged compression format in the reader.
-  // Until the writer emits that exact format, keep them uncompressed.
+  // Float arrays. By default written uncompressed (a valid, Pixar-readable
+  // encoding that round-trips — see crate_writer_basis_curves_test float[]
+  // widths). When Options.enable_float_array_compression is set,
+  // WriteCompressedFloatArray attempts OpenUSD's tagged 'i'/'t' compression and
+  // sets `is_compressed` accordingly; the count is written here first to match
+  // the reader (ReadFloatArray reads the element count, then the payload).
   else if (auto* float_array = value.as<std::vector<float>>()) {
     uint64_t count = float_array->size();
     if (!Write(count)) { if (err) *err = "Failed to write float array count"; return -1; }
-    size_t byte_count;
-    if (!safe::mul(float_array->size(), sizeof(float), &byte_count)) {
-      if (err) *err = "Integer overflow: float_array->size() * sizeof(float)";
-      return -1;
-    }
-    if (!WriteBytes(float_array->data(), byte_count)) {
-      if (err) *err = "Failed to write float array data";
+    if (WriteCompressedFloatArray(float_array->data(), count, is_compressed,
+                                  err) < 0) {
       return -1;
     }
   }
-  // Double arrays use a tagged compression format in the reader.
-  // Until the writer emits that exact format, keep them uncompressed.
+  // Double arrays. Same default + opt-in tagged-compression handling as floats
+  // (the 'i' path reconstructs via int32, matching the reader).
   else if (auto* double_array = value.as<std::vector<double>>()) {
     uint64_t count = double_array->size();
     if (!Write(count)) { if (err) *err = "Failed to write double array count"; return -1; }
-    size_t byte_count;
-    if (!safe::mul(double_array->size(), sizeof(double), &byte_count)) {
-      if (err) *err = "Integer overflow: double_array->size() * sizeof(double)";
-      return -1;
-    }
-    if (!WriteBytes(double_array->data(), byte_count)) {
-      if (err) *err = "Failed to write double array data";
+    if (WriteCompressedDoubleArray(double_array->data(), count, is_compressed,
+                                   err) < 0) {
       return -1;
     }
   }
@@ -1499,7 +1648,7 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
     // timesamples are NOT materialized into N independent copies (which would
     // blow memory up to many GB for animated arrays). For generic (non-binary)
     // storage get_data_offsets() is empty and we fall back to per-sample
-    // reconstruction + the value-bytes dedup map below.
+    // reconstruction + the writer-wide value dedup path in PackValue().
     // The offset fast-path is itself a deduplication mechanism (it reuses a
     // prior ValueRep), so it must honor enable_deduplication: with dedup off we
     // reconstruct and pack every sample independently (no sharing). Memory stays
@@ -1508,15 +1657,6 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
     const bool has_offsets =
         options_.enable_deduplication && !sample_offsets.empty();
     std::unordered_map<size_t, uint64_t> offset_rep_cache;
-
-    struct LocalValueDedupEntry {
-      std::vector<char> bytes;
-      size_t element_size;
-      bool is_float;
-      uint32_t wire_tag;
-      uint64_t rep_data;
-    };
-    std::unordered_multimap<size_t, LocalValueDedupEntry> value_dedup_map;
 
     // Write ValueRep for each value
     for (size_t i = 0; i < num_samples; ++i) {
@@ -1562,74 +1702,9 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
         return -1;
       }
 
-      // DEDUPLICATION: reuse a prior ValueRep for a value-identical sample.
-      // We compute the canonical key bytes once (ComputeArrayDedupDescriptor),
-      // hash them, and on a full-buffer match reuse the stored ValueRep
-      // VERBATIM - which carries the type, array, and compressed bits, so a
-      // deduplicated compressed array reads back correctly. On a miss we pack
-      // the value and record its ValueRep. Mirrors OpenUSD's
-      // unordered_map<VtArray<T>, ValueRep> dedup.
-      crate::ValueRep value_rep;
-      bool dedup_attempted = false;
-
-      if (options_.enable_deduplication) {
-        std::vector<char> value_bytes;
-        size_t dedup_element_size = 1;
-        bool dedup_is_float = false;
-        uint32_t dedup_wire_tag = 0;
-
-        if (ComputeArrayDedupDescriptor(crate_value, &value_bytes,
-                                        &dedup_element_size, &dedup_is_float,
-                                        &dedup_wire_tag)) {
-          // Dedup is keyed on (content hash, wire_tag) so byte-identical
-          // blocks with different crate identity land in different buckets.
-          // Empty arrays are deduped too: every empty array hashes to the
-          // same content hash (XXH3 of 0 bytes ignores element_size/is_float),
-          // so the wire_tag alone is what distinguishes e.g. an empty int
-          // array from an empty float array. See concern #2 in review.md.
-          const size_t h = NanAwareHash::combine(
-              NanAwareHash::hash_buffer(value_bytes.data(), value_bytes.size(),
-                                        dedup_element_size, dedup_is_float),
-              dedup_wire_tag);
-
-          bool found = false;
-          auto range = value_dedup_map.equal_range(h);
-          for (auto it = range.first; it != range.second; ++it) {
-            const auto &entry = it->second;
-            if (entry.wire_tag == dedup_wire_tag &&
-                entry.bytes.size() == value_bytes.size() &&
-                entry.element_size == dedup_element_size &&
-                entry.is_float == dedup_is_float &&
-                NanAwareHash::buffers_equal(
-                    entry.bytes.data(), value_bytes.data(),
-                    value_bytes.size(), dedup_element_size, dedup_is_float)) {
-              // Reuse the prior ValueRep verbatim (type/array/compressed bits).
-              value_rep = crate::ValueRep(entry.rep_data);
-              found = true;
-              break;
-            }
-          }
-
-          if (!found) {
-            // New value: pack it and remember its full ValueRep.
-            value_rep = PackValue(crate_value, err);
-            if (err && !err->empty()) {
-              return -1;
-            }
-            value_dedup_map.emplace(h, LocalValueDedupEntry{
-                std::move(value_bytes), dedup_element_size,
-                dedup_is_float, dedup_wire_tag, value_rep.GetData()});
-          }
-          dedup_attempted = true;
-        }
-      }
-
-      // If deduplication wasn't attempted, pack normally
-      if (!dedup_attempted) {
-        value_rep = PackValue(crate_value, err);
-        if (err && !err->empty()) {
-          return -1;
-        }
+      crate::ValueRep value_rep = PackValue(crate_value, err);
+      if (err && !err->empty()) {
+        return -1;
       }
 
       // Write the ValueRep
@@ -1648,45 +1723,31 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       }
     }
 
-    // === Step 6: Write times array data (count + doubles) ===
-    // PackValue() seeks to value_data_end_offset_ to write each sample's
-    // out-of-line bytes, then seeks back. After the ValueRep loop, Tell()
-    // points just past the ValueRep[] block — but value_data_end_offset_
-    // has advanced past the actual sample-value bytes. Writing times at
-    // Tell() would clobber those bytes; jump to value_data_end_offset_
-    // first so the file layout is ValueRep[] | values data | times data.
-    if (!Seek(value_data_end_offset_)) {
-      if (err) *err = "Failed to seek past value bytes before writing times";
-      return -1;
-    }
-    int64_t times_data_start = Tell();
-
-    // Write count
-    if (!Write(num_samples)) {
-      if (err) *err = "Failed to write TimeSamples time count";
-      return -1;
-    }
-
-    // Write times
+    // === Step 6: Pack times array through the global value dedup path ===
+    // PackValue() seeks to value_data_end_offset_ to write any new out-of-line
+    // bytes, then seeks back to the ValueRep[] block. This preserves the
+    // TimeSamples frame layout while allowing identical time arrays to share a
+    // single double[] payload across attributes.
+    std::vector<double> times;
+    times.reserve(static_cast<size_t>(num_samples));
     for (size_t i = 0; i < num_samples; ++i) {
       auto time_opt = timesamples_val->get_time(i);
       if (!time_opt) {
         if (err) *err = "Failed to get time from TimeSamples at index " + std::to_string(i);
         return -1;
       }
-      if (!Write(time_opt.value())) {
-        if (err) *err = "Failed to write time value at index " + std::to_string(i);
-        return -1;
-      }
+      times.push_back(time_opt.value());
+    }
+
+    crate::CrateValue times_value;
+    times_value.Set(times);
+    crate::ValueRep times_rep = PackValue(times_value, err);
+    if (err && !err->empty()) {
+      return -1;
     }
 
     // === Step 7: Go back and fill in times_rep ValueRep ===
-    int64_t current_pos = Tell();
-
-    crate::ValueRep times_rep;
-    times_rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE));
-    times_rep.SetIsArray();
-    times_rep.SetPayload(static_cast<uint64_t>(times_data_start));
+    const int64_t timesamples_end_pos = value_data_end_offset_;
 
     if (!Seek(times_rep_pos)) {
       if (err) *err = "Failed to seek to write times ValueRep";
@@ -1700,7 +1761,7 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
     }
 
     // Seek back to end
-    if (!Seek(current_pos)) {
+    if (!Seek(timesamples_end_pos)) {
       if (err) *err = "Failed to seek back after writing times ValueRep";
       return -1;
     }

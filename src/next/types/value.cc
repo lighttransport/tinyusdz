@@ -5,6 +5,8 @@
 
 #include "value.hh"
 #include "type-info.hh"
+#include "../crate/lazy-array.hh"
+#include "../crate/crate-data-source.hh"
 
 #include <cstring>
 #include <new>
@@ -547,6 +549,18 @@ bool Value::uses_heap() const {
 }
 
 void Value::destroy() {
+  if (is_lazy_) {
+    LazyArrayRef* ptr;
+    std::memcpy(&ptr, storage_, sizeof(ptr));
+    delete ptr;  // drops the shared_ptr<CrateDataSource> reference
+    type_id_ = TypeId::Invalid;
+    is_array_ = false;
+    is_lazy_ = false;
+    dirty_ = false;
+    array_size_ = 0;
+    return;
+  }
+
   if (type_id_ == TypeId::Invalid) return;
 
   if (is_array_) {
@@ -575,13 +589,24 @@ void Value::destroy() {
 
   type_id_ = TypeId::Invalid;
   is_array_ = false;
+  dirty_ = false;
   array_size_ = 0;
 }
 
 void Value::copy_from(const Value& other) {
   type_id_ = other.type_id_;
   is_array_ = other.is_array_;
+  is_lazy_ = other.is_lazy_;
+  dirty_ = other.dirty_;
   array_size_ = other.array_size_;
+
+  if (other.is_lazy_) {
+    LazyArrayRef* other_ptr;
+    std::memcpy(&other_ptr, other.storage_, sizeof(other_ptr));
+    auto* new_ptr = new LazyArrayRef(*other_ptr);  // shared_ptr refcount++
+    std::memcpy(storage_, &new_ptr, sizeof(new_ptr));
+    return;
+  }
 
   if (other.is_array_) {
     void* ptr;
@@ -621,10 +646,12 @@ void Value::copy_from(const Value& other) {
 void Value::move_from(Value&& other) noexcept {
   type_id_ = other.type_id_;
   is_array_ = other.is_array_;
+  is_lazy_ = other.is_lazy_;
+  dirty_ = other.dirty_;
   array_size_ = other.array_size_;
 
-  if (other.is_array_) {
-    // Just copy the pointer - no need to allocate
+  if (other.is_lazy_ || other.is_array_) {
+    // Just steal the heap pointer (LazyArrayRef* or XxxArrayStorage*).
     std::memcpy(storage_, other.storage_, sizeof(void*));
   } else if (UsesStringStorage(other.type_id_)) {
     new (storage_) StringStorage{std::move(reinterpret_cast<StringStorage*>(other.storage_)->value)};
@@ -635,10 +662,65 @@ void Value::move_from(Value&& other) noexcept {
 
   other.type_id_ = TypeId::Invalid;
   other.is_array_ = false;
+  other.is_lazy_ = false;
+  other.dirty_ = false;
   other.array_size_ = 0;
 }
 
+// ============================================================
+// Lazy array references
+// ============================================================
+
+Value Value::MakeLazyArray(const LazyArrayRef& ref) {
+  Value v;
+  v.type_id_ = ref.value_type;
+  v.is_array_ = true;
+  v.is_lazy_ = true;
+  v.dirty_ = false;
+  v.array_size_ = static_cast<uint32_t>(ref.element_count);
+  auto* ptr = new LazyArrayRef(ref);
+  std::memcpy(v.storage_, &ptr, sizeof(ptr));
+  return v;
+}
+
+const LazyArrayRef* Value::lazy_ref() const {
+  if (!is_lazy_) return nullptr;
+  LazyArrayRef* ptr;
+  std::memcpy(&ptr, storage_, sizeof(ptr));
+  return ptr;
+}
+
+void Value::materialize() {
+  if (!is_lazy_) return;
+
+  LazyArrayRef* ptr;
+  std::memcpy(&ptr, storage_, sizeof(ptr));
+
+  Value decoded;
+  bool ok = (ptr && ptr->source) ? ptr->source->MaterializeArray(*ptr, &decoded) : false;
+
+  delete ptr;  // releases the shared_ptr<CrateDataSource>
+
+  // Reset to empty WITHOUT calling destroy() (storage_ now dangles) then adopt
+  // the decoded value. If decode failed the value becomes empty.
+  is_lazy_ = false;
+  type_id_ = TypeId::Invalid;
+  is_array_ = false;
+  dirty_ = false;
+  array_size_ = 0;
+  if (ok) {
+    move_from(std::move(decoded));
+  }
+}
+
+void Value::ensure_materialized() const {
+  if (is_lazy_) {
+    const_cast<Value*>(this)->materialize();
+  }
+}
+
 void* Value::data_ptr() {
+  ensure_materialized();
   if (is_array_) {
     void* ptr;
     std::memcpy(&ptr, storage_, sizeof(ptr));
@@ -648,6 +730,7 @@ void* Value::data_ptr() {
 }
 
 const void* Value::data_ptr() const {
+  ensure_materialized();
   if (is_array_) {
     void* ptr;
     std::memcpy(&ptr, storage_, sizeof(ptr));
@@ -797,6 +880,7 @@ const double* Value::as_matrix4d() const {
 
 // Array accessors
 const std::vector<float>* Value::as_float_array() const {
+  ensure_materialized();
   if ((type_id_ != TypeId::Float && type_id_ != TypeId::Float3) || !is_array_) return nullptr;
   void* ptr;
   std::memcpy(&ptr, storage_, sizeof(ptr));
@@ -804,6 +888,8 @@ const std::vector<float>* Value::as_float_array() const {
 }
 
 std::vector<float>* Value::as_float_array() {
+  ensure_materialized();
+  dirty_ = true;
   if ((type_id_ != TypeId::Float && type_id_ != TypeId::Float3) || !is_array_) return nullptr;
   void* ptr;
   std::memcpy(&ptr, storage_, sizeof(ptr));
@@ -811,6 +897,7 @@ std::vector<float>* Value::as_float_array() {
 }
 
 const std::vector<int32_t>* Value::as_int_array() const {
+  ensure_materialized();
   if (type_id_ != TypeId::Int || !is_array_) return nullptr;
   void* ptr;
   std::memcpy(&ptr, storage_, sizeof(ptr));
@@ -818,6 +905,8 @@ const std::vector<int32_t>* Value::as_int_array() const {
 }
 
 std::vector<int32_t>* Value::as_int_array() {
+  ensure_materialized();
+  dirty_ = true;
   if (type_id_ != TypeId::Int || !is_array_) return nullptr;
   void* ptr;
   std::memcpy(&ptr, storage_, sizeof(ptr));
@@ -825,51 +914,61 @@ std::vector<int32_t>* Value::as_int_array() {
 }
 
 const std::vector<double>* Value::as_double_array() const {
+  ensure_materialized();
   if (type_id_ != TypeId::Double || !is_array_) return nullptr;
   void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<DoubleArrayStorage*>(ptr)->data;
 }
 std::vector<double>* Value::as_double_array() {
+  ensure_materialized(); dirty_ = true;
   if (type_id_ != TypeId::Double || !is_array_) return nullptr;
   void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<DoubleArrayStorage*>(ptr)->data;
 }
 const std::vector<int64_t>* Value::as_int64_array() const {
+  ensure_materialized();
   if (type_id_ != TypeId::Int64 || !is_array_) return nullptr;
   void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<Int64ArrayStorage*>(ptr)->data;
 }
 std::vector<int64_t>* Value::as_int64_array() {
+  ensure_materialized(); dirty_ = true;
   if (type_id_ != TypeId::Int64 || !is_array_) return nullptr;
   void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<Int64ArrayStorage*>(ptr)->data;
 }
 const std::vector<uint32_t>* Value::as_uint_array() const {
+  ensure_materialized();
   if (type_id_ != TypeId::UInt || !is_array_) return nullptr;
   void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<UIntArrayStorage*>(ptr)->data;
 }
 std::vector<uint32_t>* Value::as_uint_array() {
+  ensure_materialized(); dirty_ = true;
   if (type_id_ != TypeId::UInt || !is_array_) return nullptr;
   void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<UIntArrayStorage*>(ptr)->data;
 }
 const std::vector<uint64_t>* Value::as_uint64_array() const {
+  ensure_materialized();
   if (type_id_ != TypeId::UInt64 || !is_array_) return nullptr;
   void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<UInt64ArrayStorage*>(ptr)->data;
 }
 std::vector<uint64_t>* Value::as_uint64_array() {
+  ensure_materialized(); dirty_ = true;
   if (type_id_ != TypeId::UInt64 || !is_array_) return nullptr;
   void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<UInt64ArrayStorage*>(ptr)->data;
 }
 const std::vector<uint8_t>* Value::as_bool_array() const {
+  ensure_materialized();
   if (type_id_ != TypeId::Bool || !is_array_) return nullptr;
   void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<BoolArrayStorage*>(ptr)->data;
 }
 const std::vector<std::string>* Value::as_token_array() const {
+  ensure_materialized();
   if (type_id_ != TypeId::Token || !is_array_) return nullptr;
   void* ptr; std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<TokenArrayStorage*>(ptr)->data;
@@ -880,6 +979,8 @@ const std::vector<std::string>* Value::as_token_array() const {
 // ============================================================
 
 bool Value::operator==(const Value& other) const {
+  ensure_materialized();
+  other.ensure_materialized();
   if (type_id_ != other.type_id_) return false;
   if (is_array_ != other.is_array_) return false;
   if (is_array_ && array_size_ != other.array_size_) return false;
@@ -929,6 +1030,7 @@ inline uint64_t fnv1a_hash(const uint8_t* data, size_t len) {
 }  // namespace
 
 uint64_t Value::hash() const {
+  ensure_materialized();
   if (type_id_ == TypeId::Invalid) return 0;
 
   // Include type in hash
@@ -974,6 +1076,7 @@ const uint8_t* Value::raw_bytes(size_t* out_size) const {
   if (!out_size) return nullptr;
   *out_size = 0;
 
+  ensure_materialized();
   if (type_id_ == TypeId::Invalid) return nullptr;
 
   if (is_array_) {

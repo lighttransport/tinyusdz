@@ -49,6 +49,11 @@ struct CrateWriteResult {
   size_t path_count = 0;
   size_t spec_count = 0;
   size_t field_count = 0;
+
+  /// Lazy-array write accounting: arrays copied verbatim from the source crate
+  /// (byte pass-through) vs. arrays decoded and re-encoded.
+  size_t arrays_passed_through = 0;
+  size_t arrays_reencoded = 0;
 };
 
 /// Crate file writer

@@ -694,6 +694,99 @@ def Material "M"
     assert.equal(new Uint8Array(qual.results[0].data).length, exr.length, 'EXR passed through verbatim');
   });
 
+  // --- Image decode/write coverage for the imageproc features ---
+
+  await testAsync('repackChannels packs constant channels exactly', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const { PNG } = await import('pngjs');
+    const res = native.repackChannels({ channels: 3, width: 8, height: 8,
+      r: { const: 200 }, g: { const: 100 }, b: { const: 50 } });
+    assert.ok(res && res.success, 'repackChannels: ' + (res && res.error));
+    const png = PNG.sync.read(Buffer.from(new Uint8Array(res.data)));
+    assert.equal(png.data[0], 200, 'R');
+    assert.equal(png.data[1], 100, 'G');
+    assert.equal(png.data[2], 50, 'B');
+  });
+
+  await testAsync('convertImage colorspace sRGB->linear applies the LUT', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const { PNG } = await import('pngjs');
+    const src = native.repackChannels({ channels: 3, width: 8, height: 8,
+      r: { const: 128 }, g: { const: 128 }, b: { const: 128 } });
+    assert.ok(src && src.success);
+    const res = native.convertImage(new Uint8Array(src.data),
+      { format: 'png', colorspace: 'srgb-to-linear' });
+    assert.ok(res && res.success, 'colorspace convert: ' + (res && res.error));
+    const png = PNG.sync.read(Buffer.from(new Uint8Array(res.data)));
+    // sRGB 128/255 -> linear ~0.216 -> ~55.
+    assert.ok(png.data[0] >= 53 && png.data[0] <= 57,
+      `sRGB->linear of 128 expected ~55, got ${png.data[0]}`);
+  });
+
+  await testAsync('convertImage resizeColorspace srgb differs from linear', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const { PNG } = await import('pngjs');
+    // High-contrast checker so gamma-space vs linear-light downsample differ.
+    const W = 16, H = 16;
+    const chk = new PNG({ width: W, height: H });
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const o = (y * W + x) * 4, c = ((x ^ y) & 1) ? 255 : 0;
+      chk.data[o] = c; chk.data[o + 1] = c; chk.data[o + 2] = c; chk.data[o + 3] = 255;
+    }
+    const src = PNG.sync.write(chk);
+    const lin = native.convertImage(new Uint8Array(src), { format: 'png', maxSize: 4, resizeColorspace: 'linear' });
+    const srgb = native.convertImage(new Uint8Array(src), { format: 'png', maxSize: 4, resizeColorspace: 'srgb' });
+    assert.ok(lin.success && srgb.success, 'resize: ' + (lin.error || srgb.error));
+    const pl = PNG.sync.read(Buffer.from(new Uint8Array(lin.data)));
+    const ps = PNG.sync.read(Buffer.from(new Uint8Array(srgb.data)));
+    let differ = false;
+    for (let i = 0; i < pl.data.length; i++) if (pl.data[i] !== ps.data[i]) { differ = true; break; }
+    assert.ok(differ, 'srgb-aware resize should differ from gamma-space on high contrast');
+  });
+
+  await testAsync('getTextureColorspaceMap reads UsdUVTexture sourceColorSpace', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    assert.equal(typeof native.getTextureColorspaceMap, 'function',
+      'getTextureColorspaceMap should be exported');
+    const usda = `#usda 1.0
+def "M"
+{
+    def Shader "a"
+    {
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file = @tex/albedo.png@
+        token inputs:sourceColorSpace = "sRGB"
+    }
+    def Shader "n"
+    {
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file = @tex/normal.png@
+        token inputs:sourceColorSpace = "raw"
+    }
+}
+`;
+    const map = native.getTextureColorspaceMap(new TextEncoder().encode(usda));
+    assert.equal(map['albedo.png'], 'sRGB');
+    assert.equal(map['normal.png'], 'raw');
+  });
+
+  await testAsync('convertImage EXR->EXR fp16 round-trips losslessly', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const { PNG } = await import('pngjs');
+    const src = native.repackChannels({ channels: 3, width: 16, height: 16,
+      r: { const: 200 }, g: { const: 100 }, b: { const: 50 } });
+    const exr0 = native.convertImage(new Uint8Array(src.data), { format: 'exr' });
+    assert.ok(exr0.success, 'PNG->EXR: ' + (exr0 && exr0.error));
+    const exr1 = native.convertImage(new Uint8Array(exr0.data), { format: 'exr' });  // EXR->EXR fp16
+    assert.ok(exr1.success, 'EXR->EXR: ' + (exr1 && exr1.error));
+    const dec = (e) => PNG.sync.read(Buffer.from(new Uint8Array(
+      native.convertImage(new Uint8Array(e.data), { format: 'png' }).data)));
+    const p0 = dec(exr0), p1 = dec(exr1);
+    let eq = p0.data.length === p1.data.length;
+    for (let i = 0; eq && i < p0.data.length; i++) if (p0.data[i] !== p1.data[i]) eq = false;
+    assert.ok(eq, 'EXR->EXR fp16 decode->encode should be lossless');
+  });
+
   // Cleanup temp files.
   try { fs.rmSync(tmpDir, { recursive: true }); } catch {}
 } else {

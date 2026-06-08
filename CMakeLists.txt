@@ -102,6 +102,9 @@ option(TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER
 option(TINYUSDZ_WITH_TYDRA
        "Build with Tydra module(Handly USD scene converter for the renderer, DCC, etc)."
        ON)
+option(TINYUSDZ_WITH_PCP
+       "Build the cached/lazy (partial-composition) composition cache (src/pcp)."
+       ON)
 option(TINYUSDZ_WITH_MCP_SERVER
        "Build with C++ MCP server(http server) support."
        OFF)
@@ -307,7 +310,7 @@ option(TINYUSDZ_WITH_TIFF
 
 # -- EXR --
 option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
-option(TINYUSDZ_USE_TINYEXR_V3 "Use TinyEXR v3 API (modern C17/C++17 API). Set OFF for legacy v1 API" ON)
+option(TINYUSDZ_USE_TINYEXR_V3 "Use the pure-C11 TinyEXR v3 C EXR backend (minimal codecs: no HTJ2K/ZSTD). Set OFF for the deprecated legacy v1 API" ON)
 # ---------
 
 # -- ColorIO --
@@ -587,6 +590,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/image-writer.cc
     ${PROJECT_SOURCE_DIR}/src/image-util.cc
+    ${PROJECT_SOURCE_DIR}/src/imageio/png-stream.cc
+    ${PROJECT_SOURCE_DIR}/src/imageproc/simd.cc
     ${PROJECT_SOURCE_DIR}/src/usdz-convert.cc
     ${PROJECT_SOURCE_DIR}/src/linear-algebra.cc
     ${PROJECT_SOURCE_DIR}/src/value-eval-util.cc
@@ -638,6 +643,17 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/prim-pprint-parallel.hh
 
     )
+
+if (TINYUSDZ_WITH_PCP)
+    list(APPEND TINYUSDZ_SOURCES
+        ${PROJECT_SOURCE_DIR}/src/pcp/layer-registry.cc
+        ${PROJECT_SOURCE_DIR}/src/pcp/layer-registry.hh
+        ${PROJECT_SOURCE_DIR}/src/pcp/cache.cc
+        ${PROJECT_SOURCE_DIR}/src/pcp/cache.hh
+        ${PROJECT_SOURCE_DIR}/src/pcp/cache-impl.hh
+        ${PROJECT_SOURCE_DIR}/src/pcp/cache-parallel.cc
+    )
+endif()
 
 if (TINYUSDZ_WITH_TYDRA)
     list(APPEND TINYUSDZ_SOURCES
@@ -811,6 +827,27 @@ if (TINYUSDZ_WITH_FPNGE)
   endif()
 endif()
 
+# Native SIMD for the image-processing row kernels (src/imageproc/simd.cc).
+# When enabled on x86 GCC/Clang, the kernels use function multi-versioning
+# (target_clones + ifunc) to dispatch SSE2/SSE4.1/AVX/AVX2 at runtime. Off, or
+# on non-x86 / non-ELF / MSVC, a single auto-vectorized build is used. (WASM
+# auto-vectorizes via -msimd128 regardless; see web/CMakeLists.txt.)
+option(TINYUSDZ_ENABLE_NATIVE_SIMD "Runtime-dispatched native SIMD for image kernels" ON)
+# Disable FP contraction so vectorized kernels match the scalar reference bit-for-bit.
+if (NOT MSVC)
+  set_source_files_properties(${PROJECT_SOURCE_DIR}/src/imageproc/simd.cc
+                              PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
+if (TINYUSDZ_ENABLE_NATIVE_SIMD AND NOT EMSCRIPTEN AND NOT MSVC AND
+    (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i[3-6]86" OR
+     CMAKE_SYSTEM_PROCESSOR STREQUAL ""))
+  set_source_files_properties(${PROJECT_SOURCE_DIR}/src/imageproc/simd.cc
+                              PROPERTIES COMPILE_DEFINITIONS TINYUSDZ_IMAGEPROC_MULTIVERSION)
+  message(STATUS "imageproc: native SIMD multi-versioning enabled (sse2/sse4.1/avx/avx2 runtime dispatch)")
+else()
+  message(STATUS "imageproc: native SIMD multi-versioning disabled (single auto-vectorized build)")
+endif()
+
 if(TINYUSDZ_WITH_USDMTLX)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/pugixml.cpp)
 endif()
@@ -866,34 +903,24 @@ endif(TINYUSDZ_WITH_TIFF)
 
 if(TINYUSDZ_WITH_EXR)
   if(TINYUSDZ_USE_TINYEXR_V3)
-    # TinyEXR v3 API (modern C17/C++17 API)
-    # NOTE: We also compile tinyexr.cc (v1 implementation) for backward compatibility
-    # since image-loader.cc uses the v1 API (LoadEXRFromMemory, etc.)
-    message(STATUS "TinyUSDZ: Using TinyEXR v3 API")
+    # TinyEXR v3 C API (pure-C11 reader/writer; upstream `include/exr.h`).
+    # The vendored src/external/tinyexr/src/ holds only the minimal codec set:
+    # HTJ2K (EXR_NO_JPH) and ZSTD (EXR_NO_ZSTD) are compiled out for a small
+    # footprint. The v3 C core is self-contained (its own DEFLATE via fpnge), so
+    # it depends on neither miniz nor zlib.
+    message(STATUS "TinyUSDZ: Using TinyEXR v3 C API (pure-C11, minimal codecs)")
 
-    if(TINYUSDZ_USE_SYSTEM_ZLIB)
-      set_source_files_properties(
-        ${PROJECT_SOURCE_DIR}/src/external/tinyexr_c_impl.c
-        PROPERTIES COMPILE_DEFINITIONS "TINYEXR_V3_HAS_DEFLATE=1;TINYEXR_V3_NO_MINIZ=1")
-      set_source_files_properties(
-        ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
-        PROPERTIES COMPILE_DEFINITIONS "TINYEXR_USE_MINIZ=0")
-    else()
-      # Use bundled miniz (default)
-      set_source_files_properties(
-        ${PROJECT_SOURCE_DIR}/src/external/tinyexr_c_impl.c
-        PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
-      set_source_files_properties(
-        ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
-        PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
-    endif()
+    file(GLOB TINYEXR_V3_SOURCES
+         ${PROJECT_SOURCE_DIR}/src/external/tinyexr/src/*.c)
 
-    list(APPEND TINYUSDZ_DEP_SOURCES
-         ${PROJECT_SOURCE_DIR}/src/external/tinyexr_c_impl.c
-         ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
+    set_source_files_properties(${TINYEXR_V3_SOURCES} PROPERTIES
+      INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/external/tinyexr/include;${PROJECT_SOURCE_DIR}/src/external/tinyexr/src"
+      COMPILE_DEFINITIONS "EXR_NO_JPH;EXR_NO_ZSTD")
+
+    list(APPEND TINYUSDZ_DEP_SOURCES ${TINYEXR_V3_SOURCES})
 
   else()
-    # TinyEXR v1 API (legacy API)
+    # TinyEXR v1 API (legacy; deprecated, kept behind TINYUSDZ_USE_TINYEXR_V3=OFF).
     message(STATUS "TinyUSDZ: Using TinyEXR v1 API (legacy)")
 
     if(TINYUSDZ_USE_SYSTEM_ZLIB)
@@ -1745,6 +1772,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "TINYUSDZ_USE_USDVOX")
   endif()
 
+  if(TINYUSDZ_WITH_PCP)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_PCP")
+  endif()
+
   target_link_libraries(${TINYUSDZ_LIB_TARGET} ${TINYUSDZ_EXT_LIBRARIES}
                         ${CMAKE_DL_LIBS})
 
@@ -1774,6 +1806,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   if(TINYUSDZ_WITH_EXR)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_EXR")
+    if(TINYUSDZ_USE_TINYEXR_V3)
+      # Select the pure-C11 v3 C EXR backend in image-loader.cc / image-writer.cc.
+      target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                                 PRIVATE "TINYUSDZ_EXR_V3=1")
+    endif()
   endif(TINYUSDZ_WITH_EXR)
 
   if(TINYUSDZ_WITH_COLORIO)
@@ -2283,6 +2320,15 @@ if(TINYUSDZ_BUILD_TESTS)
     target_include_directories(feat-value-clip PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-value-clip COMMAND feat-value-clip
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    if(TINYUSDZ_WITH_MODULE_USDC_WRITER AND TINYUSDZ_WITH_MODULE_USDC_READER)
+      add_executable(feat-dedp tests/feat/dedp/test-dedp.cc)
+      add_sanitizers(feat-dedp)
+      target_link_libraries(feat-dedp PRIVATE ${TINYUSDZ_TARGET_STATIC})
+      target_include_directories(feat-dedp PRIVATE ${PROJECT_SOURCE_DIR}/src)
+      add_test(NAME feat-dedp COMMAND feat-dedp
+               WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    endif()
 
     # MaterialX tests
     add_executable(feat-mtlx-parse tests/feat/mtlx/test_mtlx_parse.cc)

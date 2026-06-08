@@ -229,7 +229,7 @@ vectors for deferred arrays (accepted, opt-in); sub-1024-element arrays always
 materialized.
 
 **Verified** (OBJ identical to baseline): suzanne-subd-lv5/lv6 (3 deferred arrays each),
-CesiumMan.usdz (4), outpost_19.usdz (233 deferred, 116.35 MB RenderScene),
+CesiumMan.usdz (4), a large production scene (233 deferred, 116.35 MB RenderScene),
 timesamples-array-dedup-001/002/004.
 
 **V2 savings** (suzanne-subd-lv6, 12M verts): Stage float arrays ~288 MB → ~0 (sentinels);

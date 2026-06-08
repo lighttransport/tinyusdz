@@ -72,11 +72,16 @@ TypeNameTable& GetTypeNameTable();
 // Forward declarations
 struct VariantData;
 struct VariantSetData;
+class Layer;  // for VariantData::content (variant subtree)
 
 /// PrimSpec metadata
 struct PrimSpecMeta {
   bool active = true;
   bool hidden = false;
+  bool instanceable = false;  // when true (with arcs), the prim is an instance
+  // When non-empty (set by composition), this prim is an instance whose children
+  // are provided by the prototype prim at this path (no duplicated subtree).
+  std::string instance_prototype;
   std::string doc;
   std::string comment;
   std::vector<std::string> apiSchemas;
@@ -86,10 +91,16 @@ struct PrimSpecMeta {
   std::vector<std::string> payloads;
   std::vector<std::string> inherits;
   std::vector<std::string> specializes;
-  std::string variantSelection;  // "variantSet=selection"
+  std::string variantSelection;  // legacy single "variantSet=selection"
+  // Multiple variant selections (set -> selection); composed in addition to the
+  // legacy single field.
+  std::vector<std::pair<std::string, std::string>> variantSelections;
 
   // Variant set definitions
   std::vector<VariantSetData> variantSets;
+
+  // Relocates: namespace renames (absolute source path -> absolute target path).
+  std::vector<std::pair<std::string, std::string>> relocates;
 
   // Layer offset (applied at evaluation time)
   // First = offset, Second = scale. Default: (0, 1)
@@ -104,11 +115,17 @@ struct VariantData {
   std::string doc;
   std::vector<std::pair<std::string, Value>> properties;
   std::unordered_map<std::string, std::vector<Path>> relationships;
+  // Optional subtree for variants that add prim-level opinions and/or child
+  // prims: a Layer whose root prim "__self__" carries the host opinions and
+  // whose descendants become the host prim's children when this variant is
+  // selected. (Composed reference-style, so it supports child prims.)
+  std::shared_ptr<Layer> content;
 };
 
 /// Variant set - a named set of variant options
 struct VariantSetData {
   std::string name;
+  std::string selected;  // selected variant name for this set ("" = none)
   std::vector<VariantData> variants;
 };
 
@@ -350,6 +367,27 @@ public:
   std::vector<std::string> relationship_names() const;
 
   // ============================================================
+  // Attribute connections / declared type names (USDC fidelity)
+  // ============================================================
+
+  /// Add an attribute connection target (e.g. inputs:x.connect = </path>).
+  /// The property itself should also exist as a slot (kFlagConnection).
+  void add_connection(const std::string& prop_name, const Path& target);
+
+  /// Get connection targets for an attribute (nullptr if none)
+  const std::vector<Path>* connection(const std::string& prop_name) const;
+
+  /// Record the declared USD type name of a property (e.g. "color3f",
+  /// "token", "float[]"). Needed to faithfully re-emit attributes that have
+  /// no authored default value (connection-only / declared-only) and to
+  /// round-trip the exact role type for valued attributes.
+  void set_property_type_name(const std::string& prop_name,
+                              const std::string& type_name);
+
+  /// Get the declared type name of a property (nullptr if not recorded)
+  const std::string* property_type_name(const std::string& prop_name) const;
+
+  // ============================================================
   // Children (stored as indices into Layer's prim array)
   // ============================================================
 
@@ -391,6 +429,19 @@ private:
 
   // Relationships: name -> targets
   std::unordered_map<std::string, std::vector<Path>> relationships_;
+
+  // Attribute connections: interned property-name id -> connection targets.
+  // (Keyed by PropNameId.id rather than a string to avoid a key string per
+  // connected property on shader-heavy scenes.)
+  std::unordered_map<uint32_t, std::vector<Path>> connections_;
+
+  // Declared USD type names: interned property-name id -> interned typeName id
+  // (both interned in the global PropNameTable). Lets the writer re-emit the
+  // exact `typeName` (incl. role types and value-less / connection-only attrs)
+  // while storing only two uint32s per property instead of two strings — the
+  // "string pooling" of the original low-memory plan (typeNames are highly
+  // repeated, so interning collapses ~150k strings to a few dozen).
+  std::unordered_map<uint32_t, uint32_t> prop_type_names_;
 
   // Children stored as indices into parent Layer's prim array
   std::vector<uint32_t> child_indices_;

@@ -320,11 +320,16 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64: {
-      // Inline payload is 48 bits. Sign-extend from bit 47 to int64_t.
-      uint64_t payload48 = rep.GetPayload() & ((1ull << 48) - 1);
-      int64_t ival;
-      if (payload48 & (1ull << 47)) {
-        // Negative: extend the upper 16 bits with 1s.
+      const uint64_t payload48 = rep.GetPayload() & ((1ull << 48) - 1);
+      int64_t ival = 0;
+      if ((payload48 >> 32) == 0) {
+        // OpenUSD inlines int64 as an exact int32 representation.
+        int32_t rep32 = 0;
+        uint32_t payload32 = static_cast<uint32_t>(payload48);
+        memcpy(&rep32, &payload32, sizeof(rep32));
+        ival = static_cast<int64_t>(rep32);
+      } else if (payload48 & (1ull << 47)) {
+        // Legacy TinyUSDZ inline payload: sign-extend from bit 47.
         ival = static_cast<int64_t>(payload48 | (~((1ull << 48) - 1)));
       } else {
         ival = static_cast<int64_t>(payload48);
@@ -334,7 +339,8 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64: {
-      // Inline payload is 48 bits, zero-extended.
+      // OpenUSD writes inlined uint64 as uint32; also accept older TinyUSDZ
+      // files that used the full 48-bit ValueRep payload.
       uint64_t ival = rep.GetPayload() & ((1ull << 48) - 1);
       DCOUT("value.uint64 = " << ival);
       value->Set(ival);
@@ -2909,6 +2915,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (!ReadTimeSamples(&ts)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read TimeSamples data");
       }
+
+      // Finalize (sort) once, single-threaded, so later const reads are pure and
+      // the TimeSamples can be safely shared across threads. See
+      // value::TimeSamples::update().
+      ts.update();
 
       //TUSDZ_LOG_I("Set TimeSamples begin\n");
       value->Set(std::move(ts));
