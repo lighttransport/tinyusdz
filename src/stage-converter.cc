@@ -1028,7 +1028,7 @@ bool CrateWriter::ConvertPrimIterative(
     // Push children in reverse order so left-most child is processed first
     const auto& children = item.prim->children();
     for (auto it = children.rbegin(); it != children.rend(); ++it) {
-      stack.push_back({&(*it), prim_path});
+      stack.push_back({&(*it), prim_path, item.depth + 1});
     }
   }
 

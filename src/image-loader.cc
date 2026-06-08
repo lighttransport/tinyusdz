@@ -485,6 +485,12 @@ bool GetImageInfoNanoimage(const uint8_t *bytes, const size_t size,
 
 #if defined(TINYUSDZ_EXR_V3)
 
+// Wrapper around tinyexr v3's EXR_OK() macro, which uses an old-style cast
+// (`((int)(r) >= 0)`) that trips -Wold-style-cast at every expansion site. The
+// macro lives in the external header and must not be edited, so route the check
+// through this static_cast-based helper instead.
+static inline bool ExrOk(exr_result r) { return static_cast<int>(r) >= 0; }
+
 // exr_allocator backed by a MemoryBudgetManager: bounds the total memory the
 // v3 C decoder allocates (reader scratch + planar channel buffers) for a single
 // decode, so a crafted EXR fails cleanly (NULL -> EXR_ERROR_OUT_OF_MEMORY)
@@ -552,7 +558,7 @@ bool DecodeImageEXR(const uint8_t *bytes, const size_t size,
   ExrBudgetAllocator budget(kMaxDecodedImageBytes);
   exr_allocator alloc = budget.handle();
   exr_result r = exr_load_from_memory(bytes, size, &alloc, &img);
-  if (!EXR_OK(r)) {
+  if (!ExrOk(r)) {
     (*err) += "Failed to load EXR image: " + uri + " (" +
               std::string(exr_result_string(r)) + ")\n";
     return false;
@@ -781,7 +787,7 @@ bool DecodeImageEXRHalf(const uint8_t *bytes, size_t size,
   std::memset(&img, 0, sizeof(img));
   ExrBudgetAllocator budget(kMaxDecodedImageBytes);
   exr_allocator alloc = budget.handle();
-  if (!EXR_OK(exr_load_from_memory(bytes, size, &alloc, &img))) {
+  if (!ExrOk(exr_load_from_memory(bytes, size, &alloc, &img))) {
     return false;  // not EXR / unparseable -> caller falls back
   }
   // Contract: single-part scanline only; multipart/tiled/deep -> fp32 path.
@@ -1081,10 +1087,10 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
     ExrBudgetAllocator budget(kMaxDecodedImageBytes);
     exr_allocator alloc = budget.handle();
     exr_reader *rd = nullptr;
-    if (!EXR_OK(exr_reader_open_memory(addr, sz, &alloc, &rd))) {
+    if (!ExrOk(exr_reader_open_memory(addr, sz, &alloc, &rd))) {
       return nonstd::make_unexpected("Failed to open EXR for info: " + uri + "\n");
     }
-    if (!EXR_OK(exr_reader_parse_header(rd)) ||
+    if (!ExrOk(exr_reader_parse_header(rd)) ||
         exr_reader_num_parts(rd) < 1) {
       exr_reader_close(rd);
       return nonstd::make_unexpected("Failed to parse EXR header: " + uri + "\n");
