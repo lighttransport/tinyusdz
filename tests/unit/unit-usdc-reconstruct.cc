@@ -19,6 +19,8 @@
 #include "usdGeom.hh"
 #include "usdLux.hh"
 #include "usdSkel.hh"
+#include "usdPhysics.hh"
+#include "core/collection-api.hh"
 
 #include <cmath>
 #include <string>
@@ -2194,4 +2196,358 @@ void usdc_golden_blendshape_schema_test(void) {
   TEST_CHECK(bs->offsets.authored());
   TEST_CHECK(bs->normalOffsets.authored());
   TEST_CHECK(bs->pointIndices.authored());
+}
+
+void usdc_golden_physics_scene_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-physics-scene-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/scene");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+  const PhysicsScene *scene = prim->as<PhysicsScene>();
+  TEST_CHECK(scene != nullptr);
+  if (!scene) return;
+
+  TEST_CHECK(scene->gravityDirection.authored());
+  TEST_CHECK(scene->gravityMagnitude.authored());
+  if (auto v = scene->gravityMagnitude.get_value()) {
+    TEST_CHECK(std::abs(*v - 9.81f) < 1e-3f);
+  }
+}
+
+void usdc_golden_physics_joint_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-physics-joint-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/joint");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+  const PhysicsRevoluteJoint *joint = prim->as<PhysicsRevoluteJoint>();
+  TEST_CHECK(joint != nullptr);
+  if (!joint) return;
+
+  TEST_CHECK(joint->body0.authored());
+  TEST_CHECK(joint->body1.authored());
+  TEST_CHECK(joint->localPos0.authored());
+  TEST_CHECK(joint->axis.authored());
+  value::token ax;
+  if (joint->axis.get_value(&ax)) TEST_CHECK(ax.str() == "X");
+  TEST_CHECK(joint->lowerLimit.authored());
+  if (auto v = joint->lowerLimit.get_value()) TEST_CHECK(std::abs(*v - (-45.0f)) < 1e-3f);
+  TEST_CHECK(joint->upperLimit.authored());
+}
+
+void usdc_golden_physics_collisiongroup_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-physics-collisiongroup-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/cg");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+  const PhysicsCollisionGroup *cg = prim->as<PhysicsCollisionGroup>();
+  TEST_CHECK(cg != nullptr);
+  if (!cg) return;
+
+  TEST_CHECK(cg->mergeGroup.authored());
+  value::token mg;
+  if (cg->mergeGroup.get_value(&mg)) TEST_CHECK(mg.str() == "groupA");
+  TEST_CHECK(cg->invertFilteredGroups.get_value() == true);
+  TEST_CHECK(cg->filteredGroups.authored());
+  TEST_CHECK(cg->filteredGroups.get_targetPaths().size() == 1);
+}
+
+void usdc_golden_physics_apis_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-physics-apis-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/body");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+
+  PhysicsRigidBodyAPI rb;
+  TEST_CHECK(GetPhysicsRigidBodyAPI(*prim, &rb));
+  TEST_CHECK(rb.mass.authored());
+  if (auto v = rb.mass.get_value()) TEST_CHECK(std::abs(*v - 2.5f) < 1e-3f);
+  TEST_CHECK(rb.velocity.authored());
+  TEST_CHECK(rb.centerOfMass.authored());
+
+  PhysicsMassAPI mass;
+  TEST_CHECK(GetPhysicsMassAPI(*prim, &mass));
+  TEST_CHECK(mass.diagonalInertia.authored());
+
+  PhysicsCollisionAPI col;
+  TEST_CHECK(GetPhysicsCollisionAPI(*prim, &col));
+  TEST_CHECK(col.collisionEnabled.get_value() == false);
+  TEST_CHECK(col.simulationOwner.authored());
+  TEST_CHECK(col.simulationOwner.get_targetPaths().size() == 1);
+}
+
+void usdc_golden_physics_material_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-physics-material-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/mat");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+
+  PhysicsMaterialAPI mat;
+  TEST_CHECK(GetPhysicsMaterialAPI(*prim, &mat));
+  TEST_CHECK(mat.staticFriction.authored());
+  if (auto v = mat.staticFriction.get_value()) TEST_CHECK(std::abs(*v - 0.5f) < 1e-3f);
+  TEST_CHECK(mat.dynamicFriction.authored());
+  TEST_CHECK(mat.restitution.authored());
+  TEST_CHECK(mat.density.authored());
+}
+
+void usdc_golden_collection_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-collection-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/mesh");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+  const GeomMesh *mesh = prim->as<GeomMesh>();
+  TEST_CHECK(mesh != nullptr);
+  if (!mesh) return;
+
+  const CollectionInstance *coll = nullptr;
+  TEST_CHECK(mesh->get_instance("foo", &coll));
+  if (coll) {
+    TEST_CHECK(coll->expansionRule.get_value() ==
+               CollectionInstance::ExpansionRule::ExpandPrimsAndProperties);
+    TEST_CHECK(coll->includes.authored());
+    TEST_CHECK(coll->includes.get_targetPaths().size() == 1);
+    TEST_CHECK(coll->excludes.authored());
+  }
+}
+
+void usdc_golden_lightfilter_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-lightfilter-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  {
+    const Prim *prim = FindPrimAtPath(stage, "/filter");
+    TEST_CHECK(prim != nullptr);
+    if (prim) {
+      const LightFilter *lf = prim->as<LightFilter>();
+      TEST_CHECK(lf != nullptr);
+      if (lf) TEST_CHECK(lf->visibility.authored());
+    }
+  }
+  {
+    const Prim *prim = FindPrimAtPath(stage, "/plug");
+    TEST_CHECK(prim != nullptr);
+    if (prim) {
+      const PluginLightFilter *plf = prim->as<PluginLightFilter>();
+      TEST_CHECK(plf != nullptr);
+      if (plf) {
+        TEST_CHECK(plf->shaderId.authored());
+        if (plf->shaderId.get_value()) {
+          value::token sid;
+          if (plf->shaderId.get_value().value().get_scalar(&sid)) {
+            TEST_CHECK(sid.str() == "MyFilterShader");
+          }
+        }
+      }
+    }
+  }
+}
+
+void usdc_golden_geom_intrinsics_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-geom-intrinsics-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  auto chk_d = [&](const char *path, auto getter) {
+    const Prim *prim = FindPrimAtPath(stage, path);
+    TEST_CHECK_(prim != nullptr, "missing %s", path);
+    if (prim) getter(prim);
+  };
+  chk_d("/cube", [](const Prim *p) {
+    const GeomCube *c = p->as<GeomCube>(); TEST_CHECK(c && c->size.authored()); });
+  chk_d("/sphere", [](const Prim *p) {
+    const GeomSphere *c = p->as<GeomSphere>(); TEST_CHECK(c && c->radius.authored()); });
+  chk_d("/cone", [](const Prim *p) {
+    const GeomCone *c = p->as<GeomCone>();
+    TEST_CHECK(c && c->height.authored() && c->radius.authored());
+    if (c) TEST_CHECK(c->axis.get_value() == Axis::X); });
+  chk_d("/cyl", [](const Prim *p) {
+    const GeomCylinder *c = p->as<GeomCylinder>();
+    TEST_CHECK(c && c->height.authored());
+    if (c) TEST_CHECK(c->axis.get_value() == Axis::Y); });
+  chk_d("/cap", [](const Prim *p) {
+    const GeomCapsule *c = p->as<GeomCapsule>(); TEST_CHECK(c && c->radius.authored()); });
+  chk_d("/plane", [](const Prim *p) {
+    const GeomPlane *c = p->as<GeomPlane>();
+    TEST_CHECK(c && c->width.authored() && c->length.authored()); });
+}
+
+void usdc_golden_geom_tetmesh_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-geom-tetmesh-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/tet");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+  const GeomTetMesh *tet = prim->as<GeomTetMesh>();
+  TEST_CHECK(tet != nullptr);
+  if (!tet) return;
+  TEST_CHECK(tet->points.authored());
+  TEST_CHECK(tet->tetVertexIndices.authored());
+  TEST_CHECK(tet->surfaceFaceVertexIndices.authored());
+}
+
+void usdc_golden_geom_nurbspatch_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-geom-nurbspatch-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/patch");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+  const GeomNurbsPatch *patch = prim->as<GeomNurbsPatch>();
+  TEST_CHECK(patch != nullptr);
+  if (!patch) return;
+  TEST_CHECK(patch->uVertexCount.authored());
+  TEST_CHECK(patch->vVertexCount.authored());
+  TEST_CHECK(patch->uKnots.authored());
+  TEST_CHECK(patch->points.authored());
+}
+
+void usdc_golden_geom_hermite_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-geom-hermite-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/herm");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+  const GeomHermiteCurves *herm = prim->as<GeomHermiteCurves>();
+  TEST_CHECK(herm != nullptr);
+  if (!herm) return;
+  TEST_CHECK(herm->curveVertexCounts.authored());
+  TEST_CHECK(herm->points.authored());
+  TEST_CHECK(herm->tangents.authored());
+}
+
+void usdc_golden_lights_extra_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-lights-extra-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  {
+    const Prim *p = FindPrimAtPath(stage, "/glight");
+    TEST_CHECK(p != nullptr);
+    if (p) { const GeometryLight *l = p->as<GeometryLight>();
+      TEST_CHECK(l && l->intensity.authored()); }
+  }
+  {
+    const Prim *p = FindPrimAtPath(stage, "/portal");
+    TEST_CHECK(p != nullptr);
+    if (p) { const PortalLight *l = p->as<PortalLight>();
+      TEST_CHECK(l && l->intensity.authored()); }
+  }
+  {
+    const Prim *p = FindPrimAtPath(stage, "/dome");
+    TEST_CHECK(p != nullptr);
+    if (p) { const DomeLight_1 *l = p->as<DomeLight_1>();
+      TEST_CHECK(l != nullptr);
+      if (l) {
+        TEST_CHECK(l->intensity.authored());
+        TEST_CHECK(l->guideRadius.authored());
+        TEST_CHECK(l->poleAxis.get_value().str() == "Y");
+      } }
+  }
+}
+
+void usdc_golden_matbind_collection_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-matbind-collection-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/mesh");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+  const GeomMesh *mesh = prim->as<GeomMesh>();
+  TEST_CHECK(mesh != nullptr);
+  if (!mesh) return;
+  TEST_CHECK(mesh->materialBindingCollectionMap().count("metalBits") == 1);
+  // The collection instance itself round-trips too.
+  const CollectionInstance *coll = nullptr;
+  TEST_CHECK(mesh->get_instance("metalBits", &coll));
+}
+
+void usdc_golden_light_linking_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-light-linking-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/light");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+  const SphereLight *light = prim->as<SphereLight>();
+  TEST_CHECK(light != nullptr);
+  if (!light) return;
+
+  const CollectionInstance *ll = nullptr;
+  TEST_CHECK(light->get_instance("lightLink", &ll));
+  if (ll) TEST_CHECK(ll->includes.get_targetPaths().size() == 1);
+  const CollectionInstance *sl = nullptr;
+  TEST_CHECK(light->get_instance("shadowLink", &sl));
+  if (sl) TEST_CHECK(sl->excludes.get_targetPaths().size() == 1);
+}
+
+void usdc_golden_physics_colliders_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-physics-colliders-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/cg");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+  TEST_CHECK(prim->as<PhysicsCollisionGroup>() != nullptr);
+
+  std::vector<Path> includes, excludes;
+  TEST_CHECK(GetPhysicsCollidersCollection(*prim, &includes, &excludes));
+  TEST_CHECK(includes.size() == 2);
+  TEST_CHECK(excludes.size() == 1);
 }

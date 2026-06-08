@@ -417,6 +417,20 @@ bool CrateWriter::ExtractPluginLightFilterProperties(
     }
   }
 
+  // Extract light:shaderId (PluginLightFilter-specific; parsed but previously not
+  // written). TypedAttribute<Animatable<token>>.
+  if (filter->shaderId.authored()) {
+    const auto& sid_opt = filter->shaderId.get_value();
+    if (sid_opt && sid_opt.value().has_default()) {
+      value::token sid;
+      if (sid_opt.value().get_default(&sid)) {
+        crate::CrateValue sid_crate_val;
+        sid_crate_val.Set(sid);
+        fields.push_back({"light:shaderId", sid_crate_val});
+      }
+    }
+  }
+
   return true;
 }
 

@@ -100,6 +100,12 @@ bool ReconstructShader(
     return false; \
   } \
   \
+  /* Lights inherit Collection (BoundableLight/NonboundableLight): reconstruct */ \
+  /* collection:* instances (incl. lightLink / shadowLink) into the typed map. */ \
+  if (!prim::ReconstructCollectionProperties(table, properties, light_ptr, warn, err, options.strict_allowedToken_check)) { \
+    return false; \
+  } \
+  \
   for (auto &prop : properties) { \
     SPECIAL_HANDLING \
     TYPED_ATTRS(EXPAND_TYPED_ATTR) \
