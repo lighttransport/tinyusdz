@@ -660,20 +660,24 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
 
   // Combine properties
   for (const auto &prop : src.props()) {
-    if (dst.props().count(prop.first) == 0) {
+    // Single lookup; the else-branch only mutates the found entry in place (no
+    // insert/erase on dst.props()), so the reference stays valid throughout.
+    auto dst_it = dst.props().find(prop.first);
+    if (dst_it == dst.props().end()) {
       // add if not existent
       dst.props()[prop.first] = prop.second;
     } else {
+      Property &dst_prop = dst_it->second;
       // AOUSD Core Spec 12.2.4 (custom): true if ANY opinion says true
-      if (prop.second.has_custom() && !dst.props().at(prop.first).has_custom()) {
-        dst.props()[prop.first].set_custom(true);
+      if (prop.second.has_custom() && !dst_prop.has_custom()) {
+        dst_prop.set_custom(true);
       }
 
       // AOUSD Core Spec 12.4 (relationships): Compose relationship targets
       // using list-op semantics across opinions.
-      if (dst.props().at(prop.first).is_relationship() &&
+      if (dst_prop.is_relationship() &&
           prop.second.is_relationship()) {
-        Relationship &dst_rel = dst.props()[prop.first].relationship();
+        Relationship &dst_rel = dst_prop.relationship();
         const Relationship &src_rel = prop.second.get_relationship();
 
         // If weaker has targets and stronger doesn't block them,
@@ -701,9 +705,9 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
       // AOUSD Core Spec 6.5 (type agreement): Warn if composed property types
       // disagree. Role types (color3f) agree with their underlying type (float3)
       // but are not equivalent; other mismatches are errors.
-      if (dst.props().at(prop.first).is_attribute() &&
+      if (dst_prop.is_attribute() &&
           prop.second.is_attribute()) {
-        const std::string &dst_type = dst.props().at(prop.first).get_attribute().type_name();
+        const std::string &dst_type = dst_prop.get_attribute().type_name();
         const std::string &src_type = prop.second.get_attribute().type_name();
         if (!dst_type.empty() && !src_type.empty() && dst_type != src_type) {
           // Check if types agree via role-type relationship
@@ -722,9 +726,9 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
       // AOUSD Core Spec 12.2.3 (variability): If the stronger opinion did not
       // explicitly author variability, use the weaker opinion's variability.
       // Also consult the schema registry as the weakest fallback.
-      if (dst.props().at(prop.first).is_attribute() &&
+      if (dst_prop.is_attribute() &&
           prop.second.is_attribute()) {
-        Attribute &dst_attr = dst.props()[prop.first].attribute();
+        Attribute &dst_attr = dst_prop.attribute();
         const Attribute &src_attr = prop.second.get_attribute();
 
         // If dst (stronger) has default variability (Varying) and src (weaker)
@@ -748,19 +752,30 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
   }
 
   // Combine child primspecs.
+  //
+  // Build a name->index map of dst children once so the per-child lookup is O(1)
+  // instead of an O(n*m) std::find_if scan. Indices (not iterators/pointers) are
+  // stored because push_back below may reallocate dst.children(); the map is
+  // kept in sync as new children are appended. emplace() keeps the first
+  // occurrence, matching find_if's first-match semantics for duplicate names.
+  std::unordered_map<std::string, size_t> dst_child_index;
+  dst_child_index.reserve(dst.children().size());
+  for (size_t i = 0; i < dst.children().size(); i++) {
+    dst_child_index.emplace(dst.children()[i].name(), i);
+  }
+
   for (auto &child : src.children()) {
-    auto dst_it = std::find_if(
-        dst.children().begin(), dst.children().end(),
-        [&child](const PrimSpec &ps) { return ps.name() == child.name(); });
+    auto it = dst_child_index.find(child.name());
 
     // if exists, combine properties and children
-    if (dst_it != dst.children().end()) {
-      if (!CombinePrimSpecRec(depth + 1, (*dst_it), child, warn, err)) {
+    if (it != dst_child_index.end()) {
+      if (!CombinePrimSpecRec(depth + 1, dst.children()[it->second], child, warn, err)) {
         return false;
       }
     }
     // otherwise add it
     else {
+      dst_child_index.emplace(child.name(), dst.children().size());
       dst.children().push_back(child);
     }
   }
@@ -2240,27 +2255,31 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
   // Override properties with AOUSD Core Spec 12.2.4 (custom) handling:
   // The `custom` flag is true if ANY opinion in the stack says true.
   for (const auto &prop : dst.props()) {
-    if (ps.props().count(prop.first)) {
+    // Single lookup into ps.props(). The found-branch only mutates the entry in
+    // place; the else-branch inserts a *new* key, so the held reference (taken
+    // only in the found-branch) is never invalidated.
+    auto ps_it = ps.props().find(prop.first);
+    if (ps_it != ps.props().end()) {
+      Property &ps_prop = ps_it->second;
       // AOUSD Core Spec 12.2.3: Preserve uniform variability from weaker (inherited) opinion
       Variability inherited_variability = Variability::Varying;
-      if (ps.props().at(prop.first).is_attribute() && prop.second.is_attribute()) {
-        inherited_variability = ps.props().at(prop.first).get_attribute().variability();
+      if (ps_prop.is_attribute() && prop.second.is_attribute()) {
+        inherited_variability = ps_prop.get_attribute().variability();
       }
 
       // AOUSD Core Spec 12.2.4: OR the custom flags before replacing
-      bool src_custom = ps.props().at(prop.first).has_custom();
-      ps.props().at(prop.first) = ComposeStrongerPropertyOverWeaker(
-          prop.second, ps.props().at(prop.first));
+      bool src_custom = ps_prop.has_custom();
+      ps_prop = ComposeStrongerPropertyOverWeaker(prop.second, ps_prop);
       if (src_custom && !prop.second.has_custom()) {
-        ps.props().at(prop.first).set_custom(true);
+        ps_prop.set_custom(true);
       }
 
       // AOUSD Core Spec 12.2.3: If inherited property had uniform variability
       // and the overriding (stronger) is varying, preserve uniform.
-      if (ps.props().at(prop.first).is_attribute() &&
+      if (ps_prop.is_attribute() &&
           inherited_variability == Variability::Uniform &&
-          ps.props().at(prop.first).attribute().variability() == Variability::Varying) {
-        ps.props().at(prop.first).attribute().variability() = Variability::Uniform;
+          ps_prop.attribute().variability() == Variability::Varying) {
+        ps_prop.attribute().variability() = Variability::Uniform;
       }
     }
     else {
@@ -2270,14 +2289,22 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
   }
 
   // Overide child primspecs.
-  for (auto &child : ps.children()) {
-    auto src_it = std::find_if(dst.children().begin(), dst.children().end(),
-                               [&child](const PrimSpec &primspec) {
-                                 return primspec.name() == child.name();
-                               });
+  //
+  // Build a name->index map of dst children once for O(1) lookup instead of an
+  // O(n*m) std::find_if scan. This loop does not resize dst.children(), so
+  // indices stay valid throughout. emplace() keeps the first occurrence, matching
+  // find_if's first-match semantics for duplicate names.
+  std::unordered_map<std::string, size_t> dst_child_index;
+  dst_child_index.reserve(dst.children().size());
+  for (size_t i = 0; i < dst.children().size(); i++) {
+    dst_child_index.emplace(dst.children()[i].name(), i);
+  }
 
-    if (src_it != dst.children().end()) {
-      if (!OverridePrimSpecRec(1, child, (*src_it), warn, err)) {
+  for (auto &child : ps.children()) {
+    auto it = dst_child_index.find(child.name());
+
+    if (it != dst_child_index.end()) {
+      if (!OverridePrimSpecRec(1, child, dst.children()[it->second], warn, err)) {
         return false;
       }
     }

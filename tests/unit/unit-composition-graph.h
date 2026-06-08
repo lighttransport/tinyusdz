@@ -22,6 +22,7 @@ void compgraph_payload_deferred_test(void);
 
 // BuildStage correctness: compare DAG vs iterative pipeline
 void compgraph_build_stage_simple_test(void);
+void compgraph_build_stage_wide_deep_test(void);
 void compgraph_build_stage_inherits_test(void);
 
 // Random USD generation tests (AOUSD spec based)

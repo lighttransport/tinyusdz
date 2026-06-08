@@ -968,14 +968,15 @@ bool CrateWriter::ConvertPrimIterative(
   const Path& parent_path,
   std::string* err
 ) {
-  // Explicit DFS stack: (prim pointer, parent path)
+  // Explicit DFS stack: (prim pointer, parent path, nesting depth)
   struct WorkItem {
     const Prim* prim;
     Path parent_path;
+    uint32_t depth;
   };
 
   std::vector<WorkItem> stack;
-  stack.push_back({&root_prim, parent_path});
+  stack.push_back({&root_prim, parent_path, 0});
 
   while (!stack.empty()) {
     if (stack.size() > kMaxDefaultTraversalLimit) {
@@ -985,6 +986,20 @@ bool CrateWriter::ConvertPrimIterative(
 
     WorkItem item = std::move(stack.back());
     stack.pop_back();
+
+    // Authoritative prim-nesting depth gate. The path-tree builder recurses on
+    // the native stack (see kMaxPrimNestingDepth in crate-writer.hh); reject
+    // here, early and clearly, so deeply nested stages don't fail cryptically
+    // during path-tree building.
+    if (item.depth > kMaxPrimNestingDepth) {
+      if (err) {
+        *err = "Prim nesting too deep (>" +
+               std::to_string(kMaxPrimNestingDepth) +
+               " levels) at " + item.parent_path.prim_part() + "/" +
+               item.prim->element_name();
+      }
+      return false;
+    }
 
     if (!ConvertSinglePrim(*item.prim, item.parent_path, err)) {
       return false;
@@ -1105,18 +1120,14 @@ void CrateWriter::ExtractPrimMeta(
     fields.push_back({"variantSetNames", v});
   }
 
-  // TODO: references, payload, customData, apiSchemas, inherits, specializes,
-  // assetInfo, and unregisteredMetas are implemented in the code below but
-  // currently disabled because the Stage path's binary encoding causes
-  // fieldset decode errors and CustomDataType serialization issues.
-  // The Layer path (ConvertPrimSpecRecursive) handles these correctly.
-  // Enable these after fixing the encoding/decoding issues.
-  //
-  // Fields that need fixing before enabling:
-  // - references/payload: cause "Failed to decode fieldset id" errors
-  // - customData/assetInfo: int2, int2[], asset types unsupported
-  // - apiSchemas: ListOp encoding issues for non-Explicit qualifiers
-  // - inherits/specializes: similar to references
+  // Composition arcs and dictionary metadata (customData, assetInfo, clips),
+  // apiSchemas, references, payload, inherits, and specializes ARE emitted on
+  // the Stage path below, mirroring the Layer path (ConvertPrimSpecRecursive in
+  // sconv-layer.cc). These were historically disabled due to fieldset
+  // decode/serialization issues; the encoding has since been fixed and is now
+  // covered by Stage->USDC round-trip tests (see unit-crate-writer.cc:
+  // crate_writer_stage_composition_arcs_test). Keep the two paths in sync when
+  // adding new metadata fields.
 
   if (metas.has_instanceable()) {
     crate::CrateValue v;

@@ -138,7 +138,8 @@ static std::string format_memory_size(size_t bytes) {
 
 static bool WriteStageToFile(const tinyusdz::Stage &stage,
                              const std::string &output_path,
-                             OutputFormat format) {
+                             OutputFormat format,
+                             bool compress_float_arrays = false) {
   std::string warn;
   std::string err;
 
@@ -149,12 +150,16 @@ static bool WriteStageToFile(const tinyusdz::Stage &stage,
         return false;
       }
       break;
-    case OutputFormat::USDC:
-      if (!tinyusdz::usdc::SaveAsUSDCToFile(output_path, stage, &warn, &err)) {
+    case OutputFormat::USDC: {
+      tinyusdz::USDWriteOptions wopts;
+      wopts.compress_float_arrays = compress_float_arrays;
+      if (!tinyusdz::usdc::SaveAsUSDCToFile(output_path, stage, &warn, &err,
+                                            wopts)) {
         std::cerr << "Failed to write USDC file: " << err << "\n";
         return false;
       }
       break;
+    }
     case OutputFormat::USDZ: {
       const std::map<std::string, std::vector<uint8_t>> assets;
       if (!tinyusdz::SaveAsUSDZToFile(output_path, stage, assets, &warn, &err)) {
@@ -379,6 +384,10 @@ void print_help() {
   std::cout << "  -o, --output FILE   Write output to FILE\n";
   std::cout << "  --output-format FMT Output format: usda, usdc, usdz\n";
   std::cout << "                      Default: infer from output filename extension\n";
+  std::cout << "  --compress-float-arrays\n";
+  std::cout << "                      Enable OpenUSD-compatible tagged compression\n";
+  std::cout << "                      for float[]/double[] arrays in USDC output\n";
+  std::cout << "                      (default off).\n";
   std::cout << "  --memstat           Print memory usage statistics\n";
   std::cout << "                      (includes USDC parser budget report for .usdc)\n";
   std::cout << "  --error-detail      Show full error stack and full source lines\n";
@@ -456,6 +465,7 @@ int main(int argc, char **argv) {
   bool memstat{false};
   bool error_detail{false};
   bool show_progress{false};
+  bool compress_float_arrays{false};
   OutputFormat output_format{OutputFormat::Infer};
 
   // Inspect options
@@ -515,6 +525,8 @@ int main(int argc, char **argv) {
                   << ". Must be 'usda', 'usdc', or 'usdz'.\n";
         return EXIT_FAILURE;
       }
+    } else if (arg.compare("--compress-float-arrays") == 0) {
+      compress_float_arrays = true;
     } else if (arg.compare("--extract-variants") == 0) {
       has_extract_variants = true;
     } else if (tinyusdz::startsWith(arg, "--variant-format=")) {
@@ -932,7 +944,8 @@ int main(int argc, char **argv) {
       }
 
       if (has_output_file) {
-        if (!WriteStageToFile(stage, output_filepath, output_format)) {
+        if (!WriteStageToFile(stage, output_filepath, output_format,
+                            compress_float_arrays)) {
           return EXIT_FAILURE;
         }
       }
@@ -1286,7 +1299,8 @@ int main(int argc, char **argv) {
     }
 
     if (has_output_file) {
-      if (!WriteStageToFile(stage, output_filepath, output_format)) {
+      if (!WriteStageToFile(stage, output_filepath, output_format,
+                            compress_float_arrays)) {
         return EXIT_FAILURE;
       }
     }

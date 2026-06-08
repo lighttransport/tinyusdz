@@ -221,6 +221,13 @@ struct USDWriteOptions {
   /// Default is 5 (good balance of speed and ratio).
   ///
   int zstd_compression_level{5};
+
+  ///
+  /// Enable OpenUSD-compatible tagged compression for float[]/double[] arrays
+  /// in USDC output (code 'i' = integers, 't' = lookup table; see
+  /// doc/crate-writer.md). Default OFF: such arrays are written uncompressed.
+  ///
+  bool compress_float_arrays{false};
 };
 
 //

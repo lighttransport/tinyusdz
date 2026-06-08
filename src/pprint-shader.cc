@@ -182,6 +182,10 @@ static std::string print_shader_params(const UsdUVTexture &shader,
   ss << print_typed_token_attr(shader.wrapS, "inputs:wrapS", indent);
   ss << print_typed_token_attr(shader.wrapT, "inputs:wrapT", indent);
 
+  // tinyusdz extensions: UV set selection (index / name).
+  ss << print_typed_attr(shader.uv_set, "inputs:uv_set", indent);
+  ss << print_typed_attr(shader.uv_set_name, "inputs:uv_set_name", indent);
+
   ss << print_typed_terminal_attr(shader.outputsR, "outputs:r", indent);
   ss << print_typed_terminal_attr(shader.outputsG, "outputs:g", indent);
   ss << print_typed_terminal_attr(shader.outputsB, "outputs:b", indent);
