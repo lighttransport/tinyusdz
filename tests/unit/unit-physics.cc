@@ -1837,7 +1837,66 @@ def "World"
 }
 
 // ---------------------------------------------------------------------------
-// 25. URDF JSON conversion authors Newton APIs for scene/colliders/actuators.
+// 25. URDF/MJCF JSON conversion authors spherical joints.
+// ---------------------------------------------------------------------------
+void urdf_json_spherical_joint_export_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "BallJsonBot",
+  "upAxis": "Z",
+  "links": [
+    { "name": "base", "inertial": { "mass": 1.0 } },
+    { "name": "tip", "inertial": { "mass": 0.25 } }
+  ],
+  "joints": [
+    {
+      "name": "ball",
+      "type": "spherical",
+      "parent": "base",
+      "child": "tip",
+      "axis": [0, 1, 0],
+      "axisToken": "Y",
+      "originMatrix": [1, 0, 0, 0,
+                       0, 1, 0, 0,
+                       0, 0, 1, 0,
+                       0, 0, 0, 1],
+      "localRot0": [1, 0, 0, 0],
+      "localRot1": [1, 0, 0, 0]
+    }
+  ]
+})JSON";
+
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(
+      robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("ConvertURDFJsonToUSDStage failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto joint_r = stage.GetPrimAtPath(Path("/World/Joints/ball", ""));
+  TEST_CHECK(bool(joint_r));
+  if (!joint_r) return;
+
+  const Prim *p = *joint_r;
+  TEST_CHECK(p->is<PhysicsSphericalJoint>());
+  const auto *joint = p->as<PhysicsSphericalJoint>();
+  TEST_CHECK(joint != nullptr);
+  if (!joint) return;
+
+  auto axis = joint->axis.get_value();
+  TEST_CHECK(axis.has_value());
+  if (axis.has_value()) TEST_CHECK(axis.value().str() == "Y");
+
+  auto body0 = joint->body0.get_targetPaths();
+  auto body1 = joint->body1.get_targetPaths();
+  TEST_CHECK(body0.size() == 1);
+  TEST_CHECK(body1.size() == 1);
+  if (body0.size() == 1) TEST_CHECK(body0[0].prim_part() == "/World/Links/base");
+  if (body1.size() == 1) TEST_CHECK(body1[0].prim_part() == "/World/Links/tip");
+}
+
+// ---------------------------------------------------------------------------
+// 26. URDF JSON conversion authors Newton APIs for scene/colliders/actuators.
 // ---------------------------------------------------------------------------
 void urdf_json_newton_api_export_test(void) {
   const char *robot_json = R"JSON({

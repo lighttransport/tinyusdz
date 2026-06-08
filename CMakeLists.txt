@@ -2183,7 +2183,25 @@ if(TINYUSDZ_BUILD_TESTS)
   # AOUSD validation fixture suite (self-checking via `# EXPECT:` markers).
   # Runs `tusdcat --validate-all` over tests/usda/validation/**.
   #
-  if(TARGET tusdcat)
+  # These are end-to-end tests that spawn the `tusdcat` binary. On 32-bit
+  # (i386) + AddressSanitizer, the i386 ASan runtime/allocator cannot reserve
+  # enough virtual address space for the full `tusdcat` process and it aborts
+  # before useful work (`ERROR: Failed to mmap`, mmap -> ENOMEM; often while
+  # reporting an internal allocator OOM). This reproduces with both gcc's
+  # libasan and clang's compiler-rt, so it is a 32-bit ASan address-space
+  # limitation for this binary, not a toolchain bug. The validation logic
+  # itself is correct on 32-bit (verified with a non-ASan i386 build: full suite
+  # passes) and is exercised by every 64-bit job, and ASan coverage of the core
+  # library is still provided by unit-test-tinyusdz (which runs fine under
+  # 32-bit ASan). So skip just these tusdcat-driven E2E tests in the 32-bit+ASan
+  # configuration.
+  set(_tinyusdz_tusdcat_e2e_ok TRUE)
+  if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND SANITIZE_ADDRESS)
+    set(_tinyusdz_tusdcat_e2e_ok FALSE)
+    message(STATUS "tinyusdz: skipping tusdcat E2E validation tests on 32-bit + ASan (i386 ASan runtime cannot reserve enough address space for tusdcat)")
+  endif()
+
+  if(TARGET tusdcat AND _tinyusdz_tusdcat_e2e_ok)
     add_test(
       NAME validation-suite-test
       COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/validation/run-validation-suite.py
