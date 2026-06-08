@@ -45,6 +45,7 @@
     "generate:exr": "vite-node cli/generate-test-exr.js",
     "test:exr-decoder": "vite-node cli/test-exr-decoder.js",
     "test:progress": "node cli/test-progress-cli.js",
+    "test:urdf-cli": "node tests/urdf-to-usd-cli.test.mjs",
     "test:usdskel": "vite-node tests/usdskel-animation-test.js",
     "usd-export": "vite-node cli/usd-export-cli.js",
     "usdzconvert": "node cli/usdzconvert.js",

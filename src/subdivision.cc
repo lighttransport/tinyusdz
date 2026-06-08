@@ -14,8 +14,13 @@
 #include <unordered_set>
 #include <cstring>
 
-#ifdef __clang__
-#pragma clang diagnostic ignored "-Wnrvo"
+// -Wnrvo only exists on newer Clang. Apple clang, the Android NDK toolchain,
+// and older clang don't know the group and would error out under
+// -Werror=-Wunknown-warning-option, so only ignore it where it is recognized.
+#if defined(__clang__) && defined(__has_warning)
+#  if __has_warning("-Wnrvo")
+#    pragma clang diagnostic ignored "-Wnrvo"
+#  endif
 #endif
 
 namespace tinyusdz {
