@@ -8,6 +8,8 @@ void crate_writer_typename_encoding_test(void);
 void crate_writer_timesamples_test(void);
 void crate_writer_pseudoroot_ordering_test(void);
 void crate_writer_roundtrip_test(void);
+void crate_writer_stage_composition_arcs_test(void);
+void crate_writer_float_double_array_compression_roundtrip_test(void);
 void crate_writer_multiple_prims_test(void);
 void crate_writer_nested_prims_test(void);
 void crate_writer_error_handling_test(void);

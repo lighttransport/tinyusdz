@@ -992,6 +992,76 @@ def Xform "Root"
 }
 
 // ---------------------------------------------------------------------------
+// compgraph_build_stage_wide_deep_test
+// Regression for the BuildStage child-composition rewrite: a wide + deep
+// hierarchy must reconstruct fully. BuildStage formerly scanned all of
+// _prim_indices for every parent (O(N^2) with a substr per probe); it now uses
+// a precomputed parent->children index. This test exercises that path and
+// checks both wide (many siblings) and deep (long chains) coverage.
+// ---------------------------------------------------------------------------
+
+void compgraph_build_stage_wide_deep_test(void) {
+  const int kWidth = 40;  // siblings under /Root
+  const int kDepth = 12;  // nested-scope chain depth under each sibling
+
+  std::ostringstream ss;
+  ss << "#usda 1.0\n";
+  ss << "def Xform \"Root\"\n{\n";
+  for (int w = 0; w < kWidth; w++) {
+    ss << "  def Scope \"Sib" << w << "\"\n  {\n";
+    for (int d = 0; d < kDepth; d++) {
+      ss << "    def Scope \"D" << d << "\"\n    {\n";
+    }
+    for (int d = 0; d < kDepth; d++) {
+      ss << "    }\n";
+    }
+    ss << "  }\n";
+  }
+  ss << "}\n";
+  const std::string usda = ss.str();
+
+  std::string warn, err;
+
+  CompositionGraph graph;
+  TEST_CHECK(compose_via_graph(usda, graph, warn, err));
+  if (!err.empty()) { TEST_MSG("graph err: %s", err.c_str()); return; }
+
+  Stage dag_stage;
+  TEST_CHECK(graph.BuildStage(&dag_stage, &warn, &err));
+  if (!err.empty()) { TEST_MSG("BuildStage err: %s", err.c_str()); return; }
+
+  // /Root exists with kWidth direct children.
+  auto root = dag_stage.GetPrimAtPath(Path("/Root", ""));
+  TEST_CHECK(root.has_value());
+  if (root) {
+    TEST_CHECK_(root.value()->children().size() == size_t(kWidth),
+                "Root has %zu children, expected %d",
+                root.value()->children().size(), kWidth);
+  }
+
+  // A representative deep leaf must exist: /Root/Sib0/D0/D1/.../D{kDepth-1}.
+  {
+    std::string deep = "/Root/Sib0";
+    for (int d = 0; d < kDepth; d++) deep += "/D" + std::to_string(d);
+    auto leaf = dag_stage.GetPrimAtPath(Path(deep, ""));
+    TEST_CHECK_(leaf.has_value(), "deep leaf %s not found", deep.c_str());
+  }
+  // The last sibling's first-level child must exist too (wide coverage).
+  {
+    const std::string p = "/Root/Sib" + std::to_string(kWidth - 1) + "/D0";
+    auto pr = dag_stage.GetPrimAtPath(Path(p, ""));
+    TEST_CHECK_(pr.has_value(), "wide path %s not found", p.c_str());
+  }
+
+  // DAG and iterative pipelines should agree on the root prim count.
+  Stage iter_stage;
+  TEST_CHECK(compose_via_iterative(usda, iter_stage, warn, err));
+  TEST_CHECK_(dag_stage.root_prims().size() == iter_stage.root_prims().size(),
+              "DAG roots %zu vs iterative %zu",
+              dag_stage.root_prims().size(), iter_stage.root_prims().size());
+}
+
+// ---------------------------------------------------------------------------
 // compgraph_build_stage_inherits_test
 // BuildStage with inherits should compose properties correctly.
 // ---------------------------------------------------------------------------

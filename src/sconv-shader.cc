@@ -875,6 +875,28 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
     }
   }
 
+  // inputs:uv_set (int) - UV set index (tinyusdz extension; mirrors the reader
+  // in prim-reconstruct-shader3.cc and the USDA printer in pprint-shader.cc).
+  if (uv_texture->uv_set.authored()) {
+    crate::CrateValue uv_set_value;
+    uv_set_value.Set(uv_texture->uv_set.get_value());
+    if (!add_input_spec("inputs:uv_set", "int", uv_set_value)) {
+      return false;
+    }
+  }
+
+  // inputs:uv_set_name (token) - UV set name (tinyusdz extension).
+  if (uv_texture->uv_set_name.authored()) {
+    value::token uv_set_name_tok;
+    if (uv_texture->uv_set_name.get_value(&uv_set_name_tok)) {
+      crate::CrateValue uv_set_name_value;
+      uv_set_name_value.Set(uv_set_name_tok);
+      if (!add_input_spec("inputs:uv_set_name", "token", uv_set_name_value)) {
+        return false;
+      }
+    }
+  }
+
   return true;
 }
 

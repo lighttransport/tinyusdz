@@ -718,33 +718,27 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       }
     }
   }
-  // Float arrays use a tagged compression format in the reader.
-  // Until the writer emits that exact format, keep them uncompressed.
+  // Float arrays. By default written uncompressed (a valid, Pixar-readable
+  // encoding that round-trips — see crate_writer_basis_curves_test float[]
+  // widths). When Options.enable_float_array_compression is set,
+  // WriteCompressedFloatArray attempts OpenUSD's tagged 'i'/'t' compression and
+  // sets `is_compressed` accordingly; the count is written here first to match
+  // the reader (ReadFloatArray reads the element count, then the payload).
   else if (auto* float_array = value.as<std::vector<float>>()) {
     uint64_t count = float_array->size();
     if (!Write(count)) { if (err) *err = "Failed to write float array count"; return -1; }
-    size_t byte_count;
-    if (!safe::mul(float_array->size(), sizeof(float), &byte_count)) {
-      if (err) *err = "Integer overflow: float_array->size() * sizeof(float)";
-      return -1;
-    }
-    if (!WriteBytes(float_array->data(), byte_count)) {
-      if (err) *err = "Failed to write float array data";
+    if (WriteCompressedFloatArray(float_array->data(), count, is_compressed,
+                                  err) < 0) {
       return -1;
     }
   }
-  // Double arrays use a tagged compression format in the reader.
-  // Until the writer emits that exact format, keep them uncompressed.
+  // Double arrays. Same default + opt-in tagged-compression handling as floats
+  // (the 'i' path reconstructs via int32, matching the reader).
   else if (auto* double_array = value.as<std::vector<double>>()) {
     uint64_t count = double_array->size();
     if (!Write(count)) { if (err) *err = "Failed to write double array count"; return -1; }
-    size_t byte_count;
-    if (!safe::mul(double_array->size(), sizeof(double), &byte_count)) {
-      if (err) *err = "Integer overflow: double_array->size() * sizeof(double)";
-      return -1;
-    }
-    if (!WriteBytes(double_array->data(), byte_count)) {
-      if (err) *err = "Failed to write double array data";
+    if (WriteCompressedDoubleArray(double_array->data(), count, is_compressed,
+                                   err) < 0) {
       return -1;
     }
   }

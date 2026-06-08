@@ -22,7 +22,7 @@ The TinyUSDZ USDC Crate Writer writes USD Stage data to binary USDC (Crate) form
 
 ## Implemented Features
 
-**Core**: Binary v0.8.0 writing, file header, TOC, LZ4 compression, NaN-aware value deduplication (XXH3), path tree encoding.
+**Core**: Binary v0.8.0 writing, file header, TOC, LZ4 compression, NaN-aware value deduplication (XXH3), path tree encoding, integer-array compression. Tagged float/double-array compression via a runtime writer option (see [below](#tagged-floatdouble-array-compression); off by default).
 
 **Data Types**: Basic types (int, float, double, bool, string, token), vectors, matrices, paths, TimeSamples with ValueRep format, ListOp<T> for references/payloads/inherits, TokenListOp, StringListOp, PathListOp, Dictionary values, VariantSelectionMap.
 
@@ -143,11 +143,116 @@ TinyUSDZ inlining lives in `CrateWriter::TryInlineValue` (`crate-writer-inline.c
 
 ## Array Compression (v0.5.0+)
 
-Arrays can be both deduplicated and compressed:
+Arrays can be both deduplicated and compressed. The decision is made per array at
+write time:
 
-- **Integer**: `Sdf_IntegerCompression` (min 16 elements)
-- **Float**: As integers if exactly representable, lookup table if few distinct values (<1024), otherwise uncompressed
-- **Other types**: Uncompressed
+- **Integer** (`int`/`uint`/`int64`/`uint64`): `Sdf_IntegerCompression` when the
+  array has ≥ `MinCompressedArraySize` (= **16**) elements; otherwise raw. No code
+  byte — the element type already tells the reader the layout.
+- **Floating point** (`half`/`float`/`double`, crate ≥ 0.6.0, ≥ 16 elements):
+  *tagged* compression — integer encoding if every value is exactly an int32,
+  else a lookup table if there are few distinct values, else uncompressed. See
+  [Tagged Float/Double Array Compression](#tagged-floatdouble-array-compression).
+- **Other types**: Uncompressed.
+
+For *which* values are eligible to be written out-of-line at all (vs. inlined in
+the 48-bit ValueRep payload), see [Value Classification](#value-classification).
+
+### Tagged Float/Double Array Compression
+
+This is the format OpenUSD calls "compressed floating point arrays" (crate
+version 0.6.0+). Reference: `_WritePossiblyCompressedArray<float/double/GfHalf>`
+in `pxr/usd/sdf/crateFile.cpp` (OpenUSD v25.08). The matching TinyUSDZ reader is
+`ReadFloatArray`/`ReadDoubleArray`/`ReadHalfArray` in `src/crate-reader-arrays.cc`.
+
+#### When OpenUSD creates a compressed float/double array
+
+For a `VtArray<float|double|GfHalf>`, OpenUSD decides in this exact order:
+
+1. **Gate.** If the crate version is `< 0.6.0`, or the array has fewer than
+   `MinCompressedArraySize` (**16**) elements → write **uncompressed** (raw
+   contiguous values, ValueRep *not* marked compressed, no code byte).
+
+2. **Integer encoding — code `'i'`.** Test every element with
+   `isIntegral(fp) = (int32_min <= fp && fp <= int32_max) && T(int32_t(fp)) == fp`.
+   If *all* elements pass, the array is rewritten as a compressed `int32` stream.
+   The reader reconstructs each value as `T(int32)`. Notes:
+   - The range check happens *before* the cast (avoids UB on NaN/Inf/out-of-range).
+   - `-0.0` satisfies `T(int32_t(-0.0)) == -0.0` (since `+0.0 == -0.0`), so the
+     `'i'` path **collapses `-0.0` to `+0.0`**. This is intrinsic to the encoding.
+
+3. **Lookup table — code `'t'`.** Otherwise OpenUSD builds a table of distinct
+   values, bailing out as soon as it would exceed
+   `maxLutSize = min(array.size() / 4, 1024)` distinct entries (a profitability
+   bound; the 1024 ceiling also bounds the linear-search cost). If the table fits,
+   the array is written as the table plus a compressed `uint32` index stream.
+   OpenUSD finds duplicates with `operator==`, so it merges `+0.0`/`-0.0` and never
+   merges `NaN` (each `NaN` is distinct, which usually pushes a `NaN`-heavy array
+   over `maxLutSize` and into the uncompressed fallback).
+
+4. **Uncompressed fallback.** If neither `'i'` nor `'t'` applies, write raw values
+   with the ValueRep *not* marked compressed (so no code byte).
+
+The ValueRep's `IsCompressed` bit is what selects the branch on read: when set and
+`count >= 16`, the reader expects a code byte; otherwise it reads raw values.
+
+#### Wire format
+
+Element `count` is always written first. Then, only when the ValueRep is marked
+compressed *and* `count >= MinCompressedArraySize`:
+
+```
+uint64  count
+int8    code                     // 'i' or 't'
+  'i':  <compressed int32 stream> // uint64 compSize + compSize bytes (Sdf_IntegerCompression)
+  't':  uint32  lutSize
+        T[lutSize]               // raw little-endian lookup-table entries
+        <compressed uint32 stream> // uint64 compSize + compSize bytes (the indices)
+```
+
+If `count < 16` (even on the "compressed" path) or the ValueRep is not marked
+compressed, the payload is simply `uint64 count` followed by raw `T[count]` — no
+code byte.
+
+#### TinyUSDZ implementation (runtime option, default off)
+
+TinyUSDZ writes float/double arrays **uncompressed by default**. The tagged
+encoding above is implemented and toggled by a runtime writer option (no compile
+flag), so the default output is unchanged:
+
+| Layer | Flag (default `false`) |
+|-------|------------------------|
+| Low-level crate writer | `CrateWriter::Options::enable_float_array_compression` |
+| High-level USDC writer | `USDWriteOptions::compress_float_arrays` (→ `SaveAsUSDCToFile`) |
+| `tusdcat` CLI | `--compress-float-arrays` |
+
+```cpp
+tinyusdz::USDWriteOptions wopts;
+wopts.compress_float_arrays = true;  // default false
+tinyusdz::usdc::SaveAsUSDCToFile("out.usdc", stage, &warn, &err, wopts);
+```
+```bash
+tusdcat --compress-float-arrays input.usda -o out.usdc   # default: off
+```
+
+- Helpers: `CrateWriter::WriteCompressedFloatArray` /
+  `WriteCompressedDoubleArray` (`src/crate-writer.cc`), invoked from the
+  `std::vector<float>` / `std::vector<double>` branches of `WriteValueData`
+  (`src/crate-writer-values.cc`). Compression is attempted only when both
+  `Options.enable_float_array_compression` *and* `Options.enable_compression` are
+  set (the latter gates the integer-stream compressor the `'i'`/`'t'` payloads use).
+- Matches OpenUSD: `MinCompressedArraySize = 16`, the `'i'` integral test with the
+  pre-cast range guard, and the `min(count/4, 1024)` LUT bound.
+- Difference from OpenUSD (still Pixar-readable): the LUT is keyed on the **raw bit
+  pattern** rather than `operator==`, so `-0.0` and `NaN` round-trip *exactly*
+  through the `'t'` path (OpenUSD merges `±0.0` and explodes the LUT on `NaN`). The
+  `'i'` path still collapses `-0.0 → +0.0`, identical to OpenUSD.
+- `half[]` arrays are left uncompressed by TinyUSDZ even with the option on (already
+  2 bytes/element; only `float[]`/`double[]` are handled).
+- Verified: `crate_writer_float_double_array_compression_roundtrip_test` runs every
+  data pattern with the option both ON and OFF (`'i'`/`'t'`/raw, bit-exact) plus a
+  file-size-shrinks assertion; Pixar `usdcat` reads both `'i'` and `'t'` TinyUSDZ
+  output with exact values.
 
 ## Performance
 
