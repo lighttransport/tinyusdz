@@ -1208,7 +1208,7 @@ class TinyUSDZLoader extends Loader {
 
         // Allocate WASM buffer upfront
         // Returns UUID for buffer operations, asset_name stored inside for cache key
-        const allocResult = usd.allocateZeroCopyBuffer(assetPath, totalSize);
+        const allocResult = usd.allocateZeroCopyBuffer(assetPath, totalSize, 0);
         if (!allocResult.success) {
             throw new Error('Failed to allocate WASM buffer for streaming: ' + (allocResult.error || 'unknown error'));
         }
@@ -1369,7 +1369,7 @@ class TinyUSDZLoader extends Loader {
         }
 
         // Now allocate WASM buffer with known size
-        const allocResult = usd.allocateZeroCopyBuffer(assetPath, totalBytes);
+        const allocResult = usd.allocateZeroCopyBuffer(assetPath, totalBytes, 0);
         if (!allocResult.success) {
             throw new Error('Failed to allocate WASM buffer: ' + (allocResult.error || 'unknown error'));
         }
@@ -1597,7 +1597,7 @@ class TinyUSDZLoader extends Loader {
         const usd = options.usdInstance || new this.native_.TinyUSDZLoaderNative();
 
         // Allocate WASM buffer
-        const allocResult = usd.allocateZeroCopyBuffer(assetPath, totalSize);
+        const allocResult = usd.allocateZeroCopyBuffer(assetPath, totalSize, 0);
         if (!allocResult.success) {
             throw new Error('Failed to allocate WASM buffer: ' + (allocResult.error || 'unknown error'));
         }
