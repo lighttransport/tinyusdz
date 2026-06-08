@@ -22,6 +22,13 @@ static std::string print_light_common_attrs(const LightT& light, uint32_t indent
   ss << print_typed_attr(light.intensity, "inputs:intensity", indent);
   ss << print_typed_attr(light.normalize, "inputs:normalize", indent);
   ss << print_typed_attr(light.specular, "inputs:specular", indent);
+  // light:filters relationship (parsed into lightFilters; emit it so USDA
+  // round-trips and matches OpenUSD usdcat output).
+  if (light.lightFilters.authored()) {
+    ss << print_relationship(light.lightFilters.relationship(),
+                             light.lightFilters.get_listedit_qual(),
+                             /* custom */ false, "light:filters", indent);
+  }
   return ss.str();
 }
 

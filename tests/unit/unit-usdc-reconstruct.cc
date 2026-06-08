@@ -17,6 +17,8 @@
 #include "io-util.hh"
 #include "crate-writer.hh"
 #include "usdGeom.hh"
+#include "usdLux.hh"
+#include "usdSkel.hh"
 
 #include <cmath>
 #include <string>
@@ -1989,4 +1991,207 @@ void usdc_stage_variant_props_roundtrip_test(void) {
   if (low_it != vs_it->second.variantSet.end()) {
     TEST_CHECK(low_it->second.properties().count("detail") > 0);
   }
+}
+
+// ===========================================================================
+// Golden USDC schema reconstruction.
+//
+// The .usdc fixtures under tests/usdc/schema-*.usdc were authored by Pixar
+// OpenUSD `usdcat` (ground truth), NOT by tinyusdz. These verify that the
+// TinyUSDZ crate reader reconstructs typed schema fields from real Pixar crate
+// files. `.authored()` on a typed field is the key signal that a property was
+// mapped into the schema struct rather than dropped.
+// ===========================================================================
+
+void usdc_golden_geom_mesh_schema_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-mesh-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/mesh");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+  const GeomMesh *mesh = prim->as<GeomMesh>();
+  TEST_CHECK(mesh != nullptr);
+  if (!mesh) return;
+
+  TEST_CHECK(mesh->get_points().size() == 4);
+  TEST_CHECK(mesh->get_faceVertexCounts().size() == 1);
+  TEST_CHECK(mesh->get_faceVertexIndices().size() == 4);
+  TEST_CHECK(mesh->normals.authored());
+  // Regression: GeomMesh velocities must reconstruct from a Pixar crate file.
+  TEST_CHECK(mesh->velocities.authored());
+}
+
+void usdc_golden_geom_subset_schema_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-geomsubset-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/mesh/subset");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+  const GeomSubset *subset = prim->as<GeomSubset>();
+  TEST_CHECK(subset != nullptr);
+  if (!subset) return;
+
+  TEST_CHECK(subset->elementType.get_value() == GeomSubset::ElementType::Face);
+  value::token fam;
+  TEST_CHECK(subset->familyName.get_value(&fam));
+  TEST_CHECK(fam.str() == "materialBind");
+  TEST_CHECK(subset->indices.authored());
+}
+
+void usdc_golden_geom_camera_schema_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-camera-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/cam");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+  const GeomCamera *cam = prim->as<GeomCamera>();
+  TEST_CHECK(cam != nullptr);
+  if (!cam) return;
+
+  auto chk = [](const TypedAttributeWithFallback<Animatable<float>> &a,
+                float expect, const char *nm) {
+    TEST_CHECK_(a.authored(), "camera.%s not authored", nm);
+    float v = 0.0f;
+    if (a.authored() && a.get_value().get_scalar(&v)) {
+      TEST_CHECK_(std::abs(v - expect) < 1e-3f, "camera.%s = %f, want %f", nm, v, expect);
+    }
+  };
+  chk(cam->focalLength, 35.0f, "focalLength");
+  chk(cam->focusDistance, 10.0f, "focusDistance");
+  chk(cam->fStop, 2.8f, "fStop");
+  chk(cam->horizontalAperture, 36.0f, "horizontalAperture");
+  TEST_CHECK(cam->clippingRange.authored());
+}
+
+void usdc_golden_light_schema_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-light-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  auto sf = [](const TypedAttributeWithFallback<Animatable<float>> &a,
+               float expect, const char *nm) {
+    TEST_CHECK_(a.authored(), "%s dropped on read", nm);
+    float v = 0.0f;
+    if (a.authored() && a.get_value().get_scalar(&v)) {
+      TEST_CHECK_(std::abs(v - expect) < 1e-3f, "%s = %f, want %f", nm, v, expect);
+    }
+  };
+
+  // SphereLight: full base radiometric set + radius + light:filters.
+  {
+    const Prim *prim = FindPrimAtPath(stage, "/light");
+    TEST_CHECK(prim != nullptr);
+    if (prim) {
+      const SphereLight *L = prim->as<SphereLight>();
+      TEST_CHECK(L != nullptr);
+      if (L) {
+        sf(L->intensity, 3.0f, "sphere.intensity");
+        sf(L->exposure, 1.5f, "sphere.exposure");
+        sf(L->diffuse, 0.7f, "sphere.diffuse");
+        sf(L->specular, 0.3f, "sphere.specular");
+        sf(L->colorTemperature, 5000.0f, "sphere.colorTemperature");
+        sf(L->radius, 2.0f, "sphere.radius");
+        TEST_CHECK(L->normalize.authored());
+        TEST_CHECK(L->enableColorTemperature.authored());
+        TEST_CHECK(L->color.authored());
+        TEST_CHECK(L->lightFilters.authored());
+        TEST_CHECK(L->lightFilters.get_targetPaths().size() == 2);
+      }
+    }
+  }
+
+  // CylinderLight: base color/intensity/exposure were dropped before the fix.
+  {
+    const Prim *prim = FindPrimAtPath(stage, "/clight");
+    TEST_CHECK(prim != nullptr);
+    if (prim) {
+      const CylinderLight *L = prim->as<CylinderLight>();
+      TEST_CHECK(L != nullptr);
+      if (L) {
+        sf(L->intensity, 2.5f, "cylinder.intensity");
+        sf(L->exposure, 0.5f, "cylinder.exposure");
+        sf(L->length, 5.0f, "cylinder.length");
+        sf(L->radius, 1.0f, "cylinder.radius");
+        TEST_CHECK(L->color.authored());
+      }
+    }
+  }
+}
+
+void usdc_golden_skeleton_schema_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-skeleton-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/skel");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+  const Skeleton *skel = prim->as<Skeleton>();
+  TEST_CHECK(skel != nullptr);
+  if (!skel) return;
+
+  TEST_CHECK(skel->joints.authored());
+  {
+    std::vector<value::token> joints;
+    if (skel->joints.get_value(&joints)) {
+      TEST_CHECK(joints.size() == 2);
+    }
+  }
+  TEST_CHECK(skel->bindTransforms.authored());
+  TEST_CHECK(skel->restTransforms.authored());
+}
+
+void usdc_golden_skelanim_schema_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-skelanim-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/anim");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+  const SkelAnimation *anim = prim->as<SkelAnimation>();
+  TEST_CHECK(anim != nullptr);
+  if (!anim) return;
+
+  TEST_CHECK(anim->joints.authored());
+  TEST_CHECK(anim->translations.authored());
+  TEST_CHECK(anim->rotations.authored());
+  TEST_CHECK(anim->scales.authored());
+}
+
+void usdc_golden_blendshape_schema_test(void) {
+  Stage stage;
+  std::string err;
+  bool loaded = LoadStageFromUsdcFixture("schema-blendshape-001.usdc", &stage, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) { TEST_MSG("%s", err.c_str()); return; }
+
+  const Prim *prim = FindPrimAtPath(stage, "/blend");
+  TEST_CHECK(prim != nullptr);
+  if (!prim) return;
+  const BlendShape *bs = prim->as<BlendShape>();
+  TEST_CHECK(bs != nullptr);
+  if (!bs) return;
+
+  TEST_CHECK(bs->offsets.authored());
+  TEST_CHECK(bs->normalOffsets.authored());
+  TEST_CHECK(bs->pointIndices.authored());
 }

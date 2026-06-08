@@ -19,6 +19,8 @@
 #include "next/parser/ascii-parser.hh"
 #include "next/stage/stage.hh"
 #include "next/reader/usda-reader.hh"
+#include "next/schema/physics-api.hh"
+#include "next/schema/physics-joint.hh"
 
 using namespace tinyusdz::next;
 
@@ -383,6 +385,69 @@ def Sphere "MySphere" {
 }
 
 // ============================================================
+// Physics schema readers (regression: vector3f / quatf properties were dropped)
+// ============================================================
+
+void test_physics_schema() {
+  std::cout << "Testing physics schema readers..." << std::endl;
+
+  const char* input = R"(#usda 1.0
+def Xform "Body" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+)
+{
+    vector3f physics:velocity = (1, 2, 3)
+    vector3f physics:angularVelocity = (4, 5, 6)
+    point3f physics:centerOfMass = (0.5, 0.5, 0.5)
+    float3 physics:diagonalInertia = (2, 3, 4)
+}
+
+def PhysicsRevoluteJoint "Joint"
+{
+    point3f physics:localPos0 = (1, 0, 0)
+    point3f physics:localPos1 = (0, 1, 0)
+}
+)";
+
+  LoadResult result = LoadUSDAFromString(input, std::strlen(input));
+  assert(result.success);
+
+  UsdPrim body = result.stage.GetPrimAtPath("/Body");
+  assert(body.IsValid());
+
+  // Rigid body velocity / angularVelocity (single vector3f attrs).
+  PhysicsRigidBodyData rb;
+  assert(GetPhysicsRigidBodyData(result.stage, body, &rb, 0.0));
+  assert(std::abs(rb.velocity[0] - 1.0f) < 0.001f);
+  assert(std::abs(rb.velocity[1] - 2.0f) < 0.001f);
+  assert(std::abs(rb.velocity[2] - 3.0f) < 0.001f);
+  assert(std::abs(rb.angularVelocity[0] - 4.0f) < 0.001f);
+  assert(std::abs(rb.angularVelocity[1] - 5.0f) < 0.001f);
+  assert(std::abs(rb.angularVelocity[2] - 6.0f) < 0.001f);
+
+  // Mass: centerOfMass / diagonalInertia (vector3f).
+  PhysicsMassData mass;
+  assert(GetPhysicsMassData(result.stage, body, &mass));
+  assert(std::abs(mass.centerOfMass[0] - 0.5f) < 0.001f);
+  assert(std::abs(mass.centerOfMass[2] - 0.5f) < 0.001f);
+  assert(std::abs(mass.diagonalInertia[0] - 2.0f) < 0.001f);
+  assert(std::abs(mass.diagonalInertia[1] - 3.0f) < 0.001f);
+  assert(std::abs(mass.diagonalInertia[2] - 4.0f) < 0.001f);
+
+  // Joint local frame positions (vector3f).
+  UsdPrim joint = result.stage.GetPrimAtPath("/Joint");
+  assert(joint.IsValid());
+  PhysicsJointData jd;
+  assert(GetPhysicsJointData(result.stage, joint, &jd, 0.0));
+  assert(jd.hasLocalPos0);
+  assert(std::abs(jd.localPos0[0] - 1.0f) < 0.001f);
+  assert(jd.hasLocalPos1);
+  assert(std::abs(jd.localPos1[1] - 1.0f) < 0.001f);
+
+  std::cout << "  physics schema tests passed!" << std::endl;
+}
+
+// ============================================================
 // Main
 // ============================================================
 
@@ -399,6 +464,7 @@ int main() {
     test_value_parser();
     test_ascii_parser();
     test_usda_reader();
+    test_physics_schema();
 
     std::cout << std::endl;
     std::cout << "All tests passed!" << std::endl;

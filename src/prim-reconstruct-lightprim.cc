@@ -109,6 +109,7 @@ bool ReconstructShader(
                        light_ptr->visibility, options.strict_allowedToken_check) \
     PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, LightClass, \
                        light_ptr->purpose, options.strict_allowedToken_check) \
+    PARSE_TARGET_PATHS_RELATION(table, prop, "light:filters", light_ptr->lightFilters) \
     ADD_PROPERTY(table, prop, LightClass, light_ptr->props) \
     PARSE_PROPERTY_END_MAKE_WARN(table, prop) \
   } \

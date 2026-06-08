@@ -5452,6 +5452,153 @@ void crate_writer_sphere_light_test(void) {
   cleanup_file(filename);
 }
 
+// Regression: every light type must round-trip the base LightAPI radiometric
+// inputs (intensity + the EXTRACT_COMMON_LIGHT set) and the light:filters
+// relationship. Before the LIGHT_BASE_ATTRS reader fix, sphere/rect/cylinder/etc.
+// silently dropped these on read despite the writer emitting them (CylinderLight
+// also dropped intensity).
+template <typename LightT>
+static void check_light_base_roundtrip(const char* tname) {
+  std::string filename = get_temp_filename("test_light_base");
+  std::string err;
+
+  Stage stage;
+  LightT light;
+  light.name = "L";
+  light.intensity.set_value(Animatable<float>(3.0f));
+  light.diffuse.set_value(Animatable<float>(0.7f));
+  light.specular.set_value(Animatable<float>(0.3f));
+  light.normalize.set_value(Animatable<bool>(true));
+  light.enableColorTemperature.set_value(Animatable<bool>(true));
+  light.colorTemperature.set_value(Animatable<float>(5000.0f));
+  light.lightFilters.set(std::vector<Path>{Path("/Filter1", ""), Path("/Filter2", "")});
+
+  Prim prim("L", light);
+  stage.root_prims().push_back(prim);
+
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0; opts.version_minor = 8; opts.version_patch = 0;
+  writer.SetOptions(opts);
+  if (!writer.Open(&err) || !writer.ConvertStageToSpecs(stage, &err) ||
+      !writer.Finalize(&err)) {
+    TEST_MSG("%s write failed: %s", tname, err.c_str());
+    writer.Close(); cleanup_file(filename); return;
+  }
+  writer.Close();
+
+  Stage loaded; std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded, &warn, &err);
+  TEST_CHECK_(ret, "%s load failed: %s", tname, err.c_str());
+  if (!ret) { cleanup_file(filename); return; }
+
+  auto r = loaded.GetPrimAtPath(Path("/L", ""));
+  TEST_CHECK(r.has_value());
+  if (!r.has_value() || !r.value()) { cleanup_file(filename); return; }
+  const LightT* lp = r.value()->data().as<LightT>();
+  TEST_CHECK_(lp != nullptr, "%s: cast failed", tname);
+  if (!lp) { cleanup_file(filename); return; }
+
+  auto close_f = [](float a, float b) { return (a > b ? a - b : b - a) < 1e-5f; };
+  auto chk_f = [&](const TypedAttributeWithFallback<Animatable<float>>& a,
+                   float expect, const char* nm) {
+    TEST_CHECK_(a.authored(), "%s.%s dropped on read", tname, nm);
+    float v = 0.0f;
+    if (a.authored() && a.get_value().get_scalar(&v)) {
+      TEST_CHECK_(close_f(v, expect), "%s.%s = %f, expected %f", tname, nm, v, expect);
+    }
+  };
+  auto chk_b = [&](const TypedAttributeWithFallback<Animatable<bool>>& a,
+                   bool expect, const char* nm) {
+    TEST_CHECK_(a.authored(), "%s.%s dropped on read", tname, nm);
+    bool v = false;
+    if (a.authored() && a.get_value().get_scalar(&v)) {
+      TEST_CHECK_(v == expect, "%s.%s mismatch", tname, nm);
+    }
+  };
+
+  chk_f(lp->intensity, 3.0f, "intensity");
+  chk_f(lp->diffuse, 0.7f, "diffuse");
+  chk_f(lp->specular, 0.3f, "specular");
+  chk_b(lp->normalize, true, "normalize");
+  chk_b(lp->enableColorTemperature, true, "enableColorTemperature");
+  chk_f(lp->colorTemperature, 5000.0f, "colorTemperature");
+
+  TEST_CHECK_(lp->lightFilters.authored(), "%s.lightFilters dropped on read", tname);
+  const std::vector<Path> filters = lp->lightFilters.get_targetPaths();
+  TEST_CHECK_(filters.size() == 2, "%s.lightFilters has %zu targets, expected 2",
+              tname, filters.size());
+
+  cleanup_file(filename);
+}
+
+void crate_writer_light_common_attrs_roundtrip_test(void) {
+  check_light_base_roundtrip<SphereLight>("SphereLight");
+  check_light_base_roundtrip<RectLight>("RectLight");
+  check_light_base_roundtrip<DiskLight>("DiskLight");
+  check_light_base_roundtrip<CylinderLight>("CylinderLight");
+  check_light_base_roundtrip<DistantLight>("DistantLight");
+  check_light_base_roundtrip<DomeLight>("DomeLight");
+  check_light_base_roundtrip<GeometryLight>("GeometryLight");
+}
+
+// Regression: GeomMesh velocities (vector3f[]) must round-trip. It was the only
+// PointBased type whose reader macro omitted velocities, so it was dropped on read
+// even though the writer/printer emit it.
+void crate_writer_mesh_velocities_roundtrip_test(void) {
+  std::string filename = get_temp_filename("test_mesh_velocities");
+  std::string err;
+
+  Stage stage;
+  GeomMesh mesh;
+  mesh.name = "M";
+  std::vector<value::point3f> points = {
+    {0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}};
+  mesh.points.set_value(points);
+  std::vector<value::vector3f> vels = {
+    {0.1f, 0.2f, 0.3f}, {0.4f, 0.5f, 0.6f},
+    {0.7f, 0.8f, 0.9f}, {1.0f, 1.1f, 1.2f}};
+  mesh.velocities.set_value(Animatable<std::vector<value::vector3f>>(vels));
+
+  Prim prim("M", mesh);
+  prim.prim_type_name() = "Mesh";
+  stage.root_prims().push_back(prim);
+
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0; opts.version_minor = 8; opts.version_patch = 0;
+  writer.SetOptions(opts);
+  if (!writer.Open(&err) || !writer.ConvertStageToSpecs(stage, &err) ||
+      !writer.Finalize(&err)) {
+    TEST_MSG("mesh velocities write failed: %s", err.c_str());
+    writer.Close(); cleanup_file(filename); return;
+  }
+  writer.Close();
+
+  Stage loaded; std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded, &warn, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) { TEST_MSG("load failed: %s", err.c_str()); cleanup_file(filename); return; }
+
+  auto r = loaded.GetPrimAtPath(Path("/M", ""));
+  TEST_CHECK(r.has_value());
+  if (r.has_value() && r.value()) {
+    const GeomMesh* m = r.value()->data().as<GeomMesh>();
+    TEST_CHECK(m != nullptr);
+    if (m) {
+      TEST_CHECK(m->velocities.authored());
+      auto vopt = m->velocities.get_value();
+      TEST_CHECK(vopt.has_value());
+      if (vopt.has_value()) {
+        std::vector<value::vector3f> out;
+        TEST_CHECK(vopt.value().get_default(&out));
+        TEST_CHECK(out.size() == vels.size());
+      }
+    }
+  }
+  cleanup_file(filename);
+}
+
 //
 // Test 70: RectLight with width, height, and intensity
 //
