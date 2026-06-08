@@ -17,11 +17,9 @@ import { OpenPBRMaterial } from 'tinyusdz/TinyUSDZOpenPBRSimple.js';
 const DEFAULT_BACKGROUND_COLOR = 0x1a1a1a;
 const CAMERA_PADDING = 1.2;
 
-// Sample models for testing
+// Sample models for testing (point these at your own .usdz/.usda under assets/)
 const SAMPLE_MODELS = [
-    //'assets/mtlx-normalmap-multi.usdz',
-    //'assets/multi-mesh-test.usda'
-    'assets/WesternDesertTown2-mtlx.usdz'
+    'assets/physics-robot-arm.usda'
 ];
 
 // ============================================================================

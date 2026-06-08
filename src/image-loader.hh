@@ -99,5 +99,16 @@ nonstd::expected<ImageResult, std::string> LoadImageFromMemory(const uint8_t *ad
 ///
 nonstd::expected<ImageInfoResult, std::string> GetImageInfoFromMemory(const uint8_t *addr, const size_t datasize, const std::string &uri);
 
+///
+/// Decode an OpenEXR image as fp16 (half) WITHOUT widening to fp32. Succeeds
+/// only when every channel is stored as HALF in the file (the common HDR-texture
+/// case) and the image is scanline (non-tiled, single-part); returns false
+/// otherwise so the caller can fall back to the fp32 LoadImageFromMemory path.
+/// On success `image` is interleaved RGBA fp16 (PixelFormat::Float, bpp 16).
+/// Always defined; returns false when built without TINYUSDZ_WITH_EXR.
+///
+bool DecodeImageEXRHalf(const uint8_t *bytes, size_t size, const std::string &uri,
+                        Image *image, std::string *err);
+
 } // namespace image
 } // namespace tinyusdz

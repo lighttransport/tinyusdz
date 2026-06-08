@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <set>
 #include <stack>
+#include <unordered_map>
+#include <unordered_set>
 
 #if defined(__linux__)
 #include <unistd.h>
@@ -68,6 +70,65 @@ bool IsVisited(const std::vector<std::set<std::string>> layer_names_stack,
 
 std::string GetExtension(const std::string &name) {
   return to_lower(io::GetFileExtension(name));
+}
+
+// Below `kPathDedupSetThreshold` combined elements we keep the original
+// nested linear scan (cache-friendly, no allocation); above it we switch to a
+// hash set so list-edit composition of relationship targets stays O(N) instead
+// of O(N^2). `full_path_name()` is the canonical key for a *valid* Path (two
+// valid paths are `==` iff their full names match). Invalid paths never compare
+// equal under Path::operator== (not even to themselves), so they are never
+// treated as duplicates here either — matching the previous behavior exactly.
+constexpr size_t kPathDedupSetThreshold = 32;
+
+// Append `extra` onto `base`, skipping entries already present (dedup is against
+// the growing `base`, so duplicates within `extra` are also collapsed).
+void AppendUniquePaths(std::vector<Path> &base, const std::vector<Path> &extra) {
+  if (base.size() + extra.size() <= kPathDedupSetThreshold) {
+    for (const auto &p : extra) {
+      bool dup = false;
+      for (const auto &c : base) { if (c == p) { dup = true; break; } }
+      if (!dup) base.push_back(p);
+    }
+    return;
+  }
+  std::unordered_set<std::string> seen;
+  seen.reserve(base.size() + extra.size());
+  for (const auto &c : base) {
+    if (c.is_valid()) seen.insert(c.full_path_name());
+  }
+  for (const auto &p : extra) {
+    if (!p.is_valid()) { base.push_back(p); continue; }  // never dedup invalid
+    if (seen.insert(p.full_path_name()).second) base.push_back(p);
+  }
+}
+
+// Remove from `base` every entry that appears in `remove` (Path == semantics).
+void RemovePaths(std::vector<Path> &base, const std::vector<Path> &remove) {
+  if (base.size() + remove.size() <= kPathDedupSetThreshold) {
+    std::vector<Path> filtered;
+    filtered.reserve(base.size());
+    for (const auto &p : base) {
+      bool del = false;
+      for (const auto &d : remove) { if (d == p) { del = true; break; } }
+      if (!del) filtered.push_back(p);
+    }
+    base = std::move(filtered);
+    return;
+  }
+  std::unordered_set<std::string> del_set;
+  del_set.reserve(remove.size());
+  for (const auto &d : remove) {
+    if (d.is_valid()) del_set.insert(d.full_path_name());
+  }
+  std::vector<Path> filtered;
+  filtered.reserve(base.size());
+  for (const auto &p : base) {
+    // Invalid `p` never compares equal, so it is never deleted.
+    if (p.is_valid() && del_set.count(p.full_path_name())) continue;
+    filtered.push_back(p);
+  }
+  base = std::move(filtered);
 }
 
 void PushChildAndVariantPrimSpecs(PrimSpec &ps, std::vector<PrimSpec *> *stack) {
@@ -599,20 +660,24 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
 
   // Combine properties
   for (const auto &prop : src.props()) {
-    if (dst.props().count(prop.first) == 0) {
+    // Single lookup; the else-branch only mutates the found entry in place (no
+    // insert/erase on dst.props()), so the reference stays valid throughout.
+    auto dst_it = dst.props().find(prop.first);
+    if (dst_it == dst.props().end()) {
       // add if not existent
       dst.props()[prop.first] = prop.second;
     } else {
+      Property &dst_prop = dst_it->second;
       // AOUSD Core Spec 12.2.4 (custom): true if ANY opinion says true
-      if (prop.second.has_custom() && !dst.props().at(prop.first).has_custom()) {
-        dst.props()[prop.first].set_custom(true);
+      if (prop.second.has_custom() && !dst_prop.has_custom()) {
+        dst_prop.set_custom(true);
       }
 
       // AOUSD Core Spec 12.4 (relationships): Compose relationship targets
       // using list-op semantics across opinions.
-      if (dst.props().at(prop.first).is_relationship() &&
+      if (dst_prop.is_relationship() &&
           prop.second.is_relationship()) {
-        Relationship &dst_rel = dst.props()[prop.first].relationship();
+        Relationship &dst_rel = dst_prop.relationship();
         const Relationship &src_rel = prop.second.get_relationship();
 
         // If weaker has targets and stronger doesn't block them,
@@ -623,33 +688,15 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
 
           if (src_qual == ListEditQual::Prepend) {
             // Prepend weaker targets before stronger
-            auto combined = src_rel.targetPathVector;
-            for (const auto &p : dst_rel.targetPathVector) {
-              bool dup = false;
-              for (const auto &c : combined) { if (c == p) { dup = true; break; } }
-              if (!dup) combined.push_back(p);
-            }
-            dst_rel.targetPathVector = combined;
+            std::vector<Path> combined = src_rel.targetPathVector;
+            AppendUniquePaths(combined, dst_rel.targetPathVector);
+            dst_rel.targetPathVector = std::move(combined);
           } else if (src_qual == ListEditQual::Append) {
             // Append weaker targets after stronger
-            auto combined = dst_rel.targetPathVector;
-            for (const auto &p : src_rel.targetPathVector) {
-              bool dup = false;
-              for (const auto &c : combined) { if (c == p) { dup = true; break; } }
-              if (!dup) combined.push_back(p);
-            }
-            dst_rel.targetPathVector = combined;
+            AppendUniquePaths(dst_rel.targetPathVector, src_rel.targetPathVector);
           } else if (src_qual == ListEditQual::Delete) {
             // Delete weaker targets from stronger
-            std::vector<Path> filtered;
-            for (const auto &p : dst_rel.targetPathVector) {
-              bool del = false;
-              for (const auto &d : src_rel.targetPathVector) {
-                if (d == p) { del = true; break; }
-              }
-              if (!del) filtered.push_back(p);
-            }
-            dst_rel.targetPathVector = filtered;
+            RemovePaths(dst_rel.targetPathVector, src_rel.targetPathVector);
           }
           // ResetToExplicit: stronger already wins (default behavior)
         }
@@ -658,9 +705,9 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
       // AOUSD Core Spec 6.5 (type agreement): Warn if composed property types
       // disagree. Role types (color3f) agree with their underlying type (float3)
       // but are not equivalent; other mismatches are errors.
-      if (dst.props().at(prop.first).is_attribute() &&
+      if (dst_prop.is_attribute() &&
           prop.second.is_attribute()) {
-        const std::string &dst_type = dst.props().at(prop.first).get_attribute().type_name();
+        const std::string &dst_type = dst_prop.get_attribute().type_name();
         const std::string &src_type = prop.second.get_attribute().type_name();
         if (!dst_type.empty() && !src_type.empty() && dst_type != src_type) {
           // Check if types agree via role-type relationship
@@ -679,9 +726,9 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
       // AOUSD Core Spec 12.2.3 (variability): If the stronger opinion did not
       // explicitly author variability, use the weaker opinion's variability.
       // Also consult the schema registry as the weakest fallback.
-      if (dst.props().at(prop.first).is_attribute() &&
+      if (dst_prop.is_attribute() &&
           prop.second.is_attribute()) {
-        Attribute &dst_attr = dst.props()[prop.first].attribute();
+        Attribute &dst_attr = dst_prop.attribute();
         const Attribute &src_attr = prop.second.get_attribute();
 
         // If dst (stronger) has default variability (Varying) and src (weaker)
@@ -705,19 +752,30 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
   }
 
   // Combine child primspecs.
+  //
+  // Build a name->index map of dst children once so the per-child lookup is O(1)
+  // instead of an O(n*m) std::find_if scan. Indices (not iterators/pointers) are
+  // stored because push_back below may reallocate dst.children(); the map is
+  // kept in sync as new children are appended. emplace() keeps the first
+  // occurrence, matching find_if's first-match semantics for duplicate names.
+  std::unordered_map<std::string, size_t> dst_child_index;
+  dst_child_index.reserve(dst.children().size());
+  for (size_t i = 0; i < dst.children().size(); i++) {
+    dst_child_index.emplace(dst.children()[i].name(), i);
+  }
+
   for (auto &child : src.children()) {
-    auto dst_it = std::find_if(
-        dst.children().begin(), dst.children().end(),
-        [&child](const PrimSpec &ps) { return ps.name() == child.name(); });
+    auto it = dst_child_index.find(child.name());
 
     // if exists, combine properties and children
-    if (dst_it != dst.children().end()) {
-      if (!CombinePrimSpecRec(depth + 1, (*dst_it), child, warn, err)) {
+    if (it != dst_child_index.end()) {
+      if (!CombinePrimSpecRec(depth + 1, dst.children()[it->second], child, warn, err)) {
         return false;
       }
     }
     // otherwise add it
     else {
+      dst_child_index.emplace(child.name(), dst.children().size());
       dst.children().push_back(child);
     }
   }
@@ -1465,12 +1523,18 @@ using PathVisitedSet = std::set<std::string>;
 
 // Resolve ListEditQual operations into a final ordered list.
 // Implements: resetToExplicit clears + adds, prepend prepends, append appends,
-// delete removes matching items, order is ignored (warn).
-// Template version uses EqPred for matching delete targets.
-template <typename T, typename EqPred>
+// delete removes matching items, order reorders per the order vector.
+//
+// Matching is by a caller-supplied string key (`key`), which must satisfy
+// key(a) == key(b)  <=>  "a and b are the same item". This replaces the former
+// O(M*N) per-item linear scans in Delete/Order with hash-set/map lookups, so
+// resolution is O(N) regardless of how many list ops or items are supplied
+// (also a guard against pathologically large inherits/specializes lists). The
+// produced result is identical to the previous predicate-based implementation.
+template <typename T, typename KeyFn>
 static std::vector<T> ResolveListOpsT(
     const std::vector<std::pair<ListEditQual, std::vector<T>>> &listops,
-    EqPred eq, std::string *warn) {
+    KeyFn key, std::string *warn) {
   std::vector<T> result;
 
   for (const auto &op : listops) {
@@ -1489,14 +1553,17 @@ static std::vector<T> ResolveListOpsT(
       }
       result.insert(result.end(), items.begin(), items.end());
     } else if (qual == ListEditQual::Delete) {
-      for (const auto &del_item : items) {
-        result.erase(
-            std::remove_if(result.begin(), result.end(),
-                           [&del_item, &eq](const T &x) {
-                             return eq(x, del_item);
-                           }),
-            result.end());
-      }
+      // Remove every result element whose key matches any deleted item.
+      // Single stable pass; preserves the order of the survivors.
+      std::unordered_set<std::string> del_keys;
+      del_keys.reserve(items.size());
+      for (const auto &del_item : items) del_keys.insert(key(del_item));
+      result.erase(
+          std::remove_if(result.begin(), result.end(),
+                         [&del_keys, &key](const T &x) {
+                           return del_keys.count(key(x)) != 0;
+                         }),
+          result.end());
     } else if (qual == ListEditQual::Order) {
       // Reorder items per the order vector.
       // Items in the order vector are placed in that relative order.
@@ -1504,28 +1571,32 @@ static std::vector<T> ResolveListOpsT(
       // This follows the deprecated SdfListOp reorder semantics.
       if (items.empty() || result.empty()) continue;
 
-      // Build a position map: for each item in `items`, what rank?
-      // Items in `items` get moved to that position, rest stay at front.
+      // First result element (in result order) for each key.
+      std::unordered_map<std::string, const T *> first_match;
+      first_match.reserve(result.size());
+      for (const auto &r : result) {
+        first_match.emplace(key(r), &r);  // keeps the first occurrence
+      }
+      // Membership set of the order vector's keys.
+      std::unordered_set<std::string> item_keys;
+      item_keys.reserve(items.size());
+      for (const auto &anchor : items) item_keys.insert(key(anchor));
+
       std::vector<T> ordered;
       std::vector<T> unordered;
 
-      // Collect items that appear in the order vector (in order)
+      // Items that appear in the order vector, emitted in order-vector order
+      // (each anchor maps to the first matching result element).
       for (const auto &anchor : items) {
-        for (const auto &r : result) {
-          if (eq(r, anchor)) {
-            ordered.push_back(r);
-            break;
-          }
+        auto it = first_match.find(key(anchor));
+        if (it != first_match.end()) {
+          ordered.push_back(*it->second);
         }
       }
 
-      // Collect items NOT in the order vector (preserve original order)
+      // Result elements NOT named by the order vector, in original order.
       for (const auto &r : result) {
-        bool found = false;
-        for (const auto &anchor : items) {
-          if (eq(r, anchor)) { found = true; break; }
-        }
-        if (!found) {
+        if (item_keys.count(key(r)) == 0) {
           unordered.push_back(r);
         }
       }
@@ -1545,8 +1616,9 @@ static std::vector<Path> ResolveListOps(
     const std::vector<std::pair<ListEditQual, std::vector<Path>>> &listops,
     std::string *warn) {
   return ResolveListOpsT<Path>(listops,
-      [](const Path &a, const Path &b) {
-        return a.prim_part() == b.prim_part();
+      [](const Path &p) {
+        auto v = p.prim_part();
+        return std::string(v.data(), v.size());
       }, warn);
 }
 
@@ -2183,27 +2255,31 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
   // Override properties with AOUSD Core Spec 12.2.4 (custom) handling:
   // The `custom` flag is true if ANY opinion in the stack says true.
   for (const auto &prop : dst.props()) {
-    if (ps.props().count(prop.first)) {
+    // Single lookup into ps.props(). The found-branch only mutates the entry in
+    // place; the else-branch inserts a *new* key, so the held reference (taken
+    // only in the found-branch) is never invalidated.
+    auto ps_it = ps.props().find(prop.first);
+    if (ps_it != ps.props().end()) {
+      Property &ps_prop = ps_it->second;
       // AOUSD Core Spec 12.2.3: Preserve uniform variability from weaker (inherited) opinion
       Variability inherited_variability = Variability::Varying;
-      if (ps.props().at(prop.first).is_attribute() && prop.second.is_attribute()) {
-        inherited_variability = ps.props().at(prop.first).get_attribute().variability();
+      if (ps_prop.is_attribute() && prop.second.is_attribute()) {
+        inherited_variability = ps_prop.get_attribute().variability();
       }
 
       // AOUSD Core Spec 12.2.4: OR the custom flags before replacing
-      bool src_custom = ps.props().at(prop.first).has_custom();
-      ps.props().at(prop.first) = ComposeStrongerPropertyOverWeaker(
-          prop.second, ps.props().at(prop.first));
+      bool src_custom = ps_prop.has_custom();
+      ps_prop = ComposeStrongerPropertyOverWeaker(prop.second, ps_prop);
       if (src_custom && !prop.second.has_custom()) {
-        ps.props().at(prop.first).set_custom(true);
+        ps_prop.set_custom(true);
       }
 
       // AOUSD Core Spec 12.2.3: If inherited property had uniform variability
       // and the overriding (stronger) is varying, preserve uniform.
-      if (ps.props().at(prop.first).is_attribute() &&
+      if (ps_prop.is_attribute() &&
           inherited_variability == Variability::Uniform &&
-          ps.props().at(prop.first).attribute().variability() == Variability::Varying) {
-        ps.props().at(prop.first).attribute().variability() = Variability::Uniform;
+          ps_prop.attribute().variability() == Variability::Varying) {
+        ps_prop.attribute().variability() = Variability::Uniform;
       }
     }
     else {
@@ -2213,14 +2289,22 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
   }
 
   // Overide child primspecs.
-  for (auto &child : ps.children()) {
-    auto src_it = std::find_if(dst.children().begin(), dst.children().end(),
-                               [&child](const PrimSpec &primspec) {
-                                 return primspec.name() == child.name();
-                               });
+  //
+  // Build a name->index map of dst children once for O(1) lookup instead of an
+  // O(n*m) std::find_if scan. This loop does not resize dst.children(), so
+  // indices stay valid throughout. emplace() keeps the first occurrence, matching
+  // find_if's first-match semantics for duplicate names.
+  std::unordered_map<std::string, size_t> dst_child_index;
+  dst_child_index.reserve(dst.children().size());
+  for (size_t i = 0; i < dst.children().size(); i++) {
+    dst_child_index.emplace(dst.children()[i].name(), i);
+  }
 
-    if (src_it != dst.children().end()) {
-      if (!OverridePrimSpecRec(1, child, (*src_it), warn, err)) {
+  for (auto &child : ps.children()) {
+    auto it = dst_child_index.find(child.name());
+
+    if (it != dst_child_index.end()) {
+      if (!OverridePrimSpecRec(1, child, dst.children()[it->second], warn, err)) {
         return false;
       }
     }

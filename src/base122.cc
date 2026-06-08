@@ -1,5 +1,7 @@
 #include "base122.hh"
 
+#include <array>
+
 // Base122 uses 122 safe printable ASCII characters
 // Excluding problematic chars like quotes, backslash, DEL, etc.
 static const char base122_alphabet[122] = 
@@ -9,14 +11,16 @@ static const char base122_alphabet[122] =
     "\xA1\xA2\xA3\xA4\xA5\xA6\xA7\xA8\xA9\xAA\xAB\xAC\xAD\xAE\xAF"
     "\xB0\xB1\xB2\xB3\xB4\xB5\xB6\xB7\xB8\xB9\xBA\xBB\xBC\xBD\xBE";
 
-// Build decode map at startup
-static uint8_t base122_decode_map[256] = {0};
-static bool base122_decode_map_ready = false;
-static void base122_init_decode_map() {
-    if (base122_decode_map_ready) return;
-    for (int i = 0; i < 256; ++i) base122_decode_map[i] = 0xFF;
-    for (int i = 0; i < 122; ++i) base122_decode_map[static_cast<unsigned char>(base122_alphabet[i])] = static_cast<uint8_t>(i);
-    base122_decode_map_ready = true;
+// Decode map, built once. Thread-safe one-time init via a function-local static
+// (C++11 magic statics), so concurrent decodes don't race on an init flag.
+static const std::array<uint8_t, 256>& base122_decode_map_table() {
+    static const std::array<uint8_t, 256> table = [] {
+        std::array<uint8_t, 256> t;
+        for (int i = 0; i < 256; ++i) t[static_cast<size_t>(i)] = 0xFF;
+        for (int i = 0; i < 122; ++i) t[static_cast<unsigned char>(base122_alphabet[i])] = static_cast<uint8_t>(i);
+        return t;
+    }();
+    return table;
 }
 
 // Encode binary data to base122 string
@@ -41,7 +45,7 @@ inline std::string base122_encode(const std::vector<uint8_t>& data) {
 // Decode base122 string to binary data
 // Returns 0 on success, nonzero on error (invalid char or truncated input)
 inline int base122_decode(const std::string& str, std::vector<uint8_t>& out) {
-    base122_init_decode_map();
+    const std::array<uint8_t, 256>& base122_decode_map = base122_decode_map_table();
     out.clear();
     size_t i = 0;
     while (i < str.size()) {

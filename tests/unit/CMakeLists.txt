@@ -20,6 +20,8 @@ set(TEST_SOURCES
 	unit-minijson.cc
 	unit-materialx.cc
 	unit-task-queue.cc
+	unit-png-stream.cc
+	unit-imageproc.cc
 	unit-tydra.cc
 	unit-tydra-subdivision.cc
 	unit-subdiv-tinyusdz.cc
@@ -44,6 +46,8 @@ set(TEST_SOURCES
 	unit-composition-arcs.cc
 	# Phase 1b: DAG-based composition graph
 	unit-composition-graph.cc
+	# Phase 1c: cached/lazy composition engine (src/pcp)
+	unit-pcp-cache.cc
 	# Phase 2: layer API
 	unit-layer.cc
 	# Phase 3: primspec and prim API

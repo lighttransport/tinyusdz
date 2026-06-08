@@ -4,6 +4,8 @@
 // TinyUSDZ Next - USDC Crate Reader Implementation
 
 #include "crate-reader.hh"
+#include "crate-data-source.hh"
+#include "lazy-array.hh"
 #include "stream-reader.hh"
 #include "../types/type-info.hh"
 #include "../layer/layer.hh"
@@ -12,11 +14,14 @@
 
 #include <fstream>
 #include <unordered_map>
+#include <map>
+#include <set>
 #include <algorithm>
 #include <cmath>
 
 namespace tinyusdz {
 namespace next {
+
 
 // ============================================================
 // Implementation class
@@ -27,16 +32,22 @@ public:
   explicit Impl(const CrateReadOptions& options) : options_(options) {}
 
   CrateReadResult Read(const uint8_t* data, size_t size);
+  CrateReadResult ReadOwned(std::string&& owned);  // adopt bytes by move (single copy)
   CrateReadResult ReadFile(const char* filename);
 
   const std::vector<std::string>& tokens() const { return tokens_; }
   const std::vector<std::string>& paths() const { return paths_; }
   const std::vector<CrateField>& fields() const { return fields_; }
   const std::vector<CrateSpec>& specs() const { return specs_; }
+  const std::vector<uint32_t>& fieldset_indices() const { return fieldset_indices_; }
 
 private:
   CrateReadOptions options_;
   std::unique_ptr<StreamReader> reader_;
+  // Retained crate bytes. Lazy array Values reference this; it stays alive (via
+  // shared_ptr) as long as some surviving Value points into it, even after the
+  // CrateReader itself is destroyed.
+  std::shared_ptr<CrateDataSource> source_;
   CrateReadResult result_;
 
   // Parsed tables
@@ -51,6 +62,9 @@ private:
 
   // Cached fieldsets
   std::unordered_map<uint32_t, std::vector<std::pair<std::string, Value>>> fieldset_cache_;
+
+  // Parse from a moved-in owned buffer (shared by Read / ReadOwned / ReadFile).
+  CrateReadResult ReadFromString(std::string&& bytes);
 
   // Parsing methods
   bool ReadBootstrap();
@@ -105,6 +119,21 @@ private:
   bool GetString(uint32_t index, std::string& out);
   bool ResolveFieldset(uint32_t fieldset_index,
                        std::vector<std::pair<std::string, Value>>& out);
+
+  // Walk a fieldset returning (token_name, raw ValueRep) pairs without
+  // unpacking. Used for Attribute/Relationship specs whose path-typed fields
+  // (targetPaths / connectionPaths) UnpackValue cannot decode.
+  bool ResolveFieldsetRaw(uint32_t fieldset_index,
+                          std::vector<std::pair<std::string, ValueRep>>& out);
+
+  // Decode a PathListOp (CrateTypeId 34) or PathVector (40) value into the
+  // referenced path strings (resolved through the reconstructed paths_ table).
+  bool DecodePathTargets(ValueRep rep, std::vector<std::string>& out);
+
+  // Decode a VariantSelectionMap (CrateTypeId 45): [u64 count][(u32 key_str_idx,
+  // u32 val_str_idx) * count] -> (variantSet, selection) pairs.
+  bool DecodeVariantSelectionMap(
+      ValueRep rep, std::vector<std::pair<std::string, std::string>>& out);
 
   void AddError(const std::string& msg);
   void AddWarning(const std::string& msg);
@@ -186,6 +215,15 @@ bool CrateReader::Impl::UnpackFloat(ValueRep rep, Value& out) {
 }
 
 bool CrateReader::Impl::UnpackDouble(ValueRep rep, Value& out) {
+  if (rep.is_inlined()) {
+    // pxrUSD inlines a double as a 32-bit float in the low payload bits
+    // (used for integer-valued doubles like startTimeCode/endTimeCode).
+    uint32_t bits = static_cast<uint32_t>(rep.payload() & 0xFFFFFFFFu);
+    float f;
+    std::memcpy(&f, &bits, sizeof(float));
+    out = Value(static_cast<double>(f));
+    return true;
+  }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   double v;
   if (!reader_->read_f64(v)) return false;
@@ -207,7 +245,15 @@ bool CrateReader::Impl::UnpackTimeSamples(ValueRep rep, Value& out) {
   //
   // NOTE: a proper fix requires a TimeSamples-aware value path and a writer that
   // names the field after its property (see the review's out-of-scope note).
-  if (rep.is_inlined()) return false;
+  if (rep.is_inlined()) {
+    // pxrUSD inlines integer-valued vectors/matrices as int8 components
+    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    out = Value::MakeInt2(int32_t(b[0]), int32_t(b[1]));
+    return true;
+  }
 
   uint64_t header_offset = rep.payload();
   if (!reader_->seek(static_cast<size_t>(header_offset))) return false;
@@ -248,6 +294,15 @@ bool CrateReader::Impl::UnpackAssetPath(ValueRep rep, Value& out) {
 }
 
 bool CrateReader::Impl::UnpackVec2f(ValueRep rep, Value& out) {
+  if (rep.is_inlined()) {
+    // pxrUSD inlines integer-valued vectors/matrices as int8 components
+    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    out = Value::MakeFloat2(float(b[0]), float(b[1]));
+    return true;
+  }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   float data[2];
   if (!reader_->read(data, sizeof(data))) return false;
@@ -256,6 +311,15 @@ bool CrateReader::Impl::UnpackVec2f(ValueRep rep, Value& out) {
 }
 
 bool CrateReader::Impl::UnpackVec3f(ValueRep rep, Value& out) {
+  if (rep.is_inlined()) {
+    // pxrUSD inlines integer-valued vectors/matrices as int8 components
+    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    out = Value::MakeFloat3(float(b[0]), float(b[1]), float(b[2]));
+    return true;
+  }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   float data[3];
   if (!reader_->read(data, sizeof(data))) return false;
@@ -264,6 +328,15 @@ bool CrateReader::Impl::UnpackVec3f(ValueRep rep, Value& out) {
 }
 
 bool CrateReader::Impl::UnpackVec4f(ValueRep rep, Value& out) {
+  if (rep.is_inlined()) {
+    // pxrUSD inlines integer-valued vectors/matrices as int8 components
+    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    out = Value::MakeFloat4(float(b[0]), float(b[1]), float(b[2]), float(b[3]));
+    return true;
+  }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   float data[4];
   if (!reader_->read(data, sizeof(data))) return false;
@@ -272,6 +345,15 @@ bool CrateReader::Impl::UnpackVec4f(ValueRep rep, Value& out) {
 }
 
 bool CrateReader::Impl::UnpackVec2d(ValueRep rep, Value& out) {
+  if (rep.is_inlined()) {
+    // pxrUSD inlines integer-valued vectors/matrices as int8 components
+    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    out = Value::MakeDouble2(double(b[0]), double(b[1]));
+    return true;
+  }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   double data[2];
   if (!reader_->read(data, sizeof(data))) return false;
@@ -280,6 +362,15 @@ bool CrateReader::Impl::UnpackVec2d(ValueRep rep, Value& out) {
 }
 
 bool CrateReader::Impl::UnpackVec3d(ValueRep rep, Value& out) {
+  if (rep.is_inlined()) {
+    // pxrUSD inlines integer-valued vectors/matrices as int8 components
+    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    out = Value::MakeDouble3(double(b[0]), double(b[1]), double(b[2]));
+    return true;
+  }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   double data[3];
   if (!reader_->read(data, sizeof(data))) return false;
@@ -288,6 +379,15 @@ bool CrateReader::Impl::UnpackVec3d(ValueRep rep, Value& out) {
 }
 
 bool CrateReader::Impl::UnpackVec4d(ValueRep rep, Value& out) {
+  if (rep.is_inlined()) {
+    // pxrUSD inlines integer-valued vectors/matrices as int8 components
+    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    out = Value::MakeDouble4(double(b[0]), double(b[1]), double(b[2]), double(b[3]));
+    return true;
+  }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   double data[4];
   if (!reader_->read(data, sizeof(data))) return false;
@@ -296,6 +396,15 @@ bool CrateReader::Impl::UnpackVec4d(ValueRep rep, Value& out) {
 }
 
 bool CrateReader::Impl::UnpackQuatf(ValueRep rep, Value& out) {
+  if (rep.is_inlined()) {
+    // pxrUSD inlines integer-valued vectors/matrices as int8 components
+    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    out = Value::MakeQuatf(float(b[0]), float(b[1]), float(b[2]), float(b[3]));
+    return true;
+  }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   float data[4];
   if (!reader_->read(data, sizeof(data))) return false;
@@ -304,6 +413,15 @@ bool CrateReader::Impl::UnpackQuatf(ValueRep rep, Value& out) {
 }
 
 bool CrateReader::Impl::UnpackQuatd(ValueRep rep, Value& out) {
+  if (rep.is_inlined()) {
+    // pxrUSD inlines integer-valued vectors/matrices as int8 components
+    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    out = Value::MakeQuatd(double(b[0]), double(b[1]), double(b[2]), double(b[3]));
+    return true;
+  }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   double data[4];
   if (!reader_->read(data, sizeof(data))) return false;
@@ -312,6 +430,15 @@ bool CrateReader::Impl::UnpackQuatd(ValueRep rep, Value& out) {
 }
 
 bool CrateReader::Impl::UnpackMatrix3d(ValueRep rep, Value& out) {
+  if (rep.is_inlined()) {
+    // pxrUSD inlines integer-valued vectors/matrices as int8 components
+    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    double m[9] = {0}; m[0]=b[0]; m[4]=b[1]; m[8]=b[2]; out = Value::MakeMatrix3d(m);
+    return true;
+  }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   double data[9];
   if (!reader_->read(data, sizeof(data))) return false;
@@ -320,6 +447,15 @@ bool CrateReader::Impl::UnpackMatrix3d(ValueRep rep, Value& out) {
 }
 
 bool CrateReader::Impl::UnpackMatrix4d(ValueRep rep, Value& out) {
+  if (rep.is_inlined()) {
+    // pxrUSD inlines integer-valued vectors/matrices as int8 components
+    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    double m[16] = {0}; m[0]=b[0]; m[5]=b[1]; m[10]=b[2]; m[15]=b[3]; out = Value::MakeMatrix4d(m);
+    return true;
+  }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   double data[16];
   if (!reader_->read(data, sizeof(data))) return false;
@@ -359,7 +495,15 @@ bool CrateReader::Impl::UnpackVec2i(ValueRep rep, Value& out) {
 }
 
 bool CrateReader::Impl::UnpackVec3i(ValueRep rep, Value& out) {
-  if (rep.is_inlined()) return false;  // 12 bytes — never inlinable
+  if (rep.is_inlined()) {
+    // pxrUSD inlines integer-valued vectors/matrices as int8 components
+    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    out = Value::MakeInt3(int32_t(b[0]), int32_t(b[1]), int32_t(b[2]));
+    return true;
+  }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   int32_t data[3];
   if (!reader_->read(data, sizeof(data))) return false;
@@ -368,7 +512,15 @@ bool CrateReader::Impl::UnpackVec3i(ValueRep rep, Value& out) {
 }
 
 bool CrateReader::Impl::UnpackVec4i(ValueRep rep, Value& out) {
-  if (rep.is_inlined()) return false;  // 16 bytes — never inlinable
+  if (rep.is_inlined()) {
+    // pxrUSD inlines integer-valued vectors/matrices as int8 components
+    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    out = Value::MakeInt4(int32_t(b[0]), int32_t(b[1]), int32_t(b[2]), int32_t(b[3]));
+    return true;
+  }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   int32_t data[4];
   if (!reader_->read(data, sizeof(data))) return false;
@@ -542,8 +694,45 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
   }
 }
 
+namespace {
+// True for array element types that DecodeCrateArray can materialize, so a lazy
+// reference emitted for them is always safe to decode on demand. Int/UInt are
+// fine whether integer-compressed or raw; the others only when uncompressed
+// (compressed POD float/vec arrays do not occur and aren't decodable here).
+bool IsLazyArrayType(CrateTypeId t, bool compressed) {
+  switch (t) {
+    case CrateTypeId::Int:
+    case CrateTypeId::UInt:
+      return true;
+    case CrateTypeId::Float:
+    case CrateTypeId::Vec3f:
+    case CrateTypeId::Double:
+    case CrateTypeId::Int64:
+    case CrateTypeId::UInt64:
+    case CrateTypeId::Bool:
+      return !compressed;
+    default:
+      return false;
+  }
+}
+}  // namespace
+
 bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   CrateTypeId type_id = rep.type_id();
+
+  // Fast path: keep numeric POD arrays as lazy references into the retained
+  // source buffer instead of decoding them now. They are materialized on first
+  // access and can be written back via verbatim byte pass-through. Token/string
+  // and unsupported array types fall through to eager decode below.
+  if (options_.lazy_arrays && source_ &&
+      IsLazyArrayType(type_id, rep.is_compressed())) {
+    LazyArrayRef lr;
+    if (ProbeArrayBlock(source_, rep, options_.max_array_elements, &lr)) {
+      out = Value::MakeLazyArray(lr);
+      return true;
+    }
+    // Malformed header: fall through to eager decode, which reports the error.
+  }
 
   // Arrays below this length are always stored uncompressed even if the
   // is_compressed bit is set (matches pxrUSD / legacy core kMinCompressedArraySize).
@@ -682,7 +871,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
 // Implementation methods
 // ============================================================
 
-CrateReadResult CrateReader::Impl::Read(const uint8_t* data, size_t size) {
+CrateReadResult CrateReader::Impl::ReadFromString(std::string&& bytes) {
   result_ = CrateReadResult();
   tokens_.clear();
   string_indices_.clear();
@@ -692,15 +881,21 @@ CrateReadResult CrateReader::Impl::Read(const uint8_t* data, size_t size) {
   paths_.clear();
   fieldset_cache_.clear();
 
-  if (!data || size < kCrateBootstrapSize) {
+  if (bytes.size() < kCrateBootstrapSize) {
     AddError("Invalid input data");
     return std::move(result_);
   }
 
-  reader_ = std::make_unique<StreamReader>(data, size);
+  // Adopt the input bytes by MOVE — a single in-heap copy of the file. Lazy
+  // array Values reference this buffer after Read() returns (they hold a
+  // shared_ptr to the source); reader_ reads from it so ValueRep file offsets
+  // stay consistent.
+  source_ = CrateDataSource::Adopt(std::move(bytes), CrateVersion{});
+  reader_ = std::make_unique<StreamReader>(source_->base(), source_->size());
 
   // Parse in order
   if (!ReadBootstrap()) return std::move(result_);
+  source_->set_version(version_);
   if (!ReadTOC()) return std::move(result_);
   if (!ReadTokens()) return std::move(result_);
   if (!ReadStrings()) return std::move(result_);
@@ -720,6 +915,20 @@ CrateReadResult CrateReader::Impl::Read(const uint8_t* data, size_t size) {
   return std::move(result_);
 }
 
+CrateReadResult CrateReader::Impl::Read(const uint8_t* data, size_t size) {
+  if (!data) {
+    result_ = CrateReadResult();
+    AddError("Invalid input data");
+    return std::move(result_);
+  }
+  // Const input: caller may free `data`, so copy it into an owned buffer once.
+  return ReadFromString(std::string(reinterpret_cast<const char*>(data), size));
+}
+
+CrateReadResult CrateReader::Impl::ReadOwned(std::string&& owned) {
+  return ReadFromString(std::move(owned));
+}
+
 CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
   std::ifstream file(filename, std::ios::binary | std::ios::ate);
   if (!file.is_open()) {
@@ -728,17 +937,18 @@ CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
     return result;
   }
 
-  size_t size = static_cast<size_t>(file.tellg());
+  std::streamsize size = file.tellg();
   file.seekg(0, std::ios::beg);
 
-  std::vector<uint8_t> data(size);
-  if (!file.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(size))) {
+  // Read straight into the owned buffer (single copy; no intermediate vector).
+  std::string data(static_cast<size_t>(size), '\0');
+  if (!file.read(&data[0], size)) {
     CrateReadResult result;
     result.errors.push_back({0, "Failed to read file contents"});
     return result;
   }
 
-  return Read(data.data(), data.size());
+  return ReadOwned(std::move(data));
 }
 
 bool CrateReader::Impl::ReadBootstrap() {
@@ -1316,74 +1526,68 @@ bool CrateReader::Impl::ReadPaths() {
     return false;
   }
 
-  // Reconstruct paths from tree structure
-  paths_.resize(n);
-  for (auto& p : paths_) p.clear();
+  // Reconstruct paths from the compressed tree by navigating jump offsets.
+  //
+  // Nodes are emitted in pre-order. jump semantics (matching the writer):
+  //   jump  > 0 : node has a child (at i+1) AND a sibling (at i+jump)
+  //   jump == 0 : node has a sibling only (at i+1), no child
+  //   jump == -1: node has a child only (at i+1), no sibling
+  //   jump == -2: leaf (no child, no sibling)
+  //
+  // The previous decoder kept a flat ancestor stack and popped only ONCE per
+  // leaf, so it could not unwind multiple levels at a subtree boundary — the
+  // stack grew without bound on deep/many-sibling trees, giving O(n^2) memory
+  // (every path got longer) and corrupted/colliding paths. Passing the parent
+  // path down the recursion and following the jump offset to each sibling is
+  // O(num_nodes) and correct.
+  paths_.assign(static_cast<size_t>(num_paths), std::string());
 
-  std::vector<std::string> stack;  // parent path components
-  for (size_t i = 0; i < n; i++) {
+  auto element_for = [&](size_t i, bool& is_prop) -> std::string {
     int32_t elem_token = static_cast<int32_t>(element_tokens[i]);
-    int32_t jump = static_cast<int32_t>(jump_raw[i]);
+    is_prop = elem_token < 0;
+    // Promote to int64 before negating (-INT32_MIN is UB).
+    uint32_t token_idx = is_prop
+        ? static_cast<uint32_t>(-static_cast<int64_t>(elem_token))
+        : static_cast<uint32_t>(elem_token);
+    if (token_idx < tokens_.size()) return tokens_[token_idx];
+    return "__unknown_token_" + std::to_string(token_idx);
+  };
 
-    // Get element name from token. Negative = property path (negate token index)
-    bool is_prop = false;
-    uint32_t token_idx;
-    if (elem_token < 0) {
-      is_prop = true;
-      // Promote to int64 before negating: -elem_token is UB for INT32_MIN.
-      // INT32_MIN yields 0x80000000, which fails the tokens_ bounds check below.
-      token_idx = static_cast<uint32_t>(-static_cast<int64_t>(elem_token));
-    } else {
-      token_idx = static_cast<uint32_t>(elem_token);
-    }
+  // Recurse over a sibling chain that all share `parent` (the parent prim path,
+  // without any property '.' prefix). Depth is bounded by max_path_depth.
+  std::function<void(size_t, const std::string&, size_t)> build =
+      [&](size_t i, const std::string& parent, size_t depth) {
+        while (i < n) {
+          bool is_prop = false;
+          std::string elem = element_for(i, is_prop);
+          int32_t jump = static_cast<int32_t>(jump_raw[i]);
 
-    std::string elem;
-    if (token_idx < tokens_.size()) {
-      elem = tokens_[token_idx];
-    } else {
-      elem = "__unknown_token_" + std::to_string(token_idx);
-    }
+          bool is_root = parent.empty() && (elem.empty() || elem == "/");
+          std::string prim_path;  // base path (no '.' prefix) for children
+          if (is_root) {
+            prim_path = "/";
+          } else if (parent.empty() || parent == "/") {
+            prim_path = "/" + elem;
+          } else {
+            prim_path = parent + "/" + elem;
+          }
 
-    // Build full path. Root element (empty string from token 0) is a marker
-    // for the root path "/" and should NOT be pushed onto the stack.
-    std::string full_path;
-    if (stack.empty() && (elem.empty() || elem == "/")) {
-      full_path = "/";
-    } else if (stack.empty()) {
-      full_path = "/" + elem;
-    } else {
-      full_path = "/";
-      for (size_t s = 0; s < stack.size(); s++) {
-        full_path += stack[s];
-        full_path += "/";
-      }
-      full_path += elem;
-    }
+          uint32_t store_idx = path_indices[i];
+          if (store_idx < num_paths) {
+            paths_[store_idx] = is_prop ? ("." + prim_path) : prim_path;
+          }
 
-    if (is_prop) {
-      full_path = "." + full_path;  // property paths start with "."
-    }
+          const bool has_child = (jump == -1 || jump > 0);
+          const bool has_sibling = (jump == 0 || jump > 0);
 
-    // Store at the original path index
-    uint32_t store_idx = path_indices[i];
-    if (store_idx < n) {
-      paths_[store_idx] = full_path;
-    }
-
-    // Update stack based on jump code.
-    // Root element (empty string, token 0) is not pushed onto stack.
-    bool is_root = (elem.empty() || elem == "/");
-    if (jump == -2) {
-      if (!stack.empty()) stack.pop_back();
-    } else if (jump == -1) {
-      if (!is_root) stack.push_back(elem);
-    } else if (jump == 0) {
-      // Stay at same level (sibling replaces previous sibling)
-    } else {
-      // j > 0: has children AND siblings
-      if (!is_root) stack.push_back(elem);
-    }
-  }
+          if (has_child && depth < options_.max_path_depth) {
+            build(i + 1, prim_path, depth + 1);
+          }
+          if (!has_sibling) return;
+          i += (jump > 0) ? static_cast<size_t>(jump) : 1;
+        }
+      };
+  build(0, std::string(), 0);
 
   return true;
 }
@@ -1450,13 +1654,52 @@ bool CrateReader::Impl::BuildStage() {
     std::vector<std::pair<std::string, Value>> fields;
   };
 
+  // Variant content lives in the layer as bracketed holder/child prims
+  // ("/Prim/{vset=sel}" + descendants); their attributes attach to those prims
+  // via attr_map (so the layer fully represents the variants, enabling both the
+  // compositor — which reads the selected holder — and unflattened round-trip).
+  // We only need to know, per owning prim, which sets are selected.
+  //   owning prim path -> { variantSet -> selected variant } (all selections).
+  std::unordered_map<std::string, std::map<std::string, std::string>> variant_sel;
+
   std::vector<PrimEntry> prim_entries;
   for (const auto& spec : specs_) {
-    if (spec.spec_type != SpecType::Prim) continue;
+    // Build Prim specs AND variant-namespace holders (Variant/VariantSet specs
+    // at "/Prim/{vset=sel}" / "/Prim/{vset=}"). The holders are needed so that
+    // variant CHILD prims ("/Prim/{vset=sel}/Geo") get a correct path from the
+    // depth-stack builder (begin_prim recomputes path from its parent). Holders
+    // and variant sub-prims are grafted onto the owning prim by the compositor
+    // on selection and skipped by the writer (their paths contain '{').
+    const bool is_prim = spec.spec_type == SpecType::Prim;
+    const bool is_variant = spec.spec_type == SpecType::Variant ||
+                            spec.spec_type == SpecType::VariantSet;
+    if (!is_prim && !is_variant) continue;
 
     if (spec.path_index.value >= paths_.size()) continue;
     std::string full_path = paths_[spec.path_index.value];
     if (full_path.empty() || full_path == "/") continue;
+    const bool bracketed = full_path.find('{') != std::string::npos;
+    // Only real (non-bracketed) Prim specs carry a variantSelection.
+    if (is_variant && !bracketed) continue;  // defensive
+
+    // Decode the prim's variantSelection (a VariantSelectionMap that
+    // UnpackValue/ResolveFieldset cannot represent). Captures every selection
+    // so prims with multiple variant sets compose correctly. (Only for the
+    // owning, non-bracketed prim.)
+    if (!bracketed) {
+      std::vector<std::pair<std::string, ValueRep>> raw;
+      if (ResolveFieldsetRaw(spec.fieldset_index.value, raw)) {
+        for (auto& f : raw) {
+          if (f.first == "variantSelection") {
+            std::vector<std::pair<std::string, std::string>> sels;
+            if (DecodeVariantSelectionMap(f.second, sels)) {
+              for (auto& kv : sels) variant_sel[full_path][kv.first] = kv.second;
+            }
+            break;
+          }
+        }
+      }
+    }
 
     size_t last_slash = full_path.rfind('/');
     std::string prim_name = (last_slash != std::string::npos && last_slash < full_path.size() - 1)
@@ -1485,6 +1728,109 @@ bool CrateReader::Impl::BuildStage() {
       }
     }
     prim_entries.push_back(std::move(entry));
+  }
+
+  // Collect separate Attribute and Relationship specs. pxrUSD-authored crates
+  // store each property as its own spec at "<primpath>/<name>" (rendered with a
+  // leading '.' marker by ReadPaths), rather than inline in the prim's
+  // fieldset. We capture, for each property: its declared typeName, its
+  // `default` value (lazy if an array — no payload decode), any connection
+  // targets, relationship targets, and uniform variability. These are attached
+  // to the parent prim below so the writer can faithfully re-emit them.
+  struct AttrInfo {
+    std::string name;
+    std::string type_name;
+    bool has_default = false;
+    Value default_value;
+    bool is_connection = false;
+    std::vector<std::string> connection_targets;
+    bool uniform = false;
+  };
+  struct RelInfo {
+    std::string name;
+    std::vector<std::string> targets;
+    bool uniform = false;
+  };
+  std::unordered_map<std::string, std::vector<AttrInfo>> attr_map;
+  std::unordered_map<std::string, std::vector<RelInfo>> rel_map;
+
+  // Split a property spec path ".<primpath>/<name>" into (primpath, name).
+  auto split_prop_path = [](const std::string& raw, std::string& prim_path,
+                            std::string& prop_name) -> bool {
+    if (raw.empty()) return false;
+    size_t begin = (raw[0] == '.') ? 1 : 0;
+    size_t slash = raw.rfind('/');
+    if (slash == std::string::npos || slash < begin) return false;
+    prim_path = raw.substr(begin, slash - begin);
+    prop_name = raw.substr(slash + 1);
+    return !prim_path.empty() && !prop_name.empty();
+  };
+
+  for (const auto& spec : specs_) {
+    const bool is_attr = spec.spec_type == SpecType::Attribute;
+    const bool is_rel = spec.spec_type == SpecType::Relationship;
+    if (!is_attr && !is_rel) continue;
+    if (spec.path_index.value >= paths_.size()) continue;
+    const std::string& raw_path = paths_[spec.path_index.value];
+
+    // Variant attributes (bracketed paths) attach to their bracketed holder /
+    // child prim like any other attribute (split_prop_path handles them): e.g.
+    // ".Prim/{vset=sel}/prop" -> prim_path "/Prim/{vset=sel}" (the holder),
+    // ".Prim/{vset=sel}/Geo/attr" -> "/Prim/{vset=sel}/Geo" (a variant child).
+    // The compositor reads the selected holder; the writer re-emits it.
+    std::string prim_path, prop_name;
+    if (!split_prop_path(raw_path, prim_path, prop_name)) {
+      continue;
+    }
+
+    std::vector<std::pair<std::string, ValueRep>> raw_fields;
+    if (!ResolveFieldsetRaw(spec.fieldset_index.value, raw_fields)) continue;
+
+    if (is_rel) {
+      RelInfo ri;
+      ri.name = std::move(prop_name);
+      for (auto& f : raw_fields) {
+        if (f.first == "targetPaths") {
+          DecodePathTargets(f.second, ri.targets);
+        } else if (f.first == "variability") {
+          Value v;
+          if (UnpackValue(f.second, v)) {
+            if (const std::string* s = v.as_token()) ri.uniform = (*s == "uniform");
+          }
+        }
+      }
+      rel_map[prim_path].push_back(std::move(ri));
+      continue;
+    }
+
+    // Attribute spec.
+    AttrInfo ai;
+    ai.name = std::move(prop_name);
+    for (auto& f : raw_fields) {
+      if (f.first == "typeName") {
+        Value v;
+        if (UnpackValue(f.second, v)) {
+          if (const std::string* s = v.as_token()) ai.type_name = *s;
+        }
+      } else if (f.first == "default") {
+        Value v;
+        if (UnpackValue(f.second, v)) {
+          ai.default_value = std::move(v);
+          ai.has_default = true;
+        }
+      } else if (f.first == "connectionPaths") {
+        if (DecodePathTargets(f.second, ai.connection_targets) &&
+            !ai.connection_targets.empty()) {
+          ai.is_connection = true;
+        }
+      } else if (f.first == "variability") {
+        Value v;
+        if (UnpackValue(f.second, v)) {
+          if (const std::string* s = v.as_token()) ai.uniform = (*s == "uniform");
+        }
+      }
+    }
+    attr_map[prim_path].push_back(std::move(ai));
   }
 
   // Sort by full path (produces correct depth-first order with parents before children)
@@ -1535,6 +1881,27 @@ bool CrateReader::Impl::BuildStage() {
     // Add properties and extract composition arcs / metadata into PrimSpecMeta
     for (auto& field : entry.fields) {
       if (field.first == "typeName" || field.first == "specifier") continue;
+
+      // Reserved prim metadata stored inline in the prim spec (pxrUSD keeps
+      // these in the prim's fieldset, not as separate property specs). Route
+      // them to PrimSpecMeta so they do not leak in as phantom properties.
+      if (ps) {
+        if (field.first == "active") {
+          if (const bool* b = field.second.as_bool()) ps->meta().active = *b;
+          continue;
+        }
+        if (field.first == "hidden") {
+          if (const bool* b = field.second.as_bool()) ps->meta().hidden = *b;
+          continue;
+        }
+        if (field.first == "doc") {
+          if (const std::string* s = field.second.as_string())
+            ps->meta().doc = *s;
+          else if (const std::string* s = field.second.as_token())
+            ps->meta().doc = *s;
+          continue;
+        }
+      }
 
       // Composition arc + metadata fields: store in PrimSpecMeta, not as
       // regular properties. (Guarded by ps; if current() were null we simply
@@ -1590,6 +1957,71 @@ bool CrateReader::Impl::BuildStage() {
       uint16_t flags = 0;
       builder.add_property(field.first, std::move(field.second), flags);
     }
+
+    // Attach separate Attribute / Relationship specs that belong to this prim.
+    // The dedup guard keeps any inline field authoritative.
+    auto am = attr_map.find(entry.full_path);
+    if (ps && am != attr_map.end()) {
+      for (auto& ai : am->second) {
+        if (ps->property(ai.name)) continue;  // inline opinion wins
+        uint16_t flags = 0;
+        if (ai.uniform) flags |= PropSlot::kFlagUniform;
+        if (ai.is_connection) flags |= PropSlot::kFlagConnection;
+        const bool is_array =
+            ai.type_name.size() >= 2 &&
+            ai.type_name.compare(ai.type_name.size() - 2, 2, "[]") == 0;
+        if (ai.has_default) {
+          ps->add_property(ai.name, std::move(ai.default_value), flags);
+        } else {
+          // Connection-only or declared-only attribute: register a typed slot
+          // with no authored default value so it round-trips.
+          if (is_array) flags |= PropSlot::kFlagArray;
+          std::string base = is_array
+              ? ai.type_name.substr(0, ai.type_name.size() - 2)
+              : ai.type_name;
+          TypeId tid = GetTypeIdFromName(base.c_str());
+          ps->add_property_slot(GetPropNameTable().intern(ai.name), tid, flags);
+        }
+        if (!ai.type_name.empty()) {
+          ps->set_property_type_name(ai.name, ai.type_name);
+        }
+        for (const auto& t : ai.connection_targets) {
+          ps->add_connection(ai.name, Path(t));
+        }
+      }
+    }
+    auto rm = rel_map.find(entry.full_path);
+    if (ps && rm != rel_map.end()) {
+      for (auto& ri : rm->second) {
+        // A target-less relationship is recorded with a single empty Path
+        // marker (the writer emits no targetPaths for it); relationships with
+        // targets push one Path per target.
+        if (ri.targets.empty()) {
+          ps->add_relationship(ri.name, Path());
+        } else {
+          for (const auto& t : ri.targets) ps->add_relationship(ri.name, Path(t));
+        }
+      }
+    }
+
+    // Variant sets: attach a VariantSetData{name, selected} per selected set.
+    // The variant CONTENT (properties + child prims) lives in the layer's
+    // bracketed holder prims, which the compositor reads on selection and the
+    // writer re-emits; the model only carries the selection here.
+    auto sel = variant_sel.find(entry.full_path);
+    if (ps && sel != variant_sel.end()) {
+      for (const auto& kv : sel->second) {
+        VariantSetData vsd;
+        vsd.name = kv.first;
+        vsd.selected = kv.second;
+        ps->meta().variantSets.push_back(std::move(vsd));
+      }
+      // Keep the first selection in the legacy single-string field too.
+      if (!sel->second.empty()) {
+        const auto& first = *sel->second.begin();
+        ps->meta().variantSelection = first.first + "=" + first.second;
+      }
+    }
   }
 
   // Close remaining prims
@@ -1644,6 +2076,110 @@ bool CrateReader::Impl::ResolveFieldset(uint32_t fieldset_index,
   return true;
 }
 
+bool CrateReader::Impl::ResolveFieldsetRaw(
+    uint32_t fieldset_index,
+    std::vector<std::pair<std::string, ValueRep>>& out) {
+  out.clear();
+  if (fieldset_index >= fieldset_indices_.size()) return false;
+
+  size_t start = fieldset_index;
+  while (start < fieldset_indices_.size()) {
+    uint32_t field_idx = fieldset_indices_[start];
+    if (field_idx == 0xFFFFFFFF) break;
+    if (field_idx < fields_.size()) {
+      const CrateField& field = fields_[field_idx];
+      std::string name;
+      if (GetToken(field.token_index.value, name)) {
+        out.emplace_back(std::move(name), field.value_rep);
+      }
+    }
+    start++;
+  }
+  return true;
+}
+
+bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
+                                          std::vector<std::string>& out) {
+  // Reads one or more [u64 count][u32 path_index * count] runs of path indices
+  // (uncompressed, per pxrUSD). PathVector has a single run; PathListOp is
+  // prefixed by a 1-byte ListOpHeader selecting which sublists are present. We
+  // flatten every present sublist's targets (sufficient for round-tripping
+  // relationship/connection targets; list-edit semantics are not preserved).
+  CrateTypeId tid = rep.type_id();
+  if (tid != CrateTypeId::PathVector && tid != CrateTypeId::PathListOp) {
+    return false;
+  }
+  if (rep.payload() == 0) return true;  // empty
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+
+  auto read_run = [&]() -> bool {
+    uint64_t n = 0;
+    if (!reader_->read_u64(n)) return false;
+    if (n > options_.max_array_elements) return false;
+    for (uint64_t i = 0; i < n; ++i) {
+      uint32_t idx = 0;
+      if (!reader_->read_u32(idx)) return false;
+      if (idx < paths_.size()) {
+        // paths_ renders a property path as ".<primpath>/<prop>"; convert to the
+        // canonical USD form "<primpath>.<prop>" so targets re-intern correctly
+        // (and survive repeated round-trips). Prim targets pass through as-is.
+        const std::string& p = paths_[idx];
+        if (!p.empty() && p[0] == '.') {
+          std::string body = p.substr(1);          // "/a/b/prop"
+          size_t slash = body.rfind('/');
+          if (slash != std::string::npos) {
+            out.push_back(body.substr(0, slash) + "." + body.substr(slash + 1));
+          } else {
+            out.push_back(body);
+          }
+        } else {
+          out.push_back(p);                        // prim path "/a/b"
+        }
+      }
+    }
+    return true;
+  };
+
+  if (tid == CrateTypeId::PathVector) {
+    return read_run();
+  }
+
+  // PathListOp: [u8 header][present sublists...]. ListOpHeader bits (pxrUSD):
+  //   0x02 explicit, 0x04 added, 0x08 deleted, 0x10 ordered,
+  //   0x20 prepended, 0x40 appended. Read order matches the legacy reader:
+  //   explicit, added, prepended, appended, deleted, ordered.
+  uint8_t bits = 0;
+  if (!reader_->read_u8(bits)) return false;
+  const uint8_t kHasExplicit = 0x02, kHasAdded = 0x04, kHasDeleted = 0x08,
+                kHasOrdered = 0x10, kHasPrepended = 0x20, kHasAppended = 0x40;
+  if ((bits & kHasExplicit) && !read_run()) return false;
+  if ((bits & kHasAdded) && !read_run()) return false;
+  if ((bits & kHasPrepended) && !read_run()) return false;
+  if ((bits & kHasAppended) && !read_run()) return false;
+  if ((bits & kHasDeleted) && !read_run()) return false;
+  if ((bits & kHasOrdered) && !read_run()) return false;
+  return true;
+}
+
+bool CrateReader::Impl::DecodeVariantSelectionMap(
+    ValueRep rep, std::vector<std::pair<std::string, std::string>>& out) {
+  if (rep.type_id() != CrateTypeId::VariantSelectionMap) return false;
+  if (rep.payload() == 0) return true;  // empty map
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  uint64_t count = 0;
+  if (!reader_->read_u64(count)) return false;
+  if (count > options_.max_array_elements) return false;
+  for (uint64_t i = 0; i < count; ++i) {
+    uint32_t k = 0, v = 0;
+    if (!reader_->read_u32(k) || !reader_->read_u32(v)) return false;
+    std::string key, val;
+    GetString(k, key);
+    GetString(v, val);
+    out.emplace_back(std::move(key), std::move(val));
+  }
+  return true;
+}
+
 bool CrateReader::Impl::GetToken(uint32_t index, std::string& out) {
   if (index >= tokens_.size()) {
     return false;
@@ -1686,6 +2222,10 @@ CrateReadResult CrateReader::Read(const uint8_t* data, size_t size) {
   return impl_->Read(data, size);
 }
 
+CrateReadResult CrateReader::ReadOwned(std::string&& owned) {
+  return impl_->ReadOwned(std::move(owned));
+}
+
 CrateReadResult CrateReader::ReadFile(const char* filename) {
   return impl_->ReadFile(filename);
 }
@@ -1704,6 +2244,10 @@ const std::vector<CrateField>& CrateReader::fields() const {
 
 const std::vector<CrateSpec>& CrateReader::specs() const {
   return impl_->specs();
+}
+
+const std::vector<uint32_t>& CrateReader::fieldset_indices() const {
+  return impl_->fieldset_indices();
 }
 
 // ============================================================

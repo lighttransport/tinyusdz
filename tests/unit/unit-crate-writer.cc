@@ -380,6 +380,153 @@ void crate_writer_roundtrip_test(void) {
 }
 
 //
+// Stage-path composition-arc round-trip.
+//
+// Regression lock for the formerly-disabled Stage path: references, payload,
+// inherits, specializes, and apiSchemas must survive Stage -> USDC -> Stage.
+// (See the note in src/stage-converter.cc CrateWriter::ExtractPrimMeta.)
+//
+void crate_writer_stage_composition_arcs_test(void) {
+  std::string filename = get_temp_filename("test_stage_comp_arcs");
+  std::string err;
+
+  Stage stage;
+
+  Xform xform;
+  xform.name = "Root";
+  xform.spec = Specifier::Def;
+  Prim prim("Root", xform);
+
+  // references (prepend)
+  {
+    Reference ref;
+    ref.asset_path = value::AssetPath("ref.usda");
+    ref.prim_path = Path("/RefPrim", "");
+    std::vector<std::pair<ListEditQual, std::vector<Reference>>> refs;
+    refs.push_back({ListEditQual::Prepend, {ref}});
+    prim.metas().references = refs;
+  }
+  // payload (explicit)
+  {
+    Payload pl;
+    pl.asset_path = value::AssetPath("pay.usda");
+    pl.prim_path = Path("/PayPrim", "");
+    std::vector<std::pair<ListEditQual, std::vector<Payload>>> payloads;
+    payloads.push_back({ListEditQual::ResetToExplicit, {pl}});
+    prim.metas().payload = payloads;
+  }
+  // inherits (prepend)
+  {
+    std::vector<std::pair<ListEditQual, std::vector<Path>>> inh;
+    inh.push_back({ListEditQual::Prepend, {Path("/Base", "")}});
+    prim.metas().inherits = inh;
+  }
+  // specializes (explicit)
+  {
+    std::vector<std::pair<ListEditQual, std::vector<Path>>> spec;
+    spec.push_back({ListEditQual::ResetToExplicit, {Path("/Spec", "")}});
+    prim.metas().specializes = spec;
+  }
+  // apiSchemas (prepend MaterialBindingAPI)
+  {
+    APISchemas schemas;
+    schemas.listOpQual = ListEditQual::Prepend;
+    schemas.names.push_back({APISchemas::APIName::MaterialBindingAPI, ""});
+    prim.metas().set_apiSchemas(schemas);
+  }
+
+  stage.root_prims().emplace_back(prim);
+
+  // Write via the Stage path.
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  writer.SetOptions(opts);
+
+  TEST_CHECK(writer.Open(&err));
+  TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
+  TEST_CHECK(writer.Finalize(&err));
+  writer.Close();
+
+  // Read back.
+  Stage loaded;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded, &warn, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  TEST_CHECK(loaded.root_prims().size() == 1);
+  if (loaded.root_prims().size() == 1) {
+    const PrimMeta &m = loaded.root_prims()[0].metas();
+
+    // references
+    TEST_CHECK(m.references.has_value());
+    if (m.references.has_value()) {
+      const auto &rv = m.references.value();
+      TEST_CHECK(rv.size() == 1);
+      if (rv.size() == 1 && rv[0].second.size() == 1) {
+        TEST_CHECK(rv[0].second[0].asset_path.GetAssetPath() == "ref.usda");
+      }
+    }
+
+    // payload
+    TEST_CHECK(m.payload.has_value());
+    if (m.payload.has_value()) {
+      const auto &pv = m.payload.value();
+      TEST_CHECK(pv.size() == 1);
+      if (pv.size() == 1 && pv[0].second.size() == 1) {
+        TEST_CHECK(pv[0].second[0].asset_path.GetAssetPath() == "pay.usda");
+      }
+    }
+
+    // inherits
+    TEST_CHECK(m.inherits.has_value());
+    if (m.inherits.has_value()) {
+      const auto &iv = m.inherits.value();
+      bool found_base = false;
+      for (const auto &op : iv) {
+        for (const auto &p : op.second) {
+          if (p.prim_part() == "/Base") found_base = true;
+        }
+      }
+      TEST_CHECK(found_base);
+    }
+
+    // specializes
+    TEST_CHECK(m.specializes.has_value());
+    if (m.specializes.has_value()) {
+      const auto &sv = m.specializes.value();
+      bool found_spec = false;
+      for (const auto &op : sv) {
+        for (const auto &p : op.second) {
+          if (p.prim_part() == "/Spec") found_spec = true;
+        }
+      }
+      TEST_CHECK(found_spec);
+    }
+
+    // apiSchemas
+    TEST_CHECK(m.has_apiSchemas());
+    if (m.has_apiSchemas()) {
+      const APISchemas sc = m.get_apiSchemas();
+      bool found_mb = false;
+      for (const auto &n : sc.names) {
+        if (n.first == APISchemas::APIName::MaterialBindingAPI) found_mb = true;
+      }
+      TEST_CHECK(found_mb);
+    }
+  }
+
+  cleanup_file(filename);
+}
+
+//
 // Test 7: Multiple prims at root level
 // Verifies that multiple prims can be written and read correctly
 //
@@ -5305,6 +5452,153 @@ void crate_writer_sphere_light_test(void) {
   cleanup_file(filename);
 }
 
+// Regression: every light type must round-trip the base LightAPI radiometric
+// inputs (intensity + the EXTRACT_COMMON_LIGHT set) and the light:filters
+// relationship. Before the LIGHT_BASE_ATTRS reader fix, sphere/rect/cylinder/etc.
+// silently dropped these on read despite the writer emitting them (CylinderLight
+// also dropped intensity).
+template <typename LightT>
+static void check_light_base_roundtrip(const char* tname) {
+  std::string filename = get_temp_filename("test_light_base");
+  std::string err;
+
+  Stage stage;
+  LightT light;
+  light.name = "L";
+  light.intensity.set_value(Animatable<float>(3.0f));
+  light.diffuse.set_value(Animatable<float>(0.7f));
+  light.specular.set_value(Animatable<float>(0.3f));
+  light.normalize.set_value(Animatable<bool>(true));
+  light.enableColorTemperature.set_value(Animatable<bool>(true));
+  light.colorTemperature.set_value(Animatable<float>(5000.0f));
+  light.lightFilters.set(std::vector<Path>{Path("/Filter1", ""), Path("/Filter2", "")});
+
+  Prim prim("L", light);
+  stage.root_prims().push_back(prim);
+
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0; opts.version_minor = 8; opts.version_patch = 0;
+  writer.SetOptions(opts);
+  if (!writer.Open(&err) || !writer.ConvertStageToSpecs(stage, &err) ||
+      !writer.Finalize(&err)) {
+    TEST_MSG("%s write failed: %s", tname, err.c_str());
+    writer.Close(); cleanup_file(filename); return;
+  }
+  writer.Close();
+
+  Stage loaded; std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded, &warn, &err);
+  TEST_CHECK_(ret, "%s load failed: %s", tname, err.c_str());
+  if (!ret) { cleanup_file(filename); return; }
+
+  auto r = loaded.GetPrimAtPath(Path("/L", ""));
+  TEST_CHECK(r.has_value());
+  if (!r.has_value() || !r.value()) { cleanup_file(filename); return; }
+  const LightT* lp = r.value()->data().as<LightT>();
+  TEST_CHECK_(lp != nullptr, "%s: cast failed", tname);
+  if (!lp) { cleanup_file(filename); return; }
+
+  auto close_f = [](float a, float b) { return (a > b ? a - b : b - a) < 1e-5f; };
+  auto chk_f = [&](const TypedAttributeWithFallback<Animatable<float>>& a,
+                   float expect, const char* nm) {
+    TEST_CHECK_(a.authored(), "%s.%s dropped on read", tname, nm);
+    float v = 0.0f;
+    if (a.authored() && a.get_value().get_scalar(&v)) {
+      TEST_CHECK_(close_f(v, expect), "%s.%s = %f, expected %f", tname, nm, v, expect);
+    }
+  };
+  auto chk_b = [&](const TypedAttributeWithFallback<Animatable<bool>>& a,
+                   bool expect, const char* nm) {
+    TEST_CHECK_(a.authored(), "%s.%s dropped on read", tname, nm);
+    bool v = false;
+    if (a.authored() && a.get_value().get_scalar(&v)) {
+      TEST_CHECK_(v == expect, "%s.%s mismatch", tname, nm);
+    }
+  };
+
+  chk_f(lp->intensity, 3.0f, "intensity");
+  chk_f(lp->diffuse, 0.7f, "diffuse");
+  chk_f(lp->specular, 0.3f, "specular");
+  chk_b(lp->normalize, true, "normalize");
+  chk_b(lp->enableColorTemperature, true, "enableColorTemperature");
+  chk_f(lp->colorTemperature, 5000.0f, "colorTemperature");
+
+  TEST_CHECK_(lp->lightFilters.authored(), "%s.lightFilters dropped on read", tname);
+  const std::vector<Path> filters = lp->lightFilters.get_targetPaths();
+  TEST_CHECK_(filters.size() == 2, "%s.lightFilters has %zu targets, expected 2",
+              tname, filters.size());
+
+  cleanup_file(filename);
+}
+
+void crate_writer_light_common_attrs_roundtrip_test(void) {
+  check_light_base_roundtrip<SphereLight>("SphereLight");
+  check_light_base_roundtrip<RectLight>("RectLight");
+  check_light_base_roundtrip<DiskLight>("DiskLight");
+  check_light_base_roundtrip<CylinderLight>("CylinderLight");
+  check_light_base_roundtrip<DistantLight>("DistantLight");
+  check_light_base_roundtrip<DomeLight>("DomeLight");
+  check_light_base_roundtrip<GeometryLight>("GeometryLight");
+}
+
+// Regression: GeomMesh velocities (vector3f[]) must round-trip. It was the only
+// PointBased type whose reader macro omitted velocities, so it was dropped on read
+// even though the writer/printer emit it.
+void crate_writer_mesh_velocities_roundtrip_test(void) {
+  std::string filename = get_temp_filename("test_mesh_velocities");
+  std::string err;
+
+  Stage stage;
+  GeomMesh mesh;
+  mesh.name = "M";
+  std::vector<value::point3f> points = {
+    {0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}};
+  mesh.points.set_value(points);
+  std::vector<value::vector3f> vels = {
+    {0.1f, 0.2f, 0.3f}, {0.4f, 0.5f, 0.6f},
+    {0.7f, 0.8f, 0.9f}, {1.0f, 1.1f, 1.2f}};
+  mesh.velocities.set_value(Animatable<std::vector<value::vector3f>>(vels));
+
+  Prim prim("M", mesh);
+  prim.prim_type_name() = "Mesh";
+  stage.root_prims().push_back(prim);
+
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0; opts.version_minor = 8; opts.version_patch = 0;
+  writer.SetOptions(opts);
+  if (!writer.Open(&err) || !writer.ConvertStageToSpecs(stage, &err) ||
+      !writer.Finalize(&err)) {
+    TEST_MSG("mesh velocities write failed: %s", err.c_str());
+    writer.Close(); cleanup_file(filename); return;
+  }
+  writer.Close();
+
+  Stage loaded; std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded, &warn, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) { TEST_MSG("load failed: %s", err.c_str()); cleanup_file(filename); return; }
+
+  auto r = loaded.GetPrimAtPath(Path("/M", ""));
+  TEST_CHECK(r.has_value());
+  if (r.has_value() && r.value()) {
+    const GeomMesh* m = r.value()->data().as<GeomMesh>();
+    TEST_CHECK(m != nullptr);
+    if (m) {
+      TEST_CHECK(m->velocities.authored());
+      auto vopt = m->velocities.get_value();
+      TEST_CHECK(vopt.has_value());
+      if (vopt.has_value()) {
+        std::vector<value::vector3f> out;
+        TEST_CHECK(vopt.value().get_default(&out));
+        TEST_CHECK(out.size() == vels.size());
+      }
+    }
+  }
+  cleanup_file(filename);
+}
+
 //
 // Test 70: RectLight with width, height, and intensity
 //
@@ -6393,6 +6687,185 @@ void crate_writer_compressed_uint_array_roundtrip_test(void) {
   TEST_CHECK(found_compressed);
 
   cleanup_file(filename);
+}
+
+// Round-trip correctness for float[]/double[] arrays across the data patterns
+// the tagged compression (Options.enable_float_array_compression) cares about:
+//   - integer-valued        -> code 'i' (compressed int32)
+//   - few distinct values   -> code 't' (lookup table + compressed indices)
+//   - arbitrary distinct    -> uncompressed fallback
+// Run with the option both OFF (default; everything uncompressed) and ON (i/t/raw
+// chosen per array): every pattern must reproduce the input bit-exactly either
+// way. A final size check confirms the option actually shrinks an integer array.
+void crate_writer_float_double_array_compression_roundtrip_test(void) {
+  auto roundtrip_widths = [](const std::vector<float>& in,
+                             bool compress) -> std::vector<float> {
+    std::string fn = get_temp_filename("test_floatcomp");
+    std::string err;
+    Stage stage;
+    GeomBasisCurves curves;
+    curves.widths.set_value(Animatable<std::vector<float>>(in));
+    Prim prim("Curve", curves);
+    prim.prim_type_name() = "BasisCurves";
+    stage.root_prims().push_back(prim);
+
+    CrateWriter writer(fn);
+    CrateWriter::Options opts;
+    opts.version_major = 0; opts.version_minor = 8; opts.version_patch = 0;
+    opts.enable_compression = true;
+    opts.enable_float_array_compression = compress;
+    writer.SetOptions(opts);
+    std::vector<float> out;
+    if (!writer.Open(&err) || !writer.ConvertStageToSpecs(stage, &err) ||
+        !writer.Finalize(&err)) {
+      TEST_MSG("float write failed: %s", err.c_str());
+      writer.Close(); cleanup_file(fn); return out;
+    }
+    writer.Close();
+
+    Stage loaded; std::string warn;
+    if (tinyusdz::LoadUSDFromFile(fn, &loaded, &warn, &err)) {
+      auto r = loaded.GetPrimAtPath(Path("/Curve", ""));
+      if (r.has_value() && r.value()) {
+        if (const GeomBasisCurves* c = r.value()->data().as<GeomBasisCurves>()) {
+          auto wopt = c->widths.get_value();
+          if (wopt.has_value()) { wopt.value().get_default(&out); }
+        }
+      }
+    } else {
+      TEST_MSG("float load failed: %s", err.c_str());
+    }
+    cleanup_file(fn);
+    return out;
+  };
+
+  auto roundtrip_knots = [](const std::vector<double>& in,
+                            bool compress) -> std::vector<double> {
+    std::string fn = get_temp_filename("test_doublecomp");
+    std::string err;
+    Stage stage;
+    GeomNurbsCurves nurbs;
+    nurbs.knots.set_value(Animatable<std::vector<double>>(in));
+    Prim prim("Nurbs", nurbs);
+    prim.prim_type_name() = "NurbsCurves";
+    stage.root_prims().push_back(prim);
+
+    CrateWriter writer(fn);
+    CrateWriter::Options opts;
+    opts.version_major = 0; opts.version_minor = 8; opts.version_patch = 0;
+    opts.enable_compression = true;
+    opts.enable_float_array_compression = compress;
+    writer.SetOptions(opts);
+    std::vector<double> out;
+    if (!writer.Open(&err) || !writer.ConvertStageToSpecs(stage, &err) ||
+        !writer.Finalize(&err)) {
+      TEST_MSG("double write failed: %s", err.c_str());
+      writer.Close(); cleanup_file(fn); return out;
+    }
+    writer.Close();
+
+    Stage loaded; std::string warn;
+    if (tinyusdz::LoadUSDFromFile(fn, &loaded, &warn, &err)) {
+      auto r = loaded.GetPrimAtPath(Path("/Nurbs", ""));
+      if (r.has_value() && r.value()) {
+        if (const GeomNurbsCurves* c = r.value()->data().as<GeomNurbsCurves>()) {
+          auto kopt = c->knots.get_value();
+          if (kopt.has_value()) { kopt.value().get_default(&out); }
+        }
+      }
+    } else {
+      TEST_MSG("double load failed: %s", err.c_str());
+    }
+    cleanup_file(fn);
+    return out;
+  };
+
+  const float fpal[3] = {0.25f, 1.5f, 2.75f};
+  const double dpal[3] = {0.25, 1.5, 2.75};
+
+  // Both option states must round-trip every pattern bit-exactly.
+  for (bool compress : {false, true}) {
+    // float[]: integer-valued (code 'i'); kept >= 0 to avoid the -0.0 collapse
+    {
+      std::vector<float> in;
+      for (int i = 0; i < 40; ++i) in.push_back(static_cast<float>(i % 17));
+      TEST_CHECK(roundtrip_widths(in, compress) == in);
+    }
+    // float[]: few distinct non-integers (code 't')
+    {
+      std::vector<float> in;
+      for (int i = 0; i < 40; ++i) in.push_back(fpal[i % 3]);
+      TEST_CHECK(roundtrip_widths(in, compress) == in);
+    }
+    // float[]: arbitrary distinct non-integers (uncompressed fallback)
+    {
+      std::vector<float> in;
+      for (int i = 0; i < 40; ++i) in.push_back(0.1f * static_cast<float>(i) + 0.0333f);
+      TEST_CHECK(roundtrip_widths(in, compress) == in);
+    }
+    // double[]: integer-valued (code 'i')
+    {
+      std::vector<double> in;
+      for (int i = 0; i < 40; ++i) in.push_back(static_cast<double>(i % 17));
+      TEST_CHECK(roundtrip_knots(in, compress) == in);
+    }
+    // double[]: few distinct non-integers (code 't')
+    {
+      std::vector<double> in;
+      for (int i = 0; i < 40; ++i) in.push_back(dpal[i % 3]);
+      TEST_CHECK(roundtrip_knots(in, compress) == in);
+    }
+    // double[]: arbitrary distinct non-integers (uncompressed fallback)
+    {
+      std::vector<double> in;
+      for (int i = 0; i < 40; ++i) in.push_back(0.1 * static_cast<double>(i) + 0.0333);
+      TEST_CHECK(roundtrip_knots(in, compress) == in);
+    }
+  }
+
+  // Enabling the option must actually shrink a large integer-valued float array
+  // (isolates the flag: both runs keep enable_compression=true).
+  {
+    std::vector<float> big;
+    for (int i = 0; i < 4096; ++i) big.push_back(static_cast<float>(i % 64));
+
+    auto write_widths = [&](bool compress) -> size_t {
+      std::string fn = get_temp_filename("test_floatcomp_size");
+      std::string err;
+      Stage stage;
+      GeomBasisCurves curves;
+      curves.widths.set_value(Animatable<std::vector<float>>(big));
+      Prim prim("Curve", curves);
+      prim.prim_type_name() = "BasisCurves";
+      stage.root_prims().push_back(prim);
+      CrateWriter writer(fn);
+      CrateWriter::Options opts;
+      opts.version_major = 0; opts.version_minor = 8; opts.version_patch = 0;
+      opts.enable_compression = true;
+      opts.enable_float_array_compression = compress;
+      writer.SetOptions(opts);
+      size_t sz = 0;
+      if (writer.Open(&err) && writer.ConvertStageToSpecs(stage, &err) &&
+          writer.Finalize(&err)) {
+        writer.Close();
+        std::vector<uint8_t> data;
+        if (tinyusdz::io::ReadWholeFile(&data, &err, fn, 0, nullptr)) {
+          sz = data.size();
+        }
+      } else {
+        writer.Close();
+      }
+      cleanup_file(fn);
+      return sz;
+    };
+
+    size_t compressed_sz = write_widths(true);
+    size_t uncompressed_sz = write_widths(false);
+    TEST_CHECK(compressed_sz > 0 && uncompressed_sz > 0);
+    TEST_CHECK_(compressed_sz < uncompressed_sz,
+                "compressed %zu should be < uncompressed %zu", compressed_sz,
+                uncompressed_sz);
+  }
 }
 
 void crate_writer_specializes_test(void) {

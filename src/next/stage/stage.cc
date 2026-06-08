@@ -183,11 +183,22 @@ UsdPrim UsdPrim::GetParent() const {
   return UsdPrim();
 }
 
+// For instance proxies, children are provided by the prototype prim's subtree.
+const PrimSpec* UsdPrim::ChildSourceSpec() const {
+  if (spec_ && layer_ && !spec_->meta().instance_prototype.empty()) {
+    const PrimSpec* proto =
+        layer_->prim_at_path(Path(spec_->meta().instance_prototype));
+    if (proto) return proto;
+  }
+  return spec_;
+}
+
 std::vector<UsdPrim> UsdPrim::GetChildren() const {
   std::vector<UsdPrim> children;
   if (!spec_ || !layer_) return children;
 
-  const auto& indices = spec_->child_indices();
+  const PrimSpec* src = ChildSourceSpec();
+  const auto& indices = src->child_indices();
   children.reserve(indices.size());
 
   for (uint32_t idx : indices) {
@@ -201,13 +212,13 @@ std::vector<UsdPrim> UsdPrim::GetChildren() const {
 
 size_t UsdPrim::GetChildCount() const {
   if (!spec_) return 0;
-  return spec_->child_count();
+  return ChildSourceSpec()->child_count();
 }
 
 UsdPrim UsdPrim::GetChild(const std::string& name) const {
   if (!spec_ || !layer_) return UsdPrim();
 
-  for (uint32_t idx : spec_->child_indices()) {
+  for (uint32_t idx : ChildSourceSpec()->child_indices()) {
     const PrimSpec* child = layer_->prim(idx);
     if (child && child->name() == name) {
       return UsdPrim(child, layer_, idx);

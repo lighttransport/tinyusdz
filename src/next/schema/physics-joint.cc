@@ -57,9 +57,6 @@ bool GetPhysicsJointData(const Stage& stage, const UsdPrim& prim,
                           PhysicsJointData* out, double time) {
   if (!prim.IsValid() || !out) return false;
 
-  (void)stage;
-  (void)time;
-
   // body0
   {
     const std::vector<Path>* targets =
@@ -133,6 +130,17 @@ bool GetPhysicsJointData(const Stage& stage, const UsdPrim& prim,
       if (f) out->motorMaxForce = *f;
     }
   }
+
+  // Local joint frames: positions (vector3f) and rotations (quatf). These were
+  // previously never read, so the joint frames stayed at identity even when
+  // authored. EvalFloat3/EvalFloat4 leave the struct defaults in place when the
+  // attribute is absent and report presence for the has* flags.
+  AttributeEval eval(&stage);
+  eval.SetTime(time);
+  out->hasLocalPos0 = eval.EvalFloat3(prim, "physics:localPos0", out->localPos0);
+  out->hasLocalPos1 = eval.EvalFloat3(prim, "physics:localPos1", out->localPos1);
+  out->hasLocalRot0 = eval.EvalFloat4(prim, "physics:localRot0", out->localQuat0);
+  out->hasLocalRot1 = eval.EvalFloat4(prim, "physics:localRot1", out->localQuat1);
 
   return true;
 }

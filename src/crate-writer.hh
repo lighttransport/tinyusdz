@@ -30,6 +30,15 @@
 namespace tinyusdz {
 namespace experimental {
 
+// Maximum prim nesting depth supported by the USDC writer. The path-tree
+// builder recurses once per nesting level on the native stack, so this bounds
+// recursion to a stack-safe value. ConvertPrimIterative enforces this as the
+// authoritative, early check (clear error before the path-tree pass); the
+// path-tree builder keeps a slightly larger backstop (property/root paths add
+// one extra level), so a too-deep stage always fails at prim conversion first
+// rather than cryptically during path-tree building.
+static constexpr uint32_t kMaxPrimNestingDepth = 512;
+
 ///
 /// ErrorContextStack - Tracks error context during crate writing operations
 ///
@@ -315,6 +324,13 @@ public:
     bool enable_compression = true;   // Phase 4: LZ4 compression enabled by default
     bool enable_deduplication = true; // Deduplicate tokens/strings/paths/values
     bool enable_validation = true;    // Phase 5: Pre-write validation enabled by default
+
+    // OpenUSD-compatible tagged compression for float[]/double[] arrays
+    // (code 'i' = integers, 't' = lookup table; see doc/crate-writer.md).
+    // Default OFF: float/double arrays are written uncompressed. Requires
+    // enable_compression as well (it gates the integer-stream compressor used
+    // by the 'i'/'t' payloads).
+    bool enable_float_array_compression = false;
 
     // Memory and file size limits (with WASM-specific defaults)
     // These prevent resource exhaustion when processing untrusted USD files
@@ -757,6 +773,26 @@ private:
                                  const char* typeName, bool* is_compressed,
                                  std::string* err);
 
+  /// Write a float array payload using OpenUSD's tagged compression for
+  /// floating-point arrays (code 'i' = compressed integers when every value is
+  /// an exactly-representable integer; code 't' = lookup table + compressed
+  /// indices when the array has few distinct values). Falls back to raw,
+  /// uncompressed floats otherwise. The array element count must already have
+  /// been written by the caller. Sets `*is_compressed` to match the bytes
+  /// written (true only when a code byte + compressed payload was emitted).
+  ///
+  /// Compression is only attempted when both `options_.enable_float_array_compression`
+  /// and `options_.enable_compression` are set (the former defaults to OFF, so
+  /// the default output is uncompressed and unchanged). Returns -1 on I/O error.
+  int64_t WriteCompressedFloatArray(const float* data, uint64_t count,
+                                    bool* is_compressed, std::string* err);
+
+  /// Double-precision counterpart of WriteCompressedFloatArray. Same tagged
+  /// format and option gating (the 'i' path reconstructs via int32, matching
+  /// the reader); falls back to raw doubles otherwise.
+  int64_t WriteCompressedDoubleArray(const double* data, uint64_t count,
+                                     bool* is_compressed, std::string* err);
+
   // ======================================================================
   // I/O utilities
   // ======================================================================
@@ -832,7 +868,7 @@ private:
   int64_t value_data_start_offset_ = 0;
   int64_t value_data_end_offset_ = 0;
 
-  // Phase 5: TimeSamples value deduplication with NaN-aware hashing.
+  // Phase 5: Value deduplication with NaN-aware hashing.
   // Follows OpenUSD TfHash pattern: +0.0 and -0.0 hash identically;
   // all other values hash by bit pattern.
   struct NanAwareHash {
@@ -857,6 +893,33 @@ private:
     static bool buffers_equal(const void *a, const void *b, size_t byte_count,
                               size_t element_size, bool is_float);
   };
+
+  struct ValueDedupEntry {
+    std::vector<char> bytes;
+    size_t element_size = 1;
+    bool is_float = false;
+    uint32_t wire_tag = 0;
+    uint64_t rep_data = 0;
+    size_t retained_bytes = 0;
+  };
+
+  static bool ComputeValueDedupDescriptor(const crate::CrateValue& value,
+                                          std::vector<char>* bytes,
+                                          size_t* element_size,
+                                          bool* is_float,
+                                          uint32_t* wire_tag);
+  bool LookupDeduplicatedValue(const std::vector<char>& bytes,
+                               size_t element_size, bool is_float,
+                               uint32_t wire_tag, crate::ValueRep* rep) const;
+  bool CanRetainDeduplicatedValue(size_t byte_count) const;
+  void RetainDeduplicatedValue(size_t hash, std::vector<char> bytes,
+                               size_t element_size, bool is_float,
+                               uint32_t wire_tag,
+                               const crate::ValueRep& rep);
+  size_t GetValueDedupBudgetBytes() const;
+
+  std::unordered_multimap<size_t, ValueDedupEntry> value_dedup_map_;
+  size_t value_dedup_bytes_ = 0;
 };
 
 } // namespace experimental

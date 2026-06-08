@@ -67,6 +67,12 @@ public:
   /// Finalize layer (build path index, sort properties)
   void finalize();
 
+  /// (Re)build only the path->index map from current prim paths. Unlike
+  /// finalize() this is not guarded and does not sort properties, so it can be
+  /// called mid-mutation (e.g. composition pass 2 needs prim_at_path lookups
+  /// before the layer is finalized, and after prims are added/renamed).
+  void build_path_index();
+
   // ============================================================
   // Access
   // ============================================================

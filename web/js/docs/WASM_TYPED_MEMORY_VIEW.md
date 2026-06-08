@@ -96,5 +96,5 @@ new THREE.QuaternionKeyframeTrack(name, new Float32Array(sampler.times), new Flo
 If `usd_scene.delete()` were removed, no copying would be needed since the C++ object (and its
 `render_scene_` data) would remain alive in WASM heap memory. However, this wastes memory -
 the entire parsed USD scene stays resident. For CesiumMan this is ~17MB; for larger models
-(AnimFinal_LowRes with 3001 joints) it can be significantly more. The one-time copy cost at
+(a large rigged model with 3001 joints) it can be significantly more. The one-time copy cost at
 load time is negligible compared to keeping the full scene in memory.

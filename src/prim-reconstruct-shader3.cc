@@ -137,7 +137,7 @@ bool ReconstructShader<UsdPreviewSurface>(
                          surface->ior)
     PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:normal", UsdPreviewSurface,
                          surface->normal)
-    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:dispacement", UsdPreviewSurface,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:displacement", UsdPreviewSurface,
                          surface->displacement)
     PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:occlusion", UsdPreviewSurface,
                          surface->occlusion)
@@ -209,6 +209,12 @@ bool ReconstructShader<UsdUVTexture>(
                           texture->scale)
     PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:bias", UsdUVTexture,
                           texture->bias)
+    // tinyusdz extensions: UV set selection (index / name). Mirrored by the
+    // USDA printer (pprint-shader.cc) and USDC writer (sconv-shader.cc).
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:uv_set", UsdUVTexture,
+                          texture->uv_set)
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:uv_set_name", UsdUVTexture,
+                          texture->uv_set_name)
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:r", UsdUVTexture,
                                   texture->outputsR)
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:g", UsdUVTexture,

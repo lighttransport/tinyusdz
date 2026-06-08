@@ -115,6 +115,7 @@ void usdc_writer_timesamples_half_test(void);
 void usdc_writer_timesamples_color3f_test(void);
 void usdc_writer_timesamples_negative_time_test(void);
 void usdc_writer_timesamples_blocked_sample_test(void);
+void usdc_writer_timesamples_blocked_array_sample_test(void);
 void usdc_writer_large_int_array_test(void);
 void usdc_writer_large_float_array_test(void);
 void usdc_writer_variant_with_connection_test(void);
