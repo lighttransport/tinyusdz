@@ -84,10 +84,11 @@ void PackChannels8(uint8_t *out, size_t n_pixels, int out_channels,
     if (s.in) {
       const uint8_t *in = s.in + s.channel;
       const int istr = s.in_stride;
-      for (size_t x = 0; x < n_pixels; ++x) out[x * oc + c] = in[x * istr];
+      for (size_t x = 0; x < n_pixels; ++x)
+        out[x * size_t(oc) + size_t(c)] = in[x * size_t(istr)];
     } else {
       const uint8_t v = s.constant;
-      for (size_t x = 0; x < n_pixels; ++x) out[x * oc + c] = v;
+      for (size_t x = 0; x < n_pixels; ++x) out[x * size_t(oc) + size_t(c)] = v;
     }
   }
 }

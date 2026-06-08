@@ -350,6 +350,12 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
       // planar channels (HALF for fp16/8-bit input, FLOAT for fp32), then stream
       // them through the mid-level writer. Channels are matched by name, so no
       // A/B/G/R reordering is needed. ---
+      // EXR_OK() is an external TinyEXR macro that uses a C-style cast; suppress
+      // -Wold-style-cast for the calls below.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wold-style-cast"
+#endif
       {
         const size_t pix = size_t(image.width) * size_t(image.height);
         const char *kNames1[1] = {"Y"};
@@ -450,11 +456,14 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
           if (outdata) free(outdata);
           return nonstd::make_unexpected("EXR: encode failed.");
         }
-        std::vector<uint8_t> out(static_cast<uint8_t *>(outdata),
-                                 static_cast<uint8_t *>(outdata) + outsize);
+        std::vector<uint8_t> exr_out(static_cast<uint8_t *>(outdata),
+                                     static_cast<uint8_t *>(outdata) + outsize);
         free(outdata);
-        return out;
+        return exr_out;
       }
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 #else
       // fp16 (half) input -> encode HALF directly, with NO fp32 widening:
       // split the interleaved half samples into planar half channels and hand

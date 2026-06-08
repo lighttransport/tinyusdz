@@ -36,6 +36,12 @@
 
 #include "safe-arithmetic.hh"
 
+// math::is_close — used for exact (eps == 0) floating-point comparison without
+// tripping -Wfloat-equal. is_close(a, b, 0) computes fabs(a - b) <= 0, which is
+// bit-exact equality for finite values (the int-representability checks below
+// guard the operands to a finite range before comparing).
+#include "math-util.inc"
+
 // Namespace alias to avoid collision between tinyusdz::crate and ::crate (path library)
 namespace pathlib = ::crate;
 
@@ -1691,7 +1697,7 @@ int64_t CrateWriter::WriteCompressedFloatArray(const float* data, uint64_t count
         const float v = data[i];
         if (!(v >= kInt32Lo && v < kInt32HiExcl)) { all_int = false; break; }
         const int32_t iv = static_cast<int32_t>(v);
-        if (static_cast<float>(iv) != v) { all_int = false; break; }
+        if (!math::is_close(static_cast<float>(iv), v, 0.0f)) { all_int = false; break; }
         ints[static_cast<size_t>(i)] = iv;
       }
       std::vector<char> comp;
@@ -1785,7 +1791,7 @@ int64_t CrateWriter::WriteCompressedDoubleArray(const double* data, uint64_t cou
         const double v = data[i];
         if (!(v >= kInt32Lo && v < kInt32HiExcl)) { all_int = false; break; }
         const int32_t iv = static_cast<int32_t>(v);
-        if (static_cast<double>(iv) != v) { all_int = false; break; }
+        if (!math::is_close(static_cast<double>(iv), v, 0.0)) { all_int = false; break; }
         ints[static_cast<size_t>(i)] = iv;
       }
       std::vector<char> comp;
