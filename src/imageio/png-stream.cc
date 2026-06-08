@@ -7,9 +7,16 @@
 #include <cstring>
 #include <vector>
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
 #include "external/miniz.h"
 // Declarations only — the implementation lives in image-util.cc.
 #include "external/stb_image_resize2.h"
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 
 namespace tinyusdz {
 namespace imageio {
@@ -24,9 +31,9 @@ inline uint32_t rd32be(const uint8_t *p) {
 inline uint8_t paeth(int a, int b, int c) {
   int p = a + b - c, pa = std::abs(p - a), pb = std::abs(p - b),
       pc = std::abs(p - c);
-  if (pa <= pb && pa <= pc) return (uint8_t)a;
-  if (pb <= pc) return (uint8_t)b;
-  return (uint8_t)c;
+  if (pa <= pb && pa <= pc) return static_cast<uint8_t>(a);
+  if (pb <= pc) return static_cast<uint8_t>(b);
+  return static_cast<uint8_t>(c);
 }
 
 // Upper bound on width/height for the streaming codec. Rejecting larger images
@@ -61,11 +68,11 @@ bool DeriveLayout(const PngImageInfo &in, PngImageInfo *out) {
   } else {  // RGB / gray+alpha / RGBA
     if (!(bd == 8 || bd == 16)) return false;
   }
-  const size_t bits_per_pixel = (size_t)bd * channels;
+  const size_t bits_per_pixel = static_cast<size_t>(bd) * channels;
   *out = in;
   out->channels = channels;
-  out->bytes_per_pixel = (uint32_t)((bits_per_pixel + 7) / 8);  // >= 1
-  out->row_bytes = (uint32_t)(((size_t)in.width * bits_per_pixel + 7) / 8);
+  out->bytes_per_pixel = static_cast<uint32_t>((bits_per_pixel + 7) / 8);  // >= 1
+  out->row_bytes = static_cast<uint32_t>((static_cast<size_t>(in.width) * bits_per_pixel + 7) / 8);
   return true;
 }
 
@@ -103,9 +110,9 @@ bool PngScanlineReader::Open(const uint8_t *data, size_t size) {
   for (size_t pos = 8; pos + 12 <= size;) {
     uint32_t len = rd32be(data + pos);
     const uint8_t *type = data + pos + 4;
-    if (pos + 12 + (size_t)len > size) return false;  // truncated
+    if (pos + 12 + static_cast<size_t>(len) > size) return false;  // truncated
     const uint8_t *cdata = data + pos + 8;
-    size_t total = 12 + (size_t)len;
+    size_t total = 12 + static_cast<size_t>(len);
     if (std::memcmp(type, "IHDR", 4) == 0) {
       if (len < 13) return false;
       raw.width = rd32be(cdata);
@@ -157,7 +164,7 @@ bool PngScanlineReader::NextRow(uint8_t *row) {
       ++m.idat_idx;
     }
     is.next_out = m.scan.data() + m.scan_filled;
-    is.avail_out = (unsigned)(m.stride - m.scan_filled);
+    is.avail_out = static_cast<unsigned>(m.stride - m.scan_filled);
     int r = mz_inflate(&is, MZ_NO_FLUSH);
     m.scan_filled = m.stride - is.avail_out;
     if (r == MZ_STREAM_END) {
@@ -191,10 +198,10 @@ bool PngScanlineReader::NextRow(uint8_t *row) {
     uint8_t v;
     switch (ft) {
       case 0: v = f[i]; break;
-      case 1: v = (uint8_t)(f[i] + a); break;
-      case 2: v = (uint8_t)(f[i] + b); break;
-      case 3: v = (uint8_t)(f[i] + (uint8_t)((a + b) >> 1)); break;
-      case 4: v = (uint8_t)(f[i] + paeth(a, b, c)); break;
+      case 1: v = static_cast<uint8_t>(f[i] + a); break;
+      case 2: v = static_cast<uint8_t>(f[i] + b); break;
+      case 3: v = static_cast<uint8_t>(f[i] + static_cast<uint8_t>((a + b) >> 1)); break;
+      case 4: v = static_cast<uint8_t>(f[i] + paeth(a, b, c)); break;
       default:
         ok_ = false;
         return false;  // invalid filter type
@@ -246,10 +253,10 @@ struct PngScanlineWriter::Impl {
 
   bool pump(const uint8_t *p, size_t n, int flush) {
     dstrm.next_in = p;
-    dstrm.avail_in = (unsigned)n;
+    dstrm.avail_in = static_cast<unsigned>(n);
     for (;;) {
       dstrm.next_out = dbuf.data();
-      dstrm.avail_out = (unsigned)dbuf.size();
+      dstrm.avail_out = static_cast<unsigned>(dbuf.size());
       int r = mz_deflate(&dstrm, flush);
       if (r != MZ_OK && r != MZ_STREAM_END && r != MZ_BUF_ERROR) return false;
       size_t produced = dbuf.size() - dstrm.avail_out;
@@ -302,29 +309,29 @@ bool PngScanlineWriter::WriteRow(const uint8_t *row) {
               c = (i >= bpp) ? prev[i - bpp] : 0, fv;
       switch (t) {
         case 0: fv = cur[i]; break;
-        case 1: fv = (uint8_t)(cur[i] - a); break;
-        case 2: fv = (uint8_t)(cur[i] - b); break;
-        case 3: fv = (uint8_t)(cur[i] - (uint8_t)((a + b) >> 1)); break;
-        default: fv = (uint8_t)(cur[i] - paeth(a, b, c)); break;
+        case 1: fv = static_cast<uint8_t>(cur[i] - a); break;
+        case 2: fv = static_cast<uint8_t>(cur[i] - b); break;
+        case 3: fv = static_cast<uint8_t>(cur[i] - static_cast<uint8_t>((a + b) >> 1)); break;
+        default: fv = static_cast<uint8_t>(cur[i] - paeth(a, b, c)); break;
       }
-      int8_t s = (int8_t)fv;
-      sum += (uint64_t)(s < 0 ? -s : s);
+      int8_t s = static_cast<int8_t>(fv);
+      sum += static_cast<uint64_t>(s < 0 ? -s : s);
     }
     if (sum < best_sum) {
       best_sum = sum;
       best = t;
     }
   }
-  m.filt[0] = (uint8_t)best;
+  m.filt[0] = static_cast<uint8_t>(best);
   for (size_t i = 0; i < rowlen; ++i) {
     uint8_t a = (i >= bpp) ? cur[i - bpp] : 0, b = prev[i],
             c = (i >= bpp) ? prev[i - bpp] : 0, fv;
     switch (best) {
       case 0: fv = cur[i]; break;
-      case 1: fv = (uint8_t)(cur[i] - a); break;
-      case 2: fv = (uint8_t)(cur[i] - b); break;
-      case 3: fv = (uint8_t)(cur[i] - (uint8_t)((a + b) >> 1)); break;
-      default: fv = (uint8_t)(cur[i] - paeth(a, b, c)); break;
+      case 1: fv = static_cast<uint8_t>(cur[i] - a); break;
+      case 2: fv = static_cast<uint8_t>(cur[i] - b); break;
+      case 3: fv = static_cast<uint8_t>(cur[i] - static_cast<uint8_t>((a + b) >> 1)); break;
+      default: fv = static_cast<uint8_t>(cur[i] - paeth(a, b, c)); break;
     }
     m.filt[1 + i] = fv;
   }
@@ -349,18 +356,18 @@ bool PngScanlineWriter::Finish(std::vector<uint8_t> &out) {
   out.reserve(m.idat_out.size() + 1024);
   out.insert(out.end(), SIG, SIG + 8);
   auto wr32 = [&](uint32_t v) {
-    out.push_back((uint8_t)(v >> 24));
-    out.push_back((uint8_t)(v >> 16));
-    out.push_back((uint8_t)(v >> 8));
-    out.push_back((uint8_t)v);
+    out.push_back(static_cast<uint8_t>(v >> 24));
+    out.push_back(static_cast<uint8_t>(v >> 16));
+    out.push_back(static_cast<uint8_t>(v >> 8));
+    out.push_back(static_cast<uint8_t>(v));
   };
   auto write_chunk = [&](const char type[4], const uint8_t *p, size_t n) {
-    wr32((uint32_t)n);
+    wr32(static_cast<uint32_t>(n));
     size_t tpos = out.size();
     out.insert(out.end(), type, type + 4);
     if (n) out.insert(out.end(), p, p + n);
     mz_ulong c = mz_crc32(MZ_CRC32_INIT, out.data() + tpos, 4 + n);
-    wr32((uint32_t)c);
+    wr32(static_cast<uint32_t>(c));
   };
 
   if (m.passthrough && m.templ) {
@@ -379,14 +386,14 @@ bool PngScanlineWriter::Finish(std::vector<uint8_t> &out) {
   } else {
     // Fresh: signature + IHDR + IDAT + IEND (no palette/ancillary).
     uint8_t ihdr[13];
-    ihdr[0] = (uint8_t)(m.info.width >> 24);
-    ihdr[1] = (uint8_t)(m.info.width >> 16);
-    ihdr[2] = (uint8_t)(m.info.width >> 8);
-    ihdr[3] = (uint8_t)m.info.width;
-    ihdr[4] = (uint8_t)(m.info.height >> 24);
-    ihdr[5] = (uint8_t)(m.info.height >> 16);
-    ihdr[6] = (uint8_t)(m.info.height >> 8);
-    ihdr[7] = (uint8_t)m.info.height;
+    ihdr[0] = static_cast<uint8_t>(m.info.width >> 24);
+    ihdr[1] = static_cast<uint8_t>(m.info.width >> 16);
+    ihdr[2] = static_cast<uint8_t>(m.info.width >> 8);
+    ihdr[3] = static_cast<uint8_t>(m.info.width);
+    ihdr[4] = static_cast<uint8_t>(m.info.height >> 24);
+    ihdr[5] = static_cast<uint8_t>(m.info.height >> 16);
+    ihdr[6] = static_cast<uint8_t>(m.info.height >> 8);
+    ihdr[7] = static_cast<uint8_t>(m.info.height);
     ihdr[8] = m.info.bit_depth;
     ihdr[9] = m.info.color_type;
     ihdr[10] = 0;  // compression
@@ -452,7 +459,7 @@ const void *ResizeInputCb(void *opt_out, const void *plane, int num_pixels,
     if (c->palette) {
       uint8_t *o = c->sample_row.data();
       const uint8_t *idxs = c->raw_row.data();
-      const int ch = c->rs_channels;
+      const uint32_t ch = static_cast<uint32_t>(c->rs_channels);
       for (uint32_t i = 0; i < c->in_w; ++i) {
         uint32_t idx = idxs[i];
         const uint8_t *p =
@@ -465,12 +472,13 @@ const void *ResizeInputCb(void *opt_out, const void *plane, int num_pixels,
       }
     } else if (c->swap16) {
       SwapPairs(c->raw_row.data(), c->sample_row.data(),
-                (size_t)c->in_w * c->rs_channels);
+                static_cast<size_t>(c->in_w) * static_cast<size_t>(c->rs_channels));
     }
   }
   const uint8_t *base = (c->palette || c->swap16) ? c->sample_row.data()
                                                   : c->raw_row.data();
-  return base + (size_t)x * c->rs_channels * c->bps;
+  return base + static_cast<size_t>(x) * static_cast<size_t>(c->rs_channels) *
+                    static_cast<size_t>(c->bps);
 }
 
 void ResizeOutputCb(const void *out_ptr, int num_pixels, int y, void *ud) {
@@ -478,7 +486,8 @@ void ResizeOutputCb(const void *out_ptr, int num_pixels, int y, void *ud) {
   ResizeCtx *c = static_cast<ResizeCtx *>(ud);
   const uint8_t *row = static_cast<const uint8_t *>(out_ptr);
   if (c->swap16) {
-    SwapPairs(row, c->out_swap.data(), (size_t)num_pixels * c->rs_channels);
+    SwapPairs(row, c->out_swap.data(),
+              static_cast<size_t>(num_pixels) * static_cast<size_t>(c->rs_channels));
     row = c->out_swap.data();
   }
   if (!c->writer->WriteRow(row)) {
@@ -522,13 +531,13 @@ bool ConvertColorspacePNG(const uint8_t *data, size_t size, ColorspaceXform xf,
     uint8_t lut[256];
     for (int i = 0; i < 256; ++i) {
       int v = int(SrgbCurve(float(i) / 255.0f, xf) * 255.0f + 0.5f);
-      lut[i] = (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v);
+      lut[i] = static_cast<uint8_t>(v < 0 ? 0 : v > 255 ? 255 : v);
     }
     for (uint32_t y = 0; y < in.height; ++y) {
       if (!reader.NextRow(row.data())) return false;
       uint8_t *r = row.data();
       for (uint32_t x = 0; x < in.width; ++x) {
-        uint8_t *px = r + (size_t)x * total_ch;
+        uint8_t *px = r + static_cast<size_t>(x) * static_cast<size_t>(total_ch);
         for (int c = 0; c < ncolor; ++c) px[c] = lut[px[c]];
       }
       if (!writer.WriteRow(row.data())) return false;
@@ -537,20 +546,20 @@ bool ConvertColorspacePNG(const uint8_t *data, size_t size, ColorspaceXform xf,
     std::vector<uint16_t> lut(65536);
     for (int i = 0; i < 65536; ++i) {
       int v = int(SrgbCurve(float(i) / 65535.0f, xf) * 65535.0f + 0.5f);
-      lut[i] = (uint16_t)(v < 0 ? 0 : v > 65535 ? 65535 : v);
+      lut[static_cast<size_t>(i)] = static_cast<uint16_t>(v < 0 ? 0 : v > 65535 ? 65535 : v);
     }
-    const size_t pix_bytes = (size_t)total_ch * 2;
+    const size_t pix_bytes = static_cast<size_t>(total_ch) * 2;
     for (uint32_t y = 0; y < in.height; ++y) {
       if (!reader.NextRow(row.data())) return false;
       uint8_t *r = row.data();
       for (uint32_t x = 0; x < in.width; ++x) {
-        uint8_t *px = r + (size_t)x * pix_bytes;
+        uint8_t *px = r + static_cast<size_t>(x) * pix_bytes;
         for (int c = 0; c < ncolor; ++c) {
-          uint8_t *s = px + (size_t)c * 2;
+          uint8_t *s = px + static_cast<size_t>(c) * 2;
           uint32_t idx = (uint32_t(s[0]) << 8) | uint32_t(s[1]);  // BE
           uint16_t v = lut[idx];
-          s[0] = (uint8_t)(v >> 8);
-          s[1] = (uint8_t)(v & 0xFF);
+          s[0] = static_cast<uint8_t>(v >> 8);
+          s[1] = static_cast<uint8_t>(v & 0xFF);
         }
       }
       if (!writer.WriteRow(row.data())) return false;
@@ -580,7 +589,7 @@ bool ResizePNG(const uint8_t *data, size_t size, uint32_t out_w, uint32_t out_h,
   }
 
   uint8_t out_ct = in.color_type;
-  uint8_t out_bd = (uint8_t)in.bit_depth;
+  uint8_t out_bd = static_cast<uint8_t>(in.bit_depth);
   if (in.color_type == 3) {  // palette (8-bit) -> RGB / RGBA 8-bit
     ctx.palette = true;
     for (auto &ck : reader.chunks()) {
@@ -605,10 +614,10 @@ bool ResizePNG(const uint8_t *data, size_t size, uint32_t out_w, uint32_t out_h,
 
   ctx.raw_row.resize(in.row_bytes);
   if (ctx.palette)
-    ctx.sample_row.resize((size_t)in.width * ctx.rs_channels);  // 8-bit RGB(A)
+    ctx.sample_row.resize(static_cast<size_t>(in.width) * static_cast<size_t>(ctx.rs_channels));  // 8-bit RGB(A)
   else if (ctx.swap16)
-    ctx.sample_row.resize((size_t)in.width * ctx.rs_channels * 2);  // native u16
-  if (ctx.swap16) ctx.out_swap.resize((size_t)out_w * ctx.rs_channels * 2);
+    ctx.sample_row.resize(static_cast<size_t>(in.width) * static_cast<size_t>(ctx.rs_channels) * 2);  // native u16
+  if (ctx.swap16) ctx.out_swap.resize(static_cast<size_t>(out_w) * static_cast<size_t>(ctx.rs_channels) * 2);
 
   PngScanlineWriter writer;
   PngImageInfo oinfo;
@@ -623,9 +632,10 @@ bool ResizePNG(const uint8_t *data, size_t size, uint32_t out_w, uint32_t out_h,
       (ctx.bps == 2) ? STBIR_TYPE_UINT16
                      : (srgb ? STBIR_TYPE_UINT8_SRGB : STBIR_TYPE_UINT8);
   STBIR_RESIZE rs;
-  stbir_resize_init(&rs, nullptr, (int)in.width, (int)in.height, 0, nullptr,
-                    (int)out_w, (int)out_h, 0,
-                    (stbir_pixel_layout)ctx.rs_channels, dtype);
+  stbir_resize_init(&rs, nullptr, static_cast<int>(in.width),
+                    static_cast<int>(in.height), 0, nullptr,
+                    static_cast<int>(out_w), static_cast<int>(out_h), 0,
+                    static_cast<stbir_pixel_layout>(ctx.rs_channels), dtype);
   stbir_set_pixel_callbacks(&rs, ResizeInputCb, ResizeOutputCb);
   stbir_set_user_data(&rs, &ctx);
   int ok = stbir_resize_extended(&rs);
