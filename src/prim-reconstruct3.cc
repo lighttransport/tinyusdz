@@ -174,7 +174,7 @@ bool ReconstructPrim(
     PARSE_TYPED_ATTRIBUTE(table, prop, "ranges", GeomNurbsCurves, curves->ranges)
     PARSE_TYPED_ATTRIBUTE(table, prop, "pointWeights", GeomNurbsCurves, curves->pointWeights)
 
-    ADD_PROPERTY(table, prop, GeomBasisCurves, curves->props)
+    ADD_PROPERTY(table, prop, GeomNurbsCurves, curves->props)
 
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }

@@ -398,6 +398,7 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent,
   // members
   ss << print_typed_attr(mesh.points, "points", indent + 1);
   ss << print_typed_attr(mesh.normals, "normals", indent + 1);
+  ss << print_typed_attr(mesh.velocities, "velocities", indent + 1);
   ss << print_typed_attr(mesh.faceVertexIndices, "faceVertexIndices",
                          indent + 1);
   ss << print_typed_attr(mesh.faceVertexCounts, "faceVertexCounts", indent + 1);

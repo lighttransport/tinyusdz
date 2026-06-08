@@ -25,3 +25,12 @@ void usdc_layer_nested_variant_props_roundtrip_test(void);
 void usdc_layer_multiple_variant_sets_roundtrip_test(void);
 void usdc_layer_3level_nested_roundtrip_test(void);
 void usdc_stage_variant_props_roundtrip_test(void);
+
+// Golden USDC schema reconstruction (fixtures authored by Pixar usdcat)
+void usdc_golden_geom_mesh_schema_test(void);
+void usdc_golden_geom_subset_schema_test(void);
+void usdc_golden_geom_camera_schema_test(void);
+void usdc_golden_light_schema_test(void);
+void usdc_golden_skeleton_schema_test(void);
+void usdc_golden_skelanim_schema_test(void);
+void usdc_golden_blendshape_schema_test(void);

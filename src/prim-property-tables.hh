@@ -41,7 +41,8 @@
   X("creaseIndices", creaseIndices) \
   X("creaseLengths", creaseLengths) \
   X("creaseSharpnesses", creaseSharpnesses) \
-  X("holeIndices", holeIndices)
+  X("holeIndices", holeIndices) \
+  X("velocities", velocities)
 
 #define GEOM_MESH_SKEL_ATTRS(X) \
   X(kSkelBlendShapes, blendShapes)
@@ -305,34 +306,51 @@
   X("inputs:shaping:cone:angle", shapingConeAngle) \
   X("inputs:shaping:cone:softness", shapingConeSoftness)
 
+// Base LightAPI radiometric inputs - shared by ALL light types. These mirror the
+// writer's EXTRACT_COMMON_LIGHT (sconv-light.cc) plus the per-light color/intensity
+// /exposure it emits, so every light parses exactly what it writes. Keeping these
+// here (instead of per-light) prevents the readers from silently dropping inputs.
+#define LIGHT_BASE_ATTRS(X) \
+  X("inputs:color", color) \
+  X("inputs:intensity", intensity) \
+  X("inputs:exposure", exposure) \
+  X("inputs:diffuse", diffuse) \
+  X("inputs:specular", specular) \
+  X("inputs:normalize", normalize) \
+  X("inputs:enableColorTemperature", enableColorTemperature) \
+  X("inputs:colorTemperature", colorTemperature)
+
 // Composite macros for light reconstruction
 // Use these in ReconstructPrim to reduce boilerplate
 
 // For lights WITH shaping (SphereLight, RectLight, DiskLight, CylinderLight)
 #define LIGHT_COMMON_ATTRS_WITH_SHAPING(X) \
+  LIGHT_BASE_ATTRS(X) \
   LIGHT_SHADOW_ATTRS(X) \
   LIGHT_SHAPING_ATTRS(X)
 
 // For lights WITHOUT shaping (DistantLight, GeometryLight, DomeLight)
 #define LIGHT_COMMON_ATTRS_NO_SHAPING(X) \
+  LIGHT_BASE_ATTRS(X) \
   LIGHT_SHADOW_ATTRS(X)
+
+// Per-light macros below carry only the GEOMETRY-specific attributes; the shared
+// LightAPI radiometric inputs (color/intensity/exposure/diffuse/specular/normalize
+// /enableColorTemperature/colorTemperature) come from LIGHT_BASE_ATTRS via the
+// LIGHT_COMMON_ATTRS_* macros, so no light drops them on read.
 
 // ============================================================================
 // SphereLight Properties
 // ============================================================================
 #define SPHERE_LIGHT_TYPED_ATTRS(X) \
-  X("inputs:color", color) \
-  X("inputs:radius", radius) \
-  X("inputs:intensity", intensity)
+  X("inputs:radius", radius)
 
 // ============================================================================
 // RectLight Properties
 // ============================================================================
 #define RECT_LIGHT_TYPED_ATTRS(X) \
-  X("inputs:color", color) \
   X("inputs:height", height) \
-  X("inputs:width", width) \
-  X("inputs:intensity", intensity)
+  X("inputs:width", width)
 
 // RectLight has a special texture:file attr that uses UsdUVTexture type
 // This needs special handling, not included in typed attrs
@@ -341,12 +359,6 @@
 // DiskLight Properties
 // ============================================================================
 #define DISK_LIGHT_TYPED_ATTRS(X) \
-  X("inputs:color", color) \
-  X("inputs:intensity", intensity) \
-  X("inputs:exposure", exposure) \
-  X("inputs:normalize", normalize) \
-  X("inputs:enableColorTemperature", enableColorTemperature) \
-  X("inputs:colorTemperature", colorTemperature) \
   X("inputs:radius", radius)
 
 // ============================================================================
@@ -360,37 +372,19 @@
 // DistantLight Properties
 // ============================================================================
 #define DISTANT_LIGHT_TYPED_ATTRS(X) \
-  X("inputs:color", color) \
-  X("inputs:intensity", intensity) \
-  X("inputs:exposure", exposure) \
-  X("inputs:normalize", normalize) \
-  X("inputs:enableColorTemperature", enableColorTemperature) \
-  X("inputs:colorTemperature", colorTemperature) \
   X("inputs:angle", angle)
 
 // ============================================================================
 // GeometryLight Properties
 // ============================================================================
-#define GEOMETRY_LIGHT_TYPED_ATTRS(X) \
-  X("inputs:color", color) \
-  X("inputs:intensity", intensity) \
-  X("inputs:exposure", exposure) \
-  X("inputs:diffuse", diffuse) \
-  X("inputs:specular", specular) \
-  X("inputs:normalize", normalize) \
-  X("inputs:enableColorTemperature", enableColorTemperature) \
-  X("inputs:colorTemperature", colorTemperature)
+// GeometryLight has no geometry-specific typed attrs beyond the shared base set.
+#define GEOMETRY_LIGHT_TYPED_ATTRS(X)
 
 // ============================================================================
 // DomeLight Properties
 // ============================================================================
 #define DOME_LIGHT_TYPED_ATTRS(X) \
   X("guideRadius", guideRadius) \
-  X("inputs:diffuse", diffuse) \
-  X("inputs:specular", specular) \
-  X("inputs:colorTemperature", colorTemperature) \
-  X("inputs:color", color) \
-  X("inputs:intensity", intensity) \
   X("inputs:texture:file", file)
 
 // ============================================================================
