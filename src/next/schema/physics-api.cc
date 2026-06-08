@@ -37,12 +37,12 @@ bool GetPhysicsRigidBodyData(const Stage& stage, const UsdPrim& prim,
 
   out->rigidBodyEnabled =
       eval.EvalOr(prim, "physics:rigidBodyEnabled", true);
-  out->velocity[0] = eval.EvalOr(prim, "physics:velocityX", 0.0f);
-  out->velocity[1] = eval.EvalOr(prim, "physics:velocityY", 0.0f);
-  out->velocity[2] = eval.EvalOr(prim, "physics:velocityZ", 0.0f);
-  out->angularVelocity[0] = eval.EvalOr(prim, "physics:angularVelocityX", 0.0f);
-  out->angularVelocity[1] = eval.EvalOr(prim, "physics:angularVelocityY", 0.0f);
-  out->angularVelocity[2] = eval.EvalOr(prim, "physics:angularVelocityZ", 0.0f);
+  // UsdPhysics authors velocity/angularVelocity as single vector3f attributes
+  // (not per-component); the previous physics:velocityX/Y/Z names do not exist in
+  // the schema, so authored values were silently dropped. EvalFloat3 leaves the
+  // {0,0,0} default in place when the attribute is absent.
+  eval.EvalFloat3(prim, "physics:velocity", out->velocity);
+  eval.EvalFloat3(prim, "physics:angularVelocity", out->angularVelocity);
   out->startsAsleep = eval.EvalOr(prim, "physics:startsAsleep", false);
 
   return true;
@@ -167,8 +167,6 @@ bool GetPhysicsMassData(const Stage& stage, const UsdPrim& prim,
                          PhysicsMassData* out) {
   if (!HasPhysicsMassAPI(prim) || !out) return false;
 
-  (void)stage;
-
   {
     const Value* val = prim.GetPropertyValue("physics:mass");
     if (val) {
@@ -184,6 +182,16 @@ bool GetPhysicsMassData(const Stage& stage, const UsdPrim& prim,
       if (f) out->density = *f;
     }
   }
+
+  // centerOfMass / diagonalInertia (vector3f) and principalAxes (quatf) — these
+  // were previously never read, leaving the inertia tensor at its default.
+  // EvalFloat3/EvalFloat4 leave the struct defaults in place when absent.
+  AttributeEval eval(&stage);
+  eval.EvalFloat3(prim, "physics:centerOfMass", out->centerOfMass);
+  eval.EvalFloat3(prim, "physics:diagonalInertia", out->diagonalInertia);
+  // principalAxes is a quatf; EvalFloat4 fills 4 components in the attribute's
+  // stored order.
+  eval.EvalFloat4(prim, "physics:principalAxes", out->principalAxes);
 
   return true;
 }

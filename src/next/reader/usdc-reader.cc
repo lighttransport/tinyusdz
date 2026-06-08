@@ -78,6 +78,12 @@ USDCLoadResult LoadUSDCFromMemory(const uint8_t* data, size_t size, const USDCLo
   return ConvertResult(std::move(crate_result));
 }
 
+USDCLoadResult LoadUSDCFromMemoryOwned(std::string&& data, const USDCLoadOptions& options) {
+  CrateReader reader(options.crate_options);
+  CrateReadResult crate_result = reader.ReadOwned(std::move(data));
+  return ConvertResult(std::move(crate_result));
+}
+
 // Note: IsUSDCFile and IsUSDCData are defined in crate-reader.cc
 
 }  // namespace next

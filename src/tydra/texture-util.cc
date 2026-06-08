@@ -308,13 +308,15 @@ bool ResizeImage(const Image &src, int dstWidth, int dstHeight, Image *dst,
     if (err) (*err) = "ResizeImage: invalid source image (channels must be 1-4).";
     return false;
   }
-  // 8-bit (LDR) and fp32 (HDR, e.g. EXR decoded to float RGBA) are supported.
+  // 8-bit (LDR), fp16 and fp32 (HDR, e.g. EXR) per-channel images are supported.
   const bool is_float =
       (src.bpp == 32) && (src.format == Image::PixelFormat::Float);
-  if (src.bpp != 8 && !is_float) {
+  const bool is_half =
+      (src.bpp == 16) && (src.format == Image::PixelFormat::Float);
+  if (src.bpp != 8 && !is_float && !is_half) {
     if (err) {
       (*err) =
-          "ResizeImage: only 8-bit-per-channel or fp32 float images are "
+          "ResizeImage: only 8-bit, fp16 or fp32 per-channel images are "
           "supported.";
     }
     return false;
@@ -381,7 +383,13 @@ bool ResizeImage(const Image &src, int dstWidth, int dstHeight, Image *dst,
   }
 
   void *r = nullptr;
-  if (is_float) {
+  if (is_half) {
+    // fp16 HDR resize in linear space (stbir handles half<->float internally).
+    r = stbir_resize(src.data.data(), src.width, src.height, 0,
+                     out.data.data(), dstWidth, dstHeight, 0, layout,
+                     STBIR_TYPE_HALF_FLOAT, STBIR_EDGE_CLAMP,
+                     STBIR_FILTER_DEFAULT);
+  } else if (is_float) {
     // HDR/float resize is always done in linear space.
     r = stbir_resize_float_linear(
         reinterpret_cast<const float *>(src.data.data()), src.width, src.height,

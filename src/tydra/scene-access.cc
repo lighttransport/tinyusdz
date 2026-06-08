@@ -4182,6 +4182,7 @@ const std::map<std::string, Property> *PrimPropsMap(const Prim &prim) {
   X(Model)
   X(Xform)
   X(Scope)
+  X(Material)
   X(GeomMesh)
   X(GeomCube)
   X(GeomSphere)
@@ -4255,6 +4256,101 @@ bool GetPhysicsCollidersCollection(const Prim &prim,
     }
   }
   return any;
+}
+
+namespace {
+
+// Extract a non-animatable scalar/vec/quat property (stored value type T) into a
+// Typed[WithFallback]Attribute target. No-op when the property is absent.
+template <typename T, typename Target>
+void ExtractTypedValue(const std::map<std::string, Property> &props,
+                       const char *name, Target *target) {
+  auto it = props.find(name);
+  if (it == props.end() || !it->second.is_attribute()) return;
+  if (auto v = it->second.get_attribute().get_value<T>()) {
+    target->set_value(*v);
+  }
+}
+
+// Animatable counterpart: wrap the authored default into Animatable<T>.
+template <typename T, typename Target>
+void ExtractAnimatableValue(const std::map<std::string, Property> &props,
+                            const char *name, Target *target) {
+  auto it = props.find(name);
+  if (it == props.end() || !it->second.is_attribute()) return;
+  if (auto v = it->second.get_attribute().get_value<T>()) {
+    target->set_value(Animatable<T>(*v));
+  }
+}
+
+void ExtractRel(const std::map<std::string, Property> &props, const char *name,
+                RelationshipProperty *target) {
+  auto it = props.find(name);
+  if (it == props.end() || !it->second.is_relationship()) return;
+  *target = RelationshipProperty(it->second.get_relationship());
+}
+
+}  // namespace
+
+bool GetPhysicsRigidBodyAPI(const Prim &prim, PhysicsRigidBodyAPI *out) {
+  if (!out) return false;
+  if (!PrimHasAPISchema(prim, APISchemas::APIName::PhysicsRigidBodyAPI)) return false;
+  const auto *props = PrimPropsMap(prim);
+  if (!props) return false;
+  ExtractTypedValue<bool>(*props, "physics:rigidBodyEnabled", &out->rigidBodyEnabled);
+  ExtractTypedValue<bool>(*props, "physics:startsAsleep", &out->startsAsleep);
+  ExtractTypedValue<float>(*props, "physics:mass", &out->mass);
+  ExtractTypedValue<float>(*props, "physics:density", &out->density);
+  ExtractTypedValue<value::point3f>(*props, "physics:centerOfMass", &out->centerOfMass);
+  ExtractTypedValue<value::float3>(*props, "physics:diagonalInertia", &out->diagonalInertia);
+  ExtractTypedValue<value::quatf>(*props, "physics:principalAxes", &out->principalAxes);
+  ExtractAnimatableValue<value::vector3f>(*props, "physics:velocity", &out->velocity);
+  ExtractAnimatableValue<value::vector3f>(*props, "physics:angularVelocity", &out->angularVelocity);
+  return true;
+}
+
+bool GetPhysicsCollisionAPI(const Prim &prim, PhysicsCollisionAPI *out) {
+  if (!out) return false;
+  if (!PrimHasAPISchema(prim, APISchemas::APIName::PhysicsCollisionAPI)) return false;
+  const auto *props = PrimPropsMap(prim);
+  if (!props) return false;
+  ExtractTypedValue<bool>(*props, "physics:collisionEnabled", &out->collisionEnabled);
+  ExtractRel(*props, "physics:simulationOwner", &out->simulationOwner);
+  return true;
+}
+
+bool GetPhysicsMaterialAPI(const Prim &prim, PhysicsMaterialAPI *out) {
+  if (!out) return false;
+  if (!PrimHasAPISchema(prim, APISchemas::APIName::PhysicsMaterialAPI)) return false;
+  const auto *props = PrimPropsMap(prim);
+  if (!props) return false;
+  ExtractTypedValue<float>(*props, "physics:staticFriction", &out->staticFriction);
+  ExtractTypedValue<float>(*props, "physics:dynamicFriction", &out->dynamicFriction);
+  ExtractTypedValue<float>(*props, "physics:restitution", &out->restitution);
+  ExtractTypedValue<float>(*props, "physics:density", &out->density);
+  return true;
+}
+
+bool GetPhysicsMassAPI(const Prim &prim, PhysicsMassAPI *out) {
+  if (!out) return false;
+  if (!PrimHasAPISchema(prim, APISchemas::APIName::PhysicsMassAPI)) return false;
+  const auto *props = PrimPropsMap(prim);
+  if (!props) return false;
+  ExtractTypedValue<float>(*props, "physics:mass", &out->mass);
+  ExtractTypedValue<float>(*props, "physics:density", &out->density_);
+  ExtractTypedValue<value::point3f>(*props, "physics:centerOfMass", &out->centerOfMass);
+  ExtractTypedValue<value::float3>(*props, "physics:diagonalInertia", &out->diagonalInertia);
+  ExtractTypedValue<value::quatf>(*props, "physics:principalAxes", &out->principalAxes);
+  return true;
+}
+
+bool GetPhysicsMeshCollisionAPI(const Prim &prim, PhysicsMeshCollisionAPI *out) {
+  if (!out) return false;
+  if (!PrimHasAPISchema(prim, APISchemas::APIName::PhysicsMeshCollisionAPI)) return false;
+  const auto *props = PrimPropsMap(prim);
+  if (!props) return false;
+  ExtractTypedValue<value::token>(*props, "physics:approximation", &out->approximation);
+  return true;
 }
 
 }  // namespace tinyusdz

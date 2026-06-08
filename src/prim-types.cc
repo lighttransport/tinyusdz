@@ -852,7 +852,6 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name,
 
   _childrenNameSet.insert(elementName);
   _children.emplace_back(std::move(rhs));
-  _child_dirty = true;
 
   return true;
 }
@@ -933,34 +932,25 @@ bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs,
     _children.emplace_back(std::move(rhs));  // add
   }
 
-  _child_dirty = true;
-
   return true;
 }
 
-const std::vector<int64_t> &Prim::get_child_indices_from_primChildren(
+std::vector<int64_t> Prim::get_child_indices_from_primChildren(
     bool force_update, bool *indices_is_valid) const {
-  if (!force_update && (_primChildrenIndices.size() == _children.size()) &&
-      !_child_dirty) {
-    // got cache.
-    if (indices_is_valid) {
-      (*indices_is_valid) = _primChildrenIndicesIsValid;
-    }
-    return _primChildrenIndices;
-  }
+  // Computed on each call and returned by value (no `mutable` cache) so it is
+  // safe to call on a shared Prim concurrently. `force_update` is retained for
+  // source compatibility but is now a no-op (nothing is cached).
+  (void)force_update;
 
-  if (!force_update) {
-    _child_dirty = false;
-  }
+  std::vector<int64_t> indices;
 
   if (metas().primChildren.empty()) {
-    _primChildrenIndices.resize(_children.size());
-    std::iota(_primChildrenIndices.begin(), _primChildrenIndices.end(), 0);
-    _primChildrenIndicesIsValid = true;
+    indices.resize(_children.size());
+    std::iota(indices.begin(), indices.end(), 0);
     if (indices_is_valid) {
-      (*indices_is_valid) = _primChildrenIndicesIsValid;
+      (*indices_is_valid) = true;
     }
-    return _primChildrenIndices;
+    return indices;
   }
 
   std::map<std::string, size_t> m;  // name -> children() index map
@@ -970,35 +960,34 @@ const std::vector<int64_t> &Prim::get_child_indices_from_primChildren(
   std::set<size_t> table;  // to check uniqueness
 
   // Use the length of primChildren.
-  _primChildrenIndices.resize(metas().primChildren.size());
+  indices.resize(metas().primChildren.size());
 
   bool valid = true;
 
-  for (size_t i = 0; i < _primChildrenIndices.size(); i++) {
+  for (size_t i = 0; i < indices.size(); i++) {
     std::string tok = metas().primChildren[i].str();
     const auto it = m.find(tok);
     if (it != m.end()) {
-      _primChildrenIndices[i] = int64_t(it->second);
+      indices[i] = int64_t(it->second);
 
       table.insert(it->second);
     } else {
       // Prim name not found.
-      _primChildrenIndices[i] = -1;
+      indices[i] = -1;
       valid = false;
     }
   }
 
-  if (table.size() != _primChildrenIndices.size()) {
+  if (table.size() != indices.size()) {
     // duplicated index exists.
     valid = false;
   }
 
-  _primChildrenIndicesIsValid = valid;
   if (indices_is_valid) {
-    (*indices_is_valid) = _primChildrenIndicesIsValid;
+    (*indices_is_valid) = valid;
   }
 
-  return _primChildrenIndices;
+  return indices;
 }
 
 //

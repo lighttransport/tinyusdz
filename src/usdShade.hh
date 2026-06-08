@@ -135,7 +135,7 @@ struct MaterialXConfigAPI {
 struct Material : UsdShadePrim {
 
   ///
-  /// NOTE: Mateiral's outputs must be a connection.
+  /// NOTE: Material's outputs must be a connection.
   /// (Whereas Shader's outputs is not)
   ///
   TypedConnection<value::token> surface; // "token outputs:surface.connect"
@@ -265,7 +265,7 @@ struct UsdUVTexture : ShaderNode {
   TypedTerminalAttribute<float> outputsG; // "float outputs:g"
   TypedTerminalAttribute<float> outputsB; // "float outputs:b"
   TypedTerminalAttribute<float> outputsA; // "float outputs:a"
-  TypedTerminalAttribute<value::float3> outputsRGB; // "float outputs:rgb" in schema. Allow color3f as well(please use TypedTerminalAttribute::get_actual_type_name() to get a actual type name in USDA/USDC).
+  TypedTerminalAttribute<value::float3> outputsRGB; // "color3f outputs:rgb" (USD spec type is color3f/float3, not a single float). Allow color3f as well(please use TypedTerminalAttribute::get_actual_type_name() to get a actual type name in USDA/USDC).
   TypedTerminalAttribute<value::float4> outputsRGBA; // "float4 outputs:rgba"
 
   // Note: Texture coordinate orientation follows USD convention (origin at bottom-left).
@@ -301,7 +301,7 @@ struct UsdPreviewSurface : ShaderNode {
 
   //
   TypedAttributeWithFallback<Animatable<float>> clearcoat{0.0f};  // "inputs:clearcoat"
-  TypedAttributeWithFallback<Animatable<float>> clearcoatRoughness{0.01f};  // "inputs:clearcoatRouighness"
+  TypedAttributeWithFallback<Animatable<float>> clearcoatRoughness{0.01f};  // "inputs:clearcoatRoughness"
   TypedAttributeWithFallback<Animatable<float>> roughness{0.5f};  // "inputs:roughness"
   TypedAttributeWithFallback<Animatable<float>> opacity{1.0f};  // "inputs:opacity"
 

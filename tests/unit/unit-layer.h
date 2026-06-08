@@ -5,6 +5,7 @@ void layer_add_primspec_test(void);
 void layer_emplace_primspec_test(void);
 void layer_replace_primspec_test(void);
 void layer_find_primspec_at_test(void);
+void layer_copy_resets_lookup_cache_test(void);
 void layer_check_unresolved_refs_test(void);
 void layer_check_unresolved_payload_test(void);
 void layer_check_unresolved_inherits_test(void);

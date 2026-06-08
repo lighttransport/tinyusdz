@@ -14,6 +14,8 @@
 namespace tinyusdz {
 namespace next {
 
+struct LazyArrayRef;  // crate/lazy-array.hh
+
 /// Value class - type-erased container for USD values
 /// Uses Small Buffer Optimization to avoid heap allocation for small types
 /// All USD scalar and vector types fit in the inline buffer
@@ -154,6 +156,30 @@ public:
   void clear();
 
   // ============================================================
+  // Lazy array references (crate-backed, undecoded)
+  // ============================================================
+
+  /// Construct a lazy array value that references an undecoded block inside a
+  /// retained CrateDataSource. The payload is decoded on first access.
+  static Value MakeLazyArray(const LazyArrayRef& ref);
+
+  /// True if this is an array whose payload has not been decoded yet.
+  bool is_lazy() const { return is_lazy_; }
+
+  /// True if the value was materialized AND potentially mutated (so write-time
+  /// byte pass-through is no longer safe).
+  bool is_dirty() const { return dirty_; }
+
+  /// Mark the value as edited (forces re-encode on write).
+  void mark_dirty() { dirty_ = true; }
+
+  /// Access the lazy reference (nullptr unless is_lazy()).
+  const LazyArrayRef* lazy_ref() const;
+
+  /// Decode a lazy array into concrete storage (idempotent; no-op if not lazy).
+  void materialize();
+
+  // ============================================================
   // Type-safe accessors (return nullptr if wrong type)
   // ============================================================
 
@@ -245,7 +271,8 @@ public:
 private:
   TypeId type_id_ = TypeId::Invalid;
   bool is_array_ = false;
-  uint16_t reserved_ = 0;
+  bool is_lazy_ = false;  // array payload not decoded; storage_ holds LazyArrayRef*
+  bool dirty_ = false;    // materialized and possibly mutated (no byte pass-through)
   uint32_t array_size_ = 0;
 
   // Storage - either inline or heap-allocated
@@ -256,6 +283,9 @@ private:
   void copy_from(const Value& other);
   void move_from(Value&& other) noexcept;
   void destroy();
+
+  // Decode a lazy value in place if needed (logical const: lazy load).
+  void ensure_materialized() const;
 
   void* data_ptr();
   const void* data_ptr() const;

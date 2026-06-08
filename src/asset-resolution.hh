@@ -51,9 +51,17 @@ class Asset {
 
   void shrink_to_fit() { buf_.shrink_to_fit(); }
 
-  void set_data(const std::vector<uint8_t> &&rhs) {
+  void set_data(std::vector<uint8_t> &&rhs) {
+    buf_ = std::move(rhs);
+  }
+
+  void set_data(const std::vector<uint8_t> &rhs) {
     buf_ = rhs;
   }
+
+  // Move the underlying byte buffer out, leaving this Asset empty. Use when the
+  // Asset is about to be discarded and its bytes can be reused without a copy.
+  std::vector<uint8_t> release_buffer() { return std::move(buf_); }
 
   void set_name(const std::string &name) {
     name_ = name;

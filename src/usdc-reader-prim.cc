@@ -434,6 +434,7 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(DistantLight, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(RectLight, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeometryLight, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(PortalLight, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(DomeLight_1, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(LightFilter, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(PluginLightFilter, typeName, prim_name, spec)
