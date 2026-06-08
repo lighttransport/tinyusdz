@@ -8,8 +8,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <iterator>
 #include <utility>
-#include <vector>
 #include <limits>
 
 namespace unicode_xid {
@@ -29,11 +29,11 @@ inline bool is_xid_start(uint32_t codepoint) {
   }
 
   // first a range(range_begin <= codepoint <= range_end) by comparing the second key(range end).
-  auto it = std::lower_bound(detail::kXID_StartTable.begin(), detail::kXID_StartTable.end(), int(codepoint), [](const std::pair<int, int> &a, const int b) {
+  auto it = std::lower_bound(std::begin(detail::kXID_StartTable), std::end(detail::kXID_StartTable), int(codepoint), [](const std::pair<int, int> &a, const int b) {
     return a.second < b;
   });
 
-  if (it != detail::kXID_StartTable.end()) {
+  if (it != std::end(detail::kXID_StartTable)) {
     if ((int(codepoint) >= it->first) && (int(codepoint) <= it->second)) { // range end is inclusive.
       return true;
     }
@@ -47,11 +47,11 @@ inline bool is_xid_continue(uint32_t codepoint) {
     return false;
   }
 
-  auto it = std::lower_bound(detail::kXID_ContinueTable.begin(), detail::kXID_ContinueTable.end(), int(codepoint), [](const std::pair<int, int> &a, const int b) {
+  auto it = std::lower_bound(std::begin(detail::kXID_ContinueTable), std::end(detail::kXID_ContinueTable), int(codepoint), [](const std::pair<int, int> &a, const int b) {
     return a.second < b;
   });
 
-  if (it != detail::kXID_ContinueTable.end()) {
+  if (it != std::end(detail::kXID_ContinueTable)) {
     if ((int(codepoint) >= it->first) && (int(codepoint) <= it->second)) { // range end is inclusive.
       return true;
     }

@@ -2024,6 +2024,12 @@ void AppendPhysicsPrimJson(const tinyusdz::Prim &prim, const std::string &path,
     AddTypedAttr(props, "physics:lowerLimit", joint->lowerLimit);
     AddTypedAttr(props, "physics:upperLimit", joint->upperLimit);
     AddPropertyMap(props, rels, joint->props);
+  } else if (const auto *joint = prim.as<tinyusdz::PhysicsSphericalJoint>()) {
+    AddJointBaseJson(props, rels, *joint);
+    AddTypedAttr(props, "physics:axis", joint->axis);
+    AddTypedAttr(props, "physics:coneAngle0Limit", joint->coneAngle0Limit);
+    AddTypedAttr(props, "physics:coneAngle1Limit", joint->coneAngle1Limit);
+    AddPropertyMap(props, rels, joint->props);
   } else if (const auto *joint = prim.as<tinyusdz::PhysicsFixedJoint>()) {
     AddJointBaseJson(props, rels, *joint);
     AddPropertyMap(props, rels, joint->props);
