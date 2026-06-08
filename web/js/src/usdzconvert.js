@@ -884,16 +884,19 @@ async function convertSingleUSDZToLowHeapFlattenedUSDZ(native, rootPath, bytes,
 // { data: Uint8Array, stats } or null if the next pipeline is unavailable or
 // declines (so the caller can fall back to the legacy path). `native` is the
 // Emscripten Module (exposes HEAPU8); `usd` is a TinyUSDZLoaderNative instance.
-export function nextFlattenViaStreaming(native, usd, usdcBytes, log = () => {}, lazy = true) {
+export function nextFlattenViaStreaming(native, usd, usdcBytes, log = () => {}, lazy = true,
+                                        maxBufferBytes = 0) {
   if (typeof usd.nextFlattenBuffer !== 'function' ||
       typeof usd.allocateZeroCopyBuffer !== 'function') {
     return null;  // old wasm without the next pipeline
   }
   const size = usdcBytes.length;
-  const info = usd.allocateZeroCopyBuffer('__next_input__', size);
+  // 0 -> wasm-side 512 MiB default; a geometry-heavy root USDC larger than that
+  // raises the cap via --max-mem-mb so it streams instead of falling back.
+  const info = usd.allocateZeroCopyBuffer('__next_input__', size, maxBufferBytes || 0);
   if (!info || !info.success) {
     log(`next: zero-copy alloc declined (${info && info.error}); falling back.`);
-    return null;  // e.g. exceeds the 256 MiB single-buffer cap
+    return null;  // e.g. exceeds the single-buffer cap
   }
   // Re-grab HEAPU8 AFTER the allocation (it may have grown/detached the view).
   const ptr = Number(info.bufferPtr);
@@ -933,7 +936,10 @@ async function convertSingleUSDZToNextLowMemUSDZ(native, bytes, opts, log) {
   let flat = null;
   const usd = new native.TinyUSDZLoaderNative();
   try {
-    flat = nextFlattenViaStreaming(native, usd, rootEntry.data, log, opts.nextEager !== true);
+    const maxBufferBytes = Number(opts.maxMemMb || 0) > 0
+      ? Number(opts.maxMemMb) * 1024 * 1024 : 0;  // 0 -> wasm 512 MiB default
+    flat = nextFlattenViaStreaming(native, usd, rootEntry.data, log,
+                                   opts.nextEager !== true, maxBufferBytes);
   } finally {
     usd.delete();
   }

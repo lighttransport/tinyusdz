@@ -1221,8 +1221,13 @@ struct EMAssetResolutionResolver {
   /// Allocate a zero-copy buffer for streaming transfer
   /// @param asset_name The asset path/name (used as cache key when finalized)
   /// @param size Buffer size in bytes
+  /// @param max_bytes Caller-supplied upper bound for a single buffer (0 = use
+  ///        the 512 MiB default). Lets a geometry-heavy root USDC whose single
+  ///        layer exceeds the default stream in instead of falling back to the
+  ///        high-memory in-heap path (raise via the CLI --max-mem-mb arg).
   /// Returns buffer info including UUID and pointer for direct memory access
-  emscripten::val allocateZeroCopyBuffer(const std::string &asset_name, size_t size) {
+  emscripten::val allocateZeroCopyBuffer(const std::string &asset_name, size_t size,
+                                         size_t max_bytes) {
     emscripten::val result = emscripten::val::object();
 
     if (size == 0) {
@@ -1232,10 +1237,13 @@ struct EMAssetResolutionResolver {
     }
 
     // Cap single buffer allocation to avoid OOM in WASM's ~2GB linear memory.
-    constexpr size_t kMaxZeroCopyBufferBytes = size_t(1) << 28;  // 256 MiB
-    if (size > kMaxZeroCopyBufferBytes) {
+    // Default 512 MiB; the caller may raise it (still bounded by the heap).
+    constexpr size_t kDefaultMaxZeroCopyBufferBytes = size_t(1) << 29;  // 512 MiB
+    const size_t cap = max_bytes ? max_bytes : kDefaultMaxZeroCopyBufferBytes;
+    if (size > cap) {
       result.set("success", false);
-      result.set("error", "Buffer size exceeds 256 MiB limit");
+      result.set("error",
+                 "Buffer size exceeds " + std::to_string(cap >> 20) + " MiB limit");
       return result;
     }
 
@@ -5784,8 +5792,9 @@ class TinyUSDZLoaderNative {
 
   /// Allocate a zero-copy buffer for streaming transfer from JS
   /// Returns object with {success, uuid, bufferPtr, totalSize} or {success: false, error}
-  emscripten::val allocateZeroCopyBuffer(const std::string &name, size_t size) {
-    return em_resolver_.allocateZeroCopyBuffer(name, size);
+  emscripten::val allocateZeroCopyBuffer(const std::string &name, size_t size,
+                                         size_t max_bytes) {
+    return em_resolver_.allocateZeroCopyBuffer(name, size, max_bytes);
   }
 
   /// Get the buffer pointer for direct memory writes
