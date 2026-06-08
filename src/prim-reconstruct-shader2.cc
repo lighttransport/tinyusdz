@@ -350,6 +350,14 @@ bool ReconstructShader<OpenPBRSurface>(
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
 
+  // OpenPBR's canonical opacity input is `geometry_opacity`, but many USD assets
+  // use the UsdPreviewSurface-style `opacity`. Both map to the single `opacity`
+  // field. Parse the legacy `opacity` into a side holder (a copy of the field so
+  // type + fallback match) so that `geometry_opacity` stays authoritative
+  // regardless of property iteration order; reconcile after the loop and warn if
+  // both are authored.
+  auto legacy_opacity = surface->opacity;
+
   for (auto &prop : properties) {
     // Base layer properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_weight", OpenPBRSurface,
@@ -465,9 +473,12 @@ bool ReconstructShader<OpenPBRSurface>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:emission_color", OpenPBRSurface,
                          surface->emission_color)
 
-    // Geometry properties
+    // Geometry properties.
+    // `inputs:opacity` (UsdPreviewSurface-style legacy name) parses into a side
+    // holder; `inputs:geometry_opacity` (OpenPBR canonical) parses into the
+    // field directly. Reconciled after the loop so geometry_opacity wins.
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:opacity", OpenPBRSurface,
-                         surface->opacity)
+                         legacy_opacity)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_opacity", OpenPBRSurface,
                          surface->opacity)  // OpenPBR standard name, maps to same opacity field
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:normal", OpenPBRSurface,
@@ -481,6 +492,16 @@ bool ReconstructShader<OpenPBRSurface>(
 
     ADD_PROPERTY(table, prop, OpenPBRSurface, surface->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  // Reconcile the two opacity spellings (see note above the loop).
+  if (surface->opacity.authored() && legacy_opacity.authored()) {
+    PUSH_WARN(
+        "OpenPBRSurface: both `inputs:opacity` and `inputs:geometry_opacity` are "
+        "authored; using the OpenPBR-canonical `inputs:geometry_opacity` and "
+        "ignoring `inputs:opacity`.");
+  } else if (!surface->opacity.authored() && legacy_opacity.authored()) {
+    surface->opacity = legacy_opacity;
   }
 
   return true;

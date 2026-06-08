@@ -1373,12 +1373,12 @@ bool CrateReader::ReadTokens() {
   CHECK_MEMORY_USAGE(uncompressedSize);
 
 
-  // dst
+  // dst. std::vector<char>(n) value-initializes all elements to 0, so no
+  // explicit memset is needed (the decompress below overwrites it anyway, and
+  // the +128 padding on `compressed` is already zeroed by the ctor).
   std::vector<char> chars(static_cast<size_t>(uncompressedSize));
-  memset(chars.data(), 0, chars.size());
 
   std::vector<char> compressed(static_cast<size_t>(bufSize + 128));
-  memset(compressed.data(), 0, compressed.size());
 
   if (compressedSize !=
       _sr->read(size_t(compressedSize), size_t(compressedSize),
@@ -1413,6 +1413,12 @@ bool CrateReader::ReadTokens() {
     // null character not found.
     return i;
   };
+
+  // Pre-size to avoid repeated reallocation while appending. Cap the up-front
+  // reservation so a corrupted (huge) num_tokens cannot amplify allocation far
+  // beyond the actual token data; the per-token CHECK_MEMORY_USAGE below still
+  // enforces the real memory budget.
+  _tokens.reserve(static_cast<size_t>((std::min)(num_tokens, uint64_t(1) << 20)));
 
   // TODO(syoyo): Check if input string has exactly `n` tokens(`n` null
   // characters)

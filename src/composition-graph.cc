@@ -1458,13 +1458,47 @@ bool CompositionGraph::BuildStage(Stage *stage, std::string *warn,
     composed_layer.metas() = _ctx._root_layer->metas();
   }
 
+  // Build a parent_path -> direct-children index once, so child lookup during
+  // recursive composition is O(1) per parent instead of scanning all of
+  // _prim_indices for every prim (previously O(N^2) overall, with a substr
+  // allocation per probe). The parent of "/A/B/C" is "/A/B"; root-level prims
+  // ("/Foo") map to parent "" and are composed by the loop below directly.
+  // _prim_indices is unordered, so the per-parent child order here matches the
+  // previous full-scan order.
+  std::unordered_map<std::string,
+                     std::vector<std::pair<std::string, const PrimIndex *>>>
+      children_by_parent;
+  children_by_parent.reserve(_prim_indices.size());
+  for (const auto &pair : _prim_indices) {
+    const std::string &p = pair.first;
+    size_t slash = p.find_last_of('/');
+    if (slash == std::string::npos) continue;
+    children_by_parent[p.substr(0, slash)].push_back({p, pair.second.get()});
+  }
+
+  // Recursively compose the direct children of parent_path into parent_ps.
+  std::function<bool(const std::string &, PrimSpec &)> compose_children =
+      [&](const std::string &parent_path, PrimSpec &parent_ps) -> bool {
+    auto cit = children_by_parent.find(parent_path);
+    if (cit == children_by_parent.end()) return true;
+    for (const auto &child : cit->second) {
+      PrimSpec child_ps;
+      if (ComposePrimSpecFromIndex(_ctx._layer_stacks, _ctx._path_table,
+                                   *child.second, &child_ps, warn, err)) {
+        compose_children(child.first, child_ps);
+        parent_ps.children().push_back(std::move(child_ps));
+      }
+    }
+    return true;
+  };
+
   // For each root-level prim, compose a PrimSpec from its PrimIndex
   for (const auto &pair : _prim_indices) {
     const std::string &path_str = pair.first;
     const PrimIndex &index = *pair.second;
 
     // Only process root-level prims here
-    // (children are handled recursively in ComposePrimSpecTree)
+    // (children are handled recursively by compose_children)
     if (std::count(path_str.begin(), path_str.end(), '/') != 1) continue;
 
     PrimSpec composed_ps;
@@ -1473,32 +1507,6 @@ bool CompositionGraph::BuildStage(Stage *stage, std::string *warn,
       // Skip prims that couldn't be composed (might just have no specs)
       continue;
     }
-
-    // Recursively compose children
-    std::function<bool(const std::string &, PrimSpec &)> compose_children;
-    compose_children = [&](const std::string &parent_path,
-                           PrimSpec &parent_ps) -> bool {
-      // Find child PrimIndices
-      std::string prefix = parent_path + "/";
-      for (const auto &child_pair : _prim_indices) {
-        const std::string &child_path = child_pair.first;
-        if (child_path.size() <= prefix.size()) continue;
-        if (child_path.substr(0, prefix.size()) != prefix) continue;
-
-        // Only direct children (no further slashes after prefix)
-        std::string remainder = child_path.substr(prefix.size());
-        if (remainder.find('/') != std::string::npos) continue;
-
-        PrimSpec child_ps;
-        if (ComposePrimSpecFromIndex(_ctx._layer_stacks, _ctx._path_table,
-                                     *child_pair.second, &child_ps, warn,
-                                     err)) {
-          compose_children(child_path, child_ps);
-          parent_ps.children().push_back(std::move(child_ps));
-        }
-      }
-      return true;
-    };
 
     compose_children(path_str, composed_ps);
     composed_layer.add_primspec(composed_ps.name(), composed_ps);

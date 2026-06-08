@@ -364,7 +364,8 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
 
   std::vector<uint8_t> output;
 
-  if (!SaveAsUSDCToMemory(stage, &output, warn, err)) {
+  if (!SaveAsUSDCToMemory(stage, &output, warn, err, /*max_file_size*/ 0,
+                          /*max_memory*/ 0, options.compress_float_arrays)) {
     return false;
   }
 
@@ -454,7 +455,8 @@ bool SaveAsUSDCToFile(const std::string &filename, const Layer &layer,
   return false;
 #else
   std::vector<uint8_t> output;
-  if (!SaveAsUSDCToMemory(layer, &output, warn, err)) {
+  if (!SaveAsUSDCToMemory(layer, &output, warn, err, /*max_file_size*/ 0,
+                          /*max_memory*/ 0, options.compress_float_arrays)) {
     return false;
   }
 
@@ -506,7 +508,8 @@ bool SaveAsUSDCToFile(const std::string &filename, const Layer &layer,
 bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
                         std::string *warn, std::string *err,
                         int64_t max_file_size_bytes,
-                        int64_t max_memory_bytes) {
+                        int64_t max_memory_bytes,
+                        bool compress_float_arrays) {
   (void)warn;
 
   if (!output) {
@@ -530,6 +533,7 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
   opts.version_patch = 0;
   opts.enable_compression = true;
   opts.enable_deduplication = true;
+  opts.enable_float_array_compression = compress_float_arrays;
   // Optional caller overrides for the (intentionally small on WASM) resource
   // limits; 0 keeps the built-in default.
   if (max_file_size_bytes > 0) opts.max_file_size_bytes = max_file_size_bytes;
@@ -569,7 +573,8 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
 bool SaveAsUSDCToMemory(const Layer &layer, std::vector<uint8_t> *output,
                         std::string *warn, std::string *err,
                         int64_t max_file_size_bytes,
-                        int64_t max_memory_bytes) {
+                        int64_t max_memory_bytes,
+                        bool compress_float_arrays) {
   (void)warn;
 
   if (!output) {
@@ -592,6 +597,7 @@ bool SaveAsUSDCToMemory(const Layer &layer, std::vector<uint8_t> *output,
   opts.version_patch = 0;
   opts.enable_compression = true;
   opts.enable_deduplication = true;
+  opts.enable_float_array_compression = compress_float_arrays;
   if (max_file_size_bytes > 0) opts.max_file_size_bytes = max_file_size_bytes;
   if (max_memory_bytes > 0) opts.max_memory_bytes = max_memory_bytes;
   writer.SetOptions(opts);

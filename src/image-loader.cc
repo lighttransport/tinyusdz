@@ -254,8 +254,10 @@ bool DecodeImageSTB(const uint8_t *bytes, const size_t size,
     }
     return false;
   }
-  image->data.resize(total_size);
-  std::copy(data, data + total_size, image->data.begin());
+  // assign() copy-constructs directly from the source range, avoiding the
+  // redundant zero-fill that resize() would do before the copy overwrites it
+  // (meaningful for large decoded textures).
+  image->data.assign(data, data + total_size);
   stbi_image_free(data);
 
   return true;
@@ -340,8 +342,11 @@ bool DecodeImageHDR(const uint8_t *bytes, const size_t size,
     }
     return false;
   }
-  image->data.resize(dataSize);
-  std::memcpy(image->data.data(), data, dataSize);
+  // assign() avoids the redundant zero-fill of resize() before the copy.
+  {
+    const uint8_t *src = reinterpret_cast<const uint8_t *>(data);
+    image->data.assign(src, src + dataSize);
+  }
 
   stbi_image_free(data);
 
@@ -449,8 +454,11 @@ bool DecodeImageNanoimage(const uint8_t *bytes, const size_t size,
     }
     return false;
   }
-  image->data.resize(ni_img.data_size);
-  std::memcpy(image->data.data(), ni_img.data, ni_img.data_size);
+  // assign() avoids the redundant zero-fill of resize() before the copy.
+  {
+    const uint8_t *src = reinterpret_cast<const uint8_t *>(ni_img.data);
+    image->data.assign(src, src + ni_img.data_size);
+  }
   ni_image_free(&ni_img);
 
   return true;
