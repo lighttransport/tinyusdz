@@ -218,6 +218,10 @@ bool CrateWriter::ExtractDomeLightProperties(
     if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
   if (light->color.authored())
     if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+  // guideRadius is parsed (DOME_LIGHT_TYPED_ATTRS) and printed, so emit it too
+  // for USDC round-trip parity. Note: no "inputs:" prefix (matches the reader).
+  if (light->guideRadius.authored())
+    if (!ExtractAnimatableDefault(light->guideRadius.get_value(), "guideRadius", fields, err)) return false;
 
   EXTRACT_COMMON_LIGHT(light)
   EXTRACT_SHADOW_API(light)
@@ -308,6 +312,9 @@ bool CrateWriter::ExtractDomeLight1Properties(
     if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
   if (light->color.authored())
     if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+
+  if (light->guideRadius.authored())
+    if (!ExtractAnimatableDefault(light->guideRadius.get_value(), "guideRadius", fields, err)) return false;
 
   // Extract poleAxis (uniform token with fallback) - DomeLight_1 specific
   if (light->poleAxis.authored()) {

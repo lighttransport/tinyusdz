@@ -16,6 +16,7 @@
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "usdLux.hh"
+#include "usdSkel.hh"
 #include "core/model-scope.hh"
 #include "math-util.inc"
 
@@ -1297,4 +1298,282 @@ void usda_reader_large_nesting_depth_test(void) {
   }
   auto result = stage.GetPrimAtPath(Path(path, ""));
   TEST_CHECK(bool(result));
+}
+
+// ===========================================================================
+// Typed schema reconstruction (USDA reader -> typed struct fields)
+//
+// These verify that authored properties land in the *typed* schema fields after
+// USDA parsing (not just the generic props bag). `.authored()` on a typed field
+// is the key signal: a property the reader fails to map stays unauthored.
+// ===========================================================================
+
+void usda_reader_geom_mesh_schema_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def Mesh "mesh" {
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+    vector3f[] velocities = [(0.1, 0, 0), (0, 0.1, 0), (0, 0, 0.1), (0.1, 0.1, 0)]
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  auto result = stage.GetPrimAtPath(Path("/mesh", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const GeomMesh *mesh = (*result)->as<GeomMesh>();
+  TEST_CHECK(mesh != nullptr);
+  if (!mesh) return;
+
+  TEST_CHECK(mesh->get_points().size() == 4);
+  TEST_CHECK(mesh->get_faceVertexCounts().size() == 1);
+  TEST_CHECK(mesh->get_faceVertexIndices().size() == 4);
+  TEST_CHECK(mesh->normals.authored());
+  // Regression: GeomMesh velocities must reconstruct into the typed field.
+  TEST_CHECK(mesh->velocities.authored());
+}
+
+void usda_reader_geom_subset_schema_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def GeomSubset "subset" {
+    uniform token elementType = "face"
+    uniform token familyName = "materialBind"
+    int[] indices = [0, 2, 4]
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  auto result = stage.GetPrimAtPath(Path("/subset", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const GeomSubset *subset = (*result)->as<GeomSubset>();
+  TEST_CHECK(subset != nullptr);
+  if (!subset) return;
+
+  TEST_CHECK(subset->elementType.get_value() == GeomSubset::ElementType::Face);
+  value::token fam;
+  TEST_CHECK(subset->familyName.get_value(&fam));
+  TEST_CHECK(fam.str() == "materialBind");
+  TEST_CHECK(subset->indices.authored());
+}
+
+void usda_reader_geom_camera_schema_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def Camera "cam" {
+    float focalLength = 35
+    float focusDistance = 10
+    float fStop = 2.8
+    float horizontalAperture = 36
+    float2 clippingRange = (0.1, 1000)
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  auto result = stage.GetPrimAtPath(Path("/cam", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const GeomCamera *cam = (*result)->as<GeomCamera>();
+  TEST_CHECK(cam != nullptr);
+  if (!cam) return;
+
+  auto chk = [](const TypedAttributeWithFallback<Animatable<float>> &a,
+                float expect, const char *nm) {
+    TEST_CHECK_(a.authored(), "camera.%s not authored", nm);
+    float v = 0.0f;
+    if (a.authored() && a.get_value().get_scalar(&v)) {
+      TEST_CHECK_(math::is_close(v, expect), "camera.%s = %f, want %f", nm, v, expect);
+    }
+  };
+  chk(cam->focalLength, 35.0f, "focalLength");
+  chk(cam->focusDistance, 10.0f, "focusDistance");
+  chk(cam->fStop, 2.8f, "fStop");
+  chk(cam->horizontalAperture, 36.0f, "horizontalAperture");
+  TEST_CHECK(cam->clippingRange.authored());
+}
+
+// Regression for the LIGHT_BASE_ATTRS reader fix: the shared LightAPI radiometric
+// inputs must reconstruct for every light type, and light:filters must parse.
+void usda_reader_light_schema_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def SphereLight "light" {
+    float inputs:radius = 2.0
+    float inputs:intensity = 3.0
+    float inputs:exposure = 1.5
+    float inputs:diffuse = 0.7
+    float inputs:specular = 0.3
+    bool inputs:normalize = true
+    bool inputs:enableColorTemperature = true
+    float inputs:colorTemperature = 5000
+    color3f inputs:color = (0.2, 0.4, 0.6)
+    rel light:filters = [</Filter1>, </Filter2>]
+}
+
+def CylinderLight "clight" {
+    float inputs:length = 5.0
+    float inputs:radius = 1.0
+    float inputs:intensity = 2.5
+    color3f inputs:color = (1.0, 0.5, 0.25)
+    float inputs:exposure = 0.5
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  auto sf = [](const TypedAttributeWithFallback<Animatable<float>> &a,
+               float expect, const char *nm) {
+    TEST_CHECK_(a.authored(), "%s dropped on read", nm);
+    float v = 0.0f;
+    if (a.authored() && a.get_value().get_scalar(&v)) {
+      TEST_CHECK_(math::is_close(v, expect), "%s = %f, want %f", nm, v, expect);
+    }
+  };
+
+  // SphereLight: full base set + radius + lightFilters.
+  {
+    auto result = stage.GetPrimAtPath(Path("/light", ""));
+    TEST_CHECK(bool(result));
+    if (result) {
+      const SphereLight *L = (*result)->as<SphereLight>();
+      TEST_CHECK(L != nullptr);
+      if (L) {
+        sf(L->intensity, 3.0f, "sphere.intensity");
+        sf(L->exposure, 1.5f, "sphere.exposure");
+        sf(L->diffuse, 0.7f, "sphere.diffuse");
+        sf(L->specular, 0.3f, "sphere.specular");
+        sf(L->colorTemperature, 5000.0f, "sphere.colorTemperature");
+        sf(L->radius, 2.0f, "sphere.radius");
+        TEST_CHECK(L->normalize.authored());
+        TEST_CHECK(L->enableColorTemperature.authored());
+        TEST_CHECK(L->color.authored());
+        TEST_CHECK(L->lightFilters.authored());
+        TEST_CHECK(L->lightFilters.get_targetPaths().size() == 2);
+      }
+    }
+  }
+
+  // CylinderLight: base color/intensity/exposure were dropped before the fix.
+  {
+    auto result = stage.GetPrimAtPath(Path("/clight", ""));
+    TEST_CHECK(bool(result));
+    if (result) {
+      const CylinderLight *L = (*result)->as<CylinderLight>();
+      TEST_CHECK(L != nullptr);
+      if (L) {
+        sf(L->intensity, 2.5f, "cylinder.intensity");
+        sf(L->exposure, 0.5f, "cylinder.exposure");
+        sf(L->length, 5.0f, "cylinder.length");
+        sf(L->radius, 1.0f, "cylinder.radius");
+        TEST_CHECK(L->color.authored());
+      }
+    }
+  }
+}
+
+void usda_reader_skel_skeleton_schema_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def Skeleton "skel" {
+    uniform token[] joints = ["Root", "Root/Hip"]
+    uniform matrix4d[] bindTransforms = [
+        ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+        ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,1,0,1))
+    ]
+    uniform matrix4d[] restTransforms = [
+        ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+        ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,1,0,1))
+    ]
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  auto result = stage.GetPrimAtPath(Path("/skel", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const Skeleton *skel = (*result)->as<Skeleton>();
+  TEST_CHECK(skel != nullptr);
+  if (!skel) return;
+
+  TEST_CHECK(skel->joints.authored());
+  {
+    std::vector<value::token> joints;
+    if (skel->joints.get_value(&joints)) {
+      TEST_CHECK(joints.size() == 2);
+    }
+  }
+  TEST_CHECK(skel->bindTransforms.authored());
+  TEST_CHECK(skel->restTransforms.authored());
+}
+
+void usda_reader_skel_animation_schema_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def SkelAnimation "anim" {
+    uniform token[] joints = ["Root"]
+    float3[] translations = [(0, 1, 0)]
+    quatf[] rotations = [(1, 0, 0, 0)]
+    half3[] scales = [(1, 1, 1)]
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  auto result = stage.GetPrimAtPath(Path("/anim", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const SkelAnimation *anim = (*result)->as<SkelAnimation>();
+  TEST_CHECK(anim != nullptr);
+  if (!anim) return;
+
+  TEST_CHECK(anim->joints.authored());
+  TEST_CHECK(anim->translations.authored());
+  TEST_CHECK(anim->rotations.authored());
+  TEST_CHECK(anim->scales.authored());
+}
+
+void usda_reader_blendshape_schema_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def BlendShape "blend" {
+    uniform vector3f[] offsets = [(0.1, 0, 0), (0, 0.1, 0)]
+    uniform vector3f[] normalOffsets = [(0, 0, 1), (0, 0, 1)]
+    uniform int[] pointIndices = [0, 1]
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &stage, &warn, &err));
+  TEST_MSG("err: %s", err.c_str());
+
+  auto result = stage.GetPrimAtPath(Path("/blend", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const BlendShape *bs = (*result)->as<BlendShape>();
+  TEST_CHECK(bs != nullptr);
+  if (!bs) return;
+
+  TEST_CHECK(bs->offsets.authored());
+  TEST_CHECK(bs->normalOffsets.authored());
+  TEST_CHECK(bs->pointIndices.authored());
 }

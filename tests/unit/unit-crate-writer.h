@@ -51,6 +51,8 @@ void crate_writer_visibility_purpose_test(void);
 void crate_writer_instance_offsets_test(void);
 void crate_writer_large_array_types_test(void);
 void crate_writer_sphere_light_test(void);
+void crate_writer_light_common_attrs_roundtrip_test(void);
+void crate_writer_mesh_velocities_roundtrip_test(void);
 void crate_writer_rect_light_test(void);
 void crate_writer_distant_light_test(void);
 void crate_writer_dome_light_test(void);
