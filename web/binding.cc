@@ -8208,13 +8208,12 @@ class RenderStream {
     }
     const tinyusdz::next::UsdPrim &prim = meshes_[static_cast<size_t>(i)].GetPrim();
 
-    const bool expanded = buildRenderMesh_(prim);
+    buildRenderMesh_(prim);  // always produces INDEXED geometry (welded when needed)
 
     out.set("vertexCount", static_cast<double>(s_points_.size() / 3));
     out.set("primName", prim.GetName());
     out.set("points", heapF_(s_points_, 3));
-    // Expanded (de-indexed) meshes draw as a non-indexed triangle soup.
-    if (!expanded && !s_indices_.empty()) out.set("indices", heapU32_(s_indices_));
+    if (!s_indices_.empty()) out.set("indices", heapU32_(s_indices_));
     if (!s_normals_.empty()) out.set("normals", heapF_(s_normals_, 3));
     if (!s_uv_.empty()) out.set("uv0", heapF_(s_uv_, 2));
     out.set("material", resolveMaterial_(prim));
@@ -8254,13 +8253,14 @@ class RenderStream {
     return a ? *a : std::vector<int32_t>{};
   }
 
-  // Build the render geometry for one mesh into the scratch (s_points_/s_normals_
-  // /s_uv_/s_indices_). Returns true if the mesh was DE-INDEXED (expanded to a
-  // triangle soup, drawn with drawArrays) — needed when UVs/normals are
-  // face-varying or indexed separately from positions, so each triangle corner
-  // carries its own attribute. When all primvars are per-vertex (or absent) the
-  // indexed form is kept (compact). At most one mesh is resident at a time.
-  bool buildRenderMesh_(const tinyusdz::next::UsdPrim &prim) {
+  // Build INDEXED render geometry for one mesh into the scratch (s_points_/
+  // s_normals_/s_uv_/s_indices_). When all primvars are per-vertex the indexed
+  // form is kept directly; when UVs/normals are face-varying or indexed
+  // separately, corners are de-indexed AND welded (one unique vertex per distinct
+  // pos/uv/normal tuple) — recovering vertex sharing while keeping correct
+  // attributes at seams. Welding is inline, so the full per-corner soup is never
+  // materialized; at most one mesh is resident at a time.
+  void buildRenderMesh_(const tinyusdz::next::UsdPrim &prim) {
     std::vector<float> P = matFloat_(prim, "points");
     std::vector<int32_t> fvc = matInt_(prim, "faceVertexCounts");
     std::vector<int32_t> fvi = matInt_(prim, "faceVertexIndices");
@@ -8288,52 +8288,71 @@ class RenderStream {
       if (nCount == vtxCount) s_normals_ = std::move(N);
       else computeNormals_(s_points_, s_indices_, s_normals_);
       if (uvCount == vtxCount) s_uv_ = std::move(UV);
-      return false;
+      return;
     }
 
-    // Expand: one corner per triangle face-vertex, indexing position by vertex
-    // and UV/normal by their own interpolation (vertex / faceVarying / indexed).
-    std::vector<uint32_t> slots;  // triangle corners, each a face-vertex SLOT
-    {
-      size_t base = 0;
-      for (int32_t n : fvc) {
-        if (n >= 3 && base + static_cast<size_t>(n) <= faceVtx) {
-          for (int32_t k = 2; k < n; ++k) {
-            slots.push_back(static_cast<uint32_t>(base));
-            slots.push_back(static_cast<uint32_t>(base + static_cast<size_t>(k) - 1));
-            slots.push_back(static_cast<uint32_t>(base + static_cast<size_t>(k)));
-          }
-        }
-        base += static_cast<size_t>(n < 0 ? 0 : n);
-      }
-    }
-    const size_t corners = slots.size();
-    s_points_.resize(corners * 3);
-    if (!UV.empty()) s_uv_.assign(corners * 2, 0.0f);
+    // De-index + weld: emit one welded vertex per unique (pos[,uv][,normal])
+    // corner, producing an INDEXED mesh. Built inline as faces are walked, so the
+    // full per-corner soup never exists — peak ~= welded verts + index buffer.
     const bool haveN = (nCount == vtxCount) || nFaceVarying;
-    if (haveN) s_normals_.resize(corners * 3);
-    for (size_t c = 0; c < corners; ++c) {
-      const uint32_t slot = slots[c];
-      const uint32_t vi = (slot < faceVtx) ? static_cast<uint32_t>(fvi[slot]) : 0u;
-      if (static_cast<size_t>(vi) * 3 + 2 < P.size()) {
-        s_points_[c * 3] = P[vi * 3]; s_points_[c * 3 + 1] = P[vi * 3 + 1]; s_points_[c * 3 + 2] = P[vi * 3 + 2];
+
+    struct WeldKey {
+      uint32_t b[8];
+      bool operator==(const WeldKey &o) const { return std::memcmp(b, o.b, sizeof(b)) == 0; }
+    };
+    struct WeldHash {
+      size_t operator()(const WeldKey &k) const {
+        uint64_t h = 1469598103934665603ull;  // FNV-1a (folded to size_t for wasm32)
+        for (uint32_t w : k.b) { h ^= w; h *= 1099511628211ull; }
+        return static_cast<size_t>(h ^ (h >> 32));
       }
+    };
+    std::unordered_map<WeldKey, uint32_t, WeldHash> weld;
+    // Welded vertices are bounded below by the point count; reserve to cut
+    // rehash spikes (which transiently inflate the peak).
+    weld.reserve(vtxCount ? vtxCount * 2 : 1024);
+
+    auto emit = [&](uint32_t slot) {
+      const uint32_t vi = (slot < faceVtx) ? static_cast<uint32_t>(fvi[slot]) : 0u;
+      float px = 0, py = 0, pz = 0, u = 0, v = 0, nx = 0, ny = 0, nz = 0;
+      if (static_cast<size_t>(vi) * 3 + 2 < P.size()) { px = P[vi * 3]; py = P[vi * 3 + 1]; pz = P[vi * 3 + 2]; }
       if (!UV.empty()) {
-        uint32_t ui;
-        if (!stIdx.empty() && slot < stIdx.size()) ui = static_cast<uint32_t>(stIdx[slot]);
-        else if (uvFaceVarying) ui = slot;
-        else ui = vi;
-        if (static_cast<size_t>(ui) * 2 + 1 < UV.size()) { s_uv_[c * 2] = UV[ui * 2]; s_uv_[c * 2 + 1] = UV[ui * 2 + 1]; }
+        const uint32_t ui = (!stIdx.empty() && slot < stIdx.size())
+                                ? static_cast<uint32_t>(stIdx[slot])
+                                : (uvFaceVarying ? slot : vi);
+        if (static_cast<size_t>(ui) * 2 + 1 < UV.size()) { u = UV[ui * 2]; v = UV[ui * 2 + 1]; }
       }
       if (haveN) {
         const uint32_t ni = nFaceVarying ? slot : vi;
-        if (static_cast<size_t>(ni) * 3 + 2 < N.size()) {
-          s_normals_[c * 3] = N[ni * 3]; s_normals_[c * 3 + 1] = N[ni * 3 + 1]; s_normals_[c * 3 + 2] = N[ni * 3 + 2];
+        if (static_cast<size_t>(ni) * 3 + 2 < N.size()) { nx = N[ni * 3]; ny = N[ni * 3 + 1]; nz = N[ni * 3 + 2]; }
+      }
+      WeldKey key;
+      std::memcpy(&key.b[0], &px, 4); std::memcpy(&key.b[1], &py, 4); std::memcpy(&key.b[2], &pz, 4);
+      std::memcpy(&key.b[3], &u, 4); std::memcpy(&key.b[4], &v, 4);
+      std::memcpy(&key.b[5], &nx, 4); std::memcpy(&key.b[6], &ny, 4); std::memcpy(&key.b[7], &nz, 4);
+      auto it = weld.find(key);
+      if (it != weld.end()) { s_indices_.push_back(it->second); return; }
+      const uint32_t idx = static_cast<uint32_t>(s_points_.size() / 3);
+      s_points_.push_back(px); s_points_.push_back(py); s_points_.push_back(pz);
+      if (!UV.empty()) { s_uv_.push_back(u); s_uv_.push_back(v); }
+      if (haveN) { s_normals_.push_back(nx); s_normals_.push_back(ny); s_normals_.push_back(nz); }
+      weld.emplace(key, idx);
+      s_indices_.push_back(idx);
+    };
+
+    size_t base = 0;
+    for (int32_t n : fvc) {
+      if (n >= 3 && base + static_cast<size_t>(n) <= faceVtx) {
+        for (int32_t k = 2; k < n; ++k) {
+          emit(static_cast<uint32_t>(base));
+          emit(static_cast<uint32_t>(base + static_cast<size_t>(k) - 1));
+          emit(static_cast<uint32_t>(base + static_cast<size_t>(k)));
         }
       }
+      base += static_cast<size_t>(n < 0 ? 0 : n);
     }
-    if (s_normals_.empty()) computeNormals_(s_points_, s_indices_, s_normals_);  // soup: empty idx -> flat
-    return true;
+    // Normals not authored -> smooth normals on the welded indexed mesh.
+    if (!haveN) computeNormals_(s_points_, s_indices_, s_normals_);
   }
 
   // Resolve a UsdUVTexture connection path ("/.../Tex.outputs:rgb") to its
