@@ -375,7 +375,9 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
     return nonstd::make_unexpected("`inputs:in` must be authored.\n");
   }
 
-  if (!tx.in.is_connection()) {
+  if (tx.in.get_connections().empty()) {
+    // Accept a connection even if a fallback value is also present
+    // (is_connection() is false then).
     return nonstd::make_unexpected("`inputs:in` must be a connection.\n");
   }
 
@@ -491,7 +493,10 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
     return nonstd::make_unexpected("[InternalError] dst is nullptr.\n");
   }
 
-  if (!src.is_connection()) {
+  if (src.get_connections().empty()) {
+    // Accept an input that has a connection even if a fallback value is also
+    // authored (is_connection() is false then). In USD a connection overrides
+    // the fallback value.
     return nonstd::make_unexpected("Attribute must be connection.\n");
   }
 
@@ -797,7 +802,10 @@ nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
     std::string *st_varname_out, const AssetInfo **assetInfo_out,
     const std::string &default_texcoords_primvar_name = "st") {
 
-  if (!src.is_connection()) {
+  if (src.get_connections().empty()) {
+    // Accept an input that has a connection even if a fallback value is also
+    // authored (is_connection() is false then). In USD a connection overrides
+    // the fallback value.
     return nonstd::make_unexpected("Attribute must be connection.\n");
   }
 
@@ -1890,7 +1898,10 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
   }
 
   if (texture.st.authored()) {
-    if (texture.st.is_connection()) {
+    if (!texture.st.get_connections().empty()) {
+      // Follow the connection even if a fallback value is present
+      // (is_connection() is false then) — the connection (e.g. to a
+      // UsdTransform2d / UsdPrimvarReader_float2) overrides the fallback.
       const auto &paths = texture.st.get_connections();
       if (paths.size() != 1) {
         PUSH_ERROR_AND_RETURN(
@@ -2053,7 +2064,12 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
 
   if (param.is_blocked()) {
     PUSH_ERROR_AND_RETURN(fmt::format("{} attribute is blocked.", param_name));
-  } else if (param.is_connection()) {
+  } else if (!param.get_connections().empty()) {
+    // Follow the connection whenever one is authored — even if a fallback value
+    // is ALSO present (is_connection() is false in that case). In USD a
+    // connection overrides the shader input's fallback value, so a textured
+    // input like `float3 inputs:diffuseColor = (0.18,..) ; .connect = </tex>`
+    // must use the texture, not the (0.18) fallback (usd-wg TextureTransformTest).
     DCOUT(fmt::format("{} is attribute connection.", param_name));
 
     // Check if this is a MaterialX connection to a NodeGraph
