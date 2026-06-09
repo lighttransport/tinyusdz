@@ -2387,7 +2387,8 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
 
 bool RenderSceneConverter::ConvertPreviewSurfaceShader(
     const RenderSceneConverterEnv &env, const Path &shader_abs_path,
-    const UsdPreviewSurface &shader, PreviewSurfaceShader *rshader_out) {
+    const UsdPreviewSurface &shader, PreviewSurfaceShader *rshader_out,
+    bool is_materialx) {
   if (!rshader_out) {
     PUSH_ERROR_AND_RETURN("rshader_out arg is nullptr.");
   }
@@ -2401,23 +2402,30 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
     } else {
       int val;
       std::string eval_err;
-      if (!ResolveTypedAnimatableValue(
+      if (ResolveTypedAnimatableValue(
               env.stage, shader.useSpecularWorkflow,
               "inputs:useSpecularWorkflow", env.timecode, env.tinterp, &val,
               &eval_err)) {
-        PUSH_ERROR_AND_RETURN(
-            fmt::format("Failed to resolve useSpecularWorkflow at time `{}`: {}",
-                        env.timecode, eval_err));
+        rshader.useSpecularWorkflow = val ? true : false;
+      } else {
+        // `useSpecularWorkflow` is authored only as a connection that resolves
+        // to no value — e.g. a MaterialX ND_UsdPreviewSurface_surfaceshader
+        // whose `inputs:useSpecularWorkflow.connect` points at an unvalued
+        // Material input (usd-wg MaterialXTest/basic_flatten). Fall back to the
+        // UsdPreviewSurface default (false) rather than failing the material,
+        // matching how the other (connected) parameters degrade gracefully.
+        PushWarn(fmt::format(
+            "useSpecularWorkflow could not be resolved ({}); using default "
+            "(false).", eval_err));
       }
-
-      rshader.useSpecularWorkflow = val ? true : false;
     }
   }
 
   // Macro to reduce repetitive ConvertPreviewSurfaceShaderParam calls.
 #define CONVERT_PREVIEW_PARAM(field, name) \
   if (!ConvertPreviewSurfaceShaderParam( \
-          env, shader_abs_path, shader.field, name, rshader.field)) { \
+          env, shader_abs_path, shader.field, name, rshader.field, \
+          is_materialx)) { \
     PushWarn(fmt::format("Failed to convert " name " parameter for shader: {}", \
                          shader_abs_path.prim_part())); \
     return false; \
@@ -2994,9 +3002,14 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
     }
 
     if (psurface) {
-      // Convert UsdPreviewSurface
+      // Convert UsdPreviewSurface. MaterialX's ND_UsdPreviewSurface_surfaceshader
+      // wires its inputs to the enclosing Material's interface inputs (not to
+      // UsdUVTexture nodes), so resolve them via the MaterialX interface path.
+      const bool psurface_is_mtlx =
+          (shader->info_id == kNdUsdPreviewSurfaceSurfaceshader);
       PreviewSurfaceShader pss;
-      if (!ConvertPreviewSurfaceShader(env, surfacePath, *psurface, &pss)) {
+      if (!ConvertPreviewSurfaceShader(env, surfacePath, *psurface, &pss,
+                                       psurface_is_mtlx)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "Failed to convert UsdPreviewSurface : {}", surfacePath.prim_part()));
       }
