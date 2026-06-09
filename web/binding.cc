@@ -6292,6 +6292,54 @@ class TinyUSDZLoaderNative {
     return nextFlattenOwned(std::move(input), lazyArrays);
   }
 
+  /// Streaming-output variant of nextFlattenBuffer: the flattened crate is
+  /// emitted to `chunkCb(view)` in file order, so the full output crate is never
+  /// materialized in the wasm heap (peak stays ~= retained input + small
+  /// structural sections). `chunkCb` receives a Uint8Array VIEW into the wasm
+  /// heap valid ONLY for the duration of the call — JS must copy it out
+  /// synchronously and must not retain it (a later wasm growth can detach it).
+  /// chunkCb may return false to abort. Returns stats only (no `data`).
+  emscripten::val nextFlattenBufferToSink(const std::string &uuid, bool lazyArrays,
+                                          emscripten::val chunkCb) {
+    emscripten::val result = emscripten::val::object();
+    std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
+    if (input.empty()) {
+      result.set("success", false);
+      result.set("error", "Unknown or empty zero-copy buffer: " + uuid);
+      return result;
+    }
+    tinyusdz::next::pipeline::FlattenOptions opts;
+    opts.read.lazy_arrays = lazyArrays;
+    opts.write.streaming = true;
+    tinyusdz::next::pipeline::FlattenStats stats;
+    std::string err;
+    bool aborted = false;
+    tinyusdz::next::CrateWriteSink sink =
+        [&](const uint8_t *data, size_t size) -> bool {
+      emscripten::val view(emscripten::typed_memory_view(size, data));
+      emscripten::val r = chunkCb(view);
+      if (r.isFalse()) {  // strictly false aborts; undefined/anything else continues
+        aborted = true;
+        return false;
+      }
+      return true;
+    };
+    bool ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCOwnedToSink(
+        std::move(input), sink, opts, &stats, &err);
+    result.set("success", ok);
+    if (!ok) {
+      result.set("error", aborted ? "aborted by sink" : err);
+      return result;
+    }
+    result.set("inputBytes", static_cast<double>(stats.input_bytes));
+    result.set("outputBytes", static_cast<double>(stats.output_bytes));
+    result.set("primCount", static_cast<double>(stats.prim_count));
+    result.set("arraysPassedThrough",
+               static_cast<double>(stats.arrays_passed_through));
+    result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
+    return result;
+  }
+
   /// Helper: convert current loaded layer to a Stage
   bool getStageFromLayer(tinyusdz::Stage &stage) {
     if (!loaded_) {
@@ -8230,6 +8278,8 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("loadFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
       .function("nextFlattenUSDC", &TinyUSDZLoaderNative::nextFlattenUSDC)
       .function("nextFlattenBuffer", &TinyUSDZLoaderNative::nextFlattenBuffer)
+      .function("nextFlattenBufferToSink",
+                &TinyUSDZLoaderNative::nextFlattenBufferToSink)
 #if defined(TINYUSDZ_USE_COROUTINE)
       .function("loadFromBinaryAsync", &TinyUSDZLoaderNative::loadFromBinaryAsync)  // C++20 coroutine async version
 #endif

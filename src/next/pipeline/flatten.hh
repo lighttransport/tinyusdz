@@ -55,6 +55,16 @@ bool FlattenUSDCToUSDCOwned(std::string&& data, std::vector<uint8_t>& out,
                             const FlattenOptions& opts = {}, FlattenStats* stats = nullptr,
                             std::string* err = nullptr);
 
+/// As FlattenUSDCToUSDCOwned, but streams the output crate to `sink` in file
+/// order instead of returning a buffer. The full output is never materialized:
+/// peak working set is the (small) structural sections plus the retained source
+/// buffer, with VALUE bytes streamed straight from their source. Output bytes
+/// are identical to the buffer form. `sink` returns false to abort.
+bool FlattenUSDCToUSDCOwnedToSink(std::string&& data, const CrateWriteSink& sink,
+                                  const FlattenOptions& opts = {},
+                                  FlattenStats* stats = nullptr,
+                                  std::string* err = nullptr);
+
 }  // namespace pipeline
 }  // namespace next
 }  // namespace tinyusdz
