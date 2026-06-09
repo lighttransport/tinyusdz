@@ -66,6 +66,13 @@ Convert options:
                            auto-enabled and falls back for nested roots / non-keep
                            formats.
   --no-stream-textures     Force the in-heap batch texture path (higher memory).
+  --stream-write           (--pipeline next) Stream the flattened root crate
+                           straight into the .usdz instead of buffering it, so
+                           the output crate never materializes in the WASM heap
+                           or in JS. Byte-identical output; roughly halves peak
+                           RSS on large scenes. Requires a file output (-o).
+                           Also via TINYUSDZ_STREAM_WRITE=1.
+  --no-stream-write        Force the buffered root path.
   --png-encoder <fpnge|fpng|auto>  PNG encoder hint (WASM always uses fpng)
   --no-reencode            Copy unmodified textures through unchanged
   -v, --verbose            Verbose logging
@@ -104,6 +111,9 @@ function parseArgs() {
     // undefined => auto (stream textures for a single .usdz keep-format re-encode,
     // the low-memory default); true => force; false => force the in-heap path.
     streamTextures: undefined,
+    // Stream the flattened root crate straight into the .usdz (next pipeline only)
+    // instead of buffering it — keeps the output crate out of the WASM heap and JS.
+    streamWrite: process.env.TINYUSDZ_STREAM_WRITE === '1',
     repack: null, packChannels: 0, pack: { R: null, G: null, B: null, A: null },
   };
   for (let i = 0; i < args.length; i++) {
@@ -129,6 +139,8 @@ function parseArgs() {
     else if (a === '--pipeline') o.pipeline = args[++i];
     else if (a === '--stream-textures') o.streamTextures = true;
     else if (a === '--no-stream-textures') o.streamTextures = false;
+    else if (a === '--stream-write') o.streamWrite = true;
+    else if (a === '--no-stream-write') o.streamWrite = false;
     else if (a === '-v' || a === '--verbose') o.verbose = true;
     else if (a === '--repack') o.repack = args[++i];
     else if (a === '--pack-channels') o.packChannels = parseInt(args[++i], 10) || 0;
@@ -237,12 +249,23 @@ async function main() {
   // a time) instead of building the whole USDZ in memory — the lowest-peak
   // legacy path for texture-heavy scenes. Opened lazily on first write, so if a
   // non-streaming path runs the sink is simply never used.
+  // Patch-capable (seekable) sink: write() appends at the running offset; patch()
+  // rewrites already-written bytes at an absolute position (used to backfill a
+  // streamed root entry's local-header CRC/size). All writes use an explicit
+  // position so append and patch never depend on the fd's implicit cursor.
   let streamFd = null, streamBytes = 0;
+  const ensureFd = () => { if (streamFd === null) streamFd = fs.openSync(o.output, 'w'); };
   const zipSink = o.output
-    ? (chunk) => {
-        if (streamFd === null) streamFd = fs.openSync(o.output, 'w');
-        fs.writeSync(streamFd, chunk);
-        streamBytes += chunk.length;
+    ? {
+        write: (chunk) => {
+          ensureFd();
+          fs.writeSync(streamFd, chunk, 0, chunk.length, streamBytes);
+          streamBytes += chunk.length;
+        },
+        patch: (pos, chunk) => {
+          ensureFd();
+          fs.writeSync(streamFd, chunk, 0, chunk.length, pos);
+        },
       }
     : undefined;
 
@@ -265,6 +288,7 @@ async function main() {
     maxMemMb: o.maxMemMb,
     pipeline: o.pipeline,
     streamTextures: o.streamTextures,
+    streamWrite: o.streamWrite,
     zipSink,
     log,
   });
