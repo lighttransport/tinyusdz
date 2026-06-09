@@ -8,13 +8,43 @@
 #include "../layer/layer.hh"
 #include "../stage/stage.hh"
 
+#include <cstdio>
 #include <memory>
+
+#if defined(__EMSCRIPTEN__) && defined(TINYUSDZ_FLATTEN_MEMLOG)
+#include <emscripten/heap.h>
+#endif
 
 namespace tinyusdz {
 namespace next {
 namespace pipeline {
 
 namespace {
+
+// Attribution aid: log the wasm linear-heap high-water at each flatten stage
+// boundary when built with -DTINYUSDZ_FLATTEN_MEMLOG. emscripten_get_heap_size()
+// is the grown ArrayBuffer size (monotonic), so the per-stage deltas attribute
+// the peak to read / compose / write. Compiled out (zero cost) by default; an
+// env gate can't be used because emscripten getenv() does not see process.env.
+void FlattenMemLog(const char* stage) {
+  (void)stage;
+#if defined(__EMSCRIPTEN__) && defined(TINYUSDZ_FLATTEN_MEMLOG)
+  std::fprintf(stderr, "[flatten-mem] %-13s heap=%zu MiB\n", stage,
+               static_cast<size_t>(emscripten_get_heap_size()) / (1024 * 1024));
+#endif
+}
+
+// True if the root layer is self-contained: no sublayers and no per-prim
+// composition arcs (references/payloads/inherits/specializes/variants). Such a
+// root flattens to itself, so the structural clone Compose() would do is pure
+// overhead and can be skipped.
+bool IsSelfContained(const Layer& root) {
+  if (!root.meta().subLayers.empty()) return false;
+  for (const auto& prim : root.prims()) {
+    if (HasCompositionArcs(prim)) return false;
+  }
+  return true;
+}
 
 // Shared post-read logic: (optionally) flatten and write. `rr.stage`'s lazy
 // Values hold their own shared_ptr to the retained source buffer, so it stays
@@ -25,6 +55,7 @@ bool FlattenLoaded(CrateReadResult&& rr, size_t input_bytes, std::vector<uint8_t
     if (err) *err = rr.errors.empty() ? "crate read failed" : rr.errors[0].message;
     return false;
   }
+  FlattenMemLog("after-read");
 
   const Layer* root = rr.stage.GetRootLayer();
   if (!root) {
@@ -34,7 +65,7 @@ bool FlattenLoaded(CrateReadResult&& rr, size_t input_bytes, std::vector<uint8_t
 
   std::unique_ptr<Layer> composed;
   const Layer* layer = root;
-  if (opts.flatten) {
+  if (opts.flatten && !IsSelfContained(*root)) {
     Compositor comp;
     comp.SetOptions(opts.composition);
     composed = comp.Compose(*root);  // structural: moves lazy refs, no decode
@@ -44,6 +75,7 @@ bool FlattenLoaded(CrateReadResult&& rr, size_t input_bytes, std::vector<uint8_t
     }
     layer = composed.get();
   }
+  FlattenMemLog("after-compose");
 
   CrateWriter writer(opts.write);
   CrateWriteResult wr = writer.WriteLayerToMemory(out, *layer);
@@ -51,6 +83,7 @@ bool FlattenLoaded(CrateReadResult&& rr, size_t input_bytes, std::vector<uint8_t
     if (err) *err = wr.error.empty() ? "crate write failed" : wr.error;
     return false;
   }
+  FlattenMemLog("after-write");
 
   if (stats) {
     stats->input_bytes = input_bytes;
