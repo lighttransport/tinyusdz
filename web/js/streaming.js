@@ -330,17 +330,7 @@ export class StreamingUSDRenderer {
     this._disposeScene();
 
     const mem = { input: u8.length, phases: [] };
-    const snap = (label) => {
-      const p = { label, heapReserved: this.heapBytes() };
-      try {
-        const s = this.usd ? this.usd.getMemoryStats() : null;
-        p.renderBuffers = s ? s.bufferMemoryBytes : 0;
-        p.assetCache = s ? s.assetCacheSizeBytes : 0;
-      } catch (_) { p.renderBuffers = 0; p.assetCache = 0; }
-      mem.phases.push(p);
-      this._emitMemory();
-      return p;
-    };
+    const snap = (label) => this._snapMem(mem, label);
 
     // Fresh native loader; keep textures ENCODED in the heap (JS decodes them),
     // so decoded RGBA never lands in the WASM heap.
@@ -362,11 +352,46 @@ export class StreamingUSDRenderer {
     }
     snap('render scene built (peak)');
 
+    return this._uploadRenderScene(mem, snap);
+  }
+
+  // Render an EXTERNALLY composed native instance. The instance must already be
+  // through layerToRenderScene() (textures resolved into render_scene_), ideally
+  // with setLoadTextureInNative(false) so images stay encoded (JS decodes them
+  // off the WASM heap). The renderer takes ownership of `usd` (it is reset()/
+  // delete()'d with the scene). Used by the HTTP asset-resolver demo, which
+  // composes a remote USD (references/payloads/textures fetched over HTTP) before
+  // handing the built render scene here. Returns the same shape as loadBytes().
+  async renderComposedNative(usd, label = 'composed', opts = {}) {
+    if (!usd) throw new Error('renderComposedNative: no native instance.');
+    this._disposeScene();
+    this.usd = usd;
+    this._inputSize = opts.inputBytes || 0;
+    // Map<imageId, Uint8Array> of HTTP-fetched encoded bytes for textures the
+    // WASM side could not resolve (buffer_id == -1). Consumed by _uploadImage.
+    this._composedTexBytes = opts.textureBytesById || null;
+
+    const mem = { input: this._inputSize, phases: [], composed: true, label };
+    const snap = (lbl) => this._snapMem(mem, lbl);
+    snap('render scene composed (peak)');
+
+    try {
+      return await this._uploadRenderScene(mem, snap);
+    } finally {
+      this._composedTexBytes = null;
+    }
+  }
+
+  // Shared upload + free pipeline for a built render_scene_ on `this.usd`:
+  // upload every texture (decoded in JS) and every mesh (zero-copy heap views)
+  // to the GPU, then reset() the WASM scene. Fills `mem` and returns
+  // { meshes, textures, materials, memory }.
+  async _uploadRenderScene(mem, snap) {
     const numMeshes = this.usd.numMeshes();
     const numMaterials = this.usd.numMaterials();
     const numImages = this.usd.numImages();
 
-    // 3) Upload every texture (decode encoded bytes in JS, off the WASM heap).
+    // Upload every texture (decode encoded bytes in JS, off the WASM heap).
     this.glTextures = new Array(numImages).fill(null);
     const colorImages = this._colorImageIds(numMaterials); // which images are sRGB
     for (let i = 0; i < numImages; i++) {
@@ -375,7 +400,7 @@ export class StreamingUSDRenderer {
     }
     snap('textures uploaded to GPU');
 
-    // 4) Upload every mesh straight from the heap to GL buffers.
+    // Upload every mesh straight from the heap to GL buffers.
     this.drawables = [];
     this.bbox = null;
     for (let i = 0; i < numMeshes; i++) {
@@ -384,7 +409,7 @@ export class StreamingUSDRenderer {
     }
     snap('meshes uploaded to GPU');
 
-    // 5) Free the entire WASM-side render scene + input. The GPU keeps the data.
+    // Free the entire WASM-side render scene + input. The GPU keeps the data.
     this.usd.reset();
     snap('WASM render scene freed (reset)');
 
@@ -399,6 +424,20 @@ export class StreamingUSDRenderer {
     this._lastMemory = mem;
     this._emitMemory();
     return { meshes: this.drawables.length, textures: numImages, materials: numMaterials, memory: mem };
+  }
+
+  // One memory snapshot (heap reserved + live WASM render buffers) appended to
+  // mem.phases, emitted live through onMemory().
+  _snapMem(mem, label) {
+    const p = { label, heapReserved: this.heapBytes() };
+    try {
+      const s = this.usd ? this.usd.getMemoryStats() : null;
+      p.renderBuffers = s ? s.bufferMemoryBytes : 0;
+      p.assetCache = s ? s.assetCacheSizeBytes : 0;
+    } catch (_) { p.renderBuffers = 0; p.assetCache = 0; }
+    mem.phases.push(p);
+    this._emitMemory();
+    return p;
   }
 
   // Incremental low-memory load via the C++ RenderStream (next-pipeline lazy
@@ -594,18 +633,56 @@ export class StreamingUSDRenderer {
     if (ss && obj.hasUsdPreviewSurface !== false) return ss;
     const o = obj.openPBR || obj.openpbr;
     if (o) {
-      const t = (v) => (v && typeof v === 'object' && 'textureId' in v) ? v.textureId : undefined;
+      // tydra serializes OpenPBR grouped by layer (o.base.base_color,
+      // o.specular.specular_roughness, o.coat.coat_color, ...). Look a param up
+      // by name across the groups, with a flat-structure fallback.
+      const GROUPS = ['base', 'specular', 'transmission', 'subsurface', 'sheen',
+        'fuzz', 'thin_film', 'coat', 'emission', 'geometry'];
+      const find = (name) => {
+        if (o[name]) return o[name];
+        for (const g of GROUPS) { if (o[g] && o[g][name]) return o[g][name]; }
+        return null;
+      };
+      const texOf = (p) => (p && p.type === 'texture' && typeof p.textureId === 'number' && p.textureId >= 0) ? p.textureId : undefined;
+      const valOf = (p) => (p && p.value != null) ? p.value : undefined;
+
+      const baseColor = find('base_color');
+      const metal = find('base_metalness');
+      const baseRough = find('base_roughness');
+      const specRough = find('specular_roughness');
+      const coatColor = find('coat_color');
+      const coatWeight = find('coat_weight');
+      const emis = find('emission_color');
+      const norm = find('geometry_normal') || find('normal');
+
+      // "Simple MaterialX shading": the dominant albedo is sometimes authored on
+      // the coat layer (e.g. Autodesk standard_surface brass = white base +
+      // coat_color image). When base_color has no map, fall back to the
+      // coat_color map so the texture is visible in this minimal renderer.
+      const useCoat = texOf(baseColor) == null && texOf(coatColor) != null &&
+                      (valOf(coatWeight) == null || valOf(coatWeight) > 0);
+      const colorTexId = texOf(baseColor) ?? (useCoat ? texOf(coatColor) : undefined);
+      // A roughness map may live on the specular/coat layer when base_roughness
+      // is a constant. Bind it (the shader's MR sampler reads .g for roughness);
+      // it also feeds .b into metalness, which softens a fully-metallic surface —
+      // acceptable for this minimal, env-map-less renderer and visually nicer
+      // than a flat mirror.
+      const roughTexId = texOf(baseRough) ?? texOf(specRough) ?? texOf(find('coat_roughness'));
+
       return {
-        diffuseColor: o.base_color && o.base_color.value || o.base_color || [0.8, 0.8, 0.8],
-        metallic: o.base_metalness && o.base_metalness.value != null ? o.base_metalness.value : (o.base_metalness ?? 0),
-        roughness: o.specular_roughness && o.specular_roughness.value != null ? o.specular_roughness.value : (o.specular_roughness ?? 0.5),
-        opacity: o.geometry_opacity ?? 1,
-        emissiveColor: o.emission_color && o.emission_color.value || o.emission_color || [0, 0, 0],
-        diffuseColorTextureId: t(o.base_color),
-        metallicTextureId: t(o.base_metalness),
-        roughnessTextureId: t(o.specular_roughness),
-        normalTextureId: t(o.geometry_normal),
-        emissiveColorTextureId: t(o.emission_color),
+        // When the tint comes from the map, neutralize the constant base color.
+        diffuseColor: useCoat ? [1, 1, 1] : (valOf(baseColor) || [0.8, 0.8, 0.8]),
+        metallic: valOf(metal) ?? 0,
+        // With a roughness map bound, let the map drive (uniform = 1); otherwise
+        // use the authored scalar (avoid a 0 → perfect-mirror look).
+        roughness: roughTexId != null ? 1.0 : (valOf(baseRough) || valOf(specRough) || 0.5),
+        opacity: valOf(find('geometry_opacity')) ?? valOf(find('opacity')) ?? 1,
+        emissiveColor: valOf(emis) || [0, 0, 0],
+        diffuseColorTextureId: colorTexId,
+        metallicTextureId: texOf(metal),
+        roughnessTextureId: roughTexId,
+        normalTextureId: texOf(norm),
+        emissiveColorTextureId: texOf(emis),
       };
     }
     return ss || null;
@@ -643,7 +720,16 @@ export class StreamingUSDRenderer {
     const gl = this.gl;
     let desc;
     try { desc = this.usd.getImagePtr(imgId); } catch (_) { return null; }
-    if (!desc || !desc.byteLength) return null;
+    if (!desc) return null;
+
+    // Image the WASM side left unresolved (buffer_id == -1, no heap bytes) — e.g.
+    // an HTTP-referenced texture. Decode externally-supplied encoded bytes
+    // (fetched in JS, off the WASM heap) keyed by image id. Same orientation /
+    // params as the heap encoded path below.
+    if (!desc.byteLength) {
+      const ext = this._composedTexBytes && this._composedTexBytes.get(imgId);
+      return ext ? this._decodeEncodedTexture(ext, srgb) : null;
+    }
 
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -672,6 +758,30 @@ export class StreamingUSDRenderer {
       gl.texImage2D(gl.TEXTURE_2D, 0, internal, gl.RGBA, gl.UNSIGNED_BYTE, bmp);
       bmp.close && bmp.close();
     }
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    return tex;
+  }
+
+  // Decode encoded image bytes (PNG/JPEG/...) supplied from JS (off the WASM
+  // heap) into a GL texture. Same orientation/params as _uploadImage's heap
+  // encoded branch (eager geometry: UNPACK_FLIP_Y = false).
+  async _decodeEncodedTexture(bytes, srgb) {
+    const gl = this.gl;
+    let bmp;
+    try {
+      bmp = await createImageBitmap(new Blob([bytes.slice ? bytes.slice() : bytes]),
+        { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+    } catch (_) { return null; }
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, srgb ? gl.SRGB8_ALPHA8 : gl.RGBA8,
+      gl.RGBA, gl.UNSIGNED_BYTE, bmp);
+    bmp.close && bmp.close();
     gl.generateMipmap(gl.TEXTURE_2D);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);

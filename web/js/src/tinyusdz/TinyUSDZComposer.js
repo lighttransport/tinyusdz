@@ -141,6 +141,24 @@ class TinyUSDZComposer {
         this.usdLoader_ = usd_loader;
     }
 
+    // Override the asset resolver used to fetch external assets (sublayers,
+    // references, payloads). The resolver must expose
+    // `resolveAsync(assetPath) -> Promise<[assetPath, ArrayBuffer]>`, where the
+    // returned key is the asset path AS WRITTEN in the USD (so setAsset() stores
+    // it under the name the native composer/converter looks it up by).
+    // Defaults to a same-origin FetchAssetResolver; inject e.g. an
+    // HttpAssetResolver to rewrite relative paths onto a remote host.
+    setAssetResolver(resolver) {
+        if (!resolver || typeof resolver.resolveAsync !== "function") {
+            throw new Error("TinyUSDZComposer: asset resolver must implement resolveAsync().");
+        }
+        this.assetResolver_ = resolver;
+    }
+
+    getAssetResolver() {
+        return this.assetResolver_;
+    }
+
     getUSDLoader() {
         if (!this.usdloader_) {
             throw new Error("TinyUSDZComposer: USD loader is not set. Call setUSDLoader() first.");
@@ -164,6 +182,25 @@ class TinyUSDZComposer {
         return this.baseWorkingPath_;
     }
 
+    // Parse already-fetched bytes into a native USD Layer (used to recurse into
+    // a sublayer's own sublayers without a second network fetch). Returns the
+    // native TinyUSDZLoaderNative instance, or null on failure.
+    _loadLayerFromBytes(binary, filename) {
+        const native = this.usdLoader_ && this.usdLoader_.native_;
+        if (!native) {
+            throw new Error("TinyUSDZComposer: USD loader native module is not initialized.");
+        }
+        const u8 = binary instanceof Uint8Array ? binary : new Uint8Array(binary);
+        const layer = new native.TinyUSDZLoaderNative();
+        this.usdLoader_._applySkinningLoadOptions?.(layer);
+        if (!layer.loadAsLayerFromBinary(u8, filename)) {
+            console.warn(`TinyUSDZComposer: failed to load sublayer '${filename}': ${layer.error?.()}`);
+            if (typeof layer.delete === "function") layer.delete();
+            return null;
+        }
+        return layer;
+    }
+
     // Recursively resolve sublayer assets.
     async resolveSublayerAssets(depth, usdLayer) {
 
@@ -178,13 +215,20 @@ class TinyUSDZComposer {
             const [uri, binary] = await this.assetResolver_.resolveAsync(sublayerPath);
             //console.log("sublayerPath:", sublayerPath, "binary:", binary.byteLength, "bytes");
 
-            //console.log("Loading sublayer:", sublayerPath);
-            const sublayer = await this.usdLoader_.loadAsLayerAsync(sublayerPath);
+            // Recurse into the sublayer to discover its own (possibly remote)
+            // sublayers. Parse from the bytes we just fetched rather than a second
+            // raw fetch of `sublayerPath` — the latter cannot honor an asset
+            // resolver's path rewriting (e.g. relative paths onto a remote host).
+            const sublayer = this._loadLayerFromBytes(binary, sublayerPath);
+            if (sublayer) {
+                try {
+                    await this.resolveSublayerAssets(depth + 1, sublayer);
+                } finally {
+                    if (typeof sublayer.delete === "function") sublayer.delete();
+                }
+            }
 
-            //console.log("sublayer:", sublayer);
-            await this.resolveSublayerAssets(depth + 1, sublayer);
-
-            this.assetMap_.set(sublayerPath, binary);
+            this.assetMap_.set(uri, binary);
         }));
     }
 
