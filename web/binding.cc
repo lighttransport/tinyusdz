@@ -8208,12 +8208,12 @@ class RenderStream {
     }
     const tinyusdz::next::UsdPrim &prim = meshes_[static_cast<size_t>(i)].GetPrim();
 
-    buildRenderMesh_(prim);  // always produces INDEXED geometry (welded when needed)
+    const bool soup = buildRenderMesh_(prim);  // indexed, or non-indexed soup
 
     out.set("vertexCount", static_cast<double>(s_points_.size() / 3));
     out.set("primName", prim.GetName());
     out.set("points", heapF_(s_points_, 3));
-    if (!s_indices_.empty()) out.set("indices", heapU32_(s_indices_));
+    if (!soup && !s_indices_.empty()) out.set("indices", heapU32_(s_indices_));
     if (!s_normals_.empty()) out.set("normals", heapF_(s_normals_, 3));
     if (!s_uv_.empty()) out.set("uv0", heapF_(s_uv_, 2));
     out.set("material", resolveMaterial_(prim));
@@ -8253,14 +8253,19 @@ class RenderStream {
     return a ? *a : std::vector<int32_t>{};
   }
 
-  // Build INDEXED render geometry for one mesh into the scratch (s_points_/
-  // s_normals_/s_uv_/s_indices_). When all primvars are per-vertex the indexed
-  // form is kept directly; when UVs/normals are face-varying or indexed
-  // separately, corners are de-indexed AND welded (one unique vertex per distinct
-  // pos/uv/normal tuple) — recovering vertex sharing while keeping correct
-  // attributes at seams. Welding is inline, so the full per-corner soup is never
-  // materialized; at most one mesh is resident at a time.
-  void buildRenderMesh_(const tinyusdz::next::UsdPrim &prim) {
+  // Build render geometry for one mesh into the scratch (s_points_/s_normals_/
+  // s_uv_/s_indices_). Returns true if the result is a NON-INDEXED triangle soup
+  // (drawn with drawArrays), false if INDEXED.
+  //   - all primvars per-vertex  -> keep the indexed form directly (compact);
+  //   - indexed UVs / per-vertex UV with face-varying normals -> de-index AND
+  //     WELD inline (one vertex per distinct pos/uv/normal tuple), recovering
+  //     vertex sharing while keeping correct attributes at seams;
+  //   - PURE face-varying UVs (no st indices) -> emit the non-indexed soup, the
+  //     minimal form when corners are mostly unique (welding would only add
+  //     index + hash-map overhead).
+  // The full soup is never materialized in the welded path; at most one mesh is
+  // resident at a time either way.
+  bool buildRenderMesh_(const tinyusdz::next::UsdPrim &prim) {
     std::vector<float> P = matFloat_(prim, "points");
     std::vector<int32_t> fvc = matInt_(prim, "faceVertexCounts");
     std::vector<int32_t> fvi = matInt_(prim, "faceVertexIndices");
@@ -8288,14 +8293,64 @@ class RenderStream {
       if (nCount == vtxCount) s_normals_ = std::move(N);
       else computeNormals_(s_points_, s_indices_, s_normals_);
       if (uvCount == vtxCount) s_uv_ = std::move(UV);
-      return;
+      return false;
+    }
+
+    const bool haveN = (nCount == vtxCount) || nFaceVarying;
+
+    // Decide weld vs soup by POSITION sharing, not interpolation type: a welded
+    // mesh has at least vtxCount vertices, so it can only beat the (index-free)
+    // soup when positions are heavily shared (vtxCount well below the triangle-
+    // corner count). Face-varying UVs still weld well when positions share — what
+    // matters is the expansion factor. When vtxCount is already close to the
+    // corner count, the soup is minimal, so skip welding and keep it.
+    size_t triCount = 0;
+    for (int32_t nn : fvc) if (nn >= 3) triCount += static_cast<size_t>(nn - 2);
+    const size_t cornerCount = triCount * 3;
+    const bool doWeld = vtxCount > 0 && vtxCount * 3 < cornerCount;
+
+    if (!doWeld) {
+      // Non-indexed triangle soup (the minimal form for unique-per-corner UVs).
+      std::vector<uint32_t> slots;
+      size_t b = 0;
+      for (int32_t n : fvc) {
+        if (n >= 3 && b + static_cast<size_t>(n) <= faceVtx) {
+          for (int32_t k = 2; k < n; ++k) {
+            slots.push_back(static_cast<uint32_t>(b));
+            slots.push_back(static_cast<uint32_t>(b + static_cast<size_t>(k) - 1));
+            slots.push_back(static_cast<uint32_t>(b + static_cast<size_t>(k)));
+          }
+        }
+        b += static_cast<size_t>(n < 0 ? 0 : n);
+      }
+      const size_t corners = slots.size();
+      s_points_.resize(corners * 3);
+      if (!UV.empty()) s_uv_.assign(corners * 2, 0.0f);
+      if (haveN) s_normals_.resize(corners * 3);
+      for (size_t c = 0; c < corners; ++c) {
+        const uint32_t slot = slots[c];
+        const uint32_t vi = (slot < faceVtx) ? static_cast<uint32_t>(fvi[slot]) : 0u;
+        if (static_cast<size_t>(vi) * 3 + 2 < P.size()) {
+          s_points_[c * 3] = P[vi * 3]; s_points_[c * 3 + 1] = P[vi * 3 + 1]; s_points_[c * 3 + 2] = P[vi * 3 + 2];
+        }
+        if (!UV.empty()) {
+          const uint32_t ui = uvFaceVarying ? slot : vi;  // st:indices is empty here
+          if (static_cast<size_t>(ui) * 2 + 1 < UV.size()) { s_uv_[c * 2] = UV[ui * 2]; s_uv_[c * 2 + 1] = UV[ui * 2 + 1]; }
+        }
+        if (haveN) {
+          const uint32_t ni = nFaceVarying ? slot : vi;
+          if (static_cast<size_t>(ni) * 3 + 2 < N.size()) {
+            s_normals_[c * 3] = N[ni * 3]; s_normals_[c * 3 + 1] = N[ni * 3 + 1]; s_normals_[c * 3 + 2] = N[ni * 3 + 2];
+          }
+        }
+      }
+      if (s_normals_.empty()) computeNormals_(s_points_, s_indices_, s_normals_);  // empty idx -> flat per-tri
+      return true;  // non-indexed soup
     }
 
     // De-index + weld: emit one welded vertex per unique (pos[,uv][,normal])
     // corner, producing an INDEXED mesh. Built inline as faces are walked, so the
     // full per-corner soup never exists — peak ~= welded verts + index buffer.
-    const bool haveN = (nCount == vtxCount) || nFaceVarying;
-
     struct WeldKey {
       uint32_t b[8];
       bool operator==(const WeldKey &o) const { return std::memcmp(b, o.b, sizeof(b)) == 0; }
@@ -8353,6 +8408,7 @@ class RenderStream {
     }
     // Normals not authored -> smooth normals on the welded indexed mesh.
     if (!haveN) computeNormals_(s_points_, s_indices_, s_normals_);
+    return false;  // welded result is INDEXED
   }
 
   // Resolve a UsdUVTexture connection path ("/.../Tex.outputs:rgb") to its
