@@ -201,7 +201,7 @@ public:
     // Initialize buffer
   }
 
-  CrateWriteResult Write(const Layer& layer) {
+  CrateWriteResult Write(const Layer& layer, const CrateWriteSink* sink = nullptr) {
     result_ = CrateWriteResult();
     buffer_.clear();
 
@@ -272,30 +272,39 @@ public:
     buffer_.resize(64, 0);
     value_start_offset_ = 64;
 
-    // Reserve the output buffer up-front. The VALUE section (the data blocks
-    // collected by BuildFieldsAndSpecs) dominates the output; without a reserve
-    // std::vector growth would double its capacity repeatedly, transiently
-    // needing ~2x the output size — expensive and a real risk near the wasm32
-    // 2 GB ceiling. Over-estimating only wastes capacity; under-estimating just
-    // falls back to normal growth, so this is always safe.
-    {
-      size_t est = 64;
-      for (const auto& b : value_data_) est += b.size() + 8;  // +8 align slack
-      est += est / 8 + (size_t(1) << 20);  // ~12% for structural sections + 1MB
-      if (est > buffer_.capacity()) buffer_.reserve(est);
+    // Compute the VALUE section layout and patch field offsets (always needed).
+    const uint64_t value_section_size = ComputeValueLayoutAndPatch();
+
+    // Streaming mode keeps the VALUE bytes OUT of buffer_ (they are streamed
+    // straight from their source at the end), so the structural sections sit at
+    // physical buffer offset 64 but their TRUE file offset is shifted past the
+    // (absent) value section. struct_base is that shift; 0 in the in-memory path
+    // where the value bytes are physically present in buffer_.
+    const uint64_t struct_base = sink ? value_section_size : 0;
+
+    if (!sink) {
+      // Reserve the output buffer up-front. The VALUE section dominates the
+      // output; without a reserve std::vector growth would double its capacity
+      // repeatedly, transiently needing ~2x the output size — expensive and a
+      // real risk near the wasm32 2 GB ceiling. Over-estimating only wastes
+      // capacity; under-estimating just falls back to normal growth.
+      {
+        size_t est = 64;
+        for (const auto& b : value_data_) est += b.size() + 8;  // +8 align slack
+        est += est / 8 + (size_t(1) << 20);  // ~12% for structural sections + 1MB
+        if (est > buffer_.capacity()) buffer_.reserve(est);
+      }
+      EmitValueBytesToBuffer();
     }
-    WriteValueSection();
-    int64_t value_data_size = static_cast<int64_t>(buffer_.size()) - 64;
-    (void)value_data_size;
 
     // TOKENS section
     {
       CrateSection sec;
       std::memset(sec.name, 0, sizeof(sec.name));
       std::strncpy(sec.name, "TOKENS", sizeof(sec.name) - 1);
-      sec.start = static_cast<int64_t>(buffer_.size());
+      sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
       WriteTokensSection();
-      sec.size = static_cast<int64_t>(buffer_.size()) - sec.start;
+      sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
       sections.push_back(sec);
     }
 
@@ -304,9 +313,9 @@ public:
       CrateSection sec;
       std::memset(sec.name, 0, sizeof(sec.name));
       std::strncpy(sec.name, "STRINGS", sizeof(sec.name) - 1);
-      sec.start = static_cast<int64_t>(buffer_.size());
+      sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
       WriteStringsSection();
-      sec.size = static_cast<int64_t>(buffer_.size()) - sec.start;
+      sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
       sections.push_back(sec);
     }
 
@@ -315,9 +324,9 @@ public:
       CrateSection sec;
       std::memset(sec.name, 0, sizeof(sec.name));
       std::strncpy(sec.name, "FIELDS", sizeof(sec.name) - 1);
-      sec.start = static_cast<int64_t>(buffer_.size());
+      sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
       WriteFieldsSection();
-      sec.size = static_cast<int64_t>(buffer_.size()) - sec.start;
+      sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
       sections.push_back(sec);
     }
 
@@ -326,9 +335,9 @@ public:
       CrateSection sec;
       std::memset(sec.name, 0, sizeof(sec.name));
       std::strncpy(sec.name, "FIELDSETS", sizeof(sec.name) - 1);
-      sec.start = static_cast<int64_t>(buffer_.size());
+      sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
       WriteFieldsetsSection();
-      sec.size = static_cast<int64_t>(buffer_.size()) - sec.start;
+      sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
       sections.push_back(sec);
     }
 
@@ -337,9 +346,9 @@ public:
       CrateSection sec;
       std::memset(sec.name, 0, sizeof(sec.name));
       std::strncpy(sec.name, "PATHS", sizeof(sec.name) - 1);
-      sec.start = static_cast<int64_t>(buffer_.size());
+      sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
       WritePathsSection();
-      sec.size = static_cast<int64_t>(buffer_.size()) - sec.start;
+      sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
       sections.push_back(sec);
     }
 
@@ -348,21 +357,42 @@ public:
       CrateSection sec;
       std::memset(sec.name, 0, sizeof(sec.name));
       std::strncpy(sec.name, "SPECS", sizeof(sec.name) - 1);
-      sec.start = static_cast<int64_t>(buffer_.size());
+      sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
       WriteSpecsSection();
-      sec.size = static_cast<int64_t>(buffer_.size()) - sec.start;
+      sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
       sections.push_back(sec);
     }
 
     // Write TOC at the end (VALUE section is NOT included in TOC)
-    int64_t toc_offset = static_cast<int64_t>(buffer_.size());
+    int64_t toc_offset = static_cast<int64_t>(buffer_.size() + struct_base);
     WriteTOC(sections);
 
     // Write bootstrap header at the beginning
     WriteBootstrap(toc_offset);
 
+    // Streaming emit: bootstrap (64 B) -> VALUE bytes (streamed from source) ->
+    // structural sections + TOC (the only part staged in buffer_). buffer_ holds
+    // [bootstrap(64)][TOKENS..SPECS][TOC] with the VALUE section logically spliced
+    // in after the bootstrap; stream the three parts in file order.
+    if (sink) {
+      if (!(*sink)(buffer_.data(), 64)) {
+        result_.error = "sink aborted (bootstrap)";
+        return result_;
+      }
+      if (!StreamValueBytes(*sink)) {
+        result_.error = "sink aborted (value section)";
+        return result_;
+      }
+      if (buffer_.size() > 64 &&
+          !(*sink)(buffer_.data() + 64, buffer_.size() - 64)) {
+        result_.error = "sink aborted (structural sections)";
+        return result_;
+      }
+    }
+
     result_.success = true;
-    result_.bytes_written = buffer_.size();
+    result_.bytes_written =
+        sink ? (64 + value_section_size + (buffer_.size() - 64)) : buffer_.size();
     result_.token_count = tokens_.size();
     result_.string_count = string_indices_.size();
     result_.path_count = paths_.size();
@@ -2094,20 +2124,19 @@ private:
     }
   }
 
-  void WriteValueSection() {
-    // Late-bind: compute actual file offsets for all value data blocks
-    // The VALUE section layout:
-    // [Block0: data][Block1: data]...
-    // Each block is: [raw bytes]
-    // Field ValueReps with is_inlined==false contain the offset from the
-    // START OF VALUE SECTION to the block's data.
-
-    // First pass: compute offsets for all data blocks in value_data_ order.
-    // Align each block to an 8-byte boundary for memory-mapped zero-copy reads.
+  // Compute the VALUE section layout (8-byte-aligned block offsets) and patch
+  // every field/time-sample ValueRep with its absolute file offset. Returns the
+  // total VALUE section size in bytes (== the offset just past the last block).
+  // This is pure bookkeeping (no bytes emitted); the bytes are written later by
+  // EmitValueBytesToBuffer() (in-memory) or StreamValueBytes() (streaming).
+  uint64_t ComputeValueLayoutAndPatch() {
+    // The VALUE section layout: [Block0][Block1]... each block is raw bytes.
+    // Field ValueReps with is_inlined==false hold the offset from the START OF
+    // VALUE SECTION to the block's data. Align each block to 8 bytes for
+    // memory-mapped zero-copy reads.
     value_offsets_.resize(value_data_.size());
     uint64_t current_offset = 0;
     for (size_t i = 0; i < value_data_.size(); ++i) {
-      // Align to 8 bytes before each block
       if (current_offset % 8 != 0) {
         current_offset += 8 - (current_offset % 8);
       }
@@ -2115,7 +2144,7 @@ private:
       current_offset += value_data_[i].size();
     }
 
-    // Second pass: patch all field ValueReps with actual file offsets (absolute).
+    // Patch all field ValueReps with actual file offsets (absolute).
     for (auto& field : fields_) {
       if (field.value_rep.is_inlined()) continue;
 
@@ -2128,7 +2157,6 @@ private:
 
       if (data_idx < value_data_.size() && data_idx < value_offsets_.size()) {
         uint64_t offset = value_start_offset_ + value_offsets_[data_idx];
-        // Patch the ValueRep with the correct absolute offset
         field.value_rep = ValueRep::Make(type, offset,
                                          field.value_rep.is_array(), false,
                                          field.value_rep.is_compressed());
@@ -2139,11 +2167,38 @@ private:
       }
     }
 
-    // Third pass: actually write the data blocks, 8-byte aligned
+    return current_offset;
+  }
+
+  // Emit the VALUE section data blocks into buffer_ (in-memory path), 8-byte
+  // aligned. Must produce exactly ComputeValueLayoutAndPatch()'s byte count.
+  void EmitValueBytesToBuffer() {
     for (size_t i = 0; i < value_data_.size(); ++i) {
       writer_.align(8);
       writer_.write_bytes(value_data_[i].bytes(), value_data_[i].size());
     }
+  }
+
+  // Stream the VALUE section data blocks straight to `sink`, copying each block
+  // verbatim from its source (the retained crate buffer for pass-through arrays,
+  // or the re-encoded block) without ever materializing the section. Emits
+  // exactly ComputeValueLayoutAndPatch()'s byte count (same 8-byte alignment).
+  bool StreamValueBytes(const CrateWriteSink& sink) {
+    static const uint8_t kZeros[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    uint64_t pos = value_start_offset_;  // value section begins right after bootstrap
+    for (size_t i = 0; i < value_data_.size(); ++i) {
+      const uint64_t pad = (8 - (pos % 8)) % 8;
+      if (pad) {
+        if (!sink(kZeros, static_cast<size_t>(pad))) return false;
+        pos += pad;
+      }
+      const size_t sz = value_data_[i].size();
+      if (sz) {
+        if (!sink(value_data_[i].bytes(), sz)) return false;
+        pos += sz;
+      }
+    }
+    return true;
   }
 
   void WriteTOC(const std::vector<CrateSection>& sections) {
@@ -2207,6 +2262,12 @@ CrateWriteResult CrateWriter::WriteLayerToMemory(std::vector<uint8_t>& buffer, c
   CrateWriteResult result = impl_->Write(layer);
   if (result.success) buffer = impl_->buffer();
   return result;
+}
+
+CrateWriteResult CrateWriter::WriteLayerToSink(const CrateWriteSink& sink, const Layer& layer) {
+  // Impl::Write streams bootstrap/VALUE/structural/TOC to `sink` in file order
+  // when a sink is supplied; buffer_ only ever holds the small structural tail.
+  return impl_->Write(layer, &sink);
 }
 
 }  // namespace next

@@ -46,11 +46,13 @@ bool IsSelfContained(const Layer& root) {
   return true;
 }
 
-// Shared post-read logic: (optionally) flatten and write. `rr.stage`'s lazy
-// Values hold their own shared_ptr to the retained source buffer, so it stays
-// alive through the write regardless of the reader's lifetime.
-bool FlattenLoaded(CrateReadResult&& rr, size_t input_bytes, std::vector<uint8_t>& out,
-                   const FlattenOptions& opts, FlattenStats* stats, std::string* err) {
+// Shared post-read logic: (optionally) flatten, then write to `out` (in-memory)
+// or `sink` (streaming) — exactly one is non-null. `rr.stage`'s lazy Values hold
+// their own shared_ptr to the retained source buffer, so it stays alive through
+// the write regardless of the reader's lifetime.
+bool FlattenLoaded(CrateReadResult&& rr, size_t input_bytes, std::vector<uint8_t>* out,
+                   const CrateWriteSink* sink, const FlattenOptions& opts,
+                   FlattenStats* stats, std::string* err) {
   if (!rr.success) {
     if (err) *err = rr.errors.empty() ? "crate read failed" : rr.errors[0].message;
     return false;
@@ -78,7 +80,8 @@ bool FlattenLoaded(CrateReadResult&& rr, size_t input_bytes, std::vector<uint8_t
   FlattenMemLog("after-compose");
 
   CrateWriter writer(opts.write);
-  CrateWriteResult wr = writer.WriteLayerToMemory(out, *layer);
+  CrateWriteResult wr = sink ? writer.WriteLayerToSink(*sink, *layer)
+                             : writer.WriteLayerToMemory(*out, *layer);
   if (!wr.success) {
     if (err) *err = wr.error.empty() ? "crate write failed" : wr.error;
     return false;
@@ -87,7 +90,7 @@ bool FlattenLoaded(CrateReadResult&& rr, size_t input_bytes, std::vector<uint8_t
 
   if (stats) {
     stats->input_bytes = input_bytes;
-    stats->output_bytes = out.size();
+    stats->output_bytes = wr.bytes_written;
     stats->prim_count = layer->prim_count();
     stats->arrays_passed_through = wr.arrays_passed_through;
     stats->arrays_reencoded = wr.arrays_reencoded;
@@ -106,7 +109,7 @@ bool FlattenUSDCToUSDC(const uint8_t* data, size_t size, std::vector<uint8_t>& o
     return false;
   }
   CrateReader reader(opts.read);
-  return FlattenLoaded(reader.Read(data, size), size, out, opts, stats, err);
+  return FlattenLoaded(reader.Read(data, size), size, &out, nullptr, opts, stats, err);
 }
 
 bool FlattenUSDCToUSDCOwned(std::string&& data, std::vector<uint8_t>& out,
@@ -119,7 +122,22 @@ bool FlattenUSDCToUSDCOwned(std::string&& data, std::vector<uint8_t>& out,
   }
   const size_t input_bytes = data.size();
   CrateReader reader(opts.read);
-  return FlattenLoaded(reader.ReadOwned(std::move(data)), input_bytes, out, opts, stats, err);
+  return FlattenLoaded(reader.ReadOwned(std::move(data)), input_bytes, &out, nullptr,
+                       opts, stats, err);
+}
+
+bool FlattenUSDCToUSDCOwnedToSink(std::string&& data, const CrateWriteSink& sink,
+                                  const FlattenOptions& opts, FlattenStats* stats,
+                                  std::string* err) {
+  if (stats) *stats = FlattenStats{};
+  if (data.empty()) {
+    if (err) *err = "empty input";
+    return false;
+  }
+  const size_t input_bytes = data.size();
+  CrateReader reader(opts.read);
+  return FlattenLoaded(reader.ReadOwned(std::move(data)), input_bytes, nullptr, &sink,
+                       opts, stats, err);
 }
 
 }  // namespace pipeline
