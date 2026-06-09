@@ -32,6 +32,9 @@ constexpr auto kMtlxOpenPBRSurface = "MtlxOpenPBRSurface";
 // MaterialX node definition IDs (as used in info:id attribute)
 constexpr auto kNdOpenPbrSurfaceSurfaceshader = "ND_open_pbr_surface_surfaceshader";
 constexpr auto kNdStandardSurfaceSurfaceshader = "ND_standard_surface_surfaceshader";
+// MaterialX's UsdPreviewSurface node definition — same inputs as the native
+// UsdPreviewSurface, so it is reconstructed into a UsdPreviewSurface value.
+constexpr auto kNdUsdPreviewSurfaceSurfaceshader = "ND_UsdPreviewSurface_surfaceshader";
 
 // MaterialX Light Shader Nodes
 constexpr auto kMtlxUniformEdf = "uniform_edf";

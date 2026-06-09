@@ -424,6 +424,18 @@ bool ReconstructPrim<Shader>(
     }
     shader->info_id = kNdOpenPbrSurfaceSurfaceshader;
     shader->value = surface;
+  } else if (shader_type.compare(kNdUsdPreviewSurfaceSurfaceshader) == 0) {
+    // MaterialX's UsdPreviewSurface node (e.g. usd-wg MaterialXTest/basic_flatten):
+    // info:id `ND_UsdPreviewSurface_surfaceshader` with the same inputs as
+    // UsdPreviewSurface. Reconstruct into a UsdPreviewSurface value so downstream
+    // (tydra render-data) handles it as one; keep the ND_ info:id for round-trip.
+    UsdPreviewSurface surface;
+    if (!ReconstructShader<UsdPreviewSurface>(spec, properties, references,
+                                              &surface, warn, err, options)) {
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kNdUsdPreviewSurfaceSurfaceshader << "`.");
+    }
+    shader->info_id = kNdUsdPreviewSurfaceSurfaceshader;
+    shader->value = surface;
   } else {
     // Reconstruct as generic ShaderNode
     ShaderNode surface;
