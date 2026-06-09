@@ -31,6 +31,11 @@
 
 // next: low-memory lazy-ValueRep flatten pipeline (src/next/).
 #include "next/pipeline/flatten.hh"
+#include "next/reader/usdc-reader.hh"
+#include "next/stage/stage.hh"
+#include "next/types/value.hh"
+#include "next/schema/geom-mesh.hh"
+#include "next/schema/usd-shade.hh"
 #include "tydra/render-data.hh"
 #include "tydra/tangent-quantize.hh"
 #include "tydra/scene-access.hh"
@@ -8127,6 +8132,265 @@ emscripten::val convertFloat16ToFloat32Array(const emscripten::val& uint16Data) 
   result.call<void>("set", jsHeap);
 
   return result;
+}
+
+// ============================================================================
+// RenderStream — incremental, low-memory render-data extraction.
+//
+// Loads ONLY the root USDC crate (the caller extracts it from the .usdz in JS
+// and keeps the texture entries there, off the WASM heap) into the next pipeline
+// with LAZY arrays, so the crate sits in the heap exactly once (~= input size).
+// getMesh(i) then materializes a SINGLE mesh's geometry on demand into a reused
+// scratch and returns zero-copy descriptors; the next getMesh(i) overwrites the
+// scratch, so at most one mesh's geometry is decoded at a time. Geometry arrays
+// are read through a *copy* of the lazy Value (Value tmp = *v) so the Stage's own
+// property stays lazy and the per-mesh decode never accumulates across meshes.
+//
+// Peak WASM heap = crate + one mesh's largest array (vs. the eager
+// loadFromBinary() path which builds the whole typed Stage + RenderScene at once,
+// peaking at ~5-10x input). Material parameters resolve to UsdPreviewSurface
+// values + texture ASSET PATHS; the JS caller maps a path to its in-archive
+// texture entry (which it already holds) and uploads it to the GPU.
+// ============================================================================
+class RenderStream {
+ public:
+  RenderStream() = default;
+
+  // Adopt the root crate bytes by move and load lazily.
+  emscripten::val beginOwned(std::string &&crate) {
+    emscripten::val r = emscripten::val::object();
+    end();
+    error_.clear();
+    tinyusdz::next::USDCLoadResult res =
+        tinyusdz::next::LoadUSDCFromMemoryOwned(std::move(crate));
+    if (!res.success) {
+      error_ = res.error_summary.empty() ? std::string("USDC load failed")
+                                         : res.error_summary;
+      r.set("success", false);
+      r.set("error", error_);
+      return r;
+    }
+    stage_ = std::move(res.stage);
+    meshes_ = tinyusdz::next::GetAllMeshes(stage_);
+    loaded_ = true;
+    r.set("success", true);
+    r.set("meshCount", static_cast<int>(meshes_.size()));
+    return r;
+  }
+
+  // Begin from a JS Uint8Array (one copy into the WASM heap, then adopted).
+  emscripten::val begin(emscripten::val bytes) {
+    const size_t size = bytes["byteLength"].as<size_t>();
+    std::string s;
+    s.resize(size);
+    if (size > 0) {
+      emscripten::val view = emscripten::val::global("Uint8Array").new_(
+          bytes["buffer"], bytes["byteOffset"],
+          emscripten::val(static_cast<double>(size)));
+      emscripten::val heapView = emscripten::val(emscripten::typed_memory_view(
+          size, reinterpret_cast<uint8_t *>(&s[0])));
+      heapView.call<void>("set", view);
+    }
+    return beginOwned(std::move(s));
+  }
+
+  int meshCount() const { return loaded_ ? static_cast<int>(meshes_.size()) : 0; }
+  std::string error() const { return error_; }
+
+  // Materialize mesh i's geometry into the scratch and return zero-copy
+  // descriptors {points,indices,normals,uv0} + resolved material. Valid until the
+  // next getMesh()/end(); the JS caller must upload before calling getMesh again.
+  emscripten::val getMesh(int i) {
+    emscripten::val out = emscripten::val::object();
+    if (!loaded_ || i < 0 || i >= static_cast<int>(meshes_.size())) {
+      out.set("error", std::string("invalid mesh index"));
+      return out;
+    }
+    const tinyusdz::next::UsdPrim &prim = meshes_[static_cast<size_t>(i)].GetPrim();
+
+    s_points_ = matFloat_(prim, "points");
+    std::vector<int32_t> fvc = matInt_(prim, "faceVertexCounts");
+    std::vector<int32_t> fvi = matInt_(prim, "faceVertexIndices");
+    s_normals_ = matFloat_(prim, "normals");
+    s_uv_ = matFloat_(prim, "primvars:st");
+    if (s_uv_.empty()) s_uv_ = matFloat_(prim, "primvars:st0");
+    if (s_uv_.empty()) s_uv_ = matFloat_(prim, "st");
+
+    triangulate_(fvi, fvc, s_indices_);
+    if (s_normals_.size() != s_points_.size()) {
+      computeNormals_(s_points_, s_indices_, s_normals_);
+    }
+
+    out.set("vertexCount", static_cast<double>(s_points_.size() / 3));
+    out.set("primName", prim.GetName());
+    out.set("points", heapF_(s_points_, 3));
+    if (!s_indices_.empty()) out.set("indices", heapU32_(s_indices_));
+    if (!s_normals_.empty()) out.set("normals", heapF_(s_normals_, 3));
+    if (!s_uv_.empty()) out.set("uv0", heapF_(s_uv_, 2));
+    out.set("material", resolveMaterial_(prim));
+    return out;
+  }
+
+  // Free the stage, mesh list and scratch (returns the heap to the allocator).
+  void end() {
+    loaded_ = false;
+    meshes_.clear();
+    meshes_.shrink_to_fit();
+    stage_ = tinyusdz::next::Stage();
+    freeVec_(s_points_);
+    freeVec_(s_normals_);
+    freeVec_(s_uv_);
+    freeVec_(s_indices_);
+  }
+
+ private:
+  template <typename T>
+  static void freeVec_(std::vector<T> &v) { std::vector<T>().swap(v); }
+
+  // Read an array property through a COPY of the lazy Value, so the Stage's own
+  // property stays lazy (per-mesh decode does not accumulate across meshes).
+  std::vector<float> matFloat_(const tinyusdz::next::UsdPrim &prim, const char *name) {
+    const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
+    if (!v) return {};
+    tinyusdz::next::Value tmp = *v;
+    const std::vector<float> *a = tmp.as_float_array();
+    return a ? *a : std::vector<float>{};
+  }
+  std::vector<int32_t> matInt_(const tinyusdz::next::UsdPrim &prim, const char *name) {
+    const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
+    if (!v) return {};
+    tinyusdz::next::Value tmp = *v;
+    const std::vector<int32_t> *a = tmp.as_int_array();
+    return a ? *a : std::vector<int32_t>{};
+  }
+
+  // Fan-triangulate faceVertexIndices grouped by faceVertexCounts.
+  static void triangulate_(const std::vector<int32_t> &fvi,
+                           const std::vector<int32_t> &fvc,
+                           std::vector<uint32_t> &out) {
+    out.clear();
+    if (fvi.empty()) return;
+    if (fvc.empty()) {  // assume an already-triangulated index list
+      out.reserve(fvi.size());
+      for (int32_t v : fvi) out.push_back(static_cast<uint32_t>(v));
+      return;
+    }
+    size_t base = 0;
+    for (int32_t n : fvc) {
+      if (n < 3 || base + static_cast<size_t>(n) > fvi.size()) { base += static_cast<size_t>(n < 0 ? 0 : n); continue; }
+      for (int32_t k = 2; k < n; ++k) {
+        out.push_back(static_cast<uint32_t>(fvi[base]));
+        out.push_back(static_cast<uint32_t>(fvi[base + static_cast<size_t>(k) - 1]));
+        out.push_back(static_cast<uint32_t>(fvi[base + static_cast<size_t>(k)]));
+      }
+      base += static_cast<size_t>(n);
+    }
+  }
+
+  // Area-weighted vertex normals from the triangulated indices.
+  static void computeNormals_(const std::vector<float> &pos,
+                              const std::vector<uint32_t> &idx,
+                              std::vector<float> &out) {
+    out.assign(pos.size(), 0.0f);
+    const size_t nv = pos.size() / 3;
+    auto addTri = [&](uint32_t a, uint32_t b, uint32_t c) {
+      if (a >= nv || b >= nv || c >= nv) return;
+      const float ex1 = pos[b * 3] - pos[a * 3], ey1 = pos[b * 3 + 1] - pos[a * 3 + 1], ez1 = pos[b * 3 + 2] - pos[a * 3 + 2];
+      const float ex2 = pos[c * 3] - pos[a * 3], ey2 = pos[c * 3 + 1] - pos[a * 3 + 1], ez2 = pos[c * 3 + 2] - pos[a * 3 + 2];
+      const float nx = ey1 * ez2 - ez1 * ey2, ny = ez1 * ex2 - ex1 * ez2, nz = ex1 * ey2 - ey1 * ex2;
+      for (uint32_t vi : {a, b, c}) { out[vi * 3] += nx; out[vi * 3 + 1] += ny; out[vi * 3 + 2] += nz; }
+    };
+    if (!idx.empty()) {
+      for (size_t t = 0; t + 2 < idx.size(); t += 3) addTri(idx[t], idx[t + 1], idx[t + 2]);
+    } else {
+      for (uint32_t v = 0; v + 2 < nv; v += 3) addTri(v, v + 1, v + 2);
+    }
+    for (size_t i = 0; i < nv; ++i) {
+      float x = out[i * 3], y = out[i * 3 + 1], z = out[i * 3 + 2];
+      float l = std::sqrt(x * x + y * y + z * z);
+      if (l > 0) { out[i * 3] = x / l; out[i * 3 + 1] = y / l; out[i * 3 + 2] = z / l; }
+      else { out[i * 3 + 2] = 1.0f; }
+    }
+  }
+
+  emscripten::val heapF_(const std::vector<float> &v, int comps) const {
+    emscripten::val d = emscripten::val::object();
+    d.set("ptr", static_cast<double>(reinterpret_cast<uintptr_t>(v.data())));
+    d.set("length", static_cast<double>(v.size()));
+    d.set("comps", comps);
+    d.set("dtype", std::string("f32"));
+    d.set("byteLength", static_cast<double>(v.size() * sizeof(float)));
+    return d;
+  }
+  emscripten::val heapU32_(const std::vector<uint32_t> &v) const {
+    emscripten::val d = emscripten::val::object();
+    d.set("ptr", static_cast<double>(reinterpret_cast<uintptr_t>(v.data())));
+    d.set("length", static_cast<double>(v.size()));
+    d.set("comps", 1);
+    d.set("dtype", std::string("u32"));
+    d.set("byteLength", static_cast<double>(v.size() * sizeof(uint32_t)));
+    return d;
+  }
+  static emscripten::val arr3_(const float *c) {
+    emscripten::val a = emscripten::val::array();
+    a.call<void>("push", c[0]);
+    a.call<void>("push", c[1]);
+    a.call<void>("push", c[2]);
+    return a;
+  }
+
+  // Resolve the mesh's bound material to UsdPreviewSurface values + texture
+  // asset paths (resolved to GPU textures by the JS caller from the archive).
+  emscripten::val resolveMaterial_(const tinyusdz::next::UsdPrim &prim) {
+    emscripten::val m = emscripten::val::object();
+    tinyusdz::next::UsdPrim mat = tinyusdz::next::GetBoundMaterial(stage_, prim);
+    if (!mat.IsValid()) return m;
+    // Resolve the surface shader: prefer the material's outputs:surface (a
+    // connection), but fall back to the first UsdPreviewSurface child shader —
+    // the common case and robust when the output connection is not resolved.
+    tinyusdz::next::UsdPrim shader;
+    const std::string shaderPath = tinyusdz::next::GetSurfaceShader(stage_, mat);
+    if (!shaderPath.empty()) shader = stage_.GetPrimAtPath(shaderPath);
+    if (!shader.IsValid()) {
+      for (const auto &ch : mat.GetChildren()) {
+        if (tinyusdz::next::IsPreviewSurface(ch)) { shader = ch; break; }
+      }
+    }
+    if (!shader.IsValid()) return m;
+    tinyusdz::next::PreviewSurfaceData ps;
+    if (!tinyusdz::next::GetPreviewSurfaceData(stage_, shader, &ps)) return m;
+    m.set("baseColor", arr3_(ps.diffuse_color));
+    m.set("metallic", ps.metallic);
+    m.set("roughness", ps.roughness);
+    m.set("opacity", ps.opacity);
+    m.set("occlusion", ps.occlusion);
+    m.set("emissive", arr3_(ps.emissive_color));
+    if (ps.opacity_threshold > 0.0f) m.set("opacityThreshold", ps.opacity_threshold);
+    if (!ps.diffuse_texture.empty()) m.set("baseColorTexture", ps.diffuse_texture);
+    if (!ps.normal_texture.empty()) m.set("normalTexture", ps.normal_texture);
+    if (!ps.roughness_texture.empty()) m.set("roughnessTexture", ps.roughness_texture);
+    if (!ps.metallic_texture.empty()) m.set("metallicTexture", ps.metallic_texture);
+    if (!ps.occlusion_texture.empty()) m.set("occlusionTexture", ps.occlusion_texture);
+    if (!ps.emissive_texture.empty()) m.set("emissiveTexture", ps.emissive_texture);
+    return m;
+  }
+
+  tinyusdz::next::Stage stage_;
+  std::vector<tinyusdz::next::UsdGeomMesh> meshes_;
+  bool loaded_ = false;
+  std::string error_;
+  std::vector<float> s_points_, s_normals_, s_uv_;
+  std::vector<uint32_t> s_indices_;
+};
+
+EMSCRIPTEN_BINDINGS(render_stream_module) {
+  emscripten::class_<RenderStream>("RenderStream")
+      .constructor<>()
+      .function("begin", &RenderStream::begin)
+      .function("meshCount", &RenderStream::meshCount)
+      .function("getMesh", &RenderStream::getMesh)
+      .function("error", &RenderStream::error)
+      .function("end", &RenderStream::end);
 }
 
 // Register STL

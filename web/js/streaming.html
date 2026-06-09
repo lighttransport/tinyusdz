@@ -57,7 +57,10 @@
     import { mountStreamingDemo } from './streaming.js';
     // Optionally pass { url: '../models/yourscene.usdz' } to auto-load.
     const params = new URLSearchParams(location.search);
-    mountStreamingDemo({ url: params.get('url') || undefined }).catch((e) => {
+    mountStreamingDemo({
+      url: params.get('url') || undefined,
+      eager: params.get('eager') === '1',  // eager path supports textures; default is the incremental ≈1x path
+    }).catch((e) => {
       document.getElementById('status').textContent = 'Init failed: ' + e.message;
       console.error(e);
     });
