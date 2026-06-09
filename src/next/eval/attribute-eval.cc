@@ -345,12 +345,13 @@ bool AttributeEval::HasConnection(const UsdPrim& prim, const std::string& attr_n
   const PrimSpec* spec = prim.GetPrimSpec();
   if (!spec) return false;
 
-  // Check for .connect suffix
-  const PropSlot* slot = spec->property(attr_name + ".connect");
-  if (slot && slot->is_connection()) return true;
+  // Connection targets are parsed into the PrimSpec connection map (from the
+  // crate "connectionPaths" field), keyed by the bare attribute name.
+  const std::vector<Path>* targets = spec->connection(attr_name);
+  if (targets && !targets->empty()) return true;
 
-  // Check the attribute itself
-  slot = spec->property(attr_name);
+  // Fall back to the connection flag on the property slot.
+  const PropSlot* slot = spec->property(attr_name);
   return slot && slot->is_connection();
 }
 
@@ -360,21 +361,10 @@ std::string AttributeEval::GetConnectionPath(const UsdPrim& prim,
   const PrimSpec* spec = prim.GetPrimSpec();
   if (!spec) return "";
 
-  // Try .connect suffix first
-  std::string conn_attr = attr_name + ".connect";
-  const Value* val = spec->property_value(conn_attr);
-  if (val) {
-    const std::string* path = val->as_string();
-    if (path) return *path;
-  }
-
-  // Try attribute directly
-  val = spec->property_value(attr_name);
-  if (val) {
-    const std::string* path = val->as_string();
-    if (path) return *path;
-  }
-
+  // The connection target is stored in the PrimSpec connection map (not as the
+  // attribute's value), keyed by the bare attribute name.
+  const std::vector<Path>* targets = spec->connection(attr_name);
+  if (targets && !targets->empty()) return (*targets)[0].str();
   return "";
 }
 

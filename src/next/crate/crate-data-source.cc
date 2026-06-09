@@ -287,6 +287,13 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       *out = Value::MakeIntArray(std::move(data));
       return true;
     }
+    case CrateTypeId::Vec2f: {
+      if (compressed) return false;
+      std::vector<float> data(static_cast<size_t>(count) * 2);
+      if (!read_raw(data.data(), 2 * sizeof(float))) return false;
+      *out = Value::MakeFloat2Array(std::move(data));
+      return true;
+    }
     case CrateTypeId::Vec3f: {
       if (compressed) return false;
       std::vector<float> data(static_cast<size_t>(count) * 3);

@@ -443,6 +443,26 @@ Value Value::MakeIntArray(std::vector<int32_t>&& data) {
   return v;
 }
 
+Value Value::MakeFloat2Array(const std::vector<float>& data) {
+  Value v;
+  v.type_id_ = TypeId::Float2;
+  v.is_array_ = true;
+  v.array_size_ = static_cast<uint32_t>(data.size() / 2);
+  auto* storage = new FloatArrayStorage{data};
+  std::memcpy(v.storage_, &storage, sizeof(storage));
+  return v;
+}
+
+Value Value::MakeFloat2Array(std::vector<float>&& data) {
+  Value v;
+  v.type_id_ = TypeId::Float2;
+  v.is_array_ = true;
+  v.array_size_ = static_cast<uint32_t>(data.size() / 2);
+  auto* storage = new FloatArrayStorage{std::move(data)};
+  std::memcpy(v.storage_, &storage, sizeof(storage));
+  return v;
+}
+
 Value Value::MakeFloat3Array(const std::vector<float>& data) {
   Value v;
   v.type_id_ = TypeId::Float3;
@@ -566,7 +586,7 @@ void Value::destroy() {
   if (is_array_) {
     void* ptr;
     std::memcpy(&ptr, storage_, sizeof(ptr));
-    if (type_id_ == TypeId::Float || type_id_ == TypeId::Float3) {
+    if (type_id_ == TypeId::Float || type_id_ == TypeId::Float2 || type_id_ == TypeId::Float3) {
       delete static_cast<FloatArrayStorage*>(ptr);
     } else if (type_id_ == TypeId::Int) {
       delete static_cast<IntArrayStorage*>(ptr);
@@ -611,7 +631,7 @@ void Value::copy_from(const Value& other) {
   if (other.is_array_) {
     void* ptr;
     std::memcpy(&ptr, other.storage_, sizeof(ptr));
-    if (other.type_id_ == TypeId::Float || other.type_id_ == TypeId::Float3) {
+    if (other.type_id_ == TypeId::Float || other.type_id_ == TypeId::Float2 || other.type_id_ == TypeId::Float3) {
       auto* new_storage = new FloatArrayStorage{static_cast<FloatArrayStorage*>(ptr)->data};
       std::memcpy(storage_, &new_storage, sizeof(new_storage));
     } else if (other.type_id_ == TypeId::Int) {
@@ -881,7 +901,7 @@ const double* Value::as_matrix4d() const {
 // Array accessors
 const std::vector<float>* Value::as_float_array() const {
   ensure_materialized();
-  if ((type_id_ != TypeId::Float && type_id_ != TypeId::Float3) || !is_array_) return nullptr;
+  if ((type_id_ != TypeId::Float && type_id_ != TypeId::Float2 && type_id_ != TypeId::Float3) || !is_array_) return nullptr;
   void* ptr;
   std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<FloatArrayStorage*>(ptr)->data;
@@ -890,7 +910,7 @@ const std::vector<float>* Value::as_float_array() const {
 std::vector<float>* Value::as_float_array() {
   ensure_materialized();
   dirty_ = true;
-  if ((type_id_ != TypeId::Float && type_id_ != TypeId::Float3) || !is_array_) return nullptr;
+  if ((type_id_ != TypeId::Float && type_id_ != TypeId::Float2 && type_id_ != TypeId::Float3) || !is_array_) return nullptr;
   void* ptr;
   std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<FloatArrayStorage*>(ptr)->data;
@@ -987,7 +1007,7 @@ bool Value::operator==(const Value& other) const {
   if (type_id_ == TypeId::Invalid) return true;
 
   if (is_array_) {
-    if (type_id_ == TypeId::Float || type_id_ == TypeId::Float3) {
+    if (type_id_ == TypeId::Float || type_id_ == TypeId::Float2 || type_id_ == TypeId::Float3) {
       return *as_float_array() == *other.as_float_array();
     } else if (type_id_ == TypeId::Int) {
       return *as_int_array() == *other.as_int_array();
@@ -1038,7 +1058,7 @@ uint64_t Value::hash() const {
 
   if (is_array_) {
     // Hash array contents
-    if (type_id_ == TypeId::Float || type_id_ == TypeId::Float3) {
+    if (type_id_ == TypeId::Float || type_id_ == TypeId::Float2 || type_id_ == TypeId::Float3) {
       const auto* arr = as_float_array();
       if (arr && !arr->empty()) {
         h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
@@ -1080,7 +1100,7 @@ const uint8_t* Value::raw_bytes(size_t* out_size) const {
   if (type_id_ == TypeId::Invalid) return nullptr;
 
   if (is_array_) {
-    if (type_id_ == TypeId::Float || type_id_ == TypeId::Float3) {
+    if (type_id_ == TypeId::Float || type_id_ == TypeId::Float2 || type_id_ == TypeId::Float3) {
       const auto* arr = as_float_array();
       if (arr && !arr->empty()) {
         *out_size = arr->size() * sizeof(float);

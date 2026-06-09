@@ -119,6 +119,10 @@ public:
   static Value MakeIntArray(const std::vector<int32_t>& data);
   static Value MakeIntArray(std::vector<int32_t>&& data);
 
+  /// Create array of float2 from flat data (length must be multiple of 2)
+  static Value MakeFloat2Array(const std::vector<float>& data);
+  static Value MakeFloat2Array(std::vector<float>&& data);
+
   /// Create array of float3 from flat data (length must be multiple of 3)
   static Value MakeFloat3Array(const std::vector<float>& data);
   static Value MakeFloat3Array(std::vector<float>&& data);
