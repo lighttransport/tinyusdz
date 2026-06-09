@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TinyUSDZ — Low-Memory Streaming Renderer</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; height: 100vh; overflow: hidden; font-family: system-ui, sans-serif;
+           background: #14161a; color: #e7e9ee; }
+    #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+    .ui { position: absolute; z-index: 2; background: rgba(20, 22, 27, 0.86);
+          border: 1px solid #2a2e37; border-radius: 10px; padding: 12px 14px;
+          backdrop-filter: blur(6px); font-size: 13px; }
+    #top { top: 12px; left: 12px; max-width: 60ch; }
+    #top h1 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+    #top p { margin: 4px 0; color: #aeb4c0; line-height: 1.4; }
+    #status { margin-top: 8px; color: #9fd0a0; }
+    #controls { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
+    input[type=file] { font-size: 12px; }
+    #mem { top: 12px; right: 12px; min-width: 320px; }
+    #mem h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: #cbd2de; }
+    #mem table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    #mem td { padding: 2px 0; }
+    #mem .phases { margin-top: 10px; border-top: 1px solid #2a2e37; padding-top: 8px; color: #aeb4c0; }
+    #mem .phases b { color: #cbd2de; font-weight: 600; }
+    #mem .target { margin-top: 8px; padding-top: 8px; border-top: 1px solid #2a2e37;
+                   color: #9fd0a0; line-height: 1.4; }
+    .hint { color: #7b818d; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <canvas id="gl"></canvas>
+
+  <div id="top" class="ui">
+    <h1>Low-Memory Streaming USD Renderer</h1>
+    <p>Streams a USD/USDZ into the WASM heap once, keeps textures <b>encoded</b>
+       (decoded per-texture in JS via <code>createImageBitmap</code>, off-heap),
+       uploads geometry through zero-copy heap views straight to GL, then
+       <code>reset()</code>s the WASM scene — the GPU keeps the data, so the WASM
+       working set drops to ~0. Target: peak WASM heap ≈ the input file size.</p>
+    <p class="hint">Drag a <code>.usdz</code> / <code>.usdc</code> / <code>.usda</code>
+       onto the view, or pick a file. Drag to orbit, wheel to zoom.</p>
+    <div id="controls">
+      <input id="file" type="file" accept=".usd,.usda,.usdc,.usdz" />
+    </div>
+    <div id="status">Initializing…</div>
+  </div>
+
+  <div id="mem" class="ui">
+    <h2>Memory</h2>
+    <div id="mem-panel"><span class="hint">Load a file to see memory usage.</span></div>
+  </div>
+
+  <script type="module">
+    import { mountStreamingDemo } from './streaming.js';
+    // Optionally pass { url: '../models/yourscene.usdz' } to auto-load.
+    const params = new URLSearchParams(location.search);
+    mountStreamingDemo({ url: params.get('url') || undefined }).catch((e) => {
+      document.getElementById('status').textContent = 'Init failed: ' + e.message;
+      console.error(e);
+    });
+  </script>
+</body>
+</html>
