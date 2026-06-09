@@ -1050,7 +1050,8 @@ class RenderSceneConverter {
   bool ConvertOpenPBRSurfaceShader(const RenderSceneConverterEnv &env,
                                     const tinyusdz::Path &shader_abs_path,
                                     const tinyusdz::OpenPBRSurface &shader,
-                                    OpenPBRSurfaceShader *openpbr_out);
+                                    OpenPBRSurfaceShader *openpbr_out,
+                                    bool is_materialx = false);
 
   ///
   /// Convert UsdUvTexture to renderer-friendly UVTexture

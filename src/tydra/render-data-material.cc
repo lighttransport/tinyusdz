@@ -1025,12 +1025,19 @@ nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
     // Log this node
     traversal_log += current_shader->info_id + " -> ";
 
-    // Check if this is an ND_image node (color or vector variants)
+    // Check if this is an image node. ND_tiledimage_* are the tiling variants of
+    // ND_image_* (Autodesk standard_surface / many MaterialX libraries author
+    // these); they carry the same `inputs:file`, so treat them identically.
     if (current_shader->info_id == "ND_image_color4" ||
         current_shader->info_id == "ND_image_color3" ||
         current_shader->info_id == "ND_image_vector4" ||
         current_shader->info_id == "ND_image_vector3" ||
-        current_shader->info_id == "ND_image_float") {
+        current_shader->info_id == "ND_image_float" ||
+        current_shader->info_id == "ND_tiledimage_color4" ||
+        current_shader->info_id == "ND_tiledimage_color3" ||
+        current_shader->info_id == "ND_tiledimage_vector4" ||
+        current_shader->info_id == "ND_tiledimage_vector3" ||
+        current_shader->info_id == "ND_tiledimage_float") {
       image_shader = current_shader;
       if (tex_abs_path) {
         *tex_abs_path = current_path;
@@ -1130,7 +1137,7 @@ nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
   }
 
   return nonstd::make_unexpected(
-      fmt::format("No ND_image texture node found (supported: ND_image_color4/color3/vector4/vector3/float). {}\n", traversal_log));
+      fmt::format("No image texture node found (supported: ND_image_* / ND_tiledimage_* color4/color3/vector4/vector3/float). {}\n", traversal_log));
 }
 
 }  // namespace
@@ -2052,8 +2059,12 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     // Check if this is a MaterialX connection to a NodeGraph
     if (is_materialx && param.get_connections().size() == 1) {
       const Path &conn_path = param.get_connections()[0];
-      if (conn_path.prim_part().contains("/NodeGraphs")) {
-        // This is a MaterialX NodeGraph connection, traverse to find texture
+      // Attempt MaterialX texture/graph resolution for ANY single connection.
+      // GetConnectedMtlxTexture resolves the connected prim via stage lookup, so
+      // it handles NodeGraph outputs of any name (e.g. `NG_brass1`), not just
+      // graphs literally named "/NodeGraphs".
+      {
+        // Traverse the MaterialX node graph to find a texture
         const Shader *image_shader{nullptr};
         Path texPath;
         std::string st_varname;
@@ -2239,9 +2250,52 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
               return true;
             }
           }
-          PUSH_ERROR_AND_RETURN(fmt::format(
-              "Failed to find MaterialX texture for {}: {}",
+          // Interface passthrough: the connection may target a Material /
+          // Shader / NodeGraph interface input that holds a constant value
+          // (e.g. `Material.inputs:metalness = 1`, common in flattened
+          // MaterialX). Follow `inputs:` connections a few hops and read the
+          // first constant value found into the param.
+          {
+            Path cur = conn_path;
+            for (int hop = 0; hop < 8; hop++) {
+              const Prim *cp{nullptr};
+              std::string ce;
+              if (!env.stage.find_prim_at_path(Path(cur.prim_part(), ""), cp,
+                                               &ce) ||
+                  !cp) {
+                break;
+              }
+              const std::map<std::string, Property> *pm = nullptr;
+              if (const Material *mp = cp->as<Material>()) {
+                pm = &mp->props;
+              } else if (const Shader *sp = cp->as<Shader>()) {
+                const ShaderNode *sn = sp->value.as<ShaderNode>();
+                pm = (sn && !sn->props.empty()) ? &sn->props : &sp->props;
+              } else if (const NodeGraph *ngp = cp->as<NodeGraph>()) {
+                pm = &ngp->props;
+              }
+              if (!pm) break;
+              auto pit = pm->find(cur.prop_part());
+              if (pit == pm->end() || !pit->second.is_attribute()) break;
+              const Attribute &ia = pit->second.get_attribute();
+              if (ia.has_connections() && !ia.connections().empty()) {
+                cur = ia.connections()[0];  // forward one hop
+                continue;
+              }
+              if (auto tv = ia.get_value<T>()) {
+                dst_param.set_value(*tv);
+              }
+              break;
+            }
+          }
+          // MaterialX input we couldn't resolve to a texture: keep whatever
+          // value we have (interface value above, or the authored fallback).
+          // Do NOT fall through to the UsdUVTexture path — MaterialX does not
+          // use UsdUVTexture and that path hard-errors on interface connections.
+          DCOUT(fmt::format(
+              "MaterialX: no texture for {} ({}); using value/fallback",
               param_name, mtlx_result.error()));
+          return true;
         }
       }
     }
@@ -2254,6 +2308,15 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
         GetConnectedUVTexture(env.stage, param, &texPath, &ptex, &pshader);
 
     if (!result) {
+      if (is_materialx) {
+        // MaterialX connection we could not resolve to a texture (e.g. it
+        // targets a Material interface input/constant or an unmodeled node).
+        // Keep the param's authored fallback value instead of failing the
+        // whole material conversion.
+        DCOUT(fmt::format("MaterialX: keeping fallback value for {} ({})",
+                          param_name, result.error()));
+        return true;
+      }
       PUSH_ERROR_AND_RETURN(result.error());
     }
 
@@ -2382,23 +2445,29 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
 
 bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
     const RenderSceneConverterEnv &env, const Path &shader_abs_path,
-    const OpenPBRSurface &shader, OpenPBRSurfaceShader *rshader_out) {
+    const OpenPBRSurface &shader, OpenPBRSurfaceShader *rshader_out,
+    bool is_materialx) {
   if (!rshader_out) {
     PUSH_ERROR_AND_RETURN("rshader_out argument is nullptr.");
   }
 
   OpenPBRSurfaceShader rshader;
 
-  // Macros to reduce repetitive ConvertPreviewSurfaceShaderParam calls.
+  // Macros to reduce repetitive ConvertPreviewSurfaceShaderParam calls. When
+  // this shader came from a MaterialX network (standard_surface / OpenPBR), EVERY
+  // input is MaterialX-style (connects to NodeGraph outputs or Material interface
+  // inputs), so all params must use the MaterialX resolution path — not just the
+  // historically-tagged subset. The `_MTLX` variant is kept for source clarity
+  // but resolves to the same is_materialx flag.
 #define CONVERT_OPENPBR_PARAM(field, name) \
   if (!ConvertPreviewSurfaceShaderParam( \
-          env, shader_abs_path, shader.field, name, rshader.field)) { \
+          env, shader_abs_path, shader.field, name, rshader.field, is_materialx)) { \
     PushWarn(fmt::format("Failed to convert " name " parameter for shader: {}", shader_abs_path.prim_part())); \
     return false; \
   }
 #define CONVERT_OPENPBR_PARAM_MTLX(field, name) \
   if (!ConvertPreviewSurfaceShaderParam( \
-          env, shader_abs_path, shader.field, name, rshader.field, true)) { \
+          env, shader_abs_path, shader.field, name, rshader.field, is_materialx)) { \
     PushWarn(fmt::format("Failed to convert " name " parameter for shader: {}", shader_abs_path.prim_part())); \
     return false; \
   }
@@ -2951,7 +3020,7 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
 
       // Convert to OpenPBRSurfaceShader
       OpenPBRSurfaceShader openpbr_shader;
-      if (!ConvertOpenPBRSurfaceShader(env, surfacePath, converted_openpbr, &openpbr_shader)) {
+      if (!ConvertOpenPBRSurfaceShader(env, surfacePath, converted_openpbr, &openpbr_shader, /* is_materialx */ true)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "Failed to convert MtlxOpenPBRSurface : {}", surfacePath.prim_part()));
       }
@@ -2979,7 +3048,7 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
           ConvertMtlxStandardSurfaceToOpenPBRSurface(*mtlx_standard);
 
       OpenPBRSurfaceShader openpbr_shader;
-      if (!ConvertOpenPBRSurfaceShader(env, surfacePath, converted_openpbr, &openpbr_shader)) {
+      if (!ConvertOpenPBRSurfaceShader(env, surfacePath, converted_openpbr, &openpbr_shader, /* is_materialx */ true)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "Failed to convert MtlxAutodeskStandardSurface : {}", surfacePath.prim_part()));
       }
@@ -3142,7 +3211,8 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
             OpenPBRSurfaceShader openpbr_shader;
             if (!ConvertOpenPBRSurfaceShader(env, mtlxSurfacePath,
                                              converted_openpbr,
-                                             &openpbr_shader)) {
+                                             &openpbr_shader,
+                                             /* is_materialx */ true)) {
               PUSH_ERROR_AND_RETURN(fmt::format(
                   "Failed to convert MtlxOpenPBRSurface : {}",
                   mtlxSurfacePath.prim_part()));

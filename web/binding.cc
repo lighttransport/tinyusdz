@@ -851,6 +851,42 @@ class JSUint8ArrayOutputStream
 
 struct EMAssetResolutionResolver {
 
+  // Lexically collapse '.' and '<seg>/..' in a relative path, preserving any
+  // leading '..' (those are resolved against a base directory elsewhere). Pure
+  // string arithmetic — no filesystem access (FILESYSTEM=0 in this build).
+  static std::string LexicalNormalizePath(const std::string &path) {
+    std::vector<std::string> parts;
+    size_t i = 0;
+    while (i <= path.size()) {
+      size_t j = path.find('/', i);
+      std::string seg =
+          path.substr(i, j == std::string::npos ? std::string::npos : j - i);
+      if (!seg.empty() && seg != ".") {
+        if (seg == "..") {
+          if (!parts.empty() && parts.back() != "..") {
+            parts.pop_back();
+          } else {
+            parts.push_back("..");
+          }
+        } else {
+          parts.push_back(std::move(seg));
+        }
+      }
+      if (j == std::string::npos) {
+        break;
+      }
+      i = j + 1;
+    }
+    std::string out;
+    for (size_t k = 0; k < parts.size(); k++) {
+      if (k) {
+        out.push_back('/');
+      }
+      out += parts[k];
+    }
+    return out;
+  }
+
   static int Resolve(const char *asset_name,
                      const std::vector<std::string> &search_paths,
                      std::string *resolved_asset_name, std::string *err,
@@ -908,6 +944,45 @@ struct EMAssetResolutionResolver {
           key.compare(key.size() - suffix.size(), suffix.size(), suffix) == 0) {
         (*resolved_asset_name) = key;
         return 0;
+      }
+    }
+
+    // 4) Resolve '..'/'.' nicely: collapse the request (and each
+    //    "<search_path>/<name>") lexically, then retry the cache. Lets a
+    //    parent-relative ref such as `../common/foo.usd` match a cached key that
+    //    differs only by collapsible segments, regardless of how composition
+    //    pushed the working directory.
+    {
+      const std::string norm_name = LexicalNormalizePath(name);
+      if (norm_name != name && p->has(norm_name)) {
+        (*resolved_asset_name) = norm_name;
+        return 0;
+      }
+      for (const std::string &sp : search_paths) {
+        if (sp.empty() || sp == "." || sp == "./") {
+          continue;
+        }
+        std::string base = sp;
+        while (!base.empty() && base.back() == '/') {
+          base.pop_back();
+        }
+        const std::string cand = LexicalNormalizePath(base + "/" + name);
+        if (p->has(cand)) {
+          (*resolved_asset_name) = cand;
+          return 0;
+        }
+      }
+      if (!norm_name.empty() && norm_name != name) {
+        const std::string nsuffix = "/" + norm_name;
+        for (const auto &kv : p->cache) {
+          const std::string &key = kv.first;
+          if (key.size() >= nsuffix.size() &&
+              key.compare(key.size() - nsuffix.size(), nsuffix.size(),
+                          nsuffix) == 0) {
+            (*resolved_asset_name) = key;
+            return 0;
+          }
+        }
       }
     }
 
@@ -5334,6 +5409,19 @@ class TinyUSDZLoaderNative {
     return combineUDIMTiles_;
   }
 
+  // Allow parent-directory ('..') segments in composition asset paths
+  // (references/payloads/sublayers). Resolution of the surviving '..' is
+  // delegated to the (sandboxed) EM asset resolver, so this is safe in the
+  // browser, where USD's legitimate `../foo.usd` references must work. Default
+  // on for the WASM build (FILESYSTEM=0 — there is no real filesystem to escape).
+  void setAllowParentRelativeAssetPaths(bool enabled) {
+    allow_parent_relative_asset_paths_ = enabled;
+  }
+
+  bool getAllowParentRelativeAssetPaths() const {
+    return allow_parent_relative_asset_paths_;
+  }
+
   // MMap zero-copy configuration
   void setMMapZeroCopy(bool enabled) {
     mmap_zero_copy_ = enabled;
@@ -5463,7 +5551,9 @@ class TinyUSDZLoaderNative {
       layer_ = std::move(composed_layer_);
     }
 
-    if (!tinyusdz::CompositeSublayers(resolver, layer_, &composed_layer_, &warn_, &error_)) {
+    tinyusdz::SublayersCompositionOptions sublayer_options;
+    sublayer_options.allow_parent_relative_paths = allow_parent_relative_asset_paths_;
+    if (!tinyusdz::CompositeSublayers(resolver, layer_, &composed_layer_, &warn_, &error_, sublayer_options)) {
       std::cerr << "Failed to composite subLayers: \n";
       if (composited_) {
         // make 'layer_' and 'composed_layer_' invalid
@@ -5498,7 +5588,9 @@ class TinyUSDZLoaderNative {
       layer_ = std::move(composed_layer_);
     }
 
-    if (!tinyusdz::CompositeReferences(resolver, layer_, &composed_layer_, &warn_, &error_)) {
+    tinyusdz::ReferencesCompositionOptions references_options;
+    references_options.allow_parent_relative_paths = allow_parent_relative_asset_paths_;
+    if (!tinyusdz::CompositeReferences(resolver, layer_, &composed_layer_, &warn_, &error_, references_options)) {
       std::cerr << "Failed to composite references: \n";
       if (composited_) {
         // make 'layer_' and 'composed_layer_' invalid
@@ -5532,7 +5624,9 @@ class TinyUSDZLoaderNative {
       layer_ = std::move(composed_layer_);
     }
 
-    if (!tinyusdz::CompositePayload(resolver, layer_, &composed_layer_, &warn_, &error_)) {
+    tinyusdz::PayloadCompositionOptions payload_options;
+    payload_options.allow_parent_relative_paths = allow_parent_relative_asset_paths_;
+    if (!tinyusdz::CompositePayload(resolver, layer_, &composed_layer_, &warn_, &error_, payload_options)) {
       std::cerr << "Failed to composite payload: \n";
       if (composited_) {
         // make 'layer_' and 'composed_layer_' invalid
@@ -5972,12 +6066,11 @@ class TinyUSDZLoaderNative {
   }
 
   emscripten::val extractUnresolvedTexturePaths() const {
-    emscripten::val val;
+    // Must be an Array: a default-constructed val is `undefined`, on which
+    // `.push()` throws. Call this AFTER layerToRenderScene()/loadFromBinary().
+    emscripten::val val = emscripten::val::array();
 
-    // Assume USD is converted to RenderScene before calling this function.
-    
     for (const tinyusdz::tydra::TextureImage &texImg : render_scene_.images) {
-      // 
       if (texImg.buffer_id == -1) {
         std::string path = texImg.asset_identifier;
         val.call<void>("push", path);
@@ -7467,6 +7560,11 @@ class TinyUSDZLoaderNative {
   bool enableComposition_{false};
   bool loadTextureInNative_{false}; // true: Let JavaScript to decode texture image.
 
+  // Allow '..' parent-dir segments in composition asset paths. Default on for
+  // WASM: the EM resolver is a sandboxed cache (FILESYSTEM=0), so there is no
+  // real directory to traverse out of, and USD `../foo.usd` refs are common.
+  bool allow_parent_relative_asset_paths_{true};
+
   // UDIM: when false, keep UDIM tiles separate (sparse tydra::UDIMTexture)
   // for editing tiles in the web RenderScene. When true (default), combine
   // tiles into a single atlas texture.
@@ -8755,6 +8853,10 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::setCombineUDIMTiles)
       .function("getCombineUDIMTiles",
                 &TinyUSDZLoaderNative::getCombineUDIMTiles)
+      .function("setAllowParentRelativeAssetPaths",
+                &TinyUSDZLoaderNative::setAllowParentRelativeAssetPaths)
+      .function("getAllowParentRelativeAssetPaths",
+                &TinyUSDZLoaderNative::getAllowParentRelativeAssetPaths)
       .function("getDefaultRootNodeId",
                 &TinyUSDZLoaderNative::getDefaultRootNodeId)
       .function("getRootNode", &TinyUSDZLoaderNative::getRootNode)
