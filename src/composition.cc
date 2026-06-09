@@ -515,16 +515,21 @@ bool LoadAsset(AssetResolutionResolver &resolver,
           fmt::format("Failed to open `{}` as Layer: {}", asset_path, _err));
     }
   } else if (IsMtlxFileFormat(asset_path)) {
-    // primPath must be '</MaterialX>'
-    if (primPath.prim_part() != "/MaterialX") {
-      PUSH_ERROR_AND_RETURN("Prim path must be </MaterialX>, but got: " +
-                            primPath.prim_part());
+    // A MaterialX reference targets the converted `/MaterialX` prim or one of
+    // its descendants — e.g. `@mat.mtlx@</MaterialX/Materials>` (common, as in
+    // usd-wg OpenChessSet looks). Accept /MaterialX or any prim under it; the
+    // sub-prim is extracted by find_primspec_at() below.
+    const std::string &mtlx_prim = primPath.prim_part();
+    if (mtlx_prim != "/MaterialX" && mtlx_prim.rfind("/MaterialX/", 0) != 0) {
+      PUSH_ERROR_AND_RETURN(
+          "Prim path for a MaterialX reference must be </MaterialX> or a "
+          "descendant, but got: " + mtlx_prim);
     }
 
     PrimSpec ps;
     if (!LoadMaterialXFromAsset(asset, asset_path, ps, &_warn, &_err)) {
       PUSH_ERROR_AND_RETURN(
-          fmt::format("Failed to open mtlx asset `{}`", asset_path));
+          fmt::format("Failed to open mtlx asset `{}`: {}", asset_path, _err));
     }
 
     ps.name() = "MaterialX";
@@ -555,7 +560,29 @@ bool LoadAsset(AssetResolutionResolver &resolver,
 
   DCOUT("layer = " << print_layer(layer, 0));
 
-  // TODO: Recursively resolve `references`
+  // If the loaded asset aggregates its prims through its OWN subLayers (e.g. a
+  // payload/reference target that is just a `subLayers` list — as in usd-wg
+  // OpenChessSet's *_payload.usd / *.usd), compose those subLayers here so the
+  // target's prims are present before the "no prims" check below (matching
+  // OpenUSD). Sublayers are resolved relative to this asset's directory.
+  if (IsUSDFileFormat(asset_path) && !layer.metas().subLayers.empty()) {
+    layer.set_asset_resolution_state(
+        base_dir.empty() ? resolver.current_working_path() : base_dir,
+        resolver.search_paths());
+
+    Layer sublayer_composited;
+    SublayersCompositionOptions subopts;
+    subopts.allow_parent_relative_paths = allow_parent_relative_paths;
+    subopts.error_when_asset_not_found = error_when_asset_not_found;
+    subopts.error_when_unsupported_fileformat = error_when_unsupported_fileformat;
+    subopts.fileformats = fileformats;
+    if (!CompositeSublayers(resolver, layer, &sublayer_composited, warn, err,
+                            subopts)) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Failed to composite subLayers of `{}`", asset_path));
+    }
+    layer = std::move(sublayer_composited);
+  }
 
   if (_warn.size()) {
     if (warn) {
@@ -596,14 +623,25 @@ bool LoadAsset(AssetResolutionResolver &resolver,
       }
     }
 
-    if (!layer.find_primspec_at(Path(default_prim, ""), &src_ps, err)) {
+    std::string find_err;
+    if (!layer.find_primspec_at(Path(default_prim, ""), &src_ps, &find_err) ||
+        !src_ps) {
+      if (primPath.is_valid()) {
+        // A reference/payload that targets a SPECIFIC prim which does not exist
+        // in the referenced layer contributes no opinions — valid in USD
+        // (OpenUSD does not fail). Return a null root so the caller skips this
+        // arc instead of aborting the whole composition.
+        if (warn) {
+          (*warn) += "Referenced prim <" + default_prim + "> not found in `" +
+                     asset_path + "`; no opinions (skipped).\n";
+        }
+        (*dst_primspec_root) = nullptr;
+        (*dst_layer) = std::move(layer);
+        return true;
+      }
       PUSH_ERROR_AND_RETURN(fmt::format(
           "Failed to find PrimSpec `{}` in layer `{}`(resolved path: `{}`)",
           default_prim, asset_path, resolved_path));
-    }
-
-    if (!src_ps) {
-      PUSH_ERROR_AND_RETURN("Internal error: PrimSpec pointer is nullptr.");
     }
 
     if (!PropagateAssetResolverState(*const_cast<PrimSpec *>(src_ps),
@@ -1044,10 +1082,18 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
   std::vector<std::string> search_paths = primspec.get_asset_search_paths();
 
   if (primspec.metas().references) {
+    // IMPORTANT: copy the reference listops before iterating. The loop body
+    // merges referenced content INTO `primspec`, which can append to
+    // `primspec.metas().references` (implied/nested arcs) and REALLOCATE the
+    // underlying vector — iterating it live then reads freed memory (observed as
+    // a garbage asset/prim path on the 2nd+ element of a `references = [a, b]`
+    // list). Iterate a stable copy instead (mirrors CompositeInheritsRec).
+    const auto references_ops = primspec.metas().references.value();
+
     // Process all listops in order (supports multiple listops per arc)
     // Pre-pass: collect deleted reference targets so we can skip them.
     std::set<std::pair<std::string, std::string>> ref_deleted;
-    for (const auto &ref_op : primspec.metas().references.value()) {
+    for (const auto &ref_op : references_ops) {
       if (ref_op.first == ListEditQual::Delete) {
         for (const auto &r : ref_op.second) {
           ref_deleted.insert({r.asset_path.GetAssetPath(), r.prim_path.prim_part()});
@@ -1055,7 +1101,7 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
       }
     }
 
-    for (const auto &ref_op : primspec.metas().references.value()) {
+    for (const auto &ref_op : references_ops) {
       const ListEditQual &qual = ref_op.first;
       const auto &refecences = ref_op.second;
 
@@ -1072,10 +1118,20 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
 
           if (reference.asset_path.GetAssetPath().empty()) {
             if (reference.prim_path.is_absolute_path()) {
-              // Inherit-like operation.
-
-              if (!in_layer.find_primspec_at(reference.prim_path, &src_ps, err)) {
-                return false;
+              // Internal reference (`references = </some/Prim>`). A target that
+              // is not defined in this layer contributes no opinions — valid in
+              // USD (OpenUSD does not fail). Skip it (src_ps stays null → the
+              // `if (!src_ps) continue;` below) instead of aborting. Use a local
+              // error string so a benign miss does not poison the shared `err`.
+              std::string find_err;
+              if (!in_layer.find_primspec_at(reference.prim_path, &src_ps,
+                                             &find_err)) {
+                if (warn) {
+                  (*warn) += "Internal reference target <" +
+                             reference.prim_path.prim_part() +
+                             "> not found in this layer; skipped.\n";
+                }
+                src_ps = nullptr;
               }
 
             } else {
@@ -1180,10 +1236,20 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
 
           if (reference.asset_path.GetAssetPath().empty()) {
             if (reference.prim_path.is_absolute_path()) {
-              // Inherit-like operation.
-
-              if (!in_layer.find_primspec_at(reference.prim_path, &src_ps, err)) {
-                return false;
+              // Internal reference (`references = </some/Prim>`). A target that
+              // is not defined in this layer contributes no opinions — valid in
+              // USD (OpenUSD does not fail). Skip it (src_ps stays null → the
+              // `if (!src_ps) continue;` below) instead of aborting. Use a local
+              // error string so a benign miss does not poison the shared `err`.
+              std::string find_err;
+              if (!in_layer.find_primspec_at(reference.prim_path, &src_ps,
+                                             &find_err)) {
+                if (warn) {
+                  (*warn) += "Internal reference target <" +
+                             reference.prim_path.prim_part() +
+                             "> not found in this layer; skipped.\n";
+                }
+                src_ps = nullptr;
               }
 
             } else {
@@ -1292,9 +1358,15 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
   std::vector<std::string> search_paths = primspec.get_asset_search_paths();
 
   if (primspec.metas().payload) {
+    // Copy the payload listops before iterating: the loop body merges loaded
+    // content INTO `primspec`, which can reallocate `primspec.metas().payload`
+    // and invalidate a live iterator (use-after-free). See the matching note in
+    // CompositeReferencesRec.
+    const auto payload_ops = primspec.metas().payload.value();
+
     // Pre-pass: collect deleted payload targets so we can skip them.
     std::set<std::pair<std::string, std::string>> pl_deleted;
-    for (const auto &payload_op : primspec.metas().payload.value()) {
+    for (const auto &payload_op : payload_ops) {
       if (payload_op.first == ListEditQual::Delete) {
         for (const auto &p : payload_op.second) {
           pl_deleted.insert({p.asset_path.GetAssetPath(), p.prim_path.prim_part()});
@@ -1302,7 +1374,7 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
       }
     }
 
-    for (const auto &payload_op : primspec.metas().payload.value()) {
+    for (const auto &payload_op : payload_ops) {
       const ListEditQual &qual = payload_op.first;
       const auto &payloads = payload_op.second;
 
@@ -1675,19 +1747,20 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
 
       const PrimSpec *src_ps{nullptr};
 
-      if (!layer.find_primspec_at(inheritPath, &src_ps, err)) {
-        visited.erase(key);
-        if (err) {
-          (*err) += "Inherit failed: Path <" +
-                    inheritPath.prim_part() + "> not found or is invalid.\n";
+      // Inheriting from a class that has no local opinions (or is not defined in
+      // this layer) is valid in USD: the arc contributes nothing. Treat a
+      // missing target as a no-op (matches OpenUSD) rather than failing the
+      // whole composition. Use a local error string so a benign miss does not
+      // poison the shared `err`.
+      std::string find_err;
+      if (!layer.find_primspec_at(inheritPath, &src_ps, &find_err) || !src_ps) {
+        if (warn) {
+          (*warn) += "Inherit target <" + inheritPath.prim_part() +
+                     "> not found in this layer; no opinions to inherit "
+                     "(skipped).\n";
         }
-        return false;
-      }
-
-      if (!src_ps) {
         visited.erase(key);
-        PUSH_ERROR_AND_RETURN(
-            "Internal error: PrimSpec is nullptr in CompositeInheritsRec.\n");
+        continue;
       }
 
       if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
@@ -1699,6 +1772,23 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
 
     // remove `inherits` metadataum after processing.
     primspec.metas().inherits.reset();
+
+    // Applying the inherit(s) above can copy in child PrimSpecs that themselves
+    // carry `inherits` (multi-level classes — a class whose children inherit
+    // further classes). Those children are introduced AFTER the children-first
+    // traversal at the top of this function, so resolve them now, within THIS
+    // pass. Otherwise the prim keeps reporting unresolved inherits and tusdcat's
+    // outer loop re-runs CompositeInherits up to kMaxIteration (128) times,
+    // re-copying large data every pass — the runaway behind oom.md's
+    // teapotScene_animCycle (1644 vs OpenUSD's 24 inherit refs). `visited`
+    // (erased above) still guards genuine cycles within each freshly-resolved
+    // chain, and once a class is applied its copy's `inherits` is reset, so
+    // acyclic multi-level chains terminate.
+    for (auto &child : primspec.children()) {
+      if (!CompositeInheritsRec(depth + 1, layer, child, warn, err, visited)) {
+        return false;
+      }
+    }
   }
 
   // AOUSD Core Spec 10.3.2.3: Implied inherits.
@@ -2336,8 +2426,14 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
 
 bool OverridePrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
                       std::string *err) {
+  // NOTE: composition merges (references/payloads/inherits) legitimately
+  // override opinions from `def` or `class` source prims, not only from `over`.
+  // Overriding their opinions onto `dst` is valid, so this is a debug note, not
+  // an error — emitting an error here poisons `err` and fails the whole arc
+  // (e.g. usd-wg OpenChessSet inherits from a `class`).
   if (src.specifier() != Specifier::Over) {
-    PUSH_ERROR("src PrimSpec must be qualified with `over` specifier.\n");
+    DCOUT("OverridePrimSpec: src specifier is "
+          << to_string(src.specifier()) << " (not `over`); proceeding.");
   }
 
   return detail::OverridePrimSpecRec(0, dst, src, warn, err);
