@@ -28,6 +28,7 @@ namespace usdc {
 nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
     const ListOp<value::token> &arg, bool ignore_unknown, std::string &warn) {
   APISchemas schemas;
+  (void)warn;  // unknown-API-schema preservation is a debug note, not a warning
 
   // Resolve a list of schema tokens into the resolved view
   // (schemas.names/unknownSchemas for additive ops, deleted* for delete) and
@@ -61,7 +62,8 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
               schemas.unknownSchemas.end());
         } else {
           schemas.unknownSchemas.push_back(entry);
-          warn += "Preserving unknown API schema: " + item.str() + "\n";
+          // Preserved (round-tripped) intentionally; not a warning (OpenUSD is silent).
+          DCOUT("Preserving unknown API schema: " << item.str());
         }
       } else {
         return nonstd::make_unexpected("Invalid or Unsupported API schema: " +

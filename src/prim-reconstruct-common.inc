@@ -1262,7 +1262,7 @@ bool ParseTimeSampledEnumProperty(
     const Attribute &attr = __prop.second.get_attribute();                       \
     if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) && \
         __prop.second.is_attribute() && __prop.second.is_empty()) {              \
-      PUSH_WARN("No value assigned to `" << __name << "` token attribute. Set default token value."); \
+      DCOUT("No value assigned to `" << __name << "` token attribute. Set default token value."); \
       __target.metas() = std::move(__prop.second.attribute().metas());           \
       __table.insert(__name);                                                    \
       continue;                                                                  \
@@ -1296,7 +1296,7 @@ bool ParseTimeSampledEnumProperty(
       const Attribute &attr = __prop.second.get_attribute();                                            \
       if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) &&          \
           __prop.second.is_attribute() && __prop.second.is_empty()) {                                   \
-        PUSH_WARN("No value assigned to `" << __name << "` token attribute. Set default token value."); \
+        DCOUT("No value assigned to `" << __name << "` token attribute. Set default token value."); \
         __target.metas() = std::move(__prop.second.attribute().metas());                                \
         __table.insert(__name);                                                                         \
       } else {                                                                                          \
