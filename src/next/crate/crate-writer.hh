@@ -9,6 +9,7 @@
 #include "crate-format.hh"
 #include "../layer/layer.hh"
 #include "../stage/stage.hh"
+#include <functional>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -16,6 +17,10 @@
 
 namespace tinyusdz {
 namespace next {
+
+/// Output sink for streaming crate writes: receives the file bytes in order, in
+/// chunks. Returns false to abort the write. See WriteLayerToSink().
+using CrateWriteSink = std::function<bool(const uint8_t* data, size_t size)>;
 
 /// Options for crate writing
 struct CrateWriteOptions {
@@ -35,6 +40,12 @@ struct CrateWriteOptions {
 
   /// Maximum inline value size (bytes)
   size_t max_inline_size = 8;
+
+  /// Stream the output to a sink instead of materializing the whole crate in a
+  /// single buffer. Only the (small) structural sections are staged in memory;
+  /// the (large) VALUE section is streamed block-by-block straight from the
+  /// retained source buffer. Used by WriteLayerToSink(); see that method.
+  bool streaming = false;
 };
 
 /// Result of crate write operation
@@ -75,6 +86,14 @@ public:
 
   /// Write Layer to memory buffer
   CrateWriteResult WriteLayerToMemory(std::vector<uint8_t>& buffer, const Layer& layer);
+
+  /// Write Layer to a streaming sink. The crate is emitted in file order
+  /// (bootstrap, VALUE section, structural sections, TOC) without ever holding
+  /// the full output in memory: peak working set is the (small) structural
+  /// sections plus the retained source buffer, with VALUE bytes streamed
+  /// straight from their source. `sink` receives ordered byte chunks and
+  /// returns false to abort. Output is byte-identical to WriteLayerToMemory.
+  CrateWriteResult WriteLayerToSink(const CrateWriteSink& sink, const Layer& layer);
 
 private:
   class Impl;
