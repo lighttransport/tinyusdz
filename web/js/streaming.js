@@ -27,10 +27,9 @@
 //     crate (textures stay in JS) and the C++ RenderStream binding loads it over
 //     the next-pipeline LAZY crate, materializing ONE mesh's geometry at a time.
 //     Peak WASM heap ~= crate size (≈ input) — e.g. geometry-scene 264 MB crate ->
-//     ~335 MB peak (1.27x), vs the eager path's ~5-10x. Renders geometry +
-//     per-material PBR params. Texture/UV support in this path is pending
-//     next-reader Float2-array + texture-connection completion, so for textured
-//     output use the eager path below.
+//     ~335 MB peak (1.27x), vs the eager path's ~5-10x. Renders geometry + UVs +
+//     textured UsdPreviewSurface / MaterialX PBR; textures are decoded in JS from
+//     the archive (off the WASM heap) and uploaded to the GPU.
 //   - loadBytes(): the eager path. loadFromBinary() builds the whole typed Stage
 //     + RenderScene at once (transient peak ~5-10x input; emscripten never
 //     returns grown heap to the OS), but supports textures + full materials.
@@ -420,15 +419,19 @@ export class StreamingUSDRenderer {
 
     // Extract the root crate; textures stay in JS, never entering the WASM heap.
     let crate = u8;
+    let texEntries = new Map(); // normalized asset path -> encoded bytes (Uint8Array)
     if (/\.usdz$/i.test(filename)) {
       let entries;
       try { entries = parseUSDZEntries(u8); } catch (_) { return this.loadBytes(u8, filename); }
       const root = entries.find((e) => /\.usdc$/i.test(e.name));
       if (!root) return this.loadBytes(u8, filename); // usda root etc.
       crate = root.data;
+      for (const e of entries) texEntries.set(this._normTexPath(e.name), e.data);
     } else if (!/\.usdc$/i.test(filename)) {
       return this.loadBytes(u8, filename); // raw .usda: no crate to stream
     }
+    this._texEntries = texEntries;
+    this._texCache = new Map(); // normalized path -> GL texture
 
     const mem = { input: u8.length, crate: crate.length, phases: [], incremental: true };
     const snap = (label) => { mem.phases.push({ label, heapReserved: this.heapBytes() }); this._emitMemory(); };
@@ -462,6 +465,11 @@ export class StreamingUSDRenderer {
     }
     snap('WASM render scene freed (end)');
 
+    // Resolve textures from the JS-held archive (off the WASM heap): decode each
+    // unique referenced image once via createImageBitmap and bind to materials.
+    await this._resolveStreamTextures();
+    const textured = this.drawables.reduce((a, d) => a + (d.material.baseMap ? 1 : 0), 0);
+
     this._frameCamera();
     mem.peakReserved = Math.max(...mem.phases.map((p) => p.heapReserved));
     mem.summary = {
@@ -473,7 +481,55 @@ export class StreamingUSDRenderer {
     };
     this._lastMemory = mem;
     this._emitMemory();
-    return { meshes: this.drawables.length, textures: 0, materials: this.drawables.length, memory: mem };
+    return { meshes: this.drawables.length, textures: this._texCache.size, materials: this.drawables.length, memory: mem };
+  }
+
+  _normTexPath(p) { return String(p || '').replace(/^[./]+/, ''); }
+
+  // Decode each referenced archive texture once (createImageBitmap, off the WASM
+  // heap) and bind to the materials that use it. Runs after geometry upload, so
+  // it does not hold up the zero-copy mesh scratch.
+  async _resolveStreamTextures() {
+    if (!this._texEntries || !this._texEntries.size) return;
+    const get = async (path, srgb) => {
+      if (!path) return null;
+      const key = this._normTexPath(path);
+      if (this._texCache.has(key)) return this._texCache.get(key);
+      let bytes = this._texEntries.get(key);
+      if (!bytes) { // suffix match fallback
+        for (const [k, v] of this._texEntries) { if (k.endsWith('/' + key) || key.endsWith('/' + k)) { bytes = v; break; } }
+      }
+      const tex = bytes ? await this._decodeArchiveTexture(bytes, srgb) : null;
+      this._texCache.set(key, tex);
+      return tex;
+    };
+    for (const d of this.drawables) {
+      const t = d.material._tex; if (!t) continue;
+      d.material.baseMap = await get(t.base, true);
+      d.material.normalMap = await get(t.normal, false);
+      d.material.mrMap = await get(t.mr, false);
+      d.material.aoMap = await get(t.ao, false);
+      d.material.emissiveMap = await get(t.emissive, true);
+    }
+  }
+
+  async _decodeArchiveTexture(bytes, srgb) {
+    const gl = this.gl;
+    let bmp;
+    try { bmp = await createImageBitmap(new Blob([bytes.slice()]), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' }); }
+    catch (_) { return null; }
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true); // USD st origin is bottom-left
+    gl.texImage2D(gl.TEXTURE_2D, 0, srgb ? gl.SRGB8_ALPHA8 : gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, bmp);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    if (bmp.close) bmp.close();
+    return tex;
   }
 
   // Build a drawable from a RenderStream getMesh() descriptor. The descriptors
@@ -512,6 +568,13 @@ export class StreamingUSDRenderer {
       occlusion: typeof mt.occlusion === 'number' ? mt.occlusion : 1,
       alphaCutoff: typeof mt.opacityThreshold === 'number' && mt.opacityThreshold > 0 ? mt.opacityThreshold : -1,
       baseMap: null, normalMap: null, mrMap: null, aoMap: null, emissiveMap: null,
+      // Texture asset paths, resolved to GL textures from the JS archive after
+      // the geometry loop (see _resolveStreamTextures).
+      _tex: {
+        base: mt.baseColorTexture, normal: mt.normalTexture,
+        mr: mt.roughnessTexture || mt.metallicTexture,
+        ao: mt.occlusionTexture, emissive: mt.emissiveTexture,
+      },
     };
     return { vao, count, indexType: gl.UNSIGNED_INT, mode, material, doubleSided: false };
   }
@@ -911,7 +974,9 @@ export class StreamingUSDRenderer {
     const gl = this.gl;
     for (const d of this.drawables) { try { gl.deleteVertexArray(d.vao); } catch (_) {} }
     for (const t of this.glTextures) { if (t) { try { gl.deleteTexture(t); } catch (_) {} } }
+    if (this._texCache) { for (const t of this._texCache.values()) { if (t) { try { gl.deleteTexture(t); } catch (_) {} } } }
     this.drawables = []; this.glTextures = []; this.bbox = null;
+    this._texCache = null; this._texEntries = null;
     if (this.usd) { try { this.usd.reset(); this.usd.delete(); } catch (_) {} this.usd = null; }
   }
 
@@ -981,9 +1046,9 @@ export async function mountStreamingDemo(opts = {}) {
         html += `<div class="target"><b>Incremental converter</b> (RenderStream, ` +
           `next-pipeline lazy crate): peak WASM heap ${s.peakHeapMB.toFixed(1)} MB ` +
           `for a ${s.crateMB.toFixed(1)} MB crate → <b>${s.ratio.toFixed(2)}× crate</b> ` +
-          `(≈ input). One mesh is decoded at a time; textures stay in JS. ` +
-          `Renders geometry + per-material PBR colors (texture/UV support pending ` +
-          `next-reader Float2 arrays).</div>`;
+          `(≈ input). One mesh is decoded at a time; textures are decoded in JS ` +
+          `(off the WASM heap) and uploaded to the GPU. Full geometry + UVs + ` +
+          `textured UsdPreviewSurface / MaterialX PBR.</div>`;
       } else if (s) {
         html += `<div class="target">Eager path: transient conversion peak ` +
           `${s.peakHeapMB.toFixed(1)} MB for ${s.inputMB.toFixed(1)} MB input → ` +
