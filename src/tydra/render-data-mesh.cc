@@ -1074,10 +1074,13 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
         return nonstd::make_unexpected(
             "Failed to retrieve float2[] texture coordinate primvar.\n");
       }
+      // float2 (std::array<float,2>) and texcoord2f are both two contiguous
+      // floats with identical layout — copy in one shot.
+      static_assert(sizeof(value::float2) == sizeof(value::texcoord2f),
+                    "float2 and texcoord2f must share layout for memcpy");
       uvs.resize(f2.size());
-      for (size_t i = 0; i < f2.size(); i++) {
-        uvs[i][0] = f2[i][0];
-        uvs[i][1] = f2[i][1];
+      if (!f2.empty()) {
+        std::memcpy(uvs.data(), f2.data(), f2.size() * sizeof(value::float2));
       }
     }
   }
@@ -1384,12 +1387,15 @@ bool ToVertexAttribute(const GeomPrimvar &primvar, const std::string &name,
   value::Value value;
   std::string flatten_err;
   if (!primvar.flatten_with_indices(t, &value, tinterp, &flatten_err)) {
-    // flatten_with_indices() returns false with NO error message for a primvar
-    // that has no authored value or an empty authored array (e.g.
-    // `float4[] primvars:tangents = []` in usd-wg TextureTransformTest) — this
-    // is intentional OpenUSD-compat behavior (see usdGeom-primvar-impl.inc).
-    // Such a primvar carries no data, so skip it (leaving `dst` empty) rather
-    // than failing the whole mesh conversion. A real error sets a message.
+    // INVARIANT: flatten_with_indices() returns false with NO error message
+    // ONLY for a primvar that carries no data — either no authored value and no
+    // timesamples (usdGeom.cc, the value::Value overload) or an empty authored
+    // array (usdGeom-primvar-impl.inc, the typed overload; intentional
+    // OpenUSD-compat, e.g. `float4[] primvars:tangents = []` in usd-wg
+    // TextureTransformTest). Every *real* failure sets a message. So an empty
+    // `flatten_err` here means "no data": skip the primvar (leaving `dst`
+    // empty) rather than failing the whole mesh conversion. If that invariant
+    // ever changes, surface real errors here instead of silently skipping.
     if (flatten_err.empty()) {
       if (warn) {
         (*warn) += fmt::format(

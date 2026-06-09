@@ -3076,6 +3076,9 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
         if (!terminal_indexAttr.has_value() && !terminal_indexAttr.has_timesamples()) {
           // No authored terminal indices value → treat as un-indexed (use the
           // primvar values directly) instead of failing, as above.
+          DCOUT("primvars:" << varname
+                << ":indices (terminal) declared with no authored value; "
+                   "treating primvar as un-indexed.");
         }
 
         if (terminal_indexAttr.has_timesamples()) {
@@ -3107,6 +3110,9 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
           // in usd-wg TextureTransformTest. Treat the primvar as un-indexed (use
           // its values directly) instead of failing, matching the blocked-indices
           // case above and OpenUSD.
+          DCOUT("primvars:" << varname
+                << ":indices declared with no authored value; treating primvar "
+                   "as un-indexed.");
         }
 
         if (indexAttr.has_value()) {
