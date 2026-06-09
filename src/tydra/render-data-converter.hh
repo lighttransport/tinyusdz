@@ -1035,7 +1035,8 @@ class RenderSceneConverter {
   bool ConvertPreviewSurfaceShader(const RenderSceneConverterEnv &env,
                                    const tinyusdz::Path &shader_abs_path,
                                    const tinyusdz::UsdPreviewSurface &shader,
-                                   PreviewSurfaceShader *pss_out);
+                                   PreviewSurfaceShader *pss_out,
+                                   bool is_materialx = false);
 
   ///
   /// Convert MaterialX OpenPBR Surface Shader to renderer-friendly OpenPBRSurfaceShader
