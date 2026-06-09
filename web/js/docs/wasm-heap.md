@@ -277,9 +277,10 @@ roughly halves on the large scenes:
 | textured-scene-1              |   204 |      493 MB  |          **368 MB**  |
 | materialx-scene-1b                 |    84 |      594 MB  |          **292 MB**  |
 
-`--stream-write` is opt-in (default off; also `TINYUSDZ_STREAM_WRITE=1`). Because
-the output is provably byte-identical and only lowers memory, the natural next
-step is to make it the default for the `next` pipeline after a soak.
+`--stream-write` is the **default** for the `next` pipeline when writing to a
+file (it transparently falls back to buffering without a seekable sink). Disable
+with `--no-stream-write` or `TINYUSDZ_STREAM_WRITE=0`. Output is byte-identical
+either way; streaming only lowers memory.
 
 Relevant commits: zero-copy cap (`4abf2ed87`), arc-free skip + attribution aid
 (`7212e1ab9`), streaming crate writer (`2a68ac062`), `--stream-write` end-to-end
