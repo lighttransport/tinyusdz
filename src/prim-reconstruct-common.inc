@@ -256,6 +256,9 @@ static ParseResult ParseTypedAttributeUnified(
     if (attr.has_connections() && !attr.has_value() &&
         !attr.get_var().has_timesamples()) {
       target.set_connections(attr.connections());
+      // Record the connection-only state (authored, but no value) — matches the
+      // normal connection-only path and the EmptyAttrib path below.
+      target.set_value_empty();
       target.metas() = std::move(prop.attribute().metas());
       table.insert(name);
       ret.code = ParseResult::ResultCode::Success;
