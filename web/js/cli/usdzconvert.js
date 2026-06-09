@@ -66,13 +66,13 @@ Convert options:
                            auto-enabled and falls back for nested roots / non-keep
                            formats.
   --no-stream-textures     Force the in-heap batch texture path (higher memory).
-  --stream-write           (--pipeline next) Stream the flattened root crate
-                           straight into the .usdz instead of buffering it, so
-                           the output crate never materializes in the WASM heap
+  --stream-write           (--pipeline next, DEFAULT) Stream the flattened root
+                           crate straight into the .usdz instead of buffering it,
+                           so the output crate never materializes in the WASM heap
                            or in JS. Byte-identical output; roughly halves peak
-                           RSS on large scenes. Requires a file output (-o).
-                           Also via TINYUSDZ_STREAM_WRITE=1.
-  --no-stream-write        Force the buffered root path.
+                           RSS on large scenes. Engages when writing to a file
+                           (-o); falls back to buffering otherwise.
+  --no-stream-write        Force the buffered root path (TINYUSDZ_STREAM_WRITE=0).
   --png-encoder <fpnge|fpng|auto>  PNG encoder hint (WASM always uses fpng)
   --no-reencode            Copy unmodified textures through unchanged
   -v, --verbose            Verbose logging
@@ -113,7 +113,9 @@ function parseArgs() {
     streamTextures: undefined,
     // Stream the flattened root crate straight into the .usdz (next pipeline only)
     // instead of buffering it — keeps the output crate out of the WASM heap and JS.
-    streamWrite: process.env.TINYUSDZ_STREAM_WRITE === '1',
+    // Default ON for --pipeline next when writing to a file; TINYUSDZ_STREAM_WRITE=0
+    // (or --no-stream-write) disables it.
+    streamWrite: process.env.TINYUSDZ_STREAM_WRITE !== '0',
     repack: null, packChannels: 0, pack: { R: null, G: null, B: null, A: null },
   };
   for (let i = 0; i < args.length; i++) {

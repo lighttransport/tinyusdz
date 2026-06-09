@@ -1018,13 +1018,14 @@ async function convertSingleUSDZToNextLowMemUSDZ(native, bytes, opts, log) {
     ? Number(opts.maxMemMb) * 1024 * 1024 : 0;  // 0 -> wasm 512 MiB default
   const lazy = opts.nextEager !== true;
 
-  // Streaming-write path: when a patch-capable (seekable) sink is available and
-  // opts.streamWrite is set, stream the flattened root crate straight from the
-  // WASM writer into the .usdz — the full output crate is never materialized in
-  // the WASM heap nor copied to JS. Otherwise build the root buffer (in WASM)
-  // and repack it. Both produce a byte-identical archive.
+  // Streaming-write path: the default for the next pipeline. When a patch-capable
+  // (seekable) sink is available, stream the flattened root crate straight from
+  // the WASM writer into the .usdz — the full output crate is never materialized
+  // in the WASM heap nor copied to JS. Disable with opts.streamWrite === false
+  // (CLI --no-stream-write). Without a seekable sink it transparently falls back
+  // to buffering the root and repacking it. Both produce a byte-identical archive.
   const sink = opts.zipSink;
-  const canStreamWrite = !!opts.streamWrite && sink && typeof sink === 'object' &&
+  const canStreamWrite = opts.streamWrite !== false && sink && typeof sink === 'object' &&
     typeof sink.patch === 'function' && typeof sink.write === 'function';
 
   const usd = new native.TinyUSDZLoaderNative();
