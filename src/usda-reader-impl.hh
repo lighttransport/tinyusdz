@@ -1025,7 +1025,9 @@ class USDAReader::Impl {
                   apiSchemas.unknownSchemas.end());
             } else {
               apiSchemas.unknownSchemas.push_back(entry);
-              PUSH_WARN("(PrimMeta) Preserving unknown API schema: " << item.str());
+              // Unknown API schemas are preserved (round-tripped) intentionally;
+              // OpenUSD does not warn on these — keep it a debug note, not a warning.
+              DCOUT("(PrimMeta) Preserving unknown API schema: " << item.str());
             }
           } else {
             PUSH_ERROR_AND_RETURN("Unknown or invalid apiSchema: " + item.str());

@@ -997,9 +997,21 @@ int main(int argc, char **argv) {
     //
 
     tinyusdz::Layer src_layer = root_layer;
+
+    // tusdcat resolves assets against the local filesystem (the input file's
+    // directory), where USD's parent-relative references (e.g.
+    // `@../common/foo.usd@`) are legitimate and ubiquitous — OpenUSD resolves
+    // them too. Allow '..' in composition asset paths.
+    tinyusdz::SublayersCompositionOptions sublayer_opts;
+    sublayer_opts.allow_parent_relative_paths = true;
+    tinyusdz::ReferencesCompositionOptions reference_opts;
+    reference_opts.allow_parent_relative_paths = true;
+    tinyusdz::PayloadCompositionOptions payload_opts;
+    payload_opts.allow_parent_relative_paths = true;
+
     if (comp_features.subLayers) {
       tinyusdz::Layer composited_layer;
-      if (!tinyusdz::CompositeSublayers(resolver, src_layer, &composited_layer, &warn, &err)) {
+      if (!tinyusdz::CompositeSublayers(resolver, src_layer, &composited_layer, &warn, &err, sublayer_opts)) {
         std::cerr << "Failed to composite subLayers: " << err << "\n";
         return -1;
       }
@@ -1028,7 +1040,7 @@ int main(int argc, char **argv) {
           has_unresolved = true;
 
           tinyusdz::Layer composited_layer;
-          if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err)) {
+          if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err, reference_opts)) {
             std::cerr << "Failed to composite `references`: " << err << "\n";
             return -1;
           }
@@ -1053,7 +1065,7 @@ int main(int argc, char **argv) {
           has_unresolved = true;
 
           tinyusdz::Layer composited_layer;
-          if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err)) {
+          if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err, payload_opts)) {
             std::cerr << "Failed to composite `payload`: " << err << "\n";
             return -1;
           }
