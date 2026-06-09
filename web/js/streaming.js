@@ -22,16 +22,19 @@
 //      buffers/textures live in GPU memory, independent of the WASM heap, so the
 //      resident WASM working set drops to ~0 while rendering.
 //
-// Memory reality / known limitation: the resident footprint is bounded by the
-// above, but the *transient conversion peak* is NOT yet at the "≈ input" target.
-// loadFromBinary() converts the WHOLE scene eagerly (parse a typed Stage, then
-// build the RenderScene), so during the load it holds input + Stage + render
-// data at once — measured at ~5–10x input on large scenes — and emscripten never
-// returns grown heap to the OS, so process RSS stays at that peak. Hitting the
-// "WASM heap ≈ input" target requires an INCREMENTAL render-data converter
-// (decode→emit→free one mesh/image at a time over the next-pipeline lazy crate),
-// which is a C++ binding addition tracked as the next step. The memory panel
-// reports the honest per-phase heap so the peak is visible, not hidden.
+// Two load paths:
+//   - loadBytesIncremental() (DEFAULT): the low-memory path. JS extracts the root
+//     crate (textures stay in JS) and the C++ RenderStream binding loads it over
+//     the next-pipeline LAZY crate, materializing ONE mesh's geometry at a time.
+//     Peak WASM heap ~= crate size (≈ input) — e.g. geometry-scene 264 MB crate ->
+//     ~335 MB peak (1.27x), vs the eager path's ~5-10x. Renders geometry +
+//     per-material PBR params. Texture/UV support in this path is pending
+//     next-reader Float2-array + texture-connection completion, so for textured
+//     output use the eager path below.
+//   - loadBytes(): the eager path. loadFromBinary() builds the whole typed Stage
+//     + RenderScene at once (transient peak ~5-10x input; emscripten never
+//     returns grown heap to the OS), but supports textures + full materials.
+// The memory panel reports the honest per-phase heap for whichever path ran.
 //
 // The renderer is self-contained raw WebGL2 (no Three.js): a compact GGX + Smith
 // + Schlick direct light plus a hemispheric ambient term, with base-color /
@@ -50,6 +53,7 @@
 // or just include streaming.html, which calls mountStreamingDemo().
 
 import { TinyUSDZLoader } from './src/tinyusdz/TinyUSDZLoader.js';
+import { parseUSDZEntries } from './src/usdzconvert.js';
 
 // ---------------------------------------------------------------------------
 // Small math helpers (column-major mat4, like WebGL/GLSL).
@@ -396,6 +400,120 @@ export class StreamingUSDRenderer {
     this._lastMemory = mem;
     this._emitMemory();
     return { meshes: this.drawables.length, textures: numImages, materials: numMaterials, memory: mem };
+  }
+
+  // Incremental low-memory load via the C++ RenderStream (next-pipeline lazy
+  // crate). JS keeps the .usdz archive (and texture entries) off the WASM heap;
+  // only the root crate is streamed in, and the converter materializes ONE mesh's
+  // geometry at a time. Peak WASM heap stays ~= crate size (≈ input), vs the
+  // eager loadFromBinary() path's ~5-10x. Renders geometry + per-material PBR
+  // params (base color / metallic / roughness / emissive). Textures + UVs in this
+  // path await next-reader Float2-array + texture-connection support, so it falls
+  // back to loadBytes() if you need textured output. Returns the same shape.
+  async loadBytesIncremental(bytes, filename = 'scene.usdz') {
+    if (typeof this.native.RenderStream !== 'function') {
+      return this.loadBytes(bytes, filename); // old wasm without RenderStream
+    }
+    const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    this._inputSize = u8.length;
+    this._disposeScene();
+
+    // Extract the root crate; textures stay in JS, never entering the WASM heap.
+    let crate = u8;
+    if (/\.usdz$/i.test(filename)) {
+      let entries;
+      try { entries = parseUSDZEntries(u8); } catch (_) { return this.loadBytes(u8, filename); }
+      const root = entries.find((e) => /\.usdc$/i.test(e.name));
+      if (!root) return this.loadBytes(u8, filename); // usda root etc.
+      crate = root.data;
+    } else if (!/\.usdc$/i.test(filename)) {
+      return this.loadBytes(u8, filename); // raw .usda: no crate to stream
+    }
+
+    const mem = { input: u8.length, crate: crate.length, phases: [], incremental: true };
+    const snap = (label) => { mem.phases.push({ label, heapReserved: this.heapBytes() }); this._emitMemory(); };
+    snap('baseline');
+
+    const rs = new this.native.RenderStream();
+    let r;
+    try {
+      r = rs.begin(crate);
+      if (!r || !r.success) {
+        rs.end();
+        return this.loadBytes(u8, filename); // not a next-readable crate -> fall back
+      }
+      snap('crate loaded (lazy)');
+
+      this.glTextures = [];
+      this.drawables = [];
+      this.bbox = null;
+      const n = r.meshCount;
+      for (let i = 0; i < n; i++) {
+        const m = rs.getMesh(i);          // materializes ONE mesh into wasm scratch
+        if (m && !m.error) {
+          const d = this._uploadStreamMesh(m); // upload to GPU before next getMesh
+          if (d) this.drawables.push(d);
+        }
+      }
+      snap('all meshes uploaded to GPU');
+    } finally {
+      rs.end();   // free the crate + scratch
+      rs.delete();
+    }
+    snap('WASM render scene freed (end)');
+
+    this._frameCamera();
+    mem.peakReserved = Math.max(...mem.phases.map((p) => p.heapReserved));
+    mem.summary = {
+      inputMB: mem.input / 1048576,
+      crateMB: mem.crate / 1048576,
+      peakHeapMB: mem.peakReserved / 1048576,
+      ratio: mem.peakReserved / Math.max(1, mem.crate),
+      incremental: true,
+    };
+    this._lastMemory = mem;
+    this._emitMemory();
+    return { meshes: this.drawables.length, textures: 0, materials: this.drawables.length, memory: mem };
+  }
+
+  // Build a drawable from a RenderStream getMesh() descriptor. The descriptors
+  // are zero-copy views into the WASM scratch, valid only until the next
+  // getMesh()/end(), so upload happens synchronously here.
+  _uploadStreamMesh(m) {
+    const gl = this.gl;
+    if (!m.points || !m.points.length) return null;
+    const vao = gl.createVertexArray();
+    gl.bindVertexArray(vao);
+    this._uploadAttrib(0, m.points, 3);
+    this._growBBox(heapView(this.native, m.points));
+    if (m.normals && m.normals.length) this._uploadAttrib(1, m.normals, 3);
+    else { gl.disableVertexAttribArray(1); gl.vertexAttrib3f(1, 0, 1, 0); }
+    if (m.uv0 && m.uv0.length) this._uploadAttrib(2, m.uv0, 2);
+    else { gl.disableVertexAttribArray(2); gl.vertexAttrib2f(2, 0, 0); }
+
+    let count, mode = 'arrays';
+    if (m.indices && m.indices.length) {
+      const ib = gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, heapView(this.native, m.indices), gl.STATIC_DRAW);
+      count = m.indices.length; mode = 'elements';
+    } else {
+      count = m.points.length / 3;
+    }
+    gl.bindVertexArray(null);
+
+    const mt = m.material || {};
+    const material = {
+      baseColor: Array.isArray(mt.baseColor) ? mt.baseColor : [0.8, 0.8, 0.8],
+      metallic: typeof mt.metallic === 'number' ? mt.metallic : 0,
+      roughness: typeof mt.roughness === 'number' ? mt.roughness : 0.5,
+      opacity: typeof mt.opacity === 'number' ? mt.opacity : 1,
+      emissive: Array.isArray(mt.emissive) ? mt.emissive : [0, 0, 0],
+      occlusion: typeof mt.occlusion === 'number' ? mt.occlusion : 1,
+      alphaCutoff: typeof mt.opacityThreshold === 'number' && mt.opacityThreshold > 0 ? mt.opacityThreshold : -1,
+      baseMap: null, normalMap: null, mrMap: null, aoMap: null, emissiveMap: null,
+    };
+    return { vao, count, indexType: gl.UNSIGNED_INT, mode, material, doubleSided: false };
   }
 
   // Parse getMaterial(matId) (a JSON string) into a normalized shader record.
@@ -859,27 +977,42 @@ export async function mountStreamingDemo(opts = {}) {
           `<td style="text-align:right">${fmtMB(p.renderBuffers)}</td></tr>`).join('') +
         '</table></div>';
       const s = m.last.summary;
-      if (s) html += `<div class="target">Transient conversion peak ${s.peakHeapMB.toFixed(1)} MB ` +
-        `for ${s.inputMB.toFixed(1)} MB input → <b>${s.ratio.toFixed(2)}×</b>. ` +
-        `After upload+reset the render data lives on the GPU and the WASM render ` +
-        `working set is freed. Reaching ≈1× (the input-size target) needs the ` +
-        `incremental converter — the eager loadFromBinary builds the whole scene at once.</div>`;
+      if (s && s.incremental) {
+        html += `<div class="target"><b>Incremental converter</b> (RenderStream, ` +
+          `next-pipeline lazy crate): peak WASM heap ${s.peakHeapMB.toFixed(1)} MB ` +
+          `for a ${s.crateMB.toFixed(1)} MB crate → <b>${s.ratio.toFixed(2)}× crate</b> ` +
+          `(≈ input). One mesh is decoded at a time; textures stay in JS. ` +
+          `Renders geometry + per-material PBR colors (texture/UV support pending ` +
+          `next-reader Float2 arrays).</div>`;
+      } else if (s) {
+        html += `<div class="target">Eager path: transient conversion peak ` +
+          `${s.peakHeapMB.toFixed(1)} MB for ${s.inputMB.toFixed(1)} MB input → ` +
+          `<b>${s.ratio.toFixed(2)}×</b> (builds the whole scene at once; supports ` +
+          `textures). Use the incremental path for ≈1× WASM heap.</div>`;
+      }
     }
     panel.innerHTML = html;
   };
   renderer.onMemory(renderPanel);
   renderer.startMemoryPolling(500);
 
+  // Default to the incremental low-memory path; eager mode (textured) is opt-in
+  // via opts.eager / a ?eager=1 query param.
+  const useEager = !!opts.eager;
   async function loadFile(file) {
     setStatus(`Loading ${file.name} (${fmtMB(file.size)})…`);
     try {
       const buf = new Uint8Array(await file.arrayBuffer());
       const t0 = performance.now();
-      const r = await renderer.loadBytes(buf, file.name);
+      const r = useEager ? await renderer.loadBytes(buf, file.name)
+                         : await renderer.loadBytesIncremental(buf, file.name);
       const dt = (performance.now() - t0).toFixed(0);
+      const s = r.memory.summary;
+      const ratioStr = s.incremental ? `${s.ratio.toFixed(2)}× crate (≈ input)`
+                                      : `${s.ratio.toFixed(2)}× input`;
       setStatus(`${file.name}: ${r.meshes} meshes, ${r.textures} textures, ` +
         `${r.materials} materials in ${dt} ms — peak WASM heap ` +
-        `${r.memory.summary.peakHeapMB.toFixed(1)} MB (${r.memory.summary.ratio.toFixed(2)}× input)`);
+        `${s.peakHeapMB.toFixed(1)} MB (${ratioStr})`);
     } catch (e) {
       setStatus('Error: ' + (e && e.message));
       console.error(e);
@@ -901,9 +1034,12 @@ export async function mountStreamingDemo(opts = {}) {
       const resp = await fetch(opts.url);
       const buf = new Uint8Array(await resp.arrayBuffer());
       const name = opts.url.split('/').pop();
-      const r = await renderer.loadBytes(buf, name);
+      const r = useEager ? await renderer.loadBytes(buf, name)
+                         : await renderer.loadBytesIncremental(buf, name);
+      const s = r.memory.summary;
+      const ratioStr = s.incremental ? `${s.ratio.toFixed(2)}× crate` : `${s.ratio.toFixed(2)}× input`;
       setStatus(`${name}: ${r.meshes} meshes, ${r.textures} textures — peak WASM heap ` +
-        `${r.memory.summary.peakHeapMB.toFixed(1)} MB (${r.memory.summary.ratio.toFixed(2)}× input)`);
+        `${s.peakHeapMB.toFixed(1)} MB (${ratioStr})`);
     } catch (e) { setStatus('Drop a .usdz/.usdc file to render. ' + (e && e.message || '')); }
   } else {
     setStatus('Drop a .usdz / .usdc / .usda file onto the canvas, or pick one.');
