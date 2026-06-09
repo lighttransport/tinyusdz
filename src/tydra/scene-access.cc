@@ -3074,7 +3074,8 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
         }
 
         if (!terminal_indexAttr.has_value() && !terminal_indexAttr.has_timesamples()) {
-          PUSH_ERROR_AND_RETURN("[Internal Error] Invalid Terminal Index Attribute. Terminal Index Attribute does not have `default` or timesamples value.");
+          // No authored terminal indices value → treat as un-indexed (use the
+          // primvar values directly) instead of failing, as above.
         }
 
         if (terminal_indexAttr.has_timesamples()) {
@@ -3102,7 +3103,10 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
       } else {
 
         if (!indexAttr.has_value() && !indexAttr.has_timesamples()) {
-          PUSH_ERROR_AND_RETURN("[Internal Error] Invalid Index Attribute. Index Attribute does not have `default` or timesamples value.");
+          // No authored indices value — e.g. the empty `int[] primvars:st:indices`
+          // in usd-wg TextureTransformTest. Treat the primvar as un-indexed (use
+          // its values directly) instead of failing, matching the blocked-indices
+          // case above and OpenUSD.
         }
 
         if (indexAttr.has_value()) {
