@@ -2333,6 +2333,20 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
                           param_name, result.error()));
         return true;
       }
+      // The connection did not resolve to a UsdUVTexture (e.g. a UsdPreviewSurface
+      // input wired to a non-texture node such as a UsdPrimvarReader) while a
+      // value is also authored. Degrade to that value instead of failing the
+      // whole material — we now follow connections even when a value is present,
+      // so erroring here would be a regression vs. the previous value path.
+      T fallback_val;
+      if (param.get_value().get(env.timecode, &fallback_val)) {
+        dst_param.set_value(fallback_val);
+        PushWarn(fmt::format(
+            "{} connection could not be resolved to a UsdUVTexture ({}); using "
+            "the authored/fallback value instead.",
+            param_name, result.error()));
+        return true;
+      }
       PUSH_ERROR_AND_RETURN(result.error());
     }
 
