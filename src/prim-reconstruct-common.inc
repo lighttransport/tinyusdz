@@ -245,6 +245,22 @@ static ParseResult ParseTypedAttributeUnified(
       (target_underlying_type_id == value::TYPE_ID_INVALID ||
        attr_underlying_type_id == value::TYPE_ID_INVALID ||
        target_underlying_type_id != attr_underlying_type_id)) {
+    // A connection-only property (`X.connect = </path>` with no authored value)
+    // carries no value to type-check — a connection is a type-agnostic path.
+    // Some assets declare it with a non-conformant type (e.g.
+    // `token inputs:in.connect` on a float2 input — usd-wg TextureTransformTest).
+    // Attach the connection to the typed target rather than failing the type
+    // check, which would demote it to a custom property and drop the connection
+    // from the typed field (breaking e.g. UsdTransform2d -> PrimvarReader
+    // traversal in tydra).
+    if (attr.has_connections() && !attr.has_value() &&
+        !attr.get_var().has_timesamples()) {
+      target.set_connections(attr.connections());
+      target.metas() = std::move(prop.attribute().metas());
+      table.insert(name);
+      ret.code = ParseResult::ResultCode::Success;
+      return ret;
+    }
     DCOUT("tyname = " << value::TypeTraits<T>::type_name() << ", attr.type = " << attr_type_name);
     ret.code = ParseResult::ResultCode::TypeMismatch;
     ret.err = fmt::format("Property type mismatch. {} expects type `{}` but defined as type `{}`",
