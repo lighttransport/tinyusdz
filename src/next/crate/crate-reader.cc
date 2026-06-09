@@ -705,6 +705,7 @@ bool IsLazyArrayType(CrateTypeId t, bool compressed) {
     case CrateTypeId::UInt:
       return true;
     case CrateTypeId::Float:
+    case CrateTypeId::Vec2f:
     case CrateTypeId::Vec3f:
     case CrateTypeId::Double:
     case CrateTypeId::Int64:
@@ -796,6 +797,17 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
         return false;
       }
       out = Value::MakeIntArray(std::move(data));
+      return true;
+    }
+    case CrateTypeId::Vec2f: {
+      if (compressed) { AddWarning("Compressed Vec2f arrays not supported"); return false; }
+      size_t data_size;
+      if (!safe::mul(static_cast<size_t>(count), size_t(2), &data_size)) {
+        return false;
+      }
+      std::vector<float> data(data_size);
+      if (!read_raw(data.data(), 2 * sizeof(float))) return false;
+      out = Value::MakeFloat2Array(std::move(data));
       return true;
     }
     case CrateTypeId::Vec3f: {

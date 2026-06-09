@@ -8208,23 +8208,13 @@ class RenderStream {
     }
     const tinyusdz::next::UsdPrim &prim = meshes_[static_cast<size_t>(i)].GetPrim();
 
-    s_points_ = matFloat_(prim, "points");
-    std::vector<int32_t> fvc = matInt_(prim, "faceVertexCounts");
-    std::vector<int32_t> fvi = matInt_(prim, "faceVertexIndices");
-    s_normals_ = matFloat_(prim, "normals");
-    s_uv_ = matFloat_(prim, "primvars:st");
-    if (s_uv_.empty()) s_uv_ = matFloat_(prim, "primvars:st0");
-    if (s_uv_.empty()) s_uv_ = matFloat_(prim, "st");
-
-    triangulate_(fvi, fvc, s_indices_);
-    if (s_normals_.size() != s_points_.size()) {
-      computeNormals_(s_points_, s_indices_, s_normals_);
-    }
+    const bool expanded = buildRenderMesh_(prim);
 
     out.set("vertexCount", static_cast<double>(s_points_.size() / 3));
     out.set("primName", prim.GetName());
     out.set("points", heapF_(s_points_, 3));
-    if (!s_indices_.empty()) out.set("indices", heapU32_(s_indices_));
+    // Expanded (de-indexed) meshes draw as a non-indexed triangle soup.
+    if (!expanded && !s_indices_.empty()) out.set("indices", heapU32_(s_indices_));
     if (!s_normals_.empty()) out.set("normals", heapF_(s_normals_, 3));
     if (!s_uv_.empty()) out.set("uv0", heapF_(s_uv_, 2));
     out.set("material", resolveMaterial_(prim));
@@ -8262,6 +8252,104 @@ class RenderStream {
     tinyusdz::next::Value tmp = *v;
     const std::vector<int32_t> *a = tmp.as_int_array();
     return a ? *a : std::vector<int32_t>{};
+  }
+
+  // Build the render geometry for one mesh into the scratch (s_points_/s_normals_
+  // /s_uv_/s_indices_). Returns true if the mesh was DE-INDEXED (expanded to a
+  // triangle soup, drawn with drawArrays) — needed when UVs/normals are
+  // face-varying or indexed separately from positions, so each triangle corner
+  // carries its own attribute. When all primvars are per-vertex (or absent) the
+  // indexed form is kept (compact). At most one mesh is resident at a time.
+  bool buildRenderMesh_(const tinyusdz::next::UsdPrim &prim) {
+    std::vector<float> P = matFloat_(prim, "points");
+    std::vector<int32_t> fvc = matInt_(prim, "faceVertexCounts");
+    std::vector<int32_t> fvi = matInt_(prim, "faceVertexIndices");
+    std::vector<float> N = matFloat_(prim, "normals");
+    std::vector<float> UV = matFloat_(prim, "primvars:st");
+    if (UV.empty()) UV = matFloat_(prim, "primvars:st0");
+    if (UV.empty()) UV = matFloat_(prim, "st");
+    std::vector<int32_t> stIdx = matInt_(prim, "primvars:st:indices");
+
+    const size_t vtxCount = P.size() / 3;
+    const size_t faceVtx = fvi.size();
+    const size_t uvCount = UV.size() / 2;
+    const size_t nCount = N.size() / 3;
+
+    const bool uvFaceVarying = !UV.empty() && uvCount != vtxCount &&
+                               (uvCount == faceVtx || !stIdx.empty());
+    const bool nFaceVarying = !N.empty() && nCount != vtxCount && nCount == faceVtx;
+    const bool needExpand = uvFaceVarying || nFaceVarying || !stIdx.empty();
+
+    s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
+
+    if (!needExpand) {
+      s_points_ = std::move(P);
+      triangulate_(fvi, fvc, s_indices_);
+      if (nCount == vtxCount) s_normals_ = std::move(N);
+      else computeNormals_(s_points_, s_indices_, s_normals_);
+      if (uvCount == vtxCount) s_uv_ = std::move(UV);
+      return false;
+    }
+
+    // Expand: one corner per triangle face-vertex, indexing position by vertex
+    // and UV/normal by their own interpolation (vertex / faceVarying / indexed).
+    std::vector<uint32_t> slots;  // triangle corners, each a face-vertex SLOT
+    {
+      size_t base = 0;
+      for (int32_t n : fvc) {
+        if (n >= 3 && base + static_cast<size_t>(n) <= faceVtx) {
+          for (int32_t k = 2; k < n; ++k) {
+            slots.push_back(static_cast<uint32_t>(base));
+            slots.push_back(static_cast<uint32_t>(base + static_cast<size_t>(k) - 1));
+            slots.push_back(static_cast<uint32_t>(base + static_cast<size_t>(k)));
+          }
+        }
+        base += static_cast<size_t>(n < 0 ? 0 : n);
+      }
+    }
+    const size_t corners = slots.size();
+    s_points_.resize(corners * 3);
+    if (!UV.empty()) s_uv_.assign(corners * 2, 0.0f);
+    const bool haveN = (nCount == vtxCount) || nFaceVarying;
+    if (haveN) s_normals_.resize(corners * 3);
+    for (size_t c = 0; c < corners; ++c) {
+      const uint32_t slot = slots[c];
+      const uint32_t vi = (slot < faceVtx) ? static_cast<uint32_t>(fvi[slot]) : 0u;
+      if (static_cast<size_t>(vi) * 3 + 2 < P.size()) {
+        s_points_[c * 3] = P[vi * 3]; s_points_[c * 3 + 1] = P[vi * 3 + 1]; s_points_[c * 3 + 2] = P[vi * 3 + 2];
+      }
+      if (!UV.empty()) {
+        uint32_t ui;
+        if (!stIdx.empty() && slot < stIdx.size()) ui = static_cast<uint32_t>(stIdx[slot]);
+        else if (uvFaceVarying) ui = slot;
+        else ui = vi;
+        if (static_cast<size_t>(ui) * 2 + 1 < UV.size()) { s_uv_[c * 2] = UV[ui * 2]; s_uv_[c * 2 + 1] = UV[ui * 2 + 1]; }
+      }
+      if (haveN) {
+        const uint32_t ni = nFaceVarying ? slot : vi;
+        if (static_cast<size_t>(ni) * 3 + 2 < N.size()) {
+          s_normals_[c * 3] = N[ni * 3]; s_normals_[c * 3 + 1] = N[ni * 3 + 1]; s_normals_[c * 3 + 2] = N[ni * 3 + 2];
+        }
+      }
+    }
+    if (s_normals_.empty()) computeNormals_(s_points_, s_indices_, s_normals_);  // soup: empty idx -> flat
+    return true;
+  }
+
+  // Resolve a UsdUVTexture connection path ("/.../Tex.outputs:rgb") to its
+  // inputs:file asset path, which the JS caller maps to an archive texture entry.
+  std::string texFile_(const std::string &connPath) {
+    if (connPath.empty()) return "";
+    const size_t slash = connPath.rfind('/');
+    const size_t dot = connPath.find('.', slash == std::string::npos ? 0 : slash);
+    const std::string primPath = (dot == std::string::npos) ? connPath : connPath.substr(0, dot);
+    tinyusdz::next::UsdPrim tex = stage_.GetPrimAtPath(primPath);
+    if (!tex.IsValid()) return "";
+    const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:file");
+    if (!v) return "";
+    if (const std::string *a = v->as_asset_path()) return *a;
+    if (const std::string *s = v->as_string()) return *s;
+    return "";
   }
 
   // Fan-triangulate faceVertexIndices grouped by faceVertexCounts.
@@ -8366,12 +8454,18 @@ class RenderStream {
     m.set("occlusion", ps.occlusion);
     m.set("emissive", arr3_(ps.emissive_color));
     if (ps.opacity_threshold > 0.0f) m.set("opacityThreshold", ps.opacity_threshold);
-    if (!ps.diffuse_texture.empty()) m.set("baseColorTexture", ps.diffuse_texture);
-    if (!ps.normal_texture.empty()) m.set("normalTexture", ps.normal_texture);
-    if (!ps.roughness_texture.empty()) m.set("roughnessTexture", ps.roughness_texture);
-    if (!ps.metallic_texture.empty()) m.set("metallicTexture", ps.metallic_texture);
-    if (!ps.occlusion_texture.empty()) m.set("occlusionTexture", ps.occlusion_texture);
-    if (!ps.emissive_texture.empty()) m.set("emissiveTexture", ps.emissive_texture);
+    // PreviewSurfaceData texture fields are connection paths to the UsdUVTexture
+    // shader; resolve each to its inputs:file asset path for the JS caller.
+    auto setTex = [&](const char *key, const std::string &connPath) {
+      const std::string file = texFile_(connPath);
+      if (!file.empty()) m.set(key, file);
+    };
+    setTex("baseColorTexture", ps.diffuse_texture);
+    setTex("normalTexture", ps.normal_texture);
+    setTex("roughnessTexture", ps.roughness_texture);
+    setTex("metallicTexture", ps.metallic_texture);
+    setTex("occlusionTexture", ps.occlusion_texture);
+    setTex("emissiveTexture", ps.emissive_texture);
     return m;
   }
 
