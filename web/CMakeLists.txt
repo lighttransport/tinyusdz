@@ -133,6 +133,10 @@ list(
   ${TINYUSDZ_NEXT_DIR}/composition/composition.cc
   ${TINYUSDZ_NEXT_DIR}/resolver/asset-resolver.cc
   ${TINYUSDZ_NEXT_DIR}/pipeline/flatten.cc
+  ${TINYUSDZ_NEXT_DIR}/reader/usdc-reader.cc
+  ${TINYUSDZ_NEXT_DIR}/schema/geom-mesh.cc
+  ${TINYUSDZ_NEXT_DIR}/schema/usd-shade.cc
+  ${TINYUSDZ_NEXT_DIR}/eval/attribute-eval.cc
 )
 
 list(
