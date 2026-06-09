@@ -1031,20 +1031,26 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
                                    "\n");
   }
 
-  // TODO: allow float2?
-  if (primvar.get_type_id() !=
-      value::TypeTraits<std::vector<value::texcoord2f>>::type_id()) {
+  // Accept the texCoord2f[] role type and the layout-identical float2[] (some
+  // exporters author `st` as float2[] — e.g. usd-wg TextureTransformTest).
+  const bool is_texcoord2f =
+      (primvar.get_type_id() ==
+       value::TypeTraits<std::vector<value::texcoord2f>>::type_id());
+  const bool is_float2 =
+      (primvar.get_type_id() ==
+       value::TypeTraits<std::vector<value::float2>>::type_id());
+  if (!is_texcoord2f && !is_float2) {
     return nonstd::make_unexpected(
-        "Texture coordinate primvar must be texCoord2f[] type, but got " +
-        primvar.get_type_name() + "\n");
+        "Texture coordinate primvar must be texCoord2f[] or float2[] type, but "
+        "got " + primvar.get_type_name() + "\n");
   }
 
   std::vector<value::texcoord2f> uvs;
 
-  // mmap zero-copy path: read texcoords directly from mmap.
+  // mmap zero-copy path: read texcoords directly from mmap (texcoord2f only).
   // V2: also handles indexed primvars via TryReadMMapArrayWithIndices.
   bool got_from_mmap = false;
-  if (!prim_path.empty()) {
+  if (is_texcoord2f && !prim_path.empty()) {
     if (primvar.has_indices()) {
       got_from_mmap = TryReadMMapArrayWithIndices<value::texcoord2f>(
           stage, prim_path, "primvars:" + name, primvar, t, &uvs);
@@ -1055,9 +1061,24 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   }
 
   if (!got_from_mmap) {
-    if (!primvar.flatten_with_indices(t, &uvs, tinterp)) {
-      return nonstd::make_unexpected(
-          "Failed to retrieve texture coordinate primvar with concrete type.\n");
+    if (is_texcoord2f) {
+      if (!primvar.flatten_with_indices(t, &uvs, tinterp)) {
+        return nonstd::make_unexpected(
+            "Failed to retrieve texture coordinate primvar with concrete "
+            "type.\n");
+      }
+    } else {  // float2[] — flatten as float2 then copy to texcoord2f (same
+              // memory layout: two floats).
+      std::vector<value::float2> f2;
+      if (!primvar.flatten_with_indices(t, &f2, tinterp)) {
+        return nonstd::make_unexpected(
+            "Failed to retrieve float2[] texture coordinate primvar.\n");
+      }
+      uvs.resize(f2.size());
+      for (size_t i = 0; i < f2.size(); i++) {
+        uvs[i][0] = f2[i][0];
+        uvs[i][1] = f2[i][1];
+      }
     }
   }
 
@@ -1361,8 +1382,25 @@ bool ToVertexAttribute(const GeomPrimvar &primvar, const std::string &name,
   }
 
   value::Value value;
-  if (!primvar.flatten_with_indices(t, &value, tinterp)) {
-    PUSH_ERROR_AND_RETURN("Failed to flatten primvar");
+  std::string flatten_err;
+  if (!primvar.flatten_with_indices(t, &value, tinterp, &flatten_err)) {
+    // flatten_with_indices() returns false with NO error message for a primvar
+    // that has no authored value or an empty authored array (e.g.
+    // `float4[] primvars:tangents = []` in usd-wg TextureTransformTest) — this
+    // is intentional OpenUSD-compat behavior (see usdGeom-primvar-impl.inc).
+    // Such a primvar carries no data, so skip it (leaving `dst` empty) rather
+    // than failing the whole mesh conversion. A real error sets a message.
+    if (flatten_err.empty()) {
+      if (warn) {
+        (*warn) += fmt::format(
+            "Primvar `{}` has no authored value (or an empty array); skipped.\n",
+            name);
+      }
+      return true;
+    }
+    PUSH_ERROR_AND_RETURN(fmt::format(
+        "Failed to flatten primvar `{}` (interpolation {}, elementSize {}): {}",
+        name, to_string(primvar.get_interpolation()), elementSize, flatten_err));
   }
 
   bool is_array = value.type_id() & value::TYPE_ID_1D_ARRAY_BIT;
