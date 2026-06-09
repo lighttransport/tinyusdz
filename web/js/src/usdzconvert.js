@@ -330,12 +330,17 @@ export function buildUSDZWithNewRoot(rootName, rootData, passthroughEntries,
 // without the whole output (and all its source entries) coexisting in memory.
 export class ZipStreamWriter {
   constructor(sink) {
-    this._sink = sink;  // (Uint8Array) => void  (appends bytes to the output)
+    // sink is either a function (bytes)=>void that appends to the output, or an
+    // object { write(bytes), patch(pos, bytes) }. A patch-capable (seekable)
+    // sink additionally enables addEntryStreaming() — the local header's CRC and
+    // sizes are written as placeholders, then patched after the streamed data.
+    if (typeof sink === 'function') { this._write = sink; this._patch = null; }
+    else { this._write = sink.write; this._patch = sink.patch || null; }
     this.offset = 0;
     this.entries = [];  // { nameBytes, crc32, size, localHeaderOffset }
     this._enc = new TextEncoder();
   }
-  _emit(bytes) { this._sink(bytes); this.offset += bytes.length; }
+  _emit(bytes) { this._write(bytes); this.offset += bytes.length; }
   addEntry(name, data) {
     const u8 = data instanceof Uint8Array ? data : new Uint8Array(data);
     assertZip32Size(name, u8.length);
@@ -368,6 +373,66 @@ export class ZipStreamWriter {
       throw new Error('USDZ archive exceeds ZIP32 size limit.');
     }
     this.entries.push({ nameBytes, crc32: crc, size: u8.length, localHeaderOffset });
+  }
+  // Stream one entry whose bytes are produced incrementally by streamFn(emit),
+  // where emit(chunk) appends a Uint8Array. Used to write a large root layer
+  // straight from the WASM writer without ever holding it in JS. The local
+  // header's CRC/size are emitted as placeholders then patched after the data,
+  // so this requires a patch-capable (seekable) sink. Output is byte-identical
+  // to addEntry() with the same bytes. `emit`-supplied chunks are consumed
+  // synchronously (copied into the CRC + the sink), so transient WASM-heap views
+  // are safe.
+  addEntryStreaming(name, streamFn) {
+    if (!this._patch) {
+      throw new Error('addEntryStreaming requires a patch-capable sink');
+    }
+    const nameBytes = this._enc.encode(name);
+    if (nameBytes.length > 0xffff) {
+      throw new Error(`USDZ entry name is too long: "${name}".`);
+    }
+    const padding = zipPaddingForDataOffset(this.offset, nameBytes.length);
+    if (padding > 0xffff) {
+      throw new Error(`USDZ alignment padding is too large for "${name}".`);
+    }
+    const localHeaderOffset = this.offset;
+    if (localHeaderOffset > 0xffffffff) {
+      throw new Error('USDZ archive exceeds ZIP32 size limit.');
+    }
+    // Local header with CRC/sizes left as 0 (patched after the data is streamed).
+    const head = new Uint8Array(ZIP_LOCAL_HEADER_SIZE + nameBytes.length + padding);
+    const dv = new DataView(head.buffer);
+    dv.setUint32(0, 0x04034b50, true);
+    dv.setUint16(4, 20, true);
+    dv.setUint16(26, nameBytes.length, true);
+    dv.setUint16(28, padding, true);
+    head.set(nameBytes, ZIP_LOCAL_HEADER_SIZE);
+    this._emit(head);
+
+    const table = crc32Table();
+    let crc = 0xffffffff;
+    let size = 0;
+    streamFn((chunk) => {
+      const c = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+      for (let i = 0; i < c.length; i++) {
+        crc = table[(crc ^ c[i]) & 0xff] ^ (crc >>> 8);
+      }
+      size += c.length;
+      this._emit(c);  // copies synchronously (fs write / append)
+    });
+    crc = (crc ^ 0xffffffff) >>> 0;
+    assertZip32Size(name, size);
+    if (this.offset > 0xffffffff) {
+      throw new Error('USDZ archive exceeds ZIP32 size limit.');
+    }
+    // Patch CRC32 (+14), compressed size (+18), uncompressed size (+22).
+    const patch = new Uint8Array(12);
+    const pdv = new DataView(patch.buffer);
+    pdv.setUint32(0, crc, true);
+    pdv.setUint32(4, size >>> 0, true);
+    pdv.setUint32(8, size >>> 0, true);
+    this._patch(localHeaderOffset + 14, patch);
+
+    this.entries.push({ nameBytes, crc32: crc, size, localHeaderOffset });
   }
   finalize() {
     const cdOffset = this.offset;
@@ -482,11 +547,18 @@ function repackUSDZEntries(native, rootName, rootData, archiveEntries, rootEntry
     return e.data;
   };
 
-  const sink = typeof opts.zipSink === 'function' ? opts.zipSink : null;
+  // opts.zipSink may be a function (append-only) or an object { write, patch }.
+  // rootData may be a Uint8Array, or { stream: fn } to stream the root entry
+  // straight from the WASM writer (requires a patch-capable sink).
+  const sink = opts.zipSink || null;
   let usdz = null;
   if (sink) {
     const zw = new ZipStreamWriter(sink);
-    zw.addEntry(rootName, rootData);
+    if (rootData && typeof rootData === 'object' && typeof rootData.stream === 'function') {
+      zw.addEntryStreaming(rootName, rootData.stream);
+    } else {
+      zw.addEntry(rootName, rootData);
+    }
     rootData = null;
     for (const e of archiveEntries) {
       if (e === rootEntry) continue;
@@ -879,6 +951,28 @@ async function convertSingleUSDZToLowHeapFlattenedUSDZ(native, rootPath, bytes,
   return { usdz, stats };
 }
 
+// Allocate a zero-copy input buffer and stream `usdcBytes` into the WASM heap
+// (chunked, single copy). Returns the buffer uuid, or null if the allocation
+// declined (e.g. exceeds the single-buffer cap) so the caller can fall back.
+function nextAllocAndFill(native, usd, usdcBytes, maxBufferBytes, log) {
+  const size = usdcBytes.length;
+  // 0 -> wasm-side 512 MiB default; a geometry-heavy root USDC larger than that
+  // raises the cap via --max-mem-mb so it streams instead of falling back.
+  const info = usd.allocateZeroCopyBuffer('__next_input__', size, maxBufferBytes || 0);
+  if (!info || !info.success) {
+    log(`next: zero-copy alloc declined (${info && info.error}); falling back.`);
+    return null;
+  }
+  // Re-grab HEAPU8 AFTER the allocation (it may have grown/detached the view).
+  const ptr = Number(info.bufferPtr);
+  const CHUNK = 16 * 1024 * 1024;
+  for (let off = 0; off < size; off += CHUNK) {
+    const end = Math.min(off + CHUNK, size);
+    native.HEAPU8.set(usdcBytes.subarray(off, end), ptr + off);
+  }
+  return info.uuid;
+}
+
 // Stream a USDC buffer into the WASM heap (chunked, single copy) and flatten it
 // with the next low-memory lazy-ValueRep pipeline. Returns
 // { data: Uint8Array, stats } or null if the next pipeline is unavailable or
@@ -890,22 +984,9 @@ export function nextFlattenViaStreaming(native, usd, usdcBytes, log = () => {}, 
       typeof usd.allocateZeroCopyBuffer !== 'function') {
     return null;  // old wasm without the next pipeline
   }
-  const size = usdcBytes.length;
-  // 0 -> wasm-side 512 MiB default; a geometry-heavy root USDC larger than that
-  // raises the cap via --max-mem-mb so it streams instead of falling back.
-  const info = usd.allocateZeroCopyBuffer('__next_input__', size, maxBufferBytes || 0);
-  if (!info || !info.success) {
-    log(`next: zero-copy alloc declined (${info && info.error}); falling back.`);
-    return null;  // e.g. exceeds the single-buffer cap
-  }
-  // Re-grab HEAPU8 AFTER the allocation (it may have grown/detached the view).
-  const ptr = Number(info.bufferPtr);
-  const CHUNK = 16 * 1024 * 1024;
-  for (let off = 0; off < size; off += CHUNK) {
-    const end = Math.min(off + CHUNK, size);
-    native.HEAPU8.set(usdcBytes.subarray(off, end), ptr + off);
-  }
-  const res = usd.nextFlattenBuffer(info.uuid, lazy);
+  const uuid = nextAllocAndFill(native, usd, usdcBytes, maxBufferBytes, log);
+  if (uuid === null) return null;
+  const res = usd.nextFlattenBuffer(uuid, lazy);
   if (!res || !res.success) {
     log('next flatten failed: ' + (res && res.error));
     return null;
@@ -933,26 +1014,54 @@ async function convertSingleUSDZToNextLowMemUSDZ(native, bytes, opts, log) {
     return null;
   }
 
-  let flat = null;
+  const maxBufferBytes = Number(opts.maxMemMb || 0) > 0
+    ? Number(opts.maxMemMb) * 1024 * 1024 : 0;  // 0 -> wasm 512 MiB default
+  const lazy = opts.nextEager !== true;
+
+  // Streaming-write path: when a patch-capable (seekable) sink is available and
+  // opts.streamWrite is set, stream the flattened root crate straight from the
+  // WASM writer into the .usdz — the full output crate is never materialized in
+  // the WASM heap nor copied to JS. Otherwise build the root buffer (in WASM)
+  // and repack it. Both produce a byte-identical archive.
+  const sink = opts.zipSink;
+  const canStreamWrite = !!opts.streamWrite && sink && typeof sink === 'object' &&
+    typeof sink.patch === 'function' && typeof sink.write === 'function';
+
   const usd = new native.TinyUSDZLoaderNative();
+  let r = null;
+  let stats = null;
   try {
-    const maxBufferBytes = Number(opts.maxMemMb || 0) > 0
-      ? Number(opts.maxMemMb) * 1024 * 1024 : 0;  // 0 -> wasm 512 MiB default
-    flat = nextFlattenViaStreaming(native, usd, rootEntry.data, log,
-                                   opts.nextEager !== true, maxBufferBytes);
+    if (canStreamWrite && typeof usd.nextFlattenBufferToSink === 'function') {
+      // Allocate + fill BEFORE touching the sink so a declined alloc (cap) falls
+      // back cleanly instead of corrupting a half-written archive.
+      const uuid = nextAllocAndFill(native, usd, rootEntry.data, maxBufferBytes, log);
+      if (uuid === null) return null;  // declined -> caller falls back to legacy
+      r = repackUSDZEntries(native, 'root.usdc',
+        { stream: (emit) => {
+            const s = usd.nextFlattenBufferToSink(uuid, lazy, (view) => { emit(view); return true; });
+            if (!s || !s.success) {
+              throw new Error('next stream flatten failed: ' + (s && s.error));
+            }
+            stats = s;
+          } },
+        archiveEntries, rootEntry, opts, log);
+    } else {
+      const flat = nextFlattenViaStreaming(native, usd, rootEntry.data, log, lazy, maxBufferBytes);
+      if (!flat) return null;
+      stats = flat.stats;
+      // Repack: next-flattened root + textures (re-encoded one-at-a-time when
+      // requested, else passthrough), streamed to opts.zipSink when given.
+      r = repackUSDZEntries(native, 'root.usdc', flat.data, archiveEntries,
+                            rootEntry, opts, log);
+    }
   } finally {
     usd.delete();
   }
-  if (!flat) return null;
+  if (!r || !stats) return null;
 
-  // Repack: next-flattened root + textures (re-encoded one-at-a-time when
-  // requested, else passthrough), streamed to opts.zipSink when given. Combined
-  // with the next low-memory flatten this is the lowest-peak full path.
-  const rootData = flat.data;
-  const r = repackUSDZEntries(native, 'root.usdc', rootData, archiveEntries,
-                              rootEntry, opts, log);
-  log(`next low-mem flatten: root.usdc ${flat.stats.inputBytes} -> ${flat.stats.outputBytes} bytes ` +
-      `(passthrough=${flat.stats.arraysPassedThrough}, reencoded=${flat.stats.arraysReencoded}); ` +
+  log(`next low-mem flatten: root.usdc ${stats.inputBytes} -> ${stats.outputBytes} bytes ` +
+      `(passthrough=${stats.arraysPassedThrough}, reencoded=${stats.arraysReencoded})` +
+      `${canStreamWrite ? ' [stream-write]' : ''}; ` +
       `repacked ${r.textures} texture(s), re-encoded ${r.reencoded}${r.streamedToSink ? ' [streamed to sink]' : ''}`);
   return {
     usdz: r.usdz,
@@ -964,8 +1073,8 @@ async function convertSingleUSDZToNextLowMemUSDZ(native, bytes, opts, log) {
       rootLayerFormat: 'usdc',
       flatten: true,
       pipeline: 'next',
-      arraysPassedThrough: flat.stats.arraysPassedThrough,
-      arraysReencoded: flat.stats.arraysReencoded,
+      arraysPassedThrough: stats.arraysPassedThrough,
+      arraysReencoded: stats.arraysReencoded,
     },
   };
 }
