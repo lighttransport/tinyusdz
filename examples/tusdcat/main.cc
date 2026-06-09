@@ -136,6 +136,25 @@ static std::string format_memory_size(size_t bytes) {
   return ss.str();
 }
 
+// Memory cap for USDA *text* output of a composed stage. USDA serialization of a
+// deeply-composed stage (e.g. baked vertex-animation timeSamples) can balloon to
+// many GB; emitting it as one std::string then exhausts memory and the process
+// is OOM-killed/aborted. When the composed stage's estimated size exceeds this
+// cap we serialize to compact USDC in memory instead of the huge USDA text.
+// Configurable via env `TUSDCAT_MAX_USDA_MB` (0 = unlimited). Default 0.
+static size_t GetMaxUsdaOutputBytes() {
+  const char *e = std::getenv("TUSDCAT_MAX_USDA_MB");
+  if (!e || !e[0]) {
+    return 0;  // unlimited (preserve existing behavior unless opted in)
+  }
+  char *end = nullptr;
+  unsigned long long mb = std::strtoull(e, &end, 10);
+  if (end == e) {
+    return 0;
+  }
+  return static_cast<size_t>(mb) * 1024ull * 1024ull;
+}
+
 static bool WriteStageToFile(const tinyusdz::Stage &stage,
                              const std::string &output_path,
                              OutputFormat format,
@@ -1009,6 +1028,15 @@ int main(int argc, char **argv) {
     tinyusdz::PayloadCompositionOptions payload_opts;
     payload_opts.allow_parent_relative_paths = true;
 
+    // Whether to dump each INTERMEDIATE composited layer as USDA text per
+    // iteration (debug aid). For heavy scenes this USDA serialization is itself
+    // the blow-up (e.g. baked vertex-animation timeSamples), and it happens
+    // inside the composition loop — before any post-loop memory cap. So when a
+    // memory cap is set, skip these intermediate dumps; the final result is
+    // still emitted (USDA, or compact USDC if over the cap) after the loop.
+    const bool print_intermediate =
+        !suppress_usd_text_output && (GetMaxUsdaOutputBytes() == 0);
+
     if (comp_features.subLayers) {
       tinyusdz::Layer composited_layer;
       if (!tinyusdz::CompositeSublayers(resolver, src_layer, &composited_layer, &warn, &err, sublayer_opts)) {
@@ -1020,7 +1048,7 @@ int main(int argc, char **argv) {
         std::cout << "WARN: " << warn << "\n";
       }
 
-      if (!suppress_usd_text_output) {
+      if (print_intermediate) {
         std::cout << "# `subLayers` composited\n";
         std::cout << composited_layer << "\n";
       }
@@ -1049,7 +1077,7 @@ int main(int argc, char **argv) {
             std::cout << "WARN: " << warn << "\n";
           }
 
-          if (!suppress_usd_text_output) {
+          if (print_intermediate) {
             std::cout << "# `references` composited\n";
             std::cout << composited_layer << "\n";
           }
@@ -1074,7 +1102,7 @@ int main(int argc, char **argv) {
             std::cout << "WARN: " << warn << "\n";
           }
 
-          if (!suppress_usd_text_output) {
+          if (print_intermediate) {
             std::cout << "# `payload` composited\n";
             std::cout << composited_layer << "\n";
           }
@@ -1099,7 +1127,7 @@ int main(int argc, char **argv) {
             std::cout << "WARN: " << warn << "\n";
           }
 
-          if (!suppress_usd_text_output) {
+          if (print_intermediate) {
             std::cout << "# `inherits` composited\n";
             std::cout << composited_layer << "\n";
           }
@@ -1124,7 +1152,7 @@ int main(int argc, char **argv) {
             std::cout << "WARN: " << warn << "\n";
           }
 
-          if (!suppress_usd_text_output) {
+          if (print_intermediate) {
             std::cout << "# `variantSet` composited\n";
             std::cout << composited_layer << "\n";
           }
@@ -1164,7 +1192,15 @@ int main(int argc, char **argv) {
     }
 
     tinyusdz::Stage comp_stage;
-    ret = LayerToStage(std::move(src_layer), &comp_stage, &warn, &err);
+    try {
+      ret = LayerToStage(std::move(src_layer), &comp_stage, &warn, &err);
+    } catch (const std::bad_alloc &) {
+      // OOM detection: turn an allocation failure into a clean error instead of
+      // an uncaught std::bad_alloc -> std::terminate -> abort().
+      std::cerr << "ERR: out of memory while building the composed Stage. "
+                   "Set TUSDCAT_MAX_USDA_MB or use USDC output for heavy scenes.\n";
+      return EXIT_FAILURE;
+    }
     if (warn.size()) {
       std::cout << warn<< "\n";
     }
@@ -1193,7 +1229,42 @@ int main(int argc, char **argv) {
       std::cerr << "JSON output is not supported in this build\n";
 #endif
     } else if (!suppress_usd_text_output) {
-      std::cout << comp_stage.ExportToString() << "\n";
+      const size_t est_bytes = comp_stage.estimate_memory_usage();
+      const size_t cap_bytes = GetMaxUsdaOutputBytes();
+      if (cap_bytes && est_bytes > cap_bytes) {
+        // Over the USDA cap: keep timeSamples compact by serializing to USDC in
+        // memory (binary, far smaller than baked USDA text) instead of emitting
+        // a multi-GB USDA string that would exhaust memory.
+        std::vector<uint8_t> usdc_bytes;
+        std::string c_warn, c_err;
+        if (tinyusdz::usdc::SaveAsUSDCToMemory(comp_stage, &usdc_bytes, &c_warn,
+                                               &c_err)) {
+          std::cerr << "# Composed stage estimate " << format_memory_size(est_bytes)
+                    << " exceeds USDA output cap " << format_memory_size(cap_bytes)
+                    << "; serialized compact USDC to memory ("
+                    << format_memory_size(usdc_bytes.size())
+                    << ") instead of USDA text. (Use -o out.usdc to write it.)\n";
+        } else {
+          std::cerr << "ERR: composed stage too large for USDA output ("
+                    << format_memory_size(est_bytes) << " > cap "
+                    << format_memory_size(cap_bytes)
+                    << ") and the compact USDC fallback failed: " << c_err << "\n";
+          return EXIT_FAILURE;
+        }
+      } else {
+        // Guard the (potentially huge) USDA serialization against allocation
+        // failure: turn an out-of-memory condition into a clean error instead of
+        // an uncaught std::bad_alloc -> std::terminate -> abort().
+        try {
+          std::cout << comp_stage.ExportToString() << "\n";
+        } catch (const std::bad_alloc &) {
+          std::cerr << "ERR: out of memory while serializing composed stage to "
+                       "USDA text (estimate " << format_memory_size(est_bytes)
+                    << "). Use USDC output (-o out.usdc) or set TUSDCAT_MAX_USDA_MB "
+                       "for large composed scenes.\n";
+          return EXIT_FAILURE;
+        }
+      }
     }
 
     if (has_output_file) {

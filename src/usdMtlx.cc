@@ -2086,14 +2086,17 @@ bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err) {
   //   }
   //   def "Shaders" {
   //   }
-  constexpr auto kAutodeskStandardSurface = "AutodeskStandardSurface";
-
+  // Validate the model's surface shader is one we recognize. (This top-level
+  // info:id is informational; the root PrimSpec is rebuilt below.) Compare
+  // against the SAME constants the reader assigns (see shader_name = … above);
+  // the standard_surface one is kMtlxAutodeskStandardSurface, not the bare
+  // "AutodeskStandardSurface" string.
   if (model.shader_name == kUsdPreviewSurface) {
     ps.props()["info:id"] =
         detail::MakeProperty(value::token(kUsdPreviewSurface));
-  } else if (model.shader_name == kAutodeskStandardSurface) {
+  } else if (model.shader_name == kMtlxAutodeskStandardSurface) {
     ps.props()["info:id"] =
-        detail::MakeProperty(value::token(kAutodeskStandardSurface));
+        detail::MakeProperty(value::token(kMtlxAutodeskStandardSurface));
   } else if (model.shader_name == kOpenPBRSurface) {
     ps.props()["info:id"] =
         detail::MakeProperty(value::token(kOpenPBRSurface));
