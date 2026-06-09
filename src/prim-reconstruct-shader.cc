@@ -492,7 +492,14 @@ bool ReconstructPrim<Material>(
 
     PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:surface",
                                   Material, material->surface)
+    // MaterialX materials author the terminals as `outputs:mtlx:surface` /
+    // `outputs:mtlx:displacement` — map them onto the same Material terminals so
+    // MaterialX (standard_surface / OpenPBR) materials are shaded, not dropped.
+    PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:mtlx:surface",
+                                  Material, material->surface)
     PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:displacement",
+                                  Material, material->displacement)
+    PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:mtlx:displacement",
                                   Material, material->displacement)
     PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:volume",
                                   Material, material->volume)

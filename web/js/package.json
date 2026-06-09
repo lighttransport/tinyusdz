@@ -21,6 +21,7 @@
     "dev:usddiff": "vite --open /usddiff.html",
     "dev:udim": "vite --open /udim.html",
     "dev:urdf": "vite --open /urdf.html",
+    "dev:http-resolver": "vite --open /http-asset-resolver.html",
     "build": "vite build",
     "preview": "vite preview",
     "__following_is_experiment_and_for_debug__": "",

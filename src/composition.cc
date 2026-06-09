@@ -388,7 +388,8 @@ bool LoadAsset(AssetResolutionResolver &resolver,
                Layer *dst_layer, const PrimSpec **dst_primspec_root,
                const bool error_when_no_prims_found,
                const bool error_when_asset_not_found,
-               const bool error_when_unsupported_fileformat, std::string *warn,
+               const bool error_when_unsupported_fileformat,
+               const bool allow_parent_relative_paths, std::string *warn,
                std::string *err) {
   if (!dst_layer) {
     PUSH_ERROR_AND_RETURN(
@@ -396,7 +397,8 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   }
 
   std::string asset_path = assetPath.GetAssetPath();
-  if (!security_policy::ValidateAndNormalizeAssetPath(asset_path, &asset_path)) {
+  if (!security_policy::ValidateAndNormalizeAssetPath(
+          asset_path, &asset_path, allow_parent_relative_paths)) {
     PUSH_ERROR_AND_RETURN(
         fmt::format("Unsafe asset path in composition: `{}`",
                     assetPath.GetAssetPath()));
@@ -895,7 +897,8 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
                    &sublayer, /* primspec_root */ nullptr,
                    options.error_when_no_prims_in_sublayer,
                    options.error_when_asset_not_found,
-                   options.error_when_unsupported_fileformat, warn, err)) {
+                   options.error_when_unsupported_fileformat,
+                   options.allow_parent_relative_paths, warn, err)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Load asset in subLayer failed: `{}`", layer.assetPath));
     }
@@ -1094,7 +1097,8 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                            reference.asset_path, reference.prim_path, &layer,
                            &src_ps, /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
-                           options.error_when_unsupported_fileformat, warn, err)) {
+                           options.error_when_unsupported_fileformat,
+                   options.allow_parent_relative_paths, warn, err)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(
                   fmt::format("Failed to `references` asset `{}`",
@@ -1196,7 +1200,8 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                            reference.asset_path, reference.prim_path, &layer,
                            &src_ps, /* error_when_no_prims */ true,
                            options.error_when_asset_not_found,
-                           options.error_when_unsupported_fileformat, warn, err)) {
+                           options.error_when_unsupported_fileformat,
+                   options.allow_parent_relative_paths, warn, err)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(
                   fmt::format("Failed to `references` asset `{}`",
@@ -1344,7 +1349,8 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
                            pl.asset_path, pl.prim_path, &layer, &src_ps,
                            /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
-                           options.error_when_unsupported_fileformat, warn, err)) {
+                           options.error_when_unsupported_fileformat,
+                   options.allow_parent_relative_paths, warn, err)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(fmt::format("Failed to `payload` asset `{}`",
                                                 pl.asset_path.GetAssetPath()));
@@ -1444,7 +1450,8 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
                            pl.asset_path, pl.prim_path, &layer, &src_ps,
                            /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
-                           options.error_when_unsupported_fileformat, warn, err)) {
+                           options.error_when_unsupported_fileformat,
+                   options.allow_parent_relative_paths, warn, err)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(fmt::format("Failed to `payload` asset `{}`",
                                                 pl.asset_path.GetAssetPath()));
