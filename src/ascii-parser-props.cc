@@ -1009,6 +1009,37 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
 
   DCOUT("type_name = " << type_name);
 
+  // `reorder nameChildren = [...]` / `reorder properties = [...]` (also
+  // variantSets, etc.). These reorder the namespace output ordering and carry
+  // no data opinions, so parse and consume the statement as a no-op rather than
+  // mis-reading `reorder` as a typed-attribute declaration and failing.
+  if (type_name == "reorder") {
+    std::string reorder_field;
+    if (!ReadIdentifier(&reorder_field)) {
+      PUSH_ERROR_AND_RETURN(
+          "Expected a field name (e.g. `nameChildren`/`properties`) after "
+          "`reorder`.");
+    }
+    if (!SkipWhitespace()) {
+      return false;
+    }
+    if (!Expect('=')) {
+      PUSH_ERROR_AND_RETURN("Expected `=` in `reorder` statement.");
+    }
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+    std::vector<value::token> reorder_toks;
+    if (!ParseTokenArrayOptimized(&reorder_toks)) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Failed to parse token array for `reorder {}`.",
+                      reorder_field));
+    }
+    DCOUT("Parsed and ignored `reorder " << reorder_field << "` ("
+          << reorder_toks.size() << " entries; ordering only).");
+    return true;
+  }
+
   // `uniform` or `varying`
 
   // Relation('rel')

@@ -845,6 +845,13 @@ end:
     continue; /* got it */\
   } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
     /* go next */ \
+  } else if (ret.code == ParseResult::ResultCode::TypeMismatch) { \
+    /* Sdf-level leniency (matches OpenUSD, which does not type-check builtin \
+       attributes at parse time): keep the authored attribute — the trailing \
+       ADD_PROPERTY captures it as a custom property — instead of failing the \
+       whole prim. The canonical typed field stays unauthored. */ \
+    PUSH_WARN(fmt::format("Attribute `{}` declared with a non-conformant type: {} Preserving the authored value as a custom property.", __name, ret.err)); \
+    /* do NOT `continue`: fall through so the trailing ADD_PROPERTY captures it */ \
   } else { \
     PUSH_ERROR_AND_RETURN(fmt::format("Parsing attribute `{}` failed. Error: {}", __name, ret.err)); \
   } \

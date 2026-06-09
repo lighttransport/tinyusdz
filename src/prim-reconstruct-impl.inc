@@ -782,6 +782,11 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
     continue; /* got it */\
   } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
     /* go next */ \
+  } else if (ret.code == ParseResult::ResultCode::TypeMismatch) { \
+    /* Sdf-level leniency (matches OpenUSD): preserve the authored attribute as \
+       a custom property (trailing ADD_PROPERTY) instead of failing the prim. */ \
+    PUSH_WARN(fmt::format("Attribute `{}` declared with a non-conformant type: {} Preserving the authored value as a custom property.", __name, ret.err)); \
+    /* do NOT `continue`: fall through so the trailing ADD_PROPERTY captures it */ \
   } else { \
     PUSH_ERROR_AND_RETURN(fmt::format("Parsing attribute `{}` failed. Error: {}", __name, ret.err)); \
   } \

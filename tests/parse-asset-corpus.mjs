@@ -27,7 +27,7 @@
 //   summary.md    status totals + warning/error category tables + FAIL lists
 //   summary.json  machine-readable (diff runs over time)
 
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -124,27 +124,45 @@ async function newestMtime(dir, depth = 3) {
 // run one file
 // ---------------------------------------------------------------------------
 
-function run(bin, args, timeout) {
+// Run a process with a timeout. Uses spawn (not execFile) so we can DISCARD
+// stdout via opts.discardStdout — `tusdcat -f` prints the whole flattened layer,
+// which for large scenes is hundreds of MB and would blow execFile's maxBuffer
+// (killing the process and producing a spurious failure). The pass/fail check
+// only needs the exit status + stderr, so the main run discards stdout.
+function run(bin, args, timeout, opts = {}) {
   return new Promise((resolve) => {
     const t0 = Date.now();
-    execFile(bin, args,
-      { timeout, killSignal: 'SIGKILL', maxBuffer: 128 * 1024 * 1024 },
-      (err, stdout, stderr) => {
-        const ms = Date.now() - t0;
-        if (!err) return resolve({ code: 0, signal: null, killed: false, stdout: stdout || '', stderr: stderr || '', ms });
-        resolve({
-          code: typeof err.code === 'number' ? err.code : null,
-          signal: err.signal || null,
-          killed: !!err.killed,
-          stdout: stdout || '',
-          stderr: stderr || (err.message || ''),
-          ms,
-        });
+    const capture = !opts.discardStdout;
+    let child;
+    try {
+      child = spawn(bin, args, {
+        stdio: ['ignore', capture ? 'pipe' : 'ignore', 'pipe'],
+        env: opts.env ? { ...process.env, ...opts.env } : process.env,
       });
+    } catch (e) {
+      return resolve({ code: null, signal: null, killed: false, stdout: '', stderr: String(e), ms: Date.now() - t0 });
+    }
+    let stdout = '', stderr = '', killed = false;
+    const STDOUT_CAP = 96 * 1024 * 1024, STDERR_CAP = 4 * 1024 * 1024;
+    if (capture && child.stdout) child.stdout.on('data', (d) => { if (stdout.length < STDOUT_CAP) stdout += d; });
+    child.stderr.on('data', (d) => { if (stderr.length < STDERR_CAP) stderr += d; });
+    const timer = setTimeout(() => { killed = true; child.kill('SIGKILL'); }, timeout);
+    child.on('error', (e) => { clearTimeout(timer); resolve({ code: null, signal: null, killed, stdout, stderr: stderr || String(e), ms: Date.now() - t0 }); });
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal, killed, stdout, stderr, ms: Date.now() - t0 });
+    });
   });
 }
 
-const runOne = (bin, flag, file, timeout) => run(bin, [flag, file], timeout);
+// Cap the USDA-text size for the flatten pass/fail run: heavy composed scenes
+// (e.g. baked vertex-animation timeSamples) would otherwise serialize to many GB
+// of USDA and hang/OOM. With the cap, tusdcat keeps timeSamples compact by
+// falling back to in-memory USDC and exits 0 — so the harness measures
+// "did composition succeed", not "can we hold the giant USDA text".
+const runOne = (bin, flag, file, timeout) =>
+  run(bin, [flag, file], timeout,
+      { discardStdout: true, env: { TUSDCAT_MAX_USDA_MB: '1024' } });
 
 // Cross-check one asset against the OpenUSD reference. Returns
 // { ref: REF_PASS|REF_WARN|REF_FAIL, diff: MATCH|DIFFER|DIFFERR|NA }.
