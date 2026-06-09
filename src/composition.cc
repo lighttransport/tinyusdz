@@ -883,6 +883,14 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
                       sublayer_asset_path, in_layer.name()));
     }
 
+    // Each sublayer is resolved relative to THIS layer's directory. A previous
+    // iteration's LoadAsset() leaves the resolver's working path pointing at the
+    // last-loaded sublayer's dir, so reset it here before the existence check —
+    // otherwise the 2nd+ sublayer of a multi-sublayer list resolves against the
+    // wrong base (e.g. `../../../_common/axis.usda` fails after a sibling loads).
+    resolver.set_current_working_path(in_layer.get_current_working_path());
+    resolver.set_search_paths(in_layer.get_asset_search_paths());
+
     std::string layer_filepath = resolver.resolve(sublayer_asset_path);
     if (layer_filepath.empty()) {
       PUSH_ERROR_AND_RETURN(fmt::format("{} not found in path: {}",
