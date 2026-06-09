@@ -286,6 +286,93 @@ Relevant commits: zero-copy cap (`4abf2ed87`), arc-free skip + attribution aid
 (`7212e1ab9`), streaming crate writer (`2a68ac062`), `--stream-write` end-to-end
 (`9c2d59b6b`).
 
+## 2026-06-09 update: incremental render-data converter (RenderStream)
+
+`web/js/streaming.js` is a self-contained raw-WebGL2 USD/USDZ renderer (no
+Three.js) whose target is to **render a scene while keeping the WASM linear heap
+near the input crate size** — not the 5–10x of the eager
+`loadFromBinary()` → typed Stage → RenderScene path.
+
+### Why the eager path can't hit the target
+
+The eager render path converts the WHOLE scene at once (parse a typed Stage,
+then build the RenderScene), so during the load it holds input + Stage + render
+data simultaneously. Measured (32-bit wasm, `getMemoryStats()`/heap):
+`geometry-scene` 264 MB crate → 1544 MB peak (5.85x); `materialx-scene-1` 135 MB →
+1406 MB (10.4x). emscripten never returns grown heap to the OS, so process RSS
+stays at that peak even after `reset()`. No JS trick fixes it — the cost is
+WASM-side. (Textures are already kept ENCODED in the heap via
+`setLoadTextureInNative(false)` and decoded per-texture in JS, so decoded RGBA
+never lands in the WASM heap; the geometry conversion is the blow-up.)
+
+### The incremental converter
+
+A `RenderStream` binding (`web/binding.cc`) drives the `next` pipeline's LAZY
+crate:
+
+1. JS extracts the root `.usdc` from the `.usdz` and streams ONLY it into WASM
+   (`RenderStream.begin`); the archive + texture entries stay in JS, off the
+   WASM heap. The crate sits in the heap exactly once (`ReadOwned`, lazy arrays).
+2. `getMesh(i)` materializes ONE mesh's geometry on demand and returns zero-copy
+   `{points,indices,normals,uv0}` descriptors + a resolved UsdPreviewSurface /
+   MaterialX material (base color / metallic / roughness / emissive / occlusion +
+   texture asset paths). Arrays are read through a COPY of the lazy `Value`
+   (`Value tmp = *v; tmp.as_float_array()`), so the Stage's own property stays
+   lazy and the per-mesh decode never accumulates across meshes — at most one
+   mesh is resident at a time.
+3. JS uploads each mesh to a GL buffer before the next `getMesh()` (the scratch
+   is overwritten), decodes referenced archive textures with `createImageBitmap`
+   (off the WASM heap) → GL textures, then `end()`s to free the crate.
+
+Peak WASM heap = crate + the largest single mesh, instead of input + whole Stage
++ whole RenderScene.
+
+### Closing the texture gaps (next-reader)
+
+Two next-model gaps blocked textured output in this path; both are fixed:
+
+- **Float2 (vec2f) arrays.** The next `Value`/reader only handled `Float`/`Float3`
+  arrays, so `primvars:st` (UVs) decoded to nothing. Added `MakeFloat2Array`,
+  `Float2` acceptance in `as_float_array`/destructor/copy/equals/hash, a `Vec2f`
+  case in the (lazy + eager) crate reader, and `Vec2f` materialization. UVs now
+  work — and next-pipeline flatten preserves them (it was silently dropping them).
+- **Texture connection resolution.** `AttributeEval::GetConnectionPath` read the
+  attribute's value as a string instead of the parsed connection targets; it now
+  uses `PrimSpec::connection()`. `RenderStream` resolves each UsdUVTexture
+  connection to its `inputs:file` asset path, which JS maps to an archive entry.
+
+### Render-mesh prep: de-index + weld
+
+When UVs/normals are face-varying or separately indexed, a mesh must be
+de-indexed so each triangle corner carries its own attributes. The naive
+non-indexed soup (3·triangles corners) spiked the per-mesh peak, so `getMesh`
+WELDS inline — one vertex per distinct (pos[,uv][,normal]) tuple — recovering
+vertex sharing while keeping seams split. Whether to weld or keep the soup is
+decided per mesh by POSITION sharing (`vtxCount*3 < corner count`); face-varying
+is NOT a reliable signal (the heaviest scenes are face-varying and weld well).
+
+### Corpus result (incremental path, peak WASM heap / crate)
+
+| scene             | crate  | eager   | **incremental** | UV / textured     |
+|-------------------|-------:|--------:|----------------:|-------------------|
+| geometry-scene      | 264 MB |  5.85x  |     **1.21x**   | 255 / —           |
+| textured-scene-1        |  78 MB |    —    |     **1.46x**   | 89 / 96 textured  |
+| textured-scene-2|  97 MB |    —    |     **1.46x**   | 18 / 18 textured  |
+| textured-scene-3   |  77 MB |    —    |     **2.5x**    | 65 / 65 textured  |
+| single-mesh-scene   | 155 MB |  6.18x  |     **2.51x**   | 3 / 3 textured    |
+| materialx-scene-1      | 133 MB | 10.43x  |     **3.62x**   | 646 / 640 textured|
+
+27/28 corpus scenes drive through it (the 1 is a non-USDC root → eager fallback);
+all geometry + UVs + materials + textures resolve, every texture path matches an
+archive entry. Small scenes are dominated by the ~17 MB wasm baseline (ratios not
+meaningful). Tiny remaining gap from the eager path is acceptable; geometry-heavy
+scenes hit ~1.2–1.5x. `streaming.js` defaults to this path; `?eager=1` uses the
+eager textured path for non-USDC roots.
+
+Relevant commits: streaming renderer (`3b6379a57`), incremental RenderStream
+(`f4f0faa45`), Float2 + connection fixes (`d9b9c268f`), inline weld
+(`b5150fb9e`), position-sharing weld heuristic (`d3f02c289`).
+
 ## Possible Memory Reduction Enhancements
 
 ### Stream USDZ Output — IMPLEMENTED (2026-06-09)
