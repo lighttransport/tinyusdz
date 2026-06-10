@@ -2313,6 +2313,27 @@ if(TINYUSDZ_BUILD_TESTS)
   endif()
 
   #
+  # usd-wg asset corpus parse regression (native `tusdcat -l`).
+  #
+  # Runs the Node harness over the usd-wg/assets corpus (path from the
+  # USD_WG_ASSETS_DIR env var, else its built-in default). The harness SKIPS
+  # (exit 0) when the corpus or Node is absent, so this is safe in CI without
+  # the usd-wg/assets checkout. --max-fail 0 gates on the load baseline.
+  #
+  find_program(TINYUSDZ_NODE_EXECUTABLE NAMES node nodejs)
+  if(TINYUSDZ_NODE_EXECUTABLE AND TARGET tusdcat)
+    add_test(
+      NAME corpus-parse-native
+      COMMAND ${TINYUSDZ_NODE_EXECUTABLE}
+              ${PROJECT_SOURCE_DIR}/tests/parse-asset-corpus.mjs
+              --mode load
+              --tusdcat "$<TARGET_FILE:tusdcat>"
+              --out "${CMAKE_BINARY_DIR}/corpus-parse-results"
+              --max-fail 0
+      )
+  endif()
+
+  #
   # USDA parser tester
   #
   if(TINYUSDZ_WITH_MODULE_USDC_READER)
