@@ -233,6 +233,38 @@ struct Cache::Impl {
     std::string layer_id;
   };
 
+  // Memoized spec resolution. The same (stack, site) is resolved 3-5x per
+  // composed prim (ExpandArcs, AnyAuthors, ComposeInto, ComputePrimIndex,
+  // instance-key); each call walked every layer and parsed the site Path. The
+  // cache keys by (stack_idx, site) and returns a stable reference (unordered_map
+  // keeps element addresses valid across rehash, so a recursive insert during
+  // expansion never dangles the outer reference). Results depend only on layer
+  // contents, which change solely on InvalidateLayer -> spec_cache_ is cleared
+  // there (Invalidate(prim) leaves layer stacks intact, so it stays valid).
+  struct SpecCacheKey {
+    uint32_t stack;
+    std::string site;
+    bool operator==(const SpecCacheKey &o) const {
+      return stack == o.stack && site == o.site;
+    }
+  };
+  struct SpecCacheKeyHash {
+    size_t operator()(const SpecCacheKey &k) const {
+      return std::hash<std::string>()(k.site) * 1000003u + k.stack;
+    }
+  };
+  mutable std::unordered_map<SpecCacheKey, std::vector<SpecRef>, SpecCacheKeyHash>
+      spec_cache_;
+
+  const std::vector<SpecRef> &Specs(uint32_t stack_idx,
+                                    const std::string &site) const {
+    SpecCacheKey key{stack_idx, site};
+    auto it = spec_cache_.find(key);
+    if (it != spec_cache_.end()) return it->second;
+    std::vector<SpecRef> refs = FindSpecs(layer_stacks[stack_idx], site);
+    return spec_cache_.emplace(std::move(key), std::move(refs)).first->second;
+  }
+
   std::vector<SpecRef> FindSpecs(const LayerStack &st,
                                  const std::string &site) const {
     std::vector<SpecRef> refs;
@@ -262,7 +294,7 @@ struct Cache::Impl {
 
   bool AnyAuthors(const std::vector<Src> &srcs) const {
     for (const Src &s : srcs) {
-      if (!FindSpecs(layer_stacks[s.stack_idx], s.site).empty()) return true;
+      if (!Specs(s.stack_idx, s.site).empty()) return true;
     }
     return false;
   }
@@ -322,7 +354,7 @@ struct Cache::Impl {
   bool IsInstanceableSources(const std::vector<Src> &srcs) const {
     if (srcs.size() <= 1) return false;
     for (const Src &s : srcs) {
-      for (const SpecRef &sr : FindSpecs(layer_stacks[s.stack_idx], s.site)) {
+      for (const SpecRef &sr : Specs(s.stack_idx, s.site)) {
         if (sr.spec->meta().instanceable) return true;
       }
     }
@@ -336,7 +368,7 @@ struct Cache::Impl {
     std::string key;
     for (const Src &s : srcs) {
       bool found_type = false;
-      for (const SpecRef &sr : FindSpecs(layer_stacks[s.stack_idx], s.site)) {
+      for (const SpecRef &sr : Specs(s.stack_idx, s.site)) {
         if (!sr.spec->type_name().empty()) {
           key += "T:" + sr.spec->type_name() + ";";
           found_type = true;
@@ -495,7 +527,7 @@ struct Cache::Impl {
       std::set<uint32_t> seen_stack;
       for (uint32_t as : chain) {
         if (as == arc_stack_idx || !seen_stack.insert(as).second) continue;
-        if (FindSpecs(layer_stacks[as], arc_site).empty()) continue;
+        if (Specs(as, arc_site).empty()) continue;
         Src implied = arc_src;
         implied.stack_idx = as;
         std::vector<uint32_t> ichain{as};
@@ -524,8 +556,7 @@ struct Cache::Impl {
                   std::string *err) {
     out->push_back(src);
 
-    const std::vector<SpecRef> specs =
-        FindSpecs(layer_stacks[src.stack_idx], src.site);
+    const std::vector<SpecRef> &specs = Specs(src.stack_idx, src.site);
     if (specs.empty()) return;
 
     // Record this source's variant selections (strong-first wins) so a selection
@@ -712,8 +743,7 @@ struct Cache::Impl {
         continue;
       }
 
-      const std::vector<SpecRef> specs =
-          FindSpecs(layer_stacks[s.stack_idx], s.site);
+      const std::vector<SpecRef> &specs = Specs(s.stack_idx, s.site);
       if (specs.empty()) continue;
 
       for (const SpecRef &sr : specs) {
@@ -778,8 +808,7 @@ struct Cache::Impl {
       n.site_path_idx = InternPath(s.site);
       n.map_to_root = s.map;
       n.offset = s.offset;
-      const std::vector<SpecRef> specs =
-          FindSpecs(layer_stacks[s.stack_idx], s.site);
+      const std::vector<SpecRef> &specs = Specs(s.stack_idx, s.site);
       if (!specs.empty()) {
         n.flags |= NodeFlags::HasSpecs;
         for (const SpecRef &sr : specs) {
@@ -1136,8 +1165,10 @@ struct Cache::Impl {
       }
     }
     for (const std::string &k : to_drop) DropIndex(k);
-    // Conservative: a referenced layer feeds many prims' sources.
+    // Conservative: a referenced layer feeds many prims' sources, and its spec
+    // contents just changed.
     sources_cache.clear();
+    spec_cache_.clear();
     reg_->Drop(layer_id);
   }
 
