@@ -32,6 +32,14 @@ namespace composition_graph {
 
 using security_policy::ValidateAndNormalizeAssetPath;
 
+namespace {
+
+bool IsFileDescriptorLimitError(const std::string &err) {
+  return err.find("file descriptor limit reached") != std::string::npos;
+}
+
+}  // namespace
+
 // ---------------------------------------------------------------------------
 // ArcType utilities
 // ---------------------------------------------------------------------------
@@ -493,10 +501,39 @@ PrimIndexBuilder::BuildChildFrom(const PrimIndex &parent,
   return FinishBuild();
 }
 
-nonstd::expected<PrimIndex, std::string> PrimIndexBuilder::FinishBuild() {
-  std::string err;
+bool PrimIndexBuilder::ReprocessNode(PrimIndex *index, uint16_t node_idx,
+                                     std::string *err) {
+  if (!index) {
+    if (err) *err = "PrimIndexBuilder::ReprocessNode: index is null";
+    return false;
+  }
+  if (node_idx >= index->GetNodeCount()) {
+    if (err) *err = "PrimIndexBuilder::ReprocessNode: node index out of range";
+    return false;
+  }
 
-  // Phase 2: Process task queue
+  _result = std::move(*index);
+  const PrimSpec *ps = GetPrimSpecForNode(node_idx);
+  if (!ps) {
+    if (err) *err = "PrimIndexBuilder::ReprocessNode: node has no PrimSpec";
+    *index = std::move(_result);
+    return false;
+  }
+
+  CollectVariantOpinions(node_idx);
+  ScanArcsAndEnqueueTasks(node_idx, *ps);
+  auto rebuilt = FinishBuild();
+  if (!rebuilt) {
+    if (err) *err = rebuilt.error();
+    *index = std::move(_result);
+    return false;
+  }
+
+  *index = std::move(*rebuilt);
+  return true;
+}
+
+bool PrimIndexBuilder::DrainTaskQueue(std::string *err) {
   while (!_task_queue.empty()) {
     CompositionTask task = _task_queue.top();
     _task_queue.pop();
@@ -507,37 +544,48 @@ nonstd::expected<PrimIndex, std::string> PrimIndexBuilder::FinishBuild() {
         // Already done
         break;
       case TaskType::EvalSubLayers:
-        ok = EvalSubLayers(task.node_idx, &err);
+        ok = EvalSubLayers(task.node_idx, err);
         break;
       case TaskType::EvalImpliedInherits:
-        ok = PropagateImpliedInherits(task.node_idx, &err);
+        ok = PropagateImpliedInherits(task.node_idx, err);
         break;
       case TaskType::EvalInherits:
-        ok = EvalInherits(task.node_idx, &err);
+        ok = EvalInherits(task.node_idx, err);
         break;
       case TaskType::EvalVariants:
-        ok = EvalVariants(task.node_idx, &err);
+        ok = EvalVariants(task.node_idx, err);
         break;
       case TaskType::EvalReferences:
-        ok = EvalReferences(task.node_idx, &err);
+        ok = EvalReferences(task.node_idx, err);
         break;
       case TaskType::EvalPayloads:
-        ok = EvalPayloads(task.node_idx, &err);
+        ok = EvalPayloads(task.node_idx, err);
         break;
       case TaskType::EvalImpliedSpecializes:
-        ok = PropagateImpliedSpecializes(task.node_idx, &err);
+        ok = PropagateImpliedSpecializes(task.node_idx, err);
         break;
       case TaskType::EvalSpecializes:
-        ok = EvalSpecializes(task.node_idx, &err);
+        ok = EvalSpecializes(task.node_idx, err);
         break;
       case TaskType::EvalRelocates:
-        ok = EvalRelocates(task.node_idx, &err);
+        ok = EvalRelocates(task.node_idx, err);
         break;
     }
 
     if (!ok) {
-      return nonstd::make_unexpected(err);
+      return false;
     }
+  }
+
+  return true;
+}
+
+nonstd::expected<PrimIndex, std::string> PrimIndexBuilder::FinishBuild() {
+  std::string err;
+
+  // Phase 2: Process task queue
+  if (!DrainTaskQueue(&err)) {
+    return nonstd::make_unexpected(err);
   }
 
   // Phase 3: Resolve deferred variant selections
@@ -547,8 +595,19 @@ nonstd::expected<PrimIndex, std::string> PrimIndexBuilder::FinishBuild() {
   // that authors a matching variantSet and repoint it at the materialized
   // result, so the variant's child prims (and their arcs) enter the namespace.
   // A variant child that itself references/payloads is handled by the normal
-  // namespace expansion when that child's index is built.
-  ApplyVariantContent();
+  // namespace expansion when that child's index is built. A variant can also
+  // author arcs on the selected prim itself; ApplyVariantContent() re-scans the
+  // resolved PrimSpec, so drain any newly queued tasks before final culling.
+  uint32_t variant_passes = 0;
+  while (ApplyVariantContent()) {
+    if (++variant_passes > _ctx->_options.max_depth) {
+      return nonstd::make_unexpected(
+          "Variant composition depth limit exceeded");
+    }
+    if (!DrainTaskQueue(&err)) {
+      return nonstd::make_unexpected(err);
+    }
+  }
 
   // Phase 4: Check for relocates on root layer and enqueue if needed
   if (_ctx->_root_layer &&
@@ -856,6 +915,13 @@ bool PrimIndexBuilder::EvalReferences(uint16_t node_idx, std::string *err) {
             }
           }
         }
+      } else if (IsFileDescriptorLimitError(load_err)) {
+        if (err) {
+          *err = fmt::format("Failed to load referenced asset `{}`: {}",
+                             asset_path_str, load_err);
+        }
+        _arc_stack.erase({asset_path_str, ref.prim_path.prim_part()});
+        return false;
       } else if (_ctx->_options.error_when_asset_not_found) {
         if (err) {
           *err = fmt::format("Failed to load referenced asset: {}",
@@ -1035,6 +1101,13 @@ bool PrimIndexBuilder::EvalPayloads(uint16_t node_idx, std::string *err) {
                   {TaskType::EvalImpliedSpecializes, child_idx, 0, 0});
             }
           }
+        } else if (IsFileDescriptorLimitError(load_err)) {
+          if (err) {
+            *err = fmt::format("Failed to load payload asset `{}`: {}",
+                               asset_path_str, load_err);
+          }
+          _arc_stack.erase({asset_path_str, pl.prim_path.prim_part()});
+          return false;
         }
 
         _arc_stack.erase({asset_path_str, pl.prim_path.prim_part()});
@@ -1134,16 +1207,31 @@ bool PrimIndexBuilder::ApplyVariantContent() {
     std::string vw, ve;
     if (!VariantSelectPrimSpec(resolved, src_ps, selection, &vw, &ve)) continue;
 
-    // Materialize the resolved PrimSpec as the sole root prim of a synthetic
-    // layer owned by the context, and repoint the node at it. Its children
-    // (the variant's child prims) are then reachable by find_primspec_at and so
-    // by the namespace expansion / value composition.
+    // Materialize the resolved PrimSpec in a synthetic layer owned by the
+    // context, and repoint the node at it. For root prims, preserve the source
+    // layer's sibling prims so internal references authored inside the selected
+    // variant can still resolve against that layer. Its
+    // children (the variant's child prims) are then reachable by
+    // find_primspec_at and so by the namespace expansion / value composition.
     std::string nm = ps->name();
     if (nm.empty()) nm = "_variant";
     resolved.name() = nm;
 
-    auto synth = std::make_unique<Layer>();
-    synth->add_primspec(nm, resolved);
+    const std::string original_site = _ctx->_path_table[node.site_path_idx];
+    const bool root_site = (original_site == "/" + nm);
+    const Layer *src_layer = nullptr;
+    if (root_site && node.layer_stack_idx != CompNode::kInvalidIndex &&
+        node.layer_stack_idx < _ctx->_layer_stacks.size()) {
+      src_layer = _ctx->_layer_stacks[node.layer_stack_idx].layer;
+    }
+
+    auto synth = src_layer ? std::make_unique<Layer>(*src_layer)
+                           : std::make_unique<Layer>();
+    if (synth->has_primspec(nm)) {
+      synth->replace_primspec(nm, resolved);
+    } else {
+      synth->add_primspec(nm, resolved);
+    }
     const Layer *synth_ptr = synth.get();
     _ctx->_loaded_layers.push_back(std::move(synth));
 
@@ -1157,6 +1245,7 @@ bool PrimIndexBuilder::ApplyVariantContent() {
         !rps.children().empty()) {
       node.flags = node.flags | NodeFlags::HasSpecs;
     }
+    ScanArcsAndEnqueueTasks(i, rps);
     changed = true;
   }
 
@@ -1458,6 +1547,27 @@ void CompositionGraph::DetectAndRegisterInstance(
   }
 }
 
+void CompositionGraph::EraseDescendantPrimIndices(
+    const std::string &prim_path) {
+  const std::string prefix = prim_path + "/";
+  for (auto it = _prim_indices.begin(); it != _prim_indices.end();) {
+    if (it->first.rfind(prefix, 0) == 0) {
+      it = _prim_indices.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
+void CompositionGraph::RebuildInstanceRegistry() {
+  _instance_key_to_prototype.clear();
+  _prototypes.clear();
+  _instance_to_prototype.clear();
+  for (const auto &pair : _prim_indices) {
+    DetectAndRegisterInstance(pair.first, pair.second);
+  }
+}
+
 std::vector<std::string> CompositionGraph::GatherComposedChildNames(
     const PrimIndex &index) const {
   std::vector<std::string> names;
@@ -1547,6 +1657,44 @@ bool CompositionGraph::BuildPrimIndex(const std::string &prim_path,
     }
   }
 
+  return true;
+}
+
+bool CompositionGraph::RebuildDescendantPrimIndices(
+    const std::string &prim_path, const std::shared_ptr<PrimIndex> &parent,
+    std::string *err) {
+  if (!parent) return true;
+
+  struct Item {
+    std::string path;
+    std::shared_ptr<PrimIndex> parent;
+    std::string child_name;
+  };
+
+  std::vector<Item> stack;
+  const std::vector<std::string> child_names = GatherComposedChildNames(*parent);
+  for (auto it = child_names.rbegin(); it != child_names.rend(); ++it) {
+    stack.push_back({prim_path + "/" + *it, parent, *it});
+  }
+
+  while (!stack.empty()) {
+    Item item = std::move(stack.back());
+    stack.pop_back();
+
+    PrimIndexBuilder builder(&_ctx, Path(item.path, ""));
+    auto result = builder.BuildChildFrom(*item.parent, item.child_name);
+    if (!result) continue;
+
+    auto index = std::make_shared<PrimIndex>(std::move(*result));
+    _prim_indices[item.path] = index;
+
+    const std::vector<std::string> nested = GatherComposedChildNames(*index);
+    for (auto it = nested.rbegin(); it != nested.rend(); ++it) {
+      stack.push_back({item.path + "/" + *it, index, *it});
+    }
+  }
+
+  (void)err;
   return true;
 }
 
@@ -1867,7 +2015,7 @@ nonstd::expected<bool, std::string> CompositionGraph::LoadPayload(
                     asset.size(), security_policy::kResolverMaxAssetReadBytes));
   }
 
-  if (!LoadLayerFromMemory(asset.data(), asset.size(), asset_path_str,
+  if (!LoadLayerFromMemory(asset.data(), asset.size(), resolved_path,
                             &pl_layer, &load_warn, &load_err)) {
     if (!old_cwp.empty()) resolver.set_current_working_path(old_cwp);
     return nonstd::make_unexpected("Failed to parse payload: " + load_err);
@@ -1897,7 +2045,7 @@ nonstd::expected<bool, std::string> CompositionGraph::LoadPayload(
       MakeReferenceMapping(target_path, prim_path, false);
   uint16_t map_idx = _ctx.AddMapExpression(mapping, -1);
   uint16_t ls_idx =
-      _ctx.AddLayerStack(layer_raw, asset_path_str, info->payload.layerOffset);
+      _ctx.AddLayerStack(layer_raw, resolved_path, info->payload.layerOffset);
 
   // Update the node
   node.layer_stack_idx = ls_idx;
@@ -1907,7 +2055,20 @@ nonstd::expected<bool, std::string> CompositionGraph::LoadPayload(
                 ~NodeFlags::Inert & ~NodeFlags::Culled) |
                NodeFlags::PayloadLoaded | NodeFlags::HasSpecs;
 
-  RecomputeStrengthOrder(index);
+  {
+    PrimIndexBuilder reprocessor(&_ctx, prim_path);
+    std::string reprocess_err;
+    if (!reprocessor.ReprocessNode(&index, info->node_idx, &reprocess_err)) {
+      return nonstd::make_unexpected(reprocess_err);
+    }
+  }
+  EraseDescendantPrimIndices(prim_path.prim_part());
+  std::string rebuild_err;
+  if (!RebuildDescendantPrimIndices(prim_path.prim_part(), it->second,
+                                    &rebuild_err)) {
+    return nonstd::make_unexpected(rebuild_err);
+  }
+  RebuildInstanceRegistry();
 
   return true;
 }
@@ -1940,6 +2101,13 @@ nonstd::expected<bool, std::string> CompositionGraph::UnloadPayload(
   }
 
   RecomputeStrengthOrder(index);
+  EraseDescendantPrimIndices(prim_path.prim_part());
+  std::string rebuild_err;
+  if (!RebuildDescendantPrimIndices(prim_path.prim_part(), it->second,
+                                    &rebuild_err)) {
+    return nonstd::make_unexpected(rebuild_err);
+  }
+  RebuildInstanceRegistry();
 
   return true;
 }
@@ -1947,14 +2115,25 @@ nonstd::expected<bool, std::string> CompositionGraph::UnloadPayload(
 std::vector<Path> CompositionGraph::GetDeferredPayloadPaths() const {
   std::vector<Path> result;
   for (const auto &dp : _ctx._deferred_payloads) {
-    result.push_back(dp.prim_path);
+    auto it = _prim_indices.find(dp.prim_path.prim_part());
+    if (it == _prim_indices.end()) continue;
+    const PrimIndex &index = *it->second;
+    if (dp.node_idx >= index.GetNodeCount()) continue;
+    if (index.GetNode(dp.node_idx).is_payload_deferred()) {
+      result.push_back(dp.prim_path);
+    }
   }
   return result;
 }
 
 bool CompositionGraph::HasDeferredPayload(const Path &prim_path) const {
   for (const auto &dp : _ctx._deferred_payloads) {
-    if (dp.prim_path.prim_part() == prim_path.prim_part()) return true;
+    if (dp.prim_path.prim_part() != prim_path.prim_part()) continue;
+    auto it = _prim_indices.find(dp.prim_path.prim_part());
+    if (it == _prim_indices.end()) continue;
+    const PrimIndex &index = *it->second;
+    if (dp.node_idx >= index.GetNodeCount()) continue;
+    if (index.GetNode(dp.node_idx).is_payload_deferred()) return true;
   }
   return false;
 }

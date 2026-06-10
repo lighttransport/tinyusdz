@@ -598,6 +598,17 @@ class CompositionGraph {
                       uint16_t root_layer_stack_idx, std::string *warn,
                       std::string *err);
 
+  /// Rebuild all composed descendants under an already-built prim index.
+  bool RebuildDescendantPrimIndices(
+      const std::string &prim_path, const std::shared_ptr<PrimIndex> &parent,
+      std::string *err);
+
+  /// Drop all cached PrimIndices below `prim_path`.
+  void EraseDescendantPrimIndices(const std::string &prim_path);
+
+  /// Recompute instance/prototype maps after graph mutation.
+  void RebuildInstanceRegistry();
+
   /// Collect the composed child names of a prim (union of children across all
   /// non-culled, non-deferred nodes of its index, strongest-first, deduped).
   std::vector<std::string> GatherComposedChildNames(
@@ -674,6 +685,11 @@ class PrimIndexBuilder {
   nonstd::expected<PrimIndex, std::string> BuildChildFrom(
       const PrimIndex &parent, const std::string &child_name);
 
+  /// Re-scan one node in an already-built index after incremental mutation
+  /// (for example, a deferred payload node that was just loaded) and finish the
+  /// queued composition phases in-place.
+  bool ReprocessNode(PrimIndex *index, uint16_t node_idx, std::string *err);
+
  private:
   // Task handlers
   bool EvalRootNode(std::string *err);
@@ -681,6 +697,9 @@ class PrimIndexBuilder {
   // Phases 2-6 shared by Build() and BuildChildFrom(): drain the task queue,
   // resolve variants, cull, compute strength order, detect instanceable.
   nonstd::expected<PrimIndex, std::string> FinishBuild();
+
+  // Drain all queued composition tasks in LIVRPS order.
+  bool DrainTaskQueue(std::string *err);
 
   // Seed descended nodes for BuildChildFrom (phase-1 replacement).
   void SeedDescendedNodes(const PrimIndex &parent, const std::string &child_name);

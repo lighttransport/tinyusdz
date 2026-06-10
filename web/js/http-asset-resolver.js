@@ -50,7 +50,7 @@ import { parseUSDZEntries } from './src/usdzconvert.js';
 // ---------------------------------------------------------------------------
 
 // Implements the resolver interface TinyUSDZComposer expects:
-//   resolveAsync(assetPath) -> Promise<[assetPath, ArrayBuffer]>
+//   resolveAsync(assetPath, { parentAssetPath? }) -> Promise<[assetPath, ArrayBuffer, resolvedUrl]>
 //   getAsset / hasAsset / setAsset / clearCache
 // plus rewrite(): relative paths resolve against `baseUrl`, absolute ones
 // (http(s)/data/blob) pass through unchanged. resolveAsync RETURNS THE ORIGINAL
@@ -60,6 +60,7 @@ export class HttpAssetResolver {
   constructor({ baseUrl = '' } = {}) {
     this.baseUrl = baseUrl;
     this.assetCache = new Map();   // authored path -> ArrayBuffer
+    this.urlCache = new Map();     // authored path -> resolved absolute URL
     this.fetchLog = [];            // [{ path, url, bytes, ok, error? }]
     this.bytesFetched = 0;
   }
@@ -68,40 +69,87 @@ export class HttpAssetResolver {
 
   static isAbsolute(p) { return /^(https?:|data:|blob:)/i.test(String(p || '')); }
 
+  assetFilePart(assetPath) {
+    return String(assetPath || '').replace(/<[^>]*>\s*$/, '');
+  }
+
+  aliases(assetPath) {
+    const raw = String(assetPath || '');
+    const p = this.assetFilePart(raw);
+    const out = new Set([raw, p]);
+    if (p.startsWith('./')) out.add(p.slice(2));
+    else if (p && !p.startsWith('/') && !HttpAssetResolver.isAbsolute(p)) out.add('./' + p);
+    return [...out];
+  }
+
   // Resolve an authored asset path to an absolute URL to fetch.
-  rewrite(assetPath) {
-    const p = String(assetPath || '');
+  rewrite(assetPath, opts = {}) {
+    const p = this.assetFilePart(assetPath);
     if (HttpAssetResolver.isAbsolute(p)) return p;
-    const base = this.baseUrl || (typeof location !== 'undefined' ? location.href : '');
+    const parent = opts.parentAssetPath || '';
+    let base = this.baseUrl || (typeof location !== 'undefined' ? location.href : '');
+    if (parent) {
+      const parentUrl = HttpAssetResolver.isAbsolute(parent) ? parent : new URL(parent, base).href;
+      base = parentUrl.slice(0, parentUrl.lastIndexOf('/') + 1);
+    }
     if (!base) return p;
     // `new URL` collapses ./ and ../ relative to the base directory.
     return new URL(p, base).href;
   }
 
-  async resolveAsync(assetPath) {
-    if (this.assetCache.has(assetPath)) return [assetPath, this.assetCache.get(assetPath)];
-    const url = this.rewrite(assetPath);
-    let bytes;
-    try {
-      const resp = await fetch(url, { cache: 'no-store', headers: { Accept: '*/*' } });
-      if (!resp.ok && resp.status !== 206) {
-        throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+  fallbackUrls(assetPath, primaryUrl) {
+    const p = this.assetFilePart(assetPath);
+    if (HttpAssetResolver.isAbsolute(p) || p.startsWith('/') || p.includes('/')) return [];
+    const base = this.baseUrl || (typeof location !== 'undefined' ? location.href : '');
+    if (!base) return [];
+    const dirs = ['geo/', 'assets/', 'materials/', 'layers/', 'payloads/'];
+    return dirs.map((d) => new URL(d + p, base).href).filter((u) => u !== primaryUrl);
+  }
+
+  async resolveAsync(assetPath, opts = {}) {
+    for (const key of this.aliases(assetPath)) {
+      if (this.assetCache.has(key)) {
+        return [assetPath, this.assetCache.get(key), this.urlCache.get(key)];
       }
-      bytes = await resp.arrayBuffer();
-    } catch (e) {
-      this.fetchLog.push({ path: assetPath, url, bytes: 0, ok: false, error: e.message });
-      throw new Error(`Failed to fetch '${assetPath}' (${url}): ${e.message}`);
     }
-    this.assetCache.set(assetPath, bytes);
+    const url = this.rewrite(assetPath, opts);
+    let resolvedUrl = url;
+    let bytes;
+    const candidates = [url, ...this.fallbackUrls(assetPath, url)];
+    for (let i = 0; i < candidates.length; i++) {
+      resolvedUrl = candidates[i];
+      try {
+        const resp = await fetch(resolvedUrl, { cache: 'no-store', headers: { Accept: '*/*' } });
+        if (!resp.ok && resp.status !== 206) {
+          throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+        }
+        bytes = await resp.arrayBuffer();
+        break;
+      } catch (e) {
+        if (i + 1 === candidates.length) {
+          this.fetchLog.push({ path: assetPath, url: resolvedUrl, bytes: 0, ok: false, error: e.message });
+          throw new Error(`Failed to fetch '${assetPath}' (${resolvedUrl}): ${e.message}`);
+        }
+      }
+    }
+    for (const key of this.aliases(assetPath)) {
+      this.assetCache.set(key, bytes);
+      this.urlCache.set(key, resolvedUrl);
+    }
     this.bytesFetched += bytes.byteLength;
-    this.fetchLog.push({ path: assetPath, url, bytes: bytes.byteLength, ok: true });
-    return [assetPath, bytes];
+    this.fetchLog.push({ path: assetPath, url: resolvedUrl, bytes: bytes.byteLength, ok: true });
+    return [assetPath, bytes, resolvedUrl];
   }
 
   getAsset(uri) { return this.assetCache.has(uri) ? this.assetCache.get(uri) : null; }
   hasAsset(uri) { return this.assetCache.has(uri); }
-  setAsset(uri, data) { this.assetCache.set(uri, data); }
-  clearCache() { this.assetCache.clear(); this.fetchLog = []; this.bytesFetched = 0; }
+  setAsset(uri, data, resolvedUrl = '') {
+    for (const key of this.aliases(uri)) {
+      this.assetCache.set(key, data);
+      if (resolvedUrl) this.urlCache.set(key, resolvedUrl);
+    }
+  }
+  clearCache() { this.assetCache.clear(); this.urlCache.clear(); this.fetchLog = []; this.bytesFetched = 0; }
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +203,7 @@ export async function resolveTexturesOverHttp(usd, resolver, { onStatus } = {}) 
 // Heuristic: does this root reference a MaterialX material? Used only to label
 // the shading mode — tydra unifies MaterialX and UsdPreviewSurface into one
 // material record, so both render through the same path.
-function detectMaterialX(bytes) {
+export function detectMaterialX(bytes) {
   // Sniff the first chunk as text (works for .usda; harmless for binary crates).
   const head = new TextDecoder('utf-8', { fatal: false }).decode(
     bytes.subarray(0, Math.min(bytes.length, 1 << 16)));
@@ -173,7 +221,7 @@ function isUsdz(name) { return /\.usdz$/i.test(name || ''); }
 // { usd, textureBytesById } — the native instance (already through
 // layerToRenderScene; caller renders then owns/frees it) plus the JS-held
 // encoded bytes for HTTP textures keyed by image id.
-async function composeOverHttp({ renderer, rootBytes, filename, resolver, onStatus }) {
+export async function composeOverHttp({ renderer, rootBytes, filename, resolver, onStatus, preloadedAssets = [] }) {
   const native = renderer.native;
   const u8 = rootBytes instanceof Uint8Array ? rootBytes : new Uint8Array(rootBytes);
 
@@ -205,6 +253,13 @@ async function composeOverHttp({ renderer, rootBytes, filename, resolver, onStat
     const err = layer.error ? layer.error() : 'unknown';
     if (typeof layer.delete === 'function') layer.delete();
     throw new Error(`loadAsLayerFromBinary failed for ${filename}: ${err}`);
+  }
+
+  for (const asset of preloadedAssets) {
+    if (!asset || !asset.key || !asset.bytes) continue;
+    resolver.setAsset(asset.key, asset.bytes, asset.url || '');
+    const aliases = typeof resolver.aliases === 'function' ? resolver.aliases(asset.key) : [asset.key];
+    for (const key of aliases) layer.setAsset(key, asset.bytes);
   }
 
   // Composition arcs (references/payloads/sublayers) over HTTP, reusing the

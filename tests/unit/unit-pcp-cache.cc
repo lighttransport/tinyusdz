@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,10 @@ namespace {
 
 struct MemAsset {
   std::string content;
+};
+
+struct MultiMemAsset {
+  std::map<std::string, std::string> content_by_asset;
 };
 
 int mem_resolve(const char *asset_name, const std::vector<std::string> & /*sp*/,
@@ -66,6 +71,53 @@ void install_mem_handler(AssetResolutionResolver *resolver, MemAsset *mem) {
   h.resolve_fun = mem_resolve;
   h.size_fun = mem_size;
   h.read_fun = mem_read;
+  h.userdata = mem;
+  resolver->register_wildcard_asset_resolution_handler(h);
+}
+
+int multi_mem_resolve(const char *asset_name,
+                      const std::vector<std::string> & /*sp*/,
+                      std::string *resolved, std::string *err, void *ud) {
+  auto *m = static_cast<MultiMemAsset *>(ud);
+  auto it = m->content_by_asset.find(asset_name);
+  if (it == m->content_by_asset.end()) {
+    if (err) *err = std::string("missing asset: ") + asset_name;
+    return -1;
+  }
+  *resolved = std::string(asset_name);
+  return 0;
+}
+int multi_mem_size(const char *resolved, uint64_t *nbytes, std::string *err,
+                   void *ud) {
+  auto *m = static_cast<MultiMemAsset *>(ud);
+  auto it = m->content_by_asset.find(resolved);
+  if (it == m->content_by_asset.end()) {
+    if (err) *err = std::string("missing asset: ") + resolved;
+    return -1;
+  }
+  *nbytes = static_cast<uint64_t>(it->second.size());
+  return 0;
+}
+int multi_mem_read(const char *resolved, uint64_t req, uint8_t *out,
+                   uint64_t *nbytes, std::string *err, void *ud) {
+  auto *m = static_cast<MultiMemAsset *>(ud);
+  auto it = m->content_by_asset.find(resolved);
+  if (it == m->content_by_asset.end()) {
+    if (err) *err = std::string("missing asset: ") + resolved;
+    return -1;
+  }
+  uint64_t n = (std::min)(req, static_cast<uint64_t>(it->second.size()));
+  std::memcpy(out, it->second.data(), n);
+  *nbytes = n;
+  return 0;
+}
+
+void install_multi_mem_handler(AssetResolutionResolver *resolver,
+                               MultiMemAsset *mem) {
+  AssetResolutionHandler h;
+  h.resolve_fun = multi_mem_resolve;
+  h.size_fun = multi_mem_size;
+  h.read_fun = multi_mem_read;
   h.userdata = mem;
   resolver->register_wildcard_asset_resolution_handler(h);
 }
@@ -674,6 +726,87 @@ def Xform "Consumer" (
 }
 
 // ---------------------------------------------------------------------------
+// pcp_external_payload_load_reprocesses_nested_arcs_test
+// Loading a deferred external payload must re-scan the newly loaded payload
+// node. Otherwise arcs authored inside the payload layer stay invisible to
+// BuildStage and large scenes miss nested subtrees after lazy streaming.
+// ---------------------------------------------------------------------------
+
+void pcp_external_payload_load_reprocesses_nested_arcs_test(void) {
+  const char *root_usda = R"(#usda 1.0
+def Xform "Consumer" (
+    payload = @payload.usda@</PayloadRoot>
+)
+{
+}
+)";
+
+  MultiMemAsset mem;
+  mem.content_by_asset["payload.usda"] =
+      "#usda 1.0\n"
+      "def Xform \"PayloadRoot\" (\n"
+      "    prepend references = @leaf.usda@</Leaf>\n"
+      ")\n"
+      "{\n"
+      "}\n";
+  mem.content_by_asset["leaf.usda"] =
+      "#usda 1.0\n"
+      "def Xform \"Leaf\"\n"
+      "{\n"
+      "    def Scope \"Nested\" { custom int nestedAttr = 3 }\n"
+      "}\n";
+
+  AssetResolutionResolver resolver;
+  install_multi_mem_handler(&resolver, &mem);
+
+  pcp::CacheOptions opts;
+  opts.composition.payload_policy = [](const Path &, const Payload &) {
+    return false;  // defer all payloads at compose
+  };
+
+  pcp::Cache cache;
+  std::string err;
+  TEST_CHECK(open_cache(root_usda, resolver, cache, opts, &err));
+  if (!err.empty()) { TEST_MSG("open err: %s", err.c_str()); return; }
+
+  std::string warn;
+  const auto *idx = cache.ComputePrimIndex(Path("/Consumer", ""), &warn, &err);
+  TEST_CHECK(idx != nullptr);
+  if (!idx) return;
+  TEST_CHECK(cache.HasDeferredPayload(Path("/Consumer", "")));
+  TEST_CHECK_(cache.layer_registry().parse_count() == 0,
+              "deferred payload should not parse yet, got %zu",
+              cache.layer_registry().parse_count());
+
+  Stage deferred_stage;
+  TEST_CHECK(cache.BuildStage(&deferred_stage, &warn, &err));
+  TEST_CHECK(!deferred_stage.GetPrimAtPath(Path("/Consumer/Nested", ""))
+                  .has_value());
+
+  auto loaded = cache.LoadPayload(Path("/Consumer", ""), &warn, &err);
+  TEST_CHECK_(loaded.has_value(), "LoadPayload failed: %s",
+              loaded ? "" : loaded.error().c_str());
+  TEST_CHECK(!cache.HasDeferredPayload(Path("/Consumer", "")));
+  TEST_CHECK_(cache.layer_registry().parse_count() == 2,
+              "expected payload and nested reference parsed, got %zu",
+              cache.layer_registry().parse_count());
+
+  bool has_ref = false;
+  for (uint16_t i = 0; i < idx->GetNodeCount(); i++) {
+    if (idx->GetNode(i).arc_type == composition_graph::ArcType::Reference) {
+      has_ref = true;
+    }
+  }
+  TEST_CHECK_(has_ref, "expected nested Reference arc after LoadPayload");
+
+  Stage loaded_stage;
+  TEST_CHECK(cache.BuildStage(&loaded_stage, &warn, &err));
+  TEST_CHECK_(loaded_stage.GetPrimAtPath(Path("/Consumer/Nested", ""))
+                  .has_value(),
+              "nested referenced payload child missing after LoadPayload");
+}
+
+// ---------------------------------------------------------------------------
 // pcp_buildstage_reference_grandchildren_test
 // A reference targets a prim that has child/grandchild prims with NO local
 // opinion in the root layer. The composition_graph engine (both the eager
@@ -742,16 +875,13 @@ def Xform "Inst" (
     TEST_CHECK_(b.has_value(), "cg missing referenced descendant %s", p);
   }
 
-  // The referencing prim itself is present in both engines.
-  TEST_CHECK(pcp_stage.GetPrimAtPath(Path("/Inst", "")).has_value());
-  TEST_CHECK(cg_stage.GetPrimAtPath(Path("/Inst", "")).has_value());
-
-  // KNOWN LIMITATION: pcp::Cache does not yet expand referenced descendants
-  // into the namespace (it computes each prim from its root-layer local
-  // PrimSpec only), so /Inst/Sub is absent on the pcp side. The eager
-  // CompositionGraph used by LargeSceneLoader does reconstruct them
-  // (see doc/large-scene.md). Assert the engines agree only on the referencing
-  // prim until pcp's namespace expansion lands.
+  // pcp::Cache BuildStage now expands the composed namespace from parent
+  // PrimIndices, so referenced descendants match the eager CompositionGraph
+  // oracle.
+  for (const char *p : paths) {
+    auto b = pcp_stage.GetPrimAtPath(Path(p, ""));
+    TEST_CHECK_(b.has_value(), "pcp missing referenced descendant %s", p);
+  }
   TEST_CHECK_(pcp_stage.root_prims().size() == cg_stage.root_prims().size(),
               "pcp roots=%zu cg roots=%zu", pcp_stage.root_prims().size(),
               cg_stage.root_prims().size());
