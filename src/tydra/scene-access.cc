@@ -3012,8 +3012,9 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
   if (it->second.is_attribute()) {
     const Attribute &attr = it->second.get_attribute();
 
-    if (attr.is_connection()) { // attribute only contains 'connection'
-      // follow targetPath to get Attribute 
+    if (attr.has_connections()) { // a connection overrides the value (USD)
+      // follow targetPath to get Attribute (GetTerminalAttribute falls back to
+      // this attribute's own value if the connection cannot be resolved).
       Attribute terminal_attr;
       bool ret = tydra::GetTerminalAttribute(stage, attr, primvar_name,
                                              &terminal_attr, err);
@@ -3064,8 +3065,9 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
                         primvar_name));
       }
 
-      if (indexAttr.is_connection()) { // attribute only contains 'connection'
-        // follow targetPath to get Attribute 
+      if (indexAttr.has_connections()) { // a connection overrides the value (USD)
+        // follow targetPath to get Attribute (falls back to this attribute's
+        // own value if the connection cannot be resolved).
         Attribute terminal_indexAttr;
         bool ret = tydra::GetTerminalAttribute(stage, indexAttr, index_name,
                                                &terminal_indexAttr, err);
@@ -3311,7 +3313,13 @@ bool GetTerminalAttribute(const tinyusdz::Stage &stage,
   std::unordered_set<std::string, FNV1StringHash> visited_paths;
   visited_paths.reserve(16);
 
-  if (attr.is_connection()) {
+  if (attr.has_connections()) {
+    // A connection overrides the authored value (USD). Follow it; fall back to
+    // the attribute's own value if it cannot be resolved. (is_connection() is
+    // false when a value is also present, so dispatch on has_connections().)
+    std::string conn_err;
+    bool resolved = false;
+
     std::vector<Path> pv = attr.connections();
     if (pv.empty()) {
       PUSH_ERROR_AND_RETURN(fmt::format(
@@ -3345,19 +3353,30 @@ bool GetTerminalAttribute(const tinyusdz::Stage &stage,
             to_string(target)));
       }
 
-      return GetTerminalAttributeImpl(stage, *targetPrim, targetPrimPropName,
-                                      value, err, visited_paths);
+      resolved = GetTerminalAttributeImpl(stage, *targetPrim, targetPrimPropName,
+                                          value, &conn_err, visited_paths);
 
     } else {
-      PUSH_ERROR_AND_RETURN(targetPrimRet.error());
+      conn_err += targetPrimRet.error();
     }
+
+    if (resolved) {
+      return true;
+    }
+    // Connection unresolved — fall back to the attribute's own value if present.
+    if (attr.has_value()) {
+      (*value) = attr;
+      return true;
+    }
+    if (err) {
+      (*err) += conn_err;
+    }
+    return false;
 
   } else {
     (*value) = attr;
     return true;
   }
-
-  return false;
 }
 
 namespace detail {
