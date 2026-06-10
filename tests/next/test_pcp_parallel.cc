@@ -23,6 +23,10 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <atomic>
+#include <thread>
+#endif
 #include <utility>
 #include <vector>
 
@@ -62,6 +66,16 @@ static std::string CanonInstances(const pcp::Cache &cache) {
   std::sort(rows.begin(), rows.end());
   std::string out;
   for (const std::string &r : rows) out += r + ";";
+  return out;
+}
+
+static std::string CanonDeferredPayloads(const pcp::Cache &cache) {
+  std::vector<Path> paths = cache.GetDeferredPayloadPaths();
+  std::vector<std::string> names;
+  for (const Path &p : paths) names.push_back(p.str());
+  std::sort(names.begin(), names.end());
+  std::string out;
+  for (const std::string &n : names) out += n + ";";
   return out;
 }
 
@@ -225,9 +239,11 @@ struct RunResult {
   size_t reg_size = 0;
   size_t parse_count = 0;
   size_t index_count = 0;
+  std::string deferred_payloads;
 };
 
-static RunResult RunBuild(const Scene &sc, int num_threads) {
+static RunResult RunBuild(const Scene &sc, int num_threads,
+                          const pcp::LoadRules *rules = nullptr) {
   AssetResolver resolver;
   resolver.SetCustomResolver(
       [](const std::string &a, const std::string &) { return a; });
@@ -237,6 +253,7 @@ static RunResult RunBuild(const Scene &sc, int num_threads) {
   assert(opened && "Cache::Open failed");
   pcp::Cache cache = std::move(*opened);
   for (const auto &a : sc.assets) cache.PreloadLayer(a.first, a.second);
+  if (rules) cache.SetLoadRules(*rules);
 
   std::string warn, err;
   assert(cache.PrewarmPrimIndices(sc.paths, &warn, &err));
@@ -250,6 +267,7 @@ static RunResult RunBuild(const Scene &sc, int num_threads) {
   r.reg_size = cache.layer_registry().size();
   r.parse_count = cache.layer_registry().parse_count();
   r.index_count = cache.ComputedPrimIndexCount();
+  r.deferred_payloads = CanonDeferredPayloads(cache);
   return r;
 }
 
@@ -270,6 +288,8 @@ static void Compare(const Scene &sc, const RunResult &a, const RunResult &b,
   assert(mism == 0 && "parallel index differs from serial");
   assert(a.instances == b.instances && "instance groupings differ");
   assert(a.index_count == b.index_count && "computed-index count differs");
+  assert(a.deferred_payloads == b.deferred_payloads &&
+         "deferred payload state differs");
 }
 
 // ---------------------------------------------------------------------------
@@ -304,6 +324,47 @@ static void test_complex_parallel() {
   assert(!par.instances.empty() && "expected instance groupings");
   assert(par.reg_size == sc.n_assets && par.parse_count == 0);
   std::cout << "  OK (" << sc.paths.size() << " paths)" << std::endl;
+}
+
+static void test_parallel_load_rules_match_serial() {
+  std::cout << "test_parallel_load_rules_match_serial..." << std::endl;
+  Scene sc;
+  sc.n_assets = 3;
+  for (int i = 0; i < 3; ++i) {
+    sc.assets.push_back({"asset_" + std::to_string(i),
+                         MakeAsset("Mesh", 2, 1)});
+  }
+
+  auto root = std::make_shared<Layer>();
+  LayerBuilder lb(*root);
+  lb.begin_prim("World", "Xform");
+  for (int i = 0; i < 32; ++i) {
+    const std::string nm = "P" + std::to_string(i);
+    lb.begin_prim(nm, "");
+    lb.current()->meta().payloads.push_back(
+        "@asset_" + std::to_string(i % 3) + "@</A>");
+    lb.end_prim();
+    sc.paths.push_back(Path("/World/" + nm));
+    sc.path_strs.push_back("/World/" + nm);
+    sc.paths.push_back(Path("/World/" + nm + "/C0"));
+    sc.path_strs.push_back("/World/" + nm + "/C0");
+  }
+  lb.end_prim();
+  lb.finalize();
+  sc.root = root;
+  sc.paths.push_back(Path("/World"));
+  sc.path_strs.push_back("/World");
+
+  pcp::LoadRules rules;
+  rules.Unload("/");
+  rules.LoadWithDescendants("/World/P0");
+
+  RunResult serial = RunBuild(sc, 1, &rules);
+  RunResult par = RunBuild(sc, 8, &rules);
+  Compare(sc, serial, par, "load-rules");
+  assert(serial.deferred_payloads.find("/World/P1;") != std::string::npos);
+  assert(serial.deferred_payloads.find("/World/P0;") == std::string::npos);
+  std::cout << "  OK" << std::endl;
 }
 
 // Stress: a large scene (hundreds of prims, ~1k paths) referencing a small pool
@@ -392,11 +453,63 @@ static void test_parallel_same_asset_parse_once() {
   std::cout << "  OK" << std::endl;
 }
 
+static void test_layer_registry_inflight_failure_diagnostics() {
+  std::cout << "test_layer_registry_inflight_failure_diagnostics..." << std::endl;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  const std::string asset_path = "/tmp/next_registry_bad.usda";
+  {
+    std::ofstream f(asset_path);
+    f << "#usda 1.0\n";
+    for (int i = 0; i < 2000; ++i) {
+      f << "def Xform \"P" << i << "\"\n{\n";
+    }
+    f << "custom float broken = \n";
+  }
+
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [](const std::string &a, const std::string &) { return a; });
+  pcp::LayerRegistry reg;
+
+  const int kThreads = 16;
+  std::atomic<int> ready{0};
+  std::atomic<bool> go{false};
+  std::vector<std::string> warn(static_cast<size_t>(kThreads));
+  std::vector<std::string> err(static_cast<size_t>(kThreads));
+  std::vector<std::thread> threads;
+  threads.reserve(static_cast<size_t>(kThreads));
+  for (int i = 0; i < kThreads; ++i) {
+    threads.emplace_back([&, i]() {
+      ready.fetch_add(1);
+      while (!go.load()) std::this_thread::yield();
+      std::shared_ptr<Layer> layer =
+          reg.GetOrLoad(resolver, asset_path, "", &warn[static_cast<size_t>(i)],
+                        &err[static_cast<size_t>(i)]);
+      assert(!layer);
+    });
+  }
+  while (ready.load() != kThreads) std::this_thread::yield();
+  go.store(true);
+  for (auto &t : threads) t.join();
+
+  for (int i = 0; i < kThreads; ++i) {
+    assert(!err[static_cast<size_t>(i)].empty() &&
+           "same-path waiters must receive parse diagnostics");
+  }
+  std::remove(asset_path.c_str());
+#else
+  std::cout << "  (skipped: build with -DTINYUSDZ_NEXT_ENABLE_THREAD=ON)\n";
+#endif
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_minimal_parallel();
   test_complex_parallel();
+  test_parallel_load_rules_match_serial();
   test_stress_parallel();
   test_parallel_same_asset_parse_once();
+  test_layer_registry_inflight_failure_diagnostics();
   std::cout << "All next/pcp parallel tests passed." << std::endl;
   return 0;
 }

@@ -73,8 +73,8 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
   }
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
-  std::shared_future<std::shared_ptr<Layer>> wait_fut;
-  std::shared_ptr<std::promise<std::shared_ptr<Layer>>> my_promise;
+  std::shared_future<LoadOutcome> wait_fut;
+  std::shared_ptr<std::promise<LoadOutcome>> my_promise;
   {
     std::lock_guard<std::mutex> lk(*mu_);
     auto it = by_resolved_.find(resolved);
@@ -85,28 +85,34 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
       wait_fut = fit->second;  // another thread is parsing this path
     } else {
       // Become the loader: publish a future, then parse outside the lock.
-      my_promise = std::make_shared<std::promise<std::shared_ptr<Layer>>>();
+      my_promise = std::make_shared<std::promise<LoadOutcome>>();
       in_flight_.emplace(resolved, my_promise->get_future().share());
     }
   }
 
   if (!my_promise) {
     // Someone else is loading this exact path; wait for them (outside the lock).
-    return wait_fut.get();
+    LoadOutcome outcome = wait_fut.get();
+    if (warn) *warn += outcome.warn;
+    if (err) *err += outcome.err;
+    return outcome.layer;
   }
 
   // Parse WITHOUT holding the lock, so other paths load concurrently.
-  std::shared_ptr<Layer> layer = LoadLayerFromFile(resolved, warn, err);
+  LoadOutcome outcome;
+  outcome.layer = LoadLayerFromFile(resolved, &outcome.warn, &outcome.err);
   {
     std::lock_guard<std::mutex> lk(*mu_);
-    if (layer) {
+    if (outcome.layer) {
       ++parse_count_;
-      by_resolved_.emplace(resolved, layer);
+      by_resolved_.emplace(resolved, outcome.layer);
     }
     in_flight_.erase(resolved);  // a failed load is retried by the next caller
   }
-  my_promise->set_value(layer);  // unblock any waiters
-  return layer;
+  if (warn) *warn += outcome.warn;
+  if (err) *err += outcome.err;
+  my_promise->set_value(outcome);  // unblock any waiters
+  return outcome.layer;
 #else
   auto it = by_resolved_.find(resolved);
   if (it != by_resolved_.end()) {

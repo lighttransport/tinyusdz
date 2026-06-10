@@ -561,10 +561,17 @@ void test_roundtrip_vec_matrix_arrays() {
   std::vector<float> qf = {0, 0, 0, 1, 0, 1, 0, 0};           // 2 x Quatf
   std::vector<double> m4(32);                                 // 2 x Matrix4d
   for (size_t i = 0; i < m4.size(); ++i) m4[i] = double(i) * 0.5;
+  std::vector<float> m4f(32);                                 // 2 x Matrix4f
+  std::vector<double> m4f_as_d(32);
+  for (size_t i = 0; i < m4f.size(); ++i) {
+    m4f[i] = float(i) * 0.25f;
+    m4f_as_d[i] = double(m4f[i]);
+  }
   std::vector<double> d3 = {1.5, 2.5, 3.5, 4.5, 5.5, 6.5};    // 2 x Double3
   b.add_property("v4", Value::MakeFloatCompArray(std::vector<float>(v4), TypeId::Float4, 4));
   b.add_property("qf", Value::MakeFloatCompArray(std::vector<float>(qf), TypeId::Quatf, 4));
   b.add_property("m4", Value::MakeDoubleCompArray(std::vector<double>(m4), TypeId::Matrix4d, 16));
+  b.add_property("m4f", Value::MakeFloatCompArray(std::vector<float>(m4f), TypeId::Matrix4f, 16));
   b.add_property("d3", Value::MakeDoubleCompArray(std::vector<double>(d3), TypeId::Double3, 3));
   b.end_prim();
   b.finalize();
@@ -596,6 +603,7 @@ void test_roundtrip_vec_matrix_arrays() {
   check_f("v4", v4, TypeId::Float4);
   check_f("qf", qf, TypeId::Quatf);
   check_d("m4", m4, TypeId::Matrix4d);
+  check_d("m4f", m4f_as_d, TypeId::Matrix4d);
   check_d("d3", d3, TypeId::Double3);
 
   std::cout << "  vec/matrix/quat array roundtrip passed!\n\n";

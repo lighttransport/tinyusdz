@@ -108,8 +108,8 @@ class Cache {
   /// `rules` is a list of (prim path, rule) where rule is 0=All, 1=Only, 2=None.
   void SetLoadRules(const LoadRules &rules);
 
-  /// The current payload load rules.
-  const LoadRules &GetLoadRules() const;
+  /// A snapshot of the current payload load rules.
+  LoadRules GetLoadRules() const;
 
   /// Whether `prim_path` has an unloaded (deferred) payload.
   bool HasDeferredPayload(const Path &prim_path) const;

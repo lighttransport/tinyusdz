@@ -1147,6 +1147,7 @@ static void test_concurrent_payload_edits() {
       cache.ComputePrimIndex(Path("/World/P"), &w, &e);
       (void)cache.HasDeferredPayload(Path("/World/P"));
       (void)cache.GetDeferredPayloadPaths();
+      (void)cache.GetLoadRules().empty();
       (void)cache.ComputedPrimIndexCount();
     }
   };

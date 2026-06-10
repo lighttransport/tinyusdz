@@ -33,6 +33,15 @@ int main() {
   for (int i = 0; i < 128 * 3; i++) points.push_back(static_cast<float>(i) * 0.5f);
   std::vector<int32_t> indices;     // 256 ints
   for (int i = 0; i < 256; i++) indices.push_back(i * 7 - 11);
+  std::vector<float> quats;         // 64 quatf
+  for (int i = 0; i < 64; i++) {
+    quats.push_back(0.0f);
+    quats.push_back(float(i));
+    quats.push_back(0.0f);
+    quats.push_back(1.0f);
+  }
+  std::vector<double> matrices;     // 8 matrix4d
+  for (int i = 0; i < 8 * 16; i++) matrices.push_back(double(i) * 0.125);
 
   StageBuilder sb;
   sb.SetDefaultPrim("Mesh1");
@@ -40,6 +49,12 @@ int main() {
   lb.begin_prim("Mesh1", "Mesh");
   lb.add_property("points", Value::MakeFloat3Array(points));
   lb.add_property("faceVertexIndices", Value::MakeIntArray(indices));
+  lb.add_property("orientations",
+                  Value::MakeFloatCompArray(std::vector<float>(quats),
+                                            TypeId::Quatf, 4));
+  lb.add_property("xforms",
+                  Value::MakeDoubleCompArray(std::vector<double>(matrices),
+                                             TypeId::Matrix4d, 16));
   lb.end_prim();
   lb.finalize();
   Stage stage = sb.Build();
@@ -108,6 +123,17 @@ int main() {
   assert(!iv->is_lazy());
   std::cout << "  indices materialized correctly (" << ia->size() << " ints)" << std::endl;
 
+  // ---- orientations / xforms: newly supported vector/matrix array laziness --
+  const Value* qv = ps->property_value("orientations");
+  assert(qv && qv->is_array() && qv->is_lazy());
+  const std::vector<float>* qa = qv->as_float_array();
+  assert(qa && *qa == quats);
+  const Value* mv = ps->property_value("xforms");
+  assert(mv && mv->is_array() && mv->is_lazy());
+  const std::vector<double>* ma = mv->as_double_array();
+  assert(ma && *ma == matrices);
+  std::cout << "  quat/matrix arrays came back lazy and materialized correctly" << std::endl;
+
   // ---- A2: composition (Clone + Compositor) preserves laziness -------------
   {
     USDCLoadResult lr2 = LoadUSDCFromMemory(buf.data(), buf.size());
@@ -159,8 +185,9 @@ int main() {
     std::vector<uint8_t> out;
     CrateWriteResult wres = writer.WriteLayerToMemory(out, *layer);
     assert(wres.success);
-    // Both numeric arrays (points Vec3f, indices Int) copied verbatim.
-    assert(wres.arrays_passed_through >= 2);
+    // Numeric arrays (points Vec3f, indices Int, orientations Quatf, xforms
+    // Matrix4d) copied verbatim.
+    assert(wres.arrays_passed_through >= 4);
     assert(wres.arrays_reencoded == 0);
     std::cout << "  writer passed through " << wres.arrays_passed_through
               << " arrays (" << wres.arrays_reencoded << " reencoded)" << std::endl;
@@ -176,6 +203,12 @@ int main() {
     const std::vector<int32_t>* ix =
         ps4->property_value("faceVertexIndices")->as_int_array();
     assert(ix && *ix == indices);
+    const std::vector<float>* oq =
+        ps4->property_value("orientations")->as_float_array();
+    assert(oq && *oq == quats);
+    const std::vector<double>* xm =
+        ps4->property_value("xforms")->as_double_array();
+    assert(xm && *xm == matrices);
     std::cout << "  pass-through output re-reads identically" << std::endl;
 
     // Dirty flag: a mutable accessor marks the value so pass-through is skipped.
@@ -195,7 +228,7 @@ int main() {
     bool ok = pipeline::FlattenUSDCToUSDC(buf.data(), buf.size(), fout, fopts,
                                           &fstats, &ferr);
     assert(ok);
-    assert(fstats.arrays_passed_through >= 2);
+    assert(fstats.arrays_passed_through >= 4);
     assert(fstats.arrays_reencoded == 0);
     std::cout << "  FlattenUSDCToUSDC: " << fstats.input_bytes << " -> "
               << fstats.output_bytes << " bytes, passthrough="
@@ -209,6 +242,12 @@ int main() {
     const std::vector<float>* fpa = ps5->property_value("points")->as_float_array();
     assert(fpa && fpa->size() == points.size());
     for (size_t i = 0; i < points.size(); i++) assert((*fpa)[i] == points[i]);
+    const std::vector<float>* fqa =
+        ps5->property_value("orientations")->as_float_array();
+    assert(fqa && *fqa == quats);
+    const std::vector<double>* fma =
+        ps5->property_value("xforms")->as_double_array();
+    assert(fma && *fma == matrices);
     std::cout << "  facade output re-reads identically" << std::endl;
 
     // Owned (single-copy) facade path produces the same result.
