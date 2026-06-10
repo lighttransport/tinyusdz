@@ -477,9 +477,15 @@ bool GetTerminalAttribute(const Stage &stage, const TypedAttribute<T> &attr,
   }
 
   Attribute value;
-  if (attr.is_connection()) {
+  if (attr.has_connections()) {
+    // A connection overrides the value (USD). Carry the authored value too, so
+    // the Stage GetTerminalAttribute can fall back to it if the connection
+    // cannot be resolved. (is_connection() is false when a value is present.)
     Attribute input;
     input.set_connections(attr.connections());
+    if (attr.has_value()) {
+      input.set_value(attr.get_value());
+    }
     return GetTerminalAttribute(stage, input, attr_name, attr_out, err);
   } else if (attr.is_blocked()) {
     value.metas() = attr.metas();

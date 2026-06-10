@@ -36,14 +36,24 @@ bool EvaluateTypedAttribute(
       (*err) += "Attribute value is empty.\n";
     }
     return false;
-  } else if (tattr.is_connection()) {
-
+  } else if (tattr.has_connections()) {
+    // A connection overrides the authored value (USD). Follow it; fall back to
+    // the value only if the connection cannot be resolved.
     Attribute attr = detail::ToAttributeConnection<
         TypedAttribute<std::string>, Variability::Uniform>(tattr);
 
-    return detail::FollowConnection(
-        stage, attr, attr_name, value_out, err,
-        value::TimeCode::Default(), value::TimeSampleInterpolationType::Held);
+    std::string conn_err;
+    if (detail::FollowConnection(
+            stage, attr, attr_name, value_out, &conn_err,
+            value::TimeCode::Default(),
+            value::TimeSampleInterpolationType::Held)) {
+      return true;
+    }
+    if (tattr.has_value() && tattr.get_value(value_out)) {
+      return true;
+    }
+    if (err) { (*err) += conn_err; }
+    return false;
 
   } else {
     if (tattr.get_value(value_out)) {
@@ -79,14 +89,26 @@ template<> bool EvaluateTypedAnimatableAttribute<std::string>(
       (*err) += "Attribute value is empty.\n";
     }
     return false;
-  } else if (tattr.is_connection()) {
-
+  } else if (tattr.has_connections()) {
+    // A connection overrides the authored value (USD). Follow it; fall back to
+    // the value only if the connection cannot be resolved.
     Attribute attr = detail::ToAttributeConnection<
         TypedAttribute<Animatable<std::string>>, Variability::Varying,
         /* copyMeta */ true>(tattr, value::TypeTraits<std::string>::type_name());
 
-    return detail::FollowConnection(
-        stage, attr, attr_name, value_out, err, t, tinterp);
+    std::string conn_err;
+    if (detail::FollowConnection(
+            stage, attr, attr_name, value_out, &conn_err, t, tinterp)) {
+      return true;
+    }
+    if (tattr.has_value()) {
+      Animatable<std::string> value;
+      if (tattr.get_value(&value) && value.get(t, value_out, tinterp)) {
+        return true;
+      }
+    }
+    if (err) { (*err) += conn_err; }
+    return false;
 
   } else {
     Animatable<std::string> value;
@@ -124,14 +146,21 @@ bool EvaluateTypedAttribute(
       (*err) += "Attribute is Blocked.\n";
     }
     return false;
-  } else if (tattr.is_connection()) {
-
+  } else if (tattr.has_connections()) {
+    // A connection overrides the authored value (USD). Follow it; fall back to
+    // the (always-present) fallback value if it cannot be resolved.
     Attribute attr = detail::ToAttributeConnection<
         TypedAttributeWithFallback<std::string>, Variability::Uniform>(tattr);
 
-    return detail::FollowConnection(
-        stage, attr, attr_name, value_out, err,
-        value::TimeCode::Default(), value::TimeSampleInterpolationType::Held);
+    std::string conn_err;
+    if (detail::FollowConnection(
+            stage, attr, attr_name, value_out, &conn_err,
+            value::TimeCode::Default(),
+            value::TimeSampleInterpolationType::Held)) {
+      return true;
+    }
+    (*value_out) = tattr.get_value();
+    return true;
 
   } else if (tattr.is_value_empty()) {
     if (err) {
@@ -162,6 +191,31 @@ bool EvaluateTypedAnimatableAttribute(
       (*err) += "Attribute is Blocked.\n";
     }
     return false;
+  } else if (tattr.has_connections()) {
+    // A connection overrides the authored value (USD). Follow it; fall back to
+    // the value if it cannot be resolved.
+    Attribute attr = detail::ToAttributeConnection<
+        TypedAttributeWithFallback<Animatable<std::string>>,
+        Variability::Varying>(tattr, value::TypeTraits<std::string>::type_name());
+
+    std::string conn_err;
+    if (detail::FollowConnection(
+            stage, attr, attr_name, value_out, &conn_err,
+            value::TimeCode::Default(),
+            value::TimeSampleInterpolationType::Held)) {
+      return true;
+    }
+    {
+      const Animatable<std::string> &value = tattr.get_value();
+      std::string v;
+      if (value.get(t, &v, tinterp)) {
+        *value_out = v;
+        return true;
+      }
+    }
+    if (err) { (*err) += conn_err; }
+    return false;
+
   } else if (tattr.has_value()) {
     const Animatable<std::string> &value = tattr.get_value();
     std::string v;
@@ -174,16 +228,6 @@ bool EvaluateTypedAnimatableAttribute(
       }
       return false;
     }
-
-  } else if (tattr.has_connections()) {
-
-    Attribute attr = detail::ToAttributeConnection<
-        TypedAttributeWithFallback<Animatable<std::string>>,
-        Variability::Varying>(tattr, value::TypeTraits<std::string>::type_name());
-
-    return detail::FollowConnection(
-        stage, attr, attr_name, value_out, err,
-        value::TimeCode::Default(), value::TimeSampleInterpolationType::Held);
 
   } else if (tattr.is_value_empty()) {
     if (err) {
