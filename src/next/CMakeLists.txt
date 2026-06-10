@@ -310,6 +310,45 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_composition.cc
     )
     target_link_libraries(test_composition PRIVATE tinyusdz_next)
+
+    # tusdcat-compatible CLI: drives the usd-wg asset-corpus regression gate
+    # (tests/parse-asset-corpus.mjs --tusdcat $<TARGET_FILE:next_usdcat>).
+    add_executable(next_usdcat
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/next_usdcat.cc
+    )
+    target_link_libraries(next_usdcat PRIVATE tinyusdz_next)
+
+    # Replays minimized fuzzer-found crash inputs (run under ASAN/UBSAN).
+    add_executable(test_crash_regressions
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_crash_regressions.cc
+    )
+    target_link_libraries(test_crash_regressions PRIVATE tinyusdz_next)
+    target_compile_definitions(test_crash_regressions PRIVATE
+        CRASH_REGRESSION_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/crash_regressions")
+endif()
+
+# ============================================================
+# libFuzzer harnesses (clang only)
+# ============================================================
+option(TINYUSDZ_NEXT_BUILD_FUZZERS "Build libFuzzer harnesses for TinyUSDZ Next (requires clang)" OFF)
+
+if(TINYUSDZ_NEXT_BUILD_FUZZERS)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "TINYUSDZ_NEXT_BUILD_FUZZERS requires clang (-fsanitize=fuzzer)")
+    endif()
+    # The library must carry fuzzer coverage instrumentation too (no-link
+    # variant), otherwise only the tiny harness body is explored.
+    set(NEXT_FUZZ_LIB_FLAGS -fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all)
+    set(NEXT_FUZZ_BIN_FLAGS -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all)
+    target_compile_options(tinyusdz_next PRIVATE ${NEXT_FUZZ_LIB_FLAGS})
+    foreach(fz next_usdc next_usda next_compose)
+        add_executable(fuzz_${fz}
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fuzzer/${fz}_fuzzmain.cc
+        )
+        target_link_libraries(fuzz_${fz} PRIVATE tinyusdz_next)
+        target_compile_options(fuzz_${fz} PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
+        target_link_options(fuzz_${fz} PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
+    endforeach()
 endif()
 
 # Tydra Next (render data conversion)
@@ -394,8 +433,37 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_composition COMMAND test_composition
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_crash_regressions COMMAND test_crash_regressions
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_benchmark COMMAND benchmark_next
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+    # usd-wg asset-corpus regression gate (mirrors the top-level
+    # corpus-parse-native test, but drives next_usdcat). Registered only when
+    # node and the corpus checkout are present; set USD_WG_ASSETS_DIR to point
+    # at a usd-wg/assets clone.
+    find_program(TINYUSDZ_NEXT_NODE_EXECUTABLE NAMES node nodejs)
+    if(DEFINED ENV{USD_WG_ASSETS_DIR})
+        set(NEXT_CORPUS_ASSETS_DIR "$ENV{USD_WG_ASSETS_DIR}")
+    else()
+        set(NEXT_CORPUS_ASSETS_DIR "/mnt/nvme02/work/usd/assets")
+    endif()
+    if(TINYUSDZ_NEXT_NODE_EXECUTABLE AND EXISTS "${NEXT_CORPUS_ASSETS_DIR}")
+        add_test(
+            NAME next_corpus_parse
+            COMMAND ${TINYUSDZ_NEXT_NODE_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/parse-asset-corpus.mjs
+                    --assets "${NEXT_CORPUS_ASSETS_DIR}"
+                    --mode load
+                    --tusdcat "$<TARGET_FILE:next_usdcat>"
+                    --out "${CMAKE_CURRENT_BINARY_DIR}/corpus-parse-results"
+                    # Regression ratchet, not a quality bar: 219 of 280 corpus
+                    # files fail today on known next parser gaps (see
+                    # corpus-parse-results/summary.md). Lower this as gaps
+                    # close; raising it requires justification.
+                    --max-fail 220
+        )
+    endif()
 endif()
 
 # ============================================================
