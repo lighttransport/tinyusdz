@@ -18,6 +18,7 @@
 #include "next/types/value.hh"
 #include "next/crate/crate-writer.hh"
 #include "next/crate/crate-format.hh"
+#include "next/crate/crate-reader.hh"
 #include "next/writer/usdc-writer.hh"
 
 using namespace tinyusdz::next;
@@ -548,6 +549,58 @@ void test_write_usdc_from_stage_api() {
   std::cout << "  WriteUSDC stage API test passed!\n\n";
 }
 
+// Vec4f / Matrix4d / Quatf / Double3 arrays must survive a write -> read cycle
+// (Phase 8: these were dropped on read with "Unsupported array type").
+void test_roundtrip_vec_matrix_arrays() {
+  std::cout << "Testing roundtrip vec/matrix/quat arrays...\n";
+
+  Layer layer;
+  LayerBuilder b(layer);
+  b.begin_prim("Geo", "Mesh");
+  std::vector<float> v4 = {1, 2, 3, 4, 5, 6, 7, 8};           // 2 x Vec4f
+  std::vector<float> qf = {0, 0, 0, 1, 0, 1, 0, 0};           // 2 x Quatf
+  std::vector<double> m4(32);                                 // 2 x Matrix4d
+  for (size_t i = 0; i < m4.size(); ++i) m4[i] = double(i) * 0.5;
+  std::vector<double> d3 = {1.5, 2.5, 3.5, 4.5, 5.5, 6.5};    // 2 x Double3
+  b.add_property("v4", Value::MakeFloatCompArray(std::vector<float>(v4), TypeId::Float4, 4));
+  b.add_property("qf", Value::MakeFloatCompArray(std::vector<float>(qf), TypeId::Quatf, 4));
+  b.add_property("m4", Value::MakeDoubleCompArray(std::vector<double>(m4), TypeId::Matrix4d, 16));
+  b.add_property("d3", Value::MakeDoubleCompArray(std::vector<double>(d3), TypeId::Double3, 3));
+  b.end_prim();
+  b.finalize();
+
+  CrateWriter writer;
+  std::vector<uint8_t> buf;
+  CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
+  assert(wr.success);
+
+  CrateReader reader;
+  CrateReadResult rr = reader.Read(buf.data(), buf.size());
+  assert(rr.success && "re-read of vec/matrix arrays failed");
+  const Layer* rl = rr.stage.GetRootLayer();
+  const PrimSpec* geo = rl->prim_at_path("/Geo");
+  assert(geo);
+
+  auto check_f = [&](const char* name, const std::vector<float>& expect, TypeId t) {
+    const Value* val = geo->property_value(name);
+    assert(val && val->is_array() && val->type_id() == t);
+    const std::vector<float>* arr = val->as_float_array();
+    assert(arr && *arr == expect);
+  };
+  auto check_d = [&](const char* name, const std::vector<double>& expect, TypeId t) {
+    const Value* val = geo->property_value(name);
+    assert(val && val->is_array() && val->type_id() == t);
+    const std::vector<double>* arr = val->as_double_array();
+    assert(arr && *arr == expect);
+  };
+  check_f("v4", v4, TypeId::Float4);
+  check_f("qf", qf, TypeId::Quatf);
+  check_d("m4", m4, TypeId::Matrix4d);
+  check_d("d3", d3, TypeId::Double3);
+
+  std::cout << "  vec/matrix/quat array roundtrip passed!\n\n";
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next USDC Roundtrip Tests ===\n\n";
 
@@ -555,6 +608,7 @@ int main() {
     test_roundtrip_schema_types();
     test_roundtrip_layer_metadata();
     test_roundtrip_time_samples();
+    test_roundtrip_vec_matrix_arrays();
     test_write_usdc_from_stage_api();
 
     std::cout << "=== All USDC roundtrip tests passed! ===\n";

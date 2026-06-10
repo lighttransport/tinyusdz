@@ -140,6 +140,15 @@ public:
   static Value MakeTokenArray(const std::vector<std::string>& data);
   static Value MakeTokenArray(std::vector<std::string>&& data);
 
+  /// Generic flat-buffer array factories for vector/quat/matrix element types
+  /// (e.g. Vec4f, Matrix4d, Quatf). `data` is the flat scalar buffer and
+  /// `comps_per_elem` the number of scalars per element (4 for Vec4f / Quatf,
+  /// 16 for Matrix4d, ...). array_size == data.size() / comps_per_elem.
+  static Value MakeFloatCompArray(std::vector<float>&& data, TypeId elem_type,
+                                  uint32_t comps_per_elem);
+  static Value MakeDoubleCompArray(std::vector<double>&& data, TypeId elem_type,
+                                   uint32_t comps_per_elem);
+
   // ============================================================
   // Type queries
   // ============================================================

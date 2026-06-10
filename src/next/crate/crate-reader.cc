@@ -873,6 +873,40 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       out = Value::MakeTokenArray(std::move(data));
       return true;
     }
+    // Vector / quaternion / matrix arrays stored as flat float or double
+    // buffers (uncompressed in crate). Decoded generically via the element
+    // stride so each type doesn't need a near-identical case.
+    case CrateTypeId::Vec4f:
+    case CrateTypeId::Quatf: {
+      if (compressed) { AddWarning("Compressed float-vector arrays not supported"); return false; }
+      const uint32_t stride_bytes = CrateArrayElemStride(type_id);  // e.g. 16
+      const uint32_t comps = stride_bytes / 4;
+      size_t scalars;
+      if (!safe::mul(static_cast<size_t>(count), size_t(comps), &scalars)) return false;
+      std::vector<float> data(scalars);
+      if (!read_raw(data.data(), stride_bytes)) return false;
+      out = Value::MakeFloatCompArray(std::move(data),
+                                      CrateArrayValueType(type_id), comps);
+      return true;
+    }
+    case CrateTypeId::Vec2d:
+    case CrateTypeId::Vec3d:
+    case CrateTypeId::Vec4d:
+    case CrateTypeId::Quatd:
+    case CrateTypeId::Matrix2d:
+    case CrateTypeId::Matrix3d:
+    case CrateTypeId::Matrix4d: {
+      if (compressed) { AddWarning("Compressed double-vector arrays not supported"); return false; }
+      const uint32_t stride_bytes = CrateArrayElemStride(type_id);  // e.g. 128
+      const uint32_t comps = stride_bytes / 8;
+      size_t scalars;
+      if (!safe::mul(static_cast<size_t>(count), size_t(comps), &scalars)) return false;
+      std::vector<double> data(scalars);
+      if (!read_raw(data.data(), stride_bytes)) return false;
+      out = Value::MakeDoubleCompArray(std::move(data),
+                                       CrateArrayValueType(type_id), comps);
+      return true;
+    }
     default:
       AddWarning(std::string("Unsupported array type: ") + CrateTypeIdName(type_id));
       return false;
