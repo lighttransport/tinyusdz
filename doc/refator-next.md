@@ -347,3 +347,34 @@ invalidation coupling, thread-safety) — only after Phases 3, 4, and 9.
 - New: `src/next/schema/geom-point-instancer.{hh,cc}`, `src/next/pcp/load-rules.{hh,cc}`,
   `tests/fuzzer/next_*`, `tests/next/test_pointinstancer.cc`
 - `src/next/CMakeLists.txt`, top-level `CMakeLists.txt` (corpus gate)
+
+---
+
+## Phase 2 results (fuzzers + corpus gate)
+
+Three libFuzzer harnesses (`TINYUSDZ_NEXT_BUILD_FUZZERS=ON`, clang) +
+`next_usdcat` CLI + `next_corpus_parse` CTest gate. The fuzzers found **7
+crashes** in the first minutes, all now fixed and pinned by
+`tests/next/test_crash_regressions.cc` (replayed under ASAN/UBSAN):
+
+1. `value-parser.cc:508` — `std::string(GetTypeName(id))` with `id` lacking
+   TypeInfo → `std::string(nullptr)` abort. (USDA + compose.)
+2. `crate-reader.cc` ReadFields token-indices — `memcpy(dst+8, v.data(), 0)`
+   with empty vector → null-arg UB.
+3. `crate-format.cc:457` DecodeIntegers — attacker-controlled `common_bytes`
+   (up to 255) → out-of-range `<< (i*8)` shift UB. Reject `> 4`.
+4. `stream-reader.hh:90` `read()` — zero-count `memcpy` with null src/dst UB
+   (both overloads).
+5. `crate-reader.cc` ReadFields value-reps — zero-count `memcpy` after decode.
+6. `crate-reader.cc` ReadTokens — unterminated token blob → `strlen` reads past
+   the decompressed buffer (heap-buffer-overflow). Now `memchr`-bounded.
+7. (re-found #1 via the compose path before relink.)
+
+Post-fix soak (clang, ASAN+UBSAN): USDA 590k runs, USDC ~bil runs across
+sessions, compose 1.86M runs — all clean.
+
+Corpus gate (`next_corpus_parse`, usd-wg/assets, 280 files): **15 PASS /
+46 WARN / 219 FAIL, 0 CRASH**. Registered as a regression ratchet
+(`--max-fail 220`); the 219 failures are known next parser gaps (list-op
+qualifiers, dictionary metadata, compressed/extra array types — Phases 7-8),
+not crashes. Ratchet down as gaps close.
