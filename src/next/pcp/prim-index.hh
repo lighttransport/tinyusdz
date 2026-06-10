@@ -60,6 +60,9 @@ struct CompNode {
 struct CompositionOptions {
   bool load_payloads = true;       // default policy when payload_policy is null.
   uint32_t max_depth = 256;        // arc recursion limit / cycle backstop.
+  uint32_t max_namespace_depth = 1024;  // composed prim-tree depth backstop
+                                        // (BuildStage); errors instead of
+                                        // exhausting the C++ stack.
   bool error_when_asset_not_found = false;
   bool detect_instances = true;    // group instanceable prims into prototypes.
   int num_threads = 1;             // PrewarmPrimIndices worker hint (see note).

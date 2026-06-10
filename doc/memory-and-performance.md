@@ -487,3 +487,18 @@ The 22× gap is what Phase-3 CoW array storage closes for *materialized*
 |--------|-------|
 | peak RSS | 771,404 KB |
 | build prims | 100000 (reread OK, out=7.2 MB) |
+
+### Phase-1 deltas (recursion/cycle hardening + lazy per-prim storage)
+
+| metric | Phase 0 | Phase 1 | delta |
+|--------|---------|---------|-------|
+| empty prim, self-reported | 1119 B/prim | 975 B/prim | −13% |
+| empty prim, RSS | 960 B/prim | 736 B/prim | −23% |
+| deep chain D=200 index | 2.95 ms | 1.58 ms | −46% |
+| compose M=20k index / BuildStage | 145 / 214 ms | 155 / 201 ms | ~noise |
+
+Sources: lazy `values_`/`time_samples_` allocation (two heap blocks per prim
+were eager), and the per-arc copied `std::set<std::string>` cycle keys replaced
+by a stack-frame chain. Note: `stage_memory` self-reporting *increased*
+(52.9 → 73.6 MB) because the old `ValueStorage` accounting counted a dead byte
+buffer (always 0) — the new number is honest, not a regression.
