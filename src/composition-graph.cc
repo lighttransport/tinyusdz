@@ -1378,7 +1378,10 @@ std::vector<std::string> CompositionGraph::GatherComposedChildNames(
   for (uint16_t order_idx : index.GetStrengthOrder()) {
     const CompNode &n = index.GetNode(order_idx);
     if (n.is_culled() || n.is_payload_deferred()) continue;
-    if (!n.has_specs()) continue;
+    // NOTE: do NOT skip on !has_specs() here. A node may contribute namespace
+    // children even when it authors no props/metas of its own (e.g. a reference
+    // target that is just a parent of geometry). has_specs() is set from
+    // props/metas only on arc nodes, so requiring it would drop such children.
     if (n.layer_stack_idx == CompNode::kInvalidIndex ||
         n.layer_stack_idx >= _ctx._layer_stacks.size()) {
       continue;

@@ -681,8 +681,44 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
     PUSH_ERROR_AND_RETURN("PrimSpec tree too deep (max 4096).");
   }
 
+  // Whether dst authored its own reference/payload arcs BEFORE merging the
+  // weaker opinion (used for list-op accumulation + cross-directory anchoring).
+  const bool dst_had_refs = dst.metas().references.has_value();
+  const bool dst_had_payload = dst.metas().payload.has_value();
+  const bool dst_had_arcs = dst_had_refs || dst_had_payload;
+
   // Combine metadataum (weaker fills in where stronger is not authored)
   dst.metas().update_from(src.metas(), /* override_authored */ false);
+
+  // `references` and `payload` are LIST-OPS: across a sublayer stack each layer
+  // may `prepend`/`append` to the same prim and the results ACCUMULATE (USD
+  // semantics) -- e.g. a shot whose department layers each prepend a reference
+  // to the same root prim. update_from() above only gap-fills the whole value
+  // (keeping the stronger opinion when present), so when BOTH layers author the
+  // arc we must concatenate the weaker layer's list-op entries after the
+  // stronger's. (When dst had none, update_from already copied src's.)
+  if (dst_had_refs && src.metas().references.has_value()) {
+    auto &dref = dst.metas().references.value();
+    for (const auto &e : src.metas().references.value()) dref.push_back(e);
+  }
+  if (dst_had_payload && src.metas().payload.has_value()) {
+    auto &dpl = dst.metas().payload.value();
+    for (const auto &e : src.metas().payload.value()) dpl.push_back(e);
+  }
+
+  // Cross-directory anchoring for the reference/payload arcs: if the arcs were
+  // introduced by this weaker layer (dst authored none of its own), they are
+  // anchored to the weaker layer's directory -- which may sit at a different
+  // depth than the stronger accumulator (e.g. a parent layer at .../shot/ vs.
+  // its `assembly/` subdirectory sublayer, where a `../../../` relative ref
+  // resolves to different places). Adopt the authoring layer's anchor so the
+  // arcs resolve correctly after sublayer flattening.
+  if (!dst_had_arcs &&
+      (src.metas().references.has_value() || src.metas().payload.has_value()) &&
+      !src.get_current_working_path().empty()) {
+    dst.set_asset_resolution_state(src.get_current_working_path(),
+                                   src.get_asset_search_paths());
+  }
 
   // AOUSD Core Spec 12.2.1 (specifier): Composed specifier resolution.
   // If dst (stronger) is `over` but src (weaker) is defining (def/class),
