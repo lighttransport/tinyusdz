@@ -79,6 +79,7 @@ set(TINYUSDZ_NEXT_SOURCES
 
     # PCP-style lazy composition cache (native to next)
     pcp/layer-registry.cc
+    pcp/load-rules.cc
     pcp/cache.cc
 
     # High-level API
@@ -311,6 +312,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_composition PRIVATE tinyusdz_next)
 
+    add_executable(test_load_rules
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_load_rules.cc
+    )
+    target_link_libraries(test_load_rules PRIVATE tinyusdz_next)
+
     # tusdcat-compatible CLI: drives the usd-wg asset-corpus regression gate
     # (tests/parse-asset-corpus.mjs --tusdcat $<TARGET_FILE:next_usdcat>).
     add_executable(next_usdcat
@@ -434,6 +440,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     add_test(NAME next_test_composition COMMAND test_composition
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_crash_regressions COMMAND test_crash_regressions
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_load_rules COMMAND test_load_rules
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_benchmark COMMAND benchmark_next
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
