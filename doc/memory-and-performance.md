@@ -502,3 +502,18 @@ were eager), and the per-arc copied `std::set<std::string>` cycle keys replaced
 by a stack-frame chain. Note: `stage_memory` self-reporting *increased*
 (52.9 → 73.6 MB) because the old `ValueStorage` accounting counted a dead byte
 buffer (always 0) — the new number is honest, not a regression.
+
+### Phase-3 delta (copy-on-write array storage in Value)
+
+`bench_lazy_mem`, 4M-vert usdc (45.8 MB), K=32 clones:
+
+| mode | Phase 0 | Phase 3 | delta |
+|------|---------|---------|-------|
+| eager | 2,159,964 KB | 176,640 KB | **−92% (12×)** |
+| lazy | 97,792 KB | 97,536 KB | unchanged |
+
+`Value`'s array buffers moved from a raw owning pointer to a
+`shared_ptr<ArrayStorageBase>` (VtArray `_DetachIfNotUnique`): copy = refcount
+bump, first mutable access clones if shared. Eager-read clones now share the
+one decoded buffer instead of deep-copying it 32×. Closes M1 for all
+materialized (USDA + eager-crate-type) arrays, not just lazy crate arrays.
