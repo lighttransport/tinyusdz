@@ -154,6 +154,38 @@ CrateTypeId ToCrateTypeId(TypeId type_id) {
   }
 }
 
+/// Scalars per element for a flat float/double vector/quat/matrix array TypeId.
+uint32_t ArrayComps(TypeId tid) {
+  switch (tid) {
+    case TypeId::Float2:
+    case TypeId::Double2:
+    case TypeId::Texcoord2f:
+      return 2;
+    case TypeId::Float3:
+    case TypeId::Double3:
+    case TypeId::Point3d:
+    case TypeId::Vector3d:
+    case TypeId::Normal3d:
+      return 3;
+    case TypeId::Float4:
+    case TypeId::Double4:
+    case TypeId::Color4f:
+    case TypeId::Quatf:
+    case TypeId::Quatd:
+    case TypeId::Matrix2f:
+    case TypeId::Matrix2d:
+      return 4;
+    case TypeId::Matrix3f:
+    case TypeId::Matrix3d:
+      return 9;
+    case TypeId::Matrix4f:
+    case TypeId::Matrix4d:
+      return 16;
+    default:
+      return 0;
+  }
+}
+
 /// Compute the amount of VALUE section data needed for a given CrateTypeId
 size_t CrateValueSize(CrateTypeId type, bool is_array) {
   if (is_array) return 0; // arrays stored with count prefix in data section
@@ -1253,6 +1285,48 @@ private:
               uint32_t idx = InternToken((*arr)[k]);
               std::memcpy(arr_data.data() + 8 + k * 4, &idx, 4);
             }
+          }
+          break;
+        }
+        // Vector / quat / matrix arrays: flat float or double buffer. comps =
+        // scalars per element (Vec2f=2, Vec4f/Quatf=4, Matrix4d=16, ...).
+        case TypeId::Float2:
+        case TypeId::Float4:
+        case TypeId::Color4f:
+        case TypeId::Texcoord2f:
+        case TypeId::Quatf:
+        case TypeId::Matrix2f:
+        case TypeId::Matrix3f:
+        case TypeId::Matrix4f: {
+          const std::vector<float>* arr = val.as_float_array();
+          const uint32_t comps = ArrayComps(type_id);
+          if (arr && comps && arr->size() % comps == 0) {
+            count = arr->size() / comps;
+            size_t bytes = arr->size() * sizeof(float);
+            arr_data.resize(8 + bytes);
+            std::memcpy(arr_data.data(), &count, 8);
+            std::memcpy(arr_data.data() + 8, arr->data(), bytes);
+          }
+          break;
+        }
+        case TypeId::Double2:
+        case TypeId::Double3:
+        case TypeId::Double4:
+        case TypeId::Point3d:
+        case TypeId::Vector3d:
+        case TypeId::Normal3d:
+        case TypeId::Quatd:
+        case TypeId::Matrix2d:
+        case TypeId::Matrix3d:
+        case TypeId::Matrix4d: {
+          const std::vector<double>* arr = val.as_double_array();
+          const uint32_t comps = ArrayComps(type_id);
+          if (arr && comps && arr->size() % comps == 0) {
+            count = arr->size() / comps;
+            size_t bytes = arr->size() * sizeof(double);
+            arr_data.resize(8 + bytes);
+            std::memcpy(arr_data.data(), &count, 8);
+            std::memcpy(arr_data.data() + 8, arr->data(), bytes);
           }
           break;
         }
