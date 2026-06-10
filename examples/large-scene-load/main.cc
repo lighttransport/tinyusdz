@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -99,9 +100,21 @@ int main(int argc, char **argv) {
   }
   if (!warn.empty()) std::printf("warn: %s\n", warn.c_str());
 
+  // Count all composed prims (recursively) to show that referenced descendants
+  // were reconstructed into the namespace.
+  std::function<size_t(const tinyusdz::Prim &)> count_prims =
+      [&](const tinyusdz::Prim &p) -> size_t {
+    size_t n = 1;
+    for (const auto &c : p.children()) n += count_prims(c);
+    return n;
+  };
+  size_t total_prims = 0;
+  for (const auto &rp : loader.stage().root_prims()) total_prims += count_prims(rp);
+
   const size_t n_roots = loader.stage().root_prims().size();
   std::printf("Loaded.\n");
   std::printf("  root prims        = %zu\n", n_roots);
+  std::printf("  total prims       = %zu\n", total_prims);
   std::printf("  deferred payloads = %zu\n", loader.deferred_count());
   std::printf("  unique files parsed = %zu\n", loader.layer_parse_count());
   std::printf("  est. Stage memory = %.1f MiB\n",

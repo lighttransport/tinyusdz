@@ -228,6 +228,76 @@ PrimIndexBuilder::PrimIndexBuilder(CompositionContext *ctx,
   _result._map_expressions = &ctx->_map_expressions;
 }
 
+PrimIndexBuilder::PrimIndexBuilder(CompositionContext *ctx,
+                                   const Path &prim_path)
+    : _ctx(ctx), _root_primspec(nullptr), _root_layer_stack_idx(0) {
+  _result._prim_path = prim_path;
+  _result._path_table = &ctx->_path_table;
+  _result._layer_stacks = &ctx->_layer_stacks;
+  _result._map_expressions = &ctx->_map_expressions;
+}
+
+void PrimIndexBuilder::SeedDescendedNodes(const PrimIndex &parent,
+                                          const std::string &child_name) {
+  // Mirror the parent's node tree one namespace level down: for each parent
+  // node that has a child named `child_name`, create a descended node with the
+  // same arc type / layer stack but the child's site path. Preserving the
+  // parent linkage keeps arc-type/depth/sibling ordering, so the descended
+  // index has the same strength order as the parent — i.e. the child inherits
+  // the parent's reference/payload/inherit arcs. Each descended node's own arcs
+  // are then scanned (and followed), which is what pulls nested references such
+  // as a referenced child that itself references another file.
+  std::unordered_map<uint16_t, uint16_t> parent_to_child;
+  parent_to_child.reserve(parent.GetNodeCount());
+
+  for (uint16_t i = 0; i < parent.GetNodeCount(); i++) {
+    const CompNode &pn = parent.GetNode(i);
+    // Skip nodes that contribute nothing or are not yet realized.
+    if (pn.is_culled() || pn.is_payload_deferred()) continue;
+    if (pn.layer_stack_idx == CompNode::kInvalidIndex ||
+        pn.layer_stack_idx >= _ctx->_layer_stacks.size()) {
+      continue;
+    }
+    const LayerStackEntry &ls = _ctx->_layer_stacks[pn.layer_stack_idx];
+    if (!ls.layer) continue;
+
+    const std::string &pn_site = _ctx->_path_table[pn.site_path_idx];
+    const std::string child_site = pn_site + "/" + child_name;
+
+    const PrimSpec *cps = nullptr;
+    std::string find_err;
+    if (!ls.layer->find_primspec_at(Path(child_site, ""), &cps, &find_err) ||
+        !cps) {
+      continue;  // this branch of the parent tree has no such child
+    }
+
+    uint16_t cparent = CompNode::kInvalidIndex;
+    if (pn.parent != CompNode::kInvalidIndex) {
+      auto it = parent_to_child.find(pn.parent);
+      if (it != parent_to_child.end()) cparent = it->second;
+    }
+
+    uint16_t new_idx =
+        AddNode(pn.arc_type, cparent, pn.layer_stack_idx, pn.layer_idx,
+                _ctx->InternPath(child_site), pn.map_expr_idx);
+    if (new_idx == CompNode::kInvalidIndex) continue;
+
+    _result._nodes[new_idx].sibling_num = pn.sibling_num;
+    if (cparent != CompNode::kInvalidIndex) AppendChild(cparent, new_idx);
+
+    if (!cps->props().empty() || cps->metas().authored() ||
+        !cps->children().empty()) {
+      _result._nodes[new_idx].flags =
+          _result._nodes[new_idx].flags | NodeFlags::HasSpecs;
+    }
+
+    parent_to_child[i] = new_idx;
+
+    CollectVariantOpinions(new_idx);
+    ScanArcsAndEnqueueTasks(new_idx, *cps);
+  }
+}
+
 uint16_t PrimIndexBuilder::AddNode(ArcType arc_type, uint16_t parent_idx,
                                    uint16_t layer_stack_idx,
                                    uint16_t layer_idx,
@@ -406,6 +476,23 @@ nonstd::expected<PrimIndex, std::string> PrimIndexBuilder::Build() {
     return nonstd::make_unexpected(err);
   }
 
+  return FinishBuild();
+}
+
+nonstd::expected<PrimIndex, std::string>
+PrimIndexBuilder::BuildChildFrom(const PrimIndex &parent,
+                                 const std::string &child_name) {
+  // Phase 1 (child): seed nodes descended from the parent's nodes.
+  SeedDescendedNodes(parent, child_name);
+  if (_result._nodes.empty()) {
+    return nonstd::make_unexpected("child prim has no contributing nodes");
+  }
+  return FinishBuild();
+}
+
+nonstd::expected<PrimIndex, std::string> PrimIndexBuilder::FinishBuild() {
+  std::string err;
+
   // Phase 2: Process task queue
   while (!_task_queue.empty()) {
     CompositionTask task = _task_queue.top();
@@ -463,10 +550,18 @@ nonstd::expected<PrimIndex, std::string> PrimIndexBuilder::Build() {
   CullInertNodes();
   ComputeStrengthOrder();
 
-  // Phase 6: Detect instanceable
-  _result._is_instanceable =
-      _root_primspec->metas().has_instanceable() &&
-      _root_primspec->metas().get_instanceable();
+  // Phase 6: Detect instanceable from the composed (strongest) opinion. For a
+  // root prim this is the root node (== _root_primspec); for a child prim built
+  // by descent there is no single root PrimSpec, so read the strongest node.
+  _result._is_instanceable = false;
+  for (uint16_t order_idx : _result._strength_order) {
+    const PrimSpec *ps = GetPrimSpecForNode(order_idx);
+    if (!ps) continue;
+    if (ps->metas().has_instanceable()) {
+      _result._is_instanceable = ps->metas().get_instanceable();
+      break;
+    }
+  }
 
   return std::move(_result);
 }
@@ -1256,6 +1351,51 @@ void PrimIndexBuilder::CullInertNodes() {
 // CompositionGraph::BuildPrimIndex
 // ---------------------------------------------------------------------------
 
+void CompositionGraph::DetectAndRegisterInstance(
+    const std::string &prim_path, const std::shared_ptr<PrimIndex> &index) {
+  if (!_ctx._options.detect_instances || !index->IsInstanceable()) return;
+
+  InstanceKey key =
+      ComputeInstanceKey(*index, _ctx._layer_stacks, _ctx._path_table);
+  if (!key.is_valid()) return;
+
+  auto it = _instance_key_to_prototype.find(key);
+  if (it != _instance_key_to_prototype.end()) {
+    _instance_to_prototype[prim_path] = static_cast<int>(it->second);
+  } else {
+    size_t proto_idx = _prototypes.size();
+    _prototypes.push_back(index);
+    _instance_key_to_prototype[key] = proto_idx;
+    _instance_to_prototype[prim_path] = static_cast<int>(proto_idx);
+  }
+}
+
+std::vector<std::string> CompositionGraph::GatherComposedChildNames(
+    const PrimIndex &index) const {
+  std::vector<std::string> names;
+  std::set<std::string> seen;
+  // Strongest-first so the composed child order follows opinion strength.
+  for (uint16_t order_idx : index.GetStrengthOrder()) {
+    const CompNode &n = index.GetNode(order_idx);
+    if (n.is_culled() || n.is_payload_deferred()) continue;
+    if (!n.has_specs()) continue;
+    if (n.layer_stack_idx == CompNode::kInvalidIndex ||
+        n.layer_stack_idx >= _ctx._layer_stacks.size()) {
+      continue;
+    }
+    const LayerStackEntry &ls = _ctx._layer_stacks[n.layer_stack_idx];
+    if (!ls.layer) continue;
+    const std::string &site = _ctx._path_table[n.site_path_idx];
+    const PrimSpec *ps = nullptr;
+    std::string fe;
+    if (!ls.layer->find_primspec_at(Path(site, ""), &ps, &fe) || !ps) continue;
+    for (const auto &c : ps->children()) {
+      if (seen.insert(c.name()).second) names.push_back(c.name());
+    }
+  }
+  return names;
+}
+
 bool CompositionGraph::BuildPrimIndex(const std::string &prim_path,
                                       const PrimSpec &primspec,
                                       uint16_t root_layer_stack_idx,
@@ -1263,60 +1403,56 @@ bool CompositionGraph::BuildPrimIndex(const std::string &prim_path,
   (void)warn;
 
   // Iterative pre-order DFS (explicit heap worklist) so deeply nested prim
-  // hierarchies cannot overflow the call stack. Order is preserved exactly
-  // (children pushed in reverse -> visited left-to-right), which matters because
-  // instance-prototype selection is "first matching index wins". A child's
-  // failure aborts the whole walk, matching the original recursion.
+  // hierarchies cannot overflow the call stack, and so instance-prototype
+  // selection ("first matching index wins") sees prims in a stable order.
+  //
+  // Unlike the old walk (which recursed only over the root-layer PrimSpec's
+  // children), each prim's children are its COMPOSED children -- the union of
+  // children across every node of its index, including those introduced by
+  // references/payloads. A child is built by descending the parent index one
+  // namespace level (BuildChildFrom), which both reconstructs referenced
+  // descendants and follows their own (nested) arcs.
   struct Item {
     std::string path;
-    const PrimSpec *ps;
+    std::shared_ptr<PrimIndex> parent;  // null for the root prim
+    std::string child_name;             // unused for the root prim
   };
   std::vector<Item> stack;
-  stack.push_back({prim_path, &primspec});
+  stack.push_back({prim_path, nullptr, std::string()});
 
   while (!stack.empty()) {
     Item item = std::move(stack.back());
     stack.pop_back();
 
-    Path path(item.path, "");
-    PrimIndexBuilder builder(&_ctx, path, *item.ps, root_layer_stack_idx);
+    if (_prim_indices.count(item.path)) continue;  // already built
 
-    auto result = builder.Build();
-    if (!result) {
-      if (err) *err = result.error();
-      return false;
-    }
-
-    auto index = std::make_shared<PrimIndex>(std::move(*result));
-
-    // Instance detection
-    if (_ctx._options.detect_instances && index->IsInstanceable()) {
-      InstanceKey key =
-          ComputeInstanceKey(*index, _ctx._layer_stacks, _ctx._path_table);
-      if (key.is_valid()) {
-        auto it = _instance_key_to_prototype.find(key);
-        if (it != _instance_key_to_prototype.end()) {
-          // Share existing prototype
-          _instance_to_prototype[item.path] =
-              static_cast<int>(it->second);
-        } else {
-          // Register as new prototype
-          size_t proto_idx = _prototypes.size();
-          _prototypes.push_back(index);
-          _instance_key_to_prototype[key] = proto_idx;
-          _instance_to_prototype[item.path] =
-              static_cast<int>(proto_idx);
-        }
+    std::shared_ptr<PrimIndex> index;
+    if (!item.parent) {
+      // Root prim: build from its root-layer PrimSpec.
+      PrimIndexBuilder builder(&_ctx, Path(item.path, ""), primspec,
+                               root_layer_stack_idx);
+      auto result = builder.Build();
+      if (!result) {
+        if (err) *err = result.error();
+        return false;
       }
+      index = std::make_shared<PrimIndex>(std::move(*result));
+    } else {
+      // Child prim: build by descending the parent index.
+      PrimIndexBuilder builder(&_ctx, Path(item.path, ""));
+      auto result = builder.BuildChildFrom(*item.parent, item.child_name);
+      if (!result) continue;  // no composable opinions for this child; skip
+      index = std::make_shared<PrimIndex>(std::move(*result));
     }
 
-    _prim_indices[item.path] = std::move(index);
+    DetectAndRegisterInstance(item.path, index);
+    _prim_indices[item.path] = index;
 
-    // Enqueue children in reverse for left-to-right pre-order traversal.
-    // Pointers into the (read-only) PrimSpec tree stay valid for the walk.
-    const auto &children = item.ps->children();
-    for (auto it = children.rbegin(); it != children.rend(); ++it) {
-      stack.push_back({item.path + "/" + it->name(), &(*it)});
+    // Enqueue composed children in reverse for left-to-right pre-order.
+    const std::vector<std::string> child_names =
+        GatherComposedChildNames(*index);
+    for (auto it = child_names.rbegin(); it != child_names.rend(); ++it) {
+      stack.push_back({item.path + "/" + *it, index, *it});
     }
   }
 

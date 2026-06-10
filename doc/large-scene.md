@@ -164,17 +164,19 @@ large-scene-load <scene.usd[a]> [--mode=none|all|budget] [--budget-mb=N]
 
 ### 2.6 Measured result (Caldera)
 
-`large-scene-load caldera.usda --mode=none` composes the scene structure in
-**~1.4 GiB / ~2.5 s** — well within the 16 GB budget. Payload deferral itself is
-verified (e.g. `tests/usda/payload-001.usda` → 2 deferred payloads).
+`large-scene-load caldera.usda --mode=none` composes the full proxy-mode
+structure — **32,811 prims, 122 files parsed, 373 deferred payloads** — in
+**~1.7 GiB / ~3 s**, well within the 16 GB budget. `--load-some=N` streams the
+deferred proxy geometry on demand.
 
 ---
 
 ## 3. Roadmap (remaining implementation)
 
 The loader bounds memory and streams payloads. Cross-directory cwp anchoring
-(§3.1) is now **fixed**; the remaining items below still block *complete*
-composition of Caldera-scale reference chains.
+(§3.1) and referenced-prim descendant reconstruction (§3.2) are now **fixed** —
+Caldera composes its full proxy-mode structure (32,811 prims, geometry deferred)
+in ~1.7 GiB. The items below are remaining enhancements.
 
 ### 3.1 Cross-directory cwp anchoring — FIXED
 
@@ -205,22 +207,39 @@ real one in `sub/`) so the parse-once registry's parse count only goes non-zero
 when the reference anchors to the correct directory — it fails if either fix is
 reverted. Full unit suite (853 cases) unaffected.
 
-### 3.2 Referenced-prim descendant reconstruction (NEW primary blocker)
+### 3.2 Referenced-prim descendant reconstruction — FIXED
 
-With anchoring fixed, the references in Caldera's `mp_wz_island.usd` resolve, but
-the chain still stops a few levels in. Root cause: `CompositionGraph` builds a
-`PrimIndex` per prim by walking only the **root-layer** namespace
-(`BuildPrimIndex` DFS over `item.ps->children()`, `composition-graph.cc:1318`)
-and `ScanArcsAndEnqueueTasks` scans only a prim's *own* arcs
-(`composition-graph.cc:361`). Child prims introduced *by a reference* (e.g.
-`paths.usd`'s `mp_wz_island_geo`, which itself references `geo.usd`) are not
-added to the namespace, so their arcs are never followed and they don't appear in
-the Stage. The deep reference chain
-(`mp_wz_island` → `paths` → `geo` → prefabs → proxy payloads) therefore isn't
-fully expanded. Fix direction: expand the composed namespace from reference/
-payload subtrees (compose child opinions across all contributing nodes), as the
-`pcp::Cache` engine is structured to do — or route the loader through
-`pcp::Cache::BuildStage` once it exposes the lazy-payload Load/Unload API.
+**Was:** `CompositionGraph` built a `PrimIndex` per prim by walking only the
+**root-layer** namespace (`BuildPrimIndex` DFS over the root-layer PrimSpec's
+children) and `ScanArcsAndEnqueueTasks` scanned only a prim's *own* arcs. Child
+prims introduced *by a reference* (e.g. `paths.usd`'s `mp_wz_island_geo`, which
+itself references `geo.usd`) were never added to the namespace, so their arcs
+were never followed and they never reached the Stage. Caldera's chain
+(`mp_wz_island` → `paths` → `geo` → prefabs → proxy payloads) stopped a few
+levels in (≈6 files parsed, 0 deferred payloads).
+
+**Fix (implemented, `src/composition-graph.cc`):** `BuildPrimIndex` now expands
+the **composed** namespace. After building a prim's index it gathers the union
+of child names across *all* of the index's nodes (`GatherComposedChildNames`),
+and builds each child's index by **descending every node of the parent index one
+namespace level** (`PrimIndexBuilder::BuildChildFrom` / `SeedDescendedNodes`):
+each descended node keeps its parent's arc type / layer stack / strength so the
+child inherits the parent's reference & payload arcs, and the descended prims'
+own arcs are then scanned and followed (which pulls nested references such as
+`geo.usd`). This reconstructs referenced descendants *and* follows their nested
+arcs, recursively.
+
+**Result:** Caldera (proxy, LoadNone) composes **32,811 prims / 122 files / 373
+deferred payloads** in **~1.7 GiB / ~3 s** — the full structural composition,
+geometry deferred. Regression test `feat-large-scene` asserts a referenced
+prim's grandchild (`/P/M`) is reconstructed. Full unit suite (853) unaffected.
+
+**Note — pcp::Cache still has this limitation.** The cached `pcp::Cache` engine
+(not used by `LargeSceneLoader`) computes each prim from its root-layer local
+PrimSpec only and does not yet expand referenced descendants; its per-entry
+composition-context model needs rework to share a context across a referenced
+subtree. The `pcp_buildstage_reference_grandchildren_test` documents this (it
+asserts the eager engine reconstructs grandchildren and notes pcp does not yet).
 
 ### 3.3 mmap-through-composition (SECONDARY)
 
@@ -259,8 +278,8 @@ cd build && cmake --build . -j16
 cd build && ctest -R feat-large-scene --output-on-failure
 # structural load within budget (absolute path works from any cwd now):
 <build>/large-scene-load /mnt/disk1/data/caldera/caldera.usda --mode=none
-# expect: RSS ~1.4 GiB, Stage built. Full geometry-reference expansion awaits
-# §3.2 (referenced-prim descendant reconstruction).
+# expect: ~32,811 total prims, 373 deferred payloads, RSS ~1.7 GiB.
+# --load-some=N streams deferred proxy geometry on demand.
 cd build && ctest --output-on-failure     # no regressions (2 pre-existing
                                            # MaterialX failures are unrelated)
 ```
