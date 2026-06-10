@@ -512,6 +512,36 @@ void test_roundtrip_time_samples() {
   auto* ts = toc.find("TOKENS");
   assert(ts != nullptr);
 
+  // Read back and verify the time samples decode per-property (Phase: crate
+  // TimeSamples decoding — previously skipped on read).
+  CrateReader reader;
+  CrateReadResult rr = reader.Read(buffer.data(), buffer.size());
+  assert(rr.success && "re-read of time-sampled layer failed");
+  const PrimSpec* anim = rr.stage.GetRootLayer()->prim_at_path("/Animated");
+  assert(anim);
+
+  PropNameId tr = GetPropNameTable().find("xformOp:translate");
+  assert(tr.is_valid() && anim->has_time_samples(tr));
+  const auto* tr_samples = anim->time_samples(tr);
+  assert(tr_samples && tr_samples->size() == 3 && "translate: 3 samples expected");
+  // Sample at t=50 should be (10,5,0).
+  bool found_50 = false;
+  for (const auto& kv : *tr_samples) {
+    if (std::abs(kv.first - 50.0) < 1e-9) {
+      const Value* v = anim->time_sample_value(kv.second);
+      assert(v && v->is_array() == false);
+      const float* f3 = v->as_float3();
+      assert(f3 && f3[0] == 10.0f && f3[1] == 5.0f && f3[2] == 0.0f);
+      found_50 = true;
+    }
+  }
+  assert(found_50 && "translate sample at t=50 missing/wrong");
+
+  PropNameId wt = GetPropNameTable().find("weight");
+  assert(wt.is_valid() && anim->has_time_samples(wt));
+  const auto* wt_samples = anim->time_samples(wt);
+  assert(wt_samples && wt_samples->size() == 2 && "weight: 2 samples expected");
+
   std::cout << "  roundtrip time samples test passed!\n\n";
 }
 
