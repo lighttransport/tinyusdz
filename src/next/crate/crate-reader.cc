@@ -105,6 +105,10 @@ private:
   bool UnpackSpecifier(ValueRep rep, Value& out);
   bool UnpackVariability(ValueRep rep, Value& out);
   bool UnpackTimeSamples(ValueRep rep, Value& out);
+  // Decode a TimeSamples value into (time, value) pairs (for per-property
+  // reconstruction). Returns false on malformed input.
+  bool DecodeTimeSamples(ValueRep rep,
+                         std::vector<std::pair<double, Value>>* out);
   bool UnpackVec2i(ValueRep rep, Value& out);
   bool UnpackVec3i(ValueRep rep, Value& out);
   bool UnpackVec4i(ValueRep rep, Value& out);
@@ -270,6 +274,49 @@ bool CrateReader::Impl::UnpackTimeSamples(ValueRep rep, Value& out) {
 
   AddWarning("TimeSamples skipped: not yet wired to per-property storage");
   return false;
+}
+
+bool CrateReader::Impl::DecodeTimeSamples(
+    ValueRep rep, std::vector<std::pair<double, Value>>* out) {
+  out->clear();
+  if (rep.is_inlined()) return false;  // inlined TimeSamples not produced
+
+  // Header at rep.payload():
+  //   [i64 fwd1][ValueRep times][i64 fwd2][u64 N][ValueRep vals[N]]
+  // `times` points to a [u64 count][double[count]] block (pxr indirection).
+  if (!reader_->seek(static_cast<size_t>(rep.payload()))) return false;
+  int64_t fwd1 = 0;
+  uint64_t times_rep_raw = 0;
+  int64_t fwd2 = 0;
+  uint64_t n = 0;
+  if (!reader_->read(&fwd1, 8) || !reader_->read_u64(times_rep_raw) ||
+      !reader_->read(&fwd2, 8) || !reader_->read_u64(n)) {
+    return false;
+  }
+  if (n > options_.max_array_elements || n > 100000000ull) return false;
+
+  // Read all sample ValueReps before decoding (decoding seeks elsewhere).
+  std::vector<ValueRep> sample_reps(static_cast<size_t>(n));
+  for (uint64_t i = 0; i < n; ++i) {
+    uint64_t raw = 0;
+    if (!reader_->read_u64(raw)) return false;
+    sample_reps[static_cast<size_t>(i)] = ValueRep(raw);
+  }
+
+  // Decode the time codes (a double array).
+  Value times_val;
+  if (!UnpackValue(ValueRep(times_rep_raw), times_val)) return false;
+  const std::vector<double>* times = times_val.as_double_array();
+  if (!times) return false;
+  const size_t count = std::min<size_t>(times->size(), sample_reps.size());
+
+  out->reserve(count);
+  for (size_t i = 0; i < count; ++i) {
+    Value v;  // a ValueBlock sample (no authored value at this time) stays empty
+    UnpackValue(sample_reps[i], v);
+    out->emplace_back((*times)[i], std::move(v));
+  }
+  return true;
 }
 
 bool CrateReader::Impl::UnpackToken(ValueRep rep, Value& out) {
@@ -1839,6 +1886,7 @@ bool CrateReader::Impl::BuildStage() {
     bool is_connection = false;
     std::vector<std::string> connection_targets;
     bool uniform = false;
+    std::vector<std::pair<double, Value>> time_samples;
   };
   struct RelInfo {
     std::string name;
@@ -1912,6 +1960,8 @@ bool CrateReader::Impl::BuildStage() {
           ai.default_value = std::move(v);
           ai.has_default = true;
         }
+      } else if (f.first == "timeSamples") {
+        DecodeTimeSamples(f.second, &ai.time_samples);
       } else if (f.first == "connectionPaths") {
         if (DecodePathTargets(f.second, ai.connection_targets) &&
             !ai.connection_targets.empty()) {
@@ -2067,14 +2117,22 @@ bool CrateReader::Impl::BuildStage() {
         if (ai.has_default) {
           ps->add_property(ai.name, std::move(ai.default_value), flags);
         } else {
-          // Connection-only or declared-only attribute: register a typed slot
-          // with no authored default value so it round-trips.
+          // Connection-only / declared-only / timeSamples-only attribute:
+          // register a typed slot with no authored default so it round-trips.
           if (is_array) flags |= PropSlot::kFlagArray;
           std::string base = is_array
               ? ai.type_name.substr(0, ai.type_name.size() - 2)
               : ai.type_name;
           TypeId tid = GetTypeIdFromName(base.c_str());
           ps->add_property_slot(GetPropNameTable().intern(ai.name), tid, flags);
+        }
+        // Time samples (an attribute may have timeSamples with or without a
+        // default).
+        if (!ai.time_samples.empty()) {
+          PropNameId nid = GetPropNameTable().intern(ai.name);
+          for (auto& ts : ai.time_samples) {
+            ps->add_time_sample(nid, ts.first, std::move(ts.second));
+          }
         }
         if (!ai.type_name.empty()) {
           ps->set_property_type_name(ai.name, ai.type_name);
