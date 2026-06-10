@@ -24,13 +24,23 @@ Landed so far:
   `SetLoadRules`; `UnloadPayload` recomposes (S7 fix); BuildStage rebuilds
   prototype maps from scratch (fixes stale-grouping nondeterminism + payload-on-
   instance split).
-- **Phase 9 (F2)** — LayerRegistry parses outside the lock (parallel layer
-  load). The deeper cache-table fine-grained locking (F3–F6) remains TODO.
+- **Phase 7 (E1)** — USDA parser now honors arc list-op qualifiers
+  (prepend→front, append→back, delete→remove, explicit→replace) within a spec.
+  Cross-layer ListOp merging, layer offsets (E2; moot until crate TimeSamples
+  are read), and typed error codes (E4) remain TODO.
+- **Phase 8 (arrays)** — read+write coverage for Vec4f/Quatf/Vec2-4d/Quatd/
+  Matrix2-4d arrays (reusing CoW float/double storage); corpus "Unsupported
+  array type" warnings drop to just Vec3h. Half-typed arrays, PrimSpecMeta
+  split, token pool, and mmap CrateDataSource remain TODO.
+- **Phase 9 (F2 + TSAN stress)** — LayerRegistry parses outside the lock
+  (parallel layer load); a concurrent-payload-edit TSAN stress test guards the
+  Phase-6 paths. The deeper cache-table fine-grained locking (F3–F6) remains a
+  dedicated high-risk TODO (the coarse lock is correct; batch parallelism is
+  already achieved via per-worker Impls).
 
-Not yet started: **Phase 7** (list-ops / layer offsets / typed errors),
-**Phase 8** (PrimSpecMeta split / token pool / mmap / extra array-type read+lazy
-coverage), **Phase 9 F3–F6**, **Phase 10** (lazy Stage). Each is a large
-independent feature; the sections below are the spec for them.
+Not yet started / partial: **Phase 7 E2/E4** + cross-layer ListOps, **Phase 8**
+half arrays / PrimSpecMeta split / token pool / mmap, **Phase 9 F3–F6**,
+**Phase 10** (lazy Stage). The sections below are the spec for them.
 
 Goals, in priority order:
 
