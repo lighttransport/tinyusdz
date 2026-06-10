@@ -120,7 +120,12 @@ Pipeline: `LoadLayerFromFile` (root) → `CompositeSublayers` (L phase) →
 `CompositionGraph::Compose` with a payload policy → `BuildStage`. The loader
 owns the resolver, `pcp::LayerRegistry`, flattened root, and `CompositionGraph`
 together so `load_payload`/`unload_payload`/`deferred_payload_paths` work after
-the initial load.
+the initial load. Loading or unloading a payload now refreshes the payload
+node's own arcs plus the composed descendant PrimIndices under that prim before
+`rebuild_stage`, so children that exist only inside streamed geometry appear on
+load and disappear again on unload; nested relative arcs inside the streamed
+payload resolve against the payload file's directory; deferred-payload queries
+report only payloads still in the deferred state.
 
 ### 2.2 Payload modes
 
@@ -251,14 +256,18 @@ deferred payloads** in **~1.7 GiB / ~3 s** — the full structural composition,
 geometry deferred. Regression test `feat-large-scene` asserts a referenced
 prim's grandchild (`/P/M`) is reconstructed. Full unit suite (853) unaffected.
 
-**Note — pcp::Cache still has this limitation.** The cached `pcp::Cache` engine
-(not used by `LargeSceneLoader`) computes each prim from its root-layer local
-PrimSpec only and does not yet expand referenced descendants; its per-entry
-composition-context model needs rework to share a context across a referenced
-subtree. The `pcp_buildstage_reference_grandchildren_test` documents this (it
-asserts the eager engine reconstructs grandchildren and notes pcp does not yet).
+`pcp::Cache::BuildStage` now mirrors this namespace expansion for stage
+reconstruction: it starts from cached root PrimIndices, descends each composed
+parent index with `PrimIndexBuilder::BuildChildFrom`, and composes temporary
+child indices for referenced descendants. Lazy `ComputePrimIndex()` remains
+local to explicitly requested prim paths, but full-stage reconstruction now
+matches the eager engine for referenced grandchildren. Regression:
+`pcp_buildstage_reference_grandchildren_test`. Deferred PCP payload streaming now
+also reprocesses the newly loaded payload node, so references/payloads authored
+inside a streamed payload layer are visible immediately after `LoadPayload`.
+Regression: `pcp_external_payload_load_reprocesses_nested_arcs_test`.
 
-### 3.3 mmap-through-composition (SECONDARY)
+### 3.3 mmap-through-composition / fd bounds (PARTIAL)
 
 mmap zero-copy (`USDLoadOptions::mmap_zero_copy`) defers large uncompressed
 float arrays to disk, but only via `LoadUSDCFromFile(... Stage*)`. It does **not**
@@ -272,6 +281,16 @@ honoring `mmap_zero_copy` against a file-backed mmap, non-copying
 `Stage::adopt_mmap_*` after `BuildStage`. A pragmatic interim: stream a single
 on-demand payload via `LoadUSDCFromFile(... mmap_zero_copy=true)` into a side
 Stage.
+
+The descriptor-bound part is now implemented: `AssetResolutionResolver` tracks a
+per-resolver concurrent open file-descriptor / asset-handle budget
+(`max_file_descriptors`, default **1024**). `LargeSceneLoadOptions` forwards this
+limit into sublayer/reference/payload loading. `open_asset()` reports a hard
+error when the budget is reached instead of falling through to an OS-level
+`EMFILE` failure, and the composition graph treats that specific resolver error
+as fatal even when ordinary missing references/payloads are skippable. The
+current filesystem and mmap paths close descriptors before returning from each
+open, so this is a guard on concurrent opens, not an LRU for long-lived mappings.
 
 ### 3.4 Asset-centric composition (ALab) — FIXED
 
@@ -322,27 +341,39 @@ variants) was dropped. Two fixes:
   authored on different nodes, this handles **both** variant sets defined in the
   root layer stack **and** variant sets introduced via a reference (asset
   defines the set, a stronger layer selects it — the ALab character pattern).
+- **Re-scan selected variant self-arcs** (`PrimIndexBuilder::FinishBuild` /
+  `ApplyVariantContent`, `src/composition-graph.cc`): after a node is repointed
+  at its resolved variant PrimSpec, the DAG re-scans that PrimSpec and drains the
+  task queue again. This covers variant options that author composition arcs on
+  the selected prim itself (e.g. a `prepend references` or `prepend payload` in
+  the variant option metadata), not only arcs on child prims.
 
 Regression: `feat-large-scene` scenarios 3 (`fixture/variant/`, set in a weaker
 sublayer) and 4 (`fixture/variant-ref/`, set in a referenced asset) — both
-require `/P/GEO` and `/P/GEO/M` to reconstruct. On the ALab shot this composes
-the character geometry (3,293 → 4,560 prims, 1,271 → 2,540 deferred payloads);
-Caldera is unchanged (32,811). Value clips themselves (`clips` metadata) are
-resolved at Tydra / attribute-evaluation time (`enable_value_clips`), not during
+require `/P/GEO` and `/P/GEO/M` to reconstruct. Scenario 5
+(`fixture/variant-self-arc/`) requires a selected variant's self-reference to
+compose `/P/M`, a selected variant's self-payload to compose `/Q/PM` in
+`LoadAll`, that same payload to be recorded as deferred on `/Q` in `LoadNone`,
+and `load_payload("/Q")` / `unload_payload("/Q")` to add/remove `/Q/PM` after
+`rebuild_stage`. Scenario 6 (`fixture/deferred-nested/`) streams a deferred
+payload from a subdirectory; that payload references `./leaf.usda`, and
+`load_payload("/P")` must compose `/P/Nested/M`, proving lazy payload parsing
+uses the resolved payload path for cwd stamping and re-scans arcs authored on
+the newly loaded payload node. On the ALab shot this composes the character
+geometry (3,293 → 4,560 prims, 1,271 → 2,540 deferred payloads); Caldera is
+unchanged (32,811). Value clips themselves (`clips` metadata) are resolved at
+Tydra / attribute-evaluation time (`enable_value_clips`), not during
 composition.
-
-Limitation: variant content that adds composition arcs *on the prim itself*
-(rather than as child prims) is not re-scanned after resolution.
 
 ### 3.6 Smaller items
 
 - **Budget-by-extent**: the `Budget` policy currently sizes payloads by file
   bytes; authored `extentsHint` would let it bound by world-space coverage, but
   the payload-policy callback would need the owning `PrimSpec`.
-- **ALab `.zip`**: ALab ships zipped; add a zip-backed asset resolver (or
-  extract) to load it without unpacking 4 GB to disk.
-- **fd/mmap bounds**: when mmap lands, cap open descriptors with an LRU on the
-  layer registry (Caldera has 63k files).
+- **Layer-owned mmap**: true mmap-through-composition still needs Layer/Stage
+  ownership plumbing for mapped crate buffers. If future code keeps file handles
+  open for long-lived mappings, add an LRU on top of the existing descriptor
+  budget.
 - **Threaded streaming**: `load_payload`/`unload_payload` mutate the graph in
   place and are single-threaded post-load.
 

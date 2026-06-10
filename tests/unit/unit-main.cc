@@ -538,6 +538,7 @@ TEST_LIST = {
   { "comp_variant_two_sets_test", comp_variant_two_sets_test },
   { "comp_variant_no_selection_test", comp_variant_no_selection_test },
   { "comp_variant_nested_children_test", comp_variant_nested_children_test },
+  { "comp_sublayer_variant_sets_merge_test", comp_sublayer_variant_sets_merge_test },
   { "comp_override_basic_test", comp_override_basic_test },
   { "comp_override_replace_property_test", comp_override_replace_property_test },
   { "comp_override_add_new_property_test", comp_override_add_new_property_test },
@@ -599,6 +600,7 @@ TEST_LIST = {
   { "pcp_singlethread_vs_multithread_identical_test", pcp_singlethread_vs_multithread_identical_test },
   { "pcp_mt_shared_reference_test", pcp_mt_shared_reference_test },
   { "pcp_external_payload_load_unload_test", pcp_external_payload_load_unload_test },
+  { "pcp_external_payload_load_reprocesses_nested_arcs_test", pcp_external_payload_load_reprocesses_nested_arcs_test },
   { "pcp_buildstage_reference_grandchildren_test", pcp_buildstage_reference_grandchildren_test },
   // Phase 2: Stage API tests (extended)
   { "stage_add_root_prim_test", stage_add_root_prim_test },

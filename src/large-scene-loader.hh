@@ -59,6 +59,10 @@ struct LargeSceneLoadOptions {
   // raised above the default.
   size_t max_asset_bytes_mb{8192};
 
+  // Maximum number of concurrently open file descriptors/asset handles used by
+  // the resolver during sublayer/reference/payload loading.
+  uint32_t max_file_descriptors{1024};
+
   // Maximum composition recursion depth.
   uint32_t max_composition_depth{1024};
 };

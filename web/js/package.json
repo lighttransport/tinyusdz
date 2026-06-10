@@ -22,6 +22,7 @@
     "dev:udim": "vite --open /udim.html",
     "dev:urdf": "vite --open /urdf.html",
     "dev:http-resolver": "vite --open /http-asset-resolver.html",
+    "dev:usd-assets": "vite --open /usd-assets-view.html",
     "build": "vite build",
     "preview": "vite preview",
     "__following_is_experiment_and_for_debug__": "",
@@ -56,7 +57,9 @@
     "urdf-to-usd": "node cli/urdf-to-usd.js",
     "usd-urdf-roundtrip": "node cli/usd-urdf-roundtrip.js",
     "screenshot:urdf": "xvfb-run -a node tests/screenshot-urdf-batch.mjs --hw",
-    "screenshot:urdf:sw": "node tests/screenshot-urdf-batch.mjs"
+    "screenshot:urdf:sw": "node tests/screenshot-urdf-batch.mjs",
+    "screenshot:usd-assets": "xvfb-run -a node tests/screenshot-usd-assets-batch.mjs --hw",
+    "screenshot:usd-assets:sw": "node tests/screenshot-usd-assets-batch.mjs --sw"
   },
   "devDependencies": {
     "@types/bun": "latest",

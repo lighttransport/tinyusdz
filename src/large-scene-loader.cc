@@ -103,6 +103,7 @@ bool LargeSceneLoader::Load(const std::string &filename,
   for (const auto &p : options.search_paths) search.push_back(p);
   _resolver->set_search_paths(search);
   _resolver->set_max_asset_bytes_in_mb(options.max_asset_bytes_mb);
+  _resolver->set_max_file_descriptors(options.max_file_descriptors);
 
   // 2. Load the root layer.
   Layer root_layer;
