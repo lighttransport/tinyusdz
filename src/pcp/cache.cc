@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <set>
 
 #if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
 #include <thread>
@@ -31,6 +32,34 @@ bool PathPrefixMatch(const std::string &path, const std::string &prefix) {
   if (path.size() <= prefix.size()) return false;
   if (path.compare(0, prefix.size(), prefix) != 0) return false;
   return path[prefix.size()] == '/';
+}
+
+std::vector<std::string> GatherComposedChildNames(
+    const cg::CompositionContext &ctx, const cg::PrimIndex &index) {
+  std::vector<std::string> names;
+  std::set<std::string> seen;
+  for (uint16_t order_idx : index.GetStrengthOrder()) {
+    const cg::CompNode &n = index.GetNode(order_idx);
+    if (n.is_culled() || n.is_payload_deferred()) continue;
+    if (n.layer_stack_idx == cg::CompNode::kInvalidIndex ||
+        n.layer_stack_idx >= ctx._layer_stacks.size()) {
+      continue;
+    }
+    const cg::LayerStackEntry &ls = ctx._layer_stacks[n.layer_stack_idx];
+    if (!ls.layer) continue;
+    const std::string &site = ctx._path_table[n.site_path_idx];
+    const PrimSpec *ps = nullptr;
+    std::string fe;
+    if (!ls.layer->find_primspec_at(Path(site, ""), &ps, &fe) || !ps) {
+      continue;
+    }
+    for (const auto &child : ps->children()) {
+      if (seen.insert(child.name()).second) {
+        names.push_back(child.name());
+      }
+    }
+  }
+  return names;
 }
 
 int ResolveThreadCount(int requested) {
@@ -412,6 +441,15 @@ nonstd::expected<bool, std::string> Cache::Impl::LoadPayload(
                 ~cg::NodeFlags::Inert & ~cg::NodeFlags::Culled) |
                cg::NodeFlags::PayloadLoaded | cg::NodeFlags::HasSpecs;
 
+  cg::PrimIndexBuilder reprocessor(&entry.ctx, prim_path);
+  std::string reprocess_err;
+  if (!reprocessor.ReprocessNode(&entry.index, info->node_idx,
+                                 &reprocess_err)) {
+    return nonstd::make_unexpected("pcp::Cache: failed to reprocess payload "
+                                   "node after load: " +
+                                   reprocess_err);
+  }
+
   cg::RecomputeStrengthOrder(entry.index);
   RegisterDependencies(key, entry);  // node now contributes a site
   return true;
@@ -489,20 +527,66 @@ bool Cache::Impl::BuildStage(Stage *stage, std::string *warn,
     composed_layer.metas() = root_layer->metas();
   }
 
-  // Build a parent -> direct-children adjacency map in a single O(N) pass.
-  // The previous recursive prefix scan re-walked the whole index_cache for
-  // every prim -> O(N^2) in prim count. A path's parent is everything before
-  // its last '/'; a single leading '/' marks a root prim. Children are kept in
-  // index_cache iteration order so the composed result is byte-identical.
+  struct StageIndexEntry {
+    cg::CompositionContext *ctx{nullptr};
+    const cg::PrimIndex *index{nullptr};
+    std::shared_ptr<CachedPrimIndex> cached_owner;
+    std::shared_ptr<cg::PrimIndex> temp_owner;
+  };
+
+  HashMap<std::string, StageIndexEntry> stage_indices;
   HashMap<std::string, std::vector<std::string>> children_of;
   std::vector<std::string> roots;
-  for (const auto &kv : index_cache) {
-    const std::string &p = kv.first;
-    const size_t slash = p.rfind('/');
-    if (slash == 0) {
-      roots.push_back(p);  // "/Foo" -> root prim
-    } else if (slash != std::string::npos) {
-      children_of[p.substr(0, slash)].push_back(p);
+
+  // Start from root prims in the root layer, then expand each composed
+  // namespace by descending the parent PrimIndex. This mirrors
+  // CompositionGraph::BuildPrimIndex and reconstructs descendants introduced by
+  // references/payloads without changing lazy ComputePrimIndex() semantics.
+  if (root_layer) {
+    for (const auto &pair : root_layer->primspecs()) {
+      const std::string root_path = "/" + pair.first;
+      auto eit = index_cache.find(root_path);
+      if (eit == index_cache.end()) continue;
+      roots.push_back(root_path);
+      StageIndexEntry entry;
+      entry.ctx = &eit->second->ctx;
+      entry.index = &eit->second->index;
+      entry.cached_owner = eit->second;
+      stage_indices[root_path] = entry;
+    }
+  }
+
+  std::vector<std::string> stack = roots;
+  while (!stack.empty()) {
+    const std::string parent_path = std::move(stack.back());
+    stack.pop_back();
+
+    auto pit = stage_indices.find(parent_path);
+    if (pit == stage_indices.end() || !pit->second.ctx ||
+        !pit->second.index) {
+      continue;
+    }
+
+    const std::vector<std::string> child_names =
+        GatherComposedChildNames(*pit->second.ctx, *pit->second.index);
+    for (auto it = child_names.rbegin(); it != child_names.rend(); ++it) {
+      const std::string child_path = parent_path + "/" + *it;
+      children_of[parent_path].push_back(child_path);
+      if (stage_indices.find(child_path) == stage_indices.end()) {
+        cg::PrimIndexBuilder builder(pit->second.ctx, Path(child_path, ""));
+        auto built = builder.BuildChildFrom(*pit->second.index, *it);
+        if (!built) {
+          continue;
+        }
+        StageIndexEntry child_entry;
+        child_entry.ctx = pit->second.ctx;
+        child_entry.temp_owner =
+            std::make_shared<cg::PrimIndex>(std::move(*built));
+        child_entry.index = child_entry.temp_owner.get();
+        child_entry.cached_owner = pit->second.cached_owner;
+        stage_indices[child_path] = child_entry;
+      }
+      stack.push_back(child_path);
     }
   }
 
@@ -511,12 +595,15 @@ bool Cache::Impl::BuildStage(Stage *stage, std::string *warn,
         auto cit = children_of.find(parent_path);
         if (cit == children_of.end()) return;
         for (const std::string &cpath : cit->second) {
-          auto eit = index_cache.find(cpath);
-          if (eit == index_cache.end()) continue;  // every child is a key
-          const CachedPrimIndex &ce = *eit->second;
+          auto eit = stage_indices.find(cpath);
+          if (eit == stage_indices.end() || !eit->second.ctx ||
+              !eit->second.index) {
+            continue;
+          }
           PrimSpec child_ps;
-          if (cg::ComposePrimSpecFromIndex(ce.ctx._layer_stacks,
-                                           ce.ctx._path_table, ce.index,
+          if (cg::ComposePrimSpecFromIndex(eit->second.ctx->_layer_stacks,
+                                           eit->second.ctx->_path_table,
+                                           *eit->second.index,
                                            &child_ps, warn, err)) {
             compose_children(cpath, child_ps);
             parent_ps.children().push_back(std::move(child_ps));
@@ -525,12 +612,15 @@ bool Cache::Impl::BuildStage(Stage *stage, std::string *warn,
       };
 
   for (const std::string &path_str : roots) {
-    auto eit = index_cache.find(path_str);
-    if (eit == index_cache.end()) continue;
-    const CachedPrimIndex &entry = *eit->second;
+    auto eit = stage_indices.find(path_str);
+    if (eit == stage_indices.end() || !eit->second.ctx ||
+        !eit->second.index) {
+      continue;
+    }
     PrimSpec composed_ps;
-    if (!cg::ComposePrimSpecFromIndex(entry.ctx._layer_stacks,
-                                      entry.ctx._path_table, entry.index,
+    if (!cg::ComposePrimSpecFromIndex(eit->second.ctx->_layer_stacks,
+                                      eit->second.ctx->_path_table,
+                                      *eit->second.index,
                                       &composed_ps, warn, err)) {
       continue;
     }

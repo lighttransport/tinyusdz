@@ -6,6 +6,7 @@ void comp_specializes_child_prims_test(void);
 void comp_variant_two_sets_test(void);
 void comp_variant_no_selection_test(void);
 void comp_variant_nested_children_test(void);
+void comp_sublayer_variant_sets_merge_test(void);
 void comp_override_basic_test(void);
 void comp_override_replace_property_test(void);
 void comp_override_add_new_property_test(void);

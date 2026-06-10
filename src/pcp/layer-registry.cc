@@ -5,6 +5,8 @@
 //
 #include "pcp/layer-registry.hh"
 
+#include "composition.hh"  // CompositeSublayers
+#include "io-util.hh"      // io::GetBaseDir
 #include "security-policy.hh"
 #include "tinyusdz.hh"  // LoadLayerFromMemory
 
@@ -65,8 +67,30 @@ const Layer *LayerRegistry::GetOrLoad(AssetResolutionResolver &resolver,
           }
         } else {
           Layer layer;
-          if (LoadLayerFromMemory(asset.data(), asset.size(), asset_path,
+          // Pass the RESOLVED (anchored) path so the cached layer's prims are
+          // stamped with the resolved directory as their current-working-path,
+          // preserving parent-directory context for nested relative arcs.
+          if (LoadLayerFromMemory(asset.data(), asset.size(), resolved_path,
                                   &layer, warn, err)) {
+            // If the referenced/payload asset aggregates its prims through its
+            // OWN subLayers (common in asset-centric scenes like ALab, where an
+            // entity file just sublayers department layers), compose them now —
+            // otherwise the referenced layer's content would be empty. Mirrors
+            // composition::LoadAsset.
+            if (!layer.metas().subLayers.empty()) {
+              const std::string base_dir = io::GetBaseDir(resolved_path);
+              layer.set_asset_resolution_state(base_dir, resolver.search_paths(),
+                                               resolver.get_userdata());
+              Layer composited;
+              SublayersCompositionOptions subopts;
+              subopts.allow_parent_relative_paths = true;
+              std::string sw, se;
+              if (CompositeSublayers(resolver, layer, &composited, &sw, &se,
+                                     subopts)) {
+                layer = std::move(composited);
+              }
+              if (warn && !sw.empty()) (*warn) += sw;
+            }
             auto sp = std::make_shared<Layer>(std::move(layer));
             result = sp.get();
             _by_resolved.emplace(resolved_path, std::move(sp));

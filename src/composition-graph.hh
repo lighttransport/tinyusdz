@@ -356,6 +356,16 @@ struct DeferredPayloadInfo {
 // CompositionGraphOptions
 // ---------------------------------------------------------------------------
 
+/// Layer-loading seam type (mirrors CompositionContext::LoadLayerFn). A plain
+/// non-capturing function pointer + opaque userdata so options stay copyable
+/// and free of self-captures. Used to route referenced/payload layer loads
+/// through a parse-once registry (see LargeSceneLoader / pcp::Cache).
+using CompositionLoadLayerFn = const Layer *(*)(void *userdata,
+                                                const std::string &asset_path,
+                                                const std::string &cwp,
+                                                std::string *warn,
+                                                std::string *err);
+
 struct CompositionGraphOptions {
   /// Payload loading policy. Return true to load, false to defer.
   /// When nullptr (default), all payloads are loaded eagerly.
@@ -383,7 +393,23 @@ struct CompositionGraphOptions {
   std::unordered_map<std::string, FileFormatHandler> fileformats;
 
   /// Maximum memory limit in MB.
+  ///
+  /// NOTE: currently advisory only — composition does not enforce it. Use the
+  /// `payload_policy` (e.g. a byte-budget closure) for actual memory bounding.
   size_t max_memory_mb{16384};
+
+  /// Allow parent-directory ('..') segments in reference/payload asset paths
+  /// (resolution delegated to the asset resolver). Required for scenes that use
+  /// '..'-relative arcs (e.g. Caldera). When false (default), such arcs are
+  /// rejected and skipped. See security_policy::ValidateAndNormalizeAssetPath.
+  bool allow_parent_relative_paths{false};
+
+  /// Optional layer-loading seam. When set, referenced/payload layers are
+  /// loaded through this function (e.g. a parse-once registry) instead of being
+  /// parsed fresh and owned per-arc. `load_layer_userdata` is passed opaquely.
+  /// When null (default), the legacy per-arc parse-and-own behavior is used.
+  CompositionLoadLayerFn load_layer_fn{nullptr};
+  void *load_layer_userdata{nullptr};
 
   /// Make an error when referenced asset is not found.
   bool error_when_asset_not_found{false};
@@ -571,6 +597,26 @@ class CompositionGraph {
   bool BuildPrimIndex(const std::string &prim_path, const PrimSpec &primspec,
                       uint16_t root_layer_stack_idx, std::string *warn,
                       std::string *err);
+
+  /// Rebuild all composed descendants under an already-built prim index.
+  bool RebuildDescendantPrimIndices(
+      const std::string &prim_path, const std::shared_ptr<PrimIndex> &parent,
+      std::string *err);
+
+  /// Drop all cached PrimIndices below `prim_path`.
+  void EraseDescendantPrimIndices(const std::string &prim_path);
+
+  /// Recompute instance/prototype maps after graph mutation.
+  void RebuildInstanceRegistry();
+
+  /// Collect the composed child names of a prim (union of children across all
+  /// non-culled, non-deferred nodes of its index, strongest-first, deduped).
+  std::vector<std::string> GatherComposedChildNames(
+      const PrimIndex &index) const;
+
+  /// Run instanceable detection + prototype registration for a built index.
+  void DetectAndRegisterInstance(const std::string &prim_path,
+                                 const std::shared_ptr<PrimIndex> &index);
 };
 
 // ---------------------------------------------------------------------------
@@ -624,12 +670,39 @@ class PrimIndexBuilder {
                    const PrimSpec &root_primspec,
                    uint16_t root_layer_stack_idx);
 
+  /// Child-mode constructor: builds the index for a namespace child by
+  /// descending a parent PrimIndex (see BuildChildFrom). No single root
+  /// PrimSpec — the child's opinions come from the descended parent nodes.
+  PrimIndexBuilder(CompositionContext *ctx, const Path &prim_path);
+
   /// Build the PrimIndex by processing all composition arcs.
   nonstd::expected<PrimIndex, std::string> Build();
+
+  /// Build the index for `child_name` under `parent` by descending every
+  /// (non-culled) node of `parent` one namespace level and following the
+  /// descended prims' own arcs. This is what brings reference/payload-introduced
+  /// child prims (and their nested references) into the composed namespace.
+  nonstd::expected<PrimIndex, std::string> BuildChildFrom(
+      const PrimIndex &parent, const std::string &child_name);
+
+  /// Re-scan one node in an already-built index after incremental mutation
+  /// (for example, a deferred payload node that was just loaded) and finish the
+  /// queued composition phases in-place.
+  bool ReprocessNode(PrimIndex *index, uint16_t node_idx, std::string *err);
 
  private:
   // Task handlers
   bool EvalRootNode(std::string *err);
+
+  // Phases 2-6 shared by Build() and BuildChildFrom(): drain the task queue,
+  // resolve variants, cull, compute strength order, detect instanceable.
+  nonstd::expected<PrimIndex, std::string> FinishBuild();
+
+  // Drain all queued composition tasks in LIVRPS order.
+  bool DrainTaskQueue(std::string *err);
+
+  // Seed descended nodes for BuildChildFrom (phase-1 replacement).
+  void SeedDescendedNodes(const PrimIndex &parent, const std::string &child_name);
   bool EvalSubLayers(uint16_t node_idx, std::string *err);
   bool EvalInherits(uint16_t node_idx, std::string *err);
   bool EvalVariants(uint16_t node_idx, std::string *err);
@@ -661,6 +734,15 @@ class PrimIndexBuilder {
 
   // Strength order computation
   void ComputeStrengthOrder();
+
+  // Compose variant CONTENT: for each node whose PrimSpec authors a variantSet
+  // that the composed selection picks, resolve the selected variant and repoint
+  // the node at the resolved PrimSpec (materialized in a synthetic layer), so
+  // the variant's child prims enter the namespace. Handles the case where the
+  // selection and the variantSet are authored on different nodes (e.g. a
+  // variant set introduced via a reference, selected by a stronger layer).
+  // Returns true if any node was resolved.
+  bool ApplyVariantContent();
 
   // Node culling
   void CullInertNodes();

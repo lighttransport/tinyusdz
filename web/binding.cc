@@ -5497,8 +5497,8 @@ class TinyUSDZLoaderNative {
   emscripten::val extractSublayerAssetPaths() {
     emscripten::val arr = emscripten::val::array();
 
-    
-    std::vector<std::string> paths = tinyusdz::ExtractSublayerAssetPaths(layer_);
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    std::vector<std::string> paths = tinyusdz::ExtractSublayerAssetPaths(curr);
     for (size_t i = 0; i < paths.size(); i++) {
      arr.call<void>("push", paths[i]);
     }
@@ -5509,8 +5509,8 @@ class TinyUSDZLoaderNative {
   emscripten::val extractReferencesAssetPaths() {
     emscripten::val arr = emscripten::val::array();
 
-    
-    std::vector<std::string> paths = tinyusdz::ExtractReferencesAssetPaths(layer_);
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    std::vector<std::string> paths = tinyusdz::ExtractReferencesAssetPaths(curr);
     for (size_t i = 0; i < paths.size(); i++) {
      arr.call<void>("push", paths[i]);
     }
@@ -5521,8 +5521,8 @@ class TinyUSDZLoaderNative {
   emscripten::val extractPayloadAssetPaths() {
     emscripten::val arr = emscripten::val::array();
 
-    
-    std::vector<std::string> paths = tinyusdz::ExtractPayloadAssetPaths(layer_);
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    std::vector<std::string> paths = tinyusdz::ExtractPayloadAssetPaths(curr);
     for (size_t i = 0; i < paths.size(); i++) {
      arr.call<void>("push", paths[i]);
     }
@@ -5606,7 +5606,7 @@ class TinyUSDZLoaderNative {
   }
 
   bool hasPayload() {
-    return tinyusdz::HasPayload(layer_, /* force_check */true);
+    return tinyusdz::HasPayload(composited_ ? composed_layer_ : layer_, /* force_check */true);
   }
 
   bool composePayload() {

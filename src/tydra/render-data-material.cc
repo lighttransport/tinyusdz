@@ -920,69 +920,78 @@ nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
 
   DCOUT("Found prim: " << prim_part << ", type: " << (ng_prim ? ng_prim->data().type_name() : "null"));
 
-  const NodeGraph *ng = ng_prim ? ng_prim->as<NodeGraph>() : nullptr;
-  if (!ng) {
-    // Debug output to understand why it's not a NodeGraph
-    if (ng_prim) {
-      return nonstd::make_unexpected(
-          fmt::format("{} is not a NodeGraph, prim_type: {}\n", prim_part, ng_prim->data().type_name()));
-    }
-    return nonstd::make_unexpected(
-        fmt::format("{} is not a NodeGraph\n", prim_part));
-  }
-
-  // Find the output connection we're looking for
-  // The prop_part should be like "outputs:node_out"
-  std::string output_name = prop_part;
-  if (startsWith(output_name, "outputs:")) {
-    output_name = output_name.substr(8); // Remove "outputs:" prefix
-  }
-
-  // Look for the connection in props
-  // Try both with and without ".connect" suffix
-  std::string conn_prop_name = "outputs:" + output_name + ".connect";
-  auto it = ng->props.find(conn_prop_name);
-
-  if (it == ng->props.end()) {
-    // Try without .connect suffix
-    conn_prop_name = "outputs:" + output_name;
-    it = ng->props.find(conn_prop_name);
-
-    if (it == ng->props.end()) {
-      // List available props for debugging
-      std::string available_props = "Available props: ";
-      for (const auto& prop : ng->props) {
-        available_props += prop.first + " ";
+  const NodeGraph *ng = nullptr;
+  Path current_path;
+  if (ng_prim && ng_prim->as<Shader>()) {
+    // MaterialX node networks can connect an input directly to a sibling
+    // Shader output, e.g. </Mat/mtlximage1.outputs:out>, without routing
+    // through a NodeGraph terminal.
+    current_path = path;
+  } else {
+    ng = ng_prim ? ng_prim->as<NodeGraph>() : nullptr;
+    if (!ng) {
+      // Debug output to understand why it's not a NodeGraph
+      if (ng_prim) {
+        return nonstd::make_unexpected(fmt::format(
+            "{} is not a NodeGraph, prim_type: {}\n", prim_part,
+            ng_prim->data().type_name()));
       }
       return nonstd::make_unexpected(
-          fmt::format("Output connection '{}' not found in NodeGraph. {}\n",
-                      conn_prop_name, available_props));
+          fmt::format("{} is not a NodeGraph\n", prim_part));
     }
-  }
 
-  // NodeGraph outputs can be stored as attributes or relationships
-  Path current_path;
-  bool found_connection = false;
-
-  if (it->second.is_attribute()) {
-    // It's an attribute - look for connections on the attribute
-    const Attribute &attr = it->second.get_attribute();
-    if (attr.has_connections() && !attr.connections().empty()) {
-      current_path = attr.connections()[0];
-      found_connection = true;
+    // Find the output connection we're looking for
+    // The prop_part should be like "outputs:node_out"
+    std::string output_name = prop_part;
+    if (startsWith(output_name, "outputs:")) {
+      output_name = output_name.substr(8); // Remove "outputs:" prefix
     }
-  } else if (it->second.is_relationship()) {
-    // Also support relationship format
-    auto targets = it->second.get_relationTargets();
-    if (!targets.empty()) {
-      current_path = targets[0];
-      found_connection = true;
-    }
-  }
 
-  if (!found_connection) {
-    return nonstd::make_unexpected(
-        fmt::format("Output {} has no connection targets\n", conn_prop_name));
+    // Look for the connection in props
+    // Try both with and without ".connect" suffix
+    std::string conn_prop_name = "outputs:" + output_name + ".connect";
+    auto it = ng->props.find(conn_prop_name);
+
+    if (it == ng->props.end()) {
+      // Try without .connect suffix
+      conn_prop_name = "outputs:" + output_name;
+      it = ng->props.find(conn_prop_name);
+
+      if (it == ng->props.end()) {
+        // List available props for debugging
+        std::string available_props = "Available props: ";
+        for (const auto &prop : ng->props) {
+          available_props += prop.first + " ";
+        }
+        return nonstd::make_unexpected(fmt::format(
+            "Output connection '{}' not found in NodeGraph. {}\n",
+            conn_prop_name, available_props));
+      }
+    }
+
+    // NodeGraph outputs can be stored as attributes or relationships
+    bool found_connection = false;
+
+    if (it->second.is_attribute()) {
+      // It's an attribute - look for connections on the attribute
+      const Attribute &attr = it->second.get_attribute();
+      if (attr.has_connections() && !attr.connections().empty()) {
+        current_path = attr.connections()[0];
+        found_connection = true;
+      }
+    } else if (it->second.is_relationship()) {
+      // Also support relationship format
+      auto targets = it->second.get_relationTargets();
+      if (!targets.empty()) {
+        current_path = targets[0];
+        found_connection = true;
+      }
+    }
+
+    if (!found_connection) {
+      return nonstd::make_unexpected(
+          fmt::format("Output {} has no connection targets\n", conn_prop_name));
+    }
   }
   const Shader *image_shader = nullptr;
 
@@ -2300,18 +2309,32 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
               }
               if (auto tv = ia.get_value<T>()) {
                 dst_param.set_value(*tv);
+                return true;
               }
               break;
             }
           }
-          // MaterialX input we couldn't resolve to a texture: keep whatever
-          // value we have (interface value above, or the authored fallback).
-          // Do NOT fall through to the UsdUVTexture path — MaterialX does not
-          // use UsdUVTexture and that path hard-errors on interface connections.
+          T fallback_val;
+          if (!param.is_value_empty() &&
+              param.get_value().get(env.timecode, &fallback_val)) {
+            dst_param.set_value(fallback_val);
+            PushWarn(fmt::format(
+                "MaterialX connection for {} could not be resolved to a "
+                "texture ({}); using the authored/fallback value instead.",
+                param_name, mtlx_result.error()));
+            return true;
+          }
+
+          // MaterialX input we couldn't resolve to a texture or constant. Do
+          // NOT fall through to the UsdUVTexture path — MaterialX does not use
+          // UsdUVTexture and that path would replace the clearer graph error
+          // with a generic interface-connection error.
           DCOUT(fmt::format(
-              "MaterialX: no texture for {} ({}); using value/fallback",
+              "MaterialX: no texture or fallback for {} ({})",
               param_name, mtlx_result.error()));
-          return true;
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "Failed to find MaterialX texture for {}: {}", param_name,
+              mtlx_result.error()));
         }
       }
     }
@@ -2327,11 +2350,22 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
       if (is_materialx) {
         // MaterialX connection we could not resolve to a texture (e.g. it
         // targets a Material interface input/constant or an unmodeled node).
-        // Keep the param's authored fallback value instead of failing the
-        // whole material conversion.
-        DCOUT(fmt::format("MaterialX: keeping fallback value for {} ({})",
-                          param_name, result.error()));
-        return true;
+        // Keep an authored fallback value if it exists; otherwise surface the
+        // MaterialX graph error instead of silently accepting an unresolved
+        // texture input.
+        T fallback_val;
+        if (!param.is_value_empty() &&
+            param.get_value().get(env.timecode, &fallback_val)) {
+          dst_param.set_value(fallback_val);
+          PushWarn(fmt::format(
+              "MaterialX connection for {} could not be resolved to a "
+              "UsdUVTexture ({}); using the authored/fallback value instead.",
+              param_name, result.error()));
+          return true;
+        }
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to find MaterialX texture for {}: {}", param_name,
+            result.error()));
       }
       // The connection did not resolve to a UsdUVTexture (e.g. a UsdPreviewSurface
       // input wired to a non-texture node such as a UsdPrimvarReader) while a
@@ -2339,7 +2373,8 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
       // whole material — we now follow connections even when a value is present,
       // so erroring here would be a regression vs. the previous value path.
       T fallback_val;
-      if (param.get_value().get(env.timecode, &fallback_val)) {
+      if (!param.is_value_empty() &&
+          param.get_value().get(env.timecode, &fallback_val)) {
         dst_param.set_value(fallback_val);
         PushWarn(fmt::format(
             "{} connection could not be resolved to a UsdUVTexture ({}); using "
@@ -2949,6 +2984,44 @@ static void ApplyMtlxGeometryNodeGraphInfoToOpenPBRShader(
   }
 }
 
+static bool GetMaterialXMtlxSurfaceConnection(const Material &material,
+                                              Path *surface_path,
+                                              std::string *err) {
+  if (!surface_path) {
+    if (err) *err += "surface_path argument is nullptr.\n";
+    return false;
+  }
+
+  std::vector<Path> paths;
+  if (material.mtlxSurface.authored()) {
+    paths = material.mtlxSurface.get_connections();
+  } else {
+    auto it = material.props.find("outputs:mtlx:surface.connect");
+    if (it != material.props.end()) {
+      const Property &prop = it->second;
+      if (prop.is_attribute()) {
+        paths = prop.get_attribute().connections();
+      } else if (prop.is_relationship()) {
+        paths = prop.get_relationTargets();
+      }
+    }
+  }
+
+  if (paths.empty()) {
+    return false;
+  }
+  if (paths.size() != 1) {
+    if (err) {
+      (*err) += "outputs:mtlx:surface must be connection with single target "
+                "Path.\n";
+    }
+    return false;
+  }
+
+  (*surface_path) = paths[0];
+  return true;
+}
+
 bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                                            const Path &mat_abs_path,
                                            const tinyusdz::Material &material,
@@ -3049,7 +3122,8 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
     if (openpbr) {
       // Convert OpenPBRSurface
       OpenPBRSurfaceShader openpbr_shader;
-      if (!ConvertOpenPBRSurfaceShader(env, surfacePath, *openpbr, &openpbr_shader)) {
+      if (!ConvertOpenPBRSurfaceShader(env, surfacePath, *openpbr, &openpbr_shader,
+                                       /* is_materialx */ true)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "Failed to convert OpenPBRSurface : {}", surfacePath.prim_part()));
       }
@@ -3145,48 +3219,27 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
     // For now, we only check the materialXConfig field as apiSchemas checking would need
     // proper MaterialXConfigAPI enum support in APISchemas::APIName
     bool has_materialx_api = material.materialXConfig.has_value();
+    bool has_explicit_mtlx_surface =
+        material.mtlxSurface.authored() ||
+        material.props.find("outputs:mtlx:surface.connect") !=
+            material.props.end();
 
-    if (has_materialx_api) {
-      DCOUT("Material has MaterialXConfigAPI, looking for MaterialX shaders");
+    if (has_materialx_api || has_explicit_mtlx_surface) {
+      DCOUT("Material has MaterialX terminal, looking for MaterialX shaders");
 
       // First try to parse outputs:mtlx:surface connection
       Path mtlxSurfacePath;
       bool has_mtlx_surface = false;
 
-      // Try to find the connection in various forms
-      for (const auto& prop_name : {"outputs:mtlx:surface.connect", "outputs:mtlx:surface"}) {
-        auto it = material.props.find(prop_name);
-        if (it != material.props.end()) {
-          if (it->second.is_relationship()) {
-            auto targets = it->second.get_relationTargets();
-            if (!targets.empty()) {
-              mtlxSurfacePath = targets[0];
-              has_mtlx_surface = true;
-              DCOUT("Found MaterialX surface connection via relationship: " << mtlxSurfacePath);
-              break;
-            }
-          } else if (it->second.is_attribute()) {
-            // Try to extract path from attribute
-            auto attr = it->second.get_attribute();
-            if (auto token_val = attr.get_value<value::token>()) {
-              std::string path_str = token_val.value().str();
-              if (!path_str.empty()) {
-                // Remove brackets if present
-                if (path_str.front() == '<' && path_str.back() == '>') {
-                  path_str = path_str.substr(1, path_str.size() - 2);
-                }
-                // Parse the path
-                size_t pos = path_str.find(".outputs:");
-                if (pos != std::string::npos) {
-                  std::string prim_path = path_str.substr(0, pos);
-                  mtlxSurfacePath = Path(prim_path, "");
-                  has_mtlx_surface = true;
-                  DCOUT("Found MaterialX surface connection via token: " << mtlxSurfacePath);
-                  break;
-                }
-              }
-            }
-          }
+      if (has_explicit_mtlx_surface) {
+        std::string mtlx_surface_err;
+        if (GetMaterialXMtlxSurfaceConnection(material, &mtlxSurfacePath,
+                                              &mtlx_surface_err)) {
+          has_mtlx_surface = true;
+          DCOUT("Found MaterialX surface connection: " << mtlxSurfacePath);
+        } else if (!mtlx_surface_err.empty()) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "{}'s {}", mat_abs_path.full_path_name(), mtlx_surface_err));
         }
       }
 

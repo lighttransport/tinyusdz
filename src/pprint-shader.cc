@@ -278,6 +278,88 @@ static std::string print_shader_params(const MtlxOpenPBRSurface &shader,
   return ss.str();
 }
 
+static std::string print_shader_params(
+    const MtlxAutodeskStandardSurface &shader, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << print_typed_attr(shader.base, "inputs:base", indent);
+  ss << print_typed_attr(shader.base_color, "inputs:base_color", indent);
+  ss << print_typed_attr(shader.diffuse_roughness, "inputs:diffuse_roughness",
+                         indent);
+  ss << print_typed_attr(shader.metalness, "inputs:metalness", indent);
+
+  ss << print_typed_attr(shader.specular, "inputs:specular", indent);
+  ss << print_typed_attr(shader.specular_color, "inputs:specular_color",
+                         indent);
+  ss << print_typed_attr(shader.specular_roughness,
+                         "inputs:specular_roughness", indent);
+  ss << print_typed_attr(shader.specular_IOR, "inputs:specular_IOR", indent);
+  ss << print_typed_attr(shader.specular_anisotropy,
+                         "inputs:specular_anisotropy", indent);
+  ss << print_typed_attr(shader.specular_rotation, "inputs:specular_rotation",
+                         indent);
+
+  ss << print_typed_attr(shader.transmission, "inputs:transmission", indent);
+  ss << print_typed_attr(shader.transmission_color,
+                         "inputs:transmission_color", indent);
+  ss << print_typed_attr(shader.transmission_depth,
+                         "inputs:transmission_depth", indent);
+  ss << print_typed_attr(shader.transmission_scatter,
+                         "inputs:transmission_scatter", indent);
+  ss << print_typed_attr(shader.transmission_scatter_anisotropy,
+                         "inputs:transmission_scatter_anisotropy", indent);
+  ss << print_typed_attr(shader.transmission_dispersion,
+                         "inputs:transmission_dispersion", indent);
+  ss << print_typed_attr(shader.transmission_extra_roughness,
+                         "inputs:transmission_extra_roughness", indent);
+
+  ss << print_typed_attr(shader.subsurface, "inputs:subsurface", indent);
+  ss << print_typed_attr(shader.subsurface_color, "inputs:subsurface_color",
+                         indent);
+  ss << print_typed_attr(shader.subsurface_radius,
+                         "inputs:subsurface_radius", indent);
+  ss << print_typed_attr(shader.subsurface_scale, "inputs:subsurface_scale",
+                         indent);
+  ss << print_typed_attr(shader.subsurface_anisotropy,
+                         "inputs:subsurface_anisotropy", indent);
+
+  ss << print_typed_attr(shader.sheen, "inputs:sheen", indent);
+  ss << print_typed_attr(shader.sheen_color, "inputs:sheen_color", indent);
+  ss << print_typed_attr(shader.sheen_roughness, "inputs:sheen_roughness",
+                         indent);
+
+  ss << print_typed_attr(shader.coat, "inputs:coat", indent);
+  ss << print_typed_attr(shader.coat_color, "inputs:coat_color", indent);
+  ss << print_typed_attr(shader.coat_roughness, "inputs:coat_roughness",
+                         indent);
+  ss << print_typed_attr(shader.coat_anisotropy, "inputs:coat_anisotropy",
+                         indent);
+  ss << print_typed_attr(shader.coat_rotation, "inputs:coat_rotation",
+                         indent);
+  ss << print_typed_attr(shader.coat_IOR, "inputs:coat_IOR", indent);
+  ss << print_typed_attr(shader.coat_affect_color,
+                         "inputs:coat_affect_color", indent);
+  ss << print_typed_attr(shader.coat_affect_roughness,
+                         "inputs:coat_affect_roughness", indent);
+
+  ss << print_typed_attr(shader.thin_film_thickness,
+                         "inputs:thin_film_thickness", indent);
+  ss << print_typed_attr(shader.thin_film_IOR, "inputs:thin_film_IOR",
+                         indent);
+
+  ss << print_typed_attr(shader.emission, "inputs:emission", indent);
+  ss << print_typed_attr(shader.emission_color, "inputs:emission_color",
+                         indent);
+  ss << print_typed_attr(shader.opacity, "inputs:opacity", indent);
+  ss << print_typed_attr(shader.thin_walled, "inputs:thin_walled", indent);
+  ss << print_typed_attr(shader.normal, "inputs:normal", indent);
+  ss << print_typed_attr(shader.tangent, "inputs:tangent", indent);
+  ss << print_typed_terminal_attr(shader.out, "outputs:out", indent);
+  ss << print_common_shader_params(shader, indent);
+
+  return ss.str();
+}
+
 static std::string print_shader_params(const OpenPBRSurface &shader,
                                        const uint32_t indent) {
   std::stringstream ss;
@@ -395,6 +477,32 @@ std::string to_string(const Material &material, const uint32_t indent,
     if (material.surface.metas().authored()) {
       ss << "(\n"
          << print_attr_metas(material.surface.metas(), indent + 2)
+         << pprint::Indent(indent + 1) << ")";
+    }
+    ss << "\n";
+  }
+
+  if (material.mtlxSurface.authored()) {
+    ss << pprint::Indent(indent + 1)
+       << "token outputs:mtlx:surface.connect ";
+
+    const auto &conns = material.mtlxSurface.get_connections();
+    if (conns.size() == 1) {
+      ss << "= " << pquote(conns[0].full_path_name());
+    } else if (conns.size() > 1) {
+      ss << "= [";
+      for (size_t i = 0; i < conns.size(); i++) {
+        ss << pquote(conns[i].full_path_name());
+        if (i != (conns.size() - 1)) {
+          ss << ", ";
+        }
+      }
+      ss << "]";
+    }
+
+    if (material.mtlxSurface.metas().authored()) {
+      ss << "(\n"
+         << print_attr_metas(material.mtlxSurface.metas(), indent + 2)
          << pprint::Indent(indent + 1) << ")";
     }
     ss << "\n";
@@ -531,6 +639,9 @@ std::string to_string(const Shader &shader, const uint32_t indent,
   } else if (auto mtlx_opbr = shader.value.as<MtlxOpenPBRSurface>()) {
     // Blender v4.5 MaterialX OpenPBR Surface
     ss << print_shader_params(*mtlx_opbr, indent + 1);
+  } else if (auto mtlx_standard =
+                 shader.value.as<MtlxAutodeskStandardSurface>()) {
+    ss << print_shader_params(*mtlx_standard, indent + 1);
   } else if (auto opbr = shader.value.as<OpenPBRSurface>()) {
     // Native OpenPBR Surface shader
     ss << print_shader_params(*opbr, indent + 1);

@@ -509,7 +509,12 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   std::string _err;
 
   if (IsUSDFileFormat(asset_path)) {
-    if (!LoadLayerFromMemory(asset.data(), asset.size(), asset_path, &layer,
+    // Pass the RESOLVED (anchored) path so the loaded layer's prims are stamped
+    // with the resolved directory as their current-working-path. Using the
+    // authored (relative) asset_path here would lose the parent-directory
+    // context across nested references (e.g. `a/b.usd` referencing `./c.usd`
+    // must anchor c.usd to `a/`, not to the process working directory).
+    if (!LoadLayerFromMemory(asset.data(), asset.size(), resolved_path, &layer,
                              &_warn, &_err)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to open `{}` as Layer: {}", asset_path, _err));
@@ -676,8 +681,51 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
     PUSH_ERROR_AND_RETURN("PrimSpec tree too deep (max 4096).");
   }
 
+  // Whether dst authored its own reference/payload arcs BEFORE merging the
+  // weaker opinion (used for list-op accumulation + cross-directory anchoring).
+  const bool dst_had_refs = dst.metas().references.has_value();
+  const bool dst_had_payload = dst.metas().payload.has_value();
+  const bool dst_had_variant_sets = dst.metas().variantSets.has_value();
+  const bool dst_had_arcs = dst_had_refs || dst_had_payload;
+
   // Combine metadataum (weaker fills in where stronger is not authored)
   dst.metas().update_from(src.metas(), /* override_authored */ false);
+
+  // `references` and `payload` are LIST-OPS: across a sublayer stack each layer
+  // may `prepend`/`append` to the same prim and the results ACCUMULATE (USD
+  // semantics) -- e.g. a shot whose department layers each prepend a reference
+  // to the same root prim. update_from() above only gap-fills the whole value
+  // (keeping the stronger opinion when present), so when BOTH layers author the
+  // arc we must concatenate the weaker layer's list-op entries after the
+  // stronger's. (When dst had none, update_from already copied src's.)
+  if (dst_had_refs && src.metas().references.has_value()) {
+    auto &dref = dst.metas().references.value();
+    for (const auto &e : src.metas().references.value()) dref.push_back(e);
+  }
+  if (dst_had_payload && src.metas().payload.has_value()) {
+    auto &dpl = dst.metas().payload.value();
+    for (const auto &e : src.metas().payload.value()) dpl.push_back(e);
+  }
+  if (dst_had_variant_sets && src.metas().variantSets.has_value()) {
+    auto &dvsets = dst.metas().variantSets.value();
+    for (const auto &e : src.metas().variantSets.value()) {
+      dvsets.push_back(e);
+    }
+  }
+
+  // Cross-directory anchoring for the reference/payload arcs: if the arcs were
+  // introduced by this weaker layer (dst authored none of its own), they are
+  // anchored to the weaker layer's directory -- which may sit at a different
+  // depth than the stronger accumulator (e.g. a parent layer at .../shot/ vs.
+  // its `assembly/` subdirectory sublayer, where a `../../../` relative ref
+  // resolves to different places). Adopt the authoring layer's anchor so the
+  // arcs resolve correctly after sublayer flattening.
+  if (!dst_had_arcs &&
+      (src.metas().references.has_value() || src.metas().payload.has_value()) &&
+      !src.get_current_working_path().empty()) {
+    dst.set_asset_resolution_state(src.get_current_working_path(),
+                                   src.get_asset_search_paths());
+  }
 
   // AOUSD Core Spec 12.2.1 (specifier): Composed specifier resolution.
   // If dst (stronger) is `over` but src (weaker) is defining (def/class),
@@ -687,6 +735,18 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
       (src.specifier() == Specifier::Def ||
        src.specifier() == Specifier::Class)) {
     dst.specifier() = src.specifier();
+
+    // The prim's definition -- and therefore the anchor for its relative
+    // reference/payload asset paths -- comes from this weaker DEFINING layer,
+    // not from the stronger `over`. A pure `over` (e.g. a root-layer variant
+    // selection) carries the root layer's working-path; keeping it would
+    // mis-anchor the arcs authored in the defining sublayer. Adopt the defining
+    // layer's asset-resolution anchor so those arcs resolve against the correct
+    // directory after sublayer flattening (cross-directory anchoring).
+    if (!src.get_current_working_path().empty()) {
+      dst.set_asset_resolution_state(src.get_current_working_path(),
+                                     src.get_asset_search_paths());
+    }
   }
 
   // AOUSD Core Spec 12.2.2 (typeName): Use typeName from defining spec.
@@ -817,6 +877,33 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
     else {
       dst_child_index.emplace(child.name(), dst.children().size());
       dst.children().push_back(child);
+    }
+  }
+
+  // Combine variantSet CONTENT (the `variantSet "x" = { ... }` blocks).
+  // update_from() above merged the `variantSets`/`variants` METADATA (the
+  // listop + the selection), but the actual variant content lives in
+  // variantSets() and would otherwise be dropped. Without this, a prim that
+  // receives its variant selection from one layer and its variant content from
+  // another (common: a shot/override selects a variant whose set is defined in
+  // a weaker sublayer) loses the content and the variant cannot be resolved.
+  for (const auto &src_vs : src.variantSets()) {
+    auto dit = dst.variantSets().find(src_vs.first);
+    if (dit == dst.variantSets().end()) {
+      dst.variantSets()[src_vs.first] = src_vs.second;  // add whole variantSet
+    } else {
+      // Same variantSet authored in both opinions: merge per-variant content
+      // (dst is stronger; weaker fills gaps / recurses on conflicts).
+      VariantSetSpec &dst_vs = dit->second;
+      for (const auto &v : src_vs.second.variantSet) {
+        auto vit = dst_vs.variantSet.find(v.first);
+        if (vit == dst_vs.variantSet.end()) {
+          dst_vs.variantSet[v.first] = v.second;
+        } else if (!CombinePrimSpecRec(depth + 1, vit->second, v.second, warn,
+                                       err)) {
+          return false;
+        }
+      }
     }
   }
 
@@ -1890,7 +1977,10 @@ bool ExtractReferencesAssetPathsImpl(const PrimSpec &primspec, std::vector<std::
         const auto &refecences = ref_op.second;
 
         for (const auto &reference : refecences) {
-          paths.push_back(reference.asset_path.GetAssetPath());
+          std::string asset_path = reference.asset_path.GetAssetPath();
+          if (!asset_path.empty()) {
+            paths.push_back(std::move(asset_path));
+          }
         }
       }
     }
@@ -1990,7 +2080,10 @@ bool ExtractPayloadAssetPathsImpl(const PrimSpec &primspec, std::vector<std::str
         const auto &payload = payload_op.second;
 
         for (const auto &pl : payload) {
-          paths.push_back(pl.asset_path.GetAssetPath());
+          std::string asset_path = pl.asset_path.GetAssetPath();
+          if (!asset_path.empty()) {
+            paths.push_back(std::move(asset_path));
+          }
         }
       }
     }
