@@ -597,6 +597,15 @@ class CompositionGraph {
   bool BuildPrimIndex(const std::string &prim_path, const PrimSpec &primspec,
                       uint16_t root_layer_stack_idx, std::string *warn,
                       std::string *err);
+
+  /// Collect the composed child names of a prim (union of children across all
+  /// non-culled, non-deferred nodes of its index, strongest-first, deduped).
+  std::vector<std::string> GatherComposedChildNames(
+      const PrimIndex &index) const;
+
+  /// Run instanceable detection + prototype registration for a built index.
+  void DetectAndRegisterInstance(const std::string &prim_path,
+                                 const std::shared_ptr<PrimIndex> &index);
 };
 
 // ---------------------------------------------------------------------------
@@ -650,12 +659,31 @@ class PrimIndexBuilder {
                    const PrimSpec &root_primspec,
                    uint16_t root_layer_stack_idx);
 
+  /// Child-mode constructor: builds the index for a namespace child by
+  /// descending a parent PrimIndex (see BuildChildFrom). No single root
+  /// PrimSpec — the child's opinions come from the descended parent nodes.
+  PrimIndexBuilder(CompositionContext *ctx, const Path &prim_path);
+
   /// Build the PrimIndex by processing all composition arcs.
   nonstd::expected<PrimIndex, std::string> Build();
+
+  /// Build the index for `child_name` under `parent` by descending every
+  /// (non-culled) node of `parent` one namespace level and following the
+  /// descended prims' own arcs. This is what brings reference/payload-introduced
+  /// child prims (and their nested references) into the composed namespace.
+  nonstd::expected<PrimIndex, std::string> BuildChildFrom(
+      const PrimIndex &parent, const std::string &child_name);
 
  private:
   // Task handlers
   bool EvalRootNode(std::string *err);
+
+  // Phases 2-6 shared by Build() and BuildChildFrom(): drain the task queue,
+  // resolve variants, cull, compute strength order, detect instanceable.
+  nonstd::expected<PrimIndex, std::string> FinishBuild();
+
+  // Seed descended nodes for BuildChildFrom (phase-1 replacement).
+  void SeedDescendedNodes(const PrimIndex &parent, const std::string &child_name);
   bool EvalSubLayers(uint16_t node_idx, std::string *err);
   bool EvalInherits(uint16_t node_idx, std::string *err);
   bool EvalVariants(uint16_t node_idx, std::string *err);

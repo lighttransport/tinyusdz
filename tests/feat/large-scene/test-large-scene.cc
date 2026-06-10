@@ -67,6 +67,14 @@ int main(int argc, char **argv) {
         "cross-directory reference ./leaf.usda resolved (leaf.usda parsed)");
   std::cout << "  layer_parse_count = " << loader.layer_parse_count() << "\n";
 
+  // The referenced prim's descendants must be reconstructed into the namespace:
+  // /P references </Leaf>, and Leaf has a child Mesh M, so /P/M must exist.
+  {
+    auto m = loader.stage().GetPrimAtPath(Path("/P/M", ""));
+    CHECK(bool(m), "/P/M reconstructed (referenced-prim descendant present)");
+    if (m) CHECK((*m)->type_name() == "Mesh", "/P/M is a Mesh");
+  }
+
   if (g_failures == 0) {
     std::cout << "Cross-directory cwp-anchoring test passed.\n";
     return 0;
