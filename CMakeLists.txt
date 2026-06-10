@@ -683,6 +683,7 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material-mtlx.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-anim.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-instancer.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-internal.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.cc
@@ -2358,6 +2359,14 @@ if(TINYUSDZ_BUILD_TESTS)
     target_link_libraries(feat-value-clip PRIVATE ${TINYUSDZ_TARGET_STATIC})
     target_include_directories(feat-value-clip PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-value-clip COMMAND feat-value-clip
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # PointInstancer instancing (compute API + Tydra expansion)
+    add_executable(feat-instancing tests/feat/instancing/test-instancing.cc)
+    add_sanitizers(feat-instancing)
+    target_link_libraries(feat-instancing PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-instancing PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-instancing COMMAND feat-instancing
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     if(TINYUSDZ_WITH_MODULE_USDC_WRITER AND TINYUSDZ_WITH_MODULE_USDC_READER)

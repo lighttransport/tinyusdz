@@ -468,6 +468,11 @@ struct RenderSceneConverterConfig {
   bool value_clip_use_time_range{false};
   double value_clip_start_time{0.0};
   double value_clip_end_time{0.0};
+
+  // Expand UsdGeomPointInstancer prims into RenderScene::instances
+  // (one RenderInstance per visible instance; geometry is shared via mesh_id,
+  // not duplicated). See RenderSceneConverter::ExpandPointInstancer.
+  bool expand_point_instancers{true};
 };
 
 //
@@ -1116,6 +1121,27 @@ class RenderSceneConverter {
   /// @param[in] root XformNode
   ///
   bool BuildNodeHierarchy(const RenderSceneConverterEnv &env, const XformNode &node);
+
+  ///
+  /// Expand a UsdGeomPointInstancer into RenderScene::instances.
+  ///
+  /// Emits one RenderInstance per visible instance (mask applied). Geometry is
+  /// shared: each RenderInstance references a prototype RenderMesh via mesh_id
+  /// (looked up from `meshMap`). Instance transforms are computed via
+  /// ComputeInstanceTransformsAtTime() at `env.timecode`.
+  ///
+  /// @param[in] env Conversion env (provides timecode).
+  /// @param[in] instancer_abs_path Absolute path of the PointInstancer prim.
+  /// @param[in] pi The PointInstancer.
+  /// @param[in] instancer_world World transform of the PointInstancer prim.
+  /// @param[in] path_to_global abs_path -> world matrix map (from node tree),
+  ///            used to resolve prototype-relative mesh transforms.
+  ///
+  bool ExpandPointInstancer(
+      const RenderSceneConverterEnv &env,
+      const std::string &instancer_abs_path, const GeomPointInstancer &pi,
+      const value::matrix4d &instancer_world,
+      const std::unordered_map<std::string, value::matrix4d> &path_to_global);
 
   ///
   /// Convert UsdLux lights to renderer-friendly RenderLight
