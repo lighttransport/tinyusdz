@@ -328,6 +328,58 @@ static void test_load_rules_lifecycle() {
   std::cout << "  OK" << std::endl;
 }
 
+// Phase 7 E2: a reference with a layer offset (offset:scale) must remap the
+// referenced prim's time-sample times into stage time (t -> offset + scale*t)
+// when BuildStage bakes the composition.
+static void test_layer_offset_timesamples() {
+  std::cout << "test_layer_offset_timesamples..." << std::endl;
+
+  // Asset: /A (Mesh) with "size" sampled at t=0 ->(0,0,0), t=10 ->(10,0,0).
+  auto asset = std::make_shared<Layer>();
+  {
+    LayerBuilder ab(*asset);
+    ab.begin_prim("A", "Mesh");
+    ab.add_time_sample("size", 0.0, Value::MakeFloat3(0, 0, 0));
+    ab.add_time_sample("size", 10.0, Value::MakeFloat3(10, 0, 0));
+    ab.end_prim();
+    ab.finalize();
+  }
+  // Root: /World/R references the asset with offset=100, scale=2.
+  auto rootL = std::make_shared<Layer>();
+  {
+    LayerBuilder rb(*rootL);
+    rb.begin_prim("World", "Xform");
+    rb.begin_prim("R", "");
+    rb.current()->meta().references.push_back("@asset@</A>?layerOffset=100:2");
+    rb.end_prim();
+    rb.end_prim();
+    rb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [](const std::string &a, const std::string &) { return a; });
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  cache.PreloadLayer("asset", asset);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  UsdPrim r = stage.GetPrimAtPath("/World/R");
+  assert(r.IsValid());
+  // Original sample times 0 and 10 map to 100 and 120 (= 100 + 2*10).
+  const Value *at100 = r.GetValueAtTime("size", 100.0);
+  const Value *at120 = r.GetValueAtTime("size", 120.0);
+  assert(at100 && at100->as_float3() && at100->as_float3()[0] == 0.0f &&
+         "sample at t=0 not remapped to t=100");
+  assert(at120 && at120->as_float3() && at120->as_float3()[0] == 10.0f &&
+         "sample at t=10 not remapped to t=120");
+  std::cout << "  OK" << std::endl;
+}
+
 // SetLoadRules drives payload inclusion declaratively: LoadNone-style (Unload
 // root) defers all payloads; a targeted Load re-includes one subtree.
 static void test_set_load_rules() {
@@ -1513,6 +1565,7 @@ int main() {
   test_deferred_payload();
   test_load_rules_lifecycle();
   test_set_load_rules();
+  test_layer_offset_timesamples();
   test_payload_in_instance();
   test_inherits_specializes();
   test_variants();

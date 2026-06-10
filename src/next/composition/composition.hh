@@ -120,6 +120,10 @@ public:
   /// Parse a payload string
   static CompositionArc ParsePayload(const std::string& payload_str);
 
+  /// Parse a layer-offset expression "offset:scale" (or "offset").
+  static void ParseLayerOffset(const std::string& offset_str, double& offset,
+                               double& scale);
+
   /// Parse variant selection from string "variantSet=selection"
   static VariantSelection ParseVariantSelection(const std::string& str);
 
@@ -127,7 +131,12 @@ public:
   /// fill-absent): type name, properties, time samples, and metadata. Public so
   /// the pcp value-resolution path can reuse it. Does NOT copy relationships or
   /// children (callers handle those, incl. namespace remapping).
-  static void CopyLocalOpinions(PrimSpec& target, const PrimSpec& source);
+  /// Time-sample times are remapped by the layer offset
+  /// `t -> time_offset + time_scale*t` (identity by default), baking a
+  /// composition arc's layer offset into the flattened result.
+  static void CopyLocalOpinions(PrimSpec& target, const PrimSpec& source,
+                                double time_offset = 0.0,
+                                double time_scale = 1.0);
 
   // ============================================================
   // Layer cache
@@ -182,10 +191,6 @@ private:
   void GraftSubtree(const Layer& src, const std::string& src_root,
                     const std::string& dst_root);
   bool ApplyVariants(PrimSpec& prim, const Layer& layer, int depth);
-
-  // Parse layer offset string into offset and scale
-  static void ParseLayerOffset(const std::string& offset_str,
-                                double& offset, double& scale);
 
   // Helper methods
   void AddError(const std::string& msg, const std::string& prim_path,

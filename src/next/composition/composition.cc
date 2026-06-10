@@ -152,7 +152,8 @@ bool Compositor::ComposePrim(PrimSpec& target, const Layer& source_layer,
   return true;
 }
 
-void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source) {
+void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source,
+                                   double time_offset, double time_scale) {
   // Copy type name if target doesn't have one
   if (target.type_name().empty() && !source.type_name().empty()) {
     target.set_type_name(source.type_name());
@@ -199,11 +200,13 @@ void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source) {
     // Check if target already has time samples for this property
     bool target_has_ts = target.has_time_samples(ts_prop_id);
     if (!target_has_ts) {
-      // Copy time samples from source to target
+      // Copy time samples from source to target, remapping the sample time by
+      // the layer offset (t -> time_offset + time_scale*t).
       for (const auto& [time, val_offset] : *samples) {
         const Value* val = source.time_sample_value(val_offset);
         if (val) {
-          target.add_time_sample(ts_prop_id, time, *val);
+          target.add_time_sample(ts_prop_id, time_offset + time_scale * time,
+                                 *val);
         }
       }
     }
