@@ -19,13 +19,18 @@ Landed so far:
 - **Phase 5 (core)** — stable variant-content instance key (fixes pointer
   aliasing S4). Strongest-opinion tri-state instanceable, path-translation API,
   and the PointInstancer compute port remain TODO.
+- **Phase 6** — payload LoadRules model (`pcp/load-rules.{hh,cc}`, a
+  `UsdStageLoadRules` port); `LoadPayload(With/WithoutDescendants)`,
+  `SetLoadRules`; `UnloadPayload` recomposes (S7 fix); BuildStage rebuilds
+  prototype maps from scratch (fixes stale-grouping nondeterminism + payload-on-
+  instance split).
 - **Phase 9 (F2)** — LayerRegistry parses outside the lock (parallel layer
   load). The deeper cache-table fine-grained locking (F3–F6) remains TODO.
 
-Not yet started: **Phase 6** (LoadRules), **Phase 7** (list-ops / layer offsets
-/ typed errors), **Phase 8** (PrimSpecMeta split / token pool / mmap / extra
-array-type read+lazy coverage), **Phase 9 F3–F6**, **Phase 10** (lazy Stage).
-Each is a large independent feature; the sections below are the spec for them.
+Not yet started: **Phase 7** (list-ops / layer offsets / typed errors),
+**Phase 8** (PrimSpecMeta split / token pool / mmap / extra array-type read+lazy
+coverage), **Phase 9 F3–F6**, **Phase 10** (lazy Stage). Each is a large
+independent feature; the sections below are the spec for them.
 
 Goals, in priority order:
 
