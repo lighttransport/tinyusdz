@@ -29,18 +29,23 @@ Landed so far:
   Cross-layer ListOp merging, layer offsets (E2; moot until crate TimeSamples
   are read), and typed error codes (E4) remain TODO.
 - **Phase 8 (arrays)** — read+write coverage for Vec4f/Quatf/Vec2-4d/Quatd/
-  Matrix2-4d arrays (reusing CoW float/double storage); corpus "Unsupported
-  array type" warnings drop to just Vec3h. Half-typed arrays, PrimSpecMeta
-  split, token pool, and mmap CrateDataSource remain TODO.
+  Matrix2-4d **and half-typed** arrays (Half/Vec2-4h/Quath, lazy + byte-exact
+  passthrough; half↔float via crate-format.hh). Corpus now has **zero**
+  "Unsupported array type" warnings. PrimSpecMeta split, token pool, and mmap
+  CrateDataSource remain TODO.
+- **TimeSamples decoding** — crate TimeSamples now decode into per-property
+  storage (was skipped on read); reads next- and pxr-written files. This
+  unblocks Phase 7 E2 (layer offsets at value-resolution time).
 - **Phase 9 (F2 + TSAN stress)** — LayerRegistry parses outside the lock
   (parallel layer load); a concurrent-payload-edit TSAN stress test guards the
   Phase-6 paths. The deeper cache-table fine-grained locking (F3–F6) remains a
   dedicated high-risk TODO (the coarse lock is correct; batch parallelism is
   already achieved via per-worker Impls).
 
-Not yet started / partial: **Phase 7 E2/E4** + cross-layer ListOps, **Phase 8**
-half arrays / PrimSpecMeta split / token pool / mmap, **Phase 9 F3–F6**,
-**Phase 10** (lazy Stage). The sections below are the spec for them.
+Not yet started / partial: **Phase 7 E2** (layer offsets — now unblocked by
+TimeSamples) / **E4** typed errors / cross-layer ListOps, **Phase 8**
+PrimSpecMeta split / token pool / mmap, **Phase 9 F3–F6**, **Phase 10** (lazy
+Stage). The sections below are the spec for them.
 
 Goals, in priority order:
 
