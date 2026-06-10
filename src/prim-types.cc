@@ -1431,8 +1431,17 @@ void PrimMetas::update_from(const PrimMetas &rhs, const bool override_authored) 
     }
   }
   if (rhs.variants) {
-    if (override_authored || !variants.has_value()) {
+    if (!variants.has_value()) {
       variants = rhs.variants;
+    } else {
+      for (const auto &item : rhs.variants.value()) {
+        auto it = variants->find(item.first);
+        if (it == variants->end()) {
+          (*variants)[item.first] = item.second;
+        } else if (override_authored) {
+          it->second = item.second;
+        }
+      }
     }
   }
   if (rhs.specializes) {

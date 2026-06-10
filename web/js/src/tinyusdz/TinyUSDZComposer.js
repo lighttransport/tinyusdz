@@ -201,8 +201,37 @@ class TinyUSDZComposer {
         return layer;
     }
 
+    _assetAliases(uri) {
+        if (typeof uri !== "string") return [uri];
+        const fileUri = uri.replace(/<[^>]*>\s*$/, "");
+        const out = new Set([uri, fileUri]);
+        uri = fileUri;
+        if (uri.startsWith("./")) out.add(uri.slice(2));
+        else if (!uri.startsWith("/") && !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(uri)) out.add("./" + uri);
+        try {
+            const u = new URL(uri, "http://tinyusdz.invalid/");
+            const p = decodeURIComponent(u.pathname).replace(/^\/+/, "");
+            if (p) {
+                out.add(p);
+                out.add("./" + p);
+            }
+        } catch (_) {
+            // Not URL-like; the simple path aliases above are enough.
+        }
+        return [...out];
+    }
+
+    _setAsset(uri, binary) {
+        for (const key of this._assetAliases(uri)) {
+            this.assetMap_.set(key, binary);
+            if (this.usdLayer_ && typeof this.usdLayer_.setAsset === "function") {
+                this.usdLayer_.setAsset(key, binary);
+            }
+        }
+    }
+
     // Recursively resolve sublayer assets.
-    async resolveSublayerAssets(depth, usdLayer) {
+    async resolveSublayerAssets(depth, usdLayer, parentAssetPath = null) {
 
         if (depth > 16) {
             console.warn("TinyUSDZComposer: Maximum recursion depth reached while resolving sublayer assets.");
@@ -212,7 +241,8 @@ class TinyUSDZComposer {
         //console.log("extractSublayer", sublayerAssetPaths);
 
         await Promise.all(sublayerAssetPaths.map(async (sublayerPath) => {
-            const [uri, binary] = await this.assetResolver_.resolveAsync(sublayerPath);
+            const [uri, binary, resolvedPath] = await this.assetResolver_.resolveAsync(
+                sublayerPath, { parentAssetPath });
             //console.log("sublayerPath:", sublayerPath, "binary:", binary.byteLength, "bytes");
 
             // Recurse into the sublayer to discover its own (possibly remote)
@@ -222,13 +252,13 @@ class TinyUSDZComposer {
             const sublayer = this._loadLayerFromBytes(binary, sublayerPath);
             if (sublayer) {
                 try {
-                    await this.resolveSublayerAssets(depth + 1, sublayer);
+                    await this.resolveSublayerAssets(depth + 1, sublayer, resolvedPath || uri);
                 } finally {
                     if (typeof sublayer.delete === "function") sublayer.delete();
                 }
             }
 
-            this.assetMap_.set(uri, binary);
+            this._setAsset(uri, binary);
         }));
     }
 
@@ -308,11 +338,19 @@ class TinyUSDZComposer {
                 const referencesAssetPaths = TinyUSDZComposer.extractReferencesAssetPaths(this.usdLayer_);
 
                 await Promise.all(referencesAssetPaths.map(async (assetPath) => {
-                    const [uri, binary] = await this.assetResolver_.resolveAsync(assetPath);
+                    const [uri, binary, resolvedPath] = await this.assetResolver_.resolveAsync(assetPath);
                     //console.log("referencesPath:", assetPath, "binary:", binary.byteLength, "bytes");
 
-                    this.assetMap_.set(uri, binary);
-                    this.usdLayer_.setAsset(uri, binary);
+                    const refLayer = this._loadLayerFromBytes(binary, uri);
+                    if (refLayer) {
+                        try {
+                            await this.resolveSublayerAssets(0, refLayer, resolvedPath || uri);
+                        } finally {
+                            if (typeof refLayer.delete === "function") refLayer.delete();
+                        }
+                    }
+
+                    this._setAsset(uri, binary);
                 }));
 
                 //console.log("do composeReferences");
@@ -325,15 +363,23 @@ class TinyUSDZComposer {
                 const payloadAssetPaths = TinyUSDZComposer.extractPayloadAssetPaths(this.usdLayer_);
 
                 await Promise.all(payloadAssetPaths.map(async (assetPath) => {
-                    const [uri, binary] = await this.assetResolver_.resolveAsync(assetPath);
+                    const [uri, binary, resolvedPath] = await this.assetResolver_.resolveAsync(assetPath);
                     //console.log("payloadAssetPath:", assetPath, "binary:", binary.byteLength, "bytes");
 
-                    this.assetMap_.set(uri, binary);
-                    this.usdLayer_.setAsset(uri, binary);
+                    const payloadLayer = this._loadLayerFromBytes(binary, uri);
+                    if (payloadLayer) {
+                        try {
+                            await this.resolveSublayerAssets(0, payloadLayer, resolvedPath || uri);
+                        } finally {
+                            if (typeof payloadLayer.delete === "function") payloadLayer.delete();
+                        }
+                    }
+
+                    this._setAsset(uri, binary);
                 }));
 
                 if (!this.usdLayer_.composePayload()) {
-                    throw new Error("Failed to compose payload:", usd_layer.error());
+                    throw new Error("Failed to compose payload: " + this.usdLayer_.error());
                 }
             }
         }

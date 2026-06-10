@@ -523,6 +523,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/composition.cc
     ${PROJECT_SOURCE_DIR}/src/composition-reconstruct.cc
     ${PROJECT_SOURCE_DIR}/src/composition-graph.cc
+    ${PROJECT_SOURCE_DIR}/src/large-scene-loader.cc
     ${PROJECT_SOURCE_DIR}/src/core/instance-key.cc
     ${PROJECT_SOURCE_DIR}/src/hash-util.cc
     ${PROJECT_SOURCE_DIR}/src/chunk-reader.cc
@@ -2054,6 +2055,7 @@ if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/file_format)
   add_subdirectory(examples/asset_resolution)
   add_subdirectory(examples/progressive_composition)
+  add_subdirectory(examples/large-scene-load)
   #if (TINYUSDZ_WITH_JSON)
   #  add_subdirectory(examples/usd_to_json)
   #endif()
@@ -2367,6 +2369,14 @@ if(TINYUSDZ_BUILD_TESTS)
     target_link_libraries(feat-instancing PRIVATE ${TINYUSDZ_TARGET_STATIC})
     target_include_directories(feat-instancing PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-instancing COMMAND feat-instancing
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # Cross-directory cwp anchoring (composition) via LargeSceneLoader
+    add_executable(feat-large-scene tests/feat/large-scene/test-large-scene.cc)
+    add_sanitizers(feat-large-scene)
+    target_link_libraries(feat-large-scene PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-large-scene PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-large-scene COMMAND feat-large-scene
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     if(TINYUSDZ_WITH_MODULE_USDC_WRITER AND TINYUSDZ_WITH_MODULE_USDC_READER)

@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite';
 import path from 'path';
 
+const usdAssetsDir = process.env.USD_WG_ASSETS_DIR || '/mnt/nvme02/work/usd/assets';
+
 // https://vitejs.dev/config/
 export default defineConfig({
   // Multi-page app: serve each .html directly and return 404 for unmatched
@@ -10,6 +12,7 @@ export default defineConfig({
     fs: {
       allow: [
         path.resolve(__dirname),
+        usdAssetsDir,
         '/path/to/mujoco/wasm/dist',
       ],
     },

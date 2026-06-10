@@ -1,0 +1,18 @@
+#usda 1.0
+(
+    defaultPrim = "Leaf"
+)
+
+def Xform "Leaf"
+{
+    # Composed onto the referencing prim /P iff `./leaf.usda` resolved (anchored
+    # to sub/). Observable without relying on referenced-child reconstruction.
+    custom int leafMarker = 42
+
+    def Mesh "M"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }
+}

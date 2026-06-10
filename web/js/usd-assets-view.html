@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TinyUSDZ — USD Assets Preview</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+    body { font-family: system-ui, sans-serif; background: #474747; color: #e7e9ee; }
+    #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+    #status {
+      position: absolute; left: 12px; top: 12px; z-index: 2; max-width: min(680px, calc(100vw - 24px));
+      padding: 9px 11px; border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 6px; background: rgba(20, 22, 27, 0.82);
+      color: #dbe4f3; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: pre-wrap;
+    }
+    body.hide-ui #status { display: none; }
+  </style>
+</head>
+<body>
+  <canvas id="gl"></canvas>
+  <div id="status">Initializing...</div>
+  <script type="module" src="./usd-assets-view.js"></script>
+</body>
+</html>
