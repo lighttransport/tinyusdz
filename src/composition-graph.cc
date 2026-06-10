@@ -24,6 +24,9 @@
 // These are needed for BuildStage (PrimSpec -> Prim reconstruction)
 #include "stage.hh"
 
+// VariantSelectPrimSpec (variant content resolution).
+#include "composition.hh"
+
 namespace tinyusdz {
 namespace composition_graph {
 
@@ -539,6 +542,13 @@ nonstd::expected<PrimIndex, std::string> PrimIndexBuilder::FinishBuild() {
 
   // Phase 3: Resolve deferred variant selections
   ResolveAndApplyVariants(&err);
+
+  // Phase 3b: Compose variant CONTENT. Resolve the selected variant on any node
+  // that authors a matching variantSet and repoint it at the materialized
+  // result, so the variant's child prims (and their arcs) enter the namespace.
+  // A variant child that itself references/payloads is handled by the normal
+  // namespace expansion when that child's index is built.
+  ApplyVariantContent();
 
   // Phase 4: Check for relocates on root layer and enqueue if needed
   if (_ctx->_root_layer &&
@@ -1073,6 +1083,84 @@ void PrimIndexBuilder::ResolveAndApplyVariants(std::string *err) {
   //
   // For now, we just record the resolved selections. The ComposePrimSpecFromIndex
   // function will apply them during Stage building.
+}
+
+// ---------------------------------------------------------------------------
+// ApplyVariantContent -- compose the selected variant's content into the index
+// ---------------------------------------------------------------------------
+
+bool PrimIndexBuilder::ApplyVariantContent() {
+  // 1. Compose the variant selection: strongest opinion per variant set. Node 0
+  //    is the root (strongest); arc nodes are appended in decreasing strength,
+  //    so a first-seen-wins scan over node index gives the composed selection.
+  std::map<std::string, std::string> selection;
+  for (uint16_t i = 0; i < static_cast<uint16_t>(_result._nodes.size()); i++) {
+    if (_result._nodes[i].is_culled()) continue;
+    const PrimSpec *ps = GetPrimSpecForNode(i);
+    if (!ps || !ps->metas().variants.has_value()) continue;
+    for (const auto &kv : ps->metas().variants.value()) {
+      selection.emplace(kv.first, kv.second);  // strongest (lower index) wins
+    }
+  }
+  if (selection.empty()) return false;
+
+  bool changed = false;
+
+  // 2. Resolve each node that authors matching variantSet CONTENT.
+  const size_t node_count = _result._nodes.size();
+  for (uint16_t i = 0; i < static_cast<uint16_t>(node_count); i++) {
+    CompNode &node = _result._nodes[i];
+    if (node.is_culled()) continue;
+
+    const PrimSpec *ps = GetPrimSpecForNode(i);
+    if (!ps || ps->variantSets().empty()) continue;
+
+    // Does this node author content for any selected variant set?
+    bool match = false;
+    for (const auto &vs : ps->variantSets()) {
+      if (selection.count(vs.first)) {
+        match = true;
+        break;
+      }
+    }
+    if (!match) continue;
+
+    // Resolve. VariantSelectPrimSpec gates on the PrimSpec carrying BOTH the
+    // `variants` selection and the `variantSets` listop; the selection here is
+    // composed from other (stronger) nodes, so inject it onto a copy.
+    PrimSpec src_ps = *ps;
+    src_ps.metas().variants = selection;
+    PrimSpec resolved;
+    std::string vw, ve;
+    if (!VariantSelectPrimSpec(resolved, src_ps, selection, &vw, &ve)) continue;
+
+    // Materialize the resolved PrimSpec as the sole root prim of a synthetic
+    // layer owned by the context, and repoint the node at it. Its children
+    // (the variant's child prims) are then reachable by find_primspec_at and so
+    // by the namespace expansion / value composition.
+    std::string nm = ps->name();
+    if (nm.empty()) nm = "_variant";
+    resolved.name() = nm;
+
+    auto synth = std::make_unique<Layer>();
+    synth->add_primspec(nm, resolved);
+    const Layer *synth_ptr = synth.get();
+    _ctx->_loaded_layers.push_back(std::move(synth));
+
+    uint16_t ls =
+        _ctx->AddLayerStack(synth_ptr, "<variant>", LayerOffset());
+    node.layer_stack_idx = ls;
+    node.site_path_idx = _ctx->InternPath("/" + nm);
+
+    const PrimSpec &rps = synth_ptr->primspecs().at(nm);
+    if (!rps.props().empty() || rps.metas().authored() ||
+        !rps.children().empty()) {
+      node.flags = node.flags | NodeFlags::HasSpecs;
+    }
+    changed = true;
+  }
+
+  return changed;
 }
 
 // ---------------------------------------------------------------------------

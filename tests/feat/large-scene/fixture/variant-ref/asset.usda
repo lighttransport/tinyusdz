@@ -1,0 +1,24 @@
+#usda 1.0
+( defaultPrim = "A" )
+# The variant SET (and its content) is defined in this referenced asset; the
+# SELECTION is authored by the stronger referencing layer (root.usda). The DAG
+# must compose the selected variant's content even though the selection and the
+# variantSet live on different composition nodes.
+def "A" (
+    append variantSets = "vs"
+)
+{
+    variantSet "vs" = {
+        "render" {
+            def Xform "GEO"
+            {
+                def Mesh "M"
+                {
+                    int[] faceVertexCounts = [3]
+                    int[] faceVertexIndices = [0, 1, 2]
+                    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                }
+            }
+        }
+    }
+}
