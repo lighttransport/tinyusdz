@@ -97,6 +97,12 @@ bool IsFloatBackedArray(TypeId id) {
     case TypeId::Matrix2f:
     case TypeId::Matrix3f:
     case TypeId::Matrix4f:
+    // Half element types materialize into a float buffer (no 16-bit storage).
+    case TypeId::Half:
+    case TypeId::Half2:
+    case TypeId::Half3:
+    case TypeId::Half4:
+    case TypeId::Quath:
       return true;
     default:
       return false;

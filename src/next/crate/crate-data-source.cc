@@ -389,6 +389,25 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
                                         CrateArrayValueType(type_id), comps);
       return true;
     }
+    case CrateTypeId::Half:
+    case CrateTypeId::Vec2h:
+    case CrateTypeId::Vec3h:
+    case CrateTypeId::Vec4h:
+    case CrateTypeId::Quath: {
+      if (compressed) return false;
+      const uint32_t comps = CrateArrayElemStride(type_id) / 2;  // 2 bytes/half
+      if (comps == 0 ||
+          count > (std::numeric_limits<size_t>::max)() / comps) {
+        return false;
+      }
+      std::vector<uint16_t> halfs(static_cast<size_t>(count) * comps);
+      if (!read_raw(halfs.data(), comps * 2)) return false;
+      std::vector<float> data(halfs.size());
+      for (size_t i = 0; i < halfs.size(); ++i) data[i] = HalfToFloat(halfs[i]);
+      *out = Value::MakeFloatCompArray(std::move(data),
+                                       CrateArrayValueType(type_id), comps);
+      return true;
+    }
     default:
       // No concrete Value storage for this array type yet.
       return false;
