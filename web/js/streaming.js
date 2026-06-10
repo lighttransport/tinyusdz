@@ -288,6 +288,8 @@ export class StreamingUSDRenderer {
     if (!gl) throw new Error('WebGL2 is required for the streaming renderer.');
     this.gl = gl;
     gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.clearColor(0.09, 0.10, 0.12, 1.0);
     this.prog = this._buildProgram(VERT_SRC, FRAG_SRC);
     gl.useProgram(this.prog);
@@ -317,6 +319,47 @@ export class StreamingUSDRenderer {
   heapBytes() { return this.native ? this.native.HEAPU8.buffer.byteLength : 0; }
 
   onMemory(cb) { this._memCb = cb; }
+
+  setClearColor(color) {
+    const c = Array.isArray(color) ? color : [0.09, 0.10, 0.12, 1.0];
+    this.gl.clearColor(c[0] ?? 0.09, c[1] ?? 0.10, c[2] ?? 0.12, c[3] ?? 1.0);
+  }
+
+  setCamera(opts = {}) {
+    if (typeof opts.az === 'number') this.cam.az = opts.az;
+    if (typeof opts.el === 'number') this.cam.el = opts.el;
+    if (typeof opts.dist === 'number' && opts.dist > 0) this.cam.dist = opts.dist;
+    if (Array.isArray(opts.target) && opts.target.length >= 3) {
+      this.cam.target = opts.target.slice(0, 3).map(Number);
+    }
+    if (typeof opts.fov === 'number' && opts.fov > 0) {
+      this.cam.fov = opts.fov > Math.PI ? opts.fov * Math.PI / 180 : opts.fov;
+    }
+    if (typeof opts.near === 'number') this._near = opts.near;
+    if (typeof opts.far === 'number') this._far = opts.far;
+  }
+
+  frameCamera(opts = {}) { this._frameCamera(opts); }
+
+  getRenderStats() {
+    return {
+      meshes: this.drawables.length,
+      textures: this.glTextures.filter(Boolean).length,
+      bbox: this.bbox ? {
+        min: this.bbox.min.slice(),
+        max: this.bbox.max.slice(),
+      } : null,
+      camera: {
+        az: this.cam.az,
+        el: this.cam.el,
+        dist: this.cam.dist,
+        target: this.cam.target.slice(),
+        fov: this.cam.fov,
+        near: this._near,
+        far: this._far,
+      },
+    };
+  }
 
   // ---- loading (the low-memory pipeline) -----------------------------------
 
@@ -959,17 +1002,46 @@ export class StreamingUSDRenderer {
 
   // ---- rendering -----------------------------------------------------------
 
-  _frameCamera() {
+  _frameCamera(opts = {}) {
     if (!this.bbox || this.bbox.min[0] > this.bbox.max[0]) return;
+    if (typeof opts.fov === 'number' && opts.fov > 0) {
+      this.cam.fov = opts.fov > Math.PI ? opts.fov * Math.PI / 180 : opts.fov;
+    }
+    if (typeof opts.az === 'number') this.cam.az = opts.az;
+    if (typeof opts.el === 'number') this.cam.el = opts.el;
     const c = [0, 1, 2].map((i) => (this.bbox.min[i] + this.bbox.max[i]) / 2);
-    const r = Math.max(1e-3, 0.5 * Math.hypot(
-      this.bbox.max[0] - this.bbox.min[0],
-      this.bbox.max[1] - this.bbox.min[1],
-      this.bbox.max[2] - this.bbox.min[2]));
-    this.cam.target = c;
-    this.cam.dist = r / Math.sin(this.cam.fov / 2) * 1.1;
-    this._near = Math.max(1e-3, this.cam.dist - r * 2);
-    this._far = this.cam.dist + r * 2;
+    this.cam.target = Array.isArray(opts.target) && opts.target.length >= 3
+      ? opts.target.slice(0, 3).map(Number) : c;
+    const corners = [];
+    for (const x of [this.bbox.min[0], this.bbox.max[0]]) {
+      for (const y of [this.bbox.min[1], this.bbox.max[1]]) {
+        for (const z of [this.bbox.min[2], this.bbox.max[2]]) corners.push([x, y, z]);
+      }
+    }
+    const dir = norm3([
+      Math.cos(this.cam.el) * Math.sin(this.cam.az),
+      Math.sin(this.cam.el),
+      Math.cos(this.cam.el) * Math.cos(this.cam.az),
+    ]);
+    let right = norm3(cross3([0, 1, 0], dir));
+    if (!Number.isFinite(right[0])) right = [1, 0, 0];
+    const up = cross3(dir, right);
+    let maxX = 1e-3, maxY = 1e-3, maxZ = 0;
+    for (const p of corners) {
+      const v = sub3(p, this.cam.target);
+      maxX = Math.max(maxX, Math.abs(dot3(v, right)));
+      maxY = Math.max(maxY, Math.abs(dot3(v, up)));
+      maxZ = Math.max(maxZ, Math.abs(dot3(v, dir)));
+    }
+    const aspect = (this.canvas.width || this.canvas.clientWidth || 1) /
+      Math.max(1, (this.canvas.height || this.canvas.clientHeight || 1));
+    const tanY = Math.tan(this.cam.fov / 2);
+    const tanX = tanY * aspect;
+    const fitDist = Math.max(maxX / Math.max(tanX, 1e-3), maxY / Math.max(tanY, 1e-3)) + maxZ;
+    this.cam.dist = typeof opts.dist === 'number' && opts.dist > 0
+      ? opts.dist : fitDist * (opts.padding ?? 1.1);
+    this._near = typeof opts.near === 'number' ? opts.near : Math.max(1e-3, this.cam.dist - maxZ * 2 - 1);
+    this._far = typeof opts.far === 'number' ? opts.far : this.cam.dist + maxZ * 2 + 1;
   }
 
   _camEye() {

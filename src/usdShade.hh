@@ -139,6 +139,7 @@ struct Material : UsdShadePrim {
   /// (Whereas Shader's outputs is not)
   ///
   TypedConnection<value::token> surface; // "token outputs:surface.connect"
+  TypedConnection<value::token> mtlxSurface; // "token outputs:mtlx:surface.connect"
   TypedConnection<value::token> displacement; // "token outputs:displacement.connect"
   TypedConnection<value::token> volume; // "token outputs:volume.connect"
 

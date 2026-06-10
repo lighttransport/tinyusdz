@@ -194,6 +194,46 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
     return false;
   }
 
+  std::atomic<uint32_t> *open_fd_counter = &_open_file_descriptors;
+  struct FileDescriptorBudgetGuard {
+    std::atomic<uint32_t> *counter{nullptr};
+    bool acquired{false};
+
+    FileDescriptorBudgetGuard(std::atomic<uint32_t> *c, uint32_t limit,
+                              const std::string &path, std::string *e)
+        : counter(c) {
+      uint32_t cur = counter->load();
+      while (true) {
+        if (cur >= limit) {
+          if (e) {
+            (*e) += fmt::format(
+                "Asset resolver file descriptor limit reached while opening "
+                "`{}` ({} / {}).\n",
+                path, cur, limit);
+          }
+          return;
+        }
+        if (counter->compare_exchange_weak(cur, cur + 1)) {
+          acquired = true;
+          return;
+        }
+      }
+    }
+
+    ~FileDescriptorBudgetGuard() {
+      if (acquired) {
+        counter->fetch_sub(1);
+      }
+    }
+  };
+
+  FileDescriptorBudgetGuard fd_guard(open_fd_counter,
+                                     get_max_file_descriptors(), resolvedPath,
+                                     err);
+  if (!fd_guard.acquired) {
+    return false;
+  }
+
   DCOUT("Opening asset: " << resolvedPath);
 
   (void)assetPath;

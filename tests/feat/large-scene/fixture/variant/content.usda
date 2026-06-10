@@ -1,0 +1,22 @@
+#usda 1.0
+# The variantSet CONTENT is authored in this (weaker) sublayer; the selection
+# is authored in the root. Sublayer composition must preserve the variantSet
+# content and the selected variant's children must reconstruct.
+over "P" (
+    append variantSets = "vs"
+)
+{
+    variantSet "vs" = {
+        "render" {
+            def Xform "GEO"
+            {
+                def Mesh "M"
+                {
+                    int[] faceVertexCounts = [3]
+                    int[] faceVertexIndices = [0, 1, 2]
+                    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                }
+            }
+        }
+    }
+}

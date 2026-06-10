@@ -652,15 +652,18 @@ bool VariantSelectPrimSpec(
         }
 
         for (const auto &child : vs.children()) {
-          // Override if PrimSpec has same name
-          // simple linear scan.
+          // Variant child opinions are authored as primspec opinions, so an
+          // `over` child in the selected variant must merge into the existing
+          // child rather than replace the whole subtree.
           auto it = std::find_if(ps.children().begin(), ps.children().end(),
                                  [&child](const PrimSpec &item) {
                                    return (item.name() == child.name());
                                  });
 
           if (it != ps.children().end()) {
-            (*it) = child;  // replace
+            if (!OverridePrimSpec(*it, child, warn, err)) {
+              PUSH_ERROR_AND_RETURN("Failed to override variant child PrimSpec.");
+            }
           } else {
             ps.children().push_back(child);
           }

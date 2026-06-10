@@ -1285,6 +1285,17 @@ nonstd::expected<bool, std::string> GetPrimProperty(
       // Not authored
       return false;
     }
+  } else if (prop_name == "outputs:mtlx:surface") {
+    if (material.mtlxSurface.authored()) {
+      Attribute attr;
+      attr.set_type_name(value::TypeTraits<value::token>::type_name());
+      attr.set_connections(material.mtlxSurface.get_connections());
+      attr.metas() = material.mtlxSurface.metas();
+      (*out_prop) = Property(attr, /* custom */ false);
+      out_prop->set_listedit_qual(material.mtlxSurface.get_listedit_qual());
+    } else {
+      return false;
+    }
   } else if (prop_name == "outputs:displacement") {
     if (material.displacement.authored()) {
       Attribute attr;
@@ -2097,6 +2108,8 @@ bool GetPrimPropertyNamesImpl(const Material &material,
   if (attr_prop) {
     AppendPropertyNameIfAuthored(material.surface, "outputs:surface",
                                  prop_names);
+    AppendPropertyNameIfAuthored(material.mtlxSurface,
+                                 "outputs:mtlx:surface", prop_names);
     AppendPropertyNameIfAuthored(material.displacement,
                                  "outputs:displacement", prop_names);
     AppendPropertyNameIfAuthored(material.volume, "outputs:volume",

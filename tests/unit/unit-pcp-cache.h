@@ -15,4 +15,5 @@ void pcp_buildstage_matches_compgraph_test(void);
 void pcp_singlethread_vs_multithread_identical_test(void);
 void pcp_mt_shared_reference_test(void);
 void pcp_external_payload_load_unload_test(void);
+void pcp_external_payload_load_reprocesses_nested_arcs_test(void);
 void pcp_buildstage_reference_grandchildren_test(void);

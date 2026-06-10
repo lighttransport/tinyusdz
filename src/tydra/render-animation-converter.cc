@@ -110,11 +110,19 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
   // TODO: inbetweens BlendShape
   std::vector<value::token> blendShapes;
   if (skelAnim.blendShapes.authored()) {
-    if (!EvaluateTypedAttribute(env.stage, skelAnim.blendShapes, "blendShapes", &blendShapes, &_err)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to evaluate `blendShapes` in SkelAnimation Prim : {}", abs_path));
+    std::string blendShapeErr;
+    if (!EvaluateTypedAttribute(env.stage, skelAnim.blendShapes, "blendShapes", &blendShapes, &blendShapeErr)) {
+      if (skelAnim.blendShapes.is_value_empty()) {
+        PUSH_WARN(fmt::format(
+            "Skipping empty `blendShapes` declaration in SkelAnimation Prim : {}",
+            abs_path));
+      } else {
+        _err += blendShapeErr;
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to evaluate `blendShapes` in SkelAnimation Prim : {}", abs_path));
+      }
     }
 
-    if (!skelAnim.blendShapeWeights.authored()) {
+    if (blendShapes.size() && !skelAnim.blendShapeWeights.authored()) {
       PUSH_ERROR_AND_RETURN(fmt::format("`blendShapeWeights` must be authored for SkelAnimation Prim {}", abs_path));
     }
   }
