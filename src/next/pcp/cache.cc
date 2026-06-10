@@ -1090,6 +1090,7 @@ struct Cache::Impl {
           std::unique_ptr<Impl> wp(new Impl());
           wp->resolver = resolver;
           wp->options = options;
+          wp->load_rules_ = load_rules_;
           wp->reg_ = reg_;  // borrow the shared, parse-once registry
           wp->root_layer = root_layer;
           wp->root_identifier = root_identifier;
@@ -1339,7 +1340,10 @@ bool Cache::LoadPayload(const Path &p, LoadPolicy policy, std::string *warn,
 }
 bool Cache::UnloadPayload(const Path &p) { return impl_->UnloadPayload(p); }
 void Cache::SetLoadRules(const LoadRules &rules) { impl_->SetLoadRules(rules); }
-const LoadRules &Cache::GetLoadRules() const { return impl_->load_rules_; }
+LoadRules Cache::GetLoadRules() const {
+  NEXT_PCP_LOCK(impl_->api_mu_);
+  return impl_->load_rules_;
+}
 bool Cache::HasDeferredPayload(const Path &p) const {
   NEXT_PCP_LOCK(impl_->api_mu_);
   return impl_->deferred_payload_prims.count(p.str()) != 0;

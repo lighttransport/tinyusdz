@@ -169,6 +169,37 @@ void test_value() {
     assert(*t.as_token_array() == *t2.as_token_array());
   }
 
+  // Array equality/hash/raw-bytes must cover every concrete array backing type,
+  // not just float3/int. These are used by time-sample deduplication.
+  {
+    Value q1 = Value::MakeFloatCompArray(
+        std::vector<float>{0, 0, 0, 1, 0, 1, 0, 0}, TypeId::Quatf, 4);
+    Value q2 = Value::MakeFloatCompArray(
+        std::vector<float>{0, 0, 0, 1, 0, 1, 0, 0}, TypeId::Quatf, 4);
+    assert(q1 == q2);
+    assert(q1.hash() == q2.hash());
+    size_t n = 0;
+    const uint8_t* raw = q1.raw_bytes(&n);
+    assert(raw && n == 8 * sizeof(float));
+
+    Value m1 = Value::MakeDoubleCompArray(std::vector<double>(32, 2.0),
+                                          TypeId::Matrix4d, 16);
+    Value m2 = m1;
+    assert(m1 == m2);
+    assert(m1.hash() == m2.hash());
+    raw = m1.raw_bytes(&n);
+    assert(raw && n == 32 * sizeof(double));
+
+    Value tok1 = Value::MakeTokenArray(std::vector<std::string>{"a", "b"});
+    Value tok2 = Value::MakeTokenArray(std::vector<std::string>{"a", "b"});
+    assert(tok1 == tok2);
+    assert(tok1.hash() == tok2.hash());
+    assert(tok1.raw_bytes(&n) == nullptr && n == 0);
+
+    (*q2.as_float_array())[0] = 42.0f;
+    assert(q1 != q2);
+  }
+
   std::cout << "  Value tests passed!" << std::endl;
 }
 
