@@ -291,6 +291,130 @@ static void test_deferred_payload() {
   std::cout << "  OK" << std::endl;
 }
 
+// LoadRules: UnloadPayload must recompose so HasDeferredPayload is immediately
+// accurate (the old set-based code left it stale until the next compose), and a
+// Load/Unload round-trip must restore the deferred state. Base policy defaults
+// to load-all; we Unload the payload prim explicitly.
+static void test_load_rules_lifecycle() {
+  std::cout << "test_load_rules_lifecycle..." << std::endl;
+  AssetResolver resolver;
+  auto root = BuildRootLayer();
+  auto opened = pcp::Cache::Open(resolver, root);  // default: load all payloads
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  std::string warn, err;
+  // Initially loaded (default policy), so not deferred.
+  Stage s0;
+  assert(cache.BuildStage(&s0, &warn, &err));
+  assert(!cache.HasDeferredPayload(Path("/World/P")));
+  assert(s0.GetPrimAtPath("/World/P/Inner").IsValid() && "payload not loaded by default");
+
+  // Unload it: HasDeferredPayload must be TRUE right away (recompose happened),
+  // not stale -- this is the S7 fix.
+  assert(cache.UnloadPayload(Path("/World/P")));
+  assert(cache.HasDeferredPayload(Path("/World/P")) &&
+         "UnloadPayload left HasDeferredPayload stale");
+  Stage s1;
+  assert(cache.BuildStage(&s1, &warn, &err));
+  assert(!s1.GetPrimAtPath("/World/P/Inner").IsValid() && "payload content leaked after unload");
+
+  // Load it back with descendants.
+  assert(cache.LoadPayload(Path("/World/P"), &warn, &err));
+  assert(!cache.HasDeferredPayload(Path("/World/P")));
+  Stage s2;
+  assert(cache.BuildStage(&s2, &warn, &err));
+  assert(s2.GetPrimAtPath("/World/P/Inner").IsValid() && "payload did not reload");
+  std::cout << "  OK" << std::endl;
+}
+
+// SetLoadRules drives payload inclusion declaratively: LoadNone-style (Unload
+// root) defers all payloads; a targeted Load re-includes one subtree.
+static void test_set_load_rules() {
+  std::cout << "test_set_load_rules..." << std::endl;
+  AssetResolver resolver;
+  auto root = BuildRootLayer();
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  // Unload the whole stage: /World/P's payload is now deferred.
+  pcp::LoadRules rules;
+  rules.Unload("/");
+  cache.SetLoadRules(rules);
+
+  std::string warn, err;
+  Stage s0;
+  assert(cache.BuildStage(&s0, &warn, &err));
+  assert(cache.HasDeferredPayload(Path("/World/P")));
+  assert(!s0.GetPrimAtPath("/World/P/Inner").IsValid());
+
+  // Re-include just /World/P.
+  rules.LoadWithDescendants("/World/P");
+  cache.SetLoadRules(rules);
+  Stage s1;
+  assert(cache.BuildStage(&s1, &warn, &err));
+  assert(!cache.HasDeferredPayload(Path("/World/P")));
+  assert(s1.GetPrimAtPath("/World/P/Inner").IsValid() && "targeted load did not include payload");
+  std::cout << "  OK" << std::endl;
+}
+
+// Payload inside an instance: two instanceable prims with the same reference +
+// a deferred payload share one prototype (the payload contributes no arc while
+// deferred, so their keys match). Loading the payload on ONE changes its arc
+// set -> its instance key diverges -> it splits into its own prototype group.
+static void test_payload_in_instance() {
+  std::cout << "test_payload_in_instance..." << std::endl;
+  auto root = std::make_shared<Layer>();
+  {
+    LayerBuilder lb(*root);
+    lb.begin_prim("World", "Xform");
+    for (const char *nm : {"Pa", "Pb"}) {
+      lb.begin_prim(nm, "");
+      lb.current()->meta().references.push_back("</Lib/Model>");
+      lb.current()->meta().payloads.push_back("</Lib/Extra>");
+      lb.current()->meta().instanceable = true;
+      lb.end_prim();
+    }
+    lb.end_prim();  // World
+    lb.begin_prim("Lib", "Scope");
+    lb.begin_prim("Model", "Mesh");
+    lb.end_prim();
+    lb.begin_prim("Extra", "Scope");
+    lb.add_property("extraProp", Value::MakeFloat3(5, 5, 5));
+    lb.end_prim();
+    lb.end_prim();  // Lib
+    lb.finalize();
+  }
+
+  AssetResolver resolver;
+  pcp::CompositionOptions opts;
+  opts.payload_policy = [](const Path &, const std::string &) { return false; };
+  auto opened = pcp::Cache::Open(resolver, root, "", opts);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  std::string warn, err;
+  Stage s0;
+  assert(cache.BuildStage(&s0, &warn, &err));
+  // Both deferred-payload instances share one prototype.
+  assert(cache.GetPrototype(Path("/World/Pa")) ==
+             cache.GetPrototype(Path("/World/Pb")) &&
+         "deferred-payload instances did not share a prototype");
+  const size_t protos_before = cache.PrototypeCount();
+
+  // Load Pa's payload: its arc set now includes the payload content, so its key
+  // diverges from Pb's -> Pa is no longer grouped with Pb.
+  assert(cache.LoadPayload(Path("/World/Pa"), &warn, &err));
+  Stage s1;
+  assert(cache.BuildStage(&s1, &warn, &err));
+  assert(cache.GetPrototype(Path("/World/Pa")) !=
+             cache.GetPrototype(Path("/World/Pb")) &&
+         "loading a payload did not split the instance from its group");
+  assert(cache.PrototypeCount() > protos_before);
+  std::cout << "  OK" << std::endl;
+}
+
 // Phase 3: inherits + specializes, with LIVRPS strength
 // (Local > Inherit > Reference > Payload > Specialize).
 static void test_inherits_specializes() {
@@ -1340,6 +1464,9 @@ int main() {
   test_invalidate();
   test_ancestral_compute();
   test_deferred_payload();
+  test_load_rules_lifecycle();
+  test_set_load_rules();
+  test_payload_in_instance();
   test_inherits_specializes();
   test_variants();
   test_variant_content_key_stable();
