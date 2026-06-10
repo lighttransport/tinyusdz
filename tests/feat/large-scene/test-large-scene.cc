@@ -101,6 +101,26 @@ int main(int argc, char **argv) {
     }
   }
 
+  // --- Scenario 3: variant-content composition. The variantSet content is in a
+  // weaker sublayer, the selection in the root; the selected variant's child
+  // prims must reconstruct (the ALab baked_procedurals pattern). ---
+  {
+    const char *vfix = "tests/feat/large-scene/fixture/variant/root.usda";
+    LargeSceneLoadOptions o3;
+    o3.payload_mode = LargeSceneLoadOptions::PayloadMode::LoadAll;
+    LargeSceneLoader l3;
+    std::string w3, e3;
+    if (!l3.Load(vfix, o3, &w3, &e3)) {
+      std::cerr << "variant load failed: " << e3 << "\n";
+      ++g_failures;
+    } else {
+      CHECK(bool(l3.stage().GetPrimAtPath(Path("/P/GEO", ""))),
+            "/P/GEO (selected variant's child composed)");
+      CHECK(bool(l3.stage().GetPrimAtPath(Path("/P/GEO/M", ""))),
+            "/P/GEO/M (variant child's descendant composed)");
+    }
+  }
+
   if (g_failures == 0) {
     std::cout << "Large-scene composition tests passed.\n";
     return 0;
