@@ -7,6 +7,7 @@
 #include "lexer.hh"
 #include "value-parser.hh"
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -559,28 +560,62 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
     return true;
   };
   // Read an arc value that may be a bracketed list or a single value.
-  auto ReadArcList = [this, &ReadArcRef](std::vector<std::string>* target) {
+  // List-op qualifier applied to an arc list (prepend/append/delete/explicit).
+  enum class ArcQual { Explicit, Prepend, Append, Delete, Reorder };
+
+  // Read the bracketed (or single) arc references, then merge into `target`
+  // honoring the list-op qualifier: explicit (bare) replaces the list, prepend
+  // inserts at the front, append/reorder push to the back, delete removes. This
+  // matches AOUSD list-op semantics for opinions authored within a single spec
+  // (cross-layer-stack merging is still strongest-first append in composition).
+  auto ReadArcList = [this, &ReadArcRef](std::vector<std::string>* target,
+                                         ArcQual qual) {
+    std::vector<std::string> items;
     if (Match(TokenType::OpenBracket)) {
       while (!Check(TokenType::CloseBracket) && !AtEnd()) {
         std::string ref;
         if (!ReadArcRef(&ref)) break;
-        target->push_back(ref);
+        items.push_back(ref);
         Match(TokenType::Comma);
       }
       Match(TokenType::CloseBracket);
     } else {
       std::string ref;
-      if (ReadArcRef(&ref)) target->push_back(ref);
+      if (ReadArcRef(&ref)) items.push_back(ref);
+    }
+
+    switch (qual) {
+      case ArcQual::Explicit:
+        *target = std::move(items);
+        break;
+      case ArcQual::Prepend:
+        target->insert(target->begin(), items.begin(), items.end());
+        break;
+      case ArcQual::Append:
+      case ArcQual::Reorder:
+        target->insert(target->end(), items.begin(), items.end());
+        break;
+      case ArcQual::Delete:
+        for (const std::string& d : items) {
+          target->erase(std::remove(target->begin(), target->end(), d),
+                        target->end());
+        }
+        break;
     }
   };
 
   while (!Check(TokenType::CloseParen) && !AtEnd()) {
     // Optional list-op qualifier keyword (prepend/append/delete/reorder)
-    // precedes the real key, e.g. `prepend references = [...]`. Consume it; the
-    // qualifier semantics are not yet modeled (arcs are a flat list).
-    if (!(Match(TokenType::Prepend) || Match(TokenType::Append) ||
-          Match(TokenType::Delete) || Match(TokenType::Reorder))) {
-      // no qualifier
+    // precedes the real key, e.g. `prepend references = [...]`.
+    ArcQual arc_qual = ArcQual::Explicit;
+    if (Match(TokenType::Prepend)) {
+      arc_qual = ArcQual::Prepend;
+    } else if (Match(TokenType::Append)) {
+      arc_qual = ArcQual::Append;
+    } else if (Match(TokenType::Delete)) {
+      arc_qual = ArcQual::Delete;
+    } else if (Match(TokenType::Reorder)) {
+      arc_qual = ArcQual::Reorder;
     }
 
     std::string key;
@@ -627,13 +662,13 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         Match(TokenType::CloseBracket);
       }
     } else if (key == "references") {
-      ReadArcList(&prim->meta().references);
+      ReadArcList(&prim->meta().references, arc_qual);
     } else if (key == "payload") {
-      ReadArcList(&prim->meta().payloads);
+      ReadArcList(&prim->meta().payloads, arc_qual);
     } else if (key == "inherits") {
-      ReadArcList(&prim->meta().inherits);
+      ReadArcList(&prim->meta().inherits, arc_qual);
     } else if (key == "specializes") {
-      ReadArcList(&prim->meta().specializes);
+      ReadArcList(&prim->meta().specializes, arc_qual);
     } else if (key == "variantSets") {
       // variantSets = ["setName1", "setName2"]
       if (Match(TokenType::OpenBracket)) {

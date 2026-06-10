@@ -402,6 +402,42 @@ def Sphere "MySphere" {
 }
 
 // ============================================================
+// Arc list-op qualifiers (prepend / append / delete)
+// ============================================================
+
+void test_arc_listops() {
+  std::cout << "Testing arc list-op qualifiers..." << std::endl;
+
+  // prepend inserts at the front; append at the back; delete removes. The
+  // composed `references` list must reflect those ops in authoring order.
+  const char* input = R"(#usda 1.0
+def "A" (
+    references = [@base.usd@</X>]
+    prepend references = [@front.usd@</X>]
+    append references = [@back.usd@</X>]
+    delete references = [@base.usd@</X>]
+)
+{
+}
+)";
+  LoadResult result = LoadUSDAFromString(input, std::strlen(input));
+  assert(result.success);
+  UsdPrim a = result.stage.GetPrimAtPath("/A");
+  assert(a.IsValid());
+  const std::vector<std::string>& refs = a.GetMeta().references;
+  // explicit [base] -> prepend front -> [front, base] -> append back ->
+  // [front, base, back] -> delete base -> [front, back].
+  assert(refs.size() == 2 && "list-op qualifiers not applied");
+  assert(refs[0].find("front.usd") != std::string::npos && "prepend not at front");
+  assert(refs[1].find("back.usd") != std::string::npos && "append not at back");
+  for (const auto& r : refs) {
+    assert(r.find("base.usd") == std::string::npos && "delete did not remove");
+  }
+
+  std::cout << "  Arc list-op tests passed!" << std::endl;
+}
+
+// ============================================================
 // Physics schema readers (regression: vector3f / quatf properties were dropped)
 // ============================================================
 
@@ -481,6 +517,7 @@ int main() {
     test_value_parser();
     test_ascii_parser();
     test_usda_reader();
+    test_arc_listops();
     test_physics_schema();
 
     std::cout << std::endl;
