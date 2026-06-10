@@ -717,6 +717,11 @@ bool IsLazyArrayType(CrateTypeId t, bool compressed) {
     case CrateTypeId::Matrix2d:
     case CrateTypeId::Matrix3d:
     case CrateTypeId::Matrix4d:
+    case CrateTypeId::Half:
+    case CrateTypeId::Vec2h:
+    case CrateTypeId::Vec3h:
+    case CrateTypeId::Vec4h:
+    case CrateTypeId::Quath:
     case CrateTypeId::Int64:
     case CrateTypeId::UInt64:
     case CrateTypeId::Bool:
@@ -914,6 +919,23 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       if (!read_raw(data.data(), stride_bytes)) return false;
       out = Value::MakeDoubleCompArray(std::move(data),
                                        CrateArrayValueType(type_id), comps);
+      return true;
+    }
+    case CrateTypeId::Half:
+    case CrateTypeId::Vec2h:
+    case CrateTypeId::Vec3h:
+    case CrateTypeId::Vec4h:
+    case CrateTypeId::Quath: {
+      if (compressed) { AddWarning("Compressed half arrays not supported"); return false; }
+      const uint32_t comps = CrateArrayElemStride(type_id) / 2;  // 2 bytes/half
+      size_t scalars;
+      if (comps == 0 || !safe::mul(static_cast<size_t>(count), size_t(comps), &scalars)) return false;
+      std::vector<uint16_t> halfs(scalars);
+      if (!read_raw(halfs.data(), comps * 2)) return false;
+      std::vector<float> data(scalars);
+      for (size_t i = 0; i < scalars; ++i) data[i] = HalfToFloat(halfs[i]);
+      out = Value::MakeFloatCompArray(std::move(data),
+                                      CrateArrayValueType(type_id), comps);
       return true;
     }
     default:

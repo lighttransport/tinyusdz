@@ -116,6 +116,10 @@ CrateTypeId ToCrateTypeId(TypeId type_id) {
     case TypeId::Int64:   return CrateTypeId::Int64;
     case TypeId::UInt64:  return CrateTypeId::UInt64;
     case TypeId::Half:    return CrateTypeId::Half;
+    case TypeId::Half2:   return CrateTypeId::Vec2h;
+    case TypeId::Half3:   return CrateTypeId::Vec3h;
+    case TypeId::Half4:   return CrateTypeId::Vec4h;
+    case TypeId::Quath:   return CrateTypeId::Quath;
     case TypeId::Float:   return CrateTypeId::Float;
     case TypeId::Double:  return CrateTypeId::Double;
     case TypeId::String:  return CrateTypeId::String;
@@ -157,15 +161,19 @@ CrateTypeId ToCrateTypeId(TypeId type_id) {
 /// Scalars per element for a flat float/double vector/quat/matrix array TypeId.
 uint32_t ArrayComps(TypeId tid) {
   switch (tid) {
+    case TypeId::Half:
+      return 1;
     case TypeId::Float2:
     case TypeId::Double2:
     case TypeId::Texcoord2f:
+    case TypeId::Half2:
       return 2;
     case TypeId::Float3:
     case TypeId::Double3:
     case TypeId::Point3d:
     case TypeId::Vector3d:
     case TypeId::Normal3d:
+    case TypeId::Half3:
       return 3;
     case TypeId::Float4:
     case TypeId::Double4:
@@ -174,6 +182,8 @@ uint32_t ArrayComps(TypeId tid) {
     case TypeId::Quatd:
     case TypeId::Matrix2f:
     case TypeId::Matrix2d:
+    case TypeId::Half4:
+    case TypeId::Quath:
       return 4;
     case TypeId::Matrix3f:
     case TypeId::Matrix3d:
@@ -1351,6 +1361,29 @@ private:
             arr_data.resize(8 + bytes);
             std::memcpy(arr_data.data(), &count, 8);
             std::memcpy(arr_data.data() + 8, arr->data(), bytes);
+          }
+          break;
+        }
+        // Half arrays materialize as a float buffer; narrow back to uint16 half
+        // for the crate (only reached when the array is materialized, not on the
+        // lazy byte-passthrough path).
+        case TypeId::Half:
+        case TypeId::Half2:
+        case TypeId::Half3:
+        case TypeId::Half4:
+        case TypeId::Quath: {
+          const std::vector<float>* arr = val.as_float_array();
+          const uint32_t comps = ArrayComps(type_id);
+          if (arr && comps && arr->size() % comps == 0) {
+            count = arr->size() / comps;
+            size_t bytes = arr->size() * sizeof(uint16_t);
+            arr_data.resize(8 + bytes);
+            std::memcpy(arr_data.data(), &count, 8);
+            for (size_t i = 0; i < arr->size(); ++i) {
+              uint16_t h = FloatToHalf((*arr)[i]);
+              std::memcpy(arr_data.data() + 8 + i * sizeof(uint16_t), &h,
+                          sizeof(uint16_t));
+            }
           }
           break;
         }

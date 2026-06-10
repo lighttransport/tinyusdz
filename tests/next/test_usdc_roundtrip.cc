@@ -609,14 +609,77 @@ void test_roundtrip_vec_matrix_arrays() {
   std::cout << "  vec/matrix/quat array roundtrip passed!\n\n";
 }
 
+// HalfToFloat/FloatToHalf: every finite half bit pattern must survive
+// half -> float -> half byte-exact (NaN payloads excluded).
+void test_half_conversion() {
+  std::cout << "Testing half<->float conversion...\n";
+  size_t checked = 0;
+  for (uint32_t bits = 0; bits < 0x10000u; ++bits) {
+    uint16_t h = static_cast<uint16_t>(bits);
+    uint32_t exp = (h >> 10) & 0x1Fu;
+    uint32_t mant = h & 0x3FFu;
+    if (exp == 0x1Fu && mant != 0) continue;  // skip NaN (payload not preserved)
+    float f = HalfToFloat(h);
+    uint16_t h2 = FloatToHalf(f);
+    assert(h2 == h && "half->float->half not exact");
+    ++checked;
+  }
+  assert(HalfToFloat(0x3C00) == 1.0f && "half 1.0");
+  assert(HalfToFloat(0xC000) == -2.0f && "half -2.0");
+  std::cout << "  " << checked << " half patterns round-tripped exactly\n\n";
+}
+
+// Half / Vec3h / Quath arrays must survive write -> read (values chosen exactly
+// representable in half so the comparison is exact).
+void test_roundtrip_half_arrays() {
+  std::cout << "Testing roundtrip half arrays...\n";
+
+  Layer layer;
+  LayerBuilder b(layer);
+  b.begin_prim("Geo", "Mesh");
+  std::vector<float> h1 = {1.0f, -2.0f, 0.5f, 0.25f};            // 4 x Half
+  std::vector<float> h3 = {1.0f, 2.0f, 3.0f, -1.0f, 0.5f, 4.0f}; // 2 x Half3
+  std::vector<float> qh = {0.0f, 0.0f, 0.0f, 1.0f};             // 1 x Quath
+  b.add_property("h1", Value::MakeFloatCompArray(std::vector<float>(h1), TypeId::Half, 1));
+  b.add_property("h3", Value::MakeFloatCompArray(std::vector<float>(h3), TypeId::Half3, 3));
+  b.add_property("qh", Value::MakeFloatCompArray(std::vector<float>(qh), TypeId::Quath, 4));
+  b.end_prim();
+  b.finalize();
+
+  CrateWriter writer;
+  std::vector<uint8_t> buf;
+  CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
+  assert(wr.success);
+
+  CrateReader reader;
+  CrateReadResult rr = reader.Read(buf.data(), buf.size());
+  assert(rr.success && "re-read of half arrays failed");
+  const PrimSpec* geo = rr.stage.GetRootLayer()->prim_at_path("/Geo");
+  assert(geo);
+
+  auto check = [&](const char* name, const std::vector<float>& expect, TypeId t) {
+    const Value* v = geo->property_value(name);
+    assert(v && v->is_array() && v->type_id() == t);
+    const std::vector<float>* arr = v->as_float_array();  // materializes half->float
+    assert(arr && *arr == expect);
+  };
+  check("h1", h1, TypeId::Half);
+  check("h3", h3, TypeId::Half3);
+  check("qh", qh, TypeId::Quath);
+
+  std::cout << "  half array roundtrip passed!\n\n";
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next USDC Roundtrip Tests ===\n\n";
 
   try {
+    test_half_conversion();
     test_roundtrip_schema_types();
     test_roundtrip_layer_metadata();
     test_roundtrip_time_samples();
     test_roundtrip_vec_matrix_arrays();
+    test_roundtrip_half_arrays();
     test_write_usdc_from_stage_api();
 
     std::cout << "=== All USDC roundtrip tests passed! ===\n";
