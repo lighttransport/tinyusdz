@@ -685,6 +685,7 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
   // weaker opinion (used for list-op accumulation + cross-directory anchoring).
   const bool dst_had_refs = dst.metas().references.has_value();
   const bool dst_had_payload = dst.metas().payload.has_value();
+  const bool dst_had_variant_sets = dst.metas().variantSets.has_value();
   const bool dst_had_arcs = dst_had_refs || dst_had_payload;
 
   // Combine metadataum (weaker fills in where stronger is not authored)
@@ -704,6 +705,12 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
   if (dst_had_payload && src.metas().payload.has_value()) {
     auto &dpl = dst.metas().payload.value();
     for (const auto &e : src.metas().payload.value()) dpl.push_back(e);
+  }
+  if (dst_had_variant_sets && src.metas().variantSets.has_value()) {
+    auto &dvsets = dst.metas().variantSets.value();
+    for (const auto &e : src.metas().variantSets.value()) {
+      dvsets.push_back(e);
+    }
   }
 
   // Cross-directory anchoring for the reference/payload arcs: if the arcs were
@@ -1970,7 +1977,10 @@ bool ExtractReferencesAssetPathsImpl(const PrimSpec &primspec, std::vector<std::
         const auto &refecences = ref_op.second;
 
         for (const auto &reference : refecences) {
-          paths.push_back(reference.asset_path.GetAssetPath());
+          std::string asset_path = reference.asset_path.GetAssetPath();
+          if (!asset_path.empty()) {
+            paths.push_back(std::move(asset_path));
+          }
         }
       }
     }
@@ -2070,7 +2080,10 @@ bool ExtractPayloadAssetPathsImpl(const PrimSpec &primspec, std::vector<std::str
         const auto &payload = payload_op.second;
 
         for (const auto &pl : payload) {
-          paths.push_back(pl.asset_path.GetAssetPath());
+          std::string asset_path = pl.asset_path.GetAssetPath();
+          if (!asset_path.empty()) {
+            paths.push_back(std::move(asset_path));
+          }
         }
       }
     }

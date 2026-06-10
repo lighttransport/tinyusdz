@@ -12,7 +12,24 @@
 #include "layer.hh"
 #include "tinyusdz.hh"
 
+#include <fstream>
+#include <filesystem>
+
 using namespace tinyusdz;
+
+namespace {
+
+bool WriteTextFileForCompositionTest(const std::string &path,
+                                     const std::string &content) {
+  std::ofstream ofs(path, std::ios::out | std::ios::trunc);
+  if (!ofs) {
+    return false;
+  }
+  ofs << content;
+  return bool(ofs);
+}
+
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // 1. comp_inherits_child_prims_test
@@ -487,6 +504,154 @@ void comp_variant_nested_children_test(void) {
   if (!found_nested) {
     TEST_MSG("Nested child not found in Root after CompositeVariant");
   }
+}
+
+// ---------------------------------------------------------------------------
+// comp_sublayer_variant_sets_merge_test
+// Stronger and weaker sublayers can author different variantSets and selection
+// entries on the same prim. The composed prim must keep all set names so all
+// selected variants are applied.
+// ---------------------------------------------------------------------------
+void comp_sublayer_variant_sets_merge_test(void) {
+  namespace fs = std::filesystem;
+
+  std::error_code ec;
+  fs::path dir = fs::temp_directory_path(ec) /
+                 "tinyusdz_comp_sublayer_variant_sets_merge";
+  TEST_CHECK(!ec);
+  if (ec) {
+    return;
+  }
+
+  fs::create_directories(dir, ec);
+  TEST_CHECK(!ec);
+  if (ec) {
+    return;
+  }
+
+  const fs::path weak_path = dir / "weak.usda";
+  const fs::path root_path = dir / "root.usda";
+
+  const std::string weak_usda = R"(#usda 1.0
+
+over "Root" (
+    variants = {
+        string look = "uvgrid"
+    }
+    prepend variantSets = "look"
+)
+{
+    variantSet "look" = {
+        "uvgrid" {
+            over "Geom"
+            {
+                custom token lookMarker = "uvgrid"
+            }
+        }
+    }
+}
+)";
+
+  const std::string root_usda = R"(#usda 1.0
+(
+    subLayers = [
+        @weak.usda@
+    ]
+)
+
+def Xform "Root" (
+    variants = {
+        string shape = "subdiv"
+    }
+    prepend variantSets = "shape"
+)
+{
+    def Xform "Geom"
+    {
+    }
+    variantSet "shape" = {
+        "subdiv" {
+            over "Geom"
+            {
+                custom token shapeMarker = "subdiv"
+            }
+        }
+    }
+}
+)";
+
+  TEST_CHECK(WriteTextFileForCompositionTest(weak_path.string(), weak_usda));
+  TEST_CHECK(WriteTextFileForCompositionTest(root_path.string(), root_usda));
+
+  Layer root_layer;
+  std::string warn, err;
+  TEST_CHECK(LoadLayerFromFile(root_path.string(), &root_layer, &warn, &err));
+  if (!err.empty()) {
+    TEST_MSG("LoadLayerFromFile error: %s", err.c_str());
+  }
+
+  AssetResolutionResolver resolver;
+  Layer sublayer_composited;
+  TEST_CHECK(CompositeSublayers(resolver, root_layer, &sublayer_composited,
+                                &warn, &err));
+  if (!err.empty()) {
+    TEST_MSG("CompositeSublayers error: %s", err.c_str());
+  }
+
+  auto root_it = sublayer_composited.primspecs().find("Root");
+  TEST_CHECK(root_it != sublayer_composited.primspecs().end());
+  if (root_it == sublayer_composited.primspecs().end()) {
+    return;
+  }
+
+  const PrimSpec &root = root_it->second;
+  TEST_CHECK(root.metas().variants.has_value());
+  TEST_CHECK(root.metas().variantSets.has_value());
+  TEST_CHECK(root.metas().variants->count("shape") == 1);
+  TEST_CHECK(root.metas().variants->count("look") == 1);
+
+  bool has_shape_set = false;
+  bool has_look_set = false;
+  if (root.metas().variantSets) {
+    for (const auto &op : root.metas().variantSets.value()) {
+      for (const auto &name : op.second) {
+        has_shape_set = has_shape_set || (name == "shape");
+        has_look_set = has_look_set || (name == "look");
+      }
+    }
+  }
+  TEST_CHECK(has_shape_set);
+  TEST_CHECK(has_look_set);
+
+  Layer variant_composited;
+  TEST_CHECK(CompositeVariant(sublayer_composited, &variant_composited, &warn,
+                              &err));
+  if (!err.empty()) {
+    TEST_MSG("CompositeVariant error: %s", err.c_str());
+  }
+
+  auto final_root_it = variant_composited.primspecs().find("Root");
+  TEST_CHECK(final_root_it != variant_composited.primspecs().end());
+  if (final_root_it == variant_composited.primspecs().end()) {
+    return;
+  }
+
+  auto geom_it = std::find_if(final_root_it->second.children().begin(),
+                              final_root_it->second.children().end(),
+                              [](const PrimSpec &ps) {
+                                return ps.name() == "Geom";
+                              });
+  TEST_CHECK(geom_it != final_root_it->second.children().end());
+  if (geom_it == final_root_it->second.children().end()) {
+    return;
+  }
+
+  TEST_CHECK(geom_it->props().count("shapeMarker") == 1);
+  TEST_CHECK(geom_it->props().count("lookMarker") == 1);
+
+  fs::remove(root_path, ec);
+  fs::remove(weak_path, ec);
+  fs::remove(dir, ec);
 }
 
 // ---------------------------------------------------------------------------

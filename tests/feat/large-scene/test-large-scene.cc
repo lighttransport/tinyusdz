@@ -15,6 +15,7 @@
 
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include "large-scene-loader.hh"
 #include "stage.hh"
@@ -139,6 +140,175 @@ int main(int argc, char **argv) {
             "/P/GEO (reference-introduced variant content composed)");
       CHECK(bool(l4.stage().GetPrimAtPath(Path("/P/GEO/M", ""))),
             "/P/GEO/M (reference variant child's descendant composed)");
+    }
+  }
+
+  // --- Scenario 5: variant content can author composition arcs on the selected
+  // prim itself. After resolving the variant, the DAG must re-scan the resolved
+  // PrimSpec so self-authored references/payloads are evaluated. ---
+  {
+    const char *safix =
+        "tests/feat/large-scene/fixture/variant-self-arc/root.usda";
+
+    LargeSceneLoadOptions o5;
+    o5.payload_mode = LargeSceneLoadOptions::PayloadMode::LoadAll;
+    LargeSceneLoader l5;
+    std::string w5, e5;
+    if (!l5.Load(safix, o5, &w5, &e5)) {
+      std::cerr << "variant-self-arc load failed: " << e5 << "\n";
+      ++g_failures;
+    } else {
+      CHECK(bool(l5.stage().GetPrimAtPath(Path("/P/M", ""))),
+            "/P/M (selected variant's self-reference composed)");
+      CHECK(bool(l5.stage().GetPrimAtPath(Path("/Q/PM", ""))),
+            "/Q/PM (selected variant's self-payload composed)");
+    }
+
+    LargeSceneLoadOptions o5d;
+    o5d.payload_mode = LargeSceneLoadOptions::PayloadMode::LoadNone;
+    LargeSceneLoader l5d;
+    std::string w5d, e5d;
+    if (!l5d.Load(safix, o5d, &w5d, &e5d)) {
+      std::cerr << "variant-self-arc deferred load failed: " << e5d << "\n";
+      ++g_failures;
+    } else {
+      CHECK(l5d.deferred_count() == 1,
+            "selected variant's self-payload deferred");
+      const std::vector<Path> deferred = l5d.deferred_payload_paths();
+      if (!deferred.empty()) {
+        CHECK(deferred.front() == Path("/Q", ""),
+              "deferred self-payload recorded on /Q");
+      }
+      CHECK(!bool(l5d.stage().GetPrimAtPath(Path("/Q/PM", ""))),
+            "/Q/PM absent while self-payload is deferred");
+
+      std::string lwarn, lerr;
+      if (!l5d.load_payload(Path("/Q", ""), &lwarn, &lerr)) {
+        std::cerr << "variant-self-arc load_payload failed: " << lerr << "\n";
+        ++g_failures;
+      } else {
+        std::string rwarn, rerr;
+        if (!l5d.rebuild_stage(&rwarn, &rerr)) {
+          std::cerr << "variant-self-arc rebuild after load failed: " << rerr
+                    << "\n";
+          ++g_failures;
+        } else {
+          CHECK(l5d.deferred_count() == 0,
+                "deferred self-payload cleared after load_payload");
+          CHECK(bool(l5d.stage().GetPrimAtPath(Path("/Q/PM", ""))),
+                "/Q/PM appears after load_payload + rebuild_stage");
+        }
+      }
+
+      std::string uwarn, uerr;
+      if (!l5d.unload_payload(Path("/Q", ""), &uwarn, &uerr)) {
+        std::cerr << "variant-self-arc unload_payload failed: " << uerr
+                  << "\n";
+        ++g_failures;
+      } else {
+        std::string rwarn, rerr;
+        if (!l5d.rebuild_stage(&rwarn, &rerr)) {
+          std::cerr << "variant-self-arc rebuild after unload failed: " << rerr
+                    << "\n";
+          ++g_failures;
+        } else {
+          CHECK(l5d.deferred_count() == 1,
+                "deferred self-payload restored after unload_payload");
+          CHECK(!bool(l5d.stage().GetPrimAtPath(Path("/Q/PM", ""))),
+                "/Q/PM removed after unload_payload + rebuild_stage");
+        }
+      }
+    }
+  }
+
+  // --- Scenario 6: lazy payload loading must stamp the loaded payload layer
+  // with its resolved directory. Otherwise nested relative arcs authored inside
+  // the streamed payload resolve against the process/root cwd instead of the
+  // payload file's directory. ---
+  {
+    const char *nfix =
+        "tests/feat/large-scene/fixture/deferred-nested/root.usda";
+
+    LargeSceneLoadOptions o6;
+    o6.payload_mode = LargeSceneLoadOptions::PayloadMode::LoadNone;
+    o6.allow_parent_relative_paths = true;
+    LargeSceneLoader l6;
+    std::string w6, e6;
+    if (!l6.Load(nfix, o6, &w6, &e6)) {
+      std::cerr << "deferred-nested load failed: " << e6 << "\n";
+      ++g_failures;
+    } else {
+      CHECK(l6.deferred_count() == 1,
+            "cross-directory payload deferred before streaming");
+      CHECK(!bool(l6.stage().GetPrimAtPath(Path("/P/Nested/M", ""))),
+            "/P/Nested/M absent before streaming nested payload");
+
+      std::string lwarn, lerr;
+      if (!l6.load_payload(Path("/P", ""), &lwarn, &lerr)) {
+        std::cerr << "deferred-nested load_payload failed: " << lerr << "\n";
+        ++g_failures;
+      } else {
+        std::string rwarn, rerr;
+        if (!l6.rebuild_stage(&rwarn, &rerr)) {
+          std::cerr << "deferred-nested rebuild after load failed: " << rerr
+                    << "\n";
+          ++g_failures;
+        } else {
+          CHECK(bool(l6.stage().GetPrimAtPath(Path("/P/Nested/M", ""))),
+                "/P/Nested/M appears after streamed payload follows nested ./leaf.usda");
+        }
+      }
+    }
+  }
+
+  // --- Scenario 7: resolver file descriptor budget. Large scene loading should
+  // fail with a clear error when the configured descriptor/handle limit is
+  // reached during sublayer/reference/payload loading. ---
+  {
+    LargeSceneLoadOptions olimit;
+    olimit.payload_mode = LargeSceneLoadOptions::PayloadMode::LoadAll;
+    olimit.max_file_descriptors = 0;
+    LargeSceneLoader llimit;
+    std::string wlimit, elimit;
+    if (llimit.Load(kRoot, olimit, &wlimit, &elimit)) {
+      std::cerr << "descriptor-limit load unexpectedly succeeded\n";
+      ++g_failures;
+    } else {
+      CHECK(elimit.find("file descriptor limit reached") != std::string::npos,
+            "descriptor-limit error is reported");
+    }
+  }
+
+  // --- Scenario 8: descriptor-limit errors from reference/payload graph
+  // composition are fatal even though ordinary missing assets are otherwise
+  // skippable. ---
+  {
+    const char *fdref =
+        "tests/feat/large-scene/fixture/fd-limit-ref/root.usda";
+
+    LargeSceneLoadOptions okopts;
+    okopts.payload_mode = LargeSceneLoadOptions::PayloadMode::LoadAll;
+    LargeSceneLoader lok;
+    std::string wok, eok;
+    if (!lok.Load(fdref, okopts, &wok, &eok)) {
+      std::cerr << "fd-limit-ref baseline load failed: " << eok << "\n";
+      ++g_failures;
+    } else {
+      CHECK(bool(lok.stage().GetPrimAtPath(Path("/P/M", ""))),
+            "fd-limit-ref baseline reference composed");
+    }
+
+    LargeSceneLoadOptions failopts;
+    failopts.payload_mode = LargeSceneLoadOptions::PayloadMode::LoadAll;
+    failopts.max_file_descriptors = 0;
+    LargeSceneLoader lfail;
+    std::string wfail, efail;
+    if (lfail.Load(fdref, failopts, &wfail, &efail)) {
+      std::cerr << "fd-limit-ref graph load unexpectedly succeeded\n";
+      ++g_failures;
+    } else {
+      CHECK(efail.find("file descriptor limit reached") != std::string::npos,
+            "descriptor-limit graph composition error is reported");
     }
   }
 
