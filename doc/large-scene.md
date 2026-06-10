@@ -298,32 +298,41 @@ Regression: `feat-large-scene` scenario 2 (`fixture/multi/`) covers all three �
 two sublayers each `prepend references` to `/P`, one asset aggregating geometry
 through its own subLayers; both `/P/MA` and `/P/MB` must reconstruct.
 
-### 3.5 Variant-content composition — FIXED (root/subLayer variant sets)
+### 3.5 Variant-content composition — FIXED
 
-CompositionGraph records variant *selections* but `ResolveAndApplyVariants` is a
-no-op, so the selected variant's *content* (child prims + their nested
+CompositionGraph recorded variant *selections* but `ResolveAndApplyVariants` was
+a no-op, so the selected variant's *content* (child prims + their nested
 references/payloads/clips) was never composed — variant-gated geometry (e.g.
-baked_procedurals' `GEO`) was dropped. Two fixes:
+baked_procedurals' `GEO`, or ALab characters behind their `geo`/`alfro`
+variants) was dropped. Two fixes:
 - **Merge variantSet content across composition** (`CombinePrimSpecRec`,
   `src/composition.cc`): the `variantSet "x" = { … }` blocks live in
   `variantSets()` and were not merged when a prim received opinions from
   multiple layers, so a prim selecting a variant whose set is defined in a
   weaker sublayer lost the content. Now the per-variant content is merged.
-- **Resolve authored variant selections before Compose** (`LargeSceneLoader`,
-  reusing the LIVRPS `ApplyVariantSelector` + `ListVariantSelectionMaps`): the
-  selected variant's content is flattened into the prim tree, after which the
-  normal namespace expansion reconstructs the variant's children.
+- **Compose variant content in the DAG** (`PrimIndexBuilder::ApplyVariantContent`,
+  `src/composition-graph.cc`): after a prim's arcs are evaluated, compose the
+  variant selection (strongest per set across nodes) and, for every node that
+  authors a matching variant set, resolve the selected variant
+  (`VariantSelectPrimSpec`, injecting the composed selection) and repoint the
+  node at the resolved PrimSpec — **materialized in a synthetic layer** owned by
+  the composition context (since `find_primspec_at` has no variant-path
+  support). The variant's child prims then enter the namespace and the normal
+  expansion follows their arcs. Because the selection and the variant set may be
+  authored on different nodes, this handles **both** variant sets defined in the
+  root layer stack **and** variant sets introduced via a reference (asset
+  defines the set, a stronger layer selects it — the ALab character pattern).
 
-Regression: `feat-large-scene` scenario 3 (`fixture/variant/`) — variantSet
-content in a weaker sublayer, selection in the root; `/P/GEO` and `/P/GEO/M`
-must reconstruct.
+Regression: `feat-large-scene` scenarios 3 (`fixture/variant/`, set in a weaker
+sublayer) and 4 (`fixture/variant-ref/`, set in a referenced asset) — both
+require `/P/GEO` and `/P/GEO/M` to reconstruct. On the ALab shot this composes
+the character geometry (3,293 → 4,560 prims, 1,271 → 2,540 deferred payloads);
+Caldera is unchanged (32,811). Value clips themselves (`clips` metadata) are
+resolved at Tydra / attribute-evaluation time (`enable_value_clips`), not during
+composition.
 
-**Remaining:** this resolves variant sets defined in the root layer stack (root
-+ subLayers). A variant set introduced via a *reference* (an asset defines the
-set, a stronger layer selects it) is not yet composed by the DAG — that needs
-variant-aware nodes in CompositionGraph's per-prim index. Value clips themselves
-(`clips` metadata) are resolved at Tydra / attribute-evaluation time
-(`enable_value_clips`), not during composition.
+Limitation: variant content that adds composition arcs *on the prim itself*
+(rather than as child prims) is not re-scanned after resolution.
 
 ### 3.6 Smaller items
 

@@ -121,6 +121,27 @@ int main(int argc, char **argv) {
     }
   }
 
+  // --- Scenario 4: reference-introduced variant set. The variant set + content
+  // are defined in a referenced asset; the selection is on the stronger
+  // referencing layer (the ALab character pattern). The DAG must compose the
+  // selected variant's content across nodes. ---
+  {
+    const char *rvfix = "tests/feat/large-scene/fixture/variant-ref/root.usda";
+    LargeSceneLoadOptions o4;
+    o4.payload_mode = LargeSceneLoadOptions::PayloadMode::LoadAll;
+    LargeSceneLoader l4;
+    std::string w4, e4;
+    if (!l4.Load(rvfix, o4, &w4, &e4)) {
+      std::cerr << "variant-ref load failed: " << e4 << "\n";
+      ++g_failures;
+    } else {
+      CHECK(bool(l4.stage().GetPrimAtPath(Path("/P/GEO", ""))),
+            "/P/GEO (reference-introduced variant content composed)");
+      CHECK(bool(l4.stage().GetPrimAtPath(Path("/P/GEO/M", ""))),
+            "/P/GEO/M (reference variant child's descendant composed)");
+    }
+  }
+
   if (g_failures == 0) {
     std::cout << "Large-scene composition tests passed.\n";
     return 0;
