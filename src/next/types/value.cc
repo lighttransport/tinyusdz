@@ -78,6 +78,50 @@ bool UsesStringStorage(TypeId id) {
   return id == TypeId::String || id == TypeId::Token || id == TypeId::AssetPath;
 }
 
+// Array element types stored as a flat std::vector<float> (FloatArrayStorage):
+// scalar floats plus all float vector/quat/matrix/color types.
+bool IsFloatBackedArray(TypeId id) {
+  switch (id) {
+    case TypeId::Float:
+    case TypeId::Float2:
+    case TypeId::Float3:
+    case TypeId::Float4:
+    case TypeId::Point3f:
+    case TypeId::Vector3f:
+    case TypeId::Normal3f:
+    case TypeId::Color3f:
+    case TypeId::Color4f:
+    case TypeId::Texcoord2f:
+    case TypeId::Quatf:
+    case TypeId::Matrix2f:
+    case TypeId::Matrix3f:
+    case TypeId::Matrix4f:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Array element types stored as a flat std::vector<double> (DoubleArrayStorage).
+bool IsDoubleBackedArray(TypeId id) {
+  switch (id) {
+    case TypeId::Double:
+    case TypeId::Double2:
+    case TypeId::Double3:
+    case TypeId::Double4:
+    case TypeId::Point3d:
+    case TypeId::Vector3d:
+    case TypeId::Normal3d:
+    case TypeId::Quatd:
+    case TypeId::Matrix2d:
+    case TypeId::Matrix3d:
+    case TypeId::Matrix4d:
+      return true;
+    default:
+      return false;
+  }
+}
+
 // Check if type requires heap allocation
 bool RequiresHeap(TypeId id, bool is_array) {
   if (is_array) return true;
@@ -549,6 +593,30 @@ Value Value::MakeTokenArray(std::vector<std::string>&& data) {
   new (v.storage_) ArrayHandle(std::make_shared<TokenArrayStorage>(std::move(data))); return v;
 }
 
+Value Value::MakeFloatCompArray(std::vector<float>&& data, TypeId elem_type,
+                                uint32_t comps_per_elem) {
+  Value v;
+  v.type_id_ = elem_type;
+  v.is_array_ = true;
+  v.array_size_ = comps_per_elem
+                      ? static_cast<uint32_t>(data.size() / comps_per_elem)
+                      : 0;
+  new (v.storage_) ArrayHandle(std::make_shared<FloatArrayStorage>(std::move(data)));
+  return v;
+}
+
+Value Value::MakeDoubleCompArray(std::vector<double>&& data, TypeId elem_type,
+                                 uint32_t comps_per_elem) {
+  Value v;
+  v.type_id_ = elem_type;
+  v.is_array_ = true;
+  v.array_size_ = comps_per_elem
+                      ? static_cast<uint32_t>(data.size() / comps_per_elem)
+                      : 0;
+  new (v.storage_) ArrayHandle(std::make_shared<DoubleArrayStorage>(std::move(data)));
+  return v;
+}
+
 // ============================================================
 // Queries and accessors
 // ============================================================
@@ -858,7 +926,7 @@ const double* Value::as_matrix4d() const {
 // Array accessors
 const std::vector<float>* Value::as_float_array() const {
   ensure_materialized();
-  if ((type_id_ != TypeId::Float && type_id_ != TypeId::Float2 && type_id_ != TypeId::Float3) || !is_array_) return nullptr;
+  if (!is_array_ || !IsFloatBackedArray(type_id_)) return nullptr;
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<FloatArrayStorage*>(ptr)->data;
 }
@@ -866,7 +934,7 @@ const std::vector<float>* Value::as_float_array() const {
 std::vector<float>* Value::as_float_array() {
   ensure_materialized();
   dirty_ = true;
-  if ((type_id_ != TypeId::Float && type_id_ != TypeId::Float2 && type_id_ != TypeId::Float3) || !is_array_) return nullptr;
+  if (!is_array_ || !IsFloatBackedArray(type_id_)) return nullptr;
   DetachArray(storage_);
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<FloatArrayStorage*>(ptr)->data;
@@ -890,13 +958,13 @@ std::vector<int32_t>* Value::as_int_array() {
 
 const std::vector<double>* Value::as_double_array() const {
   ensure_materialized();
-  if (type_id_ != TypeId::Double || !is_array_) return nullptr;
+  if (!is_array_ || !IsDoubleBackedArray(type_id_)) return nullptr;
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<DoubleArrayStorage*>(ptr)->data;
 }
 std::vector<double>* Value::as_double_array() {
   ensure_materialized(); dirty_ = true;
-  if (type_id_ != TypeId::Double || !is_array_) return nullptr;
+  if (!is_array_ || !IsDoubleBackedArray(type_id_)) return nullptr;
   DetachArray(storage_);
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<DoubleArrayStorage*>(ptr)->data;
