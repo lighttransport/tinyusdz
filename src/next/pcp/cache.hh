@@ -15,6 +15,7 @@
 
 #include "prim-index.hh"
 #include "layer-registry.hh"
+#include "load-rules.hh"
 #include "../resolver/asset-resolver.hh"
 #include "../stage/stage.hh"
 
@@ -87,11 +88,28 @@ class Cache {
   std::string ComputeInstanceKey(const Path &prim_path, std::string *warn,
                                  std::string *err);
 
-  /// Load a deferred payload on `prim_path` and recompose the affected prims.
-  bool LoadPayload(const Path &prim_path, std::string *warn, std::string *err);
+  /// Payload load granularity (mirrors UsdLoadPolicy).
+  enum class LoadPolicy {
+    WithDescendants,     ///< load this prim's payload and all descendants'
+    WithoutDescendants,  ///< load only this prim's payload
+  };
 
-  /// Unload (defer) the payload on `prim_path` and recompose.
+  /// Load a deferred payload on `prim_path` and recompose the affected subtree.
+  /// Defaults to loading descendant payloads too (LoadWithDescendants).
+  bool LoadPayload(const Path &prim_path, std::string *warn, std::string *err);
+  bool LoadPayload(const Path &prim_path, LoadPolicy policy, std::string *warn,
+                   std::string *err);
+
+  /// Unload (defer) the payload on `prim_path` and its descendants, then
+  /// recompose so HasDeferredPayload is immediately accurate.
   bool UnloadPayload(const Path &prim_path);
+
+  /// Replace the full set of payload load rules and drop all cached indices.
+  /// `rules` is a list of (prim path, rule) where rule is 0=All, 1=Only, 2=None.
+  void SetLoadRules(const LoadRules &rules);
+
+  /// The current payload load rules.
+  const LoadRules &GetLoadRules() const;
 
   /// Whether `prim_path` has an unloaded (deferred) payload.
   bool HasDeferredPayload(const Path &prim_path) const;

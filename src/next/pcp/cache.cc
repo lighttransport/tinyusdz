@@ -131,8 +131,7 @@ struct Cache::Impl {
 
   // Deferred payload state.
   std::set<std::string> deferred_payload_prims;    // root-space prim paths
-  std::set<std::string> payloads_force_loaded;     // explicit LoadPayload overrides
-  std::set<std::string> payloads_force_unloaded;   // explicit UnloadPayload overrides
+  LoadRules load_rules_;  // per-subtree payload overrides (on top of base policy)
 
   // Instancing: instance key -> prototype prim path; and the groupings.
   std::map<std::string, std::string> prototype_by_key;
@@ -303,8 +302,17 @@ struct Cache::Impl {
 
   bool ShouldLoadPayload(const std::string &root_prim_path,
                          const std::string &asset) {
-    if (payloads_force_unloaded.count(root_prim_path)) return false;
-    if (payloads_force_loaded.count(root_prim_path)) return true;
+    // Explicit load rules win; a path with no governing rule falls back to the
+    // base policy (payload_policy callback, else the load_payloads flag).
+    switch (load_rules_.GetEffect(root_prim_path)) {
+      case LoadRules::Effect::All:
+      case LoadRules::Effect::Only:
+        return true;
+      case LoadRules::Effect::None:
+        return false;
+      case LoadRules::Effect::Default:
+        break;
+    }
     if (options.payload_policy) {
       return options.payload_policy(Path(root_prim_path), asset);
     }
@@ -920,6 +928,15 @@ struct Cache::Impl {
     NEXT_PCP_LOCK(api_mu_);
     auto out = std::unique_ptr<Layer>(new Layer());
 
+    // BuildStage re-registers every prim's instancing from scratch below, so
+    // reset the prototype maps first. They are otherwise only pruned via
+    // index_cache-driven Invalidate, which BuildStage's direct RegisterInstance
+    // path doesn't populate -- leaving stale groupings across recomposition
+    // (e.g. after Load/UnloadPayload changes a prim's arc set and instance key).
+    prototype_by_key.clear();
+    prototype_of.clear();
+    instances_by_prototype.clear();
+
     const Layer *root = layer_stacks[0].layers[0].get();
     std::set<std::string> seen_root;
     std::vector<std::string> root_names;
@@ -1188,10 +1205,14 @@ struct Cache::Impl {
 
   // --- payloads -----------------------------------------------------------
 
-  bool LoadPayload(const Path &prim_path, std::string *warn, std::string *err) {
+  bool LoadPayload(const Path &prim_path, bool with_descendants,
+                   std::string *warn, std::string *err) {
     NEXT_PCP_LOCK(api_mu_);
-    payloads_force_loaded.insert(prim_path.str());
-    payloads_force_unloaded.erase(prim_path.str());
+    if (with_descendants) {
+      load_rules_.LoadWithDescendants(prim_path.str());
+    } else {
+      load_rules_.LoadWithoutDescendants(prim_path.str());
+    }
     Invalidate(prim_path);
     ComputePrimIndex(prim_path, warn, err);  // recompose now.
     return true;
@@ -1199,10 +1220,29 @@ struct Cache::Impl {
 
   bool UnloadPayload(const Path &prim_path) {
     NEXT_PCP_LOCK(api_mu_);
-    payloads_force_unloaded.insert(prim_path.str());
-    payloads_force_loaded.erase(prim_path.str());
+    load_rules_.Unload(prim_path.str());
     Invalidate(prim_path);
+    // Recompose so the deferred-payload set (and HasDeferredPayload) reflects
+    // the unload immediately -- Invalidate() drops the deferred entries under
+    // the path, and ExpandArcs repopulates them on the next composition.
+    std::string warn, err;
+    ComputePrimIndex(prim_path, &warn, &err);
     return true;
+  }
+
+  void SetLoadRules(const LoadRules &rules) {
+    NEXT_PCP_LOCK(api_mu_);
+    load_rules_ = rules;
+    // A wholesale rule change can affect any prim; drop everything (lazy
+    // rebuild). Deferred state is recomputed as prims recompose.
+    index_cache.clear();
+    sources_cache.clear();
+    site_to_indices.clear();
+    index_to_sites.clear();
+    deferred_payload_prims.clear();
+    prototype_by_key.clear();
+    prototype_of.clear();
+    instances_by_prototype.clear();
   }
 };
 
@@ -1291,9 +1331,15 @@ std::string Cache::ComputeInstanceKey(const Path &p, std::string *warn,
 }
 
 bool Cache::LoadPayload(const Path &p, std::string *warn, std::string *err) {
-  return impl_->LoadPayload(p, warn, err);
+  return impl_->LoadPayload(p, /*with_descendants=*/true, warn, err);
+}
+bool Cache::LoadPayload(const Path &p, LoadPolicy policy, std::string *warn,
+                        std::string *err) {
+  return impl_->LoadPayload(p, policy == LoadPolicy::WithDescendants, warn, err);
 }
 bool Cache::UnloadPayload(const Path &p) { return impl_->UnloadPayload(p); }
+void Cache::SetLoadRules(const LoadRules &rules) { impl_->SetLoadRules(rules); }
+const LoadRules &Cache::GetLoadRules() const { return impl_->load_rules_; }
 bool Cache::HasDeferredPayload(const Path &p) const {
   NEXT_PCP_LOCK(impl_->api_mu_);
   return impl_->deferred_payload_prims.count(p.str()) != 0;
