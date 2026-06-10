@@ -345,6 +345,58 @@ static void test_variants() {
   std::cout << "  OK" << std::endl;
 }
 
+// Variant-content layer stacks are keyed by a STABLE identity (host stack +
+// site + set + variant name), not the VariantData pointer. So the instance key
+// of a variant-content prim is deterministic across independent compositions
+// (the old uintptr_t key differed by heap address between runs, and aliased
+// after a free+realloc). Two separate Cache::Open of the same scene must agree.
+static void test_variant_content_key_stable() {
+  std::cout << "test_variant_content_key_stable..." << std::endl;
+  auto build = []() {
+    auto content = std::make_shared<Layer>();
+    LayerBuilder cb(*content);
+    cb.begin_prim("__self__", "");
+    cb.add_property("hostProp", Value::MakeFloat3(7, 7, 7));
+    cb.begin_prim("Geom", "Mesh");
+    cb.end_prim();
+    cb.end_prim();
+    cb.finalize();
+
+    auto root = std::make_shared<Layer>();
+    LayerBuilder lb(*root);
+    lb.begin_prim("VC", "");
+    VariantSetData vss;
+    vss.name = "geo";
+    VariantData full;
+    full.name = "full";
+    full.content = content;
+    vss.variants.push_back(std::move(full));
+    lb.current()->meta().variantSets.push_back(std::move(vss));
+    lb.current()->meta().variantSelection = "geo=full";
+    lb.end_prim();
+    lb.finalize();
+    return root;
+  };
+
+  std::string warn, err;
+  AssetResolver r1;
+  auto o1 = pcp::Cache::Open(r1, build());
+  assert(o1);
+  pcp::Cache c1 = std::move(*o1);
+  std::string k1 = c1.ComputeInstanceKey(Path("/VC"), &warn, &err);
+
+  AssetResolver r2;
+  auto o2 = pcp::Cache::Open(r2, build());
+  assert(o2);
+  pcp::Cache c2 = std::move(*o2);
+  std::string k2 = c2.ComputeInstanceKey(Path("/VC"), &warn, &err);
+
+  assert(k1 == k2 && "variant-content instance key not stable across runs");
+  assert(k1.find("0x") == std::string::npos &&
+         "instance key still encodes a raw pointer");
+  std::cout << "  OK" << std::endl;
+}
+
 // FU2: variant subtree (adds geometry) + multi-selection.
 static void test_variants_v2() {
   std::cout << "test_variants_v2..." << std::endl;
@@ -1290,6 +1342,7 @@ int main() {
   test_deferred_payload();
   test_inherits_specializes();
   test_variants();
+  test_variant_content_key_stable();
   test_variants_v2();
   test_instancing();
   test_relocates();
