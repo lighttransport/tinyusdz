@@ -117,32 +117,21 @@ TypeNameTable& GetTypeNameTable() {
 // ============================================================
 
 ValueStorage::ValueStorage() {
-  // Grow on demand. Eagerly reserving 4 KB (data_) + 64 Values (~8.7 KB) here
-  // cost ~13 KB PER PRIM regardless of property count — catastrophic on
-  // high-prim-count scenes (e.g. 25k-prim layers used GBs). store() uses values_
-  // (not data_), so data_ is left empty until allocate()/reserve() needs it.
+  // Grow on demand: eager per-prim reservations cost KBs per prim regardless
+  // of property count, which is catastrophic on high-prim-count scenes.
 }
 
 ValueStorage::~ValueStorage() = default;
 
-uint32_t ValueStorage::allocate(size_t size, size_t alignment) {
-  // Align current position
-  size_t aligned = (used_ + alignment - 1) & ~(alignment - 1);
-
-  // Grow if needed
-  if (aligned + size > data_.size()) {
-    size_t new_size = std::max(data_.size() * 2, aligned + size + 1024);
-    data_.resize(new_size);
-  }
-
-  uint32_t offset = static_cast<uint32_t>(aligned);
-  used_ = aligned + size;
-  return offset;
-}
-
 uint32_t ValueStorage::store(const Value& value) {
   uint32_t idx = static_cast<uint32_t>(values_.size());
   values_.push_back(value);
+  return idx;
+}
+
+uint32_t ValueStorage::store(Value&& value) {
+  uint32_t idx = static_cast<uint32_t>(values_.size());
+  values_.push_back(std::move(value));
   return idx;
 }
 
@@ -156,24 +145,17 @@ Value* ValueStorage::get(uint32_t offset) {
   return &values_[offset];
 }
 
-const void* ValueStorage::raw(uint32_t offset) const {
-  if (offset >= data_.size()) return nullptr;
-  return data_.data() + offset;
-}
-
-void* ValueStorage::raw(uint32_t offset) {
-  if (offset >= data_.size()) return nullptr;
-  return data_.data() + offset;
-}
-
-void ValueStorage::reserve(size_t bytes) {
-  if (bytes > data_.size()) {
-    data_.resize(bytes);
+size_t ValueStorage::memory_usage() const {
+  size_t size = values_.capacity() * sizeof(Value);
+  for (const auto& v : values_) {
+    if (v.is_array()) {
+      size += v.array_size() * 4;  // Approximate (element payload)
+    }
   }
+  return size;
 }
 
 void ValueStorage::clear() {
-  used_ = 0;
   values_.clear();
 }
 
@@ -316,19 +298,15 @@ TimeSampleStorage::Stats TimeSampleStorage::stats() const {
 // PrimSpec
 // ============================================================
 
-PrimSpec::PrimSpec()
-    : values_(std::make_unique<ValueStorage>()),
-      time_samples_(std::make_unique<TimeSampleStorage>()) {}
+// values_ / time_samples_ are allocated lazily on first use: most prims in
+// composed scenes carry no local values or samples, and two eager heap blocks
+// per prim dominated the per-prim fixed cost on high-prim-count layers.
+PrimSpec::PrimSpec() {}
 
-PrimSpec::PrimSpec(const std::string& name)
-    : name_(name),
-      values_(std::make_unique<ValueStorage>()),
-      time_samples_(std::make_unique<TimeSampleStorage>()) {}
+PrimSpec::PrimSpec(const std::string& name) : name_(name) {}
 
 PrimSpec::PrimSpec(const std::string& name, const std::string& type_name)
-    : name_(name),
-      values_(std::make_unique<ValueStorage>()),
-      time_samples_(std::make_unique<TimeSampleStorage>()) {
+    : name_(name) {
   set_type_name(type_name);
 }
 
@@ -406,13 +384,13 @@ const PropSlot* PrimSpec::property(const std::string& name) const {
 
 const Value* PrimSpec::property_value(PropNameId name_id) const {
   const PropSlot* slot = property(name_id);
-  if (!slot) return nullptr;
+  if (!slot || !values_) return nullptr;
   return values_->get(slot->value_offset);
 }
 
 const Value* PrimSpec::property_value(const std::string& name) const {
   const PropSlot* slot = property(name);
-  if (!slot) return nullptr;
+  if (!slot || !values_) return nullptr;
   return values_->get(slot->value_offset);
 }
 
@@ -423,6 +401,7 @@ void PrimSpec::add_property(const std::string& name, Value value, uint16_t flags
 
 void PrimSpec::add_property(PropNameId name_id, Value value, uint16_t flags) {
   // Store value
+  if (!values_) values_ = std::make_unique<ValueStorage>();
   uint32_t offset = values_->store(std::move(value));
 
   // Get type from stored value
@@ -462,6 +441,7 @@ void PrimSpec::finalize_properties() {
 
 void PrimSpec::add_time_sample(PropNameId name_id, double time, Value value) {
   // Use deduplicated storage for array values (common case for animation)
+  if (!time_samples_) time_samples_ = std::make_unique<TimeSampleStorage>();
   time_samples_->add_dedup(name_id, time, std::move(value));
 }
 
@@ -571,9 +551,7 @@ size_t PrimSpec::memory_usage() const {
   // Properties
   size += props_.slots().capacity() * sizeof(PropSlot);
   if (values_) {
-    size += values_->capacity();
-    // Estimate Value objects
-    size += values_->size() * sizeof(Value);
+    size += values_->memory_usage();
   }
 
   // Time samples (use TimeSampleStorage's memory tracking)

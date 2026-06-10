@@ -1039,6 +1039,249 @@ static void test_parallel_build_matches_serial() {
   std::cout << "  OK" << std::endl;
 }
 
+// --- security: cycle / recursion hardening ----------------------------------
+// Adversarial composition graphs must surface errors, never crash or exhaust
+// the C++ stack (the module builds with -fno-exceptions).
+
+// `def "A" { def "B" (references = </A>) {} }`: the referenced subtree contains
+// the referencing prim, so the composed namespace would grow forever. Caught by
+// the same-stack ancestor-arc check in ProcessArc.
+static void test_ancestor_reference_cycle() {
+  std::cout << "test_ancestor_reference_cycle..." << std::endl;
+  auto root = std::make_shared<Layer>();
+  {
+    LayerBuilder lb(*root);
+    lb.begin_prim("A", "Xform");
+    lb.add_property("rootProp", Value::MakeFloat3(1, 1, 1));
+    lb.begin_prim("B", "");
+    lb.current()->meta().references.push_back("</A>");
+    lb.end_prim();
+    lb.end_prim();
+    lb.finalize();
+  }
+
+  AssetResolver resolver;
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+  assert(!err.empty() && "ancestor-reference cycle must be reported");
+  // The cycle arc is dropped: /A/B exists, but no unbounded /A/B/B/... chain.
+  assert(stage.GetPrimAtPath("/A/B").IsValid());
+  assert(!stage.GetPrimAtPath("/A/B/B/B/B/B/B/B/B").IsValid());
+  std::cout << "  OK" << std::endl;
+}
+
+// Mutual reference cycle across two in-memory "files": A -> @b@</B> -> @a@</A>.
+// Caught by the expansion frame chain (site revisited within one expansion).
+static void test_mutual_reference_cycle() {
+  std::cout << "test_mutual_reference_cycle..." << std::endl;
+  auto a = std::make_shared<Layer>();
+  {
+    LayerBuilder ab(*a);
+    ab.begin_prim("A", "Mesh");
+    ab.add_property("fromA", Value::MakeFloat3(1, 0, 0));
+    ab.current()->meta().references.push_back("@asset_b@</B>");
+    ab.end_prim();
+    ab.finalize();
+  }
+  auto b = std::make_shared<Layer>();
+  {
+    LayerBuilder bb(*b);
+    bb.begin_prim("B", "");
+    bb.add_property("fromB", Value::MakeFloat3(0, 1, 0));
+    bb.current()->meta().references.push_back("@asset_a@</A>");
+    bb.end_prim();
+    bb.finalize();
+  }
+  auto rootL = std::make_shared<Layer>();
+  {
+    LayerBuilder rb(*rootL);
+    rb.begin_prim("X", "");
+    rb.current()->meta().references.push_back("@asset_a@</A>");
+    rb.end_prim();
+    rb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [](const std::string &p, const std::string &) { return p; });
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  cache.PreloadLayer("asset_a", a);
+  cache.PreloadLayer("asset_b", b);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+  assert(!err.empty() && "mutual reference cycle must be reported");
+  // Opinions up to the cycle point still compose.
+  UsdPrim x = stage.GetPrimAtPath("/X");
+  assert(x.IsValid());
+  assert(x.GetPropertyValue("fromA") != nullptr);
+  assert(x.GetPropertyValue("fromB") != nullptr);
+  std::cout << "  OK" << std::endl;
+}
+
+// An (internal) payload arc targeting the prim's own site.
+static void test_self_payload_cycle() {
+  std::cout << "test_self_payload_cycle..." << std::endl;
+  auto root = std::make_shared<Layer>();
+  {
+    LayerBuilder lb(*root);
+    lb.begin_prim("P", "Xform");
+    lb.current()->meta().payloads.push_back("</P>");
+    lb.end_prim();
+    lb.finalize();
+  }
+  AssetResolver resolver;
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+  assert(!err.empty() && "self-payload cycle must be reported");
+  assert(stage.GetPrimAtPath("/P").IsValid());
+  std::cout << "  OK" << std::endl;
+}
+
+// A selected variant whose content subtree references itself.
+static void test_variant_content_cycle() {
+  std::cout << "test_variant_content_cycle..." << std::endl;
+  auto content = std::make_shared<Layer>();
+  {
+    LayerBuilder cb(*content);
+    cb.begin_prim("__self__", "");
+    cb.current()->meta().references.push_back("</__self__>");
+    cb.add_property("vProp", Value::MakeFloat3(3, 3, 3));
+    cb.end_prim();
+    cb.finalize();
+  }
+  auto root = std::make_shared<Layer>();
+  {
+    LayerBuilder lb(*root);
+    lb.begin_prim("VC", "");
+    VariantSetData vss;
+    vss.name = "geo";
+    VariantData full;
+    full.name = "full";
+    full.content = content;
+    vss.variants.push_back(std::move(full));
+    lb.current()->meta().variantSets.push_back(std::move(vss));
+    lb.current()->meta().variantSelection = "geo=full";
+    lb.end_prim();
+    lb.finalize();
+  }
+  AssetResolver resolver;
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+  assert(!err.empty() && "variant-content self-reference must be reported");
+  UsdPrim vc = stage.GetPrimAtPath("/VC");
+  assert(vc.IsValid());
+  assert(vc.GetPropertyValue("vProp") != nullptr);
+  std::cout << "  OK" << std::endl;
+}
+
+// A deep (but legitimate) authored hierarchy composes; one beyond the
+// namespace-depth backstop errors instead of exhausting the stack.
+static void test_deep_hierarchy() {
+  std::cout << "test_deep_hierarchy..." << std::endl;
+  auto build_deep = [](size_t depth) {
+    auto l = std::make_shared<Layer>();
+    LayerBuilder lb(*l);
+    for (size_t i = 0; i < depth; ++i) lb.begin_prim("P" + std::to_string(i), "Xform");
+    for (size_t i = 0; i < depth; ++i) lb.end_prim();
+    lb.finalize();
+    return l;
+  };
+
+  {
+    AssetResolver resolver;
+    auto opened = pcp::Cache::Open(resolver, build_deep(1000));
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    Stage stage;
+    std::string warn, err;
+    assert(cache.BuildStage(&stage, &warn, &err));
+    assert(err.empty() && "1000-deep authored hierarchy must compose");
+  }
+  {
+    AssetResolver resolver;
+    pcp::CompositionOptions opts;
+    opts.max_namespace_depth = 64;
+    auto opened = pcp::Cache::Open(resolver, build_deep(100), "", opts);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    Stage stage;
+    std::string warn, err;
+    assert(cache.BuildStage(&stage, &warn, &err));
+    assert(!err.empty() && "beyond-backstop depth must be reported");
+  }
+  std::cout << "  OK" << std::endl;
+}
+
+// A reference chain longer than max_depth errors cleanly; a shorter one
+// composes the deepest opinion through.
+static void test_reference_chain_at_max_depth() {
+  std::cout << "test_reference_chain_at_max_depth..." << std::endl;
+  auto run_chain = [](size_t D, uint32_t max_depth, std::string *err_out) {
+    std::vector<std::shared_ptr<Layer>> chain;
+    for (size_t k = 0; k < D; ++k) {
+      auto l = std::make_shared<Layer>();
+      LayerBuilder lb(*l);
+      lb.begin_prim("A", k + 1 == D ? "Mesh" : "");
+      if (k + 1 < D) {
+        lb.current()->meta().references.push_back("@chain_" +
+                                                  std::to_string(k + 1) + "@</A>");
+      } else {
+        lb.add_property("deepest", Value::MakeFloat3(9, 9, 9));
+      }
+      lb.end_prim();
+      lb.finalize();
+      chain.push_back(l);
+    }
+    auto rootL = std::make_shared<Layer>();
+    {
+      LayerBuilder rb(*rootL);
+      rb.begin_prim("Top", "");
+      rb.current()->meta().references.push_back("@chain_0@</A>");
+      rb.end_prim();
+      rb.finalize();
+    }
+    AssetResolver resolver;
+    resolver.SetCustomResolver(
+        [](const std::string &p, const std::string &) { return p; });
+    pcp::CompositionOptions opts;
+    opts.max_depth = max_depth;
+    auto opened = pcp::Cache::Open(resolver, rootL, "", opts);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    for (size_t k = 0; k < D; ++k)
+      cache.PreloadLayer("chain_" + std::to_string(k), chain[k]);
+    Stage stage;
+    std::string warn;
+    assert(cache.BuildStage(&stage, &warn, err_out));
+    return stage.GetPrimAtPath("/Top").GetPropertyValue("deepest") != nullptr;
+  };
+
+  std::string err;
+  assert(run_chain(100, 256, &err) && err.empty() &&
+         "short chain must compose fully");
+  err.clear();
+  assert(!run_chain(300, 256, &err) && !err.empty() &&
+         "over-max_depth chain must error (and not crash)");
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_build_stage();
@@ -1061,6 +1304,12 @@ int main() {
   test_node_overflow_fails_cleanly();
   test_concurrent_queries();
   test_parallel_build_matches_serial();
+  test_ancestor_reference_cycle();
+  test_mutual_reference_cycle();
+  test_self_payload_cycle();
+  test_variant_content_cycle();
+  test_deep_hierarchy();
+  test_reference_chain_at_max_depth();
   std::cout << "All next/pcp tests passed." << std::endl;
   return 0;
 }
