@@ -327,19 +327,26 @@ struct Cache::Impl {
     }
   }
 
+  // A selected variant plus the name of the set it was selected from (the set
+  // name is part of the stable variant-content identity used for instancing).
+  struct SelectedVariant {
+    const std::string *set_name;
+    const VariantData *vd;
+  };
+
   // Resolve the selected variants for the variantSets defined on `spec`, using
-  // the accumulated cross-source selection map. Returns one VariantData per
-  // selected set.
-  std::vector<const VariantData *> SelectVariants(
+  // the accumulated cross-source selection map. Returns one entry per selected
+  // set.
+  std::vector<SelectedVariant> SelectVariants(
       const PrimSpec &spec,
       const std::map<std::string, std::string> &sels) const {
-    std::vector<const VariantData *> out;
+    std::vector<SelectedVariant> out;
     for (const VariantSetData &vss : spec.meta().variantSets) {
       auto sit = sels.find(vss.name);
       if (sit == sels.end()) continue;  // no selection for this set
       for (const VariantData &vd : vss.variants) {
         if (vd.name == sit->second) {
-          out.push_back(&vd);
+          out.push_back({&vss.name, &vd});
           break;
         }
       }
@@ -576,12 +583,19 @@ struct Cache::Impl {
       // Variants (weaker than inherits, stronger than references). For each
       // selected variant, graft its inline opinions and/or its content subtree.
       if (!spec->meta().variantSets.empty()) {
-        for (const VariantData *vd : SelectVariants(*spec, *sels)) {
+        for (const SelectedVariant &sv : SelectVariants(*spec, *sels)) {
+          const VariantData *vd = sv.vd;
           // Subtree content: model as a reference-style Variant source into the
           // content layer's "/__self__" root, so child prims compose normally.
           if (vd->content) {
-            const std::string vid =
-                "variant:" + std::to_string(reinterpret_cast<uintptr_t>(vd));
+            // Stable variant-content identity: (host layer-stack, host site,
+            // variantSet, variantName). The previous pointer-derived id aliased
+            // after a VariantData was freed and reallocated (stale instance
+            // keys), and never matched across two parses of the same asset.
+            const std::string vid = "variant:" +
+                                    layer_stacks[src.stack_idx].identifier +
+                                    ":" + src.site + ":" + *sv.set_name + ":" +
+                                    vd->name;
             uint32_t cstack = InternLayerStack(vd->content, vid, warn, err);
             if (cstack == kInvalidStack) continue;
             Src vsrc;
