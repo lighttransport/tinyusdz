@@ -1104,9 +1104,16 @@ bool CrateReader::Impl::ReadTokens() {
   const char* end = ptr + dr.data.size();
 
   while (ptr < end && tokens_.size() < num_tokens) {
-    std::string token(ptr);
-    tokens_.push_back(std::move(token));
-    ptr += tokens_.back().size() + 1;
+    // Bounded scan: a malformed blob whose last token lacks the NUL terminator
+    // must not strlen past the decompressed buffer.
+    const char* nul = static_cast<const char*>(
+        std::memchr(ptr, '\0', static_cast<size_t>(end - ptr)));
+    if (!nul) {
+      AddError("Token table not NUL-terminated");
+      return false;
+    }
+    tokens_.emplace_back(ptr, nul);
+    ptr = nul + 1;
   }
 
   if (tokens_.size() != num_tokens) {
@@ -1191,7 +1198,10 @@ bool CrateReader::Impl::ReadFields() {
   // Include u64 compressed_size prefix (DecompressCompressedU32 expects it)
   std::vector<uint8_t> indices_with_prefix(8 + indices_data.size());
   std::memcpy(indices_with_prefix.data(), &indices_size, 8);
-  std::memcpy(indices_with_prefix.data() + 8, indices_data.data(), indices_data.size());
+  if (!indices_data.empty()) {
+    std::memcpy(indices_with_prefix.data() + 8, indices_data.data(),
+                indices_data.size());
+  }
   DecompressResult dr = DecompressCompressedU32(indices_with_prefix.data(), indices_with_prefix.size(),
                                                  token_indices_vec.data(),
                                                  static_cast<size_t>(num_fields));
@@ -1207,8 +1217,10 @@ bool CrateReader::Impl::ReadFields() {
       AddError("Decompressed field indices shorter than expected");
       return false;
     }
-    std::memcpy(token_indices_vec.data(), dr.data.data(),
-                num_fields * sizeof(uint32_t));
+    if (num_fields) {
+      std::memcpy(token_indices_vec.data(), dr.data.data(),
+                  num_fields * sizeof(uint32_t));
+    }
   }
 
   const uint32_t* token_indices = token_indices_vec.data();
@@ -1243,7 +1255,9 @@ bool CrateReader::Impl::ReadFields() {
       AddError("Decompressed value reps shorter than expected");
       return false;
     }
-    std::memcpy(value_reps.data(), rdr.data.data(), num_fields * 8);
+    if (num_fields) {
+      std::memcpy(value_reps.data(), rdr.data.data(), num_fields * 8);
+    }
   }
 
   fields_.resize(static_cast<size_t>(num_fields));
@@ -1307,7 +1321,10 @@ bool CrateReader::Impl::ReadFieldsets() {
       AddError("Decompressed fieldsets shorter than expected");
       return false;
     }
-    std::memcpy(fieldset_indices_.data(), dr.data.data(), num_fieldsets * sizeof(uint32_t));
+    if (num_fieldsets) {
+      std::memcpy(fieldset_indices_.data(), dr.data.data(),
+                  num_fieldsets * sizeof(uint32_t));
+    }
   }
 
   return true;
@@ -1385,7 +1402,7 @@ bool CrateReader::Impl::ReadSpecs() {
         AddError("Decompressed specs array shorter than expected");
         return false;
       }
-      std::memcpy(dst, dr.data.data(), count * sizeof(uint32_t));
+      if (count) std::memcpy(dst, dr.data.data(), count * sizeof(uint32_t));
     }
     return true;
   };
@@ -1523,7 +1540,7 @@ bool CrateReader::Impl::ReadPaths() {
         AddError(std::string("Decompressed ") + name + " shorter than expected");
         return false;
       }
-      std::memcpy(dst, dr.data.data(), count * sizeof(uint32_t));
+      if (count) std::memcpy(dst, dr.data.data(), count * sizeof(uint32_t));
     }
     return true;
   };
