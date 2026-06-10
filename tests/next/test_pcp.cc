@@ -1126,6 +1126,52 @@ static void test_concurrent_queries() {
   std::cout << "  OK" << std::endl;
 }
 
+// TSAN stress: race read-only queries against mutating payload edits
+// (LoadPayload/UnloadPayload, Phase 6) and BuildStage on the SAME cache. The
+// engine's recursive_mutex must serialize all of it -- this asserts no data
+// race / no crash (run under build/next-tsan), not a specific composed result.
+static void test_concurrent_payload_edits() {
+  std::cout << "test_concurrent_payload_edits..." << std::endl;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  AssetResolver resolver;
+  auto root = BuildRootLayer();
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  std::atomic<bool> stop{false};
+  // Reader threads: hammer queries while writers mutate payload state.
+  auto reader = [&]() {
+    std::string w, e;
+    while (!stop.load()) {
+      cache.ComputePrimIndex(Path("/World/P"), &w, &e);
+      (void)cache.HasDeferredPayload(Path("/World/P"));
+      (void)cache.GetDeferredPayloadPaths();
+      (void)cache.ComputedPrimIndexCount();
+    }
+  };
+  // Writer thread: toggle the payload load state repeatedly.
+  auto writer = [&]() {
+    std::string w, e;
+    for (int i = 0; i < 400; ++i) {
+      if (i & 1) cache.UnloadPayload(Path("/World/P"));
+      else cache.LoadPayload(Path("/World/P"), &w, &e);
+      Stage s;
+      cache.BuildStage(&s, &w, &e);
+    }
+    stop.store(true);
+  };
+
+  std::vector<std::thread> ts;
+  for (int i = 0; i < 6; ++i) ts.emplace_back(reader);
+  ts.emplace_back(writer);
+  for (auto &t : ts) t.join();
+#else
+  std::cout << "  (skipped: build with -DTINYUSDZ_NEXT_ENABLE_THREAD=ON)\n";
+#endif
+  std::cout << "  OK" << std::endl;
+}
+
 // FU9 (parallel build): a canonical, index-order-independent serialization of a
 // PrimIndex -- strength-ordered (arc, site-string, has-specs) tuples + count.
 // Captures everything observable about composition while ignoring the internal
@@ -1483,6 +1529,7 @@ int main() {
   test_sublayer_cycle_and_depth();
   test_node_overflow_fails_cleanly();
   test_concurrent_queries();
+  test_concurrent_payload_edits();
   test_parallel_build_matches_serial();
   test_ancestor_reference_cycle();
   test_mutual_reference_cycle();
