@@ -873,6 +873,33 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
     }
   }
 
+  // Combine variantSet CONTENT (the `variantSet "x" = { ... }` blocks).
+  // update_from() above merged the `variantSets`/`variants` METADATA (the
+  // listop + the selection), but the actual variant content lives in
+  // variantSets() and would otherwise be dropped. Without this, a prim that
+  // receives its variant selection from one layer and its variant content from
+  // another (common: a shot/override selects a variant whose set is defined in
+  // a weaker sublayer) loses the content and the variant cannot be resolved.
+  for (const auto &src_vs : src.variantSets()) {
+    auto dit = dst.variantSets().find(src_vs.first);
+    if (dit == dst.variantSets().end()) {
+      dst.variantSets()[src_vs.first] = src_vs.second;  // add whole variantSet
+    } else {
+      // Same variantSet authored in both opinions: merge per-variant content
+      // (dst is stronger; weaker fills gaps / recurses on conflicts).
+      VariantSetSpec &dst_vs = dit->second;
+      for (const auto &v : src_vs.second.variantSet) {
+        auto vit = dst_vs.variantSet.find(v.first);
+        if (vit == dst_vs.variantSet.end()) {
+          dst_vs.variantSet[v.first] = v.second;
+        } else if (!CombinePrimSpecRec(depth + 1, vit->second, v.second, warn,
+                                       err)) {
+          return false;
+        }
+      }
+    }
+  }
+
   return true;
 }
 

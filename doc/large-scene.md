@@ -180,6 +180,12 @@ stack — a shot's department layers each `prepend references` to `/root`, and o
 the strongest survived before; (c) marking a referenced prim as having specs when
 it has children (so a reference target that is just a parent of geometry expands).
 
+The optional **`baked_procedurals`** package (value-clip + multi-payload baked
+character hair/cloth; `main.usda`) composes its full structure — multi-payload
+prims and the value-clip `GEO` behind the `alfro=render` variant — in a few MiB,
+with the multi-GB binaries and the value-clip layer deferred. This needed the
+variant-content fix (§3.5).
+
 ---
 
 ## 3. Roadmap (remaining implementation)
@@ -292,7 +298,34 @@ Regression: `feat-large-scene` scenario 2 (`fixture/multi/`) covers all three �
 two sublayers each `prepend references` to `/P`, one asset aggregating geometry
 through its own subLayers; both `/P/MA` and `/P/MB` must reconstruct.
 
-### 3.5 Smaller items
+### 3.5 Variant-content composition — FIXED (root/subLayer variant sets)
+
+CompositionGraph records variant *selections* but `ResolveAndApplyVariants` is a
+no-op, so the selected variant's *content* (child prims + their nested
+references/payloads/clips) was never composed — variant-gated geometry (e.g.
+baked_procedurals' `GEO`) was dropped. Two fixes:
+- **Merge variantSet content across composition** (`CombinePrimSpecRec`,
+  `src/composition.cc`): the `variantSet "x" = { … }` blocks live in
+  `variantSets()` and were not merged when a prim received opinions from
+  multiple layers, so a prim selecting a variant whose set is defined in a
+  weaker sublayer lost the content. Now the per-variant content is merged.
+- **Resolve authored variant selections before Compose** (`LargeSceneLoader`,
+  reusing the LIVRPS `ApplyVariantSelector` + `ListVariantSelectionMaps`): the
+  selected variant's content is flattened into the prim tree, after which the
+  normal namespace expansion reconstructs the variant's children.
+
+Regression: `feat-large-scene` scenario 3 (`fixture/variant/`) — variantSet
+content in a weaker sublayer, selection in the root; `/P/GEO` and `/P/GEO/M`
+must reconstruct.
+
+**Remaining:** this resolves variant sets defined in the root layer stack (root
++ subLayers). A variant set introduced via a *reference* (an asset defines the
+set, a stronger layer selects it) is not yet composed by the DAG — that needs
+variant-aware nodes in CompositionGraph's per-prim index. Value clips themselves
+(`clips` metadata) are resolved at Tydra / attribute-evaluation time
+(`enable_value_clips`), not during composition.
+
+### 3.6 Smaller items
 
 - **Budget-by-extent**: the `Budget` policy currently sizes payloads by file
   bytes; authored `extentsHint` would let it bound by world-space coverage, but
