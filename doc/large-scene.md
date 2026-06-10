@@ -172,37 +172,57 @@ verified (e.g. `tests/usda/payload-001.usda` → 2 deferred payloads).
 
 ## 3. Roadmap (remaining implementation)
 
-The loader bounds memory and streams payloads, but two gaps remain before these
-scenes compose *completely*. Both are pre-existing TinyUSDZ limitations, not
-specific to the loader.
+The loader bounds memory and streams payloads. Cross-directory cwp anchoring
+(§3.1) is now **fixed**; the remaining items below still block *complete*
+composition of Caldera-scale reference chains.
 
-### 3.1 Cross-directory cwp anchoring (PRIMARY blocker)
+### 3.1 Cross-directory cwp anchoring — FIXED
 
-**Symptom:** on Caldera, the top structure composes but deep geometry references
-silently fail to resolve (`deferred payloads = 0`; only first-level sibling refs
-are followed).
-
-**Root cause:** a loaded layer's PrimSpecs get their working-path stamped from
+**Was:** a loaded layer's PrimSpecs got their working-path stamped from
 `GetBaseDir(authored_asset_path)` — a *relative* path — instead of the *resolved
-absolute* base directory. See `LoadLayerFromMemory`
-(`src/tinyusdz.cc:1635`, `GetLayerBaseDirForAssetName`) and `LoadAsset`
-(`src/composition.cc:512`, which passes the authored relative `asset_path`).
-Across nested references each level rebases relative to its own authored path and
-loses the parent directory context, so e.g. `prefabs/...` inside
-`map_source/mp_wz_island_geo.usd` anchors to the scene root instead of
-`map_source/`. `Compose` reads the per-PrimSpec cwp with no fallback at
-`src/composition-graph.cc:688`.
+absolute* base directory, so nested references lost their parent-directory
+context (e.g. `prefabs/...` inside `map_source/mp_wz_island_geo.usd` anchored to
+the scene root instead of `map_source/`). A second case: when sublayer
+flattening merged a stronger `over` (carrying the root layer's cwp) onto a weaker
+`def` that authored the reference (e.g. Caldera's root `over mp_wz_island_paths`
+over `mp_wz_island.usd`'s `def`), the merged prim kept the root cwp and
+mis-anchored the arc.
 
-**Fix:** stamp the resolved absolute base dir (`GetBaseDir(resolved_path)`,
-already computed and set as the resolver cwp at `composition.cc:451`) onto every
-loaded layer's prims. Touch points: the sublayer branch of `LoadAsset`
-(`primspec_root == nullptr` currently skips the re-stamp at
-`composition.cc:647`), `DefaultLoadAndOwnLayer` (`composition-graph.cc:330`), and
-`pcp::LayerRegistry::GetOrLoad`. This is a core composition change — validate
-against the full unit suite (≈850 cases) for regressions, since some tests rely
-on the current relative behavior.
+**Fix (implemented):**
+- Pass the **resolved** path (not the authored relative path) to
+  `LoadLayerFromMemory` at every composition load site, so a loaded layer's
+  prims are stamped with their resolved directory: `LoadAsset`
+  (`src/composition.cc`), `DefaultLoadAndOwnLayer` (`src/composition-graph.cc`),
+  and `pcp::LayerRegistry::GetOrLoad` (`src/pcp/layer-registry.cc`).
+- In sublayer merge (`CombinePrimSpecRec`, `src/composition.cc`), when a stronger
+  `over` absorbs a weaker `def`/`class`, adopt the **defining** layer's
+  asset-resolution anchor (cwp + search paths) so reference/payload arcs authored
+  in the defining layer resolve against the correct directory.
 
-### 3.2 mmap-through-composition (SECONDARY)
+Regression test: `tests/feat/large-scene/` (`feat-large-scene`) uses a
+filename-collision fixture (a malformed decoy `leaf.usda` in the root dir vs. the
+real one in `sub/`) so the parse-once registry's parse count only goes non-zero
+when the reference anchors to the correct directory — it fails if either fix is
+reverted. Full unit suite (853 cases) unaffected.
+
+### 3.2 Referenced-prim descendant reconstruction (NEW primary blocker)
+
+With anchoring fixed, the references in Caldera's `mp_wz_island.usd` resolve, but
+the chain still stops a few levels in. Root cause: `CompositionGraph` builds a
+`PrimIndex` per prim by walking only the **root-layer** namespace
+(`BuildPrimIndex` DFS over `item.ps->children()`, `composition-graph.cc:1318`)
+and `ScanArcsAndEnqueueTasks` scans only a prim's *own* arcs
+(`composition-graph.cc:361`). Child prims introduced *by a reference* (e.g.
+`paths.usd`'s `mp_wz_island_geo`, which itself references `geo.usd`) are not
+added to the namespace, so their arcs are never followed and they don't appear in
+the Stage. The deep reference chain
+(`mp_wz_island` → `paths` → `geo` → prefabs → proxy payloads) therefore isn't
+fully expanded. Fix direction: expand the composed namespace from reference/
+payload subtrees (compose child opinions across all contributing nodes), as the
+`pcp::Cache` engine is structured to do — or route the loader through
+`pcp::Cache::BuildStage` once it exposes the lazy-payload Load/Unload API.
+
+### 3.3 mmap-through-composition (SECONDARY)
 
 mmap zero-copy (`USDLoadOptions::mmap_zero_copy`) defers large uncompressed
 float arrays to disk, but only via `LoadUSDCFromFile(... Stage*)`. It does **not**
@@ -217,7 +237,7 @@ honoring `mmap_zero_copy` against a file-backed mmap, non-copying
 on-demand payload via `LoadUSDCFromFile(... mmap_zero_copy=true)` into a side
 Stage.
 
-### 3.3 Smaller items
+### 3.4 Smaller items
 
 - **Budget-by-extent**: the `Budget` policy currently sizes payloads by file
   bytes; authored `extentsHint` would let it bound by world-space coverage, but
@@ -235,10 +255,12 @@ Stage.
 
 ```
 cd build && cmake --build . -j16
-# structural load within budget (run from the scene dir so first-level
-# relative refs resolve until §3.1 lands):
-( cd /mnt/disk1/data/caldera && \
-  <build>/large-scene-load caldera.usda --mode=none )
-# expect: RSS ~1.4 GiB, Stage built; deferred count grows once §3.1 is fixed.
-cd build && ctest --output-on-failure     # no regressions from the seam changes
+# cross-directory cwp anchoring regression test (§3.1):
+cd build && ctest -R feat-large-scene --output-on-failure
+# structural load within budget (absolute path works from any cwd now):
+<build>/large-scene-load /mnt/disk1/data/caldera/caldera.usda --mode=none
+# expect: RSS ~1.4 GiB, Stage built. Full geometry-reference expansion awaits
+# §3.2 (referenced-prim descendant reconstruction).
+cd build && ctest --output-on-failure     # no regressions (2 pre-existing
+                                           # MaterialX failures are unrelated)
 ```

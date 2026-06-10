@@ -2371,6 +2371,14 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-instancing COMMAND feat-instancing
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # Cross-directory cwp anchoring (composition) via LargeSceneLoader
+    add_executable(feat-large-scene tests/feat/large-scene/test-large-scene.cc)
+    add_sanitizers(feat-large-scene)
+    target_link_libraries(feat-large-scene PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-large-scene PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-large-scene COMMAND feat-large-scene
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     if(TINYUSDZ_WITH_MODULE_USDC_WRITER AND TINYUSDZ_WITH_MODULE_USDC_READER)
       add_executable(feat-dedp tests/feat/dedp/test-dedp.cc)
       add_sanitizers(feat-dedp)

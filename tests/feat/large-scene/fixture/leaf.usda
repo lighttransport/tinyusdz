@@ -1,0 +1,8 @@
+THIS IS A DECOY, NOT A VALID USD FILE.
+
+It sits in fixture/ (the root layer's directory) with the same basename as
+fixture/sub/leaf.usda. sub/mid.usda authors `references = @./leaf.usda@`, which
+must anchor to sub/ (mid.usda's directory). If cwp anchoring is wrong and the
+reference resolves against the root fixture/ dir, it picks THIS malformed file
+and fails to parse (registry parse count stays 0) — the regression test catches
+that. With correct anchoring the reference resolves to sub/leaf.usda and parses.
