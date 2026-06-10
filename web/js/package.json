@@ -31,6 +31,7 @@
     "cli": "vite-node cli/load-test-node.js",
     "test:memory": "vite-node cli/memory-usage-test.js",
     "test:streaming": "vite-node cli/load-test-node.js",
+    "test:corpus": "vite-node cli/corpus-parse-test.js --max-fail 0",
     "dump-materialx": "vite-node cli/dump-materialx-cli.js",
     "dump-mtlx-node": "vite-node cli/dump-mtlx-node.js",
     "test:materialx-json-regression": "vite-node tests/materialx-json-regression.js",
