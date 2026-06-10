@@ -1074,7 +1074,69 @@ struct GeomPointInstancer : public GPrim {
       invisibleIds;  // int64[] invisibleIds
   TypedAttribute<std::vector<int64_t>>
       inactiveIds;  // int64[] inactiveIds
+
+  // --- Convenience accessors (sample animated attrs at `time`) ---
+  // protoIndices is the per-instance prototype selector and the instance-count
+  // authority. Integer/topology arrays use Held interpolation.
+  const std::vector<int32_t> get_protoIndices(
+      double time = value::TimeCode::Default()) const;
+  const std::vector<value::point3f> get_positions(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+  const std::vector<value::float3> get_scales(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+  const std::vector<value::quath> get_orientations(
+      double time = value::TimeCode::Default()) const;
+  const std::vector<int64_t> get_ids(
+      double time = value::TimeCode::Default()) const;
+  const std::vector<int64_t> get_invisibleIds(
+      double time = value::TimeCode::Default()) const;
+  const std::vector<int64_t> get_inactiveIds() const;
 };
+
+
+// --- PointInstancer instance transform / mask computation ---
+//
+// Replicates the core of OpenUSD
+// UsdGeomPointInstancer::ComputeInstanceTransformsAtTime(). For each instance
+// `i` in [0, protoIndices.size()):
+//
+//   localXform[i] = Mult(Mult(S, R), T)   (row-vector: p * S * R * T)
+//     S = scale(scales[i] or {1,1,1})
+//     R = to_matrix(orientations[i] or identity quaternion)
+//     T = translate(positions[i] or {0,0,0})
+//
+// If `proto_xforms` is non-null and sized == instance count, each entry is
+// pre-multiplied (applied first to a prototype-local point):
+//   localXform[i] = Mult((*proto_xforms)[i], localXform[i]).
+//
+// Preliminary limitations (vs OpenUSD):
+//   * velocities / accelerations / angularVelocities are ignored (no sub-frame
+//     motion-blur extrapolation).
+//   * orientations are sampled with Held interpolation (no quaternion slerp
+//     across timeSamples).
+//
+// `protoIndices` is the instance-count authority. Missing/blocked optional SRT
+// arrays fall back to identity defaults (matching OpenUSD). Returns false (with
+// *err) when an authored SRT array has a non-zero length that differs from the
+// instance count. An empty/unauthored `protoIndices` yields an empty result and
+// returns true.
+bool ComputeInstanceTransformsAtTime(
+    const GeomPointInstancer &pi, double time,
+    value::TimeSampleInterpolationType interp,
+    std::vector<value::matrix4d> *out_xforms, std::string *err,
+    const std::vector<value::matrix4d> *proto_xforms = nullptr);
+
+// Compute a per-instance visibility mask from `invisibleIds` (animatable) and
+// `inactiveIds` (uniform). `out_mask[i] == false` => instance i should be
+// culled. Instance ids come from `ids` when authored, otherwise the implicit
+// index `i`. `out_mask` is sized to protoIndices.size(). Returns true on
+// success.
+bool ComputeMaskAtTime(const GeomPointInstancer &pi, double time,
+                       std::vector<bool> *out_mask, std::string *err);
 
 
 // --- ComputeExtent helpers ---
