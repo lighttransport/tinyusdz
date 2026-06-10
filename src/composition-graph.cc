@@ -327,7 +327,11 @@ static const Layer *DefaultLoadAndOwnLayer(CompositionContext *ctx,
         }
       } else {
         Layer layer;
-        if (LoadLayerFromMemory(asset.data(), asset.size(), asset_path, &layer,
+        // Pass the RESOLVED (anchored) path, not the authored asset_path, so the
+        // loaded layer's prims are stamped with the resolved directory as their
+        // current-working-path. This preserves the parent-directory context for
+        // nested relative references/payloads (cross-directory anchoring).
+        if (LoadLayerFromMemory(asset.data(), asset.size(), resolved_path, &layer,
                                 warn, err)) {
           auto layer_ptr = std::make_unique<Layer>(std::move(layer));
           result = layer_ptr.get();
