@@ -16,6 +16,7 @@
 #include <string>
 #include <unordered_map>
 #if defined(TINYUSDZ_ENABLE_THREAD)
+#include <future>
 #include <mutex>
 #endif
 
@@ -81,8 +82,15 @@ class LayerRegistry {
   std::unordered_map<std::string, std::shared_ptr<Layer>> by_resolved_;
   size_t parse_count_ = 0;
 #if defined(TINYUSDZ_ENABLE_THREAD)
-  // Heap-allocated so the registry stays movable. Guards by_resolved_/parse_count_.
+  // Heap-allocated so the registry stays movable. Guards by_resolved_/parse_count_
+  // and in_flight_.
   std::unique_ptr<std::mutex> mu_;
+  // Resolved path -> the in-progress parse for it. A first requester publishes a
+  // future here and parses OUTSIDE the lock; concurrent requesters for the same
+  // path wait on the future (parse-once) while requesters for OTHER paths parse
+  // in parallel (the lock no longer spans the parse).
+  std::unordered_map<std::string,
+                     std::shared_future<std::shared_ptr<Layer>>> in_flight_;
 #endif
 };
 
