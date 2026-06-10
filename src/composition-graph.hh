@@ -716,6 +716,15 @@ class PrimIndexBuilder {
   // Strength order computation
   void ComputeStrengthOrder();
 
+  // Compose variant CONTENT: for each node whose PrimSpec authors a variantSet
+  // that the composed selection picks, resolve the selected variant and repoint
+  // the node at the resolved PrimSpec (materialized in a synthetic layer), so
+  // the variant's child prims enter the namespace. Handles the case where the
+  // selection and the variantSet are authored on different nodes (e.g. a
+  // variant set introduced via a reference, selected by a stronger layer).
+  // Returns true if any node was resolved.
+  bool ApplyVariantContent();
+
   // Node culling
   void CullInertNodes();
 

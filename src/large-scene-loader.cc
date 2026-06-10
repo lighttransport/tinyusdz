@@ -128,29 +128,6 @@ bool LargeSceneLoader::Load(const std::string &filename,
     }
   }
 
-  // 3b. Resolve authored variant selections, flattening the selected variant's
-  // CONTENT (child prims + opinions) into the prim tree. CompositionGraph records
-  // variant selections but does not compose variant content, so variant-gated
-  // child prims (and their nested references/payloads/clips) would otherwise be
-  // dropped (e.g. ALab baked_procedurals' GEO behind `alfro=render`). Reuses the
-  // LIVRPS variant resolver. This resolves variants whose set is defined in the
-  // root layer stack (root + subLayers); variant sets introduced via a reference
-  // are resolved later, during composition, by the existing mechanisms.
-  {
-    VariantSelectorMap vsmap;
-    ListVariantSelectionMaps(*_flattened, vsmap);
-    if (!vsmap.empty()) {
-      Layer variant_resolved;
-      std::string vw, ve;
-      if (ApplyVariantSelector(*_flattened, vsmap, &variant_resolved, &vw, &ve)) {
-        *_flattened = std::move(variant_resolved);
-      } else if (warn && !ve.empty()) {
-        (*warn) += ve;
-      }
-      if (warn && !vw.empty()) (*warn) += vw;
-    }
-  }
-
   // 4. Parse-once registry for referenced/payload layers.
   if (options.dedup_layers) {
     _registry = std::make_unique<pcp::LayerRegistry>();
