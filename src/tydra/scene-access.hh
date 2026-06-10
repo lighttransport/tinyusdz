@@ -556,12 +556,15 @@ bool GetTerminalAttribute(const Layer &layer, const TypedAttribute<T> &attr,
 /// @param[in] name Primvar name(`primvars:` prefix omitted)
 /// @param[out] primvar GeomPrimvar output.
 /// @param[out] err Error message.
+/// @param[out] warn Non-fatal warning message (optional). e.g. a
+///                  `primvars:<name>:indices` declared with no authored value
+///                  (treated as un-indexed).
 ///
 /// @return true upon success.
 ///
 bool GetGeomPrimvar(const Stage &stage, const GPrim *prim,
                     const std::string &name, GeomPrimvar *primvar,
-                    std::string *err = nullptr);
+                    std::string *err = nullptr, std::string *warn = nullptr);
 
 ///
 /// Get Primvars in GPrim.

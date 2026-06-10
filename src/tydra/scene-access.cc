@@ -2983,7 +2983,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
 
 bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
                     const std::string &varname, GeomPrimvar *out_primvar,
-                    std::string *err) {
+                    std::string *err, std::string *warn) {
   if (!out_primvar) {
     PUSH_ERROR_AND_RETURN("Output GeomPrimvar is nullptr.");
   }
@@ -3079,6 +3079,11 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
           DCOUT("primvars:" << varname
                 << ":indices (terminal) declared with no authored value; "
                    "treating primvar as un-indexed.");
+          if (warn) {
+            (*warn) += fmt::format(
+                "`primvars:{}:indices` (terminal) is declared with no authored "
+                "value; treating the primvar as un-indexed.\n", varname);
+          }
         }
 
         if (terminal_indexAttr.has_timesamples()) {
@@ -3113,6 +3118,11 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
           DCOUT("primvars:" << varname
                 << ":indices declared with no authored value; treating primvar "
                    "as un-indexed.");
+          if (warn) {
+            (*warn) += fmt::format(
+                "`primvars:{}:indices` is declared with no authored value; "
+                "treating the primvar as un-indexed.\n", varname);
+          }
         }
 
         if (indexAttr.has_value()) {

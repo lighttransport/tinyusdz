@@ -1017,12 +1017,13 @@ static bool TryReadMMapArrayWithIndices(
 nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
     const Stage &stage, const GeomMesh &mesh, const std::string &name,
     const double t, const value::TimeSampleInterpolationType tinterp,
-    const std::string &prim_path = std::string()) {
+    const std::string &prim_path = std::string(),
+    std::string *warn = nullptr) {
   VertexAttribute vattr;
 
   std::string err;
   GeomPrimvar primvar;
-  if (!GetGeomPrimvar(stage, &mesh, name, &primvar, &err)) {
+  if (!GetGeomPrimvar(stage, &mesh, name, &primvar, &err, warn)) {
     return nonstd::make_unexpected(err);
   }
 
@@ -3113,7 +3114,7 @@ bool RenderSceneConverter::ConvertMesh(
       DCOUT("uv primvar  with default_texcoords_primvar_name found.");
       auto ret = GetTextureCoordinate(
           env.stage, mesh, env.mesh_config.default_texcoords_primvar_name,
-          env.timecode, env.tinterp, prim_path_str);
+          env.timecode, env.tinterp, prim_path_str, &_warn);
       if (ret) {
         //TUSDZ_LOG_I("uv attr");
 
@@ -3169,7 +3170,7 @@ bool RenderSceneConverter::ConvertMesh(
             // FIXME: Use GetGeomPrimvar() & ToVertexAttribute()
             auto ret = GetTextureCoordinate(env.stage, mesh, uvname,
                                             env.timecode, env.tinterp,
-                                            prim_path_str);
+                                            prim_path_str, &_warn);
             if (ret) {
               VertexAttribute &vattr = ret.value();
 
@@ -3216,7 +3217,7 @@ bool RenderSceneConverter::ConvertMesh(
             << env.mesh_config.default_texcoords_primvar_name << "`.");
       auto ret = GetTextureCoordinate(
           env.stage, mesh, env.mesh_config.default_texcoords_primvar_name,
-          env.timecode, env.tinterp, prim_path_str);
+          env.timecode, env.tinterp, prim_path_str, &_warn);
       if (ret) {
         uvAttrs[0] = std::move(ret.value());
       } else {
@@ -3241,7 +3242,7 @@ bool RenderSceneConverter::ConvertMesh(
 
     if (!GetGeomPrimvar(env.stage, &mesh,
                         env.mesh_config.default_tangents_primvar_name, &pvar,
-                        &_err)) {
+                        &_err, &_warn)) {
       return false;
     }
 
@@ -3263,7 +3264,7 @@ bool RenderSceneConverter::ConvertMesh(
 
     if (!GetGeomPrimvar(env.stage, &mesh,
                         env.mesh_config.default_binormals_primvar_name, &pvar,
-                        &_err)) {
+                        &_err, &_warn)) {
       return false;
     }
 
@@ -3283,7 +3284,7 @@ bool RenderSceneConverter::ConvertMesh(
   if (!subdivision_applied && mesh.has_primvar(kDisplayColor)) {
     GeomPrimvar pvar;
 
-    if (!GetGeomPrimvar(env.stage, &mesh, kDisplayColor, &pvar, &_err)) {
+    if (!GetGeomPrimvar(env.stage, &mesh, kDisplayColor, &pvar, &_err, &_warn)) {
       return false;
     }
 
@@ -3309,7 +3310,7 @@ bool RenderSceneConverter::ConvertMesh(
   constexpr auto kDisplayOpacity = "displayOpacity";
   if (!subdivision_applied && mesh.has_primvar(kDisplayOpacity)) {
     GeomPrimvar pvar;
-    if (!GetGeomPrimvar(env.stage, &mesh, kDisplayOpacity, &pvar, &_err)) {
+    if (!GetGeomPrimvar(env.stage, &mesh, kDisplayOpacity, &pvar, &_err, &_warn)) {
       return false;
     }
 
@@ -3359,7 +3360,7 @@ bool RenderSceneConverter::ConvertMesh(
 
     if (mesh.has_primvar("normals")) {  // primvars:normals
       GeomPrimvar pvar;
-      if (!GetGeomPrimvar(env.stage, &mesh, "normals", &pvar, &_err)) {
+      if (!GetGeomPrimvar(env.stage, &mesh, "normals", &pvar, &_err, &_warn)) {
         return false;
       }
 
