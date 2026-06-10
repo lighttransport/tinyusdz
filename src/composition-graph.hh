@@ -356,6 +356,16 @@ struct DeferredPayloadInfo {
 // CompositionGraphOptions
 // ---------------------------------------------------------------------------
 
+/// Layer-loading seam type (mirrors CompositionContext::LoadLayerFn). A plain
+/// non-capturing function pointer + opaque userdata so options stay copyable
+/// and free of self-captures. Used to route referenced/payload layer loads
+/// through a parse-once registry (see LargeSceneLoader / pcp::Cache).
+using CompositionLoadLayerFn = const Layer *(*)(void *userdata,
+                                                const std::string &asset_path,
+                                                const std::string &cwp,
+                                                std::string *warn,
+                                                std::string *err);
+
 struct CompositionGraphOptions {
   /// Payload loading policy. Return true to load, false to defer.
   /// When nullptr (default), all payloads are loaded eagerly.
@@ -383,7 +393,23 @@ struct CompositionGraphOptions {
   std::unordered_map<std::string, FileFormatHandler> fileformats;
 
   /// Maximum memory limit in MB.
+  ///
+  /// NOTE: currently advisory only — composition does not enforce it. Use the
+  /// `payload_policy` (e.g. a byte-budget closure) for actual memory bounding.
   size_t max_memory_mb{16384};
+
+  /// Allow parent-directory ('..') segments in reference/payload asset paths
+  /// (resolution delegated to the asset resolver). Required for scenes that use
+  /// '..'-relative arcs (e.g. Caldera). When false (default), such arcs are
+  /// rejected and skipped. See security_policy::ValidateAndNormalizeAssetPath.
+  bool allow_parent_relative_paths{false};
+
+  /// Optional layer-loading seam. When set, referenced/payload layers are
+  /// loaded through this function (e.g. a parse-once registry) instead of being
+  /// parsed fresh and owned per-arc. `load_layer_userdata` is passed opaquely.
+  /// When null (default), the legacy per-arc parse-and-own behavior is used.
+  CompositionLoadLayerFn load_layer_fn{nullptr};
+  void *load_layer_userdata{nullptr};
 
   /// Make an error when referenced asset is not found.
   bool error_when_asset_not_found{false};
