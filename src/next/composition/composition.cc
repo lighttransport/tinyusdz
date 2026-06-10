@@ -346,6 +346,12 @@ void Compositor::GraftSubtree(const Layer& src, const std::string& src_root,
   // Copy every descendant of src_root in `src` to the matching path under
   // dst_root, buffered in pending_graft_ (added after pass 2). Local overrides
   // already present in the result win (checked when appending).
+  //
+  // NOTE: scans the whole source layer by path prefix. A child-index DFS from
+  // the root would be O(subtree) instead of O(layer_prims x graft_count), but
+  // the layers grafted here are composed in place and do not reliably carry
+  // child_indices, so the path-prefix scan is the correct form. (CoW Clone in
+  // Phase 3 already removed the per-graft array-copy cost.)
   const std::string prefix = src_root + "/";
   for (size_t i = 0; i < src.prim_count(); ++i) {
     const PrimSpec* d = src.prim(static_cast<uint32_t>(i));

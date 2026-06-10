@@ -517,3 +517,22 @@ buffer (always 0) — the new number is honest, not a regression.
 bump, first mutable access clones if shared. Eager-read clones now share the
 one decoded buffer instead of deep-copying it 32×. Closes M1 for all
 materialized (USDA + eager-crate-type) arrays, not just lazy crate arrays.
+
+### Phase-4 delta (FindSpecs memoization)
+
+`bench_pcp_compose compose` (M=20000 prims, R=64 shared assets):
+
+| stage | Phase 0 | Phase 4 | delta |
+|-------|---------|---------|-------|
+| BuildStage | 213.6 ms | 163.2 ms | **−24%** |
+| ComputePrimIndex ×20000 | 145.4 ms | 155.6 ms | ~noise |
+
+The same `(stack, site)` was resolved 3–5× per composed prim; memoizing
+`FindSpecs` (stable references across rehash; cleared on `InvalidateLayer`)
+removes the redundant layer walks + Path parses on the BuildStage path. The
+full u32-interned-key conversion of pcp hot maps (M3) is deferred — invasive
+relative to its memory benefit now that CoW (Phase 3) removed the dominant copy
+cost; revisit if massif shows path strings dominating. The GraftSubtree
+child-index walk (M5) was attempted but reverted: composed-in-place layers
+don't reliably carry child_indices, so the path-prefix scan is the correct form
+(CoW already removed its per-graft array-copy cost).
