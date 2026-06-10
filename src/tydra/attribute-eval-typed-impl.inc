@@ -33,14 +33,25 @@ bool EvaluateTypedAttribute(
       (*err) += "Attribute value is empty.\n";
     }
     return false;
-  } else if (tattr.is_connection()) {
-
+  } else if (tattr.has_connections()) {
+    // A connection overrides the authored value (USD). Follow it; fall back to
+    // the value only if the connection cannot be resolved. (is_connection() is
+    // false when a value is also present, so dispatch on has_connections().)
     Attribute attr = detail::ToAttributeConnection<
         TypedAttribute<T>, Variability::Uniform>(tattr);
 
-    return detail::FollowConnection(
-        stage, attr, attr_name, value_out, err,
-        value::TimeCode::Default(), value::TimeSampleInterpolationType::Held);
+    std::string conn_err;
+    if (detail::FollowConnection(
+            stage, attr, attr_name, value_out, &conn_err,
+            value::TimeCode::Default(),
+            value::TimeSampleInterpolationType::Held)) {
+      return true;
+    }
+    if (tattr.has_value() && tattr.get_value(value_out)) {
+      return true;  // recovered via the authored fallback value
+    }
+    if (err) { (*err) += conn_err; }
+    return false;
 
   } else {
     if (tattr.get_value(value_out)) {
@@ -67,16 +78,37 @@ bool EvaluateTypedAnimatableAttribute(
     PUSH_ERROR_AND_RETURN("`value_out` param is nullptr.");
   }
 
-  // Eval order:
+  // Eval order (USD: a connection overrides the authored value):
   // - ValueBlocked?
-  // - has value?(default value or timesampled value)
-  // - has connection?
+  // - has connection? (follow; fall back to the value if it can't resolve)
+  // - has value? (default value or timesampled value)
 
   if (tattr.is_blocked()) {
     if (err) {
       (*err) += "Attribute is Blocked.\n";
     }
     return false;
+  } else if (tattr.has_connections()) {
+
+    Attribute attr = detail::ToAttributeConnection<
+        TypedAttribute<Animatable<T>>, Variability::Varying,
+        /* copyMeta */ true>(tattr, value::TypeTraits<T>::type_name());
+
+    std::string conn_err;
+    if (detail::FollowConnection(
+            stage, attr, attr_name, value_out, &conn_err, t, tinterp)) {
+      return true;
+    }
+    // Connection unresolved: fall back to the authored value if present.
+    if (tattr.has_value()) {
+      Animatable<T> value;
+      if (tattr.get_value(&value) && value.get(t, value_out, tinterp)) {
+        return true;
+      }
+    }
+    if (err) { (*err) += conn_err; }
+    return false;
+
   } else if (tattr.has_value()) {
     Animatable<T> value;
     if (tattr.get_value(&value)) {
@@ -89,15 +121,6 @@ bool EvaluateTypedAnimatableAttribute(
         return false;
       }
     }
-  } else if (tattr.has_connections()) {
-
-    Attribute attr = detail::ToAttributeConnection<
-        TypedAttribute<Animatable<T>>, Variability::Varying,
-        /* copyMeta */ true>(tattr, value::TypeTraits<T>::type_name());
-
-    return detail::FollowConnection(
-        stage, attr, attr_name, value_out, err, t, tinterp);
-
   } else if (tattr.is_value_empty()) {
     if (err) {
       (*err) += "Attribute value is empty.\n";
