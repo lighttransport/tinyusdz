@@ -152,6 +152,23 @@ void test_value() {
     assert((*v.as_float_array())[2] == 3.0f);
   }
 
+  // Copy-on-write: a copy shares the buffer until one side mutates, then the
+  // mutation must be private (the other copy is unaffected).
+  {
+    Value a = Value::MakeFloatArray(std::vector<float>{1, 2, 3});
+    Value b = a;  // shares the buffer (refcount bump, no element copy)
+    assert(*a.as_float_array() == *b.as_float_array());
+
+    (*b.as_float_array())[0] = 99.0f;  // mutable access detaches b
+    assert((*b.as_float_array())[0] == 99.0f);
+    assert((*a.as_float_array())[0] == 1.0f && "CoW detach failed: a was mutated");
+
+    // A token array (string elements) detaches correctly too.
+    Value t = Value::MakeTokenArray(std::vector<std::string>{"x", "y"});
+    Value t2 = t;
+    assert(*t.as_token_array() == *t2.as_token_array());
+  }
+
   std::cout << "  Value tests passed!" << std::endl;
 }
 
