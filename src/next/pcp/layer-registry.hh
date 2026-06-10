@@ -85,12 +85,16 @@ class LayerRegistry {
   // Heap-allocated so the registry stays movable. Guards by_resolved_/parse_count_
   // and in_flight_.
   std::unique_ptr<std::mutex> mu_;
+  struct LoadOutcome {
+    std::shared_ptr<Layer> layer;
+    std::string warn;
+    std::string err;
+  };
   // Resolved path -> the in-progress parse for it. A first requester publishes a
   // future here and parses OUTSIDE the lock; concurrent requesters for the same
   // path wait on the future (parse-once) while requesters for OTHER paths parse
   // in parallel (the lock no longer spans the parse).
-  std::unordered_map<std::string,
-                     std::shared_future<std::shared_ptr<Layer>>> in_flight_;
+  std::unordered_map<std::string, std::shared_future<LoadOutcome>> in_flight_;
 #endif
 };
 

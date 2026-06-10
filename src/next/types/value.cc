@@ -92,6 +92,7 @@ bool IsFloatBackedArray(TypeId id) {
     case TypeId::Color3f:
     case TypeId::Color4f:
     case TypeId::Texcoord2f:
+    case TypeId::Texcoord3f:
     case TypeId::Quatf:
     case TypeId::Matrix2f:
     case TypeId::Matrix3f:
@@ -112,6 +113,10 @@ bool IsDoubleBackedArray(TypeId id) {
     case TypeId::Point3d:
     case TypeId::Vector3d:
     case TypeId::Normal3d:
+    case TypeId::Color3d:
+    case TypeId::Color4d:
+    case TypeId::Texcoord2d:
+    case TypeId::Texcoord3d:
     case TypeId::Quatd:
     case TypeId::Matrix2d:
     case TypeId::Matrix3d:
@@ -1034,10 +1039,22 @@ bool Value::operator==(const Value& other) const {
   if (type_id_ == TypeId::Invalid) return true;
 
   if (is_array_) {
-    if (type_id_ == TypeId::Float || type_id_ == TypeId::Float2 || type_id_ == TypeId::Float3) {
+    if (IsFloatBackedArray(type_id_)) {
       return *as_float_array() == *other.as_float_array();
+    } else if (IsDoubleBackedArray(type_id_)) {
+      return *as_double_array() == *other.as_double_array();
     } else if (type_id_ == TypeId::Int) {
       return *as_int_array() == *other.as_int_array();
+    } else if (type_id_ == TypeId::Int64) {
+      return *as_int64_array() == *other.as_int64_array();
+    } else if (type_id_ == TypeId::UInt) {
+      return *as_uint_array() == *other.as_uint_array();
+    } else if (type_id_ == TypeId::UInt64) {
+      return *as_uint64_array() == *other.as_uint64_array();
+    } else if (type_id_ == TypeId::Bool) {
+      return *as_bool_array() == *other.as_bool_array();
+    } else if (type_id_ == TypeId::Token) {
+      return *as_token_array() == *other.as_token_array();
     }
     return false;
   }
@@ -1085,17 +1102,56 @@ uint64_t Value::hash() const {
 
   if (is_array_) {
     // Hash array contents
-    if (type_id_ == TypeId::Float || type_id_ == TypeId::Float2 || type_id_ == TypeId::Float3) {
+    if (IsFloatBackedArray(type_id_)) {
       const auto* arr = as_float_array();
       if (arr && !arr->empty()) {
         h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
                         arr->size() * sizeof(float));
+      }
+    } else if (IsDoubleBackedArray(type_id_)) {
+      const auto* arr = as_double_array();
+      if (arr && !arr->empty()) {
+        h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
+                        arr->size() * sizeof(double));
       }
     } else if (type_id_ == TypeId::Int) {
       const auto* arr = as_int_array();
       if (arr && !arr->empty()) {
         h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
                         arr->size() * sizeof(int32_t));
+      }
+    } else if (type_id_ == TypeId::Int64) {
+      const auto* arr = as_int64_array();
+      if (arr && !arr->empty()) {
+        h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
+                        arr->size() * sizeof(int64_t));
+      }
+    } else if (type_id_ == TypeId::UInt) {
+      const auto* arr = as_uint_array();
+      if (arr && !arr->empty()) {
+        h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
+                        arr->size() * sizeof(uint32_t));
+      }
+    } else if (type_id_ == TypeId::UInt64) {
+      const auto* arr = as_uint64_array();
+      if (arr && !arr->empty()) {
+        h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
+                        arr->size() * sizeof(uint64_t));
+      }
+    } else if (type_id_ == TypeId::Bool) {
+      const auto* arr = as_bool_array();
+      if (arr && !arr->empty()) {
+        h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
+                        arr->size() * sizeof(uint8_t));
+      }
+    } else if (type_id_ == TypeId::Token) {
+      const auto* arr = as_token_array();
+      if (arr) {
+        for (const std::string& s : *arr) {
+          h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(s.data()),
+                          s.size());
+          h *= 1099511628211ULL;
+        }
       }
     }
     return h;
@@ -1127,16 +1183,46 @@ const uint8_t* Value::raw_bytes(size_t* out_size) const {
   if (type_id_ == TypeId::Invalid) return nullptr;
 
   if (is_array_) {
-    if (type_id_ == TypeId::Float || type_id_ == TypeId::Float2 || type_id_ == TypeId::Float3) {
+    if (IsFloatBackedArray(type_id_)) {
       const auto* arr = as_float_array();
       if (arr && !arr->empty()) {
         *out_size = arr->size() * sizeof(float);
+        return reinterpret_cast<const uint8_t*>(arr->data());
+      }
+    } else if (IsDoubleBackedArray(type_id_)) {
+      const auto* arr = as_double_array();
+      if (arr && !arr->empty()) {
+        *out_size = arr->size() * sizeof(double);
         return reinterpret_cast<const uint8_t*>(arr->data());
       }
     } else if (type_id_ == TypeId::Int) {
       const auto* arr = as_int_array();
       if (arr && !arr->empty()) {
         *out_size = arr->size() * sizeof(int32_t);
+        return reinterpret_cast<const uint8_t*>(arr->data());
+      }
+    } else if (type_id_ == TypeId::Int64) {
+      const auto* arr = as_int64_array();
+      if (arr && !arr->empty()) {
+        *out_size = arr->size() * sizeof(int64_t);
+        return reinterpret_cast<const uint8_t*>(arr->data());
+      }
+    } else if (type_id_ == TypeId::UInt) {
+      const auto* arr = as_uint_array();
+      if (arr && !arr->empty()) {
+        *out_size = arr->size() * sizeof(uint32_t);
+        return reinterpret_cast<const uint8_t*>(arr->data());
+      }
+    } else if (type_id_ == TypeId::UInt64) {
+      const auto* arr = as_uint64_array();
+      if (arr && !arr->empty()) {
+        *out_size = arr->size() * sizeof(uint64_t);
+        return reinterpret_cast<const uint8_t*>(arr->data());
+      }
+    } else if (type_id_ == TypeId::Bool) {
+      const auto* arr = as_bool_array();
+      if (arr && !arr->empty()) {
+        *out_size = arr->size() * sizeof(uint8_t);
         return reinterpret_cast<const uint8_t*>(arr->data());
       }
     }

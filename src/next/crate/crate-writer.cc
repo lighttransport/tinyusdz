@@ -1125,10 +1125,19 @@ private:
             if (v) { std::memcpy(tmp, v, 32); data_idx = StoreValueData(tmp, 32, type_id); }
             break;
           }
-          case TypeId::Matrix4d:
-          case TypeId::Matrix4f: {
+          case TypeId::Matrix4d: {
             const double* v = val.as_matrix4d();
             if (v) { std::memcpy(tmp, v, 128); data_idx = StoreValueData(tmp, 128, type_id); }
+            break;
+          }
+          case TypeId::Matrix4f: {
+            const float* v = val.as_matrix4f();
+            if (v) {
+              double d[16];
+              for (size_t i = 0; i < 16; ++i) d[i] = static_cast<double>(v[i]);
+              std::memcpy(tmp, d, 128);
+              data_idx = StoreValueData(tmp, 128, type_id);
+            }
             break;
           }
           default:
@@ -1294,10 +1303,7 @@ private:
         case TypeId::Float4:
         case TypeId::Color4f:
         case TypeId::Texcoord2f:
-        case TypeId::Quatf:
-        case TypeId::Matrix2f:
-        case TypeId::Matrix3f:
-        case TypeId::Matrix4f: {
+        case TypeId::Quatf: {
           const std::vector<float>* arr = val.as_float_array();
           const uint32_t comps = ArrayComps(type_id);
           if (arr && comps && arr->size() % comps == 0) {
@@ -1306,6 +1312,24 @@ private:
             arr_data.resize(8 + bytes);
             std::memcpy(arr_data.data(), &count, 8);
             std::memcpy(arr_data.data() + 8, arr->data(), bytes);
+          }
+          break;
+        }
+        case TypeId::Matrix2f:
+        case TypeId::Matrix3f:
+        case TypeId::Matrix4f: {
+          const std::vector<float>* arr = val.as_float_array();
+          const uint32_t comps = ArrayComps(type_id);
+          if (arr && comps && arr->size() % comps == 0) {
+            count = arr->size() / comps;
+            size_t bytes = arr->size() * sizeof(double);
+            arr_data.resize(8 + bytes);
+            std::memcpy(arr_data.data(), &count, 8);
+            for (size_t i = 0; i < arr->size(); ++i) {
+              double d = static_cast<double>((*arr)[i]);
+              std::memcpy(arr_data.data() + 8 + i * sizeof(double), &d,
+                          sizeof(double));
+            }
           }
           break;
         }

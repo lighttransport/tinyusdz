@@ -10,6 +10,7 @@
 #include "../types/value.hh"
 
 #include <cstring>
+#include <limits>
 
 namespace tinyusdz {
 namespace next {
@@ -351,6 +352,41 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
         data[i] = tokens[idxs[i]];
       }
       *out = Value::MakeTokenArray(std::move(data));
+      return true;
+    }
+    case CrateTypeId::Vec4f:
+    case CrateTypeId::Quatf: {
+      if (compressed) return false;
+      const uint32_t stride_bytes = CrateArrayElemStride(type_id);
+      const uint32_t comps = stride_bytes / 4;
+      if (comps == 0 ||
+          count > (std::numeric_limits<size_t>::max)() / comps) {
+        return false;
+      }
+      std::vector<float> data(static_cast<size_t>(count) * comps);
+      if (!read_raw(data.data(), stride_bytes)) return false;
+      *out = Value::MakeFloatCompArray(std::move(data),
+                                       CrateArrayValueType(type_id), comps);
+      return true;
+    }
+    case CrateTypeId::Vec2d:
+    case CrateTypeId::Vec3d:
+    case CrateTypeId::Vec4d:
+    case CrateTypeId::Quatd:
+    case CrateTypeId::Matrix2d:
+    case CrateTypeId::Matrix3d:
+    case CrateTypeId::Matrix4d: {
+      if (compressed) return false;
+      const uint32_t stride_bytes = CrateArrayElemStride(type_id);
+      const uint32_t comps = stride_bytes / 8;
+      if (comps == 0 ||
+          count > (std::numeric_limits<size_t>::max)() / comps) {
+        return false;
+      }
+      std::vector<double> data(static_cast<size_t>(count) * comps);
+      if (!read_raw(data.data(), stride_bytes)) return false;
+      *out = Value::MakeDoubleCompArray(std::move(data),
+                                        CrateArrayValueType(type_id), comps);
       return true;
     }
     default:

@@ -707,7 +707,16 @@ bool IsLazyArrayType(CrateTypeId t, bool compressed) {
     case CrateTypeId::Float:
     case CrateTypeId::Vec2f:
     case CrateTypeId::Vec3f:
+    case CrateTypeId::Vec4f:
+    case CrateTypeId::Quatf:
     case CrateTypeId::Double:
+    case CrateTypeId::Vec2d:
+    case CrateTypeId::Vec3d:
+    case CrateTypeId::Vec4d:
+    case CrateTypeId::Quatd:
+    case CrateTypeId::Matrix2d:
+    case CrateTypeId::Matrix3d:
+    case CrateTypeId::Matrix4d:
     case CrateTypeId::Int64:
     case CrateTypeId::UInt64:
     case CrateTypeId::Bool:
