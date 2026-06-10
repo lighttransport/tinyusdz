@@ -1,7 +1,31 @@
 # refactor-next: src/next Optimization & Hardening Roadmap
 
-Status: **planned** (this document). Phases land one at a time, each independently,
-with `ctest --test-dir build/next` green at every step.
+Status: **in progress**. Phases land one at a time, each independently, with
+`ctest --test-dir build/next` green at every step.
+
+Landed so far:
+- **Phase 0** — this plan + `bench_pcp_compose` instrumentation + baselines.
+- **Phase 1** — recursion/cycle hardening (ExpansionFrame stack-frame chain,
+  ancestor-arc + namespace-depth guards, iterative SourcesForPath); lazy
+  per-prim `values_`/`time_samples_`; dead `ValueStorage` byte API removed.
+  Also fixed a parser bug (apiSchemas/variantSets dropped quoted names).
+- **Phase 2** — three libFuzzer harnesses + `next_usdcat` + `next_corpus_parse`
+  gate; 6 fuzzer-found crash/UB bugs fixed and pinned by a replay test.
+- **Phase 3** — copy-on-write array storage in `Value` (12× memory cut on the
+  clone benchmark).
+- **Phase 4** — `FindSpecs` memoization (−24% BuildStage). Interned-key
+  conversion (M3) and GraftSubtree child-walk (M5) deferred/reverted — see
+  doc/memory-and-performance.md.
+- **Phase 5 (core)** — stable variant-content instance key (fixes pointer
+  aliasing S4). Strongest-opinion tri-state instanceable, path-translation API,
+  and the PointInstancer compute port remain TODO.
+- **Phase 9 (F2)** — LayerRegistry parses outside the lock (parallel layer
+  load). The deeper cache-table fine-grained locking (F3–F6) remains TODO.
+
+Not yet started: **Phase 6** (LoadRules), **Phase 7** (list-ops / layer offsets
+/ typed errors), **Phase 8** (PrimSpecMeta split / token pool / mmap / extra
+array-type read+lazy coverage), **Phase 9 F3–F6**, **Phase 10** (lazy Stage).
+Each is a large independent feature; the sections below are the spec for them.
 
 Goals, in priority order:
 
