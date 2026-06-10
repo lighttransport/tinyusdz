@@ -522,7 +522,11 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage, const UsdPrim& pr
       std::string shader_id;
       GetToken(child, "info:id", &shader_id);
 
-      if (shader_id == "UsdPreviewSurface") {
+      if (shader_id == "UsdPreviewSurface" ||
+          shader_id == "ND_UsdPreviewSurface_surfaceshader") {
+        // MaterialX's UsdPreviewSurface node (`ND_UsdPreviewSurface_surfaceshader`)
+        // has the same inputs as UsdPreviewSurface — treat it as one (matches the
+        // legacy tydra path, e.g. usd-wg MaterialXTest/basic_flatten).
         out->shader_type = RenderMaterial::ShaderType::PreviewSurface;
         out->preview_surface = std::make_unique<PreviewSurfaceShader>();
         // TODO: Extract shader parameters
