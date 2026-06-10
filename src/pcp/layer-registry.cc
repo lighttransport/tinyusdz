@@ -65,7 +65,10 @@ const Layer *LayerRegistry::GetOrLoad(AssetResolutionResolver &resolver,
           }
         } else {
           Layer layer;
-          if (LoadLayerFromMemory(asset.data(), asset.size(), asset_path,
+          // Pass the RESOLVED (anchored) path so the cached layer's prims are
+          // stamped with the resolved directory as their current-working-path,
+          // preserving parent-directory context for nested relative arcs.
+          if (LoadLayerFromMemory(asset.data(), asset.size(), resolved_path,
                                   &layer, warn, err)) {
             auto sp = std::make_shared<Layer>(std::move(layer));
             result = sp.get();

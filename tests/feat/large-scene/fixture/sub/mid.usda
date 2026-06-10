@@ -1,0 +1,10 @@
+#usda 1.0
+(
+    doc = "Authored in sub/. Its `./leaf.usda` reference must anchor to sub/."
+)
+
+def Xform "P" (
+    prepend references = @./leaf.usda@</Leaf>
+)
+{
+}

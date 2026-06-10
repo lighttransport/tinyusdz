@@ -1,0 +1,19 @@
+#usda 1.0
+(
+    doc = """Cross-directory cwp-anchoring regression fixture.
+
+    The root layer (in fixture/) sublayers sub/mid.usda and authors a pure
+    `over P` (carrying the root layer's working-path). mid.usda authors
+    `def P` with a relative reference `@./leaf.usda@` that MUST anchor to
+    sub/ (mid.usda's directory), not to fixture/. After sublayer flattening
+    the merged P prim must keep sub/ as its working path so the reference
+    resolves and pulls in /Leaf/M.
+    """
+    subLayers = [
+        @sub/mid.usda@
+    ]
+)
+
+over "P"
+{
+}

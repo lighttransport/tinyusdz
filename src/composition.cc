@@ -509,7 +509,12 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   std::string _err;
 
   if (IsUSDFileFormat(asset_path)) {
-    if (!LoadLayerFromMemory(asset.data(), asset.size(), asset_path, &layer,
+    // Pass the RESOLVED (anchored) path so the loaded layer's prims are stamped
+    // with the resolved directory as their current-working-path. Using the
+    // authored (relative) asset_path here would lose the parent-directory
+    // context across nested references (e.g. `a/b.usd` referencing `./c.usd`
+    // must anchor c.usd to `a/`, not to the process working directory).
+    if (!LoadLayerFromMemory(asset.data(), asset.size(), resolved_path, &layer,
                              &_warn, &_err)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to open `{}` as Layer: {}", asset_path, _err));
@@ -687,6 +692,18 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
       (src.specifier() == Specifier::Def ||
        src.specifier() == Specifier::Class)) {
     dst.specifier() = src.specifier();
+
+    // The prim's definition -- and therefore the anchor for its relative
+    // reference/payload asset paths -- comes from this weaker DEFINING layer,
+    // not from the stronger `over`. A pure `over` (e.g. a root-layer variant
+    // selection) carries the root layer's working-path; keeping it would
+    // mis-anchor the arcs authored in the defining sublayer. Adopt the defining
+    // layer's asset-resolution anchor so those arcs resolve against the correct
+    // directory after sublayer flattening (cross-directory anchoring).
+    if (!src.get_current_working_path().empty()) {
+      dst.set_asset_resolution_state(src.get_current_working_path(),
+                                     src.get_asset_search_paths());
+    }
   }
 
   // AOUSD Core Spec 12.2.2 (typeName): Use typeName from defining spec.
