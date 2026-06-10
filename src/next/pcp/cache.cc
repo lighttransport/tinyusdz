@@ -397,6 +397,12 @@ struct Cache::Impl {
       key += ArcTypeName(s.arc_kind);
       key += "|" + layer_stacks[s.stack_idx].identifier + "|" + s.site;
       if (s.variant) key += "|v:" + s.variant->name;
+      // A non-identity layer offset bakes different sample times, so instances
+      // with different offsets must not share a prototype.
+      if (!s.offset.is_identity()) {
+        key += "|o:" + std::to_string(s.offset.offset) + ":" +
+               std::to_string(s.offset.scale);
+      }
       key += ";";
     }
     return key;
@@ -525,7 +531,15 @@ struct Cache::Impl {
     arc_src.stack_idx = arc_stack_idx;
     arc_src.site = arc_site;
     arc_src.map = NamespaceMapping::Compose(src.map, local);
-    arc_src.offset = src.offset;
+    // Compose this arc's layer offset under the parent's (root..arc chain), so
+    // the referenced content's time samples are mapped into root/stage time.
+    LayerOffset arc_off;
+    if (!arc.layer_offset.empty()) {
+      double o = 0.0, s = 1.0;
+      Compositor::ParseLayerOffset(arc.layer_offset, o, s);
+      arc_off = LayerOffset{o, s};
+    }
+    arc_src.offset = src.offset.Compose(arc_off);
     arc_src.arc_kind = kind;
 
     // A specialize subtree is globally weakest: it (and everything beneath it)
@@ -777,7 +791,8 @@ struct Cache::Impl {
           specifier_set = true;
         }
 
-        Compositor::CopyLocalOpinions(*out, *spec);
+        Compositor::CopyLocalOpinions(*out, *spec, s.offset.offset,
+                                      s.offset.scale);
 
         for (const std::string &rn : spec->relationship_names()) {
           if (out->relationship(rn)) continue;

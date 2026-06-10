@@ -468,6 +468,30 @@ def "A" (
   std::cout << "  Arc list-op tests passed!" << std::endl;
 }
 
+// A per-reference layer offset `(offset = N; scale = M)` must be captured into
+// the canonical ref string as `?layerOffset=N:M`.
+void test_arc_layer_offset_parse() {
+  std::cout << "Testing arc layer-offset parse..." << std::endl;
+  const char* input = R"(#usda 1.0
+def "R" (
+    references = @asset.usd@</A> (offset = 12; scale = 2)
+)
+{
+}
+)";
+  LoadResult result = LoadUSDAFromString(input, std::strlen(input));
+  assert(result.success);
+  UsdPrim r = result.stage.GetPrimAtPath("/R");
+  assert(r.IsValid());
+  const std::vector<std::string>& refs = r.GetMeta().references;
+  assert(refs.size() == 1);
+  assert(refs[0].find("layerOffset=") != std::string::npos &&
+         "reference layer offset not captured");
+  assert(refs[0].find("12") != std::string::npos &&
+         refs[0].find(":2") != std::string::npos && "offset/scale wrong");
+  std::cout << "  Arc layer-offset parse passed!" << std::endl;
+}
+
 // ============================================================
 // Physics schema readers (regression: vector3f / quatf properties were dropped)
 // ============================================================
@@ -549,6 +573,7 @@ int main() {
     test_ascii_parser();
     test_usda_reader();
     test_arc_listops();
+    test_arc_layer_offset_parse();
     test_physics_schema();
 
     std::cout << std::endl;

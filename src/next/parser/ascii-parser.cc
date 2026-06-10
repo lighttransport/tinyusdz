@@ -556,6 +556,35 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
     } else {
       return false;
     }
+    // Optional per-arc layer offset: `(offset = N; scale = M)`. Encoded into the
+    // canonical ref as `?layerOffset=offset:scale` (Compositor::ParseReference
+    // decodes it); composition composes it through the arc chain and bakes it
+    // into time-sample times.
+    if (Check(TokenType::OpenParen)) {
+      Match(TokenType::OpenParen);
+      double off = 0.0, scl = 1.0;
+      while (!Check(TokenType::CloseParen) && !AtEnd()) {
+        if (Check(TokenType::Identifier)) {
+          std::string k;
+          lexer_->expect(TokenType::Identifier, k);
+          Match(TokenType::Equals);
+          if (Check(TokenType::Number)) {
+            std::string num;
+            lexer_->expect(TokenType::Number, num);
+            double v = std::strtod(num.c_str(), nullptr);
+            if (k == "offset") off = v;
+            else if (k == "scale") scl = v;
+          }
+        } else {
+          lexer_->next();  // skip unexpected token (avoid spinning)
+        }
+        Match(TokenType::Semicolon);
+      }
+      Match(TokenType::CloseParen);
+      if (off != 0.0 || scl != 1.0) {
+        ref += "?layerOffset=" + std::to_string(off) + ":" + std::to_string(scl);
+      }
+    }
     *out = ref;
     return true;
   };
